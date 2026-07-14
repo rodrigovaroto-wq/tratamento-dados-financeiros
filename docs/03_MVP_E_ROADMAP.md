@@ -11,6 +11,8 @@ dia 1. O que evolui depois é o **nível de autonomia**, não a existência dos 
 
 - Modelo de caso/entidade/período/documento/versão (Supabase).
 - Ingestão + **gate de captura** (legibilidade/integridade) + **transcrição humana assistida**.
+  Na F1, ingestão por **upload manual em lote** no portal (integração SharePoint = fase futura);
+  ver `f0/02_build_vs_buy.md`.
 - Classificação documento→checklist (N1: sugestão + confirmação).
 - Validação formal (período/entidade/tipo/assinatura/integridade), com pré-condições.
 - Completude (Portão 1) determinístico.
