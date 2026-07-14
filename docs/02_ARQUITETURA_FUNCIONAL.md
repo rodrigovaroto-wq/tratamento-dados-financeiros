@@ -44,6 +44,11 @@ serviços transversais** (pendências e status/auditoria) que atravessam tudo.
   caminho de **transcrição humana assistida**; classificação documento→item de checklist;
   reconhecimento de período/entidade/tipo; duplicidade; versionamento; validação formal
   (período/entidade/tipo/assinatura/integridade).
+  > **Ingestão na F1 (decisão `f0/02`):** a porta de entrada começa por **upload manual em
+  > lote** no portal — o operador sobe todos os arquivos brutos de uma vez e o sistema os
+  > organiza automaticamente em **Mandato × Empresa × Tipo × Período** (classificação híbrida:
+  > nome do arquivo + conteúdo). A integração automática de busca no SharePoint é fase futura;
+  > não altera o resto do pipeline.
 - **E2 — Extração:** identificadores (tipo/período/entidade) e linhas/tabelas financeiras,
   cada campo com **score de confiança** e separação alto vs revisar.
 - **E3 — Reconciliação:** comparação cruzada entre fontes (ver `04_RECONCILIACAO.md`).

@@ -13,14 +13,15 @@ Cada arquivo tem um estado: **[DECISÃO]** (proposta minha, pronta para o time a
 **[PREENCHER]** (template que só o time pode completar com dados reais) ou **[DRAFT v0]**
 (rascunho meu que acelera o time, para cortar/refinar).
 
-| # | Artefato | Arquivo | Estado | Dono sugerido |
+| # | Artefato | Arquivo | Estado | Dono |
 |---|---|---|---|---|
-| 0.1 | Baseline quantitativo | `01_baseline_quantitativo.md` | [PREENCHER] | Sócio/gerente de operação |
-| 0.2 | Decisão build-vs-buy + dono | `02_build_vs_buy.md` | [PREENCHER] | Sócio responsável |
-| 0.3 | Taxonomia documental + checklist (Reestruturação) | `03_taxonomia_reestruturacao.md` | [DRAFT v0] | Analista sênior (dono único) |
-| 0.4 | Modelo de status + pendências + regra do portão | `04_status_e_pendencias_spec.md` | [DECISÃO] | Arquiteto + sênior |
-| 0.5 | Schema conceitual + política LGPD | `05_schema_conceitual.md` | [DECISÃO] | Arquiteto |
-| 0.6 | Golden set + protocolo de medição | `06_golden_set_protocolo.md` | [DRAFT v0] | Analista + arquiteto |
+| 0.1 | Baseline quantitativo | `01_baseline_quantitativo.md` | ⏳ PARCIAL | Rodrigo Varoto |
+| 0.2 | Decisão build-vs-buy + dono | `02_build_vs_buy.md` | ✅ DECISÃO REGISTRADA | Rodrigo Varoto |
+| 0.3 | Taxonomia documental + checklist (Reestruturação) | `03_taxonomia_reestruturacao.md` | ✅ v1 | Rodrigo Varoto (dono único) |
+| 0.4 | Modelo de status + pendências + regra do portão | `04_status_e_pendencias_spec.md` | ✅ APROVADO | Rodrigo Varoto |
+| 0.5 | Schema conceitual + política LGPD | `05_schema_conceitual.md` | ✅ APROVADO | Rodrigo Varoto |
+| 0.6 | Golden set + protocolo de medição | `06_golden_set_protocolo.md` | ⏳ DRAFT v0 (próximo) | Rodrigo Varoto |
+| 0.7 | Especificação do output para o analista | `07_output_spec.md` | ✅ DECISÃO v0 | Rodrigo Varoto |
 
 ## Ordem de execução (dependências e portões)
 
@@ -45,13 +46,20 @@ Cada arquivo tem um estado: **[DECISÃO]** (proposta minha, pronta para o time a
 
 A F0 está pronta para virar código quando **todos** forem verdade:
 
-1. Baseline quantitativo preenchido com números reais de casos passados.
-2. Decisão build-vs-buy registrada e assinada; **dono de operação nomeado**.
-3. Taxonomia + checklist de Reestruturação v1 fechados (critério "bom o suficiente para
-   começar", não "consenso perfeito").
-4. Máquina de status + tipos de pendência + regra do Portão 2 aprovados.
-5. Schema conceitual revisado; sensibilidade LGPD mapeada por tipo de documento.
-6. Golden set montado com N/tipo suficiente e métricas definidas.
+1. ⏳ Baseline quantitativo preenchido com números reais de casos passados. *(Parcial: seção A
+   com dado real + estimativa; B–E pendentes de levantamento. Não bloqueia o esqueleto da F1,
+   mas é pré-requisito da calibração — F4.)*
+2. ✅ Decisão build-vs-buy registrada e assinada; **dono de operação nomeado** (Rodrigo).
+3. ✅ Taxonomia + checklist de Reestruturação **v1** fechados (Kit Básico obrigatório +
+   Variáveis complementares), critério "bom o suficiente para começar".
+4. ✅ Máquina de status + tipos de pendência + regra do Portão 2 aprovados.
+5. ✅ Schema conceitual revisado; sensibilidade LGPD mapeada por tipo de documento.
+6. ⏳ Golden set montado com N/tipo suficiente e métricas definidas. **← próximo passo**
+   (destravado agora que a taxonomia v1 está fechada).
+7. ✅ **Output para o analista especificado** (`07_output_spec.md`) — schema-alvo definido.
+
+**Situação (2026-07-14):** 5 de 7 itens fechados. Faltam o **golden set (0.6)** — próximo
+trabalho — e o **baseline fino (0.1)**, que pode correr em paralelo à F1 sem bloqueá-la.
 
 ## Depois da F0 (prévia da F1)
 

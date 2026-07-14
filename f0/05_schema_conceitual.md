@@ -1,8 +1,11 @@
-# 0.5 — Schema Conceitual + Política LGPD  ·  [DECISÃO]
+# 0.5 — Schema Conceitual + Política LGPD  ·  [APROVADO]
 
 **Objetivo:** modelo conceitual de dados (entidades, relações, atributos-chave) que
 materializa taxonomia (0.3) e status/pendências (0.4). **Sem DDL** — é o desenho lógico que
 guia o schema físico na F1. Fonte da verdade do estado = Postgres/Supabase.
+
+> **Aprovado em 2026-07-14 (Rodrigo Varoto)** com um ajuste de storage (ver `documento_versao`
+> abaixo) decorrente da decisão híbrida 0.2 (arquivos no SharePoint / upload manual na F1).
 
 ## Entidades e relações
 
@@ -27,7 +30,7 @@ taxonomia_tipo_documento / taxonomia_contabil (versionadas, fonte da verdade)
 | `entidade` | id, caso_id, razao_social, cnpj, papel_no_grupo | Empresas do grupo |
 | `periodo` | id, caso_id, tipo (mês/ano/data-base), referencia | Eixo temporal |
 | `documento` | id, caso_id, entidade_id, periodo_id, tipo_taxonomia_id, status, sensibilidade_lgpd | Ancorado à taxonomia |
-| `documento_versao` | id, documento_id, n_versao, arquivo_storage_path, hash, legibilidade, criada_em | Versionamento + integridade |
+| `documento_versao` | id, documento_id, n_versao, `origem_arquivo` (`supabase_storage` \| `sharepoint`), `arquivo_ref` (path no bucket **ou** ID do item no SharePoint), assinado (bool), hash, legibilidade, criada_em | Versionamento + integridade. **Storage em dois modos** (ver nota abaixo) |
 | `checklist_item_status` | id, caso_id, entidade_id, periodo_id, tipo_taxonomia_id, status, obrigatoriedade | Base da completude |
 | `campo_extraido` | id, documento_versao_id, chave, valor, confianca, origem (página/linha), nivel_autonomia, revisado_por | Extração com confiança + trilha |
 | `reconciliacao` | id, caso_id, tipo, classe (A/B/C), fonte_a, fonte_b, precondicoes_ok, resultado, divergencia, materialidade | Ver `docs/04_RECONCILIACAO.md` |
@@ -41,6 +44,13 @@ taxonomia_tipo_documento / taxonomia_contabil (versionadas, fonte da verdade)
 ## Princípios de modelagem
 
 1. **Estado no Postgres, nunca no N8N.** Toda entidade acima é persistida; N8N só lê/escreve.
+   - **Storage em dois modos (decisão 0.2):** `documento_versao` guarda **de onde** o arquivo
+     vem (`origem_arquivo`) e **o ponteiro** (`arquivo_ref`). Na **F1** (upload manual em lote),
+     `origem_arquivo = supabase_storage` e o arquivo mora no bucket privado do Supabase Storage.
+     Na **fase de integração futura**, `origem_arquivo = sharepoint` e `arquivo_ref` é o ID do
+     item na biblioteca do SharePoint (arquivo permanece no VDR). O restante do modelo não muda.
+   - `assinado` reflete o atributo `(Assinado)` da taxonomia (0.3) — flag de validação formal,
+     não tipo de documento.
 2. **Append-only para auditoria.** `evento_auditoria` e `decisao` não são atualizados nem
    apagados — só inseridos. Correções são novos eventos.
 3. **Confiança e nível de autonomia são colunas**, não constantes de código — permitem o dial.

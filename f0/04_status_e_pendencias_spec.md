@@ -1,8 +1,12 @@
-# 0.4 — Modelo de Status + Pendências + Regra do Portão  ·  [DECISÃO]
+# 0.4 — Modelo de Status + Pendências + Regra do Portão  ·  [APROVADO]
 
 **Objetivo:** especificação executável das máquinas de estado e do motor de pendências.
-Proposta pronta (decorre da arquitetura aprovada em `docs/07_STATUS_E_PENDENCIAS.md`) — o time
-aprova ou ajusta. É o que o schema (0.5) materializa.
+Proposta pronta (decorre da arquitetura aprovada em `docs/07_STATUS_E_PENDENCIAS.md`).
+
+> **Aprovado em 2026-07-14 (Rodrigo Varoto):** máquinas de estado, catálogo de pendências,
+> severidades e regra do Portão 2 aceitos como estão. Teto de ressalvas confirmado em **3**
+> (default parametrizável). O conjunto obrigatório verificado no Portão 1 é o **Kit Básico**
+> definido em `03_taxonomia_reestruturacao.md`. É o que o schema (0.5) materializa.
 
 ## Máquina de estado do CASO
 
@@ -69,8 +73,9 @@ aberta → { em_correção_interna | reenviada_ao_cliente } → { aceita_com_res
 > 3. **nenhuma** pendência da **lista de bloqueantes não-sobrepujáveis** existe aberta.
 
 ### Bloqueantes NÃO-sobrepujáveis (lista fechada — nenhuma ressalva libera)
-Candidatos iniciais (confirmar em 0.3): ausência de `DF_AUDITADA`, `MAPA_DIVIDA`, `BALANCETE`
-essencial; `arquivo_ilegivel` de item essencial; `CONTINGENCIAS` ausente.
+Definida a partir do **Kit Básico** (0.3): ausência de `DRE`, `BALANCO`, `COMBINADO`, `MUTUOS`
+ou `CONTRATO_SOCIAL`; `arquivo_ilegivel` de qualquer item do Kit Básico. *(Revisar quando a
+taxonomia evoluir para v2.)*
 
 ### "Aceitar com ressalva" (controlado)
 - Exige papel **sênior** + `motivo` obrigatório + **data de expiração**.
