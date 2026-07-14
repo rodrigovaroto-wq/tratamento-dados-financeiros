@@ -1,4 +1,4 @@
-# 0.6 — Golden Set + Protocolo de Medição  ·  [DRAFT v0]
+# 0.6 — Golden Set + Protocolo de Medição  ·  [PROTOCOLO v1]
 
 **Objetivo:** o conjunto de documentos reais rotulados que permite **medir** precisão/recall
 por tipo e, com isso, **subir o dial de autonomia** de forma honesta. Sem golden set, todo
@@ -7,10 +7,27 @@ estágio interpretativo fica travado em N0/N1 — não por opção, por regra.
 > Lição direta do `clipping-news`: threshold só significa algo medido contra dado real.
 > "Confiança do LLM" não é probabilidade calibrada — a concordância humano-máquina é.
 
+> **Duas camadas — leia antes (fechado em 2026-07-14, dono Rodrigo Varoto):**
+> 1. **O protocolo** (este documento) — dimensionamento, o que se rotula, métricas, laço de
+>    calibração. **Fechado como v1**, alinhado à taxonomia v1 (0.3).
+> 2. **O golden set físico** — os documentos reais rotulados. É **tarefa de execução** (exige
+>    docs reais de clientes + rotulagem + controle LGPD); **não** se monta em documentação.
+>    Roda em paralelo à F1, começando com os casos disponíveis e crescendo. Cada tipo só passa
+>    a poder subir de dial quando acumula N suficiente rotulado — os demais ficam em N0/N1.
+
 ## Dimensionamento (fecha a crítica "30–50 docs é pouco")
 
-- **~20–30 documentos rotulados por tipo core.** Com ~8–12 tipos core da taxonomia (0.3), isso
-  dá **~200–350 documentos**.
+- **Tipos core = os 8 do Kit Básico (0.3):** `DRE`, `BALANCO`, `FLUXO_CAIXA`, `COMBINADO`,
+  `FATURAMENTO_24M`, `MUTUOS`, `FAT_INTRAGRUPO`, `CONTRATO_SOCIAL`. Tipos Variáveis entram no
+  golden set conforme aparecem e acumulam volume.
+- **Alvo: ~20–30 documentos rotulados por tipo core** → ordem de **~160–240 documentos** para
+  cobrir o Kit Básico.
+- **Ritmo de acúmulo difere por granularidade** (nuance importante):
+  - Tipos **por entidade × período** (`DRE`, `BALANCO`, `FLUXO_CAIXA`) acumulam rápido — um só
+    caso pode render dezenas (o caso real de referência já trouxe ~40 docs de demonstrações).
+  - Tipos **por caso** (`COMBINADO`, `MUTUOS`, `FAT_INTRAGRUPO`, `CONTRATO_SOCIAL`) rendem
+    ~1 por mandato → precisam de **~20 casos** para atingir o alvo. Esses ficam **mais tempo em
+    N0/N1** e é esperado — não é falha.
 - **Amostragem estratificada por qualidade** (usar a distribuição da seção B do baseline 0.1):
   incluir digital, PDF nativo, escaneado e foto na proporção real — senão a métrica mente
   sobre o pior caso.
@@ -21,10 +38,11 @@ estágio interpretativo fica travado em N0/N1 — não por opção, por regra.
 | Campo | Descrição |
 |---|---|
 | `tipo_correto` | Tipo da taxonomia (0.3) |
-| `entidade_correta`, `periodo_correto` | Identificadores |
+| `entidade_correta`, `periodo_correto` | Identificadores (Mandato × Empresa × Período) |
+| `assinado_correto` | Se é a versão assinada — flag `(Assinado)` da taxonomia (0.3) |
 | `legibilidade` | ok / degradado / ilegível |
-| `item_checklist_correto` | Item ao qual pertence |
-| `campos_chave` | Para tipos com extração (ex.: saldo de dívida, caixa, receita) |
+| `item_checklist_correto` | Item do Kit Básico ao qual pertence |
+| `campos_chave` | Para tipos com extração (ex.: saldo de dívida, caixa, receita, faturamento) |
 | `classe_contabil` (quando aplicável) | Rótulo da taxonomia contábil |
 
 ## Métricas (por tipo de documento e por campo)
@@ -60,6 +78,11 @@ subir 1 nível o dial do estágio (decisão versionada/reversível)
 monitorar taxa de erro em produção; regrediu? ──►  descer o dial
 ```
 
-**Critério de pronto (DoD):** golden set montado com N/tipo suficiente e estratificado por
-qualidade; métricas definidas por tipo/campo; protocolo de rotulagem acordado; armazenamento
-com controle de acesso.
+**Critério de pronto (DoD):**
+- **Protocolo (v1, fechado):** ✅ tipos core = Kit Básico; ✅ dimensionamento (~20–30/tipo) com
+  nuance de acúmulo por granularidade; ✅ métricas definidas por tipo/campo; ✅ protocolo de
+  rotulagem acordado; ✅ armazenamento com controle de acesso LGPD definido; ✅ laço de
+  calibração definido.
+- **Golden set físico (execução — em aberto):** ⏳ montagem com N/tipo suficiente e estratificado
+  por qualidade. Roda em paralelo à F1, começando com os casos disponíveis. **Não bloqueia** o
+  esqueleto da F1 (que nasce em N0/N1); é pré-requisito para **subir o dial** (F4).

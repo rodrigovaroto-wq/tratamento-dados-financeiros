@@ -20,7 +20,7 @@ Cada arquivo tem um estado: **[DECISÃO]** (proposta minha, pronta para o time a
 | 0.3 | Taxonomia documental + checklist (Reestruturação) | `03_taxonomia_reestruturacao.md` | ✅ v1 | Rodrigo Varoto (dono único) |
 | 0.4 | Modelo de status + pendências + regra do portão | `04_status_e_pendencias_spec.md` | ✅ APROVADO | Rodrigo Varoto |
 | 0.5 | Schema conceitual + política LGPD | `05_schema_conceitual.md` | ✅ APROVADO | Rodrigo Varoto |
-| 0.6 | Golden set + protocolo de medição | `06_golden_set_protocolo.md` | ⏳ DRAFT v0 (próximo) | Rodrigo Varoto |
+| 0.6 | Golden set + protocolo de medição | `06_golden_set_protocolo.md` | ✅ PROTOCOLO v1 (montagem = execução) | Rodrigo Varoto |
 | 0.7 | Especificação do output para o analista | `07_output_spec.md` | ✅ DECISÃO v0 | Rodrigo Varoto |
 
 ## Ordem de execução (dependências e portões)
@@ -54,12 +54,18 @@ A F0 está pronta para virar código quando **todos** forem verdade:
    Variáveis complementares), critério "bom o suficiente para começar".
 4. ✅ Máquina de status + tipos de pendência + regra do Portão 2 aprovados.
 5. ✅ Schema conceitual revisado; sensibilidade LGPD mapeada por tipo de documento.
-6. ⏳ Golden set montado com N/tipo suficiente e métricas definidas. **← próximo passo**
-   (destravado agora que a taxonomia v1 está fechada).
+6. ✅ Golden set — **protocolo v1 fechado** (dimensionamento, métricas, rotulagem, laço de
+   calibração). A **montagem física** do conjunto rotulado é tarefa de execução que roda em
+   paralelo à F1 (começa com os casos disponíveis; não bloqueia o esqueleto).
 7. ✅ **Output para o analista especificado** (`07_output_spec.md`) — schema-alvo definido.
 
-**Situação (2026-07-14):** 5 de 7 itens fechados. Faltam o **golden set (0.6)** — próximo
-trabalho — e o **baseline fino (0.1)**, que pode correr em paralelo à F1 sem bloqueá-la.
+**Situação (2026-07-14):** F0 **completa em design** — todas as decisões estruturais travadas.
+Itens de execução que correm em paralelo à F1, **sem bloquear** o esqueleto (que nasce em
+N0/N1): montagem física do **golden set (0.6)** e preenchimento do **baseline fino (0.1)**.
+
+> **Gate F1 destravado.** Próximo passo: desenhar o plano técnico do **Walking Skeleton** —
+> Supabase + N8N + Vercel, workflow inteiro ponta a ponta em N0/N1, 1 caso real do intake ao
+> Portão 2. Ver `docs/03_MVP_E_ROADMAP.md`.
 
 ## Depois da F0 (prévia da F1)
 
