@@ -1,0 +1,11 @@
+{
+  "name": "oria-n8n-e1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lógica testável dos nós N8N da Fatia 1 (E1 — ingestão) do workflow-operacional-oria",
+  "scripts": {
+    "test": "node --test",
+    "build:workflow": "node build-workflow.mjs"
+  }
+}
