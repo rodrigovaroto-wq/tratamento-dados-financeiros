@@ -79,6 +79,37 @@ export function buildClassificationRequest({ nomeOriginal, conteudo, model = DEF
   };
 }
 
+// Detecta planilhas (precisam de extração de texto antes de enviar).
+export function isSpreadsheet(mimeType) {
+  return /spreadsheetml|ms-excel|excel|csv/i.test(mimeType || '');
+}
+
+// Constrói a "parte de conteúdo" multimodal a partir de um arquivo.
+//   - PDF   → { type:'file', file:{ filename, file_data:'data:application/pdf;base64,...' } }
+//   - imagem→ { type:'image_url', image_url:{ url:'data:<mt>;base64,...' } }
+//   - texto (ex.: planilha já extraída) → { type:'text', text }
+// Nunca lança: tipo não suportado vira uma parte de texto sinalizando o caso,
+// para o workflow não dar dead-end (comportamento fail-safe).
+export function contentPartFromFile({ mimeType, base64, filename, text } = {}) {
+  const mt = (mimeType || '').toLowerCase();
+  if (text != null && text !== '') {
+    return { type: 'text', text: String(text).slice(0, 20000) };
+  }
+  if (/pdf/.test(mt)) {
+    return {
+      type: 'file',
+      file: { filename: filename || 'documento.pdf', file_data: `data:application/pdf;base64,${base64}` },
+    };
+  }
+  if (mt.startsWith('image/')) {
+    return { type: 'image_url', image_url: { url: `data:${mt};base64,${base64}` } };
+  }
+  return {
+    type: 'text',
+    text: `(conteúdo não enviado: tipo "${mt || 'desconhecido'}" requer extração prévia; classificar só pelo nome "${filename || ''}")`,
+  };
+}
+
 // Extrai e valida o JSON da resposta da OpenAI (Chat Completions).
 export function parseClassificationResponse(apiJson) {
   const content = apiJson?.choices?.[0]?.message?.content;

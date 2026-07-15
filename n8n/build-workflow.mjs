@@ -44,11 +44,35 @@ return [{json:{...item,
   assinado, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}}];
 `.trim();
 
+// --- corpo do nó Code: monta o corpo da chamada OpenAI COM o conteúdo do arquivo
+// (espelha lib/openai.mjs contentPartFromFile + buildClassificationRequest) ---
+const CODE_PREPARAR_CONTEUDO = `
+// Espelha n8n/lib/openai.mjs. Monta openai_body com a parte de CONTEUDO do arquivo.
+const item=$input.item.json;
+const binKey=item.binary_key;
+const bin=($input.item.binary||{})[binKey]||{};
+const b64=bin.data||''; const mt=(bin.mimeType||'').toLowerCase();
+function part(){
+  if(/pdf/.test(mt))return{type:'file',file:{filename:item.nome_original||'documento.pdf',file_data:'data:application/pdf;base64,'+b64}};
+  if(mt.indexOf('image/')===0)return{type:'image_url',image_url:{url:'data:'+mt+';base64,'+b64}};
+  if(/spreadsheetml|ms-excel|excel|csv/.test(mt))return{type:'text',text:'(planilha: extrair texto antes — ver README; classificar pelo nome '+(item.nome_original||'')+')'};
+  return{type:'text',text:'(conteudo nao suportado: '+mt+')'};
+}
+const schema={name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string'},entidade:{type:['string','null']},periodo_tipo:{type:'string'},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number'},justificativa:{type:'string'}}}};
+const body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
+  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Convencoes de periodo: 12M25=ano 2025; 1T25=1o trimestre/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},
+  {role:'user',content:[{type:'text',text:'Nome do arquivo (pista fraca): '+(item.nome_original||'')},part()]}
+]};
+return [{json:{...item, openai_body: body}}];
+`.trim();
+
 // --- corpo do nó Code: parse da resposta OpenAI (espelha lib/openai.mjs) ---
 const CODE_PARSE_OPENAI = `
 // Espelha n8n/lib/openai.mjs parseClassificationResponse.
-const item=$input.item.json;
-const content=item.openai_raw?.choices?.[0]?.message?.content;
+// Contexto do item vem do nó anterior; a resposta da OpenAI vem em $json.
+const item=$('Preparar Conteudo Fallback').item.json;
+const resp=$json;
+const content=resp?.choices?.[0]?.message?.content;
 if(!content){return [{json:{...item, fonte:'openai_conteudo', confianca:0, tipo_taxonomia:item.tipo_taxonomia||null}}];}
 let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){return [{json:{...item, fonte:'openai_conteudo', confianca:0}}];}
 return [{json:{...item,
@@ -116,26 +140,31 @@ const nodes = [
     ] },
   }, { x: 1100, y: 300 }),
 
+  node('Preparar Conteudo Fallback', 'n8n-nodes-base.code', 2, { jsCode: CODE_PREPARAR_CONTEUDO }, { x: 1320, y: 160 }),
+
   node('OpenAI Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
-    sendHeaders: true, headerParameters: { parameters: [ { name: 'Authorization', value: '=Bearer {{ $env.OPENAI_API_KEY }}' } ] },
+    sendHeaders: true, headerParameters: { parameters: [
+      { name: 'Authorization', value: '=Bearer {{ $env.OPENAI_API_KEY }}' },
+      { name: 'Content-Type', value: 'application/json' },
+    ] },
     sendBody: true, specifyBody: 'json',
-    jsonBody: "={{ JSON.stringify({ model: $env.OPENAI_MODEL || 'gpt-4o', temperature: 0, response_format: { type: 'json_schema', json_schema: { name: 'classificacao_documento', strict: true, schema: { type:'object', additionalProperties:false, required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'], properties:{ tipo_taxonomia:{type:'string'}, entidade:{type:['string','null']}, periodo_tipo:{type:'string'}, periodo_referencia:{type:['string','null']}, assinado:{type:['boolean','null']}, confianca:{type:'number'}, justificativa:{type:'string'} } } } }, messages: [ { role:'system', content:'Classifique o documento financeiro na taxonomia da Oria. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.' }, { role:'user', content: 'Nome do arquivo: ' + $json.nome_original + ' — (ANEXAR CONTEUDO: ver README p/ habilitar visao/OCR)' } ] }) }}",
-  }, { x: 1320, y: 200 }),
+    jsonBody: "={{ JSON.stringify($json.openai_body) }}",
+  }, { x: 1540, y: 160 }),
 
-  node('Parse OpenAI', 'n8n-nodes-base.code', 2, { jsCode: CODE_PARSE_OPENAI }, { x: 1540, y: 200 }),
+  node('Parse OpenAI', 'n8n-nodes-base.code', 2, { jsCode: CODE_PARSE_OPENAI }, { x: 1760, y: 160 }),
 
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: "select fn_registrar_documento($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) as documento_id",
     options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok'] }}" },
-  }, { x: 1760, y: 300, credentials: { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } } }),
+  }, { x: 1980, y: 300, credentials: { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } } }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: "select fn_recomputar_completude($1) as resultado",
     options: { queryReplacement: "={{ $json.caso_id }}" },
-  }, { x: 1980, y: 300, credentials: { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } } }),
+  }, { x: 2200, y: 300, credentials: { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } } }),
 ];
 
 const connections = {
@@ -145,9 +174,10 @@ const connections = {
   'Upload Storage': { main: [[{ node: 'Classificar Nome', type: 'main', index: 0 }]] },
   'Classificar Nome': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
   'Precisa Fallback?': { main: [
-    [{ node: 'OpenAI Classificar', type: 'main', index: 0 }], // true
+    [{ node: 'Preparar Conteudo Fallback', type: 'main', index: 0 }], // true
     [{ node: 'Registrar Documento', type: 'main', index: 0 }], // false
   ] },
+  'Preparar Conteudo Fallback': { main: [[{ node: 'OpenAI Classificar', type: 'main', index: 0 }]] },
   'OpenAI Classificar': { main: [[{ node: 'Parse OpenAI', type: 'main', index: 0 }]] },
   'Parse OpenAI': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
   'Registrar Documento': { main: [[{ node: 'Recomputar Completude', type: 'main', index: 0 }]] },

@@ -43,18 +43,30 @@ revisão — próxima fatia). Nada é aceito como fato sem revisão (anti-ancora
   - `OPENAI_API_KEY` — chave da API direta
   - `OPENAI_MODEL` — opcional (default `gpt-4o`)
 
+## Fallback OpenAI (conteúdo) — como funciona
+
+Quando o classificador por nome não tem confiança, o nó **Preparar Conteudo Fallback** monta o
+corpo da chamada com o **conteúdo real do arquivo**:
+- **PDF** → parte `file` (base64 `data:application/pdf;base64,...`) — o modelo lê texto + páginas.
+- **Imagem** (scan/foto PNG/JPG) → parte `image_url` (base64).
+- **Planilha (xlsx/csv)** → hoje envia uma nota de texto (a extração do conteúdo da planilha via
+  nó *Extract From File* → texto é o próximo incremento; ver "Pendências" abaixo).
+- Saída sempre via **Structured Outputs** (JSON Schema estrito) → `Parse OpenAI` normaliza para o
+  mesmo formato do classificador por nome. Continua **N1**: sugestão para a fila de revisão.
+
 ## ⚠️ Estado honesto desta entrega
 
-- **Caminho determinístico (nome → registro → completude): completo e testado** — a lógica
-  está validada por testes unitários (`n8n/test/`) e as funções do banco foram exercitadas
-  num Postgres real (ver PR).
-- **Fallback OpenAI: scaffold.** O nó `OpenAI Classificar` está montado com o schema estrito
-  correto, **mas** envia por ora só o nome do arquivo — falta plugar o **conteúdo** (converter
-  página de PDF em imagem ou usar a File API da OpenAI). É o próximo passo para habilitar a
-  leitura de arquivos de nome genérico. Enquanto isso, esses arquivos entram com pendência
-  `classificacao_pendente` e vão para revisão humana (comportamento fail-safe correto).
+- **Caminho determinístico (nome → registro → completude): completo e testado** — lógica
+  validada por testes unitários (`n8n/test/`) e funções do banco exercitadas num Postgres real.
+- **Fallback OpenAI para PDF e imagem: completo** — conteúdo do arquivo é enviado como
+  `file`/`image_url` + Structured Outputs; construção do corpo e do parse cobertos por testes
+  (`n8n/test/content.test.mjs`, `openai.test.mjs`).
+- **Pendência: planilhas (xlsx/csv)** — ainda não têm o conteúdo extraído (enviam nota de texto).
+  Próximo incremento: nó *Extract From File* → parte de texto. Até lá, planilha de nome genérico
+  cai em revisão humana (fail-safe).
 - **Não executado no N8N real** deste ambiente (sem instância/credenciais). O JSON é válido e
-  importável; os nós Code parseiam; a lógica e as funções SQL foram testadas isoladamente.
+  importável; os nós Code parseiam; a lógica e as funções SQL foram testadas isoladamente. A
+  chamada real à OpenAI (custo/latência/qualidade) só é exercível no N8N do dono.
 
 ## Fonte da verdade da lógica
 
@@ -75,6 +87,7 @@ n8n/
 
 ## Próximas fatias
 
-- Habilitar o conteúdo no fallback OpenAI (visão/OCR) + extração de linhas financeiras em
-  **N0/sombra** (E2) → grava em `campo_extraido` (tabela a criar).
+- Extração de conteúdo de **planilhas** (xlsx/csv) no fallback (nó *Extract From File* → texto).
+- **E2 — extração de linhas financeiras** em **N0/sombra** → grava em `campo_extraido` (tabela
+  a criar).
 - Portal Vercel (fila de revisão para confirmar/corrigir a classificação N1, dashboard, export).
