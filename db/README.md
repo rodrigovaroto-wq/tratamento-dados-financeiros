@@ -13,6 +13,8 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0001_schema_fatia1.sql` | Tipos enumerados (máquinas de estado de `f0/04`) + tabelas: `caso`, `entidade`, `periodo`, `taxonomia_tipo_documento`, `documento`, `documento_versao`, `checklist_item_status`, `pendencia`, `decisao`, `evento_auditoria`, `estagio_autonomia`. |
 | `migrations/0002_seed_taxonomia_e_dial.sql` | Seed da taxonomia v1 (`f0/03`: Kit Básico + Variáveis) e do dial de autonomia inicial (`f0/04`). Idempotente. |
 | `migrations/0003_rls_e_storage.sql` | RLS por tabela + bucket privado `documentos` no Storage. |
+| `migrations/0004_funcoes_e1.sql` | Coluna `nao_sobrepujavel` + funções RPC do E1 (`fn_upsert_caso`, `fn_registrar_documento`, `fn_recomputar_completude`). |
+| `migrations/0005_extracao_e2.sql` | Tabela `campo_extraido` + `fn_registrar_campos_extraidos` (extração em **N0/sombra**); redefine `fn_registrar_documento` p/ retornar os dois ids. |
 
 ## Como aplicar
 
@@ -23,6 +25,8 @@ supabase db push
 supabase db execute --file db/migrations/0001_schema_fatia1.sql
 supabase db execute --file db/migrations/0002_seed_taxonomia_e_dial.sql
 supabase db execute --file db/migrations/0003_rls_e_storage.sql
+supabase db execute --file db/migrations/0004_funcoes_e1.sql
+supabase db execute --file db/migrations/0005_extracao_e2.sql
 ```
 
 **Opção B — psql direto** (usar o **Session Pooler**; herdar a pegadinha do `clipping-news`:
@@ -57,5 +61,5 @@ where relname in ('caso','documento','pendencia','evento_auditoria') order by re
 
 ## O que NÃO está aqui (entra em fatias seguintes)
 
-`campo_extraido` (extração E2), `reconciliacao` (E3) e o refinamento de RLS por caso. Ver o
-plano da F1 e `f0/05_schema_conceitual.md`.
+`reconciliacao` (E3) e o refinamento de RLS por caso. Ver o plano da F1 e
+`f0/05_schema_conceitual.md`. (`campo_extraido` já entrou em `0005`.)

@@ -11,16 +11,21 @@ Intake (Form Trigger: nome do mandato + upload de N arquivos)
   → Upsert Caso ............... fn_upsert_caso(nome) → caso_id
   → Listar Arquivos ........... 1 item por arquivo
   → Upload Storage ............ POST no bucket privado 'documentos'
+  → Preparar Conteudo ......... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
+                                csv→texto (parse inline), xlsx→nota (ver ⚠️)
   → Classificar Nome .......... nome + regras → {tipo, período, assinado, confiança}
   → Precisa Fallback? ......... confiança < 0.7 ou tipo desconhecido?
-        ├─ sim → OpenAI Classificar → Parse OpenAI  (lê o conteúdo)
+        ├─ sim → Montar Req Classif → OpenAI Classificar → Parse  (lê o conteúdo)
         └─ não → segue direto
-  → Registrar Documento ....... fn_registrar_documento(...) → cria doc+versão+checklist+pendência
-  → Recomputar Completude ..... fn_recomputar_completude(caso_id) → Portão 1 + status + pendências
+  → Registrar Documento ....... fn_registrar_documento(...) → doc+versão+checklist+pendência
+        ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
+        └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra)
+                                      fn_registrar_campos_extraidos(...) em N0
 ```
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
-revisão — próxima fatia). Nada é aceito como fato sem revisão (anti-ancoragem).
+revisão — próxima fatia); **extração (E2) nasce em N0 (sombra)** — registra para medir, não
+decide, não entra em base sem aceite humano (anti-ancoragem).
 
 ## Como usar
 
@@ -49,8 +54,10 @@ Quando o classificador por nome não tem confiança, o nó **Preparar Conteudo F
 corpo da chamada com o **conteúdo real do arquivo**:
 - **PDF** → parte `file` (base64 `data:application/pdf;base64,...`) — o modelo lê texto + páginas.
 - **Imagem** (scan/foto PNG/JPG) → parte `image_url` (base64).
-- **Planilha (xlsx/csv)** → hoje envia uma nota de texto (a extração do conteúdo da planilha via
-  nó *Extract From File* → texto é o próximo incremento; ver "Pendências" abaixo).
+- **CSV** → decodificado e parseado inline (vira texto tabular para o modelo).
+- **XLSX** → hoje envia uma nota de texto. Para habilitar: inserir um nó *Extract From File*
+  (spreadsheet) antes de `Preparar Conteudo` e usar `spreadsheetToText(rows)` (`n8n/lib/spreadsheet.mjs`)
+  para montar a parte de texto. É um ponto explícito de validação/adaptação no N8N.
 - Saída sempre via **Structured Outputs** (JSON Schema estrito) → `Parse OpenAI` normaliza para o
   mesmo formato do classificador por nome. Continua **N1**: sugestão para a fila de revisão.
 
@@ -58,12 +65,12 @@ corpo da chamada com o **conteúdo real do arquivo**:
 
 - **Caminho determinístico (nome → registro → completude): completo e testado** — lógica
   validada por testes unitários (`n8n/test/`) e funções do banco exercitadas num Postgres real.
-- **Fallback OpenAI para PDF e imagem: completo** — conteúdo do arquivo é enviado como
-  `file`/`image_url` + Structured Outputs; construção do corpo e do parse cobertos por testes
-  (`n8n/test/content.test.mjs`, `openai.test.mjs`).
-- **Pendência: planilhas (xlsx/csv)** — ainda não têm o conteúdo extraído (enviam nota de texto).
-  Próximo incremento: nó *Extract From File* → parte de texto. Até lá, planilha de nome genérico
-  cai em revisão humana (fail-safe).
+- **Fallback OpenAI para PDF, imagem e CSV: completo** — conteúdo enviado como
+  `file`/`image_url`/texto + Structured Outputs; corpo e parse cobertos por testes.
+- **Extração E2 (linhas financeiras) em N0/sombra: completo** — corpo/schema/parse testados
+  (`n8n/test/extract.test.mjs`) e a gravação (`fn_registrar_campos_extraidos`) exercitada em
+  Postgres real. Não altera status nem entra em base (sombra/anti-ancoragem).
+- **Pendência: XLSX** — falta o *Extract From File* (ver acima). CSV já é tratado.
 - **Não executado no N8N real** deste ambiente (sem instância/credenciais). O JSON é válido e
   importável; os nós Code parseiam; a lógica e as funções SQL foram testadas isoladamente. A
   chamada real à OpenAI (custo/latência/qualidade) só é exercível no N8N do dono.
@@ -78,16 +85,17 @@ lógica: mude `lib/`, rode os testes, e **regenere** o workflow com `node n8n/bu
 
 ```
 n8n/
-├── lib/            # lógica testável (classifier, completude, openai, taxonomia, normalize)
-├── test/           # node:test (17 casos)
+├── lib/            # lógica testável: classifier, completude, openai, extract,
+│                   #                  spreadsheet, taxonomia, normalize
+├── test/           # node:test (30 casos)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
-├── workflow.e1-ingestao.json # workflow importável no N8N
+├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + E2-sombra)
 └── README.md
 ```
 
 ## Próximas fatias
 
-- Extração de conteúdo de **planilhas** (xlsx/csv) no fallback (nó *Extract From File* → texto).
-- **E2 — extração de linhas financeiras** em **N0/sombra** → grava em `campo_extraido` (tabela
-  a criar).
+- **XLSX** no fallback (nó *Extract From File* → `spreadsheetToText`).
+- **E3 — reconciliação** (Classe A aritmética em N1; B/C aproximam para humano).
+- **Refino da extração por tipo** (linhas esperadas de cada demonstração) — guiado pelo golden set.
 - Portal Vercel (fila de revisão para confirmar/corrigir a classificação N1, dashboard, export).
