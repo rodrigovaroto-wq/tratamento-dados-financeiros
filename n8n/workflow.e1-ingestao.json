@@ -98,14 +98,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}",
+        "url": "=https://SEU-PROJETO.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
-            },
             {
               "name": "x-upsert",
               "value": "true"
@@ -123,7 +121,13 @@
       "position": [
         1000,
         560
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE",
+          "name": "Supabase Service (Header Auth)"
+        }
+      }
     },
     {
       "parameters": {
@@ -158,7 +162,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const item=$input.item.json;\nconst schema={name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string'},entidade:{type:['string','null']},periodo_tipo:{type:'string'},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number'},justificativa:{type:'string'}}}};\nconst body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},\n  {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}\n]};\nreturn {json:{...item, openai_body: body}};"
+        "jsCode": "const item=$input.item.json;\nconst schema={name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string'},entidade:{type:['string','null']},periodo_tipo:{type:'string'},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number'},justificativa:{type:'string'}}}};\nconst body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},\n  {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}\n]};\nreturn {json:{...item, openai_body: body}};"
       },
       "id": "montar-req-classif",
       "name": "Montar Req Classif",
@@ -173,19 +177,8 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_body) }}"
@@ -198,6 +191,12 @@
         1400,
         200
       ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE",
+          "name": "OpenAI (Oria)"
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {
@@ -263,7 +262,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const reg=$json;\nconst versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;\nconst prep=$('Preparar Conteudo').item.json;\nconst schema={name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}};\nconst body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},\n  {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}\n]};\nreturn {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};"
+        "jsCode": "const reg=$json;\nconst versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;\nconst prep=$('Preparar Conteudo').item.json;\nconst schema={name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}};\nconst body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},\n  {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}\n]};\nreturn {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};"
       },
       "id": "montar-req-extracao",
       "name": "Montar Req Extracao",
@@ -278,19 +277,8 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_body) }}"
@@ -303,6 +291,12 @@
         2300,
         300
       ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE",
+          "name": "OpenAI (Oria)"
+        }
+      },
       "onError": "continueRegularOutput"
     },
     {
