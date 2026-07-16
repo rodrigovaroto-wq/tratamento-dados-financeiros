@@ -55,6 +55,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const caso_id = $('Upsert Caso (Postgres)').first().json.caso_id;\nconst bin = $input.item.binary || {};\nconst out = [];\nfor (const key of Object.keys(bin)) {\n  out.push({ json: { caso_id, nome_original: bin[key].fileName || key, binary_key: key }, binary: { [key]: bin[key] } });\n}\nreturn out;"
       },
       "id": "listar-arquivos",
@@ -98,6 +99,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const item=$input.item.json;\nconst binKey=item.binary_key;\nconst bin=($input.item.binary||{})[binKey]||{};\nconst b64=bin.data||''; const mt=(bin.mimeType||'').toLowerCase();\nfunction parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}\nfunction sheetTxt(rows,mr=50,mc=25){if(!rows.length)return '(planilha vazia)';const cols=Object.keys(rows[0]).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}\nlet part;\nif(/pdf/.test(mt)) part={type:'file',file:{filename:item.nome_original||'documento.pdf',file_data:'data:application/pdf;base64,'+b64}};\nelse if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+mt+';base64,'+b64}};\nelse if(/csv/.test(mt)||mt==='text/plain'){const txt=Buffer.from(b64,'base64').toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}\nelse if(/spreadsheetml|ms-excel|excel/.test(mt)) part={type:'text',text:'(XLSX: habilitar Extract From File no N8N p/ extrair texto — ver README. Nome: '+(item.nome_original||'')+')'};\nelse part={type:'text',text:'(conteudo nao suportado: '+mt+')'};\nreturn [{json:{...item, content_part: part, content_mime: mt}}];"
       },
       "id": "preparar-conteudo",
@@ -111,6 +113,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "function normalize(s){return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\.[a-z0-9]{2,4}$/i,'').replace(/[_\\-.]+/g,' ').replace(/\\s+/g,' ').trim();}\nconst ALIASES=[\n  {codigo:'FAT_INTRAGRUPO',termos:['faturamento intragrupo','fat intragrupo','faturamento intra grupo']},\n  {codigo:'FATURAMENTO_24M',termos:['faturamento 24m','faturamento 36','faturamento','receita bruta','receita']},\n  {codigo:'CONTRATO_SOCIAL',termos:['contrato social','estatuto social','alteracao contratual','estatuto']},\n  {codigo:'MUTUOS',termos:['mutuos','mutuo','relacao de mutuos','contas intragrupo']},\n  {codigo:'COMBINADO',termos:['combinado','combinada','demonstracoes combinadas','df combinada']},\n  {codigo:'FLUXO_CAIXA',termos:['fluxo de caixa','fluxo caixa','dfc','cash flow','fluxo']},\n  {codigo:'DRE',termos:['dre','demonstracao de resultado','demonstracao do resultado','resultado do exercicio']},\n  {codigo:'BALANCO',termos:['balanco patrimonial','balanco','bp']},\n  {codigo:'BALANCETE',termos:['balancete']},\n];\nfunction parsePeriodo(t){let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};return null;}\nfunction parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}\nconst item=$input.item.json;\nconst t=normalize(item.nome_original);\nconst tipo=parseTipo(t), periodo=parsePeriodo(t);\nconst assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;\nlet conf=0; if(tipo)conf+=0.6; if(periodo)conf+=0.3; if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));\nreturn [{json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:null, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}}];"
       },
       "id": "classificar-nome",
@@ -154,6 +157,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const item=$input.item.json;\nconst schema={name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string'},entidade:{type:['string','null']},periodo_tipo:{type:'string'},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number'},justificativa:{type:'string'}}}};\nconst body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},\n  {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}\n]};\nreturn [{json:{...item, openai_body: body}}];"
       },
       "id": "montar-req-classif",
@@ -197,6 +201,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const item=$('Montar Req Classif').item.json;\nconst resp=$json;\nconst content=resp?.choices?.[0]?.message?.content;\nif(!content){return [{json:{...item, fonte:'openai_conteudo', confianca:0}}];}\nlet p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){return [{json:{...item, fonte:'openai_conteudo', confianca:0}}];}\nreturn [{json:{...item,\n  tipo_taxonomia:p.tipo_taxonomia==='DESCONHECIDO'?null:p.tipo_taxonomia,\n  entidade:p.entidade??item.entidade??null,\n  periodo_tipo:p.periodo_referencia?p.periodo_tipo:null,\n  periodo_ref:p.periodo_referencia??null,\n  assinado:p.assinado??null,\n  confianca:typeof p.confianca==='number'?p.confianca:0,\n  fonte:'openai_conteudo', justificativa:p.justificativa||''}}];"
       },
       "id": "parse-openai-classif",
@@ -256,6 +261,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const reg=$json;\nconst versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;\nconst prep=$('Preparar Conteudo').item.json;\nconst schema={name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}};\nconst body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},\n  {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}\n]};\nreturn [{json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}}];"
       },
       "id": "montar-req-extracao",
@@ -299,6 +305,7 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "const ctx=$('Montar Req Extracao').item.json;\nconst resp=$json;\nconst content=resp?.choices?.[0]?.message?.content;\nlet p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}\nconst unidade=p.unidade??null;\nconst campos=Array.isArray(p.linhas)?p.linhas.map(l=>({chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];\nreturn [{json:{documento_versao_id:ctx.documento_versao_id, campos}}];"
       },
       "id": "parse-extracao",
