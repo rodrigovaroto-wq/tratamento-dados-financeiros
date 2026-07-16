@@ -36,6 +36,24 @@ decide, não entra em base sem aceite humano (anti-ancoragem).
 5. Conferir no banco: `caso`, `documento`, `checklist_item_status`, `pendencia`,
    `evento_auditoria` populados; status do caso avançando conforme a completude.
 
+## Troubleshooting conhecido (achado testando no N8N real)
+
+**Erro `there is no parameter $1` num node Postgres:** o campo **"Query Parameters"** (em
+Options) não veio preenchido do import. Abra o node → **"+ Add option"** → **"Query
+Parameters"** → cole a expressão correspondente:
+
+| Node | Query Parameters |
+|---|---|
+| Upsert Caso (Postgres) | `={{ [$json["Mandato (nome do caso)"]] }}` |
+| Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok'] }}` |
+| Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
+| Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
+
+**Nós Code:** o modo padrão do N8N é "Run Once for All Items" (onde `$input.item` não existe).
+Todos os 7 nós Code deste workflow já são gerados com `mode: 'runOnceForEachItem'` (corrigido em
+`build-workflow.mjs`) — se você importou uma versão anterior, abra cada node Code e confira que
+o modo está em **"Run Once for Each Item"**.
+
 ## Credenciais e variáveis (configurar no N8N)
 
 - **Postgres (Supabase, Session Pooler)** — credencial `Supabase Postgres (Session Pooler)`

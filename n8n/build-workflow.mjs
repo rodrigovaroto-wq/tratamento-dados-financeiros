@@ -138,7 +138,7 @@ const nodes = [
     operation: 'executeQuery', query: 'select fn_upsert_caso($1) as caso_id',
     options: { queryReplacement: "={{ $json['Mandato (nome do caso)'] }}" },
   }, 200, 400, PG_CRED),
-  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { jsCode: CODE_LISTAR }, 400, 400),
+  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_LISTAR }, 400, 400),
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
     url: '={{ $env.SUPABASE_URL }}/storage/v1/object/documentos/{{ $json.caso_id }}/{{ $json.nome_original }}',
@@ -148,14 +148,14 @@ const nodes = [
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: '={{ $json.binary_key }}',
   }, 600, 400),
-  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
-  node('Classificar Nome', 'n8n-nodes-base.code', 2, { jsCode: CODE_CLASSIFICAR }, 1000, 400),
+  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
+  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 1000, 400),
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
       { leftValue: '={{ $json.precisa_fallback_openai }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
   }, 1200, 400),
-  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { jsCode: CODE_REQ_CLASSIF }, 1400, 260),
+  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, 1400, 260),
   node('OpenAI Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
     sendHeaders: true, headerParameters: { parameters: [
@@ -164,7 +164,7 @@ const nodes = [
     ] },
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
   }, 1600, 260),
-  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { jsCode: CODE_PARSE_CLASSIF }, 1800, 260),
+  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1800, 260),
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) as r',
@@ -174,7 +174,7 @@ const nodes = [
     operation: 'executeQuery', query: 'select fn_recomputar_completude($1) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
   }, 2300, 520, PG_CRED),
-  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { jsCode: CODE_REQ_EXTRACAO }, 2300, 300),
+  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2300, 300),
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
     sendHeaders: true, headerParameters: { parameters: [
@@ -183,7 +183,7 @@ const nodes = [
     ] },
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
   }, 2500, 300),
-  node('Parse Extracao', 'n8n-nodes-base.code', 2, { jsCode: CODE_PARSE_EXTRACAO }, 2700, 300),
+  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2700, 300),
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_campos_extraidos($1, $2::jsonb) as n_campos',
