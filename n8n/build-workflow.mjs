@@ -135,7 +135,7 @@ const nodes = [
     ] },
   }, 0, 400),
   node('Upsert Caso (Postgres)', 'n8n-nodes-base.postgres', 2.5, {
-    operation: 'executeQuery', query: 'select fn_upsert_caso($1) as caso_id',
+    operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
     options: { queryReplacement: "={{ $json['Mandato (nome do caso)'] }}" },
   }, 200, 400, PG_CRED),
   node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_LISTAR }, 400, 400),
@@ -167,11 +167,11 @@ const nodes = [
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1800, 260),
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_documento($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) as r',
+    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok'] }}" },
   }, 2050, 400, PG_CRED),
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
-    operation: 'executeQuery', query: 'select fn_recomputar_completude($1) as resultado',
+    operation: 'executeQuery', query: 'select fn_recomputar_completude($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
   }, 2300, 520, PG_CRED),
   node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2300, 300),
@@ -186,7 +186,7 @@ const nodes = [
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2700, 300),
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_campos_extraidos($1, $2::jsonb) as n_campos',
+    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb) as n_campos',
     options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}" },
   }, 2900, 300, PG_CRED),
 ];

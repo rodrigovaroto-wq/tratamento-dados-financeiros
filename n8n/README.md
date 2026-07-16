@@ -49,6 +49,18 @@ Parameters"** → cole a expressão correspondente:
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
 | Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
 
+**Erro `function fn_upsert_caso(unknown) does not exist` (ou similar nos outros RPCs):** o
+driver do N8N envia o parâmetro sem tipo explícito (Postgres o vê como `unknown`), e a resolução
+de função falha sem um cast. Fix: adicionar `::tipo` a cada `$N` na **Query** do node (já
+corrigido em `build-workflow.mjs`; se reimportar o workflow atualizado já vem certo):
+- `select fn_upsert_caso($1::text) as caso_id`
+- `select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade) as r`
+- `select fn_recomputar_completude($1::uuid) as resultado`
+- `select fn_registrar_campos_extraidos($1::uuid, $2::jsonb) as n_campos`
+
+Verificado com o driver `pg` chamando as 4 funções com esses casts, ponta a ponta, num Postgres
+real: caso criado → documento registrado → completude calculada → campos gravados em sombra.
+
 **Nós Code:** o modo padrão do N8N é "Run Once for All Items" (onde `$input.item` não existe).
 Todos os 7 nós Code deste workflow já são gerados com `mode: 'runOnceForEachItem'` (corrigido em
 `build-workflow.mjs`) — se você importou uma versão anterior, abra cada node Code e confira que
