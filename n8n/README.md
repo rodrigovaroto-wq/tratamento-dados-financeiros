@@ -87,22 +87,35 @@ estão com assinatura divergente (aplicações parciais/repetidas das migrations
 **Nodes com sufixo `1` no nome (`Upsert Caso (Postgres)1`):** o workflow foi importado/colado
 por cima de outro. As referências `$('Nome')` quebram. Apagar o antigo e reimportar limpo.
 
-## Credenciais e variáveis (configurar no N8N)
+**Erro `access to env vars denied` (num node Code ou expressão):** o N8N bloqueia `$env` por
+padrão (`N8N_BLOCK_ENV_ACCESS_IN_NODE`). O workflow atual **não usa `$env`** — se esse erro
+aparecer, é versão antiga: reimportar, ou trocar manualmente `($env.OPENAI_MODEL||'gpt-4o')` →
+`'gpt-4o'` nos nós `Montar Req *` e configurar credenciais nos nós HTTP (ver seção
+Credenciais).
+
+## Credenciais (configurar no N8N — o workflow NÃO usa variáveis de ambiente)
+
+> O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
+> denied"*). Por isso o workflow usa só **credenciais nativas** + 1 edição de URL:
 
 - **Postgres (Supabase, Session Pooler)** — credencial nos **4 nós Postgres** (Upsert Caso,
   Registrar Documento, Recomputar Completude, Gravar Campos). Reaproveitar do `clipping-news`.
   Pegadinhas herdadas: usar o **Session Pooler** (IPv4 + SSL), usuário com sufixo
   `.projectref`. O N8N usa conexão de serviço, que **ignora RLS** por design (é o orquestrador)
   — ver `db/migrations/0003`.
-- **Variáveis de ambiente** do N8N:
-  - `SUPABASE_URL` — ex.: `https://<ref>.supabase.co`
-  - `SUPABASE_SERVICE_KEY` — service role (só no N8N, **nunca** no portal)
-  - `OPENAI_API_KEY` — chave da API direta
-  - `OPENAI_MODEL` — opcional (default `gpt-4o`)
-- **Sem `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`**, o `Upload Storage` falha (e para a execução —
-  falha explícita de propósito: linha no banco apontando para arquivo inexistente seria um
-  "falso-limpo"). Para um dry-run sem storage, **desative** o node Upload Storage.
-- **Sem `OPENAI_API_KEY`**, os nós OpenAI falham mas **não derrubam o workflow**
+- **OpenAI** — nos nós `OpenAI Classificar` e `OpenAI Extrair`: Authentication já vem como
+  *Predefined Credential Type → OpenAI*; criar a credencial **OpenAI** com a API key e
+  selecioná-la nos dois nós. Modelo fixado em `gpt-4o` no código (trocar nos nós
+  `Montar Req *` se quiser outro).
+- **Upload Storage** — duas configurações no node:
+  1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase
+     (`https://<ref>.supabase.co`).
+  2. **Credencial:** Authentication já vem como *Generic → Header Auth*; criar credencial
+     **Header Auth** com Name=`Authorization`, Value=`Bearer <service role key>`.
+- **Sem a credencial/URL do Upload**, o node falha (e para a execução — falha explícita de
+  propósito: linha no banco apontando para arquivo inexistente seria um "falso-limpo"). Para
+  um dry-run sem storage, **desative** o node Upload Storage.
+- **Sem a credencial OpenAI**, os nós OpenAI falham mas **não derrubam o workflow**
   (`onError: continue`): o parse produz confiança 0 → pendência de classificação / extração
   vazia (fail-safe coerente com a doutrina).
 

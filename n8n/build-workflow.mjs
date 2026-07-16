@@ -91,7 +91,7 @@ return {json:{...item, content_part: part, content_mime: mt}, binary: $input.ite
 const CODE_REQ_CLASSIF = `
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
-const body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},
   {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}
 ]};
@@ -126,7 +126,7 @@ const reg=$json;
 const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
-const body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},
   {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}
 ]};
@@ -174,15 +174,19 @@ const nodes = [
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
+  // Sem $env (bloqueado por padrão no N8N): auth via credencial Header Auth
+  // (Authorization: Bearer <service key>) e URL do projeto editada no node
+  // após o import (trocar SEU-PROJETO pela ref real).
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
-    url: '={{ $env.SUPABASE_URL }}/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
+    url: '=https://SEU-PROJETO.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
+    authentication: 'genericCredentialType',
+    genericAuthType: 'httpHeaderAuth',
     sendHeaders: true, headerParameters: { parameters: [
-      { name: 'Authorization', value: '=Bearer {{ $env.SUPABASE_SERVICE_KEY }}' },
       { name: 'x-upsert', value: 'true' },
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data',
-  }, 1000, 560),
+  }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } } }),
 
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
@@ -194,14 +198,13 @@ const nodes = [
 
   // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
+  // Auth via credencial nativa OpenAI do N8N (sem $env, bloqueado por padrão).
   node('OpenAI Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
-    sendHeaders: true, headerParameters: { parameters: [
-      { name: 'Authorization', value: '=Bearer {{ $env.OPENAI_API_KEY }}' },
-      { name: 'Content-Type', value: 'application/json' },
-    ] },
+    authentication: 'predefinedCredentialType',
+    nodeCredentialType: 'openAiApi',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 1400, 200, { onError: 'continueRegularOutput' }),
+  }, 1400, 200, { onError: 'continueRegularOutput', credentials: { openAiApi: { id: 'REPLACE', name: 'OpenAI (Oria)' } } }),
 
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200),
 
@@ -220,12 +223,10 @@ const nodes = [
 
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
-    sendHeaders: true, headerParameters: { parameters: [
-      { name: 'Authorization', value: '=Bearer {{ $env.OPENAI_API_KEY }}' },
-      { name: 'Content-Type', value: 'application/json' },
-    ] },
+    authentication: 'predefinedCredentialType',
+    nodeCredentialType: 'openAiApi',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 2300, 300, { onError: 'continueRegularOutput' }),
+  }, 2300, 300, { onError: 'continueRegularOutput', credentials: { openAiApi: { id: 'REPLACE', name: 'OpenAI (Oria)' } } }),
 
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300),
 
