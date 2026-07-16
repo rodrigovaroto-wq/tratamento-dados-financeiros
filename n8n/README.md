@@ -1,42 +1,70 @@
-# Camada N8N — Fatia 1 (E1 — Ingestão)
+# Camada N8N — Fatia 1 (E1 — Ingestão + E2 — Extração-sombra)
 
 O N8N é o **orquestrador stateless** (docs/02, trava de stack nº 1): recebe o upload em lote,
-classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004`) que cuidam do
-estado. A ingestão é feita **pelo próprio N8N** (Form Trigger) — sem Vercel nesta fatia.
+classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0006`) que cuidam
+do estado. A ingestão é feita **pelo próprio N8N** (Form Trigger) — sem Vercel nesta fatia.
 
 ## O que roda (fluxo do `workflow.e1-ingestao.json`)
 
 ```
-Intake (Form Trigger: nome do mandato + upload de N arquivos)
-  → Upsert Caso ............... fn_upsert_caso(nome) → caso_id
-  → Listar Arquivos ........... 1 item por arquivo
-  → Upload Storage ............ POST no bucket privado 'documentos'
-  → Preparar Conteudo ......... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
-                                csv→texto (parse inline), xlsx→nota (ver ⚠️)
-  → Classificar Nome .......... nome + regras → {tipo, período, assinado, confiança}
-  → Precisa Fallback? ......... confiança < 0.7 ou tipo desconhecido?
-        ├─ sim → Montar Req Classif → OpenAI Classificar → Parse  (lê o conteúdo)
-        └─ não → segue direto
-  → Registrar Documento ....... fn_registrar_documento(...) → doc+versão+checklist+pendência
+Intake (Form: nome do mandato + upload de N arquivos)
+  → Upsert Caso ............. fn_upsert_caso(nome) → caso_id   [Postgres: NÃO repassa binário]
+  → Listar Arquivos ......... fan-out: 1 item por arquivo (binário lido do FORM, chave 'data')
+  → Classificar Nome ........ nome + regras → {tipo, período, assinado, confiança} [preserva binário]
+  → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
+       │                      csv→texto, xlsx→nota [preserva binário]
+       ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
+       └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
+             ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
+             └─ não → direto
+  → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
-        └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra)
-                                      fn_registrar_campos_extraidos(...) em N0
+        └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
 ```
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
 revisão — próxima fatia); **extração (E2) nasce em N0 (sombra)** — registra para medir, não
 decide, não entra em base sem aceite humano (anti-ancoragem).
 
+## Regras de fluxo do N8N (aprendidas em teste real — a topologia depende delas)
+
+1. **Node Postgres não repassa binário** — a saída são as linhas da query. Por isso `Listar
+   Arquivos` lê os arquivos por referência direta ao Form (`$('Intake (Form)')`), não do
+   `$input`.
+2. **Node HTTP Request substitui o item pela resposta da API** (perde json e binário). Por
+   isso o `Upload Storage` é **ramo lateral** (nada consome a saída dele) e, após as chamadas
+   OpenAI, o contexto volta por `$('Nome do Node').item`.
+3. **Modos dos nós Code:** `Listar Arquivos` = "Run Once for All Items" (único fan-out; usa
+   `$input.first()`; retorna **array**). Os outros 6 = "Run Once for Each Item" (1:1; usam
+   `$input.item`; retornam **objeto único** `{json,...}` — array nesse modo dá o erro
+   `A 'json' property isn't an object`).
+4. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
+   descarta o binário (`Classificar Nome` e `Preparar Conteudo` preservam).
+
 ## Como usar
 
-1. **Aplicar as migrations do banco** (`db/README.md`) — inclusive a `0004` (funções).
-2. **Importar** `n8n/workflow.e1-ingestao.json` no N8N (Import from File).
-3. **Configurar credenciais/variáveis** (ver abaixo).
-4. Abrir a URL do **Form Trigger**, informar o nome do mandato e subir os arquivos.
-5. Conferir no banco: `caso`, `documento`, `checklist_item_status`, `pendencia`,
-   `evento_auditoria` populados; status do caso avançando conforme a completude.
+1. **Aplicar as migrations do banco** (`db/README.md`) — em caso de dúvida sobre o estado das
+   funções, rodar a `0006` (reset idempotente).
+2. **Importar como workflow NOVO**: Workflows → Add workflow → *Import from File* →
+   `n8n/workflow.e1-ingestao.json`.
+   > ⚠️ **Não cole/importe por cima de um workflow existente.** Se o canvas já tiver nodes com
+   > os mesmos nomes, o N8N renomeia os novos com sufixo (ex.: `Intake (Form)1`) — e os códigos
+   > referenciam nodes **pelo nome exato** (`$('Intake (Form)')`), então o sufixo quebra tudo.
+   > Antes de reimportar, **apague ou arquive o workflow antigo**.
+3. **Configurar credenciais** nos **4 nós Postgres** e **variáveis de ambiente** (ver abaixo).
+4. **Conferir os Query Parameters** dos 4 nós Postgres (o import pode não preenchê-los — tabela
+   no Troubleshooting).
+5. Abrir a URL do **Form Trigger**, informar o nome do mandato e subir os arquivos.
+6. Conferir no banco: `caso`, `documento`, `checklist_item_status`, `pendencia`,
+   `evento_auditoria`, `campo_extraido` populados; status do caso avançando conforme a
+   completude.
 
-## Troubleshooting conhecido (achado testando no N8N real)
+## Troubleshooting conhecido (achados testando no N8N real)
+
+**`No output data returned` no Listar Arquivos:** o node lia o binário do `$input` (= saída do
+Postgres, que não repassa binário) → lista vazia. Corrigido: lê do Form por referência. Se o
+Form realmente não entregar arquivos, o node agora **lança erro explícito** em vez de parar em
+silêncio.
 
 **Erro `there is no parameter $1` num node Postgres:** o campo **"Query Parameters"** (em
 Options) não veio preenchido do import. Abra o node → **"+ Add option"** → **"Query
@@ -49,76 +77,67 @@ Parameters"** → cole a expressão correspondente:
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
 | Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
 
-**Erro `function fn_upsert_caso(unknown) does not exist` (ou similar nos outros RPCs):** o
-driver do N8N envia o parâmetro sem tipo explícito (Postgres o vê como `unknown`), e a resolução
-de função falha sem um cast. Fix: adicionar `::tipo` a cada `$N` na **Query** do node (já
-corrigido em `build-workflow.mjs`; se reimportar o workflow atualizado já vem certo):
-- `select fn_upsert_caso($1::text) as caso_id`
-- `select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade) as r`
-- `select fn_recomputar_completude($1::uuid) as resultado`
-- `select fn_registrar_campos_extraidos($1::uuid, $2::jsonb) as n_campos`
+**Erro `function fn_upsert_caso(unknown) does not exist`:** o driver do N8N envia o parâmetro
+sem tipo; a resolução falha sem cast. As queries já vêm com `::tipo` em cada `$N`.
 
-Verificado com o driver `pg` chamando as 4 funções com esses casts, ponta a ponta, num Postgres
-real: caso criado → documento registrado → completude calculada → campos gravados em sombra.
+**Erro `function fn_upsert_caso(text) does not exist` (com o cast!):** as funções no banco
+estão com assinatura divergente (aplicações parciais/repetidas das migrations). Rodar
+`db/migrations/0006_reset_funcoes.sql` — derruba qualquer versão e recria do zero (idempotente).
 
-**Nós Code — dois modos diferentes, de propósito:**
-- **`Listar Arquivos`** roda em **"Run Once for All Items"** (é o único fan-out: 1 item de
-  entrada → N de saída, um por arquivo). Usa `$input.first()`, nunca `$input.item`. Retorna um
-  **array** (`return out;`) — correto nesse modo.
-- **Os outros 6 nós** (`Preparar Conteudo`, `Classificar Nome`, `Montar Req Classif`, `Parse
-  OpenAI Classif`, `Montar Req Extracao`, `Parse Extracao`) rodam em **"Run Once for Each
-  Item"** (transformam 1 item em 1 item). Usam `$input.item`/`$('Node').item`. **Retornam um
-  objeto único** (`return {json:{...}};`), **nunca** um array — retornar `[{json:{...}}]` nesse
-  modo dá o erro `A 'json' property isn't an object [item 0]`.
-
-Se você importou uma versão anterior deste workflow, confira nó a nó: o **Mode** (topo do
-painel) e se o `return` bate com a regra acima. Tudo já corrigido em `build-workflow.mjs` — um
-reimport do `workflow.e1-ingestao.json` atualizado resolve de uma vez.
+**Nodes com sufixo `1` no nome (`Upsert Caso (Postgres)1`):** o workflow foi importado/colado
+por cima de outro. As referências `$('Nome')` quebram. Apagar o antigo e reimportar limpo.
 
 ## Credenciais e variáveis (configurar no N8N)
 
-- **Postgres (Supabase, Session Pooler)** — credencial `Supabase Postgres (Session Pooler)`
-  nos 3 nós Postgres. Reaproveitar do `clipping-news`. Pegadinhas herdadas: usar o **Session
-  Pooler** (IPv4 + SSL), usuário com sufixo `.projectref`. O N8N usa conexão de serviço, que
-  **ignora RLS** por design (é o orquestrador) — ver `db/migrations/0003`.
+- **Postgres (Supabase, Session Pooler)** — credencial nos **4 nós Postgres** (Upsert Caso,
+  Registrar Documento, Recomputar Completude, Gravar Campos). Reaproveitar do `clipping-news`.
+  Pegadinhas herdadas: usar o **Session Pooler** (IPv4 + SSL), usuário com sufixo
+  `.projectref`. O N8N usa conexão de serviço, que **ignora RLS** por design (é o orquestrador)
+  — ver `db/migrations/0003`.
 - **Variáveis de ambiente** do N8N:
   - `SUPABASE_URL` — ex.: `https://<ref>.supabase.co`
   - `SUPABASE_SERVICE_KEY` — service role (só no N8N, **nunca** no portal)
   - `OPENAI_API_KEY` — chave da API direta
   - `OPENAI_MODEL` — opcional (default `gpt-4o`)
+- **Sem `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`**, o `Upload Storage` falha (e para a execução —
+  falha explícita de propósito: linha no banco apontando para arquivo inexistente seria um
+  "falso-limpo"). Para um dry-run sem storage, **desative** o node Upload Storage.
+- **Sem `OPENAI_API_KEY`**, os nós OpenAI falham mas **não derrubam o workflow**
+  (`onError: continue`): o parse produz confiança 0 → pendência de classificação / extração
+  vazia (fail-safe coerente com a doutrina).
 
 ## Fallback OpenAI (conteúdo) — como funciona
 
-Quando o classificador por nome não tem confiança, o nó **Preparar Conteudo Fallback** monta o
-corpo da chamada com o **conteúdo real do arquivo**:
-- **PDF** → parte `file` (base64 `data:application/pdf;base64,...`) — o modelo lê texto + páginas.
+Quando o classificador por nome não tem confiança, a chamada leva o **conteúdo real do
+arquivo** (montado no `Preparar Conteudo`, que roda para todos):
+- **PDF** → parte `file` (base64) — o modelo lê texto + páginas.
 - **Imagem** (scan/foto PNG/JPG) → parte `image_url` (base64).
-- **CSV** → decodificado e parseado inline (vira texto tabular para o modelo).
+- **CSV** → decodificado e parseado inline (vira texto tabular).
 - **XLSX** → hoje envia uma nota de texto. Para habilitar: inserir um nó *Extract From File*
-  (spreadsheet) antes de `Preparar Conteudo` e usar `spreadsheetToText(rows)` (`n8n/lib/spreadsheet.mjs`)
-  para montar a parte de texto. É um ponto explícito de validação/adaptação no N8N.
-- Saída sempre via **Structured Outputs** (JSON Schema estrito) → `Parse OpenAI` normaliza para o
-  mesmo formato do classificador por nome. Continua **N1**: sugestão para a fila de revisão.
+  (spreadsheet) antes de `Preparar Conteudo` e usar `spreadsheetToText(rows)`
+  (`n8n/lib/spreadsheet.mjs`). Ponto explícito de adaptação no N8N.
+- Saída sempre via **Structured Outputs** (JSON Schema estrito). Continua **N1**: sugestão
+  para revisão humana.
 
 ## ⚠️ Estado honesto desta entrega
 
-- **Caminho determinístico (nome → registro → completude): completo e testado** — lógica
-  validada por testes unitários (`n8n/test/`) e funções do banco exercitadas num Postgres real.
-- **Fallback OpenAI para PDF, imagem e CSV: completo** — conteúdo enviado como
-  `file`/`image_url`/texto + Structured Outputs; corpo e parse cobertos por testes.
-- **Extração E2 (linhas financeiras) em N0/sombra: completo** — corpo/schema/parse testados
-  (`n8n/test/extract.test.mjs`) e a gravação (`fn_registrar_campos_extraidos`) exercitada em
-  Postgres real. Não altera status nem entra em base (sombra/anti-ancoragem).
-- **Pendência: XLSX** — falta o *Extract From File* (ver acima). CSV já é tratado.
-- **Não executado no N8N real** deste ambiente (sem instância/credenciais). O JSON é válido e
-  importável; os nós Code parseiam; a lógica e as funções SQL foram testadas isoladamente. A
-  chamada real à OpenAI (custo/latência/qualidade) só é exercível no N8N do dono.
+- **Caminho determinístico (nome → registro → completude): completo e testado** — lógica com
+  testes unitários e funções do banco exercitadas num Postgres real.
+- **Fluxo entre nós: simulado por teste** — `n8n/test/workflow-sim.test.mjs` executa os códigos
+  **reais** do JSON gerado com a semântica de passagem de dados do N8N (Postgres sem binário,
+  HTTP substituindo o item, referências `$('Node')`), nos dois ramos.
+- **Fallback OpenAI (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos** e cobertos por
+  testes de corpo/schema/parse.
+- **Pendência: XLSX** — falta o *Extract From File* (ver acima).
+- **Não executado num N8N real deste ambiente** (sem instância/credenciais). A chamada real à
+  OpenAI (custo/latência/qualidade) só é exercível no N8N do dono.
 
 ## Fonte da verdade da lógica
 
 `n8n/lib/*.mjs` são os módulos **testados** (`node --test` em `n8n/test/`). Os nós Code do
 workflow **espelham** essa lógica (inline, porque nós Code não importam arquivos). Ao alterar a
-lógica: mude `lib/`, rode os testes, e **regenere** o workflow com `node n8n/build-workflow.mjs`.
+lógica: mude `lib/`, rode os testes, e **regenere** com `node n8n/build-workflow.mjs` — o teste
+`workflow-sim` valida o JSON regenerado.
 
 ## Estrutura
 
@@ -126,7 +145,7 @@ lógica: mude `lib/`, rode os testes, e **regenere** o workflow com `node n8n/bu
 n8n/
 ├── lib/            # lógica testável: classifier, completude, openai, extract,
 │                   #                  spreadsheet, taxonomia, normalize
-├── test/           # node:test (30 casos)
+├── test/           # node:test (40 casos, incl. simulação do workflow)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
 ├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + E2-sombra)
 └── README.md
