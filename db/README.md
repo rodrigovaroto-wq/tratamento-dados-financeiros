@@ -15,6 +15,7 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0003_rls_e_storage.sql` | RLS por tabela + bucket privado `documentos` no Storage. |
 | `migrations/0004_funcoes_e1.sql` | Coluna `nao_sobrepujavel` + funções RPC do E1 (`fn_upsert_caso`, `fn_registrar_documento`, `fn_recomputar_completude`). |
 | `migrations/0005_extracao_e2.sql` | Tabela `campo_extraido` + `fn_registrar_campos_extraidos` (extração em **N0/sombra**); redefine `fn_registrar_documento` p/ retornar os dois ids. |
+| `migrations/0006_reset_funcoes.sql` | **Reset forçado das 4 funções RPC.** Roda sempre que houver dúvida sobre o estado delas (ex.: aplicações parciais/repetidas deixaram assinatura divergente) — derruba qualquer sobrecarga existente e recria do zero. **Seguro de rodar a qualquer momento** (idempotente). |
 
 ## Como aplicar
 
@@ -27,7 +28,13 @@ supabase db execute --file db/migrations/0002_seed_taxonomia_e_dial.sql
 supabase db execute --file db/migrations/0003_rls_e_storage.sql
 supabase db execute --file db/migrations/0004_funcoes_e1.sql
 supabase db execute --file db/migrations/0005_extracao_e2.sql
+supabase db execute --file db/migrations/0006_reset_funcoes.sql
 ```
+
+> **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
+> (ex.: após aplicar migrations parcialmente/mais de uma vez), rode direto a `0006` — ela
+> derruba qualquer versão divergente das 4 funções e recria do zero. Não precisa reaplicar
+> 0001-0005 antes; 0006 assume que as tabelas (criadas em 0001/0005) já existem.
 
 **Opção B — psql direto** (usar o **Session Pooler**; herdar a pegadinha do `clipping-news`:
 IPv4 + SSL, usuário do pooler com sufixo `.projectref`):
