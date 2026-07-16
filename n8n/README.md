@@ -61,10 +61,19 @@ corrigido em `build-workflow.mjs`; se reimportar o workflow atualizado já vem c
 Verificado com o driver `pg` chamando as 4 funções com esses casts, ponta a ponta, num Postgres
 real: caso criado → documento registrado → completude calculada → campos gravados em sombra.
 
-**Nós Code:** o modo padrão do N8N é "Run Once for All Items" (onde `$input.item` não existe).
-Todos os 7 nós Code deste workflow já são gerados com `mode: 'runOnceForEachItem'` (corrigido em
-`build-workflow.mjs`) — se você importou uma versão anterior, abra cada node Code e confira que
-o modo está em **"Run Once for Each Item"**.
+**Nós Code — dois modos diferentes, de propósito:**
+- **`Listar Arquivos`** roda em **"Run Once for All Items"** (é o único fan-out: 1 item de
+  entrada → N de saída, um por arquivo). Usa `$input.first()`, nunca `$input.item`. Retorna um
+  **array** (`return out;`) — correto nesse modo.
+- **Os outros 6 nós** (`Preparar Conteudo`, `Classificar Nome`, `Montar Req Classif`, `Parse
+  OpenAI Classif`, `Montar Req Extracao`, `Parse Extracao`) rodam em **"Run Once for Each
+  Item"** (transformam 1 item em 1 item). Usam `$input.item`/`$('Node').item`. **Retornam um
+  objeto único** (`return {json:{...}};`), **nunca** um array — retornar `[{json:{...}}]` nesse
+  modo dá o erro `A 'json' property isn't an object [item 0]`.
+
+Se você importou uma versão anterior deste workflow, confira nó a nó: o **Mode** (topo do
+painel) e se o `return` bate com a regra acima. Tudo já corrigido em `build-workflow.mjs` — um
+reimport do `workflow.e1-ingestao.json` atualizado resolve de uma vez.
 
 ## Credenciais e variáveis (configurar no N8N)
 

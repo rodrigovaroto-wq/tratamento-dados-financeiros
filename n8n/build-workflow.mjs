@@ -15,9 +15,12 @@ const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type
 const SCHEMA_EXTRACAO = `{name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}}`;
 
 // --- Code: um item por arquivo enviado ---
+// Roda em 'runOnceForAllItems' (fan-out: 1 item de entrada -> N de saída;
+// só é possível nesse modo). $input.item NÃO existe aqui — usar $input.first().
 const CODE_LISTAR = `
 const caso_id = $('Upsert Caso (Postgres)').first().json.caso_id;
-const bin = $input.item.binary || {};
+const item = $input.first();
+const bin = item.binary || {};
 const out = [];
 for (const key of Object.keys(bin)) {
   out.push({ json: { caso_id, nome_original: bin[key].fileName || key, binary_key: key }, binary: { [key]: bin[key] } });
@@ -40,7 +43,7 @@ else if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+
 else if(/csv/.test(mt)||mt==='text/plain'){const txt=Buffer.from(b64,'base64').toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}
 else if(/spreadsheetml|ms-excel|excel/.test(mt)) part={type:'text',text:'(XLSX: habilitar Extract From File no N8N p/ extrair texto — ver README. Nome: '+(item.nome_original||'')+')'};
 else part={type:'text',text:'(conteudo nao suportado: '+mt+')'};
-return [{json:{...item, content_part: part, content_mime: mt}}];
+return {json:{...item, content_part: part, content_mime: mt}};
 `.trim();
 
 // --- Code: classificação por nome (espelha lib/classifier.mjs) ---
@@ -64,7 +67,7 @@ const t=normalize(item.nome_original);
 const tipo=parseTipo(t), periodo=parsePeriodo(t);
 const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
 let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=0.3; if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
-return [{json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:null, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}}];
+return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:null, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}};
 `.trim();
 
 // --- Code: monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
@@ -75,7 +78,7 @@ const body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{t
   {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},
   {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}
 ]};
-return [{json:{...item, openai_body: body}}];
+return {json:{...item, openai_body: body}};
 `.trim();
 
 // --- Code: parse da classificação (contexto do item + resposta OpenAI) ---
@@ -83,16 +86,16 @@ const CODE_PARSE_CLASSIF = `
 const item=$('Montar Req Classif').item.json;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
-if(!content){return [{json:{...item, fonte:'openai_conteudo', confianca:0}}];}
-let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){return [{json:{...item, fonte:'openai_conteudo', confianca:0}}];}
-return [{json:{...item,
+if(!content){return {json:{...item, fonte:'openai_conteudo', confianca:0}};}
+let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){return {json:{...item, fonte:'openai_conteudo', confianca:0}};}
+return {json:{...item,
   tipo_taxonomia:p.tipo_taxonomia==='DESCONHECIDO'?null:p.tipo_taxonomia,
   entidade:p.entidade??item.entidade??null,
   periodo_tipo:p.periodo_referencia?p.periodo_tipo:null,
   periodo_ref:p.periodo_referencia??null,
   assinado:p.assinado??null,
   confianca:typeof p.confianca==='number'?p.confianca:0,
-  fonte:'openai_conteudo', justificativa:p.justificativa||''}}];
+  fonte:'openai_conteudo', justificativa:p.justificativa||''}};
 `.trim();
 
 // --- Code: monta corpo da chamada de EXTRAÇÃO (E2, sombra) ---
@@ -105,7 +108,7 @@ const body={model:($env.OPENAI_MODEL||'gpt-4o'),temperature:0,response_format:{t
   {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},
   {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}
 ]};
-return [{json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}}];
+return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};
 `.trim();
 
 // --- Code: parse da extração → campos p/ fn_registrar_campos_extraidos ---
@@ -116,7 +119,7 @@ const content=resp?.choices?.[0]?.message?.content;
 let p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}
 const unidade=p.unidade??null;
 const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];
-return [{json:{documento_versao_id:ctx.documento_versao_id, campos}}];
+return {json:{documento_versao_id:ctx.documento_versao_id, campos}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -138,7 +141,7 @@ const nodes = [
     operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
     options: { queryReplacement: "={{ $json['Mandato (nome do caso)'] }}" },
   }, 200, 400, PG_CRED),
-  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_LISTAR }, 400, 400),
+  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }, 400, 400),
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
     url: '={{ $env.SUPABASE_URL }}/storage/v1/object/documentos/{{ $json.caso_id }}/{{ $json.nome_original }}',
