@@ -131,7 +131,8 @@
           "id": "REPLACE",
           "name": "Supabase Service (Header Auth)"
         }
-      }
+      },
+      "disabled": true
     },
     {
       "parameters": {

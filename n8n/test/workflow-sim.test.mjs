@@ -105,6 +105,14 @@ test('Upload Storage: URL usa encodeURIComponent (nomes com espaço/acento)', ()
   assert.ok(headers.some((h) => h.name === 'apikey'), 'falta o header apikey exigido pelo Supabase');
 });
 
+test('Upload Storage: desabilitado (bug de plataforma do HTTP Request + binário)', () => {
+  // n8n-io/n8n#3089, #10096: o node HTTP Request trava o editor com
+  // "Converting circular structure to JSON" ao lidar com dados binários em
+  // certas configs. Confirmado reproduzível no N8N real (não é bug nosso).
+  // Fica desabilitado até adotar uma alternativa (ver README).
+  assert.equal(byName['Upload Storage'].disabled, true, 'Upload Storage deve seguir desabilitado até resolver o bug de plataforma');
+});
+
 test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pelo contexto', () => {
   const { preparado } = chainFile(0);
   const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });

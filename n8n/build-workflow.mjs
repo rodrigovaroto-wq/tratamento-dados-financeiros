@@ -150,6 +150,7 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
   position: [x, yy],
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
+  ...(opts.disabled ? { disabled: true } : {}),
 });
 
 const nodes = [
@@ -174,11 +175,17 @@ const nodes = [
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
-  // Sem $env (bloqueado por padrão no N8N): auth via credencial Header Auth
-  // (Authorization: Bearer <service key>) e URL do projeto editada no node
-  // após o import (trocar SEU-PROJETO pela ref real).
-  // O gateway do Supabase exige TAMBÉM o header 'apikey' (a credencial só
-  // injeta o Authorization) — sem ele, a API de Storage responde 400.
+  // ⚠️ DESABILITADO (2026-07-17): bug de longa data do node HTTP Request do
+  // N8N ao lidar com dados binários (GitHub n8n-io/n8n#3089, #10096) — trava
+  // o editor com "Converting circular structure to JSON" ao rodar o workflow
+  // inteiro (não é config nossa: URL/credencial/headers já testados corretos;
+  // limpar cache de execução não resolve, é reproduzível). Como este node é
+  // ramo lateral (não bloqueia classificação/extração/completude), fica
+  // desabilitado até trocarmos de abordagem — ver n8n/README.md
+  // "Upload Storage — pendência conhecida" para as alternativas (community
+  // node n8n-nodes-supabase, ou mover o upload para o portal Vercel).
+  // Reabilitar: trocar `disabled: true` por `disabled: false` (ou remover)
+  // depois de adotar uma das alternativas.
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
     url: '=https://SEU-PROJETO.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
@@ -189,7 +196,7 @@ const nodes = [
       { name: 'apikey', value: 'COLE_A_SERVICE_ROLE_KEY_AQUI' },
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data',
-  }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } } }),
+  }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } }, disabled: true }),
 
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
