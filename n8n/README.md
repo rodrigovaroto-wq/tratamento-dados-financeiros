@@ -93,6 +93,19 @@ aparecer, é versão antiga: reimportar, ou trocar manualmente `($env.OPENAI_MOD
 `'gpt-4o'` nos nós `Montar Req *` e configurar credenciais nos nós HTTP (ver seção
 Credenciais).
 
+**Erro `Credentials not found` nos nós OpenAI:** a Authentication está em *Predefined
+Credential Type → OpenAI* mas a credencial não existe (ou é do tipo errado). Corrigido: os
+nós vêm configurados como *Generic Credential Type → Header Auth* — criar a credencial Header
+Auth (Authorization / Bearer sk-...) e selecionar.
+
+**Erro `Bad request` no Upload Storage com a credencial da OpenAI selecionada:** a credencial
+de Header Auth escolhida no node era a da OpenAI (manda a chave errada para o Supabase). Criar
+uma credencial Header Auth **separada** para o Supabase (ver Credenciais acima).
+
+**Erro `The resource you are requesting could not be found` no Upload Storage:** a URL está
+apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**
+(`<ref>.supabase.co/storage/v1/...`). Ver seção Credenciais acima.
+
 ## Credenciais (configurar no N8N — o workflow NÃO usa variáveis de ambiente)
 
 > O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
@@ -104,14 +117,19 @@ Credenciais).
   `.projectref`. O N8N usa conexão de serviço, que **ignora RLS** por design (é o orquestrador)
   — ver `db/migrations/0003`.
 - **OpenAI** — nos nós `OpenAI Classificar` e `OpenAI Extrair`: Authentication já vem como
-  *Predefined Credential Type → OpenAI*; criar a credencial **OpenAI** com a API key e
-  selecioná-la nos dois nós. Modelo fixado em `gpt-4o` no código (trocar nos nós
-  `Montar Req *` se quiser outro).
+  *Generic Credential Type → Header Auth*; criar (ou reaproveitar) uma credencial **Header
+  Auth** com **Name=`Authorization`, Value=`Bearer sk-...`** (a palavra `Bearer` + espaço antes
+  da chave — sem isso a OpenAI recusa) e selecioná-la nos dois nós. Modelo fixado em `gpt-4o`
+  no código (trocar nos nós `Montar Req *` se quiser outro).
 - **Upload Storage** — duas configurações no node:
-  1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase
-     (`https://<ref>.supabase.co`).
+  1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase — **atenção:** é a URL da
+     **API** (`https://<ref>.supabase.co/storage/v1/object/documentos/...`), **não** a URL do
+     painel (`https://supabase.com/dashboard/project/<ref>/...`, que é só para humanos no
+     navegador). A ref aparece em ambas as URLs; confirme também em Settings → API → Project URL.
   2. **Credencial:** Authentication já vem como *Generic → Header Auth*; criar credencial
-     **Header Auth** com Name=`Authorization`, Value=`Bearer <service role key>`.
+     **Header Auth NOVA** (não reaproveitar a da OpenAI!) com Name=`Authorization`,
+     Value=`Bearer <service role key>` — pegue em Settings → API → `service_role` (a chave
+     secreta, não a `anon`).
 - **Sem a credencial/URL do Upload**, o node falha (e para a execução — falha explícita de
   propósito: linha no banco apontando para arquivo inexistente seria um "falso-limpo"). Para
   um dry-run sem storage, **desative** o node Upload Storage.

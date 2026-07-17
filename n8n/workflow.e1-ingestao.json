@@ -177,8 +177,8 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_body) }}"
@@ -192,9 +192,9 @@
         200
       ],
       "credentials": {
-        "openAiApi": {
+        "httpHeaderAuth": {
           "id": "REPLACE",
-          "name": "OpenAI (Oria)"
+          "name": "OpenAI API"
         }
       },
       "onError": "continueRegularOutput"
@@ -277,8 +277,8 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.openai_body) }}"
@@ -292,9 +292,9 @@
         300
       ],
       "credentials": {
-        "openAiApi": {
+        "httpHeaderAuth": {
           "id": "REPLACE",
-          "name": "OpenAI (Oria)"
+          "name": "OpenAI API"
         }
       },
       "onError": "continueRegularOutput"

@@ -198,13 +198,14 @@ const nodes = [
 
   // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
-  // Auth via credencial nativa OpenAI do N8N (sem $env, bloqueado por padrão).
+  // Auth via credencial Header Auth (Name=Authorization, Value=Bearer sk-...),
+  // o setup real do dono — sem $env (bloqueado por padrão no N8N).
   node('OpenAI Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
-    authentication: 'predefinedCredentialType',
-    nodeCredentialType: 'openAiApi',
+    authentication: 'genericCredentialType',
+    genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 1400, 200, { onError: 'continueRegularOutput', credentials: { openAiApi: { id: 'REPLACE', name: 'OpenAI (Oria)' } } }),
+  }, 1400, 200, { onError: 'continueRegularOutput', credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200),
 
@@ -223,10 +224,10 @@ const nodes = [
 
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
-    authentication: 'predefinedCredentialType',
-    nodeCredentialType: 'openAiApi',
+    authentication: 'genericCredentialType',
+    genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 2300, 300, { onError: 'continueRegularOutput', credentials: { openAiApi: { id: 'REPLACE', name: 'OpenAI (Oria)' } } }),
+  }, 2300, 300, { onError: 'continueRegularOutput', credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300),
 
