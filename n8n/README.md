@@ -112,6 +112,40 @@ credencial corretas:** falta o header **`apikey`**. O gateway do Supabase exige 
 rejeita antes de processar o upload. Adicionar um header `apikey` com a mesma service role key
 (já vem como campo no node, com placeholder para editar).
 
+**Erro `Converting circular structure to JSON` / `_httpMessage closes the circle` ao rodar o
+workflow inteiro (não ao testar node a node):** **não é bug nosso** — é um problema de longa
+data do próprio node HTTP Request do N8N ao lidar com dados binários em certas configurações
+(GitHub `n8n-io/n8n#3089`, `#10096`). Confirmado via console do navegador: é o **editor do
+N8N** travando ao tentar serializar os dados de execução dos nodes HTTP, não uma falha de rede
+com o Supabase/OpenAI. Limpar o cache de execução e recarregar a página **não resolve** — é
+reproduzível. Ver seção "Upload Storage — pendência conhecida" abaixo.
+
+## Upload Storage — pendência conhecida (node desabilitado)
+
+O node **`Upload Storage` vem desabilitado por padrão** neste workflow (2026-07-17) por causa
+do bug de plataforma acima. Como ele é um **ramo lateral** (nenhum outro node depende da sua
+saída — ver teste `workflow-sim.test.mjs`), desabilitá-lo **não afeta** classificação,
+extração, completude nem pendências — só significa que a cópia do arquivo não é enviada ao
+Supabase Storage por enquanto (os arquivos originais continuam disponíveis onde foram
+enviados no Form).
+
+**Duas alternativas para resolver, fora do HTTP Request genérico do N8N:**
+
+1. **Community node `n8n-nodes-supabase`** — node dedicado com operação de upload para
+   Storage, usando a lib oficial do Supabase por baixo (evita o bug do HTTP Request com
+   binário). Instalar em **Settings → Community Nodes → Install → `n8n-nodes-supabase`**
+   (funciona em instâncias self-hosted, incluindo PikaPods, sem precisar de acesso ao
+   servidor). Depois de instalado, trocar o node `Upload Storage` por ele, apontando para o
+   mesmo bucket `documentos`.
+2. **Mover o upload para o portal Vercel** (fatia futura) — usar o SDK oficial do Supabase em
+   JavaScript (`@supabase/supabase-js`) direto no backend do portal, que não tem as
+   limitações do node HTTP Request do N8N. Fica natural já que o portal também vai lidar com
+   upload em lote na fatia seguinte.
+
+**Para reabilitar** depois de adotar uma das alternativas: em `build-workflow.mjs`, localizar
+o node `Upload Storage` e trocar/remover `disabled: true` (ou substituir o node inteiro pelo
+community node, se for esse o caminho).
+
 ## Credenciais (configurar no N8N — o workflow NÃO usa variáveis de ambiente)
 
 > O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
@@ -163,16 +197,21 @@ arquivo** (montado no `Preparar Conteudo`, que roda para todos):
 
 ## ⚠️ Estado honesto desta entrega
 
-- **Caminho determinístico (nome → registro → completude): completo e testado** — lógica com
-  testes unitários e funções do banco exercitadas num Postgres real.
+- **Executado ponta a ponta no N8N real do dono (2026-07-17):** Upsert Caso → Listar Arquivos
+  → Classificar Nome → Preparar Conteudo → (fallback OpenAI) → Registrar Documento →
+  Recomputar Completude → Extração E2 → Gravar Campos — **todos passaram** com um caso real
+  (arquivos com nome/acento reais, ex. "BALANÇO ACUMULADO 2025.pdf").
+- **Upload Storage: desabilitado** por um bug de plataforma do N8N (ver seção dedicada acima)
+  — pendência de arquitetura, não de lógica.
+- **Caminho determinístico (nome → registro → completude): completo, testado e validado ao
+  vivo** — lógica com testes unitários, funções do banco exercitadas num Postgres real, e
+  confirmado no N8N real.
 - **Fluxo entre nós: simulado por teste** — `n8n/test/workflow-sim.test.mjs` executa os códigos
   **reais** do JSON gerado com a semântica de passagem de dados do N8N (Postgres sem binário,
   HTTP substituindo o item, referências `$('Node')`), nos dois ramos.
-- **Fallback OpenAI (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos** e cobertos por
-  testes de corpo/schema/parse.
+- **Fallback OpenAI (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos**, cobertos por
+  testes de corpo/schema/parse e confirmados no N8N real.
 - **Pendência: XLSX** — falta o *Extract From File* (ver acima).
-- **Não executado num N8N real deste ambiente** (sem instância/credenciais). A chamada real à
-  OpenAI (custo/latência/qualidade) só é exercível no N8N do dono.
 
 ## Fonte da verdade da lógica
 
@@ -187,7 +226,7 @@ lógica: mude `lib/`, rode os testes, e **regenere** com `node n8n/build-workflo
 n8n/
 ├── lib/            # lógica testável: classifier, completude, openai, extract,
 │                   #                  spreadsheet, taxonomia, normalize
-├── test/           # node:test (40 casos, incl. simulação do workflow)
+├── test/           # node:test (41 casos, incl. simulação do workflow)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
 ├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + E2-sombra)
 └── README.md
@@ -195,6 +234,7 @@ n8n/
 
 ## Próximas fatias
 
+- **Resolver o Upload Storage** (community node `n8n-nodes-supabase` ou mover para o portal Vercel).
 - **XLSX** no fallback (nó *Extract From File* → `spreadsheetToText`).
 - **E3 — reconciliação** (Classe A aritmética em N1; B/C aproximam para humano).
 - **Refino da extração por tipo** (linhas esperadas de cada demonstração) — guiado pelo golden set.
