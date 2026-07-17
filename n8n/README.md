@@ -106,6 +106,12 @@ uma credencial Header Auth **separada** para o Supabase (ver Credenciais acima).
 apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**
 (`<ref>.supabase.co/storage/v1/...`). Ver seção Credenciais acima.
 
+**Erro `Bad request - please check your parameters` no Upload Storage mesmo com URL e
+credencial corretas:** falta o header **`apikey`**. O gateway do Supabase exige esse header
+**além** do `Authorization` (a credencial Header Auth só injeta um dos dois) — sem ele,
+rejeita antes de processar o upload. Adicionar um header `apikey` com a mesma service role key
+(já vem como campo no node, com placeholder para editar).
+
 ## Credenciais (configurar no N8N — o workflow NÃO usa variáveis de ambiente)
 
 > O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
@@ -130,6 +136,11 @@ apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da
      **Header Auth NOVA** (não reaproveitar a da OpenAI!) com Name=`Authorization`,
      Value=`Bearer <service role key>` — pegue em Settings → API → `service_role` (a chave
      secreta, não a `anon`).
+  3. **Header `apikey`:** o gateway do Supabase exige esse header **além** do `Authorization`
+     (a credencial só injeta um). No campo **Headers** do node, junto ao `x-upsert` já
+     presente, colar a **mesma service role key** no header `apikey` (o valor já vem com um
+     placeholder `COLE_A_SERVICE_ROLE_KEY_AQUI` para editar). Sem ele, a API responde `400
+     Bad Request` mesmo com URL e credencial corretas.
 - **Sem a credencial/URL do Upload**, o node falha (e para a execução — falha explícita de
   propósito: linha no banco apontando para arquivo inexistente seria um "falso-limpo"). Para
   um dry-run sem storage, **desative** o node Upload Storage.
