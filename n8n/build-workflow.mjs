@@ -177,6 +177,8 @@ const nodes = [
   // Sem $env (bloqueado por padrão no N8N): auth via credencial Header Auth
   // (Authorization: Bearer <service key>) e URL do projeto editada no node
   // após o import (trocar SEU-PROJETO pela ref real).
+  // O gateway do Supabase exige TAMBÉM o header 'apikey' (a credencial só
+  // injeta o Authorization) — sem ele, a API de Storage responde 400.
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
     url: '=https://SEU-PROJETO.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
@@ -184,6 +186,7 @@ const nodes = [
     genericAuthType: 'httpHeaderAuth',
     sendHeaders: true, headerParameters: { parameters: [
       { name: 'x-upsert', value: 'true' },
+      { name: 'apikey', value: 'COLE_A_SERVICE_ROLE_KEY_AQUI' },
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data',
   }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } } }),

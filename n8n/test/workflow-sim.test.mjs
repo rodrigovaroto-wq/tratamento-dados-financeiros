@@ -100,6 +100,9 @@ test('Preparar Conteudo: monta file part do PDF e preserva o binário p/ Upload'
 test('Upload Storage: URL usa encodeURIComponent (nomes com espaço/acento)', () => {
   assert.match(byName['Upload Storage'].parameters.url, /encodeURIComponent\(\$json\.nome_original\)/);
   assert.equal(byName['Upload Storage'].parameters.inputDataFieldName, 'data');
+  // Gateway do Supabase exige o header 'apikey' além do Authorization (credencial) — sem ele, 400.
+  const headers = byName['Upload Storage'].parameters.headerParameters.parameters;
+  assert.ok(headers.some((h) => h.name === 'apikey'), 'falta o header apikey exigido pelo Supabase');
 });
 
 test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pelo contexto', () => {
