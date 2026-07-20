@@ -2,7 +2,7 @@
 // workflow.e1-ingestao.json com dados mock, reproduzindo como o N8N passa
 // dados entre nós (incluindo: Postgres não repassa binário; HTTP Request
 // substitui o item pela resposta; $('Node').item volta o contexto; binário
-// só é lido via $helpers.getBinaryDataBuffer, nunca direto do campo .data).
+// só é lido via this.helpers.getBinaryDataBuffer, nunca direto do campo .data).
 //
 // Se este teste passa, os nós Code estão coerentes entre si de ponta a ponta.
 
@@ -16,12 +16,12 @@ const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
 const code = (name) => byName[name].parameters.jsCode;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json,
-// $helpers (binário) e $itemIndex. O código real usa `await`, então o mock
-// roda como função async — reproduz $helpers.getBinaryDataBuffer, que é a
-// forma correta (e obrigatória em modo de binário "filesystem"/S3) de ler
-// binário num Code node; ler `binary.<prop>.data` direto só funciona por
-// acaso no modo memória (achado testando com documento real no N8N).
+// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json e
+// this.helpers (binário — NÃO o global $helpers: no runtime de Task Runner
+// do N8N (padrão em instalações self-hosted recentes), $helpers não existe;
+// o jeito certo é this.helpers.getBinaryDataBuffer, confirmado testando ao
+// vivo e na doc oficial do n8n). O código real usa `await`, então o mock
+// roda como função async, com `this` vinculado via .call().
 async function run(name, { item, items, refs = {}, env = {} }) {
   const $input = {
     item,
@@ -33,14 +33,16 @@ async function run(name, { item, items, refs = {}, env = {} }) {
     return { first: () => refs[ref], item: refs[ref] };
   };
   const $json = item ? item.json : undefined;
-  const $helpers = {
-    getBinaryDataBuffer: async (_itemIndex, propertyName) => {
-      const bin = (item && item.binary && item.binary[propertyName]) || {};
-      return Buffer.from(bin.data || '', 'base64');
+  const thisContext = {
+    helpers: {
+      getBinaryDataBuffer: async (_itemIndex, propertyName) => {
+        const bin = (item && item.binary && item.binary[propertyName]) || {};
+        return Buffer.from(bin.data || '', 'base64');
+      },
     },
   };
-  const fn = new AsyncFunction('$input', '$', '$env', '$json', 'Buffer', '$helpers', '$itemIndex', code(name));
-  return fn($input, $, env, $json, Buffer, $helpers, 0);
+  const fn = new AsyncFunction('$input', '$', '$env', '$json', 'Buffer', code(name));
+  return fn.call(thisContext, $input, $, env, $json, Buffer);
 }
 
 // ---------------------------------------------------------------------------

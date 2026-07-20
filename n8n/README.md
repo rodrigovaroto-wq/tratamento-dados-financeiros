@@ -151,12 +151,19 @@ guarda binário em **modo memória** (o default). Se a instância está configur
 interna** (ex.: `"filesystem-v2"`), não a base64 — e a OpenAI recebe um `file_data` inválido
 **sem erro nenhum** (só devolve uma classificação vaga baseada só no texto do nome do arquivo,
 porque não conseguiu ler nada do PDF). Corrigido em `n8n/build-workflow.mjs` (nó `Preparar
-Conteudo`): agora usa `await $helpers.getBinaryDataBuffer($itemIndex, 'data')`, que resolve o
+Conteudo`): agora usa `await this.helpers.getBinaryDataBuffer(0, 'data')`, que resolve o
 binário corretamente em **qualquer** modo — é a forma documentada/correta de ler binário num
-Code node, nunca ler o campo `.data` direto. **Reimporte o workflow atualizado** (o node
-`Preparar Conteudo` mudou) e reteste; para confirmar que resolveu, a `justificativa` da IA deve
-passar a citar algo específico do conteúdo (cabeçalho, rótulos de linha, estrutura de colunas),
-não só repetir o nome do arquivo.
+Code node, nunca ler o campo `.data` direto.
+
+> **Correção de rota (mesmo dia):** a primeira versão deste fix usava o global `$helpers`, que
+> não existe no runtime de **Task Runner** do N8N (padrão em instalações self-hosted recentes —
+> confirmado pelo erro `ReferenceError: $helpers is not defined` testando ao vivo, N8N 2.30.7).
+> A forma correta, confirmada na doc oficial do N8N (cookbook "Get the binary data buffer"), é
+> `this.helpers.getBinaryDataBuffer(itemIndex, propertyName)` — `this`, não um global `$helpers`.
+
+**Reimporte o workflow atualizado** (o node `Preparar Conteudo` mudou) e reteste; para
+confirmar que resolveu, a `justificativa` da IA deve passar a citar algo específico do conteúdo
+(cabeçalho, rótulos de linha, estrutura de colunas), não só repetir o nome do arquivo.
 
 ## Upload Storage — pendência conhecida (node desabilitado)
 
