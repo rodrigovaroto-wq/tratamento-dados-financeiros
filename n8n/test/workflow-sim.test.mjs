@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { codigosConhecidos } from '../lib/openai.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -132,6 +133,23 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   assert.equal(parsed.json.caso_id, 'caso-uuid-1', 'contexto recomposto');
   assert.equal(parsed.json.openai_body, undefined, 'campos pesados removidos');
   assert.equal(parsed.json.content_part, undefined, 'campos pesados removidos');
+});
+
+test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num enum (caso real: virou "BAL" sem isso)', () => {
+  // Bug real (2026-07-20): o mirror manual do schema em build-workflow.mjs
+  // não tinha `enum`, então a OpenAI inventou "BAL" como tipo_taxonomia (não
+  // é um código válido) e "12M25" como periodo_tipo (é a REFERENCIA, não o
+  // tipo). Sem enum, nada no request impedia isso — Structured Outputs só
+  // restringe de fato quando o schema declara o enum explicitamente.
+  const { preparado } = chainFile(0);
+  const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+  const schema = req.json.openai_body.response_format.json_schema.schema;
+  const tipoEnum = schema.properties.tipo_taxonomia.enum;
+  const periodoEnum = schema.properties.periodo_tipo.enum;
+  assert.ok(Array.isArray(tipoEnum), 'tipo_taxonomia precisa de enum (senão a IA pode inventar código)');
+  assert.deepEqual([...tipoEnum].sort(), [...codigosConhecidos()].sort(), 'enum deve ser exatamente os códigos conhecidos + DESCONHECIDO');
+  assert.ok(tipoEnum.includes('BALANCO') && !tipoEnum.includes('BAL'), 'código correto é BALANCO, não uma abreviação inventada');
+  assert.deepEqual(periodoEnum, ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido']);
 });
 
 test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome já sabia, sem quebrar', () => {

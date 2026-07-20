@@ -120,6 +120,27 @@ N8N** travando ao tentar serializar os dados de execução dos nodes HTTP, não 
 com o Supabase/OpenAI. Limpar o cache de execução e recarregar a página **não resolve** — é
 reproduzível. Ver seção "Upload Storage — pendência conhecida" abaixo.
 
+**Erro `401 - "Your authentication token is not from a valid issuer"` (`invalid_issuer`) nos
+nós `OpenAI Classificar`/`OpenAI Extrair`:** a credencial Header Auth selecionada no node não é
+a chave da OpenAI (`sk-...`) — é um **JWT** (token de 3 partes com um campo `iss`), tipicamente
+a chave `anon`/`service_role` do **Supabase** selecionada por engano (o inverso do bug já visto
+no Upload Storage). Corrigir: no node, abrir a credencial Header Auth e conferir que o valor é
+`Bearer sk-...` da OpenAI — criar uma credencial separada da do Supabase se ainda não existir.
+
+**Documento com nome sugestivo (ex.: "BALANÇO ACUMULADO 2025.pdf") classificado com
+`tipo_taxonomia` inválido (ex.: `"BAL"` em vez de `"BALANCO"`) → `insert or update on table
+"documento" violates foreign key constraint "documento_tipo_taxonomia_fkey"` no Registrar
+Documento:** bug real encontrado testando com documento real (2026-07-20) — o schema JSON
+enviado à OpenAI (nó `Montar Req Classif`) **não travava `tipo_taxonomia`/`periodo_tipo` num
+`enum`** (era só `{type:'string'}`), então a IA ficou livre para inventar abreviações (`"BAL"`)
+em vez de usar exatamente um código da taxonomia — e até confundir `periodo_tipo` com a
+referência (`"12M25"` em vez de `"anual"`). Corrigido em `n8n/build-workflow.mjs`: o enum de
+`tipo_taxonomia` agora é **importado diretamente** de `codigosConhecidos()`
+(`lib/openai.mjs`), não copiado à mão — e há um teste (`workflow-sim.test.mjs`) que trava essa
+regressão. **Reimporte o workflow atualizado** (o node `Montar Req Classif` mudou) para pegar o
+fix; nenhum dado ficou corrompido no banco porque o `insert` falhou e reverteu (a
+constraint fez o trabalho dela).
+
 ## Upload Storage — pendência conhecida (node desabilitado)
 
 O node **`Upload Storage` vem desabilitado por padrão** neste workflow (2026-07-17) por causa
