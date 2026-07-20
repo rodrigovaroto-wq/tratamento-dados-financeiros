@@ -59,13 +59,13 @@ const ALIASES=[
   {codigo:'BALANCO',termos:['balanco patrimonial','balanco','bp']},
   {codigo:'BALANCETE',termos:['balancete']},
 ];
-function parsePeriodo(t){let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};return null;}
+function parsePeriodo(t){let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
 function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}
 const item=$input.item.json;
 const t=normalize(item.nome_original);
 const tipo=parseTipo(t), periodo=parsePeriodo(t);
 const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
-let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=0.3; if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
+let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=(periodo.fraco?0.05:0.3); if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
 return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:null, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}, binary: $input.item.binary};
 `.trim();
 
@@ -92,7 +92,7 @@ const CODE_REQ_CLASSIF = `
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
 const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
-  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios. Se incerto use DESCONHECIDO e confianca baixa. Nunca invente.'},
+  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'},
   {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}
 ]};
 return {json:{...item, openai_body: body}};
@@ -101,21 +101,48 @@ return {json:{...item, openai_body: body}};
 // --- Code (EACH ITEM): parse da classificação -----------------------------
 // Contexto vem do node anterior por referência (a resposta HTTP substituiu o
 // item). Remove os campos pesados (openai_body/content_part) do que segue.
+// Espelha n8n/lib/merge.mjs: fica com a MAIOR confiança entre nome-do-arquivo
+// e IA (não sobrescreve cegamente); entidade/assinado da IA sempre aproveitados.
 const CODE_PARSE_CLASSIF = `
+function mergeClassification(fromName, fromAI){
+  const nameHasTipo=!!fromName.tipo_taxonomia, aiHasTipo=!!fromAI.tipo_taxonomia;
+  let winner;
+  if(aiHasTipo&&nameHasTipo) winner=(fromAI.confianca??0)>=(fromName.confianca??0)?fromAI:fromName;
+  else if(aiHasTipo) winner=fromAI;
+  else if(nameHasTipo) winner=fromName;
+  else winner=fromAI;
+  return {
+    tipo_taxonomia:winner.tipo_taxonomia??null,
+    periodo_tipo:fromAI.periodo_ref?fromAI.periodo_tipo:(fromName.periodo_ref?fromName.periodo_tipo:null),
+    periodo_ref:fromAI.periodo_ref??fromName.periodo_ref??null,
+    assinado:fromAI.assinado??fromName.assinado??null,
+    entidade:fromAI.entidade??fromName.entidade??null,
+    confianca:Math.max(fromName.confianca||0, fromAI.confianca||0),
+    fonte:winner===fromAI?'openai_conteudo':'nome_arquivo',
+    justificativa:fromAI.justificativa||'',
+  };
+}
 const src=$('Montar Req Classif').item.json;
 const {openai_body, content_part, content_mime, ...item}=src;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
-if(!content){return {json:{...item, fonte:'openai_conteudo', confianca:0}};}
-let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){return {json:{...item, fonte:'openai_conteudo', confianca:0}};}
-return {json:{...item,
+const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
+if(!content){
+  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'A chamada a OpenAI nao retornou conteudo (falha de rede/API).'})}};
+}
+let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
+  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Resposta da OpenAI nao veio em JSON valido.'})}};
+}
+const fromAI={
   tipo_taxonomia:p.tipo_taxonomia==='DESCONHECIDO'?null:p.tipo_taxonomia,
-  entidade:p.entidade??item.entidade??null,
+  entidade:p.entidade??null,
   periodo_tipo:p.periodo_referencia?p.periodo_tipo:null,
   periodo_ref:p.periodo_referencia??null,
   assinado:p.assinado??null,
   confianca:typeof p.confianca==='number'?p.confianca:0,
-  fonte:'openai_conteudo', justificativa:p.justificativa||''}};
+  justificativa:p.justificativa||'',
+};
+return {json:{...item, ...mergeClassification(fromName, fromAI)}};
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de EXTRAÇÃO (E2, sombra) -----
@@ -219,10 +246,12 @@ const nodes = [
 
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200),
 
+  // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
+  // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade) as r',
-    options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok'] }}" },
+    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
+    options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa || null] }}" },
   }, 1850, 400, { credentials: PG_CRED }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {

@@ -134,12 +134,16 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   assert.equal(parsed.json.content_part, undefined, 'campos pesados removidos');
 });
 
-test('Ramo fallback: falha da OpenAI (onError continue) → confiança 0, sem quebrar', () => {
-  const { preparado } = chainFile(0);
+test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome já sabia, sem quebrar', () => {
+  const { preparado } = chainFile(0); // BALANÇO ACUMULADO 2025.pdf: nome já dava BALANCO @ 0.65
   const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
-  const erro = { json: { error: 'timeout' } }; // resposta de erro qualquer
+  const erro = { json: { error: 'timeout' } }; // resposta de erro qualquer (sem content)
   const parsed = run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
-  assert.equal(parsed.json.confianca, 0, 'vira pendência de classificação (fail-safe)');
+  // Merge: falha técnica da IA não deve descartar um sinal que o nome já dava.
+  assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
+  assert.equal(parsed.json.confianca, 0.65, 'mantém a confiança do nome, não zera por falha técnica da IA');
+  assert.equal(parsed.json.fonte, 'nome_arquivo');
+  assert.match(parsed.json.justificativa, /nao retornou conteudo/);
   assert.equal(byName['OpenAI Classificar'].onError, 'continueRegularOutput');
   assert.equal(byName['OpenAI Extrair'].onError, 'continueRegularOutput');
 });

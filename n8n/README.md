@@ -73,7 +73,7 @@ Parameters"** → cole a expressão correspondente:
 | Node | Query Parameters |
 |---|---|
 | Upsert Caso (Postgres) | `={{ [$json["Mandato (nome do caso)"]] }}` |
-| Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok'] }}` |
+| Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa \|\| null] }}` (14º parâmetro = justificativa; a query usa `p_justificativa=>$14` para pular o `p_threshold` que fica no default) |
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
 | Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
 
@@ -194,6 +194,29 @@ arquivo** (montado no `Preparar Conteudo`, que roda para todos):
   (`n8n/lib/spreadsheet.mjs`). Ponto explícito de adaptação no N8N.
 - Saída sempre via **Structured Outputs** (JSON Schema estrito). Continua **N1**: sugestão
   para revisão humana.
+
+## Qualidade da classificação — ajustes feitos a partir de teste real (2026-07-17)
+
+Testando com um documento real (`BALANÇO ACUMULADO 2025.pdf`), a classificação ficou incerta
+(confiança 0.5, tipo `DESCONHECIDO`) mesmo o nome citando "Balanço" claramente. Três ajustes:
+
+1. **Período mais flexível** (`n8n/lib/classifier.mjs`): reconhece agora ano isolado ("2025")
+   e intervalo de anos ("2021-2025", "2021 a 2025" — expandido para a lista inteira, não só os
+   extremos). Um ano isolado é tratado como sinal **fraco** (soma só +0.05 à confiança, contra
+   +0.3 dos formatos estruturados) — de propósito: "tipo no nome + ano solto" não deve, sozinho,
+   pular a verificação pela IA (ex.: `BALANCO` + `2025` fica em 0.65, abaixo do limiar 0.7).
+2. **Merge de confiança nome-vs-IA** (`n8n/lib/merge.mjs`): quando o fallback roda, o resultado
+   final fica com a **maior confiança** entre nome-do-arquivo e IA — não é mais sempre a IA que
+   vence. Entidade e assinado da IA são sempre aproveitados (o nome nunca informa isso). Se a
+   chamada à OpenAI falhar tecnicamente, o sistema não zera a confiança à toa — mantém o que o
+   nome já sabia.
+3. **Prompt menos conservador + justificativa objetiva** (`n8n/lib/openai.mjs`): antes, o
+   prompt incentivava "se incerto, use DESCONHECIDO" — na prática, isso fazia o modelo desistir
+   fácil demais. Agora ele é instruído a **sempre tentar um palpite específico** (reservando
+   `DESCONHECIDO` só para documento genuinamente ilegível/não-financeiro), e o campo
+   `justificativa` passou a ser obrigatório e objetivo (o que ele viu/não viu no documento).
+   Essa justificativa agora **aparece na descrição da pendência** de classificação
+   (`db/migrations/0007`), então o humano revisando já vê o motivo, não só o número de confiança.
 
 ## ⚠️ Estado honesto desta entrega
 

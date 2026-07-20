@@ -19,6 +19,23 @@ test('parsePeriodo reconhece as convenções de f0/03', () => {
   assert.deepEqual(parsePeriodo('mutuos 23 24 25'), { tipo: 'multi', referencia: '23,24,25' });
 });
 
+test('parsePeriodo reconhece ano isolado (sinal fraco)', () => {
+  assert.deepEqual(parsePeriodo('balanco acumulado 2025'), { tipo: 'anual', referencia: '2025', fraco: true });
+  assert.deepEqual(parsePeriodo('relatorio 2024'), { tipo: 'anual', referencia: '2024', fraco: true });
+});
+
+test('parsePeriodo reconhece intervalo de anos (expande a lista inteira)', () => {
+  assert.deepEqual(parsePeriodo('mutuos 2021-2025'), { tipo: 'multi', referencia: '21,22,23,24,25' });
+  assert.deepEqual(parsePeriodo('mutuos 2021 a 2025'), { tipo: 'multi', referencia: '21,22,23,24,25' });
+  assert.deepEqual(parsePeriodo('mutuos 21-25'), { tipo: 'multi', referencia: '21,22,23,24,25' });
+  assert.deepEqual(parsePeriodo('mutuos 2023-2024'), { tipo: 'multi', referencia: '23,24' });
+});
+
+test('parsePeriodo: intervalo invertido (fim < início) não expande, cai no fallback de lista', () => {
+  // start > end: a expansão não roda; ainda assim os 2 números viram lista multi-ano
+  assert.deepEqual(parsePeriodo('mutuos 2025-2021'), { tipo: 'multi', referencia: '25,21' });
+});
+
 test('parseTipo mapeia termos → código, específico antes de genérico', () => {
   assert.equal(parseTipo('dre').codigo, 'DRE');
   assert.equal(parseTipo('balanco patrimonial').codigo, 'BALANCO');
@@ -56,6 +73,16 @@ test('classifyByFilename — tipo sem período ainda pede fallback (confiança 0
   assert.equal(r.periodo, null);
   assert.equal(r.confianca, 0.6);
   assert.equal(r.precisa_fallback_openai, true); // < 0.7
+});
+
+test('classifyByFilename — tipo + ano isolado NÃO ultrapassa o limiar sozinho (sempre verifica com a IA)', () => {
+  // Caso real: "BALANÇO ACUMULADO 2025.pdf" — ter "BALANÇO" no nome + um ano
+  // solto não é suficiente para aceitar sem checar o conteúdo (feedback do dono).
+  const r = classifyByFilename('BALANÇO ACUMULADO 2025.pdf');
+  assert.equal(r.tipo_taxonomia, 'BALANCO');
+  assert.deepEqual(r.periodo, { tipo: 'anual', referencia: '2025', fraco: true });
+  assert.equal(r.confianca, 0.65, `confianca=${r.confianca} deve ficar abaixo do limiar 0.7`);
+  assert.equal(r.precisa_fallback_openai, true, 'ano isolado não deve pular a verificação da IA');
 });
 
 test('classifyByFilename — casos reais do mandato de referência', () => {
