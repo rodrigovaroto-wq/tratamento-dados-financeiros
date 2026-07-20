@@ -89,7 +89,11 @@ const mt=(binMeta.mimeType||'').toLowerCase();
 // "filesystem-v2"), e a IA acaba recebendo um PDF invalido sem avisar (achado
 // testando com documento real: a OpenAI so' "leu" o nome do arquivo, porque o
 // file_data enviado era lixo). O helper resolve os dois modos corretamente.
-const buf=await $helpers.getBinaryDataBuffer($itemIndex,'data');
+// No runtime de Task Runner (padrao a partir do N8N 1.x/2.x self-hosted) o
+// global $helpers NAO existe -- e' this.helpers (doc oficial n8n, cookbook
+// "Get the binary data buffer"). Cada item roda isolado em each-item mode,
+// entao o indice e' sempre 0 (o item corrente).
+const buf=await this.helpers.getBinaryDataBuffer(0,'data');
 const b64=buf.toString('base64');
 function parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}
 function sheetTxt(rows,mr=50,mc=25){if(!rows.length)return '(planilha vazia)';const cols=Object.keys(rows[0]).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
