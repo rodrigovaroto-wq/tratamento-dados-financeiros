@@ -1,7 +1,8 @@
 // Simulação do workflow gerado: executa os códigos REAIS dos nós Code de
 // workflow.e1-ingestao.json com dados mock, reproduzindo como o N8N passa
 // dados entre nós (incluindo: Postgres não repassa binário; HTTP Request
-// substitui o item pela resposta; $('Node').item volta o contexto).
+// substitui o item pela resposta; $('Node').item volta o contexto; binário
+// só é lido via $helpers.getBinaryDataBuffer, nunca direto do campo .data).
 //
 // Se este teste passa, os nós Code estão coerentes entre si de ponta a ponta.
 
@@ -13,9 +14,15 @@ import { codigosConhecidos } from '../lib/openai.mjs';
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
 const code = (name) => byName[name].parameters.jsCode;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json.
-function run(name, { item, items, refs = {}, env = {} }) {
+// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json,
+// $helpers (binário) e $itemIndex. O código real usa `await`, então o mock
+// roda como função async — reproduz $helpers.getBinaryDataBuffer, que é a
+// forma correta (e obrigatória em modo de binário "filesystem"/S3) de ler
+// binário num Code node; ler `binary.<prop>.data` direto só funciona por
+// acaso no modo memória (achado testando com documento real no N8N).
+async function run(name, { item, items, refs = {}, env = {} }) {
   const $input = {
     item,
     first: () => (items ? items[0] : item),
@@ -26,8 +33,14 @@ function run(name, { item, items, refs = {}, env = {} }) {
     return { first: () => refs[ref], item: refs[ref] };
   };
   const $json = item ? item.json : undefined;
-  const fn = new Function('$input', '$', '$env', '$json', 'Buffer', code(name));
-  return fn($input, $, env, $json, Buffer);
+  const $helpers = {
+    getBinaryDataBuffer: async (_itemIndex, propertyName) => {
+      const bin = (item && item.binary && item.binary[propertyName]) || {};
+      return Buffer.from(bin.data || '', 'base64');
+    },
+  };
+  const fn = new AsyncFunction('$input', '$', '$env', '$json', 'Buffer', '$helpers', '$itemIndex', code(name));
+  return fn($input, $, env, $json, Buffer, $helpers, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +57,8 @@ const FORM_ITEM = {
 const UPSERT_ITEM = { json: { caso_id: 'caso-uuid-1' } }; // sem binário (Postgres não repassa)
 const REFS_BASE = { 'Intake (Form)': FORM_ITEM, 'Upsert Caso (Postgres)': UPSERT_ITEM };
 
-test('Listar Arquivos: fan-out lê binário do FORM (não do Postgres) e normaliza a chave', () => {
-  const out = run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+test('Listar Arquivos: fan-out lê binário do FORM (não do Postgres) e normaliza a chave', async () => {
+  const out = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
   assert.ok(Array.isArray(out), 'all-items deve retornar array');
   assert.equal(out.length, 2);
   for (const it of out) {
@@ -56,9 +69,9 @@ test('Listar Arquivos: fan-out lê binário do FORM (não do Postgres) e normali
   assert.equal(out[0].json.nome_original, 'BALANÇO ACUMULADO 2025.pdf');
 });
 
-test('Listar Arquivos: sem arquivos → erro explícito (não saída vazia silenciosa)', () => {
+test('Listar Arquivos: sem arquivos → erro explícito (não saída vazia silenciosa)', async () => {
   const semArquivos = { ...UPSERT_ITEM };
-  assert.throws(
+  await assert.rejects(
     () => run('Listar Arquivos', {
       item: semArquivos, items: [semArquivos],
       refs: { ...REFS_BASE, 'Intake (Form)': { json: {}, binary: {} } },
@@ -68,29 +81,34 @@ test('Listar Arquivos: sem arquivos → erro explícito (não saída vazia silen
 });
 
 // Encadeia os dois arquivos pela cadeia principal e guarda os intermediários.
-function chainFile(idx) {
-  const listado = run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE })[idx];
-  const classificado = run('Classificar Nome', { item: listado, refs: REFS_BASE });
-  const preparado = run('Preparar Conteudo', { item: classificado, refs: REFS_BASE });
+async function chainFile(idx) {
+  const listado = (await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE }))[idx];
+  const classificado = await run('Classificar Nome', { item: listado, refs: REFS_BASE });
+  const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE });
   return { listado, classificado, preparado };
 }
 
-test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o binário', () => {
-  const { classificado } = chainFile(0); // BALANÇO ACUMULADO 2025.pdf
+test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o binário', async () => {
+  const { classificado } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf
   assert.ok(!Array.isArray(classificado), 'each-item deve retornar objeto único');
   assert.equal(classificado.json.tipo_taxonomia, 'BALANCO');
   assert.equal(classificado.json.precisa_fallback_openai, true, 'sem período no nome → confiança 0.6 → fallback');
   assert.ok(classificado.binary?.data, 'binário preservado para os nós seguintes');
 
-  const { classificado: dre } = chainFile(1); // 12M25 DRE (Assinado).pdf
+  const { classificado: dre } = await chainFile(1); // 12M25 DRE (Assinado).pdf
   assert.equal(dre.json.tipo_taxonomia, 'DRE');
   assert.equal(dre.json.periodo_ref, '12M25');
   assert.equal(dre.json.assinado, true);
   assert.equal(dre.json.precisa_fallback_openai, false, 'nome completo → alta confiança → direto');
 });
 
-test('Preparar Conteudo: monta file part do PDF e preserva o binário p/ Upload', () => {
-  const { preparado } = chainFile(0);
+test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não do campo .data direto)', async () => {
+  // Bug real (2026-07-20): ler binary.data.data direto funciona só por acaso
+  // no modo de binário em memória do N8N; no modo filesystem/S3 esse campo
+  // vira uma referência interna (ex.: "filesystem-v2"), não a base64 — e a
+  // OpenAI acaba recebendo um PDF inválido sem nenhum erro (achado quando a
+  // IA só "leu" o nome do arquivo, porque o conteúdo enviado era lixo).
+  const { preparado } = await chainFile(0);
   assert.ok(!Array.isArray(preparado));
   assert.equal(preparado.json.content_part.type, 'file');
   assert.match(preparado.json.content_part.file.file_data, /^data:application\/pdf;base64,QUJD$/);
@@ -114,9 +132,9 @@ test('Upload Storage: desabilitado (bug de plataforma do HTTP Request + binário
   assert.equal(byName['Upload Storage'].disabled, true, 'Upload Storage deve seguir desabilitado até resolver o bug de plataforma');
 });
 
-test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pelo contexto', () => {
-  const { preparado } = chainFile(0);
-  const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pelo contexto', async () => {
+  const { preparado } = await chainFile(0);
+  const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
   assert.equal(req.json.openai_body.model, 'gpt-4o');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'), 'conteúdo do arquivo vai na chamada');
 
@@ -125,7 +143,7 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
     tipo_taxonomia: 'BALANCO', entidade: 'Empresa X Ltda', periodo_tipo: 'anual',
     periodo_referencia: '12M25', assinado: true, confianca: 0.91, justificativa: 'cabeçalho',
   }) } }] } };
-  const parsed = run('Parse OpenAI Classif', { item: respostaOpenAI, refs: { 'Montar Req Classif': req } });
+  const parsed = await run('Parse OpenAI Classif', { item: respostaOpenAI, refs: { 'Montar Req Classif': req } });
   assert.ok(!Array.isArray(parsed));
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
   assert.equal(parsed.json.entidade, 'Empresa X Ltda');
@@ -135,14 +153,14 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   assert.equal(parsed.json.content_part, undefined, 'campos pesados removidos');
 });
 
-test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num enum (caso real: virou "BAL" sem isso)', () => {
+test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num enum (caso real: virou "BAL" sem isso)', async () => {
   // Bug real (2026-07-20): o mirror manual do schema em build-workflow.mjs
   // não tinha `enum`, então a OpenAI inventou "BAL" como tipo_taxonomia (não
   // é um código válido) e "12M25" como periodo_tipo (é a REFERENCIA, não o
   // tipo). Sem enum, nada no request impedia isso — Structured Outputs só
   // restringe de fato quando o schema declara o enum explicitamente.
-  const { preparado } = chainFile(0);
-  const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+  const { preparado } = await chainFile(0);
+  const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
   const schema = req.json.openai_body.response_format.json_schema.schema;
   const tipoEnum = schema.properties.tipo_taxonomia.enum;
   const periodoEnum = schema.properties.periodo_tipo.enum;
@@ -152,11 +170,11 @@ test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num
   assert.deepEqual(periodoEnum, ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido']);
 });
 
-test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome já sabia, sem quebrar', () => {
-  const { preparado } = chainFile(0); // BALANÇO ACUMULADO 2025.pdf: nome já dava BALANCO @ 0.65
-  const req = run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome já sabia, sem quebrar', async () => {
+  const { preparado } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf: nome já dava BALANCO @ 0.65
+  const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
   const erro = { json: { error: 'timeout' } }; // resposta de erro qualquer (sem content)
-  const parsed = run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
+  const parsed = await run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
   // Merge: falha técnica da IA não deve descartar um sinal que o nome já dava.
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
   assert.equal(parsed.json.confianca, 0.65, 'mantém a confiança do nome, não zera por falha técnica da IA');
@@ -166,11 +184,11 @@ test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome
   assert.equal(byName['OpenAI Extrair'].onError, 'continueRegularOutput');
 });
 
-test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload p/ Gravar Campos', () => {
-  const { preparado } = chainFile(1);
+test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload p/ Gravar Campos', async () => {
+  const { preparado } = await chainFile(1);
   // Saída do Registrar Documento (Postgres): linha {r: {ids}}
   const registrado = { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } };
-  const req = run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
   assert.equal(req.json.documento_versao_id, 'ver-1');
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
@@ -182,7 +200,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload p/ Gravar
       { chave: 'EBITDA', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
     ],
   }) } }] } };
-  const parsed = run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
+  const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.documento_versao_id, 'ver-1');
   assert.equal(parsed.json.campos.length, 2);
   assert.equal(parsed.json.campos[0].unidade, 'R$ mil', 'unidade do documento herdada por linha');
