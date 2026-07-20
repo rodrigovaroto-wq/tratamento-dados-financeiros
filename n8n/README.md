@@ -263,6 +263,17 @@ Testando com um documento real (`BALANÇO ACUMULADO 2025.pdf`), a classificaçã
    Essa justificativa agora **aparece na descrição da pendência** de classificação
    (`db/migrations/0007`), então o humano revisando já vê o motivo, não só o número de confiança.
 
+**Confirmado ao vivo (2026-07-20), depois de corrigir dois bugs à parte encontrados no caminho**
+(enum ausente no schema da OpenAI — ver troubleshooting acima — e leitura de binário via
+`this.helpers.getBinaryDataBuffer` em vez do campo `.data` direto): o mesmo documento
+`BALANÇO ACUMULADO 2025.pdf` classificou com `tipo_taxonomia=BALANCO`, `confiança=0.9`,
+`fonte=openai_conteudo`, e a justificativa passou a citar o **conteúdo real** do PDF:
+> "O documento é intitulado 'BALANÇO PATRIMONIAL ACUMULADO 31 DE DEZEMBRO 2025', indicando que
+> se trata de um balanço patrimonial. A data de referência é 2025, e o documento está assinado
+> por um contador registrado, o que aumenta a confiança na classificação."
+
+Os quatro itens do feedback original estão validados de ponta a ponta com documento real.
+
 ## ⚠️ Estado honesto desta entrega
 
 - **Executado ponta a ponta no N8N real do dono (2026-07-17):** Upsert Caso → Listar Arquivos
