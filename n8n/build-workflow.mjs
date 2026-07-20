@@ -20,11 +20,19 @@
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { codigosConhecidos } from './lib/openai.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Enums da classificação — IMPORTADOS de lib/openai.mjs (fonte única), não
+// copiados à mão: um mirror manual desses códigos já ficou desatualizado uma
+// vez (permitindo a OpenAI inventar "BAL" em vez de "BALANCO", sem nenhum
+// enum travando a saída) e só foi pego testando com documento real no N8N.
+const TIPO_TAXONOMIA_ENUM = JSON.stringify(codigosConhecidos());
+const PERIODO_TIPO_ENUM = JSON.stringify(['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido']);
+
 // Schemas estritos (mesma forma dos módulos lib/openai.mjs e lib/extract.mjs).
-const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string'},entidade:{type:['string','null']},periodo_tipo:{type:'string'},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number'},justificativa:{type:'string'}}}}`;
+const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
 const SCHEMA_EXTRACAO = `{name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}}`;
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
