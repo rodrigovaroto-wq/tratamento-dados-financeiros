@@ -141,6 +141,23 @@ regressão. **Reimporte o workflow atualizado** (o node `Montar Req Classif` mud
 fix; nenhum dado ficou corrompido no banco porque o `insert` falhou e reverteu (a
 constraint fez o trabalho dela).
 
+**IA classifica com confiança "razoável" mas a `justificativa` só repete o nome do arquivo
+(nunca cita cabeçalho, colunas, estrutura do documento) — sinal de que o PDF NÃO chegou de
+verdade na OpenAI:** bug real encontrado testando com documento real (2026-07-20), no mesmo
+caso do item acima já corrigido. O node `Preparar Conteudo` lia `binary.data.data` **direto**
+assumindo que esse campo sempre é a string base64 do arquivo — o que só é verdade quando o N8N
+guarda binário em **modo memória** (o default). Se a instância está configurada em modo
+**filesystem** ou **S3** (`N8N_DEFAULT_BINARY_DATA_MODE`), esse campo vira uma **referência
+interna** (ex.: `"filesystem-v2"`), não a base64 — e a OpenAI recebe um `file_data` inválido
+**sem erro nenhum** (só devolve uma classificação vaga baseada só no texto do nome do arquivo,
+porque não conseguiu ler nada do PDF). Corrigido em `n8n/build-workflow.mjs` (nó `Preparar
+Conteudo`): agora usa `await $helpers.getBinaryDataBuffer($itemIndex, 'data')`, que resolve o
+binário corretamente em **qualquer** modo — é a forma documentada/correta de ler binário num
+Code node, nunca ler o campo `.data` direto. **Reimporte o workflow atualizado** (o node
+`Preparar Conteudo` mudou) e reteste; para confirmar que resolveu, a `justificativa` da IA deve
+passar a citar algo específico do conteúdo (cabeçalho, rótulos de linha, estrutura de colunas),
+não só repetir o nome do arquivo.
+
 ## Upload Storage — pendência conhecida (node desabilitado)
 
 O node **`Upload Storage` vem desabilitado por padrão** neste workflow (2026-07-17) por causa

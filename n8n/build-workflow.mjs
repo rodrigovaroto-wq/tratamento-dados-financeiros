@@ -82,14 +82,21 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 // Preserva o binário (o Upload Storage roda como ramo a partir deste node).
 const CODE_PREPARAR_CONTEUDO = `
 const item=$input.item.json;
-const bin=($input.item.binary||{})['data']||{};
-const b64=bin.data||''; const mt=(bin.mimeType||'').toLowerCase();
+const binMeta=($input.item.binary||{})['data']||{};
+const mt=(binMeta.mimeType||'').toLowerCase();
+// NUNCA ler binMeta.data direto: se o N8N estiver em modo de binario "filesystem"
+// (ou S3), esse campo NAO e' a base64 -- e' so' uma referencia interna (ex.:
+// "filesystem-v2"), e a IA acaba recebendo um PDF invalido sem avisar (achado
+// testando com documento real: a OpenAI so' "leu" o nome do arquivo, porque o
+// file_data enviado era lixo). O helper resolve os dois modos corretamente.
+const buf=await $helpers.getBinaryDataBuffer($itemIndex,'data');
+const b64=buf.toString('base64');
 function parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}
 function sheetTxt(rows,mr=50,mc=25){if(!rows.length)return '(planilha vazia)';const cols=Object.keys(rows[0]).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
 let part;
 if(/pdf/.test(mt)) part={type:'file',file:{filename:item.nome_original||'documento.pdf',file_data:'data:application/pdf;base64,'+b64}};
 else if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+mt+';base64,'+b64}};
-else if(/csv/.test(mt)||mt==='text/plain'){const txt=Buffer.from(b64,'base64').toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}
+else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}
 else if(/spreadsheetml|ms-excel|excel/.test(mt)) part={type:'text',text:'(XLSX: habilitar Extract From File no N8N p/ extrair texto — ver README. Nome: '+(item.nome_original||'')+')'};
 else part={type:'text',text:'(conteudo nao suportado: '+mt+')'};
 return {json:{...item, content_part: part, content_mime: mt}, binary: $input.item.binary};
