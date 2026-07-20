@@ -1,0 +1,48 @@
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { hasEnvVars } from "./env";
+
+// Renova a sessão a cada requisição e redireciona quem não está autenticado
+// para /login. Chamado pelo src/proxy.ts (Next.js 16 renomeou middleware →
+// proxy — ver https://nextjs.org/docs/messages/middleware-to-proxy).
+export async function updateSession(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({ request });
+
+  if (!hasEnvVars) {
+    // Sem .env.local ainda configurado (ver README) — não trava em loop de
+    // redirect pro /login antes do projeto estar configurado.
+    return supabaseResponse;
+  }
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options),
+          );
+        },
+      },
+    },
+  );
+
+  // Não rodar nada entre createServerClient e getClaims() — verificação
+  // local do JWT (mais rápida que getUser(), que faz round-trip à rede).
+  const { data } = await supabase.auth.getClaims();
+  const user = data?.claims;
+
+  if (!user && !request.nextUrl.pathname.startsWith("/login")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  return supabaseResponse;
+}
