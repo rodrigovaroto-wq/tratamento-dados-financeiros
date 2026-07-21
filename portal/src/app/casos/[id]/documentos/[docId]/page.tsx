@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { CampoExtraido, Documento } from "@/lib/types";
+import { aceitarExtracao } from "./actions";
 
 function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
   if (valorNum != null) {
@@ -53,7 +54,9 @@ export default async function PlanilhaDocumentoPage({
   const camposRes = versao
     ? await supabase
         .from("campo_extraido")
-        .select("id, documento_versao_id, secao, chave, valor_texto, valor_num, unidade, confianca, origem_pagina")
+        .select(
+          "id, documento_versao_id, secao, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+        )
         .eq("documento_versao_id", versao.id)
         .order("origem_pagina", { ascending: true, nullsFirst: false })
         .order("criado_em", { ascending: true })
@@ -61,6 +64,9 @@ export default async function PlanilhaDocumentoPage({
 
   const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
   const grupos = agruparPorSecao(campos);
+  const nAceitos = campos.filter((c) => c.status_aceite === "aceito").length;
+  const tudoAceito = campos.length > 0 && nAceitos === campos.length;
+  const aceitarAction = versao ? aceitarExtracao.bind(null, id, docId) : null;
 
   return (
     <div className="space-y-6">
@@ -91,9 +97,35 @@ export default async function PlanilhaDocumentoPage({
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-          Linhas extraídas ({campos.length}) — sombra (N0), ainda não são fato aceito
-        </h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-neutral-700">
+            Linhas extraídas ({campos.length}) — {nAceitos} de {campos.length} aceitas para o export
+          </h2>
+        </div>
+
+        {campos.length > 0 && !tudoAceito && aceitarAction && (
+          <form action={aceitarAction} className="mb-4 flex items-center gap-3 rounded border border-amber-200 bg-amber-50 p-3">
+            <input type="hidden" name="documento_versao_id" value={versao!.id} />
+            <input
+              type="text"
+              name="motivo"
+              placeholder="Motivo/observação (opcional)"
+              className="flex-1 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            />
+            <button
+              type="submit"
+              className="whitespace-nowrap rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
+            >
+              Aceitar estes dados para a base
+            </button>
+          </form>
+        )}
+        {tudoAceito && (
+          <p className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            ✓ Todas as linhas foram aceitas — já entram no export como fato.
+          </p>
+        )}
+
         {campos.length === 0 ? (
           <p className="text-sm text-neutral-500">Nenhuma linha extraída para este documento ainda.</p>
         ) : (
@@ -110,11 +142,13 @@ export default async function PlanilhaDocumentoPage({
                       <th className="px-3 py-1.5 text-right">Valor</th>
                       <th className="px-3 py-1.5">Página</th>
                       <th className="px-3 py-1.5">Confiança</th>
+                      <th className="px-3 py-1.5">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-100">
                     {linhas.map((linha) => {
                       const ehTotal = /total/i.test(linha.chave);
+                      const aceito = linha.status_aceite === "aceito";
                       return (
                         <tr key={linha.id} className={ehTotal ? "font-semibold" : ""}>
                           <td className="px-3 py-1.5">{linha.chave}</td>
@@ -124,6 +158,16 @@ export default async function PlanilhaDocumentoPage({
                           <td className="px-3 py-1.5 text-neutral-500">{linha.origem_pagina ?? "—"}</td>
                           <td className="px-3 py-1.5 text-neutral-500">
                             {linha.confianca != null ? `${Math.round(linha.confianca * 100)}%` : "—"}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-xs font-medium uppercase ${
+                                aceito ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                              }`}
+                              title={aceito && linha.aceito_por ? `Aceito por ${linha.aceito_por}` : ""}
+                            >
+                              {aceito ? "aceito" : "pendente"}
+                            </span>
                           </td>
                         </tr>
                       );

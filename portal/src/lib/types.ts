@@ -62,7 +62,11 @@ export interface Documento {
   documento_versao: DocumentoVersao[] | null;
 }
 
-// Uma linha extraída pelo diagnóstico/extração (E2, N0/sombra) — db/migrations/0005, 0010.
+export type StatusAceite = "pendente" | "aceito" | "com_ressalva";
+
+// Uma linha extraída pelo diagnóstico/extração (E2, N0/sombra) — db/migrations/0005, 0010, 0011.
+// status_aceite/aceito_por/aceito_em = Portão 2 mínimo (f0/07): sem aceite,
+// nunca é "fato" — só sugestão pendente de revisão.
 export interface CampoExtraido {
   id: string;
   documento_versao_id: string;
@@ -73,6 +77,9 @@ export interface CampoExtraido {
   unidade: string | null;
   confianca: number | null;
   origem_pagina: number | null;
+  status_aceite: StatusAceite;
+  aceito_por: string | null;
+  aceito_em: string | null;
 }
 
 export interface ChecklistItem {
