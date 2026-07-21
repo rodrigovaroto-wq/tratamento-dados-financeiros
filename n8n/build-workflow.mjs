@@ -33,7 +33,12 @@ const PERIODO_TIPO_ENUM = JSON.stringify(['anual', 'trimestre', 'multi', 'data-b
 
 // Schemas estritos (mesma forma dos módulos lib/openai.mjs e lib/extract.mjs).
 const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
-const SCHEMA_EXTRACAO = `{name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}}`;
+// Diagnóstico (entidade/confere tipo+período/legibilidade/resumo) + linhas
+// com `secao` (agrupador de planilha) — mesma chamada que já rodava sempre
+// para extrair linhas (não aumenta o nº de chamadas à OpenAI); espelha
+// n8n/lib/extract.mjs (fonte da verdade).
+const LEGIBILIDADE_ENUM = JSON.stringify(['ok', 'degradado', 'ilegivel']);
+const SCHEMA_EXTRACAO = `{name:'diagnostico_e_extracao',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','diagnostico','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},diagnostico:{type:'object',additionalProperties:false,required:['entidade','tipo_confirma','tipo_sugerido','periodo_tipo','periodo_referencia','legibilidade','nota_legibilidade','resumo','justificativa'],properties:{entidade:{type:['string','null']},tipo_confirma:{type:'boolean'},tipo_sugerido:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},legibilidade:{type:'string',enum:${LEGIBILIDADE_ENUM}},nota_legibilidade:{type:['string','null']},resumo:{type:'string'},justificativa:{type:'string'}}},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['secao','chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{secao:{type:['string','null']},chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}}`;
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
 // Binário vem do FORM (o Postgres anterior não o repassa). Chave normalizada
@@ -164,30 +169,46 @@ const fromAI={
 return {json:{...item, ...mergeClassification(fromName, fromAI)}};
 `.trim();
 
-// --- Code (EACH ITEM): monta corpo da chamada de EXTRAÇÃO (E2, sombra) -----
+// --- Code (EACH ITEM): monta corpo da chamada de DIAGNÓSTICO+EXTRAÇÃO (E2) -
 // $json vem do Registrar Documento (linha {r:{documento_id, documento_versao_id}}).
-// O conteúdo do arquivo volta por referência ao Preparar Conteudo.
+// O conteúdo do arquivo volta por referência ao Preparar Conteudo. Espelha
+// n8n/lib/extract.mjs: SEMPRE roda (não só no fallback de baixa confiança) —
+// é a ÚNICA leitura de conteúdo garantida para todo documento, por isso
+// também busca entidade e faz o diagnóstico (confere tipo/período/legibilidade).
 const CODE_REQ_EXTRACAO = `
 const reg=$json;
 const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
+const promptSistema='Voce analisa UM documento financeiro de um mandato de Reestruturacao (Brasil) e devolve DUAS coisas: um diagnostico do documento e a extracao linha a linha de TODOS os dados financeiros, organizados como planilha. DIAGNOSTICO: entidade = razao social se visivel no conteudo (null se nao, nunca invente); tipo_confirma/tipo_sugerido = voce recebe uma dica de tipo vinda do nome do arquivo, leia o conteudo e diga se bate (tipo_confirma) e qual o codigo que o CONTEUDO sugere (tipo_sugerido, pode diferir da dica; DESCONHECIDO so se ilegivel/nao-financeiro); periodo_tipo/periodo_referencia = periodo real do conteudo (12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; "23,24,25"=multiplos exercicios; ano isolado tambem vale); legibilidade = ok/degradado/ilegivel (avaliacao real do ARQUIVO: paginas faltando, digitalizacao ruim, tabela cortada), nota_legibilidade explica quando != ok (null quando ok); resumo = 2-3 frases objetivas do conteudo; justificativa = 1-2 frases do diagnostico. LINHAS: extraia TODAS as linhas financeiras (rotulo+valor), com secao = agrupador que espelha a estrutura do proprio documento (ex.: "Ativo Circulante", "Passivo Nao Circulante", "Patrimonio Liquido", "Receita Operacional", "Atividades de Investimento"; null se a linha nao pertencer a nenhuma secao clara). valor_num = numero puro quando houver, senao null. Informe pagina de origem. NAO invente linhas, valores nem entidade; omita o ilegivel.';
 const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
-  {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},
-  {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}
+  {role:'system',content:promptSistema},
+  {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
 ]};
 return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};
 `.trim();
 
-// --- Code (EACH ITEM): parse da extração → campos p/ fn_registrar_campos ---
+// --- Code (EACH ITEM): parse do diagnóstico+extração → payload p/ Postgres -
 const CODE_PARSE_EXTRACAO = `
 const ctx=$('Montar Req Extracao').item.json;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
 let p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}
 const unidade=p.unidade??null;
-const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];
-return {json:{documento_versao_id:ctx.documento_versao_id, campos}};
+const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.secao??null, chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];
+const d=p.diagnostico||{};
+const diagnostico={
+  entidade: d.entidade??null,
+  tipo_confirma: (typeof d.tipo_confirma==='boolean')?d.tipo_confirma:null,
+  tipo_sugerido: d.tipo_sugerido==='DESCONHECIDO'?null:(d.tipo_sugerido??null),
+  periodo_tipo: d.periodo_referencia?d.periodo_tipo:null,
+  periodo_referencia: d.periodo_referencia??null,
+  legibilidade: d.legibilidade??null,
+  nota_legibilidade: d.nota_legibilidade??null,
+  resumo: d.resumo??null,
+  justificativa: d.justificativa??'',
+};
+return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -295,6 +316,18 @@ const nodes = [
     options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}" },
   }, 2700, 300, { credentials: PG_CRED }),
 
+  // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
+  // tipo/período/legibilidade só CONFEREM contra o que já está registrado —
+  // divergência vira pendência tipada (tipo_incorreto/periodo_incorreto/
+  // entidade_incorreta/arquivo_ilegivel), nunca corrige sozinho (anti-
+  // ancoragem, docs/01). Roda ANTES da reconciliação para que ela já veja a
+  // entidade recém-preenchida, se for o caso.
+  node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery',
+    query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
+    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}" },
+  }, 2900, 300, { credentials: PG_CRED }),
+
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
   // documento recém-extraído (docs/04). Só precisa do documento_id — a função
   // resolve caso/entidade/período sozinha (N8N continua stateless). Gera
@@ -304,7 +337,7 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
     options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
-  }, 2900, 300, { credentials: PG_CRED }),
+  }, 3100, 300, { credentials: PG_CRED }),
 ];
 
 const connections = {
@@ -331,13 +364,14 @@ const connections = {
   'Montar Req Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
   'Parse Extracao': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
-  'Gravar Campos (Sombra)': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
+  'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
+  'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
 };
 
 const workflow = {
-  name: 'Oria — E1 Ingestão + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',
+  name: 'Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',
   nodes, connections, settings: { executionOrder: 'v1' },
-  meta: { note: 'Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato).' },
+  meta: { note: 'Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato).' },
 };
 
 writeFileSync(join(__dirname, 'workflow.e1-ingestao.json'), JSON.stringify(workflow, null, 2) + '\n');

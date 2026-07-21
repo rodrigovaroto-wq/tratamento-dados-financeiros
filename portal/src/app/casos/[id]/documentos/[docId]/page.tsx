@@ -1,0 +1,140 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import type { CampoExtraido, Documento } from "@/lib/types";
+
+function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
+  if (valorNum != null) {
+    const formatado = valorNum.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+    return unidade ? `${formatado} (${unidade})` : formatado;
+  }
+  return valorTexto ?? "—";
+}
+
+// Agrupa as linhas extraídas por `secao` (agrupador livre da IA — espelha a
+// estrutura do próprio documento), preservando a ordem de primeira aparição —
+// é o que dá a leitura de "planilha organizada" (docs/04, pedido do dono).
+function agruparPorSecao(campos: CampoExtraido[]) {
+  const grupos = new Map<string, CampoExtraido[]>();
+  for (const campo of campos) {
+    const chave = campo.secao ?? "(sem seção)";
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave)!.push(campo);
+  }
+  return grupos;
+}
+
+export default async function PlanilhaDocumentoPage({
+  params,
+}: {
+  params: Promise<{ id: string; docId: string }>;
+}) {
+  const { id, docId } = await params;
+  const supabase = await createClient();
+
+  const documentoRes = await supabase
+    .from("documento")
+    .select(
+      `id, tipo_taxonomia, resumo, justificativa, confianca, fonte,
+       entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
+       documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
+    )
+    .eq("caso_id", id)
+    .eq("id", docId)
+    .single();
+
+  if (documentoRes.error || !documentoRes.data) {
+    notFound();
+  }
+
+  const doc = documentoRes.data as unknown as Documento;
+  const versao = doc.documento_versao?.[0];
+
+  const camposRes = versao
+    ? await supabase
+        .from("campo_extraido")
+        .select("id, documento_versao_id, secao, chave, valor_texto, valor_num, unidade, confianca, origem_pagina")
+        .eq("documento_versao_id", versao.id)
+        .order("origem_pagina", { ascending: true, nullsFirst: false })
+        .order("criado_em", { ascending: true })
+    : { data: [], error: null };
+
+  const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
+  const grupos = agruparPorSecao(campos);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Link href={`/casos/${id}`} className="text-sm text-neutral-500 underline">
+          ← Voltar ao caso
+        </Link>
+        <h1 className="mt-2 text-lg font-semibold">{versao?.nome_original ?? "(sem nome)"}</h1>
+        <p className="text-xs text-neutral-500">
+          {doc.tipo_taxonomia ?? "não classificado"}
+          {doc.entidade?.razao_social ? ` · ${doc.entidade.razao_social}` : ""}
+          {doc.periodo ? ` · ${doc.periodo.tipo} ${doc.periodo.referencia}` : ""}
+        </p>
+      </div>
+
+      {versao?.legibilidade && versao.legibilidade !== "ok" && (
+        <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <strong className="uppercase">{versao.legibilidade}</strong>
+          {versao.nota_legibilidade ? ` — ${versao.nota_legibilidade}` : ""}
+        </div>
+      )}
+
+      {doc.resumo && (
+        <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
+          <p className="mb-1 text-xs font-medium uppercase text-neutral-500">Resumo</p>
+          {doc.resumo}
+        </div>
+      )}
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-neutral-700">
+          Linhas extraídas ({campos.length}) — sombra (N0), ainda não são fato aceito
+        </h2>
+        {campos.length === 0 ? (
+          <p className="text-sm text-neutral-500">Nenhuma linha extraída para este documento ainda.</p>
+        ) : (
+          <div className="space-y-6">
+            {[...grupos.entries()].map(([secao, linhas]) => (
+              <div key={secao} className="overflow-x-auto rounded border border-neutral-200 bg-white">
+                <p className="border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold uppercase text-neutral-600">
+                  {secao}
+                </p>
+                <table className="w-full text-left text-sm">
+                  <thead className="text-xs uppercase text-neutral-500">
+                    <tr>
+                      <th className="px-3 py-1.5">Rótulo</th>
+                      <th className="px-3 py-1.5 text-right">Valor</th>
+                      <th className="px-3 py-1.5">Página</th>
+                      <th className="px-3 py-1.5">Confiança</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {linhas.map((linha) => {
+                      const ehTotal = /total/i.test(linha.chave);
+                      return (
+                        <tr key={linha.id} className={ehTotal ? "font-semibold" : ""}>
+                          <td className="px-3 py-1.5">{linha.chave}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">
+                            {formatValor(linha.valor_num, linha.valor_texto, linha.unidade)}
+                          </td>
+                          <td className="px-3 py-1.5 text-neutral-500">{linha.origem_pagina ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-neutral-500">
+                            {linha.confianca != null ? `${Math.round(linha.confianca * 100)}%` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

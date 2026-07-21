@@ -1,6 +1,6 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-21 (sessão 2).
+Nota de transição de contexto. Última atualização: 2026-07-21 (sessão 3).
 
 ---
 
@@ -27,6 +27,36 @@ para a F1.
 - Mesma chamada da OpenAI (multimodal) já extrai linhas contábeis (rótulo + valor +
   página + confiança) e grava em `campo_extraido`. Nada disso é apresentado como fato
   ainda — é insumo para a reconciliação (Fatia 3).
+
+**Diagnóstico de conteúdo (E1/E2) — construído e testado nesta sessão (feedback do dono:
+"não está buscando a entidade e não está fazendo o diagnóstico/análise linha por linha").**
+- Causa raiz: a IA só lia o CONTEÚDO do documento no fallback de baixa confiança do
+  classificador por nome — como a maioria dos arquivos bem nomeados já batia confiança alta,
+  o fallback quase nunca rodava, e só ele buscava entidade. Fix: a chamada que **já rodava
+  sempre** (extração E2) passou a devolver, na MESMA chamada (não aumenta o nº de chamadas à
+  OpenAI): um bloco `diagnostico` (entidade; confere tipo/período do nome contra o conteúdo
+  real; legibilidade real do arquivo — antes hardcoded `'ok'`; resumo objetivo) + linhas
+  extraídas com `secao` (agrupador que espelha a estrutura do documento — Ativo Circulante,
+  Passivo Não Circulante, PL, etc. — a "planilha organizada" pedida pelo dono).
+- `db/migrations/0010_diagnostico_e1e2.sql`: colunas novas (`campo_extraido.secao`,
+  `documento.resumo`, `documento_versao.nota_legibilidade`) + `fn_registrar_diagnostico` —
+  preenche `entidade` só quando ainda vazia (nunca sobrescreve), gera `pendencia` tipada
+  (`tipo_incorreto`/`periodo_incorreto`/`entidade_incorreta`/`arquivo_ilegivel`) quando o
+  conteúdo diverge do já registrado, idempotente (reaproveita pendência aberta) e auto-resolve
+  quando a divergência some (ex.: humano já corrigiu na fila de revisão).
+- N8N: novo node `Registrar Diagnostico` entre `Gravar Campos (Sombra)` e `Reconciliar (Classe
+  A)` — roda antes da reconciliação de propósito, para ela já enxergar a entidade recém-
+  preenchida. 53/53 testes (`workflow-sim` + `extract`) passando.
+- Portal: nova rota `/casos/[id]/documentos/[docId]` — mostra a "planilha" (linhas agrupadas
+  por seção, com valores formatados) + resumo + aviso de legibilidade ruim; dashboard do caso
+  ganhou link "ver linhas →" por documento, badge de legibilidade, coluna de resumo, e uma
+  seção "Qualidade dos arquivos" (pendências `arquivo_ilegivel`); fila de revisão ampliada para
+  aceitar também `tipo_incorreto`/`entidade_incorreta`/`periodo_incorreto` (reaproveita
+  `fn_revisar_documento`, que já corrige os três juntos — nenhuma UI nova precisou ser criada
+  para isso).
+- Testado contra Postgres 16 local (entidade nova, entidade conflitante + correção humana +
+  auto-resolução, tipo/período divergente, arquivo ilegível, idempotência, integração completa
+  com a reconciliação Classe A). **Ainda não rodou contra dados reais do dono.**
 
 **Fatia 3 (E3 — Reconciliação): Classe A construída e testada (ainda não em produção real).**
 - Dono escolheu começar direto pela Classe A (checagens aritméticas determinísticas), sem
@@ -85,6 +115,7 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 | RLS do Fatia 1: qualquer usuário `authenticated` vê tudo (ferramenta interna, um time) — restrição por caso é fatia futura | `db/migrations/0003_rls_e_storage.sql` |
 | Upload Storage (N8N→Supabase Storage) desabilitado — bug de plataforma confirmado do node HTTP Request do N8N com binário | `n8n/README.md` § "Upload Storage — pendência conhecida" |
 | E3 Classe A: casamento `chave` extraída → conceito canônico por **normalização + termos obrigatórios/excludentes** (determinístico, sem LLM); log append-only (`reconciliacao`) separado do estado acionável deduplicado (`pendencia`, chave `motivo='reconciliacao:<tipo>'`) | `db/migrations/0009_reconciliacao_e3.sql` |
+| Diagnóstico de conteúdo (entidade/tipo/período/legibilidade) fundido na MESMA chamada de extração E2 (não uma chamada nova) para não aumentar custo; só preenche lacunas (entidade vazia) ou confere contra o já registrado — divergência sempre vira pendência revisável, nunca sobrescreve sozinho | `db/migrations/0010_diagnostico_e1e2.sql` |
 
 ---
 
@@ -92,11 +123,13 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 
 ### Decisão pendente (bloqueia o próximo passo de código)
 Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
-1. **Testar a Classe A com um caso real** do dono (subir Balanço + Fluxo de Caixa reais pelo
-   N8N e conferir se `fn_valor_conceito` casa as chaves extraídas de verdade — o maior risco
-   de calibração é o vocabulário real variar mais do que os padrões cobertos hoje).
+1. **Testar diagnóstico + Classe A com um caso real** do dono (subir documentos reais pelo N8N
+   e conferir se a IA acha entidade/secao de verdade e se `fn_valor_conceito` casa as chaves
+   extraídas — o maior risco de calibração em ambos é o vocabulário real variar mais do que os
+   padrões cobertos hoje).
 2. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
-   não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação).
+   não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
+   — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente).
 3. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
    precisa de `MAPA_DIVIDA` sendo extraído, que hoje só tem schema genérico de linhas).
 4. **Seguir para a Fatia 4 (E4 — Output + Portão 2)** deixando B/C para depois.
@@ -183,7 +216,7 @@ Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual
 
 ### Onde tudo mora
 ```
-db/       — migrations SQL (0001-0009) + README com ordem de aplicação
+db/       — migrations SQL (0001-0010) + README com ordem de aplicação
 n8n/      — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
 portal/   — Next.js (App Router) + Supabase Auth — dashboard e fila de revisão
 f0/       — decisões estruturais da fundação (taxonomia, schema, output spec, build vs buy)
