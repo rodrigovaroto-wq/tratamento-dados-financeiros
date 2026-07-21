@@ -31,6 +31,23 @@ const DEFAULT_MODEL = 'gpt-4o';
 
 const PERIODO_TIPO_ENUM = ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido'];
 
+// Seção CANÔNICA sugerida pela IA por linha (N1 — sugestão, não fato). É o
+// mesmo conjunto de chaves internas do classificador do export
+// (portal/src/lib/statement-templates.ts) — mantê-los IDÊNTICOS: se um lado
+// mudar, o outro precisa acompanhar (não há import cruzado entre .mjs e o
+// portal TS). Serve para o classificador determinístico do export ter um
+// sinal interpretativo forte QUANDO ele mesmo não consegue classificar por
+// regra — reduz o bloco "Contas Não Classificadas" sem virar fato (a linha
+// continua pendente/âmbar até o aceite humano). "NAO_CLASSIFICAVEL" é o
+// escape (a IA não força um palpite ruim — deixa cair no bloco de revisão).
+export const SECAO_CANONICA_ENUM = [
+  'ativo_circulante', 'ativo_nao_circulante',
+  'passivo_circulante', 'passivo_nao_circulante', 'patrimonio_liquido',
+  'receita_bruta', 'custos', 'despesas_operacionais', 'resultado_financeiro', 'impostos_lucro',
+  'atividades_operacionais', 'atividades_investimento', 'atividades_financiamento',
+  'NAO_CLASSIFICAVEL',
+];
+
 const SYSTEM_PROMPT = [
   'Você analisa UM documento financeiro de um mandato de Reestruturação (contexto Brasil) e',
   'devolve DUAS coisas: um diagnóstico do documento e a extração linha a linha de TODOS os',
@@ -65,6 +82,21 @@ const SYSTEM_PROMPT = [
   'valor_texto = como aparece no documento. Informe a página de origem.',
   'NÃO invente linhas nem valores. Se algo não estiver legível, omita — é melhor extrair de',
   'menos com confiança do que inventar.',
+  '',
+  'secao_canonica: além da "secao" livre acima, classifique CADA linha em UMA seção canônica',
+  'padronizada (para a planilha final organizar as contas na estrutura de mercado). Use o',
+  'julgamento contábil (o significado da conta, não só o nome literal — cada empresa nomeia',
+  'diferente). Valores possíveis e seu significado:',
+  '- Balanço/Balancete: "ativo_circulante", "ativo_nao_circulante", "passivo_circulante",',
+  '  "passivo_nao_circulante", "patrimonio_liquido" (ex.: um mútuo A RECEBER é ativo; um mútuo',
+  '  A PAGAR/tomado é passivo — decida pelo sentido).',
+  '- DRE: "receita_bruta" (receita e deduções), "custos" (CPV/CMV/custo de serviço),',
+  '  "despesas_operacionais" (vendas/administrativas/gerais), "resultado_financeiro"',
+  '  (receitas/despesas financeiras, juros), "impostos_lucro" (IRPJ/CSLL).',
+  '- Fluxo de Caixa: "atividades_operacionais", "atividades_investimento", "atividades_financiamento".',
+  'Use "NAO_CLASSIFICAVEL" quando a linha for um TOTAL/subtotal geral, ou quando você não tiver',
+  'segurança de qual seção é — NÃO force um palpite ruim (a linha vai para revisão manual, o que',
+  'é preferível a classificar errado). Isto é uma SUGESTÃO revisável por humano, nunca um fato.',
 ].join(' ');
 
 export function extractionSchema() {
@@ -102,9 +134,10 @@ export function extractionSchema() {
           items: {
             type: 'object',
             additionalProperties: false,
-            required: ['secao', 'chave', 'valor_texto', 'valor_num', 'origem_pagina', 'confianca'],
+            required: ['secao', 'secao_canonica', 'chave', 'valor_texto', 'valor_num', 'origem_pagina', 'confianca'],
             properties: {
               secao: { type: ['string', 'null'] },
+              secao_canonica: { type: 'string', enum: SECAO_CANONICA_ENUM },
               chave: { type: 'string' },
               valor_texto: { type: ['string', 'null'] },
               valor_num: { type: ['number', 'null'] },
@@ -168,6 +201,7 @@ export function parseExtractionResponse(apiJson) {
   const campos = Array.isArray(p.linhas)
     ? p.linhas.map((l) => ({
         secao: l.secao ?? null,
+        secao_canonica: l.secao_canonica && l.secao_canonica !== 'NAO_CLASSIFICAVEL' ? l.secao_canonica : null,
         chave: l.chave,
         valor_texto: l.valor_texto ?? null,
         valor_num: typeof l.valor_num === 'number' ? l.valor_num : null,

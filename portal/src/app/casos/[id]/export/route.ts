@@ -37,7 +37,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ? await supabase
         .from("campo_extraido")
         .select(
-          "id, documento_versao_id, secao, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+          "id, documento_versao_id, secao, secao_canonica, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
         )
         .in("documento_versao_id", versaoIds)
     : { data: [] as CampoExtraido[], error: null };

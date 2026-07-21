@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExtractionRequest, parseExtractionResponse, extractionSchema } from '../lib/extract.mjs';
+import { buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM } from '../lib/extract.mjs';
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
@@ -10,6 +10,9 @@ test('extractionSchema é estrito, tem diagnóstico e array de linhas com seçã
   assert.equal(s.schema.properties.linhas.type, 'array');
   assert.equal(s.schema.properties.linhas.items.additionalProperties, false);
   assert.ok(s.schema.properties.linhas.items.required.includes('secao'));
+  assert.ok(s.schema.properties.linhas.items.required.includes('secao_canonica'));
+  assert.deepEqual(s.schema.properties.linhas.items.properties.secao_canonica.enum, SECAO_CANONICA_ENUM);
+  assert.ok(s.schema.properties.linhas.items.properties.secao_canonica.enum.includes('NAO_CLASSIFICAVEL'));
   assert.equal(s.schema.properties.diagnostico.type, 'object');
   assert.ok(s.schema.properties.diagnostico.required.includes('legibilidade'));
   assert.ok(s.schema.properties.diagnostico.properties.tipo_sugerido.enum.includes('DESCONHECIDO'));
@@ -34,17 +37,21 @@ test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', ()
       justificativa: 'Cabeçalho e estrutura batem com DRE.',
     },
     linhas: [
-      { secao: 'Receita Operacional', chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { secao: 'Custos', chave: 'Custo', valor_texto: '(6.000)', valor_num: -6000, origem_pagina: 1, confianca: 0.7 },
+      { secao: 'Receita Operacional', secao_canonica: 'receita_bruta', chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
+      { secao: 'Custos', secao_canonica: 'custos', chave: 'Custo', valor_texto: '(6.000)', valor_num: -6000, origem_pagina: 1, confianca: 0.7 },
+      { secao: null, secao_canonica: 'NAO_CLASSIFICAVEL', chave: 'Total geral', valor_texto: '4.000', valor_num: 4000, origem_pagina: 1, confianca: 0.9 },
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
   assert.equal(r.unidade, 'R$ mil');
-  assert.equal(r.campos.length, 2);
+  assert.equal(r.campos.length, 3);
   assert.equal(r.campos[0].secao, 'Receita Operacional');
+  assert.equal(r.campos[0].secao_canonica, 'receita_bruta');
   assert.equal(r.campos[0].chave, 'Receita líquida');
   assert.equal(r.campos[0].valor_num, 10000);
   assert.equal(r.campos[0].unidade, 'R$ mil'); // herda a unidade do documento
+  assert.equal(r.campos[1].secao_canonica, 'custos');
+  assert.equal(r.campos[2].secao_canonica, null); // NAO_CLASSIFICAVEL vira null
   assert.equal(r.diagnostico.entidade, 'Empresa X Ltda');
   assert.equal(r.diagnostico.tipo_confirma, true);
   assert.equal(r.diagnostico.legibilidade, 'ok');
