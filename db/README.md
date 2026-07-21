@@ -20,6 +20,7 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0008_portal_revisao.sql` | Suporte de banco para o **Portal**: coluna `confianca`/`fonte`/`justificativa` em `documento` (para o dashboard não precisar fazer parsing de `evento_auditoria.depois`); `fn_registrar_documento` passa a gravá-las (mesma assinatura de 0007). Nova função `fn_revisar_documento` — a fila de revisão do portal chama essa RPC para confirmar/corrigir a classificação: resolve a pendência, registra `decisao`+`evento_auditoria`, realoca o checklist, recomputa a completude. |
 | `migrations/0009_reconciliacao_e3.sql` | **E3 — Reconciliação, Classe A** (primeira fatia, `docs/04_RECONCILIACAO.md`). Tabela `reconciliacao` (log append-only de cada checagem); `fn_valor_conceito` casa `campo_extraido.chave` (texto livre) com um conceito canônico por termos obrigatórios/excludentes normalizados; duas checagens — `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no Balanço) e `fn_reconciliar_caixa_bp_fluxo` (Caixa do Balanço vs. saldo final do Fluxo de Caixa, aborta se as unidades divergirem); `fn_reconciliar_por_documento(documento_id)` é o ponto de entrada chamado pelo N8N logo após a extração — dispara as checagens do tipo do documento. Opera em **N1**: gera `pendencia` tipada (`divergencia_reconciliacao` ou `precondicao_nao_satisfeita`), nunca escreve um número como fato. |
 | `migrations/0010_diagnostico_e1e2.sql` | **Diagnóstico de conteúdo + planilha organizada (E1/E2).** Colunas novas: `campo_extraido.secao` (agrupador de planilha), `documento.resumo`, `documento_versao.nota_legibilidade`. `fn_registrar_campos_extraidos` (mesma assinatura) passa a gravar `secao`. Nova função `fn_registrar_diagnostico` — chamada pelo N8N logo após a extração, com o bloco `diagnostico` da MESMA chamada de IA (não aumenta o nº de chamadas): preenche `entidade` só quando ainda vazia (fecha uma lacuna, nunca sobrescreve), confere tipo/período contra o que já está registrado (gera `pendencia` tipada `tipo_incorreto`/`periodo_incorreto`/`entidade_incorreta` quando diverge — nunca corrige sozinha), grava a `legibilidade` real do arquivo (antes hardcoded `'ok'`) e gera `arquivo_ilegivel` quando o conteúdo está ilegível. Idempotente (reaproveita pendência aberta da mesma checagem) e auto-resolve quando a divergência some (ex.: humano já corrigiu). |
+| `migrations/0011_aceite_export_e4.sql` | **E4 — Portão 2 mínimo + suporte ao Export Excel** (`f0/07_output_spec.md`). Colunas novas em `campo_extraido`: `status_aceite` (`pendente`/`aceito`/`com_ressalva`), `aceito_por`, `aceito_em` — sem isso nenhuma linha extraída tinha mecanismo de aceite humano (princípio inegociável da spec: "nenhum número entra no export sem uma `decisao` de aceite humano ligada"). Nova função `fn_aceitar_extracao(documento_versao_id, autor, motivo)` — aceita **todas as linhas de uma versão de documento de uma vez** (granularidade v0; a spec permite refinar o "layout fino" depois), registra `decisao` (tipo `aprovacao`) + `evento_auditoria`. Idempotente. |
 
 ## Como aplicar
 
@@ -37,6 +38,7 @@ supabase db execute --file db/migrations/0007_justificativa_pendencia.sql
 supabase db execute --file db/migrations/0008_portal_revisao.sql
 supabase db execute --file db/migrations/0009_reconciliacao_e3.sql
 supabase db execute --file db/migrations/0010_diagnostico_e1e2.sql
+supabase db execute --file db/migrations/0011_aceite_export_e4.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
@@ -77,6 +79,9 @@ where relname in ('caso','documento','pendencia','evento_auditoria') order by re
 ## O que NÃO está aqui (entra em fatias seguintes)
 
 O refinamento de RLS por caso, e as Classes B/C de reconciliação (`docs/04_RECONCILIACAO.md`
-— continuam N1/aproximação, não têm engine determinística ainda). Ver o plano da F1 e
-`f0/05_schema_conceitual.md`. (`campo_extraido` entrou em `0005`; `reconciliacao` — Classe A —
-entrou em `0009`.)
+— continuam N1/aproximação, não têm engine determinística ainda). O Portão 2 formal
+(`docs/07_STATUS_E_PENDENCIAS.md`: bloqueantes não-sobrepujáveis, teto/expiração de ressalva)
+também não está aqui — `fn_aceitar_extracao` (0011) é só o aceite mínimo por linha extraída,
+não a regra de portão do caso inteiro. Ver o plano da F1 e `f0/05_schema_conceitual.md`.
+(`campo_extraido` entrou em `0005`; `reconciliacao` — Classe A — entrou em `0009`; aceite/E4
+entrou em `0011`.)

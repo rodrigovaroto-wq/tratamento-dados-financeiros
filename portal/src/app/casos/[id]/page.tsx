@@ -74,9 +74,17 @@ export default async function CasoDashboardPage({
           <h1 className="text-lg font-semibold">{caso.nome}</h1>
           <p className="text-xs text-neutral-500">{caso.produto}</p>
         </div>
-        <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
-          {CASO_STATUS_LABEL[caso.status]}
-        </span>
+        <div className="flex items-center gap-3">
+          <a
+            href={`/casos/${id}/export`}
+            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            Exportar para Excel ↓
+          </a>
+          <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
+            {CASO_STATUS_LABEL[caso.status]}
+          </span>
+        </div>
       </div>
 
       {pendenciasRevisao.length > 0 && (
