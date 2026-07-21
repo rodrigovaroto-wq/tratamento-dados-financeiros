@@ -1,6 +1,10 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-21 (sessão 4).
+Nota de transição de contexto. Última atualização: 2026-07-21 (fim da sessão 4).
+
+**Estado do repositório neste momento: tudo abaixo já está mergeado no `main`** (PRs #20 E3,
+#21 diagnóstico, #22 aceite+export E4, #23 layout de mercado, #24 classificador por seção —
+todos mergeados pelo dono). Não há nenhum PR aberto pendente de revisão no momento.
 
 ---
 
@@ -266,11 +270,14 @@ Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual
 5. `$env` é bloqueado por padrão no N8N — não usar.
 
 ### Git / PR workflow desta sessão
-- Branch de trabalho desta sessão: `claude/ola-3a5wp0` (a anterior,
-  `claude/project-workflow-overview-ga323d`, já foi mergeada — não empilhar mais nada nela).
-- Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo
-  GitHub. Depois de cada merge, a próxima sessão deve restartar sua branch a partir do
-  `main` atualizado antes de continuar.
+- Branch usada nesta sessão: `claude/ola-3a5wp0` — teve **5 PRs mergeados** a partir dela
+  (#20-#24, ver acima). Como todos já foram mergeados, essa branch está "esgotada": a
+  **próxima sessão/chat, ao começar a trabalhar, deve restartar essa branch (ou abrir uma
+  nova) a partir do `main` atualizado** antes de commitar qualquer coisa nova — nunca empilhar
+  em cima de uma branch cujo PR já foi mergeado. Padrão usado nesta sessão sempre que isso
+  aconteceu no meio do trabalho: `git fetch origin main && git rebase origin/main` (ou, se a
+  branch antiga não tiver mais utilidade, `git checkout -B claude/<nome-novo> origin/main`).
+- Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo GitHub.
 - O stop-hook local avisa sobre commits "Unverified" (merge commits do próprio
   GitHub) — **não são reescritos** (exigiria reescrever histórico compartilhado do
   `main`); é uma checagem esperada, não um problema real.
