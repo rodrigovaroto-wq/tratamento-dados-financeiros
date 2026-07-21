@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import type { CampoExtraido } from "./types";
 import {
   classificarConta,
+  classificarDemonstracao,
   secoesDe,
   ancorasDe,
   agruparPorChaveNormalizada,
@@ -59,6 +60,18 @@ export const ORDEM_ABAS = [
 const ESTRUTURA_POR_ABA = new Map<string, EstruturaDemonstracao>(
   Object.entries(ESTRUTURA_POR_TIPO).map(([tipo, estrutura]) => [ABA_POR_TIPO[tipo], estrutura]),
 );
+
+// Família da demonstração → aba PADRÃO para onde vai uma linha que pertence a
+// essa família mas foi extraída de um documento de OUTRO tipo (um PDF de
+// "Demonstrações Contábeis" completo traz Balanço + DRE + Fluxo de Caixa
+// juntos). Balancete/Combinado (também família "balanco") mantêm as próprias
+// abas quando o documento é desse tipo — só o que "vaza" de um documento
+// composto para uma família diferente é redirecionado para estas abas.
+const ABA_PADRAO_POR_ESTRUTURA: Record<EstruturaDemonstracao, string> = {
+  balanco: "Balanço",
+  dre: "DRE",
+  fluxo_caixa: "Fluxo de Caixa",
+};
 
 export interface DocumentoParaExport {
   id: string;
@@ -402,7 +415,25 @@ export function buildExportWorkbook({
   for (const campo of campos) {
     const ctx = contextoPorVersao.get(campo.documento_versao_id);
     if (!ctx) continue;
-    const aba = (ctx.tipoTaxonomia && ABA_POR_TIPO[ctx.tipoTaxonomia]) || "Outros";
+    const abaDoc = (ctx.tipoTaxonomia && ABA_POR_TIPO[ctx.tipoTaxonomia]) || "Outros";
+    const estruturaDoc = ESTRUTURA_POR_ABA.get(abaDoc);
+
+    // Roteamento por LINHA (não por tipo do documento): um PDF de
+    // "Demonstrações Contábeis" traz Balanço + DRE + Fluxo de Caixa no mesmo
+    // arquivo, mas é UM documento de um tipo só. Se a linha pertence a uma
+    // demonstração diferente da do documento, ela vai para a aba canônica
+    // daquela demonstração — em vez de empilhar tudo na aba do tipo do
+    // documento (o que fazia a DRE cair em "Não Classificadas" e as linhas de
+    // Fluxo de Caixa vazarem para dentro do Ativo). Só reroteia entre abas
+    // ESTRUTURADAS (Balanço/DRE/Fluxo); abas de série (Faturamento/Dívida/…)
+    // não são tocadas. Continua N1: a linha segue pendente/âmbar até o aceite.
+    let aba = abaDoc;
+    if (estruturaDoc) {
+      const familiaLinha = classificarDemonstracao(campo.secao, campo.chave, campo.secao_canonica);
+      if (familiaLinha && familiaLinha !== estruturaDoc) {
+        aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
+      }
+    }
     const colKey = `${ctx.entidade} ${ctx.periodo}`;
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
 
@@ -458,11 +489,14 @@ export function buildExportWorkbook({
       "Este export NÃO é modelagem financeira e não projeta nada — é dado curado e rastreável " +
         "para o time de análise trabalhar em cima (f0/07_output_spec.md). Linhas marcadas " +
         "PENDENTE ainda não passaram por aceite humano — não são fato, são sugestão a revisar " +
-        "antes de entrar no modelo. Balanço/Balancete/DRE/Fluxo de Caixa/Combinado classificam " +
-        "cada conta extraída por SEÇÃO (Ativo Circulante, Despesas Operacionais, etc.), mantendo " +
-        "o rótulo original de cada empresa — nenhum subtotal é calculado por nós, só aparece se o " +
-        "próprio documento já trouxer aquela linha. Contas que não foi possível classificar com " +
-        "segurança aparecem em \"Contas Não Classificadas\", ao final de cada aba — revisar manualmente.",
+        "antes de entrar no modelo. Quando um mesmo arquivo traz várias demonstrações juntas " +
+        "(ex.: Balanço + DRE + Fluxo de Caixa no mesmo PDF), cada linha é encaminhada para a aba " +
+        "da demonstração a que pertence — não fica tudo na aba do tipo do documento. " +
+        "Balanço/Balancete/DRE/Fluxo de Caixa/Combinado classificam cada conta extraída por SEÇÃO " +
+        "(Ativo Circulante, Despesas Operacionais, etc.), mantendo o rótulo original de cada " +
+        "empresa — nenhum subtotal é calculado por nós, só aparece se o próprio documento já " +
+        "trouxer aquela linha. Contas que não foi possível classificar com segurança aparecem em " +
+        "\"Contas Não Classificadas\", ao final de cada aba — revisar manualmente.",
     ],
   ]);
   resumo.getRow(1).font = { bold: true };

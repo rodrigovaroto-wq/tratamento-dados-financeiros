@@ -2,14 +2,15 @@
 
 Nota de transição de contexto. Última atualização: 2026-07-21 (fim da sessão 6).
 
-**Estado do repositório neste momento:** sessões 4 e 5 já mergeadas no `main` (PRs #20-#26). A
-sessão 6 abriu um PR novo (ver seção "Sessão 6" abaixo): a IA passou a sugerir uma **seção
-canônica** por linha na mesma chamada de extração, usada como fallback pelo classificador do
-export (N1, atende o pedido do dono de "≥90% dos campos nas categorias certas"). Ainda pendente
-de revisão do dono no momento em que este arquivo foi escrito. **Próximo passo já combinado com
-o dono: construir a Reconciliação Classe B** (achar inconsistências/incoerências) — as duas
-checagens canônicas do `docs/04` (Receita DRE vs. soma do faturamento; despesa financeira vs.
-juros do mapa de dívida) — num PR seguinte.
+**Estado do repositório neste momento:** sessões 4 e 5 já mergeadas no `main` (PRs #20-#27). A
+sessão 6 entregou duas fatias: (1) a IA passou a sugerir uma **seção canônica** por linha na mesma
+chamada de extração, usada como fallback pelo classificador do export (`#27`, mergeado); (2) o
+export passou a **rotear cada linha para a aba da sua demonstração** — separando Balanço/DRE/Fluxo
+de Caixa quando vêm num PDF composto — motivado por um teste real do dono (ver seções "Sessão 6"
+abaixo). A fatia (2) está num PR novo, pendente de revisão do dono no momento em que este arquivo
+foi escrito. **Próximo passo já combinado com o dono: construir a Reconciliação Classe B** (achar
+inconsistências/incoerências) — as duas checagens canônicas do `docs/04` (Receita DRE vs. soma do
+faturamento; despesa financeira vs. juros do mapa de dívida) — num PR seguinte.
 
 ---
 
@@ -263,6 +264,46 @@ sugestão N1**, exatamente no padrão que o time já usou pro diagnóstico (0010
 - **Ainda pendente (só o dono consegue):** rodar com documentos reais no Supabase/N8N de produção
   e **medir de fato a taxa de "Não Classificadas"** com o vocabulário real dos clientes — é o
   sinal direto de se o alvo de 90% foi atingido, e o primeiro insumo do golden set.
+
+### Sessão 6 (cont.) — Roteamento por linha: separar cada demonstração em sua aba
+**Motivado por teste real do dono** (documento `GLOBAL ONE BRASIL REPRESENTAÇÃO LTDA`): ele rodou
+o export e viu a DRE cair em "Contas Não Classificadas". O diagnóstico revelou um problema maior
+que o aparente: o PDF era uma **Demonstração Contábil completa** (Balanço + DRE + Fluxo de Caixa +
+DMPL num arquivo só), classificado como UM documento do tipo `BALANCO`. O export roteava **todas**
+as linhas para a aba do tipo do documento, então: (1) a DRE caía em "Não Classificadas"; (2) pior,
+as linhas de **Fluxo de Caixa vazavam para dentro do Ativo/Passivo do Balanço** (as linhas de
+caixa casavam as palavras-chave "caixa"/"disponibilidade"/"empréstimo"); (3) linhas de DMPL
+("SALDOS EM 31 DE DEZEMBRO...") iam parar no Patrimônio Líquido.
+- **Fix (escopo escolhido pelo dono: Balanço + DRE + Fluxo de Caixa agora; DMPL/DVA como
+  follow-up):** o export passou a **rotear cada LINHA para a aba da sua demonstração**, não para a
+  do tipo do documento. `classificarDemonstracao(secao, chave, secao_canonica)` em
+  `statement-templates.ts` decide a qual demonstração a linha pertence: prioridade para a
+  `secao_canonica` que a IA **já anota por linha** (o `#27`; `ativo_*`→Balanço, `receita_*/custos/
+  despesas_*/...`→DRE, `atividades_*`→Fluxo de Caixa), com fallback determinístico (ordem Fluxo →
+  DRE → Balanço, porque o de Balanço casa "caixa" de forma gulosa) quando a IA não anotou. Isto é
+  literalmente o pedido do dono ("o modelo identifica o que é DRE e o que é Balanço"): a IA já
+  identifica; faltava o export obedecer, por linha.
+- **Só reroteia entre abas ESTRUTURADAS** (Balanço/DRE/Fluxo). Abas de série (Faturamento/Dívida/
+  Fluxo Projetado) não são tocadas. Um **Balancete/Combinado puro** (também família "balanco")
+  mantém suas linhas na própria aba — o rerote só move o que "vaza" para uma família DIFERENTE.
+  Continua N1/anti-ancoragem: a linha segue pendente/âmbar até o aceite; muda só EM QUAL ABA a
+  sugestão aparece.
+- **Reforço do classificador de Fluxo de Caixa** para o vocabulário real: saldos de caixa que
+  **não usam a palavra "saldo"** ("Caixa e Equivalentes de Caixa no Final/Início do Período") e
+  variação de caixa por "acréscimo/decréscimo" agora são reconhecidos como âncoras de Saldo
+  Final/Inicial/Variação — sem casar a linha do Balanço "Caixa e Equivalentes de Caixa" (que não
+  tem final/início/período).
+- **Testes:** reproduzido o caso GLOBAL ONE isoladamente (via `tsx` + inspeção do `.xlsx` com
+  `openpyxl`): com `secao_canonica`, as 3 demonstrações se separam em abas próprias com **zero
+  "Não Classificadas"**; sem `secao_canonica` (documento antigo, fallback determinístico), ainda
+  separa as 3 abas corretamente (só 1 linha ambígua — "ADMINISTRATIVAS" sem contexto — fica em
+  "Não Classificadas", o que a `secao_canonica` da IA resolve). Balancete puro mantido na própria
+  aba. `tsc --noEmit` e `eslint` limpos. (LibreOffice deste ambiente segue quebrado — validação
+  estrutural via `openpyxl`, mesma ressalva das sessões anteriores.)
+- **DMPL/DVA (deferido, escolha do dono):** separar Mutações do PL e DVA em abas próprias exige
+  estender o `SECAO_CANONICA_ENUM` (novo schema/prompt no N8N + migration) e **reextrair** os
+  documentos — não foi feito nesta fatia. Hoje linhas de DMPL provavelmente caem no PL do Balanço
+  ou em "Não Classificadas".
 
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
