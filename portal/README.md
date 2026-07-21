@@ -45,19 +45,30 @@ extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
 - `src/app/casos/[id]/export` — **route handler** (não página) que gera o
   Excel do caso (`src/lib/export.ts` + `src/lib/statement-templates.ts`,
   função pura testável isoladamente, `exceljs`).
-  - **Balanço / DRE / Fluxo de Caixa / Combinado** saem no **layout padrão de
-    mercado** dessas demonstrações (`statement-templates.ts`: Ativo/Passivo/PL
-    hierárquico no Balanço, cascata Receita→Lucro Líquido na DRE, Atividades
-    Operacionais/Investimento/Financiamento no Fluxo de Caixa) — linhas =
-    contas do template, colunas = entidade × período. Toda conta casa com a
-    chave extraída por termos determinísticos (mesma técnica de
-    `fn_valor_conceito`, `db/migrations/0009`) — **nunca soma/calcula** um
-    subtotal novo, só recoloca o que a IA já extraiu no lugar certo do
-    layout. Contas extraídas que não batem com nenhuma linha do template
-    aparecem à parte, em "Outras contas identificadas", ao final da aba —
-    nada desaparece silenciosamente. Proveniência (arquivo/página/confiança/
-    status/versão da taxonomia) vai em **comentário da célula** (não em
-    colunas auxiliares, já que as colunas são entidade×período).
+  - **Balanço / Balancete / DRE / Fluxo de Caixa / Combinado** saem no
+    **layout padrão de mercado** dessas demonstrações — colunas = entidade ×
+    período; linhas = contas, organizadas por SEÇÃO (Ativo Circulante, Ativo
+    Não Circulante, Passivo Circulante/Não Circulante, Patrimônio Líquido no
+    Balanço; Receita/Custos/Despesas/Resultado Financeiro/Impostos na cascata
+    da DRE; Atividades Operacionais/Investimento/Financiamento no Fluxo de
+    Caixa — método indireto, CPC 03).
+    **Não é um template de ~15 nomes de conta fixos** (isso quebra na
+    primeira empresa que nomeia a conta diferente) — `statement-templates.ts`
+    **classifica cada conta extraída na seção certa** por sinais amplos (a
+    `secao` que a IA já anota + palavras-chave no rótulo, com casamento por
+    PALAVRA tolerante a plural/singular e a conectivos diferentes — "Provisão
+    PARA Férias" bate com a regra "provisão DE férias", "Duplicatas a
+    Receber" bate com "duplicata a receber") e mantém o **rótulo original**
+    de cada empresa dentro da seção — não força um nome canônico. Nenhum
+    subtotal/total é calculado por soma — só aparece se o próprio documento
+    já trouxer aquela linha extraída (mesmo princípio de `fn_valor_conceito`,
+    `db/migrations/0009`: casamento determinístico, nunca um cálculo novo).
+    Contas que não são classificáveis com segurança vão para um bloco
+    explícito "Contas Não Classificadas (revisar manualmente)" ao final da
+    aba — nada desaparece nem é forçado pro lugar errado. Proveniência
+    (arquivo/página/confiança/status/versão da taxonomia) vai em
+    **comentário da célula** (não em colunas auxiliares, já que as colunas
+    são entidade×período).
   - **Faturamento / Dívida / Fluxo Projetado** continuam em listagem simples
     (já são, por natureza, uma série/tabela — não uma demonstração de blocos).
   - Aba `Resumo` com metadados do snapshot (data-base, contagem aceitas/
@@ -107,17 +118,24 @@ para logar.
   (com env vars de teste; `/casos`, `/casos/[id]`, `/casos/[id]/revisao`,
   `/casos/[id]/documentos/[docId]`, `/casos/[id]/export` e `/login`
   corretamente dinâmicas, `/` estática).
-- `src/lib/export.ts` (montagem do workbook) testado isoladamente com dados
-  sintéticos via `tsx` + `exceljs`: gera as abas certas, reabre o `.xlsx`
-  gerado e confere célula a célula — layout padronizado do Balanço (linhas
-  do template certas, valores casados por entidade×período, inclusive um
-  mesmo rótulo em dois períodos diferentes da mesma entidade), disambiguação
-  entre "Total do Ativo" e "Total do Ativo Circulante"/"Não Circulante" (achou
-  e corrigiu um bug real de sobreposição: "Total do Patrimônio Líquido"
-  casando com a linha combinada "Total do Passivo e do Patrimônio Líquido"),
-  contas não mapeadas indo para o apêndice "Outras contas identificadas",
-  nota de proveniência na célula, preenchimento âmbar + itálico em pendente,
-  negrito + borda dupla em total, aba Resumo com as contagens certas.
+- `src/lib/export.ts` + `src/lib/statement-templates.ts` (classificação +
+  montagem do workbook) testados isoladamente com dados sintéticos via `tsx`
+  + `exceljs`, incluindo o cenário que motivou a reformulação: **duas
+  empresas com nomenclatura de plano de contas totalmente diferente para as
+  mesmas contas** (ex.: "Caixa e equivalentes de caixa" vs. "Disponibilidades";
+  "Imobilizado líquido" vs. "Bens do Ativo Imobilizado") — ambas classificadas
+  corretamente na mesma seção, cada uma com o rótulo original preservado.
+  Casos de plural/conectivo cobertos e confirmados ("Duplicatas a Receber"
+  batendo com a regra "duplicata a receber"; "Provisão PARA Férias" batendo
+  com "provisão DE férias"). Disambiguação entre "Total do Ativo" e "Total do
+  Ativo Circulante"/"Não Circulante" (achou e corrigiu um bug real de
+  sobreposição: "Total do Patrimônio Líquido" casando com a linha combinada
+  "Total do Passivo e do Patrimônio Líquido"). Balancete testado reaproveitando
+  o classificador do Balanço. Contas genuinamente não-classificáveis (nota
+  explicativa, dado sem sentido) caindo em "Contas Não Classificadas" —
+  nunca desaparecem, nunca são forçadas pro lugar errado. Nota de proveniência
+  na célula, preenchimento âmbar + itálico em pendente, negrito + borda dupla
+  em total, aba Resumo com as contagens certas.
 
 ## O que NÃO foi possível verificar aqui (precisa do Supabase real)
 
