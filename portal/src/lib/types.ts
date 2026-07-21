@@ -71,6 +71,7 @@ export interface CampoExtraido {
   id: string;
   documento_versao_id: string;
   secao: string | null;
+  secao_canonica: string | null; // sugestão da IA (db/migrations/0012) — chaves de statement-templates.ts; fallback advisory do classificador
   chave: string;
   valor_texto: string | null;
   valor_num: number | null;

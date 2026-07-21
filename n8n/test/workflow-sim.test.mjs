@@ -206,14 +206,16 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
       resumo: 'Balanço patrimonial de 2025.', justificativa: 'Conteúdo é Balanço, não DRE (dica do nome estava errada).',
     },
     linhas: [
-      { secao: 'Ativo Circulante', chave: 'Caixa e equivalentes', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { secao: 'Passivo Circulante', chave: 'Fornecedores', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', chave: 'Caixa e equivalentes', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
+      { secao: 'Passivo Circulante', secao_canonica: 'NAO_CLASSIFICAVEL', chave: 'Fornecedores', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
     ],
   }) } }] } };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.documento_versao_id, 'ver-1');
   assert.equal(parsed.json.campos.length, 2);
   assert.equal(parsed.json.campos[0].secao, 'Ativo Circulante');
+  assert.equal(parsed.json.campos[0].secao_canonica, 'ativo_circulante', 'secao_canonica mapeada no mirror do Code node');
+  assert.equal(parsed.json.campos[1].secao_canonica, null, 'NAO_CLASSIFICAVEL vira null no mirror');
   assert.equal(parsed.json.campos[0].unidade, 'R$ mil', 'unidade do documento herdada por linha');
   assert.equal(parsed.json.diagnostico.entidade, 'Empresa Teste Ltda');
   assert.equal(parsed.json.diagnostico.tipo_confirma, false);

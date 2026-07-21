@@ -220,7 +220,7 @@ function construirAbaClassificada(
 
   for (const { campo, colKey } of camposDaAba) {
     if (campo.valor_num == null && campo.valor_texto == null) continue;
-    const { secaoKey, ancoraKey } = classificarConta(estrutura, campo.secao, campo.chave);
+    const { secaoKey, ancoraKey } = classificarConta(estrutura, campo.secao, campo.chave, campo.secao_canonica);
     if (ancoraKey) {
       adicionarAoGrupo(valoresPorAncora.get(ancoraKey)!, colKey, campo);
     } else if (secaoKey) {

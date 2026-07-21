@@ -328,10 +328,39 @@ export const ESTRUTURA_POR_TIPO: Record<string, EstruturaDemonstracao> = {
   FLUXO_CAIXA: "fluxo_caixa",
 };
 
-export function classificarConta(estrutura: EstruturaDemonstracao, secao: string | null, chave: string): Classificacao {
-  if (estrutura === "balanco") return classificarBalanco(secao, chave);
-  if (estrutura === "dre") return classificarDRE(secao, chave);
-  return classificarFluxoCaixa(secao, chave);
+// Conjunto de chaves de seção válidas por estrutura — usado para validar a
+// sugestão canônica da IA (só entra se pertencer à estrutura do documento).
+function secaoKeysDe(estrutura: EstruturaDemonstracao): Set<string> {
+  return new Set(secoesDe(estrutura).map((s) => s.key));
+}
+
+export function classificarConta(
+  estrutura: EstruturaDemonstracao,
+  secao: string | null,
+  chave: string,
+  secaoCanonica?: string | null,
+): Classificacao {
+  const base =
+    estrutura === "balanco"
+      ? classificarBalanco(secao, chave)
+      : estrutura === "dre"
+        ? classificarDRE(secao, chave)
+        : classificarFluxoCaixa(secao, chave);
+
+  // A regra determinística tem prioridade: se ela achou uma âncora (total) ou
+  // uma seção, mantém — é confiável e não depende de golden set (docs/01).
+  if (base.ancoraKey || base.secaoKey) return base;
+
+  // Só quando o determinístico ABSTÉM (a conta cairia em "Não Classificadas"),
+  // usa a sugestão canônica da IA (N1/advisory, db/migrations/0012) — desde que
+  // seja uma seção válida para ESTA estrutura. Preenche a lacuna sem sobrepor a
+  // regra; a linha continua pendente/âmbar até o aceite humano. Subir a IA para
+  // prioridade/auto-clear exigiria golden set + concordância medida (f0/06).
+  if (secaoCanonica && secaoKeysDe(estrutura).has(secaoCanonica)) {
+    return { secaoKey: secaoCanonica, ancoraKey: null };
+  }
+
+  return base;
 }
 
 export function secoesDe(estrutura: EstruturaDemonstracao): SecaoDef[] {
