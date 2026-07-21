@@ -43,14 +43,28 @@ extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
   (`db/migrations/0011_aceite_export_e4.sql`), o Portão 2 mínimo: sem esse
   aceite, a linha nunca entra no export como fato (fica "pendente").
 - `src/app/casos/[id]/export` — **route handler** (não página) que gera o
-  Excel do caso (`src/lib/export.ts`, função pura testável isoladamente,
-  `exceljs`): uma aba por demonstração (`Balanço`, `DRE`, `Fluxo de Caixa`,
-  `Combinado`, `Faturamento`, `Dívida`, `Fluxo Projetado`), entidades ×
-  períodos consolidados, proveniência por linha (arquivo/página/confiança/
-  versão da taxonomia), aba `Resumo` com metadados do snapshot. Linhas
-  pendentes de aceite aparecem junto (nunca somem), mas com preenchimento
-  âmbar + itálico — "sugestão pendente de revisão", nunca fato silencioso
-  (princípio inegociável de `f0/07_output_spec.md`).
+  Excel do caso (`src/lib/export.ts` + `src/lib/statement-templates.ts`,
+  função pura testável isoladamente, `exceljs`).
+  - **Balanço / DRE / Fluxo de Caixa / Combinado** saem no **layout padrão de
+    mercado** dessas demonstrações (`statement-templates.ts`: Ativo/Passivo/PL
+    hierárquico no Balanço, cascata Receita→Lucro Líquido na DRE, Atividades
+    Operacionais/Investimento/Financiamento no Fluxo de Caixa) — linhas =
+    contas do template, colunas = entidade × período. Toda conta casa com a
+    chave extraída por termos determinísticos (mesma técnica de
+    `fn_valor_conceito`, `db/migrations/0009`) — **nunca soma/calcula** um
+    subtotal novo, só recoloca o que a IA já extraiu no lugar certo do
+    layout. Contas extraídas que não batem com nenhuma linha do template
+    aparecem à parte, em "Outras contas identificadas", ao final da aba —
+    nada desaparece silenciosamente. Proveniência (arquivo/página/confiança/
+    status/versão da taxonomia) vai em **comentário da célula** (não em
+    colunas auxiliares, já que as colunas são entidade×período).
+  - **Faturamento / Dívida / Fluxo Projetado** continuam em listagem simples
+    (já são, por natureza, uma série/tabela — não uma demonstração de blocos).
+  - Aba `Resumo` com metadados do snapshot (data-base, contagem aceitas/
+    pendentes, versões de taxonomia). Linhas pendentes de aceite aparecem
+    junto (nunca somem), mas com preenchimento âmbar + itálico — "sugestão
+    pendente de revisão", nunca fato silencioso (princípio inegociável de
+    `f0/07_output_spec.md`).
 
 ## Configuração
 
@@ -95,9 +109,15 @@ para logar.
   corretamente dinâmicas, `/` estática).
 - `src/lib/export.ts` (montagem do workbook) testado isoladamente com dados
   sintéticos via `tsx` + `exceljs`: gera as abas certas, reabre o `.xlsx`
-  gerado e confere célula a célula — cabeçalho com fundo cinza, linha
-  "pendente" com preenchimento âmbar + itálico, linha com "Total" em negrito,
-  aba Resumo com as contagens certas.
+  gerado e confere célula a célula — layout padronizado do Balanço (linhas
+  do template certas, valores casados por entidade×período, inclusive um
+  mesmo rótulo em dois períodos diferentes da mesma entidade), disambiguação
+  entre "Total do Ativo" e "Total do Ativo Circulante"/"Não Circulante" (achou
+  e corrigiu um bug real de sobreposição: "Total do Patrimônio Líquido"
+  casando com a linha combinada "Total do Passivo e do Patrimônio Líquido"),
+  contas não mapeadas indo para o apêndice "Outras contas identificadas",
+  nota de proveniência na célula, preenchimento âmbar + itálico em pendente,
+  negrito + borda dupla em total, aba Resumo com as contagens certas.
 
 ## O que NÃO foi possível verificar aqui (precisa do Supabase real)
 
@@ -128,6 +148,8 @@ src/
     supabase/{client,server,proxy,env}.ts   # clientes Supabase (browser/server/proxy)
     types.ts                                 # tipos das linhas do Postgres
     status.ts                                # rótulos/cores de caso_status
+    statement-templates.ts                   # layout padrão de mercado (Balanço/DRE/Fluxo)
+    export.ts                                # monta o workbook (função pura, sem Supabase)
   app/
     login/{page.tsx,actions.ts}
     casos/
