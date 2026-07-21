@@ -1,6 +1,6 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-21.
+Nota de transição de contexto. Última atualização: 2026-07-21 (sessão 2).
 
 ---
 
@@ -28,8 +28,32 @@ para a F1.
   página + confiança) e grava em `campo_extraido`. Nada disso é apresentado como fato
   ainda — é insumo para a reconciliação (Fatia 3).
 
-**Fatia 3 (E3 — Reconciliação): NÃO iniciada.** Decisão pendente do dono sobre como
-começar (ver §3).
+**Fatia 3 (E3 — Reconciliação): Classe A construída e testada (ainda não em produção real).**
+- Dono escolheu começar direto pela Classe A (checagens aritméticas determinísticas), sem
+  plano detalhado prévio.
+- `db/migrations/0009_reconciliacao_e3.sql`: tabela `reconciliacao` (log append-only de cada
+  checagem) + `fn_valor_conceito` (casa `campo_extraido.chave` — texto livre da IA — com um
+  conceito canônico via termos obrigatórios/excludentes normalizados, sem LLM) + as duas
+  checagens canônicas de `docs/04`: `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no
+  Balanço; tenta a linha combinada "Total do Passivo e do PL" primeiro, senão soma Passivo +
+  PL separados) e `fn_reconciliar_caixa_bp_fluxo` (Caixa do Balanço vs. saldo final do Fluxo de
+  Caixa; **aborta se as unidades divergirem** — ex. "R$" vs "R$ mil" — em vez de comparar
+  números incompatíveis). `fn_reconciliar_por_documento(documento_id)` é o ponto de entrada
+  único chamado pelo N8N.
+- Testado de ponta a ponta contra um Postgres 16 local efêmero (migrations 0001-0009 completas):
+  checagem batendo, divergência real, documento faltante (precondição), unidades divergentes
+  (precondição), auto-resolução de pendência quando a divergência some numa reextração, e
+  idempotência (rodar a mesma checagem 2x não duplica pendência — reaproveita pela chave
+  `motivo = 'reconciliacao:<tipo>'`).
+- N8N: novo node `Reconciliar (Classe A)` no fim do fluxo (depois de `Gravar Campos (Sombra)`),
+  chama `fn_reconciliar_por_documento` com o `documento_id` de `Registrar Documento`. 51/51
+  testes do `workflow-sim` continuam passando.
+- Portal: dashboard do caso (`portal/src/app/casos/[id]/page.tsx`) ganhou seção "Reconciliação
+  (Classe A)" listando as pendências abertas de divergência/precondição — **só leitura**, ainda
+  não tem uma ação de "confirmar/resolver" dedicada (usa o motor de pendências genérico).
+- Opera em **N1** (doutrina): toda checagem gera `pendencia` tipada (`divergencia_reconciliacao`
+  ou `precondicao_nao_satisfeita`), nunca escreve um número como fato aceito.
+- **Ainda não rodou contra dados reais do dono** (só dados sintéticos no Postgres local).
 
 **Fatia 4 (E4 — Output + Portão 2): NÃO iniciada.** Depende da E3.
 
@@ -60,19 +84,22 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 | Doutrina de Autonomia: classificação nasce N1 (sugestão+revisão humana), extração nasce N0 (sombra), anti-ancoragem (nenhum número vira fato sem aceite humano explícito) | `docs/01_DOUTRINA_DE_AUTONOMIA.md` |
 | RLS do Fatia 1: qualquer usuário `authenticated` vê tudo (ferramenta interna, um time) — restrição por caso é fatia futura | `db/migrations/0003_rls_e_storage.sql` |
 | Upload Storage (N8N→Supabase Storage) desabilitado — bug de plataforma confirmado do node HTTP Request do N8N com binário | `n8n/README.md` § "Upload Storage — pendência conhecida" |
+| E3 Classe A: casamento `chave` extraída → conceito canônico por **normalização + termos obrigatórios/excludentes** (determinístico, sem LLM); log append-only (`reconciliacao`) separado do estado acionável deduplicado (`pendencia`, chave `motivo='reconciliacao:<tipo>'`) | `db/migrations/0009_reconciliacao_e3.sql` |
 
 ---
 
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-O dono foi perguntado como prefere começar a **Fatia 3 (E3 — Reconciliação)**:
-1. Já começar direto pela **Classe A** (checagens aritméticas determinísticas — ex.:
-   Ativo = Passivo + PL no Balanço, Receita − Custos = Resultado na DRE) — recomendação
-   dada (maior valor, menor risco, gera pendências objetivas).
-2. Ver um plano detalhado da E3 antes de qualquer código.
-
-**Aguardando resposta do dono para prosseguir.**
+Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
+1. **Testar a Classe A com um caso real** do dono (subir Balanço + Fluxo de Caixa reais pelo
+   N8N e conferir se `fn_valor_conceito` casa as chaves extraídas de verdade — o maior risco
+   de calibração é o vocabulário real variar mais do que os padrões cobertos hoje).
+2. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
+   não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação).
+3. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
+   precisa de `MAPA_DIVIDA` sendo extraído, que hoje só tem schema genérico de linhas).
+4. **Seguir para a Fatia 4 (E4 — Output + Portão 2)** deixando B/C para depois.
 
 ### Depois da E3 (ordem sugerida)
 - **Fatia 4 (E4 — Output + Portão 2):** base viva no portal com proveniência por
@@ -80,6 +107,14 @@ O dono foi perguntado como prefere começar a **Fatia 3 (E3 — Reconciliação)
   (aceite humano formal antes de um número virar fato).
 
 ### Itens adiados (documentados, não bloqueantes)
+- **Overload morto de `fn_registrar_documento`:** achado ao testar 0009 contra Postgres local —
+  a migration `0007` adicionou `p_justificativa` via `create or replace` com um parâmetro a
+  mais, o que em Postgres **cria uma segunda função** (14 params) em vez de substituir a de
+  `0006`, em vez de exigir `drop` antes (como `0005` fez corretamente para a mudança de tipo de
+  retorno). Não quebra a produção porque o N8N sempre chama com o parâmetro nomeado
+  `p_justificativa=>...`, que desambigua para a versão de 15 params — mas é lixo de schema
+  (duas assinaturas da mesma função) e qualquer chamada só-posicional (ex.: um teste manual)
+  fica ambígua. Limpar numa migration futura (`drop function` da assinatura de 14 params).
 - **Upload Storage** ainda desabilitado — alternativas documentadas em
   `n8n/README.md`: community node `n8n-nodes-supabase`, ou mover upload pro portal via
   SDK JS do Supabase.
@@ -127,10 +162,11 @@ O dono foi perguntado como prefere começar a **Fatia 3 (E3 — Reconciliação)
 5. `$env` é bloqueado por padrão no N8N — não usar.
 
 ### Git / PR workflow desta sessão
-- Branch de trabalho: `claude/project-workflow-overview-ga323d`.
+- Branch de trabalho desta sessão: `claude/ola-3a5wp0` (a anterior,
+  `claude/project-workflow-overview-ga323d`, já foi mergeada — não empilhar mais nada nela).
 - Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo
-  GitHub. Depois de cada merge: `git fetch origin main && git checkout -B
-  claude/project-workflow-overview-ga323d origin/main` pra ressincronizar.
+  GitHub. Depois de cada merge, a próxima sessão deve restartar sua branch a partir do
+  `main` atualizado antes de continuar.
 - O stop-hook local avisa sobre commits "Unverified" (merge commits do próprio
   GitHub) — **não são reescritos** (exigiria reescrever histórico compartilhado do
   `main`); é uma checagem esperada, não um problema real.
@@ -147,13 +183,14 @@ O dono foi perguntado como prefere começar a **Fatia 3 (E3 — Reconciliação)
 
 ### Onde tudo mora
 ```
-db/       — migrations SQL (0001-0008) + README com ordem de aplicação
+db/       — migrations SQL (0001-0009) + README com ordem de aplicação
 n8n/      — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
 portal/   — Next.js (App Router) + Supabase Auth — dashboard e fila de revisão
 f0/       — decisões estruturais da fundação (taxonomia, schema, output spec, build vs buy)
 docs/     — doutrina de autonomia, arquitetura funcional, roadmap, reconciliação (E3 spec já existe aqui!)
 ```
 
-> **Nota para quem for atacar a E3:** `docs/04_RECONCILIACAO.md` já existe e
-> provavelmente tem o desenho conceitual das classes A/B/C — ler antes de desenhar a
-> migration/lógica do zero.
+> **Nota para quem for continuar a E3:** `docs/04_RECONCILIACAO.md` tem o desenho conceitual
+> das classes A/B/C. A Classe A (checagens 1 e 2 dos exemplos canônicos) já está construída em
+> `db/migrations/0009_reconciliacao_e3.sql` — ler essa migration (e os testes ad hoc descritos
+> em §1 desta sessão) antes de adicionar novas checagens ou atacar B/C do zero.

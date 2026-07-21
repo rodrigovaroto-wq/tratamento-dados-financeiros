@@ -1,7 +1,7 @@
-# Camada N8N — Fatia 1 (E1 — Ingestão + E2 — Extração-sombra)
+# Camada N8N — Fatia 1 (E1 — Ingestão + E2 — Extração-sombra + E3 — Reconciliação Classe A)
 
 O N8N é o **orquestrador stateless** (docs/02, trava de stack nº 1): recebe o upload em lote,
-classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0006`) que cuidam
+classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0009`) que cuidam
 do estado. A ingestão é feita **pelo próprio N8N** (Form Trigger) — sem Vercel nesta fatia.
 
 ## O que roda (fluxo do `workflow.e1-ingestao.json`)
@@ -20,11 +20,15 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
         └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
+              → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
 ```
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
-revisão — próxima fatia); **extração (E2) nasce em N0 (sombra)** — registra para medir, não
-decide, não entra em base sem aceite humano (anti-ancoragem).
+revisão); **extração (E2) nasce em N0 (sombra)** — registra para medir, não decide, não entra
+em base sem aceite humano (anti-ancoragem); **reconciliação Classe A (E3) nasce em N1** —
+checagens aritméticas determinísticas (`db/migrations/0009_reconciliacao_e3.sql`,
+`docs/04_RECONCILIACAO.md`) geram `pendencia` tipada quando divergem (ou quando falta
+pré-condição), nunca escrevem um número como fato aceito.
 
 ## Regras de fluxo do N8N (aprendidas em teste real — a topologia depende delas)
 
@@ -51,13 +55,13 @@ decide, não entra em base sem aceite humano (anti-ancoragem).
    > os mesmos nomes, o N8N renomeia os novos com sufixo (ex.: `Intake (Form)1`) — e os códigos
    > referenciam nodes **pelo nome exato** (`$('Intake (Form)')`), então o sufixo quebra tudo.
    > Antes de reimportar, **apague ou arquive o workflow antigo**.
-3. **Configurar credenciais** nos **4 nós Postgres** e **variáveis de ambiente** (ver abaixo).
-4. **Conferir os Query Parameters** dos 4 nós Postgres (o import pode não preenchê-los — tabela
+3. **Configurar credenciais** nos **5 nós Postgres** e **variáveis de ambiente** (ver abaixo).
+4. **Conferir os Query Parameters** dos 5 nós Postgres (o import pode não preenchê-los — tabela
    no Troubleshooting).
 5. Abrir a URL do **Form Trigger**, informar o nome do mandato e subir os arquivos.
 6. Conferir no banco: `caso`, `documento`, `checklist_item_status`, `pendencia`,
-   `evento_auditoria`, `campo_extraido` populados; status do caso avançando conforme a
-   completude.
+   `evento_auditoria`, `campo_extraido`, `reconciliacao` populados; status do caso avançando
+   conforme a completude.
 
 ## Troubleshooting conhecido (achados testando no N8N real)
 
@@ -76,6 +80,7 @@ Parameters"** → cole a expressão correspondente:
 | Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa \|\| null] }}` (14º parâmetro = justificativa; a query usa `p_justificativa=>$14` para pular o `p_threshold` que fica no default) |
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
 | Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
+| Reconciliar (Classe A) | `={{ [$('Registrar Documento').item.json.r.documento_id] }}` |
 
 **Erro `function fn_upsert_caso(unknown) does not exist`:** o driver do N8N envia o parâmetro
 sem tipo; a resolução falha sem cast. As queries já vêm com `::tipo` em cada `$N`.
