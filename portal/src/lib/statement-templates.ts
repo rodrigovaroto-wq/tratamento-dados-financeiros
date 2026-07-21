@@ -142,7 +142,7 @@ const PL_KW = [
   "capital social", "reserva de capital", "reserva de lucro", "lucro acumulado", "prejuizo acumulado",
   "ajuste de avaliacao patrimonial", "acoes em tesouraria", "patrimonio liquido", "capital a integralizar",
 ];
-const EMPRESTIMO_FINANCIAMENTO_KW = ["emprestimo", "financiamento", "debenture", "arrendamento"];
+const EMPRESTIMO_FINANCIAMENTO_KW = ["emprestimo", "financiamento", "debenture", "arrendamento", "mutuo"];
 
 export function classificarBalanco(secao: string | null, chave: string): Classificacao {
   const tokensTudo = tokensDe(`${secao || ""} ${chave}`);
@@ -189,7 +189,14 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
   // 3) Palavras-chave do próprio rótulo (fallback — cobre quando a seção não
   // veio ou não foi clara o suficiente).
   if (contemAlgumaFrase(tokensChave, EMPRESTIMO_FINANCIAMENTO_KW)) {
+    // Empréstimo/mútuo pode ser DÍVIDA (passivo, ex. "Empréstimos Bancários")
+    // ou um DIREITO da empresa (ativo, ex. "Mútuo a Receber de Coligada" —
+    // comum em holdings/grupos econômicos). Sem esse sinal, tudo caía em
+    // passivo, mesmo quando o rótulo dizia "a receber".
     const longoPrazo = contemFrase(tokensChave, "longo prazo") || contemFrase(tokensChave, "nao circulante");
+    if (tokensChave.has("receber")) {
+      return { secaoKey: longoPrazo ? "ativo_nao_circulante" : "ativo_circulante", ancoraKey: null };
+    }
     return { secaoKey: longoPrazo ? "passivo_nao_circulante" : "passivo_circulante", ancoraKey: null };
   }
   if (contemAlgumaFrase(tokensChave, PL_KW)) return { secaoKey: "patrimonio_liquido", ancoraKey: null };
