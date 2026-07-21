@@ -278,9 +278,21 @@ export const FLUXO_CAIXA_ANCORAS = [
 export function classificarFluxoCaixa(secao: string | null, chave: string): Classificacao {
   const tokens = tokensDe(`${secao || ""} ${chave}`);
 
-  if (contemAlgumaFrase(tokens, ["saldo final caixa", "caixa saldo final"])) return { secaoKey: null, ancoraKey: "saldo_final_caixa" };
-  if (contemAlgumaFrase(tokens, ["saldo inicial caixa", "caixa saldo inicial"])) return { secaoKey: null, ancoraKey: "saldo_inicial_caixa" };
-  if (contemAlgumaFrase(tokens, ["aumento caixa", "reducao caixa", "variacao liquida caixa", "diminuicao caixa"])) {
+  // Saldos de caixa: documentos reais frequentemente NÃO usam a palavra
+  // "saldo" — escrevem "Caixa e Equivalentes de Caixa no Final/Início do
+  // Período". Casa também esse padrão (caixa/equivalente + final|inicio +
+  // periodo|exercicio), sem casar a linha do Balanço "Caixa e Equivalentes
+  // de Caixa" (que não tem final/inicio/periodo).
+  if (contemAlgumaFrase(tokens, ["saldo final caixa", "caixa saldo final", "caixa final periodo", "caixa final exercicio", "equivalente caixa final"])) {
+    return { secaoKey: null, ancoraKey: "saldo_final_caixa" };
+  }
+  if (contemAlgumaFrase(tokens, ["saldo inicial caixa", "caixa saldo inicial", "caixa inicio periodo", "caixa inicio exercicio", "equivalente caixa inicio"])) {
+    return { secaoKey: null, ancoraKey: "saldo_inicial_caixa" };
+  }
+  if (contemAlgumaFrase(tokens, [
+    "aumento caixa", "reducao caixa", "variacao liquida caixa", "diminuicao caixa",
+    "acrescimo caixa", "decrescimo caixa", "acrescimo equivalente caixa", "decrescimo equivalente caixa",
+  ])) {
     return { secaoKey: null, ancoraKey: "variacao_liquida_caixa" };
   }
   if (contemAlgumaFrase(tokens, ["caixa liquido atividades operacional", "caixa gerado atividades operacional", "total atividades operacional"])) {
@@ -327,6 +339,57 @@ export const ESTRUTURA_POR_TIPO: Record<string, EstruturaDemonstracao> = {
   DRE: "dre",
   FLUXO_CAIXA: "fluxo_caixa",
 };
+
+// secao_canonica (sugestão da IA por linha, db/migrations/0012) → a QUAL
+// demonstração aquela conta pertence. É o que permite separar por aba um PDF
+// que traz várias demonstrações juntas ("Demonstrações Contábeis completas":
+// Balanço + DRE + Fluxo de Caixa no mesmo arquivo) — cada linha vai para a aba
+// da SUA demonstração, não para a do tipo do documento inteiro.
+const FAMILIA_POR_SECAO_CANONICA: Record<string, EstruturaDemonstracao> = {
+  ativo_circulante: "balanco",
+  ativo_nao_circulante: "balanco",
+  passivo_circulante: "balanco",
+  passivo_nao_circulante: "balanco",
+  patrimonio_liquido: "balanco",
+  receita_bruta: "dre",
+  custos: "dre",
+  despesas_operacionais: "dre",
+  resultado_financeiro: "dre",
+  impostos_lucro: "dre",
+  atividades_operacionais: "fluxo_caixa",
+  atividades_investimento: "fluxo_caixa",
+  atividades_financiamento: "fluxo_caixa",
+};
+
+// A qual demonstração (Balanço/DRE/Fluxo de Caixa) uma linha pertence. Usado
+// para ROTEAR a linha para a aba certa — separado da classificação da SEÇÃO
+// dentro da aba (classificarConta). Prioridade:
+//   1) secao_canonica (a IA olhou o conteúdo e disse a qual demonstração é) —
+//      "o modelo identifica o que é DRE e o que é Balanço", pedido do dono;
+//   2) fallback determinístico quando a IA não anotou — ordem Fluxo de Caixa →
+//      DRE → Balanço, porque os sinais de Fluxo/DRE são específicos e o de
+//      Balanço casa "caixa" de forma gulosa (senão uma linha de Fluxo cairia
+//      no Ativo Circulante, o bug real observado);
+//   3) null quando nenhum sinal claro — o chamador mantém a linha na aba do
+//      tipo do documento (conservador).
+// Não decide nada como fato: a linha continua N1/pendente até o aceite humano;
+// isto afeta só EM QUAL ABA a sugestão aparece.
+export function classificarDemonstracao(
+  secao: string | null,
+  chave: string,
+  secaoCanonica?: string | null,
+): EstruturaDemonstracao | null {
+  if (secaoCanonica && FAMILIA_POR_SECAO_CANONICA[secaoCanonica]) {
+    return FAMILIA_POR_SECAO_CANONICA[secaoCanonica];
+  }
+  const fc = classificarFluxoCaixa(secao, chave);
+  if (fc.secaoKey || fc.ancoraKey) return "fluxo_caixa";
+  const dre = classificarDRE(secao, chave);
+  if (dre.secaoKey || dre.ancoraKey) return "dre";
+  const bal = classificarBalanco(secao, chave);
+  if (bal.secaoKey || bal.ancoraKey) return "balanco";
+  return null;
+}
 
 // Conjunto de chaves de seção válidas por estrutura — usado para validar a
 // sugestão canônica da IA (só entra se pertencer à estrutura do documento).
