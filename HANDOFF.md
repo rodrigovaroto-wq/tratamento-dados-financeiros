@@ -1,10 +1,12 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-21 (fim da sessão 4).
+Nota de transição de contexto. Última atualização: 2026-07-21 (fim da sessão 5).
 
-**Estado do repositório neste momento: tudo abaixo já está mergeado no `main`** (PRs #20 E3,
-#21 diagnóstico, #22 aceite+export E4, #23 layout de mercado, #24 classificador por seção —
-todos mergeados pelo dono). Não há nenhum PR aberto pendente de revisão no momento.
+**Estado do repositório neste momento:** tudo da sessão 4 já está mergeado no `main` (PRs #20
+E3, #21 diagnóstico, #22 aceite+export E4, #23 layout de mercado, #24 classificador por seção —
+todos mergeados pelo dono). A sessão 5 abriu um PR novo (ver seção "Sessão 5" abaixo) com um fix
+de classificação encontrado ao testar o export com dados sintéticos mais realistas — ainda
+pendente de revisão do dono no momento em que este arquivo foi escrito.
 
 ---
 
@@ -155,6 +157,69 @@ direto do dono: "quero que seja extraído para o Excel em um modelo pronto para 
   montagem do Excel, com dados sintéticos.
 - Botão "Exportar para Excel ↓" no dashboard do caso.
 
+### Sessão 5 — Teste aprofundado do export (E4) com dados sintéticos mais realistas
+Pedido do dono: "testar o export com um caso real". **Ressalva importante:** este ambiente de
+execução remoto não tinha (e não tem) credenciais do Supabase/N8N reais do dono nem documentos
+reais de clientes — então o que rodou aqui foi um teste **local, mais profundo que o da sessão
+4** (que só usou 2 empresas fictícias mínimas), não um teste contra a infraestrutura de
+produção. **Continua pendente**: o dono rodar de fato com um caso real (aplicar `0011` no
+Supabase de produção, subir documentos reais, aceitar linhas na tela de planilha, baixar e abrir
+o `.xlsx` de verdade no Excel/LibreOffice dele; a rota `/casos/[id]/export` — a busca via
+Supabase — segue não exercitada contra um projeto real).
+
+O que foi feito e achado:
+- **Dataset sintético bem mais próximo de um caso real**: 3 empresas (mesmo grupo econômico,
+  planos de contas com nomenclatura diferente entre si — o teste que motivou o classificador por
+  seção na sessão 4), Balanço em 2 períodos, DRE em 2 períodos, Fluxo de Caixa (método indireto),
+  Balancete, e uma série de Faturamento — 110 linhas extraídas com vocabulário contábil PT-BR
+  realista (não mais só o punhado mínimo de contas fictícias da sessão 4). `buildExportWorkbook`
+  é função pura (sem Supabase), então isso testa a lógica de classificação/montagem do Excel
+  isoladamente, sem precisar de infraestrutura real.
+- **Bug real encontrado e corrigido** em `portal/src/lib/statement-templates.ts`: quando a
+  `secao` anotada pela IA não vem preenchida (fallback só por palavra-chave do rótulo), qualquer
+  conta com "empréstimo"/"financiamento"/"mútuo" no nome caía sempre no **Passivo** — mesmo
+  quando o rótulo dizia explicitamente "a receber" (ex.: "Mútuo a Receber de Coligada", comum em
+  holdings/grupos econômicos — exatamente o tipo de estrutura societária que a Oria analisa em
+  mandatos de M&A/reestruturação). Um mútuo/empréstimo CONCEDIDO pela empresa é um DIREITO (ativo),
+  não uma dívida. Fix: o fallback agora verifica o token "receber" no rótulo e classifica pro lado
+  do Ativo (circulante/não circulante conforme prazo) quando presente; mantém o comportamento
+  anterior (Passivo) quando não há esse sinal. Também foi adicionado `"mutuo"` à lista de
+  palavras-chave (antes só "emprestimo"/"financiamento"/"debenture"/"arrendamento" — "mútuo a
+  receber" caía inteiro em "Contas Não Classificadas" por falta de cobertura, não por
+  classificação errada). Confirmado com teste isolado de `classificarBalanco` antes/depois do
+  fix (4 variações: empréstimo concedido com/sem "a receber" explícito, mútuo, e o caso de
+  controle — empréstimo tomado de banco — que precisa continuar indo pro Passivo).
+- **Validação estrutural do `.xlsx` gerado**: a tentativa de abrir de verdade num programa de
+  planilha (LibreOffice headless, pré-instalado neste ambiente) **falhou por motivo do
+  ambiente, não do arquivo** — confirmado com `strace` que o LibreOffice deste sandbox não
+  carrega nem um `.xlsx`/`.csv` mínimo gerado do zero (`openpyxl`), então não é algo específico
+  do nosso export. Como alternativa, a validação foi feita inspecionando o `.xlsx` estruturalmente
+  com `openpyxl` (Python): todas as 6 abas presentes, valores/rótulos corretos por
+  empresa×período, contas das duas empresas com plano de contas diferente alinhadas na seção
+  certa mantendo o rótulo original de cada uma, linhas pendentes com preenchimento âmbar+itálico,
+  comentário de proveniência em toda célula com valor, âncoras (totais) em negrito com borda,
+  bloco "Contas Não Classificadas" só com as 2 contas genuinamente fora do vocabulário conhecido
+  (um jargão de M&A bem específico de PPA/ágio, de propósito no teste). **Isso reduz mas não
+  substitui** o dono abrir o arquivo de verdade no Excel/LibreOffice dele.
+- **Migrations 0001-0011 reaplicadas contra um Postgres 16 local efêmero** (mesmo padrão de
+  sessões anteriores): aplicam limpo, com a mesma ressalva já conhecida de `storage.buckets`
+  (schema exclusivo do Supabase, não existe em Postgres vanilla — só afeta a parte de storage da
+  `0003`, não trava o resto) e o overload morto de `fn_registrar_documento` já documentado em
+  "Itens adiados" (confirmado presente: 2 assinaturas, 14 e 15 params).
+- **Fluxo E1→E2→E4 testado de ponta a ponta** (`fn_registrar_documento` →
+  `fn_registrar_campos_extraidos` → `fn_aceitar_extracao`): aceite muda `status_aceite` de
+  `pendente` pra `aceito` corretamente, grava `aceito_por`/`aceito_em`, cria `decisao` (tipo
+  `aprovacao`) + `evento_auditoria`. **Achado (não corrigido, é uma decisão de produto, não bug
+  óbvio)**: chamar `fn_aceitar_extracao` de novo na mesma versão (idempotência) não re-aceita
+  linhas já aceitas (`n_campos_aceitos: 0` na segunda chamada, confirmado) — mas AINDA ASSIM
+  grava uma nova linha em `decisao` e `evento_auditoria` a cada chamada, mesmo quando nada mudou.
+  Ou seja: "idempotente" (`db/migrations/0011`) vale pro estado de `campo_extraido`, não pro
+  trilha de auditoria — um duplo-clique acidental no botão "Aceitar" do portal geraria uma
+  segunda `decisao` com `n_campos_aceitos: 0` no log. Pode ser intencional (toda ação explícita
+  de aceite fica registrada, mesmo sem efeito), mas vale confirmar com o dono se isso é desejado
+  ou se `fn_aceitar_extracao` deveria pular o registro de decisão/evento quando `n_campos_aceitos
+  = 0`.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -194,16 +259,19 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 
 ### Decisão pendente (bloqueia o próximo passo de código)
 Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
-1. **Testar o export com um caso real** do dono (aplicar `0011`, subir documentos reais,
-   aceitar algumas linhas na tela de planilha, baixar o `.xlsx` e abrir de verdade no
-   Excel/LibreOffice — só foi testado reabrindo com `exceljs`, não com um programa de planilha
-   de verdade; e a busca via Supabase da rota `/export` não foi exercitada contra um projeto
-   real ainda, só a classificação/montagem do workbook em si). **Validar com o time de
-   análise** se as palavras-chave de seção (`statement-templates.ts`) cobrem o vocabulário real
-   dos clientes da Oria — foram montadas por bom senso contábil (CPC/prática de mercado) e
-   testadas com nomenclaturas fictícias variadas, não com documentos reais de clientes.
-   Vocabulário genuinamente novo (setor muito específico, gíria de outra região) pode cair em
-   "Contas Não Classificadas" até alguém ampliar as listas de palavras-chave.
+1. **Testar o export com um caso real do dono, no Supabase/N8N de produção** (aplicar `0011` lá
+   se ainda não estiver, subir documentos reais, aceitar algumas linhas na tela de planilha,
+   baixar o `.xlsx` e abrir de verdade no Excel/LibreOffice do dono). A sessão 5 aprofundou o
+   teste local (dataset sintético bem mais realista, achou e corrigiu um bug de classificação —
+   ver §1 "Sessão 5" acima — e validou a estrutura do `.xlsx` via `openpyxl` já que o LibreOffice
+   deste ambiente remoto está quebrado), mas **isso não substitui** rodar contra dados e
+   documentos reais de um mandato de verdade — a busca via Supabase da rota `/export` também
+   segue não exercitada contra um projeto real. **Validar com o time de análise** se as
+   palavras-chave de seção (`statement-templates.ts`) cobrem o vocabulário real dos clientes da
+   Oria — foram montadas por bom senso contábil (CPC/prática de mercado) e testadas com
+   nomenclaturas variadas (inclusive sintéticas realistas na sessão 5), não com documentos reais
+   de clientes. Vocabulário genuinamente novo (setor muito específico, gíria de outra região)
+   pode cair em "Contas Não Classificadas" até alguém ampliar as listas de palavras-chave.
 2. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
    individual, se o dono achar o aceite em lote grosseiro demais na prática.
 3. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
@@ -270,13 +338,16 @@ Nenhuma no momento. Próximo passo natural é uma destas (perguntar ao dono qual
 5. `$env` é bloqueado por padrão no N8N — não usar.
 
 ### Git / PR workflow desta sessão
-- Branch usada nesta sessão: `claude/ola-3a5wp0` — teve **5 PRs mergeados** a partir dela
-  (#20-#24, ver acima). Como todos já foram mergeados, essa branch está "esgotada": a
-  **próxima sessão/chat, ao começar a trabalhar, deve restartar essa branch (ou abrir uma
-  nova) a partir do `main` atualizado** antes de commitar qualquer coisa nova — nunca empilhar
-  em cima de uma branch cujo PR já foi mergeado. Padrão usado nesta sessão sempre que isso
-  aconteceu no meio do trabalho: `git fetch origin main && git rebase origin/main` (ou, se a
-  branch antiga não tiver mais utilidade, `git checkout -B claude/<nome-novo> origin/main`).
+- Branch usada na sessão 4: `claude/ola-3a5wp0` — teve **5 PRs mergeados** a partir dela
+  (#20-#24, ver acima), depois esgotada (já mergeada) — sessão 5 restartou a partir do `main`
+  atualizado, como o padrão abaixo manda.
+- Branch usada na sessão 5: `claude/handoff-md-review-ywt57q`, restartada do `main` antes de
+  commitar (mesmo padrão). Como esta branch teve um PR aberto por essa sessão, a **próxima
+  sessão/chat deve verificar se esse PR já foi mergeado** antes de continuar nela — se sim,
+  restartar (ou abrir nova) a partir do `main` atualizado, nunca empilhar em cima de branch cujo
+  PR já foi mergeado. Padrão sempre que isso acontecer no meio do trabalho:
+  `git fetch origin main && git rebase origin/main` (ou, se a branch antiga não tiver mais
+  utilidade, `git checkout -B claude/<nome-novo> origin/main`).
 - Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo GitHub.
 - O stop-hook local avisa sobre commits "Unverified" (merge commits do próprio
   GitHub) — **não são reescritos** (exigiria reescrever histórico compartilhado do
