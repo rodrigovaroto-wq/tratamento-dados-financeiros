@@ -18,6 +18,7 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0006_reset_funcoes.sql` | **Reset forçado das 4 funções RPC.** Roda sempre que houver dúvida sobre o estado delas (ex.: aplicações parciais/repetidas deixaram assinatura divergente) — derruba qualquer sobrecarga existente e recria do zero. **Seguro de rodar a qualquer momento** (idempotente). |
 | `migrations/0007_justificativa_pendencia.sql` | Adiciona `p_justificativa` (parâmetro trailing com default) a `fn_registrar_documento` — a pendência de classificação incerta passa a incluir a explicação objetiva da IA ("Motivo: ..."), não só o número de confiança. |
 | `migrations/0008_portal_revisao.sql` | Suporte de banco para o **Portal**: coluna `confianca`/`fonte`/`justificativa` em `documento` (para o dashboard não precisar fazer parsing de `evento_auditoria.depois`); `fn_registrar_documento` passa a gravá-las (mesma assinatura de 0007). Nova função `fn_revisar_documento` — a fila de revisão do portal chama essa RPC para confirmar/corrigir a classificação: resolve a pendência, registra `decisao`+`evento_auditoria`, realoca o checklist, recomputa a completude. |
+| `migrations/0009_reconciliacao_e3.sql` | **E3 — Reconciliação, Classe A** (primeira fatia, `docs/04_RECONCILIACAO.md`). Tabela `reconciliacao` (log append-only de cada checagem); `fn_valor_conceito` casa `campo_extraido.chave` (texto livre) com um conceito canônico por termos obrigatórios/excludentes normalizados; duas checagens — `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no Balanço) e `fn_reconciliar_caixa_bp_fluxo` (Caixa do Balanço vs. saldo final do Fluxo de Caixa, aborta se as unidades divergirem); `fn_reconciliar_por_documento(documento_id)` é o ponto de entrada chamado pelo N8N logo após a extração — dispara as checagens do tipo do documento. Opera em **N1**: gera `pendencia` tipada (`divergencia_reconciliacao` ou `precondicao_nao_satisfeita`), nunca escreve um número como fato. |
 
 ## Como aplicar
 
@@ -33,6 +34,7 @@ supabase db execute --file db/migrations/0005_extracao_e2.sql
 supabase db execute --file db/migrations/0006_reset_funcoes.sql
 supabase db execute --file db/migrations/0007_justificativa_pendencia.sql
 supabase db execute --file db/migrations/0008_portal_revisao.sql
+supabase db execute --file db/migrations/0009_reconciliacao_e3.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
@@ -72,5 +74,7 @@ where relname in ('caso','documento','pendencia','evento_auditoria') order by re
 
 ## O que NÃO está aqui (entra em fatias seguintes)
 
-`reconciliacao` (E3) e o refinamento de RLS por caso. Ver o plano da F1 e
-`f0/05_schema_conceitual.md`. (`campo_extraido` já entrou em `0005`.)
+O refinamento de RLS por caso, e as Classes B/C de reconciliação (`docs/04_RECONCILIACAO.md`
+— continuam N1/aproximação, não têm engine determinística ainda). Ver o plano da F1 e
+`f0/05_schema_conceitual.md`. (`campo_extraido` entrou em `0005`; `reconciliacao` — Classe A —
+entrou em `0009`.)

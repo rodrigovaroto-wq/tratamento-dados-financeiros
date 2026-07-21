@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { Caso, Documento, Pendencia, TaxonomiaTipoDocumento } from "@/lib/types";
+import {
+  PENDENCIA_TIPOS_RECONCILIACAO,
+  type Caso,
+  type Documento,
+  type Pendencia,
+  type TaxonomiaTipoDocumento,
+} from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 
 export default async function CasoDashboardPage({
@@ -47,6 +53,9 @@ export default async function CasoDashboardPage({
 
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
   const pendenciasClassificacao = pendencias.filter((p) => p.tipo === "classificacao_pendente");
+  const pendenciasReconciliacao = pendencias.filter((p) =>
+    (PENDENCIA_TIPOS_RECONCILIACAO as readonly string[]).includes(p.tipo),
+  );
 
   return (
     <div className="space-y-8">
@@ -128,6 +137,31 @@ export default async function CasoDashboardPage({
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-neutral-700">
+          Reconciliação (Classe A) ({pendenciasReconciliacao.length})
+        </h2>
+        {pendenciasReconciliacao.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            Nenhuma divergência ou pré-condição pendente no momento.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {pendenciasReconciliacao.map((p) => (
+              <li
+                key={p.id}
+                className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              >
+                <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium uppercase text-amber-800">
+                  {p.tipo === "precondicao_nao_satisfeita" ? "pré-condição" : "divergência"}
+                </span>
+                {p.descricao ?? "(sem descrição)"}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>

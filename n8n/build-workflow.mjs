@@ -294,6 +294,17 @@ const nodes = [
     query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb) as n_campos',
     options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}" },
   }, 2700, 300, { credentials: PG_CRED }),
+
+  // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
+  // documento recém-extraído (docs/04). Só precisa do documento_id — a função
+  // resolve caso/entidade/período sozinha (N8N continua stateless). Gera
+  // pendência tipada quando diverge ou quando falta pré-condição; nunca
+  // escreve "fato" numa base viva (anti-ancoragem, docs/01).
+  node('Reconciliar (Classe A)', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery',
+    query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
+    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
+  }, 2900, 300, { credentials: PG_CRED }),
 ];
 
 const connections = {
@@ -320,12 +331,13 @@ const connections = {
   'Montar Req Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
   'Parse Extracao': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
+  'Gravar Campos (Sombra)': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
 };
 
 const workflow = {
-  name: 'Oria — E1 Ingestão + E2 Extração-Sombra (Fatia 1)',
+  name: 'Oria — E1 Ingestão + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',
   nodes, connections, settings: { executionOrder: 'v1' },
-  meta: { note: 'Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra.' },
+  meta: { note: 'Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato).' },
 };
 
 writeFileSync(join(__dirname, 'workflow.e1-ingestao.json'), JSON.stringify(workflow, null, 2) + '\n');

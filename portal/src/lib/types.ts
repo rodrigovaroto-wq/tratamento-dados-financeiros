@@ -72,6 +72,13 @@ export interface Pendencia {
   criada_em: string;
 }
 
+// Tipos de pendencia_tipo (db/migrations/0001, 0009) gerados pela reconciliação
+// Classe A (E3) — divergência aritmética detectada ou pré-condição não satisfeita.
+export const PENDENCIA_TIPOS_RECONCILIACAO = [
+  "divergencia_reconciliacao",
+  "precondicao_nao_satisfeita",
+] as const;
+
 export interface TaxonomiaTipoDocumento {
   codigo: string;
   categoria: string;

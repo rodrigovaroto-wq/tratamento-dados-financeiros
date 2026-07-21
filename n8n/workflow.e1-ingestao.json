@@ -1,5 +1,5 @@
 {
-  "name": "Oria — E1 Ingestão + E2 Extração-Sombra (Fatia 1)",
+  "name": "Oria — E1 Ingestão + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)",
   "nodes": [
     {
       "parameters": {
@@ -340,6 +340,29 @@
           "name": "Supabase Postgres (Session Pooler)"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select fn_reconciliar_por_documento($1::uuid) as resultado",
+        "options": {
+          "queryReplacement": "={{ [$('Registrar Documento').item.json.r.documento_id] }}"
+        }
+      },
+      "id": "reconciliar-classe-a-",
+      "name": "Reconciliar (Classe A)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2900,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE",
+          "name": "Supabase Postgres (Session Pooler)"
+        }
+      }
     }
   ],
   "connections": {
@@ -502,12 +525,23 @@
           }
         ]
       ]
+    },
+    "Gravar Campos (Sombra)": {
+      "main": [
+        [
+          {
+            "node": "Reconciliar (Classe A)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1"
   },
   "meta": {
-    "note": "Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra."
+    "note": "Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato)."
   }
 }
