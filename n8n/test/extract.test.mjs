@@ -4,39 +4,73 @@ import { buildExtractionRequest, parseExtractionResponse, extractionSchema } fro
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
-test('extractionSchema é estrito e tem array de linhas', () => {
+test('extractionSchema é estrito, tem diagnóstico e array de linhas com seção', () => {
   const s = extractionSchema();
   assert.equal(s.strict, true);
   assert.equal(s.schema.properties.linhas.type, 'array');
   assert.equal(s.schema.properties.linhas.items.additionalProperties, false);
+  assert.ok(s.schema.properties.linhas.items.required.includes('secao'));
+  assert.equal(s.schema.properties.diagnostico.type, 'object');
+  assert.ok(s.schema.properties.diagnostico.required.includes('legibilidade'));
+  assert.ok(s.schema.properties.diagnostico.properties.tipo_sugerido.enum.includes('DESCONHECIDO'));
 });
 
-test('buildExtractionRequest inclui o conteúdo e o schema de extração', () => {
+test('buildExtractionRequest inclui o conteúdo, o nome do arquivo e o schema de diagnóstico+extração', () => {
   const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'dre.pdf' });
-  const req = buildExtractionRequest({ tipo: 'DRE', conteudo: parte });
-  assert.equal(req.body.response_format.json_schema.name, 'extracao_linhas_financeiras');
+  const req = buildExtractionRequest({ tipo: 'DRE', nomeOriginal: 'dre.pdf', conteudo: parte });
+  assert.equal(req.body.response_format.json_schema.name, 'diagnostico_e_extracao');
   assert.ok(req.body.messages[1].content.some((c) => c.type === 'file'));
+  assert.match(req.body.messages[1].content[0].text, /dre\.pdf/);
 });
 
-test('parseExtractionResponse normaliza linhas p/ fn_registrar_campos_extraidos', () => {
+test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', () => {
   const api = { choices: [{ message: { content: JSON.stringify({
     moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Empresa X Ltda', tipo_confirma: true, tipo_sugerido: 'DRE',
+      periodo_tipo: 'anual', periodo_referencia: '12M25',
+      legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'DRE anual de 2025 com receita e custos detalhados.',
+      justificativa: 'Cabeçalho e estrutura batem com DRE.',
+    },
     linhas: [
-      { chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { chave: 'Custo', valor_texto: '(6.000)', valor_num: -6000, origem_pagina: 1, confianca: 0.7 },
+      { secao: 'Receita Operacional', chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
+      { secao: 'Custos', chave: 'Custo', valor_texto: '(6.000)', valor_num: -6000, origem_pagina: 1, confianca: 0.7 },
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
   assert.equal(r.unidade, 'R$ mil');
   assert.equal(r.campos.length, 2);
+  assert.equal(r.campos[0].secao, 'Receita Operacional');
   assert.equal(r.campos[0].chave, 'Receita líquida');
   assert.equal(r.campos[0].valor_num, 10000);
   assert.equal(r.campos[0].unidade, 'R$ mil'); // herda a unidade do documento
+  assert.equal(r.diagnostico.entidade, 'Empresa X Ltda');
+  assert.equal(r.diagnostico.tipo_confirma, true);
+  assert.equal(r.diagnostico.legibilidade, 'ok');
+});
+
+test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', () => {
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: false, tipo_sugerido: 'DESCONHECIDO',
+      periodo_tipo: 'desconhecido', periodo_referencia: null,
+      legibilidade: 'ilegivel', nota_legibilidade: 'Digitalização ilegível, páginas em branco.',
+      resumo: 'Não foi possível ler o conteúdo.', justificativa: 'Arquivo corrompido/ilegível.',
+    },
+    linhas: [],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.diagnostico.tipo_sugerido, null);
+  assert.equal(r.diagnostico.legibilidade, 'ilegivel');
+  assert.equal(r.diagnostico.nota_legibilidade, 'Digitalização ilegível, páginas em branco.');
 });
 
 test('parseExtractionResponse tolera resposta vazia/ruim', () => {
   assert.deepEqual(parseExtractionResponse({}).campos, []);
   assert.deepEqual(parseExtractionResponse({ choices: [{ message: { content: 'nao-json' } }] }).campos, []);
+  assert.equal(parseExtractionResponse({}).diagnostico.entidade, null);
 });
 
 test('spreadsheetToText resume linhas com cabeçalho', () => {

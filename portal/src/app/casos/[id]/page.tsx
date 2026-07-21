@@ -3,12 +3,19 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   PENDENCIA_TIPOS_RECONCILIACAO,
+  PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
+  PENDENCIA_TIPO_ARQUIVO_ILEGIVEL,
   type Caso,
   type Documento,
   type Pendencia,
   type TaxonomiaTipoDocumento,
 } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
+
+const LEGIBILIDADE_LABEL: Record<string, string> = {
+  degradado: "qualidade degradada",
+  ilegivel: "ilegível",
+};
 
 export default async function CasoDashboardPage({
   params,
@@ -28,9 +35,9 @@ export default async function CasoDashboardPage({
     supabase
       .from("documento")
       .select(
-        `id, tipo_taxonomia, status, confianca, fonte, justificativa, criado_em,
+        `id, tipo_taxonomia, status, confianca, fonte, justificativa, resumo, criado_em,
          entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-         documento_versao(nome_original)`,
+         documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
       )
       .eq("caso_id", id)
       .order("criado_em", { ascending: false }),
@@ -52,10 +59,13 @@ export default async function CasoDashboardPage({
   const pendencias = (pendenciasRes.data as Pendencia[] | null) ?? [];
 
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
-  const pendenciasClassificacao = pendencias.filter((p) => p.tipo === "classificacao_pendente");
+  const pendenciasRevisao = pendencias.filter((p) =>
+    (PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS as readonly string[]).includes(p.tipo),
+  );
   const pendenciasReconciliacao = pendencias.filter((p) =>
     (PENDENCIA_TIPOS_RECONCILIACAO as readonly string[]).includes(p.tipo),
   );
+  const pendenciasArquivo = pendencias.filter((p) => p.tipo === PENDENCIA_TIPO_ARQUIVO_ILEGIVEL);
 
   return (
     <div className="space-y-8">
@@ -69,10 +79,10 @@ export default async function CasoDashboardPage({
         </span>
       </div>
 
-      {pendenciasClassificacao.length > 0 && (
+      {pendenciasRevisao.length > 0 && (
         <div className="flex items-center justify-between rounded border border-amber-300 bg-amber-50 p-3 text-sm">
           <span className="text-amber-800">
-            {pendenciasClassificacao.length} documento(s) com classificação pendente de revisão.
+            {pendenciasRevisao.length} documento(s) com pendência de revisão (classificação, entidade ou período).
           </span>
           <Link href={`/casos/${id}/revisao`} className="font-medium text-amber-900 underline">
             Ir para a fila de revisão →
@@ -117,23 +127,47 @@ export default async function CasoDashboardPage({
                   <th className="px-3 py-2">Período</th>
                   <th className="px-3 py-2">Confiança</th>
                   <th className="px-3 py-2">Fonte</th>
+                  <th className="px-3 py-2">Resumo</th>
+                  <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {documentos.map((doc) => (
-                  <tr key={doc.id}>
-                    <td className="px-3 py-2">{doc.documento_versao?.[0]?.nome_original ?? "—"}</td>
-                    <td className="px-3 py-2">{doc.tipo_taxonomia ?? "não classificado"}</td>
-                    <td className="px-3 py-2">{doc.entidade?.razao_social ?? "—"}</td>
-                    <td className="px-3 py-2">
-                      {doc.periodo ? `${doc.periodo.tipo} ${doc.periodo.referencia}` : "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {doc.confianca != null ? `${Math.round(doc.confianca * 100)}%` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-neutral-500">{doc.fonte ?? "—"}</td>
-                  </tr>
-                ))}
+                {documentos.map((doc) => {
+                  const versao = doc.documento_versao?.[0];
+                  const legibilidadeRuim = versao?.legibilidade && versao.legibilidade !== "ok";
+                  return (
+                    <tr key={doc.id}>
+                      <td className="px-3 py-2">
+                        {versao?.nome_original ?? "—"}
+                        {legibilidadeRuim && (
+                          <span
+                            title={versao?.nota_legibilidade ?? ""}
+                            className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium uppercase text-red-700"
+                          >
+                            {LEGIBILIDADE_LABEL[versao!.legibilidade!] ?? versao!.legibilidade}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">{doc.tipo_taxonomia ?? "não classificado"}</td>
+                      <td className="px-3 py-2">{doc.entidade?.razao_social ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {doc.periodo ? `${doc.periodo.tipo} ${doc.periodo.referencia}` : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {doc.confianca != null ? `${Math.round(doc.confianca * 100)}%` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-neutral-500">{doc.fonte ?? "—"}</td>
+                      <td className="max-w-xs truncate px-3 py-2 text-xs text-neutral-500" title={doc.resumo ?? ""}>
+                        {doc.resumo ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        <Link href={`/casos/${id}/documentos/${doc.id}`} className="text-neutral-600 underline">
+                          ver linhas →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -164,6 +198,24 @@ export default async function CasoDashboardPage({
           </ul>
         )}
       </section>
+
+      {pendenciasArquivo.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
+            Qualidade dos arquivos ({pendenciasArquivo.length})
+          </h2>
+          <ul className="space-y-2">
+            {pendenciasArquivo.map((p) => (
+              <li
+                key={p.id}
+                className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+              >
+                {p.descricao ?? "(sem descrição)"}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

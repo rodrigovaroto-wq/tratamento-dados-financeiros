@@ -36,6 +36,15 @@ export interface Periodo {
   referencia: string;
 }
 
+export type Legibilidade = "ok" | "degradado" | "ilegivel";
+
+export interface DocumentoVersao {
+  id: string;
+  nome_original: string | null;
+  legibilidade: Legibilidade | null;
+  nota_legibilidade: string | null;
+}
+
 export interface Documento {
   id: string;
   caso_id: string;
@@ -46,10 +55,24 @@ export interface Documento {
   confianca: number | null;
   fonte: string | null;
   justificativa: string | null;
+  resumo: string | null;
   criado_em: string;
   entidade: Pick<Entidade, "razao_social"> | null;
   periodo: Pick<Periodo, "tipo" | "referencia"> | null;
-  documento_versao: Array<{ nome_original: string | null }> | null;
+  documento_versao: DocumentoVersao[] | null;
+}
+
+// Uma linha extraída pelo diagnóstico/extração (E2, N0/sombra) — db/migrations/0005, 0010.
+export interface CampoExtraido {
+  id: string;
+  documento_versao_id: string;
+  secao: string | null;
+  chave: string;
+  valor_texto: string | null;
+  valor_num: number | null;
+  unidade: string | null;
+  confianca: number | null;
+  origem_pagina: number | null;
 }
 
 export interface ChecklistItem {
@@ -78,6 +101,21 @@ export const PENDENCIA_TIPOS_RECONCILIACAO = [
   "divergencia_reconciliacao",
   "precondicao_nao_satisfeita",
 ] as const;
+
+// Tipos de pendencia_tipo (db/migrations/0001, 0010) gerados pelo diagnóstico de
+// conteúdo (E1/E2) — o conteúdo diverge do que já está registrado no documento.
+// Corrigíveis pela MESMA fila de revisão da classificação (fn_revisar_documento
+// já aceita tipo/entidade/período juntos).
+export const PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS = [
+  "classificacao_pendente",
+  "tipo_incorreto",
+  "entidade_incorreta",
+  "periodo_incorreto",
+] as const;
+
+// Pendência de diagnóstico que não é "corrigível" via tipo/entidade/período —
+// sinaliza problema no ARQUIVO em si, listada à parte (só leitura).
+export const PENDENCIA_TIPO_ARQUIVO_ILEGIVEL = "arquivo_ilegivel";
 
 export interface TaxonomiaTipoDocumento {
   codigo: string;

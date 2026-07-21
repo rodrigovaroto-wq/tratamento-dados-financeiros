@@ -186,7 +186,7 @@ test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome
   assert.equal(byName['OpenAI Extrair'].onError, 'continueRegularOutput');
 });
 
-test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload p/ Gravar Campos', async () => {
+test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagnóstico+extração', async () => {
   const { preparado } = await chainFile(1);
   // Saída do Registrar Documento (Postgres): linha {r: {ids}}
   const registrado = { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } };
@@ -194,18 +194,57 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload p/ Gravar
   assert.equal(req.json.documento_versao_id, 'ver-1');
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
+  assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
 
   const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
     moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Empresa Teste Ltda', tipo_confirma: false, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'anual', periodo_referencia: '12M25',
+      legibilidade: 'degradado', nota_legibilidade: 'Última página cortada.',
+      resumo: 'Balanço patrimonial de 2025.', justificativa: 'Conteúdo é Balanço, não DRE (dica do nome estava errada).',
+    },
     linhas: [
-      { chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { chave: 'EBITDA', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
+      { secao: 'Ativo Circulante', chave: 'Caixa e equivalentes', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
+      { secao: 'Passivo Circulante', chave: 'Fornecedores', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
     ],
   }) } }] } };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.documento_versao_id, 'ver-1');
   assert.equal(parsed.json.campos.length, 2);
+  assert.equal(parsed.json.campos[0].secao, 'Ativo Circulante');
   assert.equal(parsed.json.campos[0].unidade, 'R$ mil', 'unidade do documento herdada por linha');
+  assert.equal(parsed.json.diagnostico.entidade, 'Empresa Teste Ltda');
+  assert.equal(parsed.json.diagnostico.tipo_confirma, false);
+  assert.equal(parsed.json.diagnostico.tipo_sugerido, 'BALANCO');
+  assert.equal(parsed.json.diagnostico.legibilidade, 'degradado');
+
+  // Registrar Diagnostico lê $('Parse Extracao').item.json.diagnostico.* — a
+  // mesma simulação do node real garante que o encadeamento produz os campos
+  // que a query Postgres espera (sem rodar Postgres de verdade aqui).
+  const diagNode = byName['Registrar Diagnostico'];
+  const refsUsadas = [...diagNode.parameters.options.queryReplacement.matchAll(/\$\('Parse Extracao'\)\.item\.json\.diagnostico\.(\w+)/g)].map((m) => m[1]);
+  for (const campo of refsUsadas) {
+    assert.ok(campo in parsed.json.diagnostico, `Registrar Diagnostico espera diagnostico.${campo}, que Parse Extracao não produz`);
+  }
+});
+
+test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHECIDO" literal na pendência)', async () => {
+  const req = { json: { documento_versao_id: 'ver-2', tipo: 'BALANCO', openai_body: {} } };
+  const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: false, tipo_sugerido: 'DESCONHECIDO',
+      periodo_tipo: 'desconhecido', periodo_referencia: null,
+      legibilidade: 'ilegivel', nota_legibilidade: 'Arquivo corrompido.',
+      resumo: 'Não foi possível ler.', justificativa: 'Ilegível.',
+    },
+    linhas: [],
+  }) } }] } };
+  const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
+  assert.equal(parsed.json.diagnostico.tipo_sugerido, null);
+  assert.equal(parsed.json.diagnostico.legibilidade, 'ilegivel');
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
@@ -219,15 +258,24 @@ test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
 test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no canvas', () => {
   const nomes = wf.nodes.map((n) => n.name);
   for (const n of wf.nodes) {
-    if (n.type !== 'n8n-nodes-base.code') continue;
-    if (n.name === 'Listar Arquivos') {
-      assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} faz fan-out`);
-    } else {
-      assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
+    if (n.type === 'n8n-nodes-base.code') {
+      if (n.name === 'Listar Arquivos') {
+        assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} faz fan-out`);
+      } else {
+        assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
+      }
+      // toda referência $('X') aponta para um node que existe (pega renomeações)
+      for (const m of n.parameters.jsCode.matchAll(/\$\('([^']+)'\)/g)) {
+        assert.ok(nomes.includes(m[1]), `node "${n.name}" referencia "${m[1]}" que não existe no workflow`);
+      }
     }
-    // toda referência $('X') aponta para um node que existe (pega renomeações)
-    for (const m of n.parameters.jsCode.matchAll(/\$\('([^']+)'\)/g)) {
-      assert.ok(nomes.includes(m[1]), `node "${n.name}" referencia "${m[1]}" que não existe no workflow`);
+    // nós Postgres referenciam outros nós pelo nome na expressão de Query
+    // Parameters (queryReplacement) — mesma pegadinha de renomeação se aplica.
+    const queryReplacement = n.parameters?.options?.queryReplacement;
+    if (typeof queryReplacement === 'string') {
+      for (const m of queryReplacement.matchAll(/\$\('([^']+)'\)/g)) {
+        assert.ok(nomes.includes(m[1]), `node "${n.name}" referencia "${m[1]}" que não existe no workflow`);
+      }
     }
   }
 });

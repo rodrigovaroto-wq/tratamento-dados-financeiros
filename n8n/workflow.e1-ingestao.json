@@ -1,5 +1,5 @@
 {
-  "name": "Oria — E1 Ingestão + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)",
+  "name": "Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)",
   "nodes": [
     {
       "parameters": {
@@ -267,7 +267,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const reg=$json;\nconst versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;\nconst prep=$('Preparar Conteudo').item.json;\nconst schema={name:'extracao_linhas_financeiras',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}};\nconst body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:'Extraia LINHAS FINANCEIRAS (rotulo + valor). valor_num = numero puro quando houver, senao null. Informe unidade e pagina. NAO invente linhas nem valores; omita o ilegivel.'},\n  {role:'user',content:[{type:'text',text:'Tipo (dica): '+(prep.tipo_taxonomia||'desconhecido')+'. Extraia as linhas financeiras.'}, prep.content_part]}\n]};\nreturn {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};"
+        "jsCode": "const reg=$json;\nconst versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;\nconst prep=$('Preparar Conteudo').item.json;\nconst schema={name:'diagnostico_e_extracao',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','diagnostico','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},diagnostico:{type:'object',additionalProperties:false,required:['entidade','tipo_confirma','tipo_sugerido','periodo_tipo','periodo_referencia','legibilidade','nota_legibilidade','resumo','justificativa'],properties:{entidade:{type:['string','null']},tipo_confirma:{type:'boolean'},tipo_sugerido:{type:'string',enum:[\"DRE\",\"BALANCO\",\"FLUXO_CAIXA\",\"COMBINADO\",\"FATURAMENTO_24M\",\"MUTUOS\",\"FAT_INTRAGRUPO\",\"CONTRATO_SOCIAL\",\"BALANCETE\",\"DF_AUDITADA\",\"MAPA_DIVIDA\",\"EXTRATO_BANCARIO\",\"AGING_AR\",\"AGING_AP\",\"ESTOQUE\",\"CERTIDOES\",\"CONTINGENCIAS\",\"SITUACAO_FISCAL\",\"ORGANOGRAMA\",\"RAZAO\",\"NOTAS_EXPL\",\"DESCONHECIDO\"]},periodo_tipo:{type:'string',enum:[\"anual\",\"trimestre\",\"multi\",\"data-base\",\"outro\",\"desconhecido\"]},periodo_referencia:{type:['string','null']},legibilidade:{type:'string',enum:[\"ok\",\"degradado\",\"ilegivel\"]},nota_legibilidade:{type:['string','null']},resumo:{type:'string'},justificativa:{type:'string'}}},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['secao','chave','valor_texto','valor_num','origem_pagina','confianca'],properties:{secao:{type:['string','null']},chave:{type:'string'},valor_texto:{type:['string','null']},valor_num:{type:['number','null']},origem_pagina:{type:['integer','null']},confianca:{type:'number'}}}}}}};\nconst promptSistema='Voce analisa UM documento financeiro de um mandato de Reestruturacao (Brasil) e devolve DUAS coisas: um diagnostico do documento e a extracao linha a linha de TODOS os dados financeiros, organizados como planilha. DIAGNOSTICO: entidade = razao social se visivel no conteudo (null se nao, nunca invente); tipo_confirma/tipo_sugerido = voce recebe uma dica de tipo vinda do nome do arquivo, leia o conteudo e diga se bate (tipo_confirma) e qual o codigo que o CONTEUDO sugere (tipo_sugerido, pode diferir da dica; DESCONHECIDO so se ilegivel/nao-financeiro); periodo_tipo/periodo_referencia = periodo real do conteudo (12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; \"23,24,25\"=multiplos exercicios; ano isolado tambem vale); legibilidade = ok/degradado/ilegivel (avaliacao real do ARQUIVO: paginas faltando, digitalizacao ruim, tabela cortada), nota_legibilidade explica quando != ok (null quando ok); resumo = 2-3 frases objetivas do conteudo; justificativa = 1-2 frases do diagnostico. LINHAS: extraia TODAS as linhas financeiras (rotulo+valor), com secao = agrupador que espelha a estrutura do proprio documento (ex.: \"Ativo Circulante\", \"Passivo Nao Circulante\", \"Patrimonio Liquido\", \"Receita Operacional\", \"Atividades de Investimento\"; null se a linha nao pertencer a nenhuma secao clara). valor_num = numero puro quando houver, senao null. Informe pagina de origem. NAO invente linhas, valores nem entidade; omita o ilegivel.';\nconst body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[\n  {role:'system',content:promptSistema},\n  {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}\n]};\nreturn {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};"
       },
       "id": "montar-req-extracao",
       "name": "Montar Req Extracao",
@@ -307,7 +307,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const ctx=$('Montar Req Extracao').item.json;\nconst resp=$json;\nconst content=resp?.choices?.[0]?.message?.content;\nlet p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}\nconst unidade=p.unidade??null;\nconst campos=Array.isArray(p.linhas)?p.linhas.map(l=>({chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];\nreturn {json:{documento_versao_id:ctx.documento_versao_id, campos}};"
+        "jsCode": "const ctx=$('Montar Req Extracao').item.json;\nconst resp=$json;\nconst content=resp?.choices?.[0]?.message?.content;\nlet p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}\nconst unidade=p.unidade??null;\nconst campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.secao??null, chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];\nconst d=p.diagnostico||{};\nconst diagnostico={\n  entidade: d.entidade??null,\n  tipo_confirma: (typeof d.tipo_confirma==='boolean')?d.tipo_confirma:null,\n  tipo_sugerido: d.tipo_sugerido==='DESCONHECIDO'?null:(d.tipo_sugerido??null),\n  periodo_tipo: d.periodo_referencia?d.periodo_tipo:null,\n  periodo_referencia: d.periodo_referencia??null,\n  legibilidade: d.legibilidade??null,\n  nota_legibilidade: d.nota_legibilidade??null,\n  resumo: d.resumo??null,\n  justificativa: d.justificativa??'',\n};\nreturn {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico}};"
       },
       "id": "parse-extracao",
       "name": "Parse Extracao",
@@ -344,6 +344,29 @@
     {
       "parameters": {
         "operation": "executeQuery",
+        "query": "select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado",
+        "options": {
+          "queryReplacement": "={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}"
+        }
+      },
+      "id": "registrar-diagnostico",
+      "name": "Registrar Diagnostico",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2900,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE",
+          "name": "Supabase Postgres (Session Pooler)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
         "query": "select fn_reconciliar_por_documento($1::uuid) as resultado",
         "options": {
           "queryReplacement": "={{ [$('Registrar Documento').item.json.r.documento_id] }}"
@@ -354,7 +377,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2900,
+        3100,
         300
       ],
       "credentials": {
@@ -530,6 +553,17 @@
       "main": [
         [
           {
+            "node": "Registrar Diagnostico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Diagnostico": {
+      "main": [
+        [
+          {
             "node": "Reconciliar (Classe A)",
             "type": "main",
             "index": 0
@@ -542,6 +576,6 @@
     "executionOrder": "v1"
   },
   "meta": {
-    "note": "Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato)."
+    "note": "Gerado por n8n/build-workflow.mjs. Nós Code espelham n8n/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato)."
   }
 }

@@ -1,7 +1,7 @@
 # Camada N8N — Fatia 1 (E1 — Ingestão + E2 — Extração-sombra + E3 — Reconciliação Classe A)
 
 O N8N é o **orquestrador stateless** (docs/02, trava de stack nº 1): recebe o upload em lote,
-classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0009`) que cuidam
+classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0010`) que cuidam
 do estado. A ingestão é feita **pelo próprio N8N** (Form Trigger) — sem Vercel nesta fatia.
 
 ## O que roda (fluxo do `workflow.e1-ingestao.json`)
@@ -20,15 +20,21 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
         └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
-              → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
+              → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
+                    → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
 ```
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
 revisão); **extração (E2) nasce em N0 (sombra)** — registra para medir, não decide, não entra
-em base sem aceite humano (anti-ancoragem); **reconciliação Classe A (E3) nasce em N1** —
-checagens aritméticas determinísticas (`db/migrations/0009_reconciliacao_e3.sql`,
-`docs/04_RECONCILIACAO.md`) geram `pendencia` tipada quando divergem (ou quando falta
-pré-condição), nunca escrevem um número como fato aceito.
+em base sem aceite humano (anti-ancoragem); **diagnóstico de conteúdo (E1/E2) nasce em N1** —
+a MESMA chamada da extração agora também busca entidade, confere tipo/período do nome contra
+o conteúdo real e avalia a legibilidade real do arquivo (`db/migrations/0010_diagnostico_e1e2.sql`)
+— roda **sempre** (não só no fallback de baixa confiança), preenche entidade quando ainda vazia,
+mas só CONFERE tipo/período/legibilidade já registrados: divergência vira `pendencia` tipada
+(nunca corrige sozinho); **reconciliação Classe A (E3) nasce em N1** — checagens aritméticas
+determinísticas (`db/migrations/0009_reconciliacao_e3.sql`, `docs/04_RECONCILIACAO.md`) geram
+`pendencia` tipada quando divergem (ou quando falta pré-condição), nunca escrevem um número
+como fato aceito.
 
 ## Regras de fluxo do N8N (aprendidas em teste real — a topologia depende delas)
 
@@ -55,8 +61,8 @@ pré-condição), nunca escrevem um número como fato aceito.
    > os mesmos nomes, o N8N renomeia os novos com sufixo (ex.: `Intake (Form)1`) — e os códigos
    > referenciam nodes **pelo nome exato** (`$('Intake (Form)')`), então o sufixo quebra tudo.
    > Antes de reimportar, **apague ou arquive o workflow antigo**.
-3. **Configurar credenciais** nos **5 nós Postgres** e **variáveis de ambiente** (ver abaixo).
-4. **Conferir os Query Parameters** dos 5 nós Postgres (o import pode não preenchê-los — tabela
+3. **Configurar credenciais** nos **6 nós Postgres** e **variáveis de ambiente** (ver abaixo).
+4. **Conferir os Query Parameters** dos 6 nós Postgres (o import pode não preenchê-los — tabela
    no Troubleshooting).
 5. Abrir a URL do **Form Trigger**, informar o nome do mandato e subir os arquivos.
 6. Conferir no banco: `caso`, `documento`, `checklist_item_status`, `pendencia`,
@@ -80,6 +86,7 @@ Parameters"** → cole a expressão correspondente:
 | Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa \|\| null] }}` (14º parâmetro = justificativa; a query usa `p_justificativa=>$14` para pular o `p_threshold` que fica no default) |
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
 | Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
+| Registrar Diagnostico | `={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}` |
 | Reconciliar (Classe A) | `={{ [$('Registrar Documento').item.json.r.documento_id] }}` |
 
 **Erro `function fn_upsert_caso(unknown) does not exist`:** o driver do N8N envia o parâmetro
@@ -201,8 +208,9 @@ community node, se for esse o caminho).
 > O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
 > denied"*). Por isso o workflow usa só **credenciais nativas** + 1 edição de URL:
 
-- **Postgres (Supabase, Session Pooler)** — credencial nos **4 nós Postgres** (Upsert Caso,
-  Registrar Documento, Recomputar Completude, Gravar Campos). Reaproveitar do `clipping-news`.
+- **Postgres (Supabase, Session Pooler)** — credencial nos **6 nós Postgres** (Upsert Caso,
+  Registrar Documento, Recomputar Completude, Gravar Campos, Registrar Diagnostico, Reconciliar
+  (Classe A)). Reaproveitar do `clipping-news`.
   Pegadinhas herdadas: usar o **Session Pooler** (IPv4 + SSL), usuário com sufixo
   `.projectref`. O N8N usa conexão de serviço, que **ignora RLS** por design (é o orquestrador)
   — ver `db/migrations/0003`.
@@ -244,6 +252,28 @@ arquivo** (montado no `Preparar Conteudo`, que roda para todos):
   (`n8n/lib/spreadsheet.mjs`). Ponto explícito de adaptação no N8N.
 - Saída sempre via **Structured Outputs** (JSON Schema estrito). Continua **N1**: sugestão
   para revisão humana.
+
+## Diagnóstico de conteúdo (E1/E2) — como funciona
+
+Diferente do fallback de classificação acima (que só roda com confiança baixa), o diagnóstico
+roda **para todo documento, sempre** — é a MESMA chamada que já fazia a extração linha a linha
+(`Montar Req Extracao` → `OpenAI Extrair` → `Parse Extracao`), só que agora o schema
+(`n8n/lib/extract.mjs`) também pede um bloco `diagnostico`:
+
+- **Entidade**: se visível no conteúdo. `fn_registrar_diagnostico` só preenche `documento.entidade_id`
+  quando ainda está **vazio** — nunca sobrescreve uma entidade já registrada; se o conteúdo sugerir
+  uma entidade **diferente** da já registrada, vira pendência `entidade_incorreta` (revisão humana).
+- **Tipo/período**: a IA recebe a mesma dica que o classificador por nome já resolveu, mas agora
+  confirma (ou não) contra o **conteúdo real**. Diverge → pendência `tipo_incorreto` /
+  `periodo_incorreto`. Essas pendências caem na **mesma fila de revisão** da classificação
+  (`fn_revisar_documento` já sabe corrigir tipo/entidade/período juntos).
+- **Legibilidade real**: antes hardcoded `'ok'` em `documento_versao.legibilidade` — agora vem do
+  diagnóstico (`ok`/`degradado`/`ilegivel`); `ilegivel` vira pendência `arquivo_ilegivel`.
+- **Resumo + planilha organizada**: `documento.resumo` (2-3 frases) e cada linha extraída ganha
+  `secao` (agrupador que espelha a estrutura do próprio documento — ex. "Ativo Circulante",
+  "Passivo Não Circulante") — o portal agrupa por isso na tela "ver linhas" do documento.
+- Tudo isso é **N1**: só sugere (via pendência) ou preenche uma lacuna que ainda não tinha valor
+  nenhum. Nunca sobrescreve um valor já registrado sem passar por uma pendência revisável.
 
 ## Qualidade da classificação — ajustes feitos a partir de teste real (2026-07-17)
 
@@ -295,6 +325,9 @@ Os quatro itens do feedback original estão validados de ponta a ponta com docum
   HTTP substituindo o item, referências `$('Node')`), nos dois ramos.
 - **Fallback OpenAI (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos**, cobertos por
   testes de corpo/schema/parse e confirmados no N8N real.
+- **Diagnóstico de conteúdo (entidade/tipo/período/legibilidade/resumo/planilha) e Reconciliação
+  Classe A (E3): construídos e testados** (testes unitários + simulação de fluxo + Postgres 16
+  local efêmero) — **ainda não exercitados com documentos reais no N8N/Supabase do dono.**
 - **Pendência: XLSX** — falta o *Extract From File* (ver acima).
 
 ## Fonte da verdade da lógica
@@ -310,9 +343,9 @@ lógica: mude `lib/`, rode os testes, e **regenere** com `node n8n/build-workflo
 n8n/
 ├── lib/            # lógica testável: classifier, completude, openai, extract,
 │                   #                  spreadsheet, taxonomia, normalize
-├── test/           # node:test (41 casos, incl. simulação do workflow)
+├── test/           # node:test (53 casos, incl. simulação do workflow)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
-├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + E2-sombra)
+├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + Diagnóstico + E2-sombra + E3)
 └── README.md
 ```
 
@@ -320,6 +353,8 @@ n8n/
 
 - **Resolver o Upload Storage** (community node `n8n-nodes-supabase` ou mover para o portal Vercel).
 - **XLSX** no fallback (nó *Extract From File* → `spreadsheetToText`).
-- **E3 — reconciliação** (Classe A aritmética em N1; B/C aproximam para humano).
+- **Testar o diagnóstico + Classe A com documentos reais** do dono (maior risco de calibração:
+  o vocabulário real do `secao`/`chave` pode variar mais do que os padrões cobertos hoje).
+- **Reconciliação B/C** (aproximam para humano, não automatizam).
 - **Refino da extração por tipo** (linhas esperadas de cada demonstração) — guiado pelo golden set.
-- Portal Vercel (fila de revisão para confirmar/corrigir a classificação N1, dashboard, export).
+- Portal Vercel: ação dedicada de "confirmar" para pendências de reconciliação (hoje só lista).

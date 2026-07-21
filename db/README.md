@@ -19,6 +19,7 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0007_justificativa_pendencia.sql` | Adiciona `p_justificativa` (parâmetro trailing com default) a `fn_registrar_documento` — a pendência de classificação incerta passa a incluir a explicação objetiva da IA ("Motivo: ..."), não só o número de confiança. |
 | `migrations/0008_portal_revisao.sql` | Suporte de banco para o **Portal**: coluna `confianca`/`fonte`/`justificativa` em `documento` (para o dashboard não precisar fazer parsing de `evento_auditoria.depois`); `fn_registrar_documento` passa a gravá-las (mesma assinatura de 0007). Nova função `fn_revisar_documento` — a fila de revisão do portal chama essa RPC para confirmar/corrigir a classificação: resolve a pendência, registra `decisao`+`evento_auditoria`, realoca o checklist, recomputa a completude. |
 | `migrations/0009_reconciliacao_e3.sql` | **E3 — Reconciliação, Classe A** (primeira fatia, `docs/04_RECONCILIACAO.md`). Tabela `reconciliacao` (log append-only de cada checagem); `fn_valor_conceito` casa `campo_extraido.chave` (texto livre) com um conceito canônico por termos obrigatórios/excludentes normalizados; duas checagens — `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no Balanço) e `fn_reconciliar_caixa_bp_fluxo` (Caixa do Balanço vs. saldo final do Fluxo de Caixa, aborta se as unidades divergirem); `fn_reconciliar_por_documento(documento_id)` é o ponto de entrada chamado pelo N8N logo após a extração — dispara as checagens do tipo do documento. Opera em **N1**: gera `pendencia` tipada (`divergencia_reconciliacao` ou `precondicao_nao_satisfeita`), nunca escreve um número como fato. |
+| `migrations/0010_diagnostico_e1e2.sql` | **Diagnóstico de conteúdo + planilha organizada (E1/E2).** Colunas novas: `campo_extraido.secao` (agrupador de planilha), `documento.resumo`, `documento_versao.nota_legibilidade`. `fn_registrar_campos_extraidos` (mesma assinatura) passa a gravar `secao`. Nova função `fn_registrar_diagnostico` — chamada pelo N8N logo após a extração, com o bloco `diagnostico` da MESMA chamada de IA (não aumenta o nº de chamadas): preenche `entidade` só quando ainda vazia (fecha uma lacuna, nunca sobrescreve), confere tipo/período contra o que já está registrado (gera `pendencia` tipada `tipo_incorreto`/`periodo_incorreto`/`entidade_incorreta` quando diverge — nunca corrige sozinha), grava a `legibilidade` real do arquivo (antes hardcoded `'ok'`) e gera `arquivo_ilegivel` quando o conteúdo está ilegível. Idempotente (reaproveita pendência aberta da mesma checagem) e auto-resolve quando a divergência some (ex.: humano já corrigiu). |
 
 ## Como aplicar
 
@@ -35,6 +36,7 @@ supabase db execute --file db/migrations/0006_reset_funcoes.sql
 supabase db execute --file db/migrations/0007_justificativa_pendencia.sql
 supabase db execute --file db/migrations/0008_portal_revisao.sql
 supabase db execute --file db/migrations/0009_reconciliacao_e3.sql
+supabase db execute --file db/migrations/0010_diagnostico_e1e2.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**

@@ -1,10 +1,18 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import type { TaxonomiaTipoDocumento } from "@/lib/types";
+import { PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS, type TaxonomiaTipoDocumento } from "@/lib/types";
 import { revisarDocumento } from "./actions";
+
+const PENDENCIA_TIPO_LABEL: Record<string, string> = {
+  classificacao_pendente: "classificação incerta",
+  tipo_incorreto: "tipo pode estar incorreto",
+  entidade_incorreta: "entidade pode estar incorreta",
+  periodo_incorreto: "período pode estar incorreto",
+};
 
 interface PendenciaComDocumento {
   id: string;
+  tipo: string;
   descricao: string | null;
   criada_em: string;
   documento: {
@@ -31,7 +39,7 @@ export default async function FilaRevisaoPage({
     supabase
       .from("pendencia")
       .select(
-        `id, descricao, criada_em,
+        `id, tipo, descricao, criada_em,
          documento:documento_id(
            id, tipo_taxonomia, confianca, fonte, justificativa,
            entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
@@ -39,7 +47,7 @@ export default async function FilaRevisaoPage({
          )`,
       )
       .eq("caso_id", id)
-      .eq("tipo", "classificacao_pendente")
+      .in("tipo", PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS)
       .eq("estado", "aberta")
       .order("criada_em", { ascending: true }),
     supabase.from("taxonomia_tipo_documento").select("codigo, categoria, documento, obrigatoriedade").order("codigo"),
@@ -56,9 +64,10 @@ export default async function FilaRevisaoPage({
         <Link href={`/casos/${id}`} className="text-sm text-neutral-500 underline">
           ← Voltar ao caso
         </Link>
-        <h1 className="mt-2 text-lg font-semibold">Fila de revisão — classificação</h1>
+        <h1 className="mt-2 text-lg font-semibold">Fila de revisão — classificação e diagnóstico</h1>
         <p className="text-sm text-neutral-500">
-          Confirme ou corrija a sugestão. Nada entra na base sem essa decisão (anti-ancoragem).
+          Confirme ou corrija a sugestão (classificação por nome/conteúdo, ou divergência
+          apontada pelo diagnóstico de conteúdo). Nada entra na base sem essa decisão (anti-ancoragem).
         </p>
       </div>
 
@@ -69,7 +78,7 @@ export default async function FilaRevisaoPage({
       )}
 
       {pendencias.length === 0 && !pendenciasRes.error && (
-        <p className="text-sm text-neutral-500">Nenhuma pendência de classificação aberta. 🎉</p>
+        <p className="text-sm text-neutral-500">Nenhuma pendência de revisão aberta. 🎉</p>
       )}
 
       <ul className="space-y-4">
@@ -81,7 +90,12 @@ export default async function FilaRevisaoPage({
           return (
             <li key={p.id} className="rounded border border-neutral-200 bg-white p-4">
               <div className="mb-3">
-                <p className="text-sm font-medium">{nomeArquivo}</p>
+                <p className="text-sm font-medium">
+                  {nomeArquivo}
+                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium uppercase text-amber-800">
+                    {PENDENCIA_TIPO_LABEL[p.tipo] ?? p.tipo}
+                  </span>
+                </p>
                 <p className="mt-1 text-xs text-neutral-500">{p.descricao}</p>
               </div>
 
