@@ -1,6 +1,7 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7).
+Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
+do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -18,9 +19,16 @@ uma conta que aparece em várias colunas/entidades, sem inventar. Ver seção "S
 abaixo. PR novo, pendente de revisão do dono no momento em que este arquivo foi escrito. **Ação
 pendente do dono, fora do escopo de código:** existem documentos JÁ CONTAMINADOS no Supabase de
 produção de uploads em lote anteriores ao fix do item errado — ver checklist de limpeza na seção
-"Sessão 7". **Próximo passo (adiado duas vezes por causa destes achados): Reconciliação Classe
-B** (achar inconsistências/incoerências nos números) — continua sendo o combinado, só ficou atrás
-da urgência deste bug de integridade de dados.
+"Sessão 7". Depois desses fixes mergeados (#29 item errado, #30 guarda + entidade_coluna), o dono
+**reprocessou os 2 documentos reais** ("teste v9") e confirmou: **o multi-entidade funcionou** — o
+Certsys agora sai com colunas separadas (Certsys Com/Part/Tech/Total), sem os valores fabricados de
+antes. Restava um erro de classificação visível: `BALANCO` vs `COMBINADO` **invertido** entre os
+dois documentos — o Certsys (3 empresas → deveria ser COMBINADO) virou BALANCO, e o Global One (1
+empresa, várias demonstrações → deveria ser BALANCO) virou COMBINADO. **Reforço de prompt aplicado
+nesta sessão** (ver "Sessão 7 (cont.²)" abaixo) nos 3 achados secundários — falta o dono
+reprocessar pra confirmar. **Próximo passo (adiado três vezes por causa destes achados):
+Reconciliação Classe B** (achar inconsistências/incoerências nos números) — continua sendo o
+combinado, só ficou atrás da urgência dos bugs de integridade de dados.
 
 ---
 
@@ -435,7 +443,109 @@ forçá-la a resumir/adivinhar:
   N8N; `tsc --noEmit`/`eslint` do portal limpos.
 - **Não resolvido nesta fatia:** a classificação `tipo_taxonomia` (BALANCO vs. COMBINADO) do
   documento continua uma decisão separada (achado secundário #3 acima) — `entidade_coluna` funciona
-  independente de qual `tipo_taxonomia` o documento levou.
+  independente de qual `tipo_taxonomia` o documento levou. (Endereçado logo abaixo, no reforço de
+  prompt.)
+
+### Sessão 7 (cont.²) — Reforço de prompt (3 achados secundários) + confirmação do multi-entidade
+Com #29 e #30 mergeados e aplicados em produção, o dono **reprocessou os 2 documentos reais**
+("teste v9") e mandou o dashboard + o `.xlsx`. Confirmação importante: **o multi-entidade
+funcionou** — o Certsys agora sai na aba "Balanço" com 4 colunas separadas (Certsys Com / Part /
+Tech / Total), internamente consistentes (as colunas somam o Total), sem os valores fabricados
+(`1.234.567,00` repetido) de antes. As abas DRE e Fluxo de Caixa do Global One também vieram
+separadas corretamente (roteamento por linha da #28). Um erro claro restava, exatamente o achado
+secundário #3: a classificação **`BALANCO` vs `COMBINADO` saiu INVERTIDA** entre os dois documentos:
+- `BALANÇO ACUMULADO 2025.pdf` (Certsys — 3 empresas em colunas → **deveria ser COMBINADO**) foi
+  classificado como `BALANCO`.
+- `Balanço Patrimonial DRE, DFC, DMPL Global One 2024assinado.pdf` (Global One — 1 empresa, várias
+  demonstrações → **deveria ser BALANCO**) foi classificado como `COMBINADO`.
+- Distinção oficial (taxonomia `f0/03` / seed `0002`): `BALANCO` = balanço de UMA entidade × período
+  (vinculação `entidade_periodo`); `COMBINADO` = "Demonstrações combinadas (grupo consolidado)",
+  vinculação por `periodo` (o grupo inteiro, não uma entidade).
+
+Reforço aplicado no prompt de extração (`n8n/lib/extract.mjs`, fonte da verdade; mirror comprimido
+em `n8n/build-workflow.mjs` regenerado) nos 3 achados secundários de uma vez:
+1. **Entidade ≠ signatário:** não usar o nome de quem assinou (contador/administrador/sócio; bloco
+   com CRC/CPF) como razão social — foi o que fez "ED ALVES DE AQUINO" (contador) virar a entidade
+   do Certsys numa sessão anterior. Em documento de várias empresas, usar o nome do GRUPO ou null.
+2. **BALANCO vs COMBINADO:** regra prática amarrada ao sinal que já temos — se as linhas têm
+   `entidade_coluna` preenchido (várias empresas) → COMBINADO; se é uma entidade só (mesmo com
+   Balanço+DRE+DFC+DMPL no mesmo arquivo) → o tipo da demonstração principal (normalmente BALANCO).
+3. **Período ≠ saldo de abertura:** o período é o exercício ATUAL do documento; uma DMPL que mostra
+   "Saldos em 31/12/2023" e "31/12/2024" é documento de 2024 (2023 é só o saldo inicial) — foi o que
+   fez o Global One sair como "2023" numa sessão anterior.
+- **Sem teste unitário determinístico** (é comportamento do LLM — o alvo do golden set `f0/06`, ainda
+  não montado). 55/55 testes do N8N seguem passando (schema/parse cobertos); o novo texto foi
+  confirmado presente no `workflow.e1-ingestao.json` gerado. **Validação real = o dono reprocessar**
+  e conferir se o Certsys vira COMBINADO e o Global One vira BALANCO.
+
+### Sessão 7 (cont.³) — Balanço/DRE/Fluxo completos com FÓRMULAS (reescrita do export)
+Pedido do dono depois de reprocessar ("teste v9"): o export estava "horrível e faltando
+informações" — sem totais, com a linha de total do documento ("NÃO CIRCULANTE") perdida no meio
+das contas, e nomes iguais para valores diferentes ("CIRCULANTE" do Ativo vs. do Passivo). Pediu:
+fórmulas calculando os totais por categoria (Ativo/Ativo Circulante/Não Circulante/Passivo/PL/…)
+**no cabeçalho da seção**, balanço completo, e "buscar nas melhores fontes contábeis" como montar
+Balanço/DRE/Fluxo. **Tensão de doutrina:** isso contradiz a anti-ancoragem de `f0/07` ("nenhum
+subtotal calculado por soma"). Reconciliação escolhida pelo dono (via AskUserQuestion): usar
+**fórmulas Excel transparentes** (`=SUM`), manter o total que o documento trouxe numa linha de
+conferência, e **sinalizar divergência** formula×extraído. Emenda registrada em `f0/07`.
+- **Fundamentação (WebSearch):** Lei 6.404/76 art. 178 + CPC 26 — Ativo em ordem de liquidez
+  (Circulante; Não Circulante = Realizável a LP / Investimentos / Imobilizado / Intangível);
+  Passivo (Circulante, Não Circulante) + PL. DRE em cascata; DFC método indireto (CPC 03).
+- **`portal/src/lib/statement-templates.ts` reescrito:** `classificarBalanco` agora (1) reconhece
+  linhas que são TOTAIS/cabeçalhos que o doc trouxe (rótulo "nu" — só palavras estruturais — ou com
+  "total"/"soma") e as manda para o NÓ certo em vez de virarem "conta no meio" (resolve o "NÃO
+  CIRCULANTE no meio" e o "nomes iguais": "CIRCULANTE" sob Ativo vs. Passivo viram os totais de cada
+  seção, desambiguados pelo contexto `secao`); (2) sub-classifica o Ativo Não Circulante nos
+  subgrupos CPC (Realizável LP/Investimentos/Imobilizado/Intangível), com bucket "Outros" pro que
+  não casar. Nova árvore `BALANCO_OUTLINE` (grupo→seção→subseção).
+- **`portal/src/lib/export.ts` — builder reescrito:** Balanço montado pela árvore; cada
+  seção/grupo tem o subtotal como **FÓRMULA** por coluna (folha = `SUM` das contas; pai = soma dos
+  cabeçalhos dos filhos; grupo ATIVO/PASSIVO+PL = soma das seções). DRE em **cascata** (cada
+  subtotal = subtotal anterior + soma das contas da seção; referencia a célula anterior, nunca
+  re-soma subtotais → sem dupla contagem). Fluxo: caixa líquido por seção = `SUM`; variação = soma
+  dos 3; saldo final = inicial + variação. Total do documento vira linha "↳ total informado no
+  documento"; se a soma calculada divergir (tolerância 0,5%/1 centavo), pinta ambos + nota
+  (reconciliação embutida). Subseções CPC vazias não são emitidas (não polui). Funciona em
+  multi-coluna (documento combinado: uma fórmula por empresa).
+- **Bugs reais achados e corrigidos durante os testes** (validação via `openpyxl`, LibreOffice do
+  ambiente segue quebrado): (1) `ATIVO.filhos` apontava para o bucket-folha errado — o nó pai
+  "Ativo Não Circulante" não era emitido e a conta "Créditos com Pessoas Ligadas" SUMIA; (2)
+  âncora do total "NÃO CIRCULANTE" caía no nó "Outros" em vez do nó-seção; (3) "PATRIMÔNIO LÍQUIDO"
+  (total da seção) colidia com "TOTAL DO PASSIVO E PL" (total do grupo) — resolvido exigindo
+  "passivo" no próprio rótulo pro grupo; (4) "Créditos c/Terceiros" não era Realizável LP.
+- **Validação com os dados reais** (Global One + Certsys): o balanço agora FECHA — ATIVO = Passivo+
+  PL = 12.086.571,06, com Realizável a LP somando as duas contas de crédito (12.080.078,23 =
+  informado), Passivo Circulante e PL batendo o informado, zero divergência falsa. DRE em cascata e
+  Fluxo com saldo final = inicial+variação, ambos conferidos. `tsc`/`eslint` limpos; 55/55 testes
+  do N8N (inalterados — mudança é só no portal).
+- **Pendente do dono:** reprocessar/baixar o `.xlsx` e abrir no Excel de verdade (recálculo das
+  fórmulas na abertura — validei a ESTRUTURA/fórmulas via openpyxl, não a abertura no Excel real).
+
+### Sessão 7 (cont.⁴) — Layout analítico (margens) inspirado num modelo de FP&A real
+O dono mandou arquivos de referência (3 zips: balanços consolidados 2022–2025, DREs, 10
+balancetes do grupo Embrepar/Fort Lub/SKY; + `ProjecoesDelendSummary.csv`) e pediu que o export
+"entregue algo parecido". O `DelendSummary` é um **modelo de FP&A completo** (colunas mensais
+Actual→projeções, KPIs de SaaS — ARR/MRR/BaaS —, Fluxo de Caixa indireto, P&L em cascata com
+margens/crescimento %, Pro-forma). **Isso é modelagem/projeção — contradiz `f0/07` ("output NÃO
+projeta, NÃO é modelagem")**. Perguntei o rumo (AskUserQuestion); o dono escolheu **"layout
+analítico sobre o dado REAL, sem projetar"** (não o motor de projeção). Registrado.
+- **Entregue nesta fatia:** linhas de **MARGEM** (% da Receita Líquida) na DRE, como FÓRMULA por
+  coluna — Margem Bruta / Operacional / Líquida (estilo DelendSummary), com `IFERROR` (evita div/0).
+  Só divide dois valores já extraídos; não projeta nem inventa. **EBITDA ficou de fora de
+  propósito:** a DRE real (SKY GROUP consolidado, conferido no PDF) NÃO traz Depreciação/
+  Amortização como linha isolada — viria das notas/Fluxo —, então calcular EBITDA exigiria
+  inventar D&A. Não fizemos (anti-ancoragem).
+- **Nota sobre a estrutura:** a DRE do grupo dobra o Resultado Financeiro DENTRO do "Lucro
+  Operacional"; a nossa estrutura (padrão analítico) separa EBIT (antes do financeiro) do
+  Resultado Financeiro. Isso faz a conferência do "Lucro Operacional informado" divergir do EBIT
+  calculado — é uma diferença DEFINICIONAL esperada (a flag de divergência a torna visível), não
+  um bug.
+- **Deferido (natural, ainda SEM projeção):** (1) aba "Indicadores/Resumo" consolidada (KPIs por
+  período referenciando as abas de demonstração — margens, e indicadores de balanço tipo liquidez/
+  endividamento/capital de giro); (2) coluna de **Crescimento %** período-a-período (exige lógica
+  de comparabilidade entre colunas da MESMA entidade). Ambos são presentation/fórmula sobre dado
+  real. (3) O **motor de projeção/modelagem** (o que o DelendSummary realmente é) segue FORA do
+  escopo pela decisão do dono + `f0/07` — só entraria com revisão explícita da doutrina.
 
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
@@ -475,33 +585,26 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-Nenhuma no momento. O teste com caso real (sessão 7) já foi feito e achou o bug crítico do item
-errado no lote (corrigido nesta sessão) — próximo passo natural é uma destas (perguntar ao dono
-qual prioriza):
-1. **Reforçar o prompt de extração** (`n8n/lib/extract.mjs`) com os 3 achados secundários da
-   sessão 7: (a) não confundir contador/signatário com razão social quando não há entidade única
-   óbvia (documento combinado de várias entidades); (b) não confundir saldo de ABERTURA (ex.:
-   linha da DMPL) com o período de referência do documento; (c) diferenciar "múltiplas
-   demonstrações no mesmo arquivo pra UMA entidade" (ainda é `BALANCO`/`DRE`/etc., já resolvido
-   pelo roteamento por linha da sessão 6) de "demonstração combinada de um GRUPO de empresas"
-   (`COMBINADO` de verdade, f0/03) — hoje a IA classificou o mesmo tipo de documento das duas
-   formas em re-extrações diferentes.
-2. **Construir a Reconciliação Classe B** (`docs/04`) — determinística, banda de materialidade,
+Nenhuma no momento. O reforço de prompt dos 3 achados secundários (entidade≠signatário,
+BALANCO vs COMBINADO, período≠saldo de abertura) **foi feito nesta sessão** (ver "Sessão 7
+(cont.²)") — falta o dono reprocessar pra confirmar o comportamento do LLM. Próximo passo natural
+é uma destas (perguntar ao dono qual prioriza):
+1. **Construir a Reconciliação Classe B** (`docs/04`) — determinística, banda de materialidade,
    sem IA nem golden set — as duas checagens canônicas: (1) Receita da DRE vs. soma do
    faturamento mensal (`FATURAMENTO_24M`); (2) despesa financeira da DRE vs. juros do mapa de
    dívida (`MAPA_DIVIDA` — que hoje só tem schema genérico de linhas, então pode cair como
    "precondição não satisfeita" até a extração dele ser refinada). Segue o molde de
    `db/migrations/0009` (Classe A). Continua o combinado com o dono, só ficou atrás da urgência
-   do bug de integridade de dados desta sessão.
-3. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
+   dos bugs de integridade de dados desta sessão.
+2. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
    individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
    perigoso quando a extração pode vir contaminada/alucinada em volume.
-4. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
+3. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente).
-5. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
+4. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
    precisa de `MAPA_DIVIDA` sendo extraído, que hoje só tem schema genérico de linhas).
-6. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
+5. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
    `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
 
 **Validar com o time de análise** (ainda pendente): se as palavras-chave de seção

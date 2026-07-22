@@ -127,8 +127,43 @@ const ATIVO_CIRC_KW = [
 const ATIVO_NAO_CIRC_KW = [
   "imobilizado", "intangivel", "investimento", "realizavel a longo prazo", "depreciacao acumulada",
   "amortizacao acumulada", "direito de uso", "deposito judicial", "credito com pessoas ligadas",
-  "credito com partes relacionadas", "obra em andamento", "adiantamento para futuro aumento de capital",
+  "credito com partes relacionadas", "credito com terceiros", "credito c terceiros",
+  "obra em andamento", "adiantamento para futuro aumento de capital",
 ];
+
+// Subgrupos do Ativo Não Circulante (Lei 6.404/76 art. 178 + CPC 26): a conta
+// não circulante é sub-classificada em Realizável a LP / Investimentos /
+// Imobilizado / Intangível. O que não casar com segurança cai no bucket
+// genérico "ativo_nao_circulante" (Outros), nunca some.
+const REALIZAVEL_LP_KW = [
+  "realizavel a longo prazo", "credito com pessoas ligadas", "credito com partes relacionadas",
+  "credito com terceiros", "credito c terceiros", "credito c/terceiros", "conta a receber longo prazo",
+  "deposito judicial", "adiantamento para futuro aumento de capital", "tributo a recuperar longo prazo",
+  "aplicacao financeira longo prazo", "mutuo a receber", "partes relacionadas",
+];
+const INVESTIMENTOS_KW = [
+  "investimento", "participacao societaria", "participacao em outras empresas", "participacao em coligada",
+  "participacao em controlada", "propriedade para investimento", "coligada", "controlada",
+];
+const IMOBILIZADO_KW = [
+  "imobilizado", "imovel", "maquina", "equipamento", "veiculo", "movei", "utensilio", "terreno",
+  "edificacao", "edificio", "obra em andamento", "instalacao", "ferramenta", "benfeitoria",
+  "depreciacao acumulada", "bem do ativo imobilizado", "adiantamento a fornecedor de imobilizado",
+];
+const INTANGIVEL_KW = [
+  "intangivel", "software", "marca", "patente", "agio", "fundo de comercio", "direito de uso",
+  "licenca", "amortizacao acumulada", "gasto com desenvolvimento", "mais valia",
+];
+
+// Sub-classifica uma conta já sabida do Ativo Não Circulante num subgrupo CPC.
+// Devolve o bucket genérico quando nenhum subgrupo casa (nunca força palpite).
+function subgrupoNaoCirculante(tokensChave: Set<string>): string {
+  if (contemAlgumaFrase(tokensChave, INTANGIVEL_KW)) return "intangivel";
+  if (contemAlgumaFrase(tokensChave, IMOBILIZADO_KW)) return "imobilizado";
+  if (contemAlgumaFrase(tokensChave, INVESTIMENTOS_KW)) return "investimentos";
+  if (contemAlgumaFrase(tokensChave, REALIZAVEL_LP_KW)) return "realizavel_lp";
+  return "ativo_nao_circulante";
+}
 const PASSIVO_CIRC_KW = [
   "fornecedor", "salario", "obrigacao trabalhista", "obrigacao social", "obrigacao tributaria",
   "imposto a pagar", "tributo a pagar", "adiantamento de cliente", "dividendo a pagar", "provisao de ferias",
@@ -144,32 +179,71 @@ const PL_KW = [
 ];
 const EMPRESTIMO_FINANCIAMENTO_KW = ["emprestimo", "financiamento", "debenture", "arrendamento", "mutuo"];
 
+// Palavras puramente ESTRUTURAIS (nome de grupo/seção/subgrupo) — uma linha
+// cujo rótulo é feito só delas (+ "total"/"soma") é um TOTAL/cabeçalho que o
+// documento trouxe, não uma conta. É o que faz "NÃO CIRCULANTE 12.080.078,23"
+// ser reconhecido como o total da seção (indo para o nó certo) em vez de virar
+// "mais uma conta no meio" — e resolve o "nomes iguais para valores diferentes"
+// ("CIRCULANTE" sob Ativo vs. sob Passivo viram os totais de cada seção).
+const ESTRUTURAIS = new Set([
+  "ativo", "passivo", "circulante", "nao", "patrimonio", "liquido", "total", "soma",
+  "realizavel", "longo", "prazo", "investimento", "imobilizado", "intangivel", "permanente",
+  "subtotal", "grupo", "geral",
+]);
+
+// Devolve o NÓ da estrutura cujo TOTAL esta linha representa (ver BALANCO_OUTLINE)
+// ou null se a linha não for um total/cabeçalho. Usa o contexto de `secao` para
+// desambiguar rótulos "nus" iguais (ex.: "CIRCULANTE" sob Ativo vs. Passivo).
+function ancoraBalanco(tokensChave: Set<string>, tokensSecao: Set<string>): string | null {
+  const temTotal = tokensChave.has("total") || contemFrase(tokensChave, "soma");
+  const soEstrutural = tokensChave.size > 0 && [...tokensChave].every((t) => ESTRUTURAIS.has(t));
+  if (!temTotal && !soEstrutural) return null;
+
+  const ctxAtivo = tokensChave.has("ativo") || tokensSecao.has("ativo");
+  const ctxPassivo = tokensChave.has("passivo") || tokensSecao.has("passivo");
+  const patrimonio = contemFrase(tokensChave, "patrimonio liquido") || (tokensSecao.has("patrimonio") && !tokensChave.has("ativo") && !tokensChave.has("passivo"));
+  const naoCirc = contemFrase(tokensChave, "nao circulante") || contemFrase(tokensChave, "longo prazo") || tokensChave.has("permanente");
+  const circ = tokensChave.has("circulante") && !naoCirc;
+  const realizavel = tokensChave.has("realizavel");
+  const invest = tokensChave.has("investimento");
+  const imob = tokensChave.has("imobilizado");
+  const intang = tokensChave.has("intangivel");
+
+  // Total do GRUPO Passivo+PL ("total do passivo E do patrimônio líquido") —
+  // o rótulo menciona passivo E patrimônio JUNTOS. Um rótulo só "Patrimônio
+  // Líquido" (mesmo com secao=PASSIVO) é o total da SEÇÃO PL, não do grupo —
+  // por isso exigimos "passivo" no PRÓPRIO rótulo, não no contexto da seção.
+  if (tokensChave.has("passivo") && contemFrase(tokensChave, "patrimonio liquido")) return "PASSIVO_PL";
+  // Subgrupos do Ativo Não Circulante (subtotais).
+  if (realizavel) return "realizavel_lp";
+  if (invest && !ctxPassivo) return "investimentos";
+  if (imob && !ctxPassivo) return "imobilizado";
+  if (intang && !ctxPassivo) return "intangivel";
+  // Patrimônio Líquido (total).
+  if (patrimonio) return "patrimonio_liquido";
+  // Seções circulante / não circulante, desambiguadas por Ativo/Passivo.
+  if (ctxPassivo) {
+    if (circ) return "passivo_circulante";
+    if (naoCirc) return "passivo_nao_circulante";
+  }
+  if (ctxAtivo || (!ctxPassivo && (circ || naoCirc))) {
+    if (circ) return "ativo_circulante";
+    if (naoCirc) return "ativo_nao_circulante_grp"; // total da SEÇÃO (nó pai), não o bucket "Outros"
+    return "ATIVO"; // "TOTAL DO ATIVO" sem qualificar circulante
+  }
+  if (ctxPassivo) return "PASSIVO_PL";
+  return null;
+}
+
 export function classificarBalanco(secao: string | null, chave: string): Classificacao {
-  const tokensTudo = tokensDe(`${secao || ""} ${chave}`);
   const tokensChave = tokensDe(chave);
   const tokensSecao = tokensDe(secao || "");
 
-  // 1) Âncoras (total/subtotal) primeiro — sinal mais confiável, evita que
-  // uma linha de total vire só "mais uma conta" dentro da seção.
-  if (tokensTudo.has("total") || contemFrase(tokensTudo, "soma do")) {
-    const eAtivo = tokensTudo.has("ativo");
-    const ePassivo = tokensTudo.has("passivo");
-    const ePatrimonio = contemFrase(tokensTudo, "patrimonio liquido");
-    const eNaoCirculante = contemFrase(tokensTudo, "nao circulante");
-    const eCirculante = tokensTudo.has("circulante") && !eNaoCirculante;
-
-    if (ePassivo && ePatrimonio) return { secaoKey: null, ancoraKey: "total_passivo_pl" };
-    if (eAtivo && !ePassivo) {
-      if (eCirculante) return { secaoKey: null, ancoraKey: "total_ativo_circulante" };
-      if (eNaoCirculante) return { secaoKey: null, ancoraKey: "total_ativo_nao_circulante" };
-      return { secaoKey: null, ancoraKey: "total_ativo" };
-    }
-    if (ePassivo) {
-      if (eCirculante) return { secaoKey: null, ancoraKey: "total_passivo_circulante" };
-      if (eNaoCirculante) return { secaoKey: null, ancoraKey: "total_passivo_nao_circulante" };
-    }
-    if (ePatrimonio) return { secaoKey: null, ancoraKey: "total_patrimonio_liquido" };
-  }
+  // 1) A linha É um total/cabeçalho que o documento trouxe? Vira âncora do nó
+  // correspondente (não conta) — assim ela aparece ALINHADA com o total da
+  // seção, não perdida no meio das contas.
+  const anc = ancoraBalanco(tokensChave, tokensSecao);
+  if (anc) return { secaoKey: null, ancoraKey: anc };
 
   // 2) Seção anotada pela IA no diagnóstico/extração (db/migrations/0010) —
   // mais confiável que adivinhar só pelo rótulo da conta.
@@ -177,7 +251,7 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
     const naoCirc = contemFrase(tokensSecao, "nao circulante") || contemFrase(tokensSecao, "longo prazo") || tokensSecao.has("permanente");
     if (contemFrase(tokensSecao, "patrimonio liquido")) return { secaoKey: "patrimonio_liquido", ancoraKey: null };
     if (tokensSecao.has("ativo")) {
-      if (naoCirc) return { secaoKey: "ativo_nao_circulante", ancoraKey: null };
+      if (naoCirc) return { secaoKey: subgrupoNaoCirculante(tokensChave), ancoraKey: null };
       if (tokensSecao.has("circulante")) return { secaoKey: "ativo_circulante", ancoraKey: null };
     }
     if (tokensSecao.has("passivo")) {
@@ -195,18 +269,47 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
     // passivo, mesmo quando o rótulo dizia "a receber".
     const longoPrazo = contemFrase(tokensChave, "longo prazo") || contemFrase(tokensChave, "nao circulante");
     if (tokensChave.has("receber")) {
-      return { secaoKey: longoPrazo ? "ativo_nao_circulante" : "ativo_circulante", ancoraKey: null };
+      return { secaoKey: longoPrazo ? "realizavel_lp" : "ativo_circulante", ancoraKey: null };
     }
     return { secaoKey: longoPrazo ? "passivo_nao_circulante" : "passivo_circulante", ancoraKey: null };
   }
   if (contemAlgumaFrase(tokensChave, PL_KW)) return { secaoKey: "patrimonio_liquido", ancoraKey: null };
   if (contemAlgumaFrase(tokensChave, ATIVO_CIRC_KW)) return { secaoKey: "ativo_circulante", ancoraKey: null };
-  if (contemAlgumaFrase(tokensChave, ATIVO_NAO_CIRC_KW)) return { secaoKey: "ativo_nao_circulante", ancoraKey: null };
+  if (contemAlgumaFrase(tokensChave, ATIVO_NAO_CIRC_KW)) return { secaoKey: subgrupoNaoCirculante(tokensChave), ancoraKey: null };
   if (contemAlgumaFrase(tokensChave, PASSIVO_CIRC_KW)) return { secaoKey: "passivo_circulante", ancoraKey: null };
   if (contemAlgumaFrase(tokensChave, PASSIVO_NAO_CIRC_KW)) return { secaoKey: "passivo_nao_circulante", ancoraKey: null };
 
   return SEM_CLASSIFICACAO;
 }
+
+// ----- Estrutura hierárquica do Balanço (Lei 6.404/76 art. 178 + CPC 26) -----
+// Árvore ordenada usada pelo builder do export: grupo → seção → subseção.
+// `folha` = contas caem direto aqui (bucket do classificador); `filhos` = nós
+// cujos subtotais somam neste nó. `anc` = a MESMA key é usada como ancoraKey
+// quando o documento traz o total daquele nó (comparação formula×extraído).
+export type PapelNo = "grupo" | "secao" | "subsecao";
+export interface NoBalanco {
+  key: string;
+  label: string;
+  nivel: number;
+  papel: PapelNo;
+  folha: boolean;
+  filhos?: string[];
+}
+export const BALANCO_OUTLINE: NoBalanco[] = [
+  { key: "ATIVO", label: "ATIVO", nivel: 0, papel: "grupo", folha: false, filhos: ["ativo_circulante", "ativo_nao_circulante_grp"] },
+  { key: "ativo_circulante", label: "Ativo Circulante", nivel: 1, papel: "secao", folha: true },
+  { key: "ativo_nao_circulante_grp", label: "Ativo Não Circulante", nivel: 1, papel: "secao", folha: false, filhos: ["realizavel_lp", "investimentos", "imobilizado", "intangivel", "ativo_nao_circulante"] },
+  { key: "realizavel_lp", label: "Realizável a Longo Prazo", nivel: 2, papel: "subsecao", folha: true },
+  { key: "investimentos", label: "Investimentos", nivel: 2, papel: "subsecao", folha: true },
+  { key: "imobilizado", label: "Imobilizado", nivel: 2, papel: "subsecao", folha: true },
+  { key: "intangivel", label: "Intangível", nivel: 2, papel: "subsecao", folha: true },
+  { key: "ativo_nao_circulante", label: "Outros Ativos Não Circulantes", nivel: 2, papel: "subsecao", folha: true },
+  { key: "PASSIVO_PL", label: "PASSIVO E PATRIMÔNIO LÍQUIDO", nivel: 0, papel: "grupo", folha: false, filhos: ["passivo_circulante", "passivo_nao_circulante", "patrimonio_liquido"] },
+  { key: "passivo_circulante", label: "Passivo Circulante", nivel: 1, papel: "secao", folha: true },
+  { key: "passivo_nao_circulante", label: "Passivo Não Circulante", nivel: 1, papel: "secao", folha: true },
+  { key: "patrimonio_liquido", label: "Patrimônio Líquido", nivel: 1, papel: "secao", folha: true },
+];
 
 // ----- DRE (cascata sequencial Receita → Lucro Líquido) --------------------
 export const DRE_SECOES: SecaoDef[] = [
@@ -420,6 +523,13 @@ export function classificarConta(
   // regra; a linha continua pendente/âmbar até o aceite humano. Subir a IA para
   // prioridade/auto-clear exigiria golden set + concordância medida (f0/06).
   if (secaoCanonica && secaoKeysDe(estrutura).has(secaoCanonica)) {
+    // A IA sugere a seção no nível achatado (enum de 0012). Se for Ativo Não
+    // Circulante, refina no subgrupo CPC (Realizável LP / Investimentos /
+    // Imobilizado / Intangível) pelo rótulo — assim a conta cai na subseção
+    // certa e os subtotais batem com os que o documento traz.
+    if (estrutura === "balanco" && secaoCanonica === "ativo_nao_circulante") {
+      return { secaoKey: subgrupoNaoCirculante(tokensDe(chave)), ancoraKey: null };
+    }
     return { secaoKey: secaoCanonica, ancoraKey: null };
   }
 

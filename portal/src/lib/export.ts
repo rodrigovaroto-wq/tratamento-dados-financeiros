@@ -7,6 +7,7 @@ import {
   ancorasDe,
   agruparPorChaveNormalizada,
   ESTRUTURA_POR_TIPO,
+  BALANCO_OUTLINE,
   type EstruturaDemonstracao,
 } from "./statement-templates";
 
@@ -194,7 +195,32 @@ function escreverLinhaConta(
   });
 }
 
+const DIVERGENCIA_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4E4" } };
+const MARGEM_FONT: Partial<ExcelJS.Font> = { italic: true, size: 9, color: { argb: "FF2563EB" } };
+// Âncora da DRE → rótulo da linha de margem (% da Receita Líquida).
+const MARGEM_LABEL: Record<string, string> = {
+  lucro_bruto: "Margem Bruta %",
+  resultado_operacional: "Margem Operacional %",
+  lucro_liquido: "Margem Líquida %",
+};
+
+// valor_num "melhor" de um grupo de conta numa coluna (para conferir a soma em
+// JS contra o total que o documento trouxe — a célula em si leva a FÓRMULA).
+function valorNumDoGrupo(grupo: GrupoConta, colKey: string): number | null {
+  const c = grupo.porColuna.get(colKey);
+  if (!c || c.length === 0) return null;
+  const campo = melhorCampo(c);
+  return typeof campo.valor_num === "number" ? campo.valor_num : null;
+}
+
 // ----- Aba classificada por seção (Balanço/Balancete/DRE/Fluxo/Combinado) --
+// Totais/subtotais NÃO são valores estáticos: são FÓRMULAS Excel (=SUM(...)),
+// transparentes e recalculáveis, colocadas NO cabeçalho de cada seção/grupo
+// (f0/07 evoluído nesta sessão — pedido do dono). O total que o PRÓPRIO
+// documento trouxe (quando existe) aparece numa linha de conferência logo
+// abaixo; se a soma calculada divergir do informado, ambos são sinalizados
+// (anti-ancoragem: nada que o documento disse é perdido, e divergência vira
+// sinal visível — uma checagem de reconciliação embutida).
 function construirAbaClassificada(
   workbook: ExcelJS.Workbook,
   nomeAba: string,
@@ -205,10 +231,11 @@ function construirAbaClassificada(
   taxonomiaPorCodigo: Map<string, { label: string; versao: number }>,
 ) {
   const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
-  sheet.getColumn(1).width = 44;
+  sheet.getColumn(1).width = 46;
   colunas.forEach((_, i) => {
     sheet.getColumn(i + 2).width = 20;
   });
+  const colLetra = (i: number) => sheet.getColumn(i + 2).letter;
 
   const headerRow = sheet.getRow(1);
   headerRow.getCell(1).value = "Conta";
@@ -219,82 +246,271 @@ function construirAbaClassificada(
   headerRow.fill = HEADER_FILL;
   headerRow.alignment = { wrapText: true, vertical: "middle" };
 
-  const secoes = secoesDe(estrutura);
-  const ancoras = ancorasDe(estrutura);
-
-  // Classifica CADA campo extraído: ou entra numa seção (agrupado pela
-  // chave normalizada — mesma conta com a mesma redação alinha na mesma
-  // linha entre períodos/entidades), ou é uma âncora (subtotal/total já
-  // extraído do próprio documento), ou fica em "não classificado".
+  // Classifica cada campo: conta numa seção (bucket), âncora (total que o doc
+  // trouxe, por chave de nó), ou não classificado.
   const contasPorSecao = new Map<string, Map<string, GrupoConta>>();
-  secoes.forEach((s) => contasPorSecao.set(s.key, new Map()));
   const valoresPorAncora = new Map<string, GrupoConta>();
-  ancoras.forEach((a) => valoresPorAncora.set(a.key, novoGrupo(a.label)));
   const naoClassificados = new Map<string, GrupoConta>();
-
+  const bucket = (mapa: Map<string, GrupoConta>, campo: CampoExtraido, colKey: string) => {
+    const chaveNorm = campo.chave.trim().toLowerCase();
+    if (!mapa.has(chaveNorm)) mapa.set(chaveNorm, novoGrupo(campo.chave));
+    adicionarAoGrupo(mapa.get(chaveNorm)!, colKey, campo);
+  };
   for (const { campo, colKey } of camposDaAba) {
     if (campo.valor_num == null && campo.valor_texto == null) continue;
     const { secaoKey, ancoraKey } = classificarConta(estrutura, campo.secao, campo.chave, campo.secao_canonica);
     if (ancoraKey) {
+      if (!valoresPorAncora.has(ancoraKey)) valoresPorAncora.set(ancoraKey, novoGrupo(campo.chave));
       adicionarAoGrupo(valoresPorAncora.get(ancoraKey)!, colKey, campo);
     } else if (secaoKey) {
-      const mapaSecao = contasPorSecao.get(secaoKey)!;
-      const chaveNorm = campo.chave.trim().toLowerCase();
-      if (!mapaSecao.has(chaveNorm)) mapaSecao.set(chaveNorm, novoGrupo(campo.chave));
-      adicionarAoGrupo(mapaSecao.get(chaveNorm)!, colKey, campo);
+      if (!contasPorSecao.has(secaoKey)) contasPorSecao.set(secaoKey, new Map());
+      bucket(contasPorSecao.get(secaoKey)!, campo, colKey);
     } else {
-      const chaveNorm = campo.chave.trim().toLowerCase();
-      if (!naoClassificados.has(chaveNorm)) naoClassificados.set(chaveNorm, novoGrupo(campo.chave));
-      adicionarAoGrupo(naoClassificados.get(chaveNorm)!, colKey, campo);
+      bucket(naoClassificados, campo, colKey);
     }
   }
 
   let rowIndex = 2;
-  const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) => {
+  const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) =>
     escreverLinhaConta(sheet, rowIndex++, label, nivel, colunas, grupo, opts, contextoPorVersao, taxonomiaPorCodigo);
-  };
-  const escreverHeader = (label: string, nivel: number) => {
-    const row = sheet.getRow(rowIndex++);
-    row.getCell(1).value = label;
-    row.getCell(1).alignment = { indent: nivel };
-    row.font = { bold: true };
-    row.fill = SECAO_FILL;
+
+  // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
+  // abaixo do cabeçalho com a fórmula. Se divergir do subtotal calculado,
+  // pinta ambas as células e anota o motivo (checagem de reconciliação).
+  const escreverConferenciaExtraido = (nivel: number, ancoraKey: string, cabecalhoIdx: number, subtotalNum: Map<string, number>) => {
+    const grupo = valoresPorAncora.get(ancoraKey);
+    if (!grupo) return;
+    const idx = rowIndex++;
+    const row = sheet.getRow(idx);
+    row.getCell(1).value = "↳ total informado no documento";
+    row.getCell(1).alignment = { indent: nivel + 1 };
+    row.getCell(1).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+    colunas.forEach((col, i) => {
+      const cell = row.getCell(i + 2);
+      const vExtraido = valorNumDoGrupo(grupo, col.key);
+      if (vExtraido == null) return;
+      cell.value = vExtraido;
+      cell.numFmt = VALOR_NUM_FMT;
+      cell.font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+      const vCalc = subtotalNum.get(col.key);
+      if (vCalc != null && Math.abs(vCalc - vExtraido) > Math.max(0.01, Math.abs(vExtraido) * 0.005)) {
+        cell.fill = DIVERGENCIA_FILL;
+        cell.note = `Divergência: soma calculada = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
+          + `informado no documento = ${vExtraido.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. `
+          + `Conferir a extração contra o arquivo original.`;
+        // sinaliza também a célula da fórmula (cabeçalho)
+        sheet.getRow(cabecalhoIdx).getCell(i + 2).fill = DIVERGENCIA_FILL;
+      }
+    });
   };
 
   if (estrutura === "balanco") {
-    // Layout hierárquico: grupo (ATIVO / PASSIVO E PL) → seções → contas →
-    // subtotal da seção → total do grupo.
-    const grupos = [...new Set(secoes.map((s) => s.grupo!))];
-    for (const grupoNome of grupos) {
-      escreverHeader(grupoNome, 0);
-      const secoesDoGrupo = secoes.filter((s) => s.grupo === grupoNome);
-      for (const secao of secoesDoGrupo) {
-        escreverHeader(secao.label, 1);
-        const contas = [...contasPorSecao.get(secao.key)!.values()];
-        for (const conta of contas) escrever(conta.label, 2, conta);
-        const ancoraSecao = ancoras.find((a) => "aposSecao" in a && a.aposSecao === secao.key);
-        if (ancoraSecao) escrever(ancoraSecao.label, 1, valoresPorAncora.get(ancoraSecao.key)!, { negrito: true, borda: "simples" });
+    const outline = new Map(BALANCO_OUTLINE.map((n) => [n.key, n]));
+    // Emite um nó (recursivo): cabeçalho com fórmula (soma das contas-folha ou
+    // dos subtotais dos filhos), contas indentadas, conferência do extraído.
+    // Retorna { idx, subtotalNum } para o pai somar.
+    const emitirNo = (chave: string): { idx: number; subtotalNum: Map<string, number> } | null => {
+      const no = outline.get(chave)!;
+      const fill = no.papel === "subsecao" ? SECAO_FILL : HEADER_FILL;
+      const subtotalNum = new Map<string, number>();
+
+      if (no.folha) {
+        const contas = [...(contasPorSecao.get(no.key)?.values() ?? [])];
+        const temAncora = valoresPorAncora.has(no.key);
+        // Subseção CPC vazia (sem contas nem total informado) não é emitida —
+        // evita 4 linhas de subgrupo em branco quando a empresa só usa uma.
+        if (no.papel === "subsecao" && contas.length === 0 && !temAncora) return null;
+        // reserva o cabeçalho; escreve as contas; depois preenche a fórmula.
+        const cabIdx = rowIndex++;
+        const primeira = rowIndex;
+        for (const conta of contas) {
+          escrever(conta.label, no.nivel + 1, conta);
+          colunas.forEach((col) => {
+            const v = valorNumDoGrupo(conta, col.key);
+            if (v != null) subtotalNum.set(col.key, (subtotalNum.get(col.key) ?? 0) + v);
+          });
+        }
+        const ultima = rowIndex - 1;
+        const row = sheet.getRow(cabIdx);
+        row.getCell(1).value = no.label;
+        row.getCell(1).alignment = { indent: no.nivel };
+        row.font = { bold: true };
+        row.fill = fill;
+        colunas.forEach((col, i) => {
+          const cell = row.getCell(i + 2);
+          cell.font = { bold: true };
+          if (ultima >= primeira) {
+            cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
+            cell.numFmt = VALOR_NUM_FMT;
+          }
+        });
+        if (temAncora) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
+        return { idx: cabIdx, subtotalNum };
       }
-      const ancoraGrupo = ancoras.find((a) => "grupo" in a && a.grupo === grupoNome);
-      if (ancoraGrupo) escrever(ancoraGrupo.label, 0, valoresPorAncora.get(ancoraGrupo.key)!, { negrito: true, borda: "dupla" });
-    }
+
+      // nó pai: cabeçalho reservado, emite filhos (pula os vazios), soma os
+      // cabeçalhos deles.
+      const cabIdx = rowIndex++;
+      const filhosIdx: number[] = [];
+      for (const filho of no.filhos ?? []) {
+        const r = emitirNo(filho);
+        if (!r) continue;
+        filhosIdx.push(r.idx);
+        colunas.forEach((col) => {
+          const v = r.subtotalNum.get(col.key);
+          if (v != null) subtotalNum.set(col.key, (subtotalNum.get(col.key) ?? 0) + v);
+        });
+      }
+      const row = sheet.getRow(cabIdx);
+      row.getCell(1).value = no.label;
+      row.getCell(1).alignment = { indent: no.nivel };
+      row.font = { bold: true };
+      row.fill = fill;
+      const dupla = no.papel === "grupo";
+      colunas.forEach((col, i) => {
+        const cell = row.getCell(i + 2);
+        cell.font = { bold: true };
+        if (filhosIdx.length) {
+          cell.value = { formula: filhosIdx.map((r) => `${colLetra(i)}${r}`).join("+") } as ExcelJS.CellFormulaValue;
+          cell.numFmt = VALOR_NUM_FMT;
+        }
+        if (dupla) cell.border = DOUBLE_TOP_BORDER;
+      });
+      if (valoresPorAncora.has(no.key)) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
+      return { idx: cabIdx, subtotalNum };
+    };
+
+    for (const raiz of BALANCO_OUTLINE.filter((n) => n.nivel === 0)) emitirNo(raiz.key);
   } else {
-    // Layout sequencial (DRE / Fluxo de Caixa): seção → contas → âncora
-    // (quando a âncora não pertence a nenhuma seção específica — ex.: saldo
-    // inicial/final do Fluxo — ela é escrita direto, na ordem definida).
-    const aposSecaoUsadas = new Set(ancoras.filter((a) => "aposSecao" in a).map((a) => (a as { aposSecao: string }).aposSecao));
+    // Layout sequencial (DRE / Fluxo de Caixa): seção → contas → subtotal
+    // (âncora). Subtotal é FÓRMULA: DRE é cascata cumulativa (cada subtotal =
+    // soma de TODAS as contas da demonstração até ali — deduções/custos/
+    // despesas entram negativos, então a soma corrida dá o resultado); Fluxo
+    // é soma da própria seção, com variação/saldo final derivados.
+    const secoes = secoesDe(estrutura);
+    const ancoras = ancorasDe(estrutura);
+    const idxAncora = new Map<string, number>();
+    const subtotalAncora = new Map<string, Map<string, number>>();
+    let dreAncoraAnteriorIdx: number | null = null; // DRE: célula do subtotal anterior (cascata)
+    const dreAcumulado = new Map<string, number>(); // DRE: subtotal numérico corrido
+
     for (const secao of secoes) {
-      escreverHeader(secao.label, 0);
-      const contas = [...contasPorSecao.get(secao.key)!.values()];
-      for (const conta of contas) escrever(conta.label, 1, conta);
+      const hdr = sheet.getRow(rowIndex++);
+      hdr.getCell(1).value = secao.label;
+      hdr.getCell(1).alignment = { indent: 0 };
+      hdr.font = { bold: true };
+      hdr.fill = SECAO_FILL;
+      const primeira = rowIndex;
+      const contas = [...(contasPorSecao.get(secao.key)?.values() ?? [])];
+      const somaSecao = new Map<string, number>();
+      for (const conta of contas) {
+        escrever(conta.label, 1, conta);
+        colunas.forEach((col) => {
+          const v = valorNumDoGrupo(conta, col.key);
+          if (v != null) somaSecao.set(col.key, (somaSecao.get(col.key) ?? 0) + v);
+        });
+      }
+      const ultima = rowIndex - 1;
       const ancoraSecao = ancoras.find((a) => "aposSecao" in a && (a as { aposSecao: string }).aposSecao === secao.key);
-      if (ancoraSecao) escrever(ancoraSecao.label, 0, valoresPorAncora.get(ancoraSecao.key)!, { negrito: true, borda: "simples" });
+      if (ancoraSecao) {
+        const idx = rowIndex++;
+        const subtotalNum = new Map<string, number>();
+        const row = sheet.getRow(idx);
+        row.getCell(1).value = ancoraSecao.label;
+        row.getCell(1).font = { bold: true };
+        colunas.forEach((col, i) => {
+          const cell = row.getCell(i + 2);
+          cell.font = { bold: true };
+          cell.border = THIN_TOP_BORDER;
+          let formula: string | null = null;
+          const somaSecaoFormula = ultima >= primeira ? `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` : null;
+          if (estrutura === "dre") {
+            // CASCATA: subtotal = subtotal anterior + soma das contas DESTA
+            // seção (deduções/custos/despesas entram negativos). Referencia a
+            // célula da âncora anterior — nunca re-soma linhas de subtotal já
+            // escritas (evita dupla contagem).
+            const prev = dreAncoraAnteriorIdx != null ? `${colLetra(i)}${dreAncoraAnteriorIdx}` : null;
+            formula = prev && somaSecaoFormula ? `${prev}+${somaSecaoFormula}` : (prev ?? somaSecaoFormula);
+            const acc = (dreAcumulado.get(col.key) ?? 0) + (somaSecao.get(col.key) ?? 0);
+            dreAcumulado.set(col.key, acc);
+            subtotalNum.set(col.key, acc);
+          } else {
+            // Fluxo: soma da própria seção
+            formula = somaSecaoFormula;
+            subtotalNum.set(col.key, somaSecao.get(col.key) ?? 0);
+          }
+          if (formula) {
+            cell.value = { formula } as ExcelJS.CellFormulaValue;
+            cell.numFmt = VALOR_NUM_FMT;
+          }
+        });
+        idxAncora.set(ancoraSecao.key, idx);
+        subtotalAncora.set(ancoraSecao.key, subtotalNum);
+        if (estrutura === "dre") dreAncoraAnteriorIdx = idx;
+        if (valoresPorAncora.has(ancoraSecao.key)) escreverConferenciaExtraido(0, ancoraSecao.key, idx, subtotalNum);
+
+        // Linha analítica de MARGEM (% da Receita Líquida) — estilo FP&A
+        // (referência DelendSummary): Margem Bruta / Operacional / Líquida.
+        // Fórmula por coluna (IFERROR evita divisão por zero); não projeta
+        // nada, só divide dois valores já extraídos. EBITDA fica de fora aqui
+        // porque a DRE não traz Depreciação/Amortização como linha isolada
+        // (viria das notas/Fluxo) — não inventamos.
+        const rlIdx = idxAncora.get("receita_liquida");
+        if (estrutura === "dre" && rlIdx && ancoraSecao.key in MARGEM_LABEL) {
+          const mIdx = rowIndex++;
+          const mrow = sheet.getRow(mIdx);
+          mrow.getCell(1).value = MARGEM_LABEL[ancoraSecao.key];
+          mrow.getCell(1).alignment = { indent: 1 };
+          mrow.getCell(1).font = MARGEM_FONT;
+          colunas.forEach((col, i) => {
+            const cell = mrow.getCell(i + 2);
+            cell.value = { formula: `IFERROR(${colLetra(i)}${idx}/${colLetra(i)}${rlIdx},"")` } as ExcelJS.CellFormulaValue;
+            cell.numFmt = "0.0%";
+            cell.font = MARGEM_FONT;
+          });
+        }
+      }
     }
-    // Âncoras que não seguem nenhuma seção específica (ex.: variação líquida
-    // de caixa, saldo inicial/final) — na ordem em que aparecem no template.
+
+    // Âncoras "livres" (não presas a uma seção): Fluxo de Caixa —
+    // variação líquida = soma dos 3 caixas líquidos; saldo final = saldo
+    // inicial + variação; saldo inicial = só o que o documento trouxer.
     for (const ancora of ancoras) {
-      if ("aposSecao" in ancora && aposSecaoUsadas.has((ancora as { aposSecao: string }).aposSecao)) continue;
-      escrever(ancora.label, 0, valoresPorAncora.get(ancora.key)!, { negrito: true, borda: "simples" });
+      if ("aposSecao" in ancora) continue;
+      const idx = rowIndex++;
+      const row = sheet.getRow(idx);
+      row.getCell(1).value = ancora.label;
+      row.getCell(1).font = { bold: true };
+      const subtotalNum = new Map<string, number>();
+      colunas.forEach((col, i) => {
+        const cell = row.getCell(i + 2);
+        cell.font = { bold: true };
+        cell.border = THIN_TOP_BORDER;
+        let formula: string | null = null;
+        const cel = (k: string) => (idxAncora.has(k) ? `${colLetra(i)}${idxAncora.get(k)}` : null);
+        if (ancora.key === "variacao_liquida_caixa") {
+          const partes = ["caixa_operacional", "caixa_investimento", "caixa_financiamento"].map(cel).filter(Boolean);
+          if (partes.length) formula = partes.join("+");
+        } else if (ancora.key === "saldo_final_caixa") {
+          const ini = cel("saldo_inicial_caixa");
+          const varc = cel("variacao_liquida_caixa");
+          if (ini && varc) formula = `${ini}+${varc}`;
+        }
+        if (formula) {
+          cell.value = { formula } as ExcelJS.CellFormulaValue;
+          cell.numFmt = VALOR_NUM_FMT;
+        } else {
+          // saldo inicial (ou sem fórmula possível): usa o valor extraído
+          const grupo = valoresPorAncora.get(ancora.key);
+          const v = grupo ? valorNumDoGrupo(grupo, col.key) : null;
+          if (v != null) {
+            cell.value = v;
+            cell.numFmt = VALOR_NUM_FMT;
+          }
+        }
+      });
+      idxAncora.set(ancora.key, idx);
+      subtotalAncora.set(ancora.key, subtotalNum);
     }
   }
 
