@@ -16,13 +16,22 @@ const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
 const code = (name) => byName[name].parameters.jsCode;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json e
-// this.helpers (binário — NÃO o global $helpers: no runtime de Task Runner
-// do N8N (padrão em instalações self-hosted recentes), $helpers não existe;
-// o jeito certo é this.helpers.getBinaryDataBuffer, confirmado testando ao
-// vivo e na doc oficial do n8n). O código real usa `await`, então o mock
-// roda como função async, com `this` vinculado via .call().
-async function run(name, { item, items, refs = {}, env = {} }) {
+// Executa um jsCode como o N8N: $input, $ (referência a nós), $env, $json,
+// $itemIndex e this.helpers (binário — NÃO o global $helpers: no runtime de
+// Task Runner do N8N (padrão em instalações self-hosted recentes), $helpers
+// não existe; o jeito certo é this.helpers.getBinaryDataBuffer, confirmado
+// testando ao vivo e na doc oficial do n8n). O código real usa `await`,
+// então o mock roda como função async, com `this` vinculado via .call().
+//
+// getBinaryDataBuffer resolve o buffer pelo `itemIndex` DENTRO DO LOTE
+// inteiro do node — não pelo `item` específico passado nesta chamada de
+// `run()`. Por isso o mock busca em `binaryStore` (o lote completo, quando
+// fornecido) usando o itemIndex recebido pelo CÓDIGO (não um valor fixo do
+// teste) — é o que teria pego o bug real (2026-07-22): getBinaryDataBuffer(0,
+// ...) sempre lia o item 0 do lote, mesmo processando o item 1. Sem
+// binaryStore, cai pro item único (`item`) — comportamento de antes, para
+// nodes que não dependem de itemIndex.
+async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, binaryStore } = {}) {
   const $input = {
     item,
     first: () => (items ? items[0] : item),
@@ -35,14 +44,16 @@ async function run(name, { item, items, refs = {}, env = {} }) {
   const $json = item ? item.json : undefined;
   const thisContext = {
     helpers: {
-      getBinaryDataBuffer: async (_itemIndex, propertyName) => {
-        const bin = (item && item.binary && item.binary[propertyName]) || {};
+      getBinaryDataBuffer: async (idx, propertyName) => {
+        const lote = binaryStore || (item ? [item] : []);
+        const fonte = lote[idx];
+        const bin = (fonte && fonte.binary && fonte.binary[propertyName]) || {};
         return Buffer.from(bin.data || '', 'base64');
       },
     },
   };
-  const fn = new AsyncFunction('$input', '$', '$env', '$json', 'Buffer', code(name));
-  return fn.call(thisContext, $input, $, env, $json, Buffer);
+  const fn = new AsyncFunction('$input', '$', '$env', '$json', '$itemIndex', 'Buffer', code(name));
+  return fn.call(thisContext, $input, $, env, $json, itemIndex, Buffer);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,10 +94,14 @@ test('Listar Arquivos: sem arquivos → erro explícito (não saída vazia silen
 });
 
 // Encadeia os dois arquivos pela cadeia principal e guarda os intermediários.
+// `lote` guarda os DOIS itens fan-out (mesmo processando só um pelo resto da
+// cadeia) — é o que permite `Preparar Conteudo` simular getBinaryDataBuffer
+// resolvendo pelo itemIndex dentro do lote inteiro, não só pelo item único.
 async function chainFile(idx) {
-  const listado = (await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE }))[idx];
-  const classificado = await run('Classificar Nome', { item: listado, refs: REFS_BASE });
-  const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE });
+  const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+  const listado = lote[idx];
+  const classificado = await run('Classificar Nome', { item: listado, refs: REFS_BASE, itemIndex: idx, binaryStore: lote });
+  const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE, itemIndex: idx, binaryStore: lote });
   return { listado, classificado, preparado };
 }
 
@@ -116,6 +131,22 @@ test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não d
   assert.match(preparado.json.content_part.file.file_data, /^data:application\/pdf;base64,QUJD$/);
   assert.equal(preparado.json.caso_id, 'caso-uuid-1', 'contexto (caso_id) atravessa a cadeia');
   assert.ok(preparado.binary?.data, 'binário preservado (Upload é ramo a partir daqui)');
+});
+
+test('Preparar Conteudo: com 2+ arquivos no MESMO lote, cada item lê o SEU PRÓPRIO binário', async () => {
+  // Bug real (2026-07-22, achado testando com 2 documentos reais no mesmo
+  // upload): getBinaryDataBuffer(0, 'data') fixo lia sempre o binário do
+  // ITEM 0 do lote, mesmo processando o item 1 — o nome/mimeType do item 1
+  // batiam (vêm do JSON, correto), mas os BYTES enviados pra IA eram os do
+  // item 0. Com upload de 1 arquivo por vez isso nunca aparecia (o único
+  // item É o item 0). Resultado real: um documento foi extraído com o
+  // CONTEÚDO de outro (diagnóstico/entidade/valores de um arquivo diferente
+  // do que o nome dizia). Fix: usar $itemIndex em vez do literal 0.
+  const { preparado: item0 } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf (base64 "QUJD")
+  const { preparado: item1 } = await chainFile(1); // 12M25 DRE (Assinado).pdf (base64 "REVG")
+  assert.match(item0.json.content_part.file.file_data, /base64,QUJD$/, 'item 0 deve ler o PRÓPRIO binário');
+  assert.match(item1.json.content_part.file.file_data, /base64,REVG$/, 'item 1 deve ler o PRÓPRIO binário, não o do item 0');
+  assert.notEqual(item0.json.content_part.file.file_data, item1.json.content_part.file.file_data);
 });
 
 test('Upload Storage: URL usa encodeURIComponent (nomes com espaço/acento)', () => {

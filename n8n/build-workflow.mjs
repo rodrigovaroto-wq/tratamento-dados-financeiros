@@ -98,9 +98,18 @@ const mt=(binMeta.mimeType||'').toLowerCase();
 // file_data enviado era lixo). O helper resolve os dois modos corretamente.
 // No runtime de Task Runner (padrao a partir do N8N 1.x/2.x self-hosted) o
 // global $helpers NAO existe -- e' this.helpers (doc oficial n8n, cookbook
-// "Get the binary data buffer"). Cada item roda isolado em each-item mode,
-// entao o indice e' sempre 0 (o item corrente).
-const buf=await this.helpers.getBinaryDataBuffer(0,'data');
+// "Get the binary data buffer").
+// BUG REAL (achado testando com 2 arquivos no mesmo lote, 2026-07-22): o
+// indice NAO e' sempre 0. Mesmo em each-item mode, getBinaryDataBuffer
+// resolve o buffer pelo indice do item DENTRO DO LOTE inteiro do node (e' a
+// forma como a referencia interna de binario vira bytes de verdade) -- nao
+// pelo item que o closure do JS acha que esta processando. Com 0 fixo, todo
+// item != 0 lia o BINARIO DO ITEM 0 (mimeType/nome do proprio item batiam,
+// mas o CONTEUDO enviado pra IA era de outro arquivo) -- so' nao aparecia
+// com upload de 1 arquivo por vez, onde o unico item e' sempre indice 0. Usa
+// $itemIndex (global do N8N em each-item mode: indice do item corrente no
+// lote) em vez do literal 0.
+const buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');
 const b64=buf.toString('base64');
 function parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}
 function sheetTxt(rows,mr=50,mc=25){if(!rows.length)return '(planilha vazia)';const cols=Object.keys(rows[0]).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
