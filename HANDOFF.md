@@ -547,6 +547,28 @@ analítico sobre o dado REAL, sem projetar"** (não o motor de projeção). Regi
   real. (3) O **motor de projeção/modelagem** (o que o DelendSummary realmente é) segue FORA do
   escopo pela decisão do dono + `f0/07` — só entraria com revisão explícita da doutrina.
 
+### Sessão 7 (cont.⁵) — Ajustes no export após o teste v12 do dono
+O dono reprocessou ("teste v12") e apontou "faltou algumas fórmulas". Ao inspecionar o `.xlsx`:
+- **Seção só com total informado, sem itens de linha** (ex.: "Imobilizado" no balanço Certsys — o
+  documento trouxe só o total do subgrupo, sem detalhar contas): o cabeçalho ficava EM BRANCO (não
+  havia o que somar) e o valor ficava órfão na linha de conferência, quebrando o total do pai.
+  **Fix:** nesse caso o cabeçalho usa o próprio valor informado como valor da seção (não há soma a
+  fazer); a linha de conferência só aparece quando há de fato uma soma para comparar.
+- **Seções padrão genuinamente vazias** (ex.: Passivo Não Circulante sem contas) mostravam célula
+  em branco no meio do balanço. **Fix:** passam a mostrar `0` explícito (coluna completa).
+- **PL inflado no Combinado (bug mais sério, o dono não tinha citado):** as linhas de **DMPL**
+  ("SALDOS EM 31 DE DEZEMBRO DE 2023/2024") estavam sendo somadas como contas do PL — e o saldo de
+  fechamento REPETE o próprio PL, então o total dobrava (~32 mi vs. ~11,8 mi reais). **Fix:**
+  `ehLinhaDMPL()` em `statement-templates.ts` detecta linhas de saldo de abertura/fechamento de
+  DMPL (contém "saldo" + ano/inicial/final) e as tira da classificação do Balanço → vão para
+  "Contas Não Classificadas" (visíveis, sem somar). Bloqueia inclusive o fallback do
+  `secao_canonica` (a IA tende a marcar essas linhas como `patrimonio_liquido`). Só afeta o
+  Balanço/Combinado (no Fluxo, "saldo inicial/final de caixa" é tratado pelo classificador do
+  Fluxo). Validado: PL fecha no informado, sem divergência falsa; Imobilizado com valor;
+  DMPL em "Não Classificadas". `tsc`/`eslint` limpos.
+- **Ainda deferido:** DMPL em aba própria (exige estender o enum da IA + reextração); é o passo
+  que traria essas linhas de volta como uma demonstração de verdade, em vez de "Não Classificadas".
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
