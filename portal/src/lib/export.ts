@@ -122,6 +122,7 @@ function melhorCampo(campos: CampoExtraido[]): CampoExtraido {
 function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao, versaoTaxonomia: number | null) {
   const linhas = [
     `Rótulo original: "${campo.chave}"`,
+    campo.entidade_coluna ? `Coluna de origem no documento: ${campo.entidade_coluna}` : null,
     `Arquivo: ${ctx.nomeArquivo}`,
     campo.origem_pagina != null ? `Página: ${campo.origem_pagina}` : null,
     campo.confianca != null ? `Confiança da extração: ${Math.round(campo.confianca * 100)}%` : null,
@@ -434,19 +435,25 @@ export function buildExportWorkbook({
         aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
       }
     }
-    const colKey = `${ctx.entidade} ${ctx.periodo}`;
+    // Documento multi-entidade (db/migrations/0014): quando a linha traz
+    // `entidade_coluna` (ex.: "Certsys Tecn" num balanço combinado com várias
+    // colunas de empresa), a coluna do export é a ENTIDADE DA LINHA, não a
+    // entidade principal do documento — é o que separa "Certsys Tecn"/"Part"/
+    // "Com"/"Total" em colunas próprias no lugar de forçar tudo numa coluna só.
+    const entidadeColuna = campo.entidade_coluna || ctx.entidade;
+    const colKey = `${entidadeColuna} ${ctx.periodo}`;
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
 
     if (estrutura) {
       if (!colunasPorAba.has(aba)) colunasPorAba.set(aba, new Map());
-      colunasPorAba.get(aba)!.set(colKey, { key: colKey, entidade: ctx.entidade, periodo: ctx.periodo });
+      colunasPorAba.get(aba)!.set(colKey, { key: colKey, entidade: entidadeColuna, periodo: ctx.periodo });
       if (!camposPorAba.has(aba)) camposPorAba.set(aba, []);
       camposPorAba.get(aba)!.push({ campo, colKey });
     } else {
       const tax = ctx.tipoTaxonomia ? taxonomiaPorCodigo.get(ctx.tipoTaxonomia) : undefined;
       if (!linhasSimplesPorAba.has(aba)) linhasSimplesPorAba.set(aba, []);
       linhasSimplesPorAba.get(aba)!.push({
-        entidade: ctx.entidade,
+        entidade: entidadeColuna,
         periodo: ctx.periodo,
         secao: campo.secao ?? "(sem seção)",
         chave: campo.chave,
