@@ -1,6 +1,7 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7).
+Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
+do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -476,6 +477,49 @@ em `n8n/build-workflow.mjs` regenerado) nos 3 achados secundários de uma vez:
   não montado). 55/55 testes do N8N seguem passando (schema/parse cobertos); o novo texto foi
   confirmado presente no `workflow.e1-ingestao.json` gerado. **Validação real = o dono reprocessar**
   e conferir se o Certsys vira COMBINADO e o Global One vira BALANCO.
+
+### Sessão 7 (cont.³) — Balanço/DRE/Fluxo completos com FÓRMULAS (reescrita do export)
+Pedido do dono depois de reprocessar ("teste v9"): o export estava "horrível e faltando
+informações" — sem totais, com a linha de total do documento ("NÃO CIRCULANTE") perdida no meio
+das contas, e nomes iguais para valores diferentes ("CIRCULANTE" do Ativo vs. do Passivo). Pediu:
+fórmulas calculando os totais por categoria (Ativo/Ativo Circulante/Não Circulante/Passivo/PL/…)
+**no cabeçalho da seção**, balanço completo, e "buscar nas melhores fontes contábeis" como montar
+Balanço/DRE/Fluxo. **Tensão de doutrina:** isso contradiz a anti-ancoragem de `f0/07` ("nenhum
+subtotal calculado por soma"). Reconciliação escolhida pelo dono (via AskUserQuestion): usar
+**fórmulas Excel transparentes** (`=SUM`), manter o total que o documento trouxe numa linha de
+conferência, e **sinalizar divergência** formula×extraído. Emenda registrada em `f0/07`.
+- **Fundamentação (WebSearch):** Lei 6.404/76 art. 178 + CPC 26 — Ativo em ordem de liquidez
+  (Circulante; Não Circulante = Realizável a LP / Investimentos / Imobilizado / Intangível);
+  Passivo (Circulante, Não Circulante) + PL. DRE em cascata; DFC método indireto (CPC 03).
+- **`portal/src/lib/statement-templates.ts` reescrito:** `classificarBalanco` agora (1) reconhece
+  linhas que são TOTAIS/cabeçalhos que o doc trouxe (rótulo "nu" — só palavras estruturais — ou com
+  "total"/"soma") e as manda para o NÓ certo em vez de virarem "conta no meio" (resolve o "NÃO
+  CIRCULANTE no meio" e o "nomes iguais": "CIRCULANTE" sob Ativo vs. Passivo viram os totais de cada
+  seção, desambiguados pelo contexto `secao`); (2) sub-classifica o Ativo Não Circulante nos
+  subgrupos CPC (Realizável LP/Investimentos/Imobilizado/Intangível), com bucket "Outros" pro que
+  não casar. Nova árvore `BALANCO_OUTLINE` (grupo→seção→subseção).
+- **`portal/src/lib/export.ts` — builder reescrito:** Balanço montado pela árvore; cada
+  seção/grupo tem o subtotal como **FÓRMULA** por coluna (folha = `SUM` das contas; pai = soma dos
+  cabeçalhos dos filhos; grupo ATIVO/PASSIVO+PL = soma das seções). DRE em **cascata** (cada
+  subtotal = subtotal anterior + soma das contas da seção; referencia a célula anterior, nunca
+  re-soma subtotais → sem dupla contagem). Fluxo: caixa líquido por seção = `SUM`; variação = soma
+  dos 3; saldo final = inicial + variação. Total do documento vira linha "↳ total informado no
+  documento"; se a soma calculada divergir (tolerância 0,5%/1 centavo), pinta ambos + nota
+  (reconciliação embutida). Subseções CPC vazias não são emitidas (não polui). Funciona em
+  multi-coluna (documento combinado: uma fórmula por empresa).
+- **Bugs reais achados e corrigidos durante os testes** (validação via `openpyxl`, LibreOffice do
+  ambiente segue quebrado): (1) `ATIVO.filhos` apontava para o bucket-folha errado — o nó pai
+  "Ativo Não Circulante" não era emitido e a conta "Créditos com Pessoas Ligadas" SUMIA; (2)
+  âncora do total "NÃO CIRCULANTE" caía no nó "Outros" em vez do nó-seção; (3) "PATRIMÔNIO LÍQUIDO"
+  (total da seção) colidia com "TOTAL DO PASSIVO E PL" (total do grupo) — resolvido exigindo
+  "passivo" no próprio rótulo pro grupo; (4) "Créditos c/Terceiros" não era Realizável LP.
+- **Validação com os dados reais** (Global One + Certsys): o balanço agora FECHA — ATIVO = Passivo+
+  PL = 12.086.571,06, com Realizável a LP somando as duas contas de crédito (12.080.078,23 =
+  informado), Passivo Circulante e PL batendo o informado, zero divergência falsa. DRE em cascata e
+  Fluxo com saldo final = inicial+variação, ambos conferidos. `tsc`/`eslint` limpos; 55/55 testes
+  do N8N (inalterados — mudança é só no portal).
+- **Pendente do dono:** reprocessar/baixar o `.xlsx` e abrir no Excel de verdade (recálculo das
+  fórmulas na abertura — validei a ESTRUTURA/fórmulas via openpyxl, não a abertura no Excel real).
 
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3

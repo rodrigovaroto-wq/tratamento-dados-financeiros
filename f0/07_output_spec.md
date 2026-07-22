@@ -74,6 +74,16 @@ contábil como fato (a classificação `recorrente/não-recorrente/...` viaja co
 advisory**, nunca pré-preenchendo o modelo). O sistema **habilita** o analista com dado
 confiável e rastreável — não o substitui.
 
+> **Emenda 2026-07-22 (dono):** subtotais/totais por seção passam a aparecer no export como
+> **fórmulas Excel** (`=SUM(...)`), colocadas no cabeçalho de cada seção/grupo do Balanço/DRE/
+> Fluxo de Caixa. Isso NÃO é modelagem nem invenção de número: a fórmula é transparente e
+> auditável (o analista vê exatamente o que está sendo somado) e opera só sobre as linhas
+> extraídas. O total que o **próprio documento** trouxer continua preservado, numa linha de
+> conferência ao lado da fórmula; se a soma calculada divergir do informado, ambos são
+> sinalizados (vira uma checagem de reconciliação embutida). A anti-ancoragem segue valendo para
+> os DADOS extraídos: nenhum valor de conta vira fato sem aceite humano. Detalhe da implementação:
+> `portal/src/lib/statement-templates.ts` (estrutura CPC/Lei 6.404) + `portal/src/lib/export.ts`.
+
 **Critério de pronto (DoD):** ✅ dois modos de entrega definidos; ✅ schema-alvo com ordem de
 prioridade; ✅ proveniência por célula especificada; ✅ regra anti-ancoragem reafirmada.
 *(Layout fino do Excel e da tela do portal a refinar na F2, quando houver dado real fluindo.)*
