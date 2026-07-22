@@ -184,7 +184,7 @@ export default async function CasoDashboardPage({
 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-          Reconciliação (Classe A) ({pendenciasReconciliacao.length})
+          Reconciliação (Classe A/B) ({pendenciasReconciliacao.length})
         </h2>
         {pendenciasReconciliacao.length === 0 ? (
           <p className="text-sm text-neutral-500">
