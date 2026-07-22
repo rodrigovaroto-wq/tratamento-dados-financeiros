@@ -1,16 +1,19 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-21 (fim da sessão 6).
+Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7).
 
-**Estado do repositório neste momento:** sessões 4 e 5 já mergeadas no `main` (PRs #20-#27). A
-sessão 6 entregou duas fatias: (1) a IA passou a sugerir uma **seção canônica** por linha na mesma
-chamada de extração, usada como fallback pelo classificador do export (`#27`, mergeado); (2) o
-export passou a **rotear cada linha para a aba da sua demonstração** — separando Balanço/DRE/Fluxo
-de Caixa quando vêm num PDF composto — motivado por um teste real do dono (ver seções "Sessão 6"
-abaixo). A fatia (2) está num PR novo, pendente de revisão do dono no momento em que este arquivo
-foi escrito. **Próximo passo já combinado com o dono: construir a Reconciliação Classe B** (achar
-inconsistências/incoerências) — as duas checagens canônicas do `docs/04` (Receita DRE vs. soma do
-faturamento; despesa financeira vs. juros do mapa de dívida) — num PR seguinte.
+**Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
+sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
+documentos reais no MESMO upload em lote, o N8N lia o binário do item errado ao montar a chamada
+de extração — o conteúdo de um arquivo era enviado pra IA com o NOME do outro arquivo, produzindo
+diagnóstico/valores de um documento completamente diferente do que o rótulo dizia (ver seção
+"Sessão 7" abaixo). Corrigido (`$itemIndex` em vez de `0` fixo) + teste de regressão que reproduz e
+prova o bug antes/depois do fix. PR novo, pendente de revisão do dono no momento em que este
+arquivo foi escrito. **Ação pendente do dono, fora do escopo de código:** existem documentos JÁ
+CONTAMINADOS no Supabase de produção de uploads em lote anteriores a este fix — ver checklist de
+limpeza na seção "Sessão 7". **Próximo passo (adiado por causa deste achado): Reconciliação Classe
+B** (achar inconsistências/incoerências nos números) — continua sendo o combinado, só ficou atrás
+da urgência deste bug de integridade de dados.
 
 ---
 
@@ -305,6 +308,69 @@ caixa casavam as palavras-chave "caixa"/"disponibilidade"/"empréstimo"); (3) li
   documentos — não foi feito nesta fatia. Hoje linhas de DMPL provavelmente caem no PL do Balanço
   ou em "Não Classificadas".
 
+### Sessão 7 — BUG CRÍTICO: item errado no upload em lote (conteúdo trocado entre documentos)
+**Motivado por teste real do dono** com 2 documentos reais (`BALANÇO ACUMULADO 2025.pdf` — balanço
+combinado de 3 entidades, Certsys Tecn/Part/Com — e `Balanço Patrimonial DRE, DFC, DMPL Global One
+2024assinado.pdf`) enviados **juntos no mesmo upload do Form**. O export saiu com dezenas de contas
+que não existem em NENHUM dos dois PDFs (ex.: "ADIANTAMENTO A CONSÓRCIOS", "ADIANTAMENTO A
+COOPERATIVAS" com valores redondos repetidos — `1.000.000.000,00`, `1.234.567,00` — em várias
+contas sem relação nenhuma) e entidade/período errados (pegou o nome do CONTADOR assinante em vez
+da razão social num dos documentos; "anual 2023" em vez de "anual 2024" no outro).
+
+**Diagnóstico (comparado linha a linha contra os 2 PDFs originais + consulta SQL no Supabase real
+do dono):** não era só alucinação da IA. O `documento` do arquivo "Global One" tinha uma
+`justificativa` da IA **descrevendo o conteúdo do Certsys** ("colunas para 'Certsys Teen', 'Certsys
+Part', 'Certsys Com'...") — prova de que o CONTEÚDO enviado à IA pra esse item não era o do próprio
+arquivo.
+
+**Causa raiz** — `n8n/build-workflow.mjs`, node `Preparar Conteudo` (each-item mode, monta a parte
+multimodal da chamada de extração): `this.helpers.getBinaryDataBuffer(0, 'data')` com o **índice
+fixo em `0`**, comentário do código dizendo (errado) que "cada item roda isolado em each-item mode,
+então o índice é sempre 0". Na prática, mesmo em each-item mode, `getBinaryDataBuffer(itemIndex,
+propriedade)` resolve o buffer pelo índice do item **dentro do lote inteiro do node** (é assim que
+a referência interna de binário vira bytes de verdade) — não pelo item que o código acha que está
+processando. Com 2+ arquivos no mesmo upload, todo item diferente de 0 lia o **binário do item 0**:
+o nome/mimeType usados na requisição eram os do próprio item (corretos, vêm do JSON), mas os BYTES
+de fato enviados pra IA eram de outro arquivo. Com upload de 1 arquivo por vez isso nunca aparecia
+(o único item É o item 0) — por isso passou despercebido em toda sessão anterior, incluindo as
+verificações "confirmado rodando ao vivo" de sessões passadas (que sempre testaram 1 arquivo de
+cada vez).
+- **Fix:** troca do literal `0` por `$itemIndex` (global do N8N que dá o índice do item corrente
+  em each-item mode).
+- **O teste (`n8n/test/workflow-sim.test.mjs`) tinha o MESMO ponto cego** — o mock de
+  `getBinaryDataBuffer` ignorava o `itemIndex` recebido e sempre lia do `item` passado
+  explicitamente pela própria chamada de teste (por isso o parâmetro se chamava `_itemIndex`, com
+  underscore de "não uso"), então nunca exercitava o cenário real de 2 itens competindo pelo mesmo
+  binário resolvido por índice. Corrigido: o mock agora resolve pelo `itemIndex` dentro de um
+  `binaryStore` (o lote inteiro, como o N8N faz de verdade); `chainFile(idx)` passa a fornecer esse
+  lote completo. **Novo teste de regressão** reproduziu o bug (confirmado FALHANDO com o código
+  antigo antes do fix — item 1 lia o binário `QUJD` do item 0 em vez do próprio `REVG` — e
+  passando depois). 54/54 testes (`npm test` em `n8n/`).
+- **Ação pendente do dono (fora do código, só ele consegue):** documentos processados em uploads
+  em lote (2+ arquivos no mesmo Form) **antes** deste fix podem ter conteúdo trocado — qualquer
+  `documento` cujo diagnóstico/entidade/valores pareçam não bater com o próprio arquivo é suspeito.
+  Recomendação: reprocessar (reenviar) esses documentos depois do fix estar no N8N de produção, e
+  **não aceitar** ("Aceitar estes dados para a base") nenhuma extração de upload em lote anterior a
+  esta correção sem conferir contra o PDF original antes.
+- **Achados secundários** (mesmo teste, менos graves, ainda reais — corrigir depois):
+  1. Um documento que é, na prática, uma demonstração **combinada de 3 entidades** (colunas
+     Certsys Tecn/Part/Com + Total, sem uma única razão social na página) teve a entidade
+     preenchida com o **nome do contador que assinou** o documento — a IA não tem hoje uma
+     instrução explícita pra não confundir signatário/contador com razão social quando não há uma
+     entidade única óbvia. Vale reforçar o prompt (`n8n/lib/extract.mjs`).
+  2. Um documento com Balanço+DRE+DFC+DMPL do mesmo exercício teve o período extraído como o ano
+     ANTERIOR (2023 em vez de 2024) — provavelmente confundido pela linha "SALDOS EM 31 DE
+     DEZEMBRO DE 2023" (saldo de ABERTURA da DMPL) no mesmo PDF. Também vale reforçar o prompt pra
+     diferenciar saldo de abertura vs. o período de referência do documento.
+  3. O mesmo tipo de documento (Balanço+DRE+DFC+DMPL de UMA entidade só) foi classificado ora como
+     `BALANCO`, ora como `COMBINADO` em re-extrações diferentes — `COMBINADO` na taxonomia (f0/03)
+     significa demonstrações **combinadas de um grupo de empresas**, não "múltiplas demonstrações
+     no mesmo arquivo para uma entidade só". Vale clarificar essa distinção no prompt.
+  4. **Achado à parte, não é bug:** o caso de teste do dono ("teste v7") acumulou **11 registros de
+     `documento`** pra só 2 arquivos, de reprocessamentos em sessões anteriores — normal em uso
+     iterativo de teste, mas reforça que uma limpeza/consolidação de dados de teste pode ajudar a
+     não confundir qual é a versão "atual" ao depurar.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -343,34 +409,39 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-Nenhuma no momento. **Próximo passo já combinado com o dono (sessão 6): construir a Reconciliação
-Classe B** (`docs/04`) — determinística, banda de materialidade, sem IA nem golden set — as duas
-checagens canônicas: (1) Receita da DRE vs. soma do faturamento mensal (`FATURAMENTO_24M`); (2)
-despesa financeira da DRE vs. juros do mapa de dívida (`MAPA_DIVIDA` — que hoje só tem schema
-genérico de linhas, então pode cair como "precondição não satisfeita" até a extração dele ser
-refinada). Segue o molde de `db/migrations/0009` (Classe A). Além disso, as opções abaixo:
-1. **Testar o export com um caso real do dono, no Supabase/N8N de produção** (aplicar as migrations
-   pendentes — agora até `0012` — subir documentos reais, aceitar algumas linhas na tela de planilha,
-   baixar o `.xlsx` e abrir de verdade no Excel/LibreOffice do dono). A sessão 5 aprofundou o
-   teste local (dataset sintético bem mais realista, achou e corrigiu um bug de classificação —
-   ver §1 "Sessão 5" acima — e validou a estrutura do `.xlsx` via `openpyxl` já que o LibreOffice
-   deste ambiente remoto está quebrado), mas **isso não substitui** rodar contra dados e
-   documentos reais de um mandato de verdade — a busca via Supabase da rota `/export` também
-   segue não exercitada contra um projeto real. **Validar com o time de análise** se as
-   palavras-chave de seção (`statement-templates.ts`) cobrem o vocabulário real dos clientes da
-   Oria — foram montadas por bom senso contábil (CPC/prática de mercado) e testadas com
-   nomenclaturas variadas (inclusive sintéticas realistas na sessão 5), não com documentos reais
-   de clientes. Vocabulário genuinamente novo (setor muito específico, gíria de outra região)
-   pode cair em "Contas Não Classificadas" até alguém ampliar as listas de palavras-chave.
-2. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
-   individual, se o dono achar o aceite em lote grosseiro demais na prática.
-3. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
+Nenhuma no momento. O teste com caso real (sessão 7) já foi feito e achou o bug crítico do item
+errado no lote (corrigido nesta sessão) — próximo passo natural é uma destas (perguntar ao dono
+qual prioriza):
+1. **Reforçar o prompt de extração** (`n8n/lib/extract.mjs`) com os 3 achados secundários da
+   sessão 7: (a) não confundir contador/signatário com razão social quando não há entidade única
+   óbvia (documento combinado de várias entidades); (b) não confundir saldo de ABERTURA (ex.:
+   linha da DMPL) com o período de referência do documento; (c) diferenciar "múltiplas
+   demonstrações no mesmo arquivo pra UMA entidade" (ainda é `BALANCO`/`DRE`/etc., já resolvido
+   pelo roteamento por linha da sessão 6) de "demonstração combinada de um GRUPO de empresas"
+   (`COMBINADO` de verdade, f0/03) — hoje a IA classificou o mesmo tipo de documento das duas
+   formas em re-extrações diferentes.
+2. **Construir a Reconciliação Classe B** (`docs/04`) — determinística, banda de materialidade,
+   sem IA nem golden set — as duas checagens canônicas: (1) Receita da DRE vs. soma do
+   faturamento mensal (`FATURAMENTO_24M`); (2) despesa financeira da DRE vs. juros do mapa de
+   dívida (`MAPA_DIVIDA` — que hoje só tem schema genérico de linhas, então pode cair como
+   "precondição não satisfeita" até a extração dele ser refinada). Segue o molde de
+   `db/migrations/0009` (Classe A). Continua o combinado com o dono, só ficou atrás da urgência
+   do bug de integridade de dados desta sessão.
+3. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
+   individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
+   perigoso quando a extração pode vir contaminada/alucinada em volume.
+4. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente).
-4. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
+5. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
    precisa de `MAPA_DIVIDA` sendo extraído, que hoje só tem schema genérico de linhas).
-5. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
+6. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
    `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
+
+**Validar com o time de análise** (ainda pendente): se as palavras-chave de seção
+(`statement-templates.ts`) cobrem o vocabulário real dos clientes da Oria — a sessão 7 usou 2
+documentos reais e a classificação por seção em si funcionou bem (ver diff PDF↔export); o
+problema achado foi de PIPELINE (item errado), não de vocabulário de classificação.
 
 ### Itens adiados (documentados, não bloqueantes)
 - **Overload morto de `fn_registrar_documento`:** achado ao testar 0009 contra Postgres local —
@@ -426,6 +497,15 @@ refinada). Segue o molde de `db/migrations/0009` (Classe A). Além disso, as op�
    `await this.helpers.getBinaryDataBuffer(itemIndex, propertyName)` (funciona em
    qualquer modo de armazenamento; ler direto só funciona por acaso no modo memória).
 5. `$env` é bloqueado por padrão no N8N — não usar.
+6. **`itemIndex` de `getBinaryDataBuffer` NUNCA pode ser um literal fixo** (ex.: `0`) — mesmo em
+   `runOnceForEachItem`, o buffer é resolvido pelo índice do item **dentro do lote inteiro do
+   node**, não por um índice "local" do item isolado. Usar `$itemIndex` (global do N8N em
+   each-item mode). Um literal fixo funciona por acaso quando só há 1 item no lote (upload de 1
+   arquivo por vez) e **quebra silenciosamente** com 2+ itens — cada item != 0 lê o binário do
+   item 0 (nome/mimeType corretos, mas o CONTEÚDO enviado pra IA é de outro arquivo). Achado
+   testando com upload de 2 arquivos reais no mesmo Form (sessão 7) — node `Preparar Conteudo` em
+   `n8n/build-workflow.mjs` (plumbing do N8N, sem `lib/` próprio — não é lógica de negócio
+   testável isoladamente, por isso o teste é contra o JSON gerado, `workflow-sim.test.mjs`).
 
 ### Git / PR workflow desta sessão
 - Branch usada na sessão 4: `claude/ola-3a5wp0` — teve **5 PRs mergeados** a partir dela
