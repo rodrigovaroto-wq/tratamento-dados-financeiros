@@ -1,7 +1,8 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
 Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
-do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)").
+do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" — e a Reconciliação
+Classe B — ver "Sessão 7 (cont.⁶)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -569,6 +570,48 @@ O dono reprocessou ("teste v12") e apontou "faltou algumas fórmulas". Ao inspec
 - **Ainda deferido:** DMPL em aba própria (exige estender o enum da IA + reextração); é o passo
   que traria essas linhas de volta como uma demonstração de verdade, em vez de "Não Classificadas".
 
+### Sessão 7 (cont.⁶) — Reconciliação Classe B (`db/migrations/0015`)
+Próximo passo combinado com o dono desde a sessão 6, adiado 3x por bugs críticos de dados —
+retomado agora que a extração está estável. Segue o desenho de `docs/04_RECONCILIACAO.md` e o
+molde da Classe A (`0009`): mesma tabela `reconciliacao` (log append-only, `classe='B'`), mesma
+função `fn_valor_conceito`/`fn_normalizar_texto`, mesma pendência idempotente com auto-resolução —
+mas **travada em N1** (nunca sobe pra N2 como a A pode): Classe B é agregação/período, não
+identidade aritmética pura, então **banda de materialidade** (mais folgada que a A: piso R$ 50k
+**e** 5%, vs. R$ 100/0,5% da A) e qualquer divergência na zona cinzenta vira **revisão humana**,
+nunca auto-clear.
+- **Duas checagens canônicas** (os exemplos de `docs/04`): (1) `fn_reconciliar_receita_dre_vs_faturamento`
+  — Receita Operacional Bruta da DRE vs. soma das linhas MENSAIS de `FATURAMENTO_24M` do MESMO
+  ano (recorte pelo ano no rótulo — aceita "2024", "24", "12M24" — excluindo linhas de total/média/
+  acumulado, que somariam duplicado); (2) `fn_reconciliar_despfin_dre_vs_divida` — Despesa
+  Financeira da DRE vs. soma das linhas de juros/encargos do `MAPA_DIVIDA` (compara em módulo,
+  já que despesa financeira normalmente vem negativa na DRE).
+- **Novo helper de agregação** (diferente da 0009, que casa UMA linha): `fn_somar_conceito` (soma
+  todas as linhas que casam termos, ex. todas as linhas de "juros") e `fn_somar_faturamento_ano`
+  (soma as linhas mensais de um ano — cada mês não compartilha uma palavra-chave, então o recorte
+  é pelo ANO no próprio rótulo). `fn_registrar_reconciliacao_b` fatora o log+pendência (mesmo
+  padrão da 0009, reaproveitado pelas duas checagens B).
+- **Pré-condição honesta:** como `FATURAMENTO_24M`/`MAPA_DIVIDA` ainda têm schema genérico de
+  linhas (não um schema dedicado como a DRE/Balanço), é ESPERADO que estas checagens caiam em
+  "precondição não satisfeita" com frequência real até essa extração ser refinada — vira
+  pendência, nunca um "OK" falso-limpo (mesmo princípio da Classe A).
+- **`fn_reconciliar_por_documento` redefinida** (mesma assinatura) para disparar A+B pelo tipo do
+  documento processado — DRE dispara as duas checagens B; FATURAMENTO_24M/MAPA_DIVIDA disparam a
+  checagem B correspondente (reaproveitando/auto-resolvendo a pendência quando o outro lado já
+  existia).
+- **Portal:** rótulo do card mudou de "Reconciliação (Classe A)" para "Reconciliação (Classe A/B)"
+  — a lista já é genérica por `pendencia.tipo` (`PENDENCIA_TIPOS_RECONCILIACAO`), então as
+  pendências B aparecem automaticamente, sem mudança de lógica.
+- **Testado contra Postgres 16 local:** receita batendo (linha "Total" corretamente ignorada);
+  precondição por documento faltante, com **auto-resolução** quando o Mapa de Dívida chega depois;
+  zona cinzenta (divergência de 32%, acima da banda); casamento de ano com 2 e 4 dígitos.
+  Migrations 0001-0015 aplicadas limpo (mesma ressalva de sempre: `storage.buckets` não existe em
+  Postgres vanilla). `tsc`/`eslint` do portal limpos.
+- **Achado de documentação:** a `0014` nunca tinha entrado na tabela do `db/README.md` (esquecida
+  numa sessão anterior) — corrigido junto com a `0015`.
+- **Próximo passo natural (não feito aqui):** ação de "confirmar/ressalva" dedicada na fila do
+  portal pras pendências de reconciliação (hoje só listam, read-only — item já listado em
+  "Próximos passos" há várias sessões).
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -608,24 +651,24 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 
 ### Decisão pendente (bloqueia o próximo passo de código)
 Nenhuma no momento. O reforço de prompt dos 3 achados secundários (entidade≠signatário,
-BALANCO vs COMBINADO, período≠saldo de abertura) **foi feito nesta sessão** (ver "Sessão 7
-(cont.²)") — falta o dono reprocessar pra confirmar o comportamento do LLM. Próximo passo natural
-é uma destas (perguntar ao dono qual prioriza):
-1. **Construir a Reconciliação Classe B** (`docs/04`) — determinística, banda de materialidade,
-   sem IA nem golden set — as duas checagens canônicas: (1) Receita da DRE vs. soma do
-   faturamento mensal (`FATURAMENTO_24M`); (2) despesa financeira da DRE vs. juros do mapa de
-   dívida (`MAPA_DIVIDA` — que hoje só tem schema genérico de linhas, então pode cair como
-   "precondição não satisfeita" até a extração dele ser refinada). Segue o molde de
-   `db/migrations/0009` (Classe A). Continua o combinado com o dono, só ficou atrás da urgência
-   dos bugs de integridade de dados desta sessão.
-2. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
+BALANCO vs COMBINADO, período≠saldo de abertura) foi feito na sessão 7 — falta o dono reprocessar
+pra confirmar o comportamento do LLM. **A Reconciliação Classe B foi construída nesta sessão** (ver
+"Sessão 7 (cont.⁶)") — falta o dono aplicar `0015` e testar com documentos reais que tenham
+`FATURAMENTO_24M`/`MAPA_DIVIDA` (o teste local usou dados sintéticos). Próximo passo natural é uma
+destas (perguntar ao dono qual prioriza):
+1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
+   não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
+   — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante
+   agora que a Classe B dobrou o volume potencial de pendências de reconciliação.
+2. **Refinar a extração de `FATURAMENTO_24M`/`MAPA_DIVIDA`** (hoje schema genérico de linhas) —
+   é o que faz as checagens de Classe B (e uma futura Classe A de dívida) pararem de cair em
+   "precondição não satisfeita" com tanta frequência.
+3. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
    individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
    perigoso quando a extração pode vir contaminada/alucinada em volume.
-3. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
-   não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
-   — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente).
-4. **Mais checagens de Classe A** (ex.: soma das parcelas vs. saldo total do Mapa de Dívida —
-   precisa de `MAPA_DIVIDA` sendo extraído, que hoje só tem schema genérico de linhas).
+4. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
+   `docs/04`) — "não reconcilia, aproxima para humano": mostra as duas fontes, humano decide.
+   LLM só como hipótese explicativa de uma divergência já detectada, nunca decide.
 5. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
    `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
 
