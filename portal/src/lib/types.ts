@@ -72,6 +72,7 @@ export interface CampoExtraido {
   documento_versao_id: string;
   secao: string | null;
   secao_canonica: string | null; // sugestão da IA (db/migrations/0012) — chaves de statement-templates.ts; fallback advisory do classificador
+  entidade_coluna: string | null; // db/migrations/0014 — nome da coluna/entidade quando o documento tem várias entidades lado a lado (null = documento de 1 entidade só)
   chave: string;
   valor_texto: string | null;
   valor_num: number | null;

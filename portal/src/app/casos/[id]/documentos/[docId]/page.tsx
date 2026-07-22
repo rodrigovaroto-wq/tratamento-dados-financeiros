@@ -55,7 +55,7 @@ export default async function PlanilhaDocumentoPage({
     ? await supabase
         .from("campo_extraido")
         .select(
-          "id, documento_versao_id, secao, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+          "id, documento_versao_id, secao, entidade_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
         )
         .eq("documento_versao_id", versao.id)
         .order("origem_pagina", { ascending: true, nullsFirst: false })
@@ -151,7 +151,14 @@ export default async function PlanilhaDocumentoPage({
                       const aceito = linha.status_aceite === "aceito";
                       return (
                         <tr key={linha.id} className={ehTotal ? "font-semibold" : ""}>
-                          <td className="px-3 py-1.5">{linha.chave}</td>
+                          <td className="px-3 py-1.5">
+                            {linha.chave}
+                            {linha.entidade_coluna && (
+                              <span className="ml-1 text-xs font-normal text-neutral-500">
+                                ({linha.entidade_coluna})
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-1.5 text-right font-mono">
                             {formatValor(linha.valor_num, linha.valor_texto, linha.unidade)}
                           </td>

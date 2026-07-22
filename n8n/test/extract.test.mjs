@@ -11,6 +11,8 @@ test('extractionSchema é estrito, tem diagnóstico e array de linhas com seçã
   assert.equal(s.schema.properties.linhas.items.additionalProperties, false);
   assert.ok(s.schema.properties.linhas.items.required.includes('secao'));
   assert.ok(s.schema.properties.linhas.items.required.includes('secao_canonica'));
+  assert.ok(s.schema.properties.linhas.items.required.includes('entidade_coluna'));
+  assert.deepEqual(s.schema.properties.linhas.items.properties.entidade_coluna.type, ['string', 'null']);
   assert.deepEqual(s.schema.properties.linhas.items.properties.secao_canonica.enum, SECAO_CANONICA_ENUM);
   assert.ok(s.schema.properties.linhas.items.properties.secao_canonica.enum.includes('NAO_CLASSIFICAVEL'));
   assert.equal(s.schema.properties.diagnostico.type, 'object');
@@ -52,9 +54,38 @@ test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', ()
   assert.equal(r.campos[0].unidade, 'R$ mil'); // herda a unidade do documento
   assert.equal(r.campos[1].secao_canonica, 'custos');
   assert.equal(r.campos[2].secao_canonica, null); // NAO_CLASSIFICAVEL vira null
+  assert.equal(r.campos[0].entidade_coluna, null); // documento de 1 entidade só (caso comum)
   assert.equal(r.diagnostico.entidade, 'Empresa X Ltda');
   assert.equal(r.diagnostico.tipo_confirma, true);
   assert.equal(r.diagnostico.legibilidade, 'ok');
+});
+
+test('parseExtractionResponse: documento com várias entidades/colunas lado a lado (entidade_coluna por linha)', () => {
+  // Achado real (sessão 7, HANDOFF.md): um balanço combinado de 3 entidades
+  // (Certsys Tecn/Part/Com + Total) fazia a IA fabricar um valor único por
+  // conta em vez de reportar as 3 colunas — o schema não tinha como
+  // representar isso. Agora uma mesma "chave" pode aparecer em várias linhas,
+  // uma por coluna, com entidade_coluna preenchido.
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'COMBINADO',
+      periodo_tipo: 'anual', periodo_referencia: '2025',
+      legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'Balanço combinado de 3 entidades do grupo.',
+      justificativa: 'Colunas Certsys Tecn/Part/Com + Total.',
+    },
+    linhas: [
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Tecn', chave: 'Bens Numerários', valor_texto: '51,29', valor_num: 51.29, origem_pagina: 1, confianca: 0.95 },
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Part', chave: 'Bens Numerários', valor_texto: '0,00', valor_num: 0, origem_pagina: 1, confianca: 0.95 },
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Com', chave: 'Bens Numerários', valor_texto: '0,00', valor_num: 0, origem_pagina: 1, confianca: 0.95 },
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Total', chave: 'Bens Numerários', valor_texto: '51,29', valor_num: 51.29, origem_pagina: 1, confianca: 0.95 },
+    ],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.campos.length, 4, 'uma linha por (conta x coluna), não uma linha só');
+  assert.deepEqual(r.campos.map((c) => c.entidade_coluna), ['Certsys Tecn', 'Certsys Part', 'Certsys Com', 'Total']);
+  assert.ok(r.campos.every((c) => c.chave === 'Bens Numerários'), 'mesma chave, colunas diferentes');
 });
 
 test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', () => {
