@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   PENDENCIA_TIPOS_RECONCILIACAO,
   PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
+  PENDENCIA_TIPOS_QUALIDADE_EXTRACAO,
   PENDENCIA_TIPO_ARQUIVO_ILEGIVEL,
   type Caso,
   type Documento,
@@ -66,6 +67,9 @@ export default async function CasoDashboardPage({
     (PENDENCIA_TIPOS_RECONCILIACAO as readonly string[]).includes(p.tipo),
   );
   const pendenciasArquivo = pendencias.filter((p) => p.tipo === PENDENCIA_TIPO_ARQUIVO_ILEGIVEL);
+  const pendenciasExtracao = pendencias.filter((p) =>
+    (PENDENCIA_TIPOS_QUALIDADE_EXTRACAO as readonly string[]).includes(p.tipo),
+  );
 
   return (
     <div className="space-y-8">
@@ -218,6 +222,27 @@ export default async function CasoDashboardPage({
                 key={p.id}
                 className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
               >
+                {p.descricao ?? "(sem descrição)"}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {pendenciasExtracao.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
+            Qualidade da extração ({pendenciasExtracao.length})
+          </h2>
+          <ul className="space-y-2">
+            {pendenciasExtracao.map((p) => (
+              <li
+                key={p.id}
+                className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+              >
+                <span className="mr-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium uppercase text-red-800">
+                  {p.tipo === "extracao_falhou" ? "extração falhou" : "revisar"}
+                </span>
                 {p.descricao ?? "(sem descrição)"}
               </li>
             ))}

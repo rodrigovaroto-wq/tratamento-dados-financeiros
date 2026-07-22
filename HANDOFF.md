@@ -1,8 +1,9 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
 Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
-do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" — e a Reconciliação
-Classe B — ver "Sessão 7 (cont.⁶)").
+do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
+Classe B — ver "Sessão 7 (cont.⁶)" — e o fix do bug de extração silenciosamente vazia — ver
+"Sessão 7 (cont.⁷)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -612,6 +613,51 @@ nunca auto-clear.
   portal pras pendências de reconciliação (hoje só listam, read-only — item já listado em
   "Próximos passos" há várias sessões).
 
+### Sessão 7 (cont.⁷) — BUG CRÍTICO: extração silenciosamente vazia (`db/migrations/0016`)
+Achado testando com um caso real do dono ("teste v14", 16 documentos): todos os documentos foram
+**classificados com sucesso** (tipo/entidade/período gravados, confiança 90-95%, fonte
+`openai_conteudo`) mas **0 linhas foram extraídas** para qualquer um deles — export saiu com
+"Linhas totais extraídas: 0", Reconciliação (Classe A) só apontou pré-condição não satisfeita
+(sem dado pra conferir). O N8N mostrava **sucesso em todos os nós**, e reprocessar **não mudava
+nada** — sinal de causa determinística, não transitória (rate limit teria variado entre tentativas).
+- **Causa raiz:** classificação e extração são DUAS chamadas OpenAI separadas e sequenciais por
+  documento. A de extração pede um array `linhas` SEM limite de tamanho (documentos combinados
+  grandes — grupo com várias entidades/demonstrações no mesmo PDF, ex. "Balanço Patrimonial DRE
+  DFC DMPL 2025assinado.pdf" — podem exigir uma saída JSON enorme). Sem `max_tokens` explícito e
+  sem checagem de `finish_reason`, uma resposta truncada (finish_reason=length) virava um JSON
+  incompleto que falhava o `JSON.parse` — e `parseExtractionResponse` (`n8n/lib/extract.mjs`,
+  mirror em `n8n/build-workflow.mjs`) devolvia `campos: []` **silenciosamente**, sem lançar exceção
+  (por isso o node aparece verde no N8N: é um 200 OK truncado, não um erro HTTP). Como o node
+  `OpenAI Extrair` também tem `onError: continueRegularOutput` (fail-safe pra um documento ruim
+  não derrubar o lote inteiro), mesmo um erro de fato da API (429/500) passaria despercebido do
+  mesmo jeito. `fn_registrar_campos_extraidos` (0013) tratava array vazio como "0 campos, sucesso"
+  e retornava cedo — nada no pipeline detectava isso.
+- **Fix (dois lados, precisam andar juntos):**
+  1. `n8n/lib/extract.mjs` (+ mirror `n8n/build-workflow.mjs`): `buildExtractionRequest` agora
+     manda `max_tokens: 16384` explícito (teto de saída do gpt-4o) — elimina a possibilidade de um
+     default menor específico de conta/API. `parseExtractionResponse` agora captura
+     `finish_reason` e `apiJson.error`, e devolve um novo campo `falhaMotivo` (null quando ok;
+     motivo textual quando a API errou, veio truncada, ou o JSON é inválido) — nunca mais silêncio.
+  2. `db/migrations/0016_guarda_extracao_falhou.sql`: novo tipo `extracao_falhou` no enum
+     `pendencia_tipo`. `fn_registrar_campos_extraidos` (mesma assinatura de 0005/.../0013 +
+     `p_falha_motivo text default null`) passa a resolver documento/caso **mesmo com 0 campos**
+     (antes só rodava se `v_count > 0`) e gera pendência idempotente/auto-resolvível quando o N8N
+     manda um motivo de falha — igual ao padrão dos outros dois sinais de guarda (0013).
+  3. Node `Gravar Campos (Sombra)`: passa `$json.falha_motivo` como `p_falha_motivo=>$3::text`.
+  4. Portal: novo agrupador `PENDENCIA_TIPOS_QUALIDADE_EXTRACAO` (`extracao_padrao_suspeito`,
+     `extracao_baixa_confianca`, `extracao_falhou`) — os dois primeiros já existiam desde a 0013
+     mas **nunca apareciam em lugar nenhum do portal** (lacuna descoberta agora); nova seção
+     "Qualidade da extração" em `casos/[id]/page.tsx` fecha a lacuna pros três de uma vez.
+- **Testado:** `npm test` do n8n (63/63, incluindo 6 testes novos — truncamento com JSON
+  incompleto, erro de API, `max_tokens` no request, motivo passado pro Postgres). Migrations
+  0001-0016 aplicadas limpo contra Postgres 16 local; exercitado ao vivo: extração vazia com
+  motivo → pendência criada; reprocessar com o mesmo motivo → não duplica (idempotente);
+  reprocessar com sucesso → auto-resolve; sinal 1 (padrão suspeito) continua funcionando sem
+  regressão na restruturação da função. `tsc`/`eslint` do portal limpos.
+- **Ainda por confirmar pelo dono:** REIMPORTAR o workflow no N8N (o fix de `max_tokens`/detecção
+  vive no JSON gerado) + aplicar `0016` no Supabase + reprocessar "teste v14" pra confirmar que
+  os dados saem certos dessa vez.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -652,10 +698,12 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ### Decisão pendente (bloqueia o próximo passo de código)
 Nenhuma no momento. O reforço de prompt dos 3 achados secundários (entidade≠signatário,
 BALANCO vs COMBINADO, período≠saldo de abertura) foi feito na sessão 7 — falta o dono reprocessar
-pra confirmar o comportamento do LLM. **A Reconciliação Classe B foi construída nesta sessão** (ver
-"Sessão 7 (cont.⁶)") — falta o dono aplicar `0015` e testar com documentos reais que tenham
-`FATURAMENTO_24M`/`MAPA_DIVIDA` (o teste local usou dados sintéticos). Próximo passo natural é uma
-destas (perguntar ao dono qual prioriza):
+pra confirmar o comportamento do LLM. **A Reconciliação Classe B foi construída** (ver "Sessão 7
+(cont.⁶)") — falta o dono aplicar `0015` e testar com documentos reais que tenham
+`FATURAMENTO_24M`/`MAPA_DIVIDA` (o teste local usou dados sintéticos). **O bug de extração
+silenciosamente vazia foi corrigido** (ver "Sessão 7 (cont.⁷)") — falta o dono REIMPORTAR o
+workflow no N8N, aplicar `0016` e reprocessar "teste v14" pra confirmar. Próximo passo natural é
+uma destas (perguntar ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante

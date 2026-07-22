@@ -126,6 +126,18 @@ export const PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS = [
 // sinaliza problema no ARQUIVO em si, listada à parte (só leitura).
 export const PENDENCIA_TIPO_ARQUIVO_ILEGIVEL = "arquivo_ilegivel";
 
+// Tipos de pendencia_tipo (db/migrations/0013, 0016) gerados pela GUARDA de
+// qualidade da extração (E2) — não são erro de classificação nem divergência
+// de reconciliação, são sinais de que a extração em si pode não ser confiável
+// (padrão fabricado, confiança baixa, ou a chamada falhou/veio truncada e
+// gravou menos linhas do que devia). Só leitura — revisar contra o arquivo
+// original antes de aceitar.
+export const PENDENCIA_TIPOS_QUALIDADE_EXTRACAO = [
+  "extracao_padrao_suspeito",
+  "extracao_baixa_confianca",
+  "extracao_falhou",
+] as const;
+
 export interface TaxonomiaTipoDocumento {
   codigo: string;
   categoria: string;

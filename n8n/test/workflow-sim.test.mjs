@@ -226,6 +226,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
 
   const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
@@ -252,6 +253,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(parsed.json.diagnostico.tipo_confirma, false);
   assert.equal(parsed.json.diagnostico.tipo_sugerido, 'BALANCO');
   assert.equal(parsed.json.diagnostico.legibilidade, 'degradado');
+  assert.equal(parsed.json.falha_motivo, null, 'extração ok não gera motivo de falha');
 
   // Registrar Diagnostico lê $('Parse Extracao').item.json.diagnostico.* — a
   // mesma simulação do node real garante que o encadeamento produz os campos
@@ -278,6 +280,30 @@ test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHE
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.diagnostico.tipo_sugerido, null);
   assert.equal(parsed.json.diagnostico.legibilidade, 'ilegivel');
+});
+
+test('Parse Extracao: resposta truncada (finish_reason=length, JSON incompleto) vira falha_motivo, não 0 campos silencioso', async () => {
+  const req = { json: { documento_versao_id: 'ver-3', tipo: 'COMBINADO', openai_body: {} } };
+  // JSON deliberadamente cortado no meio (simula o corte real de um output
+  // que estourou o teto de tokens antes de fechar o array `linhas`).
+  const respostaOpenAI = { json: { choices: [{ finish_reason: 'length', message: { content: '{"moeda":"BRL","unidade":null,"diagnostico":{"entidade":"Grupo X"' } }] } };
+  const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
+  assert.equal(parsed.json.campos.length, 0);
+  assert.match(parsed.json.falha_motivo, /truncada.*finish_reason=length/i);
+});
+
+test('Parse Extracao: erro da API OpenAI vira falha_motivo (não silencioso)', async () => {
+  const req = { json: { documento_versao_id: 'ver-4', tipo: 'BALANCO', openai_body: {} } };
+  const respostaOpenAI = { json: { error: { message: 'Rate limit reached', code: 'rate_limit_exceeded' } } };
+  const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
+  assert.equal(parsed.json.campos.length, 0);
+  assert.match(parsed.json.falha_motivo, /Rate limit reached/);
+});
+
+test('Gravar Campos (Sombra): passa falha_motivo para fn_registrar_campos_extraidos', () => {
+  const node = byName['Gravar Campos (Sombra)'];
+  assert.match(node.parameters.query, /p_falha_motivo\s*=>\s*\$3::text/);
+  assert.match(node.parameters.options.queryReplacement, /\$json\.falha_motivo\s*\|\|\s*null/);
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {

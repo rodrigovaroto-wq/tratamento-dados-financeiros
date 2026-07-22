@@ -175,6 +175,15 @@ export function extractionSchema() {
   };
 }
 
+// Teto de tokens de saída do gpt-4o (16384) — explícito porque documentos
+// combinados grandes (grupo com várias entidades × várias demonstrações no
+// mesmo PDF) exigem um array `linhas` extenso; sem isso fica sujeito a um
+// default menor de max_tokens dependendo da conta/API, que corta a resposta
+// no meio do JSON sem erro nenhum (ver parseExtractionResponse: finish_reason
+// 'length' → JSON incompleto → falha silenciosa, achado em produção
+// reprocessando "teste v14", sessão 7 cont.⁷).
+const MAX_OUTPUT_TOKENS = 16384;
+
 // conteudo: parte multimodal (file/image/text) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
   return {
@@ -183,6 +192,7 @@ export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = D
     body: {
       model,
       temperature: 0,
+      max_tokens: MAX_OUTPUT_TOKENS,
       response_format: { type: 'json_schema', json_schema: extractionSchema() },
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -202,24 +212,42 @@ export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = D
   };
 }
 
-// Normaliza a resposta para { moeda, unidade, campos[], diagnostico }.
+// Normaliza a resposta para { moeda, unidade, campos[], diagnostico, falhaMotivo }.
 // campos já vem no formato de fn_registrar_campos_extraidos (inclui secao).
+// falhaMotivo é null quando a extração veio ok; motivo textual (para virar
+// pendência tipada 'extracao_falhou') quando a chamada errou, veio truncada
+// (finish_reason 'length' — teto de tokens de saída estourado) ou o conteúdo
+// não é JSON válido. Sem isso, uma falha silenciosa gera 0 campos e ninguém
+// nunca fica sabendo (achado em produção, sessão 7 cont.⁷ — "teste v14").
 export function parseExtractionResponse(apiJson) {
-  const vazio = {
-    moeda: null, unidade: null, campos: [],
+  const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
+  const vazio = (falhaMotivo) => ({
+    moeda: null, unidade: null, campos: [], falhaMotivo,
     diagnostico: {
       entidade: null, tipo_confirma: null, tipo_sugerido: null, periodo_tipo: null,
       periodo_referencia: null, legibilidade: null, nota_legibilidade: null,
       resumo: null, justificativa: '(sem diagnóstico: falha de rede/API ou resposta inválida)',
     },
-  };
+  });
+  if (apiJson?.error) {
+    return vazio(`Erro da API OpenAI: ${apiJson.error.message || apiJson.error.code || JSON.stringify(apiJson.error)}`);
+  }
   const content = apiJson?.choices?.[0]?.message?.content;
-  if (!content) return vazio;
+  if (!content) {
+    return vazio('Resposta da OpenAI sem conteúdo (falha de rede/API).');
+  }
   let p;
   try {
     p = typeof content === 'string' ? JSON.parse(content) : content;
   } catch {
-    return vazio;
+    if (finishReason === 'length') {
+      return vazio(
+        'Resposta da OpenAI truncada por limite de tokens de saída (finish_reason=length) — o JSON '
+        + 'ficou incompleto e não pôde ser interpretado. Documento provavelmente grande/denso demais '
+        + '(muitas contas/entidades) para uma única chamada.',
+      );
+    }
+    return vazio('Resposta da OpenAI não veio em JSON válido.');
   }
   const unidade = p.unidade ?? null;
   const campos = Array.isArray(p.linhas)
@@ -247,7 +275,15 @@ export function parseExtractionResponse(apiJson) {
     resumo: d.resumo ?? null,
     justificativa: d.justificativa ?? '',
   };
-  return { moeda: p.moeda ?? null, unidade, campos, diagnostico };
+  // finish_reason 'length' com JSON válido é raro (o corte quase sempre cai
+  // no meio de uma string/array e quebra o parse acima), mas se acontecer o
+  // conteúdo pode estar incompleto de forma "silenciosa" (JSON bem formado,
+  // faltando linhas do fim do documento) — sinaliza mesmo assim.
+  const falhaMotivo = finishReason === 'length'
+    ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
+      + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
+    : null;
+  return { moeda: p.moeda ?? null, unidade, campos, diagnostico, falhaMotivo };
 }
 
 export { OPENAI_URL, DEFAULT_MODEL, PERIODO_TIPO_ENUM };
