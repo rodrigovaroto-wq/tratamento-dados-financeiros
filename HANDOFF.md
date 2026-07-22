@@ -521,6 +521,32 @@ conferência, e **sinalizar divergência** formula×extraído. Emenda registrada
 - **Pendente do dono:** reprocessar/baixar o `.xlsx` e abrir no Excel de verdade (recálculo das
   fórmulas na abertura — validei a ESTRUTURA/fórmulas via openpyxl, não a abertura no Excel real).
 
+### Sessão 7 (cont.⁴) — Layout analítico (margens) inspirado num modelo de FP&A real
+O dono mandou arquivos de referência (3 zips: balanços consolidados 2022–2025, DREs, 10
+balancetes do grupo Embrepar/Fort Lub/SKY; + `ProjecoesDelendSummary.csv`) e pediu que o export
+"entregue algo parecido". O `DelendSummary` é um **modelo de FP&A completo** (colunas mensais
+Actual→projeções, KPIs de SaaS — ARR/MRR/BaaS —, Fluxo de Caixa indireto, P&L em cascata com
+margens/crescimento %, Pro-forma). **Isso é modelagem/projeção — contradiz `f0/07` ("output NÃO
+projeta, NÃO é modelagem")**. Perguntei o rumo (AskUserQuestion); o dono escolheu **"layout
+analítico sobre o dado REAL, sem projetar"** (não o motor de projeção). Registrado.
+- **Entregue nesta fatia:** linhas de **MARGEM** (% da Receita Líquida) na DRE, como FÓRMULA por
+  coluna — Margem Bruta / Operacional / Líquida (estilo DelendSummary), com `IFERROR` (evita div/0).
+  Só divide dois valores já extraídos; não projeta nem inventa. **EBITDA ficou de fora de
+  propósito:** a DRE real (SKY GROUP consolidado, conferido no PDF) NÃO traz Depreciação/
+  Amortização como linha isolada — viria das notas/Fluxo —, então calcular EBITDA exigiria
+  inventar D&A. Não fizemos (anti-ancoragem).
+- **Nota sobre a estrutura:** a DRE do grupo dobra o Resultado Financeiro DENTRO do "Lucro
+  Operacional"; a nossa estrutura (padrão analítico) separa EBIT (antes do financeiro) do
+  Resultado Financeiro. Isso faz a conferência do "Lucro Operacional informado" divergir do EBIT
+  calculado — é uma diferença DEFINICIONAL esperada (a flag de divergência a torna visível), não
+  um bug.
+- **Deferido (natural, ainda SEM projeção):** (1) aba "Indicadores/Resumo" consolidada (KPIs por
+  período referenciando as abas de demonstração — margens, e indicadores de balanço tipo liquidez/
+  endividamento/capital de giro); (2) coluna de **Crescimento %** período-a-período (exige lógica
+  de comparabilidade entre colunas da MESMA entidade). Ambos são presentation/fórmula sobre dado
+  real. (3) O **motor de projeção/modelagem** (o que o DelendSummary realmente é) segue FORA do
+  escopo pela decisão do dono + `f0/07` — só entraria com revisão explícita da doutrina.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):

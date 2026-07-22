@@ -196,6 +196,13 @@ function escreverLinhaConta(
 }
 
 const DIVERGENCIA_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4E4" } };
+const MARGEM_FONT: Partial<ExcelJS.Font> = { italic: true, size: 9, color: { argb: "FF2563EB" } };
+// Âncora da DRE → rótulo da linha de margem (% da Receita Líquida).
+const MARGEM_LABEL: Record<string, string> = {
+  lucro_bruto: "Margem Bruta %",
+  resultado_operacional: "Margem Operacional %",
+  lucro_liquido: "Margem Líquida %",
+};
 
 // valor_num "melhor" de um grupo de conta numa coluna (para conferir a soma em
 // JS contra o total que o documento trouxe — a célula em si leva a FÓRMULA).
@@ -441,6 +448,27 @@ function construirAbaClassificada(
         subtotalAncora.set(ancoraSecao.key, subtotalNum);
         if (estrutura === "dre") dreAncoraAnteriorIdx = idx;
         if (valoresPorAncora.has(ancoraSecao.key)) escreverConferenciaExtraido(0, ancoraSecao.key, idx, subtotalNum);
+
+        // Linha analítica de MARGEM (% da Receita Líquida) — estilo FP&A
+        // (referência DelendSummary): Margem Bruta / Operacional / Líquida.
+        // Fórmula por coluna (IFERROR evita divisão por zero); não projeta
+        // nada, só divide dois valores já extraídos. EBITDA fica de fora aqui
+        // porque a DRE não traz Depreciação/Amortização como linha isolada
+        // (viria das notas/Fluxo) — não inventamos.
+        const rlIdx = idxAncora.get("receita_liquida");
+        if (estrutura === "dre" && rlIdx && ancoraSecao.key in MARGEM_LABEL) {
+          const mIdx = rowIndex++;
+          const mrow = sheet.getRow(mIdx);
+          mrow.getCell(1).value = MARGEM_LABEL[ancoraSecao.key];
+          mrow.getCell(1).alignment = { indent: 1 };
+          mrow.getCell(1).font = MARGEM_FONT;
+          colunas.forEach((col, i) => {
+            const cell = mrow.getCell(i + 2);
+            cell.value = { formula: `IFERROR(${colLetra(i)}${idx}/${colLetra(i)}${rlIdx},"")` } as ExcelJS.CellFormulaValue;
+            cell.numFmt = "0.0%";
+            cell.font = MARGEM_FONT;
+          });
+        }
       }
     }
 
