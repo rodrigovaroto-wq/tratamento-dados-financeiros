@@ -500,12 +500,29 @@ function secaoKeysDe(estrutura: EstruturaDemonstracao): Set<string> {
   return new Set(secoesDe(estrutura).map((s) => s.key));
 }
 
+// Linhas de DMPL (Demonstração das Mutações do PL) — saldos de abertura/
+// fechamento por exercício ("SALDOS EM 31 DE DEZEMBRO DE 2024") — NÃO são
+// contas do Balanço: o saldo de fechamento REPETE o próprio total do PL, então
+// somá-las infla o Patrimônio Líquido (bug real visto no export do dono). Até a
+// DMPL ter aba própria, ficam fora da classificação do Balanço (vão para
+// "Contas Não Classificadas" — visíveis, sem entrar em nenhuma soma).
+function ehLinhaDMPL(chave: string): boolean {
+  const t = normalizar(chave);
+  if (!t.includes("saldo")) return false;
+  return /\b(19|20)\d{2}\b/.test(t) || /\b(inici|final|finai)/.test(t);
+}
+
 export function classificarConta(
   estrutura: EstruturaDemonstracao,
   secao: string | null,
   chave: string,
   secaoCanonica?: string | null,
 ): Classificacao {
+  // DMPL no meio de um Balanço/Combinado (documento composto): não classifica —
+  // não pode inflar o PL. (No Fluxo de Caixa, "saldo inicial/final de caixa" é
+  // tratado à parte pelo classificador do Fluxo, então este guard é só balanço.)
+  if (estrutura === "balanco" && ehLinhaDMPL(chave)) return SEM_CLASSIFICACAO;
+
   const base =
     estrutura === "balanco"
       ? classificarBalanco(secao, chave)

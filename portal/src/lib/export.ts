@@ -331,6 +331,7 @@ function construirAbaClassificada(
           });
         }
         const ultima = rowIndex - 1;
+        const temContas = ultima >= primeira;
         const row = sheet.getRow(cabIdx);
         row.getCell(1).value = no.label;
         row.getCell(1).alignment = { indent: no.nivel };
@@ -339,12 +340,31 @@ function construirAbaClassificada(
         colunas.forEach((col, i) => {
           const cell = row.getCell(i + 2);
           cell.font = { bold: true };
-          if (ultima >= primeira) {
+          if (temContas) {
+            // caso normal: subtotal = soma das contas-folha.
             cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
+            cell.numFmt = VALOR_NUM_FMT;
+          } else if (temAncora) {
+            // seção que o documento trouxe SÓ como total (sem detalhar as
+            // contas): não há o que somar — usa o próprio valor informado como
+            // o valor da seção, senão ele ficaria órfão e o total do pai sairia
+            // errado (era o "Imobilizado" em branco no balanço do dono).
+            const v = valorNumDoGrupo(valoresPorAncora.get(no.key)!, col.key);
+            if (v != null) {
+              cell.value = v;
+              cell.numFmt = VALOR_NUM_FMT;
+              subtotalNum.set(col.key, v);
+            }
+          } else {
+            // seção padrão sem nenhum dado no documento: 0 explícito (a coluna
+            // fica completa, sem célula vazia solta no meio do balanço).
+            cell.value = 0;
             cell.numFmt = VALOR_NUM_FMT;
           }
         });
-        if (temAncora) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
+        // Só mostra a linha de conferência quando REALMENTE há uma soma para
+        // conferir contra o informado (senão o cabeçalho já É o informado).
+        if (temAncora && temContas) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
         return { idx: cabIdx, subtotalNum };
       }
 
