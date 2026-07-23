@@ -192,7 +192,7 @@ const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema='Voce analisa UM documento financeiro de um mandato de Reestruturacao (Brasil) e devolve DUAS coisas: um diagnostico do documento e a extracao linha a linha de TODOS os dados financeiros, organizados como planilha. DIAGNOSTICO: entidade = razao social se visivel no conteudo (null se nao, nunca invente; NAO use o nome de quem ASSINOU -- contador/administrador/socio, bloco com CRC/CPF -- e o signatario, nao a entidade; se combina varias empresas use o nome do GRUPO ou null, nao escolha uma ao acaso); tipo_confirma/tipo_sugerido = voce recebe uma dica de tipo vinda do nome do arquivo, leia o conteudo e diga se bate (tipo_confirma) e qual o codigo que o CONTEUDO sugere (tipo_sugerido, pode diferir da dica; DESCONHECIDO so se ilegivel/nao-financeiro; BALANCO vs COMBINADO: COMBINADO = grupo de VARIAS empresas juntas com colunas por empresa; um arquivo com varias demonstracoes -- Balanco+DRE+DFC+DMPL -- de UMA entidade so NAO e COMBINADO, use a demonstracao principal (normalmente BALANCO); regra: linhas com entidade_coluna preenchido -> COMBINADO, entidade so -> tipo da demonstracao principal); periodo_tipo/periodo_referencia = periodo real do conteudo (12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; "23,24,25"=multiplos exercicios; ano isolado tambem vale; e o periodo ATUAL, NAO use a data de um SALDO DE ABERTURA/exercicio anterior -- ex. DMPL com "Saldos em 31/12/2023" e "31/12/2024" e documento de 2024, 2023 e so o saldo inicial); legibilidade = ok/degradado/ilegivel (avaliacao real do ARQUIVO: paginas faltando, digitalizacao ruim, tabela cortada), nota_legibilidade explica quando != ok (null quando ok); resumo = 2-3 frases objetivas do conteudo; justificativa = 1-2 frases do diagnostico. LINHAS: extraia TODAS as linhas financeiras (rotulo+valor), com secao = agrupador que espelha a estrutura do proprio documento (ex.: "Ativo Circulante", "Passivo Nao Circulante", "Patrimonio Liquido", "Receita Operacional", "Atividades de Investimento"; null se a linha nao pertencer a nenhuma secao clara). Alem da secao livre, classifique CADA linha em UMA secao_canonica padronizada usando julgamento contabil (o SIGNIFICADO da conta, nao so o nome literal): Balanco/Balancete = ativo_circulante, ativo_nao_circulante, passivo_circulante, passivo_nao_circulante, patrimonio_liquido (ex.: mutuo A RECEBER e ativo; mutuo A PAGAR e passivo); DRE = receita_bruta (receita e deducoes), custos (CPV/CMV/custo de servico), despesas_operacionais (vendas/administrativas/gerais), resultado_financeiro (receitas/despesas financeiras, juros), impostos_lucro (IRPJ/CSLL); Fluxo de Caixa = atividades_operacionais, atividades_investimento, atividades_financiamento. Use NAO_CLASSIFICAVEL quando a linha for um total/subtotal geral ou quando nao tiver seguranca (nao force palpite ruim -- vai para revisao manual). secao_canonica e SUGESTAO revisavel, nunca fato. DOCUMENTO COM VARIAS ENTIDADES/COLUNAS lado a lado (ex.: "Empresa A | Empresa B | Total"): NAO resuma num valor so por conta -- gere uma linha separada por (conta x coluna), mesmo "chave", com entidade_coluna = nome exato do cabecalho da coluna; nunca some/estime um valor unico representando varias colunas, omita so a linha que nao conseguir ler. Documento de uma entidade so (o caso comum): entidade_coluna null em todas as linhas. valor_num = numero puro quando houver, senao null. Informe pagina de origem. NAO invente linhas, valores nem entidade; omita o ilegivel.';
-const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'gpt-4o',temperature:0,max_tokens:16384,response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:promptSistema},
   {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
 ]};
@@ -200,11 +200,32 @@ return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, open
 `.trim();
 
 // --- Code (EACH ITEM): parse do diagnóstico+extração → payload p/ Postgres -
+// falha_motivo: espelha n8n/lib/extract.mjs parseExtractionResponse — null
+// quando ok; motivo textual (vira pendencia 'extracao_falhou') quando a
+// chamada errou, veio truncada (finish_reason 'length') ou o JSON é inválido.
+// Sem isso, uma falha silenciosa grava 0 campos e ninguém fica sabendo
+// (achado em produção, sessão 7 cont.⁷ — "teste v14").
 const CODE_PARSE_EXTRACAO = `
 const ctx=$('Montar Req Extracao').item.json;
 const resp=$json;
+const finishReason=resp?.choices?.[0]?.finish_reason??null;
 const content=resp?.choices?.[0]?.message?.content;
-let p={}; try{p=content?(typeof content==='string'?JSON.parse(content):content):{};}catch(e){p={};}
+let p={}; let falhaMotivo=null;
+if(resp?.error){
+  falhaMotivo='Erro da API OpenAI: '+(resp.error.message||resp.error.code||JSON.stringify(resp.error));
+}else if(!content){
+  falhaMotivo='Resposta da OpenAI sem conteudo (falha de rede/API).';
+}else{
+  try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
+    falhaMotivo=(finishReason==='length')
+      ?'Resposta da OpenAI truncada por limite de tokens de saida (finish_reason=length) -- o JSON ficou incompleto e nao pode ser interpretado. Documento provavelmente grande/denso demais (muitas contas/entidades) para uma unica chamada.'
+      :'Resposta da OpenAI nao veio em JSON valido.';
+    p={};
+  }
+}
+if(!falhaMotivo&&finishReason==='length'){
+  falhaMotivo='Resposta da OpenAI atingiu o limite de tokens de saida (finish_reason=length); o JSON veio valido, mas o conteudo pode estar incompleto (faltando linhas do fim do documento).';
+}
 const unidade=p.unidade??null;
 const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.secao??null, secao_canonica:(l.secao_canonica&&l.secao_canonica!=='NAO_CLASSIFICAVEL')?l.secao_canonica:null, entidade_coluna:l.entidade_coluna??null, chave:l.chave, valor_texto:l.valor_texto??null, valor_num:(typeof l.valor_num==='number')?l.valor_num:null, unidade, confianca:(typeof l.confianca==='number')?l.confianca:null, origem_pagina:Number.isInteger(l.origem_pagina)?l.origem_pagina:null})):[];
 const d=p.diagnostico||{};
@@ -219,7 +240,7 @@ const diagnostico={
   resumo: d.resumo??null,
   justificativa: d.justificativa??'',
 };
-return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico}};
+return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaMotivo}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -323,8 +344,8 @@ const nodes = [
 
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb) as n_campos',
-    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}" },
+    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text) as n_campos',
+    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null] }}" },
   }, 2700, 300, { credentials: PG_CRED }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;

@@ -111,6 +111,50 @@ test('parseExtractionResponse tolera resposta vazia/ruim', () => {
   assert.equal(parseExtractionResponse({}).diagnostico.entidade, null);
 });
 
+test('buildExtractionRequest define max_tokens explícito (sem isso, documentos combinados grandes truncam a resposta silenciosamente)', () => {
+  const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'balanco.pdf' });
+  const req = buildExtractionRequest({ tipo: 'COMBINADO', nomeOriginal: 'balanco.pdf', conteudo: parte });
+  assert.equal(req.body.max_tokens, 16384);
+});
+
+test('parseExtractionResponse: resposta ok não tem falhaMotivo', () => {
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'DRE',
+      periodo_tipo: 'anual', periodo_referencia: '2025',
+      legibilidade: 'ok', nota_legibilidade: null, resumo: 'x', justificativa: 'x',
+    },
+    linhas: [],
+  }) } }] };
+  assert.equal(parseExtractionResponse(api).falhaMotivo, null);
+});
+
+test('parseExtractionResponse: JSON truncado (finish_reason=length) vira falhaMotivo explicativo, não 0 campos silencioso', () => {
+  // Achado em produção (sessão 7 cont.⁷, "teste v14"): 16 documentos combinados
+  // grandes classificados com sucesso mas extraídos com 0 linhas — a chamada
+  // de extração vinha truncada e o parse falhava silenciosamente, sem
+  // sinalizar nada. Isso é o que passou a detectar.
+  const api = { choices: [{ finish_reason: 'length', message: { content: '{"moeda":"BRL","diagnostico":{"entidade":"Grupo Y"' } }] };
+  const r = parseExtractionResponse(api);
+  assert.deepEqual(r.campos, []);
+  assert.match(r.falhaMotivo, /truncada/i);
+  assert.match(r.falhaMotivo, /finish_reason=length/);
+});
+
+test('parseExtractionResponse: erro da API OpenAI vira falhaMotivo com a mensagem original', () => {
+  const api = { error: { message: 'You exceeded your current quota', code: 'insufficient_quota' } };
+  const r = parseExtractionResponse(api);
+  assert.deepEqual(r.campos, []);
+  assert.match(r.falhaMotivo, /You exceeded your current quota/);
+});
+
+test('parseExtractionResponse: sem conteúdo (falha de rede/API) vira falhaMotivo, não só diagnóstico genérico', () => {
+  const r = parseExtractionResponse({});
+  assert.deepEqual(r.campos, []);
+  assert.ok(r.falhaMotivo, 'deve haver um motivo textual, não silêncio');
+});
+
 test('spreadsheetToText resume linhas com cabeçalho', () => {
   const rows = [ { Conta: 'Receita', Valor: '100' }, { Conta: 'Custo', Valor: '-60' } ];
   const t = spreadsheetToText(rows);

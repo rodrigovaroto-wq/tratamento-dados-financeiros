@@ -85,7 +85,7 @@ Parameters"** → cole a expressão correspondente:
 | Upsert Caso (Postgres) | `={{ [$json["Mandato (nome do caso)"]] }}` |
 | Registrar Documento | `={{ [$json.caso_id, $json.entidade \|\| null, $json.periodo_tipo \|\| null, $json.periodo_ref \|\| null, $json.tipo_taxonomia \|\| null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa \|\| null] }}` (14º parâmetro = justificativa; a query usa `p_justificativa=>$14` para pular o `p_threshold` que fica no default) |
 | Recomputar Completude | `={{ $('Upsert Caso (Postgres)').first().json.caso_id }}` |
-| Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos)] }}` |
+| Gravar Campos (Sombra) | `={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo \|\| null] }}` (3º parâmetro nomeado `p_falha_motivo=>$3` — motivo textual quando a extração falhou/veio truncada, null quando ok) |
 | Registrar Diagnostico | `={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}` |
 | Reconciliar (Classe A) | `={{ [$('Registrar Documento').item.json.r.documento_id] }}` |
 
@@ -113,6 +113,18 @@ Auth (Authorization / Bearer sk-...) e selecionar.
 **Erro `Bad request` no Upload Storage com a credencial da OpenAI selecionada:** a credencial
 de Header Auth escolhida no node era a da OpenAI (manda a chave errada para o Supabase). Criar
 uma credencial Header Auth **separada** para o Supabase (ver Credenciais acima).
+
+**Documentos classificados com sucesso (tipo/entidade/período/confiança ok) mas 0 linhas
+extraídas — export sai com "Linhas totais extraídas: 0", todos os nós do N8N em verde, e
+reprocessar não muda nada:** achado em produção (sessão 7 cont.⁷, "teste v14") — a chamada de
+extração (`OpenAI Extrair`) veio truncada (`finish_reason=length`, teto de tokens de saída
+estourado por um documento combinado grande) ou com erro de API, mas `onError:
+continueRegularOutput` faz o node aparecer verde mesmo assim, e o JSON incompleto falhava o
+parse silenciosamente. Corrigido (`db/migrations/0016`): `max_tokens` explícito na chamada +
+detecção de truncamento/erro → gera pendência `extracao_falhou` (visível no portal, seção
+"Qualidade da extração") em vez de silêncio. **Se você já tem casos com este sintoma: reimporte
+o workflow (pega o `max_tokens`/detecção novos), aplique `0016`, e reprocesse** — a pendência só
+aparece em processamentos NOVOS (não é retroativa aos `campo_extraido` já gravados vazios).
 
 **Erro `The resource you are requesting could not be found` no Upload Storage:** a URL está
 apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**
