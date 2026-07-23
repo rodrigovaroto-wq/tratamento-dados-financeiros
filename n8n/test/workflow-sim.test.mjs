@@ -306,6 +306,19 @@ test('Gravar Campos (Sombra): passa falha_motivo para fn_registrar_campos_extrai
   assert.match(node.parameters.options.queryReplacement, /\$json\.falha_motivo\s*\|\|\s*null/);
 });
 
+test('Nós OpenAI têm batching + retry (evita o 429 de rate limit num upload em lote)', () => {
+  // Achado em produção (sessão 7 cont.⁸, "teste v15"): 16 documentos → 16
+  // chamadas OpenAI quase simultâneas → 429 em TODAS ("Try spacing your
+  // requests out"). Batching espaça no tempo; retry cobre o 429 residual.
+  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+    const n = byName[nm];
+    assert.equal(n.parameters.options?.batching?.batch?.batchSize, 1, `${nm}: 1 chamada por vez`);
+    assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 1000, `${nm}: intervalo entre chamadas`);
+    assert.equal(n.retryOnFail, true, `${nm}: reexecuta antes de cair no onError`);
+    assert.ok(n.maxTries >= 2, `${nm}: mais de uma tentativa`);
+  }
+});
+
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   const destinosDePreparar = wf.connections['Preparar Conteudo'].main[0].map((c) => c.node);
   assert.deepEqual(destinosDePreparar.sort(), ['Precisa Fallback?', 'Upload Storage'].sort());

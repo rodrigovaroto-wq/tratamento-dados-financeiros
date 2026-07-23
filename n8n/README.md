@@ -126,6 +126,18 @@ detecção de truncamento/erro → gera pendência `extracao_falhou` (visível n
 o workflow (pega o `max_tokens`/detecção novos), aplique `0016`, e reprocesse** — a pendência só
 aparece em processamentos NOVOS (não é retroativa aos `campo_extraido` já gravados vazios).
 
+**Pendência `extracao_falhou` com motivo "Erro da API OpenAI: Try spacing your requests out using
+the batching settings" em VÁRIOS/TODOS os documentos de um upload em lote:** é **rate limit (429)**
+da OpenAI — o N8N disparou muitas chamadas de extração quase simultâneas e a API throttlou (achado
+sessão 7 cont.⁸, "teste v15": 16 documentos, 16 falhas idênticas). **Não é problema de formato de
+arquivo** (se fosse, os erros seriam diferentes por arquivo, e a classificação — que lê o mesmo
+conteúdo — teria falhado também). Corrigido: os nós `OpenAI Classificar`/`OpenAI Extrair` vêm com
+**batching** (1 chamada por vez, 3s de intervalo) + **retry** (4 tentativas, 5s entre elas) — 1
+chamada por vez espalha RPM/TPM no tempo. Se persistir mesmo com batching, sua conta OpenAI pode
+estar num tier de limite muito baixo (subir o tier, ou aumentar `batchInterval` no node). **Reimporte
+o workflow** para pegar o batching. Trade-off: um lote de N documentos fica ~N×3s mais lento, mas
+confiável.
+
 **Erro `The resource you are requesting could not be found` no Upload Storage:** a URL está
 apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**
 (`<ref>.supabase.co/storage/v1/...`). Ver seção Credenciais acima.

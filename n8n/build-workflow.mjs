@@ -250,7 +250,20 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.disabled ? { disabled: true } : {}),
+  // Retry no nível do node (N8N): reexecuta o item que falhou antes de cair no
+  // onError. waitBetweenTries tem teto de 5000ms no N8N — combinado com o
+  // batching (abaixo) resolve o 429 de rate limit da OpenAI num upload em lote.
+  ...(opts.retryOnFail ? { retryOnFail: true, maxTries: opts.maxTries ?? 4, waitBetweenTries: opts.waitBetweenTries ?? 5000 } : {}),
 });
+
+// Batching do HTTP Request (N8N): processa `batchSize` itens, espera
+// `batchInterval` ms, processa os próximos. Com um upload em lote de N
+// documentos, sem isso o node dispara N chamadas à OpenAI praticamente
+// simultâneas → estoura o rate limit (RPM/TPM), a API responde 429 e TODAS as
+// extrações falham (achado em produção, sessão 7 cont.⁸ — "teste v15", 16
+// documentos, 16 erros idênticos "Try spacing your requests out"). 1 por vez
+// com 3s de intervalo espalha as chamadas no tempo (RPM e TPM).
+const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 3000 } } };
 
 const nodes = [
   node('Intake (Form)', 'n8n-nodes-base.formTrigger', 2, {
@@ -314,7 +327,8 @@ const nodes = [
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 1400, 200, { onError: 'continueRegularOutput', credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+    options: OPENAI_BATCHING,
+  }, 1400, 200, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200),
 
@@ -338,7 +352,8 @@ const nodes = [
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-  }, 2300, 300, { onError: 'continueRegularOutput', credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+    options: OPENAI_BATCHING,
+  }, 2300, 300, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300),
 

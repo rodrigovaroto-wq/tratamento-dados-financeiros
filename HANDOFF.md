@@ -2,8 +2,9 @@
 
 Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
 do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
-Classe B — ver "Sessão 7 (cont.⁶)" — e o fix do bug de extração silenciosamente vazia — ver
-"Sessão 7 (cont.⁷)").
+Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
+"Sessão 7 (cont.⁷)" — e o fix da causa real dessa extração vazia: rate limit no upload em lote —
+ver "Sessão 7 (cont.⁸)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -657,6 +658,34 @@ nada** — sinal de causa determinística, não transitória (rate limit teria v
 - **Ainda por confirmar pelo dono:** REIMPORTAR o workflow no N8N (o fix de `max_tokens`/detecção
   vive no JSON gerado) + aplicar `0016` no Supabase + reprocessar "teste v14" pra confirmar que
   os dados saem certos dessa vez.
+
+### Sessão 7 (cont.⁸) — Causa real da extração vazia: rate limit (429) no upload em lote
+O fix da cont.⁷ (`0016` + `max_tokens`) foi aplicado pelo dono e **funcionou como projetado**:
+reprocessando o "teste v15" (16 documentos), a falha deixou de ser silenciosa — o portal mostrou
+16 pendências `extracao_falhou` na nova seção "Qualidade da extração", TODAS com o mesmo motivo:
+**"Erro da API OpenAI: Try spacing your requests out using the batching settings under 'Options'"**.
+Ou seja: a `max_tokens` não era a causa (era uma hipótese plausível); a causa real é **rate limit
+(429)**. Num upload em lote de 16 documentos, o N8N dispara ~16 chamadas de extração multimodais
+(cada uma pesada) quase simultâneas → estoura o limite de RPM/TPM da OpenAI → a API retorna 429
+e TODAS as extrações falham. (A classificação por conteúdo dos mesmos arquivos funcionou porque é
+uma chamada mais leve e nem todo documento aciona o fallback — só quem tem confiança de nome < 0.7.)
+- **Hipótese do dono (formato de arquivo, ex. Word):** descartada para ESTE caso — os 16 são PDFs,
+  a classificação leu o conteúdo de todos com sucesso (90%), e as 16 falhas têm a mensagem idêntica
+  de rate limit (um problema de formato daria erros diferentes por arquivo). Word (.docx) É um gap
+  real e separado (hoje cai em "conteudo nao suportado" no `Preparar Conteudo`), mas não é o que
+  quebrou o teste v15.
+- **Fix:** os dois nós HTTP da OpenAI (`OpenAI Classificar`, `OpenAI Extrair`) ganharam **batching**
+  (`batchSize: 1`, `batchInterval: 3000` — 1 chamada por vez, 3s de intervalo, espalha RPM e TPM no
+  tempo) + **retry no nível do node** (`retryOnFail`, `maxTries: 4`, `waitBetweenTries: 5000` — teto
+  do N8N) pro 429 residual. É exatamente o que a própria mensagem de erro do N8N recomenda
+  ("use the batching settings under 'Options'"). Helper `OPENAI_BATCHING` + extensão do helper
+  `node()` pra aceitar as opções de retry.
+- **Só workflow** (nenhuma migration): `n8n/build-workflow.mjs` + `workflow.e1-ingestao.json`
+  regenerado. `npm test` 64/64 (1 teste novo trava batching+retry nos dois nós). **Precisa
+  reimportar o workflow no N8N** e reprocessar o "teste v15".
+- **Trade-off consciente:** com `batchSize 1` + 3s, 16 documentos levam ~1min só de espaçamento
+  (+ o tempo de cada chamada). É lento mas confiável; se o volume crescer muito, dá pra afrouxar o
+  intervalo conforme o tier da conta OpenAI (limites maiores) — deixado conservador de propósito.
 
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
