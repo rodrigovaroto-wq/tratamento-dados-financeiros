@@ -55,7 +55,7 @@ export default async function PlanilhaDocumentoPage({
     ? await supabase
         .from("campo_extraido")
         .select(
-          "id, documento_versao_id, secao, entidade_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+          "id, documento_versao_id, secao, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
         )
         .eq("documento_versao_id", versao.id)
         .order("origem_pagina", { ascending: true, nullsFirst: false })
@@ -156,6 +156,11 @@ export default async function PlanilhaDocumentoPage({
                             {linha.entidade_coluna && (
                               <span className="ml-1 text-xs font-normal text-neutral-500">
                                 ({linha.entidade_coluna})
+                              </span>
+                            )}
+                            {linha.periodo_coluna && (
+                              <span className="ml-1 text-xs font-normal text-neutral-400">
+                                [{linha.periodo_coluna}]
                               </span>
                             )}
                           </td>

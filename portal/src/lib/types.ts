@@ -73,6 +73,7 @@ export interface CampoExtraido {
   secao: string | null;
   secao_canonica: string | null; // sugestão da IA (db/migrations/0012) — chaves de statement-templates.ts; fallback advisory do classificador
   entidade_coluna: string | null; // db/migrations/0014 — nome da coluna/entidade quando o documento tem várias entidades lado a lado (null = documento de 1 entidade só)
+  periodo_coluna: string | null; // db/migrations/0017 — rótulo da coluna de período quando o documento é comparativo (ex.: "2023"/"2024" lado a lado); null = período único (vem de documento.periodo_id)
   chave: string;
   valor_texto: string | null;
   valor_num: number | null;

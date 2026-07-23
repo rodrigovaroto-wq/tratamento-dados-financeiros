@@ -226,6 +226,10 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  assert.ok(
+    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('periodo_coluna'),
+    'schema gerado pede periodo_coluna por linha (db/migrations/0017)',
+  );
   assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
 
@@ -254,6 +258,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(parsed.json.diagnostico.tipo_sugerido, 'BALANCO');
   assert.equal(parsed.json.diagnostico.legibilidade, 'degradado');
   assert.equal(parsed.json.falha_motivo, null, 'extração ok não gera motivo de falha');
+  assert.ok('periodo_coluna' in parsed.json.campos[0], 'mirror do Code node propaga periodo_coluna (db/migrations/0017)');
 
   // Registrar Diagnostico lê $('Parse Extracao').item.json.diagnostico.* — a
   // mesma simulação do node real garante que o encadeamento produz os campos
