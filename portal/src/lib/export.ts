@@ -677,12 +677,18 @@ export function buildExportWorkbook({
     // entidade principal do documento — é o que separa "Certsys Tecn"/"Part"/
     // "Com"/"Total" em colunas próprias no lugar de forçar tudo numa coluna só.
     const entidadeColuna = campo.entidade_coluna || ctx.entidade;
-    const colKey = `${entidadeColuna} ${ctx.periodo}`;
+    // Documento comparativo (db/migrations/0017): quando a linha traz
+    // `periodo_coluna` (ex.: "2023"/"2024" num balanço 2023×2024), o período da
+    // COLUNA do export é o da linha, não o período único do documento — é o que
+    // separa os anos em colunas próprias em vez de colapsá-los num só (perda de
+    // dado). Ortogonal a entidade_coluna: a coluna final é entidade × período.
+    const periodoColuna = campo.periodo_coluna || ctx.periodo;
+    const colKey = `${entidadeColuna} ${periodoColuna}`;
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
 
     if (estrutura) {
       if (!colunasPorAba.has(aba)) colunasPorAba.set(aba, new Map());
-      colunasPorAba.get(aba)!.set(colKey, { key: colKey, entidade: entidadeColuna, periodo: ctx.periodo });
+      colunasPorAba.get(aba)!.set(colKey, { key: colKey, entidade: entidadeColuna, periodo: periodoColuna });
       if (!camposPorAba.has(aba)) camposPorAba.set(aba, []);
       camposPorAba.get(aba)!.push({ campo, colKey });
     } else {
@@ -690,7 +696,7 @@ export function buildExportWorkbook({
       if (!linhasSimplesPorAba.has(aba)) linhasSimplesPorAba.set(aba, []);
       linhasSimplesPorAba.get(aba)!.push({
         entidade: entidadeColuna,
-        periodo: ctx.periodo,
+        periodo: periodoColuna,
         secao: campo.secao ?? "(sem seção)",
         chave: campo.chave,
         valorTexto: campo.valor_texto,

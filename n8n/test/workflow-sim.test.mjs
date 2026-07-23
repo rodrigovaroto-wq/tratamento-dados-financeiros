@@ -226,6 +226,10 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  assert.ok(
+    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('periodo_coluna'),
+    'schema gerado pede periodo_coluna por linha (db/migrations/0017)',
+  );
   assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
 
@@ -254,6 +258,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(parsed.json.diagnostico.tipo_sugerido, 'BALANCO');
   assert.equal(parsed.json.diagnostico.legibilidade, 'degradado');
   assert.equal(parsed.json.falha_motivo, null, 'extração ok não gera motivo de falha');
+  assert.ok('periodo_coluna' in parsed.json.campos[0], 'mirror do Code node propaga periodo_coluna (db/migrations/0017)');
 
   // Registrar Diagnostico lê $('Parse Extracao').item.json.diagnostico.* — a
   // mesma simulação do node real garante que o encadeamento produz os campos
@@ -304,6 +309,19 @@ test('Gravar Campos (Sombra): passa falha_motivo para fn_registrar_campos_extrai
   const node = byName['Gravar Campos (Sombra)'];
   assert.match(node.parameters.query, /p_falha_motivo\s*=>\s*\$3::text/);
   assert.match(node.parameters.options.queryReplacement, /\$json\.falha_motivo\s*\|\|\s*null/);
+});
+
+test('Nós OpenAI têm batching + retry (evita o 429 de rate limit num upload em lote)', () => {
+  // Achado em produção (sessão 7 cont.⁸, "teste v15"): 16 documentos → 16
+  // chamadas OpenAI quase simultâneas → 429 em TODAS ("Try spacing your
+  // requests out"). Batching espaça no tempo; retry cobre o 429 residual.
+  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+    const n = byName[nm];
+    assert.equal(n.parameters.options?.batching?.batch?.batchSize, 1, `${nm}: 1 chamada por vez`);
+    assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 1000, `${nm}: intervalo entre chamadas`);
+    assert.equal(n.retryOnFail, true, `${nm}: reexecuta antes de cair no onError`);
+    assert.ok(n.maxTries >= 2, `${nm}: mais de uma tentativa`);
+  }
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {

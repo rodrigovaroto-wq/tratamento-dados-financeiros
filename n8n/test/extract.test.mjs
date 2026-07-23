@@ -88,6 +88,36 @@ test('parseExtractionResponse: documento com várias entidades/colunas lado a la
   assert.ok(r.campos.every((c) => c.chave === 'Bens Numerários'), 'mesma chave, colunas diferentes');
 });
 
+test('parseExtractionResponse: documento comparativo (várias colunas de período) — periodo_coluna por linha', () => {
+  // Lacuna real (sessão 7 cont.⁹): "Balanço consolidado 2023 x 2024.pdf" traz
+  // 2023 e 2024 lado a lado da MESMA entidade. Sem periodo_coluna, as duas
+  // linhas "Caixa" colapsavam numa coluna só no export (perda de dado). Agora
+  // uma linha por (conta × período), ortogonal a entidade_coluna.
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Grupo X', tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'multi', periodo_referencia: '23,24',
+      legibilidade: 'ok', nota_legibilidade: null, resumo: 'Balanço comparativo 2023×2024.', justificativa: 'Duas colunas de ano.',
+    },
+    linhas: [
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: null, periodo_coluna: '2023', chave: 'Caixa', valor_texto: '100', valor_num: 100, origem_pagina: 1, confianca: 0.9 },
+      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: null, periodo_coluna: '2024', chave: 'Caixa', valor_texto: '120', valor_num: 120, origem_pagina: 1, confianca: 0.9 },
+    ],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.campos.length, 2, 'uma linha por (conta × período), não colapsada');
+  assert.deepEqual(r.campos.map((c) => c.periodo_coluna), ['2023', '2024']);
+  assert.ok(r.campos.every((c) => c.chave === 'Caixa'), 'mesma chave, períodos diferentes');
+  assert.ok(r.campos.every((c) => c.entidade_coluna === null), 'periodo_coluna é ortogonal a entidade_coluna');
+});
+
+test('extractionSchema inclui periodo_coluna (required + string|null)', () => {
+  const s = extractionSchema();
+  assert.ok(s.schema.properties.linhas.items.required.includes('periodo_coluna'));
+  assert.deepEqual(s.schema.properties.linhas.items.properties.periodo_coluna.type, ['string', 'null']);
+});
+
 test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', () => {
   const api = { choices: [{ message: { content: JSON.stringify({
     moeda: null, unidade: null,

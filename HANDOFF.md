@@ -1,9 +1,11 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-22 (fim da sessão 7; inclui a reescrita
+Nota de transição de contexto. Última atualização: 2026-07-23 (fim da sessão 7; inclui a reescrita
 do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
-Classe B — ver "Sessão 7 (cont.⁶)" — e o fix do bug de extração silenciosamente vazia — ver
-"Sessão 7 (cont.⁷)").
+Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
+"Sessão 7 (cont.⁷)" —, o fix da causa real dessa extração vazia: rate limit no upload em lote —
+ver "Sessão 7 (cont.⁸)" — e o suporte a documentos COMPARATIVOS (coluna de período) — ver
+"Sessão 7 (cont.⁹)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -658,6 +660,66 @@ nada** — sinal de causa determinística, não transitória (rate limit teria v
   vive no JSON gerado) + aplicar `0016` no Supabase + reprocessar "teste v14" pra confirmar que
   os dados saem certos dessa vez.
 
+### Sessão 7 (cont.⁸) — Causa real da extração vazia: rate limit (429) no upload em lote
+O fix da cont.⁷ (`0016` + `max_tokens`) foi aplicado pelo dono e **funcionou como projetado**:
+reprocessando o "teste v15" (16 documentos), a falha deixou de ser silenciosa — o portal mostrou
+16 pendências `extracao_falhou` na nova seção "Qualidade da extração", TODAS com o mesmo motivo:
+**"Erro da API OpenAI: Try spacing your requests out using the batching settings under 'Options'"**.
+Ou seja: a `max_tokens` não era a causa (era uma hipótese plausível); a causa real é **rate limit
+(429)**. Num upload em lote de 16 documentos, o N8N dispara ~16 chamadas de extração multimodais
+(cada uma pesada) quase simultâneas → estoura o limite de RPM/TPM da OpenAI → a API retorna 429
+e TODAS as extrações falham. (A classificação por conteúdo dos mesmos arquivos funcionou porque é
+uma chamada mais leve e nem todo documento aciona o fallback — só quem tem confiança de nome < 0.7.)
+- **Hipótese do dono (formato de arquivo, ex. Word):** descartada para ESTE caso — os 16 são PDFs,
+  a classificação leu o conteúdo de todos com sucesso (90%), e as 16 falhas têm a mensagem idêntica
+  de rate limit (um problema de formato daria erros diferentes por arquivo). Word (.docx) É um gap
+  real e separado (hoje cai em "conteudo nao suportado" no `Preparar Conteudo`), mas não é o que
+  quebrou o teste v15.
+- **Fix:** os dois nós HTTP da OpenAI (`OpenAI Classificar`, `OpenAI Extrair`) ganharam **batching**
+  (`batchSize: 1`, `batchInterval: 3000` — 1 chamada por vez, 3s de intervalo, espalha RPM e TPM no
+  tempo) + **retry no nível do node** (`retryOnFail`, `maxTries: 4`, `waitBetweenTries: 5000` — teto
+  do N8N) pro 429 residual. É exatamente o que a própria mensagem de erro do N8N recomenda
+  ("use the batching settings under 'Options'"). Helper `OPENAI_BATCHING` + extensão do helper
+  `node()` pra aceitar as opções de retry.
+- **Só workflow** (nenhuma migration): `n8n/build-workflow.mjs` + `workflow.e1-ingestao.json`
+  regenerado. `npm test` 64/64 (1 teste novo trava batching+retry nos dois nós). **Precisa
+  reimportar o workflow no N8N** e reprocessar o "teste v15".
+- **Trade-off consciente:** com `batchSize 1` + 3s, 16 documentos levam ~1min só de espaçamento
+  (+ o tempo de cada chamada). É lento mas confiável; se o volume crescer muito, dá pra afrouxar o
+  intervalo conforme o tier da conta OpenAI (limites maiores) — deixado conservador de propósito.
+
+### Sessão 7 (cont.⁹) — Documentos COMPARATIVOS: coluna de período (`db/migrations/0017`)
+Pedido do dono: deixar o sistema "profissional a ponto de um modelador de 20 anos usar ativamente".
+A maior lacuna de export mapeada (e um bug de PERDA DE DADO): demonstração comparativa — o padrão em
+contabilidade, ex. o "Balanço consolidado 2023 x 2024.pdf" do teste v15 — tinha as duas colunas de
+ano (2023, 2024) da MESMA entidade **coladas numa coluna só** no export. A chave de coluna era
+`entidade × período-do-documento`, e o período do documento é único (`multi 23,24`), então a
+extração emitia duas linhas "Caixa" (uma por ano) que caíam na MESMA coluna e uma sobrescrevia a
+outra. Sem os anos lado a lado não há análise horizontal (Δ%) nem vertical — inutilizável pra
+modelagem.
+- **Fatia completa (mesmo padrão do `entidade_coluna`/0014):** coluna nova `campo_extraido.periodo_coluna`
+  (rótulo da coluna de período da linha; null no caso comum de período único → cai no período do
+  documento, sem regressão). É **ortogonal** a `entidade_coluna`: um documento pode ter várias
+  empresas E vários anos → linha por (conta × empresa × período). Schema+prompt de extração
+  (`n8n/lib/extract.mjs` + mirror `build-workflow.mjs`) pedem uma linha por (conta × período); o
+  export (`portal/src/lib/export.ts`) usa `periodo_coluna` na chave de coluna; a tela de linhas do
+  documento mostra `[período]` ao lado do `(entidade)`.
+- **Limpeza de schema junto:** a `0016` tinha deixado DUAS sobrecargas de `fn_registrar_campos_extraidos`
+  (3 e 4 params — `create or replace` com nº de params diferente cria overload novo, não substitui);
+  uma chamada posicional de 2 args ficava AMBÍGUA ("is not unique") — só não estourava em produção
+  porque o N8N chama com o param nomeado `p_falha_motivo=>`. A `0017` derruba a de 3 params e recria
+  só a de 4. (Mesma classe do cruft de `fn_registrar_documento` ainda anotado em "Itens adiados".)
+- **Testado:** `npm test` do n8n 66/66 (parse de comparativo, schema pede `periodo_coluna`, mirror
+  propaga). Migrations 0001-0017 limpas no Postgres 16 local; provado no banco (comparativo grava 2
+  linhas "Caixa" com períodos distintos, overload agora único) E no export (harness `tsx` com
+  `buildExportWorkbook`: "Grupo X — 2023" e "Grupo X — 2024" viram colunas separadas). `tsc`/`eslint`
+  do portal limpos.
+- **Bundle consciente:** subiu na MESMA branch do batching (cont.⁸) — o dono reimporta o workflow UMA
+  vez só e ganha os dois (fim do 429 + colunas comparativas). Precisa aplicar `0017` no Supabase.
+- **Ainda por validar pelo dono:** reprocessar o v15 já com este workflow, e conferir se o LLM
+  popula `periodo_coluna` corretamente nos documentos comparativos reais (o teste local prova o
+  encanamento, não o comportamento do modelo).
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -696,28 +758,35 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-Nenhuma no momento. O reforço de prompt dos 3 achados secundários (entidade≠signatário,
-BALANCO vs COMBINADO, período≠saldo de abertura) foi feito na sessão 7 — falta o dono reprocessar
-pra confirmar o comportamento do LLM. **A Reconciliação Classe B foi construída** (ver "Sessão 7
-(cont.⁶)") — falta o dono aplicar `0015` e testar com documentos reais que tenham
-`FATURAMENTO_24M`/`MAPA_DIVIDA` (o teste local usou dados sintéticos). **O bug de extração
-silenciosamente vazia foi corrigido** (ver "Sessão 7 (cont.⁷)") — falta o dono REIMPORTAR o
-workflow no N8N, aplicar `0016` e reprocessar "teste v14" pra confirmar. Próximo passo natural é
-uma destas (perguntar ao dono qual prioriza):
+**GATE ATUAL (bloqueia validar tudo):** o dono precisa mergear o batching+período (branch atual),
+**REIMPORTAR o workflow no N8N** e **aplicar `0016` + `0017`** no Supabase, depois reprocessar o
+"teste v15". Enquanto a extração não completar em produção (hoje travada por 429 no upload em
+lote — ver cont.⁸), todo aprimoramento de export/reconciliação é feito às cegas. Também pendente
+de validação real (só testado local/sintético): reforço de prompt BALANCO×COMBINADO (cont.²),
+Reconciliação Classe B (cont.⁶, precisa de doc com `FATURAMENTO_24M`/`MAPA_DIVIDA`) e a coluna de
+período em documentos comparativos (cont.⁹, precisa confirmar que o LLM popula `periodo_coluna`).
+Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante
    agora que a Classe B dobrou o volume potencial de pendências de reconciliação.
-2. **Refinar a extração de `FATURAMENTO_24M`/`MAPA_DIVIDA`** (hoje schema genérico de linhas) —
+2. **Análise horizontal/vertical no export** (Δ% ano-a-ano e % do total) — agora que os períodos
+   viram colunas próprias (cont.⁹), é o passo seguinte pra "cara de modelo": colunas de variação
+   entre anos adjacentes e % de cada conta sobre o total do grupo. Puramente aditivo ao export.
+3. **Suporte a `.docx`/Word e `.xlsx` no `Preparar Conteudo`** (hoje caem em "conteudo nao
+   suportado"/nota de texto) — ligar um nó *Extract From File* do N8N antes do `Preparar Conteudo`
+   e mandar o texto extraído no lugar do binário. Gap real de "adaptação a arquivos diferentes"
+   levantado pelo dono (não foi a causa do v15, mas é legítimo).
+4. **Refinar a extração de `FATURAMENTO_24M`/`MAPA_DIVIDA`** (hoje schema genérico de linhas) —
    é o que faz as checagens de Classe B (e uma futura Classe A de dívida) pararem de cair em
    "precondição não satisfeita" com tanta frequência.
-3. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
+5. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
    individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
    perigoso quando a extração pode vir contaminada/alucinada em volume.
-4. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
+6. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
    `docs/04`) — "não reconcilia, aproxima para humano": mostra as duas fontes, humano decide.
    LLM só como hipótese explicativa de uma divergência já detectada, nunca decide.
-5. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
+7. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
    `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
 
 **Validar com o time de análise** (ainda pendente): se as palavras-chave de seção
