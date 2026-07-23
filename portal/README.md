@@ -91,6 +91,38 @@ Preencher com os valores do projeto Supabase (Settings → API):
   portal respeita RLS porque o usuário chega autenticado (`authenticated`
   role) via Supabase Auth.
 
+Para habilitar o **upload pelo portal** (páginas "Novo mandato" e "Adicionar
+arquivos" — ver abaixo):
+- `N8N_INTAKE_FORM_URL` — a **URL de produção do Form do N8N** (o mesmo
+  formulário de intake; em N8N: abra o node "Intake (Form)" → aba do webhook →
+  copie a *Production URL*). O portal encaminha os arquivos para essa URL
+  servidor-a-servidor, então o pipeline (classificação/extração/reconciliação)
+  continua 100% no N8N — o portal é só um front-end de intake mais amigável.
+  Sem essa env, as páginas de upload mostram um aviso de "não configurado" (o
+  resto do portal funciona normalmente).
+- `N8N_INTAKE_FIELD_MANDATO` / `N8N_INTAKE_FIELD_ARQUIVOS` (opcionais) — nomes
+  dos campos do Form, caso a instância use rótulos diferentes dos padrões
+  (`Mandato (nome do caso)` / `Arquivos`). Só ajuste se o encaminhamento
+  retornar erro de campo.
+
+### Upload pelo portal e o conceito de "mandato"
+
+O **mandato é o caso** (`caso`): reenviar arquivos com o MESMO nome de mandato
+os acumula no mesmo caso — mesmo checklist, mesma exportação para Excel e mesma
+checagem de dados (reconciliação). Isso vale tanto para o upload pelo portal
+quanto para o Form do N8N: `fn_upsert_caso(nome)` reusa por nome
+(`db/migrations/0006`). Fluxo no portal: **"+ Novo mandato"** (lista de
+mandatos) para começar um; **"+ Adicionar arquivos"** (dentro de um mandato)
+para enviar mais em outro momento.
+
+> **Limite de tamanho (Vercel):** o upload pelo portal passa por uma Serverless
+> Function da Vercel, que tem teto de ~4,5 MB por requisição. Para lotes grandes
+> (muitos PDFs escaneados de uma vez), envie em levas menores no mesmo mandato,
+> ou use o Form do N8N diretamente (sem o intermediário da Vercel) — o resultado
+> cai no mesmo caso de qualquer forma. Subir esse teto (upload direto do browser
+> para o N8N/Storage, contornando a Function) é uma melhoria futura anotada no
+> HANDOFF.
+
 Depois de rodar as migrations do `db/` (até a `0011` inclusive):
 
 ```bash
@@ -106,8 +138,9 @@ para logar.
 1. Importar este diretório (`portal/`) como o **Root Directory** do projeto
    Vercel (o repo tem outras pastas — `n8n/`, `db/`, `docs/` — que não fazem
    parte do app Next.js).
-2. Configurar as duas env vars acima em Project Settings → Environment
-   Variables (mesmos valores do `.env.local`).
+2. Configurar as env vars acima em Project Settings → Environment Variables
+   (`NEXT_PUBLIC_SUPABASE_*` obrigatórias; `N8N_INTAKE_FORM_URL` para habilitar
+   o upload pelo portal).
 3. Deploy. Sem passos de build customizados — `next build` padrão.
 
 ## Verificado localmente antes de entregar
@@ -116,8 +149,9 @@ para logar.
 - `npm run lint` — sem erros.
 - `npm run build` — build de produção completo, todas as rotas compilam
   (com env vars de teste; `/casos`, `/casos/[id]`, `/casos/[id]/revisao`,
-  `/casos/[id]/documentos/[docId]`, `/casos/[id]/export` e `/login`
-  corretamente dinâmicas, `/` estática).
+  `/casos/[id]/documentos/[docId]`, `/casos/[id]/export`, `/casos/novo`,
+  `/casos/[id]/adicionar`, `/api/intake` e `/login` corretamente dinâmicas,
+  `/` estática).
 - `src/lib/export.ts` + `src/lib/statement-templates.ts` (classificação +
   montagem do workbook) testados isoladamente com dados sintéticos via `tsx`
   + `exceljs`, incluindo o cenário que motivou a reformulação: **duas

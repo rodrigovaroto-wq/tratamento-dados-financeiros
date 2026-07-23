@@ -14,7 +14,15 @@ export default async function CasosPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Casos</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Mandatos</h1>
+        <Link
+          href="/casos/novo"
+          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
+        >
+          + Novo mandato
+        </Link>
+      </div>
 
       {error && (
         <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
@@ -23,7 +31,9 @@ export default async function CasosPage() {
       )}
 
       {!error && casos.length === 0 && (
-        <p className="text-sm text-neutral-500">Nenhum caso ainda — a ingestão roda pelo N8N.</p>
+        <p className="text-sm text-neutral-500">
+          Nenhum mandato ainda — clique em “+ Novo mandato” para subir os primeiros arquivos.
+        </p>
       )}
 
       <ul className="divide-y divide-neutral-200 rounded border border-neutral-200 bg-white">

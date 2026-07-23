@@ -4,8 +4,8 @@ Nota de transição de contexto. Última atualização: 2026-07-23 (fim da sess�
 do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
 Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
 "Sessão 7 (cont.⁷)" —, o fix da causa real dessa extração vazia: rate limit no upload em lote —
-ver "Sessão 7 (cont.⁸)" — e o suporte a documentos COMPARATIVOS (coluna de período) — ver
-"Sessão 7 (cont.⁹)").
+ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
+"Sessão 7 (cont.⁹)" — e o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -720,6 +720,37 @@ modelagem.
   popula `periodo_coluna` corretamente nos documentos comparativos reais (o teste local prova o
   encanamento, não o comportamento do modelo).
 
+### Sessão 7 (cont.¹⁰) — Upload pelo portal + mandato explícito (intake amigável)
+Pedido do dono (OODA): input mais amigável dentro do HTML da Vercel (enviar/receber arquivos no
+próprio portal) + um "campo de mandato" pra enviar arquivos em momentos diferentes e caírem no
+mesmo checklist/export/reconciliação.
+- **Observação-chave:** o "mandato" JÁ é o `caso` — `fn_upsert_caso(nome)` reusa por nome
+  (`db/migrations/0006`), então reenviar no mesmo mandato já acumula. O que faltava era (a) tornar
+  isso explícito/amigável e (b) permitir upload pelo portal. E o ponto crítico de arquitetura: o
+  pipeline lê o binário do **Form do N8N** — reescrever isso pra ler do Storage seria uma fatia
+  grande e não-testável.
+- **Desenho de menor risco (pipeline intacto):** o portal ENCAMINHA os arquivos pra MESMA URL do
+  Form do N8N, servidor-a-servidor. A OpenAI/extração/reconciliação continuam 100% no N8N; o portal
+  é só um front-end de intake.
+  - `portal/src/app/api/intake/route.ts` (runtime Node): recebe multipart, valida, e faz `fetch`
+    POST multipart pra `N8N_INTAKE_FORM_URL` com os campos `Mandato (nome do caso)`/`Arquivos`
+    (nomes overridáveis por env `N8N_INTAKE_FIELD_*`). Sem a env → 503 com aviso claro.
+  - `portal/src/components/upload-form.tsx` (client): dropzone (drag-drop + clique), lista de
+    arquivos com remover, campo de mandato, estados de envio/erro/sucesso. `travarMandato` quando
+    é "adicionar a um mandato existente".
+  - Páginas: `/casos/novo` (novo mandato) e `/casos/[id]/adicionar` (mandato travado, volta ao
+    caso). Botões "+ Novo mandato" (lista) e "+ Adicionar arquivos" (dashboard). Copy do empty-state
+    da lista corrigida (não diz mais "a ingestão roda pelo N8N").
+- **Testado:** `tsc`/`eslint`/`next build` limpos — todas as rotas novas compilam
+  (`/api/intake`, `/casos/novo`, `/casos/[id]/adicionar`). **Não testável aqui:** se o Form do N8N
+  aceita o multipart encaminhado com esses nomes de campo exatos (depende da instância/versão) —
+  por isso os nomes são overridáveis por env e o erro do route é explícito. O dono precisa setar
+  `N8N_INTAKE_FORM_URL` (Production URL do node Intake Form) na Vercel e validar o primeiro envio.
+- **Escopo consciente:** o polimento "de modelador" (análise horizontal/vertical Δ%/AV%) NÃO entrou
+  aqui — fica pro próximo passo, e faz mais sentido depois do reprocesso real do v15 (com o
+  batching+período já mergeados) mostrar dado de verdade. Documentos Word/.xlsx (gap de formato
+  levantado pelo dono) também continuam pendentes (item nos próximos passos).
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -795,6 +826,10 @@ documentos reais e a classificação por seção em si funcionou bem (ver diff P
 problema achado foi de PIPELINE (item errado), não de vocabulário de classificação.
 
 ### Itens adiados (documentados, não bloqueantes)
+- **Teto de ~4,5 MB no upload pelo portal (Vercel):** o `/api/intake` encaminha via Serverless
+  Function, que limita o corpo da requisição. Lotes grandes precisam ir em levas ou pelo Form do
+  N8N. Melhoria futura: upload direto do browser pro N8N/Storage (signed URL), contornando a
+  Function — tira o limite e o processamento pesado da Vercel. Ver `portal/README.md`.
 - **Overload morto de `fn_registrar_documento`:** achado ao testar 0009 contra Postgres local —
   a migration `0007` adicionou `p_justificativa` via `create or replace` com um parâmetro a
   mais, o que em Postgres **cria uma segunda função** (14 params) em vez de substituir a de
