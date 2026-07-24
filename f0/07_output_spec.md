@@ -84,6 +84,16 @@ confiável e rastreável — não o substitui.
 > os DADOS extraídos: nenhum valor de conta vira fato sem aceite humano. Detalhe da implementação:
 > `portal/src/lib/statement-templates.ts` (estrutura CPC/Lei 6.404) + `portal/src/lib/export.ts`.
 
+> **Emenda 2026-07-24 (dono):** o export passa a entregar também a camada de **leitura analítica**
+> que um analista de RX/M&A espera pronta — **análise vertical (AV%, common-size)**, **análise
+> horizontal (Δ% entre períodos comparáveis)** e um bloco de **indicadores de liquidez/estrutura**
+> no Balanço. Isso NÃO é modelagem nem projeção: são razões entre números **já extraídos**,
+> calculadas por fórmula Excel transparente (`IFERROR`), e **nenhum índice é emitido sem o insumo
+> real** (faltando a linha, a célula fica vazia — nunca estimada). A anti-ancoragem segue: %s e
+> índices referenciam células que continuam PENDENTES até o aceite humano. Fundamentação e
+> faseamento do que ainda falta (índices que exigem detalhamento de conta) em
+> `f0/08_padrao_entrega_analitica.md`.
+
 **Critério de pronto (DoD):** ✅ dois modos de entrega definidos; ✅ schema-alvo com ordem de
 prioridade; ✅ proveniência por célula especificada; ✅ regra anti-ancoragem reafirmada.
 *(Layout fino do Excel e da tela do portal a refinar na F2, quando houver dado real fluindo.)*
