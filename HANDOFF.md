@@ -7,9 +7,10 @@ Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silencio
 ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
 "Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" —, a
 2ª rodada de hardening pós-"teste v18" (chaves de fio curtas + batching mais conservador + kit de
-PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" — e o fix do upload pelo portal que
+PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" —, o fix do upload pelo portal que
 "funcionava" mas nunca disparava o workflow (descoberta automática de nome de campo) + pop-up de
-conclusão — ver "Sessão 7 (cont.¹²)").
+conclusão — ver "Sessão 7 (cont.¹²)" — e a confirmação do tier de rate limit + fix do bug dos nós
+Postgres sem tratamento de erro (derrubavam o lote inteiro em silêncio) — ver "Sessão 7 (cont.¹³)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -851,6 +852,38 @@ nunca chegou a rodar de verdade, apesar do portal reportar "enviado com sucesso"
   descoberta não funcionar, o comportamento cai pro que já existia (nomes fixos, ajustáveis via
   env).
 
+### Sessão 7 (cont.¹³) — "Teste v19" (9 arquivos pequenos, kit sintético): confirmação de tier + 2º bug crítico
+Pedido do dono: corrigir "completamente" os erros que fizeram até os 9 PDFs sintéticos pequenos
+(kit da cont.¹¹, ~2-3 KB cada) falharem — nenhuma linha extraída, e alguns arquivos nem aparecendo
+no dashboard.
+- **Contradição que motivou a investigação:** o "teste v18" (16 documentos REAIS, batching de 3s)
+  teve 13/16 sucesso; o "teste v19" (9 arquivos pequenos, batching de 6s — mais conservador) teve
+  0/6 sucesso nas extrações visíveis. Mais espaçamento resultando em MAIS falha é o oposto do
+  esperado — indicava causa fora do código de batching.
+- **Causa 1 confirmada pelo dono:** a conta OpenAI estava genuinamente no teto do rate limit (RPM)
+  — ele confirmou e subiu o tier durante a sessão. Nenhum espaçamento de código resolve isso
+  sozinho quando o teto real da conta é mais baixo que a cadência tentada; **"0 tokens gastos" no
+  painel da OpenAI é exatamente o esperado num 429 genuíno** (a requisição é rejeitada antes de
+  qualquer processamento, não cobra token nenhum) — não era evidência CONTRA a hipótese de rate
+  limit, e sim a favor.
+- **Causa 2 — bug real, achado investigando por que 3 dos 9 arquivos nunca apareceram no
+  dashboard (nem "não classificado", nem pendência):** os 6 nós Postgres do pipeline
+  (`Upsert Caso`, `Registrar Documento`, `Recomputar Completude`, `Gravar Campos (Sombra)`,
+  `Registrar Diagnostico`, `Reconciliar (Classe A)`) não tinham NENHUM tratamento de erro — ao
+  contrário dos nós OpenAI, que já tinham `onError:continueRegularOutput` desde a cont.⁸. Um erro
+  transitório de conexão num ÚNICO item (mais provável sob a carga do lote, com o rate limit já no
+  teto) **parava a execução inteira do N8N**, e todo item ainda na fila desaparecia sem nenhum
+  rastro — exatamente o sintoma "3 de 9 arquivos somem". Corrigido: todos os 6 nós Postgres agora
+  têm `onError:continueRegularOutput` + `retryOnFail` (3 tentativas, 3s entre elas) — o pior caso
+  agora é "esse item específico fica incompleto" (nunca vira fato, segue N0/pendente, doutrina
+  anti-ancoragem docs/01), não "o lote inteiro desaparece em silêncio".
+- **Testado:** `npm test` do n8n 69/69 (1 teste novo travando onError+retryOnFail+maxTries nos 6
+  nós Postgres). `tsc`/`eslint` do portal inalterados (fatia é só n8n).
+- **Ainda por confirmar pelo dono:** reimportar o workflow (pega o retry dos nós Postgres) e
+  reprocessar o kit de PDFs sintéticos de novo, agora com o tier da OpenAI já corrigido — deve
+  extrair 100% das linhas dos 9 arquivos (são pequenos e simples de propósito, o "caso mais fácil
+  possível" pro pipeline).
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -889,16 +922,18 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-**GATE ATUAL:** o upload pelo portal tinha um bug crítico (cont.¹²: "sucesso" na tela mas o
-workflow nunca disparava, 0 tokens gastos) — corrigido com descoberta automática de nome de campo,
-mas **não testável aqui contra o N8N real do dono**. Falta o dono: mergear esta fatia, testar um
-envio pelo portal e confirmar que agora o mandato realmente processa (o pop-up "Tudo pronto" deve
-aparecer). Em paralelo, o gate de sempre continua: reprocessar os 7 documentos do "teste v18" que
-ainda falharam com o hardening da cont.¹¹ (batching 6s/6 tentativas + chaves de fio curtas), ou
-usar o workaround manual (dividir por ano) pros 3 mais densos. Também pendente de validação real:
-reforço de prompt BALANCO×COMBINADO (cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹),
-Reconciliação Classe B (cont.⁶, agora com o kit de PDFs sintéticos — cont.¹¹ — dá pra validar sem
-custo real). Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
+**GATE ATUAL:** três coisas precisam do dono antes de seguir: (1) mergear a fatia da cont.¹³
+(retry nos nós Postgres) e **reimportar o workflow**; (2) o tier de rate limit da OpenAI já foi
+corrigido pelo dono durante a sessão (cont.¹³); (3) reprocessar o kit de PDFs sintéticos (cont.¹¹)
+de novo com as duas correções em vigor — esse é o teste decisivo: são arquivos pequenos e simples
+de propósito, então **isso precisa sair 100% limpo** (todas as linhas extraídas, todas as
+reconciliações Classe A/B fechando) antes de confiarmos no pipeline para documentos grandes e
+complexos. Upload pelo portal (cont.¹²) também segue pendente de confirmação de que o pop-up
+"Tudo pronto" aparece de verdade. Em paralelo: reprocessar os 7 documentos REAIS do "teste v18"
+que falharam com o hardening da cont.¹¹, ou usar o workaround manual (dividir por ano) pros 3 mais
+densos. Também pendente de validação real: reforço de prompt BALANCO×COMBINADO (cont.², e um novo
+caso suspeito achado no v18 — ver cont.¹¹). Próximo passo natural é uma destas (perguntar ao dono
+qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante

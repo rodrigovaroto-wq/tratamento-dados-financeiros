@@ -277,6 +277,19 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
 // produção, sessão 7 cont.¹¹). Trade-off consciente: processa mais devagar.
 const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } } };
 
+// Retry para os nós Postgres: SEM onError, um erro transitório (conexão sob
+// carga, timeout pontual) num ÚNICO item PARA A EXECUÇÃO INTEIRA — todos os
+// itens ainda na fila somem sem nenhum rastro (achado em produção, sessão 7
+// cont.¹³, "teste v19": 9 arquivos pequenos enviados, só 6 apareceram no
+// dashboard; os outros 3 nunca chegaram nem a ter uma linha `documento`
+// criada — consistente com a execução ter sido interrompida por um erro de
+// node Postgres no meio do lote, não com falha de extração, que já é
+// tolerante a erro). `continueRegularOutput` (como os nós OpenAI já têm)
+// impede esse efeito cascata: o item que falhou fica com dado incompleto
+// (nunca vira fato — segue N0/pendente, doutrina docs/01), mas os itens
+// SEGUINTES no lote continuam sendo processados normalmente.
+const PG_RETRY = { onError: 'continueRegularOutput', retryOnFail: true, maxTries: 3, waitBetweenTries: 3000 };
+
 const nodes = [
   node('Intake (Form)', 'n8n-nodes-base.formTrigger', 2, {
     formTitle: 'Intake Oria — Reestruturação',
@@ -290,7 +303,7 @@ const nodes = [
   node('Upsert Caso (Postgres)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
     options: { queryReplacement: "={{ [$json['Mandato (nome do caso)']] }}" },
-  }, 200, 400, { credentials: PG_CRED }),
+  }, 200, 400, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }, 400, 400),
 
@@ -350,12 +363,12 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa || null] }}" },
-  }, 1850, 400, { credentials: PG_CRED }),
+  }, 1850, 400, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_recomputar_completude($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
-  }, 2100, 560, { credentials: PG_CRED }),
+  }, 2100, 560, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300),
 
@@ -373,7 +386,7 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text) as n_campos',
     options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null] }}" },
-  }, 2700, 300, { credentials: PG_CRED }),
+  }, 2700, 300, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
   // tipo/período/legibilidade só CONFEREM contra o que já está registrado —
@@ -385,7 +398,7 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
     options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}" },
-  }, 2900, 300, { credentials: PG_CRED }),
+  }, 2900, 300, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
   // documento recém-extraído (docs/04). Só precisa do documento_id — a função
@@ -396,7 +409,7 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
     options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
-  }, 3100, 300, { credentials: PG_CRED }),
+  }, 3100, 300, { credentials: PG_CRED, ...PG_RETRY }),
 ];
 
 const connections = {
