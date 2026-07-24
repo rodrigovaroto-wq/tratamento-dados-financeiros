@@ -1,45 +1,56 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-24 (fim da sessão 7; inclui a reescrita
-do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
-Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
-"Sessão 7 (cont.⁷)" —, o fix da causa real dessa extração vazia: rate limit no upload em lote —
-ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
-"Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" —, a
-2ª rodada de hardening pós-"teste v18" (chaves de fio curtas + batching mais conservador + kit de
-PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" —, o fix do upload pelo portal que
-"funcionava" mas nunca disparava o workflow (descoberta automática de nome de campo) + pop-up de
-conclusão — ver "Sessão 7 (cont.¹²)" —, a confirmação do tier de rate limit + fix do bug dos nós
-Postgres sem tratamento de erro (derrubavam o lote inteiro em silêncio) — ver "Sessão 7 (cont.¹³)" —
-e o fix dos cards da fila de revisão que não somiam + vazamento entre abas do export + limpeza de
-taxonomia/colunas + auto-aceite >=95% — ver "Sessão 7 (cont.¹⁴)").
+Nota de transição de contexto — **leia isto primeiro, é o resumo pra retomar rápido em um chat
+novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
+só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
-sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
-documentos reais no MESMO upload em lote, o N8N lia o binário do item errado ao montar a chamada
-de extração — o conteúdo de um arquivo era enviado pra IA com o NOME do outro arquivo (PR #29,
-**mergeado**, `$itemIndex` em vez de `0` fixo + teste de regressão). Investigando os dados brutos
-com o dono (query SQL no Supabase real dele), achamos uma SEGUNDA causa, independente: documentos
-**combinados/multi-entidade** (várias colunas de empresa na mesma tabela, ex. Certsys Tecn/Part/
-Com/Total) faziam a IA fabricar valores com confiança ALTA — o schema de extração só tinha um
-`valor_num` por linha, sem dimensão de entidade. Duas fatias, ambas pedidas pelo dono (não são
-excludentes): **(1) guarda de segurança** que detecta e sinaliza extração suspeita (padrão de
-valores repetidos, ou confiança baixa) pra QUALQUER documento — não resolve a causa, torna visível;
-**(2) `entidade_coluna` por linha** — ataca a causa raiz, deixando a IA representar corretamente
-uma conta que aparece em várias colunas/entidades, sem inventar. Ver seção "Sessão 7 (cont.)"
-abaixo. PR novo, pendente de revisão do dono no momento em que este arquivo foi escrito. **Ação
-pendente do dono, fora do escopo de código:** existem documentos JÁ CONTAMINADOS no Supabase de
-produção de uploads em lote anteriores ao fix do item errado — ver checklist de limpeza na seção
-"Sessão 7". Depois desses fixes mergeados (#29 item errado, #30 guarda + entidade_coluna), o dono
-**reprocessou os 2 documentos reais** ("teste v9") e confirmou: **o multi-entidade funcionou** — o
-Certsys agora sai com colunas separadas (Certsys Com/Part/Tech/Total), sem os valores fabricados de
-antes. Restava um erro de classificação visível: `BALANCO` vs `COMBINADO` **invertido** entre os
-dois documentos — o Certsys (3 empresas → deveria ser COMBINADO) virou BALANCO, e o Global One (1
-empresa, várias demonstrações → deveria ser BALANCO) virou COMBINADO. **Reforço de prompt aplicado
-nesta sessão** (ver "Sessão 7 (cont.²)" abaixo) nos 3 achados secundários — falta o dono
-reprocessar pra confirmar. **Próximo passo (adiado três vezes por causa destes achados):
-Reconciliação Classe B** (achar inconsistências/incoerências nos números) — continua sendo o
-combinado, só ficou atrás da urgência dos bugs de integridade de dados.
+**Última atualização:** 2026-07-24. **Estado do `main`:** tudo mergeado até o PR #41 (branch de
+trabalho `claude/handoff-md-review-ywt57q`, sempre restartada de `origin/main` no início de cada
+sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar).
+
+## TL;DR pra quem está começando agora
+
+O sistema é um pipeline de due diligence financeira: **N8N** (self-hosted) recebe upload →
+classifica o tipo de documento → chama a **OpenAI** (multimodal) pra diagnosticar + extrair linha a
+linha → grava no **Postgres/Supabase** → o **portal Next.js** (Vercel) mostra dashboard, fila de
+revisão e exporta pra Excel. Princípio inegociável (`docs/01`): nada vira FATO sem aceite humano
+explícito (anti-ancoragem) — a única exceção documentada é auto-aceite de linhas com confiança
+extraída ≥95% (decisão explícita do dono, `db/migrations/0019`).
+
+**O que está funcionando e testado** (kit de PDFs sintéticos + arquivos reais do dono):
+classificação por tipo de documento, extração linha a linha com proveniência, classificação por
+SEÇÃO contábil (Ativo Circulante, Despesas Operacionais etc. — `statement-templates.ts`), export em
+Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila de revisão, auto-aceite
+≥95%.
+
+**Os 3 PRs mais recentes (39, 40, 41), na ordem, resolveram uma rodada de feedback real do dono
+sobre o "teste v20":**
+- **PR #39** (mergeado): fila de revisão com cards que não fechavam ao confirmar (`0018`); vazamento
+  de linhas entre abas do export; `MUTUOS`/`FAT_INTRAGRUPO`/`CONTRATO_SOCIAL` sem aba própria
+  fazendo sentido contábil; colunas técnicas demais nas abas simples (Faturamento/Dívida/...);
+  auto-aceite ≥95% (`0019`).
+- **PR #40** (mergeado): o dono perguntou por que o "total informado no documento" divergia do
+  cálculo automático MESMO em arquivo de teste sintético — achamos **2 bugs reais de classificação**
+  (não do arquivo de teste, de convenções comuns de demonstração brasileira): DRE contando um
+  subtotal em cascata duas vezes, e cabeçalho combinado "Passivo e Patrimônio Líquido" jogando tudo
+  pra Patrimônio Líquido. Ambos corrigidos em `statement-templates.ts`. Também: removida toda menção
+  a tipo/versão de taxonomia da planilha, período padronizado (`formatarPeriodo`), notas de célula
+  com fonte compacta + caixa ampliada via pós-processamento JSZip (ExcelJS não expõe isso).
+- **PR #41** (mergeado): o `formatarTipoTaxonomia`/`formatarPeriodo` só rodavam no export em Excel —
+  ligados também no dashboard, na planilha do documento e na fila de revisão (nada de código cru
+  tipo "FATURAMENTO_24M" na tela); e o prompt de IA que gera o campo `resumo` do documento foi
+  ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
+
+**Pendente agora (nenhum é bloqueante de código, são passos de operação do dono):**
+1. **Reimportar o `n8n/workflow.e1-ingestao.json` atualizado no N8N** — o prompt novo do `resumo`
+   só vale a partir da reimportação; extrações já gravadas não mudam retroativamente.
+2. **Re-exportar um caso real** (ou o "teste v20") pra conferir visualmente: planilha sem menção a
+   taxonomia, período legível, notas abrindo sem corte, e as divergências de DRE/Combinado
+   resolvidas.
+3. Ver "Decisão pendente" na seção 3 abaixo pra a lista de próximos passos de FEATURE (ainda não
+   iniciados) — a última vez que o dono escolheu prioridade explicitamente foi decidir entre os
+   itens 1-8 listados lá; nenhum foi formalmente escolhido ainda, então vale perguntar antes de
+   começar um novo do zero.
 
 ---
 
@@ -1062,18 +1073,17 @@ Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru 
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-**GATE ATUAL:** o "teste v20" mostrou que a extração em si já está boa (100% classificado, 113
-linhas) — os problemas achados agora eram de REVISÃO/EXPORT (fila não fechando, vazamento entre
-abas, taxonomia confusa), já corrigidos (cont.¹⁴, `0018`+`0019`). Falta o dono: aplicar as duas
-migrations no Supabase (sem mudança de N8N nesta fatia) e re-exportar o "teste v20" pra conferir
-visualmente — abas Intragrupo/Societário separadas, sem coluna fantasma no Fluxo de Caixa, listagem
-simples com 5 colunas, fila de revisão fechando os cards, boa parte das 113 linhas já "ACEITO" pelo
-auto-aceite. Em paralelo, ainda pendente: reimportar o workflow (pega o retry dos nós Postgres da
-cont.¹³) e reprocessar os 7 documentos REAIS do "teste v18" que falharam, ou usar o workaround
-manual (dividir por ano) pros 3 mais densos; upload pelo portal (cont.¹²) segue pendente de
-confirmação de que o pop-up "Tudo pronto" aparece de verdade; reforço de prompt BALANCO×COMBINADO
-(cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹). Próximo passo natural é uma destas
-(perguntar ao dono qual prioriza):
+**GATE ATUAL (atualizado pós-cont.¹⁶):** os problemas de REVISÃO/EXPORT achados no "teste v20"
+(fila não fechando, vazamento entre abas, taxonomia confusa/crua na tela, período sem tradução,
+2 bugs reais de classificação causando divergência de total, notas de célula cortadas, resumo
+redundante) estão todos corrigidos e mergeados (PRs #39, #40, #41 — ver TL;DR no topo do arquivo).
+**Falta o dono, antes de qualquer código novo:** (1) reimportar o workflow N8N atualizado (pega o
+prompt novo do `resumo`); (2) re-exportar um caso real e conferir visualmente o resultado de tudo
+isso junto. Depois disso, não há mais gate conhecido — a lista abaixo é de FEATURE nova, nenhuma
+delas foi formalmente escolhida ainda pelo dono. Itens mais antigos da lista (reimportar pós
+cont.¹³, reprocessar os 7 documentos do "teste v18", confirmar pop-up do upload) provavelmente já
+foram resolvidos em sessões posteriores — confirmar com o dono antes de retrabalhar. Próximo passo
+de feature é uma destas (perguntar ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante
