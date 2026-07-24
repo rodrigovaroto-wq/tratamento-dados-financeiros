@@ -1,0 +1,130 @@
+# Bibliografia Definitiva de Contabilidade, Análise, Modelagem e Reestruturação — Guia para um Analista de RX/M&A
+
+## TL;DR
+- Para um profissional de reestruturação e M&A no Brasil, a leitura indispensável concentra-se em quatro obras que resolvem a maior parte das necessidades técnicas: **Rosenbaum & Pearl, "Investment Banking" (3ª ed., 2020)**, **Moyer, "Distressed Debt Analysis" (2004/2005)**, **Koller/Goedhart/Wessels (McKinsey), "Valuation" (7ª ed., 2020; 8ª ed. publicada em 20 de maio de 2025)** e **Penman, "Financial Statement Analysis and Security Valuation" (5ª ed., 2013)** — complementadas, no plano doutrinário brasileiro, pelo **Manual de Contabilidade Societária da FIPECAFI**.
+- As obras fundacionais citadas (Pacioli, Besta, Masi, Zappa, Paton) são de valor **histórico-doutrinário**, não operacional: só o tratado de Pacioli e o "Accounting Theory" de Paton têm traduções/reimpressões amplamente acessíveis; as obras de Besta, Masi e Zappa **permanecem apenas em italiano** e não foram traduzidas para o português.
+- Não existe no Brasil um "manual" único de modelagem para recuperação judicial; o conhecimento está fragmentado entre a literatura jurídica (Sacramone, Bezerra Filho, Daniel Carnio Costa), os cursos técnicos do IBAJUD/TMA Brasil e os livros de valuation (Damodaran, Póvoa) que precisam ser adaptados ao contexto da Lei 11.101/2005.
+
+## Key Findings
+A pesquisa organiza-se em cinco camadas de leitura, da base doutrinária à técnica aplicada. A recomendação central é que o usuário **não trate a camada fundacional como pré-requisito**: ela é enriquecimento intelectual e contexto histórico, e a maior parte só existe em italiano. O núcleo profissional está nas camadas (d) modelagem e (e) distressed/reestruturação, ancoradas por (c) análise de demonstrações.
+
+Um ponto crítico de acessibilidade: enquanto os clássicos americanos antigos (Paton, 1922) e o tratado de Pacioli estão em domínio público ou reimpressos, os italianos da tradição patrimonialista/aziendalista (Besta, Masi, Zappa) nunca foram traduzidos ao português — chegaram ao Brasil apenas pela intermediação de autores como Antônio Lopes de Sá e Francisco D'Áuria.
+
+## Details
+
+### (a) Camada fundacional / histórico-doutrinária
+
+**Luca Pacioli — "Summa de Arithmetica, Geometria, Proportioni et Proportionalita" (Veneza, 1494), com o tratado "Particularis de Computis et Scripturis".**
+É a primeira descrição impressa e sistemática das partidas dobradas — um tratado de 27 páginas dentro de um compêndio matemático de 615 páginas. Pacioli não inventou o método (as partidas dobradas já eram usadas por mercadores italianos desde o século XIII, cerca de 200 anos antes, embora ainda não amplamente conhecidas), mas o codificou e disseminou, o que lhe rendeu o título de "pai da contabilidade". Disponibilidade excelente: o escaneamento completo da Summa está na Linda Hall Library e no Internet Archive (domínio público). O tratado de contabilidade tem várias traduções ao inglês — John B. Geijsbeek (1914), R. Gene Brown & Kenneth Johnston (1963) e Jeremy Cripps (1994, "The Rules of Double-Entry Bookkeeping: Particularis de computis et scripturis", ISBN 9781453702024, disponível em paperback). Em português há a edição comentada **"Tratado de Contas e Escrituras" (Tractatus de Computis et Scripturis)** com apresentação de Antônio Lopes de Sá. **Nível:** acessível historicamente, hoje de interesse cultural. **Veredito:** leitura de cultura profissional, não técnica.
+
+**Fabio Besta — "La Ragioneria" (1ª ed. do vol. I em 1891; edição definitiva em 3 volumes, 1909–1916).**
+Besta é o "pai da ragioneria moderna" e criador da **teoria personalística/do controle econômico**, redefinindo a contabilidade como "ciência do controle econômico" e originando o chamado sistema patrimonial. A obra definitiva tem 3 volumes / 1.628 páginas, editada pela Vallardi com o concurso de Alfieri, Ghidiglia e Rigobon. Reimpressão moderna disponível pela **RIREA** (coleção "Riedizioni del Novecento"), à venda na IBS (ISBN 9788885333635). **Disponibilidade em português: inexistente — apenas em italiano.** Trechos e prolusões estão no Google Books; artigos acadêmicos sobre Besta (D'Amico & Palumbo, SSRN 2012; Coronella, Ca' Foscari) suprem quem não lê italiano. **Nível:** avançado, denso, em italiano. **Veredito:** interesse histórico-doutrinário.
+
+**Vincenzo Masi — "La Ragioneria come scienza del patrimonio" (1926/1927), "Statica Patrimoniale", "Dinamica Patrimoniale", "Ragioneria Generale".**
+Aluno de Besta, Masi é o maior nome da **Escola Patrimonialista** (objeto da contabilidade = o patrimônio; divisão em estática patrimonial, dinâmica patrimonial e levantamento/relevação patrimonial). Sua relevância para o Brasil é enorme: foi a doutrina que mais influenciou a escola contábil brasileira, com adeptos como Francisco D'Áuria, Frederico Herrmann Júnior, Hilário Franco, Antônio Lopes de Sá e outros. **Disponibilidade: as obras de Masi nunca foram traduzidas integralmente para o português** — permanecem em italiano. A única tradução localizada é de um *artigo* ("Os Fenômenos Patrimoniais como Objeto da Contabilidade", tradução do Prof. Francisco Valle, no Mensário Brasileiro de Contabilidade). Há material didático brasileiro *sobre* Masi (curso do Prof. Rodrigo Chaves), mas não são as fontes primárias. **Veredito:** central para entender a identidade da contabilidade brasileira, mas acessível apenas via autores brasileiros que o interpretaram.
+
+**Gino Zappa — "Tendenze nuove negli studi di ragioneria" (prolusão de 13/11/1926, publicada em 1927), "Il reddito di impresa" (edição definitiva 1937/1946, Giuffrè), "Le produzioni nell'economia delle imprese" (Giuffrè, 1957).**
+Também aluno de Besta, Zappa rompeu com o mestre ao criar a **Economia Aziendale** e o **sistema do reddito** (sistema da renda), que substituiu o foco patrimonial pelo foco na determinação do resultado — completando a virada teórica no terceiro livro de "Il reddito di impresa" (1929). A prolusão de 1926/1927 é considerada a certidão de nascimento da economia aziendal. **Disponibilidade em português: inexistente — apenas em italiano** (Giuffrè). **Veredito:** fundamental para a história do pensamento, mas de leitura em italiano.
+
+**William Andrew Paton — "Accounting Theory: With Special Reference to the Corporate Enterprise" (1922), "An Introduction to Corporate Accounting Standards" (1940, com A.C. Littleton).**
+Paton é um dos maiores nomes da teoria contábil americana. O "Accounting Theory" (1922, The Ronald Press Company, ~531 p.) está em **domínio público e disponível gratuitamente no Internet Archive** (cópia da Cornell University Library), além de haver reimpressões print-on-demand (facsimile) na Amazon e AbeBooks. A monografia de 1940 com Littleton é um dos textos mais influentes na formação dos princípios contábeis americanos (framework de matching e custo histórico). **Nível:** avançado, mas legível. **Veredito:** clássico indispensável de teoria; o de 1922 é acessível de graça.
+
+**Autores brasileiros da linha patrimonialista/neopatrimonialista.**
+- **Antônio Lopes de Sá** — criador do **Neopatrimonialismo** (iniciado em 1978; primeira exposição no exterior na Universidade de Sevilha, 1987), o autor mais prolífico da história da literatura contábil brasileira. Obras: "Teoria da Contabilidade" (Atlas, 3ª ed. 2002), "Teoria Geral do Conhecimento Contábil", "Prática e Teoria da Contabilidade Geral" (Juruá). Acessíveis no Brasil.
+- **Sérgio de Iudícibus** — "Teoria da Contabilidade" (Atlas, 9ª+ ed.) e "Teoria Avançada da Contabilidade" (com Alexsandro Broedel Lopes, Atlas, 2004). São as referências acadêmicas brasileiras modernas. Indispensáveis.
+- **Eliseu Martins** — "Contabilidade de Custos" (Atlas) e coautor do **Manual de Contabilidade Societária** (FIPECAFI/Atlas), a "bíblia" da contabilidade societária brasileira (com Iudícibus, Gelbcke e Ariovaldo dos Santos), atualizado conforme CPC/IFRS.
+- **Hilário Franco** e **Frederico Herrmann Júnior** — clássicos patrimonialistas brasileiros, hoje de interesse mais histórico.
+
+### (b) Teoria da contabilidade avançada
+
+- **Hendriksen & Van Breda, "Accounting Theory"** (5ª ed., Irwin, ~905 p.) — o texto-padrão de teoria contábil, avaliação em três níveis (estrutural, semântico, pragmático). Há tradução brasileira ("Teoria da Contabilidade", Atlas). Disponível no Internet Archive. **Indispensável** como panorama.
+- **Watts & Zimmerman, "Positive Accounting Theory"** (Prentice Hall, 1986) — fundou a escola positiva (Rochester), baseada em hipótese de mercado eficiente, teoria da agência e três hipóteses (plano de bônus, endividamento, custos políticos). Iudícibus o considera talvez o texto mais influente das últimas décadas. **Avançado, acadêmico.**
+- **Chambers, "Accounting, Evaluation and Economic Behavior"** (1966) — teoria normativa (CoCoA, contabilidade a valores correntes de saída).
+- **Edwards & Bell, "The Theory and Measurement of Business Income"** (Univ. of California Press, 1961) — clássico sobre mensuração de renda e lucro corrente.
+- **Beaver, "Financial Reporting: An Accounting Revolution"** — leitura sobre a revolução informacional da contabilidade.
+- **Ijiri** e **Littleton** — de interesse mais histórico/acadêmico.
+**Veredito da camada:** ler Hendriksen & Van Breda + Iudícibus como base; Watts & Zimmerman se quiser a fronteira acadêmica.
+
+### (c) Análise de demonstrações financeiras (avançada)
+
+- **Stephen Penman, "Financial Statement Analysis and Security Valuation"** (5ª ed., McGraw-Hill, 2013) — o melhor livro que conecta contabilidade e valuation, defendendo o modelo de renda residual (residual income); premiado com o Wildman Medal. **Indispensável.** Disponível no Internet Archive; edições usadas acessíveis.
+- **Palepu, Healy & Peek, "Business Analysis and Valuation" (IFRS Edition)** — foco em análise das escolhas contábeis e do que diferentes negócios devem parecer; complementa Penman. **Indispensável.**
+- **Wahlen, Baginski & Bradshaw, "Financial Reporting, Financial Statement Analysis and Valuation"** — texto abrangente de nível avançado.
+- **Revsine, Collins, Johnson et al., "Financial Reporting and Analysis"** — sólido em mecânica contábil.
+- **White, Sondhi & Fried, "The Analysis and Use of Financial Statements"** — referência clássica, detalhada.
+- **Fridson & Alvarez, "Financial Statement Analysis: A Practitioner's Guide"** (5ª ed., Wiley) — o mais orientado ao profissional/analista de crédito; excelente para RX. **Muito recomendado.**
+- **Detecção de manipulação (essencial para distressed):**
+  - **Schilit, Perler & Engelhart, "Financial Shenanigans"** (4ª ed., 2018, McGraw-Hill) — o guia de forensic accounting; classifica sete "Earnings Manipulation Shenanigans" (nº 1 "Recording Revenue Too Soon", nº 2 "Recording Bogus Revenue", etc.) mais os "Cash Flow Shenanigans". Howard Schilit é apelidado de "Sherlock Holmes of Accounting". **Indispensável para RX/distressed.**
+  - **Mulford & Comiskey, "The Financial Numbers Game"** (Wiley, 2002) e **"Creative Cash Flow Reporting"** (Wiley, 2005) — foco em detecção de manipulação de resultados e de fluxo de caixa.
+
+### (d) Modelagem financeira aplicada
+
+- **Rosenbaum & Pearl, "Investment Banking: Valuation, LBOs, M&A and IPOs"** (3ª ed., Wiley, 2020; ISBN 9781119706182) — o padrão de mercado para comps, precedentes, DCF, LBO e M&A; conforme a Wiley, "the book has sold over 250,000 copies and is used in over 200 universities globally". Inclui capítulos de reestruturação. **Indispensável, ponto de partida.** Existe "University Edition" e pacote com modelos (Book + Valuation Models).
+- **Simon Benninga, "Financial Modeling"** (MIT Press; 4ª ed. 2014, 5ª ed. 2022 com Tal Mofkadi) — o texto acadêmico-padrão de modelagem em Excel, com VBA, e R e Python na 5ª ed. **Muito recomendado** para fundamentos rigorosos.
+- **Michael Rees, "Principles of Financial Modelling"** (Wiley, 2018; ed. ampliada 2022) — desenho de modelos e melhores práticas em Excel/VBA. Avançado, sobre arquitetura de modelos.
+- **Paul Pignataro, "Financial Modeling and Valuation"** (Wiley) — guia prático, passo a passo, orientado a IB/PE.
+- **Edward Bodmer, "Corporate and Project Finance Modeling"** (Wiley) — profundo em project finance, debt sculpting e estruturas de dívida — muito útil para modelagem de dívida e waterfalls.
+- Outros: **Tjia, "Building Financial Models"**; **Day, "Mastering Financial Modelling"**; **Swan**; **Housel/Proctor, "Building Financial Models with Microsoft Excel"** — complementares.
+- **Valuation:**
+  - **Koller/Goedhart/Wessels (McKinsey), "Valuation: Measuring and Managing the Value of Companies"** — a referência definitiva há três décadas. A 7ª ed. (Wiley, 2020) trouxe seções sobre digital, ESG e investimento de longo prazo; a **8ª ed. foi publicada em 20 de maio de 2025** (Wiley, 976 p., ISBN 978-1394279418). Há tradução PT-BR pela Bookman em edições anteriores. **Indispensável.**
+  - **Aswath Damodaran** — "Investment Valuation" (3ª ed.), "Damodaran on Valuation" (2ª ed., 2006), **"The Dark Side of Valuation"** (essencial para empresas em dificuldade, jovens e cíclicas), "Narrative and Numbers". Há traduções PT-BR ("Valuation: Como Avaliar Empresas e Escolher as Melhores Ações", LTC). **Indispensável, especialmente o Dark Side para distressed.**
+  - **Pratt, "Valuing a Business"** — referência em avaliação de empresas fechadas.
+  - **Pablo Fernández** (IESE) — papers e livros sobre WACC e prêmio de risco.
+  - **Brasil:** **Alexandre Póvoa, "Valuation: Como Precificar Ações"** (4ª ed., GEN) — considerada a melhor referência brasileira, com exemplos de empresas locais.
+
+### (e) Reestruturação, distressed e turnaround (foco profissional principal)
+
+**Núcleo internacional:**
+- **Stephen Moyer, "Distressed Debt Analysis: Strategies for Speculative Investors"** (J. Ross Publishing, 2004; ISBN 9781932159189, ~448 p.) — a bíblia do distressed debt: overview do processo de reestruturação, valuation, alavancagem, credit support/capacity, estruturas de capital e alocação de risco de crédito. Escrito por Stephen G. Moyer, ex-Portfolio Manager do Distressed Credit Group da PIMCO (onde criou e geriu o PIMCO Distressed Credit Fund) e formado em distressed no grupo de research de high yield da Drexel Burnham Lambert. **Indispensável, a leitura nº 1 de RX.**
+- **Altman & Hotchkiss (& Wang), "Corporate Financial Distress, Restructuring, and Bankruptcy"** (Wiley; edição mais recente com Wei Wang, 2019, ISBN 9781119481805) — do criador do Z-score; cobre leveraged finance, restructurings out-of-court, códigos de insolvência internacionais e um primer sobre o Chapter 11. **Indispensável, a base acadêmica-prática.**
+- **Stuart Gilson, "Creating Value Through Corporate Restructuring: Case Studies in Bankruptcies, Buyouts, and Breakups"** (Wiley) — o melhor livro de casos, ponte entre academia e prática. **Muito recomendado.**
+- **Whitman & Diz, "Distress Investing: Principles and Technique"** (Wiley) — filosofia de investimento em distressed por Martin Whitman.
+- **Nesvold, Anapolsky & Lajoux, "The Art of Distressed M&A"** (McGraw-Hill, 2011; ISBN 9780071750196) — cobre a mecânica de comprar/vender/financiar empresas insolventes: DIP loans, stalking horse, fraudulent conveyance, 363 sales. **Muito recomendado para M&A distressed.**
+- **DePamphilis, "Mergers, Acquisitions, and Other Restructuring Activities"** (Academic Press/Elsevier, edições anuais) — abrangente sobre M&A e reestruturações.
+- **Owsley & Kaufman, "Distressed Investment Banking: To the Abyss and Back"** — perspectiva do assessor financeiro.
+- **Turnaround management:**
+  - **Slatter & Lovett, "Corporate Turnaround"** (Penguin, 1999) e **"Leading Corporate Turnaround"** (Jossey-Bass, 2006) — clássicos práticos de gestão de recuperação.
+  - **Donald Bibeault, "Corporate Turnaround: How Managers Turn Losers Into Winners"** (Beard Books, reimpr. 1998) — clássico fundador do gênero.
+- **Modelagem específica de reestruturação** (covenants, debt schedules, waterfall de credores, recovery analysis, reorganização de capital): não há um único livro-texto dominante; o conhecimento vem de Moyer + Bodmer (estruturas de dívida) + os capítulos de restructuring de Rosenbaum & Pearl + cursos (Wall Street Prep, Breaking Into Wall Street, Multiple Expansion).
+
+**Literatura brasileira de recuperação judicial (Lei 11.101/2005 alterada pela Lei 14.112/2020):**
+Não existe um manual técnico único e consolidado especificamente sobre a elaboração de laudo de viabilidade econômico-financeira em RJ; o conhecimento está fragmentado entre a literatura jurídica, os cursos técnicos e os livros de valuation adaptados. Obras jurídicas de referência:
+- **Marcelo Barbosa Sacramone, "Comentários à Lei de Recuperação de Empresas e Falência"** (Saraiva Jur/GEN, 6ª ed., 2025, ISBN 9788553627219, ~928 p.) — a mais citada por administradores judiciais, concebida a partir de discussões diárias com advogados, administradores judiciais, promotores e juízes; a 6ª ed. incorpora a alienação fiduciária à luz da Lei 14.711/23. Sacramone também publicou "Recuperação Judicial – dos Objetivos ao Procedimento" (2024). **A mais recomendada para o profissional.**
+- **Daniel Carnio Costa & Alexandre Nasser de Melo, "Comentários à Lei de Recuperação de Empresas e Falência"** (Juruá, 7ª ed.; 6ª ed. ISBN 9786526314470) — Daniel Carnio Costa é o autor mais relevante para a **prática da administração judicial** (ex-juiz da 1ª Vara de Falências e RJ de SP, criador da teoria da "gestão democrática de processos de insolvência"). **A mais útil para quem atua com administração judicial.**
+- **Scalzilli, Spinelli & Tellechea, "Recuperação de Empresas e Falência: Teoria e Prática na Lei 11.101/2005"** (Almedina Brasil, 4ª ed., 2023, ISBN 9786556277776, atualizada pela Lei 14.112/2020) — a mais completa em "teoria e prática".
+- **Manoel Justino Bezerra Filho, "Lei de Recuperação de Empresas e Falência comentada artigo por artigo"** (Revista dos Tribunais/Thomson Reuters, 17ª ed., 2025, ISBN 9786526011416) — o comentário artigo-por-artigo clássico.
+- **Fábio Ulhoa Coelho, "Comentários à Lei de Falências e de Recuperação de Empresas"** (Revista dos Tribunais, 16ª/17ª ed., 2025/2026) — doutrina consolidada.
+- **Formação técnica:** os cursos de certificação de Administrador Judicial do **IBAJUD** e do **TMA Brasil** (que inclui módulo "TMA em Finanças – Perspectiva Contábil e Financeira das Empresas em Reestruturação") são a melhor fonte prática de modelagem financeira em RJ — não há livro comercial equivalente. Para a mecânica de valuation, recorrer a Póvoa e Damodaran + laudos públicos de consultorias (Apsis e outras).
+
+## Recommendations
+
+**Sequência de leitura recomendada** (para quem já atua em RX/M&A):
+
+**Etapa 1 — Consolidar a base técnica imediata (0–3 meses):**
+1. Rosenbaum & Pearl, "Investment Banking" (3ª ed.) — reancorar comps, DCF, LBO, M&A e o capítulo de restructuring.
+2. Moyer, "Distressed Debt Analysis" — a leitura nº 1 de distressed.
+3. Fridson & Alvarez, "Financial Statement Analysis: A Practitioner's Guide" + Schilit, "Financial Shenanigans" — para blindar a análise de crédito contra manipulação.
+
+**Etapa 2 — Aprofundar valuation e distressed (3–9 meses):**
+4. Koller/McKinsey, "Valuation" (7ª/8ª ed.) + Damodaran, "The Dark Side of Valuation".
+5. Altman & Hotchkiss, "Corporate Financial Distress, Restructuring, and Bankruptcy".
+6. Penman, "Financial Statement Analysis and Security Valuation" — para o rigor contábil-valuation.
+7. Gilson, "Creating Value Through Corporate Restructuring" — casos.
+
+**Etapa 3 — Modelagem avançada e M&A distressed (paralelo/contínuo):**
+8. Benninga, "Financial Modeling" + Bodmer, "Corporate and Project Finance Modeling" (estruturas de dívida, waterfalls).
+9. Nesvold/Anapolsky/Lajoux, "The Art of Distressed M&A" + DePamphilis.
+10. Curso de Administrador Judicial (IBAJUD ou TMA Brasil) + Sacramone/Daniel Carnio Costa para o enquadramento da Lei 11.101/2005.
+
+**Etapa 4 — Base doutrinária e teórica (enriquecimento, sem pressa):**
+11. Iudícibus, "Teoria da Contabilidade" + Hendriksen & Van Breda.
+12. Paton, "Accounting Theory" (1922, grátis no Internet Archive) e Pacioli (tratado traduzido, "Tratado de Contas e Escrituras").
+13. Besta/Masi/Zappa — apenas se dominar italiano; caso contrário, ler via Lopes de Sá e histórias do pensamento contábil brasileiro.
+
+**Benchmarks que mudam a recomendação:** se o foco for predominantemente **jurídico-processual** de RJ, priorizar Sacramone e Daniel Carnio Costa sobre os livros de modelagem. Se o foco for **investimento em dívida distressed** (fundo/mesa), priorizar Moyer, Altman e Whitman. Se for **assessoria financeira (FA)/turnaround**, priorizar Rosenbaum & Pearl, Slatter & Lovett e os cursos IBAJUD/TMA.
+
+## Caveats
+- As faixas de preço e "edição mais recente" refletem catálogos de julho/2026 e variam; a 8ª edição do "Valuation" da McKinsey foi publicada em 20/05/2025 e a 17ª ed. de Ulhoa Coelho aparece datada como 2026 (edição do ano/pré-lançamento na Livraria RT).
+- As obras de Besta, Masi e Zappa **não têm tradução em português** confirmada — este é um achado firme da pesquisa, mas a ausência de tradução nunca pode ser provada em definitivo; podem existir traduções parciais obscuras em periódicos (como o artigo isolado de Masi traduzido por Francisco Valle).
+- Não há um livro-texto único e dominante sobre modelagem financeira específica de reestruturação de dívida (waterfalls, covenants, recovery); esta é uma lacuna real do mercado editorial, suprida por cursos e pela combinação de várias obras.
+- Algumas páginas encontradas (Academia.edu, Grokipedia, blogs) são fontes secundárias ou de qualidade variável; para as obras em domínio público, priorizar Internet Archive, HathiTrust, Linda Hall Library e repositórios universitários italianos (Ca' Foscari, Unipd) para Besta/Zappa/Masi.
