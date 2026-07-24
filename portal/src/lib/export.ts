@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import type { CampoExtraido } from "./types";
 import {
   classificarConta,
@@ -32,6 +33,59 @@ import {
 //
 // Função pura (sem Supabase/Next.js) para ser testável isoladamente — a rota
 // (`app/casos/[id]/export/route.ts`) só busca os dados e chama esta função.
+
+// Padroniza o período (periodo.tipo + periodo.referencia — convenções livres
+// vindas da extração: "12M25", "1T25", "L24M", "23,24,25", datas ISO/BR,
+// texto livre) num modelo pronto de "períodos e intervalos", sem jargão
+// técnico ("multi", "data-base") nem convenções cifradas na tela. Pedido do
+// dono (sessão 7 cont.¹⁵): "simplificar e deixar mais objetiva a escrita de
+// período". Nunca lança — o que não reconhece, devolve como veio (nunca pior
+// que o comportamento anterior).
+function anoDe4Digitos(anoTexto: string): string {
+  if (anoTexto.length === 4) return anoTexto;
+  const n = Number(anoTexto);
+  return String(n <= 79 ? 2000 + n : 1900 + n);
+}
+
+function formatarDataBR(ref: string): string {
+  const iso = ref.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : ref;
+}
+
+export function formatarPeriodo(tipo: string | null, referencia: string | null): string {
+  const ref = (referencia ?? "").trim();
+  const t = (tipo ?? "").trim();
+  if (!ref) return "—";
+
+  const ultimosMeses = ref.match(/^L(\d+)M$/i);
+  if (ultimosMeses) return `Últimos ${ultimosMeses[1]} meses`;
+
+  const anoFiscal = ref.match(/^(\d+)M(\d{2,4})$/i);
+  if (anoFiscal) {
+    const nMeses = Number(anoFiscal[1]);
+    const ano = anoDe4Digitos(anoFiscal[2]);
+    return nMeses === 12 ? ano : `${nMeses} meses/${ano}`;
+  }
+
+  const trimestre = ref.match(/^(\d)T(\d{2,4})$/i);
+  if (trimestre) return `${trimestre[1]}º Tri/${anoDe4Digitos(trimestre[2])}`;
+
+  if (t === "data-base") return formatarDataBR(ref);
+
+  if (t === "multi" || /,/.test(ref)) {
+    const anos = ref
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => (/^\d{1,4}$/.test(p) ? anoDe4Digitos(p) : p));
+    if (anos.length === 2) return `${anos[0]}–${anos[1]}`;
+    if (anos.length > 2) return anos.join(", ");
+  }
+
+  if (/^\d{4}$/.test(ref)) return ref;
+
+  return ref; // texto livre já descritivo (ex.: "Jan/2024 a Dez/2025") — mantém como veio
+}
 
 // tipo_taxonomia → nome da aba (ordem de prioridade travada em f0/07;
 // Balancete/Combinado entram na mesma família estrutural do Balanço).
@@ -94,12 +148,6 @@ export interface DocumentoParaExport {
   documento_versao: Array<{ id: string; nome_original: string | null }> | null;
 }
 
-export interface TaxonomiaParaExport {
-  codigo: string;
-  documento: string;
-  versao: number;
-}
-
 interface ContextoVersao {
   entidade: string;
   periodo: string;
@@ -132,7 +180,16 @@ function melhorCampo(campos: CampoExtraido[]): CampoExtraido {
   return [...campos].sort((a, b) => (b.confianca ?? 0) - (a.confianca ?? 0) || a.chave.length - b.chave.length)[0];
 }
 
-function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao, versaoTaxonomia: number | null) {
+// Fonte compacta (8pt) + caixa de comentário ampliada (ver `ampliarNotas`,
+// pós-processamento do .xlsx — a API do ExcelJS não expõe tamanho de caixa de
+// nota, só o conteúdo/fonte) — as anotações tinham texto cortado ao abrir
+// (pedido do dono, sessão 7 cont.¹⁵).
+const NOTA_FONT: Partial<ExcelJS.Font> = { size: 8, name: "Calibri" };
+function comoNota(texto: string): ExcelJS.Comment {
+  return { texts: [{ text: texto, font: NOTA_FONT }] };
+}
+
+function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao) {
   const linhas = [
     `Rótulo original: "${campo.chave}"`,
     campo.entidade_coluna ? `Coluna de origem no documento: ${campo.entidade_coluna}` : null,
@@ -141,7 +198,6 @@ function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao, versaoTaxon
     campo.confianca != null ? `Confiança da extração: ${Math.round(campo.confianca * 100)}%` : null,
     `Status: ${formatarStatus(campo.status_aceite)}`,
     campo.status_aceite === "aceito" && campo.aceito_por ? `Aceito por: ${campo.aceito_por}` : null,
-    versaoTaxonomia != null ? `Versão da taxonomia: ${versaoTaxonomia}` : null,
   ].filter(Boolean);
   return linhas.join("\n");
 }
@@ -179,7 +235,6 @@ function escreverLinhaConta(
   grupo: GrupoConta,
   opts: { negrito?: boolean; borda?: "simples" | "dupla" },
   contextoPorVersao: Map<string, ContextoVersao>,
-  taxonomiaPorCodigo: Map<string, { label: string; versao: number }>,
 ) {
   const row = sheet.getRow(rowIndex);
   row.getCell(1).value = label;
@@ -201,8 +256,7 @@ function escreverLinhaConta(
     }
     const ctx = contextoPorVersao.get(campo.documento_versao_id);
     if (ctx) {
-      const tax = ctx.tipoTaxonomia ? taxonomiaPorCodigo.get(ctx.tipoTaxonomia) : undefined;
-      cell.note = notaProveniencia(campo, ctx, tax?.versao ?? null);
+      cell.note = comoNota(notaProveniencia(campo, ctx));
     }
   });
 }
@@ -240,7 +294,6 @@ function construirAbaClassificada(
   colunas: Coluna[],
   camposDaAba: Array<{ campo: CampoExtraido; colKey: string }>,
   contextoPorVersao: Map<string, ContextoVersao>,
-  taxonomiaPorCodigo: Map<string, { label: string; versao: number }>,
 ) {
   const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   sheet.getColumn(1).width = 46;
@@ -284,7 +337,7 @@ function construirAbaClassificada(
 
   let rowIndex = 2;
   const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) =>
-    escreverLinhaConta(sheet, rowIndex++, label, nivel, colunas, grupo, opts, contextoPorVersao, taxonomiaPorCodigo);
+    escreverLinhaConta(sheet, rowIndex++, label, nivel, colunas, grupo, opts, contextoPorVersao);
 
   // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
   // abaixo do cabeçalho com a fórmula. Se divergir do subtotal calculado,
@@ -307,9 +360,11 @@ function construirAbaClassificada(
       const vCalc = subtotalNum.get(col.key);
       if (vCalc != null && Math.abs(vCalc - vExtraido) > Math.max(0.01, Math.abs(vExtraido) * 0.005)) {
         cell.fill = DIVERGENCIA_FILL;
-        cell.note = `Divergência: soma calculada = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
+        cell.note = comoNota(
+          `Divergência: soma calculada = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
           + `informado no documento = ${vExtraido.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. `
-          + `Conferir a extração contra o arquivo original.`;
+          + `Conferir a extração contra o arquivo original.`,
+        );
         // sinaliza também a célula da fórmula (cabeçalho)
         sheet.getRow(cabecalhoIdx).getCell(i + 2).fill = DIVERGENCIA_FILL;
       }
@@ -573,13 +628,12 @@ interface LinhaSimples {
   aceitoPor: string | null;
   aceitoEm: string | null;
   arquivoOrigem: string;
-  versaoTaxonomia: number | null;
 }
 
 // Nota de proveniência da linha simples (mesmo espírito de `notaProveniencia`,
 // para os campos que a v20 pediu pra tirar da grade — seção/página/unidade/
-// confiança/aceito por/aceito em/arquivo/versão da taxonomia continuam
-// rastreáveis, só saem de coluna própria pra virar um comentário no rótulo).
+// confiança/aceito por/aceito em/arquivo continuam rastreáveis, só saem de
+// coluna própria pra virar um comentário no rótulo).
 function notaProvenienciaSimples(linha: LinhaSimples): string {
   const partes = [
     linha.secao !== "(sem seção)" ? `Seção: ${linha.secao}` : null,
@@ -590,7 +644,6 @@ function notaProvenienciaSimples(linha: LinhaSimples): string {
     `Status: ${formatarStatus(linha.statusAceite)}`,
     linha.statusAceite === "aceito" && linha.aceitoPor ? `Aceito por: ${linha.aceitoPor}` : null,
     linha.aceitoEm ? `Aceito em: ${new Date(linha.aceitoEm).toLocaleString("pt-BR")}` : null,
-    linha.versaoTaxonomia != null ? `Versão da taxonomia: ${linha.versaoTaxonomia}` : null,
   ].filter(Boolean);
   return partes.join("\n");
 }
@@ -625,7 +678,7 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
       valorNum: linha.valorNum ?? linha.valorTexto ?? null,
       statusAceite: formatarStatus(linha.statusAceite),
     });
-    row.getCell("chave").note = notaProvenienciaSimples(linha);
+    row.getCell("chave").note = comoNota(notaProvenienciaSimples(linha));
     if (typeof row.getCell("valorNum").value === "number") row.getCell("valorNum").numFmt = VALOR_NUM_FMT;
     if (/total/i.test(linha.chave)) row.font = { bold: true };
     if (linha.statusAceite !== "aceito") {
@@ -639,19 +692,15 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
 
 export function buildExportWorkbook({
   caso,
-  taxonomia,
   documentos,
   campos,
   agora = new Date(),
 }: {
   caso: { nome: string; produto: string };
-  taxonomia: TaxonomiaParaExport[];
   documentos: DocumentoParaExport[];
   campos: CampoExtraido[];
   agora?: Date;
 }): ExcelJS.Workbook {
-  const taxonomiaPorCodigo = new Map(taxonomia.map((t) => [t.codigo, { label: t.documento, versao: t.versao }]));
-
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
   // permite juntar campo_extraido (que só sabe a versão) com o resto.
   const contextoPorVersao = new Map<string, ContextoVersao>();
@@ -659,7 +708,7 @@ export function buildExportWorkbook({
     for (const versao of doc.documento_versao ?? []) {
       contextoPorVersao.set(versao.id, {
         entidade: doc.entidade?.razao_social ?? "(sem entidade)",
-        periodo: doc.periodo ? `${doc.periodo.tipo} ${doc.periodo.referencia}` : "(sem período)",
+        periodo: doc.periodo ? formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia) : "(sem período)",
         tipoTaxonomia: doc.tipo_taxonomia,
         nomeArquivo: versao.nome_original ?? "(sem nome)",
       });
@@ -714,7 +763,6 @@ export function buildExportWorkbook({
       if (!camposPorAba.has(aba)) camposPorAba.set(aba, []);
       camposPorAba.get(aba)!.push({ campo, colKey });
     } else {
-      const tax = ctx.tipoTaxonomia ? taxonomiaPorCodigo.get(ctx.tipoTaxonomia) : undefined;
       if (!linhasSimplesPorAba.has(aba)) linhasSimplesPorAba.set(aba, []);
       linhasSimplesPorAba.get(aba)!.push({
         entidade: entidadeColuna,
@@ -730,7 +778,6 @@ export function buildExportWorkbook({
         aceitoPor: campo.aceito_por,
         aceitoEm: campo.aceito_em,
         arquivoOrigem: ctx.nomeArquivo,
-        versaoTaxonomia: tax?.versao ?? null,
       });
     }
   }
@@ -739,12 +786,14 @@ export function buildExportWorkbook({
   workbook.creator = "Oria — Tratamento de Dados Financeiros";
   workbook.created = agora;
 
-  // ----- Aba Resumo (metadados do snapshot, f0/07: "data-base e versão da
-  // taxonomia registradas") -----
+  // ----- Aba Resumo (metadados do snapshot) -----
+  // Pedido do dono (sessão 7 cont.¹⁵): tipo/versão de taxonomia é detalhe
+  // interno de classificação, não algo que o time de análise precisa ver na
+  // planilha — some daqui (e de toda nota/aviso) mas continua orientando o
+  // roteamento por aba internamente (`tipo_taxonomia`/`ABA_POR_TIPO`).
   const resumo = workbook.addWorksheet("Resumo");
   const totalLinhas = campos.length;
   const totalAceitas = campos.filter((c) => c.status_aceite === "aceito").length;
-  const versoesTaxonomia = [...new Set([...taxonomiaPorCodigo.values()].map((t) => t.versao))].sort();
   resumo.columns = [{ width: 32 }, { width: 60 }];
   resumo.addRows([
     ["Caso", caso.nome],
@@ -753,7 +802,6 @@ export function buildExportWorkbook({
     ["Linhas totais extraídas", totalLinhas],
     ["Linhas aceitas (fato)", totalAceitas],
     ["Linhas pendentes (sugestão, revisar)", totalLinhas - totalAceitas],
-    ["Versão(ões) da taxonomia envolvidas", versoesTaxonomia.join(", ") || "—"],
     [""],
     [
       "Aviso",
@@ -787,7 +835,6 @@ export function buildExportWorkbook({
         colunas,
         camposPorAba.get(aba) ?? [],
         contextoPorVersao,
-        taxonomiaPorCodigo,
       );
     } else {
       const linhas = linhasSimplesPorAba.get(aba);
@@ -797,6 +844,31 @@ export function buildExportWorkbook({
   }
 
   return workbook;
+}
+
+// ExcelJS grava a caixa de toda nota (`cell.note`) com um tamanho FIXO no XML
+// VML (`width:97.8pt;height:59.1pt`, ~130×80px) — hardcoded no próprio
+// pacote (`lib/xlsx/xform/comment/vml-shape-xform.js`), sem parâmetro público
+// pra mudar (conferido lendo o fonte, não só o `.d.ts`). É por isso que
+// anotações com texto de várias linhas apareciam cortadas ao abrir (pedido do
+// dono, sessão 7 cont.¹⁵). Sem editar `node_modules`, o único jeito é
+// pós-processar o .xlsx já gerado: ele é um .zip, então abrimos com JSZip
+// (já vem como dependência transitiva do próprio exceljs), achamos as partes
+// `xl/drawings/vmlDrawing*.vml` e trocamos a string de tamanho fixo por uma
+// caixa bem maior, igual para toda nota do workbook (o hardcode do exceljs
+// já é idêntico em todas — troca segura por string).
+const NOTA_BOX_ANTIGA = "width:97.8pt;height:59.1pt";
+const NOTA_BOX_NOVA = "width:340pt;height:170pt";
+
+export async function ampliarNotasNoBuffer(buffer: Buffer | ArrayBuffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  const vmlPaths = Object.keys(zip.files).filter((p) => /^xl\/drawings\/vmlDrawing\d+\.vml$/.test(p));
+  for (const path of vmlPaths) {
+    const xml = await zip.file(path)!.async("string");
+    if (!xml.includes(NOTA_BOX_ANTIGA)) continue;
+    zip.file(path, xml.split(NOTA_BOX_ANTIGA).join(NOTA_BOX_NOVA));
+  }
+  return zip.generateAsync({ type: "nodebuffer" });
 }
 
 // Reexportado para eventuais consumidores que só precisem agrupar por conta
