@@ -262,13 +262,17 @@ function adicionarAoGrupo(grupo: GrupoConta, colKey: string, campo: CampoExtraid
 }
 
 // Escreve uma linha de conta (rótulo + valor por coluna + nota de
-// proveniência + estilo pendente/total) numa `sheet` já criada.
+// proveniência + estilo pendente/total) numa `sheet` já criada. `valuePos[i]`
+// = posição (número da coluna Excel) onde a coluna de valor `i` é escrita — as
+// colunas de valor NÃO são mais contíguas (intercalam AV%/Δ%), então tudo é
+// endereçado pelo plano de colunas, não por `i + 2`.
 function escreverLinhaConta(
   sheet: ExcelJS.Worksheet,
   rowIndex: number,
   label: string,
   nivel: number,
   colunas: Coluna[],
+  valuePos: number[],
   grupo: GrupoConta,
   opts: { negrito?: boolean; borda?: "simples" | "dupla" },
   contextoPorVersao: Map<string, ContextoVersao>,
@@ -279,7 +283,7 @@ function escreverLinhaConta(
   if (opts.negrito) row.font = { bold: true };
 
   colunas.forEach((col, i) => {
-    const cell = row.getCell(i + 2);
+    const cell = row.getCell(valuePos[i]);
     if (opts.borda === "simples") cell.border = THIN_TOP_BORDER;
     if (opts.borda === "dupla") cell.border = DOUBLE_TOP_BORDER;
     const candidatos = grupo.porColuna.get(col.key);
@@ -307,6 +311,49 @@ const MARGEM_LABEL: Record<string, string> = {
   lucro_liquido: "Margem Líquida %",
 };
 
+// ----- Camada analítica (f0/08): análise vertical / horizontal / indicadores.
+// Colunas AV% (análise vertical, common-size) e Δ% (análise horizontal, entre
+// períodos comparáveis da mesma entidade) são FÓRMULAS transparentes sobre o
+// dado já extraído — não projetam nem inventam número. Estilo discreto
+// (cinza-azulado, menor) para não competir com os valores.
+const ANALISE_FONT: Partial<ExcelJS.Font> = { italic: true, size: 9, color: { argb: "FF64748B" } };
+const ANALISE_HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } };
+const AV_FMT = "0.0%";
+const DELTA_FMT = "+0.0%;-0.0%;0.0%";
+const RATIO_FMT = "0.00"; // índices "x vezes" (liquidez, participação)
+const PCT_FMT = "0.0%"; // índices em % (endividamento, composição, imobilização)
+const INDICADOR_TITULO_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0E7FF" } };
+const INDICADOR_LABEL_FONT: Partial<ExcelJS.Font> = { size: 10, color: { argb: "FF1E293B" } };
+
+// Plano de colunas do relatório: as colunas de VALOR (entidade×período) não são
+// mais contíguas — cada uma pode ser seguida de sua AV% e, quando comparável ao
+// período anterior da MESMA entidade, de uma Δ%. Centraliza o mapeamento
+// "índice da coluna de valor → coluna Excel real" para que todas as fórmulas
+// (subtotais, margens, indicadores) refiram a célula certa.
+interface PlanoColunas {
+  valuePos: number[]; // i (coluna de valor) → nº da coluna Excel
+  avPos: Array<number | null>; // i → coluna Excel da AV% (null quando não se aplica, ex.: Fluxo)
+  deltas: Array<{ pos: number; atual: number; anterior: number }>; // colunas Δ%
+  ultimaColuna: number;
+}
+
+function planejarColunas(colunas: Coluna[], comAV: boolean): PlanoColunas {
+  const valuePos: number[] = [];
+  const avPos: Array<number | null> = [];
+  const deltas: Array<{ pos: number; atual: number; anterior: number }> = [];
+  let col = 2; // coluna 1 = rótulo da conta
+  colunas.forEach((coluna, i) => {
+    valuePos[i] = col++;
+    avPos[i] = comAV ? col++ : null;
+    // Δ% só entre períodos DIFERENTES da MESMA entidade, adjacentes na ordenação
+    // (as colunas vêm ordenadas por entidade e depois período).
+    if (i > 0 && colunas[i - 1].entidade === coluna.entidade && colunas[i - 1].periodo !== coluna.periodo) {
+      deltas.push({ pos: col++, atual: i, anterior: i - 1 });
+    }
+  });
+  return { valuePos, avPos, deltas, ultimaColuna: col - 1 };
+}
+
 // valor_num "melhor" de um grupo de conta numa coluna (para conferir a soma em
 // JS contra o total que o documento trouxe — a célula em si leva a FÓRMULA).
 function valorNumDoGrupo(grupo: GrupoConta, colKey: string): number | null {
@@ -333,19 +380,43 @@ function construirAbaClassificada(
   contextoPorVersao: Map<string, ContextoVersao>,
 ) {
   const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
+  // AV% (análise vertical) só faz sentido onde há uma base natural (Ativo Total
+  // no Balanço; Receita Líquida na DRE). No Fluxo de Caixa não há base — só Δ%.
+  const comAV = estrutura !== "fluxo_caixa";
+  const plano = planejarColunas(colunas, comAV);
+  const colLetra = (i: number) => sheet.getColumn(plano.valuePos[i]).letter;
+
   sheet.getColumn(1).width = 46;
-  colunas.forEach((_, i) => {
-    sheet.getColumn(i + 2).width = 20;
+  plano.valuePos.forEach((pos) => {
+    sheet.getColumn(pos).width = 18;
   });
-  const colLetra = (i: number) => sheet.getColumn(i + 2).letter;
+  plano.avPos.forEach((pos) => {
+    if (pos != null) sheet.getColumn(pos).width = 8;
+  });
+  plano.deltas.forEach((d) => {
+    sheet.getColumn(d.pos).width = 12;
+  });
 
   const headerRow = sheet.getRow(1);
   headerRow.getCell(1).value = "Conta";
   colunas.forEach((col, i) => {
-    headerRow.getCell(i + 2).value = `${col.entidade} — ${col.periodo}`;
+    const cell = headerRow.getCell(plano.valuePos[i]);
+    cell.value = `${col.entidade} — ${col.periodo}`;
+    cell.fill = HEADER_FILL;
+    const av = plano.avPos[i];
+    if (av != null) {
+      const avCell = headerRow.getCell(av);
+      avCell.value = "AV%";
+      avCell.fill = ANALISE_HEADER_FILL;
+    }
   });
+  plano.deltas.forEach((d) => {
+    const cell = headerRow.getCell(d.pos);
+    cell.value = `Δ% ${colunas[d.anterior].periodo}→${colunas[d.atual].periodo}`;
+    cell.fill = ANALISE_HEADER_FILL;
+  });
+  headerRow.getCell(1).fill = HEADER_FILL;
   headerRow.font = { bold: true };
-  headerRow.fill = HEADER_FILL;
   headerRow.alignment = { wrapText: true, vertical: "middle" };
 
   // Classifica cada campo: conta numa seção (bucket), âncora (total que o doc
@@ -373,8 +444,19 @@ function construirAbaClassificada(
   }
 
   let rowIndex = 2;
-  const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) =>
-    escreverLinhaConta(sheet, rowIndex++, label, nivel, colunas, grupo, opts, contextoPorVersao);
+  // Linhas monetárias elegíveis a AV%/Δ% (contas + subtotais + âncoras);
+  // exclui cabeçalhos de seção sem valor, linhas de conferência e margens.
+  const linhasValor = new Set<number>();
+  // Balanço: nó da estrutura → linha do seu subtotal (para os indicadores).
+  const noRow = new Map<string, number>();
+  let baseTotalRow: number | null = null; // base da AV% (Ativo Total / Receita Líquida)
+
+  const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) => {
+    const r = rowIndex++;
+    escreverLinhaConta(sheet, r, label, nivel, colunas, plano.valuePos, grupo, opts, contextoPorVersao);
+    linhasValor.add(r);
+    return r;
+  };
 
   // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
   // abaixo do cabeçalho com a fórmula. Se divergir do subtotal calculado,
@@ -388,7 +470,7 @@ function construirAbaClassificada(
     row.getCell(1).alignment = { indent: nivel + 1 };
     row.getCell(1).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
     colunas.forEach((col, i) => {
-      const cell = row.getCell(i + 2);
+      const cell = row.getCell(plano.valuePos[i]);
       const vExtraido = valorNumDoGrupo(grupo, col.key);
       if (vExtraido == null) return;
       cell.value = vExtraido;
@@ -403,7 +485,7 @@ function construirAbaClassificada(
           + `Conferir a extração contra o arquivo original.`,
         );
         // sinaliza também a célula da fórmula (cabeçalho)
-        sheet.getRow(cabecalhoIdx).getCell(i + 2).fill = DIVERGENCIA_FILL;
+        sheet.getRow(cabecalhoIdx).getCell(plano.valuePos[i]).fill = DIVERGENCIA_FILL;
       }
     });
   };
@@ -442,7 +524,7 @@ function construirAbaClassificada(
         row.font = { bold: true };
         row.fill = fill;
         colunas.forEach((col, i) => {
-          const cell = row.getCell(i + 2);
+          const cell = row.getCell(plano.valuePos[i]);
           cell.font = { bold: true };
           if (temContas) {
             // caso normal: subtotal = soma das contas-folha.
@@ -466,6 +548,8 @@ function construirAbaClassificada(
             cell.numFmt = VALOR_NUM_FMT;
           }
         });
+        noRow.set(no.key, cabIdx);
+        linhasValor.add(cabIdx);
         // Só mostra a linha de conferência quando REALMENTE há uma soma para
         // conferir contra o informado (senão o cabeçalho já É o informado).
         if (temAncora && temContas) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
@@ -492,7 +576,7 @@ function construirAbaClassificada(
       row.fill = fill;
       const dupla = no.papel === "grupo";
       colunas.forEach((col, i) => {
-        const cell = row.getCell(i + 2);
+        const cell = row.getCell(plano.valuePos[i]);
         cell.font = { bold: true };
         if (filhosIdx.length) {
           cell.value = { formula: filhosIdx.map((r) => `${colLetra(i)}${r}`).join("+") } as ExcelJS.CellFormulaValue;
@@ -500,11 +584,14 @@ function construirAbaClassificada(
         }
         if (dupla) cell.border = DOUBLE_TOP_BORDER;
       });
+      noRow.set(no.key, cabIdx);
+      linhasValor.add(cabIdx);
       if (valoresPorAncora.has(no.key)) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
       return { idx: cabIdx, subtotalNum };
     };
 
     for (const raiz of BALANCO_OUTLINE.filter((n) => n.nivel === 0)) emitirNo(raiz.key);
+    baseTotalRow = noRow.get("ATIVO") ?? null;
   } else {
     // Layout sequencial (DRE / Fluxo de Caixa): seção → contas → subtotal
     // (âncora). Subtotal é FÓRMULA: DRE é cascata cumulativa (cada subtotal =
@@ -543,7 +630,7 @@ function construirAbaClassificada(
         row.getCell(1).value = ancoraSecao.label;
         row.getCell(1).font = { bold: true };
         colunas.forEach((col, i) => {
-          const cell = row.getCell(i + 2);
+          const cell = row.getCell(plano.valuePos[i]);
           cell.font = { bold: true };
           cell.border = THIN_TOP_BORDER;
           let formula: string | null = null;
@@ -570,6 +657,7 @@ function construirAbaClassificada(
         });
         idxAncora.set(ancoraSecao.key, idx);
         subtotalAncora.set(ancoraSecao.key, subtotalNum);
+        linhasValor.add(idx);
         if (estrutura === "dre") dreAncoraAnteriorIdx = idx;
         if (valoresPorAncora.has(ancoraSecao.key)) escreverConferenciaExtraido(0, ancoraSecao.key, idx, subtotalNum);
 
@@ -587,7 +675,7 @@ function construirAbaClassificada(
           mrow.getCell(1).alignment = { indent: 1 };
           mrow.getCell(1).font = MARGEM_FONT;
           colunas.forEach((col, i) => {
-            const cell = mrow.getCell(i + 2);
+            const cell = mrow.getCell(plano.valuePos[i]);
             cell.value = { formula: `IFERROR(${colLetra(i)}${idx}/${colLetra(i)}${rlIdx},"")` } as ExcelJS.CellFormulaValue;
             cell.numFmt = "0.0%";
             cell.font = MARGEM_FONT;
@@ -595,6 +683,7 @@ function construirAbaClassificada(
         }
       }
     }
+    if (estrutura === "dre") baseTotalRow = idxAncora.get("receita_liquida") ?? null;
 
     // Âncoras "livres" (não presas a uma seção): Fluxo de Caixa —
     // variação líquida = soma dos 3 caixas líquidos; saldo final = saldo
@@ -607,7 +696,7 @@ function construirAbaClassificada(
       row.getCell(1).font = { bold: true };
       const subtotalNum = new Map<string, number>();
       colunas.forEach((col, i) => {
-        const cell = row.getCell(i + 2);
+        const cell = row.getCell(plano.valuePos[i]);
         cell.font = { bold: true };
         cell.border = THIN_TOP_BORDER;
         let formula: string | null = null;
@@ -635,6 +724,7 @@ function construirAbaClassificada(
       });
       idxAncora.set(ancora.key, idx);
       subtotalAncora.set(ancora.key, subtotalNum);
+      linhasValor.add(idx);
     }
   }
 
@@ -646,6 +736,139 @@ function construirAbaClassificada(
     tituloRow.font = { bold: true, italic: true };
     tituloRow.fill = NAO_CLASSIFICADO_FILL;
     for (const conta of naoClassificados.values()) escrever(conta.label, 1, conta);
+  }
+
+  // ----- Camada analítica (f0/08): AV% (common-size) e Δ% (tendência). -----
+  // Fórmulas transparentes sobre as MESMAS células de valor já escritas — não
+  // inventam nada; a linha subjacente segue pendente/âmbar até o aceite.
+  preencherAnaliseVerticalHorizontal(sheet, plano, [...linhasValor], baseTotalRow);
+
+  // ----- Indicadores de liquidez/estrutura (Balanço) — f0/08. -----
+  if (estrutura === "balanco") {
+    escreverIndicadoresBalanco(sheet, plano, colunas, noRow, () => rowIndex++);
+  }
+}
+
+// AV% e Δ% para todas as linhas monetárias. AV% = valor ÷ base (Ativo Total ou
+// Receita Líquida); Δ% = (período atual − anterior) ÷ anterior. Só escreve onde
+// a(s) célula(s) de valor referida(s) têm conteúdo — nunca força um % órfão.
+function preencherAnaliseVerticalHorizontal(
+  sheet: ExcelJS.Worksheet,
+  plano: PlanoColunas,
+  linhas: number[],
+  baseTotalRow: number | null,
+) {
+  const temValor = (r: number, pos: number) => {
+    const v = sheet.getRow(r).getCell(pos).value;
+    return v != null && v !== "";
+  };
+  for (const r of linhas) {
+    // Análise vertical
+    if (baseTotalRow != null) {
+      plano.valuePos.forEach((vp, i) => {
+        const av = plano.avPos[i];
+        if (av == null || !temValor(r, vp)) return;
+        const L = sheet.getColumn(vp).letter;
+        const cell = sheet.getRow(r).getCell(av);
+        cell.value = { formula: `IFERROR(${L}${r}/${L}${baseTotalRow},"")` } as ExcelJS.CellFormulaValue;
+        cell.numFmt = AV_FMT;
+        cell.font = ANALISE_FONT;
+      });
+    }
+    // Análise horizontal
+    for (const d of plano.deltas) {
+      const posAt = plano.valuePos[d.atual];
+      const posAn = plano.valuePos[d.anterior];
+      if (!temValor(r, posAt) || !temValor(r, posAn)) continue;
+      const Lat = sheet.getColumn(posAt).letter;
+      const Lan = sheet.getColumn(posAn).letter;
+      const cell = sheet.getRow(r).getCell(d.pos);
+      cell.value = { formula: `IFERROR((${Lat}${r}-${Lan}${r})/${Lan}${r},"")` } as ExcelJS.CellFormulaValue;
+      cell.numFmt = DELTA_FMT;
+      cell.font = ANALISE_FONT;
+    }
+  }
+}
+
+// Bloco de indicadores de liquidez e estrutura de capital ao pé do Balanço
+// (Matarazzo/Assaf Neto; CFI credit analysis — f0/08). Cada indicador é uma
+// FÓRMULA por coluna referenciando as linhas de subtotal do próprio Balanço
+// (via `noRow`), com IFERROR: se o insumo não existe, a célula fica vazia —
+// nunca estimamos. Índices que exigem detalhamento de conta ainda não isolado
+// (liquidez seca/imediata, cobertura de juros, dívida líquida, ciclo de caixa,
+// ROA/ROE, Altman Z'') ficam de fora por ora — ver f0/08.
+function escreverIndicadoresBalanco(
+  sheet: ExcelJS.Worksheet,
+  plano: PlanoColunas,
+  colunas: Coluna[],
+  noRow: Map<string, number>,
+  proximaLinha: () => number,
+) {
+  const AC = noRow.get("ativo_circulante");
+  const ATV = noRow.get("ATIVO");
+  const PC = noRow.get("passivo_circulante");
+  const PNC = noRow.get("passivo_nao_circulante");
+  const PL = noRow.get("patrimonio_liquido");
+  const RLP = noRow.get("realizavel_lp");
+  const IMOB = noRow.get("imobilizado");
+  const INV = noRow.get("investimentos");
+  const INT = noRow.get("intangivel");
+  // Sem as âncoras estruturais mínimas não há o que calcular.
+  if (AC == null || ATV == null || PC == null || PNC == null || PL == null) return;
+
+  const cel = (i: number, row: number | undefined) => (row == null ? null : `${sheet.getColumn(plano.valuePos[i]).letter}${row}`);
+
+  const indicadores: Array<{ label: string; fmt: string; formula: (i: number) => string | null }> = [
+    { label: "Liquidez Corrente (AC ÷ PC)", fmt: RATIO_FMT, formula: (i) => `${cel(i, AC)}/${cel(i, PC)}` },
+    {
+      label: "Liquidez Geral ((AC + Realizável LP) ÷ (PC + PNC))",
+      fmt: RATIO_FMT,
+      formula: (i) => {
+        const ac = cel(i, AC)!;
+        const rlp = cel(i, RLP);
+        const num = rlp ? `(${ac}+${rlp})` : ac;
+        return `${num}/(${cel(i, PC)}+${cel(i, PNC)})`;
+      },
+    },
+    { label: "Endividamento Geral ((PC + PNC) ÷ Ativo Total)", fmt: PCT_FMT, formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, ATV)}` },
+    { label: "Composição do Endividamento (PC ÷ (PC + PNC))", fmt: PCT_FMT, formula: (i) => `${cel(i, PC)}/(${cel(i, PC)}+${cel(i, PNC)})` },
+    { label: "Participação de Capital de Terceiros ((PC + PNC) ÷ PL)", fmt: PCT_FMT, formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, PL)}` },
+    {
+      label: "Imobilização do PL ((Imob. + Invest. + Intang.) ÷ PL)",
+      fmt: PCT_FMT,
+      formula: (i) => {
+        const partes = [cel(i, IMOB), cel(i, INV), cel(i, INT)].filter(Boolean);
+        if (partes.length === 0) return null;
+        return `(${partes.join("+")})/${cel(i, PL)}`;
+      },
+    },
+  ];
+
+  proximaLinha(); // linha em branco separando do balanço
+  const titulo = sheet.getRow(proximaLinha());
+  titulo.getCell(1).value = "Indicadores de Liquidez e Estrutura";
+  titulo.font = { bold: true };
+  titulo.fill = INDICADOR_TITULO_FILL;
+  titulo.getCell(1).note = comoNota(
+    "Índices calculados por fórmula sobre os subtotais extraídos deste Balanço (Matarazzo/Assaf Neto; "
+    + "f0/08). Célula vazia = insumo não disponível na extração (nunca estimado). Índices que exigem "
+    + "detalhamento de conta ainda não isolado (liquidez seca/imediata, cobertura de juros, dívida "
+    + "líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') ficam de fora desta versão — ver f0/08. "
+    + "Valores derivados de linhas ainda PENDENTES seguem pendentes até o aceite humano.",
+  );
+
+  for (const ind of indicadores) {
+    const r = proximaLinha();
+    const row = sheet.getRow(r);
+    row.getCell(1).value = ind.label;
+    row.getCell(1).font = INDICADOR_LABEL_FONT;
+    colunas.forEach((_, i) => {
+      const f = ind.formula(i);
+      if (!f) return;
+      const cell = row.getCell(plano.valuePos[i]);
+      cell.value = { formula: `IFERROR(${f},"")` } as ExcelJS.CellFormulaValue;
+      cell.numFmt = ind.fmt;
+    });
   }
 }
 
