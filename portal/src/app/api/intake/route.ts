@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseFormFieldNames } from "@/lib/n8n-form";
 
 // Recebe o upload do portal (multipart) e ENCAMINHA para a URL do Form do N8N
 // — servidor-a-servidor (sem CORS). O pipeline (classificação/extração/
@@ -10,12 +11,47 @@ import { NextResponse } from "next/server";
 // Precisa do runtime Node (streams/FormData de arquivo), não Edge.
 export const runtime = "nodejs";
 
-// Os nomes dos campos esperados pelo Form do N8N são configuráveis por env —
-// o default casa com os rótulos atuais do formulário (n8n/build-workflow.mjs:
-// "Mandato (nome do caso)" / "Arquivos"). Se a instância do dono usar rótulos
-// diferentes, basta ajustar as envs, sem mexer no código.
-const CAMPO_MANDATO = process.env.N8N_INTAKE_FIELD_MANDATO || "Mandato (nome do caso)";
-const CAMPO_ARQUIVOS = process.env.N8N_INTAKE_FIELD_ARQUIVOS || "Arquivos";
+// Nomes de campo: se as envs vierem preenchidas, são um override explícito
+// (usadas direto). Sem elas, o nome é DESCOBERTO lendo o HTML do próprio Form
+// do N8N (ver n8n-form.ts) — não adivinhado. Achado em produção (sessão 7
+// cont.¹²): o portal enviava um POST com os rótulos visíveis ("Mandato (nome
+// do caso)"/"Arquivos") como nome de campo, mas o N8N pode gerar um atributo
+// `name` INTERNO diferente do rótulo. O webhook aceitava o POST (200 OK — "o
+// upload deu certo" no portal) mas o workflow não recebia arquivo nenhum sob
+// o nome esperado, o node `Listar Arquivos` lançava erro e a execução morria
+// ANTES de qualquer chamada à OpenAI — daí "sucesso na tela, 0 tokens gastos".
+const CAMPO_MANDATO_ENV = process.env.N8N_INTAKE_FIELD_MANDATO || null;
+const CAMPO_ARQUIVOS_ENV = process.env.N8N_INTAKE_FIELD_ARQUIVOS || null;
+// Fallback de último recurso, só usado se não houver env E a descoberta falhar
+// (instância fora do ar, HTML inesperado etc.) — mantém o comportamento
+// anterior em vez de travar o upload por completo.
+const CAMPO_MANDATO_FALLBACK = "Mandato (nome do caso)";
+const CAMPO_ARQUIVOS_FALLBACK = "Arquivos";
+
+async function descobrirNomesDeCampo(url: string): Promise<{ mandato: string; arquivos: string; descoberto: boolean }> {
+  if (CAMPO_MANDATO_ENV && CAMPO_ARQUIVOS_ENV) {
+    return { mandato: CAMPO_MANDATO_ENV, arquivos: CAMPO_ARQUIVOS_ENV, descoberto: false };
+  }
+  try {
+    const resp = await fetch(url, { method: "GET" });
+    if (!resp.ok) throw new Error(`GET do form retornou HTTP ${resp.status}`);
+    const html = await resp.text();
+    const { fileFieldName, textFieldName } = parseFormFieldNames(html);
+    return {
+      mandato: CAMPO_MANDATO_ENV || textFieldName || CAMPO_MANDATO_FALLBACK,
+      arquivos: CAMPO_ARQUIVOS_ENV || fileFieldName || CAMPO_ARQUIVOS_FALLBACK,
+      descoberto: Boolean(!CAMPO_MANDATO_ENV && textFieldName) || Boolean(!CAMPO_ARQUIVOS_ENV && fileFieldName),
+    };
+  } catch {
+    // Sem acesso de leitura ao form (rede, URL errada) — cai no fallback;
+    // o erro "de verdade" (se houver) aparece no POST logo em seguida.
+    return {
+      mandato: CAMPO_MANDATO_ENV || CAMPO_MANDATO_FALLBACK,
+      arquivos: CAMPO_ARQUIVOS_ENV || CAMPO_ARQUIVOS_FALLBACK,
+      descoberto: false,
+    };
+  }
+}
 
 export async function POST(request: Request) {
   const url = process.env.N8N_INTAKE_FORM_URL;
@@ -48,11 +84,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Selecione ao menos um arquivo." }, { status: 400 });
   }
 
+  const campos = await descobrirNomesDeCampo(url);
+
   // Monta o multipart no formato do Form do N8N e encaminha.
   const fwd = new FormData();
-  fwd.append(CAMPO_MANDATO, mandato);
+  fwd.append(campos.mandato, mandato);
   for (const arquivo of arquivos) {
-    fwd.append(CAMPO_ARQUIVOS, arquivo, arquivo.name);
+    fwd.append(campos.arquivos, arquivo, arquivo.name);
   }
 
   let resp: Response;
@@ -69,11 +107,17 @@ export async function POST(request: Request) {
     const detalhe = await resp.text().catch(() => "");
     return NextResponse.json(
       {
-        error: `O N8N recusou a submissão (HTTP ${resp.status}). Confira a URL do Form e os nomes dos campos. ${detalhe.slice(0, 300)}`,
+        error: `O N8N recusou a submissão (HTTP ${resp.status}). Confira a URL do Form e os nomes dos campos ` +
+          `(usados: mandato="${campos.mandato}", arquivos="${campos.arquivos}"). ${detalhe.slice(0, 300)}`,
       },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({ ok: true, mandato, arquivos: arquivos.length });
+  return NextResponse.json({
+    ok: true,
+    mandato,
+    arquivos: arquivos.length,
+    desde: new Date().toISOString(),
+  });
 }

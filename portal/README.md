@@ -101,9 +101,16 @@ arquivos" — ver abaixo):
   Sem essa env, as páginas de upload mostram um aviso de "não configurado" (o
   resto do portal funciona normalmente).
 - `N8N_INTAKE_FIELD_MANDATO` / `N8N_INTAKE_FIELD_ARQUIVOS` (opcionais) — nomes
-  dos campos do Form, caso a instância use rótulos diferentes dos padrões
-  (`Mandato (nome do caso)` / `Arquivos`). Só ajuste se o encaminhamento
-  retornar erro de campo.
+  dos campos do Form. **Normalmente não precisa configurar**: o portal
+  DESCOBRE os nomes reais dos campos sozinho, lendo o HTML do próprio Form
+  antes de enviar (`src/lib/n8n-form.ts`) — não adivinha/fixa `"Mandato (nome
+  do caso)"`/`"Arquivos"` como antes. Isso existe porque o N8N pode aceitar o
+  POST com HTTP 200 mesmo quando o nome do campo está errado (o formulário
+  "aceita a submissão" antes de saber se o workflow vai processar), e nesse
+  caso o workflow falha silenciosamente SEM gastar nenhum token — sintoma:
+  portal mostra sucesso, mas nada aparece no mandato e nenhum custo de IA é
+  gerado (achado em produção, sessão 7 cont.¹²). Só defina essas envs se quiser
+  **forçar** um nome específico (override manual).
 
 ### Upload pelo portal e o conceito de "mandato"
 
@@ -122,6 +129,17 @@ para enviar mais em outro momento.
 > cai no mesmo caso de qualquer forma. Subir esse teto (upload direto do browser
 > para o N8N/Storage, contornando a Function) é uma melhoria futura anotada no
 > HANDOFF.
+
+### Depois do envio: acompanhamento e aviso de conclusão
+
+O upload não tem retorno síncrono do processamento (classificação + extração
+rodam depois, fora do portal) — em vez de mostrar termos técnicos, o portal
+acompanha silenciosamente em segundo plano (`GET /api/intake/status`, polling
+a cada ~8s por até ~12 min) e, quando os arquivos enviados terminam de passar
+pelo pipeline, mostra um aviso ("Tudo pronto") sem precisar recarregar a
+página. "Pronto" aqui significa "terminou de tentar" (`documento` criado +
+evento de extração gravado para cada arquivo), não "sem pendências" —
+divergências/revisões continuam visíveis no dashboard do mandato como sempre.
 
 Depois de rodar as migrations do `db/` (até a `0011` inclusive):
 
@@ -150,8 +168,8 @@ para logar.
 - `npm run build` — build de produção completo, todas as rotas compilam
   (com env vars de teste; `/casos`, `/casos/[id]`, `/casos/[id]/revisao`,
   `/casos/[id]/documentos/[docId]`, `/casos/[id]/export`, `/casos/novo`,
-  `/casos/[id]/adicionar`, `/api/intake` e `/login` corretamente dinâmicas,
-  `/` estática).
+  `/casos/[id]/adicionar`, `/api/intake`, `/api/intake/status` e `/login`
+  corretamente dinâmicas, `/` estática).
 - `src/lib/export.ts` + `src/lib/statement-templates.ts` (classificação +
   montagem do workbook) testados isoladamente com dados sintéticos via `tsx`
   + `exceljs`, incluindo o cenário que motivou a reformulação: **duas
