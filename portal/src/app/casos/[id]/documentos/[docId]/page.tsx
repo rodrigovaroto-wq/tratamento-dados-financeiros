@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { CampoExtraido, Documento } from "@/lib/types";
+import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 import { aceitarExtracao } from "./actions";
 
 function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
@@ -76,9 +77,9 @@ export default async function PlanilhaDocumentoPage({
         </Link>
         <h1 className="mt-2 text-lg font-semibold">{versao?.nome_original ?? "(sem nome)"}</h1>
         <p className="text-xs text-neutral-500">
-          {doc.tipo_taxonomia ?? "não classificado"}
+          {formatarTipoTaxonomia(doc.tipo_taxonomia)}
           {doc.entidade?.razao_social ? ` · ${doc.entidade.razao_social}` : ""}
-          {doc.periodo ? ` · ${doc.periodo.tipo} ${doc.periodo.referencia}` : ""}
+          {doc.periodo ? ` · ${formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia)}` : ""}
         </p>
       </div>
 
