@@ -35,6 +35,14 @@ import {
 
 // tipo_taxonomia → nome da aba (ordem de prioridade travada em f0/07;
 // Balancete/Combinado entram na mesma família estrutural do Balanço).
+//
+// MUTUOS e FAT_INTRAGRUPO são categoria "Intragrupo" na própria taxonomia
+// (db/migrations/0002) — mútuo entre empresas do grupo não é DÍVIDA externa
+// (banco/financiamento, como MAPA_DIVIDA/CONTRATO_DIVIDA); misturar as duas
+// na mesma aba "Dívida" era uma classificação sem sentido contábil (achado em
+// produção, sessão 7 cont.¹⁴). CONTRATO_SOCIAL (Societário/Legal) também
+// ganhou aba própria em vez de cair no genérico "Outros" junto com dado
+// tabular não relacionado.
 export const ABA_POR_TIPO: Record<string, string> = {
   BALANCO: "Balanço",
   DRE: "DRE",
@@ -42,9 +50,11 @@ export const ABA_POR_TIPO: Record<string, string> = {
   COMBINADO: "Combinado",
   BALANCETE: "Balancete",
   FATURAMENTO_24M: "Faturamento",
-  MUTUOS: "Dívida",
   MAPA_DIVIDA: "Dívida",
   CONTRATO_DIVIDA: "Dívida",
+  MUTUOS: "Intragrupo",
+  FAT_INTRAGRUPO: "Intragrupo",
+  CONTRATO_SOCIAL: "Societário",
   FLUXO_PROJETADO: "Fluxo Projetado",
 };
 export const ORDEM_ABAS = [
@@ -55,6 +65,8 @@ export const ORDEM_ABAS = [
   "Balancete",
   "Faturamento",
   "Dívida",
+  "Intragrupo",
+  "Societário",
   "Fluxo Projetado",
   "Outros",
 ];
@@ -564,6 +576,31 @@ interface LinhaSimples {
   versaoTaxonomia: number | null;
 }
 
+// Nota de proveniência da linha simples (mesmo espírito de `notaProveniencia`,
+// para os campos que a v20 pediu pra tirar da grade — seção/página/unidade/
+// confiança/aceito por/aceito em/arquivo/versão da taxonomia continuam
+// rastreáveis, só saem de coluna própria pra virar um comentário no rótulo).
+function notaProvenienciaSimples(linha: LinhaSimples): string {
+  const partes = [
+    linha.secao !== "(sem seção)" ? `Seção: ${linha.secao}` : null,
+    `Arquivo: ${linha.arquivoOrigem}`,
+    linha.pagina != null ? `Página: ${linha.pagina}` : null,
+    linha.unidade ? `Unidade: ${linha.unidade}` : null,
+    linha.confianca != null ? `Confiança da extração: ${Math.round(linha.confianca * 100)}%` : null,
+    `Status: ${formatarStatus(linha.statusAceite)}`,
+    linha.statusAceite === "aceito" && linha.aceitoPor ? `Aceito por: ${linha.aceitoPor}` : null,
+    linha.aceitoEm ? `Aceito em: ${new Date(linha.aceitoEm).toLocaleString("pt-BR")}` : null,
+    linha.versaoTaxonomia != null ? `Versão da taxonomia: ${linha.versaoTaxonomia}` : null,
+  ].filter(Boolean);
+  return partes.join("\n");
+}
+
+// Colunas reduzidas ao essencial (pedido do dono, sessão 7 cont.¹⁴): a
+// listagem simples (Faturamento, Dívida, Intragrupo, Societário, ...) tinha 13
+// colunas — a maioria delas técnica/de rastreabilidade (seção, página,
+// unidade, confiança, aceito por/em, arquivo, versão da taxonomia), poluindo
+// a leitura de quem só quer ver conta × valor. Essas informações não somem —
+// viram um comentário (`cell.note`) no rótulo, visível ao passar o mouse.
 function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas: LinhaSimples[]) {
   linhas.sort((a, b) =>
     a.entidade.localeCompare(b.entidade) || a.periodo.localeCompare(b.periodo) || a.secao.localeCompare(b.secao),
@@ -573,17 +610,9 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
   sheet.columns = [
     { header: "Entidade", key: "entidade", width: 26 },
     { header: "Período", key: "periodo", width: 14 },
-    { header: "Seção", key: "secao", width: 24 },
-    { header: "Rótulo", key: "chave", width: 34 },
+    { header: "Rótulo", key: "chave", width: 38 },
     { header: "Valor", key: "valorNum", width: 16 },
-    { header: "Unidade", key: "unidade", width: 10 },
-    { header: "Página", key: "pagina", width: 8 },
-    { header: "Confiança", key: "confianca", width: 10 },
     { header: "Status", key: "statusAceite", width: 12 },
-    { header: "Aceito por", key: "aceitoPor", width: 22 },
-    { header: "Aceito em", key: "aceitoEm", width: 18 },
-    { header: "Arquivo de origem", key: "arquivoOrigem", width: 30 },
-    { header: "Versão taxonomia", key: "versaoTaxonomia", width: 14 },
   ];
   sheet.getRow(1).font = { bold: true };
   sheet.getRow(1).fill = HEADER_FILL;
@@ -592,18 +621,11 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
     const row = sheet.addRow({
       entidade: linha.entidade,
       periodo: linha.periodo,
-      secao: linha.secao,
       chave: linha.chave,
       valorNum: linha.valorNum ?? linha.valorTexto ?? null,
-      unidade: linha.unidade ?? "",
-      pagina: linha.pagina ?? "",
-      confianca: linha.confianca != null ? linha.confianca : "",
       statusAceite: formatarStatus(linha.statusAceite),
-      aceitoPor: linha.aceitoPor ?? "",
-      aceitoEm: linha.aceitoEm ? new Date(linha.aceitoEm).toLocaleString("pt-BR") : "",
-      arquivoOrigem: linha.arquivoOrigem,
-      versaoTaxonomia: linha.versaoTaxonomia ?? "",
     });
+    row.getCell("chave").note = notaProvenienciaSimples(linha);
     if (typeof row.getCell("valorNum").value === "number") row.getCell("valorNum").numFmt = VALOR_NUM_FMT;
     if (/total/i.test(linha.chave)) row.font = { bold: true };
     if (linha.statusAceite !== "aceito") {
@@ -666,7 +688,7 @@ export function buildExportWorkbook({
     // não são tocadas. Continua N1: a linha segue pendente/âmbar até o aceite.
     let aba = abaDoc;
     if (estruturaDoc) {
-      const familiaLinha = classificarDemonstracao(campo.secao, campo.chave, campo.secao_canonica);
+      const familiaLinha = classificarDemonstracao(campo.secao, campo.chave, campo.secao_canonica, estruturaDoc);
       if (familiaLinha && familiaLinha !== estruturaDoc) {
         aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
       }

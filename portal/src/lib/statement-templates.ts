@@ -469,11 +469,24 @@ const FAMILIA_POR_SECAO_CANONICA: Record<string, EstruturaDemonstracao> = {
 // dentro da aba (classificarConta). Prioridade:
 //   1) secao_canonica (a IA olhou o conteúdo e disse a qual demonstração é) —
 //      "o modelo identifica o que é DRE e o que é Balanço", pedido do dono;
-//   2) fallback determinístico quando a IA não anotou — ordem Fluxo de Caixa →
-//      DRE → Balanço, porque os sinais de Fluxo/DRE são específicos e o de
-//      Balanço casa "caixa" de forma gulosa (senão uma linha de Fluxo cairia
-//      no Ativo Circulante, o bug real observado);
-//   3) null quando nenhum sinal claro — o chamador mantém a linha na aba do
+//   2) a linha bate com a estrutura do PRÓPRIO documento (`estruturaDocumento`,
+//      quando informado) — evita reroteio por ambiguidade legítima de
+//      vocabulário entre demonstrações. Achado em produção (sessão 7 cont.¹⁴):
+//      "Lucro Líquido do Exercício" é âncora TANTO da DRE (linha de fechamento)
+//      QUANTO do Fluxo de Caixa indireto (ponto de partida da reconciliação) —
+//      o mesmo rótulo, dois sentidos legítimos. Um documento que é SÓ uma DRE
+//      (sem Fluxo de Caixa embutido) tinha essa linha desviada pra aba Fluxo de
+//      Caixa (que vinha antes na ordem de prioridade abaixo), criando uma
+//      coluna fantasma lá. Preferir a estrutura do próprio documento quando ela
+//      TAMBÉM reconhece a linha resolve a ambiguidade a favor do que é mais
+//      provável (o documento já é dessa demonstração);
+//   3) fallback determinístico quando a estrutura do documento não reconhece a
+//      linha (aí sim é sinal de que ela pertence a OUTRA demonstração — o caso
+//      de um PDF que combina várias) — ordem Fluxo de Caixa → DRE → Balanço,
+//      porque os sinais de Fluxo/DRE são específicos e o de Balanço casa
+//      "caixa" de forma gulosa (senão uma linha de Fluxo cairia no Ativo
+//      Circulante, o bug real observado);
+//   4) null quando nenhum sinal claro — o chamador mantém a linha na aba do
 //      tipo do documento (conservador).
 // Não decide nada como fato: a linha continua N1/pendente até o aceite humano;
 // isto afeta só EM QUAL ABA a sugestão aparece.
@@ -481,9 +494,19 @@ export function classificarDemonstracao(
   secao: string | null,
   chave: string,
   secaoCanonica?: string | null,
+  estruturaDocumento?: EstruturaDemonstracao | null,
 ): EstruturaDemonstracao | null {
   if (secaoCanonica && FAMILIA_POR_SECAO_CANONICA[secaoCanonica]) {
     return FAMILIA_POR_SECAO_CANONICA[secaoCanonica];
+  }
+  if (estruturaDocumento) {
+    const propria =
+      estruturaDocumento === "fluxo_caixa"
+        ? classificarFluxoCaixa(secao, chave)
+        : estruturaDocumento === "dre"
+          ? classificarDRE(secao, chave)
+          : classificarBalanco(secao, chave);
+    if (propria.secaoKey || propria.ancoraKey) return estruturaDocumento;
   }
   const fc = classificarFluxoCaixa(secao, chave);
   if (fc.secaoKey || fc.ancoraKey) return "fluxo_caixa";
