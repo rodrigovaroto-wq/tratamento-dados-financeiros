@@ -1,11 +1,13 @@
 # Handoff — Tratamento de Dados Financeiros (Oria)
 
-Nota de transição de contexto. Última atualização: 2026-07-23 (fim da sessão 7; inclui a reescrita
+Nota de transição de contexto. Última atualização: 2026-07-24 (fim da sessão 7; inclui a reescrita
 do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" —, a Reconciliação
 Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
 "Sessão 7 (cont.⁷)" —, o fix da causa real dessa extração vazia: rate limit no upload em lote —
 ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
-"Sessão 7 (cont.⁹)" — e o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)").
+"Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" — e a
+2ª rodada de hardening pós-"teste v18" (chaves de fio curtas + batching mais conservador + kit de
+PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -751,6 +753,63 @@ mesmo checklist/export/reconciliação.
   batching+período já mergeados) mostrar dado de verdade. Documentos Word/.xlsx (gap de formato
   levantado pelo dono) também continuam pendentes (item nos próximos passos).
 
+### Sessão 7 (cont.¹¹) — "Teste v18" (16 docs reais, US$3): 9/16 ok, 7 falharam — 2ª rodada de hardening
+Pedido do dono: OODA — analisar o que ainda quebra/não está otimizado e executar. O dono rodou o
+lote real de 16 documentos ("teste v18", já com o batching+período mergeados) e reportou o
+resultado: **797 linhas extraídas com sucesso** (progresso real vs. 0 da cont.⁷), mas **7 de 16
+documentos ainda falharam** — 3 com o MESMO 429 de rate limit da cont.⁸, 3 com truncamento
+(`finish_reason=length`) mesmo com `max_tokens=16384` (cont.⁷), e 1 sinal de padrão suspeito
+(guarda 0013 funcionando corretamente).
+- **Padrão real identificado:** todos os 7 falhos são demonstrações CONSOLIDADAS COMPARATIVAS
+  MULTI-ANO (ex. "Balanço Consolidado 2022 e 2023.pdf", "DRE Consolidado 2024.pdf") — o PIOR caso
+  possível: mais tokens de ENTRADA (2-3 anos de dados no PDF) e mais tokens de SAÍDA (cada conta
+  vira 2-3 linhas via `periodo_coluna`, cont.⁹). Os 9 documentos "Sky/Fort Lub/Embrepar" (multi-
+  demonstração — Balanço+DRE+DFC+DMPL — mas de UM ano só) funcionaram bem, o que descarta a
+  hipótese de "documento com várias demonstrações = sempre denso demais".
+- **Fix 1 — chaves de fio curtas (`n8n/lib/extract.mjs` + mirror):** o array `linhas[]` é o único
+  bloco repetido centenas de vezes por documento — cada caractere de nome de propriedade é gasto
+  DE NOVO a cada linha na saída JSON. Renomeado `secao→s, secao_canonica→sc, entidade_coluna→ec,
+  periodo_coluna→pc, chave→k, valor_texto→vt, valor_num→vn, origem_pagina→op, confianca→cf` SÓ na
+  conversa com a OpenAI (com `description` em cada campo pra não perder a orientação do modelo);
+  `parseExtractionResponse` remapeia de volta pros nomes completos — **nada gravado no banco
+  muda**. Redução medida: ~30-40% de bytes por linha (teste trava >=15%). Mitigação PARCIAL e
+  honesta: ajuda todo documento, mas documentos genuinamente enormes (300+ linhas) podem ainda
+  passar de 16384 tokens mesmo compactado — a correção completa exigiria dividir a extração em
+  múltiplas chamadas (por página ou por período), o que é uma mudança de topologia do grafo do N8N
+  que **não dá pra validar sem uma instância N8N viva** (decisão consciente de NÃO implementar às
+  cegas — ver "Itens adiados" abaixo).
+- **Fix 2 — batching mais conservador (`OPENAI_BATCHING`, `maxTries`):** `batchInterval` 3s→6s,
+  `maxTries` 4→6. Achado: 3s+4 tentativas (cont.⁸) reduziu o 429 de 16/16 pra 3/16, mas não
+  eliminou pros documentos mais pesados (mais tokens de ENTRADA também consomem TPM, não só a
+  cadência de requisições resolve). Trade-off consciente: processa mais devagar.
+- **Workaround imediato pros 3 documentos que ainda truncam:** dividir o PDF em arquivos por ano
+  antes de subir (ex. "Balanço 2022.pdf" + "Balanço 2023.pdf" separados) — cada ano sozinho tem
+  volume comparável aos 9 documentos que já funcionaram bem.
+- **Kit de PDFs sintéticos pra testar sem gastar dinheiro real** (pedido explícito do dono, que não
+  quer "ficar testando infinitamente gastando tokens"): 9 arquivos pequenos (~2-3 KB cada, texto
+  puro, nada escaneado) cobrindo os 8 itens do Kit Básico + Mapa de Dívida (bônus, fecha a
+  checagem Classe B de despesa financeira). Números **deliberadamente consistentes entre
+  arquivos** — Ativo = Passivo+PL (2024 e 2025), Caixa do Balanço = Saldo final do Fluxo, Receita
+  Bruta da DRE = soma dos 12 meses de 2025 no Faturamento 24M, Despesas Financeiras da DRE = soma
+  dos juros no Mapa de Dívida — pra que as reconciliações Classe A **e** Classe B tenham uma chance
+  real de fechar limpo num teste de poucos centavos, não só "a extração rodou". Entregues ao dono
+  fora do repo (são dado de teste, não código).
+- **Testado:** `npm test` do n8n 68/68 (2 testes novos travando o batching endurecido e a redução
+  de bytes por linha). Migrations não mudaram nesta fatia (só `n8n/lib/extract.mjs` +
+  `build-workflow.mjs` + testes). `tsc`/`eslint` do portal inalterados (fatia é só n8n).
+- **Observação à parte (não corrigida aqui):** os 9 documentos "Sky/Fort Lub/Embrepar" (1 entidade,
+  4 demonstrações no mesmo PDF) vieram classificados como `COMBINADO` com a entidade preenchida —
+  pela doutrina (`f0/03`, reforçada na cont.²) isso deveria ser a demonstração PRINCIPAL (ex.
+  `BALANCO`), já que `COMBINADO` é reservado pra grupo de VÁRIAS empresas com colunas por empresa.
+  Não corrigiu os dados (o `entidade_coluna` ficou null corretamente, o export separou por arquivo
+  do jeito certo) — é só um rótulo de classificação errado, cosmético por ora. Vale reforçar o
+  prompt de novo numa sessão futura se persistir.
+- **Itens adiados (arquitetura maior, precisa de N8N vivo pra validar):**
+  1. Dividir a extração em múltiplas chamadas por período/página pra documentos genuinamente
+     enormes (a correção COMPLETA do truncamento) — muda a topologia do grafo (fan-out mid-
+     pipeline), não é seguro de implementar sem testar contra uma instância N8N real.
+  2. Reforçar de novo o prompt BALANCO×COMBINADO (achado acima) se o dono confirmar que persiste.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -789,14 +848,17 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-**GATE ATUAL (bloqueia validar tudo):** o dono precisa mergear o batching+período (branch atual),
-**REIMPORTAR o workflow no N8N** e **aplicar `0016` + `0017`** no Supabase, depois reprocessar o
-"teste v15". Enquanto a extração não completar em produção (hoje travada por 429 no upload em
-lote — ver cont.⁸), todo aprimoramento de export/reconciliação é feito às cegas. Também pendente
-de validação real (só testado local/sintético): reforço de prompt BALANCO×COMBINADO (cont.²),
-Reconciliação Classe B (cont.⁶, precisa de doc com `FATURAMENTO_24M`/`MAPA_DIVIDA`) e a coluna de
-período em documentos comparativos (cont.⁹, precisa confirmar que o LLM popula `periodo_coluna`).
-Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
+**GATE ATUAL (bloqueia validar tudo):** o dono precisa mergear o hardening pós-v18 (branch atual),
+**REIMPORTAR o workflow no N8N** e depois reprocessar. O "teste v18" (16 docs reais) já confirmou
+797 linhas extraídas com sucesso e 9/16 documentos 100% ok — falta confirmar se o batching mais
+conservador (6s/6 tentativas) e as chaves de fio curtas fecham os 7 que ainda falharam, ou se os 3
+mais densos (consolidados comparativos multi-ano) precisam do workaround manual (dividir por ano
+antes de subir) até uma correção de topologia (dividir extração por página/período) ser construída
+e testada contra N8N vivo. Também pendente de validação real: reforço de prompt BALANCO×COMBINADO
+(cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹), Reconciliação Classe B (cont.⁶,
+agora com o kit de PDFs sintéticos — cont.¹¹ — dá pra validar sem custo real), upload pelo portal
+(cont.¹⁰, precisa `N8N_INTAKE_FORM_URL` configurada). Próximo passo natural é uma destas (perguntar
+ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante
@@ -807,17 +869,20 @@ Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
 3. **Suporte a `.docx`/Word e `.xlsx` no `Preparar Conteudo`** (hoje caem em "conteudo nao
    suportado"/nota de texto) — ligar um nó *Extract From File* do N8N antes do `Preparar Conteudo`
    e mandar o texto extraído no lugar do binário. Gap real de "adaptação a arquivos diferentes"
-   levantado pelo dono (não foi a causa do v15, mas é legítimo).
-4. **Refinar a extração de `FATURAMENTO_24M`/`MAPA_DIVIDA`** (hoje schema genérico de linhas) —
+   levantado pelo dono (não foi a causa do v15/v18, mas é legítimo).
+4. **Dividir a extração por página/período pra documentos genuinamente enormes** (cont.¹¹) — a
+   correção COMPLETA do truncamento residual; requer testar contra N8N vivo (mudança de topologia
+   do grafo), por isso ficou fora desta rodada.
+5. **Refinar a extração de `FATURAMENTO_24M`/`MAPA_DIVIDA`** (hoje schema genérico de linhas) —
    é o que faz as checagens de Classe B (e uma futura Classe A de dívida) pararem de cair em
    "precondição não satisfeita" com tanta frequência.
-5. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
+6. **Refinar a granularidade do aceite** (hoje é por documento inteiro) para célula/linha
    individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
    perigoso quando a extração pode vir contaminada/alucinada em volume.
-6. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
+7. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
    `docs/04`) — "não reconcilia, aproxima para humano": mostra as duas fontes, humano decide.
    LLM só como hipótese explicativa de uma divergência já detectada, nunca decide.
-7. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
+8. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
    `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
 
 **Validar com o time de análise** (ainda pendente): se as palavras-chave de seção

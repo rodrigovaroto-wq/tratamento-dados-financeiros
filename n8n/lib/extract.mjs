@@ -83,6 +83,10 @@ const SYSTEM_PROMPT = [
   'justificativa: 1-2 frases explicando o diagnóstico acima (o que você viu ou não viu).',
   '',
   '== LINHAS (planilha) ==',
+  'Cada linha do JSON usa chaves CURTAS (economia de tokens de saída em documentos com muitas',
+  'contas): s=secao, sc=secao_canonica, ec=entidade_coluna, pc=periodo_coluna, k=chave,',
+  'vt=valor_texto, vn=valor_num, op=origem_pagina, cf=confianca. O texto abaixo usa os nomes',
+  'completos (mais claro de explicar) — sempre correspondendo à chave curta do schema.',
   'Extraia TODAS as linhas financeiras do documento (rótulo + valor), preservando a estrutura',
   'original como uma "secao" por linha — ex.: "Ativo Circulante", "Ativo Não Circulante",',
   '"Passivo Circulante", "Passivo Não Circulante", "Patrimônio Líquido", "Receita Operacional",',
@@ -160,25 +164,35 @@ export function extractionSchema() {
             justificativa: { type: 'string' },
           },
         },
+        // Chaves CURTAS de propósito (s/sc/ec/pc/k/vt/vn/op/cf): `linhas` é o
+        // único bloco que se repete centenas de vezes por documento — cada
+        // caractere de nome de propriedade é gasto de novo A CADA linha no
+        // JSON de saída. Documentos consolidados comparativos (2-3 anos lado
+        // a lado, cada conta vira 2-3 linhas via periodo_coluna) truncavam
+        // (finish_reason=length) antes mesmo de terminar de listar as contas —
+        // achado em produção (sessão 7 cont.¹¹, "teste v18": 6 de 16
+        // documentos, todos consolidados multi-ano). Nomes curtos aqui NÃO
+        // mudam nada gravado no banco — `parseExtractionResponse` remapeia de
+        // volta para os nomes completos (campo_extraido.secao_canonica etc.
+        // continuam com os valores descritivos de sempre, só a REPRESENTAÇÃO
+        // NO FIO com a OpenAI é compacta). `description` em cada campo mantém
+        // o modelo orientado apesar do nome curto.
         linhas: {
           type: 'array',
           items: {
             type: 'object',
             additionalProperties: false,
-            required: [
-              'secao', 'secao_canonica', 'entidade_coluna', 'periodo_coluna', 'chave', 'valor_texto',
-              'valor_num', 'origem_pagina', 'confianca',
-            ],
+            required: ['s', 'sc', 'ec', 'pc', 'k', 'vt', 'vn', 'op', 'cf'],
             properties: {
-              secao: { type: ['string', 'null'] },
-              secao_canonica: { type: 'string', enum: SECAO_CANONICA_ENUM },
-              entidade_coluna: { type: ['string', 'null'] },
-              periodo_coluna: { type: ['string', 'null'] },
-              chave: { type: 'string' },
-              valor_texto: { type: ['string', 'null'] },
-              valor_num: { type: ['number', 'null'] },
-              origem_pagina: { type: ['integer', 'null'] },
-              confianca: { type: 'number' },
+              s: { type: ['string', 'null'], description: 'secao: agrupador livre (rótulo do próprio documento)' },
+              sc: { type: 'string', enum: SECAO_CANONICA_ENUM, description: 'secao_canonica: seção padronizada pelo significado contábil' },
+              ec: { type: ['string', 'null'], description: 'entidade_coluna: nome da coluna/empresa quando há várias entidades lado a lado' },
+              pc: { type: ['string', 'null'], description: 'periodo_coluna: rótulo da coluna de período quando há vários períodos lado a lado' },
+              k: { type: 'string', description: 'chave: rótulo da conta' },
+              vt: { type: ['string', 'null'], description: 'valor_texto: valor como aparece no documento' },
+              vn: { type: ['number', 'null'], description: 'valor_num: valor numérico puro' },
+              op: { type: ['integer', 'null'], description: 'origem_pagina: página de origem' },
+              cf: { type: 'number', description: 'confianca: confiança 0-1 desta linha' },
             },
           },
         },
@@ -262,18 +276,21 @@ export function parseExtractionResponse(apiJson) {
     return vazio('Resposta da OpenAI não veio em JSON válido.');
   }
   const unidade = p.unidade ?? null;
+  // Remapeia as chaves curtas do fio (s/sc/ec/pc/k/vt/vn/op/cf) para os nomes
+  // completos usados em todo o resto do sistema (campo_extraido e por diante)
+  // — a compactação é só na conversa com a OpenAI, nada rio abaixo muda.
   const campos = Array.isArray(p.linhas)
     ? p.linhas.map((l) => ({
-        secao: l.secao ?? null,
-        secao_canonica: l.secao_canonica && l.secao_canonica !== 'NAO_CLASSIFICAVEL' ? l.secao_canonica : null,
-        entidade_coluna: l.entidade_coluna ?? null,
-        periodo_coluna: l.periodo_coluna ?? null,
-        chave: l.chave,
-        valor_texto: l.valor_texto ?? null,
-        valor_num: typeof l.valor_num === 'number' ? l.valor_num : null,
+        secao: l.s ?? null,
+        secao_canonica: l.sc && l.sc !== 'NAO_CLASSIFICAVEL' ? l.sc : null,
+        entidade_coluna: l.ec ?? null,
+        periodo_coluna: l.pc ?? null,
+        chave: l.k,
+        valor_texto: l.vt ?? null,
+        valor_num: typeof l.vn === 'number' ? l.vn : null,
         unidade,
-        confianca: typeof l.confianca === 'number' ? l.confianca : null,
-        origem_pagina: Number.isInteger(l.origem_pagina) ? l.origem_pagina : null,
+        confianca: typeof l.cf === 'number' ? l.cf : null,
+        origem_pagina: Number.isInteger(l.op) ? l.op : null,
       }))
     : [];
   const d = p.diagnostico || {};
