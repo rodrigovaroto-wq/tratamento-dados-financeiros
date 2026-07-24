@@ -160,6 +160,22 @@ comparável ao que já funciona. A correção completa (dividir a extração em 
 página/período automaticamente) precisa de uma mudança de topologia do grafo do N8N e só pode ser
 validada contra uma instância viva — ver "Itens adiados" em `HANDOFF.md` (cont.¹¹).
 
+**429 persiste em TODOS os documentos, mesmo pequenos e simples (ex. um PDF de 2-3 KB), mesmo com
+batching:** confirmado em produção (sessão 7 cont.¹³, "teste v19") que a causa raiz pode ser o
+**tier de rate limit da própria conta OpenAI** estar no teto — nenhum espaçamento de código resolve
+isso sozinho. Confira em platform.openai.com → Settings → Limits o RPM/TPM do `gpt-4o` da sua
+conta; se estiver baixo, suba o tier (ou adicione forma de pagamento, se a conta for nova/trial).
+
+**Alguns arquivos do upload em lote NUNCA aparecem no dashboard (nem "não classificado", nem
+pendência nenhuma) — simplesmente somem:** achado em produção (sessão 7 cont.¹³, "teste v19": 9
+arquivos enviados, só 6 apareceram). Causa: os nós Postgres (`Registrar Documento`, `Gravar Campos
+(Sombra)`, etc.) não tinham tratamento de erro — um erro transitório de conexão num ÚNICO item
+(mais provável sob carga, com o rate limit já no teto) **parava a execução inteira**, e todo item
+ainda na fila desaparecia sem nenhum rastro. Corrigido: todos os nós Postgres agora têm
+`onError: continueRegularOutput` + `retryOnFail` (3 tentativas) — um erro vira, no pior caso, um
+item incompleto (nunca fato, doutrina anti-ancoragem), não o lote inteiro sumindo. **Reimporte o
+workflow** para pegar essa correção.
+
 **Erro `The resource you are requesting could not be found` no Upload Storage:** a URL está
 apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**
 (`<ref>.supabase.co/storage/v1/...`). Ver seção Credenciais acima.

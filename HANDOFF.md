@@ -7,9 +7,12 @@ Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silencio
 ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
 "Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" —, a
 2ª rodada de hardening pós-"teste v18" (chaves de fio curtas + batching mais conservador + kit de
-PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" — e o fix do upload pelo portal que
+PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" —, o fix do upload pelo portal que
 "funcionava" mas nunca disparava o workflow (descoberta automática de nome de campo) + pop-up de
-conclusão — ver "Sessão 7 (cont.¹²)").
+conclusão — ver "Sessão 7 (cont.¹²)" —, a confirmação do tier de rate limit + fix do bug dos nós
+Postgres sem tratamento de erro (derrubavam o lote inteiro em silêncio) — ver "Sessão 7 (cont.¹³)" —
+e o fix dos cards da fila de revisão que não somiam + vazamento entre abas do export + limpeza de
+taxonomia/colunas + auto-aceite >=95% — ver "Sessão 7 (cont.¹⁴)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -851,6 +854,92 @@ nunca chegou a rodar de verdade, apesar do portal reportar "enviado com sucesso"
   descoberta não funcionar, o comportamento cai pro que já existia (nomes fixos, ajustáveis via
   env).
 
+### Sessão 7 (cont.¹³) — "Teste v19" (9 arquivos pequenos, kit sintético): confirmação de tier + 2º bug crítico
+Pedido do dono: corrigir "completamente" os erros que fizeram até os 9 PDFs sintéticos pequenos
+(kit da cont.¹¹, ~2-3 KB cada) falharem — nenhuma linha extraída, e alguns arquivos nem aparecendo
+no dashboard.
+- **Contradição que motivou a investigação:** o "teste v18" (16 documentos REAIS, batching de 3s)
+  teve 13/16 sucesso; o "teste v19" (9 arquivos pequenos, batching de 6s — mais conservador) teve
+  0/6 sucesso nas extrações visíveis. Mais espaçamento resultando em MAIS falha é o oposto do
+  esperado — indicava causa fora do código de batching.
+- **Causa 1 confirmada pelo dono:** a conta OpenAI estava genuinamente no teto do rate limit (RPM)
+  — ele confirmou e subiu o tier durante a sessão. Nenhum espaçamento de código resolve isso
+  sozinho quando o teto real da conta é mais baixo que a cadência tentada; **"0 tokens gastos" no
+  painel da OpenAI é exatamente o esperado num 429 genuíno** (a requisição é rejeitada antes de
+  qualquer processamento, não cobra token nenhum) — não era evidência CONTRA a hipótese de rate
+  limit, e sim a favor.
+- **Causa 2 — bug real, achado investigando por que 3 dos 9 arquivos nunca apareceram no
+  dashboard (nem "não classificado", nem pendência):** os 6 nós Postgres do pipeline
+  (`Upsert Caso`, `Registrar Documento`, `Recomputar Completude`, `Gravar Campos (Sombra)`,
+  `Registrar Diagnostico`, `Reconciliar (Classe A)`) não tinham NENHUM tratamento de erro — ao
+  contrário dos nós OpenAI, que já tinham `onError:continueRegularOutput` desde a cont.⁸. Um erro
+  transitório de conexão num ÚNICO item (mais provável sob a carga do lote, com o rate limit já no
+  teto) **parava a execução inteira do N8N**, e todo item ainda na fila desaparecia sem nenhum
+  rastro — exatamente o sintoma "3 de 9 arquivos somem". Corrigido: todos os 6 nós Postgres agora
+  têm `onError:continueRegularOutput` + `retryOnFail` (3 tentativas, 3s entre elas) — o pior caso
+  agora é "esse item específico fica incompleto" (nunca vira fato, segue N0/pendente, doutrina
+  anti-ancoragem docs/01), não "o lote inteiro desaparece em silêncio".
+- **Testado:** `npm test` do n8n 69/69 (1 teste novo travando onError+retryOnFail+maxTries nos 6
+  nós Postgres). `tsc`/`eslint` do portal inalterados (fatia é só n8n).
+- **Ainda por confirmar pelo dono:** reimportar o workflow (pega o retry dos nós Postgres) e
+  reprocessar o kit de PDFs sintéticos de novo, agora com o tier da OpenAI já corrigido — deve
+  extrair 100% das linhas dos 9 arquivos (são pequenos e simples de propósito, o "caso mais fácil
+  possível" pro pipeline).
+
+### Sessão 7 (cont.¹⁴) — "Teste v20" (kit sintético reprocessado): 2 bugs reais + auto-aceite + limpeza de export
+O kit de PDFs sintéticos reprocessado ("teste v20", com o rate limit corrigido e os fixes de
+extração/Postgres já mergeados) veio 100% classificado (Kit Básico inteiro "presente", 113 linhas
+extraídas) — a extração em si funcionou. Análise do resultado (export + fila de revisão) achou 4
+problemas reais, todos corrigidos nesta fatia.
+
+- **BUG 1 — cards da fila de revisão não somem ao confirmar/salvar (confirmado ao vivo):** os
+  prints do dono mostravam documentos já com `fonte=humano, confiança=100%` (ou seja, o "Confirmar/
+  salvar" JÁ tinha rodado) mas o card continuava na fila com "PERÍODO PODE ESTAR INCORRETO". Lendo
+  `fn_revisar_documento` (0008): ela só resolve pendências do tipo `classificacao_pendente` — as
+  outras três (`tipo_incorreto`/`entidade_incorreta`/`periodo_incorreto`, introduzidas pela 0010
+  MUITO depois e nunca conectadas de volta a esta função) nunca fecham, mesmo depois da revisão
+  humana confirmar/corrigir. **`db/migrations/0018`**: mesma função, mesma assinatura, resolve os
+  quatro tipos agora.
+- **BUG 2 — vazamento entre abas do export:** a aba "Fluxo de Caixa" tinha uma coluna FANTASMA
+  ("Teste Indústria Ltda — multi 02,25") com só a linha "Lucro Líquido do Exercício" (600.000) —
+  vinda do arquivo da DRE, que não tem NENHUMA linha de fluxo de caixa. Causa:
+  "Lucro Líquido do Exercício" é âncora TANTO da DRE (linha de fechamento) QUANTO do Fluxo de Caixa
+  indireto (ponto de partida da reconciliação) — mesmo rótulo, dois sentidos legítimos — e
+  `classificarDemonstracao` (`statement-templates.ts`) checava Fluxo de Caixa ANTES de checar a
+  estrutura do próprio documento, então uma DRE isolada perdia a própria linha de fechamento pra
+  aba errada. Fix: `classificarDemonstracao` agora recebe a estrutura do PRÓPRIO documento e
+  prioriza mantê-la ali quando ela também reconhece a linha — só reroteia pra outra família quando a
+  estrutura do documento não reconhece a linha (o caso genuíno de PDF combinado).
+- **BUG/ACHADO 3 — "taxonomia estranha":** `MUTUOS` (categoria "Intragrupo" na própria taxonomia,
+  `db/migrations/0002`) estava mapeado pra aba "Dívida" — um mútuo intragrupo não é dívida bancária
+  externa (`MAPA_DIVIDA`/`CONTRATO_DIVIDA`), misturar os dois numa aba só não fazia sentido
+  contábil. `FAT_INTRAGRUPO` e `CONTRATO_SOCIAL` nem tinham aba própria, caindo no genérico
+  "Outros" junto com dado sem relação nenhuma. Fix (`portal/src/lib/export.ts`): `MUTUOS`/
+  `FAT_INTRAGRUPO` → aba nova "Intragrupo"; `CONTRATO_SOCIAL` → aba nova "Societário".
+- **Pedido 4 — colunas mais simples na listagem simples** (Faturamento/Dívida/Intragrupo/
+  Societário/Fluxo Projetado): tinha 13 colunas, a maioria técnica/rastreabilidade (seção, página,
+  unidade, confiança, aceito por/em, arquivo de origem, versão da taxonomia) — poluindo quem só
+  quer ver conta × valor. Reduzido pra 5 (Entidade, Período, Rótulo, Valor, Status); as removidas
+  NÃO somem — viram um comentário (`cell.note`) no rótulo, visível ao passar o mouse (mantém
+  rastreabilidade sem poluir a grade, princípio de `f0/07_output_spec.md`).
+- **Pedido 5 — auto-aceite >=95% de confiança:** decisão de produto explícita do dono, registrada
+  com a ressalva honesta de que isto sobe a autonomia da extração além do que a doutrina padrão
+  (`docs/01`) exigiria sem golden-set validado — a `confianca` é a autoavaliação do PRÓPRIO modelo,
+  não verificada contra gabarito humano. Implementado mesmo assim (é uma escolha do dono, não da
+  IA), com registro completo: `db/migrations/0019` grava `status_aceite='aceito'` já na extração
+  quando `confianca >= 0.95`, com UM `decisao`(autor='sistema:auto_aceite')+`evento_auditoria` por
+  chamada (resumo, não por linha) — auditável/reversível. Inclui backfill pras linhas já gravadas
+  antes desta migration. Recomendação registrada: acompanhar a taxa de erro real nas linhas
+  auto-aceitas e ajustar o limiar (hoje 0.95, hardcoded) se necessário.
+- **Testado:** os dois fixes de SQL provados contra Postgres 16 local com dado real (pendência
+  `periodo_incorreto` resolvendo corretamente; confiança 90% ficando pendente e 95%/97% auto-
+  aceitando; backfill promovendo linha antiga; idempotência confirmada). Export validado com
+  harness `tsx` reproduzindo o cenário exato do bug (DRE isolada não vaza mais pra Fluxo de Caixa;
+  MUTUOS/FAT_INTRAGRUPO vão pra Intragrupo; CONTRATO_SOCIAL vai pra Societário; listagem simples
+  com 5 colunas). `tsc`/`eslint`/`next build` limpos.
+- **Precisa:** aplicar `0018`+`0019` no Supabase (sem mudança no N8N — esta fatia é só Postgres +
+  export do portal). Re-exportar o "teste v20" pra conferir visualmente o resultado.
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -889,16 +978,18 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-**GATE ATUAL:** o upload pelo portal tinha um bug crítico (cont.¹²: "sucesso" na tela mas o
-workflow nunca disparava, 0 tokens gastos) — corrigido com descoberta automática de nome de campo,
-mas **não testável aqui contra o N8N real do dono**. Falta o dono: mergear esta fatia, testar um
-envio pelo portal e confirmar que agora o mandato realmente processa (o pop-up "Tudo pronto" deve
-aparecer). Em paralelo, o gate de sempre continua: reprocessar os 7 documentos do "teste v18" que
-ainda falharam com o hardening da cont.¹¹ (batching 6s/6 tentativas + chaves de fio curtas), ou
-usar o workaround manual (dividir por ano) pros 3 mais densos. Também pendente de validação real:
-reforço de prompt BALANCO×COMBINADO (cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹),
-Reconciliação Classe B (cont.⁶, agora com o kit de PDFs sintéticos — cont.¹¹ — dá pra validar sem
-custo real). Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
+**GATE ATUAL:** o "teste v20" mostrou que a extração em si já está boa (100% classificado, 113
+linhas) — os problemas achados agora eram de REVISÃO/EXPORT (fila não fechando, vazamento entre
+abas, taxonomia confusa), já corrigidos (cont.¹⁴, `0018`+`0019`). Falta o dono: aplicar as duas
+migrations no Supabase (sem mudança de N8N nesta fatia) e re-exportar o "teste v20" pra conferir
+visualmente — abas Intragrupo/Societário separadas, sem coluna fantasma no Fluxo de Caixa, listagem
+simples com 5 colunas, fila de revisão fechando os cards, boa parte das 113 linhas já "ACEITO" pelo
+auto-aceite. Em paralelo, ainda pendente: reimportar o workflow (pega o retry dos nós Postgres da
+cont.¹³) e reprocessar os 7 documentos REAIS do "teste v18" que falharam, ou usar o workaround
+manual (dividir por ano) pros 3 mais densos; upload pelo portal (cont.¹²) segue pendente de
+confirmação de que o pop-up "Tudo pronto" aparece de verdade; reforço de prompt BALANCO×COMBINADO
+(cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹). Próximo passo natural é uma destas
+(perguntar ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante

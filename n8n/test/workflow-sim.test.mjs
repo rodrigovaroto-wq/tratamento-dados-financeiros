@@ -336,6 +336,28 @@ test('Batching endurecido após "teste v18" (3 de 16 docs ainda deram 429 com 3s
   }
 });
 
+test('Nós Postgres têm onError+retry — um erro num item não derruba o resto do lote em silêncio', () => {
+  // Achado em produção (sessão 7 cont.¹³, "teste v19"): 9 arquivos pequenos
+  // enviados, só 6 apareceram no dashboard — os outros 3 nunca chegaram a ter
+  // uma linha `documento` criada. Sem onError, um erro transitório de conexão
+  // num ÚNICO node Postgres (mais provável sob a carga do lote, com o rate
+  // limit da OpenAI já no teto) PARA A EXECUÇÃO INTEIRA — todo item ainda na
+  // fila some sem nenhum rastro. Com onError:continueRegularOutput +
+  // retryOnFail, o pior caso vira "esse item específico fica incompleto"
+  // (nunca vira fato, doutrina docs/01), não "o lote inteiro desaparece".
+  const nomesPostgres = [
+    'Upsert Caso (Postgres)', 'Registrar Documento', 'Recomputar Completude',
+    'Gravar Campos (Sombra)', 'Registrar Diagnostico', 'Reconciliar (Classe A)',
+  ];
+  for (const nm of nomesPostgres) {
+    const n = byName[nm];
+    assert.equal(n.type, 'n8n-nodes-base.postgres', `${nm}: é um node Postgres de verdade (checagem do teste)`);
+    assert.equal(n.onError, 'continueRegularOutput', `${nm}: onError ausente — um erro aqui derruba todo o lote`);
+    assert.equal(n.retryOnFail, true, `${nm}: sem retry — erro transitório de conexão não se recupera sozinho`);
+    assert.ok(n.maxTries >= 2, `${nm}: mais de uma tentativa`);
+  }
+});
+
 test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos densos truncavam antes)', () => {
   // Achado em produção (sessão 7 cont.¹¹): os 3 documentos que truncaram
   // (finish_reason=length) no "teste v18" eram consolidados comparativos

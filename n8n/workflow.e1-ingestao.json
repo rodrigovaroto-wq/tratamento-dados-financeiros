@@ -51,7 +51,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -250,7 +254,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -273,7 +281,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -361,7 +373,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -384,7 +400,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -407,7 +427,11 @@
           "id": "REPLACE",
           "name": "Supabase Postgres (Session Pooler)"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     }
   ],
   "connections": {
