@@ -79,6 +79,12 @@ export default async function CasoDashboardPage({
           <p className="text-xs text-neutral-500">{caso.produto}</p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href={`/casos/${id}/adicionar`}
+            className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
+          >
+            + Adicionar arquivos
+          </Link>
           <a
             href={`/casos/${id}/export`}
             className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
