@@ -4,17 +4,24 @@ import { buildExtractionRequest, parseExtractionResponse, extractionSchema, SECA
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
-test('extractionSchema é estrito, tem diagnóstico e array de linhas com seção', () => {
+test('extractionSchema é estrito, tem diagnóstico e array de linhas com chaves curtas', () => {
+  // Chaves curtas de propósito (s/sc/ec/pc/k/vt/vn/op/cf) — economia de
+  // tokens de saída em documentos com muitas contas (sessão 7 cont.¹¹).
   const s = extractionSchema();
   assert.equal(s.strict, true);
   assert.equal(s.schema.properties.linhas.type, 'array');
   assert.equal(s.schema.properties.linhas.items.additionalProperties, false);
-  assert.ok(s.schema.properties.linhas.items.required.includes('secao'));
-  assert.ok(s.schema.properties.linhas.items.required.includes('secao_canonica'));
-  assert.ok(s.schema.properties.linhas.items.required.includes('entidade_coluna'));
-  assert.deepEqual(s.schema.properties.linhas.items.properties.entidade_coluna.type, ['string', 'null']);
-  assert.deepEqual(s.schema.properties.linhas.items.properties.secao_canonica.enum, SECAO_CANONICA_ENUM);
-  assert.ok(s.schema.properties.linhas.items.properties.secao_canonica.enum.includes('NAO_CLASSIFICAVEL'));
+  assert.ok(s.schema.properties.linhas.items.required.includes('s'), 's=secao');
+  assert.ok(s.schema.properties.linhas.items.required.includes('sc'), 'sc=secao_canonica');
+  assert.ok(s.schema.properties.linhas.items.required.includes('ec'), 'ec=entidade_coluna');
+  assert.deepEqual(s.schema.properties.linhas.items.properties.ec.type, ['string', 'null']);
+  assert.deepEqual(s.schema.properties.linhas.items.properties.sc.enum, SECAO_CANONICA_ENUM);
+  assert.ok(s.schema.properties.linhas.items.properties.sc.enum.includes('NAO_CLASSIFICAVEL'));
+  // Cada chave curta carrega uma description explicando o nome completo, pra
+  // não perder a orientação do modelo com o nome cifrado.
+  for (const k of ['s', 'sc', 'ec', 'pc', 'k', 'vt', 'vn', 'op', 'cf']) {
+    assert.ok(s.schema.properties.linhas.items.properties[k].description, `campo ${k} sem description`);
+  }
   assert.equal(s.schema.properties.diagnostico.type, 'object');
   assert.ok(s.schema.properties.diagnostico.required.includes('legibilidade'));
   assert.ok(s.schema.properties.diagnostico.properties.tipo_sugerido.enum.includes('DESCONHECIDO'));
@@ -39,9 +46,9 @@ test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', ()
       justificativa: 'Cabeçalho e estrutura batem com DRE.',
     },
     linhas: [
-      { secao: 'Receita Operacional', secao_canonica: 'receita_bruta', chave: 'Receita líquida', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { secao: 'Custos', secao_canonica: 'custos', chave: 'Custo', valor_texto: '(6.000)', valor_num: -6000, origem_pagina: 1, confianca: 0.7 },
-      { secao: null, secao_canonica: 'NAO_CLASSIFICAVEL', chave: 'Total geral', valor_texto: '4.000', valor_num: 4000, origem_pagina: 1, confianca: 0.9 },
+      { s: 'Receita Operacional', sc: 'receita_bruta', k: 'Receita líquida', vt: '10.000', vn: 10000, op: 1, cf: 0.8 },
+      { s: 'Custos', sc: 'custos', k: 'Custo', vt: '(6.000)', vn: -6000, op: 1, cf: 0.7 },
+      { s: null, sc: 'NAO_CLASSIFICAVEL', k: 'Total geral', vt: '4.000', vn: 4000, op: 1, cf: 0.9 },
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
@@ -76,10 +83,10 @@ test('parseExtractionResponse: documento com várias entidades/colunas lado a la
       justificativa: 'Colunas Certsys Tecn/Part/Com + Total.',
     },
     linhas: [
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Tecn', chave: 'Bens Numerários', valor_texto: '51,29', valor_num: 51.29, origem_pagina: 1, confianca: 0.95 },
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Part', chave: 'Bens Numerários', valor_texto: '0,00', valor_num: 0, origem_pagina: 1, confianca: 0.95 },
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Certsys Com', chave: 'Bens Numerários', valor_texto: '0,00', valor_num: 0, origem_pagina: 1, confianca: 0.95 },
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: 'Total', chave: 'Bens Numerários', valor_texto: '51,29', valor_num: 51.29, origem_pagina: 1, confianca: 0.95 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: 'Certsys Tecn', k: 'Bens Numerários', vt: '51,29', vn: 51.29, op: 1, cf: 0.95 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: 'Certsys Part', k: 'Bens Numerários', vt: '0,00', vn: 0, op: 1, cf: 0.95 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: 'Certsys Com', k: 'Bens Numerários', vt: '0,00', vn: 0, op: 1, cf: 0.95 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: 'Total', k: 'Bens Numerários', vt: '51,29', vn: 51.29, op: 1, cf: 0.95 },
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
@@ -101,8 +108,8 @@ test('parseExtractionResponse: documento comparativo (várias colunas de períod
       legibilidade: 'ok', nota_legibilidade: null, resumo: 'Balanço comparativo 2023×2024.', justificativa: 'Duas colunas de ano.',
     },
     linhas: [
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: null, periodo_coluna: '2023', chave: 'Caixa', valor_texto: '100', valor_num: 100, origem_pagina: 1, confianca: 0.9 },
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: null, periodo_coluna: '2024', chave: 'Caixa', valor_texto: '120', valor_num: 120, origem_pagina: 1, confianca: 0.9 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: '2023', k: 'Caixa', vt: '100', vn: 100, op: 1, cf: 0.9 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: '2024', k: 'Caixa', vt: '120', vn: 120, op: 1, cf: 0.9 },
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
@@ -112,10 +119,10 @@ test('parseExtractionResponse: documento comparativo (várias colunas de períod
   assert.ok(r.campos.every((c) => c.entidade_coluna === null), 'periodo_coluna é ortogonal a entidade_coluna');
 });
 
-test('extractionSchema inclui periodo_coluna (required + string|null)', () => {
+test('extractionSchema inclui pc/periodo_coluna (required + string|null)', () => {
   const s = extractionSchema();
-  assert.ok(s.schema.properties.linhas.items.required.includes('periodo_coluna'));
-  assert.deepEqual(s.schema.properties.linhas.items.properties.periodo_coluna.type, ['string', 'null']);
+  assert.ok(s.schema.properties.linhas.items.required.includes('pc'));
+  assert.deepEqual(s.schema.properties.linhas.items.properties.pc.type, ['string', 'null']);
 });
 
 test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', () => {

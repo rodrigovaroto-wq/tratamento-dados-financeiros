@@ -69,6 +69,14 @@ como fato aceito.
    `evento_auditoria`, `campo_extraido`, `reconciliacao` populados; status do caso avançando
    conforme a completude.
 
+> **Testar sem gastar dinheiro real com documentos reais:** existe um kit de 9 PDFs sintéticos
+> (~2-3 KB cada, texto puro, cobrindo os 8 itens do Kit Básico + Mapa de Dívida como bônus)
+> entregue ao dono fora do repo (não são código, são dado de teste — sessão 7 cont.¹¹). Os números
+> são deliberadamente consistentes entre arquivos (Ativo=Passivo+PL, Caixa do Balanço=Saldo final
+> do Fluxo, Receita da DRE=soma do Faturamento, Despesa Financeira=soma dos juros do Mapa de
+> Dívida), então as reconciliações Classe A **e** Classe B têm uma chance real de fechar limpo num
+> teste de poucos centavos — não só "a extração rodou".
+
 ## Troubleshooting conhecido (achados testando no N8N real)
 
 **`No output data returned` no Listar Arquivos:** o node lia o binário do `$input` (= saída do
@@ -132,11 +140,25 @@ da OpenAI — o N8N disparou muitas chamadas de extração quase simultâneas e 
 sessão 7 cont.⁸, "teste v15": 16 documentos, 16 falhas idênticas). **Não é problema de formato de
 arquivo** (se fosse, os erros seriam diferentes por arquivo, e a classificação — que lê o mesmo
 conteúdo — teria falhado também). Corrigido: os nós `OpenAI Classificar`/`OpenAI Extrair` vêm com
-**batching** (1 chamada por vez, 3s de intervalo) + **retry** (4 tentativas, 5s entre elas) — 1
-chamada por vez espalha RPM/TPM no tempo. Se persistir mesmo com batching, sua conta OpenAI pode
-estar num tier de limite muito baixo (subir o tier, ou aumentar `batchInterval` no node). **Reimporte
-o workflow** para pegar o batching. Trade-off: um lote de N documentos fica ~N×3s mais lento, mas
+**batching** (1 chamada por vez, 6s de intervalo — era 3s, endurecido na cont.¹¹) + **retry** (6
+tentativas — era 4 — 5s entre elas) — 1 chamada por vez espalha RPM/TPM no tempo. Se persistir
+mesmo com batching, sua conta OpenAI pode estar num tier de limite muito baixo (subir o tier, ou
+aumentar `batchInterval` no node — `OPENAI_BATCHING` em `n8n/build-workflow.mjs`). **Reimporte o
+workflow** para pegar o batching. Trade-off: um lote de N documentos fica ~N×6s mais lento, mas
 confiável.
+
+**Documentos CONSOLIDADOS COMPARATIVOS MULTI-ANO (ex. "Balanço Consolidado 2022 e 2023.pdf") ainda
+dão 429 ou truncam mesmo com o batching endurecido:** achado em produção (sessão 7 cont.¹¹, "teste
+v18" — 16 documentos reais, 7 falharam, TODOS desse tipo). É o pior caso possível: mais tokens de
+ENTRADA (2-3 anos de dados no PDF) e mais tokens de SAÍDA (cada conta vira 2-3 linhas via
+`periodo_coluna`, cont.⁹) — documentos de UM ano só ou multi-demonstração-mas-um-ano funcionam bem.
+Duas mitigações já aplicadas (batching mais conservador + chaves de fio curtas no schema de
+extração, que cortam ~30-40% dos bytes de saída por linha) reduzem o problema mas **não eliminam
+pros casos mais extremos**. Workaround imediato: **divida o PDF em arquivos por ano antes de
+subir** (ex. "Balanço 2022.pdf" + "Balanço 2023.pdf" separados) — cada ano sozinho fica num volume
+comparável ao que já funciona. A correção completa (dividir a extração em várias chamadas por
+página/período automaticamente) precisa de uma mudança de topologia do grafo do N8N e só pode ser
+validada contra uma instância viva — ver "Itens adiados" em `HANDOFF.md` (cont.¹¹).
 
 **Erro `The resource you are requesting could not be found` no Upload Storage:** a URL está
 apontando para o **painel** do Supabase (`supabase.com/dashboard/...`) em vez da **API**

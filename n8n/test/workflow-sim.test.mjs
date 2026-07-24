@@ -227,8 +227,8 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
   assert.ok(
-    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('periodo_coluna'),
-    'schema gerado pede periodo_coluna por linha (db/migrations/0017)',
+    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('pc'),
+    'schema gerado pede pc/periodo_coluna por linha (db/migrations/0017)',
   );
   assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
@@ -242,8 +242,8 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
       resumo: 'Balanço patrimonial de 2025.', justificativa: 'Conteúdo é Balanço, não DRE (dica do nome estava errada).',
     },
     linhas: [
-      { secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', chave: 'Caixa e equivalentes', valor_texto: '10.000', valor_num: 10000, origem_pagina: 1, confianca: 0.8 },
-      { secao: 'Passivo Circulante', secao_canonica: 'NAO_CLASSIFICAVEL', chave: 'Fornecedores', valor_texto: '2.500', valor_num: 2500, origem_pagina: 2, confianca: 0.7 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', k: 'Caixa e equivalentes', vt: '10.000', vn: 10000, op: 1, cf: 0.8 },
+      { s: 'Passivo Circulante', sc: 'NAO_CLASSIFICAVEL', k: 'Fornecedores', vt: '2.500', vn: 2500, op: 2, cf: 0.7 },
     ],
   }) } }] } };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
@@ -322,6 +322,41 @@ test('Nós OpenAI têm batching + retry (evita o 429 de rate limit num upload em
     assert.equal(n.retryOnFail, true, `${nm}: reexecuta antes de cair no onError`);
     assert.ok(n.maxTries >= 2, `${nm}: mais de uma tentativa`);
   }
+});
+
+test('Batching endurecido após "teste v18" (3 de 16 docs ainda deram 429 com 3s/4 tentativas)', () => {
+  // Achado em produção (sessão 7 cont.¹¹): os 3 documentos que ainda deram 429
+  // com o batching da cont.⁸ (3s, 4 tentativas) eram justamente os
+  // consolidados comparativos multi-ano — mais tokens de entrada E saída que
+  // os demais. 6s + 6 tentativas dão mais folga pro balde de TPM da conta.
+  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+    const n = byName[nm];
+    assert.equal(n.parameters.options?.batching?.batch?.batchInterval, 6000, `${nm}: intervalo endurecido`);
+    assert.equal(n.maxTries, 6, `${nm}: mais tentativas`);
+  }
+});
+
+test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos densos truncavam antes)', () => {
+  // Achado em produção (sessão 7 cont.¹¹): os 3 documentos que truncaram
+  // (finish_reason=length) no "teste v18" eram consolidados comparativos
+  // multi-ano — cada conta vira 2-3 linhas via periodo_coluna. Prova que a
+  // representação por linha ficou objetivamente mais compacta (menos
+  // caracteres de CHAVE repetidos centenas de vezes por documento).
+  const linhaAntiga = {
+    secao: 'Ativo Circulante', secao_canonica: 'ativo_circulante', entidade_coluna: null,
+    periodo_coluna: '2023', chave: 'Caixa e equivalentes de caixa', valor_texto: '1.234.567,89',
+    valor_num: 1234567.89, origem_pagina: 3, confianca: 0.95,
+  };
+  const linhaNova = {
+    s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null,
+    pc: '2023', k: 'Caixa e equivalentes de caixa', vt: '1.234.567,89',
+    vn: 1234567.89, op: 3, cf: 0.95,
+  };
+  const bytesAntigos = JSON.stringify(linhaAntiga).length;
+  const bytesNovos = JSON.stringify(linhaNova).length;
+  assert.ok(bytesNovos < bytesAntigos, `esperava reduzir; antigo=${bytesAntigos} novo=${bytesNovos}`);
+  const reducaoPct = (1 - bytesNovos / bytesAntigos) * 100;
+  assert.ok(reducaoPct >= 15, `esperava >=15% de redução por linha, obteve ${reducaoPct.toFixed(1)}%`);
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
