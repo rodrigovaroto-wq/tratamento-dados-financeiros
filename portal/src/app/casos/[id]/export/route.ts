@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { buildExportWorkbook, nomeArquivoSanitizado, type DocumentoParaExport, type TaxonomiaParaExport } from "@/lib/export";
+import { ampliarNotasNoBuffer, buildExportWorkbook, nomeArquivoSanitizado, type DocumentoParaExport } from "@/lib/export";
 import type { CampoExtraido } from "@/lib/types";
 
 // exceljs (usado em lib/export.ts) usa Buffer/streams do Node — precisa do
@@ -11,9 +11,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   const supabase = await createClient();
 
-  const [casoRes, taxonomiaRes, documentosRes] = await Promise.all([
+  const [casoRes, documentosRes] = await Promise.all([
     supabase.from("caso").select("id, nome, produto").eq("id", id).single(),
-    supabase.from("taxonomia_tipo_documento").select("codigo, documento, versao"),
     supabase
       .from("documento")
       .select(
@@ -29,7 +28,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
 
   const caso = casoRes.data;
-  const taxonomia = (taxonomiaRes.data as TaxonomiaParaExport[] | null) ?? [];
   const documentos = (documentosRes.data as unknown as DocumentoParaExport[] | null) ?? [];
 
   const versaoIds = documentos.flatMap((doc) => (doc.documento_versao ?? []).map((v) => v.id));
@@ -44,8 +42,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
 
-  const workbook = buildExportWorkbook({ caso, taxonomia, documentos, campos });
-  const buffer = await workbook.xlsx.writeBuffer();
+  const workbook = buildExportWorkbook({ caso, documentos, campos });
+  const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
   const filename = `${nomeArquivoSanitizado(caso.nome)}-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
   return new NextResponse(buffer as unknown as BodyInit, {

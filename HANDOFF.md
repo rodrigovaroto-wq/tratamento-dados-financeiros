@@ -953,6 +953,59 @@ bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshoot
 Resultado final confirmado: a IA classifica com confiança alta citando o **conteúdo
 real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 
+### Sessão 7 (cont.¹⁵) — "Total informado × calculado" divergindo mesmo em arquivo de teste + limpeza final do export
+O dono reportou que, mesmo em arquivos sintéticos próprios, a linha "↳ total informado no
+documento" batia com o total informado mas divergia do SUM calculado em vários lugares — pediu pra
+explicar por quê. Inspeção do export real ("teste v20") linha a linha achou 2 bugs de classificação
+reais (não artefato do arquivo de teste — vêm de convenções bem comuns de demonstração financeira
+brasileira), além de 3 pedidos de limpeza visual:
+
+- **BUG 1 — DRE contava um subtotal duas vezes:** "Resultado antes do resultado financeiro" (mesmo
+  valor do EBIT) e "Resultado Financeiro Líquido" (mesmo valor de Despesas+Receitas Financeiras já
+  dentro da própria seção) são subtotais de apresentação em cascata — mas o rótulo compartilha
+  vocabulário com a seção "Resultado Financeiro" onde a linha está, então caíam classificados como
+  CONTA comum e eram somados de novo, dobrando o valor do total calculado (`SUM` incluía o EBIT e o
+  próprio resultado financeiro líquido, além das contas que os compõem). Fix
+  (`statement-templates.ts`): nova guarda `ehSubtotalRedundanteDRE` (mesmo padrão de `ehLinhaDMPL`)
+  reconhece essas duas frases e as tira da soma — caem em "Contas Não Classificadas" (visíveis, sem
+  distorcer nenhum subtotal).
+- **BUG 2 — cabeçalho combinado "Passivo e Patrimônio Líquido" jogava tudo pra PL:** convenção
+  padrão dos balanços brasileiros (Lei 6.404/76 art. 178) — mas em `classificarBalanco`, o check de
+  seção pra "patrimonio liquido" rodava ANTES do check pra "passivo", e o cabeçalho combinado contém
+  as duas palavras como substring. Resultado: toda conta sob esse cabeçalho (Fornecedores,
+  Empréstimos e Financiamentos) caía em `patrimonio_liquido` em vez de `passivo_circulante`/
+  `passivo_nao_circulante`, e as seções de Passivo ficavam zeradas — daí a divergência entre o total
+  informado (que inclui essas contas) e o calculado (que não). Fix: "passivo" é checado primeiro;
+  "patrimonio liquido" só entra como `else if` quando "passivo" não está combinado na mesma seção.
+- **Pedido — remover toda menção a tipo/versão de taxonomia da planilha:** era detalhe interno de
+  classificação, não algo que o time de análise precisa ver. Removido de: nota de proveniência de
+  cada célula (`notaProveniencia`/`notaProvenienciaSimples`), aba Resumo (linha "Versão(ões) da
+  taxonomia envolvidas" e o parâmetro inteiro `taxonomia`/`TaxonomiaParaExport` que só existia pra
+  isso). Continua orientando o roteamento por aba internamente (`tipo_taxonomia`/`ABA_POR_TIPO`) —
+  só sai da tela, não da lógica.
+- **Pedido — padronizar a escrita de período:** convenções cifradas vindas da extração ("multi
+  02,25", "data-base 2025-01-15", "12M25", "L24M", "1T25") viravam texto solto e técnico na
+  planilha. Nova função `formatarPeriodo` (`export.ts`) traduz pra um modelo pronto e objetivo:
+  "2023, 2024, 2025" / "15/01/2025" / "2025" (ano fiscal completo) / "9 meses/2024" / "Últimos 24
+  meses" / "1º Tri/2025" / "2024–2025" (intervalo de 2). O que não reconhece devolve como veio
+  (nunca pior que antes).
+- **Pedido — anotações cortadas ao abrir:** a caixa de toda nota (`cell.note`) do ExcelJS vem com
+  tamanho FIXO no XML VML (`width:97.8pt;height:59.1pt` ≈ 130×80px), hardcoded no próprio pacote
+  (`lib/xlsx/xform/comment/vml-shape-xform.js`) — sem parâmetro público pra mudar (conferido lendo o
+  fonte da lib, não só o `.d.ts`). Fix em duas partes: (1) fonte compacta (8pt, `comoNota()`) em toda
+  nota; (2) nova função `ampliarNotasNoBuffer` pós-processa o `.xlsx` já gerado — ele é um .zip, abre
+  com JSZip (dependência transitiva do próprio exceljs, agora explícita em `package.json`), troca a
+  string de tamanho fixo por uma caixa bem maior (`340pt×170pt`) em toda parte
+  `xl/drawings/vmlDrawing*.vml`, sem tocar `node_modules`. Chamada em `route.ts` logo após
+  `workbook.xlsx.writeBuffer()`.
+- **Testado:** harness `tsx` cobrindo os 9 formatos de período (todos passando), os dois fixes de
+  classificação (já verificados em sessão anterior, confirmados intactos), e o round-trip do
+  `ampliarNotasNoBuffer` (caixa de nota confirmada mudando de `97.8pt/59.1pt` pra `340pt/170pt` no
+  XML gerado). `tsc --noEmit`, `eslint`, `next build` limpos.
+- **Precisa:** re-exportar um caso real pra conferir visualmente — planilha sem nenhuma menção a
+  taxonomia, período legível, notas abrindo sem corte, e as duas divergências de DRE/Combinado
+  resolvidas.
+
 ---
 
 ## 2. Decisões tomadas (por que as coisas são como são)

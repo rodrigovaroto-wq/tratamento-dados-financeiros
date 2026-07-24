@@ -249,14 +249,23 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
   // mais confiável que adivinhar só pelo rótulo da conta.
   if (tokensSecao.size > 0) {
     const naoCirc = contemFrase(tokensSecao, "nao circulante") || contemFrase(tokensSecao, "longo prazo") || tokensSecao.has("permanente");
-    if (contemFrase(tokensSecao, "patrimonio liquido")) return { secaoKey: "patrimonio_liquido", ancoraKey: null };
     if (tokensSecao.has("ativo")) {
       if (naoCirc) return { secaoKey: subgrupoNaoCirculante(tokensChave), ancoraKey: null };
       if (tokensSecao.has("circulante")) return { secaoKey: "ativo_circulante", ancoraKey: null };
     }
+    // "passivo" TEM que ser checado antes de "patrimonio liquido": o
+    // cabeçalho combinado "Passivo e Patrimônio Líquido" (padrão MUITO comum
+    // em balanços brasileiros, Lei 6.404/76 art. 178) contém as duas palavras
+    // — checar "patrimonio liquido" primeiro fazia TODA conta sob esse
+    // cabeçalho (até "Fornecedores", "Empréstimos") cair em patrimonio_liquido
+    // (achado em produção, sessão 7 cont.¹⁵). Com "passivo" combinado mas sem
+    // qualificador de circulante/não circulante, não dá pra decidir só pela
+    // seção — cai pro fallback por palavra-chave da própria conta (passo 3).
     if (tokensSecao.has("passivo")) {
       if (naoCirc) return { secaoKey: "passivo_nao_circulante", ancoraKey: null };
       if (tokensSecao.has("circulante")) return { secaoKey: "passivo_circulante", ancoraKey: null };
+    } else if (contemFrase(tokensSecao, "patrimonio liquido")) {
+      return { secaoKey: "patrimonio_liquido", ancoraKey: null };
     }
   }
 
@@ -327,6 +336,25 @@ export const DRE_ANCORAS = [
   { key: "lucro_liquido", label: "Lucro/Prejuízo Líquido do Exercício", aposSecao: "impostos_lucro" },
 ] as const;
 
+// Subtotais intermediários da DRE que RESTATEM um valor já coberto por outra
+// âncora/fórmula (ex.: "Resultado antes do Resultado Financeiro" repete o
+// EBIT; "Resultado Financeiro Líquido" repete a soma de Despesas+Receitas
+// Financeiras já dentro da própria seção) — comuns em demonstrações reais
+// (apresentação por cascata com subtotal explícito entre grupos), mas o
+// rótulo compartilha vocabulário com a seção onde a linha está ("resultado
+// financeiro" aparece tanto na âncora quanto no cabeçalho da seção
+// "Resultado Financeiro"), então caíam classificadas como uma CONTA comum
+// dentro da seção e eram somadas de novo — dobrando o valor no total
+// calculado (achado em produção, sessão 7 cont.¹⁵). Ficam fora da soma (igual
+// à DMPL, `ehLinhaDMPL`) até terem âncora própria; aparecem em "Contas Não
+// Classificadas", visíveis, sem distorcer nenhum subtotal.
+function ehSubtotalRedundanteDRE(chave: string): boolean {
+  const t = tokensDe(chave);
+  if (contemFrase(t, "resultado financeiro") && (t.has("antes") || contemFrase(t, "resultado liquido"))) return true;
+  if (contemFrase(t, "resultado antes") && t.has("financeiro")) return true;
+  return false;
+}
+
 export function classificarDRE(secao: string | null, chave: string): Classificacao {
   const tokens = tokensDe(`${secao || ""} ${chave}`);
 
@@ -341,6 +369,7 @@ export function classificarDRE(secao: string | null, chave: string): Classificac
   if (contemAlgumaFrase(tokens, ["lucro liquido", "prejuizo liquido", "resultado liquido do exercicio"])) {
     return { secaoKey: null, ancoraKey: "lucro_liquido" };
   }
+  if (ehSubtotalRedundanteDRE(chave)) return SEM_CLASSIFICACAO;
   if (contemAlgumaFrase(tokens, ["receita bruta", "receita operacional bruta", "deducao da receita", "deducao"])) {
     return { secaoKey: "receita_bruta", ancoraKey: null };
   }
