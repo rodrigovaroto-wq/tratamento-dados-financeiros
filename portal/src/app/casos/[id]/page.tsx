@@ -12,6 +12,7 @@ import {
   type TaxonomiaTipoDocumento,
 } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
+import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 
 const LEGIBILIDADE_LABEL: Record<string, string> = {
   degradado: "qualidade degradada",
@@ -166,10 +167,10 @@ export default async function CasoDashboardPage({
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2">{doc.tipo_taxonomia ?? "não classificado"}</td>
+                      <td className="px-3 py-2">{formatarTipoTaxonomia(doc.tipo_taxonomia)}</td>
                       <td className="px-3 py-2">{doc.entidade?.razao_social ?? "—"}</td>
                       <td className="px-3 py-2">
-                        {doc.periodo ? `${doc.periodo.tipo} ${doc.periodo.referencia}` : "—"}
+                        {doc.periodo ? formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia) : "—"}
                       </td>
                       <td className="px-3 py-2">
                         {doc.confianca != null ? `${Math.round(doc.confianca * 100)}%` : "—"}

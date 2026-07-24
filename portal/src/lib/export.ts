@@ -128,6 +128,43 @@ const ESTRUTURA_POR_ABA = new Map<string, EstruturaDemonstracao>(
   Object.entries(ESTRUTURA_POR_TIPO).map(([tipo, estrutura]) => [ABA_POR_TIPO[tipo], estrutura]),
 );
 
+// tipo_taxonomia (código interno da classificação) → rótulo natural pra
+// tela (dashboard, planilha do documento, fila de revisão). Pedido do dono
+// (sessão 7 cont.¹⁶): nada de código cru ("FATURAMENTO_24M") na interface —
+// escrita natural, do mesmo jeito que um analista falaria. Distinto de
+// ABA_POR_TIPO (que agrupa MUTUOS/FAT_INTRAGRUPO numa aba só "Intragrupo" e
+// MAPA_DIVIDA/CONTRATO_DIVIDA em "Dívida") — aqui cada tipo tem o próprio
+// rótulo, mesmo que dois deles caiam na mesma aba do export.
+const TIPO_TAXONOMIA_LABEL: Record<string, string> = {
+  BALANCO: "Balanço",
+  DRE: "DRE",
+  FLUXO_CAIXA: "Fluxo de Caixa",
+  COMBINADO: "Demonstrações Combinadas",
+  BALANCETE: "Balancete",
+  FATURAMENTO_24M: "Faturamento em 24 meses",
+  MAPA_DIVIDA: "Mapa da Dívida",
+  CONTRATO_DIVIDA: "Contrato de Dívida",
+  MUTUOS: "Mútuos",
+  FAT_INTRAGRUPO: "Faturamento Intragrupo",
+  CONTRATO_SOCIAL: "Contrato Social",
+  FLUXO_PROJETADO: "Fluxo Projetado",
+};
+
+// Tipos ainda sem rótulo explícito (fora do Kit Básico + Variáveis já
+// mapeados acima) caem num fallback genérico — "EXTRATO_BANCARIO" vira
+// "Extrato Bancario" em vez do código cru — nunca pior que antes, e já seguem
+// a mesma linha de escrita natural quando entrar um tipo novo.
+export function formatarTipoTaxonomia(codigo: string | null): string {
+  if (!codigo) return "Não classificado";
+  const label = TIPO_TAXONOMIA_LABEL[codigo];
+  if (label) return label;
+  return codigo
+    .toLowerCase()
+    .split("_")
+    .map((palavra) => palavra.charAt(0).toUpperCase() + palavra.slice(1))
+    .join(" ");
+}
+
 // Família da demonstração → aba PADRÃO para onde vai uma linha que pertence a
 // essa família mas foi extraída de um documento de OUTRO tipo (um PDF de
 // "Demonstrações Contábeis" completo traz Balanço + DRE + Fluxo de Caixa

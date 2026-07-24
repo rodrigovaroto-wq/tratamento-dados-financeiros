@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS, type TaxonomiaTipoDocumento } from "@/lib/types";
+import { formatarTipoTaxonomia } from "@/lib/export";
 import { revisarDocumento } from "./actions";
 
 const PENDENCIA_TIPO_LABEL: Record<string, string> = {
@@ -167,7 +168,7 @@ export default async function FilaRevisaoPage({
 
                 <div className="sm:col-span-2 flex items-center justify-between text-xs text-neutral-500">
                   <span>
-                    Sugestão atual: <strong>{doc.tipo_taxonomia ?? "sem tipo"}</strong>
+                    Sugestão atual: <strong>{formatarTipoTaxonomia(doc.tipo_taxonomia)}</strong>
                     {doc.confianca != null && ` · confiança ${Math.round(doc.confianca * 100)}%`}
                     {doc.fonte && ` · fonte ${doc.fonte}`}
                   </span>

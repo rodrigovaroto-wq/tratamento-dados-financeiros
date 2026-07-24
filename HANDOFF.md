@@ -1006,6 +1006,37 @@ brasileira), além de 3 pedidos de limpeza visual:
   taxonomia, período legível, notas abrindo sem corte, e as duas divergências de DRE/Combinado
   resolvidas.
 
+### Sessão 7 (cont.¹⁶) — Tipo/período em texto natural no dashboard/planilha do documento + resumo menos redundante
+Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru ("FATURAMENTO_24M",
+"FLUXO_CAIXA") e período sem tradução ("outro Jan/2024 a Dez/2025", "anual 12M25") — a
+`formatarPeriodo` de cont.¹⁵ só tinha sido ligada no export em Excel, não nas telas do portal.
+
+- **Rótulo natural do tipo:** nova `formatarTipoTaxonomia` (`portal/src/lib/export.ts`) — mapa
+  explícito pros 12 tipos do Kit Básico + Variáveis já usados no export (`TIPO_TAXONOMIA_LABEL`,
+  igual ao pedido do dono: "Faturamento em 24 meses", "Fluxo de Caixa", "DRE", "Balanço",
+  "Faturamento Intragrupo", "Contrato Social", "Mútuos", "Mapa da Dívida", "Demonstrações
+  Combinadas", + Balancete/Contrato de Dívida/Fluxo Projetado no mesmo estilo); tipo fora desse mapa
+  (documento complementar raro, ex. `EXTRATO_BANCARIO`) cai num fallback genérico que já tira o
+  `_`/caixa alta ("Extrato Bancario") em vez do código cru — nunca pior que antes, já preparado pra
+  quando entrar um tipo novo. Ligado em `casos/[id]/page.tsx` (tabela de documentos),
+  `casos/[id]/documentos/[docId]/page.tsx` (cabeçalho da planilha do documento) e
+  `casos/[id]/revisao/page.tsx` ("Sugestão atual").
+- **Período nas mesmas telas:** `formatarPeriodo` (já existia, só usada no export em Excel) agora
+  também roda nessas três telas — mesmo tratamento, um lugar só.
+- **Resumo repetindo entidade/período/tipo:** o prompt da IA (`n8n/workflow.e1-ingestao.json`, nó
+  "Montar Req Extração") só dizia `resumo = 2-3 frases objetivas do conteudo`, sem instruir a NÃO
+  repetir o que já sai em campos próprios — daí frases como "...da Teste Indústria Ltda para os
+  últimos 24 meses, de janeiro de 2024 a dezembro de 2025..." reafirmando entidade/período que já
+  aparecem em colunas ao lado. Fix: instrução explícita no prompt pra focar só no conteúdo
+  específico (colunas/tabelas, estrutura, achados) e nunca repetir entidade/tipo/período. **Só vale
+  pra extrações novas** — resumos já gravados no banco não mudam retroativamente sem reprocessar o
+  documento.
+- **Testado:** harness `tsx` confirmando os 12 rótulos de tipo batendo exatamente com o pedido do
+  dono, o fallback genérico, e os 6 casos de período do print reproduzidos batendo com o esperado.
+  `tsc --noEmit`, `eslint`, `next build` limpos.
+- **Precisa:** nenhuma migration nem redeploy do N8N automático — o workflow JSON precisa ser
+  reimportado no N8N pra pegar o prompt novo (mesmo processo de sempre).
+
 ---
 
 ## 2. Decisões tomadas (por que as coisas são como são)
