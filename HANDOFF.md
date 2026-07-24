@@ -5,9 +5,11 @@ do export com FÓRMULAS e estrutura CPC completa — ver "Sessão 7 (cont.³)" �
 Classe B — ver "Sessão 7 (cont.⁶)" —, o fix do bug de extração silenciosamente vazia — ver
 "Sessão 7 (cont.⁷)" —, o fix da causa real dessa extração vazia: rate limit no upload em lote —
 ver "Sessão 7 (cont.⁸)" —, o suporte a documentos COMPARATIVOS (coluna de período) — ver
-"Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" — e a
+"Sessão 7 (cont.⁹)" —, o upload pelo portal + mandato explícito — ver "Sessão 7 (cont.¹⁰)" —, a
 2ª rodada de hardening pós-"teste v18" (chaves de fio curtas + batching mais conservador + kit de
-PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)").
+PDFs sintéticos pra teste barato) — ver "Sessão 7 (cont.¹¹)" — e o fix do upload pelo portal que
+"funcionava" mas nunca disparava o workflow (descoberta automática de nome de campo) + pop-up de
+conclusão — ver "Sessão 7 (cont.¹²)").
 
 **Estado do repositório neste momento:** sessões 4, 5 e 6 já mergeadas no `main` (PRs #20-#28). A
 sessão 7 achou e corrigiu um **bug crítico de dados** (não de classificação): ao testar com 2
@@ -810,6 +812,45 @@ documentos ainda falharam** — 3 com o MESMO 429 de rate limit da cont.⁸, 3 c
      pipeline), não é seguro de implementar sem testar contra uma instância N8N real.
   2. Reforçar de novo o prompt BALANCO×COMBINADO (achado acima) se o dono confirmar que persiste.
 
+### Sessão 7 (cont.¹²) — BUG CRÍTICO: upload pelo portal "sucesso" mas workflow nunca rodava
+Achado testando o upload novo (cont.¹⁰) contra o N8N real do dono: depois de corrigir o erro de
+URL de teste vs. produção, o envio pelo portal mostrava sucesso, mas **20+ minutos depois nada
+tinha aparecido no mandato e ZERO tokens tinham sido gastos na conta OpenAI** — ou seja, o workflow
+nunca chegou a rodar de verdade, apesar do portal reportar "enviado com sucesso".
+- **Causa raiz:** `/api/intake` montava o multipart usando os RÓTULOS visíveis do Form
+  ("Mandato (nome do caso)"/"Arquivos") como nome de campo — mas o atributo `name` real gerado
+  pelo N8N para aquele campo pode ser diferente do rótulo. O webhook do Form aceita o POST (HTTP
+  200 — "deu certo" pro portal) ANTES de saber se o workflow vai ter dado pra processar; se o nome
+  do campo não bate, o node `Listar Arquivos` lança seu erro explícito ("Nenhum arquivo recebido do
+  formulario") e a execução morre ANTES de qualquer chamada à OpenAI — exatamente "sucesso na tela,
+  0 tokens gastos, nada no mandato".
+- **Fix — descoberta automática de nomes de campo** (`portal/src/lib/n8n-form.ts`): em vez de
+  fixar/adivinhar os nomes, `/api/intake` agora faz um GET no próprio Form antes de enviar, faz o
+  parsing (por regex, tolerante) dos `<input>` do HTML retornado, e usa os `name` REAIS
+  encontrados (arquivo = primeiro `<input type="file">`; mandato = primeiro `<input>` de texto
+  não-hidden/não-submit). As envs `N8N_INTAKE_FIELD_*` viram um **override manual opcional** (se
+  setadas, usadas direto, pulando a descoberta) em vez do único caminho. Fallback gracioso: se o
+  GET falhar ou não achar `<input>` reconhecível, cai nos nomes padrão de antes (nunca piora o
+  comportamento anterior).
+- **Pedido do dono (mesma sessão): pop-up elegante ao terminar + copy sem termos técnicos.** A
+  mensagem "O N8N está processando (classificação + extração)" foi trocada por algo sem nomear
+  nenhuma ferramenta/plataforma ("Estamos organizando tudo com cuidado — isso costuma levar alguns
+  minutos"). Novo endpoint `GET /api/intake/status` (`portal/src/app/api/intake/status/route.ts`)
+  combina dois sinais pra saber quando o pipeline "terminou de tentar" (não "terminou sem
+  pendências" — isso continua no dashboard como sempre): `documento` criado para o caso desde o
+  envio (classificação concluída) + `evento_auditoria` tipo `extracao_sombra` referenciando aquele
+  `documento_versao` (extração tentou rodar — sucesso OU falha, sempre gravado por
+  `fn_registrar_campos_extraidos` desde a `0016`). `upload-form.tsx` faz polling silencioso a cada
+  ~8s por até ~12min e, quando pronto, mostra um pop-up modal ("Tudo pronto") com CTA pro mandato —
+  sem precisar recarregar a página.
+- **Testado:** parser de nomes de campo validado contra 4 cenários (rótulo=nome, nomes internos
+  diferentes, campo hidden não confundido, HTML sem `<input>` reconhecível → fallback). `tsc`,
+  `eslint` e **`next build`** limpos — as duas rotas novas (`/api/intake/status`) e o componente
+  compilam. **Não testável aqui:** se o parsing por regex bate com o HTML real que o N8N do dono
+  gera (não tenho acesso a uma instância viva) — por isso o fallback gracioso existe; se a
+  descoberta não funcionar, o comportamento cai pro que já existia (nomes fixos, ajustáveis via
+  env).
+
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
 bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
@@ -848,17 +889,16 @@ real** do documento (não mais o nome do arquivo), com justificativa objetiva.
 ## 3. Próximos passos
 
 ### Decisão pendente (bloqueia o próximo passo de código)
-**GATE ATUAL (bloqueia validar tudo):** o dono precisa mergear o hardening pós-v18 (branch atual),
-**REIMPORTAR o workflow no N8N** e depois reprocessar. O "teste v18" (16 docs reais) já confirmou
-797 linhas extraídas com sucesso e 9/16 documentos 100% ok — falta confirmar se o batching mais
-conservador (6s/6 tentativas) e as chaves de fio curtas fecham os 7 que ainda falharam, ou se os 3
-mais densos (consolidados comparativos multi-ano) precisam do workaround manual (dividir por ano
-antes de subir) até uma correção de topologia (dividir extração por página/período) ser construída
-e testada contra N8N vivo. Também pendente de validação real: reforço de prompt BALANCO×COMBINADO
-(cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹), Reconciliação Classe B (cont.⁶,
-agora com o kit de PDFs sintéticos — cont.¹¹ — dá pra validar sem custo real), upload pelo portal
-(cont.¹⁰, precisa `N8N_INTAKE_FORM_URL` configurada). Próximo passo natural é uma destas (perguntar
-ao dono qual prioriza):
+**GATE ATUAL:** o upload pelo portal tinha um bug crítico (cont.¹²: "sucesso" na tela mas o
+workflow nunca disparava, 0 tokens gastos) — corrigido com descoberta automática de nome de campo,
+mas **não testável aqui contra o N8N real do dono**. Falta o dono: mergear esta fatia, testar um
+envio pelo portal e confirmar que agora o mandato realmente processa (o pop-up "Tudo pronto" deve
+aparecer). Em paralelo, o gate de sempre continua: reprocessar os 7 documentos do "teste v18" que
+ainda falharam com o hardening da cont.¹¹ (batching 6s/6 tentativas + chaves de fio curtas), ou
+usar o workaround manual (dividir por ano) pros 3 mais densos. Também pendente de validação real:
+reforço de prompt BALANCO×COMBINADO (cont.², e um novo caso suspeito achado no v18 — ver cont.¹¹),
+Reconciliação Classe B (cont.⁶, agora com o kit de PDFs sintéticos — cont.¹¹ — dá pra validar sem
+custo real). Próximo passo natural é uma destas (perguntar ao dono qual prioriza):
 1. **Ação de resolução na fila do portal** para pendências de reconciliação (hoje só lista;
    não tem um "confirmar/ressalva" dedicado como `fn_revisar_documento` tem para classificação
    — as pendências de diagnóstico, ao contrário, JÁ passam pela fila existente). Mais relevante
