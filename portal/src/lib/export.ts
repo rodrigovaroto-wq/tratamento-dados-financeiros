@@ -7,6 +7,7 @@ import {
   secoesDe,
   ancorasDe,
   agruparPorChaveNormalizada,
+  normalizar,
   ESTRUTURA_POR_TIPO,
   BALANCO_OUTLINE,
   type EstruturaDemonstracao,
@@ -465,7 +466,11 @@ function construirAbaClassificada(
   const valoresPorAncora = new Map<string, GrupoConta>();
   const naoClassificados = new Map<string, GrupoConta>();
   const bucket = (mapa: Map<string, GrupoConta>, campo: CampoExtraido, colKey: string) => {
-    const chaveNorm = campo.chave.trim().toLowerCase();
+    // normalizar() (acento/espaço) para que "Salários" e "Salarios", ou
+    // "Duplicatas  a Receber" e "Duplicatas a Receber" (deriva de grafia entre
+    // períodos/entidades da mesma empresa), caiam na MESMA linha em vez de
+    // gerar dois grupos que quebram o alinhamento entidade×período.
+    const chaveNorm = normalizar(campo.chave);
     if (!mapa.has(chaveNorm)) mapa.set(chaveNorm, novoGrupo(campo.chave));
     adicionarAoGrupo(mapa.get(chaveNorm)!, colKey, campo);
   };
