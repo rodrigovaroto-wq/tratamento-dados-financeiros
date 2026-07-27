@@ -120,9 +120,13 @@ export const BALANCO_ANCORAS = [
 
 const ATIVO_CIRC_KW = [
   "caixa", "banco", "equivalente de caixa", "disponibilidade", "aplicacao financeira", "titulo e valor mobiliario",
-  "cliente", "contas a receber", "duplicata a receber", "estoque", "mercadoria", "produto acabado", "materia prima",
-  "imposto a recuperar", "tributo a recuperar", "despesa antecipada", "adiantamento a fornecedor", "outros creditos",
-  "adiantamento a empregado",
+  "cliente", "contas a receber", "conta a receber", "valores a receber", "duplicata a receber", "estoque",
+  "mercadoria", "produto acabado", "materia prima", "numerario", "bens numerarios", "deposito bancario",
+  "imposto a recuperar", "tributo a recuperar", "imposto a compensar", "tributo a compensar",
+  "icms a recuperar", "icms a compensar", "pis a recuperar", "cofins a recuperar", "irpj a recuperar",
+  "csll a recuperar", "ir a recuperar", "despesa antecipada", "despesa paga antecipadamente",
+  "adiantamento a fornecedor", "adiantamento a empregado", "adiantamento diverso", "cheque a compensar",
+  "outros creditos",
 ];
 const ATIVO_NAO_CIRC_KW = [
   "imobilizado", "intangivel", "investimento", "realizavel a longo prazo", "depreciacao acumulada",
@@ -165,8 +169,10 @@ function subgrupoNaoCirculante(tokensChave: Set<string>): string {
   return "ativo_nao_circulante";
 }
 const PASSIVO_CIRC_KW = [
-  "fornecedor", "salario", "obrigacao trabalhista", "obrigacao social", "obrigacao tributaria",
-  "imposto a pagar", "tributo a pagar", "adiantamento de cliente", "dividendo a pagar", "provisao de ferias",
+  "fornecedor", "salario", "obrigacao trabalhista", "obrigacao social", "obrigacao tributaria", "obrigacao fiscal",
+  "imposto a pagar", "tributo a pagar", "imposto a recolher", "tributo a recolher", "contribuicao a recolher",
+  "icms a recolher", "iss a recolher", "irpj a recolher", "csll a recolher", "pis a recolher", "cofins a recolher",
+  "adiantamento de cliente", "dividendo a pagar", "provisao de ferias", "provisao trabalhista", "receita diferida",
   "decimo terceiro", "conta a pagar", "encargo social", "inss", "fgts a recolher",
 ];
 const PASSIVO_NAO_CIRC_KW = [
@@ -277,7 +283,13 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
     // comum em holdings/grupos econômicos). Sem esse sinal, tudo caía em
     // passivo, mesmo quando o rótulo dizia "a receber".
     const longoPrazo = contemFrase(tokensChave, "longo prazo") || contemFrase(tokensChave, "nao circulante");
-    if (tokensChave.has("receber")) {
+    // Direção ATIVO (crédito da empresa): "a receber" ou "concedido(s)". O
+    // conectivo "a"/"de" ("Empréstimos A Coligadas" vs "DE Coligadas") é
+    // removido no matcher, então intragrupo sem "receber"/"concedido" fica
+    // ambíguo e cai no default passivo — a `secao` anotada (passo 2) resolve
+    // quando o documento diz o lado. Empréstimo bancário tomado (sem sinal de
+    // direção) segue corretamente no passivo.
+    if (tokensChave.has("receber") || tokensChave.has("concedido")) {
       return { secaoKey: longoPrazo ? "realizavel_lp" : "ativo_circulante", ancoraKey: null };
     }
     return { secaoKey: longoPrazo ? "passivo_nao_circulante" : "passivo_circulante", ancoraKey: null };
@@ -370,15 +382,25 @@ export function classificarDRE(secao: string | null, chave: string): Classificac
     return { secaoKey: null, ancoraKey: "lucro_liquido" };
   }
   if (ehSubtotalRedundanteDRE(chave)) return SEM_CLASSIFICACAO;
-  if (contemAlgumaFrase(tokens, ["receita bruta", "receita operacional bruta", "deducao da receita", "deducao"])) {
+  if (contemAlgumaFrase(tokens, [
+    "receita bruta", "receita operacional bruta", "receita de venda", "receita com venda", "receita de servico",
+    "receita de mercadoria", "venda de mercadoria", "venda de produto", "receita de produto",
+    "deducao da receita", "deducao", "imposto sobre venda", "tributo sobre venda", "imposto sobre servico",
+    "iss sobre servico",
+  ])) {
     return { secaoKey: "receita_bruta", ancoraKey: null };
   }
-  if (contemAlgumaFrase(tokens, ["custo dos produtos", "custo das mercadorias", "custo dos servicos", "cpv", "cmv", "custo da venda"])) {
+  if (contemAlgumaFrase(tokens, [
+    "custo dos produtos", "custo das mercadorias", "custo dos servicos", "custo do servico prestado",
+    "custo de venda", "custo operacional", "cpv", "cmv", "custo da venda",
+  ])) {
     return { secaoKey: "custos", ancoraKey: null };
   }
   if (contemAlgumaFrase(tokens, [
     "despesas com venda", "despesas comerciais", "despesas administrativas", "despesas gerais",
-    "outras despesas operacionais", "outras receitas operacionais",
+    "despesa com pessoal", "despesa tributaria", "despesa geral e administrativa",
+    "outras despesas operacionais", "outras receitas operacionais", "outras despesas", "outras receitas",
+    "depreciacao", "amortizacao", "provisao para devedores duvidosos", "perda estimada", "perda com credito",
   ])) {
     return { secaoKey: "despesas_operacionais", ancoraKey: null };
   }
@@ -450,6 +472,10 @@ export function classificarFluxoCaixa(secao: string | null, chave: string): Clas
   if (contemAlgumaFrase(tokens, [
     "atividades operacional", "lucro liquido exercicio", "depreciacao", "amortizacao", "variacao contas receber",
     "variacao estoque", "variacao fornecedor", "capital giro",
+    // Método direto (CPC 03) — recebimentos/pagamentos operacionais explícitos:
+    "recebimento de cliente", "recebimento de venda", "recebimento de duplicata", "pagamento a fornecedor",
+    "pagamento de fornecedor", "pagamento a empregado", "pagamento de salario", "pagamento de imposto",
+    "imposto de renda pago", "imposto pago", "juros pago", "juros recebido",
   ])) {
     return { secaoKey: "atividades_operacionais", ancoraKey: null };
   }
@@ -561,7 +587,12 @@ function secaoKeysDe(estrutura: EstruturaDemonstracao): Set<string> {
 function ehLinhaDMPL(chave: string): boolean {
   const t = normalizar(chave);
   if (!t.includes("saldo")) return false;
-  return /\b(19|20)\d{2}\b/.test(t) || /\b(inici|final|finai)/.test(t);
+  // Padrão REAL de linha de DMPL: cabeçalho de exercício com DATA COMPLETA
+  // ("SALDOS EM 31 DE DEZEMBRO DE 2024" / "Saldo em 31/12/2024"). Exigir a data
+  // completa evita descartar contas legítimas como "Disponibilidades - Saldo
+  // Final" ou "Saldo de Aplicações em 2024" (achado da auditoria) — antes
+  // qualquer "saldo" + ano/final caía como DMPL e sumia da seção.
+  return /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(t) || /\d{1,2} de [a-z]+ de (19|20)\d{2}/.test(t);
 }
 
 export function classificarConta(

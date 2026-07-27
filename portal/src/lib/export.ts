@@ -7,6 +7,7 @@ import {
   secoesDe,
   ancorasDe,
   agruparPorChaveNormalizada,
+  normalizar,
   ESTRUTURA_POR_TIPO,
   BALANCO_OUTLINE,
   type EstruturaDemonstracao,
@@ -52,15 +53,32 @@ function formatarDataBR(ref: string): string {
   return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : ref;
 }
 
+const MESES_ABREV = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const MES_POR_NOME: Record<string, number> = {
+  jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
+  janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8,
+  setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+};
+function mesAno(mes: number, anoTexto: string): string {
+  return `${MESES_ABREV[mes - 1]}/${anoDe4Digitos(anoTexto)}`;
+}
+
+// Padroniza o período num modelo pronto e objetivo, tolerante às MUITAS notações
+// que a extração produz entre contratos diferentes (cada demonstração escreve o
+// período de um jeito). Robusto contra os mis-parses reais achados na auditoria:
+// "02,25" NÃO é o intervalo "2002–2025" e sim Fev/2025 (mês,ano); semestre,
+// mês abreviado, MM/AAAA e ISO (mesmo sem tipo=data-base) são reconhecidos. O
+// que não reconhece volta como veio (nunca pior que antes).
 export function formatarPeriodo(tipo: string | null, referencia: string | null): string {
   const ref = (referencia ?? "").trim();
   const t = (tipo ?? "").trim();
   if (!ref) return "—";
+  const low = ref.toLowerCase();
 
   const ultimosMeses = ref.match(/^L(\d+)M$/i);
   if (ultimosMeses) return `Últimos ${ultimosMeses[1]} meses`;
 
-  const anoFiscal = ref.match(/^(\d+)M(\d{2,4})$/i);
+  const anoFiscal = ref.match(/^(\d{1,2})M(\d{2,4})$/i);
   if (anoFiscal) {
     const nMeses = Number(anoFiscal[1]);
     const ano = anoDe4Digitos(anoFiscal[2]);
@@ -69,20 +87,43 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
 
   const trimestre = ref.match(/^(\d)T(\d{2,4})$/i);
   if (trimestre) return `${trimestre[1]}º Tri/${anoDe4Digitos(trimestre[2])}`;
+  const semestre = ref.match(/^(\d)S(\d{2,4})$/i);
+  if (semestre) return `${semestre[1]}º Sem/${anoDe4Digitos(semestre[2])}`;
+
+  // Datas: ISO (independente do tipo) e BR já legível
+  const iso = ref.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(ref)) return ref;
+
+  // Mês por nome/abreviação + ano: "jan/25", "dez-24", "fevereiro/2025"
+  const mesNome = low.match(/^([a-zç]{3,9})[\/\-. ](\d{2,4})$/);
+  if (mesNome && MES_POR_NOME[mesNome[1]] != null) return mesAno(MES_POR_NOME[mesNome[1]], mesNome[2]);
+
+  // MM/AAAA ou MM-AAAA (mês numérico + ano de 4 dígitos): "02/2025", "12/2025"
+  const mmAno = ref.match(/^(\d{1,2})[\/-](\d{4})$/);
+  if (mmAno && Number(mmAno[1]) >= 1 && Number(mmAno[1]) <= 12) return mesAno(Number(mmAno[1]), mmAno[2]);
 
   if (t === "data-base") return formatarDataBR(ref);
 
   if (t === "multi" || /,/.test(ref)) {
-    const anos = ref
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .map((p) => (/^\d{1,4}$/.test(p) ? anoDe4Digitos(p) : p));
-    if (anos.length === 2) return `${anos[0]}–${anos[1]}`;
-    if (anos.length > 2) return anos.join(", ");
+    const toks = ref.split(",").map((p) => p.trim()).filter(Boolean);
+    // "MM,AA" com zero à esquerda no mês (ex.: "02,25" = Fev/2025) — mês,ano,
+    // NÃO um intervalo de exercícios (o mis-parse "2002–2025" da auditoria).
+    if (toks.length === 2 && /^0[1-9]$/.test(toks[0]) && /^\d{2,4}$/.test(toks[1])) {
+      return mesAno(Number(toks[0]), toks[1]);
+    }
+    // Caso geral: lista de exercícios (anos).
+    if (toks.every((p) => /^\d{1,4}$/.test(p))) {
+      const anos = toks.map((p) => anoDe4Digitos(p));
+      if (anos.length === 1) return anos[0];
+      if (anos.length === 2) return `${anos[0]}–${anos[1]}`;
+      return anos.join(", ");
+    }
+    return toks.join(", ");
   }
 
   if (/^\d{4}$/.test(ref)) return ref;
+  if (/^\d{2}$/.test(ref)) return anoDe4Digitos(ref);
 
   return ref; // texto livre já descritivo (ex.: "Jan/2024 a Dez/2025") — mantém como veio
 }
@@ -425,7 +466,11 @@ function construirAbaClassificada(
   const valoresPorAncora = new Map<string, GrupoConta>();
   const naoClassificados = new Map<string, GrupoConta>();
   const bucket = (mapa: Map<string, GrupoConta>, campo: CampoExtraido, colKey: string) => {
-    const chaveNorm = campo.chave.trim().toLowerCase();
+    // normalizar() (acento/espaço) para que "Salários" e "Salarios", ou
+    // "Duplicatas  a Receber" e "Duplicatas a Receber" (deriva de grafia entre
+    // períodos/entidades da mesma empresa), caiam na MESMA linha em vez de
+    // gerar dois grupos que quebram o alinhamento entidade×período.
+    const chaveNorm = normalizar(campo.chave);
     if (!mapa.has(chaveNorm)) mapa.set(chaveNorm, novoGrupo(campo.chave));
     adicionarAoGrupo(mapa.get(chaveNorm)!, colKey, campo);
   };
