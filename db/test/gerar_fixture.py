@@ -14,7 +14,12 @@ Uso (de dentro de test-data/book-vertentes, que é onde os módulos do book vive
     python3 ../../db/test/gerar_fixture.py > ../../db/test/fixture_book_vertentes.sql
 
 O `.sql` gerado é versionado para que `db/test/run.sh` rode sem Python.
+
+Com `--json` emite os mesmos dados em JSON, para o verificador do export
+(`portal/scripts/verificar-export.mts`) montar a planilha a partir do MESMO
+fixture e conferir cada seção contra o gabarito do book.
 """
+import json
 import sys
 
 import dados as D
@@ -230,4 +235,35 @@ for d in docs:
             "secao, periodo_coluna, entidade_coluna, status_aceite) values\n  "
             + ",\n  ".join(vals[i:i + 150]) + ";")
 out.append("commit;")
-sys.stdout.write("\n".join(out) + "\n")
+
+if "--json" in sys.argv:
+    # Mesmo fixture, formato que o verificador do export consome.
+    TIPO_PER = {v[0]: {"tipo": v[1], "referencia": v[2]} for v in PER.values()}
+    UUID_NOME = {u: NOME[k] for k, u in ENT.items()}
+    sys.stdout.write(json.dumps({
+        "documentos": [
+            {
+                "id": d["doc"],
+                "tipo_taxonomia": d["tipo"],
+                "entidade": {"razao_social": UUID_NOME[d["ent"]]},
+                "periodo": TIPO_PER[d["per"]],
+                "documento_versao": [{"id": d["ver"], "nome_original": d["tipo"] + ".pdf"}],
+            }
+            for d in docs
+        ],
+        "campos": [
+            {
+                "id": f"{d['ver']}-{i}",
+                "documento_versao_id": d["ver"],
+                "chave": k, "valor_num": v, "secao": sec, "secao_canonica": None,
+                "entidade_coluna": ecol, "periodo_coluna": pcol,
+                "valor_texto": None, "unidade": u, "confianca": cf, "origem_pagina": 1,
+                "status_aceite": "aceito", "aceito_por": "fixture",
+                "aceito_em": "2026-07-27T00:00:00Z",
+            }
+            for d in docs
+            for i, (k, v, sec, pcol, ecol, u, cf) in enumerate(d["linhas"])
+        ],
+    }, ensure_ascii=False))
+else:
+    sys.stdout.write("\n".join(out) + "\n")
