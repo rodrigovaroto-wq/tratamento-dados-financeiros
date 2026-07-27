@@ -97,3 +97,46 @@ confiável e rastreável — não o substitui.
 **Critério de pronto (DoD):** ✅ dois modos de entrega definidos; ✅ schema-alvo com ordem de
 prioridade; ✅ proveniência por célula especificada; ✅ regra anti-ancoragem reafirmada.
 *(Layout fino do Excel e da tela do portal a refinar na F2, quando houver dado real fluindo.)*
+
+---
+
+## Emenda (teste v25) — o total da seção é o que o DOCUMENTO informou
+
+Achado no teste v25: **36 de 44 somas do Balanço divergiam do total informado**, várias exatamente
+2,00x. Causa: demonstração real é hierárquica e imprime subtotais de subseção ("Disponível" acima de
+"Caixa e bancos" + "Aplicações financeiras"); a soma da seção contava o subtotal **e** os seus
+componentes. A detecção estrutural do subtotal (`detectarSubtotaisInformados`) resolve quando a IA
+anota a SUBSEÇÃO em `campo_extraido.secao` — mas quando ela anota a seção de topo, ou quando o mesmo
+rótulo é subtotal num documento e conta-folha em outro (o export junta os dois na mesma linha), o
+subtotal passa e o total sai dobrado. Isso contaminava AV%, Δ% e todos os indicadores.
+
+**Regra a partir daqui:** quando o documento traz o total de uma seção, **ele é o número da seção**.
+O cabeçalho da seção aponta para a célula do valor extraído (fórmula `=<célula>`, não valor colado —
+a planilha continua viva e a proveniência fica a um clique), e a **nossa** soma vira uma linha de
+checagem logo abaixo (`↳ soma das contas listadas (checagem)` / `↳ soma das seções acima (checagem)`).
+Quando as duas divergem, a linha do informado é pintada e a nota explica a causa provável.
+
+Três consequências que valem registrar:
+
+1. **O total deixa de depender de acertarmos a hierarquia.** Errar a detecção de subtotal passa a ser
+   um ruído visível numa linha de checagem, não um total silenciosamente errado.
+2. **É mais fiel ao princípio de anti-ancoragem** (`docs/01`): o número autoritativo é o que o
+   documento disse; o que nós calculamos fica ao lado, identificado como cálculo nosso.
+3. **A divergência continua sendo o sinal útil** — não é escondida, é justamente o que fica destacado.
+
+Só quando o documento **não** informa o total daquela coluna a seção volta a ser `=SUM(range)`.
+
+### Seção declarada pelo documento manda na classificação
+
+Junto: quando `campo_extraido.secao` nomeia uma subseção **inequívoca** da estrutura ("Realizável a
+Longo Prazo", "Investimentos", "Imobilizado", "Intangível", "Disponível", "Estoques", "Obrigações
+Tributárias"…), ela é autoritativa para a colocação da conta. Antes, só seções que diziam
+"ativo"/"passivo"/"patrimônio líquido" contavam, e um cabeçalho de subseção caía no passe de
+palavras-chave do rótulo — onde o vocabulário podia mandar a conta para o lugar errado:
+`secao="Realizável a Longo Prazo"` + `chave="Títulos a receber - venda de imobilizado"` ia para
+Imobilizado; `secao="Investimentos"` + `chave="Mútuos a receber de controladas"` ia para o Ativo
+Circulante; `secao="Imobilizado"` + `chave="Terrenos"` caía em Não Classificadas.
+
+Ficam **de fora** da lista, de propósito, os cabeçalhos que existem nos dois lados do balanço —
+"Fornecedores", "Empréstimos e Financiamentos", "Partes Relacionadas", "Provisões". Chutar o lado
+deles distorceria liquidez e endividamento; eles continuam decididos pelo rótulo + consenso de irmãos.

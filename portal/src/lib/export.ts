@@ -778,11 +778,12 @@ function construirAbaClassificada(
   };
 
   // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
-  // abaixo do cabeçalho com a fórmula. Se divergir do subtotal calculado,
-  // pinta ambas as células e anota o motivo (checagem de reconciliação).
-  const escreverConferenciaExtraido = (nivel: number, ancoraKey: string, cabecalhoIdx: number, subtotalNum: Map<string, number>) => {
+  // abaixo do cabeçalho. Se divergir do subtotal calculado, pinta ambas as
+  // células e anota o motivo (checagem de reconciliação embutida).
+  // Devolve o índice da linha, para o cabeçalho poder apontar para ela.
+  const escreverConferenciaExtraido = (nivel: number, ancoraKey: string, cabecalhoIdx: number, subtotalNum: Map<string, number>): number | null => {
     const grupo = valoresPorAncora.get(ancoraKey);
-    if (!grupo) return;
+    if (!grupo) return null;
     const idx = rowIndex++;
     const row = sheet.getRow(idx);
     row.getCell(1).value = "↳ total informado no documento";
@@ -799,14 +800,52 @@ function construirAbaClassificada(
       if (vCalc != null && Math.abs(vCalc - vExtraido) > Math.max(0.01, Math.abs(vExtraido) * 0.005)) {
         cell.fill = DIVERGENCIA_FILL;
         cell.note = comoNota(
-          `Divergência: soma calculada = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
+          `Divergência: soma das contas listadas = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
           + `informado no documento = ${vExtraido.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. `
-          + `Conferir a extração contra o arquivo original.`,
+          + `Causa mais comum: o documento imprime subtotais intermediários (ex.: "Disponível" acima de `
+          + `"Caixa e bancos" + "Aplicações"), e a soma conta o subtotal E os seus componentes. `
+          + `O valor da seção segue o que o documento informou; confira a extração contra o original.`,
         );
-        // sinaliza também a célula da fórmula (cabeçalho)
+        // sinaliza também a célula do cabeçalho
         sheet.getRow(cabecalhoIdx).getCell(plano.valuePos[i]).fill = DIVERGENCIA_FILL;
       }
     });
+    return idx;
+  };
+
+  // Linha "soma das contas listadas": a fórmula =SUM(range) sai do cabeçalho e
+  // vem para cá quando o documento informou o total da seção.
+  //
+  // Por quê: demonstração real é hierárquica e imprime subtotais de subseção.
+  // Somar as contas listadas conta o subtotal E os seus componentes — dobra o
+  // total. Detectar o subtotal pela estrutura (`detectarSubtotaisInformados`)
+  // resolve quando a IA anota a SUBSEÇÃO em `secao`; quando ela anota a seção de
+  // topo, o subtotal impresso passa e a soma sai 2x (achado no teste v25: 36 de
+  // 44 somas do Balanço divergiam, várias exatamente 2,00x).
+  //
+  // Então o número da seção deixa de depender de acertarmos a hierarquia: quando
+  // o documento diz quanto é, o cabeçalho aponta para o que ele disse, e a nossa
+  // soma vira uma LINHA DE CHECAGEM ao lado. Nada é escondido — a divergência
+  // fica visível e pintada, que é o sinal útil — e AV%, Δ% e indicadores passam a
+  // usar o número autoritativo em vez de um que pode estar dobrado.
+  const escreverSomaCalculada = (nivel: number, rotulo: string, formulaDaColuna: (i: number) => string) => {
+    const idx = rowIndex++;
+    const row = sheet.getRow(idx);
+    row.getCell(1).value = `↳ ${rotulo} (checagem)`;
+    row.getCell(1).alignment = { indent: nivel + 1 };
+    row.getCell(1).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+    row.getCell(1).note = comoNota(
+      "Soma calculada por nós, para conferir contra o total que o documento informou (linha acima). "
+      + "Quando as duas divergem, quase sempre é porque o documento traz subtotais intermediários, "
+      + "que a soma conta duas vezes — por isso o valor da seção segue o informado, não esta soma.",
+    );
+    colunas.forEach((col, i) => {
+      const cell = row.getCell(plano.valuePos[i]);
+      cell.value = { formula: formulaDaColuna(i) } as ExcelJS.CellFormulaValue;
+      cell.numFmt = VALOR_NUM_FMT;
+      cell.font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+    });
+    return idx;
   };
 
   if (estrutura === "balanco") {
@@ -838,6 +877,18 @@ function construirAbaClassificada(
         const ultima = rowIndex - 1;
         const temContas = ultima >= primeira;
         escreverSubtotaisInformados(no.key, no.nivel + 1);
+        // Quando o documento informou o total desta seção, ELE é o número da
+        // seção; a nossa soma vai para uma linha de checagem logo abaixo (ver
+        // `escreverSomaCalculada`). Isso torna o total, a AV%, o Δ% e os
+        // indicadores imunes a subtotal de subseção contado duas vezes.
+        const informadoIdx = temAncora
+          ? escreverConferenciaExtraido(no.nivel, no.key, cabIdx, temContas ? subtotalNum : new Map())
+          : null;
+        if (temAncora && temContas && informadoIdx != null) {
+          escreverSomaCalculada(no.nivel, "soma das contas listadas",
+            (i) => `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})`);
+        }
+        const grupoAncora = temAncora ? valoresPorAncora.get(no.key)! : null;
         const row = sheet.getRow(cabIdx);
         row.getCell(1).value = no.label;
         row.getCell(1).alignment = { indent: no.nivel };
@@ -846,21 +897,18 @@ function construirAbaClassificada(
         colunas.forEach((col, i) => {
           const cell = row.getCell(plano.valuePos[i]);
           cell.font = { bold: true };
-          if (temContas) {
-            // caso normal: subtotal = soma das contas-folha.
+          const vInformado = grupoAncora ? valorNumDoGrupo(grupoAncora, col.key) : null;
+          if (vInformado != null && informadoIdx != null) {
+            // O documento disse quanto é: o cabeçalho APONTA para a célula do
+            // valor extraído (fórmula, não valor colado — a planilha continua
+            // viva e a proveniência fica a um clique).
+            cell.value = { formula: `${colLetra(i)}${informadoIdx}` } as ExcelJS.CellFormulaValue;
+            cell.numFmt = VALOR_NUM_FMT;
+            subtotalNum.set(col.key, vInformado);
+          } else if (temContas) {
+            // O documento não trouxe o total desta coluna: soma as contas-folha.
             cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
             cell.numFmt = VALOR_NUM_FMT;
-          } else if (temAncora) {
-            // seção que o documento trouxe SÓ como total (sem detalhar as
-            // contas): não há o que somar — usa o próprio valor informado como
-            // o valor da seção, senão ele ficaria órfão e o total do pai sairia
-            // errado (era o "Imobilizado" em branco no balanço do dono).
-            const v = valorNumDoGrupo(valoresPorAncora.get(no.key)!, col.key);
-            if (v != null) {
-              cell.value = v;
-              cell.numFmt = VALOR_NUM_FMT;
-              subtotalNum.set(col.key, v);
-            }
           } else {
             // seção padrão sem nenhum dado no documento: 0 explícito (a coluna
             // fica completa, sem célula vazia solta no meio do balanço).
@@ -870,9 +918,6 @@ function construirAbaClassificada(
         });
         noRow.set(no.key, cabIdx);
         linhasValor.add(cabIdx);
-        // Só mostra a linha de conferência quando REALMENTE há uma soma para
-        // conferir contra o informado (senão o cabeçalho já É o informado).
-        if (temAncora && temContas) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
         return { idx: cabIdx, subtotalNum };
       }
 
@@ -889,6 +934,17 @@ function construirAbaClassificada(
           if (v != null) subtotalNum.set(col.key, (subtotalNum.get(col.key) ?? 0) + v);
         });
       }
+      // Mesma regra do nó folha: o total que o documento informou manda, e a
+      // soma dos filhos vira linha de checagem.
+      const temAncoraPai = valoresPorAncora.has(no.key);
+      const informadoPaiIdx = temAncoraPai
+        ? escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum)
+        : null;
+      if (temAncoraPai && filhosIdx.length && informadoPaiIdx != null) {
+        escreverSomaCalculada(no.nivel, "soma das seções acima",
+          (i) => filhosIdx.map((r) => `${colLetra(i)}${r}`).join("+"));
+      }
+      const grupoAncoraPai = temAncoraPai ? valoresPorAncora.get(no.key)! : null;
       const row = sheet.getRow(cabIdx);
       row.getCell(1).value = no.label;
       row.getCell(1).alignment = { indent: no.nivel };
@@ -898,7 +954,12 @@ function construirAbaClassificada(
       colunas.forEach((col, i) => {
         const cell = row.getCell(plano.valuePos[i]);
         cell.font = { bold: true };
-        if (filhosIdx.length) {
+        const vInformado = grupoAncoraPai ? valorNumDoGrupo(grupoAncoraPai, col.key) : null;
+        if (vInformado != null && informadoPaiIdx != null) {
+          cell.value = { formula: `${colLetra(i)}${informadoPaiIdx}` } as ExcelJS.CellFormulaValue;
+          cell.numFmt = VALOR_NUM_FMT;
+          subtotalNum.set(col.key, vInformado);
+        } else if (filhosIdx.length) {
           cell.value = { formula: filhosIdx.map((r) => `${colLetra(i)}${r}`).join("+") } as ExcelJS.CellFormulaValue;
           cell.numFmt = VALOR_NUM_FMT;
         }
@@ -906,7 +967,6 @@ function construirAbaClassificada(
       });
       noRow.set(no.key, cabIdx);
       linhasValor.add(cabIdx);
-      if (valoresPorAncora.has(no.key)) escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum);
       return { idx: cabIdx, subtotalNum };
     };
 

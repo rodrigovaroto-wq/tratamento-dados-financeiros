@@ -163,6 +163,53 @@ const INTANGIVEL_KW = [
 
 // Sub-classifica uma conta já sabida do Ativo Não Circulante num subgrupo CPC.
 // Devolve o bucket genérico quando nenhum subgrupo casa (nunca força palpite).
+// Nomes de SUBSEÇÃO que identificam a seção sem ambiguidade quando o documento
+// os declara como `secao` de uma conta. Deliberadamente NÃO inclui
+// "Fornecedores", "Empréstimos e Financiamentos", "Partes Relacionadas" nem
+// "Provisões": esses cabeçalhos existem no circulante E no não circulante, e
+// chutar o lado distorceria liquidez e endividamento.
+const SUBSECAO_AUTORITATIVA: Array<[string, string]> = [
+  // Subgrupos do Ativo Não Circulante (Lei 6.404/76 art. 178, CPC 26).
+  ["realizavel a longo prazo", "realizavel_lp"],
+  ["ativo realizavel a longo prazo", "realizavel_lp"],
+  ["investimentos", "investimentos"],
+  ["imobilizado", "imobilizado"],
+  ["ativo imobilizado", "imobilizado"],
+  ["intangivel", "intangivel"],
+  ["ativo intangivel", "intangivel"],
+  // Subseções que só existem no Ativo Circulante.
+  ["disponivel", "ativo_circulante"],
+  ["disponibilidades", "ativo_circulante"],
+  ["caixa e equivalentes de caixa", "ativo_circulante"],
+  ["contas a receber", "ativo_circulante"],
+  ["clientes", "ativo_circulante"],
+  ["duplicatas a receber", "ativo_circulante"],
+  ["estoques", "ativo_circulante"],
+  ["tributos a recuperar", "ativo_circulante"],
+  ["impostos a recuperar", "ativo_circulante"],
+  ["outros creditos", "ativo_circulante"],
+  ["despesas antecipadas", "ativo_circulante"],
+  // Subseções que só existem no Passivo Circulante.
+  ["obrigacoes trabalhistas", "passivo_circulante"],
+  ["obrigacoes trabalhistas e sociais", "passivo_circulante"],
+  ["obrigacoes sociais", "passivo_circulante"],
+  ["obrigacoes tributarias", "passivo_circulante"],
+  ["obrigacoes fiscais", "passivo_circulante"],
+  ["outras obrigacoes", "passivo_circulante"],
+  ["contas a pagar", "passivo_circulante"],
+];
+
+function subsecaoAutoritativa(tokensSecao: Set<string>): string | null {
+  // "Imobilizado" isolado é subseção; "Imobilizado líquido de depreciação" e
+  // afins também. Mas se a seção declarada JÁ diz circulante/não circulante,
+  // aquela informação é mais específica — deixa o passe seguinte decidir.
+  if (tokensSecao.has("circulante")) return null;
+  for (const [frase, key] of SUBSECAO_AUTORITATIVA) {
+    if (contemFrase(tokensSecao, frase)) return key;
+  }
+  return null;
+}
+
 function subgrupoNaoCirculante(tokensChave: Set<string>): string {
   if (contemAlgumaFrase(tokensChave, INTANGIVEL_KW)) return "intangivel";
   if (contemAlgumaFrase(tokensChave, IMOBILIZADO_KW)) return "imobilizado";
@@ -256,6 +303,26 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
   // 2) Seção anotada pela IA no diagnóstico/extração (db/migrations/0010) —
   // mais confiável que adivinhar só pelo rótulo da conta.
   if (tokensSecao.size > 0) {
+    // 2a) A seção declarada é o nome de uma SUBSEÇÃO da própria estrutura?
+    // Então ela MANDA. Antes, só seções que diziam "ativo"/"passivo"/"patrimônio
+    // líquido" eram consideradas aqui, e um cabeçalho de subseção caía no passe
+    // 3 (palavra-chave do rótulo) — onde o vocabulário do rótulo podia mandar a
+    // conta para o lugar errado. Achados reais no book:
+    //   secao="Realizável a Longo Prazo" chave="Títulos a receber - venda de
+    //     imobilizado"  →  ia para `imobilizado`, porque o rótulo diz imobilizado
+    //   secao="Investimentos" chave="Mútuos a receber de controladas"
+    //     →  ia para `ativo_circulante`
+    //   secao="Imobilizado" chave="Terrenos" / "Edificações e benfeitorias"
+    //     →  ia para "Não Classificadas"
+    // O documento imprimiu a conta debaixo daquele cabeçalho: isso é fato
+    // estrutural do arquivo, não palpite. Só entram aqui nomes de subseção
+    // INEQUÍVOCOS (subgrupos do art. 178 / CPC 26 e subseções de circulante que
+    // não existem nos dois lados do balanço) — "Fornecedores", "Empréstimos e
+    // Financiamentos" e "Provisões" aparecem no circulante E no não circulante,
+    // então continuam decididos pelo rótulo + consenso de irmãos.
+    const subsecaoDeclarada = subsecaoAutoritativa(tokensSecao);
+    if (subsecaoDeclarada) return { secaoKey: subsecaoDeclarada, ancoraKey: null };
+
     const naoCirc = contemFrase(tokensSecao, "nao circulante") || contemFrase(tokensSecao, "longo prazo") || tokensSecao.has("permanente");
     if (tokensSecao.has("ativo")) {
       if (naoCirc) return { secaoKey: subgrupoNaoCirculante(tokensChave), ancoraKey: null };
