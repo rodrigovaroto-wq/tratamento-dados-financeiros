@@ -48,7 +48,12 @@ export const SECAO_CANONICA_ENUM = [
   'NAO_CLASSIFICAVEL',
 ];
 
-const SYSTEM_PROMPT = [
+// Exportado de propósito: `build-workflow.mjs` embute ESTE texto no nó Code do
+// workflow (via JSON.stringify), em vez de manter uma paráfrase manual. Antes
+// havia três cópias do prompt (aqui, no gerador e no JSON gerado) e elas já
+// tinham divergido de fato — uma melhoria aplicada aqui não chegava à produção
+// até alguém reescrever o mirror à mão. Fonte única agora.
+export const SYSTEM_PROMPT = [
   'Você analisa UM documento financeiro de um mandato de Reestruturação (contexto Brasil) e',
   'devolve DUAS coisas: um diagnóstico do documento e a extração linha a linha de TODOS os',
   'dados financeiros nele contidos, organizados como uma planilha.',
@@ -69,11 +74,20 @@ const SYSTEM_PROMPT = [
   '  COMBINADO — classifique pela demonstração principal (normalmente BALANCO). Regra prática: se',
   '  as linhas têm entidade_coluna preenchido (várias empresas) → COMBINADO; se é uma entidade só',
   '  (mesmo com várias demonstrações no arquivo) → o tipo da demonstração principal.',
-  'periodo_tipo / periodo_referencia: o período de competência real do conteúdo (convenções:',
-  '  12M25=ano 2025; 1T25=1º tri/2025; L24M=últimos 24 meses; "23,24,25"=múltiplos exercícios;',
-  '  um ano isolado como "2025" também é válido). É o período ATUAL do documento — NÃO use a data',
-  '  de um SALDO DE ABERTURA/exercício anterior (ex.: uma DMPL que mostra "Saldos em 31/12/2023" e',
-  '  "Saldos em 31/12/2024" é um documento de 2024; 2023 é só o saldo inicial, não o período).',
+  'periodo_tipo / periodo_referencia: o período de competência real do conteúdo. É o período ATUAL',
+  '  do documento — NÃO use a data de um SALDO DE ABERTURA/exercício anterior (ex.: uma DMPL que',
+  '  mostra "Saldos em 31/12/2023" e "Saldos em 31/12/2024" é um documento de 2024; 2023 é só o',
+  '  saldo inicial, não o período). EMITA periodo_referencia SEMPRE numa destas formas exatas',
+  '  (notação canônica do sistema — não invente outro formato):',
+  '  - exercício anual completo → "12M" + ano de 2 dígitos. Ex.: 2025 → "12M25".',
+  '  - trimestre → dígito do trimestre + "T" + ano de 2 dígitos. Ex.: 1º tri/2025 → "1T25".',
+  '  - período de N meses corridos (últimos N meses) → "L" + N + "M". Ex.: últimos 24 meses → "L24M".',
+  '  - vários exercícios no mesmo documento → anos de 2 dígitos separados por vírgula, em ordem',
+  '    crescente. Ex.: 2023, 2024 e 2025 → "23,24,25".',
+  '  - data-base (posição numa data específica) → ISO "AAAA-MM-DD". Ex.: 15/01/2025 → "2025-01-15".',
+  '  - período de N meses de um ano específico (parcial) → N + "M" + ano de 2 dígitos. Ex.: 9 meses',
+  '    de 2024 → "9M24".',
+  '  Use o periodo_tipo coerente com a forma escolhida ("anual", "trimestre", "multi", "data-base").',
   'legibilidade: "ok" | "degradado" | "ilegivel" — avaliação real do ARQUIVO em si (não da',
   '  classificação): páginas faltando, tabela cortada, digitalização ruim, texto ilegível,',
   '  arquivo aparentemente incompleto. nota_legibilidade explica objetivamente QUANDO != "ok"',
@@ -81,6 +95,20 @@ const SYSTEM_PROMPT = [
   'resumo: 2-3 frases objetivas do que o documento contém (para alguém decidir sem abrir o',
   '  arquivo).',
   'justificativa: 1-2 frases explicando o diagnóstico acima (o que você viu ou não viu).',
+  '',
+  '== MOEDA E ESCALA (nível do documento) ==',
+  'moeda: código ISO da moeda em que os valores estão expressos — "BRL" para Real, "USD" para',
+  '  dólar, "EUR" para euro. Use o código, não o símbolo. null se não houver indicação nenhuma.',
+  'unidade: o FATOR DE ESCALA dos valores, declarado no cabeçalho/título das demonstrações',
+  '  ("Em R$ mil", "valores expressos em milhares de reais", "R$ milhões", "em unidades"). Responda',
+  '  com UMA destas três palavras exatas, e nada mais:',
+  '  - "unidade" → os valores estão em reais inteiros (o caso mais comum; use também quando o',
+  '    documento não declara escala nenhuma).',
+  '  - "milhar" → os valores estão em milhares (multiplicar por 1.000 para ter o valor real).',
+  '  - "milhao" → os valores estão em milhões (multiplicar por 1.000.000).',
+  '  NÃO converta os valores você mesmo: extraia os números COMO ESTÃO impressos no documento e',
+  '  declare a escala aqui — a conversão é feita depois, de forma auditável. A escala é crítica:',
+  '  errá-la altera o valor em 1000x.',
   '',
   '== LINHAS (planilha) ==',
   'Cada linha do JSON usa chaves CURTAS (economia de tokens de saída em documentos com muitas',
@@ -93,8 +121,19 @@ const SYSTEM_PROMPT = [
   '"Custos", "Despesas Operacionais", "Atividades Operacionais", "Atividades de Investimento",',
   '"Atividades de Financiamento" — use os agrupadores que o PRÓPRIO documento usa; null se a',
   'linha não pertencer a nenhuma seção clara (ex.: um total geral solto).',
-  'valor_num = número puro (sem separador de milhar, ponto decimal) quando houver; senão null.',
-  'valor_texto = como aparece no documento. Informe a página de origem.',
+  'valor_texto = o valor COMO APARECE no documento (com os separadores e sinais originais).',
+  'valor_num = o mesmo valor como número puro, ou null quando não houver número. Regras de',
+  'conversão (documentos brasileiros — siga à risca, é fonte comum de erro):',
+  '- NOTAÇÃO DECIMAL BR: o ponto é separador de MILHAR e a vírgula é o separador DECIMAL.',
+  '  "1.234,56" → 1234.56 ; "12.080.078,23" → 12080078.23 ; "1.000" → 1000 (mil, não 1,0).',
+  '- SINAL NEGATIVO: valores entre PARÊNTESES são NEGATIVOS — "(6.000,00)" → -6000.00. Idem sinal',
+  '  de menos antes ou DEPOIS do número ("6.000-" → -6000). Em demonstrações, deduções da receita,',
+  '  custos, despesas e saídas de caixa costumam vir entre parênteses: preserve o sinal negativo.',
+  '- BALANCETE COM COLUNAS DEVEDOR/CREDOR (ou sufixo "D"/"C"): use o sinal conforme a natureza do',
+  '  saldo — saldo devedor (D) positivo em contas de ativo/despesa; saldo credor (C) positivo em',
+  '  contas de passivo/PL/receita. Não misture: mantenha a mesma convenção em todo o documento.',
+  '- Não aplique a escala de "unidade" aqui: o número vai como impresso (ver MOEDA E ESCALA).',
+  'Informe a página de origem.',
   'NÃO invente linhas nem valores. Se algo não estiver legível, omita — é melhor extrair de',
   'menos com confiança do que inventar.',
   '',
@@ -245,6 +284,42 @@ export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = D
 // (finish_reason 'length' — teto de tokens de saída estourado) ou o conteúdo
 // não é JSON válido. Sem isso, uma falha silenciosa gera 0 campos e ninguém
 // nunca fica sabendo (achado em produção, sessão 7 cont.⁷ — "teste v14").
+// Normalização de ESCALA na fronteira. O prompt pede "unidade"|"milhar"|"milhao",
+// mas o campo é texto livre no schema (fechá-lo em enum exigiria validar contra a
+// API real, que não temos aqui) e documentos já processados trazem variedade
+// ("R$ mil", "milhares de reais", "em milhões"). Como a `unidade` é herdada por
+// TODA linha e a reconciliação Classe A compara a unidade de DOIS documentos
+// diferentes (0009: divergência aborta a checagem), texto livre inconsistente
+// gera "precondição não satisfeita" falsa — normalizar aqui torna a comparação
+// confiável, sem depender do humor do modelo. Desconhecido → null (nunca chuta
+// uma escala: errar em 1000x é pior que não saber).
+export function normalizarUnidade(bruto) {
+  if (bruto == null) return null;
+  const t = String(bruto)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().trim();
+  if (!t) return null;
+  if (/\bmilhao|milhoes|\bmm\b|r\$\s*mi\b|\bmi\b/.test(t)) return 'milhao';
+  if (/\bmilhar|milhares|\bmil\b|r\$\s*mil|\bm\$\b/.test(t)) return 'milhar';
+  if (/\bunidade|\breal\b|reais|inteiro|r\$$|^r\$$/.test(t)) return 'unidade';
+  if (t === '1' || t === '1.000' || t === '1000') return t === '1' ? 'unidade' : 'milhar';
+  return null;
+}
+
+// Moeda para código ISO — mesmo espírito da escala: "R$"/"reais" e "BRL" devem
+// virar a MESMA coisa para qualquer comparação/exibição a jusante.
+export function normalizarMoeda(bruto) {
+  if (bruto == null) return null;
+  const t = String(bruto)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().trim();
+  if (!t) return null;
+  if (/\bbrl\b|r\$|real|reais/.test(t)) return 'BRL';
+  if (/\busd\b|us\$|dolar|dollar/.test(t)) return 'USD';
+  if (/\beur\b|€|euro/.test(t)) return 'EUR';
+  return /^[a-z]{3}$/.test(t) ? t.toUpperCase() : null;
+}
+
 export function parseExtractionResponse(apiJson) {
   const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
   const vazio = (falhaMotivo) => ({
@@ -275,7 +350,7 @@ export function parseExtractionResponse(apiJson) {
     }
     return vazio('Resposta da OpenAI não veio em JSON válido.');
   }
-  const unidade = p.unidade ?? null;
+  const unidade = normalizarUnidade(p.unidade);
   // Remapeia as chaves curtas do fio (s/sc/ec/pc/k/vt/vn/op/cf) para os nomes
   // completos usados em todo o resto do sistema (campo_extraido e por diante)
   // — a compactação é só na conversa com a OpenAI, nada rio abaixo muda.
@@ -313,7 +388,7 @@ export function parseExtractionResponse(apiJson) {
     ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
       + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
     : null;
-  return { moeda: p.moeda ?? null, unidade, campos, diagnostico, falhaMotivo };
+  return { moeda: normalizarMoeda(p.moeda), unidade, campos, diagnostico, falhaMotivo };
 }
 
 export { OPENAI_URL, DEFAULT_MODEL, PERIODO_TIPO_ENUM };
