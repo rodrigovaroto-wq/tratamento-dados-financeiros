@@ -31,6 +31,8 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0019_auto_aceite_alta_confianca.sql` | **Auto-aceite de linhas com confiança >=95%** — pedido explícito do dono (decisão de produto, registrada com a ressalva honesta de que sobe a autonomia da extração além do que a doutrina padrão exigiria sem golden set). `fn_registrar_campos_extraidos` (mesma assinatura de 0017) grava `status_aceite='aceito'`/`aceito_por`/`aceito_em` já na inserção quando `confianca >= 0.95`, registrando UM `decisao`+`evento_auditoria` por chamada (resumo, não um por linha). Inclui backfill: linhas já gravadas antes desta migration, com confiança >=95% e ainda pendentes, são promovidas agora (um `decisao` por caso afetado). |
 | `migrations/0020_periodo_canonico.sql` | **Comparação de período por FORMA CANÔNICA (elimina `periodo_incorreto` falso)** — achado no "teste v22": a fila de revisão marcava "período pode estar incorreto" quando o diagnóstico sugeria o MESMO período do registrado em NOTAÇÃO diferente (`2025-01-15` × `15/01/2025`; `anual 2025` × `anual 12M25`). `fn_registrar_diagnostico` (0010) comparava a string crua. Novas funções `fn_ano4` + `fn_periodo_canonico(tipo, referencia)` (mesma semântica de `formatarPeriodo` do portal) colapsam notações equivalentes; `fn_registrar_diagnostico` (mesma assinatura) só gera pendência quando os períodos são canonicamente DISTINTOS. Pendências falsas já abertas auto-resolvem na próxima passada. Sem mudança no N8N. |
 
+| `migrations/0021_classe_b_checagem_unidade.sql` | **Classe B: pré-condição de UNIDADE/ESCALA entre os dois documentos** — achado na auditoria de endurecimento: as duas checagens B (0015) comparam valores de DOIS documentos diferentes (Receita da DRE × soma do FATURAMENTO_24M; Despesa Financeira × juros do MAPA_DIVIDA) **sem** conferir a escala — ao contrário da Classe A (0009). Se a DRE está em milhares e o mapa em unidades, a comparação é entre grandezas 1000x distintas (divergência sem sentido, ou pior, falso "ok"). Novas `fn_unidade_predominante(documento_versao_id)` (moda da escala entre as linhas que a declaram — linhas não-monetárias têm `unidade` null por construção e não distorcem) e `fn_motivo_escala_incomparavel(...)`; as duas checagens B (mesmas assinaturas de 0015) passam a devolver `precondicao_nao_satisfeita` com motivo explícito quando as escalas divergem. Escala ausente num dos lados não bloqueia (mesmo critério conservador da 0009). Sem mudança no N8N. |
+
 ## Como aplicar
 
 **Opção A — Supabase CLI (recomendado):**
@@ -57,6 +59,7 @@ supabase db execute --file db/migrations/0017_periodo_coluna.sql
 supabase db execute --file db/migrations/0018_fix_revisar_documento_pendencias.sql
 supabase db execute --file db/migrations/0019_auto_aceite_alta_confianca.sql
 supabase db execute --file db/migrations/0020_periodo_canonico.sql
+supabase db execute --file db/migrations/0021_classe_b_checagem_unidade.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**

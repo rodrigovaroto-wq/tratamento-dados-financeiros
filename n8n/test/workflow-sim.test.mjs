@@ -441,3 +441,31 @@ test('o prompt em produção carrega as instruções de escala, sinal e período
     assert.ok(prompt.includes(marca), `prompt em produção contém ${marca}`);
   }
 });
+
+test('Parse Extracao (nó real): escala não contamina linha não-monetária', async () => {
+  // Mesma proteção de lib/extract.mjs (ehLinhaNaoMonetaria), verificada no
+  // CÓDIGO QUE RODA EM PRODUÇÃO: um documento em "R$ mil" com margem em % e
+  // lucro por ação não pode marcar essas linhas como "milhar" (mis-escala de
+  // 1000x quando o fator for aplicado).
+  const { preparado } = await chainFile(1);
+  const registrado = { json: { r: { documento_id: 'doc-9', documento_versao_id: 'ver-9' } } };
+  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'R$', unidade: 'Em milhares de reais',
+    diagnostico: {
+      entidade: 'Empresa Teste Ltda', tipo_confirma: true, tipo_sugerido: 'DRE',
+      periodo_tipo: 'anual', periodo_referencia: '12M25', legibilidade: 'ok',
+      nota_legibilidade: null, resumo: 'DRE 2025.', justificativa: 'ok',
+    },
+    linhas: [
+      { s: 'Receita', sc: 'receita_bruta', ec: null, pc: null, k: 'Receita Líquida', vt: '10.000', vn: 10000, op: 1, cf: 0.9 },
+      { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Margem Líquida %', vt: '12,5%', vn: 12.5, op: 1, cf: 0.9 },
+      { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Lucro por Ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
+    ],
+  }) } }] } };
+  const parsed = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
+  assert.equal(parsed.json.campos[0].unidade, 'milhar', 'conta monetária herda a escala normalizada');
+  assert.equal(parsed.json.campos[1].unidade, null, 'linha em % não herda escala');
+  assert.equal(parsed.json.campos[2].unidade, null, 'lucro por ação não herda escala');
+  assert.equal(parsed.json.campos[1].valor_num, 12.5, 'valor preservado');
+});
