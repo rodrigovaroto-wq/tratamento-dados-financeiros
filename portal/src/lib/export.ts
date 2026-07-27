@@ -140,6 +140,24 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
   return ref; // texto livre já descritivo (ex.: "Jan/2024 a Dez/2025") — mantém como veio
 }
 
+// Colunas de uma demonstração COMBINADA que NÃO são entidades: a de
+// "Eliminações"/"Ajustes" (lançamentos que anulam saldos recíprocos) e a de
+// "Combinado"/"Consolidado"/"Total" (o resultado da soma). A extração as trata
+// como mais uma coluna de empresa — correto do ponto de vista do documento, mas
+// no export elas não podem ser lidas como entidade: a de total DUPLICA o que as
+// demais já dizem, e AV%/Δ% sobre uma coluna de ajuste é ruído. Achado no teste
+// v24: a aba Combinado saiu com "Eliminações" e "Combinado" como se fossem duas
+// empresas do grupo. Aqui elas continuam no export (nada se perde), mas ficam
+// no FIM, rotuladas pelo que são, e sem análise vertical/horizontal.
+const RE_COLUNA_AJUSTE = /^(elimina|ajuste|eliminacao)/;
+const RE_COLUNA_TOTAL = /^(combinad|consolidad|total|soma)/;
+export function tipoColunaNaoEntidade(entidade: string): "ajuste" | "total" | null {
+  const t = normalizar(entidade);
+  if (RE_COLUNA_AJUSTE.test(t)) return "ajuste";
+  if (RE_COLUNA_TOTAL.test(t)) return "total";
+  return null;
+}
+
 // Chave CRONOLÓGICA de um período já formatado (saída de `formatarPeriodo`).
 // As colunas do export eram ordenadas por `localeCompare` do rótulo, o que é
 // alfabético: "Nov/2024" vinha antes de "Out/2024" e "Dez/2024" antes de
@@ -193,8 +211,15 @@ function compararColunas(
   a: { entidade: string; periodo: string },
   b: { entidade: string; periodo: string },
 ): number {
+  // Entidades reais primeiro; depois a coluna de eliminações; o total por último
+  // (é a leitura natural de um mapa de combinação).
+  const ordem = (e: string) => {
+    const t = tipoColunaNaoEntidade(e);
+    return t === "ajuste" ? 1 : t === "total" ? 2 : 0;
+  };
   return (
-    a.entidade.localeCompare(b.entidade)
+    ordem(a.entidade) - ordem(b.entidade)
+    || a.entidade.localeCompare(b.entidade)
     || chaveCronologicaPeriodo(a.periodo) - chaveCronologicaPeriodo(b.periodo)
     || a.periodo.localeCompare(b.periodo)
   );
@@ -429,6 +454,7 @@ const MARGEM_LABEL: Record<string, string> = {
 // períodos comparáveis da mesma entidade) são FÓRMULAS transparentes sobre o
 // dado já extraído — não projetam nem inventam número. Estilo discreto
 // (cinza-azulado, menor) para não competir com os valores.
+const SUBTOTAL_INFO_FONT: Partial<ExcelJS.Font> = { italic: true, size: 8, color: { argb: "FF7C3AED" } };
 const ANALISE_FONT: Partial<ExcelJS.Font> = { italic: true, size: 9, color: { argb: "FF64748B" } };
 const ANALISE_HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } };
 const AV_FMT = "0.0%";
@@ -456,11 +482,15 @@ function planejarColunas(colunas: Coluna[], comAV: boolean): PlanoColunas {
   const deltas: Array<{ pos: number; atual: number; anterior: number }> = [];
   let col = 2; // coluna 1 = rótulo da conta
   colunas.forEach((coluna, i) => {
+    const naoEntidade = tipoColunaNaoEntidade(coluna.entidade) != null;
     valuePos[i] = col++;
-    avPos[i] = comAV ? col++ : null;
+    // AV% não se aplica a coluna de ajuste/total (ver tipoColunaNaoEntidade).
+    avPos[i] = comAV && !naoEntidade ? col++ : null;
     // Δ% só entre períodos DIFERENTES da MESMA entidade, adjacentes na ordenação
     // (as colunas vêm ordenadas por entidade e depois período).
-    if (i > 0 && colunas[i - 1].entidade === coluna.entidade && colunas[i - 1].periodo !== coluna.periodo) {
+    if (!naoEntidade && i > 0 && colunas[i - 1].entidade === coluna.entidade
+        && colunas[i - 1].periodo !== coluna.periodo
+        && tipoColunaNaoEntidade(colunas[i - 1].entidade) == null) {
       deltas.push({ pos: col++, atual: i, anterior: i - 1 });
     }
   });
@@ -474,6 +504,94 @@ function valorNumDoGrupo(grupo: GrupoConta, colKey: string): number | null {
   if (!c || c.length === 0) return null;
   const campo = melhorCampo(c);
   return typeof campo.valor_num === "number" ? campo.valor_num : null;
+}
+
+// Uma linha extraída é o SUBTOTAL de um agrupamento do próprio documento (e não
+// uma conta)? Demonstrações reais são hierárquicas: sob "Ativo Circulante" vêm
+// os agrupamentos "Disponível", "Contas a Receber", "Estoques"… cada um com o
+// PRÓPRIO subtotal impresso, seguido das contas que o compõem. Sem reconhecer
+// isso, o subtotal entra no bucket como se fosse conta e o `SUM` da seção soma
+// o subtotal MAIS os seus componentes — dobrando tudo. Achado com dado real
+// (book Vertentes): `SUM` do Ativo Circulante deu 137.865 contra 67.878
+// informados = 2,03x, contaminando também AV% e todos os indicadores.
+//
+// A `ancoraBalanco` de statement-templates.ts só reconhece total quando o
+// rótulo tem "total"/"soma" ou é feito só de palavras estruturais — não cobre
+// "Disponível"/"Estoques", que são nomes de agrupamento comuns. Aqui a detecção
+// é ESTRUTURAL, a partir do próprio documento, por dois sinais independentes:
+//
+//   (A) o rótulo da linha é IGUAL ao nome de seção (`secao`) que outras linhas
+//       do mesmo documento declaram — ou seja, o documento diz que aquele nome
+//       é um agrupamento, e esta linha é o total dele;
+//   (B) o valor da linha é IGUAL à soma das OUTRAS linhas que compartilham a
+//       mesma `secao`, em TODAS as colunas com dado — coincidência estatística
+//       praticamente impossível em documento multi-coluna.
+//
+// Nada é descartado: a linha continua visível (marcada como subtotal informado),
+// só sai da SOMA. Sem `secao` anotada, nenhum dos sinais dispara e o
+// comportamento é o de antes (conservador).
+function detectarSubtotaisInformados(
+  camposDaAba: Array<{ campo: CampoExtraido; colKey: string }>,
+): Set<string> {
+  const subtotais = new Set<string>();
+  const secoesDeclaradas = new Set<string>();
+  for (const { campo } of camposDaAba) {
+    const s = normalizar(campo.secao ?? "");
+    if (s) secoesDeclaradas.add(s);
+  }
+
+  // (A) rótulo == nome de um agrupamento declarado pelo documento.
+  for (const { campo } of camposDaAba) {
+    const chaveNorm = normalizar(campo.chave);
+    if (!chaveNorm || !secoesDeclaradas.has(chaveNorm)) continue;
+    // exige que o agrupamento tenha MEMBROS (linhas cuja secao é esse nome e
+    // cujo rótulo é diferente) — senão não há nada que este total duplique.
+    const temMembros = camposDaAba.some(
+      ({ campo: c }) => normalizar(c.secao ?? "") === chaveNorm && normalizar(c.chave) !== chaveNorm,
+    );
+    if (temMembros) subtotais.add(campo.id);
+  }
+
+  // (B) valor == soma dos irmãos da mesma seção, em todas as colunas com dado.
+  const porSecao = new Map<string, Array<{ campo: CampoExtraido; colKey: string }>>();
+  for (const item of camposDaAba) {
+    const s = normalizar(item.campo.secao ?? "");
+    if (!s) continue;
+    if (!porSecao.has(s)) porSecao.set(s, []);
+    porSecao.get(s)!.push(item);
+  }
+  for (const itens of porSecao.values()) {
+    const porChave = new Map<string, Array<{ campo: CampoExtraido; colKey: string }>>();
+    for (const it of itens) {
+      const k = normalizar(it.campo.chave);
+      if (!porChave.has(k)) porChave.set(k, []);
+      porChave.get(k)!.push(it);
+    }
+    if (porChave.size < 3) continue; // precisa de >=2 componentes + o subtotal
+    for (const [chaveCandidata, ocorrencias] of porChave) {
+      let colunasConferidas = 0;
+      let bate = true;
+      const colunas = new Set(ocorrencias.map((o) => o.colKey));
+      for (const colKey of colunas) {
+        const cand = ocorrencias.find((o) => o.colKey === colKey)?.campo.valor_num;
+        if (typeof cand !== "number") continue;
+        let soma = 0;
+        let n = 0;
+        for (const [k, occ] of porChave) {
+          if (k === chaveCandidata) continue;
+          const v = occ.find((o) => o.colKey === colKey)?.campo.valor_num;
+          if (typeof v === "number") { soma += v; n++; }
+        }
+        if (n < 2) continue;
+        colunasConferidas++;
+        if (Math.abs(soma - cand) > Math.max(0.01, Math.abs(cand) * 0.005)) { bate = false; break; }
+      }
+      if (bate && colunasConferidas > 0) {
+        for (const o of ocorrencias) subtotais.add(o.campo.id);
+      }
+    }
+  }
+  return subtotais;
 }
 
 // ----- Aba classificada por seção (Balanço/Balancete/DRE/Fluxo/Combinado) --
@@ -514,8 +632,11 @@ function construirAbaClassificada(
   headerRow.getCell(1).value = "Conta";
   colunas.forEach((col, i) => {
     const cell = headerRow.getCell(plano.valuePos[i]);
-    cell.value = `${col.entidade} — ${col.periodo}`;
-    cell.fill = HEADER_FILL;
+    const tipoCol = tipoColunaNaoEntidade(col.entidade);
+    const sufixo = tipoCol === "ajuste" ? " (ajuste — não é entidade)"
+      : tipoCol === "total" ? " (total do documento — não somar com as demais)" : "";
+    cell.value = `${col.entidade} — ${col.periodo}${sufixo}`;
+    cell.fill = tipoCol ? ANALISE_HEADER_FILL : HEADER_FILL;
     const av = plano.avPos[i];
     if (av != null) {
       const avCell = headerRow.getCell(av);
@@ -546,12 +667,65 @@ function construirAbaClassificada(
     if (!mapa.has(chaveNorm)) mapa.set(chaveNorm, novoGrupo(campo.chave));
     adicionarAoGrupo(mapa.get(chaveNorm)!, colKey, campo);
   };
+  // Subtotais de agrupamento que o documento trouxe (ver
+  // `detectarSubtotaisInformados`): ficam FORA da soma da seção — senão o
+  // `SUM` conta o subtotal e os seus componentes, dobrando o total.
+  const idsSubtotal = detectarSubtotaisInformados(camposDaAba);
+  const subtotaisInformados = new Map<string, Map<string, GrupoConta>>(); // secaoKey → grupos
+
+  // Classificação de cada linha, em DOIS passes.
+  //
+  // Passe 1: a regra de sempre (âncora / seção / palavra-chave / sugestão da IA).
+  //
+  // Passe 2 — CONSENSO DE IRMÃOS: demonstrações reais são hierárquicas, e a
+  // `secao` que a IA anota costuma ser o nome da SUBSEÇÃO ("Estoques",
+  // "Disponível", "Outras Obrigações"), que não carrega sinal de Ativo/Passivo.
+  // Resultado (achado no teste v24): uma conta com vocabulário fora das listas
+  // — "(-) PECLD", "Produtos em elaboração" — caía em "Contas Não
+  // Classificadas" mesmo estando declaradamente sob "Estoques", e a soma da
+  // seção ficava furada. Aqui a linha herda a seção dos IRMÃOS: se as outras
+  // linhas do MESMO agrupamento foram classificadas, e de forma unânime, esta
+  // vai para o mesmo lugar. É como um humano lê a demonstração ("está sob
+  // Estoques, e o resto de Estoques é Ativo Circulante"), não depende de
+  // vocabulário novo, e permanece conservador: sem irmãos classificados ou com
+  // irmãos divergentes, a linha continua em "Não Classificadas".
+  type Item = { campo: CampoExtraido; colKey: string };
+  const classificado = new Map<string, { secaoKey: string | null; ancoraKey: string | null }>();
+  const semClassificacao: Item[] = [];
+  for (const item of camposDaAba) {
+    const { campo } = item;
+    if (campo.valor_num == null && campo.valor_texto == null) continue;
+    const r = classificarConta(estrutura, campo.secao, campo.chave, campo.secao_canonica);
+    classificado.set(campo.id, r);
+    if (!r.secaoKey && !r.ancoraKey) semClassificacao.push(item);
+  }
+  if (semClassificacao.length > 0) {
+    const consensoPorSecao = new Map<string, Set<string>>();
+    for (const { campo } of camposDaAba) {
+      const sec = normalizar(campo.secao ?? "");
+      const r = classificado.get(campo.id);
+      if (!sec || !r?.secaoKey) continue;
+      if (!consensoPorSecao.has(sec)) consensoPorSecao.set(sec, new Set());
+      consensoPorSecao.get(sec)!.add(r.secaoKey);
+    }
+    for (const { campo } of semClassificacao) {
+      const sec = normalizar(campo.secao ?? "");
+      const candidatas = sec ? consensoPorSecao.get(sec) : undefined;
+      if (candidatas && candidatas.size === 1) {
+        classificado.set(campo.id, { secaoKey: [...candidatas][0], ancoraKey: null });
+      }
+    }
+  }
+
   for (const { campo, colKey } of camposDaAba) {
     if (campo.valor_num == null && campo.valor_texto == null) continue;
-    const { secaoKey, ancoraKey } = classificarConta(estrutura, campo.secao, campo.chave, campo.secao_canonica);
+    const { secaoKey, ancoraKey } = classificado.get(campo.id) ?? { secaoKey: null, ancoraKey: null };
     if (ancoraKey) {
       if (!valoresPorAncora.has(ancoraKey)) valoresPorAncora.set(ancoraKey, novoGrupo(campo.chave));
       adicionarAoGrupo(valoresPorAncora.get(ancoraKey)!, colKey, campo);
+    } else if (secaoKey && idsSubtotal.has(campo.id)) {
+      if (!subtotaisInformados.has(secaoKey)) subtotaisInformados.set(secaoKey, new Map());
+      bucket(subtotaisInformados.get(secaoKey)!, campo, colKey);
     } else if (secaoKey) {
       if (!contasPorSecao.has(secaoKey)) contasPorSecao.set(secaoKey, new Map());
       bucket(contasPorSecao.get(secaoKey)!, campo, colKey);
@@ -573,6 +747,34 @@ function construirAbaClassificada(
     escreverLinhaConta(sheet, r, label, nivel, colunas, plano.valuePos, grupo, opts, contextoPorVersao);
     linhasValor.add(r);
     return r;
+  };
+
+  // Subtotais de agrupamento que o documento trouxe: emitidos DEPOIS do range
+  // do SUM (portanto fora da soma) e com estilo próprio, para o analista ver o
+  // que o documento declarou sem que isso dobre o total.
+  const escreverSubtotaisInformados = (secaoKey: string, nivel: number) => {
+    const grupos = subtotaisInformados.get(secaoKey);
+    if (!grupos) return;
+    for (const g of grupos.values()) {
+      const r = rowIndex++;
+      const row = sheet.getRow(r);
+      row.getCell(1).value = `↳ subtotal informado: ${g.label}`;
+      row.getCell(1).alignment = { indent: nivel + 1 };
+      row.getCell(1).font = SUBTOTAL_INFO_FONT;
+      row.getCell(1).note = comoNota(
+        "Subtotal de agrupamento trazido pelo próprio documento. Fica FORA da soma da seção de "
+        + "propósito: somá-lo junto com as contas que ele agrega dobraria o total.",
+      );
+      colunas.forEach((col, i) => {
+        const cell = row.getCell(plano.valuePos[i]);
+        const v = valorNumDoGrupo(g, col.key);
+        if (v == null) return;
+        cell.value = v;
+        cell.numFmt = VALOR_NUM_FMT;
+        cell.font = SUBTOTAL_INFO_FONT;
+      });
+      linhasValor.add(r);
+    }
   };
 
   // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
@@ -635,6 +837,7 @@ function construirAbaClassificada(
         }
         const ultima = rowIndex - 1;
         const temContas = ultima >= primeira;
+        escreverSubtotaisInformados(no.key, no.nivel + 1);
         const row = sheet.getRow(cabIdx);
         row.getCell(1).value = no.label;
         row.getCell(1).alignment = { indent: no.nivel };
@@ -739,6 +942,7 @@ function construirAbaClassificada(
         });
       }
       const ultima = rowIndex - 1;
+      escreverSubtotaisInformados(secao.key, 1);
       const ancoraSecao = ancoras.find((a) => "aposSecao" in a && (a as { aposSecao: string }).aposSecao === secao.key);
       if (ancoraSecao) {
         const idx = rowIndex++;

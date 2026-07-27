@@ -11,6 +11,7 @@
 - ✅ **FEITO nesta sessão:** normalização canônica de período na comparação do diagnóstico (`db/migrations/0020`, PR #44) + `formatarPeriodo` robusto a notações de contrato (PR #44).
 - ✅ **FEITO (fatia 2):** endurecimento do prompt de extração — notação canônica de período na emissão, moeda/escala com vocabulário fechado + normalização de fronteira, convenção de sinal (parênteses/D-C) e decimal BR; e o prompt passou a ter FONTE ÚNICA (o gerador embute `SYSTEM_PROMPT` de `lib/extract.mjs`, fim das três cópias divergentes).
 - ✅ **FEITO (fatia 3):** escala por linha (linha não-monetária não herda a escala do documento), Classe B com pré-condição de escala (`0021`), e ordenação CRONOLÓGICA de períodos no export (o Δ% casava pares errados) + colunas duplicadas do mesmo período colapsadas.
+- ✅ **FEITO (rodada teste v24):** dupla contagem de subtotais de subseção no export (o total saía 2x), consenso de irmãos para conta sem vocabulário conhecido, pares ambíguos Ativo×Passivo, prefixo de arquivo virando ano, período por conjunto de anos, reconciliação tolerante a granularidade e guarda de padrão suspeito sem falso positivo (`db/migrations/0022`).
 - 🔜 **Backlog priorizado abaixo** — cada item marcado com severidade e se é corrigível localmente (`local`), exige o N8N/Supabase vivo do dono (`ambiente-vivo`), ou é decisão de doutrina (`doutrina`).
 
 ## Corrigíveis localmente (testáveis aqui) (30)

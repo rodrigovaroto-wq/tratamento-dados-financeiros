@@ -32,8 +32,29 @@ test('parsePeriodo reconhece intervalo de anos (expande a lista inteira)', () =>
 });
 
 test('parsePeriodo: intervalo invertido (fim < início) não expande, cai no fallback de lista', () => {
-  // start > end: a expansão não roda; ainda assim os 2 números viram lista multi-ano
-  assert.deepEqual(parsePeriodo('mutuos 2025-2021'), { tipo: 'multi', referencia: '25,21' });
+  // start > end: a expansão não roda; ainda assim os 2 números viram lista
+  // multi-ano — ORDENADA, para que "2025-2021" e "2021,2025" tenham a MESMA
+  // forma canônica (o mesmo critério de `fn_periodo_canonico` no Postgres:
+  // notações equivalentes do mesmo período não podem parecer divergentes).
+  assert.deepEqual(parsePeriodo('mutuos 2025-2021'), { tipo: 'multi', referencia: '21,25' });
+});
+
+test('parsePeriodo: prefixo de ORDENAÇÃO do arquivo não é ano (bug real do teste v24)', () => {
+  // "13_Balancete_..._2025.pdf" saía como período "multi 13,25" — o "13" do
+  // prefixo virava 2013. Além de exibir errado, fragmentava a tabela `periodo`
+  // e impedia a reconciliação de casar documentos do mesmo exercício.
+  assert.deepEqual(parsePeriodo('13 balancete analitico componentes 2025'),
+    { tipo: 'anual', referencia: '2025', fraco: true });
+  assert.deepEqual(parsePeriodo('08 dfc vertentes metalurgica 2025'),
+    { tipo: 'anual', referencia: '2025', fraco: true });
+  // "2025x2024" é o padrão de nome de demonstração comparativa.
+  assert.deepEqual(parsePeriodo('01 bp vertentes metalurgica 2025x2024'),
+    { tipo: 'multi', referencia: '24,25' });
+  // Não regride os formatos estruturados nem o ano isolado.
+  assert.deepEqual(parsePeriodo('12m25 dre'), { tipo: 'anual', referencia: '12M25' });
+  assert.deepEqual(parsePeriodo('1t25 dre'), { tipo: 'trimestre', referencia: '1T25' });
+  assert.deepEqual(parsePeriodo('faturamento 36 meses'), { tipo: 'multi', referencia: 'L36M' });
+  assert.deepEqual(parsePeriodo('balanco acumulado 2025'), { tipo: 'anual', referencia: '2025', fraco: true });
 });
 
 test('parseTipo mapeia termos → código, específico antes de genérico', () => {

@@ -18,7 +18,17 @@ const THRESHOLD_AUTO = 0.7; // abaixo disso → fallback OpenAI / pendência de 
 // anos ("2021-2025", "2021 a 2025") — expandido para a lista completa, não só
 // os extremos.
 export function parsePeriodo(textoNormalizado) {
-  const t = textoNormalizado;
+  // Prefixo de ORDENAÇÃO do arquivo não é ano. Achado com dado real
+  // ("13_Balancete_Analitico_Componentes_2025.pdf" saía como período
+  // "multi 13,25" — o "13" do prefixo virou o ano 2013 e o 2025 virou 25):
+  // um número no COMEÇO do nome, seguido de separador, é numeração de arquivo,
+  // não competência. Remover antes de procurar ano evita períodos-lixo, que
+  // além de exibirem errado fragmentam a tabela `periodo` e impedem a
+  // reconciliação de casar os documentos do mesmo exercício.
+  const t = String(textoNormalizado || '')
+    .replace(/^\s*\d{1,3}\s*[-_. ]+/, '')
+    // "2025x2024"/"2025 x 2024" é comparativo: o 'x' separa exercícios.
+    .replace(/(\d)\s*[x\u00d7]\s*(\d)/g, '$1 $2');
 
   // 12M25 / 12M2025  → anual (12 meses do ano)
   let m = t.match(/\b(\d{1,2})m(\d{2,4})\b/);
@@ -50,6 +60,17 @@ export function parsePeriodo(textoNormalizado) {
     }
   }
   // listas multi-ano: "23, 24 e 25" | "2023 2024 2025" | "23 24 26"
+  // Só é multi-ano de verdade quando os candidatos têm a MESMA largura: um nome
+  // como "Balancete 13 2025" mistura numeração com ano, e tratar os dois como
+  // exercício produzia "13,25" (bug real). Havendo exatamente UM ano de 4
+  // dígitos, ele manda — é o sinal forte.
+  const anos4 = t.match(/\b(19|20)\d{2}\b/g);
+  if (anos4 && anos4.length === 1) {
+    return { tipo: 'anual', referencia: anos4[0], fraco: true };
+  }
+  if (anos4 && anos4.length >= 2) {
+    return { tipo: 'multi', referencia: anos4.map((a) => a.slice(-2)).sort().join(',') };
+  }
   const anos = t.match(/\b(20)?\d{2}\b/g);
   if (anos && anos.length >= 2) {
     const norm = anos.map((a) => a.slice(-2));

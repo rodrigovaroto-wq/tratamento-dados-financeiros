@@ -121,7 +121,9 @@ export const BALANCO_ANCORAS = [
 const ATIVO_CIRC_KW = [
   "caixa", "banco", "equivalente de caixa", "disponibilidade", "aplicacao financeira", "titulo e valor mobiliario",
   "cliente", "contas a receber", "conta a receber", "valores a receber", "duplicata a receber", "estoque",
-  "mercadoria", "produto acabado", "materia prima", "numerario", "bens numerarios", "deposito bancario",
+  "mercadoria", "produto acabado", "produto em elaboracao", "produto em processo", "produto em andamento",
+  "materia prima", "insumo", "numerario", "bens numerarios", "deposito bancario",
+  "pecld", "pdd", "provisao para devedores duvidosos", "perda estimada em credito",
   "imposto a recuperar", "tributo a recuperar", "imposto a compensar", "tributo a compensar",
   "icms a recuperar", "icms a compensar", "pis a recuperar", "cofins a recuperar", "irpj a recuperar",
   "csll a recuperar", "ir a recuperar", "despesa antecipada", "despesa paga antecipadamente",
@@ -277,6 +279,27 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
 
   // 3) Palavras-chave do próprio rótulo (fallback — cobre quando a seção não
   // veio ou não foi clara o suficiente).
+  //
+  // 3a) PARES AMBÍGUOS resolvidos antes do passe genérico: há rótulos em que a
+  // MESMA palavra aparece nas duas listas e a ordem de checagem decidia o lado
+  // do balanço. Achado com dado real: "Adiantamentos de clientes" (obrigação —
+  // o cliente pagou antes da entrega) caía no ATIVO porque "cliente" é
+  // palavra-chave de Contas a Receber e o ativo é checado primeiro — pôr uma
+  // conta no lado errado distorce subtotais, liquidez e endividamento.
+  if (tokensChave.has("adiantamento") && tokensChave.has("cliente")) {
+    return { secaoKey: "passivo_circulante", ancoraKey: null };
+  }
+  // "Receita diferida"/"faturamento antecipado" é obrigação, não receita/ativo.
+  if (contemAlgumaFrase(tokensChave, ["receita diferida", "faturamento antecipado", "receita antecipada"])) {
+    return { secaoKey: "passivo_circulante", ancoraKey: null };
+  }
+  // Tributo pode ser a RECUPERAR (ativo) ou a RECOLHER/PAGAR (passivo) — o
+  // verbo decide, não a palavra "imposto".
+  if (contemAlgumaFrase(tokensChave, ["imposto", "tributo", "icms", "iss", "pis", "cofins", "irpj", "csll", "inss", "fgts"])) {
+    if (contemAlgumaFrase(tokensChave, ["recolher", "pagar"])) {
+      return { secaoKey: "passivo_circulante", ancoraKey: null };
+    }
+  }
   if (contemAlgumaFrase(tokensChave, EMPRESTIMO_FINANCIAMENTO_KW)) {
     // Empréstimo/mútuo pode ser DÍVIDA (passivo, ex. "Empréstimos Bancários")
     // ou um DIREITO da empresa (ativo, ex. "Mútuo a Receber de Coligada" —
