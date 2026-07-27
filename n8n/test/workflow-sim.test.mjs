@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { codigosConhecidos } from '../lib/openai.mjs';
+import { SYSTEM_PROMPT } from '../lib/extract.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -252,7 +253,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(parsed.json.campos[0].secao, 'Ativo Circulante');
   assert.equal(parsed.json.campos[0].secao_canonica, 'ativo_circulante', 'secao_canonica mapeada no mirror do Code node');
   assert.equal(parsed.json.campos[1].secao_canonica, null, 'NAO_CLASSIFICAVEL vira null no mirror');
-  assert.equal(parsed.json.campos[0].unidade, 'R$ mil', 'unidade do documento herdada por linha');
+  assert.equal(parsed.json.campos[0].unidade, 'milhar', 'unidade herdada por linha E normalizada na escala canônica pelo Code node real');
   assert.equal(parsed.json.diagnostico.entidade, 'Empresa Teste Ltda');
   assert.equal(parsed.json.diagnostico.tipo_confirma, false);
   assert.equal(parsed.json.diagnostico.tipo_sugerido, 'BALANCO');
@@ -411,5 +412,32 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
         assert.ok(nomes.includes(m[1]), `node "${n.name}" referencia "${m[1]}" que não existe no workflow`);
       }
     }
+  }
+});
+
+// --- Anti-drift: o prompt do workflow É a fonte única de lib/extract.mjs -----
+// Antes o prompt existia em TRÊS lugares (lib/extract.mjs, a paráfrase manual em
+// build-workflow.mjs, e o JSON gerado) e eles já tinham divergido de fato: uma
+// melhoria aplicada na fonte não chegava à produção até alguém reescrever o
+// mirror à mão. Agora o gerador embute o SYSTEM_PROMPT literal — este teste
+// trava essa propriedade (se alguém voltar a parafrasear, o teste quebra).
+test('o promptSistema do workflow gerado é IDÊNTICO ao SYSTEM_PROMPT de lib/extract.mjs', () => {
+  const node = wf.nodes.find((n) => n.name === 'Montar Req Extração' || n.name === 'Montar Req Extracao');
+  assert.ok(node, 'nó de montagem da requisição de extração encontrado');
+  const code = node.parameters.jsCode;
+  const m = code.match(/const promptSistema=("(?:[^"\\]|\\.)*");/);
+  assert.ok(m, 'promptSistema embutido como literal JSON no nó');
+  assert.equal(JSON.parse(m[1]), SYSTEM_PROMPT, 'prompt do workflow == fonte única (sem paráfrase manual)');
+});
+
+test('o prompt em produção carrega as instruções de escala, sinal e período canônico', () => {
+  // Garante que as melhorias de blindagem a variação de contrato chegaram ao
+  // JSON que o dono importa no N8N (não só à fonte).
+  const node = wf.nodes.find((n) => n.name === 'Montar Req Extração' || n.name === 'Montar Req Extracao');
+  // O prompt é embutido como literal JSON (aspas internas escapadas), então a
+  // verificação é sobre o texto DECODIFICADO — o que a OpenAI vai receber.
+  const prompt = JSON.parse(node.parameters.jsCode.match(/const promptSistema=("(?:[^"\\]|\\.)*");/)[1]);
+  for (const marca of ['MOEDA E ESCALA', '"milhar"', 'PARÊNTESES são NEGATIVOS', 'notação canônica', '12M25']) {
+    assert.ok(prompt.includes(marca), `prompt em produção contém ${marca}`);
   }
 });

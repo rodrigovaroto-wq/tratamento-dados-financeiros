@@ -399,6 +399,14 @@ workflow **espelham** essa lógica (inline, porque nós Code não importam arqui
 lógica: mude `lib/`, rode os testes, e **regenere** com `node n8n/build-workflow.mjs` — o teste
 `workflow-sim` valida o JSON regenerado.
 
+**O que NÃO é mais espelhado à mão:** os enums da classificação (importados de `lib/openai.mjs`) e
+o **prompt de extração** — `build-workflow.mjs` importa `SYSTEM_PROMPT` de `lib/extract.mjs` e o
+embute literalmente (via `JSON.stringify`). Antes havia uma paráfrase manual do prompt no gerador,
+e ela já tinha divergido da fonte: melhorias aplicadas em `lib/` não chegavam à produção até
+alguém reescrever o mirror. Dois testes travam a propriedade (`workflow-sim.test.mjs`): o prompt do
+JSON gerado é **idêntico** ao `SYSTEM_PROMPT`, e as instruções de escala/sinal/período canônico
+estão presentes no texto que a OpenAI recebe. **Nunca voltar a parafrasear o prompt no gerador.**
+
 ## Estrutura
 
 ```

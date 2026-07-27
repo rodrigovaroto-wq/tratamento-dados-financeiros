@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM } from '../lib/extract.mjs';
+import {
+  buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
+  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT,
+} from '../lib/extract.mjs';
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
@@ -52,13 +55,13 @@ test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', ()
     ],
   }) } }] };
   const r = parseExtractionResponse(api);
-  assert.equal(r.unidade, 'R$ mil');
+  assert.equal(r.unidade, 'milhar', '"R$ mil" é normalizado para a escala canônica');
   assert.equal(r.campos.length, 3);
   assert.equal(r.campos[0].secao, 'Receita Operacional');
   assert.equal(r.campos[0].secao_canonica, 'receita_bruta');
   assert.equal(r.campos[0].chave, 'Receita líquida');
   assert.equal(r.campos[0].valor_num, 10000);
-  assert.equal(r.campos[0].unidade, 'R$ mil'); // herda a unidade do documento
+  assert.equal(r.campos[0].unidade, 'milhar'); // herda a unidade (normalizada) do documento
   assert.equal(r.campos[1].secao_canonica, 'custos');
   assert.equal(r.campos[2].secao_canonica, null); // NAO_CLASSIFICAVEL vira null
   assert.equal(r.campos[0].entidade_coluna, null); // documento de 1 entidade só (caso comum)
@@ -210,4 +213,79 @@ test('parseCsv detecta separador e monta objetos', () => {
   const rows = parseCsv(csv);
   assert.equal(rows.length, 2);
   assert.deepEqual(rows[0], { Conta: 'Receita', Valor: '100' });
+});
+
+// --- Escala/moeda: normalização de fronteira (variação entre documentos) -----
+// A `unidade` é herdada por TODA linha e a reconciliação Classe A compara a
+// unidade de DOIS documentos diferentes (0009: divergência aborta a checagem),
+// então texto livre inconsistente entre arquivos gerava precondição falsa.
+test('normalizarUnidade colapsa as redações reais de escala num vocabulário fechado', () => {
+  for (const bruto of ['R$ mil', 'milhares de reais', 'Em R$ mil', 'MILHAR', 'valores em milhares', 'R$ Mil']) {
+    assert.equal(normalizarUnidade(bruto), 'milhar', `"${bruto}" → milhar`);
+  }
+  for (const bruto of ['R$ milhões', 'milhoes', 'em milhões de reais', 'MILHAO']) {
+    assert.equal(normalizarUnidade(bruto), 'milhao', `"${bruto}" → milhao`);
+  }
+  for (const bruto of ['unidade', 'reais', 'R$', 'valores inteiros']) {
+    assert.equal(normalizarUnidade(bruto), 'unidade', `"${bruto}" → unidade`);
+  }
+  // Desconhecido/ausente NUNCA chuta uma escala (errar em 1000x é pior que não saber).
+  for (const bruto of [null, undefined, '', '   ', 'sei lá', 'xyz']) {
+    assert.equal(normalizarUnidade(bruto), null, `${JSON.stringify(bruto)} → null`);
+  }
+});
+
+test('normalizarMoeda devolve código ISO', () => {
+  for (const bruto of ['R$', 'reais', 'BRL', 'Real']) assert.equal(normalizarMoeda(bruto), 'BRL');
+  assert.equal(normalizarMoeda('US$'), 'USD');
+  assert.equal(normalizarMoeda('dólar'), 'USD');
+  assert.equal(normalizarMoeda('EUR'), 'EUR');
+  assert.equal(normalizarMoeda(null), null);
+  assert.equal(normalizarMoeda('qualquer coisa'), null);
+});
+
+test('parseExtractionResponse normaliza escala e moeda do documento', () => {
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'R$', unidade: 'Em milhares de reais',
+    diagnostico: {
+      entidade: 'X Ltda', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j',
+    },
+    linhas: [{ s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: 'Caixa', vt: '1.000', vn: 1000, op: 1, cf: 0.9 }],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.moeda, 'BRL');
+  assert.equal(r.unidade, 'milhar');
+  assert.equal(r.campos[0].unidade, 'milhar', 'a escala normalizada é a herdada por linha');
+});
+
+// --- Prompt: instruções que blindam a variação entre contratos --------------
+test('SYSTEM_PROMPT instrui a notação CANÔNICA de período na emissão', () => {
+  // Sem isto, a IA emitia o período em notação livre ("2025", "31/12/2024",
+  // "12M25") — inconsistente com o lado do nome (lib/classifier.mjs).
+  assert.match(SYSTEM_PROMPT, /notação canônica/i);
+  for (const forma of ['12M25', '1T25', 'L24M', '23,24,25', 'AAAA-MM-DD']) {
+    assert.ok(SYSTEM_PROMPT.includes(forma), `prompt exemplifica a forma "${forma}"`);
+  }
+});
+
+test('SYSTEM_PROMPT define moeda e o vocabulário FECHADO de escala', () => {
+  // moeda/unidade eram `required` no schema mas o prompt não dizia nada sobre
+  // elas — o modelo escolhia o formato sozinho, documento a documento.
+  assert.match(SYSTEM_PROMPT, /MOEDA E ESCALA/);
+  assert.match(SYSTEM_PROMPT, /BRL/);
+  for (const v of ['"unidade"', '"milhar"', '"milhao"']) {
+    assert.ok(SYSTEM_PROMPT.includes(v), `prompt fecha o vocabulário em ${v}`);
+  }
+  // Não converter na origem: o número vai como impresso, a escala é declarada.
+  assert.match(SYSTEM_PROMPT, /NÃO converta os valores/i);
+});
+
+test('SYSTEM_PROMPT define convenção de SINAL e decimal brasileiro', () => {
+  // O prompt só dizia "número puro"; parênteses/decimal BR ficavam por conta
+  // do palpite do modelo (fonte de erro de sinal e de 1.000 → 1,0).
+  assert.match(SYSTEM_PROMPT, /PARÊNTESES são NEGATIVOS/i);
+  assert.ok(SYSTEM_PROMPT.includes('"1.234,56" → 1234.56'), 'exemplifica o decimal BR');
+  assert.ok(SYSTEM_PROMPT.includes('"1.000" → 1000'), 'exemplifica milhar sem decimal');
+  assert.match(SYSTEM_PROMPT, /DEVEDOR\/CREDOR/i, 'cobre balancete com coluna D/C');
 });
