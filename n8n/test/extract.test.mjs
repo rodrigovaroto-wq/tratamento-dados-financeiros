@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
-  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT,
+  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria,
 } from '../lib/extract.mjs';
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
@@ -288,4 +288,52 @@ test('SYSTEM_PROMPT define convenção de SINAL e decimal brasileiro', () => {
   assert.ok(SYSTEM_PROMPT.includes('"1.234,56" → 1234.56'), 'exemplifica o decimal BR');
   assert.ok(SYSTEM_PROMPT.includes('"1.000" → 1000'), 'exemplifica milhar sem decimal');
   assert.match(SYSTEM_PROMPT, /DEVEDOR\/CREDOR/i, 'cobre balancete com coluna D/C');
+});
+
+// --- Escala por linha: não herdar a escala do documento onde ela não vale ----
+test('ehLinhaNaoMonetaria reconhece linhas fora da escala monetária', () => {
+  for (const [chave, vt] of [
+    ['Margem Bruta %', null], ['Lucro por Ação', '1,25'], ['LPA', '1,25'],
+    ['Participação percentual', null], ['Quantidade de itens', '120'],
+    ['Número de Ações', '1.000.000'], ['Índice de liquidez', '1,5 %'],
+  ]) {
+    assert.equal(ehLinhaNaoMonetaria(chave, vt), true, `"${chave}" é não-monetária`);
+  }
+  // Conservador de propósito: conta monetária legítima NÃO pode ser confundida
+  // (um falso positivo aqui esconderia a escala de uma conta de verdade).
+  for (const [chave, vt] of [
+    ['Margem de Contribuição', '1.500,00'], ['Caixa e Equivalentes', '100'],
+    ['Receita Operacional Bruta', '10.000'], ['Fornecedores', '(2.000)'],
+  ]) {
+    assert.equal(ehLinhaNaoMonetaria(chave, vt), false, `"${chave}" é monetária`);
+  }
+});
+
+test('parseExtractionResponse: escala do documento NÃO contamina linha não-monetária', () => {
+  // Demonstrações reais misturam naturezas no mesmo arquivo: balanço/DRE em
+  // "R$ mil" junto de LPA e margens em %. Herdar "milhar" nessas linhas é uma
+  // mis-escala silenciosa de 1000x quando o fator for aplicado.
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'X', tipo_confirma: true, tipo_sugerido: 'DRE', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j',
+    },
+    linhas: [
+      { s: 'Receita', sc: 'receita_bruta', ec: null, pc: null, k: 'Receita Líquida', vt: '10.000', vn: 10000, op: 1, cf: 0.9 },
+      { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Margem Líquida %', vt: '12,5%', vn: 12.5, op: 1, cf: 0.9 },
+      { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Lucro por Ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
+    ],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.unidade, 'milhar', 'escala do documento');
+  assert.equal(r.campos[0].unidade, 'milhar', 'conta monetária herda a escala');
+  assert.equal(r.campos[1].unidade, null, 'linha em % não herda escala (null = desconhecida)');
+  assert.equal(r.campos[2].unidade, null, 'lucro por ação não herda escala');
+  assert.equal(r.campos[1].valor_num, 12.5, 'o valor em si é preservado');
+});
+
+test('SYSTEM_PROMPT avisa que a escala vale só para valores monetários', () => {
+  assert.match(SYSTEM_PROMPT, /escala vale para os valores MONETÁRIOS/i);
+  assert.match(SYSTEM_PROMPT, /POR AÇÃO/);
 });

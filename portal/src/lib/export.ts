@@ -107,10 +107,22 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
 
   if (t === "multi" || /,/.test(ref)) {
     const toks = ref.split(",").map((p) => p.trim()).filter(Boolean);
-    // "MM,AA" com zero à esquerda no mês (ex.: "02,25" = Fev/2025) — mês,ano,
-    // NÃO um intervalo de exercícios (o mis-parse "2002–2025" da auditoria).
-    if (toks.length === 2 && /^0[1-9]$/.test(toks[0]) && /^\d{2,4}$/.test(toks[1])) {
-      return mesAno(Number(toks[0]), toks[1]);
+    // "MM,AAAA"/"MM,AA" = MÊS,ANO — não um intervalo de exercícios (o mis-parse
+    // "2002–2025"/"2012–2024" da auditoria). Dois sinais desambiguam:
+    //   (a) mês com zero à esquerda ("02,25" → Fev/2025);
+    //   (b) mês 1–12 seguido de ano de 4 dígitos ("12,2024" → Dez/2024) — uma
+    //       lista de exercícios seria escrita com a MESMA largura nos dois
+    //       tokens ("2012,2024" ou "12,24"), não misturada.
+    // Sobra ambíguo só "NN,NN" sem zero à esquerda ("11,12"), que continua
+    // tratado como exercícios (2011–2012) — a convenção do sistema para lista
+    // de anos é justamente 2 dígitos (ver notação canônica em n8n/lib/extract).
+    if (toks.length === 2) {
+      const mes = Number(toks[0]);
+      const mesComZero = /^0[1-9]$/.test(toks[0]);
+      const anoCheio = /^\d{4}$/.test(toks[1]);
+      if ((mesComZero && /^\d{2,4}$/.test(toks[1])) || (anoCheio && mes >= 1 && mes <= 12)) {
+        return mesAno(mes, toks[1]);
+      }
     }
     // Caso geral: lista de exercícios (anos).
     if (toks.every((p) => /^\d{1,4}$/.test(p))) {
@@ -126,6 +138,66 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
   if (/^\d{2}$/.test(ref)) return anoDe4Digitos(ref);
 
   return ref; // texto livre já descritivo (ex.: "Jan/2024 a Dez/2025") — mantém como veio
+}
+
+// Chave CRONOLÓGICA de um período já formatado (saída de `formatarPeriodo`).
+// As colunas do export eram ordenadas por `localeCompare` do rótulo, o que é
+// alfabético: "Nov/2024" vinha antes de "Out/2024" e "Dez/2024" antes de
+// "Jan/2024" — além de bagunçar a leitura, isso fazia a coluna Δ% (que compara
+// períodos ADJACENTES da mesma entidade) casar o par errado, reportando uma
+// variação entre meses que não se sucedem. Deriva (ano, mês, dia) do rótulo;
+// períodos que agregam vários exercícios entram no nível do ANO (mês 0, antes
+// dos meses daquele ano) e rótulos sem âncora temporal ("Últimos 24 meses",
+// texto livre) vão para o fim — nunca no meio da série.
+const MES_NUM: Record<string, number> = {
+  jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
+};
+export const CRONO_SEM_ANCORA = Number.MAX_SAFE_INTEGER;
+
+export function chaveCronologicaPeriodo(periodoFormatado: string): number {
+  const p = (periodoFormatado ?? "").trim();
+  if (!p || p === "—") return CRONO_SEM_ANCORA;
+  const chave = (ano: number, mes = 0, dia = 0) => ano * 10000 + mes * 100 + dia;
+
+  const data = p.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); // 15/01/2025
+  if (data) return chave(Number(data[3]), Number(data[2]), Number(data[1]));
+
+  const mesAbrev = p.match(/^([A-Za-zç]{3})\/(\d{4})$/); // Fev/2025
+  if (mesAbrev) {
+    const m = MES_NUM[mesAbrev[1].toLowerCase()];
+    if (m) return chave(Number(mesAbrev[2]), m);
+  }
+
+  const tri = p.match(/^([1-4])º Tri\/(\d{4})$/); // 1º Tri/2025 → início do trimestre
+  if (tri) return chave(Number(tri[2]), (Number(tri[1]) - 1) * 3 + 1);
+
+  const sem = p.match(/^([12])º Sem\/(\d{4})$/); // 2º Sem/2024 → início do semestre
+  if (sem) return chave(Number(sem[2]), Number(sem[1]) === 1 ? 1 : 7);
+
+  const nMeses = p.match(/^(\d{1,2}) meses\/(\d{4})$/); // 9 meses/2024 (YTD)
+  if (nMeses) return chave(Number(nMeses[2]), Number(nMeses[1]));
+
+  if (/^\d{4}$/.test(p)) return chave(Number(p)); // exercício completo
+
+  // Agregados de vários exercícios ("2024–2025", "2023, 2024, 2025"): entram no
+  // nível do ano pelo PRIMEIRO exercício da série (ordenação determinística).
+  const anos = p.match(/\b(19|20)\d{2}\b/g);
+  if (anos && anos.length > 0) return chave(Number(anos[0]));
+
+  return CRONO_SEM_ANCORA; // "Últimos 24 meses", texto livre — sempre por último
+}
+
+// Comparador de coluna: entidade (alfabética) → período (CRONOLÓGICO) → rótulo
+// como desempate estável para períodos sem âncora temporal.
+function compararColunas(
+  a: { entidade: string; periodo: string },
+  b: { entidade: string; periodo: string },
+): number {
+  return (
+    a.entidade.localeCompare(b.entidade)
+    || chaveCronologicaPeriodo(a.periodo) - chaveCronologicaPeriodo(b.periodo)
+    || a.periodo.localeCompare(b.periodo)
+  );
 }
 
 // tipo_taxonomia → nome da aba (ordem de prioridade travada em f0/07;
@@ -960,9 +1032,7 @@ function notaProvenienciaSimples(linha: LinhaSimples): string {
 // a leitura de quem só quer ver conta × valor. Essas informações não somem —
 // viram um comentário (`cell.note`) no rótulo, visível ao passar o mouse.
 function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas: LinhaSimples[]) {
-  linhas.sort((a, b) =>
-    a.entidade.localeCompare(b.entidade) || a.periodo.localeCompare(b.periodo) || a.secao.localeCompare(b.secao),
-  );
+  linhas.sort((a, b) => compararColunas(a, b) || a.secao.localeCompare(b.secao));
 
   const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", ySplit: 1 }] });
   sheet.columns = [
@@ -1058,8 +1128,18 @@ export function buildExportWorkbook({
     // COLUNA do export é o da linha, não o período único do documento — é o que
     // separa os anos em colunas próprias em vez de colapsá-los num só (perda de
     // dado). Ortogonal a entidade_coluna: a coluna final é entidade × período.
-    const periodoColuna = campo.periodo_coluna || ctx.periodo;
-    const colKey = `${entidadeColuna} ${periodoColuna}`;
+    // `periodo_coluna` vem CRU da extração ("2024", "31/12/2024") enquanto
+    // `ctx.periodo` já passou por `formatarPeriodo` — sem normalizar os dois do
+    // mesmo jeito, o MESMO período aparecia em duas colunas distintas ("2024" e
+    // "2024" formatado de outra fonte) e os rótulos saíam inconsistentes na
+    // mesma aba. Formatar aqui colapsa a coluna e alinha a escrita.
+    const periodoColuna = campo.periodo_coluna
+      ? formatarPeriodo(null, campo.periodo_coluna)
+      : ctx.periodo;
+    // Separador improvável na chave: com espaço simples, entidade "A B" +
+    // período "C" colidia com entidade "A" + período "B C" (colunas de
+    // entidade×período diferentes fundidas numa só).
+    const colKey = `${entidadeColuna} ${periodoColuna}`;
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
 
     if (estrutura) {
@@ -1129,9 +1209,7 @@ export function buildExportWorkbook({
   for (const aba of ORDEM_ABAS) {
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
     if (estrutura) {
-      const colunas = [...(colunasPorAba.get(aba)?.values() ?? [])].sort(
-        (a, b) => a.entidade.localeCompare(b.entidade) || a.periodo.localeCompare(b.periodo),
-      );
+      const colunas = [...(colunasPorAba.get(aba)?.values() ?? [])].sort(compararColunas);
       if (colunas.length === 0) continue;
       construirAbaClassificada(
         workbook,

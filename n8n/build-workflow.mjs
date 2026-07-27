@@ -32,6 +32,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const TIPO_TAXONOMIA_ENUM = JSON.stringify(codigosConhecidos());
 const PERIODO_TIPO_ENUM = JSON.stringify(['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido']);
 
+// Modelos das DUAS chamadas, num lugar só (antes 'gpt-4o' estava hardcoded em
+// cada nó). A classificação por CONTEÚDO é a tarefa mais leve do pipeline (só
+// escolhe um código de um enum + entidade/período) e só roda quando o nome do
+// arquivo não dá confiança >= 0.7; a extração linha a linha é a tarefa pesada.
+// Separar os dois permite trocar SÓ a classificação por um modelo mais barato
+// (ex.: 'gpt-4o-mini') sem tocar na extração — a troca é uma linha aqui +
+// `node build-workflow.mjs`. Ver docs/CUSTO_OPENAI.md antes de mudar: a
+// classificação tem rede de segurança (o diagnóstico da extração confere
+// tipo/entidade/período e abre pendência quando diverge), a extração NÃO tem.
+const MODEL_CLASSIFICACAO = 'gpt-4o';
+const MODEL_EXTRACAO = 'gpt-4o';
+
 // Schemas estritos (mesma forma dos módulos lib/openai.mjs e lib/extract.mjs).
 const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
 // Diagnóstico (entidade/confere tipo+período/legibilidade/resumo) + linhas
@@ -126,7 +138,7 @@ return {json:{...item, content_part: part, content_mime: mt}, binary: $input.ite
 const CODE_REQ_CLASSIF = `
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
-const body={model:'gpt-4o',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'${MODEL_CLASSIFICACAO}',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'},
   {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}
 ]};
@@ -192,7 +204,7 @@ const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
-const body={model:'gpt-4o',temperature:0,max_tokens:16384,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:16384,response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:promptSistema},
   {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
 ]};
@@ -228,7 +240,8 @@ if(!falhaMotivo&&finishReason==='length'){
 }
 function normUnid(b){if(b==null)return null;const t=String(b).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();if(!t)return null;if(/\\bmilhao|milhoes|\\bmm\\b|r\\$\\s*mi\\b|\\bmi\\b/.test(t))return 'milhao';if(/\\bmilhar|milhares|\\bmil\\b|r\\$\\s*mil|\\bm\\$\\b/.test(t))return 'milhar';if(/\\bunidade|\\breal\\b|reais|inteiro|r\\$$/.test(t))return 'unidade';return null;}
 const unidade=normUnid(p.unidade);
-const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
+function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
+const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,

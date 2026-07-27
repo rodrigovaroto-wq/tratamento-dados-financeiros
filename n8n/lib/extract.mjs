@@ -109,6 +109,9 @@ export const SYSTEM_PROMPT = [
   '  NÃO converta os valores você mesmo: extraia os números COMO ESTÃO impressos no documento e',
   '  declare a escala aqui — a conversão é feita depois, de forma auditável. A escala é crítica:',
   '  errá-la altera o valor em 1000x.',
+  '  Atenção: a escala vale para os valores MONETÁRIOS. Linhas que não são dinheiro (percentuais,',
+  '  margens em %, lucro POR AÇÃO, quantidades, índices, prazos em dias) não estão nessa escala —',
+  '  extraia o número como impresso e mantenha o "%"/unidade no valor_texto para ficar evidente.',
   '',
   '== LINHAS (planilha) ==',
   'Cada linha do JSON usa chaves CURTAS (economia de tokens de saída em documentos com muitas',
@@ -320,6 +323,24 @@ export function normalizarMoeda(bruto) {
   return /^[a-z]{3}$/.test(t) ? t.toUpperCase() : null;
 }
 
+// A escala do documento ("R$ mil") é herdada por TODA linha — mas demonstrações
+// reais MISTURAM naturezas no mesmo arquivo: junto do balanço em milhares vêm
+// linhas que NÃO estão nessa escala (percentuais, lucro por ação, quantidades,
+// índices). Herdar a escala nessas linhas é uma mis-escala silenciosa: um "LPA
+// 1,25" viraria 1.250 quando alguém aplicasse o fator. Aqui a herança é
+// BLOQUEADA para as linhas claramente não-monetárias (unidade fica null =
+// escala desconhecida, nunca uma escala errada).
+//
+// Sinais deliberadamente CONSERVADORES (falso positivo aqui esconderia a escala
+// de uma conta monetária legítima): "%" no valor ou no rótulo, "por ação"/LPA,
+// "percentual", "quantidade", "número de ações". Note que "margem" NÃO entra —
+// "margem de contribuição" é conta monetária de verdade.
+const RE_NAO_MONETARIA = /%|\bpercentual|\bpor acao\b|\blpa\b|\bquantidade\b|numero de acoes/;
+export function ehLinhaNaoMonetaria(chave, valorTexto) {
+  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  return RE_NAO_MONETARIA.test(norm(chave)) || String(valorTexto ?? '').includes('%');
+}
+
 export function parseExtractionResponse(apiJson) {
   const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
   const vazio = (falhaMotivo) => ({
@@ -363,7 +384,8 @@ export function parseExtractionResponse(apiJson) {
         chave: l.k,
         valor_texto: l.vt ?? null,
         valor_num: typeof l.vn === 'number' ? l.vn : null,
-        unidade,
+        // escala do documento, EXCETO em linha não-monetária (ver acima)
+        unidade: ehLinhaNaoMonetaria(l.k, l.vt) ? null : unidade,
         confianca: typeof l.cf === 'number' ? l.cf : null,
         origem_pagina: Number.isInteger(l.op) ? l.op : null,
       }))
