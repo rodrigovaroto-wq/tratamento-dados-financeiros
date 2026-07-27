@@ -4,9 +4,108 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-27. **Estado do `main`:** tudo mergeado até o PR #46 (branch de
-trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de `origin/main` no início de cada
-sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar).
+**Última atualização:** 2026-07-27. **Estado do `main`:** tudo mergeado até o **PR #48** (commit de
+merge `8278765`). Branch de trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de
+`origin/main` no início de cada sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de
+commitar.
+
+## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v25 a qualquer momento
+
+O dono acabou de mergear o **PR #48** (correções do teste v24) e vai:
+
+1. aplicar a **`db/migrations/0022_periodo_por_ano_e_guardas.sql`** no Supabase,
+2. **reimportar** o `n8n/workflow.e1-ingestao.json` no N8N (fix do período vindo do nome do arquivo),
+3. **re-exportar** o book de teste e mandar o `.xlsx` + prints.
+
+**Quando esse resultado chegar, é aí que a sessão começa.** O protocolo que funcionou nas três
+rodadas anteriores (v20 → v22 → v24) e que você deve repetir:
+
+1. **Abra o `.xlsx` de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad; leia
+   `data_only=False` pra ver as **fórmulas** (o export emite fórmula, não valor) e compare `SUM(...)`
+   contra a linha "total informado no documento" de cada seção.
+2. **Compare com o gabarito** em `test-data/book-vertentes/` (o `README.md` lista as 10 armadilhas
+   deliberadas e os números esperados). O gerador é determinístico: `python3 gerar.py` reproduz.
+3. **Separe extração de agregação.** No v24 a extração estava perfeita ao centavo — o que quebrava
+   era classificação/agregação no `portal/src/lib/`. Esse diagnóstico economiza a rodada inteira:
+   se o "total informado" bate com o gabarito, o bug **não** é na IA nem no prompt.
+4. **Rode `npx tsx portal/scripts/verificar-export.mts`** antes e depois. São 8 invariantes
+   (`SUM == informado`, subtotal visível fora da soma, zero não classificadas, adiantamento no
+   passivo, ordem cronológica, colunas de ajuste). **Todo bug novo de export vira invariante nova
+   nesse arquivo** — foi assim que a dupla contagem parou de voltar.
+5. **Fatie e mergeie separado.** O dono pediu explicitamente que nada fique pela metade por falta de
+   crédito/contexto: cada fatia é um commit testado + push + **PR draft**, mergeável sozinha.
+
+### As 3 fatias já diagnosticadas e ainda NÃO feitas (têm prioridade se o v25 vier limpo)
+
+- **DMPL/DVA não existem na taxonomia.** A DMPL do book foi classificada como "Mútuos" porque a IA
+  escolhe o código mais próximo do que existe. Precisa de migration na taxonomia (`0002` é a seed;
+  siga o padrão) + menção no `SYSTEM_PROMPT` (`n8n/lib/extract.mjs`, **fonte única** — o gerador
+  importa e embute; nunca parafraseie) + aba própria no export + reextração dos documentos afetados.
+- **Reconciliação: somar as linhas da seção quando não há linha de total.** A checagem falha com
+  "Não foi possível localizar a Receita Operacional Bruta na DRE" porque no book "RECEITA OPERACIONAL
+  BRUTA" é **cabeçalho sem valor** (as contas são "Vendas de produtos…"). Convenção comum de
+  demonstração BR, não defeito do book. Correto: somar os membros da seção como fallback. Mexe em
+  `db/migrations` (checagens Classe A/B).
+- **PDF como texto em vez de imagem + `.docx`/`.xlsx`** via nó *Extract From File* no N8N. **Maior
+  alavanca que resta**: 60-80% do custo de input, mais precisão numérica, e fecha o gap crítico de
+  formato (hoje `.docx`/`.xlsx` do dono não entram). **Exige o N8N vivo** — não implemente às cegas,
+  peça ao dono pra abrir o workflow junto. Ver `docs/CUSTO_OPENAI.md`.
+
+Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
+marcação do que já foi feito). Dois itens de dinheiro parado lá: `fn_registrar_documento` não é
+idempotente por hash (paga extração repetida) e existe um overload morto de 14 argumentos.
+
+## Sessão 9 — Correções do teste v24 (PRs #47-#48)
+
+Rodada curta e cirúrgica, disparada pelo `.xlsx` do **teste v24** (o primeiro rodado com o book
+complexo). **Diagnóstico central: a extração estava excelente** — todos os "totais informados no
+documento" batiam com o gabarito ao centavo (AC 67.878/45.440, PC 63.179, PNC 33.218, PL 24.801,
+Ativo 121.198). O que estava quebrado eram **classificação e agregação**. Seis grupos de correção:
+
+- **CRÍTICO — dupla contagem: todo total saía ~2x.** Demonstração real é hierárquica: sob "Ativo
+  Circulante" vêm "Disponível", "Contas a Receber", "Estoques"…, **cada um com subtotal impresso**.
+  Esses subtotais entravam no bucket como conta e o `SUM` da seção somava subtotal **+** componentes
+  (`SUM(L4:L38) = 137.865` vs. informado `67.878`). Contaminava todo total, o AV% e todos os
+  indicadores. **`detectarSubtotaisInformados`** (`portal/src/lib/export.ts`) reconhece o subtotal por
+  dois sinais **estruturais do próprio documento** — (A) rótulo igual a uma `secao` que outras linhas
+  declaram; (B) valor igual à soma dos irmãos da mesma seção **em todas as colunas com dado** — e o
+  mantém **visível** (`↳ subtotal informado: X`), fora do range da soma. Não depende de vocabulário.
+- **Conta sem vocabulário conhecido furava a soma.** A `secao` que a IA anota é o nome da
+  **subseção** ("Estoques", "Outras Obrigações"), que não carrega sinal de Ativo/Passivo — "(-) PECLD"
+  e "Produtos em elaboração" caíam em "Não Classificadas". Novo **passe de consenso de irmãos**: a
+  linha herda a seção do agrupamento quando os irmãos são unânimes. Conservador por construção.
+- **Conta no lado errado do balanço.** "Adiantamentos de clientes" (obrigação) ia pro **ATIVO** porque
+  "cliente" é keyword de Contas a Receber e o ativo era testado primeiro. Pares ambíguos agora
+  resolvem **antes** do passe genérico (`statement-templates.ts`): adiantamento+cliente, receita
+  diferida, tributo a recolher/pagar.
+- **Prefixo do nome do arquivo virando ano.** `13_Balancete_..._2025.pdf` saía como `multi 13,25`
+  (o `13` virou 2013) em **4 dos 14 documentos** — fragmentava a tabela `periodo` e **impedia a
+  reconciliação de casar documentos do mesmo exercício**. `parsePeriodo` (`n8n/lib/classifier.mjs` +
+  espelho no `build-workflow.mjs`) descarta prefixo de ordenação, prioriza ano de 4 dígitos,
+  entende `2025x2024`, ordena lista multi-ano.
+- **`db/migrations/0022`** — três coisas: (a) **pendência de período falsa pela 3ª vez** — a
+  comparação canônica da `0020` ainda acusava divergência entre o mesmo período em granularidades
+  diferentes; agora compara **conjunto de anos** (`fn_anos_periodo`, `fn_periodos_equivalentes`,
+  `fn_periodos_compativeis`) e só diverge quando os dois lados declaram anos e eles diferem; (b) **11
+  pré-condições "documento ausente" com os documentos presentes** — as checagens casavam `periodo_id`
+  **exato**; a tolerância teve de entrar **por lookup dentro de cada uma das 4 checagens**, não por
+  checagem (tentar a checagem inteira com um período por vez nunca acha os dois lados, que podem estar
+  em granularidades diferentes — essa foi a tentativa #1, que falhou); (c) **5 alertas falsos da
+  guarda** de padrão suspeito — contava valor repetido no lote inteiro, e num combinado (5 empresas ×
+  2 anos) valor pequeno coincide à toa; agora conta repetição **dentro da mesma coluna** e só em
+  valores **materiais** (≥1% do maior do documento). Guarda que grita à toa é pior que guarda nenhuma.
+- **Combinado: "Eliminações" e "Combinado" viravam empresa.** Ganhavam coluna de entidade e AV%
+  calculado sobre coluna de ajuste. Agora são reconhecidas, **rotuladas** ("ajuste — não é entidade" /
+  "total do documento — não somar com as demais"), vão pro fim e não recebem AV%/Δ%.
+
+**Ferramenta nova que fica:** `portal/scripts/verificar-export.mts` (8 invariantes, `npx tsx`).
+Validação da rodada: n8n **83/83**; migrations **0001–0022** limpas em Postgres 16 local com os
+cenários do v24 exercitados (período equivalente → 0 pendências; divergência real 2025×2023 → 1;
+reconciliação cross-granularidade → `ok`; guarda sem falso positivo mas ainda pegando fabricação
+real); `verificar-export.mts` 8/8; `tsc`/`eslint`/`next build` limpos.
+
+**PR #47** trouxe o gerador do book (`test-data/book-vertentes/`) e o handoff; **PR #48** as seis
+correções acima. Ambos mergeados.
 
 ## Sessão 8 — Camada analítica + rodada de endurecimento (PRs #43-#46)
 
@@ -76,8 +175,7 @@ SEÇÃO contábil (Ativo Circulante, Despesas Operacionais etc. — `statement-t
 Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila de revisão, auto-aceite
 ≥95%.
 
-**Os 3 PRs mais recentes (39, 40, 41), na ordem, resolveram uma rodada de feedback real do dono
-sobre o "teste v20":**
+**Rodada de feedback do dono sobre o "teste v20" (PRs #39, #40, #41 — histórico, já mergeados):**
 - **PR #39** (mergeado): fila de revisão com cards que não fechavam ao confirmar (`0018`); vazamento
   de linhas entre abas do export; `MUTUOS`/`FAT_INTRAGRUPO`/`CONTRATO_SOCIAL` sem aba própria
   fazendo sentido contábil; colunas técnicas demais nas abas simples (Faturamento/Dívida/...);
@@ -94,17 +192,14 @@ sobre o "teste v20":**
   tipo "FATURAMENTO_24M" na tela); e o prompt de IA que gera o campo `resumo` do documento foi
   ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
 
-**Pendente agora (passos de operação do dono, nenhum bloqueia código):**
-1. **Aplicar as migrations `0020` e `0021` no Supabase.**
-2. **Reimportar o `n8n/workflow.e1-ingestao.json` no N8N** — o prompt endurecido (escala, sinal,
-   período canônico) e as constantes de modelo só valem a partir da reimportação, e só para extrações
-   NOVAS (documentos já extraídos não mudam retroativamente).
-3. **Processar o book de teste** (`test-data/book-vertentes/`) e conferir contra o gabarito — o dono
-   se comprometeu a rodar e trazer o resultado para otimizarmos.
-4. Backlog restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings, marcados o que já foi
-   feito). A maior alavanca pendente é **PDF como texto + `.docx`/`.xlsx`** — resolve de uma vez
-   60-80% do custo de input, a precisão dos números e o gap crítico de formato; exige o N8N vivo.
-   Ver também `docs/CUSTO_OPENAI.md`.
+**Pendente agora — ver a seção "⚠️ COMECE AQUI" no topo deste arquivo.** Resumo: o dono aplica a
+`0022` no Supabase, reimporta o workflow no N8N e manda o export v25; as 3 fatias já diagnosticadas
+e não feitas são DMPL/DVA na taxonomia, soma de seção na reconciliação quando não há linha de total, e
+PDF-como-texto + `.docx`/`.xlsx` (essa exige o N8N vivo). Backlog largo em
+`docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
+
+**Regra que vale pra qualquer reimportação/migration:** só afeta extrações **NOVAS** — documento já
+extraído não muda retroativamente, precisa reextração explícita.
 
 ---
 
@@ -1247,6 +1342,9 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   em cima de branch cujo PR já foi mergeado. A **próxima sessão deve fazer o mesmo**: checar se o
   PR desta branch já foi mergeado e, se sim, restartar do `main`. Padrão no meio do trabalho:
   `git fetch origin main && git rebase origin/main` (ou `git checkout -B claude/<nome> origin/main`).
+- Branch usada nas sessões 7-9: `claude/handoff-continuation-2oecw8` — **9 PRs mergeados** a partir
+  dela (#39-#48), restartada de `origin/main` a cada vez que um PR fechava. Depois do merge do #48 ela
+  já está reapontada para o `main` atualizado, pronta pra receber trabalho novo.
 - Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo GitHub.
 - O stop-hook local avisa sobre commits "Unverified" (merge commits do próprio
   GitHub) — **não são reescritos** (exigiria reescrever histórico compartilhado do
@@ -1264,12 +1362,27 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/       — migrations SQL (0001-0014) + README com ordem de aplicação
-n8n/      — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
-portal/   — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
-f0/       — decisões estruturais da fundação (taxonomia, schema, output spec, build vs buy)
-docs/     — doutrina de autonomia, arquitetura funcional, roadmap, reconciliação (E3 spec já existe aqui!)
+db/         — migrations SQL (0001-0022) + README com ordem de aplicação
+n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
+portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
+              src/lib/export.ts             — o motor do export (função pura buildExportWorkbook)
+              src/lib/statement-templates.ts — classificador por seção contábil
+              scripts/verificar-export.mts   — 8 invariantes de regressão do export
+f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
+docs/       — doutrina de autonomia, arquitetura, roadmap, reconciliação, auditoria, custo OpenAI
+test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não são versionados)
 ```
+
+### Como validar (rodar SEMPRE antes de commitar)
+```bash
+node --test 'n8n/test/*.test.mjs'           # 83 testes da lógica de ingestão/classificação/extração
+node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
+npx tsx portal/scripts/verificar-export.mts # 8 invariantes do export
+cd portal && npx tsc --noEmit && npx eslint . && npx next build
+```
+Migrations: aplicar `0001`→`0022` em ordem num Postgres 16 local antes de propor SQL novo — várias
+funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
+O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 
 > **Nota para quem for continuar a E3:** `docs/04_RECONCILIACAO.md` tem o desenho conceitual
 > das classes A/B/C. A Classe A (checagens 1 e 2 dos exemplos canônicos) já está construída em
