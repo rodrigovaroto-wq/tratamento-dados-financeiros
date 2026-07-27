@@ -4,9 +4,62 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-24. **Estado do `main`:** tudo mergeado até o PR #41 (branch de
-trabalho `claude/handoff-md-review-ywt57q`, sempre restartada de `origin/main` no início de cada
+**Última atualização:** 2026-07-27. **Estado do `main`:** tudo mergeado até o PR #46 (branch de
+trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de `origin/main` no início de cada
 sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar).
+
+## Sessão 8 — Camada analítica + rodada de endurecimento (PRs #43-#46)
+
+Partiu de dois pedidos do dono: (a) entregar a leitura analítica que um modelador espera pronta,
+fundamentada na bibliografia que ele adicionou (`docs/Embasamento sobre Contabilidade`); (b) achar e
+resolver TUDO que estava em aberto ou que quebra pela variação entre contratos. Uma **auditoria
+multi-agente** produziu 45 findings priorizados, versionados em
+**`docs/AUDITORIA_HARDENING_2026-07-24.md`** — é a fonte única do backlog restante, leia esse arquivo
+antes de escolher o próximo passo.
+
+- **PR #43 — camada analítica do export** (`f0/08_padrao_entrega_analitica.md` novo + emenda no
+  `f0/07`): **AV%** (common-size: % do Ativo Total no Balanço, % da Receita Líquida na DRE), **Δ%**
+  entre períodos comparáveis da mesma entidade, e bloco de **indicadores de liquidez/estrutura** no
+  Balanço (Liquidez Corrente/Geral, Endividamento Geral, Composição do Endividamento, Participação de
+  Capital de Terceiros, Imobilização do PL). Tudo em fórmula Excel com `IFERROR`; **nenhum índice é
+  emitido sem o insumo real** (célula vazia, nunca estimada). Fundamentação: Fridson & Alvarez,
+  Matarazzo/Assaf Neto, Penman, Schilit, Altman. O faseamento honesto do que ainda falta (liquidez
+  seca, cobertura de juros, dívida líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') está no `f0/08`.
+- **PR #44 — período canônico + robustez de classificação**: `db/migrations/0020` (`fn_ano4`,
+  `fn_periodo_canonico`) faz `fn_registrar_diagnostico` comparar período por **forma canônica** — o
+  falso "PERÍODO PODE ESTAR INCORRETO" que o dono viu na fila (`2025-01-15` × `15/01/2025`, `2025` ×
+  `12M25`) desapareceu, e as pendências falsas auto-resolvem. `formatarPeriodo` ficou robusto
+  (`02,25` era exibido como "2002–2025"). Classificação: vocabulário muito ampliado, direção de
+  empréstimo/mútuo ("concedido" → Ativo), `ehLinhaDMPL` restrito a data completa, agrupamento por
+  conta normalizado.
+- **PR #45 — prompt de extração endurecido + FONTE ÚNICA**: seção nova de **moeda/escala**
+  (vocabulário fechado `unidade|milhar|milhao`; `moeda`/`unidade` eram `required` no schema mas o
+  prompt não dizia nada sobre elas), **convenção de sinal e decimal BR** (parênteses = negativo;
+  ponto é milhar), e **notação canônica de período na emissão**. O prompt tinha **três cópias que já
+  haviam divergido** — o gerador agora importa `SYSTEM_PROMPT` de `lib/extract.mjs` e o embute
+  literalmente; **dois testes travam isso** (nunca voltar a parafrasear).
+- **PR #46 — escala por linha, Classe B com escala, ordem cronológica**: linha não-monetária (%,
+  por ação, quantidade) **não herda** a escala do documento (`ehLinhaNaoMonetaria`) — evita
+  mis-escala de 1000x, a custo zero de API; `db/migrations/0021` dá à **Classe B** a pré-condição de
+  escala que a Classe A já tinha (comparava R$ mil contra R$ unidade); e o export passou a ordenar
+  períodos **cronologicamente** (era alfabético: "Dez/2024" antes de "Jan/2024", o que fazia o **Δ%
+  casar o par errado**) + colunas do mesmo período colapsadas.
+
+**Custo (pergunta do dono "reduzir sem comprometer qualidade") — `docs/CUSTO_OPENAI.md`:** onde o
+dinheiro vai (o PDF domina o input; output custa ~4x o input; documento mal nomeado paga o PDF duas
+vezes) e as alavancas ranqueadas. Já feito: cache de prompt travado por teste (prefixo estático) e
+`MODEL_CLASSIFICACAO`/`MODEL_EXTRACAO` como constantes (trocar o modelo da tarefa leve é uma linha).
+As duas maiores alavancas — **PDF como texto em vez de imagem (60-80% do input)**, que o mesmo nó
+resolve junto com o gap crítico de `.docx`/`.xlsx`, e **não enviar o PDF duas vezes** — exigem o N8N
+vivo do dono e por isso NÃO foram implementadas às cegas.
+
+**Book de teste novo (`test-data/book-vertentes/`):** gerador de um grupo fictício com 5 empresas em
+distress severo (14 PDFs: balanços detalhados de 4 níveis, combinado com eliminações/MEP/participação
+de não controladores, DRE/DFC/DMPL, faturamento 24M, mapa de dívida **em reais**, balancete D/C,
+notas com going concern). Os números são **calculados e validados por assert** (balanço fecha em toda
+entidade e no combinado; DRE amarra com a DMPL; DFC com o Disponível; faturamento com a receita).
+Traz **10 armadilhas deliberadas** e um **gabarito**. O dono ia testar com ele e voltar com o
+resultado — **se ele trouxer o resultado, é daí que a próxima rodada começa.**
 
 ## TL;DR pra quem está começando agora
 
@@ -41,16 +94,17 @@ sobre o "teste v20":**
   tipo "FATURAMENTO_24M" na tela); e o prompt de IA que gera o campo `resumo` do documento foi
   ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
 
-**Pendente agora (nenhum é bloqueante de código, são passos de operação do dono):**
-1. **Reimportar o `n8n/workflow.e1-ingestao.json` atualizado no N8N** — o prompt novo do `resumo`
-   só vale a partir da reimportação; extrações já gravadas não mudam retroativamente.
-2. **Re-exportar um caso real** (ou o "teste v20") pra conferir visualmente: planilha sem menção a
-   taxonomia, período legível, notas abrindo sem corte, e as divergências de DRE/Combinado
-   resolvidas.
-3. Ver "Decisão pendente" na seção 3 abaixo pra a lista de próximos passos de FEATURE (ainda não
-   iniciados) — a última vez que o dono escolheu prioridade explicitamente foi decidir entre os
-   itens 1-8 listados lá; nenhum foi formalmente escolhido ainda, então vale perguntar antes de
-   começar um novo do zero.
+**Pendente agora (passos de operação do dono, nenhum bloqueia código):**
+1. **Aplicar as migrations `0020` e `0021` no Supabase.**
+2. **Reimportar o `n8n/workflow.e1-ingestao.json` no N8N** — o prompt endurecido (escala, sinal,
+   período canônico) e as constantes de modelo só valem a partir da reimportação, e só para extrações
+   NOVAS (documentos já extraídos não mudam retroativamente).
+3. **Processar o book de teste** (`test-data/book-vertentes/`) e conferir contra o gabarito — o dono
+   se comprometeu a rodar e trazer o resultado para otimizarmos.
+4. Backlog restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings, marcados o que já foi
+   feito). A maior alavanca pendente é **PDF como texto + `.docx`/`.xlsx`** — resolve de uma vez
+   60-80% do custo de input, a precisão dos números e o gap crítico de formato; exige o N8N vivo.
+   Ver também `docs/CUSTO_OPENAI.md`.
 
 ---
 
