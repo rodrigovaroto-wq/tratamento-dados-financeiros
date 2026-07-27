@@ -33,6 +33,8 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 
 | `migrations/0021_classe_b_checagem_unidade.sql` | **Classe B: pré-condição de UNIDADE/ESCALA entre os dois documentos** — achado na auditoria de endurecimento: as duas checagens B (0015) comparam valores de DOIS documentos diferentes (Receita da DRE × soma do FATURAMENTO_24M; Despesa Financeira × juros do MAPA_DIVIDA) **sem** conferir a escala — ao contrário da Classe A (0009). Se a DRE está em milhares e o mapa em unidades, a comparação é entre grandezas 1000x distintas (divergência sem sentido, ou pior, falso "ok"). Novas `fn_unidade_predominante(documento_versao_id)` (moda da escala entre as linhas que a declaram — linhas não-monetárias têm `unidade` null por construção e não distorcem) e `fn_motivo_escala_incomparavel(...)`; as duas checagens B (mesmas assinaturas de 0015) passam a devolver `precondicao_nao_satisfeita` com motivo explícito quando as escalas divergem. Escala ausente num dos lados não bloqueia (mesmo critério conservador da 0009). Sem mudança no N8N. |
 
+| `migrations/0022_periodo_por_ano_e_guardas.sql` | **Período por CONJUNTO DE ANOS + reconciliação tolerante a granularidade + guarda sem falso positivo** — três achados do "teste v24" (book Vertentes, 14 documentos). (1) A comparação canônica da 0020 ainda acusava divergência entre o MESMO período em granularidades diferentes (`anual 2025` × `data-base 2025-12-31`; `L24M` × `janeiro/2024 a dezembro/2025`): novas `fn_anos_periodo` e `fn_periodos_equivalentes` comparam o conjunto de anos, e só divergem quando os dois lados declaram anos e eles diferem. (2) As 4 checagens A/B casavam documentos por `periodo_id` EXATO — como cada arquivo declara a granularidade que quer, deu 11 pré-condições "documento ausente" com todos os documentos presentes; agora cada lookup aceita períodos COMPATÍVEIS (`fn_periodos_compativeis`, anos que se intersectam). (3) A guarda de padrão suspeito contava valores repetidos no lote inteiro — num combinado (5 empresas × 2 anos) o mesmo valor reaparece por coluna e valores pequenos coincidem à toa (5 alertas falsos): agora conta repetições DENTRO da mesma coluna e só considera valores materiais. Assinaturas inalteradas. |
+
 ## Como aplicar
 
 **Opção A — Supabase CLI (recomendado):**
@@ -60,6 +62,7 @@ supabase db execute --file db/migrations/0018_fix_revisar_documento_pendencias.s
 supabase db execute --file db/migrations/0019_auto_aceite_alta_confianca.sql
 supabase db execute --file db/migrations/0020_periodo_canonico.sql
 supabase db execute --file db/migrations/0021_classe_b_checagem_unidade.sql
+supabase db execute --file db/migrations/0022_periodo_por_ano_e_guardas.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
