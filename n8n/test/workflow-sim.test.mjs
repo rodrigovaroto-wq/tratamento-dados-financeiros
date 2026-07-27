@@ -469,3 +469,30 @@ test('Parse Extracao (nó real): escala não contamina linha não-monetária', a
   assert.equal(parsed.json.campos[2].unidade, null, 'lucro por ação não herda escala');
   assert.equal(parsed.json.campos[1].valor_num, 12.5, 'valor preservado');
 });
+
+test('prefixo cacheável: o system prompt é IDÊNTICO entre documentos (e vem primeiro)', async () => {
+  // A OpenAI cacheia automaticamente o PREFIXO do prompt (a partir de ~1024
+  // tokens) e cobra ~metade pelos tokens em cache. Nosso system prompt tem
+  // ~2,5k tokens e é o mesmo para TODO documento — desde que (a) venha como
+  // primeira mensagem e (b) NÃO tenha nada interpolado por documento. É o que
+  // paga a maior parte do custo de tê-lo completo. Este teste trava as duas
+  // condições: se alguém interpolar nome de arquivo/tipo no system prompt, o
+  // cache passa a falhar em cada chamada (custo silenciosamente maior) e o
+  // teste quebra. O que varia por documento vive na mensagem de USER.
+  const a = await run('Montar Req Extracao', {
+    item: { json: { r: { documento_id: 'd0', documento_versao_id: 'v0' } } },
+    refs: { 'Preparar Conteudo': (await chainFile(0)).preparado }, env: {},
+  });
+  const b = await run('Montar Req Extracao', {
+    item: { json: { r: { documento_id: 'd1', documento_versao_id: 'v1' } } },
+    refs: { 'Preparar Conteudo': (await chainFile(1)).preparado }, env: {},
+  });
+  const msgA = a.json.openai_body.messages;
+  const msgB = b.json.openai_body.messages;
+  assert.equal(msgA[0].role, 'system', 'system prompt é a PRIMEIRA mensagem (prefixo)');
+  assert.equal(msgA[0].content, msgB[0].content, 'system prompt idêntico entre documentos diferentes');
+  assert.ok(msgA[0].content.length > 3000, 'prefixo grande o suficiente para o cache valer');
+  // E o que varia (nome do arquivo) está na mensagem de user, não no prefixo.
+  assert.notEqual(msgA[1].content[0].text, msgB[1].content[0].text, 'o que varia por documento fica no user');
+  assert.ok(!msgA[0].content.includes('BALANÇO ACUMULADO'), 'nada de nome de arquivo no system prompt');
+});
