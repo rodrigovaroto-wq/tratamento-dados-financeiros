@@ -34,6 +34,7 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 | `migrations/0021_classe_b_checagem_unidade.sql` | **Classe B: pré-condição de UNIDADE/ESCALA entre os dois documentos** — achado na auditoria de endurecimento: as duas checagens B (0015) comparam valores de DOIS documentos diferentes (Receita da DRE × soma do FATURAMENTO_24M; Despesa Financeira × juros do MAPA_DIVIDA) **sem** conferir a escala — ao contrário da Classe A (0009). Se a DRE está em milhares e o mapa em unidades, a comparação é entre grandezas 1000x distintas (divergência sem sentido, ou pior, falso "ok"). Novas `fn_unidade_predominante(documento_versao_id)` (moda da escala entre as linhas que a declaram — linhas não-monetárias têm `unidade` null por construção e não distorcem) e `fn_motivo_escala_incomparavel(...)`; as duas checagens B (mesmas assinaturas de 0015) passam a devolver `precondicao_nao_satisfeita` com motivo explícito quando as escalas divergem. Escala ausente num dos lados não bloqueia (mesmo critério conservador da 0009). Sem mudança no N8N. |
 
 | `migrations/0022_periodo_por_ano_e_guardas.sql` | **Período por CONJUNTO DE ANOS + reconciliação tolerante a granularidade + guarda sem falso positivo** — três achados do "teste v24" (book Vertentes, 14 documentos). (1) A comparação canônica da 0020 ainda acusava divergência entre o MESMO período em granularidades diferentes (`anual 2025` × `data-base 2025-12-31`; `L24M` × `janeiro/2024 a dezembro/2025`): novas `fn_anos_periodo` e `fn_periodos_equivalentes` comparam o conjunto de anos, e só divergem quando os dois lados declaram anos e eles diferem. (2) As 4 checagens A/B casavam documentos por `periodo_id` EXATO — como cada arquivo declara a granularidade que quer, deu 11 pré-condições "documento ausente" com todos os documentos presentes; agora cada lookup aceita períodos COMPATÍVEIS (`fn_periodos_compativeis`, anos que se intersectam). (3) A guarda de padrão suspeito contava valores repetidos no lote inteiro — num combinado (5 empresas × 2 anos) o mesmo valor reaparece por coluna e valores pequenos coincidem à toa (5 alertas falsos): agora conta repetições DENTRO da mesma coluna e só considera valores materiais. Assinaturas inalteradas. |
+| `migrations/0023_reconciliacao_sem_ruido.sql` | **Reconciliação sem ruído — 36 pendências → 0** (achado do "teste v25": o portal listava 36 pendências de reconciliação com o book extraído corretamente; reproduzido em `db/test/`). Cinco causas: (1) **ausência de documento virava pendência** (20 das 36) — documento que falta é cobrança do CHECKLIST do Kit Básico (`fn_recomputar_completude`), não da fila de revisão: a tentativa segue registrada em `reconciliacao` para auditoria, mas não abre pendência que o humano não tem como acionar; (2) **o COMBINADO não era aceito como balanço** — as checagens só olhavam `tipo_taxonomia='BALANCO'`, agora aceitam BALANCO→COMBINADO→BALANCETE (`fn_documento_balanco`); (3) **coluna era ignorada** — `fn_valor_conceito` pegava `limit 1` na versão inteira, comparando o Ativo de um ano contra o Passivo de outro num comparativo; novo `fn_valor_conceito_col` + `fn_coluna_entidade`/`fn_coluna_periodo_do_ano`, e a checagem roda **uma vez por ano declarado**; (4) **total de seção sem linha de total** — "RECEITA OPERACIONAL BRUTA" é cabeçalho sem valor em demonstração BR; novo `fn_soma_secao` soma as contas-folha excluindo o total da seção, as seções irmãs e as âncoras de cascata; (5) **escala divergente recusava a comparação** — com as duas escalas declaradas e conhecidas, converter é determinístico: `fn_fator_escala`/`fn_valor_em_base` convertem e só recusam escala ausente ou fora do vocabulário. Novo registro unificado `fn_registrar_reconciliacao` (Classe A e B). Assinaturas preservadas — o N8N chama `fn_reconciliar_por_documento` e não muda. Testes: `db/test/run.sh`. |
 
 ## Como aplicar
 
@@ -63,6 +64,7 @@ supabase db execute --file db/migrations/0019_auto_aceite_alta_confianca.sql
 supabase db execute --file db/migrations/0020_periodo_canonico.sql
 supabase db execute --file db/migrations/0021_classe_b_checagem_unidade.sql
 supabase db execute --file db/migrations/0022_periodo_por_ano_e_guardas.sql
+supabase db execute --file db/migrations/0023_reconciliacao_sem_ruido.sql
 ```
 
 > **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
@@ -85,6 +87,25 @@ psql "$SUPABASE_DB_URL" -f db/migrations/0003_rls_e_storage.sql
 - Bucket `documentos` é **privado**; nunca gerar URL pública — usar signed URLs.
 - **TODO de fatia posterior:** restringir RLS por caso (membership) e reforço para documentos
   `pii_sensivel` (`DOCS_SOCIOS`, `AVAIS_FIANCAS`, `HEADCOUNT`).
+
+## Testes locais
+
+```bash
+PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
+```
+
+Recria um banco descartável, aplica as **23 migrations em ordem**, carrega o fixture do book
+Vertentes (`db/test/fixture_book_vertentes.sql` — extração FIEL dos 14 documentos) e roda
+`db/test/reconciliacao.test.sql`. A invariante central: **extração fiel não abre nenhuma pendência
+de reconciliação**; cada checagem tem também um caso negativo provando que continua pegando o erro
+real (balanço que não fecha, escala desconhecida, caixa que não bate, faturamento que não amarra,
+rótulo irreconhecível). O fixture é gerado por `db/test/gerar_fixture.py` a partir do próprio
+gerador do book — para regerá-lo:
+
+```bash
+cd test-data/book-vertentes
+PYTHONPATH=. python3 ../../db/test/gerar_fixture.py > ../../db/test/fixture_book_vertentes.sql
+```
 
 ## Verificação rápida (após aplicar)
 
