@@ -699,6 +699,15 @@ export function classificarFluxoCaixa(secao: string | null, chave: string): Clas
 // consolidado do grupo, f0/03).
 export type EstruturaDemonstracao = "balanco" | "dre" | "fluxo_caixa";
 
+// DMPL e DVA são demonstrações inteiras, mas NÃO entram em EstruturaDemonstracao:
+// aquele tipo significa "tem template de seções/âncoras e subtotal em fórmula"
+// (`secoesDe`/`ancorasDe`/`classificarConta`), e nenhuma das duas tem. A DMPL é
+// uma MATRIZ (movimento × componente do PL) e a DVA é a cascata do próprio
+// documento — as duas são renderizadas pelo que o documento trouxe, sem template
+// imposto. O que elas precisam é do ROTEAMENTO por linha, e é só isso que este
+// tipo mais largo carrega: a que demonstração a linha pertence.
+export type FamiliaDemonstracao = EstruturaDemonstracao | "dmpl" | "dva";
+
 export const ESTRUTURA_POR_TIPO: Record<string, EstruturaDemonstracao> = {
   BALANCO: "balanco",
   BALANCETE: "balanco",
@@ -712,7 +721,7 @@ export const ESTRUTURA_POR_TIPO: Record<string, EstruturaDemonstracao> = {
 // que traz várias demonstrações juntas ("Demonstrações Contábeis completas":
 // Balanço + DRE + Fluxo de Caixa no mesmo arquivo) — cada linha vai para a aba
 // da SUA demonstração, não para a do tipo do documento inteiro.
-const FAMILIA_POR_SECAO_CANONICA: Record<string, EstruturaDemonstracao> = {
+const FAMILIA_POR_SECAO_CANONICA: Record<string, FamiliaDemonstracao> = {
   ativo_circulante: "balanco",
   ativo_nao_circulante: "balanco",
   passivo_circulante: "balanco",
@@ -726,6 +735,12 @@ const FAMILIA_POR_SECAO_CANONICA: Record<string, EstruturaDemonstracao> = {
   atividades_operacionais: "fluxo_caixa",
   atividades_investimento: "fluxo_caixa",
   atividades_financiamento: "fluxo_caixa",
+  // db/migrations/0024 — a IA passou a poder dizer "esta linha é da DMPL/DVA".
+  // Antes não havia como: uma DMPL embutida num PDF de Balanço só tinha
+  // "patrimonio_liquido" (que INFLA o PL, porque o saldo de fechamento repete o
+  // total) ou "NAO_CLASSIFICAVEL" como destino.
+  dmpl: "dmpl",
+  dva: "dva",
 };
 
 // A qual demonstração (Balanço/DRE/Fluxo de Caixa) uma linha pertence. Usado
@@ -759,10 +774,22 @@ export function classificarDemonstracao(
   chave: string,
   secaoCanonica?: string | null,
   estruturaDocumento?: EstruturaDemonstracao | null,
-): EstruturaDemonstracao | null {
+): FamiliaDemonstracao | null {
   if (secaoCanonica && FAMILIA_POR_SECAO_CANONICA[secaoCanonica]) {
     return FAMILIA_POR_SECAO_CANONICA[secaoCanonica];
   }
+  // Documento ANTIGO (extraído antes da 0024, sem `secao_canonica='dmpl'`): a
+  // linha de saldo de exercício é reconhecível pela forma e vale mais na aba da
+  // DMPL do que em "Contas Não Classificadas", que era o destino dela desde que
+  // a guarda `ehLinhaDMPL` foi criada. Só o que a guarda já reconhecia — não é
+  // uma detecção nova, é o mesmo sinal com um destino melhor. Vem ANTES da
+  // checagem por estrutura do documento de propósito: `classificarBalanco` casa
+  // essas linhas pela seção declarada ("Patrimônio Líquido") e as devolveria
+  // para o Balanço, que é exatamente o destino errado. A única exceção é a
+  // Demonstração de Fluxo de Caixa que escreve o saldo de caixa com data por
+  // extenso — se o classificador do Fluxo reconhece a linha como SALDO DE
+  // CAIXA, ela é dele, não da DMPL.
+  if (ehLinhaDMPL(chave) && !classificarFluxoCaixa(secao, chave).ancoraKey) return "dmpl";
   if (estruturaDocumento) {
     const propria =
       estruturaDocumento === "fluxo_caixa"
@@ -790,9 +817,11 @@ function secaoKeysDe(estrutura: EstruturaDemonstracao): Set<string> {
 // Linhas de DMPL (Demonstração das Mutações do PL) — saldos de abertura/
 // fechamento por exercício ("SALDOS EM 31 DE DEZEMBRO DE 2024") — NÃO são
 // contas do Balanço: o saldo de fechamento REPETE o próprio total do PL, então
-// somá-las infla o Patrimônio Líquido (bug real visto no export do dono). Até a
-// DMPL ter aba própria, ficam fora da classificação do Balanço (vão para
-// "Contas Não Classificadas" — visíveis, sem entrar em nenhuma soma).
+// somá-las infla o Patrimônio Líquido (bug real visto no export do dono).
+// Desde a 0024 a DMPL tem aba própria e o roteamento manda essas linhas para
+// lá; esta guarda continua como REDE DE SEGURANÇA para a linha que, por
+// qualquer motivo, ainda caia na aba do Balanço (ex.: extração antiga com
+// `secao_canonica='patrimonio_liquido'`, que ganha do roteamento por forma).
 function ehLinhaDMPL(chave: string): boolean {
   const t = normalizar(chave);
   if (!t.includes("saldo")) return false;

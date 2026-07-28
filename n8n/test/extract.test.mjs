@@ -337,3 +337,67 @@ test('SYSTEM_PROMPT avisa que a escala vale só para valores monetários', () =>
   assert.match(SYSTEM_PROMPT, /escala vale para os valores MONETÁRIOS/i);
   assert.match(SYSTEM_PROMPT, /POR AÇÃO/);
 });
+
+test('DMPL/DVA: enum de seção canônica, códigos do diagnóstico e contrato da matriz (db/migrations/0024)', () => {
+  // 1. A IA passa a ter como dizer "esta linha é da DMPL/DVA". Sem isso, a
+  //    linha de uma DMPL embutida num PDF composto só tinha dois destinos, os
+  //    dois ruins: 'patrimonio_liquido' (o saldo de fechamento REPETE o total do
+  //    PL — somá-lo infla o balanço, bug real do export do dono) ou
+  //    'NAO_CLASSIFICAVEL'.
+  assert.ok(SECAO_CANONICA_ENUM.includes('dmpl'));
+  assert.ok(SECAO_CANONICA_ENUM.includes('dva'));
+
+  // 2. …e como classificar o DOCUMENTO inteiro como DMPL/DVA. `tipo_sugerido` é
+  //    um enum fechado nos códigos da taxonomia: enquanto DMPL não existia lá, o
+  //    modelo escolhia o vizinho mais próximo (a DMPL do book saiu como MUTUOS).
+  const tipos = extractionSchema().schema.properties.diagnostico.properties.tipo_sugerido.enum;
+  assert.ok(tipos.includes('DMPL'));
+  assert.ok(tipos.includes('DVA'));
+
+  // 3. O contrato da MATRIZ da DMPL — `secao` = movimento (a linha da tabela),
+  //    `chave` = componente do PL (o cabeçalho da coluna). É o que permite ao
+  //    export reconstruir a matriz; se o prompt parar de pedir isso, a aba DMPL
+  //    vira uma listagem sem sentido.
+  assert.match(SYSTEM_PROMPT, /"secao" = o rótulo do MOVIMENTO/);
+  assert.match(SYSTEM_PROMPT, /"chave" = o\s+rótulo do COMPONENTE do PL/);
+  // e a proibição explícita de reaproveitar entidade_coluna para os componentes
+  assert.match(SYSTEM_PROMPT, /Não use\s+entidade_coluna para os componentes do PL/);
+  // …e de marcar linha de DMPL como conta do PL (a dupla contagem)
+  assert.match(SYSTEM_PROMPT, /Nunca marque uma linha de DMPL como "patrimonio_liquido"/);
+});
+
+test('DMPL: parse mapeia a matriz para linhas (movimento × componente)', () => {
+  const api = {
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        content: JSON.stringify({
+          moeda: 'BRL', unidade: 'milhar',
+          diagnostico: { entidade: 'VERTENTES METALÚRGICA LTDA.', tipo_confirma: true, tipo_sugerido: 'DMPL',
+            periodo_tipo: 'anual', periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null,
+            resumo: 'Mutações do PL', justificativa: 'Matriz de movimentos por componente.' },
+          linhas: [
+            { s: 'SALDOS EM 31 DE DEZEMBRO DE 2024', sc: 'dmpl', ec: null, pc: null,
+              k: 'Capital social', vt: '45.000', vn: 45000, op: 1, cf: 0.98 },
+            { s: 'SALDOS EM 31 DE DEZEMBRO DE 2024', sc: 'dmpl', ec: null, pc: null,
+              k: 'Total', vt: '24.801', vn: 24801, op: 1, cf: 0.98 },
+            { s: 'Prejuízo líquido do exercício', sc: 'dmpl', ec: null, pc: null,
+              k: 'Prejuízos acumulados', vt: '(17.901)', vn: -17901, op: 1, cf: 0.97 },
+          ],
+        }),
+      },
+    }],
+  };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.falhaMotivo, null);
+  assert.equal(r.campos.length, 3);
+  // o movimento vai em `secao` e o componente em `chave` — é assim que o export
+  // remonta a matriz (linhas = movimentos, colunas = componentes)
+  assert.equal(r.campos[0].secao, 'SALDOS EM 31 DE DEZEMBRO DE 2024');
+  assert.equal(r.campos[0].chave, 'Capital social');
+  assert.equal(r.campos[0].secao_canonica, 'dmpl');
+  assert.equal(r.campos[2].valor_num, -17901);
+  // nenhum componente do PL pode ter virado "entidade" (isso criaria empresas
+  // fantasmas no export, uma por componente)
+  assert.ok(r.campos.every((c) => c.entidade_coluna === null));
+});

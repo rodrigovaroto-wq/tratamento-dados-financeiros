@@ -45,6 +45,14 @@ export const SECAO_CANONICA_ENUM = [
   'passivo_circulante', 'passivo_nao_circulante', 'patrimonio_liquido',
   'receita_bruta', 'custos', 'despesas_operacionais', 'resultado_financeiro', 'impostos_lucro',
   'atividades_operacionais', 'atividades_investimento', 'atividades_financiamento',
+  // DMPL e DVA (db/migrations/0024). Não são seções de outra demonstração: são
+  // demonstrações INTEIRAS, e é por isso que precisam de valor próprio aqui.
+  // Sem elas, a linha de uma DMPL embutida num PDF composto só tinha dois
+  // destinos ruins — "patrimonio_liquido" (o saldo de fechamento REPETE o total
+  // do PL, então somá-lo INFLA o balanço: bug real do export do dono) ou
+  // "NAO_CLASSIFICAVEL". Com o valor próprio, a linha é roteada para a aba da
+  // sua demonstração, do mesmo jeito que Balanço/DRE/Fluxo já são.
+  'dmpl', 'dva',
   'NAO_CLASSIFICAVEL',
 ];
 
@@ -74,6 +82,13 @@ export const SYSTEM_PROMPT = [
   '  COMBINADO — classifique pela demonstração principal (normalmente BALANCO). Regra prática: se',
   '  as linhas têm entidade_coluna preenchido (várias empresas) → COMBINADO; se é uma entidade só',
   '  (mesmo com várias demonstrações no arquivo) → o tipo da demonstração principal.',
+  '  DMPL e DVA são códigos próprios: use "DMPL" quando o documento É a Demonstração das Mutações',
+  '  do Patrimônio Líquido (linhas de movimentação do PL — saldos de abertura/fechamento, lucro ou',
+  '  prejuízo do exercício, dividendos, aumento de capital — com colunas por componente do PL) e',
+  '  "DVA" quando é a Demonstração do Valor Adicionado (CPC 09: receitas, insumos adquiridos de',
+  '  terceiros, valor adicionado a distribuir e sua distribuição). Se a DMPL/DVA é só UMA das',
+  '  demonstrações dentro de um arquivo que traz várias, o tipo do DOCUMENTO continua sendo o da',
+  '  demonstração principal — a separação por demonstração acontece linha a linha (secao_canonica).',
   'periodo_tipo / periodo_referencia: o período de competência real do conteúdo. É o período ATUAL',
   '  do documento — NÃO use a data de um SALDO DE ABERTURA/exercício anterior (ex.: uma DMPL que',
   '  mostra "Saldos em 31/12/2023" e "Saldos em 31/12/2024" é um documento de 2024; 2023 é só o',
@@ -160,6 +175,18 @@ export const SYSTEM_PROMPT = [
   '"periodo_coluna" null em todas as linhas. Nunca some, escolha ou estime um valor único cobrindo',
   'vários períodos.',
   '',
+  'DMPL — DEMONSTRAÇÃO DAS MUTAÇÕES DO PATRIMÔNIO LÍQUIDO (formato de MATRIZ, trate assim SEMPRE,',
+  'inclusive quando ela é só uma parte de um arquivo com várias demonstrações): as linhas são',
+  'MOVIMENTOS do exercício ("SALDOS EM 31 DE DEZEMBRO DE 2024", "Prejuízo líquido do exercício",',
+  '"Aumento de capital", "Dividendos distribuídos", "SALDOS EM 31 DE DEZEMBRO DE 2025") e as',
+  'COLUNAS são os componentes do PL ("Capital social", "Capital a integralizar", "Reserva legal",',
+  '"Ajuste de avaliação patrimonial", "Prejuízos acumulados", "Total"). Gere uma linha do JSON para',
+  'cada CRUZAMENTO com valor, com "secao" = o rótulo do MOVIMENTO (a linha da tabela) e "chave" = o',
+  'rótulo do COMPONENTE do PL (o cabeçalho da coluna) — é o componente que é a CONTA. Não use',
+  'entidade_coluna para os componentes do PL: ela é só para colunas de EMPRESAS diferentes. Células',
+  'vazias ou com traço ("-") não geram linha nenhuma. Não some nem recalcule a coluna "Total": se o',
+  'documento a traz, extraia como veio; se não traz, não invente.',
+  '',
   'secao_canonica: além da "secao" livre acima, classifique CADA linha em UMA seção canônica',
   'padronizada (para a planilha final organizar as contas na estrutura de mercado). Use o',
   'julgamento contábil (o significado da conta, não só o nome literal — cada empresa nomeia',
@@ -171,6 +198,13 @@ export const SYSTEM_PROMPT = [
   '  "despesas_operacionais" (vendas/administrativas/gerais), "resultado_financeiro"',
   '  (receitas/despesas financeiras, juros), "impostos_lucro" (IRPJ/CSLL).',
   '- Fluxo de Caixa: "atividades_operacionais", "atividades_investimento", "atividades_financiamento".',
+  '- DMPL: "dmpl" para TODA linha da Demonstração das Mutações do Patrimônio Líquido (inclusive os',
+  '  saldos de abertura/fechamento). Nunca marque uma linha de DMPL como "patrimonio_liquido": o',
+  '  saldo de fechamento da DMPL REPETE o total do PL do balanço, e classificá-lo como conta do PL',
+  '  faz o patrimônio ser contado duas vezes.',
+  '- DVA: "dva" para toda linha da Demonstração do Valor Adicionado (tanto a geração — receitas,',
+  '  insumos, depreciação, valor adicionado recebido em transferência — quanto a distribuição —',
+  '  pessoal, impostos, remuneração de capitais de terceiros e próprios).',
   'Use "NAO_CLASSIFICAVEL" quando a linha for um TOTAL/subtotal geral, ou quando você não tiver',
   'segurança de qual seção é — NÃO force um palpite ruim (a linha vai para revisão manual, o que',
   'é preferível a classificar errado). Isto é uma SUGESTÃO revisável por humano, nunca um fato.',

@@ -11,6 +11,7 @@ import {
   ESTRUTURA_POR_TIPO,
   BALANCO_OUTLINE,
   type EstruturaDemonstracao,
+  type FamiliaDemonstracao,
 } from "./statement-templates";
 
 // Modo B do output (f0/07_output_spec.md): export sob demanda. Princípio
@@ -235,6 +236,11 @@ function compararColunas(
 // produção, sessão 7 cont.¹⁴). CONTRATO_SOCIAL (Societário/Legal) também
 // ganhou aba própria em vez de cair no genérico "Outros" junto com dado
 // tabular não relacionado.
+// DMPL/DVA têm renderização própria (nem grade classificada, nem listagem
+// simples) — nomeadas para o roteamento não depender de string solta.
+const ABA_DMPL = "DMPL";
+const ABA_DVA = "DVA";
+
 export const ABA_POR_TIPO: Record<string, string> = {
   BALANCO: "Balanço",
   DRE: "DRE",
@@ -248,11 +254,18 @@ export const ABA_POR_TIPO: Record<string, string> = {
   FAT_INTRAGRUPO: "Intragrupo",
   CONTRATO_SOCIAL: "Societário",
   FLUXO_PROJETADO: "Fluxo Projetado",
+  DMPL: ABA_DMPL,
+  DVA: ABA_DVA,
 };
 export const ORDEM_ABAS = [
   "Balanço",
   "DRE",
   "Fluxo de Caixa",
+  // Depois das três demonstrações principais e antes do Combinado/Balancete:
+  // é a ordem em que uma demonstração contábil publicada apresenta o conjunto
+  // (BP, DRE, DFC, DMPL, DVA — Lei 6.404/76 art. 176).
+  ABA_DMPL,
+  ABA_DVA,
   "Combinado",
   "Balancete",
   "Faturamento",
@@ -286,6 +299,8 @@ const TIPO_TAXONOMIA_LABEL: Record<string, string> = {
   FAT_INTRAGRUPO: "Faturamento Intragrupo",
   CONTRATO_SOCIAL: "Contrato Social",
   FLUXO_PROJETADO: "Fluxo Projetado",
+  DMPL: "Mutações do Patrimônio Líquido",
+  DVA: "Demonstração do Valor Adicionado",
 };
 
 // Tipos ainda sem rótulo explícito (fora do Kit Básico + Variáveis já
@@ -309,10 +324,12 @@ export function formatarTipoTaxonomia(codigo: string | null): string {
 // juntos). Balancete/Combinado (também família "balanco") mantêm as próprias
 // abas quando o documento é desse tipo — só o que "vaza" de um documento
 // composto para uma família diferente é redirecionado para estas abas.
-const ABA_PADRAO_POR_ESTRUTURA: Record<EstruturaDemonstracao, string> = {
+const ABA_PADRAO_POR_ESTRUTURA: Record<FamiliaDemonstracao, string> = {
   balanco: "Balanço",
   dre: "DRE",
   fluxo_caixa: "Fluxo de Caixa",
+  dmpl: "DMPL",
+  dva: "DVA",
 };
 
 export interface DocumentoParaExport {
@@ -376,6 +393,13 @@ function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao) {
   ].filter(Boolean);
   return linhas.join("\n");
 }
+
+// Separador de chave composta. É um caractere que NUNCA aparece num rótulo
+// contábil, e é isso que se quer: com espaço simples, entidade "A B" + período
+// "C" colide com entidade "A" + período "B C" (colunas distintas fundidas numa
+// só). Escrito como escape, e não como o byte literal, para não deixar um
+// caractere invisível no fonte.
+const CHAVE_SEP = "\u0000";
 
 const VALOR_NUM_FMT = "#,##0.00;(#,##0.00)";
 const PENDENTE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3CD" } };
@@ -1452,6 +1476,194 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
   }
 }
 
+// ---------------------------------------------------------------------------
+// DMPL e DVA (db/migrations/0024). As duas são demonstrações inteiras, mas
+// nenhuma passa pelo `construirAbaClassificada`: aquele caminho existe para
+// template de seções + subtotal em FÓRMULA (Balanço/DRE/Fluxo), e nem a DMPL
+// nem a DVA têm um template nosso. Aqui vale o princípio travado na sessão 10:
+// o que sai é o que o documento trouxe, na ordem em que ele trouxe — nenhuma
+// linha imposta, nenhum subtotal calculado por nós (anti-ancoragem, f0/07).
+// Por construção, então, toda linha destas abas nasce de uma linha extraída:
+// não existe aqui a classe de defeito que o invariante 8 persegue nas abas com
+// template (linha em branco emitida às cegas).
+// ---------------------------------------------------------------------------
+interface RegistroDemonstracao {
+  campo: CampoExtraido;
+  ctx: ContextoVersao;
+  entidade: string;
+  periodo: string;
+}
+
+const MOVIMENTO_SEM_ROTULO = "(movimento não informado)";
+const SECAO_SEM_ROTULO = "(sem seção informada)";
+
+// Chave estável para alinhar o MESMO rótulo escrito com grafias diferentes
+// (plural, acento, caixa) sem forçar nome canônico — o rótulo exibido é sempre
+// o primeiro que apareceu, como no resto do export.
+function ordemPorPrimeiraAparicao() {
+  const ordem = new Map<string, string>(); // chave normalizada → rótulo exibido
+  return {
+    registrar(rotulo: string) {
+      const k = normalizar(rotulo);
+      if (!ordem.has(k)) ordem.set(k, rotulo);
+      return k;
+    },
+    lista(): Array<[string, string]> {
+      return [...ordem.entries()];
+    },
+  };
+}
+
+// A DMPL é uma MATRIZ: as linhas são MOVIMENTOS do exercício ("SALDOS EM 31 DE
+// DEZEMBRO DE 2024", "Prejuízo líquido do exercício") e as colunas são
+// COMPONENTES do PL ("Capital social", "Reserva legal", "Prejuízos acumulados",
+// "Total"). Achatá-la numa listagem perderia justamente a leitura que a
+// demonstração existe para dar (como cada componente do PL se moveu), então a
+// aba reconstrói a matriz: um bloco por entidade×período, cabeçalho com os
+// componentes, uma linha por movimento. `secao` = movimento e `chave` =
+// componente é o contrato que o prompt de extração pede (n8n/lib/extract.mjs).
+function construirAbaDMPL(workbook: ExcelJS.Workbook, nomeAba: string, registros: RegistroDemonstracao[]) {
+  const blocos = new Map<string, { entidade: string; periodo: string; registros: RegistroDemonstracao[] }>();
+  for (const reg of registros) {
+    const key = `${reg.entidade}${CHAVE_SEP}${reg.periodo}`;
+    if (!blocos.has(key)) blocos.set(key, { entidade: reg.entidade, periodo: reg.periodo, registros: [] });
+    blocos.get(key)!.registros.push(reg);
+  }
+
+  const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", ySplit: 1 }] });
+  let larguraMax = 0;
+
+  for (const bloco of [...blocos.values()].sort(compararColunas)) {
+    const componentes = ordemPorPrimeiraAparicao();
+    const movimentos = ordemPorPrimeiraAparicao();
+    const celulas = new Map<string, RegistroDemonstracao[]>();
+    for (const reg of bloco.registros) {
+      const comp = componentes.registrar(reg.campo.chave);
+      const mov = movimentos.registrar(reg.campo.secao ?? MOVIMENTO_SEM_ROTULO);
+      const k = `${mov}${CHAVE_SEP}${comp}`;
+      if (!celulas.has(k)) celulas.set(k, []);
+      celulas.get(k)!.push(reg);
+    }
+
+    const colunasComp = componentes.lista();
+    larguraMax = Math.max(larguraMax, colunasComp.length + 1);
+
+    // O título do bloco vive na MESMA linha do cabeçalho dos componentes (em
+    // vez de uma linha só de título): uma linha com rótulo e nenhum valor é
+    // exatamente o que o invariante 8 chama de linha vazia.
+    const header = sheet.addRow([
+      `Movimento — ${bloco.entidade} (${bloco.periodo})`,
+      ...colunasComp.map(([, label]) => label),
+    ]);
+    header.font = { bold: true };
+    header.eachCell((cell) => {
+      cell.fill = HEADER_FILL;
+      cell.alignment = { wrapText: true, vertical: "bottom" };
+    });
+
+    for (const [movKey, movLabel] of movimentos.lista()) {
+      const row = sheet.addRow([movLabel]);
+      let algumPendente = false;
+      colunasComp.forEach(([compKey], i) => {
+        const candidatos = celulas.get(`${movKey}${CHAVE_SEP}${compKey}`);
+        if (!candidatos || candidatos.length === 0) return;
+        const melhor = melhorCampo(candidatos.map((r) => r.campo));
+        const { ctx } = candidatos.find((r) => r.campo === melhor)!;
+        const cell = row.getCell(i + 2);
+        cell.value = melhor.valor_num ?? melhor.valor_texto ?? null;
+        if (typeof cell.value === "number") cell.numFmt = VALOR_NUM_FMT;
+        cell.note = comoNota(notaProveniencia(melhor, ctx));
+        if (melhor.status_aceite !== "aceito") {
+          cell.fill = PENDENTE_FILL;
+          algumPendente = true;
+        }
+      });
+      // Saldo de abertura/fechamento é a moldura da demonstração — negrito e
+      // filete, como sai no PDF publicado.
+      if (/\bsaldos?\b/i.test(movLabel)) {
+        row.font = { bold: true };
+        row.eachCell((cell) => {
+          cell.border = THIN_TOP_BORDER;
+        });
+      }
+      if (algumPendente) row.font = { ...row.font, italic: true };
+    }
+
+    sheet.addRow([]); // respiro entre blocos (sem rótulo — o invariante 8 pula)
+  }
+
+  sheet.getColumn(1).width = 46;
+  for (let c = 2; c <= Math.max(larguraMax, 2); c++) sheet.getColumn(c).width = 20;
+}
+
+// A DVA (CPC 09) é uma cascata de seções — geração do valor adicionado e sua
+// distribuição. Não escrevemos um template dela: a demonstração é padronizada
+// pelo CPC, mas não temos nenhum arquivo real para validar um, e um template
+// errado ordenaria o dado errado em silêncio. A aba apresenta o que o documento
+// trouxe, na ordem dele, com a seção declarada numa coluna própria — e as
+// colunas de valor são entidade×período, como nas demais demonstrações.
+function construirAbaDocumental(workbook: ExcelJS.Workbook, nomeAba: string, registros: RegistroDemonstracao[]) {
+  const colunas = new Map<string, Coluna>();
+  for (const reg of registros) {
+    const key = `${reg.entidade}${CHAVE_SEP}${reg.periodo}`;
+    if (!colunas.has(key)) colunas.set(key, { key, entidade: reg.entidade, periodo: reg.periodo });
+  }
+  const ordemColunas = [...colunas.values()].sort(compararColunas);
+  const posColuna = new Map(ordemColunas.map((c, i) => [c.key, i + 3]));
+
+  const secoes = ordemPorPrimeiraAparicao();
+  const linhas = new Map<string, { secaoLabel: string; rotulo: string; porColuna: Map<string, RegistroDemonstracao[]> }>();
+  for (const reg of registros) {
+    const secaoKey = secoes.registrar(reg.campo.secao ?? SECAO_SEM_ROTULO);
+    const k = `${secaoKey}${CHAVE_SEP}${normalizar(reg.campo.chave)}`;
+    if (!linhas.has(k)) {
+      linhas.set(k, {
+        secaoLabel: reg.campo.secao ?? SECAO_SEM_ROTULO,
+        rotulo: reg.campo.chave,
+        porColuna: new Map(),
+      });
+    }
+    const alvo = linhas.get(k)!;
+    const colKey = `${reg.entidade}${CHAVE_SEP}${reg.periodo}`;
+    if (!alvo.porColuna.has(colKey)) alvo.porColuna.set(colKey, []);
+    alvo.porColuna.get(colKey)!.push(reg);
+  }
+
+  const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", ySplit: 1, xSplit: 2 }] });
+  sheet.columns = [
+    { header: "Rótulo", width: 46 },
+    { header: "Seção declarada no documento", width: 32 },
+    ...ordemColunas.map((c) => ({ header: `${c.entidade} — ${c.periodo}`, width: 20 })),
+  ];
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).eachCell((cell) => {
+    cell.fill = HEADER_FILL;
+    cell.alignment = { wrapText: true, vertical: "bottom" };
+  });
+
+  for (const linha of linhas.values()) {
+    const row = sheet.addRow([linha.rotulo, linha.secaoLabel]);
+    let algumPendente = false;
+    for (const [colKey, regs] of linha.porColuna) {
+      const pos = posColuna.get(colKey);
+      if (!pos) continue;
+      const melhor = melhorCampo(regs.map((r) => r.campo));
+      const reg = regs.find((r) => r.campo === melhor)!;
+      const cell = row.getCell(pos);
+      cell.value = melhor.valor_num ?? melhor.valor_texto ?? null;
+      if (typeof cell.value === "number") cell.numFmt = VALOR_NUM_FMT;
+      cell.note = comoNota(notaProveniencia(melhor, reg.ctx));
+      if (melhor.status_aceite !== "aceito") {
+        cell.fill = PENDENTE_FILL;
+        algumPendente = true;
+      }
+    }
+    row.getCell(2).font = { size: 9, color: { argb: "FF64748B" } };
+    if (/total|valor adicionado/i.test(linha.rotulo)) row.font = { bold: true };
+    if (algumPendente) row.font = { ...row.font, italic: true };
+  }
+}
+
 export function buildExportWorkbook({
   caso,
   documentos,
@@ -1481,6 +1693,10 @@ export function buildExportWorkbook({
   const colunasPorAba = new Map<string, Map<string, Coluna>>();
   const camposPorAba = new Map<string, Array<{ campo: CampoExtraido; colKey: string }>>();
   const linhasSimplesPorAba = new Map<string, LinhaSimples[]>();
+  // DMPL/DVA (0024): nem grade classificada (não têm template) nem listagem
+  // simples (perderiam a leitura da demonstração) — ver construirAbaDMPL /
+  // construirAbaDocumental.
+  const registrosPorAba = new Map<string, RegistroDemonstracao[]>();
 
   for (const campo of campos) {
     const ctx = contextoPorVersao.get(campo.documento_versao_id);
@@ -1526,10 +1742,13 @@ export function buildExportWorkbook({
     // Separador improvável na chave: com espaço simples, entidade "A B" +
     // período "C" colidia com entidade "A" + período "B C" (colunas de
     // entidade×período diferentes fundidas numa só).
-    const colKey = `${entidadeColuna} ${periodoColuna}`;
+    const colKey = `${entidadeColuna}${CHAVE_SEP}${periodoColuna}`;
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
 
-    if (estrutura) {
+    if (aba === ABA_DMPL || aba === ABA_DVA) {
+      if (!registrosPorAba.has(aba)) registrosPorAba.set(aba, []);
+      registrosPorAba.get(aba)!.push({ campo, ctx, entidade: entidadeColuna, periodo: periodoColuna });
+    } else if (estrutura) {
       if (!colunasPorAba.has(aba)) colunasPorAba.set(aba, new Map());
       colunasPorAba.get(aba)!.set(colKey, { key: colKey, entidade: entidadeColuna, periodo: periodoColuna });
       if (!camposPorAba.has(aba)) camposPorAba.set(aba, []);
@@ -1595,7 +1814,12 @@ export function buildExportWorkbook({
 
   for (const aba of ORDEM_ABAS) {
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
-    if (estrutura) {
+    if (aba === ABA_DMPL || aba === ABA_DVA) {
+      const registros = registrosPorAba.get(aba);
+      if (!registros || registros.length === 0) continue;
+      if (aba === ABA_DMPL) construirAbaDMPL(workbook, aba, registros);
+      else construirAbaDocumental(workbook, aba, registros);
+    } else if (estrutura) {
       const colunas = [...(colunasPorAba.get(aba)?.values() ?? [])].sort(compararColunas);
       if (colunas.length === 0) continue;
       construirAbaClassificada(
