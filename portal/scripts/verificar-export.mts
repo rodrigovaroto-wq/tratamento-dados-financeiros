@@ -41,7 +41,7 @@
  */
 import { readFileSync } from "node:fs";
 import { avaliarCelula, linhaVazia } from "./lib/avaliar-formula.mts";
-import { buildExportWorkbook, chaveCronologicaPeriodo, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
+import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 
 let ok = 0;
@@ -286,7 +286,11 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const vazias: string[] = [];
   let rotuladas = 0;
   for (const ws of wb.worksheets) {
-    if (ws.name === "Resumo") continue;
+    // Modelagem tem invariante próprio (11, abaixo): lá as células são fórmulas
+    // de modelo (IF/INDEX/MATCH/MAX) que `avaliarCelula` não resolve — e o que
+    // importa naquela aba é o oposto do que se checa aqui (nenhum valor CRU
+    // fora dos inputs), não a ausência de linha em branco.
+    if (ws.name === "Resumo" || ws.name === "Modelagem") continue;
     for (let r = 2; r <= ws.rowCount; r++) {
       const rot = String(ws.getRow(r).getCell(1).value ?? "").trim();
       if (!rot) continue;
@@ -563,6 +567,469 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const semNumero = rotulos.filter((_, i) => typeof ws.getRow(i + 2).getCell(3).value !== "number");
     checar(semNumero.length === 0, "(10f) nenhuma linha da DVA sem número", semNumero.join(" / "));
   }
+}
+
+// ---- 11: aba Modelagem — nada escrito à mão fora dos INPUTS ----------------
+// A regra que o dono travou no pedido do v27: "TUDO o que não for inputs
+// externos DEVE ESTAR EM FORMATO DE FÓRMULA, ou seja, nenhum dado deve ser
+// escrito de fato, e sim puxado de outras abas onde os dados estão separados".
+// Este invariante é a tradução literal disso — e é o que impede alguém (eu,
+// numa sessão futura) de "resolver" um problema do modelo colando um número.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem");
+  checar(ws != null, "(11) o export monta a aba Modelagem");
+  if (ws) {
+    // 1. Nenhum valor numérico cru fora das células de input. As de input são
+    //    as únicas com preenchimento amarelo (INPUT_FILL) — o mesmo sinal que o
+    //    usuário vê na tela é o que o teste usa, então os dois não podem
+    //    divergir sem alguém perceber.
+    const crus: string[] = [];
+    let formulas = 0;
+    let inputs = 0;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 3; c <= ws.columnCount; c++) {
+        const cell = ws.getRow(r).getCell(c);
+        const v = cell.value;
+        if (v == null || v === "") continue;
+        const fill = cell.fill as { fgColor?: { argb?: string } } | undefined;
+        const ehInput = fill?.fgColor?.argb === "FFFFF9C4";
+        if (ehInput) { inputs++; continue; }
+        if (typeof v === "object" && v !== null && "formula" in v) { formulas++; continue; }
+        if (typeof v === "number") crus.push(`${cell.address}=${v}`);
+      }
+    }
+    checar(crus.length === 0,
+      "(11) nenhum número escrito à mão fora dos inputs — tudo é fórmula",
+      crus.slice(0, 8).join(" / "));
+    checar(formulas > 60, `(11) o modelo é feito de fórmula (${formulas} células)`);
+    checar(inputs > 0, `(11) e tem células de input marcadas (${inputs})`);
+
+    // 2. As fórmulas históricas apontam para as ABAS DE DADOS deste mesmo
+    //    arquivo — é isso que mantém a planilha viva (corrigiu a origem, o
+    //    modelo acompanha) em vez de congelar um número no modelo.
+    const alvos = new Set<string>();
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 3; c <= ws.columnCount; c++) {
+        const v = ws.getRow(r).getCell(c).value as { formula?: string } | undefined;
+        const f = v?.formula;
+        if (!f) continue;
+        for (const m of f.matchAll(/'([^']+)'!/g)) alvos.add(m[1]);
+      }
+    }
+    for (const aba of ["Balanço", "DRE", "Fluxo de Caixa"]) {
+      checar(alvos.has(aba), `(11) o modelo puxa da aba ${aba} por referência`);
+    }
+
+    // 3. A timeline deriva de UMA célula (como o modelo de referência, que faz
+    //    `=EDATE(C7,1)`): só o primeiro exercício é digitado.
+    let rAno = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "Exercício") { rAno = r; break; }
+    }
+    const anoBase = rAno > 0 ? ws.getRow(rAno).getCell(3).value : null;
+    const anoSeg = rAno > 0 ? ws.getRow(rAno).getCell(4).value as { formula?: string } | undefined : undefined;
+    checar(typeof anoBase === "number" && !!anoSeg?.formula?.includes("+1"),
+      "(11) a linha do tempo deriva do primeiro exercício, não é digitada coluna a coluna",
+      `linha=${rAno} base=${String(anoBase)} seguinte=${anoSeg?.formula ?? "(sem fórmula)"}`);
+  }
+
+  // 4. Abas de dado cru ficam OCULTAS, mas continuam no arquivo (o modelo
+  //    aponta para elas e a proveniência não pode sumir da entrega).
+  const visiveis = wb.worksheets.filter((s) => s.state === "visible").map((s) => s.name);
+  const ocultas = wb.worksheets.filter((s) => s.state === "hidden").map((s) => s.name);
+  checar(visiveis.includes("Modelagem") && visiveis.includes("Balanço"),
+    "(11) Modelagem e as demonstrações principais ficam visíveis", visiveis.join(", "));
+  checar(!visiveis.includes("Balancete") && ocultas.includes("Balancete"),
+    "(11) as abas de apoio ficam ocultas — e continuam no arquivo", `visíveis: ${visiveis.join(", ")}`);
+}
+
+// ---- 12: consolidação de entidade e período (teste v27) ---------------------
+// O grupo tem 5 empresas e o Balanço do v27 saiu com 15 colunas de entidade: a
+// mesma empresa chegava com duas grafias (apelido da coluna do combinado ×
+// razão social do documento individual) e o mesmo exercício com dois rótulos
+// ("2025" × "31/12/2025"). Somar o grupo assim conta cada empresa DUAS VEZES —
+// é o que tornava a base inutilizável para modelagem.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const bal = wb.getWorksheet("Balanço")!;
+  const heads: string[] = [];
+  for (let c = 2; c <= bal.columnCount; c++) heads.push(String(bal.getRow(1).getCell(c).value ?? ""));
+  const ents = heads.filter((h) => h && h !== "AV%" && !h.startsWith("Δ"));
+  // 5 empresas × 2 exercícios = 10. Antes da consolidação eram 15.
+  checar(ents.length === 10, `(12) o Balanço tem 10 colunas de entidade×exercício (5 empresas × 2 anos)`,
+    `${ents.length}: ${ents.join(" | ")}`);
+  checar(!ents.some((e) => /^(Componentes|Metalúrgica|Imóveis SPE|VT Logística|Vertentes Part\.)\b/.test(e)),
+    "(12) nenhum apelido de coluna do combinado sobrou como se fosse outra empresa", ents.join(" | "));
+  checar(!ents.some((e) => e.includes("31/12/")),
+    "(12) o exercício fechado não aparece como data-base numa coluna separada", ents.join(" | "));
+
+  // …e o casamento é CONSERVADOR: apelido sem uma razão social única que case
+  // continua como está (fundir duas empresas diferentes é pior que duas colunas).
+  const m = consolidarNomesDeEntidade(
+    ["ALFA COMÉRCIO LTDA.", "ALFA SERVIÇOS LTDA."],
+    ["Alfa", "Beta"],
+  );
+  checar(!m.has("Alfa"), "(12) apelido ambíguo (casa com 2 razões sociais) NÃO é consolidado");
+  checar(!m.has("Beta"), "(12) apelido sem correspondente NÃO é consolidado");
+  const m2 = consolidarNomesDeEntidade(["VERTENTES PARTICIPAÇÕES S.A."], ["Vertentes Part."]);
+  checar(m2.get("Vertentes Part.") === "VERTENTES PARTICIPAÇÕES S.A.",
+    "(12) abreviação ('Part.') casa a razão social por prefixo");
+}
+
+// ---- 13: o modelo aponta para linhas que EXISTEM (senão devolve 0 calado) ---
+// O INDEX/MATCH do modelo é embrulhado em IFERROR — o que é certo para o caso
+// legítimo (a DFC do book só cobre 2025, então 2024 não tem coluna e vale 0),
+// mas transforma um rótulo ERRADO em zero silencioso. Foi assim que a primeira
+// versão desta aba saiu com o Balanço inteiro zerado: ela procurava "Total do
+// Ativo Circulante", e a aba Balanço rotula a linha do subtotal com o nome da
+// SEÇÃO ("Ativo Circulante"). Este invariante resolve o MATCH de verdade.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem")!;
+
+  const rotulosDe = (aba: string) => {
+    const alvo = wb.getWorksheet(aba);
+    const set = new Set<string>();
+    if (alvo) for (let r = 1; r <= alvo.rowCount; r++) {
+      set.add(String(alvo.getRow(r).getCell(1).value ?? "").trim());
+    }
+    return set;
+  };
+  const cache = new Map<string, Set<string>>();
+  const perdidos: string[] = [];
+  let procurados = 0;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    for (let c = 3; c <= ws.columnCount; c++) {
+      const v = ws.getRow(r).getCell(c).value as { formula?: string } | undefined;
+      const f = v?.formula;
+      if (!f) continue;
+      // O intervalo é LIMITADO ao tamanho da aba (`$A$1:$A$162`), nunca coluna
+      // inteira — referência de coluna cheia inflava o grafo de dependência a
+      // ponto de travar o recálculo.
+      for (const m of f.matchAll(/MATCH\("([^"]+)",'([^']+)'!\$A\$1:\$A\$\d+,0\)/g)) {
+        const [, rotulo, aba] = m;
+        procurados++;
+        if (!cache.has(aba)) cache.set(aba, rotulosDe(aba));
+        if (!cache.get(aba)!.has(rotulo)) {
+          const onde = `${aba}!"${rotulo}" (usado em ${ws.getRow(r).getCell(1).value})`;
+          if (!perdidos.includes(onde)) perdidos.push(onde);
+        }
+      }
+    }
+  }
+  checar(procurados > 0, "(13) o modelo faz buscas por rótulo nas abas de dados");
+  checar(perdidos.length === 0,
+    `(13) todos os ${procurados} rótulos procurados existem na aba de destino`,
+    perdidos.slice(0, 6).join(" / "));
+
+  // …e o resultado disso bate com o GABARITO do book: resolve o INDEX/MATCH do
+  // jeito que o Excel resolveria e compara o número que o modelo vai exibir.
+  const ent = "VERTENTES METALÚRGICA LTDA.";
+  const valorNaAba = (aba: string, rotulo: string, ano: number): number | null => {
+    const alvo = wb.getWorksheet(aba);
+    if (!alvo) return null;
+    let linha = -1;
+    for (let r = 1; r <= alvo.rowCount; r++) {
+      if (String(alvo.getRow(r).getCell(1).value ?? "").trim() === rotulo) { linha = r; break; }
+    }
+    let coluna = -1;
+    for (let c = 2; c <= alvo.columnCount; c++) {
+      if (String(alvo.getRow(1).getCell(c).value ?? "").trim() === `${ent} — ${ano}`) { coluna = c; break; }
+    }
+    if (linha < 0 || coluna < 0) return null;
+    const v = avaliarCelula(alvo, alvo.getColumn(coluna).letter, linha);
+    return typeof v === "number" ? Math.round(v) : null;
+  };
+  const gab = JSON.parse(
+    readFileSync("/home/user/tratamento-dados-financeiros/test-data/book-vertentes/pdf/GABARITO.json", "utf8"),
+  ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
+  const errosModelo: string[] = [];
+  for (const ano of [2024, 2025]) {
+    const esperado = gab.balanco_por_entidade[String(ano)].metalurgica;
+    const pares: Array<[string, number]> = [
+      ["Ativo Circulante", esperado.AC],
+      ["Ativo Não Circulante", esperado.ANC],
+      ["Passivo Circulante", esperado.PC],
+      ["Passivo Não Circulante", esperado.PNC],
+      ["Patrimônio Líquido", esperado.PL],
+    ];
+    for (const [rot, exp] of pares) {
+      const got = valorNaAba("Balanço", rot, ano);
+      if (got !== exp) errosModelo.push(`${ano} ${rot}: modelo=${got} gabarito=${exp}`);
+    }
+  }
+  checar(errosModelo.length === 0,
+    "(13) o que o modelo vai puxar do Balanço bate com o gabarito, nos dois exercícios",
+    errosModelo.join(" / "));
+}
+
+// ---- 14: PREMISSA MUDOU => MODELO INTEIRO MUDA -----------------------------
+// O critério que o dono marcou como o mais importante: "alteração de premissas
+// deve alterar a modelagem como um todo". Isso não se verifica lendo o código —
+// se verifica no GRAFO DE DEPENDÊNCIA das fórmulas geradas. Aqui a planilha é
+// tratada como o Excel a trata: cada célula projetada tem de alcançar, por
+// algum caminho de referências, as células de premissa do seu exercício.
+//
+// Foi este invariante que pegou o defeito de as premissas serem lidas sempre da
+// coluna C: a premissa do 2º ano projetado existia na tela, o usuário digitava
+// nela, e NADA acontecia — o pior defeito possível num modelo.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem")!;
+
+  const formulaDe = (addr: string): string | null => {
+    const m = addr.match(/^([A-Z]+)(\d+)$/);
+    if (!m) return null;
+    const v = ws.getCell(addr).value as { formula?: string } | undefined;
+    return v?.formula ?? null;
+  };
+  // Referências a células DESTA aba (ignora as cross-sheet, que são o dado real).
+  const refsDe = (formula: string): string[] => {
+    const semOutrasAbas = formula.replace(/'[^']+'![^,)]*/g, "");
+    return [...semOutrasAbas.matchAll(/\$?([A-Z]{1,2})\$?(\d{1,4})\b/g)]
+      .map((m) => `${m[1]}${m[2]}`);
+  };
+  const alcanca = (origem: string, alvos: Set<string>): boolean => {
+    const visto = new Set<string>();
+    const fila = [origem];
+    while (fila.length > 0) {
+      const atual = fila.pop()!;
+      if (visto.has(atual)) continue;
+      visto.add(atual);
+      if (alvos.has(atual)) return true;
+      const f = formulaDe(atual);
+      if (!f) continue;
+      for (const r of refsDe(f)) if (!visto.has(r)) fila.push(r);
+    }
+    return false;
+  };
+
+  // Localiza o bloco de premissas e a linha do Exercício.
+  let linhaAno = -1;
+  const linhasPremissa: number[] = [];
+  let dentroDePremissas = false;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const rot = String(ws.getRow(r).getCell(1).value ?? "");
+    if (rot === "Exercício") linhaAno = r;
+    if (rot.startsWith("PREMISSAS")) { dentroDePremissas = true; continue; }
+    if (dentroDePremissas) {
+      if (!rot || rot === rot.toUpperCase() && rot.length > 12) { dentroDePremissas = false; continue; }
+      linhasPremissa.push(r);
+    }
+  }
+  checar(linhaAno > 0 && linhasPremissa.length >= 8,
+    `(14) o bloco de premissas foi encontrado (${linhasPremissa.length} premissas)`);
+
+  // Colunas projetadas = as que vêm depois do último exercício com dado real.
+  // No fixture do book o histórico é 2024-2025, então a 3ª coluna em diante.
+  const colunaLetra = (i: number) => ws.getColumn(i).letter;
+  const projetadas: number[] = [];
+  for (let c = 3; c <= ws.columnCount; c++) {
+    const v = ws.getRow(linhaAno).getCell(c).value;
+    if (typeof v === "object" && v !== null && "formula" in v) projetadas.push(c);
+  }
+  // (a primeira coluna é digitada; as demais derivam — as projetadas são as
+  //  últimas `anosProjetados`, mas para o teste basta olhar da 3ª em diante)
+  const colsProjetadas = projetadas.slice(-3);
+  checar(colsProjetadas.length === 3, `(14) há 3 exercícios projetados`, String(colsProjetadas.length));
+
+  // As linhas de RESULTADO que precisam responder a premissa.
+  const alvosDeTeste = [
+    "Receita Líquida", "EBITDA", "Lucro/Prejuízo Líquido do Exercício",
+    "Saldo final de caixa", "TOTAL DO ATIVO", "Patrimônio Líquido",
+    "Necessidade de captação (caixa negativo)", "Liquidez corrente",
+  ];
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+
+  const mortas: string[] = [];
+  for (const c of colsProjetadas) {
+    const letra = colunaLetra(c);
+    const premissasDaColuna = new Set(linhasPremissa.map((r) => `${letra}${r}`));
+    for (const rot of alvosDeTeste) {
+      const r = linhaDe(rot);
+      if (r < 0) { mortas.push(`linha ausente: ${rot}`); continue; }
+      if (!alcanca(`${letra}${r}`, premissasDaColuna)) {
+        mortas.push(`${letra}${r} (${rot}) não depende de nenhuma premissa de ${letra}`);
+      }
+    }
+  }
+  checar(mortas.length === 0,
+    "(14) toda linha projetada depende das premissas DO SEU exercício",
+    mortas.slice(0, 6).join(" / "));
+
+  // …e o contrário: nenhuma premissa pode estar MORTA (existir na tela sem
+  // ninguém ler). Uma premissa que não move nada é pior que não ter premissa.
+  const premissasMortas: string[] = [];
+  for (const rp of linhasPremissa) {
+    const rotulo = String(ws.getRow(rp).getCell(1).value ?? "");
+    let usada = false;
+    for (const c of colsProjetadas) {
+      const letra = colunaLetra(c);
+      const alvo = new Set([`${letra}${rp}`]);
+      for (let r = 1; r <= ws.rowCount && !usada; r++) {
+        if (r === rp) continue;
+        const f = formulaDe(`${letra}${r}`);
+        if (f && refsDe(f).includes(`${letra}${rp}`)) usada = true;
+        else if (alcanca(`${letra}${r}`, alvo) && r !== rp) usada = true;
+      }
+      if (usada) break;
+    }
+    if (!usada) premissasMortas.push(`${rotulo} (linha ${rp})`);
+  }
+  checar(premissasMortas.length === 0,
+    "(14) nenhuma premissa fica morta na tela sem mover o modelo",
+    premissasMortas.join(" / "));
+}
+
+// ---- 15: índices macro — histórico calibra, Focus projeta ------------------
+// Duas coisas diferentes e o modelo usa cada uma para o que ela serve. O erro
+// que este bloco impede é o mais fácil de cometer: projetar com a média dos
+// últimos anos (retrovisor) ou calcular essa média de forma aritmética, que
+// para taxa é simplesmente a conta errada.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+
+  // 12 anos de IPCA/Selic + um ano INCOMPLETO (o corrente), que não pode entrar
+  // nas médias, e a expectativa Focus para os anos projetados.
+  const anuais = [];
+  for (let ano = 2014; ano <= 2025; ano++) {
+    anuais.push({ serie: "IPCA", ano, meses: 12, retorno: 4 + (ano % 5) });
+    anuais.push({ serie: "SELIC", ano, meses: 12, retorno: 8 + (ano % 4) });
+  }
+  anuais.push({ serie: "IPCA", ano: 2026, meses: 5, retorno: 2.1 }); // incompleto
+  const expectativas = [
+    { serie: "IPCA", ano_ref: 2026, mediana: 5.12, coletado_em: "2026-07-24" },
+    { serie: "IPCA", ano_ref: 2027, mediana: 4.50, coletado_em: "2026-07-24" },
+    { serie: "IPCA", ano_ref: 2028, mediana: 4.00, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2026, mediana: 14.75, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2027, mediana: 12.50, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2028, mediana: 10.50, coletado_em: "2026-07-24" },
+  ];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    macro: { anuais, expectativas },
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+
+  const macro = wb.getWorksheet("Macro");
+  checar(macro != null, "(15) a aba Macro é montada quando há índices");
+  const dados = wb.getWorksheet("Macro (dados)");
+  checar(dados != null && dados.state === "hidden",
+    "(15) o dado cru fica numa aba oculta, como as demonstrações");
+
+  if (macro) {
+    // A aba visível não guarda número: é toda referência/fórmula.
+    const crus: string[] = [];
+    for (let r = 1; r <= macro.rowCount; r++) {
+      // As linhas de CABEÇALHO carregam os anos, e eles têm de ser NÚMERO: o
+      // modelo busca a expectativa com MATCH contra a célula do exercício, que
+      // é numérica. Ano como texto faz o MATCH nunca casar, o IFERROR devolver
+      // 0, e a premissa de inflação aparecer zerada sem nenhum sinal — foi o
+      // defeito que o recálculo pegou. Aqui elas são exceção legítima.
+      const rotulo = String(macro.getRow(r).getCell(1).value ?? "");
+      if (rotulo.startsWith("Retorno anual") || rotulo.startsWith("Expectativa Focus")) continue;
+      for (let c = 2; c <= macro.columnCount; c++) {
+        const v = macro.getRow(r).getCell(c).value;
+        if (typeof v === "number") crus.push(`${macro.getRow(r).getCell(c).address}=${v}`);
+      }
+    }
+    // …e que os anos do cabeçalho do Focus sejam mesmo numéricos.
+    for (let r = 1; r <= macro.rowCount; r++) {
+      if (!String(macro.getRow(r).getCell(1).value ?? "").startsWith("Expectativa Focus")) continue;
+      const primeiro = macro.getRow(r).getCell(2).value;
+      checar(typeof primeiro === "number",
+        "(15) os anos do cabeçalho do Focus são NÚMERO (senão o MATCH do modelo nunca casa)",
+        `veio ${typeof primeiro}: ${String(primeiro)}`);
+    }
+    checar(crus.length === 0, "(15) a aba Macro não tem número escrito — só fórmula", crus.slice(0, 5).join(" / "));
+
+    // A média tem de ser GEOMÉTRICA. Uma média aritmética de taxa (AVERAGE) é
+    // a conta errada e a diferença compõe: 10% e 4% dão 6,96%, não 7,00%.
+    const formulas: string[] = [];
+    for (let r = 1; r <= macro.rowCount; r++) {
+      for (let c = 2; c <= macro.columnCount; c++) {
+        const v = macro.getRow(r).getCell(c).value as { formula?: string } | undefined;
+        if (v?.formula) formulas.push(v.formula);
+      }
+    }
+    const medias = formulas.filter((f) => f.includes("PRODUCT("));
+    checar(medias.length >= 3, `(15) as médias usam composição geométrica (PRODUCT^(1/n))`, String(medias.length));
+    checar(medias.every((f) => /\^\(1\/\d+\)/.test(f)),
+      "(15) …com a raiz da janela, não a soma dividida");
+    checar(!formulas.some((f) => /\bAVERAGE\(/.test(f)),
+      "(15) nenhuma média de taxa é aritmética");
+    // Janela sem anos completos suficientes fica VAZIA em vez de inventada.
+    checar(medias.every((f) => f.includes("COUNT(")),
+      "(15) a janela só calcula com anos completos suficientes");
+  }
+
+  // O modelo consome o Focus: as premissas macro apontam para a aba Macro.
+  const mod = wb.getWorksheet("Modelagem")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  const rSelic = linhaDe("Juro esperado (Selic — Focus)");
+  checar(rIpca > 0 && rSelic > 0, "(15) o modelo tem premissas de IPCA e Selic");
+  if (rIpca > 0) {
+    const f = String((mod.getRow(rIpca).getCell(5).value as { formula?: string })?.formula ?? "");
+    checar(f.includes("'Macro'!"), "(15) a premissa de IPCA vem da aba Macro (Focus), não digitada", f.slice(0, 90));
+    checar(!f.includes("AVERAGE"), "(15) …e não da média histórica");
+  }
+
+  // E a regra do dono continua valendo COM macro: nenhuma premissa morta.
+  const linhasPremissa: number[] = [];
+  let dentro = false;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    const rot = String(mod.getRow(r).getCell(1).value ?? "");
+    if (rot.startsWith("PREMISSAS")) { dentro = true; continue; }
+    if (dentro) {
+      if (!rot || (rot === rot.toUpperCase() && rot.length > 12)) { dentro = false; continue; }
+      linhasPremissa.push(r);
+    }
+  }
+  checar(linhasPremissa.length === 12,
+    `(15) as 12 premissas (3 macro + 9 operacionais) estão no bloco`, String(linhasPremissa.length));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

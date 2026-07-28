@@ -94,6 +94,30 @@ confiável e rastreável — não o substitui.
 > faseamento do que ainda falta (índices que exigem detalhamento de conta) em
 > `f0/08_padrao_entrega_analitica.md`.
 
+> **Emenda 2026-07-28 (dono) — aba de MODELAGEM.** Depois do teste v27 o dono pediu, em palavras
+> dele: "estruture a aba de modelagem, que deve ser um modelo pronto, padrão e certo para adicionar
+> os inputs e executar a modelagem a partir dos dados que a planilha traz", tomando como referência
+> o modelo de FP&A que a equipe já usa (Projeções DeLend), com a regra de que **"TUDO o que não for
+> input externo DEVE ESTAR EM FORMATO DE FÓRMULA — nenhum dado escrito de fato, e sim puxado das
+> abas onde os dados estão separados"**, e que as abas de dado cru fiquem **ocultas** ao final.
+>
+> Isto **reabre deliberadamente** o "Fora do escopo" acima e a escolha registrada na sessão 7
+> ("layout analítico sobre o dado real, SEM projetar"): a aba `Modelagem` projeta exercícios
+> futuros. A decisão é do dono e está registrada aqui para não voltar como dúvida.
+>
+> O que a emenda NÃO afrouxa — e é o que mantém a doutrina de pé:
+> - **O modelo não GRAVA número nenhum.** Toda linha histórica é `INDEX/MATCH` contra as abas de
+>   dados do próprio arquivo; toda linha projetada é fórmula sobre as células de premissa. As
+>   ÚNICAS células digitadas são os inputs, visualmente marcados. Invariante 11 de
+>   `verificar-export.mts` falha se aparecer um número cru fora deles.
+> - **A projeção é do humano, não nossa.** As premissas nascem VAZIAS: o sistema não chuta
+>   crescimento, margem nem alíquota. Sem premissa preenchida, a coluna projetada é zero — nunca
+>   uma estimativa que o usuário não pediu.
+> - **A proveniência não some.** Ocultar ≠ remover: as abas de dado continuam no arquivo, e é para
+>   elas que o modelo aponta. Uma correção na origem reflete no modelo (a planilha segue viva).
+> - **O que não dá para derivar do dado extraído fica visível como lacuna, não como estimativa**
+>   (ex.: D&A histórica, que a DRE brasileira raramente isola, fica 0 e é anotada).
+
 **Critério de pronto (DoD):** ✅ dois modos de entrega definidos; ✅ schema-alvo com ordem de
 prioridade; ✅ proveniência por célula especificada; ✅ regra anti-ancoragem reafirmada.
 *(Layout fino do Excel e da tela do portal a refinar na F2, quando houver dado real fluindo.)*

@@ -1,0 +1,419 @@
+{
+  "name": "Oria — Índices Macroeconômicos (BCB/SGS + Focus + IBGE)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtDayOfMonth": 12,
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "agenda-mensal",
+      "name": "Agenda Mensal",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\"json\":{\"__serie\":\"IPCA\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.433/dados/ultimos/132?formato=json\"}},{\"json\":{\"__serie\":\"IGPM\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.189/dados/ultimos/132?formato=json\"}},{\"json\":{\"__serie\":\"INPC\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.188/dados/ultimos/132?formato=json\"}},{\"json\":{\"__serie\":\"SELIC\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.4390/dados/ultimos/132?formato=json\"}},{\"json\":{\"__serie\":\"CDI\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.4391/dados/ultimos/132?formato=json\"}},{\"json\":{\"__serie\":\"CAMBIO_USD\",\"__url\":\"https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados/ultimos/132?formato=json\"}}];"
+      },
+      "id": "s-ries-a-coletar",
+      "name": "Séries a Coletar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.__url }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "bcb-sgs",
+      "name": "BCB SGS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { __serie: $('Séries a Coletar').item.json.__serie, __fonte: 'BCB/SGS', __corpo: $json } };"
+      },
+      "id": "manter-contexto-sgs",
+      "name": "Manter Contexto SGS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://apisidra.ibge.gov.br/values/t/1737/n1/all/v/63/p/last%20132",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "ibge-sidra-ipca-",
+      "name": "IBGE SIDRA (IPCA)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        380
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { __serie: 'IPCA', __fonte: 'IBGE/SIDRA', __corpo: $input.all().map(i => i.json) } }];"
+      },
+      "id": "marcar-fonte-ibge",
+      "name": "Marcar Fonte IBGE",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const SERIES = [{\"codigo\":\"IPCA\",\"sgs\":433},{\"codigo\":\"IGPM\",\"sgs\":189},{\"codigo\":\"INPC\",\"sgs\":188},{\"codigo\":\"SELIC\",\"sgs\":4390},{\"codigo\":\"CDI\",\"sgs\":4391},{\"codigo\":\"CAMBIO_USD\",\"sgs\":1}];\nfunction num(b){ if(typeof b==='number') return isFinite(b)?b:null;\n  const t=String(b==null?'':b).trim(); if(!t) return null;\n  const n=Number(t.includes(',')?t.replace(/\\./g,'').replace(',','.'):t); return isFinite(n)?n:null; }\nfunction dataSgs(b){ const m=String(b==null?'':b).match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/);\n  return m? m[3]+'-'+m[2]+'-'+m[1] : null; }\nconst obs=[];\nfor (const item of $input.all()) {\n  const j=item.json||{};\n  const serie=j.__serie, corpo=j.__corpo;\n  if(!serie||!Array.isArray(corpo)) continue;\n  if(j.__fonte==='IBGE/SIDRA'){\n    for(const o of corpo.slice(1)){\n      const m=String(o&&o.D3C||'').match(/^(\\d{4})(\\d{2})$/);\n      const v=num(o&&o.V);\n      if(m&&v!==null) obs.push({serie:'IPCA',fonte:'IBGE/SIDRA',data_ref:m[1]+'-'+m[2]+'-01',valor:v});\n    }\n  } else {\n    for(const o of corpo){\n      const d=dataSgs(o&&o.data), v=num(o&&o.valor);\n      if(d&&v!==null) obs.push({serie:serie,fonte:'BCB/SGS',data_ref:d,valor:v});\n    }\n  }\n}\nreturn [{ json: { observacoes: obs, n: obs.length } }];"
+      },
+      "id": "normalizar-observa-es",
+      "name": "Normalizar Observações",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        290
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from fn_registrar_indice_macro($1::jsonb)",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.observacoes) }}"
+        }
+      },
+      "id": "gravar-ndices",
+      "name": "Gravar Índices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        290
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from fn_divergencias_indice_macro()"
+      },
+      "id": "conferir-fontes",
+      "name": "Conferir Fontes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        290
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\"json\":{\"__serie\":\"IPCA\",\"__url\":\"https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais?$top=80&$format=json&$orderby=Data%20desc&$filter=Indicador%20eq%20'IPCA'\"}},{\"json\":{\"__serie\":\"SELIC\",\"__url\":\"https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais?$top=80&$format=json&$orderby=Data%20desc&$filter=Indicador%20eq%20'Selic'\"}},{\"json\":{\"__serie\":\"IGPM\",\"__url\":\"https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais?$top=80&$format=json&$orderby=Data%20desc&$filter=Indicador%20eq%20'IGP-M'\"}},{\"json\":{\"__serie\":\"PIB\",\"__url\":\"https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais?$top=80&$format=json&$orderby=Data%20desc&$filter=Indicador%20eq%20'PIB%20Total'\"}},{\"json\":{\"__serie\":\"CAMBIO_USD\",\"__url\":\"https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais?$top=80&$format=json&$orderby=Data%20desc&$filter=Indicador%20eq%20'C%C3%A2mbio'\"}}];"
+      },
+      "id": "indicadores-focus",
+      "name": "Indicadores Focus",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.__url }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "bcb-focus",
+      "name": "BCB Focus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        560
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { __serie: $('Indicadores Focus').item.json.__serie, __corpo: $json } };"
+      },
+      "id": "manter-contexto-focus",
+      "name": "Manter Contexto Focus",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const obs=[];\nfor (const item of $input.all()) {\n  const j=item.json||{};\n  const serie=j.__serie;\n  const linhas=(j.__corpo&&j.__corpo.value)||[];\n  if(!serie||linhas.length===0) continue;\n  // Só a coleta MAIS RECENTE: a API devolve o histórico inteiro de boletins e\n  // misturar duas semanas daria dois números para o mesmo ano.\n  let recente=''; for(const l of linhas){ if(l&&l.Data>recente) recente=l.Data; }\n  const vistos={};\n  for(const l of linhas){\n    if(!l||l.Data!==recente) continue;\n    const ano=Number(l.DataReferencia);\n    const mediana=typeof l.Mediana==='number'?l.Mediana:null;\n    if(!Number.isInteger(ano)||mediana===null||vistos[ano]) continue;\n    vistos[ano]=1;\n    obs.push({serie:serie,ano_ref:ano,mediana:mediana,\n      media:typeof l.Media==='number'?l.Media:null,\n      respondentes:typeof l.numeroRespondentes==='number'?l.numeroRespondentes:null,\n      coletado_em:recente});\n  }\n}\nreturn [{ json: { expectativas: obs, n: obs.length } }];"
+      },
+      "id": "normalizar-focus",
+      "name": "Normalizar Focus",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select fn_registrar_expectativa_macro($1::jsonb) as n",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.expectativas) }}"
+        }
+      },
+      "id": "gravar-expectativas",
+      "name": "Gravar Expectativas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        560
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_PG",
+          "name": "Supabase Postgres"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Agenda Mensal": {
+      "main": [
+        [
+          {
+            "node": "Séries a Coletar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IBGE SIDRA (IPCA)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Indicadores Focus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Séries a Coletar": {
+      "main": [
+        [
+          {
+            "node": "BCB SGS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BCB SGS": {
+      "main": [
+        [
+          {
+            "node": "Manter Contexto SGS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manter Contexto SGS": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Observações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IBGE SIDRA (IPCA)": {
+      "main": [
+        [
+          {
+            "node": "Marcar Fonte IBGE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar Fonte IBGE": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Observações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Observações": {
+      "main": [
+        [
+          {
+            "node": "Gravar Índices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar Índices": {
+      "main": [
+        [
+          {
+            "node": "Conferir Fontes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Indicadores Focus": {
+      "main": [
+        [
+          {
+            "node": "BCB Focus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BCB Focus": {
+      "main": [
+        [
+          {
+            "node": "Manter Contexto Focus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manter Contexto Focus": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Focus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Focus": {
+      "main": [
+        [
+          {
+            "node": "Gravar Expectativas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "note": "Gerado por n8n/build-workflow-macro.mjs. Coleta mensal de IPCA/IGP-M/INPC/Selic/CDI/câmbio (BCB/SGS), da expectativa Focus por ano e do IPCA no IBGE/SIDRA para conferência cruzada. A ingestão é idempotente por (serie, fonte, data_ref): rebaixar a janela toda vez é intencional — é assim que uma revisão de série feita pela fonte chega até nós."
+  }
+}
