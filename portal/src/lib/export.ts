@@ -1784,7 +1784,42 @@ const ANOS_PROJETADOS = 3;
 // quem quiser auditar uma linha vai nelas com um clique. O resto (Balancete,
 // DMPL, Faturamento, Dívida, Intragrupo, Societário, Outros, Combinado) é dado
 // de apoio, e continua no arquivo, oculto.
-const ABAS_VISIVEIS = new Set([ABA_MODELAGEM, "Resumo", "Balanço", "DRE", "Fluxo de Caixa"]);
+const ABA_MACRO = "Macro";
+const ABA_MACRO_DADOS = "Macro (dados)";
+const ABAS_VISIVEIS = new Set([ABA_MODELAGEM, ABA_MACRO, "Resumo", "Balanço", "DRE", "Fluxo de Caixa"]);
+
+// ---------------------------------------------------------------------------
+// ÍNDICES MACROECONÔMICOS (db/migrations/0025)
+//
+// Dois fatos diferentes, e o modelo usa os dois para coisas diferentes:
+//   • `anuais`       — o que ACONTECEU (série publicada, acumulada por ano).
+//                      Serve para calibrar: média de 3/5/10 anos.
+//   • `expectativas` — o que o mercado ESPERA (Focus, por ano-calendário).
+//                      Serve para PROJETAR. Média histórica não é previsão.
+//
+// A aba visível "Macro" não guarda número nenhum: ela é toda fórmula sobre a
+// aba oculta "Macro (dados)", pela mesma regra das demonstrações — corrigiu a
+// origem, tudo acompanha.
+// ---------------------------------------------------------------------------
+export interface MacroAnual {
+  serie: string;
+  ano: number;
+  meses: number;
+  retorno: number;
+}
+export interface MacroExpectativa {
+  serie: string;
+  ano_ref: number;
+  mediana: number;
+  coletado_em: string;
+}
+export interface MacroParaExport {
+  anuais: MacroAnual[];
+  expectativas: MacroExpectativa[];
+  nomes?: Record<string, string>;
+}
+
+const JANELAS_MEDIA_EXPORT = [3, 5, 10];
 
 const INPUT_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF9C4" } };
 const INPUT_BORDER: Partial<ExcelJS.Borders> = {
@@ -1853,6 +1888,166 @@ interface LinhaModelo {
   nota?: string;
 }
 
+// Aba OCULTA com o dado cru vindo do banco. É a única parte do bloco macro que
+// carrega número escrito — exatamente como as abas de demonstração: o dado
+// entra aqui, e tudo que é leitura vira fórmula em cima.
+function construirAbaMacroDados(
+  workbook: ExcelJS.Workbook, macro: MacroParaExport,
+): { anos: number[]; series: string[]; linhaDe: Map<string, number>; colDe: Map<number, number>;
+     anosExp: number[]; linhaExpDe: Map<string, number>; colExpDe: Map<number, number> } {
+  const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
+  const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
+  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort();
+
+  sheet.getColumn(1).width = 30;
+  const cab = sheet.addRow(["Série (retorno anual %)", ...anos]);
+  cab.font = { bold: true };
+  cab.eachCell((c) => { c.fill = HEADER_FILL; });
+
+  const colDe = new Map(anos.map((a, i) => [a, i + 2]));
+  const linhaDe = new Map<string, number>();
+  const porChave = new Map(macro.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
+  for (const serie of series) {
+    const row = sheet.addRow([serie]);
+    linhaDe.set(serie, row.number);
+    for (const ano of anos) {
+      const dado = porChave.get(`${serie}${CHAVE_SEP}${ano}`);
+      if (!dado) continue;
+      const cell = row.getCell(colDe.get(ano)!);
+      // Ano INCOMPLETO não entra: acumulado de 4 meses tratado como ano cheio
+      // puxaria a média de 3/5/10 anos para baixo sem ninguém perceber. Fica
+      // registrado na nota, visível para quem for conferir.
+      if (dado.meses === 12) cell.value = dado.retorno;
+      cell.note = comoNota(`${dado.meses} ${dado.meses === 1 ? "mês" : "meses"} observado(s) em ${dado.ano}.`
+        + (dado.meses === 12 ? "" : " Ano INCOMPLETO — fora das médias de 3/5/10 anos."));
+      cell.numFmt = "0.00";
+    }
+  }
+
+  sheet.addRow([]);
+  const anosExp = [...new Set(macro.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
+  const cabExp = sheet.addRow(["Expectativa Focus (% a.a.)", ...anosExp]);
+  cabExp.font = { bold: true };
+  cabExp.eachCell((c) => { c.fill = HEADER_FILL; });
+  const colExpDe = new Map(anosExp.map((a, i) => [a, i + 2]));
+  const linhaExpDe = new Map<string, number>();
+  const expPorChave = new Map(macro.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
+  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort()) {
+    const row = sheet.addRow([serie]);
+    linhaExpDe.set(serie, row.number);
+    for (const ano of anosExp) {
+      const e = expPorChave.get(`${serie}${CHAVE_SEP}${ano}`);
+      if (!e) continue;
+      const cell = row.getCell(colExpDe.get(ano)!);
+      cell.value = e.mediana;
+      cell.numFmt = "0.00";
+      cell.note = comoNota(
+        `Mediana das expectativas de mercado coletadas em ${e.coletado_em} (Boletim Focus/BCB).\n`
+        + "Expectativa é DATADA: muda toda semana. A data fica registrada para a projeção "
+        + "poder ser reproduzida depois.",
+      );
+    }
+  }
+  return { anos, series, linhaDe, colDe, anosExp, linhaExpDe, colExpDe };
+}
+
+// Aba VISÍVEL: nenhum número escrito — tudo referência ou fórmula.
+export interface RefsMacro {
+  // linha do cabeçalho de anos do bloco Focus e linha de cada série nele — é o
+  // que permite ao modelo buscar "a expectativa do ANO desta coluna".
+  linhaCabFocus: number;
+  linhaFocusDe: Map<string, number>;
+  ultimaColFocus: string;
+}
+
+export function construirAbaMacro(
+  workbook: ExcelJS.Workbook, macro: MacroParaExport,
+): RefsMacro | null {
+  if (macro.anuais.length === 0 && macro.expectativas.length === 0) return null;
+  const d = construirAbaMacroDados(workbook, macro);
+  const dados = `'${ABA_MACRO_DADOS}'`;
+  const sheet = workbook.addWorksheet(ABA_MACRO, { views: [{ state: "frozen", xSplit: 1, ySplit: 2 }] });
+  const nome = (s: string) => macro.nomes?.[s] ?? s;
+
+  sheet.getColumn(1).width = 34;
+  const tit = sheet.addRow(["ÍNDICES MACROECONÔMICOS"]);
+  tit.font = { bold: true, size: 14 };
+
+  // ---- Histórico + médias 3/5/10 anos -------------------------------------
+  const cab = sheet.addRow([
+    "Retorno anual (%)", ...d.anos,
+    ...JANELAS_MEDIA_EXPORT.map((j) => `Média ${j}a`),
+  ]);
+  cab.font = { bold: true };
+  cab.eachCell((c) => { c.fill = HEADER_FILL; c.alignment = { horizontal: "center" }; });
+  for (let i = 2; i <= 2 + d.anos.length + JANELAS_MEDIA_EXPORT.length; i++) sheet.getColumn(i).width = 12;
+
+  const colLetra = (i: number) => sheet.getColumn(i).letter;
+  for (const serie of d.series) {
+    const origem = d.linhaDe.get(serie)!;
+    const row = sheet.addRow([nome(serie)]);
+    d.anos.forEach((ano, i) => {
+      const c = row.getCell(i + 2);
+      c.value = { formula: `IF(${dados}!${colLetra(d.colDe.get(ano)!)}${origem}="","",${dados}!${colLetra(d.colDe.get(ano)!)}${origem})` };
+      c.numFmt = "0.00";
+    });
+    // MÉDIA GEOMÉTRICA, em fórmula: (Π(1+i))^(1/n) − 1. A aritmética daria
+    // outro número (10% e 4% → 7,00% em vez de 6,96%) e o erro compõe ao longo
+    // do horizonte. `IFERROR` cobre a janela sem histórico suficiente: fica
+    // vazia em vez de inventar uma média com os anos que existem.
+    JANELAS_MEDIA_EXPORT.forEach((janela, k) => {
+      const c = row.getCell(2 + d.anos.length + k);
+      const ini = colLetra(2 + Math.max(0, d.anos.length - janela));
+      const fim = colLetra(2 + d.anos.length - 1);
+      const faixa = `${ini}${row.number}:${fim}${row.number}`;
+      c.value = {
+        formula: `IFERROR(IF(COUNT(${faixa})<${janela},"",`
+          + `(PRODUCT(1+${faixa}/100))^(1/${janela})-1),"")`,
+      };
+      c.numFmt = PCT_FMT;
+      c.font = { bold: true };
+    });
+  }
+  sheet.getRow(sheet.rowCount).getCell(1).note = comoNota(
+    "As médias são GEOMÉTRICAS ((Π(1+i))^(1/n) − 1), não aritméticas: taxa se compõe. "
+    + "A janela só é calculada quando há anos COMPLETOS suficientes — senão fica vazia, "
+    + "nunca preenchida com o que houver.",
+  );
+
+  // ---- Expectativa Focus ---------------------------------------------------
+  sheet.addRow([]);
+  // Os anos vão como NÚMERO, não texto: o modelo busca a expectativa com
+  // MATCH(<célula do exercício>, <esta linha>, 0), e o exercício é numérico.
+  // Com o cabeçalho em texto o MATCH nunca casa, o IFERROR devolve 0, e a
+  // premissa de inflação aparece zerada sem nenhum sinal de erro — foi
+  // exatamente o que o primeiro recálculo mostrou.
+  const cabExp = sheet.addRow(["Expectativa Focus (% a.a.)", ...d.anosExp]);
+  cabExp.font = { bold: true };
+  cabExp.eachCell((c) => { c.fill = ANALISE_HEADER_FILL; c.alignment = { horizontal: "center" }; });
+  const linhaFocusDe = new Map<string, number>();
+  for (const [serie, origem] of d.linhaExpDe) {
+    const row = sheet.addRow([nome(serie)]);
+    linhaFocusDe.set(serie, row.number);
+    d.anosExp.forEach((ano, i) => {
+      const c = row.getCell(i + 2);
+      const cl = colLetra(d.colExpDe.get(ano)!);
+      c.value = { formula: `IF(${dados}!${cl}${origem}="","",${dados}!${cl}${origem})` };
+      c.numFmt = "0.00";
+    });
+  }
+  sheet.addRow([]);
+  const aviso = sheet.addRow([
+    "Histórico calibra; expectativa projeta. A média de 3/5/10 anos descreve o passado e NÃO é "
+    + "previsão — quem alimenta a projeção do modelo é a linha do Focus.",
+  ]);
+  aviso.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  return {
+    linhaCabFocus: cabExp.number,
+    linhaFocusDe,
+    ultimaColFocus: sheet.getColumn(Math.max(2, 1 + d.anosExp.length)).letter,
+  };
+}
+
 export function construirAbaModelagem(
   workbook: ExcelJS.Workbook,
   caso: { nome: string },
@@ -1860,6 +2055,7 @@ export function construirAbaModelagem(
   entidadesDisponiveis: string[],
   anosHistoricos: number[],
   anosProjetados: number,
+  macro: RefsMacro | null,
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(ABA_MODELAGEM, {
     views: [{ state: "frozen", xSplit: 2, ySplit: 9 }],
@@ -1883,6 +2079,16 @@ export function construirAbaModelagem(
   // precedência numa string montada em código é como o "$C$" fixo das premissas
   // — funciona até alguém mexer, e falha calado.
   const chaveAno = (expr: string) => `${refEntidade}&" — "&${expr}`;
+
+  // Expectativa Focus do ANO desta coluna. Sem macro carregada devolve 0 — a
+  // premissa fica visível e zerada em vez de a aba inteira sumir.
+  const focusDoAno = (serie: string, colAno: string): string => {
+    const linha = macro?.linhaFocusDe.get(serie);
+    if (!macro || !linha) return "0";
+    const ref = `'${ABA_MACRO}'`;
+    return `IFERROR(INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
+      + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
+  };
 
   sheet.getColumn(1).width = 48;
   sheet.getColumn(2).width = 13;
@@ -2029,16 +2235,43 @@ export function construirAbaModelagem(
   // num modelo. Aqui a coluna é relativa: cada ano lê a premissa do seu ano.
   const P = (i: number, c: string) => `${c}$${rPremissas + i}`;
 
+  // Índices nomeados em vez de números soltos. Reordenar o bloco de premissas
+  // com números mágicos espalhados pelo arquivo é como trocar o cabeçalho da
+  // planilha sem mexer nas fórmulas: tudo continua compilando e o modelo passa
+  // a ler a premissa errada, calado.
+  const PREM = {
+    ipca: 0, selic: 1, parcelaOnerosa: 2, crescReal: 3, margemBruta: 4, sga: 5,
+    depreciacao: 6, resFinanceiro: 7, aliquota: 8, capex: 9, capitalGiro: 10,
+    dividaLiquida: 11,
+  } as const;
+
   const noAnoDoCorte = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(refCorte));
   const noAnoAnterior = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(`(${refCorte}-1)`));
   const recCorte = noAnoDoCorte("DRE", "Receita Líquida");
   const recAnterior = noAnoAnterior("DRE", "Receita Líquida");
 
   escrever([
-    { rotulo: "Crescimento da receita líquida", premissa: true, fmt: PCT_FMT,
+    // --- premissas MACRO: nascem da expectativa de mercado (Focus/BCB) ------
+    { rotulo: "Inflação esperada (IPCA — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
+      ambos: (c) => `${focusDoAno("IPCA", `${c}$${linhaAno}`)}/100`,
+      nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro). "
+        + "Vem do Boletim Focus/BCB, não da média histórica: média do passado calibra, não prevê." },
+    { rotulo: "Juro esperado (Selic — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
+      ambos: (c) => `${focusDoAno("SELIC", `${c}$${linhaAno}`)}/100`,
+      nota: "Idem, para a Selic — é o que precifica o custo da dívida na projeção abaixo." },
+    { rotulo: "Parcela onerosa do passivo", premissa: true, fmt: PCT_FMT, unidade: "% do passivo",
+      ambos: () => "0",
+      nota: "Quanto do passivo total paga juro (empréstimos, financiamentos, debêntures). O export "
+        + "classifica por SEÇÃO contábil e não isola dívida onerosa, então este número é SEU: "
+        + "tire-o do Mapa da Dívida. Em 0, a projeção não cobra juro nenhum." },
+    // --- premissas operacionais: nascem do último exercício real ------------
+    { rotulo: "Crescimento REAL da receita (acima da inflação)", premissa: true, fmt: PCT_FMT,
       unidade: "% a.a.",
-      ambos: () => `IFERROR(${recCorte}/${recAnterior}-1,0)`,
-      nota: "Padrão: crescimento observado entre os dois últimos exercícios reais." },
+      ambos: (c) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+${P(PREM.ipca, c)})-1,0)`,
+      nota: "Separado da inflação de propósito: o crescimento NOMINAL projetado é "
+        + "(1 + IPCA) × (1 + crescimento real) − 1. Assim dá para responder 'a empresa cresce "
+        + "acima ou abaixo da inflação?', que é a pergunta que importa numa reestruturação. "
+        + "Padrão: o crescimento observado entre os dois últimos exercícios reais, deflacionado." },
     { rotulo: "Margem bruta", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
       ambos: () => `IFERROR(${noAnoDoCorte("DRE", "Lucro Bruto")}/${recCorte},0)` },
     { rotulo: "SG&A sobre receita líquida", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
@@ -2080,30 +2313,35 @@ export function construirAbaModelagem(
   escrever([
     { rotulo: "Receita Líquida", destaque: true,
       real: (k) => buscaNaAba(workbook, "DRE", "Receita Líquida", k),
-      proj: (c, a) => `${a}${L(0)}*(1+${P(0, c)})`,
+      proj: (c, a) => `${a}${L(0)}*(1+${P(PREM.ipca, c)})*(1+${P(PREM.crescReal, c)})`,
       nota: "Histórico: puxado da aba DRE. Projetado: receita do ano anterior × (1 + crescimento)." },
     { rotulo: "(-) Custo dos produtos/serviços vendidos",
       real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}-${buscaNaAba(workbook, "DRE", "Receita Líquida", k)}`,
-      proj: (c) => `-${c}${L(0)}*(1-${P(1, c)})` },
+      proj: (c) => `-${c}${L(0)}*(1-${P(PREM.margemBruta, c)})` },
     { rotulo: "Lucro Bruto", destaque: true, ambos: (c) => `${c}${L(0)}+${c}${L(1)}` },
     { rotulo: "Margem bruta", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(2)}/${c}${L(0)},"")` },
     { rotulo: "(-) Despesas operacionais (SG&A)",
       real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}-${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}`,
-      proj: (c) => `-${c}${L(0)}*${P(2, c)}` },
+      proj: (c) => `-${c}${L(0)}*${P(PREM.sga, c)}` },
     { rotulo: "EBIT (resultado operacional)", destaque: true, ambos: (c) => `${c}${L(2)}+${c}${L(4)}` },
     { rotulo: "(+) Depreciação e amortização",
-      real: () => "0", proj: (c) => `${c}${L(0)}*${P(3, c)}`,
+      real: () => "0", proj: (c) => `${c}${L(0)}*${P(PREM.depreciacao, c)}`,
       nota: "O documento raramente traz D&A como linha isolada da DRE. Enquanto não vier, o "
         + "histórico fica 0 e o EBITDA iguala o EBIT — lacuna VISÍVEL, não estimativa nossa." },
     { rotulo: "EBITDA", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(6)}` },
     { rotulo: "Margem EBITDA", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(7)}/${c}${L(0)},"")` },
     { rotulo: "(+/-) Resultado financeiro",
       real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}-${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}`,
-      proj: (c) => `-${c}${L(0)}*${P(4, c)}` },
+      // A fórmula COMPLETA (que também cobra juro sobre a dívida) é aplicada
+      // depois, em `ligarJuroDaDivida`: ela referencia o Balanço, que só é
+      // escrito abaixo. Escrever aqui citaria uma variável ainda não
+      // inicializada — e o erro apareceria como formulário quebrado, não como
+      // falha de compilação.
+      proj: (c) => `-${c}${L(0)}*${P(PREM.resFinanceiro, c)}` },
     { rotulo: "Resultado antes dos tributos", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(9)}` },
     { rotulo: "(-) Tributos sobre o lucro",
       real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro/Prejuízo Líquido do Exercício", k)}-${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}`,
-      proj: (c) => `-MAX(0,${c}${L(10)})*${P(5, c)}`,
+      proj: (c) => `-MAX(0,${c}${L(10)})*${P(PREM.aliquota, c)}`,
       nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo." },
     { rotulo: "Lucro/Prejuízo Líquido do Exercício", destaque: true,
       ambos: (c) => `${c}${L(10)}+${c}${L(11)}` },
@@ -2124,16 +2362,16 @@ export function construirAbaModelagem(
     { rotulo: "(+) Depreciação e amortização", ambos: (c) => `${c}${L(6)}` },
     { rotulo: "(+/-) Variação do capital de giro",
       real: () => "0",
-      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(7, c)}` },
+      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(PREM.capitalGiro, c)}` },
     { rotulo: "Caixa das Atividades Operacionais", destaque: true,
       real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais", k),
       proj: (c) => `${c}${F(0)}+${c}${F(1)}+${c}${F(2)}` },
     { rotulo: "Caixa das Atividades de Investimento", destaque: true,
       real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento", k),
-      proj: (c) => `-${c}${L(0)}*${P(6, c)}` },
+      proj: (c) => `-${c}${L(0)}*${P(PREM.capex, c)}` },
     { rotulo: "Caixa das Atividades de Financiamento", destaque: true,
       real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento", k),
-      proj: (c) => `${P(8, c)}`,
+      proj: (c) => `${P(PREM.dividaLiquida, c)}`,
       nota: "Projetado = a premissa de captação/amortização líquida. Zero por padrão: o plano "
         + "de reestruturação decide isso, o modelo não extrapola dívida sozinho." },
     { rotulo: "Variação líquida de caixa", destaque: true,
@@ -2163,7 +2401,7 @@ export function construirAbaModelagem(
     { rotulo: "Ativo Circulante", destaque: true, ambos: (c) => `${c}${B(0)}+${c}${B(1)}` },
     { rotulo: "Ativo Não Circulante",
       real: (k) => buscaNaAba(workbook, "Balanço", "Ativo Não Circulante", k),
-      proj: (c, a) => `${a}${B(3)}+${c}${L(0)}*${P(6, c)}-${c}${L(6)}`,
+      proj: (c, a) => `${a}${B(3)}+${c}${L(0)}*${P(PREM.capex, c)}-${c}${L(6)}`,
       nota: "Anterior + capex − depreciação: as duas premissas movem esta linha." },
     { rotulo: "TOTAL DO ATIVO", destaque: true, ambos: (c) => `${c}${B(2)}+${c}${B(3)}` },
     { rotulo: "Passivo Circulante",
@@ -2171,20 +2409,51 @@ export function construirAbaModelagem(
       proj: (c, a) => `${a}${B(5)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)` },
     { rotulo: "Passivo Não Circulante",
       real: (k) => buscaNaAba(workbook, "Balanço", "Passivo Não Circulante", k),
-      proj: (c, a) => `${a}${B(6)}+${P(8, c)}` },
+      proj: (c, a) => `${a}${B(6)}+${P(PREM.dividaLiquida, c)}` },
     { rotulo: "Patrimônio Líquido",
       real: (k) => buscaNaAba(workbook, "Balanço", "Patrimônio Líquido", k),
       proj: (c, a) => `${a}${B(7)}+${c}${L(12)}`,
       nota: "PL projetado = PL anterior + resultado do exercício (sem aporte nem distribuição)." },
     { rotulo: "TOTAL DO PASSIVO E PL", destaque: true,
       ambos: (c) => `${c}${B(5)}+${c}${B(6)}+${c}${B(7)}` },
-    { rotulo: "Necessidade (+) / sobra (−) de financiamento", destaque: true,
+    { rotulo: "Conferência (Ativo − Passivo − PL)", destaque: true,
       ambos: (c) => `${c}${B(4)}-${c}${B(8)}`,
-      nota: "Na parte HISTÓRICA tem de ser ~zero: diferente disso, o dado extraído não fecha "
-        + "(confira a aba Balanço). Na parte PROJETADA este é o resultado que interessa — quanto "
-        + "de recurso falta (ou sobra) para o plano se sustentar com as premissas atuais. Não é "
-        + "erro: é a pergunta que a modelagem existe para responder." },
+      nota: "No HISTÓRICO tem de ser ~zero: diferente disso, o dado extraído não fecha (confira a "
+        + "aba Balanço). No PROJETADO é o resíduo entre as premissas de giro do ativo e do passivo "
+        + "— NÃO é a necessidade de caixa (esta vem logo abaixo). Um resultado pior derruba caixa "
+        + "e PL na MESMA medida, então ele não aparece aqui: aparece no caixa." },
+    { rotulo: "Necessidade de captação (caixa negativo)", destaque: true,
+      ambos: (c) => `-MIN(0,${c}${B(0)})`,
+      nota: "Quanto de recurso o plano precisa levantar para o caixa não virar negativo — a "
+        + "pergunta que a modelagem existe para responder. Sai do saldo final do fluxo: qualquer "
+        + "premissa que queime caixa (margem pior, juro maior, capex) aumenta esta linha." },
   ]);
+
+  // ---- Passada tardia: juro sobre a dívida ---------------------------------
+  // O resultado financeiro projetado é a soma de duas coisas: um percentual da
+  // receita (o padrão herdado do histórico) MAIS o juro sobre a parcela onerosa
+  // do passivo do ANO ANTERIOR, precificada pela Selic esperada. Usar o ano
+  // anterior não é detalhe: com o ano corrente, o Excel fecharia uma referência
+  // circular (juro → resultado → PL → passivo → juro).
+  {
+    const rResFin = L(9);
+    for (let i = 1; i < nCols; i++) {
+      const c = col(i);
+      const a = col(i - 1);
+      sheet.getRow(rResFin).getCell(i + 3).value = {
+        formula: `IF(${c}$${linhaAno}<=${refCorte},`
+          + `${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", chaveCol(i))}`
+          + `-${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", chaveCol(i))},`
+          + `-${c}${L(0)}*${P(PREM.resFinanceiro, c)}`
+          + `-(${a}${B(5)}+${a}${B(6)})*${P(PREM.parcelaOnerosa, c)}*${P(PREM.selic, c)})`,
+      };
+    }
+    sheet.getRow(rResFin).getCell(1).note = comoNota(
+      "Projetado = percentual da receita (padrão do histórico) + juro sobre a parcela ONEROSA do "
+      + "passivo do ano anterior, à Selic esperada do Focus. Com a parcela onerosa em 0, nenhum "
+      + "juro é cobrado — preencha-a a partir do Mapa da Dívida.",
+    );
+  }
 
   linha("");
 
@@ -2229,11 +2498,15 @@ export function buildExportWorkbook({
   caso,
   documentos,
   campos,
+  macro,
   agora = new Date(),
 }: {
   caso: { nome: string; produto: string };
   documentos: DocumentoParaExport[];
   campos: CampoExtraido[];
+  // Índices macro (db/migrations/0025). Opcional: sem eles o export sai como
+  // sempre saiu, só sem a aba Macro e com as premissas macro zeradas.
+  macro?: MacroParaExport;
   agora?: Date;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
@@ -2444,8 +2717,12 @@ export function buildExportWorkbook({
     // validação — essas ficam de fora da lista (o campo segue digitável).
     const entidadesDisponiveis = ordenadas.map(([e]) => e).filter((e) => !e.includes(","));
     const anosHistoricos = [...anos].sort((a, b) => a - b);
+    // A aba Macro entra ANTES da Modelagem: o modelo referencia as linhas do
+    // Focus por endereço, então elas precisam existir.
+    const refsMacro = macro ? construirAbaMacro(workbook, macro) : null;
     construirAbaModelagem(
       workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
+      refsMacro,
     );
 
     for (const ws of workbook.worksheets) {

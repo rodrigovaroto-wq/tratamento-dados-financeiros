@@ -866,7 +866,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const alvosDeTeste = [
     "Receita Líquida", "EBITDA", "Lucro/Prejuízo Líquido do Exercício",
     "Saldo final de caixa", "TOTAL DO ATIVO", "Patrimônio Líquido",
-    "Necessidade (+) / sobra (−) de financiamento", "Liquidez corrente",
+    "Necessidade de captação (caixa negativo)", "Liquidez corrente",
   ];
   const linhaDe = (rot: string) => {
     for (let r = 1; r <= ws.rowCount; r++) {
@@ -913,6 +913,123 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(premissasMortas.length === 0,
     "(14) nenhuma premissa fica morta na tela sem mover o modelo",
     premissasMortas.join(" / "));
+}
+
+// ---- 15: índices macro — histórico calibra, Focus projeta ------------------
+// Duas coisas diferentes e o modelo usa cada uma para o que ela serve. O erro
+// que este bloco impede é o mais fácil de cometer: projetar com a média dos
+// últimos anos (retrovisor) ou calcular essa média de forma aritmética, que
+// para taxa é simplesmente a conta errada.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+
+  // 12 anos de IPCA/Selic + um ano INCOMPLETO (o corrente), que não pode entrar
+  // nas médias, e a expectativa Focus para os anos projetados.
+  const anuais = [];
+  for (let ano = 2014; ano <= 2025; ano++) {
+    anuais.push({ serie: "IPCA", ano, meses: 12, retorno: 4 + (ano % 5) });
+    anuais.push({ serie: "SELIC", ano, meses: 12, retorno: 8 + (ano % 4) });
+  }
+  anuais.push({ serie: "IPCA", ano: 2026, meses: 5, retorno: 2.1 }); // incompleto
+  const expectativas = [
+    { serie: "IPCA", ano_ref: 2026, mediana: 5.12, coletado_em: "2026-07-24" },
+    { serie: "IPCA", ano_ref: 2027, mediana: 4.50, coletado_em: "2026-07-24" },
+    { serie: "IPCA", ano_ref: 2028, mediana: 4.00, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2026, mediana: 14.75, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2027, mediana: 12.50, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref: 2028, mediana: 10.50, coletado_em: "2026-07-24" },
+  ];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    macro: { anuais, expectativas },
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+
+  const macro = wb.getWorksheet("Macro");
+  checar(macro != null, "(15) a aba Macro é montada quando há índices");
+  const dados = wb.getWorksheet("Macro (dados)");
+  checar(dados != null && dados.state === "hidden",
+    "(15) o dado cru fica numa aba oculta, como as demonstrações");
+
+  if (macro) {
+    // A aba visível não guarda número: é toda referência/fórmula.
+    const crus: string[] = [];
+    for (let r = 1; r <= macro.rowCount; r++) {
+      // As linhas de CABEÇALHO carregam os anos, e eles têm de ser NÚMERO: o
+      // modelo busca a expectativa com MATCH contra a célula do exercício, que
+      // é numérica. Ano como texto faz o MATCH nunca casar, o IFERROR devolver
+      // 0, e a premissa de inflação aparecer zerada sem nenhum sinal — foi o
+      // defeito que o recálculo pegou. Aqui elas são exceção legítima.
+      const rotulo = String(macro.getRow(r).getCell(1).value ?? "");
+      if (rotulo.startsWith("Retorno anual") || rotulo.startsWith("Expectativa Focus")) continue;
+      for (let c = 2; c <= macro.columnCount; c++) {
+        const v = macro.getRow(r).getCell(c).value;
+        if (typeof v === "number") crus.push(`${macro.getRow(r).getCell(c).address}=${v}`);
+      }
+    }
+    // …e que os anos do cabeçalho do Focus sejam mesmo numéricos.
+    for (let r = 1; r <= macro.rowCount; r++) {
+      if (!String(macro.getRow(r).getCell(1).value ?? "").startsWith("Expectativa Focus")) continue;
+      const primeiro = macro.getRow(r).getCell(2).value;
+      checar(typeof primeiro === "number",
+        "(15) os anos do cabeçalho do Focus são NÚMERO (senão o MATCH do modelo nunca casa)",
+        `veio ${typeof primeiro}: ${String(primeiro)}`);
+    }
+    checar(crus.length === 0, "(15) a aba Macro não tem número escrito — só fórmula", crus.slice(0, 5).join(" / "));
+
+    // A média tem de ser GEOMÉTRICA. Uma média aritmética de taxa (AVERAGE) é
+    // a conta errada e a diferença compõe: 10% e 4% dão 6,96%, não 7,00%.
+    const formulas: string[] = [];
+    for (let r = 1; r <= macro.rowCount; r++) {
+      for (let c = 2; c <= macro.columnCount; c++) {
+        const v = macro.getRow(r).getCell(c).value as { formula?: string } | undefined;
+        if (v?.formula) formulas.push(v.formula);
+      }
+    }
+    const medias = formulas.filter((f) => f.includes("PRODUCT("));
+    checar(medias.length >= 3, `(15) as médias usam composição geométrica (PRODUCT^(1/n))`, String(medias.length));
+    checar(medias.every((f) => /\^\(1\/\d+\)/.test(f)),
+      "(15) …com a raiz da janela, não a soma dividida");
+    checar(!formulas.some((f) => /\bAVERAGE\(/.test(f)),
+      "(15) nenhuma média de taxa é aritmética");
+    // Janela sem anos completos suficientes fica VAZIA em vez de inventada.
+    checar(medias.every((f) => f.includes("COUNT(")),
+      "(15) a janela só calcula com anos completos suficientes");
+  }
+
+  // O modelo consome o Focus: as premissas macro apontam para a aba Macro.
+  const mod = wb.getWorksheet("Modelagem")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  const rSelic = linhaDe("Juro esperado (Selic — Focus)");
+  checar(rIpca > 0 && rSelic > 0, "(15) o modelo tem premissas de IPCA e Selic");
+  if (rIpca > 0) {
+    const f = String((mod.getRow(rIpca).getCell(5).value as { formula?: string })?.formula ?? "");
+    checar(f.includes("'Macro'!"), "(15) a premissa de IPCA vem da aba Macro (Focus), não digitada", f.slice(0, 90));
+    checar(!f.includes("AVERAGE"), "(15) …e não da média histórica");
+  }
+
+  // E a regra do dono continua valendo COM macro: nenhuma premissa morta.
+  const linhasPremissa: number[] = [];
+  let dentro = false;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    const rot = String(mod.getRow(r).getCell(1).value ?? "");
+    if (rot.startsWith("PREMISSAS")) { dentro = true; continue; }
+    if (dentro) {
+      if (!rot || (rot === rot.toUpperCase() && rot.length > 12)) { dentro = false; continue; }
+      linhasPremissa.push(r);
+    }
+  }
+  checar(linhasPremissa.length === 12,
+    `(15) as 12 premissas (3 macro + 9 operacionais) estão no bloco`, String(linhasPremissa.length));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
