@@ -725,7 +725,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       const v = ws.getRow(r).getCell(c).value as { formula?: string } | undefined;
       const f = v?.formula;
       if (!f) continue;
-      for (const m of f.matchAll(/MATCH\("([^"]+)",'([^']+)'!\$A:\$A,0\)/g)) {
+      // O intervalo é LIMITADO ao tamanho da aba (`$A$1:$A$162`), nunca coluna
+      // inteira — referência de coluna cheia inflava o grafo de dependência a
+      // ponto de travar o recálculo.
+      for (const m of f.matchAll(/MATCH\("([^"]+)",'([^']+)'!\$A\$1:\$A\$\d+,0\)/g)) {
         const [, rotulo, aba] = m;
         procurados++;
         if (!cache.has(aba)) cache.set(aba, rotulosDe(aba));
@@ -780,6 +783,136 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(errosModelo.length === 0,
     "(13) o que o modelo vai puxar do Balanço bate com o gabarito, nos dois exercícios",
     errosModelo.join(" / "));
+}
+
+// ---- 14: PREMISSA MUDOU => MODELO INTEIRO MUDA -----------------------------
+// O critério que o dono marcou como o mais importante: "alteração de premissas
+// deve alterar a modelagem como um todo". Isso não se verifica lendo o código —
+// se verifica no GRAFO DE DEPENDÊNCIA das fórmulas geradas. Aqui a planilha é
+// tratada como o Excel a trata: cada célula projetada tem de alcançar, por
+// algum caminho de referências, as células de premissa do seu exercício.
+//
+// Foi este invariante que pegou o defeito de as premissas serem lidas sempre da
+// coluna C: a premissa do 2º ano projetado existia na tela, o usuário digitava
+// nela, e NADA acontecia — o pior defeito possível num modelo.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem")!;
+
+  const formulaDe = (addr: string): string | null => {
+    const m = addr.match(/^([A-Z]+)(\d+)$/);
+    if (!m) return null;
+    const v = ws.getCell(addr).value as { formula?: string } | undefined;
+    return v?.formula ?? null;
+  };
+  // Referências a células DESTA aba (ignora as cross-sheet, que são o dado real).
+  const refsDe = (formula: string): string[] => {
+    const semOutrasAbas = formula.replace(/'[^']+'![^,)]*/g, "");
+    return [...semOutrasAbas.matchAll(/\$?([A-Z]{1,2})\$?(\d{1,4})\b/g)]
+      .map((m) => `${m[1]}${m[2]}`);
+  };
+  const alcanca = (origem: string, alvos: Set<string>): boolean => {
+    const visto = new Set<string>();
+    const fila = [origem];
+    while (fila.length > 0) {
+      const atual = fila.pop()!;
+      if (visto.has(atual)) continue;
+      visto.add(atual);
+      if (alvos.has(atual)) return true;
+      const f = formulaDe(atual);
+      if (!f) continue;
+      for (const r of refsDe(f)) if (!visto.has(r)) fila.push(r);
+    }
+    return false;
+  };
+
+  // Localiza o bloco de premissas e a linha do Exercício.
+  let linhaAno = -1;
+  const linhasPremissa: number[] = [];
+  let dentroDePremissas = false;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const rot = String(ws.getRow(r).getCell(1).value ?? "");
+    if (rot === "Exercício") linhaAno = r;
+    if (rot.startsWith("PREMISSAS")) { dentroDePremissas = true; continue; }
+    if (dentroDePremissas) {
+      if (!rot || rot === rot.toUpperCase() && rot.length > 12) { dentroDePremissas = false; continue; }
+      linhasPremissa.push(r);
+    }
+  }
+  checar(linhaAno > 0 && linhasPremissa.length >= 8,
+    `(14) o bloco de premissas foi encontrado (${linhasPremissa.length} premissas)`);
+
+  // Colunas projetadas = as que vêm depois do último exercício com dado real.
+  // No fixture do book o histórico é 2024-2025, então a 3ª coluna em diante.
+  const colunaLetra = (i: number) => ws.getColumn(i).letter;
+  const projetadas: number[] = [];
+  for (let c = 3; c <= ws.columnCount; c++) {
+    const v = ws.getRow(linhaAno).getCell(c).value;
+    if (typeof v === "object" && v !== null && "formula" in v) projetadas.push(c);
+  }
+  // (a primeira coluna é digitada; as demais derivam — as projetadas são as
+  //  últimas `anosProjetados`, mas para o teste basta olhar da 3ª em diante)
+  const colsProjetadas = projetadas.slice(-3);
+  checar(colsProjetadas.length === 3, `(14) há 3 exercícios projetados`, String(colsProjetadas.length));
+
+  // As linhas de RESULTADO que precisam responder a premissa.
+  const alvosDeTeste = [
+    "Receita Líquida", "EBITDA", "Lucro/Prejuízo Líquido do Exercício",
+    "Saldo final de caixa", "TOTAL DO ATIVO", "Patrimônio Líquido",
+    "Necessidade (+) / sobra (−) de financiamento", "Liquidez corrente",
+  ];
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+
+  const mortas: string[] = [];
+  for (const c of colsProjetadas) {
+    const letra = colunaLetra(c);
+    const premissasDaColuna = new Set(linhasPremissa.map((r) => `${letra}${r}`));
+    for (const rot of alvosDeTeste) {
+      const r = linhaDe(rot);
+      if (r < 0) { mortas.push(`linha ausente: ${rot}`); continue; }
+      if (!alcanca(`${letra}${r}`, premissasDaColuna)) {
+        mortas.push(`${letra}${r} (${rot}) não depende de nenhuma premissa de ${letra}`);
+      }
+    }
+  }
+  checar(mortas.length === 0,
+    "(14) toda linha projetada depende das premissas DO SEU exercício",
+    mortas.slice(0, 6).join(" / "));
+
+  // …e o contrário: nenhuma premissa pode estar MORTA (existir na tela sem
+  // ninguém ler). Uma premissa que não move nada é pior que não ter premissa.
+  const premissasMortas: string[] = [];
+  for (const rp of linhasPremissa) {
+    const rotulo = String(ws.getRow(rp).getCell(1).value ?? "");
+    let usada = false;
+    for (const c of colsProjetadas) {
+      const letra = colunaLetra(c);
+      const alvo = new Set([`${letra}${rp}`]);
+      for (let r = 1; r <= ws.rowCount && !usada; r++) {
+        if (r === rp) continue;
+        const f = formulaDe(`${letra}${r}`);
+        if (f && refsDe(f).includes(`${letra}${rp}`)) usada = true;
+        else if (alcanca(`${letra}${r}`, alvo) && r !== rp) usada = true;
+      }
+      if (usada) break;
+    }
+    if (!usada) premissasMortas.push(`${rotulo} (linha ${rp})`);
+  }
+  checar(premissasMortas.length === 0,
+    "(14) nenhuma premissa fica morta na tela sem mover o modelo",
+    premissasMortas.join(" / "));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

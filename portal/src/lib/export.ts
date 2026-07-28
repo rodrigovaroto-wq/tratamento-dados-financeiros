@@ -1807,10 +1807,31 @@ const TOTAL_FONT: Partial<ExcelJS.Font> = { bold: true };
 // documento traz essa linha. Errar aqui não quebra nada visivelmente: o
 // `IFERROR` devolve 0 e o modelo fecha com zeros. O invariante 13 confere que
 // todo rótulo procurado existe de fato na aba de destino.
-function buscaNaAba(aba: string, rotulo: string, colChave: string): string {
+//
+// Os intervalos são LIMITADOS ao tamanho real da aba de destino, nunca coluna
+// inteira. `INDEX('Balanço'!$B:$BZ, …)` referencia 77 colunas × 1.048.576 linhas
+// por célula do modelo; com ~500 células isso é um grafo de dependência que
+// trava o recálculo (aqui derrubou por falta de memória um motor de fórmulas
+// que abre a planilha inteira sem esforço — no Excel do usuário o efeito é a
+// planilha "pensando" a cada digitação). Limitar não muda o resultado: fora do
+// intervalo usado não há dado nenhum.
+function limitesDaAba(workbook: ExcelJS.Workbook, aba: string): { ultimaCol: string; ultimaLinha: number } {
+  const ws = workbook.getWorksheet(aba);
+  if (!ws) return { ultimaCol: "B", ultimaLinha: 1 };
+  return {
+    ultimaCol: ws.getColumn(Math.max(2, ws.columnCount)).letter,
+    ultimaLinha: Math.max(1, ws.rowCount),
+  };
+}
+
+function buscaNaAba(
+  workbook: ExcelJS.Workbook, aba: string, rotulo: string, colChave: string,
+): string {
   const ref = `'${aba}'`;
-  return `IFERROR(INDEX(${ref}!$B:$BZ,MATCH("${rotulo}",${ref}!$A:$A,0),`
-    + `MATCH(${colChave},${ref}!$B$1:$BZ$1,0)),0)`;
+  const { ultimaCol, ultimaLinha } = limitesDaAba(workbook, aba);
+  return `IFERROR(INDEX(${ref}!$B$1:$${ultimaCol}$${ultimaLinha},`
+    + `MATCH("${rotulo}",${ref}!$A$1:$A$${ultimaLinha},0),`
+    + `MATCH(${colChave},${ref}!$B$1:$${ultimaCol}$1,0)),0)`;
 }
 
 interface LinhaModelo {
@@ -1819,9 +1840,14 @@ interface LinhaModelo {
   real?: (colChave: string) => string;
   // fórmula da coluna projetada — sobre premissas e sobre a coluna anterior
   proj?: (col: string, anterior: string) => string;
-  // linha calculada igual nas duas metades (subtotal, margem, índice)
-  ambos?: (col: string, anterior: string) => string;
-  input?: boolean;
+  // linha calculada igual nas duas metades (subtotal, margem, índice).
+  // `anterior` é null na primeira coluna — quem depende do ano anterior tem de
+  // tratar esse caso em vez de referenciar a si mesmo.
+  ambos?: (col: string, anterior: string | null) => string;
+  // Célula de PREMISSA: recebe destaque de input e é onde o usuário digita por
+  // cima. Continua nascendo com fórmula (derivada do último exercício real).
+  premissa?: boolean;
+  unidade?: string;
   fmt?: string;
   destaque?: boolean;
   nota?: string;
@@ -1831,6 +1857,7 @@ export function construirAbaModelagem(
   workbook: ExcelJS.Workbook,
   caso: { nome: string },
   entidadeSugerida: string,
+  entidadesDisponiveis: string[],
   anosHistoricos: number[],
   anosProjetados: number,
 ): ExcelJS.Worksheet {
@@ -1841,24 +1868,23 @@ export function construirAbaModelagem(
   const primeiroAno = anosHistoricos[0] ?? new Date().getFullYear() - 1;
   const ultimoReal = anosHistoricos[anosHistoricos.length - 1] ?? primeiroAno;
   const nCols = Math.max(anosHistoricos.length, 1) + anosProjetados;
-  // Colunas de valor começam em C (A = rótulo largo, B = unidade/observação).
   const col = (i: number) => sheet.getColumn(i + 3).letter;
-  // Os três endereços que o modelo inteiro referencia. Derivados do layout real
-  // (e não escritos à mão) para que inserir uma linha no cabeçalho não quebre em
+  // Endereços que o modelo inteiro referencia. Derivados do layout real (e não
+  // escritos à mão) para que inserir uma linha no cabeçalho não quebre em
   // silêncio TODAS as fórmulas abaixo — foi o que aconteceu na primeira versão.
   let refEntidade = "$C$3";
   let refCorte = "$C$4";
   let linhaAno = 7;
+  // Chave de busca: o cabeçalho que as abas de dados já emitem ("<entidade> —
+  // <período>"), montada por fórmula a partir das células de input.
   const chaveCol = (i: number) => `${refEntidade}&" — "&${col(i)}$${linhaAno}`;
+  const chaveAno = (expr: string) => `${refEntidade}&" — "&${expr}`;
 
-  sheet.getColumn(1).width = 46;
-  sheet.getColumn(2).width = 15;
+  sheet.getColumn(1).width = 48;
+  sheet.getColumn(2).width = 13;
   for (let i = 0; i < nCols; i++) sheet.getColumn(i + 3).width = 16;
 
-  const linha = (rotulo: string, unidade = "") => {
-    const r = sheet.addRow([rotulo, unidade]);
-    return r;
-  };
+  const linha = (rotulo: string, unidade = "") => sheet.addRow([rotulo, unidade]);
   const marcarInput = (cell: ExcelJS.Cell) => {
     cell.fill = INPUT_FILL;
     cell.border = INPUT_BORDER;
@@ -1874,10 +1900,21 @@ export function construirAbaModelagem(
   rEnt.getCell(3).value = entidadeSugerida;
   marcarInput(rEnt.getCell(3));
   rEnt.getCell(1).font = TOTAL_FONT;
+  // Lista suspensa com as entidades que EXISTEM nas abas de dados: digitar o
+  // nome errado faria todo INDEX/MATCH cair no IFERROR e o modelo exibir zeros
+  // sem dizer por quê. Aqui o erro fica impossível de cometer por engano.
+  if (entidadesDisponiveis.length > 0) {
+    rEnt.getCell(3).dataValidation = {
+      type: "list", allowBlank: false, showErrorMessage: true,
+      formulae: [`"${entidadesDisponiveis.join(",").replace(/"/g, "'")}"`],
+      errorTitle: "Entidade desconhecida",
+      error: "Escolha uma das entidades presentes nas abas de dados deste arquivo.",
+    };
+  }
   rEnt.getCell(3).note = comoNota(
-    "Digite aqui a razão social EXATAMENTE como ela aparece no cabeçalho das abas de dados "
-    + "(Balanço, DRE, Fluxo de Caixa). Todo o modelo abaixo é recalculado a partir desta célula — "
-    + "nenhuma outra precisa ser tocada para trocar de empresa.",
+    "A empresa modelada. Todo o modelo abaixo é recalculado a partir desta célula — nenhuma outra "
+    + "precisa ser tocada para trocar de empresa. A lista traz as entidades que existem nas abas "
+    + "de dados deste arquivo.",
   );
 
   const rCorte = linha("Último exercício realizado", "input");
@@ -1887,16 +1924,16 @@ export function construirAbaModelagem(
   rCorte.getCell(1).font = TOTAL_FONT;
   rCorte.getCell(3).note = comoNota(
     "Exercícios até este ano puxam o número REAL das abas de dados; os seguintes são PROJETADOS "
-    + "pelas premissas. É o mesmo mecanismo de corte Actual/Forecast do modelo de referência.",
+    + "pelas premissas. É o mesmo mecanismo de corte Actual/Forecast do modelo de referência — e "
+    + "mover esta célula move o modelo inteiro, inclusive o sombreado das colunas projetadas.",
   );
 
   linha("");
 
-  // ---- Timeline: só o primeiro ano é digitado; o resto deriva --------------
+  // ---- Timeline: só o primeiro exercício é digitado; o resto deriva --------
   const rAno = linha("Exercício");
   linhaAno = rAno.number;
   rAno.getCell(3).value = primeiroAno;
-  marcarInput(rAno.getCell(3));
   for (let i = 1; i < nCols; i++) rAno.getCell(i + 3).value = { formula: `${col(i - 1)}${linhaAno}+1` };
   rAno.font = TOTAL_FONT;
   rAno.eachCell((c) => {
@@ -1912,6 +1949,25 @@ export function construirAbaModelagem(
   }
   rTipo.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
 
+  // Diagnóstico de cobertura: a coluna existe de fato nas abas de dados? Sem
+  // isto, um exercício sem documento e uma entidade digitada errado produzem o
+  // MESMO sintoma (zeros), e o usuário não tem como distinguir.
+  const rCobertura = linha("Dado encontrado");
+  for (let i = 0; i < nCols; i++) {
+    rCobertura.getCell(i + 3).value = {
+      formula: `IF(${col(i)}${linhaAno}>${refCorte},"—",`
+        + `IF(ISNUMBER(MATCH(${chaveCol(i)},'Balanço'!$B$1:$BZ$1,0)),"Balanço",`
+        + `IF(ISNUMBER(MATCH(${chaveCol(i)},'DRE'!$B$1:$BZ$1,0)),"só DRE","SEM DADO")))`,
+    };
+    rCobertura.getCell(i + 3).alignment = { horizontal: "center" };
+  }
+  rCobertura.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  rCobertura.getCell(1).note = comoNota(
+    "\"SEM DADO\" num exercício histórico significa que não existe coluna dessa entidade nesse ano "
+    + "nas abas de dados — o modelo mostra zeros ali porque o documento não foi entregue ou não "
+    + "foi extraído, não porque a empresa vale zero.",
+  );
+
   linha("");
 
   // ---- Blocos -------------------------------------------------------------
@@ -1922,61 +1978,94 @@ export function construirAbaModelagem(
     return r;
   };
 
+  const primeiraColuna = col(0);
+  const ultimaColuna = col(nCols - 1);
+  const linhasDeValor: number[] = [];
+
   const escrever = (defs: LinhaModelo[]) => {
     for (const d of defs) {
-      const r = linha(d.rotulo, d.input ? "input" : "");
-      const rn = r.number;
+      const r = linha(d.rotulo, d.unidade ?? "");
+      linhasDeValor.push(r.number);
       for (let i = 0; i < nCols; i++) {
         const cell = r.getCell(i + 3);
         const c = col(i);
         const ant = i > 0 ? col(i - 1) : null;
-        if (d.input) {
-          marcarInput(cell);
-        } else if (d.ambos) {
-          cell.value = { formula: d.ambos(c, ant ?? c) };
+        if (d.ambos) {
+          cell.value = { formula: d.ambos(c, ant) };
         } else {
           // O corte Real×Projetado numa fórmula só: a MESMA célula puxa o dado
-          // extraído enquanto o exercício é histórico e passa a projetar depois.
+          // extraído enquanto o exercício é histórico e projeta depois.
           const real = d.real ? d.real(chaveCol(i)) : "0";
           const proj = d.proj && ant ? d.proj(c, ant) : real;
           cell.value = { formula: `IF(${c}$${linhaAno}<=${refCorte},${real},${proj})` };
         }
         cell.numFmt = d.fmt ?? VALOR_NUM_FMT;
-        if (!d.input) {
-          // A metade projetada fica visualmente separada da histórica.
-          cell.value = cell.value;
-        }
+        if (d.premissa) marcarInput(cell);
       }
       if (d.destaque) {
         r.font = TOTAL_FONT;
         r.getCell(1).border = THIN_TOP_BORDER;
       }
       if (d.nota) r.getCell(1).note = comoNota(d.nota);
-      // Pinta a metade projetada (depende do input de corte, então é aproximada
-      // pela posição: tudo depois do último exercício histórico conhecido).
-      for (let i = anosHistoricos.length; i < nCols; i++) {
-        if (!d.input) r.getCell(i + 3).fill = PROJETADO_FILL;
-      }
-      void rn;
     }
   };
 
-  // -------- Premissas (a única parte digitada do modelo) --------------------
-  bloco("PREMISSAS — preencha só as células destacadas");
+  // -------- Premissas -------------------------------------------------------
+  // Elas NASCEM DERIVADAS do histórico, por fórmula, em vez de vazias: um modelo
+  // que abre zerado não é utilizável, e um número que eu chutasse seria pior
+  // ainda. Cada premissa lê o ÚLTIMO exercício real direto das ABAS DE DADOS —
+  // nunca das linhas do próprio modelo, senão o Excel acusa REFERÊNCIA CIRCULAR
+  // (a linha projetada cita a premissa; a premissa citaria a linha). A célula
+  // continua sendo input: o usuário digita por cima e o modelo inteiro se move.
+  bloco("PREMISSAS — o padrão vem do último exercício real; digite por cima para simular");
   const rPremissas = sheet.rowCount + 1;
+  // Premissa POR EXERCÍCIO: cada coluna projetada tem a sua célula. Referenciar
+  // uma coluna fixa (`$C$n`) faria a premissa do ano 2 não mudar nada — o
+  // usuário digitaria e o modelo ficaria parado, que é o pior defeito possível
+  // num modelo. Aqui a coluna é relativa: cada ano lê a premissa do seu ano.
+  const P = (i: number, c: string) => `${c}$${rPremissas + i}`;
+
+  const noAnoDoCorte = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(refCorte));
+  const noAnoAnterior = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(`${refCorte}-1`));
+  const recCorte = noAnoDoCorte("DRE", "Receita Líquida");
+  const recAnterior = noAnoAnterior("DRE", "Receita Líquida");
+
   escrever([
-    { rotulo: "Crescimento da receita líquida (% a.a.)", input: true, fmt: PCT_FMT,
-      nota: "Aplicada sobre a receita do exercício anterior nas colunas projetadas." },
-    { rotulo: "Margem bruta (% da receita líquida)", input: true, fmt: PCT_FMT,
-      nota: "Deixe em branco para o modelo repetir a margem do último exercício real." },
-    { rotulo: "SG&A (% da receita líquida)", input: true, fmt: PCT_FMT },
-    { rotulo: "Depreciação e amortização (% da receita líquida)", input: true, fmt: PCT_FMT },
-    { rotulo: "Resultado financeiro (% da receita líquida)", input: true, fmt: PCT_FMT },
-    { rotulo: "Alíquota efetiva de tributos sobre o lucro (%)", input: true, fmt: PCT_FMT },
-    { rotulo: "Capex (% da receita líquida)", input: true, fmt: PCT_FMT },
-    { rotulo: "Variação do capital de giro (% da variação da receita)", input: true, fmt: PCT_FMT },
+    { rotulo: "Crescimento da receita líquida", premissa: true, fmt: PCT_FMT,
+      unidade: "% a.a.",
+      ambos: () => `IFERROR(${recCorte}/${recAnterior}-1,0)`,
+      nota: "Padrão: crescimento observado entre os dois últimos exercícios reais." },
+    { rotulo: "Margem bruta", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      ambos: () => `IFERROR(${noAnoDoCorte("DRE", "Lucro Bruto")}/${recCorte},0)` },
+    { rotulo: "SG&A sobre receita líquida", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Lucro Bruto")}-`
+        + `${noAnoDoCorte("DRE", "Resultado Operacional (EBIT)")})/${recCorte},0)` },
+    { rotulo: "Depreciação e amortização", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      ambos: () => "0",
+      nota: "Sem padrão derivável: a DRE brasileira raramente isola D&A (vem das notas ou do "
+        + "fluxo). Fica 0 — lacuna visível — até você preencher." },
+    { rotulo: "Resultado financeiro sobre receita líquida", premissa: true, fmt: PCT_FMT,
+      unidade: "% da RL",
+      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Resultado Operacional (EBIT)")}-`
+        + `${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")})/${recCorte},0)` },
+    { rotulo: "Alíquota efetiva de tributos sobre o lucro", premissa: true, fmt: PCT_FMT,
+      unidade: "%",
+      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")}-`
+        + `${noAnoDoCorte("DRE", "Lucro/Prejuízo Líquido do Exercício")})/`
+        + `MAX(1,${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")}),0)` },
+    { rotulo: "Capex", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      ambos: () => `IFERROR(-${noAnoDoCorte("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento")}`
+        + `/${recCorte},0)` },
+    { rotulo: "Capital de giro sobre variação da receita", premissa: true, fmt: PCT_FMT,
+      unidade: "% da ΔRL",
+      ambos: () => "0",
+      nota: "Quanto de caixa cada real a mais de receita consome em giro. 0 = giro neutro." },
+    { rotulo: "Captação (+) / amortização (−) líquida de dívida", premissa: true,
+      unidade: "R$/ano",
+      ambos: () => "0",
+      nota: "Valor ABSOLUTO por ano projetado, não percentual: captação e amortização são decisão "
+        + "do plano de reestruturação, não extrapolação do passado." },
   ]);
-  const P = (i: number) => `$C$${rPremissas + i}`; // premissa i (0-based), coluna travada
 
   linha("");
 
@@ -1986,44 +2075,69 @@ export function construirAbaModelagem(
   const L = (offset: number) => rDRE + offset;
   escrever([
     { rotulo: "Receita Líquida", destaque: true,
-      real: (k) => buscaNaAba("DRE", "Receita Líquida", k),
-      proj: (c, a) => `${a}${L(0)}*(1+${P(0)})`,
+      real: (k) => buscaNaAba(workbook, "DRE", "Receita Líquida", k),
+      proj: (c, a) => `${a}${L(0)}*(1+${P(0, c)})`,
       nota: "Histórico: puxado da aba DRE. Projetado: receita do ano anterior × (1 + crescimento)." },
     { rotulo: "(-) Custo dos produtos/serviços vendidos",
-      real: (k) => `${buscaNaAba("DRE", "Lucro Bruto", k)}-${buscaNaAba("DRE", "Receita Líquida", k)}`,
-      proj: (c) => `-${c}${L(0)}*(1-${P(1)})` },
-    { rotulo: "Lucro Bruto", destaque: true,
-      ambos: (c) => `${c}${L(0)}+${c}${L(1)}` },
-    { rotulo: "Margem bruta", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR(${c}${L(2)}/${c}${L(0)},"")` },
+      real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}-${buscaNaAba(workbook, "DRE", "Receita Líquida", k)}`,
+      proj: (c) => `-${c}${L(0)}*(1-${P(1, c)})` },
+    { rotulo: "Lucro Bruto", destaque: true, ambos: (c) => `${c}${L(0)}+${c}${L(1)}` },
+    { rotulo: "Margem bruta", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(2)}/${c}${L(0)},"")` },
     { rotulo: "(-) Despesas operacionais (SG&A)",
-      real: (k) => `${buscaNaAba("DRE", "Resultado Operacional (EBIT)", k)}-${buscaNaAba("DRE", "Lucro Bruto", k)}`,
-      proj: (c) => `-${c}${L(0)}*${P(2)}` },
-    { rotulo: "EBIT (resultado operacional)", destaque: true,
-      ambos: (c) => `${c}${L(2)}+${c}${L(4)}` },
+      real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}-${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}`,
+      proj: (c) => `-${c}${L(0)}*${P(2, c)}` },
+    { rotulo: "EBIT (resultado operacional)", destaque: true, ambos: (c) => `${c}${L(2)}+${c}${L(4)}` },
     { rotulo: "(+) Depreciação e amortização",
-      real: () => "0",
-      proj: (c) => `${c}${L(0)}*${P(3)}`,
-      nota: "O documento raramente traz D&A como linha isolada da DRE (vem das notas ou do fluxo). "
-        + "Enquanto não vier, o histórico fica em 0 e o EBITDA abaixo iguala o EBIT — é uma lacuna "
-        + "VISÍVEL, não uma estimativa nossa." },
-    { rotulo: "EBITDA", destaque: true,
-      ambos: (c) => `${c}${L(5)}+${c}${L(6)}` },
-    { rotulo: "Margem EBITDA", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR(${c}${L(7)}/${c}${L(0)},"")` },
+      real: () => "0", proj: (c) => `${c}${L(0)}*${P(3, c)}`,
+      nota: "O documento raramente traz D&A como linha isolada da DRE. Enquanto não vier, o "
+        + "histórico fica 0 e o EBITDA iguala o EBIT — lacuna VISÍVEL, não estimativa nossa." },
+    { rotulo: "EBITDA", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(6)}` },
+    { rotulo: "Margem EBITDA", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(7)}/${c}${L(0)},"")` },
     { rotulo: "(+/-) Resultado financeiro",
-      real: (k) => `${buscaNaAba("DRE", "Resultado Antes dos Tributos", k)}-${buscaNaAba("DRE", "Resultado Operacional (EBIT)", k)}`,
-      proj: (c) => `-${c}${L(0)}*${P(4)}` },
-    { rotulo: "Resultado antes dos tributos", destaque: true,
-      ambos: (c) => `${c}${L(5)}+${c}${L(9)}` },
+      real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}-${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}`,
+      proj: (c) => `-${c}${L(0)}*${P(4, c)}` },
+    { rotulo: "Resultado antes dos tributos", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(9)}` },
     { rotulo: "(-) Tributos sobre o lucro",
-      real: (k) => `${buscaNaAba("DRE", "Lucro/Prejuízo Líquido do Exercício", k)}-${buscaNaAba("DRE", "Resultado Antes dos Tributos", k)}`,
-      proj: (c) => `-MAX(0,${c}${L(10)})*${P(5)}`,
-      nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo a pagar." },
+      real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro/Prejuízo Líquido do Exercício", k)}-${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}`,
+      proj: (c) => `-MAX(0,${c}${L(10)})*${P(5, c)}`,
+      nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo." },
     { rotulo: "Lucro/Prejuízo Líquido do Exercício", destaque: true,
       ambos: (c) => `${c}${L(10)}+${c}${L(11)}` },
-    { rotulo: "Margem líquida", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${L(0)},"")` },
+    { rotulo: "Margem líquida", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(12)}/${c}${L(0)},"")` },
+  ]);
+
+  linha("");
+
+  // -------- Fluxo de caixa (vem ANTES do balanço de propósito) --------------
+  // O caixa projetado é o elo que faz o balanço fechar: ele nasce aqui e entra
+  // no ativo circulante lá embaixo. Sem esse elo o balanço projetado não fecha e
+  // o modelo vira duas demonstrações que não conversam.
+  bloco("FLUXO DE CAIXA (MÉTODO INDIRETO)");
+  const rFC = sheet.rowCount + 1;
+  const F = (offset: number) => rFC + offset;
+  escrever([
+    { rotulo: "Lucro/Prejuízo Líquido do Exercício", ambos: (c) => `${c}${L(12)}` },
+    { rotulo: "(+) Depreciação e amortização", ambos: (c) => `${c}${L(6)}` },
+    { rotulo: "(+/-) Variação do capital de giro",
+      real: () => "0",
+      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(7, c)}` },
+    { rotulo: "Caixa das Atividades Operacionais", destaque: true,
+      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais", k),
+      proj: (c) => `${c}${F(0)}+${c}${F(1)}+${c}${F(2)}` },
+    { rotulo: "Caixa das Atividades de Investimento", destaque: true,
+      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento", k),
+      proj: (c) => `-${c}${L(0)}*${P(6, c)}` },
+    { rotulo: "Caixa das Atividades de Financiamento", destaque: true,
+      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento", k),
+      proj: (c) => `${P(8, c)}`,
+      nota: "Projetado = a premissa de captação/amortização líquida. Zero por padrão: o plano "
+        + "de reestruturação decide isso, o modelo não extrapola dívida sozinho." },
+    { rotulo: "Variação líquida de caixa", destaque: true,
+      ambos: (c) => `${c}${F(3)}+${c}${F(4)}+${c}${F(5)}` },
+    { rotulo: "Saldo inicial de caixa",
+      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Saldo Inicial de Caixa", k),
+      proj: (c, a) => `${a}${F(8)}` },
+    { rotulo: "Saldo final de caixa", destaque: true, ambos: (c) => `${c}${F(7)}+${c}${F(6)}` },
   ]);
 
   linha("");
@@ -2033,65 +2147,39 @@ export function construirAbaModelagem(
   const rBP = sheet.rowCount + 1;
   const B = (offset: number) => rBP + offset;
   escrever([
-    { rotulo: "Ativo Circulante",
-      real: (k) => buscaNaAba("Balanço", "Ativo Circulante", k),
-      proj: (c, a) => `${a}${B(0)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)`,
-      nota: "Projeção move o circulante junto com a receita (premissa implícita de giro constante); "
-        + "ajuste pela linha de capital de giro no fluxo se quiser outro comportamento." },
+    { rotulo: "Caixa e equivalentes", ambos: (c) => `${c}${F(8)}`,
+      nota: "Vem do saldo final do fluxo de caixa acima — é o elo que faz o balanço projetado "
+        + "responder a QUALQUER premissa (uma margem pior queima caixa e aparece aqui)." },
+    { rotulo: "Demais ativos circulantes",
+      real: (k) => `${buscaNaAba(workbook, "Balanço", "Ativo Circulante", k)}-`
+        + `${buscaNaAba(workbook, "Fluxo de Caixa", "Saldo Final de Caixa", k)}`,
+      proj: (c, a) => `${a}${B(1)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)`,
+      nota: "Recebíveis e estoques acompanham a receita (giro constante). Para outro "
+        + "comportamento, use a premissa de capital de giro." },
+    { rotulo: "Ativo Circulante", destaque: true, ambos: (c) => `${c}${B(0)}+${c}${B(1)}` },
     { rotulo: "Ativo Não Circulante",
-      real: (k) => buscaNaAba("Balanço", "Ativo Não Circulante", k),
-      proj: (c, a) => `${a}${B(1)}+${c}${L(0)}*${P(6)}-${c}${L(6)}` },
-    { rotulo: "TOTAL DO ATIVO", destaque: true,
-      ambos: (c) => `${c}${B(0)}+${c}${B(1)}` },
+      real: (k) => buscaNaAba(workbook, "Balanço", "Ativo Não Circulante", k),
+      proj: (c, a) => `${a}${B(3)}+${c}${L(0)}*${P(6, c)}-${c}${L(6)}`,
+      nota: "Anterior + capex − depreciação: as duas premissas movem esta linha." },
+    { rotulo: "TOTAL DO ATIVO", destaque: true, ambos: (c) => `${c}${B(2)}+${c}${B(3)}` },
     { rotulo: "Passivo Circulante",
-      real: (k) => buscaNaAba("Balanço", "Passivo Circulante", k),
-      proj: (c, a) => `${a}${B(3)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)` },
+      real: (k) => buscaNaAba(workbook, "Balanço", "Passivo Circulante", k),
+      proj: (c, a) => `${a}${B(5)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)` },
     { rotulo: "Passivo Não Circulante",
-      real: (k) => buscaNaAba("Balanço", "Passivo Não Circulante", k),
-      proj: (c, a) => `${a}${B(4)}` },
+      real: (k) => buscaNaAba(workbook, "Balanço", "Passivo Não Circulante", k),
+      proj: (c, a) => `${a}${B(6)}+${P(8, c)}` },
     { rotulo: "Patrimônio Líquido",
-      real: (k) => buscaNaAba("Balanço", "Patrimônio Líquido", k),
-      proj: (c, a) => `${a}${B(5)}+${c}${L(12)}`,
-      nota: "PL projetado = PL anterior + resultado do exercício (sem aporte nem distribuição; "
-        + "se houver, entre com eles no fluxo de financiamento)." },
+      real: (k) => buscaNaAba(workbook, "Balanço", "Patrimônio Líquido", k),
+      proj: (c, a) => `${a}${B(7)}+${c}${L(12)}`,
+      nota: "PL projetado = PL anterior + resultado do exercício (sem aporte nem distribuição)." },
     { rotulo: "TOTAL DO PASSIVO E PL", destaque: true,
-      ambos: (c) => `${c}${B(3)}+${c}${B(4)}+${c}${B(5)}` },
-    { rotulo: "Conferência (Ativo - Passivo - PL)", destaque: true, nota:
-      "Tem de ser ZERO em toda coluna. Diferente de zero na parte histórica = o dado extraído não "
-      + "fecha (vá à aba Balanço); na parte projetada = uma premissa está inconsistente.",
-      ambos: (c) => `${c}${B(2)}-${c}${B(6)}` },
-  ]);
-
-  linha("");
-
-  // -------- Fluxo de caixa (indireto) --------------------------------------
-  bloco("FLUXO DE CAIXA (MÉTODO INDIRETO)");
-  const rFC = sheet.rowCount + 1;
-  const F = (offset: number) => rFC + offset;
-  escrever([
-    { rotulo: "Lucro/Prejuízo Líquido do Exercício", ambos: (c) => `${c}${L(12)}` },
-    { rotulo: "(+) Depreciação e amortização", ambos: (c) => `${c}${L(6)}` },
-    { rotulo: "(+/-) Variação do capital de giro",
-      real: () => "0",
-      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(7)}` },
-    { rotulo: "Caixa das Atividades Operacionais", destaque: true,
-      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais", k),
-      proj: (c) => `${c}${F(0)}+${c}${F(1)}+${c}${F(2)}` },
-    { rotulo: "Caixa das Atividades de Investimento", destaque: true,
-      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento", k),
-      proj: (c) => `-${c}${L(0)}*${P(6)}` },
-    { rotulo: "Caixa das Atividades de Financiamento", destaque: true,
-      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento", k),
-      proj: () => "0",
-      nota: "Projeção fica em zero de propósito: captação e amortização são decisão do plano, "
-        + "não uma extrapolação. Digite aqui o que o plano de reestruturação previr." },
-    { rotulo: "Variação líquida de caixa", destaque: true,
-      ambos: (c) => `${c}${F(3)}+${c}${F(4)}+${c}${F(5)}` },
-    { rotulo: "Saldo inicial de caixa",
-      real: (k) => buscaNaAba("Fluxo de Caixa", "Saldo Inicial de Caixa", k),
-      proj: (c, a) => `${a}${F(8)}` },
-    { rotulo: "Saldo final de caixa", destaque: true,
-      ambos: (c) => `${c}${F(7)}+${c}${F(6)}` },
+      ambos: (c) => `${c}${B(5)}+${c}${B(6)}+${c}${B(7)}` },
+    { rotulo: "Necessidade (+) / sobra (−) de financiamento", destaque: true,
+      ambos: (c) => `${c}${B(4)}-${c}${B(8)}`,
+      nota: "Na parte HISTÓRICA tem de ser ~zero: diferente disso, o dado extraído não fecha "
+        + "(confira a aba Balanço). Na parte PROJETADA este é o resultado que interessa — quanto "
+        + "de recurso falta (ou sobra) para o plano se sustentar com as premissas atuais. Não é "
+        + "erro: é a pergunta que a modelagem existe para responder." },
   ]);
 
   linha("");
@@ -2100,25 +2188,39 @@ export function construirAbaModelagem(
   bloco("INDICADORES");
   escrever([
     { rotulo: "Liquidez corrente", fmt: RATIO_FMT,
-      ambos: (c) => `IFERROR(${c}${B(0)}/${c}${B(3)},"")` },
+      ambos: (c) => `IFERROR(${c}${B(2)}/${c}${B(5)},"")` },
     { rotulo: "Endividamento geral", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR((${c}${B(3)}+${c}${B(4)})/${c}${B(2)},"")` },
+      ambos: (c) => `IFERROR((${c}${B(5)}+${c}${B(6)})/${c}${B(4)},"")` },
     { rotulo: "(Passivo total − caixa) / EBITDA", fmt: RATIO_FMT,
       nota: "NÃO é dívida líquida/EBITDA. O export classifica por SEÇÃO contábil e não isola a "
-        + "dívida ONEROSA (empréstimos, financiamentos, debêntures) dentro do passivo, então o "
-        + "numerador aqui é o passivo INTEIRO menos o caixa — sempre mais conservador que a "
-        + "alavancagem real. Para a métrica de verdade, use o Mapa da Dívida (aba Dívida) como "
-        + "numerador. Rotular isto de 'dívida líquida' induziria a ler um covenant que não é este.",
-      ambos: (c) => `IFERROR((${c}${B(3)}+${c}${B(4)}-${c}${F(8)})/${c}${L(7)},"")` },
+        + "dívida ONEROSA dentro do passivo, então o numerador é o passivo INTEIRO menos o caixa "
+        + "— sempre mais conservador que a alavancagem real. Para a métrica de verdade, use o "
+        + "Mapa da Dívida (aba Dívida) como numerador.",
+      ambos: (c) => `IFERROR((${c}${B(5)}+${c}${B(6)}-${c}${B(0)})/${c}${L(7)},"")` },
     { rotulo: "Retorno sobre o PL (ROE)", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${B(5)},"")` },
+      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${B(7)},"")` },
     { rotulo: "Crescimento da receita", fmt: DELTA_FMT,
-      ambos: (c, a) => (c === a ? `""` : `IFERROR(${c}${L(0)}/${a}${L(0)}-1,"")`) },
+      ambos: (c, a) => (a ? `IFERROR(${c}${L(0)}/${a}${L(0)}-1,"")` : `""`) },
   ]);
+
+  // ---- Sombreado das colunas projetadas: por FORMATAÇÃO CONDICIONAL --------
+  // Pintar por posição fixa deixaria o sombreado mentindo assim que o usuário
+  // mexesse no ano de corte. Aqui a própria cor é fórmula: move junto.
+  if (linhasDeValor.length > 0) {
+    const primeira = Math.min(...linhasDeValor);
+    const ultima = Math.max(...linhasDeValor);
+    sheet.addConditionalFormatting({
+      ref: `${primeiraColuna}${primeira}:${ultimaColuna}${ultima}`,
+      rules: [{
+        type: "expression", priority: 1,
+        formulae: [`${primeiraColuna}$${linhaAno}>${refCorte}`],
+        style: { fill: PROJETADO_FILL },
+      }],
+    });
+  }
 
   return sheet;
 }
-
 export function buildExportWorkbook({
   caso,
   documentos,
@@ -2330,10 +2432,17 @@ export function buildExportWorkbook({
   if (entidadesConhecidas.size > 0) {
     // Entidade sugerida = a que tem mais colunas de demonstração no caso (a
     // mais bem documentada). É só o VALOR INICIAL de uma célula de input.
-    const entidadeSugerida = [...entidadesConhecidas.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    const ordenadas = [...entidadesConhecidas.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const entidadeSugerida = ordenadas[0][0];
+    // A lista suspensa da célula de entidade. Vírgula é o separador da lista
+    // inline do Excel, então uma razão social que a contenha quebraria a
+    // validação — essas ficam de fora da lista (o campo segue digitável).
+    const entidadesDisponiveis = ordenadas.map(([e]) => e).filter((e) => !e.includes(","));
     const anosHistoricos = [...anos].sort((a, b) => a - b);
-    construirAbaModelagem(workbook, caso, entidadeSugerida, anosHistoricos, ANOS_PROJETADOS);
+    construirAbaModelagem(
+      workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
+    );
 
     for (const ws of workbook.worksheets) {
       if (ABAS_VISIVEIS.has(ws.name)) continue;
