@@ -39,6 +39,14 @@ export const ALIASES = [
   { codigo: 'FLUXO_CAIXA', termos: ['fluxo de caixa', 'fluxo caixa', 'dfc', 'cash flow', 'fluxo'] },
   { codigo: 'DRE', termos: ['dre', 'demonstracao de resultado', 'demonstracao do resultado', 'resultado do exercicio'] },
   { codigo: 'BALANCO', termos: ['balanco patrimonial', 'balanco', 'bp'] },
+  // DMPL/DVA vêm DEPOIS das demonstrações principais de propósito (db/migrations/0024).
+  // O caso comum de "DMPL" no nome de arquivo é o PDF COMPOSTO ("Balanço
+  // Patrimonial DRE, DFC, DMPL 2024.pdf" — arquivo real do dono), que pela
+  // taxonomia (f0/03) é a demonstração PRINCIPAL, não a DMPL. Testando antes de
+  // BALANCO/DRE, esse arquivo viraria DMPL — regressão. Aqui, só o documento
+  // que é SÓ a DMPL/DVA ("09_DMPL_Metalurgica_2025.pdf") cai nestes códigos.
+  { codigo: 'DMPL', termos: ['dmpl', 'mutacoes do patrimonio', 'mutacoes patrimonio', 'demonstracao das mutacoes'] },
+  { codigo: 'DVA', termos: ['dva', 'valor adicionado'] },
   // --- variáveis (complementares) mais comuns, para não cair em "não classificado" à toa ---
   { codigo: 'BALANCETE', termos: ['balancete'] },
   { codigo: 'DF_AUDITADA', termos: ['demonstracoes financeiras auditadas', 'df auditada', 'demonstracoes auditadas'] },

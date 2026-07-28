@@ -403,6 +403,168 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(errosGab.length === 0, "(9b) DRE 2025 bate com o gabarito linha a linha", errosGab.join(" / "));
 }
 
+// ---- 10: DMPL e DVA ganham aba própria (db/migrations/0024) -----------------
+// Antes desta fatia a DMPL não tinha para onde ir: o documento inteiro era
+// classificado como MUTUOS (não havia código DMPL na taxonomia, e o enum que a
+// IA recebe é fechado nos códigos que existem) e, quando vinha embutida num PDF
+// composto, suas linhas caíam em "Contas Não Classificadas" pela guarda
+// `ehLinhaDMPL` — a alternativa era pior, porque o saldo de fechamento REPETE o
+// total do PL e somá-lo INFLA o balanço (bug real do export do dono).
+{
+  const V = "vDMPL";
+  // Números do book Vertentes (test-data/book-vertentes/render.py → pdf_dmpl):
+  // matriz de 3 movimentos × 6 componentes do PL, R$ mil.
+  const PL24 = 24801, PL25 = 6900, PREJ = PL25 - PL24;
+  const componentes: Array<[string, number | null, number | null, number | null]> = [
+    // componente,                        saldo 2024, movimento (prejuízo), saldo 2025
+    ["Capital social", 45000, null, 45000],
+    ["Capital a integralizar", -2000, null, -2000],
+    ["Reserva legal", 1200, null, 1200],
+    ["Ajuste de avaliação patrimonial", 1850, null, 1850],
+    ["Prejuízos acumulados", PL24 - 46050, PREJ, PL25 - 46050],
+    ["Total", PL24, PREJ, PL25],
+  ];
+  const MOV_ABERTURA = "SALDOS EM 31 DE DEZEMBRO DE 2024";
+  const MOV_RESULTADO = "Prejuízo líquido do exercício";
+  const MOV_FECHAMENTO = "SALDOS EM 31 DE DEZEMBRO DE 2025";
+  const campos: CampoExtraido[] = [];
+  for (const [comp, ab, mov, fe] of componentes) {
+    const cel: Array<[string, number | null]> = [[MOV_ABERTURA, ab], [MOV_RESULTADO, mov], [MOV_FECHAMENTO, fe]];
+    for (const [movimento, v] of cel) {
+      if (v === null) continue; // célula com traço no PDF não vira linha
+      campos.push(campo({ chave: comp, secao: movimento, secao_canonica: "dmpl", valor_num: v, documento_versao_id: V }));
+    }
+  }
+  const documentos: DocumentoParaExport[] = [{
+    id: "dDMPL", tipo_taxonomia: "DMPL", entidade: { razao_social: "Vertentes Metalúrgica Ltda." },
+    periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, nome_original: "09_DMPL_Vertentes_Metalurgica_2025.pdf" }],
+  }];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+
+  const ws = wb.getWorksheet("DMPL");
+  checar(ws != null, "(10a) a DMPL tem aba própria (antes caía em MUTUOS/Não Classificadas)");
+  if (ws) {
+    // A MATRIZ: cabeçalho = componentes do PL, uma linha por movimento. É a
+    // leitura que a demonstração existe para dar — achatá-la numa listagem
+    // perderia justamente "como cada componente do PL se moveu".
+    const header = ws.getRow(1);
+    const cabecalhos: string[] = [];
+    for (let c = 2; c <= ws.columnCount; c++) cabecalhos.push(String(header.getCell(c).value ?? ""));
+    checar(
+      componentes.every(([comp]) => cabecalhos.includes(comp)),
+      "(10a) os 6 componentes do PL são as COLUNAS da matriz",
+      cabecalhos.join(" | "),
+    );
+    const linhaDe = (rot: string) => {
+      for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+      return -1;
+    };
+    const colDe = (rot: string) => cabecalhos.indexOf(rot) + 2;
+    const rFech = linhaDe(MOV_FECHAMENTO);
+    checar(rFech > 0, "(10a) cada movimento é uma LINHA da matriz");
+    checar(
+      rFech > 0 && ws.getRow(rFech).getCell(colDe("Total")).value === PL25,
+      "(10b) o cruzamento movimento × componente cai na célula certa",
+      `esperado=${PL25} obtido=${rFech > 0 ? ws.getRow(rFech).getCell(colDe("Total")).value : "(sem linha)"}`,
+    );
+    checar(
+      linhaDe(MOV_RESULTADO) > 0
+        && ws.getRow(linhaDe(MOV_RESULTADO)).getCell(colDe("Capital social")).value == null,
+      "(10b) célula sem valor no documento (traço) continua vazia — nada é inventado",
+    );
+    // Toda linha rotulada tem de carregar pelo menos um NÚMERO: esta aba não tem
+    // template, então uma linha sem número só poderia vir de um defeito nosso.
+    const semNumero: string[] = [];
+    for (let r = 2; r <= ws.rowCount; r++) {
+      const rot = String(ws.getRow(r).getCell(1).value ?? "").trim();
+      if (!rot) continue;
+      let tem = false;
+      for (let c = 2; c <= ws.columnCount; c++) if (typeof ws.getRow(r).getCell(c).value === "number") tem = true;
+      if (!tem) semNumero.push(`${r} "${rot}"`);
+    }
+    checar(semNumero.length === 0, "(10c) nenhuma linha da DMPL sem número", semNumero.join(" / "));
+  }
+  // O componente do PL NÃO pode ter virado entidade: se ele fosse para
+  // `entidade_coluna`, cada componente viraria uma EMPRESA fantasma no export.
+  const abasComponente = wb.worksheets.filter((s) => s.name !== "DMPL" && s.name !== "Resumo");
+  checar(abasComponente.length === 0, "(10d) a DMPL não vaza para nenhuma outra aba",
+    abasComponente.map((s) => s.name).join(", "));
+}
+
+// ---- 10e: DMPL embutida num PDF de Balanço não infla o Patrimônio Líquido ---
+{
+  const V = "vComposto";
+  const PL = 24801;
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Capital social", secao: "Patrimônio Líquido", secao_canonica: "patrimonio_liquido", valor_num: 45000, documento_versao_id: V }),
+    campo({ chave: "Prejuízos acumulados", secao: "Patrimônio Líquido", secao_canonica: "patrimonio_liquido", valor_num: PL - 45000, documento_versao_id: V }),
+    campo({ chave: "TOTAL DO PATRIMÔNIO LÍQUIDO", secao: "Patrimônio Líquido", valor_num: PL, documento_versao_id: V }),
+    // …e a DMPL que vem no MESMO arquivo. O saldo de fechamento repete o total
+    // do PL: somado como conta, o patrimônio sai em dobro.
+    campo({ chave: "Total", secao: "SALDOS EM 31 DE DEZEMBRO DE 2025", secao_canonica: "dmpl", valor_num: PL, documento_versao_id: V }),
+    campo({ chave: "Capital social", secao: "SALDOS EM 31 DE DEZEMBRO DE 2025", secao_canonica: "dmpl", valor_num: 45000, documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dComp", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Vertentes Metalúrgica Ltda." },
+    periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, nome_original: "BP DRE DFC DMPL 2025.pdf" }],
+  }];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const bal = wb.getWorksheet("Balanço")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= bal.rowCount; r++) if (String(bal.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  const rPL = linhaDe("Patrimônio Líquido");
+  const somaPL = rPL > 0 ? Math.round(avaliar(bal, "B", rPL)) : NaN;
+  checar(somaPL === PL, "(10e) DMPL embutida não infla o PL do Balanço", `PL=${somaPL} informado=${PL}`);
+  checar(wb.getWorksheet("DMPL") != null, "(10e) …e as linhas dela vão para a aba DMPL, não somem");
+}
+
+// ---- 10f: DVA sai na ordem do documento, sem template imposto ---------------
+{
+  const V = "vDVA";
+  const linhas: Array<[string, string, number]> = [
+    ["1 - RECEITAS", "Venda de mercadorias, produtos e serviços", 214800],
+    ["1 - RECEITAS", "Provisão para créditos de liquidação duvidosa", -1980],
+    ["2 - INSUMOS ADQUIRIDOS DE TERCEIROS", "Custo dos produtos e mercadorias vendidas", -168400],
+    ["3 - VALOR ADICIONADO BRUTO", "Valor adicionado bruto", 44420],
+    ["8 - DISTRIBUIÇÃO DO VALOR ADICIONADO", "Pessoal e encargos", 31200],
+    ["8 - DISTRIBUIÇÃO DO VALOR ADICIONADO", "Impostos, taxas e contribuições", 9100],
+  ];
+  const campos = linhas.map(([secao, chave, v]) =>
+    campo({ chave, secao, secao_canonica: "dva", valor_num: v, documento_versao_id: V }));
+  const documentos: DocumentoParaExport[] = [{
+    id: "dDVA", tipo_taxonomia: "DVA", entidade: { razao_social: "Vertentes Metalúrgica Ltda." },
+    periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, nome_original: "DVA_2025.pdf" }],
+  }];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const ws = wb.getWorksheet("DVA");
+  checar(ws != null, "(10f) a DVA tem aba própria");
+  if (ws) {
+    const rotulos: string[] = [];
+    const secoes: string[] = [];
+    for (let r = 2; r <= ws.rowCount; r++) {
+      rotulos.push(String(ws.getRow(r).getCell(1).value ?? ""));
+      secoes.push(String(ws.getRow(r).getCell(2).value ?? ""));
+    }
+    checar(
+      rotulos.join("|") === linhas.map(([, c]) => c).join("|"),
+      "(10f) a ordem é a do documento — nenhuma linha imposta, nenhuma reordenada",
+      rotulos.join(" | "),
+    );
+    checar(
+      secoes[0] === "1 - RECEITAS" && secoes[4] === "8 - DISTRIBUIÇÃO DO VALOR ADICIONADO",
+      "(10f) a seção declarada pelo documento é preservada",
+      secoes.join(" | "),
+    );
+    const semNumero = rotulos.filter((_, i) => typeof ws.getRow(i + 2).getCell(3).value !== "number");
+    checar(semNumero.length === 0, "(10f) nenhuma linha da DVA sem número", semNumero.join(" / "));
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

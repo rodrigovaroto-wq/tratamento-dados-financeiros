@@ -71,6 +71,29 @@ test('parseTipo mapeia termos → código, específico antes de genérico', () =
   assert.equal(parseTipo('balancete').codigo, 'BALANCETE');
 });
 
+test('parseTipo reconhece DMPL e DVA (db/migrations/0024) sem roubar o arquivo COMPOSTO', () => {
+  // Antes da 0024 não existia código nenhum para estas duas: o enum que a IA
+  // recebe (`codigosConhecidos`) é fechado nos códigos da taxonomia, e a DMPL do
+  // book saía classificada como MUTUOS — o vizinho mais próximo do que existia.
+  assert.equal(parseTipo(normalize('09_DMPL_Vertentes_Metalurgica_2025.pdf')).codigo, 'DMPL');
+  assert.equal(parseTipo(normalize('Demonstração das Mutações do Patrimônio Líquido 2025.pdf')).codigo, 'DMPL');
+  assert.equal(parseTipo(normalize('DVA 2025.pdf')).codigo, 'DVA');
+  assert.equal(parseTipo(normalize('Demonstração do Valor Adicionado 2025.pdf')).codigo, 'DVA');
+
+  // …e a regressão que a ORDEM dos aliases protege: o caso comum de "DMPL" no
+  // nome de arquivo NÃO é a DMPL — é o arquivo COMPOSTO (este é um nome real do
+  // dono), em que a DMPL é uma das demonstrações e o tipo do documento é o da
+  // demonstração PRINCIPAL (f0/03). Se DMPL/DVA fossem testados antes das
+  // demonstrações principais, estes dois arquivos mudariam de tipo.
+  // (Qual das principais ganha é decisão anterior a esta fatia: aqui 'dfc' casa
+  // FLUXO_CAIXA antes de 'balanco'. O que importa é que não vira DMPL — e o
+  // diagnóstico por CONTEÚDO, que é quem decide de fato, corrige o resto.)
+  const composto = parseTipo(normalize('Balanço Patrimonial DRE, DFC, DMPL Global One 2024assinado.pdf'));
+  assert.notEqual(composto.codigo, 'DMPL');
+  assert.equal(composto.codigo, 'FLUXO_CAIXA');
+  assert.equal(parseTipo(normalize('DRE e DVA consolidadas 2025.pdf')).codigo, 'DRE');
+});
+
 test('classifyByFilename — nomes descritivos dão alta confiança', () => {
   const r = classifyByFilename('12M25 DRE (Assinado).pdf');
   assert.equal(r.tipo_taxonomia, 'DRE');
