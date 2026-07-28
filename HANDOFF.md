@@ -4,23 +4,26 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #51** (commit de merge
-`8a2a271`). **PR #52 aberto (draft)** — export sem linha vazia + categorização da DRE/Fluxo. Branch de
-trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de `origin/main` no início de cada
-sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
+**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #52** (commit de merge
+`96f4006`) — o PR #52 já foi mergeado, o cabeçalho anterior deste arquivo dizia "aberto (draft)" e
+estava desatualizado. Branch de trabalho `claude/handoff-leitura-continuacao-jeifmd`, sempre
+restartada de `origin/main` no início de cada sessão nova — ver "Git / PR workflow" na seção 4
+abaixo antes de commitar.
 
 ## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v26 a qualquer momento
 
-Pendências do dono (as duas únicas; nenhuma exige reimportar o N8N):
+Pendências do dono (nenhuma exige reimportar o N8N, EXCETO a `0024` — ver abaixo):
 
 1. aplicar a **`db/migrations/0023_reconciliacao_sem_ruido.sql`** no Supabase (do PR #50);
-2. **re-exportar** o book e mandar o `.xlsx` + prints.
+2. aplicar a **`db/migrations/0024_taxonomia_dmpl_dva.sql`** e **REIMPORTAR o workflow no N8N**
+   (o enum de tipos e o prompt de extração vivem no JSON gerado) — sessão 11, abaixo;
+3. **re-exportar** o book e mandar o `.xlsx` + prints.
 
 **Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
 v24 → v25 e que você deve repetir:
 
 1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (21 invariantes) e `db/test/run.sh` (21 asserts).
+   `npx tsx portal/scripts/verificar-export.mts` (34 invariantes) e `db/test/run.sh` (21 asserts).
    Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
 2. **Abra o `.xlsx` do dono de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad,
    `data_only=False` (o export emite **fórmula**, não valor).
@@ -40,10 +43,9 @@ v24 → v25 e que você deve repetir:
 
 ### Fatias diagnosticadas e ainda NÃO feitas
 
-- **DMPL/DVA não existem na taxonomia.** A DMPL do book é classificada como "Mútuos" porque a IA
-  escolhe o código mais próximo do que existe. Precisa de migration na taxonomia (`0002` é a seed;
-  siga o padrão) + menção no `SYSTEM_PROMPT` (`n8n/lib/extract.mjs`, **fonte única** — o gerador
-  importa e embute; nunca parafraseie) + aba própria no export + reextração dos documentos afetados.
+- ~~**DMPL/DVA não existem na taxonomia.**~~ **FEITA na sessão 11** (abaixo). Falta só o dono
+  aplicar a `0024`, reimportar o workflow e **reextrair** os documentos afetados — a regra de sempre
+  vale: documento já classificado como `MUTUOS` não muda retroativamente.
 - **PDF como texto em vez de imagem + `.docx`/`.xlsx`** via nó *Extract From File* no N8N. **Maior
   alavanca que resta**: 60-80% do custo de input, mais precisão numérica, e fecha o gap crítico de
   formato (hoje `.docx`/`.xlsx` do dono não entram). **Exige o N8N vivo** — não implemente às cegas,
@@ -57,6 +59,59 @@ v24 → v25 e que você deve repetir:
 Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
 marcação do que já foi feito). Dois itens de dinheiro parado lá: `fn_registrar_documento` não é
 idempotente por hash (paga extração repetida) e existe um overload morto de 14 argumentos.
+
+## Sessão 11 — DMPL e DVA: código próprio na taxonomia e aba própria (`db/migrations/0024`)
+
+O `.xlsx` do teste v26 ainda não chegou. Rodei a suíte inteira primeiro (passo 1 do protocolo) —
+**verde de ponta a ponta**: n8n 83/83, `verificar-export.mts` 21/21, `db/test/run.sh` 21/21,
+`tsc`/`eslint`/`next build` limpos — e ataquei a primeira fatia da lista de "diagnosticadas e não
+feitas", que era a única inteiramente auto-contida (as outras duas exigem o N8N vivo ou são do
+intake).
+
+**O diagnóstico que importa: não era erro da IA nem do prompt.** A DMPL do book saía como `MUTUOS`
+porque `tipo_sugerido` é um enum **fechado** nos códigos que EXISTEM na taxonomia
+(`n8n/lib/openai.mjs` → `codigosConhecidos`) — sem código para DMPL, o modelo escolhe o vizinho mais
+próximo. Mesmo padrão do achado central de v24/v25: **quando a extração está certa, o defeito está
+no nosso vocabulário/agregação, não no modelo.**
+
+- **`db/migrations/0024`** — DMPL e DVA como **complementares** (Nível 2). Não entram no Kit Básico:
+  mexer na lista de 8 obrigatórios mudaria a completude de **todo caso já aberto**, e isso é decisão
+  de produto do dono, não efeito colateral de uma migration de vocabulário.
+- **Ordem dos aliases de nome importa e tem teste travando.** O caso comum de "DMPL" num nome de
+  arquivo NÃO é a DMPL — é o PDF **composto** ("Balanço Patrimonial DRE, DFC, DMPL 2024.pdf", nome
+  real do dono), em que o tipo é o da demonstração principal. Por isso DMPL/DVA vêm **depois** das
+  principais em `n8n/lib/taxonomia.mjs`. (Nota honesta: esse arquivo hoje casa `FLUXO_CAIXA` pelo
+  "dfc", comportamento anterior a esta fatia; o que o teste trava é que ele não vire DMPL — quem
+  decide de fato é o diagnóstico por conteúdo.)
+- **Roteamento por LINHA:** `SECAO_CANONICA_ENUM` ganhou `dmpl`/`dva`. Sem isso, a linha de uma DMPL
+  embutida num PDF composto só tinha dois destinos, os dois ruins: `patrimonio_liquido` (o saldo de
+  fechamento **repete** o total do PL — somá-lo INFLA o balanço, bug real do export do dono) ou
+  `NAO_CLASSIFICAVEL`. A guarda `ehLinhaDMPL` continua, agora como rede de segurança e como
+  fallback de roteamento para documento ANTIGO (sem `secao_canonica`), cedendo a vez quando o
+  classificador do Fluxo reconhece a linha como saldo de caixa.
+- **Aba DMPL = a MATRIZ** (linhas = movimentos do exercício, colunas = componentes do PL). Achatá-la
+  numa listagem perderia justamente a leitura que a demonstração existe para dar. Isso exigiu um
+  contrato no prompt: `secao` = movimento, `chave` = componente — e a **proibição explícita** de usar
+  `entidade_coluna` para os componentes, que criaria uma "empresa" fantasma por componente no export.
+- **Aba DVA sem template.** A DVA é padronizada pelo CPC 09, mas **não temos nenhum arquivo real
+  para validar um template** — e template errado ordena o dado errado em silêncio. Sai o que o
+  documento trouxe, na ordem dele, com a seção declarada em coluna própria. Quando aparecer uma DVA
+  real, aí sim vale escrever a cascata.
+- **Nada de subtotal calculado** em nenhuma das duas (anti-ancoragem, `f0/07`): a coluna "Total" da
+  DMPL é a do documento, ou não existe.
+- **Limpeza junto:** o separador de chave composta era um **byte NUL literal** no fonte de
+  `export.ts` (caractere invisível). Virou a constante `CHAVE_SEP` — e o motivo não é cosmético: as
+  chaves compostas novas que eu tinha escrito com espaço tinham exatamente a colisão que o NUL
+  existe para evitar.
+
+**Validação:** n8n **86/86** (3 testes novos); `verificar-export.mts` **34/34** (11 verificações
+novas). Os invariantes novos foram **provados não-vazios**, como o protocolo exige: desligando o
+roteamento por linha cai 1; desligando o mapa de abas caem 3 e somem 11. Migrations 0001–0024 limpas
+em Postgres 16 local; `db/test/run.sh` 21/21; `tsc`/`eslint`/`next build` limpos.
+
+**Precisa do dono:** aplicar a `0024`, **reimportar o workflow** (o enum de tipos e o prompt vivem no
+JSON gerado) e **reextrair** os documentos de DMPL/DVA já processados — a regra de sempre: migration
+e prompt só valem para extração NOVA.
 
 ## Sessão 10 — Teste v25: reconciliação sem ruído, export que fecha (PRs #49-#52)
 
@@ -287,8 +342,8 @@ Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila 
   ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
 
 **Pendente agora — ver a seção "⚠️ COMECE AQUI" no topo deste arquivo.** Resumo: o dono aplica a
-`0023` no Supabase e manda o export v26; as fatias não feitas são DMPL/DVA na taxonomia,
-PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no intake.
+`0023` e a `0024` no Supabase (a `0024` também pede reimportar o workflow) e manda o export v26; as
+fatias não feitas são PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no intake.
 Backlog largo em `docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
 
 **Regra que vale pra qualquer reimportação/migration:** só afeta extrações **NOVAS** — documento já
@@ -1440,6 +1495,9 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   **Padrão obrigatório**: quando o PR da branch é mergeado, restarte do `main` atualizado
   (`git fetch origin main && git checkout -B claude/handoff-continuation-2oecw8 origin/main`) — nunca
   empilhe em cima de histórico já mergeado.
+- Branch da sessão 11: `claude/handoff-leitura-continuacao-jeifmd`, restartada de `origin/main`
+  (que já trazia o #52 mergeado). Mesmo padrão: quando o PR desta branch fechar, a próxima sessão
+  restarta do `main` atualizado em vez de empilhar em cima de histórico já mergeado.
 - O stop-hook local reclama dos **merge commits do próprio GitHub** (committer `noreply@github.com`),
   que aparecem na branch depois de cada merge. **Não reescreva**: já estão publicados no `main`, e
   reescrever trocaria um aviso cosmético por divergência real. Os commits de autoria própria passam.
@@ -1460,13 +1518,13 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0023) + README com ordem de aplicação
+db/         — migrations SQL (0001-0024) + README com ordem de aplicação
               test/  — fixture do book + testes de reconciliação + run.sh
 n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
 portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook)
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 21 invariantes de regressão do export
+              scripts/verificar-export.mts   — 34 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
@@ -1476,9 +1534,9 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 83 testes da lógica de ingestão/classificação/extração
+node --test 'n8n/test/*.test.mjs'           # 86 testes da lógica de ingestão/classificação/extração
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
-npx tsx portal/scripts/verificar-export.mts # 21 invariantes do export
+npx tsx portal/scripts/verificar-export.mts # 34 invariantes do export
 PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 asserts de reconciliação
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
@@ -1486,7 +1544,7 @@ Para o `db/test/run.sh` num container sem Postgres rodando: `initdb` como usuár
 (o servidor recusa rodar como root) e `pg_ctl -o '-k /tmp -p 5599'`. O script cria os papéis
 `anon`/`authenticated`/`service_role` e o schema `storage` que as migrations assumem do Supabase.
 
-Migrations: aplicar `0001`→`0023` em ordem num Postgres 16 local antes de propor SQL novo — várias
+Migrations: aplicar `0001`→`0024` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 
