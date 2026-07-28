@@ -4,11 +4,11 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #52** (commit de merge
-`96f4006`) — o PR #52 já foi mergeado, o cabeçalho anterior deste arquivo dizia "aberto (draft)" e
-estava desatualizado. Branch de trabalho `claude/handoff-leitura-continuacao-jeifmd`, sempre
-restartada de `origin/main` no início de cada sessão nova — ver "Git / PR workflow" na seção 4
-abaixo antes de commitar.
+**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #53** (commit de merge
+`e295869`; o #53 foi só correção de cabeçalho deste arquivo). **PR #54 em aberto** — DMPL/DVA na
+taxonomia + abas próprias (sessão 11, abaixo). Branch de trabalho
+`claude/handoff-leitura-continuacao-jeifmd`, sempre restartada de `origin/main` no início de cada
+sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
 
 ## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v26 a qualquer momento
 
@@ -1490,14 +1490,18 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   em cima de branch cujo PR já foi mergeado. A **próxima sessão deve fazer o mesmo**: checar se o
   PR desta branch já foi mergeado e, se sim, restartar do `main`. Padrão no meio do trabalho:
   `git fetch origin main && git rebase origin/main` (ou `git checkout -B claude/<nome> origin/main`).
-- Branch usada nas sessões 7-10: `claude/handoff-continuation-2oecw8` — **13 PRs** a partir dela
-  (#39-#51 mergeados, #52 em aberto), restartada de `origin/main` a cada vez que um PR fechava.
+- Branch usada nas sessões 7-10: `claude/handoff-continuation-2oecw8` — **14 PRs mergeados** a partir
+  dela (#39-#52), restartada de `origin/main` a cada vez que um PR fechava.
   **Padrão obrigatório**: quando o PR da branch é mergeado, restarte do `main` atualizado
   (`git fetch origin main && git checkout -B claude/handoff-continuation-2oecw8 origin/main`) — nunca
   empilhe em cima de histórico já mergeado.
-- Branch da sessão 11: `claude/handoff-leitura-continuacao-jeifmd`, restartada de `origin/main`
-  (que já trazia o #52 mergeado). Mesmo padrão: quando o PR desta branch fechar, a próxima sessão
-  restarta do `main` atualizado em vez de empilhar em cima de histórico já mergeado.
+- Branch da sessão 11: `claude/handoff-leitura-continuacao-jeifmd` (**PR #54**), restartada de
+  `origin/main`. Mesmo padrão: quando o PR desta branch fechar, a próxima sessão restarta do `main`
+  atualizado em vez de empilhar em cima de histórico já mergeado.
+- **Aviso prático desta sessão:** duas sessões editaram o mesmo cabeçalho do HANDOFF em paralelo
+  (o #53 corrigiu o estado do `main` enquanto o #54 já estava aberto), e o #54 ficou em conflito.
+  O cabeçalho deste arquivo é o ponto de conflito mais provável do repositório — ao retomar,
+  `git fetch origin main` antes de escrever nele.
 - O stop-hook local reclama dos **merge commits do próprio GitHub** (committer `noreply@github.com`),
   que aparecem na branch depois de cada merge. **Não reescreva**: já estão publicados no `main`, e
   reescrever trocaria um aviso cosmético por divergência real. Os commits de autoria própria passam.
