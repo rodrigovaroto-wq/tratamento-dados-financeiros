@@ -1878,6 +1878,10 @@ export function construirAbaModelagem(
   // Chave de busca: o cabeçalho que as abas de dados já emitem ("<entidade> —
   // <período>"), montada por fórmula a partir das células de input.
   const chaveCol = (i: number) => `${refEntidade}&" — "&${col(i)}$${linhaAno}`;
+  // `expr` é uma expressão de ano ("$C$4", "($C$4-1)"). Quem passar aritmética
+  // deve PARENTIZAR: o Excel resolve `-` antes de `&`, mas depender de
+  // precedência numa string montada em código é como o "$C$" fixo das premissas
+  // — funciona até alguém mexer, e falha calado.
   const chaveAno = (expr: string) => `${refEntidade}&" — "&${expr}`;
 
   sheet.getColumn(1).width = 48;
@@ -2026,7 +2030,7 @@ export function construirAbaModelagem(
   const P = (i: number, c: string) => `${c}$${rPremissas + i}`;
 
   const noAnoDoCorte = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(refCorte));
-  const noAnoAnterior = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(`${refCorte}-1`));
+  const noAnoAnterior = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(`(${refCorte}-1)`));
   const recCorte = noAnoDoCorte("DRE", "Receita Líquida");
   const recAnterior = noAnoAnterior("DRE", "Receita Líquida");
 
