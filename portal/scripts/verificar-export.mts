@@ -15,6 +15,18 @@
  *     clientes" é obrigação, não crédito).
  *  4. PERÍODOS EM ORDEM CRONOLÓGICA (o Δ% precisa casar meses que se sucedem).
  *  5. COLUNA DE AJUSTE/TOTAL do combinado não é tratada como entidade.
+ *  9. NOSSO NÚMERO == O NÚMERO DO DOCUMENTO na DRE e no Fluxo de Caixa: cada
+ *     linha de resultado (Receita Líquida, Lucro Bruto, EBIT, LAIR, Prejuízo,
+ *     Caixa Líquido de cada atividade) tem de bater com o "↳ total informado no
+ *     documento" logo abaixo, em toda coluna. Foi o que pegou a cascata da DRE
+ *     fechando em -27.550 onde o documento diz -17.901: duas contas de Despesas
+ *     Operacionais estavam fora da seção e uma conta residual estava sendo
+ *     tratada como a linha de Receita Líquida.
+ *  8. NENHUMA LINHA 100% VAZIA, em nenhuma aba. O template canônico (CPC 26 /
+ *     art. 178, cascata da DRE, CPC 03) serve para ORDENAR o que o documento
+ *     trouxe — não para impor linhas que ele não tem. Linha sem valor em coluna
+ *     nenhuma parece defeito para quem abre a planilha, e escondia o sinal que
+ *     importa. Zero conta como valor: se o documento diz 0,00, isso é dado.
  *  6. O TOTAL DA SEÇÃO É O QUE O DOCUMENTO INFORMOU, não a nossa soma. Este é o
  *     invariante que faltava aqui e por isso o teste v25 passou verde enquanto
  *     36 de 44 somas do Balanço divergiam. Dois casos que a detecção estrutural
@@ -28,6 +40,7 @@
  *     soma tem de ficar visível numa linha de checagem — nunca virar o total.
  */
 import { readFileSync } from "node:fs";
+import { avaliarCelula, linhaVazia } from "./lib/avaliar-formula.mts";
 import { buildExportWorkbook, chaveCronologicaPeriodo, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 
@@ -38,29 +51,11 @@ function checar(cond: boolean, desc: string, detalhe = "") {
   else falhas.push(`${desc}${detalhe ? ` — ${detalhe}` : ""}`);
 }
 
-// Avaliador mínimo das fórmulas que o export emite numa coluna: SUM(range),
-// referência simples (=B12) e soma de referências (=B4+B39). Suficiente para
-// conferir os totais sem abrir o Excel.
-function avaliar(ws: import("exceljs").Worksheet, col: string, row: number, prof = 0): number {
-  if (prof > 12) throw new Error("fórmula recursiva");
-  const cell = ws.getRow(row).getCell(col);
-  const v = cell.value;
-  if (typeof v === "number") return v;
-  const f = (v as { formula?: string } | null)?.formula;
-  if (!f) return 0;
-  const mSum = f.match(/^SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$/);
-  if (mSum) {
-    let t = 0;
-    for (let r = Number(mSum[2]); r <= Number(mSum[4]); r++) t += avaliar(ws, mSum[1], r, prof + 1);
-    return t;
-  }
-  if (/^[A-Z]+\d+(\+[A-Z]+\d+)*$/.test(f)) {
-    return f.split("+").reduce((a, ref) => {
-      const m = ref.match(/^([A-Z]+)(\d+)$/)!;
-      return a + avaliar(ws, m[1], Number(m[2]), prof + 1);
-    }, 0);
-  }
-  return 0;
+// Avalia a célula resolvendo as fórmulas do export (SUM/refs/aritmética/IFERROR)
+// — ver scripts/lib/avaliar-formula.mts.
+function avaliar(ws: import("exceljs").Worksheet, col: string, row: number): number {
+  const v = avaliarCelula(ws, col, row);
+  return typeof v === "number" ? v : 0;
 }
 
 let seq = 0;
@@ -110,10 +105,18 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const iNaoClass = rotulos.findIndex((x) => x.startsWith("Contas Não Classificadas"));
   const naoClass = iNaoClass < 0 ? [] : rotulos.slice(iNaoClass + 1).filter(Boolean);
   checar(naoClass.length === 0, "(2) nada em Não Classificadas (consenso de irmãos)", naoClass.join(", "));
+  // A conta tem de estar DENTRO do range que a soma do Passivo Circulante cobre —
+  // asserção mais precisa que "entre dois cabeçalhos", e que não depende de o
+  // Passivo Não Circulante existir (seção sem dado deixou de ser emitida).
   const rAdiant = linhaDe("Adiantamentos de clientes");
   const rPC = linhaDe("Passivo Circulante");
-  const rPNC = linhaDe("Passivo Não Circulante");
-  checar(rAdiant > rPC && rAdiant < rPNC, "(3) 'Adiantamentos de clientes' no Passivo Circulante");
+  const fPC = String((ws.getRow(rPC).getCell(2).value as { formula?: string })?.formula ?? "");
+  const mPC = fPC.match(/SUM\([A-Z]+(\d+):[A-Z]+(\d+)\)/);
+  checar(
+    rAdiant > 0 && mPC != null && rAdiant >= Number(mPC[1]) && rAdiant <= Number(mPC[2]),
+    "(3) 'Adiantamentos de clientes' entra na soma do Passivo Circulante",
+    `linha=${rAdiant} range=${mPC ? `${mPC[1]}:${mPC[2]}` : fPC}`,
+  );
 }
 
 // ---- 4: ordem cronológica ---------------------------------------------------
@@ -268,6 +271,136 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
   checar(desbalanceados.length === 0, "(7b) Ativo = Passivo + PL em toda coluna do export",
     desbalanceados.slice(0, 6).join(" / "));
+}
+
+// ---- 8: nenhuma linha 100% vazia, em nenhuma aba -----------------------------
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+  const vazias: string[] = [];
+  let rotuladas = 0;
+  for (const ws of wb.worksheets) {
+    if (ws.name === "Resumo") continue;
+    for (let r = 2; r <= ws.rowCount; r++) {
+      const rot = String(ws.getRow(r).getCell(1).value ?? "").trim();
+      if (!rot) continue;
+      rotuladas++;
+      if (linhaVazia(ws, r)) vazias.push(`${ws.name}!${r} "${rot}"`);
+    }
+  }
+  checar(vazias.length === 0,
+    `(8) nenhuma das ${rotuladas} linhas do book fica 100% vazia`,
+    vazias.slice(0, 10).join(" / "));
+
+  // …e o mesmo com um documento ESPARSO: uma empresa que só tem circulante não
+  // pode ganhar Realizável LP / Investimentos / Imobilizado / Intangível /
+  // Passivo Não Circulante em branco (nem um "0" que nós inventamos — o
+  // documento não disse zero, não disse nada).
+  const V = "vEsparso";
+  const camposEsparsos: CampoExtraido[] = [
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1000, documento_versao_id: V }),
+    campo({ chave: "Clientes - mercado interno", secao: "Ativo Circulante", valor_num: 4000, documento_versao_id: V }),
+    campo({ chave: "TOTAL DO ATIVO", secao: "ATIVO", valor_num: 5000, documento_versao_id: V }),
+    campo({ chave: "Fornecedores nacionais", secao: "Passivo Circulante", valor_num: 5000, documento_versao_id: V }),
+  ];
+  const wsEsp = buildExportWorkbook({
+    caso: { nome: "Esparso", produto: "reestruturacao" },
+    documentos: [{ id: "dE", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Só Circulante Ltda." },
+      periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: V, nome_original: "e.pdf" }] }],
+    campos: camposEsparsos, agora: new Date("2026-07-27T12:00:00Z"),
+  }).getWorksheet("Balanço")!;
+  const vaziasEsp: string[] = [];
+  const rotulos: string[] = [];
+  for (let r = 2; r <= wsEsp.rowCount; r++) {
+    const rot = String(wsEsp.getRow(r).getCell(1).value ?? "").trim();
+    if (!rot) continue;
+    rotulos.push(rot);
+    if (linhaVazia(wsEsp, r)) vaziasEsp.push(`${r} "${rot}"`);
+  }
+  checar(vaziasEsp.length === 0, "(8b) documento esparso não ganha linha vazia", vaziasEsp.join(" / "));
+  const naoDeveria = ["Realizável a Longo Prazo", "Investimentos", "Imobilizado", "Intangível",
+    "Ativo Não Circulante", "Passivo Não Circulante", "Patrimônio Líquido"];
+  const intrusos = naoDeveria.filter((x) => rotulos.includes(x));
+  checar(intrusos.length === 0,
+    "(8c) seção que o documento não tem não é emitida", intrusos.join(", "));
+}
+
+// ---- 9: DRE e Fluxo de Caixa amarram com o próprio documento ---------------
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const gab = JSON.parse(
+    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+  ) as { dre_metalurgica_2025: Record<string, number>; receita_bruta_2025: number };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+
+  for (const nomeAba of ["DRE", "Fluxo de Caixa"]) {
+    const ws = wb.getWorksheet(nomeAba)!;
+    const hdr = ws.getRow(1);
+    const cols: string[] = [];
+    for (let c = 2; c <= ws.columnCount; c++) {
+      const h = String(hdr.getCell(c).value ?? "");
+      if (h && h !== "AV%" && !h.startsWith("Δ%")) cols.push(ws.getColumn(c).letter);
+    }
+    const erros: string[] = [];
+    let pares = 0;
+    for (let r = 3; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "").trim() !== "↳ total informado no documento") continue;
+      const rotuloAcima = String(ws.getRow(r - 1).getCell(1).value ?? "").trim();
+      for (const c of cols) {
+        const informado = avaliarCelula(ws, c, r);
+        if (typeof informado !== "number") continue;
+        const nosso = avaliarCelula(ws, c, r - 1);
+        pares++;
+        if (typeof nosso !== "number" || Math.abs(nosso - informado) > Math.max(0.01, Math.abs(informado) * 0.001)) {
+          erros.push(`${rotuloAcima} col ${c}: nosso=${nosso} informado=${informado}`);
+        }
+      }
+    }
+    checar(erros.length === 0 && pares > 0,
+      `(9) ${nomeAba}: as ${pares} linhas de resultado batem com o total informado`,
+      erros.slice(0, 6).join(" / "));
+  }
+
+  // E os números da DRE contra o gabarito do book, por nome de linha.
+  const ws = wb.getWorksheet("DRE")!;
+  const hdr = ws.getRow(1);
+  let col2025 = "";
+  for (let c = 2; c <= ws.columnCount; c++) {
+    const h = String(hdr.getCell(c).value ?? "");
+    if (h.includes("2025") && !h.startsWith("Δ%")) { col2025 = ws.getColumn(c).letter; break; }
+  }
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  const esperado: Array<[string, number]> = [
+    ["Receita Líquida", gab.dre_metalurgica_2025["RECEITA OPERACIONAL LÍQUIDA"]],
+    ["Lucro Bruto", gab.dre_metalurgica_2025["LUCRO BRUTO"]],
+    ["Resultado Operacional (EBIT)", gab.dre_metalurgica_2025["RESULTADO OPERACIONAL ANTES DO RESULTADO FINANCEIRO"]],
+    ["Resultado Antes dos Tributos", gab.dre_metalurgica_2025["RESULTADO ANTES DOS TRIBUTOS SOBRE O LUCRO"]],
+    ["Lucro/Prejuízo Líquido do Exercício", gab.dre_metalurgica_2025["PREJUÍZO LÍQUIDO DO EXERCÍCIO"]],
+    ["Receita Bruta e Deduções", gab.dre_metalurgica_2025["RECEITA OPERACIONAL LÍQUIDA"]],
+  ];
+  const errosGab = esperado
+    .map(([rot, exp]) => {
+      const r = linhaDe(rot);
+      const got = r > 0 ? Math.round(avaliar(ws, col2025, r)) : NaN;
+      return got === exp ? null : `${rot}: export=${got} gabarito=${exp}`;
+    })
+    .filter(Boolean) as string[];
+  checar(errosGab.length === 0, "(9b) DRE 2025 bate com o gabarito linha a linha", errosGab.join(" / "));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

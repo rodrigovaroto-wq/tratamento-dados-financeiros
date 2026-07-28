@@ -740,6 +740,10 @@ function construirAbaClassificada(
   const linhasValor = new Set<number>();
   // Balanço: nó da estrutura → linha do seu subtotal (para os indicadores).
   const noRow = new Map<string, number>();
+  // …e o VALOR do nó por coluna, para os indicadores só emitirem índice que
+  // realmente resolve (fórmula existir não basta: os insumos podem estar
+  // vazios ou o denominador zerado, e o índice sairia como linha vazia).
+  const noValor = new Map<string, Map<string, number>>();
   let baseTotalRow: number | null = null; // base da AV% (Ativo Total / Receita Líquida)
 
   const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) => {
@@ -861,9 +865,13 @@ function construirAbaClassificada(
       if (no.folha) {
         const contas = [...(contasPorSecao.get(no.key)?.values() ?? [])];
         const temAncora = valoresPorAncora.has(no.key);
-        // Subseção CPC vazia (sem contas nem total informado) não é emitida —
-        // evita 4 linhas de subgrupo em branco quando a empresa só usa uma.
-        if (no.papel === "subsecao" && contas.length === 0 && !temAncora) return null;
+        // Seção SEM NENHUM DADO não é emitida — em nenhum nível. O template
+        // canônico (CPC 26 / art. 178) existe para ORDENAR o que o documento
+        // trouxe, não para impor linhas que o documento não tem: antes, uma
+        // empresa sem Realizável LP nem Intangível ganhava linhas de subgrupo em
+        // branco, e uma sem Passivo Não Circulante ganhava um "0" que nós
+        // inventamos (o documento não disse zero — não disse nada).
+        if (contas.length === 0 && !temAncora) return null;
         // reserva o cabeçalho; escreve as contas; depois preenche a fórmula.
         const cabIdx = rowIndex++;
         const primeira = rowIndex;
@@ -909,14 +917,10 @@ function construirAbaClassificada(
             // O documento não trouxe o total desta coluna: soma as contas-folha.
             cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
             cell.numFmt = VALOR_NUM_FMT;
-          } else {
-            // seção padrão sem nenhum dado no documento: 0 explícito (a coluna
-            // fica completa, sem célula vazia solta no meio do balanço).
-            cell.value = 0;
-            cell.numFmt = VALOR_NUM_FMT;
           }
         });
         noRow.set(no.key, cabIdx);
+        noValor.set(no.key, new Map(subtotalNum));
         linhasValor.add(cabIdx);
         return { idx: cabIdx, subtotalNum };
       }
@@ -934,9 +938,15 @@ function construirAbaClassificada(
           if (v != null) subtotalNum.set(col.key, (subtotalNum.get(col.key) ?? 0) + v);
         });
       }
+      // Grupo sem nenhum filho com dado e sem total informado: não existe neste
+      // documento. Devolve a linha reservada ao pool e não emite nada.
+      const temAncoraPai = valoresPorAncora.has(no.key);
+      if (filhosIdx.length === 0 && !temAncoraPai) {
+        if (cabIdx === rowIndex - 1) rowIndex--; // nada foi escrito depois: reaproveita
+        return null;
+      }
       // Mesma regra do nó folha: o total que o documento informou manda, e a
       // soma dos filhos vira linha de checagem.
-      const temAncoraPai = valoresPorAncora.has(no.key);
       const informadoPaiIdx = temAncoraPai
         ? escreverConferenciaExtraido(no.nivel, no.key, cabIdx, subtotalNum)
         : null;
@@ -966,6 +976,7 @@ function construirAbaClassificada(
         if (dupla) cell.border = DOUBLE_TOP_BORDER;
       });
       noRow.set(no.key, cabIdx);
+      noValor.set(no.key, new Map(subtotalNum));
       linhasValor.add(cabIdx);
       return { idx: cabIdx, subtotalNum };
     };
@@ -986,13 +997,20 @@ function construirAbaClassificada(
     const dreAcumulado = new Map<string, number>(); // DRE: subtotal numérico corrido
 
     for (const secao of secoes) {
-      const hdr = sheet.getRow(rowIndex++);
-      hdr.getCell(1).value = secao.label;
-      hdr.getCell(1).alignment = { indent: 0 };
-      hdr.font = { bold: true };
-      hdr.fill = SECAO_FILL;
-      const primeira = rowIndex;
       const contas = [...(contasPorSecao.get(secao.key)?.values() ?? [])];
+      const temSubtotalInformado = (subtotaisInformados.get(secao.key)?.size ?? 0) > 0;
+      // Seção que o documento não tem: não é emitida. O template canônico ordena
+      // o que existe, não impõe blocos vazios.
+      if (contas.length === 0 && !temSubtotalInformado) continue;
+
+      // O cabeçalho da seção CARREGA O SUBTOTAL DA SEÇÃO, não só o rótulo.
+      // Antes era linha só de texto — 8 linhas 100% vazias entre DRE e Fluxo de
+      // Caixa ("Custos", "Despesas Operacionais", "Atividades Operacionais"…).
+      // E o número é o que uma DRE real imprime: o total de custos e o total de
+      // despesas operacionais são leitura de primeira ordem, distinta da cascata
+      // acumulada que a âncora abaixo mostra.
+      const cabIdx = rowIndex++;
+      const primeira = rowIndex;
       const somaSecao = new Map<string, number>();
       for (const conta of contas) {
         escrever(conta.label, 1, conta);
@@ -1003,6 +1021,27 @@ function construirAbaClassificada(
       }
       const ultima = rowIndex - 1;
       escreverSubtotaisInformados(secao.key, 1);
+
+      const hdr = sheet.getRow(cabIdx);
+      hdr.getCell(1).value = secao.label;
+      hdr.getCell(1).alignment = { indent: 0 };
+      hdr.font = { bold: true };
+      hdr.fill = SECAO_FILL;
+      if (ultima >= primeira) {
+        hdr.getCell(1).note = comoNota(
+          "Total desta seção — soma das contas listadas abaixo. Não confundir com a linha de "
+          + "resultado que vem depois: na DRE ela é cumulativa (traz o resultado acumulado até "
+          + "ali), esta é só do bloco.",
+        );
+        colunas.forEach((col, i) => {
+          if (somaSecao.get(col.key) == null) return;
+          const cell = hdr.getCell(plano.valuePos[i]);
+          cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
+          cell.numFmt = VALOR_NUM_FMT;
+          cell.font = { bold: true };
+        });
+        linhasValor.add(cabIdx);
+      }
       const ancoraSecao = ancoras.find((a) => "aposSecao" in a && (a as { aposSecao: string }).aposSecao === secao.key);
       if (ancoraSecao) {
         const idx = rowIndex++;
@@ -1110,13 +1149,38 @@ function construirAbaClassificada(
   }
 
   // ----- Contas Não Classificadas: nada desaparece silenciosamente. -----
+  // O título carrega o TOTAL do bloco por coluna. Deixa de ser linha vazia e
+  // passa a responder a pergunta que o analista faz primeiro: "quanto de valor
+  // está fora das seções?" — se for material, a planilha ainda não está pronta
+  // para virar modelo.
   if (naoClassificados.size > 0) {
     rowIndex++; // linha em branco
-    const tituloRow = sheet.getRow(rowIndex++);
+    const tituloIdx = rowIndex++;
+    const primeiraNC = rowIndex;
+    for (const conta of naoClassificados.values()) escrever(conta.label, 1, conta);
+    const ultimaNC = rowIndex - 1;
+    const tituloRow = sheet.getRow(tituloIdx);
     tituloRow.getCell(1).value = "Contas Não Classificadas (revisar manualmente)";
     tituloRow.font = { bold: true, italic: true };
     tituloRow.fill = NAO_CLASSIFICADO_FILL;
-    for (const conta of naoClassificados.values()) escrever(conta.label, 1, conta);
+    tituloRow.getCell(1).note = comoNota(
+      "Contas que o classificador não colocou numa seção com segurança. O valor ao lado é o total "
+      + "do bloco: quanto maior, menos a planilha está pronta para virar modelo. Nada foi "
+      + "descartado — cada conta aparece abaixo com o rótulo original.",
+    );
+    if (ultimaNC >= primeiraNC) {
+      colunas.forEach((col, i) => {
+        let tem = false;
+        for (const conta of naoClassificados.values()) {
+          if (valorNumDoGrupo(conta, col.key) != null) { tem = true; break; }
+        }
+        if (!tem) return;
+        const cell = tituloRow.getCell(plano.valuePos[i]);
+        cell.value = { formula: `SUM(${colLetra(i)}${primeiraNC}:${colLetra(i)}${ultimaNC})` } as ExcelJS.CellFormulaValue;
+        cell.numFmt = VALOR_NUM_FMT;
+        cell.font = { bold: true, italic: true };
+      });
+    }
   }
 
   // ----- Camada analítica (f0/08): AV% (common-size) e Δ% (tendência). -----
@@ -1126,7 +1190,7 @@ function construirAbaClassificada(
 
   // ----- Indicadores de liquidez/estrutura (Balanço) — f0/08. -----
   if (estrutura === "balanco") {
-    escreverIndicadoresBalanco(sheet, plano, colunas, noRow, () => rowIndex++);
+    escreverIndicadoresBalanco(sheet, plano, colunas, noRow, noValor, () => rowIndex++);
   }
 }
 
@@ -1183,6 +1247,7 @@ function escreverIndicadoresBalanco(
   plano: PlanoColunas,
   colunas: Coluna[],
   noRow: Map<string, number>,
+  noValor: Map<string, Map<string, number>>,
   proximaLinha: () => number,
 ) {
   const AC = noRow.get("ativo_circulante");
@@ -1198,9 +1263,38 @@ function escreverIndicadoresBalanco(
   if (AC == null || ATV == null || PC == null || PNC == null || PL == null) return;
 
   const cel = (i: number, row: number | undefined) => (row == null ? null : `${sheet.getColumn(plano.valuePos[i]).letter}${row}`);
+  // Valor de um nó na coluna i (null quando o nó não existe ou a coluna está
+  // vazia) — é com isso que decidimos se o índice resolve de verdade.
+  const val = (i: number, chave: string): number | null => {
+    const v = noValor.get(chave)?.get(colunas[i].key);
+    return typeof v === "number" ? v : null;
+  };
+  const soma = (i: number, chaves: string[]): number | null => {
+    let t: number | null = null;
+    for (const c of chaves) {
+      const v = val(i, c);
+      if (v != null) t = (t ?? 0) + v;
+    }
+    return t;
+  };
+  // Um índice só é emitido se, em ALGUMA coluna, numerador e denominador
+  // existem e o denominador não é zero.
+  const razaoResolve = (i: number, num: string[], den: string[]): boolean => {
+    const n = soma(i, num);
+    const d = soma(i, den);
+    return n != null && d != null && d !== 0;
+  };
 
-  const indicadores: Array<{ label: string; fmt: string; formula: (i: number) => string | null }> = [
-    { label: "Liquidez Corrente (AC ÷ PC)", fmt: RATIO_FMT, formula: (i) => `${cel(i, AC)}/${cel(i, PC)}` },
+  const indicadores: Array<{
+    label: string; fmt: string;
+    formula: (i: number) => string | null;
+    resolve: (i: number) => boolean;
+  }> = [
+    {
+      label: "Liquidez Corrente (AC ÷ PC)", fmt: RATIO_FMT,
+      formula: (i) => `${cel(i, AC)}/${cel(i, PC)}`,
+      resolve: (i) => razaoResolve(i, ["ativo_circulante"], ["passivo_circulante"]),
+    },
     {
       label: "Liquidez Geral ((AC + Realizável LP) ÷ (PC + PNC))",
       fmt: RATIO_FMT,
@@ -1210,10 +1304,23 @@ function escreverIndicadoresBalanco(
         const num = rlp ? `(${ac}+${rlp})` : ac;
         return `${num}/(${cel(i, PC)}+${cel(i, PNC)})`;
       },
+      resolve: (i) => razaoResolve(i, ["ativo_circulante", "realizavel_lp"], ["passivo_circulante", "passivo_nao_circulante"]),
     },
-    { label: "Endividamento Geral ((PC + PNC) ÷ Ativo Total)", fmt: PCT_FMT, formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, ATV)}` },
-    { label: "Composição do Endividamento (PC ÷ (PC + PNC))", fmt: PCT_FMT, formula: (i) => `${cel(i, PC)}/(${cel(i, PC)}+${cel(i, PNC)})` },
-    { label: "Participação de Capital de Terceiros ((PC + PNC) ÷ PL)", fmt: PCT_FMT, formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, PL)}` },
+    {
+      label: "Endividamento Geral ((PC + PNC) ÷ Ativo Total)", fmt: PCT_FMT,
+      formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, ATV)}`,
+      resolve: (i) => razaoResolve(i, ["passivo_circulante", "passivo_nao_circulante"], ["ATIVO"]),
+    },
+    {
+      label: "Composição do Endividamento (PC ÷ (PC + PNC))", fmt: PCT_FMT,
+      formula: (i) => `${cel(i, PC)}/(${cel(i, PC)}+${cel(i, PNC)})`,
+      resolve: (i) => razaoResolve(i, ["passivo_circulante"], ["passivo_circulante", "passivo_nao_circulante"]),
+    },
+    {
+      label: "Participação de Capital de Terceiros ((PC + PNC) ÷ PL)", fmt: PCT_FMT,
+      formula: (i) => `(${cel(i, PC)}+${cel(i, PNC)})/${cel(i, PL)}`,
+      resolve: (i) => razaoResolve(i, ["passivo_circulante", "passivo_nao_circulante"], ["patrimonio_liquido"]),
+    },
     {
       label: "Imobilização do PL ((Imob. + Invest. + Intang.) ÷ PL)",
       fmt: PCT_FMT,
@@ -1222,35 +1329,51 @@ function escreverIndicadoresBalanco(
         if (partes.length === 0) return null;
         return `(${partes.join("+")})/${cel(i, PL)}`;
       },
+      resolve: (i) => razaoResolve(i, ["imobilizado", "investimentos", "intangivel"], ["patrimonio_liquido"]),
     },
   ];
 
-  proximaLinha(); // linha em branco separando do balanço
-  const titulo = sheet.getRow(proximaLinha());
-  titulo.getCell(1).value = "Indicadores de Liquidez e Estrutura";
-  titulo.font = { bold: true };
-  titulo.fill = INDICADOR_TITULO_FILL;
-  titulo.getCell(1).note = comoNota(
-    "Índices calculados por fórmula sobre os subtotais extraídos deste Balanço (Matarazzo/Assaf Neto; "
-    + "f0/08). Célula vazia = insumo não disponível na extração (nunca estimado). Índices que exigem "
+  // Só indicadores que TÊM fórmula em pelo menos uma coluna. Um índice cujos
+  // insumos não existem na extração (ex.: Imobilização do PL num combinado que
+  // não detalha Imobilizado) sairia como linha 100% vazia — e linha vazia numa
+  // planilha de entrega parece defeito, não parece "insumo indisponível".
+  const comValor = indicadores.filter((ind) =>
+    colunas.some((_, i) => ind.formula(i) != null && ind.resolve(i)));
+  if (comValor.length === 0) return;
+
+  // Sem linha de título própria (era a última linha 100% vazia do Balanço): o
+  // bloco é aberto pela borda dupla e pela nota no primeiro índice. Os rótulos
+  // já explicitam a fórmula de cada um, então nada se perde.
+  const NOTA_BLOCO = comoNota(
+    "Início do bloco de INDICADORES DE LIQUIDEZ E ESTRUTURA: índices calculados por fórmula sobre os "
+    + "subtotais extraídos deste Balanço (Matarazzo/Assaf Neto; f0/08). Não são linhas do documento. "
+    + "Célula vazia = insumo não disponível na extração (nunca estimado). Índices que exigem "
     + "detalhamento de conta ainda não isolado (liquidez seca/imediata, cobertura de juros, dívida "
     + "líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') ficam de fora desta versão — ver f0/08. "
     + "Valores derivados de linhas ainda PENDENTES seguem pendentes até o aceite humano.",
   );
 
-  for (const ind of indicadores) {
+  proximaLinha(); // linha em branco separando do balanço
+  comValor.forEach((ind, ordem) => {
     const r = proximaLinha();
     const row = sheet.getRow(r);
     row.getCell(1).value = ind.label;
     row.getCell(1).font = INDICADOR_LABEL_FONT;
+    if (ordem === 0) {
+      row.getCell(1).font = { ...INDICADOR_LABEL_FONT, bold: true };
+      row.getCell(1).fill = INDICADOR_TITULO_FILL;
+      row.getCell(1).note = NOTA_BLOCO;
+      row.getCell(1).border = DOUBLE_TOP_BORDER;
+    }
     colunas.forEach((_, i) => {
       const f = ind.formula(i);
       if (!f) return;
       const cell = row.getCell(plano.valuePos[i]);
       cell.value = { formula: `IFERROR(${f},"")` } as ExcelJS.CellFormulaValue;
       cell.numFmt = ind.fmt;
+      if (ordem === 0) cell.border = DOUBLE_TOP_BORDER;
     });
-  }
+  });
 }
 
 // ----- Aba simples (Faturamento/Dívida/Fluxo Projetado/Outros) -------------
