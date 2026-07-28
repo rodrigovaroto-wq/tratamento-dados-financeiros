@@ -4,10 +4,10 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #51** (commit de merge
-`8a2a271`). **PR #52 aberto (draft)** — export sem linha vazia + categorização da DRE/Fluxo. Branch de
-trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de `origin/main` no início de cada
-sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
+**Última atualização:** 2026-07-28. **Estado do `main`:** tudo mergeado até o **PR #52** (commit de
+merge `96f4006`) — nada em aberto. Branch de trabalho `claude/handoff-continuation-2oecw8`, sempre
+restartada de `origin/main` no início de cada sessão nova — ver "Git / PR workflow" na seção 4 abaixo
+antes de commitar.
 
 ## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v26 a qualquer momento
 
@@ -1435,8 +1435,8 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   em cima de branch cujo PR já foi mergeado. A **próxima sessão deve fazer o mesmo**: checar se o
   PR desta branch já foi mergeado e, se sim, restartar do `main`. Padrão no meio do trabalho:
   `git fetch origin main && git rebase origin/main` (ou `git checkout -B claude/<nome> origin/main`).
-- Branch usada nas sessões 7-10: `claude/handoff-continuation-2oecw8` — **13 PRs** a partir dela
-  (#39-#51 mergeados, #52 em aberto), restartada de `origin/main` a cada vez que um PR fechava.
+- Branch usada nas sessões 7-10: `claude/handoff-continuation-2oecw8` — **14 PRs mergeados** a partir
+  dela (#39-#52), restartada de `origin/main` a cada vez que um PR fechava.
   **Padrão obrigatório**: quando o PR da branch é mergeado, restarte do `main` atualizado
   (`git fetch origin main && git checkout -B claude/handoff-continuation-2oecw8 origin/main`) — nunca
   empilhe em cima de histórico já mergeado.
