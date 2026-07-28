@@ -140,3 +140,58 @@ Circulante; `secao="Imobilizado"` + `chave="Terrenos"` caía em Não Classificad
 Ficam **de fora** da lista, de propósito, os cabeçalhos que existem nos dois lados do balanço —
 "Fornecedores", "Empréstimos e Financiamentos", "Partes Relacionadas", "Provisões". Chutar o lado
 deles distorceria liquidez e endividamento; eles continuam decididos pelo rótulo + consenso de irmãos.
+
+---
+
+## Emenda — nenhuma linha 100% vazia: o template ORDENA, não impõe
+
+Pedido do dono depois do v25: "estruture a categoria de todas as linhas de todas as abas para que
+nenhuma fique 100% vazia — leia dos dados, identifique em que categoria estão, e monte o balanço, a
+DRE, o FDC a partir disso". Medindo o export do book: **14 linhas** sem valor em coluna nenhuma.
+Nenhuma era falta de dado: era o template canônico sendo emitido às cegas, e — pior — duas
+demonstrações inteiras não fechavam por causa de linhas mal categorizadas.
+
+**Princípio travado aqui:** o template (CPC 26 / Lei 6.404 art. 178 no Balanço, cascata na DRE,
+CPC 03 no Fluxo) existe para **ORDENAR** o que o documento trouxe. Ele nunca impõe uma linha que o
+documento não tem, e nunca inventa um valor para preencher.
+
+1. **Seção sem nenhum dado não é emitida** — em nenhum nível. Antes, uma empresa sem Realizável a
+   Longo Prazo nem Intangível ganhava linhas de subgrupo em branco, e uma sem Passivo Não Circulante
+   ganhava um `0` que **nós** escrevíamos: o documento não disse zero, não disse nada. Zero só
+   aparece quando o documento diz zero.
+2. **Cabeçalho de seção da DRE e do Fluxo passa a carregar o subtotal da seção** (era rótulo puro).
+   Além de eliminar 8 linhas vazias, é o que uma DRE real imprime: o total de Custos e o total de
+   Despesas Operacionais são leitura de primeira ordem, distinta da cascata acumulada da âncora.
+3. **"Contas Não Classificadas" carrega o total do bloco.** Deixa de ser título vazio e passa a
+   responder a primeira pergunta do analista: *quanto de valor está fora das seções?* — se for
+   material, a planilha ainda não está pronta para virar modelo.
+4. **Bloco de indicadores sem linha de título** (era a última linha vazia do Balanço): abre com borda
+   dupla e a nota explicativa no primeiro índice. E **índice que não resolve em nenhuma coluna não é
+   emitido** — antes, Imobilização do PL saía vazia num combinado que não detalha Imobilizado, e
+   linha vazia numa planilha de entrega parece defeito, não parece "insumo indisponível".
+
+### Categoria vem do documento, não do vocabulário do rótulo
+
+Medindo, apareceram dois defeitos de categorização que estavam **escondidos** atrás das linhas vazias:
+
+- **A cascata da DRE fechava em −27.550 onde o documento diz −17.901.** Duas contas de Despesas
+  Operacionais ("(-) Honorários da administração", "(-) Provisão para contingências trabalhistas e
+  cíveis") caíam fora da seção, e a conta residual "Outras receitas (despesas) operacionais,
+  líquidas" era tratada como **a linha de Receita Operacional Líquida**.
+- **No Fluxo, "Prejuízo líquido do exercício" era tratado como o Caixa Líquido das Atividades
+  Operacionais** e "Mútuos recebidos da controladora" como o Caixa Líquido de Financiamento — a
+  seção operacional saía sem o prejuízo, que é a primeira linha do método indireto.
+
+Causa comum: a detecção de âncora (linha de total) recebia `secao + rótulo` juntos e casava por
+**conjunto de palavras, sem ordem**. Uma conta herdava as palavras do cabeçalho da seção e virava o
+total dela. Duas regras novas:
+
+- **Âncora olha só o RÓTULO.** A seção é contexto de desambiguação, não parte do nome.
+- **Âncora tem de PARECER legenda de total** (`ehLegendaDeTotal`): não pode ser conta de detalhe
+  (`(-) …`, `Outras …`, `Variação em …`) e não pode trazer muita palavra significativa além da
+  legenda. Palavras de fraseado ("gerado pelas", "aplicado nas", "atividades") não contam — é assim
+  que demonstração brasileira escreve, e penalizá-las reprovava justamente as legendas mais comuns.
+
+E, como no Balanço, **a seção declarada pelo documento manda** na DRE e no Fluxo
+(`SECAO_DECLARADA_DRE`, `SECAO_DECLARADA_FLUXO`): se o arquivo imprimiu a conta debaixo de "DESPESAS
+OPERACIONAIS", ela é despesa operacional — não interessa se o rótulo dela está no nosso vocabulário.

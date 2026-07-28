@@ -82,6 +82,57 @@ function contemAlgumaFrase(tokens: Set<string>, frases: string[]): boolean {
   return frases.some((frase) => contemFrase(tokens, frase));
 }
 
+// Marcadores de CONTA DE DETALHE: uma linha assim nunca é o total da seção.
+// "(-) ..."/"(+) ..." é lançamento; "Outras/Outros ..." é conta residual;
+// "Variação em ..." é ajuste do método indireto.
+const RE_CONTA_DETALHE = /^\s*[([]?\s*[-+]|^\s*outr[ao]s?\b|^\s*variac|^\s*\(-\)/i;
+
+/**
+ * A linha É a legenda de um total/resultado (âncora), e não uma conta que por
+ * acaso repete algumas palavras dela?
+ *
+ * `contemFrase` casa por CONJUNTO de palavras, sem ordem — o que é ótimo para
+ * tolerar "Duplicatas a receber de clientes" × "Clientes a receber", e péssimo
+ * para âncora: "Outras receitas (despesas) operacionais, líquidas" contém
+ * "receita" e "líquida", então casava "receita liquida" e a conta era tratada
+ * como a linha de RECEITA OPERACIONAL LÍQUIDA (achado no book: a cascata da DRE
+ * fechava em -27.550 onde o documento diz -17.901).
+ *
+ * Critério: além de conter todas as palavras da legenda, o rótulo não pode ser
+ * conta de detalhe nem trazer MUITA palavra a mais — legenda de total é curta e
+ * quase toda ela é a própria legenda ("RECEITA OPERACIONAL LÍQUIDA" tem 1
+ * palavra a mais que "receita líquida"; a conta residual acima tem 3).
+ */
+// Palavras de FRASEADO que uma legenda de total carrega sem mudar de sentido.
+// Demonstração brasileira escreve "Caixa líquido GERADO PELAS (APLICADO NAS)
+// ATIVIDADES de investimento" — cinco palavras a mais que "caixa líquido
+// investimento", e nenhuma delas muda o que a linha é. Sem esta lista, a
+// tolerância de "palavras a mais" reprovava justamente as legendas mais
+// verbosas, que são as mais comuns em arquivo real.
+const FRASEADO_DE_LEGENDA = new Set([
+  "gerado", "gerada", "aplicado", "aplicada", "consumido", "consumida", "utilizado", "utilizada",
+  "proveniente", "obtido", "obtida", "oriundo", "oriunda", "decorrente", "atividade", "operacao",
+  "pela", "pelo", "na", "no", "exercicio", "periodo", "ano", "total", "geral", "valor",
+]);
+
+function ehLegendaDeTotal(chave: string, tokensChave: Set<string>, frase: string, maxExtras = 2): boolean {
+  if (RE_CONTA_DETALHE.test(chave)) return false;
+  if (!contemFrase(tokensChave, frase)) return false;
+  const daFrase = new Set(
+    normalizar(frase).split(/[^a-z0-9]+/).filter(Boolean).map(singularizar).filter((t) => !CONECTIVOS.has(t)),
+  );
+  let extras = 0;
+  for (const t of tokensChave) {
+    if (daFrase.has(t) || FRASEADO_DE_LEGENDA.has(t)) continue;
+    extras++;
+  }
+  return extras <= maxExtras;
+}
+
+function ehLegendaDeAlgumTotal(chave: string, tokensChave: Set<string>, frases: string[], maxExtras = 2): boolean {
+  return frases.some((f) => ehLegendaDeTotal(chave, tokensChave, f, maxExtras));
+}
+
 export interface SecaoDef {
   key: string;
   label: string;
@@ -423,6 +474,54 @@ export const BALANCO_OUTLINE: NoBalanco[] = [
 ];
 
 // ----- DRE (cascata sequencial Receita → Lucro Líquido) --------------------
+// Nomes de SEÇÃO que a demonstração declara e que identificam o bloco sem
+// ambiguidade. Mesmo princípio do Balanço (`SUBSECAO_AUTORITATIVA`): se o
+// documento imprimiu a conta debaixo de "DESPESAS OPERACIONAIS", ela é despesa
+// operacional — não interessa se o rótulo dela está no nosso vocabulário.
+// Sem isto, "(-) Honorários da administração" e "(-) Provisão para
+// contingências trabalhistas e cíveis" caíam fora da seção e a cascata da DRE
+// não fechava com o total informado.
+const SECAO_DECLARADA_DRE: Array<[string, string]> = [
+  ["receita operacional bruta", "receita_bruta"],
+  ["receita bruta", "receita_bruta"],
+  ["deducoes da receita", "receita_bruta"],
+  ["deducao da receita", "receita_bruta"],
+  ["custo dos produtos vendidos", "custos"],
+  ["custo das mercadorias vendidas", "custos"],
+  ["custo dos servicos prestados", "custos"],
+  ["custo dos produtos", "custos"],
+  ["custos operacionais", "custos"],
+  ["despesas operacionais", "despesas_operacionais"],
+  ["despesas administrativas", "despesas_operacionais"],
+  ["despesas comerciais", "despesas_operacionais"],
+  ["despesas com vendas", "despesas_operacionais"],
+  ["resultado financeiro", "resultado_financeiro"],
+  ["despesas financeiras", "resultado_financeiro"],
+  ["receitas financeiras", "resultado_financeiro"],
+  ["tributos sobre o lucro", "impostos_lucro"],
+  ["impostos sobre o lucro", "impostos_lucro"],
+  ["provisao para imposto de renda", "impostos_lucro"],
+];
+
+const SECAO_DECLARADA_FLUXO: Array<[string, string]> = [
+  ["atividades operacionais", "atividades_operacionais"],
+  ["fluxo de caixa das atividades operacionais", "atividades_operacionais"],
+  ["atividades de investimento", "atividades_investimento"],
+  ["fluxo de caixa das atividades de investimento", "atividades_investimento"],
+  ["atividades de financiamento", "atividades_financiamento"],
+  ["fluxo de caixa das atividades de financiamento", "atividades_financiamento"],
+];
+
+function secaoDeclarada(tokensSecao: Set<string>, mapa: Array<[string, string]>): string | null {
+  if (tokensSecao.size === 0) return null;
+  // Mais específico primeiro: "custo dos produtos vendidos" antes de "custo".
+  const ordenado = [...mapa].sort((a, b) => b[0].length - a[0].length);
+  for (const [frase, key] of ordenado) {
+    if (contemFrase(tokensSecao, frase)) return key;
+  }
+  return null;
+}
+
 export const DRE_SECOES: SecaoDef[] = [
   { key: "receita_bruta", label: "Receita Bruta e Deduções" },
   { key: "custos", label: "Custos" },
@@ -459,19 +558,30 @@ function ehSubtotalRedundanteDRE(chave: string): boolean {
 
 export function classificarDRE(secao: string | null, chave: string): Classificacao {
   const tokens = tokensDe(`${secao || ""} ${chave}`);
+  // ÂNCORA olha só o RÓTULO. Misturar o nome da seção fazia a conta herdar as
+  // palavras do cabeçalho e virar "total da seção" — no book, "Mútuos recebidos
+  // da controladora" ficava sendo o Caixa Líquido de Financiamento porque a
+  // seção se chama "FLUXO DE CAIXA DAS ATIVIDADES DE FINANCIAMENTO".
+  const tk = tokensDe(chave);
 
-  if (contemFrase(tokens, "receita liquida")) return { secaoKey: null, ancoraKey: "receita_liquida" };
-  if (contemAlgumaFrase(tokens, ["lucro bruto", "resultado bruto"])) return { secaoKey: null, ancoraKey: "lucro_bruto" };
-  if (contemAlgumaFrase(tokens, ["resultado operacional", "ebit", "lucro operacional"])) {
+  if (ehLegendaDeTotal(chave, tk, "receita liquida")) return { secaoKey: null, ancoraKey: "receita_liquida" };
+  if (ehLegendaDeAlgumTotal(chave, tk, ["lucro bruto", "resultado bruto"])) return { secaoKey: null, ancoraKey: "lucro_bruto" };
+  if (ehLegendaDeAlgumTotal(chave, tk, ["resultado operacional", "ebit", "lucro operacional"], 4)) {
     return { secaoKey: null, ancoraKey: "resultado_operacional" };
   }
-  if (contemAlgumaFrase(tokens, ["resultado antes dos tributos", "lucro antes dos impostos", "lair"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["resultado antes dos tributos", "lucro antes dos impostos", "lair"], 3)) {
     return { secaoKey: null, ancoraKey: "resultado_antes_tributos" };
   }
-  if (contemAlgumaFrase(tokens, ["lucro liquido", "prejuizo liquido", "resultado liquido do exercicio"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["lucro liquido", "prejuizo liquido", "resultado liquido do exercicio"])) {
     return { secaoKey: null, ancoraKey: "lucro_liquido" };
   }
   if (ehSubtotalRedundanteDRE(chave)) return SEM_CLASSIFICACAO;
+
+  // A seção que o DOCUMENTO declarou manda, quando é um bloco reconhecível da
+  // DRE. Vem antes do passe por palavra-chave do rótulo (que é adivinhação).
+  const declarada = secaoDeclarada(tokensDe(secao || ""), SECAO_DECLARADA_DRE);
+  if (declarada) return { secaoKey: declarada, ancoraKey: null };
+
   if (contemAlgumaFrase(tokens, [
     "receita bruta", "receita operacional bruta", "receita de venda", "receita com venda", "receita de servico",
     "receita de mercadoria", "venda de mercadoria", "venda de produto", "receita de produto",
@@ -521,33 +631,42 @@ export const FLUXO_CAIXA_ANCORAS = [
 
 export function classificarFluxoCaixa(secao: string | null, chave: string): Classificacao {
   const tokens = tokensDe(`${secao || ""} ${chave}`);
+  const tk = tokensDe(chave); // âncora olha só o rótulo — ver classificarDRE
 
   // Saldos de caixa: documentos reais frequentemente NÃO usam a palavra
   // "saldo" — escrevem "Caixa e Equivalentes de Caixa no Final/Início do
   // Período". Casa também esse padrão (caixa/equivalente + final|inicio +
   // periodo|exercicio), sem casar a linha do Balanço "Caixa e Equivalentes
   // de Caixa" (que não tem final/inicio/periodo).
-  if (contemAlgumaFrase(tokens, ["saldo final caixa", "caixa saldo final", "caixa final periodo", "caixa final exercicio", "equivalente caixa final"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["saldo final caixa", "caixa saldo final", "caixa final periodo", "caixa final exercicio", "equivalente caixa final"], 3)) {
     return { secaoKey: null, ancoraKey: "saldo_final_caixa" };
   }
-  if (contemAlgumaFrase(tokens, ["saldo inicial caixa", "caixa saldo inicial", "caixa inicio periodo", "caixa inicio exercicio", "equivalente caixa inicio"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["saldo inicial caixa", "caixa saldo inicial", "caixa inicio periodo", "caixa inicio exercicio", "equivalente caixa inicio"], 3)) {
     return { secaoKey: null, ancoraKey: "saldo_inicial_caixa" };
   }
-  if (contemAlgumaFrase(tokens, [
+  // "REDUÇÃO LÍQUIDA DE CAIXA E EQUIVALENTES DE CAIXA" é legenda de total, mas
+  // começa com palavra que o filtro de conta-detalhe não pega — e "Variação em
+  // contas a receber" (conta do método indireto) pega. Por isso a lista de
+  // frases aqui não inclui "variacao ... caixa" sozinho.
+  if (ehLegendaDeAlgumTotal(chave, tk, [
     "aumento caixa", "reducao caixa", "variacao liquida caixa", "diminuicao caixa",
     "acrescimo caixa", "decrescimo caixa", "acrescimo equivalente caixa", "decrescimo equivalente caixa",
-  ])) {
+  ], 3)) {
     return { secaoKey: null, ancoraKey: "variacao_liquida_caixa" };
   }
-  if (contemAlgumaFrase(tokens, ["caixa liquido atividades operacional", "caixa gerado atividades operacional", "total atividades operacional"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["caixa liquido atividades operacional", "caixa gerado atividades operacional", "total atividades operacional"], 3)) {
     return { secaoKey: null, ancoraKey: "caixa_operacional" };
   }
-  if (contemAlgumaFrase(tokens, ["caixa liquido investimento", "total atividades investimento"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["caixa liquido investimento", "total atividades investimento"], 3)) {
     return { secaoKey: null, ancoraKey: "caixa_investimento" };
   }
-  if (contemAlgumaFrase(tokens, ["caixa liquido financiamento", "total atividades financiamento"])) {
+  if (ehLegendaDeAlgumTotal(chave, tk, ["caixa liquido financiamento", "total atividades financiamento"], 3)) {
     return { secaoKey: null, ancoraKey: "caixa_financiamento" };
   }
+
+  // A seção declarada pelo documento manda (ver classificarDRE).
+  const declaradaFx = secaoDeclarada(tokensDe(secao || ""), SECAO_DECLARADA_FLUXO);
+  if (declaradaFx) return { secaoKey: declaradaFx, ancoraKey: null };
   if (contemAlgumaFrase(tokens, [
     "atividades investimento", "aquisicao imobilizado", "aquisicao intangivel", "venda ativo", "alienacao ativo",
   ])) {

@@ -4,56 +4,149 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-27. **Estado do `main`:** tudo mergeado até o **PR #48** (commit de
-merge `8278765`). Branch de trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de
-`origin/main` no início de cada sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de
-commitar.
+**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #51** (commit de merge
+`8a2a271`). **PR #52 aberto (draft)** — export sem linha vazia + categorização da DRE/Fluxo. Branch de
+trabalho `claude/handoff-continuation-2oecw8`, sempre restartada de `origin/main` no início de cada
+sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
 
-## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v25 a qualquer momento
+## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v26 a qualquer momento
 
-O dono acabou de mergear o **PR #48** (correções do teste v24) e vai:
+Pendências do dono (as duas únicas; nenhuma exige reimportar o N8N):
 
-1. aplicar a **`db/migrations/0022_periodo_por_ano_e_guardas.sql`** no Supabase,
-2. **reimportar** o `n8n/workflow.e1-ingestao.json` no N8N (fix do período vindo do nome do arquivo),
-3. **re-exportar** o book de teste e mandar o `.xlsx` + prints.
+1. aplicar a **`db/migrations/0023_reconciliacao_sem_ruido.sql`** no Supabase (do PR #50);
+2. **re-exportar** o book e mandar o `.xlsx` + prints.
 
-**Quando esse resultado chegar, é aí que a sessão começa.** O protocolo que funcionou nas três
-rodadas anteriores (v20 → v22 → v24) e que você deve repetir:
+**Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
+v24 → v25 e que você deve repetir:
 
-1. **Abra o `.xlsx` de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad; leia
-   `data_only=False` pra ver as **fórmulas** (o export emite fórmula, não valor) e compare `SUM(...)`
-   contra a linha "total informado no documento" de cada seção.
-2. **Compare com o gabarito** em `test-data/book-vertentes/` (o `README.md` lista as 10 armadilhas
-   deliberadas e os números esperados). O gerador é determinístico: `python3 gerar.py` reproduz.
-3. **Separe extração de agregação.** No v24 a extração estava perfeita ao centavo — o que quebrava
-   era classificação/agregação no `portal/src/lib/`. Esse diagnóstico economiza a rodada inteira:
-   se o "total informado" bate com o gabarito, o bug **não** é na IA nem no prompt.
-4. **Rode `npx tsx portal/scripts/verificar-export.mts`** antes e depois. São 8 invariantes
-   (`SUM == informado`, subtotal visível fora da soma, zero não classificadas, adiantamento no
-   passivo, ordem cronológica, colunas de ajuste). **Todo bug novo de export vira invariante nova
-   nesse arquivo** — foi assim que a dupla contagem parou de voltar.
-5. **Fatie e mergeie separado.** O dono pediu explicitamente que nada fique pela metade por falta de
+1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
+   `npx tsx portal/scripts/verificar-export.mts` (21 invariantes) e `db/test/run.sh` (21 asserts).
+   Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
+2. **Abra o `.xlsx` do dono de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad,
+   `data_only=False` (o export emite **fórmula**, não valor).
+   ⚠️ **Não conclua nada de fórmula sem AVALIAR a fórmula.** Isso já me enganou: um script bobo
+   apontou 13 linhas "vazias" na DRE que só carregavam `=B10+SUM(B13:B16)`, que ele não sabia
+   resolver. Use `portal/scripts/lib/avaliar-formula.mts` (resolve `SUM`/refs/aritmética/`IFERROR`).
+3. **Compare com o gabarito** em `test-data/book-vertentes/pdf/GABARITO.json`. O gerador é
+   determinístico (`python3 gerar.py`), e o `README.md` lista as 10 armadilhas deliberadas.
+4. **Separe extração de agregação.** Em v24 e v25 a extração estava perfeita ao centavo — o que
+   quebrava era classificação/agregação no `portal/src/lib/`. Se o "total informado" bate com o
+   gabarito, o bug **não** é na IA nem no prompt. Esse único passo economiza a rodada inteira.
+5. **Todo bug novo vira invariante** em `verificar-export.mts` ou `db/test/reconciliacao.test.sql`.
+   E **prove que o invariante novo não é vazio**: desligue o fix e confirme que ele falha. Foi assim
+   que descobri que o invariante que escrevi no PR #48 passava verde com 36 somas erradas.
+6. **Fatie e mergeie separado.** O dono pediu que nada fique pela metade por falta de
    crédito/contexto: cada fatia é um commit testado + push + **PR draft**, mergeável sozinha.
 
-### As 3 fatias já diagnosticadas e ainda NÃO feitas (têm prioridade se o v25 vier limpo)
+### Fatias diagnosticadas e ainda NÃO feitas
 
-- **DMPL/DVA não existem na taxonomia.** A DMPL do book foi classificada como "Mútuos" porque a IA
+- **DMPL/DVA não existem na taxonomia.** A DMPL do book é classificada como "Mútuos" porque a IA
   escolhe o código mais próximo do que existe. Precisa de migration na taxonomia (`0002` é a seed;
   siga o padrão) + menção no `SYSTEM_PROMPT` (`n8n/lib/extract.mjs`, **fonte única** — o gerador
   importa e embute; nunca parafraseie) + aba própria no export + reextração dos documentos afetados.
-- **Reconciliação: somar as linhas da seção quando não há linha de total.** A checagem falha com
-  "Não foi possível localizar a Receita Operacional Bruta na DRE" porque no book "RECEITA OPERACIONAL
-  BRUTA" é **cabeçalho sem valor** (as contas são "Vendas de produtos…"). Convenção comum de
-  demonstração BR, não defeito do book. Correto: somar os membros da seção como fallback. Mexe em
-  `db/migrations` (checagens Classe A/B).
 - **PDF como texto em vez de imagem + `.docx`/`.xlsx`** via nó *Extract From File* no N8N. **Maior
   alavanca que resta**: 60-80% do custo de input, mais precisão numérica, e fecha o gap crítico de
   formato (hoje `.docx`/`.xlsx` do dono não entram). **Exige o N8N vivo** — não implemente às cegas,
   peça ao dono pra abrir o workflow junto. Ver `docs/CUSTO_OPENAI.md`.
+- **Dois itens de resolução de ENTIDADE no N8N**, vistos comparando v24 × v25 e não corrigidos porque
+  são do intake, não do export: (a) a Metalúrgica aparece com grafia diferente das outras empresas
+  (`Vertentes Metalúrgica Ltda.` × `VERTENTES METALÚRGICA LTDA.`), o que sugere **registro de entidade
+  duplicado**; (b) as linhas extraídas caíram de **772 → 661** entre v24 e v25 sem explicação — vale
+  conferir no reprocessamento.
 
 Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
 marcação do que já foi feito). Dois itens de dinheiro parado lá: `fn_registrar_documento` não é
 idempotente por hash (paga extração repetida) e existe um overload morto de 14 argumentos.
+
+## Sessão 10 — Teste v25: reconciliação sem ruído, export que fecha (PRs #49-#52)
+
+Três rodadas encadeadas a partir do `.xlsx` do **teste v25** e do print da fila com **36 pendências
+de reconciliação**. A lição transversal: **medir e reproduzir antes de mexer** — em duas das três
+rodadas o que eu "sabia" estava errado.
+
+### PR #50 — reconciliação: 36 pendências → 0 (`db/migrations/0023`)
+
+Reproduzi as 36 num fixture de **extração fiel** dos 14 documentos (`db/test/gerar_fixture.py`, gerado
+do próprio gerador do book) ANTES de mexer em qualquer linha. Deu exatamente 36 — o fixture é fiel.
+A invariante que ele trava: **extração fiel não abre pendência nenhuma.** Cinco causas:
+
+1. **Ausência de documento virava pendência** (20 das 36). O fato era VERDADEIRO — o book só tem DFC
+   da Metalúrgica. Mas reconciliação não é o canal disso: documento que falta é cobrança do
+   **checklist do Kit Básico** (`fn_recomputar_completude`), que já rastreia com estado próprio.
+   Emitir aqui também duplica o sinal e enche a fila de itens que o humano **não tem como acionar** —
+   não há correção a fazer, o arquivo não foi entregue. E escala com entidades × períodos × checagens.
+   Agora a tentativa segue registrada em `reconciliacao` (auditoria intacta) sem abrir pendência.
+2. **O COMBINADO não era aceito como balanço** (4 pendências "Nenhum Balanço classificado" para o
+   grupo, sendo que o documento 06 É o balanço combinado dele). `fn_documento_balanco` aceita
+   BALANCO → COMBINADO → BALANCETE.
+3. **Coluna era ignorada.** `fn_valor_conceito` pegava `limit 1` na versão inteira: num comparativo
+   isso compara o Ativo de um ano contra o Passivo de outro, e um desequilíbrio de 2024 passava
+   batido. Novo `fn_valor_conceito_col` + `fn_coluna_entidade`/`fn_coluna_periodo_do_ano`, e a
+   checagem roda **uma vez por ano declarado** — o comparativo agora é conferido nos dois.
+4. **Total de seção sem linha de total** ("RECEITA OPERACIONAL BRUTA" é cabeçalho sem valor em
+   demonstração BR). `fn_soma_secao` soma as contas-folha, excluindo o total da própria seção, as
+   **seções irmãs** ("DEDUÇÕES DA RECEITA BRUTA" casa os mesmos termos) e as **âncoras de cascata**
+   ("RECEITA OPERACIONAL LÍQUIDA" herda a `secao` do bloco anterior) — os dois só apareceram testando.
+5. **Escala divergente recusava a comparação.** Com as duas escalas declaradas e conhecidas, converter
+   é determinístico: `fn_fator_escala`/`fn_valor_em_base`. Recusa só escala ausente ou fora do
+   vocabulário canônico.
+
+Mais dois achados do próprio fixture: `fn_coluna_periodo_do_ano` distingue "documento sem coluna de
+período" de "tem colunas mas nenhuma desse ano" (sem isso a DFC, que cobre só 2025, era comparada
+contra o Disponível de **2024**); e a pendência é idempotente por período **compatível**, não igual,
+porque a mesma checagem chega por dois documentos com granularidade diferente.
+
+### PR #50 (2ª parte) — a dupla contagem do export NÃO estava corrigida
+
+O invariante que escrevi no PR #48 passava verde enquanto **36 de 44 somas do Balanço divergiam**,
+várias exatamente 2,00x — o fixture sintético não reproduzia os dois casos reais: a IA anotando a
+seção de TOPO em vez da subseção, e o **mesmo rótulo sendo subtotal num documento e conta-folha em
+outro** (o export junta os dois na mesma linha).
+
+Correção que não depende de acertar a hierarquia: **quando o documento traz o total da seção, ELE é o
+número da seção.** O cabeçalho aponta para a célula do valor extraído (`=<célula>`, fórmula — a
+planilha segue viva e a proveniência fica a um clique) e a nossa soma vira `↳ soma das contas
+listadas (checagem)`, pintada quando diverge. Errar a detecção passa a ser **ruído visível**, não
+total silenciosamente errado — e AV%, Δ% e indicadores usam o número autoritativo.
+
+### PR #52 — nenhuma linha 100% vazia, e categoria vem do documento
+
+Pedido do dono. Medindo: 14 linhas sem valor em coluna nenhuma — nenhuma era falta de dado, era o
+template emitido às cegas. **Princípio travado:** o template (CPC 26 / art. 178, cascata da DRE,
+CPC 03) **ORDENA** o que o documento trouxe; nunca impõe linha que ele não tem nem inventa valor
+(inclusive o `0` que nós escrevíamos quando o documento não disse *nada*).
+
+Mas o que importava eram **dois defeitos escondidos atrás das linhas vazias**:
+
+- **A cascata da DRE fechava em −27.550 onde o documento diz −17.901**: duas contas de Despesas
+  Operacionais fora da seção, e a conta residual "Outras receitas (despesas) operacionais, líquidas"
+  tratada como **A LINHA** de Receita Operacional Líquida.
+- **No Fluxo, "Prejuízo líquido do exercício" era o Caixa Líquido das Atividades Operacionais** — a
+  seção operacional saía sem o prejuízo, que é a primeira linha do método indireto (18.991 × 1.090).
+
+Causa comum: a detecção de âncora recebia `secao + rótulo` juntos e casava por **conjunto de palavras,
+sem ordem** — a conta herdava as palavras do cabeçalho e virava o total dele. Agora **âncora olha só o
+rótulo** e tem de **parecer legenda de total** (`ehLegendaDeTotal`: não pode ser conta de detalhe
+`(-) …`/`Outras …`/`Variação em …`, nem trazer muita palavra significativa além da legenda; palavras
+de fraseado como "gerado pelas"/"aplicado nas"/"atividades" não contam — é assim que demonstração
+brasileira escreve). E **a seção declarada pelo documento manda** na DRE e no Fluxo, como já era no
+Balanço.
+
+### PR #49 e #51 — housekeeping
+
+#49 foi handoff. #51 reverteu `ca59311` ("Add files via upload"), 15 `.mp3` de outro projeto que o
+dono subiu por engano na raiz. Os blobs seguem no histórico (revert não reescreve); apagar de vez
+exige force-push no `main`, oferecido e não executado.
+
+### Ferramentas novas que ficam
+
+- **`db/test/run.sh`** — recria banco, aplica as 23 migrations, carrega o fixture do book e roda
+  `db/test/reconciliacao.test.sql` (**21 asserts**). Cada checagem tem um caso **negativo** provando
+  que ainda pega o erro real, e todos auto-resolvem quando o número é corrigido.
+- **`portal/scripts/lib/avaliar-formula.mts`** — avaliador de `SUM`/refs/aritmética/`IFERROR`. Sem ele
+  os invariantes mediam a coisa errada.
+- **`verificar-export.mts` foi de 8 → 21 verificações**, incluindo dois end-to-end contra o
+  `GABARITO.json`: as 60 seções do Balanço e a DRE 2025 linha a linha.
 
 ## Sessão 9 — Correções do teste v24 (PRs #47-#48)
 
@@ -98,7 +191,8 @@ Ativo 121.198). O que estava quebrado eram **classificação e agregação**. Se
   calculado sobre coluna de ajuste. Agora são reconhecidas, **rotuladas** ("ajuste — não é entidade" /
   "total do documento — não somar com as demais"), vão pro fim e não recebem AV%/Δ%.
 
-**Ferramenta nova que fica:** `portal/scripts/verificar-export.mts` (8 invariantes, `npx tsx`).
+**Ferramenta nova que fica:** `portal/scripts/verificar-export.mts` (8 invariantes nesta sessão; 21
+depois da sessão 10).
 Validação da rodada: n8n **83/83**; migrations **0001–0022** limpas em Postgres 16 local com os
 cenários do v24 exercitados (período equivalente → 0 pendências; divergência real 2025×2023 → 1;
 reconciliação cross-granularidade → `ok`; guarda sem falso positivo mas ainda pegando fabricação
@@ -193,10 +287,9 @@ Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila 
   ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
 
 **Pendente agora — ver a seção "⚠️ COMECE AQUI" no topo deste arquivo.** Resumo: o dono aplica a
-`0022` no Supabase, reimporta o workflow no N8N e manda o export v25; as 3 fatias já diagnosticadas
-e não feitas são DMPL/DVA na taxonomia, soma de seção na reconciliação quando não há linha de total, e
-PDF-como-texto + `.docx`/`.xlsx` (essa exige o N8N vivo). Backlog largo em
-`docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
+`0023` no Supabase e manda o export v26; as fatias não feitas são DMPL/DVA na taxonomia,
+PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no intake.
+Backlog largo em `docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
 
 **Regra que vale pra qualquer reimportação/migration:** só afeta extrações **NOVAS** — documento já
 extraído não muda retroativamente, precisa reextração explícita.
@@ -1342,9 +1435,14 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   em cima de branch cujo PR já foi mergeado. A **próxima sessão deve fazer o mesmo**: checar se o
   PR desta branch já foi mergeado e, se sim, restartar do `main`. Padrão no meio do trabalho:
   `git fetch origin main && git rebase origin/main` (ou `git checkout -B claude/<nome> origin/main`).
-- Branch usada nas sessões 7-9: `claude/handoff-continuation-2oecw8` — **9 PRs mergeados** a partir
-  dela (#39-#48), restartada de `origin/main` a cada vez que um PR fechava. Depois do merge do #48 ela
-  já está reapontada para o `main` atualizado, pronta pra receber trabalho novo.
+- Branch usada nas sessões 7-10: `claude/handoff-continuation-2oecw8` — **13 PRs** a partir dela
+  (#39-#51 mergeados, #52 em aberto), restartada de `origin/main` a cada vez que um PR fechava.
+  **Padrão obrigatório**: quando o PR da branch é mergeado, restarte do `main` atualizado
+  (`git fetch origin main && git checkout -B claude/handoff-continuation-2oecw8 origin/main`) — nunca
+  empilhe em cima de histórico já mergeado.
+- O stop-hook local reclama dos **merge commits do próprio GitHub** (committer `noreply@github.com`),
+  que aparecem na branch depois de cada merge. **Não reescreva**: já estão publicados no `main`, e
+  reescrever trocaria um aviso cosmético por divergência real. Os commits de autoria própria passam.
 - Todo PR é aberto como **draft**; o dono marca "ready for review" e mergeia pelo GitHub.
 - O stop-hook local avisa sobre commits "Unverified" (merge commits do próprio
   GitHub) — **não são reescritos** (exigiria reescrever histórico compartilhado do
@@ -1362,12 +1460,15 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0022) + README com ordem de aplicação
+db/         — migrations SQL (0001-0023) + README com ordem de aplicação
+              test/  — fixture do book + testes de reconciliação + run.sh
 n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
 portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook)
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 8 invariantes de regressão do export
+              scripts/verificar-export.mts   — 21 invariantes de regressão do export
+              scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
+              scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
 docs/       — doutrina de autonomia, arquitetura, roadmap, reconciliação, auditoria, custo OpenAI
 test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não são versionados)
@@ -1377,10 +1478,15 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 ```bash
 node --test 'n8n/test/*.test.mjs'           # 83 testes da lógica de ingestão/classificação/extração
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
-npx tsx portal/scripts/verificar-export.mts # 8 invariantes do export
+npx tsx portal/scripts/verificar-export.mts # 21 invariantes do export
+PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 asserts de reconciliação
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
-Migrations: aplicar `0001`→`0022` em ordem num Postgres 16 local antes de propor SQL novo — várias
+Para o `db/test/run.sh` num container sem Postgres rodando: `initdb` como usuário `postgres`
+(o servidor recusa rodar como root) e `pg_ctl -o '-k /tmp -p 5599'`. O script cria os papéis
+`anon`/`authenticated`/`service_role` e o schema `storage` que as migrations assumem do Supabase.
+
+Migrations: aplicar `0001`→`0023` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 
