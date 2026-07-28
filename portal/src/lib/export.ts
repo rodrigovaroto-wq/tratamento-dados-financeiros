@@ -206,6 +206,87 @@ export function chaveCronologicaPeriodo(periodoFormatado: string): number {
   return CRONO_SEM_ANCORA; // "Últimos 24 meses", texto livre — sempre por último
 }
 
+// ---------------------------------------------------------------------------
+// CONSOLIDAÇÃO DE COLUNA (achado do teste v27, medido no export do dono)
+//
+// O grupo Vertentes tem 5 empresas e o Balanço saiu com 15 colunas de entidade:
+// cada empresa aparecia DUAS vezes, porque chega por dois caminhos com grafias
+// diferentes —
+//   • pelo documento COMBINADO, via `entidade_coluna`: "Componentes", "Metalúrgica";
+//   • pelo balanço INDIVIDUAL, via razão social: "VERTENTES COMPONENTES AUTOMOTIVOS LTDA.".
+// O mesmo vale para o período: o combinado declara "2025" e o individual
+// "31/12/2025" — o mesmo exercício escrito de dois jeitos.
+//
+// Isso não é cosmético. Uma aba de modelagem que some as colunas do grupo conta
+// cada empresa DUAS VEZES e fecha errado em silêncio. Consolidar é pré-requisito
+// de qualquer análise em cima, e é o mesmo princípio que a `0022` já aplica no
+// Postgres para período (comparar por CONJUNTO DE ANOS, não pelo rótulo).
+//
+// Critério deliberadamente CONSERVADOR — um falso casamento aqui FUNDE duas
+// empresas diferentes, que é bem pior que deixar duas colunas: o apelido só é
+// promovido à razão social quando TODAS as suas palavras significativas casam
+// (por prefixo, para "Part." achar "Participações") com UMA ÚNICA razão social
+// conhecida do caso. Zero candidatos ou dois, fica como está.
+// ---------------------------------------------------------------------------
+// Só FORMA JURÍDICA e conectivo entram aqui. Palavras de ramo ("Participações",
+// "Comércio", "Serviços", "Logística") NÃO são ruído: são exatamente o que
+// distingue duas empresas do mesmo grupo, que costumam repetir o sobrenome
+// ("Vertentes Participações" × "Vertentes Componentes"). Tratá-las como vazias
+// fazia "Vertentes Part." perder o casamento com "VERTENTES PARTICIPAÇÕES S.A."
+// e, pior, deixaria "Alfa Comércio" e "Alfa Serviços" indistinguíveis.
+const PALAVRAS_VAZIAS_ENTIDADE = new Set([
+  "ltda", "sa", "s", "a", "me", "epp", "eireli", "cia", "companhia",
+  "do", "da", "de", "e", "dos", "das",
+]);
+
+function tokensEntidade(nome: string): string[] {
+  return normalizar(nome)
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1 && !PALAVRAS_VAZIAS_ENTIDADE.has(t));
+}
+
+/**
+ * Mapa apelido → razão social, a partir das razões sociais conhecidas do caso.
+ * `razoesSociais` são os nomes vindos do registro de entidade (documento
+ * individual); `apelidos` são os rótulos de coluna do documento combinado.
+ */
+export function consolidarNomesDeEntidade(
+  razoesSociais: string[],
+  apelidos: string[],
+): Map<string, string> {
+  const canonico = new Map<string, string>();
+  const conhecidas = [...new Set(razoesSociais)]
+    .filter((r) => r && !tipoColunaNaoEntidade(r))
+    .map((r) => ({ nome: r, tokens: tokensEntidade(r) }))
+    .filter((r) => r.tokens.length > 0);
+
+  for (const apelido of new Set(apelidos)) {
+    if (!apelido || tipoColunaNaoEntidade(apelido)) continue;
+    const tokens = tokensEntidade(apelido);
+    if (tokens.length === 0) continue;
+    // "Part." casa "Participações" por PREFIXO: o combinado abrevia a coluna
+    // para caber no papel, e exigir a palavra inteira perderia o casamento.
+    const casam = conhecidas.filter(
+      (r) => r.nome !== apelido
+        && tokens.every((t) => r.tokens.some((rt) => rt.startsWith(t) || t.startsWith(rt))),
+    );
+    if (casam.length === 1) canonico.set(apelido, casam[0].nome);
+  }
+  return canonico;
+}
+
+/**
+ * Rótulo de período consolidado. Dois rótulos que descrevem o MESMO exercício
+ * ("2025" e "31/12/2025") viram colunas distintas só por causa da grafia; aqui
+ * a data-base de 31/12 colapsa no exercício, que é como um modelo lê a coluna.
+ * Só 31/12 — qualquer outra data-base é uma posição no meio do ano e continua
+ * uma coluna própria (não é o exercício fechado).
+ */
+export function periodoConsolidado(periodoFormatado: string): string {
+  const fim = (periodoFormatado ?? "").trim().match(/^31\/12\/((?:19|20)\d{2})$/);
+  return fim ? fim[1] : periodoFormatado;
+}
+
 // Comparador de coluna: entidade (alfabética) → período (CRONOLÓGICO) → rótulo
 // como desempate estável para períodos sem âncora temporal.
 function compararColunas(
@@ -1664,6 +1745,380 @@ function construirAbaDocumental(workbook: ExcelJS.Workbook, nomeAba: string, reg
   }
 }
 
+// ===========================================================================
+// ABA MODELAGEM — o modelo pronto para receber inputs (pedido do dono, v27)
+//
+// Espelha a arquitetura do modelo de FP&A que o dono usa como referência
+// (Projeções DeLend), traduzida para dado ANUAL de reestruturação:
+//   • TIMELINE derivada de uma célula: lá `C7=2022-01-31` + `=EDATE(C7,1)`;
+//     aqui o primeiro exercício + `=anterior+1`.
+//   • CORTE Real×Projetado numa única célula, com linha-flag derivada dela
+//     (lá `=IF(C7<=$C$2,1,0)`) — é o que faz a MESMA fórmula servir a coluna
+//     histórica e a projetada.
+//   • Custo/despesa entram NEGATIVOS, para todo agregado ser soma simples
+//     (`=EBITDA+D&A`, nunca `receita - custo` com sinal implícito).
+//   • Índice sempre `IFERROR(x/denominador$ancorado, "")`.
+//
+// A regra que o dono travou: **nada escrito à mão fora dos INPUTS**. Toda
+// linha histórica é `INDEX/MATCH` contra as abas de dados deste mesmo arquivo
+// (a planilha continua viva: corrigiu a aba de origem, o modelo acompanha), e
+// toda linha projetada é fórmula sobre as premissas. Por isso o modelo é
+// honesto com a doutrina (f0/07): ele não GRAVA número nenhum — ele referencia
+// o que foi extraído e aplica a premissa que o humano digitou.
+//
+// A chave de busca reaproveita o cabeçalho que as abas de dados já emitem
+// ("<entidade> — <período>"), montada por fórmula a partir das duas células de
+// input: `=$C$3&" — "&C$7`. Trocar a entidade modelada reescreve o modelo
+// inteiro sem tocar em nenhuma outra célula.
+// ===========================================================================
+const ABA_MODELAGEM = "Modelagem";
+
+// Horizonte da projeção. Três exercícios é o padrão de um plano de
+// reestruturação — e o número de colunas não muda nada da lógica: a timeline
+// deriva de uma célula só.
+const ANOS_PROJETADOS = 3;
+
+// O que fica VISÍVEL quando o modelo é montado. O critério é o do dono: o que
+// é prático para modelar. Modelagem é a entrega; Resumo é o contexto do
+// snapshot; as três demonstrações principais são para onde o modelo aponta —
+// quem quiser auditar uma linha vai nelas com um clique. O resto (Balancete,
+// DMPL, Faturamento, Dívida, Intragrupo, Societário, Outros, Combinado) é dado
+// de apoio, e continua no arquivo, oculto.
+const ABAS_VISIVEIS = new Set([ABA_MODELAGEM, "Resumo", "Balanço", "DRE", "Fluxo de Caixa"]);
+
+const INPUT_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF9C4" } };
+const INPUT_BORDER: Partial<ExcelJS.Borders> = {
+  top: { style: "thin", color: { argb: "FFB8860B" } },
+  left: { style: "thin", color: { argb: "FFB8860B" } },
+  bottom: { style: "thin", color: { argb: "FFB8860B" } },
+  right: { style: "thin", color: { argb: "FFB8860B" } },
+};
+const BLOCO_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
+const BLOCO_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+const PROJETADO_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
+const TOTAL_FONT: Partial<ExcelJS.Font> = { bold: true };
+
+// Referência a uma linha-âncora de uma aba de dados, para a coluna da entidade
+// e período modelados. Duas buscas: a linha pelo rótulo (coluna A da origem) e
+// a coluna pelo cabeçalho "<entidade> — <período>" — os dois já existem hoje.
+// ATENÇÃO ao `rotulo`: é o texto que a aba de origem escreve na coluna A. No
+// Balanço isso é o nome da SEÇÃO ("Ativo Circulante"), que é a linha que carrega
+// o subtotal — NÃO "Total do Ativo Circulante", que só aparece quando o próprio
+// documento traz essa linha. Errar aqui não quebra nada visivelmente: o
+// `IFERROR` devolve 0 e o modelo fecha com zeros. O invariante 13 confere que
+// todo rótulo procurado existe de fato na aba de destino.
+function buscaNaAba(aba: string, rotulo: string, colChave: string): string {
+  const ref = `'${aba}'`;
+  return `IFERROR(INDEX(${ref}!$B:$BZ,MATCH("${rotulo}",${ref}!$A:$A,0),`
+    + `MATCH(${colChave},${ref}!$B$1:$BZ$1,0)),0)`;
+}
+
+interface LinhaModelo {
+  rotulo: string;
+  // fórmula da coluna histórica (real) — normalmente um INDEX/MATCH
+  real?: (colChave: string) => string;
+  // fórmula da coluna projetada — sobre premissas e sobre a coluna anterior
+  proj?: (col: string, anterior: string) => string;
+  // linha calculada igual nas duas metades (subtotal, margem, índice)
+  ambos?: (col: string, anterior: string) => string;
+  input?: boolean;
+  fmt?: string;
+  destaque?: boolean;
+  nota?: string;
+}
+
+export function construirAbaModelagem(
+  workbook: ExcelJS.Workbook,
+  caso: { nome: string },
+  entidadeSugerida: string,
+  anosHistoricos: number[],
+  anosProjetados: number,
+): ExcelJS.Worksheet {
+  const sheet = workbook.addWorksheet(ABA_MODELAGEM, {
+    views: [{ state: "frozen", xSplit: 2, ySplit: 9 }],
+  });
+
+  const primeiroAno = anosHistoricos[0] ?? new Date().getFullYear() - 1;
+  const ultimoReal = anosHistoricos[anosHistoricos.length - 1] ?? primeiroAno;
+  const nCols = Math.max(anosHistoricos.length, 1) + anosProjetados;
+  // Colunas de valor começam em C (A = rótulo largo, B = unidade/observação).
+  const col = (i: number) => sheet.getColumn(i + 3).letter;
+  // Os três endereços que o modelo inteiro referencia. Derivados do layout real
+  // (e não escritos à mão) para que inserir uma linha no cabeçalho não quebre em
+  // silêncio TODAS as fórmulas abaixo — foi o que aconteceu na primeira versão.
+  let refEntidade = "$C$3";
+  let refCorte = "$C$4";
+  let linhaAno = 7;
+  const chaveCol = (i: number) => `${refEntidade}&" — "&${col(i)}$${linhaAno}`;
+
+  sheet.getColumn(1).width = 46;
+  sheet.getColumn(2).width = 15;
+  for (let i = 0; i < nCols; i++) sheet.getColumn(i + 3).width = 16;
+
+  const linha = (rotulo: string, unidade = "") => {
+    const r = sheet.addRow([rotulo, unidade]);
+    return r;
+  };
+  const marcarInput = (cell: ExcelJS.Cell) => {
+    cell.fill = INPUT_FILL;
+    cell.border = INPUT_BORDER;
+  };
+
+  // ---- Cabeçalho e as DUAS células que comandam o modelo inteiro -----------
+  const tit = linha(`MODELAGEM — ${caso.nome}`);
+  tit.font = { bold: true, size: 14 };
+  linha("");
+
+  const rEnt = linha("Entidade modelada", "input");
+  refEntidade = `$C$${rEnt.number}`;
+  rEnt.getCell(3).value = entidadeSugerida;
+  marcarInput(rEnt.getCell(3));
+  rEnt.getCell(1).font = TOTAL_FONT;
+  rEnt.getCell(3).note = comoNota(
+    "Digite aqui a razão social EXATAMENTE como ela aparece no cabeçalho das abas de dados "
+    + "(Balanço, DRE, Fluxo de Caixa). Todo o modelo abaixo é recalculado a partir desta célula — "
+    + "nenhuma outra precisa ser tocada para trocar de empresa.",
+  );
+
+  const rCorte = linha("Último exercício realizado", "input");
+  refCorte = `$C$${rCorte.number}`;
+  rCorte.getCell(3).value = ultimoReal;
+  marcarInput(rCorte.getCell(3));
+  rCorte.getCell(1).font = TOTAL_FONT;
+  rCorte.getCell(3).note = comoNota(
+    "Exercícios até este ano puxam o número REAL das abas de dados; os seguintes são PROJETADOS "
+    + "pelas premissas. É o mesmo mecanismo de corte Actual/Forecast do modelo de referência.",
+  );
+
+  linha("");
+
+  // ---- Timeline: só o primeiro ano é digitado; o resto deriva --------------
+  const rAno = linha("Exercício");
+  linhaAno = rAno.number;
+  rAno.getCell(3).value = primeiroAno;
+  marcarInput(rAno.getCell(3));
+  for (let i = 1; i < nCols; i++) rAno.getCell(i + 3).value = { formula: `${col(i - 1)}${linhaAno}+1` };
+  rAno.font = TOTAL_FONT;
+  rAno.eachCell((c) => {
+    c.fill = HEADER_FILL;
+    c.alignment = { horizontal: "center" };
+  });
+  marcarInput(rAno.getCell(3));
+
+  const rTipo = linha("Tipo");
+  for (let i = 0; i < nCols; i++) {
+    rTipo.getCell(i + 3).value = { formula: `IF(${col(i)}${linhaAno}<=${refCorte},"Real","Projetado")` };
+    rTipo.getCell(i + 3).alignment = { horizontal: "center" };
+  }
+  rTipo.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+
+  linha("");
+
+  // ---- Blocos -------------------------------------------------------------
+  const bloco = (titulo: string) => {
+    const r = linha(titulo);
+    r.font = BLOCO_FONT;
+    for (let i = 0; i < nCols + 2; i++) r.getCell(i + 1).fill = BLOCO_FILL;
+    return r;
+  };
+
+  const escrever = (defs: LinhaModelo[]) => {
+    for (const d of defs) {
+      const r = linha(d.rotulo, d.input ? "input" : "");
+      const rn = r.number;
+      for (let i = 0; i < nCols; i++) {
+        const cell = r.getCell(i + 3);
+        const c = col(i);
+        const ant = i > 0 ? col(i - 1) : null;
+        if (d.input) {
+          marcarInput(cell);
+        } else if (d.ambos) {
+          cell.value = { formula: d.ambos(c, ant ?? c) };
+        } else {
+          // O corte Real×Projetado numa fórmula só: a MESMA célula puxa o dado
+          // extraído enquanto o exercício é histórico e passa a projetar depois.
+          const real = d.real ? d.real(chaveCol(i)) : "0";
+          const proj = d.proj && ant ? d.proj(c, ant) : real;
+          cell.value = { formula: `IF(${c}$${linhaAno}<=${refCorte},${real},${proj})` };
+        }
+        cell.numFmt = d.fmt ?? VALOR_NUM_FMT;
+        if (!d.input) {
+          // A metade projetada fica visualmente separada da histórica.
+          cell.value = cell.value;
+        }
+      }
+      if (d.destaque) {
+        r.font = TOTAL_FONT;
+        r.getCell(1).border = THIN_TOP_BORDER;
+      }
+      if (d.nota) r.getCell(1).note = comoNota(d.nota);
+      // Pinta a metade projetada (depende do input de corte, então é aproximada
+      // pela posição: tudo depois do último exercício histórico conhecido).
+      for (let i = anosHistoricos.length; i < nCols; i++) {
+        if (!d.input) r.getCell(i + 3).fill = PROJETADO_FILL;
+      }
+      void rn;
+    }
+  };
+
+  // -------- Premissas (a única parte digitada do modelo) --------------------
+  bloco("PREMISSAS — preencha só as células destacadas");
+  const rPremissas = sheet.rowCount + 1;
+  escrever([
+    { rotulo: "Crescimento da receita líquida (% a.a.)", input: true, fmt: PCT_FMT,
+      nota: "Aplicada sobre a receita do exercício anterior nas colunas projetadas." },
+    { rotulo: "Margem bruta (% da receita líquida)", input: true, fmt: PCT_FMT,
+      nota: "Deixe em branco para o modelo repetir a margem do último exercício real." },
+    { rotulo: "SG&A (% da receita líquida)", input: true, fmt: PCT_FMT },
+    { rotulo: "Depreciação e amortização (% da receita líquida)", input: true, fmt: PCT_FMT },
+    { rotulo: "Resultado financeiro (% da receita líquida)", input: true, fmt: PCT_FMT },
+    { rotulo: "Alíquota efetiva de tributos sobre o lucro (%)", input: true, fmt: PCT_FMT },
+    { rotulo: "Capex (% da receita líquida)", input: true, fmt: PCT_FMT },
+    { rotulo: "Variação do capital de giro (% da variação da receita)", input: true, fmt: PCT_FMT },
+  ]);
+  const P = (i: number) => `$C$${rPremissas + i}`; // premissa i (0-based), coluna travada
+
+  linha("");
+
+  // -------- DRE -------------------------------------------------------------
+  bloco("DEMONSTRAÇÃO DE RESULTADO");
+  const rDRE = sheet.rowCount + 1;
+  const L = (offset: number) => rDRE + offset;
+  escrever([
+    { rotulo: "Receita Líquida", destaque: true,
+      real: (k) => buscaNaAba("DRE", "Receita Líquida", k),
+      proj: (c, a) => `${a}${L(0)}*(1+${P(0)})`,
+      nota: "Histórico: puxado da aba DRE. Projetado: receita do ano anterior × (1 + crescimento)." },
+    { rotulo: "(-) Custo dos produtos/serviços vendidos",
+      real: (k) => `${buscaNaAba("DRE", "Lucro Bruto", k)}-${buscaNaAba("DRE", "Receita Líquida", k)}`,
+      proj: (c) => `-${c}${L(0)}*(1-${P(1)})` },
+    { rotulo: "Lucro Bruto", destaque: true,
+      ambos: (c) => `${c}${L(0)}+${c}${L(1)}` },
+    { rotulo: "Margem bruta", fmt: PCT_FMT,
+      ambos: (c) => `IFERROR(${c}${L(2)}/${c}${L(0)},"")` },
+    { rotulo: "(-) Despesas operacionais (SG&A)",
+      real: (k) => `${buscaNaAba("DRE", "Resultado Operacional (EBIT)", k)}-${buscaNaAba("DRE", "Lucro Bruto", k)}`,
+      proj: (c) => `-${c}${L(0)}*${P(2)}` },
+    { rotulo: "EBIT (resultado operacional)", destaque: true,
+      ambos: (c) => `${c}${L(2)}+${c}${L(4)}` },
+    { rotulo: "(+) Depreciação e amortização",
+      real: () => "0",
+      proj: (c) => `${c}${L(0)}*${P(3)}`,
+      nota: "O documento raramente traz D&A como linha isolada da DRE (vem das notas ou do fluxo). "
+        + "Enquanto não vier, o histórico fica em 0 e o EBITDA abaixo iguala o EBIT — é uma lacuna "
+        + "VISÍVEL, não uma estimativa nossa." },
+    { rotulo: "EBITDA", destaque: true,
+      ambos: (c) => `${c}${L(5)}+${c}${L(6)}` },
+    { rotulo: "Margem EBITDA", fmt: PCT_FMT,
+      ambos: (c) => `IFERROR(${c}${L(7)}/${c}${L(0)},"")` },
+    { rotulo: "(+/-) Resultado financeiro",
+      real: (k) => `${buscaNaAba("DRE", "Resultado Antes dos Tributos", k)}-${buscaNaAba("DRE", "Resultado Operacional (EBIT)", k)}`,
+      proj: (c) => `-${c}${L(0)}*${P(4)}` },
+    { rotulo: "Resultado antes dos tributos", destaque: true,
+      ambos: (c) => `${c}${L(5)}+${c}${L(9)}` },
+    { rotulo: "(-) Tributos sobre o lucro",
+      real: (k) => `${buscaNaAba("DRE", "Lucro/Prejuízo Líquido do Exercício", k)}-${buscaNaAba("DRE", "Resultado Antes dos Tributos", k)}`,
+      proj: (c) => `-MAX(0,${c}${L(10)})*${P(5)}`,
+      nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo a pagar." },
+    { rotulo: "Lucro/Prejuízo Líquido do Exercício", destaque: true,
+      ambos: (c) => `${c}${L(10)}+${c}${L(11)}` },
+    { rotulo: "Margem líquida", fmt: PCT_FMT,
+      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${L(0)},"")` },
+  ]);
+
+  linha("");
+
+  // -------- Balanço ---------------------------------------------------------
+  bloco("BALANÇO PATRIMONIAL");
+  const rBP = sheet.rowCount + 1;
+  const B = (offset: number) => rBP + offset;
+  escrever([
+    { rotulo: "Ativo Circulante",
+      real: (k) => buscaNaAba("Balanço", "Ativo Circulante", k),
+      proj: (c, a) => `${a}${B(0)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)`,
+      nota: "Projeção move o circulante junto com a receita (premissa implícita de giro constante); "
+        + "ajuste pela linha de capital de giro no fluxo se quiser outro comportamento." },
+    { rotulo: "Ativo Não Circulante",
+      real: (k) => buscaNaAba("Balanço", "Ativo Não Circulante", k),
+      proj: (c, a) => `${a}${B(1)}+${c}${L(0)}*${P(6)}-${c}${L(6)}` },
+    { rotulo: "TOTAL DO ATIVO", destaque: true,
+      ambos: (c) => `${c}${B(0)}+${c}${B(1)}` },
+    { rotulo: "Passivo Circulante",
+      real: (k) => buscaNaAba("Balanço", "Passivo Circulante", k),
+      proj: (c, a) => `${a}${B(3)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)` },
+    { rotulo: "Passivo Não Circulante",
+      real: (k) => buscaNaAba("Balanço", "Passivo Não Circulante", k),
+      proj: (c, a) => `${a}${B(4)}` },
+    { rotulo: "Patrimônio Líquido",
+      real: (k) => buscaNaAba("Balanço", "Patrimônio Líquido", k),
+      proj: (c, a) => `${a}${B(5)}+${c}${L(12)}`,
+      nota: "PL projetado = PL anterior + resultado do exercício (sem aporte nem distribuição; "
+        + "se houver, entre com eles no fluxo de financiamento)." },
+    { rotulo: "TOTAL DO PASSIVO E PL", destaque: true,
+      ambos: (c) => `${c}${B(3)}+${c}${B(4)}+${c}${B(5)}` },
+    { rotulo: "Conferência (Ativo - Passivo - PL)", destaque: true, nota:
+      "Tem de ser ZERO em toda coluna. Diferente de zero na parte histórica = o dado extraído não "
+      + "fecha (vá à aba Balanço); na parte projetada = uma premissa está inconsistente.",
+      ambos: (c) => `${c}${B(2)}-${c}${B(6)}` },
+  ]);
+
+  linha("");
+
+  // -------- Fluxo de caixa (indireto) --------------------------------------
+  bloco("FLUXO DE CAIXA (MÉTODO INDIRETO)");
+  const rFC = sheet.rowCount + 1;
+  const F = (offset: number) => rFC + offset;
+  escrever([
+    { rotulo: "Lucro/Prejuízo Líquido do Exercício", ambos: (c) => `${c}${L(12)}` },
+    { rotulo: "(+) Depreciação e amortização", ambos: (c) => `${c}${L(6)}` },
+    { rotulo: "(+/-) Variação do capital de giro",
+      real: () => "0",
+      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(7)}` },
+    { rotulo: "Caixa das Atividades Operacionais", destaque: true,
+      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais", k),
+      proj: (c) => `${c}${F(0)}+${c}${F(1)}+${c}${F(2)}` },
+    { rotulo: "Caixa das Atividades de Investimento", destaque: true,
+      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento", k),
+      proj: (c) => `-${c}${L(0)}*${P(6)}` },
+    { rotulo: "Caixa das Atividades de Financiamento", destaque: true,
+      real: (k) => buscaNaAba("Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento", k),
+      proj: () => "0",
+      nota: "Projeção fica em zero de propósito: captação e amortização são decisão do plano, "
+        + "não uma extrapolação. Digite aqui o que o plano de reestruturação previr." },
+    { rotulo: "Variação líquida de caixa", destaque: true,
+      ambos: (c) => `${c}${F(3)}+${c}${F(4)}+${c}${F(5)}` },
+    { rotulo: "Saldo inicial de caixa",
+      real: (k) => buscaNaAba("Fluxo de Caixa", "Saldo Inicial de Caixa", k),
+      proj: (c, a) => `${a}${F(8)}` },
+    { rotulo: "Saldo final de caixa", destaque: true,
+      ambos: (c) => `${c}${F(7)}+${c}${F(6)}` },
+  ]);
+
+  linha("");
+
+  // -------- Indicadores -----------------------------------------------------
+  bloco("INDICADORES");
+  escrever([
+    { rotulo: "Liquidez corrente", fmt: RATIO_FMT,
+      ambos: (c) => `IFERROR(${c}${B(0)}/${c}${B(3)},"")` },
+    { rotulo: "Endividamento geral", fmt: PCT_FMT,
+      ambos: (c) => `IFERROR((${c}${B(3)}+${c}${B(4)})/${c}${B(2)},"")` },
+    { rotulo: "(Passivo total − caixa) / EBITDA", fmt: RATIO_FMT,
+      nota: "NÃO é dívida líquida/EBITDA. O export classifica por SEÇÃO contábil e não isola a "
+        + "dívida ONEROSA (empréstimos, financiamentos, debêntures) dentro do passivo, então o "
+        + "numerador aqui é o passivo INTEIRO menos o caixa — sempre mais conservador que a "
+        + "alavancagem real. Para a métrica de verdade, use o Mapa da Dívida (aba Dívida) como "
+        + "numerador. Rotular isto de 'dívida líquida' induziria a ler um covenant que não é este.",
+      ambos: (c) => `IFERROR((${c}${B(3)}+${c}${B(4)}-${c}${F(8)})/${c}${L(7)},"")` },
+    { rotulo: "Retorno sobre o PL (ROE)", fmt: PCT_FMT,
+      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${B(5)},"")` },
+    { rotulo: "Crescimento da receita", fmt: DELTA_FMT,
+      ambos: (c, a) => (c === a ? `""` : `IFERROR(${c}${L(0)}/${a}${L(0)}-1,"")`) },
+  ]);
+
+  return sheet;
+}
+
 export function buildExportWorkbook({
   caso,
   documentos,
@@ -1688,6 +2143,14 @@ export function buildExportWorkbook({
       });
     }
   }
+
+  // Consolidação de coluna (teste v27): o apelido que o documento combinado usa
+  // na coluna ("Componentes") e a razão social do documento individual
+  // ("VERTENTES COMPONENTES AUTOMOTIVOS LTDA.") são a MESMA empresa e precisam
+  // virar UMA coluna — senão qualquer soma do grupo conta cada empresa 2x.
+  const apelidosDeColuna = campos.map((c) => c.entidade_coluna).filter((x): x is string => !!x);
+  const razoesSociais = [...contextoPorVersao.values()].map((c) => c.entidade);
+  const nomeCanonico = consolidarNomesDeEntidade(razoesSociais, apelidosDeColuna);
 
   // Agrupa por aba → coluna (entidade×período) → campos daquela coluna.
   const colunasPorAba = new Map<string, Map<string, Coluna>>();
@@ -1725,7 +2188,11 @@ export function buildExportWorkbook({
     // colunas de empresa), a coluna do export é a ENTIDADE DA LINHA, não a
     // entidade principal do documento — é o que separa "Certsys Tecn"/"Part"/
     // "Com"/"Total" em colunas próprias no lugar de forçar tudo numa coluna só.
-    const entidadeColuna = campo.entidade_coluna || ctx.entidade;
+    // …e o apelido dessa coluna é promovido à razão social quando o caso conhece
+    // uma só que case (`consolidarNomesDeEntidade`) — sem isso a mesma empresa
+    // fica em duas colunas, uma por grafia (teste v27).
+    const entidadeBruta = campo.entidade_coluna || ctx.entidade;
+    const entidadeColuna = nomeCanonico.get(entidadeBruta) ?? entidadeBruta;
     // Documento comparativo (db/migrations/0017): quando a linha traz
     // `periodo_coluna` (ex.: "2023"/"2024" num balanço 2023×2024), o período da
     // COLUNA do export é o da linha, não o período único do documento — é o que
@@ -1736,9 +2203,12 @@ export function buildExportWorkbook({
     // mesmo jeito, o MESMO período aparecia em duas colunas distintas ("2024" e
     // "2024" formatado de outra fonte) e os rótulos saíam inconsistentes na
     // mesma aba. Formatar aqui colapsa a coluna e alinha a escrita.
-    const periodoColuna = campo.periodo_coluna
-      ? formatarPeriodo(null, campo.periodo_coluna)
-      : ctx.periodo;
+    // `periodoConsolidado` fecha o mesmo buraco do lado do período: o combinado
+    // declara "2025" e o balanço individual "31/12/2025" — o mesmo exercício em
+    // duas colunas (teste v27).
+    const periodoColuna = periodoConsolidado(
+      campo.periodo_coluna ? formatarPeriodo(null, campo.periodo_coluna) : ctx.periodo,
+    );
     // Separador improvável na chave: com espaço simples, entidade "A B" +
     // período "C" colidia com entidade "A" + período "B C" (colunas de
     // entidade×período diferentes fundidas numa só).
@@ -1834,6 +2304,48 @@ export function buildExportWorkbook({
       const linhas = linhasSimplesPorAba.get(aba);
       if (!linhas || linhas.length === 0) continue;
       construirAbaSimples(workbook, aba, linhas);
+    }
+  }
+
+  // ----- Aba Modelagem + ocultação das abas de dado cru ---------------------
+  // Pedido do dono (v27): "depois de carregar e tratar, oculte as abas dos
+  // dados crus e mantenha apenas o que for prático para a modelagem" — é a
+  // mesma disciplina do modelo de referência, que deixa visíveis o Summary e os
+  // drivers e esconde as abas de backup.
+  //
+  // OCULTAR, nunca remover: as abas continuam no arquivo e as fórmulas do
+  // modelo seguem apontando para elas. É o que mantém a proveniência (e o
+  // princípio de f0/07: o dado curado e rastreável não some da entrega).
+  const entidadesConhecidas = new Map<string, number>();
+  const anos = new Set<number>();
+  for (const [aba, colunas] of colunasPorAba) {
+    if (!ESTRUTURA_POR_ABA.has(aba)) continue;
+    for (const c of colunas.values()) {
+      if (tipoColunaNaoEntidade(c.entidade)) continue;
+      entidadesConhecidas.set(c.entidade, (entidadesConhecidas.get(c.entidade) ?? 0) + 1);
+      const ano = Number((c.periodo.match(/\b(19|20)\d{2}\b/) ?? [])[0]);
+      if (ano) anos.add(ano);
+    }
+  }
+  if (entidadesConhecidas.size > 0) {
+    // Entidade sugerida = a que tem mais colunas de demonstração no caso (a
+    // mais bem documentada). É só o VALOR INICIAL de uma célula de input.
+    const entidadeSugerida = [...entidadesConhecidas.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    const anosHistoricos = [...anos].sort((a, b) => a - b);
+    construirAbaModelagem(workbook, caso, entidadeSugerida, anosHistoricos, ANOS_PROJETADOS);
+
+    for (const ws of workbook.worksheets) {
+      if (ABAS_VISIVEIS.has(ws.name)) continue;
+      ws.state = "hidden";
+    }
+    // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
+    const modelagem = workbook.getWorksheet(ABA_MODELAGEM);
+    if (modelagem) {
+      workbook.views = [{
+        activeTab: modelagem.id - 1, firstSheet: 0, visibility: "visible",
+        x: 0, y: 0, width: 10000, height: 20000,
+      }];
     }
   }
 

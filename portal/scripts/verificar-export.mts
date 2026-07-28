@@ -41,7 +41,7 @@
  */
 import { readFileSync } from "node:fs";
 import { avaliarCelula, linhaVazia } from "./lib/avaliar-formula.mts";
-import { buildExportWorkbook, chaveCronologicaPeriodo, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
+import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 
 let ok = 0;
@@ -286,7 +286,11 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const vazias: string[] = [];
   let rotuladas = 0;
   for (const ws of wb.worksheets) {
-    if (ws.name === "Resumo") continue;
+    // Modelagem tem invariante próprio (11, abaixo): lá as células são fórmulas
+    // de modelo (IF/INDEX/MATCH/MAX) que `avaliarCelula` não resolve — e o que
+    // importa naquela aba é o oposto do que se checa aqui (nenhum valor CRU
+    // fora dos inputs), não a ausência de linha em branco.
+    if (ws.name === "Resumo" || ws.name === "Modelagem") continue;
     for (let r = 2; r <= ws.rowCount; r++) {
       const rot = String(ws.getRow(r).getCell(1).value ?? "").trim();
       if (!rot) continue;
@@ -563,6 +567,219 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const semNumero = rotulos.filter((_, i) => typeof ws.getRow(i + 2).getCell(3).value !== "number");
     checar(semNumero.length === 0, "(10f) nenhuma linha da DVA sem número", semNumero.join(" / "));
   }
+}
+
+// ---- 11: aba Modelagem — nada escrito à mão fora dos INPUTS ----------------
+// A regra que o dono travou no pedido do v27: "TUDO o que não for inputs
+// externos DEVE ESTAR EM FORMATO DE FÓRMULA, ou seja, nenhum dado deve ser
+// escrito de fato, e sim puxado de outras abas onde os dados estão separados".
+// Este invariante é a tradução literal disso — e é o que impede alguém (eu,
+// numa sessão futura) de "resolver" um problema do modelo colando um número.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem");
+  checar(ws != null, "(11) o export monta a aba Modelagem");
+  if (ws) {
+    // 1. Nenhum valor numérico cru fora das células de input. As de input são
+    //    as únicas com preenchimento amarelo (INPUT_FILL) — o mesmo sinal que o
+    //    usuário vê na tela é o que o teste usa, então os dois não podem
+    //    divergir sem alguém perceber.
+    const crus: string[] = [];
+    let formulas = 0;
+    let inputs = 0;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 3; c <= ws.columnCount; c++) {
+        const cell = ws.getRow(r).getCell(c);
+        const v = cell.value;
+        if (v == null || v === "") continue;
+        const fill = cell.fill as { fgColor?: { argb?: string } } | undefined;
+        const ehInput = fill?.fgColor?.argb === "FFFFF9C4";
+        if (ehInput) { inputs++; continue; }
+        if (typeof v === "object" && v !== null && "formula" in v) { formulas++; continue; }
+        if (typeof v === "number") crus.push(`${cell.address}=${v}`);
+      }
+    }
+    checar(crus.length === 0,
+      "(11) nenhum número escrito à mão fora dos inputs — tudo é fórmula",
+      crus.slice(0, 8).join(" / "));
+    checar(formulas > 60, `(11) o modelo é feito de fórmula (${formulas} células)`);
+    checar(inputs > 0, `(11) e tem células de input marcadas (${inputs})`);
+
+    // 2. As fórmulas históricas apontam para as ABAS DE DADOS deste mesmo
+    //    arquivo — é isso que mantém a planilha viva (corrigiu a origem, o
+    //    modelo acompanha) em vez de congelar um número no modelo.
+    const alvos = new Set<string>();
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 3; c <= ws.columnCount; c++) {
+        const v = ws.getRow(r).getCell(c).value as { formula?: string } | undefined;
+        const f = v?.formula;
+        if (!f) continue;
+        for (const m of f.matchAll(/'([^']+)'!/g)) alvos.add(m[1]);
+      }
+    }
+    for (const aba of ["Balanço", "DRE", "Fluxo de Caixa"]) {
+      checar(alvos.has(aba), `(11) o modelo puxa da aba ${aba} por referência`);
+    }
+
+    // 3. A timeline deriva de UMA célula (como o modelo de referência, que faz
+    //    `=EDATE(C7,1)`): só o primeiro exercício é digitado.
+    let rAno = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "Exercício") { rAno = r; break; }
+    }
+    const anoBase = rAno > 0 ? ws.getRow(rAno).getCell(3).value : null;
+    const anoSeg = rAno > 0 ? ws.getRow(rAno).getCell(4).value as { formula?: string } | undefined : undefined;
+    checar(typeof anoBase === "number" && !!anoSeg?.formula?.includes("+1"),
+      "(11) a linha do tempo deriva do primeiro exercício, não é digitada coluna a coluna",
+      `linha=${rAno} base=${String(anoBase)} seguinte=${anoSeg?.formula ?? "(sem fórmula)"}`);
+  }
+
+  // 4. Abas de dado cru ficam OCULTAS, mas continuam no arquivo (o modelo
+  //    aponta para elas e a proveniência não pode sumir da entrega).
+  const visiveis = wb.worksheets.filter((s) => s.state === "visible").map((s) => s.name);
+  const ocultas = wb.worksheets.filter((s) => s.state === "hidden").map((s) => s.name);
+  checar(visiveis.includes("Modelagem") && visiveis.includes("Balanço"),
+    "(11) Modelagem e as demonstrações principais ficam visíveis", visiveis.join(", "));
+  checar(!visiveis.includes("Balancete") && ocultas.includes("Balancete"),
+    "(11) as abas de apoio ficam ocultas — e continuam no arquivo", `visíveis: ${visiveis.join(", ")}`);
+}
+
+// ---- 12: consolidação de entidade e período (teste v27) ---------------------
+// O grupo tem 5 empresas e o Balanço do v27 saiu com 15 colunas de entidade: a
+// mesma empresa chegava com duas grafias (apelido da coluna do combinado ×
+// razão social do documento individual) e o mesmo exercício com dois rótulos
+// ("2025" × "31/12/2025"). Somar o grupo assim conta cada empresa DUAS VEZES —
+// é o que tornava a base inutilizável para modelagem.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const bal = wb.getWorksheet("Balanço")!;
+  const heads: string[] = [];
+  for (let c = 2; c <= bal.columnCount; c++) heads.push(String(bal.getRow(1).getCell(c).value ?? ""));
+  const ents = heads.filter((h) => h && h !== "AV%" && !h.startsWith("Δ"));
+  // 5 empresas × 2 exercícios = 10. Antes da consolidação eram 15.
+  checar(ents.length === 10, `(12) o Balanço tem 10 colunas de entidade×exercício (5 empresas × 2 anos)`,
+    `${ents.length}: ${ents.join(" | ")}`);
+  checar(!ents.some((e) => /^(Componentes|Metalúrgica|Imóveis SPE|VT Logística|Vertentes Part\.)\b/.test(e)),
+    "(12) nenhum apelido de coluna do combinado sobrou como se fosse outra empresa", ents.join(" | "));
+  checar(!ents.some((e) => e.includes("31/12/")),
+    "(12) o exercício fechado não aparece como data-base numa coluna separada", ents.join(" | "));
+
+  // …e o casamento é CONSERVADOR: apelido sem uma razão social única que case
+  // continua como está (fundir duas empresas diferentes é pior que duas colunas).
+  const m = consolidarNomesDeEntidade(
+    ["ALFA COMÉRCIO LTDA.", "ALFA SERVIÇOS LTDA."],
+    ["Alfa", "Beta"],
+  );
+  checar(!m.has("Alfa"), "(12) apelido ambíguo (casa com 2 razões sociais) NÃO é consolidado");
+  checar(!m.has("Beta"), "(12) apelido sem correspondente NÃO é consolidado");
+  const m2 = consolidarNomesDeEntidade(["VERTENTES PARTICIPAÇÕES S.A."], ["Vertentes Part."]);
+  checar(m2.get("Vertentes Part.") === "VERTENTES PARTICIPAÇÕES S.A.",
+    "(12) abreviação ('Part.') casa a razão social por prefixo");
+}
+
+// ---- 13: o modelo aponta para linhas que EXISTEM (senão devolve 0 calado) ---
+// O INDEX/MATCH do modelo é embrulhado em IFERROR — o que é certo para o caso
+// legítimo (a DFC do book só cobre 2025, então 2024 não tem coluna e vale 0),
+// mas transforma um rótulo ERRADO em zero silencioso. Foi assim que a primeira
+// versão desta aba saiu com o Balanço inteiro zerado: ela procurava "Total do
+// Ativo Circulante", e a aba Balanço rotula a linha do subtotal com o nome da
+// SEÇÃO ("Ativo Circulante"). Este invariante resolve o MATCH de verdade.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem")!;
+
+  const rotulosDe = (aba: string) => {
+    const alvo = wb.getWorksheet(aba);
+    const set = new Set<string>();
+    if (alvo) for (let r = 1; r <= alvo.rowCount; r++) {
+      set.add(String(alvo.getRow(r).getCell(1).value ?? "").trim());
+    }
+    return set;
+  };
+  const cache = new Map<string, Set<string>>();
+  const perdidos: string[] = [];
+  let procurados = 0;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    for (let c = 3; c <= ws.columnCount; c++) {
+      const v = ws.getRow(r).getCell(c).value as { formula?: string } | undefined;
+      const f = v?.formula;
+      if (!f) continue;
+      for (const m of f.matchAll(/MATCH\("([^"]+)",'([^']+)'!\$A:\$A,0\)/g)) {
+        const [, rotulo, aba] = m;
+        procurados++;
+        if (!cache.has(aba)) cache.set(aba, rotulosDe(aba));
+        if (!cache.get(aba)!.has(rotulo)) {
+          const onde = `${aba}!"${rotulo}" (usado em ${ws.getRow(r).getCell(1).value})`;
+          if (!perdidos.includes(onde)) perdidos.push(onde);
+        }
+      }
+    }
+  }
+  checar(procurados > 0, "(13) o modelo faz buscas por rótulo nas abas de dados");
+  checar(perdidos.length === 0,
+    `(13) todos os ${procurados} rótulos procurados existem na aba de destino`,
+    perdidos.slice(0, 6).join(" / "));
+
+  // …e o resultado disso bate com o GABARITO do book: resolve o INDEX/MATCH do
+  // jeito que o Excel resolveria e compara o número que o modelo vai exibir.
+  const ent = "VERTENTES METALÚRGICA LTDA.";
+  const valorNaAba = (aba: string, rotulo: string, ano: number): number | null => {
+    const alvo = wb.getWorksheet(aba);
+    if (!alvo) return null;
+    let linha = -1;
+    for (let r = 1; r <= alvo.rowCount; r++) {
+      if (String(alvo.getRow(r).getCell(1).value ?? "").trim() === rotulo) { linha = r; break; }
+    }
+    let coluna = -1;
+    for (let c = 2; c <= alvo.columnCount; c++) {
+      if (String(alvo.getRow(1).getCell(c).value ?? "").trim() === `${ent} — ${ano}`) { coluna = c; break; }
+    }
+    if (linha < 0 || coluna < 0) return null;
+    const v = avaliarCelula(alvo, alvo.getColumn(coluna).letter, linha);
+    return typeof v === "number" ? Math.round(v) : null;
+  };
+  const gab = JSON.parse(
+    readFileSync("/home/user/tratamento-dados-financeiros/test-data/book-vertentes/pdf/GABARITO.json", "utf8"),
+  ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
+  const errosModelo: string[] = [];
+  for (const ano of [2024, 2025]) {
+    const esperado = gab.balanco_por_entidade[String(ano)].metalurgica;
+    const pares: Array<[string, number]> = [
+      ["Ativo Circulante", esperado.AC],
+      ["Ativo Não Circulante", esperado.ANC],
+      ["Passivo Circulante", esperado.PC],
+      ["Passivo Não Circulante", esperado.PNC],
+      ["Patrimônio Líquido", esperado.PL],
+    ];
+    for (const [rot, exp] of pares) {
+      const got = valorNaAba("Balanço", rot, ano);
+      if (got !== exp) errosModelo.push(`${ano} ${rot}: modelo=${got} gabarito=${exp}`);
+    }
+  }
+  checar(errosModelo.length === 0,
+    "(13) o que o modelo vai puxar do Balanço bate com o gabarito, nos dois exercícios",
+    errosModelo.join(" / "));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
