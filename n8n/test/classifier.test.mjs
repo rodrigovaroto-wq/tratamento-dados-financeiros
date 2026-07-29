@@ -129,6 +129,34 @@ test('classifyByFilename — tipo + ano isolado NÃO ultrapassa o limiar sozinho
   assert.equal(r.precisa_fallback_openai, true, 'ano isolado não deve pular a verificação da IA');
 });
 
+test('classifyByFilename — o CONJUNTO do exercício é DF_AUDITADA, e nome com demonstração principal não é', () => {
+  // Como o conjunto chega de verdade: um PDF só, com tudo dentro. Antes ficava
+  // SEM TIPO (a taxonomia só reconhecia "auditadas"), e documento sem tipo não
+  // ganha aba de demonstração nenhuma no export.
+  for (const nome of [
+    'Demonstrações Contábeis 2025.pdf',
+    'Demonstrações Financeiras 12M25.pdf',
+    'DFs Grupo Vertentes 2025.pdf',
+  ]) {
+    assert.equal(classifyByFilename(nome).tipo_taxonomia, 'DF_AUDITADA', `tipo de ${nome}`);
+  }
+  // …e a fronteira: nome que diz QUAL demonstração é continua sendo dela — os
+  // termos novos NÃO podem roubar esses casos. É o mesmo motivo pelo qual DMPL/DVA
+  // vêm depois das principais.
+  assert.equal(classifyByFilename('Demonstrações Combinadas 12M25.pdf').tipo_taxonomia, 'COMBINADO');
+  assert.equal(classifyByFilename('Demonstração de Resultado 2025.pdf').tipo_taxonomia, 'DRE');
+  assert.equal(classifyByFilename('Balanço Patrimonial 12M25.pdf').tipo_taxonomia, 'BALANCO');
+  // Comportamento ANTERIOR a esta fatia, preservado de propósito: o PDF composto
+  // que lista as demonstrações no nome ("Balanço Patrimonial DRE, DFC 2024.pdf",
+  // arquivo real do dono) casa FLUXO_CAIXA pelo "dfc", porque FLUXO vem antes na
+  // lista. Não mexo aqui: promovê-lo a DF_AUDITADA (complementar) tiraria dele a
+  // capacidade de satisfazer os itens OBRIGATÓRIOS do Kit Básico e mudaria a
+  // completude de todo caso já aberto — decisão de produto do dono, não efeito
+  // colateral de uma fatia de export. E, de qualquer forma, o roteamento por
+  // linha já separa as demonstrações desse arquivo aba por aba.
+  assert.equal(classifyByFilename('Balanço Patrimonial DRE, DFC 2024.pdf').tipo_taxonomia, 'FLUXO_CAIXA');
+});
+
 test('classifyByFilename — casos reais do mandato de referência', () => {
   const casos = [
     ['Balancetes 1T2026 Empresa A.pdf', 'BALANCETE', '1T26'],

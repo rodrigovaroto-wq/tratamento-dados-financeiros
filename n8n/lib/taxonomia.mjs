@@ -49,7 +49,19 @@ export const ALIASES = [
   { codigo: 'DVA', termos: ['dva', 'valor adicionado'] },
   // --- variáveis (complementares) mais comuns, para não cair em "não classificado" à toa ---
   { codigo: 'BALANCETE', termos: ['balancete'] },
-  { codigo: 'DF_AUDITADA', termos: ['demonstracoes financeiras auditadas', 'df auditada', 'demonstracoes auditadas'] },
+  // "Demonstrações Contábeis 2025.pdf" / "Demonstrações Financeiras 2025.pdf" é o
+  // nome com que o conjunto CHEGA num mandato real — o PDF do exercício com
+  // Balanço + DRE + DFC + DMPL + notas juntos, auditado ou não. Sem estes termos
+  // o arquivo ficava SEM TIPO, e um documento sem tipo não tem aba nenhuma no
+  // export (o roteamento por linha só socorre o que declara duas demonstrações).
+  // Vem depois de BALANCO/DRE/FLUXO/COMBINADO de propósito: nome que diz qual
+  // demonstração é a principal ("Balanço Patrimonial e DRE 2025") continua sendo
+  // dela — mesma razão pela qual DMPL/DVA ficam abaixo das principais.
+  { codigo: 'DF_AUDITADA', termos: [
+    'demonstracoes financeiras auditadas', 'df auditada', 'demonstracoes auditadas',
+    'demonstracoes contabeis', 'demonstracoes financeiras', 'demonstracao contabil',
+    'demonstracoes contabeis completas', 'dfs',
+  ] },
   { codigo: 'MAPA_DIVIDA', termos: ['mapa de divida', 'mapa divida', 'posicao de divida'] },
   { codigo: 'EXTRATO_BANCARIO', termos: ['extrato bancario', 'extrato'] },
   { codigo: 'AGING_AR', termos: ['aging de recebiveis', 'aging ar', 'contas a receber', 'aging de contas a receber'] },
