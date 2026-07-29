@@ -294,6 +294,24 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
 // produção, sessão 7 cont.¹¹). Trade-off consciente: processa mais devagar.
 const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } } };
 
+// A EXTRAÇÃO tem cadência própria, mais lenta que a classificação. No "teste v28"
+// (14 documentos) ainda caíram DOIS por 429 — `05_BP_Vertentes_Imoveis_SPE` e
+// `07_DRE_Vertentes_Metalurgica` —, e o dado que importa é QUAIS: são dois dos
+// documentos MENORES do book. Não foi o tamanho deles; foi o balde de TPM já
+// esvaziado pelos pesados que passaram antes (combinado e balancete). Quem
+// esvazia o balde não é quem cai — então espaçar mais só a extração é o ajuste
+// certo, e a classificação (que gasta uma fração dos tokens) não precisa pagar.
+//
+// Por que não resolver no retry: `waitBetweenTries` do N8N tem teto de 5s, então
+// 6 tentativas cabem em ~30s — dentro da MESMA janela de TPM que acabou de
+// recusar. Retry rápido não espera um balde por minuto se recompor; cadência sim.
+//
+// Trade-off consciente: 14 documentos ficam ~1,5 min mais lentos. Uma extração
+// perdida custa muito mais — no v28 custou a aba DRE inteira do book.
+// A correção DEFINITIVA é gastar menos token de entrada (PDF como TEXTO em vez de
+// imagem: 60-80% do input, `docs/CUSTO_OPENAI.md`), e essa exige o N8N vivo.
+const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: 12000 } } };
+
 // Retry para os nós Postgres: SEM onError, um erro transitório (conexão sob
 // carga, timeout pontual) num ÚNICO item PARA A EXECUÇÃO INTEIRA — todos os
 // itens ainda na fila somem sem nenhum rastro (achado em produção, sessão 7
@@ -394,7 +412,7 @@ const nodes = [
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-    options: OPENAI_BATCHING,
+    options: OPENAI_BATCHING_EXTRACAO,
   }, 2300, 300, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300),

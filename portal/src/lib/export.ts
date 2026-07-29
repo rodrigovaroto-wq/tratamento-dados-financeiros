@@ -434,6 +434,58 @@ const ABA_PADRAO_POR_ESTRUTURA: Record<FamiliaDemonstracao, string> = {
 // com o total — a dupla contagem que o export levou três rodadas para eliminar.
 const TIPOS_DOCUMENTO_COMPOSTO = new Set(["DF_AUDITADA"]);
 
+// Demonstrações que a entrega sempre mostra, com dado ou sem. São as três que o
+// Kit Básico cobra como obrigatórias e para as quais o modelo aponta.
+const ABAS_SEMPRE_PRESENTES = new Set(["Balanço", "DRE", "Fluxo de Caixa"]);
+
+/**
+ * Aba de demonstração SEM dado — e dizendo por quê.
+ *
+ * Distingue os dois casos, que pedem ações opostas do dono:
+ *   • documento ENTREGUE e sem linha extraída → é falha do pipeline (no v28, rate
+ *     limit da OpenAI): reprocessar o arquivo resolve, e a fila já tem a pendência;
+ *   • nenhum documento daquela demonstração → é cobrança de documento, e quem
+ *     cobra é o checklist do Kit Básico. Não há nada a reprocessar.
+ *
+ * Nada é inventado aqui (f0/07): sem linha extraída não há o que o template
+ * ordene. O que a aba entrega é a informação de que falta — que antes o arquivo
+ * não dava de jeito nenhum.
+ */
+function construirAbaSemDado(
+  workbook: ExcelJS.Workbook,
+  aba: string,
+  documentos: DocumentoParaExport[],
+): void {
+  const tiposDaAba = Object.entries(ABA_POR_TIPO).filter(([, nome]) => nome === aba).map(([tipo]) => tipo);
+  const arquivos = [
+    ...new Set(
+      documentos
+        .filter((d) => d.tipo_taxonomia && tiposDaAba.includes(d.tipo_taxonomia))
+        .flatMap((d) => (d.documento_versao ?? []).map((v) => v.nome_original ?? "(sem nome)")),
+    ),
+  ];
+  const ws = workbook.addWorksheet(aba);
+  ws.columns = [{ width: 42 }, { width: 88 }];
+  ws.addRow([`${aba} — sem dado nesta entrega`]).font = { bold: true, size: 12 };
+  ws.addRow(
+    arquivos.length > 0
+      ? ["Documento entregue, extração sem linha",
+        `${arquivos.join("; ")}. O arquivo chegou e foi classificado, mas a extração não gravou `
+        + "nenhuma linha — a falha abre pendência própria na fila de revisão do mandato. "
+        + "Reprocessar o arquivo preenche esta aba."]
+      : ["Nenhum documento desta demonstração",
+        "O mandato ainda não tem documento classificado nesta demonstração. Quem cobra isso é o "
+        + "checklist do Kit Básico; esta aba existe para a ausência ficar visível na entrega."],
+  );
+  ws.getRow(2).alignment = { wrapText: true, vertical: "top" };
+  ws.getRow(2).height = 42;
+  ws.addRow([]);
+  const nota = ws.addRow(["", "Nada é preenchido por conta própria: o template ordena o que o documento "
+    + "trouxe (f0/07_output_spec.md). Sem linha extraída, não há o que ordenar."]);
+  nota.alignment = { wrapText: true, vertical: "top" };
+  nota.font = { italic: true, size: 9 };
+}
+
 export interface DocumentoParaExport {
   id: string;
   tipo_taxonomia: string | null;
@@ -1090,6 +1142,22 @@ function construirAbaClassificada(
             // O documento não trouxe o total desta coluna: soma as contas-folha.
             cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
             cell.numFmt = VALOR_NUM_FMT;
+            // …e ISSO PRECISA APARECER. Sem total informado não existe checagem:
+            // se o documento imprime subtotal de agrupamento e a extração anotou
+            // a seção de TOPO em `secao` (em vez da subseção), a soma conta o
+            // subtotal E os componentes, e ninguém tem contra o que comparar.
+            // Aconteceu no teste v28: a VT Logística saiu com Ativo Circulante
+            // 7.254 onde o documento diz 3.961 — "Contas a Receber" (3.293)
+            // somada junto com "Fretes a receber" (3.562) e "(-) PECLD" (−269),
+            // que são os componentes dela. Marcar não conserta o número; impede
+            // que ele passe por conferido.
+            cell.font = { bold: true, italic: true };
+            cell.note = comoNota(
+              `Sem total informado no documento para esta coluna: o número é a NOSSA soma das contas `
+              + `listadas (${no.label}), não um valor que o documento tenha impresso. `
+              + `Se o original traz subtotais de agrupamento (ex.: "Contas a Receber" acima das duplicatas), `
+              + `confira dupla contagem antes de usar — a soma pode incluir o subtotal E os componentes dele.`,
+            );
           }
         });
         noRow.set(no.key, cabIdx);
@@ -1846,15 +1914,16 @@ const ABA_MODELAGEM = "Modelagem";
 // deriva de uma célula só.
 const ANOS_PROJETADOS = 3;
 
-// O que fica VISÍVEL quando o modelo é montado. O critério é o do dono: o que
-// é prático para modelar. Modelagem é a entrega; Resumo é o contexto do
-// snapshot; as três demonstrações principais são para onde o modelo aponta —
-// quem quiser auditar uma linha vai nelas com um clique. O resto (Balancete,
-// DMPL, Faturamento, Dívida, Intragrupo, Societário, Outros, Combinado) é dado
-// de apoio, e continua no arquivo, oculto.
+// NENHUMA aba é ocultada (pedido do dono, teste v28: "quero todas as abas juntas
+// no exportável"). O que motivou o pedido não foi estética: ele abriu o v28, viu
+// 4 abas visíveis e concluiu que "as demais não vieram" — DMPL, Combinado,
+// Balancete, Faturamento, Dívida, Intragrupo e Outros ESTAVAM lá, ocultas. Aba
+// oculta num arquivo de entrega lê-se como dado ausente, e dado ausente é a
+// pergunta mais cara que este export pode provocar. A Modelagem continua sendo a
+// aba ATIVA (é por onde o arquivo abre) — o que se perde ao ocultar as outras não
+// se ganha em nada.
 const ABA_MACRO = "Macro";
 const ABA_MACRO_DADOS = "Macro (dados)";
-const ABAS_VISIVEIS = new Set([ABA_MODELAGEM, ABA_MACRO, "Resumo", "Balanço", "DRE", "Fluxo de Caixa"]);
 
 // ---------------------------------------------------------------------------
 // ÍNDICES MACROECONÔMICOS (db/migrations/0025)
@@ -2007,6 +2076,36 @@ export interface RefsMacro {
   linhaCabFocus: number;
   linhaFocusDe: Map<string, number>;
   ultimaColFocus: string;
+}
+
+/**
+ * Aba Macro SEM índice coletado — dizendo exatamente o que falta e o efeito.
+ *
+ * O efeito importa porque não é neutro: sem Focus, as premissas de inflação e
+ * juro do modelo ficam em branco, e quem digitar por cima delas está usando
+ * memória, não dado publicado. Uma aba ausente não conta isso; esta conta.
+ */
+function construirAbaMacroSemDado(workbook: ExcelJS.Workbook): void {
+  const ws = workbook.addWorksheet(ABA_MACRO);
+  ws.columns = [{ width: 42 }, { width: 92 }];
+  ws.addRow(["Índices macro — sem dado coletado"]).font = { bold: true, size: 12 };
+  ws.addRow([
+    "O que falta",
+    "Nenhuma observação (BCB/IBGE) nem expectativa (Focus) na base. A coleta é o workflow "
+    + "n8n/workflow.macro.json, que roda no relógio (dia 12, depois da divulgação do IPCA) e depende "
+    + "da migration db/migrations/0025 aplicada NO PROJETO em uso. Importar o workflow não coleta "
+    + "nada sozinho: ele precisa estar ATIVO, e a primeira carga histórica pede uma execução manual.",
+  ]);
+  ws.addRow([
+    "Efeito nesta entrega",
+    "As premissas de inflação (IPCA — Focus) e juro (Selic — Focus) da aba Modelagem ficam em branco. "
+    + "Elas são input: dá para digitar por cima e o modelo inteiro responde — mas aí o número é "
+    + "memória de quem digitou, não índice publicado com fonte e data.",
+  ]);
+  for (const r of [2, 3]) {
+    ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
+    ws.getRow(r).height = 56;
+  }
 }
 
 export function construirAbaMacro(
@@ -3053,6 +3152,23 @@ export function buildExportWorkbook({
       `${camposDeVersaoSubstituida} — o arquivo foi reextraído; só a extração mais recente com dado entra na planilha`,
     ]);
   }
+  // Documento que chegou e não produziu NENHUMA linha. No v28 foram dois (a DRE da
+  // Metalúrgica e o Balanço da SPE, os dois por rate limit da OpenAI) e o arquivo
+  // não dizia uma palavra sobre isso: a DRE simplesmente não tinha aba, e a SPE
+  // simplesmente não tinha coluna no Balanço. Contar quantas linhas foram
+  // extraídas sem contar quantos documentos ficaram de fora é meia informação.
+  const arquivosSemLinha = documentos
+    .flatMap((d) => (d.documento_versao ?? [])
+      .filter((v) => vigentes.has(v.id) && !campos.some((c) => c.documento_versao_id === v.id))
+      .map((v) => v.nome_original ?? "(sem nome)"));
+  if (arquivosSemLinha.length > 0) {
+    linhasResumo.push([
+      "Documentos SEM linha extraída",
+      `${arquivosSemLinha.length} de ${documentos.length}: ${arquivosSemLinha.join("; ")} `
+      + "— chegaram e foram classificados, mas a extração não gravou nada (a falha abre pendência na "
+      + "fila de revisão). Onde faltou entidade/demonstração nas abas, é por isso.",
+    ]);
+  }
   resumo.addRows([
     ...linhasResumo,
     [""],
@@ -3090,7 +3206,17 @@ export function buildExportWorkbook({
       else construirAbaDocumental(workbook, aba, registros);
     } else if (estrutura) {
       const colunas = [...(colunasPorAba.get(aba)?.values() ?? [])].sort(compararColunas);
-      if (colunas.length === 0) continue;
+      if (colunas.length === 0) {
+        // As três demonstrações PRINCIPAIS existem SEMPRE, mesmo sem dado — com o
+        // motivo escrito dentro da aba, e na posição certa da ordem canônica. No
+        // teste v28 a extração da DRE falhou por rate limit (429) da OpenAI e a
+        // aba simplesmente NÃO EXISTIU no arquivo: o dono abriu o book, não achou
+        // a DRE e não tinha como saber se o problema era o documento, a extração
+        // ou o export. Aba ausente é buraco silencioso; aba presente dizendo "o
+        // documento veio e a extração falhou" é item de trabalho.
+        if (ABAS_SEMPRE_PRESENTES.has(aba)) construirAbaSemDado(workbook, aba, documentos);
+        continue;
+      }
       construirAbaClassificada(
         workbook,
         aba,
@@ -3105,6 +3231,7 @@ export function buildExportWorkbook({
       construirAbaSimples(workbook, aba, linhas);
     }
   }
+
 
   // ----- Aba Modelagem + ocultação das abas de dado cru ---------------------
   // Pedido do dono (v27): "depois de carregar e tratar, oculte as abas dos
@@ -3140,15 +3267,17 @@ export function buildExportWorkbook({
     // A aba Macro entra ANTES da Modelagem: o modelo referencia as linhas do
     // Focus por endereço, então elas precisam existir.
     const refsMacro = macro ? construirAbaMacro(workbook, macro) : null;
+    // Sem índice coletado a aba Macro também EXISTE, dizendo o que falta. No teste
+    // v28 ela não existiu e o dono leu isso como "os índices não vieram com os
+    // dados" — sem ter como distinguir "coleta não rodou" de "defeito no export".
+    // A causa real ali: a `0025` não estava aplicada no projeto certo (foi aplicada
+    // no banco errado e revertida), então não havia índice nenhum na base.
+    if (!refsMacro) construirAbaMacroSemDado(workbook);
     construirAbaModelagem(
       workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
       refsMacro,
     );
 
-    for (const ws of workbook.worksheets) {
-      if (ABAS_VISIVEIS.has(ws.name)) continue;
-      ws.state = "hidden";
-    }
     // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
     const modelagem = workbook.getWorksheet(ABA_MODELAGEM);
     if (modelagem) {
