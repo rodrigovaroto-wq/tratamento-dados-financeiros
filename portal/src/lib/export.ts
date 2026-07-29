@@ -1890,25 +1890,6 @@ function buscaNaAba(
     + `MATCH(${colChave},${ref}!$B$1:$${ultimaCol}$1,0)),0)`;
 }
 
-interface LinhaModelo {
-  rotulo: string;
-  // fórmula da coluna histórica (real) — normalmente um INDEX/MATCH
-  real?: (colChave: string) => string;
-  // fórmula da coluna projetada — sobre premissas e sobre a coluna anterior
-  proj?: (col: string, anterior: string) => string;
-  // linha calculada igual nas duas metades (subtotal, margem, índice).
-  // `anterior` é null na primeira coluna — quem depende do ano anterior tem de
-  // tratar esse caso em vez de referenciar a si mesmo.
-  ambos?: (col: string, anterior: string | null) => string;
-  // Célula de PREMISSA: recebe destaque de input e é onde o usuário digita por
-  // cima. Continua nascendo com fórmula (derivada do último exercício real).
-  premissa?: boolean;
-  unidade?: string;
-  fmt?: string;
-  destaque?: boolean;
-  nota?: string;
-}
-
 // Aba OCULTA com o dado cru vindo do banco. É a única parte do bloco macro que
 // carrega número escrito — exatamente como as abas de demonstração: o dado
 // entra aqui, e tudo que é leitura vira fórmula em cima.
@@ -2069,6 +2050,89 @@ export function construirAbaMacro(
   };
 }
 
+// Expectativa Focus do ANO de uma coluna. Sem macro carregada devolve 0 — a
+// premissa fica visível e zerada em vez de a aba inteira sumir.
+function focusMacro(macro: RefsMacro, serie: string, colAno: string): string {
+  const linha = macro.linhaFocusDe.get(serie);
+  if (!linha) return "0";
+  const ref = `'${ABA_MACRO}'`;
+  return `IFERROR(INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
+    + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
+}
+
+// ===========================================================================
+// ABA MODELAGEM — modelo MENSAL com consolidação anual
+//
+// Espelha a arquitetura do modelo de FP&A de referência (Projeções DeLend):
+// colunas mensais encadeadas por `EDATE`, corte Actual/Forecast numa célula, e
+// blocos de consolidação. Lá os anos ficam todos à direita; aqui o consolidado
+// vem LOGO DEPOIS dos 12 meses do seu ano, que é como se lê um plano.
+//
+// AS TRÊS REGRAS DE CONSOLIDAÇÃO — é onde um modelo mensal se perde, e o erro
+// é invisível na tela:
+//   • FLUXO (receita, custo, caixa gerado) → SOMA dos 12 meses.
+//   • ESTOQUE (saldo de caixa, ativo, passivo, PL) → valor de DEZEMBRO. Somar
+//     doze balanços daria doze vezes o patrimônio.
+//   • ÍNDICE (margem, liquidez) → RECALCULADO sobre os agregados anuais. Somar
+//     ou tirar média de percentual mensal não dá o percentual do ano.
+//
+// E A REGRA DO HISTÓRICO, que é a diferença honesta entre este modelo e um que
+// finge precisão que não tem: as demonstrações extraídas são ANUAIS. Não existe
+// balanço mensal de 2024 para extrair. Então:
+//   • fluxo histórico é DISTRIBUÍDO pelos meses por um vetor de sazonalidade
+//     explícito e editável (padrão: 1/12 por mês) — e a soma do ano bate com o
+//     número extraído, o que uma linha de conferência prova;
+//   • estoque histórico é INTERPOLADO entre o fechamento do ano anterior e o
+//     do ano corrente, de modo que dezembro é exatamente o valor extraído.
+// Nada disso é apresentado como observação: é distribuição declarada, com o
+// critério à vista e na mão do usuário.
+// ===========================================================================
+
+interface LinhaModelo {
+  rotulo: string;
+  unidade?: string;
+  // Fórmula da célula MENSAL. `ctx` traz tudo que a linha precisa endereçar.
+  mensal?: (ctx: CtxMes) => string;
+  // Como o ano consolida. Default: "fluxo" (soma dos 12 meses).
+  consolida?: "fluxo" | "estoque" | "inicial" | "formula";
+  // Consolidação própria (índices/margens: recalcular sobre o agregado anual).
+  anual?: (ctx: CtxAno) => string;
+  premissa?: boolean;
+  fmt?: string;
+  destaque?: boolean;
+  subtotal?: boolean;
+  nota?: string;
+}
+
+interface CtxMes {
+  c: string;            // coluna deste mês
+  ant: string | null;   // coluna do mês anterior (null no 1º mês da série)
+  mesmoMesAnoAnt: string | null; // coluna do MESMO mês do ano anterior
+  fy: string;           // coluna do consolidado ANUAL deste ano (onde vivem as premissas)
+  m: number;            // 0..11
+  y: number;            // índice do ano
+  L: (o: number) => number;
+  F: (o: number) => number;
+  B: (o: number) => number;
+  P: (i: number) => string;
+  S: (m: number) => string; // sazonalidade do mês
+  totalSazo: string;
+  hist: (aba: string, rotulo: string) => string; // valor ANUAL extraído deste ano
+  histAnoAnt: (aba: string, rotulo: string) => string;
+}
+
+interface CtxAno {
+  fy: string;
+  primeiroMes: string;
+  ultimoMes: string;
+  fyAnt: string | null;
+  L: (o: number) => number;
+  F: (o: number) => number;
+  B: (o: number) => number;
+}
+
+const MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
 export function construirAbaModelagem(
   workbook: ExcelJS.Workbook,
   caso: { nome: string },
@@ -2079,49 +2143,39 @@ export function construirAbaModelagem(
   macro: RefsMacro | null,
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(ABA_MODELAGEM, {
-    views: [{ state: "frozen", xSplit: 2, ySplit: 9 }],
+    views: [{ state: "frozen", xSplit: 2, ySplit: 11 }],
   });
 
   const primeiroAno = anosHistoricos[0] ?? new Date().getFullYear() - 1;
   const ultimoReal = anosHistoricos[anosHistoricos.length - 1] ?? primeiroAno;
-  const nCols = Math.max(anosHistoricos.length, 1) + anosProjetados;
-  const col = (i: number) => sheet.getColumn(i + 3).letter;
-  // Endereços que o modelo inteiro referencia. Derivados do layout real (e não
-  // escritos à mão) para que inserir uma linha no cabeçalho não quebre em
-  // silêncio TODAS as fórmulas abaixo — foi o que aconteceu na primeira versão.
+  const nHist = Math.max(anosHistoricos.length, 1);
+  const nAnos = nHist + anosProjetados;
+
+  // Layout: por ano, 12 colunas mensais + 1 coluna de consolidado anual.
+  const COLS_POR_ANO = 13;
+  const idxMes = (y: number, m: number) => 3 + y * COLS_POR_ANO + m;
+  const idxFY = (y: number) => 3 + y * COLS_POR_ANO + 12;
+  const cm = (y: number, m: number) => sheet.getColumn(idxMes(y, m)).letter;
+  const cfy = (y: number) => sheet.getColumn(idxFY(y)).letter;
+
   let refEntidade = "$C$3";
   let refCorte = "$C$4";
-  let linhaAno = 7;
-  // Chave de busca: o cabeçalho que as abas de dados já emitem ("<entidade> —
-  // <período>"), montada por fórmula a partir das células de input.
-  const chaveCol = (i: number) => `${refEntidade}&" — "&${col(i)}$${linhaAno}`;
-  // `expr` é uma expressão de ano ("$C$4", "($C$4-1)"). Quem passar aritmética
-  // deve PARENTIZAR: o Excel resolve `-` antes de `&`, mas depender de
-  // precedência numa string montada em código é como o "$C$" fixo das premissas
-  // — funciona até alguém mexer, e falha calado.
-  const chaveAno = (expr: string) => `${refEntidade}&" — "&${expr}`;
+  let linhaAno = 8;
+  let linhaData = 9;
 
-  // Expectativa Focus do ANO desta coluna. Sem macro carregada devolve 0 — a
-  // premissa fica visível e zerada em vez de a aba inteira sumir.
-  const focusDoAno = (serie: string, colAno: string): string => {
-    const linha = macro?.linhaFocusDe.get(serie);
-    if (!macro || !linha) return "0";
-    const ref = `'${ABA_MACRO}'`;
-    return `IFERROR(INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
-      + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
-  };
-
-  sheet.getColumn(1).width = 48;
-  sheet.getColumn(2).width = 13;
-  for (let i = 0; i < nCols; i++) sheet.getColumn(i + 3).width = 16;
+  sheet.getColumn(1).width = 52;
+  sheet.getColumn(2).width = 11;
+  for (let y = 0; y < nAnos; y++) {
+    for (let m = 0; m < 12; m++) sheet.getColumn(idxMes(y, m)).width = 12;
+    sheet.getColumn(idxFY(y)).width = 15;
+  }
 
   const linha = (rotulo: string, unidade = "") => sheet.addRow([rotulo, unidade]);
   const marcarInput = (cell: ExcelJS.Cell) => {
     cell.fill = INPUT_FILL;
     cell.border = INPUT_BORDER;
   };
-
-  // ---- Cabeçalho e as DUAS células que comandam o modelo inteiro -----------
+  // ---- Cabeçalho -----------------------------------------------------------
   const tit = linha(`MODELAGEM — ${caso.nome}`);
   tit.font = { bold: true, size: 14 };
   linha("");
@@ -2131,9 +2185,6 @@ export function construirAbaModelagem(
   rEnt.getCell(3).value = entidadeSugerida;
   marcarInput(rEnt.getCell(3));
   rEnt.getCell(1).font = TOTAL_FONT;
-  // Lista suspensa com as entidades que EXISTEM nas abas de dados: digitar o
-  // nome errado faria todo INDEX/MATCH cair no IFERROR e o modelo exibir zeros
-  // sem dizer por quê. Aqui o erro fica impossível de cometer por engano.
   if (entidadesDisponiveis.length > 0) {
     rEnt.getCell(3).dataValidation = {
       type: "list", allowBlank: false, showErrorMessage: true,
@@ -2143,9 +2194,8 @@ export function construirAbaModelagem(
     };
   }
   rEnt.getCell(3).note = comoNota(
-    "A empresa modelada. Todo o modelo abaixo é recalculado a partir desta célula — nenhuma outra "
-    + "precisa ser tocada para trocar de empresa. A lista traz as entidades que existem nas abas "
-    + "de dados deste arquivo.",
+    "A empresa modelada. Todo o modelo é recalculado a partir desta célula — nenhuma outra "
+    + "precisa ser tocada para trocar de empresa.",
   );
 
   const rCorte = linha("Último exercício realizado", "input");
@@ -2154,84 +2204,144 @@ export function construirAbaModelagem(
   marcarInput(rCorte.getCell(3));
   rCorte.getCell(1).font = TOTAL_FONT;
   rCorte.getCell(3).note = comoNota(
-    "Exercícios até este ano puxam o número REAL das abas de dados; os seguintes são PROJETADOS "
-    + "pelas premissas. É o mesmo mecanismo de corte Actual/Forecast do modelo de referência — e "
-    + "mover esta célula move o modelo inteiro, inclusive o sombreado das colunas projetadas.",
+    "Exercícios até este ano puxam o número REAL das abas de dados (distribuído nos meses pela "
+    + "sazonalidade abaixo); os seguintes são projetados pelas premissas. Mover esta célula move "
+    + "o modelo inteiro, inclusive o sombreado das colunas projetadas.",
   );
 
+  const rEscala = linha("Escala dos valores");
+  rEscala.getCell(3).value = "conforme os documentos (ver aba Resumo)";
+  rEscala.getCell(3).font = { italic: true, size: 9, color: { argb: "FF64748B" } };
   linha("");
 
-  // ---- Timeline: só o primeiro exercício é digitado; o resto deriva --------
+  // ---- Timeline ------------------------------------------------------------
   const rAno = linha("Exercício");
   linhaAno = rAno.number;
-  rAno.getCell(3).value = primeiroAno;
-  for (let i = 1; i < nCols; i++) rAno.getCell(i + 3).value = { formula: `${col(i - 1)}${linhaAno}+1` };
+  // Só o PRIMEIRO ano é digitado; cada janeiro seguinte deriva do anterior, e
+  // todas as demais colunas do ano (meses 2..12 e o FY) apontam para o janeiro
+  // do seu próprio ano. Uma célula comanda a linha do tempo inteira.
+  sheet.getRow(linhaAno).getCell(idxMes(0, 0)).value = primeiroAno;
+  marcarInput(sheet.getRow(linhaAno).getCell(idxMes(0, 0)));
+  for (let y = 0; y < nAnos; y++) {
+    if (y > 0) {
+      sheet.getRow(linhaAno).getCell(idxMes(y, 0)).value = { formula: `${cm(y - 1, 0)}${linhaAno}+1` };
+    }
+    for (let m = 1; m < 12; m++) {
+      sheet.getRow(linhaAno).getCell(idxMes(y, m)).value = { formula: `${cm(y, 0)}${linhaAno}` };
+    }
+    sheet.getRow(linhaAno).getCell(idxFY(y)).value = { formula: `${cm(y, 0)}${linhaAno}` };
+  }
   rAno.font = TOTAL_FONT;
-  rAno.eachCell((c) => {
-    c.fill = HEADER_FILL;
-    c.alignment = { horizontal: "center" };
-  });
-  marcarInput(rAno.getCell(3));
+  rAno.eachCell((c) => { c.fill = HEADER_FILL; c.alignment = { horizontal: "center" }; });
+  marcarInput(sheet.getRow(linhaAno).getCell(idxMes(0, 0)));
+
+  const rData = linha("Período");
+  linhaData = rData.number;
+  for (let y = 0; y < nAnos; y++) {
+    for (let m = 0; m < 12; m++) {
+      const cell = sheet.getRow(linhaData).getCell(idxMes(y, m));
+      cell.value = `${MESES_PT[m]}`;
+      cell.alignment = { horizontal: "center" };
+      cell.font = { size: 9 };
+    }
+    const fy = sheet.getRow(linhaData).getCell(idxFY(y));
+    fy.value = { formula: `"FY"&${cm(y, 0)}${linhaAno}` };
+    fy.font = { bold: true };
+    fy.alignment = { horizontal: "center" };
+    fy.fill = ANALISE_HEADER_FILL;
+  }
 
   const rTipo = linha("Tipo");
-  for (let i = 0; i < nCols; i++) {
-    rTipo.getCell(i + 3).value = { formula: `IF(${col(i)}${linhaAno}<=${refCorte},"Real","Projetado")` };
-    rTipo.getCell(i + 3).alignment = { horizontal: "center" };
+  for (let y = 0; y < nAnos; y++) {
+    for (let m = 0; m < 12; m++) {
+      const cell = sheet.getRow(rTipo.number).getCell(idxMes(y, m));
+      cell.value = { formula: `IF(${cm(y, 0)}${linhaAno}<=${refCorte},"Real","Projetado")` };
+      cell.alignment = { horizontal: "center" };
+    }
+    const fy = sheet.getRow(rTipo.number).getCell(idxFY(y));
+    fy.value = { formula: `IF(${cm(y, 0)}${linhaAno}<=${refCorte},"Real","Projetado")` };
+    fy.alignment = { horizontal: "center" };
   }
   rTipo.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
 
-  // Diagnóstico de cobertura: a coluna existe de fato nas abas de dados? Sem
-  // isto, um exercício sem documento e uma entidade digitada errado produzem o
-  // MESMO sintoma (zeros), e o usuário não tem como distinguir.
-  const rCobertura = linha("Dado encontrado");
-  for (let i = 0; i < nCols; i++) {
-    rCobertura.getCell(i + 3).value = {
-      formula: `IF(${col(i)}${linhaAno}>${refCorte},"—",`
-        + `IF(ISNUMBER(MATCH(${chaveCol(i)},'Balanço'!$B$1:$BZ$1,0)),"Balanço",`
-        + `IF(ISNUMBER(MATCH(${chaveCol(i)},'DRE'!$B$1:$BZ$1,0)),"só DRE","SEM DADO")))`,
+  const rCob = linha("Dado encontrado");
+  for (let y = 0; y < nAnos; y++) {
+    const cell = sheet.getRow(rCob.number).getCell(idxFY(y));
+    const chave = `${refEntidade}&" — "&${cm(y, 0)}${linhaAno}`;
+    cell.value = {
+      formula: `IF(${cm(y, 0)}${linhaAno}>${refCorte},"projetado",`
+        + `IF(ISNUMBER(MATCH(${chave},'Balanço'!$B$1:$BZ$1,0)),"Balanço+",`
+        + `IF(ISNUMBER(MATCH(${chave},'DRE'!$B$1:$BZ$1,0)),"só DRE","SEM DADO")))`,
     };
-    rCobertura.getCell(i + 3).alignment = { horizontal: "center" };
+    cell.alignment = { horizontal: "center" };
+    cell.font = { italic: true, size: 9 };
   }
-  rCobertura.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
-  rCobertura.getCell(1).note = comoNota(
+  rCob.getCell(1).note = comoNota(
     "\"SEM DADO\" num exercício histórico significa que não existe coluna dessa entidade nesse ano "
     + "nas abas de dados — o modelo mostra zeros ali porque o documento não foi entregue ou não "
     + "foi extraído, não porque a empresa vale zero.",
   );
-
   linha("");
 
-  // ---- Blocos -------------------------------------------------------------
+  // ---- Blocos --------------------------------------------------------------
   const bloco = (titulo: string) => {
     const r = linha(titulo);
     r.font = BLOCO_FONT;
-    for (let i = 0; i < nCols + 2; i++) r.getCell(i + 1).fill = BLOCO_FILL;
+    for (let i = 1; i <= 2 + nAnos * COLS_POR_ANO; i++) r.getCell(i).fill = BLOCO_FILL;
     return r;
   };
 
-  const primeiraColuna = col(0);
-  const ultimaColuna = col(nCols - 1);
   const linhasDeValor: number[] = [];
+  let rSazo = 0;
+  let rPremissas = 0;
 
-  const escrever = (defs: LinhaModelo[]) => {
+  const S = (m: number) => `$${sheet.getColumn(3 + m).letter}$${rSazo}`;
+  const totalSazo = () => `SUM($${sheet.getColumn(3).letter}$${rSazo}:$${sheet.getColumn(14).letter}$${rSazo})`;
+  const P = (i: number, y: number) => `${cfy(y)}$${rPremissas + i}`;
+
+  const escrever = (defs: LinhaModelo[], base: { L: (o: number) => number; F: (o: number) => number; B: (o: number) => number }) => {
     for (const d of defs) {
       const r = linha(d.rotulo, d.unidade ?? "");
       linhasDeValor.push(r.number);
-      for (let i = 0; i < nCols; i++) {
-        const cell = r.getCell(i + 3);
-        const c = col(i);
-        const ant = i > 0 ? col(i - 1) : null;
-        if (d.ambos) {
-          cell.value = { formula: d.ambos(c, ant) };
-        } else {
-          // O corte Real×Projetado numa fórmula só: a MESMA célula puxa o dado
-          // extraído enquanto o exercício é histórico e projeta depois.
-          const real = d.real ? d.real(chaveCol(i)) : "0";
-          const proj = d.proj && ant ? d.proj(c, ant) : real;
-          cell.value = { formula: `IF(${c}$${linhaAno}<=${refCorte},${real},${proj})` };
+      for (let y = 0; y < nAnos; y++) {
+        // --- 12 células mensais ---
+        if (d.mensal) {
+          for (let m = 0; m < 12; m++) {
+            const cell = r.getCell(idxMes(y, m));
+            const ant = m > 0 ? cm(y, m - 1) : (y > 0 ? cm(y - 1, 11) : null);
+            const ctx: CtxMes = {
+              c: cm(y, m), ant, mesmoMesAnoAnt: y > 0 ? cm(y - 1, m) : null,
+              fy: cfy(y), m, y, ...base,
+              P: (i) => P(i, y), S, totalSazo: totalSazo(),
+              hist: (aba, rot) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&${cm(y, 0)}$${linhaAno}`),
+              histAnoAnt: (aba, rot) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&(${cm(y, 0)}$${linhaAno}-1)`),
+            };
+            cell.value = { formula: d.mensal(ctx) };
+            cell.numFmt = d.fmt ?? VALOR_NUM_FMT;
+            if (d.premissa) marcarInput(cell);
+          }
         }
-        cell.numFmt = d.fmt ?? VALOR_NUM_FMT;
-        if (d.premissa) marcarInput(cell);
+        // --- consolidado anual ---
+        const fyCell = r.getCell(idxFY(y));
+        const ctxAno: CtxAno = {
+          fy: cfy(y), primeiroMes: cm(y, 0), ultimoMes: cm(y, 11),
+          fyAnt: y > 0 ? cfy(y - 1) : null, ...base,
+        };
+        if (d.anual) {
+          fyCell.value = { formula: d.anual(ctxAno) };
+        } else if (d.premissa) {
+          // premissa vive NA coluna anual: é anual por natureza
+        } else if (d.consolida === "estoque") {
+          fyCell.value = { formula: `${cm(y, 11)}${r.number}` };
+        } else if (d.consolida === "inicial") {
+          fyCell.value = { formula: `${cm(y, 0)}${r.number}` };
+        } else if (d.mensal) {
+          fyCell.value = { formula: `SUM(${cm(y, 0)}${r.number}:${cm(y, 11)}${r.number})` };
+        }
+        fyCell.numFmt = d.fmt ?? VALOR_NUM_FMT;
+        fyCell.font = { bold: true };
+        if (!d.premissa) fyCell.fill = ANALISE_HEADER_FILL;
+        if (d.premissa) marcarInput(fyCell);
       }
       if (d.destaque) {
         r.font = TOTAL_FONT;
@@ -2241,280 +2351,390 @@ export function construirAbaModelagem(
     }
   };
 
-  // -------- Premissas -------------------------------------------------------
-  // Elas NASCEM DERIVADAS do histórico, por fórmula, em vez de vazias: um modelo
-  // que abre zerado não é utilizável, e um número que eu chutasse seria pior
-  // ainda. Cada premissa lê o ÚLTIMO exercício real direto das ABAS DE DADOS —
-  // nunca das linhas do próprio modelo, senão o Excel acusa REFERÊNCIA CIRCULAR
-  // (a linha projetada cita a premissa; a premissa citaria a linha). A célula
-  // continua sendo input: o usuário digita por cima e o modelo inteiro se move.
-  bloco("PREMISSAS — o padrão vem do último exercício real; digite por cima para simular");
-  const rPremissas = sheet.rowCount + 1;
-  // Premissa POR EXERCÍCIO: cada coluna projetada tem a sua célula. Referenciar
-  // uma coluna fixa (`$C$n`) faria a premissa do ano 2 não mudar nada — o
-  // usuário digitaria e o modelo ficaria parado, que é o pior defeito possível
-  // num modelo. Aqui a coluna é relativa: cada ano lê a premissa do seu ano.
-  const P = (i: number, c: string) => `${c}$${rPremissas + i}`;
+  const nada = { L: () => 0, F: () => 0, B: () => 0 };
 
-  // Índices nomeados em vez de números soltos. Reordenar o bloco de premissas
-  // com números mágicos espalhados pelo arquivo é como trocar o cabeçalho da
-  // planilha sem mexer nas fórmulas: tudo continua compilando e o modelo passa
-  // a ler a premissa errada, calado.
-  const PREM = {
-    ipca: 0, selic: 1, parcelaOnerosa: 2, crescReal: 3, margemBruta: 4, sga: 5,
-    depreciacao: 6, resFinanceiro: 7, aliquota: 8, capex: 9, capitalGiro: 10,
-    dividaLiquida: 11,
-  } as const;
+  // ======================= SAZONALIDADE ====================================
+  bloco("SAZONALIDADE — como o ano se distribui nos meses (histórico e projeção)");
+  {
+    const r = linha("Peso do mês", "% do ano");
+    rSazo = r.number;
+    linhasDeValor.push(r.number);
+    for (let m = 0; m < 12; m++) {
+      const cell = r.getCell(3 + m);
+      cell.value = 1 / 12;
+      cell.numFmt = PCT_FMT;
+      marcarInput(cell);
+    }
+    r.getCell(1).note = comoNota(
+      "Os 12 pesos valem para TODOS os anos: é o vetor que distribui o número ANUAL extraído "
+      + "(as demonstrações são anuais — não existe balanço mensal para extrair) e que dá forma à "
+      + "projeção. Padrão 1/12: distribuição uniforme, a hipótese mais neutra possível. Se o "
+      + "mandato tem sazonalidade conhecida, digite-a aqui — os pesos NÃO precisam somar 100%, "
+      + "o modelo normaliza pela soma. Nada aqui é observação: é distribuição declarada.",
+    );
+    const chk = linha("↳ soma dos pesos", "confere");
+    chk.getCell(3).value = { formula: totalSazo() };
+    chk.getCell(3).numFmt = PCT_FMT;
+    chk.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  }
+  linha("");
 
-  const noAnoDoCorte = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(refCorte));
-  const noAnoAnterior = (aba: string, rotulo: string) => buscaNaAba(workbook, aba, rotulo, chaveAno(`(${refCorte}-1)`));
-  const recCorte = noAnoDoCorte("DRE", "Receita Líquida");
-  const recAnterior = noAnoAnterior("DRE", "Receita Líquida");
+  // ======================= PREMISSAS =======================================
+  // Ficam na COLUNA ANUAL de cada exercício: são premissas de ano, e as células
+  // mensais leem a do seu próprio ano. Uma premissa por mês (60 células por
+  // linha) seria impossível de operar e é o oposto de "pronto para modelar".
+  bloco("PREMISSAS — uma por exercício, na coluna FY. Digite por cima para simular");
+  rPremissas = sheet.rowCount + 1;
+
+  const recCorte = buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&${refCorte}`);
+  const recAnterior = buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&(${refCorte}-1)`);
+  const noCorte = (aba: string, rot: string) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&${refCorte}`);
 
   escrever([
-    // --- premissas MACRO: nascem da expectativa de mercado (Focus/BCB) ------
     { rotulo: "Inflação esperada (IPCA — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      ambos: (c) => `${focusDoAno("IPCA", `${c}$${linhaAno}`)}/100`,
-      nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro). "
-        + "Vem do Boletim Focus/BCB, não da média histórica: média do passado calibra, não prevê." },
+      anual: (a) => macro ? `${focusMacro(macro, "IPCA", `${a.fy}$${linhaAno}`)}/100` : "0",
+      nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro, Boletim "
+        + "Focus/BCB). Não é a média histórica: média do passado calibra, não prevê." },
     { rotulo: "Juro esperado (Selic — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      ambos: (c) => `${focusDoAno("SELIC", `${c}$${linhaAno}`)}/100`,
-      nota: "Idem, para a Selic — é o que precifica o custo da dívida na projeção abaixo." },
+      anual: (a) => macro ? `${focusMacro(macro, "SELIC", `${a.fy}$${linhaAno}`)}/100` : "0",
+      nota: "Precifica o custo da dívida. A conversão para o mês é GEOMÉTRICA — (1+i)^(1/12)−1, "
+        + "não i/12: dividir por 12 subestima o juro composto." },
     { rotulo: "Parcela onerosa do passivo", premissa: true, fmt: PCT_FMT, unidade: "% do passivo",
-      ambos: () => "0",
-      nota: "Quanto do passivo total paga juro (empréstimos, financiamentos, debêntures). O export "
-        + "classifica por SEÇÃO contábil e não isola dívida onerosa, então este número é SEU: "
-        + "tire-o do Mapa da Dívida. Em 0, a projeção não cobra juro nenhum." },
-    // --- premissas operacionais: nascem do último exercício real ------------
+      anual: () => "0",
+      nota: "Quanto do passivo paga juro (empréstimos, financiamentos, debêntures). O export "
+        + "classifica por SEÇÃO contábil e não isola dívida onerosa — este número sai do Mapa da "
+        + "Dívida. Em 0, a projeção não cobra juro nenhum." },
     { rotulo: "Crescimento REAL da receita (acima da inflação)", premissa: true, fmt: PCT_FMT,
       unidade: "% a.a.",
-      ambos: (c) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+${P(PREM.ipca, c)})-1,0)`,
-      nota: "Separado da inflação de propósito: o crescimento NOMINAL projetado é "
-        + "(1 + IPCA) × (1 + crescimento real) − 1. Assim dá para responder 'a empresa cresce "
-        + "acima ou abaixo da inflação?', que é a pergunta que importa numa reestruturação. "
-        + "Padrão: o crescimento observado entre os dois últimos exercícios reais, deflacionado." },
-    { rotulo: "Margem bruta", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
-      ambos: () => `IFERROR(${noAnoDoCorte("DRE", "Lucro Bruto")}/${recCorte},0)` },
+      anual: (a) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+${a.fy}$${rPremissas})-1,0)`,
+      nota: "O crescimento NOMINAL projetado é (1+IPCA)×(1+real)−1. Separar os dois é o que "
+        + "responde 'a empresa cresce acima ou abaixo da inflação?'. Padrão: o crescimento "
+        + "observado entre os dois últimos exercícios reais, deflacionado." },
+    { rotulo: "Margem bruta ALVO", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      nota: "Rótulo distinto do da DRE de propósito: num modelo que vai ser auditado, duas "
+        + "linhas com o mesmo nome fazem quem confere (e quem escreve fórmula) apontar para a "
+        + "errada. Esta é a PREMISSA; a margem realizada é calculada lá embaixo.",
+      anual: () => `IFERROR(${noCorte("DRE", "Lucro Bruto")}/${recCorte},0)` },
     { rotulo: "SG&A sobre receita líquida", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
-      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Lucro Bruto")}-`
-        + `${noAnoDoCorte("DRE", "Resultado Operacional (EBIT)")})/${recCorte},0)` },
+      anual: () => `IFERROR((${noCorte("DRE", "Lucro Bruto")}-${noCorte("DRE", "Resultado Operacional (EBIT)")})/${recCorte},0)` },
     { rotulo: "Depreciação e amortização", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
-      ambos: () => "0",
+      anual: () => "0",
       nota: "Sem padrão derivável: a DRE brasileira raramente isola D&A (vem das notas ou do "
         + "fluxo). Fica 0 — lacuna visível — até você preencher." },
-    { rotulo: "Resultado financeiro sobre receita líquida", premissa: true, fmt: PCT_FMT,
-      unidade: "% da RL",
-      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Resultado Operacional (EBIT)")}-`
-        + `${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")})/${recCorte},0)` },
-    { rotulo: "Alíquota efetiva de tributos sobre o lucro", premissa: true, fmt: PCT_FMT,
-      unidade: "%",
-      ambos: () => `IFERROR((${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")}-`
-        + `${noAnoDoCorte("DRE", "Lucro/Prejuízo Líquido do Exercício")})/`
-        + `MAX(1,${noAnoDoCorte("DRE", "Resultado Antes dos Tributos")}),0)` },
+    { rotulo: "Outras receitas/despesas financeiras", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
+      anual: () => `IFERROR((${noCorte("DRE", "Resultado Operacional (EBIT)")}-${noCorte("DRE", "Resultado Antes dos Tributos")})/${recCorte},0)`,
+      nota: "A parcela do resultado financeiro que NÃO é juro de dívida (tarifas, variação "
+        + "cambial, descontos). O juro da dívida é calculado à parte, pela Selic." },
+    { rotulo: "Alíquota efetiva de tributos sobre o lucro", premissa: true, fmt: PCT_FMT, unidade: "%",
+      anual: () => `IFERROR((${noCorte("DRE", "Resultado Antes dos Tributos")}-${noCorte("DRE", "Lucro/Prejuízo Líquido do Exercício")})/MAX(1,${noCorte("DRE", "Resultado Antes dos Tributos")}),0)` },
     { rotulo: "Capex", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
-      ambos: () => `IFERROR(-${noAnoDoCorte("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento")}`
-        + `/${recCorte},0)` },
-    { rotulo: "Capital de giro sobre variação da receita", premissa: true, fmt: PCT_FMT,
-      unidade: "% da ΔRL",
-      ambos: () => "0",
-      nota: "Quanto de caixa cada real a mais de receita consome em giro. 0 = giro neutro." },
-    { rotulo: "Captação (+) / amortização (−) líquida de dívida", premissa: true,
-      unidade: "R$/ano",
-      ambos: () => "0",
-      nota: "Valor ABSOLUTO por ano projetado, não percentual: captação e amortização são decisão "
-        + "do plano de reestruturação, não extrapolação do passado." },
-  ]);
+      anual: () => `IFERROR(-${noCorte("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento")}/${recCorte},0)` },
+    { rotulo: "Prazo médio de recebimento", premissa: true, fmt: "0", unidade: "dias",
+      anual: () => "0",
+      nota: "Dias de receita parados em clientes. Move o contas a receber e, por consequência, o "
+        + "caixa: é o principal driver de capital de giro num turnaround." },
+    { rotulo: "Prazo médio de pagamento", premissa: true, fmt: "0", unidade: "dias",
+      anual: () => "0",
+      nota: "Dias de custo financiados por fornecedores. Alongar prazo gera caixa — e é uma das "
+        + "primeiras alavancas de uma renegociação." },
+    { rotulo: "Prazo médio de estoque", premissa: true, fmt: "0", unidade: "dias",
+      anual: () => "0" },
+    { rotulo: "Captação (+) / amortização (−) de dívida no ano", premissa: true, unidade: "R$/ano",
+      anual: () => "0",
+      nota: "Valor absoluto por ano, distribuído nos 12 meses pela sazonalidade. Captação e "
+        + "amortização são decisão do plano, não extrapolação do passado." },
+    { rotulo: "Aporte (+) / distribuição (−) de sócios no ano", premissa: true, unidade: "R$/ano",
+      anual: () => "0" },
+  ], nada);
 
+  const PR = {
+    ipca: 0, selic: 1, parcelaOnerosa: 2, crescReal: 3, margemBruta: 4, sga: 5, depreciacao: 6,
+    outrasFin: 7, aliquota: 8, capex: 9, pmr: 10, pmp: 11, pme: 12, divida: 13, socios: 14,
+  } as const;
+
+  // ======================= DÍVIDA ==========================================
+  // Vem ANTES da DRE de propósito: o juro do mês nasce do saldo de dívida do mês
+  // anterior, e a DRE precisa dele. Assim não há referência para frente — nem no
+  // código, nem na planilha.
+  bloco("DÍVIDA ONEROSA");
+  const rDiv = sheet.rowCount + 1;
+  const D = (o: number) => rDiv + o;
+  const selicMes = (y: number) => `((1+${P(PR.selic, y)})^(1/12)-1)`;
+  escrever([
+    { rotulo: "Saldo inicial", consolida: "inicial",
+      // No HISTÓRICO a dívida segue o passivo extraído daquele ano (a empresa
+      // tinha a dívida que tinha — não faz sentido rolar uma estimativa por
+      // cima de um balanço que existe). Só na PROJEÇÃO o saldo rola.
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `(${x.hist("Balanço", "Passivo Circulante")}+${x.hist("Balanço", "Passivo Não Circulante")})`
+        + `*${x.P(PR.parcelaOnerosa)},`
+        + (x.ant ? `${x.ant}${D(4)})` : `0)`),
+      nota: "No histórico, a parcela ONEROSA do passivo daquele exercício — a premissa vale por "
+        + "ano, então cada exercício pode ter um mix de dívida diferente. Na projeção o saldo "
+        + "rola: fim do mês anterior = início deste." },
+    { rotulo: "(+) Captação", mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,MAX(0,${x.P(PR.divida)})*${x.S(x.m)}/${x.totalSazo})` },
+    { rotulo: "(−) Amortização", mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,MIN(0,${x.P(PR.divida)})*${x.S(x.m)}/${x.totalSazo})` },
+    { rotulo: "Juros do mês", destaque: true,
+      mensal: (x) => `-${x.c}${D(0)}*${selicMes(x.y)}`,
+      nota: "Juro sobre o saldo INICIAL do mês, à Selic esperada convertida geometricamente: "
+        + "(1+i)^(1/12)−1. Dividir a taxa anual por 12 subestimaria o juro composto — num saldo "
+        + "de dezenas de milhões, a diferença é material." },
+    { rotulo: "Saldo final", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${D(0)}+${x.c}${D(1)}+${x.c}${D(2)}` },
+  ], nada);
   linha("");
 
-  // -------- DRE -------------------------------------------------------------
+  // ======================= DRE =============================================
   bloco("DEMONSTRAÇÃO DE RESULTADO");
   const rDRE = sheet.rowCount + 1;
-  const L = (offset: number) => rDRE + offset;
+  const L = (o: number) => rDRE + o;
+  // Histórico distribuído: valor ANUAL extraído × peso do mês ÷ soma dos pesos.
+  // A normalização pela soma é o que permite ao usuário digitar pesos em
+  // qualquer escala (1..12, 100..) sem quebrar a amarração com o ano.
+  const dist = (x: CtxMes, anual: string) => `${anual}*${x.S(x.m)}/${x.totalSazo}`;
   escrever([
     { rotulo: "Receita Líquida", destaque: true,
-      real: (k) => buscaNaAba(workbook, "DRE", "Receita Líquida", k),
-      proj: (c, a) => `${a}${L(0)}*(1+${P(PREM.ipca, c)})*(1+${P(PREM.crescReal, c)})`,
-      nota: "Histórico: puxado da aba DRE. Projetado: receita do ano anterior × (1 + crescimento)." },
-    { rotulo: "(-) Custo dos produtos/serviços vendidos",
-      real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}-${buscaNaAba(workbook, "DRE", "Receita Líquida", k)}`,
-      proj: (c) => `-${c}${L(0)}*(1-${P(PREM.margemBruta, c)})` },
-    { rotulo: "Lucro Bruto", destaque: true, ambos: (c) => `${c}${L(0)}+${c}${L(1)}` },
-    { rotulo: "Margem bruta", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(2)}/${c}${L(0)},"")` },
-    { rotulo: "(-) Despesas operacionais (SG&A)",
-      real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}-${buscaNaAba(workbook, "DRE", "Lucro Bruto", k)}`,
-      proj: (c) => `-${c}${L(0)}*${P(PREM.sga, c)}` },
-    { rotulo: "EBIT (resultado operacional)", destaque: true, ambos: (c) => `${c}${L(2)}+${c}${L(4)}` },
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},${dist(x, x.hist("DRE", "Receita Líquida"))},`
+        + (x.mesmoMesAnoAnt
+          ? `${x.mesmoMesAnoAnt}${L(0)}*(1+${x.P(PR.ipca)})*(1+${x.P(PR.crescReal)}))`
+          : `${dist(x, x.hist("DRE", "Receita Líquida"))})`),
+      nota: "Projeção sobre o MESMO MÊS do ano anterior × (1+IPCA) × (1+crescimento real) — "
+        + "assim a sazonalidade se propaga sozinha, em vez de ser reaplicada." },
+    { rotulo: "(−) Custo dos produtos/serviços vendidos",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, `(${x.hist("DRE", "Lucro Bruto")}-${x.hist("DRE", "Receita Líquida")})`)},`
+        + `-${x.c}${L(0)}*(1-${x.P(PR.margemBruta)}))` },
+    { rotulo: "Lucro Bruto", destaque: true, mensal: (x) => `${x.c}${L(0)}+${x.c}${L(1)}` },
+    { rotulo: "Margem bruta", fmt: PCT_FMT,
+      mensal: (x) => `IFERROR(${x.c}${L(2)}/${x.c}${L(0)},"")`,
+      anual: (a) => `IFERROR(${a.fy}${L(2)}/${a.fy}${L(0)},"")`,
+      nota: "No consolidado a margem é RECALCULADA sobre os agregados do ano — somar ou tirar "
+        + "média de percentual mensal não dá o percentual do ano." },
+    { rotulo: "(−) Despesas operacionais (SG&A)",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, `(${x.hist("DRE", "Resultado Operacional (EBIT)")}-${x.hist("DRE", "Lucro Bruto")})`)},`
+        + `-${x.c}${L(0)}*${x.P(PR.sga)})` },
+    { rotulo: "EBIT (resultado operacional)", destaque: true, mensal: (x) => `${x.c}${L(2)}+${x.c}${L(4)}` },
     { rotulo: "(+) Depreciação e amortização",
-      real: () => "0", proj: (c) => `${c}${L(0)}*${P(PREM.depreciacao, c)}`,
-      nota: "O documento raramente traz D&A como linha isolada da DRE. Enquanto não vier, o "
-        + "histórico fica 0 e o EBITDA iguala o EBIT — lacuna VISÍVEL, não estimativa nossa." },
-    { rotulo: "EBITDA", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(6)}` },
-    { rotulo: "Margem EBITDA", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(7)}/${c}${L(0)},"")` },
-    { rotulo: "(+/-) Resultado financeiro",
-      real: (k) => `${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}-${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", k)}`,
-      // A fórmula COMPLETA (que também cobra juro sobre a dívida) é aplicada
-      // depois, em `ligarJuroDaDivida`: ela referencia o Balanço, que só é
-      // escrito abaixo. Escrever aqui citaria uma variável ainda não
-      // inicializada — e o erro apareceria como formulário quebrado, não como
-      // falha de compilação.
-      proj: (c) => `-${c}${L(0)}*${P(PREM.resFinanceiro, c)}` },
-    { rotulo: "Resultado antes dos tributos", destaque: true, ambos: (c) => `${c}${L(5)}+${c}${L(9)}` },
-    { rotulo: "(-) Tributos sobre o lucro",
-      real: (k) => `${buscaNaAba(workbook, "DRE", "Lucro/Prejuízo Líquido do Exercício", k)}-${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", k)}`,
-      proj: (c) => `-MAX(0,${c}${L(10)})*${P(PREM.aliquota, c)}`,
-      nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo." },
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,${x.c}${L(0)}*${x.P(PR.depreciacao)})`,
+      nota: "A DRE brasileira raramente isola D&A (vem das notas ou do fluxo). No histórico fica "
+        + "0 e o EBITDA iguala o EBIT — lacuna VISÍVEL, não estimativa nossa." },
+    { rotulo: "EBITDA", destaque: true, mensal: (x) => `${x.c}${L(5)}+${x.c}${L(6)}` },
+    { rotulo: "Margem EBITDA", fmt: PCT_FMT,
+      mensal: (x) => `IFERROR(${x.c}${L(7)}/${x.c}${L(0)},"")`,
+      anual: (a) => `IFERROR(${a.fy}${L(7)}/${a.fy}${L(0)},"")` },
+    { rotulo: "(−) Juros sobre dívida",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,${x.c}${D(3)})`,
+      nota: "Projetado: o juro calculado no bloco DÍVIDA. No histórico fica em 0 e o resultado "
+        + "financeiro inteiro entra na linha de baixo — o documento não separa os dois." },
+    { rotulo: "(+/−) Outras receitas/despesas financeiras",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, `(${x.hist("DRE", "Resultado Antes dos Tributos")}-${x.hist("DRE", "Resultado Operacional (EBIT)")})`)},`
+        + `-${x.c}${L(0)}*${x.P(PR.outrasFin)})` },
+    { rotulo: "Resultado financeiro", mensal: (x) => `${x.c}${L(9)}+${x.c}${L(10)}` },
+    { rotulo: "Resultado antes dos tributos", destaque: true, mensal: (x) => `${x.c}${L(5)}+${x.c}${L(11)}` },
+    { rotulo: "(−) Tributos sobre o lucro",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, `(${x.hist("DRE", "Lucro/Prejuízo Líquido do Exercício")}-${x.hist("DRE", "Resultado Antes dos Tributos")})`)},`
+        + `-MAX(0,${x.c}${L(12)})*${x.P(PR.aliquota)})`,
+      nota: "Projeção aplica a alíquota só sobre lucro positivo — prejuízo não gera tributo a pagar." },
     { rotulo: "Lucro/Prejuízo Líquido do Exercício", destaque: true,
-      ambos: (c) => `${c}${L(10)}+${c}${L(11)}` },
-    { rotulo: "Margem líquida", fmt: PCT_FMT, ambos: (c) => `IFERROR(${c}${L(12)}/${c}${L(0)},"")` },
-  ]);
-
+      mensal: (x) => `${x.c}${L(12)}+${x.c}${L(13)}` },
+    { rotulo: "Margem líquida", fmt: PCT_FMT,
+      mensal: (x) => `IFERROR(${x.c}${L(14)}/${x.c}${L(0)},"")`,
+      anual: (a) => `IFERROR(${a.fy}${L(14)}/${a.fy}${L(0)},"")` },
+  ], nada);
   linha("");
 
-  // -------- Fluxo de caixa (vem ANTES do balanço de propósito) --------------
-  // O caixa projetado é o elo que faz o balanço fechar: ele nasce aqui e entra
-  // no ativo circulante lá embaixo. Sem esse elo o balanço projetado não fecha e
-  // o modelo vira duas demonstrações que não conversam.
+  // ======================= CAPITAL DE GIRO =================================
+  // Schedule próprio (como o modelo de referência tem uma aba de Working
+  // Capital): é daqui que saem TANTO a variação que entra no fluxo QUANTO os
+  // saldos que aparecem no balanço. Uma fonte só para os dois — se cada um
+  // calculasse o seu, eles divergiriam em silêncio.
+  bloco("CAPITAL DE GIRO");
+  const rWC = sheet.rowCount + 1;
+  const W = (o: number) => rWC + o;
+  escrever([
+    { rotulo: "Contas a receber", consolida: "estoque",
+      mensal: (x) => `${x.c}${L(0)}*${x.P(PR.pmr)}/30`,
+      nota: "Receita do mês × prazo médio de recebimento ÷ 30. Com PMR em 0 não há contas a "
+        + "receber projetadas — preencha o prazo para o giro entrar no modelo." },
+    { rotulo: "Estoques", consolida: "estoque",
+      mensal: (x) => `-${x.c}${L(1)}*${x.P(PR.pme)}/30` },
+    { rotulo: "(−) Fornecedores", consolida: "estoque",
+      mensal: (x) => `${x.c}${L(1)}*${x.P(PR.pmp)}/30` },
+    { rotulo: "Necessidade de capital de giro (NCG)", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${W(0)}+${x.c}${W(1)}+${x.c}${W(2)}` },
+    { rotulo: "(+/−) Variação da NCG no mês",
+      mensal: (x) => x.ant ? `-(${x.c}${W(3)}-${x.ant}${W(3)})` : "0",
+      nota: "Entra no fluxo de caixa com o sinal invertido: NCG que cresce CONSOME caixa. É a "
+        + "alavanca mais rápida de um turnaround, e por isso ela é premissa e não resultado." },
+  ], nada);
+  linha("");
+
+  // ======================= FLUXO DE CAIXA ==================================
   bloco("FLUXO DE CAIXA (MÉTODO INDIRETO)");
   const rFC = sheet.rowCount + 1;
-  const F = (offset: number) => rFC + offset;
+  const F = (o: number) => rFC + o;
   escrever([
-    { rotulo: "Lucro/Prejuízo Líquido do Exercício", ambos: (c) => `${c}${L(12)}` },
-    { rotulo: "(+) Depreciação e amortização", ambos: (c) => `${c}${L(6)}` },
-    { rotulo: "(+/-) Variação do capital de giro",
-      real: () => "0",
-      proj: (c, a) => `-(${c}${L(0)}-${a}${L(0)})*${P(PREM.capitalGiro, c)}` },
+    { rotulo: "Lucro/Prejuízo Líquido", mensal: (x) => `${x.c}${L(14)}` },
+    { rotulo: "(+) Depreciação e amortização", mensal: (x) => `${x.c}${L(6)}` },
+    { rotulo: "(+) Juros (estorno da despesa)", mensal: (x) => `-${x.c}${L(9)}`,
+      nota: "O lucro líquido já está LÍQUIDO de juros. Como o desembolso do juro é classificado "
+        + "em Financiamento (padrão CPC 03), ele precisa ser estornado aqui — senão a mesma "
+        + "despesa sai do caixa DUAS VEZES e o balanço deixa de fechar. É o erro clássico do "
+        + "método indireto." },
+    { rotulo: "(+/−) Variação da NCG", mensal: (x) => `${x.c}${W(4)}` },
     { rotulo: "Caixa das Atividades Operacionais", destaque: true,
-      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais", k),
-      proj: (c) => `${c}${F(0)}+${c}${F(1)}+${c}${F(2)}` },
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, x.hist("Fluxo de Caixa", "Caixa Líquido das Atividades Operacionais"))},`
+        + `${x.c}${F(0)}+${x.c}${F(1)}+${x.c}${F(2)}+${x.c}${F(3)})` },
+    { rotulo: "(−) Capex", mensal: (x) => `-${x.c}${L(0)}*${x.P(PR.capex)}` },
     { rotulo: "Caixa das Atividades de Investimento", destaque: true,
-      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento", k),
-      proj: (c) => `-${c}${L(0)}*${P(PREM.capex, c)}` },
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, x.hist("Fluxo de Caixa", "Caixa Líquido das Atividades de Investimento"))},`
+        + `${x.c}${F(5)})` },
+    { rotulo: "(+) Captação de dívida", mensal: (x) => `${x.c}${D(1)}` },
+    { rotulo: "(−) Amortização de dívida", mensal: (x) => `${x.c}${D(2)}` },
+    { rotulo: "(−) Juros pagos", mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,${x.c}${D(3)})` },
+    { rotulo: "(+/−) Aporte / distribuição de sócios",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},0,${x.P(PR.socios)}*${x.S(x.m)}/${x.totalSazo})` },
     { rotulo: "Caixa das Atividades de Financiamento", destaque: true,
-      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento", k),
-      proj: (c) => `${P(PREM.dividaLiquida, c)}`,
-      nota: "Projetado = a premissa de captação/amortização líquida. Zero por padrão: o plano "
-        + "de reestruturação decide isso, o modelo não extrapola dívida sozinho." },
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${dist(x, x.hist("Fluxo de Caixa", "Caixa Líquido das Atividades de Financiamento"))},`
+        + `${x.c}${F(7)}+${x.c}${F(8)}+${x.c}${F(9)}+${x.c}${F(10)})` },
     { rotulo: "Variação líquida de caixa", destaque: true,
-      ambos: (c) => `${c}${F(3)}+${c}${F(4)}+${c}${F(5)}` },
-    { rotulo: "Saldo inicial de caixa",
-      real: (k) => buscaNaAba(workbook, "Fluxo de Caixa", "Saldo Inicial de Caixa", k),
-      proj: (c, a) => `${a}${F(8)}` },
-    { rotulo: "Saldo final de caixa", destaque: true, ambos: (c) => `${c}${F(7)}+${c}${F(6)}` },
-  ]);
-
+      mensal: (x) => `${x.c}${F(4)}+${x.c}${F(6)}+${x.c}${F(11)}` },
+    { rotulo: "Saldo inicial de caixa", consolida: "inicial",
+      mensal: (x) => x.ant
+        ? `${x.ant}${F(14)}`
+        : `${x.hist("Fluxo de Caixa", "Saldo Inicial de Caixa")}` },
+    { rotulo: "Saldo final de caixa", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${F(13)}+${x.c}${F(12)}` },
+  ], nada);
   linha("");
 
-  // -------- Balanço ---------------------------------------------------------
+  // ======================= BALANÇO =========================================
   bloco("BALANÇO PATRIMONIAL");
   const rBP = sheet.rowCount + 1;
-  const B = (offset: number) => rBP + offset;
+  const B = (o: number) => rBP + o;
+  // Estoque histórico é INTERPOLADO entre o fechamento do ano anterior e o do
+  // ano corrente: dezembro cai exatamente no valor extraído (a conferência lá
+  // embaixo prova) e os meses do meio ganham uma trajetória, em vez de um
+  // degrau em janeiro que ninguém observou.
+  const interp = (x: CtxMes, aba: string, rot: string) =>
+    `(${x.histAnoAnt(aba, rot)}+(${x.hist(aba, rot)}-${x.histAnoAnt(aba, rot)})*${x.m + 1}/12)`;
   escrever([
-    { rotulo: "Caixa e equivalentes", ambos: (c) => `${c}${F(8)}`,
-      nota: "Vem do saldo final do fluxo de caixa acima — é o elo que faz o balanço projetado "
-        + "responder a QUALQUER premissa (uma margem pior queima caixa e aparece aqui)." },
-    { rotulo: "Demais ativos circulantes",
-      real: (k) => `${buscaNaAba(workbook, "Balanço", "Ativo Circulante", k)}-`
-        + `${buscaNaAba(workbook, "Fluxo de Caixa", "Saldo Final de Caixa", k)}`,
-      proj: (c, a) => `${a}${B(1)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)`,
-      nota: "Recebíveis e estoques acompanham a receita (giro constante). Para outro "
-        + "comportamento, use a premissa de capital de giro." },
-    { rotulo: "Ativo Circulante", destaque: true, ambos: (c) => `${c}${B(0)}+${c}${B(1)}` },
-    { rotulo: "Ativo Não Circulante",
-      real: (k) => buscaNaAba(workbook, "Balanço", "Ativo Não Circulante", k),
-      proj: (c, a) => `${a}${B(3)}+${c}${L(0)}*${P(PREM.capex, c)}-${c}${L(6)}`,
-      nota: "Anterior + capex − depreciação: as duas premissas movem esta linha." },
-    { rotulo: "TOTAL DO ATIVO", destaque: true, ambos: (c) => `${c}${B(2)}+${c}${B(3)}` },
-    { rotulo: "Passivo Circulante",
-      real: (k) => buscaNaAba(workbook, "Balanço", "Passivo Circulante", k),
-      proj: (c, a) => `${a}${B(5)}*IFERROR(${c}${L(0)}/${a}${L(0)},1)` },
-    { rotulo: "Passivo Não Circulante",
-      real: (k) => buscaNaAba(workbook, "Balanço", "Passivo Não Circulante", k),
-      proj: (c, a) => `${a}${B(6)}+${P(PREM.dividaLiquida, c)}` },
-    { rotulo: "Patrimônio Líquido",
-      real: (k) => buscaNaAba(workbook, "Balanço", "Patrimônio Líquido", k),
-      proj: (c, a) => `${a}${B(7)}+${c}${L(12)}`,
-      nota: "PL projetado = PL anterior + resultado do exercício (sem aporte nem distribuição)." },
-    { rotulo: "TOTAL DO PASSIVO E PL", destaque: true,
-      ambos: (c) => `${c}${B(5)}+${c}${B(6)}+${c}${B(7)}` },
-    { rotulo: "Conferência (Ativo − Passivo − PL)", destaque: true,
-      ambos: (c) => `${c}${B(4)}-${c}${B(8)}`,
-      nota: "No HISTÓRICO tem de ser ~zero: diferente disso, o dado extraído não fecha (confira a "
-        + "aba Balanço). No PROJETADO é o resíduo entre as premissas de giro do ativo e do passivo "
-        + "— NÃO é a necessidade de caixa (esta vem logo abaixo). Um resultado pior derruba caixa "
-        + "e PL na MESMA medida, então ele não aparece aqui: aparece no caixa." },
-    { rotulo: "Necessidade de captação (caixa negativo)", destaque: true,
-      ambos: (c) => `-MIN(0,${c}${B(0)})`,
-      nota: "Quanto de recurso o plano precisa levantar para o caixa não virar negativo — a "
-        + "pergunta que a modelagem existe para responder. Sai do saldo final do fluxo: qualquer "
-        + "premissa que queime caixa (margem pior, juro maior, capex) aumenta esta linha." },
-  ]);
-
-  // ---- Passada tardia: juro sobre a dívida ---------------------------------
-  // O resultado financeiro projetado é a soma de duas coisas: um percentual da
-  // receita (o padrão herdado do histórico) MAIS o juro sobre a parcela onerosa
-  // do passivo do ANO ANTERIOR, precificada pela Selic esperada. Usar o ano
-  // anterior não é detalhe: com o ano corrente, o Excel fecharia uma referência
-  // circular (juro → resultado → PL → passivo → juro).
-  {
-    const rResFin = L(9);
-    for (let i = 1; i < nCols; i++) {
-      const c = col(i);
-      const a = col(i - 1);
-      sheet.getRow(rResFin).getCell(i + 3).value = {
-        formula: `IF(${c}$${linhaAno}<=${refCorte},`
-          + `${buscaNaAba(workbook, "DRE", "Resultado Antes dos Tributos", chaveCol(i))}`
-          + `-${buscaNaAba(workbook, "DRE", "Resultado Operacional (EBIT)", chaveCol(i))},`
-          + `-${c}${L(0)}*${P(PREM.resFinanceiro, c)}`
-          + `-(${a}${B(5)}+${a}${B(6)})*${P(PREM.parcelaOnerosa, c)}*${P(PREM.selic, c)})`,
-      };
-    }
-    sheet.getRow(rResFin).getCell(1).note = comoNota(
-      "Projetado = percentual da receita (padrão do histórico) + juro sobre a parcela ONEROSA do "
-      + "passivo do ano anterior, à Selic esperada do Focus. Com a parcela onerosa em 0, nenhum "
-      + "juro é cobrado — preencha-a a partir do Mapa da Dívida.",
-    );
-  }
-
+    { rotulo: "Caixa e equivalentes", consolida: "estoque", mensal: (x) => `${x.c}${F(14)}`,
+      nota: "Vem do saldo final do fluxo — é o elo que faz o balanço responder a QUALQUER "
+        + "premissa: uma margem pior queima caixa e aparece aqui." },
+    { rotulo: "Contas a receber", consolida: "estoque", mensal: (x) => `${x.c}${W(0)}`,
+      nota: "Vem do schedule de capital de giro, e vale TAMBÉM no histórico. Zerá-lo no passado "
+        + "faria os recebíveis saltarem de 0 para o valor cheio no primeiro mês projetado, sem "
+        + "contrapartida no caixa — e o balanço abriria exatamente esse salto." },
+    { rotulo: "Estoques", consolida: "estoque", mensal: (x) => `${x.c}${W(1)}` },
+    { rotulo: "Demais ativos circulantes", consolida: "estoque",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${interp(x, "Balanço", "Ativo Circulante")}-${x.c}${B(0)}-${x.c}${B(1)}-${x.c}${B(2)},`
+        + `MAX(0,${x.ant ? `${x.ant}${B(3)}` : "0"}))`,
+      nota: "No histórico é o resto do circulante depois do caixa (o documento não detalha "
+        + "recebíveis e estoques de forma comparável entre empresas); na projeção fica constante, "
+        + "porque o giro já está modelado nas linhas acima." },
+    { rotulo: "Ativo Circulante", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${B(0)}+${x.c}${B(1)}+${x.c}${B(2)}+${x.c}${B(3)}` },
+    { rotulo: "Ativo Não Circulante", consolida: "estoque",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},${interp(x, "Balanço", "Ativo Não Circulante")},`
+        + `${x.ant ? `${x.ant}${B(5)}` : interp(x, "Balanço", "Ativo Não Circulante")}`
+        + `-${x.c}${F(5)}-${x.c}${L(6)})`,
+      nota: "Anterior + capex − depreciação. As duas premissas movem esta linha." },
+    { rotulo: "TOTAL DO ATIVO", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${B(4)}+${x.c}${B(5)}` },
+    { rotulo: "Fornecedores", consolida: "estoque", mensal: (x) => `-${x.c}${W(2)}` },
+    { rotulo: "Dívida onerosa", consolida: "estoque", mensal: (x) => `${x.c}${D(4)}` },
+    { rotulo: "Demais passivos", consolida: "estoque",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},`
+        + `${interp(x, "Balanço", "Passivo Circulante")}+${interp(x, "Balanço", "Passivo Não Circulante")}`
+        + `-${x.c}${B(8)}-${x.c}${B(7)},`
+        + `${x.ant ? `${x.ant}${B(9)}` : "0"})` },
+    { rotulo: "Passivo Total", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${B(7)}+${x.c}${B(8)}+${x.c}${B(9)}` },
+    { rotulo: "Patrimônio Líquido", consolida: "estoque",
+      mensal: (x) => `IF(${x.c}$${linhaAno}<=${refCorte},${interp(x, "Balanço", "Patrimônio Líquido")},`
+        + `${x.ant ? `${x.ant}${B(11)}` : interp(x, "Balanço", "Patrimônio Líquido")}`
+        + `+${x.c}${L(14)}+${x.c}${F(10)})`,
+      nota: "PL projetado = PL anterior + resultado do mês + aporte/distribuição de sócios." },
+    { rotulo: "TOTAL DO PASSIVO E PL", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${B(10)}+${x.c}${B(11)}` },
+  ], nada);
   linha("");
 
-  // -------- Indicadores -----------------------------------------------------
+  // ======================= INDICADORES =====================================
   bloco("INDICADORES");
   escrever([
-    { rotulo: "Liquidez corrente", fmt: RATIO_FMT,
-      ambos: (c) => `IFERROR(${c}${B(2)}/${c}${B(5)},"")` },
-    { rotulo: "Endividamento geral", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR((${c}${B(5)}+${c}${B(6)})/${c}${B(4)},"")` },
-    { rotulo: "(Passivo total − caixa) / EBITDA", fmt: RATIO_FMT,
-      nota: "NÃO é dívida líquida/EBITDA. O export classifica por SEÇÃO contábil e não isola a "
-        + "dívida ONEROSA dentro do passivo, então o numerador é o passivo INTEIRO menos o caixa "
-        + "— sempre mais conservador que a alavancagem real. Para a métrica de verdade, use o "
-        + "Mapa da Dívida (aba Dívida) como numerador.",
-      ambos: (c) => `IFERROR((${c}${B(5)}+${c}${B(6)}-${c}${B(0)})/${c}${L(7)},"")` },
-    { rotulo: "Retorno sobre o PL (ROE)", fmt: PCT_FMT,
-      ambos: (c) => `IFERROR(${c}${L(12)}/${c}${B(7)},"")` },
-    { rotulo: "Crescimento da receita", fmt: DELTA_FMT,
-      ambos: (c, a) => (a ? `IFERROR(${c}${L(0)}/${a}${L(0)}-1,"")` : `""`) },
-  ]);
+    { rotulo: "Liquidez corrente", fmt: RATIO_FMT, consolida: "estoque",
+      mensal: (x) => `IFERROR(${x.c}${B(4)}/(${x.c}${B(7)}+${x.c}${B(8)}),"")` },
+    { rotulo: "Dívida líquida", consolida: "estoque",
+      mensal: (x) => `${x.c}${B(8)}-${x.c}${B(0)}`,
+      nota: "Agora é dívida líquida DE VERDADE: a dívida onerosa tem linha própria no modelo "
+        + "(bloco DÍVIDA), então o indicador não precisa mais usar o passivo inteiro como proxy." },
+    { rotulo: "Dívida líquida / EBITDA (12m)", fmt: RATIO_FMT, consolida: "formula",
+      mensal: (x) => `IFERROR(${x.c}${B(8)}-${x.c}${B(0)},"")`,
+      anual: (a) => `IFERROR((${a.ultimoMes}${B(8)}-${a.ultimoMes}${B(0)})/${a.fy}${L(7)},"")`,
+      nota: "Alavancagem: dívida líquida do FIM do ano sobre o EBITDA ACUMULADO de 12 meses — "
+        + "estoque sobre fluxo, que é como o covenant é escrito." },
+    { rotulo: "Endividamento geral", fmt: PCT_FMT, consolida: "estoque",
+      mensal: (x) => `IFERROR(${x.c}${B(10)}/${x.c}${B(6)},"")` },
+    { rotulo: "Retorno sobre o PL (ROE)", fmt: PCT_FMT, consolida: "formula",
+      mensal: (x) => `IFERROR(${x.c}${L(14)}/${x.c}${B(11)},"")`,
+      anual: (a) => `IFERROR(${a.fy}${L(14)}/${a.ultimoMes}${B(11)},"")` },
+    { rotulo: "Necessidade de captação (caixa negativo)", destaque: true, consolida: "estoque",
+      mensal: (x) => `MAX(0,-${x.c}${B(0)})`,
+      anual: (a) => `MAX(0,-MIN(${a.primeiroMes}${B(0)}:${a.ultimoMes}${B(0)}))`,
+      nota: "Quanto o plano precisa levantar para o caixa não virar negativo. No consolidado é o "
+        + "PIOR mês do ano, não o de dezembro: um vale de caixa em julho precisa ser financiado "
+        + "mesmo que dezembro feche positivo. É o número que decide o tamanho da captação." },
+  ], nada);
+  linha("");
 
-  // ---- Sombreado das colunas projetadas: por FORMATAÇÃO CONDICIONAL --------
+  // ======================= CONFERÊNCIAS ====================================
+  // Um modelo institucional tem de provar que fecha. Estas linhas não são
+  // decorativas: se qualquer uma sair de zero, o número acima não vale.
+  bloco("CONFERÊNCIAS — todas têm de ficar em zero");
+  escrever([
+    { rotulo: "Balanço fecha (Ativo − Passivo − PL)", destaque: true, consolida: "estoque",
+      mensal: (x) => `${x.c}${B(6)}-${x.c}${B(12)}`,
+      nota: "No HISTÓRICO tem de ser zero: diferente disso, o dado extraído não fecha (confira a "
+        + "aba Balanço). No PROJETADO, o resíduo é o desequilíbrio entre as premissas de ativo e "
+        + "de passivo — e a necessidade de captação acima é quem o financia." },
+    { rotulo: "Receita do ano = receita extraída", destaque: true, consolida: "formula",
+      mensal: () => `""`,
+      anual: (a) => `IF(${a.fy}$${linhaAno}>${refCorte},"—",ROUND(${a.fy}${L(0)}-`
+        + `${buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&${a.fy}$${linhaAno}`)},2))`,
+      nota: "A soma dos 12 meses distribuídos tem de dar EXATAMENTE o número anual extraído. "
+        + "Diferente de zero significa que a distribuição perdeu ou criou receita — o defeito "
+        + "mais perigoso de um modelo mensal construído sobre dado anual." },
+    { rotulo: "Caixa do balanço = saldo final do fluxo", destaque: true, consolida: "estoque",
+      mensal: (x) => `ROUND(${x.c}${B(0)}-${x.c}${F(14)},2)` },
+  ], nada);
+
+  // ---- Sombreado das colunas projetadas, por FORMATAÇÃO CONDICIONAL -------
   // Pintar por posição fixa deixaria o sombreado mentindo assim que o usuário
-  // mexesse no ano de corte. Aqui a própria cor é fórmula: move junto.
+  // mexesse no exercício de corte. Aqui a própria cor é fórmula.
   if (linhasDeValor.length > 0) {
     const primeira = Math.min(...linhasDeValor);
     const ultima = Math.max(...linhasDeValor);
     sheet.addConditionalFormatting({
-      ref: `${primeiraColuna}${primeira}:${ultimaColuna}${ultima}`,
+      ref: `${sheet.getColumn(3).letter}${primeira}:${sheet.getColumn(2 + nAnos * COLS_POR_ANO).letter}${ultima}`,
       rules: [{
         type: "expression", priority: 1,
-        formulae: [`${primeiraColuna}$${linhaAno}>${refCorte}`],
+        formulae: [`${sheet.getColumn(3).letter}$${linhaAno}>${refCorte}`],
         style: { fill: PROJETADO_FILL },
       }],
     });
   }
-
   return sheet;
 }
+
 export function buildExportWorkbook({
   caso,
   documentos,
