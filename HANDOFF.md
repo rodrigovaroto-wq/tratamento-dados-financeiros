@@ -4,30 +4,32 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #55** (commit de merge
-`031c914`) — sessão 11 (DMPL/DVA), sessão 12 (aba Modelagem do v27) e sessão 13 (índices macro) estão
-TODAS no `main`. Branch de trabalho da sessão 14: `claude/handoff-continuation-orqkmn`, restartada de
+**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #56** (sessão 14, DF
+auditada) — sessões 11 (DMPL/DVA), 12 (aba Modelagem do v27) e 13 (índices macro) também estão no
+`main`. Branch de trabalho das sessões 14-15: `claude/handoff-continuation-orqkmn`, restartada de
 `origin/main` — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
 
 ## ⚠️ COMECE AQUI — o dono vai enviar o resultado do próximo export a qualquer momento
 
-Pendências do dono, acumuladas de três sessões (nada aqui é opcional para o próximo teste valer):
+Pendências do dono. O que ele **já confirmou feito** (2026-07-29): aplicou `0023`, `0024` e `0025`,
+reimportou o `workflow.e1-ingestao.json` e importou o `workflow.macro.json`. Sobrou:
 
-1. aplicar no Supabase, em ordem: **`0023_reconciliacao_sem_ruido.sql`** (PR #50),
-   **`0024_taxonomia_dmpl_dva.sql`** (sessão 11) e **`0025_indices_macro.sql`** (sessão 13);
-2. **REIMPORTAR `n8n/workflow.e1-ingestao.json`** — o enum de tipos, o prompt de extração e a lista de
-   apelidos da taxonomia vivem dentro do JSON gerado (sessões 11 e 14);
-3. **IMPORTAR `n8n/workflow.macro.json`** — workflow SEPARADO, roda no relógio (dia 12) e coleta
-   BCB/IBGE/Focus; sem ele a aba Macro sai vazia e as premissas macro do modelo ficam zeradas;
-4. **reextrair** os documentos de DMPL/DVA já processados (migration e prompt só valem para extração
-   NOVA — regra de sempre);
-5. **re-exportar** o book e mandar o `.xlsx` + prints.
+1. aplicar a **`db/migrations/0026_reextracao_por_hash.sql`** (sessão 15) — é o que faz reenviar um
+   arquivo virar VERSÃO NOVA em vez de documento duplicado;
+2. **reextrair** os documentos de DMPL/DVA já processados. Isso significa **reenviar o mesmo arquivo no
+   mesmo mandato** ("+ Adicionar arquivos") — não existe botão de reprocessar, e migration/prompt só
+   valem para extração NOVA (a DMPL registrada como `MUTUOS` antes da `0024` só sai daquele código
+   assim). **Só depois da `0026`**: antes dela, o reenvio duplicava o documento e as duas extrações
+   entravam somadas no export. Alternativa sem custo de IA, se o que importa é só a aba: corrigir o
+   **tipo** na fila de revisão — mas a matriz da DMPL pode sair achatada, porque as linhas antigas
+   foram extraídas sem o contrato `secao`=movimento / `chave`=componente;
+3. **re-exportar** o book e mandar o `.xlsx` + prints.
 
 **Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
 v24 → v25 → v27 e que você deve repetir:
 
 1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (79 invariantes) e `db/test/run.sh` (21 + 13 asserts).
+   `npx tsx portal/scripts/verificar-export.mts` (85 invariantes) e `db/test/run.sh` (21 + 13 + 12 asserts).
    Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
    ⚠️ **Container novo precisa de três coisas antes** (custaram tempo na sessão 14 — ver "Como
    validar" na seção 4): `npm install` em `portal/`, `python3 gerar.py` em
@@ -70,12 +72,13 @@ v24 → v25 → v27 e que você deve repetir:
 Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
 marcação do que já foi feito). Candidatos mais fortes agora, todos locais e testáveis aqui:
 
-- **Dinheiro parado:** `fn_registrar_documento` não é idempotente por hash (paga extração repetida do
-  mesmo arquivo) e existe um **overload morto de 14 argumentos** da mesma função (lixo de schema que
-  torna ambígua qualquer chamada posicional). Uma migration resolve os dois.
-- **`reset-0006-regride-funcoes`:** o `db/README.md` recomenda reaplicar a `0006` quando o N8N diz
-  "function does not exist" — mas a `0006` recria os corpos ANTIGOS e REGRIDE o schema. Ou a `0006`
-  passa a recriar os corpos atuais, ou a recomendação sai do README. Armadilha de produção.
+- ~~**Idempotência por hash + overload morto de 14 args**~~ e ~~**`reset-0006-regride-funcoes`**~~:
+  **FEITOS na sessão 15** (`db/migrations/0026`, abaixo). O que sobrou dessa frente: **não PAGAR** a
+  extração quando o arquivo é idêntico E a extração anterior usou o MESMO prompt/modelo. Exige (i)
+  fingerprint de prompt+modelo gravado na versão e (ii) curto-circuito no grafo do N8N —
+  `Montar Req Extracao` é `runOnceForEachItem` e não pode devolver zero itens; mudar o modo troca a
+  resolução de contexto por item, a mesma classe de mudança que causou o bug do `itemIndex` fixo.
+  **Fatia própria, com o N8N vivo do dono.**
 - **`unidade-ignorada-em-abas-classificadas`:** a escala (`milhar`/`unidade`) é lida só nas abas de
   listagem simples; nas classificadas o `SUM` soma valor cru. Duas fontes em escalas diferentes na
   mesma coluna somam errado **em silêncio** — mínimo verificável: escala no cabeçalho da coluna +
@@ -86,6 +89,62 @@ marcação do que já foi feito). Candidatos mais fortes agora, todos locais e t
 - **`periodo-fragmenta-e-quebra-reconciliacao`:** a referência de período é gravada CRUA, então o
   mesmo exercício em duas notações vira duas linhas em `periodo`. Canonicalizar no caminho de ESCRITA
   (a `0022` já canonicaliza na comparação).
+
+## Sessão 15 — Reextração é versão nova, e substitui em vez de acumular (`db/migrations/0026`)
+
+Veio de uma pergunta do dono: ele aplicou as migrations e reimportou os workflows, mas não entendeu a
+pendência **"reextrair os documentos de DMPL/DVA já processados"**. Explicando, achei a armadilha —
+**o caminho que eu tinha mandado ele seguir estava quebrado dos dois lados.**
+
+**Reextrair é a única forma** de um documento já processado pegar prompt/taxonomia novos (migration e
+prompt só valem para extração NOVA), e não existe botão de "reprocessar": reextrair é **reenviar o
+mesmo arquivo no mesmo mandato**. Só que:
+
+- **No banco:** `fn_registrar_documento` **nunca consultou o hash** — o comentário da `0004` dizia
+  "idempotente-ish por hash", mas nenhum corpo (0004→0008) chegou a olhar. Todo reenvio inseria
+  `documento` + `documento_versao` + `checklist_item_status` NOVOS: o mesmo arquivo virava dois
+  documentos, duas linhas na fila, dois itens de checklist e colunas duplicadas da mesma empresa no
+  export (o "15 colunas para 5 empresas" do v27 tem essa mesma família de causa).
+- **No export:** ele lia **TODAS as versões** do documento. E duas extrações do mesmo arquivo não
+  produzem as mesmas linhas — é o ponto de mudar o prompt. **Medi antes de escrever o fix:** com a
+  conta renomeada entre as duas extrações, ela aparece DUAS vezes e a soma da seção somou as duas
+  (1.000 + 1.500 = **2.500** onde o documento diz 1.500). Dupla contagem por um caminho novo, e do
+  pior tipo: as duas linhas têm proveniência legítima, então nada parece errado ao abrir a planilha.
+
+O que a fatia trava:
+
+- **`(caso_id, hash)` → versão nova do MESMO documento** (`n_versao+1`), sem duplicar checklist nem
+  pendência. **Hash nulo nunca casa**: dois desconhecidos não são o mesmo arquivo, e fundir documentos
+  distintos é o erro mais caro que essa função pode cometer.
+- **Máquina não sobrepõe humano.** Se alguém já revisou o documento na fila (`documento.fonte =
+  'humano'`), a reextração não desfaz a correção — anti-ancoragem no sentido que importa aqui.
+- **`versoesVigentes` no export: a mais recente COM DADO manda.** Não é "a mais recente", e a
+  diferença é uma proteção real: reextração pode falhar e gravar `extracao_falhou` com ZERO linhas
+  (`0016`); vigência cega ao dado APAGARIA do book tudo o que a versão anterior extraiu com sucesso.
+  Trocar dupla contagem por perda silenciosa não é conserto. Empate sem `n_versao` declarada mantém as
+  duas (chutar qual é a nova seria pior que o comportamento antigo).
+- **Substituição declarada no Resumo** ("Linhas de versão substituída (fora deste export)") — a
+  extração anterior continua no banco para auditoria, e o dono sabe que ela existe.
+- **Overload morto de 14 args** (`fn-registrar-documento-overload-duplicado`) removido: ele ainda
+  carregava o corpo da época da `0006` — sem `confianca`/`fonte`/`justificativa` e sem idempotência —
+  e qualquer chamada posicional podia cair nele.
+- **`reset-0006-regride-funcoes`** (armadilha de produção): o `db/README.md` mandava rodar a `0006`
+  quando o N8N diz "function does not exist" — mas a `0006` recria os corpos DELA e regride tudo o que
+  veio depois (sumiria a idempotência, as guardas `0013`/`0016`, o auto-aceite `0019`, e voltaria o
+  overload morto). O aviso agora diz para continuar aplicando **0007 → 0026 em ordem** depois do reset.
+
+**Validação:** `db/test/reextracao.test.sql` novo com **12 asserts**, incluindo os NEGATIVOS que
+seguram a fronteira (hash diferente = documento próprio; hash nulo não casa; tipo revisado por humano
+sobrevive). `verificar-export.mts` **79 → 85**. Provados não-vazios: sem a busca por hash, "mesmo hash
+=> MESMO documento" falha; sem a vigência, 17a/17b/17c falham com `seção=2500 documento=1500` —
+exatamente o número que eu havia medido. n8n 105/105, migrations 0001–**0026** limpas,
+`tsc`/`eslint`/`next build` limpos.
+
+**Precisa do dono:** aplicar a **`0026`**. Depois disso, reenviar o arquivo da DMPL no mesmo mandato é
+seguro — vira versão 2 do mesmo documento e o export usa só ela. (Ainda **custa** uma extração; não
+pagar exige a fatia do fingerprint + N8N vivo.) Alternativa sem custo, se o que importa é só a aba:
+corrigir o **tipo** na fila de revisão — mas aí a matriz da DMPL pode sair achatada, porque as linhas
+antigas foram extraídas sem o contrato `secao`=movimento / `chave`=componente.
 
 ## Sessão 14 — DF auditada: o conjunto num arquivo só é separado por demonstração
 
@@ -1665,8 +1724,8 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   empilhe em cima de histórico já mergeado.
 - Branch das sessões 11-13: `claude/handoff-leitura-continuacao-jeifmd` — **2 PRs mergeados** (#54 na
   sessão 11; #55 com as sessões 12 e 13 juntas), restartada de `origin/main` a cada vez.
-- Branch da sessão 14: `claude/handoff-continuation-orqkmn`, criada a partir do `main` já com o #55
-  mergeado. Mesmo padrão: quando o PR desta branch fechar, a próxima sessão restarta do `main`
+- Branch das sessões 14-15: `claude/handoff-continuation-orqkmn`, criada a partir do `main` já com o
+  #55 mergeado; o #56 (sessão 14) saiu dela e a sessão 15 continuou na mesma branch. Mesmo padrão: quando o PR desta branch fechar, a próxima sessão restarta do `main`
   atualizado em vez de empilhar em cima de histórico já mergeado.
 - **Aviso de leitura desta sessão:** ao retomar, confirme o estado do `main` com
   `git ls-remote origin main` **e** com a lista de PRs — o cabeçalho deste arquivo já ficou defasado
@@ -1697,8 +1756,8 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0025) + README com ordem de aplicação
-              test/  — fixture do book + testes de reconciliação + macro.test.sql + run.sh
+db/         — migrations SQL (0001-0026) + README com ordem de aplicação
+              test/  — fixture do book + reconciliacao/macro/reextracao.test.sql + run.sh
 n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
               build-workflow-macro.mjs + lib/macro.mjs + workflow.macro.json — coleta de índices macro (0025),
               workflow SEPARADO que roda no relógio (dia 12); falha dele não derruba a ingestão
@@ -1706,7 +1765,7 @@ portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revi
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook):
                                               abas de demonstração, DMPL/DVA, Macro, Modelagem, roteamento por linha
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 79 invariantes de regressão do export
+              scripts/verificar-export.mts   — 85 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
@@ -1719,8 +1778,8 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 node --test 'n8n/test/*.test.mjs'           # 105 testes da lógica de ingestão/classificação/extração/macro
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
-npx tsx portal/scripts/verificar-export.mts # 79 invariantes do export
-PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 asserts de reconciliação + 13 de macro
+npx tsx portal/scripts/verificar-export.mts # 85 invariantes do export
+PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 reconciliação + 13 macro + 12 reextração
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
 
@@ -1742,7 +1801,7 @@ sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
 O `run.sh` cria os papéis `anon`/`authenticated`/`service_role` e o schema `storage` que as migrations
 assumem do Supabase.
 
-Migrations: aplicar `0001`→`0025` em ordem num Postgres 16 local antes de propor SQL novo — várias
+Migrations: aplicar `0001`→`0026` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 

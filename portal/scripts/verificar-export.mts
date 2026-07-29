@@ -1240,6 +1240,103 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     wb.worksheets.map((s) => s.name).join(", "));
 }
 
+// ---- 17: reextração SUBSTITUI, não acumula (db/migrations/0026) --------------
+// Reextrair é a única forma de um documento já processado pegar prompt/taxonomia
+// novos — o dono precisa disso para a DMPL da `0024`. Só que o export lia TODAS
+// as versões do documento, e duas extrações do mesmo arquivo não produzem as
+// mesmas linhas (é o ponto de mudar o prompt): a conta renomeada aparecia DUAS
+// vezes e a soma da seção somava as duas. Dupla contagem por um caminho novo, e
+// do pior tipo — as duas linhas têm proveniência legítima, então nada parece
+// errado ao abrir a planilha.
+{
+  const doc = (versoes: Array<{ id: string; nome_original: string | null; n_versao?: number | null }>): DocumentoParaExport => ({
+    id: "d1", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: versoes,
+  });
+  const V1 = "v1", V2 = "v2";
+  const linhaDe = (ws: import("exceljs").Worksheet, rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+
+  // A extração NOVA renomeia a conta ("Caixa e bancos" → "Caixa e equivalentes de
+  // caixa"), que é exatamente o efeito de um prompt novo.
+  // Sem linha de total informado de propósito: aí a seção É a nossa soma, e a
+  // dupla contagem aparece no número em vez de ficar mascarada pelo total do
+  // documento (a regra do PR #50 esconderia o defeito atrás do informado —
+  // primeira versão deste invariante passou verde por isso).
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1000, documento_versao_id: V1 }),
+    campo({ chave: "Caixa e equivalentes de caixa", secao: "Ativo Circulante", valor_num: 1500, documento_versao_id: V2 }),
+  ];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Reextração", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf", n_versao: 1 }, { id: V2, nome_original: "bp.pdf", n_versao: 2 }])],
+    campos, agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Balanço")!;
+  const rAC = linhaDe(ws, "Ativo Circulante");
+  checar(rAC > 0 && Math.round(avaliar(ws, "B", rAC)) === 1500,
+    "(17a) reextração não soma com a extração anterior",
+    `seção=${rAC > 0 ? Math.round(avaliar(ws, "B", rAC)) : "(ausente)"} documento=1500`);
+  checar(linhaDe(ws, "Caixa e bancos") < 0,
+    "(17b) a linha da versão substituída não aparece na planilha");
+
+  // …e a substituição não é silenciosa: o Resumo diz que existe extração anterior
+  // fora deste export (ela continua no banco, com proveniência, para auditoria).
+  const resumo = wb.getWorksheet("Resumo")!;
+  let avisa = false;
+  for (let r = 1; r <= resumo.rowCount; r++) {
+    if (String(resumo.getRow(r).getCell(1).value ?? "").startsWith("Linhas de versão substituída")) avisa = true;
+  }
+  checar(avisa, "(17c) o Resumo declara a versão substituída (substituir em silêncio seria pior)");
+
+  // PROTEÇÃO: reextração que FALHA volta com ZERO linhas (`extracao_falhou`,
+  // db/migrations/0016). Se a vigência fosse cega ao dado, essa falha APAGARIA do
+  // book tudo o que a versão anterior extraiu — trocar dupla contagem por perda
+  // silenciosa de dado não é conserto.
+  const wbFalha = buildExportWorkbook({
+    caso: { nome: "Reextração falhou", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf", n_versao: 1 }, { id: "v3", nome_original: "bp.pdf", n_versao: 2 }])],
+    campos: [campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1000, documento_versao_id: V1 })],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const wsFalha = wbFalha.getWorksheet("Balanço");
+  checar(wsFalha != null && linhaDe(wsFalha, "Caixa e bancos") > 0,
+    "(17d) reextração que volta VAZIA não apaga o que a versão anterior extraiu");
+
+  // Sem `n_versao` informada não há ordem declarada: manter as duas é o
+  // comportamento antigo, e chutar qual é a nova seria pior.
+  const wbSemN = buildExportWorkbook({
+    caso: { nome: "Sem n_versao", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf" }, { id: V2, nome_original: "bp.pdf" }])],
+    campos, agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const wsSemN = wbSemN.getWorksheet("Balanço")!;
+  checar(linhaDe(wsSemN, "Caixa e bancos") > 0 && linhaDe(wsSemN, "Caixa e equivalentes de caixa") > 0,
+    "(17e) sem n_versao declarada, nada é descartado por chute");
+
+  // E o caso normal (uma versão por documento, como todo o book) não muda.
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wbBook = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const resumoBook = wbBook.getWorksheet("Resumo")!;
+  let totalBook = 0;
+  for (let r = 1; r <= resumoBook.rowCount; r++) {
+    if (String(resumoBook.getRow(r).getCell(1).value ?? "") === "Linhas totais extraídas") {
+      totalBook = Number(resumoBook.getRow(r).getCell(2).value ?? 0);
+    }
+  }
+  checar(totalBook === fixture.campos.length,
+    "(17f) documento de versão única (o book inteiro) não perde nenhuma linha",
+    `resumo=${totalBook} fixture=${fixture.campos.length}`);
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

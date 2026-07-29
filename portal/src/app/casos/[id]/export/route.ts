@@ -19,9 +19,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     supabase
       .from("documento")
       .select(
+        // `n_versao` é o que permite ao export saber qual extração é a VIGENTE
+        // quando o mesmo arquivo foi reextraído (db/migrations/0026 registra a
+        // reextração como versão nova do mesmo documento) — sem ela, as duas
+        // extrações entrariam juntas e a soma da seção contaria as duas.
         `id, tipo_taxonomia,
          entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-         documento_versao(id, nome_original)`,
+         documento_versao(id, nome_original, n_versao)`,
       )
       .eq("caso_id", id),
   ]);

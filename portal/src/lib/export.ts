@@ -439,7 +439,54 @@ export interface DocumentoParaExport {
   tipo_taxonomia: string | null;
   entidade: { razao_social: string } | null;
   periodo: { tipo: string; referencia: string } | null;
-  documento_versao: Array<{ id: string; nome_original: string | null }> | null;
+  documento_versao: Array<{ id: string; nome_original: string | null; n_versao?: number | null }> | null;
+}
+
+/**
+ * Versões VIGENTES por documento — reextração SUBSTITUI, não acumula.
+ *
+ * Reextrair é a única forma de um documento já processado pegar prompt/taxonomia
+ * novos (migration e prompt só valem para extração NOVA), e o dono precisa disso
+ * para a DMPL da `0024`. Mas o export lia TODAS as versões de cada documento, e
+ * duas extrações do mesmo arquivo não produzem as mesmas linhas — é o ponto de
+ * mudar o prompt. Medido: com o rótulo renomeado entre as duas extrações, a
+ * conta aparece DUAS vezes e a soma da seção somou as duas (1.000 + 1.500 =
+ * 2.500 onde o documento diz 1.500). A dupla contagem de sempre, por um caminho
+ * novo — e o pior tipo: o dono não pode nem desconfiar, porque as duas linhas têm
+ * proveniência legítima.
+ *
+ * **A mais recente COM DADO manda.** Não é "a mais recente", e a diferença é uma
+ * proteção real: uma reextração pode falhar (truncamento/rate limit gravam
+ * `extracao_falhou` com ZERO linhas, `db/migrations/0016`). Se a vigência fosse
+ * cega ao dado, essa falha APAGARIA do book tudo o que a versão anterior tinha
+ * extraído com sucesso — trocar dupla contagem por perda silenciosa de dado não
+ * é conserto.
+ *
+ * Empate (mesma `n_versao`, ou nenhuma informada) mantém as duas: sem ordem
+ * declarada não há como saber qual é a nova, e escolher por chute é pior que o
+ * comportamento antigo.
+ */
+export function versoesVigentes(documentos: DocumentoParaExport[], campos: CampoExtraido[]): Set<string> {
+  const comDado = new Set(campos.map((c) => c.documento_versao_id));
+  const vigentes = new Set<string>();
+  for (const doc of documentos) {
+    const versoes = doc.documento_versao ?? [];
+    if (versoes.length <= 1) {
+      for (const v of versoes) vigentes.add(v.id);
+      continue;
+    }
+    const n = (v: { n_versao?: number | null }) => v.n_versao ?? 1;
+    // Grupos por n_versao, do mais novo para o mais antigo.
+    const grupos: Array<typeof versoes> = [];
+    for (const v of [...versoes].sort((a, b) => n(b) - n(a))) {
+      const ultimo = grupos[grupos.length - 1];
+      if (ultimo && n(ultimo[0]) === n(v)) ultimo.push(v);
+      else grupos.push([v]);
+    }
+    const vigente = grupos.find((g) => g.some((v) => comDado.has(v.id))) ?? grupos[0];
+    for (const v of vigente) vigentes.add(v.id);
+  }
+  return vigentes;
 }
 
 interface ContextoVersao {
@@ -2518,7 +2565,7 @@ export function construirAbaModelagem(
 export function buildExportWorkbook({
   caso,
   documentos,
-  campos,
+  campos: camposDeTodasAsVersoes,
   macro,
   agora = new Date(),
 }: {
@@ -2531,10 +2578,14 @@ export function buildExportWorkbook({
   agora?: Date;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
-  // permite juntar campo_extraido (que só sabe a versão) com o resto.
+  // permite juntar campo_extraido (que só sabe a versão) com o resto. Só as
+  // versões VIGENTES entram: reextração substitui, não acumula (ver
+  // `versoesVigentes`).
+  const vigentes = versoesVigentes(documentos, camposDeTodasAsVersoes);
   const contextoPorVersao = new Map<string, ContextoVersao>();
   for (const doc of documentos) {
     for (const versao of doc.documento_versao ?? []) {
+      if (!vigentes.has(versao.id)) continue;
       contextoPorVersao.set(versao.id, {
         entidade: doc.entidade?.razao_social ?? "(sem entidade)",
         periodo: doc.periodo ? formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia) : "(sem período)",
@@ -2543,6 +2594,10 @@ export function buildExportWorkbook({
       });
     }
   }
+  // Daqui para baixo, `campos` é só o da versão vigente — inclusive nas contagens
+  // do Resumo, que senão anunciariam linhas que a planilha não mostra.
+  const campos = camposDeTodasAsVersoes.filter((c) => contextoPorVersao.has(c.documento_versao_id));
+  const camposDeVersaoSubstituida = camposDeTodasAsVersoes.length - campos.length;
 
   // Consolidação de coluna (teste v27): o apelido que o documento combinado usa
   // na coluna ("Componentes") e a razão social do documento individual
@@ -2761,13 +2816,25 @@ export function buildExportWorkbook({
   const totalLinhas = campos.length;
   const totalAceitas = campos.filter((c) => c.status_aceite === "aceito").length;
   resumo.columns = [{ width: 32 }, { width: 60 }];
-  resumo.addRows([
+  const linhasResumo: Array<[string, string | number]> = [
     ["Caso", caso.nome],
     ["Produto", caso.produto],
     ["Gerado em", agora.toLocaleString("pt-BR")],
     ["Linhas totais extraídas", totalLinhas],
     ["Linhas aceitas (fato)", totalAceitas],
     ["Linhas pendentes (sugestão, revisar)", totalLinhas - totalAceitas],
+  ];
+  // Reextração é substituição, e substituição não pode ser silenciosa: quem abre
+  // o book tem de saber que existe extração anterior deste mesmo arquivo fora da
+  // planilha (ela continua no banco, com proveniência, para auditoria).
+  if (camposDeVersaoSubstituida > 0) {
+    linhasResumo.push([
+      "Linhas de versão substituída (fora deste export)",
+      `${camposDeVersaoSubstituida} — o arquivo foi reextraído; só a extração mais recente com dado entra na planilha`,
+    ]);
+  }
+  resumo.addRows([
+    ...linhasResumo,
     [""],
     [
       "Aviso",
@@ -2785,7 +2852,14 @@ export function buildExportWorkbook({
     ],
   ]);
   resumo.getRow(1).font = { bold: true };
-  resumo.getCell("B9").alignment = { wrapText: true };
+  // A linha do Aviso muda de posição quando existe versão substituída — achar por
+  // rótulo em vez de fixar "B9", que era uma referência a estourar no primeiro
+  // item novo do Resumo.
+  for (let r = 1; r <= resumo.rowCount; r++) {
+    if (String(resumo.getRow(r).getCell(1).value ?? "") === "Aviso") {
+      resumo.getRow(r).getCell(2).alignment = { wrapText: true };
+    }
+  }
 
   for (const aba of ORDEM_ABAS) {
     const estrutura = ESTRUTURA_POR_ABA.get(aba);

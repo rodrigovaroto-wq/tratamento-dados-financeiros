@@ -48,4 +48,9 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/macro.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de reextração (idempotência por hash)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reextracao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "TODOS OS TESTES PASSARAM"
