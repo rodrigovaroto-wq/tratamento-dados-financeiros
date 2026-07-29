@@ -10,6 +10,7 @@ import {
   ancorasDe,
   agruparPorChaveNormalizada,
   normalizar,
+  ehNomeDeAgrupamento,
   ESTRUTURA_POR_TIPO,
   BALANCO_OUTLINE,
   type EstruturaDemonstracao,
@@ -755,6 +756,83 @@ function valorNumDoGrupo(grupo: GrupoConta, colKey: string): number | null {
 // Nada é descartado: a linha continua visível (marcada como subtotal informado),
 // só sai da SOMA. Sem `secao` anotada, nenhum dos sinais dispara e o
 // comportamento é o de antes (conservador).
+/**
+ * Subtotal reconhecido pela ORDEM em que o documento imprime as linhas.
+ *
+ * Modo de falha que isto conserta (teste v28, VT Logística): a seção saiu com
+ * Ativo Circulante 7.254 onde o documento diz 3.961, porque "Contas a Receber"
+ * (3.293) foi somada JUNTO com "Fretes a receber" (3.562) e "(-) PECLD" (−269),
+ * que são os seus componentes. As duas detecções estruturais existentes não
+ * pegam esse caso: uma exige que alguma linha declare `secao` com o nome do
+ * subtotal (a extração daquele arquivo anotou a seção de TOPO em todas), e a
+ * outra exige que o valor bata com a soma dos irmãos da MESMA seção (ali os
+ * irmãos são o circulante inteiro). E o documento não trouxe linha de total,
+ * então nem a conferência acusava — o número errado não tinha como ser visto.
+ *
+ * O sinal que sobra é o que toda demonstração publicada dá: o subtotal vem
+ * impresso IMEDIATAMENTE ANTES dos seus componentes.
+ *
+ * Critério deliberadamente ESTREITO — um falso positivo aqui tira da soma uma
+ * conta legítima, que é pior que o defeito original:
+ *   • exige `ordem` nas linhas (extração antiga não tem: nada acontece);
+ *   • exige pelo menos DOIS componentes seguidos (um só é ambíguo — pode ser
+ *     reclassificação, arredondamento ou simplesmente coincidência);
+ *   • exige casamento EXATO (1 centavo) da soma, na MESMA coluna;
+ *   • só dentro da mesma `secao` declarada, e para valor não nulo;
+ *   • a varredura para no primeiro casamento, e retoma DEPOIS do último
+ *     componente consumido — assim uma cascata de subtotais não se sobrepõe.
+ */
+function detectarSubtotaisPorOrdem(
+  camposDaAba: Array<{ campo: CampoExtraido; colKey: string }>,
+): Set<string> {
+  const subtotais = new Set<string>();
+  // Agrupa por (versão do documento × coluna × seção): a sequência impressa só
+  // faz sentido dentro do mesmo documento e da mesma coluna de valor.
+  const grupos = new Map<string, CampoExtraido[]>();
+  for (const { campo, colKey } of camposDaAba) {
+    if (campo.ordem == null) continue;
+    const k = `${campo.documento_versao_id}${CHAVE_SEP}${colKey}${CHAVE_SEP}${normalizar(campo.secao ?? "")}`;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k)!.push(campo);
+  }
+
+  for (const linhas of grupos.values()) {
+    if (linhas.length < 3) continue; // subtotal + 2 componentes é o mínimo
+    linhas.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+    let i = 0;
+    while (i < linhas.length) {
+      const candidato = linhas[i];
+      const valor = candidato.valor_num;
+      if (valor == null || valor === 0) { i++; continue; }
+      // Quantos componentes seguidos bastam para caracterizar o subtotal:
+      //   • 1, quando o rótulo já É nome de agrupamento contábil ("Contas a
+      //     Receber", "Obrigações Tributárias") — aí há DOIS sinais
+      //     independentes, e um componente só é suficiente;
+      //   • 2, quando o rótulo não diz nada — só a aritmética sustenta, e uma
+      //     coincidência de dois valores consecutivos é bem menos provável.
+      // Sem o caso de 1 componente, "Outros Créditos 340" seguido de
+      // "Adiantamentos diversos 340" (teste v29) ficava fora e mantinha 340 de
+      // dupla contagem.
+      const minComponentes = ehNomeDeAgrupamento(candidato.chave) ? 1 : 2;
+      let acumulado = 0;
+      let casouEm = -1;
+      for (let j = i + 1; j < linhas.length; j++) {
+        const v = linhas[j].valor_num;
+        if (v == null) break;
+        acumulado += v;
+        if (j - i >= minComponentes && Math.abs(acumulado - valor) < 0.01) { casouEm = j; break; }
+      }
+      if (casouEm > 0) {
+        subtotais.add(candidato.id);
+        i = casouEm + 1; // retoma depois dos componentes consumidos
+      } else {
+        i++;
+      }
+    }
+  }
+  return subtotais;
+}
+
 function detectarSubtotaisInformados(
   camposDaAba: Array<{ campo: CampoExtraido; colKey: string }>,
 ): Set<string> {
@@ -895,7 +973,14 @@ function construirAbaClassificada(
   // Subtotais de agrupamento que o documento trouxe (ver
   // `detectarSubtotaisInformados`): ficam FORA da soma da seção — senão o
   // `SUM` conta o subtotal e os seus componentes, dobrando o total.
-  const idsSubtotal = detectarSubtotaisInformados(camposDaAba);
+  // Duas detecções, união dos resultados: a estrutural (rótulo == agrupamento
+  // declarado, ou valor == soma dos irmãos) e a por ORDEM DE IMPRESSÃO, que é a
+  // única que pega o caso em que a extração anotou a seção de topo em todas as
+  // linhas e o documento não trouxe linha de total.
+  const idsSubtotal = new Set([
+    ...detectarSubtotaisInformados(camposDaAba),
+    ...detectarSubtotaisPorOrdem(camposDaAba),
+  ]);
   const subtotaisInformados = new Map<string, Map<string, GrupoConta>>(); // secaoKey → grupos
 
   // Classificação de cada linha, em DOIS passes.

@@ -244,7 +244,7 @@ if(!falhaMotivo&&finishReason==='length'){
 function normUnid(b){if(b==null)return null;const t=String(b).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();if(!t)return null;if(/\\bmilhao|milhoes|\\bmm\\b|r\\$\\s*mi\\b|\\bmi\\b/.test(t))return 'milhao';if(/\\bmilhar|milhares|\\bmil\\b|r\\$\\s*mil|\\bm\\$\\b/.test(t))return 'milhar';if(/\\bunidade|\\breal\\b|reais|inteiro|r\\$$/.test(t))return 'unidade';return null;}
 const unidade=normUnid(p.unidade);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
-const campos=Array.isArray(p.linhas)?p.linhas.map(l=>({secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
+const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,

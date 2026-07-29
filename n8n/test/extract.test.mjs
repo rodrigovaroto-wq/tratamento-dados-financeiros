@@ -401,3 +401,32 @@ test('DMPL: parse mapeia a matriz para linhas (movimento × componente)', () => 
   // fantasmas no export, uma por componente)
   assert.ok(r.campos.every((c) => c.entidade_coluna === null));
 });
+
+test('ORDEM da linha vem da posição no array, não do modelo (db/migrations/0027)', () => {
+  // Por que a ordem não é pedida ao modelo: a posição no array JÁ é a ordem de
+  // leitura do documento. Pedir um campo gastaria token de saída por linha (e
+  // `linhas` é o único bloco que se repete centenas de vezes) e daria ao modelo
+  // uma chance de errar algo que nós sabemos com certeza.
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'milhar',
+    diagnostico: { entidade: 'VT LOGÍSTICA E TRANSPORTES LTDA.', tipo_confirma: true,
+      tipo_sugerido: 'BALANCO', periodo_tipo: 'anual', periodo_referencia: '12M24',
+      legibilidade: 'ok', nota_legibilidade: null, resumo: 'BP', justificativa: 'ok' },
+    // Sequência REAL do arquivo que causou o defeito do teste v28: o subtotal
+    // "Contas a Receber" (3.293) impresso ACIMA dos seus dois componentes.
+    linhas: [
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: 'Caixa e bancos', vt: '399', vn: 399, op: 1, cf: 0.98 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: 'Contas a Receber', vt: '3.293', vn: 3293, op: 1, cf: 0.98 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: 'Fretes a receber', vt: '3.562', vn: 3562, op: 1, cf: 0.97 },
+      { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: '(-) PECLD', vt: '(269)', vn: -269, op: 1, cf: 0.97 },
+    ],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.deepEqual(r.campos.map((c) => c.ordem), [0, 1, 2, 3]);
+  // A ordem tem de acompanhar o rótulo — se elas se descolarem, o export
+  // reconhece o subtotal errado e tira da soma uma conta legítima.
+  assert.equal(r.campos[1].chave, 'Contas a Receber');
+  assert.equal(r.campos[1].ordem, 1);
+  // O subtotal é a soma dos DOIS seguintes: é esse padrão que o export procura.
+  assert.equal(r.campos[2].valor_num + r.campos[3].valor_num, r.campos[1].valor_num);
+});
