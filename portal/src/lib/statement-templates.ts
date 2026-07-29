@@ -250,6 +250,33 @@ const SUBSECAO_AUTORITATIVA: Array<[string, string]> = [
   ["contas a pagar", "passivo_circulante"],
 ];
 
+/**
+ * O rótulo é o nome de um AGRUPAMENTO contábil, e não de uma conta?
+ *
+ * "Fornecedores", "Obrigações Tributárias", "Contas a Receber", "Estoques" são
+ * os nomes canônicos de subseção de um balanço brasileiro — quando aparecem
+ * como linha COM valor, quase sempre são o subtotal do grupo que vem abaixo.
+ *
+ * Serve como SEGUNDO SINAL na detecção de subtotal por ordem (`export.ts`): com
+ * ele, um único componente basta para caracterizar o subtotal. Sem ele seriam
+ * necessários dois — e "Outros Créditos 340" seguido de "Adiantamentos diversos
+ * 340" (caso real do teste v29) ficaria de fora, mantendo 340 de dupla contagem.
+ */
+export function ehNomeDeAgrupamento(rotulo: string): boolean {
+  const t = tokensDe(rotulo);
+  // "Fornecedores" não está em SUBSECAO_AUTORITATIVA (lá ele é conta-folha em
+  // muitos planos), mas como AGRUPAMENTO impresso é dos mais comuns; idem
+  // "Empréstimos e Financiamentos" e "Partes Relacionadas".
+  const extras = [
+    "fornecedores", "emprestimos e financiamentos", "partes relacionadas",
+    "provisoes", "adiantamentos", "creditos tributarios", "aplicacoes financeiras",
+  ];
+  for (const [frase] of SUBSECAO_AUTORITATIVA) {
+    if (contemFrase(t, frase)) return true;
+  }
+  return extras.some((f) => contemFrase(t, f));
+}
+
 function subsecaoAutoritativa(tokensSecao: Set<string>): string | null {
   // "Imobilizado" isolado é subseção; "Imobilizado líquido de depreciação" e
   // afins também. Mas se a seção declarada JÁ diz circulante/não circulante,

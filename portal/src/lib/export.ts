@@ -10,6 +10,7 @@ import {
   ancorasDe,
   agruparPorChaveNormalizada,
   normalizar,
+  ehNomeDeAgrupamento,
   ESTRUTURA_POR_TIPO,
   BALANCO_OUTLINE,
   type EstruturaDemonstracao,
@@ -803,13 +804,23 @@ function detectarSubtotaisPorOrdem(
       const candidato = linhas[i];
       const valor = candidato.valor_num;
       if (valor == null || valor === 0) { i++; continue; }
+      // Quantos componentes seguidos bastam para caracterizar o subtotal:
+      //   • 1, quando o rótulo já É nome de agrupamento contábil ("Contas a
+      //     Receber", "Obrigações Tributárias") — aí há DOIS sinais
+      //     independentes, e um componente só é suficiente;
+      //   • 2, quando o rótulo não diz nada — só a aritmética sustenta, e uma
+      //     coincidência de dois valores consecutivos é bem menos provável.
+      // Sem o caso de 1 componente, "Outros Créditos 340" seguido de
+      // "Adiantamentos diversos 340" (teste v29) ficava fora e mantinha 340 de
+      // dupla contagem.
+      const minComponentes = ehNomeDeAgrupamento(candidato.chave) ? 1 : 2;
       let acumulado = 0;
       let casouEm = -1;
       for (let j = i + 1; j < linhas.length; j++) {
         const v = linhas[j].valor_num;
         if (v == null) break;
         acumulado += v;
-        if (j - i >= 2 && Math.abs(acumulado - valor) < 0.01) { casouEm = j; break; }
+        if (j - i >= minComponentes && Math.abs(acumulado - valor) < 0.01) { casouEm = j; break; }
       }
       if (casouEm > 0) {
         subtotais.add(candidato.id);

@@ -19,7 +19,15 @@ export function avaliarCelula(
 ): Valor {
   if (prof > 24) return null;
   const v = ws.getRow(row).getCell(col).value;
-  if (v == null) return null;
+  // Célula VAZIA vale 0 numa referência, como no Excel. Devolver null aqui fazia
+  // qualquer soma que tocasse uma célula vazia virar null e, no chamador, NaN —
+  // e uma seção padrão sem dado (ex.: "Investimentos" num balanço que não tem
+  // investimento) é justamente uma célula vazia LEGÍTIMA. No teste v29 isso
+  // produziu 7 "divergências" no Ativo Não Circulante que não existiam: o Excel
+  // calcula aquelas somas sem reclamar. Ferramenta de conferência que grita à
+  // toa é a mesma classe de problema de guarda que grita à toa — faz a sessão
+  // seguinte perseguir defeito que não está lá.
+  if (v == null) return 0;
   if (typeof v === "number") return v;
   if (typeof v === "string") return v;
   if (typeof v === "object" && "formula" in v) {

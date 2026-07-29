@@ -1636,6 +1636,62 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(17) sem ordem persistida o defeito reaparece (a correção vem da ORDEM)");
 }
 
+// ---- 18: o caso REAL da Componentes (teste v29) -----------------------------
+// Números do `.xlsx` do dono. O Ativo Circulante saiu 29.990 onde o documento
+// diz 15.200 — 14.790 de dupla contagem, e o balanço da empresa inteiro estava
+// contaminado (PC saiu exatamente 2× o informado). O documento é um BP
+// detalhado de 4 níveis: ele IMPRIME o subtotal de cada subseção e, embaixo, os
+// componentes. A extração anotou a seção de TOPO em todas as linhas, então
+// nenhuma das duas detecções estruturais tinha sinal.
+//
+// Este bloco cobre os dois formatos de subtotal que aparecem no mesmo arquivo:
+// com VÁRIOS componentes ("Estoques" = 3 contas) e com UM só ("Outros Créditos"
+// = "Adiantamentos diversos"), que exige o segundo sinal do rótulo ser nome de
+// agrupamento — sem ele, ficavam 340 de dupla contagem.
+{
+  const V = "vComponentes";
+  const linhas: Array<[string, number]> = [
+    ["Disponível", 410],
+    ["Contas a Receber", 8420],
+    ["Clientes - mercado interno", 9240],
+    ["(-) PECLD", -820],
+    ["Estoques", 5100],
+    ["Matéria-prima", 3180],
+    ["Produtos acabados", 2260],
+    ["(-) Provisão para perdas em estoques", -340],
+    ["Tributos a Recuperar", 930],
+    ["ICMS a recuperar", 520],
+    ["PIS/COFINS a compensar", 410],
+    ["Outros Créditos", 340],
+    ["Adiantamentos diversos", 340],
+  ];
+  const AC_DOCUMENTO = 15200;
+  const campos: CampoExtraido[] = linhas.map(([chave, v], i) =>
+    campo({ chave, secao: "Ativo Circulante", valor_num: v, ordem: i, documento_versao_id: V }));
+  const documentos: DocumentoParaExport[] = [{
+    id: "dComp", tipo_taxonomia: "BALANCO",
+    entidade: { razao_social: "VERTENTES COMPONENTES AUTOMOTIVOS LTDA." },
+    periodo: { tipo: "anual", referencia: "2024" },
+    documento_versao: [{ id: V, nome_original: "02_BP_Vertentes_Componentes_2025x2024.pdf" }],
+  }];
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-29T12:00:00Z"),
+  }).getWorksheet("Balanço")!;
+  let rAC = -1;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    if (String(ws.getRow(r).getCell(1).value ?? "") === "Ativo Circulante") { rAC = r; break; }
+  }
+  const soma = Math.round(avaliar(ws, "B", rAC));
+  checar(soma === AC_DOCUMENTO,
+    "(18) BP detalhado: o Ativo Circulante bate com o documento",
+    `export=${soma} documento=${AC_DOCUMENTO} (sem o conserto dava 29.990)`);
+
+  // O subtotal de UM componente é o que exige o sinal do rótulo. Se ele
+  // escapar, sobram exatamente 340 — este número é o teste.
+  checar(soma !== AC_DOCUMENTO + 340,
+    "(18) subtotal com UM único componente também é reconhecido (senão sobram 340)");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);
