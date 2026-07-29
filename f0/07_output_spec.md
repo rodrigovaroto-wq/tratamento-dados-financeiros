@@ -219,3 +219,39 @@ total dela. Duas regras novas:
 E, como no Balanço, **a seção declarada pelo documento manda** na DRE e no Fluxo
 (`SECAO_DECLARADA_DRE`, `SECAO_DECLARADA_FLUXO`): se o arquivo imprimiu a conta debaixo de "DESPESAS
 OPERACIONAIS", ela é despesa operacional — não interessa se o rótulo dela está no nosso vocabulário.
+
+---
+
+## Emenda — documento COMPOSTO: uma entrega, várias demonstrações
+
+Num mandato real o conjunto não chega em três arquivos: chega como **um PDF do exercício** —
+"Demonstrações Contábeis 2025.pdf" / "Demonstrações Financeiras Auditadas" — com Balanço, DRE, DFC,
+DMPL e **notas** dentro. Esse tipo (`DF_AUDITADA` na taxonomia) não pode ter aba própria no export:
+que aba seria? E por não ter, caía em "Outros" — onde o roteamento por linha nem rodava. Resultado:
+a entrega mais comum do cliente saía como **listagem crua**, sem template, sem total de seção, sem
+AV%/Δ%, sem indicadores, e a aba Modelagem (que lê das abas de demonstração) saía **zerada**.
+
+**Regra travada:** documento composto não tem UMA estrutura — cada linha vai para a aba da SUA
+demonstração. Duas portas para um documento ser tratado assim, e a diferença entre elas é o que
+impede o roteamento de virar dupla contagem:
+
+1. **o tipo declara o conjunto** (`DF_AUDITADA`): basta isso;
+2. **o documento ainda não tem tipo** (nome que a taxonomia não reconhece, esperando a fila): exige
+   evidência **declarada** de mais de uma demonstração — linhas com `secao_canonica` de duas famílias
+   diferentes. É o sinal que separa um conjunto de demonstrações de um aging de recebíveis, que é
+   homogêneo.
+
+**Não se estende ao resto de "Outros"**, de propósito: aging, posição de estoques, extrato bancário,
+razão e notas explicativas trazem o **detalhe** do que o balanço apresenta consolidado. Roteá-los
+para o Balanço somaria o detalhe DEBAIXO do total informado — a dupla contagem que o export levou
+três rodadas para eliminar. Nota explicativa (`ehSecaoDeNotaExplicativa`) fica fora de qualquer
+demonstração **mesmo vindo dentro da DF auditada**, e continua entregue com proveniência na listagem
+documental.
+
+**Quem desempata a linha ambígua é o próprio documento.** Sem estrutura própria, "Prejuízo líquido do
+exercício" (âncora da DRE E do Fluxo indireto) e "Caixa e equivalentes" (conta do Balanço E saldo da
+DFC) não têm como ser resolvidos por palavra-chave — a primeira versão desta fatia mandou a DRE
+inteira para a aba do Fluxo e a cascata saiu com Lucro Bruto 10.820 onde o documento diz 5.280. A
+ordem de evidência ficou: **o que a IA declarou para a linha** → **o bloco em que o documento a
+imprimiu** (voto das linhas daquela `secao`) → palavra-chave. Sem nenhum sinal, a linha fica na
+listagem documental: nada desaparece.

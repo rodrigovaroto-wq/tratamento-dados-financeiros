@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
 import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT } from './lib/extract.mjs';
+import { ALIASES } from './lib/taxonomia.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // enum travando a saída) e só foi pego testando com documento real no N8N.
 const TIPO_TAXONOMIA_ENUM = JSON.stringify(codigosConhecidos());
 const PERIODO_TIPO_ENUM = JSON.stringify(['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido']);
+
+// Apelidos por código da taxonomia — IMPORTADOS de lib/taxonomia.mjs pelo mesmo
+// motivo dos enums acima, e aqui o mirror manual JÁ TINHA DIVERGIDO: a cópia à
+// mão parava em BALANCETE e o nó real do workflow não conhecia DF_AUDITADA,
+// MAPA_DIVIDA, EXTRATO_BANCARIO, AGING_AR/AP, ESTOQUE, CERTIDOES, CONTINGENCIAS,
+// SITUACAO_FISCAL, ORGANOGRAMA, RAZAO nem NOTAS_EXPL. Em produção esses arquivos
+// saíam do passe de nome SEM TIPO — a classificação por nome existe justamente
+// para não gastar uma chamada de IA com o que o nome já diz. `n8n/test/
+// workflow-sim.test.mjs` agora compara as duas listas e falha se voltarem a
+// divergir. A ORDEM da lista é significativa (regra específica antes da genérica)
+// e serializar preserva ela.
+const ALIASES_JSON = JSON.stringify(ALIASES);
 
 // Modelos das DUAS chamadas, num lugar só (antes 'gpt-4o' estava hardcoded em
 // cada nó). A classificação por CONTEÚDO é a tarefa mais leve do pipeline (só
@@ -75,19 +88,7 @@ return out;
 // Preserva o binário (Preparar Conteudo e Upload precisam dele adiante).
 const CODE_CLASSIFICAR = `
 function normalize(s){return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\.[a-z0-9]{2,4}$/i,'').replace(/[_\\-.]+/g,' ').replace(/\\s+/g,' ').trim();}
-const ALIASES=[
-  {codigo:'FAT_INTRAGRUPO',termos:['faturamento intragrupo','fat intragrupo','faturamento intra grupo']},
-  {codigo:'FATURAMENTO_24M',termos:['faturamento 24m','faturamento 36','faturamento','receita bruta','receita']},
-  {codigo:'CONTRATO_SOCIAL',termos:['contrato social','estatuto social','alteracao contratual','estatuto']},
-  {codigo:'MUTUOS',termos:['mutuos','mutuo','relacao de mutuos','contas intragrupo']},
-  {codigo:'COMBINADO',termos:['combinado','combinada','demonstracoes combinadas','df combinada']},
-  {codigo:'FLUXO_CAIXA',termos:['fluxo de caixa','fluxo caixa','dfc','cash flow','fluxo']},
-  {codigo:'DRE',termos:['dre','demonstracao de resultado','demonstracao do resultado','resultado do exercicio']},
-  {codigo:'BALANCO',termos:['balanco patrimonial','balanco','bp']},
-  {codigo:'DMPL',termos:['dmpl','mutacoes do patrimonio','mutacoes patrimonio','demonstracao das mutacoes']},
-  {codigo:'DVA',termos:['dva','valor adicionado']},
-  {codigo:'BALANCETE',termos:['balancete']},
-];
+const ALIASES=${ALIASES_JSON};
 function parsePeriodo(t0){const t=String(t0||'').replace(/^\\s*\\d{1,3}\\s*[-_. ]+/,'').replace(/(\\d)\\s*[x\\u00d7]\\s*(\\d)/g,'$1 $2');let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a4=t.match(/\\b(19|20)\\d{2}\\b/g);if(a4&&a4.length===1)return{tipo:'anual',referencia:a4[0],fraco:true};if(a4&&a4.length>=2)return{tipo:'multi',referencia:a4.map(x=>x.slice(-2)).sort().join(',')};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
 function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}
 const item=$input.item.json;

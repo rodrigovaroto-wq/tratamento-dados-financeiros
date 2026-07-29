@@ -743,6 +743,34 @@ const FAMILIA_POR_SECAO_CANONICA: Record<string, FamiliaDemonstracao> = {
   dva: "dva",
 };
 
+// A demonstração que a IA DECLAROU para a linha, sem nenhum palpite nosso por
+// palavra-chave. Existe separado de `classificarDemonstracao` porque serve a uma
+// pergunta diferente: "este documento traz mais de uma demonstração?" — e essa
+// pergunta só pode ser respondida com o que o documento/IA afirmou, nunca com o
+// fallback determinístico. Um aging de recebíveis casa "receber" em toda linha e
+// pareceria um Balanço; um documento que DECLARA linhas de duas demonstrações
+// diferentes é composto de fato (ver TIPOS_DOCUMENTO_COMPOSTO em export.ts).
+export function familiaDeclarada(secaoCanonica?: string | null): FamiliaDemonstracao | null {
+  if (!secaoCanonica) return null;
+  return FAMILIA_POR_SECAO_CANONICA[secaoCanonica] ?? null;
+}
+
+// Seção que é NOTA EXPLICATIVA, não linha de demonstração. Um PDF de
+// "Demonstrações financeiras auditadas completas (+ notas)" (DF_AUDITADA na
+// taxonomia) traz as duas coisas no mesmo arquivo — e a nota DETALHA o que o
+// balanço já apresenta consolidado ("Nota 12 — Empréstimos: Banco A 12.000,
+// Banco B 13.000" contra a linha "Empréstimos e financiamentos 25.000" do BP).
+// Rotear a nota para a aba do Balanço somaria o detalhe JUNTO com o total: é a
+// mesma dupla contagem que o export levou três rodadas para eliminar. A nota
+// fica na listagem documental, com proveniência, fora de qualquer soma.
+//
+// Exige "explicativa" ou um NÚMERO depois de "nota" de propósito: "Notas
+// promissórias a pagar" é conta legítima de passivo e não pode ser descartada.
+export function ehSecaoDeNotaExplicativa(secao: string | null | undefined): boolean {
+  if (!secao) return false;
+  return /^notas?\b\s*(explicativas?\b|(n[o°]?\.?\s*)?\d+\b)/.test(normalizar(secao));
+}
+
 // A qual demonstração (Balanço/DRE/Fluxo de Caixa) uma linha pertence. Usado
 // para ROTEAR a linha para a aba certa — separado da classificação da SEÇÃO
 // dentro da aba (classificarConta). Prioridade:

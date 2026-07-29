@@ -1032,6 +1032,214 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     `(15) as 12 premissas (3 macro + 9 operacionais) estão no bloco`, String(linhasPremissa.length));
 }
 
+// ---- 16: DF auditada — o conjunto num arquivo só é separado por demonstração --
+// A forma mais comum de entrega num mandato real é o PDF auditado do exercício:
+// Balanço + DRE + DFC + DMPL + notas juntos, um documento só. Esse tipo
+// (DF_AUDITADA, db/migrations/0002) não pode ter aba própria — que aba seria? — e
+// por isso caía em "Outros", onde o roteamento por linha nem rodava: a DF inteira
+// saía como listagem crua, sem template, sem total de seção, sem AV%/Δ%, sem
+// indicadores, e a aba Modelagem (que lê das abas de demonstração) saía ZERADA.
+// Aqui o MESMO dado do book é entregue como um arquivo auditado só, e tem de
+// produzir os MESMOS números que produz quando vem em três arquivos separados.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const gab = JSON.parse(
+    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+  ) as {
+    balanco_por_entidade: Record<string, Record<string, Record<string, number>>>;
+    dre_metalurgica_2025: Record<string, number>;
+  };
+
+  // BP (01) + DRE (07) + DFC (08) da Metalúrgica, os três apontando para UMA
+  // versão de um documento DF_AUDITADA — é literalmente o mesmo dado, entregue
+  // como o cliente entrega.
+  const V = "vDFAuditada";
+  const VERSOES_METALURGICA = [
+    "55555555-0000-0000-0000-000000000001", // Balanço 2025x2024
+    "55555555-0000-0000-0000-000000000007", // DRE 2025x2024
+    "55555555-0000-0000-0000-000000000008", // DFC 2025
+  ];
+  const camposDF: CampoExtraido[] = fixture.campos
+    .filter((c) => VERSOES_METALURGICA.includes(c.documento_versao_id))
+    .map((c) => ({ ...c, documento_versao_id: V }));
+  // …e as NOTAS que vêm no mesmo arquivo auditado. A nota DETALHA o que o balanço
+  // já traz consolidado: a linha "Empréstimos e financiamentos" do BP contra o
+  // credor-a-credor da nota. Roteá-la para o Balanço somaria as duas.
+  const notas: CampoExtraido[] = [
+    campo({ chave: "Banco Alfa - capital de giro", secao: "Nota 12 — Empréstimos e financiamentos", valor_num: 9000, periodo_coluna: "2025", documento_versao_id: V }),
+    campo({ chave: "Banco Beta - CDC", secao: "Nota 12 — Empréstimos e financiamentos", valor_num: 6000, periodo_coluna: "2025", documento_versao_id: V }),
+    campo({ chave: "Duplicatas descontadas", secao: "Notas explicativas às demonstrações financeiras", valor_num: 4000, periodo_coluna: "2025", documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dDF", tipo_taxonomia: "DF_AUDITADA", entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+    periodo: { tipo: "multi", referencia: "24,25" },
+    documento_versao: [{ id: V, nome_original: "DF_Auditadas_Vertentes_Metalurgica_2025.pdf" }],
+  }];
+  const wb = buildExportWorkbook({
+    caso: { nome: "DF auditada", produto: "reestruturacao" },
+    campos: [...camposDF, ...notas], documentos, agora: new Date("2026-07-29T12:00:00Z"),
+  });
+
+  const bal = wb.getWorksheet("Balanço");
+  const dre = wb.getWorksheet("DRE");
+  const dfc = wb.getWorksheet("Fluxo de Caixa");
+  checar(bal != null && dre != null && dfc != null,
+    "(16a) a DF auditada abre as três abas de demonstração (antes: listagem crua em 'Outros')",
+    wb.worksheets.map((s) => s.name).join(", "));
+
+  if (bal && dre && dfc) {
+    const linhaDe = (ws: import("exceljs").Worksheet, rot: string) => {
+      for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+      return -1;
+    };
+    const colunas = (ws: import("exceljs").Worksheet) => {
+      const m = new Map<string, string>();
+      for (let c = 2; c <= ws.columnCount; c++) {
+        const h = String(ws.getRow(1).getCell(c).value ?? "");
+        if (h && h !== "AV%" && !h.startsWith("Δ%")) m.set(h, ws.getColumn(c).letter);
+      }
+      return m;
+    };
+    // O Balanço tem de bater com o gabarito nos dois exercícios — mesmo número
+    // que sai quando o BP vem em arquivo próprio (invariante 7).
+    const colBal = colunas(bal);
+    const LINHA: Record<string, number> = {
+      ATIVO: linhaDe(bal, "ATIVO"), AC: linhaDe(bal, "Ativo Circulante"), ANC: linhaDe(bal, "Ativo Não Circulante"),
+      PC: linhaDe(bal, "Passivo Circulante"), PNC: linhaDe(bal, "Passivo Não Circulante"), PL: linhaDe(bal, "Patrimônio Líquido"),
+    };
+    const erros: string[] = [];
+    let conferidos = 0;
+    for (const ano of ["2024", "2025"]) {
+      const col = colBal.get(`VERTENTES METALÚRGICA LTDA. — ${ano}`);
+      if (!col) { erros.push(`coluna ausente: ${ano} (${[...colBal.keys()].join(" | ")})`); continue; }
+      for (const [sigla, row] of Object.entries(LINHA)) {
+        const esperado = gab.balanco_por_entidade[ano].metalurgica[sigla];
+        const obtido = Math.round(avaliar(bal, col, row));
+        conferidos++;
+        if (obtido !== esperado) erros.push(`${ano} ${sigla}: export=${obtido} gabarito=${esperado}`);
+      }
+    }
+    checar(erros.length === 0 && conferidos === 12,
+      `(16b) o Balanço da DF auditada bate com o gabarito nas ${conferidos} seções`,
+      erros.slice(0, 6).join(" / "));
+
+    // A DRE idem — e é a prova de que a cascata foi ORDENADA pelo template, não
+    // empilhada como veio.
+    const colDRE = colunas(dre);
+    const col2025 = [...colDRE.entries()].find(([h]) => h.includes("2025"))?.[1] ?? "";
+    const errosDRE = ([
+      ["Receita Líquida", gab.dre_metalurgica_2025["RECEITA OPERACIONAL LÍQUIDA"]],
+      ["Lucro Bruto", gab.dre_metalurgica_2025["LUCRO BRUTO"]],
+      ["Resultado Operacional (EBIT)", gab.dre_metalurgica_2025["RESULTADO OPERACIONAL ANTES DO RESULTADO FINANCEIRO"]],
+      ["Lucro/Prejuízo Líquido do Exercício", gab.dre_metalurgica_2025["PREJUÍZO LÍQUIDO DO EXERCÍCIO"]],
+    ] as Array<[string, number]>)
+      .map(([rot, exp]) => {
+        const r = linhaDe(dre, rot);
+        const got = r > 0 && col2025 ? Math.round(avaliar(dre, col2025, r)) : NaN;
+        return got === exp ? null : `${rot}: export=${got} gabarito=${exp}`;
+      })
+      .filter(Boolean) as string[];
+    checar(errosDRE.length === 0, "(16c) a DRE da DF auditada bate com o gabarito", errosDRE.join(" / "));
+
+    // O Fluxo idem, pelo próprio documento (o book só tem DFC de 2025).
+    const colDFC = colunas(dfc);
+    const colFC = [...colDFC.values()][0] ?? "";
+    const rOper = linhaDe(dfc, "Caixa Líquido das Atividades Operacionais");
+    checar(rOper > 0 && Math.round(avaliar(dfc, colFC, rOper)) === 1090,
+      "(16d) o Fluxo de Caixa da DF auditada fecha com o documento",
+      `linha=${rOper} valor=${rOper > 0 ? Math.round(avaliar(dfc, colFC, rOper)) : "(ausente)"}`);
+
+    // A NOTA não pode ter entrado em soma nenhuma do Balanço: o detalhe do
+    // credor-a-credor debaixo do total que o BP já informa é dupla contagem.
+    const ROTULOS_DE_NOTA = ["Banco Alfa - capital de giro", "Banco Beta - CDC", "Duplicatas descontadas"];
+    const vazamentos: string[] = [];
+    for (const ws of [bal, dre, dfc]) {
+      for (let r = 1; r <= ws.rowCount; r++) {
+        const rot = String(ws.getRow(r).getCell(1).value ?? "");
+        if (ROTULOS_DE_NOTA.includes(rot)) vazamentos.push(`${ws.name}!${r} "${rot}"`);
+      }
+    }
+    checar(vazamentos.length === 0,
+      "(16e) linha de NOTA EXPLICATIVA não entra em demonstração nenhuma (seria dupla contagem)",
+      vazamentos.join(", "));
+    const outros = wb.getWorksheet("Outros");
+    const rotulosOutros: string[] = [];
+    if (outros) for (let r = 1; r <= outros.rowCount; r++) {
+      for (let c = 1; c <= outros.columnCount; c++) rotulosOutros.push(String(outros.getRow(r).getCell(c).value ?? ""));
+    }
+    checar(rotulosOutros.includes("Banco Alfa - capital de giro"),
+      "(16f) …mas continua entregue, com proveniência, na listagem documental");
+
+    // E o modelo deixa de sair zerado: é o que a fatia existe para destravar.
+    const mod = wb.getWorksheet("Modelagem")!;
+    const rANC = linhaDe(mod, "Ativo Não Circulante");
+    const formulas: string[] = [];
+    if (rANC > 0) {
+      for (let c = 2; c <= mod.columnCount; c++) {
+        const f = (mod.getRow(rANC).getCell(c).value as { formula?: string } | undefined)?.formula;
+        if (f) formulas.push(f);
+      }
+    }
+    checar(rANC > 0 && formulas.some((f) => f.includes("Balanço")),
+      "(16g) a aba Modelagem passa a ter de onde ler (antes: DF auditada = modelo zerado)",
+      formulas[0]?.slice(0, 90) ?? "(nenhuma fórmula)");
+  }
+}
+
+// ---- 16h/16i: o roteamento não se estende a quem DETALHA o balanço -----------
+// A contrapartida do 16: aging de recebíveis, estoque, extrato e razão trazem o
+// DETALHE do que o balanço já apresenta consolidado. Se o roteamento por linha
+// valesse para todo o balde "Outros", esse detalhe entraria na mesma seção do
+// Balanço, DEBAIXO do total informado — exatamente a dupla contagem que o export
+// levou três rodadas para eliminar. Este bloco trava a fronteira.
+{
+  const aging = (versao: string): CampoExtraido[] => [
+    campo({ chave: "Duplicatas a receber - a vencer", secao: "Contas a Receber", secao_canonica: "ativo_circulante", valor_num: 12000, documento_versao_id: versao }),
+    campo({ chave: "Duplicatas a receber - vencidas até 30 dias", secao: "Contas a Receber", secao_canonica: "ativo_circulante", valor_num: 5000, documento_versao_id: versao }),
+    campo({ chave: "Duplicatas a receber - vencidas há mais de 180 dias", secao: "Contas a Receber", secao_canonica: "ativo_circulante", valor_num: 3000, documento_versao_id: versao }),
+  ];
+
+  for (const [tipo, rotulo] of [["AGING_AR", "(16h) documento de aging (tipo próprio)"], [null, "(16i) documento homogêneo AINDA SEM TIPO"]] as Array<[string | null, string]>) {
+    const V = `vAging${tipo ?? "Null"}`;
+    const wb = buildExportWorkbook({
+      caso: { nome: "Aging", produto: "reestruturacao" },
+      documentos: [{
+        id: `dAging${tipo ?? "Null"}`, tipo_taxonomia: tipo, entidade: { razao_social: "Alfa Ltda." },
+        periodo: { tipo: "data-base", referencia: "2025-12-31" },
+        documento_versao: [{ id: V, nome_original: "aging.pdf" }],
+      }],
+      campos: aging(V), agora: new Date("2026-07-29T12:00:00Z"),
+    });
+    checar(wb.getWorksheet("Balanço") == null,
+      `${rotulo} não vira linha do Balanço`,
+      wb.worksheets.map((s) => s.name).join(", "));
+  }
+
+  // …e o documento SEM TIPO que declara DUAS demonstrações é composto de fato:
+  // "Demonstrações Contábeis 2025.pdf" (nome que a taxonomia não reconhece)
+  // esperando a fila de revisão não deveria custar ao dono a estrutura inteira.
+  const V = "vSemTipo";
+  const wb = buildExportWorkbook({
+    caso: { nome: "Sem tipo", produto: "reestruturacao" },
+    documentos: [{
+      id: "dSemTipo", tipo_taxonomia: null, entidade: { razao_social: "Alfa Ltda." },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: V, nome_original: "Demonstracoes Contabeis 2025.pdf" }],
+    }],
+    campos: [
+      campo({ chave: "Caixa e equivalentes de caixa", secao: "Ativo Circulante", secao_canonica: "ativo_circulante", valor_num: 500, documento_versao_id: V }),
+      campo({ chave: "Fornecedores nacionais", secao: "Passivo Circulante", secao_canonica: "passivo_circulante", valor_num: 500, documento_versao_id: V }),
+      campo({ chave: "Receita bruta de vendas", secao: "RECEITA OPERACIONAL BRUTA", secao_canonica: "receita_bruta", valor_num: 9000, documento_versao_id: V }),
+    ],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  checar(wb.getWorksheet("Balanço") != null && wb.getWorksheet("DRE") != null,
+    "(16j) documento sem tipo que DECLARA duas demonstrações é separado nas duas abas",
+    wb.worksheets.map((s) => s.name).join(", "));
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

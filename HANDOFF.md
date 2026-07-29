@@ -4,27 +4,35 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-28. **Estado do `main`:** mergeado até o **PR #53** (commit de merge
-`e295869`; o #53 foi só correção de cabeçalho deste arquivo). **PR #54 em aberto** — DMPL/DVA na
-taxonomia + abas próprias (sessão 11, abaixo). Branch de trabalho
-`claude/handoff-leitura-continuacao-jeifmd`, sempre restartada de `origin/main` no início de cada
-sessão nova — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
+**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #55** (commit de merge
+`031c914`) — sessão 11 (DMPL/DVA), sessão 12 (aba Modelagem do v27) e sessão 13 (índices macro) estão
+TODAS no `main`. Branch de trabalho da sessão 14: `claude/handoff-continuation-orqkmn`, restartada de
+`origin/main` — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
 
-## ⚠️ COMECE AQUI — o dono vai enviar o resultado do teste v26 a qualquer momento
+## ⚠️ COMECE AQUI — o dono vai enviar o resultado do próximo export a qualquer momento
 
-Pendências do dono (nenhuma exige reimportar o N8N, EXCETO a `0024` — ver abaixo):
+Pendências do dono, acumuladas de três sessões (nada aqui é opcional para o próximo teste valer):
 
-1. aplicar a **`db/migrations/0023_reconciliacao_sem_ruido.sql`** no Supabase (do PR #50);
-2. aplicar a **`db/migrations/0024_taxonomia_dmpl_dva.sql`** e **REIMPORTAR o workflow no N8N**
-   (o enum de tipos e o prompt de extração vivem no JSON gerado) — sessão 11, abaixo;
-3. **re-exportar** o book e mandar o `.xlsx` + prints.
+1. aplicar no Supabase, em ordem: **`0023_reconciliacao_sem_ruido.sql`** (PR #50),
+   **`0024_taxonomia_dmpl_dva.sql`** (sessão 11) e **`0025_indices_macro.sql`** (sessão 13);
+2. **REIMPORTAR `n8n/workflow.e1-ingestao.json`** — o enum de tipos, o prompt de extração e a lista de
+   apelidos da taxonomia vivem dentro do JSON gerado (sessões 11 e 14);
+3. **IMPORTAR `n8n/workflow.macro.json`** — workflow SEPARADO, roda no relógio (dia 12) e coleta
+   BCB/IBGE/Focus; sem ele a aba Macro sai vazia e as premissas macro do modelo ficam zeradas;
+4. **reextrair** os documentos de DMPL/DVA já processados (migration e prompt só valem para extração
+   NOVA — regra de sempre);
+5. **re-exportar** o book e mandar o `.xlsx` + prints.
 
 **Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
-v24 → v25 e que você deve repetir:
+v24 → v25 → v27 e que você deve repetir:
 
 1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (34 invariantes) e `db/test/run.sh` (21 asserts).
+   `npx tsx portal/scripts/verificar-export.mts` (79 invariantes) e `db/test/run.sh` (21 + 13 asserts).
    Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
+   ⚠️ **Container novo precisa de três coisas antes** (custaram tempo na sessão 14 — ver "Como
+   validar" na seção 4): `npm install` em `portal/`, `python3 gerar.py` em
+   `test-data/book-vertentes/` (o `GABARITO.json` **não é versionado** e o script morre sem ele) e
+   subir o Postgres local **com o `config_file` explícito**.
 2. **Abra o `.xlsx` do dono de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad,
    `data_only=False` (o export emite **fórmula**, não valor).
    ⚠️ **Não conclua nada de fórmula sem AVALIAR a fórmula.** Isso já me enganou: um script bobo
@@ -46,19 +54,174 @@ v24 → v25 e que você deve repetir:
 - ~~**DMPL/DVA não existem na taxonomia.**~~ **FEITA na sessão 11** (abaixo). Falta só o dono
   aplicar a `0024`, reimportar o workflow e **reextrair** os documentos afetados — a regra de sempre
   vale: documento já classificado como `MUTUOS` não muda retroativamente.
+- ~~**DF auditada / conjunto num arquivo só bypassava o roteamento por linha.**~~ **FEITA na sessão
+  14** (abaixo). Era o único `CRÍTICO` local que restava na auditoria.
 - **PDF como texto em vez de imagem + `.docx`/`.xlsx`** via nó *Extract From File* no N8N. **Maior
   alavanca que resta**: 60-80% do custo de input, mais precisão numérica, e fecha o gap crítico de
   formato (hoje `.docx`/`.xlsx` do dono não entram). **Exige o N8N vivo** — não implemente às cegas,
   peça ao dono pra abrir o workflow junto. Ver `docs/CUSTO_OPENAI.md`.
-- **Dois itens de resolução de ENTIDADE no N8N**, vistos comparando v24 × v25 e não corrigidos porque
-  são do intake, não do export: (a) a Metalúrgica aparece com grafia diferente das outras empresas
-  (`Vertentes Metalúrgica Ltda.` × `VERTENTES METALÚRGICA LTDA.`), o que sugere **registro de entidade
-  duplicado**; (b) as linhas extraídas caíram de **772 → 661** entre v24 e v25 sem explicação — vale
-  conferir no reprocessamento.
+- **Dois itens de resolução de ENTIDADE no intake**, vistos comparando v24 × v25: (a) a Metalúrgica
+  aparece com grafia diferente das outras empresas (`Vertentes Metalúrgica Ltda.` × `VERTENTES
+  METALÚRGICA LTDA.`), o que sugere **registro de entidade duplicado** — a sessão 12 resolveu o
+  sintoma NO EXPORT (`consolidarNomesDeEntidade`, senão o modelo contava cada empresa 2x), mas a
+  duplicidade na base continua; (b) as linhas extraídas caíram de **772 → 661** entre v24 e v25 sem
+  explicação — vale conferir no reprocessamento.
 
 Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
-marcação do que já foi feito). Dois itens de dinheiro parado lá: `fn_registrar_documento` não é
-idempotente por hash (paga extração repetida) e existe um overload morto de 14 argumentos.
+marcação do que já foi feito). Candidatos mais fortes agora, todos locais e testáveis aqui:
+
+- **Dinheiro parado:** `fn_registrar_documento` não é idempotente por hash (paga extração repetida do
+  mesmo arquivo) e existe um **overload morto de 14 argumentos** da mesma função (lixo de schema que
+  torna ambígua qualquer chamada posicional). Uma migration resolve os dois.
+- **`reset-0006-regride-funcoes`:** o `db/README.md` recomenda reaplicar a `0006` quando o N8N diz
+  "function does not exist" — mas a `0006` recria os corpos ANTIGOS e REGRIDE o schema. Ou a `0006`
+  passa a recriar os corpos atuais, ou a recomendação sai do README. Armadilha de produção.
+- **`unidade-ignorada-em-abas-classificadas`:** a escala (`milhar`/`unidade`) é lida só nas abas de
+  listagem simples; nas classificadas o `SUM` soma valor cru. Duas fontes em escalas diferentes na
+  mesma coluna somam errado **em silêncio** — mínimo verificável: escala no cabeçalho da coluna +
+  pintar divergência dentro da mesma coluna/aba.
+- **`vocabulario-classificacao-contas-nao-classificadas`:** rótulos reais ("Receita de Vendas de
+  Mercadorias" — a top line!, "Impostos sobre Vendas") caem em "Não Classificadas". Ampliar as listas
+  de palavra-chave é aditivo e de baixo risco.
+- **`periodo-fragmenta-e-quebra-reconciliacao`:** a referência de período é gravada CRUA, então o
+  mesmo exercício em duas notações vira duas linhas em `periodo`. Canonicalizar no caminho de ESCRITA
+  (a `0022` já canonicaliza na comparação).
+
+## Sessão 14 — DF auditada: o conjunto num arquivo só é separado por demonstração
+
+O `.xlsx` do próximo teste ainda não chegou. Rodei a suíte inteira primeiro (passo 1 do protocolo) —
+verde de ponta a ponta: n8n 103/103, `verificar-export.mts` 69/69, `db/test/run.sh` 21 + 13 asserts
+de macro, migrations 0001–0025 limpas, `tsc`/`eslint`/`next build` limpos — e ataquei o **único
+`CRÍTICO` local que ainda restava** na auditoria (`df-auditada-bypassa-roteamento-linha`).
+
+**O defeito.** Num mandato real o conjunto não chega em três arquivos: chega como **um PDF do
+exercício** ("Demonstrações Contábeis 2025.pdf", "DF Auditadas 2025.pdf") com Balanço + DRE + DFC +
+DMPL + **notas** dentro. Esse tipo (`DF_AUDITADA`) não pode ter aba própria — que aba seria? — e por
+não estar em `ABA_POR_TIPO` caía em `"Outros"`, **onde o roteamento por linha nem rodava** (ele só
+corria para documento de tipo estruturado). A entrega mais comum do cliente saía como listagem crua:
+sem template, sem total de seção, sem AV%/Δ%, sem indicadores — e a aba **Modelagem** (que lê das abas
+de demonstração) saía **zerada**. Mesmo padrão do achado central de v24/v25 e da sessão 11: com a
+extração certa, o defeito está no nosso roteamento.
+
+- **Duas portas para ser tratado como composto**, e a diferença entre elas é o que impede isto de
+  virar dupla contagem: (a) o **tipo declara** o conjunto (`DF_AUDITADA`) — basta isso; (b) o
+  documento **ainda não tem tipo** (nome que a taxonomia não reconhece, esperando a fila) — aí exige
+  evidência **declarada** de duas demonstrações (`secao_canonica` de famílias diferentes). É o sinal
+  que separa um conjunto de demonstrações de um **aging de recebíveis**, que é homogêneo.
+- **Não se estende ao resto de "Outros"**, de propósito: aging, estoque, extrato, razão e notas
+  **detalham** o que o balanço traz consolidado. Roteá-los somaria o detalhe DEBAIXO do total
+  informado — a dupla contagem que o export levou três rodadas para eliminar. `ehSecaoDeNotaExplicativa`
+  mantém a nota fora de qualquer demonstração **mesmo vindo dentro da DF auditada**; ela continua
+  entregue, com proveniência, na listagem documental. (A regex exige "explicativa" ou um NÚMERO depois
+  de "nota": "Notas promissórias a pagar" é conta legítima de passivo.)
+- **Defeito meu, pego pelo invariante e não por leitura.** Sem estrutura própria para desambiguar, o
+  fallback determinístico tenta **Fluxo primeiro** — e "Prejuízo líquido do exercício" é âncora da DRE
+  **e** do Fluxo indireto. Resultado da primeira versão: a DRE inteira foi para a aba do Fluxo (Lucro
+  Bruto 10.820 onde o documento diz 5.280; Fluxo operacional −41.175 onde diz 1.090). **Quem desempata
+  é o próprio documento:** ele IMPRIME os blocos e a extração traz o cabeçalho em `secao`. A seção
+  decide por **voto** das suas linhas, e a ordem de evidência virou: **o que a IA declarou para a
+  linha → o bloco em que o documento a imprimiu → palavra-chave.**
+- **DRIFT REAL no gerador**, achado ao ligar a ponta do intake: a cópia à mão de `ALIASES` em
+  `build-workflow.mjs` **parava em `BALANCETE`**, então o nó que roda em PRODUÇÃO não conhecia
+  `DF_AUDITADA`, `MAPA_DIVIDA`, `EXTRATO_BANCARIO`, `AGING_AR/AP`, `ESTOQUE`, `CERTIDOES`,
+  `CONTINGENCIAS`, `SITUACAO_FISCAL`, `ORGANOGRAMA`, `RAZAO` nem `NOTAS_EXPL` — arquivos com esses
+  nomes saíam do passe de nome **sem tipo**, que é justamente a chamada de IA que esse passe existe
+  para evitar. Agora o gerador **importa** a lista de `lib/taxonomia.mjs` (fonte única, como já era com
+  os enums e o prompt) e um teste compara as duas, **ordem inclusa** (a ordem é semântica: regra
+  específica antes da genérica). Junto: `DF_AUDITADA` passou a reconhecer "demonstrações
+  contábeis"/"demonstrações financeiras"/"DFs".
+- **O que NÃO mexi, e por quê:** "Balanço Patrimonial DRE, DFC 2024.pdf" (arquivo real do dono) segue
+  casando `FLUXO_CAIXA` pelo "dfc". Promovê-lo a `DF_AUDITADA` (complementar) tiraria dele a
+  capacidade de satisfazer itens **obrigatórios** do Kit Básico e mudaria a completude de **todo caso
+  já aberto** — decisão de produto do dono, não efeito colateral de uma fatia de export. E o
+  roteamento por linha já separa esse arquivo aba por aba de qualquer jeito.
+
+**Validação:** `verificar-export.mts` **69 → 79**; n8n **103 → 105**; `db/test/run.sh` 21 + 13;
+migrations 0001–0025 limpas; `tsc`/`eslint`/`next build` limpos. Invariantes provados **não-vazios**:
+desligando o roteamento composto a DF auditada volta a sair como `"Resumo, Outros"` (16a/16j falham e
+8 checagens desaparecem); desligando a guarda de nota, as notas vazam para o Fluxo (16d/16e/16f);
+mexendo em `ALIASES` sem regenerar, o anti-drift falha.
+
+**Precisa do dono:** nada para o export. Para o passe de nome novo valer em produção, **reimportar**
+`workflow.e1-ingestao.json`.
+
+## Sessão 13 — Índices macro: histórico (BCB/IBGE) + Focus, e o modelo consumindo os dois
+
+Pedido do dono: automatizar índices macro **validados e revisados**, com retorno médio de 3/5/10 anos,
+e ligar isso à modelagem. `db/migrations/0025` + `n8n/workflow.macro.json` (workflow **separado**, roda
+no relógio — falha dele não derruba a ingestão) + aba **Macro** no export.
+
+**São duas coisas diferentes, e o modelo usa cada uma para o que ela serve:** `indice_macro_obs` é o
+que **aconteceu** (série mensal publicada) e **calibra**; `indice_macro_expectativa` é o que o mercado
+**espera** (Focus/BCB, por ano) e **projeta**. Média do passado não é previsão — projetar com ela é
+dirigir pelo retrovisor, e era o caminho mais fácil de tomar ali.
+
+- **Duas fontes para o mesmo número.** O IPCA é produzido pelo IBGE e espelhado pelo BCB; a observação
+  é chaveada por `(serie, data_ref, FONTE)` para as duas coexistirem — sobrescrever uma com a outra
+  destruiria a evidência que autoriza chamar o dado de conferido. `fn_divergencias_indice_macro`
+  **aponta e não corrige** (não temos autoridade para decidir qual fonte está certa); tolerância de
+  0,01 p.p. porque arredondamento de publicação não pode virar alerta semanal.
+- **Composição, nunca soma nem média aritmética.** 12 meses de 1% dão 12,68%, não 12%; a média de 10%
+  e 4% é 6,96%, não 7,00%. Vale no SQL, na lib e **na FÓRMULA da aba Macro** (`PRODUCT^(1/n)`, com
+  teste **proibindo `AVERAGE`**). Série de **NÍVEL** (câmbio) varia entre fechamentos — compor nível
+  seria erro conceitual, e por isso a natureza da série está no catálogo.
+- **Ano incompleto não entra na média** (o corrente tem 5 meses): continua visível, com o nº de meses
+  anotado, mas fora da janela.
+- **Coleta no dia 12**, não no dia 1: o IBGE divulga o IPCA por volta do dia 10, e coletar antes faria
+  a conferência acusar divergência todo mês por atraso de publicação.
+- **Dois defeitos meus**, achados recalculando a planilha (não lendo o código): os anos do cabeçalho do
+  Focus saíam como **TEXTO** e o `MATCH` do modelo compara com o exercício, que é **número** — nunca
+  casava, o `IFERROR` devolvia 0 e a premissa de inflação aparecia **zerada sem nenhum sinal de erro**;
+  e eu havia chamado de "necessidade de financiamento" o resíduo Ativo−Passivo−PL, que **não se move
+  com premissa nenhuma** (um resultado pior derruba caixa e PL na mesma medida). A necessidade real é
+  o **caixa negativo**: virou linha própria, e ela responde (14.249 → 20.803 com 50% de passivo
+  oneroso).
+
+**Validação:** n8n 86 → **103** (17 testes novos, com respostas REAIS das três APIs);
+`verificar-export.mts` 57 → **69**; `db/test/macro.test.sql` com 13 asserts e **caso negativo em cada
+checagem**. **Precisa do dono:** aplicar a `0025` e **importar `workflow.macro.json`** no N8N.
+
+## Sessão 12 — Aba Modelagem: modelo pronto em fórmula + consolidação de entidade (v27)
+
+Pedido do dono sobre o export do v27: uma aba de modelagem pronta para receber inputs, espelhando um
+modelo de FP&A real, com a regra de que **tudo que não for input externo tem de ser FÓRMULA** puxando
+das abas de dados — e as abas cruas ocultas ao final. Emenda registrada em `f0/07` (reabre o "output
+não projeta"; é decisão do dono, e o que a emenda não afrouxa está escrito lá).
+
+**Pré-requisito medido antes de construir: a base não estava consolidada.** O Balanço do v27 saiu com
+**15 colunas de entidade** para 5 empresas, porque a mesma empresa chega por dois caminhos com grafias
+diferentes (apelido da coluna do combinado × razão social do individual) e o mesmo exercício com dois
+rótulos ("2025" × "31/12/2025"). Um modelo somando o grupo por cima disso conta cada empresa **duas
+vezes** e fecha errado em silêncio. `consolidarNomesDeEntidade` promove o apelido à razão social **só
+quando UMA ÚNICA** razão social do caso casa; ambíguo fica como está — fundir duas empresas diferentes
+é pior que duas colunas. Balanço: 38 → 26 colunas, entidades 15 → 10.
+
+**Quatro defeitos reais na revisão da própria aba, todos achados por teste:**
+
+1. **PREMISSA MORTA** (o pior): as premissas eram escritas em todas as colunas, mas as fórmulas liam
+   sempre `$C$n` — digitar a premissa do 2º ano projetado **não movia nada**. Agora a premissa é **por
+   exercício** (coluna relativa), como um modelo de FP&A real.
+2. **Modelo abria zerado.** As premissas nascem **derivadas do último exercício real, por fórmula,
+   lendo as ABAS DE DADOS** (não as linhas do próprio modelo — isso fecharia **referência circular**).
+   A célula continua input: digitar por cima sobrepõe.
+3. **Balanço projetado não fechava**: não havia elo entre fluxo de caixa e ativo. O fluxo passou a vir
+   ANTES do balanço e o caixa projetado entra no ativo circulante.
+4. **Referência de coluna inteira** (`INDEX('Balanço'!$B:$BZ, …)`) — 77 colunas × 1M linhas por
+   fórmula: derrubou por falta de memória um motor de fórmulas que abre a planilha inteira sem esforço.
+   No Excel do usuário isso é a planilha "pensando" a cada digitação. Intervalos passaram a ser
+   limitados ao tamanho real da aba.
+
+Também: lista suspensa na célula de entidade, linha "Dado encontrado" (distingue "exercício sem
+documento" de "entidade errada" — os dois davam o MESMO sintoma), sombreado das colunas projetadas por
+formatação condicional, e "Dívida líquida / EBITDA" renomeada para "(Passivo total − caixa) / EBITDA"
+(o export classifica por seção e **não isola dívida onerosa** — o nome anterior induziria a ler um
+covenant que não é aquele).
+
+**O invariante 14 é a tradução literal do critério do dono** ("alterar uma premissa tem de alterar o
+modelo inteiro"): monta o **grafo de dependência** das fórmulas e exige que toda linha projetada
+alcance as premissas **do seu exercício**, e que nenhuma premissa fique morta. Foi ele que pegou o
+defeito 1. Recálculo de ponta a ponta com motor de fórmulas Excel: histórico bate com o gabarito
+(Ativo 121.198 / 95.780) e a necessidade de financiamento dá **0,00** nas colunas reais.
 
 ## Sessão 11 — DMPL e DVA: código próprio na taxonomia e aba própria (`db/migrations/0024`)
 
@@ -342,9 +505,14 @@ Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila 
   ajustado pra não repetir entidade/tipo/período (já aparecem em colunas próprias).
 
 **Pendente agora — ver a seção "⚠️ COMECE AQUI" no topo deste arquivo.** Resumo: o dono aplica a
-`0023` e a `0024` no Supabase (a `0024` também pede reimportar o workflow) e manda o export v26; as
-fatias não feitas são PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no intake.
-Backlog largo em `docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
+`0023`, a `0024` e a `0025` no Supabase, **reimporta** `workflow.e1-ingestao.json`, **importa**
+`workflow.macro.json`, reextrai os DMPL/DVA já processados e manda o export novo. As fatias não feitas
+são PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no
+intake. Backlog largo em `docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
+
+**Além do export, já existem:** aba **Modelagem** (modelo de FP&A em fórmula, premissa por exercício —
+sessão 12) e aba **Macro** (IPCA/Selic/câmbio: histórico do BCB/IBGE calibra, Focus projeta — sessão
+13, `db/migrations/0025` + `n8n/workflow.macro.json`).
 
 **Regra que vale pra qualquer reimportação/migration:** só afeta extrações **NOVAS** — documento já
 extraído não muda retroativamente, precisa reextração explícita.
@@ -1495,9 +1663,16 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   **Padrão obrigatório**: quando o PR da branch é mergeado, restarte do `main` atualizado
   (`git fetch origin main && git checkout -B claude/handoff-continuation-2oecw8 origin/main`) — nunca
   empilhe em cima de histórico já mergeado.
-- Branch da sessão 11: `claude/handoff-leitura-continuacao-jeifmd` (**PR #54**), restartada de
-  `origin/main`. Mesmo padrão: quando o PR desta branch fechar, a próxima sessão restarta do `main`
+- Branch das sessões 11-13: `claude/handoff-leitura-continuacao-jeifmd` — **2 PRs mergeados** (#54 na
+  sessão 11; #55 com as sessões 12 e 13 juntas), restartada de `origin/main` a cada vez.
+- Branch da sessão 14: `claude/handoff-continuation-orqkmn`, criada a partir do `main` já com o #55
+  mergeado. Mesmo padrão: quando o PR desta branch fechar, a próxima sessão restarta do `main`
   atualizado em vez de empilhar em cima de histórico já mergeado.
+- **Aviso de leitura desta sessão:** ao retomar, confirme o estado do `main` com
+  `git ls-remote origin main` **e** com a lista de PRs — o cabeçalho deste arquivo já ficou defasado
+  duas vezes (na sessão 14 ele dizia "PR #54 em aberto" quando #54 e #55 já estavam mergeados, porque
+  o commit de handoff viaja no próprio PR que muda o estado). O `git fetch origin main` do container
+  pode devolver um `origin/main` velho; o `ls-remote` não mente.
 - **Aviso prático desta sessão:** duas sessões editaram o mesmo cabeçalho do HANDOFF em paralelo
   (o #53 corrigiu o estado do `main` enquanto o #54 já estava aberto), e o #54 ficou em conflito.
   O cabeçalho deste arquivo é o ponto de conflito mais provável do repositório — ao retomar,
@@ -1522,13 +1697,16 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0024) + README com ordem de aplicação
-              test/  — fixture do book + testes de reconciliação + run.sh
+db/         — migrations SQL (0001-0025) + README com ordem de aplicação
+              test/  — fixture do book + testes de reconciliação + macro.test.sql + run.sh
 n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
+              build-workflow-macro.mjs + lib/macro.mjs + workflow.macro.json — coleta de índices macro (0025),
+              workflow SEPARADO que roda no relógio (dia 12); falha dele não derruba a ingestão
 portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
-              src/lib/export.ts             — o motor do export (função pura buildExportWorkbook)
+              src/lib/export.ts             — o motor do export (função pura buildExportWorkbook):
+                                              abas de demonstração, DMPL/DVA, Macro, Modelagem, roteamento por linha
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 34 invariantes de regressão do export
+              scripts/verificar-export.mts   — 79 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
@@ -1538,17 +1716,33 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 86 testes da lógica de ingestão/classificação/extração
+node --test 'n8n/test/*.test.mjs'           # 105 testes da lógica de ingestão/classificação/extração/macro
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
-npx tsx portal/scripts/verificar-export.mts # 34 invariantes do export
-PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 asserts de reconciliação
+node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
+npx tsx portal/scripts/verificar-export.mts # 79 invariantes do export
+PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 asserts de reconciliação + 13 de macro
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
-Para o `db/test/run.sh` num container sem Postgres rodando: `initdb` como usuário `postgres`
-(o servidor recusa rodar como root) e `pg_ctl -o '-k /tmp -p 5599'`. O script cria os papéis
-`anon`/`authenticated`/`service_role` e o schema `storage` que as migrations assumem do Supabase.
 
-Migrations: aplicar `0001`→`0024` em ordem num Postgres 16 local antes de propor SQL novo — várias
+**Preparo de container novo** (a sessão 14 perdeu tempo nos três — rode antes de qualquer coisa):
+
+```bash
+cd portal && npm install && cd ..                    # node_modules NÃO vem no clone
+cd test-data/book-vertentes && pip install reportlab && python3 gerar.py && cd ../..
+# ↑ gera pdf/ + GABARITO.json, que NÃO são versionados. Sem isso o verificar-export.mts
+#   morre com ENOENT no GABARITO.json — não é bug, é insumo faltando.
+sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
+  -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
+# ↑ o cluster já vem provisionado; sem o config_file explícito o pg_ctl falha
+#   ("could not access postgresql.conf" — o Debian separa config de dados).
+sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
+# ↑ como postgres, senão dá "Peer authentication failed" (o socket usa peer auth).
+```
+
+O `run.sh` cria os papéis `anon`/`authenticated`/`service_role` e o schema `storage` que as migrations
+assumem do Supabase.
+
+Migrations: aplicar `0001`→`0025` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 

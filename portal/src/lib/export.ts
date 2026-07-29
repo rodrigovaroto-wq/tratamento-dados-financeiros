@@ -4,6 +4,8 @@ import type { CampoExtraido } from "./types";
 import {
   classificarConta,
   classificarDemonstracao,
+  familiaDeclarada,
+  ehSecaoDeNotaExplicativa,
   secoesDe,
   ancorasDe,
   agruparPorChaveNormalizada,
@@ -412,6 +414,25 @@ const ABA_PADRAO_POR_ESTRUTURA: Record<FamiliaDemonstracao, string> = {
   dmpl: "DMPL",
   dva: "DVA",
 };
+
+// Tipo cujo documento é, por definição, o CONJUNTO das demonstrações num arquivo
+// só: "Demonstrações financeiras auditadas completas (+ notas)"
+// (`db/migrations/0002`). É a forma mais comum de entrega num mandato real — o
+// cliente manda o PDF auditado do exercício, não um arquivo por demonstração.
+//
+// Ele não pode ter aba própria em `ABA_POR_TIPO` (que aba seria? o arquivo é
+// Balanço E DRE E DFC E DMPL), e por não ter caía em "Outros": o roteamento por
+// linha só rodava para documento de tipo ESTRUTURADO, então a DF auditada inteira
+// saía como listagem crua — sem template, sem total de seção, sem AV%/Δ%, sem
+// indicadores, e a aba Modelagem (que lê das abas de demonstração) saía ZERADA.
+// Aqui o tipo declara "sou composto" e cada linha vai para a aba da SUA
+// demonstração, do mesmo jeito que já acontecia com a DMPL embutida num Balanço.
+//
+// Por que só este tipo, e não todo o balde "Outros": aging de recebíveis, posição
+// de estoques, extrato bancário, razão e notas explicativas DETALHAM o que o
+// balanço já traz consolidado. Roteá-los para o Balanço somaria o detalhe junto
+// com o total — a dupla contagem que o export levou três rodadas para eliminar.
+const TIPOS_DOCUMENTO_COMPOSTO = new Set(["DF_AUDITADA"]);
 
 export interface DocumentoParaExport {
   id: string;
@@ -2531,6 +2552,98 @@ export function buildExportWorkbook({
   const razoesSociais = [...contextoPorVersao.values()].map((c) => c.entidade);
   const nomeCanonico = consolidarNomesDeEntidade(razoesSociais, apelidosDeColuna);
 
+  // Quais versões são documento COMPOSTO — várias demonstrações no mesmo arquivo
+  // sem aba estruturada própria. Duas portas, e a diferença entre elas é o que
+  // impede este roteamento de virar dupla contagem:
+  //
+  //  (a) o TIPO declara o conjunto (`TIPOS_DOCUMENTO_COMPOSTO`): basta isso. Seja
+  //      o que o arquivo contiver, suas linhas são de demonstração e cada uma tem
+  //      aba canônica — inclusive quando a DF auditada traz só o balanço.
+  //  (b) o documento AINDA NÃO TEM TIPO (nome de arquivo que a taxonomia não
+  //      reconhece, aguardando a fila de revisão): aí exige-se evidência DECLARADA
+  //      de mais de uma demonstração — linhas com `secao_canonica` de duas
+  //      famílias diferentes. É o sinal que separa "Demonstrações Contábeis
+  //      2025.pdf" (BP + DRE + DFC juntos) de um aging de recebíveis, que é
+  //      homogêneo e cujo lugar continua sendo a listagem documental. Sem essa
+  //      exigência, o aging entraria no Balanço somando o detalhe DEBAIXO do total
+  //      que o BP já informa.
+  const versoesCompostas = new Set<string>();
+  {
+    const familiasDeclaradasPorVersao = new Map<string, Set<FamiliaDemonstracao>>();
+    for (const campo of campos) {
+      const ctx = contextoPorVersao.get(campo.documento_versao_id);
+      if (!ctx) continue;
+      const abaDoc = (ctx.tipoTaxonomia && ABA_POR_TIPO[ctx.tipoTaxonomia]) || "Outros";
+      // Documento que já tem aba própria (estruturada, DMPL/DVA ou de série) não
+      // é tocado: seu roteamento é o que sempre foi.
+      if (abaDoc !== "Outros") continue;
+      if (ctx.tipoTaxonomia) {
+        if (TIPOS_DOCUMENTO_COMPOSTO.has(ctx.tipoTaxonomia)) versoesCompostas.add(campo.documento_versao_id);
+        continue;
+      }
+      const familia = familiaDeclarada(campo.secao_canonica);
+      if (!familia || ehSecaoDeNotaExplicativa(campo.secao)) continue;
+      if (!familiasDeclaradasPorVersao.has(campo.documento_versao_id)) {
+        familiasDeclaradasPorVersao.set(campo.documento_versao_id, new Set());
+      }
+      familiasDeclaradasPorVersao.get(campo.documento_versao_id)!.add(familia);
+    }
+    for (const [versaoId, familias] of familiasDeclaradasPorVersao) {
+      if (familias.size >= 2) versoesCompostas.add(versaoId);
+    }
+  }
+
+  // Num documento composto NÃO existe uma estrutura "própria" para desambiguar a
+  // linha — e é justamente ela que o roteamento por linha usava para resolver a
+  // ambiguidade legítima entre demonstrações. "Prejuízo líquido do exercício" é
+  // âncora da DRE (linha de fechamento) E do Fluxo indireto (ponto de partida);
+  // "Caixa e equivalentes" é conta do Balanço E saldo da DFC. Sem estrutura, o
+  // fallback determinístico tenta Fluxo primeiro e a DRE inteira ia para a aba
+  // errada — a primeira versão desta fatia fez exatamente isso, e a cascata saiu
+  // com Lucro Bruto 10.820 onde o documento diz 5.280.
+  //
+  // Quem desempata é o próprio documento: um PDF auditado IMPRIME os blocos
+  // ("CUSTO DOS PRODUTOS VENDIDOS", "FLUXO DE CAIXA DAS ATIVIDADES OPERACIONAIS")
+  // e a extração traz esse cabeçalho em `secao`. A seção decide por VOTO das suas
+  // linhas, e a linha ambígua vai com o bloco em que o documento a imprimiu — a
+  // mesma doutrina que o resto do export já segue ("a seção declarada manda").
+  const familiaPorSecaoComposta = new Map<string, FamiliaDemonstracao>();
+  if (versoesCompostas.size > 0) {
+    const chaveSecao = (campo: CampoExtraido) =>
+      `${campo.documento_versao_id}${CHAVE_SEP}${normalizar(campo.secao ?? "")}`;
+    // Voto DECLARADO (a IA disse a que demonstração a linha pertence) vale mais
+    // que voto INFERIDO por palavra-chave — a seção só é decidida pelo segundo
+    // quando nenhuma linha dela foi declarada.
+    const votos = new Map<string, { declarados: Map<string, number>; inferidos: Map<string, number> }>();
+    for (const campo of campos) {
+      if (!versoesCompostas.has(campo.documento_versao_id)) continue;
+      if (!campo.secao || ehSecaoDeNotaExplicativa(campo.secao)) continue;
+      const k = chaveSecao(campo);
+      if (!votos.has(k)) votos.set(k, { declarados: new Map(), inferidos: new Map() });
+      const urna = votos.get(k)!;
+      const declarada = familiaDeclarada(campo.secao_canonica);
+      const inferida = declarada ? null : classificarDemonstracao(campo.secao, campo.chave, null, null);
+      const alvo = declarada ? urna.declarados : urna.inferidos;
+      const familia = declarada ?? inferida;
+      if (familia) alvo.set(familia, (alvo.get(familia) ?? 0) + 1);
+    }
+    // Empate: mantém a ordem de preferência do fallback determinístico
+    // (`classificarDemonstracao`) — Fluxo e DRE têm sinais específicos, Balanço
+    // casa "caixa" de forma gulosa. DMPL/DVA vêm antes porque só chegam aqui
+    // declaradas, e declaração não é palpite.
+    const DESEMPATE: FamiliaDemonstracao[] = ["dmpl", "dva", "fluxo_caixa", "dre", "balanco"];
+    for (const [k, urna] of votos) {
+      const urnaValida = urna.declarados.size > 0 ? urna.declarados : urna.inferidos;
+      let vencedora: FamiliaDemonstracao | null = null;
+      let maisVotos = 0;
+      for (const familia of DESEMPATE) {
+        const n = urnaValida.get(familia) ?? 0;
+        if (n > maisVotos) { maisVotos = n; vencedora = familia; }
+      }
+      if (vencedora) familiaPorSecaoComposta.set(k, vencedora);
+    }
+  }
+
   // Agrupa por aba → coluna (entidade×período) → campos daquela coluna.
   const colunasPorAba = new Map<string, Map<string, Coluna>>();
   const camposPorAba = new Map<string, Array<{ campo: CampoExtraido; colKey: string }>>();
@@ -2561,6 +2674,19 @@ export function buildExportWorkbook({
       if (familiaLinha && familiaLinha !== estruturaDoc) {
         aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
       }
+    } else if (versoesCompostas.has(campo.documento_versao_id) && !ehSecaoDeNotaExplicativa(campo.secao)) {
+      // Documento composto (DF auditada / conjunto ainda sem tipo): não há
+      // estrutura "própria" para preferir, então a ordem de evidência é o que a IA
+      // declarou PARA ESTA LINHA → o bloco em que o documento a imprimiu (voto da
+      // seção) → palavra-chave. Sem nenhum sinal, a linha fica onde estava
+      // (listagem documental): conservador, nada desaparece.
+      const familiaLinha =
+        familiaDeclarada(campo.secao_canonica)
+        ?? (campo.secao
+          ? familiaPorSecaoComposta.get(`${campo.documento_versao_id}${CHAVE_SEP}${normalizar(campo.secao)}`)
+          : undefined)
+        ?? classificarDemonstracao(campo.secao, campo.chave, campo.secao_canonica, null);
+      if (familiaLinha) aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
     }
     // Documento multi-entidade (db/migrations/0014): quando a linha traz
     // `entidade_coluna` (ex.: "Certsys Tecn" num balanço combinado com várias

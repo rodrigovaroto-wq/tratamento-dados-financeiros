@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { codigosConhecidos } from '../lib/openai.mjs';
 import { SYSTEM_PROMPT } from '../lib/extract.mjs';
+import { ALIASES } from '../lib/taxonomia.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -413,6 +414,22 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
       }
     }
   }
+});
+
+// --- Anti-drift: os apelidos do workflow SÃO os de lib/taxonomia.mjs ---------
+// Mesmo defeito do prompt, e este já estava acontecendo: a cópia à mão dentro de
+// build-workflow.mjs parava em BALANCETE, então o nó que roda em produção não
+// conhecia DF_AUDITADA, MAPA_DIVIDA, EXTRATO_BANCARIO, AGING_AR/AP, ESTOQUE,
+// CERTIDOES, CONTINGENCIAS, SITUACAO_FISCAL, ORGANOGRAMA, RAZAO nem NOTAS_EXPL —
+// arquivos com esses nomes saíam do passe de nome SEM TIPO, que é exatamente o
+// gasto de chamada de IA que a classificação por nome existe para evitar.
+test('os ALIASES do workflow gerado são IDÊNTICOS aos de lib/taxonomia.mjs (ordem inclusa)', () => {
+  const m = code('Classificar Nome').match(/const ALIASES=(\[[\s\S]*?\]);/);
+  assert.ok(m, 'ALIASES embutido como literal JSON no nó');
+  // Ordem importa: a lista é avaliada de cima para baixo e a regra específica
+  // ("faturamento intragrupo") tem de ser testada antes da genérica
+  // ("faturamento"). deepEqual sem sort é intencional.
+  assert.deepEqual(JSON.parse(m[1]), ALIASES, 'apelidos do workflow == fonte única, na mesma ordem');
 });
 
 // --- Anti-drift: o prompt do workflow É a fonte única de lib/extract.mjs -----
