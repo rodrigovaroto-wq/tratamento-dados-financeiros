@@ -40,10 +40,31 @@ test('catálogo de séries: taxa e nível são distinguidos (agregam de formas d
     assert.ok(s.codigo && s.nome && s.sgs && ['taxa', 'nivel'].includes(s.natureza), `série incompleta: ${s.codigo}`);
   }
   assert.ok(INDICADORES_FOCUS.every((i) => i.codigo && i.indicador));
+  // O câmbio tem de ser a série MENSAL de fechamento (3698), não a PTAX diária
+  // (1): a diária estoura a janela de 11 anos no SGS (HTTP 406, medido) e, se
+  // passasse, misturaria ~2.800 observações diárias com séries mensais — aí
+  // "fechamento do ano" passaria a depender do último dia útil coletado.
+  assert.equal(serieMacro('CAMBIO_USD').sgs, 3698, 'câmbio: série mensal de fim de período');
+  assert.equal(serieMacro('CAMBIO_USD').natureza, 'nivel');
 });
 
 test('URLs das três fontes', () => {
-  assert.match(urlSgs(433, { ultimos: 12 }), /bcdata\.sgs\.433\/dados\/ultimos\/12\?formato=json$/);
+  // O SGS responde HTTP 400 para `ultimos/N` com N acima de ~20 (medido em
+  // 2026-07-29 nas séries 433, 4390, 1 e 189: 20 → 200, 22 → 400) — e a coleta
+  // pede 132 meses. Com a forma antiga, TODAS as séries falhavam, e o sintoma era
+  // a aba Macro vazia, indistinguível de "workflow não ativado". A janela por
+  // DATA devolve os 11 anos sem reclamar; este teste impede a volta do `ultimos`.
+  const u = urlSgs(433, { mesesAtras: 132, hoje: new Date('2026-07-29T00:00:00Z') });
+  assert.match(u, /bcdata\.sgs\.433\/dados\?formato=json&dataInicial=01%2F08%2F2015$/);
+  assert.ok(!u.includes('/ultimos/'), 'a forma `ultimos/N` é recusada pelo SGS na janela que usamos');
+  // `dataFinal` fica de fora: a URL não pode envelhecer nem depender do relógio
+  // de quem chama — sem ela o SGS devolve até a última observação publicada.
+  assert.ok(!u.includes('dataFinal'), 'sem dataFinal: a série vem até a última publicação');
+  // Janela curta continua correta (o mês inicial anda com a janela).
+  assert.match(
+    urlSgs(4390, { mesesAtras: 12, hoje: new Date('2026-07-29T00:00:00Z') }),
+    /dataInicial=01%2F08%2F2025$/,
+  );
   const f = urlFocus('IPCA');
   assert.match(f, /ExpectativasMercadoAnuais/);
   assert.match(f, /Indicador%20eq%20'IPCA'/); // filtro precisa ir codificado
