@@ -491,9 +491,19 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
   // O componente do PL NÃO pode ter virado entidade: se ele fosse para
   // `entidade_coluna`, cada componente viraria uma EMPRESA fantasma no export.
-  const abasComponente = wb.worksheets.filter((s) => s.name !== "DMPL" && s.name !== "Resumo");
-  checar(abasComponente.length === 0, "(10d) a DMPL não vaza para nenhuma outra aba",
-    abasComponente.map((s) => s.name).join(", "));
+  // (As abas Balanço/DRE/Fluxo existem sempre, mesmo sem dado — v28. O que não
+  //  pode acontecer é uma delas carregar linha da DMPL.)
+  const vazamento: string[] = [];
+  for (const s of wb.worksheets) {
+    if (s.name === "DMPL" || s.name === "Resumo") continue;
+    for (let r = 1; r <= s.rowCount; r++) {
+      const rot = String(s.getRow(r).getCell(1).value ?? "");
+      if (componentes.some(([comp]) => rot === comp) || rot === MOV_ABERTURA || rot === MOV_FECHAMENTO) {
+        vazamento.push(`${s.name}!${r} "${rot}"`);
+      }
+    }
+  }
+  checar(vazamento.length === 0, "(10d) a DMPL não vaza para nenhuma outra aba", vazamento.join(", "));
 }
 
 // ---- 10e: DMPL embutida num PDF de Balanço não infla o Patrimônio Líquido ---
@@ -643,14 +653,18 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       `linha=${rAno} base=${String(anoBase)} próximo janeiro=${janAnoSeg?.formula ?? "(sem fórmula)"}`);
   }
 
-  // 4. Abas de dado cru ficam OCULTAS, mas continuam no arquivo (o modelo
-  //    aponta para elas e a proveniência não pode sumir da entrega).
-  const visiveis = wb.worksheets.filter((s) => s.state === "visible").map((s) => s.name);
-  const ocultas = wb.worksheets.filter((s) => s.state === "hidden").map((s) => s.name);
-  checar(visiveis.includes("Modelagem") && visiveis.includes("Balanço"),
-    "(11) Modelagem e as demonstrações principais ficam visíveis", visiveis.join(", "));
-  checar(!visiveis.includes("Balancete") && ocultas.includes("Balancete"),
-    "(11) as abas de apoio ficam ocultas — e continuam no arquivo", `visíveis: ${visiveis.join(", ")}`);
+  // 4. NENHUMA aba oculta (pedido do dono no teste v28: "quero todas as abas
+  //    juntas no exportável"). Reverte a decisão do v27 — e o motivo é concreto:
+  //    ele abriu o v28, viu 4 abas e concluiu que DMPL/Combinado/Balancete/
+  //    Faturamento/Dívida/Intragrupo/Outros "não vieram". Estavam lá, ocultas.
+  //    Aba oculta em arquivo de entrega lê-se como dado ausente.
+  const ocultas = wb.worksheets.filter((s) => s.state !== "visible").map((s) => s.name);
+  checar(ocultas.length === 0, "(11) nenhuma aba fica oculta na entrega", `ocultas: ${ocultas.join(", ")}`);
+  // …e a Modelagem continua sendo a aba ATIVA: é por onde o arquivo abre.
+  const modelagem = wb.getWorksheet("Modelagem")!;
+  const abaAtiva = (wb.views?.[0] as { activeTab?: number } | undefined)?.activeTab;
+  checar(abaAtiva === modelagem.id - 1,
+    "(11) a Modelagem é a aba ativa (o arquivo abre nela)", `activeTab=${String(abaAtiva)} modelagem=${modelagem.id - 1}`);
 }
 
 // ---- 12: consolidação de entidade e período (teste v27) ---------------------
@@ -957,8 +971,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const macro = wb.getWorksheet("Macro");
   checar(macro != null, "(15) a aba Macro é montada quando há índices");
   const dados = wb.getWorksheet("Macro (dados)");
-  checar(dados != null && dados.state === "hidden",
-    "(15) o dado cru fica numa aba oculta, como as demonstrações");
+  // A aba de dado cru continua EXISTINDO e agora fica visível como todas as
+  // outras (v28) — o que importa é que ela existe e que a aba Macro não guarda
+  // número nenhum, só fórmula sobre ela (verificado abaixo).
+  checar(dados != null, "(15) o dado cru da série tem aba própria (proveniência não some)");
 
   if (macro) {
     // A aba visível não guarda número: é toda referência/fórmula.
@@ -1302,9 +1318,15 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       }],
       campos: aging(V), agora: new Date("2026-07-29T12:00:00Z"),
     });
-    checar(wb.getWorksheet("Balanço") == null,
+    // A aba Balanço existe sempre (v28); o que não pode é a linha do aging ter
+    // ido para dentro dela — seria o detalhe somado debaixo do total do BP.
+    const bal = wb.getWorksheet("Balanço");
+    const rotulos: string[] = [];
+    if (bal) for (let r = 1; r <= bal.rowCount; r++) rotulos.push(String(bal.getRow(r).getCell(1).value ?? ""));
+    const entrou = rotulos.filter((x) => x.startsWith("Duplicatas a receber -"));
+    checar(entrou.length === 0,
       `${rotulo} não vira linha do Balanço`,
-      wb.worksheets.map((s) => s.name).join(", "));
+      `${entrou.join(", ")} | abas: ${wb.worksheets.map((s) => s.name).join(", ")}`);
   }
 
   // …e o documento SEM TIPO que declara DUAS demonstrações é composto de fato:
@@ -1328,6 +1350,221 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(wb.getWorksheet("Balanço") != null && wb.getWorksheet("DRE") != null,
     "(16j) documento sem tipo que DECLARA duas demonstrações é separado nas duas abas",
     wb.worksheets.map((s) => s.name).join(", "));
+}
+
+// ---- 17: reextração SUBSTITUI, não acumula (db/migrations/0026) --------------
+// Reextrair é a única forma de um documento já processado pegar prompt/taxonomia
+// novos — o dono precisa disso para a DMPL da `0024`. Só que o export lia TODAS
+// as versões do documento, e duas extrações do mesmo arquivo não produzem as
+// mesmas linhas (é o ponto de mudar o prompt): a conta renomeada aparecia DUAS
+// vezes e a soma da seção somava as duas. Dupla contagem por um caminho novo, e
+// do pior tipo — as duas linhas têm proveniência legítima, então nada parece
+// errado ao abrir a planilha.
+{
+  const doc = (versoes: Array<{ id: string; nome_original: string | null; n_versao?: number | null }>): DocumentoParaExport => ({
+    id: "d1", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: versoes,
+  });
+  const V1 = "v1", V2 = "v2";
+  const linhaDe = (ws: import("exceljs").Worksheet, rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+
+  // A extração NOVA renomeia a conta ("Caixa e bancos" → "Caixa e equivalentes de
+  // caixa"), que é exatamente o efeito de um prompt novo.
+  // Sem linha de total informado de propósito: aí a seção É a nossa soma, e a
+  // dupla contagem aparece no número em vez de ficar mascarada pelo total do
+  // documento (a regra do PR #50 esconderia o defeito atrás do informado —
+  // primeira versão deste invariante passou verde por isso).
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1000, documento_versao_id: V1 }),
+    campo({ chave: "Caixa e equivalentes de caixa", secao: "Ativo Circulante", valor_num: 1500, documento_versao_id: V2 }),
+  ];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Reextração", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf", n_versao: 1 }, { id: V2, nome_original: "bp.pdf", n_versao: 2 }])],
+    campos, agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Balanço")!;
+  const rAC = linhaDe(ws, "Ativo Circulante");
+  checar(rAC > 0 && Math.round(avaliar(ws, "B", rAC)) === 1500,
+    "(17a) reextração não soma com a extração anterior",
+    `seção=${rAC > 0 ? Math.round(avaliar(ws, "B", rAC)) : "(ausente)"} documento=1500`);
+  checar(linhaDe(ws, "Caixa e bancos") < 0,
+    "(17b) a linha da versão substituída não aparece na planilha");
+
+  // …e a substituição não é silenciosa: o Resumo diz que existe extração anterior
+  // fora deste export (ela continua no banco, com proveniência, para auditoria).
+  const resumo = wb.getWorksheet("Resumo")!;
+  let avisa = false;
+  for (let r = 1; r <= resumo.rowCount; r++) {
+    if (String(resumo.getRow(r).getCell(1).value ?? "").startsWith("Linhas de versão substituída")) avisa = true;
+  }
+  checar(avisa, "(17c) o Resumo declara a versão substituída (substituir em silêncio seria pior)");
+
+  // PROTEÇÃO: reextração que FALHA volta com ZERO linhas (`extracao_falhou`,
+  // db/migrations/0016). Se a vigência fosse cega ao dado, essa falha APAGARIA do
+  // book tudo o que a versão anterior extraiu — trocar dupla contagem por perda
+  // silenciosa de dado não é conserto.
+  const wbFalha = buildExportWorkbook({
+    caso: { nome: "Reextração falhou", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf", n_versao: 1 }, { id: "v3", nome_original: "bp.pdf", n_versao: 2 }])],
+    campos: [campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1000, documento_versao_id: V1 })],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const wsFalha = wbFalha.getWorksheet("Balanço");
+  checar(wsFalha != null && linhaDe(wsFalha, "Caixa e bancos") > 0,
+    "(17d) reextração que volta VAZIA não apaga o que a versão anterior extraiu");
+
+  // Sem `n_versao` informada não há ordem declarada: manter as duas é o
+  // comportamento antigo, e chutar qual é a nova seria pior.
+  const wbSemN = buildExportWorkbook({
+    caso: { nome: "Sem n_versao", produto: "rx" },
+    documentos: [doc([{ id: V1, nome_original: "bp.pdf" }, { id: V2, nome_original: "bp.pdf" }])],
+    campos, agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const wsSemN = wbSemN.getWorksheet("Balanço")!;
+  checar(linhaDe(wsSemN, "Caixa e bancos") > 0 && linhaDe(wsSemN, "Caixa e equivalentes de caixa") > 0,
+    "(17e) sem n_versao declarada, nada é descartado por chute");
+
+  // E o caso normal (uma versão por documento, como todo o book) não muda.
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wbBook = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const resumoBook = wbBook.getWorksheet("Resumo")!;
+  let totalBook = 0;
+  for (let r = 1; r <= resumoBook.rowCount; r++) {
+    if (String(resumoBook.getRow(r).getCell(1).value ?? "") === "Linhas totais extraídas") {
+      totalBook = Number(resumoBook.getRow(r).getCell(2).value ?? 0);
+    }
+  }
+  checar(totalBook === fixture.campos.length,
+    "(17f) documento de versão única (o book inteiro) não perde nenhuma linha",
+    `resumo=${totalBook} fixture=${fixture.campos.length}`);
+}
+
+// ---- 18: o teste v28 — buraco silencioso deixa de ser silencioso ------------
+// Três achados do v28, e o que os une é que o arquivo NÃO CONTAVA o que faltava:
+//   • a extração da DRE falhou (rate limit 429) e a aba simplesmente NÃO EXISTIU;
+//   • a `0025` não estava aplicada no projeto em uso, então não havia índice
+//     macro — e a aba Macro também não existiu ("os índices não vieram");
+//   • sete abas de apoio estavam OCULTAS e foram lidas como "não vieram".
+// Nenhum dos três era um número errado: eram ausências indistinguíveis de defeito.
+{
+  const V = "vSoBalanco";
+  const wb = buildExportWorkbook({
+    caso: { nome: "v28", produto: "reestruturacao" },
+    documentos: [
+      { id: "dBP", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa Ltda." },
+        periodo: { tipo: "anual", referencia: "2025" },
+        documento_versao: [{ id: V, nome_original: "01_BP_Alfa.pdf" }] },
+      // …e a DRE que CHEGOU e não extraiu nada (o caso do v28).
+      { id: "dDRE", tipo_taxonomia: "DRE", entidade: { razao_social: "Alfa Ltda." },
+        periodo: { tipo: "anual", referencia: "2025" },
+        documento_versao: [{ id: "vDreFalhou", nome_original: "07_DRE_Alfa.pdf" }] },
+    ],
+    campos: [
+      campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 500, documento_versao_id: V }),
+      campo({ chave: "TOTAL DO ATIVO", secao: "ATIVO", valor_num: 500, documento_versao_id: V }),
+      campo({ chave: "Fornecedores nacionais", secao: "Passivo Circulante", valor_num: 500, documento_versao_id: V }),
+    ],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+
+  const nomes = wb.worksheets.map((s) => s.name);
+  checar(nomes.includes("DRE") && nomes.includes("Fluxo de Caixa"),
+    "(18a) as três demonstrações principais existem sempre, com dado ou sem", nomes.join(", "));
+
+  const textoDe = (nome: string) => {
+    const ws = wb.getWorksheet(nome);
+    const out: string[] = [];
+    if (ws) for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 1; c <= 2; c++) out.push(String(ws.getRow(r).getCell(c).value ?? ""));
+    }
+    return out;
+  };
+  const textoDRE = textoDe("DRE");
+  checar(textoDRE.some((t) => t.includes("07_DRE_Alfa.pdf")),
+    "(18b) a aba sem dado NOMEIA o documento que chegou e não extraiu",
+    textoDRE.filter(Boolean).join(" | ").slice(0, 160));
+  const textoFluxo = textoDe("Fluxo de Caixa");
+  checar(textoFluxo.some((t) => t.includes("Nenhum documento")),
+    "(18c) …e distingue 'não entregue' de 'entregue e não extraído'",
+    textoFluxo.filter(Boolean).join(" | ").slice(0, 160));
+
+  // O Resumo conta os documentos que ficaram de fora — antes ele só contava as
+  // linhas que entraram, que é meia informação.
+  const resumo = wb.getWorksheet("Resumo")!;
+  let linhaSemLinha = "";
+  for (let r = 1; r <= resumo.rowCount; r++) {
+    if (String(resumo.getRow(r).getCell(1).value ?? "").startsWith("Documentos SEM linha")) {
+      linhaSemLinha = String(resumo.getRow(r).getCell(2).value ?? "");
+    }
+  }
+  checar(linhaSemLinha.includes("07_DRE_Alfa.pdf"),
+    "(18d) o Resumo declara os documentos sem nenhuma linha extraída", linhaSemLinha.slice(0, 120));
+
+  // Sem índice coletado, a aba Macro existe e diz o que falta.
+  const macro = wb.getWorksheet("Macro");
+  const textoMacro = textoDe("Macro");
+  checar(macro != null && textoMacro.some((t) => t.includes("workflow.macro.json")),
+    "(18e) sem índice coletado, a aba Macro existe e diz o que falta",
+    macro ? textoMacro.filter(Boolean).join(" | ").slice(0, 140) : "(sem aba Macro)");
+}
+
+// ---- 19: seção sem total informado é DECLARADA como nossa soma ---------------
+// O defeito numérico do v28: a VT Logística saiu com Ativo Circulante 7.254 onde
+// o documento diz 3.961 — "Contas a Receber" (3.293) somada JUNTO com "Fretes a
+// receber" (3.562) e "(-) PECLD" (−269), que são os componentes dela. O documento
+// imprime o total da seção, mas a extração daquele arquivo não o trouxe, e sem
+// total informado não existe linha de checagem: o número errado não tinha como
+// ser percebido. Enquanto a detecção de hierarquia não melhorar (exige ORDEM do
+// documento, que hoje não é persistida — fatia própria), o mínimo é o número não
+// passar por conferido.
+{
+  const V = "vSemTotal";
+  const wb = buildExportWorkbook({
+    caso: { nome: "Sem total informado", produto: "rx" },
+    documentos: [{
+      id: "dST", tipo_taxonomia: "BALANCO", entidade: { razao_social: "VT Logística Ltda." },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: V, nome_original: "04_BP_VT_Logistica.pdf" }],
+    }],
+    // Exatamente o padrão do v28: subtotal de agrupamento e seus componentes na
+    // mesma seção, e NENHUMA linha de total do Ativo Circulante.
+    campos: [
+      campo({ chave: "Disponível", secao: "Ativo Circulante", valor_num: 358, documento_versao_id: V }),
+      campo({ chave: "Contas a Receber", secao: "Ativo Circulante", valor_num: 3293, documento_versao_id: V }),
+      campo({ chave: "Fretes a receber", secao: "Ativo Circulante", valor_num: 3562, documento_versao_id: V }),
+      campo({ chave: "(-) PECLD", secao: "Ativo Circulante", valor_num: -269, documento_versao_id: V }),
+      campo({ chave: "Fornecedores nacionais", secao: "Passivo Circulante", valor_num: 5070, documento_versao_id: V }),
+    ],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const bal = wb.getWorksheet("Balanço")!;
+  let rAC = -1;
+  for (let r = 1; r <= bal.rowCount; r++) {
+    if (String(bal.getRow(r).getCell(1).value ?? "") === "Ativo Circulante") rAC = r;
+  }
+  const cell = rAC > 0 ? bal.getRow(rAC).getCell(2) : null;
+  const temInformado = (() => {
+    for (let r = 1; r <= bal.rowCount; r++) {
+      if (String(bal.getRow(r).getCell(1).value ?? "").includes("total informado")
+        && bal.getRow(r).getCell(2).value != null) return true;
+    }
+    return false;
+  })();
+  checar(!temInformado, "(19a) o cenário é o do v28 mesmo: seção sem total informado");
+  checar(!!cell?.note, "(19b) seção cujo número é a NOSSA soma carrega a ressalva na célula");
+  const nota = JSON.stringify(cell?.note ?? "");
+  checar(nota.includes("dupla contagem"),
+    "(19c) …e a ressalva nomeia o risco (dupla contagem de subtotal)", nota.slice(0, 120));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

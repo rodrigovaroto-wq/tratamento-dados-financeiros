@@ -331,9 +331,12 @@ test('Batching endurecido após "teste v18" (3 de 16 docs ainda deram 429 com 3s
   // com o batching da cont.⁸ (3s, 4 tentativas) eram justamente os
   // consolidados comparativos multi-ano — mais tokens de entrada E saída que
   // os demais. 6s + 6 tentativas dão mais folga pro balde de TPM da conta.
+  // O piso de 6s vale para as DUAS chamadas; a extração subiu para 12s depois do
+  // v28 (teste próprio abaixo), então aqui a asserção é o PISO, não a igualdade —
+  // travar 6000 exato reprovaria justamente o endurecimento seguinte.
   for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
     const n = byName[nm];
-    assert.equal(n.parameters.options?.batching?.batch?.batchInterval, 6000, `${nm}: intervalo endurecido`);
+    assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 6000, `${nm}: intervalo endurecido`);
     assert.equal(n.maxTries, 6, `${nm}: mais tentativas`);
   }
 });
@@ -431,6 +434,35 @@ test('os ALIASES do workflow gerado são IDÊNTICOS aos de lib/taxonomia.mjs (or
   // ("faturamento"). deepEqual sem sort é intencional.
   assert.deepEqual(JSON.parse(m[1]), ALIASES, 'apelidos do workflow == fonte única, na mesma ordem');
 });
+
+// --- Cadência da OpenAI: a extração é mais lenta que a classificação ---------
+// Teste v28 (14 documentos): DOIS caíram por 429 — e eram dois dos documentos
+// MENORES do book. Não foi o tamanho deles; foi o balde de TPM já esvaziado pelos
+// pesados que passaram antes. Quem esvazia o balde não é quem cai, então o que
+// espalha as chamadas da extração no tempo é o que resolve; retry não (o
+// `waitBetweenTries` do N8N tem teto de 5s, e 6 tentativas cabem na MESMA janela
+// de TPM que acabou de recusar).
+test('OpenAI Extrair espaça mais que OpenAI Classificar, e as duas têm retry', () => {
+  const extrair = byName['OpenAI Extrair'];
+  const classificar = byName['OpenAI Classificar'];
+  const intervalo = (n) => n.parameters.options?.batching?.batch?.batchInterval;
+  assert.equal(n8nBatchSize(extrair), 1, 'extração: um documento por vez');
+  assert.ok(
+    intervalo(extrair) > intervalo(classificar),
+    `extração (${intervalo(extrair)}ms) tem de espaçar mais que classificação (${intervalo(classificar)}ms)`,
+  );
+  assert.ok(intervalo(extrair) >= 12000, `intervalo da extração = ${intervalo(extrair)}ms (< 12s não bastou no v28)`);
+  for (const n of [extrair, classificar]) {
+    assert.equal(n.retryOnFail, true, `${n.name}: retry no nível do node`);
+    assert.ok(n.maxTries >= 4, `${n.name}: maxTries=${n.maxTries}`);
+    assert.equal(n.onError, 'continueRegularOutput',
+      `${n.name}: falha da IA não derruba a execução (vira pendência)`);
+  }
+});
+
+function n8nBatchSize(node) {
+  return node.parameters.options?.batching?.batch?.batchSize;
+}
 
 // --- Anti-drift: o prompt do workflow É a fonte única de lib/extract.mjs -----
 // Antes o prompt existia em TRÊS lugares (lib/extract.mjs, a paráfrase manual em
