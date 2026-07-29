@@ -634,11 +634,13 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     for (let r = 1; r <= ws.rowCount; r++) {
       if (String(ws.getRow(r).getCell(1).value ?? "") === "Exercício") { rAno = r; break; }
     }
+    // Layout mensal: 12 meses + 1 coluna FY por ano. Só o PRIMEIRO janeiro é
+    // digitado; o janeiro do ano seguinte (13 colunas à frente) deriva dele.
     const anoBase = rAno > 0 ? ws.getRow(rAno).getCell(3).value : null;
-    const anoSeg = rAno > 0 ? ws.getRow(rAno).getCell(4).value as { formula?: string } | undefined : undefined;
-    checar(typeof anoBase === "number" && !!anoSeg?.formula?.includes("+1"),
-      "(11) a linha do tempo deriva do primeiro exercício, não é digitada coluna a coluna",
-      `linha=${rAno} base=${String(anoBase)} seguinte=${anoSeg?.formula ?? "(sem fórmula)"}`);
+    const janAnoSeg = rAno > 0 ? ws.getRow(rAno).getCell(3 + 13).value as { formula?: string } | undefined : undefined;
+    checar(typeof anoBase === "number" && !!janAnoSeg?.formula?.includes("+1"),
+      "(11) a linha do tempo deriva do primeiro exercício, não é digitada ano a ano",
+      `linha=${rAno} base=${String(anoBase)} próximo janeiro=${janAnoSeg?.formula ?? "(sem fórmula)"}`);
   }
 
   // 4. Abas de dado cru ficam OCULTAS, mas continuam no arquivo (o modelo
@@ -852,14 +854,15 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // Colunas projetadas = as que vêm depois do último exercício com dado real.
   // No fixture do book o histórico é 2024-2025, então a 3ª coluna em diante.
   const colunaLetra = (i: number) => ws.getColumn(i).letter;
-  const projetadas: number[] = [];
-  for (let c = 3; c <= ws.columnCount; c++) {
-    const v = ws.getRow(linhaAno).getCell(c).value;
-    if (typeof v === "object" && v !== null && "formula" in v) projetadas.push(c);
-  }
-  // (a primeira coluna é digitada; as demais derivam — as projetadas são as
-  //  últimas `anosProjetados`, mas para o teste basta olhar da 3ª em diante)
-  const colsProjetadas = projetadas.slice(-3);
+  // Layout mensal: por ano, 12 colunas de mês + 1 coluna FY (a 13ª), que é onde
+  // as premissas daquele exercício moram. O teste checa a coluna FY dos anos
+  // PROJETADOS e também um mês dentro de cada um — a célula mensal tem de
+  // alcançar a premissa do SEU ano, não de outro.
+  const nAnos = Math.floor((ws.columnCount - 2) / 13);
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const colMes = (y: number, m: number) => 3 + y * 13 + m;
+  const anosProj = [nAnos - 3, nAnos - 2, nAnos - 1];
+  const colsProjetadas = anosProj.map(colFY);
   checar(colsProjetadas.length === 3, `(14) há 3 exercícios projetados`, String(colsProjetadas.length));
 
   // As linhas de RESULTADO que precisam responder a premissa.
@@ -876,14 +879,17 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   };
 
   const mortas: string[] = [];
-  for (const c of colsProjetadas) {
-    const letra = colunaLetra(c);
-    const premissasDaColuna = new Set(linhasPremissa.map((r) => `${letra}${r}`));
-    for (const rot of alvosDeTeste) {
-      const r = linhaDe(rot);
-      if (r < 0) { mortas.push(`linha ausente: ${rot}`); continue; }
-      if (!alcanca(`${letra}${r}`, premissasDaColuna)) {
-        mortas.push(`${letra}${r} (${rot}) não depende de nenhuma premissa de ${letra}`);
+  for (const y of anosProj) {
+    const letraFY = colunaLetra(colFY(y));
+    const premissasDoAno = new Set(linhasPremissa.map((r) => `${letraFY}${r}`));
+    for (const c of [colFY(y), colMes(y, 5)]) { // consolidado e um mês do meio do ano
+      const letra = colunaLetra(c);
+      for (const rot of alvosDeTeste) {
+        const r = linhaDe(rot);
+        if (r < 0) { mortas.push(`linha ausente: ${rot}`); continue; }
+        if (!alcanca(`${letra}${r}`, premissasDoAno)) {
+          mortas.push(`${letra}${r} (${rot}) não alcança as premissas de ${letraFY}`);
+        }
       }
     }
   }
@@ -1012,7 +1018,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const rSelic = linhaDe("Juro esperado (Selic — Focus)");
   checar(rIpca > 0 && rSelic > 0, "(15) o modelo tem premissas de IPCA e Selic");
   if (rIpca > 0) {
-    const f = String((mod.getRow(rIpca).getCell(5).value as { formula?: string })?.formula ?? "");
+    const nA = Math.floor((mod.columnCount - 2) / 13);
+    const f = String((mod.getRow(rIpca).getCell(3 + (nA - 1) * 13 + 12).value as { formula?: string })?.formula ?? "");
     checar(f.includes("'Macro'!"), "(15) a premissa de IPCA vem da aba Macro (Focus), não digitada", f.slice(0, 90));
     checar(!f.includes("AVERAGE"), "(15) …e não da média histórica");
   }
@@ -1028,8 +1035,91 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       linhasPremissa.push(r);
     }
   }
-  checar(linhasPremissa.length === 12,
-    `(15) as 12 premissas (3 macro + 9 operacionais) estão no bloco`, String(linhasPremissa.length));
+  checar(linhasPremissa.length === 15,
+    `(15) as 15 premissas (3 macro + 12 operacionais) estão no bloco`, String(linhasPremissa.length));
+}
+
+// ---- 16: consolidação mensal → anual (fluxo soma, estoque NÃO) -------------
+// É onde um modelo mensal se perde, e o erro é invisível na tela: somar doze
+// balanços dá doze vezes o patrimônio, e somar doze margens dá 1200%. Cada
+// natureza de linha tem UMA consolidação correta, e este invariante prende cada
+// uma à sua.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-28T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem")!;
+  const nAnos = Math.floor((ws.columnCount - 2) / 13);
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const colMes = (y: number, m: number) => 3 + y * 13 + m;
+  const letra = (i: number) => ws.getColumn(i).letter;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const fDe = (r: number, c: number) =>
+    String((ws.getRow(r).getCell(c).value as { formula?: string } | undefined)?.formula ?? "");
+
+  checar(nAnos >= 5 && (ws.columnCount - 2) % 13 === 0,
+    `(16) layout mensal: ${nAnos} anos × (12 meses + 1 consolidado)`, `${ws.columnCount} colunas`);
+
+  const y = nAnos - 1; // um ano projetado
+  const fy = colFY(y);
+
+  // FLUXO consolida por SOMA dos 12 meses.
+  for (const rot of ["Receita Líquida", "EBITDA", "Lucro/Prejuízo Líquido do Exercício"]) {
+    const r = linhaDe(rot);
+    const f = fDe(r, fy);
+    const esperado = `SUM(${letra(colMes(y, 0))}${r}:${letra(colMes(y, 11))}${r})`;
+    checar(f === esperado, `(16) "${rot}" consolida somando os 12 meses`, `veio: ${f}`);
+  }
+
+  // ESTOQUE consolida pegando DEZEMBRO — somar seria multiplicar o patrimônio.
+  for (const rot of ["TOTAL DO ATIVO", "Patrimônio Líquido", "Saldo final de caixa", "Caixa e equivalentes"]) {
+    const r = linhaDe(rot);
+    const f = fDe(r, fy);
+    const esperado = `${letra(colMes(y, 11))}${r}`;
+    checar(f === esperado, `(16) "${rot}" consolida pelo saldo de DEZEMBRO, não pela soma`, `veio: ${f}`);
+    checar(!f.startsWith("SUM("), `(16) …e definitivamente não soma`, `${rot}: ${f}`);
+  }
+
+  // SALDO INICIAL do ano é o de JANEIRO (não o de dezembro, nem a soma).
+  {
+    const r = linhaDe("Saldo inicial de caixa");
+    checar(fDe(r, fy) === `${letra(colMes(y, 0))}${r}`,
+      "(16) o saldo inicial do ano é o de JANEIRO", `veio: ${fDe(r, fy)}`);
+  }
+
+  // ÍNDICE é RECALCULADO sobre os agregados anuais — nunca somado nem "média".
+  for (const rot of ["Margem bruta", "Margem EBITDA", "Margem líquida"]) {
+    const r = linhaDe(rot);
+    const f = fDe(r, fy);
+    checar(f.includes(`${letra(fy)}`) && !f.startsWith("SUM(") && !f.includes("AVERAGE("),
+      `(16) "${rot}" é recalculada sobre o agregado do ano`, `veio: ${f}`);
+  }
+
+  // A necessidade de captação do ano é o PIOR mês, não dezembro: um vale de
+  // caixa em julho precisa ser financiado mesmo que dezembro feche positivo.
+  {
+    const r = linhaDe("Necessidade de captação (caixa negativo)");
+    const f = fDe(r, fy);
+    checar(f.includes("MIN(") && f.includes(`${letra(colMes(y, 0))}`) && f.includes(`${letra(colMes(y, 11))}`),
+      "(16) a captação do ano olha o PIOR mês, não o fechamento", `veio: ${f}`);
+  }
+
+  // E as três conferências existem — um modelo institucional prova que fecha.
+  for (const rot of ["Balanço fecha (Ativo − Passivo − PL)",
+                     "Receita do ano = receita extraída",
+                     "Caixa do balanço = saldo final do fluxo"]) {
+    checar(linhaDe(rot) > 0, `(16) o modelo traz a conferência "${rot}"`);
+  }
 }
 
 // ---- 16: DF auditada — o conjunto num arquivo só é separado por demonstração --
