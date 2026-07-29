@@ -108,7 +108,7 @@ const nodes = [
 
   node('Séries a Coletar', 'n8n-nodes-base.code', 2, {
     jsCode: `return ${JSON.stringify(
-      SERIES_MACRO.map((s) => ({ json: { __serie: s.codigo, __url: urlSgs(s.sgs, { ultimos: MESES_HISTORICO }) } })),
+      SERIES_MACRO.map((s) => ({ json: { __serie: s.codigo, __url: urlSgs(s.sgs, { mesesAtras: MESES_HISTORICO }) } })),
     )};`,
   }, 220, 200),
 

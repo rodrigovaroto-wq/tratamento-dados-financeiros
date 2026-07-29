@@ -39,8 +39,15 @@ export const SERIES_MACRO = [
     descricao: 'Juro básico efetivamente acumulado no mês (não a meta anual).' },
   { codigo: 'CDI', sgs: 4391, nome: 'CDI acumulado no mês', natureza: 'taxa', unidade: '% a.m.',
     descricao: 'Referência de custo de dívida bancária e de rendimento de aplicação.' },
-  { codigo: 'CAMBIO_USD', sgs: 1, nome: 'Câmbio R$/US$ (venda)', natureza: 'nivel', unidade: 'R$',
-    descricao: 'Taxa de câmbio de fechamento — relevante quando há receita, custo ou dívida em dólar.' },
+  // 3698 (fechamento MENSAL), não 1 (PTAX diária). Duas razões, e a segunda é a
+  // que importa: (a) a série diária estoura a janela — o SGS responde 406 para
+  // 11 anos de dado diário (medido em 2026-07-29), então a coleta do câmbio
+  // falhava; (b) todas as outras séries aqui são mensais, e guardar ~2.800
+  // observações diárias no meio delas faria "fechamento do ano" depender de qual
+  // foi o último dia útil coletado. Com a mensal, o fechamento do ano é dezembro,
+  // que é a convenção que um modelo usa.
+  { codigo: 'CAMBIO_USD', sgs: 3698, nome: 'Câmbio R$/US$ (venda, fim de período)', natureza: 'nivel', unidade: 'R$',
+    descricao: 'Taxa de câmbio de fechamento do mês — relevante quando há receita, custo ou dívida em dólar.' },
 ];
 
 export function serieMacro(codigo) {
@@ -61,10 +68,25 @@ const SGS_BASE = 'https://api.bcb.gov.br/dados/serie/bcdata.sgs';
 const FOCUS_BASE = 'https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais';
 const SIDRA_BASE = 'https://apisidra.ibge.gov.br/values';
 
-// O SGS recusa janelas muito longas em algumas séries; pedir "os últimos N" é
-// mais robusto que um intervalo de datas e não depende do relógio do servidor.
-export function urlSgs(codigoSgs, { ultimos = 132 } = {}) {
-  return `${SGS_BASE}.${codigoSgs}/dados/ultimos/${ultimos}?formato=json`;
+// Janela por DATA, não por "últimos N".
+//
+// A primeira versão pedia `/dados/ultimos/132` com a justificativa de que seria
+// "mais robusto que um intervalo de datas". É o contrário, e medido: o SGS
+// responde **HTTP 400** para `ultimos/N` com N acima de ~20 (conferido em
+// 2026-07-29 nas séries 433, 4390, 1 e 189 — 20 responde 200, 22 já responde
+// 400), enquanto o intervalo de datas devolve 11 anos sem reclamar. Ou seja: a
+// coleta falhava em TODAS as séries, e o sintoma que o dono via era a aba Macro
+// vazia — não havia como distinguir isso de "workflow não ativado".
+//
+// `dataFinal` fica de fora de propósito: sem ela o SGS devolve até a última
+// observação publicada, então a URL não envelhece nem depende do relógio de quem
+// chama. A data inicial é o único parâmetro, e a gravação é idempotente por
+// (serie, data_ref, fonte) — reprocessar meses já gravados não duplica nada.
+export function urlSgs(codigoSgs, { mesesAtras = 132, hoje = new Date() } = {}) {
+  const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - mesesAtras + 1, 1));
+  const dd = String(inicio.getUTCDate()).padStart(2, '0');
+  const mm = String(inicio.getUTCMonth() + 1).padStart(2, '0');
+  return `${SGS_BASE}.${codigoSgs}/dados?formato=json&dataInicial=${dd}%2F${mm}%2F${inicio.getUTCFullYear()}`;
 }
 
 // dd/MM/yyyy (formato do SGS) → ISO. Data inválida devolve null em vez de uma

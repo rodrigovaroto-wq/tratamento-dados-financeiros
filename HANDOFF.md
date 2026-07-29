@@ -4,32 +4,42 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #56** (sessão 14, DF
-auditada) — sessões 11 (DMPL/DVA), 12 (aba Modelagem do v27) e 13 (índices macro) também estão no
-`main`. Branch de trabalho das sessões 14-15: `claude/handoff-continuation-orqkmn`, restartada de
-`origin/main` — ver "Git / PR workflow" na seção 4 abaixo antes de commitar.
+**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #58** (commit de merge
+`7846b9e`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
+(reextração por hash) e 16 (teste v28) estão TODAS no `main`. **Cuidado: houve DUAS sessões em
+paralelo** — o PR #57 (modelo MENSAL + rollback da `0025`) entrou entre o #56 e o #58, e foi lendo o
+`.xlsx` do dono que eu descobri isso. Confirme o `main` com `git ls-remote` E a lista de PRs antes de
+assumir qualquer coisa. Branch de trabalho: `claude/handoff-continuation-orqkmn`, restartada de
+`origin/main` — ver "Git / PR workflow" na seção 4 antes de commitar.
 
 ## ⚠️ COMECE AQUI — o dono vai enviar o resultado do próximo export a qualquer momento
 
-Pendências do dono. O que ele **já confirmou feito** (2026-07-29): aplicou `0023`, `0024` e `0025`,
-reimportou o `workflow.e1-ingestao.json` e importou o `workflow.macro.json`. Sobrou:
+Pendências do dono depois do **teste v28** (o `.xlsx` dele está analisado na sessão 16, abaixo). Ele já
+aplicou `0023`/`0024`, reimportou o workflow de ingestão e importou o macro. Sobrou:
 
-1. aplicar a **`db/migrations/0026_reextracao_por_hash.sql`** (sessão 15) — é o que faz reenviar um
-   arquivo virar VERSÃO NOVA em vez de documento duplicado;
-2. **reextrair** os documentos de DMPL/DVA já processados. Isso significa **reenviar o mesmo arquivo no
-   mesmo mandato** ("+ Adicionar arquivos") — não existe botão de reprocessar, e migration/prompt só
-   valem para extração NOVA (a DMPL registrada como `MUTUOS` antes da `0024` só sai daquele código
-   assim). **Só depois da `0026`**: antes dela, o reenvio duplicava o documento e as duas extrações
-   entravam somadas no export. Alternativa sem custo de IA, se o que importa é só a aba: corrigir o
+1. aplicar a **`0026_reextracao_por_hash.sql`** — é o que faz reenviar um arquivo virar VERSÃO NOVA em
+   vez de documento duplicado;
+2. aplicar a **`0025_indices_macro.sql` NO PROJETO EM USO** e **ATIVAR** o `workflow.macro.json` com
+   uma execução manual. É a causa de "os índices não vieram": a `0025` foi aplicada no banco ERRADO e
+   revertida (PR #57, `db/rollback/0025_indices_macro_rollback.sql`), então no projeto certo as tabelas
+   macro não existem. O workflow roda **dia 12** e **não faz carga histórica sozinho** — importar não
+   coleta nada;
+3. **REIMPORTAR `workflow.e1-ingestao.json`** (cadência nova da extração, sessão 16);
+4. **reenviar os DOIS arquivos que falharam por 429** (`05_BP_Vertentes_Imoveis_SPE`,
+   `07_DRE_Vertentes_Metalurgica`) — é o que preenche a aba DRE e a coluna da SPE. Com a `0026`
+   aplicada, reenviar NÃO duplica documento;
+5. **reextrair** os documentos de DMPL/DVA já processados — mesma mecânica: reenviar o arquivo no
+   mesmo mandato ("+ Adicionar arquivos"), porque migration/prompt só valem para extração NOVA e não
+   existe botão de reprocessar. Alternativa sem custo de IA, se o que importa é só a aba: corrigir o
    **tipo** na fila de revisão — mas a matriz da DMPL pode sair achatada, porque as linhas antigas
    foram extraídas sem o contrato `secao`=movimento / `chave`=componente;
-3. **re-exportar** o book e mandar o `.xlsx` + prints.
+6. **re-exportar** o book e mandar o `.xlsx` + prints.
 
 **Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
 v24 → v25 → v27 e que você deve repetir:
 
 1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (85 invariantes) e `db/test/run.sh` (21 + 13 + 12 asserts).
+   `npx tsx portal/scripts/verificar-export.mts` (113 invariantes) e `db/test/run.sh` (21 + 13 + 12 asserts).
    Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
    ⚠️ **Container novo precisa de três coisas antes** (custaram tempo na sessão 14 — ver "Como
    validar" na seção 4): `npm install` em `portal/`, `python3 gerar.py` em
@@ -89,6 +99,72 @@ marcação do que já foi feito). Candidatos mais fortes agora, todos locais e t
 - **`periodo-fragmenta-e-quebra-reconciliacao`:** a referência de período é gravada CRUA, então o
   mesmo exercício em duas notações vira duas linhas em `periodo`. Canonicalizar no caminho de ESCRITA
   (a `0022` já canonicaliza na comparação).
+
+## Sessão 16 — Teste v28: aba ausente deixa de ser buraco silencioso
+
+O dono mandou o `.xlsx` do v28 (14 documentos) com dois destaques: "os índices não vieram com os
+dados" e "a aba de DRE não veio, e as demais abas também não vieram — quero todas as abas juntas".
+As três causas são DIFERENTES, e **nenhuma era um número errado**: eram ausências indistinguíveis de
+defeito. Também achei um defeito numérico que ninguém tinha pedido para procurar.
+
+**Antes de tudo: havia uma SESSÃO PARALELA.** O `.xlsx` tinha uma aba Modelagem MENSAL que o código
+que eu conhecia não produzia. O PR #57 (outra sessão, mesma conta) entrou entre o meu #56 e o #58 com
+modelo mensal + **rollback da `0025`**. Lição registrada: quando o arquivo do dono não corresponde ao
+código que você leu, o código errado é o SEU — confira `git ls-remote origin main` e a lista de PRs
+antes de diagnosticar.
+
+1. **"Os índices não vieram."** A `0025` foi aplicada no banco ERRADO e revertida (PR #57), então no
+   projeto em uso as tabelas macro não existem. Sem dado, o export nem criava a aba — e aba ausente
+   não distingue "coleta não rodou" de "defeito no export". Agora a aba **Macro existe sempre**,
+   dizendo o que falta (aplicar a `0025` no projeto certo, ATIVAR o workflow — que roda dia 12 e não
+   faz carga histórica sozinho) e **qual é o efeito** (as premissas de IPCA/Selic ficam em branco; dá
+   para digitar por cima, mas aí o número é memória de quem digitou, não índice publicado).
+2. **"A aba de DRE não veio."** A extração falhou: **429 da OpenAI**, junto com o Balanço da SPE — é
+   por isso que também faltava a coluna da SPE. Agora Balanço/DRE/Fluxo **existem sempre**, e a aba
+   sem dado **nomeia o arquivo** que chegou e não extraiu, distinguindo de "nenhum documento desta
+   demonstração" (uma pede reprocessar, a outra pede cobrar o documento). O Resumo declara
+   "Documentos SEM linha extraída: 2 de 14: …".
+   **Na causa:** a cadência da extração foi separada da classificação (6s → 12s). O dado que decidiu:
+   os dois que caíram são dois dos **menores** documentos do book — não foi o tamanho deles, foi o
+   balde de TPM esvaziado pelos pesados que passaram antes. Quem esvazia o balde não é quem cai.
+   Retry não resolve (o `waitBetweenTries` do N8N tem teto de 5s: 6 tentativas cabem na MESMA janela
+   de TPM que acabou de recusar). Definitivo é gastar menos input — PDF como TEXTO, com o N8N vivo.
+3. **"As demais abas não vieram."** Vieram: estavam **OCULTAS** (decisão do v27). Isso responde por si
+   — aba oculta em arquivo de entrega lê-se como dado ausente. **Nada fica oculto agora**; a Modelagem
+   continua sendo a aba ATIVA.
+
+**O defeito numérico (não pedido):** a VT Logística saiu com **Ativo Circulante 7.254 onde o documento
+diz 3.961** — "Contas a Receber" (3.293) somada JUNTO com "Fretes a receber" (3.562) e "(-) PECLD"
+(−269), que são os componentes dela. O PDF **imprime** o total da seção, mas a extração daquele
+arquivo não o trouxe, e **sem total informado não existe linha de checagem**: o número errado não
+tinha como ser percebido. A detecção de subtotal depende de a extração anotar a SUBSEÇÃO em `secao`;
+quando ela anota a seção de topo, passa.
+
+> **PRÓXIMA FATIA, e é a mais valiosa que sobrou:** conserto de verdade exige a **ORDEM das linhas do
+> documento** (o subtotal vem impresso ACIMA dos componentes — é assim que `render.py` do book e
+> qualquer demonstração real imprimem). Ordem hoje **não é persistida**: `campo_extraido` não tem
+> coluna de ordem e a query do export não ordena. Fatia = migration (`ordem int`) + n8n mandando o
+> índice da linha + `.order("ordem")` na rota + detecção "subtotal seguido dos seus componentes" no
+> export. Precisa de reprocessamento para valer no dado antigo.
+
+Nesta rodada ficou o mínimo honesto: seção cujo número é a NOSSA soma (porque o documento não informou
+o total) **carrega a ressalva na célula**, nomeando o risco de dupla contagem. Não conserta o número;
+impede que ele passe por conferido.
+
+**Conferido e OK no v28:** as 38 seções do Balanço das 4 empresas extraídas batem com o gabarito ao
+centavo; consolidação de entidade funcionando (1 coluna por empresa, não 15); DMPL como matriz
+correta; zero "Contas Não Classificadas"; notas explicativas fora das demonstrações.
+
+**Ainda aberto na fila do dono** (reconciliação, não mexi): divergência de caixa com diferença de
+**4.340.000** (é conversão de escala entre documentos em escalas diferentes); "Ativo 158.801 vs
+Passivo+PL 150.232" no combinado; e o alerta de fabricação com **4 contas repetindo 14.529**, que é o
+total do ativo da Componentes — vale conferir junto.
+
+**Validação:** `verificar-export.mts` 105 → **113**; n8n **106**; `db/test/run.sh` 21+13+12;
+`tsc`/`eslint`/`next build` limpos. Provados não-vazios (18a-18e, 19b-19c). **Três invariantes antigos
+foram REESCRITOS em vez de deletados** — o 11 travava a ocultação, o 15 travava a aba oculta de dado
+cru, e o 16h/16i usavam "a aba Balanço não existe" como proxy; cada um agora trava a intenção original
+de outra forma. Teste que vira verde por deleção não protege nada.
 
 ## Sessão 15 — Reextração é versão nova, e substitui em vez de acumular (`db/migrations/0026`)
 
@@ -1765,7 +1841,7 @@ portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revi
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook):
                                               abas de demonstração, DMPL/DVA, Macro, Modelagem, roteamento por linha
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 85 invariantes de regressão do export
+              scripts/verificar-export.mts   — 113 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
@@ -1775,10 +1851,10 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 105 testes da lógica de ingestão/classificação/extração/macro
+node --test 'n8n/test/*.test.mjs'           # 106 testes da lógica de ingestão/classificação/extração/macro
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
-npx tsx portal/scripts/verificar-export.mts # 85 invariantes do export
+npx tsx portal/scripts/verificar-export.mts # 113 invariantes do export
 PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 reconciliação + 13 macro + 12 reextração
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
