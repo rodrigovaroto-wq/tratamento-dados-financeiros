@@ -1567,6 +1567,75 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(19c) …e a ressalva nomeia o risco (dupla contagem de subtotal)", nota.slice(0, 120));
 }
 
+// ---- 17: subtotal reconhecido pela ORDEM do documento ----------------------
+// Modo de falha REAL do teste v28 (VT Logística): a seção saiu com Ativo
+// Circulante 7.254 onde o documento diz 3.961, porque "Contas a Receber"
+// (3.293) foi somada JUNTO com "Fretes a receber" (3.562) e "(-) PECLD" (−269),
+// que são os seus componentes.
+//
+// Por que a detecção existente não pega: (A) exige que alguma linha declare
+// `secao` = "Contas a Receber", e a extração daquele arquivo anotou a seção de
+// TOPO em todas; (B) exige que o valor bata com a soma dos irmãos da MESMA
+// seção, e os irmãos ali são o circulante inteiro. E não havia linha de "total
+// informado" para a conferência acusar — o número errado não tinha como ser
+// percebido.
+//
+// O sinal que sobra é o que qualquer demonstração impressa dá: o subtotal vem
+// IMEDIATAMENTE ANTES dos seus componentes. Isso exige ORDEM persistida.
+{
+  const V = "vOrdem";
+  // Ordem do documento, como o PDF imprime (subtotal acima, componentes abaixo).
+  const linhas: Array<[string, number]> = [
+    ["Caixa e bancos", 399],
+    ["Contas a Receber", 3293],      // ← subtotal impresso
+    ["Fretes a receber", 3562],      //   componente
+    ["(-) PECLD", -269],             //   componente
+    ["Despesas antecipadas", 269],
+  ];
+  const AC_CORRETO = 399 + 3293 + 269; // 3.961 — o que o documento diz
+  const campos: CampoExtraido[] = linhas.map(([chave, v], i) =>
+    campo({ chave, secao: "Ativo Circulante", valor_num: v, ordem: i, documento_versao_id: V }));
+
+  const documentos: DocumentoParaExport[] = [{
+    id: "dOrdem", tipo_taxonomia: "BALANCO", entidade: { razao_social: "VT Logística" },
+    periodo: { tipo: "anual", referencia: "2024" },
+    documento_versao: [{ id: V, nome_original: "04_BP_VT_Logistica.pdf" }],
+  }];
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-29T12:00:00Z"),
+  }).getWorksheet("Balanço")!;
+
+  let rAC = -1;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    if (String(ws.getRow(r).getCell(1).value ?? "") === "Ativo Circulante") { rAC = r; break; }
+  }
+  const soma = Math.round(avaliar(ws, "B", rAC));
+  checar(soma === AC_CORRETO,
+    "(17) subtotal impresso ACIMA dos componentes não é somado junto",
+    `seção=${soma} documento=${AC_CORRETO} (somando o subtotal daria ${AC_CORRETO + 3293})`);
+
+  // …e ele continua VISÍVEL: nada é escondido para o número fechar.
+  const rotulos: string[] = [];
+  for (let r = 1; r <= ws.rowCount; r++) rotulos.push(String(ws.getRow(r).getCell(1).value ?? ""));
+  checar(rotulos.some((x) => x.includes("subtotal informado")),
+    "(17) o subtotal detectado pela ordem continua visível na planilha");
+
+  // NEGATIVO: sem a ordem, o mesmo dado tem de voltar a errar — é o que prova
+  // que a correção vem da ordem, e não de outro sinal por acaso.
+  const semOrdem = linhas.map(([chave, v]) =>
+    campo({ chave, secao: "Ativo Circulante", valor_num: v, documento_versao_id: V }));
+  const wsSem = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos: semOrdem,
+    agora: new Date("2026-07-29T12:00:00Z"),
+  }).getWorksheet("Balanço")!;
+  let rAC2 = -1;
+  for (let r = 1; r <= wsSem.rowCount; r++) {
+    if (String(wsSem.getRow(r).getCell(1).value ?? "") === "Ativo Circulante") { rAC2 = r; break; }
+  }
+  checar(Math.round(avaliar(wsSem, "B", rAC2)) !== AC_CORRETO,
+    "(17) sem ordem persistida o defeito reaparece (a correção vem da ORDEM)");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

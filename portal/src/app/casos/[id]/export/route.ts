@@ -42,9 +42,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ? await supabase
         .from("campo_extraido")
         .select(
-          "id, documento_versao_id, secao, secao_canonica, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+          "id, documento_versao_id, secao, secao_canonica, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, ordem, status_aceite, aceito_por, aceito_em",
         )
         .in("documento_versao_id", versaoIds)
+        // ORDEM DO DOCUMENTO (db/migrations/0027). Sem isto o PostgREST devolve
+        // as linhas em ordem arbitrária, e a detecção de "subtotal impresso
+        // acima dos seus componentes" — que é o que conserta o Ativo Circulante
+        // da VT Logística (7.254 onde o documento diz 3.961) — não tem sinal
+        // nenhum para trabalhar. `nullsFirst: false` mantém a extração ANTIGA
+        // (ordem nula) no fim, sem embaralhar o que tem ordem.
+        .order("documento_versao_id", { ascending: true })
+        .order("ordem", { ascending: true, nullsFirst: false })
     : { data: [] as CampoExtraido[], error: null };
 
   const campos = (camposRes.data as CampoExtraido[] | null) ?? [];

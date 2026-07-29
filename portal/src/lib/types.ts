@@ -80,6 +80,12 @@ export interface CampoExtraido {
   unidade: string | null;
   confianca: number | null;
   origem_pagina: number | null;
+  // db/migrations/0027 — posição da linha NO DOCUMENTO (0-based). É o sinal que
+  // permite reconhecer um subtotal impresso ACIMA dos seus componentes, que é
+  // como toda demonstração publicada imprime. Sem ele, o subtotal entrava na
+  // soma da seção junto com os componentes (teste v28: Ativo Circulante da VT
+  // Logística saiu 7.254 onde o documento diz 3.961). `null` em extração antiga.
+  ordem: number | null;
   status_aceite: StatusAceite;
   aceito_por: string | null;
   aceito_em: string | null;

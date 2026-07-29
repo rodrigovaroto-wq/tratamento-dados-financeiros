@@ -410,7 +410,15 @@ export function parseExtractionResponse(apiJson) {
   // completos usados em todo o resto do sistema (campo_extraido e por diante)
   // — a compactação é só na conversa com a OpenAI, nada rio abaixo muda.
   const campos = Array.isArray(p.linhas)
-    ? p.linhas.map((l) => ({
+    ? p.linhas.map((l, i) => ({
+        // ORDEM da linha no documento (db/migrations/0027). NÃO é pedida ao
+        // modelo: é a posição no array que ele devolveu, que já é a ordem de
+        // leitura do documento. Pedir um campo de ordem gastaria token de saída
+        // por linha e daria ao modelo uma chance de errar algo que nós já
+        // sabemos com certeza. É o que permite ao export reconhecer um subtotal
+        // impresso ACIMA dos seus componentes (teste v28: Ativo Circulante da
+        // VT Logística saiu 7.254 onde o documento diz 3.961).
+        ordem: i,
         secao: l.s ?? null,
         secao_canonica: l.sc && l.sc !== 'NAO_CLASSIFICAVEL' ? l.sc : null,
         entidade_coluna: l.ec ?? null,

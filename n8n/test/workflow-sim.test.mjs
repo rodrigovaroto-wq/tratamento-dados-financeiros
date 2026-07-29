@@ -545,3 +545,13 @@ test('prefixo cacheável: o system prompt é IDÊNTICO entre documentos (e vem p
   assert.notEqual(msgA[1].content[0].text, msgB[1].content[0].text, 'o que varia por documento fica no user');
   assert.ok(!msgA[0].content.includes('BALANÇO ACUMULADO'), 'nada de nome de arquivo no system prompt');
 });
+
+test('Parse Extracao (nó real): propaga a ORDEM da linha (db/migrations/0027)', () => {
+  // O mirror dentro do JSON é o que roda em produção. Sem `ordem` aqui, a
+  // migration e o export existem e o dado real chega sem o sinal — o defeito do
+  // v28 continuaria acontecendo em silêncio.
+  const parse = wf.nodes.find((n) => n.name === 'Parse Extracao');
+  assert.ok(parse, 'nó Parse Extracao não existe');
+  assert.match(parse.parameters.jsCode, /p\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
+    'o mirror não está numerando as linhas pela posição no array');
+});
