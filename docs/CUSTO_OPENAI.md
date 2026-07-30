@@ -150,3 +150,47 @@ e um teste (`workflow-sim.test.mjs`) reprova quem mexer num dos dois sem recalcu
 **Diagnóstico em 10 segundos:** `OPENAI_API_KEY=sk-... node n8n/diagnosticar-openai.mjs` faz uma
 chamada de 1 token e diz se é crédito, cota diária ou cadência — e imprime o TPM real que a OpenAI
 informa nos headers, número que até aqui era chute em todo o repositório.
+
+---
+
+## Adendo (teste v31, 2026-07-30) — a alavanca 2 agora está MEDIDA, e o dono a aciona sem código
+
+A alavanca 2 acima ("não enviar o PDF duas vezes") estava estimada em "até 50% nos documentos mal
+nomeados". O v31 permite medir, porque a decisão de fazer a segunda chamada é **determinística e
+derivável só do nome do arquivo**: `precisa_fallback_openai = confianca < 0.7`. Rodando o classificador
+nos 14 arquivos reais do teste:
+
+| Padrão do nome | Confiança | 2ª chamada (documento inteiro, `gpt-4o`) | Qtd |
+|---|---|---|---|
+| `..._2025x2024.pdf` (dois anos) | 0,60 + 0,30 = **0,90** | não | 6 |
+| `..._2025.pdf` (um ano isolado = sinal **fraco**, +0,05) | **0,65** | **sim** | 7 |
+| `10_Faturamento_24M_...` (sem ano reconhecido) | **0,60** | **sim** | 1 |
+
+**8 dos 14 documentos (57% do lote) pagaram o input duas vezes** — e não por serem difíceis: por
+causa de um caractere no nome. O que dispara o custo é o `fraco: true` que `parsePeriodo` atribui a um
+ano isolado de 4 dígitos, deliberadamente, para que nome de arquivo sozinho não pule a verificação da
+IA (essa penalidade está certa e **não** deve ser removida — ver o teste
+`entidade do nome NÃO altera confiança nem o limiar de fallback`).
+
+### A consequência prática: renomear é a economia mais barata que existe aqui
+
+Usar a notação de período de `f0/03` no nome do arquivo elimina a segunda chamada, porque
+`12M25`/`L24M` são sinais FORTES (+0,30) em vez de fracos (+0,05) — sem mexer em nenhum limiar:
+
+```
+08_DFC_Vertentes_Metalurgica_2025.pdf        0,65 → chama a IA
+08_DFC_Vertentes_Metalurgica_12M25.pdf       0,90 → NÃO chama          ← mesma informação
+
+10_Faturamento_24M_Vertentes_Metalurgica.pdf 0,60 → chama a IA
+10_Faturamento_L24M_Vertentes_Metalurgica    0,90 → NÃO chama
+```
+
+Zero risco (a classificação por nome continua sendo conferida contra o conteúdo pelo `diagnostico` da
+extração, que roda sempre), zero código, e no lote do v31 corta **8 chamadas `gpt-4o` carregando o PDF
+inteiro** — a maior redução disponível hoje sem depender do N8N ao vivo.
+
+### E o que NÃO é economia, apesar de parecer
+
+`max_tokens: 16384` **não custa dinheiro** — só reserva TPM (ver o adendo do v30). Baixá-lo acelera o
+lote, não barateia: a cobrança é sobre os tokens realmente gerados. Quem quiser reduzir gasto de
+verdade mexe no INPUT (alavancas 1 e 2), não na saída.
