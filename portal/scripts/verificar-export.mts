@@ -1692,6 +1692,61 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(18) subtotal com UM único componente também é reconhecido (senão sobram 340)");
 }
 
+// ---- 20: "consulta falhou" NÃO é a mesma mensagem de "sem dado coletado" ----
+// Achado no teste v29 (0028): a base tinha índice macro gravado, mas a consulta
+// do portal falhava por autorização (RLS sem policy, ou RPC sem grant) — e o
+// export dizia "sem dado coletado", como se a coleta nunca tivesse rodado.
+// `route.ts` engolia `.error` das duas consultas com `?? []`. Confundir "tentei
+// e deu erro" com "tentei e não achei nada" é o próprio padrão que este export
+// existe para não repetir (a mesma classe do "total informado" vs "nossa soma").
+{
+  const wbErro = buildExportWorkbook({
+    caso: { nome: "Erro macro", produto: "rx" },
+    documentos: [{
+      id: "d1", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa" },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: "v1", nome_original: "bp.pdf" }],
+    }],
+    campos: [campo({ chave: "Caixa", secao: "Ativo Circulante", valor_num: 100, documento_versao_id: "v1" })],
+    macroErro: "permission denied for table indice_macro_obs",
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const macroComErro = wbErro.getWorksheet("Macro");
+  const textoErro: string[] = [];
+  if (macroComErro) for (let r = 1; r <= macroComErro.rowCount; r++) {
+    for (let c = 1; c <= 2; c++) textoErro.push(String(macroComErro.getRow(r).getCell(c).value ?? ""));
+  }
+  const tituloErro = String(macroComErro?.getRow(1).getCell(1).value ?? "");
+  checar(macroComErro != null && tituloErro.includes("CONSULTA falhou"),
+    "(20a) erro de consulta vira uma aba PRÓPRIA, distinta de 'sem dado coletado'", tituloErro);
+  checar(textoErro.some((t) => t.includes("permission denied for table indice_macro_obs")),
+    "(20b) a mensagem de erro real aparece na aba (não é genérica)");
+  // O TÍTULO é o sinal que distingue as duas causas (o corpo pode CITAR a outra
+  // frase de propósito, como contraste explícito — "isto é diferente de X").
+  checar(!tituloErro.includes("sem dado coletado"),
+    "(20c) …e o título NÃO usa a frase de 'sem dado coletado' (confundiria as duas causas)", tituloErro);
+
+  // Sem erro, a mensagem antiga continua — é o caso genuinamente vazio.
+  const wbVazio = buildExportWorkbook({
+    caso: { nome: "Vazio macro", produto: "rx" },
+    documentos: [{
+      id: "d1", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa" },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: "v1", nome_original: "bp.pdf" }],
+    }],
+    campos: [campo({ chave: "Caixa", secao: "Ativo Circulante", valor_num: 100, documento_versao_id: "v1" })],
+    agora: new Date("2026-07-29T12:00:00Z"),
+  });
+  const macroVazio = wbVazio.getWorksheet("Macro");
+  const textoVazio: string[] = [];
+  if (macroVazio) for (let r = 1; r <= macroVazio.rowCount; r++) {
+    for (let c = 1; c <= 2; c++) textoVazio.push(String(macroVazio.getRow(r).getCell(c).value ?? ""));
+  }
+  checar(textoVazio.some((t) => t.includes("sem dado coletado")),
+    "(20d) sem macroErro, a mensagem genuína de ausência continua",
+    textoVazio.filter(Boolean).join(" | ").slice(0, 140));
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

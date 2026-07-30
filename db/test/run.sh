@@ -27,6 +27,35 @@ psql -q -d "$DB" -c "
     bucket_id text, name text, owner uuid);
   alter table storage.objects enable row level security;" >/dev/null
 
+# Supabase configura isto UMA VEZ, na criação do projeto — e nenhuma migration
+# deste repositório faz GRANT de tabela (nem precisa) porque conta com isso.
+# É por isso que um defeito de AUTORIZAÇÃO nunca tinha sido pego por teste
+# nenhum aqui: sem replicar este passo, `set role authenticated` falharia para
+# QUALQUER tabela, não só a que tem o bug — o teste acusaria falso positivo em
+# geral, então ninguém testava como authenticated. Achado real:
+# db/migrations/0028 (índices macro sem RLS nem grant).
+#
+# Função é DIFERENTE de tabela, e não replicamos o lado de função aqui — de
+# propósito, depois de medir. Em produção o Supabase impede EXECUTE público em
+# função nova (é por isso que este projeto já tem, desde a sessão 8, `grant
+# execute ... to authenticated` explícito em toda função chamada PELO PORTAL:
+# 0008 `fn_revisar_documento`, 0011 `fn_aceitar_extracao`, 0028
+# `fn_indice_macro_anual`). Tentei replicar isso aqui com `alter default
+# privileges ... revoke execute on functions from public` e MEDI que não
+# funciona neste Postgres: a revoke não grava linha em `pg_default_acl` (objtype
+# 'f') e função criada depois continua executável por PUBLIC — plain Postgres
+# não tem como REVOGAR um default que nunca foi GRANTado por default privilege
+# (o hardcoded "PUBLIC pode executar" não passa por ali). O mecanismo real do
+# Supabase para isso não é `ALTER DEFAULT PRIVILEGES` puro. Por isso os `grant
+# execute` em migration continuam sendo o único jeito CORRETO de garantir o
+# acesso em produção — só não dá para provar aqui, com teste local, que a
+# ausência deles quebraria (o teste da 0028 exercita a chamada como smoke test,
+# não como negativo).
+psql -q -d "$DB" -c "
+  grant usage on schema public to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
+
 echo "== migrations"
 for f in db/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then
