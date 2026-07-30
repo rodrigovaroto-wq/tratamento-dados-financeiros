@@ -21,7 +21,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT } from './lib/extract.mjs';
+import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +66,12 @@ const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type
 const LEGIBILIDADE_ENUM = JSON.stringify(['ok', 'degradado', 'ilegivel']);
 const SECAO_CANONICA_ENUM_JSON = JSON.stringify(SECAO_CANONICA_ENUM);
 const SCHEMA_EXTRACAO = `{name:'diagnostico_e_extracao',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','diagnostico','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},diagnostico:{type:'object',additionalProperties:false,required:['entidade','tipo_confirma','tipo_sugerido','periodo_tipo','periodo_referencia','legibilidade','nota_legibilidade','resumo','justificativa'],properties:{entidade:{type:['string','null']},tipo_confirma:{type:'boolean'},tipo_sugerido:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},legibilidade:{type:'string',enum:${LEGIBILIDADE_ENUM}},nota_legibilidade:{type:['string','null']},resumo:{type:'string'},justificativa:{type:'string'}}},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['s','sc','ec','pc','k','vt','vn','op','cf'],properties:{s:{type:['string','null'],description:'secao: agrupador livre (rótulo do próprio documento)'},sc:{type:'string',enum:${SECAO_CANONICA_ENUM_JSON},description:'secao_canonica: seção padronizada pelo significado contábil'},ec:{type:['string','null'],description:'entidade_coluna: nome da coluna/empresa quando há várias entidades lado a lado'},pc:{type:['string','null'],description:'periodo_coluna: rótulo da coluna de período quando há vários períodos lado a lado'},k:{type:'string',description:'chave: rótulo da conta'},vt:{type:['string','null'],description:'valor_texto: valor como aparece no documento'},vn:{type:['number','null'],description:'valor_num: valor numérico puro'},op:{type:['integer','null'],description:'origem_pagina: página de origem'},cf:{type:'number',description:'confianca: confiança 0-1 desta linha'}}}}}}}`;
+
+// `diagnosticarErroApi` é EMBUTIDA a partir do fonte de lib/extract.mjs (fonte
+// única — o nó Code do n8n não importa arquivo, e cópia à mão neste repositório
+// já divergiu duas vezes). A função é auto-contida justamente para o toString()
+// bastar; `workflow-sim.test.mjs` confere que o nó carrega este mesmo código.
+const FONTE_DIAGNOSTICO_ERRO = `const diagnosticarErroApi = ${diagnosticarErroApi.toString()};`;
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
 // Binário vem do FORM (o Postgres anterior não o repassa). Chave normalizada
@@ -154,6 +160,7 @@ return {json:{...item, openai_body: body}};
 // Espelha n8n/lib/merge.mjs: fica com a MAIOR confiança entre nome-do-arquivo
 // e IA (não sobrescreve cegamente); entidade/assinado da IA sempre aproveitados.
 const CODE_PARSE_CLASSIF = `
+${FONTE_DIAGNOSTICO_ERRO}
 function mergeClassification(fromName, fromAI){
   const nameHasTipo=!!fromName.tipo_taxonomia, aiHasTipo=!!fromAI.tipo_taxonomia;
   let winner;
@@ -178,7 +185,13 @@ const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
 const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
 if(!content){
-  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'A chamada a OpenAI nao retornou conteudo (falha de rede/API).'})}};
+  // A classificação DEGRADA para o nome do arquivo quando a IA falha — e isso é
+  // o certo (fail-safe). O que não pode é a justificativa dizer só "falha de
+  // rede/API": no "teste v30" os 14 documentos ficaram classificados pelo nome
+  // com essa frase genérica, enquanto a causa real era a OpenAI recusando TODA
+  // chamada. A causa vai junto, com o mesmo diagnóstico da extração.
+  const motivo=resp?.error?diagnosticarErroApi(resp.error).motivo:'A chamada a OpenAI nao retornou conteudo (falha de rede/API).';
+  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Classificacao por conteudo indisponivel, valeu o nome do arquivo. '+motivo})}};
 }
 let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
   return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Resposta da OpenAI nao veio em JSON valido.'})}};
@@ -207,7 +220,7 @@ const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
-const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:16384,response_format:{type:'json_schema',json_schema:schema},messages:[
+const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKENS},response_format:{type:'json_schema',json_schema:schema},messages:[
   {role:'system',content:promptSistema},
   {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
 ]};
@@ -221,13 +234,14 @@ return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, open
 // Sem isso, uma falha silenciosa grava 0 campos e ninguém fica sabendo
 // (achado em produção, sessão 7 cont.⁷ — "teste v14").
 const CODE_PARSE_EXTRACAO = `
+${FONTE_DIAGNOSTICO_ERRO}
 const ctx=$('Montar Req Extracao').item.json;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
 const content=resp?.choices?.[0]?.message?.content;
 let p={}; let falhaMotivo=null;
 if(resp?.error){
-  falhaMotivo='Erro da API OpenAI: '+(resp.error.message||resp.error.code||JSON.stringify(resp.error));
+  falhaMotivo=diagnosticarErroApi(resp.error).motivo;
 }else if(!content){
   falhaMotivo='Resposta da OpenAI sem conteudo (falha de rede/API).';
 }else{
@@ -268,11 +282,23 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.disabled ? { disabled: true } : {}),
   // Retry no nível do node (N8N): reexecuta o item que falhou antes de cair no
-  // onError. waitBetweenTries tem teto de 5000ms no N8N — combinado com o
-  // batching (abaixo) resolve o 429 de rate limit da OpenAI num upload em
-  // lote. maxTries 6 (era 4, cont.⁸): o "teste v18" mostrou que 4 tentativas
-  // ainda não bastavam pros 3 documentos mais pesados (cont.¹¹) — mais
-  // tentativas dão mais chances do balde de TPM da conta se recompor.
+  // onError. waitBetweenTries tem teto de 5000ms no N8N. maxTries 6 (era 4,
+  // cont.⁸): o "teste v18" mostrou que 4 tentativas não bastavam pros documentos
+  // mais pesados (cont.¹¹).
+  //
+  // ⚠️ SUSPEITA FORTE, NÃO CONFIRMADA (achado ao investigar o v30, lendo o fonte
+  // do n8n): com `onError: 'continueRegularOutput'` o nó NUNCA LANÇA — ele empurra
+  // o item de erro adiante —, e se o retry do n8n depende do lançamento, então
+  // `retryOnFail` nunca dispara nos nós OpenAI e as "6 tentativas" em que este
+  // comentário confiava são ficção. Não confirmei contra o n8n do dono, e por isso
+  // NÃO mexi na configuração: trocar `onError` para o retry funcionar traria de
+  // volta o bug da sessão 7 cont.¹³ (um erro num item matando o lote inteiro em
+  // silêncio), o que é pior que não ter retry. A verificação é de 1 minuto no n8n
+  // vivo: a duração da execução diz se houve 1 passada ou 6 (ver HANDOFF).
+  //
+  // O que NÃO depende dessa dúvida: a cadência derivada do TPM (abaixo). Ela
+  // dimensiona o lote para não estourar o balde na PRIMEIRA tentativa — que é a
+  // única em que dá para confiar hoje.
   ...(opts.retryOnFail ? { retryOnFail: true, maxTries: opts.maxTries ?? 6, waitBetweenTries: opts.waitBetweenTries ?? 5000 } : {}),
 });
 
@@ -294,23 +320,39 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
 // produção, sessão 7 cont.¹¹). Trade-off consciente: processa mais devagar.
 const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } } };
 
-// A EXTRAÇÃO tem cadência própria, mais lenta que a classificação. No "teste v28"
-// (14 documentos) ainda caíram DOIS por 429 — `05_BP_Vertentes_Imoveis_SPE` e
-// `07_DRE_Vertentes_Metalurgica` —, e o dado que importa é QUAIS: são dois dos
-// documentos MENORES do book. Não foi o tamanho deles; foi o balde de TPM já
-// esvaziado pelos pesados que passaram antes (combinado e balancete). Quem
-// esvazia o balde não é quem cai — então espaçar mais só a extração é o ajuste
-// certo, e a classificação (que gasta uma fração dos tokens) não precisa pagar.
+// A CADÊNCIA DA EXTRAÇÃO É ARITMÉTICA, NÃO CHUTE — e isto é a correção do v30.
 //
-// Por que não resolver no retry: `waitBetweenTries` do N8N tem teto de 5s, então
-// 6 tentativas cabem em ~30s — dentro da MESMA janela de TPM que acabou de
-// recusar. Retry rápido não espera um balde por minuto se recompor; cadência sim.
+// O que eu não sabia quando escolhi 6s e depois 12s: a OpenAI documenta que
+// "your rate limit is calculated as the MAXIMUM of max_tokens and the estimated
+// number of tokens based on the character count of your request". Ou seja,
+// `max_tokens` é RESERVA de TPM: toda extração reserva 16.384
+// tokens do balde por minuto, para um PDF de 2 KB ou de 40 páginas — os dois
+// pagam igual. Isso explica o fato que mais incomodava no v30: as notas
+// explicativas minúsculas também tomaram 429.
 //
-// Trade-off consciente: 14 documentos ficam ~1,5 min mais lentos. Uma extração
-// perdida custa muito mais — no v28 custou a aba DRE inteira do book.
-// A correção DEFINITIVA é gastar menos token de entrada (PDF como TEXTO em vez de
-// imagem: 60-80% do input, `docs/CUSTO_OPENAI.md`), e essa exige o N8N vivo.
-const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: 12000 } } };
+// Com isso, a cadência deixa de ser opinião:
+//
+//     chamadas por minuto suportadas = TPM_DA_CONTA / max_tokens
+//     intervalo mínimo entre chamadas = 60.000ms / chamadas por minuto
+//
+// Nos números de hoje (Tier 1 = 30.000 TPM, max_tokens = 16.384):
+// 1,8 chamada/min → intervalo de ~33s. Os 12s que eu havia posto suportam 5
+// chamadas/min = 81.920 TPM — quase 3x o teto do Tier 1. Ou seja: no Tier 1 o
+// lote de 14 documentos NÃO tinha como passar, nem a 6s nem a 12s, e o problema
+// não era "espaçar um pouco mais".
+//
+// TPM_CONTA é o ÚNICO número a ajustar aqui, e ele é LIDO, não estimado:
+// platform.openai.com → Settings → Limits → o modelo da extração. Tier 2 do
+// gpt-4o são 450.000 TPM, e aí o intervalo cai para ~2,2s — a diferença entre
+// 8 minutos e 30 segundos para o mesmo lote. Deixo o padrão no Tier 1 porque é o
+// mais restritivo: errar para o lento faz a extração demorar; errar para o
+// rápido faz ela FALHAR, e falha custa uma rodada inteira do dono.
+const TPM_CONTA = 30000;
+
+const CHAMADAS_POR_MINUTO = TPM_CONTA / MAX_OUTPUT_TOKENS;
+const INTERVALO_EXTRACAO_MS = Math.ceil(60000 / CHAMADAS_POR_MINUTO);
+
+const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } } };
 
 // Retry para os nós Postgres: SEM onError, um erro transitório (conexão sob
 // carga, timeout pontual) num ÚNICO item PARA A EXECUÇÃO INTEIRA — todos os

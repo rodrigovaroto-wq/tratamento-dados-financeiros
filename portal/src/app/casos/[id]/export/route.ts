@@ -57,6 +57,29 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
 
+  // POR QUE a extração falhou, e não só QUAIS documentos falharam. No "teste v30"
+  // os 14 documentos falharam e o export listava os nomes — a CAUSA (que a
+  // pendência já registrava) ficava só na fila de revisão, numa tela diferente.
+  // Quem abre o book precisa saber, ali, se o problema é crédito da OpenAI, cota
+  // do dia ou cadência: as três pedem ações diferentes e só uma delas é nossa.
+  const falhasRes = await supabase
+    .from("pendencia")
+    .select("descricao, documento_id")
+    .eq("caso_id", id)
+    .eq("tipo", "extracao_falhou")
+    .neq("estado", "resolvida");
+  const causasDeFalha = [
+    ...new Set(
+      ((falhasRes.data as Array<{ descricao: string | null }> | null) ?? [])
+        .map((p) => p.descricao ?? "")
+        // A descrição da pendência é "Extração de 'X.pdf' falhou ... Motivo: <causa>".
+        // Só a causa interessa aqui: o nome do arquivo já vai na outra coluna, e
+        // repetir 14 vezes o mesmo motivo esconderia o que importa.
+        .map((d) => d.split(/Motivo:\s*/)[1]?.trim())
+        .filter((c): c is string => !!c),
+    ),
+  ];
+
   // Índices macro (db/migrations/0025). São do CASO nenhum — a série é a mesma
   // para todos os mandatos —, por isso vêm à parte e não filtram por caso.
   // Falha aqui NÃO derruba o export: sem macro o arquivo sai como sempre saiu,
@@ -106,7 +129,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ? { anuais, expectativas, nomes }
     : undefined;
 
-  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro });
+  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro, causasDeFalha });
   const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
   const filename = `${nomeArquivoSanitizado(caso.nome)}-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
 

@@ -1747,6 +1747,63 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     textoVazio.filter(Boolean).join(" | ").slice(0, 140));
 }
 
+// ---- 21: a CAUSA da falha de extração aparece no book ------------------------
+// Teste v30: 14 de 14 documentos sem linha extraída. O Resumo listava os nomes —
+// e a causa (que a pendência JÁ registrava) ficava só na fila de revisão, em
+// outra tela. As causas possíveis pedem ações opostas (crédito da OpenAI, cota do
+// dia, cadência), então listar o arquivo sem a causa é meia informação.
+{
+  const V = "vFalhou";
+  const wb = buildExportWorkbook({
+    caso: { nome: "v30", produto: "reestruturacao" },
+    documentos: [{
+      id: "dBP", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa Ltda." },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: V, nome_original: "01_BP_Alfa.pdf" }],
+    }],
+    campos: [],
+    causasDeFalha: [
+      "CRÉDITO DA OPENAI ESGOTADO (insufficient_quota). A conta não tem saldo. "
+      + "Espaçar as chamadas NÃO resolve isto.",
+    ],
+    agora: new Date("2026-07-30T12:00:00Z"),
+  });
+  const resumo = wb.getWorksheet("Resumo")!;
+  const linhas: Array<[string, string]> = [];
+  for (let r = 1; r <= resumo.rowCount; r++) {
+    linhas.push([
+      String(resumo.getRow(r).getCell(1).value ?? ""),
+      String(resumo.getRow(r).getCell(2).value ?? ""),
+    ]);
+  }
+  const rotulos = linhas.map(([a]) => a);
+  checar(rotulos.some((x) => x.startsWith("Documentos SEM linha")),
+    "(21a) o Resumo conta os documentos sem linha extraída", rotulos.filter(Boolean).join(" | ").slice(0, 120));
+  const causa = linhas.find(([a]) => a === "↳ causa registrada")?.[1] ?? "";
+  checar(causa.includes("CRÉDITO DA OPENAI ESGOTADO"),
+    "(21b) …e a CAUSA registrada na pendência aparece junto", causa.slice(0, 120));
+  checar(causa.includes("NÃO resolve"),
+    "(21c) …inclusive o que NÃO resolve (senão a ação óbvia é a errada)");
+
+  // Sem causa informada, nada de linha vazia inventada.
+  const wbSemCausa = buildExportWorkbook({
+    caso: { nome: "v30", produto: "reestruturacao" },
+    documentos: [{
+      id: "dBP", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Alfa Ltda." },
+      periodo: { tipo: "anual", referencia: "2025" },
+      documento_versao: [{ id: V, nome_original: "01_BP_Alfa.pdf" }],
+    }],
+    campos: [],
+    agora: new Date("2026-07-30T12:00:00Z"),
+  });
+  const resumoSem = wbSemCausa.getWorksheet("Resumo")!;
+  let temCausaVazia = false;
+  for (let r = 1; r <= resumoSem.rowCount; r++) {
+    if (String(resumoSem.getRow(r).getCell(1).value ?? "") === "↳ causa registrada") temCausaVazia = true;
+  }
+  checar(!temCausaVazia, "(21d) sem causa registrada, o Resumo não inventa a linha");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

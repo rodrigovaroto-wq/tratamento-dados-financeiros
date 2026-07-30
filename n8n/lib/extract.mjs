@@ -284,7 +284,7 @@ export function extractionSchema() {
 // no meio do JSON sem erro nenhum (ver parseExtractionResponse: finish_reason
 // 'length' → JSON incompleto → falha silenciosa, achado em produção
 // reprocessando "teste v14", sessão 7 cont.⁷).
-const MAX_OUTPUT_TOKENS = 16384;
+export const MAX_OUTPUT_TOKENS = 16384;
 
 // conteudo: parte multimodal (file/image/text) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
@@ -375,6 +375,209 @@ export function ehLinhaNaoMonetaria(chave, valorTexto) {
   return RE_NAO_MONETARIA.test(norm(chave)) || String(valorTexto ?? '').includes('%');
 }
 
+// ---------------------------------------------------------------------------
+// DIAGNÓSTICO DE ERRO DA API — separar causas que pedem ações OPOSTAS
+//
+// O "teste v30" custou uma rodada inteira por causa disto: 14 de 14 documentos
+// falharam e a única coisa que a pendência dizia era
+//
+//     "Erro da API OpenAI: Try spacing your requests out using the batching
+//      settings under 'Options'"
+//
+// Essa frase é do **N8N**, não da OpenAI: o nó HTTP Request a acrescenta a
+// QUALQUER resposta 429. E 429 na OpenAI cobre causas que pedem ações opostas:
+//
+//   • `insufficient_quota` / limite de faturamento → acabou o CRÉDITO.
+//     Espaçar as chamadas NÃO resolve; só recarregar/subir o limite resolve.
+//   • `rate_limit_exceeded` (RPM/TPM) → cadência alta. Espaçar resolve.
+//   • limite DIÁRIO (TPD) → cota do dia esgotada. Espaçar não resolve hoje;
+//     resolve amanhã (ou subindo o tier).
+//
+// Lendo só a frase do n8n, as três são indistinguíveis — e eu mesmo tratei o
+// v28 como cadência e subi o intervalo de 6s para 12s sem ter evidência de que
+// a causa fosse cadência. Este diagnóstico existe para que ninguém (dono ou
+// sessão futura) volte a chutar isso.
+//
+// A busca é DEFENSIVA por desenho: dependendo da versão do n8n e do modo de
+// erro, o corpo real da OpenAI aparece em lugares diferentes do objeto de erro
+// (`cause`, `context.data`, `response.data`, `error.error`…), e não há como
+// fixar uma forma só sem o n8n vivo do dono para conferir. Procurar em todos os
+// caminhos plausíveis é mais robusto que acertar um e falhar calado nos outros.
+/**
+ * Classifica um erro de chamada à OpenAI numa CAUSA acionável.
+ *
+ * Devolve `{ causa, status, tipo, codigo, mensagem, motivo }` — `motivo` é o
+ * texto que vai para a pendência: diz a causa, o que fazer, e (quando é o caso)
+ * diz explicitamente o que NÃO resolve. `causa` é o código estável para teste.
+ *
+ * AUTO-CONTIDA de propósito: os helpers ficam DENTRO da função porque o gerador
+ * do workflow embute o `toString()` dela no nó Code (nó Code do n8n não importa
+ * arquivo). Com dependência de escopo externo, o mirror voltaria a ser cópia à
+ * mão — e cópia à mão neste repositório já divergiu duas vezes (o prompt de
+ * extração e a lista de apelidos da taxonomia). Aqui a fonte é UMA, e
+ * `n8n/test/workflow-sim.test.mjs` confere que o nó carrega exatamente este
+ * código. O custo (recriar helpers por chamada) é irrelevante: roda uma vez por
+ * documento que FALHOU.
+ */
+export function diagnosticarErroApi(erro) {
+  // Dependendo da versão do n8n e do modo de erro, o corpo real da OpenAI
+  // aparece em lugares diferentes (`cause`, `context.data`, `response.data`,
+  // `error.error`…). Sem o n8n vivo do dono não há como fixar uma forma só;
+  // procurar em todos os caminhos plausíveis é mais robusto que acertar um e
+  // falhar calado nos outros.
+  const CAMINHOS = [
+    // A FORMA REAL DO N8N, confirmada no fonte dele (não suposta):
+    // `packages/@n8n/backend-network/src/http/legacy-request.ts` anexa ao erro
+    // `error: responseData` — o JSON da OpenAI JÁ PARSEADO, que por sua vez é
+    // `{ error: { type, code, message } }`. O item que chega ao nó Code é
+    // `{ json: { error: <reason inteiro> } }`, então o corpo da OpenAI fica em
+    // `error.error.error` a partir da raiz do item. Este caminho vem PRIMEIRO
+    // porque é o que acontece em produção.
+    (e) => e && e.error && e.error.error,
+    (e) => e && e.error,                                  // corpo da OpenAI direto (ou responseData já desembrulhado)
+    (e) => e && e.cause && e.cause.error,                 // NodeApiError embrulhando a resposta
+    (e) => e && e.cause && e.cause.response && e.cause.response.data && e.cause.response.data.error,
+    (e) => e && e.cause && e.cause.data && e.cause.data.error,
+    (e) => e && e.context && e.context.data && e.context.data.error,
+    (e) => e && e.response && e.response.data && e.response.data.error,
+    (e) => e && e.data && e.data.error,
+    (e) => e && e.cause,                                  // último recurso: o cause pode já ser o corpo
+  ];
+  const corpoDeErroOpenAI = (e) => {
+    if (!e || typeof e !== 'object') return null;
+    for (const caminho of CAMINHOS) {
+      let c;
+      try { c = caminho(e); } catch { continue; }
+      if (c && typeof c === 'object' && (c.type || c.code || c.message)) return c;
+    }
+    return null;
+  };
+  // A FRASE do n8n como sinal de status. O n8n só acrescenta "Try spacing your
+  // requests out using the batching settings under 'Options'" em resposta 429 —
+  // então, quando ele entrega só a frase (sem httpCode em campo nenhum, que é
+  // exatamente o caso que chegou na pendência do v30), a frase é a única
+  // evidência de que houve 429. Reconhecê-la separa "sei que é limite, não sei
+  // qual" de "não sei nada" — e a primeira já dá um passo concreto ao dono.
+  const RE_DICA_429_N8N = /spacing your requests out|too many requests from you/i;
+  const statusHttpDoErro = (e) => {
+    const candidatos = [
+      e && e.httpCode, e && e.status, e && e.statusCode,
+      e && e.cause && e.cause.status, e && e.cause && e.cause.statusCode,
+      e && e.response && e.response.status, e && e.context && e.context.httpCode,
+    ];
+    for (const v of candidatos) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 100 && n < 600) return n;
+    }
+    const texto = typeof e === 'string' ? e : ((e && e.message) || '');
+    return RE_DICA_429_N8N.test(String(texto)) ? 429 : null;
+  };
+  // Serializar tudo é o que permite reconhecer "insufficient_quota" mesmo quando
+  // ele não vem num campo estruturado (o n8n às vezes entrega só string).
+  const textoDoErro = (e) => {
+    if (typeof e === 'string') return e;
+    try { return JSON.stringify(e); } catch { return String(e === undefined ? '' : e); }
+  };
+
+  const corpo = corpoDeErroOpenAI(erro);
+  const status = statusHttpDoErro(erro);
+  const tipo = corpo?.type ?? null;
+  const codigo = corpo?.code ?? null;
+  const mensagemOpenAI = corpo?.message ?? null;
+  const mensagemBruta = typeof erro === 'string' ? erro : (erro?.message ?? null);
+  // O texto completo inclui a mensagem do n8n E o corpo da OpenAI, quando os
+  // dois vieram — é nele que a busca por assinatura procura.
+  const alvo = `${tipo ?? ''} ${codigo ?? ''} ${mensagemOpenAI ?? ''} ${textoDoErro(erro)}`.toLowerCase();
+
+  const tem = (...frases) => frases.some((f) => alvo.includes(f));
+
+  let causa = 'desconhecida';
+  let motivo;
+
+  if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
+    'billing hard limit', 'check your plan and billing', 'account is not active')) {
+    causa = 'sem_credito';
+    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota). A conta não tem saldo/limite de '
+      + 'faturamento para processar. Espaçar as chamadas NÃO resolve isto — é preciso recarregar '
+      + 'crédito ou subir o limite de gasto em platform.openai.com/settings/organization/billing.';
+  } else if (tem('tokens per day', 'requests per day', 'tpd', 'rpd', 'daily limit', 'per-day')) {
+    causa = 'limite_diario';
+    motivo = 'COTA DIÁRIA DA OPENAI ESGOTADA (limite por DIA de tokens/requisições do tier da conta). '
+      + 'Espaçar as chamadas não resolve hoje: a cota reabre na virada da janela diária, ou sobe '
+      + 'junto com o tier da conta.';
+  } else if (tem('rate_limit_exceeded', 'rate limit', 'too many requests', 'tokens per min',
+    'requests per min', 'tpm', 'rpm')) {
+    causa = 'limite_cadencia';
+    motivo = 'LIMITE DE CADÊNCIA DA OPENAI (rate limit por minuto). Aqui espaçar as chamadas ajuda '
+      + 'de fato — é o único caso em que ajuda. Reduzir o tamanho do que é enviado (PDF como texto '
+      + 'em vez de imagem) ataca a causa, porque o limite por minuto é de TOKENS, não de arquivos.';
+  } else if (status === 401 || tem('invalid_api_key', 'incorrect api key', 'invalid authentication')) {
+    causa = 'chave_invalida';
+    motivo = 'CHAVE DA OPENAI INVÁLIDA OU AUSENTE (401). Nada a ver com cadência ou crédito: a '
+      + 'credencial do nó HTTP no N8N precisa ser corrigida (header Authorization: Bearer sk-...).';
+  } else if (status === 404 || tem('model_not_found', 'does not exist or you do not have access')) {
+    causa = 'modelo_indisponivel';
+    motivo = 'MODELO INDISPONÍVEL PARA ESTA CONTA (404). O modelo configurado no workflow não existe '
+      + 'ou a conta não tem acesso a ele — conferir MODEL_EXTRACAO em n8n/build-workflow.mjs contra '
+      + 'os modelos disponíveis na conta.';
+  } else if (status === 429) {
+    // 429 sem assinatura reconhecível: NÃO afirmar cadência. Foi exatamente o
+    // palpite errado do v28→v30, e afirmar causa sem evidência é o defeito que
+    // este diagnóstico existe para não repetir.
+    causa = 'limite_indeterminado';
+    motivo = 'LIMITE DA OPENAI ATINGIDO (HTTP 429), mas a resposta não disse QUAL: pode ser crédito '
+      + 'esgotado (insufficient_quota), cota diária, ou cadência por minuto — e cada um pede ação '
+      + 'diferente. Confira em platform.openai.com: se houver saldo/limite disponível, é cadência; '
+      + 'se não houver, é crédito. Espaçar as chamadas só resolve o caso de cadência.';
+  } else {
+    motivo = `ERRO NA CHAMADA À OPENAI${status ? ` (HTTP ${status})` : ''}: `
+      + `${mensagemOpenAI || mensagemBruta || textoDoErro(erro).slice(0, 300)}`;
+  }
+
+  // OS HEADERS DE RATE LIMIT são o número que o repositório inteiro só chutava:
+  // `x-ratelimit-limit-tokens` é o TPM REAL da conta para aquele modelo, e
+  // `retry-after` é quanto a própria OpenAI diz para esperar. O n8n preserva os
+  // headers em `error.response.headers` (legacy-request.ts) — eles estavam ali no
+  // v30, intactos, e o pipeline os descartava junto com o resto.
+  const headers = (erro && erro.response && erro.response.headers)
+    || (erro && erro.headers)
+    || (erro && erro.cause && erro.cause.response && erro.cause.response.headers)
+    || null;
+  const h = (nome) => {
+    if (!headers) return null;
+    const v = typeof headers.get === 'function' ? headers.get(nome) : headers[nome];
+    return v == null || v === '' ? null : String(v);
+  };
+  const limiteTokens = h('x-ratelimit-limit-tokens');
+  const restamTokens = h('x-ratelimit-remaining-tokens');
+  const esperar = h('retry-after') || h('x-ratelimit-reset-tokens');
+
+  // Detalhe técnico junto do motivo: sem isto a sessão seguinte fica no mesmo
+  // escuro em que esta ficou. Só o que é útil para decidir — não o objeto todo.
+  const detalhes = [
+    status ? `http=${status}` : null,
+    tipo ? `type=${tipo}` : null,
+    codigo ? `code=${codigo}` : null,
+    limiteTokens ? `limite_tokens_min=${limiteTokens}` : null,
+    restamTokens ? `restavam=${restamTokens}` : null,
+    esperar ? `esperar=${esperar}` : null,
+    mensagemOpenAI ? `openai="${String(mensagemOpenAI).slice(0, 200)}"` : null,
+    // A mensagem do n8n entra por último e IDENTIFICADA como dele: ela é a que
+    // enganou a rodada passada, então fica claro de quem é a frase.
+    (mensagemBruta && mensagemBruta !== mensagemOpenAI)
+      ? `n8n="${String(mensagemBruta).slice(0, 200)}"` : null,
+  ].filter(Boolean).join(' ');
+
+  return {
+    causa,
+    status,
+    tipo,
+    codigo,
+    mensagem: mensagemOpenAI ?? mensagemBruta ?? null,
+    motivo: detalhes ? `${motivo} [${detalhes}]` : motivo,
+  };
+}
+
 export function parseExtractionResponse(apiJson) {
   const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
   const vazio = (falhaMotivo) => ({
@@ -386,7 +589,9 @@ export function parseExtractionResponse(apiJson) {
     },
   });
   if (apiJson?.error) {
-    return vazio(`Erro da API OpenAI: ${apiJson.error.message || apiJson.error.code || JSON.stringify(apiJson.error)}`);
+    // Diagnostica a CAUSA em vez de repassar a frase do n8n: ver
+    // `diagnosticarErroApi` acima e o que o "teste v30" custou sem isto.
+    return vazio(diagnosticarErroApi(apiJson.error).motivo);
   }
   const content = apiJson?.choices?.[0]?.message?.content;
   if (!content) {

@@ -2993,6 +2993,7 @@ export function buildExportWorkbook({
   campos: camposDeTodasAsVersoes,
   macro,
   macroErro,
+  causasDeFalha,
   agora = new Date(),
 }: {
   caso: { nome: string; produto: string };
@@ -3007,6 +3008,11 @@ export function buildExportWorkbook({
   // portal falhava por autorização, e a aba saía dizendo "sem dado coletado"
   // como se a coleta nunca tivesse rodado. Ver `route.ts` (chamador).
   macroErro?: string;
+  // Causas DISTINTAS das falhas de extração abertas no caso (texto das pendências
+  // `extracao_falhou`). Listar o arquivo que falhou sem dizer POR QUE deixa o
+  // dono com meia informação: no v30 os 14 nomes estavam no Resumo e a causa
+  // ficava só na fila de revisão, em outra tela.
+  causasDeFalha?: string[];
   agora?: Date;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
@@ -3281,6 +3287,13 @@ export function buildExportWorkbook({
       + "— chegaram e foram classificados, mas a extração não gravou nada (a falha abre pendência na "
       + "fila de revisão). Onde faltou entidade/demonstração nas abas, é por isso.",
     ]);
+    // …e a CAUSA junto. Quando as 14 falhas têm a MESMA causa (foi o caso do
+    // v30), aparece uma linha só: repetir o mesmo motivo por arquivo esconderia
+    // justamente o que a repetição significa — o problema é da conta/API, não
+    // dos documentos.
+    for (const causa of causasDeFalha ?? []) {
+      linhasResumo.push(["↳ causa registrada", causa]);
+    }
   }
   resumo.addRows([
     ...linhasResumo,

@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
@@ -214,9 +214,28 @@ test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
   assert.equal(parsed.json.confianca, 0.65, 'mantém a confiança do nome, não zera por falha técnica da IA');
   assert.equal(parsed.json.fonte, 'nome_arquivo');
-  assert.match(parsed.json.justificativa, /nao retornou conteudo/);
+  // A justificativa tem de dizer as DUAS coisas: que valeu o nome, e QUAL foi a
+  // falha. No "teste v30" os 14 documentos ficaram com uma justificativa genérica
+  // ("falha de rede/API") enquanto a causa real era a OpenAI recusando toda
+  // chamada — o dono não tinha como ligar uma coisa à outra.
+  assert.match(parsed.json.justificativa, /valeu o nome do arquivo/);
+  assert.match(parsed.json.justificativa, /timeout/, 'a falha real aparece, não uma frase genérica');
   assert.equal(byName['OpenAI Classificar'].onError, 'continueRegularOutput');
   assert.equal(byName['OpenAI Extrair'].onError, 'continueRegularOutput');
+});
+
+test('Parse OpenAI Classif: 429 da OpenAI nomeia a CAUSA na justificativa do documento', async () => {
+  // O sintoma real do v30: o n8n devolve a própria dica ("Try spacing your
+  // requests out...") e nada mais. Antes isso virava "falha de rede/API"; agora
+  // vira "limite atingido, e não sabemos qual — confira crédito", que é
+  // acionável e não afirma cadência sem evidência.
+  const { preparado } = await chainFile(0);
+  const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+  const erro = { json: { error: { message: "Try spacing your requests out using the batching settings under 'Options'" } } };
+  const parsed = await run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
+  assert.match(parsed.json.justificativa, /LIMITE DA OPENAI ATINGIDO \(HTTP 429\)/);
+  assert.match(parsed.json.justificativa, /crédito/i, 'diz que pode ser crédito — a causa que espaçar NÃO resolve');
+  assert.equal(parsed.json.tipo_taxonomia, 'BALANCO', 'e o nome do arquivo continua valendo');
 });
 
 test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagnóstico+extração', async () => {
@@ -419,6 +438,37 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
   }
 });
 
+// --- Anti-drift: o diagnóstico de erro do workflow É o de lib/extract.mjs -----
+// Terceiro mirror deste repositório (depois do prompt e dos apelidos), e os dois
+// anteriores JÁ divergiram na prática. Aqui a função é auto-contida de propósito
+// e o gerador embute o `toString()` dela — este teste trava que os DOIS nós que
+// diagnosticam erro carregam exatamente o mesmo código da lib.
+test('os nós de parse carregam o MESMO diagnosticarErroApi de lib/extract.mjs', () => {
+  const fonte = diagnosticarErroApi.toString();
+  for (const nome of ['Parse Extracao', 'Parse OpenAI Classif']) {
+    assert.ok(code(nome).includes(fonte),
+      `${nome}: o diagnóstico embutido divergiu da fonte em lib/extract.mjs`);
+  }
+});
+
+// E o comportamento de verdade, executando o código REAL do nó: o sintoma exato
+// do "teste v30" (o n8n devolve só a própria dica de 429) tem de virar causa
+// nomeada, e uma causa que espaçar NÃO resolve tem de dizer isso.
+test('Parse Extracao: 429 sem corpo vira causa nomeada; quota diz que espaçar não resolve', async () => {
+  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', openai_body: {} } };
+  const soDica = { json: { error: { message: "Try spacing your requests out using the batching settings under 'Options'" } } };
+  const p1 = await run('Parse Extracao', { item: soDica, refs: { 'Montar Req Extracao': req } });
+  assert.equal(p1.json.campos.length, 0);
+  assert.match(p1.json.falha_motivo, /HTTP 429/);
+  assert.match(p1.json.falha_motivo, /não disse QUAL/, 'não afirma cadência sem evidência');
+
+  const comQuota = { json: { error: { httpCode: '429', cause: { error: { type: 'insufficient_quota', message: 'You exceeded your current quota' } } } } };
+  const p2 = await run('Parse Extracao', { item: comQuota, refs: { 'Montar Req Extracao': req } });
+  assert.match(p2.json.falha_motivo, /CRÉDITO DA OPENAI ESGOTADO/);
+  assert.match(p2.json.falha_motivo, /NÃO resolve/, 'diz explicitamente o que não resolve');
+  assert.match(p2.json.falha_motivo, /insufficient_quota/, 'o detalhe técnico vai junto');
+});
+
 // --- Anti-drift: os apelidos do workflow SÃO os de lib/taxonomia.mjs ---------
 // Mesmo defeito do prompt, e este já estava acontecendo: a cópia à mão dentro de
 // build-workflow.mjs parava em BALANCETE, então o nó que roda em produção não
@@ -442,6 +492,30 @@ test('os ALIASES do workflow gerado são IDÊNTICOS aos de lib/taxonomia.mjs (or
 // espalha as chamadas da extração no tempo é o que resolve; retry não (o
 // `waitBetweenTries` do N8N tem teto de 5s, e 6 tentativas cabem na MESMA janela
 // de TPM que acabou de recusar).
+test('a cadência da extração É a aritmética do TPM, não um número escolhido', () => {
+  // A correção do v30. A OpenAI calcula o consumo de rate limit como o MÁXIMO
+  // entre `max_tokens` e os tokens estimados do request — então `max_tokens` é
+  // RESERVA de TPM, e toda extração reserva o mesmo, seja o PDF de 2 KB ou de 40
+  // páginas (foi por isso que as notas explicativas minúsculas também tomaram
+  // 429). Logo o intervalo entre chamadas não é gosto: é 60s ÷ (TPM ÷ max_tokens).
+  //
+  // Este teste trava a RELAÇÃO, não o valor: se alguém mexer em max_tokens ou no
+  // TPM da conta sem recalcular a cadência, ele reprova. Era exatamente esse
+  // acoplamento que faltava — eu subi 6s→12s sem olhar o max_tokens, e 12s
+  // suportava 5 chamadas/min = 81.920 TPM, quase 3x o teto do Tier 1.
+  const intervalo = byName['OpenAI Extrair'].parameters.options?.batching?.batch?.batchInterval;
+  const chamadasPorMinuto = 60000 / intervalo;
+  const tpmDemandado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  const TPM_TIER1_GPT4O = 30000;
+  assert.ok(tpmDemandado <= TPM_TIER1_GPT4O,
+    `a cadência demanda ${Math.round(tpmDemandado)} TPM, acima do Tier 1 (${TPM_TIER1_GPT4O}) — `
+    + `com intervalo de ${intervalo}ms e max_tokens de ${MAX_OUTPUT_TOKENS}`);
+  // …e não folgado ao ponto de ser lentidão gratuita: no limite do tier, o
+  // intervalo certo usa a banda quase toda.
+  assert.ok(tpmDemandado > TPM_TIER1_GPT4O * 0.8,
+    `a cadência usa só ${Math.round(tpmDemandado)} de ${TPM_TIER1_GPT4O} TPM — lentidão sem ganho`);
+});
+
 test('OpenAI Extrair espaça mais que OpenAI Classificar, e as duas têm retry', () => {
   const extrair = byName['OpenAI Extrair'];
   const classificar = byName['OpenAI Classificar'];

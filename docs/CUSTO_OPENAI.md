@@ -106,3 +106,47 @@ guarda de baixa confiança; `op` (página) é proveniência. Cortar qualquer um 
    chamada de extração.
 4. **Sempre:** usar o kit sintético para qualquer experimento — é o que permite iterar por centavos em
    vez de dólares.
+
+---
+
+## Adendo (teste v30, 2026-07-30) — `max_tokens` é RESERVA de TPM, e isso muda a conta
+
+14 de 14 documentos falharam com 429, incluindo notas explicativas de poucas linhas. A causa física
+não era "muitos arquivos": é que a OpenAI documenta o consumo de rate limit como
+
+> "your rate limit is calculated as the **maximum** of `max_tokens` and the estimated number of
+> tokens based on the character count of your request"
+
+Ou seja: **toda extração reserva `max_tokens` (16.384) do balde por minuto**, para um PDF de 2 KB ou
+de 40 páginas — os dois pagam igual. Isso explica o único fato que não fechava com a hipótese de
+cadência: por que os arquivos minúsculos também caíram.
+
+A cadência deixa de ser opinião e passa a ser aritmética:
+
+| | cálculo | resultado |
+|---|---|---|
+| Chamadas/min suportadas | TPM da conta ÷ `max_tokens` | Tier 1: 30.000 ÷ 16.384 = **1,8** |
+| Intervalo mínimo | 60.000ms ÷ chamadas/min | **~33s** |
+| O que estava configurado | 12s = 5 chamadas/min | **81.920 TPM — 2,7x o Tier 1** |
+
+Com 12s (e antes com 6s) o lote **não tinha como passar no Tier 1**, e "espaçar um pouco mais" nunca
+seria suficiente. `n8n/build-workflow.mjs` agora deriva o intervalo de `TPM_CONTA / MAX_OUTPUT_TOKENS`,
+e um teste (`workflow-sim.test.mjs`) reprova quem mexer num dos dois sem recalcular o outro.
+
+**As três saídas, em ordem de impacto:**
+
+1. **Subir o tier da conta** (decisão do dono, sem código): Tier 2 do gpt-4o são 450.000 TPM → o
+   intervalo cai de 33s para ~2,2s. Para o mesmo lote de 14, a diferença é 8 minutos contra 30
+   segundos. É a alavanca de maior efeito e a única que não exige trade-off técnico.
+2. **Reduzir `max_tokens`** (decisão de risco): a reserva cai proporcionalmente e o intervalo com ela.
+   O limite existe por um bug real — resposta truncada gravava 0 linhas em silêncio (sessão 7 cont.⁷)
+   —, mas hoje o truncamento é DETECTADO (`finish_reason=length` abre pendência), então o risco é
+   visível em vez de silencioso. Medir antes: a maior extração observada no book tem ~140 linhas
+   (≈8k tokens de saída), então 16.384 tem folga de 2x.
+3. **PDF como TEXTO em vez de imagem** (a alavanca de sempre): corta 60-80% do INPUT. Não muda a
+   reserva de `max_tokens`, mas reduz o outro lado da conta — e é o que faz o custo por documento cair
+   junto. Continua exigindo o nó *Extract From File* no N8N vivo.
+
+**Diagnóstico em 10 segundos:** `OPENAI_API_KEY=sk-... node n8n/diagnosticar-openai.mjs` faz uma
+chamada de 1 token e diz se é crédito, cota diária ou cadência — e imprime o TPM real que a OpenAI
+informa nos headers, número que até aqui era chute em todo o repositório.
