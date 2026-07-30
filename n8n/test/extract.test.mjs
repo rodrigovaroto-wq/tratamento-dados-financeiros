@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
-  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria,
+  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria, diagnosticarErroApi,
 } from '../lib/extract.mjs';
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
@@ -180,6 +180,37 @@ test('parseExtractionResponse: JSON truncado (finish_reason=length) vira falhaMo
   assert.deepEqual(r.campos, []);
   assert.match(r.falhaMotivo, /truncada/i);
   assert.match(r.falhaMotivo, /finish_reason=length/);
+});
+
+test('diagnosticarErroApi: separa TETO DE GASTO de falta de crédito (a conta "está OK" e recusa)', () => {
+  // O relato do dono depois do v30: "o limite da OpenAI está OK". E podia estar
+  // mesmo — teto de gasto de PROJETO devolve 429 com saldo em caixa, tier normal
+  // e as páginas de Billing e Limits sem nada de errado. São causas diferentes com
+  // ações diferentes: recarregar crédito não conserta um teto configurado.
+  const tetoProjeto = { statusCode: 429, error: { error: { code: 'project_spend_limit_exceeded',
+    message: 'You have exceeded the spend limit set for this project.' } } };
+  const d = diagnosticarErroApi(tetoProjeto);
+  assert.equal(d.causa, 'limite_de_gasto');
+  assert.match(d.motivo, /NÃO é falta de crédito/);
+  assert.match(d.motivo, /Projects/, 'diz ONDE olhar — o teto do projeto não aparece na tela de Billing');
+
+  // Orçamento mensal da ORG: mesma família, mesma ação.
+  assert.equal(diagnosticarErroApi({ statusCode: 429,
+    error: { error: { code: 'organization_usage_limit_exceeded', message: 'Monthly budget exceeded' } } }).causa,
+    'limite_de_gasto');
+
+  // Já sem saldo de verdade é OUTRA causa, com outra ação.
+  for (const codigo of ['insufficient_quota', 'credit_balance_exhausted']) {
+    assert.equal(diagnosticarErroApi({ statusCode: 429, error: { error: { code: codigo } } }).causa,
+      'sem_credito', codigo);
+  }
+
+  // E cadência continua sendo reconhecida como cadência (o único caso em que
+  // espaçar resolve) — sem isso a correção acima teria roubado o caso legítimo.
+  const cadencia = diagnosticarErroApi({ statusCode: 429, error: { error: { code: 'rate_limit_exceeded',
+    message: 'Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 28000' } } });
+  assert.equal(cadencia.causa, 'limite_cadencia');
+  assert.match(cadencia.motivo, /espaçar as chamadas ajuda/i);
 });
 
 test('parseExtractionResponse: erro da API OpenAI vira falhaMotivo com a mensagem original', () => {

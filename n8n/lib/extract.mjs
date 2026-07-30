@@ -494,12 +494,29 @@ export function diagnosticarErroApi(erro) {
   let causa = 'desconhecida';
   let motivo;
 
-  if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
-    'billing hard limit', 'check your plan and billing', 'account is not active')) {
+  // TETO DE GASTO vem ANTES de "sem crédito" de propósito: são coisas
+  // diferentes com ações diferentes, e esta é a que engana. Um teto de gasto de
+  // PROJETO (ou o orçamento mensal da organização) devolve 429 com a conta
+  // perfeitamente saudável — há saldo, o tier está normal, e as páginas de
+  // Billing e de Limits não mostram nada de errado. Foi exatamente o relato do
+  // dono depois do v30: "o limite da OpenAI está OK". Estes códigos estão na doc
+  // oficial de erros da OpenAI e nenhum deles é falta de dinheiro.
+  if (tem('spend_limit_exceeded', 'spend limit', 'usage_limit_exceeded',
+    'usage limit', 'budget')) {
+    causa = 'limite_de_gasto';
+    motivo = 'TETO DE GASTO ATINGIDO na OpenAI — e isto NÃO é falta de crédito: há saldo, o tier '
+      + 'está normal, e é por isso que as páginas de Billing e de Limits parecem em ordem. O que '
+      + 'estourou é um LIMITE CONFIGURADO: teto do PROJETO a que a chave pertence, ou orçamento '
+      + 'mensal da organização. Onde olhar: platform.openai.com → Settings → Limits (orçamento '
+      + 'mensal da org) E Settings → Projects → o projeto da chave → Limits (teto do projeto). '
+      + 'Espaçar as chamadas não resolve; subir o teto resolve na hora.';
+  } else if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
+    'billing hard limit', 'check your plan and billing', 'account is not active',
+    'credit_balance_exhausted', 'no prepaid credits')) {
     causa = 'sem_credito';
-    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota). A conta não tem saldo/limite de '
-      + 'faturamento para processar. Espaçar as chamadas NÃO resolve isto — é preciso recarregar '
-      + 'crédito ou subir o limite de gasto em platform.openai.com/settings/organization/billing.';
+    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota / credit_balance_exhausted). A conta '
+      + 'não tem saldo pré-pago para processar. Espaçar as chamadas NÃO resolve isto — é preciso '
+      + 'recarregar crédito em platform.openai.com/settings/organization/billing.';
   } else if (tem('tokens per day', 'requests per day', 'tpd', 'rpd', 'daily limit', 'per-day')) {
     causa = 'limite_diario';
     motivo = 'COTA DIÁRIA DA OPENAI ESGOTADA (limite por DIA de tokens/requisições do tier da conta). '
