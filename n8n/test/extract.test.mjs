@@ -213,6 +213,35 @@ test('diagnosticarErroApi: separa TETO DE GASTO de falta de crédito (a conta "e
   assert.match(cadencia.motivo, /espaçar as chamadas ajuda/i);
 });
 
+test('diagnosticarErroApi: o AxiosError REAL do v30 não é lido como código da OpenAI', () => {
+  // Este é o item que o dono colou do nó, copiado sem inventar campo nenhum. É o
+  // fato que refutou a previsão de que o corpo da OpenAI estaria em
+  // `error.error`: NÃO existe corpo aninhado, nem `cause`, nem headers. Só o
+  // AxiosError, com a dica genérica que o n8n escreve sobre QUALQUER 429.
+  const doNo = {
+    message: "Try spacing your requests out using the batching settings under 'Options'",
+    name: 'AxiosError',
+    stack: 'AxiosError: Request failed with status code 429\n    at settle (...)',
+    code: 'ERR_BAD_REQUEST',
+    status: 429,
+  };
+  const d = diagnosticarErroApi(doNo);
+  assert.equal(d.causa, 'limite_indeterminado',
+    'sem corpo da OpenAI, a causa honesta é "não sei qual limite" — nunca um chute em cadência');
+  assert.equal(d.status, 429, 'o status precisa sobreviver — é a única coisa que o item afirma');
+  assert.equal(d.codigo, null,
+    'ERR_BAD_REQUEST é código de TRANSPORTE do axios; reportá-lo como código da OpenAI manda a próxima sessão investigar o campo errado');
+  assert.equal(d.tipo, null);
+
+  // A guarda não pode cegar o caminho legítimo: quando o item É o corpo da
+  // OpenAI (o que `neverError` passa a entregar), o código real tem de aparecer.
+  const corpoDireto = { status: 429, type: 'insufficient_quota', code: 'insufficient_quota',
+    message: 'You exceeded your current quota' };
+  const c = diagnosticarErroApi(corpoDireto);
+  assert.equal(c.causa, 'sem_credito');
+  assert.equal(c.codigo, 'insufficient_quota', 'o corpo real chega inteiro ao diagnóstico');
+});
+
 test('parseExtractionResponse: erro da API OpenAI vira falhaMotivo com a mensagem original', () => {
   const api = { error: { message: 'You exceeded your current quota', code: 'insufficient_quota' } };
   const r = parseExtractionResponse(api);

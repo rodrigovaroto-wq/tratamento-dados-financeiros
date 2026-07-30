@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
@@ -358,6 +358,40 @@ test('Batching endurecido após "teste v18" (3 de 16 docs ainda deram 429 com 3s
     assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 6000, `${nm}: intervalo endurecido`);
     assert.equal(n.maxTries, 6, `${nm}: mais tentativas`);
   }
+});
+
+test('Os dois nós OpenAI pedem o CORPO da resposta de erro (`neverError`)', () => {
+  // Sem isto, o item que chega ao parse num 429 é só o AxiosError — foi
+  // literalmente o que o dono colou depois do v30: `name: AxiosError`,
+  // `code: ERR_BAD_REQUEST`, `status: 429`, `message` = a dica genérica que o
+  // n8n escreve em cima de QUALQUER 429, e NENHUM corpo da OpenAI em lugar
+  // nenhum do item. Sem corpo, `error.code` (o campo que a doc da OpenAI manda
+  // inspecionar) não existe, e as causas que pedem ações OPOSTAS — crédito,
+  // teto de gasto, cota diária, cadência — ficam indistinguíveis. Com
+  // `neverError`, a resposta 429 vem como item normal E COM CORPO, e o
+  // diagnóstico deixa de precisar adivinhar.
+  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+    const n = byName[nm];
+    assert.equal(n.parameters.options?.response?.response?.neverError, true,
+      `${nm}: sem neverError o corpo do erro da OpenAI é descartado antes do parse`);
+  }
+});
+
+test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () => {
+  // A rodada anterior subiu o intervalo de 6s para 12s por chute e o 429
+  // continuou — erro meu, registrado aqui para não repetir. A OpenAI cobra do
+  // balde de TPM o MÁXIMO entre `max_tokens` e os tokens estimados do request,
+  // então cada extração RESERVA MAX_OUTPUT_TOKENS por chamada, independente do
+  // tamanho do PDF. Isso torna o intervalo mínimo uma conta, não uma opinião:
+  // TPM / max_tokens = chamadas por minuto.
+  const intervalo = byName['OpenAI Extrair'].parameters.options.batching.batch.batchInterval;
+  const chamadasPorMinuto = 60000 / intervalo;
+  const tpmReservado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  assert.ok(tpmReservado <= TPM_CONTA + 1,
+    `a cadência reserva ${Math.round(tpmReservado)} TPM, acima do teto da conta (${TPM_CONTA}) — o 429 é matemático`);
+  // E não pode ser lenta a ponto de não usar a conta: pelo menos metade do balde.
+  assert.ok(tpmReservado >= TPM_CONTA / 2,
+    `${Math.round(tpmReservado)} TPM desperdiça mais da metade do limite disponível (${TPM_CONTA})`);
 });
 
 test('Nós Postgres têm onError+retry — um erro num item não derruba o resto do lote em silêncio', () => {

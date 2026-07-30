@@ -286,6 +286,20 @@ export function extractionSchema() {
 // reprocessando "teste v14", sessão 7 cont.⁷).
 export const MAX_OUTPUT_TOKENS = 16384;
 
+// TPM (tokens por minuto) da conta OpenAI, LIDO e não estimado:
+// platform.openai.com → Settings → Limits → o modelo da extração.
+//
+// Vive aqui, e não no gerador, porque TRÊS lugares dependem do mesmo número e
+// precisam concordar: o gerador (calcula o batchInterval a partir dele), o teste
+// que trava a cadência, e `diagnosticar-openai.mjs` (compara o configurado com o
+// que a API informa nos headers). Duplicado, o dono ajustaria um e os outros
+// dois passariam a mentir.
+//
+// Padrão no Tier 1 (30.000) porque é o mais restritivo: errar para o lento faz a
+// extração demorar; errar para o rápido faz ela FALHAR, e falha custa uma rodada
+// inteira. Tier 2 do gpt-4o são 450.000 TPM.
+export const TPM_CONTA = 30000;
+
 // conteudo: parte multimodal (file/image/text) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
   return {
@@ -441,7 +455,14 @@ export function diagnosticarErroApi(erro) {
     (e) => e && e.context && e.context.data && e.context.data.error,
     (e) => e && e.response && e.response.data && e.response.data.error,
     (e) => e && e.data && e.data.error,
-    (e) => e && e.cause,                                  // último recurso: o cause pode já ser o corpo
+    (e) => e && e.cause,                                  // o cause pode já ser o corpo
+    // O PRÓPRIO objeto é o corpo — é o que chega quando o nó roda com
+    // `neverError` (a resposta 429 vem como item normal, e o item É
+    // `{error:{type,code,message}}`). Aceito só com sinal de que é corpo da
+    // OpenAI: `type`, ou um `code` que não seja de TRANSPORTE. Sem essa guarda,
+    // um AxiosError entraria aqui e `ERR_BAD_REQUEST` seria reportado como se
+    // fosse o código da OpenAI — pista falsa, pior que pista nenhuma.
+    (e) => (e && (e.type || (e.code && !/^ERR_/i.test(String(e.code))))) ? e : null,
   ];
   const corpoDeErroOpenAI = (e) => {
     if (!e || typeof e !== 'object') return null;
@@ -482,7 +503,18 @@ export function diagnosticarErroApi(erro) {
   const corpo = corpoDeErroOpenAI(erro);
   const status = statusHttpDoErro(erro);
   const tipo = corpo?.type ?? null;
-  const codigo = corpo?.code ?? null;
+  // `code` de TRANSPORTE (axios: ERR_BAD_REQUEST, ECONNRESET...) não é o código
+  // da OpenAI — a doc dela manda inspecionar `error.code`, e confundir os dois
+  // mandaria a sessão seguinte investigar o código errado.
+  //
+  // MEDIDO, para não superestimar a cobertura: esta guarda e a do último caminho
+  // de CAMINHOS são REDUNDANTES para o payload do v30 — removendo UMA só, o teste
+  // "o AxiosError REAL do v30 não é lido como código da OpenAI" continua passando;
+  // ele só reprova com as DUAS removidas. É proteção em profundidade de propósito
+  // (dois pontos de entrada possíveis para um code de transporte), mas quem mexer
+  // em uma delas não vai ser avisado pelo teste. Mexa nas duas juntas.
+  const codigoBruto = corpo?.code ?? null;
+  const codigo = (codigoBruto && /^ERR_/i.test(String(codigoBruto))) ? null : codigoBruto;
   const mensagemOpenAI = corpo?.message ?? null;
   const mensagemBruta = typeof erro === 'string' ? erro : (erro?.message ?? null);
   // O texto completo inclui a mensagem do n8n E o corpo da OpenAI, quando os
