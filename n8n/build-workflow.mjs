@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
 import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
+import { parseEntidade } from './lib/classifier.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,12 @@ const SCHEMA_EXTRACAO = `{name:'diagnostico_e_extracao',strict:true,schema:{type
 // bastar; `workflow-sim.test.mjs` confere que o nó carrega este mesmo código.
 const FONTE_DIAGNOSTICO_ERRO = `const diagnosticarErroApi = ${diagnosticarErroApi.toString()};`;
 
+// `parseEntidade` idem — embutida do fonte, não espelhada à mão. Ela é a correção
+// do achado do "teste v31" (entidade "—" nos 14 documentos porque o nome do
+// arquivo nunca era lido para isso); ver o comentário longo em lib/classifier.mjs
+// para por que ela NÃO mexe na confiança.
+const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};`;
+
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
 // Binário vem do FORM (o Postgres anterior não o repassa). Chave normalizada
 // para 'data' (o Upload Storage usa esse nome fixo).
@@ -97,12 +104,13 @@ function normalize(s){return String(s||'').normalize('NFD').replace(/[\\u0300-\\
 const ALIASES=${ALIASES_JSON};
 function parsePeriodo(t0){const t=String(t0||'').replace(/^\\s*\\d{1,3}\\s*[-_. ]+/,'').replace(/(\\d)\\s*[x\\u00d7]\\s*(\\d)/g,'$1 $2');let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a4=t.match(/\\b(19|20)\\d{2}\\b/g);if(a4&&a4.length===1)return{tipo:'anual',referencia:a4[0],fraco:true};if(a4&&a4.length>=2)return{tipo:'multi',referencia:a4.map(x=>x.slice(-2)).sort().join(',')};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
 function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}
+${FONTE_PARSE_ENTIDADE}
 const item=$input.item.json;
 const t=normalize(item.nome_original);
 const tipo=parseTipo(t), periodo=parsePeriodo(t);
 const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
 let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=(periodo.fraco?0.05:0.3); if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
-return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:null, confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}, binary: $input.item.binary};
+return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): prepara a parte de CONTEUDO (para todos os docs) ---

@@ -105,6 +105,74 @@ export function parseAssinado(textoNormalizado) {
   return null; // desconhecido (não é "não assinado")
 }
 
+// --- Entidade ----------------------------------------------------------------
+// O "teste v31" mostrou o preço de devolver `entidade: null` aqui. A cadeia era:
+// num documento que o nome classifica ACIMA do limiar (0,90 nos comparativos
+// `..._2025x2024.pdf`) o fallback da IA nunca roda, então a ÚNICA fonte de
+// entidade passava a ser o `diagnostico` da EXTRAÇÃO. Quando a extração falha —
+// no v31, teto de gasto da OpenAI derrubou 8 de 14 — a entidade morre junto, e o
+// dashboard mostrou "—" nos 14. Os nomes diziam a empresa em voz alta:
+// `Vertentes_Metalurgica`, `VT_Logistica`, `Grupo_Vertentes`.
+//
+// O que isto NÃO faz, porque seria furar a anti-ancoragem (docs/01, f0/06):
+//   • não soma confiança nenhuma — um documento não pode PULAR a verificação da
+//     IA porque o nome sugeriu uma empresa. `confianca` continua saindo só de
+//     tipo/período/assinado, e `THRESHOLD_AUTO` continua valendo igual;
+//   • não vira fato: sai com `fonte: 'nome_arquivo'` e seque o caminho de sempre
+//     — `fn_registrar_diagnostico` (0010) só preenche entidade quando está vazia
+//     e abre pendência quando o conteúdo diverge do que foi registrado.
+// É uma HIPÓTESE barata que sobrevive à falha da extração, e nada além disso.
+//
+// AUTO-CONTIDA de propósito (recebe `aliases` por parâmetro, declara os próprios
+// helpers): o gerador embute o `toString()` desta função no Code node, que não
+// importa arquivo. É o mesmo padrão de `diagnosticarErroApi` — e é o que impede
+// este virar o quarto mirror manual do repositório, já que dois dos anteriores
+// divergiram na prática.
+export function parseEntidade(textoNormalizado, aliases) {
+  // Palavras que descrevem o DOCUMENTO, não a empresa. Sem isto,
+  // `12_Mutuos_Intragrupo_Grupo_Vertentes` viraria "Intragrupo Grupo Vertentes".
+  const RUIDO = new Set([
+    'combinado', 'combinada', 'combinadas', 'consolidado', 'consolidada', 'consolidadas',
+    'analitico', 'analitica', 'sintetico', 'sintetica', 'intragrupo', 'intra',
+    'assinado', 'assinada', 'assinados', 'assinadas', 'final', 'rev', 'revisado',
+    'versao', 'copia', 'scan', 'digitalizado', 'grupo_', 'exercicio', 'exercicios',
+  ]);
+  // Siglas que ficam feias em Title Case ("Vt Logistica"). Lista curta e
+  // explícita: adivinhar por "não tem vogal" erraria em `SPE`.
+  const SIGLAS = new Set(['vt', 'spe', 'sa', 'me', 'epp', 'ltda', 'eireli', 'scp']);
+
+  const ehPeriodo = (tok) =>
+    /^(19|20)?\d{2}$/.test(tok) ||        // 2025, 25
+    /^\d{1,3}$/.test(tok) ||              // número de sequência do arquivo (01)
+    /^\d{2,4}x\d{2,4}$/.test(tok) ||      // 2025x2024 (comparativo)
+    /^\d{1,2}m\d{2,4}$/.test(tok) ||      // 12m25
+    /^l\d{1,2}m$/.test(tok) ||            // l24m
+    /^\d{1,2}m$/.test(tok) ||             // 24m
+    /^[1-4]t\d{2,4}$/.test(tok);          // 1t25
+
+  // Remove TODOS os termos de tipo presentes, do mais longo para o mais curto.
+  // Parar no primeiro match (como `parseTipo` faz, e deve fazer) deixaria lixo:
+  // em `06_BP_COMBINADO_Grupo_Vertentes` o alias que casa é 'combinado', e o
+  // 'bp' sobraria dentro do nome da entidade.
+  let s = ` ${textoNormalizado} `;
+  const termos = [];
+  for (const a of aliases || []) for (const termo of a.termos) termos.push(termo);
+  termos.sort((x, y) => y.length - x.length);
+  for (const termo of termos) s = s.split(` ${termo} `).join(' ');
+
+  const tokens = s
+    .split(' ')
+    .filter((tok) => tok && tok.length > 1 && !ehPeriodo(tok) && !RUIDO.has(tok));
+  if (tokens.length === 0) return null;
+
+  const nome = tokens
+    .map((tok) => (SIGLAS.has(tok) ? tok.toUpperCase() : tok.charAt(0).toUpperCase() + tok.slice(1)))
+    .join(' ');
+  // Duas letras não identificam empresa nenhuma; devolver isso como hipótese só
+  // geraria uma entidade-lixo na base para um humano ter que apagar depois.
+  return nome.length >= 3 ? nome : null;
+}
+
 // --- Classificação completa por nome -----------------------------------------
 // Retorna sempre um objeto; confianca baixa sinaliza necessidade de fallback.
 export function classifyByFilename(nomeOriginal) {
@@ -112,8 +180,9 @@ export function classifyByFilename(nomeOriginal) {
   const tipo = parseTipo(t);
   const periodo = parsePeriodo(t);
   const assinado = parseAssinado(t);
+  const entidade = parseEntidade(t, ALIASES);
 
-  const sinais = { tipo: !!tipo, periodo: !!periodo, assinado: assinado === true };
+  const sinais = { tipo: !!tipo, periodo: !!periodo, assinado: assinado === true, entidade: !!entidade };
 
   // Confiança: tipo é o sinal forte; período reforça (menos se for um sinal
   // fraco, tipo ano isolado — não deve, sozinho, somado ao tipo, ultrapassar
@@ -134,8 +203,9 @@ export function classifyByFilename(nomeOriginal) {
     fonte: 'nome_arquivo',
     precisa_fallback_openai: precisaFallback,
     sinais,
-    // entidade não sai do nome com confiança; fica para conteúdo/humano
-    entidade: null,
+    // Hipótese barata, NUNCA fato — e deliberadamente fora do cálculo de
+    // `confianca` acima (ver o comentário de `parseEntidade`).
+    entidade,
   };
 }
 

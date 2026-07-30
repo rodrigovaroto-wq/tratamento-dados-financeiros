@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize } from '../lib/normalize.mjs';
-import { classifyByFilename, parsePeriodo, parseTipo } from '../lib/classifier.mjs';
+import { classifyByFilename, parseEntidade, parsePeriodo, parseTipo } from '../lib/classifier.mjs';
 
 test('normalize remove acento, extensão e separadores', () => {
   assert.equal(normalize('12M25_DRE (Assinado).pdf'), '12m25 dre (assinado)');
@@ -169,4 +169,69 @@ test('classifyByFilename — casos reais do mandato de referência', () => {
     assert.equal(r.tipo_taxonomia, tipo, `tipo de ${nome}`);
     assert.equal(r.periodo?.referencia, ref, `periodo de ${nome}`);
   }
+});
+
+// --- Entidade a partir do nome do arquivo (correção do "teste v31") ----------
+// No v31 o dashboard mostrou entidade "—" nos 14 documentos, INCLUSIVE nos 6 que
+// extraíram sem erro. A causa era `entidade: null` fixo aqui: nos documentos que
+// o nome classifica acima do limiar a IA de classificação nunca roda, então a
+// única fonte de entidade era o diagnóstico da extração — e a extração dos outros
+// 8 morreu no teto de gasto da OpenAI, levando a entidade junto.
+//
+// Os nomes são os 14 REAIS do teste (test-data/book-vertentes), não inventados.
+test('parseEntidade resolve a empresa nos 14 arquivos do teste v31', () => {
+  const casos = [
+    ['01_BP_Vertentes_Metalurgica_2025x2024.pdf', 'Vertentes Metalurgica'],
+    ['02_BP_Vertentes_Componentes_2025x2024.pdf', 'Vertentes Componentes'],
+    ['03_BP_Vertentes_Participacoes_2025x2024.pdf', 'Vertentes Participacoes'],
+    // sigla fica em caixa alta: "Vt Logistica" leria como erro de digitação
+    ['04_BP_VT_Logistica_2025x2024.pdf', 'VT Logistica'],
+    ['05_BP_Vertentes_Imoveis_SPE_2025x2024.pdf', 'Vertentes Imoveis SPE'],
+    // 'COMBINADO' é termo de TIPO, não parte do nome da empresa
+    ['06_BP_COMBINADO_Grupo_Vertentes_2025.pdf', 'Grupo Vertentes'],
+    ['07_DRE_Vertentes_Metalurgica_2025x2024.pdf', 'Vertentes Metalurgica'],
+    ['08_DFC_Vertentes_Metalurgica_2025.pdf', 'Vertentes Metalurgica'],
+    ['09_DMPL_Vertentes_Metalurgica_2025.pdf', 'Vertentes Metalurgica'],
+    ['10_Faturamento_24M_Vertentes_Metalurgica.pdf', 'Vertentes Metalurgica'],
+    ['11_Mapa_Divida_Vertentes_Metalurgica_2025.pdf', 'Vertentes Metalurgica'],
+    // 'Intragrupo' descreve o documento; sem removê-lo viria "Intragrupo Grupo Vertentes"
+    ['12_Mutuos_Intragrupo_Grupo_Vertentes_2025.pdf', 'Grupo Vertentes'],
+    // o nome só diz "Componentes" — devolver isso é honesto; o conteúdo refina
+    ['13_Balancete_Analitico_Componentes_2025.pdf', 'Componentes'],
+    ['14_Notas_Explicativas_Grupo_Vertentes_2025.pdf', 'Grupo Vertentes'],
+  ];
+  for (const [nome, entidade] of casos) {
+    assert.equal(classifyByFilename(nome).entidade, entidade, `entidade de ${nome}`);
+  }
+});
+
+// O invariante que protege a doutrina: a entidade é hipótese, e hipótese não
+// compra dispensa da verificação da IA. Se alguém somar a entidade à confiança,
+// os documentos de 0,65 sobem para 0,70+ e PARAM de ser conferidos pela IA —
+// exatamente o tipo de subida de dial que docs/01 proíbe sem golden set.
+test('entidade do nome NÃO altera confiança nem o limiar de fallback', () => {
+  const esperado = [
+    ['01_BP_Vertentes_Metalurgica_2025x2024.pdf', 0.9, false],
+    ['06_BP_COMBINADO_Grupo_Vertentes_2025.pdf', 0.65, true],
+    ['10_Faturamento_24M_Vertentes_Metalurgica.pdf', 0.6, true],
+  ];
+  for (const [nome, conf, fallback] of esperado) {
+    const r = classifyByFilename(nome);
+    assert.ok(r.entidade, `${nome} tem hipótese de entidade`);
+    assert.equal(r.confianca, conf, `confiança de ${nome} intacta`);
+    assert.equal(r.precisa_fallback_openai, fallback, `fallback de ${nome} intacto`);
+  }
+});
+
+test('parseEntidade se abstém quando o nome não carrega empresa', () => {
+  // Só tipo + período: não há o que extrair, e inventar seria pior que nada.
+  assert.equal(classifyByFilename('Balanço Patrimonial 12M25.pdf').entidade, null);
+  assert.equal(classifyByFilename('DRE_2025.pdf').entidade, null);
+  // Resto de 2 letras não identifica empresa nenhuma — não vira entidade-lixo.
+  assert.equal(classifyByFilename('DRE_XY_2025.pdf').entidade, null);
+  // contrato de auto-contenção: `parseEntidade` recebe os aliases por parâmetro
+  // (é assim que o `toString()` dela funciona dentro do Code node do n8n) e não
+  // pode estourar quando eles não vêm.
+  assert.equal(parseEntidade('bp vertentes metalurgica 2025', []), 'Bp Vertentes Metalurgica');
+  assert.equal(parseEntidade('bp vertentes metalurgica 2025', undefined), 'Bp Vertentes Metalurgica');
 });

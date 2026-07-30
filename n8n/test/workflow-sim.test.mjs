@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { codigosConhecidos } from '../lib/openai.mjs';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
+import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -662,4 +663,34 @@ test('Parse Extracao (nó real): propaga a ORDEM da linha (db/migrations/0027)',
   assert.ok(parse, 'nó Parse Extracao não existe');
   assert.match(parse.parameters.jsCode, /p\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
     'o mirror não está numerando as linhas pela posição no array');
+});
+
+// --- Anti-drift: a entidade do nome no nó É a de lib/classifier.mjs -----------
+// QUARTO mirror do repositório. Nasceu já embutido por `toString()` (como o
+// diagnóstico de erro) em vez de copiado à mão, porque dos três anteriores DOIS
+// divergiram na prática — o mirror manual é o defeito, não o descuido de quem
+// mexeu depois.
+test('Classificar Nome carrega o MESMO parseEntidade de lib/classifier.mjs', () => {
+  assert.ok(code('Classificar Nome').includes(parseEntidade.toString()),
+    'a entidade embutida no nó divergiu da fonte em lib/classifier.mjs');
+});
+
+// E o comportamento, executando o código REAL do nó — não a lib. É o que prova
+// que a correção do v31 chega ao workflow que o dono importa: no v31 estes 14
+// documentos gravaram entidade nula, e 8 deles perderam a única outra chance de
+// tê-la quando a extração morreu no teto de gasto da OpenAI.
+test('Classificar Nome: entidade sai do nome do arquivo, e a confiança não muda', async () => {
+  const casos = [
+    ['01_BP_Vertentes_Metalurgica_2025x2024.pdf', 'Vertentes Metalurgica', 0.9, false],
+    ['06_BP_COMBINADO_Grupo_Vertentes_2025.pdf', 'Grupo Vertentes', 0.65, true],
+    ['10_Faturamento_24M_Vertentes_Metalurgica.pdf', 'Vertentes Metalurgica', 0.6, true],
+  ];
+  for (const [nome, entidade, conf, fallback] of casos) {
+    const out = await run('Classificar Nome', { item: { json: { caso_id: 'c-1', nome_original: nome } } });
+    assert.equal(out.json.entidade, entidade, `entidade de ${nome} no nó`);
+    assert.equal(out.json.confianca, conf, `confiança de ${nome} no nó`);
+    assert.equal(out.json.precisa_fallback_openai, fallback, `fallback de ${nome} no nó`);
+    // o nó e a lib têm de concordar — é o ponto de existir um mirror testado
+    assert.equal(out.json.entidade, classifyByFilename(nome).entidade, `nó × lib para ${nome}`);
+  }
 });
