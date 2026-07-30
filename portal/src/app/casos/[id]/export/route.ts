@@ -71,6 +71,21 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       .order("coletado_em", { ascending: false }),
   ]);
 
+  // Erro de CONSULTA (RLS sem policy volta 0 linhas sem erro; função sem
+  // `grant execute` para `authenticated` volta erro de permissão — os dois
+  // aconteceram de fato na `0025`, ver db/migrations/0028) é DIFERENTE de "sem
+  // dado coletado", e as duas coisas não podem cair na mesma mensagem — foi
+  // exatamente essa confusão que fez o export dizer "sem dado coletado" com a
+  // base já povoada. `console.error` fica nos logs da função (Vercel/servidor):
+  // não é visível no arquivo, mas para de ser invisível PARA SEMPRE.
+  const nomesRes = await supabase.from("indice_macro_serie").select("codigo, nome");
+  const macroErro = anuaisRes.error?.message ?? expRes.error?.message ?? nomesRes.error?.message;
+  if (macroErro) {
+    console.error(`[export] consulta de índices macro falhou: ${macroErro}`, {
+      anuais: anuaisRes.error, expectativas: expRes.error, series: nomesRes.error,
+    });
+  }
+
   const anuais = (anuaisRes.data as MacroAnual[] | null) ?? [];
   // A API devolve todas as coletas; para o export vale a MAIS RECENTE de cada
   // (série, ano) — e como vem ordenado por coleta decrescente, o primeiro que
@@ -84,15 +99,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   });
 
   const nomes = Object.fromEntries(
-    ((await supabase.from("indice_macro_serie").select("codigo, nome")).data ?? [])
-      .map((s: { codigo: string; nome: string }) => [s.codigo, s.nome]),
+    (nomesRes.data ?? []).map((s: { codigo: string; nome: string }) => [s.codigo, s.nome]),
   );
 
   const macro = anuais.length > 0 || expectativas.length > 0
     ? { anuais, expectativas, nomes }
     : undefined;
 
-  const workbook = buildExportWorkbook({ caso, documentos, campos, macro });
+  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro });
   const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
   const filename = `${nomeArquivoSanitizado(caso.nome)}-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
 

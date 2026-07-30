@@ -2170,23 +2170,44 @@ export interface RefsMacro {
  * juro do modelo ficam em branco, e quem digitar por cima delas está usando
  * memória, não dado publicado. Uma aba ausente não conta isso; esta conta.
  */
-function construirAbaMacroSemDado(workbook: ExcelJS.Workbook): void {
+function construirAbaMacroSemDado(workbook: ExcelJS.Workbook, erro?: string): void {
   const ws = workbook.addWorksheet(ABA_MACRO);
   ws.columns = [{ width: 42 }, { width: 92 }];
-  ws.addRow(["Índices macro — sem dado coletado"]).font = { bold: true, size: 12 };
-  ws.addRow([
-    "O que falta",
-    "Nenhuma observação (BCB/IBGE) nem expectativa (Focus) na base. A coleta é o workflow "
-    + "n8n/workflow.macro.json, que roda no relógio (dia 12, depois da divulgação do IPCA) e depende "
-    + "da migration db/migrations/0025 aplicada NO PROJETO em uso. Importar o workflow não coleta "
-    + "nada sozinho: ele precisa estar ATIVO, e a primeira carga histórica pede uma execução manual.",
-  ]);
-  ws.addRow([
+  const linhas: Array<[string, string]> = [];
+  if (erro) {
+    // A consulta/RPC FALHOU — a base pode muito bem ter dado. Confundir isto com
+    // "não há dado coletado" foi o próprio defeito (0028): RLS habilitado sem
+    // policy volta ZERO linhas SEM erro nenhum para quem lê, e função sem
+    // `grant execute` volta erro de permissão que o `route.ts` engolia
+    // silenciosamente (`?? []` sobre `.data`, sem olhar `.error`). Por isso as
+    // duas mensagens abaixo são deliberadamente diferentes uma da outra.
+    ws.addRow(["Índices macro — a CONSULTA falhou (pode haver dado na base)"]).font = { bold: true, size: 12 };
+    linhas.push([
+      "O que aconteceu",
+      `A busca dos índices retornou erro: "${erro}". Isto é diferente de "sem dado coletado" — pode `
+      + "haver observação/expectativa gravada e a consulta não ter permissão para lê-la (RLS sem "
+      + "policy, ou função sem grant para o papel authenticated — db/migrations/0028). Confira "
+      + "rodando `select count(*) from indice_macro_obs;` no SQL Editor do Supabase: se vier > 0, é "
+      + "autorização, não ausência de coleta.",
+    ]);
+  } else {
+    ws.addRow(["Índices macro — sem dado coletado"]).font = { bold: true, size: 12 };
+    linhas.push([
+      "O que falta",
+      "Nenhuma observação (BCB/IBGE) nem expectativa (Focus) na base. A coleta é o workflow "
+      + "n8n/workflow.macro.json, que roda no relógio (dia 12, depois da divulgação do IPCA) e depende "
+      + "da migration db/migrations/0025 aplicada NO PROJETO em uso. Importar o workflow não coleta "
+      + "nada sozinho: ele precisa estar ATIVO, e a primeira carga histórica pede uma execução manual "
+      + "(ou o seed `db/seed/macro_carga_inicial.sql`).",
+    ]);
+  }
+  linhas.push([
     "Efeito nesta entrega",
     "As premissas de inflação (IPCA — Focus) e juro (Selic — Focus) da aba Modelagem ficam em branco. "
     + "Elas são input: dá para digitar por cima e o modelo inteiro responde — mas aí o número é "
     + "memória de quem digitou, não índice publicado com fonte e data.",
   ]);
+  ws.addRows(linhas);
   for (const r of [2, 3]) {
     ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
     ws.getRow(r).height = 56;
@@ -2971,6 +2992,7 @@ export function buildExportWorkbook({
   documentos,
   campos: camposDeTodasAsVersoes,
   macro,
+  macroErro,
   agora = new Date(),
 }: {
   caso: { nome: string; produto: string };
@@ -2979,6 +3001,12 @@ export function buildExportWorkbook({
   // Índices macro (db/migrations/0025). Opcional: sem eles o export sai como
   // sempre saiu, só sem a aba Macro e com as premissas macro zeradas.
   macro?: MacroParaExport;
+  // Mensagem da consulta/RPC que FALHOU ao buscar macro (permissão, RLS, rede) —
+  // distinta de "consultou e não achou nada". Confundir as duas é o próprio
+  // defeito que motivou este parâmetro (0028): a base tinha dado, a consulta do
+  // portal falhava por autorização, e a aba saía dizendo "sem dado coletado"
+  // como se a coleta nunca tivesse rodado. Ver `route.ts` (chamador).
+  macroErro?: string;
   agora?: Date;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
@@ -3357,7 +3385,7 @@ export function buildExportWorkbook({
     // dados" — sem ter como distinguir "coleta não rodou" de "defeito no export".
     // A causa real ali: a `0025` não estava aplicada no projeto certo (foi aplicada
     // no banco errado e revertida), então não havia índice nenhum na base.
-    if (!refsMacro) construirAbaMacroSemDado(workbook);
+    if (!refsMacro) construirAbaMacroSemDado(workbook, macroErro);
     construirAbaModelagem(
       workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
       refsMacro,
