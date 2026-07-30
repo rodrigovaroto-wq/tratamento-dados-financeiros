@@ -286,6 +286,20 @@ export function extractionSchema() {
 // reprocessando "teste v14", sessão 7 cont.⁷).
 export const MAX_OUTPUT_TOKENS = 16384;
 
+// TPM (tokens por minuto) da conta OpenAI, LIDO e não estimado:
+// platform.openai.com → Settings → Limits → o modelo da extração.
+//
+// Vive aqui, e não no gerador, porque TRÊS lugares dependem do mesmo número e
+// precisam concordar: o gerador (calcula o batchInterval a partir dele), o teste
+// que trava a cadência, e `diagnosticar-openai.mjs` (compara o configurado com o
+// que a API informa nos headers). Duplicado, o dono ajustaria um e os outros
+// dois passariam a mentir.
+//
+// Padrão no Tier 1 (30.000) porque é o mais restritivo: errar para o lento faz a
+// extração demorar; errar para o rápido faz ela FALHAR, e falha custa uma rodada
+// inteira. Tier 2 do gpt-4o são 450.000 TPM.
+export const TPM_CONTA = 30000;
+
 // conteudo: parte multimodal (file/image/text) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
   return {
@@ -441,7 +455,14 @@ export function diagnosticarErroApi(erro) {
     (e) => e && e.context && e.context.data && e.context.data.error,
     (e) => e && e.response && e.response.data && e.response.data.error,
     (e) => e && e.data && e.data.error,
-    (e) => e && e.cause,                                  // último recurso: o cause pode já ser o corpo
+    (e) => e && e.cause,                                  // o cause pode já ser o corpo
+    // O PRÓPRIO objeto é o corpo — é o que chega quando o nó roda com
+    // `neverError` (a resposta 429 vem como item normal, e o item É
+    // `{error:{type,code,message}}`). Aceito só com sinal de que é corpo da
+    // OpenAI: `type`, ou um `code` que não seja de TRANSPORTE. Sem essa guarda,
+    // um AxiosError entraria aqui e `ERR_BAD_REQUEST` seria reportado como se
+    // fosse o código da OpenAI — pista falsa, pior que pista nenhuma.
+    (e) => (e && (e.type || (e.code && !/^ERR_/i.test(String(e.code))))) ? e : null,
   ];
   const corpoDeErroOpenAI = (e) => {
     if (!e || typeof e !== 'object') return null;
@@ -482,7 +503,18 @@ export function diagnosticarErroApi(erro) {
   const corpo = corpoDeErroOpenAI(erro);
   const status = statusHttpDoErro(erro);
   const tipo = corpo?.type ?? null;
-  const codigo = corpo?.code ?? null;
+  // `code` de TRANSPORTE (axios: ERR_BAD_REQUEST, ECONNRESET...) não é o código
+  // da OpenAI — a doc dela manda inspecionar `error.code`, e confundir os dois
+  // mandaria a sessão seguinte investigar o código errado.
+  //
+  // MEDIDO, para não superestimar a cobertura: esta guarda e a do último caminho
+  // de CAMINHOS são REDUNDANTES para o payload do v30 — removendo UMA só, o teste
+  // "o AxiosError REAL do v30 não é lido como código da OpenAI" continua passando;
+  // ele só reprova com as DUAS removidas. É proteção em profundidade de propósito
+  // (dois pontos de entrada possíveis para um code de transporte), mas quem mexer
+  // em uma delas não vai ser avisado pelo teste. Mexa nas duas juntas.
+  const codigoBruto = corpo?.code ?? null;
+  const codigo = (codigoBruto && /^ERR_/i.test(String(codigoBruto))) ? null : codigoBruto;
   const mensagemOpenAI = corpo?.message ?? null;
   const mensagemBruta = typeof erro === 'string' ? erro : (erro?.message ?? null);
   // O texto completo inclui a mensagem do n8n E o corpo da OpenAI, quando os
@@ -494,12 +526,29 @@ export function diagnosticarErroApi(erro) {
   let causa = 'desconhecida';
   let motivo;
 
-  if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
-    'billing hard limit', 'check your plan and billing', 'account is not active')) {
+  // TETO DE GASTO vem ANTES de "sem crédito" de propósito: são coisas
+  // diferentes com ações diferentes, e esta é a que engana. Um teto de gasto de
+  // PROJETO (ou o orçamento mensal da organização) devolve 429 com a conta
+  // perfeitamente saudável — há saldo, o tier está normal, e as páginas de
+  // Billing e de Limits não mostram nada de errado. Foi exatamente o relato do
+  // dono depois do v30: "o limite da OpenAI está OK". Estes códigos estão na doc
+  // oficial de erros da OpenAI e nenhum deles é falta de dinheiro.
+  if (tem('spend_limit_exceeded', 'spend limit', 'usage_limit_exceeded',
+    'usage limit', 'budget')) {
+    causa = 'limite_de_gasto';
+    motivo = 'TETO DE GASTO ATINGIDO na OpenAI — e isto NÃO é falta de crédito: há saldo, o tier '
+      + 'está normal, e é por isso que as páginas de Billing e de Limits parecem em ordem. O que '
+      + 'estourou é um LIMITE CONFIGURADO: teto do PROJETO a que a chave pertence, ou orçamento '
+      + 'mensal da organização. Onde olhar: platform.openai.com → Settings → Limits (orçamento '
+      + 'mensal da org) E Settings → Projects → o projeto da chave → Limits (teto do projeto). '
+      + 'Espaçar as chamadas não resolve; subir o teto resolve na hora.';
+  } else if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
+    'billing hard limit', 'check your plan and billing', 'account is not active',
+    'credit_balance_exhausted', 'no prepaid credits')) {
     causa = 'sem_credito';
-    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota). A conta não tem saldo/limite de '
-      + 'faturamento para processar. Espaçar as chamadas NÃO resolve isto — é preciso recarregar '
-      + 'crédito ou subir o limite de gasto em platform.openai.com/settings/organization/billing.';
+    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota / credit_balance_exhausted). A conta '
+      + 'não tem saldo pré-pago para processar. Espaçar as chamadas NÃO resolve isto — é preciso '
+      + 'recarregar crédito em platform.openai.com/settings/organization/billing.';
   } else if (tem('tokens per day', 'requests per day', 'tpd', 'rpd', 'daily limit', 'per-day')) {
     causa = 'limite_diario';
     motivo = 'COTA DIÁRIA DA OPENAI ESGOTADA (limite por DIA de tokens/requisições do tier da conta). '

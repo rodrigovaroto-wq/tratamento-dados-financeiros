@@ -21,7 +21,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
+import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -318,7 +318,37 @@ const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
 // requisições. 6s de intervalo + mais tentativas de retry dão mais folga pro
 // balde de TPM da conta se recompor entre chamadas pesadas (achado em
 // produção, sessão 7 cont.¹¹). Trade-off consciente: processa mais devagar.
-const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } } };
+// `neverError`: A CORREÇÃO QUE O DADO DO DONO EXIGIU.
+//
+// A saída real do nó no v30, colada por ele:
+//
+//     error.message = "Try spacing your requests out using the batching settings…"
+//     error.name    = "AxiosError"
+//     error.code    = "ERR_BAD_REQUEST"      ← código de TRANSPORTE, não da OpenAI
+//     error.status  = 429
+//
+// Não há `error.error`, não há `cause`, não há headers: o corpo da resposta da
+// OpenAI — que é o único lugar onde `insufficient_quota` / `rate_limit_exceeded` /
+// `project_spend_limit_exceeded` aparecem — **não chega ao item**. A investigação
+// tinha previsto que ele estaria em `error.error.error`; o dado do dono refutou
+// isso nesta versão do n8n. Tratar 429 sem corpo é o melhor que dá para fazer com
+// esse item, e é honestamente o que o diagnóstico faz ("não disse QUAL").
+//
+// Com `neverError`, o nó deixa de tratar 4xx/5xx como exceção e entrega a
+// RESPOSTA — cujo corpo é exatamente `{error:{type,code,message}}`. Aí o
+// diagnóstico nomeia a causa em vez de dizer "indeterminado", e a mensagem da
+// OpenAI para rate limit traz os números do balde ("Limit 30000, Used …").
+//
+// TRADE-OFF, explícito: sem exceção, o `retryOnFail` do nó não tem o que
+// reexecutar. Aceito por duas razões — (a) a investigação indica que ele já não
+// disparava, porque `onError: continueRegularOutput` também impede o lançamento;
+// (b) uma tentativa que sabe a causa vale mais que seis que não sabem. Falha de
+// REDE (sem resposta) continua sendo exceção, então retry/onError seguem valendo
+// para ela. Se em produção aparecer sinal de que o retry era real e fazia falta,
+// o caminho é reverter esta opção — não empilhar as duas.
+const RESPOSTA_COM_CORPO_NO_ERRO = { response: { response: { neverError: true } } };
+
+const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
 
 // A CADÊNCIA DA EXTRAÇÃO É ARITMÉTICA, NÃO CHUTE — e isto é a correção do v30.
 //
@@ -341,18 +371,15 @@ const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000
 // lote de 14 documentos NÃO tinha como passar, nem a 6s nem a 12s, e o problema
 // não era "espaçar um pouco mais".
 //
-// TPM_CONTA é o ÚNICO número a ajustar aqui, e ele é LIDO, não estimado:
-// platform.openai.com → Settings → Limits → o modelo da extração. Tier 2 do
-// gpt-4o são 450.000 TPM, e aí o intervalo cai para ~2,2s — a diferença entre
-// 8 minutos e 30 segundos para o mesmo lote. Deixo o padrão no Tier 1 porque é o
-// mais restritivo: errar para o lento faz a extração demorar; errar para o
-// rápido faz ela FALHAR, e falha custa uma rodada inteira do dono.
-const TPM_CONTA = 30000;
-
+// TPM_CONTA é o ÚNICO número a ajustar, e ele mora em lib/extract.mjs (junto de
+// MAX_OUTPUT_TOKENS) porque o teste de cadência e o diagnosticar-openai.mjs leem
+// o MESMO valor — duplicar aqui faria os três discordarem no primeiro ajuste.
+// Tier 2 do gpt-4o são 450.000 TPM, e aí o intervalo cai para ~2,2s — a
+// diferença entre 8 minutos e 30 segundos para o mesmo lote.
 const CHAMADAS_POR_MINUTO = TPM_CONTA / MAX_OUTPUT_TOKENS;
 const INTERVALO_EXTRACAO_MS = Math.ceil(60000 / CHAMADAS_POR_MINUTO);
 
-const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } } };
+const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
 
 // Retry para os nós Postgres: SEM onError, um erro transitório (conexão sob
 // carga, timeout pontual) num ÚNICO item PARA A EXECUÇÃO INTEIRA — todos os

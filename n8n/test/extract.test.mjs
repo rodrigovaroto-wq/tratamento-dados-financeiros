@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
-  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria,
+  normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria, diagnosticarErroApi,
 } from '../lib/extract.mjs';
 import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
@@ -180,6 +180,66 @@ test('parseExtractionResponse: JSON truncado (finish_reason=length) vira falhaMo
   assert.deepEqual(r.campos, []);
   assert.match(r.falhaMotivo, /truncada/i);
   assert.match(r.falhaMotivo, /finish_reason=length/);
+});
+
+test('diagnosticarErroApi: separa TETO DE GASTO de falta de crédito (a conta "está OK" e recusa)', () => {
+  // O relato do dono depois do v30: "o limite da OpenAI está OK". E podia estar
+  // mesmo — teto de gasto de PROJETO devolve 429 com saldo em caixa, tier normal
+  // e as páginas de Billing e Limits sem nada de errado. São causas diferentes com
+  // ações diferentes: recarregar crédito não conserta um teto configurado.
+  const tetoProjeto = { statusCode: 429, error: { error: { code: 'project_spend_limit_exceeded',
+    message: 'You have exceeded the spend limit set for this project.' } } };
+  const d = diagnosticarErroApi(tetoProjeto);
+  assert.equal(d.causa, 'limite_de_gasto');
+  assert.match(d.motivo, /NÃO é falta de crédito/);
+  assert.match(d.motivo, /Projects/, 'diz ONDE olhar — o teto do projeto não aparece na tela de Billing');
+
+  // Orçamento mensal da ORG: mesma família, mesma ação.
+  assert.equal(diagnosticarErroApi({ statusCode: 429,
+    error: { error: { code: 'organization_usage_limit_exceeded', message: 'Monthly budget exceeded' } } }).causa,
+    'limite_de_gasto');
+
+  // Já sem saldo de verdade é OUTRA causa, com outra ação.
+  for (const codigo of ['insufficient_quota', 'credit_balance_exhausted']) {
+    assert.equal(diagnosticarErroApi({ statusCode: 429, error: { error: { code: codigo } } }).causa,
+      'sem_credito', codigo);
+  }
+
+  // E cadência continua sendo reconhecida como cadência (o único caso em que
+  // espaçar resolve) — sem isso a correção acima teria roubado o caso legítimo.
+  const cadencia = diagnosticarErroApi({ statusCode: 429, error: { error: { code: 'rate_limit_exceeded',
+    message: 'Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Used 28000' } } });
+  assert.equal(cadencia.causa, 'limite_cadencia');
+  assert.match(cadencia.motivo, /espaçar as chamadas ajuda/i);
+});
+
+test('diagnosticarErroApi: o AxiosError REAL do v30 não é lido como código da OpenAI', () => {
+  // Este é o item que o dono colou do nó, copiado sem inventar campo nenhum. É o
+  // fato que refutou a previsão de que o corpo da OpenAI estaria em
+  // `error.error`: NÃO existe corpo aninhado, nem `cause`, nem headers. Só o
+  // AxiosError, com a dica genérica que o n8n escreve sobre QUALQUER 429.
+  const doNo = {
+    message: "Try spacing your requests out using the batching settings under 'Options'",
+    name: 'AxiosError',
+    stack: 'AxiosError: Request failed with status code 429\n    at settle (...)',
+    code: 'ERR_BAD_REQUEST',
+    status: 429,
+  };
+  const d = diagnosticarErroApi(doNo);
+  assert.equal(d.causa, 'limite_indeterminado',
+    'sem corpo da OpenAI, a causa honesta é "não sei qual limite" — nunca um chute em cadência');
+  assert.equal(d.status, 429, 'o status precisa sobreviver — é a única coisa que o item afirma');
+  assert.equal(d.codigo, null,
+    'ERR_BAD_REQUEST é código de TRANSPORTE do axios; reportá-lo como código da OpenAI manda a próxima sessão investigar o campo errado');
+  assert.equal(d.tipo, null);
+
+  // A guarda não pode cegar o caminho legítimo: quando o item É o corpo da
+  // OpenAI (o que `neverError` passa a entregar), o código real tem de aparecer.
+  const corpoDireto = { status: 429, type: 'insufficient_quota', code: 'insufficient_quota',
+    message: 'You exceeded your current quota' };
+  const c = diagnosticarErroApi(corpoDireto);
+  assert.equal(c.causa, 'sem_credito');
+  assert.equal(c.codigo, 'insufficient_quota', 'o corpo real chega inteiro ao diagnóstico');
 });
 
 test('parseExtractionResponse: erro da API OpenAI vira falhaMotivo com a mensagem original', () => {

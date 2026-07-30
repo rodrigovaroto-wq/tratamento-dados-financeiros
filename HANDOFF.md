@@ -4,42 +4,78 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-29. **Estado do `main`:** mergeado até o **PR #58** (commit de merge
-`7846b9e`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
-(reextração por hash) e 16 (teste v28) estão TODAS no `main`. **Cuidado: houve DUAS sessões em
-paralelo** — o PR #57 (modelo MENSAL + rollback da `0025`) entrou entre o #56 e o #58, e foi lendo o
-`.xlsx` do dono que eu descobri isso. Confirme o `main` com `git ls-remote` E a lista de PRs antes de
-assumir qualquer coisa. Branch de trabalho: `claude/handoff-continuation-orqkmn`, restartada de
-`origin/main` — ver "Git / PR workflow" na seção 4 antes de commitar.
+**Última atualização:** 2026-07-30. **Estado do `main`:** mergeado até o **PR #62** (commit de merge
+`50eb8dd`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
+(reextração por hash), 16 (teste v28) e 17 (v29/v30: macro sem RLS + diagnóstico de 429) estão no
+`main`. Migrations `0001`→**`0028`**. **PR #63 está ABERTO** (draft, `claude/handoff-continuation-orqkmn`)
+com o diagnóstico de teto de gasto. **Cuidado: já houve DUAS sessões em paralelo** — o PR #57 entrou
+entre o #56 e o #58, e foi lendo o `.xlsx` do dono que eu descobri isso. Confirme o `main` com
+`git ls-remote` E a lista de PRs antes de assumir qualquer coisa. Branch de trabalho:
+`claude/handoff-continuation-orqkmn` — ver "Git / PR workflow" na seção 4 antes de commitar.
 
-## ⚠️ COMECE AQUI — o dono vai enviar o resultado do próximo export a qualquer momento
+**Contadores atuais** (o texto antigo abaixo pode citar números velhos — estes valem):
+`node --test 'n8n/test/*.test.mjs'` = **116**; `verificar-export.mts` = **126 invariantes**;
+`db/test/run.sh` = 21 reconciliação + 13 macro + 12 reextração.
 
-Pendências do dono depois do **teste v28** (o `.xlsx` dele está analisado na sessão 16, abaixo). Ele já
-aplicou `0023`/`0024`, reimportou o workflow de ingestão e importou o macro. Sobrou:
+## ⚠️ COMECE AQUI — o bloqueio de hoje é o 429 da OpenAI, e a causa dele NÃO está determinada
 
-1. aplicar a **`0026_reextracao_por_hash.sql`** — é o que faz reenviar um arquivo virar VERSÃO NOVA em
-   vez de documento duplicado;
-2. aplicar a **`0025_indices_macro.sql` NO PROJETO EM USO** e **ATIVAR** o `workflow.macro.json` com
-   uma execução manual. É a causa de "os índices não vieram": a `0025` foi aplicada no banco ERRADO e
-   revertida (PR #57, `db/rollback/0025_indices_macro_rollback.sql`), então no projeto certo as tabelas
-   macro não existem. O workflow roda **dia 12** e **não faz carga histórica sozinho** — importar não
-   coleta nada;
-3. **REIMPORTAR `workflow.e1-ingestao.json`** (cadência nova da extração, sessão 16);
-4. **reenviar os DOIS arquivos que falharam por 429** (`05_BP_Vertentes_Imoveis_SPE`,
-   `07_DRE_Vertentes_Metalurgica`) — é o que preenche a aba DRE e a coluna da SPE. Com a `0026`
-   aplicada, reenviar NÃO duplica documento;
-5. **reextrair** os documentos de DMPL/DVA já processados — mesma mecânica: reenviar o arquivo no
-   mesmo mandato ("+ Adicionar arquivos"), porque migration/prompt só valem para extração NOVA e não
-   existe botão de reprocessar. Alternativa sem custo de IA, se o que importa é só a aba: corrigir o
-   **tipo** na fila de revisão — mas a matriz da DMPL pode sair achatada, porque as linhas antigas
-   foram extraídas sem o contrato `secao`=movimento / `chave`=componente;
-6. **re-exportar** o book e mandar o `.xlsx` + prints.
+**O estado honesto, em uma frase:** no **teste v30** os **14 de 14** documentos falharam com HTTP 429,
+e a resposta que chegou ao pipeline **não continha o corpo de erro da OpenAI** — então o código
+classifica como `limite_indeterminado`, que é a verdade, e não como "cadência", que seria chute. Tudo
+que a sessão 17 fez foi (a) tirar o chute da frente e (b) instrumentar para que a **próxima** execução
+capture a causa real. **Não recomece inventando hipótese: leia §"Sessão 17" abaixo antes de agir.**
 
-**Quando esse resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
+### O fato que refuta a hipótese mais fácil
+
+O dono colou a saída do nó `OpenAI Extrair`. É **isto**, sem nada omitido:
+
+```
+message  Try spacing your requests out using the batching settings under 'Options'
+name     AxiosError
+stack    AxiosError: Request failed with status code 429 ...
+code     ERR_BAD_REQUEST
+status   429
+```
+
+Leia o que **não** está aí: nenhum `error.error`, nenhum `cause`, nenhum header de rate limit, nenhum
+`insufficient_quota`. A frase do `message` é escrita pelo **próprio n8n** em cima de **qualquer** 429
+(`HttpRequestV3.node.ts:850-853` sobrescreve `message`) — ela **não é evidência de cadência**, e foi
+exatamente ela que me fez errar numa rodada anterior (subi o intervalo 6s→12s sem evidência; o 429
+continuou). `ERR_BAD_REQUEST` é código de **transporte do axios**, não código da OpenAI.
+
+Isso importa porque as causas de 429 pedem ações **OPOSTAS**: crédito esgotado → recarregar; **teto de
+gasto** configurado → subir o teto (e ele **não aparece** nas telas de Billing nem de Limits); cota
+diária → só reabre amanhã; **cadência** → o único caso em que espaçar resolve.
+
+### Pendências do dono (nesta ordem — as duas primeiras são o que destrava)
+
+1. **REIMPORTAR `n8n/workflow.e1-ingestao.json`.** Traz duas coisas: `neverError` nos dois nós OpenAI
+   (para que a próxima 429 entregue o **corpo real** da OpenAI em vez de só o AxiosError) e a cadência
+   **derivada** do TPM. Sem reimportar, a próxima falha vai ser tão cega quanto esta.
+2. **Rodar `OPENAI_API_KEY=sk-... node n8n/diagnosticar-openai.mjs`** com a **mesma chave da credencial
+   do n8n**. Uma chamada de 1 token; se a conta estiver sem crédito o custo é zero. Ele imprime a causa
+   classificada pelo **mesmo código de produção**, os headers de rate limit e diz se a cadência
+   configurada cabe no TPM real. **Experimento discriminante:** se essa chamada mínima **passa** e o
+   lote **falha**, crédito e teto de gasto estão descartados (rejeitariam a chamada de 1 token também)
+   → é TPM sob carga, que a cadência nova já respeita.
+3. **Aplicar `db/migrations/0028_rls_e_grant_indices_macro.sql`** — sem ela os índices macro voltam
+   vazios **em silêncio** (RLS ligada sem policy devolve zero linhas; e a função precisava de `grant
+   execute ... to authenticated`). Era a causa real de "não veio os dados macro".
+4. **Aplicar `0026`** (se ainda não) e **reenviar** os arquivos que falharam — com a `0026`, reenviar
+   vira **versão nova**, não documento duplicado.
+5. **Re-exportar** o book e mandar o `.xlsx` + prints.
+
+Se o item 2 disser `limite_de_gasto`, o caminho é: `platform.openai.com` → Settings → **Limits** *e*
+Settings → **Projects** → projeto da chave → **Limits**. O teto de projeto é invisível na tela de
+Billing — é por isso que "o limite da OpenAI está OK" (palavras do dono) podia ser verdade e o 429
+acontecer de todo jeito.
+
+**Quando o resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
 v24 → v25 → v27 e que você deve repetir:
 
 1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (113 invariantes) e `db/test/run.sh` (21 + 13 + 12 asserts).
+   `npx tsx portal/scripts/verificar-export.mts` (126 invariantes), `node --test 'n8n/test/*.test.mjs'`
+   (116) e `db/test/run.sh` (21 + 13 + 12 asserts).
    Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
    ⚠️ **Container novo precisa de três coisas antes** (custaram tempo na sessão 14 — ver "Como
    validar" na seção 4): `npm install` em `portal/`, `python3 gerar.py` em
@@ -99,6 +135,103 @@ marcação do que já foi feito). Candidatos mais fortes agora, todos locais e t
 - **`periodo-fragmenta-e-quebra-reconciliacao`:** a referência de período é gravada CRUA, então o
   mesmo exercício em duas notações vira duas linhas em `periodo`. Canonicalizar no caminho de ESCRITA
   (a `0022` já canonicaliza na comparação).
+
+## Sessão 17 — Testes v29/v30: macro vazio por AUTORIZAÇÃO, e 429 sem causa conhecida
+
+Duas frentes. A primeira está **resolvida e mergeada**. A segunda está **instrumentada, não resolvida** —
+e a distinção é o ponto mais importante desta seção.
+
+### Frente 1 (RESOLVIDA, PR #61, `db/migrations/0028`) — "não veio os dados macro"
+
+O dono aplicou a `0025`, ativou o workflow macro, rodou de novo, e as abas macro continuaram vazias.
+A causa não era coleta: era **autorização**. A `0025` criou as tabelas `indice_macro_serie/obs/expectativa`
+e a função `fn_indice_macro_anual` **sem RLS policy e sem grant** para `authenticated`. O portal lê com
+a **anon key** + sessão do usuário, o que o Postgres vê como o papel `authenticated`. Dois efeitos, os
+dois **silenciosos**:
+
+- **RLS ligada sem policy devolve ZERO LINHAS** — não erro, não aviso. Zero.
+- **função nova precisa de `grant execute ... to authenticated`** explícito no Supabase.
+
+O n8n **não** era afetado (conecta por Postgres nativo via Session Pooler, fora do PostgREST), o que
+explica o sintoma confuso: a coleta gravava, o portal não lia. A `0028` liga RLS com policy de leitura
+e faz o grant, **com verificação embutida** que insere uma linha real e confere `COUNT(*)` já como
+`authenticated`.
+
+**O achado de método, que vale mais que a migration:** `db/test/run.sh` era **estruturalmente incapaz**
+de pegar isso. Ele não replicava os privilégios default que o Supabase configura na criação do projeto,
+então `set role authenticated` falharia para **qualquer** tabela — o teste acusaria falso positivo em
+geral, e por isso ninguém testava como `authenticated`. O `run.sh` agora replica esse passo
+(`grant usage on schema public`, `alter default privileges ... grant all on tables/sequences`) e
+**deliberadamente NÃO** o lado de função — com comentário explicando que a abordagem de revogar execute
+foi **medida** e não reproduz o comportamento do Supabase em Postgres puro. Sem isso, o próximo bug de
+autorização passa igual.
+
+Junto (PRs #59-#61): seed macro versionado com **920 observações reais** + 25 expectativas Focus (zero
+divergências BCB×IBGE), correção da URL do BCB SGS (`ultimos/132` dava HTTP 400; série diária dava 406
+→ passou a usar faixa de datas e a série 3698), e o export deixou de esconder abas — **todas visíveis**,
+com aba de "sem dado" que declara o motivo em vez de sumir (o dono pediu explicitamente: "quero todas as
+abas juntas no exportável").
+
+### Frente 2 (NÃO RESOLVIDA — leia antes de mexer) — os 14/14 com 429 do v30
+
+Cronologia, porque ela é o que impede repetir o erro:
+
+1. **Rodada anterior:** subi o intervalo da extração de 6s → 12s supondo cadência. **Erro meu.** O 429
+   continuou. Nenhuma evidência apoiava "cadência" — só a frase genérica do n8n.
+2. **Esta sessão, hipótese:** o corpo de erro da OpenAI estaria em `error.error.error` (agentes leram o
+   fonte do n8n e previram isso). Escrevi `diagnosticarErroApi` para cobrir esse caminho e vários outros.
+3. **O dono colou a saída real do nó — e ela REFUTOU a previsão.** Não há corpo aninhado nenhum (ver o
+   bloco em "COMECE AQUI"). Confirmei rodando: aquele payload exato classifica como
+   `limite_indeterminado`, status 429, tipo `null`, código `null`.
+
+**Conclusão que fica registrada como pendência, não como fato** (doutrina `docs/01`): a causa do v30 é
+**desconhecida**. `limite_indeterminado` é a classificação honesta.
+
+O que foi construído em cima disso:
+
+- **`diagnosticarErroApi` (`n8n/lib/extract.mjs`)** — auto-contida de propósito, porque o gerador embute
+  o `toString()` dela nos nós (Code node não importa arquivo). Emite causas com **ações diferentes**:
+  `limite_de_gasto` (testado **primeiro**, porque tetos de projeto/org são invisíveis em Billing e
+  Limits), `sem_credito`, `limite_diario`, `limite_cadencia`, `chave_invalida`, `modelo_indisponivel`,
+  `limite_indeterminado`, `desconhecida`. Captura `x-ratelimit-*` e `retry-after` quando existem.
+  **Terceiro mirror do repositório** (depois do prompt e dos ALIASES) — e os dois anteriores JÁ
+  divergiram na prática, então há teste comparando nó × lib.
+- **`neverError: true` nos dois nós OpenAI.** É o que faz a resposta 429 chegar ao parse **com o corpo
+  da OpenAI** em vez de só o AxiosError. **É a instrumentação de que a próxima execução depende.**
+- **Guarda contra pista falsa:** `ERR_BAD_REQUEST` (transporte axios) nunca é reportado como código da
+  OpenAI — senão a sessão seguinte investigaria o campo errado. São **duas** guardas redundantes
+  (uma em `CAMINHOS`, uma no cálculo de `codigo`) e **medi** que o teste só reprova com as **duas**
+  removidas; está comentado no código para ninguém superestimar a cobertura.
+- **A cadência agora é ARITMÉTICA, não opinião.** A OpenAI cobra do balde de TPM o **máximo** entre
+  `max_tokens` e os tokens estimados do request — então cada extração **RESERVA** `MAX_OUTPUT_TOKENS`
+  (16.384) por chamada, **independente do tamanho do PDF**. Logo:
+
+  ```
+  chamadas/min = TPM_CONTA / MAX_OUTPUT_TOKENS
+  intervalo    = 60.000ms / chamadas por minuto
+  ```
+
+  No Tier 1 (30.000 TPM): 1,8 chamada/min → **32.768ms**. Os 12s que eu havia posto suportariam 5
+  chamadas/min = **81.920 TPM**, quase **3× o teto do Tier 1** — ou seja, o lote de 14 documentos **não
+  tinha como passar**, nem a 6s nem a 12s. `TPM_CONTA` vive em `lib/extract.mjs` (junto de
+  `MAX_OUTPUT_TOKENS`) porque **três** lugares dependem do mesmo número — o gerador, o teste de cadência
+  e o `diagnosticar-openai.mjs`; duplicado, o dono ajustaria um e os outros dois passariam a mentir.
+- **`n8n/diagnosticar-openai.mjs`** — o experimento discriminante descrito em "COMECE AQUI". Já validado
+  contra a API real (chave inválida → `chave_invalida`).
+
+**Suspeita NÃO verificada, registrada como suspeita:** `retryOnFail` pode nunca disparar quando o nó tem
+`onError: continueRegularOutput`. Se for verdade, `maxTries: 6` é decorativo nos nós OpenAI. Não medi.
+
+### Ângulos ainda abertos nesta frente
+
+1. **Consumo de tokens** — se a reserva de 16.384 por chamada é o que estoura o balde, reduzir
+   `max_tokens` (ou cortar tokens de entrada, ver a fatia de *Extract From File*) vale mais que espaçar.
+2. **Resiliência** — hoje uma 429 no meio do lote custa o documento; nada re-tenta o item depois de o
+   balde reabrir.
+3. **Observabilidade** — a pendência registra a causa, mas não há visão de "quantas 429 nesta execução".
+4. **Modelo alternativo** para extração (TPM maior no mesmo tier).
+5. **Comparar o banco de v29 × v30** — quantas linhas/documentos sobreviveram em cada, que é o que diz
+   se algo além do 429 regrediu.
 
 ## Sessão 16 — Teste v28: aba ausente deixa de ser buraco silencioso
 
@@ -1832,7 +1965,7 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0026) + README com ordem de aplicação
+db/         — migrations SQL (0001-0028) + README com ordem de aplicação
               test/  — fixture do book + reconciliacao/macro/reextracao.test.sql + run.sh
 n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
               build-workflow-macro.mjs + lib/macro.mjs + workflow.macro.json — coleta de índices macro (0025),
@@ -1841,7 +1974,7 @@ portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revi
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook):
                                               abas de demonstração, DMPL/DVA, Macro, Modelagem, roteamento por linha
               src/lib/statement-templates.ts — classificador por seção contábil
-              scripts/verificar-export.mts   — 113 invariantes de regressão do export
+              scripts/verificar-export.mts   — 126 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
 f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
@@ -1854,7 +1987,8 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 node --test 'n8n/test/*.test.mjs'           # 106 testes da lógica de ingestão/classificação/extração/macro
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
-npx tsx portal/scripts/verificar-export.mts # 113 invariantes do export
+node --test 'n8n/test/*.test.mjs'           # 116 testes dos nós/libs do workflow
+npx tsx portal/scripts/verificar-export.mts # 126 invariantes do export
 PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 reconciliação + 13 macro + 12 reextração
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
@@ -1877,7 +2011,7 @@ sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
 O `run.sh` cria os papéis `anon`/`authenticated`/`service_role` e o schema `storage` que as migrations
 assumem do Supabase.
 
-Migrations: aplicar `0001`→`0026` em ordem num Postgres 16 local antes de propor SQL novo — várias
+Migrations: aplicar `0001`→`0028` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 
