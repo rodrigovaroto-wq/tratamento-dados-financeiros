@@ -4,14 +4,17 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-30. **Estado do `main`:** mergeado até o **PR #62** (commit de merge
-`50eb8dd`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
-(reextração por hash), 16 (teste v28) e 17 (v29/v30: macro sem RLS + diagnóstico de 429) estão no
-`main`. Migrations `0001`→**`0028`**. **PR #63 está ABERTO** (draft, `claude/handoff-continuation-orqkmn`)
-com o diagnóstico de teto de gasto. **Cuidado: já houve DUAS sessões em paralelo** — o PR #57 entrou
-entre o #56 e o #58, e foi lendo o `.xlsx` do dono que eu descobri isso. Confirme o `main` com
-`git ls-remote` E a lista de PRs antes de assumir qualquer coisa. Branch de trabalho:
-`claude/handoff-continuation-orqkmn` — ver "Git / PR workflow" na seção 4 antes de commitar.
+**Última atualização:** 2026-07-30. **Estado do `main`:** mergeado até o **PR #63** (commit de merge
+`cc3faed`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
+(reextração por hash), 16 (teste v28) e 17 (v29/v30: macro sem RLS + diagnóstico de 429) estão TODAS no
+`main`, e **não há PR aberto**. Migrations `0001`→**`0028`**. **Cuidado: já houve DUAS sessões em
+paralelo** — o PR #57 entrou entre o #56 e o #58, e foi lendo o `.xlsx` do dono que eu descobri isso.
+Confirme o `main` com `git ls-remote` E a lista de PRs antes de assumir qualquer coisa. Branch de
+trabalho: `claude/handoff-continuation-orqkmn`, restartada de `origin/main` depois do merge do #63 —
+ver "Git / PR workflow" na seção 4 antes de commitar.
+
+⚠️ **O código está pronto; o que falta é AÇÃO DO DONO no n8n/Supabase/OpenAI** — nada aqui destrava o
+429 sem os passos listados logo abaixo. Se o dono chegar com um export novo, comece pelo item 2.
 
 **Contadores atuais** (o texto antigo abaixo pode citar números velhos — estes valem):
 `node --test 'n8n/test/*.test.mjs'` = **116**; `verificar-export.mts` = **126 invariantes**;
