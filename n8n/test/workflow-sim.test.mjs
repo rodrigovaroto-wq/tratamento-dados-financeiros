@@ -36,7 +36,13 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 // ...) sempre lia o item 0 do lote, mesmo processando o item 1. Sem
 // binaryStore, cai pro item único (`item`) — comportamento de antes, para
 // nodes que não dependem de itemIndex.
-async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, binaryStore } = {}) {
+// `semCrypto` reproduz o sandbox do n8n do dono, MEDIDO em 2026-07-31: o Code
+// node não expõe o global `crypto`, e por isso o campo `hash` de
+// `Preparar Conteudo` vinha null em produção enquanto passava verde aqui — o
+// Node local expõe `crypto.subtle`, então o teste exercitava um caminho que a
+// produção nunca toma. Passar `crypto` como PARÂMETRO (valor `undefined`)
+// sombreia o global dentro do corpo do nó, que é exatamente o que o sandbox faz.
+async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, binaryStore, semCrypto = false } = {}) {
   const $input = {
     item,
     first: () => (items ? items[0] : item),
@@ -57,8 +63,14 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
       },
     },
   };
-  const fn = new AsyncFunction('$input', '$', '$env', '$json', '$itemIndex', 'Buffer', code(name));
-  return fn.call(thisContext, $input, $, env, $json, itemIndex, Buffer);
+  const nomes = ['$input', '$', '$env', '$json', '$itemIndex', 'Buffer'];
+  const valores = [$input, $, env, $json, itemIndex, Buffer];
+  if (semCrypto) {
+    nomes.push('crypto');
+    valores.push(undefined);
+  }
+  const fn = new AsyncFunction(...nomes, code(name));
+  return fn.call(thisContext, ...valores);
 }
 
 // ---------------------------------------------------------------------------
@@ -871,6 +883,39 @@ test('Preparar Conteudo calcula SHA-256 do conteúdo e se abstém se não puder'
     item: { ...item, binary: { data: { ...item.binary.data, data: Buffer.from('outro').toString('base64') } } },
   });
   assert.notEqual(diff.json.hash, esperado);
+});
+
+// O invariante que FALTAVA — e a ausência dele custou uma rodada inteira de
+// produção. O teste acima passa verde no Node local, onde `crypto.subtle`
+// existe; o sandbox do n8n do dono NÃO o expõe, e lá o campo vinha null. Um
+// teste que só exercita o caminho feliz do ambiente de desenvolvimento não diz
+// nada sobre o ambiente que roda de verdade.
+//
+// Aqui o hash tem de sair CERTO — não "não-nulo": um hash errado é pior que
+// hash nenhum, porque a 0026 fundiria documentos diferentes numa versão só.
+test('Preparar Conteudo calcula o MESMO SHA-256 quando o sandbox não expõe crypto', async () => {
+  const conteudo = Buffer.from('%PDF-1.4 conteudo de teste');
+  const esperado = createHash('sha256').update(conteudo).digest('hex');
+  const item = {
+    json: { caso_id: 'c-1', nome_original: 'BP.pdf' },
+    binary: { data: { fileName: 'BP.pdf', mimeType: 'application/pdf', data: conteudo.toString('base64') } },
+  };
+
+  const out = await run('Preparar Conteudo', { item, semCrypto: true });
+  assert.equal(out.json.hash, esperado, 'sem crypto no sandbox, o SHA-256 em JS puro tem de dar o mesmo hexadecimal');
+
+  // Os dois caminhos (nativo e JS puro) concordando é o que autoriza manter o
+  // atalho nativo por velocidade sem virar duas verdades.
+  const nativo = await run('Preparar Conteudo', { item });
+  assert.equal(nativo.json.hash, out.json.hash, 'caminho nativo × JS puro não podem divergir');
+
+  // E continua DISCRIMINANDO conteúdo sem o crypto: se o fallback devolvesse
+  // constante, os dois asserts acima ainda passariam com um hash fixo.
+  const diff = await run('Preparar Conteudo', {
+    item: { ...item, binary: { data: { ...item.binary.data, data: Buffer.from('outro').toString('base64') } } },
+    semCrypto: true,
+  });
+  assert.equal(diff.json.hash, createHash('sha256').update(Buffer.from('outro')).digest('hex'));
 });
 
 // --- Não pagar extração de documento que não existe --------------------------
