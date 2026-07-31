@@ -270,17 +270,24 @@ declare
   v_n int;
 begin
   raise notice '--- 7. NEGATIVO: o rótulo EXISTE, com outro nome — a pendência o NOMEIA ---';
-  -- O outro lado da moeda do teste 6, e o caso caro: a extração TROUXE a linha
-  -- de total, só que com um nome que o padrão de casamento não reconhece
-  -- ("Somatório geral do ativo" tem 'ativo' mas não tem 'total'). A conduta
-  -- correta aqui é o oposto da do teste 6: não adianta reextrair, o que precisa
-  -- mudar é o padrão — e para decidir isso é preciso VER o rótulo.
+  -- O outro lado da moeda do teste 6, e o caso caro: a extração TROUXE algo que
+  -- MENCIONA o conceito, mas que não é o total do grupo. A conduta correta aqui
+  -- é o oposto da do teste 6: não adianta reextrair, o que precisa mudar é o
+  -- padrão — e para decidir isso é preciso VER o rótulo.
+  --
+  -- ⚠ OS RÓTULOS DESTA FIXTURE MUDARAM NA 0034, e o motivo importa. Eles eram
+  -- "Somatório geral do ativo" e "Somatório geral do passivo e do patrimônio",
+  -- escolhidos por não terem a palavra "total". A 0034 passou a reconhecer
+  -- exatamente esses — "somatório" e "geral" são ruído de rodapé, e o que sobra
+  -- é o grupo. Ou seja: o teste reprovou porque o sistema MELHOROU. Trocados
+  -- por rótulos que continuam legitimamente irreconhecíveis (sobra conteúdo
+  -- próprio depois de tirar a ligação), que é o que este teste quer exercitar.
   update campo_extraido set secao = 'BLOCO SEM NOME', chave = 'XPTO ' || id::text
   where documento_versao_id = v_ver;
-  update campo_extraido set chave = 'Somatório geral do ativo'
+  update campo_extraido set chave = 'Recursos aplicados no ativo permanente'
   where id = (select id from campo_extraido where documento_versao_id = v_ver
               and valor_num is not null order by id limit 1);
-  update campo_extraido set chave = 'Somatório geral do passivo e do patrimônio'
+  update campo_extraido set chave = 'Obrigações com terceiros e patrimônio dos sócios'
   where id = (select id from campo_extraido where documento_versao_id = v_ver
               and valor_num is not null order by id offset 1 limit 1);
   perform teste_reconciliar_tudo(v_caso);
@@ -293,12 +300,81 @@ begin
     and p.estado <> 'resolvida' and dv.id = v_ver;
   perform teste_assert(v_n = 1, 'rótulo com outro nome ainda reprova a pré-condição (nada foi afrouxado)',
     format('%s pendência(s)', v_n));
-  perform teste_assert(v_desc like '%Somatório geral do ativo%',
+  perform teste_assert(v_desc like '%Recursos aplicados no ativo permanente%',
     '…mas a pendência NOMEIA o rótulo que a extração trouxe', left(v_desc, 400));
-  perform teste_assert(v_desc like '%Somatório geral do passivo e do patrimônio%',
+  perform teste_assert(v_desc like '%Obrigações com terceiros e patrimônio dos sócios%',
     '…os dois lados, não só um', left(v_desc, 400));
   perform teste_assert(v_desc like '%padrão de casamento%',
     '…e diz o que fazer com isso (mexer no padrão, não reextrair)', left(v_desc, 400));
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000003';
+  v_desc text;
+  v_n int;
+begin
+  raise notice '--- 8. O TOTAL DO GRUPO SEM A PALAVRA "total" (causa raiz do v35) ---';
+  -- Arranjo REAL do teste v35, lido da mensagem que a 0033 escreveu na
+  -- pendência: o documento traz o total do grupo como "ATIVO" e
+  -- "PASSIVO E PATRIMÔNIO LÍQUIDO" — sem a palavra "total". A busca antiga
+  -- exigia os tokens ['ativo','total'] e ['passivo','patrimonio','total'],
+  -- então o rótulo certo estava na base, com valor, e não era visto.
+  --
+  -- E o fallback que deveria salvar era inalcançável: somava com
+  -- fn_soma_secao(['passivo','patrimonio']), que exige a SEÇÃO conter os dois
+  -- termos, e as seções reais são "Passivo Circulante" e "Patrimônio Líquido".
+  update campo_extraido set chave = 'ATIVO'
+   where documento_versao_id = v_ver and fn_normalizar_texto(chave) like 'total do ativo%';
+  update campo_extraido set chave = 'PASSIVO E PATRIMÔNIO LÍQUIDO'
+   where documento_versao_id = v_ver and fn_normalizar_texto(chave) like 'total do passivo%';
+
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n
+  from pendencia p
+  join documento_versao dv on dv.documento_id = p.documento_id
+  where p.caso_id = v_caso and p.motivo = 'reconciliacao:ativo_passivo_pl'
+    and p.estado <> 'resolvida' and dv.id = v_ver;
+  perform teste_assert(v_n = 0,
+    'total do grupo sem a palavra "total" É reconhecido (nenhuma pendência)',
+    format('%s pendência(s)', v_n));
+
+  -- E a reconciliação tem de dizer DE ONDE veio cada lado — senão ela poderia
+  -- ter passado por outro caminho (a soma de seção, por exemplo) e o assert
+  -- acima seria vazio. A trilha vive em `fonte_a`/`fonte_b`, que é onde a 0033
+  -- passou a gravar a origem; a `reconciliacao` não tem coluna de descrição, e
+  -- no caminho de SUCESSO não existe pendência para carregar o texto.
+  -- A MAIS RECENTE: `fn_registrar_reconciliacao` INSERE uma linha por execução,
+  -- e os testes anteriores deixaram linhas desta mesma versão com os rótulos
+  -- antigos. Um `max()` sobre o texto pegava a linha velha — e ela dizia
+  -- "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", que é justamente o rótulo que
+  -- este teste acabou de renomear. Cada bloco DO anônimo é uma transação
+  -- própria, então `criado_em` ordena de verdade.
+  -- (E não escreva cifrão-cifrão num comentário aqui dentro: ele FECHA o
+  --  dollar-quote do bloco e o erro sai como "syntax error at or near".)
+  select r.fonte_b->>'origem' into v_desc from reconciliacao r
+  where r.tipo = 'ativo_passivo_pl' and r.caso_id = v_caso
+    and r.fonte_a->>'documento_versao_id' = v_ver::text
+  order by r.criado_em desc limit 1;
+  perform teste_assert(v_desc like '%PASSIVO E PATRIMÔNIO LÍQUIDO%',
+    '…e a trilha nomeia o rótulo estrutural que foi usado', coalesce(v_desc, '(nula)'));
+  perform teste_assert(v_desc like '%sem a palavra%',
+    '…declarando que veio do cabeçalho do grupo, não de um rodapé "TOTAL DO ..."',
+    coalesce(v_desc, '(nula)'));
+
+  -- CONTRAPROVA: sem isto, tudo acima passaria num sistema que aceitasse
+  -- qualquer rótulo com a palavra "ativo". Uma conta que só MENCIONA a palavra
+  -- não pode virar o total do grupo — e é o caso concreto do v35, onde
+  -- "Créditos tributários - ICMS sobre ativo permanente" estava na lista de
+  -- candidatos ao lado de "ATIVO".
+  perform teste_assert(
+    not fn_rotulo_estrutural('Créditos tributários - ICMS sobre ativo permanente', array['ativo']),
+    'uma conta que MENCIONA "ativo" continua não sendo o total do grupo');
+  perform teste_assert(
+    not fn_rotulo_estrutural('Ativo Circulante', array['ativo']),
+    'e uma SEÇÃO também não');
 end $$;
 
 drop function teste_assert(boolean, text, text);
