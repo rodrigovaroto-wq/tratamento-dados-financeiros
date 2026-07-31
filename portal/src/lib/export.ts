@@ -2290,6 +2290,10 @@ export interface RefsMacro {
   mediaDe: Map<string, { linha: number; colunas: string[] }>;
   // As janelas, na mesma ordem de `colunas`, para rotular sem adivinhar.
   janelasMedia: readonly number[];
+  // Nome por extenso de cada série, como a aba Macro o escreve. O bloco de
+  // REFERÊNCIAS MACRO cita séries que o modelo não usa (IGP-M, PIB, câmbio) e
+  // "IGPM" cru numa linha de leitura humana é código de sistema, não rótulo.
+  nomeDe: Map<string, string>;
 }
 
 /**
@@ -2491,6 +2495,12 @@ export function construirAbaMacro(
     // média 3a/5a/10a no modelo exigiria adivinhar linha e coluna da aba Macro.
     mediaDe,
     janelasMedia: JANELAS_MEDIA_EXPORT,
+    // As séries do histórico E as do Focus: o Focus publica PIB, que não tem
+    // série histórica coletada, e o histórico tem INPC/CDI, que o Focus não
+    // publica. Unir as duas é o que evita "PIB" cru na aba Modelagem.
+    nomeDe: new Map(
+      [...new Set([...d.series, ...d.linhaExpDe.keys()])].map((s) => [s, nome(s)]),
+    ),
   };
 }
 
@@ -3059,6 +3069,192 @@ export function construirAbaModelagem(
       r.getCell(1).fill = DIVERGENCIA_FILL;
       linha("");
     }
+  }
+
+  // ======================= REFERÊNCIAS MACRO ================================
+  //
+  // POR QUE ESTE BLOCO EXISTE, e por que ele NÃO é um bloco de premissas.
+  //
+  // Placar medido antes de escrevê-lo: das 15 premissas, 2 leem macro (IPCA e
+  // Selic do Focus); das 6 séries históricas coletadas, 0 alimentavam qualquer
+  // fórmula — as 18 células de média 3a/5a/10a da aba Macro não moviam nada e
+  // ninguém fora daquela aba as via.
+  //
+  // Mas o modelo é dirigido por PERCENTUAL DE RECEITA (CPV = RL×(1−margem
+  // alvo), SG&A = % da RL) e por IPCA+crescimento real. IGP-M, PIB e câmbio
+  // não têm alavanca nenhuma aqui hoje: dar alavanca a eles é escolher qual
+  // índice corrige o quê, e isso é o SELETOR DE INPUTS MACRO — Etapa 5 do
+  // plano do dono, ainda não construída. Ligá-los agora sem seletor seria
+  // arbitrar a escolha dentro do código, onde ninguém audita.
+  //
+  // Decisão do dono (2026-07-31): trazer como REFERÊNCIA agora, seletor na
+  // Etapa 5. Então cada linha aqui DIZ o que ela deveria dirigir e diz que
+  // ainda não dirige. Uma referência que PARECE premissa é pior que nenhuma:
+  // quem digita por cima de uma célula esperando o modelo responder, e ele não
+  // responde, sai com um número que ele acha que testou.
+  //
+  // POSIÇÃO: aqui, depois das conferências — nunca dentro do bloco de
+  // premissas. `P(i)` endereça premissa por deslocamento a partir de
+  // `rPremissas`, e uma linha inserida lá desloca todas as fórmulas do modelo
+  // em silêncio; além disso o verificador conta as premissas varrendo do
+  // cabeçalho "PREMISSAS" até a primeira linha vazia.
+  //
+  // TUDO EM FÓRMULA lendo a aba Macro, nenhum valor escrito: a planilha tem de
+  // continuar viva. Corrigir a origem (recoletar o macro, recalcular a média)
+  // e ver o modelo acompanhar é a arquitetura desde a sessão 12.
+  {
+    bloco("REFERÊNCIAS MACRO — informam a leitura; NÃO movem o modelo sozinhas");
+    const rCab = sheet.getRow(sheet.rowCount);
+    rCab.getCell(1).note = comoNota(
+      "Estas linhas são LEITURA, não input. Nenhuma fórmula do modelo depende delas: digitar por "
+      + "cima não recalcula nada, e apagar não quebra nada. Elas existem porque o modelo hoje é "
+      + "dirigido por IPCA + crescimento real + percentuais de receita, e IGP-M, PIB e câmbio não "
+      + "têm alavanca nenhuma nessa mecânica — quem escolhe qual índice corrige o quê é o SELETOR "
+      + "DE INPUTS MACRO, que é a Etapa 5 do plano e ainda não existe. Até lá, o número fica à "
+      + "vista para quem for calibrar as premissas à mão, com a fonte declarada.",
+    );
+
+    // ---- Focus por exercício: IGP-M, PIB, câmbio ---------------------------
+    // Mesma mecânica de `premissaDoFocus`/`notaDoFocus` das duas premissas que
+    // já leem Focus, inclusive o tratamento de ausência da fatia 4: célula EM
+    // BRANCO com nota dizendo a cobertura real, jamais 0. Um 0 aqui seria lido
+    // como "o mercado espera PIB zero" — e para o câmbio seria pior ainda, um
+    // dólar de R$ 0,00.
+    const refsFocus: Array<{
+      serie: string; rotulo: string; unidade: string; fmt: string;
+      percentual: boolean; oQue: string; deveriaDirigir: string;
+    }> = [
+      { serie: "IGPM", rotulo: "IGP-M esperado (Focus)", unidade: "% a.a.", fmt: PCT_FMT,
+        percentual: true, oQue: "inflação de contratos",
+        deveriaDirigir:
+          "Reajuste de aluguel e de contratos de fornecimento de longo prazo, que no Brasil são "
+          + "indexados a IGP-M e não a IPCA. Hoje o modelo corrige receita e custo SÓ por IPCA "
+          + "(premissa 'Inflação esperada'), então um mandato com custo majoritariamente indexado "
+          + "a IGP-M está sendo projetado com o índice errado — e a diferença entre os dois passou "
+          + "de 15 p.p. num único ano (2021).",
+      },
+      { serie: "PIB", rotulo: "PIB esperado (Focus)", unidade: "% a.a.", fmt: PCT_FMT,
+        percentual: true, oQue: "crescimento da economia",
+        deveriaDirigir:
+          "Proxy de VOLUME: quanto da receita cresce porque a economia cresce, separado do quanto "
+          + "cresce por preço. Hoje a premissa 'Crescimento REAL da receita' é derivada dos dois "
+          + "últimos exercícios do próprio mandato e não olha a economia — uma empresa que só "
+          + "acompanhou o PIB aparece com crescimento próprio.",
+      },
+      { serie: "CAMBIO_USD", rotulo: "Câmbio esperado (Focus)", unidade: "R$/US$", fmt: "0.0000",
+        // NÃO é percentual: o Focus publica o câmbio como NÍVEL (R$/US$ no fim
+        // do período), não como variação. Dividir por 100 daria R$ 0,054 e
+        // formatar como % daria 540% — o mesmo tipo de erro de escala que
+        // custou ~496x nas abas de dados na Etapa 1.
+        percentual: false, oQue: "taxa de câmbio",
+        deveriaDirigir:
+          "Receita, custo e dívida denominados em dólar. Hoje o modelo não separa moeda: o campo "
+          + "`moeda` é capturado na extração e DESCARTADO (não há coluna), então uma linha em USD "
+          + "é somada a uma em BRL sem nenhuma marca. Enquanto isso não mudar, esta linha é a "
+          + "única menção a câmbio no modelo.",
+      },
+    ];
+
+    for (const r of refsFocus) {
+      // O rótulo é o fixo daqui, não o `nomeDe` da aba Macro: ali o nome é o da
+      // SÉRIE ("Câmbio R$/US$ (venda, fim de período)"); aqui a linha precisa
+      // dizer que é EXPECTATIVA e de quem — "(Focus)" é a metade que importa.
+      const row = linha(`↳ ${r.rotulo}`, r.unidade);
+      row.font = { italic: true, size: 9, color: { argb: "FF334155" } };
+      for (let y = 0; y < nAnos; y++) {
+        const cell = row.getCell(idxFY(y));
+        const ano = primeiroAno + y;
+        const colAno = `${cfy(y)}$${linhaAno}`;
+        const f = r.percentual
+          ? premissaDoFocus(macro, r.serie, ano, colAno)
+          : (macro ? focusMacro(macro, r.serie, ano, colAno) : null);
+        if (f !== null) {
+          cell.value = { formula: f };
+        } else {
+          const n = notaDoFocus(macro, r.serie, ano, r.oQue);
+          if (n) cell.note = comoNota(n);
+        }
+        cell.numFmt = r.fmt;
+        cell.alignment = { horizontal: "center" };
+      }
+      row.getCell(1).note = comoNota(
+        `FONTE: mediana das expectativas de mercado (Boletim Focus/BCB) para o exercício de cada `
+        + `coluna — a mesma linha da aba ${ABA_MACRO}, lida por fórmula (INDEX/MATCH), não copiada.\n\n`
+        + `O QUE ESTA LINHA DEVERIA DIRIGIR: ${r.deveriaDirigir}\n\n`
+        + "HOJE ELA NÃO DIRIGE NADA. Quem escolhe qual índice corrige o quê é o seletor de inputs "
+        + "macro (Etapa 5), que ainda não foi construído. Célula em branco significa que o Focus "
+        + "não cobre aquele exercício — a nota da própria célula diz qual é a cobertura publicada.",
+      );
+    }
+
+    // ---- Médias históricas 3a/5a/10a --------------------------------------
+    // Escalares: não variam por exercício. Vão nas três primeiras colunas do
+    // bloco com um sub-cabeçalho explícito, do mesmo jeito que "↳ soma dos
+    // pesos" já usa a coluna 3 para um escalar. A nota do sub-cabeçalho diz
+    // que aquelas colunas NÃO são meses aqui — o painel congelado no topo
+    // continua exibindo "jan/fev/mar" e essa colisão precisa estar declarada,
+    // não deixada para o leitor descobrir.
+    if (macro && macro.mediaDe.size > 0) {
+      const janelas = macro.janelasMedia;
+      const subCab = linha("↳ médias históricas (média GEOMÉTRICA dos exercícios completos)", "");
+      subCab.font = { bold: true, size: 9, color: { argb: "FF334155" } };
+      janelas.forEach((j, k) => {
+        const c = subCab.getCell(3 + k);
+        c.value = `Média ${j}a`;
+        c.font = { bold: true, size: 9 };
+        c.alignment = { horizontal: "center" };
+        c.fill = ANALISE_HEADER_FILL;
+      });
+      subCab.getCell(1).note = comoNota(
+        "ATENÇÃO À LEITURA DAS COLUNAS: as três células com valor abaixo estão nas colunas que o "
+        + "painel congelado no topo rotula como jan/fev/mar. Aqui elas NÃO são meses — são as "
+        + "janelas 3a / 5a / 10a, como diz o sub-cabeçalho desta linha. O resto do bloco (as três "
+        + "linhas do Focus acima) usa as colunas FY normalmente.\n\n"
+        + "MÉDIA GEOMÉTRICA ((Π(1+i))^(1/n) − 1), não aritmética: taxa se compõe, e a aritmética "
+        + "daria outro número que erra mais a cada ano do horizonte. A janela usa os últimos N "
+        + `exercícios COMPLETOS da aba ${ABA_MACRO}, nomeados um a um — o ano corrente, sempre `
+        + "parcial, não entra.",
+      );
+
+      for (const [serie, ref] of macro.mediaDe) {
+        const row = linha(`   ↳ ${macro.nomeDe.get(serie) ?? serie}`, "% a.a.");
+        row.font = { italic: true, size: 9, color: { argb: "FF334155" } };
+        ref.colunas.forEach((col, k) => {
+          const cell = row.getCell(3 + k);
+          // O `IF(...="","",...)` não é decoração. A célula de origem na aba
+          // Macro fica LITERALMENTE VAZIA quando não há N exercícios completos
+          // (a fatia 3a deixou assim de propósito, com a nota dizendo quantos
+          // há). Uma referência crua a célula vazia vale 0 no Excel, e este
+          // bloco publicaria "0,0%" como média de 10 anos do IPCA — ausência
+          // apresentada como medição, que é exatamente o defeito da fatia 4
+          // reencenado num lugar novo.
+          cell.value = {
+            formula: `IF('${ABA_MACRO}'!${col}${ref.linha}="","",'${ABA_MACRO}'!${col}${ref.linha})`,
+          };
+          cell.numFmt = PCT_FMT;
+          cell.alignment = { horizontal: "center" };
+          cell.note = comoNota(
+            `Média geométrica de ${janelas[k]} exercícios completos da série ${serie}, calculada na `
+            + `aba ${ABA_MACRO} e lida daqui por fórmula. EM BRANCO significa que a base não tem `
+            + `${janelas[k]} exercícios completos — a nota da célula de origem, na aba ${ABA_MACRO}, `
+            + "diz quantos existem e quais são. Em branco NÃO é zero.",
+          );
+        });
+        row.getCell(1).note = comoNota(
+          `FONTE: histórico coletado (BCB/SGS e IBGE/SIDRA) e agregado por exercício na aba `
+          + `${ABA_MACRO}.\n\n`
+          + "O QUE ESTA LINHA DEVERIA DIRIGIR: calibrar a premissa do exercício que o Focus NÃO "
+          + "cobre. Os exercícios do modelo derivam do histórico DESTE mandato — com demonstrações "
+          + "antigas, o horizonte projetado fica atrás do horizonte que o Focus publica, e hoje "
+          + "essas colunas ficam em branco (ver a linha 'cobertura do Focus' acima). A média "
+          + "histórica é o candidato natural a preencher, e é uma ESCOLHA: histórico calibra, não "
+          + "prevê.\n\n"
+          + "HOJE ELA NÃO DIRIGE NADA — nenhuma premissa lê esta célula. Ligar média histórica a "
+          + "premissa é o seletor de inputs macro (Etapa 5).",
+        );
+      }
+    }
+    linha("");
   }
 
   // ======================= DÍVIDA ==========================================
