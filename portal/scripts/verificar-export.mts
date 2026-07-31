@@ -2194,6 +2194,153 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+
+// ---- 31: Focus que não cobre o exercício projetado NÃO vira 0,0% -----------
+// O defeito mais enganoso que restava da Etapa 2, e o gatilho é banal: os
+// exercícios projetados derivam do histórico DO MANDATO. Um caso com
+// demonstrações de 2019-2021 projeta 2022-2024; o Focus publicado cobre
+// 2026-2030. As três colunas saíam com inflação e juro ZERADOS — célula
+// amarela de input, com a nota afirmando "Mediana das expectativas de mercado
+// (Boletim Focus/BCB)" — enquanto a aba Macro, ao lado, exibia o Focus de
+// 2026-2030 como se estivesse tudo em ordem. Todo o bloco de dívida cobra juro
+// zero nesse cenário e o modelo fecha bonito.
+//
+// O que se afirma aqui é o COMPORTAMENTO (a ausência aparece como ausência),
+// não o mecanismo — o invariante das médias já ensinou o preço de travar "como
+// o código faz": ele protegeu justamente o defeito.
+{
+  const V = "v-focus-fora";
+  const documentos: DocumentoParaExport[] = [2019, 2020, 2021].map((ano) => ({
+    id: `d-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Antiga Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2019, 2020, 2021].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  // Focus real de hoje: horizonte 2026-2030. Nenhum dos anos que ESTE caso
+  // projeta (2022-2024) está nele.
+  const expectativas = [2026, 2027, 2028, 2029, 2030].flatMap((ano_ref) => [
+    { serie: "IPCA", ano_ref, mediana: 4.5, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref, mediana: 11.0, coletado_em: "2026-07-24" },
+  ]);
+  const anuais = [2019, 2020, 2021].flatMap((ano) => [
+    { serie: "IPCA", ano, meses: 12, retorno: 4.2 },
+    { serie: "SELIC", ano, meses: 12, retorno: 9.1 },
+  ]);
+  const mod = buildExportWorkbook({
+    caso: { nome: "Caso Antigo", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais, expectativas }, agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const nAnos = Math.floor((mod.columnCount - 2) / 13);
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  // 3 exercícios históricos (2019-2021) + 3 projetados (2022-2024).
+  const projetados = [3, 4, 5].filter((y) => y < nAnos);
+  checar(projetados.length === 3, "(31) o caso projeta 3 exercícios fora do horizonte do Focus", String(nAnos));
+
+  for (const rot of ["Inflação esperada (IPCA — Focus)", "Juro esperado (Selic — Focus)"]) {
+    const r = linhaDe(rot);
+    checar(r > 0, `(31) a premissa "${rot}" existe`);
+    if (r < 0) continue;
+    for (const y of projetados) {
+      const cell = mod.getRow(r).getCell(colFY(y));
+      // A afirmação central: sem Focus para o ano, a célula não carrega NADA —
+      // nem fórmula que resolve para zero, nem o literal 0. Zero numa célula de
+      // premissa é indistinguível de uma expectativa medida de 0%.
+      checar(cell.value == null,
+        `(31) sem Focus para ${2019 + y}, "${rot}" fica EM BRANCO (0 seria ausência disfarçada de dado)`,
+        JSON.stringify(cell.value));
+      const nota = String((cell.note as { texts?: Array<{ text: string }> } | undefined)?.texts?.map((t) => t.text).join("") ?? "");
+      checar(/EM BRANCO/.test(nota) && /2026/.test(nota),
+        "(31) …e a nota da célula declara a cobertura real do Focus", nota.slice(0, 140));
+      checar(new RegExp(String(2019 + y)).test(nota),
+        `(31) …nomeando o exercício desta coluna (${2019 + y})`, nota.slice(0, 140));
+    }
+  }
+
+  // O aviso que se lê SEM abrir nota nenhuma: nota de célula só alcança quem já
+  // desconfiou e foi até lá.
+  let avisoLinha = -1;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (/SEM EXPECTATIVA DO FOCUS/.test(String(mod.getRow(r).getCell(1).value ?? ""))) { avisoLinha = r; break; }
+  }
+  checar(avisoLinha > 0, "(31) a Modelagem avisa, em linha visível, que a projeção saiu sem Focus");
+  if (avisoLinha > 0) {
+    const txt = String(mod.getRow(avisoLinha).getCell(1).value ?? "");
+    checar(/2022/.test(txt) && /2024/.test(txt),
+      "(31) …nomeando os exercícios descobertos", txt.slice(0, 120));
+    checar(/juro zero/i.test(txt), "(31) …e dizendo o EFEITO (o bloco de dívida não cobra juro)");
+  }
+
+  // A conferência VIVA, que é o que sobrevive ao dono mover a linha do tempo:
+  // a nota foi escrita na exportação, a fórmula responde a cada recálculo.
+  const rCob = linhaDe("↳ cobertura do Focus (IPCA / Selic)");
+  checar(rCob > 0, "(31) existe linha de cobertura do Focus que recalcula com o arquivo");
+  if (rCob > 0) {
+    const f = String((mod.getRow(rCob).getCell(colFY(projetados[0])).value as { formula?: string })?.formula ?? "");
+    checar(/SEM FOCUS/.test(f) && /MATCH\(/.test(f),
+      "(31) …e ela pergunta ao arquivo (MATCH), não repete a decisão da geração", f.slice(0, 120));
+  }
+}
+
+// ---- 32: e o contrário — com Focus cobrindo o ano, nada de aviso -----------
+// A metade que impede o invariante 31 de virar "sempre em branco": um export
+// que apagasse a premissa SEMPRE passaria em todos os asserts acima. Aqui o
+// horizonte do Focus cobre os anos projetados e o comportamento tem de ser o
+// oposto — fórmula lendo a aba Macro, nenhuma célula vazia, nenhum aviso.
+{
+  const V = "v-focus-cobre";
+  const documentos: DocumentoParaExport[] = [2024, 2025].map((ano) => ({
+    id: `dc-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Atual Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2024, 2025].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) => [
+    { serie: "IPCA", ano_ref, mediana: 4.5, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref, mediana: 11.0, coletado_em: "2026-07-24" },
+  ]);
+  const mod = buildExportWorkbook({
+    caso: { nome: "Caso Atual", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais: [{ serie: "IPCA", ano: 2024, meses: 12, retorno: 4.2 }], expectativas },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  // 2024-2025 históricos, 2026-2028 projetados — todos no Focus desta fixture.
+  for (const y of [2, 3, 4]) {
+    const cell = mod.getRow(rIpca).getCell(colFY(y));
+    const f = String((cell.value as { formula?: string } | undefined)?.formula ?? "");
+    checar(f.includes("'Macro'!"),
+      `(32) com Focus para ${2024 + y}, a premissa LÊ a aba Macro em vez de ficar vazia`, f.slice(0, 90));
+  }
+  let aviso = false;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (/SEM EXPECTATIVA DO FOCUS/.test(String(mod.getRow(r).getCell(1).value ?? ""))) aviso = true;
+  }
+  checar(!aviso, "(32) e nenhum aviso de ausência aparece quando não há ausência");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

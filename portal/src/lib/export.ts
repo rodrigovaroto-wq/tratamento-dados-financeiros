@@ -2204,7 +2204,13 @@ function construirAbaMacroDados(
      // Quais anos, POR SÉRIE, têm os 12 meses. É o que a janela das médias precisa
      // saber — e não sabia, o que a deixava em branco com histórico de sobra.
      completosDe: Map<string, number[]>;
-     anosExp: number[]; linhaExpDe: Map<string, number>; colExpDe: Map<number, number> } {
+     anosExp: number[]; linhaExpDe: Map<string, number>; colExpDe: Map<number, number>;
+     // Quais anos, POR SÉRIE, têm mediana do Focus. `anosExp` é a união de todas
+     // as séries e NÃO serve para isso: o Focus publica horizontes diferentes
+     // por indicador, então uma série pode não ter o ano que outra tem. O modelo
+     // precisa da cobertura da SÉRIE que ele vai ler, senão apresenta ausência
+     // como expectativa zero.
+     anosExpDe: Map<string, number[]> } {
   const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
   const series = [...new Set(macro.anuais.map((a) => a.serie))].sort();
@@ -2245,6 +2251,7 @@ function construirAbaMacroDados(
   cabExp.eachCell((c) => { c.fill = HEADER_FILL; });
   const colExpDe = new Map(anosExp.map((a, i) => [a, i + 2]));
   const linhaExpDe = new Map<string, number>();
+  const anosExpDe = new Map<string, number[]>();
   const expPorChave = new Map(macro.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
   for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort()) {
     const row = sheet.addRow([serie]);
@@ -2252,6 +2259,7 @@ function construirAbaMacroDados(
     for (const ano of anosExp) {
       const e = expPorChave.get(`${serie}${CHAVE_SEP}${ano}`);
       if (!e) continue;
+      anosExpDe.set(serie, [...(anosExpDe.get(serie) ?? []), ano]);
       const cell = row.getCell(colExpDe.get(ano)!);
       cell.value = e.mediana;
       cell.numFmt = "0.00";
@@ -2262,7 +2270,7 @@ function construirAbaMacroDados(
       );
     }
   }
-  return { anos, series, linhaDe, colDe, completosDe, anosExp, linhaExpDe, colExpDe };
+  return { anos, series, linhaDe, colDe, completosDe, anosExp, linhaExpDe, colExpDe, anosExpDe };
 }
 
 // Aba VISÍVEL: nenhum número escrito — tudo referência ou fórmula.
@@ -2272,6 +2280,10 @@ export interface RefsMacro {
   linhaCabFocus: number;
   linhaFocusDe: Map<string, number>;
   ultimaColFocus: string;
+  // Cobertura REAL do Focus, por série. Sem isto o modelo não tem como
+  // distinguir "o mercado espera 0%" de "o Focus não fala deste ano" — e
+  // apresentava a segunda como a primeira, com nota afirmando procedência.
+  anosFocusDe: Map<string, number[]>;
 }
 
 /**
@@ -2433,17 +2445,108 @@ export function construirAbaMacro(
     linhaCabFocus: cabExp.number,
     linhaFocusDe,
     ultimaColFocus: sheet.getColumn(Math.max(2, 1 + d.anosExp.length)).letter,
+    anosFocusDe: d.anosExpDe,
   };
 }
 
-// Expectativa Focus do ANO de uma coluna. Sem macro carregada devolve 0 — a
-// premissa fica visível e zerada em vez de a aba inteira sumir.
-function focusMacro(macro: RefsMacro, serie: string, colAno: string): string {
+// Expectativa Focus do ANO de uma coluna.
+//
+// O QUE ESTA FUNÇÃO NÃO FAZ MAIS, e por quê. Ela devolvia o literal `"0"`
+// quando a série não tinha linha, e embrulhava a busca em `IFERROR(…,0)`
+// quando o ano projetado não estava no Focus. Os dois zeros chegavam à célula
+// de premissa PINTADA DE INPUT e com a nota afirmando "Mediana das
+// expectativas de mercado (Boletim Focus/BCB)" — isto é, ausência de dado
+// apresentada como dado publicado, que é a coisa que a doutrina (docs/01)
+// proíbe explicitamente.
+//
+// O gatilho é banal, não exótico: os anos que o modelo projeta derivam do
+// histórico do CASO. Um mandato com demonstrações de 2019-2021 projeta
+// 2022-2024, o Focus publicado cobre 2026-2030, e as TRÊS colunas saíam com
+// inflação e juro ZERADOS — enquanto a aba Macro, ao lado, exibia o Focus de
+// 2026-2030 como se estivesse tudo em ordem. Todo o bloco de dívida cobra juro
+// zero nesse cenário, e o modelo fecha bonito.
+//
+// Agora a função devolve `null` quando não há o que ler, e quem chama deixa a
+// CÉLULA EM BRANCO com nota dizendo o que falta. Em branco é 0 na aritmética do
+// Excel (o modelo não quebra), mas lê como "falta preencher" em vez de "o
+// mercado espera zero" — e é o que a própria aba "sem dado" já prometia:
+// "as premissas … ficam em branco".
+function focusMacro(macro: RefsMacro, serie: string, ano: number, colAno: string): string | null {
   const linha = macro.linhaFocusDe.get(serie);
-  if (!linha) return "0";
+  if (!linha) return null;
+  if (!(macro.anosFocusDe.get(serie) ?? []).includes(ano)) return null;
   const ref = `'${ABA_MACRO}'`;
+  // O IFERROR fica: a cobertura acima é do ANO DA EXPORTAÇÃO, e a célula do
+  // exercício é editável (o dono move a linha do tempo inteira mexendo em uma
+  // célula). Se ele mover para um ano fora do Focus, o IFERROR evita #N/A —
+  // e a linha "cobertura do Focus", que é VIVA, é quem denuncia o buraco.
   return `IFERROR(INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
     + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
+}
+
+// A premissa em si: a fórmula quando há Focus para ler, `null` (branco) quando
+// não há. Cobre também o caso "nenhum índice macro no arquivo", que antes
+// escrevia `"0"` — e um zero é indistinguível de uma expectativa medida de 0%.
+function premissaDoFocus(
+  macro: RefsMacro | null, serie: string, ano: number, colAno: string,
+): string | null {
+  if (!macro) return null;
+  const f = focusMacro(macro, serie, ano, colAno);
+  return f === null ? null : `${f}/100`;
+}
+
+// A nota da CÉLULA quando ela sai em branco — ela é o que transforma "vazio"
+// em "vazio por este motivo". Devolve null quando há dado: aí a nota da linha
+// (que descreve a fonte) já basta e repetir só polui.
+function notaDoFocus(
+  macro: RefsMacro | null, serie: string, ano: number, oQue: string,
+): string | null {
+  const semDado = (motivo: string) =>
+    `EM BRANCO — ${motivo}\n\n`
+    + `Ausência não é expectativa. Um 0 aqui projetaria ${oQue} zero para ${ano} com a aparência `
+    + "de consenso de mercado, e o modelo fecharia bonito em cima disso. Digite a premissa à mão "
+    + "se você tem uma fonte — e então o número é sua hipótese declarada, não índice publicado.";
+
+  if (!macro) {
+    return semDado(
+      "este arquivo não tem índice macro nenhum (ver a aba Macro, que diz se foi falta de coleta "
+      + "ou falha de consulta).",
+    );
+  }
+  if (!macro.linhaFocusDe.has(serie)) {
+    return semDado(`o Focus carregado não traz a série ${serie}.`);
+  }
+  const cobertos = macro.anosFocusDe.get(serie) ?? [];
+  if (!cobertos.includes(ano)) {
+    const faixa = cobertos.length
+      ? `${cobertos[0]}–${cobertos[cobertos.length - 1]}`
+      : "nenhum ano";
+    return semDado(
+      `o Boletim Focus publicado cobre ${faixa} para ${serie}, e esta coluna é o exercício ${ano}. `
+      + "Os exercícios do modelo derivam do histórico DESTE mandato — quando as demonstrações são "
+      + "antigas, o horizonte projetado fica atrás do horizonte que o Focus publica.",
+    );
+  }
+  return null;
+}
+
+// A linha de conferência VIVA que acompanha as duas premissas do Focus.
+//
+// A cobertura conferida no `focusMacro` é a do momento da exportação. A célula
+// do exercício é input — mover o "Último exercício realizado" ou o primeiro ano
+// remapeia todas as colunas, e a decisão tomada na geração fica velha. Esta
+// fórmula pergunta ao arquivo, a cada recálculo, se AQUELE ano tem Focus.
+//
+// Dois casos distintos, e os dois viram o mesmo aviso: o ano não está no
+// cabeçalho do Focus (MATCH falha → IFERROR) ou está, mas a série não tem
+// mediana nele (a célula da aba Macro é "" por construção).
+function coberturaFocus(macro: RefsMacro, serie: string, colAno: string): string {
+  const linha = macro.linhaFocusDe.get(serie);
+  if (!linha) return `"sem Focus para ${serie}"`;
+  const ref = `'${ABA_MACRO}'`;
+  const valor = `INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
+    + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0))`;
+  return `IFERROR(IF(${valor}="","SEM FOCUS","Focus "&${colAno}),"SEM FOCUS")`;
 }
 
 // ===========================================================================
@@ -2482,7 +2585,13 @@ interface LinhaModelo {
   // Como o ano consolida. Default: "fluxo" (soma dos 12 meses).
   consolida?: "fluxo" | "estoque" | "inicial" | "formula";
   // Consolidação própria (índices/margens: recalcular sobre o agregado anual).
-  anual?: (ctx: CtxAno) => string;
+  // `null` deixa a célula EM BRANCO de propósito — é como uma premissa declara
+  // que não tem valor de origem, em vez de fabricar um zero que parece medido.
+  anual?: (ctx: CtxAno) => string | null;
+  // Nota da célula ANUAL, por exercício. Diferente de `nota`, que fica no rótulo
+  // e vale para a linha toda: o que precisa ser dito aqui muda de ano para ano
+  // ("2024 não está no Focus" não vale para 2026).
+  notaAnual?: (ctx: CtxAno) => string | null;
   premissa?: boolean;
   fmt?: string;
   destaque?: boolean;
@@ -2509,6 +2618,10 @@ interface CtxMes {
 
 interface CtxAno {
   fy: string;
+  // O exercício deste bloco no momento da EXPORTAÇÃO. É o que permite decidir
+  // na geração o que só o arquivo saberia depois (ex.: se o Focus cobre este
+  // ano). Continua sendo uma foto: a célula do exercício é editável.
+  ano: number;
   primeiroMes: string;
   ultimoMes: string;
   fyAnt: string | null;
@@ -2710,11 +2823,19 @@ export function construirAbaModelagem(
         // --- consolidado anual ---
         const fyCell = r.getCell(idxFY(y));
         const ctxAno: CtxAno = {
-          fy: cfy(y), primeiroMes: cm(y, 0), ultimoMes: cm(y, 11),
+          fy: cfy(y), ano: primeiroAno + y, primeiroMes: cm(y, 0), ultimoMes: cm(y, 11),
           fyAnt: y > 0 ? cfy(y - 1) : null, ...base,
         };
+        if (d.notaAnual) {
+          const n = d.notaAnual(ctxAno);
+          if (n) fyCell.note = comoNota(n);
+        }
         if (d.anual) {
-          fyCell.value = { formula: d.anual(ctxAno) };
+          // `null` = em branco DE PROPÓSITO (ver LinhaModelo.anual). Não é o
+          // mesmo que "não tem regra anual": a célula segue pintada de input,
+          // com a nota dizendo o que falta, e o humano digita por cima.
+          const f = d.anual(ctxAno);
+          if (f !== null) fyCell.value = { formula: f };
         } else if (d.premissa) {
           // premissa vive NA coluna anual: é anual por natureza
         } else if (d.consolida === "estoque") {
@@ -2778,13 +2899,18 @@ export function construirAbaModelagem(
 
   escrever([
     { rotulo: "Inflação esperada (IPCA — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      anual: (a) => macro ? `${focusMacro(macro, "IPCA", `${a.fy}$${linhaAno}`)}/100` : "0",
+      anual: (a) => premissaDoFocus(macro, "IPCA", a.ano, `${a.fy}$${linhaAno}`),
+      notaAnual: (a) => notaDoFocus(macro, "IPCA", a.ano, "inflação"),
       nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro, Boletim "
-        + "Focus/BCB). Não é a média histórica: média do passado calibra, não prevê." },
+        + "Focus/BCB). Não é a média histórica: média do passado calibra, não prevê. Célula EM "
+        + "BRANCO significa que o Focus não cobre aquele exercício — a nota da célula diz qual "
+        + "é a cobertura publicada, e a linha 'cobertura do Focus' confere isso a cada recálculo." },
     { rotulo: "Juro esperado (Selic — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      anual: (a) => macro ? `${focusMacro(macro, "SELIC", `${a.fy}$${linhaAno}`)}/100` : "0",
+      anual: (a) => premissaDoFocus(macro, "SELIC", a.ano, `${a.fy}$${linhaAno}`),
+      notaAnual: (a) => notaDoFocus(macro, "SELIC", a.ano, "juro"),
       nota: "Precifica o custo da dívida. A conversão para o mês é GEOMÉTRICA — (1+i)^(1/12)−1, "
-        + "não i/12: dividir por 12 subestima o juro composto." },
+        + "não i/12: dividir por 12 subestima o juro composto. Em branco, o bloco de dívida cobra "
+        + "juro ZERO — é a premissa mais cara de deixar vazia." },
     { rotulo: "Parcela onerosa do passivo", premissa: true, fmt: PCT_FMT, unidade: "% do passivo",
       anual: () => "0",
       nota: "Quanto do passivo paga juro (empréstimos, financiamentos, debêntures). O export "
@@ -2837,6 +2963,58 @@ export function construirAbaModelagem(
     ipca: 0, selic: 1, parcelaOnerosa: 2, crescReal: 3, margemBruta: 4, sga: 5, depreciacao: 6,
     outrasFin: 7, aliquota: 8, capex: 9, pmr: 10, pmp: 11, pme: 12, divida: 13, socios: 14,
   } as const;
+
+  // ---- Cobertura do Focus: a conferência que acompanha a edição -------------
+  // Fica FORA do bloco de premissas de propósito: `P(i)` endereça as premissas
+  // por deslocamento a partir de `rPremissas`, e uma linha inserida no meio
+  // deslocaria todas as fórmulas do modelo em silêncio. A linha em branco
+  // ENCERRA o bloco — é o que separa premissa (o que se digita) de conferência
+  // (o que o arquivo responde), inclusive para quem conta as premissas.
+  linha("");
+  //
+  // Por que existir, já que as células vazias têm nota: a nota é do momento da
+  // exportação. O exercício é INPUT — mover "Último exercício realizado" ou o
+  // primeiro ano remapeia as colunas, e a nota fica velha sem avisar. Esta
+  // linha é fórmula: ela responde sobre o ano que está na coluna AGORA.
+  {
+    const rCob = linha("↳ cobertura do Focus (IPCA / Selic)", "confere");
+    rCob.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+    for (let y = 0; y < nAnos; y++) {
+      const cell = rCob.getCell(idxFY(y));
+      const colAno = `${cfy(y)}$${linhaAno}`;
+      cell.value = macro
+        ? { formula: `${coberturaFocus(macro, "IPCA", colAno)}&" / "&${coberturaFocus(macro, "SELIC", colAno)}` }
+        : "sem índice macro";
+      cell.alignment = { horizontal: "center" };
+      cell.font = { italic: true, size: 9 };
+    }
+    rCob.getCell(1).note = comoNota(
+      "\"SEM FOCUS\" quer dizer que o Boletim Focus carregado neste arquivo não tem expectativa "
+      + "para o exercício desta coluna — a premissa acima fica EM BRANCO e o modelo projeta como "
+      + "se inflação (ou juro) fosse zero naquele ano. Não é opinião do mercado: é ausência. "
+      + "Digite a premissa à mão ou rode a coleta macro para um horizonte que cubra estes anos.",
+    );
+  }
+
+  // O aviso de ANTES DE ABRIR A PLANILHA: quem exporta precisa saber que a
+  // projeção saiu sem inflação e sem juro, e a nota de uma célula não conta
+  // isso — ela só é lida por quem já foi até lá.
+  {
+    const projetados = Array.from({ length: nAnos }, (_, y) => primeiroAno + y).filter((a) => a > ultimoReal);
+    const semFocus = projetados.filter((a) =>
+      premissaDoFocus(macro, "IPCA", a, "X") === null || premissaDoFocus(macro, "SELIC", a, "X") === null);
+    if (semFocus.length > 0) {
+      const r = linha(
+        `⚠ SEM EXPECTATIVA DO FOCUS para ${semFocus.join(", ")} — `
+        + "as premissas de inflação e juro desses exercícios estão EM BRANCO, e o modelo os projeta "
+        + "com inflação zero e juro zero (o bloco de dívida não cobra juro nenhum). Preencha à mão "
+        + "ou amplie a coleta macro antes de usar estes números.",
+      );
+      r.font = { bold: true, size: 10, color: { argb: "FF991B1B" } };
+      r.getCell(1).fill = DIVERGENCIA_FILL;
+      linha("");
+    }
+  }
 
   // ======================= DÍVIDA ==========================================
   // Vem ANTES da DRE de propósito: o juro do mês nasce do saldo de dívida do mês
