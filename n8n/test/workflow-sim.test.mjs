@@ -872,3 +872,29 @@ test('Preparar Conteudo calcula SHA-256 do conteúdo e se abstém se não puder'
   });
   assert.notEqual(diff.json.hash, esperado);
 });
+
+// --- Não pagar extração de documento que não existe --------------------------
+// Com `onError: continueRegularOutput` nos nós Postgres, uma falha em
+// `Registrar Documento` empurra o item de erro adiante. Antes, `versaoId` virava
+// null em silêncio, a extração era EXECUTADA (dinheiro gasto) e
+// `fn_registrar_campos_extraidos(null, …)` retornava 0 descartando o
+// `falha_motivo`. A 0029 fecha o lado do banco; esta guarda fecha o do dinheiro.
+test('Montar Req Extracao recusa montar requisição sem documento_versao_id', async () => {
+  const prep = { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: { type: 'text', text: 'x' } } };
+  // item de erro típico do que o nó Postgres empurra quando falha: sem `r`
+  await assert.rejects(
+    () => run('Montar Req Extracao', { item: { json: { error: 'connection reset' } }, refs: { 'Preparar Conteudo': prep } }),
+    (e) => {
+      assert.match(e.message, /a extracao NAO foi chamada/, 'a mensagem tem de dizer que não gastou');
+      assert.match(e.message, /Registrar Documento/, 'e apontar a causa provável');
+      return true;
+    },
+  );
+  // E com versão presente, segue montando normalmente.
+  const ok = await run('Montar Req Extracao', {
+    item: { json: { r: { documento_versao_id: 'ver-1' } } },
+    refs: { 'Preparar Conteudo': prep },
+  });
+  assert.equal(ok.json.documento_versao_id, 'ver-1');
+  assert.ok(ok.json.openai_body.messages.length === 2);
+});

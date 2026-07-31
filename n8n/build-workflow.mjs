@@ -296,6 +296,23 @@ return {json:{...item, ...mergeClassification(fromName, fromAI)}};
 const CODE_REQ_EXTRACAO = `
 const reg=$json;
 const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;
+// SEM VERSAO, NAO SE MONTA REQUISICAO -- e' o que impede pagar por uma extracao
+// que nao tem onde ser gravada.
+//
+// O caminho era real e caro: com PG_RETRY (onError: continueRegularOutput), quando
+// "Registrar Documento" falha o item de erro segue adiante, versaoId virava null
+// SEM sinalizar nada, a extracao era EXECUTADA (dinheiro gasto) e
+// fn_registrar_campos_extraidos(null, ...) retornava 0 jogando fora o
+// falha_motivo antes do Sinal 3. Documento inexistente, chamada paga, zero
+// pendencia -- so' o log do n8n sabia. A 0029 fecha o lado do banco (registra em
+// evento_auditoria em vez de descartar); esta guarda fecha o lado do DINHEIRO.
+//
+// Lancar aqui e' seguro porque este no' tem onError: o item vira item de erro, o
+// lote CONTINUA, e nenhum token e' cobrado (o corpo nunca e' montado). O modo
+// runOnceForEachItem nao permite devolver zero itens -- por isso guarda, nao filtro.
+if(!versaoId){
+  throw new Error('Documento nao registrado no banco (documento_versao_id ausente): a extracao NAO foi chamada, para nao gastar credito com um documento que nao existe. Causa provavel: falha no no "Registrar Documento" -- ver o log desta execucao.');
+}
 const prep=$('Preparar Conteudo').item.json;
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
