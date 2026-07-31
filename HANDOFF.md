@@ -4,23 +4,88 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-30. **Estado do `main`:** mergeado até o **PR #63** (commit de merge
-`cc3faed`) — sessões 11 (DMPL/DVA), 12 (Modelagem v27), 13 (índices macro), 14 (DF auditada), 15
-(reextração por hash), 16 (teste v28) e 17 (v29/v30: macro sem RLS + diagnóstico de 429) estão TODAS no
-`main`, e **não há PR aberto**. Migrations `0001`→**`0028`**. **Cuidado: já houve DUAS sessões em
-paralelo** — o PR #57 entrou entre o #56 e o #58, e foi lendo o `.xlsx` do dono que eu descobri isso.
-Confirme o `main` com `git ls-remote` E a lista de PRs antes de assumir qualquer coisa. Branch de
-trabalho: `claude/handoff-continuation-orqkmn`, restartada de `origin/main` depois do merge do #63 —
-ver "Git / PR workflow" na seção 4 antes de commitar.
+**Última atualização:** 2026-07-31. **Estado do `main`:** mergeado até o **PR #67** (Etapa 1 completa).
+Migrations `0001`→**`0031`** (a `0031` está no PR #68, ainda ABERTO). Branch de trabalho:
+`claude/project-next-steps-2ttjhy`. **Cuidado: já houve DUAS sessões em paralelo** — o PR #57 entrou
+entre o #56 e o #58. Confirme o `main` com `git ls-remote` E a lista de PRs antes de assumir nada.
 
-⚠️ **O código está pronto; o que falta é AÇÃO DO DONO no n8n/Supabase/OpenAI** — nada aqui destrava o
-429 sem os passos listados logo abaixo. Se o dono chegar com um export novo, comece pelo item 2.
+**Contadores atuais** (o texto antigo abaixo cita números velhos — estes valem):
+`node --test 'n8n/test/*.test.mjs'` = **153**; `verificar-export.mts` = **160 invariantes**;
+`db/test/run.sh` = reconciliação + macro + reextração + **canonicalização (16 asserts)** + seed;
+**novo:** `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts` = **18 asserts**
+encadeando extração → banco → export (era o que nenhuma suíte cobria).
 
-**Contadores atuais** (o texto antigo abaixo pode citar números velhos — estes valem):
-`node --test 'n8n/test/*.test.mjs'` = **116**; `verificar-export.mts` = **126 invariantes**;
-`db/test/run.sh` = 21 reconciliação + 13 macro + 12 reextração.
+## ⚠️ COMECE AQUI — o 429 está RESOLVIDO; o plano agora é o do dono, etapa por etapa
 
-## ⚠️ COMECE AQUI — o bloqueio de hoje é o 429 da OpenAI, e a causa dele NÃO está determinada
+**O 429 era TETO DE GASTO DO PROJETO na OpenAI** (`project_spend_limit_exceeded`), não crédito nem
+cadência. O `neverError` da sessão 17 fez o corpo real da OpenAI chegar ao pipeline e a causa saiu
+nomeada. O dono subiu o teto; o teste **v33 rodou os 14 documentos em 7m14s com sucesso**.
+
+O dono definiu um plano de 6 etapas (estabilização → macro → automatizar modelagem → abas → seletor
+de inputs → validação). **Regra dele: uma etapa por vez, e só avança depois da validação dele.**
+O plano detalhado da etapa corrente vive em `/root/.claude/plans/` da sessão; se não existir, releia
+esta seção e refaça.
+
+### Etapa 1 — CONCLUÍDA e mergeada (PR #67, 7 fatias)
+
+Não havia regressão: havia defeitos que rodavam sem erro e entregavam número errado. Os que mais
+importam, todos com invariante e vacuidade medida:
+
+- **A escala NUNCA era aplicada, em nenhuma aba.** `grep escala export.ts` dava zero. Balanço em
+  milhar + fonte em unidade na mesma coluna = erro de **~496x**, sem uma marca. Corrigido no LIMITE
+  DE NORMALIZAÇÃO (uma vez, na entrada), não célula por célula — assim `SUM`, AV%, indicadores e a
+  Modelagem ficam certos sem serem tocados. **Confirmado em produção no v33: "20 linhas vinham em R$
+  e foram convertidas".**
+- **Conta de RESULTADO no Ativo Circulante:** `"mercadoria"` está em `ATIVO_CIRC_KW` (certo, é
+  estoque), e por isso a top line da DRE era classificada ATIVAMENTE errada. `ehContaDeResultado`
+  faz o classificador de balanço se ABSTER, e a abstenção reroteia para a DRE.
+- **`0029`:** auto-aceite atropelava as guardas anti-fabricação (extração alucinada entrava como FATO
+  ACEITO); extração vazia sem erro de API não gerava pendência; `extracao_falhou` nunca fechava;
+  documento inexistente descartava o motivo da falha e a extração era PAGA.
+- **`0030`:** entidade e período canônicos na ESCRITA. A duplicidade de entidade era **regressão do
+  PR #65** (nome do arquivo sem acento × diagnóstico com acento).
+- **`0031`** (no #68): o caixa estava na SEÇÃO e a reconciliação só olhava a chave.
+- **Teto de gasto de US$ 3 por execução** em `n8n/lib/custo.mjs` + nó `Orcamento do Lote`.
+- **`test/e2e/run.mts`:** a validação encadeada que não existia.
+
+### Etapa 2 — EM ANDAMENTO (PR #68, 3 fatias de 6)
+
+**A causa não era a que a etapa supunha.** RLS/GRANT estava fechado pela `0028`. Era a **COLETA**:
+
+- **O nó HTTP do n8n EXPLODE resposta JSON que é array em N itens.** O SGS devolve 132 objetos e
+  `Manter Contexto SGS` guardava `__corpo` = UM objeto ⇒ `!Array.isArray(corpo) continue` descartava
+  **~792 itens das 6 séries mensais**. O ramo SIDRA já remontava o array; a assimetria era o sintoma.
+  E ninguém viu porque o seed (920 obs) faz a aba **congelar** em vez de esvaziar.
+- A coleta agora **falha alto** (zero nunca é legítimo: o SGS devolve 132 meses por chamada).
+- **As médias 3a/5a/10a saíam em branco com 12 anos completos na base** — a janela era posicional e
+  a última coluna é sempre o ano parcial. Agora nomeia os anos completos um a um.
+- O último mirror manual (`numeroMacro` no Focus) passou a ser embutido por `toString()`.
+
+**FALTA na Etapa 2** (fatias 4-6): Focus ausente vira **0,0% com nota afirmando procedência** (é o
+defeito mais enganoso que resta); falha PARCIAL do macro descarta `macroErro`; sem entidade
+reconhecida nem a aba de aviso é criada; **ligar IGP-M, PIB, câmbio e as médias às premissas** (o
+dono decidiu que isso entra na Etapa 2 — hoje só 2 de 15 premissas leem macro); câmbio perde janeiro
+todo ano (`0025:227`, e a fixture do teste CONSAGRA o erro); Focus sem filtro de `baseCalculo`.
+
+### ABERTO e não resolvido — leia antes de mexer no Balanço
+
+**Dupla contagem no total do grupo.** No v33, o Imobilizado usou o TOTAL INFORMADO (5.590, que já
+inclui "Ferramental e moldes") e o Ferramental foi somado DE NOVO em "Outros Ativos Não Circulantes":
+Ativo Não Circulante inflado em 3.600. O vocabulário foi corrigido, mas **a guarda no PARENTE
+continua aberta**: sempre que uma conta de uma seção com total informado cai numa seção irmã, o grupo
+conta duas vezes e nada detecta.
+
+⚠️ **Duas fixtures minhas para provar isso nasceram VAZIAS** (passavam com o bug ligado): uma
+declarava `secao` (e aí `subsecaoAutoritativa` já acertava), a outra tinha `ordem` entre contas do
+Imobilizado (e o consenso de irmãos acertava). Fechar isso pede as linhas REAIS da extração do v33 —
+não invente fixture, ela vai passar verde e te enganar.
+
+**As 5 PRÉ-CONDIÇÃO de Ativo Total / Passivo+PL do v33 continuam.** A `0030` corrigiu o casamento de
+COLUNA (combinado); estes são balanços individuais, onde o problema é o casamento de RÓTULO — caminho
+diferente. E há uma DIVERGÊNCIA real (Ativo 158.801 vs Passivo+PL 126.673, diferença 32.128) que
+pode ser a mesma família de dupla contagem.
+
+ — o bloqueio de hoje é o 429 da OpenAI, e a causa dele NÃO está determinada
 
 **O estado honesto, em uma frase:** no **teste v30** os **14 de 14** documentos falharam com HTTP 429,
 e a resposta que chegou ao pipeline **não continha o corpo de erro da OpenAI** — então o código
@@ -28,7 +93,18 @@ classifica como `limite_indeterminado`, que é a verdade, e não como "cadência
 que a sessão 17 fez foi (a) tirar o chute da frente e (b) instrumentar para que a **próxima** execução
 capture a causa real. **Não recomece inventando hipótese: leia §"Sessão 17" abaixo antes de agir.**
 
-### O fato que refuta a hipótese mais fácil
+---
+
+## Histórico: como o 429 foi diagnosticado (RESOLVIDO — mantido pelo método)
+
+Fica aqui porque o **método** vale para o próximo mistério, não porque o problema esteja aberto.
+A causa final foi `project_spend_limit_exceeded` — teto de gasto do PROJETO, invisível nas telas de
+Billing e de Limits. Duas lições que se repetem: (1) uma frase de erro escrita pelo n8n em cima de
+qualquer 429 não é evidência de cadência, e acreditar nela me fez subir o intervalo 6s→12s sem
+evidência; (2) sem `neverError`, o corpo real da OpenAI nunca chega ao pipeline e o diagnóstico é
+cego. Foi o `neverError` que fez a causa aparecer com nome no v31.
+
+### O fato que refutou a hipótese mais fácil
 
 O dono colou a saída do nó `OpenAI Extrair`. É **isto**, sem nada omitido:
 
