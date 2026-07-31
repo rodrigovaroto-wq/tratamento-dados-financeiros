@@ -2814,6 +2814,94 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+// ---- 37: 12 meses NÃO bastam — ano sem retorno calculável fica fora da média
+// Achado na revisão crítica da sessão 19 (item pedido pelo dono), e o defeito é
+// da interação entre duas coisas que estavam certas isoladamente.
+//
+// A `0032` fez a série de NÍVEL (câmbio) devolver retorno NULL no primeiro
+// exercício: sem o fechamento do ano anterior não existe variação, e inventar
+// uma era o defeito que ela corrigiu. Mas `meses` continua 12 — o ano TEM as
+// doze observações, só não tem base. E o export decidia "exercício completo"
+// olhando SÓ `meses === 12`.
+//
+// O efeito, medido antes da correção: o ano entrava em `completosDe`, a janela
+// de 3 anos o NOMEAVA, e a média virava PRODUCT(1+B3/100, …) com B3 resolvendo
+// para "" — a célula da aba visível é IF(dados!X="","",dados!X), e texto vazio
+// não é célula vazia: ""/100 é #VALUE!, o erro sobe pelo PRODUCT, e o IFERROR
+// de fora devolve "". A média 3a saía EM BRANCO com a nota afirmando "Média
+// geométrica dos exercícios completos: 2023, 2024, 2025" — nota afirmando um
+// cálculo que não aconteceu.
+//
+// É REACHABLE, não teórico: basta a coleta do SGS começar em janeiro. A janela
+// da coleta é por DATA (n8n/lib/macro.mjs), então é o caso normal, não o raro.
+// O seed atual escapa por acidente — ele começa em agosto de 2015.
+{
+  const V = "v-nulo-12m";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-n12", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Nível Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 1, unidade: "milhar", ordem: 0 }),
+  ];
+  // Coleta começando em JANEIRO: o primeiro ano tem 12 meses E retorno NULL.
+  const anuais = [
+    { serie: "CAMBIO_USD", ano: 2023, meses: 12, retorno: null },
+    { serie: "CAMBIO_USD", ano: 2024, meses: 12, retorno: 8.1 },
+    { serie: "CAMBIO_USD", ano: 2025, meses: 12, retorno: -3.2 },
+  ];
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    macro: { anuais: anuais as never, expectativas: [] },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Macro")!;
+
+  let rCambio = -1;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    if (/CAMBIO_USD/.test(String(ws.getRow(r).getCell(1).value ?? ""))) { rCambio = r; break; }
+  }
+  checar(rCambio > 0, "(37) a série de nível foi emitida na aba Macro");
+  if (rCambio > 0) {
+    // Colunas: 2..4 são os anos; 5,6,7 são as médias 3a/5a/10a.
+    const media3 = ws.getRow(rCambio).getCell(5);
+    const nota3 = String((media3.note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    // O comportamento afirmado: a janela de 3 anos NÃO fecha, porque só há 2
+    // exercícios com retorno. Antes ela "fechava" e o resultado era uma célula
+    // vazia com uma nota falsa.
+    checar(media3.value == null,
+      "(37) com 2 exercícios calculáveis, a média 3a fica vazia (não finge fechar)",
+      JSON.stringify(media3.value));
+    checar(/exige 3 exerc/i.test(nota3) && /há 2/.test(nota3),
+      "(37) …e a nota diz a VERDADE sobre quantos existem", nota3.slice(0, 160));
+    checar(!/2023/.test(nota3),
+      "(37) …sem nomear o ano que não tem retorno como se tivesse", nota3.slice(0, 160));
+
+    // E a célula do ano sem base diz POR QUE está vazia. "12 meses observados"
+    // sozinho é contraditório com a célula em branco ao lado.
+    const notaAno = String((ws.getRow(rCambio).getCell(2).note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    // A nota do ano vive na aba de DADOS (a visível é fórmula); busca lá.
+    const dados = buildExportWorkbook({
+      caso: { nome: "C", produto: "rx" }, documentos, campos,
+      macro: { anuais: anuais as never, expectativas: [] },
+      agora: new Date("2026-07-31T12:00:00Z"),
+    }).getWorksheet("Macro (dados)")!;
+    let rD = -1;
+    for (let r = 1; r <= dados.rowCount; r++) {
+      if (/CAMBIO_USD/.test(String(dados.getRow(r).getCell(1).value ?? ""))) { rD = r; break; }
+    }
+    const nd = String((dados.getRow(rD).getCell(2).note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    checar(dados.getRow(rD).getCell(2).value == null,
+      "(37) o ano sem base não recebe número (0% seria a invenção que a 0032 tirou)");
+    checar(/SEM RETORNO CALCULÁVEL/.test(nd) && /0032/.test(nd),
+      "(37) …e a nota dele diz a causa, não só que tem 12 meses", nd.slice(0, 200));
+    void notaAno;
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);
