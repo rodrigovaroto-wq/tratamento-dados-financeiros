@@ -24,6 +24,7 @@ import { codigosConhecidos } from './lib/openai.mjs';
 import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
+import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -79,6 +80,36 @@ const FONTE_DIAGNOSTICO_ERRO = `const diagnosticarErroApi = ${diagnosticarErroAp
 // arquivo nunca era lido para isso); ver o comentário longo em lib/classifier.mjs
 // para por que ela NÃO mexe na confiança.
 const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};`;
+
+// Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
+const FONTE_ORCAMENTO_LOTE = `const orcamentoDoLote = ${orcamentoDoLote.toString()};`;
+const FONTE_CUSTO_CHAMADA = `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
+const custoDaChamada = ${custoDaChamada.toString()};`;
+
+// --- Code (ALL ITEMS): o TETO DE GASTO POR EXECUÇÃO -------------------------
+// Roda depois de `Classificar Nome` e antes de `Preparar Conteudo`, e o lugar é
+// o ponto todo: aqui o número de chamadas do lote é EXATO (cada item já sabe se
+// `precisa_fallback_openai`), e nada foi enviado à OpenAI nem gravado no banco.
+// Barrar aqui custa zero; barrar depois é o v31 — 8 documentos registrados sem
+// extração porque o teto da OpenAI cortou no meio.
+//
+// Por que contar as chamadas em vez dos documentos: um documento cujo nome não
+// resolve o tipo paga o PDF DUAS vezes (classificação por conteúdo + extração).
+// No v31 isso valia para 8 dos 14 — 22 chamadas num lote de 14 documentos, que
+// com este teto de US$ 3 teria sido RECUSADO antes de gastar. Depois de renomear
+// para a notação de f0/03 (`12M25`/`L24M`), o mesmo lote são 14 chamadas e passa.
+const CODE_ORCAMENTO = `
+${FONTE_ORCAMENTO_LOTE}
+const itens = $input.all();
+const comFallback = itens.filter(i => i.json.precisa_fallback_openai).length;
+const chamadas = itens.length + comFallback;
+const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: chamadas / itens.length, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD} });
+// Recusa o lote INTEIRO. Não existe "roda os que cabem" de propósito: metade
+// registrada sem extração e metade sem registro nenhum é estado que dá mais
+// trabalho para desfazer do que o reenvio que esta mensagem pede.
+if (!r.cabe) throw new Error(r.mensagem);
+return itens.map(i => ({ json: { ...i.json, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas }, binary: i.binary }));
+`.trim();
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
 // Binário vem do FORM (o Postgres anterior não o repassa). Chave normalizada
@@ -243,6 +274,7 @@ return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, open
 // (achado em produção, sessão 7 cont.⁷ — "teste v14").
 const CODE_PARSE_EXTRACAO = `
 ${FONTE_DIAGNOSTICO_ERRO}
+${FONTE_CUSTO_CHAMADA}
 const ctx=$('Montar Req Extracao').item.json;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
@@ -279,7 +311,13 @@ const diagnostico={
   resumo: d.resumo??null,
   justificativa: d.justificativa??'',
 };
-return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaMotivo}};
+// Custo REAL desta chamada, do bloco \`usage\` que a OpenAI devolve. Não vai
+// para o banco (exigiria migration) — vai para a saída do nó, visível na
+// execução do n8n. É com ele que CUSTO_ESTIMADO_DOC_USD deve ser recalibrado:
+// hoje o teto de US$ 3 por execução decide em cima de uma ESTIMATIVA declarada,
+// e trocar estimativa por medição é o único jeito honesto de apertar o teto.
+const custo_usd=custoDaChamada(resp?.usage, '${MODEL_EXTRACAO}');
+return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaMotivo, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -421,6 +459,7 @@ const nodes = [
 
   node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400),
 
+  node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }, 700, 260),
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
@@ -528,7 +567,11 @@ const connections = {
   'Intake (Form)': { main: [[{ node: 'Upsert Caso (Postgres)', type: 'main', index: 0 }]] },
   'Upsert Caso (Postgres)': { main: [[{ node: 'Listar Arquivos', type: 'main', index: 0 }]] },
   'Listar Arquivos': { main: [[{ node: 'Classificar Nome', type: 'main', index: 0 }]] },
-  'Classificar Nome': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
+  // O orçamento entra AQUI, entre a classificação por nome e o preparo do
+  // conteúdo: é o último ponto em que o lote inteiro está visível de uma vez e
+  // ainda não custou nada (nem chamada à OpenAI, nem linha no banco).
+  'Classificar Nome': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
+  'Orcamento do Lote': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
   // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
   'Preparar Conteudo': { main: [[
     { node: 'Upload Storage', type: 'main', index: 0 },

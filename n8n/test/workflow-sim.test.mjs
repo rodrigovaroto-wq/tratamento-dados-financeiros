@@ -13,6 +13,7 @@ import { codigosConhecidos } from '../lib/openai.mjs';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
+import { orcamentoDoLote } from '../lib/custo.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -440,6 +441,14 @@ test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos 
   assert.ok(reducaoPct >= 15, `esperava >=15% de redução por linha, obteve ${reducaoPct.toFixed(1)}%`);
 });
 
+// O guarda de orçamento tem de estar ANTES de qualquer gasto: depois da
+// classificação por nome (que é grátis e diz quantas chamadas o lote fará) e
+// antes de `Preparar Conteudo`, que abre os binários para as chamadas.
+test('Topologia: o teto de gasto fica entre a classificação por nome e o conteúdo', () => {
+  assert.deepEqual(wf.connections['Classificar Nome'].main[0].map((c) => c.node), ['Orcamento do Lote']);
+  assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+});
+
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   const destinosDePreparar = wf.connections['Preparar Conteudo'].main[0].map((c) => c.node);
   assert.deepEqual(destinosDePreparar.sort(), ['Precisa Fallback?', 'Upload Storage'].sort());
@@ -452,8 +461,12 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
   const nomes = wf.nodes.map((n) => n.name);
   for (const n of wf.nodes) {
     if (n.type === 'n8n-nodes-base.code') {
-      if (n.name === 'Listar Arquivos') {
-        assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} faz fan-out`);
+      // Dois nós legitimamente veem o LOTE inteiro, por motivos diferentes:
+      // `Listar Arquivos` faz fan-out (1 item → N), e `Orcamento do Lote` é N→N
+      // mas precisa contar o lote para decidir se ele cabe no teto de gasto —
+      // uma decisão que por definição não existe olhando um item por vez.
+      if (n.name === 'Listar Arquivos' || n.name === 'Orcamento do Lote') {
+        assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
       }
@@ -693,4 +706,68 @@ test('Classificar Nome: entidade sai do nome do arquivo, e a confiança não mud
     // o nó e a lib têm de concordar — é o ponto de existir um mirror testado
     assert.equal(out.json.entidade, classifyByFilename(nome).entidade, `nó × lib para ${nome}`);
   }
+});
+
+// --- O teto de gasto por execução, executando o nó REAL ----------------------
+// Pedido do dono depois do v31: no máximo US$ 3 por execução completa, com o teto
+// da OpenAI em US$ 5. As duas defesas são de camadas diferentes e nenhuma
+// substitui a outra — ver o comentário do topo de lib/custo.mjs. Este teste cobre
+// a de dentro: recusar o lote ANTES da primeira chamada.
+const itemDoc = (nome, precisaFallback) => ({
+  json: { caso_id: 'c-1', nome_original: nome, precisa_fallback_openai: precisaFallback },
+  binary: { data: { fileName: nome, mimeType: 'application/pdf', data: '' } },
+});
+
+test('Orcamento do Lote: o lote do v31 é RECUSADO antes do renome', async () => {
+  // 14 documentos, 8 deles precisando da classificação por conteúdo = 22 chamadas.
+  const items = [
+    ...Array.from({ length: 6 }, (_, i) => itemDoc(`0${i + 1}_BP_X_2025x2024.pdf`, false)),
+    ...Array.from({ length: 8 }, (_, i) => itemDoc(`1${i}_DFC_X_2025.pdf`, true)),
+  ];
+  await assert.rejects(
+    () => run('Orcamento do Lote', { items }),
+    (e) => {
+      assert.match(e.message, /Lote recusado ANTES de gastar/);
+      assert.match(e.message, /22 chamada/, 'a mensagem conta as CHAMADAS, não os documentos');
+      assert.match(e.message, /Nada foi enviado à OpenAI e nada foi gravado/,
+        'quem lê o erro precisa saber que reenviar é seguro');
+      return true;
+    },
+  );
+});
+
+test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobrevive', async () => {
+  // Mesmos 14 documentos, agora todos resolvidos pelo nome (12M25/L24M) = 14 chamadas.
+  const items = Array.from({ length: 14 }, (_, i) => itemDoc(`${i + 1}_BP_X_12M25.pdf`, false));
+  const out = await run('Orcamento do Lote', { items });
+  assert.equal(out.length, 14, 'passa os 14 adiante');
+  assert.equal(out[0].json.orcamento_estimado_usd, 2.1);
+  assert.equal(out[0].json.orcamento_chamadas, 14);
+  // Regra 4 do topo do gerador: Code que repassa arquivo DEVE devolver `binary`.
+  // Perder isso aqui deixaria `Preparar Conteudo` sem arquivo — e o sintoma seria
+  // "conteudo nao suportado" em todo documento, longe da causa.
+  assert.ok(out[13].binary?.data, 'o binário do último item sobreviveu ao nó');
+  assert.equal(out[13].binary.data.fileName, '14_BP_X_12M25.pdf');
+});
+
+test('Orcamento do Lote carrega o MESMO orcamentoDoLote de lib/custo.mjs', () => {
+  assert.ok(code('Orcamento do Lote').includes(orcamentoDoLote.toString()),
+    'o orçamento embutido no nó divergiu da fonte em lib/custo.mjs');
+});
+
+test('Parse Extracao mede o custo real da chamada a partir do usage', async () => {
+  const req = { json: { documento_versao_id: 'ver-1', tipo: 'BALANCO', openai_body: {} } };
+  const resp = {
+    json: {
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        moeda: 'BRL', unidade: 'milhar',
+        diagnostico: { entidade: 'Vertentes Metalurgica', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual', periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'ok', justificativa: 'ok' },
+        linhas: [{ s: 'Ativo', sc: 'ativo_circulante', ec: null, pc: null, k: 'Caixa', vt: '1.000', vn: 1000, op: 1, cf: 0.9 }],
+      }) } }],
+      usage: { prompt_tokens: 10_000, completion_tokens: 8_000 },
+    },
+  };
+  const out = await run('Parse Extracao', { item: resp, refs: { 'Montar Req Extracao': req } });
+  assert.equal(out.json.custo_usd, 0.105, 'custo medido, não estimado');
+  assert.deepEqual(out.json.tokens, { entrada: 10_000, saida: 8_000, cache: 0 });
 });
