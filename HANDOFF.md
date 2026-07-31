@@ -4,17 +4,183 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-31 (sessão 19). **Estado do `main`:** mergeado até o **PR #68**
-(Etapa 1 completa + 3 fatias da Etapa 2). Migrations `0001`→**`0032`** (a `0032` está no PR #69,
-ABERTO). Branch de trabalho: `claude/handoff-next-steps-6k88f2`. **Cuidado: já houve DUAS sessões em
-paralelo** — o PR #57 entrou entre o #56 e o #58. Confirme o `main` com `git ls-remote` E a lista de
-PRs antes de assumir nada.
+**Última atualização:** 2026-07-31 (sessão 20). **Estado do `main`:** mergeado até o **PR #69**
+(Etapa 1 completa + 5 fatias da Etapa 2, `main` em `f2b801f`). Migrations `0001`→**`0033`** (a
+`0033` está na branch de trabalho, NÃO aplicada). Branch de trabalho:
+**`claude/handoff-next-steps-6k88f2-7pv76w`**. **Cuidado: já houve sessões em paralelo neste repo** —
+confirme o `main` com `git fetch` E a lista de PRs antes de assumir nada.
+
+**AGORA EXISTE CI.** `.github/workflows/suites.yml` roda as quatro suítes, os três geradores (com
+`git diff --exit-code`), tsc, eslint e o build, em todo push e PR. Se você mudar algo e o PR ficar
+vermelho, é regressão sua — não é "o CI que é chato".
 
 **Contadores atuais** (o texto antigo abaixo cita números velhos — estes valem):
-`node --test 'n8n/test/*.test.mjs'` = **160**; `verificar-export.mts` = **198 invariantes**;
-`db/test/run.sh` = reconciliação + macro + reextração + canonicalização (16) + seed, com **32
+`node --test 'n8n/test/*.test.mjs'` = **160**; `verificar-export.mts` = **273 invariantes**;
+`db/test/run.sh` = reconciliação + macro + reextração + canonicalização + seed, com **33
 migrations**; `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts` = **18
 asserts** encadeando extração → banco → export (é a única suíte que cobre a COSTURA entre as três).
+
+## Sessão 20 (2026-07-31, noite) — Etapa 2 FECHADA, dupla contagem sinalizada, e CI
+
+Rodou sozinha, sem supervisão, a partir de `docs/PROMPT_CONTINUACAO.md`. Cinco frentes, todas
+commitadas na branch acima.
+
+### 1. Etapa 2 FECHADA — bloco "REFERÊNCIAS MACRO" na Modelagem (`a545c28`)
+
+O placar que motivou, medido antes de escrever: das 15 premissas, **2** liam macro; das 6 séries
+históricas, **0** alimentavam fórmula (as 18 células de média 3a/5a/10a não moviam nada).
+
+Entrou o bloco que o dono aprovou: IGP-M, PIB e câmbio do Focus **por exercício** + as médias
+3a/5a/10a por série, **tudo em fórmula lendo a aba Macro**, com nota dizendo a fonte, **o que a
+linha deveria dirigir**, e que ela **não dirige nada hoje** porque o seletor é a Etapa 5. Cabeçalho
+diz isso em linha visível: referência que parece premissa é pior que nenhuma.
+
+**Duas armadilhas que o bloco teve de desarmar, e que a próxima sessão precisa conhecer:**
+- **Câmbio é NÍVEL, não taxa.** O Focus publica câmbio em R$/US$ (5,40), as outras séries em % a.a..
+  Dividir por 100 e formatar como % publicaria "5,4%" no lugar de "R$ 5,4000" — mesma família do
+  erro de escala de ~496x da Etapa 1, e sem sinal nenhum na tela.
+- **Célula de origem vazia vale 0 no Excel.** A média sem N exercícios completos fica LITERALMENTE
+  vazia na aba Macro (fatia 3a, de propósito). Referência crua a ela publicaria "0,0%" como média de
+  10 anos. Daí o `IF(origem="","",origem)` em cada uma das 18.
+
+Invariante 35, 57 asserts. Não-vacuidade medida em 5 mutações.
+
+### 2. Dupla contagem no total do grupo — o bug ABERTO mais caro, agora SINALIZADO (`37de0e5`)
+
+**Reproduzi o arranjo real do v33** (Balanço da Componentes: 14.200 + 3.600 + 890 − 13.100 = 5.590,
+com o 5.590 impresso): conta anotada com a seção de TOPO em vez da subseção cai em "Outros Ativos
+Não Circulantes", irmã do Imobilizado, e o grupo a conta duas vezes.
+
+O export agora escreve uma linha visível **nomeando a conta suspeita**, as duas seções e a diferença
+medida, com nota trazendo **as duas leituras** — e **não corrige sozinho** (docs/04). Reportado UMA
+vez, no grupo onde as duas seções são irmãs; repetir no ATIVO ensinaria o leitor a ignorar avisos.
+
+**SOBRE A FIXTURE — leia antes de mexer.** A conta do v33 era "Ferramental e moldes" e ela NÃO serve
+mais: a correção de vocabulário da sessão 18 (invariante 30) faz esse rótulo ser Imobilizado mesmo
+sem seção declarada. MEDIDO:
+```
+classificarConta("balanco","Ativo Não Circulante","Ferramental e moldes",null) -> imobilizado
+classificarConta("balanco","Ativo Não Circulante","Bens em comodato",null)     -> ativo_nao_circulante
+```
+A instância está fechada; a CLASSE não estava. A fixture usa "Bens em comodato" (conta de imobilizado
+real, CPC 27, que o vocabulário genuinamente não reconhece), com a seção de TOPO declarada e a ordem
+longe da vizinhança — que é o arranjo que a produção tinha.
+
+**SEGUNDO DEFEITO, achado ao escrever o teste:** a marca de divergência no CABEÇALHO da seção
+**nunca apareceu**. O cabeçalho é linha reservada e preenchida no fim com `row.fill = fill`, que no
+ExcelJS repinta a linha inteira e apagava o destaque escrito antes. A pintura passou a ser adiada
+(`pintarNoFim`) para depois de a aba inteira ser emitida. **Se você escrever destaque em célula de
+cabeçalho de seção, use `pintarNoFim` — escrever direto não sobrevive.**
+
+Invariante 36, 12 asserts, com contraprova. Não-vacuidade medida em 3 mutações.
+
+### 3. Pré-condições de Ativo × Passivo+PL — `db/migrations/0033` (`1f95d62`)
+
+**O que eu MEDI: a pré-condição NÃO é reproduzível pelo book.** Rodei a A.1 contra o book sintético
+inteiro pelo arnês e2e (migrations reais, gravação pelas funções reais): as **7** entidades/períodos
+dão `ok`. A falha do v33 veio do que a extração da OpenAI emitiu naquele lote, que não está
+versionado aqui. **Não inventei fixture para "provar" uma causa que não tenho como medir.**
+
+O que a `0033` entrega é a mensagem que teria dito a causa na hora: nomeia o LADO que faltou, o ano,
+as colunas tentadas, e **LISTA os rótulos que a extração trouxe**. E, em qualquer resultado, declara
+a ORIGEM dos dois lados (linha impressa × soma de seção do fallback) — porque "Ativo 158.801 vs
+Passivo+PL 126.673" não diz se a divergência é do documento ou se uma seção não classificada sumiu
+da soma, e são investigações diferentes.
+
+**A lista de candidatos NÃO filtra por coluna, e isso é decisão medida.** Filtrar reproduziria o
+defeito que se quer diagnosticar: quando a causa é o casamento de COLUNA (a família que a `0030`
+corrigiu), o rótulo certo existe e some da lista. Escrevi a versão filtrada primeiro e o teste 7
+reprovou com "nenhum rótulo … foi extraído" apesar de o rótulo existir — foi assim que apareceu.
+
+**Nenhum critério de casamento foi afrouxado.** Alargar o `like` fabricaria um casamento.
+
+Testes 6 (reescrito) e 7 (novo) em `db/test/reconciliacao.test.sql` — as duas condutas opostas que a
+mensagem antiga não distinguia: "reextrair" × "mexer no padrão". Não-vacuidade medida trocando a
+`0033` por `select 1;` e reconstruindo o banco.
+
+### 4. CI (`75be07c`, `a7bfee5`) — e ele achou defeito na PRIMEIRA execução
+
+`.github/workflows/suites.yml`: n8n, os três geradores **com `git diff --exit-code`**, export, db
+contra serviço Postgres 16, e2e, tsc, eslint e `next build`. Em todo push e PR.
+
+**A primeira execução real reprovou e achou dois defeitos, nenhum deles do workflow:**
+1. **`verificar-export.mts` linha 810 tinha um CAMINHO ABSOLUTO** para o checkout de uma sessão
+   (`/home/user/tratamento-dados-financeiros/...`). Os outros nove `readFileSync` do arquivo usam
+   `new URL(..., import.meta.url)`. Funcionava por acidente — qualquer clone em outro diretório
+   recebia ENOENT. **Nenhuma das quatro suítes pegaria isso**, porque todas rodavam no único
+   diretório onde não dá erro.
+2. **`npx tsx` baixa o tsx do registro mesmo com o `.bin` no PATH** ("package was not found and will
+   be installed"). As suítes agora chamam `./portal/node_modules/.bin/tsx` por caminho, o binário
+   pinado no lock. `tsx` entrou nas devDependencies do portal.
+
+### 5. Análise crítica da sessão 19 (`495ca68`) — pedido explícito do dono
+
+**DEFEITO ENCONTRADO E CORRIGIDO: 12 meses NÃO bastam.** A `0032` fez a série de NÍVEL devolver
+retorno NULL no primeiro exercício, mas `meses` continua 12 — e o export decidia "exercício completo"
+olhando só `meses === 12`. O ano entrava em `completosDe`, a janela de 3 anos o NOMEAVA, e a média
+virava `PRODUCT(1+B3/100, …)` com B3 resolvendo para `""` (a célula visível é
+`IF(dados!X="","",dados!X)`, e **texto vazio não é célula vazia**: `""/100` é #VALUE!). A média 3a
+saía **EM BRANCO com a nota afirmando "Média geométrica dos exercícios completos: 2023, 2024, 2025"**.
+É alcançável, não teórico: basta a coleta do SGS começar em janeiro. Corrigido
+(`meses === 12 && retorno != null`) + a nota do ano passa a dizer a causa. Invariante 37.
+
+**AUDITADO E CORRETO, com a medição:**
+- **`n8n/lib/hash.mjs`** — diferencial contra `node:crypto` em **619 casos**, todos idênticos: todos
+  os comprimentos de 0 a 600, multi-bloco até 1.000.003 bytes, `Uint8Array` com **byteOffset
+  não-zero** vindo de `subarray`, ArrayBuffer cru, Array comum, vetor da FIPS para entrada vazia.
+  **Custo medido: 5 MB em 209 ms (23,9 MB/s)**; lote de 14 documentos de 5 MB = 2,9 s, contra dezenas
+  de segundos de UMA chamada de IA. Irrelevante.
+- **`0032`** — o recorte de leitura não muda o número. Medido com o filtro cortando exatamente o
+  ano-base: sem filtro 2024 = 20,0000%; com `p_desde_ano=2024` → 20,0000%. Primeiro ano sai NULL.
+- **Fatia 5** — não existe `spliceRows` nem `insertRow` em lugar nenhum do lib; todo `addRow` da aba
+  Macro acontece antes do `return` que captura os endereços. Confirmado.
+- **Fatia 4** — o vazio das premissas do Focus **não** produz #VALUE!: aquelas células são de verdade
+  vazias, e vazio é 0 na aritmética do Excel. O único lugar onde "vazio" é `""` é a aba Macro — e é
+  justamente ele que produziu o defeito acima.
+
+**CORTE EM `export.ts`** (4.100 → 2.780 linhas). O acoplamento foi medido antes: exatamente **nove**
+símbolos em comum, todos de apresentação → `export-estilo.ts` (38 linhas); o bloco Macro+Modelagem →
+`export-modelagem.ts` (1.516). A condição "nenhum endereço de célula muda" foi **verificada, não
+suposta**: dump completo do workbook (**7.485 células**, com valor, fórmula, formato, tamanho da nota
+e preenchimento) gerado antes e depois — `diff` sem uma linha de diferença.
+
+### ⚠️ PENDÊNCIAS DO DONO (sessão 20)
+
+1. **Aplicar as migrations em ordem: `0032` (se ainda não aplicou) e `0033`.**
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** (hash em JS puro) **e `n8n/workflow.macro.json`**
+   (`baseCalculo` do Focus) — continua pendente da sessão 19.
+3. **Conferir o campo `hash` na saída de `Preparar Conteudo`** — tem de vir preenchido em qualquer
+   sandbox. Se vier null de novo, o problema não é mais `crypto`.
+4. **Validar a Etapa 2**, que agora está COMPLETA (é a regra dele: uma etapa por vez).
+
+### O QUE FICOU ABERTO (nesta ordem, com o contexto detalhado mais abaixo)
+
+1. **Truncamento de CSV/XLSX em 50 linhas antes de ir à IA** — faturamento de 24-36 meses perde o
+   resto, em silêncio. **Não foi tocado.**
+2. **`moeda` capturada e descartada** — não há coluna; USD indistinguível de BRL. Com o erro de
+   escala corrigido, é o último fator multiplicativo invisível. **Não foi tocado.** (O bloco de
+   REFERÊNCIAS MACRO agora ao menos NOMEIA isso na nota da linha do câmbio.)
+3. **`completude_ok` só exige a linha `documento`** — 14 docs com zero linhas dão dashboard verde e
+   book vazio. **Não foi tocado.**
+4. **`fn_aceitar_extracao` aceita versão com zero campos.** **Não foi tocado.**
+5. **Poller do upload expira em 12 min sem sinalizar**, e a recusa do orçamento só existe no log do
+   n8n. **Não foi tocado.**
+
+E a causa REAL das 5 pré-condições do v33 **continua desconhecida** — ver item 3 acima: a `0033`
+garante que a PRÓXIMA ocorrência se explique, mas não explica a passada.
+
+### Armadilhas novas desta sessão (além das que já estavam no fim deste arquivo)
+
+- **`pintarNoFim`**: destaque escrito direto numa célula de cabeçalho de seção do Balanço é apagado
+  pelo `row.fill = fill` que preenche a linha reservada depois. Use a lista adiada.
+- **A aba Macro é o único lugar do export onde "vazio" é `""` e não célula vazia** — porque a célula
+  visível é fórmula (`IF(dados!X="","",dados!X)`). Aritmética sobre isso é #VALUE!, não 0.
+- **`npx tsx` baixa o tsx mesmo com o `.bin` no PATH.** Chame `./portal/node_modules/.bin/tsx`.
+- **Caminho absoluto em teste passa despercebido para sempre** enquanto só existir um checkout. O CI
+  é o que pega — e pegou na primeira execução.
+- **Para medir não-vacuidade em SQL**: o `.test.sql` tem `ON_ERROR_STOP`, então a primeira falha
+  aborta o resto. Para ver TODAS as falhas, neutralize os asserts já medidos um a um, ou rode blocos
+  isolados contra um banco reconstruído com a migration trocada por `select 1;`.
 
 ## Sessão 19 (2026-07-31, tarde) — pendências do dono fechadas, Etapa 2 quase inteira (PR #69)
 
@@ -207,7 +373,7 @@ Regra dele, literal: *"Ao concluir uma etapa, aguarde minha validação antes de
 | Etapa | Objetivo | Estado |
 |---|---|---|
 | 1 | Estabilização da pipeline | **CONCLUÍDA** (PR #67) + correção pós-v33 no #68 |
-| 2 | Dados macroeconômicos corretos na planilha | **quase completa** — 3 fatias no #68, 3 no #69; falta só o bloco de REFERÊNCIAS MACRO |
+| 2 | Dados macroeconômicos corretos na planilha | **COMPLETA** (sessão 20) — 3 fatias no #68, 3 no #69, o bloco de REFERÊNCIAS MACRO na sessão 20. **Aguardando validação do dono.** |
 | 3 | Modelagem 100% automatizada, e **sem buscar valor de outras abas por fórmula** | não iniciada |
 | 4 | Todas as abas geradas; **auxiliares OCULTAS**, Modelagem visível | não iniciada |
 | 5 | **Seletor de inputs macro** (IPCA+, Selic, IGP-M, PIB, média histórica, CAGR) recalculando tudo | não iniciada |
@@ -269,8 +435,8 @@ Exige n8n vivo: `.docx`/`.xlsx` via *Extract From File* (também a maior alavanc
 input); chunking por página para `finish_reason=length`; confirmar se `retryOnFail` é decorativo com
 `onError: continueRegularOutput`.
 
-**Infra:** **não existe CI.** As quatro suítes só rodam quando alguém lembra. É a alavanca mais barata
-contra regressão que existe neste repositório.
+**Infra:** ~~não existe CI~~ → **RESOLVIDO na sessão 20** (`.github/workflows/suites.yml`). Ele achou
+um defeito na primeira execução: caminho absoluto embutido no `verificar-export.mts`.
 
 ## Histórico: como o 429 foi diagnosticado (RESOLVIDO — mantido pelo método)
 
