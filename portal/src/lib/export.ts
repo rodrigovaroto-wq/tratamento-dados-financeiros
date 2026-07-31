@@ -1216,9 +1216,13 @@ function construirAbaClassificada(
         cell.note = comoNota(
           `Divergência: soma das contas listadas = ${vCalc.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
           + `informado no documento = ${vExtraido.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. `
-          + `Causa mais comum: o documento imprime subtotais intermediários (ex.: "Disponível" acima de `
-          + `"Caixa e bancos" + "Aplicações"), e a soma conta o subtotal E os seus componentes. `
-          + `O valor da seção segue o que o documento informou; confira a extração contra o original.`,
+          + `Duas causas possíveis, e elas pedem conferências diferentes. (1) O documento imprime `
+          + `subtotais intermediários (ex.: "Disponível" acima de "Caixa e bancos" + "Aplicações") e a `
+          + `soma conta o subtotal E os seus componentes — aí o informado é o certo. (2) Uma conta desta `
+          + `seção foi classificada em OUTRA seção: o informado a inclui, a soma listada não, e o TOTAL `
+          + `DO GRUPO passa a contá-la duas vezes. Achado real no teste v33: "Ferramental e moldes" `
+          + `(3.600) caiu em "Outros Ativos Não Circulantes" enquanto o total do Imobilizado já a `
+          + `continha. Se a diferença bater com uma conta que aparece em outra seção, é o caso (2).`,
         );
         // sinaliza também a célula do cabeçalho
         sheet.getRow(cabecalhoIdx).getCell(plano.valuePos[i]).fill = DIVERGENCIA_FILL;

@@ -43,6 +43,7 @@ import { readFileSync } from "node:fs";
 import { avaliarCelula, linhaVazia } from "./lib/avaliar-formula.mts";
 import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
+import { classificarConta } from "../src/lib/statement-templates.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -2163,6 +2164,34 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // A explicação tem de ser VERDADEIRA: "há 2 (2024, 2025)", não "falta histórico".
   checar(/exige 3 exerc/i.test(nota), "(29a) a nota diz qual janela não fechou", nota.slice(0, 160));
   checar(/2024, 2025/.test(nota), "(29b) …e QUANTOS anos completos existem, nomeados", nota.slice(0, 160));
+}
+
+// ---- 30: "Ferramental e moldes" é Imobilizado pelo RÓTULO ------------------
+// Achado no teste v33, com dado real. No book, "Ferramental e moldes" (3.600) está
+// DENTRO do Imobilizado da Componentes — 14.200 + 3.600 + 890 − 13.100 = 5.590, o
+// total informado. No export o Imobilizado usou 5.590 E o Ferramental foi somado de
+// novo em "Outros Ativos Não Circulantes": Ativo Não Circulante inflado em 3.600.
+//
+// HONESTIDADE SOBRE O ESCOPO DESTE INVARIANTE. Ele afirma a CLASSIFICAÇÃO, não a
+// ausência de dupla contagem — e a diferença importa. Tentei duas fixtures para
+// reproduzir a dupla contagem e as duas nasceram VAZIAS (passavam com o bug ligado):
+//   1ª: declarei `secao: "Imobilizado"` nas contas — com seção declarada,
+//       `subsecaoAutoritativa` já mandava o Ferramental ao lugar certo;
+//   2ª: tirei a seção, mas a `ordem` deixou a linha ENTRE contas do Imobilizado, e o
+//       consenso de irmãos a colocou certo de novo, sem depender do vocabulário.
+// Não consegui reconstruir o arranjo exato que a produção tinha. Então afirmo o que
+// dá para provar não-vazio, e a guarda de dupla contagem NO PARENTE fica registrada
+// como aberta — ver o comentário de `escreverConferenciaExtraido`, que agora nomeia
+// esta causa entre as duas possíveis.
+{
+  for (const chave of ["Ferramental e moldes", "Ferramental", "Moldes e ferramental", "Ferramentaria"]) {
+    const c = classificarConta("balanco", null, chave, null);
+    checar(
+      c?.secaoKey === "imobilizado",
+      `(30) "${chave}" é Imobilizado pelo rótulo, sem depender de seção declarada`,
+      `caiu em ${c?.secaoKey ?? c?.ancoraKey ?? "Não Classificadas"}`,
+    );
+  }
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

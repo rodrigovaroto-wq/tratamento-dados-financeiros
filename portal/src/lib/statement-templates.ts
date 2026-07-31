@@ -194,7 +194,8 @@ const ATIVO_NAO_CIRC_KW = [
   // subseção com o nome exato, o que balancete analítico raramente faz. Verificado
   // executando o classificador antes e depois.
   "imovel", "maquina", "equipamento", "veiculo", "movei", "utensilio", "terreno",
-  "edificacao", "edificio", "instalacao", "ferramenta", "benfeitoria",
+  "edificacao", "edificio", "instalacao", "ferramenta", "ferramental", "ferramentaria",
+  "molde", "benfeitoria",
   "software", "marca", "patente", "agio", "fundo de comercio", "licenca",
   "gasto com desenvolvimento", "mais valia",
 ];
@@ -216,6 +217,10 @@ const INVESTIMENTOS_KW = [
 const IMOBILIZADO_KW = [
   "imobilizado", "imovel", "maquina", "equipamento", "veiculo", "movei", "utensilio", "terreno",
   "edificacao", "edificio", "obra em andamento", "instalacao", "ferramenta", "benfeitoria",
+  // "Ferramental e moldes" é imobilizado no documento real do book e caía no balde
+  // genérico de não circulante — enquanto o TOTAL INFORMADO do Imobilizado já a
+  // continha. O parente somava os dois: Ativo Não Circulante inflado em 3.600.
+  "ferramental", "ferramentaria", "molde",
   "depreciacao acumulada", "bem do ativo imobilizado", "adiantamento a fornecedor de imobilizado",
 ];
 const INTANGIVEL_KW = [
