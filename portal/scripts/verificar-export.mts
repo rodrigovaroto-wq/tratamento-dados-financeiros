@@ -2341,6 +2341,95 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(!aviso, "(32) e nenhum aviso de ausência aparece quando não há ausência");
 }
 
+// ---- 33: falha PARCIAL do macro é declarada DENTRO do arquivo --------------
+// `macroErro` só chegava ao arquivo quando NÃO havia macro nenhum. O caso que
+// escapava: os índices e o Focus respondem, mas a consulta de NOMES das séries
+// falha — a aba sai com "IPCA"/"SELIC" crus no lugar dos nomes por extenso, e
+// o erro morria num `console.error` do servidor. Quem abre a planilha não tem
+// acesso a log nenhum: para ele, o arquivo simplesmente parece pronto.
+{
+  const V = "v-macro-parcial";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-mp", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Parcial Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+  ];
+  const macro = {
+    anuais: [{ serie: "IPCA", ano: 2024, meses: 12, retorno: 4.5 }],
+    expectativas: [{ serie: "IPCA", ano_ref: 2026, mediana: 4.5, coletado_em: "2026-07-24" }],
+  };
+  const erro = "nomes das séries: permission denied for table indice_macro_serie";
+  const wb = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos, macro, macroErro: erro,
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Macro")!;
+  let achou = "";
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const t = String(ws.getRow(r).getCell(1).value ?? "");
+    if (/falhou EM PARTE/.test(t)) { achou = t; break; }
+  }
+  checar(achou !== "", "(33) a aba Macro declara que a consulta falhou em parte");
+  checar(achou.includes("nomes das séries"),
+    "(33) …repetindo QUAL parte falhou, para quem for conferir no Supabase", achou.slice(0, 120));
+
+  // E o aviso não pode ter deslocado as linhas que o modelo endereça por
+  // número: o INDEX/MATCH da premissa aponta para uma LINHA da aba Macro, e um
+  // aviso inserido depois do fato faria cada fórmula mirar uma linha acima.
+  const mod = wb.getWorksheet("Modelagem")!;
+  let rIpca = -1;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (String(mod.getRow(r).getCell(1).value ?? "") === "Inflação esperada (IPCA — Focus)") { rIpca = r; break; }
+  }
+  const nA = Math.floor((mod.columnCount - 2) / 13);
+  let apontou = false;
+  for (let y = 0; y < nA; y++) {
+    const f = String((mod.getRow(rIpca).getCell(3 + y * 13 + 12).value as { formula?: string } | undefined)?.formula ?? "");
+    if (!f) continue;
+    // A linha citada pela fórmula tem de ser mesmo a do IPCA na aba Macro.
+    const m = f.match(/'Macro'!\$B\$(\d+)/);
+    if (!m) continue;
+    apontou = true;
+    checar(/IPCA/i.test(String(ws.getRow(Number(m[1])).getCell(1).value ?? "")),
+      "(33) o aviso não deslocou as linhas que o modelo endereça por número",
+      `fórmula aponta linha ${m[1]}, que contém "${String(ws.getRow(Number(m[1])).getCell(1).value ?? "")}"`);
+  }
+  checar(apontou, "(33) …e a premissa realmente endereça a aba Macro nesta fixture");
+}
+
+// ---- 34: sem entidade reconhecida, a AUSÊNCIA das abas é declarada ---------
+// A guarda `entidadesConhecidas.size > 0` cobre Macro E Modelagem: sem nenhuma
+// entidade, o arquivo saía sem as duas abas e sem uma palavra sobre isso. Uma
+// aba que não existe não diz por que não existe — foi assim que "não veio os
+// dados macro" (v28) virou meia hora de investigação de causa errada.
+{
+  const V = "v-sem-entidade";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-se", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: null, periodo: null,
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "ilegivel.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Caso Sem Entidade", produto: "rx" }, documentos, campos: [],
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem");
+  checar(ws != null, "(34) a aba Modelagem EXISTE mesmo sem entidade reconhecida (declarando o porquê)");
+  if (ws) {
+    let texto = "";
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 1; c <= 2; c++) texto += String(ws.getRow(r).getCell(c).value ?? "") + "\n";
+    }
+    checar(/não montad/i.test(texto), "(34) …dizendo que não foi montada", texto.slice(0, 100));
+    checar(/ENTIDADE reconhecida/i.test(texto), "(34) …e a causa: nenhuma entidade reconhecida");
+    checar(/Resumo/.test(texto) && /fila de revisão/i.test(texto),
+      "(34) …e para onde ir (Resumo e fila de revisão), não só o diagnóstico");
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

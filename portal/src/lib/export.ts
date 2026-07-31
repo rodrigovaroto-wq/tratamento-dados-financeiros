@@ -2338,7 +2338,7 @@ function construirAbaMacroSemDado(workbook: ExcelJS.Workbook, erro?: string): vo
 }
 
 export function construirAbaMacro(
-  workbook: ExcelJS.Workbook, macro: MacroParaExport,
+  workbook: ExcelJS.Workbook, macro: MacroParaExport, erroParcial?: string,
 ): RefsMacro | null {
   if (macro.anuais.length === 0 && macro.expectativas.length === 0) return null;
   const d = construirAbaMacroDados(workbook, macro);
@@ -2347,6 +2347,32 @@ export function construirAbaMacro(
   const nome = (s: string) => macro.nomes?.[s] ?? s;
 
   sheet.getColumn(1).width = 34;
+
+  // FALHA PARCIAL da consulta, declarada DENTRO do arquivo.
+  //
+  // `macroErro` só era usado quando NÃO havia macro nenhum. O caso real que
+  // escapava: `fn_indice_macro_anual` e as expectativas respondem, mas a
+  // consulta de NOMES das séries não — a aba sai com "IPCA"/"SELIC" crus no
+  // lugar dos nomes por extenso, e o único registro do erro era um
+  // `console.error` no servidor. Quem abre a planilha não tem acesso a log.
+  //
+  // A linha é escrita AQUI, antes de qualquer outra: `spliceRows` depois do
+  // fato deslocaria toda a numeração da aba, e o modelo endereça as linhas do
+  // Focus por NÚMERO (`linhaCabFocus`, `linhaFocusDe`) — cada INDEX/MATCH
+  // passaria a apontar uma linha acima, em silêncio.
+  if (erroParcial) {
+    const av = sheet.addRow([
+      `⚠ A consulta dos índices macro falhou EM PARTE: "${erroParcial}". O que está nesta aba veio `
+      + "da base e é confiável; o que faltou não aparece — nome de série pode estar como código "
+      + "cru, e uma série inteira pode estar ausente sem que a aba tenha como dizer qual. Confira "
+      + "no Supabase antes de usar estes índices numa entrega.",
+    ]);
+    av.font = { bold: true, size: 10, color: { argb: "FF991B1B" } };
+    av.getCell(1).fill = DIVERGENCIA_FILL;
+    av.alignment = { wrapText: true, vertical: "top" };
+    av.height = 42;
+  }
+
   const tit = sheet.addRow(["ÍNDICES MACROECONÔMICOS"]);
   tit.font = { bold: true, size: 14 };
 
@@ -3736,12 +3762,17 @@ export function buildExportWorkbook({
     const anosHistoricos = [...anos].sort((a, b) => a - b);
     // A aba Macro entra ANTES da Modelagem: o modelo referencia as linhas do
     // Focus por endereço, então elas precisam existir.
-    const refsMacro = macro ? construirAbaMacro(workbook, macro) : null;
+    const refsMacro = macro ? construirAbaMacro(workbook, macro, macroErro) : null;
     // Sem índice coletado a aba Macro também EXISTE, dizendo o que falta. No teste
     // v28 ela não existiu e o dono leu isso como "os índices não vieram com os
     // dados" — sem ter como distinguir "coleta não rodou" de "defeito no export".
     // A causa real ali: a `0025` não estava aplicada no projeto certo (foi aplicada
     // no banco errado e revertida), então não havia índice nenhum na base.
+    // A aba de "sem dado" só cobre a falha TOTAL. Quando a consulta falha em
+    // PARTE — o caso concreto: os índices vêm, mas a consulta de NOMES das
+    // séries não —, a aba Macro é montada normalmente, exibe códigos crus no
+    // lugar dos nomes, e o erro morria num `console.error` que ninguém lê. Um
+    // arquivo degradado que não declara a degradação é pior que um que falha.
     if (!refsMacro) construirAbaMacroSemDado(workbook, macroErro);
     construirAbaModelagem(
       workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
@@ -3756,10 +3787,45 @@ export function buildExportWorkbook({
         x: 0, y: 0, width: 10000, height: 20000,
       }];
     }
+  } else {
+    // NENHUMA entidade reconhecida nas abas de demonstração. Sem entidade não
+    // dá para montar a Modelagem (o modelo inteiro pende de uma célula de
+    // entidade) nem faz sentido montar a Macro — mas até aqui o arquivo saía
+    // simplesmente SEM as duas abas, e uma aba que não existe não diz por quê.
+    // No v28 foi assim que "não veio os dados macro" virou meia hora de
+    // investigação: o dono não tinha como distinguir "o export não montou"
+    // de "a coleta não rodou".
+    const ws = workbook.addWorksheet(ABA_MODELAGEM);
+    ws.columns = [{ width: 40 }, { width: 96 }];
+    ws.addRow(["Modelagem e índices macro — não montados"]).font = { bold: true, size: 12 };
+    ws.addRows([
+      ["Por quê",
+        "Nenhuma das linhas extraídas tem ENTIDADE reconhecida (razão social na coluna das abas de "
+        + "demonstração). O modelo é recalculado a partir de uma célula de entidade — sem nenhuma "
+        + "para escolher, ele não teria de onde ler número nenhum, e a aba Macro sozinha não "
+        + "projetaria nada."],
+      ["O que costuma ser",
+        "Documentos que chegaram e não produziram linha (ver a aba Resumo: 'Documentos SEM linha "
+        + "extraída' e a causa registrada), ou extração que gravou linhas sem identificar a empresa "
+        + "— o diagnóstico da IA e o nome do arquivo são as duas fontes de entidade."],
+      ["O que fazer",
+        "Confira a aba Resumo e a fila de revisão do portal. Depois de aceitar/corrigir a entidade "
+        + "de pelo menos um documento, exporte de novo: a Modelagem e a Macro voltam sozinhas."],
+      ...(macroErro
+        ? [["Nota sobre os índices macro",
+            `A consulta dos índices também falhou: "${macroErro}". São problemas independentes — `
+            + "este arquivo não montaria a Modelagem mesmo com o macro em ordem."] as [string, string]]
+        : []),
+    ]);
+    for (let r = 2; r <= ws.rowCount; r++) {
+      ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
+      ws.getRow(r).height = 56;
+    }
   }
 
   return workbook;
 }
+
 
 // ExcelJS grava a caixa de toda nota (`cell.note`) com um tamanho FIXO no XML
 // VML (`width:97.8pt;height:59.1pt`, ~130×80px) — hardcoded no próprio

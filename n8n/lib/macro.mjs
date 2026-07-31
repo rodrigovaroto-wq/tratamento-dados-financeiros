@@ -119,10 +119,32 @@ export function parseSgs(json, codigo) {
     .filter((o) => o.data_ref && o.valor !== null);
 }
 
+// Qual das DUAS medianas do Focus este projeto usa.
+//
+// O Olinda devolve, para o MESMO (indicador, ano de referência, data de
+// coleta), duas linhas com medianas diferentes:
+//   • `baseCalculo = 0` — estatísticas sobre as expectativas dos últimos 30
+//     dias. Mais respondentes, mais estável. É a base da tabela principal do
+//     Boletim Focus.
+//   • `baseCalculo = 1` — últimos 5 dias úteis. Reage mais rápido e oscila
+//     mais; serve para acompanhar virada de expectativa, não para fixar
+//     premissa de um modelo que vai ser auditado.
+//
+// Sem filtro, `parseFocus` ficava com "a que o servidor devolvesse primeiro"
+// (o primeiro `if (!porAno.has(ano))` vence) — isto é, a premissa de inflação
+// do modelo mudava conforme a ordem de uma resposta HTTP. Não é erro grande em
+// magnitude; é irreprodutível, que numa entrega auditável é pior.
+export const FOCUS_BASE_CALCULO = 0;
+
+// `$top` grande o bastante para a coleta mais recente trazer todos os anos de
+// horizonte de todos os indicadores. Era 40 aqui e 80 no gerador do workflow —
+// duas verdades para o mesmo número, e a do seed truncava antes.
+export const FOCUS_TOP = 80;
+
 // Focus: só o boletim MAIS RECENTE interessa (a API devolve o histórico inteiro
 // de coletas). `$orderby` decrescente + `$top` resolve sem baixar tudo.
-export function urlFocus(indicador, { top = 40 } = {}) {
-  const filtro = encodeURIComponent(`Indicador eq '${indicador}'`);
+export function urlFocus(indicador, { top = FOCUS_TOP, baseCalculo = FOCUS_BASE_CALCULO } = {}) {
+  const filtro = encodeURIComponent(`Indicador eq '${indicador}' and baseCalculo eq ${baseCalculo}`);
   return `${FOCUS_BASE}?$top=${top}&$format=json&$orderby=Data%20desc&$filter=${filtro}`;
 }
 
@@ -135,6 +157,14 @@ export function parseFocus(json, codigo) {
   const porAno = new Map();
   for (const l of linhas) {
     if (l?.Data !== maisRecente) continue;
+    // Segunda guarda, e não é redundante: o filtro da URL protege a COLETA, esta
+    // protege o PARSE de qualquer resposta que traga as duas bases (um seed
+    // antigo, uma chamada à mão, uma mudança de default do Olinda). Sem ela,
+    // duas linhas do mesmo ano com medianas diferentes fazem a primeira vencer
+    // — e "a primeira" é a ordem de uma resposta HTTP, não uma decisão.
+    // `undefined` passa: resposta que não traz o campo é a de antes deste
+    // filtro existir, e descartá-la esvaziaria a série em silêncio.
+    if (l?.baseCalculo !== undefined && Number(l.baseCalculo) !== FOCUS_BASE_CALCULO) continue;
     const ano = Number(l?.DataReferencia);
     const mediana = numeroMacro(l?.Mediana);
     if (!Number.isInteger(ano) || mediana === null) continue;
