@@ -2197,6 +2197,9 @@ function buscaNaAba(
 function construirAbaMacroDados(
   workbook: ExcelJS.Workbook, macro: MacroParaExport,
 ): { anos: number[]; series: string[]; linhaDe: Map<string, number>; colDe: Map<number, number>;
+     // Quais anos, POR SÉRIE, têm os 12 meses. É o que a janela das médias precisa
+     // saber — e não sabia, o que a deixava em branco com histórico de sobra.
+     completosDe: Map<string, number[]>;
      anosExp: number[]; linhaExpDe: Map<string, number>; colExpDe: Map<number, number> } {
   const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
@@ -2209,6 +2212,7 @@ function construirAbaMacroDados(
 
   const colDe = new Map(anos.map((a, i) => [a, i + 2]));
   const linhaDe = new Map<string, number>();
+  const completosDe = new Map<string, number[]>();
   const porChave = new Map(macro.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
   for (const serie of series) {
     const row = sheet.addRow([serie]);
@@ -2220,7 +2224,10 @@ function construirAbaMacroDados(
       // Ano INCOMPLETO não entra: acumulado de 4 meses tratado como ano cheio
       // puxaria a média de 3/5/10 anos para baixo sem ninguém perceber. Fica
       // registrado na nota, visível para quem for conferir.
-      if (dado.meses === 12) cell.value = dado.retorno;
+      if (dado.meses === 12) {
+        cell.value = dado.retorno;
+        completosDe.set(serie, [...(completosDe.get(serie) ?? []), ano]);
+      }
       cell.note = comoNota(`${dado.meses} ${dado.meses === 1 ? "mês" : "meses"} observado(s) em ${dado.ano}.`
         + (dado.meses === 12 ? "" : " Ano INCOMPLETO — fora das médias de 3/5/10 anos."));
       cell.numFmt = "0.00";
@@ -2251,7 +2258,7 @@ function construirAbaMacroDados(
       );
     }
   }
-  return { anos, series, linhaDe, colDe, anosExp, linhaExpDe, colExpDe };
+  return { anos, series, linhaDe, colDe, completosDe, anosExp, linhaExpDe, colExpDe };
 }
 
 // Aba VISÍVEL: nenhum número escrito — tudo referência ou fórmula.
@@ -2349,23 +2356,46 @@ export function construirAbaMacro(
     // outro número (10% e 4% → 7,00% em vez de 6,96%) e o erro compõe ao longo
     // do horizonte. `IFERROR` cobre a janela sem histórico suficiente: fica
     // vazia em vez de inventar uma média com os anos que existem.
+    // A JANELA É SOBRE OS ANOS COMPLETOS, NOMEADOS UM A UM — não uma fatia
+    // posicional das últimas N colunas.
+    //
+    // O defeito que isto corrige, medido lendo a fórmula gerada: a faixa era
+    // `COUNT(L3:N3)<3` sobre as três últimas COLUNAS, e a RPC devolve o ano
+    // corrente parcial por construção, então a última coluna está SEMPRE vazia
+    // (só `meses === 12` recebe valor). Com 2014-2025 completos + 2026 parcial:
+    // COUNT dava 2, 4 e 9 ⇒ as TRÊS médias em branco, com 12 anos completos na
+    // base. E a nota explicava "falta de histórico" — falso no caso concreto.
+    //
+    // Nomear as células também resolve BURACO NO MEIO da série (revisão do IBGE,
+    // mês não consolidado), que a faixa contígua não resolvia de jeito nenhum.
+    // E `COUNT` deixa de ser necessário: aqui já se sabe, em tempo de geração,
+    // se existem N anos completos.
+    const completos = d.completosDe.get(serie) ?? [];
     JANELAS_MEDIA_EXPORT.forEach((janela, k) => {
       const c = row.getCell(2 + d.anos.length + k);
-      const ini = colLetra(2 + Math.max(0, d.anos.length - janela));
-      const fim = colLetra(2 + d.anos.length - 1);
-      const faixa = `${ini}${row.number}:${fim}${row.number}`;
-      c.value = {
-        formula: `IFERROR(IF(COUNT(${faixa})<${janela},"",`
-          + `(PRODUCT(1+${faixa}/100))^(1/${janela})-1),"")`,
-      };
+      const usados = completos.slice(-janela);
+      if (usados.length < janela) {
+        // Vazia, mas por um motivo VERDADEIRO — e a nota diz quantos anos há.
+        c.note = comoNota(
+          `Vazia: a janela de ${janela} anos exige ${janela} exercícios COMPLETOS e há ${completos.length}`
+          + `${completos.length > 0 ? ` (${completos.join(", ")})` : ""}.`,
+        );
+      } else {
+        const refs = usados.map((ano) => `1+${colLetra(d.colDe.get(ano)!)}${row.number}/100`).join(",");
+        c.value = { formula: `IFERROR((PRODUCT(${refs}))^(1/${janela})-1,"")` };
+        // Quais anos entraram: sem isso, uma média sobre anos não adjacentes
+        // (por causa de buraco) seria indistinguível de uma sobre os últimos N.
+        c.note = comoNota(`Média geométrica dos exercícios completos: ${usados.join(", ")}.`);
+      }
       c.numFmt = PCT_FMT;
       c.font = { bold: true };
     });
   }
   sheet.getRow(sheet.rowCount).getCell(1).note = comoNota(
     "As médias são GEOMÉTRICAS ((Π(1+i))^(1/n) − 1), não aritméticas: taxa se compõe. "
-    + "A janela só é calculada quando há anos COMPLETOS suficientes — senão fica vazia, "
-    + "nunca preenchida com o que houver.",
+    + "A janela usa os últimos N exercícios COMPLETOS, nomeados um a um — o ano corrente, "
+    + "sempre parcial, não entra e não estraga a janela. Quando não há N exercícios completos "
+    + "a célula fica vazia e a NOTA DELA diz quantos existem.",
   );
 
   // ---- Expectativa Focus ---------------------------------------------------

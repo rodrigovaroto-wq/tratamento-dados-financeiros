@@ -63,7 +63,9 @@ function avaliar(ws: import("exceljs").Worksheet, col: string, row: number): num
 function notaDaLinha(ws: import("exceljs").Worksheet, row: number): string {
   const r = ws.getRow(row);
   const partes: string[] = [];
-  r.eachCell({ includeEmpty: false }, (cell) => {
+  // `includeEmpty: true` importa: a nota da média que NÃO fechou vive numa célula
+  // sem valor, e com `false` o ExcelJS pula justamente ela.
+  r.eachCell({ includeEmpty: true }, (cell) => {
     const n = cell.note as unknown;
     if (!n) return;
     if (typeof n === "string") partes.push(n);
@@ -72,6 +74,15 @@ function notaDaLinha(ws: import("exceljs").Worksheet, row: number): string {
     }
   });
   return partes.join("\n");
+}
+
+// Letra da coluna a partir do índice (1 = A). O harness comparava só texto de
+// fórmula até agora, então nunca precisou disto.
+function colLetraDe(idx: number): string {
+  let s = "";
+  let n = idx;
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
 }
 
 let seq = 0;
@@ -1033,9 +1044,13 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(15) …com a raiz da janela, não a soma dividida");
     checar(!formulas.some((f) => /\bAVERAGE\(/.test(f)),
       "(15) nenhuma média de taxa é aritmética");
-    // Janela sem anos completos suficientes fica VAZIA em vez de inventada.
-    checar(medias.every((f) => f.includes("COUNT(")),
-      "(15) a janela só calcula com anos completos suficientes");
+    // O invariante ANTIGO exigia `COUNT(` em toda média — ele travava o MECANISMO,
+    // não a propriedade, e o mecanismo era justamente o defeito: a faixa era
+    // posicional (últimas N colunas) e a última coluna é sempre o ano parcial, então
+    // as três médias saíam em branco com 12 anos completos na base. Agora a janela
+    // nomeia os anos completos um a um, e o que se afirma é o COMPORTAMENTO.
+    checar(medias.every((f) => !f.includes(":")),
+      "(15) a janela nomeia os anos completos, não uma faixa posicional de colunas");
   }
 
   // O modelo consome o Focus: as premissas macro apontam para a aba Macro.
@@ -2044,6 +2059,110 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   } else {
     checar(false, "(27b) a aba tem seção de Ativo Não Circulante");
   }
+}
+
+// ---- 28: as médias macro AVALIAM para número (não só têm a fórmula certa) ---
+// Os 17 asserts que tocavam macro eram TODOS textuais sobre a fórmula, e é por
+// isso que o defeito da janela passou verde por tanto tempo: a fórmula estava
+// "certa" e o resultado era branco. O harness tem avaliador desde sempre.
+{
+  const V = "macro-med";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-mm", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Ômega Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+  ];
+  // 12 exercícios COMPLETOS + o ano corrente parcial, que é o que a RPC devolve
+  // sempre. Era exatamente este cenário que zerava as três janelas.
+  const anuais = [];
+  for (let a = 2014; a <= 2025; a++) anuais.push({ serie: "IPCA", ano: a, meses: 12, retorno: 4.5 });
+  anuais.push({ serie: "IPCA", ano: 2026, meses: 7, retorno: 2.1 });
+
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    macro: { anuais, expectativas: [{ serie: "IPCA", ano_ref: 2026, mediana: 4.2, coletado_em: "2026-07-01" }] },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Macro")!;
+
+  // Acha a linha do IPCA e as três colunas de média pelo cabeçalho.
+  let rIpca = -1;
+  for (let r = 1; r <= ws.rowCount; r++) if (/IPCA/.test(String(ws.getRow(r).getCell(1).value ?? ""))) { rIpca = r; break; }
+  checar(rIpca > 0, "(28a) a linha do IPCA existe na aba Macro");
+  const colDaMedia: Record<string, number> = {};
+  for (let r = 1; r <= Math.min(ws.rowCount, 4); r++) {
+    for (let c = 2; c <= ws.columnCount; c++) {
+      const m = String(ws.getRow(r).getCell(c).value ?? "").match(/M[ée]dia (\d+)a/);
+      if (m) colDaMedia[m[1]] = c;
+    }
+  }
+  checar(Object.keys(colDaMedia).length === 3, "(28b) as três colunas de média existem", JSON.stringify(colDaMedia));
+
+  // Qual coluna é qual ano, na própria aba visível.
+  const colDoAno: Record<number, string> = {};
+  for (let r = 1; r <= Math.min(ws.rowCount, 4); r++) {
+    for (let c = 2; c <= ws.columnCount; c++) {
+      const v = ws.getRow(r).getCell(c).value;
+      if (typeof v === "number" && v >= 2000 && v <= 2100) colDoAno[v] = colLetraDe(c);
+    }
+  }
+
+  // A asserção é ESTRUTURAL, e a limitação é minha, não do export: `avaliarCelula`
+  // não segue referência ENTRE ABAS, e cada célula de ano da aba visível é
+  // `IF('Macro (dados)'!X="","",…)`. Então não dá para avaliar a média aqui.
+  //
+  // O que se afirma no lugar pega o defeito exato: a janela tem de NOMEAR os N
+  // últimos exercícios COMPLETOS e NÃO pode tocar a coluna do ano parcial — que era
+  // precisamente o que a faixa posicional fazia, zerando as três médias.
+  for (const [janela, anosEsperados] of [
+    ["3", [2023, 2024, 2025]],
+    ["5", [2021, 2022, 2023, 2024, 2025]],
+    ["10", [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]],
+  ] as Array<[string, number[]]>) {
+    const cel = ws.getRow(rIpca).getCell(colDaMedia[janela]) as { value?: { formula?: string } };
+    const f = cel.value?.formula ?? "";
+    const faltando = anosEsperados.filter((a) => !new RegExp(`\\b${colDoAno[a]}${rIpca}\\b`).test(f));
+    checar(
+      faltando.length === 0,
+      `(28c) a média de ${janela}a nomeia os ${anosEsperados.length} exercícios completos`,
+      `faltando ${faltando.join(", ")} em ${f.slice(0, 110)}`,
+    );
+    checar(
+      !new RegExp(`\\b${colDoAno[2026]}${rIpca}\\b`).test(f),
+      `(28d) a média de ${janela}a NÃO toca a coluna do ano parcial (2026)`,
+      f.slice(0, 110),
+    );
+  }
+}
+
+// ---- 29: histórico curto deixa a média vazia, e a NOTA diz quantos anos há ---
+{
+  const V = "macro-curto";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-mc", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Ômega Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+  ];
+  const anuais = [
+    { serie: "IPCA", ano: 2024, meses: 12, retorno: 4.5 },
+    { serie: "IPCA", ano: 2025, meses: 12, retorno: 4.5 },
+    { serie: "IPCA", ano: 2026, meses: 7, retorno: 2.1 },
+  ];
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    macro: { anuais, expectativas: [] }, agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Macro")!;
+  let rIpca = -1;
+  for (let r = 1; r <= ws.rowCount; r++) if (/IPCA/.test(String(ws.getRow(r).getCell(1).value ?? ""))) { rIpca = r; break; }
+  const nota = notaDaLinha(ws, rIpca);
+  // A explicação tem de ser VERDADEIRA: "há 2 (2024, 2025)", não "falta histórico".
+  checar(/exige 3 exerc/i.test(nota), "(29a) a nota diz qual janela não fechou", nota.slice(0, 160));
+  checar(/2024, 2025/.test(nota), "(29b) …e QUANTOS anos completos existem, nomeados", nota.slice(0, 160));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
