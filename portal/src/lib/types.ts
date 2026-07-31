@@ -78,6 +78,10 @@ export interface CampoExtraido {
   valor_texto: string | null;
   valor_num: number | null;
   unidade: string | null;
+  // Escala ORIGINAL do documento, preservada quando o export converte tudo para
+  // uma escala só. Serve para a nota de proveniência dizer de onde o número veio
+  // — "convertido de R$ para R$ mil" é informação de auditoria, não detalhe.
+  unidade_original?: string | null;
   confianca: number | null;
   origem_pagina: number | null;
   // db/migrations/0027 — posição da linha NO DOCUMENTO (0-based). É o sinal que

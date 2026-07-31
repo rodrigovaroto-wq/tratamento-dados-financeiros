@@ -9,8 +9,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 import { orcamentoDoLote } from '../lib/custo.mjs';
@@ -770,4 +771,130 @@ test('Parse Extracao mede o custo real da chamada a partir do usage', async () =
   const out = await run('Parse Extracao', { item: resp, refs: { 'Montar Req Extracao': req } });
   assert.equal(out.json.custo_usd, 0.105, 'custo medido, não estimado');
   assert.deepEqual(out.json.tokens, { entrada: 10_000, saida: 8_000, cache: 0 });
+});
+
+// --- Anti-drift: todo nó Code declara o que faz quando UM item falha ----------
+// O invariante antigo ("Nós Postgres têm onError+retry") tem lista de nomes
+// hardcoded, e foi por isso que os 7 nós Code passaram anos sem `onError` sem
+// ninguém notar. Aqui a regra é por EXCLUSÃO: todo nó Code precisa continuar o
+// lote, salvo os que estão na lista de aborto deliberado — e cada exclusão carrega
+// o motivo, para a próxima pessoa não "consertar" um throw que existe de propósito.
+const CODE_QUE_DEVE_ABORTAR = {
+  // Formulário sem arquivo: não há lote para continuar.
+  'Listar Arquivos': 'lote vazio',
+  // Recusa do teto de US$ 3 por execução. Pôr onError aqui DESLIGA o teto de gasto.
+  'Orcamento do Lote': 'orçamento excedido',
+};
+
+test('todo nó Code continua o lote quando um item falha (exceto os que devem abortar)', () => {
+  for (const n of wf.nodes.filter((x) => x.type === 'n8n-nodes-base.code')) {
+    if (n.name in CODE_QUE_DEVE_ABORTAR) {
+      assert.equal(n.onError, undefined,
+        `${n.name} tem de ABORTAR (${CODE_QUE_DEVE_ABORTAR[n.name]}) — onError aqui é um bug`);
+    } else {
+      assert.equal(n.onError, 'continueRegularOutput',
+        `${n.name}: sem onError, um item ruim mata a execução e os itens da fila somem sem rastro`);
+    }
+  }
+});
+
+// O caso concreto que motivou tudo: `Preparar Conteudo` lê o binário e é o nó com
+// mais formas de falhar por arquivo individual.
+test('Preparar Conteudo não derruba o lote — é o nó que toca o binário', () => {
+  const n = wf.nodes.find((x) => x.name === 'Preparar Conteudo');
+  assert.equal(n.onError, 'continueRegularOutput');
+});
+
+// --- Anti-drift: a escala do nó É a de lib/extract.mjs ------------------------
+// QUINTO mirror. Este ficou de fora quando os outros passaram a ser embutidos, e
+// JÁ HAVIA DIVERGIDO: a cópia à mão perdeu a cláusula final de `normalizarUnidade`
+// (célula que é exatamente o multiplicador: '1.000' / '1000' / '1').
+test('Parse Extracao carrega o MESMO normalizarUnidade de lib/extract.mjs', () => {
+  assert.ok(code('Parse Extracao').includes(normalizarUnidade.toString()),
+    'a normalização de escala embutida divergiu da fonte em lib/extract.mjs');
+});
+
+test('a escala do nó concorda com a lib nos casos que ANTES divergiam', async () => {
+  // Rodando o normUnid REAL extraído do JSON gerado, não a lib.
+  // A fonte embutida é MULTI-LINHA (é o `toString()` da função formatada da lib),
+  // então recorta-se pela própria fonte, não por fim de linha.
+  const src = code('Parse Extracao');
+  const decl = `const normUnid = ${normalizarUnidade.toString()};`;
+  assert.ok(src.includes(decl), 'a declaração embutida não é a da lib');
+  const normUnidDoNo = await new AsyncFunction(`${decl} return normUnid;`)();
+
+  // Os três casos da divergência medida. Escala nula NÃO é neutra: fn_valor_em_base
+  // (0023:127) multiplica por coalesce(fator, 1), então "não sei" é tratado como
+  // UNIDADE — e comparar milhar com unidade erra por 1000x.
+  for (const [bruto, esperado] of [['1.000', 'milhar'], ['1000', 'milhar'], ['1', 'unidade']]) {
+    assert.equal(normUnidDoNo(bruto), esperado, `nó: escala de ${JSON.stringify(bruto)}`);
+    assert.equal(normalizarUnidade(bruto), esperado, `lib: escala de ${JSON.stringify(bruto)}`);
+  }
+  // E segue concordando no que já funcionava.
+  for (const bruto of ['R$ mil', 'milhares de reais', 'em milhões', 'reais', 'Em R$ 1.000', null, '']) {
+    assert.equal(normUnidDoNo(bruto), normalizarUnidade(bruto), `nó × lib para ${JSON.stringify(bruto)}`);
+  }
+});
+
+// --- Hash do conteúdo: a idempotência da 0026 recebe dado de verdade ----------
+// A 0026 casa reenvio por (caso_id, hash) para virar VERSÃO nova em vez de
+// documento novo. O pipeline mandava `null` no 12º parâmetro, então
+// `p_hash is not null` nunca era verdade e todo reenvio duplicava o documento —
+// o "15 colunas para 5 empresas" do teste v27. reextracao.test.sql provava a
+// função passando o hash à mão; o gap era do pipeline, e invisível.
+test('Registrar Documento passa o hash, não o literal null', () => {
+  const q = wf.nodes.find((x) => x.name === 'Registrar Documento').parameters.options.queryReplacement;
+  assert.match(q, /\$json\.hash/, 'o 12º parâmetro tem de ser o hash do conteúdo');
+  assert.ok(!/assinado, null,/.test(q), 'o literal null que matava a idempotência da 0026 saiu');
+});
+
+test('Preparar Conteudo calcula SHA-256 do conteúdo e se abstém se não puder', async () => {
+  const conteudo = Buffer.from('%PDF-1.4 conteudo de teste');
+  const item = {
+    json: { caso_id: 'c-1', nome_original: 'BP.pdf' },
+    binary: { data: { fileName: 'BP.pdf', mimeType: 'application/pdf', data: conteudo.toString('base64') } },
+  };
+  const out = await run('Preparar Conteudo', { item });
+  const esperado = createHash('sha256').update(conteudo).digest('hex');
+  assert.equal(out.json.hash, esperado, 'hash do CONTEÚDO, não do nome');
+
+  // Mesmo conteúdo com nome diferente → MESMO hash (é o que faz reenvio virar
+  // versão em vez de documento novo, mesmo que o dono renomeie o arquivo).
+  const outro = await run('Preparar Conteudo', {
+    item: { ...item, json: { ...item.json, nome_original: 'BP_v2.pdf' } },
+  });
+  assert.equal(outro.json.hash, esperado);
+
+  // Conteúdo diferente → hash diferente. Sem isto o "hash" fundiria documentos
+  // distintos, que a 0026 chama de o erro mais caro possível.
+  const diff = await run('Preparar Conteudo', {
+    item: { ...item, binary: { data: { ...item.binary.data, data: Buffer.from('outro').toString('base64') } } },
+  });
+  assert.notEqual(diff.json.hash, esperado);
+});
+
+// --- Não pagar extração de documento que não existe --------------------------
+// Com `onError: continueRegularOutput` nos nós Postgres, uma falha em
+// `Registrar Documento` empurra o item de erro adiante. Antes, `versaoId` virava
+// null em silêncio, a extração era EXECUTADA (dinheiro gasto) e
+// `fn_registrar_campos_extraidos(null, …)` retornava 0 descartando o
+// `falha_motivo`. A 0029 fecha o lado do banco; esta guarda fecha o do dinheiro.
+test('Montar Req Extracao recusa montar requisição sem documento_versao_id', async () => {
+  const prep = { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: { type: 'text', text: 'x' } } };
+  // item de erro típico do que o nó Postgres empurra quando falha: sem `r`
+  await assert.rejects(
+    () => run('Montar Req Extracao', { item: { json: { error: 'connection reset' } }, refs: { 'Preparar Conteudo': prep } }),
+    (e) => {
+      assert.match(e.message, /a extracao NAO foi chamada/, 'a mensagem tem de dizer que não gastou');
+      assert.match(e.message, /Registrar Documento/, 'e apontar a causa provável');
+      return true;
+    },
+  );
+  // E com versão presente, segue montando normalmente.
+  const ok = await run('Montar Req Extracao', {
+    item: { json: { r: { documento_versao_id: 'ver-1' } } },
+    refs: { 'Preparar Conteudo': prep },
+  });
+  assert.equal(ok.json.documento_versao_id, 'ver-1');
+  assert.ok(ok.json.openai_body.messages.length === 2);
 });
