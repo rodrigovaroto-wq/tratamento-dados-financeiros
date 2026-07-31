@@ -1,0 +1,134 @@
+# CI — as quatro suítes, os geradores e o lint, em todo push e PR.
+#
+# POR QUE ESTE ARQUIVO EXISTE. Até a sessão 20 este repositório NÃO TINHA CI: as
+# quatro suítes só rodavam quando alguém lembrava de rodá-las. O custo disso está
+# registrado no HANDOFF e não é hipotético — a escala nunca aplicada (erro de
+# ~496x), a coleta do SGS descartando ~792 observações, o hash que dormia em
+# produção: todos rodavam SEM ERRO e entregavam número errado, por várias
+# sessões. Nenhum é pego lendo o diff; todos são pegos pelas suítes.
+#
+# O QUE ELE COBRE, e por que cada peça:
+#   • n8n            libs e nós simulados.
+#   • geradores      regeram os 3 workflows E `git diff --exit-code`. Sem essa
+#                    segunda metade, o JSON commitado pode divergir da fonte que
+#                    o gera, e é o JSON que o dono importa no n8n — a fonte
+#                    "certa" no repositório não conserta a produção.
+#   • export         invariantes do arquivo entregue ao cliente.
+#   • db             migrations aplicadas do zero + testes SQL, contra Postgres 16.
+#   • e2e            a ÚNICA suíte que cobre a costura extração → banco → export.
+#                    As outras validam seu pedaço contra fixture escrita à mão nas
+#                    duas pontas, e as duas pontas podem errar juntas.
+#   • tsc/eslint/build  o portal tem de continuar compilando.
+#
+# A ORDEM É DELIBERADA: o que falha rápido e barato vem primeiro (lint, n8n,
+# geradores), e o que precisa de banco vem depois.
+
+name: suítes
+
+on:
+  push:
+  pull_request:
+
+# Um PR que recebe três pushes seguidos não precisa de três execuções completas.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # 16 é a versão do Supabase em uso e a que as migrations assumem.
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Instalar dependências do portal
+        working-directory: portal
+        run: npm ci
+
+
+      - name: Cliente psql 16
+        # O runner traz um cliente, mas não necessariamente o 16. As migrations
+        # usam sintaxe que não vale a pena depender da sorte da imagem.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-16 \
+            || sudo apt-get install -y --no-install-recommends postgresql-client
+          psql --version
+
+      # ---- rápido e barato primeiro ---------------------------------------
+      - name: Lint e tipos do portal
+        working-directory: portal
+        run: |
+          npx tsc --noEmit
+          npx eslint .
+
+      - name: Suíte n8n
+        run: node --test 'n8n/test/*.test.mjs'
+
+      - name: Geradores de workflow — e o gerado tem de ser igual ao commitado
+        run: |
+          node n8n/build-workflow.mjs
+          node n8n/build-workflow-macro.mjs
+          node n8n/build-workflow-diagnostico.mjs
+          # É o `git diff` que impede o JSON commitado de divergir da fonte.
+          # Sem ele, o gerador vira documentação: o dono importa o JSON velho e
+          # a correção fica no repositório sem chegar à produção.
+          git diff --exit-code -- n8n/ \
+            || { echo "::error::os workflows gerados divergem dos commitados — rode os 3 geradores e commite o resultado"; exit 1; }
+
+      # ---- fixtures do book (insumo do export e do e2e) --------------------
+      - name: Gerar o book sintético
+        # PYTHONPATH=. é OBRIGATÓRIO (o gerar.py importa módulos irmãos), e o
+        # GABARITO.json sai dentro de pdf/. Sem este passo o verificar-export
+        # morre com ENOENT no GABARITO — não é bug, é insumo faltando.
+        working-directory: test-data/book-vertentes
+        run: |
+          python3 -m pip install --quiet reportlab
+          PYTHONPATH=. python3 gerar.py
+
+      - name: Suíte de export (invariantes do arquivo entregue)
+        # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
+        # foi medido na primeira execução do CI: mesmo com o .bin do portal no
+        # PATH, o npx respondeu "package was not found and will be installed" e
+        # baixou o tsx do registro — sem versão fixada, com o CI passando a
+        # depender do que estiver publicado no dia.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
+
+      # ---- o que precisa de banco -----------------------------------------
+      - name: Suíte de banco (migrations do zero + testes SQL)
+        run: db/test/run.sh
+
+      - name: Suíte e2e (extração → banco → export)
+        run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
+
+      - name: Build do portal
+        working-directory: portal
+        run: npx next build

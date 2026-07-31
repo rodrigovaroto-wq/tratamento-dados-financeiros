@@ -126,6 +126,17 @@ begin
   perform teste_assert(v_n = 1,
     'a pendência diz qual ano divergiu e qual conferiu');
 
+  -- 0033: …e de ONDE veio cada lado. "Ativo 158.801 vs Passivo+PL 126.673" não
+  -- diz se o lado direito é uma linha impressa no documento ou uma soma de
+  -- seção do nosso fallback — e são investigações diferentes: no segundo caso,
+  -- uma seção que a extração não classificou some da soma e a "divergência" não
+  -- é do documento, é buraco da extração.
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and motivo = 'reconciliacao:ativo_passivo_pl'
+    and estado <> 'resolvida' and descricao like '%[linha "TOTAL DO ATIVO"]%';
+  perform teste_assert(v_n = 1,
+    '…e de ONDE veio cada lado (linha impressa × soma de seção do fallback)');
+
   -- Desfaz e confirma a auto-resolução.
   update campo_extraido set valor_num = valor_num - 5000
   where documento_versao_id = v_ver
@@ -219,6 +230,7 @@ do $$
 declare
   v_caso uuid := '11111111-1111-1111-1111-111111111111';
   v_ver  uuid := '55555555-0000-0000-0000-000000000001';
+  v_desc text;
   v_n int;
 begin
   raise notice '--- 6. NEGATIVO: rótulo de total irreconhecível => pendência real ---';
@@ -230,10 +242,63 @@ begin
   perform teste_reconciliar_tudo(v_caso);
   select count(*) into v_n from pendencia
   where caso_id = v_caso and motivo = 'reconciliacao:ativo_passivo_pl'
-    and estado <> 'resolvida' and descricao like '%rótulos extraídos não bateram%';
+    and estado <> 'resolvida' and descricao like '%nenhum exercício teve os DOIS lados%';
   perform teste_assert(v_n = 1,
     'documento presente com rótulos irreconhecíveis abre pendência (defeito acionável)',
     format('%s pendência(s)', v_n));
+
+  -- 0033: a pendência tem de dizer QUAL lado faltou. Antes ela dizia só que
+  -- "os rótulos não bateram com os padrões esperados" — correta e inútil: quem
+  -- recebia não sabia se o buraco era no Ativo, no Passivo+PL ou nos dois, e
+  -- cinco pendências assim saíram do teste v33.
+  select descricao into v_desc from pendencia
+  where caso_id = v_caso and motivo = 'reconciliacao:ativo_passivo_pl' and estado <> 'resolvida';
+  perform teste_assert(v_desc like '%o Ativo Total E o Passivo+PL%',
+    '…nomeando QUAL lado faltou (aqui, os dois)', left(v_desc, 200));
+  -- …e, quando a extração não trouxe rótulo nenhum aproveitável, tem de dizer
+  -- isso — porque a conduta muda: reextrair, não mexer no padrão de casamento.
+  perform teste_assert(v_desc like '%nenhum rótulo com ativo/passivo/patrimônio/total foi extraído%',
+    '…e que NÃO há rótulo candidato (logo, o caminho é reextrair)', left(v_desc, 300));
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000002';
+  v_desc text;
+  v_n int;
+begin
+  raise notice '--- 7. NEGATIVO: o rótulo EXISTE, com outro nome — a pendência o NOMEIA ---';
+  -- O outro lado da moeda do teste 6, e o caso caro: a extração TROUXE a linha
+  -- de total, só que com um nome que o padrão de casamento não reconhece
+  -- ("Somatório geral do ativo" tem 'ativo' mas não tem 'total'). A conduta
+  -- correta aqui é o oposto da do teste 6: não adianta reextrair, o que precisa
+  -- mudar é o padrão — e para decidir isso é preciso VER o rótulo.
+  update campo_extraido set secao = 'BLOCO SEM NOME', chave = 'XPTO ' || id::text
+  where documento_versao_id = v_ver;
+  update campo_extraido set chave = 'Somatório geral do ativo'
+  where id = (select id from campo_extraido where documento_versao_id = v_ver
+              and valor_num is not null order by id limit 1);
+  update campo_extraido set chave = 'Somatório geral do passivo e do patrimônio'
+  where id = (select id from campo_extraido where documento_versao_id = v_ver
+              and valor_num is not null order by id offset 1 limit 1);
+  perform teste_reconciliar_tudo(v_caso);
+  -- Escopo pelo DOCUMENTO: o teste 6 deixou uma pendência aberta de outra
+  -- entidade no mesmo caso, e contar por caso pegaria as duas.
+  select count(*), max(p.descricao) into v_n, v_desc
+  from pendencia p
+  join documento_versao dv on dv.documento_id = p.documento_id
+  where p.caso_id = v_caso and p.motivo = 'reconciliacao:ativo_passivo_pl'
+    and p.estado <> 'resolvida' and dv.id = v_ver;
+  perform teste_assert(v_n = 1, 'rótulo com outro nome ainda reprova a pré-condição (nada foi afrouxado)',
+    format('%s pendência(s)', v_n));
+  perform teste_assert(v_desc like '%Somatório geral do ativo%',
+    '…mas a pendência NOMEIA o rótulo que a extração trouxe', left(v_desc, 400));
+  perform teste_assert(v_desc like '%Somatório geral do passivo e do patrimônio%',
+    '…os dois lados, não só um', left(v_desc, 400));
+  perform teste_assert(v_desc like '%padrão de casamento%',
+    '…e diz o que fazer com isso (mexer no padrão, não reextrair)', left(v_desc, 400));
 end $$;
 
 drop function teste_assert(boolean, text, text);

@@ -807,7 +807,12 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     return typeof v === "number" ? Math.round(v) : null;
   };
   const gab = JSON.parse(
-    readFileSync("/home/user/tratamento-dados-financeiros/test-data/book-vertentes/pdf/GABARITO.json", "utf8"),
+    // Resolvido a partir do PRÓPRIO arquivo, como todos os outros nove `readFileSync`
+    // desta suíte. Este aqui era um caminho ABSOLUTO para o checkout de uma sessão
+    // (`/home/user/tratamento-dados-financeiros/...`) e funcionava por acidente: quem
+    // clonasse o repositório em qualquer outro lugar recebia ENOENT. Foi o PRIMEIRO
+    // achado do CI — na primeira execução dele, antes de qualquer suíte reprovar.
+    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
   const errosModelo: string[] = [];
   for (const ano of [2024, 2025]) {
@@ -2427,6 +2432,478 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(/ENTIDADE reconhecida/i.test(texto), "(34) …e a causa: nenhuma entidade reconhecida");
     checar(/Resumo/.test(texto) && /fila de revisão/i.test(texto),
       "(34) …e para onde ir (Resumo e fila de revisão), não só o diagnóstico");
+  }
+}
+
+// ---- 35: bloco REFERÊNCIAS MACRO — informa sem fingir que dirige -----------
+// Fecha a Etapa 2. O placar que motivou o bloco, medido antes de escrevê-lo:
+// das 15 premissas, 2 liam macro (IPCA e Selic do Focus); das 6 séries
+// históricas coletadas, 0 alimentavam qualquer fórmula — as 18 células de média
+// 3a/5a/10a da aba Macro não moviam nada e ninguém fora daquela aba as via.
+//
+// Decisão do dono (2026-07-31): trazer IGP-M, PIB, câmbio e as médias como
+// REFERÊNCIA agora; o seletor que escolhe qual índice dirige o quê é a Etapa 5.
+// Então o que se afirma aqui é o COMPORTAMENTO de uma referência honesta:
+//   (a) ela existe e diz, em linha visível, que NÃO move o modelo sozinha;
+//   (b) é FÓRMULA lendo a aba Macro — a planilha continua viva, corrigir a
+//       origem faz o modelo acompanhar (arquitetura desde a sessão 12);
+//   (c) ausência aparece como ausência, com o MESMO tratamento da fatia 4;
+//   (d) as premissas continuam sendo 15 — referência não é premissa.
+{
+  const V = "v-refs-macro";
+  const documentos: DocumentoParaExport[] = [2024, 2025].map((ano) => ({
+    id: `dr-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Referência Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2024, 2025].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  // Focus cobrindo SÓ 2026-2028: os exercícios 2024 e 2025 do modelo ficam
+  // descobertos de propósito, para o assert de ausência ter onde acontecer.
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) => [
+    { serie: "IPCA", ano_ref, mediana: 4.5, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref, mediana: 11.0, coletado_em: "2026-07-24" },
+    { serie: "IGPM", ano_ref, mediana: 5.1, coletado_em: "2026-07-24" },
+    { serie: "PIB", ano_ref, mediana: 2.2, coletado_em: "2026-07-24" },
+    // NÍVEL, não taxa: o Focus publica câmbio em R$/US$. É o número que revela
+    // erro de escala — 5,4 dividido por 100 e formatado como % vira 5,4%.
+    { serie: "CAMBIO_USD", ano_ref, mediana: 5.4, coletado_em: "2026-07-24" },
+  ]);
+  // IPCA com 10 exercícios completos (as três janelas fecham) e IGPM com 2 (as
+  // três ficam VAZIAS na origem). As duas metades importam: a primeira prova que
+  // a referência lê, a segunda que ela não publica o vazio como 0,0%.
+  const anuais = [
+    ...Array.from({ length: 10 }, (_, k) => ({ serie: "IPCA", ano: 2016 + k, meses: 12, retorno: 4.2 })),
+    { serie: "IGPM", ano: 2024, meses: 12, retorno: 3.1 },
+    { serie: "IGPM", ano: 2025, meses: 12, retorno: 3.3 },
+  ];
+  // `nomes` vai preenchido de propósito: é o que o `route.ts` manda em produção,
+  // e é o que faz o bloco escrever "IGP-M (FGV)" em vez de "IGPM" cru. Código de
+  // sistema num rótulo de leitura humana é o começo de alguém ler a série errada.
+  const nomes = {
+    IPCA: "IPCA (IBGE)", IGPM: "IGP-M (FGV)", PIB: "PIB Total",
+    CAMBIO_USD: "Câmbio R$/US$ (venda, fim de período)",
+  };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Caso Referência", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais, expectativas, nomes }, agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+  const macroWs = wb.getWorksheet("Macro")!;
+
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  const linhaDe = (pred: (rot: string) => boolean) => {
+    for (let r = 1; r <= mod.rowCount; r++) if (pred(rotuloDe(r))) return r;
+    return -1;
+  };
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const formulaDe = (r: number, c: number) =>
+    r < 1 ? "" : String((mod.getRow(r).getCell(c).value as { formula?: string } | undefined)?.formula ?? "");
+  const notaDe = (r: number, c: number) =>
+    r < 1 ? "" : String((mod.getRow(r).getCell(c).note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+
+  const rBloco = linhaDe((rot) => rot.startsWith("REFERÊNCIAS MACRO"));
+  checar(rBloco > 0, "(35) a Modelagem tem um bloco REFERÊNCIAS MACRO");
+  checar(/NÃO move/i.test(rotuloDe(rBloco)),
+    "(35) …e o cabeçalho diz, sem abrir nota, que elas não movem o modelo sozinhas",
+    rotuloDe(rBloco));
+  checar(/Etapa 5/.test(notaDaLinha(mod, rBloco)),
+    "(35) …e aponta o seletor da Etapa 5 como quem vai dar alavanca a elas",
+    notaDaLinha(mod, rBloco).slice(0, 140));
+
+  // O bloco fica DEPOIS das premissas: uma linha inserida no meio delas
+  // deslocaria `P(i)` e toda fórmula do modelo, em silêncio.
+  const rPremissasCab = linhaDe((rot) => rot.startsWith("PREMISSAS"));
+  checar(rPremissasCab > 0 && rBloco > rPremissasCab,
+    "(35) o bloco fica FORA (depois) do bloco de premissas", `${rPremissasCab} → ${rBloco}`);
+
+  // --- as três séries do Focus que o modelo ainda não usa -------------------
+  for (const [rot, temFocus] of [
+    ["↳ IGP-M esperado (Focus)", true],
+    ["↳ PIB esperado (Focus)", true],
+    ["↳ Câmbio esperado (Focus)", true],
+  ] as Array<[string, boolean]>) {
+    const r = linhaDe((x) => x === rot);
+    checar(r > 0, `(35) existe a linha de referência "${rot}"`);
+    if (r < 0) continue;
+    // 2026-2028 (y=2,3,4) estão no Focus desta fixture: tem de sair FÓRMULA
+    // lendo a aba Macro, não valor escrito — senão a planilha morre e recoletar
+    // o macro não corrige mais nada.
+    for (const y of [2, 3, 4]) {
+      const f = formulaDe(r, colFY(y));
+      checar(f.includes("'Macro'!") && /MATCH\(/.test(f),
+        `(35) "${rot}" em ${2024 + y} é FÓRMULA lendo a aba Macro, não número escrito`,
+        f.slice(0, 90) || JSON.stringify(mod.getRow(r).getCell(colFY(y)).value));
+    }
+    // 2024-2025 (y=0,1) NÃO estão no Focus: mesmo tratamento da fatia 4 —
+    // célula sem nada e a nota dizendo qual é a cobertura publicada. Um 0 aqui
+    // seria "o mercado espera PIB zero"; no câmbio, um dólar de R$ 0,00.
+    for (const y of [0, 1]) {
+      checar(mod.getRow(r).getCell(colFY(y)).value == null,
+        `(35) sem Focus para ${2024 + y}, "${rot}" fica EM BRANCO`,
+        JSON.stringify(mod.getRow(r).getCell(colFY(y)).value));
+      const n = notaDe(r, colFY(y));
+      checar(/EM BRANCO/.test(n) && /2026/.test(n),
+        `(35) …e a nota da célula declara a cobertura real (${rot}, ${2024 + y})`, n.slice(0, 120));
+    }
+    void temFocus;
+    // Cada linha diz O QUE DEVERIA DIRIGIR e que hoje não dirige. Sem isso o
+    // bloco é uma lista de números soltos, que é a crítica registrada às médias.
+    const nl = notaDaLinha(mod, r);
+    checar(/DEVERIA DIRIGIR/.test(nl), `(35) a nota de "${rot}" diz o que ela deveria dirigir`, nl.slice(0, 120));
+    checar(/Etapa 5/.test(nl), `(35) …e que a escolha é o seletor da Etapa 5`, nl.slice(0, 120));
+  }
+
+  // --- câmbio é NÍVEL: o assert que pega erro de escala ---------------------
+  // O Focus publica câmbio em R$/US$ (5,4), não em %. Tratá-lo como as outras
+  // duas — dividir por 100 e formatar como percentual — publicaria "5,4%" no
+  // lugar de "R$ 5,4000". É a mesma família do erro de ~496x que a Etapa 1
+  // corrigiu nas abas de dados, e ele não dá nenhum sinal na tela.
+  {
+    const r = linhaDe((x) => x === "↳ Câmbio esperado (Focus)");
+    const f = formulaDe(r, colFY(2));
+    checar(!/\/100/.test(f), "(35) a referência de câmbio NÃO divide por 100 (Focus publica NÍVEL)", f.slice(0, 90));
+    checar(String(mod.getRow(r).getCell(colFY(2)).numFmt ?? "").indexOf("%") < 0,
+      "(35) …nem é formatada como percentual", String(mod.getRow(r).getCell(colFY(2)).numFmt));
+    checar(String(mod.getRow(r).getCell(2).value ?? "").includes("R$/US$"),
+      "(35) …e a unidade na própria linha diz R$/US$", String(mod.getRow(r).getCell(2).value));
+    // E a contraprova, para o assert acima não passar por um export que
+    // simplesmente nunca divide por 100: IGP-M e PIB, que são percentuais, DIVIDEM.
+    for (const rot of ["↳ IGP-M esperado (Focus)", "↳ PIB esperado (Focus)"]) {
+      const rp = linhaDe((x) => x === rot);
+      checar(/\/100/.test(formulaDe(rp, colFY(2))),
+        `(35) …enquanto "${rot}", que é percentual, divide por 100`, formulaDe(rp, colFY(2)).slice(0, 90));
+    }
+  }
+
+  // --- médias históricas: lidas por fórmula, e o vazio continua vazio -------
+  // `avaliarCelula` NÃO segue referência entre abas (toda célula da Macro é
+  // `IF('Macro (dados)'!X="","",…)`), então a afirmação aqui é estrutural — e o
+  // motivo está aqui escrito para ninguém achar que foi preguiça.
+  {
+    const rSub = linhaDe((rot) => rot.startsWith("↳ médias históricas"));
+    checar(rSub > 0, "(35) existe o sub-cabeçalho das médias históricas");
+    checar(/NÃO são meses/i.test(notaDaLinha(mod, rSub)),
+      "(35) …declarando que aquelas colunas não são meses (o painel congelado diz jan/fev/mar)",
+      notaDaLinha(mod, rSub).slice(0, 140));
+    for (const k of [0, 1, 2]) {
+      checar(/^Média \d+a$/.test(String(mod.getRow(rSub).getCell(3 + k).value ?? "")),
+        `(35) …e rotulando a janela na própria coluna (${k})`,
+        String(mod.getRow(rSub).getCell(3 + k).value));
+    }
+
+    // IPCA: 10 exercícios completos na fixture ⇒ as três janelas FECHAM na aba
+    // Macro, e a referência tem de trazer as três.
+    const daMedia = (codigoNoNome: string) => {
+      for (let r = rSub + 1; r <= mod.rowCount; r++) {
+        const rot = rotuloDe(r);
+        if (!rot.trim().startsWith("↳")) break;   // o bloco acaba na linha em branco
+        if (rot.includes(codigoNoNome)) return r;
+      }
+      return -1;
+    };
+    const rIpca = daMedia("IPCA");
+    checar(rIpca > 0, "(35) existe a linha de médias históricas do IPCA", `rowCount=${mod.rowCount}`);
+    for (const k of [0, 1, 2]) {
+      const f = formulaDe(rIpca, 3 + k);
+      checar(f.includes("'Macro'!"),
+        `(35) a média ${[3, 5, 10][k]}a do IPCA é lida da aba Macro por fórmula`, f.slice(0, 90));
+      // O comportamento: origem vazia NÃO pode virar 0. Uma referência crua a
+      // célula vazia vale 0 no Excel, e o bloco publicaria "0,0%" como média de
+      // 10 anos — ausência apresentada como medição.
+      checar(/=""/.test(f),
+        `(35) …e guarda o vazio da origem em vez de publicar 0,0% (média ${[3, 5, 10][k]}a)`, f.slice(0, 90));
+    }
+
+    // IGPM: 2 exercícios ⇒ as três células de ORIGEM na aba Macro estão
+    // literalmente vazias. É o caso em que a guarda acima é a diferença entre
+    // "em branco" e "0,0% de inflação em 10 anos".
+    const rIgpm = daMedia("IGP-M");
+    checar(rIgpm > 0, "(35) existe a linha de médias históricas do IGP-M");
+    if (rIgpm > 0) {
+      let origemVazia = 0;
+      for (const k of [0, 1, 2]) {
+        const f = formulaDe(rIgpm, 3 + k);
+        const m = /'Macro'!([A-Z]+)(\d+)/.exec(f);
+        if (!m) continue;
+        const orig = macroWs.getRow(Number(m[2])).getCell(m[1]);
+        if (orig.value == null) origemVazia++;
+        checar(/=""/.test(f),
+          `(35) a média ${[3, 5, 10][k]}a do IGP-M guarda o vazio da origem`, f.slice(0, 90));
+      }
+      // Sem este assert o parágrafo acima seria decorativo: ele prova que a
+      // fixture REALMENTE tem origem vazia, e não que o guard nunca é exercido.
+      checar(origemVazia === 3,
+        "(35) …e a fixture realmente tem as 3 células de origem vazias (2 exercícios só)",
+        `vazias=${origemVazia}`);
+    }
+  }
+
+  // --- e as premissas continuam sendo 15 -----------------------------------
+  // Referência não é premissa. Este assert é o que impede o bloco de crescer
+  // para dentro do bloco de cima: `P(i)` endereça premissa por deslocamento a
+  // partir da primeira, e uma linha a mais lá desloca o modelo inteiro em
+  // silêncio. (Os invariantes 14/15 já contam; aqui a contagem é afirmada nesta
+  // fixture, que é a que tem o bloco novo.)
+  {
+    let dentro = false;
+    let n = 0;
+    for (let r = 1; r <= mod.rowCount; r++) {
+      const rot = rotuloDe(r);
+      if (rot.startsWith("PREMISSAS")) { dentro = true; continue; }
+      if (dentro) {
+        if (!rot || (rot === rot.toUpperCase() && rot.length > 12)) break;
+        n++;
+      }
+    }
+    checar(n === 15, "(35) o bloco de REFERÊNCIAS não entrou na contagem de premissas (continuam 15)", String(n));
+  }
+}
+
+// ---- 36: dupla contagem no total do GRUPO, com a conta suspeita NOMEADA ----
+// O bug aberto mais caro do repositório, e o arranjo abaixo é o do teste v33,
+// não um inventado: Balanço da Componentes (test-data/book-vertentes/dados.py),
+// Imobilizado = 14.200 + 3.600 + 890 − 13.100 = 5.590, com o 5.590 IMPRESSO no
+// documento. Uma conta do Imobilizado foi anotada com a seção de TOPO ("Ativo
+// Não Circulante") em vez da subseção, caiu em "Outros Ativos Não Circulantes"
+// — irmã do Imobilizado — e o grupo passou a contá-la duas vezes: o total
+// informado do Imobilizado já a inclui, e ela entra de novo pela irmã.
+//
+// HONESTIDADE SOBRE A CONTA USADA. A conta do v33 era "Ferramental e moldes", e
+// ela NÃO serve mais para reproduzir: a fatia de vocabulário da sessão 18
+// (invariante 30) faz esse rótulo ser Imobilizado mesmo sem seção declarada —
+// medido aqui, `classificarConta("balanco","Ativo Não Circulante","Ferramental
+// e moldes",null)` devolve `imobilizado`. Aquela INSTÂNCIA está fechada; a
+// CLASSE de defeito não estava. A fixture usa "Bens em comodato", uma conta de
+// imobilizado real (CPC 27) que o vocabulário genuinamente não reconhece —
+// medido: devolve `ativo_nao_circulante`. Nada aqui foi inventado para o teste
+// passar; o que mudou foi o rótulo, porque o antigo já está coberto.
+//
+// AS DUAS FIXTURES ANTERIORES NASCERAM VAZIAS (sessão 18) e o motivo está no
+// handoff: uma declarava a SUBSEÇÃO (e `subsecaoAutoritativa` já acertava), a
+// outra deixava a `ordem` entre contas do Imobilizado (e o consenso de irmãos
+// acertava). Esta declara a seção de TOPO e põe a ordem longe — que é o que a
+// produção tinha.
+{
+  const anc = (extra: { totalGrupo?: boolean; contaNoLugarCerto?: boolean }) => {
+    const V = `v-dc-${extra.totalGrupo ? "t" : "s"}-${extra.contaNoLugarCerto ? "c" : "e"}`;
+    const documentos: DocumentoParaExport[] = [{
+      id: `d-${V}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+      entidade: { razao_social: "Componentes Ltda." },
+      periodo: { tipo: "anual", referencia: "12M25" },
+      documento_versao: [{ id: V, n_versao: 1, nome_original: "BP_Componentes.pdf" }],
+    } as unknown as DocumentoParaExport];
+    const c = (chave: string, valor_num: number, ordem: number, secao: string | null = null) =>
+      campo({ chave, secao, valor_num, ordem, unidade: "milhar", documento_versao_id: V });
+    const campos: CampoExtraido[] = [
+      c("Numerário disponível em bancos", 410, 1, "Disponível"),
+      c("Total do Ativo Circulante", 410, 2, "Ativo Circulante"),
+      ...(extra.totalGrupo ? [c("Ativo Não Circulante", 6550, 3)] : []),
+      c("Realizável a Longo Prazo", 860, 4),
+      c("Depósitos judiciais", 860, 5),
+      c("Imobilizado", 5590, 6),
+      c("Máquinas e equipamentos", 14200, 7),
+      c("Veículos", 890, 8),
+      c("(-) Depreciação acumulada", -13100, 9),
+      c("Intangível", 100, 10),
+      c("Software", 210, 11),
+      c("(-) Amortização acumulada", -110, 12),
+      // A conta exilada — ou não, na variante de contraprova.
+      c("Bens em comodato", 3600, 40, extra.contaNoLugarCerto ? "Imobilizado" : "Ativo Não Circulante"),
+    ];
+    return buildExportWorkbook({
+      caso: { nome: "Caso Dupla Contagem", produto: "reestruturacao" }, documentos, campos,
+      agora: new Date("2026-07-31T12:00:00Z"),
+    }).getWorksheet("Balanço")!;
+  };
+  const avisos = (ws: import("exceljs").Worksheet) => {
+    const rs: number[] = [];
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (/DUPLA CONTAGEM/.test(String(ws.getRow(r).getCell(1).value ?? ""))) rs.push(r);
+    }
+    return rs;
+  };
+
+  // --- (a) com total do grupo informado: o número fica certo, mas o arquivo
+  //         tem de dizer POR QUE ele diverge da soma, nomeando a conta.
+  {
+    const ws = anc({ totalGrupo: true });
+    const rs = avisos(ws);
+    checar(rs.length === 1, "(36) o export sinaliza a dupla contagem no total do grupo", `avisos=${rs.length}`);
+    if (rs.length >= 1) {
+      const txt = String(ws.getRow(rs[0]).getCell(1).value ?? "");
+      // NOMEAR é o ponto: a nota antiga pedia ao humano que casasse a diferença
+      // com alguma conta de outra seção, à mão, em 44 seções. Ninguém faz.
+      checar(/Bens em comodato/.test(txt), "(36) …NOMEANDO a conta suspeita", txt.slice(0, 160));
+      checar(/Outros Ativos Não Circulantes/.test(txt) && /Imobilizado/.test(txt),
+        "(36) …e as DUAS seções envolvidas (onde ela está × quem já a soma)", txt.slice(0, 160));
+      const nota = notaDaLinha(ws, rs[0]);
+      checar(/LEITURA A/.test(nota) && /LEITURA B/.test(nota),
+        "(36) …e a nota traz as DUAS leituras, porque o export não escolhe (docs/04)",
+        nota.slice(0, 120));
+      checar(/3\.600,00/.test(nota),
+        "(36) …com a diferença medida, não só a afirmação", nota.slice(0, 300));
+      // Não corrige sozinho: o cabeçalho do grupo continua sendo o que era
+      // (o total informado), e o valor exilado continua onde a extração o pôs.
+      let rGrupo = -1;
+      for (let r = 1; r <= ws.rowCount; r++) {
+        if (String(ws.getRow(r).getCell(1).value ?? "") === "Ativo Não Circulante") { rGrupo = r; break; }
+      }
+      checar(rGrupo > 0 && ws.getRow(rGrupo).getCell(2).value != null,
+        "(36) o export NÃO reclassifica sozinho: o cabeçalho do grupo continua o que era");
+      checar(String((ws.getRow(rGrupo).getCell(2).fill as { fgColor?: { argb?: string } } | undefined)
+        ?.fgColor?.argb ?? "") === "FFFCE4E4",
+        "(36) …mas a célula do total do grupo fica pintada, para quem lê só o total ver a suspeita");
+    }
+  }
+
+  // --- (b) SEM total do grupo informado: é o caso silencioso e o mais caro.
+  //         O cabeçalho do grupo vira a SOMA dos filhos — sai inflado em 3.600
+  //         e não existe nenhuma linha de conferência contra a qual comparar.
+  {
+    const ws = anc({});
+    const rs = avisos(ws);
+    checar(rs.length === 1,
+      "(36) o aviso aparece TAMBÉM sem total do grupo informado (o caso em que o número sai inflado)",
+      `avisos=${rs.length}`);
+  }
+
+  // --- (c) a contraprova, sem a qual tudo acima passaria num export que
+  //         simplesmente avisasse sempre. Com a conta na subseção certa, o
+  //         Imobilizado fecha (14.200+3.600+890−13.100 = 5.590 = informado) e
+  //         não existe divergência nenhuma para suspeitar.
+  {
+    const ws = anc({ totalGrupo: true, contaNoLugarCerto: true });
+    checar(avisos(ws).length === 0,
+      "(36) com a conta classificada no lugar certo, NÃO há aviso (o guard não é 'avisa sempre')",
+      `avisos=${avisos(ws).length}`);
+  }
+
+  // --- (e) defeito ENCONTRADO ao escrever este teste, e corrigido junto: a
+  //         marca de divergência no CABEÇALHO da seção nunca aparecia. O
+  //         cabeçalho é linha reservada e preenchida no fim com `row.fill = …`,
+  //         que no ExcelJS repinta a linha inteira e apagava o destaque escrito
+  //         antes. Medido no arranjo abaixo: o Imobilizado diverge 1.990 ×
+  //         5.590 e o cabeçalho dele saía com o cinza normal de seção — quem
+  //         lê só a linha do total não tinha nenhum sinal.
+  {
+    const ws = anc({ totalGrupo: true });
+    let rImob = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "Imobilizado") { rImob = r; break; }
+    }
+    checar(rImob > 0, "(36) a seção Imobilizado foi emitida");
+    const fill = String((ws.getRow(rImob).getCell(2).fill as { fgColor?: { argb?: string } } | undefined)
+      ?.fgColor?.argb ?? "");
+    checar(fill === "FFFCE4E4",
+      "(36) o CABEÇALHO da seção que diverge fica pintado (o destaque não é apagado pelo fill da linha)",
+      `fill=${fill || "(nenhum)"}`);
+  }
+
+  // --- (d) o mesmo achado não pode ser reportado no grupo e no avô. Duas vezes
+  //         o mesmo aviso ensina o leitor a ignorar o aviso.
+  {
+    const ws = anc({ totalGrupo: true });
+    const rs = avisos(ws);
+    let rAtivo = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "ATIVO") { rAtivo = r; break; }
+    }
+    checar(rs.length === 1 && rAtivo > 0,
+      "(36) o achado é reportado UMA vez, no grupo onde as duas seções são irmãs — não repetido no ATIVO",
+      `avisos=${rs.length}`);
+  }
+}
+
+// ---- 37: 12 meses NÃO bastam — ano sem retorno calculável fica fora da média
+// Achado na revisão crítica da sessão 19 (item pedido pelo dono), e o defeito é
+// da interação entre duas coisas que estavam certas isoladamente.
+//
+// A `0032` fez a série de NÍVEL (câmbio) devolver retorno NULL no primeiro
+// exercício: sem o fechamento do ano anterior não existe variação, e inventar
+// uma era o defeito que ela corrigiu. Mas `meses` continua 12 — o ano TEM as
+// doze observações, só não tem base. E o export decidia "exercício completo"
+// olhando SÓ `meses === 12`.
+//
+// O efeito, medido antes da correção: o ano entrava em `completosDe`, a janela
+// de 3 anos o NOMEAVA, e a média virava PRODUCT(1+B3/100, …) com B3 resolvendo
+// para "" — a célula da aba visível é IF(dados!X="","",dados!X), e texto vazio
+// não é célula vazia: ""/100 é #VALUE!, o erro sobe pelo PRODUCT, e o IFERROR
+// de fora devolve "". A média 3a saía EM BRANCO com a nota afirmando "Média
+// geométrica dos exercícios completos: 2023, 2024, 2025" — nota afirmando um
+// cálculo que não aconteceu.
+//
+// É REACHABLE, não teórico: basta a coleta do SGS começar em janeiro. A janela
+// da coleta é por DATA (n8n/lib/macro.mjs), então é o caso normal, não o raro.
+// O seed atual escapa por acidente — ele começa em agosto de 2015.
+{
+  const V = "v-nulo-12m";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-n12", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Nível Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 1, unidade: "milhar", ordem: 0 }),
+  ];
+  // Coleta começando em JANEIRO: o primeiro ano tem 12 meses E retorno NULL.
+  const anuais = [
+    { serie: "CAMBIO_USD", ano: 2023, meses: 12, retorno: null },
+    { serie: "CAMBIO_USD", ano: 2024, meses: 12, retorno: 8.1 },
+    { serie: "CAMBIO_USD", ano: 2025, meses: 12, retorno: -3.2 },
+  ];
+  const ws = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    macro: { anuais: anuais as never, expectativas: [] },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Macro")!;
+
+  let rCambio = -1;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    if (/CAMBIO_USD/.test(String(ws.getRow(r).getCell(1).value ?? ""))) { rCambio = r; break; }
+  }
+  checar(rCambio > 0, "(37) a série de nível foi emitida na aba Macro");
+  if (rCambio > 0) {
+    // Colunas: 2..4 são os anos; 5,6,7 são as médias 3a/5a/10a.
+    const media3 = ws.getRow(rCambio).getCell(5);
+    const nota3 = String((media3.note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    // O comportamento afirmado: a janela de 3 anos NÃO fecha, porque só há 2
+    // exercícios com retorno. Antes ela "fechava" e o resultado era uma célula
+    // vazia com uma nota falsa.
+    checar(media3.value == null,
+      "(37) com 2 exercícios calculáveis, a média 3a fica vazia (não finge fechar)",
+      JSON.stringify(media3.value));
+    checar(/exige 3 exerc/i.test(nota3) && /há 2/.test(nota3),
+      "(37) …e a nota diz a VERDADE sobre quantos existem", nota3.slice(0, 160));
+    checar(!/2023/.test(nota3),
+      "(37) …sem nomear o ano que não tem retorno como se tivesse", nota3.slice(0, 160));
+
+    // E a célula do ano sem base diz POR QUE está vazia. "12 meses observados"
+    // sozinho é contraditório com a célula em branco ao lado.
+    const notaAno = String((ws.getRow(rCambio).getCell(2).note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    // A nota do ano vive na aba de DADOS (a visível é fórmula); busca lá.
+    const dados = buildExportWorkbook({
+      caso: { nome: "C", produto: "rx" }, documentos, campos,
+      macro: { anuais: anuais as never, expectativas: [] },
+      agora: new Date("2026-07-31T12:00:00Z"),
+    }).getWorksheet("Macro (dados)")!;
+    let rD = -1;
+    for (let r = 1; r <= dados.rowCount; r++) {
+      if (/CAMBIO_USD/.test(String(dados.getRow(r).getCell(1).value ?? ""))) { rD = r; break; }
+    }
+    const nd = String((dados.getRow(rD).getCell(2).note as { texts?: Array<{ text: string }> } | undefined)
+      ?.texts?.map((t) => t.text).join("") ?? "");
+    checar(dados.getRow(rD).getCell(2).value == null,
+      "(37) o ano sem base não recebe número (0% seria a invenção que a 0032 tirou)");
+    checar(/SEM RETORNO CALCULÁVEL/.test(nd) && /0032/.test(nd),
+      "(37) …e a nota dele diz a causa, não só que tem 12 meses", nd.slice(0, 200));
+    void notaAno;
   }
 }
 
