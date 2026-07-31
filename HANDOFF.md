@@ -95,6 +95,99 @@ capture a causa real. **Não recomece inventando hipótese: leia §"Sessão 17" 
 
 ---
 
+### PENDÊNCIAS DO DONO — o que destrava a próxima sessão
+
+1. **Mergear o PR #68** (5 commits: 3 fatias da Etapa 2 + a correção pós-v33 + este handoff).
+2. **Aplicar `db/migrations/0029`, `0030` e `0031`**, em ordem. A `0029` e a `0030` foram para o `main`
+   com o #67; a `0031` está no #68.
+3. **Reimportar `n8n/workflow.e1-ingestao.json` E `n8n/workflow.macro.json`.**
+4. **Confirmar o diagnóstico da coleta macro** — é uma olhada: rodar o workflow macro e ver a
+   **contagem de itens na saída do nó `BCB SGS`**. Se for **maior que 6**, o split do nó HTTP é real e
+   a correção da fatia 1 da Etapa 2 é a certa. Depois de reimportar, `Normalizar Observações` deve
+   mostrar `n > 0` e `descartados = 0`.
+5. **Conferir o campo `hash` na saída de `Preparar Conteudo`.** Se vier `null`, o sandbox de Code do
+   n8n dele não expõe `crypto.subtle` — o fallback é seguro (volta ao comportamento antigo), mas a
+   idempotência da `0026` continua adormecida e a implementação precisa mudar.
+6. **Decidir a lista de média/baixa severidade** (abaixo). Ele pediu que fosse trazida para avaliação
+   e ainda não decidiu.
+
+### O PLANO DO DONO — 6 etapas, uma por vez
+
+Regra dele, literal: *"Ao concluir uma etapa, aguarde minha validação antes de iniciar a seguinte"* e
+*"não tente antecipar etapas futuras"*. Não avance sem o OK.
+
+| Etapa | Objetivo | Estado |
+|---|---|---|
+| 1 | Estabilização da pipeline | **CONCLUÍDA** (PR #67) + correção pós-v33 no #68 |
+| 2 | Dados macroeconômicos corretos na planilha | **3 de 6 fatias** (PR #68) |
+| 3 | Modelagem 100% automatizada, e **sem buscar valor de outras abas por fórmula** | não iniciada |
+| 4 | Todas as abas geradas; **auxiliares OCULTAS**, Modelagem visível | não iniciada |
+| 5 | **Seletor de inputs macro** (IPCA+, Selic, IGP-M, PIB, média histórica, CAGR) recalculando tudo | não iniciada |
+| 6 | Validação final ponta a ponta | não iniciada |
+
+⚠️ **A Etapa 4 CONTRADIZ uma decisão anterior do dono.** No teste v28 ele pediu explicitamente "quero
+todas as abas juntas no exportável" porque abas ocultas leram como dado ausente, e o código hoje
+**não oculta nada** de propósito (`export.ts`, comentário de `ABA_MACRO`). A Etapa 4 pede o oposto.
+**Pergunte antes de ocultar** — pode ser que ele queira só a Modelagem em primeiro plano, não abas
+escondidas.
+
+⚠️ **A Etapa 3 pede que a Modelagem NÃO leia outras abas por fórmula** e receba os valores brutos já
+preenchidos. Isso **desfaz** a arquitetura da sessão 12 (`INDEX/MATCH` contra as abas de dados, para a
+planilha continuar viva: corrigiu a origem, o modelo acompanha). É uma troca real — perde-se o "vivo"
+e ganha-se independência. **Confirme que é isso que ele quer** antes de reescrever.
+
+### O QUE A ETAPA 2 AINDA DEVE (fatias 4-6)
+
+- **Focus ausente vira 0,0% com nota AFIRMANDO procedência** — o defeito mais enganoso que resta.
+  `focusMacro` devolve literal `"0"` quando a série não tem linha, e `IFERROR(INDEX/MATCH, 0)` quando o
+  ano projetado não está no Focus. A célula fica amarela de input com nota dizendo "Mediana das
+  expectativas de mercado (Boletim Focus/BCB)". **Gatilho banal:** os anos projetados derivam do
+  histórico do caso, mas `export/route.ts` filtra `ano_ref >= anoAtual-1` — caso com demonstrações de
+  2019-2021 projeta 2022-2024 e as TRÊS colunas ficam com inflação e juro zerados, com a aba Macro na
+  frente exibindo Focus 2026-2030 como se estivesse tudo bem. Todo o bloco de dívida cobra juro zero.
+- **Falha PARCIAL do macro descarta `macroErro`**: ele só é usado quando `refsMacro` é nulo. Se só a
+  consulta de NOMES falhar, a aba sai com códigos crus e o erro morre no `console.error`.
+- **Sem entidade reconhecida, nem a aba de aviso é criada** (`export.ts`, guarda
+  `entidadesConhecidas.size > 0` cobre Macro E Modelagem).
+- **Ligar IGP-M, PIB, câmbio e as médias históricas às premissas** — o dono decidiu que isto entra na
+  Etapa 2. Placar medido: das 15 premissas, **2** leem macro (IPCA e Selic do Focus), 6 são derivadas
+  da extração, 7 são zeros esperando humano. Do lado do histórico, **0 de 6** séries alimentam
+  qualquer fórmula: as 18 células de Média 3a/5a/10a não movem nada.
+- **O câmbio perde JANEIRO todo ano** (`0025`, `natureza='nivel'`: `ini = min(data_ref)` DENTRO do ano,
+  e a série 3698 é fechamento mensal — a variação anual deveria ser dez/(n-1) → dez/n). E
+  `db/test/macro.test.sql` **assume a convenção errada**, então a suíte PROTEGE o bug. Corrigir os dois.
+- **Focus sem filtro de `baseCalculo`**: o Olinda devolve duas linhas para o mesmo (indicador, ano) —
+  `baseCalculo=0` (30 dias) e `=1` (5 dias úteis), com medianas diferentes — e o dedup fica com "a que
+  o servidor devolver primeiro". Confirmar exige rede; fixar a base e declará-la é barato.
+- Resíduos: `gerar-seed-macro.mjs` passa `{ultimos:}` a uma função cuja assinatura é `{mesesAtras:}`
+  (ignorado em silêncio); o seed usa `top=40` e a produção `top=80`.
+
+### PARA O DONO AVALIAR (média/baixa severidade — ele pediu que fosse trazido)
+
+**O único que eu levantaria:** hoje toda policy é `for all to authenticated using (true)` — qualquer
+usuário autenticado lê e escreve dados de **qualquer mandato**, incluindo PII de sócios. Não existe
+`caso_membro`. Não corrompe número; é exposição. Exige decisão de arquitetura.
+
+Perde dado de forma menos aguda: truncamento de CSV/XLSX em 50 linhas antes de ir à IA (faturamento de
+24-36 meses perde o resto); `moeda` capturada e descartada (não há coluna — USD indistinguível de BRL);
+`completude_ok` só exige a linha `documento` (14 docs com zero linhas ⇒ dashboard verde, book vazio);
+`fn_aceitar_extracao` aceita versão com zero campos e grava decisão de aprovação; reconciliação A.1
+pula anos em silêncio; `fn_valor_em_base` trata escala desconhecida como fator 1.
+
+Atrito de uso: poller do upload expira em 12 min sem sinalizar nada — e a **recusa do orçamento** (o
+`throw` do `Orcamento do Lote`) só existe no log do n8n, invisível para o dono; `status` compara nº de
+arquivos com nº de linhas `documento` (com a `0026`, reenvio válido nunca fica "pronto"); fila não
+pré-preenche a sugestão do diagnóstico; pendências de reconciliação/extração são listas só-leitura;
+Kit Básico conta classificação não confirmada como "✓ presente"; upload sem `accept` nem validação de
+tipo; parser de CSV ingênuo com aspas.
+
+Exige n8n vivo: `.docx`/`.xlsx` via *Extract From File* (também a maior alavanca de custo, 60-80% do
+input); chunking por página para `finish_reason=length`; confirmar se `retryOnFail` é decorativo com
+`onError: continueRegularOutput`.
+
+**Infra:** **não existe CI.** As quatro suítes só rodam quando alguém lembra. É a alavanca mais barata
+contra regressão que existe neste repositório.
+
 ## Histórico: como o 429 foi diagnosticado (RESOLVIDO — mantido pelo método)
 
 Fica aqui porque o **método** vale para o próximo mistério, não porque o problema esteja aberto.
@@ -126,74 +219,6 @@ Isso importa porque as causas de 429 pedem ações **OPOSTAS**: crédito esgotad
 gasto** configurado → subir o teto (e ele **não aparece** nas telas de Billing nem de Limits); cota
 diária → só reabre amanhã; **cadência** → o único caso em que espaçar resolve.
 
-### Pendências do dono (nesta ordem — as duas primeiras são o que destrava)
-
-1. **REIMPORTAR `n8n/workflow.e1-ingestao.json`.** Traz duas coisas: `neverError` nos dois nós OpenAI
-   (para que a próxima 429 entregue o **corpo real** da OpenAI em vez de só o AxiosError) e a cadência
-   **derivada** do TPM. Sem reimportar, a próxima falha vai ser tão cega quanto esta.
-2. **Rodar `OPENAI_API_KEY=sk-... node n8n/diagnosticar-openai.mjs`** com a **mesma chave da credencial
-   do n8n**. Uma chamada de 1 token; se a conta estiver sem crédito o custo é zero. Ele imprime a causa
-   classificada pelo **mesmo código de produção**, os headers de rate limit e diz se a cadência
-   configurada cabe no TPM real. **Experimento discriminante:** se essa chamada mínima **passa** e o
-   lote **falha**, crédito e teto de gasto estão descartados (rejeitariam a chamada de 1 token também)
-   → é TPM sob carga, que a cadência nova já respeita.
-3. **Aplicar `db/migrations/0028_rls_e_grant_indices_macro.sql`** — sem ela os índices macro voltam
-   vazios **em silêncio** (RLS ligada sem policy devolve zero linhas; e a função precisava de `grant
-   execute ... to authenticated`). Era a causa real de "não veio os dados macro".
-4. **Aplicar `0026`** (se ainda não) e **reenviar** os arquivos que falharam — com a `0026`, reenviar
-   vira **versão nova**, não documento duplicado.
-5. **Re-exportar** o book e mandar o `.xlsx` + prints.
-
-Se o item 2 disser `limite_de_gasto`, o caminho é: `platform.openai.com` → Settings → **Limits** *e*
-Settings → **Projects** → projeto da chave → **Limits**. O teto de projeto é invisível na tela de
-Billing — é por isso que "o limite da OpenAI está OK" (palavras do dono) podia ser verdade e o 429
-acontecer de todo jeito.
-
-**Quando o resultado chegar, é aí que a sessão começa.** Protocolo que funcionou em v20 → v22 →
-v24 → v25 → v27 e que você deve repetir:
-
-1. **Rode a suíte ANTES de olhar o arquivo do dono** — ela já reproduz o book inteiro:
-   `npx tsx portal/scripts/verificar-export.mts` (126 invariantes), `node --test 'n8n/test/*.test.mjs'`
-   (116) e `db/test/run.sh` (21 + 13 + 12 asserts).
-   Se algo aí falha, o bug é reproduzível localmente e você não precisa do `.xlsx` para trabalhar.
-   ⚠️ **Container novo precisa de três coisas antes** (custaram tempo na sessão 14 — ver "Como
-   validar" na seção 4): `npm install` em `portal/`, `python3 gerar.py` em
-   `test-data/book-vertentes/` (o `GABARITO.json` **não é versionado** e o script morre sem ele) e
-   subir o Postgres local **com o `config_file` explícito**.
-2. **Abra o `.xlsx` do dono de verdade** antes de opinar. `python3` + `openpyxl` no scratchpad,
-   `data_only=False` (o export emite **fórmula**, não valor).
-   ⚠️ **Não conclua nada de fórmula sem AVALIAR a fórmula.** Isso já me enganou: um script bobo
-   apontou 13 linhas "vazias" na DRE que só carregavam `=B10+SUM(B13:B16)`, que ele não sabia
-   resolver. Use `portal/scripts/lib/avaliar-formula.mts` (resolve `SUM`/refs/aritmética/`IFERROR`).
-3. **Compare com o gabarito** em `test-data/book-vertentes/pdf/GABARITO.json`. O gerador é
-   determinístico (`python3 gerar.py`), e o `README.md` lista as 10 armadilhas deliberadas.
-4. **Separe extração de agregação.** Em v24 e v25 a extração estava perfeita ao centavo — o que
-   quebrava era classificação/agregação no `portal/src/lib/`. Se o "total informado" bate com o
-   gabarito, o bug **não** é na IA nem no prompt. Esse único passo economiza a rodada inteira.
-5. **Todo bug novo vira invariante** em `verificar-export.mts` ou `db/test/reconciliacao.test.sql`.
-   E **prove que o invariante novo não é vazio**: desligue o fix e confirme que ele falha. Foi assim
-   que descobri que o invariante que escrevi no PR #48 passava verde com 36 somas erradas.
-6. **Fatie e mergeie separado.** O dono pediu que nada fique pela metade por falta de
-   crédito/contexto: cada fatia é um commit testado + push + **PR draft**, mergeável sozinha.
-
-### Fatias diagnosticadas e ainda NÃO feitas
-
-- ~~**DMPL/DVA não existem na taxonomia.**~~ **FEITA na sessão 11** (abaixo). Falta só o dono
-  aplicar a `0024`, reimportar o workflow e **reextrair** os documentos afetados — a regra de sempre
-  vale: documento já classificado como `MUTUOS` não muda retroativamente.
-- ~~**DF auditada / conjunto num arquivo só bypassava o roteamento por linha.**~~ **FEITA na sessão
-  14** (abaixo). Era o único `CRÍTICO` local que restava na auditoria.
-- **PDF como texto em vez de imagem + `.docx`/`.xlsx`** via nó *Extract From File* no N8N. **Maior
-  alavanca que resta**: 60-80% do custo de input, mais precisão numérica, e fecha o gap crítico de
-  formato (hoje `.docx`/`.xlsx` do dono não entram). **Exige o N8N vivo** — não implemente às cegas,
-  peça ao dono pra abrir o workflow junto. Ver `docs/CUSTO_OPENAI.md`.
-- **Dois itens de resolução de ENTIDADE no intake**, vistos comparando v24 × v25: (a) a Metalúrgica
-  aparece com grafia diferente das outras empresas (`Vertentes Metalúrgica Ltda.` × `VERTENTES
-  METALÚRGICA LTDA.`), o que sugere **registro de entidade duplicado** — a sessão 12 resolveu o
-  sintoma NO EXPORT (`consolidarNomesDeEntidade`, senão o modelo contava cada empresa 2x), mas a
-  duplicidade na base continua; (b) as linhas extraídas caíram de **772 → 661** entre v24 e v25 sem
-  explicação — vale conferir no reprocessamento.
-
 Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
 marcação do que já foi feito). Candidatos mais fortes agora, todos locais e testáveis aqui:
 
@@ -215,7 +240,79 @@ marcação do que já foi feito). Candidatos mais fortes agora, todos locais e t
   mesmo exercício em duas notações vira duas linhas em `periodo`. Canonicalizar no caminho de ESCRITA
   (a `0022` já canonicaliza na comparação).
 
-## Sessão 17 — Testes v29/v30: macro vazio por AUTORIZAÇÃO, e 429 sem causa conhecida
+## Sessão 18 (2026-07-31) — Etapa 1 completa + Etapa 2 começada; e dois invariantes MEUS nasceram vazios
+
+Sessão longa, guiada pelo plano de 6 etapas do dono. Três PRs: **#67** (Etapa 1, 7 fatias, mergeado),
+**#68** (Etapa 2, 3 fatias + correção pós-v33, aberto). O 429 foi resolvido no começo: era
+`project_spend_limit_exceeded` — **teto de gasto do PROJETO**, invisível nas telas de Billing e de
+Limits. O `neverError` da sessão 17 é que fez o corpo real da OpenAI chegar ao pipeline.
+
+### O que o teste v33 provou (14 documentos, 7m14s, sucesso)
+
+- **A escala funciona em produção:** o Resumo saiu com *"20 linha(s) vinham em R$ e foram convertidas"*.
+  Era o mapa de dívida em reais somando com demonstrações em milhar — o erro de ~496x, evitado.
+- Entidade preenchida em 14/14 (era `—` em todos no v31), 620 linhas, 14 abas visíveis.
+- O teto de US$ 3 por execução não barrou o lote e não estourou.
+- Renomear os arquivos para `12M25`/`L24M` eliminou a 2ª chamada `gpt-4o` por documento.
+
+### O bug que o v33 revelou, e o que dele NÃO está fechado
+
+No Balanço da Componentes: `Imobilizado = 5.590` (total informado, que **já inclui** "Ferramental e
+moldes") e o Ferramental somado **de novo** em "Outros Ativos Não Circulantes" (3.600) ⇒ **Ativo Não
+Circulante inflado em 3.600**, sem nada acusar no total do grupo. Confirmei no gabarito:
+14.200 + 3.600 + 890 − 13.100 = 5.590.
+
+Causa imediata: `IMOBILIZADO_KW` tinha `"ferramenta"` e o rótulo é `"Ferramental"` — o casamento por
+token não aproxima. Corrigido (`ferramental`, `ferramentaria`, `molde`).
+
+**NÃO FECHADO:** a guarda no PARENTE. Sempre que uma conta de uma seção com total informado cai numa
+seção irmã, o grupo conta duas vezes e nada detecta. Ver "ABERTO" no topo.
+
+### A lição mais cara da sessão: invariante vazio
+
+**Duas fixtures minhas para provar a dupla contagem passaram verde COM O BUG LIGADO**, e eu só
+descobri porque desliguei o fix e olhei:
+
+1. Declarei `secao: "Imobilizado"` nas contas — com seção declarada, `subsecaoAutoritativa` já mandava
+   o Ferramental ao lugar certo, independente do vocabulário.
+2. Tirei a seção, mas deixei a `ordem` ENTRE contas do Imobilizado — o consenso de irmãos acertava
+   sozinho, também sem depender do vocabulário.
+
+Não consegui reconstruir o arranjo real da produção. Então o invariante que ficou afirma a
+**classificação por rótulo** (4 asserts, provados não-vazios) e a dupla contagem ficou registrada como
+aberta. **Se você for fechá-la: não invente fixture — ela passa verde e te engana. Use as linhas reais
+da extração do v33.**
+
+Mesma classe de erro em outro lugar: o invariante ANTIGO das médias macro exigia `COUNT(` na fórmula.
+Ele travava o **mecanismo**, e o mecanismo era justamente o defeito — a faixa posicional. Invariante
+que descreve *como* o código faz, em vez de *o que ele garante*, protege o bug.
+
+### Armadilhas de execução que custaram tempo (não repetir)
+
+- **Backtick dentro dos templates de código dos nós.** O gerador monta o `jsCode` como template
+  literal, então um backtick num COMENTÁRIO fecha a string e o JS do nó sai quebrado — e o gerador
+  não parseia, então só o teste pega. Aconteceu duas vezes.
+- **Aspas simples em `'... e' resultado ...'`** dentro de string de nó: `e'` fecha a string.
+- **Ordem de parâmetros:** `classificarConta(estrutura, secao, chave, secaoCanonica)` — estrutura
+  PRIMEIRO; `classificarDemonstracao(secao, chave, secaoCanonica, estrutura)` — diferente.
+- **`entidade` e `periodo` NÃO têm `criado_em`**; `periodo.tipo` é `text`, não enum; `caso` não tem
+  `tipo_mandato`; `pendencia` usa `criada_em` (não `criado_em`).
+- **`notaDaLinha` no harness precisa de `includeEmpty: true`** — nota de célula sem valor é pulada.
+- **`avaliarCelula` NÃO segue referência entre abas.** Toda célula de ano da aba Macro é
+  `IF('Macro (dados)'!X="","",…)`, então não dá para avaliar médias nem valores da Macro por ali. Foi
+  o que me obrigou a trocar duas asserções por estruturais — com o motivo comentado no código.
+- **`gerar_fixture.py` precisa de `PYTHONPATH=.`** (a linha de uso no docstring está errada).
+- O `e2e` precisa de `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432"` por causa do peer auth.
+
+### Uma regressão minha, corrigida na mesma sessão
+
+O PR #65 fez a entidade sair do nome do arquivo — **sem acento**, porque `normalize.mjs` remove
+diacríticos de propósito — enquanto o diagnóstico da IA traz `"Vertentes Metalúrgica Ltda."`. O
+casamento no banco era `lower(razao_social)` ⇒ **duas entidades para a mesma empresa**. Corrigido na
+`0030`, dos dois lados (escrita e `fn_coluna_entidade`). O export já mascarava o sintoma com
+`consolidarNomesDeEntidade`, e é por isso que a duplicidade na base passou tanto tempo sem ser vista.
+
+## Sessão 17 — Testes v29/v30: macro vazio por AUTORIZAÇÃO, e 429 sem causa conhecida (a causa saiu na sessão 18: teto de gasto do PROJETO)
 
 Duas frentes. A primeira está **resolvida e mergeada**. A segunda está **instrumentada, não resolvida** —
 e a distinção é o ponto mais importante desta seção.
@@ -2063,12 +2160,17 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 106 testes da lógica de ingestão/classificação/extração/macro
+node --test 'n8n/test/*.test.mjs'           # 153 testes: libs + nós REAIS do JSON gerado
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
-node --test 'n8n/test/*.test.mjs'           # 116 testes dos nós/libs do workflow
-npx tsx portal/scripts/verificar-export.mts # 126 invariantes do export
-PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh   # 21 reconciliação + 13 macro + 12 reextração
+node n8n/build-workflow-diagnostico.mjs     # regenera workflow.diagnostico-openai.json (idem)
+npx tsx portal/scripts/verificar-export.mts # 160 invariantes do export
+sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
+#   ^ reconciliação + macro + reextração + canonicalização (16) + seed macro
+E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts
+#   ^ 18 asserts ENCADEANDO extração (nó real) -> banco (funções reais) -> export -> gabarito.
+#     É a única suíte que cobre a COSTURA entre as três; as outras validam seu pedaço
+#     contra fixture escrita à mão nas duas pontas, e as duas pontas podem errar juntas.
 cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
 
