@@ -88,6 +88,27 @@ for (const item of $input.all()) {
     }
   }
 }
+// FALHAR ALTO. Antes isto terminava em return com n:0 e NUNCA lancava: com
+// neverError nos HTTP, falha de API virava corpo de erro, o continue engolia, a
+// funcao do banco recebia '[]' e devolvia 0,0 -- e a execucao agendada fechava
+// VERDE. O workflow roda dia 12; ninguem olha uma execucao verde.
+//
+// Zero observacao NUNCA e' resultado legitimo aqui: o SGS devolve os ultimos 132
+// meses em toda chamada, entao "coletei e nada veio" significa que a resposta nao
+// era o que se esperava. O padrao certo ja' existia no repositorio -- CODE_LISTAR
+// do gerador da ingestao lanca quando o formulario vem sem arquivo -- e estava
+// aplicado so' la'.
+//
+// A mensagem carrega o que foi VISTO, nao so' o que faltou: quantos itens
+// chegaram, quantos foram descartados e uma amostra do corpo. Sem isso o proximo
+// diagnostico recomeca do zero, que foi o custo do v30.
+if (obs.length === 0) {
+  const amostra = JSON.stringify(($input.all()[0] || {}).json || {}).slice(0, 400);
+  throw new Error('Coleta de indices macro NAO trouxe observacao nenhuma. Itens recebidos: '
+    + $input.all().length + ', descartados: ' + descartados
+    + '. Zero nunca e resultado legitimo aqui (o SGS devolve 132 meses por chamada), '
+    + 'entao a resposta nao era o esperado. Primeiro item recebido: ' + amostra);
+}
 // 'descartados' sai no payload de proposito: e' o unico numero que distingue
 // "coletou e nao mudou nada" de "a API respondeu outra coisa e nada foi lido".
 return [{ json: { observacoes: obs, n: obs.length, descartados } }];
@@ -125,6 +146,16 @@ for (const item of $input.all()) {
       respondentes:numeroMacro(l.numeroRespondentes),
       coletado_em:recente});
   }
+}
+// Mesmo motivo do lado das observacoes: o Focus publica boletim toda semana, e
+// zero expectativa significa resposta inesperada, nao "nada novo". Sem o throw,
+// as premissas de inflacao e juro da aba Modelagem vao a 0% com nota afirmando que
+// vieram do Boletim Focus -- mentira que fecha o EBITDA bonito.
+if (obs.length === 0) {
+  const amostra = JSON.stringify(($input.all()[0] || {}).json || {}).slice(0, 400);
+  throw new Error('Coleta de expectativas Focus NAO trouxe nada. Itens recebidos: '
+    + $input.all().length + '. Zero nunca e resultado legitimo aqui (o Focus publica '
+    + 'boletim semanal), entao a resposta nao era o esperado. Primeiro item: ' + amostra);
 }
 return [{ json: { expectativas: obs, n: obs.length } }];
 `.trim();

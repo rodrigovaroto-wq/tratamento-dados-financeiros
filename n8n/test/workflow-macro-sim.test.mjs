@@ -218,3 +218,58 @@ test('Focus: decimal como STRING é aceito (era o que zerava o ramo inteiro)', (
   assert.equal(y2026.respondentes, 151, 'inteiro como string');
   assert.equal(exp.find((e) => e.ano_ref === 2027).mediana, 3.9, 'número continua funcionando');
 });
+
+// --- A coleta falha ALTO em vez de gravar zero --------------------------------
+// Antes, os dois normalizadores terminavam em `return {n: 0}` e NUNCA lançavam:
+// com `neverError` nos HTTP, falha de API virava corpo de erro, o `continue`
+// engolia, a função do banco recebia `'[]'` e devolvia `0,0` — e a execução
+// AGENDADA fechava verde. O workflow roda dia 12; ninguém olha execução verde.
+test('coleta de observações LANÇA quando nada foi lido, e diz o que viu', () => {
+  assert.throws(
+    () => rodarCode('Normalizar Observações', {
+      itens: [
+        { __serie: 'IPCA', __fonte: 'BCB/SGS', __corpo: { error: 'Bad Request', status: 400 } },
+        { __serie: 'SELIC', __fonte: 'BCB/SGS', __corpo: { error: 'Bad Request', status: 400 } },
+      ],
+    }),
+    (e) => {
+      assert.match(e.message, /NAO trouxe observacao nenhuma/);
+      // A mensagem tem de carregar o que foi VISTO, não só o que faltou — sem isso
+      // o próximo diagnóstico recomeça do zero, que foi o custo do teste v30.
+      assert.match(e.message, /Itens recebidos: 2/, 'diz quantos itens chegaram');
+      assert.match(e.message, /descartados: 2/, 'diz quantos foram descartados');
+      assert.match(e.message, /Bad Request/, 'inclui amostra do corpo recebido');
+      assert.match(e.message, /SGS devolve 132 meses/, 'explica por que zero não é legítimo');
+      return true;
+    },
+  );
+});
+
+test('coleta do Focus LANÇA quando nada foi lido', () => {
+  assert.throws(
+    () => rodarCode('Normalizar Focus', {
+      itens: [{ __serie: 'IPCA', __corpo: { error: 'service unavailable' } }],
+    }),
+    (e) => {
+      assert.match(e.message, /Focus NAO trouxe nada/);
+      assert.match(e.message, /service unavailable/, 'inclui amostra do corpo');
+      assert.match(e.message, /boletim semanal/, 'explica por que zero não é legítimo');
+      return true;
+    },
+  );
+});
+
+// E o caminho normal NÃO lança — um throw que dispara em operação normal seria
+// pior que o silêncio, porque treina quem opera a ignorar o alarme.
+test('coleta com dado válido não lança', () => {
+  const obs = rodarCode('Normalizar Observações', {
+    itens: [{ __serie: 'IPCA', __fonte: 'BCB/SGS', __corpo: { data: '01/01/2026', valor: '0.33' } }],
+  });
+  assert.equal(obs[0].json.n, 1);
+  const foc = rodarCode('Normalizar Focus', {
+    itens: [{ __serie: 'IPCA', __corpo: { value: [
+      { Data: '2026-07-24', DataReferencia: '2026', Mediana: 4.5, Media: 4.5, numeroRespondentes: 151 },
+    ] } }],
+  });
+  assert.equal(foc[0].json.n, 1);
+});
