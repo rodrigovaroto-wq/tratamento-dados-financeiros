@@ -132,6 +132,38 @@ begin
     'nome curto é absorvido pelo longo (limitação conhecida e fixada por teste)',
     'fn_mesma_entidade: viés deliberado para consolidar');
 
+  -- ---- 5. fn_valor_conceito_secao (0031): rótulo que não nomeia o conceito ----
+  -- Os dois rótulos do book que NENHUMA das quatro tentativas por `chave` casava,
+  -- e que produziram a pendência "não foi possível localizar o Caixa/Disponível"
+  -- no teste v31. Para a VT Logística o dado estava na SEÇÃO todo esse tempo.
+  v_r := fn_registrar_documento(v_caso, 'VT Logistica', 'anual', '12M25', 'BALANCO', 0.9,
+    'nome_arquivo', 'supabase_storage', 'b/vt.pdf', 'BP VT.pdf', null, 'H-CANON-8', 'ok');
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_campos_extraidos(v_ver, jsonb_build_array(
+    jsonb_build_object('chave','Bancos Conta Movimento','secao','Disponível','valor_num','320','confianca','0.9'),
+    jsonb_build_object('chave','Duplicatas a receber','secao','Contas a Receber','valor_num','1180','confianca','0.9')
+  ), 'N0', null);
+  perform teste_assert_rx(
+    (fn_valor_conceito_secao(v_ver, array['disponivel'], array['circulante'], null, null)).valor_num = 320,
+    '"Bancos Conta Movimento" é achado pela SEÇÃO "Disponível"',
+    'fn_valor_conceito_secao: era a causa da 2a pre-condicao do v31');
+  -- E não confunde: a seção "Contas a Receber" não vira caixa.
+  perform teste_assert_rx(
+    (fn_valor_conceito_secao(v_ver, array['disponivel'], array['circulante'], null, null)).chave = 'Bancos Conta Movimento',
+    'e escolhe a linha certa, não qualquer linha do documento', 'fn_valor_conceito_secao');
+  -- "Caixa" puro (o caso da SPE): as tentativas antigas exigiam 'equivalentes' ou
+  -- 'bancos' junto, então um rótulo de uma palavra não casava nenhuma.
+  v_r := fn_registrar_documento(v_caso, 'Vertentes Imoveis SPE', 'anual', '12M25', 'BALANCO', 0.9,
+    'nome_arquivo', 'supabase_storage', 'b/spe.pdf', 'BP SPE.pdf', null, 'H-CANON-9', 'ok');
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_campos_extraidos(v_ver, jsonb_build_array(
+    jsonb_build_object('chave','Caixa','secao','Ativo Circulante','valor_num','90','confianca','0.9')
+  ), 'N0', null);
+  perform teste_assert_rx(
+    (fn_valor_conceito_col(v_ver, array['caixa'], array['circulante','fluxo','inicio','inicial','equivalente'], null, null)).valor_num = 90,
+    '"Caixa" puro é achado (as tentativas antigas exigiam equivalentes ou bancos)',
+    'cascata do caixa: rotulo de uma palavra');
+
   delete from caso where id = v_caso;
   raise notice 'TODOS OS TESTES DE CANONICALIZAÇÃO PASSARAM';
 end

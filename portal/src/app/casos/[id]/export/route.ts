@@ -35,6 +35,28 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
 
   const caso = casoRes.data;
+
+  // `.error` das consultas PRINCIPAIS: a 0028 nomeou este defeito ("`?? []` sobre
+  // `.data`, sem olhar `.error`") e corrigiu SÓ o ramo macro. Aqui era o pior lugar
+  // para ele estar: erro de RLS/permissão/relacionamento no PostgREST produzia um
+  // book com "Linhas totais extraídas: 0" e nenhuma mensagem — exatamente o sintoma
+  // do teste v14, que a 0016 tentou tornar impossível.
+  //
+  // E aqui a resposta certa é DIFERENTE da do macro. Macro é opcional: a aba declara
+  // "a consulta falhou" e o resto do book segue valendo. Sem `documento` ou
+  // `campo_extraido`, o book não tem conteúdo nenhum — entregar um arquivo vazio é
+  // pior que não entregar, porque um `.xlsx` que abre parece um resultado.
+  if (documentosRes.error) {
+    console.error(`[export] consulta de documentos falhou: ${documentosRes.error.message}`, { caso_id: id });
+    return NextResponse.json(
+      {
+        error: "Não foi possível ler os documentos deste caso — o export foi ABORTADO em vez de gerar uma planilha vazia.",
+        detalhe: documentosRes.error.message,
+        dica: "Causa mais comum: RLS/GRANT (ver db/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
+      },
+      { status: 500 },
+    );
+  }
   const documentos = (documentosRes.data as unknown as DocumentoParaExport[] | null) ?? [];
 
   const versaoIds = documentos.flatMap((doc) => (doc.documento_versao ?? []).map((v) => v.id));
@@ -55,6 +77,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         .order("ordem", { ascending: true, nullsFirst: false })
     : { data: [] as CampoExtraido[], error: null };
 
+  if (camposRes.error) {
+    console.error(`[export] consulta de campos extraídos falhou: ${camposRes.error.message}`, { caso_id: id });
+    return NextResponse.json(
+      {
+        error: "Não foi possível ler as linhas extraídas — o export foi ABORTADO em vez de gerar uma planilha sem números.",
+        detalhe: camposRes.error.message,
+        dica: "Causa mais comum: RLS/GRANT (ver db/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
+      },
+      { status: 500 },
+    );
+  }
   const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
 
   // POR QUE a extração falhou, e não só QUAIS documentos falharam. No "teste v30"
@@ -68,7 +101,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     .eq("caso_id", id)
     .eq("tipo", "extracao_falhou")
     .neq("estado", "resolvida");
+  // Esta é auxiliar (a lista de causas), então segue a doutrina do macro: declara
+  // que não deu para ler, em vez de abortar o book inteiro ou omitir em silêncio.
+  if (falhasRes.error) {
+    console.error(`[export] consulta de causas de falha falhou: ${falhasRes.error.message}`, { caso_id: id });
+  }
   const causasDeFalha = [
+    ...(falhasRes.error
+      ? [`(não foi possível ler as causas registradas: ${falhasRes.error.message})`]
+      : []),
     ...new Set(
       ((falhasRes.data as Array<{ descricao: string | null }> | null) ?? [])
         .map((p) => p.descricao ?? "")
