@@ -21,7 +21,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA } from './lib/extract.mjs';
+import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
@@ -80,6 +80,24 @@ const FONTE_DIAGNOSTICO_ERRO = `const diagnosticarErroApi = ${diagnosticarErroAp
 // arquivo nunca era lido para isso); ver o comentário longo em lib/classifier.mjs
 // para por que ela NÃO mexe na confiança.
 const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};`;
+
+// `normalizarUnidade` — o mirror manual que ficou de fora quando todos os outros
+// passaram a ser embutidos, e que JÁ DIVERGIU. A cópia à mão em `normUnid` perdeu
+// a última cláusula da fonte:
+//
+//     if (t === '1' || t === '1.000' || t === '1000') return t === '1' ? 'unidade' : 'milhar';
+//
+// Divergência MEDIDA (não estimada): em 13 redações de escala testadas, 3 diferem —
+// quando a célula é EXATAMENTE o multiplicador (`1.000`, `1000`, `1`), que é como
+// um cabeçalho de coluna costuma declarar a escala. A lib devolve
+// `milhar`/`milhar`/`unidade`; o nó em produção devolvia `null` nos três.
+//
+// Por que `null` é caro aqui: escala nula não é neutra. `fn_valor_em_base`
+// (0023:127) multiplica por `coalesce(fn_fator_escala(...), 1)`, então escala
+// desconhecida é tratada como UNIDADE — e comparar milhar com unidade erra por
+// 1000x. O comentário da própria fonte diz "errar em 1000x é pior que não saber";
+// perder a escala silenciosamente entrega exatamente esse 1000x.
+const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString()};`;
 
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
 const FONTE_ORCAMENTO_LOTE = `const orcamentoDoLote = ${orcamentoDoLote.toString()};`;
@@ -179,7 +197,29 @@ else if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+
 else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}
 else if(/spreadsheetml|ms-excel|excel/.test(mt)) part={type:'text',text:'(XLSX: habilitar Extract From File no N8N p/ extrair texto — ver README. Nome: '+(item.nome_original||'')+')'};
 else part={type:'text',text:'(conteudo nao suportado: '+mt+')'};
-return {json:{...item, content_part: part, content_mime: mt}, binary: $input.item.binary};
+// HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.
+// A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob
+// o MESMO documento, em vez de documento novo. Como o pipeline mandava null no
+// 12o elemento do queryReplacement de Registrar Documento, a condicao
+// "p_hash is not null" nunca era verdade: todo reenvio duplicava o documento,
+// inflava a completude e duplicava colunas no export -- o "15 colunas para 5
+// empresas" do teste v27. O reextracao.test.sql provava a FUNCAO passando o hash
+// a mao, e e' por isso que o gap ficou invisivel para a suite.
+//
+// Calculado AQUI porque este e' o unico no' que tem os bytes de verdade (o buffer
+// acima, resolvido pelo helper). SHA-256 via Web Crypto, global no Node 18+.
+// Se o sandbox do n8n nao expuser crypto.subtle, o hash fica NULO e o
+// comportamento volta a ser o de hoje (sem idempotencia) -- de proposito: um hash
+// mais fraco poderia COLIDIR e fundir documentos diferentes, que o cabecalho da
+// 0026 chama de "o erro mais caro possivel aqui". Nao saber e' melhor que errar.
+let hash=null;
+try{
+  if(typeof crypto!=='undefined'&&crypto&&crypto.subtle){
+    const d=await crypto.subtle.digest('SHA-256',buf);
+    hash=Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+}catch(e){hash=null;}
+return {json:{...item, content_part: part, content_mime: mt, hash}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
@@ -295,7 +335,7 @@ if(resp?.error){
 if(!falhaMotivo&&finishReason==='length'){
   falhaMotivo='Resposta da OpenAI atingiu o limite de tokens de saida (finish_reason=length); o JSON veio valido, mas o conteudo pode estar incompleto (faltando linhas do fim do documento).';
 }
-function normUnid(b){if(b==null)return null;const t=String(b).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().trim();if(!t)return null;if(/\\bmilhao|milhoes|\\bmm\\b|r\\$\\s*mi\\b|\\bmi\\b/.test(t))return 'milhao';if(/\\bmilhar|milhares|\\bmil\\b|r\\$\\s*mil|\\bm\\$\\b/.test(t))return 'milhar';if(/\\bunidade|\\breal\\b|reais|inteiro|r\\$$/.test(t))return 'unidade';return null;}
+${FONTE_NORMALIZAR_UNIDADE}
 const unidade=normUnid(p.unidade);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
 const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
@@ -440,6 +480,24 @@ const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInter
 // SEGUINTES no lote continuam sendo processados normalmente.
 const PG_RETRY = { onError: 'continueRegularOutput', retryOnFail: true, maxTries: 3, waitBetweenTries: 3000 };
 
+// Todo nó Code POR ITEM continua o lote quando um item falha.
+//
+// Antes desta correção o JSON tinha 8 `onError` — os 6 Postgres e os 2 OpenAI — e
+// ZERO nos Code. `Preparar Conteudo` chama `getBinaryDataBuffer` (binário
+// corrompido, referência de filesystem expirada, arquivo grande demais): um throw
+// ali **mata a execução inteira** e todos os itens ainda na fila desaparecem sem
+// rastro. É exatamente o bug do "teste v19" (9 arquivos enviados, 6 no dashboard)
+// por outra causa, e foi para ele que os nós Postgres ganharam `onError` na
+// sessão 7 cont.¹³ — os Code ficaram de fora e ninguém notou porque o invariante
+// que confere isso tem lista de nomes hardcoded.
+//
+// DOIS nós Code NÃO entram aqui, e a exclusão é o ponto:
+//   • `Listar Arquivos` lança quando o formulário vem sem arquivo — abortar é a
+//     resposta certa, não há lote para continuar.
+//   • `Orcamento do Lote` lança para RECUSAR o lote acima de US$ 3. Pôr `onError`
+//     nele desativaria o teto de gasto, que é o oposto do que ele existe para fazer.
+const CODE_CONTINUA = { onError: 'continueRegularOutput' };
+
 const nodes = [
   node('Intake (Form)', 'n8n-nodes-base.formTrigger', 2, {
     formTitle: 'Intake Oria — Reestruturação',
@@ -457,10 +515,10 @@ const nodes = [
 
   node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }, 400, 400),
 
-  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400),
+  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400, CODE_CONTINUA),
 
   node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }, 700, 260),
-  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400),
+  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
   // ⚠️ DESABILITADO (2026-07-17): bug de longa data do node HTTP Request do
@@ -492,7 +550,7 @@ const nodes = [
     ] },
   }, 1000, 300),
 
-  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, 1200, 200),
+  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, 1200, 200, CODE_CONTINUA),
 
   // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
@@ -506,14 +564,14 @@ const nodes = [
     options: OPENAI_BATCHING,
   }, 1400, 200, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200),
+  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200, CODE_CONTINUA),
 
   // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
   // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
-    options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, null, 'ok', $json.justificativa || null] }}" },
+    options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null] }}" },
   }, 1850, 400, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
@@ -521,7 +579,7 @@ const nodes = [
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
   }, 2100, 560, { credentials: PG_CRED, ...PG_RETRY }),
 
-  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300),
+  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300, CODE_CONTINUA),
 
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
@@ -531,7 +589,7 @@ const nodes = [
     options: OPENAI_BATCHING_EXTRACAO,
   }, 2300, 300, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300),
+  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300, CODE_CONTINUA),
 
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
