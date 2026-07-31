@@ -13,7 +13,13 @@
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SERIES_MACRO, INDICADORES_FOCUS, urlSgs, urlFocus, urlSidraIpca } from './lib/macro.mjs';
+import { SERIES_MACRO, INDICADORES_FOCUS, urlSgs, urlFocus, urlSidraIpca, numeroMacro } from './lib/macro.mjs';
+
+// `numeroMacro` EMBUTIDA do fonte, não copiada à mão. É o padrão que o gerador da
+// ingestão já usa cinco vezes (prompt, ALIASES, diagnosticarErroApi, parseEntidade,
+// orçamento) exatamente porque a cópia à mão deste repositório já divergiu — e este
+// arquivo era o último mirror manual que restava.
+const FONTE_NUMERO_MACRO = `const numeroMacro = ${numeroMacro.toString()};`;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -46,11 +52,29 @@ function num(b){ if(typeof b==='number') return isFinite(b)?b:null;
   const n=Number(t.includes(',')?t.replace(/\\./g,'').replace(',','.'):t); return isFinite(n)?n:null; }
 function dataSgs(b){ const m=String(b==null?'':b).match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/);
   return m? m[3]+'-'+m[2]+'-'+m[1] : null; }
+// O no' HTTP Request do n8n EXPLODE resposta JSON que e' array em N itens. O SGS
+// devolve [{data,valor}, ...x132], entao 'Manter Contexto SGS' (runOnceForEachItem)
+// recebe UM objeto por item e gravava __corpo = {data,valor} -- nao um array. O
+// '!Array.isArray(corpo) continue' abaixo descartava TODOS os ~792 itens das 6
+// series mensais, em silencio. Sobrevivia so' o ramo IBGE/SIDRA, que ja' remontava
+// o array ($input.all().map(...)) porque e' UMA requisicao so'.
+//
+// Nao se remonta aqui de proposito: cada item ja' carrega o __serie CERTO, pelo
+// pareamento de itens do n8n ($('Series a Coletar').item). Agrupar de novo por
+// serie seria refazer, com risco, um trabalho que o n8n ja' fez.
+//
+// A distincao importa: corpo de ERRO da API tambem e' um objeto unico. Envolver
+// qualquer objeto num array faria a falha virar "zero observacoes" -- o mesmo
+// silencio, por outra porta. So' o que TEM CARA DE OBSERVACAO e' aceito; o resto
+// e' contado em 'descartados', e e' esse numero que torna a falha visivel.
+function ehObsSgs(o){ return !!o && typeof o==='object' && !Array.isArray(o) && ('data' in o) && ('valor' in o); }
+function comoArray(c){ return Array.isArray(c) ? c : (ehObsSgs(c) ? [c] : null); }
 const obs=[];
+let descartados=0;
 for (const item of $input.all()) {
   const j=item.json||{};
-  const serie=j.__serie, corpo=j.__corpo;
-  if(!serie||!Array.isArray(corpo)) continue;
+  const serie=j.__serie, corpo=comoArray(j.__corpo);
+  if(!serie||!corpo){ descartados++; continue; }
   if(j.__fonte==='IBGE/SIDRA'){
     for(const o of corpo.slice(1)){
       const m=String(o&&o.D3C||'').match(/^(\\d{4})(\\d{2})$/);
@@ -64,10 +88,13 @@ for (const item of $input.all()) {
     }
   }
 }
-return [{ json: { observacoes: obs, n: obs.length } }];
+// 'descartados' sai no payload de proposito: e' o unico numero que distingue
+// "coletou e nao mudou nada" de "a API respondeu outra coisa e nada foi lido".
+return [{ json: { observacoes: obs, n: obs.length, descartados } }];
 `.trim();
 
 const CODE_FOCUS = `
+${FONTE_NUMERO_MACRO}
 const obs=[];
 for (const item of $input.all()) {
   const j=item.json||{};
@@ -81,12 +108,21 @@ for (const item of $input.all()) {
   for(const l of linhas){
     if(!l||l.Data!==recente) continue;
     const ano=Number(l.DataReferencia);
-    const mediana=typeof l.Mediana==='number'?l.Mediana:null;
+    // MIRROR que JA' DIVERGIU: o no' fazia typeof l.Mediana==='number' ? ... : null,
+    // rejeitando QUALQUER string -- inclusive "4.50". A lib usa numeroMacro, que
+    // aceita string e vírgula decimal. Medido: no' devolvia {n:0} onde a lib
+    // devolvia 2 expectativas.
+    //
+    // Hoje o Olinda entrega numero (o seed versionado nao tem um null de
+    // respondentes), entao isto era fragilidade LATENTE, nao a causa atual. Mas se
+    // a API passar a serializar decimal como string, todo o ramo Focus zera em
+    // silencio e as premissas de inflacao/juro da Modelagem vao a 0%.
+    const mediana=numeroMacro(l.Mediana);
     if(!Number.isInteger(ano)||mediana===null||vistos[ano]) continue;
     vistos[ano]=1;
     obs.push({serie:serie,ano_ref:ano,mediana:mediana,
-      media:typeof l.Media==='number'?l.Media:null,
-      respondentes:typeof l.numeroRespondentes==='number'?l.numeroRespondentes:null,
+      media:numeroMacro(l.Media),
+      respondentes:numeroMacro(l.numeroRespondentes),
       coletado_em:recente});
   }
 }

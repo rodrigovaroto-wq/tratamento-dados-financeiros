@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SERIES_MACRO, INDICADORES_FOCUS } from '../lib/macro.mjs';
+import { SERIES_MACRO, INDICADORES_FOCUS, numeroMacro } from '../lib/macro.mjs';
 
 // Executa os códigos REAIS dos nós Code do workflow gerado, com a semântica do
 // N8N ($input/$json/$()). O mesmo padrão de `workflow-sim.test.mjs`: o mirror
@@ -128,4 +128,93 @@ test('workflow macro: uma fonte fora do ar não derruba as outras', () => {
     assert.equal(n.onError, 'continueRegularOutput', `${nome} sem tolerância a erro`);
     assert.equal(n.retryOnFail, true, `${nome} sem retry`);
   }
+});
+
+// --- O runtime REAL do n8n: o nó HTTP explode array em N itens ----------------
+// Este é o teste que faltava, e a razão pela qual a perda total de 6 séries
+// passava verde. O nó HTTP Request do n8n, ao receber uma resposta JSON que é um
+// ARRAY, devolve um item por elemento. O SGS responde `[{data,valor}, …×132]`,
+// então `Manter Contexto SGS` (que é `runOnceForEachItem`) recebe UM OBJETO por
+// item — nunca o array inteiro.
+//
+// O teste antigo injetava `__corpo` já como array, um modelo que não corresponde
+// ao runtime. Com isso, `if (!Array.isArray(corpo)) continue` parecia inofensivo
+// aqui e descartava ~792 itens em produção, calado. O ramo IBGE/SIDRA sobrevivia
+// porque é UMA requisição e o nó anterior remonta o array explicitamente — a
+// assimetria entre os dois ramos era o sintoma à vista.
+test('SGS: o split do nó HTTP (um item por observação) NÃO perde dado', () => {
+  // É assim que os itens chegam de verdade: 6 séries × N observações, cada item
+  // com `__corpo` sendo UMA observação e o `__serie` correto vindo do pareamento.
+  const itens = [];
+  for (const s of ['IPCA', 'SELIC', 'CDI']) {
+    for (const [data, valor] of [['01/01/2026', '0.33'], ['01/02/2026', '0.70'], ['01/03/2026', '0.51']]) {
+      itens.push({ __serie: s, __fonte: 'BCB/SGS', __corpo: { data, valor } });
+    }
+  }
+  const saida = rodarCode('Normalizar Observações', { itens });
+  const obs = saida[0].json.observacoes;
+  assert.equal(obs.length, 9, 'as 9 observações do split foram normalizadas');
+  assert.equal(saida[0].json.descartados, 0, 'nenhum item foi descartado');
+  // Cada observação mantém a SÉRIE do seu item — é por isso que não se remonta o
+  // array aqui: o pareamento do n8n já resolveu de qual requisição o item veio.
+  for (const s of ['IPCA', 'SELIC', 'CDI']) {
+    assert.equal(obs.filter((o) => o.serie === s).length, 3, `série ${s} preservada no split`);
+  }
+  assert.deepEqual(obs[0], { serie: 'IPCA', fonte: 'BCB/SGS', data_ref: '2026-01-01', valor: 0.33 });
+});
+
+// Corpo de ERRO da API também é um objeto único. Envolvê-lo num array faria a
+// falha virar "zero observações" — o mesmo silêncio, por outra porta. Só o que tem
+// CARA de observação é aceito, e o resto é CONTADO.
+test('SGS: corpo de erro da API não é confundido com observação, e é contado', () => {
+  const saida = rodarCode('Normalizar Observações', {
+    itens: [
+      { __serie: 'IPCA', __fonte: 'BCB/SGS', __corpo: { data: '01/01/2026', valor: '0.33' } },
+      // com `neverError`, uma falha da API chega como CORPO, não como exceção
+      { __serie: 'SELIC', __fonte: 'BCB/SGS', __corpo: { error: 'Bad Request', status: 400 } },
+      { __serie: 'CDI', __fonte: 'BCB/SGS', __corpo: 'erro em texto puro' },
+      { __serie: 'IGPM', __fonte: 'BCB/SGS', __corpo: null },
+    ],
+  });
+  assert.equal(saida[0].json.observacoes.length, 1, 'só a observação de verdade entra');
+  assert.equal(saida[0].json.descartados, 3, 'os três corpos inválidos são contados, não engolidos');
+});
+
+test('SGS: array inteiro (caso do SIDRA e de instância sem split) continua funcionando', () => {
+  const saida = rodarCode('Normalizar Observações', {
+    itens: [{ __serie: 'IPCA', __fonte: 'BCB/SGS', __corpo: [
+      { data: '01/01/2026', valor: '0.33' }, { data: '01/02/2026', valor: '0.70' },
+    ] }],
+  });
+  assert.equal(saida[0].json.observacoes.length, 2, 'a forma de array não regrediu');
+  assert.equal(saida[0].json.descartados, 0);
+});
+
+// --- Anti-drift: o Focus usa o MESMO numeroMacro da lib ----------------------
+// Era o último mirror manual do repositório, e tinha divergido: o nó fazia
+// `typeof l.Mediana === 'number'`, rejeitando qualquer string — inclusive "4.50".
+test('Normalizar Focus carrega o MESMO numeroMacro de lib/macro.mjs', () => {
+  const codigo = nodeDe('Normalizar Focus').parameters.jsCode;
+  assert.ok(codigo.includes(numeroMacro.toString()),
+    'a conversão numérica embutida no nó divergiu da fonte em lib/macro.mjs');
+});
+
+test('Focus: decimal como STRING é aceito (era o que zerava o ramo inteiro)', () => {
+  // Se o Olinda passar a serializar decimal como string — hoje ele devolve número —
+  // o nó antigo descartaria TODA linha e as premissas de inflação/juro da aba
+  // Modelagem iriam a 0%, sem erro em lugar nenhum.
+  const saida = rodarCode('Normalizar Focus', {
+    itens: [{ __serie: 'IPCA', __corpo: { value: [
+      { Data: '2026-07-24', DataReferencia: '2026', Mediana: '4.50', Media: '4,52', numeroRespondentes: '151' },
+      { Data: '2026-07-24', DataReferencia: '2027', Mediana: 3.9, Media: 3.88, numeroRespondentes: 148 },
+      { Data: '2026-07-17', DataReferencia: '2026', Mediana: '9.99', Media: '9.99', numeroRespondentes: '10' },
+    ] } }],
+  });
+  const exp = saida[0].json.expectativas;
+  assert.equal(exp.length, 2, 'só o boletim mais recente entra, e as duas linhas dele passam');
+  const y2026 = exp.find((e) => e.ano_ref === 2026);
+  assert.equal(y2026.mediana, 4.5, 'decimal com ponto vindo como string');
+  assert.equal(y2026.media, 4.52, 'decimal com VÍRGULA vindo como string');
+  assert.equal(y2026.respondentes, 151, 'inteiro como string');
+  assert.equal(exp.find((e) => e.ano_ref === 2027).mediana, 3.9, 'número continua funcionando');
 });
