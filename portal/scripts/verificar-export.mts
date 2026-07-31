@@ -2194,6 +2194,242 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+
+// ---- 31: Focus que não cobre o exercício projetado NÃO vira 0,0% -----------
+// O defeito mais enganoso que restava da Etapa 2, e o gatilho é banal: os
+// exercícios projetados derivam do histórico DO MANDATO. Um caso com
+// demonstrações de 2019-2021 projeta 2022-2024; o Focus publicado cobre
+// 2026-2030. As três colunas saíam com inflação e juro ZERADOS — célula
+// amarela de input, com a nota afirmando "Mediana das expectativas de mercado
+// (Boletim Focus/BCB)" — enquanto a aba Macro, ao lado, exibia o Focus de
+// 2026-2030 como se estivesse tudo em ordem. Todo o bloco de dívida cobra juro
+// zero nesse cenário e o modelo fecha bonito.
+//
+// O que se afirma aqui é o COMPORTAMENTO (a ausência aparece como ausência),
+// não o mecanismo — o invariante das médias já ensinou o preço de travar "como
+// o código faz": ele protegeu justamente o defeito.
+{
+  const V = "v-focus-fora";
+  const documentos: DocumentoParaExport[] = [2019, 2020, 2021].map((ano) => ({
+    id: `d-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Antiga Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2019, 2020, 2021].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  // Focus real de hoje: horizonte 2026-2030. Nenhum dos anos que ESTE caso
+  // projeta (2022-2024) está nele.
+  const expectativas = [2026, 2027, 2028, 2029, 2030].flatMap((ano_ref) => [
+    { serie: "IPCA", ano_ref, mediana: 4.5, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref, mediana: 11.0, coletado_em: "2026-07-24" },
+  ]);
+  const anuais = [2019, 2020, 2021].flatMap((ano) => [
+    { serie: "IPCA", ano, meses: 12, retorno: 4.2 },
+    { serie: "SELIC", ano, meses: 12, retorno: 9.1 },
+  ]);
+  const mod = buildExportWorkbook({
+    caso: { nome: "Caso Antigo", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais, expectativas }, agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const nAnos = Math.floor((mod.columnCount - 2) / 13);
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  // 3 exercícios históricos (2019-2021) + 3 projetados (2022-2024).
+  const projetados = [3, 4, 5].filter((y) => y < nAnos);
+  checar(projetados.length === 3, "(31) o caso projeta 3 exercícios fora do horizonte do Focus", String(nAnos));
+
+  for (const rot of ["Inflação esperada (IPCA — Focus)", "Juro esperado (Selic — Focus)"]) {
+    const r = linhaDe(rot);
+    checar(r > 0, `(31) a premissa "${rot}" existe`);
+    if (r < 0) continue;
+    for (const y of projetados) {
+      const cell = mod.getRow(r).getCell(colFY(y));
+      // A afirmação central: sem Focus para o ano, a célula não carrega NADA —
+      // nem fórmula que resolve para zero, nem o literal 0. Zero numa célula de
+      // premissa é indistinguível de uma expectativa medida de 0%.
+      checar(cell.value == null,
+        `(31) sem Focus para ${2019 + y}, "${rot}" fica EM BRANCO (0 seria ausência disfarçada de dado)`,
+        JSON.stringify(cell.value));
+      const nota = String((cell.note as { texts?: Array<{ text: string }> } | undefined)?.texts?.map((t) => t.text).join("") ?? "");
+      checar(/EM BRANCO/.test(nota) && /2026/.test(nota),
+        "(31) …e a nota da célula declara a cobertura real do Focus", nota.slice(0, 140));
+      checar(new RegExp(String(2019 + y)).test(nota),
+        `(31) …nomeando o exercício desta coluna (${2019 + y})`, nota.slice(0, 140));
+    }
+  }
+
+  // O aviso que se lê SEM abrir nota nenhuma: nota de célula só alcança quem já
+  // desconfiou e foi até lá.
+  let avisoLinha = -1;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (/SEM EXPECTATIVA DO FOCUS/.test(String(mod.getRow(r).getCell(1).value ?? ""))) { avisoLinha = r; break; }
+  }
+  checar(avisoLinha > 0, "(31) a Modelagem avisa, em linha visível, que a projeção saiu sem Focus");
+  if (avisoLinha > 0) {
+    const txt = String(mod.getRow(avisoLinha).getCell(1).value ?? "");
+    checar(/2022/.test(txt) && /2024/.test(txt),
+      "(31) …nomeando os exercícios descobertos", txt.slice(0, 120));
+    checar(/juro zero/i.test(txt), "(31) …e dizendo o EFEITO (o bloco de dívida não cobra juro)");
+  }
+
+  // A conferência VIVA, que é o que sobrevive ao dono mover a linha do tempo:
+  // a nota foi escrita na exportação, a fórmula responde a cada recálculo.
+  const rCob = linhaDe("↳ cobertura do Focus (IPCA / Selic)");
+  checar(rCob > 0, "(31) existe linha de cobertura do Focus que recalcula com o arquivo");
+  if (rCob > 0) {
+    const f = String((mod.getRow(rCob).getCell(colFY(projetados[0])).value as { formula?: string })?.formula ?? "");
+    checar(/SEM FOCUS/.test(f) && /MATCH\(/.test(f),
+      "(31) …e ela pergunta ao arquivo (MATCH), não repete a decisão da geração", f.slice(0, 120));
+  }
+}
+
+// ---- 32: e o contrário — com Focus cobrindo o ano, nada de aviso -----------
+// A metade que impede o invariante 31 de virar "sempre em branco": um export
+// que apagasse a premissa SEMPRE passaria em todos os asserts acima. Aqui o
+// horizonte do Focus cobre os anos projetados e o comportamento tem de ser o
+// oposto — fórmula lendo a aba Macro, nenhuma célula vazia, nenhum aviso.
+{
+  const V = "v-focus-cobre";
+  const documentos: DocumentoParaExport[] = [2024, 2025].map((ano) => ({
+    id: `dc-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Atual Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2024, 2025].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) => [
+    { serie: "IPCA", ano_ref, mediana: 4.5, coletado_em: "2026-07-24" },
+    { serie: "SELIC", ano_ref, mediana: 11.0, coletado_em: "2026-07-24" },
+  ]);
+  const mod = buildExportWorkbook({
+    caso: { nome: "Caso Atual", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais: [{ serie: "IPCA", ano: 2024, meses: 12, retorno: 4.2 }], expectativas },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === rot) return r;
+    }
+    return -1;
+  };
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  // 2024-2025 históricos, 2026-2028 projetados — todos no Focus desta fixture.
+  for (const y of [2, 3, 4]) {
+    const cell = mod.getRow(rIpca).getCell(colFY(y));
+    const f = String((cell.value as { formula?: string } | undefined)?.formula ?? "");
+    checar(f.includes("'Macro'!"),
+      `(32) com Focus para ${2024 + y}, a premissa LÊ a aba Macro em vez de ficar vazia`, f.slice(0, 90));
+  }
+  let aviso = false;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (/SEM EXPECTATIVA DO FOCUS/.test(String(mod.getRow(r).getCell(1).value ?? ""))) aviso = true;
+  }
+  checar(!aviso, "(32) e nenhum aviso de ausência aparece quando não há ausência");
+}
+
+// ---- 33: falha PARCIAL do macro é declarada DENTRO do arquivo --------------
+// `macroErro` só chegava ao arquivo quando NÃO havia macro nenhum. O caso que
+// escapava: os índices e o Focus respondem, mas a consulta de NOMES das séries
+// falha — a aba sai com "IPCA"/"SELIC" crus no lugar dos nomes por extenso, e
+// o erro morria num `console.error` do servidor. Quem abre a planilha não tem
+// acesso a log nenhum: para ele, o arquivo simplesmente parece pronto.
+{
+  const V = "v-macro-parcial";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-mp", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Parcial Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Caixa", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+  ];
+  const macro = {
+    anuais: [{ serie: "IPCA", ano: 2024, meses: 12, retorno: 4.5 }],
+    expectativas: [{ serie: "IPCA", ano_ref: 2026, mediana: 4.5, coletado_em: "2026-07-24" }],
+  };
+  const erro = "nomes das séries: permission denied for table indice_macro_serie";
+  const wb = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos, macro, macroErro: erro,
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Macro")!;
+  let achou = "";
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const t = String(ws.getRow(r).getCell(1).value ?? "");
+    if (/falhou EM PARTE/.test(t)) { achou = t; break; }
+  }
+  checar(achou !== "", "(33) a aba Macro declara que a consulta falhou em parte");
+  checar(achou.includes("nomes das séries"),
+    "(33) …repetindo QUAL parte falhou, para quem for conferir no Supabase", achou.slice(0, 120));
+
+  // E o aviso não pode ter deslocado as linhas que o modelo endereça por
+  // número: o INDEX/MATCH da premissa aponta para uma LINHA da aba Macro, e um
+  // aviso inserido depois do fato faria cada fórmula mirar uma linha acima.
+  const mod = wb.getWorksheet("Modelagem")!;
+  let rIpca = -1;
+  for (let r = 1; r <= mod.rowCount; r++) {
+    if (String(mod.getRow(r).getCell(1).value ?? "") === "Inflação esperada (IPCA — Focus)") { rIpca = r; break; }
+  }
+  const nA = Math.floor((mod.columnCount - 2) / 13);
+  let apontou = false;
+  for (let y = 0; y < nA; y++) {
+    const f = String((mod.getRow(rIpca).getCell(3 + y * 13 + 12).value as { formula?: string } | undefined)?.formula ?? "");
+    if (!f) continue;
+    // A linha citada pela fórmula tem de ser mesmo a do IPCA na aba Macro.
+    const m = f.match(/'Macro'!\$B\$(\d+)/);
+    if (!m) continue;
+    apontou = true;
+    checar(/IPCA/i.test(String(ws.getRow(Number(m[1])).getCell(1).value ?? "")),
+      "(33) o aviso não deslocou as linhas que o modelo endereça por número",
+      `fórmula aponta linha ${m[1]}, que contém "${String(ws.getRow(Number(m[1])).getCell(1).value ?? "")}"`);
+  }
+  checar(apontou, "(33) …e a premissa realmente endereça a aba Macro nesta fixture");
+}
+
+// ---- 34: sem entidade reconhecida, a AUSÊNCIA das abas é declarada ---------
+// A guarda `entidadesConhecidas.size > 0` cobre Macro E Modelagem: sem nenhuma
+// entidade, o arquivo saía sem as duas abas e sem uma palavra sobre isso. Uma
+// aba que não existe não diz por que não existe — foi assim que "não veio os
+// dados macro" (v28) virou meia hora de investigação de causa errada.
+{
+  const V = "v-sem-entidade";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-se", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: null, periodo: null,
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "ilegivel.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const wb = buildExportWorkbook({
+    caso: { nome: "Caso Sem Entidade", produto: "rx" }, documentos, campos: [],
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const ws = wb.getWorksheet("Modelagem");
+  checar(ws != null, "(34) a aba Modelagem EXISTE mesmo sem entidade reconhecida (declarando o porquê)");
+  if (ws) {
+    let texto = "";
+    for (let r = 1; r <= ws.rowCount; r++) {
+      for (let c = 1; c <= 2; c++) texto += String(ws.getRow(r).getCell(c).value ?? "") + "\n";
+    }
+    checar(/não montad/i.test(texto), "(34) …dizendo que não foi montada", texto.slice(0, 100));
+    checar(/ENTIDADE reconhecida/i.test(texto), "(34) …e a causa: nenhuma entidade reconhecida");
+    checar(/Resumo/.test(texto) && /fila de revisão/i.test(texto),
+      "(34) …e para onde ir (Resumo e fila de revisão), não só o diagnóstico");
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

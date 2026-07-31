@@ -4,16 +4,107 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-31. **Estado do `main`:** mergeado até o **PR #67** (Etapa 1 completa).
-Migrations `0001`→**`0031`** (a `0031` está no PR #68, ainda ABERTO). Branch de trabalho:
-`claude/project-next-steps-2ttjhy`. **Cuidado: já houve DUAS sessões em paralelo** — o PR #57 entrou
-entre o #56 e o #58. Confirme o `main` com `git ls-remote` E a lista de PRs antes de assumir nada.
+**Última atualização:** 2026-07-31 (sessão 19). **Estado do `main`:** mergeado até o **PR #68**
+(Etapa 1 completa + 3 fatias da Etapa 2). Migrations `0001`→**`0032`** (a `0032` está no PR #69,
+ABERTO). Branch de trabalho: `claude/handoff-next-steps-6k88f2`. **Cuidado: já houve DUAS sessões em
+paralelo** — o PR #57 entrou entre o #56 e o #58. Confirme o `main` com `git ls-remote` E a lista de
+PRs antes de assumir nada.
 
 **Contadores atuais** (o texto antigo abaixo cita números velhos — estes valem):
-`node --test 'n8n/test/*.test.mjs'` = **153**; `verificar-export.mts` = **160 invariantes**;
-`db/test/run.sh` = reconciliação + macro + reextração + **canonicalização (16 asserts)** + seed;
-**novo:** `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts` = **18 asserts**
-encadeando extração → banco → export (era o que nenhuma suíte cobria).
+`node --test 'n8n/test/*.test.mjs'` = **160**; `verificar-export.mts` = **198 invariantes**;
+`db/test/run.sh` = reconciliação + macro + reextração + canonicalização (16) + seed, com **32
+migrations**; `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts` = **18
+asserts** encadeando extração → banco → export (é a única suíte que cobre a COSTURA entre as três).
+
+## Sessão 19 (2026-07-31, tarde) — pendências do dono fechadas, Etapa 2 quase inteira (PR #69)
+
+O dono voltou com as cinco pendências dele **resolvidas**, e uma das respostas virou trabalho:
+
+1. PR #68 **mergeado** (o `main` está em `8109f2f`).
+2. Migrations `0029`, `0030` e `0031` **aplicadas**.
+3. Os dois workflows **reimportados**; **coleta macro confirmada** — o split do nó HTTP era real.
+4. **`hash` veio NULL** → o sandbox de Code do n8n dele **não expõe `crypto`**. Virou fatia.
+5. **RLS fica como está**: qualquer autenticado lê tudo; só time interno da Oria usa o portal.
+   **Decisão registrada do dono — não reabrir sem ele pedir.**
+
+### O que entrou no PR #69 (aberto, 4 commits)
+
+- **`n8n/lib/hash.mjs` — SHA-256 em JS puro.** A abstenção anterior (`hash = null` quando não havia
+  `crypto.subtle`) funcionou como projetada, mas o efeito era a idempotência da `0026` seguir
+  **adormecida**: `p_hash is not null` nunca era verdade e todo reenvio duplicava o documento. Mesmo
+  algoritmo (FIPS 180-4), zero dependência de ambiente; o caminho nativo ficou como atalho de
+  velocidade. O harness de teste ganhou `semCrypto`, que sombreia o global dentro do corpo do nó —
+  **o teste antigo passava verde com a produção quebrada** porque só exercitava o Node local.
+- **Fatia 4 — Focus ausente virava 0,0% com nota afirmando procedência.** Agora a célula fica **em
+  branco** (0 no Excel, mas lê como "falta preencher"), com **três camadas**: nota por exercício
+  declarando a cobertura real, **linha VIVA** "cobertura do Focus" (a nota é da exportação; o
+  exercício é input e a torna velha), e **aviso em linha visível** nomeando os anos e o efeito.
+  `RefsMacro` passou a carregar a cobertura **por série** (o Focus publica horizontes diferentes por
+  indicador).
+- **Fatia 5 — o que degrada em silêncio passa a se declarar.** (a) falha PARCIAL do macro agora é
+  escrita no topo da aba Macro — e a linha é escrita ANTES das outras, porque `spliceRows` depois do
+  fato deslocaria a numeração que o modelo endereça por número; (b) `route.ts` NOMEIA a parte que
+  falhou; (c) sem entidade reconhecida, a aba Modelagem **existe** dizendo a causa e para onde ir;
+  (d) **Focus com `baseCalculo` fixado em 0** (a mediana dependia da ordem da resposta HTTP);
+  (e) resíduos: `{ultimos:}`→`{mesesAtras:}` no seed, `$top` unificado em `FOCUS_TOP`.
+- **Fatia 6a — `db/migrations/0032`: o câmbio perdia JANEIRO todo ano.** A base era `min(data_ref)`
+  DENTRO do ano; agora é o último fechamento **anterior** ao ano (dez/n−1 → dez/n). Primeiro ano da
+  série sai **NULL** (sem base não existe variação — e era aí que a versão antiga inventava uma).
+  **A suíte protegia o bug**: `db/test/macro.test.sql` afirmava a convenção errada, corrigido junto.
+  A migration tem verificação embutida e ela é **não-vazia**: com a base antiga religada, a própria
+  migration se recusa a aplicar ("deveria ser 21%, veio 10").
+
+**Todas as não-vacuidades foram MEDIDAS**, não estimadas: hash (1 reprova), fatia 4 (7), fatia 5 (3 +
+o teste de `baseCalculo`, que testa as DUAS ordens de resposta), `0032` (a migration aborta).
+
+### O que FALTA da Etapa 2 — uma coisa só, e o dono já decidiu como
+
+**Bloco "REFERÊNCIAS MACRO" na Modelagem.** Medi o placar: das 15 premissas, **2** leem macro; das 6
+séries históricas, **0** alimentam qualquer fórmula. Mas o modelo é dirigido por **percentual de
+receita** (CPV = `RL × (1 − margem alvo)`, SG&A = `% da RL`), então **IGP-M, PIB e câmbio não têm
+alavanca** hoje: trazê-los sem mais nada criaria mais células mortas, que é exatamente a crítica
+registrada sobre as médias. Dar alavanca a eles é escolher qual índice corrige o quê — **isso é a
+Etapa 5**.
+
+**O dono escolheu (2026-07-31): bloco de REFERÊNCIA agora, seletor na Etapa 5.** Um bloco
+"REFERÊNCIAS MACRO — não movem o modelo sozinhas" com IGP-M, PIB e câmbio do Focus **por exercício** e
+as médias 3a/5a/10a, cada linha com nota dizendo o que ela **deveria** dirigir e que a escolha é o
+seletor da Etapa 5.
+
+**A infraestrutura já está pronta e commitada:** `RefsMacro` agora carrega `mediaDe`
+(linha + colunas das médias, por série) e `janelasMedia`. Falta **só consumir** isso na
+`construirAbaModelagem`. Onde colocar: **depois** da linha "cobertura do Focus", nunca no meio do
+bloco de premissas — `P(i)` endereça premissa por deslocamento a partir de `rPremissas`, e uma linha
+inserida no meio desloca todas as fórmulas do modelo em silêncio. A linha em branco depois das
+premissas é o que ENCERRA o bloco para quem conta as 15 (invariante 15).
+
+### ➡️ PRÓXIMA SESSÃO: `docs/PROMPT_CONTINUACAO.md`
+
+O dono pediu um prompt único e auto-contido para a sessão seguinte rodar **de forma autônoma, sem
+supervisão e sem fazer perguntas**. Ele está em **`docs/PROMPT_CONTINUACAO.md`** e cobre, em ordem:
+fechar a Etapa 2 (bloco de REFERÊNCIAS MACRO), a dupla contagem no parente, as 5 pré-condições do
+v33, montar CI, e uma **análise crítica do que a sessão 19 fez** (pedido explícito dele). Se este
+handoff e aquele prompt divergirem, **este arquivo é a fonte da verdade** — o prompt é o roteiro.
+
+### Armadilhas de execução da sessão 19 (não repetir)
+
+- **`git checkout <arquivo>` apaga trabalho não commitado.** Usei para desfazer um patch de MEDIÇÃO
+  de não-vacuidade e levei junto as mudanças legítimas do mesmo arquivo. Para medir: **copie o
+  arquivo para o scratchpad e restaure com `cp`**, nunca com `git checkout`.
+- **`sed -i '/marca/,$d'` depois de um `cat >>`** apaga o que você acabou de anexar (a marca estava
+  ANTES do bloco novo). Para inserir antes do rodapé de um script, use Python com `str.index`.
+- **O `verificar-export.mts` conta as premissas varrendo do cabeçalho "PREMISSAS" até a primeira
+  linha vazia.** Qualquer linha nova adicionada logo depois do bloco entra na contagem e reprova os
+  invariantes 14/15. A **linha em branco** é o que encerra o bloco — e ela é semanticamente certa:
+  separa premissa (o que se digita) de conferência (o que o arquivo responde).
+- **`spliceRows` na aba Macro quebra o modelo em silêncio**: `linhaCabFocus`/`linhaFocusDe` são
+  números capturados na geração, e o INDEX/MATCH passa a apontar uma linha acima. Escreva avisos
+  ANTES do resto da aba, nunca insira depois.
+- **`test-data/book-vertentes/gerar.py` precisa de `PYTHONPATH=.`** e grava o `GABARITO.json` dentro
+  de `pdf/`, não na raiz do diretório (a linha de uso do docstring está errada; o handoff anterior
+  também dizia o lugar errado).
+- **Não existe CI** — as quatro suítes só rodam quando alguém lembra. Continua sendo a alavanca mais
+  barata contra regressão que existe neste repositório.
 
 ## ⚠️ COMECE AQUI — o 429 está RESOLVIDO; o plano agora é o do dono, etapa por etapa
 
@@ -95,21 +186,18 @@ capture a causa real. **Não recomece inventando hipótese: leia §"Sessão 17" 
 
 ---
 
-### PENDÊNCIAS DO DONO — o que destrava a próxima sessão
+### PENDÊNCIAS DO DONO — as da sessão 18 estão TODAS fechadas (ver "Sessão 19")
 
-1. **Mergear o PR #68** (5 commits: 3 fatias da Etapa 2 + a correção pós-v33 + este handoff).
-2. **Aplicar `db/migrations/0029`, `0030` e `0031`**, em ordem. A `0029` e a `0030` foram para o `main`
-   com o #67; a `0031` está no #68.
-3. **Reimportar `n8n/workflow.e1-ingestao.json` E `n8n/workflow.macro.json`.**
-4. **Confirmar o diagnóstico da coleta macro** — é uma olhada: rodar o workflow macro e ver a
-   **contagem de itens na saída do nó `BCB SGS`**. Se for **maior que 6**, o split do nó HTTP é real e
-   a correção da fatia 1 da Etapa 2 é a certa. Depois de reimportar, `Normalizar Observações` deve
-   mostrar `n > 0` e `descartados = 0`.
-5. **Conferir o campo `hash` na saída de `Preparar Conteudo`.** Se vier `null`, o sandbox de Code do
-   n8n dele não expõe `crypto.subtle` — o fallback é seguro (volta ao comportamento antigo), mas a
-   idempotência da `0026` continua adormecida e a implementação precisa mudar.
-6. **Decidir a lista de média/baixa severidade** (abaixo). Ele pediu que fosse trazida para avaliação
-   e ainda não decidiu.
+As seis pendências anteriores (mergear o #68, aplicar `0029`-`0031`, reimportar os workflows,
+confirmar a coleta macro, conferir o `hash`, decidir a lista de severidade) foram **respondidas pelo
+dono em 2026-07-31**. O que ficou pendente dele agora:
+
+1. **Aplicar `db/migrations/0032`** (câmbio) quando o PR #69 entrar.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** (hash em JS puro) **e `n8n/workflow.macro.json`**
+   (`baseCalculo` do Focus).
+3. **Conferir de novo o campo `hash` na saída de `Preparar Conteudo`** — agora ele TEM de vir
+   preenchido em qualquer sandbox. Se vier null outra vez, o problema não é mais `crypto`.
+4. **Validar a Etapa 2** quando ela fechar (é a regra dele: uma etapa por vez).
 
 ### O PLANO DO DONO — 6 etapas, uma por vez
 
@@ -119,7 +207,7 @@ Regra dele, literal: *"Ao concluir uma etapa, aguarde minha validação antes de
 | Etapa | Objetivo | Estado |
 |---|---|---|
 | 1 | Estabilização da pipeline | **CONCLUÍDA** (PR #67) + correção pós-v33 no #68 |
-| 2 | Dados macroeconômicos corretos na planilha | **3 de 6 fatias** (PR #68) |
+| 2 | Dados macroeconômicos corretos na planilha | **quase completa** — 3 fatias no #68, 3 no #69; falta só o bloco de REFERÊNCIAS MACRO |
 | 3 | Modelagem 100% automatizada, e **sem buscar valor de outras abas por fórmula** | não iniciada |
 | 4 | Todas as abas geradas; **auxiliares OCULTAS**, Modelagem visível | não iniciada |
 | 5 | **Seletor de inputs macro** (IPCA+, Selic, IGP-M, PIB, média histórica, CAGR) recalculando tudo | não iniciada |
@@ -136,37 +224,33 @@ preenchidos. Isso **desfaz** a arquitetura da sessão 12 (`INDEX/MATCH` contra a
 planilha continuar viva: corrigiu a origem, o modelo acompanha). É uma troca real — perde-se o "vivo"
 e ganha-se independência. **Confirme que é isso que ele quer** antes de reescrever.
 
-### O QUE A ETAPA 2 AINDA DEVE (fatias 4-6)
+### O QUE A ETAPA 2 AINDA DEVE — a lista abaixo está QUASE toda FEITA (sessão 19)
 
-- **Focus ausente vira 0,0% com nota AFIRMANDO procedência** — o defeito mais enganoso que resta.
-  `focusMacro` devolve literal `"0"` quando a série não tem linha, e `IFERROR(INDEX/MATCH, 0)` quando o
-  ano projetado não está no Focus. A célula fica amarela de input com nota dizendo "Mediana das
-  expectativas de mercado (Boletim Focus/BCB)". **Gatilho banal:** os anos projetados derivam do
-  histórico do caso, mas `export/route.ts` filtra `ano_ref >= anoAtual-1` — caso com demonstrações de
-  2019-2021 projeta 2022-2024 e as TRÊS colunas ficam com inflação e juro zerados, com a aba Macro na
-  frente exibindo Focus 2026-2030 como se estivesse tudo bem. Todo o bloco de dívida cobra juro zero.
-- **Falha PARCIAL do macro descarta `macroErro`**: ele só é usado quando `refsMacro` é nulo. Se só a
-  consulta de NOMES falhar, a aba sai com códigos crus e o erro morre no `console.error`.
-- **Sem entidade reconhecida, nem a aba de aviso é criada** (`export.ts`, guarda
-  `entidadesConhecidas.size > 0` cobre Macro E Modelagem).
-- **Ligar IGP-M, PIB, câmbio e as médias históricas às premissas** — o dono decidiu que isto entra na
-  Etapa 2. Placar medido: das 15 premissas, **2** leem macro (IPCA e Selic do Focus), 6 são derivadas
-  da extração, 7 são zeros esperando humano. Do lado do histórico, **0 de 6** séries alimentam
-  qualquer fórmula: as 18 células de Média 3a/5a/10a não movem nada.
-- **O câmbio perde JANEIRO todo ano** (`0025`, `natureza='nivel'`: `ini = min(data_ref)` DENTRO do ano,
-  e a série 3698 é fechamento mensal — a variação anual deveria ser dez/(n-1) → dez/n). E
-  `db/test/macro.test.sql` **assume a convenção errada**, então a suíte PROTEGE o bug. Corrigir os dois.
-- **Focus sem filtro de `baseCalculo`**: o Olinda devolve duas linhas para o mesmo (indicador, ano) —
-  `baseCalculo=0` (30 dias) e `=1` (5 dias úteis), com medianas diferentes — e o dedup fica com "a que
-  o servidor devolver primeiro". Confirmar exige rede; fixar a base e declará-la é barato.
-- Resíduos: `gerar-seed-macro.mjs` passa `{ultimos:}` a uma função cuja assinatura é `{mesesAtras:}`
-  (ignorado em silêncio); o seed usa `top=40` e a produção `top=80`.
+⚠️ **Não retrabalhe.** Cada item abaixo foi resolvido no PR #69, exceto o último. Mantido como
+registro do que era o defeito, porque a descrição do defeito é o que explica o teste que ficou.
+
+- ~~**Focus ausente vira 0,0% com nota AFIRMANDO procedência**~~ → **FEITO** (fatia 4). Célula em
+  branco + nota por exercício + linha viva de cobertura + aviso visível. Invariantes 31 e 32.
+- ~~**Falha PARCIAL do macro descarta `macroErro`**~~ → **FEITO** (fatia 5), declarado no topo da aba
+  Macro, com a parte que falhou NOMEADA pelo `route.ts`. Invariante 33.
+- ~~**Sem entidade reconhecida, nem a aba de aviso é criada**~~ → **FEITO** (fatia 5). Invariante 34.
+- ~~**O câmbio perde JANEIRO todo ano**~~ e ~~**a fixture do teste CONSAGRA o erro**~~ → **FEITO**
+  (fatia 6a, `db/migrations/0032`), os dois lados corrigidos na mesma fatia.
+- ~~**Focus sem filtro de `baseCalculo`**~~ → **FEITO** (fatia 5): fixado em 0 (base de 30 dias, a da
+  tabela principal do Boletim), na URL e no parse.
+- ~~**Resíduos** (`{ultimos:}` × `{mesesAtras:}`, `top=40` × `top=80`)~~ → **FEITO** (fatia 5).
+- **Ligar IGP-M, PIB, câmbio e as médias históricas às premissas** → **É O QUE FALTA.** O dono
+  decidiu a forma: **bloco de REFERÊNCIAS MACRO agora, seletor na Etapa 5.** Ver a seção "Sessão 19"
+  no topo — a infraestrutura (`RefsMacro.mediaDe`, `janelasMedia`) já está commitada e só falta
+  consumir.
 
 ### PARA O DONO AVALIAR (média/baixa severidade — ele pediu que fosse trazido)
 
-**O único que eu levantaria:** hoje toda policy é `for all to authenticated using (true)` — qualquer
-usuário autenticado lê e escreve dados de **qualquer mandato**, incluindo PII de sócios. Não existe
-`caso_membro`. Não corrompe número; é exposição. Exige decisão de arquitetura.
+~~**O único que eu levantaria:** hoje toda policy é `for all to authenticated using (true)`~~ —
+**DECIDIDO PELO DONO (2026-07-31): fica como está.** "Qualquer usuário pode visualizar, apenas o
+pessoal interno da Oria vai ter acesso mesmo." Não reabrir sem ele pedir. O fato técnico continua
+verdadeiro (não existe `caso_membro`, qualquer autenticado lê PII de sócios de qualquer mandato); o
+que mudou é que é **risco aceito**, não pendência.
 
 Perde dado de forma menos aguda: truncamento de CSV/XLSX em 50 linhas antes de ir à IA (faturamento de
 24-36 meses perde o resto); `moeda` capturada e descartada (não há coluna — USD indistinguível de BRL);
@@ -2160,11 +2244,11 @@ test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não 
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 153 testes: libs + nós REAIS do JSON gerado
+node --test 'n8n/test/*.test.mjs'           # 160 testes: libs + nós REAIS do JSON gerado
 node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
 node n8n/build-workflow-diagnostico.mjs     # regenera workflow.diagnostico-openai.json (idem)
-npx tsx portal/scripts/verificar-export.mts # 160 invariantes do export
+npx tsx portal/scripts/verificar-export.mts # 198 invariantes do export
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
 #   ^ reconciliação + macro + reextração + canonicalização (16) + seed macro
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts
@@ -2192,7 +2276,7 @@ sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
 O `run.sh` cria os papéis `anon`/`authenticated`/`service_role` e o schema `storage` que as migrations
 assumem do Supabase.
 
-Migrations: aplicar `0001`→`0028` em ordem num Postgres 16 local antes de propor SQL novo — várias
+Migrations: aplicar `0001`→`0032` em ordem num Postgres 16 local antes de propor SQL novo — várias
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 

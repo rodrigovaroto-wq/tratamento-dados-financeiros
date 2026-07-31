@@ -143,7 +143,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // base já povoada. `console.error` fica nos logs da função (Vercel/servidor):
   // não é visível no arquivo, mas para de ser invisível PARA SEMPRE.
   const nomesRes = await supabase.from("indice_macro_serie").select("codigo, nome");
-  const macroErro = anuaisRes.error?.message ?? expRes.error?.message ?? nomesRes.error?.message;
+  // NOMEAR a parte que falhou, não só a primeira mensagem. Com `??` em cadeia,
+  // uma falha só nos NOMES das séries produzia uma mensagem indistinguível de
+  // uma falha nos índices — e as duas degradam o arquivo de formas diferentes
+  // (código cru no rótulo × série inteira ausente). Quem for conferir no
+  // Supabase precisa saber onde olhar.
+  const macroErro = [
+    anuaisRes.error && `índices anuais: ${anuaisRes.error.message}`,
+    expRes.error && `expectativas do Focus: ${expRes.error.message}`,
+    nomesRes.error && `nomes das séries: ${nomesRes.error.message}`,
+  ].filter(Boolean).join("; ") || undefined;
   if (macroErro) {
     console.error(`[export] consulta de índices macro falhou: ${macroErro}`, {
       anuais: anuaisRes.error, expectativas: expRes.error, series: nomesRes.error,

@@ -72,6 +72,40 @@ test('URLs das três fontes', () => {
   assert.match(urlSidraIpca({ ultimos: 6 }), /t\/1737\/n1\/all\/v\/63\/p\/last%206$/);
 });
 
+// --- Focus: qual das DUAS medianas -------------------------------------------
+// O Olinda devolve, para o mesmo (indicador, ano, coleta), duas linhas: base 30
+// dias (`baseCalculo=0`) e base 5 dias úteis (`=1`), com medianas diferentes. O
+// dedup de `parseFocus` ficava com "a que o servidor devolvesse primeiro" — a
+// premissa de inflação do modelo dependia da ordem de uma resposta HTTP. Não é
+// erro grande em magnitude; é irreprodutível, e numa entrega auditável isso é
+// pior do que estar um pouco diferente.
+test('a URL do Focus fixa a base de cálculo, e o parse não aceita a outra', () => {
+  assert.match(urlFocus('IPCA'), /baseCalculo%20eq%200/);
+
+  // Resposta com AS DUAS bases para o mesmo ano — o que a API devolve de fato.
+  const resposta = { value: [
+    { Indicador: 'IPCA', Data: '2026-07-24', DataReferencia: '2027', Mediana: '9,99', baseCalculo: 1 },
+    { Indicador: 'IPCA', Data: '2026-07-24', DataReferencia: '2027', Mediana: '4,50', baseCalculo: 0 },
+  ] };
+  const exp = parseFocus(resposta, 'IPCA');
+  assert.equal(exp.length, 1, 'um registro por ano de referência');
+  assert.equal(exp[0].mediana, 4.5, 'vale a base de 30 dias, não a que vier primeiro');
+
+  // A ORDEM INVERSA tem de dar o mesmo resultado — é justamente o que não
+  // acontecia. Sem esta metade o teste passaria com o bug ligado (a linha certa
+  // já vinha em segundo lugar acima, mas um dedup por "primeiro que chega" com
+  // a ordem trocada devolveria 9,99).
+  const invertida = { value: [resposta.value[1], resposta.value[0]] };
+  assert.equal(parseFocus(invertida, 'IPCA')[0].mediana, 4.5, 'a ordem da resposta não decide');
+
+  // Resposta SEM o campo (seed antigo, chamada à mão) continua valendo: filtrar
+  // o que não se sabe esvaziaria a série em silêncio, que é o defeito da fatia 1.
+  const semCampo = { value: [
+    { Indicador: 'IPCA', Data: '2026-07-24', DataReferencia: '2027', Mediana: '4,50' },
+  ] };
+  assert.equal(parseFocus(semCampo, 'IPCA').length, 1, 'ausência do campo não descarta a linha');
+});
+
 test('numeroMacro aceita ponto e vírgula decimal, recusa lixo', () => {
   assert.equal(numeroMacro('0.67'), 0.67);
   assert.equal(numeroMacro('1.234,56'), 1234.56);

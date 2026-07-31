@@ -44,7 +44,11 @@ const expectativas = [];
 const resumo = [];
 
 for (const s of SERIES_MACRO) {
-  const obs = parseSgs(await buscar(urlSgs(s.sgs, { ultimos: MESES }), `SGS ${s.codigo}`), s.codigo);
+  // `mesesAtras`, não `ultimos`: a chave errada era IGNORADA em silêncio (é um
+  // default de desestruturação), então o seed sempre puxou o default da lib em
+  // vez dos MESES declarados aqui. Coincidiam em 132 — o defeito só apareceria
+  // no dia em que alguém mudasse esta constante e nada mudasse na saída.
+  const obs = parseSgs(await buscar(urlSgs(s.sgs, { mesesAtras: MESES }), `SGS ${s.codigo}`), s.codigo);
   observacoes.push(...obs);
   resumo.push(`${s.codigo}: ${obs.length} observações (BCB/SGS ${s.sgs})`);
 }

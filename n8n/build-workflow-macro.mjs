@@ -214,7 +214,10 @@ const nodes = [
 
   node('Indicadores Focus', 'n8n-nodes-base.code', 2, {
     jsCode: `return ${JSON.stringify(
-      INDICADORES_FOCUS.map((i) => ({ json: { __serie: i.codigo, __url: urlFocus(i.indicador, { top: 80 }) } })),
+      // Sem `top` explícito: o número vive em `FOCUS_TOP` na lib, junto do
+      // `baseCalculo`. Era 80 aqui e 40 no default da lib, e o seed (que usa o
+      // default) truncava antes da produção — duas verdades para o mesmo número.
+      INDICADORES_FOCUS.map((i) => ({ json: { __serie: i.codigo, __url: urlFocus(i.indicador) } })),
     )};`,
   }, 220, 560),
 

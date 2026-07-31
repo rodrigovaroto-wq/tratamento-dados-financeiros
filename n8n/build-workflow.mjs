@@ -25,6 +25,7 @@ import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOK
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
+import { sha256Hex } from './lib/hash.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -101,6 +102,12 @@ const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString(
 
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
 const FONTE_ORCAMENTO_LOTE = `const orcamentoDoLote = ${orcamentoDoLote.toString()};`;
+
+// `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
+// `crypto.subtle`, que o dono MEDIU vindo ausente no sandbox do n8n dele
+// (campo `hash` = null na saída de `Preparar Conteudo`, 2026-07-31); ver o
+// cabeçalho de lib/hash.mjs.
+const FONTE_SHA256 = `const sha256Hex = ${sha256Hex.toString()};`;
 const FONTE_CUSTO_CHAMADA = `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
 const custoDaChamada = ${custoDaChamada.toString()};`;
 
@@ -166,6 +173,7 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 // pdf→file; imagem→image_url; csv→texto (parse inline); xlsx→nota (ver README).
 // Preserva o binário (o Upload Storage roda como ramo a partir deste node).
 const CODE_PREPARAR_CONTEUDO = `
+${FONTE_SHA256}
 const item=$input.item.json;
 const binMeta=($input.item.binary||{})['data']||{};
 const mt=(binMeta.mimeType||'').toLowerCase();
@@ -207,18 +215,31 @@ else part={type:'text',text:'(conteudo nao suportado: '+mt+')'};
 // a mao, e e' por isso que o gap ficou invisivel para a suite.
 //
 // Calculado AQUI porque este e' o unico no' que tem os bytes de verdade (o buffer
-// acima, resolvido pelo helper). SHA-256 via Web Crypto, global no Node 18+.
-// Se o sandbox do n8n nao expuser crypto.subtle, o hash fica NULO e o
-// comportamento volta a ser o de hoje (sem idempotencia) -- de proposito: um hash
-// mais fraco poderia COLIDIR e fundir documentos diferentes, que o cabecalho da
-// 0026 chama de "o erro mais caro possivel aqui". Nao saber e' melhor que errar.
+// acima, resolvido pelo helper).
+//
+// A primeira versao usava crypto.subtle e se ABSTINHA (hash null) se ele nao
+// existisse. O dono conferiu a saida deste no' no n8n dele e o campo veio NULL:
+// o Code node nao expoe crypto. A abstencao funcionou como projetada -- nao
+// inventou hash fraco -- mas deixava a idempotencia da 0026 adormecida na
+// pratica. Agora o SHA-256 vem de sha256Hex (JS puro, lib/hash.mjs), que nao
+// depende de nada do ambiente; o caminho nativo fica so' como atalho de
+// velocidade quando existe. MESMO algoritmo nos dois: nada de hash mais fraco,
+// porque colisao aqui FUNDIRIA documentos diferentes -- "o erro mais caro
+// possivel", nas palavras do cabecalho da 0026.
 let hash=null;
 try{
   if(typeof crypto!=='undefined'&&crypto&&crypto.subtle){
     const d=await crypto.subtle.digest('SHA-256',buf);
     hash=Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  }else{
+    hash=sha256Hex(buf);
   }
-}catch(e){hash=null;}
+}catch(e){
+  // Ultimo recurso: se ate' o caminho nativo falhar (por qualquer motivo do
+  // sandbox), tenta o JS puro antes de desistir. So' devolve null se os DOIS
+  // falharem -- ai' sim nao saber e' melhor que errar.
+  try{hash=sha256Hex(buf);}catch(e2){hash=null;}
+}
 return {json:{...item, content_part: part, content_mime: mt, hash}, binary: $input.item.binary};
 `.trim();
 
