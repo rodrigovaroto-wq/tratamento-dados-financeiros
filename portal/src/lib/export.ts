@@ -1191,6 +1191,12 @@ function construirAbaClassificada(
     }
   };
 
+  // Células de cabeçalho a pintar DEPOIS que toda a aba foi emitida. Cabeçalho
+  // de seção é linha reservada e preenchida no fim, com `row.fill = …`, que no
+  // ExcelJS repinta a linha inteira: qualquer destaque aplicado antes disso é
+  // silenciosamente apagado. Adiar é a única forma de o destaque sobreviver.
+  const pintarNoFim: Array<[number, number]> = [];
+
   // Linha de conferência: o total que o DOCUMENTO trouxe (extraído), logo
   // abaixo do cabeçalho. Se divergir do subtotal calculado, pinta ambas as
   // células e anota o motivo (checagem de reconciliação embutida).
@@ -1224,8 +1230,17 @@ function construirAbaClassificada(
           + `(3.600) caiu em "Outros Ativos Não Circulantes" enquanto o total do Imobilizado já a `
           + `continha. Se a diferença bater com uma conta que aparece em outra seção, é o caso (2).`,
         );
-        // sinaliza também a célula do cabeçalho
-        sheet.getRow(cabecalhoIdx).getCell(plano.valuePos[i]).fill = DIVERGENCIA_FILL;
+        // Sinaliza também a célula do CABEÇALHO — quem lê só a linha do total
+        // precisa ver que ela está sob suspeita, sem rolar até a conferência.
+        //
+        // ADIADA DE PROPÓSITO, e é correção de um defeito medido nesta sessão:
+        // esta linha existia aqui e NÃO PINTAVA NADA. O cabeçalho é uma linha
+        // RESERVADA (`cabIdx = rowIndex++`) e só é preenchida depois que as
+        // contas e as conferências foram escritas — e o preenchimento faz
+        // `row.fill = fill`, que no ExcelJS repinta a linha INTEIRA e apagava
+        // este destaque. Medido no arranjo do v33: o Imobilizado divergia
+        // 1.990 × 5.590 e o cabeçalho dele saía com o cinza normal de seção.
+        pintarNoFim.push([cabecalhoIdx, plano.valuePos[i]]);
       }
     });
     return idx;
@@ -1268,6 +1283,154 @@ function construirAbaClassificada(
 
   if (estrutura === "balanco") {
     const outline = new Map(BALANCO_OUTLINE.map((n) => [n.key, n]));
+
+    // ---- DUPLA CONTAGEM NO TOTAL DO GRUPO ----------------------------------
+    //
+    // O DEFEITO, com o número do teste v33. No Balanço da Componentes o
+    // Imobilizado é 14.200 + 3.600 + 890 − 13.100 = 5.590, e o documento
+    // IMPRIME esse 5.590. A extração anotou "Ferramental e moldes" (3.600) com
+    // a seção de TOPO ("Ativo Não Circulante") em vez da subseção, então a
+    // conta caiu em "Outros Ativos Não Circulantes" — uma seção IRMÃ do
+    // Imobilizado. Resultado: o total do Imobilizado (que já a contém) entra
+    // inteiro no grupo, e o Ferramental entra DE NOVO pela seção irmã. O Ativo
+    // Não Circulante fica 3.600 maior, e nada acusava.
+    //
+    // POR QUE A DIVERGÊNCIA QUE JÁ EXISTIA NÃO BASTAVA. Cada seção já compara
+    // "total informado" × "soma das contas listadas". No arranjo acima, o
+    // Imobilizado acusa (1.990 × 5.590) — mas essa divergência tem DUAS causas
+    // possíveis (subtotal intermediário contado duas vezes, ou conta exilada
+    // numa seção irmã), e a nota pedia ao humano que fizesse o casamento.
+    // Ninguém faz esse casamento à mão em 44 seções. Pior: quando o grupo NÃO
+    // tem total informado, o cabeçalho dele é a SOMA dos filhos — o número sai
+    // inflado e não existe nenhuma linha para comparar.
+    //
+    // O SINAL, que não depende do grupo ter total informado: uma seção-folha
+    // cujo total informado EXCEDE a soma das suas próprias contas em D, e uma
+    // seção IRMÃ que tem uma conta valendo exatamente D. É a assinatura de uma
+    // conta que ficou do lado de fora da seção que a soma por dentro.
+    //
+    // NÃO CORRIGE SOZINHO — e isso é doutrina (docs/04), não cautela. As duas
+    // leituras vão para a planilha nomeadas, e quem decide é quem audita:
+    // reclassificar automaticamente uma conta com base numa coincidência de
+    // valor moveria dinheiro de seção sem que ninguém tivesse visto.
+    const folhasSob = (chave: string): string[] => {
+      const n = outline.get(chave);
+      if (!n) return [];
+      return n.folha ? [chave] : (n.filhos ?? []).flatMap(folhasSob);
+    };
+    const somaDasContas = (secaoKey: string, colKey: string): number | null => {
+      const grupos = contasPorSecao.get(secaoKey);
+      if (!grupos) return null;
+      let total = 0;
+      let achou = false;
+      for (const g of grupos.values()) {
+        const v = valorNumDoGrupo(g, colKey);
+        if (v != null) { total += v; achou = true; }
+      }
+      return achou ? total : null;
+    };
+    type Suspeita = {
+      colKey: string; folhaLabel: string; informado: number; soma: number; diff: number;
+      contaLabel: string; contaSecaoLabel: string; contaValor: number;
+    };
+    const suspeitasDoGrupo = (no: (typeof BALANCO_OUTLINE)[number]): Suspeita[] => {
+      const achados: Suspeita[] = [];
+      // Só olha pares que estão em FILHOS DIFERENTES deste nó. Sem isso, o
+      // "ATIVO" reportaria de novo o que o "Ativo Não Circulante" já reportou
+      // — o mesmo achado duas vezes ensina o leitor a ignorar o aviso.
+      const porFilho = (no.filhos ?? []).map((f) => folhasSob(f));
+      for (let a = 0; a < porFilho.length; a++) {
+        for (const folha of porFilho[a]) {
+          const ancora = valoresPorAncora.get(folha);
+          if (!ancora) continue;
+          const labelFolha = outline.get(folha)?.label ?? folha;
+          for (const col of colunas) {
+            const informado = valorNumDoGrupo(ancora, col.key);
+            if (informado == null) continue;
+            const soma = somaDasContas(folha, col.key);
+            if (soma == null) continue;
+            const diff = informado - soma;
+            const tol = Math.max(0.01, Math.abs(informado) * 0.005);
+            if (diff <= tol) continue;   // informado ≤ soma: outro problema, não este
+            for (let b = 0; b < porFilho.length; b++) {
+              if (b === a) continue;
+              for (const irma of porFilho[b]) {
+                for (const g of contasPorSecao.get(irma)?.values() ?? []) {
+                  const v = valorNumDoGrupo(g, col.key);
+                  if (v == null) continue;
+                  if (Math.abs(v - diff) > tol) continue;
+                  achados.push({
+                    colKey: col.key, folhaLabel: labelFolha, informado, soma, diff,
+                    contaLabel: g.label, contaValor: v,
+                    contaSecaoLabel: outline.get(irma)?.label ?? irma,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+      return achados;
+    };
+    const escreverSuspeitasDuplaContagem = (
+      no: (typeof BALANCO_OUTLINE)[number], nivel: number, cabecalhoIdx: number,
+    ) => {
+      const achados = suspeitasDoGrupo(no);
+      if (achados.length === 0) return;
+      // Uma linha por conta suspeita (a mesma conta pode bater em várias
+      // colunas/exercícios; o aviso é sobre a CONTA, não sobre a célula).
+      const porConta = new Map<string, Suspeita[]>();
+      for (const s of achados) {
+        const k = `${s.contaSecaoLabel} ${s.contaLabel} ${s.folhaLabel}`;
+        if (!porConta.has(k)) porConta.set(k, []);
+        porConta.get(k)!.push(s);
+      }
+      for (const grupo of porConta.values()) {
+        const s0 = grupo[0];
+        const idx = rowIndex++;
+        const row = sheet.getRow(idx);
+        row.getCell(1).value =
+          `⚠ possível DUPLA CONTAGEM: "${s0.contaLabel}" está em ${s0.contaSecaoLabel}, e o total `
+          + `informado de ${s0.folhaLabel} parece já incluí-la — ${no.label} pode estar contando-a duas vezes`;
+        row.getCell(1).alignment = { indent: nivel + 1, wrapText: true, vertical: "top" };
+        row.getCell(1).font = { bold: true, size: 9, color: { argb: "FF991B1B" } };
+        row.getCell(1).fill = DIVERGENCIA_FILL;
+        row.getCell(1).note = comoNota(
+          `AS DUAS LEITURAS, para você escolher — o export NÃO escolhe.\n\n`
+          + `LEITURA A (o documento está certo e a classificação errou): "${s0.contaLabel}" pertence a `
+          + `${s0.folhaLabel}. O total informado de ${s0.folhaLabel} já a inclui, e a conta aparecer em `
+          + `${s0.contaSecaoLabel} faz ${no.label} somá-la de novo. Nesse caso ${no.label} está `
+          + `INFLADO no valor dela e a correção é reclassificar a conta.\n\n`
+          + `LEITURA B (a coincidência é coincidência): a diferença de ${s0.folhaLabel} vem de outra `
+          + `causa — subtotal intermediário, conta não extraída, arredondamento — e "${s0.contaLabel}" `
+          + `está no lugar certo. Nesse caso não há nada a corrigir aqui.\n\n`
+          + `O QUE FOI MEDIDO: total informado de ${s0.folhaLabel} = `
+          + `${s0.informado.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}; `
+          + `soma das contas listadas nele = `
+          + `${s0.soma.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}; `
+          + `diferença = `
+          + `${s0.diff.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, `
+          + `que é exatamente o valor de "${s0.contaLabel}" em ${s0.contaSecaoLabel}.\n\n`
+          + `ACHADO REAL (teste v33): "Ferramental e moldes" (3.600) caiu em "Outros Ativos Não `
+          + `Circulantes" enquanto o Imobilizado informado (5.590) já a continha — o Ativo Não `
+          + `Circulante saiu 3.600 maior e nada acusava.`,
+        );
+        // Pinta a coluna/exercício onde bateu, e o cabeçalho do grupo: quem lê a
+        // linha do total precisa ver que ela está sob suspeita, sem depender de
+        // ter rolado até aqui.
+        for (const s of grupo) {
+          const i = colunas.findIndex((c) => c.key === s.colKey);
+          if (i < 0) continue;
+          const cell = row.getCell(plano.valuePos[i]);
+          cell.value = s.diff;
+          cell.numFmt = VALOR_NUM_FMT;
+          cell.fill = DIVERGENCIA_FILL;
+          cell.font = { bold: true, size: 9, color: { argb: "FF991B1B" } };
+          pintarNoFim.push([cabecalhoIdx, plano.valuePos[i]]);
+        }
+      }
+    };
+
     // Emite um nó (recursivo): cabeçalho com fórmula (soma das contas-folha ou
     // dos subtotais dos filhos), contas indentadas, conferência do extraído.
     // Retorna { idx, subtotalNum } para o pai somar.
@@ -1384,6 +1547,11 @@ function construirAbaClassificada(
         escreverSomaCalculada(no.nivel, "soma das seções acima",
           (i) => filhosIdx.map((r) => `${colLetra(i)}${r}`).join("+"));
       }
+      // Depois das linhas de conferência e ANTES de preencher o cabeçalho: o
+      // aviso precisa existir mesmo quando o grupo NÃO tem total informado —
+      // que é justamente o caso em que o cabeçalho vira a soma dos filhos e o
+      // número sai inflado sem nada para comparar.
+      escreverSuspeitasDuplaContagem(no, no.nivel, cabIdx);
       const grupoAncoraPai = temAncoraPai ? valoresPorAncora.get(no.key)! : null;
       const row = sheet.getRow(cabIdx);
       row.getCell(1).value = no.label;
@@ -1612,6 +1780,11 @@ function construirAbaClassificada(
       });
     }
   }
+
+  // Destaques de cabeçalho, agora que nenhum `row.fill = …` vem depois para
+  // apagá-los. Ver `pintarNoFim`: enquanto isto era feito na hora, a marca de
+  // divergência no cabeçalho da seção era escrita e imediatamente perdida.
+  for (const [r, c] of pintarNoFim) sheet.getRow(r).getCell(c).fill = DIVERGENCIA_FILL;
 
   // ----- Camada analítica (f0/08): AV% (common-size) e Δ% (tendência). -----
   // Fórmulas transparentes sobre as MESMAS células de valor já escritas — não

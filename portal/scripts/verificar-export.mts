@@ -2659,6 +2659,161 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+// ---- 36: dupla contagem no total do GRUPO, com a conta suspeita NOMEADA ----
+// O bug aberto mais caro do repositório, e o arranjo abaixo é o do teste v33,
+// não um inventado: Balanço da Componentes (test-data/book-vertentes/dados.py),
+// Imobilizado = 14.200 + 3.600 + 890 − 13.100 = 5.590, com o 5.590 IMPRESSO no
+// documento. Uma conta do Imobilizado foi anotada com a seção de TOPO ("Ativo
+// Não Circulante") em vez da subseção, caiu em "Outros Ativos Não Circulantes"
+// — irmã do Imobilizado — e o grupo passou a contá-la duas vezes: o total
+// informado do Imobilizado já a inclui, e ela entra de novo pela irmã.
+//
+// HONESTIDADE SOBRE A CONTA USADA. A conta do v33 era "Ferramental e moldes", e
+// ela NÃO serve mais para reproduzir: a fatia de vocabulário da sessão 18
+// (invariante 30) faz esse rótulo ser Imobilizado mesmo sem seção declarada —
+// medido aqui, `classificarConta("balanco","Ativo Não Circulante","Ferramental
+// e moldes",null)` devolve `imobilizado`. Aquela INSTÂNCIA está fechada; a
+// CLASSE de defeito não estava. A fixture usa "Bens em comodato", uma conta de
+// imobilizado real (CPC 27) que o vocabulário genuinamente não reconhece —
+// medido: devolve `ativo_nao_circulante`. Nada aqui foi inventado para o teste
+// passar; o que mudou foi o rótulo, porque o antigo já está coberto.
+//
+// AS DUAS FIXTURES ANTERIORES NASCERAM VAZIAS (sessão 18) e o motivo está no
+// handoff: uma declarava a SUBSEÇÃO (e `subsecaoAutoritativa` já acertava), a
+// outra deixava a `ordem` entre contas do Imobilizado (e o consenso de irmãos
+// acertava). Esta declara a seção de TOPO e põe a ordem longe — que é o que a
+// produção tinha.
+{
+  const anc = (extra: { totalGrupo?: boolean; contaNoLugarCerto?: boolean }) => {
+    const V = `v-dc-${extra.totalGrupo ? "t" : "s"}-${extra.contaNoLugarCerto ? "c" : "e"}`;
+    const documentos: DocumentoParaExport[] = [{
+      id: `d-${V}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+      entidade: { razao_social: "Componentes Ltda." },
+      periodo: { tipo: "anual", referencia: "12M25" },
+      documento_versao: [{ id: V, n_versao: 1, nome_original: "BP_Componentes.pdf" }],
+    } as unknown as DocumentoParaExport];
+    const c = (chave: string, valor_num: number, ordem: number, secao: string | null = null) =>
+      campo({ chave, secao, valor_num, ordem, unidade: "milhar", documento_versao_id: V });
+    const campos: CampoExtraido[] = [
+      c("Numerário disponível em bancos", 410, 1, "Disponível"),
+      c("Total do Ativo Circulante", 410, 2, "Ativo Circulante"),
+      ...(extra.totalGrupo ? [c("Ativo Não Circulante", 6550, 3)] : []),
+      c("Realizável a Longo Prazo", 860, 4),
+      c("Depósitos judiciais", 860, 5),
+      c("Imobilizado", 5590, 6),
+      c("Máquinas e equipamentos", 14200, 7),
+      c("Veículos", 890, 8),
+      c("(-) Depreciação acumulada", -13100, 9),
+      c("Intangível", 100, 10),
+      c("Software", 210, 11),
+      c("(-) Amortização acumulada", -110, 12),
+      // A conta exilada — ou não, na variante de contraprova.
+      c("Bens em comodato", 3600, 40, extra.contaNoLugarCerto ? "Imobilizado" : "Ativo Não Circulante"),
+    ];
+    return buildExportWorkbook({
+      caso: { nome: "Caso Dupla Contagem", produto: "reestruturacao" }, documentos, campos,
+      agora: new Date("2026-07-31T12:00:00Z"),
+    }).getWorksheet("Balanço")!;
+  };
+  const avisos = (ws: import("exceljs").Worksheet) => {
+    const rs: number[] = [];
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (/DUPLA CONTAGEM/.test(String(ws.getRow(r).getCell(1).value ?? ""))) rs.push(r);
+    }
+    return rs;
+  };
+
+  // --- (a) com total do grupo informado: o número fica certo, mas o arquivo
+  //         tem de dizer POR QUE ele diverge da soma, nomeando a conta.
+  {
+    const ws = anc({ totalGrupo: true });
+    const rs = avisos(ws);
+    checar(rs.length === 1, "(36) o export sinaliza a dupla contagem no total do grupo", `avisos=${rs.length}`);
+    if (rs.length >= 1) {
+      const txt = String(ws.getRow(rs[0]).getCell(1).value ?? "");
+      // NOMEAR é o ponto: a nota antiga pedia ao humano que casasse a diferença
+      // com alguma conta de outra seção, à mão, em 44 seções. Ninguém faz.
+      checar(/Bens em comodato/.test(txt), "(36) …NOMEANDO a conta suspeita", txt.slice(0, 160));
+      checar(/Outros Ativos Não Circulantes/.test(txt) && /Imobilizado/.test(txt),
+        "(36) …e as DUAS seções envolvidas (onde ela está × quem já a soma)", txt.slice(0, 160));
+      const nota = notaDaLinha(ws, rs[0]);
+      checar(/LEITURA A/.test(nota) && /LEITURA B/.test(nota),
+        "(36) …e a nota traz as DUAS leituras, porque o export não escolhe (docs/04)",
+        nota.slice(0, 120));
+      checar(/3\.600,00/.test(nota),
+        "(36) …com a diferença medida, não só a afirmação", nota.slice(0, 300));
+      // Não corrige sozinho: o cabeçalho do grupo continua sendo o que era
+      // (o total informado), e o valor exilado continua onde a extração o pôs.
+      let rGrupo = -1;
+      for (let r = 1; r <= ws.rowCount; r++) {
+        if (String(ws.getRow(r).getCell(1).value ?? "") === "Ativo Não Circulante") { rGrupo = r; break; }
+      }
+      checar(rGrupo > 0 && ws.getRow(rGrupo).getCell(2).value != null,
+        "(36) o export NÃO reclassifica sozinho: o cabeçalho do grupo continua o que era");
+      checar(String((ws.getRow(rGrupo).getCell(2).fill as { fgColor?: { argb?: string } } | undefined)
+        ?.fgColor?.argb ?? "") === "FFFCE4E4",
+        "(36) …mas a célula do total do grupo fica pintada, para quem lê só o total ver a suspeita");
+    }
+  }
+
+  // --- (b) SEM total do grupo informado: é o caso silencioso e o mais caro.
+  //         O cabeçalho do grupo vira a SOMA dos filhos — sai inflado em 3.600
+  //         e não existe nenhuma linha de conferência contra a qual comparar.
+  {
+    const ws = anc({});
+    const rs = avisos(ws);
+    checar(rs.length === 1,
+      "(36) o aviso aparece TAMBÉM sem total do grupo informado (o caso em que o número sai inflado)",
+      `avisos=${rs.length}`);
+  }
+
+  // --- (c) a contraprova, sem a qual tudo acima passaria num export que
+  //         simplesmente avisasse sempre. Com a conta na subseção certa, o
+  //         Imobilizado fecha (14.200+3.600+890−13.100 = 5.590 = informado) e
+  //         não existe divergência nenhuma para suspeitar.
+  {
+    const ws = anc({ totalGrupo: true, contaNoLugarCerto: true });
+    checar(avisos(ws).length === 0,
+      "(36) com a conta classificada no lugar certo, NÃO há aviso (o guard não é 'avisa sempre')",
+      `avisos=${avisos(ws).length}`);
+  }
+
+  // --- (e) defeito ENCONTRADO ao escrever este teste, e corrigido junto: a
+  //         marca de divergência no CABEÇALHO da seção nunca aparecia. O
+  //         cabeçalho é linha reservada e preenchida no fim com `row.fill = …`,
+  //         que no ExcelJS repinta a linha inteira e apagava o destaque escrito
+  //         antes. Medido no arranjo abaixo: o Imobilizado diverge 1.990 ×
+  //         5.590 e o cabeçalho dele saía com o cinza normal de seção — quem
+  //         lê só a linha do total não tinha nenhum sinal.
+  {
+    const ws = anc({ totalGrupo: true });
+    let rImob = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "Imobilizado") { rImob = r; break; }
+    }
+    checar(rImob > 0, "(36) a seção Imobilizado foi emitida");
+    const fill = String((ws.getRow(rImob).getCell(2).fill as { fgColor?: { argb?: string } } | undefined)
+      ?.fgColor?.argb ?? "");
+    checar(fill === "FFFCE4E4",
+      "(36) o CABEÇALHO da seção que diverge fica pintado (o destaque não é apagado pelo fill da linha)",
+      `fill=${fill || "(nenhum)"}`);
+  }
+
+  // --- (d) o mesmo achado não pode ser reportado no grupo e no avô. Duas vezes
+  //         o mesmo aviso ensina o leitor a ignorar o aviso.
+  {
+    const ws = anc({ totalGrupo: true });
+    const rs = avisos(ws);
+    let rAtivo = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "ATIVO") { rAtivo = r; break; }
+    }
+    checar(rs.length === 1 && rAtivo > 0,
+      "(36) o achado é reportado UMA vez, no grupo onde as duas seções são irmãs — não repetido no ATIVO",
+      `avisos=${rs.length}`);
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);
