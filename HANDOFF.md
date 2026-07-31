@@ -113,6 +113,10 @@ contra serviço Postgres 16, e2e, tsc, eslint e `next build`. Em todo push e PR.
    be installed"). As suítes agora chamam `./portal/node_modules/.bin/tsx` por caminho, o binário
    pinado no lock. `tsx` entrou nas devDependencies do portal.
 
+**CI VERIFICADO VERDE EM RUNNER REAL** (run `30668647822`, commit `a7bfee5`): os **14 passos**
+passaram em 82 s, incluindo os que a primeira execução tinha pulado — `db/test/run.sh` contra o
+serviço Postgres 16, o `e2e`, e o `next build`. Não é "o YAML é válido": é a coisa rodando.
+
 ### 5. Análise crítica da sessão 19 (`495ca68`) — pedido explícito do dono
 
 **DEFEITO ENCONTRADO E CORRIGIDO: 12 meses NÃO bastam.** A `0032` fez a série de NÍVEL devolver
