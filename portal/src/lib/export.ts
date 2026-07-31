@@ -570,6 +570,97 @@ function formatarStatus(status: string) {
 // Em empate (mais de um campo casando no mesmo lugar), prefere maior
 // confiança e rótulo mais curto (mais específico) — mesmo critério de
 // `fn_valor_conceito` (db/migrations/0009).
+// ---------------------------------------------------------------------------
+// ESCALA (milhar/milhão/unidade) — o defeito mais caro que este arquivo tinha.
+//
+// `campo.unidade` existia, era lido e NUNCA era usado como fator. Cada célula
+// gravava `campo.valor_num` cru, então um Balanço em MILHAR somado a um Balancete
+// em UNIDADE na mesma coluna dava erro de ~496x — medido, não estimado:
+//
+//     ATIVO                      27.928.400   <- deveria ser 56.300 (em milhar)
+//     Ativo Circulante  =SUM(...) 27.928.400
+//       Disponibilidades              500     (milhar)
+//       Duplicatas a receber       27.900     (milhar)
+//       Clientes nacionais     27.900.000     (unidade)
+//
+// E sem NENHUMA marca de divergência: a linha de conferência só compara contra o
+// total informado pelo documento, e aqui não havia total. AV%, Δ% e todos os
+// indicadores de liquidez/endividamento herdavam o número corrompido.
+//
+// O banco já resolvia isso e o portal não usava: `fn_fator_escala` /
+// `fn_valor_em_base` (0023) convertem antes de comparar, e é por isso que a
+// reconciliação acertava enquanto o book mentia.
+//
+// A correção é feita no LIMITE DE NORMALIZAÇÃO (uma vez, logo depois de filtrar as
+// versões vigentes) e não em cada ponto de escrita. Isso é deliberado: convertendo
+// os valores na entrada, TODO consumidor a jusante — células, `SUM`, detecção de
+// subtotal, AV%/Δ%, indicadores, linha de conferência, aba Modelagem — passa a
+// estar correto sem precisar ser tocado. Corrigir célula por célula deixaria de
+// fora exatamente os consumidores que ninguém lembra.
+const FATOR_ESCALA: Record<string, number> = { unidade: 1, milhar: 1_000, milhao: 1_000_000 };
+
+// Como a escala é escrita para humano. Vai no cabeçalho de cada aba de valores:
+// planilha financeira sem escala declarada é planilha que alguém vai ler errado.
+export const ROTULO_ESCALA: Record<string, string> = {
+  unidade: "R$",
+  milhar: "R$ mil",
+  milhao: "R$ milhões",
+};
+
+export interface EscalaDoExport {
+  alvo: string;                       // escala em que TODO valor do book está
+  converteu: number;                  // quantos campos foram convertidos
+  semDeclaracao: number;              // quantos não declaravam escala
+  escalasEncontradas: string[];        // o que apareceu nos documentos
+}
+
+// A escala do book é a PREDOMINANTE entre as declaradas. Não é média nem "a
+// primeira": é a que mais linhas declaram, porque converter a minoria produz
+// menos ruído de leitura. Sem nenhuma escala declarada → 'unidade', que preserva
+// os números exatamente como estão hoje.
+export function escolherEscalaAlvo(campos: CampoExtraido[]): string {
+  const contagem = new Map<string, number>();
+  for (const c of campos) {
+    if (c.unidade && FATOR_ESCALA[c.unidade] != null) {
+      contagem.set(c.unidade, (contagem.get(c.unidade) ?? 0) + 1);
+    }
+  }
+  if (contagem.size === 0) return "unidade";
+  return [...contagem.entries()].sort((a, b) => b[1] - a[1] || FATOR_ESCALA[b[0]] - FATOR_ESCALA[a[0]])[0][0];
+}
+
+// Converte todo valor para a escala alvo. Campo sem escala declarada é deixado
+// COMO ESTÁ e contado em `semDeclaracao`: assumir 'unidade' para ele seria
+// inventar um fator de 1000x justamente onde não se sabe — e o comentário da
+// fonte de `normalizarUnidade` já diz que "errar em 1000x é pior que não saber".
+// A nota de proveniência da célula declara essa suposição, uma por uma.
+export function normalizarEscala(
+  campos: CampoExtraido[],
+  alvo: string,
+): { campos: CampoExtraido[]; escala: EscalaDoExport } {
+  const fatorAlvo = FATOR_ESCALA[alvo] ?? 1;
+  let converteu = 0;
+  let semDeclaracao = 0;
+  const encontradas = new Set<string>();
+
+  const saida = campos.map((c) => {
+    if (!c.unidade || FATOR_ESCALA[c.unidade] == null) {
+      semDeclaracao += 1;
+      return c;
+    }
+    encontradas.add(c.unidade);
+    if (c.unidade === alvo || c.valor_num == null) return { ...c, unidade: alvo, unidade_original: c.unidade };
+    const fator = FATOR_ESCALA[c.unidade] / fatorAlvo;
+    converteu += 1;
+    return { ...c, valor_num: c.valor_num * fator, unidade: alvo, unidade_original: c.unidade };
+  });
+
+  return {
+    campos: saida,
+    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort() },
+  };
+}
+
 function melhorCampo(campos: CampoExtraido[]): CampoExtraido {
   return [...campos].sort((a, b) => (b.confianca ?? 0) - (a.confianca ?? 0) || a.chave.length - b.chave.length)[0];
 }
@@ -588,6 +679,15 @@ function notaProveniencia(campo: CampoExtraido, ctx: ContextoVersao) {
     `Rótulo original: "${campo.chave}"`,
     campo.entidade_coluna ? `Coluna de origem no documento: ${campo.entidade_coluna}` : null,
     `Arquivo: ${ctx.nomeArquivo}`,
+    // Escala: informação de AUDITORIA, não detalhe. Antes desta linha as abas
+    // classificadas não mostravam a escala nem no hover, então um número
+    // convertido era indistinguível de um número original — e um número SEM
+    // escala declarada era indistinguível de um que declarava a escala do book.
+    campo.unidade_original && campo.unidade_original !== campo.unidade
+      ? `Escala: convertido de ${ROTULO_ESCALA[campo.unidade_original] ?? campo.unidade_original} para ${ROTULO_ESCALA[campo.unidade ?? ""] ?? campo.unidade}`
+      : campo.unidade
+        ? `Escala: ${ROTULO_ESCALA[campo.unidade] ?? campo.unidade}`
+        : `Escala: NÃO declarada no documento — valor usado como está, sem conversão`,
     campo.origem_pagina != null ? `Página: ${campo.origem_pagina}` : null,
     campo.confianca != null ? `Confiança da extração: ${Math.round(campo.confianca * 100)}%` : null,
     `Status: ${formatarStatus(campo.status_aceite)}`,
@@ -3034,8 +3134,15 @@ export function buildExportWorkbook({
   }
   // Daqui para baixo, `campos` é só o da versão vigente — inclusive nas contagens
   // do Resumo, que senão anunciariam linhas que a planilha não mostra.
-  const campos = camposDeTodasAsVersoes.filter((c) => contextoPorVersao.has(c.documento_versao_id));
-  const camposDeVersaoSubstituida = camposDeTodasAsVersoes.length - campos.length;
+  const camposVigentes = camposDeTodasAsVersoes.filter((c) => contextoPorVersao.has(c.documento_versao_id));
+  const camposDeVersaoSubstituida = camposDeTodasAsVersoes.length - camposVigentes.length;
+
+  // ESCALA: converte tudo para uma escala só, ANTES de qualquer soma. Ver o
+  // comentário de `normalizarEscala`. Daqui para baixo, todo `valor_num` está na
+  // mesma escala — que é o que torna `SUM`, AV%, indicadores e a Modelagem
+  // corretos sem que nenhum deles precise saber que escala existe.
+  const escalaAlvo = escolherEscalaAlvo(camposVigentes);
+  const { campos, escala } = normalizarEscala(camposVigentes, escalaAlvo);
 
   // Consolidação de coluna (teste v27): o apelido que o documento combinado usa
   // na coluna ("Componentes") e a razão social do documento individual
@@ -3261,7 +3368,32 @@ export function buildExportWorkbook({
     ["Linhas totais extraídas", totalLinhas],
     ["Linhas aceitas (fato)", totalAceitas],
     ["Linhas pendentes (sugestão, revisar)", totalLinhas - totalAceitas],
+    // ESCALA: a informação mais importante do Resumo depois do nome do caso.
+    // Toda aba de valores está NESTA escala — o export converte na entrada
+    // (`normalizarEscala`) justamente para que exista uma resposta única aqui.
+    // Antes desta linha o book não declarava escala em lugar nenhum, e valores em
+    // escalas diferentes eram somados crus: erro de ~496x sem nenhuma marca.
+    ["Escala dos valores", `${ROTULO_ESCALA[escala.alvo] ?? escala.alvo} — vale para TODAS as abas de valores`],
   ];
+  // Só aparece quando houve conversão de verdade: linha que diz "0 convertidos"
+  // é ruído, e ruído no Resumo treina o leitor a não ler o Resumo.
+  if (escala.converteu > 0) {
+    linhasResumo.push([
+      "↳ valores convertidos de escala",
+      `${escala.converteu} linha(s) vinham em ${escala.escalasEncontradas
+        .filter((e) => e !== escala.alvo)
+        .map((e) => ROTULO_ESCALA[e] ?? e)
+        .join(", ")} e foram convertidas. A nota de cada célula diz a escala de origem.`,
+    ]);
+  }
+  // E o que NÃO deu para converter, que é o que o leitor precisa conferir à mão.
+  if (escala.semDeclaracao > 0) {
+    linhasResumo.push([
+      "↳ linhas sem escala declarada",
+      `${escala.semDeclaracao} — o documento não disse a escala, então o valor entrou COMO ESTÁ, sem conversão. ` +
+        `Assumir uma escala aqui seria inventar um fator de 1.000x onde não se sabe.`,
+    ]);
+  }
   // Reextração é substituição, e substituição não pode ser silenciosa: quem abre
   // o book tem de saber que existe extração anterior deste mesmo arquivo fora da
   // planilha (ela continua no banco, com proveniência, para auditoria).

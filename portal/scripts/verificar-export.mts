@@ -58,6 +58,22 @@ function avaliar(ws: import("exceljs").Worksheet, col: string, row: number): num
   return typeof v === "number" ? v : 0;
 }
 
+// No ExcelJS a nota de célula é um objeto (`{texts:[{text}]}`), não string — ler
+// com String() devolve "[object Object]" e o invariante passaria a testar nada.
+function notaDaLinha(ws: import("exceljs").Worksheet, row: number): string {
+  const r = ws.getRow(row);
+  const partes: string[] = [];
+  r.eachCell({ includeEmpty: false }, (cell) => {
+    const n = cell.note as unknown;
+    if (!n) return;
+    if (typeof n === "string") partes.push(n);
+    else if (typeof n === "object" && Array.isArray((n as { texts?: Array<{ text?: string }> }).texts)) {
+      partes.push((n as { texts: Array<{ text?: string }> }).texts.map((t) => t.text ?? "").join(""));
+    }
+  });
+  return partes.join("\n");
+}
+
 let seq = 0;
 const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id: string }): CampoExtraido => ({
   id: `c${seq++}`, secao: null, secao_canonica: null, entidade_coluna: null, periodo_coluna: null,
@@ -1802,6 +1818,152 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     if (String(resumoSem.getRow(r).getCell(1).value ?? "") === "↳ causa registrada") temCausaVazia = true;
   }
   checar(!temCausaVazia, "(21d) sem causa registrada, o Resumo não inventa a linha");
+}
+
+// ---- 22: ESCALA MISTA — o bug de ~496x ------------------------------------
+// A fixture `campo()` fixa `unidade: null`, e nenhum dos 126 invariantes
+// anteriores mencionava escala. Era por isso que o defeito mais caro do export
+// passava verde: um Balanço em MILHAR somado a um Balancete em UNIDADE na mesma
+// coluna somava valor cru, sem nenhuma marca de divergência.
+{
+  const V1 = "esc-milhar";
+  const V2 = "esc-unidade";
+  const documentos: DocumentoParaExport[] = [
+    {
+      id: "d-esc-1", tipo_taxonomia: "BALANCO", status: "em_validacao",
+      entidade: { razao_social: "Alfa Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+      documento_versao: [{ id: V1, n_versao: 1, nome_original: "BP Alfa 2025.pdf" }],
+    } as unknown as DocumentoParaExport,
+    {
+      // MESMO tipo e mesma entidade/período que o d-esc-1: é o que faz as duas
+      // fontes caírem na MESMA coluna da MESMA aba, que é onde a soma quebrava.
+      // Cenário real: um BP e uma DF auditada da mesma empresa, cada arquivo
+      // declarando a escala do seu jeito.
+      id: "d-esc-2", tipo_taxonomia: "BALANCO", status: "em_validacao",
+      entidade: { razao_social: "Alfa Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+      documento_versao: [{ id: V2, n_versao: 1, nome_original: "DF Auditada Alfa 2025.pdf" }],
+    } as unknown as DocumentoParaExport,
+  ];
+  // Mesmos R$ 27,9 milhões escritos em escalas diferentes: 27.900 em milhar e
+  // 27.900.000 em unidade. Depois da normalização os dois têm de valer o MESMO.
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V1, chave: "Disponibilidades", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+    campo({ documento_versao_id: V1, chave: "Duplicatas a receber", secao: "Contas a Receber", valor_num: 27900, unidade: "milhar", ordem: 1 }),
+    campo({ documento_versao_id: V2, chave: "Clientes nacionais", secao: "Contas a Receber", valor_num: 27_900_000, unidade: "unidade", ordem: 0 }),
+  ];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const ws = wb.getWorksheet("Balanço")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  // O que o valor em unidade tem de virar depois de convertido para milhar.
+  const rClientes = linhaDe("Clientes nacionais");
+  checar(rClientes > 0, "(22a) a linha em escala 'unidade' aparece na aba");
+  const vClientes = rClientes > 0 ? avaliar(ws, "B", rClientes) : NaN;
+  checar(
+    Math.abs(vClientes - 27900) < 0.01,
+    "(22b) valor em unidade é CONVERTIDO para a escala do book (27.900.000 → 27.900)",
+    `obteve ${vClientes}`,
+  );
+  // E a soma da seção fecha na escala única. Antes: 500 + 27.900 + 27.900.000.
+  const rAC = linhaDe("Ativo Circulante");
+  const soma = avaliar(ws, "B", rAC);
+  checar(
+    Math.abs(soma - 56300) < 0.01,
+    "(22c) soma com escalas mistas fecha na escala única (era erro de ~496x)",
+    `obteve ${soma}, esperado 56300`,
+  );
+  // A conversão fica DECLARADA na nota da célula — número convertido sem rastro
+  // é número que ninguém consegue conferir contra o PDF.
+  const nota = notaDaLinha(ws, rClientes);
+  checar(/convertido de/i.test(nota), "(22d) a nota da célula declara a conversão de escala", nota.slice(0, 120));
+}
+
+// ---- 23: escala não declarada não é convertida às cegas --------------------
+// `unidade: null` significa "o documento não disse". Assumir 'unidade' aí seria
+// inventar um fator de 1000x justamente onde não se sabe — e o comentário da
+// fonte de `normalizarUnidade` diz que "errar em 1000x é pior que não saber".
+{
+  const V = "esc-null";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-esc-3", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Beta Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP Beta.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Disponibilidades", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+    campo({ documento_versao_id: V, chave: "Outros créditos", secao: "Disponível", valor_num: 300, unidade: null, ordem: 1 }),
+  ];
+  const ws = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") })
+    .getWorksheet("Balanço")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  const rOutros = linhaDe("Outros créditos");
+  checar(Math.abs(avaliar(ws, "B", rOutros) - 300) < 0.01, "(23a) valor sem escala declarada NÃO é convertido");
+  const nota = notaDaLinha(ws, rOutros);
+  checar(/NÃO declarada/i.test(nota), "(23b) a nota diz que a escala não foi declarada, em vez de omitir", nota.slice(0, 120));
+}
+
+// ---- 24: o Resumo DECLARA a escala e o que não deu para converter ---------
+// Uma planilha financeira sem escala declarada é uma planilha que alguém vai ler
+// errado — e este book não declarava escala em lugar nenhum.
+{
+  const V1 = "res-esc-1";
+  const V2 = "res-esc-2";
+  const doc = (id: string, ver: string, nome: string): DocumentoParaExport => ({
+    id, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Gama Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: ver, n_versao: 1, nome_original: nome }],
+  } as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V1, chave: "Disponibilidades", secao: "Disponível", valor_num: 500, unidade: "milhar", ordem: 0 }),
+    campo({ documento_versao_id: V1, chave: "Duplicatas a receber", secao: "Contas a Receber", valor_num: 27900, unidade: "milhar", ordem: 1 }),
+    campo({ documento_versao_id: V2, chave: "Clientes nacionais", secao: "Contas a Receber", valor_num: 27_900_000, unidade: "unidade", ordem: 0 }),
+    campo({ documento_versao_id: V2, chave: "Outros créditos", secao: "Contas a Receber", valor_num: 300, unidade: null, ordem: 1 }),
+  ];
+  const resumo = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" },
+    documentos: [doc("d-res-1", V1, "BP.pdf"), doc("d-res-2", V2, "DF.pdf")],
+    campos, agora: new Date("2026-07-27T12:00:00Z"),
+  }).getWorksheet("Resumo")!;
+
+  const valorDe = (rot: string) => {
+    for (let r = 1; r <= resumo.rowCount; r++) {
+      if (String(resumo.getRow(r).getCell(1).value ?? "") === rot) return String(resumo.getRow(r).getCell(2).value ?? "");
+    }
+    return "";
+  };
+  checar(/R\$ mil/.test(valorDe("Escala dos valores")), "(24a) o Resumo declara a escala do book", valorDe("Escala dos valores"));
+  checar(/^1 linha\(s\)/.test(valorDe("↳ valores convertidos de escala")), "(24b) o Resumo diz quantas linhas foram convertidas", valorDe("↳ valores convertidos de escala"));
+  checar(/^1 —/.test(valorDe("↳ linhas sem escala declarada")), "(24c) o Resumo declara o que NÃO deu para converter", valorDe("↳ linhas sem escala declarada"));
+}
+
+// ---- 25: sem escala nenhuma declarada, nada muda --------------------------
+// Regressão: a maioria dos documentos reais não declara escala, e o export
+// precisa continuar saindo exatamente como saía. Um fix de escala que mexe em
+// número onde não havia escala seria pior que o bug.
+{
+  const V = "res-esc-none";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-none", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Delta Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Disponibilidades", secao: "Disponível", valor_num: 1240, ordem: 0 }),
+    campo({ documento_versao_id: V, chave: "Aplicações financeiras", secao: "Disponível", valor_num: 3600, ordem: 1 }),
+  ];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const ws = wb.getWorksheet("Balanço")!;
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  checar(Math.abs(avaliar(ws, "B", linhaDe("Disponibilidades")) - 1240) < 0.01, "(25a) sem escala declarada, o valor sai intacto");
+  checar(Math.abs(avaliar(ws, "B", linhaDe("Ativo Circulante")) - 4840) < 0.01, "(25b) e a soma também");
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
