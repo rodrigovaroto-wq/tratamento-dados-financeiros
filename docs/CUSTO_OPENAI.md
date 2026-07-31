@@ -194,3 +194,60 @@ inteiro** — a maior redução disponível hoje sem depender do N8N ao vivo.
 `max_tokens: 16384` **não custa dinheiro** — só reserva TPM (ver o adendo do v30). Baixá-lo acelera o
 lote, não barateia: a cobrança é sobre os tokens realmente gerados. Quem quiser reduzir gasto de
 verdade mexe no INPUT (alavancas 1 e 2), não na saída.
+
+---
+
+## Teto de gasto em CÓDIGO (2026-07-31) — duas defesas, camadas diferentes
+
+Pedido do dono depois do v31: **no máximo US$ 3 por execução completa, e o teto da OpenAI em US$ 5**.
+São duas coisas, e confundi-las é o que faz um teto não proteger:
+
+| Defesa | Onde vive | O que acontece quando estoura |
+|---|---|---|
+| **US$ 5 por projeto** | Conta da OpenAI (Settings → Projects → Limits) | a API recusa; o pipeline registra `limite_de_gasto`. Foi o v31: o teto cortou no meio do lote e **8 documentos ficaram registrados sem extração**. |
+| **US$ 3 por execução** | `n8n/lib/custo.mjs` (`TETO_EXECUCAO_USD`) | o nó `Orcamento do Lote` **recusa o lote antes da primeira chamada**, com uma mensagem que diz quantos documentos mandar por leva. |
+
+A folga entre 3 e 5 é deliberada: ela garante que quem barra o lote seja o **código** (que explica o que
+fazer, e não gastou nada) e não a **API** (que devolve 429 e deixa estado pela metade). E o teto da
+OpenAI continua sendo a defesa dura — um teto que o próprio sistema controla é um teto que um bug do
+próprio sistema fura.
+
+### Onde o guarda fica, e por que ali
+
+`Classificar Nome` → **`Orcamento do Lote`** → `Preparar Conteudo`. É o último ponto em que o lote
+inteiro está visível **e** nada custou ainda: cada item já sabe se `precisa_fallback_openai`, então a
+contagem de chamadas é **exata** — não estimada. Contar chamadas em vez de documentos importa porque
+documento mal nomeado paga o PDF duas vezes (alavanca 2 acima).
+
+O lote é recusado **inteiro**. Não existe "roda os que cabem" de propósito: metade registrada sem
+extração e metade sem registro nenhum é estado que dá mais trabalho para desfazer do que o reenvio que
+a mensagem de recusa pede.
+
+O efeito no lote real do v31, que os testes travam:
+
+```
+antes do renome:  14 documentos → 22 chamadas ≈ US$ 3,30  → RECUSADO antes de gastar
+depois do renome: 14 documentos → 14 chamadas ≈ US$ 2,10  → passa
+```
+
+### Estimativa vs. medição — e como apertar o teto com honestidade
+
+`CUSTO_ESTIMADO_DOC_USD = 0,15` é **estimativa declarada** (o cálculo está no comentário da constante),
+posta acima do custo típico medido (~US$ 0,105) para errar para o lado seguro. Barrar um lote que
+caberia é um aviso; deixar passar um que não cabe é o v31 de novo.
+
+`custoDaChamada` mede o **real** a partir do bloco `usage` que a OpenAI devolve — inclusive cobrando
+tokens em cache pela metade, que é material aqui porque o prompt de sistema é idêntico em toda chamada.
+O valor medido sai em `Parse Extracao` (`custo_usd` + `tokens`), visível na execução do n8n. **É com ele
+que a constante deve ser recalibrada depois do próximo lote** — e só então faz sentido apertar o teto.
+
+Se `usage` não vier, `custoDaChamada` devolve `null` em vez de chutar: número inventado num relatório de
+custo é pior que campo vazio.
+
+### Diagnóstico sem terminal
+
+`n8n/workflow.diagnostico-openai.json` (gerado por `build-workflow-diagnostico.mjs`) faz o mesmo que
+`diagnosticar-openai.mjs`, mas como **workflow importável**: trigger manual, uma chamada de 1 token na
+credencial `OpenAI API` que já existe, e um veredito em texto. Nasceu porque o dono não usa terminal — e
+um diagnóstico que o dono não consegue rodar não diagnostica nada. Não grava em banco, não tem trigger
+de relógio, e o veredito sai do **mesmo** `diagnosticarErroApi` da produção (embutido por `toString()`).
