@@ -1966,6 +1966,86 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(Math.abs(avaliar(ws, "B", linhaDe("Ativo Circulante")) - 4840) < 0.01, "(25b) e a soma também");
 }
 
+// ---- 26: conta de RESULTADO nunca fica no balanço --------------------------
+// `ATIVO_CIRC_KW` contém "mercadoria" (porque no balanço "Mercadorias para
+// revenda" é estoque), e por isso a TOP LINE da DRE caía no Ativo Circulante —
+// não em "Não Classificadas": era classificada ATIVAMENTE errada, e o roteamento
+// não salvava porque `classificarBalanco` "reconhecia" a linha. Alvo direto de
+// balancete analítico, onde contas de resultado e de balanço convivem.
+{
+  const V = "bal-analitico";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-ba", tipo_taxonomia: "BALANCETE", status: "em_validacao",
+    entidade: { razao_social: "Épsilon Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "Balancete Analitico.pdf" }],
+  } as unknown as DocumentoParaExport];
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Mercadorias para revenda", secao: "Estoques", valor_num: 12400, ordem: 0 }),
+    campo({ documento_versao_id: V, chave: "Receita de Vendas de Mercadorias", secao: "RECEITAS", valor_num: 98000, ordem: 1 }),
+    campo({ documento_versao_id: V, chave: "Custo das Mercadorias Vendidas", secao: "CUSTOS", valor_num: -61000, ordem: 2 }),
+  ];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const rotulosDe = (aba: string) => {
+    const ws = wb.getWorksheet(aba);
+    if (!ws) return [] as string[];
+    const out: string[] = [];
+    for (let r = 1; r <= ws.rowCount; r++) out.push(String(ws.getRow(r).getCell(1).value ?? ""));
+    return out;
+  };
+  const naDRE = rotulosDe("DRE");
+  const noBalancete = rotulosDe("Balancete");
+  checar(naDRE.includes("Receita de Vendas de Mercadorias"), "(26a) a top line da DRE vai para a aba DRE");
+  checar(naDRE.includes("Custo das Mercadorias Vendidas"), "(26b) o CMV vai para a aba DRE");
+  checar(!noBalancete.includes("Receita de Vendas de Mercadorias"), "(26c) e NÃO fica no balancete somada ao Ativo Circulante");
+  // O estoque, que legitimamente tem "mercadoria" no rótulo, continua no balanço.
+  checar(noBalancete.includes("Mercadorias para revenda"), "(26d) estoque com 'mercadoria' no rótulo segue sendo conta de balanço");
+}
+
+// ---- 27: imobilizado/intangível alcançáveis SÓ pelo rótulo ----------------
+// `subgrupoNaoCirculante` só era chamado depois de casar `ATIVO_NAO_CIRC_KW`, que
+// não continha veículo/máquina/terreno/software. Metade de `IMOBILIZADO_KW` e de
+// `INTANGIVEL_KW` era código morto: sem a subseção anotada, o imobilizado inteiro
+// ia para "Contas Não Classificadas" — fora de toda soma e de todo indicador.
+{
+  const V = "imob";
+  const documentos: DocumentoParaExport[] = [{
+    id: "d-imob", tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Zeta Ltda." }, periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: V, n_versao: 1, nome_original: "BP Zeta.pdf" }],
+  } as unknown as DocumentoParaExport];
+  // secao: null de propósito — é o caso do balancete analítico que não anota subseção.
+  const campos: CampoExtraido[] = [
+    campo({ documento_versao_id: V, chave: "Veículos", valor_num: 1800, ordem: 0 }),
+    campo({ documento_versao_id: V, chave: "Máquinas e Equipamentos", valor_num: 9400, ordem: 1 }),
+    campo({ documento_versao_id: V, chave: "Terrenos", valor_num: 5000, ordem: 2 }),
+    campo({ documento_versao_id: V, chave: "Software", valor_num: 700, ordem: 3 }),
+  ];
+  const ws = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") })
+    .getWorksheet("Balanço")!;
+  const rotulos: string[] = [];
+  let rNaoClass = -1;
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const rot = String(ws.getRow(r).getCell(1).value ?? "");
+    rotulos.push(rot);
+    if (/N[ãa]o Classificad/i.test(rot)) rNaoClass = r;
+  }
+  const linhaDe = (rot: string) => rotulos.indexOf(rot) + 1;
+  for (const bem of ["Veículos", "Máquinas e Equipamentos", "Terrenos"]) {
+    const r = linhaDe(bem);
+    checar(r > 0 && (rNaoClass < 0 || r < rNaoClass), `(27) "${bem}" entra no Imobilizado, não em Não Classificadas`);
+  }
+  const rSoft = linhaDe("Software");
+  checar(rSoft > 0 && (rNaoClass < 0 || rSoft < rNaoClass), '(27) "Software" entra no Intangível, não em Não Classificadas');
+  // E entra na SOMA: ficar fora dela era o custo real de cair em Não Classificadas.
+  const rANC = linhaDe("Ativo Não Circulante");
+  if (rANC > 0) {
+    const soma = avaliar(ws, "B", rANC);
+    checar(Math.abs(soma - 16900) < 0.01, "(27b) os quatro bens entram na soma do Ativo Não Circulante", `obteve ${soma}`);
+  } else {
+    checar(false, "(27b) a aba tem seção de Ativo Não Circulante");
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

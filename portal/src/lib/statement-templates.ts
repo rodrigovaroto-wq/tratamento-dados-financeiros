@@ -186,6 +186,17 @@ const ATIVO_NAO_CIRC_KW = [
   "amortizacao acumulada", "direito de uso", "deposito judicial", "credito com pessoas ligadas",
   "credito com partes relacionadas", "credito com terceiros", "credito c terceiros",
   "obra em andamento", "adiantamento para futuro aumento de capital",
+  // Bens CONCRETOS do imobilizado/intangível. Sem eles, metade de `IMOBILIZADO_KW`
+  // e de `INTANGIVEL_KW` era código MORTO no caminho por rótulo: `subgrupoNaoCirculante`
+  // só é chamado DEPOIS de casar esta lista, então "Veículos", "Máquinas e
+  // Equipamentos", "Terrenos" e "Software" iam para "Contas Não Classificadas" —
+  // fora de toda soma e de todo indicador — a menos que a extração anotasse a
+  // subseção com o nome exato, o que balancete analítico raramente faz. Verificado
+  // executando o classificador antes e depois.
+  "imovel", "maquina", "equipamento", "veiculo", "movei", "utensilio", "terreno",
+  "edificacao", "edificio", "instalacao", "ferramenta", "benfeitoria",
+  "software", "marca", "patente", "agio", "fundo de comercio", "licenca",
+  "gasto com desenvolvimento", "mais valia",
 ];
 
 // Subgrupos do Ativo Não Circulante (Lei 6.404/76 art. 178 + CPC 26): a conta
@@ -368,6 +379,54 @@ function ancoraBalanco(tokensChave: Set<string>, tokensSecao: Set<string>): stri
   return null;
 }
 
+// Uma conta de RESULTADO nunca é conta de balanço, por mais que o rótulo dela
+// contenha uma palavra do vocabulário patrimonial.
+//
+// O defeito que isto corrige, medido executando o classificador: `ATIVO_CIRC_KW`
+// contém "mercadoria" — porque no balanço "Mercadorias para revenda" é estoque —
+// e por isso a TOP LINE da DRE caía no Ativo Circulante:
+//
+//     estrutura=balanco:
+//       ativo_circulante   Receita de Vendas de Mercadorias   <- top line da DRE
+//       ativo_circulante   Custo das Mercadorias Vendidas     <- CMV
+//
+// E o roteamento não salvava: como `classificarBalanco` "reconhecia" a linha,
+// `classificarDemonstracao` devolvia "balanco" e ela NÃO era reroteada para a DRE
+// — ficava na aba somada ao Ativo Circulante. Declarar a seção não resolvia:
+// "RECEITAS"/"CUSTOS" não são subseção autoritativa nem contêm
+// ativo/passivo/patrimônio, então caíam no passe por palavra-chave também.
+// Alvo direto de balancete analítico, que é justamente onde contas de resultado
+// e de balanço convivem no mesmo arquivo.
+//
+// A guarda faz `classificarBalanco` se ABSTER, e é a abstenção que faz o
+// roteamento mandar a linha para a DRE — o mecanismo que já existia.
+//
+// Vem DEPOIS do passe da seção declarada, de propósito: seção autoritativa de
+// balanço continua ganhando. "Títulos a receber - venda de imobilizado" debaixo de
+// "Realizável a Longo Prazo" é conta de balanço, e o documento disse isso.
+const RESULTADO_KW = [
+  "receita", "receitas", "custo", "custos", "cmv", "cpv",
+  "despesa", "despesas", "deducao", "deducoes", "devolucao de venda", "devolucoes de venda",
+  "abatimento", "desconto concedido", "imposto sobre venda", "tributo sobre venda",
+  "imposto sobre servico", "iss sobre", "icms sobre venda", "pis sobre", "cofins sobre",
+  "margem", "lucro", "prejuizo", "resultado",
+];
+
+// Rótulos que contêm palavra de resultado mas são PATRIMONIAIS de verdade. Sem
+// esta lista a guarda tiraria do balanço justamente as contas que o balanço tem:
+// "Despesas antecipadas" é ativo, "Prejuízos acumulados" e "Lucros acumulados"
+// são patrimônio líquido, "Depreciação acumulada" é redutora do imobilizado.
+const RESULTADO_EXCECAO_KW = [
+  "antecipada", "antecipadamente", "acumulado", "acumulada", "acumulados", "acumuladas",
+  "a receber", "a recuperar", "a compensar", "a pagar", "a apropriar", "diferido", "diferida",
+  "reserva", "provisao para", "distribuir", "a distribuir",
+];
+
+export function ehContaDeResultado(tokensChave: Set<string>): boolean {
+  if (RESULTADO_EXCECAO_KW.some((k) => contemAlgumaFrase(tokensChave, [k]))) return false;
+  return contemAlgumaFrase(tokensChave, RESULTADO_KW);
+}
+
 export function classificarBalanco(secao: string | null, chave: string): Classificacao {
   const tokensChave = tokensDe(chave);
   const tokensSecao = tokensDe(secao || "");
@@ -421,6 +480,11 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
       return { secaoKey: "patrimonio_liquido", ancoraKey: null };
     }
   }
+
+  // 2b) Natureza de RESULTADO: abstém-se, para o roteamento mandar para a DRE.
+  // Ver o comentário de `ehContaDeResultado`. Só chega aqui quem NÃO teve seção
+  // autoritativa de balanço — logo, seção de balanço declarada continua ganhando.
+  if (ehContaDeResultado(tokensChave)) return { secaoKey: null, ancoraKey: null };
 
   // 3) Palavras-chave do próprio rótulo (fallback — cobre quando a seção não
   // veio ou não foi clara o suficiente).
