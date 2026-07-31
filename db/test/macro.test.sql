@@ -86,13 +86,30 @@ begin
   assert v_meses = 4, format('ano parcial deveria reportar 4 meses, veio %s', v_meses);
   raise notice 'ok    ano incompleto é reportado com o nº de meses (não vira ano cheio)';
 
-  raise notice '--- 4. série de NÍVEL varia entre fechamentos (não compõe) ---';
+  raise notice '--- 4. série de NÍVEL varia entre FECHAMENTOS (dez anterior → dez) ---';
+  -- ESTE TESTE PROTEGIA O BUG (corrigido junto com a `0032`). Ele afirmava a
+  -- variação de jan→dez DENTRO do ano, que é justamente o defeito: o câmbio
+  -- perdia janeiro todo ano. Um invariante que descreve o comportamento
+  -- defeituoso é pior que nenhum — quem fosse corrigir a função veria a suíte
+  -- reprovar e concluiria que quebrou algo.
   insert into indice_macro_obs (serie, fonte, data_ref, valor) values
-    ('CAMBIO_USD','BCB/SGS','2024-01-01', 5.00),
+    ('CAMBIO_USD','BCB/SGS','2023-12-01', 5.00),
+    ('CAMBIO_USD','BCB/SGS','2024-01-01', 5.50),
     ('CAMBIO_USD','BCB/SGS','2024-12-01', 6.00);
   select retorno into v_ret from fn_indice_macro_anual() where serie='CAMBIO_USD' and ano=2024;
-  assert abs(v_ret - 20.0) < 0.0001, format('câmbio 5,00→6,00 deveria dar 20%%, veio %s', v_ret);
-  raise notice 'ok    câmbio 5,00 → 6,00 = +20%% (variação, não composição)';
+  -- 6,00/5,00 = +20%. Com a base errada (jan/2024 = 5,50) daria +9,09%: o
+  -- movimento de dezembro para janeiro sumia da conta.
+  assert abs(v_ret - 20.0) < 0.0001,
+    format('câmbio dez/23 5,00 → dez/24 6,00 deveria dar 20%%, veio %s (9,09%% = janeiro perdido)', v_ret);
+  assert abs(v_ret - 9.0909) > 0.5, 'a base voltou a ser janeiro do próprio ano';
+  raise notice 'ok    câmbio dez/23 5,00 → dez/24 6,00 = +20%% (janeiro entra na conta)';
+
+  -- Primeiro ano da série: sem fechamento anterior não existe variação anual, e
+  -- é justamente aí que a versão antiga inventava uma (jan→dez do próprio ano).
+  select retorno into v_ret from fn_indice_macro_anual() where serie='CAMBIO_USD' and ano=2023;
+  assert v_ret is null,
+    format('sem base do ano anterior o retorno deveria ser NULL, veio %s', v_ret);
+  raise notice 'ok    primeiro ano da série sai NULL (não dá para calcular ≠ variou zero)';
 
   raise notice '--- 5. expectativa é DATADA (sem isso a projeção não se reproduz) ---';
   select fn_registrar_expectativa_macro($j$[
