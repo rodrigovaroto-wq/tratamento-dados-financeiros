@@ -73,13 +73,6 @@ jobs:
         working-directory: portal
         run: npm ci
 
-      - name: tsx local no PATH
-        # `npx tsx` a partir da raiz não enxerga o node_modules do portal (npx
-        # sobe a partir do cwd, e a raiz não tem node_modules). Sem isto o npx
-        # BAIXA o tsx a cada execução: lento e, pior, sem versão fixada — o CI
-        # passaria a depender do que estiver publicado no dia. `tsx` está nas
-        # devDependencies do portal justamente para ficar pinado no lock.
-        run: echo "$GITHUB_WORKSPACE/portal/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Cliente psql 16
         # O runner traz um cliente, mas não necessariamente o 16. As migrations
@@ -122,14 +115,19 @@ jobs:
           PYTHONPATH=. python3 gerar.py
 
       - name: Suíte de export (invariantes do arquivo entregue)
-        run: npx tsx portal/scripts/verificar-export.mts
+        # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
+        # foi medido na primeira execução do CI: mesmo com o .bin do portal no
+        # PATH, o npx respondeu "package was not found and will be installed" e
+        # baixou o tsx do registro — sem versão fixada, com o CI passando a
+        # depender do que estiver publicado no dia.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: db/test/run.sh
 
       - name: Suíte e2e (extração → banco → export)
-        run: npx tsx test/e2e/run.mts
+        run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
 
       - name: Build do portal
         working-directory: portal

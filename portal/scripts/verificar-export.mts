@@ -807,7 +807,12 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     return typeof v === "number" ? Math.round(v) : null;
   };
   const gab = JSON.parse(
-    readFileSync("/home/user/tratamento-dados-financeiros/test-data/book-vertentes/pdf/GABARITO.json", "utf8"),
+    // Resolvido a partir do PRÓPRIO arquivo, como todos os outros nove `readFileSync`
+    // desta suíte. Este aqui era um caminho ABSOLUTO para o checkout de uma sessão
+    // (`/home/user/tratamento-dados-financeiros/...`) e funcionava por acidente: quem
+    // clonasse o repositório em qualquer outro lugar recebia ENOENT. Foi o PRIMEIRO
+    // achado do CI — na primeira execução dele, antes de qualquer suíte reprovar.
+    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
   const errosModelo: string[] = [];
   for (const ano of [2024, 2025]) {
