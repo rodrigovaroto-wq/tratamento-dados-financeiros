@@ -2284,6 +2284,12 @@ export interface RefsMacro {
   // distinguir "o mercado espera 0%" de "o Focus não fala deste ano" — e
   // apresentava a segunda como a primeira, com nota afirmando procedência.
   anosFocusDe: Map<string, number[]>;
+  // Endereço das médias históricas 3a/5a/10a, por série, para o modelo poder
+  // citá-las. Elas existiam só na aba Macro e não eram referenciadas em lugar
+  // nenhum — 18 células que não moviam nada e que ninguém via.
+  mediaDe: Map<string, { linha: number; colunas: string[] }>;
+  // As janelas, na mesma ordem de `colunas`, para rotular sem adivinhar.
+  janelasMedia: readonly number[];
 }
 
 /**
@@ -2386,9 +2392,16 @@ export function construirAbaMacro(
   for (let i = 2; i <= 2 + d.anos.length + JANELAS_MEDIA_EXPORT.length; i++) sheet.getColumn(i).width = 12;
 
   const colLetra = (i: number) => sheet.getColumn(i).letter;
+  // Endereço das médias, por série, para o modelo poder CITÁ-LAS. Sem isto elas
+  // eram 18 células que não moviam nada e que ninguém fora da aba Macro via.
+  const mediaDe = new Map<string, { linha: number; colunas: string[] }>();
   for (const serie of d.series) {
     const origem = d.linhaDe.get(serie)!;
     const row = sheet.addRow([nome(serie)]);
+    mediaDe.set(serie, {
+      linha: row.number,
+      colunas: JANELAS_MEDIA_EXPORT.map((_, k) => colLetra(2 + d.anos.length + k)),
+    });
     d.anos.forEach((ano, i) => {
       const c = row.getCell(i + 2);
       c.value = { formula: `IF(${dados}!${colLetra(d.colDe.get(ano)!)}${origem}="","",${dados}!${colLetra(d.colDe.get(ano)!)}${origem})` };
@@ -2472,6 +2485,12 @@ export function construirAbaMacro(
     linhaFocusDe,
     ultimaColFocus: sheet.getColumn(Math.max(2, 1 + d.anosExp.length)).letter,
     anosFocusDe: d.anosExpDe,
+    // Endereço das médias históricas — coletado aqui, ainda NÃO consumido pela
+    // Modelagem. É a base do bloco de REFERÊNCIAS MACRO que o dono aprovou
+    // (ver HANDOFF, "o que falta da Etapa 2"): sem estes endereços, citar a
+    // média 3a/5a/10a no modelo exigiria adivinhar linha e coluna da aba Macro.
+    mediaDe,
+    janelasMedia: JANELAS_MEDIA_EXPORT,
   };
 }
 
