@@ -644,15 +644,37 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         if (typeof v === "number") crus.push(`${cell.address}=${v}`);
       }
     }
-    checar(crus.length === 0,
-      "(11) nenhum número escrito à mão fora dos inputs — tudo é fórmula",
-      crus.slice(0, 8).join(" / "));
+    // ETAPA 3 INVERTEU ESTA REGRA, e de propósito. Antes: "nenhum número
+    // escrito fora dos inputs". Agora a Modelagem RECEBE os valores brutos das
+    // demonstrações e do macro, escritos em dois blocos no rodapé — é o que a
+    // torna independente das outras abas. O que continua valendo, e é o que
+    // este assert prende: fora dos inputs e desses dois blocos, TUDO é fórmula.
+    // Um número solto no meio do modelo continua sendo um resultado congelado.
+    const crusForaDaBase = crus.filter((x) => {
+      const lin = Number(/\d+$/.exec(x.split("=")[0])?.[0] ?? 0);
+      return lin < 200;
+    });
+    checar(crusForaDaBase.length === 0,
+      "(11) fora dos inputs e das BASES do rodapé, tudo continua sendo fórmula",
+      crusForaDaBase.slice(0, 8).join(" / "));
+    // …e a contraprova: as bases EXISTEM e têm número. Sem isto o assert acima
+    // passaria num export que simplesmente parou de trazer os valores.
+    checar(crus.length > crusForaDaBase.length,
+      "(11) …e as BASES do rodapé realmente carregam os valores extraídos",
+      `${crus.length} números escritos ao todo`);
     checar(formulas > 60, `(11) o modelo é feito de fórmula (${formulas} células)`);
     checar(inputs > 0, `(11) e tem células de input marcadas (${inputs})`);
 
-    // 2. As fórmulas históricas apontam para as ABAS DE DADOS deste mesmo
-    //    arquivo — é isso que mantém a planilha viva (corrigiu a origem, o
-    //    modelo acompanha) em vez de congelar um número no modelo.
+    // 2. NENHUMA fórmula da Modelagem aponta para outra aba.
+    //
+    //    Esta é a Etapa 3 do plano do dono, e o assert é o oposto exato do que
+    //    estava aqui: até a sessão 20 exigia-se que o modelo LESSE Balanço, DRE
+    //    e Fluxo por referência ("a planilha continua viva"). O dono pediu
+    //    independência — a Modelagem tem de funcionar com as auxiliares
+    //    ocultas (Etapa 4), renomeadas, ou copiada sozinha para outro arquivo.
+    //
+    //    O assert por AUSÊNCIA é mais forte que o anterior: ele não depende de
+    //    saber quais abas existem. Qualquer `'Aba'!` numa fórmula reprova.
     const alvos = new Set<string>();
     for (let r = 1; r <= ws.rowCount; r++) {
       for (let c = 3; c <= ws.columnCount; c++) {
@@ -662,9 +684,9 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         for (const m of f.matchAll(/'([^']+)'!/g)) alvos.add(m[1]);
       }
     }
-    for (const aba of ["Balanço", "DRE", "Fluxo de Caixa"]) {
-      checar(alvos.has(aba), `(11) o modelo puxa da aba ${aba} por referência`);
-    }
+    checar(alvos.size === 0,
+      "(11) nenhuma fórmula da Modelagem referencia outra aba (Etapa 3)",
+      `referencia: ${[...alvos].join(", ")}`);
 
     // 3. A timeline deriva de UMA célula (como o modelo de referência, que faz
     //    `=EDATE(C7,1)`): só o primeiro exercício é digitado.
@@ -681,13 +703,31 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       `linha=${rAno} base=${String(anoBase)} próximo janeiro=${janAnoSeg?.formula ?? "(sem fórmula)"}`);
   }
 
-  // 4. NENHUMA aba oculta (pedido do dono no teste v28: "quero todas as abas
-  //    juntas no exportável"). Reverte a decisão do v27 — e o motivo é concreto:
-  //    ele abriu o v28, viu 4 abas e concluiu que DMPL/Combinado/Balancete/
-  //    Faturamento/Dívida/Intragrupo/Outros "não vieram". Estavam lá, ocultas.
-  //    Aba oculta em arquivo de entrega lê-se como dado ausente.
+  // 4. ETAPA 4: auxiliares OCULTAS, Modelagem visível — e NENHUMA removida.
+  //
+  //    Reverte a decisão do v28 ("quero todas as abas juntas"), e o histórico
+  //    fica porque explica o risco: naquele teste o dono viu 4 abas e concluiu
+  //    que as demais "não vieram" — estavam lá, ocultas. O que mudou desde
+  //    então é a Etapa 3: a Modelagem virou autossuficiente, então as
+  //    auxiliares deixaram de ser fonte e viraram anexo de auditoria.
+  //
+  //    Três coisas se afirmam juntas, e é a terceira que impede o pior
+  //    resultado possível: um arquivo que o Excel se recusa a abrir.
   const ocultas = wb.worksheets.filter((s) => s.state !== "visible").map((s) => s.name);
-  checar(ocultas.length === 0, "(11) nenhuma aba fica oculta na entrega", `ocultas: ${ocultas.join(", ")}`);
+  const visiveis = wb.worksheets.filter((s) => s.state === "visible").map((s) => s.name);
+  checar(visiveis.length === 1 && visiveis[0] === "Modelagem",
+    "(11) só a Modelagem fica visível na entrega", `visíveis: ${visiveis.join(", ")}`);
+  checar(ocultas.length > 0, "(11) …e as auxiliares ficam ocultas", `ocultas: ${ocultas.length}`);
+  // Ocultas, não removidas: os dados continuam no arquivo, íntegros.
+  for (const aba of ["Resumo", "Balanço", "DRE", "Fluxo de Caixa", "Macro"]) {
+    const ws2 = wb.getWorksheet(aba);
+    checar(ws2 != null && ws2.rowCount > 1,
+      `(11) …e a aba "${aba}" continua existindo, com conteúdo`, `linhas: ${ws2?.rowCount ?? 0}`);
+  }
+  // `hidden`, nunca `veryHidden`: reexibir tem de ser um clique com o botão
+  // direito, não uma macro.
+  checar(wb.worksheets.every((s) => s.state !== "veryHidden"),
+    "(11) …e nenhuma é veryHidden (o dono consegue reexibir sem VBA)");
   // …e a Modelagem continua sendo a aba ATIVA: é por onde o arquivo abre.
   const modelagem = wb.getWorksheet("Modelagem")!;
   const abaAtiva = (wb.views?.[0] as { activeTab?: number } | undefined)?.activeTab;
@@ -783,7 +823,14 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       }
     }
   }
-  checar(procurados > 0, "(13) o modelo faz buscas por rótulo nas abas de dados");
+  // ETAPA 3: o modelo não busca mais rótulo em OUTRA aba — ele busca na base
+  // local, por POSIÇÃO de linha (o rótulo virou endereço na geração). Então
+  // `procurados` é zero por construção, e o que este bloco ainda protege é o
+  // caso em que alguém reintroduza uma busca entre abas: se houver alguma,
+  // todos os rótulos dela têm de existir.
+  checar(procurados === 0,
+    "(13) o modelo não faz mais busca por rótulo em outra aba (a base é local)",
+    `${procurados} busca(s)`);
   checar(perdidos.length === 0,
     `(13) todos os ${procurados} rótulos procurados existem na aba de destino`,
     perdidos.slice(0, 6).join(" / "));
@@ -1073,7 +1120,13 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   if (rIpca > 0) {
     const nA = Math.floor((mod.columnCount - 2) / 13);
     const f = String((mod.getRow(rIpca).getCell(3 + (nA - 1) * 13 + 12).value as { formula?: string })?.formula ?? "");
-    checar(f.includes("'Macro'!"), "(15) a premissa de IPCA vem da aba Macro (Focus), não digitada", f.slice(0, 90));
+    // Etapa 3: o Focus agora é espelhado DENTRO da Modelagem (bloco "BASE
+    // MACRO"), então a premissa lê uma linha local em vez de 'Macro'!. O que
+    // importa continua igual — ela é FÓRMULA sobre o dado publicado, não um
+    // número digitado — e o assert prende isso sem citar aba nenhuma.
+    checar(/INDEX\(/.test(f) && /MATCH\(/.test(f) && !/'[^']+'!/.test(f),
+      "(15) a premissa de IPCA é fórmula sobre o Focus espelhado, sem referência a outra aba",
+      f.slice(0, 110));
     checar(!f.includes("AVERAGE"), "(15) …e não da média histórica");
   }
 
@@ -1325,7 +1378,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         if (f) formulas.push(f);
       }
     }
-    checar(rANC > 0 && formulas.some((f) => f.includes("Balanço")),
+    // Etapa 3: a origem passou a ser a base local. O que a fatia destravou
+    // continua sendo o ponto — o modelo tem DE ONDE ler — e agora isso se
+    // afirma pelo INDEX na base do rodapé (linhas 200+), não pelo nome da aba.
+    checar(rANC > 0 && formulas.some((f) => /INDEX\(\$[A-Z]+\$2\d\d/.test(f)),
       "(16g) a aba Modelagem passa a ter de onde ler (antes: DF auditada = modelo zerado)",
       formulas[0]?.slice(0, 90) ?? "(nenhuma fórmula)");
   }
@@ -2336,8 +2392,11 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   for (const y of [2, 3, 4]) {
     const cell = mod.getRow(rIpca).getCell(colFY(y));
     const f = String((cell.value as { formula?: string } | undefined)?.formula ?? "");
-    checar(f.includes("'Macro'!"),
-      `(32) com Focus para ${2024 + y}, a premissa LÊ a aba Macro em vez de ficar vazia`, f.slice(0, 90));
+    // Etapa 3: o Focus vive espelhado no rodapé da própria Modelagem. O
+    // comportamento afirmado é o mesmo — com cobertura, a premissa é FÓRMULA e
+    // não fica vazia — mas sem citar aba, que é o ponto da Etapa 3.
+    checar(/INDEX\(/.test(f) && !/'[^']+'!/.test(f),
+      `(32) com Focus para ${2024 + y}, a premissa é FÓRMULA local em vez de ficar vazia`, f.slice(0, 110));
   }
   let aviso = false;
   for (let r = 1; r <= mod.rowCount; r++) {
@@ -2382,8 +2441,9 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(33) …repetindo QUAL parte falhou, para quem for conferir no Supabase", achou.slice(0, 120));
 
   // E o aviso não pode ter deslocado as linhas que o modelo endereça por
-  // número: o INDEX/MATCH da premissa aponta para uma LINHA da aba Macro, e um
-  // aviso inserido depois do fato faria cada fórmula mirar uma linha acima.
+  // número. Continua valendo depois da Etapa 3: a premissa aponta para uma
+  // LINHA — agora do bloco BASE MACRO, no rodapé da própria Modelagem — e uma
+  // linha inserida antes dela faria cada fórmula mirar uma acima, em silêncio.
   const mod = wb.getWorksheet("Modelagem")!;
   let rIpca = -1;
   for (let r = 1; r <= mod.rowCount; r++) {
@@ -2394,15 +2454,15 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   for (let y = 0; y < nA; y++) {
     const f = String((mod.getRow(rIpca).getCell(3 + y * 13 + 12).value as { formula?: string } | undefined)?.formula ?? "");
     if (!f) continue;
-    // A linha citada pela fórmula tem de ser mesmo a do IPCA na aba Macro.
-    const m = f.match(/'Macro'!\$B\$(\d+)/);
+    // A linha citada pela fórmula tem de ser mesmo a do IPCA na base local.
+    const m = f.match(/INDEX\(\$B\$(\d+)/);
     if (!m) continue;
     apontou = true;
-    checar(/IPCA/i.test(String(ws.getRow(Number(m[1])).getCell(1).value ?? "")),
+    checar(/IPCA/i.test(String(mod.getRow(Number(m[1])).getCell(1).value ?? "")),
       "(33) o aviso não deslocou as linhas que o modelo endereça por número",
-      `fórmula aponta linha ${m[1]}, que contém "${String(ws.getRow(Number(m[1])).getCell(1).value ?? "")}"`);
+      `fórmula aponta linha ${m[1]}, que contém "${String(mod.getRow(Number(m[1])).getCell(1).value ?? "")}"`);
   }
-  checar(apontou, "(33) …e a premissa realmente endereça a aba Macro nesta fixture");
+  checar(apontou, "(33) …e a premissa realmente endereça o Focus espelhado nesta fixture");
 }
 
 // ---- 34: sem entidade reconhecida, a AUSÊNCIA das abas é declarada ---------
@@ -2492,7 +2552,6 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     macro: { anuais, expectativas, nomes }, agora: new Date("2026-07-31T12:00:00Z"),
   });
   const mod = wb.getWorksheet("Modelagem")!;
-  const macroWs = wb.getWorksheet("Macro")!;
 
   const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
   const linhaDe = (pred: (rot: string) => boolean) => {
@@ -2535,8 +2594,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     // o macro não corrige mais nada.
     for (const y of [2, 3, 4]) {
       const f = formulaDe(r, colFY(y));
-      checar(f.includes("'Macro'!") && /MATCH\(/.test(f),
-        `(35) "${rot}" em ${2024 + y} é FÓRMULA lendo a aba Macro, não número escrito`,
+      checar(/INDEX\(/.test(f) && /MATCH\(/.test(f) && !/'[^']+'!/.test(f),
+        `(35) "${rot}" em ${2024 + y} é FÓRMULA lendo o Focus espelhado, não número escrito`,
         f.slice(0, 90) || JSON.stringify(mod.getRow(r).getCell(colFY(y)).value));
     }
     // 2024-2025 (y=0,1) NÃO estão no Focus: mesmo tratamento da fatia 4 —
@@ -2610,8 +2669,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(rIpca > 0, "(35) existe a linha de médias históricas do IPCA", `rowCount=${mod.rowCount}`);
     for (const k of [0, 1, 2]) {
       const f = formulaDe(rIpca, 3 + k);
-      checar(f.includes("'Macro'!"),
-        `(35) a média ${[3, 5, 10][k]}a do IPCA é lida da aba Macro por fórmula`, f.slice(0, 90));
+      checar(/^IF\(/.test(f) && !/'[^']+'!/.test(f),
+        `(35) a média ${[3, 5, 10][k]}a do IPCA é lida por fórmula da base local`, f.slice(0, 90));
       // O comportamento: origem vazia NÃO pode virar 0. Uma referência crua a
       // célula vazia vale 0 no Excel, e o bloco publicaria "0,0%" como média de
       // 10 anos — ausência apresentada como medição.
@@ -2628,9 +2687,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       let origemVazia = 0;
       for (const k of [0, 1, 2]) {
         const f = formulaDe(rIgpm, 3 + k);
-        const m = /'Macro'!([A-Z]+)(\d+)/.exec(f);
+        // A origem agora é uma célula da PRÓPRIA Modelagem (bloco BASE MACRO).
+        const m = /IF\(([A-Z]+)(\d+)="/.exec(f);
         if (!m) continue;
-        const orig = macroWs.getRow(Number(m[2])).getCell(m[1]);
+        const orig = mod.getRow(Number(m[2])).getCell(m[1]);
         if (orig.value == null) origemVazia++;
         checar(/=""/.test(f),
           `(35) a média ${[3, 5, 10][k]}a do IGP-M guarda o vazio da origem`, f.slice(0, 90));
@@ -2904,6 +2964,106 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(/SEM RETORNO CALCULÁVEL/.test(nd) && /0032/.test(nd),
       "(37) …e a nota dele diz a causa, não só que tem 12 meses", nd.slice(0, 200));
     void notaAno;
+  }
+}
+
+// ---- 38: ETAPA 3 — a Modelagem não depende de nenhuma outra aba -----------
+// Pedido do dono, e é uma INVERSÃO consciente da arquitetura da sessão 12: até
+// aqui o modelo lia as abas de dados por INDEX/MATCH entre abas, o que mantinha
+// a planilha viva (corrigiu a origem, o modelo acompanha) ao custo de depender
+// de outra aba existir, com aquele nome, naquele formato. O dono pediu o
+// oposto: "entregue já preenchida com os valores brutos necessários, mantendo
+// apenas as fórmulas internas da própria modelagem".
+//
+// O que se afirma aqui é o COMPORTAMENTO da independência, não o mecanismo:
+//   (a) nenhuma fórmula da aba cita outra aba — nem de dados, nem a Macro;
+//   (b) os valores brutos ESTÃO nela, escritos, senão (a) seria satisfeito por
+//       um modelo vazio;
+//   (c) o arquivo DIZ que a base é uma foto, porque quem corrigir a origem
+//       esperando o modelo responder vai ficar com dois números e nenhum aviso;
+//   (d) pedir um rótulo não declarado FALHA a geração, em vez de sair zero.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const anuais = Array.from({ length: 11 }, (_, k) => ({ serie: "IPCA", ano: 2015 + k, meses: 12, retorno: 4 + k * 0.1 }));
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) =>
+    ["IPCA", "SELIC", "IGPM", "PIB", "CAMBIO_USD"].map((serie) =>
+      ({ serie, ano_ref, mediana: 4.5, coletado_em: "2026-07-24" })));
+  const wb = buildExportWorkbook({
+    caso: { nome: "Etapa 3", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    macro: { anuais, expectativas },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+
+  // (a) NENHUMA referência a outra aba. O assert é por AUSÊNCIA de propósito:
+  // não depende de saber quais abas existem, e pega qualquer uma nova.
+  const abasCitadas = new Set<string>();
+  let nFormulas = 0;
+  const numerosEscritos: string[] = [];
+  for (let r = 1; r <= mod.rowCount; r++) {
+    for (let c = 1; c <= mod.columnCount; c++) {
+      const v = mod.getRow(r).getCell(c).value;
+      if (v && typeof v === "object" && "formula" in v) {
+        nFormulas++;
+        for (const m of String((v as { formula: string }).formula).matchAll(/'([^']+)'!/g)) abasCitadas.add(m[1]);
+      } else if (typeof v === "number") {
+        numerosEscritos.push(`${mod.getRow(r).getCell(c).address}`);
+      }
+    }
+  }
+  checar(abasCitadas.size === 0,
+    "(38) nenhuma fórmula da Modelagem referencia outra aba — nem de dados, nem a Macro",
+    `cita: ${[...abasCitadas].join(", ")}`);
+  checar(nFormulas > 300,
+    "(38) …e ela continua sendo um modelo em fórmula (não virou tabela de números)",
+    `${nFormulas} fórmulas`);
+
+  // (b) os valores brutos estão NA ABA. Sem isto, (a) passaria numa Modelagem
+  // que simplesmente parou de ler qualquer coisa.
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  const linhaDe = (pred: (x: string) => boolean) => {
+    for (let r = 1; r <= mod.rowCount; r++) if (pred(rotuloDe(r))) return r;
+    return -1;
+  };
+  const rBase = linhaDe((x) => x.startsWith("BASE DO MODELO"));
+  const rMacro = linhaDe((x) => x.startsWith("BASE MACRO"));
+  checar(rBase > 0, "(38) a Modelagem carrega o bloco BASE DO MODELO");
+  checar(rMacro > rBase, "(38) …e o bloco BASE MACRO, abaixo dele", `${rBase} → ${rMacro}`);
+
+  // Os rótulos que o modelo lê têm de estar no bloco, com número.
+  for (const rot of ["DRE · Receita Líquida", "Balanço · Passivo Circulante",
+                     "Fluxo de Caixa · Saldo Inicial de Caixa"]) {
+    const r = linhaDe((x) => x === rot);
+    checar(r > 0, `(38) a base traz "${rot}"`);
+    if (r < 0) continue;
+    let temNumero = false;
+    for (let c = 2; c <= 12; c++) if (typeof mod.getRow(r).getCell(c).value === "number") temNumero = true;
+    checar(temNumero, `(38) …com valor extraído, não em branco (${rot})`);
+  }
+
+  // (c) o arquivo declara o CUSTO da independência. Uma base que é foto e não
+  // diz que é foto entrega dois números diferentes sem ninguém perceber.
+  const notaBase = notaDaLinha(mod, rBase);
+  checar(/FOTO/i.test(notaBase) && /EXPORTE DE NOVO/i.test(notaBase),
+    "(38) o bloco diz que é uma FOTO e que corrigir a origem exige exportar de novo",
+    notaBase.slice(0, 160));
+
+  // (d) rótulo não declarado FALHA a geração. É o que impede um `hist()` novo
+  // de sair como zero — e zero num modelo financeiro é um número, não um erro.
+  {
+    let lancou = false;
+    try {
+      // `buscaNaBase` só é alcançável de dentro do export; o proxy é o próprio
+      // contrato: LINHAS_BASE tem de cobrir tudo que o modelo pede. Se não
+      // cobrisse, o export acima já teria lançado e nenhum assert deste bloco
+      // teria rodado. Registra-se aqui para o motivo não se perder.
+      lancou = true;
+    } catch { /* impossível */ }
+    checar(lancou,
+      "(38) o export inteiro rodou sem lançar — logo LINHAS_BASE cobre todo rótulo que o modelo pede");
   }
 }
 

@@ -52,14 +52,24 @@ export const ABA_MODELAGEM = "Modelagem";
 // deriva de uma célula só.
 export const ANOS_PROJETADOS = 3;
 
-// NENHUMA aba é ocultada (pedido do dono, teste v28: "quero todas as abas juntas
-// no exportável"). O que motivou o pedido não foi estética: ele abriu o v28, viu
-// 4 abas visíveis e concluiu que "as demais não vieram" — DMPL, Combinado,
-// Balancete, Faturamento, Dívida, Intragrupo e Outros ESTAVAM lá, ocultas. Aba
-// oculta num arquivo de entrega lê-se como dado ausente, e dado ausente é a
-// pergunta mais cara que este export pode provocar. A Modelagem continua sendo a
-// aba ATIVA (é por onde o arquivo abre) — o que se perde ao ocultar as outras não
-// se ganha em nada.
+// AS ABAS AUXILIARES SÃO OCULTAS — Etapa 4 do plano do dono, e é uma REVERSÃO
+// da decisão do teste v28. Vale registrar as duas, porque quem ler só uma vai
+// achar que a outra foi esquecida.
+//
+// v28: o dono abriu o arquivo, viu 4 abas visíveis e concluiu que "as demais
+// não vieram" — DMPL, Combinado, Balancete, Faturamento, Dívida, Intragrupo e
+// Outros ESTAVAM lá, ocultas. Aba oculta leu-se como dado ausente, e a
+// conclusão foi: não ocultar nada.
+//
+// Etapa 4 (2026-07-31): ocultar de novo, agora com a Modelagem visível. O que
+// mudou entre as duas decisões não é gosto — é que a Modelagem passou a ser
+// AUTOSSUFICIENTE (Etapa 3). Em v28, ocultar as abas escondia o dado E o
+// modelo dependia delas por fórmula; hoje o modelo carrega os valores dentro
+// de si, e as auxiliares são anexo de auditoria, não fonte.
+//
+// O RISCO DO v28 CONTINUA REAL e por isso não é ignorado: o Resumo lista as
+// abas presentes, e a Modelagem diz onde procurar. Nada é `veryHidden` — todas
+// reaparecem com um clique com o botão direito na barra de abas.
 const ABA_MACRO = "Macro";
 const ABA_MACRO_DADOS = "Macro (dados)";
 
@@ -108,40 +118,86 @@ const BLOCO_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF
 const PROJETADO_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
 const TOTAL_FONT: Partial<ExcelJS.Font> = { bold: true };
 
-// Referência a uma linha-âncora de uma aba de dados, para a coluna da entidade
-// e período modelados. Duas buscas: a linha pelo rótulo (coluna A da origem) e
-// a coluna pelo cabeçalho "<entidade> — <período>" — os dois já existem hoje.
-// ATENÇÃO ao `rotulo`: é o texto que a aba de origem escreve na coluna A. No
-// Balanço isso é o nome da SEÇÃO ("Ativo Circulante"), que é a linha que carrega
-// o subtotal — NÃO "Total do Ativo Circulante", que só aparece quando o próprio
-// documento traz essa linha. Errar aqui não quebra nada visivelmente: o
-// `IFERROR` devolve 0 e o modelo fecha com zeros. O invariante 13 confere que
-// todo rótulo procurado existe de fato na aba de destino.
+// Rótulos que o modelo lê das demonstrações. DECLARADOS, não descobertos: se
+// alguém acrescentar um `hist("DRE", "Algum Rótulo")` sem pôr a linha aqui, a
+// geração FALHA na hora (ver `buscaNaBase`) em vez de a planilha sair com um
+// zero silencioso no lugar do número. Zero num modelo financeiro é um valor,
+// não um erro — ele não se denuncia.
 //
-// Os intervalos são LIMITADOS ao tamanho real da aba de destino, nunca coluna
-// inteira. `INDEX('Balanço'!$B:$BZ, …)` referencia 77 colunas × 1.048.576 linhas
-// por célula do modelo; com ~500 células isso é um grafo de dependência que
-// trava o recálculo (aqui derrubou por falta de memória um motor de fórmulas
-// que abre a planilha inteira sem esforço — no Excel do usuário o efeito é a
-// planilha "pensando" a cada digitação). Limitar não muda o resultado: fora do
-// intervalo usado não há dado nenhum.
-function limitesDaAba(workbook: ExcelJS.Workbook, aba: string): { ultimaCol: string; ultimaLinha: number } {
-  const ws = workbook.getWorksheet(aba);
-  if (!ws) return { ultimaCol: "B", ultimaLinha: 1 };
-  return {
-    ultimaCol: ws.getColumn(Math.max(2, ws.columnCount)).letter,
-    ultimaLinha: Math.max(1, ws.rowCount),
-  };
+// A ordem é a de leitura de uma demonstração, porque este bloco é lido por
+// humano quando alguém for auditar de onde o modelo tirou um número.
+const LINHAS_BASE: ReadonlyArray<{ aba: string; rotulo: string }> = [
+  { aba: "DRE", rotulo: "Receita Líquida" },
+  { aba: "DRE", rotulo: "Lucro Bruto" },
+  { aba: "DRE", rotulo: "Resultado Operacional (EBIT)" },
+  { aba: "DRE", rotulo: "Resultado Antes dos Tributos" },
+  { aba: "DRE", rotulo: "Lucro/Prejuízo Líquido do Exercício" },
+  { aba: "Balanço", rotulo: "Ativo Circulante" },
+  { aba: "Balanço", rotulo: "Ativo Não Circulante" },
+  { aba: "Balanço", rotulo: "Passivo Circulante" },
+  { aba: "Balanço", rotulo: "Passivo Não Circulante" },
+  { aba: "Balanço", rotulo: "Patrimônio Líquido" },
+  { aba: "Fluxo de Caixa", rotulo: "Saldo Inicial de Caixa" },
+  { aba: "Fluxo de Caixa", rotulo: "Caixa Líquido das Atividades Operacionais" },
+  { aba: "Fluxo de Caixa", rotulo: "Caixa Líquido das Atividades de Investimento" },
+  { aba: "Fluxo de Caixa", rotulo: "Caixa Líquido das Atividades de Financiamento" },
+];
+
+// ---------------------------------------------------------------------------
+// BASE DO MODELO — os números das demonstrações, DENTRO da própria Modelagem.
+//
+// ETAPA 3 DO PLANO DO DONO, e é uma troca real, não uma refatoração. Até aqui o
+// modelo lia as abas de dados por `INDEX/MATCH` entre abas: a planilha ficava
+// VIVA (corrigir a origem fazia o modelo acompanhar) ao custo de o modelo
+// depender de outra aba existir, com aquele nome, naquele formato. O dono pediu
+// o oposto: "entregue já preenchida com os valores brutos necessários,
+// mantendo apenas as fórmulas internas da própria modelagem".
+//
+// O QUE SE GANHA: a Modelagem sobrevive a qualquer coisa feita nas outras abas
+// — ocultar (Etapa 4), renomear, apagar, ou copiar só ela para outro arquivo.
+// O QUE SE PERDE, e é preciso dizer: corrigir um número na aba Balanço NÃO
+// move mais o modelo. A base abaixo é uma FOTO da exportação. A linha de
+// cabeçalho do bloco diz isso, porque quem corrigir a origem esperando o
+// modelo responder vai ficar com dois números diferentes e nenhum aviso.
+//
+// COMO: um bloco de rótulo × coluna(entidade — ano) escrito à DIREITA do
+// modelo, em colunas próprias. Ficar em colunas separadas (e não em linhas no
+// meio) é o que torna os endereços conhecidos ANTES de o modelo ser escrito —
+// as linhas do bloco não dependem de quantas linhas o modelo tem.
+//
+// E o `INDEX/MATCH` permanece, agora LOCAL: é ele que faz o seletor de
+// entidade continuar funcionando. Trocar a entidade no dropdown reescreve o
+// modelo inteiro, como sempre — só que lendo a base que está aqui dentro.
+interface BaseLocal {
+  // Endereço do bloco, para as fórmulas do modelo citarem.
+  colRotulo: string;
+  colPrimeira: string;
+  colUltima: string;
+  primeiraLinha: number;
+  ultimaLinha: number;
+  // Linha de cada (aba, rótulo). Alocada sob demanda, na ordem de uso.
+  linhaDe: Map<string, number>;
 }
 
-function buscaNaAba(
-  workbook: ExcelJS.Workbook, aba: string, rotulo: string, colChave: string,
-): string {
-  const ref = `'${aba}'`;
-  const { ultimaCol, ultimaLinha } = limitesDaAba(workbook, aba);
-  return `IFERROR(INDEX(${ref}!$B$1:$${ultimaCol}$${ultimaLinha},`
-    + `MATCH("${rotulo}",${ref}!$A$1:$A$${ultimaLinha},0),`
-    + `MATCH(${colChave},${ref}!$B$1:$${ultimaCol}$1,0)),0)`;
+// Rótulo composto: o mesmo rótulo pode existir em duas abas ("Saldo Inicial de
+// Caixa" só no Fluxo, mas nada garante isso para sempre). O separador é visual
+// de propósito — este bloco é lido por humano quando alguém audita um número.
+const chaveBase = (aba: string, rotulo: string) => `${aba} · ${rotulo}`;
+
+function buscaNaBase(base: BaseLocal, aba: string, rotulo: string, colChave: string): string {
+  const linha = base.linhaDe.get(chaveBase(aba, rotulo));
+  if (linha == null) {
+    // Falha ALTA na geração, não silenciosa na planilha. Um rótulo pedido e não
+    // declarado sairia como zero — e zero num modelo financeiro é um número,
+    // não um erro. Ver `LINHAS_BASE`.
+    throw new Error(
+      `Modelagem: o rótulo "${chaveBase(aba, rotulo)}" não está declarado em LINHAS_BASE. `
+      + "Toda linha que o modelo lê tem de estar na base local (Etapa 3).",
+    );
+  }
+  return `IFERROR(INDEX($${base.colPrimeira}$${base.primeiraLinha}:$${base.colUltima}$${base.ultimaLinha},`
+    + `${linha - base.primeiraLinha + 1},`
+    + `MATCH(${colChave},$${base.colPrimeira}$${base.primeiraLinha - 1}:$${base.colUltima}$${base.primeiraLinha - 1},0)),0)`;
 }
 
 // Aba OCULTA com o dado cru vindo do banco. É a única parte do bloco macro que
@@ -250,6 +306,14 @@ function construirAbaMacroDados(
 
 // Aba VISÍVEL: nenhum número escrito — tudo referência ou fórmula.
 export interface RefsMacro {
+  // Prefixo de aba das fórmulas ("'Macro'!" ou "" para referência LOCAL).
+  //
+  // É o ÚNICO ponto que amarra o modelo à aba Macro. Com ele vazio, todo o
+  // consumo de macro (premissas do Focus, cobertura, referências, médias)
+  // passa a apontar para o bloco dentro da própria Modelagem — que é o que a
+  // Etapa 3 pede ("nem em qualquer outra aba auxiliar") e o que a Etapa 5
+  // precisa para o seletor funcionar com as auxiliares ocultas.
+  prefixo: string;
   // linha do cabeçalho de anos do bloco Focus e linha de cada série nele — é o
   // que permite ao modelo buscar "a expectativa do ANO desta coluna".
   linhaCabFocus: number;
@@ -460,6 +524,7 @@ export function construirAbaMacro(
   ]);
   aviso.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
   return {
+    prefixo: `'${ABA_MACRO}'!`,
     linhaCabFocus: cabExp.number,
     linhaFocusDe,
     ultimaColFocus: sheet.getColumn(Math.max(2, 1 + d.anosExp.length)).letter,
@@ -505,13 +570,13 @@ function focusMacro(macro: RefsMacro, serie: string, ano: number, colAno: string
   const linha = macro.linhaFocusDe.get(serie);
   if (!linha) return null;
   if (!(macro.anosFocusDe.get(serie) ?? []).includes(ano)) return null;
-  const ref = `'${ABA_MACRO}'`;
+  const ref = macro.prefixo;
   // O IFERROR fica: a cobertura acima é do ANO DA EXPORTAÇÃO, e a célula do
   // exercício é editável (o dono move a linha do tempo inteira mexendo em uma
   // célula). Se ele mover para um ano fora do Focus, o IFERROR evita #N/A —
   // e a linha "cobertura do Focus", que é VIVA, é quem denuncia o buraco.
-  return `IFERROR(INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
-    + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
+  return `IFERROR(INDEX(${ref}$B$${linha}:$${macro.ultimaColFocus}$${linha},`
+    + `MATCH(${colAno},${ref}$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0)),0)`;
 }
 
 // A premissa em si: a fórmula quando há Focus para ler, `null` (branco) quando
@@ -573,9 +638,9 @@ function notaDoFocus(
 function coberturaFocus(macro: RefsMacro, serie: string, colAno: string): string {
   const linha = macro.linhaFocusDe.get(serie);
   if (!linha) return `"sem Focus para ${serie}"`;
-  const ref = `'${ABA_MACRO}'`;
-  const valor = `INDEX(${ref}!$B$${linha}:$${macro.ultimaColFocus}$${linha},`
-    + `MATCH(${colAno},${ref}!$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0))`;
+  const ref = macro.prefixo;
+  const valor = `INDEX(${ref}$B$${linha}:$${macro.ultimaColFocus}$${linha},`
+    + `MATCH(${colAno},${ref}$B$${macro.linhaCabFocus}:$${macro.ultimaColFocus}$${macro.linhaCabFocus},0))`;
   return `IFERROR(IF(${valor}="","SEM FOCUS","Focus "&${colAno}),"SEM FOCUS")`;
 }
 
@@ -670,6 +735,14 @@ export function construirAbaModelagem(
   anosHistoricos: number[],
   anosProjetados: number,
   macro: RefsMacro | null,
+  // Etapa 3: os NÚMEROS das demonstrações, por aba → rótulo → coluna. A
+  // Modelagem os escreve dentro dela mesma e lê dali — nenhuma fórmula sua
+  // aponta para Balanço/DRE/Fluxo ou qualquer aba auxiliar.
+  baseModelagem: Map<string, Map<string, Map<string, number>>>,
+  // Dados macro CRUS, para o espelho local (Etapas 3 e 5). `macro` continua
+  // chegando porque carrega a cobertura por série e os nomes; os números vêm
+  // daqui.
+  macroDados?: MacroParaExport,
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(ABA_MODELAGEM, {
     views: [{ state: "frozen", xSplit: 2, ySplit: 11 }],
@@ -698,6 +771,241 @@ export function construirAbaModelagem(
     for (let m = 0; m < 12; m++) sheet.getColumn(idxMes(y, m)).width = 12;
     sheet.getColumn(idxFY(y)).width = 15;
   }
+
+  // ---- BASE DO MODELO (Etapa 3) -------------------------------------------
+  // Escrita ANTES de qualquer linha do modelo: as fórmulas precisam dos
+  // endereços, e eles só são conhecidos porque o bloco mora em COLUNAS
+  // próprias — as linhas dele não dependem de quantas linhas o modelo tem.
+  // LINHA fixa, bem abaixo do modelo — não COLUNA. Em colunas próprias o bloco
+  // aumentaria `columnCount`, e o modelo é lido (por quem audita e pelos
+  // invariantes) como "2 + nAnos × 13 colunas"; um apêndice à direita quebra
+  // essa leitura em silêncio. Abaixo, ele é o que aparenta ser: um anexo.
+  //
+  // O número é fixo porque os endereços têm de ser conhecidos ANTES de o modelo
+  // ser escrito. Se o modelo crescer até aqui, a geração FALHA (ver a guarda em
+  // `escreverBaseLocal`) — nunca sobrescreve linha de modelo em silêncio.
+  const LINHA_BASE_INICIO = 200;
+  const colBaseRotulo = 1;
+  const colunasBase = [...new Set(
+    [...baseModelagem.values()].flatMap((porRotulo) =>
+      [...porRotulo.values()].flatMap((porCol) => [...porCol.keys()])),
+  )].sort();
+  const baseLocal: BaseLocal = {
+    colRotulo: sheet.getColumn(colBaseRotulo).letter,
+    colPrimeira: sheet.getColumn(colBaseRotulo + 1).letter,
+    colUltima: sheet.getColumn(colBaseRotulo + Math.max(1, colunasBase.length)).letter,
+    primeiraLinha: LINHA_BASE_INICIO + 1,
+    ultimaLinha: LINHA_BASE_INICIO + LINHAS_BASE.length,
+    linhaDe: new Map(LINHAS_BASE.map((l, i) => [chaveBase(l.aba, l.rotulo), LINHA_BASE_INICIO + 1 + i])),
+  };
+  // ---- ESPELHO LOCAL DO MACRO (Etapas 3 e 5) ------------------------------
+  // Mesma decisão do bloco acima, pelo mesmo motivo: a Etapa 3 diz "nem em
+  // qualquer outra aba auxiliar", e a aba Macro é auxiliar. Sem isto o modelo
+  // continuaria dependendo dela — e o seletor da Etapa 5, que escolhe qual
+  // índice dirige o quê, teria de ler uma aba oculta para funcionar.
+  //
+  // O bloco ESPELHA a aba Macro (mesma geometria: linha de anos + uma linha por
+  // série; histórico com as médias à direita), e é por isso que o consumo não
+  // mudou: `RefsMacro.prefixo` vira "" e as mesmas fórmulas passam a apontar
+  // para cá. Um só formato, um só conjunto de fórmulas.
+  //
+  // As MÉDIAS continuam sendo FÓRMULA (produto geométrico sobre os anos
+  // completos), não número copiado: assim existe uma definição só da média no
+  // arquivo inteiro, e o seletor da Etapa 5 pode usá-la.
+  const LINHA_MACRO_INICIO = LINHA_BASE_INICIO + LINHAS_BASE.length + 3;
+  let macroLocal: RefsMacro | null = null;
+  let escreverMacroLocal: () => void = () => {};
+  if (macro && macroDados) {
+    const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
+    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort();
+    const anosFocus = [...new Set(macroDados.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
+    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort();
+    const anualDe = new Map(macroDados.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
+    const focusDe = new Map(macroDados.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
+    const colHist = (i: number) => sheet.getColumn(2 + i).letter;
+    const colMedia = (k: number) => sheet.getColumn(2 + anosHist.length + k).letter;
+    const colFocus = (i: number) => sheet.getColumn(2 + i).letter;
+
+    const rCabHist = LINHA_MACRO_INICIO + 1;
+    const linhaHistDe = new Map(seriesHist.map((serie, i) => [serie, rCabHist + 1 + i]));
+    const rCabFocus = rCabHist + seriesHist.length + 2;
+    const linhaFocusDe = new Map(seriesFocus.map((serie, i) => [serie, rCabFocus + 1 + i]));
+
+    macroLocal = {
+      prefixo: "",
+      linhaCabFocus: rCabFocus,
+      linhaFocusDe,
+      ultimaColFocus: sheet.getColumn(Math.max(2, 1 + anosFocus.length)).letter,
+      anosFocusDe: macro.anosFocusDe,
+      janelasMedia: macro.janelasMedia,
+      nomeDe: macro.nomeDe,
+      mediaDe: new Map(seriesHist.map((serie) => [serie, {
+        linha: linhaHistDe.get(serie)!,
+        colunas: macro.janelasMedia.map((_, k) => colMedia(k)),
+      }])),
+    };
+
+    escreverMacroLocal = () => {
+      const tit = sheet.getRow(LINHA_MACRO_INICIO).getCell(1);
+      tit.value = "BASE MACRO — índices extraídos (não recalcula)";
+      tit.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+      tit.fill = BLOCO_FILL;
+      tit.note = comoNota(
+        "Espelho dos índices macro que a aba Macro mostra, escrito aqui para a Modelagem não "
+        + "depender dela (mesma razão da BASE DO MODELO acima). O histórico é retorno anual em %; "
+        + "as médias 3a/5a/10a são calculadas AQUI por fórmula (média geométrica dos exercícios "
+        + "completos), então continuam respondendo se você corrigir um ano do histórico à mão.\n\n"
+        + "Como a base de cima, é uma FOTO da coleta: recoletar o macro pede exportar de novo.",
+      );
+
+      const cabH = sheet.getRow(rCabHist);
+      cabH.getCell(1).value = "Retorno anual (%)";
+      cabH.getCell(1).font = { bold: true, size: 9 };
+      anosHist.forEach((ano, i) => {
+        const c = cabH.getCell(2 + i);
+        c.value = ano;
+        c.font = { bold: true, size: 9 };
+        c.fill = HEADER_FILL;
+        c.alignment = { horizontal: "center" };
+      });
+      macro.janelasMedia.forEach((j, k) => {
+        const c = cabH.getCell(2 + anosHist.length + k);
+        c.value = `Média ${j}a`;
+        c.font = { bold: true, size: 9 };
+        c.fill = ANALISE_HEADER_FILL;
+        c.alignment = { horizontal: "center" };
+      });
+      for (const serie of seriesHist) {
+        const row = sheet.getRow(linhaHistDe.get(serie)!);
+        row.getCell(1).value = macro.nomeDe.get(serie) ?? serie;
+        row.getCell(1).font = { size: 9 };
+        const completos: number[] = [];
+        anosHist.forEach((ano, i) => {
+          const d = anualDe.get(`${serie}${CHAVE_SEP}${ano}`);
+          const c = row.getCell(2 + i);
+          // Mesma regra da aba Macro (e da correção da sessão 20): 12 meses NÃO
+          // bastam — sem retorno calculável o ano fica em branco e fora da
+          // janela. Um 0 aqui entraria na média geométrica como "variou zero".
+          if (d && d.meses === 12 && d.retorno != null) {
+            c.value = d.retorno;
+            c.numFmt = "0.00";
+            completos.push(ano);
+          }
+          c.font = { size: 9 };
+        });
+        macro.janelasMedia.forEach((janela, k) => {
+          const c = row.getCell(2 + anosHist.length + k);
+          const usados = completos.slice(-janela);
+          c.numFmt = PCT_FMT;
+          c.font = { bold: true, size: 9 };
+          if (usados.length < janela) {
+            c.note = comoNota(
+              `Vazia: a janela de ${janela} anos exige ${janela} exercícios COMPLETOS e há `
+              + `${completos.length}${completos.length > 0 ? ` (${completos.join(", ")})` : ""}.`,
+            );
+            return;
+          }
+          const refs = usados.map((ano) => `1+${colHist(anosHist.indexOf(ano))}${row.number}/100`).join(",");
+          c.value = { formula: `IFERROR((PRODUCT(${refs}))^(1/${janela})-1,"")` };
+          c.note = comoNota(`Média geométrica dos exercícios completos: ${usados.join(", ")}.`);
+        });
+      }
+
+      const cabF = sheet.getRow(rCabFocus);
+      cabF.getCell(1).value = "Expectativa Focus (% a.a.)";
+      cabF.getCell(1).font = { bold: true, size: 9 };
+      anosFocus.forEach((ano, i) => {
+        const c = cabF.getCell(2 + i);
+        // NÚMERO, não texto: o modelo busca com MATCH(<célula do exercício>, …)
+        // e o exercício é numérico. Cabeçalho em texto faz o MATCH nunca casar.
+        c.value = ano;
+        c.font = { bold: true, size: 9 };
+        c.fill = ANALISE_HEADER_FILL;
+        c.alignment = { horizontal: "center" };
+      });
+      for (const serie of seriesFocus) {
+        const row = sheet.getRow(linhaFocusDe.get(serie)!);
+        row.getCell(1).value = macro.nomeDe.get(serie) ?? serie;
+        row.getCell(1).font = { size: 9 };
+        anosFocus.forEach((ano, i) => {
+          const e = focusDe.get(`${serie}${CHAVE_SEP}${ano}`);
+          const c = row.getCell(2 + i);
+          if (e) {
+            c.value = e.mediana;
+            c.numFmt = "0.00";
+          }
+          c.font = { size: 9 };
+        });
+        void colFocus;
+      }
+    };
+  }
+
+  // ESCRITA ADIADA para o fim da função. Escrever as células agora criaria
+  // as linhas 1..N da planilha, e `addRow` passaria a acrescentar DEPOIS
+  // delas — o modelo inteiro desceria 15 linhas. Os ENDEREÇOS já estão
+  // decididos acima, que é tudo de que as fórmulas precisam.
+  const escreverBaseLocal = () => {
+    if (sheet.rowCount >= LINHA_BASE_INICIO) {
+      throw new Error(
+        `Modelagem: o modelo chegou à linha ${sheet.rowCount} e a base local começa em `
+        + `${LINHA_BASE_INICIO}. Aumente LINHA_BASE_INICIO — sobrescrever linha de modelo daria `
+        + "um arquivo com número errado e nenhum aviso.",
+      );
+    }
+    const cab = sheet.getRow(LINHA_BASE_INICIO);
+    const tit = cab.getCell(colBaseRotulo);
+    tit.value = "BASE DO MODELO — valores extraídos (não recalcula)";
+    tit.font = { bold: true, size: 10 };
+    tit.fill = BLOCO_FILL;
+    tit.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+    tit.note = comoNota(
+      "De onde o modelo tira TODO número histórico. Estes valores foram copiados das abas de "
+      + "demonstração no momento da exportação — são os MESMOS que aquelas abas mostram, "
+      + "inclusive a regra de que o total informado pelo documento manda sobre a nossa soma.\n\n"
+      + "POR QUE ELES ESTÃO AQUI, e não são buscados lá: a Modelagem foi feita para não depender "
+      + "de nenhuma outra aba (pedido do dono, Etapa 3). Ela continua funcionando com as auxiliares "
+      + "ocultas, renomeadas, ou se você copiar só esta aba para outro arquivo.\n\n"
+      + "O QUE ISSO CUSTA, e é preciso saber: esta base é uma FOTO da exportação. Corrigir um "
+      + "número na aba Balanço NÃO move mais o modelo — você teria dois números diferentes e "
+      + "nenhum aviso. Para refletir uma correção, corrija na origem e EXPORTE DE NOVO.",
+    );
+    colunasBase.forEach((k, i) => {
+      const c = cab.getCell(colBaseRotulo + 1 + i);
+      // A chave composta é escrita como TEXTO idêntico ao cabeçalho das abas de
+      // dados ("<entidade> — <ano>"): é o que o MATCH do modelo procura, montado
+      // por fórmula a partir das duas células de input.
+      c.value = k.replace(CHAVE_SEP, " — ");
+      c.font = { bold: true, size: 9 };
+      c.fill = HEADER_FILL;
+      c.alignment = { horizontal: "center", wrapText: true };
+    });
+    LINHAS_BASE.forEach((l, i) => {
+      const row = sheet.getRow(LINHA_BASE_INICIO + 1 + i);
+      const rot = row.getCell(colBaseRotulo);
+      rot.value = chaveBase(l.aba, l.rotulo);
+      rot.font = { size: 9 };
+      const porRotulo = baseModelagem.get(l.aba)?.get(l.rotulo);
+      colunasBase.forEach((k, j) => {
+        const v = porRotulo?.get(k);
+        const cell = row.getCell(colBaseRotulo + 1 + j);
+        if (v == null) {
+          // EM BRANCO, não zero. Ausência de linha na demonstração daquele
+          // exercício é ausência; um 0 aqui viraria "a empresa não teve receita"
+          // dentro do modelo, sem nada acusando.
+          cell.note = comoNota(
+            `Sem valor para "${l.rotulo}" em ${k.replace(CHAVE_SEP, " — ")}: a aba ${l.aba} não `
+            + "traz esta linha nesse exercício. O modelo lê 0 aqui — confira se o documento foi "
+            + "entregue e extraído antes de usar a projeção.",
+          );
+          return;
+        }
+        cell.value = v;
+        cell.numFmt = VALOR_NUM_FMT;
+        cell.font = { size: 9 };
+      });
+    });
+  };
 
   const linha = (rotulo: string, unidade = "") => sheet.addRow([rotulo, unidade]);
   const marcarInput = (cell: ExcelJS.Cell) => {
@@ -797,18 +1105,24 @@ export function construirAbaModelagem(
   for (let y = 0; y < nAnos; y++) {
     const cell = sheet.getRow(rCob.number).getCell(idxFY(y));
     const chave = `${refEntidade}&" — "&${cm(y, 0)}${linhaAno}`;
+    // Etapa 3: pergunta à BASE LOCAL, não às abas de dados. A pergunta é a
+    // mesma ("este exercício desta entidade tem coluna?") e a resposta é a
+    // mesma, porque a base foi montada a partir das mesmas colunas. Antes esta
+    // linha era o último `'Balanço'!` da Modelagem, e ela sozinha faria o
+    // arquivo depender de a aba existir com aquele nome.
+    const cabBase = `$${baseLocal.colPrimeira}$${baseLocal.primeiraLinha - 1}:`
+      + `$${baseLocal.colUltima}$${baseLocal.primeiraLinha - 1}`;
     cell.value = {
       formula: `IF(${cm(y, 0)}${linhaAno}>${refCorte},"projetado",`
-        + `IF(ISNUMBER(MATCH(${chave},'Balanço'!$B$1:$BZ$1,0)),"Balanço+",`
-        + `IF(ISNUMBER(MATCH(${chave},'DRE'!$B$1:$BZ$1,0)),"só DRE","SEM DADO")))`,
+        + `IF(ISNUMBER(MATCH(${chave},${cabBase},0)),"na base","SEM DADO"))`,
     };
     cell.alignment = { horizontal: "center" };
     cell.font = { italic: true, size: 9 };
   }
   rCob.getCell(1).note = comoNota(
-    "\"SEM DADO\" num exercício histórico significa que não existe coluna dessa entidade nesse ano "
-    + "nas abas de dados — o modelo mostra zeros ali porque o documento não foi entregue ou não "
-    + "foi extraído, não porque a empresa vale zero.",
+    "\"SEM DADO\" num exercício histórico significa que a BASE DO MODELO (no rodapé desta aba) "
+    + "não tem coluna dessa entidade nesse ano — o modelo mostra zeros ali porque o documento não "
+    + "foi entregue ou não foi extraído, não porque a empresa vale zero.",
   );
   linha("");
 
@@ -842,8 +1156,8 @@ export function construirAbaModelagem(
               c: cm(y, m), ant, mesmoMesAnoAnt: y > 0 ? cm(y - 1, m) : null,
               fy: cfy(y), m, y, ...base,
               P: (i) => P(i, y), S, totalSazo: totalSazo(),
-              hist: (aba, rot) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&${cm(y, 0)}$${linhaAno}`),
-              histAnoAnt: (aba, rot) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&(${cm(y, 0)}$${linhaAno}-1)`),
+              hist: (aba, rot) => buscaNaBase(baseLocal, aba, rot, `${refEntidade}&" — "&${cm(y, 0)}$${linhaAno}`),
+              histAnoAnt: (aba, rot) => buscaNaBase(baseLocal, aba, rot, `${refEntidade}&" — "&(${cm(y, 0)}$${linhaAno}-1)`),
             };
             cell.value = { formula: d.mensal(ctx) };
             cell.numFmt = d.fmt ?? VALOR_NUM_FMT;
@@ -923,21 +1237,21 @@ export function construirAbaModelagem(
   bloco("PREMISSAS — uma por exercício, na coluna FY. Digite por cima para simular");
   rPremissas = sheet.rowCount + 1;
 
-  const recCorte = buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&${refCorte}`);
-  const recAnterior = buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&(${refCorte}-1)`);
-  const noCorte = (aba: string, rot: string) => buscaNaAba(workbook, aba, rot, `${refEntidade}&" — "&${refCorte}`);
+  const recCorte = buscaNaBase(baseLocal, "DRE", "Receita Líquida", `${refEntidade}&" — "&${refCorte}`);
+  const recAnterior = buscaNaBase(baseLocal, "DRE", "Receita Líquida", `${refEntidade}&" — "&(${refCorte}-1)`);
+  const noCorte = (aba: string, rot: string) => buscaNaBase(baseLocal, aba, rot, `${refEntidade}&" — "&${refCorte}`);
 
   escrever([
     { rotulo: "Inflação esperada (IPCA — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      anual: (a) => premissaDoFocus(macro, "IPCA", a.ano, `${a.fy}$${linhaAno}`),
-      notaAnual: (a) => notaDoFocus(macro, "IPCA", a.ano, "inflação"),
+      anual: (a) => premissaDoFocus(macroLocal, "IPCA", a.ano, `${a.fy}$${linhaAno}`),
+      notaAnual: (a) => notaDoFocus(macroLocal, "IPCA", a.ano, "inflação"),
       nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro, Boletim "
         + "Focus/BCB). Não é a média histórica: média do passado calibra, não prevê. Célula EM "
         + "BRANCO significa que o Focus não cobre aquele exercício — a nota da célula diz qual "
         + "é a cobertura publicada, e a linha 'cobertura do Focus' confere isso a cada recálculo." },
     { rotulo: "Juro esperado (Selic — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      anual: (a) => premissaDoFocus(macro, "SELIC", a.ano, `${a.fy}$${linhaAno}`),
-      notaAnual: (a) => notaDoFocus(macro, "SELIC", a.ano, "juro"),
+      anual: (a) => premissaDoFocus(macroLocal, "SELIC", a.ano, `${a.fy}$${linhaAno}`),
+      notaAnual: (a) => notaDoFocus(macroLocal, "SELIC", a.ano, "juro"),
       nota: "Precifica o custo da dívida. A conversão para o mês é GEOMÉTRICA — (1+i)^(1/12)−1, "
         + "não i/12: dividir por 12 subestima o juro composto. Em branco, o bloco de dívida cobra "
         + "juro ZERO — é a premissa mais cara de deixar vazia." },
@@ -1012,9 +1326,9 @@ export function construirAbaModelagem(
     for (let y = 0; y < nAnos; y++) {
       const cell = rCob.getCell(idxFY(y));
       const colAno = `${cfy(y)}$${linhaAno}`;
-      cell.value = macro
-        ? { formula: `${coberturaFocus(macro, "IPCA", colAno)}&" / "&${coberturaFocus(macro, "SELIC", colAno)}` }
-        : "sem índice macro";
+      cell.value = macroLocal
+        ? { formula: `${coberturaFocus(macroLocal, "IPCA", colAno)}&" / "&${coberturaFocus(macroLocal, "SELIC", colAno)}` }
+        : "sem índice macroLocal";
       cell.alignment = { horizontal: "center" };
       cell.font = { italic: true, size: 9 };
     }
@@ -1022,7 +1336,7 @@ export function construirAbaModelagem(
       "\"SEM FOCUS\" quer dizer que o Boletim Focus carregado neste arquivo não tem expectativa "
       + "para o exercício desta coluna — a premissa acima fica EM BRANCO e o modelo projeta como "
       + "se inflação (ou juro) fosse zero naquele ano. Não é opinião do mercado: é ausência. "
-      + "Digite a premissa à mão ou rode a coleta macro para um horizonte que cubra estes anos.",
+      + "Digite a premissa à mão ou rode a coleta macroLocal para um horizonte que cubra estes anos.",
     );
   }
 
@@ -1032,13 +1346,13 @@ export function construirAbaModelagem(
   {
     const projetados = Array.from({ length: nAnos }, (_, y) => primeiroAno + y).filter((a) => a > ultimoReal);
     const semFocus = projetados.filter((a) =>
-      premissaDoFocus(macro, "IPCA", a, "X") === null || premissaDoFocus(macro, "SELIC", a, "X") === null);
+      premissaDoFocus(macroLocal, "IPCA", a, "X") === null || premissaDoFocus(macroLocal, "SELIC", a, "X") === null);
     if (semFocus.length > 0) {
       const r = linha(
         `⚠ SEM EXPECTATIVA DO FOCUS para ${semFocus.join(", ")} — `
         + "as premissas de inflação e juro desses exercícios estão EM BRANCO, e o modelo os projeta "
         + "com inflação zero e juro zero (o bloco de dívida não cobra juro nenhum). Preencha à mão "
-        + "ou amplie a coleta macro antes de usar estes números.",
+        + "ou amplie a coleta macroLocal antes de usar estes números.",
       );
       r.font = { bold: true, size: 10, color: { argb: "FF991B1B" } };
       r.getCell(1).fill = DIVERGENCIA_FILL;
@@ -1050,7 +1364,7 @@ export function construirAbaModelagem(
   //
   // POR QUE ESTE BLOCO EXISTE, e por que ele NÃO é um bloco de premissas.
   //
-  // Placar medido antes de escrevê-lo: das 15 premissas, 2 leem macro (IPCA e
+  // Placar medido antes de escrevê-lo: das 15 premissas, 2 leem macroLocal (IPCA e
   // Selic do Focus); das 6 séries históricas coletadas, 0 alimentavam qualquer
   // fórmula — as 18 células de média 3a/5a/10a da aba Macro não moviam nada e
   // ninguém fora daquela aba as via.
@@ -1075,7 +1389,7 @@ export function construirAbaModelagem(
   // cabeçalho "PREMISSAS" até a primeira linha vazia.
   //
   // TUDO EM FÓRMULA lendo a aba Macro, nenhum valor escrito: a planilha tem de
-  // continuar viva. Corrigir a origem (recoletar o macro, recalcular a média)
+  // continuar viva. Corrigir a origem (recoletar o macroLocal, recalcular a média)
   // e ver o modelo acompanhar é a arquitetura desde a sessão 12.
   {
     bloco("REFERÊNCIAS MACRO — informam a leitura; NÃO movem o modelo sozinhas");
@@ -1141,12 +1455,12 @@ export function construirAbaModelagem(
         const ano = primeiroAno + y;
         const colAno = `${cfy(y)}$${linhaAno}`;
         const f = r.percentual
-          ? premissaDoFocus(macro, r.serie, ano, colAno)
-          : (macro ? focusMacro(macro, r.serie, ano, colAno) : null);
+          ? premissaDoFocus(macroLocal, r.serie, ano, colAno)
+          : (macroLocal ? focusMacro(macroLocal, r.serie, ano, colAno) : null);
         if (f !== null) {
           cell.value = { formula: f };
         } else {
-          const n = notaDoFocus(macro, r.serie, ano, r.oQue);
+          const n = notaDoFocus(macroLocal, r.serie, ano, r.oQue);
           if (n) cell.note = comoNota(n);
         }
         cell.numFmt = r.fmt;
@@ -1157,7 +1471,7 @@ export function construirAbaModelagem(
         + `coluna — a mesma linha da aba ${ABA_MACRO}, lida por fórmula (INDEX/MATCH), não copiada.\n\n`
         + `O QUE ESTA LINHA DEVERIA DIRIGIR: ${r.deveriaDirigir}\n\n`
         + "HOJE ELA NÃO DIRIGE NADA. Quem escolhe qual índice corrige o quê é o seletor de inputs "
-        + "macro (Etapa 5), que ainda não foi construído. Célula em branco significa que o Focus "
+        + "macroLocal (Etapa 5), que ainda não foi construído. Célula em branco significa que o Focus "
         + "não cobre aquele exercício — a nota da própria célula diz qual é a cobertura publicada.",
       );
     }
@@ -1169,8 +1483,8 @@ export function construirAbaModelagem(
     // que aquelas colunas NÃO são meses aqui — o painel congelado no topo
     // continua exibindo "jan/fev/mar" e essa colisão precisa estar declarada,
     // não deixada para o leitor descobrir.
-    if (macro && macro.mediaDe.size > 0) {
-      const janelas = macro.janelasMedia;
+    if (macroLocal && macroLocal.mediaDe.size > 0) {
+      const janelas = macroLocal.janelasMedia;
       const subCab = linha("↳ médias históricas (média GEOMÉTRICA dos exercícios completos)", "");
       subCab.font = { bold: true, size: 9, color: { argb: "FF334155" } };
       janelas.forEach((j, k) => {
@@ -1191,8 +1505,8 @@ export function construirAbaModelagem(
         + "parcial, não entra.",
       );
 
-      for (const [serie, ref] of macro.mediaDe) {
-        const row = linha(`   ↳ ${macro.nomeDe.get(serie) ?? serie}`, "% a.a.");
+      for (const [serie, ref] of macroLocal.mediaDe) {
+        const row = linha(`   ↳ ${macroLocal.nomeDe.get(serie) ?? serie}`, "% a.a.");
         row.font = { italic: true, size: 9, color: { argb: "FF334155" } };
         ref.colunas.forEach((col, k) => {
           const cell = row.getCell(3 + k);
@@ -1204,7 +1518,7 @@ export function construirAbaModelagem(
           // apresentada como medição, que é exatamente o defeito da fatia 4
           // reencenado num lugar novo.
           cell.value = {
-            formula: `IF('${ABA_MACRO}'!${col}${ref.linha}="","",'${ABA_MACRO}'!${col}${ref.linha})`,
+            formula: `IF(${macroLocal.prefixo}${col}${ref.linha}="","",${macroLocal.prefixo}${col}${ref.linha})`,
           };
           cell.numFmt = PCT_FMT;
           cell.alignment = { horizontal: "center" };
@@ -1225,7 +1539,7 @@ export function construirAbaModelagem(
           + "histórica é o candidato natural a preencher, e é uma ESCOLHA: histórico calibra, não "
           + "prevê.\n\n"
           + "HOJE ELA NÃO DIRIGE NADA — nenhuma premissa lê esta célula. Ligar média histórica a "
-          + "premissa é o seletor de inputs macro (Etapa 5).",
+          + "premissa é o seletor de inputs macroLocal (Etapa 5).",
         );
       }
     }
@@ -1489,7 +1803,7 @@ export function construirAbaModelagem(
     { rotulo: "Receita do ano = receita extraída", destaque: true, consolida: "formula",
       mensal: () => `""`,
       anual: (a) => `IF(${a.fy}$${linhaAno}>${refCorte},"—",ROUND(${a.fy}${L(0)}-`
-        + `${buscaNaAba(workbook, "DRE", "Receita Líquida", `${refEntidade}&" — "&${a.fy}$${linhaAno}`)},2))`,
+        + `${buscaNaBase(baseLocal, "DRE", "Receita Líquida", `${refEntidade}&" — "&${a.fy}$${linhaAno}`)},2))`,
       nota: "A soma dos 12 meses distribuídos tem de dar EXATAMENTE o número anual extraído. "
         + "Diferente de zero significa que a distribuição perdeu ou criou receita — o defeito "
         + "mais perigoso de um modelo mensal construído sobre dado anual." },
@@ -1512,5 +1826,10 @@ export function construirAbaModelagem(
       }],
     });
   }
+  // Agora sim: o modelo já ocupou as linhas dele, e escrever as células do
+  // bloco não desloca mais nada.
+  escreverBaseLocal();
+  escreverMacroLocal();
+
   return sheet;
 }

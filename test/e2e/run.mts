@@ -372,6 +372,69 @@ checar(/R\$ mil/.test(valorResumo("Escala dos valores")), "a escala declarada é
   checar(Object.keys(subtotais).length >= 3, "o gabarito publica subtotais suficientes para valer como conferência");
 }
 
+// ---------------------------------------------------------------------------
+// FASE 5 — a COSTURA da Etapa 3: a BASE DO MODELO é o mesmo número da aba.
+//
+// A Modelagem deixou de ler as abas de dados por fórmula e passou a receber os
+// valores escritos. Isso cria uma junta nova, e ela é exatamente do tipo que
+// esta suíte existe para cobrir: duas cópias do mesmo número, produzidas por
+// caminhos diferentes, que podem divergir sem ninguém perceber. Um invariante
+// do export não pega — lá as duas pontas nascem da mesma fixture.
+//
+// Aqui a corrente é inteira: PDF do book → nó real de extração → funções reais
+// do Postgres → export. Se a base do modelo divergir da aba de origem, é
+// porque a cópia se perdeu no caminho.
+// ---------------------------------------------------------------------------
+console.log("\n== fase 5: a base do modelo é o mesmo número que a aba mostra");
+{
+  const mod = wb.getWorksheet("Modelagem");
+  const dre = wb.getWorksheet("DRE");
+  checar(mod != null && dre != null, "as abas Modelagem e DRE existem");
+  if (mod && dre) {
+    // Nenhuma fórmula da Modelagem pode citar outra aba — a Etapa 3 inteira em
+    // uma linha, conferida sobre o arquivo que a cadeia real produziu.
+    const citadas = new Set<string>();
+    for (let r = 1; r <= mod.rowCount; r++) {
+      for (let c = 1; c <= mod.columnCount; c++) {
+        const v = mod.getRow(r).getCell(c).value as { formula?: string } | undefined;
+        if (v?.formula) for (const m of v.formula.matchAll(/'([^']+)'!/g)) citadas.add(m[1]);
+      }
+    }
+    checar(citadas.size === 0,
+      "nenhuma fórmula da Modelagem referencia outra aba (Etapa 3), no arquivo da cadeia real",
+      `cita: ${[...citadas].join(", ")}`);
+
+    // E o número: "DRE · Receita Líquida" da base tem de existir, resolvido,
+    // na aba DRE.
+    let rBase = -1;
+    for (let r = 1; r <= mod.rowCount; r++) {
+      if (String(mod.getRow(r).getCell(1).value ?? "") === "DRE · Receita Líquida") { rBase = r; break; }
+    }
+    checar(rBase > 0, "a base do modelo traz a linha \"DRE · Receita Líquida\"");
+    const naBase: number[] = [];
+    if (rBase > 0) {
+      for (let c = 2; c <= mod.columnCount; c++) {
+        const v = mod.getRow(rBase).getCell(c).value;
+        if (typeof v === "number") naBase.push(v);
+      }
+    }
+    checar(naBase.length > 0, "…com pelo menos um exercício preenchido", `${naBase.length} valores`);
+
+    const naDre: number[] = [];
+    for (let r = 1; r <= dre.rowCount; r++) {
+      for (const col of ["B", "C", "D", "E", "F", "G", "H"]) {
+        const v = avaliarCelula(dre, col, r);
+        if (typeof v === "number") naDre.push(v);
+      }
+    }
+    for (const v of naBase) {
+      checar(naDre.some((x) => Math.abs(x - v) < 1),
+        `a Receita Líquida ${v} da base do modelo é a MESMA que a aba DRE mostra`,
+        `mais próximo na DRE: ${naDre.slice().sort((a, b) => Math.abs(a - v) - Math.abs(b - v))[0]}`);
+    }
+  }
+}
+
 psql(`drop database if exists ${DB}`, "postgres");
 
 console.log(`\n${ok} verificações OK / ${falhas.length} falhas`);

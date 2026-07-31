@@ -994,6 +994,18 @@ function detectarSubtotaisInformados(
 // abaixo; se a soma calculada divergir do informado, ambos são sinalizados
 // (anti-ancoragem: nada que o documento disse é perdido, e divergência vira
 // sinal visível — uma checagem de reconciliação embutida).
+// Valores NUMÉRICOS por rótulo e coluna, do jeito que a aba os apresenta —
+// informado quando o documento informou, soma quando não. É o que a aba
+// Modelagem consome para NÃO precisar buscar nada em outra aba por fórmula
+// (Etapa 3 do plano do dono).
+//
+// POR QUE VEM DAQUI e não é recalculado na Modelagem: seriam duas
+// implementações da mesma regra ("o total informado manda sobre a soma",
+// "subtotal de agrupamento fica fora do SUM", escala normalizada), e elas
+// divergiriam. O número que a Modelagem usa passa a ser, por construção, o
+// MESMO que a aba mostra.
+export type ValoresDaAba = Map<string, Map<string, number>>;
+
 function construirAbaClassificada(
   workbook: ExcelJS.Workbook,
   nomeAba: string,
@@ -1001,7 +1013,7 @@ function construirAbaClassificada(
   colunas: Coluna[],
   camposDaAba: Array<{ campo: CampoExtraido; colKey: string }>,
   contextoPorVersao: Map<string, ContextoVersao>,
-) {
+): ValoresDaAba {
   const sheet = workbook.addWorksheet(nomeAba, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   // AV% (análise vertical) só faz sentido onde há uma base natural (Ativo Total
   // no Balanço; Receita Líquida na DRE). No Fluxo de Caixa não há base — só Δ%.
@@ -1144,6 +1156,15 @@ function construirAbaClassificada(
   // vazios ou o denominador zerado, e o índice sairia como linha vazia).
   const noValor = new Map<string, Map<string, number>>();
   let baseTotalRow: number | null = null; // base da AV% (Ativo Total / Receita Líquida)
+
+  // Coletor dos valores por rótulo — ver `ValoresDaAba`.
+  const valoresDaAba: ValoresDaAba = new Map();
+  const registrarValores = (rotulo: string, valores: Map<string, number>) => {
+    if (valores.size === 0) return;
+    const alvo = valoresDaAba.get(rotulo) ?? new Map<string, number>();
+    for (const [k, v] of valores) alvo.set(k, v);
+    valoresDaAba.set(rotulo, alvo);
+  };
 
   const escrever = (label: string, nivel: number, grupo: GrupoConta, opts: { negrito?: boolean; borda?: "simples" | "dupla" } = {}) => {
     const r = rowIndex++;
@@ -1503,6 +1524,7 @@ function construirAbaClassificada(
         });
         noRow.set(no.key, cabIdx);
         noValor.set(no.key, new Map(subtotalNum));
+        registrarValores(no.label, subtotalNum);
         linhasValor.add(cabIdx);
         return { idx: cabIdx, subtotalNum };
       }
@@ -1564,6 +1586,7 @@ function construirAbaClassificada(
       });
       noRow.set(no.key, cabIdx);
       noValor.set(no.key, new Map(subtotalNum));
+      registrarValores(no.label, subtotalNum);
       linhasValor.add(cabIdx);
       return { idx: cabIdx, subtotalNum };
     };
@@ -1664,6 +1687,7 @@ function construirAbaClassificada(
         });
         idxAncora.set(ancoraSecao.key, idx);
         subtotalAncora.set(ancoraSecao.key, subtotalNum);
+        registrarValores(ancoraSecao.label, subtotalNum);
         linhasValor.add(idx);
         if (estrutura === "dre") dreAncoraAnteriorIdx = idx;
         if (valoresPorAncora.has(ancoraSecao.key)) escreverConferenciaExtraido(0, ancoraSecao.key, idx, subtotalNum);
@@ -1719,6 +1743,15 @@ function construirAbaClassificada(
         if (formula) {
           cell.value = { formula } as ExcelJS.CellFormulaValue;
           cell.numFmt = VALOR_NUM_FMT;
+          // …e o NÚMERO equivalente, para a Modelagem. A fórmula fica na aba;
+          // o valor vai para a base do modelo.
+          const somaDe = (k: string) => subtotalAncora.get(k)?.get(col.key);
+          const n = ancora.key === "variacao_liquida_caixa"
+            ? ["caixa_operacional", "caixa_investimento", "caixa_financiamento"]
+              .map(somaDe).filter((x): x is number => x != null)
+              .reduce((a, b) => a + b, 0)
+            : (somaDe("saldo_inicial_caixa") ?? 0) + (somaDe("variacao_liquida_caixa") ?? 0);
+          subtotalNum.set(col.key, n);
         } else {
           // saldo inicial (ou sem fórmula possível): usa o valor extraído
           const grupo = valoresPorAncora.get(ancora.key);
@@ -1726,11 +1759,17 @@ function construirAbaClassificada(
           if (v != null) {
             cell.value = v;
             cell.numFmt = VALOR_NUM_FMT;
+            // O `subtotalNum` das âncoras LIVRES só era preenchido no ramo da
+            // fórmula. O "Saldo Inicial de Caixa" cai justamente no outro ramo
+            // (é valor extraído, não derivado) — e é uma das linhas que a
+            // Modelagem lê. Sem isto ela receberia a âncora vazia.
+            subtotalNum.set(col.key, v);
           }
         }
       });
       idxAncora.set(ancora.key, idx);
       subtotalAncora.set(ancora.key, subtotalNum);
+      registrarValores(ancora.label, subtotalNum);
       linhasValor.add(idx);
     }
   }
@@ -1784,6 +1823,7 @@ function construirAbaClassificada(
   if (estrutura === "balanco") {
     escreverIndicadoresBalanco(sheet, plano, colunas, noRow, noValor, () => rowIndex++);
   }
+  return valoresDaAba;
 }
 
 // AV% e Δ% para todas as linhas monetárias. AV% = valor ÷ base (Ativo Total ou
@@ -2600,6 +2640,10 @@ export function buildExportWorkbook({
     }
   }
 
+
+  // Números por aba → rótulo → coluna, para a Modelagem não depender de
+  // fórmula entre abas (Etapa 3).
+  const baseModelagem = new Map<string, ValoresDaAba>();
   for (const aba of ORDEM_ABAS) {
     const estrutura = ESTRUTURA_POR_ABA.get(aba);
     if (aba === ABA_DMPL || aba === ABA_DVA) {
@@ -2620,14 +2664,16 @@ export function buildExportWorkbook({
         if (ABAS_SEMPRE_PRESENTES.has(aba)) construirAbaSemDado(workbook, aba, documentos);
         continue;
       }
-      construirAbaClassificada(
+      // A aba devolve os NÚMEROS que ela mostra. É o insumo da Etapa 3: a
+      // Modelagem passa a receber valor bruto em vez de buscar por fórmula.
+      baseModelagem.set(aba, construirAbaClassificada(
         workbook,
         aba,
         estrutura,
         colunas,
         camposPorAba.get(aba) ?? [],
         contextoPorVersao,
-      );
+      ));
     } else {
       const linhas = linhasSimplesPorAba.get(aba);
       if (!linhas || linhas.length === 0) continue;
@@ -2683,7 +2729,7 @@ export function buildExportWorkbook({
     if (!refsMacro) construirAbaMacroSemDado(workbook, macroErro);
     construirAbaModelagem(
       workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
-      refsMacro,
+      refsMacro, baseModelagem, macro,
     );
 
     // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
@@ -2727,6 +2773,30 @@ export function buildExportWorkbook({
     for (let r = 2; r <= ws.rowCount; r++) {
       ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
       ws.getRow(r).height = 56;
+    }
+  }
+
+  // ----- ETAPA 4: auxiliares OCULTAS, Modelagem visível ---------------------
+  // Nenhuma aba é removida — todas continuam no arquivo, com os dados
+  // íntegros; muda só a visibilidade. Ver o comentário longo em
+  // `export-modelagem.ts` sobre a reversão da decisão do v28.
+  //
+  // A GUARDA: se por qualquer motivo a Modelagem não existir, NADA é ocultado.
+  // Um .xlsx sem nenhuma aba visível o Excel se recusa a abrir — entregar isso
+  // seria trocar "o dono não vê uma aba" por "o dono não vê o arquivo".
+  {
+    const modelagem = workbook.getWorksheet(ABA_MODELAGEM);
+    if (modelagem) {
+      for (const ws of workbook.worksheets) {
+        if (ws.id === modelagem.id) { ws.state = "visible"; continue; }
+        // `hidden`, nunca `veryHidden`: o dono precisa conseguir reexibir pela
+        // barra de abas, sem VBA. É o que mantém a auditoria a um clique.
+        ws.state = "hidden";
+      }
+      workbook.views = [{
+        activeTab: modelagem.id - 1, firstSheet: 0, visibility: "visible",
+        x: 0, y: 0, width: 10000, height: 20000,
+      }];
     }
   }
 
