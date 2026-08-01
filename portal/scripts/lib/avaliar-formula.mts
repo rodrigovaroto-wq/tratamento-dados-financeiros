@@ -145,6 +145,57 @@ function celulasDoIntervalo(bruto: string): Array<{ col: string; row: number }> 
   return out;
 }
 
+/**
+ * Endereço para onde um `INDEX(intervalo, a[, b])` aponta — sem resolver o
+ * VALOR. É o que permite a `COUNT` distinguir "célula vazia" de "célula com
+ * zero": `avaliarCelula` devolve 0 para as duas (e tem de devolver, ver o
+ * comentário lá), então quem precisa da diferença tem de olhar a célula crua.
+ *
+ * No Excel isso não é um detalhe do arnês: `ISNUMBER(INDEX(...))` é VERDADEIRO
+ * para célula vazia, porque INDEX de vazio vale 0. `COUNT(INDEX(...))` é o
+ * idioma correto, e só funciona porque INDEX devolve REFERÊNCIA.
+ */
+function enderecoDeIndex(bruto: string, ws: ExcelJS.Worksheet, prof: number): { col: string; row: number } | null {
+  const m = /^INDEX\s*\(([\s\S]*)\)$/i.exec(bruto.trim());
+  if (!m) return null;
+  const dentro = m[1];
+  const partes: string[] = [];
+  let nivel = 0; let atual = "";
+  for (let k = 0; k < dentro.length; k++) {
+    const ch = dentro[k];
+    if (ch === "(") nivel++;
+    if (ch === ")") nivel--;
+    if (ch === '"') { atual += ch; k++; while (k < dentro.length && dentro[k] !== '"') atual += dentro[k++]; atual += '"'; continue; }
+    if (ch === "," && nivel === 0) { partes.push(atual.trim()); atual = ""; continue; }
+    atual += ch;
+  }
+  partes.push(atual.trim());
+  const mr = RE_RANGE.exec(partes[0] ?? "");
+  if (!mr) return null;
+  const [, c1, r1, c2, r2] = mr;
+  const cIni = Math.min(colParaNum(c1), colParaNum(c2));
+  const cFim = Math.max(colParaNum(c1), colParaNum(c2));
+  const rIni = Math.min(Number(r1), Number(r2));
+  const rFim = Math.max(Number(r1), Number(r2));
+  const a = avaliarExpressao(partes[1] ?? "", ws, prof + 1);
+  if (typeof a !== "number") return null;
+  if (partes.length >= 3) {
+    const b = avaliarExpressao(partes[2] ?? "", ws, prof + 1);
+    if (typeof b !== "number") return null;
+    if (a < 1 || a > rFim - rIni + 1 || b < 1 || b > cFim - cIni + 1) return null;
+    return { col: numParaCol(cIni + b - 1), row: rIni + a - 1 };
+  }
+  if (rIni === rFim) {
+    if (a < 1 || a > cFim - cIni + 1) return null;
+    return { col: numParaCol(cIni + a - 1), row: rIni };
+  }
+  if (cIni === cFim) {
+    if (a < 1 || a > rFim - rIni + 1) return null;
+    return { col: numParaCol(cIni), row: rIni + a - 1 };
+  }
+  return null;
+}
+
 /** Avalia uma expressão de fórmula (sem o "=" inicial). */
 export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): Valor {
   if (prof > 4000) return null;
@@ -351,6 +402,36 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
         return typeof v === "number" ? v : 0;
       }
       if (nome === "ISNUMBER") return typeof val(0) === "number";
+      if (nome === "COUNT" || nome === "ISBLANK") {
+        // Contam CÉLULAS, não valores — e é por isso que precisam do endereço:
+        // uma célula vazia vale 0 quando lida, mas não conta como número.
+        let n = 0; let vistas = 0;
+        for (const bruto of brutos) {
+          const cels = celulasDoIntervalo(bruto);
+          if (cels) {
+            for (const c of cels) {
+              vistas++;
+              if (typeof ws.getRow(c.row).getCell(c.col).value === "number") n++;
+            }
+            continue;
+          }
+          const end = enderecoDeIndex(bruto, ws, prof + 1);
+          if (end) {
+            vistas++;
+            const cru = ws.getRow(end.row).getCell(end.col).value;
+            if (typeof cru === "number") n++;
+            else if (cru && typeof cru === "object" && "formula" in cru) {
+              // Célula com FÓRMULA conta se ela resolve para número.
+              if (typeof avaliarCelula(ws, end.col, end.row, prof + 1) === "number") n++;
+            }
+            continue;
+          }
+          vistas++;
+          if (typeof avaliarExpressao(bruto, ws, prof + 1) === "number") n++;
+        }
+        if (nome === "ISBLANK") return vistas > 0 && n === 0;
+        return n;
+      }
       if (nome === "IF") {
         const c = val(0);
         const verdade = c === true || (typeof c === "number" && c !== 0);

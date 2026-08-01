@@ -3267,6 +3267,32 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(typeof v === "number" && Math.abs(v) < 0.01,
       `(40) …e o balanço continua fechando com a outra metodologia (exercício ${y + 1})`, String(v));
   }
+  // (d) "Dado encontrado" tem de DIZER A VERDADE sobre o que existe para a
+  //     entidade escolhida. Defeito real desta sessão: a primeira versão da
+  //     linha (Etapa 3) checava só se a COLUNA existia na base, e depois a
+  //     segunda usou `ISNUMBER(INDEX(...))` — que é VERDADEIRO para célula
+  //     vazia, porque INDEX de vazio vale 0 no Excel. Nos dois casos a linha
+  //     dizia "DRE+Balanço" para uma entidade sem DRE, com receita zero ao
+  //     lado. `COUNT` é o idioma correto.
+  {
+    const rEnt = linhaDe("Entidade modelada");
+    const rDado = linhaDe("Dado encontrado");
+    // No book, só a Metalúrgica tem DRE; as outras quatro têm apenas Balanço.
+    mod.getRow(rSel).getCell(3).value = "Focus — IPCA";
+    mod.getRow(rEnt).getCell(3).value = "VERTENTES COMPONENTES AUTOMOTIVOS LTDA.";
+    esquecerMemoria(mod);
+    const dado = avaliarCelula(mod, letra(colFY(0)), rDado);
+    const rl = avaliarCelula(mod, letra(colFY(0)), rRL);
+    checar(dado === "só Balanço",
+      "(40) entidade sem DRE é declarada como \"só Balanço\", não como \"DRE+Balanço\"", String(dado));
+    checar(rl === 0,
+      "(40) …e a receita dela é mesmo 0, que é o que a linha está avisando", String(rl));
+    mod.getRow(rEnt).getCell(3).value = "VERTENTES METALÚRGICA LTDA.";
+    esquecerMemoria(mod);
+    checar(avaliarCelula(mod, letra(colFY(0)), rDado) === "DRE+Balanço",
+      "(40) …e a entidade que tem as duas é declarada como \"DRE+Balanço\"");
+  }
+
   // Metodologia SEM dado para o exercício deixa a premissa vazia, e o modelo
   // segue calculando (é o que o `N()` garante) em vez de virar #VALUE!.
   mod.getRow(rSel).getCell(3).value = "Média histórica 10a — IGP-M";

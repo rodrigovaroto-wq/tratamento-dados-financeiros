@@ -1121,17 +1121,38 @@ export function construirAbaModelagem(
     // arquivo depender de a aba existir com aquele nome.
     const cabBase = `$${baseLocal.colPrimeira}$${baseLocal.primeiraLinha - 1}:`
       + `$${baseLocal.colUltima}$${baseLocal.primeiraLinha - 1}`;
+    // Pergunta pela LINHA, não só pela coluna. A primeira versão desta fórmula
+    // (Etapa 3) checava apenas se a COLUNA "<entidade> — <ano>" existia na base
+    // — e existir coluna não é ter dado: no book, todas as cinco empresas têm
+    // Balanço e só a Metalúrgica tem DRE. Trocar a entidade no dropdown para uma
+    // sem DRE dava "na base" com receita zero, que é pior do que a versão
+    // anterior à Etapa 3 dizia ("só DRE" / "Balanço+" / "SEM DADO").
+    //
+    // Agora responde o que de fato existe, com as MESMAS linhas que o modelo lê.
+    // `COUNT`, não `ISNUMBER`. INDEX de célula VAZIA vale 0 no Excel, e
+    // `ISNUMBER(0)` é VERDADEIRO — a primeira versão desta linha dizia
+    // "DRE+Balanço" para uma entidade sem DRE nenhuma, com receita zero ao
+    // lado (medido no book: a Componentes tem Balanço e não tem DRE).
+    // `COUNT` conta CÉLULAS numéricas e ignora a vazia, que é o idioma certo.
+    const naLinha = (aba: string, rot: string) =>
+      `COUNT(INDEX($${baseLocal.colPrimeira}$${baseLocal.linhaDe.get(chaveBase(aba, rot))}`
+      + `:$${baseLocal.colUltima}$${baseLocal.linhaDe.get(chaveBase(aba, rot))},`
+      + `MATCH(${chave},${cabBase},0)))>0`;
     cell.value = {
-      formula: `IF(${cm(y, 0)}${linhaAno}>${refCorte},"projetado",`
-        + `IF(ISNUMBER(MATCH(${chave},${cabBase},0)),"na base","SEM DADO"))`,
+      formula: `IFERROR(IF(${cm(y, 0)}${linhaAno}>${refCorte},"projetado",`
+        + `IF(${naLinha("DRE", "Receita Líquida")},`
+        + `IF(${naLinha("Balanço", "Ativo Circulante")},"DRE+Balanço","só DRE"),`
+        + `IF(${naLinha("Balanço", "Ativo Circulante")},"só Balanço","SEM DADO"))),"SEM DADO")`,
     };
     cell.alignment = { horizontal: "center" };
     cell.font = { italic: true, size: 9 };
   }
   rCob.getCell(1).note = comoNota(
-    "\"SEM DADO\" num exercício histórico significa que a BASE DO MODELO (no rodapé desta aba) "
-    + "não tem coluna dessa entidade nesse ano — o modelo mostra zeros ali porque o documento não "
-    + "foi entregue ou não foi extraído, não porque a empresa vale zero.",
+    "O que a BASE DO MODELO (no rodapé desta aba) tem para esta entidade neste exercício.\n\n"
+    + "\"SEM DADO\" significa que não há nem DRE nem Balanço — o modelo mostra zeros ali porque o "
+    + "documento não foi entregue ou não foi extraído, não porque a empresa vale zero. "
+    + "\"só Balanço\" é o caso mais traiçoeiro: o balanço existe, a receita não, e a projeção sai "
+    + "de uma receita zero. Confira antes de usar.",
   );
   linha("");
 
