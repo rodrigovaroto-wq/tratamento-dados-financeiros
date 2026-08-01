@@ -40,7 +40,7 @@
  *     soma tem de ficar visível numa linha de checagem — nunca virar o total.
  */
 import { readFileSync } from "node:fs";
-import { avaliarCelula, linhaVazia } from "./lib/avaliar-formula.mts";
+import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
 import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 import { classificarConta } from "../src/lib/statement-templates.ts";
@@ -3172,6 +3172,108 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(rJuro > 0 && !fJuro.includes(`$C$${rSel}`),
     "(39) o juro da dívida NÃO depende do seletor (índice que corrige preço ≠ custo da dívida)",
     fJuro.slice(0, 100));
+}
+
+// ---- 40: ETAPA 6 — o modelo RESOLVE, e o seletor move mesmo o resultado ----
+// Este é o único invariante que confere NÚMERO no modelo, não estrutura. Ele
+// existe porque a Etapa 6 pede "todas as fórmulas funcionando" e "validar um
+// caso real do início ao fim", e nenhuma quantidade de assert sobre o TEXTO da
+// fórmula responde isso: um modelo pode ter 4.000 fórmulas bem formadas e
+// devolver #VALUE! em todas.
+//
+// A alternativa seria recalcular no LibreOffice. MEDIDO neste container: ele se
+// recusa a abrir até um .xlsx mínimo de três células, e recusa igualmente o
+// arquivo v35 que o dono abriu no Excel — é o ambiente. Então o avaliador do
+// próprio arnês foi estendido (INDEX/MATCH/IF/N/^/comparações) e memoizado.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const anuais = Array.from({ length: 11 }, (_, k) => [
+    { serie: "IPCA", ano: 2015 + k, meses: 12, retorno: 4 + k * 0.1 },
+    { serie: "IGPM", ano: 2015 + k, meses: 12, retorno: 9 + k * 0.1 },
+  ]).flat();
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) =>
+    ["IPCA", "SELIC", "IGPM", "PIB"].map((serie) =>
+      ({ serie, ano_ref, mediana: serie === "IPCA" ? 4.5 : 7.5, coletado_em: "2026-07-24" })));
+  const mod = buildExportWorkbook({
+    caso: { nome: "Validação final", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    macro: { anuais, expectativas }, agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const letra = (i: number) => mod.getColumn(i).letter;
+  const nA = 5;
+  const colFY = (y: number) => 3 + y * 13 + 12;
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  const linhaDe = (x: string) => { for (let r = 1; r <= mod.rowCount; r++) if (rotuloDe(r) === x) return r; return -1; };
+
+  // (a) TODAS as fórmulas do modelo resolvem. `null` aqui é o avaliador dizendo
+  //     "não sei" — o que, para as funções que ele cobre, significa erro de
+  //     fórmula (#VALUE!, #N/A, #REF!, divisão por zero fora de IFERROR).
+  let total = 0; const naoResolvem: string[] = [];
+  const ultimaLinhaModelo = linhaDe("Caixa do balanço = saldo final do fluxo");
+  for (let r = 1; r <= ultimaLinhaModelo; r++) {
+    for (let c = 3; c <= 2 + nA * 13; c++) {
+      const v = mod.getRow(r).getCell(c).value;
+      if (!(v && typeof v === "object" && "formula" in v)) continue;
+      total++;
+      if (avaliarCelula(mod, letra(c), r) == null && naoResolvem.length < 5) {
+        naoResolvem.push(`${letra(c)}${r} (${rotuloDe(r)})`);
+      }
+    }
+  }
+  checar(total > 3000, "(40) o modelo tem milhares de fórmulas para resolver", `${total}`);
+  checar(naoResolvem.length === 0,
+    "(40) TODAS as fórmulas do modelo resolvem (nenhuma vira erro)", naoResolvem.join(" / "));
+
+  // (b) as CONFERÊNCIAS fecham em zero. É a prova contábil: se o balanço não
+  //     fechasse, o modelo estaria errado por mais bem formado que fosse.
+  const rBal = linhaDe("Balanço fecha (Ativo − Passivo − PL)");
+  const rCaixa = linhaDe("Caixa do balanço = saldo final do fluxo");
+  for (let y = 0; y < nA; y++) {
+    for (const [nome, r] of [["Balanço fecha", rBal], ["Caixa do balanço", rCaixa]] as Array<[string, number]>) {
+      const v = avaliarCelula(mod, letra(colFY(y)), r);
+      checar(typeof v === "number" && Math.abs(v) < 0.01,
+        `(40) "${nome}" fecha em zero no exercício ${y + 1}`, String(v));
+    }
+  }
+  // …e a identidade, medida nas duas linhas independentes.
+  for (let y = 0; y < nA; y++) {
+    const a = avaliarCelula(mod, letra(colFY(y)), linhaDe("TOTAL DO ATIVO"));
+    const p = avaliarCelula(mod, letra(colFY(y)), linhaDe("TOTAL DO PASSIVO E PL"));
+    checar(typeof a === "number" && typeof p === "number" && Math.abs(a - p) < 0.01,
+      `(40) Ativo = Passivo + PL no exercício ${y + 1}`, `${a} × ${p}`);
+  }
+
+  // (c) TROCAR A METODOLOGIA MOVE O RESULTADO. É a exigência literal da Etapa 5
+  //     ("ao alterar a opção, toda a modelagem deve ser recalculada"), e é a
+  //     única forma de prová-la: comparar o número antes e depois.
+  const rSel = linhaDe("Índice macro que dirige a projeção");
+  const rRL = linhaDe("Receita Líquida");
+  const antes = avaliarCelula(mod, letra(colFY(nA - 1)), rRL);
+  // Nesta fixture o IGP-M do Focus é 7,5% contra 4,5% do IPCA: a receita do
+  // último exercício projetado TEM de subir.
+  mod.getRow(rSel).getCell(3).value = "Focus — IGP-M";
+  esquecerMemoria(mod);
+  const depois = avaliarCelula(mod, letra(colFY(nA - 1)), rRL);
+  checar(typeof antes === "number" && typeof depois === "number" && depois > antes * 1.01,
+    "(40) trocar a metodologia no seletor RECALCULA o modelo (receita projetada muda)",
+    `IPCA→${antes} | IGP-M→${depois}`);
+  // E continua fechando: um seletor que quebra a identidade contábil seria pior
+  // que não ter seletor.
+  for (let y = 0; y < nA; y++) {
+    const v = avaliarCelula(mod, letra(colFY(y)), rBal);
+    checar(typeof v === "number" && Math.abs(v) < 0.01,
+      `(40) …e o balanço continua fechando com a outra metodologia (exercício ${y + 1})`, String(v));
+  }
+  // Metodologia SEM dado para o exercício deixa a premissa vazia, e o modelo
+  // segue calculando (é o que o `N()` garante) em vez de virar #VALUE!.
+  mod.getRow(rSel).getCell(3).value = "Média histórica 10a — IGP-M";
+  esquecerMemoria(mod);
+  const comMedia = avaliarCelula(mod, letra(colFY(nA - 1)), rRL);
+  checar(typeof comMedia === "number",
+    "(40) com a média histórica, o modelo segue resolvendo (nada de #VALUE!)", String(comMedia));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

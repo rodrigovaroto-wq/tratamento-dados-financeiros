@@ -1422,10 +1422,33 @@ export function construirAbaModelagem(
         + "Dívida. Em 0, a projeção não cobra juro nenhum." },
     { rotulo: "Crescimento REAL da receita (acima da inflação)", premissa: true, fmt: PCT_FMT,
       unidade: "% a.a.",
-      anual: (a) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+N(${a.fy}$${rPremissas}))-1,0)`,
-      nota: "O crescimento NOMINAL projetado é (1+IPCA)×(1+real)−1. Separar os dois é o que "
-        + "responde 'a empresa cresce acima ou abaixo da inflação?'. Padrão: o crescimento "
-        + "observado entre os dois últimos exercícios reais, deflacionado." },
+      // DEFLACIONA PELA METODOLOGIA PADRÃO (a primeira linha do bloco INPUTS
+      // MACRO), NÃO pela escolhida. A diferença é o que faz o seletor da Etapa 5
+      // existir de fato, e ela foi descoberta MEDINDO: com a versão anterior
+      // — que deflacionava pela premissa selecionada — trocar de IPCA para
+      // IGP-M não mexia um centavo na receita projetada (medido: 43.776,1068
+      // nos dois casos, iguais até a 12ª casa).
+      //
+      // O motivo é aritmética, não fiação: o nominal projetado é
+      // (1+índice)×(1+real), e o real era definido como (1+observado)/(1+índice)
+      // −1. O índice cancelava exatamente, e o seletor era decorativo.
+      //
+      // Deflacionando pelo índice PADRÃO, o default continua idêntico ao de
+      // antes (nominal = observado, que é o comportamento que já estava
+      // validado), e escolher IGP-M passa a valer o DIFERENCIAL IGP-M − IPCA
+      // sobre a receita — que é exatamente o que "projetar por IGP-M" quer
+      // dizer para quem tem contrato indexado a ele.
+      anual: (a) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))`
+        + `/(1+N(INDEX(${a.fy}$${rMetodosIni}:${a.fy}$${rMetodosIni},1)))-1,0)`,
+      nota: "O crescimento NOMINAL projetado é (1+índice escolhido)×(1+real)−1. Separar os dois é "
+        + "o que responde 'a empresa cresce acima ou abaixo da inflação?'.\n\n"
+        + "PADRÃO: o crescimento observado entre os dois últimos exercícios reais, deflacionado "
+        + "pela metodologia PADRÃO (a primeira do bloco INPUTS MACRO) — não pela que estiver "
+        + "escolhida. É de propósito: deflacionar pela escolhida faria o índice cancelar na "
+        + "multiplicação e trocar a metodologia não moveria nada. Assim, trocar para IGP-M vale o "
+        + "diferencial IGP-M − IPCA sobre a receita, que é o que projetar por IGP-M significa.\n\n"
+        + "Digite por cima para fixar um crescimento real seu — aí o índice escolhido passa a ser "
+        + "a única coisa que move o nominal." },
     { rotulo: "Margem bruta ALVO", premissa: true, fmt: PCT_FMT, unidade: "% da RL",
       nota: "Rótulo distinto do da DRE de propósito: num modelo que vai ser auditado, duas "
         + "linhas com o mesmo nome fazem quem confere (e quem escreve fórmula) apontar para a "
