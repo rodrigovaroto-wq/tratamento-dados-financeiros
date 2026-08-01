@@ -1046,6 +1046,15 @@ export function construirAbaModelagem(
     + "o modelo inteiro, inclusive o sombreado das colunas projetadas.",
   );
 
+  // ---- ETAPA 5: seletor de inputs macro ------------------------------------
+  // A célula fica AQUI, junto das outras duas que comandam o modelo (entidade e
+  // último exercício realizado), porque é da mesma natureza: uma célula que
+  // recalcula tudo. A tabela que ela indexa vem logo antes das premissas.
+  const rMetodo = linha("Índice macro que dirige a projeção", "input");
+  const refMetodo = `$C$${rMetodo.number}`;
+  rMetodo.getCell(1).font = TOTAL_FONT;
+  marcarInput(rMetodo.getCell(3));
+
   const rEscala = linha("Escala dos valores");
   rEscala.getCell(3).value = "conforme os documentos (ver aba Resumo)";
   rEscala.getCell(3).font = { italic: true, size: 9, color: { argb: "FF64748B" } };
@@ -1140,7 +1149,18 @@ export function construirAbaModelagem(
 
   const S = (m: number) => `$${sheet.getColumn(3 + m).letter}$${rSazo}`;
   const totalSazo = () => `SUM($${sheet.getColumn(3).letter}$${rSazo}:$${sheet.getColumn(14).letter}$${rSazo})`;
-  const P = (i: number, y: number) => `${cfy(y)}$${rPremissas + i}`;
+  // `N(...)` é o que permite a uma premissa devolver "" (texto vazio) sem
+  // estourar #VALUE! no modelo inteiro.
+  //
+  // Por que isso passou a importar na Etapa 5: antes, uma premissa sem dado era
+  // uma célula VAZIA, e vazio vale 0 na aritmética do Excel — o modelo seguia.
+  // Com o seletor, a premissa virou FÓRMULA (ela indexa a metodologia
+  // escolhida), e uma fórmula que devolve "" NÃO é uma célula vazia: `(1+"")` é
+  // #VALUE!, e o erro contamina receita, custo, capital de giro e balanço.
+  // `N("")` é 0 e `N(número)` é o número — a semântica da célula vazia, de
+  // volta, sem desfazer o que a fatia 4 conquistou (a célula continua LENDO
+  // como "falta preencher", não como "o mercado espera zero").
+  const P = (i: number, y: number) => `N(${cfy(y)}$${rPremissas + i})`;
 
   const escrever = (defs: LinhaModelo[], base: { L: (o: number) => number; F: (o: number) => number; B: (o: number) => number }) => {
     for (const d of defs) {
@@ -1234,6 +1254,129 @@ export function construirAbaModelagem(
   // Ficam na COLUNA ANUAL de cada exercício: são premissas de ano, e as células
   // mensais leem a do seu próprio ano. Uma premissa por mês (60 células por
   // linha) seria impossível de operar e é o oposto de "pronto para modelar".
+  // ======================= SELETOR DE INPUTS MACRO ==========================
+  //
+  // ETAPA 5 DO PLANO DO DONO. A pergunta que ele responde é: "qual índice
+  // corrige esta projeção?". Até aqui a resposta estava enterrada no código —
+  // era sempre o IPCA do Focus — e trocar exigia reexportar com outro código.
+  //
+  // A FORMA é uma TABELA, não um `IF` encadeado, e a escolha é o que torna o
+  // seletor extensível: acrescentar uma metodologia é acrescentar uma LINHA
+  // dentro do intervalo. Nenhuma fórmula do modelo muda, e a lista da validação
+  // e a do `MATCH` são a MESMA — não há segunda cópia para sair de sincronia.
+  //
+  // A tabela vive nas MESMAS colunas FY do modelo, então cada metodologia já
+  // entrega o valor debaixo do exercício certo, e a premissa é um `INDEX` de
+  // uma coluna só.
+  //
+  // AUSÊNCIA CONTINUA SENDO AUSÊNCIA. Uma metodologia sem dado para um
+  // exercício devolve "" (texto vazio), não 0 — e a premissa propaga o vazio.
+  // Um 0 aqui projetaria inflação zero com a aparência de escolha deliberada.
+  //
+  // O QUE O SELETOR NÃO MEXE, de propósito: o JURO da dívida continua na Selic
+  // do Focus. "Qual índice corrige preço" e "quanto custa a dívida" são duas
+  // perguntas, e responder as duas com a mesma célula faria escolher IGP-M
+  // encarecer ou baratear a dívida sem que ninguém tivesse pedido isso.
+  const metodos: Array<{ rotulo: string; formula: (ano: number, colAno: string) => string; nota: string }> = [];
+  const focusPct = (serie: string) => (ano: number, colAno: string) =>
+    (macroLocal ? premissaDoFocus(macroLocal, serie, ano, colAno) : null) ?? '""';
+  const mediaHist = (serie: string, k: number) => () => {
+    const ref = macroLocal?.mediaDe.get(serie);
+    if (!ref) return '""';
+    const col = ref.colunas[k];
+    // A célula da média já é fração (produto geométrico − 1) e já sai "" quando
+    // a janela não fecha — o vazio se propaga sozinho.
+    return `IF(${col}${ref.linha}="","",${col}${ref.linha})`;
+  };
+  const temFocus = (serie: string) => macroLocal?.linhaFocusDe.has(serie) ?? false;
+  const temMedia = (serie: string) => macroLocal?.mediaDe.has(serie) ?? false;
+
+  if (temFocus("IPCA")) metodos.push({ rotulo: "Focus — IPCA", formula: focusPct("IPCA"),
+    nota: "Mediana das expectativas de mercado para o IPCA (Boletim Focus/BCB). É o padrão: o "
+      + "IPCA é o índice oficial de inflação ao consumidor e a meta do Banco Central." });
+  if (temFocus("IGPM")) metodos.push({ rotulo: "Focus — IGP-M", formula: focusPct("IGPM"),
+    nota: "Mediana do Focus para o IGP-M. Escolha esta quando o mandato tem receita ou custo "
+      + "indexado a IGP-M (aluguel, contratos de fornecimento de longo prazo) — a diferença para "
+      + "o IPCA passou de 15 p.p. num único ano (2021)." });
+  if (temFocus("SELIC")) metodos.push({ rotulo: "Focus — Selic", formula: focusPct("SELIC"),
+    nota: "Mediana do Focus para a Selic. Corrige a projeção pelo juro nominal — leitura de custo "
+      + "de oportunidade, não de inflação." });
+  if (temFocus("PIB")) metodos.push({ rotulo: "Focus — PIB", formula: focusPct("PIB"),
+    nota: "Mediana do Focus para o PIB. É crescimento de VOLUME, não de preço: com esta, a receita "
+      + "passa a acompanhar a economia em vez da inflação." });
+  (macroLocal?.janelasMedia ?? []).forEach((janela, k) => {
+    if (temMedia("IPCA")) metodos.push({ rotulo: `Média histórica ${janela}a — IPCA`, formula: mediaHist("IPCA", k),
+      nota: `Média GEOMÉTRICA do IPCA dos últimos ${janela} exercícios completos. Histórico calibra, `
+        + "não prevê — mas é o candidato natural quando o Focus não cobre o exercício projetado "
+        + "(ver a linha 'cobertura do Focus')." });
+  });
+  (macroLocal?.janelasMedia ?? []).forEach((janela, k) => {
+    if (temMedia("IGPM")) metodos.push({ rotulo: `Média histórica ${janela}a — IGP-M`, formula: mediaHist("IGPM", k),
+      nota: `Média GEOMÉTRICA do IGP-M dos últimos ${janela} exercícios completos.` });
+  });
+  // CAGR da própria empresa: não é macro, é a trajetória DELA. Entra porque o
+  // dono pediu ("CAGR histórico") e porque é a única metodologia da lista que
+  // não depende de coleta externa nenhuma.
+  {
+    const rlPrimeiro = buscaNaBase(baseLocal, "DRE", "Receita Líquida",
+      `${refEntidade}&" — "&${cm(0, 0)}$${linhaAno}`);
+    const rlUltimo = buscaNaBase(baseLocal, "DRE", "Receita Líquida",
+      `${refEntidade}&" — "&${refCorte}`);
+    const nInterv = Math.max(1, ultimoReal - primeiroAno);
+    metodos.push({
+      rotulo: "CAGR histórico da receita",
+      formula: () => `IFERROR((${rlUltimo}/${rlPrimeiro})^(1/${nInterv})-1,"")`,
+      nota: "Crescimento anual composto da receita líquida DESTA entidade entre o primeiro e o "
+        + `último exercício com dado (${nInterv} intervalo(s)). Não é macro: é a trajetória da `
+        + "própria empresa. Fica vazio quando falta um dos dois exercícios — extrapolar de um "
+        + "ponto só não é CAGR.",
+    });
+  }
+
+  bloco("INPUTS MACRO — escolha a metodologia na célula do topo; o modelo inteiro recalcula");
+  const rMetodosIni = sheet.rowCount + 1;
+  for (const m of metodos) {
+    const r = linha(m.rotulo, "% a.a.");
+    r.font = { italic: true, size: 9, color: { argb: "FF334155" } };
+    r.getCell(1).note = comoNota(m.nota);
+    for (let y = 0; y < nAnos; y++) {
+      const cell = r.getCell(idxFY(y));
+      cell.value = { formula: m.formula(primeiroAno + y, `${cfy(y)}$${linhaAno}`) };
+      cell.numFmt = PCT_FMT;
+      cell.alignment = { horizontal: "center" };
+    }
+  }
+  const rMetodosFim = sheet.rowCount;
+  {
+    const opcoes = metodos.map((m) => m.rotulo);
+    const cel = rMetodo.getCell(3);
+    cel.value = opcoes[0] ?? "";
+    // Vírgula é o separador da lista inline do Excel: um rótulo que a contenha
+    // quebraria a validação. Nenhum contém, e o filtro garante que continue assim.
+    if (opcoes.length > 0 && !opcoes.some((o) => o.includes(","))) {
+      cel.dataValidation = {
+        type: "list", allowBlank: false, showErrorMessage: true,
+        formulae: [`"${opcoes.join(",")}"`],
+        errorTitle: "Metodologia desconhecida",
+        error: "Escolha uma das metodologias listadas no bloco INPUTS MACRO.",
+      };
+    }
+    cel.note = comoNota(
+      "QUAL ÍNDICE CORRIGE ESTA PROJEÇÃO. Trocar aqui recalcula o modelo inteiro — receita, "
+      + "custo, capital de giro e balanço — sem tocar em nenhuma outra célula.\n\n"
+      + "As opções são as linhas do bloco INPUTS MACRO, logo abaixo; cada uma tem uma nota "
+      + "dizendo quando faz sentido. Acrescentar uma metodologia nova é acrescentar uma linha "
+      + "lá dentro.\n\n"
+      + "O JURO DA DÍVIDA NÃO MUDA com esta célula: continua na Selic do Focus. Qual índice "
+      + "corrige preço e quanto custa a dívida são duas perguntas — responder as duas aqui faria "
+      + "escolher IGP-M encarecer a dívida sem ninguém ter pedido.",
+    );
+    rMetodo.getCell(1).note = comoNota(
+      `Metodologias disponíveis neste arquivo: ${opcoes.join("; ")}.`,
+    );
+  }
+  linha("");
+
   bloco("PREMISSAS — uma por exercício, na coluna FY. Digite por cima para simular");
   rPremissas = sheet.rowCount + 1;
 
@@ -1242,13 +1385,30 @@ export function construirAbaModelagem(
   const noCorte = (aba: string, rot: string) => buscaNaBase(baseLocal, aba, rot, `${refEntidade}&" — "&${refCorte}`);
 
   escrever([
-    { rotulo: "Inflação esperada (IPCA — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
-      anual: (a) => premissaDoFocus(macroLocal, "IPCA", a.ano, `${a.fy}$${linhaAno}`),
+    { rotulo: "Inflação esperada (metodologia selecionada)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
+      // ETAPA 5: a premissa deixou de ser "o IPCA do Focus" e passou a ser "o
+      // que a metodologia escolhida diz". Uma linha do bloco INPUTS MACRO,
+      // indexada pela célula do topo — trocar lá recalcula tudo daqui para
+      // baixo, sem tocar em nenhuma célula.
+      //
+      // O `IF(...="","",...)` preserva o que a fatia 4 conquistou: metodologia
+      // sem dado para o exercício deixa a premissa VAZIA em vez de 0. Quem lê a
+      // premissa usa `N()` e enxerga 0, como enxergava numa célula vazia.
+      anual: (a) => {
+        const alvo = `INDEX(${a.fy}$${rMetodosIni}:${a.fy}$${rMetodosFim},`
+          + `MATCH(${refMetodo},$A$${rMetodosIni}:$A$${rMetodosFim},0))`;
+        return `IF(${alvo}="","",${alvo})`;
+      },
       notaAnual: (a) => notaDoFocus(macroLocal, "IPCA", a.ano, "inflação"),
-      nota: "Mediana das expectativas de mercado para o ANO desta coluna (aba Macro, Boletim "
-        + "Focus/BCB). Não é a média histórica: média do passado calibra, não prevê. Célula EM "
-        + "BRANCO significa que o Focus não cobre aquele exercício — a nota da célula diz qual "
-        + "é a cobertura publicada, e a linha 'cobertura do Focus' confere isso a cada recálculo." },
+      nota: "O ÍNDICE QUE CORRIGE A PROJEÇÃO, vindo da metodologia escolhida na célula "
+        + "\"Índice macro que dirige a projeção\" (topo desta aba). O padrão é a mediana do "
+        + "Boletim Focus/BCB para o IPCA; o bloco INPUTS MACRO lista as outras e diz quando cada "
+        + "uma faz sentido.\n\n"
+        + "Célula EM BRANCO significa que a metodologia escolhida não cobre aquele exercício — a "
+        + "nota da célula diz qual é a cobertura do Focus, e a linha 'cobertura do Focus' confere "
+        + "isso a cada recálculo. Em branco o modelo projeta sem correção nenhuma naquele ano: "
+        + "escolha outra metodologia (a média histórica cobre todos os exercícios) ou digite por "
+        + "cima." },
     { rotulo: "Juro esperado (Selic — Focus)", premissa: true, fmt: PCT_FMT, unidade: "% a.a.",
       anual: (a) => premissaDoFocus(macroLocal, "SELIC", a.ano, `${a.fy}$${linhaAno}`),
       notaAnual: (a) => notaDoFocus(macroLocal, "SELIC", a.ano, "juro"),
@@ -1262,7 +1422,7 @@ export function construirAbaModelagem(
         + "Dívida. Em 0, a projeção não cobra juro nenhum." },
     { rotulo: "Crescimento REAL da receita (acima da inflação)", premissa: true, fmt: PCT_FMT,
       unidade: "% a.a.",
-      anual: (a) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+${a.fy}$${rPremissas})-1,0)`,
+      anual: (a) => `IFERROR((1+IFERROR(${recCorte}/${recAnterior}-1,0))/(1+N(${a.fy}$${rPremissas}))-1,0)`,
       nota: "O crescimento NOMINAL projetado é (1+IPCA)×(1+real)−1. Separar os dois é o que "
         + "responde 'a empresa cresce acima ou abaixo da inflação?'. Padrão: o crescimento "
         + "observado entre os dois últimos exercícios reais, deflacionado." },

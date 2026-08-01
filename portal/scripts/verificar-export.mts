@@ -1114,7 +1114,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
     return -1;
   };
-  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  const rIpca = linhaDe("Inflação esperada (metodologia selecionada)");
   const rSelic = linhaDe("Juro esperado (Selic — Focus)");
   checar(rIpca > 0 && rSelic > 0, "(15) o modelo tem premissas de IPCA e Selic");
   if (rIpca > 0) {
@@ -2308,17 +2308,22 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const projetados = [3, 4, 5].filter((y) => y < nAnos);
   checar(projetados.length === 3, "(31) o caso projeta 3 exercícios fora do horizonte do Focus", String(nAnos));
 
-  for (const rot of ["Inflação esperada (IPCA — Focus)", "Juro esperado (Selic — Focus)"]) {
+  for (const rot of ["Inflação esperada (metodologia selecionada)", "Juro esperado (Selic — Focus)"]) {
     const r = linhaDe(rot);
     checar(r > 0, `(31) a premissa "${rot}" existe`);
     if (r < 0) continue;
     for (const y of projetados) {
       const cell = mod.getRow(r).getCell(colFY(y));
-      // A afirmação central: sem Focus para o ano, a célula não carrega NADA —
-      // nem fórmula que resolve para zero, nem o literal 0. Zero numa célula de
-      // premissa é indistinguível de uma expectativa medida de 0%.
-      checar(cell.value == null,
-        `(31) sem Focus para ${2019 + y}, "${rot}" fica EM BRANCO (0 seria ausência disfarçada de dado)`,
+      // A afirmação central continua a mesma — sem Focus, a premissa NÃO vira
+      // zero — mas a Etapa 5 mudou o mecanismo: a premissa passou a ser uma
+      // fórmula que indexa a metodologia escolhida. Então o que se prende aqui
+      // é que ela RESOLVE para vazio: ou a célula está vazia (linha do juro,
+      // que não passa pelo seletor), ou a fórmula guarda o vazio com
+      // `IF(...="","",...)`. Um zero literal reprova nos dois casos.
+      const fCel = String((cell.value as { formula?: string } | undefined)?.formula ?? "");
+      const resolveVazio = cell.value == null || /="",""/.test(fCel);
+      checar(resolveVazio,
+        `(31) sem Focus para ${2019 + y}, "${rot}" resolve para VAZIO (0 seria ausência disfarçada de dado)`,
         JSON.stringify(cell.value));
       const nota = String((cell.note as { texts?: Array<{ text: string }> } | undefined)?.texts?.map((t) => t.text).join("") ?? "");
       checar(/EM BRANCO/.test(nota) && /2026/.test(nota),
@@ -2387,7 +2392,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     return -1;
   };
   const colFY = (y: number) => 3 + y * 13 + 12;
-  const rIpca = linhaDe("Inflação esperada (IPCA — Focus)");
+  const rIpca = linhaDe("Inflação esperada (metodologia selecionada)");
   // 2024-2025 históricos, 2026-2028 projetados — todos no Focus desta fixture.
   for (const y of [2, 3, 4]) {
     const cell = mod.getRow(rIpca).getCell(colFY(y));
@@ -2445,9 +2450,14 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // LINHA — agora do bloco BASE MACRO, no rodapé da própria Modelagem — e uma
   // linha inserida antes dela faria cada fórmula mirar uma acima, em silêncio.
   const mod = wb.getWorksheet("Modelagem")!;
+  // ETAPA 5: quem endereça a linha do Focus por NÚMERO deixou de ser a
+  // premissa (ela indexa a tabela de metodologias) e passou a ser a linha
+  // "Focus — IPCA" do bloco INPUTS MACRO. O risco é o mesmo — um aviso
+  // inserido antes faria a fórmula mirar uma linha acima — e é lá que ele
+  // agora se manifesta.
   let rIpca = -1;
   for (let r = 1; r <= mod.rowCount; r++) {
-    if (String(mod.getRow(r).getCell(1).value ?? "") === "Inflação esperada (IPCA — Focus)") { rIpca = r; break; }
+    if (String(mod.getRow(r).getCell(1).value ?? "") === "Focus — IPCA") { rIpca = r; break; }
   }
   const nA = Math.floor((mod.columnCount - 2) / 13);
   let apontou = false;
@@ -3065,6 +3075,103 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(lancou,
       "(38) o export inteiro rodou sem lançar — logo LINHAS_BASE cobre todo rótulo que o modelo pede");
   }
+}
+
+// ---- 39: ETAPA 5 — o seletor de inputs macro ------------------------------
+// "Permitir que o usuário escolha qual conjunto de inputs macroeconômicos será
+// utilizado… ao alterar a opção, toda a modelagem deve ser recalculada
+// automaticamente… flexível para permitir adicionar novos tipos futuramente
+// sem grandes alterações estruturais."
+//
+// As três exigências viram três afirmações verificáveis:
+//   (a) existe UMA célula de escolha, com lista fechada;
+//   (b) a premissa que dirige a projeção LÊ essa célula — é isso, e só isso,
+//       que faz "trocar a opção recalcula tudo": o resto do modelo já pende da
+//       premissa;
+//   (c) as opções da lista são as MESMAS linhas da tabela — se fossem duas
+//       listas, acrescentar uma metodologia exigiria lembrar das duas, e um dia
+//       alguém escolheria uma opção que o MATCH não acha.
+{
+  const V = "v-seletor";
+  const documentos: DocumentoParaExport[] = [2024, 2025].map((ano) => ({
+    id: `ds-${ano}`, tipo_taxonomia: "BALANCO", status: "em_validacao",
+    entidade: { razao_social: "Seletor Ltda." },
+    periodo: { tipo: "anual", referencia: `12M${String(ano).slice(2)}` },
+    documento_versao: [{ id: `${V}-${ano}`, n_versao: 1, nome_original: `BP_${ano}.pdf` }],
+  }) as unknown as DocumentoParaExport);
+  const campos: CampoExtraido[] = [2024, 2025].map((ano, i) => campo({
+    documento_versao_id: `${V}-${ano}`, chave: "Caixa e bancos", secao: "Disponível",
+    valor_num: 100 + i, unidade: "milhar", ordem: 0, periodo_coluna: String(ano),
+  }));
+  const anuais = Array.from({ length: 11 }, (_, k) => [
+    { serie: "IPCA", ano: 2015 + k, meses: 12, retorno: 4 + k * 0.1 },
+    { serie: "IGPM", ano: 2015 + k, meses: 12, retorno: 5 + k * 0.1 },
+  ]).flat();
+  const expectativas = [2026, 2027, 2028].flatMap((ano_ref) =>
+    ["IPCA", "SELIC", "IGPM", "PIB"].map((serie) =>
+      ({ serie, ano_ref, mediana: 4.5, coletado_em: "2026-07-24" })));
+  const mod = buildExportWorkbook({
+    caso: { nome: "Caso Seletor", produto: "reestruturacao" }, documentos, campos,
+    macro: { anuais, expectativas }, agora: new Date("2026-07-31T12:00:00Z"),
+  }).getWorksheet("Modelagem")!;
+
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  const linhaDe = (pred: (x: string) => boolean) => {
+    for (let r = 1; r <= mod.rowCount; r++) if (pred(rotuloDe(r))) return r;
+    return -1;
+  };
+
+  // (a) a célula de escolha.
+  const rSel = linhaDe((x) => x === "Índice macro que dirige a projeção");
+  checar(rSel > 0, "(39) existe a célula que escolhe a metodologia de inputs macro");
+  const celSel = rSel > 0 ? mod.getRow(rSel).getCell(3) : null;
+  const dv = celSel?.dataValidation as { type?: string; formulae?: string[] } | undefined;
+  checar(dv?.type === "list" && (dv.formulae?.[0]?.length ?? 0) > 10,
+    "(39) …com lista fechada (dropdown), não texto livre", JSON.stringify(dv?.formulae));
+  // Marcada como INPUT: é a terceira célula que comanda o modelo, junto de
+  // entidade e último exercício realizado, e tem de se parecer com elas.
+  checar((celSel?.fill as { fgColor?: { argb?: string } } | undefined)?.fgColor?.argb === "FFFFF9C4",
+    "(39) …e pintada como input, como as outras células que comandam o modelo");
+
+  // (b) a premissa lê a célula. É o elo que faz "trocar recalcula tudo".
+  const rPrem = linhaDe((x) => x === "Inflação esperada (metodologia selecionada)");
+  checar(rPrem > 0, "(39) a premissa que dirige a projeção existe");
+  const fPrem = String((mod.getRow(rPrem).getCell(3 + 4 * 13 + 12).value as { formula?: string } | undefined)?.formula ?? "");
+  checar(fPrem.includes(`$C$${rSel}`),
+    "(39) …e ela indexa a célula de escolha (trocar a opção recalcula o modelo)", fPrem.slice(0, 120));
+  checar(/="",""/.test(fPrem),
+    "(39) …guardando o vazio: metodologia sem dado deixa a premissa em branco, não em 0",
+    fPrem.slice(0, 120));
+
+  // (c) as opções são as linhas da tabela — uma lista só.
+  const opcoes = (dv?.formulae?.[0] ?? "").replace(/^"|"$/g, "").split(",").filter(Boolean);
+  checar(opcoes.length >= 4,
+    "(39) o arquivo oferece várias metodologias", `${opcoes.length}: ${opcoes.join(" | ")}`);
+  for (const opt of opcoes) {
+    checar(linhaDe((x) => x === opt) > 0,
+      `(39) a opção "${opt}" existe como LINHA da tabela (o MATCH acha)`);
+  }
+  // …e o inverso: toda linha da tabela é uma opção. Sem isto, uma metodologia
+  // poderia existir na planilha e ser inalcançável pelo dropdown.
+  const rTab = linhaDe((x) => x.startsWith("INPUTS MACRO"));
+  checar(rTab > 0 && rTab < rPrem, "(39) a tabela de metodologias vem ANTES das premissas", `${rTab} → ${rPrem}`);
+  for (let r = rTab + 1; r <= mod.rowCount; r++) {
+    const rot = rotuloDe(r);
+    if (!rot) break;
+    checar(opcoes.includes(rot), `(39) a linha "${rot}" da tabela é oferecida no dropdown`);
+  }
+
+  // A lista cobre o que o dono pediu: Focus, médias históricas e CAGR.
+  checar(opcoes.some((o) => o.startsWith("Focus")), "(39) a lista traz metodologias do Focus");
+  checar(opcoes.some((o) => o.startsWith("Média histórica")), "(39) …médias históricas");
+  checar(opcoes.some((o) => /CAGR/.test(o)), "(39) …e o CAGR histórico");
+
+  // O juro NÃO passa pelo seletor: é outra pergunta.
+  const rJuro = linhaDe((x) => x === "Juro esperado (Selic — Focus)");
+  const fJuro = String((mod.getRow(rJuro).getCell(3 + 4 * 13 + 12).value as { formula?: string } | undefined)?.formula ?? "");
+  checar(rJuro > 0 && !fJuro.includes(`$C$${rSel}`),
+    "(39) o juro da dívida NÃO depende do seletor (índice que corrige preço ≠ custo da dívida)",
+    fJuro.slice(0, 100));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

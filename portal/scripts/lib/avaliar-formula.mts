@@ -3,7 +3,7 @@
  * verificação conferirem os números sem abrir o Excel.
  *
  * Cobre exatamente o que `buildExportWorkbook` gera: referências (`B12`),
- * `SUM(B4:B37)`, aritmética `+ - * /`, parênteses e `IFERROR(expr, "")`.
+ * `SUM(B4:B37)`, `N(x)`, aritmética `+ - * /`, parênteses e `IFERROR(expr, "")`.
  * Qualquer outra função devolve null ("não sei avaliar") — é melhor um teste
  * dizer "não sei" do que afirmar 0 e passar verde por engano.
  */
@@ -145,6 +145,13 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
           }
         }
         return t;
+      }
+      if (nome === "N") {
+        // `N(x)`: número passa; texto (inclusive "") e vazio viram 0. É a
+        // semântica de CÉLULA VAZIA aplicada a uma fórmula — o modelo usa isso
+        // para ler uma premissa que devolve "" sem estourar #VALUE!.
+        const v = avaliarExpressao(brutos[0] ?? "", ws, prof + 1);
+        return typeof v === "number" ? v : 0;
       }
       if (nome === "IFERROR") {
         const v = avaliarExpressao(brutos[0] ?? "", ws, prof + 1);
