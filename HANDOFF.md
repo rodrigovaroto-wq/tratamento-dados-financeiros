@@ -18,6 +18,103 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 25 (2026-08-03) — Fase 7.1: granularidade total e o export de dados
+
+O dono interrompeu a Fase 6 (calibração) para acertar o **output**: "cada linha de cada documento
+no excel, todos os valores, cada vírgula, cada tópico", premissas escolhidas no portal, e **dois
+exports** — um só de dados e um completo com a modelagem. O plano inteiro (fases 7.1 a 7.4 + o
+catálogo de premissas por setor) está no plano aprovado desta sessão. Esta é a 7.1.
+
+### O achado: rótulo repetido COLAPSAVA
+
+`bucket()` agrupava por `normalizar(campo.chave)` e `valorNumDoGrupo` devolvia `melhorCampo` — o de
+maior confiança. Consequência: **duas linhas com o mesmo rótulo no mesmo documento viravam uma**, e
+a outra desaparecia do arquivo. Num balancete com dois "Outros", duas "Diversos", ou "Fornecedores"
+repetido em subgrupos diferentes, é perda silenciosa de linha **e de soma**.
+
+A prova, ao religar o defeito: com três linhas (5.000 + 300 + 700) numa seção, o total saía
+**5.300** em vez de 6.000. Note o formato da falha — o total continua *parecendo* consistente com o
+que está visível, porque a linha que falta não está lá para contradizer. Não estava em nenhuma lista
+de itens abertos.
+
+**A correção:** a chave do grupo passa a incluir a **ocorrência** — o rank por `ordem`
+(`db/migrations/0027`) dentro de cada versão e rótulo. Rótulo que aparece uma vez (a maioria) tem
+rank 1 e se comporta como antes; repetido vira duas linhas, cada uma com sua proveniência. O rank é
+por VERSÃO de propósito: num comparativo (2025 | 2024) a 1ª ocorrência de uma coluna alinha com a 1ª
+da outra, que é o alinhamento entidade×período que o agrupamento por rótulo existe para garantir.
+
+### Aba nova: `Dados (linha a linha)`
+
+Espelho **1:1** do banco — uma linha de Excel por `campo_extraido`, ordenada por arquivo e pela
+`ordem` do documento, com a proveniência inteira ao lado (arquivo, tipo, entidade, período, página,
+ordem, seção, seção canônica, entidade/período da coluna, rótulo, valor texto, valor, escala, escala
+original, **moeda**, confiança, aceite). Sem fórmula, sem template, com autofiltro.
+
+Por que ela é diferente das abas classificadas: aquelas são uma **leitura** (agrupam, escolhem,
+somam) — é o que as torna úteis para analisar e insuficientes para **conferir**. Não havia como
+olhar a aba Balanço e saber se aquilo é tudo o que a extração trouxe. Agora há. Linha pendente de
+aceite sai em itálico âmbar: nesta aba, mais que em qualquer outra, sugestão não pode parecer fato.
+
+### Dois exports
+
+`GET /casos/[id]/export?modo=dados` → todas as abas de dado, **sem Modelagem**; sem o parâmetro sai
+o completo. Dois botões no dashboard, e o de dados **sempre disponível** (é insumo de conferência,
+vale com pendência aberta). O nome do arquivo diz qual é (`-dados-` / `-completo-`): dois arquivos
+com o mesmo nome na pasta de Downloads, um com modelo e outro sem, é confusão garantida.
+
+**Um só builder, com um parâmetro** — não dois construtores. As abas de dado têm de ser idênticas
+nos dois arquivos; dois caminhos divergiriam, e a divergência apareceria como "o número do completo
+não bate com o de dados". Há assert comparando aba por aba.
+
+**A Macro entra nos DOIS:** índice do BCB/IBGE é dado coletado, não modelagem — e foi exatamente uma
+aba macro ausente que custou meia hora de investigação no v28.
+
+### A fixture cobria 11 dos 14 documentos
+
+Faltavam **DMPL, MUTUOS e NOTAS EXPLICATIVAS**. As abas `DMPL`/`Intragrupo`/`Outros` existiam no
+código e **nenhum teste passava por elas com dado** — cobertura que parecia existir porque a fixture
+afirmava os dois lados. Os três entraram em `db/test/gerar_fixture.py` com extração fiel ao que cada
+PDF imprime:
+
+- **DMPL** como matriz (`chave` = componente do PL, `secao` = movimento), sem inventar zero nas
+  células que o PDF imprime como "-";
+- **MUTUOS** com a divergência **deliberada de R$ 180 mil** contra o balanço — é o caso que a
+  reconciliação existe para mostrar;
+- **NOTAS** como prosa com números, com `secao` no formato "Nota 1"/"Nota 2" que
+  `ehSecaoDeNotaExplicativa` reconhece. Há assert de que essas linhas **não** vão para o Balanço
+  (nota detalha o que o BP já totaliza; somar as duas é dupla contagem vinda de complementar) e de
+  que continuam no arquivo, na aba de dados crus.
+
+O JSON da fixture passou a emitir `ordem` — sem ele a desambiguação de rótulo repetido não teria o
+sinal de que depende.
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
+| `verificar-export.mts` | 362 | **397** |
+| `db/test/run.sh` | 37 migrations | **37** (nenhuma migration nesta fase) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+Fixture: 11 → **14 documentos**, 744 → **767 linhas**.
+
+### Defeito religado
+
+- colapso de rótulo repetido de volta → `FALHOU: as DUAS linhas "Outros" aparecem — encontradas: 1`
+  e `FALHOU: a soma da seção conta as duas — 5300`.
+
+### O que vem (7.2 a 7.4, no plano aprovado)
+
+- **7.2** banco: `premissa_catalogo` (o agregado por setor), `caso_modelagem`, `caso_premissa`,
+  `caso_linha_premissa`, `fn_premissas_sugeridas(setor)`;
+- **7.3** portal: `/casos/[id]/modelagem` — parâmetros, premissas do caso, **linhas × premissas com
+  aplicar-em-lote**, conferência;
+- **7.4** export completo: cabeçalho da Modelagem reduzido a 4 linhas (as 3-5 migram para o portal),
+  linhas do modelo passam a ser as do caso, e o completo respeita o Portão 2.
+- **Fase 6 (calibração)** fica depois disso, por decisão do dono.
+
+
 ## Sessão 24 (2026-08-03) — Fases 4 e 5: abas resolvidas, Portão 2 existe, roteiro do teste
 
 O dono pediu as fases 4 e 5 juntas, e depois "1 vez a fase 6 de calibração" antes de testar na

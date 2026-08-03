@@ -110,11 +110,23 @@ export default async function CasoDashboardPage({
           >
             + Adicionar arquivos
           </Link>
+          {/* DOIS EXPORTS (decisão do dono). "Dados" é insumo de conferência e fica
+              disponível desde a ingestão, mesmo com pendência aberta — é o que
+              permite conferir a extração antes de modelar. "Completo" acrescenta a
+              Modelagem projetada. */}
+          <a
+            href={`/casos/${id}/export?modo=dados`}
+            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            title="Todas as abas de dado, linha a linha, sem modelagem. Serve para conferir a extração contra os documentos."
+          >
+            Exportar dados ↓
+          </a>
           <a
             href={`/casos/${id}/export`}
             className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            title="Dados + Modelagem projetada."
           >
-            Exportar para Excel ↓
+            Exportar completo ↓
           </a>
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
             {CASO_STATUS_LABEL[caso.status]}

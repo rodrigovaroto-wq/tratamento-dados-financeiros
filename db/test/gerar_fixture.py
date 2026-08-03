@@ -204,6 +204,55 @@ for sec, lab, secao in [("AC", "Ativo Circulante", SEC_ATIVO),
 L(d, "TOTAL DO ATIVO", t["ATIVO"], SEC_ATIVO, "2025")
 L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", t["PASSIVO_PL"], SEC_PASSIVO, "2025")
 
+# ----------------------------------------------------------------------- 09: DMPL
+# Matriz: cada célula é uma linha, `chave` = COMPONENTE do PL e `secao` =
+# MOVIMENTO — é a forma que `construirAbaDMPL` monta de volta em tabela. As
+# células que o PDF imprime como "-" NÃO entram: extração fiel não inventa zero
+# onde o documento não tem número (zero num modelo financeiro é um valor).
+d = doc(9, "DMPL", "metalurgica", "anual_2025")
+_cap, _capint, _rl, _aap = 45000, -2000, 1200, 1850
+_t24m, _t25m = tot[2024]["metalurgica"], tot[2025]["metalurgica"]
+for _mov, _vals in [
+    ("SALDOS EM 31 DE DEZEMBRO DE 2024",
+     [("Capital social", _cap), ("Capital a integralizar", _capint), ("Reserva legal", _rl),
+      ("Ajuste de avaliação patrimonial", _aap), ("Prejuízos acumulados", _t24m["plug"]),
+      ("Total", _t24m["PL"])]),
+    ("Prejuízo líquido do exercício",
+     [("Prejuízos acumulados", prejuizo), ("Total", prejuizo)]),
+    ("SALDOS EM 31 DE DEZEMBRO DE 2025",
+     [("Capital social", _cap), ("Capital a integralizar", _capint), ("Reserva legal", _rl),
+      ("Ajuste de avaliação patrimonial", _aap), ("Prejuízos acumulados", _t25m["plug"]),
+      ("Total", _t25m["PL"])]),
+]:
+    for _comp, _v in _vals:
+        L(d, _comp, _v, _mov, "2025")
+
+# ------------------------------------------------------------------- 12: MÚTUOS
+# O documento tem a divergência DELIBERADA de R$ 180 mil contra o balanço
+# (planilha de controle mantida à parte do razão) — é o caso que a reconciliação
+# deve MOSTRAR, e é por isso que ele precisa estar na fixture.
+mut, tot_mut = X.mutuos_intragrupo(tot)
+d = doc(12, "MUTUOS", "grupo", "anual_2025")
+for _cred, _dev, _nat, _val, _venc in mut:
+    L(d, f"{_cred} → {_dev} — {_nat}", _val, "MÚTUOS E CONTAS INTRAGRUPO", "2025")
+L(d, "TOTAL", tot_mut, "MÚTUOS E CONTAS INTRAGRUPO", "2025")
+
+# ---------------------------------------------------------- 14: NOTAS EXPLICATIVAS
+# Notas são PROSA com alguns números dentro. A extração fiel traz os números que
+# o texto afirma, com a `secao` no formato de nota ("Nota 1", "Nota 2") — que
+# `ehSecaoDeNotaExplicativa` reconhece para NÃO rotear essas linhas para o
+# Balanço. Sem esse reconhecimento, o detalhe da nota entraria somando DEBAIXO do
+# total que o BP já informa: dupla contagem vinda de documento complementar.
+d = doc(14, "NOTAS_EXPL", "metalurgica", "anual_2025")
+L(d, "Prejuízo líquido do exercício", abs(_t25m["plug"] - _t24m["plug"]), "Nota 1", "2025")
+L(d, "Capital circulante líquido negativo", abs(_t25m["AC"] - _t25m["PC"]), "Nota 1", "2025")
+L(d, "Índice de liquidez corrente", round(_t25m["AC"] / _t25m["PC"], 2), "Nota 1", "2025",
+  unidade=None)
+L(d, "Parcela reclassificada de longo para curto prazo (covenant)",
+  bp[2025]["metalurgica"]["PC"][ "Empréstimos e Financiamentos"][0][1]
+  if "Empréstimos e Financiamentos" in bp[2025]["metalurgica"]["PC"] else 0,
+  "Nota 2", "2025")
+
 # ----------------------------------------------------------------------- emitir
 out = [
     "-- GERADO por db/test/gerar_fixture.py — não editar à mão.",
@@ -256,6 +305,10 @@ if "--json" in sys.argv:
                 "id": f"{d['ver']}-{i}",
                 "documento_versao_id": d["ver"],
                 "chave": k, "valor_num": v, "secao": sec, "secao_canonica": None,
+                # `ordem` = posição da linha NO DOCUMENTO (db/migrations/0027). É o
+                # que permite ao export desambiguar rótulo repetido em vez de
+                # colapsar as duas linhas numa só.
+                "ordem": i,
                 "entidade_coluna": ecol, "periodo_coluna": pcol,
                 "valor_texto": None, "unidade": u, "confianca": cf, "origem_pagina": 1,
                 "status_aceite": "aceito", "aceito_por": "fixture",

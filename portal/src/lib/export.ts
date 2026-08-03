@@ -334,6 +334,10 @@ function compararColunas(
 // tabular não relacionado.
 // DMPL/DVA têm renderização própria (nem grade classificada, nem listagem
 // simples) — nomeadas para o roteamento não depender de string solta.
+// A aba do espelho 1:1 do banco. Nome com "linha a linha" de propósito: é o que
+// distingue, para quem abre o arquivo, o dado CRU do dado lido pelas abas
+// classificadas.
+export const ABA_DADOS = "Dados (linha a linha)";
 const ABA_DMPL = "DMPL";
 const ABA_DVA = "DVA";
 
@@ -1130,12 +1134,52 @@ function construirAbaClassificada(
   const contasPorSecao = new Map<string, Map<string, GrupoConta>>();
   const valoresPorAncora = new Map<string, GrupoConta>();
   const naoClassificados = new Map<string, GrupoConta>();
+  // OCORRÊNCIA da linha dentro do documento, por rótulo.
+  //
+  // O defeito que isto corrige: agrupar só por rótulo normalizado fazia duas
+  // linhas com o MESMO rótulo no mesmo documento virarem UM grupo, e
+  // `valorNumDoGrupo` mostrava só a de maior confiança (`melhorCampo`). Num
+  // balancete com dois "Outros", duas "Diversos", ou "Fornecedores" repetido em
+  // subgrupos diferentes, **linhas desapareciam do arquivo sem aviso** — e a soma
+  // da seção saía menor que o documento, o que é a pior versão do problema porque
+  // o total parece consistente com o que está visível.
+  //
+  // A ocorrência é o rank por `ordem` (db/migrations/0027) DENTRO de cada versão
+  // e rótulo. Por que dentro da VERSÃO e não do lote: num documento comparativo
+  // (2025 | 2024) o mesmo rótulo repetido aparece uma vez por bloco de leitura, e
+  // o rank calculado por versão faz a 1ª ocorrência de uma coluna alinhar com a
+  // 1ª da outra — que é o alinhamento entidade×período que o agrupamento por
+  // rótulo existe para garantir. Rótulo que aparece uma única vez (a esmagadora
+  // maioria) tem rank 1 e se comporta exatamente como antes.
+  const ocorrenciaDoCampo = new Map<string, number>();
+  {
+    const porVersaoERotulo = new Map<string, CampoExtraido[]>();
+    for (const campo of camposDaAba.map((i) => i.campo)) {
+      const k = `${campo.documento_versao_id}${CHAVE_SEP}${normalizar(campo.chave)}`;
+      if (!porVersaoERotulo.has(k)) porVersaoERotulo.set(k, []);
+      porVersaoERotulo.get(k)!.push(campo);
+    }
+    for (const lista of porVersaoERotulo.values()) {
+      if (lista.length === 1) { ocorrenciaDoCampo.set(lista[0].id, 1); continue; }
+      // Empate de `ordem` (extração antiga, sem o campo) cai no id para a ordem
+      // ser estável entre exportações — arquivo que muda de forma sozinho é o
+      // problema que os geradores deste repo já combatem.
+      const ordenada = [...lista].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.id.localeCompare(b.id));
+      ordenada.forEach((c, i) => ocorrenciaDoCampo.set(c.id, i + 1));
+    }
+  }
+
   const bucket = (mapa: Map<string, GrupoConta>, campo: CampoExtraido, colKey: string) => {
     // normalizar() (acento/espaço) para que "Salários" e "Salarios", ou
     // "Duplicatas  a Receber" e "Duplicatas a Receber" (deriva de grafia entre
     // períodos/entidades da mesma empresa), caiam na MESMA linha em vez de
     // gerar dois grupos que quebram o alinhamento entidade×período.
-    const chaveNorm = normalizar(campo.chave);
+    //
+    // …e a OCORRÊNCIA entra na chave, para rótulo repetido não colapsar (acima).
+    const ocorrencia = ocorrenciaDoCampo.get(campo.id) ?? 1;
+    const chaveNorm = ocorrencia > 1
+      ? `${normalizar(campo.chave)}${CHAVE_SEP}#${ocorrencia}`
+      : normalizar(campo.chave);
     if (!mapa.has(chaveNorm)) mapa.set(chaveNorm, novoGrupo(campo.chave));
     adicionarAoGrupo(mapa.get(chaveNorm)!, colKey, campo);
   };
@@ -2347,6 +2391,15 @@ export function buildExportWorkbook({
   macroErro,
   causasDeFalha,
   agora = new Date(),
+  // MODO DO EXPORT (decisão do dono): "dados" entrega só as abas de dado — é o
+  // insumo de conferência da ingestão, e existe desde a ingestão, mesmo com
+  // pendência aberta. "completo" acrescenta a Modelagem projetada.
+  //
+  // Por que um parâmetro e não dois construtores: as abas de dado têm de ser
+  // BIT A BIT as mesmas nos dois arquivos. Dois caminhos de construção divergem
+  // — e a divergência apareceria como "o número do completo não bate com o de
+  // dados", que é a pior conversa possível com um analista.
+  modo = "completo",
 }: {
   caso: { nome: string; produto: string };
   documentos: DocumentoParaExport[];
@@ -2366,6 +2419,7 @@ export function buildExportWorkbook({
   // ficava só na fila de revisão, em outra tela.
   causasDeFalha?: string[];
   agora?: Date;
+  modo?: "dados" | "completo";
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
   // permite juntar campo_extraido (que só sabe a versão) com o resto. Só as
@@ -2708,6 +2762,94 @@ export function buildExportWorkbook({
   }
 
 
+  // ---- ABA "Dados (linha a linha)" ----------------------------------------
+  // O ESPELHO 1:1 do banco, sem template, sem agregação, sem fórmula.
+  //
+  // POR QUE ELA EXISTE: as abas classificadas são uma LEITURA das linhas —
+  // agrupam por seção, escolhem um valor por rótulo × coluna, calculam soma.
+  // Isso é o que as torna úteis para analisar e é também o que as torna
+  // insuficientes para conferir: não há como olhar uma aba de Balanço e saber se
+  // aquilo é tudo o que a extração trouxe. Esta aba responde a essa pergunta —
+  // uma linha de Excel por linha de `campo_extraido`, na ordem do documento, com
+  // a proveniência inteira ao lado.
+  //
+  // É o insumo de conferência ("cada valor, cada tópico") e é o que permite
+  // auditar o resto do arquivo contra o banco sem abrir o Supabase.
+  {
+    const ws = workbook.addWorksheet(ABA_DADOS, { views: [{ state: "frozen", ySplit: 1 }] });
+    ws.columns = [
+      { header: "Arquivo", width: 34 },
+      { header: "Tipo", width: 16 },
+      { header: "Entidade (documento)", width: 30 },
+      { header: "Período (documento)", width: 16 },
+      { header: "Pág.", width: 6 },
+      { header: "Ordem", width: 7 },
+      { header: "Seção (do documento)", width: 26 },
+      { header: "Seção canônica (IA)", width: 22 },
+      { header: "Entidade da coluna", width: 24 },
+      { header: "Período da coluna", width: 16 },
+      { header: "Rótulo", width: 46 },
+      { header: "Valor (texto)", width: 18 },
+      { header: "Valor", width: 16 },
+      { header: "Escala", width: 12 },
+      { header: "Escala original", width: 14 },
+      { header: "Moeda", width: 8 },
+      { header: "Confiança", width: 10 },
+      { header: "Aceite", width: 12 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = HEADER_FILL;
+    ws.getRow(1).alignment = { wrapText: true, vertical: "middle" };
+
+    // ORDEM: por arquivo, e dentro do arquivo pela `ordem` da linha no documento
+    // (db/migrations/0027). É a ordem de leitura do original — é o que permite
+    // conferir de cima para baixo com o PDF ao lado.
+    const ordenados = [...campos].sort((a, b) => {
+      const ca = contextoPorVersao.get(a.documento_versao_id);
+      const cb = contextoPorVersao.get(b.documento_versao_id);
+      const na = ca?.nomeArquivo ?? "";
+      const nb = cb?.nomeArquivo ?? "";
+      if (na !== nb) return na.localeCompare(nb, "pt-BR");
+      return (a.ordem ?? 0) - (b.ordem ?? 0);
+    });
+
+    for (const campo of ordenados) {
+      const ctx = contextoPorVersao.get(campo.documento_versao_id);
+      const row = ws.addRow([
+        ctx?.nomeArquivo ?? "(arquivo desconhecido)",
+        ctx?.tipoTaxonomia ?? "(sem tipo)",
+        ctx?.entidade ?? "",
+        ctx?.periodo ?? "",
+        campo.origem_pagina ?? null,
+        campo.ordem ?? null,
+        campo.secao ?? "",
+        campo.secao_canonica ?? "",
+        campo.entidade_coluna ?? "",
+        campo.periodo_coluna ?? "",
+        campo.chave,
+        campo.valor_texto ?? "",
+        campo.valor_num ?? null,
+        campo.unidade ? (ROTULO_ESCALA[campo.unidade] ?? campo.unidade) : "",
+        campo.unidade_original ? (ROTULO_ESCALA[campo.unidade_original] ?? campo.unidade_original) : "",
+        campo.moeda ?? "",
+        campo.confianca ?? null,
+        campo.status_aceite,
+      ]);
+      row.getCell(13).numFmt = VALOR_NUM_FMT;
+      row.getCell(17).numFmt = "0.00";
+      // Linha ainda PENDENTE de aceite fica visualmente distinta: nesta aba, mais
+      // que em qualquer outra, é importante não confundir sugestão com fato.
+      if (campo.status_aceite !== "aceito") {
+        row.font = { italic: true, color: { argb: "FF92400E" } };
+      }
+    }
+
+    if (ordenados.length === 0) {
+      ws.addRow(["Nenhuma linha extraída neste caso — ver a aba Resumo para a causa."]);
+    }
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 18 } };
+  }
+
   // Números por aba → rótulo → coluna, para a Modelagem não depender de
   // fórmula entre abas (Etapa 3).
   const baseModelagem = new Map<string, ValoresDaAba>();
@@ -2748,6 +2890,21 @@ export function buildExportWorkbook({
     }
   }
 
+
+  // No modo "dados" o arquivo termina aqui: sem Modelagem, sem reordenação de
+  // abas. Retorno antecipado em vez de `if` gigante em volta de 200 linhas — e o
+  // `Resumo` continua sendo a primeira aba, que é onde se começa a conferir.
+  //
+  // A MACRO ENTRA MESMO NO MODO DADOS: índices do BCB/IBGE são DADO coletado, não
+  // modelagem. Quem confere a ingestão precisa poder ver o que a coleta trouxe —
+  // e foi assim que "não veio os dados macro" custou meia hora de investigação no
+  // v28, com a aba simplesmente ausente. Aqui ela é construída em qualquer modo,
+  // inclusive a versão "sem dado", que diz por que está vazia.
+  if (modo === "dados") {
+    if (macro) construirAbaMacro(workbook, macro, macroErro);
+    else construirAbaMacroSemDado(workbook, macroErro);
+    return workbook;
+  }
 
   // ----- Aba Modelagem + ocultação das abas de dado cru ---------------------
   // Pedido do dono (v27): "depois de carregar e tratar, oculte as abas dos

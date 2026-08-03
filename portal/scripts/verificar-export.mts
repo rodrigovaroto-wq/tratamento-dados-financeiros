@@ -3421,6 +3421,165 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(43) …e a soma continua sendo emitida normalmente", String(avaliar(ws, "B", rAC)));
 }
 
+// ---- 44: rótulo REPETIDO não colapsa (granularidade total) -----------------
+// O defeito: o agrupamento por rótulo normalizado fazia duas linhas com o MESMO
+// rótulo no mesmo documento virarem um grupo, e só a de maior confiança aparecia
+// (`melhorCampo`). Num balancete com dois "Outros" ou "Fornecedores" repetido em
+// subgrupos diferentes, linhas desapareciam do arquivo — e a soma da seção saía
+// menor que o documento, parecendo consistente com o que estava visível.
+{
+  const V = "vRep";
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Duplicatas a receber", secao: "Ativo Circulante", valor_num: 5000, ordem: 0, documento_versao_id: V }),
+    // MESMO rótulo, duas vezes, valores diferentes — o caso real do balancete.
+    campo({ chave: "Outros", secao: "Ativo Circulante", valor_num: 300, ordem: 1, documento_versao_id: V }),
+    campo({ chave: "Outros", secao: "Ativo Circulante", valor_num: 700, ordem: 2, documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dRep", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Repetida" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: V, nome_original: "bp.pdf" }],
+  }];
+  const wb = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") });
+  const ws = wb.getWorksheet("Balanço")!;
+
+  const rotulos: string[] = [];
+  for (let r = 1; r <= ws.rowCount; r++) rotulos.push(String(ws.getRow(r).getCell(1).value ?? ""));
+  const nOutros = rotulos.filter((x) => x === "Outros").length;
+  checar(nOutros === 2,
+    "(44) as DUAS linhas \"Outros\" aparecem — rótulo repetido não colapsa",
+    `encontradas: ${nOutros}`);
+
+  // …e a soma da seção cobre as duas: 5000 + 300 + 700.
+  const rAC = rotulos.indexOf("Ativo Circulante") + 1;
+  checar(avaliar(ws, "B", rAC) === 6000,
+    "(44) …e a soma da seção conta as duas (5000+300+700)", String(avaliar(ws, "B", rAC)));
+
+  // A aba de dados linha a linha tem de trazer as três, sempre.
+  const dados = wb.getWorksheet("Dados (linha a linha)")!;
+  let nLinhas = 0;
+  for (let r = 2; r <= dados.rowCount; r++) if (dados.getRow(r).getCell(11).value) nLinhas++;
+  checar(nLinhas === 3,
+    "(44) e a aba \"Dados (linha a linha)\" traz as 3 linhas extraídas, cruas", String(nLinhas));
+}
+
+// ---- 45: a aba de dados é espelho 1:1 do que entrou ------------------------
+// É a aba de conferência: se ela agregar, filtrar ou reordenar de forma que perca
+// linha, deixa de servir ao propósito (conferir o arquivo contra o banco).
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+  const dados = wb.getWorksheet("Dados (linha a linha)")!;
+  let nLinhas = 0;
+  for (let r = 2; r <= dados.rowCount; r++) if (dados.getRow(r).getCell(11).value) nLinhas++;
+  checar(nLinhas === fixture.campos.length,
+    "(45) a aba de dados tem UMA linha por campo extraído, sem agregar",
+    `aba=${nLinhas} fixture=${fixture.campos.length}`);
+  const cab: string[] = [];
+  for (let c = 1; c <= 18; c++) cab.push(String(dados.getRow(1).getCell(c).value ?? ""));
+  for (const col of ["Rótulo", "Valor", "Moeda", "Escala", "Pág.", "Ordem", "Aceite"]) {
+    checar(cab.includes(col), `(45) …e declara a coluna "${col}" (proveniência conferível)`, cab.join(" | "));
+  }
+}
+
+// ---- 46: os DOIS modos de export -------------------------------------------
+// Decisão do dono: "dados" é insumo de conferência e existe desde a ingestão;
+// "completo" acrescenta a Modelagem. A propriedade que importa e que este bloco
+// trava: as abas de DADO são as mesmas nos dois arquivos. Se divergirem, a
+// conversa que sobra é "o número do completo não bate com o de dados".
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const params = {
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  };
+  const wbDados = buildExportWorkbook({ ...params, modo: "dados" as const });
+  const wbCompleto = buildExportWorkbook({ ...params, modo: "completo" as const });
+
+  const nomes = (wb: ReturnType<typeof buildExportWorkbook>) => wb.worksheets.map((w) => w.name);
+  checar(!nomes(wbDados).includes("Modelagem"),
+    "(46) o export de dados NÃO traz a aba Modelagem", nomes(wbDados).join(", "));
+  checar(nomes(wbCompleto).includes("Modelagem"),
+    "(46) o export completo traz a Modelagem", nomes(wbCompleto).join(", "));
+  // Macro é DADO coletado (BCB/IBGE), não modelagem: entra nos dois.
+  checar(nomes(wbDados).includes("Macro"),
+    "(46) …e a Macro entra também no de dados (é coleta, não modelo)", nomes(wbDados).join(", "));
+
+  // As abas de dado, iguais nos dois — mesmo conjunto e mesma contagem de linhas.
+  const dataSheets = nomes(wbDados).filter((n) => n !== "Modelagem");
+  for (const nome of dataSheets) {
+    const a = wbDados.getWorksheet(nome);
+    const b = wbCompleto.getWorksheet(nome);
+    checar(a != null && b != null && a.rowCount === b.rowCount,
+      `(46) a aba "${nome}" é idêntica em linhas nos dois modos`,
+      `dados=${a?.rowCount ?? 0} completo=${b?.rowCount ?? 0}`);
+  }
+  // …e nenhuma aba fica oculta no export de dados (mesma decisão do v28).
+  checar(wbDados.worksheets.every((w) => w.state === "visible"),
+    "(46) nenhuma aba oculta no export de dados");
+}
+
+// ---- 47: as abas DMPL / Intragrupo / Outros agora têm DADO -----------------
+// A fixture cobria 11 dos 14 documentos do book: faltavam DMPL, MUTUOS e NOTAS
+// EXPLICATIVAS. As abas existiam no código e NENHUM teste passava por elas com
+// dado — cobertura que parecia existir porque a fixture afirmava os dois lados.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  checar(fixture.documentos.length === 14,
+    "(47) a fixture cobre os 14 documentos do book", String(fixture.documentos.length));
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+
+  // DMPL: matriz movimento × componente do PL, montada por construirAbaDMPL.
+  const dmpl = wb.getWorksheet("DMPL");
+  checar(dmpl != null && dmpl.rowCount > 2, "(47) a aba DMPL existe e tem linhas",
+    `linhas: ${dmpl?.rowCount ?? 0}`);
+  {
+    const textos: string[] = [];
+    for (let r = 1; r <= (dmpl?.rowCount ?? 0); r++) {
+      for (let c = 1; c <= 8; c++) textos.push(String(dmpl!.getRow(r).getCell(c).value ?? ""));
+    }
+    checar(textos.some((t) => t.includes("Capital social")),
+      "(47) …com os componentes do PL como colunas");
+    checar(textos.some((t) => t.toUpperCase().includes("SALDOS EM 31 DE DEZEMBRO DE 2025")),
+      "(47) …e os movimentos como linhas");
+  }
+
+  // MUTUOS → aba Intragrupo, com a divergência deliberada de R$ 180 mil do book.
+  const intra = wb.getWorksheet("Intragrupo");
+  checar(intra != null && intra.rowCount > 1, "(47) a aba Intragrupo existe e tem linhas",
+    `linhas: ${intra?.rowCount ?? 0}`);
+
+  // NOTAS: prosa com números. O que importa é que as linhas NÃO foram para o
+  // Balanço — nota explicativa detalha o que o BP já totaliza, e somar as duas
+  // coisas é dupla contagem vinda de documento complementar.
+  const balanco = wb.getWorksheet("Balanço")!;
+  const rotulosBP: string[] = [];
+  for (let r = 1; r <= balanco.rowCount; r++) rotulosBP.push(String(balanco.getRow(r).getCell(1).value ?? ""));
+  checar(!rotulosBP.some((x) => x.startsWith("Índice de liquidez corrente")),
+    "(47) linha de NOTA EXPLICATIVA não é roteada para o Balanço (evita dupla contagem)");
+  // …e continua no arquivo, na aba documental.
+  const dados = wb.getWorksheet("Dados (linha a linha)")!;
+  let achouNota = false;
+  for (let r = 2; r <= dados.rowCount; r++) {
+    if (String(dados.getRow(r).getCell(11).value ?? "").startsWith("Índice de liquidez corrente")) achouNota = true;
+  }
+  checar(achouNota, "(47) …mas a linha da nota está no arquivo, na aba de dados crus");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

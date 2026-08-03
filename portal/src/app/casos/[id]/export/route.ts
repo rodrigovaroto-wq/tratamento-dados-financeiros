@@ -10,8 +10,13 @@ import type { CampoExtraido } from "@/lib/types";
 // runtime Node, não Edge.
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // MODO (decisão do dono): `?modo=dados` entrega só as abas de dado — insumo de
+  // conferência, disponível desde a ingestão. Sem o parâmetro sai o completo, com
+  // a Modelagem. Valor desconhecido cai em "completo" em vez de erro: um link
+  // datilografado errado não deve deixar o analista sem arquivo.
+  const modo = new URL(request.url).searchParams.get("modo") === "dados" ? "dados" : "completo";
   const supabase = await createClient();
 
   const [casoRes, documentosRes] = await Promise.all([
@@ -179,9 +184,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ? { anuais, expectativas, nomes }
     : undefined;
 
-  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro, causasDeFalha });
+  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro, causasDeFalha, modo });
   const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
-  const filename = `${nomeArquivoSanitizado(caso.nome)}-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  // O nome do arquivo DIZ qual dos dois é. Dois arquivos com o mesmo nome na
+  // pasta de Downloads, um com modelo e outro sem, é confusão garantida — e a
+  // pergunta "qual desses é o completo?" não tem resposta olhando o ícone.
+  const sufixo = modo === "dados" ? "dados" : "completo";
+  const filename = `${nomeArquivoSanitizado(caso.nome)}-${sufixo}-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {

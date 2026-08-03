@@ -22,7 +22,12 @@ import { readFileSync } from "node:fs";
 import { buildExportWorkbook, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 
-const saida = process.argv[2] ?? "/tmp/book-vertentes.xlsx";
+const args = process.argv.slice(2);
+const saida = args.find((a) => !a.startsWith("--")) ?? "/tmp/book-vertentes.xlsx";
+// `--modo=dados` gera o export de conferência (sem Modelagem); sem a flag sai o
+// completo. Os dois saem do MESMO builder, de propósito: as abas de dado têm de
+// ser idênticas nos dois arquivos.
+const modo = args.includes("--modo=dados") ? "dados" : "completo";
 
 const fixture = JSON.parse(
   readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
@@ -33,11 +38,12 @@ const wb = buildExportWorkbook({
   documentos: fixture.documentos,
   campos: fixture.campos,
   agora: new Date("2026-07-27T12:00:00Z"),
+  modo,
 });
 
 await wb.xlsx.writeFile(saida);
 
 const abas = wb.worksheets.map((w) => `${w.name}${w.state === "visible" ? "" : ` (${w.state})`}`);
-console.log(`Escrito: ${saida}`);
+console.log(`Escrito: ${saida}  (modo=${modo})`);
 console.log(`Abas, na ordem em que o Excel mostra: ${abas.join(" · ")}`);
 console.log(`Documentos: ${fixture.documentos.length} · linhas extraídas: ${fixture.campos.length}`);
