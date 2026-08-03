@@ -792,4 +792,36 @@ insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, conf
   ('55555555-0000-0000-0000-000000000013', 'Prejuízos acumulados', -20399.0, 'milhar', 0.97, 'Patrimônio Líquido', '2025', null, 'aceito'),
   ('55555555-0000-0000-0000-000000000013', 'TOTAL DO ATIVO', 14529.0, 'milhar', 0.97, 'ATIVO', '2025', null, 'aceito'),
   ('55555555-0000-0000-0000-000000000013', 'TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO', 14529.0, 'milhar', 0.97, 'PASSIVO E PATRIMÔNIO LÍQUIDO', '2025', null, 'aceito');
+insert into documento (id, caso_id, entidade_id, periodo_id, tipo_taxonomia, status, confianca, fonte) values ('44444444-0000-0000-0000-000000000009', '11111111-1111-1111-1111-111111111111', '22222222-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000002', 'DMPL', 'valido', 0.97, 'fixture');
+insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash) values ('55555555-0000-0000-0000-000000000009', '44444444-0000-0000-0000-000000000009', 1, 'fixture/44444444-0000-0000-0000-000000000009.pdf', 'DMPL.pdf', md5('44444444-0000-0000-0000-000000000009'));
+insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca, secao, periodo_coluna, entidade_coluna, status_aceite) values
+  ('55555555-0000-0000-0000-000000000009', 'Capital social', 45000.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Capital a integralizar', -2000.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Reserva legal', 1200.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Ajuste de avaliação patrimonial', 1850.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Prejuízos acumulados', -21249.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Total', 24801.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2024', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Prejuízos acumulados', -17901.0, 'milhar', 0.97, 'Prejuízo líquido do exercício', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Total', -17901.0, 'milhar', 0.97, 'Prejuízo líquido do exercício', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Capital social', 45000.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Capital a integralizar', -2000.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Reserva legal', 1200.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Ajuste de avaliação patrimonial', 1850.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Prejuízos acumulados', -39150.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000009', 'Total', 6900.0, 'milhar', 0.97, 'SALDOS EM 31 DE DEZEMBRO DE 2025', '2025', null, 'aceito');
+insert into documento (id, caso_id, entidade_id, periodo_id, tipo_taxonomia, status, confianca, fonte) values ('44444444-0000-0000-0000-000000000012', '11111111-1111-1111-1111-111111111111', '22222222-0000-0000-0000-000000000006', '33333333-0000-0000-0000-000000000002', 'MUTUOS', 'valido', 0.97, 'fixture');
+insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash) values ('55555555-0000-0000-0000-000000000012', '44444444-0000-0000-0000-000000000012', 1, 'fixture/44444444-0000-0000-0000-000000000012.pdf', 'MUTUOS.pdf', md5('44444444-0000-0000-0000-000000000012'));
+insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca, secao, periodo_coluna, entidade_coluna, status_aceite) values
+  ('55555555-0000-0000-0000-000000000012', 'Vertentes Participações S.A. → Vertentes Metalúrgica Ltda. — Mútuo', 7600.0, 'milhar', 0.97, 'MÚTUOS E CONTAS INTRAGRUPO', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000012', 'Vertentes Participações S.A. → Vertentes Componentes Automotivos Ltda. — Mútuo', 4033.0, 'milhar', 0.97, 'MÚTUOS E CONTAS INTRAGRUPO', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000012', 'Vertentes Metalúrgica Ltda. → VT Logística e Transportes Ltda. — Conta corrente', 1400.0, 'milhar', 0.97, 'MÚTUOS E CONTAS INTRAGRUPO', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000012', 'Vertentes Imóveis SPE Ltda. → Vertentes Metalúrgica Ltda. — Aluguéis a receber', 640.0, 'milhar', 0.97, 'MÚTUOS E CONTAS INTRAGRUPO', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000012', 'TOTAL', 13673.0, 'milhar', 0.97, 'MÚTUOS E CONTAS INTRAGRUPO', '2025', null, 'aceito');
+insert into documento (id, caso_id, entidade_id, periodo_id, tipo_taxonomia, status, confianca, fonte) values ('44444444-0000-0000-0000-000000000014', '11111111-1111-1111-1111-111111111111', '22222222-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000002', 'NOTAS_EXPL', 'valido', 0.97, 'fixture');
+insert into documento_versao (id, documento_id, n_versao, arquivo_ref, nome_original, hash) values ('55555555-0000-0000-0000-000000000014', '44444444-0000-0000-0000-000000000014', 1, 'fixture/44444444-0000-0000-0000-000000000014.pdf', 'NOTAS_EXPL.pdf', md5('44444444-0000-0000-0000-000000000014'));
+insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca, secao, periodo_coluna, entidade_coluna, status_aceite) values
+  ('55555555-0000-0000-0000-000000000014', 'Prejuízo líquido do exercício', 17901.0, 'milhar', 0.97, 'Nota 1', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000014', 'Capital circulante líquido negativo', 24392.0, 'milhar', 0.97, 'Nota 1', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000014', 'Índice de liquidez corrente', 0.65, null, 0.97, 'Nota 1', '2025', null, 'aceito'),
+  ('55555555-0000-0000-0000-000000000014', 'Parcela reclassificada de longo para curto prazo (covenant)', 15660.0, 'milhar', 0.97, 'Nota 2', '2025', null, 'aceito');
 commit;
