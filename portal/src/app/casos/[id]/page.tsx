@@ -114,6 +114,15 @@ export default async function CasoDashboardPage({
               disponível desde a ingestão, mesmo com pendência aberta — é o que
               permite conferir a extração antes de modelar. "Completo" acrescenta a
               Modelagem projetada. */}
+          {/* A seção Modelagem (Fase 7.3): onde as linhas do caso cruzam com as
+              premissas. Fica ao lado dos exports de propósito — é o passo ENTRE
+              conferir os dados e gerar o completo. */}
+          <Link
+            href={`/casos/${id}/modelagem`}
+            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
+          >
+            Modelagem
+          </Link>
           <a
             href={`/casos/${id}/export?modo=dados`}
             className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"

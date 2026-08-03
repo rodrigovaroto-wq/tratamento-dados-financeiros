@@ -194,5 +194,37 @@ begin
   perform teste_assert_pr((v_r->>'pronto') = 'false',
     'e ela impede o "pronto" — projeção com premissa vazia é projeção com zero', v_r::text);
 
+  raise notice '--- 9. fn_linhas_para_modelagem NÃO vaza linha de outro caso (0039) ---';
+  -- `campo_extraido` não tem `caso_id` — o vínculo passa por documento_versao →
+  -- documento. Com a RLS aberta a qualquer autenticado, uma consulta sem esse
+  -- join traz as linhas de TODOS os mandatos, e nada barra. Foi o defeito da
+  -- primeira versão da tela de Modelagem; a função existe para o escopo por caso
+  -- ter um lugar só, coberto por este teste.
+  declare
+    v_outro uuid;
+    v_doc2 jsonb;
+  begin
+    v_outro := (fn_upsert_caso('Caso VIZINHO — não deve aparecer'))::uuid;
+    v_doc2 := fn_registrar_documento(
+      v_outro, 'Outra Empresa Ltda.', 'anual', '2025', 'DRE', 0.95, 'nome_arquivo',
+      'supabase_storage', 'bucket/outro.pdf', 'DRE Outro 2025.pdf', true, 'HASH-OUTRO', 'ok');
+    perform fn_registrar_campos_extraidos((v_doc2->>'documento_versao_id')::uuid, jsonb_build_array(
+      jsonb_build_object('ordem', 0, 'chave', 'LINHA DO CASO VIZINHO', 'valor_num', '99999',
+                         'unidade', 'milhar', 'moeda', 'BRL', 'confianca', '0.9',
+                         'secao_canonica', 'receita_bruta')
+    ));
+
+    perform teste_assert_pr(
+      not exists (select 1 from fn_linhas_para_modelagem(v_caso) where chave = 'LINHA DO CASO VIZINHO'),
+      'a linha do caso vizinho NÃO aparece nas linhas deste caso');
+    perform teste_assert_pr(
+      exists (select 1 from fn_linhas_para_modelagem(v_outro) where chave = 'LINHA DO CASO VIZINHO'),
+      'e aparece no caso a que pertence');
+
+    select count(*) into v_n from fn_linhas_para_modelagem(v_caso);
+    perform teste_assert_pr(v_n = 3,
+      'este caso continua com as suas 3 linhas lógicas', format('%s', v_n));
+  end;
+
   raise notice 'TODOS OS TESTES DE PREMISSAS PASSARAM';
 end $$;
