@@ -215,7 +215,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     // parâmetros do caso, premissas ativas (com o catálogo para saber a fórmula),
     // e o vínculo linha↔premissa. Ausência de qualquer uma NÃO é erro: o arquivo
     // sai com o esqueleto agregado, como sempre saiu.
-    const [paramRes, premRes, vincRes, linhasRes] = await Promise.all([
+    const [paramRes, premRes, vincRes, linhasRes, sazoRes] = await Promise.all([
       supabase.from("caso_modelagem").select("*").eq("caso_id", id).maybeSingle(),
       supabase.from("caso_premissa")
         .select("premissa_codigo, valores, premissa_catalogo!inner(nome, formula, unidade)")
@@ -224,6 +224,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         .select("rotulo_norm, secao_canonica, premissa_codigo, sazonalidade_codigo")
         .eq("caso_id", id),
       supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id }),
+      // A curva mensal do caso (0040). Vem vazia quando não há FATURAMENTO_24M —
+      // e aí as linhas com sazonalidade ficam sem distribuição mensal, dizendo
+      // por quê, em vez de rateio uniforme.
+      supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id }),
     ]);
 
     const par = paramRes.data as unknown as {
@@ -269,8 +273,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     }));
 
     if (par || premissas.length > 0 || linhas.length > 0) {
+      const curva = ((sazoRes.data ?? []) as unknown as Array<{ mes: number; fracao: number }>)
+        .sort((a2, b2) => a2.mes - b2.mes)
+        .map((x) => Number(x.fracao));
+
       modelagemConfig = {
         entidade: par?.entidade ?? null,
+        sazonalidade: curva.length === 12 ? curva : undefined,
         ultimoExercicioReal: par?.ultimo_exercicio_real ?? null,
         anosProjetados: par?.anos_projetados ?? 5,
         premissas,

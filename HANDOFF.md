@@ -18,6 +18,87 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 29 (2026-08-03) — Fase 7.5: as primitivas de projeção que faltavam
+
+Com as duas decisões que o dono deu: **`pct_de_linha` incide sobre a receita total do caso,
+automaticamente**, e **a sazonalidade é derivada do histórico do próprio caso**.
+
+### Seis das sete primitivas desenhadas
+
+| Primitiva | Como |
+|---|---|
+| `crescimento_composto` / `indice_macro` | anterior × (1 + premissa) |
+| `valor_por_ano` | a premissa É a linha |
+| **`pct_de_linha`** | premissa × **receita total do caso** |
+| **`dias_de_giro`** | receita total × dias ÷ **360** (ano comercial — é o que os contratos usam) |
+| **`curva_mensal`** | reparte o valor anual nos 12 meses pela curva do caso |
+| `preco_x_volume` | ⛔ **exige decisão de schema** — ver abaixo |
+
+**A base dos percentuais é uma LINHA EXPLÍCITA** ("↳ Receita total do caso"), não uma soma
+escondida dentro de 30 fórmulas: o analista precisa ver sobre o que o percentual incide, e soma
+oculta é impossível de auditar quando o número sai estranho. Ela soma **célula a célula**, não por
+intervalo — as linhas de receita podem não ser contíguas, e `SUM` de intervalo pegaria o que estiver
+no meio.
+
+**A nota de cada célula de percentual NOMEIA a base.** É a mitigação do risco que a própria decisão
+carrega: depreciação e capex como % do imobilizado têm base errada com receita, e o único jeito de o
+analista perceber é o arquivo dizer sobre o que aplicou.
+
+### Sazonalidade: `db/migrations/0040`
+
+`fn_sazonalidade_do_caso(caso_id)` deriva as 12 frações do `FATURAMENTO_24M` do mandato — o mês vem
+do rótulo da linha ("jan/2024"), e a curva sai só **completa**: 12 meses ou nada. Curva parcial
+distribuiria o ano inteiro nos meses existentes, inflando cada um.
+
+**Sem documento mensal, a função devolve zero linhas** e o gerador deixa a linha só no anual, com a
+nota explicando: num negócio sazonal, o duodécimo uniforme move caixa de dezembro para março e a
+necessidade de capital de giro sai errada justamente no mês que importa.
+
+Os meses são **fórmula**, não número: corrigir a premissa anual recalcula os doze.
+
+### Um teste meu que não provava o que dizia
+
+Escrevi `'e a linha TOTAL não entrou na base'` acreditando estar provando o filtro
+`not like 'total%'`. Ao religar o defeito, **o teste passou** — porque o parser de mês já excluía
+"TOTAL DO EXERCÍCIO" ("tot" não casa com mês nenhum), e o filtro é redundante.
+
+Era um teste que não podia falhar, a categoria exata que o `CLAUDE.md` manda caçar. Reescrevi para
+provar o mecanismo real (13 linhas entram, 12 meses saem, cada um com **uma** observação) e anotei
+na migration que o filtro é defesa em profundidade redundante — para o próximo não repetir a
+armadilha. Religado de novo com o parser aceitando `'tot'` como dezembro, reprova: dezembro daria
+**0,577** em vez de 0,154.
+
+### `preco_x_volume` fica de fora, e o motivo é de schema
+
+Ela multiplica **duas** premissas (preço × volume, ADR × ocupação, headcount × custo por cabeça), e
+`caso_linha_premissa` tem **um** slot de premissa por linha. Não dá para expressar o par sem uma
+coluna nova — e inventar uma convenção de pareamento ("premissa X sempre casa com Y") seria decidir
+modelagem no lugar do dono. Fica como decisão dele: segunda premissa por linha, ou premissa composta
+no catálogo.
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `verificar-export.mts` | 417 | **426** |
+| `db/test/run.sh` | 39 migrations | **40** + asserts de sazonalidade (37 em premissas) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+### Defeito religado
+
+- `pct_de_linha` sem a base → `FALHOU: pct_de_linha aplica 40% sobre a receita total (440) — 0.4`;
+- sazonalidade rateando 1/12 sem curva → `FALHOU: sem curva no caso, os meses ficam VAZIOS`;
+- parser aceitando "tot" como dezembro → `FALHOU: dezembro pesa 200/1300 — 0.577`.
+
+### O que resta
+
+- **`preco_x_volume`** (decisão de schema do dono);
+- os outros 11 setores do catálogo, se ele quiser (semente, não motor);
+- e a **Fase 6 (calibração)**, que era o que estava em curso quando a série 7.x começou: o dial
+  voltar a ser estado do sistema e a medição do auto-aceite contra o gabarito.
+
+
 ## Sessão 28 (2026-08-03) — Fase 7.4: o export dirigido pelas escolhas do portal
 
 Última da série 7.x. O export completo passa a ser **consequência** do que foi decidido na tela de
