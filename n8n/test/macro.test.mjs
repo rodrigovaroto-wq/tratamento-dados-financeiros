@@ -206,3 +206,46 @@ test('mediaAnualGeometrica: geométrica, só anos cheios, e nunca inventa', () =
   // Deflação entra normalmente (fator < 1) — a fórmula não pode quebrar.
   assert.ok(mediaAnualGeometrica(anos([-2, 3]), 2) < 1);
 });
+
+// ---------------------------------------------------------------------------
+// O GERADOR TEM DE SER DETERMINÍSTICO — achado pelo CI, no primeiro dia em que
+// ele rodou numa data diferente da última geração.
+//
+// O passo `git diff --exit-code` do workflow reprovou com a URL saindo
+// `dataInicial=01/09/2015` em vez de `01/08/2015`: a janela do SGS era contada
+// a partir de `new Date()`, então o JSON gerado mudava sozinho a cada virada de
+// mês. O CI ficaria VERMELHO todo mês sem nenhuma mudança de código — e um CI
+// que fica vermelho por não-motivo é pior que CI nenhuma, porque ensina a
+// ignorá-lo.
+//
+// Este teste prende a causa, não o sintoma: gerar o workflow em dois DIAS
+// diferentes tem de dar o mesmo arquivo.
+// ---------------------------------------------------------------------------
+test('o workflow macro gerado NÃO depende do dia em que se gera', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const raiz = new URL('../../', import.meta.url).pathname;
+  const alvo = `${raiz}n8n/workflow.macro.json`;
+  const antes = readFileSync(alvo, 'utf8');
+  try {
+    // Roda o gerador com o relógio do processo deslocado em ~2 meses. Se algum
+    // parâmetro ainda vier de `new Date()`, o arquivo muda.
+    execFileSync(process.execPath, [`${raiz}n8n/build-workflow-macro.mjs`], {
+      cwd: raiz, stdio: 'ignore',
+      env: { ...process.env, TZ: 'UTC', FAKE_HOJE: '2026-10-15' },
+    });
+    const depois = readFileSync(alvo, 'utf8');
+    assert.equal(depois, antes, 'o workflow.macro.json mudou sem mudança de código');
+  } finally {
+    execFileSync(process.execPath, [`${raiz}n8n/build-workflow-macro.mjs`], { cwd: raiz, stdio: 'ignore' });
+  }
+});
+
+// E a causa direta, isolada: `urlSgs` só muda se a data de referência mudar.
+test('urlSgs é função pura da data de referência (não do relógio)', () => {
+  const a = urlSgs(433, { hoje: new Date(Date.UTC(2026, 6, 1)) });
+  const b = urlSgs(433, { hoje: new Date(Date.UTC(2026, 6, 1)) });
+  assert.equal(a, b);
+  const c = urlSgs(433, { hoje: new Date(Date.UTC(2026, 7, 1)) });
+  assert.notEqual(a, c, 'mover a referência TEM de mover a janela — senão o parâmetro é decorativo');
+});

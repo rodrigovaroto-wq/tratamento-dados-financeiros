@@ -4,21 +4,123 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-07-31 (sessão 20). **Estado do `main`:** mergeado até o **PR #69**
-(Etapa 1 completa + 5 fatias da Etapa 2, `main` em `f2b801f`). Migrations `0001`→**`0033`** (a
-`0033` está na branch de trabalho, NÃO aplicada). Branch de trabalho:
-**`claude/handoff-next-steps-6k88f2-7pv76w`**. **Cuidado: já houve sessões em paralelo neste repo** —
-confirme o `main` com `git fetch` E a lista de PRs antes de assumir nada.
+**Última atualização:** 2026-08-01 (sessão 21). **Estado do `main`:** mergeado até o **PR #70**
+(`main` em `60f2d26`). Migrations `0001`→**`0034`** (a `0033` o dono já aplicou; a **`0034` é NOVA e
+não está aplicada**). Branch de trabalho: **`claude/handoff-next-steps-6k88f2-7pv76w`**.
 
-**AGORA EXISTE CI.** `.github/workflows/suites.yml` roda as quatro suítes, os três geradores (com
-`git diff --exit-code`), tsc, eslint e o build, em todo push e PR. Se você mudar algo e o PR ficar
-vermelho, é regressão sua — não é "o CI que é chato".
+**AS ETAPAS 1 A 6 DO PLANO DO DONO ESTÃO FEITAS** e aguardam a validação dele. O dono autorizou
+explicitamente executar todas de uma vez nesta sessão ("execute tudo de uma vez, não pare para me
+perguntar nada"), o que suspende — só para esta rodada — a regra de uma etapa por vez.
 
-**Contadores atuais** (o texto antigo abaixo cita números velhos — estes valem):
-`node --test 'n8n/test/*.test.mjs'` = **160**; `verificar-export.mts` = **273 invariantes**;
-`db/test/run.sh` = reconciliação + macro + reextração + canonicalização + seed, com **33
-migrations**; `E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts` = **18
-asserts** encadeando extração → banco → export (é a única suíte que cobre a COSTURA entre as três).
+**Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
+push e PR. Se o PR ficar vermelho, é regressão sua.
+
+**Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
+**352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
+
+## Sessão 21 (2026-08-01) — Etapas 1 a 6, a partir do teste v35
+
+O dono mandou o export do **v35** (o v34 tinha rodado com a API errada no nó da OpenAI) e pediu:
+analisar, executar o que falta do plano de 6 etapas, e depois criticar a própria implementação.
+
+### O v35 entregou a causa raiz de graça — a `0033` funcionou como projetada
+
+A pendência dizia, literal: *"falta o Passivo+PL … Rótulos que a extração TROUXE e que poderiam ser
+um total: "ATIVO", "Ativo Circulante", …, "PASSIVO E PATRIMÔNIO LÍQUIDO""*. Está tudo ali: **o
+documento traz o total do grupo SEM a palavra "total"**, e a A.1 exigia o token. O rótulo certo
+estava na base, com valor, e a busca não o via. É a convenção da maioria dos balanços brasileiros —
+o classificador em TypeScript já sabia (`soEstrutural`); quem não sabia era o SQL.
+
+**Segunda causa, no fallback:** `fn_soma_secao(['passivo','patrimonio'])` exige a SEÇÃO conter os
+DOIS termos, e as seções reais são "Passivo Circulante" e "Patrimônio Líquido". O fallback era
+**inalcançável desde que foi escrito**. → **`db/migrations/0034`**, com `fn_rotulo_estrutural`
+(comparação por CONJUNTO, não substring) e duas somas que se juntam.
+
+**E a guarda anti-alucinação acusava o balanço mais CORRETO possível:** "4 contas com o mesmo valor
+material (14529)" eram ATIVO, TOTAL DO ATIVO, PASSIVO E PL e TOTAL DO PASSIVO E DO PL — iguais
+**porque o balanço fecha**. Os totais de grupo saíram da contagem, usando o mesmo
+`fn_rotulo_estrutural`.
+
+### Etapa 3 — a Modelagem se basta (INVERSÃO da arquitetura da sessão 12)
+
+Dois blocos no rodapé da Modelagem: **BASE DO MODELO** (números das demonstrações) e **BASE MACRO**
+(espelho do histórico e do Focus, com as médias ainda em fórmula). Nenhuma fórmula da Modelagem cita
+outra aba. O `INDEX/MATCH` permanece, agora local — é ele que mantém o dropdown de entidade vivo.
+
+**O que se perde, e o arquivo diz:** a base é uma FOTO. Corrigir a aba Balanço não move mais o
+modelo; tem de exportar de novo.
+
+**Três armadilhas que custaram tempo:** (1) escrever o bloco antes do modelo cria as linhas 1..15 e
+`addRow` passa a acrescentar DEPOIS — o modelo desce 15 linhas; (2) pôr o bloco em COLUNAS aumenta
+`columnCount`, e o modelo é lido como "2 + nAnos × 13"; (3) `RefsMacro.prefixo` era o único ponto que
+amarrava tudo à aba Macro — com ele vazio, todo o consumo virou local sem tocar no resto.
+
+### Etapa 4 — auxiliares ocultas (reverte o v28), com guarda
+
+`hidden`, nunca `veryHidden`. E se a Modelagem não existir, NADA é ocultado: um .xlsx sem aba visível
+o Excel se recusa a abrir.
+
+### Etapa 5 — o seletor, que nasceu DECORATIVO e foi consertado
+
+Tabela de metodologias (Focus IPCA/IGP-M/Selic/PIB, médias 3a/5a/10a de IPCA e IGP-M, CAGR da
+receita) nas colunas FY; a premissa a indexa. Acrescentar metodologia = acrescentar linha.
+
+⚠️ **O seletor não movia nada, e só o invariante 40 pegou.** Trocar IPCA→IGP-M dava a MESMA receita
+até a 12ª casa (43.776,1068). Causa aritmética: nominal = (1+índice)×(1+real) e real era
+(1+observado)/(1+índice)−1 — **o índice cancelava**. Corrigido deflacionando pela metodologia
+PADRÃO, não pela escolhida: o default fica idêntico e escolher IGP-M passa a valer o diferencial.
+
+⚠️ **`N()` em toda leitura de premissa.** Com o seletor a premissa virou FÓRMULA, e fórmula que
+devolve `""` NÃO é célula vazia: `(1+"")` é #VALUE! e contamina o modelo inteiro. `N("")` é 0.
+
+### Etapa 6 — o modelo é RESOLVIDO, não inspecionado
+
+**LibreOffice está quebrado neste container** (recusa um .xlsx mínimo de 3 células E o v35 que o dono
+abriu no Excel). Então o avaliador do arnês foi estendido (INDEX/MATCH/IF/N/^/comparações/COUNT) e
+**memoizado** — sem memória a avaliação é exponencial e 1.110 de 4.380 fórmulas davam "não sei".
+
+**Resultado: 4.380 fórmulas, ZERO não resolvidas; as duas conferências fecham em 0,00 nos cinco
+exercícios; Ativo = Passivo + PL bate nos cinco.**
+
+### O CI achou um defeito no PRÓPRIO CI
+
+`git diff --exit-code` reprovou por a janela do SGS vir de `new Date()`: o JSON mudava sozinho a cada
+virada de mês, e o CI ficaria vermelho por não-motivo. Data de referência agora é fixa, com dois
+testes prendendo a causa.
+
+### Análise crítica da própria implementação (achado no artefato, não no código)
+
+"Dado encontrado" dizia **"DRE+Balanço" para uma entidade sem DRE**, com receita zero ao lado. Duas
+causas em sequência: checar só a COLUNA; e depois `ISNUMBER(INDEX(...))`, que é VERDADEIRO para
+célula vazia porque **INDEX de vazio vale 0 no Excel**. O idioma correto é `COUNT(INDEX(...))`.
+
+### ⚠️ PENDÊNCIAS DO DONO (sessão 21)
+
+1. **Aplicar `db/migrations/0034`.**
+2. **Reimportar `n8n/workflow.macro.json`** (a janela do SGS mudou de forma, não de valor).
+3. **Validar as Etapas 1 a 6** — é o que o plano dele pede antes de qualquer coisa nova.
+
+### O QUE FICOU ABERTO
+
+Os cinco itens de "se sobrar fôlego" continuam **não tocados**: truncamento de CSV/XLSX em 50 linhas,
+`moeda` capturada e descartada, `completude_ok` só exigindo a linha `documento`,
+`fn_aceitar_extracao` aceitando versão vazia, e o poller que expira sem sinalizar.
+
+**E dois limites conhecidos do que foi entregue:**
+- A **BASE DO MODELO traz colunas de pseudo-entidades** do Combinado ("Eliminações — 2025"). São
+  inofensivas (o dropdown de entidade as filtra) e auditáveis, mas são ruído.
+- O avaliador do arnês lê **célula vazia como 0**, então `x=""` trata 0 e vazio igual. Para tudo que
+  o export gera o resultado coincide; uma metodologia que rendesse exatamente 0,00% seria lida como
+  ausente. Registrado no cabeçalho do arquivo.
+
+### Armadilhas novas desta sessão
+
+- **`$$` dentro de um COMENTÁRIO num bloco `do $$ … $$` FECHA o bloco.** O erro sai como
+  "syntax error at or near" e não aponta o comentário.
+- **`ISNUMBER(INDEX(...))` é verdadeiro para célula vazia** (INDEX de vazio = 0). Use `COUNT`.
+- **Fórmula que devolve `""` não é célula vazia**: `(1+"")` é #VALUE!. Use `N()`.
+- **Gerador que lê `new Date()` deixa o CI vermelho todo mês.**
+- **LibreOffice não abre .xlsx neste container** — não é o arquivo, é o ambiente.
 
 ## Sessão 20 (2026-07-31, noite) — Etapa 2 FECHADA, dupla contagem sinalizada, e CI
 
@@ -378,10 +480,10 @@ Regra dele, literal: *"Ao concluir uma etapa, aguarde minha validação antes de
 |---|---|---|
 | 1 | Estabilização da pipeline | **CONCLUÍDA** (PR #67) + correção pós-v33 no #68 |
 | 2 | Dados macroeconômicos corretos na planilha | **COMPLETA** (sessão 20) — 3 fatias no #68, 3 no #69, o bloco de REFERÊNCIAS MACRO na sessão 20. **Aguardando validação do dono.** |
-| 3 | Modelagem 100% automatizada, e **sem buscar valor de outras abas por fórmula** | não iniciada |
-| 4 | Todas as abas geradas; **auxiliares OCULTAS**, Modelagem visível | não iniciada |
-| 5 | **Seletor de inputs macro** (IPCA+, Selic, IGP-M, PIB, média histórica, CAGR) recalculando tudo | não iniciada |
-| 6 | Validação final ponta a ponta | não iniciada |
+| 3 | Modelagem 100% automatizada, e **sem buscar valor de outras abas por fórmula** | **FEITA** (sessão 21) — aguardando validação |
+| 4 | Todas as abas geradas; **auxiliares OCULTAS**, Modelagem visível | **FEITA** (sessão 21) — aguardando validação |
+| 5 | **Seletor de inputs macro** (IPCA+, Selic, IGP-M, PIB, média histórica, CAGR) recalculando tudo | **FEITA** (sessão 21) — aguardando validação |
+| 6 | Validação final ponta a ponta | **FEITA** (sessão 21) — modelo resolvido, conferências em zero |
 
 ⚠️ **A Etapa 4 CONTRADIZ uma decisão anterior do dono.** No teste v28 ele pediu explicitamente "quero
 todas as abas juntas no exportável" porque abas ocultas leram como dado ausente, e o código hoje

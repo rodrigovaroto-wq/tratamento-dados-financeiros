@@ -42,6 +42,22 @@ const HTTP_TOLERANTE = { onError: 'continueRegularOutput', retryOnFail: true, ma
 // uma REVISÃO de série feita pela fonte chega até nós.
 const MESES_HISTORICO = 132;
 
+// DATA DE REFERÊNCIA FIXA para a janela do SGS, e o motivo é que o gerador tem
+// de ser DETERMINÍSTICO.
+//
+// Achado ao rodar o passo `git diff --exit-code` do CI num dia diferente do da
+// última geração: a URL saía com `dataInicial=01/09/2015` em vez de
+// `01/08/2015`, porque a janela era contada a partir de `new Date()`. O CI
+// ficaria VERMELHO todo mês, sem nenhuma mudança de código — e um CI que fica
+// vermelho por não-motivo é pior que CI nenhuma, porque ensina a ignorá-lo.
+//
+// Fixar não muda o comportamento em produção: o JSON é ESTÁTICO, então a
+// janela já ficava congelada no instante da geração de qualquer jeito. O que
+// muda é que agora ela é congelada num valor ESCOLHIDO e visível, não no dia
+// em que alguém rodou o gerador. Para ampliar o histórico, mova esta data —
+// e o diff dirá exatamente isso.
+const INICIO_HISTORICO_REF = new Date(Date.UTC(2026, 6, 1)); // 2026-07 → janela a partir de 2015-08
+
 // Espelho do parse (lib/macro.mjs). Comprimido porque nó Code do N8N não
 // importa arquivo; a fonte da verdade continua sendo a lib, e os testes de
 // `macro.test.mjs` cobrem o comportamento.
@@ -175,7 +191,7 @@ const nodes = [
 
   node('Séries a Coletar', 'n8n-nodes-base.code', 2, {
     jsCode: `return ${JSON.stringify(
-      SERIES_MACRO.map((s) => ({ json: { __serie: s.codigo, __url: urlSgs(s.sgs, { mesesAtras: MESES_HISTORICO }) } })),
+      SERIES_MACRO.map((s) => ({ json: { __serie: s.codigo, __url: urlSgs(s.sgs, { hoje: INICIO_HISTORICO_REF }) } })),
     )};`,
   }, 220, 200),
 
