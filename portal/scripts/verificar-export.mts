@@ -3580,6 +3580,158 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(achouNota, "(47) …mas a linha da nota está no arquivo, na aba de dados crus");
 }
 
+// ---- 48: cabeçalho da Modelagem reduzido, parâmetros no rodapé (7.4) -------
+// Eram 11 linhas fixas no topo, três delas células de input. Decisão do dono:
+// ficam 4 (título, branco, Exercício, mês) e as três células migram para o
+// portal — o arquivo sai parametrizado, e elas ficam registradas no rodapé para
+// a auditoria saber com que parâmetros aquele arquivo foi gerado.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+
+  const ySplit = (mod.views?.[0] as { ySplit?: number } | undefined)?.ySplit;
+  checar(ySplit === 4, "(48) o congelado do topo é de 4 linhas (era 11)", String(ySplit));
+  checar(String(mod.getRow(1).getCell(1).value ?? "").startsWith("MODELAGEM"),
+    "(48) linha 1 continua o título");
+  checar(String(mod.getRow(3).getCell(1).value ?? "") === "Exercício",
+    "(48) linha 3 é a timeline (Exercício)", String(mod.getRow(3).getCell(1).value));
+  checar(String(mod.getRow(4).getCell(1).value ?? "") === "Período",
+    "(48) linha 4 é o mês", String(mod.getRow(4).getCell(1).value));
+
+  // As três células de input NÃO estão mais no topo…
+  const topo: string[] = [];
+  for (let r = 1; r <= 4; r++) topo.push(String(mod.getRow(r).getCell(1).value ?? ""));
+  checar(!topo.includes("Entidade modelada"),
+    "(48) \"Entidade modelada\" saiu do topo", topo.join(" | "));
+  checar(!topo.includes("Último exercício realizado"),
+    "(48) e \"Último exercício realizado\" também");
+
+  // …e estão no rodapé, com o bloco declarado.
+  const rotulos: string[] = [];
+  for (let r = 1; r <= mod.rowCount; r++) rotulos.push(String(mod.getRow(r).getCell(1).value ?? ""));
+  const rParam = rotulos.findIndex((x) => x.startsWith("PARÂMETROS DO MODELO"));
+  checar(rParam > 0, "(48) o bloco de PARÂMETROS existe no rodapé", `linha ${rParam + 1}`);
+  checar(rotulos[rParam + 1] === "Entidade modelada",
+    "(48) …com a entidade modelada como célula editável", rotulos[rParam + 1]);
+  checar(rotulos[rParam + 2] === "Último exercício realizado",
+    "(48) …e o corte do último exercício real", rotulos[rParam + 2]);
+  // O bloco vem DEPOIS do modelo: se estivesse antes, `addRow` teria empurrado o
+  // modelo inteiro para baixo — a armadilha nº 1 da sessão 12, que voltou a
+  // acontecer nesta fase (o modelo foi de ~200 para 291 linhas) e foi a guarda
+  // que a pegou.
+  const rTitulo = rotulos.findIndex((x) => x.startsWith("MODELAGEM"));
+  checar(rParam > rTitulo + 10,
+    "(48) e o bloco fica no RODAPÉ, não empurrando o modelo para baixo",
+    `parâmetros na linha ${rParam + 1}`);
+}
+
+// ---- 49: projeção POR LINHA dirigida pela configuração do portal (7.4) ------
+// O coração do pedido: "cada caso vai vir com linhas diferentes… projetar cada
+// linha baseado em cada premissa".
+{
+  const V = "vProj";
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Receita de vendas", secao: "Receita Bruta", secao_canonica: "receita_bruta",
+            valor_num: 1000, ordem: 0, documento_versao_id: V }),
+    campo({ chave: "Custo dos produtos vendidos", secao: "Custos", secao_canonica: "custos",
+            valor_num: -600, ordem: 1, documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dProj", tipo_taxonomia: "DRE", entidade: { razao_social: "Projetada Ltda" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: V, nome_original: "dre.pdf" }],
+  }];
+
+  const wb = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+    modelagemConfig: {
+      entidade: "Projetada Ltda", ultimoExercicioReal: 2025, anosProjetados: 3,
+      premissas: [
+        { codigo: "CRESC_REAL", nome: "Crescimento real da receita", formula: "crescimento_composto",
+          unidade: "%", valores: { "2026": 0.1, "2027": 0.1 } },
+        { codigo: "CAPEX_ANO", nome: "Capex por ano", formula: "valor_por_ano",
+          unidade: "R$/ano", valores: { "2026": 50 } },
+        { codigo: "MARGEM_BRUTA", nome: "Margem bruta", formula: "pct_de_linha",
+          unidade: "%", valores: { "2026": 0.4 } },
+      ],
+      linhas: [
+        { rotulo: "Receita de vendas", secaoCanonica: "receita_bruta",
+          premissaCodigo: "CRESC_REAL", sazonalidadeCodigo: null, valorBase: 1000 },
+        { rotulo: "Capex do plano", secaoCanonica: null,
+          premissaCodigo: "CAPEX_ANO", sazonalidadeCodigo: null, valorBase: null },
+        { rotulo: "Custo dos produtos vendidos", secaoCanonica: "custos",
+          premissaCodigo: "MARGEM_BRUTA", sazonalidadeCodigo: null, valorBase: -600 },
+      ],
+    },
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+  const rotulos: string[] = [];
+  for (let r = 1; r <= mod.rowCount; r++) rotulos.push(String(mod.getRow(r).getCell(1).value ?? ""));
+
+  checar(rotulos.some((x) => x.startsWith("PROJEÇÃO POR LINHA")),
+    "(49) o bloco de projeção por linha existe quando há configuração");
+  const rRec = rotulos.indexOf("Receita de vendas") + 1;
+  checar(rRec > 0, "(49) a linha configurada aparece pelo rótulo do documento");
+
+  // Crescimento composto: 1000 × 1,10 = 1100 no primeiro projetado, 1210 no
+  // segundo. É a conta que o analista faria à mão, e é a que o arquivo tem de
+  // fazer — em FÓRMULA, não em número colado.
+  // A geometria da aba é DECLARADA (coluna 1 = rótulo, 2 = unidade, e por ano 12
+  // meses + 1 consolidado), e é o que os invariantes do modelo já usam: "2 + nAnos
+  // × 13". Procurar a coluna pelo VALOR da linha do Exercício não funciona — ela é
+  // fórmula (cada janeiro deriva do anterior), então `.value` é o objeto da
+  // fórmula, não o ano.
+  const primeiroAnoDaAba = 2025;  // único exercício com dado nesta fixture
+  const colDe = (ano: number) => mod.getColumn(3 + (ano - primeiroAnoDaAba) * 13 + 12).letter;
+  const c2026 = colDe(2026);
+  checar(c2026 !== "", "(49) a coluna consolidada de 2026 existe na timeline", c2026);
+  checar(Math.round(Number(avaliar(mod, c2026, rRec))) === 1100,
+    "(49) crescimento composto projeta 1000 × 1,10 = 1100",
+    String(avaliar(mod, c2026, rRec)));
+  const c2027 = colDe(2027);
+  checar(Math.round(Number(avaliar(mod, c2027, rRec))) === 1210,
+    "(49) …e compõe no ano seguinte (1210)", String(avaliar(mod, c2027, rRec)));
+
+  // Valor por ano: a premissa É a linha.
+  const rCapex = rotulos.indexOf("Capex do plano") + 1;
+  checar(Math.round(Number(avaliar(mod, c2026, rCapex))) === 50,
+    "(49) valor por ano entra como o próprio valor da premissa",
+    String(avaliar(mod, c2026, rCapex)));
+
+  // Primitiva NÃO implementada: célula VAZIA com nota, nunca um número inventado.
+  // Zero num modelo financeiro é um valor, e projeção errada com cara de pronta é
+  // pior do que célula vazia que diz por que está vazia.
+  const rCusto = rotulos.indexOf("Custo dos produtos vendidos") + 1;
+  const celCusto = mod.getRow(rCusto).getCell(mod.getColumn(c2026).number);
+  checar(celCusto.value == null || celCusto.value === "",
+    "(49) primitiva não desenhada deixa a célula VAZIA (nada de zero inventado)",
+    JSON.stringify(celCusto.value));
+  checar(notaDaLinha(mod, rCusto).includes("ainda não desenha"),
+    "(49) …e a nota diz que a fórmula ainda não é desenhada",
+    notaDaLinha(mod, rCusto).slice(0, 120));
+
+  // Sem configuração, o arquivo continua saindo como antes: o esqueleto agregado
+  // é o fallback, e esta fase não tira modelo de ninguém.
+  const semConfig = buildExportWorkbook({
+    caso: { nome: "C", produto: "rx" }, documentos, campos,
+    agora: new Date("2026-07-27T12:00:00Z"),
+  });
+  const modSem = semConfig.getWorksheet("Modelagem")!;
+  const rotSem: string[] = [];
+  for (let r = 1; r <= modSem.rowCount; r++) rotSem.push(String(modSem.getRow(r).getCell(1).value ?? ""));
+  checar(!rotSem.some((x) => x.startsWith("PROJEÇÃO POR LINHA")),
+    "(49) sem configuração, não há bloco por linha — o esqueleto agregado é o fallback");
+  checar(rotSem.some((x) => x.startsWith("PARÂMETROS DO MODELO")),
+    "(49) …e o bloco de parâmetros continua existindo de todo jeito");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

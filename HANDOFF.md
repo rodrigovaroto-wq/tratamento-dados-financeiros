@@ -18,6 +18,100 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 28 (2026-08-03) — Fase 7.4: o export dirigido pelas escolhas do portal
+
+Última da série 7.x. O export completo passa a ser **consequência** do que foi decidido na tela de
+Modelagem, em vez de o lugar onde a decisão é tomada.
+
+### Cabeçalho: 11 linhas fixas → 4
+
+Congelado em `ySplit: 4` — título, branco, Exercício, mês. As três células de input (entidade
+modelada, último exercício realizado, índice macro) **saíram do topo** e vivem no bloco
+**PARÂMETROS DO MODELO**, no rodapé, junto da BASE DO MODELO. Continuam editáveis: trocar a entidade
+ali recalcula o modelo inteiro sem reexportar. O que muda é que a escolha de origem fica no banco,
+com autor e data, e é ela que vale na próxima exportação.
+
+**`Tipo` (Real/Projetado) e `Dado encontrado` NÃO foram deletadas**, embora a instrução permitisse.
+Com o congelado em 4 elas simplesmente deixam de ficar fixas no topo — e apagá-las custaria o
+diagnóstico "só Balanço"/"SEM DADO", que a sessão 12 registrou como o caso mais traiçoeiro (balanço
+existe, receita não, projeção sai zerada parecendo empresa que vale zero).
+
+### A armadilha nº 1 da sessão 12 voltou, e a guarda pegou
+
+`sheet.getRow(N)` numa linha ALÉM do fim **cria** a linha, e todo `addRow` seguinte passa a
+acrescentar depois dela. Peguei a célula do seletor de índice macro (linha 189) no meio do modelo, e
+o modelo inteiro desceu: de ~200 para **291 linhas**. A guarda nova do bloco de parâmetros acusou na
+hora, com a mensagem dizendo o número. A correção é o mesmo padrão da BASE DO MODELO: **escrita
+adiada** — decide-se o conteúdo no lugar onde ele é conhecido, escreve-se no fim.
+
+### PROJEÇÃO POR LINHA — o coração do pedido
+
+Bloco novo, emitido **antes** do esqueleto agregado quando o caso tem configuração: uma linha por
+linha extraída que tenha premissa vinculada, com as premissas do caso logo acima (uma linha cada, um
+valor por exercício projetado) e as fórmulas citando aquelas células.
+
+**Três primitivas desenhadas, quatro não** — e as quatro deixam a célula **VAZIA com nota dizendo
+por quê**, nunca um número:
+
+| Primitiva | Estado |
+|---|---|
+| `crescimento_composto` | ✅ anterior × (1 + premissa) |
+| `indice_macro` | ✅ mesma matemática |
+| `valor_por_ano` | ✅ a premissa É a linha |
+| `pct_de_linha`, `dias_de_giro`, `preco_x_volume`, `curva_mensal` | ⛔ célula vazia + nota |
+
+Preencher com zero, ou com uma fórmula aproximada, entregaria **projeção errada com cara de projeção
+pronta**. Zero num modelo financeiro é um valor, não um vazio.
+
+Só as colunas consolidadas (FY) recebem fórmula. Distribuir nos meses depende de `curva_mensal`
+(sazonalidade), que não está desenhada — e mês preenchido por rateio uniforme seria um número que
+ninguém escolheu.
+
+**Ano sem valor de premissa fica vazio com nota**, e as linhas que dependem dela ficam sem projeção
+naquele exercício. É a mesma disciplina do "SEM FOCUS".
+
+**Sem configuração, o arquivo sai como sempre saiu:** o esqueleto agregado é o fallback, e há assert
+disso. Esta fase não tira modelo de nenhum caso existente.
+
+### Portão 2 no modo completo
+
+`?modo=completo` pergunta a `fn_avaliar_portao2` e **recusa com 409** quando o caso não é elegível,
+listando os motivos. O modo `dados` **não** passa por essa checagem, de propósito: ele é insumo de
+conferência, e conferir é o que se faz antes de aprovar — bloqueá-lo criaria o impasse de precisar da
+aprovação para poder conferir.
+
+### Uma correção que o teste ditou
+
+A fórmula do crescimento composto testava também a célula do exercício anterior com `=""`. Comparar
+célula NUMÉRICA com string vazia é ambíguo, e o assert media **0** onde devia medir 1100. Agora a
+guarda testa só a premissa: se ela está vazia não há projeção; se a anterior está vazia, a cadeia nem
+começou, porque linha sem valor-base não é emitida.
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `verificar-export.mts` | 397 | **417** |
+| `db/test/run.sh` | 39 migrations | **39** (nenhuma migration nesta fase) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+### Defeito religado
+
+- congelado de volta a 11 → `FALHOU: o congelado do topo é de 4 linhas (era 11) — 11`;
+- primitiva não desenhada preenchendo zero → `FALHOU: primitiva não desenhada deixa a célula VAZIA
+  (nada de zero inventado) — 0`.
+
+### O que fica em aberto da modelagem
+
+- **as quatro primitivas restantes**, com destaque para `pct_de_linha` (margem, % da receita) e
+  `curva_mensal` (sazonalidade mensal) — são as mais pedidas na prática, e cada uma exige decidir
+  QUAL linha é a base do percentual;
+- os outros 11 setores do catálogo, se o dono quiser (é semente, não motor).
+
+E então a **Fase 6 (calibração)**, que era o que estava em curso quando esta série começou.
+
+
 ## Sessão 27 (2026-08-03) — Fase 7.3: a tela onde linha e premissa se cruzam
 
 `/casos/[id]/modelagem` (rota nova) + `db/migrations/0039`. É onde "cada caso é um caso" vira

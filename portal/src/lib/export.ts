@@ -22,6 +22,7 @@ import {
 } from "./statement-templates";
 import {
   ABA_MODELAGEM, ANOS_PROJETADOS, construirAbaMacro, construirAbaMacroSemDado,
+  type ConfigModelagem,
   construirAbaModelagem,
 } from "./export-modelagem";
 import type { MacroParaExport } from "./export-modelagem";
@@ -337,6 +338,8 @@ function compararColunas(
 // A aba do espelho 1:1 do banco. Nome com "linha a linha" de propósito: é o que
 // distingue, para quem abre o arquivo, o dado CRU do dado lido pelas abas
 // classificadas.
+export type { ConfigModelagem } from "./export-modelagem";
+
 export const ABA_DADOS = "Dados (linha a linha)";
 const ABA_DMPL = "DMPL";
 const ABA_DVA = "DVA";
@@ -2400,6 +2403,11 @@ export function buildExportWorkbook({
   // — e a divergência apareceria como "o número do completo não bate com o de
   // dados", que é a pior conversa possível com um analista.
   modo = "completo",
+  // Fase 7.4 — a configuração de modelagem do caso (0038/0039), vinda do portal.
+  // Ausente = arquivo como sempre saiu: só o esqueleto agregado. É o fallback de
+  // todo caso que ainda não passou pela seção Modelagem, e é o que garante que
+  // esta fase não tire modelo de ninguém.
+  modelagemConfig,
 }: {
   caso: { nome: string; produto: string };
   documentos: DocumentoParaExport[];
@@ -2420,6 +2428,7 @@ export function buildExportWorkbook({
   causasDeFalha?: string[];
   agora?: Date;
   modo?: "dados" | "completo";
+  modelagemConfig?: ConfigModelagem;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
   // permite juntar campo_extraido (que só sabe a versão) com o resto. Só as
@@ -2952,8 +2961,14 @@ export function buildExportWorkbook({
     // arquivo degradado que não declara a degradação é pior que um que falha.
     if (!refsMacro) construirAbaMacroSemDado(workbook, macroErro);
     construirAbaModelagem(
-      workbook, caso, entidadeSugerida, entidadesDisponiveis, anosHistoricos, ANOS_PROJETADOS,
-      refsMacro, baseModelagem, macro,
+      workbook, caso,
+      // A entidade e o corte ESCOLHIDOS no portal mandam sobre os sugeridos pelo
+      // conteúdo. Foi para isso que a escolha saiu da planilha: o arquivo sai
+      // parametrizado com a decisão registrada, não com o palpite do gerador.
+      modelagemConfig?.entidade ?? entidadeSugerida,
+      entidadesDisponiveis, anosHistoricos,
+      modelagemConfig?.anosProjetados ?? ANOS_PROJETADOS,
+      refsMacro, baseModelagem, macro, modelagemConfig,
     );
 
     // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
