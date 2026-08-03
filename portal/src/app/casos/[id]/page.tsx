@@ -12,6 +12,7 @@ import {
   type TaxonomiaTipoDocumento,
 } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
+import { aprovarCaso } from "./actions";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 
 const LEGIBILIDADE_LABEL: Record<string, string> = {
@@ -27,7 +28,7 @@ export default async function CasoDashboardPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [casoRes, kitBasicoRes, documentosRes, pendenciasRes, checklistRes] = await Promise.all([
+  const [casoRes, kitBasicoRes, documentosRes, pendenciasRes, checklistRes, portao2Res] = await Promise.all([
     supabase.from("caso").select("id, nome, produto, status, criado_em").eq("id", id).single(),
     supabase
       .from("taxonomia_tipo_documento")
@@ -57,6 +58,11 @@ export default async function CasoDashboardPage({
       .from("checklist_item_status")
       .select("tipo_taxonomia, status")
       .eq("caso_id", id),
+    // db/migrations/0037 — a avaliação do Portão 2. Determinística e sem efeito
+    // colateral (a função é `stable`), então dá para chamar a cada render: é a
+    // MESMA função que `fn_aprovar_caso` usa para decidir, e não uma segunda
+    // implementação da regra aqui no portal.
+    supabase.rpc("fn_avaliar_portao2", { p_caso_id: id }),
   ]);
 
   if (casoRes.error || !casoRes.data) {
@@ -71,6 +77,10 @@ export default async function CasoDashboardPage({
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
   // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o
   // `recebido_nao_valido` de `docs/07`, e é bloqueante para o Portão 2.
+  const portao2 = portao2Res.data as {
+    elegivel: boolean; motivos: string[]; ressalvas_ativas: number; teto_ressalvas: number;
+    status_atual: string;
+  } | null;
   const checklist = (checklistRes.data as Array<{ tipo_taxonomia: string; status: string }> | null) ?? [];
   const tiposSemConteudo = new Set(
     checklist.filter((c) => c.status === "recebido_nao_valido").map((c) => c.tipo_taxonomia),
@@ -120,6 +130,56 @@ export default async function CasoDashboardPage({
           <Link href={`/casos/${id}/revisao`} className="font-medium text-amber-900 underline">
             Ir para a fila de revisão →
           </Link>
+        </div>
+      )}
+
+      {/* PORTÃO 2 (db/migrations/0037) — a regra de f0/04, visível.
+          Antes desta tela não havia como saber se um caso podia ser aprovado:
+          a regra não existia em código, e "não implementado" tem a mesma
+          aparência de "sem pendência bloqueante" para quem olha o dashboard. */}
+      {portao2 && (
+        <div
+          className={`rounded border p-3 text-sm ${
+            portao2.elegivel
+              ? "border-emerald-300 bg-emerald-50"
+              : "border-neutral-300 bg-neutral-50"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className={`font-medium ${portao2.elegivel ? "text-emerald-900" : "text-neutral-800"}`}>
+                Portão 2 —{" "}
+                {portao2.elegivel ? "elegível a aprovação" : "não elegível"}
+              </p>
+              {!portao2.elegivel && portao2.motivos?.length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-neutral-700">
+                  {portao2.motivos.map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-1 text-xs text-neutral-500">
+                Ressalvas ativas: {portao2.ressalvas_ativas} de {portao2.teto_ressalvas} (teto por
+                caso, f0/04). A regra é determinística e não tem exceção por autor.
+              </p>
+            </div>
+            {portao2.elegivel && caso.status !== "aprovado" && caso.status !== "pronto_para_base" && (
+              <form action={aprovarCaso.bind(null, id)} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  name="motivo"
+                  placeholder="motivo (opcional)"
+                  className="rounded border border-neutral-300 px-2 py-1 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="rounded bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
+                >
+                  Aprovar caso
+                </button>
+              </form>
+            )}
+          </div>
         </div>
       )}
 

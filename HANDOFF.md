@@ -18,6 +18,115 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 24 (2026-08-03) — Fases 4 e 5: abas resolvidas, Portão 2 existe, roteiro do teste
+
+O dono pediu as fases 4 e 5 juntas, e depois "1 vez a fase 6 de calibração" antes de testar na
+prática. **Fase 3 (custo) foi PULADA por decisão dele** — consequência registrada no fim desta
+seção.
+
+### O achado desta sessão: o Portão 2 não existia
+
+Fui conferir os "limites duros do Portão 2" (item da Fase 4) e encontrei o seguinte:
+
+- `caso_status` tem `'aprovado'` e `'pronto_para_base'` desde a `0001` — e **nenhuma função
+  transicionava** um caso para eles;
+- **`pendencia.sobrepujavel` era gravado desde a `0001` e nunca lido por ninguém** (`grep`: só
+  escrita). O flag que existe para dizer "nenhuma ressalva libera isto" não tinha consultante;
+- não havia teto de ressalvas, nem conferência de expiração;
+- `fn_aceitar_extracao` é o Portão 2 **por documento** (o comentário da `0011` diz isso). O portão
+  **por caso** — o que decide se o mandato pode ser aprovado — não existia.
+
+**Isso não estava em nenhuma lista de itens abertos** (nem no §7.4 do Onboarding), e a regra está
+**especificada e aprovada em `f0/04` desde a F0**: três condições, teto de ressalvas **confirmado
+em 3** pelo dono, lista fechada de não-sobrepujáveis. `docs/03` põe "Portão 2 com limites duros"
+dentro do MVP. Então a `0037` implementa **a regra como ela está escrita**, sem inventar política.
+
+`fn_avaliar_portao2` (só lê, `stable`) + `fn_aprovar_caso` (recusa retornada, mesmo padrão da
+`0036`, pelo mesmo motivo: exceção desfaria o registro da tentativa). O portal mostra o portão com
+os motivos e só oferece o botão quando a regra permite.
+
+**Duas decisões de implementação que valem registro:**
+
+1. **Ressalva expirada é avaliada NA LEITURA.** `f0/04` diz "ao expirar, a pendência reabre
+   automaticamente". Reabrir por job seria a próxima falha silenciosa (job que ninguém observa);
+   aqui uma `aceita_com_ressalva` com `expira_em` no passado **já conta como pendência de novo**,
+   sem depender de cron nenhum estar vivo.
+2. **Condição 3 usa estados DIFERENTES da condição 1 — e o teste é que descobriu.** A primeira
+   versão copiou a lista `('aberta','em_correcao_interna','reenviada_ao_cliente')` para as duas.
+   Resultado: mover uma **não-sobrepujável** para `aceita_com_ressalva` a tirava da contagem e **o
+   portão liberava** — exatamente a porta dos fundos que a lista fechada existe para fechar, aberta
+   na minha própria implementação por um copiar-e-colar de três valores de enum. Agora qualquer
+   estado não-terminal conta: `aceita_com_ressalva` numa não-sobrepujável é **estado ilegítimo**,
+   não caminho de saída.
+
+### Fase 4 — a contradição das abas, resolvida
+
+A Etapa 4 pedia auxiliares **ocultas**; no v28 o dono pediu o oposto ("quero todas as abas
+juntas"), porque **aba oculta foi lida como dado ausente**. O §7.2 do Onboarding registra as duas.
+
+As duas querem a mesma coisa: a Modelagem sendo o que se vê ao abrir, sem o resto parecer
+inexistente. **Ordem entrega as duas; visibilidade só entregava uma** — quem recebe o arquivo não
+sabe que há abas escondidas, e "reexibir é um clique" só vale para quem sabe que existe o que
+reexibir. Agora: **Modelagem primeiro, nada oculto.**
+
+**Armadilha do ExcelJS que custou um ciclo:** `workbook.worksheets` é um **getter** que devolve
+`_worksheets.slice(1).sort(orderNo)` — um array descartável. A primeira versão fez `splice` nele e
+**não mudou nada no arquivo**; o assert (11) pegou (`modelagem=9` depois de "mover para 0"). O
+mecanismo real é `orderNo`, e `orderNo = 0` põe a aba à frente sem tocar no `orderNo` de ninguém.
+`orderNo` existe no runtime mas **não nos tipos publicados** — daí o cast pontual, comentado.
+
+### Fase 4 — o artefato para o dono olhar
+
+Script novo: **`portal/scripts/gerar-export-fixture.mts`**. Grava em disco o `.xlsx` que o export
+produz a partir da fixture do book sintético, usando o **mesmo** `buildExportWorkbook` que o portal
+chama em produção. Custo zero, sem IA, sem banco. Data fixa (2026-07-27), como todo gerador daqui.
+
+```bash
+./portal/node_modules/.bin/tsx portal/scripts/gerar-export-fixture.mts /tmp/book.xlsx
+```
+
+### Fase 5 — o roteiro do teste ao vivo MÍNIMO (para quando o dono rodar)
+
+O teste ao vivo é dele. O que esta sessão entrega é o roteiro, para a rodada **confirmar** em vez
+de explorar — e para ninguém precisar reconstruir o raciocínio depois:
+
+| # | Documento a enviar | O que exercita | Passou se |
+|---|---|---|---|
+| 1 | Uma **planilha de faturamento longa** (24–36 meses, CSV/XLSX) | Fase 1: teto de 2000 linhas e o aviso de truncamento | todas as linhas aparecem no book; nenhuma pendência de truncamento |
+| 2 | Um documento **em moeda estrangeira** (ou com linhas em USD) | Fase 1: `campo_extraido.moeda` e a recusa de somar moedas | cabeçalho da coluna diz a moeda; coluna mista mostra "⚠ não somável" |
+| 3 | **Reenvio do mesmo arquivo** do item 1 | `0026` (versão nova, não documento novo) | não duplica documento nem coluna no export |
+| 4 | Um **.xlsx** qualquer (sem o Extract From File ligado) | Fase 1/2: XLSX não lido vira pendência + item `recebido_nao_valido` | pendência bloqueante e checklist âmbar, **não** verde |
+
+Depois: conferir `fn_avaliar_portao2` do caso — com o item 4 no lote, ele **tem** de sair não
+elegível, e o motivo tem de nomear a não-sobrepujável.
+
+**Consequência de pular a Fase 3 (custo):** este teste custa hoje o mesmo que o v33 — duas chamadas
+por documento, ambas em `gpt-4o`, com página como imagem. As três alavancas da Fase 3 (PDF como
+texto, `gpt-4o-mini` na classificação, não pagar reprocessamento) estão desenhadas e não
+implementadas. Se o orçamento estiver curto na hora de rodar, **fazer a Fase 3 antes é o que torna
+esta rodada barata** — e o item 4 do roteiro (XLSX) só passa a ler o arquivo de verdade lá.
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
+| `verificar-export.mts` | 361 | **362** |
+| `db/test/run.sh` | 36 migrations | **37** + `portao2.test.sql` (24 asserts) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+Nota honesta sobre o 362: os asserts de visibilidade das abas **mudaram de assunto**, não só de
+número — três do comportamento antigo saíram, e entraram três do novo (nada oculto; Modelagem
+primeiro; ordem relativa das auxiliares preservada). O `veryHidden` deixou de ter assert próprio
+porque "nenhuma oculta" o cobre por construção.
+
+### Defeito religado
+
+- abas ocultas de novo → `FALHOU: NENHUMA aba fica oculta — ocultas: Resumo, Balanço, DRE, …`;
+- condição 3 do Portão 2 com a lista de estados da condição 1 → `FALHOU: aceitar COM RESSALVA uma
+  não-sobrepujável NÃO libera o portão`, com o payload mostrando `elegivel: true`.
+
+
 ## Sessão 23 (2026-08-03) — Fase 2: documento que chegou vazio para de contar
 
 Itens **3 e 4** do §7.4 do Onboarding. O dono já aplicou a `0035` e reimportou o workflow da
