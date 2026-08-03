@@ -56,6 +56,29 @@ psql -q -d "$DB" -c "
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
   alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;"
 
+# Duas migrations com o MESMO prefixo não geram conflito de merge — o git aceita
+# `0035_a.sql` e `0035_b.sql` de branches diferentes sem uma palavra, e o laço
+# abaixo aplica as duas na ordem alfabética do SUFIXO. A ordem oficial de
+# aplicação (`db/README.md`) passa a mentir em silêncio, e nada acusa. É por isso
+# que a checagem existe, e é por isso que ela vem ANTES de aplicar qualquer coisa:
+# com duas pessoas no repositório (faixas em `CLAUDE.md`), colisão é questão de
+# tempo, e o lugar de morrer é o PR, não o banco de produção.
+#
+# BURACO na sequência é LEGÍTIMO e não reprova: as faixas reservam 0035-0099 ao
+# dono, então 0034 → 0100 é o estado esperado, não um erro.
+echo "== numeração das migrations"
+dup=$(for f in db/migrations/*.sql; do basename "$f" | cut -c1-4; done | sort | uniq -d)
+if [ -n "$dup" ]; then
+  echo "FALHOU: prefixo de migration duplicado — cada número tem de ser único."
+  for n in $dup; do
+    echo "   $n:"
+    for f in db/migrations/"$n"*.sql; do echo "     - $f"; done
+  done
+  echo "   Renumere a mais nova respeitando as faixas de CLAUDE.md (dono 0035-0099, estagiário 0100+)."
+  exit 1
+fi
+echo "   sem prefixo duplicado"
+
 echo "== migrations"
 for f in db/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then

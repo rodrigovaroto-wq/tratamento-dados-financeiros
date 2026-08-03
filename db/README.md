@@ -6,6 +6,25 @@ subconjunto necessário para a **Fatia 1 (E1 — Intake determinístico)** da F1
 > **Fonte da verdade do estado = Postgres** (ver `docs/02`, trava de stack nº 1). O N8N é
 > stateless; o portal Vercel lê/escreve via camada que respeita RLS.
 
+## Faixas de numeração — leia antes de criar uma migration
+
+| Faixa | De quem |
+|---|---|
+| `0001`–`0034` | já aplicadas em produção, **não tocar** |
+| `0035`–`0099` | reservada ao **dono** |
+| `0100`+ | **estagiário / colaborador** |
+
+**Nunca reaproveite um número existente**, e buraco na sequência (`0034` → `0100`) é o
+estado esperado.
+
+**Por que a faixa existe:** duas migrations com o mesmo prefixo **não geram conflito de
+merge**. O git aceita `0035_a.sql` e `0035_b.sql` vindas de branches diferentes sem uma
+palavra; o laço de aplicação (`db/test/run.sh`, e a tabela abaixo) as aplica na ordem
+alfabética do **sufixo**, que é arbitrária — e a "ordem de aplicação" documentada aqui passa
+a mentir em silêncio. `db/test/run.sh` reprova prefixo duplicado antes de aplicar qualquer
+coisa, então a colisão morre no PR e não no banco; a faixa é o que evita chegar até lá. Quem
+aplica migration em produção é só o dono (ver `CLAUDE.md`).
+
 ## Migrations (aplicar nesta ordem)
 
 | Arquivo | O que faz |
