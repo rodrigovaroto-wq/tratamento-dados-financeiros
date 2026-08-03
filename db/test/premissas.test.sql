@@ -226,5 +226,68 @@ begin
       'este caso continua com as suas 3 linhas lógicas', format('%s', v_n));
   end;
 
+  raise notice '--- 10. sazonalidade DERIVADA do histórico do caso (0040) ---';
+  declare
+    v_cs uuid;
+    v_dfat jsonb;
+    v_soma numeric;
+    v_meses int;
+    v_linhas jsonb := '[]'::jsonb;
+    v_m int;
+  begin
+    v_cs := (fn_upsert_caso('Caso sazonalidade'))::uuid;
+    v_dfat := fn_registrar_documento(
+      v_cs, 'Sazonal Ltda.', 'L24M', '24,25', 'FATURAMENTO_24M', 0.95, 'nome_arquivo',
+      'supabase_storage', 'bucket/fat.pdf', 'Faturamento 24M.pdf', true, 'HASH-FAT-SAZ', 'ok');
+
+    -- Curva com dezembro forte, como varejo de verdade: 100 nos onze primeiros
+    -- meses e 200 em dezembro. Total 1300 → dezembro é 200/1300.
+    for v_m in 1..12 loop
+      v_linhas := v_linhas || jsonb_build_array(jsonb_build_object(
+        'ordem', v_m, 'chave',
+        (array['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'])[v_m] || '/2025',
+        'valor_num', case when v_m = 12 then '200' else '100' end,
+        'unidade', 'milhar', 'moeda', 'BRL', 'confianca', '0.95',
+        'secao_canonica', 'receita_bruta'));
+    end loop;
+    -- E a linha de TOTAL, que NÃO pode entrar na base (dobraria o ano).
+    v_linhas := v_linhas || jsonb_build_array(jsonb_build_object(
+      'ordem', 13, 'chave', 'TOTAL DO EXERCÍCIO', 'valor_num', '1300',
+      'unidade', 'milhar', 'moeda', 'BRL', 'confianca', '0.95', 'secao_canonica', 'receita_bruta'));
+
+    perform fn_registrar_campos_extraidos((v_dfat->>'documento_versao_id')::uuid, v_linhas);
+
+    select count(*), sum(fracao) into v_meses, v_soma from fn_sazonalidade_do_caso(v_cs);
+    perform teste_assert_pr(v_meses = 12, 'a curva tem os 12 meses', format('%s', v_meses));
+    perform teste_assert_pr(abs(v_soma - 1) < 0.0001,
+      'e as frações somam 1 (é isso que o gerador multiplica pelo valor anual)', format('%s', v_soma));
+
+    select fracao into v_soma from fn_sazonalidade_do_caso(v_cs) where mes = 12;
+    perform teste_assert_pr(abs(v_soma - (200.0/1300.0)) < 0.0001,
+      'dezembro pesa 200/1300 — a curva é a da empresa, não um duodécimo uniforme',
+      format('%s', v_soma));
+
+    -- A linha de TOTAL ficou fora da base. O mecanismo que a exclui é o PARSER DE
+    -- MÊS ("tot" não casa com mês nenhum), não o filtro `not like 'total%'` — que é
+    -- redundante e está anotado como tal na 0040. Escrevi o assert original
+    -- acreditando provar o filtro; ao religar o defeito, ele passou, porque o
+    -- parser já fazia o trabalho. Este é o que prova o que diz: 13 linhas entraram,
+    -- 12 meses saíram, cada um com UMA observação.
+    select fracao into v_soma from fn_sazonalidade_do_caso(v_cs) where mes = 1;
+    perform teste_assert_pr(abs(v_soma - (100.0/1300.0)) < 0.0001,
+      'janeiro pesa 100/1300 — a linha TOTAL não inflou o denominador',
+      format('%s', v_soma));
+    perform teste_assert_pr(
+      not exists (select 1 from fn_sazonalidade_do_caso(v_cs) where n_observacoes <> 1),
+      'e nenhum mês recebeu duas observações (a TOTAL não virou mês)');
+
+    -- Caso SEM documento mensal: zero linhas, e o gerador deixa a linha sem
+    -- distribuição dizendo por quê. Ratear 1/12 moveria caixa de dezembro para
+    -- março e erraria a necessidade de giro no mês que importa.
+    perform teste_assert_pr(
+      not exists (select 1 from fn_sazonalidade_do_caso(v_caso)),
+      'caso sem faturamento mensal devolve curva VAZIA, não 1/12 inventado');
+  end;
+
   raise notice 'TODOS OS TESTES DE PREMISSAS PASSARAM';
 end $$;

@@ -743,6 +743,11 @@ export interface ConfigModelagem {
     unidade: string | null;
     valores: Record<string, number>;
   }>;
+  // A curva mensal do caso (12 frações que somam 1), derivada do FATURAMENTO_24M
+  // pela `fn_sazonalidade_do_caso` (0040). VAZIA quando o caso não tem documento
+  // mensal — e aí as linhas com sazonalidade vinculada ficam sem distribuição, com
+  // a nota dizendo por quê. Ratear 1/12 moveria caixa de dezembro para março.
+  sazonalidade?: number[];
   linhas: Array<{
     rotulo: string;
     secaoCanonica: string | null;
@@ -762,6 +767,17 @@ export interface ConfigModelagem {
 // zero seria entregar projeção errada com aparência de projeção pronta.
 const PRIMITIVAS_IMPLEMENTADAS = new Set([
   "crescimento_composto", "indice_macro", "valor_por_ano",
+  // Fase 7.5, com a decisão do dono: o percentual incide sobre a RECEITA TOTAL do
+  // caso, automaticamente. A nota de cada célula NOMEIA a base, para o analista
+  // poder discordar — e há um caso em que receita é base errada (depreciação e
+  // capex como % do imobilizado), que a nota avisa em vez de deixar passar.
+  "pct_de_linha",
+  // Dias de giro sobre a mesma base, pela mesma decisão: saldo = receita × dias/360.
+  "dias_de_giro",
+  // A sazonalidade não projeta valor: ela DISTRIBUI nos meses o valor anual que
+  // outra premissa projetou. Por isso não aparece como fórmula de linha — aparece
+  // no rateio mensal, abaixo.
+  "curva_mensal",
 ]);
 
 export function construirAbaModelagem(
@@ -1188,10 +1204,39 @@ export function construirAbaModelagem(
       }
     }
 
+    // ---- A BASE DOS PERCENTUAIS: receita total do caso -----------------------
+    // Decisão do dono (7.5): `pct_de_linha` e `dias_de_giro` incidem sobre a
+    // receita total. A linha existe explicitamente, em vez de a fórmula somar por
+    // dentro, por dois motivos: o analista precisa VER sobre o que o percentual
+    // está incidindo, e uma soma escondida dentro de 30 fórmulas é impossível de
+    // auditar quando o número sai estranho.
+    const linhasDeReceita = config.linhas.filter(
+      (l) => l.secaoCanonica === "receita_bruta" && l.premissaCodigo,
+    );
+    let linhaReceitaTotal: number | null = null;
+    if (linhasDeReceita.length > 0) {
+      // Emitida DEPOIS das linhas de receita? Não: antes, e as células apontam
+      // para as linhas que vêm abaixo. Excel não se incomoda com referência
+      // adiante, e ler o modelo de cima para baixo com a base no topo é o que um
+      // analista espera.
+      const rBase = linha("↳ Receita total do caso (base dos percentuais)", "R$");
+      rBase.font = { italic: true, size: 9, color: { argb: "FF334155" } };
+      linhaReceitaTotal = rBase.number;
+      rBase.getCell(1).note = comoNota(
+        "Soma das linhas de RECEITA deste caso (seção canônica `receita_bruta`) que têm premissa "
+        + "vinculada. É a base sobre a qual incidem as premissas de percentual e de dias de giro.\n\n"
+        + "Se a base certa para alguma linha NÃO é a receita — depreciação e capex como % do "
+        + "imobilizado são os casos clássicos — o número daquela linha sai errado, e a nota da "
+        + "célula dela diz qual base foi usada.",
+      );
+    }
+
+    const linhaDoRotulo = new Map<string, number>();
     for (const l of config.linhas) {
       if (!l.premissaCodigo) continue;
       const premissa = config.premissas.find((p) => p.codigo === l.premissaCodigo);
       const r = linha(l.rotulo, l.secaoCanonica ?? "");
+      linhaDoRotulo.set(l.rotulo, r.number);
       const rPrem = premissa ? linhaDaPremissa.get(premissa.codigo) : undefined;
       const implementada = premissa && PRIMITIVAS_IMPLEMENTADAS.has(premissa.formula);
 
@@ -1226,6 +1271,41 @@ export function construirAbaModelagem(
           continue;
         }
         const cPrem = `${cfy(y)}$${rPrem}`;
+        const cBase = linhaReceitaTotal ? `${cfy(y)}$${linhaReceitaTotal}` : null;
+        if (premissa.formula === "pct_de_linha" || premissa.formula === "dias_de_giro") {
+          if (!cBase) {
+            cell.note = comoNota(
+              `A premissa "${premissa.nome}" incide sobre a RECEITA TOTAL do caso, e este caso não `
+              + "tem nenhuma linha de receita com premissa vinculada — não há base sobre a qual "
+              + "aplicar. Vincule premissa às linhas de receita na seção Modelagem do portal.",
+            );
+            continue;
+          }
+          // pct: premissa × receita. dias: receita × dias / 360 — a mesma base,
+          // pela decisão do dono, e 360 porque é a convenção de mercado para
+          // prazo médio (não 365: o ano comercial é o que os contratos usam).
+          cell.value = {
+            formula: premissa.formula === "pct_de_linha"
+              ? `IF(${cPrem}="","",${cBase}*${cPrem})`
+              : `IF(${cPrem}="","",${cBase}*${cPrem}/360)`,
+          };
+          cell.numFmt = VALOR_NUM_FMT;
+          cell.fill = PROJETADO_FILL;
+          // A NOTA NOMEIA A BASE em toda célula. É o que permite ao analista
+          // discordar: depreciação como % do imobilizado, capex % do ativo — nesses
+          // a receita é base errada, e o único jeito de ele perceber é o arquivo
+          // dizer sobre o que aplicou.
+          cell.note = comoNota(
+            `Base usada: RECEITA TOTAL do caso (linha ${linhaReceitaTotal}).\n\n`
+            + (premissa.formula === "pct_de_linha"
+              ? `${premissa.nome} × receita total.`
+              : `receita total × ${premissa.nome} ÷ 360 (ano comercial).`)
+            + "\n\nSe a base correta para esta linha não é a receita — depreciação e capex como % do "
+            + "imobilizado são os casos clássicos — este número está errado. A base é decisão de "
+            + "modelagem, e hoje o sistema aplica a receita para toda premissa de percentual.",
+          );
+          continue;
+        }
         if (premissa.formula === "valor_por_ano") {
           // Valor absoluto por exercício: a própria premissa É a linha.
           cell.value = { formula: `IF(${cPrem}="","",${cPrem})` };
@@ -1246,6 +1326,59 @@ export function construirAbaModelagem(
         }
         cell.numFmt = VALOR_NUM_FMT;
         cell.fill = PROJETADO_FILL;
+      }
+
+      // ---- DISTRIBUIÇÃO MENSAL (curva_mensal, 7.5) --------------------------
+      // A sazonalidade não projeta valor: ela reparte nos 12 meses o valor ANUAL
+      // que a premissa da linha projetou. A curva vem do histórico do próprio
+      // caso (decisão do dono) e some quando o documento mensal não existe.
+      if (l.sazonalidadeCodigo) {
+        const curva = config.sazonalidade;
+        if (!curva || curva.length !== 12) {
+          r.getCell(2).note = comoNota(
+            "Esta linha tem sazonalidade vinculada, mas este caso não tem faturamento mensal "
+            + "extraído (FATURAMENTO_24M) para derivar a curva — então o valor fica só na coluna "
+            + "anual, sem distribuição.\n\n"
+            + "Não repartimos em 1/12: num negócio sazonal, o duodécimo uniforme move caixa de "
+            + "dezembro para março e a necessidade de capital de giro sai errada justamente no mês "
+            + "que importa.",
+          );
+        } else {
+          for (let y = 0; y < nAnos; y++) {
+            const ano = primeiroAno + y;
+            if (ano <= ultimoReal) continue;
+            for (let m = 0; m < 12; m++) {
+              const cm2 = r.getCell(idxMes(y, m));
+              // FÓRMULA, não número: o mês responde ao anual, então corrigir a
+              // premissa recalcula os 12 meses sem reexportar.
+              cm2.value = {
+                formula: `IF(${cfy(y)}${r.number}="","",${cfy(y)}${r.number}*${curva[m]})`,
+              };
+              cm2.numFmt = VALOR_NUM_FMT;
+              cm2.fill = PROJETADO_FILL;
+            }
+          }
+          r.getCell(2).note = comoNota(
+            "Os meses são o valor anual repartido pela curva de sazonalidade DESTE caso, derivada "
+            + "do faturamento mensal entregue (FATURAMENTO_24M). Cada mês é fórmula: corrigir a "
+            + "premissa anual recalcula os doze.",
+          );
+        }
+      }
+    }
+    // Agora que os números de linha das receitas são conhecidos, a base soma.
+    if (linhaReceitaTotal) {
+      const refs = linhasDeReceita
+        .map((l) => linhaDoRotulo.get(l.rotulo))
+        .filter((n): n is number => typeof n === "number");
+      for (let y = 0; y < nAnos; y++) {
+        const cell = sheet.getRow(linhaReceitaTotal).getCell(idxFY(y));
+        if (refs.length === 0) continue;
+        // SOMA das células, não `SUM` de intervalo: as linhas de receita podem
+        // não ser contíguas (a ordem é a da configuração, e o analista pode ter
+        // vinculado receita, custo, receita). Intervalo pegaria o que está no meio.
+        cell.value = { formula: refs.map((n) => `${cfy(y)}${n}`).join("+") };
+        cell.numFmt = VALOR_NUM_FMT;
       }
     }
     linha("");
