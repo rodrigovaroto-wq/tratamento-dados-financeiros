@@ -27,7 +27,7 @@ export default async function CasoDashboardPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [casoRes, kitBasicoRes, documentosRes, pendenciasRes] = await Promise.all([
+  const [casoRes, kitBasicoRes, documentosRes, pendenciasRes, checklistRes] = await Promise.all([
     supabase.from("caso").select("id, nome, produto, status, criado_em").eq("id", id).single(),
     supabase
       .from("taxonomia_tipo_documento")
@@ -49,6 +49,14 @@ export default async function CasoDashboardPage({
       .eq("caso_id", id)
       .eq("estado", "aberta")
       .order("criada_em", { ascending: false }),
+    // db/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
+    // ter documento e ainda assim não ter uma linha extraída
+    // (`recebido_nao_valido`). Antes o dashboard derivava "presente" só da
+    // existência do documento, e por isso ficava verde sobre um book vazio.
+    supabase
+      .from("checklist_item_status")
+      .select("tipo_taxonomia, status")
+      .eq("caso_id", id),
   ]);
 
   if (casoRes.error || !casoRes.data) {
@@ -61,6 +69,12 @@ export default async function CasoDashboardPage({
   const pendencias = (pendenciasRes.data as Pendencia[] | null) ?? [];
 
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
+  // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o
+  // `recebido_nao_valido` de `docs/07`, e é bloqueante para o Portão 2.
+  const checklist = (checklistRes.data as Array<{ tipo_taxonomia: string; status: string }> | null) ?? [];
+  const tiposSemConteudo = new Set(
+    checklist.filter((c) => c.status === "recebido_nao_valido").map((c) => c.tipo_taxonomia),
+  );
   const pendenciasRevisao = pendencias.filter((p) =>
     (PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS as readonly string[]).includes(p.tipo),
   );
@@ -113,17 +127,34 @@ export default async function CasoDashboardPage({
         <h2 className="mb-2 text-sm font-semibold text-neutral-700">Kit Básico (obrigatórios)</h2>
         <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {kitBasico.map((item) => {
-            const presente = tiposPresentes.has(item.codigo);
+            const semConteudo = tiposSemConteudo.has(item.codigo);
+            // TRÊS estados, não dois (0036): verde só quando chegou E rendeu
+            // linha. O documento que chegou vazio fica âmbar — não verde, porque
+            // o book sai vazio nessa parte, e não "faltante", porque o arquivo
+            // está lá e pedi-lo de novo ao cliente seria pedir o que ele mandou.
+            const presente = tiposPresentes.has(item.codigo) && !semConteudo;
+            const cor = presente
+              ? "border-emerald-200 bg-emerald-50"
+              : semConteudo
+                ? "border-amber-300 bg-amber-50"
+                : "border-neutral-200 bg-white";
+            const corTexto = presente
+              ? "text-emerald-700"
+              : semConteudo
+                ? "text-amber-800"
+                : "text-neutral-400";
             return (
               <li
                 key={item.codigo}
-                className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
-                  presente ? "border-emerald-200 bg-emerald-50" : "border-neutral-200 bg-white"
-                }`}
+                className={`flex items-center justify-between gap-3 rounded border px-3 py-2 text-sm ${cor}`}
               >
                 <span>{item.documento}</span>
-                <span className={presente ? "text-emerald-700" : "text-neutral-400"}>
-                  {presente ? "✓ presente" : "faltante"}
+                <span className={`shrink-0 ${corTexto}`}>
+                  {presente
+                    ? "✓ presente"
+                    : semConteudo
+                      ? "recebido, sem conteúdo extraído"
+                      : "faltante"}
                 </span>
               </li>
             );
