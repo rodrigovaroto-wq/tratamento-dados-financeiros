@@ -2843,25 +2843,56 @@ export function buildExportWorkbook({
     }
   }
 
-  // ----- ETAPA 4: auxiliares OCULTAS, Modelagem visível ---------------------
-  // Nenhuma aba é removida — todas continuam no arquivo, com os dados
-  // íntegros; muda só a visibilidade. Ver o comentário longo em
-  // `export-modelagem.ts` sobre a reversão da decisão do v28.
+  // ----- ETAPA 4, resolvida: Modelagem PRIMEIRO, nada oculto ----------------
   //
-  // A GUARDA: se por qualquer motivo a Modelagem não existir, NADA é ocultado.
-  // Um .xlsx sem nenhuma aba visível o Excel se recusa a abrir — entregar isso
-  // seria trocar "o dono não vê uma aba" por "o dono não vê o arquivo".
+  // Havia uma contradição registrada entre duas decisões suas, e o §7.2 do
+  // material de Onboarding a nomeia: a Etapa 4 pedia "todas as abas geradas, com
+  // as auxiliares OCULTAS", e no teste v28 você pediu o contrário — "quero todas
+  // as abas juntas" — porque **aba oculta foi lida como dado ausente** por quem
+  // recebeu o arquivo.
+  //
+  // As duas queriam a mesma coisa por caminhos opostos: que a Modelagem seja o
+  // que se vê ao abrir, sem que o resto pareça inexistente. Dá para ter as duas
+  // com ORDEM em vez de visibilidade — a Modelagem vem primeiro na barra de abas
+  // e é a aba ativa; as auxiliares seguem atrás, visíveis.
+  //
+  // Por que a ordem resolve e o `hidden` não resolvia: quem recebe o arquivo não
+  // sabe que existem abas escondidas. "Reexibir" só é um clique para quem sabe
+  // que há o que reexibir — para todos os outros, o dado simplesmente não está
+  // lá. Ordem não tem esse problema: tudo é visível, e a primeira aba é a que
+  // importa.
+  //
+  // A GUARDA de antes continua valendo em espírito: se a Modelagem não existir,
+  // não se mexe em nada (não há o que promover, e reordenar por reordenar só
+  // embaralharia o arquivo).
   {
     const modelagem = workbook.getWorksheet(ABA_MODELAGEM);
     if (modelagem) {
-      for (const ws of workbook.worksheets) {
-        if (ws.id === modelagem.id) { ws.state = "visible"; continue; }
-        // `hidden`, nunca `veryHidden`: o dono precisa conseguir reexibir pela
-        // barra de abas, sem VBA. É o que mantém a auditoria a um clique.
-        ws.state = "hidden";
-      }
+      // Nenhuma aba oculta. `visible` é reafirmado de propósito: um `.xlsx`
+      // gerado por versão anterior deste código podia trazer `hidden` gravado,
+      // e o estado explícito aqui é o que garante que ninguém receba um arquivo
+      // meio-oculto se o export rodar sobre um workbook reaproveitado.
+      for (const ws of workbook.worksheets) ws.state = "visible";
+
+      // A ORDEM das abas no ExcelJS é `orderNo`, não a posição num array:
+      // `workbook.worksheets` é um GETTER que devolve `_worksheets.slice(1)
+      // .sort(orderNo)`. A primeira versão disto fazia splice no resultado do
+      // getter — ou seja, mexia num array descartável e não mudava nada no
+      // arquivo. O assert (11) pegou (`modelagem=9` depois de "mover para 0"),
+      // que é exatamente o tipo de mudança que passa por feita sem ser.
+      //
+      // `addWorksheet` numera de 1 em diante, então 0 põe a Modelagem à frente
+      // de todas sem tocar no `orderNo` de ninguém — e `id`/nome não mudam,
+      // logo nada que referencie aba por nome quebra.
+      // `orderNo` é real no runtime do ExcelJS mas não está nos tipos publicados
+      // (@types embutido do pacote) — daí o cast pontual, com o motivo escrito
+      // para ninguém "limpar" isto achando que é gambiarra.
+      (modelagem as unknown as { orderNo: number }).orderNo = 0;
+
       workbook.views = [{
-        activeTab: modelagem.id - 1, firstSheet: 0, visibility: "visible",
+        // Aba ativa = a Modelagem, agora na primeira posição. `firstSheet: 0`
+        // garante que a barra de abas também comece nela.
+        activeTab: 0, firstSheet: 0, visibility: "visible",
         x: 0, y: 0, width: 10000, height: 20000,
       }];
     }

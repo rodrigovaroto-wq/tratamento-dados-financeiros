@@ -703,36 +703,54 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       `linha=${rAno} base=${String(anoBase)} próximo janeiro=${janAnoSeg?.formula ?? "(sem fórmula)"}`);
   }
 
-  // 4. ETAPA 4: auxiliares OCULTAS, Modelagem visível — e NENHUMA removida.
+  // 4. ETAPA 4, resolvida: Modelagem PRIMEIRO e nada oculto.
   //
-  //    Reverte a decisão do v28 ("quero todas as abas juntas"), e o histórico
-  //    fica porque explica o risco: naquele teste o dono viu 4 abas e concluiu
-  //    que as demais "não vieram" — estavam lá, ocultas. O que mudou desde
-  //    então é a Etapa 3: a Modelagem virou autossuficiente, então as
-  //    auxiliares deixaram de ser fonte e viraram anexo de auditoria.
+  //    Havia duas decisões do dono em contradição, e o §7.2 do Onboarding a
+  //    nomeia: a Etapa 4 pedia as auxiliares OCULTAS; no v28 ele pediu o
+  //    oposto ("quero todas as abas juntas"), porque naquele teste viu 4 abas e
+  //    concluiu que as demais "não vieram" — estavam lá, ocultas.
   //
-  //    Três coisas se afirmam juntas, e é a terceira que impede o pior
-  //    resultado possível: um arquivo que o Excel se recusa a abrir.
+  //    As duas querem a mesma coisa: que a Modelagem seja o que se vê ao abrir,
+  //    sem o resto parecer inexistente. ORDEM entrega as duas; visibilidade só
+  //    entregava uma. Quem recebe o arquivo não sabe que há abas escondidas —
+  //    "reexibir é um clique" só vale para quem sabe que existe o que reexibir.
   const ocultas = wb.worksheets.filter((s) => s.state !== "visible").map((s) => s.name);
-  const visiveis = wb.worksheets.filter((s) => s.state === "visible").map((s) => s.name);
-  checar(visiveis.length === 1 && visiveis[0] === "Modelagem",
-    "(11) só a Modelagem fica visível na entrega", `visíveis: ${visiveis.join(", ")}`);
-  checar(ocultas.length > 0, "(11) …e as auxiliares ficam ocultas", `ocultas: ${ocultas.length}`);
-  // Ocultas, não removidas: os dados continuam no arquivo, íntegros.
+  checar(ocultas.length === 0,
+    "(11) NENHUMA aba fica oculta — aba oculta lê como dado ausente (v28)",
+    `ocultas: ${ocultas.join(", ")}`);
+  // A Modelagem é a PRIMEIRA da barra de abas. `wb.worksheets` já vem ordenado
+  // por `orderNo` (é o getter do ExcelJS que ordena), então a posição 0 aqui é a
+  // posição que o Excel mostra.
+  const nomesEmOrdem = wb.worksheets.map((s) => s.name);
+  checar(nomesEmOrdem[0] === "Modelagem",
+    "(11) …e a Modelagem é a primeira aba do arquivo", `ordem: ${nomesEmOrdem.join(", ")}`);
+  // …e a ordem RELATIVA das auxiliares não foi embaralhada. É o risco real de
+  // mexer em `orderNo`: promover uma aba com um número menor que todos podia,
+  // num descuido, empurrar as outras para posições arbitrárias. A ordem das
+  // auxiliares é a de criação (Resumo primeiro, depois as demonstrações), e é
+  // ela que faz o arquivo parecer o mesmo de sempre depois da Modelagem.
+  const auxiliares = nomesEmOrdem.slice(1);
+  const posicao = (n: string) => auxiliares.indexOf(n);
+  checar(posicao("Resumo") === 0,
+    "(11) …e o Resumo continua sendo a primeira das auxiliares", `ordem: ${auxiliares.join(", ")}`);
+  checar(posicao("Balanço") < posicao("DRE") && posicao("DRE") < posicao("Fluxo de Caixa"),
+    "(11) …e as demonstrações seguem na ordem de sempre (Balanço → DRE → Fluxo)",
+    `ordem: ${auxiliares.join(", ")}`);
+
+  // As auxiliares continuam todas lá, com conteúdo — o que muda é a ordem, não
+  // o que o arquivo contém.
   for (const aba of ["Resumo", "Balanço", "DRE", "Fluxo de Caixa", "Macro"]) {
     const ws2 = wb.getWorksheet(aba);
     checar(ws2 != null && ws2.rowCount > 1,
       `(11) …e a aba "${aba}" continua existindo, com conteúdo`, `linhas: ${ws2?.rowCount ?? 0}`);
   }
-  // `hidden`, nunca `veryHidden`: reexibir tem de ser um clique com o botão
-  // direito, não uma macro.
-  checar(wb.worksheets.every((s) => s.state !== "veryHidden"),
-    "(11) …e nenhuma é veryHidden (o dono consegue reexibir sem VBA)");
-  // …e a Modelagem continua sendo a aba ATIVA: é por onde o arquivo abre.
-  const modelagem = wb.getWorksheet("Modelagem")!;
+  // …e o arquivo ABRE na Modelagem. Com ela em primeiro lugar, a aba ativa é a 0
+  // — e é isto que prova que o reorder aconteceu de verdade: a primeira versão
+  // desta mudança fez splice no retorno do getter `worksheets`, um array
+  // descartável, e não mudou nada no arquivo.
   const abaAtiva = (wb.views?.[0] as { activeTab?: number } | undefined)?.activeTab;
-  checar(abaAtiva === modelagem.id - 1,
-    "(11) a Modelagem é a aba ativa (o arquivo abre nela)", `activeTab=${String(abaAtiva)} modelagem=${modelagem.id - 1}`);
+  checar(abaAtiva === 0,
+    "(11) a Modelagem é a aba ativa (o arquivo abre nela)", `activeTab=${String(abaAtiva)}`);
 }
 
 // ---- 12: consolidação de entidade e período (teste v27) ---------------------
