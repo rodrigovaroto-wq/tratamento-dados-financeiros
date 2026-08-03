@@ -1,0 +1,7 @@
+# Todo PR pede revisão do dono automaticamente, sem depender de alguém marcar.
+#
+# ATENÇÃO: este arquivo PEDE a revisão, não a EXIGE. Para que o merge fique
+# bloqueado até a aprovação é preciso ligar branch protection em `main` nas
+# configurações do repositório ("Require a pull request before merging" +
+# "Require review from Code Owners") — é clique na UI do GitHub, não código.
+* @rodrigovaroto-wq
