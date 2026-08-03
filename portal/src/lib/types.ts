@@ -82,6 +82,13 @@ export interface CampoExtraido {
   // uma escala só. Serve para a nota de proveniência dizer de onde o número veio
   // — "convertido de R$ para R$ mil" é informação de auditoria, não detalhe.
   unidade_original?: string | null;
+  // db/migrations/0035 — MOEDA da linha (ISO: BRL/USD/EUR…), herdada do documento
+  // pela extração. `null` = desconhecida, e desconhecida NUNCA vira BRL presumido:
+  // presumir é o erro que a coluna existe para impedir. É coisa SEPARADA de
+  // `unidade` (a escala): "milhares de dólares" são duas informações, e as duas
+  // multiplicam. Somar moedas diferentes erra pelo câmbio inteiro — ver
+  // `somaHomogenea` / `moedasDistintas` abaixo neste arquivo de export.
+  moeda?: string | null;
   confianca: number | null;
   origem_pagina: number | null;
   // db/migrations/0027 — posição da linha NO DOCUMENTO (0-based). É o sinal que

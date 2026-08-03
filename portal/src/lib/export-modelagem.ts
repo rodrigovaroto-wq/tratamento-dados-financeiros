@@ -1641,10 +1641,12 @@ export function construirAbaModelagem(
         // custou ~496x nas abas de dados na Etapa 1.
         percentual: false, oQue: "taxa de câmbio",
         deveriaDirigir:
-          "Receita, custo e dívida denominados em dólar. Hoje o modelo não separa moeda: o campo "
-          + "`moeda` é capturado na extração e DESCARTADO (não há coluna), então uma linha em USD "
-          + "é somada a uma em BRL sem nenhuma marca. Enquanto isso não mudar, esta linha é a "
-          + "única menção a câmbio no modelo.",
+          "Receita, custo e dívida denominados em dólar. A moeda JÁ é gravada por linha "
+          + "(db/migrations/0035): as abas declaram a moeda de cada coluna quando há mais de uma, e "
+          + "coluna que mistura moedas NÃO recebe total — a soma é recusada em vez de entregar um "
+          + "número errado pelo câmbio. O que ainda NÃO existe é conversão: o modelo não traduz USD "
+          + "em BRL nem projeta receita dolarizada por esta expectativa de câmbio. Converter exige "
+          + "taxa e data-base decididas pelo analista, e essa decisão não é do gerador.",
       },
     ];
 

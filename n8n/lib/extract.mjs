@@ -627,10 +627,20 @@ export function diagnosticarErroApi(erro) {
   };
 }
 
-export function parseExtractionResponse(apiJson) {
+// AVISO DO CONTEÚDO ENVIADO (`avisoConteudo`): o que o preparo do conteúdo já
+// sabia estar faltando ANTES da chamada — planilha acima do teto de linhas/
+// colunas (`avisoTruncamentoPlanilha`) ou formato que nem foi extraído (XLSX sem
+// o "Extract From File" ligado). A extração pode voltar impecável e ainda assim
+// estar incompleta, porque o pedaço que falta nunca chegou à IA. Ele entra em
+// `falhaMotivo` — que a 0016 converte em pendência visível — SOMANDO-SE ao motivo
+// da própria chamada em vez de competir com ele: os dois cabem no mesmo
+// documento (planilha cortada E resposta truncada), e esconder um dos dois já é
+// a falha que estamos fechando.
+export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) {
   const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
+  const comAviso = (motivo) => [avisoConteudo, motivo].filter(Boolean).join(' | ') || null;
   const vazio = (falhaMotivo) => ({
-    moeda: null, unidade: null, campos: [], falhaMotivo,
+    moeda: null, unidade: null, campos: [], falhaMotivo: comAviso(falhaMotivo),
     diagnostico: {
       entidade: null, tipo_confirma: null, tipo_sugerido: null, periodo_tipo: null,
       periodo_referencia: null, legibilidade: null, nota_legibilidade: null,
@@ -660,6 +670,18 @@ export function parseExtractionResponse(apiJson) {
     return vazio('Resposta da OpenAI não veio em JSON válido.');
   }
   const unidade = normalizarUnidade(p.unidade);
+  // MOEDA DO DOCUMENTO, HERDADA POR LINHA — item 2 do §7.4 do Onboarding.
+  //
+  // `normalizarMoeda` existe desde sempre e o schema já pede `moeda` à IA, mas o
+  // valor morria AQUI: só o cabeçalho do retorno o carregava, nenhum campo o
+  // levava ao banco (não havia coluna), e o book somava USD com BRL como se
+  // fossem a mesma grandeza. Com o erro de escala de ~496× corrigido, era o
+  // último fator multiplicativo invisível que sobrava.
+  //
+  // Herança pela MESMA regra da escala, e pelo mesmo motivo: linha não-monetária
+  // (percentual, LPA, quantidade) não tem moeda, e marcá-la como BRL faria o
+  // export tratar "margem 12%" como doze reais.
+  const moedaDoc = normalizarMoeda(p.moeda);
   // Remapeia as chaves curtas do fio (s/sc/ec/pc/k/vt/vn/op/cf) para os nomes
   // completos usados em todo o resto do sistema (campo_extraido e por diante)
   // — a compactação é só na conversa com a OpenAI, nada rio abaixo muda.
@@ -680,8 +702,9 @@ export function parseExtractionResponse(apiJson) {
         chave: l.k,
         valor_texto: l.vt ?? null,
         valor_num: typeof l.vn === 'number' ? l.vn : null,
-        // escala do documento, EXCETO em linha não-monetária (ver acima)
+        // escala e moeda do documento, EXCETO em linha não-monetária (ver acima)
         unidade: ehLinhaNaoMonetaria(l.k, l.vt) ? null : unidade,
+        moeda: ehLinhaNaoMonetaria(l.k, l.vt) ? null : moedaDoc,
         confianca: typeof l.cf === 'number' ? l.cf : null,
         origem_pagina: Number.isInteger(l.op) ? l.op : null,
       }))
@@ -702,11 +725,11 @@ export function parseExtractionResponse(apiJson) {
   // no meio de uma string/array e quebra o parse acima), mas se acontecer o
   // conteúdo pode estar incompleto de forma "silenciosa" (JSON bem formado,
   // faltando linhas do fim do documento) — sinaliza mesmo assim.
-  const falhaMotivo = finishReason === 'length'
+  const falhaMotivo = comAviso(finishReason === 'length'
     ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
       + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
-    : null;
-  return { moeda: normalizarMoeda(p.moeda), unidade, campos, diagnostico, falhaMotivo };
+    : null);
+  return { moeda: moedaDoc, unidade, campos, diagnostico, falhaMotivo };
 }
 
 export { OPENAI_URL, DEFAULT_MODEL, PERIODO_TIPO_ENUM };

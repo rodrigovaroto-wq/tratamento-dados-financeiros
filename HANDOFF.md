@@ -18,6 +18,103 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 22 (2026-08-03) — Fase 1: os dois itens que perdiam dado em silêncio
+
+O dono subiu no `main` o **`Onboarding`** (PDF de 67 páginas, commit `5edb89e`) e mandou usá-lo
+como base para dividir o desenvolvimento em fases — **só a contextualização, do capítulo 1 ao 7;
+o que é papel do estagiário, lista de documentos e banco de perguntas ficou fora por instrução
+dele.**
+
+### O §7.4 do Onboarding reordenou a prioridade — e eu estava errado
+
+Eu tinha proposto começar pela dupla contagem. O §7.4 nomeia **8 itens abertos** e ordena por
+risco/esforço: **itens 1 e 2 primeiro**, porque são os únicos que ainda **perdem ou corrompem
+dado em silêncio**. A dupla contagem (item 7) **já é sinalizada no arquivo com as duas leituras
+e não é corrigida automaticamente por doutrina** — corrigi-la calada seria violar a doutrina,
+não cumprir o plano. Esta sessão fechou os itens **1 e 2**.
+
+### Item 1 — truncamento de planilha (era 50 linhas)
+
+`spreadsheetToText` cortava em **50 linhas × 25 colunas**. 50 é menos do que documento real tem:
+faturamento de 24 meses × 5 entidades = 120 linhas; balancete analítico passa de 500. O resto ia
+embora com uma nota **dentro do prompt** (`… (+N linhas omitidas)`) que só a IA lia — o banco
+recebia a extração como completa e **nenhuma pendência existia**.
+
+- Tetos agora **2000 × 60** (`MAX_LINHAS_PLANILHA`/`MAX_COLUNAS_PLANILHA`), que é ordem de
+  grandeza de documento real. O teto continua existindo porque input é dinheiro.
+- O que ainda passar do teto vira **`avisoTruncamentoPlanilha`** → `falha_motivo` → pendência
+  `extracao_falhou` (a 0016 já fazia essa conversão; o que faltava era chegar lá).
+- **Coluna pela UNIÃO das chaves**, não pelas da primeira linha: o "Extract From File" devolve
+  objeto esparso, e célula vazia na linha 0 **apagava a coluna do documento inteiro**. Achado ao
+  escrever o teste, não previsto no §7.4.
+- **XLSX deixou de mentir:** o nó mandava a frase "(XLSX: habilitar Extract From File…)" **como
+  se fosse o documento**, pagava a chamada e a pendência dizia que a *extração* falhou — não que
+  o arquivo **nunca foi lido**. Agora o motivo real vira pendência. Pular a chamada exige nó IF
+  (topologia = fase 3).
+- O aviso **soma-se** ao motivo da chamada em vez de competir: planilha cortada **e** resposta
+  truncada cabem no mesmo documento.
+
+### Item 2 — moeda capturada e descartada (`db/migrations/0035`)
+
+O caminho existia inteiro **menos o último metro**: o schema já pedia `moeda` à IA,
+`normalizarMoeda` já convertia "US$"/"dolar" no ISO desde sempre, e o valor **morria no nó** —
+nenhum campo o levava ao banco, porque **não havia coluna**. Com o erro de escala de ~496×
+corrigido na Etapa 1, era o **último fator multiplicativo invisível**: dólar somado a real erra
+**pelo câmbio inteiro** (~5x), num arquivo que fecha.
+
+- **`campo_extraido.moeda`** (0035), herdada por linha pela **mesma regra da escala** — bloqueada
+  em linha não-monetária, porque "margem 12%" com moeda BRL viraria doze reais.
+- **Moeda desconhecida fica `null`, nunca BRL presumido.** Presumir é o mesmo erro com outra
+  roupa.
+- **`unidade` continua sendo a ESCALA.** O comentário da 0005 dizia `-- ex.: 'BRL', 'milhares'`,
+  confundindo as duas numa coluna só; na prática sempre gravou escala. A 0035 **não migra nada** —
+  separa as duas de agora em diante.
+- **No book:** a moeda aparece no cabeçalho da coluna **quando discrimina** (mais de uma moeda no
+  arquivo, ou coluna mista) — book todo em BRL não ganha "(BRL)" em cada coluna, porque rótulo
+  redundante ensina a não ler o cabeçalho.
+- **Coluna que mistura moedas NÃO recebe total.** Os 4 pontos de `SUM` passam por
+  `escreverSomaOuRecusa`: a célula recebe "⚠ não somável" + nota nomeando as moedas. **Só a soma
+  é recusada** — os valores individuais continuam todos visíveis. É a doutrina de sempre (mostrar
+  as leituras, não consertar sozinho), sem a parte de emitir um número errado.
+
+### Contadores (todos subiram, nenhum caiu)
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 162 | **171** |
+| `verificar-export.mts` | 352 | **361** |
+| `db/test/run.sh` | 34 migrations | **35** + `moeda.test.sql` (7 asserts) |
+| `test/e2e/run.mts` | 24 | **27** |
+
+### Cada correção teve o defeito RELIGADO para ver o teste reprovar
+
+Não é formalidade — duas fixtures deste projeto nasceram vazias e passavam com o bug ligado.
+
+- teto de volta a 50 → **3 reprovações**, incluindo o caso de 120 linhas fixas no teste;
+- `moeda` fora do campo → **4 reprovações** na suíte n8n;
+- `moeda` fora do insert da 0035 → **`ERROR: FALHOU: as duas linhas em USD gravaram moeda USD —
+  esperado 2, veio 0`**;
+- guarda do export desligada → **6 reprovações**, e a célula voltou a exibir `SUM(B4:B5)` = **7000
+  somando BRL 5000 com USD 2000** — exatamente o total falso que a guarda existe para impedir.
+
+### O Onboarding está desatualizado em dois pontos (decisão do dono)
+
+O PDF foi gerado de um retrato **anterior ao merge dos PRs #70/#71**: o §7.2 e o §7.5 dizem que as
+**Etapas 3 a 6 estão "Não iniciada"** e contam **33 migrations** com suítes de **160/273/18**. O
+repositório diz outra coisa — as seis executadas na sessão 21, a Etapa 4 em
+`portal/src/lib/export.ts`, e os contadores da tabela acima. **Não toquei no PDF**; corrigir esses
+dois trechos e os contadores é decisão dele.
+
+### O que fica para as próximas fases (do §7.4, na ordem que o Onboarding propõe)
+
+- **#3 e #4** — `completude_ok` verde com book vazio e `fn_aceitar_extracao` aceitando versão com
+  zero campos ("um aceite formal de nada"): **próxima fase**.
+- **#5** — poller de 12 min e recusa por estouro de orçamento visível só no log do n8n.
+- **#6** — causa das 5 pré-condições que falharam no v33, ainda desconhecida.
+- **#7** — dupla contagem: **decisão de doutrina**, não correção silenciosa.
+- **#8** — golden set físico, que é o que bloqueia a F4 inteira.
+
+
 ## Sessão 21 (2026-08-01) — Etapas 1 a 6, a partir do teste v35
 
 O dono mandou o export do **v35** (o v34 tinha rodado com a API errada no nó da OpenAI) e pediu:

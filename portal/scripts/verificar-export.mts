@@ -3302,6 +3302,107 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(40) com a média histórica, o modelo segue resolvendo (nada de #VALUE!)", String(comMedia));
 }
 
+// ---- 41: MOEDA (db/migrations/0035) — item 2 do §7.4 do Onboarding ---------
+// Até a 0035 a moeda era extraída e descartada: uma linha em USD entrava na mesma
+// soma que uma em BRL, sem marca nenhuma. Erro pelo câmbio inteiro (~5x) num
+// arquivo que fecha — a assinatura exata da família de falha que este projeto
+// combate. Estas verificações travam as duas metades da correção: a moeda APARECE
+// onde discrimina, e a soma que não é somável NÃO é emitida.
+{
+  const VB = "vBRL", VU = "vUSD";
+  const campos: CampoExtraido[] = [
+    // Operação no Brasil, em reais.
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1200, moeda: "BRL", documento_versao_id: VB }),
+    campo({ chave: "Duplicatas a receber", secao: "Ativo Circulante", valor_num: 3400, moeda: "BRL", documento_versao_id: VB }),
+    // Subsidiária exportadora, em dólares — MESMOS valores de propósito: sem a
+    // coluna de moeda, estas linhas são indistinguíveis das de cima.
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1200, moeda: "USD", documento_versao_id: VU }),
+    campo({ chave: "Duplicatas a receber", secao: "Ativo Circulante", valor_num: 3400, moeda: "USD", documento_versao_id: VU }),
+  ];
+  const documentos: DocumentoParaExport[] = [
+    { id: "dBR", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Operação BR" },
+      periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: VB, nome_original: "bp-br.pdf" }] },
+    { id: "dUS", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Export Co" },
+      periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: VU, nome_original: "bp-us.pdf" }] },
+  ];
+  const ws = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") })
+    .getWorksheet("Balanço")!;
+
+  const cabecalhos: string[] = [];
+  for (let c = 1; c <= ws.columnCount; c++) cabecalhos.push(String(ws.getRow(1).getCell(c).value ?? ""));
+  const hBR = cabecalhos.find((h) => h.startsWith("Operação BR")) ?? "";
+  const hUS = cabecalhos.find((h) => h.startsWith("Export Co")) ?? "";
+  checar(hBR.includes("(BRL)"),
+    "(41) com duas moedas no arquivo, a coluna em real DIZ que é BRL", hBR);
+  checar(hUS.includes("(USD)"),
+    "(41) …e a coluna em dólar DIZ que é USD — era o que faltava para o analista ver", hUS);
+}
+
+// ---- 42: coluna que MISTURA moedas não recebe soma -------------------------
+// O caso grave: duas moedas dentro da MESMA coluna (mesma entidade × período).
+// Nenhuma inspeção visual pega, e um SUM ali entrega um total plausível e errado.
+{
+  const V = "vMisto";
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Receita mercado interno", secao: "Ativo Circulante", valor_num: 5000, moeda: "BRL", documento_versao_id: V }),
+    campo({ chave: "Receita de exportação", secao: "Ativo Circulante", valor_num: 2000, moeda: "USD", documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dMisto", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Mista" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: V, nome_original: "bp-misto.pdf" }],
+  }];
+  const ws = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") })
+    .getWorksheet("Balanço")!;
+
+  const linhaDe = (rot: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === rot) return r;
+    return -1;
+  };
+  const rAC = linhaDe("Ativo Circulante");
+  const cel = ws.getRow(rAC).getCell(2);
+  const temFormula = typeof cel.value === "object" && cel.value != null && "formula" in (cel.value as object);
+  checar(!temFormula,
+    "(42) coluna com moedas misturadas NÃO recebe fórmula de soma (7000 seria falso)",
+    JSON.stringify(cel.value));
+  checar(String(cel.value ?? "").includes("não somável"),
+    "(42) …e a célula diz POR QUE está vazia, em vez de ficar em branco", String(cel.value));
+  checar(notaDaLinha(ws, rAC).includes("BRL + USD"),
+    "(42) …e a nota nomeia as duas moedas encontradas", notaDaLinha(ws, rAC).slice(0, 140));
+  checar(String(ws.getRow(1).getCell(2).value ?? "").includes("MOEDAS MISTURADAS"),
+    "(42) …e o cabeçalho da coluna avisa antes de o analista somar à mão",
+    String(ws.getRow(1).getCell(2).value));
+  // Os valores individuais continuam TODOS lá: recusar a soma não é esconder dado.
+  const rotulos: string[] = [];
+  for (let r = 1; r <= ws.rowCount; r++) rotulos.push(String(ws.getRow(r).getCell(1).value ?? ""));
+  checar(rotulos.includes("Receita mercado interno") && rotulos.includes("Receita de exportação"),
+    "(42) as duas linhas seguem visíveis — só o total foi omitido");
+}
+
+// ---- 43: book de uma moeda só não ganha ruído ------------------------------
+// Rótulo redundante em toda coluna ensina o analista a não ler o cabeçalho.
+{
+  const V = "vSo";
+  const campos: CampoExtraido[] = [
+    campo({ chave: "Caixa e bancos", secao: "Ativo Circulante", valor_num: 1200, moeda: "BRL", documento_versao_id: V }),
+    campo({ chave: "Duplicatas a receber", secao: "Ativo Circulante", valor_num: 3400, moeda: "BRL", documento_versao_id: V }),
+  ];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dSo", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Só BRL" },
+    periodo: { tipo: "anual", referencia: "2025" }, documento_versao: [{ id: V, nome_original: "bp.pdf" }],
+  }];
+  const ws = buildExportWorkbook({ caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-07-27T12:00:00Z") })
+    .getWorksheet("Balanço")!;
+  checar(!String(ws.getRow(1).getCell(2).value ?? "").includes("(BRL)"),
+    "(43) arquivo com uma moeda só não repete a moeda em cada cabeçalho",
+    String(ws.getRow(1).getCell(2).value));
+  const rAC = (() => {
+    for (let r = 1; r <= ws.rowCount; r++) if (String(ws.getRow(r).getCell(1).value ?? "") === "Ativo Circulante") return r;
+    return -1;
+  })();
+  checar(avaliar(ws, "B", rAC) === 4600,
+    "(43) …e a soma continua sendo emitida normalmente", String(avaliar(ws, "B", rAC)));
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);
