@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
-  ampliarNotasNoBuffer, buildExportWorkbook, nomeArquivoSanitizado,
+  ampliarNotasNoBuffer, buildExportWorkbook, nomeArquivoSanitizado, type ConfigModelagem,
   type DocumentoParaExport, type MacroAnual, type MacroExpectativa,
 } from "@/lib/export";
 import type { CampoExtraido } from "@/lib/types";
@@ -184,7 +184,104 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     ? { anuais, expectativas, nomes }
     : undefined;
 
-  const workbook = buildExportWorkbook({ caso, documentos, campos, macro, macroErro, causasDeFalha, modo });
+  // ---- Fase 7.4: a configuração de modelagem e o Portão 2 -------------------
+  //
+  // O modo COMPLETO carrega um modelo projetado. Entregar isso sobre base que não
+  // passou o Portão 2 seria dar aparência de resultado aprovado a número que
+  // ninguém aprovou — e a regra do portão é determinística (f0/04, 0037), então
+  // não há julgamento a fazer aqui: pergunta-se e obedece-se.
+  //
+  // O modo DADOS não passa por aqui de propósito: ele é insumo de CONFERÊNCIA, e
+  // conferir é justamente o que se faz antes de aprovar. Bloqueá-lo criaria o
+  // impasse de precisar da aprovação para poder conferir.
+  let modelagemConfig: ConfigModelagem | undefined;
+  if (modo === "completo") {
+    const portao = await supabase.rpc("fn_avaliar_portao2", { p_caso_id: id });
+    const aval = portao.data as { elegivel?: boolean; motivos?: string[] } | null;
+    if (aval && aval.elegivel === false) {
+      return NextResponse.json(
+        {
+          error: "O export COMPLETO foi recusado: este caso não passou o Portão 2.",
+          motivos: aval.motivos ?? [],
+          dica: "Use \"Exportar dados\" para conferir a extração — esse modo não depende do portão. "
+            + "O completo carrega modelo projetado, e projetar sobre base não aprovada dá aparência "
+            + "de resultado aprovado a número que ninguém aprovou.",
+        },
+        { status: 409 },
+      );
+    }
+
+    // A configuração vem em três consultas porque são três coisas distintas:
+    // parâmetros do caso, premissas ativas (com o catálogo para saber a fórmula),
+    // e o vínculo linha↔premissa. Ausência de qualquer uma NÃO é erro: o arquivo
+    // sai com o esqueleto agregado, como sempre saiu.
+    const [paramRes, premRes, vincRes, linhasRes] = await Promise.all([
+      supabase.from("caso_modelagem").select("*").eq("caso_id", id).maybeSingle(),
+      supabase.from("caso_premissa")
+        .select("premissa_codigo, valores, premissa_catalogo!inner(nome, formula, unidade)")
+        .eq("caso_id", id).eq("ativo", true),
+      supabase.from("caso_linha_premissa")
+        .select("rotulo_norm, secao_canonica, premissa_codigo, sazonalidade_codigo")
+        .eq("caso_id", id),
+      supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id }),
+    ]);
+
+    const par = paramRes.data as unknown as {
+      entidade: string | null; ultimo_exercicio_real: number | null; anos_projetados: number;
+    } | null;
+    // O embed do PostgREST vem como ARRAY (ele não assume 1:1 no tipo gerado),
+    // então normaliza-se aqui em vez de confiar no formato — um `?.nome` sobre
+    // array daria `undefined` silencioso e a premissa apareceria sem nome no
+    // arquivo.
+    type EmbedCatalogo = { nome: string; formula: string; unidade: string | null };
+    const premissas = ((premRes.data ?? []) as unknown as Array<{
+      premissa_codigo: string; valores: Record<string, number>;
+      premissa_catalogo: EmbedCatalogo | EmbedCatalogo[] | null;
+    }>).map((p) => {
+      const cat = Array.isArray(p.premissa_catalogo) ? p.premissa_catalogo[0] : p.premissa_catalogo;
+      return {
+        codigo: p.premissa_codigo,
+        nome: cat?.nome ?? p.premissa_codigo,
+        formula: cat?.formula ?? "",
+        unidade: cat?.unidade ?? null,
+        valores: p.valores ?? {},
+      };
+    });
+
+    // O rótulo EXIBIDO e o valor base vêm de `fn_linhas_para_modelagem` (0039),
+    // casados pelo `rotulo_norm` — que é a mesma identidade que o vínculo usa. Sem
+    // esse casamento o arquivo mostraria a chave normalizada em vez da grafia do
+    // documento, e o analista não reconheceria a conta.
+    const infoDaLinha = new Map(
+      ((linhasRes.data ?? []) as unknown as Array<{
+        rotulo_norm: string; chave: string; valor_ultimo: number | null;
+      }>).map((l) => [l.rotulo_norm, l]),
+    );
+    const linhas = ((vincRes.data ?? []) as unknown as Array<{
+      rotulo_norm: string; secao_canonica: string | null;
+      premissa_codigo: string | null; sazonalidade_codigo: string | null;
+    }>).map((v) => ({
+      rotulo: infoDaLinha.get(v.rotulo_norm)?.chave ?? v.rotulo_norm,
+      secaoCanonica: v.secao_canonica,
+      premissaCodigo: v.premissa_codigo,
+      sazonalidadeCodigo: v.sazonalidade_codigo,
+      valorBase: infoDaLinha.get(v.rotulo_norm)?.valor_ultimo ?? null,
+    }));
+
+    if (par || premissas.length > 0 || linhas.length > 0) {
+      modelagemConfig = {
+        entidade: par?.entidade ?? null,
+        ultimoExercicioReal: par?.ultimo_exercicio_real ?? null,
+        anosProjetados: par?.anos_projetados ?? 5,
+        premissas,
+        linhas,
+      };
+    }
+  }
+
+  const workbook = buildExportWorkbook({
+    caso, documentos, campos, macro, macroErro, causasDeFalha, modo, modelagemConfig,
+  });
   const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
   // O nome do arquivo DIZ qual dos dois é. Dois arquivos com o mesmo nome na
   // pasta de Downloads, um com modelo e outro sem, é confusão garantida — e a

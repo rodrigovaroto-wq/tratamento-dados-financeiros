@@ -727,6 +727,43 @@ interface CtxAno {
 
 const MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
+// A configuração que a seção Modelagem do portal produz (db/migrations/0038).
+//
+// Chega PRONTA: o export não decide premissa nem vínculo, só desenha o que foi
+// decidido. É a mesma disciplina do resto do arquivo — quem decide é o humano no
+// portal, e a decisão fica no banco com autor e data.
+export interface ConfigModelagem {
+  entidade: string | null;
+  ultimoExercicioReal: number | null;
+  anosProjetados: number;
+  premissas: Array<{
+    codigo: string;
+    nome: string;
+    formula: string;
+    unidade: string | null;
+    valores: Record<string, number>;
+  }>;
+  linhas: Array<{
+    rotulo: string;
+    secaoCanonica: string | null;
+    premissaCodigo: string | null;
+    sazonalidadeCodigo: string | null;
+    // Valor da linha no último exercício REAL. É a base da projeção, e vem do
+    // banco como FOTO — mesma natureza da BASE DO MODELO da Etapa 3.
+    valorBase: number | null;
+  }>;
+}
+
+// As primitivas de projeção que este gerador sabe desenhar hoje.
+//
+// `premissa_formula` (0038) tem sete valores; três estão implementadas. As outras
+// quatro deixam a célula VAZIA com a nota dizendo por quê — nunca um número
+// inventado. Zero num modelo financeiro é um valor, não um vazio: preencher com
+// zero seria entregar projeção errada com aparência de projeção pronta.
+const PRIMITIVAS_IMPLEMENTADAS = new Set([
+  "crescimento_composto", "indice_macro", "valor_por_ano",
+]);
+
 export function construirAbaModelagem(
   workbook: ExcelJS.Workbook,
   caso: { nome: string },
@@ -743,9 +780,18 @@ export function construirAbaModelagem(
   // chegando porque carrega a cobertura por série e os nomes; os números vêm
   // daqui.
   macroDados?: MacroParaExport,
+  // Fase 7.4 — a configuração de modelagem escolhida no portal (0038/0039).
+  // Ausente = o arquivo sai como sempre saiu (só o esqueleto agregado), que é o
+  // fallback para todo caso que ainda não passou pela seção Modelagem.
+  config?: ConfigModelagem,
 ): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet(ABA_MODELAGEM, {
-    views: [{ state: "frozen", xSplit: 2, ySplit: 11 }],
+    // CONGELADO EM 4 LINHAS (era 11), por decisão do dono: só título, linha em
+    // branco, Exercício e mês ficam fixos no topo. Entidade modelada, último
+    // exercício realizado e índice macro saíram daqui — são escolhidos na seção
+    // Modelagem do portal e ficam registrados no bloco de PARÂMETROS do rodapé,
+    // onde a auditoria os encontra sem ocupar o alto da tela.
+    views: [{ state: "frozen", xSplit: 2, ySplit: 4 }],
   });
 
   const primeiroAno = anosHistoricos[0] ?? new Date().getFullYear() - 1;
@@ -760,10 +806,19 @@ export function construirAbaModelagem(
   const cm = (y: number, m: number) => sheet.getColumn(idxMes(y, m)).letter;
   const cfy = (y: number) => sheet.getColumn(idxFY(y)).letter;
 
-  let refEntidade = "$C$3";
-  let refCorte = "$C$4";
-  let linhaAno = 8;
-  let linhaData = 9;
+  // ---- PARÂMETROS NO RODAPÉ (Fase 7.4) -------------------------------------
+  // Os endereços têm de ser conhecidos ANTES de o modelo ser escrito (as fórmulas
+  // citam `refEntidade`/`refCorte` em toda coluna), e por isso o bloco mora em
+  // LINHA FIXA, como a BASE DO MODELO — mesma razão, mesmo padrão. Se o modelo
+  // crescer até aqui, a geração FALHA em vez de sobrescrever linha de modelo.
+  const LINHA_PARAM_INICIO = 186;
+  // `const` agora: o endereço é FIXO desde a 7.4. Antes eram `let` porque o
+  // número da linha só se conhecia ao emitir o cabeçalho — o bloco de parâmetros
+  // no rodapé é o que torna o endereço conhecido de antemão.
+  const refEntidade = `$C$${LINHA_PARAM_INICIO + 1}`;
+  const refCorte = `$C$${LINHA_PARAM_INICIO + 2}`;
+  let linhaAno = 3;
+  let linhaData = 4;
 
   sheet.getColumn(1).width = 52;
   sheet.getColumn(2).width = 11;
@@ -815,6 +870,9 @@ export function construirAbaModelagem(
   const LINHA_MACRO_INICIO = LINHA_BASE_INICIO + LINHAS_BASE.length + 3;
   let macroLocal: RefsMacro | null = null;
   let escreverMacroLocal: () => void = () => {};
+  // Idem para o seletor de índice macro: a célula vive no rodapé (7.4) e só pode
+  // ser TOCADA depois de o modelo estar escrito.
+  let escreverSeletorMacro: () => void = () => {};
   if (macro && macroDados) {
     const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
     const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort();
@@ -1012,53 +1070,18 @@ export function construirAbaModelagem(
     cell.fill = INPUT_FILL;
     cell.border = INPUT_BORDER;
   };
-  // ---- Cabeçalho -----------------------------------------------------------
+  // ---- Cabeçalho: título, branco, e a timeline. Nada mais. ------------------
+  // Eram 11 linhas fixas no topo, com três células de input entre elas. Por
+  // decisão do dono ficaram QUATRO: o que comanda o modelo é escolhido no portal
+  // (seção Modelagem do mandato) e este arquivo sai já parametrizado.
   const tit = linha(`MODELAGEM — ${caso.nome}`);
   tit.font = { bold: true, size: 14 };
   linha("");
 
-  const rEnt = linha("Entidade modelada", "input");
-  refEntidade = `$C$${rEnt.number}`;
-  rEnt.getCell(3).value = entidadeSugerida;
-  marcarInput(rEnt.getCell(3));
-  rEnt.getCell(1).font = TOTAL_FONT;
-  if (entidadesDisponiveis.length > 0) {
-    rEnt.getCell(3).dataValidation = {
-      type: "list", allowBlank: false, showErrorMessage: true,
-      formulae: [`"${entidadesDisponiveis.join(",").replace(/"/g, "'")}"`],
-      errorTitle: "Entidade desconhecida",
-      error: "Escolha uma das entidades presentes nas abas de dados deste arquivo.",
-    };
-  }
-  rEnt.getCell(3).note = comoNota(
-    "A empresa modelada. Todo o modelo é recalculado a partir desta célula — nenhuma outra "
-    + "precisa ser tocada para trocar de empresa.",
-  );
-
-  const rCorte = linha("Último exercício realizado", "input");
-  refCorte = `$C$${rCorte.number}`;
-  rCorte.getCell(3).value = ultimoReal;
-  marcarInput(rCorte.getCell(3));
-  rCorte.getCell(1).font = TOTAL_FONT;
-  rCorte.getCell(3).note = comoNota(
-    "Exercícios até este ano puxam o número REAL das abas de dados (distribuído nos meses pela "
-    + "sazonalidade abaixo); os seguintes são projetados pelas premissas. Mover esta célula move "
-    + "o modelo inteiro, inclusive o sombreado das colunas projetadas.",
-  );
-
-  // ---- ETAPA 5: seletor de inputs macro ------------------------------------
-  // A célula fica AQUI, junto das outras duas que comandam o modelo (entidade e
-  // último exercício realizado), porque é da mesma natureza: uma célula que
-  // recalcula tudo. A tabela que ela indexa vem logo antes das premissas.
-  const rMetodo = linha("Índice macro que dirige a projeção", "input");
-  const refMetodo = `$C$${rMetodo.number}`;
-  rMetodo.getCell(1).font = TOTAL_FONT;
-  marcarInput(rMetodo.getCell(3));
-
-  const rEscala = linha("Escala dos valores");
-  rEscala.getCell(3).value = "conforme os documentos (ver aba Resumo)";
-  rEscala.getCell(3).font = { italic: true, size: 9, color: { argb: "FF64748B" } };
-  linha("");
+  // O seletor de índice macro continua existindo como CÉLULA (a tabela de
+  // metodologias da Etapa 5 o indexa), só mudou de lugar — vai para o bloco de
+  // parâmetros do rodapé, junto de entidade e corte.
+  const refMetodo = `$C$${LINHA_PARAM_INICIO + 3}`;
 
   // ---- Timeline ------------------------------------------------------------
   const rAno = linha("Exercício");
@@ -1109,6 +1132,124 @@ export function construirAbaModelagem(
     fy.alignment = { horizontal: "center" };
   }
   rTipo.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+
+  // ======================= PROJEÇÃO POR LINHA DO CASO ========================
+  // Fase 7.4, e o coração do pedido do dono: "cada caso vai vir com linhas
+  // diferentes… projetar cada linha baseado em cada premissa".
+  //
+  // Vem ANTES do esqueleto agregado porque é o modelo DESTE mandato; o esqueleto
+  // que segue é a visão agregada das demonstrações, que continua valendo (e é o
+  // único modelo quando o caso ainda não passou pela seção Modelagem).
+  //
+  // Só as colunas FY recebem fórmula. Distribuir nos meses depende da primitiva
+  // `curva_mensal` (sazonalidade), que ainda não está desenhada — e mês
+  // preenchido por rateio uniforme seria um número que ninguém escolheu.
+  if (config && config.linhas.length > 0) {
+    const tituloBloco = linha("PROJEÇÃO POR LINHA — premissas escolhidas no portal");
+    tituloBloco.font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+    tituloBloco.getCell(1).fill = BLOCO_FILL;
+    tituloBloco.getCell(1).note = comoNota(
+      "Cada linha abaixo é uma linha EXTRAÍDA deste caso, projetada pela premissa que o analista "
+      + "vinculou a ela na seção Modelagem do portal. Linha sem premissa não aparece aqui — ela "
+      + "existe nas abas de dados e simplesmente não é projetada, que é escolha legítima e "
+      + "declarada.\n\n"
+      + "O valor do último exercício real é uma FOTO do banco no momento da exportação, como a "
+      + "BASE DO MODELO. Corrigir a extração e reexportar é o caminho; editar aqui muda só este "
+      + "arquivo.",
+    );
+
+    // As premissas do caso, uma linha cada, com um valor por exercício projetado.
+    // Ficam AQUI, e não no bloco de premissas fixas, porque são as premissas
+    // DESTE caso — e é a célula delas que as linhas abaixo citam.
+    const linhaDaPremissa = new Map<string, number>();
+    for (const p of config.premissas) {
+      const r = linha(`↳ ${p.nome}`, p.unidade ?? "");
+      r.font = { italic: true, size: 9, color: { argb: "FF334155" } };
+      linhaDaPremissa.set(p.codigo, r.number);
+      for (let y = 0; y < nAnos; y++) {
+        const ano = primeiroAno + y;
+        if (ano <= ultimoReal) continue;               // premissa só vale no projetado
+        const v = p.valores[String(ano)];
+        const cell = r.getCell(idxFY(y));
+        if (typeof v === "number") {
+          cell.value = v;
+          cell.numFmt = p.unidade === "%" ? PCT_FMT : VALOR_NUM_FMT;
+          marcarInput(cell);
+        } else {
+          // Ano SEM valor fica VAZIO e diz por quê. A alternativa (zero) faria a
+          // linha projetar como se a premissa fosse nula — o erro que não se
+          // denuncia, e o mesmo que o "SEM FOCUS" já custou neste projeto.
+          cell.note = comoNota(
+            `A premissa "${p.nome}" não tem valor para ${ano} — as linhas que dependem dela ficam `
+            + "sem projeção neste exercício. Preencha na seção Modelagem do portal (ou aqui, se "
+            + "for ajuste só deste arquivo).",
+          );
+        }
+      }
+    }
+
+    for (const l of config.linhas) {
+      if (!l.premissaCodigo) continue;
+      const premissa = config.premissas.find((p) => p.codigo === l.premissaCodigo);
+      const r = linha(l.rotulo, l.secaoCanonica ?? "");
+      const rPrem = premissa ? linhaDaPremissa.get(premissa.codigo) : undefined;
+      const implementada = premissa && PRIMITIVAS_IMPLEMENTADAS.has(premissa.formula);
+
+      // O último real é literal: é a base da projeção e é foto, como a BASE DO
+      // MODELO. Vai na coluna do PRÓPRIO exercício de corte, para o analista ver
+      // de onde a curva partiu.
+      let colBase: string | null = null;
+      for (let y = 0; y < nAnos; y++) {
+        if (primeiroAno + y !== ultimoReal) continue;
+        if (l.valorBase != null) {
+          const c = r.getCell(idxFY(y));
+          c.value = l.valorBase;
+          c.numFmt = VALOR_NUM_FMT;
+          c.font = { color: { argb: "FF64748B" } };
+          colBase = cfy(y);
+        }
+      }
+
+      for (let y = 0; y < nAnos; y++) {
+        const ano = primeiroAno + y;
+        if (ano <= ultimoReal) continue;
+        const cell = r.getCell(idxFY(y));
+        if (!premissa || !rPrem) continue;
+        if (!implementada) {
+          cell.note = comoNota(
+            `A premissa "${premissa.nome}" usa a fórmula "${premissa.formula}", que este gerador `
+            + "ainda não desenha. A célula fica VAZIA de propósito: preencher com zero, ou com "
+            + "uma fórmula aproximada, entregaria projeção errada com cara de projeção pronta. "
+            + "As primitivas desenhadas hoje são crescimento composto, índice macro e valor por "
+            + "ano.",
+          );
+          continue;
+        }
+        const cPrem = `${cfy(y)}$${rPrem}`;
+        if (premissa.formula === "valor_por_ano") {
+          // Valor absoluto por exercício: a própria premissa É a linha.
+          cell.value = { formula: `IF(${cPrem}="","",${cPrem})` };
+        } else {
+          // Crescimento composto (e índice macro, que é a mesma matemática):
+          // exercício anterior × (1 + premissa). O anterior é a coluna FY do ano
+          // de trás — no primeiro projetado, é a base literal escrita acima.
+          const anterior = ano - 1 === ultimoReal ? colBase : cfy(y - 1);
+          if (!anterior) continue;
+          // A guarda testa SÓ a célula da premissa. A primeira versão testava
+          // também a do exercício anterior com `=""` — e comparar CÉLULA NUMÉRICA
+          // com string vazia é ambíguo (o assert (49) media 0 no lugar de 1100).
+          // Se a premissa está vazia, não há projeção; se a anterior está vazia, a
+          // cadeia nem começou, porque sem valor-base a linha não é emitida.
+          cell.value = {
+            formula: `IF(${cPrem}="","",${anterior}${r.number}*(1+${cPrem}))`,
+          };
+        }
+        cell.numFmt = VALOR_NUM_FMT;
+        cell.fill = PROJETADO_FILL;
+      }
+    }
+    linha("");
+  }
 
   const rCob = linha("Dado encontrado");
   for (let y = 0; y < nAnos; y++) {
@@ -1370,6 +1511,14 @@ export function construirAbaModelagem(
   const rMetodosFim = sheet.rowCount;
   {
     const opcoes = metodos.map((m) => m.rotulo);
+    // ESCRITA ADIADA, e o motivo é a armadilha nº 1 da sessão 12 registrada no
+    // HANDOFF: `sheet.getRow(N)` numa linha ALÉM do fim CRIA a linha, e todo
+    // `addRow` seguinte passa a acrescentar depois dela. A primeira versão desta
+    // mudança pegou a célula do seletor (linha 189) aqui, no meio do modelo, e o
+    // modelo inteiro desceu — foi de ~200 para 291 linhas, e a guarda do bloco de
+    // parâmetros acusou. Aqui só se DECIDE o conteúdo; escrever é no fim.
+    escreverSeletorMacro = () => {
+    const rMetodo = sheet.getRow(LINHA_PARAM_INICIO + 3);
     const cel = rMetodo.getCell(3);
     cel.value = opcoes[0] ?? "";
     // Vírgula é o separador da lista inline do Excel: um rótulo que a contenha
@@ -1395,6 +1544,7 @@ export function construirAbaModelagem(
     rMetodo.getCell(1).note = comoNota(
       `Metodologias disponíveis neste arquivo: ${opcoes.join("; ")}.`,
     );
+    };
   }
   linha("");
 
@@ -2034,6 +2184,73 @@ export function construirAbaModelagem(
   }
   // Agora sim: o modelo já ocupou as linhas dele, e escrever as células do
   // bloco não desloca mais nada.
+  // ---- PARÂMETROS (Fase 7.4) — escritos por último, em linha FIXA ----------
+  // As três células que saíram do topo. Elas continuam sendo células de verdade
+  // (o modelo inteiro as cita: trocar a entidade aqui recalcula tudo, sem
+  // reexportar), só não ocupam mais o alto da tela.
+  //
+  // A GUARDA vem antes de escrever: se o modelo cresceu até aqui, a geração
+  // FALHA. Sobrescrever linha de modelo em silêncio é o que esta guarda existe
+  // para impedir — mesma decisão da BASE DO MODELO.
+  if (sheet.rowCount >= LINHA_PARAM_INICIO) {
+    throw new Error(
+      `Modelagem: o modelo chegou à linha ${sheet.rowCount} e o bloco de PARÂMETROS começa em `
+      + `${LINHA_PARAM_INICIO}. Aumente LINHA_PARAM_INICIO (e LINHA_BASE_INICIO adiante) — `
+      + "sobrescrever linha de modelo daria um arquivo errado sem nenhum sinal.",
+    );
+  }
+  {
+    const tituloParam = sheet.getRow(LINHA_PARAM_INICIO).getCell(1);
+    tituloParam.value = "PARÂMETROS DO MODELO — escolhidos na seção Modelagem do portal";
+    tituloParam.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+    tituloParam.fill = BLOCO_FILL;
+    tituloParam.note = comoNota(
+      "Estas três células comandam o modelo inteiro e ANTES ficavam fixadas no topo da aba. Por "
+      + "decisão do dono elas passaram a ser escolhidas na seção Modelagem do mandato (no portal), "
+      + "e o arquivo sai já parametrizado com o que foi escolhido lá.\n\n"
+      + "Continuam EDITÁVEIS aqui: trocar a entidade recalcula o modelo inteiro sem reexportar. O "
+      + "que muda é que a escolha de origem fica registrada no banco, com autor e data — e é ela "
+      + "que vale quando você exportar de novo.",
+    );
+
+    const pEnt = sheet.getRow(LINHA_PARAM_INICIO + 1);
+    pEnt.getCell(1).value = "Entidade modelada";
+    pEnt.getCell(1).font = TOTAL_FONT;
+    pEnt.getCell(3).value = entidadeSugerida;
+    marcarInput(pEnt.getCell(3));
+    if (entidadesDisponiveis.length > 0) {
+      pEnt.getCell(3).dataValidation = {
+        type: "list", allowBlank: false, showErrorMessage: true,
+        formulae: [`"${entidadesDisponiveis.join(",").replace(/"/g, "'")}"`],
+        errorTitle: "Entidade desconhecida",
+        error: "Escolha uma das entidades presentes nas abas de dados deste arquivo.",
+      };
+    }
+
+    const pCorte = sheet.getRow(LINHA_PARAM_INICIO + 2);
+    pCorte.getCell(1).value = "Último exercício realizado";
+    pCorte.getCell(1).font = TOTAL_FONT;
+    pCorte.getCell(3).value = ultimoReal;
+    marcarInput(pCorte.getCell(3));
+    pCorte.getCell(3).note = comoNota(
+      "Exercícios até este ano puxam o número REAL das abas de dados; os seguintes são projetados "
+      + "pelas premissas. Mover esta célula move o modelo inteiro, inclusive o sombreado das "
+      + "colunas projetadas.",
+    );
+
+    const pMet = sheet.getRow(LINHA_PARAM_INICIO + 3);
+    pMet.getCell(1).value = "Índice macro que dirige a projeção";
+    pMet.getCell(1).font = TOTAL_FONT;
+    marcarInput(pMet.getCell(3));
+    // …e agora sim a validação/valor do seletor, com as opções decididas lá atrás.
+    escreverSeletorMacro();
+
+    const pEsc = sheet.getRow(LINHA_PARAM_INICIO + 4);
+    pEsc.getCell(1).value = "Escala dos valores";
+    pEsc.getCell(3).value = "conforme os documentos (ver aba Resumo)";
+    pEsc.getCell(3).font = { italic: true, size: 9, color: { argb: "FF64748B" } };
+  }
+
   escreverBaseLocal();
   escreverMacroLocal();
 
