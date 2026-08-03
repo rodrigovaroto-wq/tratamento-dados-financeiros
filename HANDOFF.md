@@ -18,6 +18,77 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 27 (2026-08-03) — Fase 7.3: a tela onde linha e premissa se cruzam
+
+`/casos/[id]/modelagem` (rota nova) + `db/migrations/0039`. É onde "cada caso é um caso" vira
+operação: o analista escolhe as premissas do mandato e diz **onde cada uma entra na projeção**.
+
+### Quatro passos, na ordem em que se pensa
+
+1. **Parâmetros** — entidade modelada, último exercício realizado, índice macro, setor, anos
+   projetados. São as três células que saíram do topo da aba Modelagem (decisão do dono), mais o
+   setor, que filtra o passo 2.
+2. **Premissas do caso** — o catálogo da `0038` **filtrado pelo setor**, agrupado por natureza, com
+   uma coluna por ano projetado. Sem setor definido vem só a base comum — que é a resposta certa
+   para "ainda não sei", e não uma lista de 90 premissas para escolher no escuro.
+3. **Linhas × premissas** — as linhas do caso agrupadas por seção canônica, cada uma com sua
+   premissa e sua sazonalidade, mais o **aplicar em lote por seção**.
+4. **Conferência** — e ela está no **TOPO**, não no rodapé: quantas linhas ficariam sem projeção,
+   qual premissa está ativa sem valor, quais vínculos apontam para linha que não existe. Pôr isso no
+   fim seria pôr o resultado depois da decisão.
+
+### Três coisas que a tela torna impossíveis
+
+- **ano em branco virar zero.** O campo vazio fica **fora** do `jsonb` — ausência é ausência, e a
+  `0038` trata premissa sem valor como "não projeta aquele ano". Escrever 0 ali seria inventar a
+  premissa mais perigosa que existe.
+- **lote silencioso.** Lote que não encontra nenhuma linha na seção **avisa** em vez de recarregar
+  como se tivesse funcionado.
+- **recusa passar por sucesso.** Toda ação lê `recusado` do payload: as funções da 0036/0037/0038
+  devolvem recusa em vez de exceção (exceção desfaria o registro da tentativa), então `error` nulo
+  **não** significa que salvou.
+
+### O defeito que eu mesmo introduzi, e o que fiz com ele
+
+A primeira versão da tela consultava `campo_extraido` direto para listar as linhas. **`campo_extraido`
+não tem `caso_id`** — o vínculo é `campo_extraido → documento_versao → documento`. Com a RLS aberta a
+qualquer autenticado (decisão do dono de 31/07), a consulta trazia as linhas de **todos os
+mandatos** para a tela de um. Nada barraria isso em produção.
+
+Corrigi primeiro com embed `!inner` e filtro no campo aninhado — funciona, e continua dependendo de
+alguém escrever o join certo em **cada consulta nova** que a tela receber. Então virou função:
+**`fn_linhas_para_modelagem(caso_id)`** (`0039`), com o escopo por caso num lugar só, coberto por
+teste SQL que cria um caso vizinho e prova que a linha dele não aparece. Mesmo raciocínio de
+`fn_aplicar_premissa_em_lote`: quem sabe quais linhas existem é o banco.
+
+A função também resolve uma duplicação que eu tinha deixado passar: a tela normalizava o rótulo em JS
+para casar com `caso_linha_premissa`. Duas definições de "mesma linha" divergem no primeiro
+caractere que só uma das duas trate — agora o `rotulo_norm` vem do banco, de `fn_normalizar_texto`.
+
+`valor_ultimo` é `max(abs())`, não soma: serve para o analista **reconhecer** a conta na lista, e
+somar ocorrências de períodos diferentes daria um número que não existe em lugar nenhum — número
+inexistente numa tela de modelagem é convite a erro.
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `verificar-export.mts` | 397 | **397** |
+| `db/test/run.sh` | 38 migrations | **39** + 3 asserts novos em `premissas.test.sql` (31) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+### Defeito religado
+
+- função sem o join por caso → `FALHOU: a linha do caso vizinho NÃO aparece nas linhas deste caso`.
+
+### O que falta da 7.x
+
+- **7.4** export completo: cabeçalho da Modelagem reduzido a 4 linhas, as linhas do modelo passam a
+  ser as do caso, projeção pelas 7 primitivas de `premissa_formula`, Portão 2 respeitado.
+- Depois disso, a **Fase 6 (calibração)**.
+
+
 ## Sessão 26 (2026-08-03) — Fase 7.2: a premissa deixa de ser código e passa a ser dado
 
 `db/migrations/0038`. O modelo tinha **15 premissas hardcoded** (`PR` em `export-modelagem.ts`)
