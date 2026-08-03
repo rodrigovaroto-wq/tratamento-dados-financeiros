@@ -18,6 +18,97 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 26 (2026-08-03) — Fase 7.2: a premissa deixa de ser código e passa a ser dado
+
+`db/migrations/0038`. O modelo tinha **15 premissas hardcoded** (`PR` em `export-modelagem.ts`)
+sobre um esqueleto fixo de linhas (`LINHAS_BASE`). Não sobrevive ao que o dono descreveu: "cada caso
+vai ser um caso, vai vir com linhas diferentes, contas diferentes, vai precisar de inputs e
+premissas diferentes".
+
+**A inversão:** premissa passa a ser **dado**. Acrescentar "RevPAR" ao vocabulário do sistema é uma
+LINHA no catálogo, não um ramo de `if` no gerador — é o que impede um agregado de 20 setores de
+virar 20 caminhos de código.
+
+### Quatro tabelas, e por que quatro
+
+| Tabela | O que guarda |
+|---|---|
+| `premissa_catalogo` | o vocabulário global: o que EXISTE como premissa |
+| `caso_modelagem` | parâmetros do caso — entidade modelada, último exercício real, índice macro, **setor** |
+| `caso_premissa` | quais premissas ESTE caso usa, com valor por ano (`jsonb`) |
+| `caso_linha_premissa` | o vínculo linha↔premissa: **onde cada input entra na projeção** |
+
+Separar catálogo de escolha é o que permite o catálogo crescer sem tocar em caso nenhum, e o caso
+ser auditável sem depender do catálogo do futuro.
+
+**A fronteira que os dois enums desenham:** `premissa_formula` (7 primitivas —
+`crescimento_composto`, `pct_de_linha`, `dias_de_giro`, `valor_por_ano`, `preco_x_volume`,
+`curva_mensal`, `indice_macro`) exige código novo no gerador; **premissa nova, não.**
+
+**Como a linha é identificada:** por `(secao_canonica, rotulo_norm, entidade)`, **não** por
+`campo_extraido.id` — aquele id morre a cada reextração, e a configuração de modelagem tem de
+sobreviver a reenviar um arquivo. Índice de **expressão** com `coalesce(...,'')` porque em `unique`
+normal NULL não colide com NULL, e duas configurações para a mesma linha passariam.
+
+### O catálogo semeado
+
+Base comum (30 premissas, `setores = '{}'`) + **20 setores**: indústria, varejo, serviços, agro,
+construção, logística, saúde, energia, tecnologia, alimentos, educação, mineração, papel e celulose,
+química, têxtil, automotivo, farma, telecom, hotelaria, imobiliário. **Sazonalidade está no catálogo
+COMO premissa**, com natureza própria — o dono foi explícito, e ela muda caixa e necessidade de giro.
+
+A descrição de cada premissa de setor diz **qual é a que manda** (a que o analista move primeiro):
+SSS no varejo, produtividade × preço no agro, sinistralidade em saúde, churn em tecnologia, RevPAR
+em hotelaria, produção do cliente em autopeças.
+
+**Setor é sugestão, não restrição.** `fn_premissas_sugeridas(setor)` devolve base comum + as do
+setor; `fn_vincular_linha_premissa` aceita **qualquer** premissa ativa. Em reestruturação o caso
+atípico é a regra — há teste de que um caso de indústria pode usar RevPAR se o analista quiser.
+
+### As guardas, e a que o teste descobriu
+
+- **Premissa fora do catálogo é recusada** (recusa retornada, padrão das 0036/0037) — premissa nova
+  entra por semente, não por caso.
+- **Não se vincula linha a premissa que o caso não ativou.** Sem isso a linha sairia "projetada" por
+  uma premissa sem valor nenhum — projetada com **zero**, que é a mesma armadilha do "SEM FOCUS" que
+  o macro já combate. O motivo da recusa diz isso, em texto.
+- **`fn_aplicar_premissa_em_lote` roda no BANCO**, não na tela: as linhas vêm de `campo_extraido`, e
+  é ali que se sabe quais existem. Num balancete de 500 linhas, fazer isso no portal seria 500
+  chamadas para uma decisão só. Devolve **quantas linhas pegou** — lote que pega zero não pode
+  parecer sucesso.
+- **`fn_conferir_modelagem` tinha um defeito que o teste pegou:** contava vínculos direto, e
+  reprovou mostrando `linhas_com_premissa: 4` sobre `linhas_do_caso: 3`, com `linhas_sem_premissa`
+  caindo a zero por subtração. Vínculo pode apontar para linha que não existe (configurada antes de
+  o documento chegar, ou o arquivo foi reextraído com outro rótulo). Agora conta **por join**, e os
+  órfãos ganham nome próprio no payload (`vinculos_orfaos`) — é a diferença entre "configurei" e
+  "está coberto".
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `verificar-export.mts` | 397 | **397** |
+| `db/test/run.sh` | 37 migrations | **38** + `premissas.test.sql` (28 asserts) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+### Defeito religado
+
+- guarda de premissa ativa desligada → `FALHOU: vincular a premissa não ativada no caso é recusado`,
+  com o vínculo tendo sido criado;
+- contagem sem o join → `FALHOU: conta como cobertas SÓ as que existem de fato`, mostrando
+  `linhas_com_premissa: 4` e `linhas_sem_premissa: 0` sobre 3 linhas reais.
+
+### O que vem
+
+- **7.3** portal: `/casos/[id]/modelagem` — parâmetros, premissas do caso (catálogo filtrado pelo
+  setor), **linhas × premissas com aplicar-em-lote**, e a conferência que `fn_conferir_modelagem`
+  já devolve;
+- **7.4** export completo: cabeçalho da Modelagem reduzido a 4 linhas, linhas do modelo passam a ser
+  as do caso, projeção pelas 7 primitivas, e o completo respeitando o Portão 2;
+- **Fase 6 (calibração)** depois.
+
+
 ## Sessão 25 (2026-08-03) — Fase 7.1: granularidade total e o export de dados
 
 O dono interrompeu a Fase 6 (calibração) para acertar o **output**: "cada linha de cada documento
