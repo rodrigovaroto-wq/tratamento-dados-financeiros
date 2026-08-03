@@ -4,7 +4,10 @@ import {
   buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
   normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria, diagnosticarErroApi,
 } from '../lib/extract.mjs';
-import { spreadsheetToText, parseCsv } from '../lib/spreadsheet.mjs';
+import {
+  spreadsheetToText, parseCsv, avisoTruncamentoPlanilha, colunasDaPlanilha,
+  MAX_LINHAS_PLANILHA, MAX_COLUNAS_PLANILHA,
+} from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
 test('extractionSchema é estrito, tem diagnóstico e array de linhas com chaves curtas', () => {
@@ -268,6 +271,89 @@ test('spreadsheetToText trunca e sinaliza linhas omitidas', () => {
   assert.match(t, /\+110 linhas omitidas/);
 });
 
+// --- Item 1 do §7.4 do Onboarding: truncamento de planilha ------------------
+// O teto ERA 50 linhas, e 50 é menos do que documento real tem. Estes testes
+// fixam as duas metades da correção: o teto cobre documento real, e o que
+// eventualmente sobrar do teto vira PENDÊNCIA em vez de nota no prompt.
+
+test('faturamento de 24 meses × 5 entidades (120 linhas) cabe INTEIRO no envio', () => {
+  // O caso do §7.4: "um faturamento de 24 a 36 meses perde o resto em silêncio".
+  // Com o teto antigo de 50, 70 das 120 linhas não chegavam à IA.
+  const rows = [];
+  for (const emp of ['Metalurgica', 'Componentes', 'Logistica', 'SPE', 'Holding']) {
+    for (let m = 1; m <= 24; m++) rows.push({ Empresa: emp, Mes: `${m}/2025`, Receita: 1000 + m });
+  }
+  assert.equal(rows.length, 120);
+  const t = spreadsheetToText(rows);
+  assert.doesNotMatch(t, /linhas omitidas/, 'não deve truncar documento de tamanho real');
+  assert.match(t, /Holding \| 24\/2025/, 'a última linha da última entidade tem de estar no texto');
+  assert.equal(avisoTruncamentoPlanilha(rows), null, 'nada cortado ⇒ nenhuma pendência');
+});
+
+test('acima do teto, o corte vira aviso que nomeia o tamanho — não silêncio', () => {
+  const rows = Array.from({ length: MAX_LINHAS_PLANILHA + 137 }, (_, i) => ({ A: i }));
+  const aviso = avisoTruncamentoPlanilha(rows);
+  assert.ok(aviso, 'linha cortada SEM aviso é o defeito que estamos fechando');
+  assert.match(aviso, /137 de 2137 linhas/);
+  assert.match(aviso, /INCOMPLETA/);
+});
+
+test('coluna acima do teto também vira aviso (não só linha)', () => {
+  const larga = {};
+  for (let c = 0; c < MAX_COLUNAS_PLANILHA + 3; c++) larga[`col${c}`] = c;
+  const aviso = avisoTruncamentoPlanilha([larga]);
+  assert.ok(aviso);
+  assert.match(aviso, /3 de 63 colunas/);
+});
+
+test('colunas saem da UNIÃO das linhas: célula vazia na linha 0 não apaga a coluna', () => {
+  // O "Extract From File" do N8N devolve objeto esparso — sem a união, uma
+  // planilha cuja primeira linha não tem 2024 preenchido perdia a coluna 2024
+  // do documento inteiro, que é perda silenciosa da mesma família.
+  const rows = [{ Conta: 'Receita', '2025': '100' }, { Conta: 'Custo', '2025': '-60', '2024': '-55' }];
+  // ORDEM: chave que parece inteiro ('2025') é reordenada pelo próprio JS para a
+  // frente das chaves textuais — não é escolha nossa e não se corrige aqui. Não
+  // causa desalinhamento porque cabeçalho e corpo usam a MESMA lista de colunas;
+  // o que este teste garante é a PRESENÇA das três, que é o que se perdia.
+  assert.deepEqual([...colunasDaPlanilha(rows)].sort(), ['2024', '2025', 'Conta']);
+  const t = spreadsheetToText(rows);
+  const [cabecalho, ...corpo] = t.split('\n');
+  assert.match(cabecalho, /2024/, 'a coluna ausente na linha 0 tem de aparecer no cabeçalho');
+  const iCol2024 = cabecalho.split(' | ').indexOf('2024');
+  assert.equal(corpo[1].split(' | ')[iCol2024], '-55', 'e o valor cai sob a própria coluna');
+});
+
+test('avisoConteudo entra em falhaMotivo mesmo quando a extração volta impecável', () => {
+  // A chamada pode voltar perfeita e o documento ainda estar incompleto, porque
+  // o pedaço que falta nunca chegou à IA. Sem isto, extração "ok" + planilha
+  // cortada = dashboard verde sobre dado parcial.
+  const boa = {
+    choices: [{
+      finish_reason: 'stop',
+      message: { content: JSON.stringify({
+        moeda: 'BRL', unidade: 'milhar',
+        diagnostico: { entidade: 'X', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual', periodo_referencia: '2025', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j' },
+        linhas: [{ s: null, sc: 'ATIVO_CIRCULANTE', ec: null, pc: null, k: 'Caixa', vt: '10', vn: 10, op: 1, cf: 0.9 }],
+      }) },
+    }],
+  };
+  const semAviso = parseExtractionResponse(boa);
+  assert.equal(semAviso.falhaMotivo, null, 'sem aviso e sem erro ⇒ nada a relatar');
+
+  const comAviso = parseExtractionResponse(boa, { avisoConteudo: 'Planilha maior que o teto de envio: 70 de 120 linhas não foram enviadas.' });
+  assert.equal(comAviso.campos.length, 1, 'as linhas que vieram continuam valendo');
+  assert.match(comAviso.falhaMotivo, /70 de 120 linhas/, 'o aviso tem de virar pendência');
+});
+
+test('avisoConteudo SOMA-SE ao motivo da chamada, não o substitui', () => {
+  // Planilha cortada E resposta truncada cabem no mesmo documento; esconder um
+  // dos dois é a falha que esta mudança fecha.
+  const truncada = { choices: [{ finish_reason: 'length', message: { content: '{"linhas":[' } }] };
+  const r = parseExtractionResponse(truncada, { avisoConteudo: 'XLSX nao foi lido' });
+  assert.match(r.falhaMotivo, /XLSX nao foi lido/);
+  assert.match(r.falhaMotivo, /finish_reason=length/);
+});
+
 test('parseCsv detecta separador e monta objetos', () => {
   const csv = 'Conta;Valor\nReceita;100\nCusto;-60';
   const rows = parseCsv(csv);
@@ -317,6 +403,78 @@ test('parseExtractionResponse normaliza escala e moeda do documento', () => {
   assert.equal(r.moeda, 'BRL');
   assert.equal(r.unidade, 'milhar');
   assert.equal(r.campos[0].unidade, 'milhar', 'a escala normalizada é a herdada por linha');
+  assert.equal(r.campos[0].moeda, 'BRL', 'a moeda também desce para a linha (0035)');
+});
+
+// --- Item 2 do §7.4 do Onboarding: moeda capturada e descartada -------------
+// `normalizarMoeda` sempre existiu e o schema sempre pediu `moeda` à IA; o valor
+// morria no cabeçalho do retorno, porque NENHUM campo o levava ao banco. Com a
+// escala de ~496× já corrigida, era o último fator multiplicativo invisível: uma
+// linha em dólar somada a reais erra pelo câmbio inteiro, num book que fecha.
+
+test('cada linha carrega a moeda do documento — é o que chega ao banco', () => {
+  const doc = (moeda) => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda, unidade: 'milhar',
+    diagnostico: {
+      entidade: 'Export Co', tipo_confirma: true, tipo_sugerido: 'DRE', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j',
+    },
+    linhas: [
+      { s: null, sc: 'RECEITA_LIQUIDA', ec: null, pc: null, k: 'Receita de exportação', vt: '2.400', vn: 2400, op: 1, cf: 0.97 },
+      { s: null, sc: 'RECEITA_LIQUIDA', ec: null, pc: null, k: 'Receita interna', vt: '600', vn: 600, op: 1, cf: 0.97 },
+    ],
+  }) } }] });
+
+  const emDolar = parseExtractionResponse(doc('US$'));
+  assert.deepEqual(emDolar.campos.map((c) => c.moeda), ['USD', 'USD']);
+
+  const emReal = parseExtractionResponse(doc('R$'));
+  assert.deepEqual(emReal.campos.map((c) => c.moeda), ['BRL', 'BRL']);
+
+  // Duas linhas de MESMO valor numérico e moedas diferentes: sem a coluna, são
+  // indistinguíveis — que é exatamente como o book somava USD com BRL.
+  assert.equal(emDolar.campos[0].valor_num, emReal.campos[0].valor_num);
+  assert.notEqual(emDolar.campos[0].moeda, emReal.campos[0].moeda);
+});
+
+test('moeda desconhecida fica null — nunca BRL presumido', () => {
+  // Presumir a moeda da maioria é o mesmo erro com outra roupa: um documento de
+  // subsidiária em USD entraria como real e ninguém veria.
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: null, unidade: 'milhar',
+    diagnostico: {
+      entidade: 'X', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j',
+    },
+    linhas: [{ s: null, sc: 'ATIVO_CIRCULANTE', ec: null, pc: null, k: 'Caixa', vt: '10', vn: 10, op: 1, cf: 0.9 }],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.moeda, null);
+  assert.equal(r.campos[0].moeda, null, 'sem moeda declarada, a linha fica sem moeda');
+});
+
+test('linha não-monetária não herda moeda (mesma regra da escala)', () => {
+  // "Margem 12%" com moeda BRL faria o export tratar doze por cento como doze
+  // reais — o motivo pelo qual a escala já era bloqueada nessas linhas.
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'R$', unidade: 'milhar',
+    diagnostico: {
+      entidade: 'X', tipo_confirma: true, tipo_sugerido: 'DRE', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'r', justificativa: 'j',
+    },
+    linhas: [
+      { s: null, sc: 'RECEITA_LIQUIDA', ec: null, pc: null, k: 'Receita líquida', vt: '1.000', vn: 1000, op: 1, cf: 0.9 },
+      { s: null, sc: null, ec: null, pc: null, k: 'Margem bruta (%)', vt: '12%', vn: 12, op: 1, cf: 0.9 },
+      { s: null, sc: null, ec: null, pc: null, k: 'Lucro por ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
+    ],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.campos[0].moeda, 'BRL', 'conta monetária herda');
+  assert.equal(r.campos[1].moeda, null, 'percentual não herda moeda');
+  assert.equal(r.campos[2].moeda, null, 'LPA não herda moeda');
+  // E a escala continua bloqueada nas mesmas linhas — os dois andam juntos.
+  assert.equal(r.campos[1].unidade, null);
+  assert.equal(r.campos[2].unidade, null);
 });
 
 // --- Prompt: instruções que blindam a variação entre contratos --------------

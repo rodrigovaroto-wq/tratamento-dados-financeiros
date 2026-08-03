@@ -21,7 +21,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from './lib/extract.mjs';
+import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
@@ -99,6 +99,11 @@ const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};
 // 1000x. O comentário da própria fonte diz "errar em 1000x é pior que não saber";
 // perder a escala silenciosamente entrega exatamente esse 1000x.
 const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString()};`;
+// Idem para a moeda: embutida do fonte, nunca copiada à mão — é o que garante
+// que o nó e a lib normalizem "US$"/"dolar"/"usd" para o MESMO 'USD'. Divergir
+// aqui reintroduziria exatamente a soma de moedas diferentes que a coluna
+// `campo_extraido.moeda` existe para impedir.
+const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};`;
 
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
 const FONTE_ORCAMENTO_LOTE = `const orcamentoDoLote = ${orcamentoDoLote.toString()};`;
@@ -198,13 +203,28 @@ const mt=(binMeta.mimeType||'').toLowerCase();
 const buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');
 const b64=buf.toString('base64');
 function parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}
-function sheetTxt(rows,mr=50,mc=25){if(!rows.length)return '(planilha vazia)';const cols=Object.keys(rows[0]).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
-let part;
+// TETOS: 2000x60, nao 50x25 -- espelha lib/spreadsheet.mjs (MAX_LINHAS_PLANILHA).
+// 50 linhas e' menos do que um documento real tem (24 meses x 5 entidades = 120;
+// balancete analitico passa de 500) e o resto ia embora com uma nota no prompt
+// que so' a IA lia. Item 1 do 7.4 do Onboarding.
+// Colunas pela UNIAO das chaves, nao pelas da primeira linha: o Extract From File
+// devolve objeto esparso, e celula vazia na linha 0 apagava a coluna do documento
+// inteiro.
+function colsPlan(rows){const s=new Set();for(const r of rows){if(r&&typeof r==='object')for(const k of Object.keys(r))s.add(k);}return [...s];}
+function sheetTxt(rows,mr=2000,mc=60){if(!rows.length)return '(planilha vazia)';const cols=colsPlan(rows).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
+// O que ficou de fora vira PENDENCIA (falha_motivo -> 0016), nao nota no prompt.
+function avisoSheet(rows,mr=2000,mc=60){if(!Array.isArray(rows)||!rows.length)return null;const nc=colsPlan(rows).length;const p=[];if(rows.length>mr)p.push((rows.length-mr)+' de '+rows.length+' linhas nao foram enviadas a extracao (teto de '+mr+')');if(nc>mc)p.push((nc-mc)+' de '+nc+' colunas nao foram enviadas a extracao (teto de '+mc+')');if(!p.length)return null;return 'Planilha maior que o teto de envio: '+p.join('; ')+'. A extracao deste documento esta INCOMPLETA -- o que falta nao esta no banco nem no book. Reenvie o arquivo fatiado ou peca ao dono para elevar o teto.';}
+let part; let aviso=null;
 if(/pdf/.test(mt)) part={type:'file',file:{filename:item.nome_original||'documento.pdf',file_data:'data:application/pdf;base64,'+b64}};
 else if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+mt+';base64,'+b64}};
-else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');part={type:'text',text:sheetTxt(parseCsv(txt))};}
-else if(/spreadsheetml|ms-excel|excel/.test(mt)) part={type:'text',text:'(XLSX: habilitar Extract From File no N8N p/ extrair texto — ver README. Nome: '+(item.nome_original||'')+')'};
-else part={type:'text',text:'(conteudo nao suportado: '+mt+')'};
+else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');const rows=parseCsv(txt);part={type:'text',text:sheetTxt(rows)};aviso=avisoSheet(rows);}
+// XLSX: o conteudo NAO e' extraido. A versao anterior mandava esta frase como se
+// fosse o documento -- a IA recebia um recado de configuracao no lugar do balanco,
+// devolvia "nao ha linhas", e a pendencia dizia que a EXTRACAO falhou, nao que o
+// arquivo nunca foi lido. A chamada continua sendo feita (pular exige no' IF, e'
+// mudanca de topologia da fase 3); o que muda e' que o motivo real vira pendencia.
+else if(/spreadsheetml|ms-excel|excel/.test(mt)){part={type:'text',text:'(XLSX nao extraido: habilitar Extract From File no N8N -- ver README. Nome: '+(item.nome_original||'')+')'};aviso='Arquivo .xlsx/.xls NAO foi lido: o no "Extract From File" nao esta habilitado nesta instancia do n8n, entao NENHUM dado deste documento chegou a extracao. O que este documento contem nao esta no banco nem no book.';}
+else {part={type:'text',text:'(conteudo nao suportado: '+mt+')'};aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}
 // HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.
 // A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob
 // o MESMO documento, em vez de documento novo. Como o pipeline mandava null no
@@ -240,7 +260,7 @@ try{
   // falharem -- ai' sim nao saber e' melhor que errar.
   try{hash=sha256Hex(buf);}catch(e2){hash=null;}
 }
-return {json:{...item, content_part: part, content_mime: mt, hash}, binary: $input.item.binary};
+return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
@@ -341,7 +361,10 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
   {role:'system',content:promptSistema},
   {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
 ]};
-return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, openai_body:body}};
+// aviso_conteudo viaja junto: o que o preparo ja sabia estar faltando ANTES da
+// chamada (planilha acima do teto, XLSX nao lido) tem de virar pendencia mesmo
+// quando a extracao volta impecavel -- o pedaco que falta nunca chegou a IA.
+return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
 `.trim();
 
 // --- Code (EACH ITEM): parse do diagnóstico+extração → payload p/ Postgres -
@@ -354,6 +377,7 @@ const CODE_PARSE_EXTRACAO = `
 ${FONTE_DIAGNOSTICO_ERRO}
 ${FONTE_CUSTO_CHAMADA}
 const ctx=$('Montar Req Extracao').item.json;
+const avisoConteudo=ctx.aviso_conteudo??null;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
 const content=resp?.choices?.[0]?.message?.content;
@@ -374,9 +398,13 @@ if(!falhaMotivo&&finishReason==='length'){
   falhaMotivo='Resposta da OpenAI atingiu o limite de tokens de saida (finish_reason=length); o JSON veio valido, mas o conteudo pode estar incompleto (faltando linhas do fim do documento).';
 }
 ${FONTE_NORMALIZAR_UNIDADE}
+${FONTE_NORMALIZAR_MOEDA}
 const unidade=normUnid(p.unidade);
+// Moeda do documento herdada por linha, mesma regra da escala (item 2 do 7.4):
+// era normalizada e jogada fora aqui, e o book somava USD com BRL.
+const moedaDoc=normMoeda(p.moeda);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
-const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
+const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,
@@ -395,7 +423,11 @@ const diagnostico={
 // hoje o teto de US$ 3 por execução decide em cima de uma ESTIMATIVA declarada,
 // e trocar estimativa por medição é o único jeito honesto de apertar o teto.
 const custo_usd=custoDaChamada(resp?.usage, '${MODEL_EXTRACAO}');
-return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaMotivo, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
+// O aviso do preparo SOMA-SE ao motivo da chamada em vez de competir com ele:
+// planilha cortada E resposta truncada cabem no mesmo documento, e esconder um
+// dos dois e' a falha que esta mudanca fecha.
+const falhaFinal=[avisoConteudo,falhaMotivo].filter(Boolean).join(' | ')||null;
+return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };

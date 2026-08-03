@@ -1032,13 +1032,81 @@ function construirAbaClassificada(
     sheet.getColumn(d.pos).width = 12;
   });
 
+  // ----- MOEDA POR COLUNA (db/migrations/0035) -------------------------------
+  // Até a 0035 a moeda era extraída e DESCARTADA, e uma linha em USD entrava na
+  // mesma soma que uma em BRL sem nenhuma marca: erro pelo câmbio inteiro (~5x),
+  // num arquivo que fecha. Agora a moeda chega por linha, e a aba precisa fazer
+  // duas coisas com ela — DIZER qual é, e RECUSAR somar o que não é somável.
+  //
+  // Silencioso de propósito no caso normal: book inteiro em BRL não ganha "(BRL)"
+  // em cada cabeçalho, porque rótulo redundante em toda coluna é ruído que ensina
+  // a não ler o cabeçalho. A moeda aparece quando ela DISCRIMINA: mais de uma
+  // moeda no mesmo arquivo, ou coluna que mistura moedas dentro de si.
+  const moedasPorColuna = new Map<string, Set<string>>();
+  for (const { campo, colKey } of camposDaAba) {
+    const m = campo.moeda?.trim().toUpperCase();
+    if (!m) continue; // null = desconhecida; ausência não é uma moeda
+    if (!moedasPorColuna.has(colKey)) moedasPorColuna.set(colKey, new Set());
+    moedasPorColuna.get(colKey)!.add(m);
+  }
+  const moedasDaAba = new Set([...moedasPorColuna.values()].flatMap((s) => [...s]));
+  const abaMultiMoeda = moedasDaAba.size > 1;
+  // Coluna que mistura moedas DENTRO de si é o caso grave: o SUM dela somaria
+  // grandezas diferentes célula a célula, e nenhuma inspeção visual pega isso.
+  const colunasMistas = new Set(
+    [...moedasPorColuna.entries()].filter(([, s]) => s.size > 1).map(([k]) => k),
+  );
+  const moedaDaColuna = (colKey: string): string | null => {
+    const s = moedasPorColuna.get(colKey);
+    return s && s.size === 1 ? [...s][0] : null;
+  };
+
+  // A RECUSA DE SOMAR, num lugar só.
+  //
+  // Doutrina do projeto (docs/04, e o comentário da dupla contagem acima): o
+  // export NÃO conserta sozinho — ele mostra as leituras e nomeia o problema. Mas
+  // "não consertar" nunca quis dizer "emitir um número errado": uma coluna que
+  // mistura BRL e USD não tem soma correta possível, e um `SUM` ali produziria um
+  // total que parece bom e está errado pelo câmbio. Então a célula recebe o
+  // MOTIVO em vez do número, e a nota diz o que fazer.
+  //
+  // Só a soma é recusada. Os valores individuais continuam todos na planilha,
+  // cada um com a sua moeda no cabeçalho — nada é escondido nem descartado.
+  // Devolve `true` quando RECUSOU. Quem chama usa isso para não escrever, em
+  // cima da recusa, uma nota que fala de um número que não existe — a nota do
+  // "sem total informado" apagava esta e o analista perdia o motivo real.
+  const escreverSomaOuRecusa = (
+    cell: ExcelJS.Cell, colKey: string, formula: string,
+  ): boolean => {
+    if (colunasMistas.has(colKey)) {
+      const moedas = [...moedasPorColuna.get(colKey)!].sort().join(" + ");
+      cell.value = "⚠ não somável";
+      cell.note = comoNota(
+        `Esta coluna traz linhas em MOEDAS DIFERENTES (${moedas}), então nenhuma soma daqui `
+        + "seria correta: somar dólar com real erra pelo câmbio inteiro, e o total pareceria "
+        + "perfeitamente normal. O total foi OMITIDO de propósito — os valores individuais "
+        + "continuam todos abaixo, com a moeda de cada um. Para ter um total, separe o "
+        + "documento por moeda ou defina a taxa de conversão e a data-base com o analista.",
+      );
+      cell.font = { bold: true, color: { argb: "FFB91C1C" } };
+      return true;
+    }
+    cell.value = { formula } as ExcelJS.CellFormulaValue;
+    cell.numFmt = VALOR_NUM_FMT;
+    return false;
+  };
+
   const headerRow = sheet.getRow(1);
   headerRow.getCell(1).value = "Conta";
   colunas.forEach((col, i) => {
     const cell = headerRow.getCell(plano.valuePos[i]);
     const tipoCol = tipoColunaNaoEntidade(col.entidade);
-    const sufixo = tipoCol === "ajuste" ? " (ajuste — não é entidade)"
-      : tipoCol === "total" ? " (total do documento — não somar com as demais)" : "";
+    const sufixoMoeda = colunasMistas.has(col.key)
+      ? ` (⚠ MOEDAS MISTURADAS: ${[...moedasPorColuna.get(col.key)!].sort().join(" + ")} — não somável)`
+      : abaMultiMoeda && moedaDaColuna(col.key) ? ` (${moedaDaColuna(col.key)})` : "";
+    const sufixo = (tipoCol === "ajuste" ? " (ajuste — não é entidade)"
+      : tipoCol === "total" ? " (total do documento — não somar com as demais)" : "")
+      + sufixoMoeda;
     cell.value = `${col.entidade} — ${col.periodo}${sufixo}`;
     cell.fill = tipoCol ? ANALISE_HEADER_FILL : HEADER_FILL;
     const av = plano.avPos[i];
@@ -1502,8 +1570,7 @@ function construirAbaClassificada(
             subtotalNum.set(col.key, vInformado);
           } else if (temContas) {
             // O documento não trouxe o total desta coluna: soma as contas-folha.
-            cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
-            cell.numFmt = VALOR_NUM_FMT;
+            const recusou = escreverSomaOuRecusa(cell, col.key, `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})`);
             // …e ISSO PRECISA APARECER. Sem total informado não existe checagem:
             // se o documento imprime subtotal de agrupamento e a extração anotou
             // a seção de TOPO em `secao` (em vez da subseção), a soma conta o
@@ -1514,7 +1581,10 @@ function construirAbaClassificada(
             // que são os componentes dela. Marcar não conserta o número; impede
             // que ele passe por conferido.
             cell.font = { bold: true, italic: true };
-            cell.note = comoNota(
+            // A recusa por moeda misturada já explicou a célula; sobrescrever a
+            // nota aqui trocaria o motivo REAL por um aviso sobre um número que
+            // nem foi emitido.
+            if (!recusou) cell.note = comoNota(
               `Sem total informado no documento para esta coluna: o número é a NOSSA soma das contas `
               + `listadas (${no.label}), não um valor que o documento tenha impresso. `
               + `Se o original traz subtotais de agrupamento (ex.: "Contas a Receber" acima das duplicatas), `
@@ -1646,8 +1716,7 @@ function construirAbaClassificada(
         colunas.forEach((col, i) => {
           if (somaSecao.get(col.key) == null) return;
           const cell = hdr.getCell(plano.valuePos[i]);
-          cell.value = { formula: `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})` } as ExcelJS.CellFormulaValue;
-          cell.numFmt = VALOR_NUM_FMT;
+          escreverSomaOuRecusa(cell, col.key, `SUM(${colLetra(i)}${primeira}:${colLetra(i)}${ultima})`);
           cell.font = { bold: true };
         });
         linhasValor.add(cabIdx);
@@ -1681,8 +1750,7 @@ function construirAbaClassificada(
             subtotalNum.set(col.key, somaSecao.get(col.key) ?? 0);
           }
           if (formula) {
-            cell.value = { formula } as ExcelJS.CellFormulaValue;
-            cell.numFmt = VALOR_NUM_FMT;
+            escreverSomaOuRecusa(cell, col.key, formula);
           }
         });
         idxAncora.set(ancoraSecao.key, idx);
@@ -1802,8 +1870,7 @@ function construirAbaClassificada(
         }
         if (!tem) return;
         const cell = tituloRow.getCell(plano.valuePos[i]);
-        cell.value = { formula: `SUM(${colLetra(i)}${primeiraNC}:${colLetra(i)}${ultimaNC})` } as ExcelJS.CellFormulaValue;
-        cell.numFmt = VALOR_NUM_FMT;
+        escreverSomaOuRecusa(cell, col.key, `SUM(${colLetra(i)}${primeiraNC}:${colLetra(i)}${ultimaNC})`);
         cell.font = { bold: true, italic: true };
       });
     }

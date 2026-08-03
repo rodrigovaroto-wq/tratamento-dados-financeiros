@@ -110,6 +110,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/canonico.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de moeda por linha (0035: o último fator multiplicativo invisível)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/moeda.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/seed_macro.test.sql 2>&1 \

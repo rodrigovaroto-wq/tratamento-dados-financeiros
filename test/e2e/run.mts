@@ -169,6 +169,29 @@ for (const [versaoId, campos] of camposPorVersao) {
   camposDoProdutor.set(versaoId, out.json.campos as Array<Record<string, unknown>>);
 }
 
+// AVISO DE CONTEÚDO (item 1 do §7.4): o que o preparo já sabia estar faltando
+// ANTES da chamada tem de virar `falha_motivo` — que é o que a 0016 converte em
+// pendência visível. O caminho passa por DOIS nós (Preparar Conteudo → Montar Req
+// Extracao → Parse Extracao) e nenhuma das outras suítes o atravessa: aqui roda o
+// código real do nó, com o aviso vindo pela referência, como em produção.
+{
+  const [versaoId, campos] = [...camposPorVersao.entries()][0];
+  const aviso = "Planilha maior que o teto de envio: 137 de 2137 linhas não foram enviadas à extração (teto de 2000).";
+  const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", aviso_conteudo: aviso, openai_body: {} } };
+  const out = await rodarNo("Parse Extracao", respostaDaOpenAI(campos), { "Montar Req Extracao": req });
+  const motivo = String(out.json.falha_motivo ?? "");
+  checar(motivo.includes("137 de 2137 linhas"),
+    "o aviso do preparo de conteúdo chega a falha_motivo (vira pendência)", motivo.slice(0, 120));
+  checar((out.json.campos as unknown[]).length === campos.length,
+    "…e as linhas que VIERAM continuam valendo — o aviso não descarta extração");
+
+  const semAviso = await rodarNo("Parse Extracao", respostaDaOpenAI(campos),
+    { "Montar Req Extracao": { json: { documento_versao_id: versaoId, tipo: "BALANCO", openai_body: {} } } });
+  checar(semAviso.json.falha_motivo == null,
+    "…e sem aviso nenhum o motivo continua nulo (nada de pendência inventada)",
+    String(semAviso.json.falha_motivo));
+}
+
 const totalProduzido = [...camposDoProdutor.values()].reduce((s, v) => s + v.length, 0);
 checar(
   totalProduzido === fixture.campos.length,
@@ -182,7 +205,11 @@ checar(
 // a fixture continuaria afirmando o campo dos dois lados.
 const CAMPOS_DO_CONTRATO = [
   "ordem", "secao", "secao_canonica", "entidade_coluna", "periodo_coluna",
-  "chave", "valor_texto", "valor_num", "unidade", "confianca", "origem_pagina",
+  // `moeda` (0035): entrou no contrato porque era EXATAMENTE isto que faltava —
+  // a extração calculava a moeda e nenhum campo a levava ao banco. Se o nó
+  // parar de emitir, esta lista reprova aqui, que é o único lugar onde o
+  // vocabulário do produtor é confrontado com o que o banco grava.
+  "chave", "valor_texto", "valor_num", "unidade", "moeda", "confianca", "origem_pagina",
 ];
 {
   const umaLinha = [...camposDoProdutor.values()][0][0];
