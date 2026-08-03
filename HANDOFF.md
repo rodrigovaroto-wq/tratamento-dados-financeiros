@@ -18,6 +18,92 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 23 (2026-08-03) — Fase 2: documento que chegou vazio para de contar
+
+Itens **3 e 4** do §7.4 do Onboarding. O dono já aplicou a `0035` e reimportou o workflow da
+Fase 1 antes desta sessão começar.
+
+### O que o item #3 pedia, e por que a leitura literal não servia
+
+O item diz: *"`completude_ok` só exige a linha do documento — 14 documentos com zero linhas
+extraídas dão dashboard verde e book vazio."* A correção óbvia seria trocar a condição do Portão
+1 por "existe documento COM linhas". **Duas coisas impedem, e as duas foram medidas no
+repositório, não supostas:**
+
+1. **Ordem do grafo.** `Registrar Documento` liga em **paralelo** para `Recomputar Completude` e
+   para `Montar Req Extracao`. Quando a completude é calculada, a extração **ainda não rodou** —
+   o número de linhas é zero para todo documento, sempre. A condição literal reprovaria o caso
+   inteiro por um motivo que é só de sequência.
+2. **Doutrina.** `docs/07` separa os dois status de propósito: *"Completude ≠ validade … para
+   evitar falsa sensação de completude."* Colapsar as duas condições apagaria a distinção que
+   existe justamente para impedir o que o item descreve.
+
+**A 0036 usa o vocabulário que já existia**, em vez de redefinir o Portão 1:
+
+- o documento continua **recebido** (a completude conta a chegada);
+- o item vira **`recebido_nao_valido`** no `checklist_item_status` quando NENHUMA versão dele
+  rendeu uma linha — a coluna já previa `invalido` desde a 0001;
+- e abre pendência **`item_sem_conteudo`, BLOQUEANTE e NÃO-SOBREPUJÁVEL**, que é o que de fato
+  trava o Portão 2 (`docs/07`: *"elegível ao Portão 2 se e somente se não há pendência bloqueante
+  aberta"*, e a lista fechada inclui "arquivo ilegível de item essencial");
+- **`fn_registrar_campos_extraidos` passa a recomputar a completude no fim** — é o único ponto do
+  pipeline que roda com o resultado da extração na mão. Sem isso, o estado novo só apareceria
+  quando alguém abrisse a fila de revisão, que é exatamente quem se está tentando avisar.
+- o payload ganha `sem_conteudo` e **`pronto_para_revisao`** (= chegou tudo **E** tem conteúdo).
+  `portao1_ok` continua significando "chegou tudo".
+
+**No portal:** o Kit Básico tem **três** cores — verde só quando chegou e rendeu linha; **âmbar
+"recebido, sem conteúdo extraído"**; e cinza para faltante. Âmbar e não "faltante" porque o
+arquivo está lá: pedi-lo de novo ao cliente seria pedir o que ele mandou. A mensagem da tela do
+documento também mudou: era *"Nenhuma linha extraída para este documento **ainda**"*, e o "ainda"
+fazia parecer fila — quem lia esperava.
+
+### Item #4 — o aceite formal de nada
+
+`fn_aceitar_extracao` com zero campos não tocava nada (`v_n_aceitos = 0`) e **gravava, ainda
+assim, uma `decisao` de tipo `aprovacao`**. Como `decisao` é append-only, esse registro — que faz
+a trilha afirmar que um humano aprovou a extração daquele documento — não sai mais de lá.
+
+- versão **sem nenhum campo** → recusa, com motivo que nomeia o arquivo e diz o que fazer;
+- versão **com campos, todos já aceitos** → no-op declarado (`ja_estava_aceito`), sem `decisao`
+  nova: antes, clicar duas vezes gravava **duas** aprovações.
+
+**A recusa é RETORNADA, não `raise exception` — e a razão é técnica, descoberta pelo teste:**
+exceção em plpgsql desfaz tudo o que a função fez, **inclusive o registro da tentativa em
+`evento_auditoria`**. O primeiro rascunho levantava exceção, e o assert "a tentativa recusada fica
+em evento_auditoria" reprovou. Postgres não tem transação autônoma: ou se tem a exceção, ou se tem
+o rastro. Ficou o rastro, e `recusado: true` no payload para nenhum chamador confundir com sucesso
+— **com a `actions.ts` do portal obrigada a ler esse campo**, senão a recusa passaria por sucesso
+e trocaríamos "aceite de nada" por "sucesso de nada".
+
+### Contadores
+
+| Suíte | Antes | Agora |
+|---|---|---|
+| `node --test n8n/test/*.test.mjs` | 171 | **176** |
+| `verificar-export.mts` | 361 | **361** (nada no export mudou) |
+| `db/test/run.sh` | 35 migrations | **36** + `completude_conteudo.test.sql` (14 asserts) |
+| `test/e2e/run.mts` | 27 | **27** |
+
+### Defeito religado, um por um
+
+- terceiro estado tirado da lib → **3 reprovações**;
+- recomputação pós-extração removida da `0036` → `FALHOU: o item do checklist fica
+  recebido_nao_valido, não presente — presente`;
+- guarda do aceite removida → `FALHOU: a função declara a recusa no payload` devolvendo
+  **`{"ja_estava_aceito": true, "n_campos_aceitos": 0}`** — isto é, sem a guarda o aceite do vazio
+  responde **sucesso silencioso**, que é pior do que o diagnóstico original sugeria.
+
+### O que fica para as próximas fases
+
+- **#5** — poller de 12 min e recusa por estouro de orçamento visível só no log do n8n.
+- **#6** — causa das 5 pré-condições que falharam no v33.
+- **#7** — dupla contagem: decisão de doutrina, não correção silenciosa.
+- **#8** — golden set físico, que bloqueia a F4 inteira.
+- E a **fase de custo** (PDF como texto, `gpt-4o-mini` na classificação, não pagar
+  reprocessamento), que também é o que permite pular a chamada do XLSX com um nó IF.
+
+
 ## Sessão 22 (2026-08-03) — Fase 1: os dois itens que perdiam dado em silêncio
 
 O dono subiu no `main` o **`Onboarding`** (PDF de 67 páginas, commit `5edb89e`) e mandou usá-lo

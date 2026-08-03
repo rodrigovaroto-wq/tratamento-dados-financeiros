@@ -128,7 +128,21 @@ export default async function PlanilhaDocumentoPage({
         )}
 
         {campos.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nenhuma linha extraída para este documento ainda.</p>
+          // db/migrations/0036 — item 3 do §7.4. A mensagem antiga era "Nenhuma
+          // linha extraída para este documento ainda", e o "ainda" fazia parecer
+          // fila: quem lia esperava. Na prática, se a extração já rodou, este
+          // documento NÃO tem nada no banco e sai vazio do book — e, sendo
+          // obrigatório do Kit Básico, agora abre pendência bloqueante.
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-medium">Nenhuma linha foi extraída deste documento.</p>
+            <p className="mt-1">
+              Se a extração já rodou, isto não é fila: não há nada deste arquivo no banco, e a parte
+              dele no book sai vazia. Causas comuns — formato que o pipeline ainda não converte
+              (.xlsx/.docx), arquivo ilegível, ou chamada de extração que falhou. Veja a pendência
+              de extração deste documento e reenvie o arquivo. Não há o que aceitar aqui: aceitar
+              gravaria uma aprovação formal de nada.
+            </p>
+          </div>
         ) : (
           <div className="space-y-6">
             {[...grupos.entries()].map(([secao, linhas]) => (

@@ -18,7 +18,7 @@ export async function aceitarExtracao(casoId: string, docId: string, formData: F
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { error } = await supabase.rpc("fn_aceitar_extracao", {
+  const { data, error } = await supabase.rpc("fn_aceitar_extracao", {
     p_documento_versao_id: documentoVersaoId,
     p_autor: user?.email ?? "portal:desconhecido",
     p_motivo: motivo,
@@ -26,6 +26,21 @@ export async function aceitarExtracao(casoId: string, docId: string, formData: F
 
   if (error) {
     throw new Error(`Falha ao aceitar extração: ${error.message}`);
+  }
+
+  // RECUSA (db/migrations/0036): a função devolve `recusado: true` quando a versão
+  // não tem NENHUMA linha extraída — aceitar ali gravaria uma aprovação formal de
+  // nada numa tabela append-only. A recusa vem no payload, e não como erro de
+  // Postgres, porque exceção em plpgsql desfaria o registro da própria tentativa
+  // em `evento_auditoria` (ver o comentário na migration).
+  //
+  // Ler este campo é OBRIGATÓRIO aqui: sem isto, o `error` nulo faria a recusa
+  // passar por sucesso e a tela recarregaria como se algo tivesse sido aceito —
+  // trocar um "aceite de nada" por um "sucesso de nada" não seria correção
+  // nenhuma.
+  const resultado = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (resultado?.recusado) {
+    throw new Error(resultado.motivo_recusa ?? "Aceite recusado: versão sem linhas extraídas.");
   }
 
   revalidatePath(`/casos/${casoId}/documentos/${docId}`);
