@@ -1,0 +1,54 @@
+"use client";
+
+// FRONTEIRA DE ERRO DA TELA DE MODELAGEM.
+//
+// POR QUE ELA PRECISOU EXISTIR. Sem um `error.tsx` na rota, qualquer exceção
+// lançada por uma Server Action derruba a subárvore inteira: na rodada de
+// 04/08/2026 o analista clicou em "aplicar em lote" e a seção 3 simplesmente
+// desapareceu da página — sem mensagem, sem pista, sem caminho de volta. Ele
+// levou o problema para a mesa achando que era a modelagem que estava errada.
+//
+// As RECUSAS esperadas (subtotal não recebe premissa, premissa não ativa, lote
+// vazio) não chegam mais aqui: elas voltam pela URL e viram aviso na própria tela
+// (`voltarComAviso`, em actions.ts). O que sobra para esta fronteira é o
+// inesperado — a conexão que caiu, a função que não existe no banco porque a
+// migration não foi aplicada. Para esses, a única coisa honesta a dizer é que
+// falhou, e dar o caminho de volta.
+//
+// Em produção o Next REDIGE a mensagem de erro do servidor: `error.message` vem
+// genérico e o que identifica a ocorrência é o `digest`. Por isso o digest é
+// mostrado — é o que permite achar a linha no log da Vercel.
+
+export default function ErroModelagem({
+  error, reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <div className="mx-auto max-w-2xl p-6">
+      <div className="rounded border border-red-300 bg-red-50 p-4">
+        <h2 className="text-sm font-semibold text-red-900">
+          A tela de Modelagem falhou ao processar esta ação
+        </h2>
+        <p className="mt-2 text-sm text-red-900">
+          Nada foi perdido: o que já estava salvo continua salvo. Tente de novo — se repetir,
+          é falha do servidor ou uma migration que ainda não foi aplicada no banco.
+        </p>
+        {error.digest && (
+          <p className="mt-2 font-mono text-xs text-red-800">
+            identificador da ocorrência: {error.digest}
+          </p>
+        )}
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button" onClick={reset}
+            className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800"
+          >
+            Tentar de novo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

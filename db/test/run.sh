@@ -135,6 +135,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_da_linha.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes do papel POR SEÇÃO (0100: guarda e tela concordam; lote não cai inteiro)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_por_secao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de reconferir (0043: reaplicar as regras de hoje sobre o dado gravado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconferir.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
