@@ -3488,3 +3488,109 @@ asserts**; `test/e2e/run.mts` = **27**.
 - A aba `Modelagem` agregada (Fase 7) **continua no arquivo**, de propósito: é a única com
   validação ao vivo, e serve de comparação. Removê-la é decisão do dono depois de conferir os dois.
 - Aplicar `0042`, `0043`, `0044` e publicar o portal.
+
+## Sessão 32 (2026-08-04) — o lote da Modelagem destravado, e a captura de produção
+
+Sessão curta e reativa: o dono foi executar o roteiro de teste da Fase 8/9 e **travou no passo 3**.
+Três PRs mergeados (#86, #87 e o do `db/README.md`), nenhuma fase nova.
+
+### O que o dono subiu: a tela de Modelagem de produção, salva pelo navegador
+
+`test-data/capturas/2026-08-04-v35-modelagem/` — o HTML renderizado de
+`/casos/c4581e51-…/modelagem`, com a `0042`/`0043`/`0044` **já aplicadas**. Chegou achatado na raiz
+do repositório (o HTML mais os onze *bundles* do Next); os assets voltaram para a pasta `_files/`
+que o próprio HTML referencia, senão a página abre sem estilo. Conferido: **nenhum segredo** nos
+onze arquivos.
+
+**É a primeira evidência da Fase 8 contra dado real, e ela prova as duas coisas:**
+
+| Funciona | Denuncia |
+|---|---|
+| curva de sazonalidade **preenchida** (jan 8,4% … dez 7,0%) com `Faturamento Janeiro` — a correção de `fn_mes_do_rotulo` | **203 contas projetáveis, ZERO com premissa vinculada** |
+| 28 subtotais sem seletor; os 12 meses como série mensal; indicadores como derivado | só as **5 premissas macro** ativas; o seletor de sazonalidade das 203 linhas tinha **uma única opção**, a vazia |
+| escala **por linha**: `R$` no mapa da dívida ao lado de `R$ mil` no balanço | `setor = tecnologia` salvo num mandato de **metalurgia** (a lista sugeria ARR, churn, LTV, CAC) |
+| `sobreposicao_suspeita` marcando 6 pares reais | `Arrendamentos` e `Provisões` são **cabeçalho de grupo tratado como conta projetável** |
+
+### O defeito que travou o dono — `0100_papel_por_secao.sql`, e são TRÊS empilhados
+
+Clicar em "aplicar em lote" fazia a **seção inteira sumir da página**: sem mensagem, sem linha
+vinculada, sem caminho para continuar.
+
+1. **Duas funções calculavam o mesmo papel com escopos diferentes.**
+   `fn_linhas_para_modelagem` agrupa por `(secao_canonica, rotulo_norm)` — é o que a tela mostra e o
+   que o laço do lote percorre. `fn_papel_do_rotulo_no_caso`, que é a guarda dentro de
+   `fn_vincular_linha_premissa`, agrupava **só por `rotulo_norm`** no caso inteiro e resolvia o
+   empate pelo papel mais restritivo. Bastava o mesmo rótulo existir em outro canto do caso para a
+   guarda **recusar a linha que a tela tinha acabado de oferecer como conta**. E é o caso comum, não
+   o raro: `fn_papel_linha` depende do tipo do documento, e as ocorrências **sem `secao_canonica`**
+   (45 no v35) formam grupo separado na tela e caem no mesmo balaio na guarda.
+2. **Uma recusa de papel abortava o lote inteiro.** O `return` na primeira recusa vale para "a
+   premissa não está ativa", que é global — e derrubava as outras 43 quando o motivo era por linha.
+   A recusa passou a carregar `escopo`: `'premissa'` aborta, papel vai para `ignoradas`.
+3. **E a recusa chegava à tela como exceção sem dono.** Sem `error.tsx` na rota o React desmonta a
+   subárvore — foi assim que a seção "fechou". E **em produção o Next redige a mensagem de erro de
+   servidor**, então nem com fronteira o analista leria "esta linha é um subtotal": leria "an error
+   occurred". Recusa esperada agora volta pela URL e vira aviso na própria tela (`voltarComAviso`);
+   `error.tsx` ficou só para o inesperado. O lote que **dá certo** também passou a dizer o que fez —
+   antes, "não aconteceu nada" e "aconteceu tudo" tinham a mesma aparência.
+
+A guarda **não afrouxou**: subtotal, série mensal e derivado seguem recusados, e seção inexistente
+cai para o escopo do caso inteiro, para passar seção errada não virar o jeito de furar a regra.
+
+**Defeitos religados:** com a guarda sem seção, `"em receita_bruta a guarda diz CONTA"` reprovou com
+`serie_mensal`; com os dois juntos (= comportamento da `0042`), `"o lote NÃO é recusado"` reprovou
+com a recusa de `Faturamento Janeiro` — **o sintoma da tela reproduzido em teste**.
+
+**Declarado:** o ramo de recusa por linha dentro do lote fica **inalcançável** com a guarda
+corrigida, e portanto **não está coberto por teste**. A migration diz isso em vez de fingir
+cobertura. Ficou porque é a diferença entre uma linha declarada e o lote inteiro caindo — e a
+divergência volta no instante em que alguém mexer num lado só, que é o que aconteceu entre a `0039`
+e a `0042`.
+
+### `db/README.md` tinha parado na `0031`
+
+O `CLAUDE.md` chama esse arquivo de **ordem oficial de aplicação**, e treze migrations (`0032` a
+`0044`) nunca entraram nem na tabela nem na lista de comandos. Quem aplicasse do zero seguindo a
+lista pararia na `0031` e teria um banco **sem Portão 2, sem catálogo de premissas, sem papel da
+linha — sem nenhum erro, só faltando**. É literalmente a falha que a faixa de numeração existe para
+evitar, descrita no próprio arquivo. As 14 linhas entraram nos dois lugares.
+
+### Também nesta sessão
+
+**O horizonte de projeção deixou de ser `placeholder`** (PR #86). O ano de cada coluna de premissa
+só existia como texto cinza dentro da caixa, que some ao digitar o primeiro caractere — quem
+preenchia a terceira caixa não sabia mais se estava em 2028 ou 2029, e premissa no ano errado não dá
+erro, projeta diferente. Agora é rótulo fixo acima da coluna, com o horizonte por extenso.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **45 migrations**
+(13 asserts novos, em `db/test/papel_por_secao.test.sql`); `test/e2e/run.mts` = **27**.
+
+### O que o dono precisa fazer
+
+1. **Aplicar a `0100` no Supabase** — sem ela o "aplicar em lote" continua caindo, porque a correção
+   principal é no banco. A faixa `0100`+ é a de quem colabora (`CLAUDE.md`/`db/README.md`, PR #73);
+   o buraco `0044` → `0100` é o estado esperado. São 45 migrations no repositório.
+2. Conferir se `0042`, `0043` e `0044` já foram aplicadas — a captura indica que sim.
+3. Executar o roteiro de modelagem e mandar o `.xlsx`.
+
+### Aberto, e prioritário para a próxima rodada
+
+- **Dupla contagem de caixa e de dívida no modelo institucional.** `Working Capital` pega TODAS as
+  contas de `ativo_circulante` (só exclui imobilizado) — **inclusive caixa, bancos e aplicações** —
+  e as projeta por dias de giro; `Cash Flow` soma as mesmas contas em `CAIXA_FIM`; e `Balance Sheet`
+  faz `AC = CAIXA + AC_OPER`. **O caixa entra duas vezes no ativo circulante, em toda coluna**, e a
+  NCG sai inflada. Do lado do passivo, empréstimos do balanço entram no giro **e** as tranches do
+  mapa de dívida entram em `DIVIDA_CP`. É correção só de portal, sem migration. O `CHECK` da aba
+  `Balance Sheet` vai acusar isso em vermelho no próximo teste.
+- **A Fase 9 nunca foi exercitada com conteúdo.** Medido nesta sessão: as 199 linhas da fixture do
+  book têm `secao_canonica` **nula**, então 132 contas caem em `"fora"` e sobram os 18 lançamentos
+  do mapa de dívida. O arquivo gerado dá `ATIVO 1.000` contra `PASSIVO+PL 52.300` e `CHECK −51.300`
+  em toda coluna — e o banner "ESTE MODELO NÃO ESTÁ PROJETÁVEL" dispara e nomeia a causa certa. A
+  rede de proteção funciona; **ela é hoje a única coisa que a Fase 9 comprova.** Os asserts do
+  modelo institucional continuam sendo o próximo passo, e agora sabe-se que eles precisam de uma
+  fixture COM seção canônica para provar qualquer coisa.
+- **O cabeçalho deste arquivo está 17 PRs atrasado** (diz "mergeado até o PR #70, migrations até
+  `0034`"). Não é descuido: o `CLAUDE.md` proíbe editar o cabeçalho, só acrescentar seção. O efeito
+  colateral é que o "resumo de retomada rápida" é a parte mais velha do documento. Decisão do dono.
