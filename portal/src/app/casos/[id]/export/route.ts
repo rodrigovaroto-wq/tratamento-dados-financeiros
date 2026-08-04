@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { EntradaModeloInstitucional, LinhaModelo } from "@/lib/modelo-institucional";
 import {
   ampliarNotasNoBuffer, buildExportWorkbook, nomeArquivoSanitizado, type ConfigModelagem,
   type DocumentoParaExport, type MacroAnual, type MacroExpectativa,
@@ -195,6 +196,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // conferir é justamente o que se faz antes de aprovar. Bloqueá-lo criaria o
   // impasse de precisar da aprovação para poder conferir.
   let modelagemConfig: ConfigModelagem | undefined;
+  let modeloInstitucional: EntradaModeloInstitucional | undefined;
   if (modo === "completo") {
     const portao = await supabase.rpc("fn_avaliar_portao2", { p_caso_id: id });
     const aval = portao.data as { elegivel?: boolean; motivos?: string[] } | null;
@@ -218,7 +220,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const [paramRes, premRes, vincRes, linhasRes, sazoRes] = await Promise.all([
       supabase.from("caso_modelagem").select("*").eq("caso_id", id).maybeSingle(),
       supabase.from("caso_premissa")
-        .select("premissa_codigo, valores, premissa_catalogo!inner(nome, formula, unidade)")
+        .select("premissa_codigo, valores, origem, "
+          + "premissa_catalogo!inner(nome, formula, unidade, natureza)")
         .eq("caso_id", id).eq("ativo", true),
       supabase.from("caso_linha_premissa")
         .select("rotulo_norm, secao_canonica, premissa_codigo, sazonalidade_codigo")
@@ -232,14 +235,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
     const par = paramRes.data as unknown as {
       entidade: string | null; ultimo_exercicio_real: number | null; anos_projetados: number;
+      setor: string | null;
     } | null;
     // O embed do PostgREST vem como ARRAY (ele não assume 1:1 no tipo gerado),
     // então normaliza-se aqui em vez de confiar no formato — um `?.nome` sobre
     // array daria `undefined` silencioso e a premissa apareceria sem nome no
     // arquivo.
-    type EmbedCatalogo = { nome: string; formula: string; unidade: string | null };
+    type EmbedCatalogo = {
+      nome: string; formula: string; unidade: string | null; natureza?: string;
+    };
     const premissas = ((premRes.data ?? []) as unknown as Array<{
       premissa_codigo: string; valores: Record<string, number>;
+      origem?: string | null;
       premissa_catalogo: EmbedCatalogo | EmbedCatalogo[] | null;
     }>).map((p) => {
       const cat = Array.isArray(p.premissa_catalogo) ? p.premissa_catalogo[0] : p.premissa_catalogo;
@@ -248,6 +255,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         nome: cat?.nome ?? p.premissa_codigo,
         formula: cat?.formula ?? "",
         unidade: cat?.unidade ?? null,
+        natureza: cat?.natureza ?? "",
+        origem: p.origem ?? null,
         valores: p.valores ?? {},
       };
     });
@@ -286,10 +295,106 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         linhas,
       };
     }
+
+    // ---- Fase 9: o MODELO INSTITUCIONAL --------------------------------------
+    //
+    // Ele exige DUAS coisas que o modelo agregado não exigia, e as duas são
+    // condição de existência e não preferência:
+    //
+    //   • ENTIDADE MODELADA. Sem ela o modelo somaria o ativo de uma empresa do
+    //     grupo com o passivo de outra — foi medido contra o book (0044): "Ativo
+    //     Circulante 2024" devolvia o da VT Logística enquanto a Metalúrgica
+    //     tinha 17× mais. Balanço que não existe em lugar nenhum, com cara de
+    //     balanço.
+    //   • ÚLTIMO EXERCÍCIO REAL, para saber onde termina o realizado e começa a
+    //     projeção. Adivinhar isso pelo maior ano extraído erraria justamente no
+    //     caso em que o cliente mandou um balancete parcial do ano corrente.
+    //
+    // Faltando qualquer uma, o arquivo sai SEM as 14 abas e o motivo é dito no
+    // cabeçalho da resposta — em vez de sair um modelo silenciosamente errado.
+    const entidadeModelada = par?.entidade?.trim() || null;
+    const ultimoReal = par?.ultimo_exercicio_real ?? null;
+    if (entidadeModelada && ultimoReal) {
+      const valoresRes = await supabase.rpc("fn_valores_por_ano", {
+        p_caso_id: id, p_entidade: entidadeModelada,
+      });
+      const valores = (valoresRes.data ?? []) as unknown as Array<{
+        rotulo_norm: string; secao_canonica: string | null; ano: number; valor: number;
+      }>;
+      // Só exercícios ATÉ o último realizado entram como histórico: um balancete
+      // do ano corrente não é exercício fechado, e tratá-lo como tal faria a
+      // projeção partir de meio ano.
+      const anosHistoricos = [...new Set(valores.map((v) => v.ano))]
+        .filter((a) => a <= ultimoReal).sort((a, b) => a - b);
+      const nProj = par?.anos_projetados ?? 5;
+      const anosProjetados = Array.from({ length: nProj }, (_, i) => ultimoReal + 1 + i);
+
+      const porRotulo = new Map<string, Record<string, number>>();
+      for (const v of valores) {
+        if (!anosHistoricos.includes(v.ano)) continue;
+        if (!porRotulo.has(v.rotulo_norm)) porRotulo.set(v.rotulo_norm, {});
+        porRotulo.get(v.rotulo_norm)![String(v.ano)] = Number(v.valor);
+      }
+      const linhasModelo: LinhaModelo[] = ((linhasRes.data ?? []) as unknown as Array<{
+        secao_canonica: string | null; chave: string; rotulo_norm: string;
+        papel: LinhaModelo["papel"]; unidade: string | null; moeda: string | null;
+        documentos: string[] | null;
+      }>).map((l) => ({
+        secao_canonica: l.secao_canonica, chave: l.chave, rotulo_norm: l.rotulo_norm,
+        papel: l.papel, unidade: l.unidade, moeda: l.moeda, documentos: l.documentos,
+        valores: porRotulo.get(l.rotulo_norm) ?? {},
+      }));
+
+      // A base macro do modelo: realizado + Focus, com a fonte de cada célula.
+      const macroModelo = [
+        ...anuais.map((a) => ({
+          serie: a.serie, ano: a.ano, valor: Number(a.retorno),
+          fonte: `realizado (${a.meses} meses)`,
+        })),
+        ...expectativas.map((e) => ({
+          serie: e.serie, ano: e.ano_ref, valor: Number(e.mediana),
+          fonte: `Focus, coleta ${e.coletado_em}`,
+        })),
+      ];
+
+      // Unidade dominante: a das linhas, não um palpite. Se o caso mistura milhar
+      // e unidade, a dominante entra no cabeçalho e a divergência aparece por
+      // linha (cada célula histórica leva a sua unidade em nota).
+      const contagemUnidade = new Map<string, number>();
+      for (const l of linhasModelo) {
+        if (!l.unidade) continue;
+        contagemUnidade.set(l.unidade, (contagemUnidade.get(l.unidade) ?? 0) + 1);
+      }
+      const unidadeDominante = [...contagemUnidade.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+
+      modeloInstitucional = {
+        caso: { nome: caso.nome, produto: caso.produto },
+        agora: new Date(),
+        entidade: entidadeModelada,
+        setor: par?.setor ?? null,
+        anosHistoricos, anosProjetados,
+        stressPct: 0.2,
+        caixaMinimo: 0,
+        aliquotaTributos: 0.34,
+        linhas: linhasModelo,
+        premissas,
+        vinculos: ((vincRes.data ?? []) as unknown as Array<{
+          rotulo_norm: string; premissa_codigo: string | null; sazonalidade_codigo: string | null;
+        }>).map((v) => ({
+          rotulo_norm: v.rotulo_norm,
+          premissa_codigo: v.premissa_codigo,
+          sazonalidade_codigo: v.sazonalidade_codigo,
+        })),
+        macro: macroModelo,
+        unidade: unidadeDominante === "milhar" ? "R$ mil"
+          : unidadeDominante === "unidade" ? "R$" : (unidadeDominante ?? "R$"),
+      };
+    }
   }
 
   const workbook = buildExportWorkbook({
     caso, documentos, campos, macro, macroErro, causasDeFalha, modo, modelagemConfig,
+    modeloInstitucional,
   });
   const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
   // O nome do arquivo DIZ qual dos dois é. Dois arquivos com o mesmo nome na

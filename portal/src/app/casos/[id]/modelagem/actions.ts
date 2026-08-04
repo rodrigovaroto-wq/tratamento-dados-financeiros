@@ -95,6 +95,63 @@ export async function vincularLinha(casoId: string, formData: FormData) {
   revalidatePath(`/casos/${casoId}/modelagem`);
 }
 
+// Salvar a seção inteira de uma vez.
+//
+// POR QUE ISTO EXISTE: no v35 a tela listou 236 linhas, cada uma com o seu botão
+// `salvar`. Configurar as exceções depois do lote significava 236 idas ao
+// servidor, uma por clique — e trabalho que dá 236 cliques é trabalho que não se
+// faz. Aqui cada seção é UM formulário e UMA submissão.
+//
+// Só chama o banco para a linha que MUDOU (`orig__i` traz o valor que a tela
+// carregou). Reenviar as 45 linhas de uma seção a cada salvamento gravaria
+// `caso_linha_premissa` para linha que ninguém tocou — inclusive para a linha
+// deliberadamente "não projetar" —, e a trilha de decisão passaria a registrar
+// escolhas que o analista não fez.
+export async function salvarSecao(casoId: string, formData: FormData) {
+  const supabase = await createClient();
+  const autorNome = await autor();
+
+  const indices = new Set<string>();
+  for (const k of formData.keys()) {
+    const m = k.match(/^(?:premissa|sazonalidade|rotulo|entidade|orig|origSaz)__(\d+)$/);
+    if (m) indices.add(m[1]);
+  }
+
+  const erros: string[] = [];
+  let n = 0;
+  for (const i of [...indices].sort((a, b) => Number(a) - Number(b))) {
+    const premissa = String(formData.get(`premissa__${i}`) ?? "");
+    const sazonalidade = String(formData.get(`sazonalidade__${i}`) ?? "");
+    const orig = String(formData.get(`orig__${i}`) ?? "");
+    const origSaz = String(formData.get(`origSaz__${i}`) ?? "");
+    if (premissa === orig && sazonalidade === origSaz) continue;
+
+    const rotulo = String(formData.get(`rotulo__${i}`) ?? "");
+    const { data, error } = await supabase.rpc("fn_vincular_linha_premissa", {
+      p_caso_id: casoId,
+      p_secao_canonica: String(formData.get("secao_canonica") || "") || null,
+      p_rotulo: rotulo,
+      p_entidade: String(formData.get(`entidade__${i}`) || "") || null,
+      p_premissa: premissa || null,
+      p_autor: autorNome,
+      p_sazonalidade: sazonalidade || null,
+    });
+    if (error) { erros.push(`${rotulo}: ${error.message}`); continue; }
+    // Recusa por linha NÃO aborta as outras: numa submissão de 45 linhas, parar
+    // na primeira perderia as 44 decisões seguintes. Junta e relata.
+    const r = data as Recusavel;
+    if (r?.recusado) { erros.push(`${rotulo}: ${r.motivo_recusa ?? "recusado"}`); continue; }
+    n++;
+  }
+
+  revalidatePath(`/casos/${casoId}/modelagem`);
+  if (erros.length > 0) {
+    throw new Error(
+      `${n} linha(s) salva(s); ${erros.length} recusada(s):\n` + erros.slice(0, 8).join("\n"),
+    );
+  }
+}
+
 export async function aplicarEmLote(casoId: string, formData: FormData) {
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("fn_aplicar_premissa_em_lote", {
@@ -108,13 +165,18 @@ export async function aplicarEmLote(casoId: string, formData: FormData) {
   conferirRecusa(data, "Lote recusado.");
 
   // Lote que pega ZERO linha não é erro, mas também não pode passar por sucesso:
-  // significa que a seção escolhida não tem linha nenhuma neste caso, e quem
-  // clicou precisa saber disso agora — não ao abrir o Excel.
-  const r = data as { n_linhas?: number } | null;
+  // significa que a seção escolhida não tem CONTA nenhuma neste caso (só subtotal,
+  // série mensal ou indicador), e quem clicou precisa saber disso agora — não ao
+  // abrir o Excel.
+  const r = data as { n_linhas?: number; n_ignoradas?: number } | null;
   if (r && r.n_linhas === 0) {
     throw new Error(
-      "O lote não encontrou NENHUMA linha nessa seção neste caso — nada foi vinculado. "
-      + "Confira a seção escolhida na lista de linhas abaixo.",
+      "O lote não vinculou NENHUMA linha nessa seção. "
+      + (r.n_ignoradas
+        ? `As ${r.n_ignoradas} linha(s) da seção não são contas projetáveis (subtotal, série mensal `
+          + "ou indicador derivado) — subtotal sai como soma dos componentes no Excel, e por isso "
+          + "não recebe premissa."
+        : "Confira a seção escolhida na lista de linhas abaixo."),
     );
   }
   revalidatePath(`/casos/${casoId}/modelagem`);

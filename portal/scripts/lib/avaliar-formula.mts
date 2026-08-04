@@ -327,6 +327,27 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
       return avaliarCelula(ws, mAbs[1], Number(mAbs[2]), prof + 1);
     }
 
+    // REFERÊNCIA ENTRE ABAS: `'Balance Sheet'!J42` ou `Anual!U54`.
+    //
+    // Sem isto o avaliador devolvia `null` para toda fórmula do modelo
+    // institucional — que é feito de referência cruzada — e o arnês não tinha como
+    // provar que o balanço fecha. Pior: `null` propagava como "não sei" e o assert
+    // passaria por não conseguir avaliar, que é a forma mais silenciosa de teste
+    // que não prova nada.
+    const mExt = /^('(?:[^']|'')+'|[A-Za-zÀ-ÿ0-9_.&][A-Za-zÀ-ÿ0-9_.&\s]*)!(\$?[A-Z]+\$?[0-9]+)/
+      .exec(s.slice(i));
+    if (mExt) {
+      const nomeBruto = mExt[1];
+      const nome = nomeBruto.startsWith("'")
+        ? nomeBruto.slice(1, -1).replace(/''/g, "'")
+        : nomeBruto;
+      const outra = ws.workbook?.getWorksheet(nome);
+      const alvo = RE_REF.exec(mExt[2]);
+      if (!outra || !alvo) return null;
+      i += mExt[0].length;
+      return avaliarCelula(outra, alvo[1], Number(alvo[2]), prof + 1);
+    }
+
     const mId = /^([A-Za-z_][A-Za-z0-9_.]*)/.exec(s.slice(i));
     if (!mId) return null;
     const id = mId[1];
@@ -484,6 +505,23 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
           return avaliarCelula(ws, numParaCol(cIni), rIni + a - 1, prof + 1);
         }
         return null;
+      }
+      // CHOOSE(n, a, b, c) — o interruptor de cenário do modelo institucional.
+      // Índice fora de 1..n devolve null ("não sei"), como o #VALUE! do Excel:
+      // devolver o primeiro argumento faria o arnês avaliar o cenário Base
+      // enquanto o arquivo mostraria erro.
+      if (nome === "CHOOSE") {
+        const idx = num(avaliarExpressao(brutos[0] ?? "", ws, prof + 1));
+        if (idx == null) return null;
+        const escolhido = brutos[Math.round(idx)];
+        if (escolhido === undefined) return null;
+        return avaliarExpressao(escolhido, ws, prof + 1);
+      }
+      // TEXT(v, fmt) — só o suficiente para as células de diagnóstico do modelo
+      // não virarem "não sei" e contaminarem um assert vizinho.
+      if (nome === "TEXT") {
+        const v = avaliarExpressao(brutos[0] ?? "", ws, prof + 1);
+        return typeof v === "number" ? String(v) : (typeof v === "string" ? v : "");
       }
       return null; // função desconhecida: "não sei", nunca 0
     }

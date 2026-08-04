@@ -3421,3 +3421,70 @@ O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver a
 > (não há import cruzado .mjs↔portal TS). Promover a IA a ter PRIORIDADE sobre a regra (ou
 > auto-clear) é uma subida de dial que exige golden set + concordância medida (`docs/01`, `f0/06`)
 > — não fazer sem isso.
+
+## Sessão 31 (2026-08-04) — Fase 8 (papel da linha) + Fase 9 (modelo institucional)
+
+Duas coisas nesta sessão: as correções que a **rodada real do Teste v35** pediu, e a
+**reconstrução do "Modelo Base"** que o dono subiu como referência universal.
+
+### Fase 8 — a linha diz o que ela é (`0042`, `0043`, `0044`)
+
+Os prints do v35 mostraram a tela de Modelagem tratando 236 linhas como conta projetável:
+`Ativo Circulante 67.878` entre os 32 componentes dela, os 12 `Faturamento Janeiro…Dezembro`
+como contas, `(-) Depreciação acumulada` positiva, `TOTAL — saldo devedor 51.300.000` (reais)
+ao lado de `Passivo Circulante 92.539` (milhares).
+
+- **`0042`** — `fn_papel_linha` (conta/subtotal/derivado/serie_mensal, lista fechada,
+  reaproveitando `fn_rotulo_estrutural` da 0034), `fn_linhas_para_modelagem` com **papel, valor
+  COM SINAL, unidade/moeda, documentos de origem e `sobreposicao_suspeita`**; recusa de vínculo
+  em linha que não é conta, no BANCO; lote que declara o que deixou de fora; macro puxando o
+  **Focus** ao ser ativada sem valor; `fn_conferir_modelagem` contando só o projetável.
+- **Dois defeitos que a fixture escondia:** `fn_sazonalidade_do_caso` lia o mês com
+  `left(chave,3)` — funcionava com `jan/2024` (rótulo que EU inventei) e voltava **vazia** com
+  `Faturamento Janeiro` (rótulo que a extração real produz). E `sobreposicao_suspeita` na
+  primeira versão marcava qualquer par com valor igual: 4 pares reais viraram dezenas de falsos
+  até entrar `fn_rotulo_contido`.
+- **`0043`** — `fn_reconferir_caso`: reaplica as regras de HOJE sobre o dado já gravado, **sem
+  gastar IA**. As duas pendências do v35 ("falta o Passivo+PL" e "4 contas com 14529") eram
+  **achado de regra velha** — a 0034 já as havia fechado e nada reavaliava pendência gravada. O
+  teste reproduz a forma exata daquele dado e prova que hoje dá `ok`.
+- **`0044`** — `fn_valores_por_ano(caso, entidade)`: a série histórica por exercício. O filtro de
+  entidade **não é opcional**: sem ele, "Ativo Circulante 2024" devolvia o da VT Logística
+  (3.961) enquanto a Metalúrgica tinha 67.878 — ativo de uma empresa com passivo de outra.
+
+### Fase 9 — o modelo institucional (14 abas)
+
+`portal/src/lib/modelo-institucional.ts` reconstrói o Modelo Base com os MESMOS nomes de aba e a
+MESMA semântica: `Considerações · Capa · Output · Revenues, COGS & SG&A · Premissas · Income
+Statement · Balance Sheet · Working Capital · ST Inv. & Debt · Fixed Assets & CAPEX · Cash Flow ·
+Goodwill, Taxes & Div. · Anual · Tributos a Recolher`. Switch de cenário `CHOOSE(Output!$G$2,…)`,
+capital de giro por dias/360, revolver contra caixa mínimo, capex com depreciação linear, checks.
+
+**O que muda em relação à referência, declarado na aba Considerações:**
+
+1. **Histórico não é digitado** — vem da extração, com proveniência por célula.
+2. **`Anual` é a base macro do banco** (realizado + Focus), não uma planilha de 1994-2014.
+3. **A circularidade foi cortada**: juros e rendimento sobre o saldo de ABERTURA. Referência
+   circular resolve para zero SEM AVISO fora do Excel e nenhum teste consegue verificar o arquivo.
+4. **Nada projeta sem premissa**; subtotal é soma dos componentes; tributo só sobre lucro positivo.
+
+**O avaliador de fórmula do arnês ganhou referência entre abas e `CHOOSE`** — e foi ele que
+achou os dois defeitos desta fase: escala misturada (dívida em reais somada a balanço em
+milhares: passivo de 51.300.000 contra ativo de 1.000) e **modelo vazio com cara de modelo**
+(sem `secao_canonica` todo bloco fica vazio e as 14 abas saem zeradas). O primeiro virou
+conversão de escala com nota por célula; o segundo, um banner **"ESTE MODELO NÃO ESTÁ
+PROJETÁVEL"** no topo do Output, nomeando o que falta.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **44 migrations / 233
+asserts**; `test/e2e/run.mts` = **27**.
+
+### O que falta (declarado, não escondido)
+
+- **Asserts do modelo institucional no `verificar-export.mts`** — o avaliador já resolve as
+  fórmulas cruzadas; faltam os asserts (balanço fecha em toda coluna projetada, cenário 3 piora o
+  resultado, banner aparece quando não projetável). É o próximo passo.
+- A aba `Modelagem` agregada (Fase 7) **continua no arquivo**, de propósito: é a única com
+  validação ao vivo, e serve de comparação. Removê-la é decisão do dono depois de conferir os dois.
+- Aplicar `0042`, `0043`, `0044` e publicar o portal.
