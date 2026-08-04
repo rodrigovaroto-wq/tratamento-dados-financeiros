@@ -112,11 +112,17 @@ export default async function ModelagemPage({
   params, searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; aviso?: string; tom?: string }>;
 }) {
   const { id } = await params;
-  const { q } = await searchParams;
+  const { q, aviso, tom } = await searchParams;
   const busca = (q ?? "").trim();
+  // O resultado da última ação (ver `voltarComAviso` em actions.ts). Vem pela URL
+  // porque em produção o Next redige a mensagem de uma exceção de servidor antes
+  // de ela chegar ao browser — e "recusado porque é subtotal" viraria "an error
+  // occurred", que não ensina nada a ninguém.
+  const avisoTexto = (aviso ?? "").trim();
+  const avisoErro = tom !== "ok";
   const supabase = await createClient();
 
   const casoRes = await supabase.from("caso").select("id, nome, produto, status").eq("id", id).single();
@@ -247,6 +253,28 @@ export default async function ModelagemPage({
           Exportar completo ↓
         </a>
       </div>
+
+      {/* O RESULTADO DA ÚLTIMA AÇÃO. Fica antes de tudo porque é resposta a um
+          clique que acabou de acontecer — e porque o que ele substitui era a
+          página quebrando sem dizer nada. */}
+      {avisoTexto && (
+        <div
+          role="status"
+          className={`flex items-start justify-between gap-3 rounded border p-2 text-sm ${
+            avisoErro
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-emerald-300 bg-emerald-50 text-emerald-900"
+          }`}
+        >
+          <span>{avisoTexto}</span>
+          <Link
+            href={`/casos/${id}/modelagem${busca ? `?q=${encodeURIComponent(busca)}` : ""}`}
+            className="shrink-0 text-xs underline"
+          >
+            fechar
+          </Link>
+        </div>
+      )}
 
       {/* 4. CONFERÊNCIA — no TOPO, não no fim. É o que o analista precisa saber
           antes de mexer em qualquer coisa: quantas linhas ficariam de fora e qual
