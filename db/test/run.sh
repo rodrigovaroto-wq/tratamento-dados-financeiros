@@ -79,6 +79,38 @@ if [ -n "$dup" ]; then
 fi
 echo "   sem prefixo duplicado"
 
+# A LISTA DE COMANDOS DO db/README.md É O QUE O DONO COPIA PARA APLICAR.
+#
+# O CLAUDE.md chama esse arquivo de "ordem oficial de aplicação", e o próprio
+# README já narra o estrago de ele ficar atrás: treze migrations (0032→0044)
+# nunca entraram na lista, e quem aplicasse seguindo-a pararia na 0031 com um
+# banco "sem Portão 2, sem catálogo de premissas, sem papel da linha — sem nenhum
+# erro, só faltando".
+#
+# ACONTECEU DE NOVO, e desta vez custou uma rodada de produção: a `0101` entrou na
+# TABELA do README e **não** na lista de comandos. O dono mergeou o PR, aplicou o
+# que a lista mandava, e a tela de Modelagem continuou mostrando o mesmo defeito —
+# porque a correção nunca chegou ao banco. Da tela, "aplicada" e "não aplicada"
+# têm exatamente a mesma aparência.
+#
+# Escrever migration e esquecer de listá-la é um erro silencioso de UMA linha, e é
+# o único passo entre "corrigido no git" e "corrigido em produção". Aqui ele para
+# de ser silencioso.
+echo "== o db/README.md lista todas as migrations"
+faltando=""
+for f in db/migrations/*.sql; do
+  grep -qF "$f" db/README.md || faltando="$faltando $f"
+done
+if [ -n "$faltando" ]; then
+  echo "FALHOU: migration que existe e o db/README.md não manda aplicar:"
+  for f in $faltando; do echo "     - $f"; done
+  echo "   Acrescente 'supabase db execute --file <arquivo>' na lista de comandos do db/README.md."
+  echo "   Sem isso o dono aplica o que a lista diz, a correção não chega ao banco, e a tela"
+  echo "   mostra o defeito antigo como se o PR não tivesse funcionado."
+  exit 1
+fi
+echo "   as $(ls db/migrations/*.sql | wc -l) migrations estão na lista de aplicação"
+
 echo "== migrations"
 for f in db/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then
@@ -142,6 +174,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_por_secao.test.sql 2>&1 \
 echo
 echo "== testes de ESCALA da modelagem (0101: cabe no statement_timeout do Supabase)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/modelagem_escala.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== testes da Modelagem contra o caso REAL de produção (0102: versão vigente; rótulo real)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/modelagem_v35.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo

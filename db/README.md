@@ -76,6 +76,7 @@ aplica migration em produção é só o dono (ver `CLAUDE.md`).
 | `migrations/0043_reconferir_o_que_ja_esta_no_banco.sql` | **Reaplicar as regras de HOJE sobre o dado já gravado, sem gastar IA.** Pendência é estado gravado e nada a reavaliava quando a regra mudava — o portal mostrava, por tempo indeterminado, achado que a regra atual não faria mais. `fn_avaliar_guardas_extracao` vira fonte única dos três sinais; `fn_reconferir_caso` é o ponto de entrada. |
 | `migrations/0044_valores_por_ano.sql` | **O valor de cada linha lógica por exercício.** `fn_valores_por_ano(caso, entidade)` — o filtro de entidade **não é opcional**: sem ele, "Ativo Circulante 2024" devolvia o de uma empresa do grupo e o passivo de outra. Ano vem de `periodo_coluna` primeiro (balanço comparativo traz dois anos no mesmo documento). |
 | `migrations/0100_papel_por_secao.sql` | **O papel da linha é da SEÇÃO, não do rótulo solto no caso.** A tela agrupa por (seção, rótulo) e a guarda agrupava só por rótulo, resolvendo o empate pelo papel mais restritivo — então ela recusava a linha que a tela tinha acabado de oferecer, e o "aplicar em lote" caía inteiro na primeira recusa. A guarda passa a ler o papel da mesma seção que a tela mostrou; recusa por linha vai para `ignoradas` e o lote segue; recusa global (premissa não ativa) continua abortando. **Primeira migration na faixa `0100`+** (colaborador). |
+| `migrations/0102_modelagem_versao_vigente.sql` | **A Modelagem lê a versão VIGENTE de cada documento.** A `0026` estabeleceu que reextrair cria `documento_versao` nova sem perder a anterior — e os cinco leitores por caso (`fn_linhas_para_modelagem`, `fn_papel_do_rotulo_no_caso`, `fn_sazonalidade_do_caso`, `fn_valores_por_ano`, `fn_linhas_do_tipo`) nunca mencionavam `n_versao`, então as ocorrências de TODAS as versões entravam no mesmo agrupamento. Medido: `Estoques` ia de 7 ocorrências/24.610 para 8/777.777 depois de UMA reextração — a versão superada somava e podia **ditar o valor que sai no Excel**. E cada rodada de reextração acrescentava um jogo inteiro de ocorrências, o que devolveria o caso ao `statement_timeout` que a `0101` acabou de destravar, sem ninguém mexer em código. A regra vive numa definição só, `fn_versao_com_extracao` — que difere de `fn_versao_atual` de propósito, porque `max(n_versao)` puro deixaria a tela em branco na janela entre registrar o documento e extrair. Traz também `fn_diagnostico_modelagem`, para responder "a correção está no banco?" sem adivinhar. |
 | `migrations/0101_modelagem_dentro_do_tempo.sql` | **A tela de Modelagem cabe dentro do `statement_timeout`.** Medido num caso do tamanho do v35 (14 documentos, 770 ocorrências): `fn_conferir_modelagem` levava **9,3 s** — acima do teto de 8 s do Supabase —, era cancelada, e a tela mostrava isso como "este caso não tem linha extraída". Duas causas: `fn_conferir_modelagem` chamava `fn_linhas_para_modelagem` **cinco vezes**, duas delas dentro de `exists` correlacionado (uma execução completa **por vínculo**); e `fn_papel_linha`, que custa ~1,6 ms, era avaliada **por ocorrência** quando o papel é propriedade do RÓTULO. Agora a conferência é uma passada só, o papel é calculado uma vez por rótulo distinto e a marca de sobreposição virou join por igualdade. **9,3 s → 96 ms**, com resultado idêntico campo a campo. Traz também os `grant execute` dos auxiliares da 0042 que nasceram sem nenhum. |
 | `seed/macro_carga_inicial.sql` | **Carga inicial dos índices macro** (dado REAL, gerado por `node n8n/gerar-seed-macro.mjs` das mesmas APIs e parsers que o workflow de coleta usa: BCB/SGS, IBGE/SIDRA e BCB/Focus). Existe porque o `workflow.macro.json` roda no RELÓGIO (dia 12) e **não faz carga histórica** — importar/ativar o workflow hoje não traz número nenhum até o próximo dia 12, e as médias de 3/5/10 anos e as premissas de Focus do modelo são inúteis vazias. Aplicar **depois da `0025`**, no mesmo banco. Seguro rodar mais de uma vez (as RPCs são idempotentes). É uma FOTO da data em que o arquivo foi gerado — a manutenção mês a mês continua sendo do workflow. Testes: `db/test/seed_macro.test.sql`, que confere as duas fontes do IPCA entre si. |
 
@@ -131,10 +132,30 @@ supabase db execute --file db/migrations/0043_reconferir_o_que_ja_esta_no_banco.
 supabase db execute --file db/migrations/0044_valores_por_ano.sql
 # Faixa 0100+ (colaborador). O buraco 0044 → 0100 é o estado esperado, não erro:
 supabase db execute --file db/migrations/0100_papel_por_secao.sql
+supabase db execute --file db/migrations/0101_modelagem_dentro_do_tempo.sql
+supabase db execute --file db/migrations/0102_modelagem_versao_vigente.sql
 
 # Carga inicial dos índices macro (depois da 0025; não é migration, é dado):
 supabase db execute --file db/seed/macro_carga_inicial.sql
 ```
+
+> 🔎 **MERGE NÃO É APPLY — e da tela os dois são iguais.** O PR entrar no `main` não
+> muda uma linha do Supabase; a migration só existe quando o comando acima roda. Foi
+> exatamente aqui que a rodada da `0101` se perdeu: a migration estava na tabela deste
+> arquivo e **não** na lista de comandos acima, o dono aplicou o que a lista mandava, e a
+> tela de Modelagem seguiu mostrando o defeito antigo — parecendo que o PR não tinha
+> funcionado. Para não precisar adivinhar, a `0102` traz um diagnóstico; rode no SQL
+> Editor:
+>
+> ```sql
+> select jsonb_pretty(fn_diagnostico_modelagem('<caso_id>'));
+> ```
+>
+> `correcoes_instaladas` responde direto se as funções em pé no banco são as da
+> `0101`/`0102`; `ocorrencias_superadas` diz quantas ocorrências vinham de versão
+> superada de documento; `linhas` e `linhas_por_papel` dizem o que a tela **deve**
+> mostrar, para comparar com o que ela está mostrando. `db/test/run.sh` agora reprova
+> migration que exista e não esteja na lista acima, para o esquecimento não repetir.
 
 > ⚠️ **DEPOIS DE APLICAR QUALQUER MIGRATION QUE CRIE OU DERRUBE FUNÇÃO, recarregue o
 > cache de schema do PostgREST:**
