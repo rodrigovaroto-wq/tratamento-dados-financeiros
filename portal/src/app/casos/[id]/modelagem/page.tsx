@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { definirParametros, ativarPremissa, aplicarEmLote, salvarSecao } from "./actions";
+import { SecaoLinhas } from "./SecaoLinhas";
+import { FormParametros, FormPremissa } from "./FormsTopo";
 
 // A seção MODELAGEM do mandato (pedido do dono, Fase 7.3; revisada na Fase 8
 // depois da rodada real do Teste v35).
@@ -112,17 +113,11 @@ export default async function ModelagemPage({
   params, searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ q?: string; aviso?: string; tom?: string }>;
+  searchParams: Promise<{ q?: string }>;
 }) {
   const { id } = await params;
-  const { q, aviso, tom } = await searchParams;
+  const { q } = await searchParams;
   const busca = (q ?? "").trim();
-  // O resultado da última ação (ver `voltarComAviso` em actions.ts). Vem pela URL
-  // porque em produção o Next redige a mensagem de uma exceção de servidor antes
-  // de ela chegar ao browser — e "recusado porque é subtotal" viraria "an error
-  // occurred", que não ensina nada a ninguém.
-  const avisoTexto = (aviso ?? "").trim();
-  const avisoErro = tom !== "ok";
   const supabase = await createClient();
 
   const casoRes = await supabase.from("caso").select("id, nome, produto, status").eq("id", id).single();
@@ -224,13 +219,6 @@ export default async function ModelagemPage({
     porNatureza.get(p.natureza)!.push(p);
   }
 
-  const fmt = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
-  // Unidade e moeda ao lado do número: é o que impede alguém de comparar um saldo
-  // em milhares com um saldo em reais e concluir que a dívida é 500× maior.
-  const escala = (l: LinhaDoCaso) =>
-    [l.unidade === "milhar" ? "R$ mil" : l.unidade === "unidade" ? "R$" : l.unidade,
-     l.moeda && l.moeda !== "BRL" ? l.moeda : null].filter(Boolean).join(" ");
-
   const premissasSazonais = ativas.filter((a) => a.premissa_codigo.includes("SAZON")
     || a.premissa_codigo === "CRONOGRAMA_FISICO" || a.premissa_codigo === "PARADA_MANUTENCAO");
 
@@ -253,28 +241,6 @@ export default async function ModelagemPage({
           Exportar completo ↓
         </a>
       </div>
-
-      {/* O RESULTADO DA ÚLTIMA AÇÃO. Fica antes de tudo porque é resposta a um
-          clique que acabou de acontecer — e porque o que ele substitui era a
-          página quebrando sem dizer nada. */}
-      {avisoTexto && (
-        <div
-          role="status"
-          className={`flex items-start justify-between gap-3 rounded border p-2 text-sm ${
-            avisoErro
-              ? "border-amber-300 bg-amber-50 text-amber-900"
-              : "border-emerald-300 bg-emerald-50 text-emerald-900"
-          }`}
-        >
-          <span>{avisoTexto}</span>
-          <Link
-            href={`/casos/${id}/modelagem${busca ? `?q=${encodeURIComponent(busca)}` : ""}`}
-            className="shrink-0 text-xs underline"
-          >
-            fechar
-          </Link>
-        </div>
-      )}
 
       {/* 4. CONFERÊNCIA — no TOPO, não no fim. É o que o analista precisa saber
           antes de mexer em qualquer coisa: quantas linhas ficariam de fora e qual
@@ -338,7 +304,7 @@ export default async function ModelagemPage({
           premissas sugeridas no passo 2. Entidade e último exercício vêm <strong>sugeridos</strong>{" "}
           pelo que os documentos deste caso dizem; confira antes de salvar.
         </p>
-        <form action={definirParametros.bind(null, id)} className="grid gap-3 sm:grid-cols-2">
+        <FormParametros casoId={id}>
           <label className="text-sm">
             <span className="text-neutral-600">Entidade modelada</span>
             <input
@@ -391,15 +357,7 @@ export default async function ModelagemPage({
               {anos.join(" · ")}
             </span>
           </label>
-          <div className="flex items-end">
-            <button
-              type="submit"
-              className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
-            >
-              Salvar parâmetros
-            </button>
-          </div>
-        </form>
+        </FormParametros>
       </section>
 
       {/* 2. PREMISSAS DO CASO */}
@@ -482,13 +440,7 @@ export default async function ModelagemPage({
                 {lista.map((p) => {
                   const ativa = ativasPorCodigo.get(p.codigo);
                   return (
-                    <form
-                      key={p.codigo} action={ativarPremissa.bind(null, id)}
-                      className={`flex flex-wrap items-center gap-2 rounded border px-2 py-1.5 text-sm ${
-                        ativa ? "border-emerald-200 bg-emerald-50" : "border-neutral-200"
-                      }`}
-                    >
-                      <input type="hidden" name="codigo" value={p.codigo} />
+                    <FormPremissa key={p.codigo} casoId={id} codigo={p.codigo} ativa={!!ativa}>
                       <span className="min-w-56 flex-1" title={p.descricao ?? undefined}>
                         {p.nome}
                         {p.unidade && <span className="ml-1 text-neutral-500">({p.unidade})</span>}
@@ -511,13 +463,7 @@ export default async function ModelagemPage({
                           className="w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs"
                         />
                       ))}
-                      <button
-                        type="submit"
-                        className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
-                      >
-                        {ativa ? "Atualizar" : "Ativar"}
-                      </button>
-                    </form>
+                    </FormPremissa>
                   );
                 })}
               </div>
@@ -561,161 +507,26 @@ export default async function ModelagemPage({
           </p>
         ) : (
           <div className="space-y-5">
-            {[...linhasPorSecao.entries()].sort().map(([secao, linhas]) => {
-              const contas = linhas.filter((l) => l.papel === "conta");
-              return (
-                <div key={secao}>
-                  <div className="mb-1 flex flex-wrap items-center gap-2">
-                    <h3 className="text-xs font-semibold uppercase text-neutral-500">
-                      {secao}{" "}
-                      <span className="font-normal">
-                        ({contas.length} conta(s)
-                        {linhas.length !== contas.length && ` + ${linhas.length - contas.length} não projetável(is)`})
-                      </span>
-                    </h3>
-                    {secao !== "(sem seção canônica)" && contas.length > 0 && (
-                      <form action={aplicarEmLote.bind(null, id)} className="flex items-center gap-1">
-                        <input type="hidden" name="secao_canonica" value={secao} />
-                        <select
-                          name="premissa" required
-                          className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                          defaultValue=""
-                        >
-                          <option value="" disabled>aplicar em lote…</option>
-                          {ativas.map((a) => (
-                            <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                              {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="submit"
-                          className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
-                        >
-                          aplicar às {contas.length} conta(s)
-                        </button>
-                      </form>
-                    )}
-                  </div>
-
-                  {/* UM formulário por seção: as exceções se ajustam e salvam de uma
-                      vez. Antes era um botão por linha — 236 idas ao servidor. */}
-                  <form action={salvarSecao.bind(null, id)}>
-                    <input
-                      type="hidden" name="secao_canonica"
-                      value={secao === "(sem seção canônica)" ? "" : secao}
-                    />
-                    <div className="overflow-x-auto rounded border border-neutral-200">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-                          <tr>
-                            <th className="px-2 py-1">Linha</th>
-                            <th className="px-2 py-1 text-right">Último real</th>
-                            <th className="px-2 py-1">Premissa que dirige</th>
-                            <th className="px-2 py-1">Sazonalidade</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {linhas.map((l, i) => {
-                            // O rótulo normalizado vem do BANCO (`fn_normalizar_texto`).
-                            // Normalizar de novo aqui, em JS, criaria uma segunda
-                            // definição de "mesma linha", e as duas divergiriam no
-                            // primeiro caractere que só uma delas tratasse.
-                            const v = vinculoPorRotulo.get(l.rotulo_norm);
-                            const info = PAPEL_INFO[l.papel];
-                            return (
-                              <tr key={`${secao}-${l.rotulo_norm}`} className="border-t border-neutral-100 align-top">
-                                <td className="px-2 py-1">
-                                  <span className={l.papel === "conta" ? "" : "text-neutral-500"}>
-                                    {l.chave}
-                                  </span>
-                                  {info && (
-                                    <span className={`ml-1 rounded px-1 text-[10px] ${info.cor}`} title={info.explica}>
-                                      {info.rotulo}
-                                    </span>
-                                  )}
-                                  {l.sobreposicao_suspeita && (
-                                    <span
-                                      className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800"
-                                      title="Outra linha desta seção tem o MESMO valor e um rótulo que descreve a mesma conta de forma mais grossa — provavelmente o balanço sintético e o balancete analítico. Projetar as duas dobra a conta: escolha uma."
-                                    >
-                                      possível sobreposição
-                                    </span>
-                                  )}
-                                  <span className="block text-[10px] text-neutral-400">
-                                    {(l.documentos ?? []).join(" · ")}
-                                    {l.n_ocorrencias > 1 && ` · ${l.n_ocorrencias} ocorrências`}
-                                  </span>
-                                </td>
-                                <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                                  {fmt.format(l.valor_ultimo)}
-                                  <span className="block text-[10px] text-neutral-400">{escala(l)}</span>
-                                </td>
-                                {l.papel === "conta" ? (
-                                  <>
-                                    <td className="px-2 py-1">
-                                      <input type="hidden" name={`rotulo__${i}`} value={l.chave} />
-                                      <input type="hidden" name={`entidade__${i}`} value={l.entidade ?? ""} />
-                                      <input type="hidden" name={`orig__${i}`} value={v?.premissa_codigo ?? ""} />
-                                      <select
-                                        name={`premissa__${i}`} defaultValue={v?.premissa_codigo ?? ""}
-                                        className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                                      >
-                                        <option value="">(não projetar)</option>
-                                        {ativas.map((a) => (
-                                          <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                                            {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                    <td className="px-2 py-1">
-                                      <input type="hidden" name={`origSaz__${i}`} value={v?.sazonalidade_codigo ?? ""} />
-                                      <select
-                                        name={`sazonalidade__${i}`} defaultValue={v?.sazonalidade_codigo ?? ""}
-                                        className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                                        disabled={premissasSazonais.length === 0}
-                                      >
-                                        <option value="">(sem sazonalidade)</option>
-                                        {premissasSazonais.map((a) => (
-                                          <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                                            {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                  </>
-                                ) : (
-                                  // Sem seletor, com o DESTINO escrito: se a linha
-                                  // simplesmente não tivesse controle, o analista
-                                  // procuraria o defeito na tela.
-                                  <td colSpan={2} className="px-2 py-1 text-xs text-neutral-500">
-                                    {info?.explica}
-                                  </td>
-                                )}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    {contas.length > 0 && (
-                      <div className="mt-1 flex items-center gap-2">
-                        <button
-                          type="submit"
-                          className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
-                        >
-                          salvar esta seção
-                        </button>
-                        <span className="text-[10px] text-neutral-400">
-                          só as linhas que você mudou vão ao banco
-                        </span>
-                      </div>
-                    )}
-                  </form>
-                </div>
-              );
-            })}
+            {[...linhasPorSecao.entries()].sort().map(([secao, linhas]) => (
+              <SecaoLinhas
+                key={secao}
+                casoId={id}
+                secao={secao}
+                linhas={linhas}
+                ativas={ativas.map((a) => ({
+                  codigo: a.premissa_codigo,
+                  nome: nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo,
+                }))}
+                sazonais={premissasSazonais.map((a) => ({
+                  codigo: a.premissa_codigo,
+                  nome: nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo,
+                }))}
+                vinculos={Object.fromEntries(linhas.map((l) => [l.rotulo_norm, {
+                  premissa: vinculoPorRotulo.get(l.rotulo_norm)?.premissa_codigo ?? "",
+                  sazonalidade: vinculoPorRotulo.get(l.rotulo_norm)?.sazonalidade_codigo ?? "",
+                }]))}
+              />
+            ))}
             {linhasPorSecao.size === 0 && (
               <p className="text-sm text-neutral-500">
                 {busca
