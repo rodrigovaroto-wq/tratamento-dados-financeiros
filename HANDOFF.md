@@ -18,6 +18,120 @@ push e PR. Se o PR ficar vermelho, é regressão sua.
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
 **352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
+## Sessão 30 (2026-08-03) — Fase 6: calibração — o dial volta a mandar
+
+**A contradição que esta sessão fecha.** `estagio_autonomia` nasce na `0001` com o comentário
+"Nível é estado do sistema, não constante de código (docs/01)", é semeada na `0002` — e até aqui
+**não tinha um único leitor**: `grep -rl estagio_autonomia portal/src n8n` não retornava nada. O
+dial de `extracao_linhas_financeiras` dizia **N0** ("roda, registra, **não influencia decisão**")
+enquanto `fn_registrar_campos_extraidos` auto-aceitava toda linha com confiança **>= 0.95
+hardcoded** — que é o que a faz virar fato no export. O cabeçalho da `0019` registra a subida com
+todas as letras; o dial no banco nunca foi mudado. **O sistema declarava uma coisa e fazia outra, e
+nada podia acusar, porque não havia nada ligando as duas.**
+
+### `0041_dial_manda.sql` — o que muda, e o que NÃO muda
+
+Por decisão do dono: **o dial passa a DECLARAR N2 e o comportamento continua idêntico**. Não é
+mudança de autonomia — é a autonomia que já existia parando de ficar enterrada no corpo de uma
+função.
+
+| Peça | O que faz |
+|---|---|
+| `estagio_autonomia.limiar_auto_clear` | o `0.95` sai do código e vira **dado** (default 0.95, para nenhum banco existente mudar de comportamento). `null` = não auto-aceita, qualquer que seja o nível |
+| `fn_dial(estagio)` | a leitura única do dial (nível, teto, limiar, `no_teto`, quem/quando) |
+| `fn_mudar_dial(estagio, nivel, autor, motivo, limiar)` | sobe/baixa com o **teto respeitado**, recusa **retornada**, e grava `evento_auditoria` `mudanca_dial` — o valor que existia no enum desde a `0001` e nunca havia sido usado |
+| `fn_registrar_campos_extraidos` | reemitida: o auto-aceite **lê o dial**. N0/N1 = nenhum auto-aceite; N2/N3 = acima do limiar **lido da tabela** |
+
+Três decisões de projeto que valem registro:
+
+- **Ausência de configuração não vira permissão.** Sem linha no dial, `v_auto_permitido` é falso e
+  nada é auto-aceito. O default seguro é o único default admissível aqui.
+- **A recusa é retornada, não levantada** (padrão `0036`/`0037`/`0038`): exceção em plpgsql desfaria
+  o registro da própria tentativa, e *tentar passar do teto* é justamente o que a trilha precisa
+  guardar.
+- **`decisao` exige `caso_id`; mudança de dial é GLOBAL.** O registro append-only vai para
+  `evento_auditoria`. Pendurar num caso arbitrário faria a trilha daquele mandato afirmar uma
+  decisão que não é dele.
+
+**Baixar o dial passou a ser UMA CHAMADA** — sem migration, sem deploy. Era o que faltava para
+"desligar a autonomia" ser uma ação e não um comentário.
+
+### `db/test/dial.test.sql` — e os quatro defeitos religados
+
+Dez cenários. Os que importam: **N0 e N1 não auto-aceitam nada**; **mudar `limiar_auto_clear` muda o
+resultado sem tocar em uma linha de código** (0.98 aceita com limiar 0.95, pendente com 0.99, aceita
+outra vez ao voltar); **guarda disparada continua suprimindo o auto-aceite** (o que a `0029` fechou —
+a `0041` mexeu nesse bloco, e regressão ali reabre o furo de anti-ancoragem); **teto recusa e a
+tentativa fica registrada**, inclusive nos dois estágios que `docs/01` nunca solta de N1.
+
+Cada defeito foi **religado** e o teste reprovou (regra do `CLAUDE.md`, "teste que não pode falhar
+não prova nada"):
+
+| Defeito religado | Assert que reprovou |
+|---|---|
+| auto-aceite volta a ignorar o dial (`v_auto_permitido := true`) | "em N0 nenhuma linha é aceita" — *aceitas indevidamente: 1* |
+| `fn_mudar_dial` deixa de checar o teto | "pedir N3 num estágio de teto N2 é RECUSADO" — nível foi para N3 |
+| limiar volta ao código (`v_limiar := 0.95`) | "com limiar 0.99, a linha de 0.98 deixa de ser auto-aceita" — *aceito* |
+| guarda deixa de suprimir (regressão da `0029`) | "NENHUMA das 4 linhas de 0.99 foi aceita" — *aceitas indevidamente: 4* |
+
+O cenário 10 **restaura** o dial em N2/0.95: os testes rodam todos no mesmo banco, e um dial
+deixado em N0 faria qualquer teste futuro de auto-aceite passar ou reprovar por motivo errado.
+
+### `/autonomia` — o painel, somente leitura
+
+Os 8 estágios com nível de hoje, teto, limiar, quem mudou e quando, mais a trilha das últimas
+mudanças (aplicadas **e recusadas**). Duas escolhas deliberadas:
+
+- **Só leitura.** Subir dial é decisão de doutrina, é global (afeta todo mandato, não o que está
+  aberto) e `docs/01` exige concordância medida. Um botão aqui convidaria a mexer no meio de um
+  caso. A mudança se faz por `fn_mudar_dial` — ação do dono, como migration e teste ao vivo.
+- **A ressalva viaja com o número.** Estágio de extração acima de N1 mostra um aviso: está nesse
+  nível por **decisão de produto, não por concordância medida**. Sem isso, alguém lê "N2" daqui a
+  seis meses e conclui que houve medição contra golden set.
+
+A rota é `/autonomia`, fora de `/casos/`, porque o dial **não é estado de um mandato**.
+
+### `portal/scripts/medir-auto-aceite.mts` — e o número que ele deu
+
+Mede, para um dial dado, quantas linhas seriam auto-aceitas, quantas dessas o gabarito consegue
+conferir, e quantas concordam. Rodado no default:
+
+```
+linhas na extração:            767
+auto-aceitas pelo dial:        767  (100.0%)
+  conferíveis contra gabarito:  77
+    concordam:                  77  (100.0%)
+  SEM gabarito que confira:    690  (90.0% do auto-aceito)
+```
+
+**Leia os 100% com a ressalva, que é maior que o número.** A extração medida no default é o
+**fixture** — transcrição fiel do book, feita à mão —, **não a saída da IA**. Nesse modo o script
+mede o **instrumento**, não a autonomia: que os pares conferíveis são encontrados e comparados
+certo. Medir autonomia exige `--extracao` apontando para uma extração **ao vivo** sobre os PDFs do
+book, que é ação do dono (custa orçamento).
+
+**E o número que decide não é a concordância — é a cobertura: 90% do que o dial auto-aceita não tem
+gabarito que confira.** Essas linhas viram fato sem que humano ou teste tenha olhado; é o tamanho
+real da aposta que o N2 faz. Reduzir isso exige **gabarito mais fino** (golden set físico, §7.4 #8),
+não limiar mais alto.
+
+**Ainda com a ressalva de estrato:** o book é **melhor caso** — PDF gerado por reportlab, texto
+limpo, layout conhecido, sem scan, sem carimbo, sem coluna torta. `docs/01` exige concordância
+medida no estrato que **vai para produção** antes de tratar este N2 como autonomia **medida** em vez
+de declarada. O golden set físico continua aberto.
+
+### Contadores após esta sessão
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **41 migrations / 197
+asserts**; `test/e2e/run.mts` = **27**.
+
+### O que o dono precisa fazer
+
+Aplicar `0038`, `0039`, `0040` e **`0041`** no Supabase (a `0041` já declara o dial em N2 no fim do
+próprio arquivo, e falha se a mudança for recusada); publicar o portal; e, quando quiser o número
+que vale, rodar a extração ao vivo sobre `test-data/book-vertentes/pdf/` e passar o resultado em
+`--extracao`.
+
 ## Sessão 29 (2026-08-03) — Fase 7.5: as primitivas de projeção que faltavam
 
 Com as duas decisões que o dono deu: **`pct_de_linha` incide sobre a receita total do caso,

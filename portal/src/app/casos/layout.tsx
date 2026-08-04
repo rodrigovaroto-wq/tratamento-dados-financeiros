@@ -15,6 +15,12 @@ export default async function CasosLayout({ children }: { children: React.ReactN
             Oria · Tratamento de Dados Financeiros
           </Link>
           <div className="flex items-center gap-3 text-sm text-neutral-500">
+            {/* O dial é GLOBAL, não por mandato — por isso mora fora de /casos.
+                O link fica aqui porque o painel só serve para quem está usando o
+                portal e precisa saber com que autonomia o pipeline rodou. */}
+            <Link href="/autonomia" className="text-neutral-500 hover:text-neutral-900">
+              Autonomia
+            </Link>
             <span>{email}</span>
             <form action={logout}>
               <button type="submit" className="text-neutral-500 underline hover:text-neutral-900">
