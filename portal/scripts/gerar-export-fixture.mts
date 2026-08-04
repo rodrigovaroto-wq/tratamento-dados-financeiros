@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import { buildExportWorkbook, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
+import { entradaModeloDaFixture } from "./lib/modelo-da-fixture.mts";
 
 const args = process.argv.slice(2);
 const saida = args.find((a) => !a.startsWith("--")) ?? "/tmp/book-vertentes.xlsx";
@@ -39,6 +40,11 @@ const wb = buildExportWorkbook({
   campos: fixture.campos,
   agora: new Date("2026-07-27T12:00:00Z"),
   modo,
+  // O MODELO INSTITUCIONAL (14 abas) montado da mesma fixture. Só no completo:
+  // o modo "dados" não projeta, por decisão do dono.
+  modeloInstitucional: modo === "completo"
+    ? entradaModeloDaFixture(fixture, new Date("2026-07-27T12:00:00Z"))
+    : undefined,
 });
 
 await wb.xlsx.writeFile(saida);

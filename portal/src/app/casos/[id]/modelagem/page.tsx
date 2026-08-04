@@ -1,25 +1,29 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { formatarTipoTaxonomia } from "@/lib/export";
-import { definirParametros, ativarPremissa, vincularLinha, aplicarEmLote } from "./actions";
+import { definirParametros, ativarPremissa, aplicarEmLote, salvarSecao } from "./actions";
 
-// A seção MODELAGEM do mandato (pedido do dono, Fase 7.3).
+// A seção MODELAGEM do mandato (pedido do dono, Fase 7.3; revisada na Fase 8
+// depois da rodada real do Teste v35).
 //
 // É aqui que "cada caso é um caso" vira operação: o analista escolhe as premissas
-// que valem para ESTE mandato e diz ONDE cada uma entra na projeção — linha por
-// linha, com atalho em lote por seção.
+// que valem para ESTE mandato e diz ONDE cada uma entra na projeção.
 //
-// Três coisas que esta tela existe para tornar impossíveis:
-//   1. premissa aparecer sem valor e o modelo projetar como se fosse zero — a
-//      conferência no topo nomeia toda premissa ativa sem valor;
-//   2. o analista não saber quais linhas ficariam de fora — o contador de "sem
-//      premissa" é a primeira coisa que ele lê;
-//   3. configuração apontando para linha que não existe mais (documento
-//      reextraído com outro rótulo) passar por configuração válida — são os
-//      `vinculos_orfaos`, nomeados.
+// O QUE A RODADA REAL MUDOU NESTA TELA. Ela listava as 236 linhas do caso como se
+// todas fossem conta projetável, e três coisas saíam erradas por isso:
+//   • `Ativo Circulante 67.878` aparecia entre os 32 componentes dela, e um clique
+//     em "aplicar a todas" projetava o total E as partes — dupla contagem, que não
+//     parece erro no arquivo: parece um número maior;
+//   • os 12 `Faturamento Janeiro…Dezembro` entravam como 12 contas, quando são o
+//     insumo da curva de sazonalidade;
+//   • `(-) Depreciação acumulada` aparecia POSITIVA e nada dizia a unidade, então
+//     `TOTAL — saldo devedor 51.300.000` (reais) ficava ao lado de `Passivo
+//     Circulante 92.539` (milhares) sem aviso.
+// Agora cada linha traz PAPEL, sinal, unidade/moeda e documento de origem, e só
+// `conta` recebe premissa. A regra mora no banco (0042) — aqui é a apresentação
+// dela: se esta tela mentisse, o banco recusaria de todo jeito.
 //
-// Nada de regra de projeção vive aqui: tudo é `rpc` para as funções da 0038.
+// Nada de regra de projeção vive aqui: tudo é `rpc` para as funções da 0038/0042.
 
 interface PremissaCatalogo {
   codigo: string;
@@ -45,6 +49,11 @@ interface LinhaDoCaso {
   entidade: string | null;
   valor_ultimo: number;
   n_ocorrencias: number;
+  papel: "conta" | "subtotal" | "derivado" | "serie_mensal";
+  unidade: string | null;
+  moeda: string | null;
+  documentos: string[] | null;
+  sobreposicao_suspeita: boolean;
 }
 
 interface LinhaVinculo {
@@ -73,8 +82,41 @@ const NATUREZA_LABEL: Record<string, string> = {
   operacional: "Driver operacional",
 };
 
-export default async function ModelagemPage({ params }: { params: Promise<{ id: string }> }) {
+// O que cada papel significa PARA O ARQUIVO. O texto é o destino da linha, não uma
+// etiqueta: quem lê precisa entender por que aquela linha não tem seletor, senão
+// procura o defeito na tela.
+const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string }> = {
+  subtotal: {
+    rotulo: "subtotal",
+    explica: "sai no Excel como a SOMA dos componentes projetados — se move sozinho, e por isso "
+      + "não recebe premissa (projetá-lo contaria o mesmo dinheiro duas vezes)",
+    cor: "bg-sky-100 text-sky-800",
+  },
+  serie_mensal: {
+    rotulo: "série mensal",
+    explica: "alimenta a curva de sazonalidade, derivada do próprio histórico do caso — não é uma "
+      + "conta a projetar",
+    cor: "bg-violet-100 text-violet-800",
+  },
+  derivado: {
+    rotulo: "derivado",
+    explica: "indicador gerencial (resultado de outras contas, não dinheiro) — projetá-lo o faria "
+      + "divergir das linhas que o compõem",
+    cor: "bg-neutral-200 text-neutral-700",
+  },
+};
+
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+export default async function ModelagemPage({
+  params, searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ q?: string }>;
+}) {
   const { id } = await params;
+  const { q } = await searchParams;
+  const busca = (q ?? "").trim();
   const supabase = await createClient();
 
   const casoRes = await supabase.from("caso").select("id, nome, produto, status").eq("id", id).single();
@@ -91,7 +133,7 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
   // O catálogo vem FILTRADO pelo setor — é a sugestão da 0038. Sem setor
   // definido, vem só a base comum, que é a resposta correta para "ainda não sei
   // o setor" (e não uma lista de 90 premissas para escolher no escuro).
-  const [sugeridasRes, ativasRes, vinculosRes, confRes, camposRes] = await Promise.all([
+  const [sugeridasRes, ativasRes, vinculosRes, confRes, camposRes, sazRes, docsRes] = await Promise.all([
     supabase.rpc("fn_premissas_sugeridas", { p_setor: parametros?.setor ?? null }),
     supabase.from("caso_premissa").select("premissa_codigo, valores, origem")
       .eq("caso_id", id).eq("ativo", true),
@@ -99,15 +141,19 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
       .select("secao_canonica, rotulo_norm, entidade, premissa_codigo, sazonalidade_codigo")
       .eq("caso_id", id),
     supabase.rpc("fn_conferir_modelagem", { p_caso_id: id }),
-    // As linhas do caso — por FUNÇÃO (db/migrations/0039), não por consulta direta.
+    // As linhas do caso — por FUNÇÃO (0039/0042), não por consulta direta.
     //
     // `campo_extraido` não tem `caso_id`: o vínculo é `campo_extraido →
     // documento_versao → documento`. A primeira versão desta tela consultava a
     // tabela direto e, com a RLS aberta a qualquer autenticado, trazia as linhas
-    // de TODOS os mandatos. O escopo por caso passou a viver em UM lugar, coberto
-    // por teste SQL, em vez de depender de um join escrito certo em cada consulta
-    // nova que alguém acrescente aqui.
+    // de TODOS os mandatos. O escopo por caso vive em UM lugar, coberto por teste.
     supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id }),
+    // A curva de sazonalidade é DERIVADA do faturamento mensal do caso (0040):
+    // ninguém digita 12 percentuais que o documento já afirma.
+    supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id }),
+    // Só para SUGERIR entidade e último exercício no passo 1 (ver abaixo).
+    supabase.from("documento")
+      .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)").eq("caso_id", id),
   ]);
 
   const sugeridas = (sugeridasRes.data as PremissaCatalogo[] | null) ?? [];
@@ -116,17 +162,39 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
   const conf = confRes.data as {
     premissas_ativas: number; premissas_sem_valor: string[];
     linhas_do_caso: number; linhas_com_premissa: number; linhas_sem_premissa: number;
+    linhas_nao_projetaveis: Record<string, number>;
     vinculos_orfaos: string[]; pronto: boolean;
   } | null;
+  const curva = (sazRes.data as { mes: number; fracao: number; n_observacoes: number }[] | null) ?? [];
 
   const ativasPorCodigo = new Map(ativas.map((a) => [a.premissa_codigo, a]));
   const vinculoPorRotulo = new Map(vinculos.map((v) => [v.rotulo_norm, v]));
   const nomeDaPremissa = new Map(sugeridas.map((p) => [p.codigo, p.nome]));
 
+  // SUGESTÃO de entidade e de último exercício, a partir do que o caso já tem.
+  // No v35 os dois campos ficaram VAZIOS enquanto o banco sabia as duas coisas —
+  // e campo vazio num parâmetro que dirige todo o modelo é convite a esquecer.
+  // É sugestão, não imposição: entra como `defaultValue` e o analista sobrescreve.
+  const docs = (docsRes.data as {
+    entidade: { razao_social: string } | { razao_social: string }[] | null;
+    periodo: { referencia: string } | { referencia: string }[] | null;
+  }[] | null) ?? [];
+  const um = <T,>(x: T | T[] | null): T | null => (Array.isArray(x) ? x[0] ?? null : x);
+  const contagemEntidade = new Map<string, number>();
+  let anoMaisRecente = 0;
+  for (const d of docs) {
+    const razao = um(d.entidade)?.razao_social;
+    if (razao) contagemEntidade.set(razao, (contagemEntidade.get(razao) ?? 0) + 1);
+    for (const m of (um(d.periodo)?.referencia ?? "").matchAll(/\d{4}/g)) {
+      anoMaisRecente = Math.max(anoMaisRecente, Number(m[0]));
+    }
+  }
+  const entidadeSugerida = [...contagemEntidade.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const anoSugerido = anoMaisRecente || new Date().getFullYear() - 1;
+
   // Anos a projetar: do último exercício real + 1 em diante. É o horizonte que as
-  // premissas precisam cobrir, e é derivado dos parâmetros — não digitado duas
-  // vezes.
-  const ultimoReal = parametros?.ultimo_exercicio_real ?? new Date().getFullYear() - 1;
+  // premissas precisam cobrir, e é derivado dos parâmetros — não digitado duas vezes.
+  const ultimoReal = parametros?.ultimo_exercicio_real ?? anoSugerido;
   const nAnos = parametros?.anos_projetados ?? 5;
   const anos = Array.from({ length: nAnos }, (_, i) => ultimoReal + 1 + i);
 
@@ -134,8 +202,11 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
   // A função já devolve UMA linha por (seção, rótulo normalizado): o agrupamento
   // por rótulo é dela, não daqui, para a tela e o lote concordarem sobre o que é
   // "uma linha".
+  const todasLinhas = (camposRes.data as LinhaDoCaso[] | null) ?? [];
+  const alvo = busca.toLowerCase();
   const linhasPorSecao = new Map<string, LinhaDoCaso[]>();
-  for (const c of (camposRes.data as LinhaDoCaso[] | null) ?? []) {
+  for (const c of todasLinhas) {
+    if (alvo && !c.chave.toLowerCase().includes(alvo)) continue;
     const secao = c.secao_canonica ?? "(sem seção canônica)";
     if (!linhasPorSecao.has(secao)) linhasPorSecao.set(secao, []);
     linhasPorSecao.get(secao)!.push(c);
@@ -148,6 +219,14 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
   }
 
   const fmt = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+  // Unidade e moeda ao lado do número: é o que impede alguém de comparar um saldo
+  // em milhares com um saldo em reais e concluir que a dívida é 500× maior.
+  const escala = (l: LinhaDoCaso) =>
+    [l.unidade === "milhar" ? "R$ mil" : l.unidade === "unidade" ? "R$" : l.unidade,
+     l.moeda && l.moeda !== "BRL" ? l.moeda : null].filter(Boolean).join(" ");
+
+  const premissasSazonais = ativas.filter((a) => a.premissa_codigo.includes("SAZON")
+    || a.premissa_codigo === "CRONOGRAMA_FISICO" || a.premissa_codigo === "PARADA_MANUTENCAO");
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 p-6">
@@ -186,15 +265,29 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
           </p>
           <ul className="mt-1 space-y-0.5 text-neutral-700">
             <li>
-              {conf.linhas_com_premissa} de {conf.linhas_do_caso} linhas com premissa —{" "}
-              <strong>{conf.linhas_sem_premissa} sem premissa</strong>, que não serão projetadas (o
-              arquivo mostra cada uma como não projetada, nunca projetada por padrão).
+              {conf.linhas_com_premissa} de {conf.linhas_do_caso} <strong>contas projetáveis</strong>{" "}
+              com premissa — <strong>{conf.linhas_sem_premissa} sem premissa</strong>, que não serão
+              projetadas (o arquivo mostra cada uma como não projetada, nunca projetada por padrão).
             </li>
+            {/* O que NÃO é projetável fica nomeado, em vez de desaparecer da conta:
+                no v35 a tela dizia "0 de 236" e o alvo real era bem menor. */}
+            {conf.linhas_nao_projetaveis && Object.keys(conf.linhas_nao_projetaveis).length > 0 && (
+              <li className="text-neutral-600">
+                Fora da conta por natureza da linha:{" "}
+                {Object.entries(conf.linhas_nao_projetaveis)
+                  .map(([p, n]) => `${n} ${PAPEL_INFO[p]?.rotulo ?? p}`)
+                  .join(", ")}{" "}
+                — subtotal sai como soma dos componentes, série mensal alimenta a sazonalidade e
+                indicador derivado não se projeta.
+              </li>
+            )}
             <li>{conf.premissas_ativas} premissa(s) ativa(s) neste caso.</li>
             {conf.premissas_sem_valor?.length > 0 && (
               <li className="text-amber-900">
                 <strong>Sem valor preenchido:</strong> {conf.premissas_sem_valor.join(", ")} — premissa
-                ativa sem valor projetaria com zero, então ela impede o &quot;pronto&quot;.
+                ativa sem valor projetaria com zero, então ela impede o &quot;pronto&quot;. Premissa
+                macro puxa o Focus sozinha ao ser ativada sem valor; se ficou vazia, é porque o Focus
+                não publica expectativa para esses anos.
               </li>
             )}
             {conf.vinculos_orfaos?.length > 0 && (
@@ -214,13 +307,14 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
         <p className="mb-3 text-xs text-neutral-500">
           Entidade modelada, corte do último exercício real e índice macro saíram do topo da planilha
           e vivem aqui — o Excel sai já parametrizado com o que você escolher. O setor filtra as
-          premissas sugeridas no passo 2.
+          premissas sugeridas no passo 2. Entidade e último exercício vêm <strong>sugeridos</strong>{" "}
+          pelo que os documentos deste caso dizem; confira antes de salvar.
         </p>
         <form action={definirParametros.bind(null, id)} className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
             <span className="text-neutral-600">Entidade modelada</span>
             <input
-              type="text" name="entidade" defaultValue={parametros?.entidade ?? ""}
+              type="text" name="entidade" defaultValue={parametros?.entidade ?? entidadeSugerida}
               placeholder="razão social como aparece nas abas de dados"
               className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
             />
@@ -229,7 +323,7 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
             <span className="text-neutral-600">Último exercício realizado</span>
             <input
               type="number" name="ultimo_exercicio_real"
-              defaultValue={parametros?.ultimo_exercicio_real ?? ""}
+              defaultValue={parametros?.ultimo_exercicio_real ?? anoSugerido}
               className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
             />
           </label>
@@ -287,8 +381,39 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
           O setor <strong>sugere</strong>, não restringe: a lista traz a base comum mais as do setor,
           e qualquer premissa ativada aqui pode ser usada em qualquer linha. Ano em branco fica{" "}
           <strong>em branco</strong> — não vira zero, porque projetar com zero é o erro que não se
-          denuncia.
+          denuncia. Premissa <strong>macro</strong> ativada sem valor puxa a expectativa do Focus que
+          está no banco, com a origem declarada.
         </p>
+
+        {/* A CURVA DE SAZONALIDADE não é digitada: ela é derivada do faturamento
+            mensal que o próprio mandato entregou (0040). Mostrá-la aqui é o que
+            permite ao analista discordar dela — e, quando ela não existe, saber
+            por quê antes de abrir o arquivo. */}
+        <div className="mb-4 rounded border border-neutral-200 bg-neutral-50 p-2 text-xs">
+          <p className="font-medium text-neutral-700">Curva de sazonalidade deste caso</p>
+          {curva.length === 12 ? (
+            <>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {curva.map((c) => (
+                  <span key={c.mes} className="rounded bg-white px-1.5 py-0.5 tabular-nums text-neutral-700">
+                    {MESES[c.mes - 1]} {(c.fracao * 100).toFixed(1)}%
+                  </span>
+                ))}
+              </div>
+              <p className="mt-1 text-neutral-500">
+                Derivada do faturamento mensal do próprio caso — nada digitado. É ela que reparte o
+                valor anual das linhas com sazonalidade vinculada.
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-neutral-600">
+              Sem curva: o caso não tem série mensal completa de faturamento (12 meses). As linhas
+              ficam <strong>sem distribuição mensal</strong> e o arquivo diz isso — ratear 1/12 seria
+              inventar um número que ninguém escolheu, e move caixa de dezembro para março.
+            </p>
+          )}
+        </div>
+
         <div className="space-y-4">
           {[...porNatureza.entries()].map(([natureza, lista]) => (
             <div key={natureza}>
@@ -312,6 +437,11 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
                         {p.setores.length > 0 && (
                           <span className="ml-1 rounded bg-indigo-100 px-1 text-[10px] text-indigo-800">
                             setor
+                          </span>
+                        )}
+                        {ativa?.origem === "focus" && (
+                          <span className="ml-1 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">
+                            Focus
                           </span>
                         )}
                       </span>
@@ -342,11 +472,28 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
       <section className="rounded border border-neutral-200 bg-white p-4">
         <h2 className="mb-1 text-sm font-semibold text-neutral-700">3. Linhas × premissas</h2>
         <p className="mb-3 text-xs text-neutral-500">
-          Cada linha extraída pode ter a sua premissa. O <strong>aplicar em lote</strong> resolve a
-          maioria dos casos de uma vez (todas as linhas de receita → crescimento real); depois é só
-          ajustar as exceções. Linha sem premissa não é projetada — e isso é escolha legítima, que o
-          arquivo declara.
+          Cada <strong>conta</strong> pode ter a sua premissa. O <strong>aplicar em lote</strong>{" "}
+          resolve a maioria dos casos de uma vez (todas as contas de receita → crescimento real);
+          depois é só ajustar as exceções e salvar a seção inteira de uma vez. Linha sem premissa não
+          é projetada — e isso é escolha legítima, que o arquivo declara.
         </p>
+
+        {/* Busca por rótulo: com 236 linhas, achar "Fornecedores nacionais" rolando
+            a página é o que faz o analista desistir de ajustar a exceção. */}
+        <form method="get" className="mb-3 flex items-center gap-2 text-sm">
+          <input
+            type="text" name="q" defaultValue={busca} placeholder="filtrar por rótulo…"
+            className="w-64 rounded border border-neutral-300 px-2 py-1 text-xs"
+          />
+          <button type="submit" className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100">
+            filtrar
+          </button>
+          {busca && (
+            <Link href={`/casos/${id}/modelagem`} className="text-xs text-neutral-500 hover:underline">
+              limpar filtro ({todasLinhas.length} linhas no total)
+            </Link>
+          )}
+        </form>
 
         {ativas.length === 0 ? (
           <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
@@ -356,117 +503,166 @@ export default async function ModelagemPage({ params }: { params: Promise<{ id: 
           </p>
         ) : (
           <div className="space-y-5">
-            {[...linhasPorSecao.entries()].sort().map(([secao, linhas]) => (
-              <div key={secao}>
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <h3 className="text-xs font-semibold uppercase text-neutral-500">
-                    {secao} <span className="font-normal">({linhas.length} linha(s))</span>
-                  </h3>
-                  {secao !== "(sem seção canônica)" && (
-                    <form action={aplicarEmLote.bind(null, id)} className="flex items-center gap-1">
-                      <input type="hidden" name="secao_canonica" value={secao} />
-                      <select
-                        name="premissa" required
-                        className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                        defaultValue=""
-                      >
-                        <option value="" disabled>aplicar em lote…</option>
-                        {ativas.map((a) => (
-                          <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                            {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="submit"
-                        className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
-                      >
-                        aplicar a todas
-                      </button>
-                    </form>
-                  )}
-                </div>
-                <div className="overflow-x-auto rounded border border-neutral-200">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-                      <tr>
-                        <th className="px-2 py-1">Linha</th>
-                        <th className="px-2 py-1 text-right">Último real</th>
-                        <th className="px-2 py-1">Premissa que dirige</th>
-                        <th className="px-2 py-1">Sazonalidade</th>
-                        <th className="px-2 py-1"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {linhas.map((l) => {
-                        // O rótulo normalizado vem do BANCO (`fn_normalizar_texto`,
-                        // via 0039). Normalizar de novo aqui, em JS, criaria uma
-                        // segunda definição de "mesma linha" — e as duas
-                        // divergiriam no primeiro caractere que só uma das
-                        // implementações tratasse.
-                        const v = vinculoPorRotulo.get(l.rotulo_norm);
-                        return (
-                          <tr key={`${secao}-${l.chave}`} className="border-t border-neutral-100">
-                            <td className="px-2 py-1">{l.chave}</td>
-                            <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
-                              {fmt.format(l.valor_ultimo)}
-                            </td>
-                            <td colSpan={3} className="px-2 py-1">
-                              <form action={vincularLinha.bind(null, id)} className="flex items-center gap-1">
-                                <input type="hidden" name="secao_canonica" value={secao === "(sem seção canônica)" ? "" : secao} />
-                                <input type="hidden" name="rotulo" value={l.chave} />
-                                <input type="hidden" name="entidade" value={l.entidade ?? ""} />
-                                <select
-                                  name="premissa" defaultValue={v?.premissa_codigo ?? ""}
-                                  className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                                >
-                                  <option value="">(não projetar)</option>
-                                  {ativas.map((a) => (
-                                    <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                                      {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                                    </option>
-                                  ))}
-                                </select>
-                                <select
-                                  name="sazonalidade" defaultValue={v?.sazonalidade_codigo ?? ""}
-                                  className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
-                                >
-                                  <option value="">(sem sazonalidade)</option>
-                                  {ativas
-                                    .filter((a) => a.premissa_codigo.includes("SAZON")
-                                      || a.premissa_codigo === "CRONOGRAMA_FISICO"
-                                      || a.premissa_codigo === "PARADA_MANUTENCAO")
-                                    .map((a) => (
-                                      <option key={a.premissa_codigo} value={a.premissa_codigo}>
-                                        {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
-                                      </option>
-                                    ))}
-                                </select>
-                                <button
-                                  type="submit"
-                                  className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
-                                >
-                                  salvar
-                                </button>
-                                {v?.premissa_codigo && (
-                                  <span className="text-xs text-emerald-700">
-                                    ✓ {nomeDaPremissa.get(v.premissa_codigo) ?? v.premissa_codigo}
-                                  </span>
-                                )}
-                              </form>
-                            </td>
+            {[...linhasPorSecao.entries()].sort().map(([secao, linhas]) => {
+              const contas = linhas.filter((l) => l.papel === "conta");
+              return (
+                <div key={secao}>
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <h3 className="text-xs font-semibold uppercase text-neutral-500">
+                      {secao}{" "}
+                      <span className="font-normal">
+                        ({contas.length} conta(s)
+                        {linhas.length !== contas.length && ` + ${linhas.length - contas.length} não projetável(is)`})
+                      </span>
+                    </h3>
+                    {secao !== "(sem seção canônica)" && contas.length > 0 && (
+                      <form action={aplicarEmLote.bind(null, id)} className="flex items-center gap-1">
+                        <input type="hidden" name="secao_canonica" value={secao} />
+                        <select
+                          name="premissa" required
+                          className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+                          defaultValue=""
+                        >
+                          <option value="" disabled>aplicar em lote…</option>
+                          {ativas.map((a) => (
+                            <option key={a.premissa_codigo} value={a.premissa_codigo}>
+                              {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="submit"
+                          className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
+                        >
+                          aplicar às {contas.length} conta(s)
+                        </button>
+                      </form>
+                    )}
+                  </div>
+
+                  {/* UM formulário por seção: as exceções se ajustam e salvam de uma
+                      vez. Antes era um botão por linha — 236 idas ao servidor. */}
+                  <form action={salvarSecao.bind(null, id)}>
+                    <input
+                      type="hidden" name="secao_canonica"
+                      value={secao === "(sem seção canônica)" ? "" : secao}
+                    />
+                    <div className="overflow-x-auto rounded border border-neutral-200">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+                          <tr>
+                            <th className="px-2 py-1">Linha</th>
+                            <th className="px-2 py-1 text-right">Último real</th>
+                            <th className="px-2 py-1">Premissa que dirige</th>
+                            <th className="px-2 py-1">Sazonalidade</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {linhas.map((l, i) => {
+                            // O rótulo normalizado vem do BANCO (`fn_normalizar_texto`).
+                            // Normalizar de novo aqui, em JS, criaria uma segunda
+                            // definição de "mesma linha", e as duas divergiriam no
+                            // primeiro caractere que só uma delas tratasse.
+                            const v = vinculoPorRotulo.get(l.rotulo_norm);
+                            const info = PAPEL_INFO[l.papel];
+                            return (
+                              <tr key={`${secao}-${l.rotulo_norm}`} className="border-t border-neutral-100 align-top">
+                                <td className="px-2 py-1">
+                                  <span className={l.papel === "conta" ? "" : "text-neutral-500"}>
+                                    {l.chave}
+                                  </span>
+                                  {info && (
+                                    <span className={`ml-1 rounded px-1 text-[10px] ${info.cor}`} title={info.explica}>
+                                      {info.rotulo}
+                                    </span>
+                                  )}
+                                  {l.sobreposicao_suspeita && (
+                                    <span
+                                      className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800"
+                                      title="Outra linha desta seção tem o MESMO valor e um rótulo que descreve a mesma conta de forma mais grossa — provavelmente o balanço sintético e o balancete analítico. Projetar as duas dobra a conta: escolha uma."
+                                    >
+                                      possível sobreposição
+                                    </span>
+                                  )}
+                                  <span className="block text-[10px] text-neutral-400">
+                                    {(l.documentos ?? []).join(" · ")}
+                                    {l.n_ocorrencias > 1 && ` · ${l.n_ocorrencias} ocorrências`}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+                                  {fmt.format(l.valor_ultimo)}
+                                  <span className="block text-[10px] text-neutral-400">{escala(l)}</span>
+                                </td>
+                                {l.papel === "conta" ? (
+                                  <>
+                                    <td className="px-2 py-1">
+                                      <input type="hidden" name={`rotulo__${i}`} value={l.chave} />
+                                      <input type="hidden" name={`entidade__${i}`} value={l.entidade ?? ""} />
+                                      <input type="hidden" name={`orig__${i}`} value={v?.premissa_codigo ?? ""} />
+                                      <select
+                                        name={`premissa__${i}`} defaultValue={v?.premissa_codigo ?? ""}
+                                        className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+                                      >
+                                        <option value="">(não projetar)</option>
+                                        {ativas.map((a) => (
+                                          <option key={a.premissa_codigo} value={a.premissa_codigo}>
+                                            {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="px-2 py-1">
+                                      <input type="hidden" name={`origSaz__${i}`} value={v?.sazonalidade_codigo ?? ""} />
+                                      <select
+                                        name={`sazonalidade__${i}`} defaultValue={v?.sazonalidade_codigo ?? ""}
+                                        className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+                                        disabled={premissasSazonais.length === 0}
+                                      >
+                                        <option value="">(sem sazonalidade)</option>
+                                        {premissasSazonais.map((a) => (
+                                          <option key={a.premissa_codigo} value={a.premissa_codigo}>
+                                            {nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                  </>
+                                ) : (
+                                  // Sem seletor, com o DESTINO escrito: se a linha
+                                  // simplesmente não tivesse controle, o analista
+                                  // procuraria o defeito na tela.
+                                  <td colSpan={2} className="px-2 py-1 text-xs text-neutral-500">
+                                    {info?.explica}
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {contas.length > 0 && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          type="submit"
+                          className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100"
+                        >
+                          salvar esta seção
+                        </button>
+                        <span className="text-[10px] text-neutral-400">
+                          só as linhas que você mudou vão ao banco
+                        </span>
+                      </div>
+                    )}
+                  </form>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {linhasPorSecao.size === 0 && (
               <p className="text-sm text-neutral-500">
-                Este caso ainda não tem linha extraída com valor. Confira a fila de revisão e o
-                export de dados ({formatarTipoTaxonomia("BALANCO")} e as demais abas).
+                {busca
+                  ? `Nenhuma linha com "${busca}" no rótulo.`
+                  : "Este caso ainda não tem linha extraída com valor. Confira a fila de revisão e o export de dados."}
               </p>
             )}
           </div>

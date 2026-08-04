@@ -26,6 +26,9 @@ import {
   construirAbaModelagem,
 } from "./export-modelagem";
 import type { MacroParaExport } from "./export-modelagem";
+import {
+  construirModeloInstitucional, type EntradaModeloInstitucional,
+} from "./modelo-institucional";
 // Reexportados para o `route.ts` seguir importando tudo de "@/lib/export": o
 // corte da sessão 20 é interno ao lib, e não é motivo para mexer no chamador.
 export type { MacroAnual, MacroExpectativa, MacroParaExport, RefsMacro } from "./export-modelagem";
@@ -2408,6 +2411,15 @@ export function buildExportWorkbook({
   // todo caso que ainda não passou pela seção Modelagem, e é o que garante que
   // esta fase não tire modelo de ninguém.
   modelagemConfig,
+  // Fase 9 — o MODELO INSTITUCIONAL (14 abas), reconstruído do "Modelo Base" do
+  // dono. Ausente = arquivo como antes; presente = as 14 abas entram no modo
+  // completo.
+  //
+  // Por que conviver com a aba `Modelagem` agregada em vez de substituí-la já: a
+  // agregada é o único caminho com validação ao vivo até aqui, e trocar os dois no
+  // mesmo passo tiraria a referência de comparação exatamente na rodada em que ela
+  // é mais necessária. A remoção é decisão do dono, depois de comparar os dois.
+  modeloInstitucional,
 }: {
   caso: { nome: string; produto: string };
   documentos: DocumentoParaExport[];
@@ -2429,6 +2441,7 @@ export function buildExportWorkbook({
   agora?: Date;
   modo?: "dados" | "completo";
   modelagemConfig?: ConfigModelagem;
+  modeloInstitucional?: EntradaModeloInstitucional;
 }): ExcelJS.Workbook {
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
   // permite juntar campo_extraido (que só sabe a versão) com o resto. Só as
@@ -2970,6 +2983,12 @@ export function buildExportWorkbook({
       modelagemConfig?.anosProjetados ?? ANOS_PROJETADOS,
       refsMacro, baseModelagem, macro, modelagemConfig,
     );
+
+    // O MODELO INSTITUCIONAL. Só no modo completo: ele projeta, e projetar é o que
+    // o modo "dados" deliberadamente não faz.
+    if (modeloInstitucional && modeloInstitucional.anosProjetados.length > 0) {
+      construirModeloInstitucional(workbook, modeloInstitucional);
+    }
 
     // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
     const modelagem = workbook.getWorksheet(ABA_MODELAGEM);
