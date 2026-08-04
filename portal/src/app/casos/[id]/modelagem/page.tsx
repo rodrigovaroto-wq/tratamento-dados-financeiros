@@ -355,6 +355,13 @@ export default async function ModelagemPage({
               defaultValue={parametros?.anos_projetados ?? 5}
               className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
             />
+            {/* O horizonte que estes dois campos PRODUZEM, escrito por extenso.
+                "5 anos" a partir de "2025" é uma conta que o analista fazia de
+                cabeça enquanto preenchia premissa — e errar o ano de corte move
+                a projeção inteira sem gerar um único aviso. */}
+            <span className="mt-1 block text-xs tabular-nums text-neutral-500">
+              {anos.join(" · ")}
+            </span>
           </label>
           <div className="flex items-end">
             <button
@@ -412,6 +419,29 @@ export default async function ModelagemPage({
               inventar um número que ninguém escolheu, e move caixa de dezembro para março.
             </p>
           )}
+        </div>
+
+        {/* CABEÇALHO DE ANOS — o horizonte fica ESCRITO, não insinuado.
+            Antes o ano só aparecia como `placeholder` dentro da caixa: texto
+            cinza que some no instante em que se digita o primeiro caractere.
+            Quem preenchia a terceira caixa de uma premissa não tinha mais como
+            saber se estava em 2028 ou 2029 — e premissa no ano errado não dá
+            erro nenhum, só projeta diferente. O ano agora é rótulo fixo em cima
+            da coluna, alinhado com as caixas, e continua no `placeholder` e no
+            `title` para quem navega por teclado. */}
+        <div className="flex flex-wrap items-center gap-2 px-2 pb-1 text-xs text-neutral-500">
+          <span className="min-w-56 flex-1">
+            Horizonte de projeção — <strong className="text-neutral-700">{anos.length} anos</strong>,
+            de {anos[0]} a {anos[anos.length - 1]}, derivados do último exercício realizado
+            ({ultimoReal}). Mudar em <em>1. Parâmetros do mandato</em>.
+          </span>
+          {anos.map((ano) => (
+            <span key={ano} className="w-16 text-center font-semibold tabular-nums text-neutral-700">
+              {ano}
+            </span>
+          ))}
+          {/* Espelha a largura do botão da linha para os anos ficarem sobre as caixas. */}
+          <span aria-hidden className="invisible px-2 py-0.5 text-xs">Atualizar</span>
         </div>
 
         <div className="space-y-4">
