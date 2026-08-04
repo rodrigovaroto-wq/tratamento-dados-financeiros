@@ -283,12 +283,34 @@ export default async function ModelagemPage({
           <ul className="mt-1 list-disc pl-5 text-xs">
             {falhas.map((f) => <li key={f} className="font-mono">{f}</li>)}
           </ul>
-          <p className="mt-2 text-xs">
-            Se isto começou logo depois de aplicar uma migration, é quase certo que seja o cache de
-            schema do PostgREST: rode <code className="font-mono">notify pgrst, &apos;reload schema&apos;;</code>{" "}
-            no SQL Editor do Supabase e recarregue. Função recém-criada só existe para a API depois
-            disso.
-          </p>
+          {/* A ORIENTAÇÃO SEGUE O ERRO, não o palpite mais comum.
+
+              Esta caixa nasceu (PR #89) dando SEMPRE o conselho do cache de schema do
+              PostgREST — que é o certo para "function not found" e o ERRADO para
+              consulta cancelada. E foi com um `statement timeout` na tela que o
+              conselho apareceu em produção: mandava recarregar o cache de schema
+              quando a função existia, era encontrada, e só não tinha terminado em 8 s.
+              Orientação errada num painel de diagnóstico é pior que orientação
+              nenhuma: manda o analista consertar o que não está quebrado e confirma
+              a impressão de que o PR não funcionou. */}
+          {falhas.some((f) => /statement timeout|canceling statement/i.test(f)) ? (
+            <p className="mt-2 text-xs">
+              <strong>A consulta foi CANCELADA por tempo</strong> (o Supabase corta em 8 s), não é
+              função faltando nem caso vazio — recarregar o cache de schema não resolve isto. Se as
+              migrations <code className="font-mono">0101</code> e <code className="font-mono">0102</code>{" "}
+              ainda não foram aplicadas neste banco, é isso: elas existirem no GitHub não as coloca
+              no Supabase. Para confirmar sem adivinhar, rode no SQL Editor{" "}
+              <code className="font-mono">select jsonb_pretty(fn_diagnostico_modelagem(&apos;{id}&apos;));</code>{" "}
+              e olhe <code className="font-mono">correcoes_instaladas</code>.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs">
+              Se isto começou logo depois de aplicar uma migration, é quase certo que seja o cache de
+              schema do PostgREST: rode <code className="font-mono">notify pgrst, &apos;reload schema&apos;;</code>{" "}
+              no SQL Editor do Supabase e recarregue. Função recém-criada só existe para a API depois
+              disso.
+            </p>
+          )}
         </section>
       )}
 

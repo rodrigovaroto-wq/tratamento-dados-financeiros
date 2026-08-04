@@ -3594,3 +3594,159 @@ erro, projeta diferente. Agora é rótulo fixo acima da coluna, com o horizonte 
 - **O cabeçalho deste arquivo está 17 PRs atrasado** (diz "mergeado até o PR #70, migrations até
   `0034`"). Não é descuido: o `CLAUDE.md` proíbe editar o cabeçalho, só acrescentar seção. O efeito
   colateral é que o "resumo de retomada rápida" é a parte mais velha do documento. Decisão do dono.
+
+## Sessão 33 (2026-08-04) — por que a Modelagem continuou quebrada DEPOIS do merge
+
+Sessão de diagnóstico. O dono relatou que a tela de Modelagem seguia mostrando o mesmo erro
+**depois de mergear o PR #90 e aplicar a `0101`**, e pediu resolução completa. A conclusão é que
+havia **duas coisas diferentes** sob o mesmo sintoma, e só uma delas era código de banco.
+
+### O que a tela mostrava, e o que aquilo era
+
+A captura do dono traz a caixa vermelha da `0089`:
+
+```
+2 consulta(s) ao banco FALHARAM
+  conferência (fn_conferir_modelagem): canceling statement due to statement timeout
+  linhas do caso (fn_linhas_para_modelagem): canceling statement due to statement timeout
+```
+
+**Isso é, campo a campo, o comportamento PRÉ-`0101`.** Reproduzido nesta sessão (ver fixture
+abaixo): com os corpos da `0042` em pé, `fn_conferir_modelagem` estoura o teto de 8 s de forma
+determinística (3 medições, 3 cancelamentos) e `fn_linhas_para_modelagem` leva 2,7 s — que sozinha
+caberia, mas a página dispara **as duas no mesmo `Promise.all`**, concorrentes, e as duas voltam
+canceladas. Com a `0101`+`0102` aplicadas, as mesmas duas funções, no mesmo caso: **~640 ms cada**.
+
+### A causa de a correção não ter chegado ao banco: `db/README.md`
+
+A `0101` entrou na **tabela** do `db/README.md` e **não** na lista de comandos
+`supabase db execute` que o dono copia para aplicar. A lista terminava na `0100`.
+
+É a mesma falha que a sessão 32 já havia consertado uma vez (treze migrations, `0032`→`0044`, fora
+da lista) e que o próprio arquivo descreve: quem aplica seguindo a lista para no último item **sem
+nenhum erro, só faltando**. E o efeito é particularmente cruel aqui, porque da tela **"aplicada" e
+"não aplicada" têm exatamente a mesma aparência** — o que faz um PR correto parecer um PR que não
+funcionou.
+
+Três coisas mudaram por causa disso:
+
+- a `0101` e a `0102` entraram na lista de comandos;
+- **`db/test/run.sh` passou a reprovar migration que exista em `db/migrations/` e não esteja na
+  lista** — o esquecimento de uma linha deixa de ser silencioso e morre no PR. Conferido religando o
+  defeito: apagar a linha da `0102` do README reprova a suíte com o arquivo nomeado;
+- `fn_diagnostico_modelagem(caso)` responde `correcoes_instaladas` direto do banco, para "merge não
+  é apply" deixar de ser uma dedução.
+
+### `0102_modelagem_versao_vigente.sql` — o que traria o defeito de volta sozinho
+
+A `0101` resolveu o **custo por ocorrência** e não tocou no **número de ocorrências** — e ele cresce
+sozinho. A `0026` estabeleceu que reextrair um documento cria `documento_versao` nova sem perder a
+anterior; os **cinco leitores por caso** nunca mencionavam `n_versao`, então as ocorrências de
+**todas** as versões entravam no mesmo agrupamento. Medido:
+
+| | `Estoques` |
+|---|---|
+| antes da reextração | 7 ocorrências, valor 24.610 |
+| depois de UMA reextração | 8 ocorrências, valor **777.777** |
+
+São dois estragos de naturezas diferentes:
+
+- **correção** — a versão superada não é substituída, é **somada**, e como o valor exibido é o de
+  maior módulo (`0042`), uma ocorrência que o analista acabou de corrigir pode **ganhar** e sair no
+  Excel. `fn_valores_por_ano` é quem escreve os números do entregável;
+- **custo** — cada rodada de reextração acrescenta um jogo inteiro de ocorrências. O caso do v35 tem
+  760; três reextrações fazem 2.280, e o custo é linear. **O `statement_timeout` que a `0101`
+  destravou voltaria sem ninguém mexer em uma linha de código**, com a mesma cara de "caso vazio".
+
+Os cinco leitores (`fn_linhas_para_modelagem`, `fn_papel_do_rotulo_no_caso`,
+`fn_sazonalidade_do_caso`, `fn_valores_por_ano`, `fn_linhas_do_tipo`) passam a compartilhar **uma**
+definição, `fn_versao_com_extracao`. Tela, guarda, curva, export e checklist ou andam juntos ou
+reabrem o defeito da `0100` por outra porta.
+
+**A decisão que evita trocar um jeito de mentir por outro:** `fn_versao_com_extracao` é a última
+versão **que tem extração**, e não `max(n_versao)` como `fn_versao_atual`. `fn_registrar_documento`
+cria a versão e `fn_registrar_campos_extraidos` a preenche **depois**; com `max(n_versao)` puro, na
+janela entre as duas a tela ficaria **em branco** — exibindo "este caso não tem linha extraída" num
+caso cheio, que é literalmente o sintoma que esta rodada existe para matar. Tem assert para isso.
+
+### A fixture que faltava: o caso real, não o inventado
+
+`db/test/fixture_modelagem_v35.sql` reconstrói o caso "Teste v35" a partir da captura de produção
+que a sessão 32 versionou — **249 linhas lógicas, 760 ocorrências, 14 documentos, com os rótulos que
+o extrator realmente escreveu**. Ela reproduz a produção exatamente, papel por papel:
+
+```
+conta 203 · subtotal 28 · serie_mensal 12 · derivado 6      (= o que a captura mostra)
+```
+
+E reproduz também as medições do cabeçalho da `0101` (2,7 s / 8,0 s pré-correção contra os 2,35 s /
+9,3 s medidos em produção), o que é o que autoriza tratá-la como reprodução fiel e não como
+aproximação.
+
+**Por que isso vale mais do que parece.** `modelagem_escala.test.sql` monta 770 ocorrências de **55
+rótulos sintéticos** — mede escala e mede bem, mas nunca exerceu `fn_papel_linha` contra rótulo de
+verdade, que é onde este projeto já se enganou duas vezes (a `0042` registra `fn_mes_do_rotulo`
+passando na fixture com "jan/2024" e voltando vazia com "Faturamento Janeiro"). Agora
+`ATIVO`, `TOTAL DO ATIVO`, `Faturamento Janeiro`, `Índice de liquidez corrente` e
+`PREJUÍZO LÍQUIDO DO EXERCÍCIO` estão travados **um por um, pelo nome**.
+
+### Defeitos religados (regra do `CLAUDE.md`)
+
+| Defeito religado | Assert que reprovou |
+|---|---|
+| `fn_linhas_para_modelagem` sem filtro de versão (= `0101`) | "a reextração SUBSTITUI a contribuição do documento" — *depois 8, com o defeito seria 8* |
+| `fn_versao_com_extracao` volta a `max(n_versao)` puro | "a linha continua igual com a versão vazia registrada por cima" — *antes 6, depois 5* |
+| `fn_papel_linha` perde o total de grupo sem a palavra "total" | "a classificação bate com a produção" — *conta 204, subtotal 27* |
+| par PRÉ-`0101` inteiro, na forma real | `canceling statement due to statement timeout`, 3 de 3 |
+| a `0102` fora da lista do `db/README.md` | `run.sh` reprova nomeando o arquivo |
+
+**Declarado, com a medição que sustenta:** o filtro de versão em `fn_papel_do_rotulo_no_caso`
+**não muda nenhum resultado hoje e não está coberto**. Escrevi o teste e ele **passou com o filtro
+removido** — `fn_papel_linha` declara `p_unidade` na assinatura e nunca a usa no corpo, então o
+papel é função de (chave, tipo do documento); como a versão superada pertence ao mesmo `documento`,
+o papel calculado sobre ela é necessariamente igual. O filtro fica pelo critério da `0100` (as duas
+funções ou andam juntas ou a divergência volta), com a inalcançabilidade escrita na migration em vez
+de fingida em teste. Vale o mesmo para o outro achado do caminho: `p_unidade` é **parâmetro
+decorativo** em `fn_papel_linha` — 303 combinações distintas com ou sem ela na fixture real.
+
+### Também nesta sessão
+
+**A caixa de erro parou de dar o conselho errado.** Ela sempre mandava rodar
+`notify pgrst, 'reload schema'` — certo para "function not found", **errado para consulta
+cancelada**, que é o caso que estava na tela do dono. Orientação errada num painel de diagnóstico é
+pior que orientação nenhuma: manda consertar o que não está quebrado e reforça a impressão de que o
+PR não funcionou. Agora a orientação segue o erro, e no caso de timeout aponta para
+`fn_diagnostico_modelagem`.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **47 migrations** e
+**306 asserts** (283 antes: 23 novos, em `db/test/modelagem_v35.test.sql`); `test/e2e/run.mts` =
+**27**.
+
+Nota de insumo, que custou uma tentativa: o `CLAUDE.md` documenta o e2e como
+`E2E_PSQL=1 ./portal/node_modules/.bin/tsx test/e2e/run.mts`, mas `E2E_PSQL` é o **comando** do psql
+e não um interruptor — com `1` o Node tenta executar um binário chamado `1` e morre com
+`spawnSync 1 ENOENT`. O que funciona é `E2E_PSQL=psql` (ou `E2E_PSQL="sudo -u postgres psql"`, que é
+o exemplo no próprio `test/e2e/run.mts`).
+
+### O que o dono precisa fazer
+
+1. **Aplicar a `0101` e a `0102`** no Supabase, na ordem, e rodar
+   `notify pgrst, 'reload schema';`. A `0101` é a que tira a tela do timeout — se o sintoma da
+   captura ainda aparece, é ela que não está no banco.
+2. **Conferir com o diagnóstico, em vez de deduzir pela tela:**
+   `select jsonb_pretty(fn_diagnostico_modelagem('c4581e51-3ee5-413d-ba04-6d6149fff0c7'));`
+   `correcoes_instaladas` tem de vir tudo `true`. Vale olhar `ocorrencias_superadas`: se vier maior
+   que zero, o caso vinha somando versão superada e os números da tela **vão mudar** com a `0102` —
+   é correção, não regressão.
+3. Executar o roteiro de modelagem e mandar o `.xlsx`.
+
+### Aberto (inalterado nesta sessão)
+
+- **Dupla contagem de caixa e de dívida no modelo institucional** (sessão 32) — correção só de
+  portal. `Arrendamentos` e `Provisões` como cabeçalho de grupo tratado como conta é da mesma
+  família, e agora está travado como `conta` em `modelagem_v35.test.sql`: mudar o papel deles exige
+  atualizar o `203/28/12/6` de propósito, com o rótulo nomeado no diff.
+- **A Fase 9 nunca foi exercitada com conteúdo** (sessão 32). A fixture desta sessão **tem** seção
+  canônica nas 249 linhas, então ela é o insumo que faltava para os asserts do modelo institucional.
