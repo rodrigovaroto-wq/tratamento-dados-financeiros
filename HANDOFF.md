@@ -3750,3 +3750,102 @@ o exemplo no próprio `test/e2e/run.mts`).
   atualizar o `203/28/12/6` de propósito, com o rótulo nomeado no diff.
 - **A Fase 9 nunca foi exercitada com conteúdo** (sessão 32). A fixture desta sessão **tem** seção
   canônica nas 249 linhas, então ela é o insumo que faltava para os asserts do modelo institucional.
+
+## Sessão 34 (2026-08-04) — o timeout sobreviveu ao apply, e a investigação virou de ambiente
+
+A `0101` e a `0102` foram aplicadas e **confirmadas** pelo dono: `fn_diagnostico_modelagem`
+devolveu `correcoes_instaladas` tudo `true`, `conferir_modelagem_e_0101` `true`, 249 linhas,
+203 projetáveis, 760 ocorrências, `ocorrencias_superadas: 0`. **E a tela continuou mostrando
+`canceling statement due to statement timeout` nas duas RPC.**
+
+### O que essa combinação já prova, antes de qualquer hipótese nova
+
+O retorno do diagnóstico em produção veio **idêntico**, número por número, ao que a fixture
+`db/test/fixture_modelagem_v35.sql` produz — `249 · conta 203 · subtotal 28 · serie_mensal 12 ·
+derivado 6`, 760 ocorrências, 14 documentos. A reconstrução do caso é fiel, então medição local
+vale como medição do caso real. E `fn_diagnostico_modelagem` chama
+`fn_linhas_para_modelagem` por dentro: ela **terminou** no SQL Editor.
+
+Duas consequências que fecham capítulos:
+
+- **a `0102` não mudou nenhum número desse caso** (`ocorrencias_superadas: 0`): aquele mandato
+  nunca havia sofrido do defeito de versão. Quem destravou o sintoma foi a `0101`; a `0102` é
+  prevenção. O aviso que dei ao dono de que "os números podem mudar" não se concretizou;
+- **o SQL Editor roda como `postgres`, o portal roda como `authenticated`** — e as medições da
+  sessão 33 correram todas como superusuário, que **ignora RLS**. Era a assimetria óbvia a
+  investigar primeiro.
+
+### As três hipóteses testadas nesta sessão, e todas descartadas POR MEDIÇÃO
+
+| Hipótese | Medido | Veredito |
+|---|---|---|
+| RLS encarece o caminho como `authenticated` | 492 ms como `authenticated` × 498 ms como superusuário | **descartada** — as políticas são todas `using (true)` |
+| as 7 chamadas do `Promise.all` se estrangulam | 480-492 ms cada, todas concorrentes, como `authenticated` | **descartada** |
+| `campo_extraido` cresceu com os casos antigos e o plano degradou | plano usa índice em `(documento_versao_id)`, 14 laços — o custo acompanha os documentos DO CASO, não a tabela | **descartada** |
+
+**Conclusão: a lógica SQL não é mais o gargalo.** Nenhuma medição chega perto de 8 s, e nada que
+eu consiga fazer localmente reproduz o timeout com a `0101`+`0102` instaladas. O que sobra é
+ambiente — e ambiente não se resolve com migration.
+
+### As quatro causas que sobram, e o instrumento que as separa
+
+`db/diagnostico_modelagem.sql` (novo) responde as quatro numa consulta só:
+
+- **A. o portal aponta para outro projeto Supabase** do que o SQL Editor onde as migrations
+  foram aplicadas. Explica *tudo* sem sobra: `correcoes_instaladas` `true` de um lado, funções
+  velhas do outro. A variável é `NEXT_PUBLIC_SUPABASE_URL` na Vercel;
+- **B. o `statement_timeout` de `authenticated` é menor que os 8 s** contra os quais a `0101` foi
+  dimensionada;
+- **C. a instância está estrangulada de CPU** (crédito de tier compartilhado) e 640 ms viram
+  segundos. Quem responde isso é `pg_stat_statements`, que guarda o tempo REAL das chamadas do
+  PostgREST — evidência histórica, do relógio da própria produção, não simulação;
+- **D. o render do print é anterior ao apply.** A rota é `ƒ` (dinâmica, `cookies()` no
+  `createClient`), então não há Full Route Cache — sobra cache de navegador.
+
+O arquivo é uma consulta única de propósito: o SQL Editor mostra só o resultado da **última**
+consulta de um lote, e um `pg_stat_statements` inexistente abortaria o lote inteiro levando os
+outros blocos com ele. Daí a tabela temporária e o `execute` guardado por `to_regclass`.
+
+### A tela passou a relatar TEMPO, não só falha
+
+Cada uma das sete chamadas volta cronometrada, e o tempo entra na caixa de erro. **Num
+cancelamento por tempo, o tempo decorrido É O TETO que o servidor aplica** — sem esse número,
+8 s (default do Supabase) e 3 s (projeto mais apertado) produzem exatamente a mesma mensagem, e
+foi essa ambiguidade que fez esta rodada custar idas e vindas. Os tempos de quem deu **certo**
+também aparecem, porque é a linha de base que dá sentido ao número da falha: cinco chamadas
+leves em 80 ms com duas pesadas cortadas em 8.000 ms é um servidor saudável e duas funções que
+não couberam; **tudo** lento é a instância, e nenhuma otimização de SQL resolve.
+
+O cronômetro vive em escopo de módulo por causa do `react-hooks/purity` do eslint, que reprova
+`Date.now()` no corpo de componente — com o motivo escrito, em vez de silenciado com um
+`eslint-disable`.
+
+### Sobre otimizar mais: deliberadamente NÃO feito
+
+`fn_papel_linha` domina os ~490 ms (~1,6 ms × 303 combinações distintas, entre
+`fn_normalizar_texto`, quinze subconsultas escalares e nove `fn_rotulo_estrutural`). Dá para
+melhorar, e agora seria **seguro** tentar, porque `modelagem_v35.test.sql` trava a classificação
+203/28/12/6 contra rótulo real. Mas 490 ms contra 8 s são 16× de folga, e otimizar contra uma
+causa **desconhecida** é trabalho especulativo. Medir primeiro; otimizar se a medição pedir.
+
+### O upload do dono não continha o artefato
+
+Os 15 arquivos do commit `9cdadc4` são *chunks* de framework e CSS — **nenhum tem a string
+`supabase`**, e o HTML não veio. Como `NEXT_PUBLIC_SUPABASE_URL` fica embutido no bundle da
+aplicação, o HTML (ou o chunk da app) permitiria ler o projeto de destino do portal e matar a
+hipótese A na hora. Fica registrado como o que pedir na próxima: **o `.html` salvo**, não a
+pasta `_files/`.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **47 migrations** e
+**306 asserts**; `test/e2e/run.mts` = **27**. Nenhuma migration nova nesta sessão — o achado é
+que não cabia migration nenhuma.
+
+### O que o dono precisa fazer
+
+1. **Rodar `db/diagnostico_modelagem.sql`** (bloco 1) e mandar a saída inteira.
+2. **Comparar o `NEXT_PUBLIC_SUPABASE_URL` da Vercel** com o projeto onde as migrations foram
+   aplicadas. Se forem diferentes, acabou aqui.
+3. Recarregar a tela com **Ctrl+Shift+R** — o print novo passa a trazer os tempos, e só isso já
+   distingue B de C.
