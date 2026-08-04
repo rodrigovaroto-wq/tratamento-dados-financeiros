@@ -135,6 +135,22 @@ supabase db execute --file db/migrations/0100_papel_por_secao.sql
 supabase db execute --file db/seed/macro_carga_inicial.sql
 ```
 
+> ⚠️ **DEPOIS DE APLICAR QUALQUER MIGRATION QUE CRIE OU DERRUBE FUNÇÃO, recarregue o
+> cache de schema do PostgREST:**
+>
+> ```sql
+> notify pgrst, 'reload schema';
+> ```
+>
+> O PostgREST (a API que o portal usa) guarda um catálogo próprio das funções expostas.
+> Função recém-criada **não existe para ele** até esse `notify` — e função derrubada
+> continua existindo. Enquanto o cache está velho, a chamada volta erro de "função não
+> encontrada", e a tela que não lê o `.error` mostra isso como **lista vazia**: foi
+> exatamente assim que a Modelagem anunciou "este caso ainda não tem linha extraída"
+> num caso com 203 linhas, logo depois da `0100`. A tela agora denuncia o erro em vez
+> de engoli-lo, mas o `notify` continua sendo parte de aplicar a migration, não um
+> extra.
+
 > ⚠️ **Se o N8N reportar `function ... does not exist` mesmo com a função existindo no banco**
 > (ex.: após aplicar migrations parcialmente/mais de uma vez), a `0006` derruba qualquer versão
 > divergente das 4 funções RPC e recria do zero — mas ela recria os corpos **da época dela**, e

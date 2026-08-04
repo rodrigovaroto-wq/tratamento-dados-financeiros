@@ -157,6 +157,36 @@ export default async function ModelagemPage({
       .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)").eq("caso_id", id),
   ]);
 
+  // ---------------------------------------------------------------------------
+  // ERRO DE RPC NUNCA MAIS VIRA "LISTA VAZIA".
+  //
+  // Todas as sete chamadas acima terminavam em `?? []`, e o `.error` de nenhuma
+  // era lido. O efeito apareceu em produção do jeito mais enganoso possível: a
+  // seção 3 anunciou "Este caso ainda não tem linha extraída com valor" num caso
+  // com 203 linhas, porque `fn_linhas_para_modelagem` tinha FALHADO e a falha foi
+  // convertida em lista vazia. O analista lê isso como "o caso está vazio" e vai
+  // procurar o problema na extração, que está intacta.
+  //
+  // Causa provável quando isso acontece logo depois de aplicar uma migration: o
+  // PostgREST guarda um CACHE do schema, e função criada/derrubada só passa a
+  // existir para ele depois de `notify pgrst, 'reload schema';`. Até lá a chamada
+  // volta "function not found" — que é um erro, não um caso sem dado.
+  //
+  // A distinção que a tela precisa fazer, e agora faz: "não há linha" é uma
+  // resposta; "não consegui perguntar" é outra.
+  // ---------------------------------------------------------------------------
+  const falhas = ([
+    ["premissas sugeridas (fn_premissas_sugeridas)", sugeridasRes.error],
+    ["premissas ativas (caso_premissa)", ativasRes.error],
+    ["vínculos de linha (caso_linha_premissa)", vinculosRes.error],
+    ["conferência (fn_conferir_modelagem)", confRes.error],
+    ["linhas do caso (fn_linhas_para_modelagem)", camposRes.error],
+    ["curva de sazonalidade (fn_sazonalidade_do_caso)", sazRes.error],
+    ["documentos do caso", docsRes.error],
+  ] as const)
+    .filter(([, e]) => e)
+    .map(([nome, e]) => `${nome}: ${e!.message}`);
+
   const sugeridas = (sugeridasRes.data as PremissaCatalogo[] | null) ?? [];
   const ativas = (ativasRes.data as CasoPremissa[] | null) ?? [];
   const vinculos = (vinculosRes.data as LinhaVinculo[] | null) ?? [];
@@ -241,6 +271,26 @@ export default async function ModelagemPage({
           Exportar completo ↓
         </a>
       </div>
+
+      {/* CONSULTA QUE FALHOU aparece ANTES de tudo, e nomeada. Enquanto isto não
+          existia, uma RPC quebrada saía da tela como "este caso não tem linha". */}
+      {falhas.length > 0 && (
+        <section className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+          <p className="font-semibold">
+            {falhas.length} consulta(s) ao banco FALHARAM — o que está faltando nesta tela é efeito
+            disso, não é o caso estar vazio.
+          </p>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {falhas.map((f) => <li key={f} className="font-mono">{f}</li>)}
+          </ul>
+          <p className="mt-2 text-xs">
+            Se isto começou logo depois de aplicar uma migration, é quase certo que seja o cache de
+            schema do PostgREST: rode <code className="font-mono">notify pgrst, &apos;reload schema&apos;;</code>{" "}
+            no SQL Editor do Supabase e recarregue. Função recém-criada só existe para a API depois
+            disso.
+          </p>
+        </section>
+      )}
 
       {/* 4. CONFERÊNCIA — no TOPO, não no fim. É o que o analista precisa saber
           antes de mexer em qualquer coisa: quantas linhas ficariam de fora e qual
@@ -455,13 +505,27 @@ export default async function ModelagemPage({
                           </span>
                         )}
                       </span>
+                      {/* O ANO FICA ESCRITO EM CIMA DA CAIXA, em preto.
+                          Ele era o `placeholder` — cinza claro, e some no primeiro
+                          caractere digitado. O dono leu isso como "tenho que
+                          selecionar o ano em cada premissa", que é justamente o
+                          trabalho que a tela existe para não dar: o horizonte já
+                          vem dos parâmetros do mandato e é o mesmo para todas.
+                          Agora o ano é rótulo fixo, e o `placeholder` passa a
+                          dizer a UNIDADE, que é o que a caixa realmente pede. */}
                       {anos.map((ano) => (
-                        <input
-                          key={ano} type="text" name={`valor_${ano}`}
-                          defaultValue={ativa?.valores?.[String(ano)] ?? ""}
-                          placeholder={String(ano)} title={`${p.nome} — ${ano}`}
-                          className="w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs"
-                        />
+                        <label key={ano} className="flex w-16 flex-col items-center">
+                          <span className="text-[10px] font-semibold leading-none text-neutral-700 tabular-nums">
+                            {ano}
+                          </span>
+                          <input
+                            type="text" name={`valor_${ano}`}
+                            defaultValue={ativa?.valores?.[String(ano)] ?? ""}
+                            placeholder={p.unidade ?? "valor"}
+                            title={`${p.nome} — ${ano}${p.unidade ? ` (${p.unidade})` : ""}`}
+                            className="mt-0.5 w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs"
+                          />
+                        </label>
                       ))}
                     </FormPremissa>
                   );
@@ -531,7 +595,12 @@ export default async function ModelagemPage({
               <p className="text-sm text-neutral-500">
                 {busca
                   ? `Nenhuma linha com "${busca}" no rótulo.`
-                  : "Este caso ainda não tem linha extraída com valor. Confira a fila de revisão e o export de dados."}
+                  : falhas.length > 0
+                    // A afirmação só pode ser feita quando a pergunta foi
+                    // respondida. Com a consulta falhando, dizer "não tem linha"
+                    // é inventar um fato sobre o caso.
+                    ? "A consulta das linhas FALHOU (veja o aviso vermelho no topo). Isto NÃO quer dizer que o caso está vazio."
+                    : "Este caso ainda não tem linha extraída com valor. Confira a fila de revisão e o export de dados."}
               </p>
             )}
           </div>
