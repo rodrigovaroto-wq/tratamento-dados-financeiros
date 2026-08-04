@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 // As ações da seção Modelagem (db/migrations/0038).
@@ -17,27 +16,38 @@ import { createClient } from "@/lib/supabase/server";
 // própria tentativa. Ler esse campo é OBRIGATÓRIO em cada ação: sem isso, `error`
 // nulo faria a recusa passar por sucesso, e a tela recarregaria como se algo
 // tivesse sido salvo.
+//
+// -----------------------------------------------------------------------------
+// TODA AÇÃO DAQUI DEVOLVE `Resultado`. NENHUMA levanta exceção, NENHUMA navega.
+//
+// Foram três tentativas até chegar aqui, e vale registrar por que as duas
+// primeiras estavam erradas:
+//
+//   1. `throw new Error(motivo)` — sem `error.tsx` na rota, o React DESMONTA a
+//      subárvore: a seção 3 sumia da página. E em produção o Next REDIGE a
+//      mensagem de erro de servidor, então nem com fronteira o analista leria
+//      "esta linha é um subtotal": leria "an error occurred".
+//   2. `redirect(...?aviso=...)` — resolveu a mensagem e trocou o defeito de
+//      lugar. Redirect é NAVEGAÇÃO: remonta a árvore inteira, joga o scroll para
+//      o topo e apaga tudo que estava sendo editado e ainda não foi salvo. Quem
+//      estava no meio da seção 3 via, de novo, a seção "fechar sozinha".
+//   3. RETORNAR o resultado, que é o que está aqui. `useActionState` no cliente
+//      recebe o objeto, mostra a mensagem NO LUGAR onde o clique aconteceu, e o
+//      `revalidatePath` atualiza os dados do servidor SEM desmontar nada: os
+//      componentes de cliente ficam na mesma posição da árvore e o estado local
+//      (as escolhas ainda não salvas das outras seções) sobrevive.
+//
+// A regra que fica: recusa esperada NÃO é exceção, e feedback de ação NÃO é
+// navegação. As duas coisas custaram uma rodada de teste do dono cada.
+// -----------------------------------------------------------------------------
 
 type Recusavel = { recusado?: boolean; motivo_recusa?: string } | null;
 
-// RECUSA ESPERADA VOLTA COMO AVISO NA TELA, não como exceção.
-//
-// POR QUE ISTO MUDOU. Levantar `Error` numa Server Action para uma recusa que o
-// banco prevê tem duas consequências, e as duas apareceram na rodada de
-// 04/08/2026: sem `error.tsx` na rota, o React DESMONTA a subárvore — foi assim
-// que a seção inteira do passo 3 sumiu da página ao clicar em "aplicar em lote";
-// e, em produção, o Next REDIGE a mensagem de erro de servidor antes de entregá-la
-// ao browser, então mesmo com uma fronteira de erro o analista leria "an error
-// occurred" no lugar de "esta linha é um subtotal".
-//
-// Recusa não é falha do sistema: é o sistema funcionando e dizendo não. Então ela
-// volta pela URL, que é conteúdo que nós controlamos, e a página a renderiza.
-// `redirect` levanta a exceção interna do Next — por isso nunca dentro de
-// try/catch, e por isso o tipo de retorno é `never`.
-function voltarComAviso(casoId: string, tom: "erro" | "ok", texto: string): never {
-  const p = new URLSearchParams({ aviso: texto, tom });
-  redirect(`/casos/${casoId}/modelagem?${p.toString()}`);
-}
+/** O que toda ação desta tela devolve. `null` = ainda não rodou nesta sessão. */
+export type Resultado = { tom: "ok" | "erro"; texto: string } | null;
+
+const erro = (texto: string): Resultado => ({ tom: "erro", texto });
+const ok = (texto: string): Resultado => ({ tom: "ok", texto });
 
 async function autor() {
   const supabase = await createClient();
@@ -45,12 +55,15 @@ async function autor() {
   return user?.email ?? "portal:desconhecido";
 }
 
-function conferirRecusa(casoId: string, data: unknown, fallback: string) {
+/** Recusa do banco → mensagem. `null` quando não houve recusa. */
+function recusa(data: unknown, fallback: string): Resultado {
   const r = data as Recusavel;
-  if (r?.recusado) voltarComAviso(casoId, "erro", r.motivo_recusa ?? fallback);
+  return r?.recusado ? erro(r.motivo_recusa ?? fallback) : null;
 }
 
-export async function definirParametros(casoId: string, formData: FormData) {
+export async function definirParametros(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
   const supabase = await createClient();
   const ultimo = Number(formData.get("ultimo_exercicio_real"));
   const { data, error } = await supabase.rpc("fn_definir_modelagem", {
@@ -62,12 +75,16 @@ export async function definirParametros(casoId: string, formData: FormData) {
     p_autor: await autor(),
     p_anos_projetados: Number(formData.get("anos_projetados")) || 5,
   });
-  if (error) throw new Error(`Falha ao salvar os parâmetros: ${error.message}`);
-  conferirRecusa(casoId, data, "Parâmetros recusados.");
+  if (error) return erro(`Falha ao salvar os parâmetros: ${error.message}`);
+  const r = recusa(data, "Parâmetros recusados.");
+  if (r) return r;
   revalidatePath(`/casos/${casoId}/modelagem`);
+  return ok("Parâmetros do mandato salvos.");
 }
 
-export async function ativarPremissa(casoId: string, formData: FormData) {
+export async function ativarPremissa(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
   const supabase = await createClient();
   const codigo = String(formData.get("codigo") || "");
 
@@ -91,12 +108,19 @@ export async function ativarPremissa(casoId: string, formData: FormData) {
     p_origem: String(formData.get("origem") || "digitado"),
     p_autor: await autor(),
   });
-  if (error) throw new Error(`Falha ao ativar a premissa: ${error.message}`);
-  conferirRecusa(casoId, data, "Premissa recusada.");
+  if (error) return erro(`Falha ao ativar a premissa: ${error.message}`);
+  const r = recusa(data, "Premissa recusada.");
+  if (r) return r;
   revalidatePath(`/casos/${casoId}/modelagem`);
+  const n = Object.keys(valores).length;
+  return ok(n === 0
+    ? "Premissa ativada SEM valor — se for macro, o Focus preenche; senão ela não projeta ano nenhum."
+    : `Premissa ativada com valor em ${n} ano(s).`);
 }
 
-export async function vincularLinha(casoId: string, formData: FormData) {
+export async function vincularLinha(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
   const supabase = await createClient();
   const premissa = String(formData.get("premissa") || "");
   const { data, error } = await supabase.rpc("fn_vincular_linha_premissa", {
@@ -110,9 +134,11 @@ export async function vincularLinha(casoId: string, formData: FormData) {
     p_autor: await autor(),
     p_sazonalidade: String(formData.get("sazonalidade") || "") || null,
   });
-  if (error) throw new Error(`Falha ao vincular a linha: ${error.message}`);
-  conferirRecusa(casoId, data, "Vínculo recusado.");
+  if (error) return erro(`Falha ao vincular a linha: ${error.message}`);
+  const r = recusa(data, "Vínculo recusado.");
+  if (r) return r;
   revalidatePath(`/casos/${casoId}/modelagem`);
+  return ok("Linha vinculada.");
 }
 
 // Salvar a seção inteira de uma vez.
@@ -127,7 +153,9 @@ export async function vincularLinha(casoId: string, formData: FormData) {
 // `caso_linha_premissa` para linha que ninguém tocou — inclusive para a linha
 // deliberadamente "não projetar" —, e a trilha de decisão passaria a registrar
 // escolhas que o analista não fez.
-export async function salvarSecao(casoId: string, formData: FormData) {
+export async function salvarSecao(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
   const supabase = await createClient();
   const autorNome = await autor();
 
@@ -166,14 +194,17 @@ export async function salvarSecao(casoId: string, formData: FormData) {
 
   revalidatePath(`/casos/${casoId}/modelagem`);
   if (erros.length > 0) {
-    voltarComAviso(casoId, "erro",
-      `${n} linha(s) salva(s); ${erros.length} recusada(s). ` + erros.slice(0, 4).join(" | "));
+    return erro(`${n} linha(s) salva(s); ${erros.length} recusada(s). `
+      + erros.slice(0, 4).join(" | "));
   }
   // Silêncio depois de salvar 30 linhas é indistinguível de não ter salvado.
-  voltarComAviso(casoId, "ok", `${n} linha(s) salva(s) nesta seção.`);
+  return ok(n === 0 ? "Nada mudou nesta seção — nada foi gravado."
+    : `${n} linha(s) salva(s) nesta seção.`);
 }
 
-export async function aplicarEmLote(casoId: string, formData: FormData) {
+export async function aplicarEmLote(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("fn_aplicar_premissa_em_lote", {
     p_caso_id: casoId,
@@ -182,30 +213,29 @@ export async function aplicarEmLote(casoId: string, formData: FormData) {
     p_autor: await autor(),
     p_sazonalidade: String(formData.get("sazonalidade") || "") || null,
   });
-  if (error) throw new Error(`Falha ao aplicar em lote: ${error.message}`);
-  conferirRecusa(casoId, data, "Lote recusado.");
+  if (error) return erro(`Falha ao aplicar em lote: ${error.message}`);
+  const r0 = recusa(data, "Lote recusado.");
+  if (r0) return r0;
+
+  const r = data as { n_linhas?: number; n_ignoradas?: number } | null;
+  revalidatePath(`/casos/${casoId}/modelagem`);
 
   // Lote que pega ZERO linha não é erro, mas também não pode passar por sucesso:
   // significa que a seção escolhida não tem CONTA nenhuma neste caso (só subtotal,
   // série mensal ou indicador), e quem clicou precisa saber disso agora — não ao
   // abrir o Excel.
-  const r = data as { n_linhas?: number; n_ignoradas?: number } | null;
-  revalidatePath(`/casos/${casoId}/modelagem`);
   if (r && r.n_linhas === 0) {
-    voltarComAviso(casoId, "erro",
-      "O lote não vinculou NENHUMA linha nessa seção. "
+    return erro("O lote não vinculou NENHUMA linha nessa seção. "
       + (r.n_ignoradas
         ? `As ${r.n_ignoradas} linha(s) da seção não são contas projetáveis (subtotal, série mensal `
           + "ou indicador derivado) — subtotal sai como soma dos componentes no Excel, e por isso "
           + "não recebe premissa."
-        : "Confira a seção escolhida na lista de linhas abaixo."),
-    );
+        : "Confira a seção escolhida na lista de linhas abaixo."));
   }
   // E o lote que DEU certo também precisa dizer o que fez: quantas entraram e
   // quantas ficaram de fora. Antes ele não dizia nada, e "não aconteceu nada" e
   // "aconteceu tudo" tinham exatamente a mesma aparência na tela.
-  voltarComAviso(casoId, "ok",
-    `${r?.n_linhas ?? 0} conta(s) vinculada(s)`
+  return ok(`${r?.n_linhas ?? 0} conta(s) vinculada(s)`
     + (r?.n_ignoradas
       ? `; ${r.n_ignoradas} linha(s) ficaram de fora por não serem contas projetáveis `
         + "(subtotal, série mensal ou indicador)."
