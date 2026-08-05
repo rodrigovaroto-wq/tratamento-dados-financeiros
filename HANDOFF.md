@@ -4,16 +4,15 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-05 (sessão 36). **Estado do `main`:** mergeado até o **PR #94**
-(`main` em `8d92b74`); o **PR #95** traz esta sessão. Branch de trabalho:
-**`claude/migration-102-modeling-issue-7f4uxw`**.
+**Última atualização:** 2026-08-05 (sessão 37). **Estado do `main`:** mergeado até o **PR #100**
+(`main` em `342f5c0`). Branch de trabalho: **`claude/handoff-teste-passo-passo-np8tin`**.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
 > virou a mais velha do documento. A regra mudou na sessão 35: **atualizar o cabeçalho ao fechar a
 > rodada é obrigação**; o que continua intocável é a seção de sessão passada.
 
-### Migrations — 48 arquivos, nesta ordem
+### Migrations — 49 arquivos, nesta ordem
 
 `0001`→`0044` (sequência completa, todas aplicadas) e a faixa do colaborador:
 
@@ -23,12 +22,13 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 | `0101_modelagem_dentro_do_tempo` | conferência em uma passada (era 5, duas por vínculo): 9,3 s → 100 ms | ✅ |
 | `0102_modelagem_versao_vigente` | a Modelagem lê só a versão VIGENTE de cada documento | ✅ |
 | `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
+| `0104_desativar_premissa` | remover premissa **e** os vínculos que ela dirigia, devolvendo quantos desfez | ⚠️ **aplicar** — sem ela o botão "Remover" da tela erra |
 
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**426**; `db/test/run.sh` = **48 migrations / 306 asserts**; `test/e2e/run.mts` = **27**.
+**435**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
 
 > Nota de insumo: o `CLAUDE.md` documenta `E2E_PSQL=1` para o e2e, mas essa variável é o **comando**
 > do psql, não um flag — com `=1` o arnês tenta executar um binário chamado `1`. Rode sem ela,
@@ -42,10 +42,16 @@ intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` 
 `0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `db/README.md` e
 fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
 
-**O QUE ESTÁ ABERTO AGORA:** o **teste prático da tela**, que é do dono e nenhuma suíte substitui —
-roteiro de modelagem no caso do v35 (incluindo ativar `SAZ_MENSAL` e o "aplicar em lote" por seção),
-export do completo, e conferir o `CHECK` da aba `Balance Sheet`, que **deve** acusar em vermelho a
-dupla contagem de caixa e dívida aberta desde a sessão 32. Passo a passo no fim da sessão 36.
+**O QUE ESTÁ ABERTO AGORA:** **espelhar o Modelo Base** (`docs/referencia/modelo-base.xlsx`) no
+export. Medido na sessão 37: as 14 abas do modelo institucional têm **2.842 fórmulas contra as
+14.504 da referência** (~20%), **zero** dos 1.044 nomes definidos e **zero** dos 8 gráficos. Os
+maiores buracos são `Output` (3.693 × 118) e `ST Inv. & Debt` (3.573 × 241). O trabalho está
+descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, feito para ser colado como primeira
+mensagem de uma sessão nova.
+
+> A tela de Modelagem já foi exercitada de ponta a ponta pelo dono (sessão 37) e o export completo
+> gera. O que sobra dela: a `0104` a aplicar, a dupla contagem de caixa/dívida (o `CHECK` do
+> `Balance Sheet` acusa), e a falta de UI para rejeitar pendência do Portão 2.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
@@ -4116,3 +4122,133 @@ que nenhuma suíte substitui:
 - **A Fase 9 nunca foi exercitada com conteúdo** (sessão 32). A fixture da sessão 33 **tem**
   seção canônica nas 249 linhas, e é o insumo que faltava para os asserts do modelo
   institucional em `verificar-export.mts`.
+
+## Sessão 37 (2026-08-05) — a modelagem exercitada de ponta a ponta, e três defeitos que só o uso real acha
+
+Primeira rodada em que o dono **usou** a tela de Modelagem e o export completo até o fim. Saíram
+cinco PRs (#96 a #100) e, principalmente, a lição de que **os defeitos desta fase não aparecem em
+teste sintético** — aparecem quando alguém clica.
+
+### O que entrou
+
+| PR | O que |
+|---|---|
+| #96 | organização da raiz (as capturas do dono viraram pasta com procedência) |
+| #97 | **`0104`**: `fn_desativar_premissa` + botão **"Remover"** no passo 2 da tela |
+| #98 | a identidade da linha é **(seção, rótulo)** — a linha que "completava sozinha" |
+| #99 | **`db/roteiro_modelagem_v35.sql`**: 70 cliques viram uma colada de SQL |
+| #100 | o **HTTP 500** do export: âncora duplicada no modelo institucional |
+
+### Os três defeitos, e o que eles têm em comum
+
+**São a mesma família**: tratar o rótulo como identidade da linha, quando no banco a identidade é
+o par (`secao_canonica`, `rotulo_norm`) — o índice único de `caso_linha_premissa` inclui a seção e
+`fn_linhas_para_modelagem` agrupa pelas duas. **No caso v35, treze rótulos existem em duas
+seções** (`Empréstimos e Financiamentos`, `Arrendamentos`, `Capital social`, `Reserva legal`…).
+
+1. **A tela preenchia linha que ninguém tocou.** Relato do dono: escolher a premissa de UMA linha,
+   salvar, e outra aparecer preenchida. A causa não era o salvamento (que já mandava só o que
+   mudou) — era a LEITURA, em dois mapas indexados só pelo rótulo. E o efeito era em cadeia: o
+   valor herdado virava o `orig` daquela seção e ia ao banco de verdade no salvamento seguinte.
+2. **O export puxava o valor base da seção errada.** Medido com o defeito religado: a linha do
+   passivo **circulante** recebia base **37.379**, que é o saldo do **não** circulante. A projeção
+   inteira partia do número errado, sem erro nenhum na tela.
+3. **O modelo institucional derrubava o export com HTTP 500.** `abaTributos` é a única aba que
+   junta dois blocos sob o mesmo prefixo, e `Obrigações Tributárias` existe nas duas pontas do
+   passivo (7.895 e 13.549). A guarda da `Grade` fez o que devia — preferiu explodir a somar a
+   conta errada em silêncio.
+
+A correção é a mesma nos três: a chave inclui a seção. Ficou em `portal/src/lib/modelagem-linha.ts`
+(um módulo, não duas cópias) e em `chaveLinha` do modelo institucional.
+
+### `portal/scripts/gerar-export-do-banco.mts` — o 500 deixou de ser invisível
+
+O export completo só podia ser exercitado em produção, e um defeito nele chegava ao dono como
+página em branco, com o stack trace preso no log da Vercel. O script novo refaz **as consultas da
+rota** contra um Postgres local e chama o **mesmo** `buildExportWorkbook`: o mesmo defeito virou
+stack trace no terminal em dois segundos. Foi assim que a âncora duplicada foi encontrada.
+
+Se o script gera e a rota não, a diferença é de **ambiente**, não de lógica de planilha — é a
+mesma separação que a sessão 34 levou quatro rodadas para conseguir fazer.
+
+### O Portão 2 recusou o export, e estava certo
+
+`item_faltante` de `CONTRATO_SOCIAL` (não-sobrepujável) e de `FAT_INTRAGRUPO`. As outras cinco
+pendências do caso são `importante` e não contam para a condição 1.
+
+Testado o atalho — registrar documento vazio só para tapar o buraco — e **a `0036` o barrou**:
+`item_faltante` vira `item_sem_conteudo`, também bloqueante e também não-sobrepujável. **Não existe
+caminho barato**, e isso é notícia boa sobre o desenho. O caminho legítimo quando o documento não
+vem é `rejeitada` com motivo, que é o que o próprio portão nomeia.
+
+**Lacuna que isso expôs:** não existe UI para rejeitar pendência. A tela de revisão só trata
+`classificacao_pendente`; todo o resto é `UPDATE` no SQL Editor. Para um portão que é a doutrina
+central do produto, a decisão mais importante do fluxo é a única sem botão.
+
+### O que o roteiro de SQL provou sobre o produto
+
+Configurar a modelagem pela tela são ~70 interações antes de chegar no que interessa. O roteiro faz
+tudo numa colada, chamando **as mesmas funções que a tela chama** — então as guardas continuam
+valendo, e se o roteiro passa e a tela não, a diferença está na interface.
+
+Duas descobertas dele, medidas contra o caso real:
+
+- **só premissa de CRESCIMENTO pode entrar em lote.** `pct_de_linha` e `dias_de_giro` incidem
+  sobre a **receita total**, então um lote em 44 linhas faria as 44 valerem o mesmo. Isso não está
+  escrito em lugar nenhum da tela — foi preciso ler `export-modelagem.ts` para saber;
+- **`ALIQUOTA` e `TAXA_DIVIDA` são inúteis como estão.** A alíquota realizada do caso (43%) e a
+  taxa da dívida (15,1% a.a.) são números bons, mas como `pct_de_linha` aplicariam 43% e 15% **da
+  receita** como imposto e juro. A base é errada para elas.
+
+O roteiro **começa com reset** desde o PR #99: rodar por cima de uma configuração existente somava
+os dois estados (26 viraram 98, medido). Agora uma colada devolve sempre o mesmo estado.
+
+### O espelhamento do Modelo Base — medido, e é o próximo grande trabalho
+
+O dono pediu que o modelo gerado seja **idêntico** ao `docs/referencia/modelo-base.xlsx`. Primeira
+medição honesta da distância, com `docs/referencia/mapear-xlsx.py` (novo):
+
+| | Modelo Base | Nosso export |
+|---|---|---|
+| Abas | 14 | 29 (as 14 + 15 nossas, de proveniência) |
+| **Fórmulas nas 14 abas** | **14.504** | **2.842** (~20%) |
+| Nomes definidos | 1.044 | **0** |
+| Gráficos / imagens | 8 / 1 | **0 / 0** |
+
+Os dois maiores buracos são `Output` (3.693 contra 118) e `ST Inv. & Debt` (3.573 contra 241).
+
+**E o Modelo Base não é um gabarito vazio:** é o modelo preenchido de uma **operadora de plano de
+saúde**, exercícios 2010–2018 ("Contraprest. efetivas de plano de assist. à saúde", "Eventos
+conhecidos ou avisados"). Isso obriga a separar o que se replica: o **motor** (abas, blocos,
+gramática de fórmula, formatação, recursos) e não o **vocabulário** de outra indústria. É a
+primeira pergunta que a próxima sessão tem de fazer ao dono.
+
+O trabalho está descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, escrito para ser colado como
+primeira mensagem de uma sessão nova: função, objetivo, estado medido, ferramentas, método em cinco
+fases (mapear → comparar → planejar → replicar → provar), requisitos e formato de entrega.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **435**; `db/test/run.sh` = **49 migrations / 324
+asserts**; `test/e2e/run.mts` = **27**.
+
+### O que o dono precisa fazer
+
+1. **Aplicar a `0104`** no Supabase (`supabase db execute --file db/migrations/0104_desativar_premissa.sql`
+   + `notify pgrst, 'reload schema';`) — sem ela o botão "Remover" devolve erro de função inexistente.
+2. Decidir a leitura de "idêntico" (§4 do prompt): **motor** ou **arquivo**.
+3. Quando quiser retomar: abrir sessão nova e colar `docs/PROMPT_ESPELHAR_MODELO_BASE.md`.
+
+### Aberto
+
+- **Espelhamento do Modelo Base** — o trabalho grande, ~80% da distância em fórmulas.
+- **Dupla contagem de caixa e de dívida** (sessão 32). O `CHECK` do `Balance Sheet` acusa. O mapa
+  do Modelo Base provavelmente contém a resposta certa.
+- **Sem UI para rejeitar/ressalvar pendência** — o Portão 2 depende de `UPDATE` manual.
+- **O "Exportar completo" não pergunta o portão antes de abrir a aba**: a recusa chega como página
+  preta de JSON em vez de mensagem na tela com link para a revisão.
+- **`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor"** e isso segura o
+  "pronto" — a curva vem do caso, ela não tem valor a digitar.
+- **"Sugerir do realizado"** (proposta, não feita): oito premissas saem do próprio balanço/DRE do
+  caso (PMR 81, PME 62, PMP 59, custo variável 54,7%, SG&A 14,1%, alíquota, depreciação, taxa da
+  dívida), com `origem = 'historico'` — que o schema da `0038` já prevê e ninguém usa.
