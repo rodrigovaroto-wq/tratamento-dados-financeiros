@@ -40,9 +40,22 @@ aplicar qualquer coisa, então a colisão morre no PR; a faixa é o que evita ch
 - **Branch + PR sempre.** Nunca push direto em `main`.
 - O CI (`.github/workflows/suites.yml`) roda as quatro suítes em todo push e PR. **PR
   vermelho é regressão sua** — não peça revisão antes de estar verde.
-- **`HANDOFF.md` é a memória do projeto** (2.500+ linhas) e o cabeçalho é o resumo de
-  retomada. **Só acrescente seção nova**; não edite o cabeçalho nem as seções de sessões
-  anteriores. Dois editando o topo conflita a cada rodada.
+- **`HANDOFF.md` é a memória do projeto** (3.500+ linhas). O cabeçalho é o resumo de
+  retomada, e **manter o cabeçalho em dia é obrigação de quem fecha a rodada** — estado do
+  `main`, última migration aplicada, branch de trabalho e contadores das suítes.
+
+  A regra anterior era "só acrescente seção nova, nunca toque no cabeçalho", e o motivo era
+  bom: dois editando o topo conflita a cada rodada. O custo, medido, foi maior: o cabeçalho
+  ficou **17 PRs atrasado**, anunciando "mergeado até o PR #70, migrations até `0034`"
+  enquanto o `main` estava no #93 com a `0103` — ou seja, a parte escrita para quem chega
+  sem contexto virou a mais velha do documento, e mandava a pessoa começar errado.
+
+  **O que fica no lugar:**
+  - **atualize o cabeçalho** ao fechar a rodada, e só ele — as seções de sessões
+    anteriores continuam sendo histórico e **não se reescrevem**;
+  - **acrescente a sua seção nova** no fim, como sempre;
+  - conflito no topo se resolve como qualquer outro: relendo e mantendo os dois fatos. Um
+    cabeçalho mentiroso custa mais caro que um `git merge`.
 
 ## As quatro suítes (rode antes de pedir revisão)
 

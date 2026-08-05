@@ -4,19 +4,51 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-01 (sessão 21). **Estado do `main`:** mergeado até o **PR #70**
-(`main` em `60f2d26`). Migrations `0001`→**`0034`** (a `0033` o dono já aplicou; a **`0034` é NOVA e
-não está aplicada**). Branch de trabalho: **`claude/handoff-next-steps-6k88f2-7pv76w`**.
+**Última atualização:** 2026-08-05 (sessão 36). **Estado do `main`:** mergeado até o **PR #94**
+(`main` em `8d92b74`); o **PR #95** traz esta sessão. Branch de trabalho:
+**`claude/migration-102-modeling-issue-7f4uxw`**.
 
-**AS ETAPAS 1 A 6 DO PLANO DO DONO ESTÃO FEITAS** e aguardam a validação dele. O dono autorizou
-explicitamente executar todas de uma vez nesta sessão ("execute tudo de uma vez, não pare para me
-perguntar nada"), o que suspende — só para esta rodada — a regra de uma etapa por vez.
+> **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
+> `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
+> virou a mais velha do documento. A regra mudou na sessão 35: **atualizar o cabeçalho ao fechar a
+> rodada é obrigação**; o que continua intocável é a seção de sessão passada.
+
+### Migrations — 48 arquivos, nesta ordem
+
+`0001`→`0044` (sequência completa, todas aplicadas) e a faixa do colaborador:
+
+| Migration | O que fecha | Aplicada? |
+|---|---|---|
+| `0100_papel_por_secao` | o papel da linha é da SEÇÃO, e o lote não cai inteiro por uma linha | ✅ |
+| `0101_modelagem_dentro_do_tempo` | conferência em uma passada (era 5, duas por vínculo): 9,3 s → 100 ms | ✅ |
+| `0102_modelagem_versao_vigente` | a Modelagem lê só a versão VIGENTE de cada documento | ✅ |
+| `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
+
+`db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
+comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
+
+**Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
+**426**; `db/test/run.sh` = **48 migrations / 306 asserts**; `test/e2e/run.mts` = **27**.
+
+> Nota de insumo: o `CLAUDE.md` documenta `E2E_PSQL=1` para o e2e, mas essa variável é o **comando**
+> do psql, não um flag — com `=1` o arnês tenta executar um binário chamado `1`. Rode sem ela,
+> com `PGHOST/PGPORT/PGUSER/PGPASSWORD`.
+
+**O TIMEOUT DA MODELAGEM ESTÁ RESOLVIDO** (detalhe na sessão 36): medido pelo
+`pg_stat_statements` da própria produção, com o contador zerado, `fn_linhas_para_modelagem` = **501
+ms** e `fn_conferir_modelagem` = **485 ms** contra o teto de 8.000 ms — 16× de folga, nenhum
+cancelamento. Eram 6.381 ms de média, raspando o teto, que é o que fazia a falha parecer
+intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` versão superada,
+`0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `db/README.md` e
+fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
+
+**O QUE ESTÁ ABERTO AGORA:** o **teste prático da tela**, que é do dono e nenhuma suíte substitui —
+roteiro de modelagem no caso do v35 (incluindo ativar `SAZ_MENSAL` e o "aplicar em lote" por seção),
+export do completo, e conferir o `CHECK` da aba `Balance Sheet`, que **deve** acusar em vermelho a
+dupla contagem de caixa e dívida aberta desde a sessão 32. Passo a passo no fim da sessão 36.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
-
-**Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **162**; `verificar-export.mts` =
-**352**; `db/test/run.sh` = **34 migrations**; `E2E_PSQL=... npx tsx test/e2e/run.mts` = **24**.
 
 ## Sessão 30 (2026-08-03) — Fase 6: calibração — o dial volta a mandar
 
@@ -3850,7 +3882,110 @@ que não cabia migration nenhuma.
 3. Recarregar a tela com **Ctrl+Shift+R** — o print novo passa a trazer os tempos, e só isso já
    distingue B de C.
 
-## Sessão 35 (2026-08-05) — RESOLVIDO: as três fatias do timeout, medidas na produção
+## Sessão 35 (2026-08-05) — a `0103`, a regra do cabeçalho, e um agente que não gravou nada
+
+Três coisas: a terceira fatia do problema de tempo, a liberação do cabeçalho deste arquivo, e a
+conferência de um agente novo que o dono pôs para rodar.
+
+### `0103_papel_linha_tokeniza_uma_vez.sql` — e o erro foi meu, no BENCHMARK
+
+A `0101` foi medida contra um caso de **55 rótulos distintos** e o resultado (9,3 s → 100 ms)
+pareceu suficiente. O caso real tem **~250**. Refeita a medição com a forma certa — 14 documentos,
+770 ocorrências, 750 linhas lógicas, oito tipos de documento — as duas funções da tela voltaram a
+**~1,9 s cada**, e o dono viu as DUAS cancelarem na mesma tela.
+
+**Fixture menor que a produção mede o instrumento, não o sistema.** Vale como regra geral aqui.
+
+Dois gargalos, os dois de trabalho repetido *dentro* de cada rótulo:
+
+| Gargalo | Antes | Agora |
+|---|---|---|
+| `fn_papel_linha` chamava `fn_rotulo_estrutural` **nove vezes**, cada uma re-tokenizando o mesmo rótulo do zero | 1,27 s / 770 chamadas | `fn_tokens_estruturais` uma vez por rótulo, nove igualdades de array — **182 ms** |
+| `sobreposicao_suspeita` chamava `fn_rotulo_contido` **por par de linhas**, re-tokenizando os dois rótulos a cada par | — | radicais como coluna calculada uma vez por linha, contenção pelo operador `<@`, par não ordenado visitado uma vez |
+
+**1,93 s → 270 ms**, medido em cima da `0102`.
+
+**Duas coisas que eu quase quebrei, e o repositório pegou:**
+
+- o filtro `dv.id = fn_versao_com_extracao(d.id)` da `0102` é **preservado** — reemitir
+  `fn_linhas_para_modelagem` sem ele desfaria a correção de versão vigente em silêncio;
+- a **`marca-0102` fica no corpo**, ao lado da `marca-0103`. `fn_diagnostico_modelagem` procura
+  aquela marca para responder "está instalada no banco?", e foi esse assert que reprovou a primeira
+  versão desta migration, com `fn_linhas_para_modelagem: false`.
+
+**Colisão de número, e ela morreu onde devia.** A minha migration nasceu `0102` e outra sessão
+mergeou uma `0102` diferente em paralelo. O `run.sh` reprovou o prefixo duplicado antes de aplicar
+qualquer coisa — exatamente o desenho da faixa (`CLAUDE.md`). Renumerada para `0103`.
+
+**E um erro de processo que vale registrar:** empurrei a migration para a branch **depois** que o
+PR já tinha sido mergeado. Ela ficou órfã — no repositório, fora de qualquer PR — e o dono só
+descobriu ao procurar o arquivo. Commit depois do merge não entra sozinho: abre PR novo.
+
+### A regra do cabeçalho mudou
+
+O `CLAUDE.md` proibia editar o cabeçalho deste arquivo. O motivo era bom (dois editando o topo
+conflita a cada rodada) e o custo foi maior: o cabeçalho ficou **17 PRs atrasado**, anunciando
+"mergeado até o PR #70, migrations até `0034`" enquanto o `main` estava no #93 com a `0103`. A parte
+escrita para quem chega sem contexto virou a mais velha do documento — e mandava começar errado.
+
+Agora: **manter o cabeçalho em dia é obrigação de quem fecha a rodada**; seção de sessão anterior
+continua sendo histórico e não se reescreve. Conflito no topo se resolve como qualquer outro.
+
+### O agente de ARCHITECTURE.md não alterou nada
+
+Conferido, e o resultado é limpo:
+
+- **não existe `.cto/` nem `ARCHITECTURE.md`** em nenhuma branch do repositório
+  (`git ls-tree -r` em todas as `origin/*`);
+- **nada no `.gitignore`** esconderia esses caminhos;
+- `HANDOFF.md` e `CLAUDE.md` não têm commit dele — o histórico dos dois só traz os desta linha de
+  trabalho e os da sessão paralela.
+
+**Por quê:** o próprio prompt terminava com *"Retorne SOMENTE o conteúdo do arquivo"*. Ele produziu
+o texto e devolveu na resposta; salvar, commitar e abrir PR não estavam no pedido. O trabalho não se
+perdeu — só não foi gravado. Para virar arquivo, o prompt precisa mandar **escrever em
+`.cto/ARCHITECTURE.md`, commitar em branch e abrir PR**, e a saída dele passa a ser o link do PR.
+
+Um risco a declarar sobre esse agente: ele pede leitura de cabeçalhos de migrations "mais
+estruturais" por número fixo (`0001`…`0102`). Essa lista envelhece a cada rodada — hoje já ignora a
+`0103`. Melhor pedir *"as N migrations mais recentes + as que `db/README.md` marca como
+estruturais"*, que é uma pergunta que continua verdadeira sozinha.
+
+### O que continua ABERTO, e é o único bloqueio real
+
+**A tela ainda dá `statement_timeout` em produção com `0101` e `0102` aplicadas e confirmadas.** A
+sessão 34 mediu e descartou três hipóteses de SQL (RLS: 492 ms como `authenticated` contra 498 ms
+como superusuário; concorrência das sete chamadas; crescimento de `campo_extraido`). Sobraram quatro
+de **ambiente**, e `db/diagnostico_modelagem.sql` separa as quatro numa consulta só:
+
+1. portal apontando para **outro projeto** Supabase;
+2. `statement_timeout` de `authenticated` **abaixo dos 8 s** contra os quais a `0101` foi dimensionada;
+3. instância **estrangulada de CPU** (respondida por `pg_stat_statements`);
+4. render **anterior** ao apply.
+
+A `0103` entrou depois dessa medição e derruba o tempo mais 6× — o que aumenta a folga, mas **não
+substitui o diagnóstico**: se o teto do projeto for 3 s e não 8 s, ou se o portal estiver noutro
+banco, nenhuma otimização resolve.
+
+### Também aberto, sem dono ainda
+
+- **Caixa e dívida contados duas vezes no modelo institucional.** `Working Capital` pega TODAS as
+  contas de `ativo_circulante` — inclusive caixa, bancos e aplicações — e as projeta por dias de
+  giro; `Cash Flow` soma as mesmas em `CAIXA_FIM`; e `Balance Sheet` faz `AC = CAIXA + AC_OPER`.
+  Correção só de portal, sem migration. O `CHECK` da aba `Balance Sheet` acusa em vermelho.
+- **A Fase 9 nunca foi exercitada com conteúdo:** as 199 linhas da fixture do book têm
+  `secao_canonica` nula, 132 contas caem em `"fora"`, e o arquivo sai com `CHECK −51.300` em toda
+  coluna. O banner "não projetável" dispara e acerta a causa — e é hoje a única coisa que a fase
+  comprova. Os asserts do modelo institucional precisam de uma fixture **com** seção canônica.
+- **Duas capturas de página** do dono estão achatadas na raiz do repositório (commit `9cdadc4`). A
+  primeira foi organizada em `test-data/capturas/2026-08-04-v35-modelagem/`; a segunda ainda não.
+
+## Sessão 36 (2026-08-05) — RESOLVIDO: as três fatias do timeout, medidas na produção
+
+> Esta seção fecha o que a **sessão 35** deixou aberto como "o único bloqueio real". As duas
+> rodaram no mesmo dia, em sessões paralelas, e esta é a mais nova: onde as duas falarem do estado
+> da tela de Modelagem, **vale esta**. A `0103` está descrita na sessão 35 — aqui entra só o que é
+> novo, que é a medição na produção.
 
 **A tela de Modelagem voltou a funcionar.** Medido pelo `pg_stat_statements` da própria
 produção, com o contador **zerado** e um único carregamento de página depois:
@@ -3880,22 +4015,18 @@ tabela do `db/README.md` e **não** na lista de comandos que o dono copia para a
 rodada inteira a correção existia no GitHub e não no banco — e da tela isso é indistinguível de
 "o PR não funcionou". Hoje `db/test/run.sh` reprova migration que exista e não esteja na lista.
 
-### `0103_papel_linha_tokeniza_uma_vez.sql` — registrada aqui porque ninguém a registrou
+### A `0103` está mesmo NO BANCO — conferido pelo plano, não pela lista de migrations
 
-Ela veio do PR #93, de outra sessão, e **não deixou seção neste arquivo** (mexeu só na migration,
-no `db/README.md` e no `modelagem_escala.test.sql`). Como o `HANDOFF.md` é a memória do projeto,
-fica o registro: `fn_papel_linha` chama `fn_rotulo_estrutural` **nove vezes** — ativo, passivo,
-patrimônio, passivo+PL, ativo circulante, ativo não circulante, passivo circulante, passivo não
-circulante, realizável a longo prazo — e cada chamada **refazia do zero** a mesma coisa:
-normalizar o texto, trocar pontuação por espaço, quebrar em palavras, descartar ligação e ruído,
-ordenar. Nove tokenizações idênticas do mesmo rótulo para nove comparações que podiam usar a
-primeira. Ela tokeniza uma vez e compara nove, e **nenhum resultado muda**.
+A migration está descrita na sessão 35 (o que ela faz e o que quase quebrou). O que esta sessão
+acrescenta é a **confirmação de que a versão aplicada é a nova**, e ela não veio de conferir
+arquivo: veio do plano em produção, que mostra a marca da `0103` — CTEs `base_r` e `pares`, com
+`radicais <@ o.radicais` e `tem_longa` no lugar de `fn_rotulo_contido`.
 
-O plano em produção mostra a marca dela: CTEs `base_r` e `pares`, com `radicais <@ o.radicais` e
-`tem_longa` no lugar de `fn_rotulo_contido`.
+Isso importa porque "mergeado" e "aplicado" já divergiram uma rodada inteira neste mesmo problema
+(a `0101`), e a única evidência que não mente sobre isso é o que o banco está de fato executando.
 
-Medido no mesmo caso, aqui: **~8 s (pré-`0101`) → 570 ms (`0102`) → 160 ms (`0103`)**. Na
-produção do dono: **483 ms** no `explain analyze`.
+A escada de tempo, no mesmo caso: **~8 s (pré-`0101`) → 570 ms (`0102`) → 160 ms (`0103`)** aqui;
+na produção do dono, **483 ms** no `explain analyze`.
 
 ### O erro desta rodada foi de RÉGUA, não de análise — e vale mais que a correção
 
