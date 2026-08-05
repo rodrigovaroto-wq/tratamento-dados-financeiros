@@ -6,6 +6,9 @@ import {
   type DocumentoParaExport, type MacroAnual, type MacroExpectativa,
 } from "@/lib/export";
 import type { CampoExtraido } from "@/lib/types";
+import {
+  casarVinculosComLinhas, type LinhaParaCasar, type VinculoParaCasar,
+} from "@/lib/modelagem-linha";
 
 // exceljs (usado em lib/export.ts) usa Buffer/streams do Node — precisa do
 // runtime Node, não Edge.
@@ -262,24 +265,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     });
 
     // O rótulo EXIBIDO e o valor base vêm de `fn_linhas_para_modelagem` (0039),
-    // casados pelo `rotulo_norm` — que é a mesma identidade que o vínculo usa. Sem
-    // esse casamento o arquivo mostraria a chave normalizada em vez da grafia do
-    // documento, e o analista não reconheceria a conta.
-    const infoDaLinha = new Map(
-      ((linhasRes.data ?? []) as unknown as Array<{
-        rotulo_norm: string; chave: string; valor_ultimo: number | null;
-      }>).map((l) => [l.rotulo_norm, l]),
+    // casados pelo PAR (seção, rótulo normalizado) — a mesma identidade que o
+    // índice único de `caso_linha_premissa` usa. Sem a seção, rótulo repetido
+    // entre seções (13 no caso do v35: `Empréstimos e Financiamentos`,
+    // `Arrendamentos`, `Capital social`…) fazia o vínculo herdar o valor base da
+    // OUTRA seção, e a projeção partia do saldo errado sem dar erro nenhum.
+    const linhas = casarVinculosComLinhas(
+      (vincRes.data ?? []) as unknown as VinculoParaCasar[],
+      (linhasRes.data ?? []) as unknown as LinhaParaCasar[],
     );
-    const linhas = ((vincRes.data ?? []) as unknown as Array<{
-      rotulo_norm: string; secao_canonica: string | null;
-      premissa_codigo: string | null; sazonalidade_codigo: string | null;
-    }>).map((v) => ({
-      rotulo: infoDaLinha.get(v.rotulo_norm)?.chave ?? v.rotulo_norm,
-      secaoCanonica: v.secao_canonica,
-      premissaCodigo: v.premissa_codigo,
-      sazonalidadeCodigo: v.sazonalidade_codigo,
-      valorBase: infoDaLinha.get(v.rotulo_norm)?.valor_ultimo ?? null,
-    }));
 
     if (par || premissas.length > 0 || linhas.length > 0) {
       const curva = ((sazoRes.data ?? []) as unknown as Array<{ mes: number; fracao: number }>)
