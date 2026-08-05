@@ -3907,6 +3907,89 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     JSON.stringify(orfao[0]));
 }
 
+// ---------------------------------------------------------------------------
+// (0104c) DUAS LINHAS COM O MESMO RÓTULO EM SEÇÕES DIFERENTES NÃO DERRUBAM O
+// MODELO INSTITUCIONAL — o HTTP 500 que o dono viu ao exportar o v35:
+//
+//   Error: modelo-institucional: âncora duplicada "trib:obrigacoes tributarias"
+//          em Tributos a Recolher
+//
+// `Obrigações Tributárias` existe nas DUAS pontas do passivo (7.895 no
+// circulante, 13.549 no não circulante), e `abaTributos` é a única aba que junta
+// os dois blocos sob um prefixo só. Os valores abaixo são os do caso real.
+// ---------------------------------------------------------------------------
+{
+  const linhaBase = (secao: string, chave: string, rotulo_norm: string, v2025: number) => ({
+    secao_canonica: secao, chave, rotulo_norm,
+    papel: "conta" as const, unidade: "milhar", moeda: "BRL",
+    documentos: ["BALANCO"], valores: { "2025": v2025 },
+  });
+
+  const entrada = {
+    caso: { nome: "Homônimos em duas seções", produto: "reestruturacao" },
+    agora: new Date("2026-08-05T12:00:00Z"),
+    entidade: "VERTENTES METALÚRGICA LTDA.",
+    setor: "industria",
+    anosHistoricos: [2025], anosProjetados: [2026, 2027],
+    stressPct: 0.2, caixaMinimo: 0, aliquotaTributos: 0.34,
+    linhas: [
+      linhaBase("passivo_circulante", "Obrigações Tributárias", "obrigacoes tributarias", 7895),
+      linhaBase("passivo_nao_circulante", "Obrigações Tributárias", "obrigacoes tributarias", 13549),
+      linhaBase("receita_bruta", "Vendas de produtos - mercado interno",
+                "vendas de produtos - mercado interno", 158900),
+    ],
+    premissas: [], vinculos: [], macro: [], unidade: "R$ mil",
+  };
+
+  // O modelo institucional só é construído quando o caso tem entidade
+  // reconhecível NOS CAMPOS EXTRAÍDOS (`if (entidadesConhecidas.size > 0)`, em
+  // export.ts) — com as duas listas vazias o export pula justamente o código sob
+  // teste, e o assert passaria sem exercitar nada.
+  const VHOM = "vHom";
+  const camposHom: CampoExtraido[] = [
+    campo({ chave: "Obrigações Tributárias", secao: "Passivo Circulante",
+            secao_canonica: "passivo_circulante", valor_num: 7895, documento_versao_id: VHOM }),
+    campo({ chave: "Obrigações Tributárias", secao: "Passivo Não Circulante",
+            secao_canonica: "passivo_nao_circulante", valor_num: 13549, documento_versao_id: VHOM }),
+  ];
+  const docsHom: DocumentoParaExport[] = [{
+    id: "dHom", tipo_taxonomia: "BALANCO",
+    entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+    periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: VHOM, nome_original: "01_BP_Vertentes_Metalurgica_2025x2024.pdf" }],
+  }];
+
+  let erro: string | null = null;
+  let wbHom: ReturnType<typeof buildExportWorkbook> | null = null;
+  try {
+    wbHom = buildExportWorkbook({
+      caso: entrada.caso, documentos: docsHom, campos: camposHom,
+      agora: new Date("2026-08-05T12:00:00Z"),
+      modo: "completo",
+      modeloInstitucional: entrada as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+  } catch (e) {
+    erro = e instanceof Error ? e.message : String(e);
+  }
+
+  checar(erro === null,
+    "(0104c) o mesmo rótulo em duas seções NÃO derruba o export — era o HTTP 500 do v35",
+    erro ?? "");
+
+  if (wbHom) {
+    const trib = wbHom.getWorksheet("Tributos a Recolher");
+    let n = 0;
+    if (trib) {
+      for (let r = 1; r <= trib.rowCount; r++) {
+        if (String(trib.getRow(r).getCell(3).value ?? "") === "Obrigações Tributárias") n++;
+      }
+    }
+    checar(n === 2,
+      "(0104c) …e as DUAS aparecem na aba de tributos, uma por seção (somar só uma esconderia 13.549)",
+      `linhas com o rótulo: ${n}`);
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

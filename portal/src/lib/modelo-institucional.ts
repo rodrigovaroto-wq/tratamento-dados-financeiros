@@ -456,7 +456,30 @@ function contexto(ent: EntradaModeloInstitucional): Ctx {
   };
 }
 
-const chaveLinha = (prefixo: string, l: LinhaModelo) => `${prefixo}:${l.rotulo_norm}`;
+// A ÂNCORA DA LINHA INCLUI A SEÇÃO, e não só o rótulo.
+//
+// O DEFEITO QUE ISTO CORRIGE derrubou o export inteiro com HTTP 500 na primeira
+// vez que o modelo institucional rodou sobre conteúdo real:
+//
+//   Error: modelo-institucional: âncora duplicada "trib:obrigacoes tributarias"
+//          em Tributos a Recolher
+//
+// `Obrigações Tributárias` existe DUAS vezes no caso do v35 — 7.895 no passivo
+// circulante e 13.549 no não circulante —, e `fn_linhas_para_modelagem` devolve
+// as duas porque a identidade dela é o par (seção, rótulo). Enquanto cada aba
+// consumia UM bloco, o rótulo sozinho bastava: dentro de um bloco ele é único.
+// `abaTributos` é a única que junta dois blocos (circulante + não circulante) sob
+// o mesmo prefixo — e ali as duas linhas viram a mesma âncora.
+//
+// A guarda da `Grade` fez o que devia: preferiu explodir a somar a conta errada
+// em silêncio (é o que o comentário dela diz, e é a escolha certa). O que estava
+// errado era a chave.
+//
+// Vale para as demais abas como prevenção do mesmo acidente: `Working Capital`
+// junta ativo e passivo circulante, `Balance Sheet` junta quatro blocos, e hoje
+// nenhum rótulo colide ali por acaso — não por construção.
+const chaveLinha = (prefixo: string, l: LinhaModelo) =>
+  `${prefixo}:${l.secao_canonica ?? ""}:${l.rotulo_norm}`;
 
 // =============================================================================
 // ABA Anual — a base macro. Séries nas linhas, anos nas colunas, como no
