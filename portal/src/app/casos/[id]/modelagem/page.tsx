@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { SecaoLinhas } from "./SecaoLinhas";
 import { FormParametros, FormPremissa } from "./FormsTopo";
+import { chaveDaLinha, vinculoPorLinha } from "@/lib/modelagem-linha";
 
 // A seção MODELAGEM do mandato (pedido do dono, Fase 7.3; revisada na Fase 8
 // depois da rodada real do Teste v35).
@@ -244,7 +245,12 @@ export default async function ModelagemPage({
   const curva = (sazRes.data as { mes: number; fracao: number; n_observacoes: number }[] | null) ?? [];
 
   const ativasPorCodigo = new Map(ativas.map((a) => [a.premissa_codigo, a]));
-  const vinculoPorRotulo = new Map(vinculos.map((v) => [v.rotulo_norm, v]));
+  // Indexado pelo PAR (seção, rótulo) — ver `lib/modelagem-linha.ts`. Com a chave
+  // só no rótulo, vincular `Empréstimos e Financiamentos` no passivo circulante
+  // fazia a linha homônima do NÃO circulante aparecer preenchida sozinha, e o
+  // valor herdado virava o `orig` daquela seção: no salvamento seguinte ele ia ao
+  // banco como escolha do analista.
+  const vinculoDaLinha = vinculoPorLinha(vinculos);
   const nomeDaPremissa = new Map(sugeridas.map((p) => [p.codigo, p.nome]));
 
   // SUGESTÃO de entidade e de último exercício, a partir do que o caso já tem.
@@ -658,8 +664,10 @@ export default async function ModelagemPage({
                   nome: nomeDaPremissa.get(a.premissa_codigo) ?? a.premissa_codigo,
                 }))}
                 vinculos={Object.fromEntries(linhas.map((l) => [l.rotulo_norm, {
-                  premissa: vinculoPorRotulo.get(l.rotulo_norm)?.premissa_codigo ?? "",
-                  sazonalidade: vinculoPorRotulo.get(l.rotulo_norm)?.sazonalidade_codigo ?? "",
+                  premissa: vinculoDaLinha.get(chaveDaLinha(l.secao_canonica, l.rotulo_norm))
+                    ?.premissa_codigo ?? "",
+                  sazonalidade: vinculoDaLinha.get(chaveDaLinha(l.secao_canonica, l.rotulo_norm))
+                    ?.sazonalidade_codigo ?? "",
                 }]))}
               />
             ))}

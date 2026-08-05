@@ -44,6 +44,7 @@ import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formul
 import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 import { classificarConta } from "../src/lib/statement-templates.ts";
+import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/lib/modelagem-linha.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -3831,6 +3832,79 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(49) sem configuração, não há bloco por linha — o esqueleto agregado é o fallback");
   checar(rotSem.some((x) => x.startsWith("PARÂMETROS DO MODELO")),
     "(49) …e o bloco de parâmetros continua existindo de todo jeito");
+}
+
+// ---------------------------------------------------------------------------
+// (0104b) A IDENTIDADE DA LINHA É O PAR (SEÇÃO, RÓTULO) — defeito relatado pelo
+// dono no teste da tela: ele escolhia a premissa de UMA linha, não mexia em mais
+// nenhuma, salvava, e outra linha aparecia preenchida com a mesma premissa.
+//
+// A causa era o casamento por `rotulo_norm` sozinho, nos dois lugares que leem
+// vínculo (a tela e a rota de export). Demonstração real repete rótulo entre
+// seções o tempo todo: no caso do v35 são TREZE — `Empréstimos e Financiamentos`
+// e `Arrendamentos` no passivo circulante E no não circulante, `Capital social` e
+// `Reserva legal` no patrimônio líquido E na DMPL.
+//
+// Os dados abaixo são desses rótulos reais, com os valores reais do v35.
+// ---------------------------------------------------------------------------
+{
+  const linhasDoCaso = [
+    { secao_canonica: "passivo_circulante", rotulo_norm: "emprestimos e financiamentos",
+      chave: "Empréstimos e Financiamentos", valor_ultimo: 44474 },
+    { secao_canonica: "passivo_nao_circulante", rotulo_norm: "emprestimos e financiamentos",
+      chave: "Empréstimos e Financiamentos", valor_ultimo: 37379 },
+    { secao_canonica: "patrimonio_liquido", rotulo_norm: "capital social",
+      chave: "Capital social", valor_ultimo: 42000 },
+    { secao_canonica: "dmpl", rotulo_norm: "capital social",
+      chave: "Capital social", valor_ultimo: 42000 },
+  ];
+
+  // O analista configurou UMA linha: a do passivo circulante.
+  const umVinculo = [{
+    secao_canonica: "passivo_circulante", rotulo_norm: "emprestimos e financiamentos",
+    premissa_codigo: "DIVIDA_MOV", sazonalidade_codigo: null,
+  }];
+  const casado = casarVinculosComLinhas(umVinculo, linhasDoCaso);
+  checar(casado.length === 1,
+    "(0104b) um vínculo gravado produz UMA linha configurada — não uma por homônimo",
+    `linhas: ${casado.length}`);
+  checar(casado[0].secaoCanonica === "passivo_circulante" && casado[0].valorBase === 44474,
+    "(0104b) e ela leva o valor base da PRÓPRIA seção (44.474, não os 37.379 do não circulante)",
+    JSON.stringify(casado[0]));
+
+  // A tela: a linha homônima da outra seção tem de vir VAZIA.
+  const porLinha = vinculoPorLinha(umVinculo);
+  checar(
+    porLinha.get(chaveDaLinha("passivo_circulante", "emprestimos e financiamentos"))
+      ?.premissa_codigo === "DIVIDA_MOV",
+    "(0104b) a tela acha o vínculo na linha que o analista configurou");
+  checar(
+    porLinha.get(chaveDaLinha("passivo_nao_circulante", "emprestimos e financiamentos")) === undefined,
+    "(0104b) …e a linha HOMÔNIMA de outra seção continua sem premissa — este é o assert "
+    + "que impede a linha de 'completar sozinha'",
+    JSON.stringify(porLinha.get(chaveDaLinha("passivo_nao_circulante", "emprestimos e financiamentos"))));
+
+  // Seção nula não pode virar coringa que casa com todo mundo.
+  const semSecao = [{
+    secao_canonica: null, rotulo_norm: "capital social",
+    premissa_codigo: "SOCIOS_MOV", sazonalidade_codigo: null,
+  }];
+  checar(
+    vinculoPorLinha(semSecao).get(chaveDaLinha("dmpl", "capital social")) === undefined,
+    "(0104b) vínculo SEM seção não casa com a linha que tem seção");
+  checar(casarVinculosComLinhas(semSecao, linhasDoCaso)[0].valorBase === null,
+    "(0104b) …e ele fica órfão, com valor base nulo, em vez de herdar o de um homônimo qualquer");
+
+  // Órfão de verdade (documento reextraído com outro rótulo) segue aparecendo:
+  // sumir com ele esconderia configuração que `fn_conferir_modelagem` denuncia.
+  const orfao = casarVinculosComLinhas([{
+    secao_canonica: "custos", rotulo_norm: "conta que nao existe mais",
+    premissa_codigo: "CUSTO_MP", sazonalidade_codigo: null,
+  }], linhasDoCaso);
+  checar(orfao.length === 1 && orfao[0].rotulo === "conta que nao existe mais"
+    && orfao[0].valorBase === null,
+    "(0104b) vínculo órfão continua no arquivo, com o rótulo normalizado e sem base",
+    JSON.stringify(orfao[0]));
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
