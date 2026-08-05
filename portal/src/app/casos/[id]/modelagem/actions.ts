@@ -118,6 +118,46 @@ export async function ativarPremissa(
     : `Premissa ativada com valor em ${n} ano(s).`);
 }
 
+// Remover a premissa do caso.
+//
+// POR QUE O BOTÃO PRECISOU EXISTIR: a tela tinha "Ativar" e "Atualizar", e nada
+// que desfizesse. Premissa ativada por engano ficava no caso para sempre — e uma
+// premissa ativa SEM valor é o que segura o "pronto" da conferência, então o
+// engano travava o export do mandato inteiro.
+//
+// A CONFIRMAÇÃO É DAQUI, e não do `confirm()` do navegador: remover uma premissa
+// aplicada em lote desfaz o vínculo de dezenas de linhas, e esse número só o
+// banco conhece. O texto de volta diz quantas — é a única forma de quem clicou
+// saber o tamanho do que desfez.
+export async function desativarPremissa(
+  casoId: string, _prev: Resultado, formData: FormData,
+): Promise<Resultado> {
+  const supabase = await createClient();
+  const codigo = String(formData.get("codigo") || "");
+  const { data, error } = await supabase.rpc("fn_desativar_premissa", {
+    p_caso_id: casoId,
+    p_codigo: codigo,
+    p_autor: await autor(),
+  });
+  if (error) return erro(`Falha ao remover a premissa: ${error.message}`);
+  const r = recusa(data, "Remoção recusada.");
+  if (r) return r;
+
+  const d = data as {
+    n_vinculos_desfeitos?: number; n_sazonalidades_desfeitas?: number;
+  } | null;
+  revalidatePath(`/casos/${casoId}/modelagem`);
+
+  // O que foi desfeito, NOMEADO. "Premissa removida" sozinho esconderia que 44
+  // linhas de uma seção deixaram de ser projetadas no mesmo clique.
+  const partes = [
+    d?.n_vinculos_desfeitos ? `${d.n_vinculos_desfeitos} linha(s) deixaram de ser projetadas por ela` : "",
+    d?.n_sazonalidades_desfeitas ? `${d.n_sazonalidades_desfeitas} linha(s) perderam a curva mensal` : "",
+  ].filter(Boolean);
+  return ok(`Premissa removida${partes.length ? ` — ${partes.join(" e ")}` : ""}. `
+    + "Os valores digitados ficam guardados: reativar devolve o que estava lá.");
+}
+
 export async function vincularLinha(
   casoId: string, _prev: Resultado, formData: FormData,
 ): Promise<Resultado> {
