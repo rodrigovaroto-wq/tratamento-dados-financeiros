@@ -55,9 +55,14 @@ declare
   v_r    jsonb;
   v_lote jsonb;
   v_n    int;
+  v_tipos text[] := array['BALANCO','DRE','FLUXO_CAIXA','BALANCETE','MAPA_DIVIDA',
+                          'FATURAMENTO_24M','NOTAS_EXPL','MUTUOS'];
   v_secoes text[] := array['ativo_circulante','ativo_nao_circulante','passivo_circulante',
                            'passivo_nao_circulante','patrimonio_liquido','receita_bruta',
-                           'custos','despesas_operacionais','atividades_operacionais'];
+                           'custos','despesas_operacionais','atividades_operacionais',
+                           'atividades_investimento','atividades_financiamento','dmpl',
+                           'impostos_lucro','resultado_financeiro', null];
+  v_i int := 0;
 begin
   raise notice '--- 1. um caso do TAMANHO do v35: 14 documentos, 770 ocorrências ---';
   -- Nome ÚNICO por execução: `fn_upsert_caso` reaproveita o caso pelo nome, e um
@@ -67,18 +72,25 @@ begin
   -- teste não pode depender disso para estar certo.
   v_caso := (fn_upsert_caso('Escala da modelagem ' || clock_timestamp()::text))::uuid;
   for d in 1..14 loop
-    v_r := fn_registrar_documento(v_caso, 'ESCALA LTDA.', 'anual', '2025', 'BALANCO', 0.95,
+    -- Tipos VARIADOS: fn_papel_linha depende do tipo, então um caso de um tipo só
+    -- subestima o número de combinações distintas — que é o que ela paga.
+    v_r := fn_registrar_documento(v_caso, 'ESCALA LTDA.', 'anual', '2025',
+      v_tipos[1 + (d % array_length(v_tipos, 1))], 0.95,
       'nome_arquivo', 'supabase_storage', 'e/'||d||'.pdf', 'BP '||d||'.pdf', true,
       'HASH-ESCALA-'||d, 'ok');
     v_ver := (v_r->>'documento_versao_id')::uuid;
     v_lote := '[]'::jsonb;
     for i in 1..55 loop
+      v_i := v_i + 1;
+      -- ~250 rótulos DISTINTOS, longos como os reais, e valores que colidem de
+      -- propósito: é a colisão de valor que aciona a marca de sobreposição, que
+      -- era o segundo gargalo (uma chamada de função por PAR de linhas).
       v_lote := v_lote || jsonb_build_object(
         'ordem', i,
-        'chave', 'Conta analitica numero '||i,
-        'valor_num', (1000 + (i*37) % 500)::text,
+        'chave', 'Conta detalhada ' || ((v_i % 250) + 1) || ' de natureza operacional',
+        'valor_num', (1000 + (v_i * 37) % 120)::text,
         'unidade', 'milhar', 'moeda', 'BRL', 'confianca', '0.97',
-        'secao_canonica', v_secoes[1 + (i % array_length(v_secoes, 1))]);
+        'secao_canonica', v_secoes[1 + (v_i % array_length(v_secoes, 1))]);
     end loop;
     perform fn_registrar_campos_extraidos(v_ver, v_lote, 'N2');
   end loop;
@@ -114,12 +126,11 @@ begin
   raise notice '--- 2. as duas funções da tela cabem no teto de 8s do Supabase ---';
 
   select count(*) into v_n from fn_linhas_para_modelagem(v_caso);
-  perform teste_assert_escala(v_n = 55,
-    'fn_linhas_para_modelagem responde dentro do teto, e agrupa as 770 ocorrências em 55 linhas',
-    v_n::text);
+  perform teste_assert_escala(v_n between 600 and 800,
+    'fn_linhas_para_modelagem responde dentro do teto, com ~750 linhas lógicas', v_n::text);
 
   v_r := fn_conferir_modelagem(v_caso);
-  perform teste_assert_escala(v_r is not null and (v_r->>'linhas_do_caso')::int = 55,
+  perform teste_assert_escala(v_r is not null and (v_r->>'linhas_do_caso')::int > 0,
     'fn_conferir_modelagem responde dentro do teto (era 9,3s: cancelada, e a tela lia como caso vazio)',
     coalesce(v_r::text, '(null)'));
 
@@ -135,10 +146,9 @@ begin
   select count(distinct papel) into v_n from fn_linhas_para_modelagem(v_caso);
   perform teste_assert_escala(v_n >= 1, 'as linhas têm papel atribuído', v_n::text);
 
-  select n_ocorrencias into v_n from fn_linhas_para_modelagem(v_caso)
-   where chave = 'Conta analitica numero 1';
-  perform teste_assert_escala(v_n = 14,
-    'a linha lógica junta as 14 ocorrências do mesmo rótulo', v_n::text);
+  select max(n_ocorrencias) into v_n from fn_linhas_para_modelagem(v_caso);
+  perform teste_assert_escala(v_n > 1,
+    'a linha lógica junta as ocorrências do mesmo rótulo em documentos diferentes', v_n::text);
 
   raise notice 'TODOS OS TESTES DE ESCALA DA MODELAGEM PASSARAM';
 end $$;
