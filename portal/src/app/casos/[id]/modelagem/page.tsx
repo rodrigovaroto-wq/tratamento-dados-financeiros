@@ -109,6 +109,20 @@ const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string 
 
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
+// CRONÔMETRO DE CHAMADA, em escopo de MÓDULO e não dentro do componente.
+//
+// Fica aqui por causa do `react-hooks/purity` do eslint, que reprova `Date.now()`
+// no corpo de um componente — e reprova com razão no caso geral: leitura de relógio
+// em render de componente cliente quebra a idempotência que o React assume. Esta é
+// uma página `async` de servidor, que roda uma vez por requisição, e o relógio mede
+// I/O que já aconteceu. Em escopo de módulo a regra não se aplica e a intenção fica
+// explícita, em vez de silenciada com um `eslint-disable` que esconderia o motivo.
+async function medir<T>(p: PromiseLike<T>): Promise<[T, number]> {
+  const t0 = Date.now();
+  const r = await p;
+  return [r, Date.now() - t0];
+}
+
 export default async function ModelagemPage({
   params, searchParams,
 }: {
@@ -134,27 +148,44 @@ export default async function ModelagemPage({
   // O catálogo vem FILTRADO pelo setor — é a sugestão da 0038. Sem setor
   // definido, vem só a base comum, que é a resposta correta para "ainda não sei
   // o setor" (e não uma lista de 90 premissas para escolher no escuro).
-  const [sugeridasRes, ativasRes, vinculosRes, confRes, camposRes, sazRes, docsRes] = await Promise.all([
-    supabase.rpc("fn_premissas_sugeridas", { p_setor: parametros?.setor ?? null }),
-    supabase.from("caso_premissa").select("premissa_codigo, valores, origem")
-      .eq("caso_id", id).eq("ativo", true),
-    supabase.from("caso_linha_premissa")
+  // CADA CHAMADA VOLTA CRONOMETRADA, e o tempo aparece na caixa de erro.
+  //
+  // POR QUE ISSO É DIAGNÓSTICO E NÃO ENFEITE. Quando a resposta é `canceling
+  // statement due to statement timeout`, o tempo decorrido É O TETO que o
+  // servidor aplica — a consulta foi cortada nele. Sem o número, "estourou o
+  // tempo" não diz QUAL tempo, e 8 s (o default do Supabase, contra o qual a
+  // 0101 foi dimensionada) e 3 s (um projeto configurado mais apertado) produzem
+  // exatamente a mesma mensagem. Foi essa ambiguidade que fez a rodada da 0101
+  // custar idas e vindas: a tela relatava o sintoma sem a única grandeza capaz de
+  // distinguir "a função está lenta" de "o teto é mais baixo do que supomos".
+  //
+  // O cronômetro fica FORA do `Promise.all` de propósito: as sete chamadas são
+  // concorrentes, então o que interessa é o tempo de parede de cada uma sob a
+  // concorrência real da página, não um tempo isolado que ninguém experimenta.
+  const [
+    [sugeridasRes, msSugeridas], [ativasRes, msAtivas], [vinculosRes, msVinculos],
+    [confRes, msConf], [camposRes, msCampos], [sazRes, msSaz], [docsRes, msDocs],
+  ] = await Promise.all([
+    medir(supabase.rpc("fn_premissas_sugeridas", { p_setor: parametros?.setor ?? null })),
+    medir(supabase.from("caso_premissa").select("premissa_codigo, valores, origem")
+      .eq("caso_id", id).eq("ativo", true)),
+    medir(supabase.from("caso_linha_premissa")
       .select("secao_canonica, rotulo_norm, entidade, premissa_codigo, sazonalidade_codigo")
-      .eq("caso_id", id),
-    supabase.rpc("fn_conferir_modelagem", { p_caso_id: id }),
+      .eq("caso_id", id)),
+    medir(supabase.rpc("fn_conferir_modelagem", { p_caso_id: id })),
     // As linhas do caso — por FUNÇÃO (0039/0042), não por consulta direta.
     //
     // `campo_extraido` não tem `caso_id`: o vínculo é `campo_extraido →
     // documento_versao → documento`. A primeira versão desta tela consultava a
     // tabela direto e, com a RLS aberta a qualquer autenticado, trazia as linhas
     // de TODOS os mandatos. O escopo por caso vive em UM lugar, coberto por teste.
-    supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id }),
+    medir(supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id })),
     // A curva de sazonalidade é DERIVADA do faturamento mensal do caso (0040):
     // ninguém digita 12 percentuais que o documento já afirma.
-    supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id }),
+    medir(supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id })),
     // Só para SUGERIR entidade e último exercício no passo 1 (ver abaixo).
-    supabase.from("documento")
-      .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)").eq("caso_id", id),
+    medir(supabase.from("documento")
+      .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)").eq("caso_id", id)),
   ]);
 
   // ---------------------------------------------------------------------------
@@ -175,17 +206,31 @@ export default async function ModelagemPage({
   // A distinção que a tela precisa fazer, e agora faz: "não há linha" é uma
   // resposta; "não consegui perguntar" é outra.
   // ---------------------------------------------------------------------------
-  const falhas = ([
-    ["premissas sugeridas (fn_premissas_sugeridas)", sugeridasRes.error],
-    ["premissas ativas (caso_premissa)", ativasRes.error],
-    ["vínculos de linha (caso_linha_premissa)", vinculosRes.error],
-    ["conferência (fn_conferir_modelagem)", confRes.error],
-    ["linhas do caso (fn_linhas_para_modelagem)", camposRes.error],
-    ["curva de sazonalidade (fn_sazonalidade_do_caso)", sazRes.error],
-    ["documentos do caso", docsRes.error],
-  ] as const)
+  const chamadas = ([
+    ["premissas sugeridas (fn_premissas_sugeridas)", sugeridasRes.error, msSugeridas],
+    ["premissas ativas (caso_premissa)", ativasRes.error, msAtivas],
+    ["vínculos de linha (caso_linha_premissa)", vinculosRes.error, msVinculos],
+    ["conferência (fn_conferir_modelagem)", confRes.error, msConf],
+    ["linhas do caso (fn_linhas_para_modelagem)", camposRes.error, msCampos],
+    ["curva de sazonalidade (fn_sazonalidade_do_caso)", sazRes.error, msSaz],
+    ["documentos do caso", docsRes.error, msDocs],
+  ] as const);
+
+  // O tempo entra na linha da falha. Num cancelamento por tempo ele é o TETO do
+  // servidor, que é a grandeza que faltava para saber contra o que a tela está
+  // lutando (ver o comentário do `medir`).
+  const falhas = chamadas
     .filter(([, e]) => e)
-    .map(([nome, e]) => `${nome}: ${e!.message}`);
+    .map(([nome, e, ms]) => `${nome}: ${e!.message} [${ms} ms]`);
+
+  // E os tempos de QUEM DEU CERTO também, porque é a linha de base que dá sentido
+  // ao número da falha: se as cinco chamadas leves voltam em 80 ms e as duas
+  // pesadas são cortadas em 8.000 ms, o servidor está saudável e as duas funções
+  // é que não couberam. Se TUDO estiver lento, o problema é a instância, e nenhuma
+  // otimização de SQL vai resolver.
+  const tempos = chamadas
+    .map(([nome, e, ms]) => `${nome.replace(/ \(.*\)$/, "")} ${ms} ms${e ? " (falhou)" : ""}`)
+    .join(" · ");
 
   const sugeridas = (sugeridasRes.data as PremissaCatalogo[] | null) ?? [];
   const ativas = (ativasRes.data as CasoPremissa[] | null) ?? [];
@@ -301,7 +346,8 @@ export default async function ModelagemPage({
               ainda não foram aplicadas neste banco, é isso: elas existirem no GitHub não as coloca
               no Supabase. Para confirmar sem adivinhar, rode no SQL Editor{" "}
               <code className="font-mono">select jsonb_pretty(fn_diagnostico_modelagem(&apos;{id}&apos;));</code>{" "}
-              e olhe <code className="font-mono">correcoes_instaladas</code>.
+              e olhe <code className="font-mono">correcoes_instaladas</code>. O diagnóstico completo
+              de ambiente está em <code className="font-mono">db/diagnostico_modelagem.sql</code>.
             </p>
           ) : (
             <p className="mt-2 text-xs">
@@ -311,6 +357,10 @@ export default async function ModelagemPage({
               disso.
             </p>
           )}
+          {/* A linha de base: o tempo das SETE chamadas, inclusive as que deram
+              certo. É o que separa "duas funções não couberam" de "a instância
+              inteira está lenta" — e a segunda não se resolve com SQL. */}
+          <p className="mt-2 font-mono text-[10px] text-red-800">{tempos}</p>
         </section>
       )}
 

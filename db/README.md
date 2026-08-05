@@ -151,6 +151,13 @@ supabase db execute --file db/seed/macro_carga_inicial.sql
 > select jsonb_pretty(fn_diagnostico_modelagem('<caso_id>'));
 > ```
 >
+> **Se o diagnóstico vier tudo `true` e a tela AINDA mostrar timeout**, o problema não é
+> mais SQL — a lógica foi medida em 490 ms como `authenticated`, com RLS, e com as sete
+> chamadas da página concorrentes. Aí rode **`db/diagnostico_modelagem.sql`**, que separa as
+> quatro causas de ambiente que sobram: portal apontando para outro projeto Supabase,
+> `statement_timeout` do papel `authenticated` menor que os 8 s presumidos, instância
+> estrangulada de CPU, ou render anterior ao apply.
+>
 > `correcoes_instaladas` responde direto se as funções em pé no banco são as da
 > `0101`/`0102`; `ocorrencias_superadas` diz quantas ocorrências vinham de versão
 > superada de documento; `linhas` e `linhas_por_papel` dizem o que a tela **deve**
