@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-05 (sessão 37). **Estado do `main`:** mergeado até o **PR #100**
-(`main` em `342f5c0`). Branch de trabalho: **`claude/handoff-teste-passo-passo-np8tin`**.
+**Última atualização:** 2026-08-05 (sessão 38). **Estado do `main`:** mergeado até o **PR #101**
+(`main` em `da23f63`). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
@@ -43,11 +43,22 @@ intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` 
 fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
 
 **O QUE ESTÁ ABERTO AGORA:** **espelhar o Modelo Base** (`docs/referencia/modelo-base.xlsx`) no
-export. Medido na sessão 37: as 14 abas do modelo institucional têm **2.842 fórmulas contra as
-14.504 da referência** (~20%), **zero** dos 1.044 nomes definidos e **zero** dos 8 gráficos. Os
-maiores buracos são `Output` (3.693 × 118) e `ST Inv. & Debt` (3.573 × 241). O trabalho está
-descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, feito para ser colado como primeira
-mensagem de uma sessão nova.
+export. As 14 abas do modelo institucional têm **2.842 fórmulas contra as 14.504 da referência**
+(~20%); os maiores buracos são `Output` (3.693 × 118) e `ST Inv. & Debt` (3.573 × 241). O
+trabalho está descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, feito para ser colado como
+primeira mensagem de uma sessão nova.
+
+> **A fase 1 do prompt está FECHADA** (sessão 38): o mapa completo das 14 abas está em
+> **`docs/referencia/MAPA_MODELO_BASE.md`** — 32 padrões de fórmula nomeados, a gramática de
+> cores decodificada e a marcação `universal` × `do setor de origem` × `do caso`. Três medições
+> dele mudam o placar do §3 do prompt e **têm de ser lidas antes de escrever a fase 2**: dos
+> **1.044 nomes definidos, ZERO estão em uso** (531 apontam para `#REF!`, 392 são relatório do
+> Excel 4, 382 apontam para outra pasta; só 5 áreas de impressão têm valor); **667 das 14.504
+> fórmulas da referência já estão com `#REF!`** (627 delas no `Output`, o bloco de tranches de
+> dívida inteiro); e **o Modelo Base não fecha o próprio balanço a partir de 2020** — o
+> `Mismatch` dá 16.987 em 2020, 33.974 em 2021 e `#VALUE!` de 2022 a 2032, por duas causas
+> rastreadas (parcelamento tributário sem piso, e `Anual!AC86` = texto `nd` na série da Libor).
+> A régua legítima é o **horizonte publicado, 2010–2018**.
 
 > A tela de Modelagem já foi exercitada de ponta a ponta pelo dono (sessão 37) e o export completo
 > gera. O que sobra dela: a `0104` a aplicar, a dupla contagem de caixa/dívida (o `CHECK` do
@@ -4252,3 +4263,155 @@ asserts**; `test/e2e/run.mts` = **27**.
 - **"Sugerir do realizado"** (proposta, não feita): oito premissas saem do próprio balanço/DRE do
   caso (PMR 81, PME 62, PMP 59, custo variável 54,7%, SG&A 14,1%, alíquota, depreciação, taxa da
   dívida), com `origem = 'historico'` — que o schema da `0038` já prevê e ninguém usa.
+
+## Sessão 38 (2026-08-05) — Fase 1 do espelhamento: o Modelo Base mapeado inteiro, e três números que mudam o placar
+
+Rodada de **leitura**, como o `docs/PROMPT_ESPELHAR_MODELO_BASE.md` manda: *mapear primeiro,
+replicar depois*. **Nenhuma linha de código de produção foi alterada.** A entrega é
+`docs/referencia/MAPA_MODELO_BASE.md`, com as **14 abas** cobertas nos seis eixos que o §7 do
+prompt exige (identidade, anatomia, gramática das fórmulas, formatação, recursos, classificação).
+
+### A medição, refeita nesta sessão
+
+`python3 docs/referencia/mapear-xlsx.py docs/referencia/modelo-base.xlsx` confere com o §3 do
+prompt nas duas colunas que ele mede: **14 abas**, **14.504 fórmulas**, 1.044 nomes definidos,
+8 gráficos, 1 imagem, 3 validações, 0 formatação condicional. O mapa acrescenta três colunas que
+o §3 não tinha — e são elas que mudam o plano.
+
+### Os três achados que mudam o plano da fase 2
+
+1. **Dos 1.044 nomes definidos, ZERO estão em uso.** Varredura de todos os identificadores das
+   14.504 fórmulas contra a lista de nomes: **nenhum casamento**. O que existe é sedimento —
+   531 apontam para `#REF!`, 392 são definição de relatório do **Excel 4** (`{#N/A,#N/A,FALSE,…}`),
+   382 apontam para **outra pasta de trabalho** (`[6]Comps!`, `'PXR_6500'!`), 26 são
+   `__123Graph_*` do **Lotus 1-2-3** e 4 são macros de tecla (`\a`, `\b`). Só **5** têm valor:
+   as áreas de impressão de `Output`, `Income Statement`, `Balance Sheet`, `Cash Flow` e `Anual`.
+   A linha do placar *"nomes definidos: 1.044 × 0, ausente por completo"* estava medindo lixo —
+   gerar 1.044 nomes não aproximaria o export de nada que um analista consiga apontar.
+2. **667 das 14.504 fórmulas da referência já estão quebradas** (`#REF!`), e **627 delas estão no
+   `Output`** (17% da aba): o bloco `DEBT & RATIOS` (linhas 128–206) inteiro — os 33 `HLOOKUP`,
+   os 13 rótulos de tranche e o `DSCR2` — aponta para uma tabela de dívida que não existe mais no
+   arquivo. Mais 24 no `Goodwill` (o `New Deferred Taxes`, que contamina o saldo de imposto
+   diferido), 10 no `ST Inv. & Debt`, 4 no `Revenues` e 2 no `Income Statement`. **Nove abas estão
+   íntegras.** A meta honesta do `Output` não é 3.693 fórmulas: são **3.066** mais a
+   reimplementação do bloco de tranches a partir do que ele *queria* fazer.
+3. **O Modelo Base não fecha o próprio balanço a partir de 2020**, e o `CHECK` dele denuncia:
+   `Balance Sheet!Mismatch` = **0** de 2007 a 2019, **16.987** em 2020, **33.974** em 2021 e
+   **`#VALUE!`** de 2022 a 2032 (`#DIV/0!` em 2032). Duas causas independentes, rastreadas célula
+   a célula:
+   - **o parcelamento tributário sem piso**: `Tributos a Recolher` paga 16.987/ano por 12 anos
+     contra um saldo que só suporta 11 (`L10` = **−4.249**), e o rótulo de ano para em 2018
+     enquanto a fórmula vai até 2024;
+   - **texto na base macro**: `Anual!AC86:AL86` (`Libor 6 meses`, 2021+) contém a string **`nd`**;
+     `='ST Inv. & Debt'!S196` = `=Anual!AC86/100` vira `#VALUE!` e a cadeia propaga sem guarda
+     até o `NET PROFIT` e o `Mismatch`:
+     `Anual!AC86 → ST!S196 → S198 → S202 (×5 tranches em moeda estrangeira) → ST!S20 → IS!U64 →
+     IS!U63 → U70 → U81 NET PROFIT → BS!U80 → U44 → U83 Mismatch`.
+
+   **Uma célula de texto na base macro apaga o resultado dos últimos 11 anos do modelo.** Isso é
+   transferível direto para o nosso produto: em `Macro (dados)`, ano sem série tem de ser vazio ou
+   zero, **nunca `nd`**, e o consumo precisa de guarda. E passou despercebido no arquivo do dono
+   por um motivo estrutural: **o horizonte visível do `Output` é 2010–2018** (as colunas P:AB,
+   2019–2031, estão **ocultas**) — o modelo quebra exatamente onde ninguém olha.
+
+### O que o mapa descobriu sobre o motor (o que se replica)
+
+- **Todo o calendário do modelo sai de UMA célula.** `'Revenues, COGS & SG&A'!C5`
+  (`Last Completed Period` = 31/12/2011) e duas recorrências: histórico para trás
+  `=+EOMONTH(<coluna à direita>,-12)`, projeção para frente `=+EOMONTH(<coluna à esquerda>,12)`.
+  São as **3 únicas** ocorrências de `EOMONTH` no arquivo. Não existe lista de anos.
+- **As abas não estão alinhadas na mesma coluna** — cada uma tem seu deslocamento fixo
+  (`Income Statement` = `Revenues` +1 coluna; `Fixed Assets` e `Cash Flow` = −1; `Working Capital`
+  = mesma). O `Output` usa **ano inteiro** e termina em **2031**; as operacionais usam **data de
+  fim de mês** e vão a **2032**. A tabela completa está no §2.2 do mapa.
+- **O cenário é dado, não código**: `Output!G2` ∈ {1,2,3}; cada driver copia em `C3`; consumo por
+  `CHOOSE($C$3,…)` (46 ocorrências); e o mesmo conjunto de linhas aparece **três vezes** na aba,
+  com o 2º e o 3º bloco nascendo como `=<bloco anterior>`. Há uma guarda `Check Scenario`
+  (`Output!I2:L5`) que lê o `C3` de volta de três abas.
+- **Nenhuma demonstração lê o miolo de um cálculo.** Todo driver publica três blocos —
+  `BALANCE SHEET ACCOUNTS`, `INCOME STATEMENT ACCOUNTS`, `CASH FLOW ACCOUNTS` — e as
+  demonstrações leem **dali**. É a interface do modelo, e replicar isso vale mais que replicar
+  qualquer aba isolada.
+- **A cor tem significado, e a paleta está declarada no arquivo** (`indexedColors`, 64 entradas):
+  fonte **azul `0000FF`** = entrada manual; **preta** = calculado; **branca** = auxiliar
+  invisível (o contador da coluna A); preenchimento `DDDDDD`/`C0C0C0`/`969696` = conta/subtotal/
+  total; **`CCFFCC` verde** = âncora do histórico que vem da `Premissas`; **`FF0000` vermelho com
+  fonte branca** = faixa de cabeçalho de ano.
+- **A gramática cabe em dez verbos**: `SUM` 1.525, `IF` 851, `AVERAGE` 192, `CHOOSE` 46,
+  `HLOOKUP` 33 (todos quebrados), `OFFSET` 17, `EOMONTH` 3, `ABS`/`CORREL`/`SUMPRODUCT`. **Não
+  há** `VLOOKUP`, `INDEX/MATCH`, `IFERROR`, `NPV`, `IRR`, macro VBA, tabela dinâmica nem tabela
+  estruturada. O mapa nomeia **32 padrões** (`P01`…`P32`), cada um com o endereço onde nasce.
+- **Os 8 gráficos estão todos no `Output`**, todos `lineChart`, alimentados por duas tabelas
+  laterais da própria aba (`AD18:AK28` e `AO11:BB44`); o padrão é **3 séries = 3 cenários** ou
+  **4 séries = 3 cenários + corte de covenant**. A única imagem (`image1.emf`) está no
+  `Balance Sheet`, ancorada em C73.
+
+### A resposta para a dupla contagem de caixa e de dívida (aberta desde a sessão 32)
+
+**O Modelo Base não projeta caixa por dias de giro.** As 6 contas de giro do ativo em
+`Working Capital` (linhas 13–18) são `Aplicações de liquidez imediata`, `Reserva Técnica`,
+`Créd. operações`, `Despesas de comercialização diferidas`, `Títulos e créditos a receber` e
+`Outros valores e bens` — **`Cash & Short Term Inv.` está fora da lista**. O caixa vem **só** do
+`Cash Flow` (`Balance Sheet!J13` = `='Cash Flow'!H59`) e a dívida **só** do `ST Inv. & Debt`. A
+regra é **uma conta, uma origem**, e é exatamente o que o §9 do prompt suspeitava que o mapa
+conteria. Nosso `Working Capital` projeta todas as contas de `ativo_circulante` inclusive caixa:
+é divergência de **mecanismo**, com a correção agora conhecida.
+
+Outro achado do mesmo tipo: em `P08 DIAS-DE-GIRO` a base é **a linha de DRE correspondente**
+(`Net Revenues`, `COGS` ou `SG&A`), com **360 dias**, e o prazo médio da projeção é *derivado do
+realizado* (`=IF(base>0, saldo/base*360,)`). Isso contrasta com a nossa decisão de produto de
+`pct_de_linha` e `dias_de_giro` incidirem sobre a **receita total do caso** (sessão 37) — vai para
+a tabela de conformidade como divergência de mecanismo, **não corrigida por conta própria**.
+
+### A ambiguidade do §4, resolvida com número
+
+O mapa marcou cada bloco como `universal`, `do setor de origem` ou `do caso` (o terceiro grupo
+apareceu na leitura e conta como não-universal para efeito da regra). **O vocabulário de outra
+indústria cabe em 18 itens**, todos localizados: 14 rótulos do setor de origem (`Reserva Técnica`,
+`Créd. operações pl. de assist. à saúde`, `Provisões técnicas…`, `Eventos conhecidos ou
+avisados`…) e 4 blocos do caso (`Capa!C4` = `Unimed Rio`, a aba `Tributos a Recolher` inteira,
+`Reconhecimento de Perdas Futuras`, `Provisão Previdenciaria`). **Todo o resto é motor.** Isso
+confirma a hipótese (A) do prompt com medição, e o trabalho não fica bloqueado: se o dono ler
+como (B), é o mesmo trabalho **mais** a cópia destes 18 itens, todos com endereço no mapa.
+
+### Sobre as ferramentas
+
+Foi usado o `docs/referencia/mapear-xlsx.py` do §6, e ele resolve a aba pelo `rels` — a armadilha
+da ordem dos `sheetN.xml` não voltou. Ele tem três limites de escopo que a fase 1 precisou cobrir
+por leitura direta das partes do ZIP: não decodifica `xl/styles.xml` (o `s=123` fica opaco), não
+expande fórmula **compartilhada** (8.373 células, 58% do total, saem como
+`=(compartilhada si=N)`), e não lê largura/altura/`hidden`/`outlineLevel`/gráfico/imagem/nome
+definido. Duas ferramentas de análise **descartáveis** cobriram isso no scratchpad, reusando a
+mesma resolução por `rels`: uma que traduz o índice de estilo para o que ele significa, e uma que
+traduz cada fórmula para **R1C1 relativa** e comprime faixas de colunas idênticas — é ela que
+torna 14.504 fórmulas legíveis, porque uma linha de 26 colunas quase sempre é **uma** fórmula
+puxada à direita. **Se a fase 2 quiser isso de forma permanente, o lugar é dentro do
+`mapear-xlsx.py` (`--estilos` e `--r1c1`), não em script novo** — e é mudança de ferramenta, fora
+do escopo da fase 1.
+
+### Ordem proposta para a fase 4 (a fase 3 é aprovação do dono)
+
+A ordem natural é **a do fluxo de dados, não a do tamanho do buraco**: `Premissas`/eixo do tempo →
+`Revenues` (define `P01`, `P03`, `P06`, `P07`, `P10`) → `Working Capital` (`P08`) →
+`Fixed Assets` (`P13`) → `ST Inv. & Debt` (`P11`, `P14`, `P15`, `P17`) → `Income Statement` →
+`Balance Sheet` (+ `P12`) → `Cash Flow` (`P22`) → `Goodwill` → `Output` → `Considerações`/`Capa`.
+Começar pelo `Output`, que é o maior buraco, seria construir a vitrine antes do motor: **toda
+fórmula dele é referência a outra aba.**
+
+### Contadores
+
+Inalterados, e é o esperado: o diff desta rodada é **só documentação** (`docs/referencia/
+MAPA_MODELO_BASE.md` + esta seção), sem uma linha de código. Conferido nesta sessão:
+`node --test 'n8n/test/*.test.mjs'` = **176 pass / 0 fail**. Os outros três contadores seguem em
+`verificar-export.mts` = **435**, `db/test/run.sh` = **49 migrations / 324 asserts**,
+`test/e2e/run.mts` = **27** — e o CI os roda no PR.
+
+### O que o dono precisa decidir
+
+1. **Aplicar a `0104`** (segue pendente da sessão 37).
+2. **A leitura de "idêntico"** (§4 do prompt): **motor** ou **arquivo**. O mapa segue por
+   **motor** e mostra que a diferença entre as duas leituras são 18 itens nomeados.
+3. **Aprovar a ordem da fase 4** acima — é a fase 3 do prompt, e ela pede aprovação antes de
+   executar.
+4. **Confirmar que os 1.044 nomes definidos saem do placar** (§17.1 do mapa): eles não são
+   funcionalidade, e replicá-los seria replicar lixo de três gerações de pasta de trabalho.
