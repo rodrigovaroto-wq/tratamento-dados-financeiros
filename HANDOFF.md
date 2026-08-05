@@ -4,12 +4,13 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-05 (sessão 35). **Estado do `main`:** mergeado até o **PR #93**
-(`main` em `ecadebc`). Branch de trabalho: **`claude/project-review-context-3cngto`**.
+**Última atualização:** 2026-08-05 (sessão 36). **Estado do `main`:** mergeado até o **PR #94**
+(`main` em `8d92b74`); o **PR #95** traz esta sessão. Branch de trabalho:
+**`claude/migration-102-modeling-issue-7f4uxw`**.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
-> virou a mais velha do documento. A regra mudou nesta sessão: **atualizar o cabeçalho ao fechar a
+> virou a mais velha do documento. A regra mudou na sessão 35: **atualizar o cabeçalho ao fechar a
 > rodada é obrigação**; o que continua intocável é a seção de sessão passada.
 
 ### Migrations — 48 arquivos, nesta ordem
@@ -21,7 +22,7 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 | `0100_papel_por_secao` | o papel da linha é da SEÇÃO, e o lote não cai inteiro por uma linha | ✅ |
 | `0101_modelagem_dentro_do_tempo` | conferência em uma passada (era 5, duas por vínculo): 9,3 s → 100 ms | ✅ |
 | `0102_modelagem_versao_vigente` | a Modelagem lê só a versão VIGENTE de cada documento | ✅ |
-| `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ⚠️ **conferir** |
+| `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
 
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
@@ -33,10 +34,18 @@ comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 > do psql, não um flag — com `=1` o arnês tenta executar um binário chamado `1`. Rode sem ela,
 > com `PGHOST/PGPORT/PGUSER/PGPASSWORD`.
 
-**O QUE ESTÁ ABERTO AGORA** (detalhe na sessão 35): a tela de Modelagem ainda dá
-`statement_timeout` em produção **com `0101` e `0102` aplicadas e confirmadas**. Três hipóteses de
-SQL foram medidas e descartadas; sobraram quatro de **ambiente**, e `db/diagnostico_modelagem.sql`
-separa as quatro numa consulta só. A `0103` entrou depois dessa medição e derruba o tempo mais 6×.
+**O TIMEOUT DA MODELAGEM ESTÁ RESOLVIDO** (detalhe na sessão 36): medido pelo
+`pg_stat_statements` da própria produção, com o contador zerado, `fn_linhas_para_modelagem` = **501
+ms** e `fn_conferir_modelagem` = **485 ms** contra o teto de 8.000 ms — 16× de folga, nenhum
+cancelamento. Eram 6.381 ms de média, raspando o teto, que é o que fazia a falha parecer
+intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` versão superada,
+`0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `db/README.md` e
+fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
+
+**O QUE ESTÁ ABERTO AGORA:** o **teste prático da tela**, que é do dono e nenhuma suíte substitui —
+roteiro de modelagem no caso do v35 (incluindo ativar `SAZ_MENSAL` e o "aplicar em lote" por seção),
+export do completo, e conferir o `CHECK` da aba `Balance Sheet`, que **deve** acusar em vermelho a
+dupla contagem de caixa e dívida aberta desde a sessão 32. Passo a passo no fim da sessão 36.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
@@ -3970,3 +3979,140 @@ banco, nenhuma otimização resolve.
   comprova. Os asserts do modelo institucional precisam de uma fixture **com** seção canônica.
 - **Duas capturas de página** do dono estão achatadas na raiz do repositório (commit `9cdadc4`). A
   primeira foi organizada em `test-data/capturas/2026-08-04-v35-modelagem/`; a segunda ainda não.
+
+## Sessão 36 (2026-08-05) — RESOLVIDO: as três fatias do timeout, medidas na produção
+
+> Esta seção fecha o que a **sessão 35** deixou aberto como "o único bloqueio real". As duas
+> rodaram no mesmo dia, em sessões paralelas, e esta é a mais nova: onde as duas falarem do estado
+> da tela de Modelagem, **vale esta**. A `0103` está descrita na sessão 35 — aqui entra só o que é
+> novo, que é a medição na produção.
+
+**A tela de Modelagem voltou a funcionar.** Medido pelo `pg_stat_statements` da própria
+produção, com o contador **zerado** e um único carregamento de página depois:
+
+| Chamada | `calls` | média | teto do Supabase | folga |
+|---|---|---|---|---|
+| `fn_linhas_para_modelagem` | 1 | **501 ms** | 8.000 ms | **16×** |
+| `fn_conferir_modelagem` | 1 | **485 ms** | 8.000 ms | **16×** |
+
+Nenhum cancelamento. Antes eram **6.381 ms de média com máximo de 7.769 ms**, raspando o teto —
+e é por isso que a tela falhava de forma que parecia intermitente.
+
+Detalhe que confirma o desenho da `0101`: as duas dão praticamente o **mesmo** tempo (501 e
+485), porque a conferência faz **uma** passada pelo mesmo leitor. Quando ela fazia cinco, era
+exatamente dali que vinham os 9,3 s.
+
+### O que era, no fim: TRÊS causas empilhadas, cada uma escondendo a seguinte
+
+| Migration | Parou de repetir |
+|---|---|
+| `0101` | trabalho **de fora** — a conferência executava a listagem cinco vezes, duas delas uma vez por vínculo |
+| `0102` | leitura de versão **superada** — cada reextração somava um jogo inteiro de ocorrências ao caso |
+| `0103` | trabalho **de dentro de cada rótulo** — `fn_papel_linha` refazia a mesma tokenização nove vezes |
+
+E uma quarta causa, **de processo**, que atrasou tudo mais que as três juntas: a `0101` estava na
+tabela do `db/README.md` e **não** na lista de comandos que o dono copia para aplicar. Por uma
+rodada inteira a correção existia no GitHub e não no banco — e da tela isso é indistinguível de
+"o PR não funcionou". Hoje `db/test/run.sh` reprova migration que exista e não esteja na lista.
+
+### A `0103` está mesmo NO BANCO — conferido pelo plano, não pela lista de migrations
+
+A migration está descrita na sessão 35 (o que ela faz e o que quase quebrou). O que esta sessão
+acrescenta é a **confirmação de que a versão aplicada é a nova**, e ela não veio de conferir
+arquivo: veio do plano em produção, que mostra a marca da `0103` — CTEs `base_r` e `pares`, com
+`radicais <@ o.radicais` e `tem_longa` no lugar de `fn_rotulo_contido`.
+
+Isso importa porque "mergeado" e "aplicado" já divergiram uma rodada inteira neste mesmo problema
+(a `0101`), e a única evidência que não mente sobre isso é o que o banco está de fato executando.
+
+A escada de tempo, no mesmo caso: **~8 s (pré-`0101`) → 570 ms (`0102`) → 160 ms (`0103`)** aqui;
+na produção do dono, **483 ms** no `explain analyze`.
+
+### O erro desta rodada foi de RÉGUA, não de análise — e vale mais que a correção
+
+Eu afirmei, na sessão 34, "a lógica SQL não é mais o gargalo" e "16× de folga contra 8 s", e
+**decidi deliberadamente não otimizar `fn_papel_linha`** por ser "especulação contra causa
+desconhecida". As três hipóteses que descartei (RLS, concorrência das sete chamadas, volume da
+tabela) estavam certas em serem descartadas. O que estava errado era a base da conclusão:
+
+**eu medi 570 ms no meu hardware e concluí folga para o hardware do dono, que é ~3× mais lento e
+onde aquilo dava 6,4 s contra um teto de 8 s.** O gargalo *ainda era SQL*, e era exatamente a
+função que eu havia examinado e deixado passar.
+
+O instrumento que resolvia isso era o `pg_stat_statements` — **o relógio da produção, não o
+meu** — e eu o empacotei na quarta rodada, não na primeira. Fica como regra: **em qualquer
+"está lento" deste sistema, o primeiro dado é o `pg_stat_statements` da produção**, antes de
+qualquer medição local. `db/diagnostico_modelagem.sql` existe para isso e é o primeiro lugar a
+olhar.
+
+Duas armadilhas de leitura que custaram uma volta cada, e ficam registradas:
+
+- **`mean_exec_time` é média ACUMULADA desde o último reset.** Ela mostrou 6.381 ms enquanto o
+  `explain analyze` mostrava 483 ms, e as duas estavam certas: média histórica contaminada por
+  chamadas pré-correção contra execução de agora. Para medir o estado atual:
+  `select pg_stat_statements_reset();` → recarregar a tela → medir;
+- **o SQL Editor do Supabase roda como `postgres`, o portal como `authenticated`.** O Editor não
+  tem o teto de 8 s, então `fn_diagnostico_modelagem` respondia com folga (6,9 s) enquanto a tela
+  era cancelada. "Funciona no Editor" nunca foi evidência de que a tela funciona.
+
+### O susto do Supabase, que não era perda de dado
+
+O dono clicou em *Integrations → Open in Supabase* na Vercel e caiu numa organização cuja URL é
+`/dashboard/org/vercel_icfg_…` — uma org **criada pelo Vercel Marketplace**, contendo um único
+projeto (`supabase-charcoal-crystal`, `sa-east-1`) com **0 GB de banco, 0 usuários, pausado**.
+Parecia que os projetos tinham sumido. Não sumiram: era outra organização, e o projeto de lá é
+vazio. O seletor de org, ou `supabase.com/dashboard/projects`, volta para a org de verdade.
+
+Fica o alerta, porque a integração anuncia *"sync all your Project env vars to your Vercel
+projects automatically"*: se ela sobrescrever `NEXT_PUBLIC_SUPABASE_URL`, o portal passa a falar
+com o projeto vazio. **Não desinstalar a integração nem apagar o projeto do Marketplace sem
+conferir antes** — desinstalar integração de marketplace pode apagar o projeto que ela
+provisionou.
+
+Nota prática: o *ref* do projeto **não é descoberto de fora**. Todo acesso a Supabase no portal é
+de servidor (`createServerClient` no `proxy.ts` e no `server.ts`), então a URL não aparece no
+HTML, nem nos chunks, nem em cookie de visitante anônimo — conferido nesta sessão. E na Vercel a
+variável pode estar marcada como *Sensitive*, que não permite leitura depois de criada, só
+sobrescrita. O caminho que funciona é a barra de endereço do dashboard do Supabase
+(`/dashboard/project/<ref>`) ou o `pg_stat_statements` do próprio banco, que responde "o portal
+está falando comigo?" sem depender de navegador.
+
+### Contadores
+
+`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **48 migrations** e
+**306 asserts**; `test/e2e/run.mts` = **27**. Conferido nesta sessão que a `0103` convive com a
+trava da `modelagem_v35.test.sql`: a classificação **203/28/12/6** contra rótulo real continua
+passando, o que era o risco de a `0103` ter mexido em `fn_papel_linha`.
+
+### PRÓXIMO PASSO — o teste prático, e é do dono
+
+O caminho de banco está fechado e medido. **O que falta é exercitar a tela de ponta a ponta**, o
+que nenhuma suíte substitui:
+
+1. **Executar o roteiro de modelagem** no caso do v35 (`c4581e51-…`): parâmetros do mandato,
+   ativar as premissas do passo 2 — incluindo **`SAZ_MENSAL`**, que a captura da sessão 32
+   denunciou como não ativada (a curva é calculada e exibida, e nenhuma linha podia consumi-la) —
+   e vincular premissa às linhas, inclusive **"aplicar em lote"** por seção, que é o caminho que
+   a `0100` consertou e que só foi exercitado em teste.
+2. **Exportar o completo e mandar o `.xlsx`.** É o primeiro export depois da `0102`
+   (`fn_valores_por_ano` passou a ler só a versão vigente) e da Fase 9, e é o artefato que
+   ninguém conferiu ainda contra dado real.
+3. **O que olhar no arquivo, porque já se sabe onde deve doer:** o `CHECK` da aba
+   `Balance Sheet`. Ele deve acusar em vermelho a **dupla contagem de caixa e de dívida** que
+   está aberta desde a sessão 32 — `Working Capital` pega TODAS as contas de `ativo_circulante`
+   (inclusive caixa, bancos e aplicações) e as projeta por dias de giro, enquanto `Cash Flow`
+   soma as mesmas contas em `CAIXA_FIM` e `Balance Sheet` faz `AC = CAIXA + AC_OPER`. Se o
+   `CHECK` fechar, é sinal de que a leitura do defeito está errada e vale reabrir a análise.
+
+### Aberto (inalterado)
+
+- **Dupla contagem de caixa e de dívida no modelo institucional** (sessão 32) — correção só de
+  portal, sem migration. É o item 3 acima.
+- **`Arrendamentos` e `Provisões` são cabeçalho de grupo tratado como conta projetável.**
+  `fn_papel_linha` não os classifica como subtotal porque não têm a palavra "total". Estão
+  travados como `conta` em `modelagem_v35.test.sql`, então mudar isso exige atualizar o
+  `203/28/12/6` de propósito, com o rótulo nomeado no diff — o que é o comportamento desejado
+  para uma reclassificação deliberada.
+- **A Fase 9 nunca foi exercitada com conteúdo** (sessão 32). A fixture da sessão 33 **tem**
+  seção canônica nas 249 linhas, e é o insumo que faltava para os asserts do modelo
+  institucional em `verificar-export.mts`.
