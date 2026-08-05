@@ -162,6 +162,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/premissas.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de REMOVER premissa (0104: desativar limpa o vínculo que ela dirigia)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/desativar_premissa.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do papel da linha (0042: subtotal/serie mensal/derivado não se projetam)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_da_linha.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
