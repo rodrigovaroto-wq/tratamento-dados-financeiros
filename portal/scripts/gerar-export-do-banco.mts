@@ -27,7 +27,7 @@
 // aqui faria o arquivo mudar sozinho e um diff de bytes acusar mudança onde não
 // houve.
 import { execFileSync } from "node:child_process";
-import { buildExportWorkbook, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
+import { buildExportWorkbook, finalizarBufferDoExport, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
 import type { EntradaModeloInstitucional, LinhaModelo } from "../src/lib/modelo-institucional.ts";
 import type { CampoExtraido } from "../src/lib/types.ts";
 import { casarVinculosComLinhas } from "../src/lib/modelagem-linha.ts";
@@ -153,6 +153,9 @@ const wb = buildExportWorkbook({
   caso, documentos, campos, modo: "completo", modelagemConfig, modeloInstitucional,
 });
 const saida = process.argv[3] ?? "/tmp/v35-completo.xlsx";
-await wb.xlsx.writeFile(saida);
+// O MESMO caminho de saída da rota — sem isto, o arquivo que eu meço localmente
+// não tem gráfico nem nota ampliada, e a medição mente sobre o entregável.
+const { writeFile } = await import("node:fs/promises");
+await writeFile(saida, await finalizarBufferDoExport(wb));
 console.log(`OK — escrito ${saida}`);
 console.log(`abas: ${wb.worksheets.map((w) => w.name).join(" · ")}`);

@@ -26,6 +26,7 @@ import {
   construirAbaModelagem,
 } from "./export-modelagem";
 import type { MacroParaExport } from "./export-modelagem";
+import { injetarGraficosNoBuffer, type EspecGrafico } from "./xlsx-graficos";
 import {
   construirModeloInstitucional, type EntradaModeloInstitucional,
 } from "./modelo-institucional";
@@ -2987,7 +2988,11 @@ export function buildExportWorkbook({
     // O MODELO INSTITUCIONAL. Só no modo completo: ele projeta, e projetar é o que
     // o modo "dados" deliberadamente não faz.
     if (modeloInstitucional && modeloInstitucional.anosProjetados.length > 0) {
-      construirModeloInstitucional(workbook, modeloInstitucional);
+      // Os gráficos do `Output` não podem ser escritos pelo ExcelJS (ele não tem
+      // API de gráfico). A especificação volta daqui e viaja PRESA AO WORKBOOK
+      // até o pós-processamento do buffer — ver `finalizarBufferDoExport`.
+      const graficos = construirModeloInstitucional(workbook, modeloInstitucional);
+      (workbook as unknown as { __graficosDoModelo?: EspecGrafico[] }).__graficosDoModelo = graficos;
     }
 
     // A Modelagem é a primeira aba: é por onde o arquivo deve abrir.
@@ -3107,6 +3112,24 @@ export function buildExportWorkbook({
 const NOTA_BOX_ANTIGA = "width:97.8pt;height:59.1pt";
 const NOTA_BOX_NOVA = "width:340pt;height:170pt";
 
+/**
+ * O ÚNICO CAMINHO DE SAÍDA DO .XLSX ENTREGUE — e ele existe porque duas coisas
+ * que o arquivo precisa ter não podem ser escritas pelo ExcelJS:
+ *
+ *   1. a caixa de nota ampliada (o tamanho é hardcode do pacote);
+ *   2. os GRÁFICOS do `Output` (não há API de gráfico no ExcelJS).
+ *
+ * Antes, a rota chamava `ampliarNotasNoBuffer` e o script de iteração local
+ * chamava `writeFile` direto — então o arquivo que o dono recebia e o arquivo que
+ * eu media localmente eram DIFERENTES, e a diferença era invisível. Agora as duas
+ * pontas chamam esta função, que é a única que sabe montar o entregável.
+ */
+export async function finalizarBufferDoExport(workbook: ExcelJS.Workbook): Promise<Buffer> {
+  const graficos = (workbook as unknown as { __graficosDoModelo?: EspecGrafico[] }).__graficosDoModelo ?? [];
+  const comNotas = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
+  return graficos.length > 0 ? injetarGraficosNoBuffer(comNotas, graficos) : comNotas;
+}
+
 export async function ampliarNotasNoBuffer(buffer: Buffer | ArrayBuffer): Promise<Buffer> {
   const zip = await JSZip.loadAsync(buffer);
   const vmlPaths = Object.keys(zip.files).filter((p) => /^xl\/drawings\/vmlDrawing\d+\.vml$/.test(p));
@@ -3115,7 +3138,11 @@ export async function ampliarNotasNoBuffer(buffer: Buffer | ArrayBuffer): Promis
     if (!xml.includes(NOTA_BOX_ANTIGA)) continue;
     zip.file(path, xml.split(NOTA_BOX_ANTIGA).join(NOTA_BOX_NOVA));
   }
-  return zip.generateAsync({ type: "nodebuffer" });
+  // COMPRESSÃO EXPLÍCITA. O default do JSZip é `STORE` (sem compressão), e o
+  // ExcelJS grava com DEFLATE — então este pós-processamento inflava o arquivo
+  // entregue de ~0,3 MB para ~4,3 MB (medido nesta sessão) sem mudar uma célula.
+  // O dono baixava um .xlsx 14× maior por causa da regravação do zip.
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }
 
 // Reexportado para eventuais consumidores que só precisem agrupar por conta

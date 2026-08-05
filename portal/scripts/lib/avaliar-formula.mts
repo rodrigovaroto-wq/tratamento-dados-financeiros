@@ -25,9 +25,10 @@
  * chama tem de tratar `null` como desconhecido, nunca como zero.
  *
  * LIMITES CONHECIDOS E DELIBERADOS:
- *   • Não segue referência ENTRE ABAS. Depois da Etapa 3 isso deixou de ser um
- *     limite para a Modelagem — ela não referencia outra aba —, mas continua
- *     valendo para as abas de dados.
+ *   • Referência ENTRE ABAS é seguida (`'Balance Sheet'!J42`) — foi acrescentada
+ *     quando o modelo institucional passou a ser conferido por VALOR, e sem ela
+ *     nenhuma fórmula dele era avaliável. O comentário anterior dizia o oposto e
+ *     estava desatualizado.
  *   • Célula VAZIA é devolvida como 0 (ver o comentário em `avaliarCelula`), e
  *     por isso a comparação `x=""` trata 0 e vazio do mesmo jeito. No Excel são
  *     coisas diferentes: vazio="" é VERDADEIRO, mas 0="" é FALSO. Para tudo que
@@ -104,6 +105,11 @@ function avaliarCelulaSemMemoria(
   if (v == null) return 0;
   if (typeof v === "number") return v;
   if (typeof v === "string") return v;
+  // CÉLULA DE DATA. O eixo do tempo do modelo institucional é uma data (uma raiz
+  // e duas recorrências de EOMONTH), e sem esta conversão toda célula de
+  // cabeçalho vinha como `null` — "não sei avaliar" — e qualquer assert sobre o
+  // calendário passava sem provar nada.
+  if (v instanceof Date) return Math.round((v.getTime() - Date.UTC(1899, 11, 30)) / 86400000);
   if (typeof v === "object" && "formula" in v) {
     return avaliarExpressao((v as ExcelJS.CellFormulaValue).formula, ws, prof + 1);
   }
@@ -423,6 +429,49 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
         return typeof v === "number" ? v : 0;
       }
       if (nome === "ISNUMBER") return typeof val(0) === "number";
+      // NOT/AND/OR e ABS/YEAR: o modelo institucional os usa nos testes de
+      // covenant (`IF(NOT(ISNUMBER(x)),"n.a.",…)`), no diagnóstico por exercício
+      // e no eixo do tempo (`YEAR` do cabeçalho). Sem eles o avaliador devolvia
+      // `null` e o assert passava por não conseguir avaliar — que é a forma mais
+      // silenciosa de teste que não prova nada, exatamente o que este arquivo
+      // existe para evitar.
+      if (nome === "NOT") {
+        const v = val(0);
+        if (v == null) return null;
+        return !(v === true || (typeof v === "number" && v !== 0));
+      }
+      if (nome === "AND" || nome === "OR") {
+        const bools: boolean[] = [];
+        for (const bruto of brutos) {
+          const v = avaliarExpressao(bruto, ws, prof + 1);
+          if (v == null) return null;
+          bools.push(v === true || (typeof v === "number" && v !== 0));
+        }
+        return nome === "AND" ? bools.every(Boolean) : bools.some(Boolean);
+      }
+      if (nome === "ABS") {
+        const x = num(val(0));
+        return x == null ? null : Math.abs(x);
+      }
+      if (nome === "YEAR") {
+        // O cabeçalho de ano do modelo é uma DATA (o eixo do tempo sai de uma
+        // célula só). Aqui basta devolver o ano dela.
+        const v = val(0);
+        if (typeof v === "number") {
+          // Serial do Excel: 1 = 1900-01-01, com o bug do ano bissexto de 1900.
+          const ms = Date.UTC(1899, 11, 30) + v * 86400000;
+          return new Date(ms).getUTCFullYear();
+        }
+        return null;
+      }
+      if (nome === "EOMONTH") {
+        const v = val(0);
+        const meses = num(val(1)) ?? 0;
+        const base = typeof v === "number" ? new Date(Date.UTC(1899, 11, 30) + v * 86400000) : null;
+        if (!base) return null;
+        const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + meses + 1, 0));
+        return Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000);
+      }
       if (nome === "COUNT" || nome === "ISBLANK") {
         // Contam CÉLULAS, não valores — e é por isso que precisam do endereço:
         // uma célula vazia vale 0 quando lida, mas não conta como número.

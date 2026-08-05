@@ -45,6 +45,7 @@ import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade
 import type { CampoExtraido } from "../src/lib/types";
 import { classificarConta } from "../src/lib/statement-templates.ts";
 import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/lib/modelagem-linha.ts";
+import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -3988,6 +3989,302 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(0104c) …e as DUAS aparecem na aba de tributos, uma por seção (somar só uma esconderia 13.549)",
       `linhas com o rótulo: ${n}`);
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// (0105) O MODELO INSTITUCIONAL FECHA — e é o único invariante que decide se ele
+// é um modelo ou um relatório bonito.
+//
+// POR QUE ESTE BLOCO EXISTE. Até esta rodada nenhum teste avaliava os NÚMEROS do
+// modelo institucional: os asserts existentes cobriam estrutura (a aba existe, o
+// rótulo aparece duas vezes, o export não explode). Um modelo pode ter as 14 abas
+// no lugar, 3.000 fórmulas e não fechar o balanço — e foi exatamente o que
+// acontecia. Três defeitos de MECANISMO só apareceram quando os números foram
+// somados:
+//
+//   1. o CAIXA era projetado por dias de giro no `Working Capital` E somado outra
+//      vez pelo `Cash Flow` no `Balance Sheet` (`AC = CAIXA + AC_OPER`);
+//   2. a DÍVIDA bancária de curto prazo entrava no passivo operacional do giro E
+//      voltava em `DIVIDA_CP`;
+//   3. `Revenues!DEPRECIACAO` era declarada e NUNCA preenchida — a DRE debitava
+//      zero de depreciação, o `Cash Flow` somava de volta uma depreciação que
+//      ninguém tinha subtraído, e o imobilizado caía sem contrapartida.
+//
+// O caso abaixo tem as sete famílias de conta que o balanço precisa para fechar
+// (caixa, giro do ativo, estoque, imobilizado, giro do passivo, dívida em duas
+// pontas, patrimônio) com números redondos escolhidos para o CHECK ser
+// verificável a olho se o teste falhar.
+// ---------------------------------------------------------------------------
+{
+  const linha = (secao: string, chave: string, v: number, doc = "BALANCO") => ({
+    secao_canonica: secao, chave, rotulo_norm: chave.toLowerCase(),
+    papel: "conta" as const, unidade: "milhar", moeda: "BRL",
+    documentos: [doc], valores: { "2025": v },
+  });
+
+  const entradaModelo = {
+    caso: { nome: "Fecha o balanço", produto: "reestruturacao" },
+    agora: new Date("2026-08-05T12:00:00Z"),
+    entidade: "VERTENTES METALÚRGICA LTDA.",
+    setor: "industria",
+    anosHistoricos: [2025],
+    anosProjetados: [2026, 2027, 2028],
+    stressPct: 0.2, caixaMinimo: 5000, aliquotaTributos: 0.34,
+    linhas: [
+      // ativo
+      linha("ativo_circulante", "Caixa e equivalentes de caixa", 12000),
+      linha("ativo_circulante", "Clientes", 30000),
+      linha("ativo_circulante", "Estoques", 20000),
+      linha("ativo_nao_circulante", "Imobilizado", 60000),
+      linha("ativo_nao_circulante", "Depósitos judiciais", 3000),
+      // passivo
+      linha("passivo_circulante", "Fornecedores", 18000),
+      linha("passivo_circulante", "Obrigações trabalhistas", 7000),
+      linha("passivo_circulante", "Empréstimos e financiamentos", 15000),
+      linha("passivo_nao_circulante", "Empréstimos e financiamentos", 35000),
+      linha("passivo_nao_circulante", "Provisão para contingências", 5000),
+      // patrimônio: o que falta para o balanço fechar em 2025
+      //   ativo  = 12.000 + 30.000 + 20.000 + 60.000 + 3.000 = 125.000
+      //   passivo = 18.000 + 7.000 + 15.000 + 35.000 + 5.000  =  80.000
+      //   PL      = 45.000
+      linha("patrimonio_liquido", "Capital social", 40000),
+      linha("patrimonio_liquido", "Reservas de lucros", 5000),
+      // resultado
+      linha("receita_bruta", "Vendas de produtos - mercado interno", 200000, "DRE"),
+      linha("custos", "Custo dos produtos vendidos", 140000, "DRE"),
+      linha("despesas_operacionais", "Despesas administrativas", 25000, "DRE"),
+    ],
+    premissas: [
+      {
+        codigo: "CRESC", nome: "Crescimento nominal da receita", natureza: "receita",
+        formula: "crescimento_composto", unidade: "%",
+        valores: { "2026": 8, "2027": 6, "2028": 5 }, origem: "digitado",
+      },
+      {
+        codigo: "CUSTO", nome: "Custo sobre receita líquida", natureza: "custo",
+        formula: "pct_de_linha", unidade: "%",
+        valores: { "2026": 70, "2027": 70, "2028": 69 }, origem: "historico",
+      },
+      {
+        codigo: "PMR", nome: "Prazo médio de recebimento", natureza: "giro",
+        formula: "dias_de_giro", unidade: "dias",
+        valores: { "2026": 54, "2027": 54, "2028": 50 }, origem: "historico",
+      },
+      {
+        codigo: "CAPEX", nome: "Capex sobre receita líquida", natureza: "investimento",
+        formula: "pct_de_linha", unidade: "%",
+        valores: { "2026": 3, "2027": 3, "2028": 3 }, origem: "digitado",
+      },
+    ],
+    vinculos: [
+      { rotulo_norm: "vendas de produtos - mercado interno", premissa_codigo: "CRESC", sazonalidade_codigo: null },
+      { rotulo_norm: "custo dos produtos vendidos", premissa_codigo: "CUSTO", sazonalidade_codigo: null },
+      { rotulo_norm: "clientes", premissa_codigo: "PMR", sazonalidade_codigo: null },
+      { rotulo_norm: "imobilizado", premissa_codigo: "CAPEX", sazonalidade_codigo: null },
+    ],
+    macro: [
+      { serie: "IPCA", ano: 2026, valor: 4.5, fonte: "Focus" },
+      { serie: "IPCA", ano: 2027, valor: 4, fonte: "Focus" },
+      { serie: "IPCA", ano: 2028, valor: 3.5, fonte: "Focus" },
+      { serie: "CDI", ano: 2026, valor: 10, fonte: "Focus" },
+      { serie: "CDI", ano: 2027, valor: 9.5, fonte: "Focus" },
+      { serie: "CDI", ano: 2028, valor: 9, fonte: "Focus" },
+    ],
+    unidade: "R$ mil",
+  };
+
+  // O modelo só é construído quando o caso tem entidade reconhecível NOS CAMPOS
+  // extraídos (`if (entidadesConhecidas.size > 0)` em export.ts). Sem estes dois
+  // campos o export pula o código sob teste e o assert passaria sem exercitar nada.
+  const VMOD = "vModelo";
+  const camposModelo: CampoExtraido[] = [
+    campo({ chave: "Caixa e equivalentes de caixa", secao: "Ativo Circulante",
+            secao_canonica: "ativo_circulante", valor_num: 12000, documento_versao_id: VMOD }),
+    campo({ chave: "Capital social", secao: "Patrimônio Líquido",
+            secao_canonica: "patrimonio_liquido", valor_num: 40000, documento_versao_id: VMOD }),
+  ];
+  const docsModelo: DocumentoParaExport[] = [{
+    id: "dModelo", tipo_taxonomia: "BALANCO",
+    entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+    periodo: { tipo: "anual", referencia: "12M25" },
+    documento_versao: [{ id: VMOD, nome_original: "01_BP_Vertentes_2025.pdf" }],
+  }];
+
+  const wbMod = buildExportWorkbook({
+    caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+    agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+    modeloInstitucional: entradaModelo as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+  });
+
+  /** Acha a linha de uma aba do modelo pelo rótulo exato da coluna C. */
+  const linhaDoRotulo = (aba: string, rotulo: string): number | null => {
+    const ws = wbMod.getWorksheet(aba);
+    if (!ws) return null;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(3).value ?? "").trim() === rotulo) return r;
+    }
+    return null;
+  };
+  const COLS_ANO = ["E", "F", "G", "H"]; // 2025, 2026, 2027, 2028
+  const valorNaAba = (aba: string, rotulo: string, iAno: number) => {
+    const ws = wbMod.getWorksheet(aba);
+    const r = linhaDoRotulo(aba, rotulo);
+    if (!ws || r === null) return null;
+    return avaliarCelula(ws, COLS_ANO[iAno], r);
+  };
+
+  // ---- (0105a) O CHECK do balanço fecha em TODO exercício projetado --------
+  const rCheck = linhaDoRotulo("Balance Sheet", "CHECK — Ativo − (Passivo + PL) deve ser ZERO");
+  checar(rCheck !== null, "(0105a) a aba Balance Sheet tem a linha de CHECK", String(rCheck));
+  if (rCheck !== null) {
+    const bs = wbMod.getWorksheet("Balance Sheet")!;
+    const desvios: string[] = [];
+    for (let i = 0; i < COLS_ANO.length; i++) {
+      const v = avaliarCelula(bs, COLS_ANO[i], rCheck);
+      if (typeof v !== "number") { desvios.push(`${2025 + i}: não avaliável (${JSON.stringify(v)})`); continue; }
+      if (Math.abs(v) > 0.5) desvios.push(`${2025 + i}: ${v.toFixed(2)}`);
+    }
+    checar(desvios.length === 0,
+      "(0105a) O BALANÇO FECHA — Ativo − (Passivo + PL) = 0 em todos os exercícios, realizado e projetado",
+      desvios.join(" · "));
+  }
+
+  // ---- (0105b) o caixa NÃO é projetado por dias de giro --------------------
+  //
+  // A dupla contagem aberta desde a sessão 32. O Modelo Base exclui
+  // `Cash & Short Term Inv.` das contas de giro (§10 do MAPA_MODELO_BASE.md), e a
+  // regra é: uma conta, uma origem.
+  {
+    const wc = wbMod.getWorksheet("Working Capital");
+    let achouCaixa = false;
+    let achouDivida = false;
+    if (wc) {
+      for (let r = 1; r <= wc.rowCount; r++) {
+        const rot = String(wc.getRow(r).getCell(3).value ?? "");
+        if (/^Caixa e equivalentes/i.test(rot)) achouCaixa = true;
+        if (/^Empréstimos e financiamentos/i.test(rot)) achouDivida = true;
+      }
+    }
+    checar(!achouCaixa,
+      "(0105b) o CAIXA não aparece como conta de giro no Working Capital (era contado duas vezes no ativo)",
+      achouCaixa ? "a linha de caixa está no giro" : "");
+    checar(!achouDivida,
+      "(0105b) a DÍVIDA bancária não aparece como conta de giro (era contada duas vezes no passivo)",
+      achouDivida ? "a linha de empréstimos está no giro" : "");
+  }
+
+  // ---- (0105c) a depreciação chega à DRE ----------------------------------
+  {
+    const dep2026 = valorNaAba("Income Statement", "Depreciation and Amortization", 1);
+    const capexOk = valorNaAba("Fixed Assets & CAPEX", "CAPEX total", 1);
+    checar(typeof dep2026 === "number" && dep2026 > 0,
+      "(0105c) a DEPRECIAÇÃO chega à DRE — a linha D&A do Income Statement é maior que zero no projetado",
+      `D&A 2026 = ${JSON.stringify(dep2026)} (capex 2026 = ${JSON.stringify(capexOk)})`);
+    const ebitda = valorNaAba("Income Statement", "EBITDA", 1);
+    const ebit = valorNaAba("Income Statement", "EBIT", 1);
+    checar(typeof ebitda === "number" && typeof ebit === "number" && ebitda > ebit,
+      "(0105c) …e por isso EBITDA > EBIT no projetado (com D&A zero os dois eram iguais)",
+      `EBITDA ${JSON.stringify(ebitda)} · EBIT ${JSON.stringify(ebit)}`);
+  }
+
+  // ---- (0105d) o eixo do tempo tem UMA raiz ------------------------------
+  {
+    const rec = wbMod.getWorksheet("Revenues, COGS & SG&A")!;
+    const rRaiz = linhaDoRotulo("Revenues, COGS & SG&A",
+      "Último exercício realizado (a raiz do calendário do modelo)");
+    checar(rRaiz !== null,
+      "(0105d) a aba de receita declara a RAIZ do calendário (uma única data digitada)", String(rRaiz));
+    // O cabeçalho de cada aba do modelo é FÓRMULA, não ano digitado.
+    const semFormula: string[] = [];
+    for (const aba of ["Income Statement", "Balance Sheet", "Working Capital", "Cash Flow",
+                       "ST Inv. & Debt", "Fixed Assets & CAPEX", "Goodwill, Taxes & Div.", "Output"]) {
+      const ws = wbMod.getWorksheet(aba);
+      if (!ws) { semFormula.push(`${aba}: aba ausente`); continue; }
+      let rTit: number | null = null;
+      for (let r = 1; r <= ws.rowCount; r++) {
+        const c = ws.getRow(r).getCell(5).value;
+        if (c && typeof c === "object" && "formula" in c
+          && /Revenues, COGS & SG&A/.test((c as { formula: string }).formula)) { rTit = r; break; }
+      }
+      if (rTit === null) semFormula.push(aba);
+    }
+    checar(semFormula.length === 0,
+      "(0105d) o cabeçalho de ano de todas as abas do modelo é FÓRMULA que herda da raiz (P01/P02)",
+      semFormula.join(", "));
+    void rec;
+  }
+
+  // ---- (0105e) nenhuma fórmula do modelo com #REF! ou erro ---------------
+  {
+    const comErro: string[] = [];
+    for (const aba of ABAS_DO_MODELO) {
+      const ws = wbMod.getWorksheet(aba);
+      if (!ws) continue;
+      for (let r = 1; r <= ws.rowCount; r++) {
+        const row = ws.getRow(r);
+        for (let c = 1; c <= 40; c++) {
+          const v = row.getCell(c).value;
+          if (v && typeof v === "object" && "formula" in v) {
+            const f = (v as { formula: string }).formula;
+            if (/#REF!|#VALUE!|#DIV\/0!|#NAME\?/.test(f)) comErro.push(`${aba}!${row.getCell(c).address}`);
+          }
+        }
+      }
+    }
+    checar(comErro.length === 0,
+      "(0105e) nenhuma fórmula do modelo nasce com #REF!/#VALUE! — a referência tem 667, das quais 627 no Output",
+      comErro.slice(0, 8).join(", "));
+  }
+
+  // ---- (0105f) área de impressão nas 14 abas do modelo ------------------
+  {
+    const semArea = ABAS_DO_MODELO.filter((aba) => {
+      const ws = wbMod.getWorksheet(aba);
+      return !ws || !ws.pageSetup?.printArea;
+    });
+    checar(semArea.length === 0,
+      "(0105f) as 14 abas do modelo declaram área de impressão (a referência declara 5)",
+      semArea.join(", "));
+  }
+
+  // ---- (0105g) o Output não sobrescreve a legenda de cenário ------------
+  {
+    const out = wbMod.getWorksheet("Output")!;
+    checar(String(out.getRow(5).getCell(3).value ?? "") === "3 = Stress Case",
+      "(0105g) a legenda '3 = Stress Case' sobrevive — o cabeçalho caía sobre ela (defeito medido)",
+      String(out.getRow(5).getCell(3).value ?? ""));
+    checar(String(out.getRow(1).getCell(3).value ?? "") === "SCENARIO",
+      "(0105g) …e 'SCENARIO' continua na linha 1", String(out.getRow(1).getCell(3).value ?? ""));
+  }
+
+  // ---- (0105h) os covenants e o diagnóstico respondem -------------------
+  {
+    const diag = valorNaAba("Output", "Diagnóstico do exercício", 1);
+    checar(typeof diag === "string" && diag.length > 0,
+      "(0105h) o Output devolve um diagnóstico por exercício (a linha que o comitê lê primeiro)",
+      JSON.stringify(diag));
+    const nd = valorNaAba("Output", "Net Debt / EBITDA", 1);
+    checar(typeof nd === "number" || (typeof nd === "string" && nd === "EBITDA<=0"),
+      "(0105h) Net Debt / EBITDA é número, ou texto explícito quando o EBITDA não é positivo",
+      JSON.stringify(nd));
+  }
+
+  // ---- (0105i) o revolver cobre o furo e o caixa nunca fica abaixo do mínimo
+  {
+    const desvios: string[] = [];
+    for (let i = 1; i < COLS_ANO.length; i++) {
+      const caixa = valorNaAba("Cash Flow", "CAIXA DE FECHAMENTO", i);
+      const min = valorNaAba("ST Inv. & Debt", "Caixa mínimo operacional", i);
+      if (typeof caixa !== "number" || typeof min !== "number") { desvios.push(`${2025 + i}: não avaliável`); continue; }
+      if (caixa < min - 0.5) desvios.push(`${2025 + i}: caixa ${caixa.toFixed(0)} < mínimo ${min.toFixed(0)}`);
+    }
+    checar(desvios.length === 0,
+      "(0105i) o revolver cobre o furo: o caixa de fechamento nunca fica abaixo do caixa mínimo",
+      desvios.join(" · "));
+  }
+
+  esquecerMemoria(wbMod.getWorksheet("Balance Sheet")!);
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

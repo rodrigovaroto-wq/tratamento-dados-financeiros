@@ -818,6 +818,11 @@ Convenções de fonte, borda e formato numérico, uniformes no arquivo:
 Este é o achado que mais muda o plano. A linha do placar do §3 — *"Nomes definidos: 1.044 × 0,
 ausente por completo"* — está **medindo sedimento, não funcionalidade**:
 
+> **As categorias abaixo NÃO são disjuntas** — a soma delas passa de 1.044 porque um mesmo nome
+> pode estar em duas (uma definição de relatório do Excel 4 que aponta para `#REF!`, um nome externo
+> que também está quebrado). O que é disjunto, e é o que importa, são os **6 `_xlnm`** contra os
+> **1.038 restantes**.
+
 | Categoria | Quantos | O que é |
 |---|---:|---|
 | apontam para `#REF!` | **531** | faixa cuja aba de origem não existe mais |
@@ -1028,6 +1033,21 @@ ocultas, §5). O modelo quebra exatamente onde ninguém olha.
 fecha e é a régua legítima. Fora dele, **não existe conformidade a perseguir** — nossa geração
 não deve copiar nem o parcelamento sem piso nem o consumo de macro sem guarda, e as duas coisas
 entram como *deliberadamente diferente, com motivo escrito*.
+
+### 20.1.1 Mais duas incoerências da referência, achadas na fase 2
+
+Encontradas ao comparar aba a aba (`CONFORMIDADE.md`), e as duas mudam número:
+
+1. **A base do prazo médio do passivo é medida num denominador e aplicada em outro.**
+   `Working Capital!D46` = `=IF(D32>0,D21/D32*360,)` mede o prazo da conta de passivo contra o
+   **CUSTO** (linha 32); `Working Capital!I21` = `=I46/360*I31` aplica o saldo projetado sobre a
+   **RECEITA LÍQUIDA** (linha 31). O saldo projetado sai inflado na razão receita/custo — no próprio
+   arquivo da referência, ~1,27×. Não é convenção: é defeito.
+2. **A chave `Efeito Caixa?` (`D128`) não tem contrapartida.** Marcar `N` faz a amortização daquela
+   tranche sair do fluxo de caixa (`Cash Flow!H51` desconta `ST!H127`) e o saldo da dívida cair
+   igual — sem nada no ativo nem no patrimônio. Uma redução de passivo sem saída de caixa precisa de
+   contrapartida (conversão em participação, perdão, capitalização), senão o balanço abre exatamente
+   no valor reperfilado. É uma das razões pelas quais o `Mismatch` dela não é confiável.
 
 ### 20.2 Defeitos menores, registrados e **não** replicados
 
