@@ -1,0 +1,18 @@
+# Lixo de "salvar página" caindo na RAIZ do repositório.
+#
+# Já aconteceu duas vezes: o *Add files via upload* do GitHub achata a pasta
+# `<pagina>_files/` de uma captura de navegador e despeja os bundles do Next na raiz
+# (sessão 32 e commit `9cdadc4`). São dezenas de arquivos de nome gerado, minificados,
+# que ninguém consegue distinguir de conteúdo ao olhar a listagem.
+#
+# Os padrões são ANCORADOS NA RAIZ (`/`) de propósito: captura legítima **versiona**
+# esses mesmos arquivos dentro de `test-data/capturas/<data>/…_files/`, e um ignore
+# solto (`*.js.download`) excluiria a captura de 04/08 que é evidência de produção.
+/*.js.download
+/*.css
+/*.js.map
+
+# Saída de build e dependências (o portal tem o seu próprio .gitignore; isto é rede de
+# segurança para quando algum comando roda da raiz).
+node_modules/
+.next/
