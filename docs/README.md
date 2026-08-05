@@ -43,6 +43,11 @@ no dia 1, mas **não confia em si mesmo até medir que pode**. Ver
 | [`08_RISCOS.md`](08_RISCOS.md) | Riscos prováveis e mitigações |
 | [`09_PLANO_DE_EXECUCAO.md`](09_PLANO_DE_EXECUCAO.md) | Alterações, plano executável por fase, próximos passos |
 
+Fora da série numerada: [`referencia/`](referencia/) guarda os documentos que o **dono** subiu como
+fonte — o `onboarding.pdf` (67 páginas, citado por seção em `HANDOFF.md` e `db/README.md`) e o
+`modelo-base.xlsx` (a planilha que `portal/src/lib/modelo-institucional.ts` reconstrói). Os dois
+estavam soltos na raiz e sem extensão.
+
 ## Stack (referência)
 
 Supabase (Postgres + Storage + Auth + Realtime — fonte da verdade do estado), N8N
