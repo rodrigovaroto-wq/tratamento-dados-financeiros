@@ -4,16 +4,31 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #105**
-(`main` em `052817a`) — **as Fases A, B, C e D do plano estão todas no `main`**. Branch de trabalho:
-**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois do merge.
+**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #106**
+(`main` em `004092c`) — **as Fases A, B, C e D do plano estão todas no `main`**. Branch de trabalho:
+**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de cada merge; o **#107** (só este
+cabeçalho) está aberto.
+
+**O plano de fim de projeto, em uma frase cada** (o dono pediu na sessão 40 um caminho para acabar
+"sem nenhum bug ou falha", depois de 100+ PRs verdes que não impediram o arquivo errado):
+
+| Fase | O que era | Estado |
+|---|---|---|
+| **A** | o portão que faltava: o e2e compara os números do MODELO com o gabarito, na cadeia real | ✅ no `main` (#104) — 27 → **46** asserts |
+| **B** | a conta duplicada vira ACHADO da reconciliação, sem apagar nada (`0105`) | ✅ no `main` (#105) — falta **aplicar** a migration |
+| **C** | três dos seis itens da fila do §5 do `CONFORMIDADE.md`, com assert cada | ✅ no `main` (#105) |
+| **D** | a auditoria do arquivo entregue vira comando + aceite humano curto | ✅ no `main` (#105) — `auditar-xlsx.mts` e `docs/ACEITE.md` |
+
+O que sobra do plano **não é código**: é aplicar duas migrations, rodar o aceite sobre um export de
+verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 
 > **O GitHub Actions ficou sem runner em 06/08/2026** e por isso as Fases B–D foram acumuladas numa
-> branch e mergeadas num PR só (#105), com a evidência sendo a execução LOCAL dos nove passos do CI:
-> a execução no `main` esperou 15 min na fila e foi CANCELADA sem começar (`runner_name` vazio), e os
-> pushes seguintes não criaram execução nenhuma. O GitHub **não reexecuta retroativamente** — evento
-> sem execução não ganha execução quando o serviço volta. Três PRs (#103, #104, #105) foram mergeados
-> nessas condições.
+> branch e mergeadas num PR só (#105), com a evidência sendo a execução LOCAL dos nove passos do CI.
+> O incidente teve **duas caras**, e é isso que confunde: primeiro os eventos **não criavam execução
+> nenhuma** (push sem run, PR sem run — e o GitHub **não reexecuta retroativamente**: evento sem
+> execução não ganha execução quando o serviço volta); depois voltaram a criar, e aí a execução
+> **entra na fila e é cancelada em ~15 minutos sem nunca começar**. Três PRs (#103, #104, #105) foram
+> mergeados nessas condições.
 >
 > **E O X VERMELHO NO `bc844e4` NÃO É REGRESSÃO — NENHUM PASSO RODOU.** A execução `31127589390`
 > aparece como `failure` no commit `bc844e4`, que está no `main`; abrindo o job: `conclusion:
@@ -27,8 +42,8 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 > **O que fica disso:** `workflow_dispatch` está no `main`, então Actions → suítes → **"Run
 > workflow"** revalida o estado acumulado sem empurrar commit vazio — mas com o serviço nesse estado
 > ele também só entra na fila e é cancelado em 15 min (medido: a execução `31127647424`, disparada à
-> mão no `052817a`). **Enquanto o serviço não voltar,
-> não recoloque a suíte como check obrigatório** do `main`: check obrigatório que não pode rodar é
+> mão no `052817a`). **Enquanto o serviço não voltar, não recoloque a suíte como check obrigatório**
+> do `main`: check obrigatório que não pode rodar é
 > bloqueio permanente, não portão — foi o que deixou o #105 em `blocked`. O outro motivo do `blocked`
 > é "Require approvals" com o PR aberto no nome do próprio dono: o GitHub não deixa aprovar o próprio
 > PR, e com duas pessoas em que uma abre PR no próprio nome, essa exigência trava toda rodada sem
@@ -61,9 +76,6 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
-**Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**478**; `db/test/run.sh` = **50 migrations / 325 asserts**; `test/e2e/run.mts` = **46**.
-
 **Para conferir um `.xlsx` que já saiu:** `./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts
 <arquivo>` responde 10 itens sobre o arquivo pronto (balanço fecha, DRE reproduz o documento, câmbio é
 nível, recalcula ao abrir…) e sai com código 1 se algum reprovar. O que exige o Excel de verdade está
@@ -82,9 +94,32 @@ o ARQUIVO — a lacuna por onde o v35 errado passou com o CI verde.
 > **A fixture do `(0105)` era mais fácil que a produção** (custo positivo, uma conta por grupo, um
 > exercício, nenhum total informado) e por isso os 15 asserts passavam verdes com o arquivo errado.
 
-> Nota de insumo: o `CLAUDE.md` documenta `E2E_PSQL=1` para o e2e, mas essa variável é o **comando**
-> do psql, não um flag — com `=1` o arnês tenta executar um binário chamado `1`. Rode sem ela,
-> com `PGHOST/PGPORT/PGUSER/PGPASSWORD`.
+**AS QUATRO SUÍTES, COM OS COMANDOS QUE DE FATO FUNCIONAM** (os do `CLAUDE.md` têm duas pegadinhas,
+anotadas abaixo — use estes):
+
+```bash
+# insumo: o book sintético (gera pdf/ + GABARITO.json, não versionados)
+cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
+
+node --test 'n8n/test/*.test.mjs'                                     # 176
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 478
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
+  ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
+```
+
+> Pegadinha 1: **`E2E_PSQL` é o COMANDO do psql, não um flag.** O `CLAUDE.md` documenta `E2E_PSQL=1`
+> e com isso o arnês tenta executar um binário chamado `1`. Passe `E2E_PSQL="psql"`.
+>
+> Pegadinha 2: o `run.sh` conecta como o usuário do sistema (`root` no contêiner), que **não existe**
+> no Postgres local — daí `PGUSER=postgres`. Ajuste `PGHOST` ao seu socket/porta.
+>
+> E o `node --test` é sensível ao diretório: rode da **raiz** do repositório, senão o glob não casa
+> nada e a suíte diz "0 testes" em vez de falhar.
+
+Os números ao lado de cada comando são **contadores, não enfeite**: se um deles **cair**, alguém
+apagou cobertura. O CI roda os quatro mais os três geradores (com `git diff --exit-code -- n8n/`),
+`tsc`, `eslint` e `next build` — nove passos.
 
 **O TIMEOUT DA MODELAGEM ESTÁ RESOLVIDO** (detalhe na sessão 36): medido pelo
 `pg_stat_statements` da própria produção, com o contador zerado, `fn_linhas_para_modelagem` = **501
@@ -94,39 +129,63 @@ intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` 
 `0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `db/README.md` e
 fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
 
-**O QUE ESTÁ ABERTO AGORA:** **espelhar o Modelo Base** (`docs/referencia/modelo-base.xlsx`) no
-export. As 14 abas do modelo institucional têm **2.842 fórmulas contra as 14.504 da referência**
-(~20%); os maiores buracos são `Output` (3.693 × 118) e `ST Inv. & Debt` (3.573 × 241). O
-trabalho está descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, feito para ser colado como
-primeira mensagem de uma sessão nova.
+## O QUE ESTÁ ABERTO AGORA
 
-> **AS FASES 1 A 5 RODARAM (sessões 38 e 39).** O mapa está em
-> `docs/referencia/MAPA_MODELO_BASE.md`; a comparação aba a aba, com veredito e a lista do que
-> falta, em `docs/referencia/CONFORMIDADE.md`. O placar mudou de leitura: em **densidade de fórmula
-> por coluna de ano** — que é a comparação honesta, porque a referência projeta 21 exercícios e o
-> caso v35 projeta 5 — estamos em **89% do Modelo Base** (533 contra 598 fórmulas por coluna). Em
-> contagem absoluta, 3.157 contra 14.504. **O balanço agora FECHA em todos os exercícios**, provado
-> por teste; a referência não fecha a partir de 2020. Os 8 gráficos existem. O que falta está no §5
-> da conformidade, por impacto.
+**1. Ações do dono** (nenhuma é do colaborador — ver `CLAUDE.md`):
 
-> **A fase 1 do prompt está FECHADA** (sessão 38): o mapa completo das 14 abas está em
-> **`docs/referencia/MAPA_MODELO_BASE.md`** — 32 padrões de fórmula nomeados, a gramática de
-> cores decodificada e a marcação `universal` × `do setor de origem` × `do caso`. Três medições
-> dele mudam o placar do §3 do prompt e **têm de ser lidas antes de escrever a fase 2**: dos
-> **1.044 nomes definidos, ZERO estão em uso** (531 apontam para `#REF!`, 392 são relatório do
-> Excel 4, 382 apontam para outra pasta; só 5 áreas de impressão têm valor); **667 das 14.504
-> fórmulas da referência já estão com `#REF!`** (627 delas no `Output`, o bloco de tranches de
-> dívida inteiro); e **o Modelo Base não fecha o próprio balanço a partir de 2020** — o
-> `Mismatch` dá 16.987 em 2020, 33.974 em 2021 e `#VALUE!` de 2022 a 2032, por duas causas
-> rastreadas (parcelamento tributário sem piso, e `Anual!AC86` = texto `nd` na série da Libor).
-> A régua legítima é o **horizonte publicado, 2010–2018**.
+- **aplicar a `0104` e a `0105`** no Supabase, nesta ordem;
+- **exportar o v35 e rodar o aceite**: `auditar-xlsx.mts` + os 10 itens do `docs/ACEITE.md`. É a
+  primeira vez que existe conferência do arquivo ANTES de ele ir a comitê;
+- **decidir as premissas que travam as duas últimas linhas do motor**: cortes de covenant (`3,0x`,
+  `1,2x`, `1,0x` são patamares usuais de term sheet, não dados do caso) e o cronograma de
+  amortização por tranche; se o `CAPEX FINANCING` entra e com que regra. Chutar premissa é mentir
+  com número — por isso essas linhas ficam fora até a decisão;
+- **enquanto o Actions não voltar**, não recolocar a suíte como check obrigatório (ver o bloco do
+  incidente acima).
+
+**2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
+`docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
+
+| Fica | Por quê |
+|---|---|
+| tranche em **moeda estrangeira** (`ST Inv. & Debt`) | exige a MOEDA por contrato, que o Kit Básico não coleta. Aplicar câmbio sem saber se a tranche é em dólar erra por ~5× — mesma família do que a `0035` corrigiu |
+| `CAPEX FINANCING` | é premissa de plano, entra com a decisão do dono acima |
+| espelhos do `Goodwill` | só valem com ágio de verdade; hoje a aba trabalha com saldo zero e espelho de zero é ruído |
+| **vida útil por classe** (`Fixed Assets`) | depende de laudo que o Kit Básico não traz. O que existe é a taxa implícita medida no próprio caso |
+
+Nenhum dos quatro é falta de código. **Cosmético** (não muda número): contador invisível da coluna A,
+ordem dos grupos do balanço, três blocos de cenário literais em vez de `CHOOSE`.
+
+**3. Dívida de produto, fora do motor:** falta UI para **rejeitar pendência do Portão 2** (hoje só
+dá para aprovar).
+
+> **O PLACAR DO ESPELHAMENTO, e a régua certa.** Em **densidade de fórmula por coluna de ano** — a
+> comparação honesta, porque a referência projeta 21 exercícios e o caso v35 projeta 5 — a última
+> medição (sessão 39) deu **89% do Modelo Base**: 533 contra 598 fórmulas por coluna. Em contagem
+> absoluta, 3.157 contra 14.504, e é por isso que a leitura absoluta engana. As linhas que a Fase C
+> acrescentou **não foram remedidas** — o 89% é piso, não teto. Duas coisas que a régua não mostra:
+> **o nosso balanço FECHA em todos os exercícios** (provado por teste) e **o Modelo Base não fecha o
+> dele a partir de 2020**; e das **1.044 fórmulas nomeadas da referência, ZERO estão em uso** (531
+> apontam para `#REF!`), com **667 fórmulas dela já em `#REF!`** — 627 no `Output`, o bloco de
+> tranches inteiro. Não se copia o que está quebrado. Mapa completo em
+> `docs/referencia/MAPA_MODELO_BASE.md`, veredito aba a aba em `CONFORMIDADE.md`; o prompt de
+> retomada é `docs/PROMPT_ESPELHAR_MODELO_BASE.md`.
+
+> Detalhe das medições do Modelo Base, para quem for mexer nele: os `#REF!` da referência se
+> concentram no bloco de tranches do `Output`; o balanço dela dá `Mismatch` de 16.987 em 2020, 33.974
+> em 2021 e `#VALUE!` de 2022 a 2032, por duas causas rastreadas (parcelamento tributário sem piso, e
+> `Anual!AC86` = texto `nd` na série da Libor). A régua legítima dela é o **horizonte publicado,
+> 2010–2018**. Os 32 padrões de fórmula nomeados e a gramática de cores estão no mapa.
 
 > A tela de Modelagem já foi exercitada de ponta a ponta pelo dono (sessão 37) e o export completo
-> gera. O que sobra dela: a `0104` a aplicar, a dupla contagem de caixa/dívida (o `CHECK` do
-> `Balance Sheet` acusa), e a falta de UI para rejeitar pendência do Portão 2.
+> gera. A **dupla contagem de caixa/dívida**, aberta desde a sessão 32, foi respondida na 38 e hoje o
+> `CHECK` do `Balance Sheet` fecha em todos os exercícios — se ele sair de zero, o defeito voltou, e
+> essa linha é o alarme.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
-push e PR. Se o PR ficar vermelho, é regressão sua.
+push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
+antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
+produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
 
 ## Sessão 40d (2026-08-06) — Fase D: a auditoria do arquivo entregue virou comando
 
