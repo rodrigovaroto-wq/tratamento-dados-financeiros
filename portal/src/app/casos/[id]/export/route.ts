@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { EntradaModeloInstitucional, LinhaModelo } from "@/lib/modelo-institucional";
 import {
-  ampliarNotasNoBuffer, buildExportWorkbook, nomeArquivoSanitizado, type ConfigModelagem,
+  buildExportWorkbook, finalizarBufferDoExport, nomeArquivoSanitizado, type ConfigModelagem,
   type DocumentoParaExport, type MacroAnual, type MacroExpectativa,
 } from "@/lib/export";
 import type { CampoExtraido } from "@/lib/types";
@@ -390,7 +390,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     caso, documentos, campos, macro, macroErro, causasDeFalha, modo, modelagemConfig,
     modeloInstitucional,
   });
-  const buffer = await ampliarNotasNoBuffer(await workbook.xlsx.writeBuffer());
+  const buffer = await finalizarBufferDoExport(workbook);
   // O nome do arquivo DIZ qual dos dois é. Dois arquivos com o mesmo nome na
   // pasta de Downloads, um com modelo e outro sem, é confusão garantida — e a
   // pergunta "qual desses é o completo?" não tem resposta olhando o ícone.

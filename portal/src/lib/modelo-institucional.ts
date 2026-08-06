@@ -1,5 +1,11 @@
 import ExcelJS from "exceljs";
-import { comoNota, HEADER_FILL, THIN_TOP_BORDER } from "./export-estilo";
+import { comoNota, THIN_TOP_BORDER } from "./export-estilo";
+import {
+  FILL_ANO_PROJETADO, FILL_ANO_REALIZADO, FILL_ENTRADA, FILL_ERRO, FILL_OK, FILL_SECAO,
+  FILL_SUBTOTAL, FMT, FONTE_COR, fonte, LEGENDA_CORES, ORIA,
+  TAM_CAPA_TITULO, TAM_TITULO_ABA,
+} from "./oria-marca";
+import type { EspecGrafico } from "./xlsx-graficos";
 
 // =============================================================================
 // O MODELO INSTITUCIONAL — reconstrução do "Modelo Base" do dono, integrada aos
@@ -69,6 +75,16 @@ export const ABAS_MODELO = [
 ] as const;
 
 // Colunas. B = sinal, C = rótulo, D = premissa/unidade, E em diante = períodos.
+//
+// UMA GRADE, TODAS AS ABAS — divergência DELIBERADA do Modelo Base, e é uma das
+// correções que ele mais pede. Lá cada aba tem seu próprio deslocamento: a coluna
+// de rótulo é B, C ou nenhuma, o eixo do tempo começa em D, E ou G, e a mesma
+// referência entre abas carrega um deslocamento fixo diferente em cada par
+// (`Income Statement` = `Revenues` +1 coluna, `Fixed Assets` = −1, `Working
+// Capital` = 0). O mapa chama isso de "a armadilha estrutural do arquivo"
+// (§2.2), e é a fonte natural do erro de espelhar a linha certa na coluna
+// errada. Aqui a grade é a MESMA nas 14 abas, e nenhuma fórmula precisa saber de
+// deslocamento nenhum.
 const COL_SINAL = 2;
 const COL_ROTULO = 3;
 const COL_NOTA = 4;
@@ -76,19 +92,33 @@ const COL_PRIMEIRO_ANO = 5;
 
 const CENARIOS = ["Base Case", "Cliente Case", "Stress Case"] as const;
 
-// Estilo. Sóbrio de propósito: modelo de crédito é lido em impressão preto e
-// branco por comitê, e cor que não sobrevive ao papel não carrega informação.
-const FONTE_BLOCO: Partial<ExcelJS.Font> = { bold: true, size: 11 };
-const FILL_BLOCO: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
-const FONTE_BLOCO_INV: Partial<ExcelJS.Font> = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
-const FILL_INPUT: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF9C4" } };
-const FILL_HIST: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F4F6" } };
-const FILL_CHECK_OK: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCFCE7" } };
-const FILL_CHECK_ERRO: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
-const NUM = "#,##0;(#,##0)";
-const NUM2 = "#,##0.00;(#,##0.00)";
-const PCT = "0.0%";
-const MULT = "0.00x";
+// Estilo: vem de `oria-marca.ts`, que é onde a identidade visual do entregável
+// mora e onde está escrito o que cada cor SIGNIFICA. Os aliases abaixo são só
+// para o corpo deste arquivo continuar legível.
+const FONTE_BLOCO: Partial<ExcelJS.Font> = fonte({ bold: true });
+const FILL_BLOCO = FILL_SECAO;
+const FONTE_BLOCO_INV: Partial<ExcelJS.Font> = fonte({ bold: true, color: { argb: ORIA.branco } });
+const FILL_INPUT = FILL_ENTRADA;
+const FILL_HIST = FILL_SUBTOTAL;
+const FILL_CHECK_OK = FILL_OK;
+const FILL_CHECK_ERRO = FILL_ERRO;
+const NUM = FMT.valor;
+const NUM2 = FMT.valor2;
+const PCT = FMT.pct;
+const MULT = FMT.mult;
+const DIAS = FMT.dias;
+const PCT2 = FMT.pct2;
+
+// A gramática de cor de FONTE (azul = digitado, preto = calculado, verde = vem de
+// outra aba) é aplicada dentro de `Grade.set`, que classifica a célula pela
+// PROCEDÊNCIA do valor. Copiada do Modelo Base, que a usa com rigor, mais o
+// verde, que é acréscimo nosso — num arquivo de 29 abas, saber num relance que a
+// célula é espelho de outra aba economiza a auditoria de abrir a nota.
+// A constante abaixo é para as células escritas FORA da grade (a raiz do eixo do
+// tempo e a chave S/N por tranche).
+const FONTE_ENTRADA: Partial<ExcelJS.Font> = fonte({ color: { argb: FONTE_COR.entrada } });
+const preencherArgb = (argb: string): ExcelJS.Fill =>
+  ({ type: "pattern", pattern: "solid", fgColor: { argb } });
 
 // -----------------------------------------------------------------------------
 // Entrada
@@ -256,16 +286,29 @@ class Grade {
     return Grade.refExterna(aba, g.letraDoAno(ano), g.n(chave));
   }
 
-  /** Escreve valor/fórmula na célula (linha por chave, coluna por ano). */
+  /**
+   * Escreve valor/fórmula na célula (linha por chave, coluna por ano) e pinta a
+   * fonte pela PROCEDÊNCIA do número — azul digitado, preto calculado, verde
+   * vindo de outra aba. A classificação é automática justamente para não
+   * depender de alguém lembrar: fórmula com `'Aba'!` é externa, fórmula sem é
+   * cálculo local, e literal é entrada. Onde a heurística erraria (histórico
+   * EXTRAÍDO, que é literal mas não é premissa), quem chama passa `tipo`.
+   */
   set(chave: string, ano: number, v: number | string | null, opts: {
     fmt?: string; fill?: ExcelJS.Fill; nota?: string; negrito?: boolean;
+    tipo?: "entrada" | "calc" | "externa";
   } = {}): ExcelJS.Cell {
     const cell = this.ws.getRow(this.n(chave)).getCell(this.colDoAno(ano));
-    if (typeof v === "string" && v.startsWith("=")) cell.value = { formula: v.slice(1) };
+    const ehFormula = typeof v === "string" && v.startsWith("=");
+    if (ehFormula) cell.value = { formula: (v as string).slice(1) };
     else if (v !== null) cell.value = v;
     if (opts.fmt) cell.numFmt = opts.fmt;
     if (opts.fill) cell.fill = opts.fill;
-    if (opts.negrito) cell.font = FONTE_BLOCO;
+    const tipo = opts.tipo ?? (ehFormula
+      ? (/'[^']+'!/.test(v as string) ? "externa" : "calc")
+      : (opts.fill === FILL_HIST ? "calc" : "entrada"));
+    const cor = tipo === "entrada" ? FONTE_COR.entrada : tipo === "externa" ? FONTE_COR.externo : FONTE_COR.calculado;
+    cell.font = fonte({ bold: opts.negrito === true, color: { argb: cor } });
     if (opts.nota) cell.note = comoNota(opts.nota);
     return cell;
   }
@@ -275,17 +318,111 @@ class Grade {
     return this.ws.getRow(linha).getCell(col);
   }
 
-  cabecalho(titulo: string, unidade: string, refAno?: (ano: number) => string): void {
+  /**
+   * O cabeçalho da aba: título, a linha de anos e a unidade.
+   *
+   * `refAno` é o EIXO DO TEMPO (`P01`/`P02` do mapa). Quando informado, a célula
+   * do ano é FÓRMULA — e é isso que faz o arquivo inteiro ter uma única raiz de
+   * calendário, como no Modelo Base: lá as 26 colunas de 9 abas saem de UMA
+   * célula (`'Revenues, COGS & SG&A'!C5`) por duas recorrências de `EOMONTH`.
+   * Sem isso, "2026" está escrito 14 vezes no arquivo e mudar o exercício-base é
+   * reescrever tudo.
+   */
+  cabecalho(titulo: string, unidade: string, refAno?: (ano: number) => string, fmtAno: string = FMT.ano): void {
     const rTit = this.linha("__titulo", { rotulo: titulo, negrito: true });
-    this.ws.getRow(rTit).getCell(COL_ROTULO).font = { bold: true, size: 12 };
+    this.ws.getRow(rTit).getCell(COL_ROTULO).font = fonte({ bold: true, size: TAM_TITULO_ABA });
+    this.ws.getRow(rTit).getCell(COL_ROTULO).border = { bottom: { style: "double" } };
     for (const ano of this.anos) {
       const cell = this.ws.getRow(rTit).getCell(this.colDoAno(ano));
-      cell.value = refAno ? { formula: refAno(ano).slice(1) } : ano;
-      cell.font = { bold: true };
-      cell.alignment = { horizontal: "right" };
-      cell.fill = this.ehProjetado(ano) ? HEADER_FILL : FILL_HIST;
+      const f = refAno?.(ano);
+      if (f !== undefined && f.startsWith("=")) {
+        cell.value = { formula: f.slice(1) };
+        cell.numFmt = fmtAno;
+      } else if (f !== undefined) {
+        cell.value = Number(f);
+        cell.numFmt = fmtAno;
+      } else {
+        cell.value = ano;
+      }
+      cell.font = fonte({ bold: true, color: { argb: this.ehProjetado(ano) ? ORIA.branco : FONTE_COR.calculado } });
+      cell.alignment = { horizontal: "center" };
+      cell.fill = this.ehProjetado(ano) ? FILL_ANO_PROJETADO : FILL_ANO_REALIZADO;
+      cell.border = { bottom: { style: "double" } };
+      if (refAno && fmtAno === FMT.ano) {
+        cell.note = comoNota(
+          "O ano é FÓRMULA, não número digitado. Todo o calendário do modelo sai de uma única "
+          + "célula — o último exercício realizado, na aba 'Revenues, COGS & SG&A' —, e daí para "
+          + "trás e para frente por EOMONTH(±12 meses). Mudar aquela célula move as 14 abas. "
+          + "É o mecanismo do Modelo Base (uma raiz, duas recorrências).",
+        );
+      }
     }
     this.linha("__unidade", { rotulo: unidade });
+    this.ws.getRow(this.n("__unidade")).getCell(COL_ROTULO).font = fonte({ italic: true });
+    this.pular();
+  }
+
+  /**
+   * `P01` — a RAIZ do calendário, escrita uma vez, na aba de receita.
+   * Devolve o endereço absoluto da célula-raiz para as outras abas herdarem.
+   */
+  eixoRaiz(ultimoHist: number): string {
+    const r = this.linha("__eixoRaiz", {
+      rotulo: "Último exercício realizado (a raiz do calendário do modelo)",
+      nota: "entrada — move o modelo inteiro",
+    });
+    const cell = this.celula(r, COL_PRIMEIRO_ANO);
+    // 31 de dezembro do último exercício realizado. Data FIXA derivada do caso,
+    // nunca `new Date()`: gerador com data do sistema muda o arquivo sozinho na
+    // virada do mês (regra do CLAUDE.md, e já aconteceu neste repositório).
+    cell.value = new Date(Date.UTC(ultimoHist, 11, 31));
+    cell.numFmt = "dd/mm/yyyy";
+    cell.fill = FILL_INPUT;
+    cell.font = FONTE_ENTRADA;
+    cell.note = comoNota(
+      "A ÚNICA data digitada do modelo. Todas as colunas de todas as abas saem daqui por "
+      + "EOMONTH(±12): o histórico para trás, a projeção para frente. Trocar 2025 por 2026 aqui "
+      + "reescreve o cabeçalho das 14 abas sem tocar em mais nada.",
+    );
+    this.celula(r, COL_ROTULO).font = fonte({ bold: true });
+    this.pular();
+    return `$${colLetra(COL_PRIMEIRO_ANO)}$${r}`;
+  }
+
+  /**
+   * A fórmula do cabeçalho de ano DESTA aba, montada como cadeia a partir da
+   * raiz — igual ao Modelo Base: a coluna do último realizado aponta para a
+   * raiz, as anteriores voltam 12 meses, as posteriores avançam 12.
+   */
+  formulaEixo(ano: number, raiz: string, ultimoHist: number): string {
+    if (ano === ultimoHist) return `=${raiz}`;
+    const i = this.anos.indexOf(ano);
+    const iUlt = this.anos.indexOf(ultimoHist);
+    if (i < 0) throw new Error(`modelo-institucional: ano ${ano} fora do horizonte`);
+    if (iUlt < 0) {
+      // Caso sem histórico: a raiz é o ano anterior ao primeiro projetado.
+      return i === 0 ? `=+EOMONTH(${raiz},12)` : `=+EOMONTH(${this.letraDoAno(this.anos[i - 1])}${this.n("__titulo")},12)`;
+    }
+    return i < iUlt
+      ? `=+EOMONTH(${this.letraDoAno(this.anos[i + 1])}${this.n("__titulo")},-12)`
+      : `=+EOMONTH(${this.letraDoAno(this.anos[i - 1])}${this.n("__titulo")},12)`;
+  }
+
+  /**
+   * `P18 ESPELHO-DA-CONTA` — os três blocos que toda aba de driver do Modelo
+   * Base publica no topo (`BALANCE SHEET ACCOUNTS`, `INCOME STATEMENT ACCOUNTS`,
+   * `CASH FLOW ACCOUNTS`) e de onde as demonstrações leem.
+   *
+   * POR QUE ISTO IMPORTA e não é decoração: sem o espelho, `Balance Sheet` lê a
+   * linha de MIOLO do cálculo do giro, e trocar o motor de uma conta obriga a
+   * mexer na demonstração. Com o espelho, a interface de cada driver é
+   * declarada, e é a única coisa que as demonstrações conhecem.
+   */
+  espelho(titulo: string, itens: { chave: string; rotulo: string; fmt?: string }[]): void {
+    this.linha(null, { rotulo: titulo, bloco: true });
+    for (const it of itens) {
+      this.linha(it.chave, { rotulo: it.rotulo, fmt: it.fmt ?? NUM });
+    }
     this.pular();
   }
 
@@ -301,12 +438,54 @@ class Grade {
   /** Endereço absoluto da célula de cenário desta aba, para usar em CHOOSE. */
   get celulaCenario(): string { return `$${colLetra(COL_NOTA + 1)}$1`; }
 
+  /**
+   * Painel congelado. O Modela Base congela até a ÚLTIMA COLUNA DE HISTÓRICO e
+   * até a linha do cabeçalho (`ySplit=7` nas 10 abas congeladas dele, medido no
+   * §17.5 do mapa) — e o motivo é operacional: quem rola a projeção para a
+   * direita precisa continuar vendo o realizado ao lado do rótulo, senão compara
+   * de memória. Congelar só as colunas de rótulo, como fazíamos, perde isso.
+   */
   congelar(chaveLinha?: string): void {
+    const ultimaHist = this.nHist > 0 ? this.colDoAno(this.anos[this.nHist - 1]) : COL_NOTA;
     this.ws.views = [{
       state: "frozen",
-      xSplit: COL_NOTA,
-      ySplit: chaveLinha ? this.n(chaveLinha) : 3,
+      xSplit: Math.max(COL_NOTA, ultimaHist),
+      ySplit: chaveLinha ? this.n(chaveLinha) : (this.tem("__unidade") ? this.n("__unidade") : 3),
+      // Sem linhas de grade e a 85% — é como o Modelo Base abre em 11 das 14 abas
+      // (§2.8 do mapa). Grade ligada num modelo de 30 colunas compete com a
+      // borda que separa subtotal de conta, que é a borda que carrega informação.
+      showGridLines: false,
+      zoomScale: 85,
     }];
+  }
+
+  /**
+   * Área de impressão. O Modelo Base declara `Print_Area` em 5 das 14 abas — os
+   * únicos 5 nomes definidos dele que têm valor, entre 1.044 (§17.1 do mapa).
+   * Aqui todas declaram: sem isso, imprimir uma aba de 30 colunas leva a
+   * planilha para 6 páginas em pedaços, e é assim que o comitê recebe o papel.
+   */
+  imprimir(): void {
+    const ultima = colLetra(COL_PRIMEIRO_ANO + this.anos.length - 1);
+    const ultimaLinha = Math.max(this.cursor, 1);
+    this.ws.pageSetup = {
+      ...(this.ws.pageSetup ?? {}),
+      orientation: "landscape",
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printArea: `B1:${ultima}${ultimaLinha}`,
+      margins: { left: 0.4, right: 0.4, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
+    };
+    this.ws.headerFooter = {
+      oddFooter: "&L&\"Arial,Italic\"&8Oria Partners — documento de trabalho&C&8&A&R&8&P/&N",
+    };
+  }
+
+  /** Fecha a aba: congela, define área de impressão e devolve a última linha. */
+  finalizar(chaveLinha?: string): void {
+    this.congelar(chaveLinha);
+    this.imprimir();
   }
 }
 
@@ -414,6 +593,36 @@ const PADROES_IMOBILIZADO = [
 const ehImobilizado = (chave: string) => PADROES_IMOBILIZADO.some((re) => re.test(chave));
 
 // -----------------------------------------------------------------------------
+// CAIXA E EQUIVALENTES — a lista que corrige a DUPLA CONTAGEM aberta desde a
+// sessão 32, e a resposta veio do próprio Modelo Base.
+//
+// O QUE ESTAVA ERRADO. `Working Capital` projetava TODAS as contas de
+// `ativo_circulante` por dias de giro — inclusive caixa, bancos e aplicações. As
+// mesmas contas voltavam pelo `Cash Flow` em `CAIXA_FIM`, e o `Balance Sheet`
+// fazia `AC = CAIXA + AC_OPER`. Resultado: o caixa entrava DUAS VEZES no ativo, o
+// `CHECK` do balanço acusava em vermelho, e a alavancagem saía otimista porque a
+// dívida líquida descontava um caixa inflado.
+//
+// O QUE O MODELO BASE FAZ (medido, §10 do MAPA_MODELO_BASE.md): as seis contas de
+// giro do ativo dele são `Aplicações de liquidez imediata`, `Reserva Técnica`,
+// `Créd. operações`, `Despesas de comercialização diferidas`, `Títulos e créditos
+// a receber` e `Outros valores e bens` — e `Cash & Short Term Inv.` **está fora
+// da lista**. O caixa é projetado só pelo `Cash Flow`
+// (`Balance Sheet!J13 = 'Cash Flow'!H59`) e a dívida só pelo `ST Inv. & Debt`.
+// A regra é UMA CONTA, UMA ORIGEM.
+//
+// A lista é fechada e casa por palavra inteira, pelo mesmo motivo das outras: a
+// conta "Aplicações em coligadas" é investimento permanente e não pode virar
+// caixa só por conter "aplicações".
+const PADROES_CAIXA = [
+  /\bcaixa\b/i, /\bcaixa e equivalentes?\b/i, /\bdisponibilidades?\b/i, /\bdispon(í|i)vel\b/i,
+  /\bbancos?\b/i, /\bconta movimento\b/i, /\bequivalentes? de caixa\b/i,
+  /\baplica(ç|c)(õ|o)es financeiras\b/i, /\baplica(ç|c)(õ|o)es de liquidez\b/i,
+  /\bt(í|i)tulos e valores mobili(á|a)rios\b/i, /\bnumer(á|a)rio\b/i,
+];
+const ehCaixa = (chave: string) => PADROES_CAIXA.some((re) => re.test(chave));
+
+// -----------------------------------------------------------------------------
 // Premissa por linha: como a projeção de cada conta é escrita.
 // -----------------------------------------------------------------------------
 interface Ctx {
@@ -498,7 +707,13 @@ const SERIES_MACRO: ReadonlyArray<{ codigo: string; rotulo: string }> = [
 
 function abaAnual(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
   const g = new Grade(wb, "Anual", ctx.anos, ctx.nHist);
-  g.cabecalho("BASE MACROECONÔMICA", "Séries anuais — realizado (BCB/IBGE) e expectativa (Focus)");
+  // Cadeia de ano própria (esta aba é construída ANTES da de receita, que é a raiz
+  // do calendário) — mesma solução da `Premissas`, e o mesmo padrão do Modelo Base.
+  g.cabecalho("BASE MACROECONÔMICA", "Séries anuais — realizado (BCB/IBGE) e expectativa (Focus)",
+    (ano) => {
+      const i = ctx.anos.indexOf(ano);
+      return i <= 0 ? String(ano) : `=${g.letraDoAno(ctx.anos[i - 1])}1+1`;
+    }, "0");
 
   const porSerieAno = new Map<string, { valor: number; fonte: string }>();
   for (const m of ctx.ent.macro) porSerieAno.set(`${m.serie}|${m.ano}`, { valor: m.valor, fonte: m.fonte });
@@ -522,12 +737,45 @@ function abaAnual(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
     }
   }
   g.pular();
+
+  // ---- SÉRIES DERIVADAS, por FÓRMULA ---------------------------------------
+  //
+  // O Modelo Base tem 64 fórmulas nesta aba (índice de PIB base 1998=100,
+  // crescimento nominal, correlações); a nossa tinha ZERO — só valor colado. O
+  // índice acumulado abaixo é o que um modelo usa para trazer valor nominal a
+  // real e vice-versa, e por ser fórmula ele acompanha qualquer revisão do Focus
+  // sem ninguém recalcular à mão.
+  //
+  // A GUARDA `N()` É DELIBERADA e corrige o defeito mais caro da referência: lá a
+  // série da Libor carrega o TEXTO "nd" a partir de 2021, e `=Anual!AC86/100`
+  // virou #VALUE! que propagou por cinco tranches em moeda estrangeira até
+  // apagar o NET PROFIT e o CHECK do balanço de 11 exercícios (§20.1 do mapa).
+  // Aqui ano sem publicação fica VAZIO — nunca texto — e todo consumo tem N().
+  if (porSerieAno.size > 0 && g.tem("macro:IPCA")) {
+    g.linha("IPCA_INDICE", { rotulo: "IPCA — índice acumulado (base 100 no primeiro exercício)", fmt: NUM2 });
+    g.linha("IPCA_FATOR", { rotulo: "IPCA — fator acumulado desde o primeiro exercício", fmt: NUM2 });
+    for (const ano of ctx.anos) {
+      const ant = g.anoAnterior(ano);
+      const refIPCA = g.ref("macro:IPCA", ano);
+      g.set("IPCA_INDICE", ano, ant === null ? 100 : `=${g.ref("IPCA_INDICE", ant)}*(1+N(${refIPCA})/100)`, {
+        fmt: NUM2,
+        nota: ant === null
+          ? "Base 100 no primeiro exercício do horizonte."
+          : "Índice do ano anterior corrigido pelo IPCA do ano. O N() trata ano sem publicação como "
+            + "zero em vez de propagar erro — é a guarda que falta no Modelo Base.",
+      });
+      g.set("IPCA_FATOR", ano, `=${g.ref("IPCA_INDICE", ano)}/100`, { fmt: NUM2 });
+    }
+    g.pular();
+  }
+
   const rNota = g.linha(null, {
     rotulo: "Realizado: BCB/IBGE (db/seed/macro_carga_inicial.sql). Projetado: mediana do Focus, "
-      + "coleta mais recente. Célula vazia = sem publicação para o ano.",
+      + "coleta mais recente. Célula vazia = sem publicação para o ano — NUNCA texto como 'nd', "
+      + "que é o que quebrou 11 exercícios do modelo de referência.",
   });
   g.celula(rNota, COL_ROTULO).font = { italic: true, size: 9 };
-  g.congelar();
+  g.finalizar();
   return g;
 }
 
@@ -537,7 +785,16 @@ function abaAnual(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
 // =============================================================================
 function abaPremissas(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
   const g = new Grade(wb, "Premissas", ctx.hist, ctx.hist.length);
-  g.cabecalho("PREMISSAS — BASE HISTÓRICA EXTRAÍDA", `Valores em ${ctx.ent.unidade}`);
+  // Cadeia de ano própria (`=<ano anterior>+1`), que é exatamente o que o Modelo
+  // Base faz nesta aba (`Premissas!D4 = C4+1`). Ela não herda a raiz de data
+  // porque é construída ANTES da aba de receita — e inverter a ordem faria a
+  // receita referenciar uma aba que ainda não existe. A linha do título é sempre
+  // a 1 desta aba (nada é escrito antes do cabeçalho).
+  g.cabecalho("PREMISSAS — BASE HISTÓRICA EXTRAÍDA", `Valores em ${ctx.ent.unidade}`,
+    (ano) => {
+      const i = ctx.hist.indexOf(ano);
+      return i <= 0 ? String(ano) : `=${g.letraDoAno(ctx.hist[i - 1])}1+1`;
+    }, "0");
 
   const bloco = (titulo: string, b: BlocoModelo, chaveTotal: string) => {
     g.linha(null, { rotulo: titulo, bloco: true });
@@ -568,7 +825,7 @@ function abaPremissas(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
   bloco("DESPESAS OPERACIONAIS (SG&A)", "sga", "total:sga");
   bloco("RESULTADO FINANCEIRO", "resultado_financeiro", "total:resultado_financeiro");
   bloco("TRIBUTOS SOBRE O LUCRO", "tributos", "total:tributos");
-  g.congelar();
+  g.finalizar();
   return g;
 }
 
@@ -580,7 +837,10 @@ function abaPremissas(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
 function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade): Grade {
   const g = new Grade(wb, "Revenues, COGS & SG&A", ctx.anos, ctx.nHist);
   g.ancoraCenario();
-  g.cabecalho("RECEITA, CUSTOS E DESPESAS", `Valores em ${ctx.ent.unidade}`);
+  // `P01` — esta aba é a RAIZ do calendário do modelo, como no Modelo Base.
+  const raiz = g.eixoRaiz(ctx.ultimoHist);
+  g.cabecalho("RECEITA, CUSTOS E DESPESAS", `Valores em ${ctx.ent.unidade}`,
+    (ano) => g.formulaEixo(ano, raiz, ctx.ultimoHist));
   const cen = g.celulaCenario;
 
   // ---- GROSS REVENUES ------------------------------------------------------
@@ -778,6 +1038,9 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
     g.set("SGA_PCT", ano, `=IF(${g.ref("RECEITA_LIQUIDA", ano)}<>0,${g.ref("SGA", ano)}/${g.ref("RECEITA_LIQUIDA", ano)},0)`, { fmt: PCT });
   }
 
+  // Esta aba nunca congelava nem tinha área de impressão — medido no arquivo
+  // gerado (`congelado=False` na única aba que é a RAIZ do modelo).
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -801,6 +1064,18 @@ function somaOuZero(g: Grade, chave: string, ano: number, termos: string[], negr
 /** Referência absoluta à célula do haircut de stress (mora em Considerações). */
 function refStress(): string { return `Considerações!$F$8`; }
 
+/**
+ * `P02 CABEÇALHO-HERDADO` — o eixo do tempo de qualquer aba que não seja a raiz.
+ * Aponta para a linha de título da aba de receita, que é onde o calendário nasce.
+ *
+ * No Modelo Base cada par de abas carrega um DESLOCAMENTO de coluna diferente
+ * (§2.2 do mapa), e é dali que sai o erro de ler o ano errado. Aqui a coluna é a
+ * mesma nas 14 abas, então a herança é sempre "mesma coluna, linha do título".
+ */
+function eixoHerdado(gRec: Grade): (ano: number) => string {
+  return (ano) => `=${Grade.refExterna("Revenues, COGS & SG&A", gRec.letraDoAno(ano), gRec.n("__titulo"))}`;
+}
+
 // =============================================================================
 // ABA Income Statement — a DRE completa. Todo subtotal é FÓRMULA: é o que faz o
 // modelo se mover quando a premissa muda, e é o que impede o subtotal de
@@ -809,7 +1084,7 @@ function refStress(): string { return `Considerações!$F$8`; }
 function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv: Grade): Grade {
   const g = new Grade(wb, "Income Statement", ctx.anos, ctx.nHist);
   g.ancoraCenario();
-  g.cabecalho("INCOME STATEMENT", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("INCOME STATEMENT", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
   g.linha("GROSS", { sinal: "+", rotulo: "GROSS REVENUES", negrito: true, fmt: NUM });
   g.linha("DEDUC", { sinal: "(-)", rotulo: "Deductions", fmt: NUM });
@@ -896,7 +1171,7 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
     g.set("NET_PROFIT", ano, `=${g.ref("EBT", ano)}+${g.ref("TAX", ano)}`, { fmt: NUM, negrito: true });
     g.set("NET_MARGIN", ano, `=IF(${g.ref("NET_REV", ano)}<>0,${g.ref("NET_PROFIT", ano)}/${g.ref("NET_REV", ano)},0)`, { fmt: PCT });
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -907,13 +1182,54 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
 function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Working Capital", ctx.anos, ctx.nHist);
   g.ancoraCenario();
-  g.cabecalho("WORKING CAPITAL", `Valores em ${ctx.ent.unidade} · dias de giro sobre receita líquida`);
+  g.cabecalho("WORKING CAPITAL", `Valores em ${ctx.ent.unidade} · dias de giro sobre a linha de DRE correspondente`, eixoHerdado(gRec));
   const cen = g.celulaCenario;
 
-  const ativos = (ctx.linhasPorBloco.get("ativo_circulante") ?? []).filter((l) => !ehImobilizado(l.chave));
-  const passivos = ctx.linhasPorBloco.get("passivo_circulante") ?? [];
+  // O CAIXA NÃO ENTRA NO GIRO — ver `PADROES_CAIXA`. É a correção da dupla
+  // contagem aberta desde a sessão 32, e é o que o Modelo Base faz.
+  const ativos = (ctx.linhasPorBloco.get("ativo_circulante") ?? [])
+    .filter((l) => !ehImobilizado(l.chave) && !ehCaixa(l.chave));
+  const caixaFora = (ctx.linhasPorBloco.get("ativo_circulante") ?? []).filter((l) => ehCaixa(l.chave));
+  // O estoque é giro (fica aqui), mas é identificado à parte porque a LIQUIDEZ
+  // SECA do Output precisa dele: num mandato de reestruturação o estoque é o
+  // ativo circulante que menos vira caixa.
+  const estoques = ativos.filter((l) => /\bestoque/i.test(l.chave) || /\bmercadoria/i.test(l.chave)
+    || /\bprodutos? (acabados?|em (elabora|processo))/i.test(l.chave) || /\bmat(é|e)ria.prima/i.test(l.chave));
+  // A dívida bancária de curto prazo também não é giro: ela vive no
+  // `ST Inv. & Debt`. Deixá-la aqui faria o passivo operacional carregar dívida,
+  // e a NCG passaria a "melhorar" quando a empresa se endivida mais.
+  const passivos = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave));
+  const dividaFora = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+    .filter((l) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave));
 
-  g.linha("NET_REV", { rotulo: "Receita líquida (base dos dias de giro)", negrito: true, fmt: NUM });
+  // `P18` — o espelho: é DAQUI que o `Balance Sheet` e o `Cash Flow` leem.
+  g.espelho("BALANCE SHEET ACCOUNTS", [
+    { chave: "ESP_AC", rotulo: "Ativo circulante operacional (para o Balance Sheet)" },
+    { chave: "ESP_PC", rotulo: "Passivo circulante operacional (para o Balance Sheet)" },
+    { chave: "ESP_ESTOQUE", rotulo: "    do qual ESTOQUE (para a liquidez seca do Output)" },
+  ]);
+  g.espelho("CASH FLOW ACCOUNTS", [
+    { chave: "ESP_VAR_NCG", rotulo: "Variação da NCG (para o Cash Flow)" },
+  ]);
+  g.espelho("INCOME STATEMENT ACCOUNTS", [
+    { chave: "NET_REV", rotulo: "Receita líquida (base dos dias de giro do ativo)" },
+    { chave: "BASE_COGS", rotulo: "Custos (base dos dias de giro do passivo de fornecedor)" },
+  ]);
+
+  const rExcl = g.linha(null, {
+    rotulo: caixaFora.length + dividaFora.length === 0
+      ? "Nenhuma conta de caixa ou de dívida bancária foi encontrada no circulante deste caso."
+      : `FORA do giro de propósito (uma conta, uma origem): ${
+        [...caixaFora, ...dividaFora].map((l) => l.chave).join(" · ")}`,
+  });
+  g.celula(rExcl, COL_ROTULO).font = fonte({ italic: true, size: 9, color: { argb: FONTE_COR.auxiliar } });
+  g.celula(rExcl, COL_ROTULO).note = comoNota(
+    "Caixa, bancos e aplicações são projetados SÓ pelo Cash Flow; empréstimos e financiamentos, "
+    + "SÓ pelo ST Inv. & Debt. Projetá-los aqui por dias de giro os contaria duas vezes no ativo "
+    + "(o defeito aberto desde a sessão 32) e faria a NCG melhorar quando a empresa se endivida. "
+    + "É a mesma separação do Modelo Base.",
+  );
   g.pular();
   g.linha(null, { rotulo: "ATIVO CIRCULANTE OPERACIONAL", bloco: true });
   for (const l of ativos) {
@@ -936,36 +1252,57 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   g.linha("NCG", { rotulo: "NECESSIDADE DE CAPITAL DE GIRO (AC − PC)", negrito: true, topo: true, fmt: NUM });
   g.linha("VAR_NCG", { rotulo: "Variação da NCG (efeito no caixa, sinal invertido)", fmt: NUM });
 
+  // A BASE DE CADA CONTA — e uma incoerência do Modelo Base que NÃO se replica.
+  //
+  // Lá o prazo médio HISTÓRICO de uma conta de fornecedor é medido contra o CUSTO
+  // (`Working Capital!D46 = IF(D32>0, D21/D32*360, )`), mas o saldo PROJETADO é
+  // aplicado sobre a RECEITA LÍQUIDA (`I21 = I46/360*I31`). Medir num
+  // denominador e aplicar noutro infla o passivo projetado na razão
+  // receita/custo — no caso da referência, ~1,27×. É defeito, não convenção.
+  //
+  // Aqui a base é a MESMA nas duas pontas, e é a base contábil correta de cada
+  // conta: fornecedor gira contra CUSTO (é o PMP de manual), o resto gira contra
+  // RECEITA LÍQUIDA.
+  const ehFornecedor = (chave: string) =>
+    /\bfornecedor/i.test(chave) || /\bcontas? a pagar\b/i.test(chave) || /\bduplicatas? a pagar\b/i.test(chave);
+  const baseDe = (pref: "wc_a" | "wc_p", l: LinhaModelo, ano: number) =>
+    pref === "wc_p" && ehFornecedor(l.chave) ? g.ref("BASE_COGS", ano) : g.ref("NET_REV", ano);
+  const nomeBase = (pref: "wc_a" | "wc_p", l: LinhaModelo) =>
+    pref === "wc_p" && ehFornecedor(l.chave) ? "custos" : "receita líquida";
+
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
     const ant = g.anoAnterior(ano);
     g.set("NET_REV", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "RECEITA_LIQUIDA", ano)}`, { fmt: NUM, negrito: true });
+    g.set("BASE_COGS", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "CUSTOS", ano)}`, { fmt: NUM });
 
     for (const [pref, lista] of [["wc_a", ativos], ["wc_p", passivos]] as const) {
       for (const l of lista) {
         const ch = chaveLinha(pref, l);
+        const base = baseDe(pref, l, ano);
         if (hist) {
           const e = valorNaEscala(l, ano, ctx.ent.unidade);
-          if (e) g.set(ch, ano, e.valor, { fmt: NUM, fill: FILL_HIST, nota: e.nota });
-          // Dias IMPLÍCITOS do histórico: saldo / receita × 360. É o número que o
-          // analista precisa ver antes de escolher o dia projetado — sem ele, a
-          // premissa de giro é palpite.
+          if (e) g.set(ch, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
+          // Dias IMPLÍCITOS do histórico: saldo ÷ base × 360, com a guarda
+          // `IF(base>0)` do Modelo Base (`P27`). É o número que o analista precisa
+          // ver antes de escolher o dia projetado — sem ele, a premissa é palpite.
           g.set(`${ch}#dias`, ano,
-            `=IF(${g.ref("NET_REV", ano)}<>0,${g.ref(ch, ano)}/${g.ref("NET_REV", ano)}*360,0)`,
-            { fmt: NUM2, nota: "Dias implícitos no realizado: saldo ÷ receita líquida × 360." });
+            `=IF(${base}>0,${g.ref(ch, ano)}/${base}*360,0)`,
+            { fmt: DIAS, nota: `Dias implícitos no realizado: saldo ÷ ${nomeBase(pref, l)} × 360. `
+              + "Base 360 (ano comercial), que é a dos contratos e dos covenants." });
           continue;
         }
         const p = ctx.premissaPorLinha.get(l.rotulo_norm);
         const usaPremissa = p && p.formula === "dias_de_giro" && p.valores[String(ano)] !== undefined;
         g.set(`${ch}#dias`, ano, usaPremissa ? p!.valores[String(ano)] : `=${g.ref(`${ch}#dias`, ant!)}`, {
-          fmt: NUM2, fill: FILL_INPUT,
+          fmt: DIAS, fill: FILL_INPUT,
           nota: usaPremissa
-            ? `Premissa "${p!.nome}" (${p!.origem ?? "digitado"}).`
+            ? `Premissa "${p!.nome}" (${p!.origem ?? "digitado"}). Aplicada sobre ${nomeBase(pref, l)}.`
             : "Sem premissa de dias de giro para esta conta: mantém os dias do período anterior. "
               + "É a hipótese conservadora — o giro não melhora sozinho.",
         });
         g.set(`${ch}#diasStr`, ano, `=${g.ref(`${ch}#dias`, ano)}*(1+${refStress()}*${pref === "wc_a" ? "1" : "-1"})`, {
-          fmt: NUM2,
+          fmt: DIAS,
           nota: pref === "wc_a"
             ? "No Stress o ATIVO gira MAIS DEVAGAR (recebe pior): dias sobem."
             : "No Stress o PASSIVO gira MAIS RÁPIDO (fornecedor aperta o prazo): dias caem. "
@@ -973,7 +1310,7 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         });
         g.set(ch, ano,
           `=CHOOSE(${cen},${g.ref(`${ch}#dias`, ano)},${g.ref(`${ch}#dias`, ano)},${g.ref(`${ch}#diasStr`, ano)})`
-          + `/360*${g.ref("NET_REV", ano)}`, { fmt: NUM });
+          + `/360*${base}`, { fmt: NUM, nota: `Prazo ÷ 360 × ${nomeBase(pref, l)} do mesmo exercício.` });
       }
     }
     somaOuZero(g, "TOTAL_AC", ano, ativos.map((l) => g.ref(chaveLinha("wc_a", l), ano)), true);
@@ -984,8 +1321,13 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
       nota: "Sinal invertido: NCG que CRESCE consome caixa. É o erro de sinal mais comum do "
         + "fluxo indireto, e ele dobra o efeito em vez de zerá-lo.",
     });
+    // `P18` — o espelho, que é o que as demonstrações leem.
+    g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
+    somaOuZero(g, "ESP_ESTOQUE", ano, estoques.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
+    g.set("ESP_PC", ano, `=${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
+    g.set("ESP_VAR_NCG", ano, `=${g.ref("VAR_NCG", ano)}`, { fmt: NUM });
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -1001,19 +1343,48 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
 // =============================================================================
 const VIDA_UTIL_PADRAO = 10;
 
+// Prazo de amortização da dívida NOVA, em anos. É default de modelo, não dado do
+// caso — e por isso vira célula de premissa (azul) na aba, não número escondido
+// na fórmula.
+const PRAZO_EMISSAO_PADRAO = 5;
+
+// CORTES DE COVENANT SUGERIDOS. São PREMISSA DE NEGOCIAÇÃO, não dado do caso, e
+// por isso entram como célula azul editável ao lado do índice — que é o desenho
+// do Modelo Base (as linhas `Corte Sugerido` / `Covenant Sugerido` das tabelas
+// laterais do `Output` dele). Os números abaixo são os patamares usuais de term
+// sheet de crédito no Brasil; o valor certo é o do contrato, e é por isso que a
+// célula existe em vez de a fórmula ter o número dentro.
+const COVENANT_ND_EBITDA = 3;
+const COVENANT_DSCR = 1.2;
+const COVENANT_LIQUIDEZ = 1;
+
 function abaImobilizado(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Fixed Assets & CAPEX", ctx.anos, ctx.nHist);
   g.ancoraCenario();
-  g.cabecalho("FIXED ASSETS & CAPEX", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("FIXED ASSETS & CAPEX", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
   const cen = g.celulaCenario;
 
   const classes = (ctx.linhasPorBloco.get("ativo_nao_circulante") ?? []).filter((l) => ehImobilizado(l.chave));
+
+  // `P18` — o espelho desta aba. É daqui que `Balance Sheet`, `Income Statement`
+  // e `Cash Flow` leem; nenhum deles conhece o miolo do cálculo de depreciação.
+  g.espelho("BALANCE SHEET ACCOUNTS", [
+    { chave: "ESP_IMOB", rotulo: "Imobilizado e intangível líquido (para o Balance Sheet)" },
+  ]);
+  g.espelho("INCOME STATEMENT ACCOUNTS", [
+    { chave: "ESP_DEPREC", rotulo: "Depreciação e amortização do período (para a DRE)" },
+  ]);
+  g.espelho("CASH FLOW ACCOUNTS", [
+    { chave: "ESP_CAPEX", rotulo: "CAPEX do período (para o Cash Flow)" },
+    { chave: "ESP_DEPREC_CF", rotulo: "Depreciação (volta ao caixa no método indireto)" },
+  ]);
 
   g.linha("VIDA_UTIL", { rotulo: "Vida útil média adotada (anos)", nota: "premissa", fmt: NUM2 });
   g.pular();
   g.linha(null, { rotulo: "SALDO DO IMOBILIZADO POR CLASSE", bloco: true });
   for (const l of classes) {
     g.linha(chaveLinha("fa", l), { rotulo: l.chave, fmt: NUM });
+    g.linha(`${chaveLinha("fa", l)}#dep`, { rotulo: "    depreciação rateada à classe", fmt: NUM });
   }
   g.linha("TOTAL_FA", { rotulo: "Imobilizado líquido total", negrito: true, topo: true, fmt: NUM });
   g.pular();
@@ -1044,8 +1415,9 @@ function abaImobilizado(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
       const chCx = chaveLinha("capex", l);
       if (hist) {
         const e = valorNaEscala(l, ano, ctx.ent.unidade);
-        if (e) g.set(chFa, ano, e.valor, { fmt: NUM, fill: FILL_HIST, nota: e.nota });
-        g.set(chCx, ano, 0, { fmt: NUM, nota: "Capex histórico não é extraível do balanço (só a variação do saldo). Zero explícito." });
+        if (e) g.set(chFa, ano, e.valor, { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
+        g.set(`${chFa}#dep`, ano, 0, { fmt: NUM, tipo: "calc" });
+        g.set(chCx, ano, 0, { fmt: NUM, tipo: "calc", nota: "Capex histórico não é extraível do balanço (só a variação do saldo). Zero explícito." });
         continue;
       }
       const p = ctx.premissaPorLinha.get(l.rotulo_norm);
@@ -1061,10 +1433,34 @@ function abaImobilizado(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         `=CHOOSE(${cen},${g.ref(`${chCx}#pct`, ano)},${g.ref(`${chCx}#pct`, ano)},`
         + `${g.ref(`${chCx}#pct`, ano)}*(1-${refStress()}))*${g.externa("Revenues, COGS & SG&A", gRec, "RECEITA_LIQUIDA", ano)}`,
         { fmt: NUM, nota: "No Stress o capex é CORTADO (é a primeira coisa que se corta numa crise de caixa)." });
-      // Saldo: abertura + capex − depreciação rateada pela participação da classe.
+      // RATEIO EXAUSTIVO DA DEPRECIAÇÃO — e é uma correção que a álgebra do
+      // balanço exige, não estética.
+      //
+      // O rateio anterior era `IF(total anterior<>0, participação × depreciação, 0)`
+      // por classe. Quando o saldo anterior total era ZERO (primeiro ano com
+      // capex, ou caso sem imobilizado extraído), TODOS os rateios davam zero e a
+      // depreciação do período não saía de classe nenhuma: o imobilizado crescia
+      // pelo capex inteiro, a DRE debitava a depreciação, e o balanço abria
+      // exatamente no valor dela. Aqui a ÚLTIMA classe recebe o resíduo, então a
+      // soma dos rateios é sempre igual à depreciação do período — por
+      // construção, não por sorte.
+      const iClasse = classes.indexOf(l);
+      const ehUltima = iClasse === classes.length - 1;
+      g.set(`${chFa}#dep`, ano,
+        ehUltima
+          ? `=${g.ref("DEPREC", ano)}-(${classes.slice(0, -1).map((o) => g.ref(`${chaveLinha("fa", o)}#dep`, ano)).join("+") || "0"})`
+          : `=IF(${g.ref("TOTAL_FA", ant!)}<>0,${g.ref(chFa, ant!)}/${g.ref("TOTAL_FA", ant!)}*${g.ref("DEPREC", ano)},0)`,
+        {
+          fmt: NUM,
+          nota: ehUltima
+            ? "Última classe: recebe o RESÍDUO, para a soma dos rateios ser exatamente a "
+              + "depreciação do período. Sem isso, quando o saldo anterior é zero nenhuma classe "
+              + "recebe depreciação e o balanço abre no valor dela."
+            : "Rateio pela participação da classe no imobilizado de abertura.",
+        });
+      // Saldo: abertura + capex − depreciação rateada à classe.
       g.set(chFa, ano,
-        `=${g.ref(chFa, ant!)}+${g.ref(chCx, ano)}-IF(${g.ref("TOTAL_FA", ant!)}<>0,`
-        + `${g.ref(chFa, ant!)}/${g.ref("TOTAL_FA", ant!)}*${g.ref("DEPREC", ano)},0)`, { fmt: NUM });
+        `=${g.ref(chFa, ant!)}+${g.ref(chCx, ano)}-${g.ref(`${chFa}#dep`, ano)}`, { fmt: NUM });
     }
     somaOuZero(g, "TOTAL_FA", ano, classes.map((l) => g.ref(chaveLinha("fa", l), ano)), true);
     somaOuZero(g, "TOTAL_CAPEX", ano, classes.map((l) => g.ref(chaveLinha("capex", l), ano)), true);
@@ -1089,49 +1485,191 @@ function abaImobilizado(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         + "#DIV/0! em cascata por 12 abas.",
     });
   }
-  g.congelar("__unidade");
+  // `P18` — o espelho, preenchido depois que TOTAL_FA/TOTAL_CAPEX/DEPREC existem
+  // em todos os anos. Fazê-lo dentro do laço acima daria o mesmo resultado, mas
+  // separado deixa explícito que o espelho é interface, não cálculo.
+  for (const ano of ctx.anos) {
+    g.set("ESP_IMOB", ano, `=${g.ref("TOTAL_FA", ano)}`, { fmt: NUM, negrito: true });
+    g.set("ESP_DEPREC", ano, `=${g.ref("DEPREC", ano)}`, { fmt: NUM });
+    g.set("ESP_CAPEX", ano, `=${g.ref("TOTAL_CAPEX", ano)}`, { fmt: NUM });
+    g.set("ESP_DEPREC_CF", ano, `=${g.ref("DEPREC", ano)}`, { fmt: NUM });
+  }
+  g.finalizar("__unidade");
   return g;
 }
 
 // =============================================================================
 // ABA ST Inv. & Debt — o cronograma da dívida, uma tranche por linha do mapa.
 // =============================================================================
-function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade): Grade {
+function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): Grade {
   const g = new Grade(wb, "ST Inv. & Debt", ctx.anos, ctx.nHist);
   g.ancoraCenario();
-  g.cabecalho("ST INVESTMENTS & DEBT", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("ST INVESTMENTS & DEBT", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
-  // Uma tranche por linha de SALDO do mapa da dívida. As linhas de "juros do
-  // exercício" do mesmo mapa NÃO viram tranche: elas são a taxa implícita, e
-  // tratá-las como principal dobraria a dívida.
-  const dividas = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /saldo|principal/i.test(l.chave));
+  // DE ONDE SAEM AS TRANCHES — e este parágrafo corrige o defeito mais grave que
+  // esta rodada encontrou no nosso lado, achado por um teste que somou o balanço.
+  //
+  // Antes, as tranches vinham SÓ do mapa de dívida (`documentos` com
+  // `MAPA_DIVIDA`, linhas de "saldo"/"principal"). Como esta mesma rodada tirou a
+  // dívida bancária do capital de giro — corretamente, ela não é giro —, um caso
+  // SEM mapa de dívida ficava com a dívida em lugar NENHUM: fora do giro e fora
+  // desta aba. Medido no teste (0105a): o balanço abria em exatamente 50.000, que
+  // era a soma dos empréstimos de curto e longo prazo do caso.
+  //
+  // A regra agora tem duas fontes, nesta ordem de qualidade:
+  //   1. o MAPA DE DÍVIDA, quando existe — é o detalhe por contrato, com juros;
+  //   2. as LINHAS DE DÍVIDA BANCÁRIA DO BALANÇO, sempre que o mapa não traz —
+  //      é o número auditado da demonstração, e ele nunca falta.
+  // Nunca as duas juntas: somar mapa e balanço contaria a mesma dívida duas vezes.
+  const ehBancariaChave = (chave: string) =>
+    /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing|nota promiss(ó|o)ria|c(é|e)dula de cr(é|e)dito/i
+      .test(chave);
+  const doMapa = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /saldo|principal/i.test(l.chave));
+  const doBalanco = [
+    ...(ctx.linhasPorBloco.get("passivo_circulante") ?? []),
+    ...(ctx.linhasPorBloco.get("passivo_nao_circulante") ?? []),
+  ].filter((l) => ehBancariaChave(l.chave));
+  const dividas = doMapa.length > 0 ? doMapa : doBalanco;
+  const origemDaDivida = doMapa.length > 0 ? "mapa de dívida" : "linhas de dívida bancária do balanço";
   const jurosDoMapa = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /juros/i.test(l.chave));
 
+  // A REPARTIÇÃO CURTO/LONGO PRAZO MORA AQUI, não no balanço. Ela é medida no
+  // último exercício realizado do próprio caso (dívida bancária no circulante ÷
+  // dívida bancária total). Antes vivia em `abaBalanco`, e o balanço acabava
+  // sabendo de dívida — o que é exatamente o acoplamento que o espelho (`P18`)
+  // existe para evitar. Sem base para medir, 30% declarado na nota.
+  const ehBancaria = (chave: string) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(chave);
+  const saldoCP = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+    .filter((l) => ehBancaria(l.chave))
+    .reduce((acc, l) => acc + Math.abs(l.valores[String(ctx.ultimoHist)] ?? 0), 0);
+  const saldoLP = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
+    .filter((l) => ehBancaria(l.chave))
+    .reduce((acc, l) => acc + Math.abs(l.valores[String(ctx.ultimoHist)] ?? 0), 0);
+  const fracCP = saldoCP + saldoLP > 0 ? saldoCP / (saldoCP + saldoLP) : 0.3;
+
+  // `P18` — o espelho desta aba, na ordem do Modelo Base: o que o balanço, a DRE
+  // e o fluxo leem. As demonstrações NÃO conhecem as tranches.
+  // NOTA DE DESENHO: as aplicações financeiras NÃO entram neste espelho de
+  // propósito. No Modelo Base `Cash` e `ST Investments` são duas linhas do ativo;
+  // aqui o caixa é UMA linha (`Balance Sheet!Caixa e equivalentes`) e a aplicação
+  // é uma DECOMPOSIÇÃO dela — o excedente ao caixa mínimo. Publicá-la como conta
+  // de balanço convidaria a somá-la ao caixa, que é exatamente a dupla contagem
+  // que esta rodada corrigiu no giro. Ela vive no bloco `SHORT TERM INVESTMENTS`,
+  // com a nota dizendo isso.
+  g.espelho("BALANCE SHEET ACCOUNTS", [
+    { chave: "ESP_REVOLVER", rotulo: "Revolver (fim do período)" },
+    { chave: "ESP_DIVIDA_CP", rotulo: "Dívida de curto prazo (fim do período)" },
+    { chave: "ESP_DIVIDA_LP", rotulo: "Dívida de longo prazo (fim do período)" },
+  ]);
+  g.espelho("INCOME STATEMENT ACCOUNTS", [
+    { chave: "DESP_FIN", rotulo: "Despesa financeira total (juros e encargos)" },
+    { chave: "REC_FIN", rotulo: "Receita financeira (rendimento das aplicações)" },
+  ]);
+  g.espelho("CASH FLOW ACCOUNTS", [
+    { chave: "ESP_CAPTACAO", rotulo: "Captação de dívida no período" },
+    { chave: "ESP_AMORT", rotulo: "Amortização de dívida no período" },
+    { chave: "ESP_REVOLVER_MOV", rotulo: "Saque/(amortização) do revolver" },
+  ]);
+
+  // ---- premissas do instrumento, todas em coluna própria (como no Modelo Base,
+  // que concentra margem, fee e % de amortização na coluna F) ------------------
+  g.linha(null, { rotulo: "PREMISSAS DO ENDIVIDAMENTO", bloco: true });
   g.linha("CAIXA_MIN", { rotulo: "Caixa mínimo operacional", nota: "premissa", fmt: NUM });
-  g.linha("TAXA_MEDIA", { rotulo: "Taxa média da dívida (% a.a.)", nota: "premissa/implícita", fmt: PCT });
+  g.linha("CURVA_CDI", { rotulo: "Curva de juros de referência (CDI, da aba Anual)", fmt: PCT2 });
+  g.linha("SPREAD_DIVIDA", { rotulo: "Spread sobre a curva (dívida existente)", nota: "premissa", fmt: PCT2 });
+  g.linha("TAXA_MEDIA", { rotulo: "Custo efetivo da dívida — (1+curva)×(1+spread)−1", fmt: PCT2 });
+  g.linha("SPREAD_REVOLVER", { rotulo: "Spread do revolver (dívida de emergência)", nota: "premissa", fmt: PCT2 });
+  g.linha("TAXA_REVOLVER", { rotulo: "Custo efetivo do revolver", fmt: PCT2 });
+  g.linha("SPREAD_APLIC", { rotulo: "% do CDI recebido na aplicação", nota: "premissa", fmt: PCT2 });
+  g.linha("TAXA_APLIC", { rotulo: "Rendimento efetivo da aplicação", fmt: PCT2 });
+  g.linha("FX_USD", { rotulo: "R$/US$ — final de período (da aba Anual)", fmt: NUM2 });
   g.pular();
-  g.linha(null, { rotulo: "TRANCHES", bloco: true });
+
+  // ---- aplicações de curto prazo (o Modelo Base tem este bloco e nós não
+  // tínhamos: sem ele o caixa excedente não rende e o modelo subestima o
+  // resultado financeiro) -----------------------------------------------------
+  g.linha(null, { rotulo: "SHORT TERM INVESTMENTS", bloco: true });
+  g.linha("ST_INI", { rotulo: "Saldo de abertura", fmt: NUM });
+  g.linha("ST_VAR", { rotulo: "Variação do período", fmt: NUM });
+  g.linha("ST_FIM", { rotulo: "Saldo de fechamento", negrito: true, fmt: NUM });
+  g.linha("ST_REND", { rotulo: "Rendimento do período", fmt: NUM });
+  g.pular();
+
+  g.linha(null, { rotulo: `TRANCHES DA DÍVIDA EXISTENTE — origem: ${origemDaDivida}`, bloco: true });
   for (const l of dividas) {
     const ch = chaveLinha("dv", l);
     g.linha(`${ch}#ini`, { rotulo: `${l.chave} — saldo de abertura`, fmt: NUM });
-    g.linha(`${ch}#amort`, { rotulo: "    amortização do período", fmt: NUM });
     g.linha(`${ch}#pct`, { rotulo: "    % amortizado no período (premissa)", fmt: PCT });
+    g.linha(`${ch}#amort`, { rotulo: "    amortização do período", fmt: NUM });
     g.linha(`${ch}#fim`, { rotulo: "    saldo de fechamento", fmt: NUM });
+    g.linha(`${ch}#taxa`, { rotulo: "    custo efetivo aplicado", fmt: PCT2 });
     g.linha(`${ch}#juros`, { rotulo: "    juros do período", fmt: NUM });
   }
-  g.linha("TOTAL_DIVIDA", { rotulo: "DÍVIDA TOTAL (fechamento)", negrito: true, topo: true, fmt: NUM });
+  // `P29 CHAVE-DE-EFEITO-CAIXA` — o Modelo Base tem uma célula por tranche com
+  // validação de lista "S,N" (`ST Inv. & Debt!D128`) que decide se a amortização
+  // daquela tranche SAI DO CAIXA. Existe porque dívida reperfilada, capitalizada
+  // ou convertida em equity reduz o saldo SEM pagamento — e num mandato de
+  // reestruturação isso é a regra, não a exceção. Sem essa chave, todo
+  // reperfilamento aparece como saída de caixa que nunca aconteceu.
+  for (const l of dividas) {
+    const ch = chaveLinha("dv", l);
+    const cel = g.celula(g.n(`${ch}#amort`), COL_NOTA);
+    cel.value = "S";
+    cel.fill = FILL_INPUT;
+    cel.font = FONTE_ENTRADA;
+    cel.alignment = { horizontal: "center" };
+    cel.dataValidation = {
+      type: "list", allowBlank: false, formulae: ['"S,N"'],
+      showErrorMessage: true, errorTitle: "Efeito caixa",
+      error: "S = a amortização desta tranche sai do caixa. N = o saldo cai sem pagamento "
+        + "(reperfilamento, capitalização, conversão em equity).",
+    };
+    cel.note = comoNota(
+      "EFEITO CAIXA desta tranche. S = a amortização sai do caixa e entra no fluxo de "
+      + "financiamento. N = o saldo diminui SEM pagamento — é o caso de dívida reperfilada, "
+      + "capitalizada ou convertida em participação. Marcar N aqui tira a saída do fluxo e "
+      + "mantém a queda do saldo no balanço, que é o que de fato acontece.",
+    );
+  }
+  if (dividas.length > 0) {
+    g.celula(g.n(chaveLinha("dv", dividas[0]) + "#amort") - 1, COL_NOTA).value = "Efeito caixa?";
+  }
+  g.linha("TOTAL_DIVIDA", { rotulo: "DÍVIDA EXISTENTE (fechamento)", negrito: true, topo: true, fmt: NUM });
+  g.linha("TOTAL_AMORT_CAIXA", { rotulo: "    da qual COM efeito caixa", fmt: NUM });
   g.linha("TOTAL_AMORT", { rotulo: "Amortização total do período", fmt: NUM });
   g.linha("TOTAL_JUROS", { rotulo: "Juros totais do período", fmt: NUM });
   g.pular();
-  g.linha(null, { rotulo: "REVOLVER (dívida de tapa-buraco)", bloco: true });
+
+  // ---- DÍVIDA NOVA POR SAFRA (`P14`) ---------------------------------------
+  // O Modelo Base dedica 43 linhas a isto (`% Amt Issuance #0…#42`): cada
+  // captação anual tem sua PRÓPRIA linha de amortização, e a linha só paga a
+  // partir do ano em que a safra existe, parando quando o acumulado atinge o
+  // principal. É o que permite modelar carência e prazo diferentes por captação
+  // — o que um "% do saldo" único não consegue expressar.
+  g.linha(null, { rotulo: "DEBT ISSUANCE — CAPTAÇÃO NOVA, AMORTIZADA POR SAFRA", bloco: true });
+  g.linha("EMISSAO_PRAZO", { rotulo: "Prazo de amortização da captação nova (anos)", nota: "premissa", fmt: NUM2 });
+  g.linha("EMISSAO_SPREAD", { rotulo: "Spread da captação nova", nota: "premissa", fmt: PCT2 });
+  g.linha("EMISSAO_TAXA", { rotulo: "Custo efetivo da captação nova", fmt: PCT2 });
+  for (const ano of ctx.proj) {
+    g.linha(`emis:${ano}`, { rotulo: `Captação de ${ano} (principal)`, fmt: NUM });
+  }
+  g.linha("EMISSAO_TOTAL", { rotulo: "Captação do período", negrito: true, topo: true, fmt: NUM });
+  for (const ano of ctx.proj) {
+    g.linha(`amort:${ano}`, { rotulo: `    amortização da safra de ${ano}`, fmt: NUM });
+  }
+  g.linha("EMISSAO_AMORT", { rotulo: "Amortização das safras novas", negrito: true, topo: true, fmt: NUM });
+  g.linha("EMISSAO_SALDO", { rotulo: "Saldo das captações novas", negrito: true, fmt: NUM });
+  g.linha("EMISSAO_JUROS", { rotulo: "Juros das captações novas", fmt: NUM });
+  g.pular();
+
+  g.linha(null, { rotulo: "ADDITIONAL LEVERAGE — REVOLVER", bloco: true });
   g.linha("REVOLVER_INI", { rotulo: "Revolver — saldo de abertura", fmt: NUM });
   g.linha("REVOLVER_SAQUE", { rotulo: "Saque/(amortização) do revolver", fmt: NUM });
   g.linha("REVOLVER_FIM", { rotulo: "Revolver — saldo de fechamento", negrito: true, fmt: NUM });
   g.linha("REVOLVER_JUROS", { rotulo: "Juros do revolver", fmt: NUM });
   g.pular();
-  g.linha("DIVIDA_BRUTA", { rotulo: "DÍVIDA BRUTA TOTAL", negrito: true, fmt: NUM });
-  g.linha("DESP_FIN", { rotulo: "Despesa financeira total (para a DRE)", negrito: true, fmt: NUM });
-  g.linha("REC_FIN", { rotulo: "Receita financeira do caixa (para a DRE)", fmt: NUM });
+  g.linha("DIVIDA_BRUTA", { rotulo: "DÍVIDA BRUTA TOTAL", negrito: true, topo: true, fmt: NUM });
+  g.linha("DIVIDA_LIQUIDA", { rotulo: "DÍVIDA LÍQUIDA (bruta − caixa − aplicações)", negrito: true, fmt: NUM });
 
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
@@ -1155,24 +1693,93 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade): Grade {
     const refCDI = gAnual.tem("macro:CDI")
       ? `${Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n("macro:CDI"))}/100`
       : null;
-    g.set("TAXA_MEDIA", ano, taxaImplicita > 0 ? taxaImplicita : (refCDI ? `=${refCDI}` : 0), {
-      fmt: PCT, fill: FILL_INPUT,
-      nota: taxaImplicita > 0
-        ? `Taxa IMPLÍCITA do mapa da dívida deste caso: juros ${Math.round(somaJuros)} ÷ saldo `
-          + `${Math.round(somaSaldo)}. Custo medido no documento, não taxa de mercado.`
-        : refCDI
-          ? "O mapa da dívida não traz juros e saldo no mesmo exercício: a taxa cai para o CDI da "
-            + "aba Anual (dado versionado). É PISO — dívida de empresa em reestruturação custa "
-            + "mais que CDI, e este número deve ser revisto antes de ir a comitê."
-          : "Sem juros no mapa da dívida e sem série de CDI: ZERO, com aviso. Preencher aqui é "
-            + "premissa de custo da dívida.",
+    // `P16 CURVA-MACRO` — a curva vem da aba Anual, dado versionado, e o consumo
+    // divide por 100 porque a série está em pontos percentuais. É o mesmo contrato
+    // do Modelo Base, com uma diferença que corrige o defeito dele: lá a série da
+    // Libor carrega o TEXTO "nd" a partir de 2021, e `=Anual!AC86/100` virou
+    // #VALUE! que apagou o resultado dos últimos 11 anos do modelo (§20.1 do
+    // mapa). Aqui ano sem publicação fica VAZIO (nunca texto) e o consumo tem
+    // guarda `N()`, que trata vazio como zero e não propaga erro.
+    const curva = refCDI ? `=N(${refCDI})` : null;
+    g.set("CURVA_CDI", ano, curva ?? 0, {
+      fmt: PCT2,
+      nota: curva
+        ? "Curva de referência da aba Anual (realizado BCB, projetado Focus), em pontos percentuais "
+          + "— daí o /100. O N() trata ano sem publicação como zero em vez de propagar erro: é a "
+          + "guarda que falta no Modelo Base, onde um 'nd' na série da Libor apagou o resultado de "
+          + "11 anos de projeção."
+        : "Sem série de CDI na aba Anual: zero, com aviso.",
+    });
+    // O SPREAD É DERIVADO DO CUSTO MEDIDO, não arbitrado: se o mapa da dívida traz
+    // juros e saldo, o custo implícito é fato do documento, e o spread é o que
+    // falta para a curva chegar nele. Assim a composição (1+curva)×(1+spread)−1
+    // reproduz o custo real do caso, e mexer na curva move o custo junto.
+    const spread = taxaImplicita > 0 && curva
+      ? null // calculado por fórmula abaixo, para acompanhar a curva
+      : 0;
+    if (taxaImplicita > 0 && curva) {
+      g.set("SPREAD_DIVIDA", ano, `=IF((1+${g.ref("CURVA_CDI", ano)})=0,0,(1+${taxaImplicita})/(1+${g.ref("CURVA_CDI", ano)})-1)`, {
+        fmt: PCT2, fill: FILL_INPUT,
+        nota: `Spread DERIVADO do custo implícito medido no mapa da dívida deste caso: juros `
+          + `${Math.round(somaJuros)} ÷ saldo ${Math.round(somaSaldo)} = ${(taxaImplicita * 100).toFixed(2)}% a.a. `
+          + "O spread é o que falta para a curva chegar nesse custo — então o número total é o do "
+          + "documento, e não uma taxa de mercado chutada.",
+      });
+    } else {
+      g.set("SPREAD_DIVIDA", ano, taxaImplicita > 0 ? taxaImplicita : (spread ?? 0), {
+        fmt: PCT2, fill: FILL_INPUT,
+        nota: taxaImplicita > 0
+          ? "Sem curva na aba Anual: o custo implícito medido no mapa entra inteiro como spread."
+          : "O mapa da dívida não traz juros e saldo no mesmo exercício: spread ZERO, e o custo "
+            + "fica igual à curva. É PISO — dívida de empresa em reestruturação custa mais que CDI, "
+            + "e este número tem de ser revisto antes de ir a comitê.",
+      });
+    }
+    // `P15 CUSTO-COMPOSTO` — composição, não soma. Somar curva e spread erra por
+    // curva×spread, que a 10% e 5% já é 50 pontos-base.
+    g.set("TAXA_MEDIA", ano, `=((1+${g.ref("CURVA_CDI", ano)})*(1+${g.ref("SPREAD_DIVIDA", ano)}))-1`, {
+      fmt: PCT2, negrito: true,
+      nota: "Custo efetivo = (1+curva)×(1+spread)−1, como no Modelo Base. Somar as duas pontas "
+        + "subestima o custo em curva×spread.",
+    });
+    g.set("SPREAD_REVOLVER", ano, `=${g.ref("SPREAD_DIVIDA", ano)}`, {
+      fmt: PCT2, fill: FILL_INPUT,
+      nota: "Spread do revolver, inicializado IGUAL ao da dívida existente. Na prática dívida de "
+        + "emergência custa mais; este valor é PISO e a célula existe para o analista subir. "
+        + "Inventar um prêmio aqui seria inventar o número que decide se a empresa cabe no plano.",
+    });
+    g.set("TAXA_REVOLVER", ano, `=((1+${g.ref("CURVA_CDI", ano)})*(1+${g.ref("SPREAD_REVOLVER", ano)}))-1`, { fmt: PCT2 });
+    g.set("SPREAD_APLIC", ano, 1, {
+      fmt: PCT2, fill: FILL_INPUT,
+      nota: "Percentual da curva que a aplicação rende. 100% = rende a taxa de referência, que é o "
+        + "valor NEUTRO. Um CDB de empresa em dificuldade rende menos; baixar aqui é premissa.",
+    });
+    g.set("TAXA_APLIC", ano, `=${g.ref("CURVA_CDI", ano)}*${g.ref("SPREAD_APLIC", ano)}`, { fmt: PCT2 });
+    const refFX = gAnual.tem("macro:CAMBIO_USD")
+      ? Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n("macro:CAMBIO_USD"))
+      : null;
+    g.set("FX_USD", ano, refFX ? `=${refFX}` : null, {
+      fmt: NUM2,
+      nota: refFX
+        ? "R$/US$ de final de período, da aba Anual. É série de NÍVEL (não percentual), então NÃO "
+          + "leva /100 — confundir as duas erra por 100×."
+        : "Sem série de câmbio na aba Anual para este ano. Célula VAZIA: dívida em moeda "
+          + "estrangeira não pode ser convertida por número inventado.",
+    });
+
+    // ---- aplicações: DECOMPOSIÇÃO do caixa, não ativo adicional -------------
+    g.set("ST_INI", ano, ant === null ? 0 : `=${g.ref("ST_FIM", ant)}`, { fmt: NUM });
+    g.set("ST_VAR", ano, `=${g.ref("ST_FIM", ano)}-${g.ref("ST_INI", ano)}`, { fmt: NUM });
+    g.set("ST_REND", ano, `=${g.ref("ST_INI", ano)}*${g.ref("TAXA_APLIC", ano)}`, {
+      fmt: NUM,
+      nota: "Rendimento sobre o saldo de ABERTURA da aplicação. " + NOTA_CIRCULARIDADE,
     });
 
     for (const l of dividas) {
       const ch = chaveLinha("dv", l);
       if (hist) {
         const e = valorNaEscala(l, ano, ctx.ent.unidade);
-        if (e) g.set(`${ch}#fim`, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota });
+        if (e) g.set(`${ch}#fim`, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
         continue;
       }
       g.set(`${ch}#ini`, ano, `=${g.ref(`${ch}#fim`, ant!)}`, { fmt: NUM });
@@ -1183,29 +1790,112 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade): Grade {
       });
       g.set(`${ch}#amort`, ano, `=${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#pct`, ano)}`, { fmt: NUM });
       g.set(`${ch}#fim`, ano, `=${g.ref(`${ch}#ini`, ano)}-${g.ref(`${ch}#amort`, ano)}`, { fmt: NUM });
+      g.set(`${ch}#taxa`, ano, `=${g.ref("TAXA_MEDIA", ano)}`, { fmt: PCT2 });
       // Juros sobre o saldo de ABERTURA — ver NOTA_CIRCULARIDADE.
-      g.set(`${ch}#juros`, ano, `=-${g.ref(`${ch}#ini`, ano)}*${g.ref("TAXA_MEDIA", ano)}`,
+      g.set(`${ch}#juros`, ano, `=-${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#taxa`, ano)}`,
         { fmt: NUM, nota: NOTA_CIRCULARIDADE });
     }
     somaOuZero(g, "TOTAL_DIVIDA", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#fim", ano)), true);
     somaOuZero(g, "TOTAL_AMORT", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#amort", ano)));
     somaOuZero(g, "TOTAL_JUROS", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#juros", ano)));
+    somaOuZero(g, "TOTAL_AMORT_CAIXA", ano, dividas.map((l) => {
+      const chAmort = chaveLinha("dv", l) + "#amort";
+      const chave = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
+      return `IF(${chave}="S",${g.ref(chAmort, ano)},0)`;
+    }));
+
+    // ---- `P14` captação nova, uma safra por ano -----------------------------
+    g.set("EMISSAO_PRAZO", ano, PRAZO_EMISSAO_PADRAO, {
+      fmt: NUM2, fill: FILL_INPUT,
+      nota: `Prazo de amortização da dívida nova, em anos. ${PRAZO_EMISSAO_PADRAO} é o default do `
+        + "modelo, não um dado do caso: cada safra amortiza em parcelas iguais nesse prazo, a partir "
+        + "do ano seguinte à captação (carência de um ano).",
+    });
+    g.set("EMISSAO_SPREAD", ano, `=${g.ref("SPREAD_DIVIDA", ano)}`, {
+      fmt: PCT2, fill: FILL_INPUT,
+      nota: "Spread da captação nova, inicializado igual ao da dívida existente.",
+    });
+    g.set("EMISSAO_TAXA", ano, `=((1+${g.ref("CURVA_CDI", ano)})*(1+${g.ref("EMISSAO_SPREAD", ano)}))-1`, { fmt: PCT2 });
+    for (const safra of ctx.proj) {
+      const chE = `emis:${safra}`;
+      const chA = `amort:${safra}`;
+      if (hist) { g.set(chE, ano, 0, { fmt: NUM, tipo: "calc" }); g.set(chA, ano, 0, { fmt: NUM, tipo: "calc" }); continue; }
+      g.set(chE, ano, safra === ano ? 0 : null, safra === ano
+        ? {
+          fmt: NUM, fill: FILL_INPUT,
+          nota: `Principal captado em ${safra}. ZERO por padrão: dívida nova é decisão do plano, `
+            + "não default de planilha. Preencher aqui cria a safra, com cronograma próprio.",
+        }
+        : { fmt: NUM });
+      // A safra só amortiza DEPOIS do ano da captação e por `prazo` anos.
+      const k = ano - safra;
+      const refPrazo = g.ref("EMISSAO_PRAZO", ctx.proj[0], "$");
+      g.set(chA, ano,
+        k <= 0 ? 0 : `=IF(${refPrazo}<=0,0,IF(${k}<=${refPrazo},${g.ref(chE, safra, "$")}/${refPrazo},0))`,
+        {
+          fmt: NUM,
+          nota: k <= 0
+            ? "Carência: a safra do próprio ano não amortiza no ano da captação."
+            : `Parcela ${k} de ${PRAZO_EMISSAO_PADRAO} da safra de ${safra}. A linha para de pagar `
+              + "quando o prazo termina — é o mecanismo das 43 linhas '% Amt Issuance' do Modelo Base, "
+              + "escrito com uma safra por ano em vez de 43 linhas fixas.",
+        });
+    }
+    somaOuZero(g, "EMISSAO_TOTAL", ano, ctx.proj.map((s) => g.ref(`emis:${s}`, ano)), true);
+    somaOuZero(g, "EMISSAO_AMORT", ano, ctx.proj.map((s) => g.ref(`amort:${s}`, ano)), true);
+    g.set("EMISSAO_SALDO", ano,
+      ant === null
+        ? `=${g.ref("EMISSAO_TOTAL", ano)}-${g.ref("EMISSAO_AMORT", ano)}`
+        : `=${g.ref("EMISSAO_SALDO", ant)}+${g.ref("EMISSAO_TOTAL", ano)}-${g.ref("EMISSAO_AMORT", ano)}`,
+      { fmt: NUM, negrito: true });
+    // Meia safra de juros no ano da captação (convenção de meio-ano, a mesma do
+    // capex). Cobrar o ano inteiro sobre dinheiro que entrou em julho superestima
+    // a despesa; não cobrar nada a subestima.
+    g.set("EMISSAO_JUROS", ano,
+      ant === null
+        ? `=-${g.ref("EMISSAO_TOTAL", ano)}/2*${g.ref("EMISSAO_TAXA", ano)}`
+        : `=-(${g.ref("EMISSAO_SALDO", ant)}+${g.ref("EMISSAO_TOTAL", ano)}/2)*${g.ref("EMISSAO_TAXA", ano)}`,
+      { fmt: NUM, nota: "Juros sobre o saldo de abertura mais meia safra da captação do ano." });
 
     if (hist) {
       for (const ch of ["REVOLVER_INI", "REVOLVER_SAQUE", "REVOLVER_FIM", "REVOLVER_JUROS"]) {
-        g.set(ch, ano, 0, { fmt: NUM });
+        g.set(ch, ano, 0, { fmt: NUM, tipo: "calc" });
       }
     } else {
       g.set("REVOLVER_INI", ano, `=${g.ref("REVOLVER_FIM", ant!)}`, { fmt: NUM });
       // O saque é preenchido pela aba Cash Flow (é lá que se sabe o furo de
       // caixa). Aqui a linha existe e aponta para lá: uma tela, uma verdade.
       g.set("REVOLVER_FIM", ano, `=${g.ref("REVOLVER_INI", ano)}+${g.ref("REVOLVER_SAQUE", ano)}`, { fmt: NUM, negrito: true });
-      g.set("REVOLVER_JUROS", ano, `=-${g.ref("REVOLVER_INI", ano)}*${g.ref("TAXA_MEDIA", ano)}`, { fmt: NUM, nota: NOTA_CIRCULARIDADE });
+      g.set("REVOLVER_JUROS", ano, `=-${g.ref("REVOLVER_INI", ano)}*${g.ref("TAXA_REVOLVER", ano)}`, { fmt: NUM, nota: NOTA_CIRCULARIDADE });
     }
-    g.set("DIVIDA_BRUTA", ano, `=${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("REVOLVER_FIM", ano)}`, { fmt: NUM, negrito: true });
-    g.set("DESP_FIN", ano, `=${g.ref("TOTAL_JUROS", ano)}+${g.ref("REVOLVER_JUROS", ano)}`, { fmt: NUM, negrito: true });
+    g.set("DIVIDA_BRUTA", ano,
+      `=${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)}+${g.ref("REVOLVER_FIM", ano)}`,
+      { fmt: NUM, negrito: true });
+    g.set("DESP_FIN", ano,
+      `=${g.ref("TOTAL_JUROS", ano)}+${g.ref("EMISSAO_JUROS", ano)}+${g.ref("REVOLVER_JUROS", ano)}`,
+      { fmt: NUM, negrito: true });
+    g.set("REC_FIN", ano, `=${g.ref("ST_REND", ano)}`, { fmt: NUM });
+
+    // ---- o espelho ---------------------------------------------------------
+    g.set("ESP_REVOLVER", ano, `=${g.ref("REVOLVER_FIM", ano)}`, { fmt: NUM });
+    g.set("ESP_DIVIDA_CP", ano,
+      `=(${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)})*${fracCP}+${g.ref("REVOLVER_FIM", ano)}`, {
+      fmt: NUM,
+      nota: `Fração de curto prazo (${(fracCP * 100).toFixed(1)}%) MEDIDA no último exercício `
+        + "realizado deste caso (dívida no circulante ÷ dívida total). O revolver é integralmente "
+        + "curto prazo por natureza. A repartição vive nesta aba, não no balanço: o balanço só lê.",
+    });
+    g.set("ESP_DIVIDA_LP", ano,
+      `=(${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)})*${1 - fracCP}`, { fmt: NUM });
+    g.set("ESP_CAPTACAO", ano, `=${g.ref("EMISSAO_TOTAL", ano)}`, { fmt: NUM });
+    g.set("ESP_AMORT", ano, `=${g.ref("TOTAL_AMORT_CAIXA", ano)}+${g.ref("EMISSAO_AMORT", ano)}`, {
+      fmt: NUM,
+      nota: "Só a amortização COM efeito caixa (chave S/N por tranche) mais as safras novas. "
+        + "Dívida reperfilada reduz saldo sem sair do caixa — e o fluxo tem de refletir isso.",
+    });
+    g.set("ESP_REVOLVER_MOV", ano, `=${g.ref("REVOLVER_SAQUE", ano)}`, { fmt: NUM });
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -1215,10 +1905,10 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade): Grade {
 // =============================================================================
 function abaFluxo(
   wb: ExcelJS.Workbook, ctx: Ctx,
-  gDRE: Grade, gWC: Grade, gFA: Grade, gDiv: Grade,
+  gDRE: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gRec: Grade,
 ): Grade {
   const g = new Grade(wb, "Cash Flow", ctx.anos, ctx.nHist);
-  g.cabecalho("CASH FLOW", `Valores em ${ctx.ent.unidade} · método indireto`);
+  g.cabecalho("CASH FLOW", `Valores em ${ctx.ent.unidade} · método indireto`, eixoHerdado(gRec));
 
   g.linha(null, { rotulo: "FLUXO DE CAIXA DAS OPERAÇÕES", bloco: true });
   g.linha("NET_INCOME", { sinal: "+", rotulo: "Lucro (prejuízo) líquido", fmt: NUM });
@@ -1233,6 +1923,7 @@ function abaFluxo(
   g.linha("FCL", { sinal: "=", rotulo: "FLUXO DE CAIXA LIVRE", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha(null, { rotulo: "FLUXO DE CAIXA DE FINANCIAMENTO", bloco: true });
+  g.linha("CAPTACAO", { sinal: "+", rotulo: "Captação de dívida nova", fmt: NUM });
   g.linha("AMORT", { sinal: "(-)", rotulo: "Amortização de dívida", fmt: NUM });
   g.linha("REVOLVER", { sinal: "+", rotulo: "Saque/(amortização) do revolver", fmt: NUM });
   g.linha("DIVIDENDOS", { sinal: "(-)", rotulo: "Dividendos pagos", fmt: NUM });
@@ -1256,7 +1947,7 @@ function abaFluxo(
     const ant = g.anoAnterior(ano);
     if (hist) {
       for (const ch of ["NET_INCOME", "DEPREC", "VAR_NCG", "FCO", "CAPEX", "FCI", "FCL",
-                        "AMORT", "REVOLVER", "DIVIDENDOS", "FCF", "VAR_CAIXA", "FURO"]) {
+                        "CAPTACAO", "AMORT", "REVOLVER", "DIVIDENDOS", "FCF", "VAR_CAIXA", "FURO"]) {
         g.set(ch, ano, 0, { fmt: NUM });
       }
       g.set("CAIXA_INI", ano, ant === null ? 0 : `=${g.ref("CAIXA_FIM", ant)}`, { fmt: NUM });
@@ -1270,22 +1961,27 @@ function abaFluxo(
       continue;
     }
     g.set("NET_INCOME", ano, `=${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}`, { fmt: NUM });
-    g.set("DEPREC", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "DEPREC", ano)}`, { fmt: NUM });
-    g.set("VAR_NCG", ano, `=${g.externa("Working Capital", gWC, "VAR_NCG", ano)}`, { fmt: NUM });
+    g.set("DEPREC", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "ESP_DEPREC_CF", ano)}`, { fmt: NUM });
+    g.set("VAR_NCG", ano, `=${g.externa("Working Capital", gWC, "ESP_VAR_NCG", ano)}`, { fmt: NUM });
     g.set("FCO", ano, `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("VAR_NCG", ano)}`, { fmt: NUM, negrito: true });
-    g.set("CAPEX", ano, `=-${g.externa("Fixed Assets & CAPEX", gFA, "TOTAL_CAPEX", ano)}`, { fmt: NUM });
+    g.set("CAPEX", ano, `=-${g.externa("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano)}`, { fmt: NUM });
     g.set("FCI", ano, `=${g.ref("CAPEX", ano)}`, { fmt: NUM, negrito: true });
     g.set("FCL", ano, `=${g.ref("FCO", ano)}+${g.ref("FCI", ano)}`, { fmt: NUM, negrito: true });
-    g.set("AMORT", ano, `=-${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano)}`, { fmt: NUM });
+    g.set("CAPTACAO", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_CAPTACAO", ano)}`, { fmt: NUM });
+    g.set("AMORT", ano, `=-${g.externa("ST Inv. & Debt", gDiv, "ESP_AMORT", ano)}`, { fmt: NUM });
     g.set("DIVIDENDOS", ano, 0, {
       fmt: NUM, fill: FILL_INPUT,
       nota: "Dividendos ZERO por padrão. Num mandato de reestruturação, distribuir caixa é "
-        + "decisão que o plano precisa declarar — não default de planilha.",
+        + "decisão que o plano precisa declarar — não default de planilha. CONVENÇÃO DE SINAL: "
+        + "dividendo pago entra NEGATIVO aqui, como as outras saídas do bloco de financiamento. "
+        + "O patrimônio líquido soma esta célula (não subtrai), então o sinal tem de ser o da "
+        + "saída — trocar isso faria distribuir dividendo AUMENTAR o patrimônio.",
     });
     g.set("CAIXA_INI", ano, `=${g.ref("CAIXA_FIM", ant!)}`, { fmt: NUM });
     // Caixa antes do revolver: sem o saque, para o furo ser visível.
     g.set("CAIXA_ANTES", ano,
-      `=${g.ref("CAIXA_INI", ano)}+${g.ref("FCL", ano)}+${g.ref("AMORT", ano)}+${g.ref("DIVIDENDOS", ano)}`, { fmt: NUM });
+      `=${g.ref("CAIXA_INI", ano)}+${g.ref("FCL", ano)}+${g.ref("CAPTACAO", ano)}`
+      + `+${g.ref("AMORT", ano)}+${g.ref("DIVIDENDOS", ano)}`, { fmt: NUM });
     g.set("FURO", ano,
       `=MAX(0,${g.externa("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano)}-${g.ref("CAIXA_ANTES", ano)})`, {
       fmt: NUM,
@@ -1302,11 +1998,13 @@ function abaFluxo(
         + "O MIN impede amortizar mais do que se deve — sem ele o revolver fica NEGATIVO e o "
         + "modelo passa a mostrar dívida como se fosse aplicação.",
     });
-    g.set("FCF", ano, `=${g.ref("AMORT", ano)}+${g.ref("REVOLVER", ano)}+${g.ref("DIVIDENDOS", ano)}`, { fmt: NUM, negrito: true });
+    g.set("FCF", ano,
+      `=${g.ref("CAPTACAO", ano)}+${g.ref("AMORT", ano)}+${g.ref("REVOLVER", ano)}+${g.ref("DIVIDENDOS", ano)}`,
+      { fmt: NUM, negrito: true });
     g.set("VAR_CAIXA", ano, `=${g.ref("FCL", ano)}+${g.ref("FCF", ano)}`, { fmt: NUM, negrito: true });
     g.set("CAIXA_FIM", ano, `=${g.ref("CAIXA_INI", ano)}+${g.ref("VAR_CAIXA", ano)}`, { fmt: NUM, negrito: true });
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -1316,14 +2014,18 @@ function abaFluxo(
 // =============================================================================
 function abaBalanco(
   wb: ExcelJS.Workbook, ctx: Ctx,
-  gCF: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gDRE: Grade,
+  gCF: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gDRE: Grade, gRec: Grade,
 ): Grade {
   const g = new Grade(wb, "Balance Sheet", ctx.anos, ctx.nHist);
-  g.cabecalho("BALANCE SHEET", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("BALANCE SHEET", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
   const anc = ctx.linhasPorBloco.get("ativo_nao_circulante") ?? [];
   const ancNaoImob = anc.filter((l) => !ehImobilizado(l.chave));
-  const pnc = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? []).filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture/i.test(l.chave));
+  // A dívida bancária do não circulante NÃO entra como conta avulsa: ela é
+  // projetada pela aba de dívida e entra por `DIVIDA_LP`. Listá-la aqui também a
+  // contaria duas vezes — o mesmo defeito que o giro tinha.
+  const pnc = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
+    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave));
   const pl = ctx.linhasPorBloco.get("patrimonio_liquido") ?? [];
 
   g.linha("CAIXA", { rotulo: "Caixa e equivalentes", fmt: NUM });
@@ -1345,28 +2047,21 @@ function abaBalanco(
   g.pular();
   for (const l of pl) g.linha(chaveLinha("pl", l), { rotulo: l.chave, fmt: NUM });
   g.linha("LUCROS_ACUM", { rotulo: "Lucros (prejuízos) acumulados do modelo", fmt: NUM });
+  g.linha("REPERFILAMENTO", { rotulo: "Redução de dívida SEM efeito caixa (acumulada)", fmt: NUM });
   g.linha("PL", { rotulo: "PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   g.linha("PASSIVO_PL", { rotulo: "PASSIVO + PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("CHECK", { rotulo: "CHECK — Ativo − (Passivo + PL) deve ser ZERO", negrito: true, fmt: NUM2 });
   g.linha("CHECK_TXT", { rotulo: "    diagnóstico" });
 
-  // Proporção CP/LP da dívida: do realizado, quando dá para medir.
-  const saldoCP = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
-    .filter((l) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave))
-    .reduce((s, l) => s + Math.abs(l.valores[String(ctx.ultimoHist)] ?? 0), 0);
-  const saldoLP = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
-    .filter((l) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave))
-    .reduce((s, l) => s + Math.abs(l.valores[String(ctx.ultimoHist)] ?? 0), 0);
-  const fracCP = saldoCP + saldoLP > 0 ? saldoCP / (saldoCP + saldoLP) : 0.3;
 
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
     const ant = g.anoAnterior(ano);
     g.set("CAIXA", ano, `=${g.externa("Cash Flow", gCF, "CAIXA_FIM", ano)}`, { fmt: NUM });
-    g.set("AC_OPER", ano, `=${g.externa("Working Capital", gWC, "TOTAL_AC", ano)}`, { fmt: NUM });
+    g.set("AC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_AC", ano)}`, { fmt: NUM });
     g.set("AC", ano, `=${g.ref("CAIXA", ano)}+${g.ref("AC_OPER", ano)}`, { fmt: NUM, negrito: true });
-    g.set("IMOB", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "TOTAL_FA", ano)}`, { fmt: NUM });
+    g.set("IMOB", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "ESP_IMOB", ano)}`, { fmt: NUM });
     for (const l of ancNaoImob) {
       const ch = chaveLinha("anc", l);
       const e = valorNaEscala(l, ano, ctx.ent.unidade);
@@ -1379,16 +2074,15 @@ function abaBalanco(
     somaOuZero(g, "ANC", ano, [g.ref("IMOB", ano), ...ancNaoImob.map((l) => g.ref(chaveLinha("anc", l), ano))], true);
     g.set("ATIVO", ano, `=${g.ref("AC", ano)}+${g.ref("ANC", ano)}`, { fmt: NUM, negrito: true });
 
-    g.set("PC_OPER", ano, `=${g.externa("Working Capital", gWC, "TOTAL_PC", ano)}`, { fmt: NUM });
-    g.set("DIVIDA_CP", ano,
-      `=${g.externa("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano)}*${fracCP}`
-      + `+${g.externa("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ano)}`, {
+    g.set("PC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_PC", ano)}`, { fmt: NUM });
+    g.set("DIVIDA_CP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_DIVIDA_CP", ano)}`, {
       fmt: NUM,
-      nota: `Fração de curto prazo (${(fracCP * 100).toFixed(1)}%) medida no último exercício `
-        + "realizado; o revolver é integralmente curto prazo por natureza.",
+      nota: "Lida do ESPELHO da aba de dívida (`P18`). A repartição curto/longo prazo é decidida lá, "
+        + "onde a dívida vive; o balanço só lê. Antes o balanço recalculava a fração, e passava a "
+        + "saber de dívida — acoplamento que o espelho existe para eliminar.",
     });
     g.set("PC", ano, `=${g.ref("PC_OPER", ano)}+${g.ref("DIVIDA_CP", ano)}`, { fmt: NUM, negrito: true });
-    g.set("DIVIDA_LP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano)}*${1 - fracCP}`, { fmt: NUM });
+    g.set("DIVIDA_LP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_DIVIDA_LP", ano)}`, { fmt: NUM });
     for (const l of pnc) {
       const ch = chaveLinha("pnc", l);
       const e = valorNaEscala(l, ano, ctx.ent.unidade);
@@ -1402,13 +2096,32 @@ function abaBalanco(
       g.set(ch, ano, hist ? (e?.valor ?? 0) : `=${g.ref(ch, ant!)}`,
         { fmt: NUM, fill: hist ? FILL_HIST : undefined, nota: hist ? e?.nota : undefined });
     }
-    g.set("LUCROS_ACUM", ano, hist ? 0 : `=${g.ref("LUCROS_ACUM", ant!)}+${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}-${g.externa("Cash Flow", gCF, "DIVIDENDOS", ano)}`, {
+    g.set("LUCROS_ACUM", ano, hist ? 0 : `=${g.ref("LUCROS_ACUM", ant!)}+${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}+${g.externa("Cash Flow", gCF, "DIVIDENDOS", ano)}`, {
       fmt: NUM,
       nota: hist ? "Zero no realizado: o PL realizado já está nas contas extraídas acima. "
         + "Somar lucro acumulado aqui contaria o mesmo patrimônio duas vezes."
         : undefined,
     });
-    somaOuZero(g, "PL", ano, [...pl.map((l) => g.ref(chaveLinha("pl", l), ano)), g.ref("LUCROS_ACUM", ano)], true);
+    // A CONTRAPARTIDA DO REPERFILAMENTO. A chave "Efeito caixa? = N" de uma
+    // tranche faz o saldo dela cair SEM pagamento — e uma redução de passivo sem
+    // saída de caixa precisa de contrapartida, senão o balanço abre exatamente no
+    // valor dela. Contabilmente é o que uma conversão em participação, um perdão
+    // ou uma capitalização de dívida é: aumento de patrimônio líquido.
+    g.set("REPERFILAMENTO", ano,
+      hist
+        ? 0
+        : `=${g.ref("REPERFILAMENTO", ant!)}+${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano)}`
+          + `-${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT_CAIXA", ano)}`, {
+      fmt: NUM,
+      nota: hist
+        ? "Zero no realizado: o PL realizado já vem das contas extraídas."
+        : "Acumula a parcela da amortização marcada como SEM efeito caixa na aba de dívida "
+          + "(chave S/N por tranche). Dívida reperfilada, capitalizada ou convertida em "
+          + "participação reduz passivo e aumenta patrimônio — sem esta linha, o balanço abriria "
+          + "exatamente no valor reperfilado.",
+    });
+    somaOuZero(g, "PL", ano,
+      [...pl.map((l) => g.ref(chaveLinha("pl", l), ano)), g.ref("LUCROS_ACUM", ano), g.ref("REPERFILAMENTO", ano)], true);
     g.set("PASSIVO_PL", ano, `=${g.ref("PC", ano)}+${g.ref("PNC", ano)}+${g.ref("PL", ano)}`, { fmt: NUM, negrito: true });
 
     // O CHECK. Formatação condicional não seria suficiente: o número tem de estar
@@ -1427,16 +2140,16 @@ function abaBalanco(
       `=IF(ABS(${g.ref("CHECK", ano)})<0.5,"fecha","NÃO FECHA: "&TEXT(${g.ref("CHECK", ano)},"#,##0"))`, {});
     g.ws.getRow(g.n("CHECK_TXT")).getCell(g.colDoAno(ano)).fill = FILL_CHECK_ERRO;
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
 // =============================================================================
 // ABA Goodwill, Taxes & Div. — ágio, tributos diferidos e dividendos.
 // =============================================================================
-function abaGoodwill(wb: ExcelJS.Workbook, ctx: Ctx, gDRE: Grade, gCF: Grade): Grade {
+function abaGoodwill(wb: ExcelJS.Workbook, ctx: Ctx, gDRE: Grade, gCF: Grade, gRec: Grade): Grade {
   const g = new Grade(wb, "Goodwill, Taxes & Div.", ctx.anos, ctx.nHist);
-  g.cabecalho("GOODWILL, TAXES & DIVIDENDS", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("GOODWILL, TAXES & DIVIDENDS", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
   g.linha(null, { rotulo: "TRIBUTOS SOBRE O LUCRO", bloco: true });
   g.linha("EBT", { rotulo: "EBT", fmt: NUM });
@@ -1477,7 +2190,7 @@ function abaGoodwill(wb: ExcelJS.Workbook, ctx: Ctx, gDRE: Grade, gCF: Grade): G
     g.set("AGIO", ano, 0, { fmt: NUM, fill: hist ? FILL_HIST : FILL_INPUT, nota: "Sem ágio identificado nos documentos do caso." });
     g.set("AGIO_AMORT", ano, 0, { fmt: NUM });
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -1486,9 +2199,9 @@ function abaGoodwill(wb: ExcelJS.Workbook, ctx: Ctx, gDRE: Grade, gCF: Grade): G
 // reestruturação é quase sempre a segunda maior dívida e quase nunca está no
 // mapa de dívida bancária.
 // =============================================================================
-function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
+function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Tributos a Recolher", ctx.anos, ctx.nHist);
-  g.cabecalho("TRIBUTOS A RECOLHER — PARCELAMENTOS", `Valores em ${ctx.ent.unidade}`);
+  g.cabecalho("TRIBUTOS A RECOLHER — PARCELAMENTOS", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
   const tributarios = [
     ...(ctx.linhasPorBloco.get("passivo_circulante") ?? []),
@@ -1502,6 +2215,9 @@ function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
     g.linha(null, {
       rotulo: "A aba fica VAZIA de propósito — inventar um parcelamento seria pior que não ter a aba.",
     });
+    // Mesmo vazia a aba é entregue e impressa — o teste (0105f) pegou esta saída
+    // antecipada sem área de impressão.
+    g.finalizar("__unidade");
     return g;
   }
   for (const l of tributarios) {
@@ -1531,7 +2247,7 @@ function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
     }
     somaOuZero(g, "TOTAL", ano, tributarios.map((l) => g.ref(chaveLinha("trib", l), ano)), true);
   }
-  g.congelar("__unidade");
+  g.finalizar("__unidade");
   return g;
 }
 
@@ -1547,16 +2263,34 @@ function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
 function abaOutput(
   wb: ExcelJS.Workbook, ctx: Ctx,
   gDRE: Grade, gBS: Grade, gDiv: Grade, gCF: Grade, gFA: Grade, gWC: Grade,
-): Grade {
+  gRec: Grade, gGW: Grade, gTrib: Grade,
+): { g: Grade; graficos: EspecGrafico[] } {
   const g = new Grade(wb, "Output", ctx.anos, ctx.nHist);
 
-  // O interruptor, em G2 (col 7, linha 2), com validação de lista.
+  // ---- SCENARIO + CHECK SCENARIO -------------------------------------------
+  //
+  // O interruptor mora em `G2` e só ali; toda outra aba lê `Output!$G$2`. Dois
+  // interruptores seriam o defeito clássico: alguém muda o da aba em que está, o
+  // resto do modelo continua no cenário antigo, e o arquivo mostra uma mistura de
+  // dois cenários sem nada denunciar.
+  //
+  // O BLOCO `CHECK SCENARIO` é do Modelo Base (`Output!I2:L5`) e faz o caminho de
+  // VOLTA: lê o cenário de dentro de cada aba de driver e mostra ao lado. Se uma
+  // aba perder o vínculo com o dial — porque alguém colou por cima, ou porque a
+  // referência quebrou —, aparece aqui, e não num número errado três abas adiante.
+  //
+  // NOTA DE LAYOUT, e é um defeito que esta rodada corrigiu: as linhas 1 a 5 são
+  // escritas com `celula()`, que NÃO move o cursor da `Grade`. O código antigo
+  // fazia `pular(4)` depois de escrever até a linha 5, e o cabeçalho caía
+  // exatamente sobre a legenda "3 = Stress Case" — medido no arquivo gerado, que
+  // trazia o título da aba no lugar do rótulo do terceiro cenário. Agora o cursor
+  // é sincronizado explicitamente.
   g.celula(1, COL_ROTULO).value = "SCENARIO";
-  g.celula(1, COL_ROTULO).font = { bold: true, size: 12 };
+  g.celula(1, COL_ROTULO).font = fonte({ bold: true, size: TAM_TITULO_ABA });
   const cellCen = g.celula(2, 7);
   cellCen.value = 1;
   cellCen.fill = FILL_INPUT;
-  cellCen.font = { bold: true };
+  cellCen.font = fonte({ bold: true, color: { argb: FONTE_COR.entrada } });
   cellCen.numFmt = "0";
   cellCen.dataValidation = {
     type: "whole", operator: "between", formulae: [1, 3], allowBlank: false,
@@ -1565,23 +2299,48 @@ function abaOutput(
       + "em todas as abas — e um modelo cheio de #VALUE! é um modelo que ninguém lê.",
   };
   cellCen.note = comoNota(
-    "INTERRUPTOR ÚNICO DE CENÁRIO. 1 = Base, 2 = Cliente, 3 = Stress. Todas as 13 outras abas "
-    + "leem esta célula; não existe segundo interruptor, de propósito.",
+    "INTERRUPTOR ÚNICO DE CENÁRIO. 1 = Base, 2 = Cliente, 3 = Stress. Todas as outras abas leem "
+    + "esta célula; não existe segundo interruptor, de propósito.",
   );
   g.celula(2, COL_ROTULO).value = "Cenário ativo →";
+  g.celula(2, COL_ROTULO).font = fonte();
   for (let i = 0; i < CENARIOS.length; i++) {
-    g.celula(3 + i, COL_ROTULO).value = `${i + 1} = ${CENARIOS[i]}`;
-    g.celula(3 + i, COL_ROTULO).font = { size: 9, italic: true };
+    const c = g.celula(3 + i, COL_ROTULO);
+    c.value = `${i + 1} = ${CENARIOS[i]}`;
+    c.font = fonte({ size: 9, italic: true, color: { argb: FONTE_COR.auxiliar } });
   }
+  // CHECK SCENARIO — o caminho de volta, uma linha por aba com dial.
+  g.celula(1, 9).value = "CHECK SCENARIO — o cenário lido DE VOLTA de cada aba";
+  g.celula(1, 9).font = fonte({ bold: true });
+  const abasComDial: [string, Grade][] = [
+    ["Revenues, COGS & SG&A", gRec], ["Working Capital", gWC], ["Fixed Assets & CAPEX", gFA],
+    ["ST Inv. & Debt", gDiv],
+  ];
+  abasComDial.forEach(([nome, grade], i) => {
+    const r = 2 + i;
+    g.celula(r, 9).value = nome;
+    g.celula(r, 9).font = fonte({ size: 9 });
+    const cel = g.celula(r, 12);
+    cel.value = { formula: `'${nome}'!${grade.celulaCenario.replace(/\$/g, "")}` };
+    cel.font = fonte({ color: { argb: FONTE_COR.externo } });
+    cel.numFmt = "0";
+    const dif = g.celula(r, 13);
+    dif.value = { formula: `IF(${colLetra(12)}${r}=$G$2,"ok","DIVERGE")` };
+    dif.font = fonte({ bold: true });
+    dif.note = comoNota(
+      `Lê o cenário de dentro da aba "${nome}" e compara com o interruptor. "DIVERGE" significa que `
+      + "aquela aba perdeu o vínculo com o dial — e que os números dela são de outro cenário.",
+    );
+  });
+  // Sincroniza o cursor com o que foi escrito à mão acima.
+  g.pular(5 - g.proximaLinha() + 1);
+
   // ---- O AVISO QUE IMPEDE UM MODELO VAZIO DE PARECER UM MODELO --------------
   //
   // Medido contra a fixture: quando a extração não classifica `secao_canonica`,
   // TODO bloco do modelo fica vazio, a receita sai zero, e o arquivo entrega 14
   // abas de zeros com aparência de modelo institucional. Zero com aparência de
   // resultado é o pior defeito que este projeto pode produzir.
-  //
-  // Então o modelo se declara: sem receita histórica ou sem premissa vinculada,
-  // a primeira coisa que se lê é o que falta e onde resolver.
   const impedimentos: string[] = [];
   const nReceita = (ctx.linhasPorBloco.get("receita") ?? []).length;
   const receitaHist = (ctx.linhasPorBloco.get("receita") ?? [])
@@ -1603,92 +2362,386 @@ function abaOutput(
       + "Conferir a entidade escolhida no passo 1 da Modelagem contra as abas de dados.");
   }
   if (impedimentos.length > 0) {
+    g.pular();
     const rAviso = g.linha(null, {
       rotulo: "⚠ ESTE MODELO NÃO ESTÁ PROJETÁVEL — leia antes de usar qualquer número",
       negrito: true,
     });
     const cAviso = g.celula(rAviso, COL_ROTULO);
     cAviso.fill = FILL_CHECK_ERRO;
-    cAviso.font = { bold: true, size: 12 };
+    cAviso.font = fonte({ bold: true, size: TAM_TITULO_ABA });
     for (const texto of impedimentos) {
       const r = g.linha(null, { rotulo: `• ${texto}` });
       g.celula(r, COL_ROTULO).fill = FILL_CHECK_ERRO;
       g.celula(r, COL_ROTULO).alignment = { wrapText: true };
       g.ws.getRow(r).height = 28;
     }
-    g.pular();
   }
 
-  g.pular(4);
-  g.cabecalho("OUTPUT — RESUMO PARA COMITÊ", `Valores em ${ctx.ent.unidade}`);
+  g.pular();
+  g.cabecalho("OUTPUT — RESUMO PARA COMITÊ", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
-  g.linha(null, { rotulo: "RESULTADO", bloco: true });
-  g.linha("REC_LIQ", { rotulo: "Receita líquida", fmt: NUM });
-  g.linha("REC_CRESC", { rotulo: "    % crescimento", fmt: PCT });
-  g.linha("EBITDA", { rotulo: "EBITDA", fmt: NUM });
-  g.linha("EBITDA_MG", { rotulo: "    % margem EBITDA", fmt: PCT });
-  g.linha("LUCRO", { rotulo: "Lucro (prejuízo) líquido", fmt: NUM });
+  // Categoria dos gráficos: o ano como NÚMERO. O cabeçalho é data (`P01`), e uma
+  // série de datas num eixo de categoria sai como número de série no gráfico.
+  g.linha("ANO_GRAF", { rotulo: "Exercício (eixo dos gráficos)" });
+
+  // ---- SUMMARY --------------------------------------------------------------
+  g.linha(null, { rotulo: "SUMMARY", bloco: true });
+  g.linha("REC_LIQ", { rotulo: "Net Revenues", fmt: NUM });
+  g.linha("REC_CRESC", { rotulo: "    % Growth", fmt: PCT });
+  g.linha("EBITDA", { rotulo: "EBITDA", negrito: true, fmt: NUM });
+  g.linha("EBITDA_MG", { rotulo: "    % EBITDA Margin", fmt: PCT });
+  g.linha("EBIT", { rotulo: "EBIT", fmt: NUM });
+  g.linha("LUCRO", { rotulo: "Net Profit", fmt: NUM });
+  g.linha("CAPEX", { rotulo: "Capex", fmt: NUM });
+  g.linha("VAR_NCG", { rotulo: "Variação NCG", fmt: NUM });
+  g.linha("FCL", { rotulo: "Free Cash Flow", negrito: true, fmt: NUM });
   g.pular();
-  g.linha(null, { rotulo: "ENDIVIDAMENTO", bloco: true });
-  g.linha("DIVIDA", { rotulo: "Dívida bruta", fmt: NUM });
-  g.linha("CAIXA", { rotulo: "Caixa", fmt: NUM });
-  g.linha("DIV_LIQ", { rotulo: "Dívida líquida", negrito: true, fmt: NUM });
-  g.linha("DIV_EBITDA", { rotulo: "Dívida líquida / EBITDA", negrito: true, fmt: MULT });
-  g.linha("COBERTURA", { rotulo: "EBITDA / (juros + amortização)", fmt: MULT });
+
+  // ---- BALANCE SHEET (espelho) ---------------------------------------------
+  g.linha(null, { rotulo: "BALANCE SHEET", bloco: true });
+  g.linha("BS_CAIXA", { rotulo: "Cash & Short Term Inv.", fmt: NUM });
+  g.linha("BS_AC", { rotulo: "Current Assets", fmt: NUM });
+  g.linha("BS_ANC", { rotulo: "Long-Term & Permanent Assets", fmt: NUM });
+  g.linha("BS_ATIVO", { rotulo: "ASSETS", negrito: true, topo: true, fmt: NUM });
+  g.linha("BS_PC", { rotulo: "Current Liabilities", fmt: NUM });
+  g.linha("BS_PNC", { rotulo: "Long-Term Liabilities", fmt: NUM });
+  g.linha("BS_PL", { rotulo: "Shareholder's Equity", fmt: NUM });
+  g.linha("BS_PASSIVO", { rotulo: "LIABILITIES & EQUITY", negrito: true, topo: true, fmt: NUM });
+  g.linha("BS_MISMATCH", { rotulo: "Mismatch (ASSETS − LIABILITIES & EQUITY)", negrito: true, fmt: NUM2 });
   g.pular();
-  g.linha(null, { rotulo: "CAIXA E GIRO", bloco: true });
-  g.linha("FCL", { rotulo: "Fluxo de caixa livre", fmt: NUM });
-  g.linha("CAPEX", { rotulo: "CAPEX", fmt: NUM });
-  g.linha("NCG", { rotulo: "Necessidade de capital de giro", fmt: NUM });
-  g.linha("REVOLVER", { rotulo: "Revolver acionado (saldo)", fmt: NUM });
-  g.linha("LIQUIDEZ", { rotulo: "Liquidez corrente", fmt: MULT });
+
+  // ---- INCOME STATEMENT (espelho) ------------------------------------------
+  g.linha(null, { rotulo: "INCOME STATEMENT", bloco: true });
+  g.linha("IS_GROSS", { rotulo: "Gross Revenues", fmt: NUM });
+  g.linha("IS_DEDUC", { rotulo: "Deductions", fmt: NUM });
+  g.linha("IS_NET", { rotulo: "Net Revenues", negrito: true, fmt: NUM });
+  g.linha("IS_COGS", { rotulo: "COGS", fmt: NUM });
+  g.linha("IS_GP", { rotulo: "Gross Profit", fmt: NUM });
+  g.linha("IS_SGA", { rotulo: "SG&A", fmt: NUM });
+  g.linha("IS_EBITDA", { rotulo: "EBITDA", negrito: true, fmt: NUM });
+  g.linha("IS_DA", { rotulo: "Depreciation & Amortization", fmt: NUM });
+  g.linha("IS_EBIT", { rotulo: "EBIT", negrito: true, fmt: NUM });
+  g.linha("IS_FIN", { rotulo: "Financial Result", fmt: NUM });
+  g.linha("IS_EBT", { rotulo: "EBT", fmt: NUM });
+  g.linha("IS_TAX", { rotulo: "Income Tax", fmt: NUM });
+  g.linha("IS_NP", { rotulo: "NET PROFIT", negrito: true, topo: true, fmt: NUM });
   g.pular();
+
+  // ---- CASH FLOW (espelho) --------------------------------------------------
+  g.linha(null, { rotulo: "CASH FLOW", bloco: true });
+  g.linha("CF_FCO", { rotulo: "Cash Flow from Operations", fmt: NUM });
+  g.linha("CF_FCI", { rotulo: "Cash Flow from Investing", fmt: NUM });
+  g.linha("CF_FCL", { rotulo: "FREE CASH FLOW", negrito: true, fmt: NUM });
+  g.linha("CF_FCF", { rotulo: "Cash Flow from Financing", fmt: NUM });
+  g.linha("CF_VAR", { rotulo: "Net Change in Cash", fmt: NUM });
+  g.linha("CF_INI", { rotulo: "Beg. of the Period Cash", fmt: NUM });
+  g.linha("CF_FIM", { rotulo: "END OF PERIOD CASH", negrito: true, topo: true, fmt: NUM });
+  g.linha("CF_MIN", { rotulo: "Required (minimum) Cash", fmt: NUM });
+  g.pular();
+
+  // ---- DEBT & RATIOS -------------------------------------------------------
+  //
+  // O Modelo Base dedica 79 linhas a isto (13 blocos de tranche), e HOJE 627 das
+  // fórmulas dele estão com `#REF!` — o bloco inteiro aponta para uma tabela de
+  // dívida que não existe mais no arquivo (§20 do mapa). Aqui a mesma informação
+  // é montada a partir do espelho da aba de dívida, que existe e é auditável.
+  g.linha(null, { rotulo: "DEBT & RATIOS", bloco: true });
+  g.linha("DV_EXISTENTE", { rotulo: "Dívida existente (fechamento)", fmt: NUM });
+  g.linha("DV_NOVA", { rotulo: "Captações novas (saldo)", fmt: NUM });
+  g.linha("DV_REVOLVER", { rotulo: "Revolver (saldo)", fmt: NUM });
+  g.linha("DV_TOTAL", { rotulo: "Total Financial Debt", negrito: true, topo: true, fmt: NUM });
+  g.linha("DV_CAIXA", { rotulo: "(−) Caixa e equivalentes", fmt: NUM });
+  g.linha("DV_LIQ", { rotulo: "Net Financial Debt", negrito: true, fmt: NUM });
+  g.linha("DV_JUROS", { rotulo: "Juros e encargos do período", fmt: NUM });
+  g.linha("DV_AMORT", { rotulo: "Amortização do período", fmt: NUM });
+  g.linha("DV_SERVICO", { rotulo: "Serviço da dívida (juros + amortização)", negrito: true, fmt: NUM });
+  g.linha("DV_TRIB", { rotulo: "Parcelamentos tributários (saldo)", fmt: NUM });
+  g.pular();
+
+  // ---- RATIOS + COVENANTS --------------------------------------------------
+  //
+  // Cada índice vem com o CORTE SUGERIDO ao lado (é o desenho do Modelo Base:
+  // `Corte Sugerido` / `Covenant Sugerido` nas tabelas laterais que alimentam os
+  // gráficos) e com um teste explícito de rompimento. Um índice sem o corte ao
+  // lado obriga quem lê a saber o covenant de cabeça.
+  g.linha(null, { rotulo: "RATIOS & COVENANTS", bloco: true });
+  g.linha("R_ND_EBITDA", { rotulo: "Net Debt / EBITDA", negrito: true, fmt: MULT });
+  g.linha("C_ND_EBITDA", { rotulo: "    corte sugerido (covenant)", fmt: MULT });
+  g.linha("T_ND_EBITDA", { rotulo: "    rompe?" });
+  g.linha("R_DIV_EBITDA", { rotulo: "Total Debt / EBITDA", fmt: MULT });
+  g.linha("R_COBERTURA", { rotulo: "EBITDA / Serviço da dívida (DSCR)", negrito: true, fmt: MULT });
+  g.linha("C_COBERTURA", { rotulo: "    corte sugerido (covenant)", fmt: MULT });
+  g.linha("T_COBERTURA", { rotulo: "    rompe?" });
+  g.linha("R_JUROS", { rotulo: "EBITDA / Juros (Interest Coverage)", fmt: MULT });
+  g.linha("R_LIQ_CORR", { rotulo: "Liquidez corrente", fmt: MULT });
+  g.linha("C_LIQ_CORR", { rotulo: "    corte sugerido (covenant)", fmt: MULT });
+  g.linha("T_LIQ_CORR", { rotulo: "    rompe?" });
+  g.linha("R_LIQ_SECA", { rotulo: "Liquidez seca (sem estoque)", fmt: MULT });
+  g.linha("R_ALAV_PL", { rotulo: "Dívida bruta / Patrimônio líquido", fmt: MULT });
+  g.pular();
+
+  // ---- CHECKS DO MODELO ----------------------------------------------------
   g.linha(null, { rotulo: "CHECKS DO MODELO", bloco: true });
   g.linha("CHECK_BS", { rotulo: "Balanço fecha? (0 = sim)", fmt: NUM2 });
   g.linha("CHECK_CAIXA", { rotulo: "Caixa ≥ mínimo? (0 = sim)", fmt: NUM2 });
+  g.linha("CHECK_EBITDA", { rotulo: "EBITDA positivo? (0 = sim)", fmt: NUM2 });
+  g.linha("CHECK_TXT", { rotulo: "Diagnóstico do exercício" });
+
+  // -------------------------------------------------------------- preencher
+  const ext = (aba: string, grade: Grade, chave: string, ano: number) => `=${g.externa(aba, grade, chave, ano)}`;
+  const temTrib = gTrib.tem("TOTAL");
 
   for (const ano of ctx.anos) {
     const ant = g.anoAnterior(ano);
-    g.set("REC_LIQ", ano, `=${g.externa("Income Statement", gDRE, "NET_REV", ano)}`, { fmt: NUM });
+    g.set("ANO_GRAF", ano, `=YEAR(${g.letraDoAno(ano)}${g.n("__titulo")})`, {
+      fmt: "0",
+      nota: "O ano como número inteiro. O cabeçalho é uma DATA (o eixo do tempo do modelo), e uma "
+        + "data num eixo de categoria de gráfico apareceria como número de série.",
+    });
+
+    // SUMMARY
+    g.set("REC_LIQ", ano, ext("Income Statement", gDRE, "NET_REV", ano), { fmt: NUM });
     g.set("REC_CRESC", ano, ant === null ? null
       : `=IF(${g.ref("REC_LIQ", ant)}<>0,${g.ref("REC_LIQ", ano)}/${g.ref("REC_LIQ", ant)}-1,0)`, { fmt: PCT });
-    g.set("EBITDA", ano, `=${g.externa("Income Statement", gDRE, "EBITDA", ano)}`, { fmt: NUM });
+    g.set("EBITDA", ano, ext("Income Statement", gDRE, "EBITDA", ano), { fmt: NUM, negrito: true });
     g.set("EBITDA_MG", ano, `=IF(${g.ref("REC_LIQ", ano)}<>0,${g.ref("EBITDA", ano)}/${g.ref("REC_LIQ", ano)},0)`, { fmt: PCT });
-    g.set("LUCRO", ano, `=${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}`, { fmt: NUM });
-    g.set("DIVIDA", ano, `=${g.externa("ST Inv. & Debt", gDiv, "DIVIDA_BRUTA", ano)}`, { fmt: NUM });
-    g.set("CAIXA", ano, `=${g.externa("Cash Flow", gCF, "CAIXA_FIM", ano)}`, { fmt: NUM });
-    g.set("DIV_LIQ", ano, `=${g.ref("DIVIDA", ano)}-${g.ref("CAIXA", ano)}`, { fmt: NUM, negrito: true });
-    // Alavancagem com EBITDA negativo é ARMADILHA: -3x parece confortável e
+    g.set("EBIT", ano, ext("Income Statement", gDRE, "EBIT", ano), { fmt: NUM });
+    g.set("LUCRO", ano, ext("Income Statement", gDRE, "NET_PROFIT", ano), { fmt: NUM });
+    g.set("CAPEX", ano, ext("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano), { fmt: NUM });
+    g.set("VAR_NCG", ano, ext("Working Capital", gWC, "ESP_VAR_NCG", ano), { fmt: NUM });
+    g.set("FCL", ano, ext("Cash Flow", gCF, "FCL", ano), { fmt: NUM, negrito: true });
+
+    // BALANCE SHEET
+    g.set("BS_CAIXA", ano, ext("Balance Sheet", gBS, "CAIXA", ano), { fmt: NUM });
+    g.set("BS_AC", ano, ext("Balance Sheet", gBS, "AC", ano), { fmt: NUM });
+    g.set("BS_ANC", ano, ext("Balance Sheet", gBS, "ANC", ano), { fmt: NUM });
+    g.set("BS_ATIVO", ano, ext("Balance Sheet", gBS, "ATIVO", ano), { fmt: NUM, negrito: true });
+    g.set("BS_PC", ano, ext("Balance Sheet", gBS, "PC", ano), { fmt: NUM });
+    g.set("BS_PNC", ano, ext("Balance Sheet", gBS, "PNC", ano), { fmt: NUM });
+    g.set("BS_PL", ano, ext("Balance Sheet", gBS, "PL", ano), { fmt: NUM });
+    g.set("BS_PASSIVO", ano, ext("Balance Sheet", gBS, "PASSIVO_PL", ano), { fmt: NUM, negrito: true });
+    g.set("BS_MISMATCH", ano, `=${g.ref("BS_ATIVO", ano)}-${g.ref("BS_PASSIVO", ano)}`, {
+      fmt: NUM2, negrito: true,
+      nota: "O `Mismatch` do Modelo Base, recalculado AQUI a partir das duas linhas de cima em vez "
+        + "de espelhado do balanço. É de propósito: se o espelho do ativo e o do passivo vierem de "
+        + "linhas diferentes por erro de âncora, esta subtração acusa, e um espelho do CHECK do "
+        + "balanço não acusaria.",
+    });
+
+    // INCOME STATEMENT
+    g.set("IS_GROSS", ano, ext("Income Statement", gDRE, "GROSS", ano), { fmt: NUM });
+    g.set("IS_DEDUC", ano, ext("Income Statement", gDRE, "DEDUC", ano), { fmt: NUM });
+    g.set("IS_NET", ano, ext("Income Statement", gDRE, "NET_REV", ano), { fmt: NUM, negrito: true });
+    g.set("IS_COGS", ano, ext("Income Statement", gDRE, "COGS", ano), { fmt: NUM });
+    g.set("IS_GP", ano, ext("Income Statement", gDRE, "GROSS_PROFIT", ano), { fmt: NUM });
+    g.set("IS_SGA", ano, ext("Income Statement", gDRE, "SGA", ano), { fmt: NUM });
+    g.set("IS_EBITDA", ano, ext("Income Statement", gDRE, "EBITDA", ano), { fmt: NUM, negrito: true });
+    g.set("IS_DA", ano, ext("Income Statement", gDRE, "DA", ano), { fmt: NUM });
+    g.set("IS_EBIT", ano, ext("Income Statement", gDRE, "EBIT", ano), { fmt: NUM, negrito: true });
+    g.set("IS_FIN", ano, ext("Income Statement", gDRE, "FIN_RESULT", ano), { fmt: NUM });
+    g.set("IS_EBT", ano, ext("Income Statement", gDRE, "EBT", ano), { fmt: NUM });
+    g.set("IS_TAX", ano, ext("Income Statement", gDRE, "TAX", ano), { fmt: NUM });
+    g.set("IS_NP", ano, ext("Income Statement", gDRE, "NET_PROFIT", ano), { fmt: NUM, negrito: true });
+
+    // CASH FLOW
+    g.set("CF_FCO", ano, ext("Cash Flow", gCF, "FCO", ano), { fmt: NUM });
+    g.set("CF_FCI", ano, ext("Cash Flow", gCF, "FCI", ano), { fmt: NUM });
+    g.set("CF_FCL", ano, ext("Cash Flow", gCF, "FCL", ano), { fmt: NUM, negrito: true });
+    g.set("CF_FCF", ano, ext("Cash Flow", gCF, "FCF", ano), { fmt: NUM });
+    g.set("CF_VAR", ano, ext("Cash Flow", gCF, "VAR_CAIXA", ano), { fmt: NUM });
+    g.set("CF_INI", ano, ext("Cash Flow", gCF, "CAIXA_INI", ano), { fmt: NUM });
+    g.set("CF_FIM", ano, ext("Cash Flow", gCF, "CAIXA_FIM", ano), { fmt: NUM, negrito: true });
+    g.set("CF_MIN", ano, ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano), { fmt: NUM });
+
+    // DEBT & RATIOS
+    g.set("DV_EXISTENTE", ano, ext("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano), { fmt: NUM });
+    g.set("DV_NOVA", ano, ext("ST Inv. & Debt", gDiv, "EMISSAO_SALDO", ano), { fmt: NUM });
+    g.set("DV_REVOLVER", ano, ext("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ano), { fmt: NUM });
+    g.set("DV_TOTAL", ano, `=${g.ref("DV_EXISTENTE", ano)}+${g.ref("DV_NOVA", ano)}+${g.ref("DV_REVOLVER", ano)}`,
+      { fmt: NUM, negrito: true });
+    g.set("DV_CAIXA", ano, `=${g.ref("BS_CAIXA", ano)}`, { fmt: NUM });
+    g.set("DV_LIQ", ano, `=${g.ref("DV_TOTAL", ano)}-${g.ref("DV_CAIXA", ano)}`, { fmt: NUM, negrito: true });
+    g.set("DV_JUROS", ano, `=-${g.externa("ST Inv. & Debt", gDiv, "DESP_FIN", ano)}`, {
+      fmt: NUM, nota: "Com sinal invertido para leitura: a despesa financeira é negativa na DRE.",
+    });
+    g.set("DV_AMORT", ano, ext("ST Inv. & Debt", gDiv, "ESP_AMORT", ano), { fmt: NUM });
+    g.set("DV_SERVICO", ano, `=${g.ref("DV_JUROS", ano)}+${g.ref("DV_AMORT", ano)}`, { fmt: NUM, negrito: true });
+    g.set("DV_TRIB", ano, temTrib ? ext("Tributos a Recolher", gTrib, "TOTAL", ano) : 0, {
+      fmt: NUM,
+      nota: temTrib
+        ? "Parcelamentos tributários — no mandato de reestruturação são quase sempre a segunda maior "
+          + "dívida, e quase nunca estão no mapa de dívida bancária."
+        : "Nenhuma conta de parcelamento tributário identificada neste caso.",
+    });
+
+    // RATIOS & COVENANTS
+    // Alavancagem com EBITDA negativo é ARMADILHA: −3x parece confortável e
     // significa o oposto. O IF devolve texto e o comitê lê o que está acontecendo.
-    g.set("DIV_EBITDA", ano,
-      `=IF(${g.ref("EBITDA", ano)}<=0,"EBITDA<=0",${g.ref("DIV_LIQ", ano)}/${g.ref("EBITDA", ano)})`, {
+    g.set("R_ND_EBITDA", ano,
+      `=IF(${g.ref("EBITDA", ano)}<=0,"EBITDA<=0",${g.ref("DV_LIQ", ano)}/${g.ref("EBITDA", ano)})`, {
       fmt: MULT, negrito: true,
-      nota: "Com EBITDA negativo a razão não tem significado: -3,0x parece confortável e é o "
+      nota: "Com EBITDA negativo a razão não tem significado: −3,0x parece confortável e é o "
         + "contrário. A célula diz 'EBITDA<=0' em vez de mostrar um múltiplo enganoso.",
     });
-    g.set("COBERTURA", ano,
-      `=IF((-${g.externa("ST Inv. & Debt", gDiv, "DESP_FIN", ano)}+`
-      + `${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano)})<=0,"sem serviço de dívida",`
-      + `${g.ref("EBITDA", ano)}/(-${g.externa("ST Inv. & Debt", gDiv, "DESP_FIN", ano)}+`
-      + `${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano)}))`, { fmt: MULT });
-    g.set("FCL", ano, `=${g.externa("Cash Flow", gCF, "FCL", ano)}`, { fmt: NUM });
-    g.set("CAPEX", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "TOTAL_CAPEX", ano)}`, { fmt: NUM });
-    g.set("NCG", ano, `=${g.externa("Working Capital", gWC, "NCG", ano)}`, { fmt: NUM });
-    g.set("REVOLVER", ano, `=${g.externa("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ano)}`, { fmt: NUM });
-    g.set("LIQUIDEZ", ano,
-      `=IF(${g.externa("Balance Sheet", gBS, "PC", ano)}<>0,`
-      + `${g.externa("Balance Sheet", gBS, "AC", ano)}/${g.externa("Balance Sheet", gBS, "PC", ano)},0)`, { fmt: MULT });
-    g.set("CHECK_BS", ano, `=${g.externa("Balance Sheet", gBS, "CHECK", ano)}`, { fmt: NUM2 });
+    g.set("C_ND_EBITDA", ano, COVENANT_ND_EBITDA, {
+      fmt: MULT, fill: FILL_INPUT,
+      nota: `Corte sugerido de alavancagem (${COVENANT_ND_EBITDA}x). É PREMISSA de negociação, não `
+        + "dado do caso — a célula existe para o corte do term sheet entrar aqui e o teste abaixo "
+        + "responder sozinho.",
+    });
+    g.set("T_ND_EBITDA", ano,
+      `=IF(NOT(ISNUMBER(${g.ref("R_ND_EBITDA", ano)})),"n.a.",`
+      + `IF(${g.ref("R_ND_EBITDA", ano)}>${g.ref("C_ND_EBITDA", ano)},"ROMPE","ok"))`, {});
+    g.set("R_DIV_EBITDA", ano,
+      `=IF(${g.ref("EBITDA", ano)}<=0,"EBITDA<=0",${g.ref("DV_TOTAL", ano)}/${g.ref("EBITDA", ano)})`, { fmt: MULT });
+    g.set("R_COBERTURA", ano,
+      `=IF(${g.ref("DV_SERVICO", ano)}<=0,"sem serviço de dívida",${g.ref("EBITDA", ano)}/${g.ref("DV_SERVICO", ano)})`,
+      { fmt: MULT, negrito: true });
+    g.set("C_COBERTURA", ano, COVENANT_DSCR, {
+      fmt: MULT, fill: FILL_INPUT,
+      nota: `Corte sugerido de cobertura (${COVENANT_DSCR}x). Premissa de negociação.`,
+    });
+    g.set("T_COBERTURA", ano,
+      `=IF(NOT(ISNUMBER(${g.ref("R_COBERTURA", ano)})),"n.a.",`
+      + `IF(${g.ref("R_COBERTURA", ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
+    g.set("R_JUROS", ano,
+      `=IF(${g.ref("DV_JUROS", ano)}<=0,"sem juros",${g.ref("EBITDA", ano)}/${g.ref("DV_JUROS", ano)})`, { fmt: MULT });
+    g.set("R_LIQ_CORR", ano,
+      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_AC", ano)}/${g.ref("BS_PC", ano)},0)`, { fmt: MULT });
+    g.set("C_LIQ_CORR", ano, COVENANT_LIQUIDEZ, {
+      fmt: MULT, fill: FILL_INPUT,
+      nota: `Corte sugerido de liquidez corrente (${COVENANT_LIQUIDEZ}x). Premissa de negociação.`,
+    });
+    g.set("T_LIQ_CORR", ano,
+      `=IF(NOT(ISNUMBER(${g.ref("R_LIQ_CORR", ano)})),"n.a.",`
+      + `IF(${g.ref("R_LIQ_CORR", ano)}<${g.ref("C_LIQ_CORR", ano)},"ROMPE","ok"))`, {});
+    // Liquidez SECA: sem estoque. Num mandato de reestruturação o estoque é o
+    // ativo que menos vira caixa, e é o que separa "tem liquidez" de "tem
+    // liquidez se conseguir vender tudo".
+    g.set("R_LIQ_SECA", ano,
+      `=IF(${g.ref("BS_PC", ano)}<>0,(${g.ref("BS_AC", ano)}-${g.externa("Working Capital", gWC, "ESP_ESTOQUE", ano)})`
+      + `/${g.ref("BS_PC", ano)},0)`, {
+      fmt: MULT,
+      nota: "Ativo circulante MENOS estoque, sobre o passivo circulante. É o índice que o Modelo "
+        + "Base acompanha com covenant próprio, e o que separa liquidez de liquidez condicionada a "
+        + "vender estoque.",
+    });
+    g.set("R_ALAV_PL", ano,
+      `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+
+    // CHECKS
+    g.set("CHECK_BS", ano, ext("Balance Sheet", gBS, "CHECK", ano), { fmt: NUM2 });
     g.set("CHECK_CAIXA", ano,
-      `=MIN(0,${g.externa("Cash Flow", gCF, "CAIXA_FIM", ano)}-`
-      + `${g.externa("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano)})`, {
+      `=MIN(0,${g.ref("CF_FIM", ano)}-${g.ref("CF_MIN", ano)})`, {
       fmt: NUM2,
       nota: "Negativo significa que o revolver não cobriu o furo — ou porque o limite não foi "
         + "modelado, ou porque o cenário é insustentável. Nos dois casos é informação, não erro "
         + "a esconder.",
     });
+    g.set("CHECK_EBITDA", ano, `=MIN(0,${g.ref("EBITDA", ano)})`, { fmt: NUM2 });
+    g.set("CHECK_TXT", ano,
+      `=IF(ABS(${g.ref("CHECK_BS", ano)})>0.5,"BALANÇO NÃO FECHA",`
+      + `IF(${g.ref("CHECK_CAIXA", ano)}<0,"CAIXA ABAIXO DO MÍNIMO",`
+      + `IF(${g.ref("CHECK_EBITDA", ano)}<0,"EBITDA NEGATIVO",`
+      + `IF(${g.ref("T_ND_EBITDA", ano)}="ROMPE","COVENANT DE ALAVANCAGEM ROMPIDO","ok"))))`, {
+      nota: "Um diagnóstico por exercício, na ordem de gravidade. É a linha que o comitê lê primeiro.",
+    });
   }
-  return g;
+
+  // ---- formatação condicional nos checks -----------------------------------
+  //
+  // O Modelo Base tem ZERO formatação condicional (medido, §17.4): o `Mismatch`
+  // dele é um número que alguém precisa olhar. Aqui os checks se pintam — verde
+  // quando fecham, vermelho quando não. É acréscimo nosso, e é o tipo de coisa
+  // que impede um modelo aberto às pressas de passar por bom.
+  const colIni = colLetra(COL_PRIMEIRO_ANO);
+  const colFim = colLetra(COL_PRIMEIRO_ANO + ctx.anos.length - 1);
+  for (const [chave, regra] of [
+    ["CHECK_BS", `ABS(${colIni}${g.n("CHECK_BS")})>0.5`],
+    ["CHECK_CAIXA", `${colIni}${g.n("CHECK_CAIXA")}<0`],
+    ["CHECK_EBITDA", `${colIni}${g.n("CHECK_EBITDA")}<0`],
+    ["BS_MISMATCH", `ABS(${colIni}${g.n("BS_MISMATCH")})>0.5`],
+  ] as const) {
+    const linha = g.n(chave);
+    g.ws.addConditionalFormatting({
+      ref: `${colIni}${linha}:${colFim}${linha}`,
+      rules: [
+        { type: "expression", formulae: [regra], style: { fill: FILL_CHECK_ERRO }, priority: 1 },
+        { type: "expression", formulae: ["TRUE"], style: { fill: FILL_CHECK_OK }, priority: 2 },
+      ],
+    });
+  }
+  for (const chave of ["T_ND_EBITDA", "T_COBERTURA", "T_LIQ_CORR", "CHECK_TXT"] as const) {
+    const linha = g.n(chave);
+    g.ws.addConditionalFormatting({
+      ref: `${colIni}${linha}:${colFim}${linha}`,
+      rules: [
+        { type: "containsText", operator: "containsText", text: "ROMPE", style: { fill: FILL_CHECK_ERRO }, priority: 1 },
+        { type: "containsText", operator: "containsText", text: "NÃO FECHA", style: { fill: FILL_CHECK_ERRO }, priority: 2 },
+        { type: "containsText", operator: "containsText", text: "ok", style: { fill: FILL_CHECK_OK }, priority: 3 },
+      ],
+    });
+  }
+
+  g.finalizar("__unidade");
+
+  // ---- os 8 gráficos -------------------------------------------------------
+  //
+  // Mesmo número e mesma família do Modelo Base (8, todos de linha, todos nesta
+  // aba). O padrão dele é "índice + corte de covenant" em quatro deles; aqui o
+  // corte entra TRACEJADO, que é o que distingue no papel preto e branco uma
+  // linha de projeção de uma linha de limite contratual.
+  const faixa = (chave: string) =>
+    `Output!$${colIni}$${g.n(chave)}:$${colFim}$${g.n(chave)}`;
+  const cat = faixa("ANO_GRAF");
+  const rotulo = (chave: string) => `Output!$${colLetra(COL_ROTULO)}$${g.n(chave)}`;
+  const COR = { receita: "0E7490", ebitda: "1E293B", divida: "B45309", caixa: "15803D", corte: "B91C1C" };
+  const larg = 8;
+  const alt = 15;
+  const colBase = COL_PRIMEIRO_ANO + ctx.anos.length + 1;
+  const graficos: EspecGrafico[] = [
+    { titulo: "Receita líquida e EBITDA", series: [
+      { refNome: rotulo("REC_LIQ"), refCategorias: cat, refValores: faixa("REC_LIQ"), cor: COR.receita },
+      { refNome: rotulo("EBITDA"), refCategorias: cat, refValores: faixa("EBITDA"), cor: COR.ebitda },
+    ] },
+    { titulo: "Margem EBITDA", fmtValor: "0.0%", series: [
+      { refNome: rotulo("EBITDA_MG"), refCategorias: cat, refValores: faixa("EBITDA_MG"), cor: COR.ebitda },
+    ] },
+    { titulo: "Dívida total e dívida líquida", series: [
+      { refNome: rotulo("DV_TOTAL"), refCategorias: cat, refValores: faixa("DV_TOTAL"), cor: COR.divida },
+      { refNome: rotulo("DV_LIQ"), refCategorias: cat, refValores: faixa("DV_LIQ"), cor: COR.ebitda },
+    ] },
+    { titulo: "Net Debt / EBITDA vs covenant", fmtValor: '0.0"x"', series: [
+      { refNome: rotulo("R_ND_EBITDA"), refCategorias: cat, refValores: faixa("R_ND_EBITDA"), cor: COR.divida },
+      { refNome: rotulo("C_ND_EBITDA"), refCategorias: cat, refValores: faixa("C_ND_EBITDA"), cor: COR.corte, tracejada: true },
+    ] },
+    { titulo: "Cobertura do serviço da dívida vs covenant", fmtValor: '0.0"x"', series: [
+      { refNome: rotulo("R_COBERTURA"), refCategorias: cat, refValores: faixa("R_COBERTURA"), cor: COR.caixa },
+      { refNome: rotulo("C_COBERTURA"), refCategorias: cat, refValores: faixa("C_COBERTURA"), cor: COR.corte, tracejada: true },
+    ] },
+    { titulo: "Fluxo de caixa livre", series: [
+      { refNome: rotulo("FCL"), refCategorias: cat, refValores: faixa("FCL"), cor: COR.caixa },
+    ] },
+    { titulo: "Caixa de fechamento vs caixa mínimo", series: [
+      { refNome: rotulo("CF_FIM"), refCategorias: cat, refValores: faixa("CF_FIM"), cor: COR.caixa },
+      { refNome: rotulo("CF_MIN"), refCategorias: cat, refValores: faixa("CF_MIN"), cor: COR.corte, tracejada: true },
+    ] },
+    { titulo: "Liquidez corrente vs covenant", fmtValor: '0.0"x"', series: [
+      { refNome: rotulo("R_LIQ_CORR"), refCategorias: cat, refValores: faixa("R_LIQ_CORR"), cor: COR.receita },
+      { refNome: rotulo("C_LIQ_CORR"), refCategorias: cat, refValores: faixa("C_LIQ_CORR"), cor: COR.corte, tracejada: true },
+    ] },
+  ].map((espec, i) => ({
+    aba: "Output",
+    titulo: espec.titulo,
+    fmtValor: espec.fmtValor,
+    series: espec.series,
+    // Duas colunas de gráficos à direita dos dados, empilhados em pares.
+    de: { col: colBase + (i % 2) * (larg + 1), linha: 1 + Math.floor(i / 2) * (alt + 1) },
+    ate: { col: colBase + (i % 2) * (larg + 1) + larg, linha: 1 + Math.floor(i / 2) * (alt + 1) + alt },
+  }));
+
+  return { g, graficos };
 }
 
 // =============================================================================
@@ -1759,21 +2812,159 @@ function abaConsideracoes(wb: ExcelJS.Workbook, ctx: Ctx): void {
     ws.getRow(r).height = 30;
     r++;
   }
-  ws.views = [{ state: "frozen", ySplit: 5 }];
+
+  // ---- A MATRIZ DE CENÁRIOS DA REFERÊNCIA ----------------------------------
+  //
+  // A `Considerações` do Modelo Base é uma matriz 3×4 — três cenários nas linhas,
+  // quatro premissas-chave nas colunas (Crescimento, Margem Ebitda, Investimento,
+  // Capital de giro) — com as células de texto em BRANCO e altura de 77 pontos
+  // para o analista escrever a justificativa de cada uma. É a única aba do
+  // arquivo dele feita para receber texto humano, e o nosso export não a tinha.
+  //
+  // Aqui ela existe com a mesma anatomia, e cada célula já vem com o que o
+  // sistema SABE (a premissa vinculada, o valor, a origem) — o analista completa
+  // o porquê. Célula em branco num entregável institucional é convite a esquecer;
+  // célula com o fato e sem a justificativa é um pedido explícito.
+  r += 1;
+  put(r, 2, "MATRIZ DE CENÁRIOS — a justificativa de cada premissa", { bold: true, size: 12 });
+  r += 1;
+  const COLUNAS_MATRIZ = ["Crescimento", "Margem EBITDA", "Investimento (Capex)", "Capital de giro"];
+  const rCab = r;
+  put(rCab, 2, "Cenários", { bold: true, color: { argb: ORIA.branco } }).fill = FILL_SECAO;
+  COLUNAS_MATRIZ.forEach((nome, i) => {
+    const c = put(rCab, 3 + i, nome, { bold: true, color: { argb: ORIA.branco } });
+    c.fill = FILL_SECAO;
+    c.alignment = { horizontal: "center", wrapText: true };
+    ws.getColumn(3 + i).width = 30;
+  });
+  r += 1;
+  const premissasPorFormula = (formula: string) => ctx.ent.premissas
+    .filter((p) => p.formula === formula)
+    .map((p) => `${p.nome} (${p.origem ?? "digitado"})`);
+  const fatoConhecido = [
+    premissasPorFormula("crescimento_composto").concat(premissasPorFormula("indice_macro")),
+    premissasPorFormula("pct_de_linha"),
+    ctx.ent.premissas.filter((p) => /capex|investimento/i.test(p.nome)).map((p) => p.nome),
+    premissasPorFormula("dias_de_giro"),
+  ];
+  for (let i = 0; i < CENARIOS.length; i++) {
+    const rLinha = r + i;
+    const cCen = put(rLinha, 2, CENARIOS[i], { bold: true });
+    cCen.alignment = { vertical: "top" };
+    cCen.fill = FILL_SUBTOTAL;
+    for (let j = 0; j < COLUNAS_MATRIZ.length; j++) {
+      const c = ws.getRow(rLinha).getCell(3 + j);
+      const fatos = fatoConhecido[j];
+      c.value = i === 0
+        ? (fatos.length > 0
+          ? `Premissas ativas: ${fatos.join("; ")}.\n\n(justificar aqui)`
+          : "(nenhuma premissa ativa nesta família — justificar aqui)")
+        : i === 1
+          ? "Espelha o Base Case salvo onde o cliente divergir — anotar aqui a divergência."
+          : `Haircut de ${(ctx.ent.stressPct * 100).toFixed(0)}% aplicado com o sinal correto em cada `
+            + "linha (receita piora, custo piora, giro piora, capex é cortado) — justificar o nível aqui.";
+      c.alignment = { wrapText: true, vertical: "top" };
+      c.font = fonte({ size: 9 });
+      c.border = { top: { style: "hair" }, bottom: { style: "hair" }, left: { style: "hair" }, right: { style: "hair" } };
+    }
+    ws.getRow(rLinha).height = 66;
+  }
+  r += CENARIOS.length + 1;
+
+  // ---- a legenda das cores, que é o manual de leitura do arquivo ------------
+  put(r, 2, "GRAMÁTICA DE CORES", { bold: true }); r += 1;
+  for (const item of LEGENDA_CORES) {
+    const c = put(r, 2, item.texto, { color: { argb: item.cor }, bold: item.fundo !== undefined });
+    if (item.fundo) c.fill = preencherArgb(item.fundo);
+    ws.mergeCells(r, 2, r, 6);
+    r += 1;
+  }
+
+  ws.views = [{ state: "frozen", ySplit: 5, showGridLines: false }];
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printArea: `B1:H${r}` };
 }
 
 function abaCapa(wb: ExcelJS.Workbook, ctx: Ctx): void {
   const ws = wb.addWorksheet("Capa");
-  ws.getColumn(3).width = 70;
-  ws.getRow(4).getCell(3).value = ctx.ent.entidade ?? ctx.ent.caso.nome;
-  ws.getRow(4).getCell(3).font = { bold: true, size: 20 };
-  ws.getRow(6).getCell(3).value = "Projeções Financeiras";
-  ws.getRow(6).getCell(3).font = { size: 14 };
-  ws.getRow(8).getCell(3).value = `${ctx.ent.caso.nome} · ${ctx.ent.caso.produto}`;
-  ws.getRow(10).getCell(3).value = `Gerado em ${ctx.ent.agora.toLocaleDateString("pt-BR")}`;
-  ws.getRow(10).getCell(3).font = { size: 10, italic: true };
-  ws.getRow(12).getCell(3).value = "Oria Partners — documento de trabalho";
-  ws.getRow(12).getCell(3).font = { size: 10 };
+  // A CAPA É A CARA DA ORIA NO ENTREGÁVEL. O Modelo Base tem duas células de
+  // texto (`Unimed Rio` e `Projeções Financeiras`) e nada mais — funciona como
+  // capa de papel de trabalho, não como capa de documento que vai a comitê ou a
+  // credor. Aqui ela é composta: faixa institucional, entidade, produto do
+  // mandato, cenário ATIVO por fórmula (não texto congelado) e a legenda das
+  // cores, que é o que permite ler o resto do arquivo sem manual.
+  ws.getColumn(2).width = 3;
+  ws.getColumn(3).width = 92;
+  ws.views = [{ showGridLines: false }];
+
+  const faixa = (r: number, altura: number) => {
+    ws.getRow(r).height = altura;
+    for (let c = 2; c <= 9; c++) ws.getRow(r).getCell(c).fill = FILL_SECAO;
+  };
+  faixa(2, 6);
+  faixa(3, 34);
+  const titulo = ws.getRow(3).getCell(3);
+  titulo.value = "ORIA PARTNERS";
+  titulo.font = fonte({ bold: true, size: 16, color: { argb: ORIA.branco } });
+  titulo.alignment = { vertical: "middle" };
+  faixa(4, 6);
+
+  const linhaTexto = (r: number, valor: ExcelJS.CellValue, f: Partial<ExcelJS.Font>, altura?: number) => {
+    const c = ws.getRow(r).getCell(3);
+    c.value = valor;
+    c.font = fonte(f);
+    if (altura) ws.getRow(r).height = altura;
+    return c;
+  };
+
+  linhaTexto(6, ctx.ent.entidade ?? ctx.ent.caso.nome, { bold: true, size: TAM_CAPA_TITULO }, 34);
+  linhaTexto(7, "Modelo financeiro institucional — projeções", { size: 13, color: { argb: ORIA.acento } });
+  linhaTexto(9, `${ctx.ent.caso.nome} · ${ctx.ent.caso.produto}`, { size: 11 });
+  linhaTexto(10, `Setor: ${ctx.ent.setor ?? "(não definido)"}`, { size: 10, color: { argb: FONTE_COR.auxiliar } });
+  linhaTexto(11,
+    `Exercícios realizados: ${ctx.hist.join(", ") || "(nenhum)"} · projetados: ${ctx.proj.join(", ") || "(nenhum)"}`,
+    { size: 10, color: { argb: FONTE_COR.auxiliar } });
+  linhaTexto(12, `Gerado em ${ctx.ent.agora.toLocaleDateString("pt-BR")}`,
+    { size: 10, italic: true, color: { argb: FONTE_COR.auxiliar } });
+
+  // O cenário ativo na CAPA, por fórmula. Numa capa de texto congelado, o
+  // arquivo circula dizendo "Base Case" com o dial em Stress — e ninguém percebe.
+  linhaTexto(14, "Cenário ativo", { bold: true });
+  const cen = ws.getRow(15).getCell(3);
+  cen.value = { formula: `CHOOSE(Output!$G$2,"${CENARIOS[0]}","${CENARIOS[1]}","${CENARIOS[2]}")` };
+  cen.font = fonte({ bold: true, size: 13, color: { argb: ORIA.acento } });
+  cen.note = comoNota(
+    "Lido do interruptor único (`Output!$G$2`) por fórmula. Capa com cenário escrito à mão circula "
+    + "dizendo 'Base Case' com o modelo em 'Stress' — e o leitor não tem como saber.",
+  );
+
+  linhaTexto(17, "COMO LER ESTE ARQUIVO", { bold: true });
+  let r = 18;
+  for (const item of LEGENDA_CORES) {
+    const c = ws.getRow(r).getCell(3);
+    c.value = item.texto;
+    c.font = fonte({ color: { argb: item.cor }, bold: item.fundo !== undefined });
+    if (item.fundo) c.fill = preencherArgb(item.fundo);
+    r++;
+  }
+  r++;
+  for (const texto of [
+    "As 14 primeiras abas são o MODELO (projeção). As demais são a PROVENIÊNCIA: o dado extraído "
+    + "linha a linha, com o documento de origem — é o que permite auditar qualquer número daqui.",
+    "Toda projeção é FÓRMULA. Mudar uma premissa (célula azul) move o modelo inteiro; nenhum número "
+    + "projetado foi calculado fora do arquivo.",
+    "O calendário sai de UMA célula — o último exercício realizado, na aba 'Revenues, COGS & SG&A'.",
+    "A aba 'Considerações' declara as divergências de método. Ler antes de usar qualquer número.",
+  ]) {
+    const c = ws.getRow(r).getCell(3);
+    c.value = texto;
+    c.font = fonte({ size: 9, color: { argb: FONTE_COR.auxiliar } });
+    c.alignment = { wrapText: true, vertical: "top" };
+    ws.getRow(r).height = 26;
+    r++;
+  }
+  linhaTexto(r + 1, "Documento de trabalho — Oria Partners. Circulação restrita.",
+    { size: 9, italic: true, color: { argb: FONTE_COR.auxiliar } });
+  ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 1, printArea: `B1:I${r + 1}` };
 }
 
 // =============================================================================
@@ -1782,7 +2973,7 @@ function abaCapa(wb: ExcelJS.Workbook, ctx: Ctx): void {
 export function construirModeloInstitucional(
   workbook: ExcelJS.Workbook,
   ent: EntradaModeloInstitucional,
-): void {
+): EspecGrafico[] {
   if (ent.anosProjetados.length === 0) {
     throw new Error("construirModeloInstitucional: sem anos projetados — nada a modelar.");
   }
@@ -1794,15 +2985,15 @@ export function construirModeloInstitucional(
   const gAnual = abaAnual(workbook, ctx);
   const gPrem = abaPremissas(workbook, ctx);
   const gRec = abaReceita(workbook, ctx, gPrem, gAnual);
-  const gDiv = abaDivida(workbook, ctx, gAnual);
+  const gDiv = abaDivida(workbook, ctx, gAnual, gRec);
   const gFA = abaImobilizado(workbook, ctx, gRec);
   const gWC = abaCapitalGiro(workbook, ctx, gRec);
   const gDRE = abaDRE(workbook, ctx, gRec, gPrem, gDiv);
-  const gCF = abaFluxo(workbook, ctx, gDRE, gWC, gFA, gDiv);
-  const gBS = abaBalanco(workbook, ctx, gCF, gWC, gFA, gDiv, gDRE);
-  const gGW = abaGoodwill(workbook, ctx, gDRE, gCF);
-  abaTributos(workbook, ctx);
-  const gOut = abaOutput(workbook, ctx, gDRE, gBS, gDiv, gCF, gFA, gWC);
+  const gCF = abaFluxo(workbook, ctx, gDRE, gWC, gFA, gDiv, gRec);
+  const gBS = abaBalanco(workbook, ctx, gCF, gWC, gFA, gDiv, gDRE, gRec);
+  const gGW = abaGoodwill(workbook, ctx, gDRE, gCF, gRec);
+  const gTrib = abaTributos(workbook, ctx, gRec);
+  const saidaOutput = abaOutput(workbook, ctx, gDRE, gBS, gDiv, gCF, gFA, gWC, gRec, gGW, gTrib);
   abaConsideracoes(workbook, ctx);
   abaCapa(workbook, ctx);
 
@@ -1815,19 +3006,45 @@ export function construirModeloInstitucional(
       fmt: NUM,
       nota: "Decidido na aba Cash Flow, onde o furo de caixa é conhecido. Uma conta, um lugar.",
     });
-    // Rendimento do caixa: sobre o saldo de ABERTURA (ver NOTA_CIRCULARIDADE), e
-    // só sobre o excedente ao caixa mínimo — caixa operacional mínimo não rende
-    // CDI, fica em conta movimento.
-    gDiv.set("REC_FIN", ano,
-      `=MAX(0,${Grade.refExterna("Cash Flow", gCF.letraDoAno(ano), gCF.n("CAIXA_INI"))}-${gDiv.ref("CAIXA_MIN", ano)})`
-      + `*${gDiv.ref("TAXA_MEDIA", ano)}`, {
-      fmt: NUM,
-      nota: "Rende só o excedente ao caixa mínimo, sobre o saldo de ABERTURA. " + NOTA_CIRCULARIDADE,
+    // A APLICAÇÃO É O EXCEDENTE DO CAIXA AO CAIXA MÍNIMO — decomposição, não
+    // ativo adicional. O caixa operacional mínimo fica em conta movimento e não
+    // rende; só o que passa dele é aplicado. Publicar isto como conta de balanço
+    // somaria o mesmo dinheiro duas vezes, que é o defeito que esta rodada
+    // corrigiu no giro.
+    gDiv.set("ST_FIM", ano,
+      `=MAX(0,${Grade.refExterna("Cash Flow", gCF.letraDoAno(ano), gCF.n("CAIXA_FIM"))}-${gDiv.ref("CAIXA_MIN", ano)})`, {
+      fmt: NUM, negrito: true,
+      nota: "PARTE do caixa, não um ativo a mais: é o excedente ao caixa mínimo. O `Balance Sheet` "
+        + "carrega o caixa TOTAL numa linha só; esta aqui existe para o rendimento incidir apenas "
+        + "sobre o que de fato é aplicado.",
     });
   }
   for (const ano of ctx.hist) {
-    gDiv.set("REC_FIN", ano, 0, { fmt: NUM });
-    gDiv.set("REVOLVER_SAQUE", ano, 0, { fmt: NUM });
+    gDiv.set("REVOLVER_SAQUE", ano, 0, { fmt: NUM, tipo: "calc" });
+    gDiv.set("ST_FIM", ano,
+      `=MAX(0,${Grade.refExterna("Cash Flow", gCF.letraDoAno(ano), gCF.n("CAIXA_FIM"))}-${gDiv.ref("CAIXA_MIN", ano)})`,
+      { fmt: NUM });
+  }
+
+  // A DEPRECIAÇÃO CHEGANDO À DRE — o defeito que esta rodada encontrou no NOSSO
+  // lado, e o mais grave dos dois.
+  //
+  // A linha `Revenues, COGS & SG&A!DEPRECIACAO` era DECLARADA e nunca preenchida.
+  // Consequência medida: `Income Statement!EBITDA` somava uma célula vazia (então
+  // EBITDA = EBIT, exatamente o erro que o comentário do EBITDA alerta), `D&A`
+  // saía ZERO em todos os anos mesmo com `Fixed Assets & CAPEX` calculando
+  // depreciação, e o `Cash Flow` somava de volta uma depreciação que a DRE nunca
+  // tinha subtraído — o que infla o lucro E o caixa, e abre o balanço.
+  // Ela é preenchida aqui, e não na `abaReceita`, porque a aba de imobilizado é
+  // construída depois — é a mesma costura de volta do revolver.
+  for (const ano of ctx.anos) {
+    gRec.set("DEPRECIACAO", ano,
+      `=${Grade.refExterna("Fixed Assets & CAPEX", gFA.letraDoAno(ano), gFA.n("ESP_DEPREC"))}`, {
+      fmt: NUM,
+      nota: "Depreciação do período, do espelho da aba Fixed Assets & CAPEX. No realizado ela é ZERO "
+        + "de propósito: a depreciação histórica já está DENTRO das linhas de custo e despesa "
+        + "extraídas, e somá-la outra vez contaria o mesmo abatimento duas vezes.",
+    });
   }
 
   // ---- Ordem das abas ------------------------------------------------------
@@ -1855,5 +3072,10 @@ export function construirModeloInstitucional(
   // isto o Excel mostra célula vazia até alguém apertar F9.
   workbook.calcProperties = { fullCalcOnLoad: true };
 
-  void gGW; void gOut;
+  // Os gráficos NÃO podem ser escritos pelo ExcelJS (ele não tem API de gráfico,
+  // conferido no runtime da versão do lock). A especificação sai daqui e é
+  // injetada no .xlsx já gerado por `injetarGraficosNoBuffer`, no mesmo
+  // pós-processamento que já amplia a caixa das notas.
+  void gGW;
+  return saidaOutput.graficos;
 }
