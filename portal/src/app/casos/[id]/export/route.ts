@@ -135,13 +135,28 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // Falha aqui NÃO derruba o export: sem macro o arquivo sai como sempre saiu,
   // só sem a aba Macro e com as premissas de inflação/juro zeradas. Um índice
   // indisponível não pode impedir alguém de baixar a planilha do mandato.
-  const [anuaisRes, expRes] = await Promise.all([
+  const [anuaisRes, expRes, obsRes] = await Promise.all([
     supabase.rpc("fn_indice_macro_anual", { p_desde_ano: new Date().getFullYear() - 11 }),
     supabase
       .from("indice_macro_expectativa")
       .select("serie, ano_ref, mediana, coletado_em")
       .gte("ano_ref", new Date().getFullYear() - 1)
       .order("coletado_em", { ascending: false }),
+    // AS OBSERVAÇÕES CRUAS, para as séries de NÍVEL.
+    //
+    // `fn_indice_macro_anual` devolve, para série de nível, a VARIAÇÃO entre o
+    // primeiro e o último fechamento do ano — e o modelo institucional tem uma linha
+    // de nível ("R$/US$ — final de período") alimentada por ela. O arquivo entregue
+    // em 06/08/2026 saiu com câmbio de 24,5 em 2024 e **−10,6** em 2025 ao lado de
+    // 5,2 do Focus (que é nível): duas grandezas na mesma linha, e ela converte
+    // dívida em moeda estrangeira.
+    //
+    // O nível de fechamento do ano vem daqui, da própria observação. Sem migration:
+    // a tabela já é legível pelo papel `authenticated` (0028).
+    supabase
+      .from("indice_macro_obs")
+      .select("serie, data_ref, valor")
+      .order("data_ref", { ascending: true }),
   ]);
 
   // Erro de CONSULTA (RLS sem policy volta 0 linhas sem erro; função sem
@@ -187,6 +202,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const macro = anuais.length > 0 || expectativas.length > 0
     ? { anuais, expectativas, nomes }
     : undefined;
+
+  // Natureza por série e nível de fechamento por (série, ano) — os dois insumos que
+  // impedem publicar variação numa linha de nível (ver a consulta `obsRes`).
+  const naturezaDaSerie = new Map<string, "taxa" | "nivel">();
+  for (const a of anuais) {
+    if (a.natureza === "nivel" || a.natureza === "taxa") naturezaDaSerie.set(a.serie, a.natureza);
+  }
+  // As observações vêm ordenadas por data crescente, então a última escrita de cada
+  // (série, ano) é o fechamento do ano.
+  const nivelDeFechamento = new Map<string, { valor: number; data: string }>();
+  if (obsRes.error) {
+    console.error(`[export] consulta de observações macro falhou: ${obsRes.error.message}`);
+  }
+  for (const o of ((obsRes.data as Array<{ serie: string; data_ref: string; valor: number }> | null) ?? [])) {
+    const ano = Number(o.data_ref.slice(0, 4));
+    if (!Number.isFinite(ano)) continue;
+    nivelDeFechamento.set(`${o.serie}|${ano}`, { valor: Number(o.valor), data: o.data_ref });
+  }
 
   // ---- Fase 7.4: a configuração de modelagem e o Portão 2 -------------------
   //
@@ -340,13 +373,35 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       }));
 
       // A base macro do modelo: realizado + Focus, com a fonte de cada célula.
-      const macroModelo = [
-        ...anuais.map((a) => ({
-          serie: a.serie, ano: a.ano, valor: Number(a.retorno),
-          fonte: `realizado (${a.meses} meses)`,
-        })),
-        ...expectativas.map((e) => ({
+      //
+      // SÉRIE DE NÍVEL ENTREGA NÍVEL. Para `natureza = 'nivel'` o valor do ano é o
+      // ÚLTIMO fechamento observado, não o retorno — e quando não há observação para
+      // o ano, a série NÃO entra (o modelo deixa a célula vazia dizendo por quê, em
+      // vez de publicar variação numa linha de nível).
+      type MacroDoModelo = {
+        serie: string; ano: number; valor: number; fonte: string; natureza: "taxa" | "nivel";
+      };
+      const macroModelo: MacroDoModelo[] = [
+        ...anuais.flatMap((a): MacroDoModelo[] => {
+          if (a.natureza === "nivel") {
+            const nivel = nivelDeFechamento.get(`${a.serie}|${a.ano}`);
+            if (nivel === undefined) return [];
+            return [{
+              serie: a.serie, ano: a.ano, valor: nivel.valor, natureza: "nivel",
+              fonte: `realizado — fechamento de ${nivel.data}`,
+            }];
+          }
+          return [{
+            serie: a.serie, ano: a.ano, valor: Number(a.retorno), natureza: "taxa",
+            fonte: `realizado (${a.meses} meses)`,
+          }];
+        }),
+        ...expectativas.map((e): MacroDoModelo => ({
           serie: e.serie, ano: e.ano_ref, valor: Number(e.mediana),
+          // A expectativa do Focus para câmbio é publicada em NÍVEL (R$/US$ de fim de
+          // período), e para IPCA/Selic/CDI em taxa — a natureza é da SÉRIE, então ela
+          // vem da mesma classificação usada no realizado.
+          natureza: naturezaDaSerie.get(e.serie) ?? "taxa",
           fonte: `Focus, coleta ${e.coletado_em}`,
         })),
       ];

@@ -4015,45 +4015,123 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // (caixa, giro do ativo, estoque, imobilizado, giro do passivo, dívida em duas
 // pontas, patrimônio) com números redondos escolhidos para o CHECK ser
 // verificável a olho se o teste falhar.
+//
+// A FIXTURE FOI REFEITA (rodada de 06/08/2026) COM A FORMA DO DADO REAL, e é essa
+// a lição mais cara desta rodada. A versão anterior tinha:
+//
+//   • custo e despesa POSITIVOS (`"Custo dos produtos vendidos", 140000`), quando
+//     a extração — e a fixture `book-vertentes.json`, e o banco — trazem `−140000`,
+//     porque é assim que a DRE publicada escreve;
+//   • uma conta por grupo, NENHUM par subtotal+componente, quando toda demonstração
+//     real imprime "Obrigações Tributárias 8.706" seguido dos componentes dela;
+//   • um único exercício realizado, quando o mapa de dívida costuma cobrir só o
+//     último e o balanço cobre todos;
+//   • nenhuma linha de resultado informada (Receita Líquida, Lucro Bruto, EBIT),
+//     então não havia contra o que conferir a cascata.
+//
+// Com essa fixture os 15 asserts do (0105) passavam VERDES enquanto o arquivo
+// entregue ao dono transformava prejuízo de 17.901 em lucro de 268.041 e um ativo
+// de 95.780 em 195.090. Fixture mais fácil que a produção mede o instrumento, não
+// o sistema — é o que o `CLAUDE.md` chama de teste que não pode falhar.
 // ---------------------------------------------------------------------------
 {
-  const linha = (secao: string, chave: string, v: number, doc = "BALANCO") => ({
+  // Valores POR ANO e na CONVENÇÃO DO DOCUMENTO: despesa negativa, como o PDF
+  // escreve e como a extração entrega. É o modelo que tem de normalizar.
+  const linhaAnos = (
+    secao: string, chave: string, valores: Record<string, number>,
+    doc = "BALANCO", papel: "conta" | "subtotal" = "conta",
+  ) => ({
     secao_canonica: secao, chave, rotulo_norm: chave.toLowerCase(),
-    papel: "conta" as const, unidade: "milhar", moeda: "BRL",
-    documentos: [doc], valores: { "2025": v },
+    papel, unidade: "milhar", moeda: "BRL",
+    documentos: [doc], valores,
   });
+  const linha = (secao: string, chave: string, v: number, doc = "BALANCO") =>
+    linhaAnos(secao, chave, { "2025": v }, doc);
+  void linha;
 
   const entradaModelo = {
     caso: { nome: "Fecha o balanço", produto: "reestruturacao" },
     agora: new Date("2026-08-05T12:00:00Z"),
     entidade: "VERTENTES METALÚRGICA LTDA.",
     setor: "industria",
-    anosHistoricos: [2025],
+    anosHistoricos: [2024, 2025],
     anosProjetados: [2026, 2027, 2028],
     stressPct: 0.2, caixaMinimo: 5000, aliquotaTributos: 0.34,
+    // O BALANÇO DESTE CASO FECHA NOS DOIS EXERCÍCIOS, e fecha SÓ se o modelo
+    // excluir o subtotal informado e achar a dívida de 2024 no balanço:
+    //
+    //             |      2024 |      2025
+    //   ativo     |   117.000 |   125.000
+    //   PC        |    33.000 |    40.000   (giro 21.000/25.000 + dívida CP 12.000/15.000)
+    //   PNC       |    34.000 |    40.000   (dívida LP 30.000/35.000 + provisões 4.000/5.000)
+    //   PL        |    50.000 |    45.000
+    //
+    // As "Provisões" entram como SUBTOTAL do documento (e os dois componentes
+    // abaixo): somar os três dobra o grupo e o CHECK acusa 4.000/5.000.
     linhas: [
-      // ativo
-      linha("ativo_circulante", "Caixa e equivalentes de caixa", 12000),
-      linha("ativo_circulante", "Clientes", 30000),
-      linha("ativo_circulante", "Estoques", 20000),
-      linha("ativo_nao_circulante", "Imobilizado", 60000),
-      linha("ativo_nao_circulante", "Depósitos judiciais", 3000),
-      // passivo
-      linha("passivo_circulante", "Fornecedores", 18000),
-      linha("passivo_circulante", "Obrigações trabalhistas", 7000),
-      linha("passivo_circulante", "Empréstimos e financiamentos", 15000),
-      linha("passivo_nao_circulante", "Empréstimos e financiamentos", 35000),
-      linha("passivo_nao_circulante", "Provisão para contingências", 5000),
-      // patrimônio: o que falta para o balanço fechar em 2025
-      //   ativo  = 12.000 + 30.000 + 20.000 + 60.000 + 3.000 = 125.000
-      //   passivo = 18.000 + 7.000 + 15.000 + 35.000 + 5.000  =  80.000
-      //   PL      = 45.000
-      linha("patrimonio_liquido", "Capital social", 40000),
-      linha("patrimonio_liquido", "Reservas de lucros", 5000),
-      // resultado
-      linha("receita_bruta", "Vendas de produtos - mercado interno", 200000, "DRE"),
-      linha("custos", "Custo dos produtos vendidos", 140000, "DRE"),
-      linha("despesas_operacionais", "Despesas administrativas", 25000, "DRE"),
+      // ---- ativo
+      linhaAnos("ativo_circulante", "Caixa e equivalentes de caixa", { "2024": 8000, "2025": 12000 }),
+      linhaAnos("ativo_circulante", "Clientes", { "2024": 26000, "2025": 30000 }),
+      linhaAnos("ativo_circulante", "Estoques", { "2024": 18000, "2025": 20000 }),
+      linhaAnos("ativo_nao_circulante", "Imobilizado", { "2024": 62000, "2025": 60000 }),
+      linhaAnos("ativo_nao_circulante", "Depósitos judiciais", { "2024": 3000, "2025": 3000 }),
+      // ---- passivo
+      linhaAnos("passivo_circulante", "Fornecedores", { "2024": 15000, "2025": 18000 }),
+      linhaAnos("passivo_circulante", "Obrigações trabalhistas", { "2024": 6000, "2025": 7000 }),
+      linhaAnos("passivo_circulante", "Empréstimos e financiamentos", { "2024": 12000, "2025": 15000 }),
+      linhaAnos("passivo_nao_circulante", "Empréstimos e financiamentos", { "2024": 30000, "2025": 35000 }),
+      // O par subtotal + componentes, como o documento imprime. `papel` chega como
+      // "conta" de propósito: é o que `fn_papel_linha` devolve para "Provisões"
+      // (não está na lista fechada dela), e é por isso que a detecção estrutural do
+      // export precisa existir.
+      linhaAnos("passivo_nao_circulante", "Provisões", { "2024": 4000, "2025": 5000 }),
+      linhaAnos("passivo_nao_circulante", "Provisão para contingências cíveis", { "2024": 1500, "2025": 2000 }),
+      linhaAnos("passivo_nao_circulante", "Provisão para contingências trabalhistas", { "2024": 2500, "2025": 3000 }),
+      // ---- patrimônio
+      linhaAnos("patrimonio_liquido", "Capital social", { "2024": 40000, "2025": 40000 }),
+      linhaAnos("patrimonio_liquido", "Reservas de lucros", { "2024": 10000, "2025": 5000 }),
+      // A MESMA CONTA COM DOIS RÓTULOS — o defeito que sobrou da rodada anterior e que
+      // a reconciliação com o total informado resolve. No v35 são "Prejuízos
+      // acumulados" e "Resultados Acumulados", ambos −39.150, e "Capital social
+      // subscrito"/"Capital social subscrito e integralizado". Não é subtotal (a
+      // detecção estrutural não pega) e não dá para resolver por semelhança de
+      // valor: duas reservas de mesmo valor são plausíveis. Somadas, inflam o PL em
+      // 10.000/5.000 — e é isso que o total informado corrige.
+      linhaAnos("patrimonio_liquido", "Reserva de lucros acumulados", { "2024": 10000, "2025": 5000 }),
+      // ---- resultado, NA CONVENÇÃO DO DOCUMENTO (despesa negativa)
+      //   2025: RL 166.000 · LB 58.000 · EBITDA 41.000 · EBIT 33.000 · LL 17.820
+      //   2024: RL 149.400 · LB 49.900 · EBITDA 35.400 · EBIT 27.900 · LL 15.900
+      linhaAnos("receita_bruta", "Vendas de produtos - mercado interno",
+        { "2024": 180000, "2025": 200000 }, "DRE"),
+      linhaAnos("receita_bruta", "ICMS sobre vendas", { "2024": -30600, "2025": -34000 }, "DRE"),
+      linhaAnos("custos", "Custo dos produtos vendidos", { "2024": -92000, "2025": -100000 }, "DRE"),
+      linhaAnos("custos", "Depreciação industrial", { "2024": -7500, "2025": -8000 }, "DRE"),
+      linhaAnos("despesas_operacionais", "Despesas administrativas", { "2024": -22000, "2025": -25000 }, "DRE"),
+      linhaAnos("resultado_financeiro", "Despesas financeiras", { "2024": -5000, "2025": -6000 }, "DRE"),
+      linhaAnos("impostos_lucro", "Imposto de renda e contribuição social",
+        { "2024": -7000, "2025": -9180 }, "DRE"),
+      // ---- o mapa de dívida cobre SÓ 2025 (é o caso comum: uma data de referência)
+      linhaAnos("passivo_circulante", "Banco Alfa - Capital de giro - Saldo devedor",
+        { "2025": 50000 }, "MAPA_DIVIDA"),
+      linhaAnos("passivo_circulante", "Banco Alfa - Capital de giro - Juros do período",
+        { "2025": 6000 }, "MAPA_DIVIDA"),
+      // ---- as ÂNCORAS: o que o documento informa, para a conferência por valor.
+      // Chegam com `papel: "subtotal"` (lista fechada da `fn_papel_linha`), ficam
+      // fora das somas e servem de referência.
+      linhaAnos("receita_bruta", "Receita Líquida", { "2024": 149400, "2025": 166000 }, "DRE", "subtotal"),
+      linhaAnos("custos", "Lucro Bruto", { "2024": 49900, "2025": 58000 }, "DRE", "subtotal"),
+      linhaAnos("despesas_operacionais", "Resultado Operacional (EBIT)",
+        { "2024": 27900, "2025": 33000 }, "DRE", "subtotal"),
+      linhaAnos("impostos_lucro", "Lucro Líquido do Exercício",
+        { "2024": 15900, "2025": 17820 }, "DRE", "subtotal"),
+      linhaAnos("ativo_circulante", "ATIVO", { "2024": 117000, "2025": 125000 }, "BALANCO", "subtotal"),
+      // Os TOTAIS DE GRUPO informados — o insumo da reconciliação. O documento os
+      // publica; o modelo passa a segui-los em vez de confiar na própria soma.
+      linhaAnos("ativo_circulante", "Ativo Circulante", { "2024": 52000, "2025": 62000 }, "BALANCO", "subtotal"),
+      linhaAnos("ativo_nao_circulante", "Ativo Não Circulante", { "2024": 65000, "2025": 63000 }, "BALANCO", "subtotal"),
+      linhaAnos("passivo_circulante", "Passivo Circulante", { "2024": 33000, "2025": 40000 }, "BALANCO", "subtotal"),
+      linhaAnos("passivo_nao_circulante", "Passivo Não Circulante", { "2024": 34000, "2025": 40000 }, "BALANCO", "subtotal"),
+      linhaAnos("patrimonio_liquido", "Patrimônio Líquido", { "2024": 50000, "2025": 45000 }, "BALANCO", "subtotal"),
     ],
     premissas: [
       {
@@ -4084,12 +4162,19 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       { rotulo_norm: "imobilizado", premissa_codigo: "CAPEX", sazonalidade_codigo: null },
     ],
     macro: [
-      { serie: "IPCA", ano: 2026, valor: 4.5, fonte: "Focus" },
-      { serie: "IPCA", ano: 2027, valor: 4, fonte: "Focus" },
-      { serie: "IPCA", ano: 2028, valor: 3.5, fonte: "Focus" },
-      { serie: "CDI", ano: 2026, valor: 10, fonte: "Focus" },
-      { serie: "CDI", ano: 2027, valor: 9.5, fonte: "Focus" },
-      { serie: "CDI", ano: 2028, valor: 9, fonte: "Focus" },
+      { serie: "IPCA", ano: 2026, valor: 4.5, fonte: "Focus", natureza: "taxa" as const },
+      { serie: "IPCA", ano: 2027, valor: 4, fonte: "Focus", natureza: "taxa" as const },
+      { serie: "IPCA", ano: 2028, valor: 3.5, fonte: "Focus", natureza: "taxa" as const },
+      { serie: "CDI", ano: 2026, valor: 10, fonte: "Focus", natureza: "taxa" as const },
+      { serie: "CDI", ano: 2027, valor: 9.5, fonte: "Focus", natureza: "taxa" as const },
+      { serie: "CDI", ano: 2028, valor: 9, fonte: "Focus", natureza: "taxa" as const },
+      // O CÂMBIO NAS DUAS GRANDEZAS, de propósito: 2024 chega como o retorno do ano
+      // (o que `fn_indice_macro_anual` devolve para série de nível) e tem de ser
+      // RECUSADO; 2025 e 2026 chegam em nível e têm de ser publicados. Sem as duas
+      // formas na fixture, o teste não distingue "recusa" de "não recebeu nada".
+      { serie: "CAMBIO_USD", ano: 2024, valor: 24.5, fonte: "realizado (12 meses)", natureza: "taxa" as const },
+      { serie: "CAMBIO_USD", ano: 2025, valor: 5.2, fonte: "realizado — fechamento de 2025-12-31", natureza: "nivel" as const },
+      { serie: "CAMBIO_USD", ano: 2026, valor: 5.4, fonte: "Focus", natureza: "nivel" as const },
     ],
     unidade: "R$ mil",
   };
@@ -4098,11 +4183,23 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // extraídos (`if (entidadesConhecidas.size > 0)` em export.ts). Sem estes dois
   // campos o export pula o código sob teste e o assert passaria sem exercitar nada.
   const VMOD = "vModelo";
+  // OS CAMPOS EXISTEM PARA A DETECÇÃO ESTRUTURAL RODAR. É por eles que o export
+  // descobre que "Provisões" é o subtotal impresso ANTES dos seus componentes — o
+  // sinal está na ORDEM, e é o único sinal que existe (o rótulo "Provisões" não está
+  // na lista fechada da `fn_papel_linha`, e por isso chega como `papel: "conta"`).
+  // Sem esta sequência aqui, o teste do (0106b) mediria o instrumento: a lista de
+  // subtotais chegaria vazia e a exclusão nunca seria exercitada.
   const camposModelo: CampoExtraido[] = [
     campo({ chave: "Caixa e equivalentes de caixa", secao: "Ativo Circulante",
-            secao_canonica: "ativo_circulante", valor_num: 12000, documento_versao_id: VMOD }),
+            secao_canonica: "ativo_circulante", valor_num: 12000, documento_versao_id: VMOD, ordem: 1 }),
     campo({ chave: "Capital social", secao: "Patrimônio Líquido",
-            secao_canonica: "patrimonio_liquido", valor_num: 40000, documento_versao_id: VMOD }),
+            secao_canonica: "patrimonio_liquido", valor_num: 40000, documento_versao_id: VMOD, ordem: 2 }),
+    campo({ chave: "Provisões", secao: "Passivo Não Circulante",
+            secao_canonica: "passivo_nao_circulante", valor_num: 5000, documento_versao_id: VMOD, ordem: 3 }),
+    campo({ chave: "Provisão para contingências cíveis", secao: "Passivo Não Circulante",
+            secao_canonica: "passivo_nao_circulante", valor_num: 2000, documento_versao_id: VMOD, ordem: 4 }),
+    campo({ chave: "Provisão para contingências trabalhistas", secao: "Passivo Não Circulante",
+            secao_canonica: "passivo_nao_circulante", valor_num: 3000, documento_versao_id: VMOD, ordem: 5 }),
   ];
   const docsModelo: DocumentoParaExport[] = [{
     id: "dModelo", tipo_taxonomia: "BALANCO",
@@ -4117,6 +4214,14 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     modeloInstitucional: entradaModelo as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
   });
 
+  // A especificação dos gráficos viaja presa ao workbook até o pós-processamento do
+  // buffer (é o caminho que `finalizarBufferDoExport` usa). Ler daqui é o que
+  // permite conferir a ÂNCORA deles sem reabrir o .xlsx.
+  const graficosDoModelo =
+    (wbMod as unknown as { __graficosDoModelo?: Array<{
+      titulo: string; de: { col: number; linha: number }; ate: { col: number; linha: number };
+    }> }).__graficosDoModelo ?? [];
+
   /** Acha a linha de uma aba do modelo pelo rótulo exato da coluna C. */
   const linhaDoRotulo = (aba: string, rotulo: string): number | null => {
     const ws = wbMod.getWorksheet(aba);
@@ -4126,7 +4231,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
     return null;
   };
-  const COLS_ANO = ["E", "F", "G", "H"]; // 2025, 2026, 2027, 2028
+  // 2024 e 2025 são REALIZADOS; 2026 a 2028, projetados.
+  const COLS_ANO = ["E", "F", "G", "H", "I"];
+  const ANOS = [2024, 2025, 2026, 2027, 2028];
+  const iAnoDe = (ano: number) => ANOS.indexOf(ano);
   const valorNaAba = (aba: string, rotulo: string, iAno: number) => {
     const ws = wbMod.getWorksheet(aba);
     const r = linhaDoRotulo(aba, rotulo);
@@ -4142,8 +4250,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const desvios: string[] = [];
     for (let i = 0; i < COLS_ANO.length; i++) {
       const v = avaliarCelula(bs, COLS_ANO[i], rCheck);
-      if (typeof v !== "number") { desvios.push(`${2025 + i}: não avaliável (${JSON.stringify(v)})`); continue; }
-      if (Math.abs(v) > 0.5) desvios.push(`${2025 + i}: ${v.toFixed(2)}`);
+      if (typeof v !== "number") { desvios.push(`${ANOS[i]}: não avaliável (${JSON.stringify(v)})`); continue; }
+      if (Math.abs(v) > 0.5) desvios.push(`${ANOS[i]}: ${v.toFixed(2)}`);
     }
     checar(desvios.length === 0,
       "(0105a) O BALANÇO FECHA — Ativo − (Passivo + PL) = 0 em todos os exercícios, realizado e projetado",
@@ -4176,16 +4284,166 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
   // ---- (0105c) a depreciação chega à DRE ----------------------------------
   {
-    const dep2026 = valorNaAba("Income Statement", "Depreciation and Amortization", 1);
-    const capexOk = valorNaAba("Fixed Assets & CAPEX", "CAPEX total", 1);
+    const i2026 = iAnoDe(2026);
+    const dep2026 = valorNaAba("Income Statement", "Depreciation and Amortization", i2026);
+    const capexOk = valorNaAba("Fixed Assets & CAPEX", "CAPEX total", i2026);
     checar(typeof dep2026 === "number" && dep2026 > 0,
       "(0105c) a DEPRECIAÇÃO chega à DRE — a linha D&A do Income Statement é maior que zero no projetado",
       `D&A 2026 = ${JSON.stringify(dep2026)} (capex 2026 = ${JSON.stringify(capexOk)})`);
-    const ebitda = valorNaAba("Income Statement", "EBITDA", 1);
-    const ebit = valorNaAba("Income Statement", "EBIT", 1);
+    const ebitda = valorNaAba("Income Statement", "EBITDA", i2026);
+    const ebit = valorNaAba("Income Statement", "EBIT", i2026);
     checar(typeof ebitda === "number" && typeof ebit === "number" && ebitda > ebit,
       "(0105c) …e por isso EBITDA > EBIT no projetado (com D&A zero os dois eram iguais)",
       `EBITDA ${JSON.stringify(ebitda)} · EBIT ${JSON.stringify(ebit)}`);
+
+    // ---- (0106e) …e chega no REALIZADO também -------------------------------
+    //
+    // A DRE extraída traz "Depreciação industrial" DENTRO do custo (−8.000 em
+    // 2025). No arquivo entregue a linha D&A do realizado era ZERO e o EBITDA
+    // realizado saía igual ao EBIT — o erro que o próprio comentário do EBITDA
+    // alerta, no único par de colunas que o comitê compara com o balanço auditado.
+    const i2025 = iAnoDe(2025);
+    const depHist = valorNaAba("Income Statement", "Depreciation and Amortization", i2025);
+    checar(typeof depHist === "number" && Math.abs(depHist - 8000) < 0.5,
+      "(0106e) a DEPRECIAÇÃO REALIZADA chega à DRE — vem das linhas de custo/despesa extraídas",
+      `D&A 2025 = ${JSON.stringify(depHist)} (esperado 8.000, de \"Depreciação industrial\")`);
+    const ebitdaH = valorNaAba("Income Statement", "EBITDA", i2025);
+    const ebitH = valorNaAba("Income Statement", "EBIT", i2025);
+    checar(typeof ebitdaH === "number" && typeof ebitH === "number"
+      && Math.abs(ebitdaH - 41000) < 0.5 && Math.abs(ebitH - 33000) < 0.5,
+      "(0106e) …e o EBITDA realizado deixa de ser o EBIT com outro nome (41.000 contra 33.000)",
+      `EBITDA ${JSON.stringify(ebitdaH)} · EBIT ${JSON.stringify(ebitH)}`);
+  }
+
+  // ---- (0106a) A DRE DO REALIZADO É A DO DOCUMENTO -------------------------
+  //
+  // O invariante nº 9 aplicado ao modelo institucional. É o assert que o arquivo
+  // entregue em 06/08/2026 teria reprovado em oito células: a cascata SUBTRAI
+  // despesa (convenção do modelo: magnitude positiva) e a extração entrega despesa
+  // NEGATIVA (convenção do documento) — subtrair negativo soma, e a DRE realizada
+  // saiu com receita líquida 170.220 onde o documento diz 106.580 e resultado
+  // +268.041 onde o documento diz −17.901.
+  {
+    const esperado: Array<{ rotulo: string; ano: number; valor: number }> = [
+      { rotulo: "NET REVENUES", ano: 2024, valor: 149400 },
+      { rotulo: "NET REVENUES", ano: 2025, valor: 166000 },
+      { rotulo: "GROSS PROFIT", ano: 2024, valor: 49900 },
+      { rotulo: "GROSS PROFIT", ano: 2025, valor: 58000 },
+      { rotulo: "EBIT", ano: 2024, valor: 27900 },
+      { rotulo: "EBIT", ano: 2025, valor: 33000 },
+      { rotulo: "NET PROFIT", ano: 2024, valor: 15900 },
+      { rotulo: "NET PROFIT", ano: 2025, valor: 17820 },
+    ];
+    const fora = esperado.filter(({ rotulo, ano, valor }) => {
+      const v = valorNaAba("Income Statement", rotulo, iAnoDe(ano));
+      return typeof v !== "number" || Math.abs(v - valor) > 0.5;
+    }).map(({ rotulo, ano, valor }) =>
+      `${rotulo} ${ano}: ${JSON.stringify(valorNaAba("Income Statement", rotulo, iAnoDe(ano)))} != ${valor}`);
+    checar(fora.length === 0,
+      "(0106a) A DRE REALIZADA REPRODUZ O DOCUMENTO — receita líquida, lucro bruto, EBIT e "
+      + "resultado líquido dos exercícios realizados batem com o informado (convenção de sinal)",
+      fora.join(" · "));
+
+    // E a conferência existe DENTRO do arquivo, não só no teste: quem abre a
+    // planilha tem a diferença na cara, senão o próximo erro de sinal volta a
+    // passar por bom.
+    const difs = ["Receita líquida", "Lucro bruto", "EBIT", "Resultado líquido"]
+      .map((r) => linhaDoRotulo("Income Statement", `${r} — informado no documento`))
+      .filter((r) => r !== null);
+    checar(difs.length === 4,
+      "(0106a) o Income Statement publica o informado no documento ao lado do número do modelo",
+      `linhas encontradas: ${difs.length}/4`);
+    const rDiag = linhaDoRotulo("Income Statement", "diagnóstico");
+    const diag = rDiag === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Income Statement")!, COLS_ANO[iAnoDe(2025)], rDiag);
+    checar(diag === "confere com o documento",
+      "(0106a) …e o diagnóstico do exercício realizado diz que CONFERE",
+      JSON.stringify(diag));
+  }
+
+  // ---- (0106b) SUBTOTAL INFORMADO NÃO ENTRA NA SOMA DO BALANÇO -------------
+  //
+  // "Provisões 5.000" seguido dos dois componentes (2.000 + 3.000) é como toda
+  // demonstração imprime. Somar os três dobra o grupo: no arquivo entregue o
+  // `ATIVO TOTAL` de 2025 saiu 195.090 contra 95.780 informados (2,04x), enquanto a
+  // aba analítica `Balanço` do MESMO arquivo mostrava o número certo.
+  {
+    const fora: string[] = [];
+    for (const [ano, esperado] of [[2024, 117000], [2025, 125000]] as const) {
+      const ativo = valorNaAba("Balance Sheet", "ATIVO TOTAL", iAnoDe(ano));
+      const pnc = valorNaAba("Balance Sheet", "PASSIVO NÃO CIRCULANTE", iAnoDe(ano));
+      const pncEsperado = ano === 2024 ? 34000 : 40000;
+      if (typeof ativo !== "number" || Math.abs(ativo - esperado) > 0.5) {
+        fora.push(`ATIVO ${ano}: ${JSON.stringify(ativo)} != ${esperado}`);
+      }
+      if (typeof pnc !== "number" || Math.abs(pnc - pncEsperado) > 0.5) {
+        fora.push(`PNC ${ano}: ${JSON.stringify(pnc)} != ${pncEsperado} (subtotal somado com os componentes?)`);
+      }
+    }
+    checar(fora.length === 0,
+      "(0106b) o SUBTOTAL informado pelo documento fica FORA da soma do balanço — o grupo não dobra",
+      fora.join(" · "));
+
+    const rDif = linhaDoRotulo("Balance Sheet", "diferença (modelo − documento) — ZERO");
+    const dif2025 = rDif === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Balance Sheet")!, COLS_ANO[iAnoDe(2025)], rDif);
+    checar(typeof dif2025 === "number" && Math.abs(dif2025) < 0.5,
+      "(0106b) …e o balanço publica a diferença contra o ativo total informado, em ZERO",
+      JSON.stringify(dif2025));
+  }
+
+  // ---- (0106h) A MESMA CONTA COM DOIS RÓTULOS NÃO ESTOURA O BALANÇO -------
+  //
+  // "Reservas de lucros" e "Reserva de lucros acumulados", ambas 5.000 em 2025, são
+  // a mesma conta transposta duas vezes — o resíduo que sobrou depois de excluir os
+  // subtotais informados. Somadas, o PL sai 50.000 onde o documento diz 45.000.
+  //
+  // A correção NÃO é apagar uma delas (duas reservas de mesmo valor são plausíveis,
+  // e apagar conta legítima é pior que somar demais): é seguir o TOTAL INFORMADO,
+  // com a diferença escrita numa linha própria. Invariante nº 6, que as abas
+  // analíticas seguem desde o teste v25, aplicado ao modelo.
+  {
+    const fora: string[] = [];
+    for (const [ano, plEsperado] of [[2024, 50000], [2025, 45000]] as const) {
+      const plModelo = valorNaAba("Balance Sheet", "PATRIMÔNIO LÍQUIDO", iAnoDe(ano));
+      if (typeof plModelo !== "number" || Math.abs(plModelo - plEsperado) > 0.5) {
+        fora.push(`PL ${ano}: ${JSON.stringify(plModelo)} != ${plEsperado} (conta duplicada somada?)`);
+      }
+    }
+    checar(fora.length === 0,
+      "(0106h) o PATRIMÔNIO segue o total informado no documento mesmo com a MESMA conta transposta "
+      + "com dois rótulos — sem apagar conta nenhuma",
+      fora.join(" · "));
+
+    const rRec = linhaDoRotulo("Balance Sheet", "reconciliação com o patrimônio líquido informado no documento");
+    const rec2025 = rRec === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Balance Sheet")!, COLS_ANO[iAnoDe(2025)], rRec);
+    checar(typeof rec2025 === "number" && Math.abs(rec2025 + 5000) < 0.5,
+      "(0106h) …e a linha de reconciliação DIZ o tamanho do que não se explica (−5.000 em 2025)",
+      JSON.stringify(rec2025));
+    // Na projeção ela é constante: nem zerada (salto artificial), nem crescida
+    // (projetar erro de extração como se fosse conta).
+    const rec2027 = rRec === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Balance Sheet")!, COLS_ANO[iAnoDe(2027)], rRec);
+    checar(typeof rec2027 === "number" && Math.abs(rec2027 + 5000) < 0.5,
+      "(0106h) …e permanece constante no projetado, sem salto na virada do realizado",
+      JSON.stringify(rec2027));
+  }
+
+  // ---- (0106c) A DÍVIDA APARECE NO EXERCÍCIO QUE O MAPA NÃO COBRE ----------
+  //
+  // O mapa de dívida deste caso (como o do v35) tem UMA data de referência: 2025.
+  // Antes, `dividas` escolhia o mapa para o modelo inteiro e 2024 saía com dívida
+  // ZERO — enquanto o balanço informa 12.000 no circulante e 30.000 no não
+  // circulante. O `CHECK` de 2024 abria exatamente no valor que desapareceu.
+  {
+    const cp2024 = valorNaAba("Balance Sheet", "Dívida de curto prazo + revolver", iAnoDe(2024));
+    const lp2024 = valorNaAba("Balance Sheet", "Dívida de longo prazo", iAnoDe(2024));
+    checar(typeof cp2024 === "number" && Math.abs(cp2024 - 12000) < 1
+      && typeof lp2024 === "number" && Math.abs(lp2024 - 30000) < 1,
+      "(0106c) a DÍVIDA do exercício que o mapa não cobre vem do balanço, com a repartição "
+      + "curto/longo do próprio ano (12.000 + 30.000 em 2024)",
+      `CP ${JSON.stringify(cp2024)} · LP ${JSON.stringify(lp2024)}`);
   }
 
   // ---- (0105d) o eixo do tempo tem UMA raiz ------------------------------
@@ -4260,11 +4518,12 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
   // ---- (0105h) os covenants e o diagnóstico respondem -------------------
   {
-    const diag = valorNaAba("Output", "Diagnóstico do exercício", 1);
+    const i2026 = iAnoDe(2026);
+    const diag = valorNaAba("Output", "Diagnóstico do exercício", i2026);
     checar(typeof diag === "string" && diag.length > 0,
       "(0105h) o Output devolve um diagnóstico por exercício (a linha que o comitê lê primeiro)",
       JSON.stringify(diag));
-    const nd = valorNaAba("Output", "Net Debt / EBITDA", 1);
+    const nd = valorNaAba("Output", "Net Debt / EBITDA", i2026);
     checar(typeof nd === "number" || (typeof nd === "string" && nd === "EBITDA<=0"),
       "(0105h) Net Debt / EBITDA é número, ou texto explícito quando o EBITDA não é positivo",
       JSON.stringify(nd));
@@ -4273,15 +4532,149 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // ---- (0105i) o revolver cobre o furo e o caixa nunca fica abaixo do mínimo
   {
     const desvios: string[] = [];
-    for (let i = 1; i < COLS_ANO.length; i++) {
+    for (let i = iAnoDe(2026); i < COLS_ANO.length; i++) {
       const caixa = valorNaAba("Cash Flow", "CAIXA DE FECHAMENTO", i);
       const min = valorNaAba("ST Inv. & Debt", "Caixa mínimo operacional", i);
-      if (typeof caixa !== "number" || typeof min !== "number") { desvios.push(`${2025 + i}: não avaliável`); continue; }
-      if (caixa < min - 0.5) desvios.push(`${2025 + i}: caixa ${caixa.toFixed(0)} < mínimo ${min.toFixed(0)}`);
+      if (typeof caixa !== "number" || typeof min !== "number") { desvios.push(`${ANOS[i]}: não avaliável`); continue; }
+      if (caixa < min - 0.5) desvios.push(`${ANOS[i]}: caixa ${caixa.toFixed(0)} < mínimo ${min.toFixed(0)}`);
     }
     checar(desvios.length === 0,
       "(0105i) o revolver cobre o furo: o caixa de fechamento nunca fica abaixo do caixa mínimo",
       desvios.join(" · "));
+  }
+
+  // ---- (0106d) OS GRÁFICOS ENTRAM NO PAPEL --------------------------------
+  //
+  // Medido no arquivo entregue: os 8 gráficos estavam ancorados nas colunas N a AE
+  // e a área de impressão do `Output` é B:K — quem gerasse o PDF do Output (que é
+  // como o comitê recebe) não levava gráfico nenhum. Gráfico fora da área de
+  // impressão é trabalho que existe só na tela de quem o fez.
+  {
+    const out = wbMod.getWorksheet("Output")!;
+    const area = String(out.pageSetup?.printArea ?? "");
+    const m = /^B1:([A-Z]+)(\d+)$/.exec(area);
+    const colLimite = m ? m[1] : "";
+    const linhaLimite = m ? Number(m[2]) : 0;
+    // Índice base 1 da última coluna da área de impressão.
+    const colParaNum = (s: string) => [...s].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0);
+    // Confere os DOIS cantos, e que o retângulo não é degenerado: conferir só o
+    // canto inferior deixava passar uma âncora invertida (`de` à direita de `ate`),
+    // que o Excel desenha como nada. Primeira versão deste assert fazia isso, e o
+    // defeito religado passou verde — ver §8.2 do CLAUDE.md.
+    const colB = 2; // a área de impressão do modelo começa sempre em B1
+    const fora = graficosDoModelo.filter((esp) =>
+      // A âncora do OOXML é base 0; a coluna da área de impressão é base 1.
+      esp.de.col + 1 < colB || esp.de.linha + 1 < 1
+      || esp.ate.col + 1 > colParaNum(colLimite) || esp.ate.linha + 1 > linhaLimite
+      || esp.de.col >= esp.ate.col || esp.de.linha >= esp.ate.linha);
+    checar(m !== null && graficosDoModelo.length === 8 && fora.length === 0,
+      "(0106d) os 8 gráficos do Output estão DENTRO da área de impressão da aba",
+      `área ${area || "(ausente)"} · gráficos ${graficosDoModelo.length} · fora ${fora.length}`
+      + (fora.length ? `: ${fora.map((f) => `${f.titulo} até col ${f.ate.col} lin ${f.ate.linha}`).join(" · ")}` : ""));
+  }
+
+  // ---- (0106f) O CÂMBIO É NÍVEL, NUNCA VARIAÇÃO ---------------------------
+  //
+  // A linha "R$/US$ — final de período" do arquivo entregue trazia 24,5 em 2024 e
+  // −10,6 em 2025 (câmbio negativo!) ao lado de 5,2 do Focus: o RETORNO de uma série
+  // de nível publicado numa linha de nível. A célula agora fica VAZIA quando a fonte
+  // entrega a grandeza errada, com o motivo na nota.
+  {
+    const anual = wbMod.getWorksheet("Anual")!;
+    const rFx = linhaDoRotulo("Anual", "R$/US$ — final de período");
+    const v2024 = rFx === null ? null : anual.getRow(rFx).getCell(COLS_ANO[iAnoDe(2024)]).value;
+    const v2026 = rFx === null ? null : avaliarCelula(anual, COLS_ANO[iAnoDe(2026)], rFx);
+    checar(rFx !== null && (v2024 === null || v2024 === undefined),
+      "(0106f) a série de NÍVEL recusa a variação: a célula fica vazia em vez de publicar câmbio negativo",
+      `2024 = ${JSON.stringify(v2024)}`);
+    checar(rFx !== null && typeof v2026 === "number" && Math.abs(v2026 - 5.4) < 0.001,
+      "(0106f) …e o nível de fato publicado (expectativa do Focus, 5,40) continua chegando",
+      JSON.stringify(v2026));
+  }
+
+  // ---- (0106i) O PAINEL DE PREMISSAS RESPONDE À EDIÇÃO NO EXCEL ------------
+  //
+  // A promessa é "trocar o índice ou o spread dentro do arquivo reprojeta o
+  // modelo". Um assert que só conferisse a existência das linhas não provaria nada:
+  // este SIMULA a edição — escreve na célula de escolha da série, esquece a memória
+  // do avaliador e recalcula, exigindo que a receita projetada MUDE na direção
+  // certa. É o mais próximo de "o dono abriu e editou" que dá para fazer sem Excel.
+  {
+    const rec = wbMod.getWorksheet("Revenues, COGS & SG&A")!;
+    const rTotal = linhaDoRotulo("Revenues, COGS & SG&A", "= crescimento nominal aplicado");
+    const rSerie = rTotal === null ? null : rTotal - 2;
+    checar(rTotal !== null,
+      "(0106i) a aba de receita traz o PAINEL DE PREMISSAS (índice macro × spread)", String(rTotal));
+
+    const iA = iAnoDe(2026);
+    const rReceita = linhaDoRotulo("Revenues, COGS & SG&A", "Vendas de produtos - mercado interno");
+    if (rTotal !== null && rSerie !== null && rReceita !== null) {
+      // 1. Como o arquivo nasce: índice "(nenhum)" e o crescimento é exatamente a
+      //    premissa que o portal escolheu (8% em 2026). Continuidade — o painel
+      //    acrescenta mecanismo sem mexer em número.
+      const escolha = rec.getRow(rSerie).getCell(4);
+      checar(String(escolha.value ?? "") === "(nenhum)",
+        "(0106i) o painel nasce com índice \"(nenhum)\", reproduzindo a premissa do portal",
+        String(escolha.value ?? ""));
+      const cresc0 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      checar(typeof cresc0 === "number" && Math.abs(cresc0 - 0.08) < 1e-9,
+        "(0106i) …e o crescimento nominal aplicado é os 8% do portal", JSON.stringify(cresc0));
+      const receita0 = avaliarCelula(rec, COLS_ANO[iA], rReceita);
+
+      // 2. A EDIÇÃO: o analista escolhe IPCA no dropdown. O IPCA de 2026 na fixture
+      //    é 4,5%, então o crescimento tem de virar (1+4,5%)×(1+8%)−1 = 12,86%.
+      escolha.value = "IPCA";
+      esquecerMemoria(rec);
+      esquecerMemoria(wbMod.getWorksheet("Anual")!);
+      const cresc1 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      const esperado = 1.045 * 1.08 - 1;
+      checar(typeof cresc1 === "number" && Math.abs(cresc1 - esperado) < 1e-9,
+        "(0106i) escolher IPCA no dropdown COMPÕE índice e spread — (1+4,5%)×(1+8%)−1, não a soma",
+        `${JSON.stringify(cresc1)} (esperado ${esperado.toFixed(6)})`);
+      const receita1 = avaliarCelula(rec, COLS_ANO[iA], rReceita);
+      checar(typeof receita0 === "number" && typeof receita1 === "number" && receita1 > receita0,
+        "(0106i) …e a RECEITA PROJETADA acompanha a edição — é o que faz do arquivo uma alternativa "
+        + "de edição ao portal",
+        `receita 2026: ${JSON.stringify(receita0)} → ${JSON.stringify(receita1)}`);
+
+      // 3. Devolve o arquivo ao estado original: os asserts seguintes (e o de
+      //    reprodutibilidade do gerador) leem o mesmo workbook.
+      escolha.value = "(nenhum)";
+      esquecerMemoria(rec);
+      esquecerMemoria(wbMod.getWorksheet("Anual")!);
+      const cresc2 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      checar(typeof cresc2 === "number" && Math.abs(cresc2 - 0.08) < 1e-9,
+        "(0106i) …e voltar a escolha a \"(nenhum)\" devolve a premissa do portal (a edição é reversível)",
+        JSON.stringify(cresc2));
+    }
+  }
+
+  // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
+  //
+  // Quando a extração não classifica as linhas de resultado (`secao_canonica`
+  // ausente — medido na cadeia do book: 767 campos, todos sem), a cascata da DRE
+  // sai inteira em ZERO. Zero em tudo parece "empresa sem operação", que é uma
+  // afirmação sobre o negócio; o fato é "o modelo não recebeu a DRE". Antes as duas
+  // coisas tinham exatamente a mesma aparência.
+  {
+    const semDRE = {
+      ...entradaModelo,
+      linhas: entradaModelo.linhas.filter((l) =>
+        !["receita_bruta", "custos", "despesas_operacionais"].includes(l.secao_canonica)),
+    };
+    const wbSemDRE = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: semDRE as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const ws = wbSemDRE.getWorksheet("Income Statement");
+    let achou = false;
+    for (let r = 1; ws && r <= ws.rowCount; r++) {
+      if (/^SEM DRE:/.test(String(ws.getRow(r).getCell(3).value ?? ""))) { achou = true; break; }
+    }
+    checar(achou,
+      "(0106g) modelo cuja extração não trouxe linha de resultado ANUNCIA que está sem DRE, em vez "
+      + "de exibir uma cascata zerada com cara de empresa sem operação");
   }
 
   esquecerMemoria(wbMod.getWorksheet("Balance Sheet")!);

@@ -997,6 +997,69 @@ function detectarSubtotaisInformados(
   return subtotais;
 }
 
+/**
+ * Os rótulos que a ESTRUTURA do documento denuncia como subtotal, para o MODELO
+ * INSTITUCIONAL usar a mesma verdade que as abas analíticas.
+ *
+ * POR QUE ISTO EXISTE. As duas detecções acima rodam por aba e devolvem ids de
+ * campo, que servem para a aba marcar "↳ subtotal informado" e tirar a linha do
+ * `SUM`. O modelo institucional consome LINHAS agregadas por rótulo
+ * (`fn_linhas_para_modelagem`), cujo `papel` vem de lista fechada de rótulos — que
+ * por construção não reconhece "Obrigações Tributárias", "Provisões", "Capital
+ * Social", "Reservas", "Disponível", "Contas a Receber". Resultado medido no
+ * arquivo entregue ao dono (v35, 06/08/2026): a aba `Balanço` mostrava o ativo
+ * certo (95.780 informados) e o `Balance Sheet` do modelo, no MESMO arquivo,
+ * mostrava 195.090 — o subtotal somado junto com os componentes dele.
+ *
+ * Uma detecção, dois consumidores. Duplicar a regra aqui seria garantir que as
+ * duas abas do mesmo arquivo voltem a discordar.
+ *
+ * FILTRA PELA ENTIDADE MODELADA de propósito: o mesmo rótulo pode ser subtotal no
+ * documento de uma empresa do grupo e conta-folha no de outra (é o caso (b) do
+ * comentário do invariante nº 6). Tirar da soma do modelo de B um subtotal que só
+ * existe em A seria um falso positivo — e falso positivo aqui ESCONDE conta, que é
+ * pior que o defeito que se está corrigindo.
+ *
+ * E A CHAVE INCLUI A SEÇÃO, pelo mesmo motivo, dentro da mesma empresa. MEDIDO no
+ * caso v35 com a primeira versão desta função, que devolvia rótulo solto: o
+ * balanço imprime "Provisão para contingências trabalhistas e cíveis" como
+ * subtotal do grupo de provisões, e a DRE tem uma DESPESA com o mesmo nome
+ * (−1.900). Excluir por rótulo tirava as duas, o SG&A saía 1.900 menor e o EBIT
+ * 1.900 maior — trocando uma dupla contagem por uma conta escondida. O mesmo
+ * aconteceu com "Imposto de renda e contribuição social - corrente".
+ *
+ * O par devolvido é `secao_canonica||rotulo`, ambos normalizados.
+ */
+export function rotulosDeSubtotalInformado(
+  camposPorAba: Map<string, Array<{ campo: CampoExtraido; colKey: string }>>,
+  entidade: string | null,
+): string[] {
+  const alvo = entidade ? normalizar(entidade) : null;
+  const rotulos = new Set<string>();
+  for (const [aba, itens] of camposPorAba) {
+    if (!ESTRUTURA_POR_ABA.has(aba)) continue;
+    // DETECTA SOBRE A ABA INTEIRA e só DEPOIS filtra pela entidade. A ordem
+    // importa: os dois detectores olham a SEQUÊNCIA impressa e a soma dos irmãos
+    // de seção, então mudar o conjunto de entrada muda o veredito. Filtrar antes
+    // fazia esta função discordar da aba analítica do mesmo arquivo — medido no
+    // v35: com a entrada reduzida, uma despesa da DRE virava "subtotal" por
+    // coincidência de soma que não existe quando a aba é vista inteira. A aba e o
+    // modelo têm de receber o MESMO veredito; a entidade decide apenas QUAIS
+    // vereditos se aplicam às linhas do modelo.
+    const ids = new Set([
+      ...detectarSubtotaisInformados(itens),
+      ...detectarSubtotaisPorOrdem(itens),
+    ]);
+    if (ids.size === 0) continue;
+    for (const { campo, colKey } of itens) {
+      if (!ids.has(campo.id)) continue;
+      if (alvo !== null && normalizar(colKey.split(CHAVE_SEP)[0] ?? "") !== alvo) continue;
+      rotulos.add(`${normalizar(campo.secao_canonica ?? "")}||${normalizar(campo.chave)}`);
+    }
+  }
+  return [...rotulos];
+}
+
 // ----- Aba classificada por seção (Balanço/Balancete/DRE/Fluxo/Combinado) --
 // Totais/subtotais NÃO são valores estáticos: são FÓRMULAS Excel (=SUM(...)),
 // transparentes e recalculáveis, colocadas NO cabeçalho de cada seção/grupo
@@ -2988,10 +3051,17 @@ export function buildExportWorkbook({
     // O MODELO INSTITUCIONAL. Só no modo completo: ele projeta, e projetar é o que
     // o modo "dados" deliberadamente não faz.
     if (modeloInstitucional && modeloInstitucional.anosProjetados.length > 0) {
+      // A MESMA detecção de subtotal das abas analíticas, injetada no modelo. Sem
+      // isto o `Balance Sheet` soma o subtotal informado E os componentes dele, e
+      // sai 2x o documento (medido: 195.090 contra 95.780 no arquivo do v35).
+      const entradaDoModelo: EntradaModeloInstitucional = {
+        ...modeloInstitucional,
+        subtotaisInformados: rotulosDeSubtotalInformado(camposPorAba, modeloInstitucional.entidade),
+      };
       // Os gráficos do `Output` não podem ser escritos pelo ExcelJS (ele não tem
       // API de gráfico). A especificação volta daqui e viaja PRESA AO WORKBOOK
       // até o pós-processamento do buffer — ver `finalizarBufferDoExport`.
-      const graficos = construirModeloInstitucional(workbook, modeloInstitucional);
+      const graficos = construirModeloInstitucional(workbook, entradaDoModelo);
       (workbook as unknown as { __graficosDoModelo?: EspecGrafico[] }).__graficosDoModelo = graficos;
     }
 
