@@ -51,12 +51,25 @@ begin
       (select string_agg(left(descricao, 90), ' | ') from pendencia
        where caso_id = v_caso and estado <> 'resolvida')));
 
-  -- As 4 checagens têm de ter CHEGADO a um veredito, não ficado caladas.
+  -- As checagens têm de ter CHEGADO a um veredito, não ficado caladas.
+  -- Cinco tipos desde a 0105 (as quatro A/B mais a duplicidade de rótulo). O número
+  -- é explícito de propósito: checagem nova que nasce muda passa despercebida, e foi
+  -- para isso que este assert foi escrito.
   select count(distinct tipo) into v_n from reconciliacao
   where caso_id = v_caso and resultado = 'ok';
-  perform teste_assert(v_n = 4,
-    'as 4 checagens A/B chegam a "ok" com número (nenhuma fica muda)',
-    format('%s tipo(s) com ok', v_n));
+  perform teste_assert(v_n = 5,
+    'as 5 checagens (4 A/B + duplicidade de rótulo) chegam a "ok" com número (nenhuma fica muda)',
+    format('%s tipo(s) com ok: %s', v_n,
+      (select string_agg(distinct tipo, ', ') from reconciliacao
+       where caso_id = v_caso and resultado = 'ok')));
+
+  -- E a checagem de duplicidade tem de ter rodado e dado OK no book: extração fiel
+  -- não tem conta transposta duas vezes. Se um dia tiver, é aqui que aparece.
+  select count(*) into v_n from reconciliacao
+  where caso_id = v_caso and tipo = 'duplicidade_de_rotulo' and resultado = 'ok';
+  perform teste_assert(v_n >= 1,
+    'a checagem de duplicidade de rótulo (0105) rodou no book e não achou par nenhum',
+    format('%s registro(s) ok', v_n));
 
   -- Balanço comparativo => os DOIS anos conferidos, não só um.
   select max((materialidade->>'anos_checados')::int) into v_n from reconciliacao
