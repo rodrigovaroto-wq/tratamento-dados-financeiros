@@ -4,18 +4,30 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #104**
-(`main` em `b9effc4`, que traz a Fase A). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**,
-com as **Fases B, C e D acumuladas** (`workflow_dispatch` + `0105` + três itens do §5 + o auditor do
-arquivo) esperando um PR só.
+**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #105**
+(`main` em `052817a`) — **as Fases A, B, C e D do plano estão todas no `main`**. Branch de trabalho:
+**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois do merge.
 
-> **O GitHub Actions ficou sem runner em 06/08/2026** e por isso as Fases B–D foram acumuladas na
-> branch em vez de virarem um PR cada: a execução no `main` esperou 15 min na fila e foi CANCELADA
-> sem começar (`runner_name` vazio), e os pushes seguintes não criaram execução nenhuma. O GitHub
-> **não reexecuta retroativamente** — evento sem execução não ganha execução quando o serviço volta.
-> Os nove passos do CI foram rodados localmente, um por um, e estão verdes. Quando o serviço voltar,
-> `workflow_dispatch` (já na branch) permite reconferir sem empurrar commit vazio — mas ele só
-> aparece na interface depois de estar no `main`.
+> **O GitHub Actions ficou sem runner em 06/08/2026** e por isso as Fases B–D foram acumuladas numa
+> branch e mergeadas num PR só (#105), com a evidência sendo a execução LOCAL dos nove passos do CI:
+> a execução no `main` esperou 15 min na fila e foi CANCELADA sem começar (`runner_name` vazio), e os
+> pushes seguintes não criaram execução nenhuma. O GitHub **não reexecuta retroativamente** — evento
+> sem execução não ganha execução quando o serviço volta. Três PRs (#103, #104, #105) foram mergeados
+> nessas condições.
+>
+> **O que fica disso:** `workflow_dispatch` está no `main`, então Actions → suítes → **"Run
+> workflow"** revalida o estado acumulado sem empurrar commit vazio. **Enquanto o serviço não voltar,
+> não recoloque a suíte como check obrigatório** do `main`: check obrigatório que não pode rodar é
+> bloqueio permanente, não portão — foi o que deixou o #105 em `blocked`. O outro motivo do `blocked`
+> é "Require approvals" com o PR aberto no nome do próprio dono: o GitHub não deixa aprovar o próprio
+> PR, e com duas pessoas em que uma abre PR no próprio nome, essa exigência trava toda rodada sem
+> adicionar segurança — quem revisa de fato é o CI.
+>
+> Fidelidade da execução local, medida: Node **v22.22.2** (o CI pede 22), psql **16.13** (o CI instala
+> o cliente 16), Postgres 16 local descartável. O `package-lock.json` **não foi tocado** nas Fases B–D,
+> então o `npm ci` do CI é o mesmo do `main` que já passou, e **nenhum arquivo de `n8n/`** entrou no
+> diff — o risco clássico de mergear sem CI (espelho dos nós Code divergindo da `lib/`) não existia
+> nessa rodada. O único passo que a execução local não reproduz é o `npm ci` em ambiente limpo.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
@@ -151,8 +163,7 @@ número que não fecha.
 
 ### O que depende do dono (nada disso é do colaborador)
 
-1. **Mergear o PR das Fases B–D.** Ele leva o `workflow_dispatch`, que só aparece na interface do
-   Actions depois de estar no `main`.
+1. ~~Mergear o PR das Fases B–D~~ — **feito (PR #105, `main` em `052817a`)**.
 2. **Aplicar a `0104` e a `0105`** no Supabase, nesta ordem.
 3. **Exportar o v35 de novo e rodar o aceite**: o auditor (comando) + os 10 itens do `docs/ACEITE.md`.
    É a primeira vez que o arquivo entregue passa por conferência antes de ir a comitê.
