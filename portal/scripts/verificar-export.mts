@@ -40,12 +40,14 @@
  *     soma tem de ficar visível numa linha de checagem — nunca virar o total.
  */
 import { readFileSync } from "node:fs";
+import type ExcelJS from "exceljs";
 import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
 import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 import { classificarConta } from "../src/lib/statement-templates.ts";
 import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/lib/modelagem-linha.ts";
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
+import { auditarWorkbook } from "./auditar-xlsx.mts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -4647,6 +4649,233 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         "(0106i) …e voltar a escolha a \"(nenhum)\" devolve a premissa do portal (a edição é reversível)",
         JSON.stringify(cresc2));
     }
+  }
+
+  // ---- (0107) FASE C — O QUE FALTAVA DE MOTOR, POR IMPACTO -----------------
+  //
+  // Os três itens estruturais da fila do §5 do CONFORMIDADE.md que dependiam só de
+  // nós. Cada um tem assert próprio porque cada um pode regredir sozinho.
+  {
+    // (0107a) A VARIAÇÃO DE GIRO ABERTA CONTA A CONTA, e a abertura tem de FECHAR
+    // com o total — que continua vindo do espelho da aba de giro. Duas origens para
+    // o mesmo número só valem com uma linha de conferência entre elas.
+    const rConf = linhaDoRotulo("Cash Flow", "conferência: soma das contas − total (ZERO)");
+    const cf = wbMod.getWorksheet("Cash Flow")!;
+    const desvios: string[] = [];
+    for (const ano of [2026, 2027, 2028]) {
+      const v = rConf === null ? null : avaliarCelula(cf, COLS_ANO[iAnoDe(ano)], rConf);
+      if (typeof v !== "number" || Math.abs(v) > 0.01) desvios.push(`${ano}: ${JSON.stringify(v)}`);
+    }
+    checar(rConf !== null && desvios.length === 0,
+      "(0107a) a variação de giro do Cash Flow é aberta CONTA A CONTA e a abertura fecha com o total",
+      desvios.join(" · "));
+    // E a abertura existe de fato: uma linha por conta de giro do caso.
+    let nContas = 0;
+    for (let r = 1; r <= cf.rowCount; r++) {
+      if (/^\s{4}\((−|\+)\)\s/.test(String(cf.getRow(r).getCell(3).value ?? ""))) nContas++;
+    }
+    checar(nContas >= 3,
+      "(0107a) …e há uma linha por conta de giro, não uma linha agregada",
+      `linhas de conta no bloco de operações: ${nContas}`);
+
+    // (0107b) O CHECK DO BALANÇO NO TOPO DAS QUATRO ABAS DE DRIVER. É onde a
+    // premissa é mexida, e portanto onde o "o balanço abriu" tem de aparecer.
+    const semCheck: string[] = [];
+    for (const aba of ["Revenues, COGS & SG&A", "Working Capital", "Fixed Assets & CAPEX",
+                       "ST Inv. & Debt"]) {
+      const r = linhaDoRotulo(aba, "CHECK do balanço (0 = fecha)");
+      const ws = wbMod.getWorksheet(aba);
+      if (r === null || !ws) { semCheck.push(`${aba}: linha ausente`); continue; }
+      // Tem de estar no TOPO (logo abaixo do cabeçalho), senão não serve ao propósito.
+      if (r > 8) semCheck.push(`${aba}: linha ${r} (esperado no topo)`);
+      // A CÉLULA TEM DE SER FÓRMULA APONTANDO PARA O BALANÇO — não basta avaliar
+      // zero. Célula VAZIA avalia 0 no avaliador (é o contrato dele), então uma
+      // versão anterior deste assert passava verde com a linha existindo e nunca
+      // preenchida: exatamente a armadilha da "fixture que nasce vazia" que o
+      // CLAUDE.md descreve, cometida aqui dentro.
+      const bruto = ws.getRow(r).getCell(COLS_ANO[iAnoDe(2026)]).value as { formula?: string } | null;
+      const formula = bruto && typeof bruto === "object" && "formula" in bruto ? bruto.formula ?? "" : "";
+      if (!/Balance Sheet/.test(formula)) {
+        semCheck.push(`${aba}: célula não é fórmula do Balance Sheet (${JSON.stringify(bruto)})`);
+        continue;
+      }
+      const v = avaliarCelula(ws, COLS_ANO[iAnoDe(2026)], r);
+      if (typeof v !== "number" || Math.abs(v) > 0.01) semCheck.push(`${aba}: ${JSON.stringify(v)}`);
+    }
+    checar(semCheck.length === 0,
+      "(0107b) as quatro abas de driver publicam o CHECK do balanço no topo, e ele fecha",
+      semCheck.join(" · "));
+
+    // (0107c) OS ESPELHOS DO OUTPUT CONTA A CONTA. O item de maior impacto da fila:
+    // o `Output` é a aba que vai a comitê, e um espelho só de totais obriga a voltar
+    // às abas de origem para saber do que o número é feito.
+    const detalhes = [
+      ["Output", "    Operating current assets"],
+      ["Output", "    Short-term debt + revolver"],
+      ["Output", "    Retained earnings (model)"],
+      ["Output", "    (+) D&A"],
+      ["Output", "    (+/−) Change in working capital"],
+      ["Output", "    (−) CAPEX"],
+      ["Output", "    (+) New debt"],
+    ] as const;
+    const faltam = detalhes.filter(([aba, rot]) => linhaDoRotulo(aba, rot.trim()) === null
+      && linhaDoRotulo(aba, rot) === null);
+    checar(faltam.length === 0,
+      "(0107c) os espelhos de balanço e fluxo do Output são abertos conta a conta",
+      faltam.map(([, r]) => r.trim()).join(" · "));
+    // E o detalhe tem de BATER com a origem — espelho que não bate é pior que
+    // espelho que não existe.
+    const out = wbMod.getWorksheet("Output")!;
+    const bs = wbMod.getWorksheet("Balance Sheet")!;
+    const rEsp = linhaDoRotulo("Output", "Operating current assets");
+    const rOrig = linhaDoRotulo("Balance Sheet", "Ativo circulante operacional");
+    const vEsp = rEsp === null ? null : avaliarCelula(out, COLS_ANO[iAnoDe(2026)], rEsp);
+    const vOrig = rOrig === null ? null : avaliarCelula(bs, COLS_ANO[iAnoDe(2026)], rOrig);
+    checar(typeof vEsp === "number" && typeof vOrig === "number" && Math.abs(vEsp - vOrig) < 0.01,
+      "(0107c) …e cada linha do espelho é o MESMO número da aba de origem",
+      `espelho ${JSON.stringify(vEsp)} · origem ${JSON.stringify(vOrig)}`);
+  }
+
+  // ---- (0108) O AUDITOR DO ARQUIVO ENTREGUE NÃO PODE MENTIR ---------------
+  //
+  // `auditar-xlsx.mts` é a Fase D: o comando que responde, sobre um .xlsx pronto, o
+  // que dá para responder sem abrir o Excel — e que existe porque a auditoria da
+  // sessão 40 foi um script descartável rodado UMA vez. Ferramenta de aceite sem
+  // teste próprio apodrece, e aí ela passa a dizer "9/9" sobre um arquivo quebrado,
+  // que é pior que não existir. Aqui ela roda sobre o workbook desta fixture (que o
+  // teste sabe estar correto) e sobre um workbook SEM as correções, e tem de
+  // distinguir os dois.
+  {
+    const itens = auditarWorkbook(wbMod);
+    const reprovados = itens.filter((i) => !i.ok && !i.naoAplicavel);
+    checar(itens.length >= 8 && reprovados.length === 0,
+      "(0108) o auditor do arquivo entregue aprova o modelo desta fixture em todos os itens",
+      `${itens.length} itens · reprovados: ${reprovados.map((i) => `${i.chave} (${i.medida})`).join(" · ")}`);
+
+    // E TEM DE REPROVAR o que está errado, ITEM POR ITEM. "Reprovou alguma coisa"
+    // não serve como prova: um auditor com um único item sensível e oito itens
+    // decorativos passaria nesse teste e continuaria aprovando arquivo quebrado.
+    //
+    // Cada injeção abaixo é UM dos defeitos que estavam no arquivo entregue em
+    // 06/08/2026 (ou o mesmo defeito na forma em que ele chega ao arquivo), e o
+    // teste exige que seja o item CORRESPONDENTE a acusar. Se algum dia um item for
+    // enfraquecido — um `IFERROR` engolindo a conta, um limite afrouxado — é aqui
+    // que aparece.
+    const construir = () => buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: entradaModelo as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    /** Linha pelo rótulo da coluna C, em QUALQUER workbook (o `linhaDoRotulo` é preso ao `wbMod`). */
+    const linhaEm = (wb: ExcelJS.Workbook, aba: string, rotulo: string): number | null => {
+      const ws = wb.getWorksheet(aba);
+      if (!ws) return null;
+      for (let r = 1; r <= ws.rowCount; r++) {
+        if (String(ws.getRow(r).getCell(3).value ?? "").trim() === rotulo) return r;
+      }
+      return null;
+    };
+    const injecoes: Array<{
+      defeito: string;
+      chave: string;
+      /** devolve `false` se o alvo da injeção não existir — injeção que não quebra nada não testa nada */
+      quebrar: (wb: ExcelJS.Workbook) => boolean;
+      recalculo?: boolean;
+    }> = [
+      {
+        // O defeito que decide se o arquivo é um modelo: no entregue, "NÃO FECHA" nas 7 colunas.
+        defeito: "balanço que não fecha (ativo total adulterado)",
+        chave: "balanco_fecha",
+        quebrar: (wb) => {
+          const r = linhaEm(wb, "Balance Sheet", "ATIVO TOTAL");
+          if (r === null) return false;
+          wb.getWorksheet("Balance Sheet")!.getRow(r).getCell("G").value = 999_999;
+          return true;
+        },
+      },
+      {
+        // O defeito mais caro da sessão 40: a DRE do realizado dizendo o contrário do documento.
+        defeito: "DRE do realizado que não reproduz o documento",
+        chave: "dre_confere",
+        quebrar: (wb) => {
+          const r = linhaEm(wb, "Income Statement", "Receita líquida — informado no documento");
+          if (r === null) return false;
+          wb.getWorksheet("Income Statement")!.getRow(r).getCell("F").value = 42;
+          return true;
+        },
+      },
+      {
+        // Balanço inteiro em zero: FECHA (zero = zero) e não é modelo.
+        defeito: "modelo sem conteúdo (ativo total em zero em todos os exercícios)",
+        chave: "conteudo",
+        quebrar: (wb) => {
+          const r = linhaEm(wb, "Balance Sheet", "ATIVO TOTAL");
+          if (r === null) return false;
+          for (const c of COLS_ANO) wb.getWorksheet("Balance Sheet")!.getRow(r).getCell(c).value = 0;
+          return true;
+        },
+      },
+      {
+        defeito: "fórmula nascida com #REF!",
+        chave: "sem_erro",
+        quebrar: (wb) => {
+          wb.getWorksheet("Balance Sheet")!.getCell("Z2").value = { formula: "1+#REF!" } as ExcelJS.CellValue;
+          return true;
+        },
+      },
+      {
+        // Sem `fullCalcOnLoad` o Excel mostra célula vazia até alguém apertar F9.
+        defeito: "arquivo sem fullCalcOnLoad (abre com as fórmulas em branco)",
+        chave: "recalcula",
+        quebrar: () => true,
+        recalculo: false,
+      },
+      {
+        defeito: "aba do modelo sem área de impressão",
+        chave: "imprime",
+        quebrar: (wb) => {
+          const ws = wb.getWorksheet("Cash Flow");
+          if (!ws?.pageSetup?.printArea) return false;
+          ws.pageSetup.printArea = undefined;
+          return true;
+        },
+      },
+      {
+        // O arquivo entregue publicou −10,6 como "R$/US$": variação percentual no lugar do nível.
+        defeito: "câmbio publicado como variação (negativo) em vez de nível",
+        chave: "cambio",
+        quebrar: (wb) => {
+          const r = linhaEm(wb, "Anual", "R$/US$ — final de período");
+          if (r === null) return false;
+          wb.getWorksheet("Anual")!.getRow(r).getCell("G").value = -10.6;
+          return true;
+        },
+      },
+      {
+        // Gráfico fora da área de impressão sai do PDF que vai a comitê.
+        defeito: "gráficos fora da área de impressão do Output",
+        chave: "graficos",
+        quebrar: (wb) => {
+          const ws = wb.getWorksheet("Output");
+          if (!ws?.pageSetup?.printArea) return false;
+          ws.pageSetup.printArea = "B1:C10";
+          return true;
+        },
+      },
+    ];
+    const naoAcusados: string[] = [];
+    for (const inj of injecoes) {
+      const wbQ = construir();
+      if (!inj.quebrar(wbQ)) { naoAcusados.push(`${inj.chave}: alvo da injeção não existe no arquivo`); continue; }
+      const itensQ = auditarWorkbook(wbQ, inj.recalculo);
+      const reprovadosQ = itensQ.filter((i) => !i.ok && !i.naoAplicavel).map((i) => i.chave);
+      if (!reprovadosQ.includes(inj.chave)) {
+        naoAcusados.push(`${inj.defeito} → ${inj.chave} não acusou (reprovados: ${reprovadosQ.join(", ") || "nenhum"})`);
+      }
+    }
+    checar(naoAcusados.length === 0,
+      `(0108) …e cada um dos ${injecoes.length} defeitos injetados é acusado pelo item que lhe corresponde — auditor que aprova tudo não audita`,
+      naoAcusados.join(" · "));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------

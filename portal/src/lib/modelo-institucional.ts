@@ -1133,6 +1133,20 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
   const raiz = g.eixoRaiz(ctx.ultimoHist);
   g.cabecalho("RECEITA, CUSTOS E DESPESAS", `Valores em ${ctx.ent.unidade}`,
     (ano) => g.formulaEixo(ano, raiz, ctx.ultimoHist));
+  // `CHECK` DO BALANÇO NO TOPO DO DRIVER (§5.3 do CONFORMIDADE.md).
+  //
+  // O Modelo Base publica a conferência do balanço no alto de cada aba de driver, e
+  // o motivo é operacional: quem está mexendo na premissa de giro, de dívida ou de
+  // capex está OLHANDO ESTA ABA — e é aqui que ele precisa saber se o modelo
+  // continua fechando. Ter o CHECK só no `Balance Sheet` significa que a pessoa
+  // muda um número, o balanço abre, e ela descobre isso quando (e se) trocar de aba.
+  //
+  // A célula é preenchida na costura de volta (`construirModeloInstitucional`),
+  // porque o `Balance Sheet` é construído DEPOIS dos drivers — a linha existe aqui,
+  // apontando para lá, e não o contrário: driver que soubesse calcular o balanço
+  // seria o acoplamento que o espelho existe para evitar.
+  g.linha("CHECK_MODELO", { rotulo: "CHECK do balanço (0 = fecha)", fmt: NUM2 });
+  g.pular();
   const cen = g.celulaCenario;
 
   // ===========================================================================
@@ -1800,6 +1814,8 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Working Capital", ctx.anos, ctx.nHist);
   g.ancoraCenario();
   g.cabecalho("WORKING CAPITAL", `Valores em ${ctx.ent.unidade} · dias de giro sobre a linha de DRE correspondente`, eixoHerdado(gRec));
+  g.linha("CHECK_MODELO", { rotulo: "CHECK do balanço (0 = fecha)", fmt: NUM2 });
+  g.pular();
   const cen = g.celulaCenario;
 
   // O CAIXA NÃO ENTRA NO GIRO — ver `PADROES_CAIXA`. É a correção da dupla
@@ -1979,6 +1995,8 @@ function abaImobilizado(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Fixed Assets & CAPEX", ctx.anos, ctx.nHist);
   g.ancoraCenario();
   g.cabecalho("FIXED ASSETS & CAPEX", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
+  g.linha("CHECK_MODELO", { rotulo: "CHECK do balanço (0 = fecha)", fmt: NUM2 });
+  g.pular();
   const cen = g.celulaCenario;
 
   const classes = (ctx.linhasPorBloco.get("ativo_nao_circulante") ?? []).filter((l) => ehImobilizado(l.chave));
@@ -2122,6 +2140,8 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   const g = new Grade(wb, "ST Inv. & Debt", ctx.anos, ctx.nHist);
   g.ancoraCenario();
   g.cabecalho("ST INVESTMENTS & DEBT", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
+  g.linha("CHECK_MODELO", { rotulo: "CHECK do balanço (0 = fecha)", fmt: NUM2 });
+  g.pular();
 
   // DE ONDE SAEM AS TRANCHES — e este parágrafo corrige o defeito mais grave que
   // esta rodada encontrou no nosso lado, achado por um teste que somou o balanço.
@@ -2590,7 +2610,37 @@ function abaFluxo(
   g.linha(null, { rotulo: "FLUXO DE CAIXA DAS OPERAÇÕES", bloco: true });
   g.linha("NET_INCOME", { sinal: "+", rotulo: "Lucro (prejuízo) líquido", fmt: NUM });
   g.linha("DEPREC", { sinal: "+", rotulo: "Depreciação e amortização", fmt: NUM });
+  // A VARIAÇÃO DO GIRO, CONTA A CONTA (§5.4 do CONFORMIDADE.md).
+  //
+  // Era uma linha agregada, e agregado esconde o que o analista precisa: quando o
+  // caixa das operações piora, a pergunta seguinte é SEMPRE "por causa de qual
+  // conta?" — cliente que atrasou, estoque que subiu, fornecedor que encurtou o
+  // prazo. Com uma linha só, a resposta exigia abrir a aba de giro e subtrair dois
+  // anos à mão. O Modelo Base abre por conta, e é o padrão de qualquer fluxo
+  // indireto publicado.
+  //
+  // Cada linha é a variação NEGATIVA do saldo (ativo que cresce consome caixa,
+  // passivo que cresce libera), lida da aba de giro — a mesma convenção de sinal do
+  // total, que continua existindo e continua sendo o que o `FCO` soma. As duas
+  // pontas não podem divergir, então o total NÃO é a soma destas linhas: ele
+  // continua vindo do espelho do giro, e um assert confere que os dois batem.
+  const contasGiro = [
+    ...(ctx.linhasPorBloco.get("ativo_circulante") ?? [])
+      .filter((l) => !ehImobilizado(l.chave) && !ehCaixa(l.chave))
+      .map((l) => ({ l, pref: "wc_a" as const })),
+    ...(ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+      .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave))
+      .map((l) => ({ l, pref: "wc_p" as const })),
+  ];
   g.linha("VAR_NCG", { sinal: "+/-", rotulo: "Variação da necessidade de capital de giro", fmt: NUM });
+  for (const { l, pref } of contasGiro) {
+    g.linha(`ncg:${pref}:${l.rotulo_norm}`, {
+      rotulo: `    ${pref === "wc_a" ? "(−)" : "(+)"} ${l.chave}`, fmt: NUM,
+    });
+  }
+  g.linha("VAR_NCG_CHECK", {
+    rotulo: "    conferência: soma das contas − total (ZERO)", fmt: NUM2,
+  });
   g.linha("FCO", { sinal: "=", rotulo: "CAIXA DAS OPERAÇÕES", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha(null, { rotulo: "FLUXO DE CAIXA DE INVESTIMENTO", bloco: true });
@@ -2627,6 +2677,8 @@ function abaFluxo(
                         "CAPTACAO", "AMORT", "REVOLVER", "DIVIDENDOS", "FCF", "VAR_CAIXA", "FURO"]) {
         g.set(ch, ano, 0, { fmt: NUM });
       }
+      for (const { l, pref } of contasGiro) g.set(`ncg:${pref}:${l.rotulo_norm}`, ano, 0, { fmt: NUM });
+      g.set("VAR_NCG_CHECK", ano, 0, { fmt: NUM2 });
       g.set("CAIXA_INI", ano, ant === null ? 0 : `=${g.ref("CAIXA_FIM", ant)}`, { fmt: NUM });
       g.set("CAIXA_ANTES", ano, caixaHist(ano), { fmt: NUM, fill: FILL_HIST });
       g.set("CAIXA_FIM", ano, caixaHist(ano), {
@@ -2640,6 +2692,31 @@ function abaFluxo(
     g.set("NET_INCOME", ano, `=${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}`, { fmt: NUM });
     g.set("DEPREC", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "ESP_DEPREC_CF", ano)}`, { fmt: NUM });
     g.set("VAR_NCG", ano, `=${g.externa("Working Capital", gWC, "ESP_VAR_NCG", ano)}`, { fmt: NUM });
+    // A abertura conta a conta: variação NEGATIVA do saldo de cada conta de giro,
+    // lida da aba onde ela é projetada. `ant` existe sempre aqui (o primeiro ano é
+    // realizado e cai no ramo de cima).
+    for (const { l, pref } of contasGiro) {
+      const chWC = chaveLinha(pref, l);
+      if (!gWC.tem(chWC)) { g.set(`ncg:${pref}:${l.rotulo_norm}`, ano, 0, { fmt: NUM }); continue; }
+      const atual = g.externa("Working Capital", gWC, chWC, ano);
+      const anterior = g.externa("Working Capital", gWC, chWC, ant!);
+      g.set(`ncg:${pref}:${l.rotulo_norm}`, ano,
+        `=${pref === "wc_a" ? "-" : ""}(${atual}-${anterior})`, {
+        fmt: NUM,
+        nota: pref === "wc_a"
+          ? "Ativo de giro que CRESCE consome caixa — daí o sinal negativo. É a mesma convenção "
+            + "do total logo acima."
+          : "Passivo de giro que CRESCE libera caixa (o fornecedor está financiando a operação).",
+      });
+    }
+    g.set("VAR_NCG_CHECK", ano,
+      `=(${contasGiro.map(({ l, pref }) => g.ref(`ncg:${pref}:${l.rotulo_norm}`, ano)).join("+") || "0"})`
+      + `-${g.ref("VAR_NCG", ano)}`, {
+      fmt: NUM2,
+      nota: "A abertura por conta e o total vêm de lugares diferentes de propósito (o total é o "
+        + "espelho da aba de giro, que é o que o FCO soma). Esta linha existe para os dois não "
+        + "poderem divergir em silêncio: tem de ser ZERO.",
+    });
     g.set("FCO", ano, `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("VAR_NCG", ano)}`, { fmt: NUM, negrito: true });
     g.set("CAPEX", ano, `=-${g.externa("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano)}`, { fmt: NUM });
     g.set("FCI", ano, `=${g.ref("CAPEX", ano)}`, { fmt: NUM, negrito: true });
@@ -3190,15 +3267,59 @@ function abaOutput(
   g.pular();
 
   // ---- BALANCE SHEET (espelho) ---------------------------------------------
+  //
+  // CONTA A CONTA, não só os totais (§5.1 do CONFORMIDADE.md — era o item de maior
+  // impacto da fila). O `Output` é a aba que o comitê lê; um espelho que só mostra
+  // "Current Assets" obriga quem está com o papel na mão a voltar ao `Balance Sheet`
+  // para saber DE QUE é feito o ativo circulante. A referência abre conta a conta, e
+  // é isso que faz do `Output` um relatório em vez de um sumário.
+  //
+  // As linhas de detalhe são as MESMAS da aba de origem, por referência — não há
+  // segunda soma, nem segunda verdade: se o balanço mudar, o espelho acompanha. O
+  // `Mismatch` continua sendo calculado das duas linhas de total daqui, que é a
+  // guarda contra ler a linha errada por deslocamento de âncora.
+  // O caixa já é a linha `Cash & Short Term Inv.` logo acima do bloco: repeti-lo
+  // aqui seria mostrar o mesmo número duas vezes na mesma coluna.
+  const detalheAC = [
+    { chave: "AC_OPER", rotulo: "    Operating current assets" },
+    ...(gBS.tem("RECONC_AC") ? [{ chave: "RECONC_AC", rotulo: "    reconciliation w/ reported total" }] : []),
+  ];
+  const detalheANC = [
+    { chave: "IMOB", rotulo: "    Property, plant & intangibles" },
+    ...(gBS.tem("RECONC_ANC") ? [{ chave: "RECONC_ANC", rotulo: "    reconciliation w/ reported total" }] : []),
+  ];
+  const detalhePC = [
+    { chave: "PC_OPER", rotulo: "    Operating current liabilities" },
+    { chave: "DIVIDA_CP", rotulo: "    Short-term debt + revolver" },
+    ...(gBS.tem("RECONC_PC") ? [{ chave: "RECONC_PC", rotulo: "    reconciliation w/ reported total" }] : []),
+  ];
+  const detalhePNC = [
+    { chave: "DIVIDA_LP", rotulo: "    Long-term debt" },
+    ...(gBS.tem("RECONC_PNC") ? [{ chave: "RECONC_PNC", rotulo: "    reconciliation w/ reported total" }] : []),
+  ];
+  const detalhePL = [
+    { chave: "LUCROS_ACUM", rotulo: "    Retained earnings (model)" },
+    { chave: "REPERFILAMENTO", rotulo: "    Debt-to-equity conversion (cumulative)" },
+    ...(gBS.tem("RECONC_PL") ? [{ chave: "RECONC_PL", rotulo: "    reconciliation w/ reported total" }] : []),
+  ];
+  const espelhoDoBalanco: Array<{ chave: string; rotulo: string; detalhe?: typeof detalheAC }> = [
+    { chave: "BS_AC", rotulo: "Current Assets", detalhe: detalheAC },
+    { chave: "BS_ANC", rotulo: "Long-Term & Permanent Assets", detalhe: detalheANC },
+    { chave: "BS_ATIVO", rotulo: "ASSETS" },
+    { chave: "BS_PC", rotulo: "Current Liabilities", detalhe: detalhePC },
+    { chave: "BS_PNC", rotulo: "Long-Term Liabilities", detalhe: detalhePNC },
+    { chave: "BS_PL", rotulo: "Shareholder's Equity", detalhe: detalhePL },
+    { chave: "BS_PASSIVO", rotulo: "LIABILITIES & EQUITY" },
+  ];
   g.linha(null, { rotulo: "BALANCE SHEET", bloco: true });
   g.linha("BS_CAIXA", { rotulo: "Cash & Short Term Inv.", fmt: NUM });
-  g.linha("BS_AC", { rotulo: "Current Assets", fmt: NUM });
-  g.linha("BS_ANC", { rotulo: "Long-Term & Permanent Assets", fmt: NUM });
-  g.linha("BS_ATIVO", { rotulo: "ASSETS", negrito: true, topo: true, fmt: NUM });
-  g.linha("BS_PC", { rotulo: "Current Liabilities", fmt: NUM });
-  g.linha("BS_PNC", { rotulo: "Long-Term Liabilities", fmt: NUM });
-  g.linha("BS_PL", { rotulo: "Shareholder's Equity", fmt: NUM });
-  g.linha("BS_PASSIVO", { rotulo: "LIABILITIES & EQUITY", negrito: true, topo: true, fmt: NUM });
+  for (const bloco of espelhoDoBalanco) {
+    const total = bloco.chave === "BS_ATIVO" || bloco.chave === "BS_PASSIVO";
+    g.linha(bloco.chave, { rotulo: bloco.rotulo, negrito: total, topo: total, fmt: NUM });
+    for (const d of bloco.detalhe ?? []) {
+      g.linha(`bsd:${d.chave}`, { rotulo: d.rotulo, fmt: NUM });
+    }
+  }
   g.linha("BS_MISMATCH", { rotulo: "Mismatch (ASSETS − LIABILITIES & EQUITY)", negrito: true, fmt: NUM2 });
   g.pular();
 
@@ -3220,11 +3341,28 @@ function abaOutput(
   g.pular();
 
   // ---- CASH FLOW (espelho) --------------------------------------------------
+  // Também conta a conta (§5.1): as três atividades abertas nas linhas que as
+  // compõem. Sem isto, "Cash Flow from Operations" negativo no papel não diz se o
+  // problema é resultado, giro ou depreciação — e é a primeira pergunta do comitê.
+  const detalheFCO = [
+    { chave: "NET_INCOME", rotulo: "    Net income" },
+    { chave: "DEPREC", rotulo: "    (+) D&A" },
+    { chave: "VAR_NCG", rotulo: "    (+/−) Change in working capital" },
+  ];
+  const detalheFCF = [
+    { chave: "CAPTACAO", rotulo: "    (+) New debt" },
+    { chave: "AMORT", rotulo: "    (−) Debt amortization" },
+    { chave: "REVOLVER", rotulo: "    (+/−) Revolver" },
+    { chave: "DIVIDENDOS", rotulo: "    (−) Dividends" },
+  ];
   g.linha(null, { rotulo: "CASH FLOW", bloco: true });
   g.linha("CF_FCO", { rotulo: "Cash Flow from Operations", fmt: NUM });
+  for (const d of detalheFCO) g.linha(`cfd:${d.chave}`, { rotulo: d.rotulo, fmt: NUM });
   g.linha("CF_FCI", { rotulo: "Cash Flow from Investing", fmt: NUM });
+  g.linha("cfd:CAPEX", { rotulo: "    (−) CAPEX", fmt: NUM });
   g.linha("CF_FCL", { rotulo: "FREE CASH FLOW", negrito: true, fmt: NUM });
   g.linha("CF_FCF", { rotulo: "Cash Flow from Financing", fmt: NUM });
+  for (const d of detalheFCF) g.linha(`cfd:${d.chave}`, { rotulo: d.rotulo, fmt: NUM });
   g.linha("CF_VAR", { rotulo: "Net Change in Cash", fmt: NUM });
   g.linha("CF_INI", { rotulo: "Beg. of the Period Cash", fmt: NUM });
   g.linha("CF_FIM", { rotulo: "END OF PERIOD CASH", negrito: true, topo: true, fmt: NUM });
@@ -3312,6 +3450,16 @@ function abaOutput(
     g.set("BS_PNC", ano, ext("Balance Sheet", gBS, "PNC", ano), { fmt: NUM });
     g.set("BS_PL", ano, ext("Balance Sheet", gBS, "PL", ano), { fmt: NUM });
     g.set("BS_PASSIVO", ano, ext("Balance Sheet", gBS, "PASSIVO_PL", ano), { fmt: NUM, negrito: true });
+    // O DETALHE conta a conta, por referência à aba de origem (§5.1).
+    for (const bloco of espelhoDoBalanco) {
+      for (const d of bloco.detalhe ?? []) {
+        g.set(`bsd:${d.chave}`, ano, ext("Balance Sheet", gBS, d.chave, ano), {
+          fmt: NUM,
+          nota: "Detalhe do bloco acima, lido do `Balance Sheet`. Não há soma nova aqui: o total do "
+            + "bloco também vem de lá, então espelho e origem não podem divergir.",
+        });
+      }
+    }
     g.set("BS_MISMATCH", ano, `=${g.ref("BS_ATIVO", ano)}-${g.ref("BS_PASSIVO", ano)}`, {
       fmt: NUM2, negrito: true,
       nota: "O `Mismatch` do Modelo Base, recalculado AQUI a partir das duas linhas de cima em vez "
@@ -3344,6 +3492,14 @@ function abaOutput(
     g.set("CF_INI", ano, ext("Cash Flow", gCF, "CAIXA_INI", ano), { fmt: NUM });
     g.set("CF_FIM", ano, ext("Cash Flow", gCF, "CAIXA_FIM", ano), { fmt: NUM, negrito: true });
     g.set("CF_MIN", ano, ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano), { fmt: NUM });
+    // O detalhe das três atividades, por referência à aba de fluxo (§5.1).
+    for (const d of [...detalheFCO, { chave: "CAPEX", rotulo: "" }, ...detalheFCF]) {
+      g.set(`cfd:${d.chave}`, ano, ext("Cash Flow", gCF, d.chave, ano), {
+        fmt: NUM,
+        nota: "Detalhe da atividade acima, lido do `Cash Flow`. O total continua vindo de lá — "
+          + "somar as parcelas aqui criaria um segundo número para o mesmo fato.",
+      });
+    }
 
     // DEBT & RATIOS
     g.set("DV_EXISTENTE", ano, ext("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano), { fmt: NUM });
@@ -3890,6 +4046,35 @@ export function construirModeloInstitucional(
           + "zero, e o EBITDA realizado fica igual ao EBIT. Não é defeito do modelo, é o que o "
           + "documento informa — e está dito aqui para não parecer defeito."
         : "Depreciação do período, do espelho da aba Fixed Assets & CAPEX.",
+    });
+  }
+
+  // ---- O CHECK DO BALANÇO NO TOPO DOS DRIVERS (§5.3) -----------------------
+  //
+  // A linha existe nas quatro abas de driver desde a construção; aqui ela recebe a
+  // fórmula, porque só agora o `Balance Sheet` existe. Mesma costura do revolver e
+  // da depreciação — e mesma razão: a dependência aponta do driver PARA a
+  // demonstração, nunca ao contrário.
+  for (const gDriver of [gRec, gWC, gFA, gDiv]) {
+    if (!gDriver.tem("CHECK_MODELO")) continue;
+    const colIni = colLetra(COL_PRIMEIRO_ANO);
+    const colFim = colLetra(COL_PRIMEIRO_ANO + ctx.anos.length - 1);
+    for (const ano of ctx.anos) {
+      gDriver.set("CHECK_MODELO", ano,
+        `=${Grade.refExterna("Balance Sheet", gBS.letraDoAno(ano), gBS.n("CHECK"))}`, {
+        fmt: NUM2,
+        nota: "Ativo − (Passivo + PL) do `Balance Sheet`, repetido aqui porque é NESTA aba que a "
+          + "premissa é mexida. Diferente de zero quer dizer que a mudança que você acabou de "
+          + "fazer abriu o balanço — e o lugar de descobrir isso é aqui, não duas abas adiante.",
+      });
+    }
+    const linha = gDriver.n("CHECK_MODELO");
+    gDriver.ws.addConditionalFormatting({
+      ref: `${colIni}${linha}:${colFim}${linha}`,
+      rules: [
+        { type: "expression", formulae: [`ABS(${colIni}${linha})>0.5`], style: { fill: FILL_CHECK_ERRO }, priority: 1 },
+        { type: "expression", formulae: ["TRUE"], style: { fill: FILL_CHECK_OK }, priority: 2 },
+      ],
     });
   }
 

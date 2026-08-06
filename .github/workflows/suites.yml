@@ -28,6 +28,24 @@ name: suítes
 on:
   push:
   pull_request:
+  # DISPARO MANUAL — para reconferir um commit que ficou SEM execução.
+  #
+  # POR QUE ISTO EXISTE (incidente de 06/08/2026, registrado no HANDOFF). O GitHub
+  # Actions ficou horas sem runner disponível: a execução no `main` esperou 15
+  # minutos na fila e foi CANCELADA sem nunca começar (`runner_name` vazio), e os
+  # pushes seguintes não criaram execução nenhuma. Dois PRs foram mergeados nesse
+  # intervalo com a evidência sendo apenas a execução local das quatro suítes.
+  #
+  # E o GitHub NÃO reexecuta retroativamente: evento que não gerou execução não
+  # ganha execução quando o serviço volta — não há o que reexecutar. Sem disparo
+  # manual, a única forma de conferir o estado acumulado era empurrar um commit
+  # vazio, que polui o histórico para resolver um problema de infraestrutura.
+  #
+  # `workflow_dispatch` aceita escolher a branch, então serve tanto para revalidar
+  # o `main` depois de um incidente quanto para rodar a suíte numa branch antes de
+  # abrir o PR. Ele só aparece na interface quando o arquivo está na branch
+  # default — é exigência do GitHub, não escolha nossa.
+  workflow_dispatch:
 
 # Um PR que recebe três pushes seguidos não precisa de três execuções completas.
 concurrency:
