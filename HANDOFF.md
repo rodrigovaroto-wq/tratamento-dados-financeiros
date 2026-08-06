@@ -28,7 +28,7 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**462**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
+**471**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
 
 > **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
 > exportou o v35 completo e mandou conferir. O motor estava fiel (8 gráficos válidos, zero `#REF!`,
@@ -166,6 +166,27 @@ cadeia do book (`test/e2e`) tem `secao`/`ordem` reais mas **`secao_canonica` nul
 por isso o modelo institucional sai com a DRE inteira em zero. Isso levou ao sétimo assert e a uma
 guarda nova: modelo sem linha de resultado **anuncia** "SEM DRE" em vermelho, em vez de exibir uma
 cascata zerada com cara de empresa sem operação.
+
+**Ainda na sessão 40, em cima da correção:** (a) **a reconciliação com o total informado** — cada
+grupo do balanço (AC, ANC, PC, PNC, PL) passa a seguir o total que o DOCUMENTO informa, com a
+diferença numa linha própria chamada "reconciliação com o … informado no documento". É o invariante
+nº 6 ("o total da seção é o que o documento informou, não a nossa soma") aplicado ao modelo, e é o
+que resolve a conta duplicada (`Prejuízos acumulados` = `Resultados Acumulados` = −39.150) **sem
+apagar conta nenhuma** — apagar por semelhança de valor mataria conta legítima. Medido no v35 local:
+`CHECK` de 52.992 → −20.529 e a diferença do ativo de 69.421 → 10.277, e o que sobra é o próprio
+fixture sintético cujos totais informados não somam entre si (numa demonstração real,
+AC+ANC = ativo total por definição). O `CHECK` agora **diz** que essa é a única causa possível de
+sobra. (b) **O PAINEL DE PREMISSAS** no topo da aba de receita: uma linha por premissa de
+crescimento, com **índice base** (dropdown com as séries da aba `Anual`), **spread real** digitado e
+`crescimento nominal = (1+índice)×(1+spread)−1` — o mesmo `P15` do custo da dívida. As contas
+apontam para o painel, então trocar o índice ou o spread **dentro do Excel** reprojeta o modelo
+inteiro. O spread nasce calibrado para reproduzir exatamente a premissa que o portal escolheu
+(índice "(nenhum)"), então o arquivo abre com os mesmos números e ganha o mecanismo. O assert
+`(0106i)` **simula a edição**: escreve "IPCA" na célula de escolha, esquece a memória do avaliador,
+recalcula e exige que a receita projetada mude — e que voltar a "(nenhum)" restaure a premissa.
+Nota de implementação: o painel usa `IF` encadeado em vez de `INDEX/MATCH` porque o avaliador das
+suítes segue referência entre abas mas **não intervalo entre abas** — com `INDEX/MATCH` o teste da
+edição passava verde sem edição nenhuma.
 
 **O que continua do dono:** aplicar a `0104`; exportar o v35 de novo e conferir a nova linha
 `diferença (modelo − documento)` do `Income Statement` e do `Balance Sheet` — se sobrar diferença, ela

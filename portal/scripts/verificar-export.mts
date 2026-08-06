@@ -4090,6 +4090,14 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       // ---- patrimônio
       linhaAnos("patrimonio_liquido", "Capital social", { "2024": 40000, "2025": 40000 }),
       linhaAnos("patrimonio_liquido", "Reservas de lucros", { "2024": 10000, "2025": 5000 }),
+      // A MESMA CONTA COM DOIS RÓTULOS — o defeito que sobrou da rodada anterior e que
+      // a reconciliação com o total informado resolve. No v35 são "Prejuízos
+      // acumulados" e "Resultados Acumulados", ambos −39.150, e "Capital social
+      // subscrito"/"Capital social subscrito e integralizado". Não é subtotal (a
+      // detecção estrutural não pega) e não dá para resolver por semelhança de
+      // valor: duas reservas de mesmo valor são plausíveis. Somadas, inflam o PL em
+      // 10.000/5.000 — e é isso que o total informado corrige.
+      linhaAnos("patrimonio_liquido", "Reserva de lucros acumulados", { "2024": 10000, "2025": 5000 }),
       // ---- resultado, NA CONVENÇÃO DO DOCUMENTO (despesa negativa)
       //   2025: RL 166.000 · LB 58.000 · EBITDA 41.000 · EBIT 33.000 · LL 17.820
       //   2024: RL 149.400 · LB 49.900 · EBITDA 35.400 · EBIT 27.900 · LL 15.900
@@ -4117,6 +4125,13 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       linhaAnos("impostos_lucro", "Lucro Líquido do Exercício",
         { "2024": 15900, "2025": 17820 }, "DRE", "subtotal"),
       linhaAnos("ativo_circulante", "ATIVO", { "2024": 117000, "2025": 125000 }, "BALANCO", "subtotal"),
+      // Os TOTAIS DE GRUPO informados — o insumo da reconciliação. O documento os
+      // publica; o modelo passa a segui-los em vez de confiar na própria soma.
+      linhaAnos("ativo_circulante", "Ativo Circulante", { "2024": 52000, "2025": 62000 }, "BALANCO", "subtotal"),
+      linhaAnos("ativo_nao_circulante", "Ativo Não Circulante", { "2024": 65000, "2025": 63000 }, "BALANCO", "subtotal"),
+      linhaAnos("passivo_circulante", "Passivo Circulante", { "2024": 33000, "2025": 40000 }, "BALANCO", "subtotal"),
+      linhaAnos("passivo_nao_circulante", "Passivo Não Circulante", { "2024": 34000, "2025": 40000 }, "BALANCO", "subtotal"),
+      linhaAnos("patrimonio_liquido", "Patrimônio Líquido", { "2024": 50000, "2025": 45000 }, "BALANCO", "subtotal"),
     ],
     premissas: [
       {
@@ -4377,6 +4392,44 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       JSON.stringify(dif2025));
   }
 
+  // ---- (0106h) A MESMA CONTA COM DOIS RÓTULOS NÃO ESTOURA O BALANÇO -------
+  //
+  // "Reservas de lucros" e "Reserva de lucros acumulados", ambas 5.000 em 2025, são
+  // a mesma conta transposta duas vezes — o resíduo que sobrou depois de excluir os
+  // subtotais informados. Somadas, o PL sai 50.000 onde o documento diz 45.000.
+  //
+  // A correção NÃO é apagar uma delas (duas reservas de mesmo valor são plausíveis,
+  // e apagar conta legítima é pior que somar demais): é seguir o TOTAL INFORMADO,
+  // com a diferença escrita numa linha própria. Invariante nº 6, que as abas
+  // analíticas seguem desde o teste v25, aplicado ao modelo.
+  {
+    const fora: string[] = [];
+    for (const [ano, plEsperado] of [[2024, 50000], [2025, 45000]] as const) {
+      const plModelo = valorNaAba("Balance Sheet", "PATRIMÔNIO LÍQUIDO", iAnoDe(ano));
+      if (typeof plModelo !== "number" || Math.abs(plModelo - plEsperado) > 0.5) {
+        fora.push(`PL ${ano}: ${JSON.stringify(plModelo)} != ${plEsperado} (conta duplicada somada?)`);
+      }
+    }
+    checar(fora.length === 0,
+      "(0106h) o PATRIMÔNIO segue o total informado no documento mesmo com a MESMA conta transposta "
+      + "com dois rótulos — sem apagar conta nenhuma",
+      fora.join(" · "));
+
+    const rRec = linhaDoRotulo("Balance Sheet", "reconciliação com o patrimônio líquido informado no documento");
+    const rec2025 = rRec === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Balance Sheet")!, COLS_ANO[iAnoDe(2025)], rRec);
+    checar(typeof rec2025 === "number" && Math.abs(rec2025 + 5000) < 0.5,
+      "(0106h) …e a linha de reconciliação DIZ o tamanho do que não se explica (−5.000 em 2025)",
+      JSON.stringify(rec2025));
+    // Na projeção ela é constante: nem zerada (salto artificial), nem crescida
+    // (projetar erro de extração como se fosse conta).
+    const rec2027 = rRec === null ? null
+      : avaliarCelula(wbMod.getWorksheet("Balance Sheet")!, COLS_ANO[iAnoDe(2027)], rRec);
+    checar(typeof rec2027 === "number" && Math.abs(rec2027 + 5000) < 0.5,
+      "(0106h) …e permanece constante no projetado, sem salto na virada do realizado",
+      JSON.stringify(rec2027));
+  }
+
   // ---- (0106c) A DÍVIDA APARECE NO EXERCÍCIO QUE O MAPA NÃO COBRE ----------
   //
   // O mapa de dívida deste caso (como o do v35) tem UMA data de referência: 2025.
@@ -4537,6 +4590,63 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(rFx !== null && typeof v2026 === "number" && Math.abs(v2026 - 5.4) < 0.001,
       "(0106f) …e o nível de fato publicado (expectativa do Focus, 5,40) continua chegando",
       JSON.stringify(v2026));
+  }
+
+  // ---- (0106i) O PAINEL DE PREMISSAS RESPONDE À EDIÇÃO NO EXCEL ------------
+  //
+  // A promessa é "trocar o índice ou o spread dentro do arquivo reprojeta o
+  // modelo". Um assert que só conferisse a existência das linhas não provaria nada:
+  // este SIMULA a edição — escreve na célula de escolha da série, esquece a memória
+  // do avaliador e recalcula, exigindo que a receita projetada MUDE na direção
+  // certa. É o mais próximo de "o dono abriu e editou" que dá para fazer sem Excel.
+  {
+    const rec = wbMod.getWorksheet("Revenues, COGS & SG&A")!;
+    const rTotal = linhaDoRotulo("Revenues, COGS & SG&A", "= crescimento nominal aplicado");
+    const rSerie = rTotal === null ? null : rTotal - 2;
+    checar(rTotal !== null,
+      "(0106i) a aba de receita traz o PAINEL DE PREMISSAS (índice macro × spread)", String(rTotal));
+
+    const iA = iAnoDe(2026);
+    const rReceita = linhaDoRotulo("Revenues, COGS & SG&A", "Vendas de produtos - mercado interno");
+    if (rTotal !== null && rSerie !== null && rReceita !== null) {
+      // 1. Como o arquivo nasce: índice "(nenhum)" e o crescimento é exatamente a
+      //    premissa que o portal escolheu (8% em 2026). Continuidade — o painel
+      //    acrescenta mecanismo sem mexer em número.
+      const escolha = rec.getRow(rSerie).getCell(4);
+      checar(String(escolha.value ?? "") === "(nenhum)",
+        "(0106i) o painel nasce com índice \"(nenhum)\", reproduzindo a premissa do portal",
+        String(escolha.value ?? ""));
+      const cresc0 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      checar(typeof cresc0 === "number" && Math.abs(cresc0 - 0.08) < 1e-9,
+        "(0106i) …e o crescimento nominal aplicado é os 8% do portal", JSON.stringify(cresc0));
+      const receita0 = avaliarCelula(rec, COLS_ANO[iA], rReceita);
+
+      // 2. A EDIÇÃO: o analista escolhe IPCA no dropdown. O IPCA de 2026 na fixture
+      //    é 4,5%, então o crescimento tem de virar (1+4,5%)×(1+8%)−1 = 12,86%.
+      escolha.value = "IPCA";
+      esquecerMemoria(rec);
+      esquecerMemoria(wbMod.getWorksheet("Anual")!);
+      const cresc1 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      const esperado = 1.045 * 1.08 - 1;
+      checar(typeof cresc1 === "number" && Math.abs(cresc1 - esperado) < 1e-9,
+        "(0106i) escolher IPCA no dropdown COMPÕE índice e spread — (1+4,5%)×(1+8%)−1, não a soma",
+        `${JSON.stringify(cresc1)} (esperado ${esperado.toFixed(6)})`);
+      const receita1 = avaliarCelula(rec, COLS_ANO[iA], rReceita);
+      checar(typeof receita0 === "number" && typeof receita1 === "number" && receita1 > receita0,
+        "(0106i) …e a RECEITA PROJETADA acompanha a edição — é o que faz do arquivo uma alternativa "
+        + "de edição ao portal",
+        `receita 2026: ${JSON.stringify(receita0)} → ${JSON.stringify(receita1)}`);
+
+      // 3. Devolve o arquivo ao estado original: os asserts seguintes (e o de
+      //    reprodutibilidade do gerador) leem o mesmo workbook.
+      escolha.value = "(nenhum)";
+      esquecerMemoria(rec);
+      esquecerMemoria(wbMod.getWorksheet("Anual")!);
+      const cresc2 = avaliarCelula(rec, COLS_ANO[iA], rTotal);
+      checar(typeof cresc2 === "number" && Math.abs(cresc2 - 0.08) < 1e-9,
+        "(0106i) …e voltar a escolha a \"(nenhum)\" devolve a premissa do portal (a edição é reversível)",
+        JSON.stringify(cresc2));
+    }
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------

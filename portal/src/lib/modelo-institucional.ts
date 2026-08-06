@@ -775,6 +775,17 @@ const ANCORAS_DOC: ReadonlyArray<{ chave: string; doc: string; rotulos: readonly
   { chave: "DOC_PASSIVO_PL", doc: "BALANCO", rotulos: [
     "passivo e patrimonio liquido", "total do passivo e patrimonio liquido",
     "passivo + patrimonio liquido", "total do passivo e do patrimonio liquido"] },
+  // OS TOTAIS DE GRUPO — o insumo da reconciliação (ver `RECONC_` em `abaBalanco`).
+  { chave: "DOC_AC", doc: "BALANCO", rotulos: [
+    "ativo circulante", "total do ativo circulante", "total ativo circulante"] },
+  { chave: "DOC_ANC", doc: "BALANCO", rotulos: [
+    "ativo nao circulante", "total do ativo nao circulante", "total ativo nao circulante"] },
+  { chave: "DOC_PC", doc: "BALANCO", rotulos: [
+    "passivo circulante", "total do passivo circulante", "total passivo circulante"] },
+  { chave: "DOC_PNC", doc: "BALANCO", rotulos: [
+    "passivo nao circulante", "total do passivo nao circulante", "total passivo nao circulante"] },
+  { chave: "DOC_PL", doc: "BALANCO", rotulos: [
+    "patrimonio liquido", "total do patrimonio liquido", "patrimonio liquido consolidado"] },
 ];
 
 // -----------------------------------------------------------------------------
@@ -1124,6 +1135,132 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
     (ano) => g.formulaEixo(ano, raiz, ctx.ultimoHist));
   const cen = g.celulaCenario;
 
+  // ===========================================================================
+  // PAINEL DE PREMISSAS — a modelagem passa a ser EDITÁVEL DENTRO DO EXCEL, com
+  // os índices macro como base.
+  //
+  // O QUE MUDA. Até aqui, cada conta projetada por crescimento tinha o percentual
+  // do portal DIGITADO na linha dela: para trocar a premissa era preciso voltar ao
+  // portal, remodelar e exportar de novo. Os índices macro estavam na aba `Anual`,
+  // versionados e certos, e nenhuma linha de crescimento os REFERENCIAVA — só a
+  // correção por `indice_macro` fazia isso, e sem passar pelo dial de cenário.
+  //
+  // COMO FUNCIONA. Uma linha por premissa de crescimento, com três partes:
+  //   • ÍNDICE BASE — célula de escolha (validação de lista com as séries da aba
+  //     `Anual` mais "(nenhum)"). A linha mostra, ano a ano, o valor da série
+  //     escolhida, por `INDEX/MATCH` sobre a `Anual`.
+  //   • SPREAD REAL — premissa digitada, por ano (azul).
+  //   • CRESCIMENTO NOMINAL — `(1+índice)×(1+spread)−1`, o mesmo `P15` do custo da
+  //     dívida. Composição, não soma: somar erra por índice×spread, que a 5% e 4%
+  //     já são 20 pontos-base.
+  // As contas apontam para o resultado — mudar o índice na `Anual`, trocar a série
+  // no dropdown ou mexer no spread reprojeta o modelo inteiro sem sair do arquivo.
+  //
+  // CALIBRAÇÃO QUE NÃO INVENTA NÚMERO: o spread nasce com o valor que REPRODUZ
+  // exatamente a premissa escolhida no portal (índice "(nenhum)" → spread = a
+  // própria premissa; premissa que já era macro → série dela e spread zero). Ou
+  // seja, o arquivo abre com os mesmos números de antes e ganha o mecanismo. É a
+  // mesma escolha do spread da dívida, que é derivado do custo medido em vez de
+  // arbitrado.
+  // ===========================================================================
+  const premissasDeCrescimento = [...new Map(
+    [...ctx.premissaPorLinha.values()]
+      .filter((p) => p.formula === "crescimento_composto" || p.formula === "indice_macro")
+      .map((p) => [p.codigo, p] as const),
+  ).values()].sort((a, b) => a.codigo.localeCompare(b.codigo));
+
+  const codigosMacro = SERIES_MACRO.map((s) => s.codigo).filter((c) => gAnual.tem(`macro:${c}`));
+  const linhasMacro = codigosMacro.map((c) => gAnual.n(`macro:${c}`));
+  const colCodigo = colLetra(COL_NOTA);
+  const painel = new Map<string, string>(); // código da premissa → chave da linha de total
+
+  if (premissasDeCrescimento.length > 0 && linhasMacro.length > 0) {
+    g.linha(null, {
+      rotulo: "PAINEL DE PREMISSAS — ÍNDICE MACRO × SPREAD (edite aqui e o modelo inteiro reprojeta)",
+      bloco: true, nota: "escolha o índice",
+    });
+    for (const p of premissasDeCrescimento) {
+      const base = `pnl:${p.codigo}`;
+      const ehMacro = p.formula === "indice_macro" && codigosMacro.includes(p.codigo);
+      const rSerie = g.linha(`${base}#serie`, {
+        rotulo: `${p.nome} — índice base (da aba Anual)`, fmt: NUM2,
+      });
+      g.linha(`${base}#spread`, { rotulo: "    spread real sobre o índice", nota: "premissa", fmt: PCT });
+      g.linha(`${base}#total`, { rotulo: "    = crescimento nominal aplicado", fmt: PCT });
+      painel.set(p.codigo, `${base}#total`);
+
+      // A célula de escolha da série, com validação de lista. Vive na coluna de
+      // nota, ao lado do rótulo, pelo mesmo desenho da chave S/N por tranche.
+      const cel = g.celula(rSerie, COL_NOTA);
+      cel.value = ehMacro ? p.codigo : "(nenhum)";
+      cel.fill = FILL_INPUT;
+      cel.font = FONTE_ENTRADA;
+      cel.alignment = { horizontal: "center" };
+      cel.dataValidation = {
+        type: "list", allowBlank: false,
+        formulae: [`"(nenhum),${codigosMacro.join(",")}"`],
+        showErrorMessage: true, errorTitle: "Índice base",
+        error: `Escolha uma série da aba Anual (${codigosMacro.join(", ")}) ou "(nenhum)" para `
+          + "esta premissa não seguir índice nenhum.",
+      };
+      cel.note = comoNota(
+        "ÍNDICE BASE desta premissa. Escolhendo uma série, o crescimento passa a ser "
+        + "(1+índice do ano)×(1+spread)−1 e acompanha qualquer revisão do Focus na aba Anual. "
+        + "Com \"(nenhum)\", o índice vale zero e o spread carrega o crescimento inteiro — que é "
+        + "como o arquivo nasce, reproduzindo exatamente a premissa escolhida no portal.",
+      );
+
+      for (const ano of ctx.anos) {
+        // A ESCOLHA VIRA REFERÊNCIA POR `IF` ENCADEADO, e não por `INDEX/MATCH`.
+        //
+        // Duas razões, e a segunda é a que decide. (1) `INDEX/MATCH` sobre intervalo
+        // de OUTRA aba é a forma idiomática, mas esconde a dependência: quem audita
+        // não vê quais séries a célula pode ler. (2) O avaliador das suítes
+        // (`avaliar-formula.mts`) segue referência entre abas mas NÃO intervalo entre
+        // abas — com `INDEX/MATCH` ele devolvia "não sei", o `IFERROR` virava zero e o
+        // teste da edição passava verde sem edição nenhuma. Fórmula que o teste não
+        // consegue avaliar é fórmula sem prova, e este painel é justamente a promessa
+        // que precisa de prova.
+        //
+        // O `0` do fim é o caso "(nenhum)": índice zero, spread carrega tudo.
+        const expr = codigosMacro.reduceRight(
+          (acc, cod) => `IF($${colCodigo}$${rSerie}="${cod}",`
+            + `${Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n(`macro:${cod}`))},${acc})`,
+          "0",
+        );
+        g.set(`${base}#serie`, ano, `=${expr}`, {
+          fmt: NUM2,
+          nota: "Valor da série escolhida na célula ao lado, lido da aba Anual (realizado BCB/IBGE, "
+            + "projetado Focus). Zero quando a escolha é \"(nenhum)\" ou o ano não tem publicação — "
+            + "nunca erro, que propagaria para o modelo inteiro.",
+        });
+        const doPortal = p.valores[String(ano)];
+        // O spread que reproduz a premissa do portal: com índice zero ele É a
+        // premissa; com premissa macro, zero (o índice já é o crescimento).
+        const spread = ehMacro ? 0 : (doPortal === undefined ? null : doPortal / 100);
+        g.set(`${base}#spread`, ano, spread, {
+          fmt: PCT, fill: FILL_INPUT,
+          nota: ehMacro
+            ? `Zero: esta premissa É a série ${p.codigo}, e o crescimento vem inteiro do índice. `
+              + "Subir aqui é dizer que este caso cresce acima do índice."
+            : doPortal === undefined
+              ? `Premissa "${p.nome}" sem valor para ${ano} no portal — sem crescimento neste ano, `
+                + "e o arquivo diz isso em vez de inventar."
+              : `Calibrado para reproduzir a premissa "${p.nome}" (${doPortal}% em ${ano}) escolhida `
+                + "no portal, com índice \"(nenhum)\". Escolhendo um índice, este número passa a ser o "
+                + "ganho REAL sobre ele.",
+        });
+        g.set(`${base}#total`, ano,
+          `=(1+N(${g.ref(`${base}#serie`, ano)})/100)*(1+${g.ref(`${base}#spread`, ano)})-1`, {
+          fmt: PCT,
+          nota: "Composição, não soma: (1+índice)×(1+spread)−1. É o mesmo P15 do custo da dívida — "
+            + "somar as duas pontas subestima o crescimento em índice×spread.",
+        });
+      }
+    }
+    g.pular();
+  }
+
   // ---- GROSS REVENUES ------------------------------------------------------
   g.linha("GROSS_REVENUES", { sinal: "+", rotulo: "GROSS REVENUES", bloco: true, fmt: NUM });
   const receitas = ctx.linhasPorBloco.get("receita") ?? [];
@@ -1217,12 +1354,23 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
       const vBase = p.valores[String(ano)];
       // Premissa por ano: Base é o valor escolhido; Cliente ESPELHA o Base
       // (como no referência, `=J11`); Stress aplica o haircut declarado.
-      g.set(`${ch}#base`, ano, vBase === undefined ? null : vBase / 100, {
-        fmt: PCT, fill: FILL_INPUT,
-        nota: vBase === undefined
-          ? `Premissa "${p.nome}" sem valor para ${ano} — a projeção deste ano fica sem crescimento `
-            + "e o arquivo diz isso. Preencher no portal (Modelagem)."
-          : `Premissa "${p.nome}" (${p.origem ?? "digitado"}) — ${vBase}% em ${ano}.`,
+      //
+      // COM PAINEL, o Base é FÓRMULA apontando para ele — é isso que faz o modelo
+      // reprojetar quando alguém troca o índice ou o spread dentro do Excel. Sem
+      // painel (premissa que não é de crescimento), continua sendo o número do
+      // portal, digitado e azul.
+      const doPainel = painel.get(p.codigo);
+      g.set(`${ch}#base`, ano,
+        doPainel ? `=${g.ref(doPainel, ano)}` : (vBase === undefined ? null : vBase / 100), {
+        fmt: PCT, fill: doPainel ? undefined : FILL_INPUT,
+        nota: doPainel
+          ? `Vem do PAINEL DE PREMISSAS, no topo desta aba (premissa "${p.nome}"): índice macro × `
+            + "spread. Para mudar a projeção, mexa lá — não aqui, senão a conta passa a discordar "
+            + "das outras que usam a mesma premissa."
+          : vBase === undefined
+            ? `Premissa "${p.nome}" sem valor para ${ano} — a projeção deste ano fica sem crescimento `
+              + "e o arquivo diz isso. Preencher no portal (Modelagem)."
+            : `Premissa "${p.nome}" (${p.origem ?? "digitado"}) — ${vBase}% em ${ano}.`,
       });
       g.set(`${ch}#cli`, ano, `=${g.ref(`${ch}#base`, ano)}`, { fmt: PCT });
       g.set(`${ch}#str`, ano, `=${g.ref(`${ch}#base`, ano)}*(1-${refStress()})`, { fmt: PCT });
@@ -1278,11 +1426,18 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
           continue;
         }
         const v = p.valores[String(ano)];
-        const notaP = v === undefined
-          ? `Premissa "${p.nome}" sem valor para ${ano}.`
-          : `Premissa "${p.nome}" (${p.origem ?? "digitado"}).`;
+        const doPainel = painel.get(p.codigo);
+        const notaP = doPainel
+          ? `Vem do PAINEL DE PREMISSAS no topo desta aba (premissa "${p.nome}"): índice macro × `
+            + "spread. Mexer lá reprojeta todas as contas que usam esta premissa; mexer aqui faria "
+            + "esta conta discordar das outras."
+          : v === undefined
+            ? `Premissa "${p.nome}" sem valor para ${ano}.`
+            : `Premissa "${p.nome}" (${p.origem ?? "digitado"}).`;
         if (p.formula === "pct_de_linha" || p.formula === "indice_macro" || p.formula === "crescimento_composto") {
-          g.set(`${ch}#base`, ano, v === undefined ? null : v / 100, { fmt: PCT, fill: FILL_INPUT, nota: notaP });
+          g.set(`${ch}#base`, ano,
+            doPainel ? `=${g.ref(doPainel, ano)}` : (v === undefined ? null : v / 100),
+            { fmt: PCT, fill: doPainel ? undefined : FILL_INPUT, nota: notaP });
           g.set(`${ch}#cli`, ano, `=${g.ref(`${ch}#base`, ano)}`, { fmt: PCT });
           // No STRESS, custo e despesa pioram: o haircut entra com sinal
           // invertido em relação à receita. Aplicar -20% num custo produziria um
@@ -1298,13 +1453,18 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
           g.set(ch, ano,
             `=CHOOSE(${cen},${g.ref(`${ch}#base`, ano)},${g.ref(`${ch}#cli`, ano)},`
             + `${g.ref(`${ch}#str`, ano)})*${g.ref("RECEITA_LIQUIDA", ano)}`, fmtCel);
-        } else if (p.formula === "indice_macro") {
+        } else if (p.formula === "indice_macro" && !doPainel) {
+          // Caminho antigo, para quando não há painel (nenhuma série macro no caso):
+          // referência direta à `Anual`. Com painel, a linha cai no caso geral abaixo
+          // e passa a responder ao dial de cenário — antes uma conta corrigida por
+          // índice ficava IMÓVEL no Stress, o que é o oposto do que um cenário de
+          // estresse tem de mostrar.
           const serie = p.codigo;
           const refMacro = gAnual.tem(`macro:${serie}`)
             ? Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n(`macro:${serie}`))
             : null;
           g.set(ch, ano,
-            `=${g.ref(ch, ant!)}*(1+${refMacro ? `${refMacro}/100` : g.ref(`${ch}#base`, ano)})`,
+            `=${g.ref(ch, ant!)}*(1+${refMacro ? `N(${refMacro})/100` : g.ref(`${ch}#base`, ano)})`,
             { fmt: NUM, nota: `Corrigido pela série ${serie} da aba Anual (dado versionado, não digitado).` });
         } else {
           g.set(ch, ano,
@@ -1323,6 +1483,56 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
   // gerado (`congelado=False` na única aba que é a RAIZ do modelo).
   g.finalizar("__unidade");
   return g;
+}
+
+// O texto que explica a linha de reconciliação, na célula onde ela aparece. Fica
+// aqui (e não inline) porque é a MESMA explicação nas cinco linhas de grupo, e
+// cinco cópias divergiriam na primeira revisão.
+const NOTA_RECONC = "Diferença entre o total que o DOCUMENTO informa para este grupo e a soma das "
+  + "contas extraídas dele. Existe porque a extração pode traspor a mesma conta com dois rótulos "
+  + "(medido no v35: 'Prejuízos acumulados' e 'Resultados Acumulados', ambos −39.150), deixar conta "
+  + "fora de classificação, ou arredondar. É DADO A RECONCILIAR, não premissa: o número do grupo "
+  + "segue o documento, e o tamanho do que não se explica fica escrito aqui. Mantida constante na "
+  + "projeção — reprojetá-la seria projetar um erro de extração como se fosse conta.";
+
+/**
+ * Escreve a linha de reconciliação de um grupo do balanço (ver o comentário longo em
+ * `abaBalanco`): no realizado, `informado − nossa soma`; no projetado, o valor do
+ * último realizado, constante.
+ *
+ * O realizado é uma FÓRMULA (`informado − termos`), não um literal, para a linha
+ * acompanhar qualquer correção nas contas: se amanhã a extração deixar de duplicar
+ * "Resultados Acumulados", esta linha vai a zero sozinha e ninguém precisa lembrar
+ * de mexer aqui. É o mesmo motivo pelo qual todo subtotal deste modelo é fórmula.
+ */
+function escreverReconc(
+  g: Grade, ctx: Ctx, r: { chave: string; ancora: string } | null,
+  ano: number, hist: boolean, ant: number | null, termos: string[],
+): void {
+  if (!r) return;
+  if (!hist) {
+    g.set(r.chave, ano, ant === null ? 0 : `=${g.ref(r.chave, ant)}`, {
+      fmt: NUM2,
+      nota: "Mantida constante: é o resíduo do REALIZADO. Reprojetá-la seria projetar um erro de "
+        + "extração como se fosse conta; zerá-la na virada criaria um salto artificial no balanço.",
+    });
+    return;
+  }
+  const e = valorDaAncora(ctx, r.ancora, ano);
+  if (!e) {
+    g.set(r.chave, ano, 0, {
+      fmt: NUM2,
+      nota: "O documento deste exercício não informa o total deste grupo: nada a reconciliar, e o "
+        + "grupo fica com a soma das contas extraídas.",
+    });
+    return;
+  }
+  const soma = termos.length > 0 ? termos.join("+") : "0";
+  g.set(r.chave, ano, `=${e.valor}-(${soma})`, {
+    fmt: NUM2,
+    nota: `Total informado no documento para este grupo: ${e.valor.toLocaleString("pt-BR")}. `
+      + `${e.nota}\n\n${NOTA_RECONC}`,
+  });
 }
 
 /** Soma célula a célula, ou zero explícito quando o bloco está vazio. */
@@ -2495,26 +2705,69 @@ function abaBalanco(
     .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave));
   const pl = ctx.linhasPorBloco.get("patrimonio_liquido") ?? [];
 
+  // A RECONCILIAÇÃO COM O TOTAL INFORMADO — invariante nº 6 aplicado ao modelo.
+  //
+  // "O TOTAL DA SEÇÃO É O QUE O DOCUMENTO INFORMOU, não a nossa soma": é a regra que
+  // as abas analíticas seguem desde o teste v25 (36 de 44 somas do Balanço divergiam)
+  // e que o modelo institucional não seguia. Somar as contas extraídas erra sempre
+  // que a extração traz a MESMA conta com dois rótulos — medido no v35: "Prejuízos
+  // acumulados" e "Resultados Acumulados", ambos −39.150; "Capital social subscrito"
+  // e "Capital social subscrito e integralizado". Não é subtotal (a detecção
+  // estrutural não pega), é identidade de conta entre documentos, e resolver com
+  // heurística de semelhança apagaria conta legítima: duas provisões de mesmo valor
+  // são plausíveis.
+  //
+  // A SOLUÇÃO NÃO É APAGAR NEM ADIVINHAR, é declarar. Cada grupo cujo total o
+  // documento informa ganha uma linha de reconciliação = informado − nossa soma. No
+  // realizado o grupo passa a fechar com o documento POR CONSTRUÇÃO; a linha diz
+  // quanto é, e a nota diz que aquilo é DADO A RECONCILIAR, não premissa. É o mesmo
+  // desenho da linha de conferência das abas analíticas, com uma diferença: aqui ela
+  // entra na soma, porque o balanço tem de fechar para o modelo se mover.
+  //
+  // Na projeção ela é mantida CONSTANTE no valor do último realizado — nunca
+  // reprojetada. Zerá-la na virada criaria um salto artificial no primeiro ano
+  // projetado; crescê-la seria projetar um erro de extração como se fosse conta.
+  const reconc = (grupo: string, ancora: string) => ctx.ancoras.has(ancora)
+    ? { chave: `RECONC_${grupo}`, ancora }
+    : null;
+  const rAC = reconc("AC", "DOC_AC");
+  const rANC = reconc("ANC", "DOC_ANC");
+  const rPC = reconc("PC", "DOC_PC");
+  const rPNC = reconc("PNC", "DOC_PNC");
+  const rPL = reconc("PL", "DOC_PL");
+  const linhaReconc = (r: { chave: string; ancora: string } | null, grupo: string) => {
+    if (!r) return;
+    g.linha(r.chave, {
+      rotulo: `    reconciliação com o ${grupo} informado no documento`, fmt: NUM2,
+      nota: "dado a reconciliar",
+    });
+  };
+
   g.linha("CAIXA", { rotulo: "Caixa e equivalentes", fmt: NUM });
   g.linha("AC_OPER", { rotulo: "Ativo circulante operacional", fmt: NUM });
+  linhaReconc(rAC, "ativo circulante");
   g.linha("AC", { rotulo: "ATIVO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("IMOB", { rotulo: "Imobilizado e intangível", fmt: NUM });
   for (const l of ancNaoImob) g.linha(chaveLinha("anc", l), { rotulo: l.chave, fmt: NUM });
+  linhaReconc(rANC, "ativo não circulante");
   g.linha("ANC", { rotulo: "ATIVO NÃO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
   g.linha("ATIVO", { rotulo: "ATIVO TOTAL", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("PC_OPER", { rotulo: "Passivo circulante operacional", fmt: NUM });
   g.linha("DIVIDA_CP", { rotulo: "Dívida de curto prazo + revolver", fmt: NUM });
+  linhaReconc(rPC, "passivo circulante");
   g.linha("PC", { rotulo: "PASSIVO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("DIVIDA_LP", { rotulo: "Dívida de longo prazo", fmt: NUM });
   for (const l of pnc) g.linha(chaveLinha("pnc", l), { rotulo: l.chave, fmt: NUM });
+  linhaReconc(rPNC, "passivo não circulante");
   g.linha("PNC", { rotulo: "PASSIVO NÃO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
   g.pular();
   for (const l of pl) g.linha(chaveLinha("pl", l), { rotulo: l.chave, fmt: NUM });
   g.linha("LUCROS_ACUM", { rotulo: "Lucros (prejuízos) acumulados do modelo", fmt: NUM });
   g.linha("REPERFILAMENTO", { rotulo: "Redução de dívida SEM efeito caixa (acumulada)", fmt: NUM });
+  linhaReconc(rPL, "patrimônio líquido");
   g.linha("PL", { rotulo: "PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   g.linha("PASSIVO_PL", { rotulo: "PASSIVO + PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   g.pular();
@@ -2543,7 +2796,10 @@ function abaBalanco(
     const ant = g.anoAnterior(ano);
     g.set("CAIXA", ano, `=${g.externa("Cash Flow", gCF, "CAIXA_FIM", ano)}`, { fmt: NUM });
     g.set("AC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_AC", ano)}`, { fmt: NUM });
-    g.set("AC", ano, `=${g.ref("CAIXA", ano)}+${g.ref("AC_OPER", ano)}`, { fmt: NUM, negrito: true });
+    const somaAC = [g.ref("CAIXA", ano), g.ref("AC_OPER", ano)];
+    escreverReconc(g, ctx, rAC, ano, hist, ant, somaAC);
+    g.set("AC", ano, `=${[...somaAC, ...(rAC ? [g.ref(rAC.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("IMOB", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "ESP_IMOB", ano)}`, { fmt: NUM });
     for (const l of ancNaoImob) {
       const ch = chaveLinha("anc", l);
@@ -2554,7 +2810,12 @@ function abaBalanco(
           + "projetá-la por crescimento de receita seria inventar movimento.",
       });
     }
-    somaOuZero(g, "ANC", ano, [g.ref("IMOB", ano), ...ancNaoImob.map((l) => g.ref(chaveLinha("anc", l), ano))], true);
+    // A reconciliação de cada grupo: informado − nossa soma no realizado, constante
+    // depois. `somaOuZero` recebe a linha dela como termo, então o total do grupo
+    // fecha com o documento por construção.
+    const somaANC = [g.ref("IMOB", ano), ...ancNaoImob.map((l) => g.ref(chaveLinha("anc", l), ano))];
+    escreverReconc(g, ctx, rANC, ano, hist, ant, somaANC);
+    somaOuZero(g, "ANC", ano, [...somaANC, ...(rANC ? [g.ref(rANC.chave, ano)] : [])], true);
     g.set("ATIVO", ano, `=${g.ref("AC", ano)}+${g.ref("ANC", ano)}`, { fmt: NUM, negrito: true });
 
     g.set("PC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_PC", ano)}`, { fmt: NUM });
@@ -2564,7 +2825,10 @@ function abaBalanco(
         + "onde a dívida vive; o balanço só lê. Antes o balanço recalculava a fração, e passava a "
         + "saber de dívida — acoplamento que o espelho existe para eliminar.",
     });
-    g.set("PC", ano, `=${g.ref("PC_OPER", ano)}+${g.ref("DIVIDA_CP", ano)}`, { fmt: NUM, negrito: true });
+    const somaPC = [g.ref("PC_OPER", ano), g.ref("DIVIDA_CP", ano)];
+    escreverReconc(g, ctx, rPC, ano, hist, ant, somaPC);
+    g.set("PC", ano, `=${[...somaPC, ...(rPC ? [g.ref(rPC.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("DIVIDA_LP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_DIVIDA_LP", ano)}`, { fmt: NUM });
     for (const l of pnc) {
       const ch = chaveLinha("pnc", l);
@@ -2572,7 +2836,9 @@ function abaBalanco(
       g.set(ch, ano, hist ? Math.abs(e?.valor ?? 0) : `=${g.ref(ch, ant!)}`,
         { fmt: NUM, fill: hist ? FILL_HIST : undefined, nota: hist ? e?.nota : undefined });
     }
-    somaOuZero(g, "PNC", ano, [g.ref("DIVIDA_LP", ano), ...pnc.map((l) => g.ref(chaveLinha("pnc", l), ano))], true);
+    const somaPNC = [g.ref("DIVIDA_LP", ano), ...pnc.map((l) => g.ref(chaveLinha("pnc", l), ano))];
+    escreverReconc(g, ctx, rPNC, ano, hist, ant, somaPNC);
+    somaOuZero(g, "PNC", ano, [...somaPNC, ...(rPNC ? [g.ref(rPNC.chave, ano)] : [])], true);
     for (const l of pl) {
       const ch = chaveLinha("pl", l);
       const e = valorNaEscala(l, ano, ctx.ent.unidade);
@@ -2603,8 +2869,15 @@ function abaBalanco(
           + "participação reduz passivo e aumenta patrimônio — sem esta linha, o balanço abriria "
           + "exatamente no valor reperfilado.",
     });
+    // O PL É O GRUPO ONDE A CONTA DUPLICADA MAIS APARECE (o v35 traz "Prejuízos
+    // acumulados" e "Resultados Acumulados" com o mesmo −39.150). A reconciliação
+    // considera apenas as contas EXTRAÍDAS: `LUCROS_ACUM` e `REPERFILAMENTO` são
+    // linhas do modelo, zero no realizado, e entrariam como divergência falsa.
+    const somaPLextraido = pl.map((l) => g.ref(chaveLinha("pl", l), ano));
+    escreverReconc(g, ctx, rPL, ano, hist, ant, somaPLextraido);
     somaOuZero(g, "PL", ano,
-      [...pl.map((l) => g.ref(chaveLinha("pl", l), ano)), g.ref("LUCROS_ACUM", ano), g.ref("REPERFILAMENTO", ano)], true);
+      [...somaPLextraido, g.ref("LUCROS_ACUM", ano), g.ref("REPERFILAMENTO", ano),
+       ...(rPL ? [g.ref(rPL.chave, ano)] : [])], true);
     g.set("PASSIVO_PL", ano, `=${g.ref("PC", ano)}+${g.ref("PNC", ano)}+${g.ref("PL", ano)}`, { fmt: NUM, negrito: true });
 
     // O CHECK. Formatação condicional não seria suficiente: o número tem de estar
@@ -2612,9 +2885,11 @@ function abaBalanco(
     const cellCheck = g.set("CHECK", ano, `=${g.ref("ATIVO", ano)}-${g.ref("PASSIVO_PL", ano)}`, {
       fmt: NUM2, negrito: true,
       nota: hist
-        ? "No período REALIZADO, diferente de zero significa que a extração do balanço está "
-          + "incompleta (conta não classificada em nenhum grupo) — não que o modelo está errado. "
-          + "Confira a aba de dados linha a linha."
+        ? "No período REALIZADO, com as linhas de reconciliação acima, cada GRUPO já segue o total "
+          + "que o documento informa. Então diferente de zero aqui significa uma coisa só: os "
+          + "próprios totais informados não somam entre si (circulante + não circulante ≠ ativo "
+          + "total, ou passivo + PL ≠ ativo). A causa está no documento ou na extração dele, não no "
+          + "modelo — confira a aba de dados linha a linha e a de revisão."
         : "No período PROJETADO tem de ser ZERO. Diferente de zero é defeito do modelo: "
           + "alguma linha de projeção não tem contrapartida.",
     });
