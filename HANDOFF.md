@@ -9,6 +9,13 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 **`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de cada merge; o **#107** (só este
 cabeçalho) está aberto.
 
+**CI: O `main` ESTÁ VERDE, PELA SUÍTE INTEIRA E NO SERVIDOR** — execução
+[`31128897900`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/31128897900),
+`workflow_dispatch` no `004092c`, **os 14 passos `success`** em 3 minutos (22:17→22:20 UTC de
+06/08/2026). Como o `004092c` **contém os PRs #103, #104, #105 e #106**, essa execução única **paga a
+dívida retroativa dos três que foram mergeados sem CI**. Não há mais nada pendente de conferência de
+servidor nesta rodada.
+
 **O plano de fim de projeto, em uma frase cada** (o dono pediu na sessão 40 um caminho para acabar
 "sem nenhum bug ou falha", depois de 100+ PRs verdes que não impediram o arquivo errado):
 
@@ -22,13 +29,18 @@ cabeçalho) está aberto.
 O que sobra do plano **não é código**: é aplicar duas migrations, rodar o aceite sobre um export de
 verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 
-> **O GitHub Actions ficou sem runner em 06/08/2026** e por isso as Fases B–D foram acumuladas numa
-> branch e mergeadas num PR só (#105), com a evidência sendo a execução LOCAL dos nove passos do CI.
-> O incidente teve **duas caras**, e é isso que confunde: primeiro os eventos **não criavam execução
-> nenhuma** (push sem run, PR sem run — e o GitHub **não reexecuta retroativamente**: evento sem
-> execução não ganha execução quando o serviço volta); depois voltaram a criar, e aí a execução
-> **entra na fila e é cancelada em ~15 minutos sem nunca começar**. Três PRs (#103, #104, #105) foram
-> mergeados nessas condições.
+> **O INCIDENTE DO ACTIONS DE 06/08/2026 — ENCERRADO ÀS 22:17 UTC.** O serviço ficou ~5 horas sem
+> runner e por isso as Fases B–D foram acumuladas numa branch e mergeadas num PR só (#105), com a
+> evidência sendo a execução LOCAL dos nove passos do CI. O incidente teve **duas caras**, e é isso que
+> confunde: primeiro os eventos **não criavam execução nenhuma** (push sem run, PR sem run — e o GitHub
+> **não reexecuta retroativamente**: evento sem execução não ganha execução quando o serviço volta);
+> depois voltaram a criar, e aí a execução **entrava na fila e era cancelada em ~15 minutos sem nunca
+> começar** — cinco execuções assim, com `steps: 0` e `runner_name` vazio, os 15 minutos cronometrados
+> em todas. Três PRs (#103, #104, #105) foram mergeados nessas condições. A sexta tentativa, disparada
+> à mão às 22:17, **pegou runner na hora** (`GitHub Actions 1000000147`) e rodou os 14 passos em 3
+> minutos. **A lição operacional, medida:** com o serviço nesse estado, insistir na fila não resolve —
+> o que resolve é **redisparar** (`workflow_dispatch`) até uma execução PEGAR RUNNER, e é isso que dá
+> veredito retroativo sobre tudo o que já está no `main`.
 >
 > **E O X VERMELHO NO `bc844e4` NÃO É REGRESSÃO — NENHUM PASSO RODOU.** A execução `31127589390`
 > aparece como `failure` no commit `bc844e4`, que está no `main`; abrindo o job: `conclusion:
@@ -39,15 +51,14 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 > Zero passos com `runner_name` vazio = nunca começou; não há log de teste porque não houve teste.
 > Vermelho legítimo tem passo com nome ("Suíte de export", "Suíte de banco") e log.
 >
-> **O que fica disso:** `workflow_dispatch` está no `main`, então Actions → suítes → **"Run
-> workflow"** revalida o estado acumulado sem empurrar commit vazio — mas com o serviço nesse estado
-> ele também só entra na fila e é cancelado em 15 min (medido: a execução `31127647424`, disparada à
-> mão no `052817a`). **Enquanto o serviço não voltar, não recoloque a suíte como check obrigatório**
-> do `main`: check obrigatório que não pode rodar é
-> bloqueio permanente, não portão — foi o que deixou o #105 em `blocked`. O outro motivo do `blocked`
-> é "Require approvals" com o PR aberto no nome do próprio dono: o GitHub não deixa aprovar o próprio
-> PR, e com duas pessoas em que uma abre PR no próprio nome, essa exigência trava toda rodada sem
-> adicionar segurança — quem revisa de fato é o CI.
+> **O que fica disso:** `workflow_dispatch` está no `main` — Actions → suítes → **"Run workflow"**
+> revalida o estado acumulado sem empurrar commit vazio, e foi o que fechou este incidente. Sobre as
+> regras de proteção do `main`: **check obrigatório só faz sentido enquanto o serviço executa** (com o
+> Actions parado, check obrigatório é bloqueio permanente, não portão — foi o que deixou o #105 em
+> `blocked`; agora que voltou, pode ser recolocado). O outro motivo do `blocked` **não se resolve
+> sozinho**: "Require approvals" com o PR aberto no nome do próprio dono, e o GitHub não deixa aprovar
+> o próprio PR. Com duas pessoas em que uma abre PR no próprio nome, essa exigência trava toda rodada
+> sem revisar nada — quem revisa de fato é o CI.
 >
 > Fidelidade da execução local, medida: Node **v22.22.2** (o CI pede 22), psql **16.13** (o CI instala
 > o cliente 16), Postgres 16 local descartável. O `package-lock.json` **não foi tocado** nas Fases B–D,
@@ -140,8 +151,9 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
   `1,2x`, `1,0x` são patamares usuais de term sheet, não dados do caso) e o cronograma de
   amortização por tranche; se o `CAPEX FINANCING` entra e com que regra. Chutar premissa é mentir
   com número — por isso essas linhas ficam fora até a decisão;
-- **enquanto o Actions não voltar**, não recolocar a suíte como check obrigatório (ver o bloco do
-  incidente acima).
+- **o Actions voltou e o `main` está verde** (execução `31128897900`), então **pode recolocar a suíte
+  como check obrigatório** do `main`. Recomendação junto: deixar **"Require approvals" em 0** — o
+  GitHub não deixa aprovar o próprio PR, e é isso, não o CI, que trava a rodada.
 
 **2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
 `docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
