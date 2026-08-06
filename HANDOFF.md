@@ -28,7 +28,7 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**471**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
+**471**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **46**.
 
 > **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
 > exportou o v35 completo e mandou conferir. O motor estava fiel (8 gráficos válidos, zero `#REF!`,
@@ -87,6 +87,40 @@ primeira mensagem de uma sessão nova.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
+
+## Sessão 40b (2026-08-06) — a Fase A do plano: o portão de fidelidade que faltava
+
+O dono pediu um plano para fechar o projeto, e a primeira fase dele era a única que muda a natureza
+do problema: **nenhuma suíte comparava os números do MODELO com o gabarito.** O `verificar-export`
+monta o modelo de uma entrada escrita à mão (e por isso a fixture podia ser mais fácil que a
+produção); o e2e cobria a cadeia real só até as abas ANALÍTICAS. As 14 abas que vão a comitê tinham
+como único juiz o dono abrindo o arquivo — foi assim que receita líquida de 170.220 contra 106.580
+informados chegou a ele depois de 100+ PRs verdes.
+
+**O pré-requisito, que era um defeito de fixture.** `db/test/gerar_fixture.py` gravava
+`secao_canonica = NULL` nas 767 linhas do book, enquanto a extração real PREENCHE esse campo (é
+instrução do `SYSTEM_PROMPT`, enum em `SECAO_CANONICA_ENUM`). Consequência medida: `blocoDaLinha`
+devolvia `fora` para as 132 contas de balanço e DRE e o modelo saía com a **DRE inteira em zero** na
+cadeia do book. Nenhuma base local reproduzia produção: a `fixture_modelagem_v35.sql` tem
+`secao_canonica` mas `secao` nula e `ordem` alfabética; a do book tinha o inverso. O gerador agora
+classifica no PONTO DE EMISSÃO (ele sabe, ao escrever, se está no ativo circulante ou no passivo não
+circulante), com `NAO_CLASSIFICAVEL` onde não existe valor honesto no enum — total de grupo,
+eliminações, faturamento mensal, mútuos, notas. Os dois fixtures versionados foram regerados.
+
+**A fase 6 do e2e**, que é o portão: monta o modelo institucional pelas MESMAS consultas da rota
+(`fn_definir_modelagem`, `fn_linhas_para_modelagem`, `fn_valores_por_ano`) e confere contra o
+`GABARITO.json` — as 4 linhas de resultado, os 6 totais de grupo do balanço nos dois exercícios, e o
+`CHECK` em todas as colunas, com tolerância de 1 centavo. Sem premissa nenhuma de propósito: o que
+está sob teste é a fidelidade do REALIZADO.
+
+**Resultado, na cadeia completa (extração do book → banco pelas funções reais → export):** receita
+líquida 143.380/106.580, lucro bruto 27.400/5.280, EBIT 6.470/−4.571, resultado −2.950/−17.901 —
+**diferença ZERO nas oito células**, diagnóstico "confere com o documento"; ativo total 121.198/95.780
+idêntico ao informado; `CHECK` em zero em todos os exercícios. E religando o defeito de sinal, a fase
+6 devolve **exatamente** os números do arquivo que chegou ao dono (170.220 · 271.520 · 281.371 ·
+268.041) — ou seja, o portão pega o defeito que passou.
+
+`test/e2e/run.mts`: 27 → **46** verificações.
 
 ## Sessão 40 (2026-08-06) — o arquivo entregue mentia; seis defeitos e a conferência que os pega
 
