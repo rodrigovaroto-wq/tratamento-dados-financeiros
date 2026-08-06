@@ -4,15 +4,25 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-06 (sessão 40). **Estado do `main`:** mergeado até o **PR #102**
-(`main` em `6317327`). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**.
+**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #104**
+(`main` em `b9effc4`, que traz a Fase A). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**,
+com as **Fases B, C e D acumuladas** (`workflow_dispatch` + `0105` + três itens do §5 + o auditor do
+arquivo) esperando um PR só.
+
+> **O GitHub Actions ficou sem runner em 06/08/2026** e por isso as Fases B–D foram acumuladas na
+> branch em vez de virarem um PR cada: a execução no `main` esperou 15 min na fila e foi CANCELADA
+> sem começar (`runner_name` vazio), e os pushes seguintes não criaram execução nenhuma. O GitHub
+> **não reexecuta retroativamente** — evento sem execução não ganha execução quando o serviço volta.
+> Os nove passos do CI foram rodados localmente, um por um, e estão verdes. Quando o serviço voltar,
+> `workflow_dispatch` (já na branch) permite reconferir sem empurrar commit vazio — mas ele só
+> aparece na interface depois de estar no `main`.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
 > virou a mais velha do documento. A regra mudou na sessão 35: **atualizar o cabeçalho ao fechar a
 > rodada é obrigação**; o que continua intocável é a seção de sessão passada.
 
-### Migrations — 49 arquivos, nesta ordem
+### Migrations — 50 arquivos, nesta ordem
 
 `0001`→`0044` (sequência completa, todas aplicadas) e a faixa do colaborador:
 
@@ -23,12 +33,19 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 | `0102_modelagem_versao_vigente` | a Modelagem lê só a versão VIGENTE de cada documento | ✅ |
 | `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
 | `0104_desativar_premissa` | remover premissa **e** os vínculos que ela dirigia, devolvendo quantos desfez | ⚠️ **aplicar** — sem ela o botão "Remover" da tela erra |
+| `0105_reconciliar_duplicidade_de_rotulo` | a conta que aparece duas vezes com o mesmo valor vira **achado** da reconciliação, sem apagar nada | ⚠️ **aplicar** — até aplicar, o par duplicado do v35 não abre pendência |
 
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**476**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **46**.
+**478**; `db/test/run.sh` = **50 migrations / 325 asserts**; `test/e2e/run.mts` = **46**.
+
+**Para conferir um `.xlsx` que já saiu:** `./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts
+<arquivo>` responde 10 itens sobre o arquivo pronto (balanço fecha, DRE reproduz o documento, câmbio é
+nível, recalcula ao abrir…) e sai com código 1 se algum reprovar. O que exige o Excel de verdade está
+em **`docs/ACEITE.md`**, 10 itens de gente. As quatro suítes provam o GERADOR; essas duas peças provam
+o ARQUIVO — a lacuna por onde o v35 errado passou com o CI verde.
 
 > **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
 > exportou o v35 completo e mandou conferir. O motor estava fiel (8 gráficos válidos, zero `#REF!`,
@@ -87,6 +104,61 @@ primeira mensagem de uma sessão nova.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
+
+## Sessão 40d (2026-08-06) — Fase D: a auditoria do arquivo entregue virou comando
+
+**O buraco que esta fase fecha.** As quatro suítes provam o GERADOR — rodam contra fixture e contra o
+book, e reprovam quando o código volta a errar. **Nenhuma olhava o arquivo entregue**, e foi por essa
+lacuna que o v35 chegou ao dono com a DRE dizendo o contrário do documento enquanto o CI estava verde.
+A auditoria da sessão 40 achou os seis defeitos, mas foi feita com um script descartável, rodado uma
+vez: auditoria que existe uma vez não é controle, é sorte.
+
+**`portal/scripts/auditar-xlsx.mts`** é essa auditoria versionada, e roda sobre um `.xlsx` pronto —
+inclusive um gerado meses atrás, ou gerado em produção com dado que nenhuma fixture tem. Onze itens
+(dez ao ler de disco), cada um um número LIDO do arquivo: as 14 abas existem · o balanço fecha em todo
+exercício · a DRE do realizado reproduz o documento (as linhas de diferença, célula a célula) · o
+ativo total é o informado · **o modelo tem conteúdo** · nenhuma fórmula nasce com `#REF!` · o arquivo
+pede recálculo ao abrir · as 14 abas declaram área de impressão · o painel de premissas COMPÕE índice
+× spread · o câmbio traz nível · os 8 gráficos caem dentro da área de impressão do `Output`. Sai com
+código 1 se algum reprovar, então serve em script sem ninguém ler a saída. Medido sobre o arquivo da
+cadeia real do book: **10/10**.
+
+**O item "tem conteúdo" é o menos óbvio e o mais necessário.** Balanço sem conta nenhuma FECHA (zero =
+zero) e DRE sem linha de resultado sai toda em zero — e zero, num modelo financeiro, é uma AFIRMAÇÃO
+sobre o negócio, não a ausência de dado. Era exatamente o que a cadeia do book produzia antes da Fase A
+(132 contas fora dos blocos por `secao_canonica` nula) e nenhum invariante acusava, porque tudo
+"fechava".
+
+**Duas armadilhas da casa, nesta fase.** (1) O `fullCalcOnLoad` dava falso negativo: o ExcelJS ESCREVE
+a flag mas não a restaura em `calcProperties` ao LER de disco (medido: `{}` num arquivo cujo
+`xl/workbook.xml` traz `fullCalcOnLoad="1"`). O CLI lê o XML pelo JSZip e passa o resultado; conferir só
+o objeto reprovaria todo arquivo lido. (2) O primeiro assert `(0108)` de direção negativa injetava "modelo
+sem as contas de balanço" e **passava verde acusando nada** — a projeção de imobilizado mantém o `ATIVO
+TOTAL` diferente de zero, então o item de conteúdo não tinha por que disparar. Trocado por **oito
+injeções, uma por item**, cada uma um dos defeitos que estavam no arquivo de 06/08/2026, exigindo que
+seja o item CORRESPONDENTE a acusar — "reprovou alguma coisa" não prova nada, porque um auditor com um
+item sensível e oito decorativos passaria nesse teste. Conferido afrouxando dois itens de propósito
+(limite do balanço em `1e12`, câmbio negativo aceito): o assert reprova e nomeia os dois.
+
+**`docs/ACEITE.md`** é a metade humana, curta de propósito: 10 itens, ~15 minutos, só o que o auditor
+não consegue ver — o arquivo abre sem oferecer reparo, os gráficos DESENHAM, o dropdown de índice macro
+REPROJETA ao clicar, o spread compõe (7,1% e não 7,0%), o `CHECK` continua zero DEPOIS de editar, o PDF
+sai com o gráfico dentro da página. Itens 1, 6 e 9 são bloqueantes. O item 6 é o mais grave dos
+quatro que testam a promessa da edição no Excel: se ele falhar, o arquivo aceita edição e responde com
+número que não fecha.
+
+`verificar-export.mts`: 476 → **478**. Os nove passos do CI rodados localmente: verdes.
+
+### O que depende do dono (nada disso é do colaborador)
+
+1. **Mergear o PR das Fases B–D.** Ele leva o `workflow_dispatch`, que só aparece na interface do
+   Actions depois de estar no `main`.
+2. **Aplicar a `0104` e a `0105`** no Supabase, nesta ordem.
+3. **Exportar o v35 de novo e rodar o aceite**: o auditor (comando) + os 10 itens do `docs/ACEITE.md`.
+   É a primeira vez que o arquivo entregue passa por conferência antes de ir a comitê.
+4. **Decidir o que a Fase C deixou pendente por falta de premissa, não por falta de código:** os cortes
+   de covenant (3,0× / 1,2× / 1,0×) e o cronograma de amortização por tranche; se o `CAPEX FINANCING`
+   entra e com que regra. Sem decisão, essas linhas ficam fora — chutar premissa é mentir com número.
 
 ## Sessão 40c (2026-08-06) — Fases B e C do plano
 
