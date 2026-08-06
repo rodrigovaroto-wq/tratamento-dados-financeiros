@@ -13,8 +13,17 @@ cabeçalho) está aberto.
 [`31128897900`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/31128897900),
 `workflow_dispatch` no `004092c`, **os 14 passos `success`** em 3 minutos (22:17→22:20 UTC de
 06/08/2026). Como o `004092c` **contém os PRs #103, #104, #105 e #106**, essa execução única **paga a
-dívida retroativa dos três que foram mergeados sem CI**. Não há mais nada pendente de conferência de
-servidor nesta rodada.
+dívida retroativa dos três que foram mergeados sem CI**. A branch de trabalho também tem veredito
+próprio: `31128960940` no `792409e`, verde.
+
+> ⚠️ **MAS O DISPARO AUTOMÁTICO AINDA NÃO VOLTOU, e isso muda o que fazer.** Medido depois do verde:
+> `workflow_dispatch` cria execução E ela roda; **`push` e `pull_request` continuam não criando
+> execução nenhuma** (os pushes `32724af` e `792409e` não geraram run). Ou seja: **PR novo não ganha
+> check automático** — a conferência de branch tem de ser disparada à mão (Actions → suítes → "Run
+> workflow", escolhendo a branch). Consequência prática: **não recoloque `suítes` como check
+> obrigatório enquanto o disparo automático não voltar** — o check exigido não apareceria, e o PR
+> ficaria em `blocked` para sempre. Para saber se voltou: empurre um commit e veja se nasce execução
+> com evento `push`.
 
 **O plano de fim de projeto, em uma frase cada** (o dono pediu na sessão 40 um caminho para acabar
 "sem nenhum bug ou falha", depois de 100+ PRs verdes que não impediram o arquivo errado):
@@ -29,8 +38,9 @@ servidor nesta rodada.
 O que sobra do plano **não é código**: é aplicar duas migrations, rodar o aceite sobre um export de
 verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 
-> **O INCIDENTE DO ACTIONS DE 06/08/2026 — ENCERRADO ÀS 22:17 UTC.** O serviço ficou ~5 horas sem
-> runner e por isso as Fases B–D foram acumuladas numa branch e mergeadas num PR só (#105), com a
+> **O INCIDENTE DO ACTIONS DE 06/08/2026 — RUNNER VOLTOU ÀS 22:17 UTC, DISPARO AUTOMÁTICO NÃO.** O
+> serviço ficou ~5 horas sem executar nada; as Fases B–D foram acumuladas numa branch e mergeadas num
+> PR só (#105), com a
 > evidência sendo a execução LOCAL dos nove passos do CI. O incidente teve **duas caras**, e é isso que
 > confunde: primeiro os eventos **não criavam execução nenhuma** (push sem run, PR sem run — e o GitHub
 > **não reexecuta retroativamente**: evento sem execução não ganha execução quando o serviço volta);
@@ -151,9 +161,10 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
   `1,2x`, `1,0x` são patamares usuais de term sheet, não dados do caso) e o cronograma de
   amortização por tranche; se o `CAPEX FINANCING` entra e com que regra. Chutar premissa é mentir
   com número — por isso essas linhas ficam fora até a decisão;
-- **o Actions voltou e o `main` está verde** (execução `31128897900`), então **pode recolocar a suíte
-  como check obrigatório** do `main`. Recomendação junto: deixar **"Require approvals" em 0** — o
-  GitHub não deixa aprovar o próprio PR, e é isso, não o CI, que trava a rodada.
+- **deixar "Require approvals" em 0** — é isso, e não o CI, que trava a rodada: o GitHub não deixa
+  aprovar o próprio PR. **Recolocar `suítes` como check obrigatório só depois** de o disparo automático
+  voltar (ver o aviso acima: hoje o `workflow_dispatch` roda, mas `push`/`pull_request` não criam
+  execução, então o check exigido nunca apareceria).
 
 **2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
 `docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
