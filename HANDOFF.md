@@ -15,8 +15,19 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 > sem execução não ganha execução quando o serviço volta. Três PRs (#103, #104, #105) foram mergeados
 > nessas condições.
 >
+> **E O X VERMELHO NO `bc844e4` NÃO É REGRESSÃO — NENHUM PASSO RODOU.** A execução `31127589390`
+> aparece como `failure` no commit `bc844e4`, que está no `main`; abrindo o job: `conclusion:
+> cancelled`, `runner_name: null`, **`steps: 0`**, 20:25:05 → 20:40:07 = **15 minutos na fila**. É o
+> mesmo padrão da execução das 17:15. O GitHub rotula como `failure` no nível da EXECUÇÃO o que no
+> nível do JOB é `cancelled` — então um vermelho de infraestrutura fica visualmente idêntico a um
+> vermelho de teste. **Como distinguir, em dez segundos:** abra o job e olhe a contagem de passos.
+> Zero passos com `runner_name` vazio = nunca começou; não há log de teste porque não houve teste.
+> Vermelho legítimo tem passo com nome ("Suíte de export", "Suíte de banco") e log.
+>
 > **O que fica disso:** `workflow_dispatch` está no `main`, então Actions → suítes → **"Run
-> workflow"** revalida o estado acumulado sem empurrar commit vazio. **Enquanto o serviço não voltar,
+> workflow"** revalida o estado acumulado sem empurrar commit vazio — mas com o serviço nesse estado
+> ele também só entra na fila e é cancelado em 15 min (medido: a execução `31127647424`, disparada à
+> mão no `052817a`). **Enquanto o serviço não voltar,
 > não recoloque a suíte como check obrigatório** do `main`: check obrigatório que não pode rodar é
 > bloqueio permanente, não portão — foi o que deixou o #105 em `blocked`. O outro motivo do `blocked`
 > é "Require approvals" com o PR aberto no nome do próprio dono: o GitHub não deixa aprovar o próprio
