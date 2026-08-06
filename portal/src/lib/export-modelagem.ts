@@ -91,6 +91,15 @@ export interface MacroAnual {
   ano: number;
   meses: number;
   retorno: number;
+  /**
+   * `taxa` (o ano acumula por composição) ou `nivel` (preço/estoque, e aí
+   * `retorno` é a VARIAÇÃO entre fechamentos, não o nível). Vem de
+   * `indice_macro_serie.natureza` via `fn_indice_macro_anual` (0025) e existe aqui
+   * porque quem consome precisa saber que grandeza recebeu: publicar a variação de
+   * uma série de nível numa linha rotulada "R$/US$ — final de período" produziu
+   * câmbio de −10,6 no arquivo entregue em 06/08/2026.
+   */
+  natureza?: "taxa" | "nivel";
 }
 export interface MacroExpectativa {
   serie: string;

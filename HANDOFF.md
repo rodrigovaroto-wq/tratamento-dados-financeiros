@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-05 (sessão 38). **Estado do `main`:** mergeado até o **PR #101**
-(`main` em `da23f63`). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**.
+**Última atualização:** 2026-08-06 (sessão 40). **Estado do `main`:** mergeado até o **PR #102**
+(`main` em `6317327`). Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**.
 
 > **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
 > `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
@@ -28,7 +28,19 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**450**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
+**462**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **27**.
+
+> **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
+> exportou o v35 completo e mandou conferir. O motor estava fiel (8 gráficos válidos, zero `#REF!`,
+> `fullCalcOnLoad`, 14 áreas de impressão, eixo do tempo de uma raiz), e **a DRE realizada dizia o
+> contrário do documento**: receita líquida 170.220 contra **106.580** informados, e resultado de
+> **+268.041** onde o documento diz **−17.901**. Causa: a cascata SUBTRAI despesa (convenção
+> "magnitude positiva") e a extração entrega despesa NEGATIVA, como o PDF escreve — subtrair
+> negativo soma. O balanço saía **195.090 contra 95.780** (2,04×) porque o modelo somava o subtotal
+> informado E os componentes dele, o que a aba analítica `Balanço` do mesmo arquivo já excluía. Os
+> seis defeitos estão corrigidos e cada um tem teste que reprova religado — detalhe na sessão 40.
+> **A fixture do `(0105)` era mais fácil que a produção** (custo positivo, uma conta por grupo, um
+> exercício, nenhum total informado) e por isso os 15 asserts passavam verdes com o arquivo errado.
 
 > Nota de insumo: o `CLAUDE.md` documenta `E2E_PSQL=1` para o e2e, mas essa variável é o **comando**
 > do psql, não um flag — com `=1` o arnês tenta executar um binário chamado `1`. Rode sem ela,
@@ -75,6 +87,99 @@ primeira mensagem de uma sessão nova.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
+
+## Sessão 40 (2026-08-06) — o arquivo entregue mentia; seis defeitos e a conferência que os pega
+
+O dono exportou o v35 completo depois do PR #102 e pediu a auditoria: "está fiel à referência e
+pronto para ser usado como base?". Medido por dentro (o mapeador do próprio repo + o avaliador de
+fórmulas dos testes, sobre as 10.167 fórmulas das abas do modelo): **motor fiel, números errados.**
+A linha `CHECK` do `Balance Sheet` do próprio arquivo acusava **"NÃO FECHA" nas sete colunas**.
+
+**O que estava certo, medido:** 8 gráficos com XML e rels válidos; **zero** fórmulas com `#REF!` em
+11.521; zero erro de avaliação; `fullCalcOnLoad="1"`; 14 áreas de impressão com escopo local; eixo do
+tempo de uma raiz; caixa do `Cash Flow` = caixa do `Balance Sheet`; 490 fórmulas por coluna de ano
+contra 558 da referência; 0,4 MB.
+
+**Os seis defeitos, todos corrigidos, cada um com teste que reprova religado (§8.2):**
+
+1. **CONVENÇÃO DE SINAL.** A cascata subtrai despesa (magnitude positiva, com "(-)" na coluna de
+   sinal) e a extração entrega despesa negativa. Subtrair negativo soma: receita líquida de 2025 saiu
+   **170.220 contra 106.580**, lucro bruto 271.520 contra 5.280, EBIT **+281.371** contra **−4.571**,
+   resultado **+268.041** contra **−17.901** — e as projeções de 2026-2030 cresceram dessa base. Pior,
+   dentro da MESMA coluna as linhas projetadas por crescimento ficavam negativas e as projetadas por
+   percentual saíam positivas, então `CUSTOS 2026` somava sinais opostos. Normalizado **por bloco e
+   por multiplicação por −1** (nunca `Math.abs`, que inverteria o crédito "Outras receitas
+   (despesas) operacionais, líquidas +11.549"), com a decisão medida no próprio caso e a frase na
+   nota de cada célula.
+2. **SUBTOTAL INFORMADO SOMADO COM OS COMPONENTES.** `ATIVO TOTAL` de 2025 em **195.090 contra
+   95.780** informados. A detecção estrutural (`detectarSubtotaisInformados` +
+   `detectarSubtotaisPorOrdem`) já existia e já era usada pelas abas analíticas — o modelo é que
+   consumia `papel` da `fn_papel_linha`, que é lista FECHADA e não reconhece "Obrigações
+   Tributárias", "Provisões", "Capital Social", "Reservas", "Disponível". Agora é **uma detecção,
+   dois consumidores** (`rotulosDeSubtotalInformado`).
+3. **DÍVIDA DESAPARECIDA NO EXERCÍCIO QUE O MAPA NÃO COBRE.** O mapa do v35 tem uma data de
+   referência (2025); 2024 saía com dívida ZERO nas duas linhas enquanto o balanço informa 22.972 +
+   11.393. A origem passa a ser decidida **por exercício** e a repartição curto/longo do realizado
+   vem do balanço daquele ano, não da fração estimada.
+4. **CÂMBIO NEGATIVO.** A linha "R$/US$ — final de período" trazia **24,5 em 2024 e −10,6 em 2025** ao
+   lado de 5,2 do Focus: `fn_indice_macro_anual` devolve, para série de NÍVEL, a VARIAÇÃO do ano, e a
+   rota publicava isso numa linha de nível. A rota passa a ler o nível de fechamento de
+   `indice_macro_obs` e a linha **recusa** valor de outra grandeza, deixando a célula vazia com o
+   motivo.
+5. **DEPRECIAÇÃO REALIZADA NÃO CHEGAVA À DRE.** `EBITDA = EBIT` em 2024 e 2025 apesar de a DRE trazer
+   "Depreciação industrial" de −5.180 e −5.540 dentro do custo. Não era dupla contagem: `EBITDA =
+   LUCRO BRUTO − SG&A + D&A` soma de volta o que já está no custo e o `EBIT` subtrai outra vez — o
+   EBIT continua igual ao do documento, o que a nova conferência prova.
+6. **OS 8 GRÁFICOS FORA DA ÁREA DE IMPRESSÃO** (colunas N:AE contra B:K). Quem gerasse o PDF do
+   `Output` — que é como o comitê recebe — não levava gráfico nenhum. Agora um por faixa, abaixo dos
+   números, dentro das colunas que imprimem, com a área estendida.
+
+**A CONFERÊNCIA QUE FALTAVA, e é o que impede o próximo erro de sinal de passar por bom.** O
+invariante nº 9 ("nosso número == o número do documento") valia para as abas analíticas desde o
+teste v25 e o modelo institucional era a única parte do arquivo sem ele. As linhas de resultado e os
+totais do balanço chegam com `papel = 'subtotal'`, ficavam fora das somas (correto) e eram
+**descartadas** — agora são **âncoras**: o `Income Statement` publica, no realizado, receita líquida,
+lucro bruto, EBIT e resultado líquido **do documento** ao lado dos do modelo, com a diferença, o
+diagnóstico e formatação condicional; o `Balance Sheet` faz o mesmo com o ativo total. Duas
+armadilhas medidas e tratadas: o mesmo rótulo vem de vários documentos (a DMPL traz o prejuízo
+positivo numa coluna de movimento → preferir o documento da âncora) e **"PREJUÍZO LÍQUIDO 17.901" é
+−17.901** (o rótulo carrega o sinal).
+
+**Dois defeitos que eu mesmo introduzi no caminho e o teste pegou** — ficam registrados porque são o
+tipo de coisa que volta: (a) a exclusão de subtotal por **rótulo solto** tirou da DRE a despesa
+"Provisão para contingências trabalhistas e cíveis", que tem o mesmo nome de um subtotal do balanço —
+a chave passou a ser o par `(seção, rótulo)`; (b) filtrar os campos pela entidade **antes** de rodar
+os detectores mudava o veredito deles (a sequência é a evidência), fazendo o modelo discordar da aba
+analítica do mesmo arquivo — detecta-se sobre a aba inteira e filtra-se depois.
+
+**A FIXTURE ERA MAIS FÁCIL QUE A PRODUÇÃO, e é a lição mais cara da rodada.** A do `(0105)` tinha
+custo POSITIVO (`"Custo dos produtos vendidos", 140000` quando a extração entrega `−140000`), uma
+conta por grupo (nenhum par subtotal+componente), UM exercício realizado (o mapa de dívida cobre o
+último, o balanço cobre todos) e nenhum total informado (nada contra o que conferir). Com ela, 15
+asserts verdes conviviam com prejuízo virando lucro. Foi refeita com a forma do dado real e os sete
+asserts novos (`0106a`–`0106g`) foram **verificados um a um religando o defeito**.
+
+**Insumo, para quem for medir localmente:** nenhuma das duas bases locais reproduz a produção
+inteira. `db/test/fixture_modelagem_v35.sql` tem `secao_canonica` mas `secao` nula e `ordem`
+ALFABÉTICA (a detecção estrutural quase não dispara, e a coluna histórica mistura 2024 e 2025); a
+cadeia do book (`test/e2e`) tem `secao`/`ordem` reais mas **`secao_canonica` nula nos 767 campos**, e
+por isso o modelo institucional sai com a DRE inteira em zero. Isso levou ao sétimo assert e a uma
+guarda nova: modelo sem linha de resultado **anuncia** "SEM DRE" em vermelho, em vez de exibir uma
+cascata zerada com cara de empresa sem operação.
+
+**O que continua do dono:** aplicar a `0104`; exportar o v35 de novo e conferir a nova linha
+`diferença (modelo − documento)` do `Income Statement` e do `Balance Sheet` — se sobrar diferença, ela
+agora está escrita no arquivo; decidir os cortes de covenant (3,0x / 1,2x / 1,0x são patamares de term
+sheet, não dado do caso) e o cronograma de amortização por tranche (hoje 0% = dívida rolada, hipótese
+conservadora e explícita).
+
+**O que fica aberto, e é o próximo passo natural:** a **mesma conta extraída com dois rótulos**
+("Prejuízos acumulados" e "Resultados Acumulados", ambos −39.150; "Capital social subscrito" e
+"Capital social subscrito e integralizado") continua contada duas vezes no patrimônio. Não é subtotal
+— é identidade de conta entre documentos, e resolver isso com heurística de semelhança apagaria conta
+legítima (duas provisões de mesmo valor são plausíveis). O caminho é a reconciliação, não o gerador
+de planilha. Enquanto não for resolvido, o arquivo **diz** o tamanho do problema nas linhas de
+conferência, em vez de escondê-lo.
 
 ## Sessão 30 (2026-08-03) — Fase 6: calibração — o dial volta a mandar
 
