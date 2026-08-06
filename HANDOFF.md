@@ -28,7 +28,7 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Contadores atuais:** `node --test 'n8n/test/*.test.mjs'` = **176**; `verificar-export.mts` =
-**471**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **46**.
+**476**; `db/test/run.sh` = **49 migrations / 324 asserts**; `test/e2e/run.mts` = **46**.
 
 > **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
 > exportou o v35 completo e mandou conferir. O motor estava fiel (8 gráficos válidos, zero `#REF!`,
@@ -87,6 +87,37 @@ primeira mensagem de uma sessão nova.
 
 **Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
 push e PR. Se o PR ficar vermelho, é regressão sua.
+
+## Sessão 40c (2026-08-06) — Fases B e C do plano
+
+**Fase B — a conta duplicada virou achado da reconciliação (`0105`).** Depois de excluir os subtotais
+informados, sobrava no v35 o resíduo de outra natureza: `Prejuízos acumulados` e `Resultados
+Acumulados`, ambos −39.150. `fn_pares_duplicados_do_caso` acha os pares e `fn_reconciliar_duplicidade`
+abre pendência com o valor dobrado — **sem apagar nem reescrever nada**, e um assert prova que a
+checagem só lê. O trabalho de verdade foi APERTAR o critério: a primeira versão abriu 5 pendências no
+book, que por contrato é extração fiel e não pode abrir nenhuma. Os falsos positivos ensinaram três
+filtros — subtotal × seu único componente (a `secao` do componente É o rótulo do subtotal), contas em
+subseções diferentes com valor igual, e radical contido sem subseção declarada (indistinguível de
+grupo com um componente). Resultado: **zero pares nas 6 entidades do book, 1 par no formato da
+extração de produção** — o do v35. Nove asserts embutidos, cinco recusando falso positivo.
+
+**Fase C — três dos seis itens da fila do §5, com assert cada.** (a) variação de giro do `Cash Flow`
+aberta **conta a conta**, com linha de conferência contra o total (que continua vindo do espelho do
+giro — duas origens só valem com conferência entre elas); (b) o `CHECK` do balanço publicado **no topo
+das quatro abas de driver**, com formatação condicional, porque é onde a premissa é mexida; (c) os
+espelhos de balanço e fluxo do `Output` abertos **conta a conta**, por referência à origem.
+
+Os três ficam nos números do §5 do `CONFORMIDADE.md`, atualizado com o que FICA e por quê: tranche em
+moeda estrangeira exige a MOEDA por contrato, que o Kit Básico não coleta (aplicar câmbio sem saber
+se a tranche é em dólar erra por ~5×); `CAPEX FINANCING` é premissa de plano e entra com a decisão do
+dono; espelho do `Goodwill` só vale com ágio de verdade; vida útil por classe depende de laudo.
+
+**E um assert meu nasceu vazio — registrado porque é a armadilha da casa.** A primeira versão do
+`0107b` conferia que o `CHECK` dos drivers avaliava zero. Com o preenchimento desligado, a célula fica
+VAZIA e o avaliador devolve 0 por contrato: o assert passava verde provando nada. Agora ele exige que
+a célula seja FÓRMULA apontando para o `Balance Sheet`.
+
+`verificar-export.mts`: 471 → **476**.
 
 ## Sessão 40b (2026-08-06) — a Fase A do plano: o portão de fidelidade que faltava
 

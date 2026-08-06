@@ -4649,6 +4649,91 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
   }
 
+  // ---- (0107) FASE C — O QUE FALTAVA DE MOTOR, POR IMPACTO -----------------
+  //
+  // Os três itens estruturais da fila do §5 do CONFORMIDADE.md que dependiam só de
+  // nós. Cada um tem assert próprio porque cada um pode regredir sozinho.
+  {
+    // (0107a) A VARIAÇÃO DE GIRO ABERTA CONTA A CONTA, e a abertura tem de FECHAR
+    // com o total — que continua vindo do espelho da aba de giro. Duas origens para
+    // o mesmo número só valem com uma linha de conferência entre elas.
+    const rConf = linhaDoRotulo("Cash Flow", "conferência: soma das contas − total (ZERO)");
+    const cf = wbMod.getWorksheet("Cash Flow")!;
+    const desvios: string[] = [];
+    for (const ano of [2026, 2027, 2028]) {
+      const v = rConf === null ? null : avaliarCelula(cf, COLS_ANO[iAnoDe(ano)], rConf);
+      if (typeof v !== "number" || Math.abs(v) > 0.01) desvios.push(`${ano}: ${JSON.stringify(v)}`);
+    }
+    checar(rConf !== null && desvios.length === 0,
+      "(0107a) a variação de giro do Cash Flow é aberta CONTA A CONTA e a abertura fecha com o total",
+      desvios.join(" · "));
+    // E a abertura existe de fato: uma linha por conta de giro do caso.
+    let nContas = 0;
+    for (let r = 1; r <= cf.rowCount; r++) {
+      if (/^\s{4}\((−|\+)\)\s/.test(String(cf.getRow(r).getCell(3).value ?? ""))) nContas++;
+    }
+    checar(nContas >= 3,
+      "(0107a) …e há uma linha por conta de giro, não uma linha agregada",
+      `linhas de conta no bloco de operações: ${nContas}`);
+
+    // (0107b) O CHECK DO BALANÇO NO TOPO DAS QUATRO ABAS DE DRIVER. É onde a
+    // premissa é mexida, e portanto onde o "o balanço abriu" tem de aparecer.
+    const semCheck: string[] = [];
+    for (const aba of ["Revenues, COGS & SG&A", "Working Capital", "Fixed Assets & CAPEX",
+                       "ST Inv. & Debt"]) {
+      const r = linhaDoRotulo(aba, "CHECK do balanço (0 = fecha)");
+      const ws = wbMod.getWorksheet(aba);
+      if (r === null || !ws) { semCheck.push(`${aba}: linha ausente`); continue; }
+      // Tem de estar no TOPO (logo abaixo do cabeçalho), senão não serve ao propósito.
+      if (r > 8) semCheck.push(`${aba}: linha ${r} (esperado no topo)`);
+      // A CÉLULA TEM DE SER FÓRMULA APONTANDO PARA O BALANÇO — não basta avaliar
+      // zero. Célula VAZIA avalia 0 no avaliador (é o contrato dele), então uma
+      // versão anterior deste assert passava verde com a linha existindo e nunca
+      // preenchida: exatamente a armadilha da "fixture que nasce vazia" que o
+      // CLAUDE.md descreve, cometida aqui dentro.
+      const bruto = ws.getRow(r).getCell(COLS_ANO[iAnoDe(2026)]).value as { formula?: string } | null;
+      const formula = bruto && typeof bruto === "object" && "formula" in bruto ? bruto.formula ?? "" : "";
+      if (!/Balance Sheet/.test(formula)) {
+        semCheck.push(`${aba}: célula não é fórmula do Balance Sheet (${JSON.stringify(bruto)})`);
+        continue;
+      }
+      const v = avaliarCelula(ws, COLS_ANO[iAnoDe(2026)], r);
+      if (typeof v !== "number" || Math.abs(v) > 0.01) semCheck.push(`${aba}: ${JSON.stringify(v)}`);
+    }
+    checar(semCheck.length === 0,
+      "(0107b) as quatro abas de driver publicam o CHECK do balanço no topo, e ele fecha",
+      semCheck.join(" · "));
+
+    // (0107c) OS ESPELHOS DO OUTPUT CONTA A CONTA. O item de maior impacto da fila:
+    // o `Output` é a aba que vai a comitê, e um espelho só de totais obriga a voltar
+    // às abas de origem para saber do que o número é feito.
+    const detalhes = [
+      ["Output", "    Operating current assets"],
+      ["Output", "    Short-term debt + revolver"],
+      ["Output", "    Retained earnings (model)"],
+      ["Output", "    (+) D&A"],
+      ["Output", "    (+/−) Change in working capital"],
+      ["Output", "    (−) CAPEX"],
+      ["Output", "    (+) New debt"],
+    ] as const;
+    const faltam = detalhes.filter(([aba, rot]) => linhaDoRotulo(aba, rot.trim()) === null
+      && linhaDoRotulo(aba, rot) === null);
+    checar(faltam.length === 0,
+      "(0107c) os espelhos de balanço e fluxo do Output são abertos conta a conta",
+      faltam.map(([, r]) => r.trim()).join(" · "));
+    // E o detalhe tem de BATER com a origem — espelho que não bate é pior que
+    // espelho que não existe.
+    const out = wbMod.getWorksheet("Output")!;
+    const bs = wbMod.getWorksheet("Balance Sheet")!;
+    const rEsp = linhaDoRotulo("Output", "Operating current assets");
+    const rOrig = linhaDoRotulo("Balance Sheet", "Ativo circulante operacional");
+    const vEsp = rEsp === null ? null : avaliarCelula(out, COLS_ANO[iAnoDe(2026)], rEsp);
+    const vOrig = rOrig === null ? null : avaliarCelula(bs, COLS_ANO[iAnoDe(2026)], rOrig);
+    checar(typeof vEsp === "number" && typeof vOrig === "number" && Math.abs(vEsp - vOrig) < 0.01,
+      "(0107c) …e cada linha do espelho é o MESMO número da aba de origem",
+      `espelho ${JSON.stringify(vEsp)} · origem ${JSON.stringify(vOrig)}`);
+  }
+
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
   //
   // Quando a extração não classifica as linhas de resultado (`secao_canonica`

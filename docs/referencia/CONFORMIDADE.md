@@ -343,12 +343,28 @@ de cada célula em nota, contra 90 séries coladas de uma consultoria em 2011.
 
 **Estrutural (muda o que o analista vê):**
 
-1. `Output`: expandir os espelhos de balanço/DRE/fluxo para conta a conta (39% → ~80% de densidade).
-2. `ST Inv. & Debt`: tranche em moeda estrangeira (o câmbio já está publicado) e `CAPEX FINANCING`.
-3. `Balance Sheet`: publicar o `CHECK` no topo das quatro abas de driver, como a referência faz.
-4. `Cash Flow`: abrir a variação de giro em uma linha por conta (hoje é agregada).
-5. `Goodwill`: os três blocos de espelho.
-6. `Fixed Assets`: vida útil por classe — depende de laudo que o Kit Básico não traz.
+1. ✅ **FEITO (Fase C)** — `Output`: espelhos de balanço e fluxo abertos conta a conta. Cada linha de
+   detalhe é REFERÊNCIA à aba de origem, não soma nova: espelho e origem não podem divergir, e um
+   assert (`0107c`) confere que o número do espelho é o mesmo da origem.
+2. **FICA** — `ST Inv. & Debt`: tranche em moeda estrangeira e `CAPEX FINANCING`. A tranche em moeda
+   exige um dado que o Kit Básico não coleta hoje (a MOEDA do contrato, por tranche): o câmbio está
+   publicado, mas aplicá-lo a uma tranche sem saber se ela é em dólar seria converter dívida em real
+   por engano — erro de ~5×, da mesma família do que a `0035` corrigiu. O `CAPEX FINANCING` é uma
+   premissa de plano (% do capex financiado por dívida nova) e entra junto com a decisão do dono
+   sobre o cronograma de amortização, que ainda está pendente.
+3. ✅ **FEITO (Fase C)** — o `CHECK` do balanço publicado no topo das quatro abas de driver, com
+   formatação condicional. É onde a premissa é mexida, e portanto onde "o balanço abriu" tem de
+   aparecer. Assert `0107b` — e ele exige que a célula seja FÓRMULA apontando para o `Balance Sheet`,
+   porque célula vazia avalia zero e a primeira versão do assert passou verde com a linha nunca
+   preenchida.
+4. ✅ **FEITO (Fase C)** — `Cash Flow`: variação de giro aberta em uma linha por conta, com o sinal
+   por natureza (ativo que cresce consome caixa, passivo que cresce libera) e uma linha de
+   conferência contra o total, que continua vindo do espelho da aba de giro. Duas origens para o
+   mesmo número só valem com a conferência entre elas — assert `0107a`.
+5. **FICA** — `Goodwill`: os três blocos de espelho. Só valem quando houver ágio de verdade no caso;
+   hoje a aba trabalha com saldo zero e publicar espelho de zero é ruído.
+6. **FICA (não é nosso)** — `Fixed Assets`: vida útil por classe depende de laudo que o Kit Básico
+   não traz. Sem o laudo, o que existe é a taxa implícita medida no próprio caso.
 
 **Cosmético:** contador invisível da coluna A (`P20`), ordem dos grupos do balanço, os três blocos
 de cenário literais em vez de `CHOOSE` com duas linhas.
