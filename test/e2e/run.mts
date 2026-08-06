@@ -462,7 +462,148 @@ console.log("\n== fase 5: a base do modelo é o mesmo número que a aba mostra")
   }
 }
 
-psql(`drop database if exists ${DB}`, "postgres");
+// ---------------------------------------------------------------------------
+// FASE 6 — O MODELO INSTITUCIONAL REPRODUZ O DOCUMENTO.
+//
+// POR QUE ESTA FASE EXISTE, e por que ela é o portão que faltava. As fases 1 a 5
+// provam a cadeia até as abas ANALÍTICAS. O modelo institucional — as 14 abas que
+// o dono manda para comitê — nunca foi conferido contra o gabarito por NENHUMA
+// suíte: o `verificar-export` monta o modelo a partir de uma entrada escrita à
+// mão, e uma entrada escrita à mão não descobre o que a cadeia real faz com o
+// dado real.
+//
+// O custo disso, medido na sessão 40 no arquivo que o dono exportou: a DRE
+// realizada saiu com receita líquida de 170.220 onde o documento diz 106.580 e
+// resultado de +268.041 onde o documento diz −17.901 — 100+ PRs verdes, e o único
+// juiz foi o dono abrindo o .xlsx.
+//
+// Aqui o modelo é montado pelas MESMAS consultas da rota de export (é o que
+// `gerar-export-do-banco.mts` replica) e cada linha de resultado é comparada com o
+// gabarito do book, com tolerância de 1 centavo. Sem premissa nenhuma de propósito:
+// o que está sob teste é a FIDELIDADE DO REALIZADO, não a projeção.
+// ---------------------------------------------------------------------------
+console.log("\n== fase 6: o modelo institucional reproduz o documento");
+{
+  const ENTIDADE = "VERTENTES METALÚRGICA LTDA.";
+  const ULTIMO_REAL = 2025;
+  psql(`select fn_definir_modelagem('${casoId}', '${ENTIDADE}', ${ULTIMO_REAL}, 'IPCA', 'industria', 'e2e', 3)`);
+
+  type LinhaSql = {
+    chave: string; rotulo_norm: string; papel: string; secao_canonica: string | null;
+    unidade: string | null; moeda: string | null; documentos: string[] | null;
+  };
+  const linhasSql = psqlJson<LinhaSql[]>(`select chave, rotulo_norm, papel::text as papel,
+      secao_canonica, unidade, moeda, documentos
+    from fn_linhas_para_modelagem('${casoId}')`);
+  const valoresSql = psqlJson<Array<{ rotulo_norm: string; ano: number; valor: number }>>(
+    `select rotulo_norm, ano, valor from fn_valores_por_ano('${casoId}', '${ENTIDADE}')`);
+
+  const porRotulo = new Map<string, Record<string, number>>();
+  const anos = new Set<number>();
+  for (const v of valoresSql) {
+    if (v.ano > ULTIMO_REAL) continue;
+    anos.add(v.ano);
+    if (!porRotulo.has(v.rotulo_norm)) porRotulo.set(v.rotulo_norm, {});
+    porRotulo.get(v.rotulo_norm)![String(v.ano)] = Number(v.valor);
+  }
+  const anosHistoricos = [...anos].sort((a, b) => a - b);
+  checar(anosHistoricos.length >= 2,
+    "o caso do book tem pelo menos dois exercícios realizados (é o que faz a série valer como base)",
+    JSON.stringify(anosHistoricos));
+
+  const wbModelo = buildExportWorkbook({
+    caso: { nome: "e2e book vertentes", produto: "reestruturacao" },
+    documentos, campos, agora: new Date("2026-07-31T12:00:00Z"), modo: "completo",
+    modeloInstitucional: {
+      caso: { nome: "e2e book vertentes", produto: "reestruturacao" },
+      agora: new Date("2026-07-31T12:00:00Z"),
+      entidade: ENTIDADE, setor: "industria",
+      anosHistoricos, anosProjetados: [2026, 2027, 2028],
+      stressPct: 0.2, caixaMinimo: 0, aliquotaTributos: 0.34,
+      linhas: linhasSql.map((l) => ({
+        secao_canonica: l.secao_canonica, chave: l.chave, rotulo_norm: l.rotulo_norm,
+        papel: l.papel as "conta" | "subtotal" | "derivado" | "serie_mensal",
+        unidade: l.unidade, moeda: l.moeda, documentos: l.documentos,
+        valores: porRotulo.get(l.rotulo_norm) ?? {},
+      })),
+      // Nenhuma premissa: o que se confere aqui é o REALIZADO. Projeção sem premissa
+      // mantém as contas constantes, que é o comportamento declarado do modelo.
+      premissas: [], vinculos: [], macro: [], unidade: "R$ mil",
+    },
+  });
+
+  const is = wbModelo.getWorksheet("Income Statement");
+  const bs = wbModelo.getWorksheet("Balance Sheet");
+  checar(!!is && !!bs, "o modelo institucional foi construído pela cadeia real (banco → export)");
+
+  /** Linha da aba pelo rótulo exato da coluna C, e o valor avaliado na coluna do ano. */
+  const linhaPorRotulo = (ws: NonNullable<typeof is>, rotulo: string) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(3).value ?? "").trim() === rotulo) return r;
+    }
+    return null;
+  };
+  const COL = ["E", "F", "G", "H", "I"]; // 2024, 2025, 2026, 2027, 2028
+  const iDe = (ano: number) => anosHistoricos.indexOf(ano);
+
+  if (is && bs) {
+    // O GABARITO DA DRE, exercício a exercício. O book publica os subtotais de 2025;
+    // os de 2024 vêm da mesma cascata (`dre_metalurgica_2025` é o nome do bloco, o
+    // conteúdo tem os dois anos nas abas). Aqui usa-se o que o gabarito expõe.
+    const sub = (gabarito as { dre_metalurgica_2025?: Record<string, number> }).dre_metalurgica_2025 ?? {};
+    const paresDRE: Array<[string, string]> = [
+      ["NET REVENUES", "RECEITA OPERACIONAL LÍQUIDA"],
+      ["GROSS PROFIT", "LUCRO BRUTO"],
+      ["EBIT", "RESULTADO OPERACIONAL ANTES DO RESULTADO FINANCEIRO"],
+      ["NET PROFIT", "PREJUÍZO LÍQUIDO DO EXERCÍCIO"],
+    ];
+    for (const [rotuloModelo, chaveGabarito] of paresDRE) {
+      const esperado = sub[chaveGabarito];
+      if (esperado === undefined) continue;
+      const r = linhaPorRotulo(is, rotuloModelo);
+      const v = r === null ? null : avaliarCelula(is, COL[iDe(2025)], r);
+      checar(typeof v === "number" && Math.abs(v - esperado) < 0.01,
+        `(fase 6) o modelo institucional reproduz "${chaveGabarito}" de 2025 (${esperado}) — `
+        + "é o número que o arquivo entregue errava",
+        `modelo: ${JSON.stringify(v)}`);
+    }
+
+    // O BALANÇO: cada grupo e o total, contra o gabarito por entidade e ano.
+    const bpGab = (gabarito as {
+      balanco_por_entidade?: Record<string, Record<string, Record<string, number>>>;
+    }).balanco_por_entidade ?? {};
+    for (const ano of anosHistoricos) {
+      const g = bpGab[String(ano)]?.metalurgica;
+      if (!g) continue;
+      for (const [rotulo, chaveGab] of [
+        ["ATIVO CIRCULANTE", "AC"], ["ATIVO NÃO CIRCULANTE", "ANC"], ["ATIVO TOTAL", "ATIVO"],
+        ["PASSIVO CIRCULANTE", "PC"], ["PASSIVO NÃO CIRCULANTE", "PNC"], ["PATRIMÔNIO LÍQUIDO", "PL"],
+      ] as const) {
+        const esperado = g[chaveGab];
+        if (esperado === undefined) continue;
+        const r = linhaPorRotulo(bs, rotulo);
+        const v = r === null ? null : avaliarCelula(bs, COL[iDe(ano)], r);
+        checar(typeof v === "number" && Math.abs(v - esperado) < 0.01,
+          `(fase 6) "${rotulo}" de ${ano} é o do documento (${esperado})`,
+          `modelo: ${JSON.stringify(v)}`);
+      }
+    }
+
+    // E O CHECK FECHA — em todo exercício, realizado e projetado.
+    const rCheck = linhaPorRotulo(bs, "CHECK — Ativo − (Passivo + PL) deve ser ZERO");
+    const desvios: string[] = [];
+    for (let i = 0; i < anosHistoricos.length + 3; i++) {
+      const v = rCheck === null ? null : avaliarCelula(bs, COL[i], rCheck);
+      if (typeof v !== "number") { desvios.push(`col ${COL[i]}: ${JSON.stringify(v)}`); continue; }
+      if (Math.abs(v) > 0.01) desvios.push(`col ${COL[i]}: ${v.toFixed(2)}`);
+    }
+    checar(rCheck !== null && desvios.length === 0,
+      "(fase 6) O BALANÇO DO MODELO FECHA na cadeia real, em todos os exercícios",
+      desvios.join(" · "));
+  }
+}
+
+if (!process.env.E2E_MANTER) psql(`drop database if exists ${DB}`, "postgres");
 
 console.log(`\n${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);

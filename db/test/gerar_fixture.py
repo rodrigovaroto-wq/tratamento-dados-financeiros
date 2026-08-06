@@ -86,8 +86,61 @@ def doc(idx, tipo, ent, per_key):
     return d
 
 
-def L(d, chave, valor, secao=None, per_col=None, ent_col=None, unidade="milhar", conf=0.97):
-    d["linhas"].append((chave, valor, secao, per_col, ent_col, unidade, conf))
+def L(d, chave, valor, secao=None, per_col=None, ent_col=None, unidade="milhar", conf=0.97,
+      canon=None):
+    d["linhas"].append((chave, valor, secao, per_col, ent_col, unidade, conf, canon))
+
+
+# ---------------------------------------------------------------------------
+# `secao_canonica` — POR QUE ELA PASSOU A SER EMITIDA AQUI.
+#
+# Este fixture representa uma extração PERFEITA, e até a sessão 40 ele gravava
+# `secao_canonica = NULL` nas 767 linhas. A extração de verdade PREENCHE esse
+# campo (é a instrução `secao_canonica` do `SYSTEM_PROMPT` em `n8n/lib/extract.mjs`,
+# com o enum de `SECAO_CANONICA_ENUM`), e é ele que diz a que BLOCO do modelo cada
+# conta pertence.
+#
+# O custo de não emitir, medido na sessão 40: no export gerado pela cadeia do book,
+# `blocoDaLinha` devolvia `fora` para as 132 contas de balanço e DRE, e o modelo
+# institucional saía com a DRE INTEIRA EM ZERO. Nenhuma base local conseguia provar
+# o modelo ponta a ponta — o `fixture_modelagem_v35.sql` tem `secao_canonica` mas
+# `secao` nula e `ordem` alfabética; a cadeia do book tinha o inverso. O defeito de
+# sinal que transformou prejuízo de 17.901 em lucro de 268.041 passou por esse vão.
+#
+# A CLASSIFICAÇÃO É EXPLÍCITA NO PONTO DE EMISSÃO, não inferida do rótulo depois:
+# aqui o gerador SABE, ao escrever a linha, se está no ativo circulante ou no
+# passivo não circulante — inferir de volta pelo nome seria reintroduzir a
+# ambiguidade que a extração real resolve com julgamento contábil.
+#
+# `NAO_CLASSIFICAVEL` é o escape do próprio enum e é usado onde não existe valor
+# honesto: total de GRUPO (o enum não tem "ativo_total"), eliminações do combinado,
+# faturamento mensal, mútuos e notas explicativas. Chutar um valor ali seria pior
+# que declarar que não se classifica — é a mesma doutrina do prompt.
+# ---------------------------------------------------------------------------
+NC = "NAO_CLASSIFICAVEL"
+CANON_BP = {"AC": "ativo_circulante", "ANC": "ativo_nao_circulante",
+            "PC": "passivo_circulante", "PNC": "passivo_nao_circulante",
+            "PL": "patrimonio_liquido"}
+CANON_BP_LABEL = {"Ativo Circulante": "ativo_circulante",
+                  "Ativo Não Circulante": "ativo_nao_circulante",
+                  "Passivo Circulante": "passivo_circulante",
+                  "Passivo Não Circulante": "passivo_nao_circulante",
+                  "Patrimônio Líquido": "patrimonio_liquido"}
+# A cascata da DRE do book (ver `demonstracoes.py`): o subtotal que abre a seção é
+# o que define a seção canônica das contas abaixo dele.
+CANON_DRE = {
+    "RECEITA OPERACIONAL BRUTA": "receita_bruta",
+    "DEDUÇÕES DA RECEITA BRUTA": "receita_bruta",
+    "CUSTO DOS PRODUTOS VENDIDOS": "custos",
+    "DESPESAS OPERACIONAIS": "despesas_operacionais",
+    "RESULTADO FINANCEIRO": "resultado_financeiro",
+    "TRIBUTOS SOBRE O LUCRO": "impostos_lucro",
+}
+CANON_DFC = {
+    "FLUXO DE CAIXA DAS ATIVIDADES OPERACIONAIS": "atividades_operacionais",
+    "FLUXO DE CAIXA DAS ATIVIDADES DE INVESTIMENTO": "atividades_investimento",
+    "FLUXO DE CAIXA DAS ATIVIDADES DE FINANCIAMENTO": "atividades_financiamento",
+}
 
 
 # --------------------------------------------------------------- 01-05: BALANÇOS
@@ -98,27 +151,27 @@ for ent, idx in [("metalurgica", 1), ("componentes", 2), ("holding", 3),
     d = doc(idx, "BALANCO", ent, "multi_2425")
     for ano in (2025, 2024):
         pc, t = str(ano), tot[ano][ent]
-        L(d, "ATIVO", t["ATIVO"], SEC_ATIVO, pc)
+        L(d, "ATIVO", t["ATIVO"], SEC_ATIVO, pc, canon=NC)
         for sec, lab in [("AC", "Ativo Circulante"), ("ANC", "Ativo Não Circulante")]:
-            L(d, lab, t[sec], SEC_ATIVO, pc)
+            L(d, lab, t[sec], SEC_ATIVO, pc, canon=CANON_BP[sec])
             for sub, contas in bp[ano][ent][sec].items():
                 if not contas:
                     continue
-                L(d, sub, sum(v for _, v in contas), lab, pc)
+                L(d, sub, sum(v for _, v in contas), lab, pc, canon=CANON_BP[sec])
                 for rot, v in contas:
-                    L(d, rot, v, sub, pc)
-        L(d, "TOTAL DO ATIVO", t["ATIVO"], SEC_ATIVO, pc)
-        L(d, SEC_PASSIVO, t["PASSIVO_PL"], SEC_PASSIVO, pc)
+                    L(d, rot, v, sub, pc, canon=CANON_BP[sec])
+        L(d, "TOTAL DO ATIVO", t["ATIVO"], SEC_ATIVO, pc, canon=NC)
+        L(d, SEC_PASSIVO, t["PASSIVO_PL"], SEC_PASSIVO, pc, canon=NC)
         for sec, lab in [("PC", "Passivo Circulante"), ("PNC", "Passivo Não Circulante"),
                          ("PL", "Patrimônio Líquido")]:
-            L(d, lab, t["PL"] if sec == "PL" else t[sec], SEC_PASSIVO, pc)
+            L(d, lab, t["PL"] if sec == "PL" else t[sec], SEC_PASSIVO, pc, canon=CANON_BP[sec])
             for sub, contas in bp[ano][ent][sec].items():
                 if not contas:
                     continue
-                L(d, sub, sum(v for _, v in contas), lab, pc)
+                L(d, sub, sum(v for _, v in contas), lab, pc, canon=CANON_BP[sec])
                 for rot, v in contas:
-                    L(d, rot, v, sub, pc)
-        L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", t["PASSIVO_PL"], SEC_PASSIVO, pc)
+                    L(d, rot, v, sub, pc, canon=CANON_BP[sec])
+        L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", t["PASSIVO_PL"], SEC_PASSIVO, pc, canon=NC)
 
 # ------------------------------------------------------------------- 06: COMBINADO
 d = doc(6, "COMBINADO", "grupo", "anual_2025")
@@ -133,14 +186,14 @@ for e in ["componentes", "spe", "metalurgica", "holding", "logistica"]:
         ("Passivo Não Circulante", t["PNC"], SEC_PASSIVO),
         ("Patrimônio Líquido", t["PL"], SEC_PASSIVO),
     ]:
-        L(d, chave, val, secao, "2025", ec)
+        L(d, chave, val, secao, "2025", ec, canon=CANON_BP_LABEL.get(chave, NC))
 for chave, val in [("Eliminação de investimentos (MEP)", -c["elim_invest"]),
                    ("Eliminação de mútuos e conta corrente", -c["elim_mutuos"]),
                    ("Eliminação de provisão para passivo a descoberto", -c["elim_provisao"])]:
-    L(d, chave, val, "ELIMINAÇÕES", "2025", "Eliminações")
-L(d, "TOTAL DO ATIVO", c["ativo"], SEC_ATIVO, "2025", "Combinado")
-L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", c["passivo"] + c["pl"], SEC_PASSIVO, "2025", "Combinado")
-L(d, "Participação de não controladores", c["nci"], SEC_PASSIVO, "2025", "Combinado")
+    L(d, chave, val, "ELIMINAÇÕES", "2025", "Eliminações", canon=NC)
+L(d, "TOTAL DO ATIVO", c["ativo"], SEC_ATIVO, "2025", "Combinado", canon=NC)
+L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", c["passivo"] + c["pl"], SEC_PASSIVO, "2025", "Combinado", canon=NC)
+L(d, "Participação de não controladores", c["nci"], SEC_PASSIVO, "2025", "Combinado", canon="patrimonio_liquido")
 
 # ------------------------------------------------------------------------ 07: DRE
 # "RECEITA OPERACIONAL BRUTA" é CABEÇALHO SEM VALOR (convenção BR comum): quem
@@ -151,9 +204,13 @@ for cascata, ano in ((c25, "2025"), (c24, "2024")):
     for rot, v, tipo in cascata:
         if tipo == "sub":
             secao_atual = rot
-            L(d, rot, None, secao_atual, ano)
+            L(d, rot, None, secao_atual, ano, canon=CANON_DRE.get(rot, NC))
         else:
-            L(d, rot, v, secao_atual, ano)
+            # A linha de resultado da cascata ("RECEITA OPERACIONAL LÍQUIDA",
+            # "LUCRO BRUTO", "PREJUÍZO LÍQUIDO DO EXERCÍCIO") não é conta de seção
+            # nenhuma: é o total. `fn_papel_linha` já a marca como subtotal, e o
+            # modelo a usa como ÂNCORA de conferência.
+            L(d, rot, v, secao_atual, ano, canon=CANON_DRE.get(secao_atual, NC))
 
 # ------------------------------------------------------------------------ 08: DFC
 d = doc(8, "FLUXO_CAIXA", "metalurgica", "anual_2025")
@@ -162,32 +219,37 @@ for grupo_lab, chave_tot, itens in [
     ("FLUXO DE CAIXA DAS ATIVIDADES DE INVESTIMENTO", "tot_inv", dfc["investimento"]),
     ("FLUXO DE CAIXA DAS ATIVIDADES DE FINANCIAMENTO", "tot_fin", dfc["financiamento"]),
 ]:
-    L(d, grupo_lab, None, grupo_lab, "2025")
+    ca = CANON_DFC[grupo_lab]
+    L(d, grupo_lab, None, grupo_lab, "2025", canon=ca)
     for rot, v in itens:
-        L(d, rot, v, grupo_lab, "2025")
+        L(d, rot, v, grupo_lab, "2025", canon=ca)
     L(d, "Caixa líquido gerado pelas (aplicado nas) " + grupo_lab.split("DAS ")[1].lower(),
-      dfc[chave_tot], grupo_lab, "2025")
-L(d, "REDUÇÃO LÍQUIDA DE CAIXA E EQUIVALENTES DE CAIXA", dfc["variacao"], "VARIAÇÃO DE CAIXA", "2025")
-L(d, "Caixa e equivalentes de caixa no início do exercício", dfc["caixa_ini"], "VARIAÇÃO DE CAIXA", "2025")
-L(d, "Caixa e equivalentes de caixa no final do exercício", dfc["caixa_fim"], "VARIAÇÃO DE CAIXA", "2025")
+      dfc[chave_tot], grupo_lab, "2025", canon=ca)
+L(d, "REDUÇÃO LÍQUIDA DE CAIXA E EQUIVALENTES DE CAIXA", dfc["variacao"], "VARIAÇÃO DE CAIXA", "2025", canon=NC)
+L(d, "Caixa e equivalentes de caixa no início do exercício", dfc["caixa_ini"], "VARIAÇÃO DE CAIXA", "2025", canon=NC)
+L(d, "Caixa e equivalentes de caixa no final do exercício", dfc["caixa_fim"], "VARIAÇÃO DE CAIXA", "2025", canon=NC)
 
 # ---------------------------------------------------------------- 10: FATURAMENTO
 d = doc(10, "FATURAMENTO_24M", "metalurgica", "l24m")
 for mes, v2024, v2025 in fat:
-    L(d, f"{mes}/2024", v2024, "FATURAMENTO MENSAL", "2024")
-    L(d, f"{mes}/2025", v2025, "FATURAMENTO MENSAL", "2025")
-L(d, "TOTAL DO EXERCÍCIO", t24f, "FATURAMENTO MENSAL", "2024")
-L(d, "TOTAL DO EXERCÍCIO", t25f, "FATURAMENTO MENSAL", "2025")
+    L(d, f"{mes}/2024", v2024, "FATURAMENTO MENSAL", "2024", canon=NC)
+    L(d, f"{mes}/2025", v2025, "FATURAMENTO MENSAL", "2025", canon=NC)
+L(d, "TOTAL DO EXERCÍCIO", t24f, "FATURAMENTO MENSAL", "2024", canon=NC)
+L(d, "TOTAL DO EXERCÍCIO", t25f, "FATURAMENTO MENSAL", "2025", canon=NC)
 
 # ------------------------------------------------------- 11: MAPA DE DÍVIDA (REAIS)
 # Armadilha deliberada do book: este documento está em REAIS, as demonstrações em
 # milhares. A reconciliação tem de CONVERTER pela escala declarada.
 d = doc(11, "MAPA_DIVIDA", "metalurgica", "base_251231")
 for credor, mod, saldo_mil, _taxa, _venc, _gar, juros_mil in contratos:
-    L(d, f"{credor} — {mod} — saldo devedor", saldo_mil * 1000, "DÍVIDA", "2025", unidade="unidade")
-    L(d, f"{credor} — {mod} — juros do exercício", juros_mil * 1000, "DÍVIDA", "2025", unidade="unidade")
-L(d, "TOTAL — saldo devedor", sum(c[2] for c in contratos) * 1000, "DÍVIDA", "2025", unidade="unidade")
-L(d, "TOTAL — juros do exercício", sum(c[6] for c in contratos) * 1000, "DÍVIDA", "2025", unidade="unidade")
+    # O mapa de dívida é roteado pelo TIPO DO DOCUMENTO (`blocoDaLinha` vê
+    # `MAPA_DIVIDA` antes da seção), então a seção canônica aqui é informativa: o
+    # saldo é obrigação de curto/longo prazo indistinta neste documento, e o
+    # contrato é que diz. `NAO_CLASSIFICAVEL` em vez de um chute.
+    L(d, f"{credor} — {mod} — saldo devedor", saldo_mil * 1000, "DÍVIDA", "2025", unidade="unidade", canon=NC)
+    L(d, f"{credor} — {mod} — juros do exercício", juros_mil * 1000, "DÍVIDA", "2025", unidade="unidade", canon=NC)
+L(d, "TOTAL — saldo devedor", sum(c[2] for c in contratos) * 1000, "DÍVIDA", "2025", unidade="unidade", canon=NC)
+L(d, "TOTAL — juros do exercício", sum(c[6] for c in contratos) * 1000, "DÍVIDA", "2025", unidade="unidade", canon=NC)
 
 # ------------------------------------------------------------------ 13: BALANCETE
 d = doc(13, "BALANCETE", "componentes", "anual_2025")
@@ -197,12 +259,12 @@ for sec, lab, secao in [("AC", "Ativo Circulante", SEC_ATIVO),
                         ("PC", "Passivo Circulante", SEC_PASSIVO),
                         ("PNC", "Passivo Não Circulante", SEC_PASSIVO),
                         ("PL", "Patrimônio Líquido", SEC_PASSIVO)]:
-    L(d, lab, t["PL"] if sec == "PL" else t[sec], secao, "2025")
+    L(d, lab, t["PL"] if sec == "PL" else t[sec], secao, "2025", canon=CANON_BP[sec])
     for sub, contas in bp[2025]["componentes"][sec].items():
         for rot, v in contas:
-            L(d, rot, v, lab, "2025")
-L(d, "TOTAL DO ATIVO", t["ATIVO"], SEC_ATIVO, "2025")
-L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", t["PASSIVO_PL"], SEC_PASSIVO, "2025")
+            L(d, rot, v, lab, "2025", canon=CANON_BP[sec])
+L(d, "TOTAL DO ATIVO", t["ATIVO"], SEC_ATIVO, "2025", canon=NC)
+L(d, "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO", t["PASSIVO_PL"], SEC_PASSIVO, "2025", canon=NC)
 
 # ----------------------------------------------------------------------- 09: DMPL
 # Matriz: cada célula é uma linha, `chave` = COMPONENTE do PL e `secao` =
@@ -225,7 +287,7 @@ for _mov, _vals in [
       ("Total", _t25m["PL"])]),
 ]:
     for _comp, _v in _vals:
-        L(d, _comp, _v, _mov, "2025")
+        L(d, _comp, _v, _mov, "2025", canon="dmpl")
 
 # ------------------------------------------------------------------- 12: MÚTUOS
 # O documento tem a divergência DELIBERADA de R$ 180 mil contra o balanço
@@ -234,8 +296,8 @@ for _mov, _vals in [
 mut, tot_mut = X.mutuos_intragrupo(tot)
 d = doc(12, "MUTUOS", "grupo", "anual_2025")
 for _cred, _dev, _nat, _val, _venc in mut:
-    L(d, f"{_cred} → {_dev} — {_nat}", _val, "MÚTUOS E CONTAS INTRAGRUPO", "2025")
-L(d, "TOTAL", tot_mut, "MÚTUOS E CONTAS INTRAGRUPO", "2025")
+    L(d, f"{_cred} → {_dev} — {_nat}", _val, "MÚTUOS E CONTAS INTRAGRUPO", "2025", canon=NC)
+L(d, "TOTAL", tot_mut, "MÚTUOS E CONTAS INTRAGRUPO", "2025", canon=NC)
 
 # ---------------------------------------------------------- 14: NOTAS EXPLICATIVAS
 # Notas são PROSA com alguns números dentro. A extração fiel traz os números que
@@ -244,14 +306,14 @@ L(d, "TOTAL", tot_mut, "MÚTUOS E CONTAS INTRAGRUPO", "2025")
 # Balanço. Sem esse reconhecimento, o detalhe da nota entraria somando DEBAIXO do
 # total que o BP já informa: dupla contagem vinda de documento complementar.
 d = doc(14, "NOTAS_EXPL", "metalurgica", "anual_2025")
-L(d, "Prejuízo líquido do exercício", abs(_t25m["plug"] - _t24m["plug"]), "Nota 1", "2025")
-L(d, "Capital circulante líquido negativo", abs(_t25m["AC"] - _t25m["PC"]), "Nota 1", "2025")
+L(d, "Prejuízo líquido do exercício", abs(_t25m["plug"] - _t24m["plug"]), "Nota 1", "2025", canon=NC)
+L(d, "Capital circulante líquido negativo", abs(_t25m["AC"] - _t25m["PC"]), "Nota 1", "2025", canon=NC)
 L(d, "Índice de liquidez corrente", round(_t25m["AC"] / _t25m["PC"], 2), "Nota 1", "2025",
-  unidade=None)
+  unidade=None, canon=NC)
 L(d, "Parcela reclassificada de longo para curto prazo (covenant)",
   bp[2025]["metalurgica"]["PC"][ "Empréstimos e Financiamentos"][0][1]
   if "Empréstimos e Financiamentos" in bp[2025]["metalurgica"]["PC"] else 0,
-  "Nota 2", "2025")
+  "Nota 2", "2025", canon=NC)
 
 # ----------------------------------------------------------------------- emitir
 out = [
@@ -275,13 +337,13 @@ for d in docs:
         f"values ('{d['ver']}', '{d['doc']}', 1, 'fixture/{d['doc']}.pdf', "
         f"'{d['tipo']}.pdf', md5('{d['doc']}'));")
     vals = [
-        f"('{d['ver']}', {q(k)}, {n(v)}, {q(u)}, {n(cf)}, {q(s)}, {q(pcol)}, {q(ecol)}, 'aceito')"
-        for k, v, s, pcol, ecol, u, cf in d["linhas"]
+        f"('{d['ver']}', {q(k)}, {n(v)}, {q(u)}, {n(cf)}, {q(s)}, {q(ca)}, {q(pcol)}, {q(ecol)}, 'aceito')"
+        for k, v, s, pcol, ecol, u, cf, ca in d["linhas"]
     ]
     for i in range(0, len(vals), 150):
         out.append(
             "insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca, "
-            "secao, periodo_coluna, entidade_coluna, status_aceite) values\n  "
+            "secao, secao_canonica, periodo_coluna, entidade_coluna, status_aceite) values\n  "
             + ",\n  ".join(vals[i:i + 150]) + ";")
 out.append("commit;")
 
@@ -304,7 +366,7 @@ if "--json" in sys.argv:
             {
                 "id": f"{d['ver']}-{i}",
                 "documento_versao_id": d["ver"],
-                "chave": k, "valor_num": v, "secao": sec, "secao_canonica": None,
+                "chave": k, "valor_num": v, "secao": sec, "secao_canonica": ca,
                 # `ordem` = posição da linha NO DOCUMENTO (db/migrations/0027). É o
                 # que permite ao export desambiguar rótulo repetido em vez de
                 # colapsar as duas linhas numa só.
@@ -315,7 +377,7 @@ if "--json" in sys.argv:
                 "aceito_em": "2026-07-27T00:00:00Z",
             }
             for d in docs
-            for i, (k, v, sec, pcol, ecol, u, cf) in enumerate(d["linhas"])
+            for i, (k, v, sec, pcol, ecol, u, cf, ca) in enumerate(d["linhas"])
         ],
     }, ensure_ascii=False))
 else:
