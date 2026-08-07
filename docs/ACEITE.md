@@ -1,7 +1,11 @@
 # Aceite do modelo institucional exportado
 
-Este documento é a **metade humana** do aceite de um `.xlsx` exportado pelo portal. A
-outra metade é automática:
+Vale para o arquivo do botão **Exportar modelagem** — as 14 abas do modelo, mais a
+`Modelagem` e os índices macro. O outro botão, **Exportar dados financeiros**, entrega as
+abas de dado linha a linha e tem outro propósito (conferir a extração contra os
+documentos); ele não passa por este aceite porque não projeta nada.
+
+Este documento é a **metade humana** do aceite. A outra metade é automática:
 
 ```bash
 ./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <arquivo.xlsx>
@@ -50,7 +54,7 @@ isso, não deixe em branco.
 | 1 | Abrir o arquivo no Excel (não no Google Sheets nem no LibreOffice — o alvo é o Excel) | Abre direto | Aparece "o Excel encontrou conteúdo ilegível" / oferece reparar. **Isto é bloqueante**: o reparo remove partes silenciosamente, e o que o dono vê depois não é o que saiu daqui |
 | 2 | Olhar a aba `Output` logo na abertura, **sem apertar F9** | Os números estão preenchidos | Células em branco onde deveria haver número — o `fullCalcOnLoad` não pegou nesta versão do Excel |
 | 3 | Rolar o `Output` até os gráficos | Os **8** gráficos desenham, com série visível e eixo com anos | Gráfico em branco, moldura vazia, ou "não é possível exibir" |
-| 4 | Na aba `Revenues, COGS & SG&A`, no painel de premissas, abrir o **dropdown** de índice macro de uma linha de receita e trocar o índice (ex.: de `IPCA` para `PIB`) | O total muda, e a **receita projetada muda junto** nos anos seguintes | O dropdown não abre, ou muda e nada se recalcula abaixo |
+| 4 | Abrir a aba **`Premissas`**: o `PAINEL DE MODELAGEM` no topo lista as alavancas com o endereço de cada uma. Ir a **uma** delas pelo endereço publicado e trocar o valor (o mais direto é o **dropdown** de índice macro na aba `Revenues, COGS & SG&A`, ex.: de `IPCA` para `PIB`) | O endereço leva à célula certa; o total muda, e a **receita projetada muda junto** nos anos seguintes; o valor no painel acompanha | O endereço aponta para outra coisa, o dropdown não abre, ou muda e nada se recalcula abaixo |
 | 5 | No mesmo painel, digitar um **spread** diferente (ex.: `2` no lugar de `0`) | O total recompõe como `(1+índice)×(1+spread)−1` — com índice 5% e spread 2%, dá **7,1%**, não 7,0% | Deu exatamente a soma (7,0%) — a composição virou soma em algum ponto |
 | 6 | Depois dos itens 4 e 5, olhar a linha `CHECK do balanço` no topo das abas de driver | Continua **zero** | Saiu de zero: a edição das premissas quebrou o balanço, e o modelo passa a mentir depois de editado |
 | 7 | Trocar o **cenário** no seletor (base / otimista / conservador) | Todas as abas se movem juntas e o `CHECK` segue em zero | Alguma aba não acompanha |

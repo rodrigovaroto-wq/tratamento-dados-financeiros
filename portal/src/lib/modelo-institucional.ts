@@ -303,6 +303,9 @@ class Grade {
 
   tem(chave: string): boolean { return this.anchors.has(chave); }
 
+  /** As chaves registradas, na ordem em que as linhas foram criadas. */
+  chaves(): string[] { return [...this.anchors.keys()]; }
+
   n(chave: string): number {
     const r = this.anchors.get(chave);
     if (r === undefined) throw new Error(`modelo-institucional: âncora "${chave}" não existe em ${this.ws.name}`);
@@ -1067,8 +1070,95 @@ function abaAnual(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
 // ABA Premissas — o HISTÓRICO extraído, por bloco da DRE, com proveniência.
 // É a aba que substitui os valores colados do referência.
 // =============================================================================
+/**
+ * As premissas de CRESCIMENTO do caso, deduplicadas por código. Usada em dois
+ * lugares — o painel da aba `Revenues` e o cockpit da aba `Premissas` — e por isso
+ * mora aqui: as duas listas TÊM de ser a mesma, senão o cockpit publica endereço de
+ * uma linha que não existe.
+ */
+function premissasDeCrescimentoDe(ctx: Ctx) {
+  return [...new Map(
+    [...ctx.premissaPorLinha.values()]
+      .filter((p) => p.formula === "crescimento_composto" || p.formula === "indice_macro")
+      .map((p) => [p.codigo, p] as const),
+  ).values()].sort((a, b) => a.codigo.localeCompare(b.codigo));
+}
+
+/**
+ * UM BOTÃO DO MODELO: uma célula que o analista pode mexer dentro do Excel e que
+ * reprojeta o arquivo. O cockpit da aba `Premissas` publica um por linha.
+ */
+interface BotaoDoModelo {
+  /** âncora da linha no cockpit */
+  chave: string;
+  rotulo: string;
+  /** aba onde a célula editável mora */
+  aba: string;
+  /** âncora da linha naquela aba */
+  alvo: string;
+  fmt: string;
+  /** o editável é a célula da COLUNA DE NOTA (dropdown de série macro), não a do ano */
+  naNota?: boolean;
+  /** texto curto de o que acontece ao mexer */
+  efeito: string;
+}
+
+/**
+ * A LISTA DE BOTÕES, decidida a partir do caso. Fica fora das abas porque o cockpit
+ * precisa RESERVAR as linhas antes das abas de origem existirem (a `Premissas` é
+ * construída em segundo lugar) — os endereços são preenchidos na costura de volta,
+ * quando todas as grades já existem.
+ */
+function botoesDoModelo(ctx: Ctx): BotaoDoModelo[] {
+  const b: BotaoDoModelo[] = [];
+  for (const p of premissasDeCrescimentoDe(ctx)) {
+    b.push({
+      chave: `cock:serie:${p.codigo}`, rotulo: `${p.nome} — índice macro escolhido`,
+      aba: "Revenues, COGS & SG&A", alvo: `pnl:${p.codigo}#serie`, fmt: PCT2, naNota: true,
+      efeito: "troca a série que serve de base (dropdown: PIB, IPCA, IGPM, INPC, SELIC, CDI, câmbio ou nenhum)",
+    });
+    b.push({
+      chave: `cock:spread:${p.codigo}`, rotulo: `${p.nome} — spread real sobre o índice`,
+      aba: "Revenues, COGS & SG&A", alvo: `pnl:${p.codigo}#spread`, fmt: PCT2,
+      efeito: "compõe com o índice: (1+índice)×(1+spread)−1, nunca soma",
+    });
+  }
+  b.push(
+    { chave: "cock:caixa", rotulo: "Caixa mínimo operacional", aba: "ST Inv. & Debt",
+      alvo: "CAIXA_MIN", fmt: NUM,
+      efeito: "piso de caixa; abaixo dele o revolver saca automaticamente" },
+    { chave: "cock:spread_div", rotulo: "Spread da dívida existente", aba: "ST Inv. & Debt",
+      alvo: "SPREAD_DIVIDA", fmt: PCT2, efeito: "compõe com o CDI da aba Anual e vira o custo efetivo" },
+    { chave: "cock:spread_rev", rotulo: "Spread do revolver", aba: "ST Inv. & Debt",
+      alvo: "SPREAD_REVOLVER", fmt: PCT2, efeito: "custo da dívida de emergência, que cobre o furo de caixa" },
+    { chave: "cock:aplic", rotulo: "% do CDI recebido na aplicação", aba: "ST Inv. & Debt",
+      alvo: "SPREAD_APLIC", fmt: PCT2, efeito: "rendimento do caixa excedente" },
+    { chave: "cock:prazo_novo", rotulo: "Prazo da captação nova (anos)", aba: "ST Inv. & Debt",
+      alvo: "EMISSAO_PRAZO", fmt: NUM2, efeito: "cada safra nova amortiza em parcelas iguais nesse prazo" },
+    { chave: "cock:prazo_tranche", rotulo: "Prazo de amortização das tranches existentes (anos)",
+      aba: "ST Inv. & Debt", alvo: "#prazo", fmt: NUM2,
+      efeito: "SAC até o vencimento; nasce do prazo implícito no balanço, uma célula por tranche" },
+    { chave: "cock:vida_util", rotulo: "Vida útil média do imobilizado (anos)",
+      aba: "Fixed Assets & CAPEX", alvo: "VIDA_UTIL", fmt: NUM2,
+      efeito: "define a depreciação das safras de capex" },
+    { chave: "cock:cov_alav", rotulo: "Covenant — Dívida Líquida / EBITDA (teto)", aba: "Output",
+      alvo: "C_ND_EBITDA", fmt: MULT, efeito: "o teste de ROMPE/ok do ano lê esta célula" },
+    { chave: "cock:cov_dscr", rotulo: "Covenant — DSCR (piso)", aba: "Output",
+      alvo: "C_COBERTURA", fmt: MULT, efeito: "o teste de ROMPE/ok do ano lê esta célula" },
+    { chave: "cock:cov_liq", rotulo: "Covenant — liquidez corrente (piso)", aba: "Output",
+      alvo: "C_LIQ_CORR", fmt: MULT, efeito: "o teste de ROMPE/ok do ano lê esta célula" },
+  );
+  return b;
+}
+
 function abaPremissas(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
-  const g = new Grade(wb, "Premissas", ctx.hist, ctx.hist.length);
+  // A GRADE COBRE TODOS OS ANOS, não só os realizados. Os blocos de base histórica
+  // continuam escrevendo apenas no realizado (as colunas projetadas ficam vazias, que
+  // é a verdade sobre eles), mas o cockpit publica premissa de exercício PROJETADO —
+  // e uma premissa de 2027 numa aba que só tem colunas de 2024 e 2025 ou não cabe ou
+  // sai na coluna errada. Alinhar as colunas com as demais abas também deixa a leitura
+  // lado a lado possível.
+  const g = new Grade(wb, "Premissas", ctx.anos, ctx.nHist);
   // Cadeia de ano própria (`=<ano anterior>+1`), que é exatamente o que o Modelo
   // Base faz nesta aba (`Premissas!D4 = C4+1`). Ela não herda a raiz de data
   // porque é construída ANTES da aba de receita — e inverter a ordem faria a
@@ -1079,6 +1169,40 @@ function abaPremissas(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
       const i = ctx.hist.indexOf(ano);
       return i <= 0 ? String(ano) : `=${g.letraDoAno(ctx.hist[i - 1])}1+1`;
     }, "0");
+
+  // ===========================================================================
+  // COCKPIT — TODO BOTÃO DO MODELO EM UMA TELA SÓ.
+  //
+  // POR QUE ELE EXISTE. O mecanismo de modelar dentro do Excel já funcionava — o
+  // painel de índice × spread na aba de receita reprojeta a cascata inteira, e cada
+  // aba tem suas células azuis. Só que ele estava ESPALHADO por sete abas de até 135
+  // linhas, e uma alavanca que ninguém acha não é uma alavanca. Quem abre o arquivo
+  // procurando "as premissas" abre a aba `Premissas` — que até aqui só trazia a base
+  // histórica extraída, ou seja, o oposto do que o nome promete.
+  //
+  // O QUE ELE É. Uma linha por botão: o que é, quanto vale HOJE (por referência viva
+  // à célula de origem — não é cópia, muda junto), em que ABA E CÉLULA se edita, e o
+  // que acontece ao mexer. Não é documentação: os valores são fórmula, então um
+  // cockpit desatualizado é impossível por construção.
+  //
+  // POR QUE NÃO SE EDITA AQUI. Excel não tem célula de mão dupla: ou o valor mora
+  // aqui e as abas leem daqui, ou mora lá e este painel espelha. Mover as premissas
+  // para cá quebraria a leitura de cada aba em pé (a de dívida deixaria de ser
+  // legível sozinha) e é uma mudança de arquitetura que merece decisão própria. O
+  // espelho com endereço entrega o essencial — achar a alavanca em cinco segundos —
+  // sem esse custo.
+  // ===========================================================================
+  const botoes = botoesDoModelo(ctx);
+  g.linha(null, {
+    rotulo: "PAINEL DE MODELAGEM — as alavancas do arquivo, e onde fica cada uma",
+    bloco: true, nota: "editar em",
+  });
+  g.linha("cock:ajuda", {
+    rotulo: "Edite na ABA/CÉLULA indicada ao lado; o modelo reprojeta sozinho. Depois confira o "
+      + "CHECK do balanço no topo das abas de driver: tem de continuar ZERO.",
+  });
+  for (const b of botoes) g.linha(b.chave, { rotulo: b.rotulo, fmt: b.fmt });
+  g.pular();
 
   const bloco = (titulo: string, b: BlocoModelo, chaveTotal: string) => {
     // A CONVENÇÃO DE SINAL DO BLOCO FICA ESCRITA NO CABEÇALHO DELE. O leitor que
@@ -4135,6 +4259,72 @@ export function construirModeloInstitucional(
         { type: "expression", formulae: ["TRUE"], style: { fill: FILL_CHECK_OK }, priority: 2 },
       ],
     });
+  }
+
+  // ---- COCKPIT da aba `Premissas`: endereço e valor VIVO de cada alavanca ---
+  //
+  // Preenchido aqui pelo mesmo motivo do `CHECK`: as linhas foram reservadas na
+  // construção da `Premissas` (segunda aba a nascer) e só agora as abas de origem
+  // existem para dizer em que LINHA cada premissa caiu. Endereço escrito à mão
+  // envelheceria na primeira linha inserida; este é derivado da âncora.
+  {
+    const grades = new Map<string, Grade>([
+      ["Revenues, COGS & SG&A", gRec], ["ST Inv. & Debt", gDiv],
+      ["Fixed Assets & CAPEX", gFA], ["Output", saidaOutput.g],
+    ]);
+    const anoBase = ctx.proj[0] ?? ctx.ultimoHist;
+    for (const b of botoesDoModelo(ctx)) {
+      if (!gPrem.tem(b.chave)) continue;
+      const origem = grades.get(b.aba);
+      // `#prazo` é por TRANCHE: o cockpit aponta para a primeira e diz quantas são,
+      // porque uma linha por tranche transformaria o painel na própria aba de dívida.
+      const alvo = b.alvo === "#prazo"
+        ? origem?.chaves().find((k) => k.endsWith("#prazo"))
+        : b.alvo;
+      const nTranches = b.alvo === "#prazo"
+        ? (origem?.chaves().filter((k) => k.endsWith("#prazo")).length ?? 0)
+        : 0;
+      const rotuloCel = gPrem.ws.getRow(gPrem.n(b.chave)).getCell(COL_ROTULO);
+      if (!origem || !alvo || !origem.tem(alvo)) {
+        // AUSÊNCIA DECLARADA, nunca linha em branco: "não se aplica" é informação
+        // (o caso não tem tranche de dívida, não tem premissa de crescimento), e
+        // célula vazia é indistinguível de defeito do gerador.
+        gPrem.ws.getRow(gPrem.n(b.chave)).getCell(COL_NOTA).value = "não se aplica";
+        rotuloCel.note = comoNota(
+          `${b.rotulo} — este caso não tem essa alavanca: ${b.efeito}. A linha fica visível de `
+          + "propósito, para a ausência ser lida como ausência e não como esquecimento.",
+        );
+        continue;
+      }
+      const linhaAlvo = origem.n(alvo);
+      const col = b.naNota ? colLetra(COL_NOTA) : origem.letraDoAno(anoBase);
+      gPrem.ws.getRow(gPrem.n(b.chave)).getCell(COL_NOTA).value =
+        `${b.aba}!${col}${linhaAlvo}${nTranches > 1 ? ` (+${nTranches - 1})` : ""}`;
+      rotuloCel.note = comoNota(
+        `${b.efeito}.\n\nEdite em ${b.aba}, célula ${col}${linhaAlvo}`
+        + (nTranches > 1 ? ` — e nas outras ${nTranches - 1} tranches, uma célula cada.` : ".")
+        + "\n\nO valor mostrado aqui é REFERÊNCIA à célula de origem: muda junto, não é cópia.",
+      );
+      // O valor: a série inteira quando a premissa é por ano, e a célula única
+      // quando é um dropdown (que não tem série).
+      if (b.naNota) {
+        // Referência ABSOLUTA e sem formato numérico: a célula do dropdown guarda
+        // TEXTO ("IPCA", "(nenhum)"), e um `0,00%` em cima de texto mostraria a
+        // premissa como se fosse um número.
+        gPrem.set(b.chave, anoBase, `='${b.aba.replace(/'/g, "''")}'!$${col}$${linhaAlvo}`, {});
+      } else {
+        for (const ano of ctx.anos) {
+          if (!origem.anos.includes(ano)) continue;
+          // SÓ ESPELHA CÉLULA QUE EXISTE. Referência a célula vazia mostra ZERO no
+          // Excel, e zero numa linha de prazo ou de spread é uma afirmação — "o prazo
+          // é zero" — quando o fato é "esta premissa não vale para o exercício
+          // realizado". O mesmo princípio do item de conteúdo do auditor.
+          if (origem.ws.getRow(linhaAlvo).getCell(origem.colDoAno(ano)).value == null) continue;
+          gPrem.set(b.chave, ano,
+            `=${Grade.refExterna(b.aba, origem.letraDoAno(ano), linhaAlvo)}`, { fmt: b.fmt });
+        }
+      }
+    }
   }
 
   // ---- Ordem das abas ------------------------------------------------------

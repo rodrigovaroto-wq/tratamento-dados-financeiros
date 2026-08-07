@@ -315,12 +315,29 @@ export default async function ModelagemPage({
             Escolha as premissas deste mandato e diga onde cada uma entra na projeção.
           </p>
         </div>
-        <a
-          href={`/casos/${id}/export`}
-          className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-        >
-          Exportar completo ↓
-        </a>
+        {/* OS DOIS EXPORTS, LADO A LADO (decisão do dono, 07/08/2026). Eram um só,
+            e o "completo" trazia as 12 abas de dado cru junto com o modelo — 29
+            abas para quem só queria o que vai a comitê. Agora são dois arquivos
+            com dois propósitos, e o nome de cada botão diz qual é o seu:
+            "modelagem" entrega as 14 abas do modelo; "dados financeiros" entrega
+            a conferência da ingestão, linha a linha. O de dados vem primeiro por
+            ser o que se usa ANTES de modelar. */}
+        <div className="flex shrink-0 items-center gap-2">
+          <a
+            href={`/casos/${id}/export?modo=dados`}
+            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            title="As abas de dado, linha a linha, como saíram da extração. Serve para conferir contra os documentos — não projeta nada."
+          >
+            Exportar dados financeiros ↓
+          </a>
+          <a
+            href={`/casos/${id}/export`}
+            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
+            title="As 14 abas do modelo institucional, projetadas e editáveis dentro do Excel, mais a Modelagem e os índices macro. Sem as abas de dado cru."
+          >
+            Exportar modelagem ↓
+          </a>
+        </div>
       </div>
 
       {/* CONSULTA QUE FALHOU aparece ANTES de tudo, e nomeada. Enquanto isto não
@@ -382,8 +399,8 @@ export default async function ModelagemPage({
         >
           <p className={`font-medium ${conf.pronto ? "text-emerald-900" : "text-amber-900"}`}>
             {conf.pronto
-              ? "Pronto para o export completo"
-              : "Ainda falta algo para o export completo"}
+              ? "Pronto para o export de modelagem"
+              : "Ainda falta algo para o export de modelagem"}
           </p>
           <ul className="mt-1 space-y-0.5 text-neutral-700">
             <li>
