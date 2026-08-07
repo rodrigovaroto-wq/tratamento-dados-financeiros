@@ -346,12 +346,28 @@ de cada célula em nota, contra 90 séries coladas de uma consultoria em 2011.
 1. ✅ **FEITO (Fase C)** — `Output`: espelhos de balanço e fluxo abertos conta a conta. Cada linha de
    detalhe é REFERÊNCIA à aba de origem, não soma nova: espelho e origem não podem divergir, e um
    assert (`0107c`) confere que o número do espelho é o mesmo da origem.
-2. **FICA** — `ST Inv. & Debt`: tranche em moeda estrangeira e `CAPEX FINANCING`. A tranche em moeda
-   exige um dado que o Kit Básico não coleta hoje (a MOEDA do contrato, por tranche): o câmbio está
-   publicado, mas aplicá-lo a uma tranche sem saber se ela é em dólar seria converter dívida em real
-   por engano — erro de ~5×, da mesma família do que a `0035` corrigiu. O `CAPEX FINANCING` é uma
-   premissa de plano (% do capex financiado por dívida nova) e entra junto com a decisão do dono
-   sobre o cronograma de amortização, que ainda está pendente.
+2. **FICA** — `ST Inv. & Debt`, tranche em **moeda estrangeira**. Exige um dado que o Kit Básico não
+   coleta hoje (a MOEDA do contrato, por tranche): o câmbio está publicado, mas aplicá-lo a uma
+   tranche sem saber se ela é em dólar seria converter dívida em real por engano — erro de ~5×, da
+   mesma família do que a `0035` corrigiu.
+2b. ✅ **DECIDIDO PELO DONO (07/08/2026) — `CAPEX FINANCING` NÃO ENTRA.** O capex é pago com o caixa
+   gerado (0% financiado por dívida nova). Não é omissão: é a hipótese que **deixa o rombo
+   aparecer**. Modelar captação que ninguém contratou fecha o caixa no papel e esconde exatamente a
+   necessidade de recurso que um mandato de reestruturação existe para dimensionar. Se faltar caixa,
+   o revolver saca e o `DSCR` do bloco de covenants acusa — que é a informação útil.
+2c. ✅ **DECIDIDO PELO DONO (07/08/2026) — AMORTIZAÇÃO LINEAR (SAC) ATÉ O VENCIMENTO**, quando o
+   documento não traz cronograma. Implementado com o **prazo implícito no próprio balanço**: sob
+   amortização linear em `n` anos a parcela de 12 meses é `1/n` do saldo, logo `n = 1 ÷ fração da
+   dívida bancária no circulante`, medida no último exercício realizado. Vira célula azul editável
+   por tranche (uma só, na primeira coluna projetada; os anos seguintes a referenciam), e o `%` do
+   período passa a ser fórmula `1/(prazo − anos decorridos)` — principal constante, tranche zerada no
+   vencimento. Asserts `0109a`–`0109c`, incluindo o de edição dentro do Excel.
+
+   O que isso corrigiu: o `%` era **ZERO fixo**, documentado como "dívida rolada integralmente, a
+   hipótese conservadora". Ela não é conservadora — dívida que nunca amortiza não consome caixa
+   nenhum no horizonte, o fluxo projetado sai melhor do que a empresa vai viver, e o `DSCR` mede um
+   serviço de dívida feito só de juros. Religando o zero, três asserts reprovam com o número exato de
+   antes (os 50.000 da fixture inteiros em 2028).
 3. ✅ **FEITO (Fase C)** — o `CHECK` do balanço publicado no topo das quatro abas de driver, com
    formatação condicional. É onde a premissa é mexida, e portanto onde "o balanço abriu" tem de
    aparecer. Assert `0107b` — e ele exige que a célula seja FÓRMULA apontando para o `Balance Sheet`,
@@ -369,9 +385,12 @@ de cada célula em nota, contra 90 séries coladas de uma consultoria em 2011.
 **Cosmético:** contador invisível da coluna A (`P20`), ordem dos grupos do balanço, os três blocos
 de cenário literais em vez de `CHOOSE` com duas linhas.
 
-**Decisão do dono:** os cortes de covenant (`3,0x`, `1,2x`, `1,0x`) são patamares usuais de term
-sheet, não dados do caso — entram como célula azul editável. Se houver contrato, o número certo é o
-dele.
+**Decisão do dono, tomada em 07/08/2026 — covenants nos patamares usuais de term sheet.** Dívida
+Líquida/EBITDA ≤ **3,0x**, DSCR ≥ **1,2x**, liquidez corrente ≥ **1,0x**. Já é o que o `Output`
+publica: cada índice com o corte ao lado em **célula azul editável**, um teste por ano que responde
+`ROMPE`/`ok` com formatação condicional, e a linha de corte tracejada nos gráficos. São patamares de
+mercado, não dados do caso — se houver contrato, o número certo é o dele, e a célula existe
+exatamente para isso (a fórmula do teste lê a célula, nunca o número).
 
 ---
 

@@ -4878,6 +4878,82 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       naoAcusados.join(" · "));
   }
 
+  // ---- (0109) A DÍVIDA EXISTENTE AMORTIZA — SAC, COM O PRAZO DO BALANÇO ----
+  //
+  // Decisão do dono (07/08/2026): quando o documento não traz cronograma, a tranche
+  // amortiza LINEARMENTE (SAC) até o vencimento. Antes o `%` era ZERO fixo, com a
+  // nota "dívida rolada integralmente, que é a hipótese conservadora" — e ela NÃO é
+  // conservadora: dívida que nunca amortiza não consome caixa nenhum no horizonte, o
+  // fluxo projetado sai melhor do que a empresa vai viver, e o `DSCR` do bloco de
+  // covenants mede um serviço de dívida que é só juros.
+  //
+  // O prazo não é inventado: sob amortização linear em `n` anos, a parcela que vence
+  // em 12 meses é `1/n` do saldo, então `n = 1 ÷ fração no circulante`, medida no
+  // balanço do último exercício realizado. Nesta fixture a dívida bancária é 15.000
+  // no circulante contra 50.000 no total → 30% → **3,3 anos**.
+  {
+    const div = wbMod.getWorksheet("ST Inv. & Debt")!;
+    const rPrazo = linhaDoRotulo("ST Inv. & Debt", "prazo de amortização (anos)");
+    const rPct = linhaDoRotulo("ST Inv. & Debt", "% amortizado no período (SAC)");
+    const rIni = linhaDoRotulo("ST Inv. & Debt",
+      "Banco Alfa - Capital de giro - Saldo devedor — saldo de abertura");
+    const rAmort = linhaDoRotulo("ST Inv. & Debt", "amortização do período");
+    const rFim = linhaDoRotulo("ST Inv. & Debt", "saldo de fechamento");
+    checar(rPrazo !== null && rPct !== null && rIni !== null && rAmort !== null && rFim !== null,
+      "(0109a) a tranche tem linha de PRAZO, de % (SAC), de amortização e de saldo",
+      `prazo ${rPrazo} · pct ${rPct} · ini ${rIni} · amort ${rAmort} · fim ${rFim}`);
+
+    if (rPrazo !== null && rPct !== null && rIni !== null && rAmort !== null && rFim !== null) {
+      // O prazo é PREMISSA EDITÁVEL, e só na primeira coluna projetada: os anos
+      // seguintes apontam para ela, senão editar dentro do Excel exigiria mexer em
+      // cinco células para reprojetar uma tranche.
+      const celPrazo = div.getRow(rPrazo).getCell(COLS_ANO[iAnoDe(2026)]);
+      const prazo = avaliarCelula(div, COLS_ANO[iAnoDe(2026)], rPrazo);
+      checar(typeof prazo === "number" && Math.abs(prazo - 3.3) < 0.001,
+        "(0109a) …e o prazo é o IMPLÍCITO NO BALANÇO (15.000 de 50.000 no circulante → 30% → 3,3 anos), não um número cravado",
+        `prazo ${JSON.stringify(prazo)}`);
+      checar(typeof celPrazo.value === "number" && celPrazo.fill !== undefined,
+        "(0109a) …e a célula do prazo é ENTRADA (número editável, pintada), não fórmula",
+        `valor ${JSON.stringify(celPrazo.value)} · fill ${celPrazo.fill ? "sim" : "NÃO"}`);
+      const seguintes = [2027, 2028].map((a) => {
+        const c = div.getRow(rPrazo).getCell(COLS_ANO[iAnoDe(a)]).value as { formula?: string } | null;
+        return c && typeof c === "object" && "formula" in c ? c.formula ?? "" : "";
+      });
+      checar(seguintes.every((f) => /\$[A-Z]+\$\d+/.test(f)),
+        "(0109a) …e os anos seguintes REFERENCIAM essa célula — uma edição reprojeta a tranche inteira",
+        seguintes.join(" · "));
+
+      // SAC de verdade: PRINCIPAL CONSTANTE. É o que distingue SAC de "um percentual
+      // fixo do saldo", que decai geometricamente e nunca zera a dívida.
+      const amorts = [2026, 2027, 2028].map((a) => avaliarCelula(div, COLS_ANO[iAnoDe(a)], rAmort));
+      const esperado = 50000 / 3.3;
+      const fora = amorts.filter((v) => typeof v !== "number" || Math.abs(v - esperado) > 0.01);
+      checar(fora.length === 0,
+        `(0109b) a amortização é LINEAR — principal constante de ${esperado.toFixed(2)} nos três exercícios projetados`,
+        amorts.map((v) => (typeof v === "number" ? v.toFixed(2) : JSON.stringify(v))).join(" · "));
+
+      // E o saldo cai por causa dela. Este é o assert que reprova se o `%` voltar a
+      // ser zero: com a dívida rolada, o fechamento de 2028 seria os mesmos 50.000.
+      const fim2028 = avaliarCelula(div, COLS_ANO[iAnoDe(2028)], rFim);
+      const esperadoFim = 50000 - 3 * esperado;
+      checar(typeof fim2028 === "number" && Math.abs(fim2028 - esperadoFim) < 0.02,
+        "(0109b) …e o saldo CAI por causa dela — 50.000 rolados integralmente até 2028 era o defeito",
+        `fim de 2028 ${JSON.stringify(fim2028)} · esperado ${esperadoFim.toFixed(2)}`);
+
+      // EDITAR O PRAZO REPROJETA, DENTRO DO EXCEL. É a mesma promessa do painel de
+      // premissas, agora na dívida: trocar 3,3 por 2 tem de dobrar a parcela.
+      const original = celPrazo.value;
+      celPrazo.value = 2;
+      esquecerMemoria(div);
+      const amortEditado = avaliarCelula(div, COLS_ANO[iAnoDe(2026)], rAmort);
+      checar(typeof amortEditado === "number" && Math.abs(amortEditado - 25000) < 0.01,
+        "(0109c) trocar o prazo para 2 anos dentro do Excel reprojeta a tranche (parcela vai a 25.000)",
+        JSON.stringify(amortEditado));
+      celPrazo.value = original as ExcelJS.CellValue;
+      esquecerMemoria(div);
+    }
+  }
+
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
   //
   // Quando a extração não classifica as linhas de resultado (`secao_canonica`

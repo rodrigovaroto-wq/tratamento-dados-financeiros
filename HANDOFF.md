@@ -83,10 +83,15 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 > diff — o risco clássico de mergear sem CI (espelho dos nós Code divergindo da `lib/`) não existia
 > nessa rodada. O único passo que a execução local não reproduz é o `npm ci` em ambiente limpo.
 
-> **O cabeçalho voltou a ser mantido.** Ele passou 17 PRs congelado em "PR #70, migrations até
-> `0034`" porque o `CLAUDE.md` proibia editá-lo — e a parte escrita para quem chega sem contexto
-> virou a mais velha do documento. A regra mudou na sessão 35: **atualizar o cabeçalho ao fechar a
-> rodada é obrigação**; o que continua intocável é a seção de sessão passada.
+> **O `CLAUDE.md` FOI REMOVIDO DO REPOSITÓRIO EM 07/08/2026** (commit `9fc1031`), por decisão do
+> dono. As seções antigas deste documento continuam citando-o — são história e não se reescrevem.
+> O que valia a pena preservar do que ele dizia está aqui no cabeçalho: os comandos das suítes, as
+> faixas de migration, e a prática de religar o defeito antes de dizer que um teste o cobre.
+>
+> **O cabeçalho é mantido em dia.** Ele já passou 17 PRs congelado em "PR #70, migrations até
+> `0034`" — a parte escrita para quem chega sem contexto virou a mais velha do documento, e mandava
+> a pessoa começar errado. **Atualizar o cabeçalho ao fechar a rodada é obrigação**; o que não se
+> toca é a seção de sessão passada.
 
 ### Migrations — 50 arquivos, nesta ordem
 
@@ -98,8 +103,8 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 | `0101_modelagem_dentro_do_tempo` | conferência em uma passada (era 5, duas por vínculo): 9,3 s → 100 ms | ✅ |
 | `0102_modelagem_versao_vigente` | a Modelagem lê só a versão VIGENTE de cada documento | ✅ |
 | `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
-| `0104_desativar_premissa` | remover premissa **e** os vínculos que ela dirigia, devolvendo quantos desfez | ⚠️ **aplicar** — sem ela o botão "Remover" da tela erra |
-| `0105_reconciliar_duplicidade_de_rotulo` | a conta que aparece duas vezes com o mesmo valor vira **achado** da reconciliação, sem apagar nada | ⚠️ **aplicar** — até aplicar, o par duplicado do v35 não abre pendência |
+| `0104_desativar_premissa` | remover premissa **e** os vínculos que ela dirigia, devolvendo quantos desfez | ✅ aplicada (07/08/2026) |
+| `0105_reconciliar_duplicidade_de_rotulo` | a conta que aparece duas vezes com o mesmo valor vira **achado** da reconciliação, sem apagar nada | ✅ aplicada (07/08/2026) |
 
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
@@ -122,22 +127,22 @@ o ARQUIVO — a lacuna por onde o v35 errado passou com o CI verde.
 > **A fixture do `(0105)` era mais fácil que a produção** (custo positivo, uma conta por grupo, um
 > exercício, nenhum total informado) e por isso os 15 asserts passavam verdes com o arquivo errado.
 
-**AS QUATRO SUÍTES, COM OS COMANDOS QUE DE FATO FUNCIONAM** (os do `CLAUDE.md` têm duas pegadinhas,
-anotadas abaixo — use estes):
+**AS QUATRO SUÍTES, COM OS COMANDOS QUE DE FATO FUNCIONAM** (duas pegadinhas anotadas abaixo — use
+estes):
 
 ```bash
 # insumo: o book sintético (gera pdf/ + GABARITO.json, não versionados)
 cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
 node --test 'n8n/test/*.test.mjs'                                     # 176
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 478
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 485
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
 ```
 
-> Pegadinha 1: **`E2E_PSQL` é o COMANDO do psql, não um flag.** O `CLAUDE.md` documenta `E2E_PSQL=1`
-> e com isso o arnês tenta executar um binário chamado `1`. Passe `E2E_PSQL="psql"`.
+> Pegadinha 1: **`E2E_PSQL` é o COMANDO do psql, não um flag.** Com `E2E_PSQL=1` — como o antigo
+> `CLAUDE.md` documentava — o arnês tenta executar um binário chamado `1`. Passe `E2E_PSQL="psql"`.
 >
 > Pegadinha 2: o `run.sh` conecta como o usuário do sistema (`root` no contêiner), que **não existe**
 > no Postgres local — daí `PGUSER=postgres`. Ajuste `PGHOST` ao seu socket/porta.
@@ -159,18 +164,25 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 
 ## O QUE ESTÁ ABERTO AGORA
 
-**1. Ações do dono** (nenhuma é do colaborador — ver `CLAUDE.md`):
+**1. Ações do dono:**
 
-- **aplicar a `0104` e a `0105`** no Supabase, nesta ordem;
+- ~~aplicar a `0104` e a `0105`~~ — **feitas em 07/08/2026**, as duas no Supabase;
+- ~~decidir as premissas do motor~~ — **decididas em 07/08/2026**, ver o quadro abaixo;
 - **exportar o v35 e rodar o aceite**: `auditar-xlsx.mts` + os 10 itens do `docs/ACEITE.md`. É a
-  primeira vez que existe conferência do arquivo ANTES de ele ir a comitê;
-- **decidir as premissas que travam as duas últimas linhas do motor**: cortes de covenant (`3,0x`,
-  `1,2x`, `1,0x` são patamares usuais de term sheet, não dados do caso) e o cronograma de
-  amortização por tranche; se o `CAPEX FINANCING` entra e com que regra. Chutar premissa é mentir
-  com número — por isso essas linhas ficam fora até a decisão;
-- **deixar "Require approvals" em 0** — é isso, e não o CI, que trava a rodada: o GitHub não deixa
-  aprovar o próprio PR. O CI voltou ao normal (push, PR e disparo manual), então **`suítes` pode
-  voltar a ser check obrigatório** do `main` — agora ele aparece e roda sozinho no PR.
+  primeira vez que existe conferência do arquivo ANTES de ele ir a comitê — e agora ele sai com a
+  dívida amortizando, o que muda o fluxo projetado de todo caso;
+- **proteção do `main`**: "Require approvals" em **0** (é isso, e não o CI, que trava a rodada — o
+  GitHub não deixa aprovar o próprio PR) e `suítes` de volta como check obrigatório, já que o CI
+  voltou ao normal nas três frentes. Em 07/08 as rules foram REMOVIDAS por inteiro: hoje nada
+  impede mergear vermelho nem empurrar direto no `main`.
+
+### As três decisões de premissa (07/08/2026)
+
+| Decisão | O que ficou valendo | Onde está |
+|---|---|---|
+| **Covenants** | patamares usuais de term sheet: ND/EBITDA ≤ **3,0x**, DSCR ≥ **1,2x**, liquidez corrente ≥ **1,0x** | já existia — célula azul editável ao lado de cada índice no `Output`, teste `ROMPE`/`ok` por ano e corte tracejado nos gráficos |
+| **Amortização** | **linear (SAC) até o vencimento** quando o documento não traz cronograma | implementado nesta rodada, com o **prazo implícito no balanço** (`n = 1 ÷ fração no circulante`) como célula editável por tranche — asserts `0109a`–`0109c` |
+| **CAPEX FINANCING** | **não entra** (0% financiado por dívida nova) | ausência deliberada, registrada no §5 do `CONFORMIDADE.md`: é a hipótese que deixa o rombo aparecer em vez de fechar o caixa no papel |
 
 **2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
 `docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
@@ -178,7 +190,7 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 | Fica | Por quê |
 |---|---|
 | tranche em **moeda estrangeira** (`ST Inv. & Debt`) | exige a MOEDA por contrato, que o Kit Básico não coleta. Aplicar câmbio sem saber se a tranche é em dólar erra por ~5× — mesma família do que a `0035` corrigiu |
-| `CAPEX FINANCING` | é premissa de plano, entra com a decisão do dono acima |
+| `CAPEX FINANCING` | **decidido: não entra** (0%). Não é pendência, é escolha — ver o quadro acima |
 | espelhos do `Goodwill` | só valem com ágio de verdade; hoje a aba trabalha com saldo zero e espelho de zero é ruído |
 | **vida útil por classe** (`Fixed Assets`) | depende de laudo que o Kit Básico não traz. O que existe é a taxa implícita medida no próprio caso |
 
@@ -215,6 +227,46 @@ dá para aprovar).
 push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 40e (2026-08-07) — as três premissas decididas, e a dívida passou a amortizar
+
+O dono aplicou a `0104` e a `0105` no Supabase e decidiu as três premissas que estavam travando as
+últimas linhas do motor. Duas viraram código, uma virou ausência documentada.
+
+**A que mudou número: AMORTIZAÇÃO LINEAR (SAC).** O `%` amortizado de cada tranche era **ZERO fixo**,
+com a nota "dívida rolada integralmente, que é a hipótese conservadora". **Ela não é conservadora** —
+dívida que nunca amortiza não consome caixa nenhum no horizonte, o fluxo projetado sai melhor do que
+a empresa vai viver, e o `DSCR` do bloco de covenants mede um serviço de dívida feito só de juros.
+Numa reestruturação, isso é errar exatamente a pergunta que o mandato existe para responder.
+
+**O prazo não foi inventado — estava no balanço.** Sob amortização linear em `n` anos, a parcela que
+vence em 12 meses é `1/n` do saldo; logo `n = 1 ÷ fração da dívida bancária no circulante`, medida no
+último exercício realizado do próprio caso. Uma dívida 40% circulante amortiza em 2,5 anos, e quem
+disse isso foi a demonstração. Na fixture: 15.000 de 50.000 no circulante → 30% → **3,3 anos**; na
+cadeia do book, **1,2 anos** (o book é 83% circulante). Teto de 10 anos porque dívida 100% de longo
+prazo daria `n → ∞`, que é a dívida que nunca é paga — o defeito que a mudança veio corrigir; piso de
+1 ano porque prazo fracionário geraria amortização acima de 100% do saldo (o `MIN(1;…)` da fórmula é
+o mesmo cinto).
+
+O prazo é **célula azul editável, uma por tranche**, na primeira coluna projetada; os anos seguintes
+a referenciam com `$`. Uma edição reprojeta a tranche inteira dentro do Excel — é a mesma promessa do
+painel de premissas, agora na dívida, e tem assert que prova (trocar 3,3 por 2 leva a parcela a
+25.000). O `%` virou fórmula `1/(prazo − anos decorridos)`: **principal constante**, que é o que
+separa SAC de "percentual fixo do saldo" — este decai geometricamente e nunca zera a dívida.
+
+**Prova pelos dois lados:** os sete asserts novos (`0109a`–`0109c`) passam, e **religando o zero, três
+deles reprovam com o número exato de antes** — os 50.000 da fixture inteiros em 2028. O balanço
+continua fechando em todos os exercícios, inclusive no e2e contra a cadeia real, que é o que importa:
+a amortização consome caixa e o revolver cobre o furo, então o rombo aparece em vez de sumir.
+
+**As outras duas.** *Covenants*: patamares usuais de term sheet (ND/EBITDA ≤ 3,0x, DSCR ≥ 1,2x,
+liquidez ≥ 1,0x) — **já era exatamente o que o `Output` publicava**, com célula azul por corte, teste
+`ROMPE`/`ok` por ano e a linha tracejada nos gráficos; conferido antes de tocar em qualquer coisa, e
+nada foi mexido. *CAPEX FINANCING*: **não entra** (0% financiado por dívida nova). É ausência
+deliberada — modelar captação que ninguém contratou fecha o caixa no papel e esconde a necessidade de
+recurso que se quer dimensionar.
+
+`verificar-export.mts`: 478 → **485**.
 
 ## Sessão 40d (2026-08-06) — Fase D: a auditoria do arquivo entregue virou comando
 

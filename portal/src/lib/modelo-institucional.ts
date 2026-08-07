@@ -2182,7 +2182,29 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       .reduce((acc, l) => acc + Math.abs(valorNaEscala(l, ano, ctx.ent.unidade)?.valor ?? 0), 0);
   const saldoCP = somaBancaria("passivo_circulante", ctx.ultimoHist);
   const saldoLP = somaBancaria("passivo_nao_circulante", ctx.ultimoHist);
-  const fracCP = saldoCP + saldoLP > 0 ? saldoCP / (saldoCP + saldoLP) : 0.3;
+  const fracCPMedida = saldoCP + saldoLP > 0;
+  const fracCP = fracCPMedida ? saldoCP / (saldoCP + saldoLP) : 0.3;
+
+  // PRAZO DE AMORTIZAÇÃO IMPLÍCITO NO PRÓPRIO BALANÇO.
+  //
+  // A decisão do dono (07/08/2026) é amortizar LINEARMENTE (SAC) até o vencimento
+  // quando o documento não traz cronograma — e o documento quase nunca traz. Falta
+  // então o prazo, e a saída fácil seria cravar um número: é exatamente o tipo de
+  // premissa inventada que este repositório já pagou caro para não ter.
+  //
+  // Só que o prazo NÃO precisa ser inventado: a repartição curto/longo prazo do
+  // balanço já É uma declaração de vencimento. Sob amortização linear em `n` anos, a
+  // parcela que vence nos próximos 12 meses é `1/n` do saldo — logo `n = 1 ÷ fração
+  // no circulante`, medido no último exercício realizado do próprio caso. Uma dívida
+  // 40% circulante amortiza em 2,5 anos, e quem disse isso foi a demonstração.
+  //
+  // O limite superior de 10 anos existe porque dívida 100% de longo prazo levaria
+  // `n → ∞` (fração zero), e um prazo infinito é dívida que nunca é paga — o defeito
+  // que esta mudança veio corrigir. O inferior de 1 ano impede prazo fracionário
+  // gerar amortização acima de 100% do saldo.
+  const prazoImplicito = fracCP > 0
+    ? Math.min(10, Math.max(1, Math.round((1 / fracCP) * 10) / 10))
+    : 10;
 
   // A DÍVIDA DO BALANÇO, POR EXERCÍCIO REALIZADO — a origem de segunda instância.
   //
@@ -2262,7 +2284,8 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   for (const l of dividas) {
     const ch = chaveLinha("dv", l);
     g.linha(`${ch}#ini`, { rotulo: `${l.chave} — saldo de abertura`, fmt: NUM });
-    g.linha(`${ch}#pct`, { rotulo: "    % amortizado no período (premissa)", fmt: PCT });
+    g.linha(`${ch}#prazo`, { rotulo: "    prazo de amortização (anos)", fmt: NUM2 });
+    g.linha(`${ch}#pct`, { rotulo: "    % amortizado no período (SAC)", fmt: PCT });
     g.linha(`${ch}#amort`, { rotulo: "    amortização do período", fmt: NUM });
     g.linha(`${ch}#fim`, { rotulo: "    saldo de fechamento", fmt: NUM });
     g.linha(`${ch}#taxa`, { rotulo: "    custo efetivo aplicado", fmt: PCT2 });
@@ -2452,10 +2475,46 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
         continue;
       }
       g.set(`${ch}#ini`, ano, `=${g.ref(`${ch}#fim`, ant!)}`, { fmt: NUM });
-      g.set(`${ch}#pct`, ano, 0, {
-        fmt: PCT, fill: FILL_INPUT,
-        nota: "Percentual do saldo amortizado no período. ZERO = dívida rolada integralmente, "
-          + "que é a hipótese conservadora e explícita. O cronograma real entra aqui.",
+      // `iProj` = 0 no PRIMEIRO exercício projetado. O prazo é uma premissa só, na
+      // primeira coluna projetada; os anos seguintes apontam para ela, então UMA
+      // edição reprojeta a tranche inteira dentro do Excel.
+      const iProj = g.anos.indexOf(ano) - g.nHist;
+      const refPrazoBase = g.ref(`${ch}#prazo`, g.anos[g.nHist], "$");
+      g.set(`${ch}#prazo`, ano, iProj === 0 ? prazoImplicito : `=${refPrazoBase}`, {
+        fmt: NUM2, fill: iProj === 0 ? FILL_INPUT : undefined,
+        nota: iProj === 0
+          ? `Prazo de amortização desta tranche, em anos: ${prazoImplicito}. NÃO é número `
+            + (fracCPMedida
+              ? `inventado — é o prazo IMPLÍCITO no balanço de ${ctx.ultimoHist}: `
+                + `${(fracCP * 100).toFixed(1)}% da dívida bancária está no circulante, e sob `
+                + "amortização linear a parcela de 12 meses é 1/n do saldo, logo n = 1 ÷ 0,"
+                + `${(fracCP * 100).toFixed(0)} = ${prazoImplicito} anos. Quem declarou o prazo foi a `
+                + "demonstração. Se o contrato disser outra coisa, troque AQUI: a linha de % abaixo "
+                + "e todos os exercícios seguintes se refazem sozinhos."
+              : "inventado por falta de opção melhor: este caso não tem dívida bancária repartida "
+                + "entre circulante e não circulante no último exercício, então o prazo implícito "
+                + "não pôde ser medido e vale o teto de 10 anos. Troque AQUI pelo prazo do contrato.")
+          : "Mesmo prazo da primeira coluna projetada (referência fixa). Edite a célula azul de lá, "
+            + "não esta.",
+      });
+      // AMORTIZAÇÃO LINEAR (SAC), decisão do dono de 07/08/2026. A parcela é
+      // constante: 1/n do saldo no primeiro ano, 1/(n−1) do que sobrou no segundo, e
+      // assim por diante — o que dá SEMPRE o mesmo principal, e zera a tranche
+      // exatamente no vencimento. Antes esta célula era ZERO fixo ("dívida rolada
+      // integralmente"), que parece conservador e não é: dívida que nunca amortiza
+      // não consome caixa nenhum no horizonte, e o fluxo projetado saía melhor do que
+      // a empresa vai viver.
+      //
+      // O `MIN(1;…)` é o cinto de segurança do prazo fracionário: com n = 0,5 a conta
+      // daria 200% do saldo, e uma tranche amortizaria mais do que deve.
+      g.set(`${ch}#pct`, ano,
+        `=IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj})))`, {
+        fmt: PCT,
+        nota: "Amortização LINEAR (SAC) até o vencimento: 1 ÷ (prazo − anos já decorridos). "
+          + "Dá parcela de principal constante e zera a tranche no vencimento. Depois do "
+          + "vencimento a célula devolve zero — não existe amortização negativa. Para um "
+          + "cronograma irregular (carência, balão), digite o percentual do ano por cima desta "
+          + "fórmula: o saldo e os juros seguem a célula.",
       });
       g.set(`${ch}#amort`, ano, `=${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#pct`, ano)}`, { fmt: NUM });
       g.set(`${ch}#fim`, ano, `=${g.ref(`${ch}#ini`, ano)}-${g.ref(`${ch}#amort`, ano)}`, { fmt: NUM });
