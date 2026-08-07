@@ -132,6 +132,21 @@ jobs:
           python3 -m pip install --quiet reportlab
           PYTHONPATH=. python3 gerar.py
 
+      # ---- o book difícil: 38 documentos, 3 exercícios, e o custo do lote ----
+      - name: Gerar o book-canastra
+        # O gerador é o próprio teste do book: ele fecha o balanço das 6 empresas
+        # nos 3 exercícios e confere cada anexo contra a conta do balanço que ele
+        # detalha, por `assert`. Se um número deixar de bater, ele MORRE aqui —
+        # antes de qualquer coisa rodar sobre um insumo mentiroso.
+        working-directory: test-data/book-canastra
+        run: PYTHONPATH=. python3 gerar.py
+
+      - name: Custo do lote (medido no artefato, sem chamar a OpenAI)
+        # Reprova quando um documento custa mais que a estimativa por chamada que
+        # sustenta o teto de US$ 3 — que foi como se descobriu que o livro razão
+        # custava US$ 0,1725 contra os US$ 0,15 então declarados.
+        run: node n8n/medir-custo-book.mjs
+
       - name: Suíte de export (invariantes do arquivo entregue)
         # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
         # foi medido na primeira execução do CI: mesmo com o .bin do portal no

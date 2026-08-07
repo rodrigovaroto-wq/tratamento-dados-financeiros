@@ -4,9 +4,9 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-07 (sessão 40h). **Estado do `main`:** mergeado até o **PR #110**
-(`main` em `d539464`); a rodada dos tributos está na branch. Branch de trabalho:
-**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de cada merge.
+**Última atualização:** 2026-08-07 (sessão 41). **Estado do `main`:** mergeado até o **PR #111**
+(`main` em `13a7a11`). Branch de trabalho: **`claude/robust-testing-real-data-et1jlu`**, reiniciada
+do `main` depois de cada merge.
 
 **O PRODUTO, EM UMA LINHA:** o portal entrega **dois arquivos** — *dados financeiros* (a conferência
 da ingestão, linha a linha) e *modelagem* (as 14 abas do modelo institucional, projetadas e editáveis
@@ -152,10 +152,12 @@ o ARQUIVO — a lacuna por onde o v35 errado passou com o CI verde.
 estes):
 
 ```bash
-# insumo: o book sintético (gera pdf/ + GABARITO.json, não versionados)
+# insumo: os DOIS books sintéticos (geram pdf/ + GABARITO.json, não versionados)
 cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
+cd test-data/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 38 docs, 3 exercícios
+node n8n/medir-custo-book.mjs                                          # o custo do lote, sem gastar
 
-node --test 'n8n/test/*.test.mjs'                                     # 176
+node --test 'n8n/test/*.test.mjs'                                     # 180
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 506
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
@@ -173,7 +175,9 @@ PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
 
 Os números ao lado de cada comando são **contadores, não enfeite**: se um deles **cair**, alguém
 apagou cobertura. O CI roda os quatro mais os três geradores (com `git diff --exit-code -- n8n/`),
-`tsc`, `eslint` e `next build` — nove passos.
+os **dois books** (o gerador de cada um é o teste dele — morre por `assert` se um número deixar de
+fechar), a **medição de custo do lote** (`medir-custo-book.mjs`, que reprova quando um documento passa
+da estimativa que sustenta o teto), `tsc`, `eslint` e `next build`.
 
 **O TIMEOUT DA MODELAGEM ESTÁ RESOLVIDO** (detalhe na sessão 36): medido pelo
 `pg_stat_statements` da própria produção, com o contador zerado, `fn_linhas_para_modelagem` = **501
@@ -248,6 +252,108 @@ dá para aprovar).
 push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 41 (2026-08-07) — o segundo book, e a primeira medição de custo por documento
+
+O dono pediu **um teste mais robusto**: dados mais bagunçados, mais variáveis, mais completo,
+simulando uma empresa real com tudo o que ela tem, e com **três anos de histórico (2023, 2024,
+2025)**. Saiu `test-data/book-canastra`: **38 documentos, 6 empresas, 3 exercícios**.
+
+**Por que um SEGUNDO book e não estender o primeiro.** O `book-vertentes` é insumo do
+`verificar-export`, do `db/test` e do e2e, e o contrato dele é "extração fiel, nenhuma pendência".
+Mexer nele para caber um terceiro exercício mudaria o gabarito de 877 asserts que hoje estão verdes,
+por uma razão que não é defeito de nenhum deles. O segundo book é aditivo: o primeiro segue provando
+o caminho feliz, o novo existe para ser difícil.
+
+**O que ele tem que o primeiro não tinha:**
+
+| | `book-vertentes` | `book-canastra` |
+|---|---|---|
+| Exercícios | 2 | **3** — comparativo de três colunas, três pontos realizados para o modelo |
+| Empresas | 5 | **6**, uma fornecendo matéria-prima às outras |
+| Documentos / tipos documentais | 14 / 8 | **38 / 16** |
+| Conta que nasce ou morre no meio do histórico | não | **sim** — antecipação de recebíveis e direito de uso nascem em 2024; parcelamento tributário, crédito presumido e tributo diferido em 2025; importações em andamento e a reserva de lucros somem |
+| Nomes de arquivo | todos na notação de f0/03 | **metade como o cliente manda** (`Doc1.pdf`, `digitalizado_20260115_0003.pdf`, ano solto) |
+| Lote cabe no teto de gasto | sim | **não — e é isso que ele mede** |
+
+Os tipos novos não são enfeite: aging AR/AP, posição de estoques **com quantidade física**, situação
+fiscal **separando parcelamento de tributo corrente e de provisão** (que é exatamente a distinção da
+sessão 40h), contingências **por prognóstico** (só o provável está no passivo), composição do
+imobilizado **com taxa por classe** (a vida útil que o §5 do `CONFORMIDADE.md` lista como pendente
+por falta de laudo — aqui ela existe no documento), folha com **efetivo em pessoas**, razão com ~100
+lançamentos, e o PDF **composto** com quatro demonstrações num arquivo só.
+
+**A disciplina é a mesma do primeiro book, e é ela que faz isso ser teste e não PDF bonito:** nenhum
+total é digitado. O balanço fecha nas seis empresas e nos três exercícios; o resultado da DRE de cada
+ano É a variação do PL do próprio balanço; a depreciação, a PECLD e as provisões saem da variação das
+retificadoras; o mapa de dívida soma a dívida bancária e os juros somam a despesa financeira; o aging
+soma as duplicatas; a situação fiscal soma os parcelamentos. **A única divergência é deliberada**
+(R$ 240 mil na planilha de mútuos) e está no gabarito. O gerador MORRE por `assert` se algo deixar de
+fechar — e ele roda no CI, então insumo mentiroso não chega a lugar nenhum.
+
+**Duas escolhas de projeto que diferem do primeiro book.** (1) **Não há calibração por PL-alvo**: lá o
+passivo inteiro é multiplicado por um fator até o PL cair num alvo, o que com DOIS exercícios passa e
+com TRÊS vira distorção entre anos — conta que cresce no plano de contas pode decrescer no balanço só
+porque o fator daquele ano é menor, e o histórico é o insumo do modelo. (2) O número quebrado vem de
+**ruído determinístico pelo RÓTULO** da conta, não pelo par (rótulo, ano): assim terreno e capital
+social ficam iguais nos três exercícios em vez de oscilarem sem documento que explique. Saldos
+intragrupo ficam **fora** do ruído, senão as duas pernas não casam e a eliminação do combinado
+acusaria uma divergência que ninguém escreveu.
+
+### O TESTE DE GASTO: `n8n/medir-custo-book.mjs`, e os três achados dele
+
+O teto de gasto (`lib/custo.mjs`) decidia com UM número — US$ 0,15 por chamada — que nunca tinha sido
+confrontado com documento nenhum: ele saiu de uma conta de guardanapo. O script novo converte páginas
+e linhas **contadas no PDF gerado** em dólares, usando o preço e as funções que rodam em produção
+(`classifyByFilename`, `custoDaChamada`, `orcamentoDoLote`). **Não chama a OpenAI**, então medir custa
+zero e roda no CI. Custo medido do lote: **US$ 1,41 em 57 chamadas**.
+
+1. **O gargalo é a SAÍDA, não a entrada.** ~106 mil tokens de saída contra ~49 mil de entrada, a US$
+   10/M contra US$ 2,50/M: a saída é ~75% da conta. Consequência que corrige o `CUSTO_OPENAI.md`: a
+   "alavanca nº 1" (mandar o PDF como texto em vez de imagem) economiza **5%** neste book, não os
+   60-80% prometidos. Ela continua valendo por qualidade de leitura e pelo gap de `.xlsx`/`.docx` —
+   mas em documento de uma página o PDF é troco.
+2. **Existia documento realista mais caro que a estimativa que sustenta o teto.** O livro razão (3
+   páginas, 461 linhas) mediu **US$ 0,1725 por chamada**, acima dos US$ 0,15. Num lote só dele a
+   promessa de "no máximo US$ 3 por execução" seria quebrada em ~15%. `CUSTO_ESTIMADO_DOC_USD` foi
+   **recalibrado para 0,20** — que é literalmente o que o comentário da constante mandava fazer quando
+   houvesse medição. Custo aceito: o lote máximo cai de 20 para 15 chamadas.
+3. **A estimativa plana erra nos DOIS sentidos, e agora isso está medido.** Para os 38 documentos ela
+   projeta US$ 11,40 contra US$ 1,41 medidos (8× para cima, recusando lote que caberia), e para o
+   documento denso ficava para baixo. Um número plano não acerta os dois, porque o custo depende de
+   páginas e linhas. **A fatia seguinte, já com o número que a justifica:** estimador por TAMANHO DE
+   ARQUIVO — `Listar Arquivos` já conhece os bytes antes de qualquer chamada, e bytes correlacionam
+   com páginas e com densidade. Não foi feito agora porque muda o contrato do nó de orçamento no n8n.
+
+O script reprova (código 1) quando um documento custa mais que a estimativa por chamada — é assim que
+o achado nº 2 apareceu, e é o que impede a próxima recalibração de passar despercebida.
+
+**19 dos 38 documentos pagam o PDF duas vezes**: 6 porque o nome não diz o tipo, 13 porque trazem ano
+solto (sinal fraco, 0,65, abaixo do limiar de 0,70). Renomear tudo para a notação de f0/03 corta 19
+chamadas e **ainda assim o lote não cabe** (38 × 0,20 = US$ 7,60). Com kit de mandato completo,
+dividir em levas não é contorno de nome mal escolhido: é a operação normal.
+
+### E a medição achou um defeito que não é de custo
+
+`17_Livro_Razao_Fornecedores_....pdf` saía classificado como **`AGING_AP` com confiança 0,90** — alta
+o bastante para PULAR a verificação da IA e mandar um livro contábil para a aba de contas a pagar. A
+causa era a ordem de `ALIASES`: `fornecedores`, termo de uma palavra e genérico, era testado antes de
+`livro razao`. A regra escrita no próprio arquivo já era "o mais específico primeiro" — era a ORDEM
+que não a seguia. Corrigido, com teste que reprova religado. **O defeito só apareceu porque um book
+passou a ter razão E aging no mesmo lote**; com um dos dois faltando, a ordem errada nunca é
+exercitada — que é a tese inteira desta rodada.
+
+`n8n/test/*.test.mjs`: 176 → **180**.
+
+### O que este book ainda NÃO tem, e é a fatia seguinte
+
+Ele gera os PDFs, o gabarito e a medição de custo. **Não tem fixture de extração** — o equivalente do
+`db/test/gerar_fixture.py`, que converteria o book em linhas de `campo_extraido` para o `db/test`, o
+`verificar-export` e o e2e rodarem contra ele. E essa fatia é maior do que parece: a fixture do
+`book-vertentes` afirma extração FIEL (zero pendência), enquanto a graça deste book é o contrário —
+as pendências que as escalas mistas, o locale anglo e os prognósticos de contingência **devem** abrir
+são o resultado esperado, e cada uma precisa de assert próprio. Enquanto isso não existe, o book prova
+o GERADOR de casos difíceis e o orçamento; ainda não prova a ingestão sobre eles.
 
 ## Sessão 40h (2026-08-07) — o tributo ganhou dono, e o parcelamento passou a ser pago
 

@@ -31,6 +31,15 @@ export const NAO_SOBREPUJAVEIS = [
 // Termos já normalizados (minúsculos, sem acento) — ver normalize.mjs.
 export const ALIASES = [
   // --- específicos primeiro ---
+  // RAZAO vem ANTES de AGING_AP por um achado do book-canastra: o arquivo
+  // "17_Livro_Razao_Fornecedores_..." saía como AGING_AP, porque 'fornecedores'
+  // — termo de UMA palavra e genérico — era testado antes de 'livro razao'.
+  // Razão de fornecedores é livro contábil (lançamento a lançamento), não
+  // relação de contas a pagar por faixa de vencimento: as duas coisas têm
+  // colunas, granularidade e uso diferentes, e trocar uma pela outra manda o
+  // documento para a aba errada. A regra do arquivo já era "o mais específico
+  // primeiro"; era a ORDEM que não a seguia.
+  { codigo: 'RAZAO', termos: ['livro razao', 'razao contabil', 'razao analitico'] },
   { codigo: 'FAT_INTRAGRUPO', termos: ['faturamento intragrupo', 'fat intragrupo', 'faturamento intra grupo'] },
   { codigo: 'FATURAMENTO_24M', termos: ['faturamento 24m', 'faturamento 36', 'faturamento', 'receita bruta', 'receita'] },
   { codigo: 'CONTRATO_SOCIAL', termos: ['contrato social', 'estatuto social', 'alteracao contratual', 'estatuto'] },
@@ -71,6 +80,5 @@ export const ALIASES = [
   { codigo: 'CONTINGENCIAS', termos: ['contingencia', 'contingencias', 'processos judiciais'] },
   { codigo: 'SITUACAO_FISCAL', termos: ['situacao fiscal', 'parcelamento', 'refis'] },
   { codigo: 'ORGANOGRAMA', termos: ['organograma'] },
-  { codigo: 'RAZAO', termos: ['livro razao', 'razao contabil'] },
   { codigo: 'NOTAS_EXPL', termos: ['notas explicativas'] },
 ];
