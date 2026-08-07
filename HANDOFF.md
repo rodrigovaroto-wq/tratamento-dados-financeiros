@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-07 (sessão 40f). **Estado do `main`:** mergeado até o **PR #108**
-(`main` em `8a6a1ea`) — **as Fases A, B, C e D do plano e as três decisões de premissa estão todas no
+**Última atualização:** 2026-08-07 (sessão 40g). **Estado do `main`:** mergeado até o **PR #109**
+(`main` em `e074a76`) — **as Fases A, B, C e D do plano e as três decisões de premissa estão todas no
 `main`**. Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de
 cada merge.
 
@@ -140,7 +140,7 @@ estes):
 cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
 node --test 'n8n/test/*.test.mjs'                                     # 176
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 491
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 499
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
@@ -232,6 +232,50 @@ dá para aprovar).
 push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 40g (2026-08-07) — a tela deixou de falar canônico
+
+Três pedidos do dono, todos sobre a MESMA coisa: o portal publicava vocabulário de banco.
+
+**1. Um export por tela.** A tela do caso (conferir o que chegou) ficou só com *Exportar dados
+financeiros*; o *Exportar modelagem* vive na tela de Modelagem, junto das premissas que ele usa.
+Oferecer o modelo na tela de ingestão convidava a exportá-lo antes de dizer como cada conta projeta.
+
+**2. O card do Portão 2, em português.** Dizia *"Ressalvas ativas: 0 de 3 (teto por caso, f0/04). A
+regra é determinística e não tem exceção por autor."* — três defeitos numa linha: citava documento
+interno por código, mostrava contagem sem dizer o que é uma ressalva, e não dava a consequência. Agora
+o texto muda com o estado: sem ressalva diz quantas cabem e o que uma ressalva é ("ponto documentado
+como aceito com reserva"); no teto diz que dali em diante ponto aberto precisa ser resolvido, não
+aceito. A frase final virou "a decisão é sempre a mesma para todos os casos: ninguém aprova por
+exceção" — que é o que "determinística e sem exceção por autor" queria dizer.
+
+**3. As pendências viraram lista, com o arquivo.** As mensagens nascem no banco (é lá que a medição
+acontece) e chegam como um parágrafo com vários fatos emendados por `;`. Agora `ItemPendencia` quebra
+em **um fato por linha, com travessão**, e publica o **nome do arquivo** de origem — sem ele, quem vai
+conferir adivinha em qual dos treze documentos olhar. Pendência de caso (divergência ENTRE documentos)
+diz isso em vez de deixar o espaço vazio.
+
+**Sobre "em qual linha".** O sistema não guarda número de linha do PDF: o extrator devolve conta,
+coluna e valor, não coordenada de página. O que serve para achar o erro no original é o RÓTULO da
+conta, e é ele que aparece numa lista à parte ("onde conferir no arquivo"), retirado do corpo da
+mensagem para não repetir. Inventar número de linha seria dar precisão falsa a quem vai procurar.
+
+**A quebra tem duas armadilhas, as duas cobertas por assert.** O `;` DENTRO de colchete qualifica o
+item (`[entidade: —; período: 31/12/2024]`) e não separa nada — quebrar ali produzia linha órfã
+("período: 31/12/2024]"). E o ponto separa fato, mas **só seguido de espaço**: sem essa guarda,
+`14529.00` viraria duas linhas.
+
+**4. `portal/src/lib/rotulos.ts`** é o único lugar que traduz vocabulário interno para tela:
+`passivo_nao_circulante` → "Passivo Não Circulante", com mapa explícito para o que tem nome próprio e
+um humanizador genérico como rede — chave nova aparece legível antes de alguém mapeá-la, em vez de
+vazar `snake_case` para o cliente. Sigla fica maiúscula (`total_dre_por_cnpj` → "Total DRE por CNPJ"),
+preposição fica minúscula, e o acento entra sempre: "divida" e "dívida" são palavras diferentes, e a
+primeira não é a que se quer.
+
+A fixture do assert é o **texto real** que o dono copiou da tela, não uma frase escrita para o teste
+passar. Religando a publicação da chave canônica, `0112` reprova nomeando as cinco seções.
+
+`verificar-export.mts`: 491 → **499**.
 
 ## Sessão 40f (2026-08-07) — dois exports, e as alavancas em uma tela só
 

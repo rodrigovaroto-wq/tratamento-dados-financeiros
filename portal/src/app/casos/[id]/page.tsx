@@ -13,6 +13,8 @@ import {
 } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 import { aprovarCaso } from "./actions";
+import { ItemPendencia } from "./Pendencia";
+import { humanizar } from "@/lib/rotulos";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 
 const LEGIBILIDADE_LABEL: Record<string, string> = {
@@ -96,12 +98,22 @@ export default async function CasoDashboardPage({
     (PENDENCIA_TIPOS_QUALIDADE_EXTRACAO as readonly string[]).includes(p.tipo),
   );
 
+  // O ARQUIVO DE CADA PENDÊNCIA. A mensagem diz o que está errado; sem o nome do
+  // arquivo, quem vai conferir tem de adivinhar em qual dos treze documentos olhar.
+  // A versão mais recente é a que vale — é ela que a extração usou.
+  const arquivoDoDocumento = new Map<string, string>();
+  for (const d of documentos) {
+    const nome = (d.documento_versao ?? []).map((v) => v.nome_original).filter(Boolean).at(-1);
+    if (nome) arquivoDoDocumento.set(d.id, nome);
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-lg font-semibold">{caso.nome}</h1>
-          <p className="text-xs text-neutral-500">{caso.produto}</p>
+          {/* O produto do mandato em português: o banco guarda `reestruturacao`. */}
+          <p className="text-xs text-neutral-500">{humanizar(caso.produto)}</p>
         </div>
         <div className="flex items-center gap-3">
           <Link
@@ -110,13 +122,12 @@ export default async function CasoDashboardPage({
           >
             + Adicionar arquivos
           </Link>
-          {/* DOIS EXPORTS (decisão do dono). "Dados" é insumo de conferência e fica
-              disponível desde a ingestão, mesmo com pendência aberta — é o que
-              permite conferir a extração antes de modelar. "Completo" acrescenta a
-              Modelagem projetada. */}
-          {/* A seção Modelagem (Fase 7.3): onde as linhas do caso cruzam com as
-              premissas. Fica ao lado dos exports de propósito — é o passo ENTRE
-              conferir os dados e gerar o completo. */}
+          {/* UM EXPORT SÓ NESTA TELA (decisão do dono, 07/08/2026). Esta é a tela de
+              CONFERIR O QUE CHEGOU, e o único arquivo que faz sentido aqui é o dos
+              dados — ele existe desde a ingestão, mesmo com pendência aberta. O
+              export de modelagem mora na tela de Modelagem, junto das premissas que
+              ele usa: oferecê-lo aqui convidava a exportar o modelo antes de dizer
+              como cada conta projeta. */}
           <Link
             href={`/casos/${id}/modelagem`}
             className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
@@ -129,13 +140,6 @@ export default async function CasoDashboardPage({
             title="Todas as abas de dado, linha a linha, sem modelagem. Serve para conferir a extração contra os documentos."
           >
             Exportar dados financeiros ↓
-          </a>
-          <a
-            href={`/casos/${id}/export`}
-            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-            title="As 14 abas do modelo institucional, projetadas e editáveis dentro do Excel. Sem as abas de dado cru — essas estão no export de dados financeiros."
-          >
-            Exportar modelagem ↓
           </a>
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
             {CASO_STATUS_LABEL[caso.status]}
@@ -179,9 +183,24 @@ export default async function CasoDashboardPage({
                   ))}
                 </ul>
               )}
-              <p className="mt-1 text-xs text-neutral-500">
-                Ressalvas ativas: {portao2.ressalvas_ativas} de {portao2.teto_ressalvas} (teto por
-                caso, f0/04). A regra é determinística e não tem exceção por autor.
+              {/* A MESMA REGRA, EM PORTUGUÊS (pedido do dono, 07/08/2026). Antes esta
+                  linha dizia "Ressalvas ativas: 0 de 3 (teto por caso, f0/04)" — três
+                  coisas erradas de uma vez: citava um documento interno pelo código,
+                  mostrava contagem sem dizer o que é uma ressalva, e não explicava a
+                  consequência. Quem lê a tela precisa saber o que pode fazer, não o
+                  número de referência da norma. */}
+              <p className="mt-1 text-xs text-neutral-600">
+                {portao2.ressalvas_ativas === 0
+                  ? `Nenhuma ressalva registrada neste caso. É possível aprovar com até `
+                    + `${portao2.teto_ressalvas} ressalvas — cada uma é um ponto que fica documentado `
+                    + `como aceito com reserva.`
+                  : portao2.ressalvas_ativas >= portao2.teto_ressalvas
+                    ? `Este caso já usou todas as ressalvas que pode ter (${portao2.teto_ressalvas}). `
+                      + `A partir daqui, ponto em aberto precisa ser resolvido, não aceito com reserva.`
+                    : `Este caso tem ${portao2.ressalvas_ativas} ${portao2.ressalvas_ativas === 1
+                      ? "ponto aceito com reserva" : "pontos aceitos com reserva"}, e ainda cabem `
+                      + `${portao2.teto_ressalvas - portao2.ressalvas_ativas}.`}
+                {" "}A decisão é sempre a mesma para todos os casos: ninguém aprova por exceção.
               </p>
             </div>
             {portao2.elegivel && caso.status !== "aprovado" && caso.status !== "pronto_para_base" && (
@@ -316,15 +335,10 @@ export default async function CasoDashboardPage({
         ) : (
           <ul className="space-y-2">
             {pendenciasReconciliacao.map((p) => (
-              <li
-                key={p.id}
-                className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-              >
-                <span className="mr-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium uppercase text-amber-800">
-                  {p.tipo === "precondicao_nao_satisfeita" ? "pré-condição" : "divergência"}
-                </span>
-                {p.descricao ?? "(sem descrição)"}
-              </li>
+              <ItemPendencia
+                key={p.id} p={p} tom="amber"
+                arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
+              />
             ))}
           </ul>
         )}
@@ -337,12 +351,10 @@ export default async function CasoDashboardPage({
           </h2>
           <ul className="space-y-2">
             {pendenciasArquivo.map((p) => (
-              <li
-                key={p.id}
-                className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
-              >
-                {p.descricao ?? "(sem descrição)"}
-              </li>
+              <ItemPendencia
+                key={p.id} p={p} tom="red"
+                arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
+              />
             ))}
           </ul>
         </section>
@@ -355,15 +367,10 @@ export default async function CasoDashboardPage({
           </h2>
           <ul className="space-y-2">
             {pendenciasExtracao.map((p) => (
-              <li
-                key={p.id}
-                className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
-              >
-                <span className="mr-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium uppercase text-red-800">
-                  {p.tipo === "extracao_falhou" ? "extração falhou" : "revisar"}
-                </span>
-                {p.descricao ?? "(sem descrição)"}
-              </li>
+              <ItemPendencia
+                key={p.id} p={p} tom="red"
+                arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
+              />
             ))}
           </ul>
         </section>
