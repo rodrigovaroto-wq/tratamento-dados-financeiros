@@ -16,14 +16,22 @@ cabeçalho) está aberto.
 dívida retroativa dos três que foram mergeados sem CI**. A branch de trabalho também tem veredito
 próprio: `31128960940` no `792409e`, verde.
 
-> ⚠️ **MAS O DISPARO AUTOMÁTICO AINDA NÃO VOLTOU, e isso muda o que fazer.** Medido depois do verde:
-> `workflow_dispatch` cria execução E ela roda; **`push` e `pull_request` continuam não criando
-> execução nenhuma** (os pushes `32724af` e `792409e` não geraram run). Ou seja: **PR novo não ganha
-> check automático** — a conferência de branch tem de ser disparada à mão (Actions → suítes → "Run
-> workflow", escolhendo a branch). Consequência prática: **não recoloque `suítes` como check
-> obrigatório enquanto o disparo automático não voltar** — o check exigido não apareceria, e o PR
-> ficaria em `blocked` para sempre. Para saber se voltou: empurre um commit e veja se nasce execução
-> com evento `push`.
+**O DISPARO AUTOMÁTICO TAMBÉM VOLTOU, às 22:52 UTC** — as execuções `#136`/`#137` (`push`) e `#138`
+(`pull_request`) nasceram sozinhas no `77c0a71` e saíram **verdes em ~2m20s**. O serviço está normal:
+`push`, `pull_request` e `workflow_dispatch`, os três.
+
+> **A recuperação foi por partes, e a ordem importa para diagnosticar a próxima vez** (tudo
+> cronometrado em 06/08/2026, UTC): ~17:15 a 22:17 o serviço **enfileirava e cancelava em 15 min**
+> (`steps: 0`, `runner_name` vazio); **22:17** o runner voltou e o `workflow_dispatch` passou a
+> executar; **22:52** o disparo automático voltou, entregando com **~30 minutos de atraso** os eventos
+> represados (o push do `792409e`, feito às 22:22, virou execução às 22:52).
+>
+> **Evento perdido é diferente de evento atrasado.** Durante a queda, cinco commits **nunca ganharam
+> execução** — `58b4de9`, `c114a3a`, `32724af`, `252cb7f`, `e38865f`: zero runs, e o GitHub não os cria
+> depois. Na recuperação, os dois últimos pushes ganharam a sua com meia hora de atraso. Ou seja:
+> **"ainda não apareceu run" não é veredito** — durante a queda significa "não vai aparecer", na
+> recuperação significa "espere". O que resolve nos dois casos é `workflow_dispatch`, que dá veredito
+> imediato sobre o estado da branch inteira.
 
 **O plano de fim de projeto, em uma frase cada** (o dono pediu na sessão 40 um caminho para acabar
 "sem nenhum bug ou falha", depois de 100+ PRs verdes que não impediram o arquivo errado):
@@ -38,9 +46,8 @@ próprio: `31128960940` no `792409e`, verde.
 O que sobra do plano **não é código**: é aplicar duas migrations, rodar o aceite sobre um export de
 verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 
-> **O INCIDENTE DO ACTIONS DE 06/08/2026 — RUNNER VOLTOU ÀS 22:17 UTC, DISPARO AUTOMÁTICO NÃO.** O
-> serviço ficou ~5 horas sem executar nada; as Fases B–D foram acumuladas numa branch e mergeadas num
-> PR só (#105), com a
+> **O INCIDENTE DO ACTIONS DE 06/08/2026 — ENCERRADO ÀS 22:52 UTC.** O serviço ficou ~5h30 sem
+> executar nada; as Fases B–D foram acumuladas numa branch e mergeadas num PR só (#105), com a
 > evidência sendo a execução LOCAL dos nove passos do CI. O incidente teve **duas caras**, e é isso que
 > confunde: primeiro os eventos **não criavam execução nenhuma** (push sem run, PR sem run — e o GitHub
 > **não reexecuta retroativamente**: evento sem execução não ganha execução quando o serviço volta);
@@ -162,9 +169,8 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
   amortização por tranche; se o `CAPEX FINANCING` entra e com que regra. Chutar premissa é mentir
   com número — por isso essas linhas ficam fora até a decisão;
 - **deixar "Require approvals" em 0** — é isso, e não o CI, que trava a rodada: o GitHub não deixa
-  aprovar o próprio PR. **Recolocar `suítes` como check obrigatório só depois** de o disparo automático
-  voltar (ver o aviso acima: hoje o `workflow_dispatch` roda, mas `push`/`pull_request` não criam
-  execução, então o check exigido nunca apareceria).
+  aprovar o próprio PR. O CI voltou ao normal (push, PR e disparo manual), então **`suítes` pode
+  voltar a ser check obrigatório** do `main` — agora ele aparece e roda sozinho no PR.
 
 **2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
 `docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
