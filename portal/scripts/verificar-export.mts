@@ -5054,6 +5054,105 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
   }
 
+  // ---- (0113) TRIBUTO A RECOLHER TEM UM DONO SÓ ---------------------------
+  //
+  // Achado da auditoria de 07/08/2026, e o pior desta rodada: a aba `Tributos a
+  // Recolher` era DECORATIVA. Ela projetava com `% pago = 0` fixo e alimentava UMA
+  // linha de exibição do `Output` — enquanto as MESMAS contas eram projetadas por
+  // dias de giro no `Working Capital` (parcelamento girando contra receita: o saldo
+  // do acordo CRESCIA quando a empresa vendia mais) e ficavam congeladas no não
+  // circulante do balanço. Três lugares, três respostas, nenhuma conferência.
+  //
+  // Agora a aba é dona: o balanço lê o espelho dela, o fluxo lê o pagamento, e o giro
+  // exclui as contas. A fixture principal não tem conta tributária — é por isso que o
+  // defeito viveu tanto —, então esta variante acrescenta as quatro que importam:
+  // parcelamento em CP e em LP (o que amortiza), tributo corrente (o que ROLA) e
+  // provisão (o que espera decisão judicial).
+  //
+  // Prazo implícito esperado: 1.000 de 4.000 no circulante → 25% → 4 anos. Parcela
+  // constante de 250/ano no CP e 750/ano no LP.
+  {
+    const comTributos = {
+      ...entradaModelo,
+      linhas: [
+        ...entradaModelo.linhas,
+        linhaAnos("passivo_circulante", "Parcelamentos tributários - curto prazo",
+          { "2024": 900, "2025": 1000 }),
+        linhaAnos("passivo_nao_circulante", "Parcelamentos tributários - longo prazo",
+          { "2024": 2700, "2025": 3000 }),
+        linhaAnos("passivo_circulante", "ICMS a recolher", { "2024": 500, "2025": 600 }),
+        linhaAnos("passivo_nao_circulante", "Provisão para contingências tributárias",
+          { "2024": 800, "2025": 800 }),
+      ],
+    };
+    const wbT = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: comTributos as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const trib = wbT.getWorksheet("Tributos a Recolher")!;
+    const wc = wbT.getWorksheet("Working Capital")!;
+    const bs = wbT.getWorksheet("Balance Sheet")!;
+    const cf = wbT.getWorksheet("Cash Flow")!;
+    const rot = (ws: ExcelJS.Worksheet, r: string): number | null => {
+      for (let i = 1; i <= ws.rowCount; i++) {
+        if (String(ws.getRow(i).getCell(3).value ?? "").trim() === r) return i;
+      }
+      return null;
+    };
+    const val = (ws: ExcelJS.Worksheet, r: number | null, ano: number) =>
+      r === null ? null : avaliarCelula(ws, COLS_ANO[iAnoDe(ano)], r);
+
+    // 1. O PRAZO É O IMPLÍCITO NO BALANÇO, e a parcela é constante.
+    const rPrazo = rot(trib, "prazo do parcelamento (anos)");
+    checar(val(trib, rPrazo, 2026) === 4,
+      "(0113) o prazo do parcelamento é o IMPLÍCITO no balanço (1.000 de 4.000 no circulante → 4 anos)",
+      JSON.stringify(val(trib, rPrazo, 2026)));
+    const rParcCP = rot(trib, "Parcelamentos tributários - curto prazo");
+    const saldos = [2026, 2027, 2028].map((a) => val(trib, rParcCP, a));
+    const esperados = [750, 500, 250];
+    checar(saldos.every((v, i) => typeof v === "number" && Math.abs(v - esperados[i]) < 0.01),
+      "(0113) …e o parcelamento amortiza em parcela CONSTANTE de 250 — 1.000 congelados era o defeito",
+      saldos.map((v) => JSON.stringify(v)).join(" · "));
+
+    // 2. O QUE ROLA, ROLA. Zerar o ICMS a recolher diria que a empresa parou de operar.
+    const rICMS = rot(trib, "ICMS a recolher");
+    const icms = [2026, 2028].map((a) => val(trib, rICMS, a));
+    checar(icms.every((v) => typeof v === "number" && Math.abs(v - 600) < 0.01),
+      "(0113) …e o tributo corrente fica CONSTANTE: é saldo rotativo, não dívida a liquidar",
+      icms.map((v) => JSON.stringify(v)).join(" · "));
+
+    // 3. UMA CONTA, UM LUGAR: nenhuma delas pode estar também no giro.
+    const noGiro = ["Parcelamentos tributários - curto prazo", "ICMS a recolher"]
+      .filter((r) => rot(wc, r) !== null);
+    checar(noGiro.length === 0,
+      "(0113) …e nenhuma conta de tributo aparece no Working Capital — dupla contagem seria o defeito",
+      noGiro.join(" · "));
+
+    // 4. O BALANÇO LÊ O ESPELHO, e o CHECK continua zero apesar do pagamento.
+    const rTribCP = rot(bs, "Tributos a recolher e parcelamentos (curto prazo)");
+    const rTribPNC = rot(bs, "Tributos a recolher e parcelamentos (longo prazo)");
+    checar(typeof val(bs, rTribCP, 2026) === "number" && Math.abs((val(bs, rTribCP, 2026) as number) - 1350) < 0.01
+      && typeof val(bs, rTribPNC, 2026) === "number" && Math.abs((val(bs, rTribPNC, 2026) as number) - 3050) < 0.01,
+      "(0113) …e o balanço lê o espelho da aba (CP 750+600=1.350 · LP 2.250+800=3.050)",
+      `${JSON.stringify(val(bs, rTribCP, 2026))} · ${JSON.stringify(val(bs, rTribPNC, 2026))}`);
+    const rCheckT = rot(bs, "CHECK — Ativo − (Passivo + PL) deve ser ZERO");
+    const desviosT = ANOS.map((a) => val(bs, rCheckT, a))
+      .filter((v) => typeof v !== "number" || Math.abs(v) > 0.5);
+    checar(desviosT.length === 0,
+      "(0113) …e o balanço FECHA com o pagamento saindo do caixa",
+      desviosT.map((v) => JSON.stringify(v)).join(" · "));
+
+    // 5. O PAGAMENTO NO FLUXO É A QUEDA DO SALDO — derivado, nunca calculado de novo.
+    const rPago = rot(cf, "Pagamento de tributos e parcelamentos");
+    const rTotal = rot(trib, "TOTAL A RECOLHER");
+    const queda = (val(trib, rTotal, 2026) as number) - (val(trib, rTotal, 2027) as number);
+    const pago2027 = val(cf, rPago, 2027);
+    checar(typeof pago2027 === "number" && Math.abs(pago2027 + queda) < 0.01 && pago2027 < 0,
+      "(0113) …e o pagamento no Cash Flow é EXATAMENTE a queda do saldo, com sinal de saída",
+      `fluxo ${JSON.stringify(pago2027)} · queda do saldo ${queda.toFixed(2)}`);
+  }
+
   // ---- (0112) A TELA NÃO FALA CANÔNICO ------------------------------------
   //
   // Pedido do dono (07/08/2026): a tela não publica chave de banco. Nada de `_`,

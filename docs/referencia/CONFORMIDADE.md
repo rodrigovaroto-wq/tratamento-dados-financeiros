@@ -247,9 +247,19 @@ Legenda: **C** conforme · **D** divergente (temos de mudar) · **X** deliberada
 
 | Elemento | A referência faz | Nós fazemos | ✓ | Impacto |
 |---|---|---|---|---|
-| Cronograma → duas pontas do passivo | `A7` (curto) e `A10` (longo) | uma linha por conta tributária do caso | C | — |
+| Cronograma → duas pontas do passivo | `A7` (curto) e `A10` (longo) | uma linha por conta tributária do caso, com espelho para o balanço nas duas pontas | ✓ | — |
 | **Piso do saldo** | **não tem**: paga 12 parcelas contra saldo para 11, `L10` = **−4.249**, e **abre o balanço em 2020 e 2021** | `=ant*(1-% pago)` — **não pode ficar negativo por construção** | **melhor** | **de resultado** |
 | Rótulo de ano | para em 2018, a fórmula vai a 2024 | herda o eixo do tempo | melhor | — |
+| **Dono da conta** | a aba É a origem do passivo tributário | **agora também**: o balanço lê o espelho, o fluxo lê o pagamento, e o giro exclui as contas | **corrigido em 07/08/2026** | **de resultado** |
+| **Natureza da conta** | uma regra só para tudo | **três**: parcelamento amortiza em parcela linear (prazo implícito no balanço), tributo corrente ROLA (saldo rotativo), provisão espera decisão | **melhor** | **de resultado** |
+
+> **O DEFEITO QUE ESTA ABA ESCONDIA (achado em 07/08/2026).** Ela projetava com `% pago = 0` fixo e
+> alimentava UMA linha de exibição do `Output` — era **decorativa**. As mesmas contas eram projetadas
+> por **dias de giro** no `Working Capital` (parcelamento girando contra receita: o saldo do acordo
+> CRESCIA quando a empresa vendia mais) e ficavam **congeladas** no não circulante do balanço. Três
+> lugares, três respostas, nenhuma conferência — o quarto caso da família "uma conta, dois donos",
+> depois de caixa, dívida bancária e subtotal informado. Asserts `0113`, com os dois defeitos
+> religados reprovando quatro deles.
 
 ---
 
