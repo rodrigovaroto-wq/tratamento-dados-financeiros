@@ -1955,8 +1955,16 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // A dívida bancária de curto prazo também não é giro: ela vive no
   // `ST Inv. & Debt`. Deixá-la aqui faria o passivo operacional carregar dívida,
   // e a NCG passaria a "melhorar" quando a empresa se endivida mais.
+  // TRIBUTO A RECOLHER SAI DO GIRO, pelo mesmo motivo da dívida bancária: ele não
+  // gira contra receita. Parcelamento tributário é cronograma de pagamento — projetá-lo
+  // por dias de giro fazia o saldo do acordo CRESCER quando a empresa vende mais, o que
+  // é o contrário do que acontece. Quem o projeta é a aba `Tributos a Recolher`, e o
+  // balanço lê o espelho dela.
   const passivos = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
-    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave));
+    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave))
+    .filter((l) => !ehTributoARecolher(l.chave));
+  const tributoFora = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+    .filter((l) => ehTributoARecolher(l.chave));
   const dividaFora = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
     .filter((l) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave));
 
@@ -1974,17 +1982,18 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     { chave: "BASE_COGS", rotulo: "Custos (base dos dias de giro do passivo de fornecedor)" },
   ]);
 
+  const fora = [...caixaFora, ...dividaFora, ...tributoFora];
   const rExcl = g.linha(null, {
-    rotulo: caixaFora.length + dividaFora.length === 0
-      ? "Nenhuma conta de caixa ou de dívida bancária foi encontrada no circulante deste caso."
-      : `FORA do giro de propósito (uma conta, uma origem): ${
-        [...caixaFora, ...dividaFora].map((l) => l.chave).join(" · ")}`,
+    rotulo: fora.length === 0
+      ? "Nenhuma conta de caixa, de dívida bancária ou de tributo a recolher foi encontrada no circulante deste caso."
+      : `FORA do giro de propósito (uma conta, uma origem): ${fora.map((l) => l.chave).join(" · ")}`,
   });
   g.celula(rExcl, COL_ROTULO).font = fonte({ italic: true, size: 9, color: { argb: FONTE_COR.auxiliar } });
   g.celula(rExcl, COL_ROTULO).note = comoNota(
     "Caixa, bancos e aplicações são projetados SÓ pelo Cash Flow; empréstimos e financiamentos, "
-    + "SÓ pelo ST Inv. & Debt. Projetá-los aqui por dias de giro os contaria duas vezes no ativo "
-    + "(o defeito aberto desde a sessão 32) e faria a NCG melhorar quando a empresa se endivida. "
+    + "SÓ pelo ST Inv. & Debt; tributo a recolher e parcelamento, SÓ pela aba Tributos a Recolher. "
+    + "Projetá-los aqui por dias de giro os contaria duas vezes (o defeito aberto desde a sessão 32) "
+    + "e, no caso do parcelamento, faria o saldo do acordo CRESCER quando a empresa vende mais. "
     + "É a mesma separação do Modelo Base.",
   );
   g.pular();
@@ -2785,7 +2794,7 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
 // =============================================================================
 function abaFluxo(
   wb: ExcelJS.Workbook, ctx: Ctx,
-  gDRE: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gRec: Grade,
+  gDRE: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gRec: Grade, gTrib: Grade,
 ): Grade {
   const g = new Grade(wb, "Cash Flow", ctx.anos, ctx.nHist);
   g.cabecalho("CASH FLOW", `Valores em ${ctx.ent.unidade} · método indireto`, eixoHerdado(gRec));
@@ -2824,6 +2833,13 @@ function abaFluxo(
   g.linha("VAR_NCG_CHECK", {
     rotulo: "    conferência: soma das contas − total (ZERO)", fmt: NUM2,
   });
+  // O PAGAMENTO DE TRIBUTO E PARCELAMENTO, com linha própria no operacional.
+  //
+  // Ele estava DENTRO da variação de giro (as contas de tributo eram projetadas por dias
+  // de giro) e por isso subia com a receita em vez de seguir o cronograma do acordo. Agora
+  // as contas têm dono único — a aba `Tributos a Recolher` — e a saída de caixa aparece
+  // com nome, que é o que o comitê pergunta: quanto do caixa vai para o passado.
+  g.linha("PAGO_TRIB", { sinal: "(-)", rotulo: "Pagamento de tributos e parcelamentos", fmt: NUM });
   g.linha("FCO", { sinal: "=", rotulo: "CAIXA DAS OPERAÇÕES", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha(null, { rotulo: "FLUXO DE CAIXA DE INVESTIMENTO", bloco: true });
@@ -2900,7 +2916,15 @@ function abaFluxo(
         + "espelho da aba de giro, que é o que o FCO soma). Esta linha existe para os dois não "
         + "poderem divergir em silêncio: tem de ser ZERO.",
     });
-    g.set("FCO", ano, `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("VAR_NCG", ano)}`, { fmt: NUM, negrito: true });
+    g.set("PAGO_TRIB", ano, `=-${g.externa("Tributos a Recolher", gTrib, "ESP_PAGO", ano)}`, {
+      fmt: NUM,
+      nota: "Queda do passivo tributário no período, vinda da aba Tributos a Recolher — é a parcela "
+        + "do acordo que saiu do caixa. Negativo porque é saída. No realizado é zero: variação de "
+        + "exercício passado já está no saldo extraído.",
+    });
+    g.set("FCO", ano,
+      `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("VAR_NCG", ano)}+${g.ref("PAGO_TRIB", ano)}`,
+      { fmt: NUM, negrito: true });
     g.set("CAPEX", ano, `=-${g.externa("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano)}`, { fmt: NUM });
     g.set("FCI", ano, `=${g.ref("CAPEX", ano)}`, { fmt: NUM, negrito: true });
     g.set("FCL", ano, `=${g.ref("FCO", ano)}+${g.ref("FCI", ano)}`, { fmt: NUM, negrito: true });
@@ -2951,7 +2975,7 @@ function abaFluxo(
 // =============================================================================
 function abaBalanco(
   wb: ExcelJS.Workbook, ctx: Ctx,
-  gCF: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gDRE: Grade, gRec: Grade,
+  gCF: Grade, gWC: Grade, gFA: Grade, gDiv: Grade, gDRE: Grade, gRec: Grade, gTrib: Grade,
 ): Grade {
   const g = new Grade(wb, "Balance Sheet", ctx.anos, ctx.nHist);
   g.cabecalho("BALANCE SHEET", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
@@ -2962,7 +2986,10 @@ function abaBalanco(
   // projetada pela aba de dívida e entra por `DIVIDA_LP`. Listá-la aqui também a
   // contaria duas vezes — o mesmo defeito que o giro tinha.
   const pnc = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
-    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave));
+    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave))
+    // Tributo e parcelamento de longo prazo entram por `TRIB_PNC`, o espelho da aba que
+    // conhece o cronograma. Listá-los aqui também os contaria duas vezes.
+    .filter((l) => !ehTributoARecolher(l.chave));
   const pl = ctx.linhasPorBloco.get("patrimonio_liquido") ?? [];
 
   // A RECONCILIAÇÃO COM O TOTAL INFORMADO — invariante nº 6 aplicado ao modelo.
@@ -3016,10 +3043,12 @@ function abaBalanco(
   g.pular();
   g.linha("PC_OPER", { rotulo: "Passivo circulante operacional", fmt: NUM });
   g.linha("DIVIDA_CP", { rotulo: "Dívida de curto prazo + revolver", fmt: NUM });
+  g.linha("TRIB_CP", { rotulo: "Tributos a recolher e parcelamentos (curto prazo)", fmt: NUM });
   linhaReconc(rPC, "passivo circulante");
   g.linha("PC", { rotulo: "PASSIVO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("DIVIDA_LP", { rotulo: "Dívida de longo prazo", fmt: NUM });
+  g.linha("TRIB_PNC", { rotulo: "Tributos a recolher e parcelamentos (longo prazo)", fmt: NUM });
   for (const l of pnc) g.linha(chaveLinha("pnc", l), { rotulo: l.chave, fmt: NUM });
   linhaReconc(rPNC, "passivo não circulante");
   g.linha("PNC", { rotulo: "PASSIVO NÃO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
@@ -3085,7 +3114,12 @@ function abaBalanco(
         + "onde a dívida vive; o balanço só lê. Antes o balanço recalculava a fração, e passava a "
         + "saber de dívida — acoplamento que o espelho existe para eliminar.",
     });
-    const somaPC = [g.ref("PC_OPER", ano), g.ref("DIVIDA_CP", ano)];
+    g.set("TRIB_CP", ano, `=${g.externa("Tributos a Recolher", gTrib, "ESP_CP", ano)}`, {
+      fmt: NUM,
+      nota: "Espelho da aba Tributos a Recolher. O balanço não projeta tributo: quem projeta é a aba "
+        + "que conhece o cronograma do parcelamento.",
+    });
+    const somaPC = [g.ref("PC_OPER", ano), g.ref("DIVIDA_CP", ano), g.ref("TRIB_CP", ano)];
     escreverReconc(g, ctx, rPC, ano, hist, ant, somaPC);
     g.set("PC", ano, `=${[...somaPC, ...(rPC ? [g.ref(rPC.chave, ano)] : [])].join("+")}`,
       { fmt: NUM, negrito: true });
@@ -3096,7 +3130,13 @@ function abaBalanco(
       g.set(ch, ano, hist ? Math.abs(e?.valor ?? 0) : `=${g.ref(ch, ant!)}`,
         { fmt: NUM, fill: hist ? FILL_HIST : undefined, nota: hist ? e?.nota : undefined });
     }
-    const somaPNC = [g.ref("DIVIDA_LP", ano), ...pnc.map((l) => g.ref(chaveLinha("pnc", l), ano))];
+    g.set("TRIB_PNC", ano, `=${g.externa("Tributos a Recolher", gTrib, "ESP_PNC", ano)}`, {
+      fmt: NUM,
+      nota: "Espelho da aba Tributos a Recolher — a parte do parcelamento que vence depois de 12 meses. "
+        + "Antes esta parcela ficava CONGELADA aqui, o que dizia que o acordo nunca é pago.",
+    });
+    const somaPNC = [g.ref("DIVIDA_LP", ano), g.ref("TRIB_PNC", ano),
+      ...pnc.map((l) => g.ref(chaveLinha("pnc", l), ano))];
     escreverReconc(g, ctx, rPNC, ano, hist, ant, somaPNC);
     somaOuZero(g, "PNC", ano, [...somaPNC, ...(rPNC ? [g.ref(rPNC.chave, ano)] : [])], true);
     for (const l of pl) {
@@ -3250,14 +3290,30 @@ function abaGoodwill(wb: ExcelJS.Workbook, ctx: Ctx, gDRE: Grade, gCF: Grade, gR
 // reestruturação é quase sempre a segunda maior dívida e quase nunca está no
 // mapa de dívida bancária.
 // =============================================================================
+/**
+ * CONTA DE TRIBUTO A RECOLHER — o que a aba `Tributos a Recolher` POSSUI.
+ *
+ * Um predicado só, em escopo de módulo, porque três abas precisam concordar sobre
+ * ele: a de tributos (que projeta), a de giro (que precisa NÃO projetar as mesmas
+ * contas) e o balanço (que lê o espelho em vez da conta). Duas cópias desta regra
+ * divergiriam na primeira mudança, e o efeito de divergir é dupla contagem — o
+ * mesmo defeito que a dívida bancária no giro tinha até a sessão 39.
+ *
+ * Vale só para linha de PASSIVO: no ativo a mesma expressão pegaria "ICMS a
+ * recuperar" e "créditos tributários", que são direito, não obrigação.
+ */
+const ehTributoARecolher = (chave: string) =>
+  /tribut|imposto|icms|pis|cofins|inss|fgts|irrf|iss|parcelament|refis|previd/i.test(chave);
+
 function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   const g = new Grade(wb, "Tributos a Recolher", ctx.anos, ctx.nHist);
   g.cabecalho("TRIBUTOS A RECOLHER — PARCELAMENTOS", `Valores em ${ctx.ent.unidade}`, eixoHerdado(gRec));
 
-  const tributarios = [
-    ...(ctx.linhasPorBloco.get("passivo_circulante") ?? []),
-    ...(ctx.linhasPorBloco.get("passivo_nao_circulante") ?? []),
-  ].filter((l) => /tribut|imposto|icms|pis|cofins|inss|fgts|irrf|iss|parcelamento|refis|previd/i.test(l.chave));
+  const tribCP = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
+    .filter((l) => ehTributoARecolher(l.chave));
+  const tribPNC = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
+    .filter((l) => ehTributoARecolher(l.chave));
+  const tributarios = [...tribCP, ...tribPNC];
 
   if (tributarios.length === 0) {
     g.linha(null, {
@@ -3266,17 +3322,94 @@ function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     g.linha(null, {
       rotulo: "A aba fica VAZIA de propósito — inventar um parcelamento seria pior que não ter a aba.",
     });
+    // O ESPELHO EXISTE MESMO VAZIO, com zeros. O balanço e o fluxo leem estas âncoras
+    // sempre; se elas só existissem quando o caso tem tributo, um caso sem tributo
+    // derrubaria a geração inteira — e foi exatamente o que aconteceu na primeira
+    // versão desta mudança (a fixture do (0105) não tem conta tributária).
+    g.pular();
+    g.espelho("BALANCE SHEET ACCOUNTS", [
+      { chave: "ESP_CP", rotulo: "Tributos a recolher — circulante (para o Balance Sheet)" },
+      { chave: "ESP_PNC", rotulo: "Tributos a recolher — não circulante (para o Balance Sheet)" },
+    ]);
+    g.espelho("CASH FLOW ACCOUNTS", [
+      { chave: "ESP_PAGO", rotulo: "Pagamento do período (para o Cash Flow)" },
+    ]);
+    for (const ano of ctx.anos) {
+      for (const ch of ["ESP_CP", "ESP_PNC", "ESP_PAGO"]) g.set(ch, ano, 0, { fmt: NUM });
+    }
     // Mesmo vazia a aba é entregue e impressa — o teste (0105f) pegou esta saída
     // antecipada sem área de impressão.
     g.finalizar("__unidade");
     return g;
   }
+  // ===========================================================================
+  // PARCELAMENTO AMORTIZA; TRIBUTO CORRENTE A RECOLHER ROLA. SÃO COISAS DIFERENTES.
+  //
+  // O DEFEITO QUE ISTO CORRIGE. Todas as linhas desta aba tinham `% pago = 0` fixo,
+  // com a nota "ZERO = saldo rolado". Para o ICMS do mês isso é verdade — o saldo
+  // renova na mesma velocidade em que é pago. Para um PARCELAMENTO é falso, e cara:
+  // parcelamento é, por definição, um cronograma de pagamento; deixá-lo congelado
+  // significa que a empresa nunca paga o acordo que assinou, o caixa projetado não
+  // sente essa saída, e a dívida tributária aparece no balanço de 2030 igualzinha à
+  // de 2025. Medido no v35: 11.978 de parcelamento parados nos cinco exercícios,
+  // dentro de 34.912 de tributos igualmente congelados.
+  //
+  // A REGRA, e de onde vem cada número:
+  //   • PARCELAMENTO (`parcelamento`, `REFIS`, `PERT`, transação tributária, dívida
+  //     ativa) → amortiza LINEARMENTE, como a dívida bancária, e pelo mesmo prazo
+  //     implícito: sob pagamento linear em `n` anos, a parcela que vence em 12 meses
+  //     é `1/n` do saldo, logo `n = 1 ÷ fração no circulante`, medida no balanço.
+  //     No v35: 3.272 no circulante contra 11.978 no total → 27,3% → 3,7 anos.
+  //   • TRIBUTO CORRENTE (ICMS, IRRF, ISS, PIS/COFINS, obrigações tributárias) →
+  //     saldo ROTATIVO: fica constante. Zerá-lo diria que a empresa deixou de ter
+  //     imposto a recolher, o que só acontece se ela parar de operar.
+  //   • PROVISÃO tributária → fica constante: ela se resolve por decisão judicial ou
+  //     acordo, e nenhum dos dois tem data que o modelo possa inferir.
+  //
+  // Sem repartição curto/longo prazo do parcelamento no caso, o prazo cai em 5 anos
+  // (60 meses é o parcelamento ordinário da legislação federal) e a nota DIZ que é
+  // padrão legal, não medição — que é diferente de inventar em silêncio.
+  // ===========================================================================
+  const ehParcelamento = (chave: string) =>
+    /parcelament|reparcelament|refis|\bpert\b|paes|paex|transa(ç|c)(ã|a)o tribut|d(í|i)vida ativa/i
+      .test(chave);
+  const ehProvisao = (chave: string) => /provis(ã|a)o|conting(ê|e)nc/i.test(chave);
+  const somaParcelamento = (bloco: BlocoModelo) =>
+    (ctx.linhasPorBloco.get(bloco) ?? [])
+      .filter((l) => ehParcelamento(l.chave))
+      .reduce((acc, l) => acc + Math.abs(valorNaEscala(l, ctx.ultimoHist, ctx.ent.unidade)?.valor ?? 0), 0);
+  const parcCP = somaParcelamento("passivo_circulante");
+  const parcLP = somaParcelamento("passivo_nao_circulante");
+  const fracParcCP = parcCP + parcLP > 0 ? parcCP / (parcCP + parcLP) : 0;
+  const prazoParcelamentoMedido = fracParcCP > 0;
+  const prazoParcelamento = prazoParcelamentoMedido
+    ? Math.min(10, Math.max(1, Math.round((1 / fracParcCP) * 10) / 10))
+    : 5;
+
   for (const l of tributarios) {
     const ch = chaveLinha("trib", l);
     g.linha(ch, { rotulo: l.chave, nota: (l.documentos ?? []).join(" · "), fmt: NUM });
-    g.linha(`${ch}#pct`, { rotulo: "    % pago no período (premissa)", fmt: PCT });
+    if (ehParcelamento(l.chave)) {
+      g.linha(`${ch}#prazo`, { rotulo: "    prazo do parcelamento (anos)", fmt: NUM2 });
+      g.linha(`${ch}#pct`, { rotulo: "    % pago no período (parcela linear)", fmt: PCT });
+    } else {
+      g.linha(`${ch}#pct`, { rotulo: "    % pago no período (premissa)", fmt: PCT });
+    }
   }
   g.linha("TOTAL", { rotulo: "TOTAL A RECOLHER", negrito: true, topo: true, fmt: NUM });
+  // `P18` — O ESPELHO DESTA ABA. É daqui que o balanço lê o passivo tributário e o
+  // fluxo lê o pagamento. Sem o espelho, esta aba era DECORATIVA: as mesmas contas
+  // eram projetadas por dias de giro no `Working Capital` e ficavam congeladas no
+  // não circulante do balanço, então a aba podia dizer que o parcelamento amortiza
+  // enquanto o balanço dizia que não — duas verdades sobre a mesma conta.
+  g.pular();
+  g.espelho("BALANCE SHEET ACCOUNTS", [
+    { chave: "ESP_CP", rotulo: "Tributos a recolher — circulante (para o Balance Sheet)" },
+    { chave: "ESP_PNC", rotulo: "Tributos a recolher — não circulante (para o Balance Sheet)" },
+  ]);
+  g.espelho("CASH FLOW ACCOUNTS", [
+    { chave: "ESP_PAGO", rotulo: "Pagamento do período (para o Cash Flow)" },
+  ]);
 
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
@@ -3288,15 +3421,63 @@ function abaTributos(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         if (e) g.set(ch, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota });
         continue;
       }
-      g.set(`${ch}#pct`, ano, 0, {
-        fmt: PCT, fill: FILL_INPUT,
-        nota: "Percentual do saldo pago no período. ZERO = saldo rolado, que é o que acontece "
-          + "quando o parcelamento não está em dia — e é a hipótese que o plano precisa contestar "
-          + "explicitamente.",
-      });
+      if (ehParcelamento(l.chave)) {
+        // O prazo é premissa: uma célula na primeira coluna projetada, e os anos
+        // seguintes apontando para ela — uma edição reprojeta o parcelamento todo.
+        const iProj = g.anos.indexOf(ano) - g.nHist;
+        const refPrazoBase = g.ref(`${ch}#prazo`, g.anos[g.nHist], "$");
+        g.set(`${ch}#prazo`, ano, iProj === 0 ? prazoParcelamento : `=${refPrazoBase}`, {
+          fmt: NUM2, fill: iProj === 0 ? FILL_INPUT : undefined,
+          nota: iProj === 0
+            ? (prazoParcelamentoMedido
+              ? `Prazo do parcelamento: ${prazoParcelamento} anos. NÃO é número inventado — é o prazo `
+                + `IMPLÍCITO no balanço de ${ctx.ultimoHist}: ${(fracParcCP * 100).toFixed(1)}% do `
+                + "parcelamento está no circulante, e sob parcela linear a fração de 12 meses é 1/n do "
+                + "saldo. Se o termo de adesão disser outro prazo, troque AQUI: a linha de % e todos os "
+                + "exercícios seguintes se refazem sozinhos."
+              : "Prazo do parcelamento: 5 anos (60 meses), que é o parcelamento ORDINÁRIO da legislação "
+                + "federal. Este caso não traz o parcelamento repartido entre circulante e não "
+                + "circulante, então o prazo implícito não pôde ser medido — é padrão legal, não "
+                + "medição. Troque AQUI pelo prazo do termo de adesão.")
+            : "Mesmo prazo da primeira coluna projetada (referência fixa). Edite a célula azul de lá.",
+        });
+        g.set(`${ch}#pct`, ano,
+          `=IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj})))`, {
+          fmt: PCT,
+          nota: "Parcela LINEAR até o fim do parcelamento: 1 ÷ (prazo − anos já decorridos). Dá "
+            + "pagamento constante e zera o acordo no prazo. Parcelamento é cronograma — deixá-lo "
+            + "congelado dizia que a empresa nunca paga o que assinou, e o caixa projetado não sentia "
+            + "a saída. Para um cronograma irregular, digite o percentual do ano por cima.",
+        });
+      } else {
+        g.set(`${ch}#pct`, ano, 0, {
+          fmt: PCT, fill: FILL_INPUT,
+          nota: ehProvisao(l.chave)
+            ? "ZERO porque provisão não tem cronograma: ela se resolve por decisão judicial ou acordo, "
+              + "e nenhum dos dois tem data que o modelo possa inferir. Quando houver desfecho, ele "
+              + "entra aqui como percentual do ano."
+            : "ZERO porque este é saldo ROTATIVO, não dívida a liquidar: o tributo corrente é pago no "
+              + "mês seguinte e o do mês seguinte toma o lugar dele. Zerar a linha diria que a empresa "
+              + "deixou de ter imposto a recolher, o que só acontece se ela parar de operar. Se houver "
+              + "acordo para quitar este saldo, o percentual do ano entra aqui.",
+        });
+      }
       g.set(ch, ano, `=${g.ref(ch, ant!)}*(1-${g.ref(`${ch}#pct`, ano)})`, { fmt: NUM });
     }
     somaOuZero(g, "TOTAL", ano, tributarios.map((l) => g.ref(chaveLinha("trib", l), ano)), true);
+    somaOuZero(g, "ESP_CP", ano, tribCP.map((l) => g.ref(chaveLinha("trib", l), ano)));
+    somaOuZero(g, "ESP_PNC", ano, tribPNC.map((l) => g.ref(chaveLinha("trib", l), ano)));
+    // O PAGAMENTO É DERIVADO DO SALDO, não calculado de novo. Ele é exatamente a queda
+    // do total — então qualquer mudança de regra aqui (prazo editado no Excel, cronograma
+    // digitado por cima) chega ao caixa sozinha, e as duas contas não podem divergir.
+    // No realizado é ZERO: a variação de um exercício já ocorrido é história, e lançá-la
+    // como pagamento projetado tiraria caixa duas vezes.
+    g.set("ESP_PAGO", ano, hist || ant === null ? 0 : `=${g.ref("TOTAL", ant)}-${g.ref("TOTAL", ano)}`, {
+      fmt: NUM,
+      nota: hist ? "Zero no realizado: o que foi pago no passado já está no saldo extraído."
+        : "Queda do total no período — é o que saiu do caixa. Derivado do saldo de propósito: "
+          + "duas contas do mesmo pagamento divergiriam na primeira mudança de premissa.",
+    });
   }
   g.finalizar("__unidade");
   return g;
@@ -4136,11 +4317,15 @@ export function construirModeloInstitucional(
   const gDiv = abaDivida(workbook, ctx, gAnual, gRec);
   const gFA = abaImobilizado(workbook, ctx, gRec);
   const gWC = abaCapitalGiro(workbook, ctx, gRec);
-  const gDRE = abaDRE(workbook, ctx, gRec, gPrem, gDiv);
-  const gCF = abaFluxo(workbook, ctx, gDRE, gWC, gFA, gDiv, gRec);
-  const gBS = abaBalanco(workbook, ctx, gCF, gWC, gFA, gDiv, gDRE, gRec);
-  const gGW = abaGoodwill(workbook, ctx, gDRE, gCF, gRec);
+  // A aba de tributos nasce ANTES do fluxo e do balanço porque agora os dois LEEM dela
+  // (passivo tributário e pagamento do período). Ela só depende da receita, então subir
+  // na ordem não custa nada — e a ordem das abas no arquivo é decidida no fim, por
+  // `orderNo`, não por quem foi criado primeiro.
   const gTrib = abaTributos(workbook, ctx, gRec);
+  const gDRE = abaDRE(workbook, ctx, gRec, gPrem, gDiv);
+  const gCF = abaFluxo(workbook, ctx, gDRE, gWC, gFA, gDiv, gRec, gTrib);
+  const gBS = abaBalanco(workbook, ctx, gCF, gWC, gFA, gDiv, gDRE, gRec, gTrib);
+  const gGW = abaGoodwill(workbook, ctx, gDRE, gCF, gRec);
   const saidaOutput = abaOutput(workbook, ctx, gDRE, gBS, gDiv, gCF, gFA, gWC, gRec, gGW, gTrib);
   abaConsideracoes(workbook, ctx);
   abaCapa(workbook, ctx);

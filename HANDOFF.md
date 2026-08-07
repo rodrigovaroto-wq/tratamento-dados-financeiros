@@ -4,15 +4,31 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-07 (sessão 40g). **Estado do `main`:** mergeado até o **PR #109**
-(`main` em `e074a76`) — **as Fases A, B, C e D do plano e as três decisões de premissa estão todas no
-`main`**. Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de
-cada merge.
+**Última atualização:** 2026-08-07 (sessão 40h). **Estado do `main`:** mergeado até o **PR #110**
+(`main` em `d539464`); a rodada dos tributos está na branch. Branch de trabalho:
+**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de cada merge.
 
 **O PRODUTO, EM UMA LINHA:** o portal entrega **dois arquivos** — *dados financeiros* (a conferência
 da ingestão, linha a linha) e *modelagem* (as 14 abas do modelo institucional, projetadas e editáveis
 dentro do Excel). O aceite de um `.xlsx` é `auditar-xlsx.mts` (10 itens automáticos) +
 `docs/ACEITE.md` (10 itens humanos).
+
+### O invariante que organiza o modelo: UMA CONTA, UM LUGAR
+
+Toda vez que uma conta teve dois donos, o modelo mentiu — e sempre para o lado de parecer melhor.
+São quatro incidentes com a mesma forma, três deles já corrigidos e o quarto nesta rodada:
+
+| Conta | Os dois donos | O que saía errado | Fechado em |
+|---|---|---|---|
+| caixa e aplicações | giro **e** fluxo | caixa contado duas vezes no ativo | sessão 39 |
+| dívida bancária | giro **e** aba de dívida | NCG MELHORAVA quando a empresa se endividava | sessão 39 |
+| subtotal informado | soma dos componentes **e** total do documento | `ATIVO TOTAL` 195.090 contra 95.780 informados (2,04×) | sessão 40 |
+| **tributo a recolher** | **giro, balanço e aba de tributos (três!)** | **parcelamento girava contra receita: o saldo do acordo CRESCIA quando a empresa vendia mais** | **sessão 40h** |
+
+A regra prática que sai disso: quem projeta uma conta é UMA aba, e as outras leem o **espelho**
+(`P18`) dela. Duas origens para o mesmo número só valem com uma linha de conferência entre elas — e
+foi assim que a variação de giro do `Cash Flow` ficou (aberta conta a conta, com o total vindo do
+espelho e um assert exigindo diferença zero).
 
 **CI: O `main` ESTÁ VERDE, PELA SUÍTE INTEIRA E NO SERVIDOR** — execução
 [`31128897900`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/31128897900),
@@ -140,7 +156,7 @@ estes):
 cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
 node --test 'n8n/test/*.test.mjs'                                     # 176
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 499
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 506
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
@@ -232,6 +248,61 @@ dá para aprovar).
 push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 40h (2026-08-07) — o tributo ganhou dono, e o parcelamento passou a ser pago
+
+**O PIOR DEFEITO DESTA RODADA, e ele estava escondido atrás de uma aba bonita.** A aba `Tributos a
+Recolher` projetava com `% pago = 0` fixo — 34.912 de tributos, dos quais 11.978 de parcelamento,
+congelados nos cinco exercícios. Ao investigar, o defeito era maior do que o número parado: **a aba
+era DECORATIVA**. Ela alimentava UMA linha de exibição do `Output` (`DV_TRIB`) e mais nada. As mesmas
+contas eram projetadas em outros dois lugares:
+
+- no **`Working Capital`**, por **dias de giro** — parcelamento girando contra receita, ou seja, o
+  saldo do acordo com a Receita Federal **crescia quando a empresa vendia mais**;
+- no **não circulante do `Balance Sheet`**, **congeladas** — o acordo nunca era pago.
+
+Três lugares, três respostas, nenhuma conferência entre elas. É o quarto incidente da mesma família
+(caixa, dívida, subtotal informado, tributo) e a razão de o invariante "uma conta, um lugar" ter
+ganhado bloco próprio no cabeçalho.
+
+**A correção dá dono único à conta.** A aba de tributos passa a publicar espelho (`P18`) e todos leem
+dela: o `Balance Sheet` tem duas linhas novas (`Tributos a recolher e parcelamentos`, curto e longo
+prazo), o `Cash Flow` ganhou **"(−) Pagamento de tributos e parcelamentos"** no operacional, e o giro
+**exclui** essas contas, com a razão escrita na própria aba, ao lado de caixa e dívida bancária.
+
+**O pagamento é DERIVADO do saldo** (`ESP_PAGO = total do ano anterior − total do ano`), nunca
+calculado de novo. Assim qualquer mudança de regra — prazo editado dentro do Excel, cronograma
+digitado por cima — chega ao caixa sozinha, e as duas contas do mesmo pagamento não podem divergir.
+
+**E A REGRA DE PROJEÇÃO DISTINGUE TRÊS NATUREZAS**, que é o que faltava:
+
+| Natureza | Como projeta | Por quê |
+|---|---|---|
+| **parcelamento** (`parcelamento`, REFIS, PERT, transação tributária, dívida ativa) | parcela LINEAR até o fim, pelo prazo implícito no balanço | parcelamento **é** um cronograma de pagamento |
+| **tributo corrente** (ICMS, IRRF, ISS, PIS/COFINS, obrigações tributárias) | fica CONSTANTE | é saldo **rotativo**: paga-se o do mês e o do mês seguinte toma o lugar. Zerar diria que a empresa deixou de ter imposto a recolher, o que só acontece se ela parar de operar |
+| **provisão tributária** | fica CONSTANTE | resolve-se por decisão judicial ou acordo, e nenhum dos dois tem data que o modelo possa inferir |
+
+O prazo do parcelamento vem da MESMA derivação da dívida: sob parcela linear em `n` anos, a fração
+que vence em 12 meses é `1/n` do saldo, logo `n = 1 ÷ fração no circulante`. No book: 3.272 de 11.978
+no circulante → 27,3% → **3,7 anos**, parcela constante de 3.237/ano. Sem repartição curto/longo no
+caso, cai em **5 anos (60 meses)**, que é o parcelamento ordinário da legislação federal — e a nota
+DIZ que é padrão legal, não medição.
+
+**A fixture principal não tinha conta tributária nenhuma — é por isso que o defeito viveu tanto.** A
+variante do `(0113)` acrescenta as quatro que importam (parcelamento em CP e LP, tributo corrente,
+provisão) e prova os cinco elos: prazo implícito de 4 anos, parcela constante de 250, tributo corrente
+constante, **nenhuma conta de tributo no `Working Capital`**, o balanço lendo o espelho, o balanço
+FECHANDO com o pagamento saindo do caixa, e o pagamento do fluxo sendo exatamente a queda do saldo.
+Religando os dois defeitos (congelar o parcelamento e devolver o tributo ao giro), **quatro asserts
+reprovam com os números de antes** (1.000 · 1.000 · 1.000).
+
+**Um falso alarme, registrado para ninguém repetir a caçada.** No book o giro projetado explode
+(`Passivo circulante operacional` 46.669 → 432.714) e as contas saem todas com o MESMO valor. Não é
+defeito do motor: a fixture do book aplica uma premissa de **60 dias de giro** a todas as contas, e
+60 dias × receita ÷ 360 dá o mesmo número para todas. No arquivo de produção os dias medidos são
+mantidos (13, 7,9, 1,6…) e o giro fica são — conferido no v35 (AC 102.070 → 114.346).
+
+`verificar-export.mts`: 499 → **506**.
 
 ## Sessão 40g (2026-08-07) — a tela deixou de falar canônico
 
