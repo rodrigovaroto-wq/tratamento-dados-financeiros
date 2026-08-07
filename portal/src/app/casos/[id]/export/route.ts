@@ -449,7 +449,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // O nome do arquivo DIZ qual dos dois é. Dois arquivos com o mesmo nome na
   // pasta de Downloads, um com modelo e outro sem, é confusão garantida — e a
   // pergunta "qual desses é o completo?" não tem resposta olhando o ícone.
-  const sufixo = modo === "dados" ? "dados" : "completo";
+  const sufixo = modo === "dados" ? "dados-financeiros" : "modelagem";
   const filename = `${nomeArquivoSanitizado(caso.nome)}-${sufixo}-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
   return new NextResponse(buffer as unknown as BodyInit, {

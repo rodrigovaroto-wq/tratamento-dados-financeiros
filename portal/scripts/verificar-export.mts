@@ -4954,6 +4954,105 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
   }
 
+  // ---- (0110) O EXPORT DE MODELAGEM NÃO CARREGA AS ABAS DE DADO -----------
+  //
+  // Decisão do dono (07/08/2026): dois arquivos, dois propósitos. O de modelagem
+  // entrega as 14 abas do modelo; as 12 de dado cru ficam no export de dados
+  // financeiros, que já existia (`?modo=dados`). Antes o de modelagem continha o
+  // outro inteiro — 29 abas para quem só queria o que vai a comitê.
+  {
+    const nomes = wbMod.worksheets.map((w) => w.name);
+    const faltando = ABAS_DO_MODELO.filter((a) => !nomes.includes(a));
+    checar(faltando.length === 0,
+      "(0110) o export de modelagem traz as 14 abas do modelo",
+      faltando.join(", "));
+    // As abas de dado do MESMO caso: a fixture tem documento de BALANÇO, então
+    // `Balanço` e `Dados (linha a linha)` existiriam se a separação não acontecesse.
+    const dado = nomes.filter((n) => ["Balanço", "DRE", "Dados (linha a linha)", "Resumo",
+      "Fluxo de Caixa", "DMPL", "Combinado", "Balancete", "Faturamento", "Dívida",
+      "Intragrupo", "Outros"].includes(n));
+    checar(dado.length === 0,
+      "(0110) …e NENHUMA aba de dado cru — elas são o outro arquivo",
+      dado.join(", ") || "nenhuma");
+    // E o corte não pode ter deixado fórmula órfã: aba referenciada que some vira
+    // `#REF!` em toda fórmula que apontava para ela. É o motivo de a remoção ter
+    // sido decidida por MEDIÇÃO das referências cruzadas, não por parecer seguro.
+    const orfas: string[] = [];
+    for (const ws of wbMod.worksheets) {
+      for (let r = 1; r <= ws.rowCount; r++) {
+        ws.getRow(r).eachCell({ includeEmpty: false }, (cell) => {
+          const v = cell.value as { formula?: string } | null;
+          if (!v || typeof v !== "object" || !("formula" in v) || !v.formula) return;
+          for (const m of v.formula.matchAll(/'([^']+)'!/g)) {
+            if (!nomes.includes(m[1])) orfas.push(`${ws.name}!${cell.address} → '${m[1]}'`);
+          }
+        });
+      }
+    }
+    checar(orfas.length === 0,
+      "(0110) …e nenhuma fórmula ficou apontando para aba que não está mais no arquivo",
+      orfas.slice(0, 4).join(" · "));
+  }
+
+  // ---- (0111) O COCKPIT DA ABA `Premissas` -------------------------------
+  //
+  // O mecanismo de modelar dentro do Excel já existia, mas espalhado por sete abas:
+  // alavanca que ninguém acha não é alavanca. O cockpit publica cada uma com o valor
+  // VIVO e o endereço de onde se edita — e o assert que importa é o do endereço:
+  // painel que aponta para a célula errada é pior que painel nenhum, porque manda o
+  // analista editar coisa que não é a premissa.
+  {
+    const prem = wbMod.getWorksheet("Premissas")!;
+    const rPainel = linhaDoRotulo("Premissas",
+      "PAINEL DE MODELAGEM — as alavancas do arquivo, e onde fica cada uma");
+    checar(rPainel !== null, "(0111) a aba Premissas publica o PAINEL DE MODELAGEM", String(rPainel));
+
+    // Cada linha do painel: rótulo na C, endereço "Aba!Célula" na D. O endereço tem
+    // de RESOLVER — e resolver para a mesma célula que o painel espelha.
+    const enderecosErrados: string[] = [];
+    let conferidos = 0;
+    for (let r = (rPainel ?? 0) + 1; r <= (rPainel ?? 0) + 20; r++) {
+      const onde = String(prem.getRow(r).getCell(4).value ?? "").trim();
+      const m = /^(.+)!([A-Z]+)(\d+)/.exec(onde);
+      if (!m) continue;
+      conferidos++;
+      const wsAlvo = wbMod.getWorksheet(m[1]);
+      if (!wsAlvo) { enderecosErrados.push(`${onde}: aba não existe`); continue; }
+      const celAlvo = wsAlvo.getRow(Number(m[3])).getCell(m[2]);
+      if (celAlvo.value === null || celAlvo.value === undefined) {
+        enderecosErrados.push(`${onde}: célula vazia`); continue;
+      }
+      // O valor do painel naquele ano tem de ser o MESMO da célula apontada.
+      const doPainel = avaliarCelula(prem, m[2] === "D" ? COLS_ANO[iAnoDe(2026)] : m[2], r);
+      const naOrigem = avaliarCelula(wsAlvo, m[2], Number(m[3]));
+      const igual = typeof doPainel === "number" && typeof naOrigem === "number"
+        ? Math.abs(doPainel - naOrigem) < 0.001
+        : String(doPainel) === String(naOrigem);
+      if (!igual) enderecosErrados.push(`${onde}: painel ${JSON.stringify(doPainel)} ≠ origem ${JSON.stringify(naOrigem)}`);
+    }
+    checar(conferidos >= 8 && enderecosErrados.length === 0,
+      `(0111) …e cada endereço publicado aponta para a célula CERTA (${conferidos} conferidos)`,
+      enderecosErrados.slice(0, 4).join(" · "));
+
+    // REFERÊNCIA VIVA, não cópia: mexer na origem move o painel. É o que garante que
+    // o cockpit não vire documentação desatualizada.
+    const rCaixa = linhaDoRotulo("Premissas", "Caixa mínimo operacional");
+    const div = wbMod.getWorksheet("ST Inv. & Debt")!;
+    const rOrig = linhaDoRotulo("ST Inv. & Debt", "Caixa mínimo operacional");
+    if (rCaixa !== null && rOrig !== null) {
+      const col = COLS_ANO[iAnoDe(2026)];
+      const antes = avaliarCelula(prem, col, rCaixa);
+      div.getRow(rOrig).getCell(col).value = 77777;
+      esquecerMemoria(prem); esquecerMemoria(div);
+      const depois = avaliarCelula(prem, col, rCaixa);
+      checar(depois === 77777 && antes !== 77777,
+        "(0111) …e o valor é REFERÊNCIA VIVA à origem — mudar lá muda aqui",
+        `antes ${JSON.stringify(antes)} · depois ${JSON.stringify(depois)}`);
+      div.getRow(rOrig).getCell(col).value = antes as number;
+      esquecerMemoria(prem); esquecerMemoria(div);
+    }
+  }
+
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
   //
   // Quando a extração não classifica as linhas de resultado (`secao_canonica`

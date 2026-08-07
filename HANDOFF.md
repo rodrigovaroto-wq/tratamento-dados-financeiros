@@ -4,10 +4,15 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-06 (sessão 40d). **Estado do `main`:** mergeado até o **PR #106**
-(`main` em `004092c`) — **as Fases A, B, C e D do plano estão todas no `main`**. Branch de trabalho:
-**`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de cada merge; o **#107** (só este
-cabeçalho) está aberto.
+**Última atualização:** 2026-08-07 (sessão 40f). **Estado do `main`:** mergeado até o **PR #108**
+(`main` em `8a6a1ea`) — **as Fases A, B, C e D do plano e as três decisões de premissa estão todas no
+`main`**. Branch de trabalho: **`claude/mapa-modelo-base-krhhbj`**, reiniciada do `main` depois de
+cada merge.
+
+**O PRODUTO, EM UMA LINHA:** o portal entrega **dois arquivos** — *dados financeiros* (a conferência
+da ingestão, linha a linha) e *modelagem* (as 14 abas do modelo institucional, projetadas e editáveis
+dentro do Excel). O aceite de um `.xlsx` é `auditar-xlsx.mts` (10 itens automáticos) +
+`docs/ACEITE.md` (10 itens humanos).
 
 **CI: O `main` ESTÁ VERDE, PELA SUÍTE INTEIRA E NO SERVIDOR** — execução
 [`31128897900`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/31128897900),
@@ -135,7 +140,7 @@ estes):
 cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
 node --test 'n8n/test/*.test.mjs'                                     # 176
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 485
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 491
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
@@ -227,6 +232,54 @@ dá para aprovar).
 push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 40f (2026-08-07) — dois exports, e as alavancas em uma tela só
+
+**Auditoria do v35 exportado depois da amortização: 10/10 no auditor**, 12.244 fórmulas sem um
+`#REF!`, balanço fechando nas sete colunas, DRE do realizado igual ao documento nas 28 células. E o
+que o arquivo agora MOSTRA, que antes escondia: a dívida existente amortiza 36.643 em 2026 e o caixa
+não cobre — o revolver saca 48.406 e chega a **122.216 em 2030**, o `DSCR` fica entre 0,3 e 0,7
+contra o corte de 1,2 e o `ND/EBITDA` vai de 5,1x a **10,8x**. Nenhum desses números é novo no
+negócio; eles é que estavam invisíveis enquanto a dívida era rolada para sempre.
+
+**DOIS EXPORTS, DOIS PROPÓSITOS** (decisão do dono). O de modelagem carregava as 12 abas de dado cru
+do export da Etapa 1: 29 abas para quem só queria o que vai a comitê. Agora *Exportar dados
+financeiros* entrega a conferência da ingestão e *Exportar modelagem* entrega as 14 abas do modelo +
+`Modelagem` + o par macro — **16 a 17 abas**. Os dois botões ficam lado a lado na tela de Modelagem e
+na do caso.
+
+**A remoção só foi feita porque foi MEDIDA.** Aba referenciada que some vira `#REF!` em toda fórmula
+que apontava para ela. O mapa de referências cruzadas das 12.244 fórmulas do arquivo entregue mostrou
+que as 14 abas do modelo referenciam APENAS umas às outras; zero referências às abas de dado. A regra
+é por **lista do que FICA**, não do que sai: tipo documental novo já nasce fora do arquivo de
+modelagem. E há guarda: sem o modelo montado não se remove nada — arquivo pequeno e vazio é pior que
+arquivo grande.
+
+**O COCKPIT DA ABA `Premissas`.** O mecanismo de modelar dentro do Excel já funcionava (o painel
+índice macro × spread reprojeta a cascata: `conta = ano anterior × (1 + CHOOSE(cenário, base,
+cliente, stress))`, e `base = (1+índice)×(1+spread)−1`), mas estava **espalhado por sete abas de até
+135 linhas** — e alavanca que ninguém acha não é alavanca. Pior: quem abre o arquivo procurando "as
+premissas" abre a aba `Premissas`, que só tinha base histórica extraída, o oposto do que o nome
+promete.
+
+Agora ela abre com o **PAINEL DE MODELAGEM**: uma linha por alavanca, com o valor **vivo** (fórmula
+apontando para a origem, nunca cópia), o **endereço** de onde se edita (`aba!célula`) e uma nota
+dizendo o que muda ao mexer. Cobre o índice macro e o spread de cada premissa de crescimento, caixa
+mínimo, spreads de dívida/revolver/aplicação, prazo da captação nova, prazo SAC das tranches, vida
+útil e os três cortes de covenant. Alavanca que não existe no caso aparece como **"não se aplica"** —
+ausência declarada, nunca linha em branco.
+
+Não se edita NO painel porque Excel não tem célula de mão dupla: ou o valor mora lá e as abas leem
+daqui, ou mora nas abas e o painel espelha. Mover tudo para cá quebraria a leitura de cada aba em pé
+e é decisão de arquitetura própria.
+
+**O assert que importa é o do endereço** (`0111`): painel que aponta para a célula errada é pior que
+painel nenhum, porque manda editar o que não é a premissa. O teste lê os 12 endereços publicados, vai
+a cada célula e exige que o valor bata. Deslocando o endereço em uma linha, ele reprova nomeando as
+divergências. `0110` faz o mesmo pelo corte das abas: religando a remoção, reprova listando as abas
+de dado que voltaram.
+
+`verificar-export.mts`: 485 → **491**.
 
 ## Sessão 40e (2026-08-07) — as três premissas decididas, e a dívida passou a amortizar
 

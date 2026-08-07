@@ -21,14 +21,15 @@ import {
   type FamiliaDemonstracao,
 } from "./statement-templates";
 import {
-  ABA_MODELAGEM, ANOS_PROJETADOS, construirAbaMacro, construirAbaMacroSemDado,
+  ABA_MACRO, ABA_MACRO_DADOS, ABA_MODELAGEM, ANOS_PROJETADOS,
+  construirAbaMacro, construirAbaMacroSemDado,
   type ConfigModelagem,
   construirAbaModelagem,
 } from "./export-modelagem";
 import type { MacroParaExport } from "./export-modelagem";
 import { injetarGraficosNoBuffer, type EspecGrafico } from "./xlsx-graficos";
 import {
-  construirModeloInstitucional, type EntradaModeloInstitucional,
+  ABAS_MODELO, construirModeloInstitucional, type EntradaModeloInstitucional,
 } from "./modelo-institucional";
 // Reexportados para o `route.ts` seguir importando tudo de "@/lib/export": o
 // corte da sessão 20 é interno ao lib, e não é motivo para mexer no chamador.
@@ -3106,6 +3107,46 @@ export function buildExportWorkbook({
     for (let r = 2; r <= ws.rowCount; r++) {
       ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
       ws.getRow(r).height = 56;
+    }
+  }
+
+  // ----- AS ABAS DE DADO SAEM DO EXPORT DE MODELAGEM ------------------------
+  //
+  // Decisão do dono (07/08/2026): "remova as abas de dados financeiros que não têm
+  // relação com a modelagem — todas as que já estão no export da Etapa 1". São dois
+  // arquivos com dois propósitos, e o botão de cada um está na tela: *Exportar dados
+  // financeiros* (`?modo=dados`) entrega a conferência da ingestão, *Exportar
+  // modelagem* entrega o que vai a comitê. Antes o segundo continha o primeiro
+  // inteiro: 29 abas, das quais 12 eram dado cru repetido.
+  //
+  // REMOVER SÓ É SEGURO PORQUE FOI MEDIDO. Aba referenciada que some vira `#REF!` em
+  // toda fórmula que apontava para ela — o defeito que o `auditar-xlsx.mts` caça.
+  // Medição no arquivo entregue em 07/08 (o mapa de referências cruzadas das 12.244
+  // fórmulas): as 14 abas do modelo referenciam APENAS umas às outras — `Anual`,
+  // `Premissas`, `Considerações`, `Output` e as demonstrações do próprio modelo. Zero
+  // referências às abas de dado. A `Modelagem` não referencia ninguém (recebe VALOR,
+  // não fórmula), e a `Macro` referencia só a `Macro (dados)`.
+  //
+  // O QUE FICA, e por quê: as 14 do modelo (é o produto), a `Modelagem` (é a decisão
+  // registrada — entidade, corte, premissas) e o par `Macro`/`Macro (dados)`. O par
+  // macro está no export da Etapa 1, mas NÃO é dado financeiro da empresa: é o índice
+  // que dirige a projeção, e agora que as premissas são editáveis dentro do Excel,
+  // tirá-lo deixaria o arquivo sem a fonte do que ele projeta.
+  //
+  // A regra é por LISTA DO QUE FICA, não do que sai: aba de dado nova (tipo
+  // documental novo) já nasce fora do arquivo de modelagem, sem ninguém lembrar de
+  // atualizar lista nenhuma.
+  {
+    const modeloMontado = ABAS_MODELO.every((a) => workbook.getWorksheet(a));
+    // GUARDA: sem o modelo montado não há o que separar, e remover as abas de dado
+    // deixaria um arquivo com a `Modelagem` explicando por que está vazia — pior que
+    // o arquivo grande. Só se separa quando existe o produto que justifica a
+    // separação.
+    if (modeloMontado) {
+      const fica = new Set<string>([...ABAS_MODELO, ABA_MODELAGEM, ABA_MACRO, ABA_MACRO_DADOS]);
+      for (const ws of [...workbook.worksheets]) {
+        if (!fica.has(ws.name)) workbook.removeWorksheet(ws.id);
+      }
     }
   }
 

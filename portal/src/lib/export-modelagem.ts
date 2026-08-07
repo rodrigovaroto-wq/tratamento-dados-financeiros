@@ -70,8 +70,8 @@ export const ANOS_PROJETADOS = 3;
 // O RISCO DO v28 CONTINUA REAL e por isso não é ignorado: o Resumo lista as
 // abas presentes, e a Modelagem diz onde procurar. Nada é `veryHidden` — todas
 // reaparecem com um clique com o botão direito na barra de abas.
-const ABA_MACRO = "Macro";
-const ABA_MACRO_DADOS = "Macro (dados)";
+export const ABA_MACRO = "Macro";
+export const ABA_MACRO_DADOS = "Macro (dados)";
 
 // ---------------------------------------------------------------------------
 // ÍNDICES MACROECONÔMICOS (db/migrations/0025)
