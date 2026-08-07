@@ -20,23 +20,48 @@ test('orçamento: o lote do v31 é recusado ANTES do renome e passa DEPOIS', () 
   // pagavam o PDF duas vezes → 22 chamadas.
   const antes = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 22 / 14 });
   assert.equal(antes.chamadas, 22);
-  assert.equal(antes.cabe, false, '22 chamadas ≈ US$ 3,30 estoura o teto de US$ 3');
+  assert.equal(antes.cabe, false, '22 chamadas ≈ US$ 4,40 estoura o teto de US$ 3');
   assert.match(antes.mensagem, /Lote recusado ANTES de gastar/);
   assert.match(antes.mensagem, /Nada foi enviado à OpenAI/);
   assert.ok(antes.maxDocumentos > 0 && antes.maxDocumentos < 14,
     'a mensagem tem de dizer um número de documentos por leva que seja acionável');
 
   // Depois do renome para a notação de f0/03 (12M25 / L24M): 1 chamada por
-  // documento → 14 chamadas, US$ 2,10, cabe.
+  // documento → 14 chamadas, US$ 2,80, cabe.
   const depois = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 1 });
   assert.equal(depois.chamadas, 14);
   assert.equal(depois.cabe, true);
-  assert.equal(depois.estimadoUSD, 2.1);
+  assert.equal(depois.estimadoUSD, 2.8);
   assert.equal(depois.mensagem, null, 'lote que cabe não produz mensagem de recusa');
 });
 
+// O book-canastra é o primeiro lote do repositório que NÃO CABE nem depois de
+// renomear: 38 documentos, dos quais 19 pagam o PDF duas vezes = 57 chamadas.
+// Ele existe para exercitar exatamente isto — que a decisão seja NÃO antes da
+// primeira chamada, e que a mensagem diga em quantas levas o trabalho cabe.
+// O custo MEDIDO desse lote está em `n8n/medir-custo-book.mjs`.
+test('orçamento: o lote do book-canastra é recusado, e recusado de novo depois do renome', () => {
+  const comoEsta = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38 });
+  assert.equal(comoEsta.chamadas, 57);
+  assert.equal(comoEsta.cabe, false);
+  // 15 chamadas ÷ 1,5 chamada por documento daria 10; a função devolve 9 porque
+  // 0,20 × 1,5 não é exatamente 0,30 em ponto flutuante e o `floor` arredonda
+  // para baixo. Erro de arredondamento que sobra para o lado SEGURO (leva menor)
+  // é o que se quer aqui — trava-se o 9 de propósito, não se "corrige" para 10.
+  assert.equal(comoEsta.maxDocumentos, 9);
+  assert.match(comoEsta.mensagem, /Envie no máximo 9 documento\(s\) por vez \(5 levas\)/);
+
+  // Renomear tudo para a notação de f0/03 corta 19 chamadas — e ainda assim o
+  // lote não cabe. Ou seja: com kit de mandato completo, dividir em levas não é
+  // contorno de nome mal escolhido, é a operação normal.
+  const renomeado = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 1 });
+  assert.equal(renomeado.chamadas, 38);
+  assert.equal(renomeado.cabe, false, '38 × US$ 0,20 = US$ 7,60 continua acima do teto');
+  assert.equal(renomeado.maxDocumentos, 15);
+});
+
 test('orçamento: fronteira exata do teto', () => {
-  const n = Math.floor(TETO_EXECUCAO_USD / CUSTO_ESTIMADO_DOC_USD); // 20
+  const n = Math.floor(TETO_EXECUCAO_USD / CUSTO_ESTIMADO_DOC_USD); // 15
   assert.equal(orcamentoDoLote({ documentos: n }).cabe, true, `${n} documentos cabem`);
   assert.equal(orcamentoDoLote({ documentos: n + 1 }).cabe, false, `${n + 1} não cabem`);
   // Lote vazio não é erro de orçamento — quem reclama de lote vazio é
@@ -63,10 +88,13 @@ test('custoDaChamada mede a partir do usage e cobra cache pela metade', () => {
     ),
     0.09875,
   );
-  // O estimador de US$ 0,15/documento tem de ficar ACIMA do custo medido típico,
-  // senão o teto de US$ 3 mente para o lado perigoso.
-  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.105,
-    'a estimativa precisa errar para o lado seguro (superestimar), não subestimar');
+  // O estimador por documento tem de ficar ACIMA do custo medido, senão o teto
+  // de US$ 3 mente para o lado perigoso. O piso não é mais o cálculo de
+  // guardanapo (US$ 0,105): é o documento MAIS CARO já medido num book real — o
+  // livro razão do book-canastra, US$ 0,1725 por chamada (3 páginas, 461
+  // linhas). Foi ele que obrigou a recalibração de 0,15 para 0,20.
+  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.1725,
+    'a estimativa precisa cobrir o documento mais caro já medido, não o típico');
 });
 
 test('custoDaChamada devolve null em vez de chutar quando não pode medir', () => {

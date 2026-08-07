@@ -235,3 +235,70 @@ test('parseEntidade se abstém quando o nome não carrega empresa', () => {
   assert.equal(parseEntidade('bp vertentes metalurgica 2025', []), 'Bp Vertentes Metalurgica');
   assert.equal(parseEntidade('bp vertentes metalurgica 2025', undefined), 'Bp Vertentes Metalurgica');
 });
+
+// --- O achado do book-canastra: razão de fornecedores não é aging de pagáveis -
+//
+// O arquivo "17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf" saía como
+// AGING_AP com confiança 0,90 — alta o bastante para PULAR a verificação da IA e
+// mandar um livro contábil para a aba de contas a pagar. A causa era a ordem da
+// lista de ALIASES: 'fornecedores', termo de uma palavra, vinha antes de
+// 'livro razao'. O defeito só apareceu porque um book passou a ter razão E aging
+// no mesmo lote — com um dos dois faltando, a ordem errada nunca é exercitada.
+test('nome com duas palavras-chave resolve pela regra MAIS ESPECÍFICA', () => {
+  const casos = [
+    ['17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf', 'RAZAO'],
+    ['Razao Analitico Clientes 2025.pdf', 'RAZAO'],
+    // e o aging continua sendo aging — a correção não pode roubar o caso dele
+    ['23_Aging_de_Contas_a_Pagar_Canastra_Industria_2025.pdf', 'AGING_AP'],
+    ['Fornecedores em aberto 12M25.pdf', 'AGING_AP'],
+    ['22_Aging_de_Contas_a_Receber_Canastra_Industria_2025.pdf', 'AGING_AR'],
+  ];
+  for (const [nome, tipo] of casos) {
+    assert.equal(classifyByFilename(nome).tipo_taxonomia, tipo, `tipo de ${nome}`);
+  }
+});
+
+// --- Os nomes do book-canastra e o que eles CUSTAM ---------------------------
+//
+// Metade dos nomes está na notação de f0/03 e metade chega como o cliente manda.
+// Este teste trava a fronteira: quem resolve tipo E período forte fica em 0,90 e
+// paga UMA chamada; quem traz ano solto fica em 0,65 e paga DUAS (classificação
+// por conteúdo + extração). É a diferença que faz o lote caber ou não no teto —
+// ver `n8n/medir-custo-book.mjs` e docs/CUSTO_OPENAI.md.
+test('a notação do nome decide se o documento paga o PDF uma ou duas vezes', () => {
+  const umaChamada = [
+    '01_Balanco_Patrimonial_Canastra_Industria_2025x2024x2023.pdf',
+    '03_DFC_Canastra_Industria_12M25.pdf',
+    '04_DMPL_Canastra_Industria_2023_a_2025.pdf',
+    '18_Faturamento_36_meses_Canastra_Industria_2023_a_2025.pdf',
+    '35_Demonstracoes_Contabeis_Canastra_Industria_2024x2023.pdf',
+  ];
+  const duasChamadas = [
+    '13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf', // ano solto: sinal fraco
+    '20_Mapa_de_Divida_Canastra_Industria_2025.pdf',
+    '30_Certidoes_Negativas_Grupo_Canastra.pdf', // sem período nenhum
+    'Doc1.pdf', // sem tipo nenhum
+    'digitalizado_20260115_0003.pdf',
+    'ANEXO IV - planilha final REV3.pdf',
+  ];
+  for (const nome of umaChamada) {
+    const r = classifyByFilename(nome);
+    assert.equal(r.precisa_fallback_openai, false, `${nome} deveria dispensar a IA (conf ${r.confianca})`);
+    assert.ok(r.confianca >= 0.7, `${nome}: confiança ${r.confianca}`);
+  }
+  for (const nome of duasChamadas) {
+    const r = classifyByFilename(nome);
+    assert.equal(r.precisa_fallback_openai, true, `${nome} deveria cair na IA (conf ${r.confianca})`);
+  }
+});
+
+// O nome de scanner não pode inventar período: "20260115" não é o ano de 2026, e
+// "0003" não é 2003. Período-lixo fragmenta a tabela `periodo` e impede a
+// reconciliação de casar os documentos do mesmo exercício.
+test('nome de scanner e de anexo de e-mail não produzem período inventado', () => {
+  for (const nome of ['digitalizado_20260115_0003.pdf', 'ANEXO IV - planilha final REV3.pdf', 'Doc1.pdf']) {
+    const r = classifyByFilename(nome);
+    assert.equal(r.periodo, null, `${nome} não pode ter período: ${JSON.stringify(r.periodo)}`);
+    assert.equal(r.tipo_taxonomia, null, `${nome} não pode ter tipo`);
+  }
+});

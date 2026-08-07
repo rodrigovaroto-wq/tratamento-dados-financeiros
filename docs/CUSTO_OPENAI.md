@@ -226,14 +226,15 @@ a mensagem de recusa pede.
 O efeito no lote real do v31, que os testes travam:
 
 ```
-antes do renome:  14 documentos → 22 chamadas ≈ US$ 3,30  → RECUSADO antes de gastar
-depois do renome: 14 documentos → 14 chamadas ≈ US$ 2,10  → passa
+antes do renome:  14 documentos → 22 chamadas ≈ US$ 4,40  → RECUSADO antes de gastar
+depois do renome: 14 documentos → 14 chamadas ≈ US$ 2,80  → passa
 ```
 
 ### Estimativa vs. medição — e como apertar o teto com honestidade
 
-`CUSTO_ESTIMADO_DOC_USD = 0,15` é **estimativa declarada** (o cálculo está no comentário da constante),
-posta acima do custo típico medido (~US$ 0,105) para errar para o lado seguro. Barrar um lote que
+`CUSTO_ESTIMADO_DOC_USD = 0,20` (era 0,15 até 07/08/2026 — ver o adendo da medição abaixo) é
+**estimativa declarada** (o cálculo está no comentário da constante), posta acima do custo medido
+para errar para o lado seguro. Barrar um lote que
 caberia é um aviso; deixar passar um que não cabe é o v31 de novo.
 
 `custoDaChamada` mede o **real** a partir do bloco `usage` que a OpenAI devolve — inclusive cobrando
@@ -251,3 +252,55 @@ custo é pior que campo vazio.
 credencial `OpenAI API` que já existe, e um veredito em texto. Nasceu porque o dono não usa terminal — e
 um diagnóstico que o dono não consegue rodar não diagnostica nada. Não grava em banco, não tem trigger
 de relógio, e o veredito sai do **mesmo** `diagnosticarErroApi` da produção (embutido por `toString()`).
+
+
+---
+
+## Adendo (book-canastra, 2026-08-07) — a primeira MEDIÇÃO por documento, e o que ela desmentiu
+
+Até aqui a conta de custo era uma estimativa de guardanapo confrontada com uma âncora de fatura
+("o v18 custou ~US$ 3"). O `test-data/book-canastra` mudou isso: 38 documentos sintéticos, 49
+páginas, 3.034 linhas com número, todos com páginas e linhas **contadas no PDF gerado**. O
+`n8n/medir-custo-book.mjs` converte essa contagem em dólares usando o preço e as funções que rodam em
+produção (`classifyByFilename`, `custoDaChamada`, `orcamentoDoLote`) — sem chamar a OpenAI, então
+medir custa zero e pode rodar no CI.
+
+**Custo medido do lote inteiro: US$ 1,41 em 57 chamadas.** Três coisas saíram diferentes do que este
+documento afirmava:
+
+**1. O gargalo não é a entrada, é a SAÍDA.** A extração devolve ~106 mil tokens de saída (3.034 linhas
+× ~35 tokens) contra ~49 mil de entrada de imagem. A US$ 10/M contra US$ 2,50/M, a saída responde por
+**~75% da conta**. Consequência direta: a alavanca nº 1 deste documento — mandar o PDF como TEXTO em
+vez de imagem — economiza **5%** neste book, não os 60-80% que a seção prometia. Ela continua valendo
+(e continua sendo a que fecha o gap de `.docx`/`.xlsx`), mas por qualidade de leitura e por documentos
+de MUITAS páginas, não por ser a maior economia. Em documento de 1 página, o PDF é troco.
+
+**2. Existia documento realista mais caro que a estimativa que sustenta o teto.** O livro razão (3
+páginas, 461 linhas) mediu **US$ 0,1725 por chamada**, acima dos US$ 0,15. Num lote só dele, a promessa
+de "no máximo US$ 3 por execução" seria quebrada em ~15%. Por isso `CUSTO_ESTIMADO_DOC_USD` foi
+**recalibrado para 0,20** — que é exatamente o que o comentário da constante mandava fazer quando
+houvesse medição. Efeito colateral aceito: o lote máximo cai de 20 para 15 chamadas.
+
+**3. A estimativa plana é ruim nos dois sentidos, e isso agora está medido.** Para os 38 documentos
+deste book ela projeta US$ 11,40 contra US$ 1,41 medidos — **8× para cima**, o que recusa lotes que
+caberiam. E para o documento denso ela ficava para baixo, que é o item 2. Um número plano não pode
+acertar os dois, porque o custo depende de **páginas e linhas**, e nenhuma das duas entra na conta.
+
+> **A fatia seguinte, com o número que a justifica:** estimador por TAMANHO DE ARQUIVO. `Listar
+> Arquivos` já conhece os bytes de cada arquivo antes de qualquer chamada, e bytes correlacionam com
+> páginas e com densidade de linha. Trocar `custoPorChamada` fixo por `custoPorChamada(bytes)`
+> resolveria a superestimação de 8× e a subestimação do documento denso de uma vez. Não foi feito
+> agora porque muda o contrato do nó de orçamento no n8n e merece rodada própria.
+
+**19 dos 38 documentos pagam o PDF duas vezes** — 6 porque o nome não diz o tipo (`Doc1.pdf`,
+`digitalizado_20260115_0003.pdf`, `ANEXO IV - planilha final REV3.pdf`, e os três tipos que a
+taxonomia não tem: imobilizado, folha e parecer de auditoria), 13 porque o nome traz **ano solto**
+(`..._2025.pdf`), que é sinal fraco e não chega ao limiar de 0,70. Renomear para a notação de f0/03
+corta 19 chamadas — e **ainda assim o lote não cabe**: 38 × US$ 0,20 = US$ 7,60. Com kit de mandato
+completo, dividir em levas não é contorno de nome mal escolhido, é a operação normal.
+
+**E a medição achou um defeito que não é de custo:** o arquivo `17_Livro_Razao_Fornecedores_...`
+saía classificado como `AGING_AP` com confiança 0,90 — alta o bastante para pular a verificação da IA
+e mandar um livro contábil para a aba de contas a pagar. A causa era a ordem de `ALIASES`:
+`fornecedores` (uma palavra, genérica) era testado antes de `livro razao`. Corrigido, com teste que
+reprova religado. O defeito só apareceu porque um book passou a ter razão **e** aging no mesmo lote.
