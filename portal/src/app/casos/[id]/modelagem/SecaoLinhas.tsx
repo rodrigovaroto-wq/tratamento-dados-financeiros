@@ -97,10 +97,13 @@ function Aviso({ r }: { r: Resultado }) {
 }
 
 export function SecaoLinhas({
-  casoId, secao, linhas, ativas, sazonais, vinculos,
+  casoId, secao, rotulo, linhas, ativas, sazonais, vinculos,
 }: {
   casoId: string;
+  /** chave canônica — é o que vai ao banco */
   secao: string;
+  /** o nome em português — é o que aparece na tela */
+  rotulo: string;
   linhas: LinhaDaSecao[];
   ativas: OpcaoPremissa[];
   sazonais: OpcaoPremissa[];
@@ -158,7 +161,7 @@ export function SecaoLinhas({
     <div>
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-xs font-semibold uppercase text-neutral-500">
-          {secao}{" "}
+          {rotulo}{" "}
           <span className="font-normal">
             ({contas.length} conta(s)
             {linhas.length !== contas.length && ` + ${linhas.length - contas.length} não projetável(is)`})

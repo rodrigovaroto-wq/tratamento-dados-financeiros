@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SecaoLinhas } from "./SecaoLinhas";
 import { FormParametros, FormPremissa } from "./FormsTopo";
 import { chaveDaLinha, vinculoPorLinha } from "@/lib/modelagem-linha";
+import { humanizar, rotuloDaSecao } from "@/lib/rotulos";
 
 // A seção MODELAGEM do mandato (pedido do dono, Fase 7.3; revisada na Fase 8
 // depois da rodada real do Teste v35).
@@ -511,7 +512,7 @@ export default async function ModelagemPage({
           2. Premissas deste caso
           {parametros?.setor && (
             <span className="ml-2 font-normal text-neutral-500">
-              — sugeridas para {SETORES.find(([v]) => v === parametros.setor)?.[1] ?? parametros.setor}
+              — sugeridas para {SETORES.find(([v]) => v === parametros.setor)?.[1] ?? humanizar(parametros.setor)}
             </span>
           )}
         </h2>
@@ -579,7 +580,7 @@ export default async function ModelagemPage({
           {[...porNatureza.entries()].map(([natureza, lista]) => (
             <div key={natureza}>
               <h3 className="mb-1 text-xs font-semibold uppercase text-neutral-500">
-                {NATUREZA_LABEL[natureza] ?? natureza}
+                {NATUREZA_LABEL[natureza] ?? humanizar(natureza)}
               </h3>
               <div className="space-y-1">
                 {lista.map((p) => {
@@ -671,6 +672,10 @@ export default async function ModelagemPage({
                 key={secao}
                 casoId={id}
                 secao={secao}
+                // A CHAVE canônica continua sendo `secao` (é ela que o formulário manda
+                // ao banco); o que a tela mostra é o rótulo em português. Misturar os
+                // dois foi o defeito: `passivo_nao_circulante` num cabeçalho de seção.
+                rotulo={rotuloDaSecao(secao === "(sem seção canônica)" ? null : secao)}
                 linhas={linhas}
                 ativas={ativas.map((a) => ({
                   codigo: a.premissa_codigo,

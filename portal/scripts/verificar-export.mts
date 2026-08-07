@@ -48,6 +48,7 @@ import { classificarConta } from "../src/lib/statement-templates.ts";
 import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/lib/modelagem-linha.ts";
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
+import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -5051,6 +5052,72 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       div.getRow(rOrig).getCell(col).value = antes as number;
       esquecerMemoria(prem); esquecerMemoria(div);
     }
+  }
+
+  // ---- (0112) A TELA NÃO FALA CANÔNICO ------------------------------------
+  //
+  // Pedido do dono (07/08/2026): a tela não publica chave de banco. Nada de `_`,
+  // acento em todo lugar, sigla em maiúscula, e a mensagem de pendência quebrada em
+  // um fato por linha em vez de um parágrafo emendado por `;`.
+  //
+  // A fixture é o TEXTO REAL que ele copiou da tela — não uma frase inventada para o
+  // teste passar. Se a mensagem do banco mudar de forma, é aqui que aparece.
+  {
+    const canonicas: Array<[string, string]> = [
+      ["passivo_nao_circulante", "Passivo Não Circulante"],
+      ["patrimonio_liquido", "Patrimônio Líquido"],
+      ["receita_bruta", "Receita Bruta e Deduções"],
+      ["divida", "Mapa de Dívida"],
+      ["atividades_financiamento", "Atividades de Financiamento"],
+    ];
+    const erradas = canonicas.filter(([k, esperado]) => rotuloDaSecao(k) !== esperado)
+      .map(([k, esperado]) => `${k} → "${rotuloDaSecao(k)}" (esperado "${esperado}")`);
+    checar(erradas.length === 0,
+      "(0112) as seções canônicas têm nome em português na tela",
+      erradas.join(" · "));
+
+    // A rede de segurança: chave que ninguém mapeou não pode vazar com `_`.
+    const inventadas = ["secao_nova_do_futuro", "provisao_tributaria", "extracao_padrao_suspeito"];
+    const comUnderscore = inventadas.filter((k) => /_/.test(humanizar(k)));
+    const semAcento = humanizar("provisao_tributaria_nao_circulante");
+    checar(comUnderscore.length === 0 && semAcento === "Provisão Tributária Não Circulante",
+      "(0112) …e o humanizador genérico cobre chave nova — sem `_`, com acento",
+      `${comUnderscore.join(", ")} · "${semAcento}"`);
+    checar(humanizar("total_dre_por_cnpj") === "Total DRE por CNPJ",
+      "(0112) …e sigla fica MAIÚSCULA, preposição fica minúscula",
+      humanizar("total_dre_por_cnpj"));
+    checar(rotuloDaPendencia("precondicao_nao_satisfeita") === "falta um lado da conta"
+      && !/_/.test(rotuloDaPendencia("tipo_que_nao_existe")),
+      "(0112) …e o tipo de pendência aparece pelo que ele significa",
+      `${rotuloDaPendencia("precondicao_nao_satisfeita")} · ${rotuloDaPendencia("tipo_que_nao_existe")}`);
+
+    // A MENSAGEM REAL, quebrada. O `;` DENTRO de colchete qualifica o item e não
+    // separa nada — quebrar ali produzia linha órfã ("período: 31/12/2024]").
+    const real = 'O Balanço foi encontrado, mas nenhum exercício teve os DOIS lados. 2024: falta o '
+      + 'Passivo+PL (coluna de entidade: (qualquer); coluna de período: 31/12/2024); 2025: falta o '
+      + 'Passivo+PL (coluna de entidade: (qualquer); coluna de período: 31/12/2025). Rótulos que a '
+      + 'extração TROUXE e que poderiam ser um total: "ATIVO" [entidade: —; período: 31/12/2024], '
+      + '"Passivo Circulante" [entidade: —; período: 31/12/2025].';
+    const partes = partesDaDescricao(real);
+    checar(partes.length === 4 && /^2024:/.test(partes[1]) && /^2025:/.test(partes[2]),
+      "(0112) a mensagem real vira 4 fatos — o achado, cada exercício, e a lista de rótulos",
+      `${partes.length}: ${partes.map((x) => x.slice(0, 24)).join(" | ")}`);
+    // E o ponto de DECIMAL não separa nada: `14529.00` tem de ficar inteiro, senão a
+    // quebra por fim de frase transforma um valor em duas linhas.
+    const comValor = partesDaDescricao(
+      "4 contas diferentes, na MESMA coluna, vieram com o MESMO valor material (14529.00) — "
+      + "padrão típico de fabricação. Conferir contra o arquivo original.");
+    checar(comValor.length === 2 && comValor[0].includes("14529.00"),
+      "(0112) …e ponto de decimal não quebra linha",
+      comValor.map((x) => x.slice(0, 40)).join(" | "));
+    const orfas = partes.filter((x) => /^\s*(coluna de )?per[ií]odo:/i.test(x) || /^\]/.test(x));
+    checar(orfas.length === 0,
+      "(0112) …e nenhuma linha nasce órfã do qualificador que a explica",
+      orfas.join(" · "));
+    const suave = suavizarMensagem(real);
+    checar(!/f0\/\d/.test(suave) && !/secao_canonica|rotulo_norm/.test(suave),
+      "(0112) …e o jargão de campo (código de documento interno, nome de coluna) sai do texto",
+      suave.slice(0, 80));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
