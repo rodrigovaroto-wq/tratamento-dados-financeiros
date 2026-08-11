@@ -134,6 +134,14 @@ begin
   -- seja, rejeitar é o único caminho de saída além de consertar — sem teto, ao
   -- contrário da ressalva, que para em 3. Não dá para proibir sem prender o caso
   -- para sempre; o que dá é NÃO DEIXAR ISSO INVISÍVEL.
+  -- A 0107 APERTOU ESTA PORTA: declarar improcedente uma pendência da lista
+  -- fechada passou a exigir papel SÊNIOR. O autor deste trecho precisa existir
+  -- como tal — e é bom que o teste tenha quebrado quando o aperto entrou, porque
+  -- é assim que se descobre que uma regra nova mudou um caminho antigo.
+  insert into usuario_papel (email, papel, criado_por)
+    values ('socio.senior@oria', 'senior', 'teste 0106')
+    on conflict (email) do nothing;
+
   v_caso2 := (fn_upsert_caso('Caso rejeição — não-sobrepujável'))::uuid;
   insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao)
     values (v_caso2, 'completude', 'item_sem_conteudo', 'bloqueante', false,
@@ -181,7 +189,10 @@ begin
   perform teste_assert_rej(v_pend is not null,
     'o recomputo abriu pendência de item faltante (caso sem nenhum documento)');
 
-  v_r := fn_rejeitar_pendencia(v_pend, 'analista@oria',
+  -- Sênior porque os itens do Kit Básico nascem NÃO-SOBREPUJÁVEIS (a
+  -- `nao_sobrepujavel` da taxonomia, lida pela `fn_recomputar_completude`), e a
+  -- 0107 exige o papel para declarar improcedente o que está na lista fechada.
+  v_r := fn_rejeitar_pendencia(v_pend, 'socio.senior@oria',
     'Item dispensado pelo mandato: a holding não tem contrato de mútuo neste exercício.');
   perform teste_assert_rej((v_r->>'rejeitada') = 'true', 'e ela é rejeitada', v_r::text);
 

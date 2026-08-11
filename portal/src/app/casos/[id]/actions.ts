@@ -102,3 +102,95 @@ export async function rejeitarPendencia(
 
   revalidatePath(`/casos/${casoId}`);
 }
+
+// Chama fn_ressalvar_pendencia (db/migrations/0107) — o caminho que `f0/04`
+// especificou na F0 e que nunca existiu em código.
+//
+// O card do Portão 2 fala do teto de 3 ressalvas desde a 0037, e até aqui
+// NINGUÉM CONSEGUIA CRIAR UMA: o controle estava publicado sem existir. Ele
+// exigia antes uma decisão — `f0/04` pede papel SÊNIOR, que não existia no
+// schema —, e é por isso que a 0107 traz `usuario_papel` junto.
+//
+// As quatro exigências (sênior, motivo, expiração futura, teto) são cobradas no
+// banco. Aqui não se reimplementa nenhuma: a tela só encaminha e mostra a recusa,
+// que vem escrita para ser lida por gente.
+export async function ressalvarPendencia(
+  casoId: string,
+  pendenciaId: string,
+  formData: FormData,
+) {
+  const supabase = await createClient();
+
+  const motivo = String(formData.get("motivo") || "");
+  const expiraEm = String(formData.get("expira_em") || "").trim();
+
+  if (!expiraEm) {
+    throw new Error(
+      "Ressalva exige data de expiração (f0/04): ressalva permanente é liberação com outro nome. "
+      + "No vencimento a pendência volta a valer sozinha.",
+    );
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase.rpc("fn_ressalvar_pendencia", {
+    p_pendencia_id: pendenciaId,
+    p_autor: user?.email ?? "portal:desconhecido",
+    p_motivo: motivo,
+    // O input de data devolve `YYYY-MM-DD`; o fim do dia é o que o usuário quer
+    // dizer com "vale até dia 20" — às 00:00 a ressalva morreria no começo do dia
+    // escolhido, um dia antes do esperado.
+    p_expira_em: `${expiraEm}T23:59:59`,
+  });
+
+  if (error) {
+    throw new Error(`Falha ao registrar a ressalva: ${error.message}`);
+  }
+  const r = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (r?.recusado) {
+    throw new Error(r.motivo_recusa ?? "Ressalva recusada.");
+  }
+
+  revalidatePath(`/casos/${casoId}`);
+}
+
+// Chama fn_tratar_pendencia (db/migrations/0107) — "estou cuidando disto".
+//
+// É o estado mais comum do processo real e o que menos existia: quem pedia o
+// documento de novo ao cliente não tinha onde registrar isso, e a pendência
+// seguia idêntica a uma que ninguém tocou — o que leva a pedir duas vezes, que é
+// como se perde credibilidade num mandato.
+//
+// NÃO libera o Portão 2, de propósito (f0/04 conta os três estados de tratamento
+// como pendência viva). O valor é de processo, não de portão.
+export async function tratarPendencia(
+  casoId: string,
+  pendenciaId: string,
+  estado: "em_correcao_interna" | "reenviada_ao_cliente",
+  formData: FormData,
+) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase.rpc("fn_tratar_pendencia", {
+    p_pendencia_id: pendenciaId,
+    p_autor: user?.email ?? "portal:desconhecido",
+    p_estado: estado,
+    p_motivo: String(formData.get("motivo") || "").trim() || null,
+  });
+
+  if (error) {
+    throw new Error(`Falha ao registrar o tratamento: ${error.message}`);
+  }
+  const r = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (r?.recusado) {
+    throw new Error(r.motivo_recusa ?? "Movimento recusado.");
+  }
+
+  revalidatePath(`/casos/${casoId}`);
+}

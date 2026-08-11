@@ -23,8 +23,8 @@
 // não tinha o que fazer na tela. `f0/04` prevê esse caminho desde a F0
 // (`rejeitada`); faltava código e faltava botão.
 import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
-import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao } from "@/lib/pendencia";
-import { rejeitarPendencia } from "./actions";
+import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, rotuloDoEstado } from "@/lib/pendencia";
+import { rejeitarPendencia, ressalvarPendencia, tratarPendencia } from "./actions";
 
 export interface PendenciaNaTela {
   id: string;
@@ -34,6 +34,8 @@ export interface PendenciaNaTela {
   severidade?: string;
   /** `false` = da lista fechada de f0/04, que nenhuma ressalva libera. */
   sobrepujavel?: boolean | null;
+  /** estado de f0/04 — `aberta` ou um dos dois de tratamento */
+  estado?: string;
 }
 
 /** Rótulos entre aspas que a mensagem cita — as contas a conferir no original. */
@@ -82,6 +84,14 @@ export function ItemPendencia({
         <span className={`text-xs ${cores.fraco}`}>
           {arquivo ? `Arquivo: ${arquivo}` : "Vale para o caso, não para um arquivo específico"}
         </span>
+        {/* O ANDAMENTO, quando alguém já mexeu. Sem isto, uma pendência que já foi
+            pedida ao cliente é visualmente idêntica a uma que ninguém tocou — e o
+            resultado é pedir duas vezes. */}
+        {p.estado && p.estado !== "aberta" && (
+          <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-xs font-medium text-neutral-700">
+            {rotuloDoEstado(p.estado)}
+          </span>
+        )}
       </div>
 
       {/* UM FATO POR LINHA, com travessão. A primeira parte é a frase principal e
@@ -111,46 +121,127 @@ export function ItemPendencia({
         </div>
       )}
 
-      {/* A DECISÃO DE QUEM ESTÁ LENDO — dentro de `<details>`, e isso é escolha,
-          não economia de espaço. A ação normal diante de uma pendência é
-          CONFERIR e corrigir; declarar que ela não procede é a exceção, e uma
-          exceção com botão sempre visível vira o caminho mais curto. Fechado por
-          padrão, o clique a mais é o convite a ler antes. */}
+      {/* AS TRÊS SAÍDAS DE f0/04, na ordem em que se deve pensar nelas.
+          Dentro de `<details>`, e isso é escolha, não economia de espaço: a ação
+          normal diante de uma pendência é CONFERIR e corrigir — o resto é
+          exceção, e exceção com botão sempre visível vira o caminho mais curto.
+
+          A ORDEM É DELIBERADA. Primeiro "pedi de novo", que é o que o processo
+          real faz na maioria dos casos e não decide nada; depois a ressalva, que
+          admite o problema e assume o risco com prazo; por último a rejeição, que
+          afirma que problema não há. Do mais reversível para o menos. */}
       {casoId && (
         <details className="mt-2">
           <summary className={`cursor-pointer text-xs font-medium ${cores.fraco}`}>
-            Esta pendência não procede?
+            O que fazer com esta pendência?
           </summary>
-          <div className="mt-1.5 rounded border border-neutral-200 bg-white p-2">
-            <p className="text-xs text-neutral-600">{avisoDeRejeicao({
-              severidade: p.severidade ?? "importante", sobrepujavel: p.sobrepujavel,
-            })}</p>
-            <form
-              action={rejeitarPendencia.bind(null, casoId, p.id)}
-              className="mt-2 flex flex-wrap items-center gap-2"
-            >
-              {/* `required` + `minLength` espelham `fn_min_motivo_rejeicao()`: o
-                  navegador recusa antes do round-trip, o banco recusa de novo, e
-                  o assert (0114) prova que os dois números são o mesmo. */}
-              <input
-                type="text"
-                name="motivo"
-                required
-                minLength={MOTIVO_REJEICAO_MIN}
-                placeholder={`por que não procede (mín. ${MOTIVO_REJEICAO_MIN} caracteres)`}
-                className="min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
-              />
-              <button
-                type="submit"
-                className="rounded border border-neutral-400 bg-white px-3 py-1 text-sm font-medium text-neutral-800 hover:bg-neutral-100"
+          <div className="mt-1.5 space-y-3 rounded border border-neutral-200 bg-white p-2">
+            {/* 1. TRATAMENTO — registra sem decidir, e o portão continua fechado. */}
+            <div>
+              <p className="text-xs font-medium text-neutral-700">Estou cuidando disto</p>
+              <p className="text-[11px] text-neutral-500">
+                Registra o andamento — não resolve nem libera a aprovação. Serve para ninguém
+                pedir o mesmo documento ao cliente duas vezes.
+              </p>
+              <form
+                action={tratarPendencia.bind(null, casoId, p.id, "reenviada_ao_cliente")}
+                className="mt-1 flex flex-wrap items-center gap-2"
               >
-                Declarar improcedente
-              </button>
-            </form>
-            <p className="mt-1 text-[11px] text-neutral-500">
-              A pendência não é apagada: fica registrada como improcedente, com o seu nome e o
-              seu motivo, e a contagem aparece no Portão 2.
-            </p>
+                <input
+                  type="text"
+                  name="motivo"
+                  placeholder="o que foi pedido, e quando (opcional)"
+                  className="min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  Pedi de novo ao cliente
+                </button>
+                <button
+                  type="submit"
+                  formAction={tratarPendencia.bind(null, casoId, p.id, "em_correcao_interna")}
+                  className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  Em correção interna
+                </button>
+              </form>
+            </div>
+
+            {/* 2. RESSALVA — só quando a lista fechada permite. Esconder o
+                formulário para a não-sobrepujável não é economia de tela: é não
+                oferecer um caminho que o banco vai recusar, e cuja recusa o
+                usuário leria como defeito do sistema. */}
+            {p.sobrepujavel !== false && (
+              <div className="border-t border-neutral-100 pt-2">
+                <p className="text-xs font-medium text-neutral-700">Aceitar com ressalva</p>
+                <p className="text-[11px] text-neutral-500">
+                  O problema existe e você assume o risco, com prazo. Exige papel sênior, e
+                  cabem no máximo 3 por caso — no vencimento a pendência volta a valer sozinha.
+                </p>
+                <form
+                  action={ressalvarPendencia.bind(null, casoId, p.id)}
+                  className="mt-1 flex flex-wrap items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    name="motivo"
+                    required
+                    minLength={MOTIVO_REJEICAO_MIN}
+                    placeholder={`qual risco você está assumindo (mín. ${MOTIVO_REJEICAO_MIN} caracteres)`}
+                    className="min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
+                  />
+                  <input
+                    type="date"
+                    name="expira_em"
+                    required
+                    className="rounded border border-neutral-300 px-2 py-1 text-sm"
+                    title="Data de expiração — obrigatória (f0/04)"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded border border-amber-400 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+                  >
+                    Aceitar com ressalva
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* 3. REJEIÇÃO — a afirmação mais forte, por último. */}
+            <div className="border-t border-neutral-100 pt-2">
+              <p className="text-xs font-medium text-neutral-700">Esta pendência não procede</p>
+              <p className="text-xs text-neutral-600">{avisoDeRejeicao({
+                severidade: p.severidade ?? "importante", sobrepujavel: p.sobrepujavel,
+              })}</p>
+              <form
+                action={rejeitarPendencia.bind(null, casoId, p.id)}
+                className="mt-1 flex flex-wrap items-center gap-2"
+              >
+                {/* `required` + `minLength` espelham `fn_min_motivo_rejeicao()`: o
+                    navegador recusa antes do round-trip, o banco recusa de novo, e
+                    o assert (0114) prova que os dois números são o mesmo. */}
+                <input
+                  type="text"
+                  name="motivo"
+                  required
+                  minLength={MOTIVO_REJEICAO_MIN}
+                  placeholder={`por que não procede (mín. ${MOTIVO_REJEICAO_MIN} caracteres)`}
+                  className="min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="rounded border border-neutral-400 bg-white px-2 py-1 text-xs font-medium text-neutral-800 hover:bg-neutral-100"
+                >
+                  Declarar improcedente
+                </button>
+              </form>
+              <p className="mt-1 text-[11px] text-neutral-500">
+                A pendência não é apagada: fica registrada como improcedente, com o seu nome e o
+                seu motivo, e a contagem aparece no Portão 2.
+              </p>
+            </div>
           </div>
         </details>
       )}

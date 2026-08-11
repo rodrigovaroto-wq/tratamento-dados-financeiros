@@ -159,6 +159,20 @@ jobs:
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: db/test/run.sh
 
+      # O `db/test/run.sh` acabou de reescrever `db/schema.sql` a partir do banco
+      # que ele montou do zero. Se o commitado divergir, o schema que o
+      # repositório publica não é o que as migrations produzem — e é o publicado
+      # que alguém vai ler para entender o banco.
+      #
+      # Mesmo idioma do espelho do n8n, e pela mesma razão: gerar sem conferir
+      # deixa a fonte e o resultado divergirem em silêncio.
+      - name: O schema materializado bate com as migrations
+        run: |
+          git diff --exit-code -- db/schema.sql || {
+            echo "::error::db/schema.sql está desatualizado — rode db/test/run.sh e commite o resultado."
+            exit 1
+          }
+
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
 

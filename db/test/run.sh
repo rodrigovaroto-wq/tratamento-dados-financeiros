@@ -111,6 +111,22 @@ if [ -n "$faltando" ]; then
 fi
 echo "   as $(ls db/migrations/*.sql | wc -l) migrations estão na lista de aplicação"
 
+# O ESTADO.md CITA A MIGRATION MAIS NOVA — e é assim que ele não envelhece.
+#
+# O cabeçalho do HANDOFF.md passou 17 PRs congelado em "migrations até 0034",
+# mandando quem chegava começar errado. Documento de estado não envelhece por
+# descuido: envelhece porque nada acusa. Aqui acusa — e a checagem é sobre o
+# fato que mais se move (a última migration), não sobre o texto inteiro, que
+# viraria um portão irritante e sem valor.
+echo "== o ESTADO.md aponta para a migration mais nova"
+ultima=$(ls db/migrations/*.sql | sort | tail -1 | xargs basename)
+if ! grep -qF "$ultima" ESTADO.md; then
+  echo "FALHOU: a migration mais nova é $ultima e o ESTADO.md não a cita."
+  echo "   Atualize o ESTADO.md — ele é o que alguém lê para saber onde o projeto está."
+  exit 1
+fi
+echo "   $ultima"
+
 echo "== migrations"
 for f in db/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then
@@ -118,6 +134,40 @@ for f in db/migrations/*.sql; do
   fi
 done
 echo "   $(ls db/migrations/*.sql | wc -l) migrations aplicadas"
+
+# -----------------------------------------------------------------------------
+# O SCHEMA ATUAL, MATERIALIZADO — porque ler 51 migrations não é uma resposta.
+#
+# O PROBLEMA. Uma função deste banco pode ter sido republicada três vezes:
+# `fn_recomputar_completude` existe na 0004, na 0006 e na 0036, e a que vale é a
+# última. Para saber o que o banco faz HOJE é preciso saber qual migration tocou
+# aquela função por último — e o único jeito de descobrir isso, olhando o
+# repositório, é ler todas em ordem. Numa revisão de PR ninguém faz isso, então o
+# efeito de uma migration nova sobre o estado final não é revisável.
+#
+# A SOLUÇÃO É A MESMA DO ESPELHO DO n8n: gerar e conferir. Este passo aplica as
+# migrations do zero (é o que o laço acima acabou de fazer) e escreve o resultado
+# em `db/schema.sql`; o CI roda `git diff --exit-code` em cima. Passa a existir um
+# arquivo que responde "como está o banco depois de tudo", que aparece no diff do
+# PR, e onde o efeito real de uma migration nova é UMA seção alterada em vez de
+# 300 linhas de SQL imperativo.
+#
+# `--no-owner` porque o dono do objeto é o usuário de quem rodou (root aqui,
+# postgres no CI) e isso não é informação do schema. As PRIVILÉGIOS ficam: os
+# `grant execute ... to authenticated` são o que separa uma função que o portal
+# chama de uma que devolve "permission denied" em produção (0028), e a ausência
+# de um deles é exatamente o tipo de coisa que este arquivo tem de denunciar.
+echo "== schema materializado (db/schema.sql)"
+# As duas linhas filtradas mudam A CADA EXECUÇÃO e nada têm a ver com o schema:
+# a versão do pg_dump/servidor (que difere entre a máquina de quem roda e o CI) e
+# o par `\restrict`/`\unrestrict`, que o pg_dump 16.10+ emite com um TOKEN
+# ALEATÓRIO. Sem tirá-las, o `git diff --exit-code` do CI ficaria vermelho toda
+# vez, por ruído — e um portão que acusa sempre é um portão que se aprende a
+# ignorar, que é pior do que não ter portão.
+pg_dump --schema-only --no-owner --schema=public -d "$DB" \
+  | grep -vE '^(-- (Dumped (from|by)|PostgreSQL database dump)|\\(un)?restrict )' \
+  | sed -E '/^$/N;/^\n$/D' > db/schema.sql
+echo "   $(grep -c '^CREATE ' db/schema.sql) objetos criados · $(wc -l < db/schema.sql) linhas"
 
 echo "== fixture (book Vertentes, extração fiel dos 14 documentos)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fixture_book_vertentes.sql
@@ -159,6 +209,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/portao2.test.sql 2>&1 \
 echo
 echo "== testes de REJEITAR pendência (0106: o Portão 2 ganha o segundo lado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/rejeitar_pendencia.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== testes de papel, ressalva e tratamento (0107: a máquina de f0/04 fica inteira)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_ressalva.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo

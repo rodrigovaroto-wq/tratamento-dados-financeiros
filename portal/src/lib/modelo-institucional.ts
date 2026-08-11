@@ -1952,6 +1952,13 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // ativo circulante que menos vira caixa.
   const estoques = ativos.filter((l) => /\bestoque/i.test(l.chave) || /\bmercadoria/i.test(l.chave)
     || /\bprodutos? (acabados?|em (elabora|processo))/i.test(l.chave) || /\bmat(é|e)ria.prima/i.test(l.chave));
+  // CLIENTES, pela mesma razão e para o mesmo destino: o CICLO DE CAIXA do
+  // `Output` precisa do recebível isolado. `f0/08` lista PMR/PME/PMP como
+  // faseados "até a extração isolar as linhas-conceito" — e o giro já as isola
+  // aqui para aplicar dias, então o que faltava era publicar o espelho.
+  const clientes = ativos.filter((l) => /\bclientes?\b/i.test(l.chave)
+    || /\bcontas? a receber\b/i.test(l.chave) || /\bduplicatas? a receber\b/i.test(l.chave)
+    || /\btítulos? a receber\b/i.test(l.chave) || /\btitulos? a receber\b/i.test(l.chave));
   // A dívida bancária de curto prazo também não é giro: ela vive no
   // `ST Inv. & Debt`. Deixá-la aqui faria o passivo operacional carregar dívida,
   // e a NCG passaria a "melhorar" quando a empresa se endivida mais.
@@ -1973,6 +1980,8 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     { chave: "ESP_AC", rotulo: "Ativo circulante operacional (para o Balance Sheet)" },
     { chave: "ESP_PC", rotulo: "Passivo circulante operacional (para o Balance Sheet)" },
     { chave: "ESP_ESTOQUE", rotulo: "    do qual ESTOQUE (para a liquidez seca do Output)" },
+    { chave: "ESP_CLIENTES", rotulo: "    do qual CLIENTES (para o ciclo de caixa do Output)" },
+    { chave: "ESP_FORNEC", rotulo: "    do qual FORNECEDORES (para o ciclo de caixa do Output)" },
   ]);
   g.espelho("CASH FLOW ACCOUNTS", [
     { chave: "ESP_VAR_NCG", rotulo: "Variação da NCG (para o Cash Flow)" },
@@ -2090,6 +2099,9 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     // `P18` — o espelho, que é o que as demonstrações leem.
     g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
     somaOuZero(g, "ESP_ESTOQUE", ano, estoques.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
+    somaOuZero(g, "ESP_CLIENTES", ano, clientes.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
+    somaOuZero(g, "ESP_FORNEC", ano,
+      passivos.filter((l) => ehFornecedor(l.chave)).map((l) => g.ref(chaveLinha("wc_p", l), ano)));
     g.set("ESP_PC", ano, `=${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
     g.set("ESP_VAR_NCG", ano, `=${g.ref("VAR_NCG", ano)}`, { fmt: NUM });
   }
@@ -3774,6 +3786,71 @@ function abaOutput(
   g.linha("R_ALAV_PL", { rotulo: "Dívida bruta / Patrimônio líquido", fmt: MULT });
   g.pular();
 
+  // ---- CICLO DE CAIXA ------------------------------------------------------
+  //
+  // `f0/08` fasejou PMR/PME/PMP "até a extração isolar as linhas-conceito
+  // necessárias como âncoras endereçáveis". Ela ISOLA: o `Working Capital`
+  // separa clientes, estoques e fornecedores para aplicar dias de giro a cada um
+  // — o que faltava era publicar os espelhos e fazer a divisão aqui.
+  //
+  // Por que 360 e não 365: é a convenção do giro que a própria aba usa para
+  // projetar (dias × base ÷ 360). Misturar as duas bases faria o ciclo publicado
+  // divergir dos dias que dirigem a projeção, e a diferença (1,4%) apareceria
+  // como erro de arredondamento que ninguém consegue explicar.
+  //
+  // ZERO NÃO É RESPOSTA. Caso sem conta de clientes publica "n.a.", não "0 dias":
+  // zero dias de recebimento afirma que a empresa vende à vista, que é uma
+  // afirmação sobre o negócio. É a mesma regra do `f0/08` — sem o insumo, a
+  // célula não estima.
+  g.linha(null, { rotulo: "CICLO DE CAIXA (dias)", bloco: true });
+  g.linha("CC_PMR", { rotulo: "PMR — prazo médio de recebimento", fmt: NUM2 });
+  g.linha("CC_PME", { rotulo: "PME — prazo médio de estocagem", fmt: NUM2 });
+  g.linha("CC_PMP", { rotulo: "PMP — prazo médio de pagamento a fornecedores", fmt: NUM2 });
+  g.linha("CC_OPER", { rotulo: "Ciclo operacional (PMR + PME)", negrito: true, topo: true, fmt: NUM2 });
+  g.linha("CC_FIN", { rotulo: "Ciclo financeiro (− PMP)", negrito: true, fmt: NUM2 });
+  g.pular();
+
+  // ---- NECESSIDADE DE RECURSOS E CAPACIDADE DE PAGAMENTO -------------------
+  //
+  // O ARQUIVO DIAGNOSTICAVA E NÃO DIMENSIONAVA. Ele já dizia que o DSCR fica em
+  // 0,3 e que o ND/EBITDA vai a 10,8x — e o revolver, sacando o que falta todo
+  // ano, chegava a 122.216 sem que nada dissesse que isso É a necessidade de
+  // recursos. O revolver é uma FICÇÃO DE FECHAMENTO: ele existe para o balanço
+  // fechar, não porque alguém vai emprestar 122 milhões a uma empresa com DSCR
+  // de 0,3. Quem lê precisava fazer a conta de cabeça, ano a ano, na aba errada.
+  //
+  // Nenhuma linha daqui é dado novo: todas saem de linhas que já existem nesta
+  // aba ou no `Cash Flow`. O que muda é a leitura — de "o modelo mostra que não
+  // fecha" para "o rombo é de X, no ano Y, e vem daqui".
+  //
+  // SOBRE A DÍVIDA SUSTENTÁVEL, e por que ela é ND/EBITDA e não uma tabela de
+  // amortização: dívida líquida sustentável = corte de covenant × EBITDA é a
+  // definição do próprio covenant, e não exige inventar prazo nenhum. Sustentar
+  // um número de dívida a partir de um perfil de amortização suposto seria
+  // fabricar a premissa mais sensível do caso dentro de uma linha de resumo.
+  // O mesmo vale para o serviço: EBITDA ÷ DSCR alvo é a leitura direta do corte.
+  //
+  // Os dois cortes vêm das células AZUIS de covenant logo acima (`C_ND_EBITDA` e
+  // `C_COBERTURA`), nunca das constantes: negociou outro patamar, digita lá e
+  // este bloco inteiro se move junto.
+  g.linha(null, { rotulo: "NECESSIDADE DE RECURSOS E CAPACIDADE DE PAGAMENTO", bloco: true });
+  g.linha("NR_FURO", { rotulo: "Necessidade de recursos do exercício", negrito: true, fmt: NUM });
+  g.linha("NR_ACUM", { rotulo: "    acumulada desde o início da projeção", negrito: true, fmt: NUM });
+  g.linha("NR_PICO", { rotulo: "    pico do horizonte projetado", fmt: NUM });
+  g.linha("NR_ANO_PICO", { rotulo: "    ano do pico", fmt: "0" });
+  g.linha("NR_DIV_SUST", { rotulo: "Dívida líquida sustentável (ao corte de ND/EBITDA)", fmt: NUM });
+  g.linha("NR_DIV_EXC", { rotulo: "    excesso sobre o sustentável", negrito: true, fmt: NUM });
+  g.linha("NR_SERV_SUP", { rotulo: "Serviço da dívida suportado (ao corte de DSCR)", fmt: NUM });
+  g.linha("NR_SERV_EXC", { rotulo: "    excesso de serviço sobre o suportado", negrito: true, fmt: NUM });
+  g.linha(null, { rotulo: "    para onde vai o caixa gerado", bloco: false });
+  g.linha("NR_USO_SERV", { rotulo: "    (−) serviço da dívida", fmt: NUM });
+  g.linha("NR_USO_TRIB", { rotulo: "    (−) tributos e parcelamentos", fmt: NUM });
+  g.linha("NR_USO_GIRO", { rotulo: "    (−) variação do giro", fmt: NUM });
+  g.linha("NR_USO_CAPEX", { rotulo: "    (−) capex", fmt: NUM });
+  g.linha("NR_USO_TOTAL", { rotulo: "    = total dos usos", negrito: true, topo: true, fmt: NUM });
+  g.linha("NR_COBERTO", { rotulo: "    EBITDA cobre os usos? (EBITDA − usos)", negrito: true, fmt: NUM });
+  g.pular();
+
   // ---- CHECKS DO MODELO ----------------------------------------------------
   g.linha(null, { rotulo: "CHECKS DO MODELO", bloco: true });
   g.linha("CHECK_BS", { rotulo: "Balanço fecha? (0 = sim)", fmt: NUM2 });
@@ -3784,6 +3861,19 @@ function abaOutput(
   // -------------------------------------------------------------- preencher
   const ext = (aba: string, grade: Grade, chave: string, ano: number) => `=${g.externa(aba, grade, chave, ano)}`;
   const temTrib = gTrib.tem("TOTAL");
+
+  // Faixas do horizonte PROJETADO, para o pico da necessidade de recursos. O
+  // realizado fica de fora de propósito: necessidade de recursos é uma pergunta
+  // sobre o futuro, e um furo que já aconteceu já foi financiado de algum jeito.
+  const anosProjetados = ctx.anos.filter((a) => g.ehProjetado(a));
+  const faixaFuro = anosProjetados.length > 0
+    ? `$${g.letraDoAno(anosProjetados[0])}$${g.n("NR_FURO")}`
+      + `:$${g.letraDoAno(anosProjetados[anosProjetados.length - 1])}$${g.n("NR_FURO")}`
+    : "";
+  const faixaAnos = anosProjetados.length > 0
+    ? `$${g.letraDoAno(anosProjetados[0])}$${g.n("__titulo")}`
+      + `:$${g.letraDoAno(anosProjetados[anosProjetados.length - 1])}$${g.n("__titulo")}`
+    : "";
 
   for (const ano of ctx.anos) {
     const ant = g.anoAnterior(ano);
@@ -3940,6 +4030,110 @@ function abaOutput(
     });
     g.set("R_ALAV_PL", ano,
       `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+
+    // CICLO DE CAIXA — dias, a partir dos espelhos do giro.
+    //
+    // O denominador de cada prazo é a linha de DRE contra a qual aquela conta
+    // GIRA, e é a mesma escolha que a aba de giro faz para projetar: recebível
+    // gira contra receita líquida, estoque e fornecedor giram contra custo. Usar
+    // receita para o fornecedor — erro comum — infla o PMP pela margem inteira.
+    {
+      const dias = (esp: string, base: string) =>
+        `=IF(OR(${g.externa("Working Capital", gWC, esp, ano)}=0,ABS(${base})=0),"n.a.",`
+        + `${g.externa("Working Capital", gWC, esp, ano)}/ABS(${base})*360)`;
+      const cogs = g.externa("Working Capital", gWC, "BASE_COGS", ano);
+      g.set("CC_PMR", ano, dias("ESP_CLIENTES", g.ref("REC_LIQ", ano)), { fmt: NUM2 });
+      g.set("CC_PME", ano, dias("ESP_ESTOQUE", cogs), { fmt: NUM2 });
+      g.set("CC_PMP", ano, dias("ESP_FORNEC", cogs), { fmt: NUM2 });
+      // O ciclo só existe se as pernas existirem: somar "n.a." com número daria
+      // #VALUE!, e tratar "n.a." como zero publicaria um ciclo curto por FALTA de
+      // dado, que é o pior dos dois mundos.
+      const num = (ch: string) => `ISNUMBER(${g.ref(ch, ano)})`;
+      g.set("CC_OPER", ano,
+        `=IF(AND(${num("CC_PMR")},${num("CC_PME")}),${g.ref("CC_PMR", ano)}+${g.ref("CC_PME", ano)},"n.a.")`,
+        { fmt: NUM2, negrito: true });
+      g.set("CC_FIN", ano,
+        `=IF(AND(ISNUMBER(${g.ref("CC_OPER", ano)}),${num("CC_PMP")}),`
+        + `${g.ref("CC_OPER", ano)}-${g.ref("CC_PMP", ano)},"n.a.")`, {
+        fmt: NUM2, negrito: true,
+        nota: "Dias entre pagar o fornecedor e receber do cliente — o giro que a empresa precisa "
+          + "financiar. Ciclo que ABRE ao longo da projeção é necessidade de capital de giro "
+          + "crescente, e ela aparece no fluxo como consumo de caixa.",
+      });
+    }
+
+    // NECESSIDADE DE RECURSOS — leitura, não dado novo.
+    //
+    // O furo vem do `Cash Flow` (é ele quem sabe o que sobra antes do revolver);
+    // o acumulado soma o ano anterior porque necessidade de recursos é ESTOQUE,
+    // não fluxo: quem precisou de 30 no primeiro ano e 20 no segundo precisa de
+    // 50 de dinheiro novo, não de 20.
+    g.set("NR_FURO", ano, ext("Cash Flow", gCF, "FURO", ano), {
+      fmt: NUM, negrito: true,
+      nota: "O que falta para o caixa mínimo ANTES do revolver. É a necessidade de recursos do "
+        + "exercício — o revolver, logo abaixo dela no fluxo, é só a suposição de que alguém a "
+        + "financia.",
+    });
+    g.set("NR_ACUM", ano, ant === null || !g.ehProjetado(ano)
+      ? `=${g.ref("NR_FURO", ano)}`
+      : `=${g.ref("NR_ACUM", ant)}+${g.ref("NR_FURO", ano)}`, { fmt: NUM, negrito: true });
+
+    // O PICO E O ANO DO PICO, repetidos em toda coluna projetada — mesmo idioma
+    // das linhas de corte de covenant logo acima, que também são constantes
+    // horizontais. É o par de números que responde "de quanto e para quando",
+    // que é a pergunta de quem vai levantar o dinheiro.
+    if (anosProjetados.length > 0) {
+      g.set("NR_PICO", ano, g.ehProjetado(ano) ? `=MAX(${faixaFuro})` : null, { fmt: NUM });
+      g.set("NR_ANO_PICO", ano, g.ehProjetado(ano)
+        // Sem furo em ano nenhum, "ano do pico" não existe — e escrever o
+        // primeiro ano por padrão seria apontar um problema onde não há.
+        ? `=IF(MAX(${faixaFuro})<=0,"—",YEAR(INDEX(${faixaAnos},MATCH(MAX(${faixaFuro}),${faixaFuro},0))))`
+        : null, { fmt: "0" });
+    }
+
+    // CAPACIDADE DE PAGAMENTO — o corte vem da célula azul, nunca da constante.
+    g.set("NR_DIV_SUST", ano, `=${g.ref("C_ND_EBITDA", ano)}*${g.ref("EBITDA", ano)}`, {
+      fmt: NUM,
+      nota: "Dívida líquida que o covenant de alavancagem comporta: corte × EBITDA. Não supõe "
+        + "prazo nem cronograma — é a leitura direta do próprio covenant.",
+    });
+    g.set("NR_DIV_EXC", ano, `=${g.ref("DV_LIQ", ano)}-${g.ref("NR_DIV_SUST", ano)}`, {
+      fmt: NUM, negrito: true,
+      nota: "Positivo = quanto de dívida está acima do que a geração sustenta. É o tamanho do "
+        + "problema a resolver — por alongamento, deságio, capitalização ou venda de ativo.",
+    });
+    g.set("NR_SERV_SUP", ano,
+      `=IF(${g.ref("C_COBERTURA", ano)}<>0,${g.ref("EBITDA", ano)}/${g.ref("C_COBERTURA", ano)},0)`,
+      { fmt: NUM });
+    g.set("NR_SERV_EXC", ano, `=${g.ref("DV_SERVICO", ano)}-${g.ref("NR_SERV_SUP", ano)}`, {
+      fmt: NUM, negrito: true,
+      nota: "Positivo = o serviço contratado passa do que o EBITDA paga no DSCR alvo. É o número "
+        + "que dimensiona a carência ou o alongamento que o plano precisa pedir.",
+    });
+
+    // PARA ONDE VAI O CAIXA — sinais normalizados para SAÍDA POSITIVA.
+    //
+    // No `Cash Flow` cada linha carrega o sinal da convenção do fluxo (capex sai
+    // negativo, variação de giro pode ir para os dois lados). Aqui todas viram
+    // "quanto de caixa este uso consumiu", positivo, para poderem ser somadas e
+    // comparadas com o EBITDA sem ninguém precisar lembrar de sinal.
+    g.set("NR_USO_SERV", ano, `=${g.ref("DV_SERVICO", ano)}`, { fmt: NUM });
+    g.set("NR_USO_TRIB", ano, `=-${ext("Cash Flow", gCF, "PAGO_TRIB", ano).slice(1)}`, { fmt: NUM });
+    g.set("NR_USO_GIRO", ano, `=-${ext("Cash Flow", gCF, "VAR_NCG", ano).slice(1)}`, {
+      fmt: NUM,
+      nota: "Sinal invertido em relação ao fluxo: aqui a linha responde 'quanto de caixa o giro "
+        + "CONSUMIU'. Giro que libera caixa aparece negativo, como uso negativo.",
+    });
+    g.set("NR_USO_CAPEX", ano, `=-${ext("Cash Flow", gCF, "CAPEX", ano).slice(1)}`, { fmt: NUM });
+    g.set("NR_USO_TOTAL", ano,
+      `=${g.ref("NR_USO_SERV", ano)}+${g.ref("NR_USO_TRIB", ano)}+${g.ref("NR_USO_GIRO", ano)}`
+      + `+${g.ref("NR_USO_CAPEX", ano)}`, { fmt: NUM, negrito: true });
+    g.set("NR_COBERTO", ano, `=${g.ref("EBITDA", ano)}-${g.ref("NR_USO_TOTAL", ano)}`, {
+      fmt: NUM, negrito: true,
+      nota: "Negativo significa que o EBITDA do ano não paga o que o ano exige — e a diferença "
+        + "tem de vir de dinheiro novo, de venda de ativo ou de renegociação. É a mesma história "
+        + "que o furo conta, dita pelo lado da origem.",
+    });
 
     // CHECKS
     g.set("CHECK_BS", ano, ext("Balance Sheet", gBS, "CHECK", ano), { fmt: NUM2 });

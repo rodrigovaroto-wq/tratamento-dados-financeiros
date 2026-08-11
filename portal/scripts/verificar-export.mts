@@ -49,7 +49,7 @@ import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/li
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
-import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido } from "../src/lib/pendencia.ts";
+import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido, rotuloDoEstado } from "../src/lib/pendencia.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -5220,6 +5220,230 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       suave.slice(0, 80));
   }
 
+  // ---- (0116) CICLO DE CAIXA: DIAS DE VERDADE, OU "n.a." ------------------
+  //
+  // `f0/08` fasejou PMR/PME/PMP até "a extração isolar as linhas-conceito". O
+  // giro já as isolava para aplicar dias de giro conta a conta; faltava publicar.
+  //
+  // Os dois defeitos que estes asserts pegam são os clássicos do indicador:
+  // denominador errado (fornecedor girando contra RECEITA infla o PMP pela margem
+  // inteira) e ZERO no lugar de "não sei" (um caso sem conta de clientes
+  // publicando "0 dias" afirma que a empresa vende à vista).
+  {
+    const out = wbMod.getWorksheet("Output")!;
+    const wc = wbMod.getWorksheet("Working Capital")!;
+    const linhaPorRotulo = (ws: ExcelJS.Worksheet, r: string): number | null => {
+      for (let i = 1; i <= ws.rowCount; i++) {
+        if (String(ws.getRow(i).getCell(3).value ?? "").trim() === r) return i;
+      }
+      return null;
+    };
+    const v = (ws: ExcelJS.Worksheet, r: number | null, ano: number) =>
+      r === null ? null : avaliarCelula(ws, COLS_ANO[iAnoDe(ano)], r);
+    const ano = 2026;
+
+    // A conta de manual, com os números da fixture: clientes 30.000 sobre receita
+    // líquida, estoques 20.000 e fornecedores 18.000 sobre CMV — os três × 360.
+    const pmr = Number(v(out, linhaPorRotulo(out, "PMR — prazo médio de recebimento"), ano));
+    const pme = Number(v(out, linhaPorRotulo(out, "PME — prazo médio de estocagem"), ano));
+    const pmp = Number(v(out, linhaPorRotulo(out, "PMP — prazo médio de pagamento a fornecedores"), ano));
+    const clientes = Number(v(wc, linhaPorRotulo(wc, "do qual CLIENTES (para o ciclo de caixa do Output)"), ano));
+    const estoque = Number(v(wc, linhaPorRotulo(wc, "do qual ESTOQUE (para a liquidez seca do Output)"), ano));
+    const fornec = Number(v(wc, linhaPorRotulo(wc, "do qual FORNECEDORES (para o ciclo de caixa do Output)"), ano));
+    // O rótulo do Output é em inglês (fidelidade ao Modelo Base); o da aba de
+    // giro é em português. Buscar pelo texto errado devolve null e o assert
+    // "passaria" comparando Infinity com Infinity — por isso o valor é conferido.
+    const recLiq = Number(v(out, linhaPorRotulo(out, "Net Revenues"), ano));
+    const cogs = Math.abs(Number(v(wc, linhaPorRotulo(wc, "Custos (base dos dias de giro do passivo de fornecedor)"), ano)));
+
+    checar(Math.abs(pmr - clientes / recLiq * 360) < 0.01,
+      "(0116) o PMR é clientes ÷ receita líquida × 360", `${pmr} vs ${clientes / recLiq * 360}`);
+    checar(Math.abs(pme - estoque / cogs * 360) < 0.01,
+      "(0116) …o PME gira contra CUSTO, não receita", `${pme} vs ${estoque / cogs * 360}`);
+    checar(Math.abs(pmp - fornec / cogs * 360) < 0.01,
+      "(0116) …e o PMP também — girar fornecedor contra receita infla o prazo pela margem inteira",
+      `${pmp} vs ${fornec / cogs * 360}`);
+
+    const oper = Number(v(out, linhaPorRotulo(out, "Ciclo operacional (PMR + PME)"), ano));
+    const fin = Number(v(out, linhaPorRotulo(out, "Ciclo financeiro (− PMP)"), ano));
+    checar(Math.abs(oper - (pmr + pme)) < 0.01 && Math.abs(fin - (oper - pmp)) < 0.01,
+      "(0116) o ciclo operacional soma as duas pernas e o financeiro desconta o PMP",
+      `${oper} · ${fin}`);
+
+    // SEM O INSUMO, "n.a." — NÃO ZERO. A variante tira a conta de clientes do
+    // caso; religando a guarda (publicar a divisão de qualquer jeito), o PMR sai
+    // 0 e o arquivo passa a afirmar que a empresa vende à vista.
+    const semClientes = {
+      ...entradaModelo,
+      linhas: entradaModelo.linhas.filter((l: { chave: string }) => !/clientes/i.test(l.chave)),
+    };
+    const wbSem = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: semClientes as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const outSem = wbSem.getWorksheet("Output")!;
+    const pmrSem = v(outSem, linhaPorRotulo(outSem, "PMR — prazo médio de recebimento"), ano);
+    checar(String(pmrSem) === "n.a.",
+      "(0116) caso sem conta de clientes publica \"n.a.\", não 0 dias de recebimento",
+      String(pmrSem));
+    const operSem = v(outSem, linhaPorRotulo(outSem, "Ciclo operacional (PMR + PME)"), ano);
+    checar(String(operSem) === "n.a.",
+      "(0116) …e o ciclo não soma em cima do que não sabe — sem uma perna, não há ciclo",
+      String(operSem));
+  }
+
+  // ---- (0115) NECESSIDADE DE RECURSOS: O ARQUIVO DIMENSIONA, NÃO SÓ ACUSA --
+  //
+  // O `Output` já dizia que o DSCR fica em 0,3 e que o revolver chega a 122.216 —
+  // e não dizia, em lugar nenhum, que aquilo É a necessidade de recursos do caso.
+  // O revolver é ficção de fechamento: ele existe para o balanço fechar. Quem lia
+  // precisava fazer a conta de cabeça, ano a ano, na aba errada.
+  //
+  // O que estes asserts travam é a ARITMÉTICA do bloco, não a existência dele:
+  // acumulado que não acumula, uso com sinal trocado e corte lido da constante em
+  // vez da célula azul são os três jeitos de este bloco mentir com cara de certo.
+  {
+    const out = wbMod.getWorksheet("Output")!;
+    const cf = wbMod.getWorksheet("Cash Flow")!;
+    const linhaPorRotulo = (ws: ExcelJS.Worksheet, r: string): number | null => {
+      for (let i = 1; i <= ws.rowCount; i++) {
+        if (String(ws.getRow(i).getCell(3).value ?? "").trim() === r) return i;
+      }
+      return null;
+    };
+    const v = (ws: ExcelJS.Worksheet, r: number | null, ano: number) =>
+      r === null ? null : avaliarCelula(ws, COLS_ANO[iAnoDe(ano)], r);
+
+    const rFuro = linhaPorRotulo(out, "Necessidade de recursos do exercício");
+    const rAcum = linhaPorRotulo(out, "acumulada desde o início da projeção");
+    const rPico = linhaPorRotulo(out, "pico do horizonte projetado");
+    const rAnoPico = linhaPorRotulo(out, "ano do pico");
+    checar([rFuro, rAcum, rPico, rAnoPico].every((x) => x !== null),
+      "(0115) o Output publica a necessidade de recursos — do exercício, acumulada e no pico",
+      JSON.stringify({ rFuro, rAcum, rPico, rAnoPico }));
+
+    // 1. O FURO É O MESMO DO FLUXO. Duas origens para o mesmo número só valem com
+    //    conferência entre elas — e aqui a conferência é esta.
+    const rFuroCF = linhaPorRotulo(cf, "Furo em relação ao caixa mínimo");
+    const divergentes = ANOS.filter((a) => {
+      const x = v(out, rFuro, a); const y = v(cf, rFuroCF, a);
+      return typeof x === "number" && typeof y === "number" ? Math.abs(x - y) > 0.01 : x !== y;
+    });
+    checar(divergentes.length === 0,
+      "(0115) …e o furo do Output é EXATAMENTE o do Cash Flow, ano a ano",
+      divergentes.join(", "));
+
+    const projetados = ANOS.filter((a) => a > 2025);
+
+    // 2 e 3. O ACUMULADO E O PICO EXIGEM UM CASO QUE TENHA FURO — e a fixture
+    //    principal NÃO TEM: medida, ela projeta furo ZERO nos três exercícios
+    //    (a empresa gera caixa e a dívida amortiza sem aperto). Com zeros, "o
+    //    acumulado é a soma dos furos" passa mesmo com a acumulação religada,
+    //    porque 0 = 0 — foi exatamente o que aconteceu ao religar o defeito de
+    //    propósito: a suíte continuou verde.
+    //
+    //    É a armadilha registrada três vezes neste projeto (a fixture do 0105, a
+    //    do 0113 sem conta tributária, o medir-auto-aceite medindo o próprio
+    //    instrumento): fixture mais fácil que a produção deixa o assert passar
+    //    sobre o defeito. A variante abaixo é um caso de reestruturação de
+    //    verdade — dívida concentrada no CIRCULANTE, que é como um caso
+    //    estressado chega (tudo vencido ou vencendo), financiada por prejuízo
+    //    acumulado para o balanço continuar fechando.
+    const comFuro = {
+      ...entradaModelo,
+      linhas: [
+        ...entradaModelo.linhas,
+        linhaAnos("passivo_circulante", "Empréstimos e financiamentos - dívida vencida",
+          { "2024": 100000, "2025": 120000 }),
+        linhaAnos("patrimonio_liquido", "Prejuízos acumulados",
+          { "2024": -100000, "2025": -120000 }),
+      ],
+    };
+    const wbFuro = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: comFuro as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const outF = wbFuro.getWorksheet("Output")!;
+    const rFuroF = linhaPorRotulo(outF, "Necessidade de recursos do exercício");
+    const rAcumF = linhaPorRotulo(outF, "acumulada desde o início da projeção");
+    const rPicoF = linhaPorRotulo(outF, "pico do horizonte projetado");
+    const rAnoPicoF = linhaPorRotulo(outF, "ano do pico");
+    const furos = projetados.map((a) => Number(v(outF, rFuroF, a) ?? 0));
+    checar(furos.some((x) => x > 0),
+      "(0115) a variante estressada PRODUZ furo — sem isso os asserts abaixo passariam sobre zeros",
+      furos.join(" · "));
+
+    // NECESSIDADE DE RECURSOS É ESTOQUE, NÃO FLUXO. Quem precisou de 30 e depois
+    // de 20 precisa de 50 de dinheiro novo, não de 20.
+    let soma = 0; const erros: string[] = [];
+    for (const a of projetados) {
+      soma += Number(v(outF, rFuroF, a) ?? 0);
+      const acum = Number(v(outF, rAcumF, a) ?? 0);
+      if (Math.abs(acum - soma) > 0.01) erros.push(`${a}: ${acum} ≠ ${soma}`);
+    }
+    checar(erros.length === 0,
+      "(0115) …e o acumulado é a SOMA dos furos do horizonte, não o furo do ano",
+      erros.join(" · "));
+
+    // O PICO E O ANO DO PICO CONCORDAM ENTRE SI. Publicar 30 como pico e apontar
+    // um ano cujo furo é 10 é pior que não publicar: manda levantar dinheiro para
+    // a data errada.
+    const maior = Math.max(...furos);
+    const pico = v(outF, rPicoF, projetados[0]);
+    checar(typeof pico === "number" && Math.abs(pico - maior) < 0.01,
+      "(0115) …o pico é o MÁXIMO dos furos projetados",
+      `${JSON.stringify(pico)} vs ${maior}`);
+    const anoPico = v(outF, rAnoPicoF, projetados[0]);
+    checar(String(anoPico) === String(projetados[furos.indexOf(maior)]),
+      "(0115) …e o ano publicado é o ano DESSE máximo",
+      `${JSON.stringify(anoPico)} vs ${projetados[furos.indexOf(maior)]}`);
+
+    // E O CASO SEM FURO NENHUM (a fixture principal) NÃO INVENTA UM ANO: apontar
+    // 2026 quando não falta caixa em ano nenhum manda procurar problema onde não há.
+    checar(String(v(out, rAnoPico, projetados[0])) === "—",
+      "(0115) …e sem furo em ano nenhum o ano do pico é travessão, não o primeiro ano",
+      String(v(out, rAnoPico, projetados[0])));
+
+    // 4. A CAPACIDADE DE PAGAMENTO LÊ A CÉLULA AZUL, NÃO A CONSTANTE. Se alguém
+    //    negociar outro covenant e digitar na célula, o bloco inteiro tem de se
+    //    mover junto; com a constante embutida, o arquivo passaria a responder
+    //    sobre um covenant que não é o do caso.
+    const rCorte = linhaPorRotulo(out, "corte sugerido (covenant)");
+    const rEbitda = linhaPorRotulo(out, "EBITDA");
+    const rSust = linhaPorRotulo(out, "Dívida líquida sustentável (ao corte de ND/EBITDA)");
+    const rExc = linhaPorRotulo(out, "excesso sobre o sustentável");
+    const rNd = linhaPorRotulo(out, "Net Financial Debt");
+    const anoT = projetados[projetados.length - 1];
+    const corte = Number(v(out, rCorte, anoT)); const ebitda = Number(v(out, rEbitda, anoT));
+    const sust = Number(v(out, rSust, anoT));
+    checar(Math.abs(sust - corte * ebitda) < 0.01,
+      "(0115) a dívida sustentável é o CORTE (célula editável) × EBITDA",
+      `${sust} vs ${corte}×${ebitda}`);
+    checar(Math.abs(Number(v(out, rExc, anoT)) - (Number(v(out, rNd, anoT)) - sust)) < 0.01,
+      "(0115) …e o excesso é a dívida líquida MENOS o sustentável");
+
+    // 5. OS USOS SÃO SAÍDAS POSITIVAS E FECHAM COM O TOTAL. É o assert que pega
+    //    sinal trocado: no Cash Flow o capex sai negativo, e somar os dois
+    //    mundos sem normalizar daria um total que ninguém consegue conferir.
+    const usos = ["(−) serviço da dívida", "(−) tributos e parcelamentos",
+      "(−) variação do giro", "(−) capex"].map((r) => linhaPorRotulo(out, r));
+    const rTotal = linhaPorRotulo(out, "= total dos usos");
+    const somaUsos = usos.reduce<number>((s, r) => s + Number(v(out, r, anoT) ?? 0), 0);
+    checar(Math.abs(Number(v(out, rTotal, anoT)) - somaUsos) < 0.01,
+      "(0115) o total dos usos é a soma das quatro linhas que o compõem",
+      `${v(out, rTotal, anoT)} vs ${somaUsos}`);
+    const rCapexOut = linhaPorRotulo(out, "(−) capex");
+    const rCapexCF = linhaPorRotulo(cf, "CAPEX");
+    checar(Number(v(out, rCapexOut, anoT)) === -Number(v(cf, rCapexCF, anoT)),
+      "(0115) …e o capex entra como USO POSITIVO, invertido em relação ao fluxo",
+      `${v(out, rCapexOut, anoT)} vs ${v(cf, rCapexCF, anoT)}`);
+    const rCoberto = linhaPorRotulo(out, "EBITDA cobre os usos? (EBITDA − usos)");
+    checar(Math.abs(Number(v(out, rCoberto, anoT)) - (ebitda - somaUsos)) < 0.01,
+      "(0115) …e a linha de cobertura é EBITDA − usos, o furo contado pelo lado da origem");
+  }
+
   // ---- (0114) REJEITAR PENDÊNCIA: A TELA NÃO PODE MENTIR SOBRE A REGRA -----
   //
   // A regra vive no Postgres (`db/migrations/0106`). O portal a espelha para poder
@@ -5265,6 +5489,19 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(!todos.some((t) => /f0\/\d|sobrepuj|pendencia_|_id\b/.test(t)),
       "(0114) …sem citar documento interno por código nem nome de coluna do banco",
       todos.join(" ").slice(0, 80));
+
+    // OS SEIS ESTADOS DE f0/04 TÊM NOME DE GENTE (0107). O banco guarda
+    // `reenviada_ao_cliente`; a tela que publicasse isso estaria falando canônico
+    // de novo — o defeito que o (0112) fechou para as seções.
+    const estados = ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
+      "aceita_com_ressalva", "rejeitada", "resolvida"];
+    const comUnderscore = estados.filter((e) => /_/.test(rotuloDoEstado(e)));
+    checar(comUnderscore.length === 0 && rotuloDoEstado("reenviada_ao_cliente") === "pedida ao cliente",
+      "(0114) os estados da pendência aparecem em português, não como chave de banco",
+      `${comUnderscore.join(", ")} · ${rotuloDoEstado("reenviada_ao_cliente")}`);
+    checar(!/_/.test(rotuloDoEstado("estado_que_nao_existe")),
+      "(0114) …e estado novo aparece legível antes de alguém mapeá-lo",
+      rotuloDoEstado("estado_que_nao_existe"));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------
