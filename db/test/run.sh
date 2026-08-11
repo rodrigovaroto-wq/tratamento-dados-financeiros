@@ -157,6 +157,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/portao2.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de REJEITAR pendência (0106: o Portão 2 ganha o segundo lado)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/rejeitar_pendencia.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do catálogo de premissas e da modelagem por caso (0038)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/premissas.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

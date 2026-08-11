@@ -120,6 +120,11 @@ export interface Pendencia {
   descricao: string | null;
   documento_id: string | null;
   criada_em: string;
+  // f0/04 — `false` marca a pendência da lista fechada, que NENHUMA ressalva
+  // libera (db/migrations/0037 é quem lê a coluna). A tela precisa dela para
+  // dizer, antes do clique, que declarar improcedente ali é passar por cima do
+  // controle mais duro do sistema.
+  sobrepujavel?: boolean | null;
 }
 
 // Tipos de pendencia_tipo (db/migrations/0001, 0009) gerados pela reconciliação

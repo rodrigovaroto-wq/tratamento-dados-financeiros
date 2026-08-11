@@ -49,6 +49,7 @@ import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/li
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
+import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido } from "../src/lib/pendencia.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -5217,6 +5218,53 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(!/f0\/\d/.test(suave) && !/secao_canonica|rotulo_norm/.test(suave),
       "(0112) …e o jargão de campo (código de documento interno, nome de coluna) sai do texto",
       suave.slice(0, 80));
+  }
+
+  // ---- (0114) REJEITAR PENDÊNCIA: A TELA NÃO PODE MENTIR SOBRE A REGRA -----
+  //
+  // A regra vive no Postgres (`db/migrations/0106`). O portal a espelha para poder
+  // recusar o motivo curto ANTES do round-trip — e espelho é a coisa que diverge
+  // em silêncio neste repositório (é o mesmo risco do JSON dos nós do n8n contra
+  // a `lib/`, e lá a resposta é `git diff --exit-code`).
+  //
+  // Aqui a resposta é ler a migration. Mudar o piso no banco sem mudar a
+  // constante do portal produziria uma tela que ANUNCIA um mínimo e um banco que
+  // cobra outro: o usuário digita o que a tela pede, a ação estoura, e o defeito
+  // aparece como "erro ao rejeitar" — a pior forma de descobrir uma regra.
+  {
+    const sql = readFileSync(new URL("../../db/migrations/0106_rejeitar_pendencia.sql", import.meta.url), "utf8");
+    const m = sql.match(/fn_min_motivo_rejeicao\(\)[\s\S]*?as \$\$ select (\d+); \$\$/);
+    checar(m != null && Number(m[1]) === MOTIVO_REJEICAO_MIN,
+      "(0114) o mínimo do motivo de rejeição é o MESMO no portal e na migration",
+      `migration: ${m?.[1] ?? "(não encontrado)"} · portal: ${MOTIVO_REJEICAO_MIN}`);
+
+    // O trim vem antes da contagem: trinta espaços são zero caractere de
+    // justificativa, e é o primeiro atalho que alguém tenta.
+    const curtos = ["", "ok", "n/a", "-", "   ".repeat(10)];
+    const passaram = curtos.filter((t) => motivoDeRejeicaoValido(t));
+    checar(passaram.length === 0,
+      "(0114) …e motivo vazio, de duas letras ou só espaço em branco NÃO passa",
+      passaram.map((t) => JSON.stringify(t)).join(" · "));
+    checar(motivoDeRejeicaoValido("A conta está no PDF combinado do mesmo lote."),
+      "(0114) …enquanto uma justificativa de verdade passa");
+
+    // O AVISO MUDA COM A PENDÊNCIA, e o da lista fechada tem de dizer o que é.
+    // Rejeitar uma não-sobrepujável é passar por cima do controle mais duro do
+    // sistema; a tela dizendo a mesma frase genérica das outras seria o mesmo que
+    // não avisar.
+    const naoSobre = avisoDeRejeicao({ severidade: "bloqueante", sobrepujavel: false });
+    const bloqueante = avisoDeRejeicao({ severidade: "bloqueante", sobrepujavel: true });
+    checar(/nenhuma ressalva libera/i.test(naoSobre.replace("NENHUMA", "nenhuma"))
+      && naoSobre !== bloqueante,
+      "(0114) o aviso da pendência que nenhuma ressalva libera é DIFERENTE, e diz isso",
+      naoSobre.slice(0, 60));
+    const todos = [naoSobre, bloqueante, avisoDeRejeicao({ severidade: "complementar" })];
+    checar(todos.every((t) => /não procede|improcedente/i.test(t)),
+      "(0114) …e todo aviso diz que rejeitar é declarar IMPROCEDENTE, não 'resolvido'",
+      todos.map((t) => t.slice(0, 24)).join(" | "));
+    checar(!todos.some((t) => /f0\/\d|sobrepuj|pendencia_|_id\b/.test(t)),
+      "(0114) …sem citar documento interno por código nem nome de coluna do banco",
+      todos.join(" ").slice(0, 80));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------

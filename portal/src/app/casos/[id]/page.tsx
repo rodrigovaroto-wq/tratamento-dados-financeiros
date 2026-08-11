@@ -48,9 +48,17 @@ export default async function CasoDashboardPage({
       .order("criado_em", { ascending: false }),
     supabase
       .from("pendencia")
-      .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em")
+      .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em, sobrepujavel")
       .eq("caso_id", id)
-      .eq("estado", "aberta")
+      // A TELA MOSTRA EXATAMENTE O QUE O PORTÃO CONTA. `fn_avaliar_portao2`
+      // (0037) conta bloqueante em três estados — 'aberta',
+      // 'em_correcao_interna' e 'reenviada_ao_cliente', porque pendência sendo
+      // tratada é pendência não resolvida —, e esta consulta filtrava só
+      // 'aberta'. Hoje nenhum caminho de código escreve os outros dois, então a
+      // divergência ainda não apareceu; no dia em que a fila de tratamento
+      // existir, o card diria "1 pendência BLOQUEANTE em aberto" com a lista
+      // abaixo vazia. Os dois lados leem a mesma definição a partir daqui.
+      .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente"])
       .order("criada_em", { ascending: false }),
     // db/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
     // ter documento e ainda assim não ter uma linha extraída
@@ -82,6 +90,12 @@ export default async function CasoDashboardPage({
   const portao2 = portao2Res.data as {
     elegivel: boolean; motivos: string[]; ressalvas_ativas: number; teto_ressalvas: number;
     status_atual: string;
+    // db/migrations/0106 — quantas pendências foram declaradas IMPROCEDENTES.
+    // Não entra na regra (rejeitada é estado terminal); entra na tela porque é a
+    // única informação que separa um caso que nunca teve pendência de um que
+    // teve e as rejeitou. Opcionais: um banco onde a 0106 ainda não foi aplicada
+    // devolve o payload da 0037, e a tela tem de continuar funcionando.
+    rejeitadas?: number; rejeitadas_nao_sobrepujaveis?: number;
   } | null;
   const checklist = (checklistRes.data as Array<{ tipo_taxonomia: string; status: string }> | null) ?? [];
   const tiposSemConteudo = new Set(
@@ -97,6 +111,30 @@ export default async function CasoDashboardPage({
   const pendenciasExtracao = pendencias.filter((p) =>
     (PENDENCIA_TIPOS_QUALIDADE_EXTRACAO as readonly string[]).includes(p.tipo),
   );
+
+  // O RESTO — e "o resto" era o BURACO desta tela.
+  //
+  // As quatro listas acima são por tipo, escolhidas a dedo. Toda pendência de
+  // tipo que não está em nenhuma delas simplesmente NÃO APARECIA — e as duas que
+  // caem aqui são as que mais bloqueiam: `item_faltante` (obrigatório do Kit
+  // Básico ausente, bloqueante, 0004/0036) e `item_sem_conteudo` (chegou e não
+  // rendeu uma linha — bloqueante NÃO-SOBREPUJÁVEL, 0036). O card do Portão 2
+  // dizia "2 pendência(s) BLOQUEANTE(s) em aberto" e não havia, na página
+  // inteira, uma linha que dissesse QUAIS.
+  //
+  // A grade do Kit Básico mostra o FATO ("faltante", "recebido, sem conteúdo
+  // extraído"), o que é fácil confundir com "então está mostrado". Não é a mesma
+  // coisa: a pendência é o objeto que bloqueia e sobre o qual se decide, e é ela
+  // que precisa estar na tela para poder ser rejeitada. Lista por COMPLEMENTO,
+  // não por enumeração: tipo novo nasce visível: o erro que se paga por esquecer
+  // de listar é o de mostrar demais, não o de esconder um bloqueio.
+  const TIPOS_COM_SECAO_PROPRIA = new Set<string>([
+    ...PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
+    ...PENDENCIA_TIPOS_RECONCILIACAO,
+    ...PENDENCIA_TIPOS_QUALIDADE_EXTRACAO,
+    PENDENCIA_TIPO_ARQUIVO_ILEGIVEL,
+  ]);
+  const pendenciasOutras = pendencias.filter((p) => !TIPOS_COM_SECAO_PROPRIA.has(p.tipo));
 
   // O ARQUIVO DE CADA PENDÊNCIA. A mensagem diz o que está errado; sem o nome do
   // arquivo, quem vai conferir tem de adivinhar em qual dos treze documentos olhar.
@@ -202,6 +240,31 @@ export default async function CasoDashboardPage({
                       + `${portao2.teto_ressalvas - portao2.ressalvas_ativas}.`}
                 {" "}A decisão é sempre a mesma para todos os casos: ninguém aprova por exceção.
               </p>
+              {/* O QUE FOI DECLARADO IMPROCEDENTE (0106). Rejeitar é a única ação
+                  que libera o portão SEM TETO — inclusive a pendência que nenhuma
+                  ressalva libera. Não dá para proibir (senão uma pendência
+                  errada prende o caso para sempre, e o que sobra é editar a
+                  tabela por fora, que é a mesma liberação sem rastro). O que dá
+                  é não deixar invisível: aqui, e dentro da decisão de aprovação. */}
+              {(portao2.rejeitadas ?? 0) > 0 && (
+                <p className="mt-1 text-xs text-neutral-700">
+                  <strong>
+                    {portao2.rejeitadas === 1
+                      ? "1 pendência foi declarada improcedente"
+                      : `${portao2.rejeitadas} pendências foram declaradas improcedentes`}
+                  </strong>
+                  {(portao2.rejeitadas_nao_sobrepujaveis ?? 0) > 0 && (
+                    <>
+                      {", "}
+                      {portao2.rejeitadas_nao_sobrepujaveis === 1
+                        ? "sendo 1 daquelas que nenhuma ressalva libera"
+                        : `sendo ${portao2.rejeitadas_nao_sobrepujaveis} daquelas que nenhuma `
+                          + "ressalva libera"}
+                    </>
+                  )}
+                  . Quem decidiu e por quê está na trilha do caso, e vai junto com a aprovação.
+                </p>
+              )}
             </div>
             {portao2.elegivel && caso.status !== "aprovado" && caso.status !== "pronto_para_base" && (
               <form action={aprovarCaso.bind(null, id)} className="flex items-center gap-2">
@@ -324,6 +387,27 @@ export default async function CasoDashboardPage({
         )}
       </section>
 
+      {pendenciasOutras.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
+            Completude e outras pendências ({pendenciasOutras.length})
+          </h2>
+          <p className="mb-2 text-xs text-neutral-500">
+            São as pendências que impedem a aprovação por falta de documento ou de conteúdo. A
+            grade do Kit Básico acima mostra o mesmo fato pelo lado do checklist; aqui elas
+            aparecem como o que são — o que o Portão 2 conta.
+          </p>
+          <ul className="space-y-2">
+            {pendenciasOutras.map((p) => (
+              <ItemPendencia
+                key={p.id} p={p} tom={p.severidade === "bloqueante" ? "red" : "amber"} casoId={id}
+                arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section>
         <h2 className="mb-2 text-sm font-semibold text-neutral-700">
           Reconciliação (Classe A/B) ({pendenciasReconciliacao.length})
@@ -336,7 +420,7 @@ export default async function CasoDashboardPage({
           <ul className="space-y-2">
             {pendenciasReconciliacao.map((p) => (
               <ItemPendencia
-                key={p.id} p={p} tom="amber"
+                key={p.id} p={p} tom="amber" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
               />
             ))}
@@ -352,7 +436,7 @@ export default async function CasoDashboardPage({
           <ul className="space-y-2">
             {pendenciasArquivo.map((p) => (
               <ItemPendencia
-                key={p.id} p={p} tom="red"
+                key={p.id} p={p} tom="red" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
               />
             ))}
@@ -368,7 +452,7 @@ export default async function CasoDashboardPage({
           <ul className="space-y-2">
             {pendenciasExtracao.map((p) => (
               <ItemPendencia
-                key={p.id} p={p} tom="red"
+                key={p.id} p={p} tom="red" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
               />
             ))}
