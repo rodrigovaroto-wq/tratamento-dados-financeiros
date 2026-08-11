@@ -258,6 +258,58 @@ rodada, e está no mesmo arquivo das partes que nunca mudam.
 
 ---
 
+## 5-A. O que foi EXECUTADO nesta rodada (11/08/2026)
+
+O diagnóstico acima foi escrito antes; este bloco é o depois, e fica no mesmo arquivo porque um
+diagnóstico sem o que aconteceu com ele vira documento morto.
+
+| # | Item | Estado | Onde |
+|---|---|---|---|
+| 1 | Necessidade de recursos no `Output` | ✅ | pico, ano do pico, acumulado, decomposição dos usos, dívida sustentável e serviço suportado — asserts `(0115)` |
+| 2 | `db/schema.sql` gerado e conferido | ✅ | `db/test/run.sh` + passo de CI; 157 objetos, 84 funções |
+| 3 | Índices faseados da `f0/08` | ✅ | ciclo de caixa (PMR/PME/PMP + operacional/financeiro), asserts `(0116)`. **Correção do que eu havia escrito**: cobertura de juros e liquidez seca JÁ existiam; o que faltava era o ciclo |
+| 7 | Papel de usuário | ✅ | `usuario_papel` + `fn_papel()`, default no menor privilégio (`0107`) |
+| 7b | Ressalva, enfim implementável | ✅ | `fn_ressalvar_pendencia` com as quatro exigências de `f0/04` |
+| 8 | Estados de tratamento | ✅ | `fn_tratar_pendencia` + botões "pedi de novo" / "em correção interna" |
+| 11 | `ESTADO.md` + guarda de frescor | ✅ | o `run.sh` reprova quando a migration mais nova não está citada |
+| — | Rejeição de pendência (o pedido original) | ✅ | `0106`, e apertada pela `0107` (lista fechada exige sênior) |
+| — | Espelho do n8n divergente | ✅ | o `main` estava vermelho: o `#112` recalibrou o custo por chamada e não regerou o JSON |
+
+### E o que eu NÃO executei, com o motivo — não com uma promessa
+
+**Resumo dos três cenários lado a lado (item 5).** Continua sendo o item de maior valor não feito, e
+a razão de não ter saído nesta rodada é técnica, não de tempo. O modelo tem **um interruptor de
+cenário** (`Output!$G$2`) e toda projeção lê `CHOOSE` dele. Para publicar as três colunas ao mesmo
+tempo só há três caminhos, e dois são ruins:
+
+- *replicar uma cascata compacta por cenário* — passa a existir um segundo lugar que calcula EBITDA,
+  e esse é exatamente o defeito que os quatro incidentes de dupla contagem produziram. **Violaria a
+  invariante central do projeto** ("uma conta, um lugar") em nome de uma tela;
+- *Data Table do Excel* (`{=TABLE(,G2)}`) é a resposta tecnicamente correta — uma tabela de uma
+  variável sobre a célula de cenário recalcula o modelo inteiro para os três valores. Escrever isso
+  via ExcelJS é possível mas frágil, e a fragilidade cai justamente onde o arnês local **não
+  consegue provar** (o comportamento é do Excel na abertura, não do arquivo);
+- *bloco preenchido à mão* depois de trocar o cenário — honesto, mas é trabalho manual em um produto
+  cujo argumento é não ter trabalho manual.
+
+A recomendação, então, é a segunda opção **com um item de aceite humano próprio** em `docs/ACEITE.md`
+— porque é o único jeito de conferir o que o arnês não alcança. É uma rodada inteira, não um
+acréscimo.
+
+**Proveniência completa na `Premissas` (item 9).** O caminho barato que tentei — reaproveitar os
+`campos` que a rota já busca — casa a linha do modelo com o campo extraído pelo **rótulo**, e a
+normalização que o banco usa (`fn_normalizar_texto`) não tem equivalente garantido em TypeScript.
+Casar por texto cru acerta o caso comum e falha em silêncio nas variações de grafia, publicando
+"sem aceite" para linhas que têm aceite — uma nota de proveniência errada é pior que a ausência
+dela. O caminho correto é estender `fn_linhas_para_modelagem` para devolver confiança, página e
+status de aceite; como isso muda o **tipo de retorno**, exige `drop function` + recriação (a
+restrição que a `0005`/`0006` já documentam), mais a rota, o tipo e a nota. Contido, mas é fatia
+própria.
+
+**Itens 4, 6, 12, 13 e 14** seguem como estavam: são do dono (proteção do `main`, golden set),
+de outro PR (fixture do `book-canastra`) ou fatia grande com decisão de produto antes (Modo A,
+observabilidade).
+
 ## 6. Backlog priorizado
 
 Ordem por (impacto no output) ÷ (esforço). Os quatro primeiros cabem em uma rodada cada.

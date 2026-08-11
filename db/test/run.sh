@@ -111,6 +111,22 @@ if [ -n "$faltando" ]; then
 fi
 echo "   as $(ls db/migrations/*.sql | wc -l) migrations estão na lista de aplicação"
 
+# O ESTADO.md CITA A MIGRATION MAIS NOVA — e é assim que ele não envelhece.
+#
+# O cabeçalho do HANDOFF.md passou 17 PRs congelado em "migrations até 0034",
+# mandando quem chegava começar errado. Documento de estado não envelhece por
+# descuido: envelhece porque nada acusa. Aqui acusa — e a checagem é sobre o
+# fato que mais se move (a última migration), não sobre o texto inteiro, que
+# viraria um portão irritante e sem valor.
+echo "== o ESTADO.md aponta para a migration mais nova"
+ultima=$(ls db/migrations/*.sql | sort | tail -1 | xargs basename)
+if ! grep -qF "$ultima" ESTADO.md; then
+  echo "FALHOU: a migration mais nova é $ultima e o ESTADO.md não a cita."
+  echo "   Atualize o ESTADO.md — ele é o que alguém lê para saber onde o projeto está."
+  exit 1
+fi
+echo "   $ultima"
+
 echo "== migrations"
 for f in db/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then
