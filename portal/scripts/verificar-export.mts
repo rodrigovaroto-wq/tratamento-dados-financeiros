@@ -5220,6 +5220,79 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       suave.slice(0, 80));
   }
 
+  // ---- (0116) CICLO DE CAIXA: DIAS DE VERDADE, OU "n.a." ------------------
+  //
+  // `f0/08` fasejou PMR/PME/PMP até "a extração isolar as linhas-conceito". O
+  // giro já as isolava para aplicar dias de giro conta a conta; faltava publicar.
+  //
+  // Os dois defeitos que estes asserts pegam são os clássicos do indicador:
+  // denominador errado (fornecedor girando contra RECEITA infla o PMP pela margem
+  // inteira) e ZERO no lugar de "não sei" (um caso sem conta de clientes
+  // publicando "0 dias" afirma que a empresa vende à vista).
+  {
+    const out = wbMod.getWorksheet("Output")!;
+    const wc = wbMod.getWorksheet("Working Capital")!;
+    const linhaPorRotulo = (ws: ExcelJS.Worksheet, r: string): number | null => {
+      for (let i = 1; i <= ws.rowCount; i++) {
+        if (String(ws.getRow(i).getCell(3).value ?? "").trim() === r) return i;
+      }
+      return null;
+    };
+    const v = (ws: ExcelJS.Worksheet, r: number | null, ano: number) =>
+      r === null ? null : avaliarCelula(ws, COLS_ANO[iAnoDe(ano)], r);
+    const ano = 2026;
+
+    // A conta de manual, com os números da fixture: clientes 30.000 sobre receita
+    // líquida, estoques 20.000 e fornecedores 18.000 sobre CMV — os três × 360.
+    const pmr = Number(v(out, linhaPorRotulo(out, "PMR — prazo médio de recebimento"), ano));
+    const pme = Number(v(out, linhaPorRotulo(out, "PME — prazo médio de estocagem"), ano));
+    const pmp = Number(v(out, linhaPorRotulo(out, "PMP — prazo médio de pagamento a fornecedores"), ano));
+    const clientes = Number(v(wc, linhaPorRotulo(wc, "do qual CLIENTES (para o ciclo de caixa do Output)"), ano));
+    const estoque = Number(v(wc, linhaPorRotulo(wc, "do qual ESTOQUE (para a liquidez seca do Output)"), ano));
+    const fornec = Number(v(wc, linhaPorRotulo(wc, "do qual FORNECEDORES (para o ciclo de caixa do Output)"), ano));
+    // O rótulo do Output é em inglês (fidelidade ao Modelo Base); o da aba de
+    // giro é em português. Buscar pelo texto errado devolve null e o assert
+    // "passaria" comparando Infinity com Infinity — por isso o valor é conferido.
+    const recLiq = Number(v(out, linhaPorRotulo(out, "Net Revenues"), ano));
+    const cogs = Math.abs(Number(v(wc, linhaPorRotulo(wc, "Custos (base dos dias de giro do passivo de fornecedor)"), ano)));
+
+    checar(Math.abs(pmr - clientes / recLiq * 360) < 0.01,
+      "(0116) o PMR é clientes ÷ receita líquida × 360", `${pmr} vs ${clientes / recLiq * 360}`);
+    checar(Math.abs(pme - estoque / cogs * 360) < 0.01,
+      "(0116) …o PME gira contra CUSTO, não receita", `${pme} vs ${estoque / cogs * 360}`);
+    checar(Math.abs(pmp - fornec / cogs * 360) < 0.01,
+      "(0116) …e o PMP também — girar fornecedor contra receita infla o prazo pela margem inteira",
+      `${pmp} vs ${fornec / cogs * 360}`);
+
+    const oper = Number(v(out, linhaPorRotulo(out, "Ciclo operacional (PMR + PME)"), ano));
+    const fin = Number(v(out, linhaPorRotulo(out, "Ciclo financeiro (− PMP)"), ano));
+    checar(Math.abs(oper - (pmr + pme)) < 0.01 && Math.abs(fin - (oper - pmp)) < 0.01,
+      "(0116) o ciclo operacional soma as duas pernas e o financeiro desconta o PMP",
+      `${oper} · ${fin}`);
+
+    // SEM O INSUMO, "n.a." — NÃO ZERO. A variante tira a conta de clientes do
+    // caso; religando a guarda (publicar a divisão de qualquer jeito), o PMR sai
+    // 0 e o arquivo passa a afirmar que a empresa vende à vista.
+    const semClientes = {
+      ...entradaModelo,
+      linhas: entradaModelo.linhas.filter((l: { chave: string }) => !/clientes/i.test(l.chave)),
+    };
+    const wbSem = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: semClientes as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const outSem = wbSem.getWorksheet("Output")!;
+    const pmrSem = v(outSem, linhaPorRotulo(outSem, "PMR — prazo médio de recebimento"), ano);
+    checar(String(pmrSem) === "n.a.",
+      "(0116) caso sem conta de clientes publica \"n.a.\", não 0 dias de recebimento",
+      String(pmrSem));
+    const operSem = v(outSem, linhaPorRotulo(outSem, "Ciclo operacional (PMR + PME)"), ano);
+    checar(String(operSem) === "n.a.",
+      "(0116) …e o ciclo não soma em cima do que não sabe — sem uma perna, não há ciclo",
+      String(operSem));
+  }
+
   // ---- (0115) NECESSIDADE DE RECURSOS: O ARQUIVO DIMENSIONA, NÃO SÓ ACUSA --
   //
   // O `Output` já dizia que o DSCR fica em 0,3 e que o revolver chega a 122.216 —

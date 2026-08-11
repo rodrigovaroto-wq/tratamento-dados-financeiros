@@ -1952,6 +1952,13 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // ativo circulante que menos vira caixa.
   const estoques = ativos.filter((l) => /\bestoque/i.test(l.chave) || /\bmercadoria/i.test(l.chave)
     || /\bprodutos? (acabados?|em (elabora|processo))/i.test(l.chave) || /\bmat(é|e)ria.prima/i.test(l.chave));
+  // CLIENTES, pela mesma razão e para o mesmo destino: o CICLO DE CAIXA do
+  // `Output` precisa do recebível isolado. `f0/08` lista PMR/PME/PMP como
+  // faseados "até a extração isolar as linhas-conceito" — e o giro já as isola
+  // aqui para aplicar dias, então o que faltava era publicar o espelho.
+  const clientes = ativos.filter((l) => /\bclientes?\b/i.test(l.chave)
+    || /\bcontas? a receber\b/i.test(l.chave) || /\bduplicatas? a receber\b/i.test(l.chave)
+    || /\btítulos? a receber\b/i.test(l.chave) || /\btitulos? a receber\b/i.test(l.chave));
   // A dívida bancária de curto prazo também não é giro: ela vive no
   // `ST Inv. & Debt`. Deixá-la aqui faria o passivo operacional carregar dívida,
   // e a NCG passaria a "melhorar" quando a empresa se endivida mais.
@@ -1973,6 +1980,8 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     { chave: "ESP_AC", rotulo: "Ativo circulante operacional (para o Balance Sheet)" },
     { chave: "ESP_PC", rotulo: "Passivo circulante operacional (para o Balance Sheet)" },
     { chave: "ESP_ESTOQUE", rotulo: "    do qual ESTOQUE (para a liquidez seca do Output)" },
+    { chave: "ESP_CLIENTES", rotulo: "    do qual CLIENTES (para o ciclo de caixa do Output)" },
+    { chave: "ESP_FORNEC", rotulo: "    do qual FORNECEDORES (para o ciclo de caixa do Output)" },
   ]);
   g.espelho("CASH FLOW ACCOUNTS", [
     { chave: "ESP_VAR_NCG", rotulo: "Variação da NCG (para o Cash Flow)" },
@@ -2090,6 +2099,9 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     // `P18` — o espelho, que é o que as demonstrações leem.
     g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
     somaOuZero(g, "ESP_ESTOQUE", ano, estoques.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
+    somaOuZero(g, "ESP_CLIENTES", ano, clientes.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
+    somaOuZero(g, "ESP_FORNEC", ano,
+      passivos.filter((l) => ehFornecedor(l.chave)).map((l) => g.ref(chaveLinha("wc_p", l), ano)));
     g.set("ESP_PC", ano, `=${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
     g.set("ESP_VAR_NCG", ano, `=${g.ref("VAR_NCG", ano)}`, { fmt: NUM });
   }
@@ -3774,6 +3786,30 @@ function abaOutput(
   g.linha("R_ALAV_PL", { rotulo: "Dívida bruta / Patrimônio líquido", fmt: MULT });
   g.pular();
 
+  // ---- CICLO DE CAIXA ------------------------------------------------------
+  //
+  // `f0/08` fasejou PMR/PME/PMP "até a extração isolar as linhas-conceito
+  // necessárias como âncoras endereçáveis". Ela ISOLA: o `Working Capital`
+  // separa clientes, estoques e fornecedores para aplicar dias de giro a cada um
+  // — o que faltava era publicar os espelhos e fazer a divisão aqui.
+  //
+  // Por que 360 e não 365: é a convenção do giro que a própria aba usa para
+  // projetar (dias × base ÷ 360). Misturar as duas bases faria o ciclo publicado
+  // divergir dos dias que dirigem a projeção, e a diferença (1,4%) apareceria
+  // como erro de arredondamento que ninguém consegue explicar.
+  //
+  // ZERO NÃO É RESPOSTA. Caso sem conta de clientes publica "n.a.", não "0 dias":
+  // zero dias de recebimento afirma que a empresa vende à vista, que é uma
+  // afirmação sobre o negócio. É a mesma regra do `f0/08` — sem o insumo, a
+  // célula não estima.
+  g.linha(null, { rotulo: "CICLO DE CAIXA (dias)", bloco: true });
+  g.linha("CC_PMR", { rotulo: "PMR — prazo médio de recebimento", fmt: NUM2 });
+  g.linha("CC_PME", { rotulo: "PME — prazo médio de estocagem", fmt: NUM2 });
+  g.linha("CC_PMP", { rotulo: "PMP — prazo médio de pagamento a fornecedores", fmt: NUM2 });
+  g.linha("CC_OPER", { rotulo: "Ciclo operacional (PMR + PME)", negrito: true, topo: true, fmt: NUM2 });
+  g.linha("CC_FIN", { rotulo: "Ciclo financeiro (− PMP)", negrito: true, fmt: NUM2 });
+  g.pular();
+
   // ---- NECESSIDADE DE RECURSOS E CAPACIDADE DE PAGAMENTO -------------------
   //
   // O ARQUIVO DIAGNOSTICAVA E NÃO DIMENSIONAVA. Ele já dizia que o DSCR fica em
@@ -3994,6 +4030,37 @@ function abaOutput(
     });
     g.set("R_ALAV_PL", ano,
       `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+
+    // CICLO DE CAIXA — dias, a partir dos espelhos do giro.
+    //
+    // O denominador de cada prazo é a linha de DRE contra a qual aquela conta
+    // GIRA, e é a mesma escolha que a aba de giro faz para projetar: recebível
+    // gira contra receita líquida, estoque e fornecedor giram contra custo. Usar
+    // receita para o fornecedor — erro comum — infla o PMP pela margem inteira.
+    {
+      const dias = (esp: string, base: string) =>
+        `=IF(OR(${g.externa("Working Capital", gWC, esp, ano)}=0,ABS(${base})=0),"n.a.",`
+        + `${g.externa("Working Capital", gWC, esp, ano)}/ABS(${base})*360)`;
+      const cogs = g.externa("Working Capital", gWC, "BASE_COGS", ano);
+      g.set("CC_PMR", ano, dias("ESP_CLIENTES", g.ref("REC_LIQ", ano)), { fmt: NUM2 });
+      g.set("CC_PME", ano, dias("ESP_ESTOQUE", cogs), { fmt: NUM2 });
+      g.set("CC_PMP", ano, dias("ESP_FORNEC", cogs), { fmt: NUM2 });
+      // O ciclo só existe se as pernas existirem: somar "n.a." com número daria
+      // #VALUE!, e tratar "n.a." como zero publicaria um ciclo curto por FALTA de
+      // dado, que é o pior dos dois mundos.
+      const num = (ch: string) => `ISNUMBER(${g.ref(ch, ano)})`;
+      g.set("CC_OPER", ano,
+        `=IF(AND(${num("CC_PMR")},${num("CC_PME")}),${g.ref("CC_PMR", ano)}+${g.ref("CC_PME", ano)},"n.a.")`,
+        { fmt: NUM2, negrito: true });
+      g.set("CC_FIN", ano,
+        `=IF(AND(ISNUMBER(${g.ref("CC_OPER", ano)}),${num("CC_PMP")}),`
+        + `${g.ref("CC_OPER", ano)}-${g.ref("CC_PMP", ano)},"n.a.")`, {
+        fmt: NUM2, negrito: true,
+        nota: "Dias entre pagar o fornecedor e receber do cliente — o giro que a empresa precisa "
+          + "financiar. Ciclo que ABRE ao longo da projeção é necessidade de capital de giro "
+          + "crescente, e ela aparece no fluxo como consumo de caixa.",
+      });
+    }
 
     // NECESSIDADE DE RECURSOS — leitura, não dado novo.
     //
