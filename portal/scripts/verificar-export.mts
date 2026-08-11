@@ -49,7 +49,7 @@ import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/li
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
-import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido, rotuloDoEstado } from "../src/lib/pendencia.ts";
+import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "../src/lib/pendencia.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -5444,64 +5444,53 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(0115) …e a linha de cobertura é EBITDA − usos, o furo contado pelo lado da origem");
   }
 
-  // ---- (0114) REJEITAR PENDÊNCIA: A TELA NÃO PODE MENTIR SOBRE A REGRA -----
+  // ---- (0114) OS TRÊS BOTÕES DA PENDÊNCIA ---------------------------------
   //
-  // A regra vive no Postgres (`db/migrations/0106`). O portal a espelha para poder
-  // recusar o motivo curto ANTES do round-trip — e espelho é a coisa que diverge
-  // em silêncio neste repositório (é o mesmo risco do JSON dos nós do n8n contra
-  // a `lib/`, e lá a resposta é `git diff --exit-code`).
+  // A 0109 trocou o formulário (motivo obrigatório, data, papel, teto) por três
+  // botões de um clique. Este bloco já provou o espelho do piso do motivo, que
+  // deixou de existir; o que sobra para provar é o que a tela promete.
   //
-  // Aqui a resposta é ler a migration. Mudar o piso no banco sem mudar a
-  // constante do portal produziria uma tela que ANUNCIA um mínimo e um banco que
-  // cobra outro: o usuário digita o que a tela pede, a ação estoura, e o defeito
-  // aparece como "erro ao rejeitar" — a pior forma de descobrir uma regra.
+  // O DEFEITO QUE ELE PEGA: botão cuja cor ou rótulo não corresponde ao estado
+  // que ele produz. Com três botões coloridos e nenhum texto explicativo, a cor
+  // É a informação — um "Prosseguir sem resolução" que gravasse o estado de
+  // "contatar cliente" seria indistinguível na tela e mudaria o caso inteiro.
   {
-    const sql = readFileSync(new URL("../../db/migrations/0106_rejeitar_pendencia.sql", import.meta.url), "utf8");
-    const m = sql.match(/fn_min_motivo_rejeicao\(\)[\s\S]*?as \$\$ select (\d+); \$\$/);
-    checar(m != null && Number(m[1]) === MOTIVO_REJEICAO_MIN,
-      "(0114) o mínimo do motivo de rejeição é o MESMO no portal e na migration",
-      `migration: ${m?.[1] ?? "(não encontrado)"} · portal: ${MOTIVO_REJEICAO_MIN}`);
+    const esperado: Array<[string, string, string]> = [
+      ["contatar_cliente", "Contatar o Cliente", "reenviada_ao_cliente"],
+      ["prosseguir", "Prosseguir sem resolução", "aceita_com_ressalva"],
+      ["nao_procede", "Pendência não procede", "rejeitada"],
+    ];
+    checar(BOTOES_DECISAO.length === 3
+      && BOTOES_DECISAO.every((b, i) => b.decisao === esperado[i][0] && b.rotulo === esperado[i][1]),
+      "(0114) os três botões, na ordem e com os rótulos que o dono pediu",
+      BOTOES_DECISAO.map((b) => b.rotulo).join(" · "));
 
-    // O trim vem antes da contagem: trinta espaços são zero caractere de
-    // justificativa, e é o primeiro atalho que alguém tenta.
-    const curtos = ["", "ok", "n/a", "-", "   ".repeat(10)];
-    const passaram = curtos.filter((t) => motivoDeRejeicaoValido(t));
-    checar(passaram.length === 0,
-      "(0114) …e motivo vazio, de duas letras ou só espaço em branco NÃO passa",
-      passaram.map((t) => JSON.stringify(t)).join(" · "));
-    checar(motivoDeRejeicaoValido("A conta está no PDF combinado do mesmo lote."),
-      "(0114) …enquanto uma justificativa de verdade passa");
+    // Cada botão tem de aparecer de volta no estado que produz — é o que faz o
+    // rótulo colorido do item ser o mesmo botão que alguém clicou.
+    const semVolta = esperado.filter(([dec, , estado]) => ROTULO_POR_ESTADO[estado]?.decisao !== dec);
+    checar(semVolta.length === 0,
+      "(0114) …e o rótulo que fica na pendência é o do botão que a decidiu",
+      semVolta.map(([d]) => d).join(", "));
 
-    // O AVISO MUDA COM A PENDÊNCIA, e o da lista fechada tem de dizer o que é.
-    // Rejeitar uma não-sobrepujável é passar por cima do controle mais duro do
-    // sistema; a tela dizendo a mesma frase genérica das outras seria o mesmo que
-    // não avisar.
-    const naoSobre = avisoDeRejeicao({ severidade: "bloqueante", sobrepujavel: false });
-    const bloqueante = avisoDeRejeicao({ severidade: "bloqueante", sobrepujavel: true });
-    checar(/nenhuma ressalva libera/i.test(naoSobre.replace("NENHUMA", "nenhuma"))
-      && naoSobre !== bloqueante,
-      "(0114) o aviso da pendência que nenhuma ressalva libera é DIFERENTE, e diz isso",
-      naoSobre.slice(0, 60));
-    const todos = [naoSobre, bloqueante, avisoDeRejeicao({ severidade: "complementar" })];
-    checar(todos.every((t) => /não procede|improcedente/i.test(t)),
-      "(0114) …e todo aviso diz que rejeitar é declarar IMPROCEDENTE, não 'resolvido'",
-      todos.map((t) => t.slice(0, 24)).join(" | "));
-    checar(!todos.some((t) => /f0\/\d|sobrepuj|pendencia_|_id\b/.test(t)),
-      "(0114) …sem citar documento interno por código nem nome de coluna do banco",
-      todos.join(" ").slice(0, 80));
+    // As três cores são distintas: verde, vermelho, amarelo. Duas iguais e a
+    // tela perde a única informação que ela dá sem texto.
+    const cores = BOTOES_DECISAO.map((b) => b.classe.match(/bg-(\w+)-\d+/)?.[1]);
+    checar(new Set(cores).size === 3 && cores.includes("emerald") && cores.includes("red") && cores.includes("amber"),
+      "(0114) …com as três cores separadas (verde, vermelho, amarelo)",
+      cores.join(" · "));
 
-    // OS SEIS ESTADOS DE f0/04 TÊM NOME DE GENTE (0107). O banco guarda
-    // `reenviada_ao_cliente`; a tela que publicasse isso estaria falando canônico
-    // de novo — o defeito que o (0112) fechou para as seções.
+    // Cada botão diz o que ACONTECE COM O CASO. Sem campo e sem confirmação, é
+    // a única chance de o usuário saber antes de clicar.
+    checar(BOTOES_DECISAO.every((b) => b.efeito.length > 30 && !/_/.test(b.efeito)),
+      "(0114) …e cada um declara o efeito no caso, em português",
+      BOTOES_DECISAO.map((b) => b.efeito.slice(0, 20)).join(" | "));
+
     const estados = ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
       "aceita_com_ressalva", "rejeitada", "resolvida"];
     const comUnderscore = estados.filter((e) => /_/.test(rotuloDoEstado(e)));
-    checar(comUnderscore.length === 0 && rotuloDoEstado("reenviada_ao_cliente") === "pedida ao cliente",
-      "(0114) os estados da pendência aparecem em português, não como chave de banco",
-      `${comUnderscore.join(", ")} · ${rotuloDoEstado("reenviada_ao_cliente")}`);
-    checar(!/_/.test(rotuloDoEstado("estado_que_nao_existe")),
-      "(0114) …e estado novo aparece legível antes de alguém mapeá-lo",
-      rotuloDoEstado("estado_que_nao_existe"));
+    checar(comUnderscore.length === 0 && !/_/.test(rotuloDoEstado("estado_que_nao_existe")),
+      "(0114) e nenhum estado vaza como chave de banco, nem os que ninguém mapeou",
+      comUnderscore.join(", "));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------

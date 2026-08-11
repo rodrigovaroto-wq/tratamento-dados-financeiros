@@ -61,12 +61,13 @@ import type { EspecGrafico } from "./xlsx-graficos";
 // e em nota na célula, porque é uma divergência de método e quem audita precisa
 // saber. Não é aproximação escondida: é escolha registrada.
 // -----------------------------------------------------------------------------
+// O que o LEITOR do arquivo precisa saber sobre a convenção de juros. A
+// justificativa da escolha (referência circular, cálculo iterativo, o que o
+// modelo de referência faz) está no cabeçalho deste arquivo — é assunto de quem
+// mantém o gerador, não de quem lê o entregável.
 const NOTA_CIRCULARIDADE =
-  "Juros e rendimentos financeiros incidem sobre o saldo de ABERTURA do período. "
-  + "O modelo de referência os calcula sobre a média (abertura, fechamento), o que cria "
-  + "referência circular e exige cálculo iterativo do Excel. Fora do Excel, referência "
-  + "circular resolve para zero SEM AVISO, e nenhum teste consegue verificar o arquivo. "
-  + "A diferença é de ordem de meio período de juros e está documentada aqui de propósito.";
+  "Juros e rendimentos financeiros incidem sobre o saldo de ABERTURA do período, não sobre a "
+  + "média do período — a diferença é de cerca de meio período de juros.";
 
 export const ABAS_MODELO = [
   "Considerações", "Capa", "Output", "Revenues, COGS & SG&A", "Premissas",
@@ -1865,8 +1866,7 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
       const e = hist ? valorDaAncora(ctx, c.ancora, ano) : null;
       if (!hist) {
         g.set(`DOC_${c.chave}`, ano, null, {
-          nota: "Exercício PROJETADO: não existe documento contra o que conferir. Célula vazia de "
-            + "propósito — zero aqui pareceria uma conferência que fechou.",
+          nota: "Exercício projetado: não há documento contra o que conferir.",
         });
         g.set(`DIF_${c.chave}`, ano, null, {});
         continue;
@@ -2093,8 +2093,7 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     g.set("NCG", ano, `=${g.ref("TOTAL_AC", ano)}-${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
     g.set("VAR_NCG", ano, ant === null ? 0 : `=-(${g.ref("NCG", ano)}-${g.ref("NCG", ant)})`, {
       fmt: NUM,
-      nota: "Sinal invertido: NCG que CRESCE consome caixa. É o erro de sinal mais comum do "
-        + "fluxo indireto, e ele dobra o efeito em vez de zerá-lo.",
+      nota: "Giro que CRESCE consome caixa — por isso o sinal aqui é o inverso do saldo.",
     });
     // `P18` — o espelho, que é o que as demonstrações leem.
     g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
@@ -2576,8 +2575,7 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     // curva×spread, que a 10% e 5% já é 50 pontos-base.
     g.set("TAXA_MEDIA", ano, `=((1+${g.ref("CURVA_CDI", ano)})*(1+${g.ref("SPREAD_DIVIDA", ano)}))-1`, {
       fmt: PCT2, negrito: true,
-      nota: "Custo efetivo = (1+curva)×(1+spread)−1, como no Modelo Base. Somar as duas pontas "
-        + "subestima o custo em curva×spread.",
+      nota: "Custo efetivo = (1+curva)×(1+spread)−1. A composição não é soma.",
     });
     g.set("SPREAD_REVOLVER", ano, `=${g.ref("SPREAD_DIVIDA", ano)}`, {
       fmt: PCT2, fill: FILL_INPUT,
@@ -2924,9 +2922,7 @@ function abaFluxo(
       `=(${contasGiro.map(({ l, pref }) => g.ref(`ncg:${pref}:${l.rotulo_norm}`, ano)).join("+") || "0"})`
       + `-${g.ref("VAR_NCG", ano)}`, {
       fmt: NUM2,
-      nota: "A abertura por conta e o total vêm de lugares diferentes de propósito (o total é o "
-        + "espelho da aba de giro, que é o que o FCO soma). Esta linha existe para os dois não "
-        + "poderem divergir em silêncio: tem de ser ZERO.",
+      nota: "Conferência: a soma das contas menos o total. Tem de ser ZERO — fora disso, a abertura e o total do giro contam coisas diferentes.",
     });
     g.set("PAGO_TRIB", ano, `=-${g.externa("Tributos a Recolher", gTrib, "ESP_PAGO", ano)}`, {
       fmt: NUM,
@@ -2944,11 +2940,8 @@ function abaFluxo(
     g.set("AMORT", ano, `=-${g.externa("ST Inv. & Debt", gDiv, "ESP_AMORT", ano)}`, { fmt: NUM });
     g.set("DIVIDENDOS", ano, 0, {
       fmt: NUM, fill: FILL_INPUT,
-      nota: "Dividendos ZERO por padrão. Num mandato de reestruturação, distribuir caixa é "
-        + "decisão que o plano precisa declarar — não default de planilha. CONVENÇÃO DE SINAL: "
-        + "dividendo pago entra NEGATIVO aqui, como as outras saídas do bloco de financiamento. "
-        + "O patrimônio líquido soma esta célula (não subtrai), então o sinal tem de ser o da "
-        + "saída — trocar isso faria distribuir dividendo AUMENTAR o patrimônio.",
+      nota: "Célula editável, zero por padrão: num mandato de reestruturação, distribuir caixa é "
+        + "decisão que o plano declara. Dividendo pago entra NEGATIVO, como as outras saídas.",
     });
     g.set("CAIXA_INI", ano, `=${g.ref("CAIXA_FIM", ant!)}`, { fmt: NUM });
     // Caixa antes do revolver: sem o saque, para o furo ser visível.
@@ -2967,9 +2960,7 @@ function abaFluxo(
       + `-MIN(${g.externa("ST Inv. & Debt", gDiv, "REVOLVER_INI", ano)},`
       + `MAX(0,${g.ref("CAIXA_ANTES", ano)}-${g.externa("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano)})))`, {
       fmt: NUM,
-      nota: "Saca o furo; havendo sobra acima do caixa mínimo, amortiza o revolver até zerá-lo. "
-        + "O MIN impede amortizar mais do que se deve — sem ele o revolver fica NEGATIVO e o "
-        + "modelo passa a mostrar dívida como se fosse aplicação.",
+      nota: "Saca o que falta para o caixa mínimo; havendo sobra, amortiza o revolver até zerá-lo.",
     });
     g.set("FCF", ano,
       `=${g.ref("CAPTACAO", ano)}+${g.ref("AMORT", ano)}+${g.ref("REVOLVER", ano)}+${g.ref("DIVIDENDOS", ano)}`,
@@ -3122,9 +3113,7 @@ function abaBalanco(
     g.set("PC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_PC", ano)}`, { fmt: NUM });
     g.set("DIVIDA_CP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_DIVIDA_CP", ano)}`, {
       fmt: NUM,
-      nota: "Lida do ESPELHO da aba de dívida (`P18`). A repartição curto/longo prazo é decidida lá, "
-        + "onde a dívida vive; o balanço só lê. Antes o balanço recalculava a fração, e passava a "
-        + "saber de dívida — acoplamento que o espelho existe para eliminar.",
+      nota: "Vem da aba de dívida, onde a repartição entre curto e longo prazo é decidida.",
     });
     g.set("TRIB_CP", ano, `=${g.externa("Tributos a Recolher", gTrib, "ESP_CP", ano)}`, {
       fmt: NUM,
@@ -3916,10 +3905,8 @@ function abaOutput(
     }
     g.set("BS_MISMATCH", ano, `=${g.ref("BS_ATIVO", ano)}-${g.ref("BS_PASSIVO", ano)}`, {
       fmt: NUM2, negrito: true,
-      nota: "O `Mismatch` do Modelo Base, recalculado AQUI a partir das duas linhas de cima em vez "
-        + "de espelhado do balanço. É de propósito: se o espelho do ativo e o do passivo vierem de "
-        + "linhas diferentes por erro de âncora, esta subtração acusa, e um espelho do CHECK do "
-        + "balanço não acusaria.",
+      nota: "Ativo menos passivo + PL, recalculado aqui a partir das duas linhas acima. "
+        + "Diferente de zero significa que o balanço não fecha.",
     });
 
     // INCOME STATEMENT
@@ -4024,9 +4011,7 @@ function abaOutput(
       `=IF(${g.ref("BS_PC", ano)}<>0,(${g.ref("BS_AC", ano)}-${g.externa("Working Capital", gWC, "ESP_ESTOQUE", ano)})`
       + `/${g.ref("BS_PC", ano)},0)`, {
       fmt: MULT,
-      nota: "Ativo circulante MENOS estoque, sobre o passivo circulante. É o índice que o Modelo "
-        + "Base acompanha com covenant próprio, e o que separa liquidez de liquidez condicionada a "
-        + "vender estoque.",
+      nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez que depende de vender estoque.",
     });
     g.set("R_ALAV_PL", ano,
       `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
@@ -4298,12 +4283,10 @@ function abaConsideracoes(wb: ExcelJS.Workbook, ctx: Ctx): void {
   cellStress.numFmt = PCT;
   cellStress.fill = FILL_INPUT;
   cellStress.note = comoNota(
-    "HAIRCUT DO STRESS, em $F$8 — a única célula que define o cenário 3. Ela piora receita "
-    + "(crescimento menor), custo (percentual maior), giro (ativo mais lento, passivo mais rápido) "
-    + "e capex (corte). Aplicar o mesmo sinal em tudo é o erro que faz o cenário ruim sair melhor "
-    + "que o base.",
+    "A única célula que define o Stress Case. Ela piora receita (crescimento menor), custo "
+    + "(percentual maior), giro (ativo mais lento, passivo mais rápido) e capex (corte).",
   );
-  put(8, 3, "aplicado com o SINAL CORRETO em cada linha — ver notas das células");
+  put(8, 3, "piora cada linha no sentido que a torna pior — não é o mesmo ajuste em todas");
 
   put(10, 2, "PREMISSAS DO MANDATO", { bold: true });
   let r = 11;
@@ -4319,15 +4302,12 @@ function abaConsideracoes(wb: ExcelJS.Workbook, ctx: Ctx): void {
   put(r, 2, "MÉTODO — DIVERGÊNCIAS DECLARADAS", { bold: true }); r++;
   for (const texto of [
     NOTA_CIRCULARIDADE,
-    "Nenhuma linha é projetada sem premissa vinculada: conta sem premissa fica CONSTANTE e é "
-    + "listada na conferência do portal. O modelo não inventa movimento.",
-    "Subtotal nunca é projetado por premissa própria — ele é a soma dos componentes projetados, "
-    + "célula a célula. É o que impede a mesma receita de ser contada duas vezes.",
+    "Conta sem premissa vinculada fica CONSTANTE na projeção, e aparece na conferência do portal.",
+    "Subtotal não tem premissa própria: é sempre a soma dos componentes projetados.",
     "Tributo incide apenas sobre lucro POSITIVO. Compensação de prejuízo fiscal é decisão "
     + "tributária e não subproduto de fórmula.",
     "Histórico não é digitado: vem da extração, com a proveniência de cada célula em nota.",
-    "Depreciação: linear sobre o saldo de abertura + meia safra do capex do ano. O modelo de "
-    + "referência usa SUM(OFFSET(...)), que quebra em silêncio se alguém inserir coluna.",
+    "Depreciação: linear sobre o saldo de abertura, mais meia safra do capex do ano.",
   ]) {
     const cell = put(r, 2, texto);
     ws.mergeCells(r, 2, r, 8);

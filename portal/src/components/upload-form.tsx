@@ -34,11 +34,15 @@ export default function UploadForm({
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<{ mandato: string; arquivos: number; desde: string } | null>(null);
   const [pronto, setPronto] = useState(false);
+  // A FALHA DO PROCESSAMENTO. Sem este estado, o "aguarde" era eterno: a tela
+  // deduzia progresso da ausência de documentos, e falha produz exatamente a
+  // mesma ausência.
+  const [falha, setFalha] = useState<{ etapa: string; mensagem: string } | null>(null);
 
   // Acompanha silenciosamente, em segundo plano, até os arquivos enviados
   // estarem organizados — sem nomear nenhuma ferramenta ou etapa técnica.
   useEffect(() => {
-    if (!sucesso || pronto) return;
+    if (!sucesso || pronto || falha) return;
     let cancelado = false;
     let tentativas = 0;
 
@@ -53,6 +57,12 @@ export default function UploadForm({
         });
         const resp = await fetch(`/api/intake/status?${params}`);
         const json = await resp.json().catch(() => ({}));
+        // A falha ENCERRA o acompanhamento. Continuar perguntando depois dela
+        // seria manter a espera de pé sobre um processo que não vai voltar.
+        if (!cancelado && resp.ok && json.falha) {
+          setFalha({ etapa: json.falha.etapa, mensagem: json.falha.mensagem });
+          return;
+        }
         if (!cancelado && resp.ok && json.pronto) {
           setPronto(true);
           if (casoId) router.refresh();
@@ -72,7 +82,7 @@ export default function UploadForm({
       cancelado = true;
       clearTimeout(primeiraEspera);
     };
-  }, [sucesso, pronto, casoId, router]);
+  }, [sucesso, pronto, falha, casoId, router]);
 
   function adicionarArquivos(lista: FileList | null) {
     if (!lista) return;
@@ -123,6 +133,50 @@ export default function UploadForm({
     } finally {
       setEnviando(false);
     }
+  }
+
+  // O PROCESSAMENTO FALHOU — e a tela diz isso, com a causa.
+  //
+  // O texto tem três partes, nesta ordem, e a ordem é o que o torna útil: (1) o
+  // que aconteceu, em uma frase; (2) a causa TÉCNICA como o sistema a produziu,
+  // sem tradução — é o que o desenvolvedor precisa ler e o que some quando a
+  // interface "simplifica" demais; (3) o que fazer agora. Sem a (2), quem for
+  // ajudar começa perguntando "qual erro apareceu?" e a resposta é "deu erro".
+  if (sucesso && falha) {
+    return (
+      <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+        <p className="font-medium">
+          Não foi possível processar os {sucesso.arquivos} arquivo(s) do mandato “{sucesso.mandato}”.
+        </p>
+        <p className="mt-1 text-red-800">
+          O envio chegou, mas o processamento parou antes de terminar. Nada foi cobrado e nada ficou
+          pela metade — os arquivos podem ser reenviados depois que o problema for resolvido.
+        </p>
+        <div className="mt-3 rounded border border-red-200 bg-white p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+            O que o sistema respondeu {falha.etapa ? `(etapa: ${falha.etapa})` : null}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700">{falha.mensagem}</p>
+        </div>
+        <p className="mt-3 font-medium text-red-900">
+          Envie esta mensagem ao desenvolvedor do sistema para que ele resolva o problema.
+        </p>
+        <div className="mt-3 flex gap-3">
+          <button
+            onClick={() => { setFalha(null); setSucesso(null); }}
+            className="rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+          >
+            Tentar de novo
+          </button>
+          <button
+            onClick={() => router.push(casoId ? `/casos/${casoId}` : "/casos")}
+            className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
+          >
+            {casoId ? "Voltar ao mandato →" : "Ver mandatos →"}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (sucesso) {

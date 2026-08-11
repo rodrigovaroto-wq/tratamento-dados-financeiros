@@ -120,11 +120,11 @@ export interface Pendencia {
   descricao: string | null;
   documento_id: string | null;
   criada_em: string;
-  // f0/04 — `false` marca a pendência da lista fechada, que NENHUMA ressalva
-  // libera (db/migrations/0037 é quem lê a coluna). A tela precisa dela para
-  // dizer, antes do clique, que declarar improcedente ali é passar por cima do
-  // controle mais duro do sistema.
-  sobrepujavel?: boolean | null;
+  // `sobrepujavel` NÃO entra aqui de propósito. A coluna existe e continua sendo
+  // contada pelo banco (`fn_avaliar_portao2` publica quantas não-sobrepujáveis
+  // seguiram sem decisão), mas desde a 0109 ela não muda nada na TELA: os três
+  // botões valem para qualquer pendência. Trazer um campo que ninguém lê é o
+  // mesmo defeito que a 0037 corrigiu do outro lado — dado gravado sem leitor.
 }
 
 // Tipos de pendencia_tipo (db/migrations/0001, 0009) gerados pela reconciliação

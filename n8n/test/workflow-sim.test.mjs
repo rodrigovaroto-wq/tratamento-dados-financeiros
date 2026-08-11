@@ -459,7 +459,17 @@ test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos 
 // antes de `Preparar Conteudo`, que abre os binários para as chamadas.
 test('Topologia: o teto de gasto fica entre a classificação por nome e o conteúdo', () => {
   assert.deepEqual(wf.connections['Classificar Nome'].main[0].map((c) => c.node), ['Orcamento do Lote']);
-  assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  // O orçamento não segue mais direto para o conteúdo: entre os dois há o IF que
+  // separa "cabe" de "não cabe". O ramo do NÃO existe porque a recusa precisava
+  // chegar ao portal — lançando ali mesmo, a mensagem ficava só no log do n8n e
+  // a tela seguia dizendo "estamos organizando tudo com cuidado" para sempre.
+  assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
+  // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
+  // o portal sem a causa, que é exatamente o defeito que este ramo corrige.
+  assert.deepEqual(wf.connections['Registrar Recusa'].main[0].map((c) => c.node), ['Abortar Lote']);
+  assert.equal(wf.connections['Abortar Lote'], undefined, 'abortar é o fim do ramo');
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
@@ -478,7 +488,7 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
       // `Listar Arquivos` faz fan-out (1 item → N), e `Orcamento do Lote` é N→N
       // mas precisa contar o lote para decidir se ele cabe no teto de gasto —
       // uma decisão que por definição não existe olhando um item por vez.
-      if (n.name === 'Listar Arquivos' || n.name === 'Orcamento do Lote') {
+      if (n.name === 'Listar Arquivos' || n.name === 'Orcamento do Lote' || n.name === 'Abortar Lote') {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -737,13 +747,26 @@ test('Orcamento do Lote: o lote do v31 é RECUSADO antes do renome', async () =>
     ...Array.from({ length: 6 }, (_, i) => itemDoc(`0${i + 1}_BP_X_2025x2024.pdf`, false)),
     ...Array.from({ length: 8 }, (_, i) => itemDoc(`1${i}_DFC_X_2025.pdf`, true)),
   ];
+  // O nó não LANÇA mais: ele marca. A diferença existe para a recusa poder ser
+  // GRAVADA no banco antes de a execução morrer — lançando aqui, a mensagem
+  // ficava só no log do n8n e o portal seguia num "aguarde" eterno.
+  const out = await run('Orcamento do Lote', { items });
+  assert.equal(out[0].json.orcamento_cabe, false, 'o lote é recusado');
+  assert.match(out[0].json.orcamento_mensagem, /Lote recusado ANTES de gastar/);
+  assert.match(out[0].json.orcamento_mensagem, /22 chamada/,
+    'a mensagem conta as CHAMADAS, não os documentos');
+  assert.match(out[0].json.orcamento_mensagem, /Nada foi enviado à OpenAI e nada foi gravado/,
+    'quem lê o erro precisa saber que reenviar é seguro');
+  // Estes 14 documentos não trazem tamanho (o fixture tem binário vazio), então
+  // quem decidiu foi o estimador PLANO — e a mensagem tem de dizer isso, senão
+  // ninguém sabe qual das duas contas produziu a recusa.
+  assert.match(out[0].json.orcamento_mensagem, /estimativa plana/);
+
+  // E o aborto continua acontecendo, uma etapa depois.
   await assert.rejects(
-    () => run('Orcamento do Lote', { items }),
+    () => run('Abortar Lote', { items: out }),
     (e) => {
       assert.match(e.message, /Lote recusado ANTES de gastar/);
-      assert.match(e.message, /22 chamada/, 'a mensagem conta as CHAMADAS, não os documentos');
-      assert.match(e.message, /Nada foi enviado à OpenAI e nada foi gravado/,
-        'quem lê o erro precisa saber que reenviar é seguro');
       return true;
     },
   );
@@ -803,8 +826,15 @@ test('Parse Extracao mede o custo real da chamada a partir do usage', async () =
 const CODE_QUE_DEVE_ABORTAR = {
   // Formulário sem arquivo: não há lote para continuar.
   'Listar Arquivos': 'lote vazio',
-  // Recusa do teto de US$ 3 por execução. Pôr onError aqui DESLIGA o teto de gasto.
-  'Orcamento do Lote': 'orçamento excedido',
+  // O orçamento não LANÇA mais a recusa (ela virou marca, para o ramo do IF
+  // poder gravá-la no banco antes de a execução morrer) — mas continua sem
+  // `onError`, e por um motivo diferente do de antes: se ESTE nó falhar por um
+  // bug, continuar significa seguir para as chamadas da OpenAI sem nenhuma
+  // decisão de orçamento tomada. Um teto que se desliga sozinho quando quebra
+  // não é teto.
+  'Orcamento do Lote': 'falha aqui = lote sem decisão de orçamento',
+  // E o aborto do lote recusado, que é onde a exceção passou a morar.
+  'Abortar Lote': 'orçamento excedido',
 };
 
 test('todo nó Code continua o lote quando um item falha (exceto os que devem abortar)', () => {

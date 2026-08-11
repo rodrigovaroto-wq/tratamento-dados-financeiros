@@ -24,6 +24,25 @@ export async function GET(request: Request) {
 
   const supabase = await createClient();
 
+  // A FALHA VEM PRIMEIRO, e vem antes de qualquer contagem de progresso.
+  //
+  // Esta rota deduz "está processando" da AUSÊNCIA de documentos — e falha
+  // produz a mesma ausência. Foi assim que 35 documentos recusados pelo
+  // orçamento viraram um "aguarde" eterno: o pipeline tinha morrido dois minutos
+  // antes e a tela seguia calma. Perguntar pela falha ANTES de contar progresso é
+  // o que faz os dois estados deixarem de ter a mesma aparência.
+  const { data: falhas } = await supabase.rpc("fn_falhas_abertas", {
+    p_caso_nome: casoNome,
+    p_desde: desde,
+  });
+  const falha = (falhas as Array<{ id: string; etapa: string; mensagem: string }> | null)?.[0];
+  if (falha) {
+    return NextResponse.json({
+      classificados: 0, processados: 0, esperados, pronto: false,
+      falha: { id: falha.id, etapa: falha.etapa, mensagem: falha.mensagem },
+    });
+  }
+
   const { data: caso, error: casoErr } = await supabase
     .from("caso")
     .select("id")
