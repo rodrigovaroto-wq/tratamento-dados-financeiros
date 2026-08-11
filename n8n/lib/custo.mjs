@@ -41,17 +41,31 @@ export const TETO_EXECUCAO_USD = 3;
 // Custo estimado de UM documento, usado só para decidir se o lote cabe antes de
 // existir qualquer medição.
 //
-// De onde sai o número (docs/CUSTO_OPENAI.md): ~1k tokens de entrada por página,
-// documento típico de ~10 páginas + ~2,5k do prompt de sistema ≈ 12,5k de
-// entrada = US$ 0,031; saída de extração densa até MAX_OUTPUT_TOKENS/2 ≈ 8k =
-// US$ 0,08. Soma ≈ US$ 0,11 — e fica em 0,15 para o estimador errar para o lado
-// SEGURO (barrar um lote que caberia é um aviso; deixar passar um que não cabe é
-// o v31 de novo).
+// De onde saiu o número original (docs/CUSTO_OPENAI.md): ~1k tokens de entrada
+// por página, documento típico de ~10 páginas + ~2,5k do prompt de sistema ≈
+// 12,5k de entrada = US$ 0,031; saída de extração densa até MAX_OUTPUT_TOKENS/2
+// ≈ 8k = US$ 0,08. Soma ≈ US$ 0,11 — e ficou em 0,15 para o estimador errar para
+// o lado SEGURO (barrar um lote que caberia é um aviso; deixar passar um que não
+// cabe é o v31 de novo).
 //
-// É estimativa declarada, não medição. `custoDaChamada` mede o real a partir do
-// `usage` que a própria OpenAI devolve, e o valor medido aparece na execução do
-// n8n — é com ele que este número deve ser recalibrado depois do próximo lote.
-export const CUSTO_ESTIMADO_DOC_USD = 0.15;
+// RECALIBRADO DE 0,15 PARA 0,20 EM 07/08/2026, POR MEDIÇÃO. Este comentário
+// pedia justamente isso ("é com ele que este número deve ser recalibrado"), e a
+// medição chegou com o book-canastra: `n8n/medir-custo-book.mjs` mede o custo de
+// cada documento a partir de páginas e linhas contadas no PDF gerado, e um dos
+// 38 — o livro razão, 3 páginas e 461 linhas — deu **US$ 0,1725 por chamada**,
+// ACIMA dos 0,15. Ou seja: existia documento realista que custava mais do que o
+// número que sustenta o teto, e num lote só dele a promessa de "no máximo US$ 3
+// por execução" seria quebrada em ~15%.
+//
+// O que 0,20 muda na prática: o lote máximo cai de 20 para 15 chamadas. É o
+// preço de a recusa continuar acontecendo AQUI (com mensagem que diz o que
+// fazer) e não na API (que só devolve 429 no meio do lote).
+//
+// O limite que 0,20 NÃO resolve, e que fica declarado: o estimador é PLANO — ele
+// não sabe quantas páginas nem quantas linhas o documento tem. Acima de ~550
+// linhas extraíveis o custo real volta a passar de 0,20. Enquanto for plano, a
+// defesa dura continua sendo o teto de US$ 5 do projeto na OpenAI.
+export const CUSTO_ESTIMADO_DOC_USD = 0.20;
 
 // Custo REAL de uma chamada, a partir do bloco `usage` da resposta da OpenAI.
 // Não estima nada: se o `usage` não vier, devolve null em vez de chutar — um
