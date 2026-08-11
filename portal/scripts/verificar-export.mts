@@ -49,7 +49,7 @@ import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/li
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
-import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido } from "../src/lib/pendencia.ts";
+import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao, motivoDeRejeicaoValido, rotuloDoEstado } from "../src/lib/pendencia.ts";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -5489,6 +5489,19 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(!todos.some((t) => /f0\/\d|sobrepuj|pendencia_|_id\b/.test(t)),
       "(0114) …sem citar documento interno por código nem nome de coluna do banco",
       todos.join(" ").slice(0, 80));
+
+    // OS SEIS ESTADOS DE f0/04 TÊM NOME DE GENTE (0107). O banco guarda
+    // `reenviada_ao_cliente`; a tela que publicasse isso estaria falando canônico
+    // de novo — o defeito que o (0112) fechou para as seções.
+    const estados = ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
+      "aceita_com_ressalva", "rejeitada", "resolvida"];
+    const comUnderscore = estados.filter((e) => /_/.test(rotuloDoEstado(e)));
+    checar(comUnderscore.length === 0 && rotuloDoEstado("reenviada_ao_cliente") === "pedida ao cliente",
+      "(0114) os estados da pendência aparecem em português, não como chave de banco",
+      `${comUnderscore.join(", ")} · ${rotuloDoEstado("reenviada_ao_cliente")}`);
+    checar(!/_/.test(rotuloDoEstado("estado_que_nao_existe")),
+      "(0114) …e estado novo aparece legível antes de alguém mapeá-lo",
+      rotuloDoEstado("estado_que_nao_existe"));
   }
 
   // ---- (0106g) MODELO SEM DRE DIZ QUE ESTÁ SEM DRE -------------------------

@@ -55,3 +55,23 @@ export function avisoDeRejeicao(p: { severidade: string; sobrepujavel?: boolean 
     + "improcedente, com o seu nome e o seu motivo."
   );
 }
+
+/**
+ * O ESTADO DA PENDÊNCIA, EM PORTUGUÊS DE TELA.
+ *
+ * O banco guarda `reenviada_ao_cliente`; quem lê a tela precisa de "pedida ao
+ * cliente". É a mesma regra do `rotulos.ts` — a tela não publica chave de banco
+ * —, e fica aqui porque estes cinco valores são da máquina de estado de `f0/04`,
+ * não vocabulário de seção contábil.
+ */
+export function rotuloDoEstado(estado: string): string {
+  const mapa: Record<string, string> = {
+    aberta: "em aberto",
+    em_correcao_interna: "em correção interna",
+    reenviada_ao_cliente: "pedida ao cliente",
+    aceita_com_ressalva: "aceita com ressalva",
+    rejeitada: "declarada improcedente",
+    resolvida: "resolvida",
+  };
+  return mapa[estado] ?? estado.replace(/_/g, " ");
+}

@@ -196,6 +196,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/rejeitar_pendencia.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de papel, ressalva e tratamento (0107: a máquina de f0/04 fica inteira)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/papel_ressalva.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do catálogo de premissas e da modelagem por caso (0038)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/premissas.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
