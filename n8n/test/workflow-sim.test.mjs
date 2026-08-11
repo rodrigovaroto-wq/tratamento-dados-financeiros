@@ -754,7 +754,16 @@ test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobre
   const items = Array.from({ length: 14 }, (_, i) => itemDoc(`${i + 1}_BP_X_12M25.pdf`, false));
   const out = await run('Orcamento do Lote', { items });
   assert.equal(out.length, 14, 'passa os 14 adiante');
-  assert.equal(out[0].json.orcamento_estimado_usd, 2.1);
+  // 14 × CUSTO_ESTIMADO_DOC_USD. Era 2.10 (a 0,15) e passou a 2.80 quando a
+  // medição do `book-canastra` recalibrou a constante para 0,20 — o livro razão
+  // mediu US$ 0,1725 POR CHAMADA, acima do 0,15 que sustentava o teto.
+  //
+  // O NÚMERO QUE IMPORTA AQUI NÃO É O 2.80, É A MARGEM. O teto de execução é
+  // US$ 3,00: este lote passou a consumir 93% dele, contra 70% antes. Um lote de
+  // 15 documentos com nome resolvido já NÃO cabe (3,00 exatos é o limite, e o
+  // 16º recusa). Se este assert voltar a falhar por cima, não é o teste que está
+  // velho — é o teto que ficou pequeno para o tamanho de lote que se usa.
+  assert.equal(out[0].json.orcamento_estimado_usd, 2.8);
   assert.equal(out[0].json.orcamento_chamadas, 14);
   // Regra 4 do topo do gerador: Code que repassa arquivo DEVE devolver `binary`.
   // Perder isso aqui deixaria `Preparar Conteudo` sem arquivo — e o sintoma seria
