@@ -15,13 +15,25 @@
 // entidade). Então é isso que fica em destaque: os rótulos citados pela mensagem
 // aparecem como uma lista à parte, que é a "linha" no sentido de quem vai conferir.
 // Inventar número de linha seria dar precisão falsa a quem precisa procurar.
+//
+// E POR QUE ELA GANHOU UM BOTÃO (07/08/2026). O portal só sabia dizer sim: a
+// única ação do Portão 2 era *aprovar*, que é exatamente o que a regra proíbe
+// enquanto houver pendência bloqueante viva. Quem olhava um caso travado por uma
+// pendência que NÃO PROCEDE — o motor errou, a conta está no outro documento —
+// não tinha o que fazer na tela. `f0/04` prevê esse caminho desde a F0
+// (`rejeitada`); faltava código e faltava botão.
 import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
+import { MOTIVO_REJEICAO_MIN, avisoDeRejeicao } from "@/lib/pendencia";
+import { rejeitarPendencia } from "./actions";
 
 export interface PendenciaNaTela {
   id: string;
   tipo: string;
   descricao: string | null;
   documento_id: string | null;
+  severidade?: string;
+  /** `false` = da lista fechada de f0/04, que nenhuma ressalva libera. */
+  sobrepujavel?: boolean | null;
 }
 
 /** Rótulos entre aspas que a mensagem cita — as contas a conferir no original. */
@@ -41,12 +53,14 @@ function semALista(texto: string): string {
 }
 
 export function ItemPendencia({
-  p, arquivo, tom,
+  p, arquivo, tom, casoId,
 }: {
   p: PendenciaNaTela;
   /** nome do arquivo de origem, quando a pendência aponta para um documento */
   arquivo: string | null;
   tom: "amber" | "red";
+  /** quando informado, o item ganha a ação de declarar a pendência improcedente */
+  casoId?: string;
 }) {
   const cores = tom === "red"
     ? { caixa: "border-red-200 bg-red-50 text-red-900", chip: "bg-red-100 text-red-800", fraco: "text-red-700" }
@@ -95,6 +109,50 @@ export function ItemPendencia({
             ))}
           </ul>
         </div>
+      )}
+
+      {/* A DECISÃO DE QUEM ESTÁ LENDO — dentro de `<details>`, e isso é escolha,
+          não economia de espaço. A ação normal diante de uma pendência é
+          CONFERIR e corrigir; declarar que ela não procede é a exceção, e uma
+          exceção com botão sempre visível vira o caminho mais curto. Fechado por
+          padrão, o clique a mais é o convite a ler antes. */}
+      {casoId && (
+        <details className="mt-2">
+          <summary className={`cursor-pointer text-xs font-medium ${cores.fraco}`}>
+            Esta pendência não procede?
+          </summary>
+          <div className="mt-1.5 rounded border border-neutral-200 bg-white p-2">
+            <p className="text-xs text-neutral-600">{avisoDeRejeicao({
+              severidade: p.severidade ?? "importante", sobrepujavel: p.sobrepujavel,
+            })}</p>
+            <form
+              action={rejeitarPendencia.bind(null, casoId, p.id)}
+              className="mt-2 flex flex-wrap items-center gap-2"
+            >
+              {/* `required` + `minLength` espelham `fn_min_motivo_rejeicao()`: o
+                  navegador recusa antes do round-trip, o banco recusa de novo, e
+                  o assert (0114) prova que os dois números são o mesmo. */}
+              <input
+                type="text"
+                name="motivo"
+                required
+                minLength={MOTIVO_REJEICAO_MIN}
+                placeholder={`por que não procede (mín. ${MOTIVO_REJEICAO_MIN} caracteres)`}
+                className="min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
+              />
+              <button
+                type="submit"
+                className="rounded border border-neutral-400 bg-white px-3 py-1 text-sm font-medium text-neutral-800 hover:bg-neutral-100"
+              >
+                Declarar improcedente
+              </button>
+            </form>
+            <p className="mt-1 text-[11px] text-neutral-500">
+              A pendência não é apagada: fica registrada como improcedente, com o seu nome e o
+              seu motivo, e a contagem aparece no Portão 2.
+            </p>
+          </div>
+        </details>
       )}
     </li>
   );
