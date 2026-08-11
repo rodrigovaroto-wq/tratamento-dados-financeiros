@@ -84,6 +84,22 @@ aplica migration em produção é só o dono (ver `CLAUDE.md`).
 | `migrations/0106_rejeitar_pendencia.sql` | **O Portão 2 ganha o segundo lado: a pendência que NÃO PROCEDE.** A `0037` deu ao portal um botão só — *aprovar* — que é exatamente o que a regra proíbe enquanto houver pendência bloqueante viva: o caso trava, a tela explica o motivo, e não existe ação que mude o motivo. `f0/04` define três saídas para a pendência (`resolvida`, `rejeitada`, `aceita_com_ressalva`) e só a primeira existia em código, escrita por `sistema:*`. `fn_rejeitar_pendencia` entrega a rejeição HUMANA, com três guardas: **motivo obrigatório de no mínimo 15 caracteres** (`fn_min_motivo_rejeicao`, espelhado em `portal/src/lib/pendencia.ts`), **estado terminal não se rejeita** (`resolvida` → `rejeitada` reescreveria o passado; rejeitar de novo é no-op declarado) e **nada é apagado** — a linha fica com autor e motivo, e a decisão vai para `decisao(override)` + `evento_auditoria`, inclusive a TENTATIVA recusada. Como `rejeitada` é estado terminal nas três condições da `0037`, rejeitar libera o portão **sem teto, inclusive para a lista fechada de não-sobrepujáveis** — que é o que `f0/04` manda ("tem de ser resolvida ou rejeitada") e a alavanca mais forte do sistema. Por isso `fn_avaliar_portao2` foi republicada (regra idêntica) publicando `rejeitadas` e `rejeitadas_nao_sobrepujaveis`: a contagem aparece na tela e fica gravada dentro da `decisao` de aprovação, para um caso destravado por rejeição parar de ter a mesma aparência de um caso limpo. Testes: `db/test/rejeitar_pendencia.test.sql`, incluindo o que prova que a rejeição **sobrevive ao recomputo da completude** (sem isso o botão seria decorativo). |
 | `seed/macro_carga_inicial.sql` | **Carga inicial dos índices macro** (dado REAL, gerado por `node n8n/gerar-seed-macro.mjs` das mesmas APIs e parsers que o workflow de coleta usa: BCB/SGS, IBGE/SIDRA e BCB/Focus). Existe porque o `workflow.macro.json` roda no RELÓGIO (dia 12) e **não faz carga histórica** — importar/ativar o workflow hoje não traz número nenhum até o próximo dia 12, e as médias de 3/5/10 anos e as premissas de Focus do modelo são inúteis vazias. Aplicar **depois da `0025`**, no mesmo banco. Seguro rodar mais de uma vez (as RPCs são idempotentes). É uma FOTO da data em que o arquivo foi gerado — a manutenção mês a mês continua sendo do workflow. Testes: `db/test/seed_macro.test.sql`, que confere as duas fontes do IPCA entre si. |
 
+## `schema.sql` — o estado final, materializado
+
+`db/schema.sql` é **gerado**, não escrito à mão: o `db/test/run.sh` aplica as migrations num
+Postgres limpo e faz o `pg_dump --schema-only` do resultado. O CI confere com
+`git diff --exit-code` — mesmo portão do espelho do n8n.
+
+**Para que serve:** responder "o que este banco faz HOJE" sem ler 51 migrations em ordem.
+`fn_recomputar_completude` existe na `0004`, na `0006` e na `0036`, e só a última vale; numa
+revisão de PR ninguém reconstrói isso de cabeça. Com o arquivo gerado, o efeito real de uma
+migration nova aparece como uma seção alterada no diff.
+
+**O que ele NÃO é:** um registro do que está aplicado em PRODUÇÃO. Ele descreve o que as
+migrations do repositório produzem — merge continua não sendo apply (ver o aviso abaixo).
+
+Não edite o arquivo: rode `db/test/run.sh` e commite o que sair.
+
 ## Como aplicar
 
 **Opção A — Supabase CLI (recomendado):**
