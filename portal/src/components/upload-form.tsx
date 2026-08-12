@@ -9,7 +9,30 @@ const MB = 1024 * 1024;
 // para de perguntar sozinho sem assustar ninguém (o mandato sempre pode ser
 // conferido manualmente).
 const INTERVALO_ACOMPANHAMENTO_MS = 8000;
-const TENTATIVAS_MAXIMAS = 90; // ~12 minutos
+
+// QUANTO ESPERAR — calculado a partir do LOTE, não fixo.
+//
+// O teto era fixo em 90 tentativas (~12 minutos), e isso funcionou enquanto o
+// orçamento recusava lote grande: 14 documentos terminam em ~8 min e cabiam.
+// Com a estimativa por tamanho, 38 documentos passam a rodar de uma vez — e a
+// extração é deliberadamente LENTA (uma chamada a cada ~33s no Tier 1, porque
+// `max_tokens` é reserva de TPM e ir mais rápido produz 429). São ~23 minutos.
+//
+// Com o teto fixo, a tela desistiria no minuto 12 de um trabalho que termina no
+// 23, e voltaria a mostrar "assim que estiver pronto, avisamos" para sempre —
+// exatamente o defeito que a 0108 corrigiu, agora com o processo VIVO em vez de
+// morto. O custo destravou o lote grande e destravou este defeito junto.
+//
+// 45s por documento = os ~33s da cadência mais folga para classificação e banco.
+// O piso de 12 minutos preserva o comportamento de lote pequeno.
+const SEGUNDOS_POR_DOCUMENTO = 45;
+const ESPERA_MINIMA_MS = 12 * 60 * 1000;
+const ESPERA_MAXIMA_MS = 90 * 60 * 1000;
+function tentativasPara(arquivos: number): number {
+  const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * 1.5; // 50% de margem
+  const janela = Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));
+  return Math.ceil(janela / INTERVALO_ACOMPANHAMENTO_MS);
+}
 
 function formatarTamanho(bytes: number): string {
   if (bytes < MB) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -38,6 +61,11 @@ export default function UploadForm({
   // deduzia progresso da ausência de documentos, e falha produz exatamente a
   // mesma ausência.
   const [falha, setFalha] = useState<{ etapa: string; mensagem: string } | null>(null);
+  // O PROGRESSO, que a rota já devolvia e esta tela ignorava. Numa espera de 20
+  // minutos, "12 de 38 organizados" e "nada aconteceu" são a diferença entre
+  // esperar tranquilo e achar que travou.
+  const [progresso, setProgresso] = useState<{ processados: number; esperados: number } | null>(null);
+  const [demorou, setDemorou] = useState(false);
 
   // Acompanha silenciosamente, em segundo plano, até os arquivos enviados
   // estarem organizados — sem nomear nenhuma ferramenta ou etapa técnica.
@@ -63,6 +91,9 @@ export default function UploadForm({
           setFalha({ etapa: json.falha.etapa, mensagem: json.falha.mensagem });
           return;
         }
+        if (!cancelado && resp.ok && typeof json.processados === "number") {
+          setProgresso({ processados: json.processados, esperados: json.esperados });
+        }
         if (!cancelado && resp.ok && json.pronto) {
           setPronto(true);
           if (casoId) router.refresh();
@@ -72,8 +103,12 @@ export default function UploadForm({
         // Falha pontual de rede não interrompe o acompanhamento — só a
         // próxima tentativa (ou o teto de tentativas) decide quando parar.
       }
-      if (!cancelado && tentativas < TENTATIVAS_MAXIMAS) {
+      if (!cancelado && tentativas < tentativasPara(sucesso.arquivos)) {
         setTimeout(verificar, INTERVALO_ACOMPANHAMENTO_MS);
+      } else if (!cancelado) {
+        // DESISTIR EM SILÊNCIO É O DEFEITO. Parar de perguntar é legítimo (a aba
+        // pode ficar aberta o dia todo); fingir que ainda se está esperando, não.
+        setDemorou(true);
       }
     };
 
@@ -186,10 +221,36 @@ export default function UploadForm({
           <p className="font-medium">
             {sucesso.arquivos} arquivo(s) enviado(s) para o mandato “{sucesso.mandato}”.
           </p>
+          {/* O TEMPO É PROPORCIONAL AO LOTE, e a tela diz isso antes de a pessoa
+              se perguntar. Cada documento passa pela IA com espaçamento entre as
+              chamadas (o limite de uso da conta obriga), então 38 arquivos são
+              ~20 minutos — e quem não sabe disso lê a demora como travamento. */}
           <p className="mt-1 text-emerald-800">
-            Estamos organizando tudo com cuidado — isso costuma levar alguns minutos. Você pode
-            aguardar aqui ou voltar mais tarde; assim que estiver pronto, avisamos.
+            Estamos organizando tudo com cuidado. São cerca de{" "}
+            <strong>{Math.max(1, Math.round((sucesso.arquivos * SEGUNDOS_POR_DOCUMENTO) / 60))} minutos</strong>
+            {" "}para {sucesso.arquivos} arquivo(s) — cada um é lido separadamente. Você pode aguardar
+            aqui ou voltar mais tarde.
           </p>
+          {progresso && progresso.processados > 0 && (
+            <div className="mt-2">
+              <div className="h-1.5 w-full overflow-hidden rounded bg-emerald-200">
+                <div
+                  className="h-full bg-emerald-600 transition-all"
+                  style={{ width: `${Math.min(100, (progresso.processados / Math.max(1, progresso.esperados)) * 100)}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-emerald-800">
+                {progresso.processados} de {progresso.esperados} organizados
+              </p>
+            </div>
+          )}
+          {demorou && (
+            <p className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+              Está levando mais tempo que o previsto e paramos de acompanhar por aqui — o
+              processamento pode continuar em segundo plano. Abra o mandato para ver o estado atual;
+              se nada tiver chegado, acione o desenvolvedor do sistema.
+            </p>
+          )}
           <div className="mt-3 flex gap-3">
             {casoId ? (
               <button
