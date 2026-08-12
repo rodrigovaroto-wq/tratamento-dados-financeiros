@@ -1736,22 +1736,6 @@ CREATE FUNCTION public.fn_normalizar_texto(p_texto text) RETURNS text
 $$;
 
 --
--- Name: fn_papel(text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_papel(p_email text) RETURNS text
-    LANGUAGE sql STABLE
-    AS $$
-  select coalesce((select papel from usuario_papel where lower(email) = lower(trim(p_email))), 'analista');
-$$;
-
---
--- Name: FUNCTION fn_papel(p_email text); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_papel(p_email text) IS 'Papel do e-mail, `analista` quando não cadastrado. Default de menor privilégio: controle que nasce aberto nunca é fechado depois.';
-
---
 -- Name: fn_papel_do_rotulo_no_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5095,24 +5079,6 @@ CREATE TABLE public.taxonomia_tipo_documento (
 COMMENT ON TABLE public.taxonomia_tipo_documento IS 'Taxonomia documental v1 (f0/03). Kit Básico = obrigatorio; Variáveis = complementar.';
 
 --
--- Name: usuario_papel; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.usuario_papel (
-    email text NOT NULL,
-    papel text NOT NULL,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL,
-    criado_por text,
-    CONSTRAINT usuario_papel_papel_check CHECK ((papel = ANY (ARRAY['analista'::text, 'senior'::text])))
-);
-
---
--- Name: TABLE usuario_papel; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.usuario_papel IS 'Papel por e-mail (f0/04: ressalva exige sênior). Quem não está aqui é `analista` — o default é o menor privilégio, então num banco novo ninguém ressalva até o dono se cadastrar. Sem hierarquia e sem grupos de propósito: dois papéis é o que a spec pede.';
-
---
 -- Name: campo_extraido campo_extraido_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5293,13 +5259,6 @@ ALTER TABLE ONLY public.reconciliacao
 
 ALTER TABLE ONLY public.taxonomia_tipo_documento
     ADD CONSTRAINT taxonomia_tipo_documento_pkey PRIMARY KEY (codigo);
-
---
--- Name: usuario_papel usuario_papel_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.usuario_papel
-    ADD CONSTRAINT usuario_papel_pkey PRIMARY KEY (email);
 
 --
 -- Name: idx_campo_docversao; Type: INDEX; Schema: public; Owner: -
@@ -5884,18 +5843,6 @@ CREATE POLICY taxonomia_read ON public.taxonomia_tipo_documento FOR SELECT TO au
 ALTER TABLE public.taxonomia_tipo_documento ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: usuario_papel; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.usuario_papel ENABLE ROW LEVEL SECURITY;
-
---
--- Name: usuario_papel usuario_papel_leitura; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY usuario_papel_leitura ON public.usuario_papel FOR SELECT TO authenticated USING (true);
-
---
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: -
 --
 
@@ -6040,12 +5987,6 @@ GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric) TO authenticated;
-
---
--- Name: FUNCTION fn_papel(p_email text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_papel(p_email text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_papel_do_rotulo_no_caso(p_caso_id uuid, p_rotulo_norm text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
@@ -6341,14 +6282,6 @@ GRANT ALL ON TABLE public.reconciliacao TO service_role;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO anon;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO authenticated;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO service_role;
-
---
--- Name: TABLE usuario_papel; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.usuario_papel TO anon;
-GRANT ALL ON TABLE public.usuario_papel TO authenticated;
-GRANT ALL ON TABLE public.usuario_papel TO service_role;
 
 --
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: -

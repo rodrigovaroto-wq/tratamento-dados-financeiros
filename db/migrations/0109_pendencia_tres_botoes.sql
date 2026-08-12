@@ -23,8 +23,8 @@
 --     a condição 2 do Portão 2. O contador continua sendo publicado, agora como
 --     informação, não como limite.
 --   • PAPEL SÊNIOR (0107): sai da ressalva e da rejeição de não-sobrepujável.
---     `usuario_papel` e `fn_papel` FICAM no schema — não custam nada parados e
---     evitam uma migration de volta se o controle for retomado.
+--     (`usuario_papel` e `fn_papel` ficaram parados aqui e foram REMOVIDOS pela
+--     0110 — tabela sem leitor não se guarda "por precaução".)
 --
 --   • E A LISTA FECHADA de f0/04 (a "não-sobrepujável", que nenhuma ressalva
 --     libera) deixa de bloquear quando o humano decide seguir. Esta é a única
@@ -243,8 +243,9 @@ grant execute on function fn_decidir_pendencia(uuid, text, text, text) to authen
 -- É o mesmo invariante que organiza o modelo ("uma conta, um lugar") aplicado a
 -- comportamento: uma decisão, uma função.
 --
--- `usuario_papel` e `fn_papel` FICAM. Não custam nada parados, e o dia em que o
--- controle por papel voltar, ele volta sem migration de tabela.
+-- `usuario_papel` e `fn_papel` ficaram para trás nesta migration e saíram na
+-- 0110, pelo motivo que esta aqui deveria ter aplicado a si mesma: o que não tem
+-- leitor não fica no schema.
 drop function if exists fn_rejeitar_pendencia(uuid, text, text);
 drop function if exists fn_ressalvar_pendencia(uuid, text, text, timestamptz);
 drop function if exists fn_tratar_pendencia(uuid, text, text, text);
