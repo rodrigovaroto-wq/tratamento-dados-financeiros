@@ -14,6 +14,7 @@ import {
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 import { aprovarCaso } from "./actions";
 import { ItemPendencia } from "./Pendencia";
+import { ExcluirMandato } from "@/components/excluir-mandato";
 import { humanizar } from "@/lib/rotulos";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 
@@ -48,17 +49,17 @@ export default async function CasoDashboardPage({
       .order("criado_em", { ascending: false }),
     supabase
       .from("pendencia")
-      .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em, sobrepujavel")
+      .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em")
       .eq("caso_id", id)
-      // A TELA MOSTRA EXATAMENTE O QUE O PORTÃO CONTA. `fn_avaliar_portao2`
-      // (0037) conta bloqueante em três estados — 'aberta',
-      // 'em_correcao_interna' e 'reenviada_ao_cliente', porque pendência sendo
-      // tratada é pendência não resolvida —, e esta consulta filtrava só
-      // 'aberta'. Hoje nenhum caminho de código escreve os outros dois, então a
-      // divergência ainda não apareceu; no dia em que a fila de tratamento
-      // existir, o card diria "1 pendência BLOQUEANTE em aberto" com a lista
-      // abaixo vazia. Os dois lados leem a mesma definição a partir daqui.
-      .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente"])
+      // A PENDÊNCIA DECIDIDA CONTINUA NA TELA — e isto é o que faz os três
+      // botões (0109) terem sentido. Eles "adicionam um rótulo na pendência";
+      // se o item sumisse ao ser decidido, o rótulo não existiria para ninguém
+      // ver, e a única forma de saber o que foi decidido seria abrir o banco.
+      //
+      // Fica de fora só `resolvida`, que é do SISTEMA: o problema deixou de
+      // existir, não há decisão humana para exibir nem nada a reconsiderar.
+      .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
+                     "aceita_com_ressalva", "rejeitada"])
       .order("criada_em", { ascending: false }),
     // db/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
     // ter documento e ainda assim não ter uma linha extraída
@@ -101,6 +102,13 @@ export default async function CasoDashboardPage({
   const tiposSemConteudo = new Set(
     checklist.filter((c) => c.status === "recebido_nao_valido").map((c) => c.tipo_taxonomia),
   );
+  // DECIDIDA VAI PARA O FIM. Quem abre a tela quer ver o que falta decidir; o
+  // que já foi decidido continua visível (é onde o rótulo mora), mas embaixo.
+  const DECIDIDOS = new Set(["aceita_com_ressalva", "rejeitada"]);
+  const emAberto = (p: Pendencia) => !DECIDIDOS.has(p.estado);
+  const porDecidirPrimeiro = (a: Pendencia, b: Pendencia) =>
+    Number(!emAberto(a)) - Number(!emAberto(b));
+
   const pendenciasRevisao = pendencias.filter((p) =>
     (PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS as readonly string[]).includes(p.tipo),
   );
@@ -182,13 +190,16 @@ export default async function CasoDashboardPage({
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
             {CASO_STATUS_LABEL[caso.status]}
           </span>
+          {/* Excluir fica por ÚLTIMO e discreto: encontrável por quem procura,
+              não esbarrável por quem não. */}
+          <ExcluirMandato casoId={id} nome={caso.nome} />
         </div>
       </div>
 
-      {pendenciasRevisao.length > 0 && (
+      {pendenciasRevisao.filter(emAberto).length > 0 && (
         <div className="flex items-center justify-between rounded border border-amber-300 bg-amber-50 p-3 text-sm">
           <span className="text-amber-800">
-            {pendenciasRevisao.length} documento(s) com pendência de revisão (classificação, entidade ou período).
+            {pendenciasRevisao.filter(emAberto).length} documento(s) com pendência de revisão (classificação, entidade ou período).
           </span>
           <Link href={`/casos/${id}/revisao`} className="font-medium text-amber-900 underline">
             Ir para a fila de revisão →
@@ -227,18 +238,15 @@ export default async function CasoDashboardPage({
                   mostrava contagem sem dizer o que é uma ressalva, e não explicava a
                   consequência. Quem lê a tela precisa saber o que pode fazer, não o
                   número de referência da norma. */}
+              {/* A CONTAGEM, sem teto (0109). O limite de 3 saiu por decisão do
+                  dono; o número continua na tela porque é o que distingue um caso
+                  limpo de um caso que seguiu por cima de seis pendências. */}
               <p className="mt-1 text-xs text-neutral-600">
                 {portao2.ressalvas_ativas === 0
-                  ? `Nenhuma ressalva registrada neste caso. É possível aprovar com até `
-                    + `${portao2.teto_ressalvas} ressalvas — cada uma é um ponto que fica documentado `
-                    + `como aceito com reserva.`
-                  : portao2.ressalvas_ativas >= portao2.teto_ressalvas
-                    ? `Este caso já usou todas as ressalvas que pode ter (${portao2.teto_ressalvas}). `
-                      + `A partir daqui, ponto em aberto precisa ser resolvido, não aceito com reserva.`
-                    : `Este caso tem ${portao2.ressalvas_ativas} ${portao2.ressalvas_ativas === 1
-                      ? "ponto aceito com reserva" : "pontos aceitos com reserva"}, e ainda cabem `
-                      + `${portao2.teto_ressalvas - portao2.ressalvas_ativas}.`}
-                {" "}A decisão é sempre a mesma para todos os casos: ninguém aprova por exceção.
+                  ? "Nenhuma pendência foi aceita sem resolução neste caso."
+                  : `${portao2.ressalvas_ativas} ${portao2.ressalvas_ativas === 1
+                      ? "pendência seguiu sem resolução" : "pendências seguiram sem resolução"}`
+                    + " — o caso avança com elas registradas, não resolvidas."}
               </p>
               {/* O QUE FOI DECLARADO IMPROCEDENTE (0106). Rejeitar é a única ação
                   que libera o portão SEM TETO — inclusive a pendência que nenhuma
@@ -398,7 +406,7 @@ export default async function CasoDashboardPage({
             aparecem como o que são — o que o Portão 2 conta.
           </p>
           <ul className="space-y-2">
-            {pendenciasOutras.map((p) => (
+            {[...pendenciasOutras].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia
                 key={p.id} p={p} tom={p.severidade === "bloqueante" ? "red" : "amber"} casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
@@ -418,7 +426,7 @@ export default async function CasoDashboardPage({
           </p>
         ) : (
           <ul className="space-y-2">
-            {pendenciasReconciliacao.map((p) => (
+            {[...pendenciasReconciliacao].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia
                 key={p.id} p={p} tom="amber" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
@@ -434,7 +442,7 @@ export default async function CasoDashboardPage({
             Qualidade dos arquivos ({pendenciasArquivo.length})
           </h2>
           <ul className="space-y-2">
-            {pendenciasArquivo.map((p) => (
+            {[...pendenciasArquivo].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia
                 key={p.id} p={p} tom="red" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}
@@ -450,7 +458,7 @@ export default async function CasoDashboardPage({
             Qualidade da extração ({pendenciasExtracao.length})
           </h2>
           <ul className="space-y-2">
-            {pendenciasExtracao.map((p) => (
+            {[...pendenciasExtracao].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia
                 key={p.id} p={p} tom="red" casoId={id}
                 arquivo={p.documento_id ? arquivoDoDocumento.get(p.documento_id) ?? null : null}

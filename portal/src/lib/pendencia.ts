@@ -1,68 +1,73 @@
-// A REJEIÇÃO DE PENDÊNCIA, DO LADO DA TELA.
+// AS DECISÕES DE PENDÊNCIA, DO LADO DA TELA.
 //
-// A regra vive no Postgres (`db/migrations/0106`), como toda regra deste projeto.
-// Este arquivo é o ESPELHO dela no portal, e existe por um motivo prático: sem o
-// piso do motivo aqui, o botão manda o texto curto ao banco, o banco recusa, e o
-// usuário descobre pelo erro genérico da server action que "algo deu errado" —
-// quando o que houve foi uma regra clara que dava para dizer antes de clicar.
+// Este arquivo já teve o piso de caracteres do motivo de rejeição e o aviso que
+// mudava conforme a pendência. Os dois saíram com a 0109, que trocou o
+// formulário por três botões: código de uma regra que não existe mais é pior que
+// código ausente, porque ele passa a impressão de que a regra continua valendo.
 //
-// ESPELHO DIVERGE. É o defeito clássico desta arquitetura (o mesmo do JSON dos
-// nós do n8n contra a `lib/`), e a resposta é a mesma: um assert que compara os
-// dois. `(0114)` em `portal/scripts/verificar-export.mts` LÊ o `select 15;` da
-// migration e exige que bata com a constante abaixo — mudar o piso no banco sem
-// mudar aqui reprova a suíte, em vez de produzir uma tela que mente sobre a
-// regra.
+// AS TRÊS SAÍDAS DA PENDÊNCIA, COMO A TELA AS OFERECE (0109).
+//
+// Pedido do dono (11/08/2026): três botões, separados por cor, sem campo de
+// escrita e sem data. O clique registra a decisão e o rótulo aparece na
+// pendência — nenhum formulário no meio.
+//
+// A ORDEM É A DA TELA e não é alfabética: primeiro o que devolve o problema a
+// quem pode resolvê-lo (o cliente), depois o que segue apesar dele, por último o
+// que nega que ele exista. Do mais reversível para o menos, que é a ordem em que
+// se deve pensar — e a ordem em que um botão apressado faz menos estrago.
+export type DecisaoPendencia = "contatar_cliente" | "prosseguir" | "nao_procede";
 
-/** Mínimo de caracteres do motivo. Espelha `fn_min_motivo_rejeicao()` (0106). */
-export const MOTIVO_REJEICAO_MIN = 15;
-
-/**
- * O motivo é suficiente? `trim` antes de contar — trinta espaços em branco são
- * zero caractere de justificativa, e é o primeiro atalho que alguém tenta.
- */
-export function motivoDeRejeicaoValido(texto: string | null | undefined): boolean {
-  return (texto ?? "").trim().length >= MOTIVO_REJEICAO_MIN;
+export interface BotaoDecisao {
+  decisao: DecisaoPendencia;
+  rotulo: string;
+  /** o que acontece com o caso — a tela diz, o usuário não adivinha */
+  efeito: string;
+  classe: string;
+  /** cor do rótulo depois de decidida */
+  chip: string;
 }
 
-/**
- * O QUE A TELA DIZ ANTES DE ALGUÉM CLICAR — e por que o texto muda com a
- * pendência.
- *
- * Rejeitar não é "arquivar": é afirmar que o motor errou, que o problema não
- * existe. Para a pendência NÃO-SOBREPUJÁVEL (a lista fechada de `f0/04`) essa
- * afirmação é a única saída além de consertar o documento — nenhuma ressalva a
- * libera —, e é por isso que ela merece frase própria: quem clica ali está
- * passando por cima do controle mais duro do sistema, e a tela tem de dizer isso
- * com essas palavras, não com um ícone amarelo.
- */
-export function avisoDeRejeicao(p: { severidade: string; sobrepujavel?: boolean | null }): string {
-  if (p.sobrepujavel === false) {
-    return (
-      "Esta é uma pendência que NENHUMA ressalva libera. Rejeitar é declarar que ela não "
-      + "procede — o caso passa a poder ser aprovado, e o Portão 2 vai mostrar que isso "
-      + "aconteceu, com o seu nome e o seu motivo, também dentro da aprovação."
-    );
-  }
-  if (p.severidade === "bloqueante") {
-    return (
-      "Esta pendência está impedindo a aprovação do caso. Rejeitar é declarar que ela não "
-      + "procede — não que o problema foi resolvido. Se ele foi resolvido, o próprio sistema "
-      + "fecha a pendência na próxima passada."
-    );
-  }
-  return (
-    "Rejeitar é declarar que a pendência não procede. Ela não some: fica registrada como "
-    + "improcedente, com o seu nome e o seu motivo."
-  );
-}
+export const BOTOES_DECISAO: BotaoDecisao[] = [
+  {
+    decisao: "contatar_cliente",
+    rotulo: "Contatar o Cliente",
+    efeito: "O caso continua aguardando: o documento ainda não chegou.",
+    classe: "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700",
+    chip: "bg-emerald-100 text-emerald-800",
+  },
+  {
+    decisao: "prosseguir",
+    rotulo: "Prosseguir sem resolução",
+    efeito: "O caso deixa de ser travado por esta pendência, e ela fica registrada como aceita.",
+    classe: "border-red-600 bg-red-600 text-white hover:bg-red-700",
+    chip: "bg-red-100 text-red-800",
+  },
+  {
+    decisao: "nao_procede",
+    rotulo: "Pendência não procede",
+    efeito: "A pendência é declarada improcedente e deixa de travar o caso.",
+    classe: "border-amber-500 bg-amber-400 text-amber-950 hover:bg-amber-500",
+    chip: "bg-amber-100 text-amber-900",
+  },
+];
+
+/** O rótulo que fica na pendência depois de decidida — indexado pelo ESTADO. */
+export const ROTULO_POR_ESTADO: Record<string, BotaoDecisao> = {
+  reenviada_ao_cliente: BOTOES_DECISAO[0],
+  aceita_com_ressalva: BOTOES_DECISAO[1],
+  rejeitada: BOTOES_DECISAO[2],
+};
 
 /**
  * O ESTADO DA PENDÊNCIA, EM PORTUGUÊS DE TELA.
  *
  * O banco guarda `reenviada_ao_cliente`; quem lê a tela precisa de "pedida ao
- * cliente". É a mesma regra do `rotulos.ts` — a tela não publica chave de banco
- * —, e fica aqui porque estes cinco valores são da máquina de estado de `f0/04`,
- * não vocabulário de seção contábil.
+ * cliente". É a mesma regra do `rotulos.ts` — a tela não publica chave de banco.
+ *
+ * Continua existindo ao lado de `ROTULO_POR_ESTADO` porque os dois respondem
+ * perguntas diferentes: aquele dá o BOTÃO que produziu o estado (e só vale para
+ * os três decididos), este dá o NOME do estado, inclusive dos que nenhum botão
+ * produz — `aberta` e `resolvida`, que são do motor.
  */
 export function rotuloDoEstado(estado: string): string {
   const mapa: Record<string, string> = {

@@ -1,0 +1,80 @@
+{
+  "name": "Oria — Reportar Erros",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "erro-trigger",
+      "name": "Quando algo falha",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const e = $input.first().json;\nconst exec = e.execution || {};\nconst wf = e.workflow || {};\n\n// O n8n põe o dado do último nó que rodou em lugares diferentes conforme o modo\n// de falha. Procurar em todos os caminhos plausíveis é mais robusto que apostar\n// num — é a mesma decisão que `diagnosticarErroApi` já toma em lib/extract.mjs.\nconst dados = exec.lastNodeExecuted && exec.data && exec.data.resultData\n  ? (exec.data.resultData.runData || {})\n  : {};\nlet caso_id = null, mandato = null;\nfor (const nome of Object.keys(dados)) {\n  for (const rodada of (dados[nome] || [])) {\n    const itens = ((rodada.data || {}).main || [])[0] || [];\n    for (const it of itens) {\n      const j = (it || {}).json || {};\n      if (!caso_id && j.caso_id) caso_id = j.caso_id;\n      if (!mandato && j['Mandato (nome do caso)']) mandato = j['Mandato (nome do caso)'];\n    }\n  }\n}\n\nconst etapa = exec.lastNodeExecuted || 'desconhecida';\nconst mensagem = (exec.error && (exec.error.message || exec.error.description))\n  || 'O processamento parou sem mensagem de erro.';\n\nreturn [{ json: {\n  caso_id,\n  mandato,\n  etapa,\n  mensagem,\n  detalhe: {\n    workflow: wf.name || null,\n    execucao_id: exec.id || null,\n    url: exec.url || null,\n    modo: exec.mode || null,\n  },\n} }];"
+      },
+      "id": "erro-extrair",
+      "name": "Extrair Causa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, $5::jsonb) as r",
+        "options": {
+          "queryReplacement": "={{ [$json.caso_id, $json.mandato, $json.etapa, $json.mensagem, JSON.stringify($json.detalhe)] }}"
+        }
+      },
+      "id": "erro-gravar",
+      "name": "Registrar Falha",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE",
+          "name": "Supabase Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quando algo falha": {
+      "main": [
+        [
+          {
+            "node": "Extrair Causa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Causa": {
+      "main": [
+        [
+          {
+            "node": "Registrar Falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

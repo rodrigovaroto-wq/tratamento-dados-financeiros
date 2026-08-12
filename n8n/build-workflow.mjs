@@ -24,7 +24,7 @@ import { codigosConhecidos } from './lib/openai.mjs';
 import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
+import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -106,7 +106,19 @@ const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString(
 const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};`;
 
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
-const FONTE_ORCAMENTO_LOTE = `const orcamentoDoLote = ${orcamentoDoLote.toString()};`;
+// O corpo de `orcamentoDoLote` referencia constantes do módulo, e `toString()`
+// NÃO as leva junto — dentro do nó elas seriam `ReferenceError`. Embutir as
+// quatro é o que mantém o espelho fiel; o teste que compara o nó com a fonte
+// continua valendo sobre a função.
+const FONTE_ORCAMENTO_LOTE = [
+  `const TETO_EXECUCAO_USD = ${TETO_EXECUCAO_USD};`,
+  `const CUSTO_ESTIMADO_DOC_USD = ${CUSTO_ESTIMADO_DOC_USD};`,
+  `const CUSTO_POR_MB_USD = ${CUSTO_POR_MB_USD};`,
+  `const CUSTO_MINIMO_CHAMADA_USD = ${CUSTO_MINIMO_CHAMADA_USD};`,
+  `const BYTES_POR_MB = 1024 * 1024;`,
+  `const orcamentoDoLote = ${orcamentoDoLote.toString()};`,
+].join('\n');
+const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
 
 // `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
 // `crypto.subtle`, que o dono MEDIU vindo ausente no sandbox do n8n dele
@@ -133,24 +145,40 @@ ${FONTE_ORCAMENTO_LOTE}
 const itens = $input.all();
 const comFallback = itens.filter(i => i.json.precisa_fallback_openai).length;
 const chamadas = itens.length + comFallback;
-const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: chamadas / itens.length, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD} });
+// Soma os bytes que o \`Listar Arquivos\` mediu. Se QUALQUER arquivo veio sem
+// tamanho, o lote inteiro cai na estimativa plana: somar só os conhecidos
+// subestimaria o lote na exata proporção do que não se sabe.
+const semTamanho = itens.some(i => !Number.isFinite(Number(i.json.bytes)) || Number(i.json.bytes) <= 0);
+const bytes = semTamanho ? null : itens.reduce((s, i) => s + Number(i.json.bytes), 0);
+const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: chamadas / itens.length, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, bytes });
 // Recusa o lote INTEIRO. Não existe "roda os que cabem" de propósito: metade
 // registrada sem extração e metade sem registro nenhum é estado que dá mais
 // trabalho para desfazer do que o reenvio que esta mensagem pede.
-if (!r.cabe) throw new Error(r.mensagem);
-return itens.map(i => ({ json: { ...i.json, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas }, binary: i.binary }));
+//
+// E A RECUSA NÃO LANÇA MAIS AQUI. Lançar punha a mensagem certa no lugar errado:
+// ela ficava só no log do n8n, e o portal — que deduz progresso da ausência de
+// documentos — seguia dizendo "estamos organizando tudo com cuidado" para
+// sempre. Agora o item segue marcado, o IF manda a recusa para o nó que a GRAVA
+// no banco, e só depois o lote é abortado. Nada foi enviado à OpenAI em nenhum
+// dos caminhos: a decisão continua sendo antes de gastar.
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
 // Binário vem do FORM (o Postgres anterior não o repassa). Chave normalizada
 // para 'data' (o Upload Storage usa esse nome fixo).
 const CODE_LISTAR = `
+${FONTE_BYTES_BINARIO}
 const caso_id = $('Upsert Caso (Postgres)').first().json.caso_id;
 const form = $('Intake (Form)').first();
 const bin = form.binary || {};
 const out = [];
 for (const key of Object.keys(bin)) {
-  out.push({ json: { caso_id, nome_original: bin[key].fileName || key, binary_key: 'data' }, binary: { data: bin[key] } });
+  // O TAMANHO VIAJA COM O ITEM. É o insumo do orçamento: sem ele o lote é
+  // estimado por um número plano que já recusou um lote de US$ 1,41 dizendo
+  // US$ 7,65. \`null\` quando o metadado não permite medir — e null cai no
+  // plano lá na frente, nunca em zero.
+  out.push({ json: { caso_id, nome_original: bin[key].fileName || key, binary_key: 'data', bytes: bytesDoBinario(bin[key]) }, binary: { data: bin[key] } });
 }
 if (out.length === 0) {
   throw new Error('Nenhum arquivo recebido do formulario (binario vazio). Confira o campo "Arquivos" do Form.');
@@ -588,6 +616,30 @@ const nodes = [
   node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400, CODE_CONTINUA),
 
   node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }, 700, 260),
+
+  // O CAMINHO DA RECUSA — três nós, e cada um existe por um motivo.
+  //
+  // `Lote cabe?` decide; `Registrar Recusa` GRAVA a causa no banco (é o que faz
+  // a tela do portal parar de dizer "aguarde" sobre um processo morto); e
+  // `Abortar Lote` lança, para a execução aparecer VERMELHA no n8n. Sem o
+  // último, a execução ficaria verde tendo recusado o lote — e "deu certo" é a
+  // última coisa que ela deve dizer.
+  node('Lote cabe?', 'n8n-nodes-base.if', 2, {
+    conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
+      { leftValue: '={{ $json.orcamento_cabe }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+    ] },
+  }, 760, 260),
+
+  node('Registrar Recusa', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery',
+    query: 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, null) as r',
+    options: { queryReplacement: "={{ [$json.caso_id, $('Intake (Form)').first().json['Mandato (nome do caso)'], 'orcamento', $json.orcamento_mensagem] }}" },
+  }, 900, 140, { credentials: PG_CRED, ...PG_RETRY }),
+
+  node('Abortar Lote', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems',
+    jsCode: `throw new Error($input.first().json.orcamento_mensagem || 'Lote recusado pelo orcamento.');`,
+  }, 1060, 140),
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
@@ -699,7 +751,12 @@ const connections = {
   // conteúdo: é o último ponto em que o lote inteiro está visível de uma vez e
   // ainda não custou nada (nem chamada à OpenAI, nem linha no banco).
   'Classificar Nome': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
-  'Orcamento do Lote': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
+  'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
+  'Lote cabe?': { main: [
+    [{ node: 'Preparar Conteudo', type: 'main', index: 0 }],   // true — segue
+    [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
+  ] },
+  'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
   // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
   'Preparar Conteudo': { main: [[
     { node: 'Upload Storage', type: 'main', index: 0 },

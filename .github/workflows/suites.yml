@@ -9,7 +9,7 @@
 #
 # O QUE ELE COBRE, e por que cada peça:
 #   • n8n            libs e nós simulados.
-#   • geradores      regeram os 3 workflows E `git diff --exit-code`. Sem essa
+#   • geradores      regeram os 4 workflows E `git diff --exit-code`. Sem essa
 #                    segunda metade, o JSON commitado pode divergir da fonte que
 #                    o gera, e é o JSON que o dono importa no n8n — a fonte
 #                    "certa" no repositório não conserta a produção.
@@ -116,11 +116,12 @@ jobs:
           node n8n/build-workflow.mjs
           node n8n/build-workflow-macro.mjs
           node n8n/build-workflow-diagnostico.mjs
+          node n8n/build-workflow-erros.mjs
           # É o `git diff` que impede o JSON commitado de divergir da fonte.
           # Sem ele, o gerador vira documentação: o dono importa o JSON velho e
           # a correção fica no repositório sem chegar à produção.
           git diff --exit-code -- n8n/ \
-            || { echo "::error::os workflows gerados divergem dos commitados — rode os 3 geradores e commite o resultado"; exit 1; }
+            || { echo "::error::os workflows gerados divergem dos commitados — rode os 4 geradores e commite o resultado"; exit 1; }
 
       # ---- fixtures do book (insumo do export e do e2e) --------------------
       - name: Gerar o book sintético

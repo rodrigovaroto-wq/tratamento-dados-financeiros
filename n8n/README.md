@@ -4,6 +4,24 @@ O N8N é o **orquestrador stateless** (docs/02, trava de stack nº 1): recebe o 
 classifica cada arquivo e chama as funções do Postgres (`db/migrations/0004-0010`) que cuidam
 do estado. A ingestão é feita **pelo próprio N8N** (Form Trigger) — sem Vercel nesta fatia.
 
+
+## Reportar erro — ligue o Error Workflow (passo do dono, uma vez)
+
+O `workflow.erros.json` transforma **qualquer** falha do pipeline numa linha de
+`execucao_falha`, que é o que o portal lê para parar de dizer "estamos organizando tudo com
+cuidado" sobre um processamento que já morreu.
+
+1. importar `n8n/workflow.erros.json`;
+2. abrir o **Intake Oria — E1** → menu ⋯ → **Settings** → **Error Workflow** → escolher
+   *Oria — Reportar Erros*;
+3. salvar.
+
+Sem esse passo, só a recusa de orçamento chega ao portal (ela tem ramo próprio no workflow
+principal); as outras falhas continuam visíveis apenas na aba de execuções do n8n.
+
+A credencial de Postgres do workflow de erros é a mesma do principal (`Supabase Postgres`) —
+o `id: REPLACE` do JSON é substituído pelo n8n na importação, como nos outros.
+
 ## O que roda (fluxo do `workflow.e1-ingestao.json`)
 
 ```

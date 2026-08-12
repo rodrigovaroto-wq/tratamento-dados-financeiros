@@ -641,10 +641,8 @@ declare
   v_bloqueantes      int;
   v_nao_sobrepujavel int;
   v_ressalvas        int;
-  v_ressalvas_venc   int;
   v_rejeitadas       int;
   v_rejeitadas_ns    int;
-  v_teto             int := fn_teto_ressalvas();
   v_motivos          text[] := array[]::text[];
   v_status           caso_status;
 begin
@@ -653,40 +651,26 @@ begin
     raise exception 'caso % não encontrado', p_caso_id;
   end if;
 
-  -- Condição 1: nenhuma BLOQUEANTE em aberto. "Em aberto" inclui as que estão
-  -- em tratamento (correção interna / reenviada ao cliente) — é o que `f0/04`
-  -- escreve, e faz sentido: pendência sendo tratada é pendência não resolvida.
+  -- A ÚNICA condição de bloqueio: bloqueante que ninguém decidiu ainda.
   select count(*) into v_bloqueantes
   from pendencia
   where caso_id = p_caso_id and severidade = 'bloqueante'
     and estado in ('aberta', 'em_correcao_interna', 'reenviada_ao_cliente');
 
-  -- Condição 3: nenhuma NÃO-SOBREPUJÁVEL viva. Note que os estados aqui são
-  -- OUTROS — e essa diferença é o ponto todo desta condição (ver 0037: mover uma
-  -- não-sobrepujável para `aceita_com_ressalva` NÃO pode liberar o portão).
+  -- INFORMAÇÃO, não bloqueio (0109). As três contagens abaixo não entram em
+  -- `elegivel`; elas existem para a tela e para a `decisao` de aprovação
+  -- dizerem sobre o que se passou por cima. Um caso aprovado com seis
+  -- ressalvas continua sendo distinguível de um caso limpo — o que ele deixou
+  -- de ser é impedido.
   select count(*) into v_nao_sobrepujavel
   from pendencia
   where caso_id = p_caso_id and sobrepujavel = false
-    and estado not in ('resolvida', 'rejeitada');
+    and estado in ('aberta', 'em_correcao_interna', 'reenviada_ao_cliente');
 
-  -- Condição 2: ressalvas ATIVAS dentro do teto. Ativa = aceita_com_ressalva e
-  -- ainda não expirada.
   select count(*) into v_ressalvas
   from pendencia
-  where caso_id = p_caso_id and estado = 'aceita_com_ressalva'
-    and (expira_em is null or expira_em > now());
+  where caso_id = p_caso_id and estado = 'aceita_com_ressalva';
 
-  -- Ressalva EXPIRADA volta a bloquear (0037: a spec manda reabrir; a leitura já
-  -- a trata como reaberta, sem depender de job).
-  select count(*) into v_ressalvas_venc
-  from pendencia
-  where caso_id = p_caso_id and estado = 'aceita_com_ressalva'
-    and expira_em is not null and expira_em <= now();
-
-  -- NOVO (0106): o que foi declarado improcedente. Não entra em nenhuma das três
-  -- condições — rejeitada é terminal, e é assim que `f0/04` a define. Entra no
-  -- payload porque é a única informação que distingue um caso que nunca teve
-  -- pendência de um que teve e as rejeitou.
   select count(*) filter (where true),
          count(*) filter (where sobrepujavel = false)
     into v_rejeitadas, v_rejeitadas_ns
@@ -695,21 +679,7 @@ begin
 
   if v_bloqueantes > 0 then
     v_motivos := array_append(v_motivos,
-      format('%s pendência(s) BLOQUEANTE(s) em aberto', v_bloqueantes));
-  end if;
-  if v_nao_sobrepujavel > 0 then
-    v_motivos := array_append(v_motivos,
-      format('%s pendência(s) NÃO-SOBREPUJÁVEL(is) viva(s): nenhuma ressalva libera (lista '
-             'fechada de f0/04) — tem de ser resolvida ou rejeitada', v_nao_sobrepujavel));
-  end if;
-  if v_ressalvas > v_teto then
-    v_motivos := array_append(v_motivos,
-      format('%s ressalvas ativas — acima do teto de %s por caso', v_ressalvas, v_teto));
-  end if;
-  if v_ressalvas_venc > 0 then
-    v_motivos := array_append(v_motivos,
-      format('%s ressalva(s) EXPIRADA(s): voltam a valer como pendência (f0/04)',
-             v_ressalvas_venc));
+      format('%s pendência(s) BLOQUEANTE(s) sem decisão', v_bloqueantes));
   end if;
 
   return jsonb_build_object(
@@ -720,10 +690,10 @@ begin
     'bloqueantes_abertas', v_bloqueantes,
     'nao_sobrepujaveis_abertas', v_nao_sobrepujavel,
     'ressalvas_ativas', v_ressalvas,
-    'ressalvas_expiradas', v_ressalvas_venc,
+    'ressalvas_expiradas', 0,
     'rejeitadas', v_rejeitadas,
     'rejeitadas_nao_sobrepujaveis', v_rejeitadas_ns,
-    'teto_ressalvas', v_teto
+    'teto_ressalvas', null
   );
 end;
 $$;
@@ -732,7 +702,7 @@ $$;
 -- Name: FUNCTION fn_avaliar_portao2(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_avaliar_portao2(p_caso_id uuid) IS 'Regra do Portão 2 de f0/04, determinística e sem efeito colateral: elegível se e somente se nenhuma bloqueante em aberto, nenhuma não-sobrepujável em aberto, e ressalvas ativas <= teto. Ressalva expirada conta como pendência de novo (avaliada na leitura, sem depender de job). Publica também quantas pendências foram REJEITADAS (0106) — não muda a regra, mas é o que distingue um caso limpo de um caso destravado por rejeição.';
+COMMENT ON FUNCTION public.fn_avaliar_portao2(p_caso_id uuid) IS 'Portão 2 (0109): elegível quando não há pendência BLOQUEANTE sem decisão. O teto de ressalvas e a lista fechada de f0/04 deixaram de bloquear por decisão do dono — as contagens continuam publicadas como informação, e vão gravadas dentro da decisão de aprovação.';
 
 --
 -- Name: fn_coluna_entidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -902,6 +872,96 @@ CREATE FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) RET
   order by count(distinct ce.chave) desc
   limit 1;
 $$;
+
+--
+-- Name: fn_decidir_pendencia(uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_p       pendencia%rowtype;
+  v_estado  pendencia_estado;
+  v_motivo  text := nullif(trim(coalesce(p_motivo, '')), '');
+  v_rotulo  text;
+  v_tipo    decisao_tipo;
+begin
+  select * into v_p from pendencia where id = p_pendencia_id;
+  if v_p.id is null then
+    raise exception 'pendência % não encontrada', p_pendencia_id;
+  end if;
+
+  -- Os três botões da tela, nas palavras da tela.
+  case p_decisao
+    when 'contatar_cliente' then
+      v_estado := 'reenviada_ao_cliente'; v_rotulo := 'Contatar o Cliente'; v_tipo := null;
+    when 'prosseguir' then
+      v_estado := 'aceita_com_ressalva';  v_rotulo := 'Prosseguir sem resolução'; v_tipo := 'ressalva';
+    when 'nao_procede' then
+      v_estado := 'rejeitada';            v_rotulo := 'Pendência não procede'; v_tipo := 'override';
+    else
+      return jsonb_build_object('recusado', true, 'pendencia_id', p_pendencia_id,
+        'motivo_recusa', format('Decisão desconhecida: %s. São três — contatar_cliente, '
+                                'prosseguir, nao_procede.', p_decisao));
+  end case;
+
+  -- Clicar de novo no mesmo botão é no-op declarado: dois cliques não viram
+  -- duas decisões na trilha.
+  if v_p.estado = v_estado then
+    return jsonb_build_object('sem_mudanca', true, 'pendencia_id', p_pendencia_id,
+                              'estado', v_estado, 'rotulo', v_rotulo,
+                              'avaliacao', fn_avaliar_portao2(v_p.caso_id));
+  end if;
+
+  -- `resolvida` é do SISTEMA: ela significa "a condição que abriu a pendência
+  -- deixou de valer", e um clique humano não pode afirmar isso. Trocar uma
+  -- resolvida por decisão humana reescreveria o que o motor mediu.
+  if v_p.estado = 'resolvida' then
+    return jsonb_build_object('recusado', true, 'pendencia_id', p_pendencia_id,
+      'motivo_recusa', 'Esta pendência já foi RESOLVIDA pelo próprio sistema: o problema que a '
+        || 'abriu deixou de existir. Não há o que decidir sobre ela.');
+  end if;
+
+  update pendencia
+     set estado        = v_estado,
+         motivo        = coalesce(v_motivo, motivo),
+         -- `resolvida_em`/`por` marcam QUANDO e QUEM tirou a pendência da fila.
+         -- Para o estado de tratamento ficam nulos: contatar o cliente não tira
+         -- nada da fila, só diz que alguém está cuidando.
+         resolvida_em  = case when v_estado in ('rejeitada', 'aceita_com_ressalva') then now() else null end,
+         resolvida_por = case when v_estado in ('rejeitada', 'aceita_com_ressalva') then p_autor else null end
+   where id = p_pendencia_id;
+
+  -- Decisão sobre o MÉRITO vira `decisao`; "estou cuidando" não vira, porque
+  -- ninguém decidiu nada ainda.
+  if v_tipo is not null then
+    insert into decisao (caso_id, tipo, autor, motivo, payload)
+      values (v_p.caso_id, v_tipo, p_autor, coalesce(v_motivo, v_rotulo),
+              jsonb_build_object('acao', 'decidir_pendencia', 'decisao', p_decisao,
+                                 'rotulo', v_rotulo, 'pendencia_id', p_pendencia_id,
+                                 'tipo', v_p.tipo, 'severidade', v_p.severidade,
+                                 'sobrepujavel', v_p.sobrepujavel,
+                                 'estado_anterior', v_p.estado));
+  end if;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+    values (p_autor, 'pendencia_decidida', 'pendencia:'||p_pendencia_id,
+            jsonb_build_object('estado', v_p.estado),
+            jsonb_build_object('estado', v_estado, 'rotulo', v_rotulo,
+                               'caso_id', v_p.caso_id, 'motivo', v_motivo));
+
+  return jsonb_build_object('decidida', true, 'pendencia_id', p_pendencia_id,
+                            'estado', v_estado, 'rotulo', v_rotulo,
+                            'avaliacao', fn_avaliar_portao2(v_p.caso_id));
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text) IS 'Os três botões da tela em UMA função: contatar_cliente (não libera o portão — o documento ainda não chegou), prosseguir (aceita com ressalva) e nao_procede (rejeita). Sem motivo obrigatório, sem expiração e sem teto, por decisão do dono (0109). Nada é apagado e tudo é contado.';
 
 --
 -- Name: fn_definir_modelagem(uuid, text, integer, text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
@@ -1180,6 +1240,70 @@ $_$;
 COMMENT ON FUNCTION public.fn_entidade_canonica(p_nome text) IS 'Forma canônica de nome de entidade para CASAMENTO: sem acento, pontuação nem sufixo societário. Não substitui razao_social, que preserva a grafia da fonte.';
 
 --
+-- Name: fn_excluir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_nome  text;
+  v_docs  int;
+  v_campos int;
+  v_pend  int;
+begin
+  select nome into v_nome from caso where id = p_caso_id;
+  if v_nome is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este mandato não existe mais — talvez alguém já o tenha excluído.');
+  end if;
+
+  select count(*) into v_docs from documento where caso_id = p_caso_id;
+  select count(*) into v_campos from campo_extraido ce
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d on d.id = dv.documento_id
+   where d.caso_id = p_caso_id;
+  select count(*) into v_pend from pendencia where caso_id = p_caso_id;
+
+  -- A trilha ANTES do delete: se o delete falhar, sobra um registro de tentativa,
+  -- que é informação; se registrássemos depois, uma falha no meio deixaria o
+  -- caso apagado e nenhum rastro.
+  insert into evento_auditoria (ator, acao, entidade_ref, antes)
+    values (p_autor, 'caso_excluido', 'caso:'||p_caso_id,
+            jsonb_build_object('nome', v_nome, 'documentos', v_docs,
+                               'campos_extraidos', v_campos, 'pendencias', v_pend));
+
+  delete from caso where id = p_caso_id;
+
+  return jsonb_build_object('excluido', true, 'nome', v_nome,
+                            'documentos', v_docs, 'campos_extraidos', v_campos,
+                            'pendencias', v_pend);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_excluir_caso(p_caso_id uuid, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) IS 'Exclui o mandato e tudo que depende dele (cascade da 0001), devolvendo a contagem do que se perdeu. Grava a exclusão em evento_auditoria ANTES do delete — a trilha não tem FK para caso, então o rastro sobrevive ao caso.';
+
+--
+-- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone) RETURNS TABLE(id uuid, etapa text, mensagem text, criado_em timestamp with time zone)
+    LANGUAGE sql STABLE
+    AS $$
+  select f.id, f.etapa, f.mensagem, f.criado_em
+  from execucao_falha f
+  where f.visto_em is null
+    and f.criado_em >= p_desde
+    and (lower(f.caso_nome) = lower(trim(p_caso_nome))
+         or f.caso_id in (select c.id from caso c where lower(c.nome) = lower(trim(p_caso_nome))))
+  order by f.criado_em desc;
+$$;
+
+--
 -- Name: fn_fator_escala(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1421,6 +1545,20 @@ $$;
 COMMENT ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) IS 'Linhas lógicas do caso para a tela de Modelagem, com PAPEL (conta/subtotal/derivado/serie_mensal), valor COM SINAL, unidade/moeda, documentos de origem e marca de sobreposição. Existe como função porque campo_extraido não tem caso_id — o escopo por caso mora aqui. 0101: papel calculado uma vez por rótulo e sobreposição por join, para caber no statement_timeout. 0102: só a versão VIGENTE de cada documento (reextração deixava a versão superada somando ocorrência e podendo ditar o valor_ultimo).';
 
 --
+-- Name: fn_marcar_falha_vista(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_marcar_falha_vista(p_falha_id uuid, p_autor text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+begin
+  update execucao_falha set visto_em = now(), visto_por = p_autor
+   where id = p_falha_id and visto_em is null;
+  return jsonb_build_object('ok', found);
+end;
+$$;
+
+--
 -- Name: fn_mes_do_rotulo(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1596,22 +1734,6 @@ CREATE FUNCTION public.fn_normalizar_texto(p_texto text) RETURNS text
     AS $$
   select trim(regexp_replace(lower(unaccent(coalesce(p_texto, ''))), '\s+', ' ', 'g'));
 $$;
-
---
--- Name: fn_papel(text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_papel(p_email text) RETURNS text
-    LANGUAGE sql STABLE
-    AS $$
-  select coalesce((select papel from usuario_papel where lower(email) = lower(trim(p_email))), 'analista');
-$$;
-
---
--- Name: FUNCTION fn_papel(p_email text); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_papel(p_email text) IS 'Papel do e-mail, `analista` quando não cadastrado. Default de menor privilégio: controle que nasce aberto nunca é fechado depois.';
 
 --
 -- Name: fn_papel_do_rotulo_no_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -3621,6 +3743,38 @@ end;
 $$;
 
 --
+-- Name: fn_registrar_falha_execucao(uuid, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb DEFAULT NULL::jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_id uuid;
+begin
+  insert into execucao_falha (caso_id, caso_nome, etapa, mensagem, detalhe)
+    values (p_caso_id, nullif(trim(coalesce(p_caso_nome, '')), ''),
+            coalesce(nullif(trim(p_etapa), ''), 'desconhecida'),
+            coalesce(nullif(trim(p_mensagem), ''), 'Falha sem mensagem.'),
+            p_detalhe)
+    returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:n8n', 'falha_execucao',
+            coalesce('caso:' || p_caso_id::text, 'caso_nome:' || coalesce(p_caso_nome, '?')),
+            jsonb_build_object('etapa', p_etapa, 'mensagem', p_mensagem, 'detalhe', p_detalhe));
+
+  return jsonb_build_object('falha_id', v_id, 'registrada', true);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) IS 'Registra falha do pipeline para a TELA mostrar (e para a trilha guardar). Aceita caso_id nulo: a falha pode acontecer antes de o caso existir, e falha órfã é falha invisível.';
+
+--
 -- Name: fn_registrar_indice_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3757,207 +3911,6 @@ CREATE FUNCTION public.fn_registrar_reconciliacao_b(p_caso_id uuid, p_entidade_i
     p_documento_id, p_fonte_a, p_fonte_b, p_resultado, p_divergencia_abs,
     p_divergencia_pct, p_materialidade, p_descricao);
 $$;
-
---
--- Name: fn_rejeitar_pendencia(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_rejeitar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text) RETURNS jsonb
-    LANGUAGE plpgsql
-    AS $$
-declare
-  v_p       pendencia%rowtype;
-  v_motivo  text := trim(coalesce(p_motivo, ''));
-  v_min     int  := fn_min_motivo_rejeicao();
-begin
-  select * into v_p from pendencia where id = p_pendencia_id;
-  if v_p.id is null then
-    raise exception 'pendência % não encontrada', p_pendencia_id;
-  end if;
-
-  if length(v_motivo) < v_min then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
-      values (p_autor, 'rejeicao_recusada', 'pendencia:'||p_pendencia_id,
-              jsonb_build_object('caso_id', v_p.caso_id, 'motivo_informado', p_motivo,
-                                 'minimo_exigido', v_min));
-    return jsonb_build_object(
-      'recusado', true,
-      'pendencia_id', p_pendencia_id,
-      'motivo_recusa',
-        format('Rejeitar uma pendência exige motivo escrito com pelo menos %s caracteres. '
-               'Rejeitar é declarar que a pendência NÃO PROCEDE — é a única ação que libera o '
-               'Portão 2 sem teto, inclusive para a lista fechada de f0/04. Quem ler o caso '
-               'daqui a seis meses precisa saber por quê.', v_min));
-  end if;
-
-  -- NOVO NA 0107: a lista fechada exige sênior. A rejeição comum continua aberta
-  -- a qualquer autenticado — o que se aperta aqui é só a alavanca que passa por
-  -- cima do controle mais duro do sistema.
-  if v_p.sobrepujavel = false and fn_papel(p_autor) <> 'senior' then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
-      values (p_autor, 'rejeicao_recusada', 'pendencia:'||p_pendencia_id,
-              jsonb_build_object('caso_id', v_p.caso_id, 'papel', fn_papel(p_autor),
-                                 'nao_sobrepujavel', true));
-    return jsonb_build_object(
-      'recusado', true,
-      'pendencia_id', p_pendencia_id,
-      'motivo_recusa',
-        'Esta pendência é da lista fechada de f0/04 — a que nenhuma ressalva libera. Declará-la '
-        || 'improcedente é a única saída além de resolver o problema, e por isso exige papel '
-        || 'SÊNIOR. O seu está como analista.');
-  end if;
-
-  if v_p.estado = 'rejeitada' then
-    return jsonb_build_object(
-      'ja_rejeitada', true,
-      'pendencia_id', p_pendencia_id,
-      'avaliacao', fn_avaliar_portao2(v_p.caso_id));
-  end if;
-
-  if v_p.estado = 'resolvida' then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
-      values (p_autor, 'rejeicao_recusada', 'pendencia:'||p_pendencia_id,
-              jsonb_build_object('caso_id', v_p.caso_id, 'estado', v_p.estado,
-                                 'motivo_informado', v_motivo));
-    return jsonb_build_object(
-      'recusado', true,
-      'pendencia_id', p_pendencia_id,
-      'motivo_recusa',
-        'Esta pendência já está RESOLVIDA: o problema que a abriu deixou de valer. '
-        || 'Rejeitar agora diria que ela nunca procedeu, o que reescreve o que aconteceu.');
-  end if;
-
-  update pendencia
-     set estado        = 'rejeitada',
-         motivo        = v_motivo,
-         resolvida_em  = now(),
-         resolvida_por = p_autor
-   where id = p_pendencia_id;
-
-  insert into decisao (caso_id, tipo, autor, motivo, payload)
-    values (v_p.caso_id, 'override', p_autor, v_motivo,
-            jsonb_build_object(
-              'acao', 'rejeitar_pendencia',
-              'pendencia_id', p_pendencia_id,
-              'tipo', v_p.tipo,
-              'severidade', v_p.severidade,
-              'sobrepujavel', v_p.sobrepujavel,
-              'papel_do_autor', fn_papel(p_autor),
-              'estado_anterior', v_p.estado,
-              'descricao', v_p.descricao));
-
-  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-    values (p_autor, 'pendencia_rejeitada', 'pendencia:'||p_pendencia_id,
-            jsonb_build_object('estado', v_p.estado, 'caso_id', v_p.caso_id),
-            jsonb_build_object('estado', 'rejeitada', 'motivo', v_motivo,
-                               'severidade', v_p.severidade,
-                               'sobrepujavel', v_p.sobrepujavel));
-
-  return jsonb_build_object(
-    'rejeitada', true,
-    'pendencia_id', p_pendencia_id,
-    'caso_id', v_p.caso_id,
-    'severidade', v_p.severidade,
-    'sobrepujavel', v_p.sobrepujavel,
-    'avaliacao', fn_avaliar_portao2(v_p.caso_id));
-end;
-$$;
-
---
--- Name: FUNCTION fn_rejeitar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_rejeitar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text) IS 'Declara uma pendência IMPROCEDENTE (f0/04: estado `rejeitada`). Exige motivo com no mínimo fn_min_motivo_rejeicao() caracteres, não aceita estado terminal, não apaga a linha, e grava decisao(override) + evento_auditoria. Libera o Portão 2 inclusive para não-sobrepujável — por isso a contagem sai em fn_avaliar_portao2.';
-
---
--- Name: fn_ressalvar_pendencia(uuid, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_ressalvar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text, p_expira_em timestamp with time zone) RETURNS jsonb
-    LANGUAGE plpgsql
-    AS $$
-declare
-  v_p      pendencia%rowtype;
-  v_motivo text := trim(coalesce(p_motivo, ''));
-  v_min    int  := fn_min_motivo_rejeicao();
-  v_teto   int  := fn_teto_ressalvas();
-  v_ativas int;
-  v_recusa text;
-begin
-  select * into v_p from pendencia where id = p_pendencia_id;
-  if v_p.id is null then
-    raise exception 'pendência % não encontrada', p_pendencia_id;
-  end if;
-
-  select count(*) into v_ativas
-  from pendencia
-  where caso_id = v_p.caso_id and estado = 'aceita_com_ressalva'
-    and id <> p_pendencia_id
-    and (expira_em is null or expira_em > now());
-
-  -- As recusas, na ordem em que importam a quem está lendo a tela.
-  if fn_papel(p_autor) <> 'senior' then
-    v_recusa := 'Aceitar com ressalva exige papel SÊNIOR (f0/04). O seu está como analista — '
-      || 'um sênior precisa registrar o seu e-mail em `usuario_papel`, e isso é feito no banco, '
-      || 'não pela tela: um controle que o próprio usuário se concede não é controle.';
-  elsif v_p.estado in ('resolvida', 'rejeitada') then
-    v_recusa := 'Esta pendência já está encerrada — não há risco em aberto para ressalvar.';
-  elsif v_p.sobrepujavel = false then
-    v_recusa := 'Esta pendência é da lista fechada de f0/04: NENHUMA ressalva a libera. Aceitar '
-      || 'com ressalva aqui deixaria o caso travado do mesmo jeito, com o registro dizendo o '
-      || 'contrário. O caminho é resolver o problema ou declarar a pendência improcedente.';
-  elsif length(v_motivo) < v_min then
-    v_recusa := format('Ressalva exige motivo escrito com pelo menos %s caracteres: ela é a '
-      || 'aceitação CONSCIENTE de um risco conhecido, e quem assumiu o risco precisa dizer qual.',
-      v_min);
-  elsif p_expira_em is null then
-    v_recusa := 'Ressalva exige DATA DE EXPIRAÇÃO (f0/04). Ressalva permanente é liberação com '
-      || 'outro nome — no vencimento a pendência volta a valer sozinha.';
-  elsif p_expira_em <= now() then
-    v_recusa := 'A data de expiração está no passado: a ressalva nasceria vencida e o Portão 2 a '
-      || 'contaria como pendência no mesmo instante.';
-  elsif v_ativas >= v_teto then
-    v_recusa := format('Este caso já tem %s ressalvas ativas, que é o teto (f0/04). A próxima não '
-      || '"quase passa": ela BLOQUEIA o Portão 2. Daqui em diante, ponto em aberto precisa ser '
-      || 'resolvido.', v_ativas);
-  end if;
-
-  if v_recusa is not null then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
-      values (p_autor, 'ressalva_recusada', 'pendencia:'||p_pendencia_id,
-              jsonb_build_object('caso_id', v_p.caso_id, 'papel', fn_papel(p_autor),
-                                 'motivo_recusa', v_recusa, 'ressalvas_ativas', v_ativas));
-    return jsonb_build_object('recusado', true, 'pendencia_id', p_pendencia_id,
-                              'motivo_recusa', v_recusa);
-  end if;
-
-  update pendencia
-     set estado = 'aceita_com_ressalva', motivo = v_motivo, expira_em = p_expira_em
-   where id = p_pendencia_id;
-
-  insert into decisao (caso_id, tipo, autor, motivo, payload)
-    values (v_p.caso_id, 'ressalva', p_autor, v_motivo,
-            jsonb_build_object('acao', 'ressalvar_pendencia', 'pendencia_id', p_pendencia_id,
-                               'tipo', v_p.tipo, 'severidade', v_p.severidade,
-                               'expira_em', p_expira_em, 'estado_anterior', v_p.estado));
-
-  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-    values (p_autor, 'pendencia_ressalvada', 'pendencia:'||p_pendencia_id,
-            jsonb_build_object('estado', v_p.estado),
-            jsonb_build_object('estado', 'aceita_com_ressalva', 'expira_em', p_expira_em,
-                               'motivo', v_motivo));
-
-  return jsonb_build_object('ressalvada', true, 'pendencia_id', p_pendencia_id,
-                            'expira_em', p_expira_em,
-                            'avaliacao', fn_avaliar_portao2(v_p.caso_id));
-end;
-$$;
-
---
--- Name: FUNCTION fn_ressalvar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text, p_expira_em timestamp with time zone); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_ressalvar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text, p_expira_em timestamp with time zone) IS 'Aceita a pendência COM RESSALVA (f0/04): exige papel sênior, motivo, data de expiração futura, teto de ressalvas não estourado, e recusa a lista fechada de não-sobrepujáveis. Grava decisao(ressalva) + evento_auditoria; a recusa também.';
 
 --
 -- Name: fn_revisar_documento(uuid, text, text, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -4317,62 +4270,6 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_tokens_estruturais(p_chave text) IS 'Palavras estruturais de um rótulo (sem ligação, ruído de rodapé e a palavra "total"), ordenadas e sem repetição. Extraída de fn_rotulo_estrutural na 0102 para ser calculada UMA vez por rótulo: fn_papel_linha comparava nove grupos e pagava nove tokenizações iguais.';
-
---
--- Name: fn_tratar_pendencia(uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_tratar_pendencia(p_pendencia_id uuid, p_autor text, p_estado text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
-    LANGUAGE plpgsql
-    AS $$
-declare
-  v_p      pendencia%rowtype;
-  v_motivo text := nullif(trim(coalesce(p_motivo, '')), '');
-begin
-  select * into v_p from pendencia where id = p_pendencia_id;
-  if v_p.id is null then
-    raise exception 'pendência % não encontrada', p_pendencia_id;
-  end if;
-
-  if p_estado not in ('aberta', 'em_correcao_interna', 'reenviada_ao_cliente') then
-    return jsonb_build_object('recusado', true, 'pendencia_id', p_pendencia_id,
-      'motivo_recusa', 'Estado de tratamento inválido. Os finais — resolvida, rejeitada, aceita '
-        || 'com ressalva — têm função própria, com as guardas que cada um exige.');
-  end if;
-
-  if v_p.estado in ('resolvida', 'rejeitada', 'aceita_com_ressalva') then
-    return jsonb_build_object('recusado', true, 'pendencia_id', p_pendencia_id,
-      'motivo_recusa', 'Esta pendência já está encerrada: voltar para "em tratamento" reabriria '
-        || 'sozinha uma decisão que alguém tomou.');
-  end if;
-
-  if v_p.estado::text = p_estado then
-    return jsonb_build_object('sem_mudanca', true, 'pendencia_id', p_pendencia_id,
-                              'estado', p_estado);
-  end if;
-
-  update pendencia set estado = p_estado::pendencia_estado,
-                       motivo = coalesce(v_motivo, motivo)
-   where id = p_pendencia_id;
-
-  -- Movimento de tratamento NÃO é `decisao`: ninguém decidiu nada sobre o
-  -- mérito. Vai só para a trilha, que é onde "quem fez o quê e quando" mora.
-  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-    values (p_autor, 'pendencia_em_tratamento', 'pendencia:'||p_pendencia_id,
-            jsonb_build_object('estado', v_p.estado),
-            jsonb_build_object('estado', p_estado, 'motivo', v_motivo,
-                               'caso_id', v_p.caso_id));
-
-  return jsonb_build_object('tratada', true, 'pendencia_id', p_pendencia_id, 'estado', p_estado,
-                            'bloqueia_portao', true);
-end;
-$$;
-
---
--- Name: FUNCTION fn_tratar_pendencia(p_pendencia_id uuid, p_autor text, p_estado text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_tratar_pendencia(p_pendencia_id uuid, p_autor text, p_estado text, p_motivo text) IS 'Move a pendência entre os estados de TRATAMENTO de f0/04 (aberta / em correção interna / reenviada ao cliente). Não libera o Portão 2 — pendência sendo tratada é pendência não resolvida — e não grava `decisao`, porque ninguém decidiu sobre o mérito.';
 
 --
 -- Name: fn_unidade_predominante(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -5033,6 +4930,28 @@ CREATE TABLE public.evento_auditoria (
 );
 
 --
+-- Name: execucao_falha; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execucao_falha (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid,
+    caso_nome text,
+    etapa text NOT NULL,
+    mensagem text NOT NULL,
+    detalhe jsonb,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    visto_em timestamp with time zone,
+    visto_por text
+);
+
+--
+-- Name: TABLE execucao_falha; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.execucao_falha IS 'Falha do pipeline (n8n) que a TELA precisa mostrar. Existe porque o portal deduzia progresso de sinais positivos, e falha produz ausência — indistinguível de "ainda processando". Tabela própria e não evento_auditoria: isto é estado operacional que se marca como visto, não trilha.';
+
+--
 -- Name: indice_macro_expectativa; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5160,24 +5079,6 @@ CREATE TABLE public.taxonomia_tipo_documento (
 COMMENT ON TABLE public.taxonomia_tipo_documento IS 'Taxonomia documental v1 (f0/03). Kit Básico = obrigatorio; Variáveis = complementar.';
 
 --
--- Name: usuario_papel; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.usuario_papel (
-    email text NOT NULL,
-    papel text NOT NULL,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL,
-    criado_por text,
-    CONSTRAINT usuario_papel_papel_check CHECK ((papel = ANY (ARRAY['analista'::text, 'senior'::text])))
-);
-
---
--- Name: TABLE usuario_papel; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.usuario_papel IS 'Papel por e-mail (f0/04: ressalva exige sênior). Quem não está aqui é `analista` — o default é o menor privilégio, então num banco novo ninguém ressalva até o dono se cadastrar. Sem hierarquia e sem grupos de propósito: dois papéis é o que a spec pede.';
-
---
 -- Name: campo_extraido campo_extraido_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5276,6 +5177,13 @@ ALTER TABLE ONLY public.evento_auditoria
     ADD CONSTRAINT evento_auditoria_pkey PRIMARY KEY (id);
 
 --
+-- Name: execucao_falha execucao_falha_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execucao_falha
+    ADD CONSTRAINT execucao_falha_pkey PRIMARY KEY (id);
+
+--
 -- Name: indice_macro_expectativa indice_macro_expectativa_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5353,13 +5261,6 @@ ALTER TABLE ONLY public.taxonomia_tipo_documento
     ADD CONSTRAINT taxonomia_tipo_documento_pkey PRIMARY KEY (codigo);
 
 --
--- Name: usuario_papel usuario_papel_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.usuario_papel
-    ADD CONSTRAINT usuario_papel_pkey PRIMARY KEY (email);
-
---
 -- Name: idx_campo_docversao; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5424,6 +5325,18 @@ CREATE INDEX idx_entidade_caso ON public.entidade USING btree (caso_id);
 --
 
 CREATE INDEX idx_evento_entidade_ref ON public.evento_auditoria USING btree (entidade_ref);
+
+--
+-- Name: idx_execucao_falha_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_execucao_falha_caso ON public.execucao_falha USING btree (caso_id, criado_em DESC);
+
+--
+-- Name: idx_execucao_falha_nome; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_execucao_falha_nome ON public.execucao_falha USING btree (lower(caso_nome), criado_em DESC);
 
 --
 -- Name: idx_indice_macro_exp_serie_ano; Type: INDEX; Schema: public; Owner: -
@@ -5593,6 +5506,13 @@ ALTER TABLE ONLY public.documento_versao
 
 ALTER TABLE ONLY public.entidade
     ADD CONSTRAINT entidade_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: execucao_falha execucao_falha_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execucao_falha
+    ADD CONSTRAINT execucao_falha_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
 
 --
 -- Name: indice_macro_expectativa indice_macro_expectativa_serie_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -5815,6 +5735,18 @@ CREATE POLICY evento_auditoria_insert ON public.evento_auditoria FOR INSERT TO a
 CREATE POLICY evento_auditoria_read ON public.evento_auditoria FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: execucao_falha; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.execucao_falha ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: execucao_falha execucao_falha_authenticated_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY execucao_falha_authenticated_all ON public.execucao_falha TO authenticated USING (true) WITH CHECK (true);
+
+--
 -- Name: indice_macro_expectativa; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -5911,18 +5843,6 @@ CREATE POLICY taxonomia_read ON public.taxonomia_tipo_documento FOR SELECT TO au
 ALTER TABLE public.taxonomia_tipo_documento ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: usuario_papel; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.usuario_papel ENABLE ROW LEVEL SECURITY;
-
---
--- Name: usuario_papel usuario_papel_leitura; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY usuario_papel_leitura ON public.usuario_papel FOR SELECT TO authenticated USING (true);
-
---
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: -
 --
 
@@ -5985,6 +5905,12 @@ GRANT ALL ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) TO authentica
 GRANT ALL ON FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_definir_modelagem(p_caso_id uuid, p_entidade text, p_ultimo_exercicio_real integer, p_indice_macro text, p_setor text, p_autor text, p_anos_projetados integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6009,6 +5935,18 @@ GRANT ALL ON FUNCTION public.fn_diagnostico_modelagem(p_caso_id uuid) TO authent
 GRANT ALL ON FUNCTION public.fn_dial(p_estagio text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_excluir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone) TO authenticated;
+
+--
 -- Name: FUNCTION fn_indice_macro_anual(p_desde_ano integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6027,6 +5965,12 @@ GRANT ALL ON FUNCTION public.fn_linhas_do_tipo(p_caso_id uuid, p_codigo text) TO
 GRANT ALL ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_marcar_falha_vista(p_falha_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_marcar_falha_vista(p_falha_id uuid, p_autor text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_mes_do_rotulo(p_chave text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6043,12 +5987,6 @@ GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric) TO authenticated;
-
---
--- Name: FUNCTION fn_papel(p_email text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_papel(p_email text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_papel_do_rotulo_no_caso(p_caso_id uuid, p_rotulo_norm text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
@@ -6113,16 +6051,11 @@ GRANT ALL ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) TO
 GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text) TO authenticated;
 
 --
--- Name: FUNCTION fn_rejeitar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.fn_rejeitar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text) TO authenticated;
-
---
--- Name: FUNCTION fn_ressalvar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text, p_expira_em timestamp with time zone); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_ressalvar_pendencia(p_pendencia_id uuid, p_autor text, p_motivo text, p_expira_em timestamp with time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) TO service_role;
 
 --
 -- Name: FUNCTION fn_revisar_documento(p_documento_id uuid, p_autor text, p_novo_tipo_taxonomia text, p_nova_entidade_nome text, p_novo_periodo_tipo text, p_novo_periodo_ref text, p_motivo text); Type: ACL; Schema: public; Owner: -
@@ -6165,12 +6098,6 @@ GRANT ALL ON FUNCTION public.fn_teto_ressalvas() TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_tokens_estruturais(p_chave text) TO authenticated;
-
---
--- Name: FUNCTION fn_tratar_pendencia(p_pendencia_id uuid, p_autor text, p_estado text, p_motivo text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_tratar_pendencia(p_pendencia_id uuid, p_autor text, p_estado text, p_motivo text) TO authenticated;
 
 --
 -- Name: TABLE campo_extraido; Type: ACL; Schema: public; Owner: -
@@ -6293,6 +6220,14 @@ GRANT ALL ON TABLE public.evento_auditoria TO authenticated;
 GRANT ALL ON TABLE public.evento_auditoria TO service_role;
 
 --
+-- Name: TABLE execucao_falha; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.execucao_falha TO anon;
+GRANT ALL ON TABLE public.execucao_falha TO authenticated;
+GRANT ALL ON TABLE public.execucao_falha TO service_role;
+
+--
 -- Name: TABLE indice_macro_expectativa; Type: ACL; Schema: public; Owner: -
 --
 
@@ -6347,14 +6282,6 @@ GRANT ALL ON TABLE public.reconciliacao TO service_role;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO anon;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO authenticated;
 GRANT ALL ON TABLE public.taxonomia_tipo_documento TO service_role;
-
---
--- Name: TABLE usuario_papel; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.usuario_papel TO anon;
-GRANT ALL ON TABLE public.usuario_papel TO authenticated;
-GRANT ALL ON TABLE public.usuario_papel TO service_role;
 
 --
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: -

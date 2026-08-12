@@ -35,8 +35,11 @@ begin
   v_r := fn_avaliar_portao2(v_caso);
   perform teste_assert_p2((v_r->>'elegivel')::boolean,
     'sem pendência nenhuma, o caso é elegível', v_r::text);
-  perform teste_assert_p2((v_r->>'teto_ressalvas')::int = 3,
-    'e o teto é 3 — o número que o dono confirmou em f0/04', v_r::text);
+  -- O teto de 3 saiu na 0109 (decisão do dono). A avaliação DECLARA que não há
+  -- teto em vez de publicar um número que não vale mais — um `3` fantasma na
+  -- resposta faria a tela mostrar um limite que ninguém cobra.
+  perform teste_assert_p2(v_r->>'teto_ressalvas' is null,
+    'e não há teto de ressalvas — a 0109 o removeu, e a avaliação diz isso', v_r::text);
 
   raise notice '--- 2. bloqueante aberta impede (condição 1) ---';
   insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao)
@@ -78,17 +81,20 @@ begin
   perform teste_assert_p2((v_r->>'nao_sobrepujaveis_abertas')::int = 1,
     'e é contada separadamente das outras bloqueantes', v_r::text);
 
-  -- A tentativa de "resolver" pela ressalva: é exatamente o que a lista fechada
-  -- proíbe, e o teste prova que não funciona.
-  update pendencia set estado = 'aceita_com_ressalva', expira_em = now() + interval '30 days'
-    where id = v_pend;
+  -- ATÉ A 0108 a ressalva NÃO liberava a não-sobrepujável (a lista fechada de
+  -- f0/04). A 0109 mudou isso por decisão do dono: com um botão só e sem campo,
+  -- "Prosseguir sem resolução" que não faz prosseguir seria um botão que mente.
+  -- O que sobra no lugar do bloqueio é a CONTAGEM, travada logo abaixo.
+  update pendencia set estado = 'aceita_com_ressalva' where id = v_pend;
   v_r := fn_avaliar_portao2(v_caso);
-  perform teste_assert_p2(not (v_r->>'elegivel')::boolean,
-    'aceitar COM RESSALVA uma não-sobrepujável NÃO libera o portão', v_r::text);
+  perform teste_assert_p2((v_r->>'elegivel')::boolean,
+    'decidida, a não-sobrepujável deixa de travar o caso (0109)', v_r::text);
+  perform teste_assert_p2((v_r->>'ressalvas_ativas')::int = 1,
+    '…e aparece contada, que é o controle que restou', v_r::text);
 
   update pendencia set estado = 'resolvida' where id = v_pend;
 
-  raise notice '--- 6. teto de ressalvas: 3 passa, 4 não (condição 2) ---';
+  raise notice '--- 6. SEM TETO: a quarta ressalva também passa (0109) ---';
   for v_n in 1..3 loop
     insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao,
                            estado, expira_em)
@@ -98,34 +104,37 @@ begin
   v_r := fn_avaliar_portao2(v_caso);
   perform teste_assert_p2((v_r->>'ressalvas_ativas')::int = 3, 'três ressalvas ativas', v_r::text);
   perform teste_assert_p2((v_r->>'elegivel')::boolean,
-    'exatamente no teto (3) ainda é elegível — o teto é <=, não <', v_r::text);
+    'três ressalvas não travam nada', v_r::text);
 
   insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao,
-                         estado, expira_em)
+                         estado)
     values (v_caso, 'validacao_formal', 'periodo_incorreto', 'importante', true,
-            'ressalva 4', 'aceita_com_ressalva', now() + interval '30 days');
+            'ressalva 4', 'aceita_com_ressalva');
   v_r := fn_avaliar_portao2(v_caso);
-  perform teste_assert_p2(not (v_r->>'elegivel')::boolean,
-    'a quarta ressalva estoura o teto e bloqueia', v_r::text);
-  perform teste_assert_p2((v_r->'motivos')::text like '%teto de 3%',
-    'e o motivo nomeia o teto', v_r->>'motivos');
+  perform teste_assert_p2((v_r->>'elegivel')::boolean,
+    'a quarta ressalva NÃO bloqueia — o teto saiu na 0109', v_r::text);
+  perform teste_assert_p2((v_r->>'ressalvas_ativas')::int = 4,
+    'e as quatro aparecem contadas', v_r::text);
 
-  raise notice '--- 7. ressalva EXPIRADA volta a bloquear, sem job nenhum ---';
-  -- f0/04: "ao expirar, a pendência reabre automaticamente". Reabrir por job
-  -- seria uma falha silenciosa esperando acontecer (job que ninguém observa);
-  -- aqui a expiração é avaliada na leitura.
+  raise notice '--- 7. a EXPIRAÇÃO saiu junto com o teto (0109) ---';
+  -- f0/04 mandava a ressalva vencer e a pendência reabrir. Sem data de
+  -- expiração no formulário (a 0109 tirou o campo), não há o que vencer: a
+  -- ressalva vale enquanto ninguém mudar de ideia. O contador continua no
+  -- payload, sempre zero, para nenhum leitor antigo quebrar.
   delete from pendencia where caso_id = v_caso and descricao = 'ressalva 4';
   update pendencia set expira_em = now() - interval '1 day'
     where caso_id = v_caso and descricao = 'ressalva 1';
   v_r := fn_avaliar_portao2(v_caso);
-  perform teste_assert_p2((v_r->>'ressalvas_expiradas')::int = 1,
-    'a ressalva vencida é contada como expirada', v_r::text);
-  perform teste_assert_p2(not (v_r->>'elegivel')::boolean,
-    'e ela bloqueia o portão de novo, sem nada ter rodado', v_r::text);
-  perform teste_assert_p2((v_r->'motivos')::text like '%EXPIRADA%',
-    'com o motivo dizendo que expirou', v_r->>'motivos');
+  perform teste_assert_p2((v_r->>'ressalvas_expiradas')::int = 0,
+    'data no passado não reabre mais nada', v_r::text);
+  perform teste_assert_p2((v_r->>'elegivel')::boolean,
+    'e o caso segue elegível', v_r::text);
 
   raise notice '--- 8. fn_aprovar_caso RECUSA o que a regra não permite ---';
+  -- Com o teto fora, o que ainda RECUSA é a bloqueante sem decisão — que é a
+  -- única condição que sobrou. Uma nova, aberta, põe o caso de volta no vermelho.
+  insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao)
+    values (v_caso, 'completude', 'item_faltante', 'bloqueante', true, 'falta o CONTRATO_SOCIAL');
   v_r := fn_aprovar_caso(v_caso, 'socio.senior@oria', 'preciso fechar hoje');
   perform teste_assert_p2((v_r->>'recusado') = 'true',
     'a aprovação é recusada, e o payload declara isso', v_r::text);
@@ -147,8 +156,8 @@ begin
     'mas a TENTATIVA fica na trilha — recusar não é apagar o rastro');
 
   raise notice '--- 9. com a regra satisfeita, aprova e registra ---';
-  update pendencia set expira_em = now() + interval '30 days'
-    where caso_id = v_caso and descricao = 'ressalva 1';
+  update pendencia set estado = 'resolvida'
+    where caso_id = v_caso and descricao = 'falta o CONTRATO_SOCIAL';
   v_r := fn_aprovar_caso(v_caso, 'socio.senior@oria', 'conferido contra o book');
   perform teste_assert_p2((v_r->>'aprovado') = 'true', 'agora aprova', v_r::text);
 

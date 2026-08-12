@@ -67,6 +67,92 @@ export const TETO_EXECUCAO_USD = 3;
 // defesa dura continua sendo o teto de US$ 5 do projeto na OpenAI.
 export const CUSTO_ESTIMADO_DOC_USD = 0.20;
 
+// ---------------------------------------------------------------------------
+// ESTIMATIVA POR TAMANHO — o que substitui o número plano quando os bytes são
+// conhecidos, que é sempre que o arquivo veio pelo formulário.
+// ---------------------------------------------------------------------------
+//
+// POR QUE ISTO EXISTE, com o número que o justifica. O estimador plano recusou
+// um lote REAL de 35 documentos do book-canastra dizendo "≈ US$ 7,65, acima do
+// teto de US$ 3". O mesmo book inteiro — 38 documentos, 57 chamadas — foi MEDIDO
+// por `n8n/medir-custo-book.mjs` em **US$ 1,41**. O estimador errou por 5,4× e
+// barrou um lote que cabia com folga de mais da metade do teto.
+//
+// Errar para o lado seguro é o projeto do estimador, e continua sendo. Errar por
+// 5× é outra coisa: é impedir o uso do sistema para proteger um orçamento que
+// nunca esteve em risco. E o custo disso não é teórico — foi o que travou o
+// primeiro teste de ponta a ponta com o book difícil.
+//
+// A CALIBRAÇÃO, medida sobre os 38 documentos do book-canastra:
+//
+//   • custo agregado real: US$ 1,4117 para 257.150 bytes ponderados por chamada
+//     (o documento mal nomeado paga o PDF duas vezes e conta duas vezes aqui)
+//     = US$ 5,76 por MB;
+//   • `CUSTO_POR_MB_USD` fica em **10,5**, ou seja 1,8× o agregado medido. A
+//     margem cobre um lote quase duas vezes mais denso que o book — e o book já
+//     é o material mais difícil que existe no repositório;
+//   • `CUSTO_MINIMO_CHAMADA_USD` existe porque toda chamada paga o prompt de
+//     sistema e pelo menos uma página de imagem, independente do tamanho do
+//     arquivo. Sem ele, um lote de PDFs minúsculos estimaria quase zero.
+//
+// O QUE ESTA CALIBRAÇÃO ACERTA, e é o teste que importa: o book de 38 documentos
+// estima ≈ US$ 2,5 (real 1,41) e PASSA; um lote de 35 cópias do documento mais
+// denso do book — o livro razão, 461 linhas — estima ≈ US$ 3,7 e é RECUSADO,
+// enquanto custaria US$ 6,04 de verdade. Ou seja: passa o caso realista e barra
+// o caso caro, que é exatamente o que o teto existe para fazer e o que o número
+// plano não conseguia fazer nos dois sentidos ao mesmo tempo.
+//
+// O LIMITE QUE FICA DECLARADO: bytes de PDF não são tokens. Um PDF de texto
+// dá mais linhas por byte que um escaneado, e a razão entre os extremos medidos
+// no book é de 4× por byte. A margem de 1,8× cobre a média de um lote, não o
+// pior documento isolado — para isso continua valendo a defesa dura, o teto de
+// US$ 5 do projeto na OpenAI. Um lote que estimasse exatamente no teto de US$ 3
+// e fosse inteiro do tipo mais denso custaria ~US$ 4,8: cabe no teto duro.
+export const CUSTO_POR_MB_USD = 10.5;
+export const CUSTO_MINIMO_CHAMADA_USD = 0.012;
+
+const BYTES_POR_MB = 1024 * 1024;
+
+/**
+ * Custo estimado de UMA chamada sobre um arquivo de `bytes`.
+ * Devolve `null` quando o tamanho não é conhecido — quem chama decide o que
+ * fazer com isso, e o que NÃO se pode fazer é tratar desconhecido como zero.
+ */
+export function custoEstimadoPorTamanho(bytes) {
+  const b = Number(bytes);
+  if (!Number.isFinite(b) || b <= 0) return null;
+  return Math.max(CUSTO_MINIMO_CHAMADA_USD, (b / BYTES_POR_MB) * CUSTO_POR_MB_USD);
+}
+
+/**
+ * Bytes de um binário do n8n, na ordem do mais confiável para o menos.
+ *
+ * O n8n guarda o binário de dois jeitos e o formato do metadado muda com o modo:
+ * em memória, `data` é base64 (e o tamanho real sai dele); em modo filesystem,
+ * `data` é um ponteiro e só resta `fileSize`, que vem FORMATADO ("10.79 kB").
+ * Ler só um dos dois funciona no ambiente de quem escreveu e falha no outro.
+ */
+export function bytesDoBinario(bin) {
+  if (!bin) return null;
+  if (Number.isFinite(Number(bin.fileSize))) return Number(bin.fileSize);
+  if (typeof bin.data === 'string' && !bin.id) {
+    // base64 → bytes, sem alocar o buffer inteiro só para medir.
+    const s = bin.data.length;
+    const pad = bin.data.endsWith('==') ? 2 : bin.data.endsWith('=') ? 1 : 0;
+    const n = Math.floor((s * 3) / 4) - pad;
+    if (n > 0) return n;
+  }
+  if (typeof bin.fileSize === 'string') {
+    const m = /^\s*([\d.,]+)\s*([kmg]?b)\s*$/i.exec(bin.fileSize);
+    if (m) {
+      const n = Number(m[1].replace(',', '.'));
+      const mult = { b: 1, kb: 1024, mb: 1024 * 1024, gb: 1024 * 1024 * 1024 }[m[2].toLowerCase()];
+      if (Number.isFinite(n) && mult) return Math.round(n * mult);
+    }
+  }
+  return null;
+}
+
 // Custo REAL de uma chamada, a partir do bloco `usage` da resposta da OpenAI.
 // Não estima nada: se o `usage` não vier, devolve null em vez de chutar — um
 // custo inventado num relatório de custo é pior que um campo vazio.
@@ -97,24 +183,52 @@ export function orcamentoDoLote({
   chamadasPorDocumento = 1,
   teto = TETO_EXECUCAO_USD,
   custoPorChamada = CUSTO_ESTIMADO_DOC_USD,
+  bytes = null,
 }) {
   const n = Number(documentos) || 0;
   // Arredonda para CIMA: meia chamada não existe, e a metade que sobra é gasto.
   const chamadas = Math.ceil(n * Math.max(1, chamadasPorDocumento));
-  const estimadoUSD = Number((chamadas * custoPorChamada).toFixed(2));
-  const maxDocumentos = Math.max(0, Math.floor(teto / (custoPorChamada * Math.max(1, chamadasPorDocumento))));
+
+  // POR TAMANHO quando os bytes vieram; PLANO quando não vieram.
+  //
+  // `bytes` é o total do lote. A distinção não é cosmética: o número plano é o
+  // que recusou um lote de US$ 1,41 dizendo US$ 7,65, e a estimativa por tamanho
+  // é o que o corrige. Mas tamanho DESCONHECIDO não pode virar zero — isso
+  // deixaria qualquer lote passar —, então a ausência cai no plano de propósito,
+  // e a mensagem diz qual dos dois decidiu.
+  const bytesTotais = Number(bytes);
+  const porTamanho = Number.isFinite(bytesTotais) && bytesTotais > 0;
+  const estimadoUSD = porTamanho
+    ? Number(Math.max(
+        chamadas * CUSTO_MINIMO_CHAMADA_USD,
+        (bytesTotais / BYTES_POR_MB) * CUSTO_POR_MB_USD * Math.max(1, chamadasPorDocumento),
+      ).toFixed(2))
+    : Number((chamadas * custoPorChamada).toFixed(2));
+
+  // Quantos documentos caberiam. Por tamanho, usa o tamanho MÉDIO deste lote —
+  // é a única base honesta: dizer "no máximo 15" com base num documento típico
+  // que não é o deste lote foi o que produziu a recusa errada.
+  const custoMedioPorDoc = n > 0 ? estimadoUSD / n : custoPorChamada;
+  const maxDocumentos = custoMedioPorDoc > 0
+    ? Math.max(0, Math.floor(teto / custoMedioPorDoc))
+    : n;
   const cabe = estimadoUSD <= teto;
 
   // A mensagem é metade do valor desta função: ela é o que o dono lê quando o
   // lote é recusado, e tem de dizer o que FAZER — não só que deu errado.
+  const base = porTamanho
+    ? `${(bytesTotais / 1024).toFixed(0)} KB de arquivo`
+    : `estimativa plana de US$ ${custoPorChamada.toFixed(2)} por chamada (o tamanho dos arquivos não chegou até aqui)`;
+
   const mensagem = cabe
     ? null
     : `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
+      `A conta saiu de ${base}. ` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
       `Nada foi enviado à OpenAI e nada foi gravado, então reenviar não duplica nem custa. ` +
       `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (n8n/lib/custo.mjs) ` +
       `— e subir ele exige subir também o teto do projeto na OpenAI, senão a API barra no meio.`;
 
-  return { cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem };
+  return { cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem, porTamanho };
 }

@@ -1,0 +1,100 @@
+"use client";
+
+import { useState } from "react";
+import { excluirCaso } from "@/app/casos/[id]/actions";
+
+// O BOTÃO DE EXCLUIR O MANDATO, com a confirmação que o dono pediu.
+//
+// POR QUE É UM COMPONENTE DE CLIENTE. A confirmação tem de acontecer ANTES da
+// requisição sair: uma server action não tem como perguntar "tem certeza?" no
+// meio do caminho — quando ela roda, a decisão já foi tomada. Então o diálogo
+// vive aqui, e o servidor cuida do resto (trilha e contagem do que se perdeu,
+// em `fn_excluir_caso`).
+//
+// POR QUE NÃO `window.confirm`. Ele funcionaria e é uma linha — mas o texto de
+// um `confirm` nativo aparece com o domínio do site em cima ("tratamento-dados…
+// diz:"), sem formatação e sem hierarquia. Para uma ação que apaga o mandato
+// inteiro, o aviso precisa ser lido, e um diálogo próprio é o que permite pôr o
+// nome do caso e a consequência em destaque.
+//
+// O BOTÃO É PEQUENO E DISCRETO de propósito, e o de CONFIRMAR é o vermelho. A
+// ação destrutiva não deve competir em atenção com o trabalho normal da tela;
+// ela deve ser encontrável por quem a procura, e não esbarrável por quem não.
+export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string }) {
+  const [aberto, setAberto] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAberto(true)}
+        title="Excluir este mandato"
+        aria-label="Excluir este mandato"
+        className="rounded border border-neutral-300 px-2 py-1.5 text-xs font-medium text-neutral-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+      >
+        Excluir
+      </button>
+
+      {aberto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-excluir"
+          // Clicar fora fecha — mas só no fundo, não no cartão (senão qualquer
+          // clique dentro do diálogo o fecharia no meio da leitura).
+          onClick={(e) => { if (e.target === e.currentTarget && !enviando) setAberto(false); }}
+        >
+          <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
+            <h2 id="titulo-excluir" className="text-base font-semibold text-neutral-900">
+              Após a exclusão todos os dados serão perdidos, você tem certeza que deseja excluir
+              esse mandato?
+            </h2>
+            {/* O NOME DO CASO. Com vários mandatos abertos em abas diferentes, é
+                o que impede excluir o certo achando que é o outro. */}
+            <p className="mt-2 text-sm text-neutral-600">
+              Mandato: <strong className="text-neutral-900">{nome}</strong>
+            </p>
+            <p className="mt-1 text-sm text-neutral-600">
+              Serão apagados os documentos recebidos, as linhas extraídas, as pendências e a
+              modelagem deste mandato. Não há como desfazer.
+            </p>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={enviando}
+                onClick={() => setAberto(false)}
+                className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <form
+                action={async () => {
+                  // O estado de envio existe porque a exclusão de um mandato
+                  // grande leva alguns segundos (cascade sobre campo_extraido), e
+                  // um botão que não responde convida ao segundo clique.
+                  setEnviando(true);
+                  try {
+                    await excluirCaso(casoId);
+                  } finally {
+                    setEnviando(false);
+                  }
+                }}
+              >
+                <button
+                  type="submit"
+                  disabled={enviando}
+                  className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {enviando ? "Excluindo…" : "Excluir mandato"}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

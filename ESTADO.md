@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0107_papel_ressalva_e_tratamento.sql` |
+| **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 180 · export 532 · e2e 46 · banco (52 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -23,17 +23,9 @@ lidas para retomar.
 
 1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
    `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência.
-2. **Cadastrar o primeiro sênior** — sem isso ninguém aceita pendência com ressalva, porque o papel
-   nasce no menor privilégio (`0107`):
-   ```sql
-   insert into usuario_papel (email, papel) values ('voce@dominio', 'senior');
-   ```
-3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
+2. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
    `docs/ACEITE.md` (10 itens humanos). É a única conferência que nenhuma automação cobre, e ela
    nunca foi executada sobre um arquivo posterior ao PR #111.
-4. **Recolocar as proteções do `main`** — removidas em 07/08/2026. Hoje nada impede mergear vermelho
-   nem empurrar direto. "Require approvals" em **0** (é isso que trava a rodada, não o CI: o GitHub
-   não deixa aprovar o próprio PR) e `suítes` como check obrigatório.
 
 ## O que está aberto no produto
 
