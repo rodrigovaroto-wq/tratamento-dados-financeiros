@@ -9,6 +9,11 @@ import {
   CUSTO_ESTIMADO_DOC_USD,
   CUSTO_POR_MB_USD,
   CUSTO_MINIMO_CHAMADA_USD,
+  VERSAO_ORCAMENTO,
+  MODELO_CLASSIFICACAO,
+  MODELO_EXTRACAO,
+  pesoDaChamadaDeClassificacao,
+  PRECO_USD_POR_MILHAO,
 } from '../lib/custo.mjs';
 
 // O teto que o dono pediu, travado por teste. Se alguém mexer no número sem
@@ -16,6 +21,16 @@ import {
 // PELA API no meio — que é o v31 — em vez de aqui, antes de gastar.
 test('o teto por execução é o que o dono pediu: US$ 3', () => {
   assert.equal(TETO_EXECUCAO_USD, 3);
+});
+
+// A assimetria que autoriza o modelo barato de um lado e o proíbe do outro: a
+// classificação tem rede (o `diagnostico` da extração confere tipo/entidade/
+// período e abre pendência quando diverge); a extração não tem nada depois dela.
+test('a extração fica no modelo forte, e os dois modelos têm preço conhecido', () => {
+  assert.equal(MODELO_EXTRACAO, 'gpt-4o');
+  assert.ok(PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO], 'modelo sem preço não pode entrar em produção');
+  assert.ok(PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO].entrada <= PRECO_USD_POR_MILHAO[MODELO_EXTRACAO].entrada,
+    'a classificação nunca pode custar MAIS que a extração — seria a troca ao contrário');
 });
 
 // O caso REAL do v31, nas duas versões, porque é o que dá sentido ao guarda.
@@ -140,6 +155,60 @@ test('orçamento por tamanho: lote homogêneo DENSO continua sendo recusado', ()
   const r = orcamentoDoLote({ documentos: 35, chamadasPorDocumento: 1, bytes: 10_849 * 35 });
   assert.equal(r.cabe, false);
   assert.match(r.mensagem, /KB de arquivo/, 'a mensagem diz de onde saiu a conta');
+});
+
+// ---------------------------------------------------------------------------
+// O PESO DA SEGUNDA CHAMADA — a última superestimação que restava
+// ---------------------------------------------------------------------------
+
+test('a chamada de classificação NÃO custa o mesmo que a de extração', () => {
+  const bytes = 183_139;
+  const semFallback = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 1, bytes });
+  const comFallback = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38, bytes });
+
+  // 19 documentos a mais pagando o PDF duas vezes não podem somar 50% na conta:
+  // medido no book, as 19 classificações são US$ 0,0089 contra US$ 1,32 das
+  // extrações. Cobrar cheio é o que fazia o mesmo lote estimar 46% mais caro.
+  assert.ok(comFallback.estimadoUSD > semFallback.estimadoUSD,
+    'a segunda chamada continua custando ALGUMA coisa — barato não é grátis');
+  assert.ok(comFallback.estimadoUSD < semFallback.estimadoUSD * 1.1,
+    `19 classificações não podem pesar 50% do lote (${semFallback.estimadoUSD} → ${comFallback.estimadoUSD})`);
+  assert.ok(comFallback.fatorCusto > 1 && comFallback.fatorCusto < 1.05);
+  // E as 57 chamadas continuam sendo REPORTADAS como 57: o que mudou é o peso
+  // de cada uma na conta, não a contagem — a mensagem seguiria mentindo se
+  // dissesse "39 chamadas" para um lote que faz 57.
+  assert.equal(comFallback.chamadas, 57);
+});
+
+// A tentação é aplicar o desconto nos dois caminhos. O plano é o de "não sei
+// nada sobre estes arquivos", e a única calibração que ele tem é um incidente
+// de dinheiro de verdade (v31). Descontar ali com base numa proporção medida em
+// PDF sintético seria trocar evidência cara por barata.
+test('o desconto da 2ª chamada vale SÓ quando o tamanho é conhecido', () => {
+  const plano = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 22 / 14 });
+  assert.equal(plano.porTamanho, false);
+  assert.equal(plano.estimadoUSD, 4.4, '22 chamadas cheias × US$ 0,20 — como sempre foi');
+  assert.equal(plano.fatorCusto, Number((22 / 14).toFixed(4)));
+  assert.equal(plano.cabe, false);
+});
+
+test('modelo fora da tabela de preço cobra CHEIO', () => {
+  // Desconhecido não é barato. Se alguém apontar a classificação para um modelo
+  // que este arquivo não conhece, o orçamento volta a contar chamada inteira em
+  // vez de aplicar um desconto que ninguém mediu.
+  const peso = pesoDaChamadaDeClassificacao('modelo-que-nao-existe', 'gpt-4o');
+  assert.equal(peso, 1);
+  const r = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 2, bytes: 183_139, pesoClassificacao: peso });
+  assert.equal(r.fatorCusto, 2);
+});
+
+test('a mensagem de recusa CARIMBA a versão do orçamento', () => {
+  // Sem isto, "reimportei o workflow?" é uma pergunta que só a memória responde
+  // — e em 12/08/2026 ela respondeu errado, custando uma rodada de teste.
+  const r = orcamentoDoLote({ documentos: 500, chamadasPorDocumento: 1, bytes: 500 * 1024 * 1024 });
+  assert.equal(r.cabe, false);
+  assert.equal(r.versao, VERSAO_ORCAMENTO);
+  assert.ok(r.mensagem.startsWith(`[orçamento ${VERSAO_ORCAMENTO}]`), r.mensagem);
 });
 
 test('orçamento por tamanho: tamanho desconhecido NÃO vira zero', () => {

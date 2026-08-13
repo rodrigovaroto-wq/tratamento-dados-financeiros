@@ -38,6 +38,79 @@ export const PRECO_USD_POR_MILHAO = {
 // propósito — ver o comentário do topo.
 export const TETO_EXECUCAO_USD = 3;
 
+// ---------------------------------------------------------------------------
+// OS DOIS MODELOS DO PIPELINE — e por que eles moram AQUI e não no build
+// ---------------------------------------------------------------------------
+//
+// Eles estavam em `build-workflow.mjs`, que é quem os escreve nos nós. Mudaram
+// de casa porque o ORÇAMENTO passou a depender deles: o preço da chamada de
+// classificação entra na conta do lote (ver `pesoDaChamadaDeClassificacao`), e
+// um preço derivado de um modelo declarado em outro arquivo é a mesma cópia à
+// mão que este repositório já viu divergir três vezes. O build importa daqui.
+//
+// `MODELO_CLASSIFICACAO` é `gpt-4o-mini` desde 13/08/2026 — a recomendação nº 1
+// de `docs/CUSTO_OPENAI.md` ("agora, sem risco"), acionada quando o dono pediu
+// redução de custo por chamada. A tarefa é a mais leve do pipeline (escolher um
+// código de um enum + entidade/período) e ela tem REDE: o `diagnostico` da
+// extração — que segue no modelo forte — confere tipo/entidade/período contra o
+// conteúdo e abre pendência quando diverge. Erro de classificação é detectado,
+// não silencioso.
+//
+// `MODELO_EXTRACAO` NÃO muda. É a tarefa que exige julgamento contábil linha a
+// linha, e ela não tem rede nenhuma depois dela.
+export const MODELO_CLASSIFICACAO = 'gpt-4o-mini';
+export const MODELO_EXTRACAO = 'gpt-4o';
+
+// ---------------------------------------------------------------------------
+// O PESO DA SEGUNDA CHAMADA — o defeito de estimativa que restava
+// ---------------------------------------------------------------------------
+//
+// O orçamento contava a chamada de CLASSIFICAÇÃO como se ela custasse o mesmo
+// que uma extração. Não custa, e a diferença é grande: medido no book-canastra,
+// as 19 classificações somaram **US$ 0,0893** contra **US$ 1,32** das 38
+// extrações — US$ 0,0047 contra US$ 0,035 em média, ou seja **13%**. A razão é
+// física: as duas mandam o MESMO PDF, mas a classificação devolve um objeto de
+// ~120 tokens e a extração devolve centenas de linhas — e a saída responde por
+// ~75% da conta (medição do book, `docs/CUSTO_OPENAI.md`).
+//
+// Cobrar cheio inflava a estimativa do book em 46% (fator 1,5 em vez de 1,03) e
+// era o que faltava para o lote de 35 caber com folga em vez de raspar o teto.
+//
+// A conta do peso, com as duas parcelas declaradas:
+//
+//   peso = PARCELA_ENTRADA_NA_CHAMADA × (preço de entrada do modelo de
+//          classificação ÷ preço de entrada do modelo de extração)
+//
+// `PARCELA_ENTRADA_NA_CHAMADA = 0,30` é a fatia da conta que é ENTRADA (medido:
+// 25%; 0,30 é a margem). O segundo termo é 1 quando os dois modelos são iguais e
+// 0,06 com a classificação em `gpt-4o-mini`. O piso de 0,05 existe para que a
+// segunda chamada NUNCA saia de graça: modelo barato não é modelo grátis, e um
+// lote de mil documentos mal nomeados tem de pesar alguma coisa.
+export const PARCELA_ENTRADA_NA_CHAMADA = 0.3;
+export const PESO_MINIMO_CLASSIFICACAO = 0.05;
+
+export function pesoDaChamadaDeClassificacao(
+  modeloClassificacao = MODELO_CLASSIFICACAO,
+  modeloExtracao = MODELO_EXTRACAO,
+) {
+  const c = PRECO_USD_POR_MILHAO[modeloClassificacao];
+  const e = PRECO_USD_POR_MILHAO[modeloExtracao];
+  // Modelo que não está na tabela de preço é modelo cujo custo não se conhece —
+  // e desconhecido cobra CHEIO. Errar para o lado seguro é o projeto daqui.
+  if (!c || !e || !(e.entrada > 0)) return 1;
+  return Math.max(PESO_MINIMO_CLASSIFICACAO, PARCELA_ENTRADA_NA_CHAMADA * (c.entrada / e.entrada));
+}
+
+// Versão do orçamento, e ela vai na MENSAGEM de recusa de propósito.
+//
+// Por que existe: em 12/08/2026 o dono reexecutou o lote depois de a estimativa
+// por tamanho ter entrado no repositório e recebeu a MESMA recusa antiga
+// ("51 chamadas ≈ US$ 7,65") — porque o n8n roda o JSON que foi IMPORTADO, e o
+// merge no `main` não reimporta nada. Da tela, código novo e código velho têm a
+// mesma aparência: os dois recusam. Com a versão na mensagem, "o n8n está com o
+// workflow velho" deixa de ser hipótese e vira leitura.
+export const VERSAO_ORCAMENTO = 'v3 (2026-08-13)';
+
 // Custo estimado de UM documento, usado só para decidir se o lote cabe antes de
 // existir qualquer medição.
 //
@@ -184,6 +257,7 @@ export function orcamentoDoLote({
   teto = TETO_EXECUCAO_USD,
   custoPorChamada = CUSTO_ESTIMADO_DOC_USD,
   bytes = null,
+  pesoClassificacao = pesoDaChamadaDeClassificacao(),
 }) {
   const n = Number(documentos) || 0;
   // Arredonda para CIMA: meia chamada não existe, e a metade que sobra é gasto.
@@ -198,10 +272,31 @@ export function orcamentoDoLote({
   // e a mensagem diz qual dos dois decidiu.
   const bytesTotais = Number(bytes);
   const porTamanho = Number.isFinite(bytesTotais) && bytesTotais > 0;
+
+  // O FATOR DE CUSTO não é o número de chamadas: a segunda chamada de um
+  // documento é a de CLASSIFICAÇÃO, e ela custa uma fração da extração (o
+  // comentário de `pesoDaChamadaDeClassificacao` traz a medição). Contar
+  // "2 chamadas = 2× o custo" é o que inflava a estimativa em 46% no lote real.
+  //
+  // E ELE SÓ VALE NO CAMINHO POR TAMANHO. A tentação é aplicar nos dois — o
+  // desconto é o mesmo fato físico —, e é justamente onde ele não deve ir: o
+  // caminho PLANO é o de "não sei nada sobre estes arquivos", e a única
+  // calibração que ele tem é um incidente de dinheiro de verdade (o v31, 14
+  // documentos reais que estouraram o teto de US$ 5 da OpenAI no meio do lote).
+  // Descontar num caminho cego, com base numa proporção medida em PDFs
+  // sintéticos de uma página, seria trocar a evidência cara pela barata. Quando
+  // o tamanho é conhecido, a conta tem base própria e o desconto tem onde se
+  // apoiar; quando não é, o guarda continua contando chamada cheia.
+  const extrasPorDocumento = Math.max(0, Math.max(1, chamadasPorDocumento) - 1);
+  const peso = Number.isFinite(Number(pesoClassificacao))
+    ? Math.min(1, Math.max(0, Number(pesoClassificacao)))
+    : 1;
+  const fatorCusto = porTamanho ? 1 + extrasPorDocumento * peso : Math.max(1, chamadasPorDocumento);
+
   const estimadoUSD = porTamanho
     ? Number(Math.max(
         chamadas * CUSTO_MINIMO_CHAMADA_USD,
-        (bytesTotais / BYTES_POR_MB) * CUSTO_POR_MB_USD * Math.max(1, chamadasPorDocumento),
+        (bytesTotais / BYTES_POR_MB) * CUSTO_POR_MB_USD * fatorCusto,
       ).toFixed(2))
     : Number((chamadas * custoPorChamada).toFixed(2));
 
@@ -222,7 +317,8 @@ export function orcamentoDoLote({
 
   const mensagem = cabe
     ? null
-    : `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
+    : `[orçamento ${VERSAO_ORCAMENTO}] ` +
+      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
       `A conta saiu de ${base}. ` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
@@ -230,5 +326,9 @@ export function orcamentoDoLote({
       `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (n8n/lib/custo.mjs) ` +
       `— e subir ele exige subir também o teto do projeto na OpenAI, senão a API barra no meio.`;
 
-  return { cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem, porTamanho };
+  return {
+    cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem, porTamanho,
+    versao: VERSAO_ORCAMENTO,
+    fatorCusto: Number(fatorCusto.toFixed(4)),
+  };
 }
