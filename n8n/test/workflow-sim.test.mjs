@@ -1218,6 +1218,75 @@ test('Camada 3: sem régua (escaneado) a guarda se CALA, em vez de absolver ou a
   assert.equal(out[0].json.cobertura, null);
 });
 
+// ---------------------------------------------------------------------------
+// O DEFEITO DA EXECUÇÃO 6164 — fan-out quebra o pareamento de itens do n8n
+// ---------------------------------------------------------------------------
+//
+// Um nó que muda a QUANTIDADE de itens (1 documento → N blocos → 1 documento)
+// corta a cadeia de `pairedItem`, e TODA expressão `$('Outro Nó').item` rio
+// abaixo passa a devolver undefined. Em produção isso apareceu como:
+//   • `Registrar Diagnostico` e `Reconciliar`: "Query Parameters must be a
+//     string of comma-separated values or an array of values" (a expressão
+//     inteira virou `undefined`);
+//   • `Gravar Campos`: `invalid input syntax for type uuid: "sem-versao-0"` —
+//     o `Juntar Blocos` FABRICAVA uma chave quando o id faltava, e o texto
+//     inventado foi direto para um parâmetro `::uuid`.
+//
+// Os dois testes abaixo travam as duas metades da correção.
+
+test('6164: os nós de fan-out declaram pairedItem — sem isso o grafo inteiro perde o contexto', async () => {
+  const doc = (id, celulas) => ({ json: {
+    documento_id: 'doc-' + id, documento_versao_id: 'ver-' + id, celulas_no_documento: celulas,
+    linhas_do_texto: Array.from({ length: celulas }, (_, i) => `linha ${i}  ${i},00`),
+    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+  } });
+  const fatiado = await run('Fatiar Extracao', { items: [doc(1, 500), doc(2, 10)] });
+  assert.ok(fatiado.length > 2, 'o documento grande virou mais de um bloco');
+  for (const it of fatiado) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      'todo bloco tem de apontar para o item de entrada que o gerou');
+  }
+  // Os blocos do documento 1 apontam para a entrada 0; o do documento 2, para a 1.
+  const doDoc2 = fatiado.filter((i) => i.json.documento_versao_id === 'ver-2');
+  assert.equal(doDoc2.length, 1);
+  assert.equal(doDoc2[0].pairedItem.item, 1);
+
+  const juntado = await run('Juntar Blocos', { items: fatiado.map((i) => ({ json: {
+    ...i.json, campos: [{ ordem: 0, chave: 'A', valor_num: 1 }], diagnostico: {}, falha_motivo: null,
+  } })) });
+  for (const it of juntado) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      'o documento remontado tem de apontar para um dos blocos que o formaram');
+  }
+});
+
+test('6164: id ausente vira FALHA declarada, nunca um uuid inventado', async () => {
+  // `'sem-versao-0'` foi direto para `fn_registrar_campos_extraidos($1::uuid)`.
+  // Um id que não existe é uma falha a declarar — inventar um texto no formato
+  // errado transforma "não sei onde gravar" em erro de banco três nós à frente.
+  const out = await run('Juntar Blocos', { items: [{ json: {
+    documento_versao_id: undefined, bloco: 1, blocos: 1, celulas_no_documento: null,
+    campos: [{ ordem: 0, chave: 'A' }], diagnostico: {}, falha_motivo: null,
+  } }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].json.documento_versao_id, null, 'null, nunca uma string inventada');
+  assert.match(out[0].json.falha_motivo, /SEM documento_versao_id/);
+});
+
+test('6164: os nós Postgres depois do fatiamento leem do PRÓPRIO item', () => {
+  // Nenhum deles pode depender de `$('...').item`: através do fan-out essa
+  // resolução não existe mais, e o sintoma é "undefined" em Query Parameters.
+  for (const nome of ['Gravar Campos (Sombra)', 'Registrar Diagnostico', 'Reconciliar (Classe A)']) {
+    const q = wf.nodes.find((n) => n.name === nome).parameters.options.queryReplacement;
+    assert.ok(!/\$\('[^']+'\)\.item/.test(q),
+      `${nome} ainda lê outro nó por .item — isso quebra depois do fatiamento: ${q}`);
+    assert.match(q, /\$json\./, `${nome} tem de ler do próprio item`);
+  }
+  // E o item que chega até eles carrega os dois ids, que é o que torna isso
+  // possível: `Montar Req Extracao` passou a levar o `documento_id` junto.
+  assert.match(code('Montar Req Extracao'), /documento_id:docId/);
+});
+
 test('Topologia das três camadas: fan-out e volta, com o resto do grafo intacto', () => {
   assert.deepEqual(wf.connections['Montar Req Extracao'].main[0].map((c) => c.node), ['Fatiar Extracao']);
   assert.deepEqual(wf.connections['Fatiar Extracao'].main[0].map((c) => c.node), ['OpenAI Extrair']);
