@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
+| **Última migration** | `db/migrations/0111_linha_exigida_por_tipo.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 194 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 194 · export 529 · e2e 46 · banco (56 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
