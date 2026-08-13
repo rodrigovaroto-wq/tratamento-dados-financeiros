@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 207 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 225 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -44,6 +44,32 @@ real do lote, o que o orçamento estimou e os **tokens de saída por linha**, qu
 `CUSTO_POR_MB_USD` e o modelo de saída se recalibram. Mais: quantos dos 38 chegaram, e o que a
 reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
 
+### O buraco que a rodada completa abriu — e as três camadas que o fecham
+
+A rodada do `book-canastra` (35 documentos, 21 min, US$ 0,71, no workflow ANTIGO) respondeu o custo e
+abriu outra coisa: **das 2.893 células de valor dos PDFs, chegaram ao banco 1.139 — 39%**. Duas
+famílias: 5 documentos TRUNCARAM (teto de 16.384 tokens de saída do gpt-4o; `01_Balanco` sozinho pede
+~20.900) e o resto veio pela metade **em silêncio** (`17_Livro_Razao`: 99 de 461, sem uma pendência).
+
+O `.xlsx` da modelagem exportado dessa rodada passa em **9 de 10** itens do auditor; o único reprovado
+é o balanço não fechar por 40.169 — que é o buraco da extração chegando ao arquivo entregue.
+
+Três camadas, no `n8n/lib/cobertura.mjs` e no grafo:
+
+| | O que faz | Onde |
+|---|---|---|
+| **1. Medir antes de chamar** | lê a camada de texto do PDF na instância (sem IA, sem custo) e conta as linhas com número | nó `Extrair Texto` |
+| **2. Fatiar** | acima de 60% do teto, um item por bloco de ≤234 células, cada um com o TEXTO da primeira e última linha da faixa como âncora | nó `Fatiar Extracao` |
+| **3. Guarda de cobertura** | compara o que voltou com o que o documento tem; abaixo de 60% abre pendência com os dois números | nó `Juntar Blocos` |
+
+No `book-canastra`: 38 documentos → **41 chamadas** de extração, 3 fatiados. Custo projetado com o
+dado INTEIRO: **~US$ 1,4** (era 0,71 com 39% do dado) — menos da metade do teto.
+
+> **O que a camada 3 promete, com precisão:** ela não impede o modelo de pular uma linha. Impede que
+> isso seja silencioso. E o `Extrair Texto` tem `onError: continue` — PDF escaneado não tem camada de
+> texto, o nó falha nele, o documento segue como imagem e as camadas 2 e 3 se calam. **O pior caso da
+> mudança é o comportamento de ontem.**
+
 ### O custo, medido e projetado (13/08/2026)
 
 A primeira fatura real veio dos 14 documentos do `book-vertentes`: **US$ 0,90**, com alvo de US$ 0,50.
@@ -56,10 +82,10 @@ escrita uma vez com um valor por coluna) e o `medir-custo-book.mjs` projeta:
 | `book-vertentes` (14 docs) | US$ 0,857 (fatura real: **0,90**) | **US$ 0,471** |
 | `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** |
 
-**Aberto e nomeado:** o livro razão do `book-canastra` (461 células de valor) projeta **109% do teto
-de saída** do gpt-4o mesmo agrupado — vai truncar, abrir pendência e ficar sem parte dos dados. A
-saída é extrair por faixa de página, e é fatia própria. O `medir-custo-book.mjs` avisa em toda
-execução do CI, nomeando o arquivo.
+~~**Aberto:** o livro razão projeta 109% do teto de saída mesmo agrupado.~~ **Fechado no mesmo dia
+pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum deles chega perto do teto. O
+`medir-custo-book.mjs` continua avisando, nomeando o arquivo, se algum documento voltar a passar de
+80% do teto numa chamada — a guarda fica de pé mesmo depois de a causa conhecida sumir.
 
 ## O que só o dono pode fazer
 
@@ -69,11 +95,10 @@ execução do CI, nomeando o arquivo.
    select proname from pg_proc
     where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
    ```
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou duas vezes em 13/08 (classificação em
-   `gpt-4o-mini`, peso da 2ª chamada no orçamento, versão carimbada na recusa, **saída agrupada** e o
-   nó novo `Resumo de Custo`), e a execução de 12/08 provou que o que está lá dentro ainda é de
-   julho. **Conferência de 5 segundos depois de importar:** o canvas tem 23 nós e o último se chama
-   `Resumo de Custo`; rodando, a saída dele traz `orcamento_versao: "v3 (2026-08-13)"`.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou três vezes em 13/08 (classificação em
+   `gpt-4o-mini`, saída agrupada, e as três camadas de cobertura). **Conferência de 5 segundos depois
+   de importar:** o canvas tem **26 nós**; procure `Extrair Texto`, `Fatiar Extracao`, `Juntar Blocos`
+   e, na ponta direita, `Resumo de Custo` — rodando, a saída dele traz a cobertura do lote.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
@@ -85,6 +110,13 @@ execução do CI, nomeando o arquivo.
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:
 
+- **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
+  blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
+  contagem de linhas determinística. Fatia própria.
+- **A entidade sai poluída com o período** — "Canastra Industria 2025x2024x2023" na rodada real, e é
+  o que gerou 15 das 22 pendências de revisão. Correção pequena em `parseEntidade`.
+- **Dedup por hash** (não pagar reextração do mesmo arquivo): a `0026` descreve o que falta —
+  *fingerprint* de prompt+modelo na versão e curto-circuito no grafo.
 - **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o
   gerador e o orçamento, não a ingestão sobre dado sujo. É a maior lacuna de cobertura viva.
 - **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma

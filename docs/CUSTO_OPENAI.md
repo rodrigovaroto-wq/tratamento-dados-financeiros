@@ -462,3 +462,87 @@ O nó **`Resumo de Custo`**, no fim da cadeia, devolve num painel só: custo rea
 extração e quanto foi classificação, o que o orçamento havia estimado, os tokens de entrada/saída/
 cache e — o número que recalibra tudo — **tokens de saída por linha extraída**. Antes isso existia um
 por documento no `Parse Extracao`, e saber o custo do lote exigia abrir 14 painéis e somar à mão.
+
+---
+
+## Adendo (2026-08-13, noite) — as três camadas contra o truncamento e a extração pela metade
+
+A rodada completa do `book-canastra` (35 documentos, 21 minutos, US$ 0,71) respondeu a pergunta de
+custo e abriu outra, maior: **das 2.893 células de valor dos PDFs, chegaram ao banco 1.139 — 39%.**
+
+> **Nota de método:** essa rodada ainda usava o workflow ANTIGO (formato plano, sem o `Resumo de
+> Custo` no canvas). Os 39% e os truncamentos são a **linha de base**, não efeito do agrupamento.
+
+Duas famílias, com causas e correções diferentes:
+
+| | O que aconteceu | Como falhou |
+|---|---|---|
+| **Truncamento** (5 documentos) | `01_Balanco_..._2025x2024x2023` tem 326 células = ~20.900 tokens de saída, contra o teto de **16.384 do gpt-4o**. Não cabia por construção. | **Alto**: `finish_reason=length` → `extracao_falhou` com a causa escrita. |
+| **Sub-extração** (o resto) | `17_Livro_Razao` devolveu **99 de 461** sem estourar teto nenhum. | **Em silêncio**: o sistema registrou sucesso. |
+
+Nenhum prompt conserta um teto físico, e nenhum modelo garante ler cada linha. A resposta são três
+camadas, e só as três juntas sustentam a promessa:
+
+### Camada 1 — saber o que o documento tem ANTES de chamar
+
+Nó `Extrair Texto` (`extractFromFile`, nativo), entre o teto de gasto e o `Preparar Conteudo`: lê a
+camada de texto do PDF na própria instância, sem IA e sem custo, e dela sai a contagem determinística
+de **linhas com número**. É o insumo das outras duas.
+
+`onError: continueRegularOutput` é o que torna a adição segura: PDF escaneado não tem camada de texto
+e o nó falha nele — o documento segue como imagem e as camadas 2 e 3 se calam para ele. **O pior caso
+desta mudança é o comportamento de ontem.**
+
+> **O texto NÃO substitui o PDF na chamada, e isso é decisão, não esquecimento.** Seria mais barato,
+> mas o texto de uma tabela perde o alinhamento das colunas — e foi justamente a leitura de coluna que
+> passou a funcionar (o balanço combinado saiu com as 8 colunas de empresa certas). **O texto serve
+> para MEDIR, não para LER.**
+
+### Camada 2 — fatiar: nunca fazer o pedido que não cabe
+
+`Fatiar Extracao` projeta a saída (~42 tokens por célula) e, quando ela passa de **60% do teto**,
+emite um item por bloco de no máximo **234 células**. Não é "tentar de novo quando falhar".
+
+O ponto fino é a **âncora**: o modelo continua vendo o PDF inteiro, então "extraia o bloco 2 de 3"
+seria pedir que ele adivinhe onde a faixa começa. Cada bloco carrega o **texto exato** da primeira e
+da última linha da faixa, lidos do PDF pelo extrator — vira instrução verificável em vez de proporção.
+A instrução vai na mensagem de *user*; o prompt de sistema fica idêntico, senão o cache de prefixo
+(alavanca 3) para de valer e o fatiamento pagaria o prompt duas vezes.
+
+No `book-canastra`: **38 documentos → 41 chamadas de extração**, 3 documentos fatiados.
+
+### Camada 3 — a guarda de cobertura
+
+`Juntar Blocos` remonta o documento (renumerando `ordem` no conjunto e limpando linha repetida **na
+emenda**, que é onde o modelo repete a âncora) e compara o que voltou com o que a camada 1 mediu.
+Abaixo de **60%**, escreve o motivo em `falha_motivo` — que `fn_registrar_campos_extraidos` já
+converte em pendência desde a `0016`. Sem migration: o caminho existia, faltava alguém **conferir**.
+
+O limiar é calibrado na rodada real e erra para o lado de avisar demais: documentos sadios ficaram em
+68%-90% (`02_DRE` 104/115, `22_Aging` 91/114, `06_Balanco` 74/109) e os incompletos em 21%-48%
+(`17_Livro_Razao` 99/461, `15_Balancete` 77/162). Uma pendência falsa custa uma olhada; um buraco não
+visto custa o mandato.
+
+**O que a camada 3 promete, com precisão:** ela não impede o modelo de pular uma linha. Impede que
+isso seja silencioso.
+
+### O que muda no grafo, e o que não muda
+
+`Montar Req Extracao` → **`Fatiar Extracao`** → `OpenAI Extrair` → `Parse Extracao` → **`Juntar
+Blocos`** → `Gravar Campos (Sombra)`. De `Gravar Campos` em diante **nada muda**: um item por
+documento, com `campos` e `falha_motivo`, exatamente como antes.
+
+### O custo sobe, e é para subir
+
+Extrair o que faltava custa tokens: mais saída, mais uma passagem do prompt de sistema por bloco. A
+projeção para o `book-canastra` sai de US$ 0,71 (com 39% do dado) para **~US$ 1,4 com o dado
+inteiro** — menos da metade do teto de US$ 3. É o que o agrupamento comprou: folga para pagar o dado
+que faltava.
+
+### O limite que fica declarado
+
+O `Orcamento do Lote` continua decidindo **antes** do `Extrair Texto`, então ele estima por bytes e
+não sabe quantos blocos o lote terá. Isso encolhe a margem dele (ele superestima ~50%, e agora as
+chamadas são mais). O conserto natural é mover o teto para depois da extração de texto — aí a
+estimativa deixa de ser por byte e passa a ser por linha contada, que é determinística. É fatia
+própria, e está no `ESTADO.md`.

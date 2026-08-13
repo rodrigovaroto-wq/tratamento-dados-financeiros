@@ -29,6 +29,8 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Upsert Caso ............. fn_upsert_caso(nome) → caso_id   [Postgres: NÃO repassa binário]
   → Listar Arquivos ......... fan-out: 1 item por arquivo (binário lido do FORM, chave 'data')
   → Classificar Nome ........ nome + regras → {tipo, período, assinado, confiança} [preserva binário]
+  → Extrair Texto ........... camada de texto do PDF, na instância (sem IA, sem custo)
+                              → conta as linhas com número: a régua do fatiamento e da cobertura
   → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
        │                      csv→texto, xlsx→nota [preserva binário]
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
@@ -37,12 +39,21 @@ Intake (Form: nome do mandato + upload de N arquivos)
              └─ não → direto
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
-        └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
+        └─ [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM no teto
+              de saída) → OpenAI Extrair → Parse → Juntar Blocos (N → 1 doc + guarda de
+              cobertura) → Gravar Campos (Sombra, N0)
               → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
                     → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
                           → Resumo de Custo ..... o custo REAL do lote, num painel só
 ```
 
+> **As três camadas contra o truncamento e a extração pela metade** (`n8n/lib/cobertura.mjs`):
+> `Extrair Texto` mede o documento antes de qualquer chamada; `Fatiar Extracao` garante que nenhum
+> pedido passe de 60% do teto de saída do modelo (16.384 tokens), com o TEXTO da primeira e da última
+> linha da faixa como âncora; `Juntar Blocos` remonta o documento e **abre pendência quando o que
+> voltou é muito menor que o que o documento tem**. O `Extrair Texto` tem `onError: continue` — PDF
+> escaneado (sem camada de texto) segue como imagem e as duas outras camadas se calam para ele.
+>
 > **`Resumo de Custo` é onde se lê quanto o lote custou.** Último nó do canvas, terminal: custo total,
 > quanto foi extração e quanto foi classificação, o que o `Orcamento do Lote` havia estimado, tokens de
 > entrada/saída/cache e **tokens de saída por linha extraída** (o número que recalibra o estimador).
@@ -69,9 +80,10 @@ como fato aceito.
 2. **Node HTTP Request substitui o item pela resposta da API** (perde json e binário). Por
    isso o `Upload Storage` é **ramo lateral** (nada consome a saída dele) e, após as chamadas
    OpenAI, o contexto volta por `$('Nome do Node').item`.
-3. **Modos dos nós Code:** quatro rodam "Run Once for All Items", cada um porque a pergunta dele é
+3. **Modos dos nós Code:** seis rodam "Run Once for All Items", cada um porque a pergunta dele é
    do LOTE e não do item — `Listar Arquivos` (fan-out, 1 item → N), `Orcamento do Lote` (só o lote
-   inteiro diz se ele cabe no teto), `Abortar Lote` e `Resumo de Custo` (quanto custou o lote). Os
+   inteiro diz se ele cabe no teto), `Abortar Lote`, `Fatiar Extracao` (1 documento → N blocos),
+   `Juntar Blocos` (N blocos → 1 documento) e `Resumo de Custo` (quanto custou o lote). Os
    demais são "Run Once for Each Item" (1:1; usam `$input.item`; retornam **objeto único**
    `{json,...}` — array nesse modo dá o erro `A 'json' property isn't an object`). Um teste em
    `workflow-sim.test.mjs` reprova quem puser um nó no modo errado, com a lista das exceções.

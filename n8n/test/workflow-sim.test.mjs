@@ -573,7 +573,11 @@ test('Topologia: o teto de gasto fica entre a classificação por nome e o conte
   // chegar ao portal — lançando ali mesmo, a mensagem ficava só no log do n8n e
   // a tela seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  // E entre o IF e o preparo entrou o `Extrair Texto`: ler a camada de texto do
+  // PDF na própria instância é grátis, mas mesmo assim fica DEPOIS do teto de
+  // gasto — o lote recusado não abre arquivo nenhum.
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Extrair Texto']);
+  assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Preparar Conteudo']);
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
   // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
   // o portal sem a causa, que é exatamente o defeito que este ramo corrige.
@@ -599,7 +603,11 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
       // uma decisão que por definição não existe olhando um item por vez; e
       // `Resumo de Custo` responde "quanto custou ESTE LOTE", que é a mesma
       // classe de pergunta na outra ponta da cadeia.
-      if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo'].includes(n.name)) {
+      // `Fatiar Extracao` e `Juntar Blocos` são as duas pontas do fatiamento: um
+      // documento vira N chamadas e N respostas voltam a ser um documento. Nenhum
+      // dos dois é 1:1 por definição.
+      if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo',
+        'Fatiar Extracao', 'Juntar Blocos'].includes(n.name)) {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -1011,8 +1019,8 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   // classificação ao documento errado, que num relatório de custo é pior que
   // não ter relatório.
   const extracoes = [
-    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null } },
-    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou' } },
+    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null, celulas_no_documento: 100, blocos: 1 } },
+    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou', celulas_no_documento: 200, blocos: 3 } },
     // Documento sem `usage`: conta como SEM MEDIÇÃO, nunca como custo zero.
     { json: { custo_usd: null, tokens: null, campos: [], falha_motivo: null } },
   ];
@@ -1020,6 +1028,10 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   const out = await run('Resumo de Custo', {
     items: extracoes,
     refs: {
+      // Desde o fatiamento o resumo lê o `Juntar Blocos` (um item por DOCUMENTO)
+      // e não o `Parse Extracao` (um item por BLOCO) — contar blocos como
+      // documentos diria "48 documentos" para um lote de 35.
+      'Juntar Blocos': extracoes,
       'Parse Extracao': extracoes,
       'Parse OpenAI Classif': classificacoes,
       'Orcamento do Lote': { json: { orcamento_estimado_usd: 0.42, orcamento_versao: 'v3 (2026-08-13)' } },
@@ -1036,6 +1048,11 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   assert.equal(r.tokens_saida_por_linha, 66.7);
   assert.equal(r.documentos_com_falha, 1);
   assert.equal(r.documentos_sem_medicao, 1, 'sem usage é sem medição, nunca custo zero');
+  // A cobertura do LOTE no mesmo painel: é a resposta para "o custo caiu porque
+  // ficou eficiente ou porque deixou de extrair?".
+  assert.equal(r.celulas_nos_documentos, 300);
+  assert.equal(r.cobertura_do_lote, 0.4);
+  assert.equal(r.documentos_fatiados, 1);
   assert.equal(r.custo_estimado_usd, 0.42, 'o estimado vem junto: é a única forma de calibrar');
   assert.match(r.resumo, /Custo REAL deste lote: US\$ 0\.1016 em 3 documento\(s\)/);
 });
@@ -1054,6 +1071,163 @@ test('Resumo de Custo é TERMINAL e não derruba o lote que ele resume', async (
   const r = Array.isArray(out) ? out[0].json : out.json;
   assert.equal(r.custo_total_usd, 0);
   assert.equal(r.custo_estimado_usd, null);
+});
+
+// ---------------------------------------------------------------------------
+// AS TRÊS CAMADAS CONTRA O TRUNCAMENTO E A EXTRAÇÃO PELA METADE (13/08/2026)
+// ---------------------------------------------------------------------------
+
+test('Camada 1: Extrair Texto é NATIVO, roda depois do teto de gasto e não derruba o lote', () => {
+  const n = wf.nodes.find((x) => x.name === 'Extrair Texto');
+  assert.ok(n, 'o nó não existe');
+  assert.equal(n.type, 'n8n-nodes-base.extractFromFile');
+  assert.equal(n.parameters.operation, 'pdf');
+  assert.equal(n.parameters.binaryPropertyName, 'data');
+  // PDF escaneado não tem camada de texto e este nó falha nele. `continue` é o
+  // que faz o pior caso desta adição ser "o comportamento de ontem" em vez de
+  // "lote perdido".
+  assert.equal(n.onError, 'continueRegularOutput');
+});
+
+test('Camada 1: Preparar Conteudo MEDE o documento, e ausência de texto vira null (nunca zero)', async () => {
+  const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+  const classificado = await run('Classificar Nome', { item: lote[0], refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
+  const texto = ['CNPJ 44.555.667/0001-59', 'ATIVO', 'Caixa   380', 'Duplicatas   22.310'].join('\n');
+  // É assim que o item chega do `Extrair Texto`: o texto do PDF entra no json.
+  const comTexto = await run('Preparar Conteudo', {
+    item: { json: { ...classificado.json, text: texto }, binary: classificado.binary },
+    refs: REFS_BASE, itemIndex: 0, binaryStore: lote,
+  });
+  assert.equal(comTexto.json.celulas_no_documento, 3);
+  assert.equal(comTexto.json.linhas_do_texto.length, 3);
+  // O texto NÃO segue adiante: ele já virou medida e âncora, e carregar o
+  // documento inteiro por todo o grafo incharia cada item sem ninguém ler.
+  assert.equal(comTexto.json.text, undefined);
+
+  // Sem camada de texto (escaneado): `null` significa "não sei", e é o que
+  // desliga as camadas 2 e 3 para este documento — tratar como zero as ligaria
+  // com régua inventada justamente no documento onde o modelo mais erra.
+  const semTexto = await run('Preparar Conteudo', {
+    item: classificado, refs: REFS_BASE, itemIndex: 0, binaryStore: lote,
+  });
+  assert.equal(semTexto.json.celulas_no_documento, null);
+  assert.equal(semTexto.json.linhas_do_texto, null);
+  // E o conteúdo continua indo como ARQUIVO: o texto serve para medir, não para
+  // ler. Mandá-lo no lugar do PDF perderia o alinhamento das colunas, que é
+  // justamente o que passou a funcionar (8 colunas de empresa no combinado).
+  assert.equal(comTexto.json.content_part.type, 'file');
+});
+
+test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intacto', async () => {
+  const grande = {
+    json: {
+      documento_versao_id: 'ver-grande', aviso_conteudo: null, celulas_no_documento: 461,
+      linhas_do_texto: Array.from({ length: 461 }, (_, i) => `PAGTO ${i}  ${1000 + i},00`),
+      openai_body: { model: 'gpt-4o', messages: [
+        { role: 'system', content: 'PROMPT DE SISTEMA' },
+        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: razao.pdf.' }, { type: 'file' }] },
+      ] },
+    },
+  };
+  const pequeno = {
+    json: {
+      documento_versao_id: 'ver-pequeno', aviso_conteudo: null, celulas_no_documento: 30,
+      linhas_do_texto: Array.from({ length: 30 }, (_, i) => `conta ${i}  ${i}`),
+      openai_body: { model: 'gpt-4o', messages: [
+        { role: 'system', content: 'PROMPT DE SISTEMA' },
+        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: dre.pdf.' }, { type: 'file' }] },
+      ] },
+    },
+  };
+  const out = await run('Fatiar Extracao', { items: [grande, pequeno] });
+  const doGrande = out.filter((i) => i.json.documento_versao_id === 'ver-grande');
+  const doPequeno = out.filter((i) => i.json.documento_versao_id === 'ver-pequeno');
+  assert.ok(doGrande.length >= 2, 'o documento que não cabe tem de virar mais de uma chamada');
+  assert.equal(doPequeno.length, 1, 'o que cabe continua sendo UMA chamada');
+
+  // A instrução da faixa vai na mensagem de USER. O prompt de SISTEMA tem de
+  // ficar idêntico em toda chamada, senão o cache de prefixo da OpenAI para de
+  // valer e o fatiamento fica pagando o dobro pelo prompt (docs/CUSTO_OPENAI.md).
+  for (const i of out) {
+    assert.equal(i.json.openai_body.messages[0].content, 'PROMPT DE SISTEMA');
+  }
+  assert.match(doGrande[0].json.openai_body.messages[1].content[0].text, /BLOCO 1 DE/);
+  assert.ok(doGrande[0].json.openai_body.messages[1].content[0].text.includes('PAGTO 0'),
+    'a âncora de início é o TEXTO da linha, que o modelo consegue localizar no PDF');
+  // O documento pequeno não ganha instrução nenhuma: a requisição dele fica
+  // igual à de antes do fatiamento existir.
+  assert.equal(doPequeno[0].json.openai_body.messages[1].content[0].text, 'Nome do arquivo: dre.pdf.');
+  // E o texto do documento fica para trás — ele já virou âncora.
+  assert.equal(doGrande[0].json.linhas_do_texto, undefined);
+  assert.equal(doGrande[0].json.celulas_no_documento, 461, 'a régua da camada 3 segue viajando');
+});
+
+test('Camada 2: documento SEM medida (escaneado) vai inteiro, nunca fatiado às cegas', async () => {
+  const out = await run('Fatiar Extracao', { items: [{ json: {
+    documento_versao_id: 'ver-escaneado', celulas_no_documento: null, linhas_do_texto: null,
+    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+  } }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].json.blocos, 1);
+  // Sem âncora, "bloco 2 de 3" seria um pedido para o modelo adivinhar onde a
+  // faixa começa — e adivinhar faixa é como se perde linha em silêncio.
+  assert.equal(out[0].json.openai_body.messages[1].content[0].text, 'x');
+});
+
+test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta dado', async () => {
+  const linha = (k, v) => ({ ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null });
+  const out = await run('Juntar Blocos', { items: [
+    { json: { documento_versao_id: 'ver-1', bloco: 1, blocos: 2, celulas_no_documento: 461,
+      campos: [linha('A', 1), linha('B', 2)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
+      custo_usd: 0.03, tokens: { entrada: 10, saida: 20, cache: 5 } } },
+    { json: { documento_versao_id: 'ver-1', bloco: 2, blocos: 2, celulas_no_documento: 461,
+      campos: [linha('B', 2), linha('C', 3)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
+      custo_usd: 0.02, tokens: { entrada: 5, saida: 10, cache: 5 } } },
+    { json: { documento_versao_id: 'ver-2', bloco: 1, blocos: 1, celulas_no_documento: 115,
+      campos: Array.from({ length: 104 }, (_, i) => linha(`k${i}`, i)), diagnostico: { entidade: 'X' },
+      falha_motivo: null, custo_usd: 0.05, tokens: { entrada: 1, saida: 2, cache: 0 } } },
+  ] });
+  assert.equal(out.length, 2, 'volta UM item por documento — daqui para a frente o grafo é o de sempre');
+
+  const doc1 = out.find((i) => i.json.documento_versao_id === 'ver-1').json;
+  // A linha repetida na emenda (o modelo repetiu a âncora) some; o resto fica.
+  assert.deepEqual(doc1.campos.map((c) => c.chave), ['A', 'B', 'C']);
+  assert.deepEqual(doc1.campos.map((c) => c.ordem), [0, 1, 2], 'ordem renumerada no conjunto');
+  // 3 de 461 — a guarda de cobertura tem de falar.
+  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 linha\(s\).*461/);
+  assert.match(doc1.falha_motivo, /repetida\(s\) na emenda/);
+  assert.equal(doc1.cobertura, 0.007);
+  // O custo dos blocos SOMA: um documento fatiado custou o que os pedaços dele
+  // custaram, e o `Resumo de Custo` lê daqui.
+  assert.equal(doc1.custo_usd, 0.05);
+  assert.deepEqual(doc1.tokens, { entrada: 15, saida: 30, cache: 10 });
+
+  // 104 de 115 é documento sadio: nada de pendência. Uma guarda que grita em
+  // toda extração é uma guarda que ninguém lê.
+  const doc2 = out.find((i) => i.json.documento_versao_id === 'ver-2').json;
+  assert.equal(doc2.falha_motivo, null);
+  assert.equal(doc2.campos.length, 104);
+});
+
+test('Camada 3: sem régua (escaneado) a guarda se CALA, em vez de absolver ou acusar', async () => {
+  const out = await run('Juntar Blocos', { items: [{ json: {
+    documento_versao_id: 'ver-3', bloco: 1, blocos: 1, celulas_no_documento: null,
+    campos: [{ ordem: 0, chave: 'A' }], diagnostico: {}, falha_motivo: null,
+  } }] });
+  assert.equal(out[0].json.falha_motivo, null);
+  assert.equal(out[0].json.cobertura, null);
+});
+
+test('Topologia das três camadas: fan-out e volta, com o resto do grafo intacto', () => {
+  assert.deepEqual(wf.connections['Montar Req Extracao'].main[0].map((c) => c.node), ['Fatiar Extracao']);
+  assert.deepEqual(wf.connections['Fatiar Extracao'].main[0].map((c) => c.node), ['OpenAI Extrair']);
+  assert.deepEqual(wf.connections['Parse Extracao'].main[0].map((c) => c.node), ['Juntar Blocos']);
+  // O ponto do desenho: de `Gravar Campos` em diante nada muda. O contrato do
+  // banco (um item por documento, com `campos` e `falha_motivo`) é o mesmo.
+  assert.deepEqual(wf.connections['Juntar Blocos'].main[0].map((c) => c.node), ['Gravar Campos (Sombra)']);
+  const gravar = wf.nodes.find((n) => n.name === 'Gravar Campos (Sombra)');
+  assert.match(gravar.parameters.options.queryReplacement, /\$json\.documento_versao_id/);
+  assert.match(gravar.parameters.options.queryReplacement, /\$json\.falha_motivo/);
 });
 
 // --- Anti-drift: todo nó Code declara o que faz quando UM item falha ----------
