@@ -125,6 +125,17 @@ estão com assinatura divergente (aplicações parciais/repetidas das migrations
 **Nodes com sufixo `1` no nome (`Upsert Caso (Postgres)1`):** o workflow foi importado/colado
 por cima de outro. As referências `$('Nome')` quebram. Apagar o antigo e reimportar limpo.
 
+**"Corrigimos isso, mas o erro é o mesmo" — como saber se o workflow importado é o do repositório.**
+Aconteceu em 12/08/2026: o lote foi recusado com uma mensagem que o código em `main` não produzia
+havia cinco dias, e a hipótese "o n8n está com a versão velha" ficou uma rodada inteira sem prova. A
+partir da v3 do orçamento (13/08/2026) dá para ler da tela, em dois lugares:
+
+- a mensagem de recusa começa com **`[orçamento v3 (2026-08-13)]`**;
+- a saída do nó `Orcamento do Lote` traz **`orcamento_versao`** mesmo quando o lote PASSA.
+
+Se a versão não aparecer, o workflow importado é anterior a 13/08 — reimportar. **Merge no
+repositório não reimporta nada**, e da tela código novo e código velho recusam igual.
+
 **Erro `access to env vars denied` (num node Code ou expressão):** o N8N bloqueia `$env` por
 padrão (`N8N_BLOCK_ENV_ACCESS_IN_NODE`). O workflow atual **não usa `$env`** — se esse erro
 aparecer, é versão antiga: reimportar, ou trocar manualmente `($env.OPENAI_MODEL||'gpt-4o')` →

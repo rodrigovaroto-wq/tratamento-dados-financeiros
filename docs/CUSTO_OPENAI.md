@@ -77,9 +77,10 @@ modelo** — é a tarefa que exige julgamento contábil linha a linha.
 - **Rede de segurança que torna isso seguro:** se a classificação errar, o `diagnostico` da extração
   (que segue no modelo forte) confere tipo/entidade/período e **abre pendência** na fila de revisão;
   confiança baixa também cai na fila. Ou seja: erro de classificação é detectado, não silencioso.
-- **Já preparado:** `MODEL_CLASSIFICACAO` e `MODEL_EXTRACAO` são constantes no topo de
-  `n8n/build-workflow.mjs`. Trocar é **uma linha** + `node build-workflow.mjs`. Deixei as duas em
-  `gpt-4o` de propósito — a decisão de qualidade é sua.
+- **FEITO em 13/08/2026** (ver o adendo do fim). `MODELO_CLASSIFICACAO` e `MODELO_EXTRACAO` moram em
+  `n8n/lib/custo.mjs` (mudaram de `build-workflow.mjs` quando o orçamento passou a precisar do preço
+  delas). Hoje: classificação em `gpt-4o-mini`, extração em `gpt-4o`. Trocar é uma linha +
+  `node n8n/build-workflow.mjs` — e um teste reprova quem apontar a EXTRAÇÃO para o modelo barato.
 - **Como testar sem gastar:** rode o **kit de PDFs sintéticos** (9 arquivos pequenos) com a
   classificação em mini e confira se tipo/entidade/período saem certos. Custa centavos.
 
@@ -98,8 +99,9 @@ guarda de baixa confiança; `op` (página) é proveniência. Cortar qualquer um 
 
 ## Recomendação prática
 
-1. **Agora, sem risco:** rode o kit sintético com `MODEL_CLASSIFICACAO = 'gpt-4o-mini'` e compare.
-   Se o tipo/entidade/período saírem certos, é economia direta em todo documento mal nomeado.
+1. ~~**Agora, sem risco:** rode o kit sintético com `MODEL_CLASSIFICACAO = 'gpt-4o-mini'` e compare.~~
+   **Feito em 13/08/2026.** O que falta é a conferência ao vivo: rodar o kit sintético e ver se
+   tipo/entidade/período continuam saindo certos com o modelo barato.
 2. **Próxima fatia (maior ganho):** PDF como texto + `.docx`/`.xlsx` via *Extract From File* —
    corta a maior parte do input **e** fecha o gap crítico de formato. Precisa de você ao vivo no N8N.
 3. **Depois:** dedup por hash (não pagar reprocessamento) e, por último, fundir a classificação na
@@ -299,8 +301,77 @@ taxonomia não tem: imobilizado, folha e parecer de auditoria), 13 porque o nome
 corta 19 chamadas — e **ainda assim o lote não cabe**: 38 × US$ 0,20 = US$ 7,60. Com kit de mandato
 completo, dividir em levas não é contorno de nome mal escolhido, é a operação normal.
 
-**E a medição achou um defeito que não é de custo:** o arquivo `17_Livro_Razao_Fornecedores_...`
+**A medição achou um defeito que não é de custo:** o arquivo `17_Livro_Razao_Fornecedores_...`
 saía classificado como `AGING_AP` com confiança 0,90 — alta o bastante para pular a verificação da IA
 e mandar um livro contábil para a aba de contas a pagar. A causa era a ordem de `ALIASES`:
 `fornecedores` (uma palavra, genérica) era testado antes de `livro razao`. Corrigido, com teste que
 reprova religado. O defeito só apareceu porque um book passou a ter razão **e** aging no mesmo lote.
+
+---
+
+## Adendo (2026-08-13) — a redução pedida pelo dono, e a recusa que era de outro workflow
+
+**O que o dono relatou:** reexecutou o lote de 35 documentos depois das correções da sessão 42 e
+recebeu *"51 chamadas ≈ US$ 7,65, acima do teto de US$ 3"* — a mesma recusa de antes. Pedido:
+**reduzir o custo por chamada, para que o lote de 35 não passe de US$ 3.**
+
+### Primeiro, o que aquela tela estava dizendo
+
+Duas coisas que a mensagem não deixava claras e que mudam o diagnóstico:
+
+1. **Não é limite de crédito da OpenAI.** Nada foi enviado e nada foi gasto: quem recusou foi o nó
+   `Orcamento do Lote`, que decide **antes** da primeira chamada. O saldo da conta não foi tocado.
+2. **Aquela recusa não podia ter saído do código deste repositório.** US$ 7,65 ÷ 51 chamadas =
+   **US$ 0,15 por chamada** — a constante que vigorou até 07/08/2026. A versão em `main` desde a
+   sessão 42 estima **por tamanho de arquivo** e nem cita "US$ 0,15". Ou seja: o n8n estava
+   executando o **JSON importado em julho**. Merge não reimporta workflow, e da tela as duas
+   versões têm exatamente a mesma aparência — as duas recusam.
+
+Por isso a primeira mudança desta rodada não é de custo, é de **legibilidade**: a mensagem de recusa
+agora começa com `[orçamento v3 (2026-08-13)]`, e `orcamento_versao` viaja com o item **mesmo quando
+o lote passa**. "O workflow importado está velho" deixou de ser hipótese e virou leitura.
+
+### As duas reduções REAIS, com o número de cada uma
+
+| Alavanca | O que muda | Efeito no book (38 docs) |
+|---|---|---|
+| **Classificação em `gpt-4o-mini`** | a 2ª chamada (só nos documentos mal nomeados) sai de US$ 2,50/M de entrada para US$ 0,15/M | custo medido **US$ 1,41 → US$ 1,33** (−6%); a parte de classificação, **US$ 0,0893 → US$ 0,0054** (−94%) |
+| **A 2ª chamada deixa de ser cobrada como se fosse extração** | o orçamento pesava "2 chamadas = 2× o custo"; medido, a classificação é ~13% de uma extração (mesma entrada, saída de 120 tokens contra centenas de linhas) | estimativa do guarda **US$ 2,46 → US$ 1,88** (−24%) |
+
+É a recomendação nº 1 deste documento ("agora, sem risco") finalmente acionada, mais a correção da
+última superestimação que restava no guarda. **A extração continua em `gpt-4o` e não deve mudar**: a
+classificação tem rede — o `diagnostico` da própria extração confere tipo/entidade/período e abre
+pendência quando diverge —, a extração não tem nada depois dela. Um teste trava as duas pontas.
+
+### O desconto vale só onde há medição
+
+O peso reduzido da 2ª chamada se aplica **apenas quando o tamanho dos arquivos chega ao nó**. Sem
+tamanho, o guarda continua contando chamada cheia a US$ 0,20. O motivo é de evidência: a estimativa
+plana é o caminho de "não sei nada sobre estes arquivos", e a única calibração que ela tem é um
+incidente de dinheiro de verdade (o v31, que estourou o teto de US$ 5 da OpenAI no meio do lote).
+Descontar ali com base numa proporção medida em PDF sintético seria trocar a evidência cara pela
+barata. Um teste trava isso nos dois sentidos.
+
+### Onde o lote de 35 fica agora
+
+```
+custo REAL medido (38 documentos, 57 chamadas)   US$ 1,33   ← era 1,41
+estimativa do guarda, por tamanho                US$ 1,88   ← era 2,46 (teto: 3,00)
+lote homogêneo denso (35× o livro razão)         US$ 3,80   → continua RECUSADO (custaria 6,04)
+```
+
+A margem contra o teto saiu de 18% para **37%**, e o caso caro continua barrado — que é a única
+forma de o teto significar alguma coisa.
+
+### O que ainda NÃO foi feito, e continua sendo a maior alavanca
+
+**A saída responde por ~75% da conta.** Nenhuma das duas mudanças acima toca nela. As opções que
+sobram, todas com trade-off que só o dono decide:
+
+- **Não fazer a chamada de classificação** (usar o `diagnostico` da extração como classificação) —
+  economia inteira dos US$ 0,0054, hoje irrelevante depois do mini. Deixou de valer o risco de
+  topologia.
+- **Menos linhas por documento**: extrair só as seções que o modelo usa. É corte de escopo do
+  produto, não de custo — muda o que o book entrega.
+- **PDF como texto**: 5% neste book (medido), não os 60-80% que a seção 1 prometia. Continua valendo
+  pelo `.docx`/`.xlsx` e pela precisão, não pela economia.

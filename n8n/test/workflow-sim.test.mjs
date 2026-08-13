@@ -14,7 +14,7 @@ import { codigosConhecidos } from '../lib/openai.mjs';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
-import { orcamentoDoLote } from '../lib/custo.mjs';
+import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO } from '../lib/custo.mjs';
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -185,7 +185,13 @@ test('Upload Storage: desabilitado (bug de plataforma do HTTP Request + binário
 test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pelo contexto', async () => {
   const { preparado } = await chainFile(0);
   const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
-  assert.equal(req.json.openai_body.model, 'gpt-4o');
+  // O modelo vem da FONTE (`lib/custo.mjs`), não de um literal repetido aqui: um
+  // teste que espelha o valor à mão passa a reprovar a mudança em vez de conferir
+  // a ligação, e foi o que aconteceu quando a classificação virou `gpt-4o-mini`.
+  // O que este assert trava de verdade é que o nó usa o modelo de CLASSIFICAÇÃO,
+  // não o de extração — trocar os dois é o erro caro, e ele é invisível a olho.
+  assert.equal(req.json.openai_body.model, MODELO_CLASSIFICACAO);
+  assert.notEqual(MODELO_CLASSIFICACAO, undefined);
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'), 'conteúdo do arquivo vai na chamada');
 
   // O N8N substitui o item pela resposta da OpenAI:
@@ -798,6 +804,75 @@ test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobre
 test('Orcamento do Lote carrega o MESMO orcamentoDoLote de lib/custo.mjs', () => {
   assert.ok(code('Orcamento do Lote').includes(orcamentoDoLote.toString()),
     'o orçamento embutido no nó divergiu da fonte em lib/custo.mjs');
+});
+
+// O nó Code do n8n não importa arquivo: tudo o que a função referencia tem de
+// estar DECLARADO dentro do nó. `orcamentoDoLote` passou a chamar
+// `pesoDaChamadaDeClassificacao`, que lê a tabela de preço e os dois modelos —
+// esquecer qualquer uma dessas declarações não quebra teste nenhum aqui, quebra
+// a PRIMEIRA execução real, com ReferenceError e o lote inteiro perdido.
+test('Orcamento do Lote declara tudo o que o corpo do orçamento referencia', () => {
+  const c = code('Orcamento do Lote');
+  for (const nome of ['PRECO_USD_POR_MILHAO', 'MODELO_CLASSIFICACAO', 'MODELO_EXTRACAO',
+    'PARCELA_ENTRADA_NA_CHAMADA', 'PESO_MINIMO_CLASSIFICACAO', 'VERSAO_ORCAMENTO',
+    'pesoDaChamadaDeClassificacao', 'TETO_EXECUCAO_USD', 'CUSTO_POR_MB_USD',
+    'CUSTO_MINIMO_CHAMADA_USD', 'BYTES_POR_MB']) {
+    assert.ok(new RegExp(`const ${nome}\\s*=`).test(c), `${nome} não está declarado no nó`);
+  }
+  // E o nó tem de RODAR de verdade — a conferência acima é textual, esta não.
+  // Só o preâmbulo (tudo antes de `$input`, que não existe fora do n8n) e uma
+  // chamada de verdade em cima dele.
+  const preambulo = c.slice(0, c.indexOf('const itens = $input'));
+  const r = new Function(`${preambulo}\nreturn orcamentoDoLote({documentos: 2, chamadasPorDocumento: 2, bytes: 2048});`)();
+  assert.equal(r.versao, VERSAO_ORCAMENTO, 'o nó decide com a MESMA versão da fonte');
+  assert.ok(r.fatorCusto < 2, 'a 2ª chamada pesa menos que a 1ª dentro do nó, não só na lib');
+});
+
+// A VERSÃO NA MENSAGEM. Em 12/08/2026 o dono reexecutou o lote depois da
+// correção e recebeu a recusa ANTIGA, palavra por palavra — porque o n8n roda o
+// JSON importado, e o merge no repositório não reimporta nada. Da tela, código
+// novo e código velho recusam igual. Com a versão na mensagem e no item, "o
+// workflow importado é velho" deixa de ser hipótese e vira leitura.
+test('a recusa do orçamento CARIMBA a versão — é como se vê que o n8n está com o workflow velho', () => {
+  const r = orcamentoDoLote({ documentos: 400, chamadasPorDocumento: 1, bytes: 400 * 1024 * 1024 });
+  assert.equal(r.cabe, false);
+  assert.ok(r.mensagem.startsWith(`[orçamento ${VERSAO_ORCAMENTO}]`), r.mensagem);
+  assert.ok(code('Orcamento do Lote').includes('orcamento_versao: r.versao'),
+    'a versão tem de viajar com o item também quando o lote PASSA');
+});
+
+// A extração é a tarefa sem rede: se ela errar, ninguém confere depois. A
+// classificação tem rede (o `diagnostico` da própria extração confere
+// tipo/entidade/período e abre pendência). É essa assimetria que autoriza o
+// modelo barato de um lado e proíbe do outro — e é ela que este teste trava.
+test('a extração roda no modelo forte; só a classificação pode baratear', () => {
+  assert.equal(MODELO_EXTRACAO, 'gpt-4o');
+  assert.ok(code('Montar Req Extracao').includes(`model:'${MODELO_EXTRACAO}'`));
+  assert.ok(code('Montar Req Classif').includes(`model:'${MODELO_CLASSIFICACAO}'`));
+});
+
+test('Parse OpenAI Classif mede o custo da SEGUNDA chamada (a metade da conta que ninguém olhava)', async () => {
+  const { preparado } = await chainFile(0);
+  const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
+  const resp = { json: {
+    choices: [{ message: { content: JSON.stringify({
+      tipo_taxonomia: 'BALANCO', entidade: 'Empresa X Ltda', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', assinado: true, confianca: 0.91, justificativa: 'cabeçalho',
+    }) } }],
+    usage: { prompt_tokens: 10_000, completion_tokens: 120 },
+  } };
+  const ok = await run('Parse OpenAI Classif', { item: resp, refs: { 'Montar Req Classif': req } });
+  // gpt-4o-mini: 10k × 0,15/M + 120 × 0,60/M = 0,001572. No gpt-4o seriam
+  // 0,026200 — 17× mais, e é a economia inteira desta rodada em um número.
+  assert.equal(ok.json.custo_classificacao_usd, 0.001572);
+
+  // E o caminho da FALHA também declara o custo: a chamada que voltou sem
+  // conteúdo depois de consumir tokens foi paga do mesmo jeito.
+  const falha = await run('Parse OpenAI Classif', {
+    item: { json: { error: { message: 'timeout' }, usage: { prompt_tokens: 10_000, completion_tokens: 0 } } },
+    refs: { 'Montar Req Classif': req },
+  });
+  assert.equal(falha.json.custo_classificacao_usd, 0.0015);
 });
 
 test('Parse Extracao mede o custo real da chamada a partir do usage', async () => {

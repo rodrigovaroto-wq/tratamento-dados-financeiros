@@ -24,7 +24,7 @@ import { codigosConhecidos } from './lib/openai.mjs';
 import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO } from './lib/custo.mjs';
+import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,17 +48,16 @@ const PERIODO_TIPO_ENUM = JSON.stringify(['anual', 'trimestre', 'multi', 'data-b
 // e serializar preserva ela.
 const ALIASES_JSON = JSON.stringify(ALIASES);
 
-// Modelos das DUAS chamadas, num lugar só (antes 'gpt-4o' estava hardcoded em
-// cada nó). A classificação por CONTEÚDO é a tarefa mais leve do pipeline (só
-// escolhe um código de um enum + entidade/período) e só roda quando o nome do
-// arquivo não dá confiança >= 0.7; a extração linha a linha é a tarefa pesada.
-// Separar os dois permite trocar SÓ a classificação por um modelo mais barato
-// (ex.: 'gpt-4o-mini') sem tocar na extração — a troca é uma linha aqui +
-// `node build-workflow.mjs`. Ver docs/CUSTO_OPENAI.md antes de mudar: a
-// classificação tem rede de segurança (o diagnóstico da extração confere
-// tipo/entidade/período e abre pendência quando diverge), a extração NÃO tem.
-const MODEL_CLASSIFICACAO = 'gpt-4o';
-const MODEL_EXTRACAO = 'gpt-4o';
+// Modelos das DUAS chamadas. Eles MORAVAM aqui e passaram a morar em
+// `lib/custo.mjs` (13/08/2026), porque o orçamento do lote passou a precisar do
+// preço da classificação para pesar a segunda chamada — e preço derivado de um
+// modelo declarado noutro arquivo é a cópia à mão que este repositório já viu
+// divergir. Aqui ficam só os apelidos, para os nós não mudarem de forma.
+//
+// Hoje: classificação em `gpt-4o-mini`, extração em `gpt-4o`. O porquê (e a rede
+// que torna isso seguro) está no comentário da fonte e em docs/CUSTO_OPENAI.md.
+const MODEL_CLASSIFICACAO = MODELO_CLASSIFICACAO;
+const MODEL_EXTRACAO = MODELO_EXTRACAO;
 
 // Schemas estritos (mesma forma dos módulos lib/openai.mjs e lib/extract.mjs).
 const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
@@ -116,6 +115,17 @@ const FONTE_ORCAMENTO_LOTE = [
   `const CUSTO_POR_MB_USD = ${CUSTO_POR_MB_USD};`,
   `const CUSTO_MINIMO_CHAMADA_USD = ${CUSTO_MINIMO_CHAMADA_USD};`,
   `const BYTES_POR_MB = 1024 * 1024;`,
+  // O peso da segunda chamada entrou no corpo de `orcamentoDoLote` (via
+  // parâmetro com valor padrão), então a função e as CINCO constantes que ela
+  // usa têm de vir junto — `toString()` não leva o escopo do módulo, e sem elas
+  // o nó quebraria com ReferenceError na primeira execução.
+  `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};`,
+  `const MODELO_CLASSIFICACAO = ${JSON.stringify(MODELO_CLASSIFICACAO)};`,
+  `const MODELO_EXTRACAO = ${JSON.stringify(MODELO_EXTRACAO)};`,
+  `const PARCELA_ENTRADA_NA_CHAMADA = ${PARCELA_ENTRADA_NA_CHAMADA};`,
+  `const PESO_MINIMO_CLASSIFICACAO = ${PESO_MINIMO_CLASSIFICACAO};`,
+  `const VERSAO_ORCAMENTO = ${JSON.stringify(VERSAO_ORCAMENTO)};`,
+  `const pesoDaChamadaDeClassificacao = ${pesoDaChamadaDeClassificacao.toString()};`,
   `const orcamentoDoLote = ${orcamentoDoLote.toString()};`,
 ].join('\n');
 const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
@@ -161,7 +171,11 @@ const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: cham
 // sempre. Agora o item segue marcado, o IF manda a recusa para o nó que a GRAVA
 // no banco, e só depois o lote é abortado. Nada foi enviado à OpenAI em nenhum
 // dos caminhos: a decisão continua sendo antes de gastar.
-return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas }, binary: i.binary }));
+//
+// \`orcamento_versao\` viaja com o item mesmo quando o lote PASSA. É o que
+// responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
+// workflow é o que está no repositório ou é o que foi importado em julho?".
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
@@ -307,8 +321,15 @@ return {json:{...item, openai_body: body}};
 // item). Remove os campos pesados (openai_body/content_part) do que segue.
 // Espelha n8n/lib/merge.mjs: fica com a MAIOR confiança entre nome-do-arquivo
 // e IA (não sobrescreve cegamente); entidade/assinado da IA sempre aproveitados.
+// E ele passou a MEDIR o custo desta chamada (13/08/2026). Até aqui só a
+// extração media o seu — a classificação era a metade da conta que ninguém
+// olhava, e é exatamente a metade cujo preço acabou de mudar (gpt-4o →
+// gpt-4o-mini). Sem `custo_classificacao_usd` na saída do nó, a economia
+// prometida por este repositório seria verificável só na fatura da OpenAI, no
+// fim do mês, misturada com todo o resto.
 const CODE_PARSE_CLASSIF = `
 ${FONTE_DIAGNOSTICO_ERRO}
+${FONTE_CUSTO_CHAMADA}
 function mergeClassification(fromName, fromAI){
   const nameHasTipo=!!fromName.tipo_taxonomia, aiHasTipo=!!fromAI.tipo_taxonomia;
   let winner;
@@ -332,6 +353,11 @@ const {openai_body, content_part, content_mime, ...item}=src;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
 const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
+// Custo REAL desta chamada, pelo mesmo \`custoDaChamada\` da extracao e pelo
+// modelo que ESTE no' pediu. Vai em TODOS os caminhos de saida: a chamada que
+// falhou depois de consumir tokens tambem foi paga, e um custo que so' aparece
+// no caminho feliz e' um custo subdeclarado.
+const custo_classificacao_usd=custoDaChamada(resp?.usage, '${MODEL_CLASSIFICACAO}');
 if(!content){
   // A classificação DEGRADA para o nome do arquivo quando a IA falha — e isso é
   // o certo (fail-safe). O que não pode é a justificativa dizer só "falha de
@@ -339,10 +365,10 @@ if(!content){
   // com essa frase genérica, enquanto a causa real era a OpenAI recusando TODA
   // chamada. A causa vai junto, com o mesmo diagnóstico da extração.
   const motivo=resp?.error?diagnosticarErroApi(resp.error).motivo:'A chamada a OpenAI nao retornou conteudo (falha de rede/API).';
-  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Classificacao por conteudo indisponivel, valeu o nome do arquivo. '+motivo})}};
+  return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Classificacao por conteudo indisponivel, valeu o nome do arquivo. '+motivo})}};
 }
 let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
-  return {json:{...item, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Resposta da OpenAI nao veio em JSON valido.'})}};
+  return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName, {tipo_taxonomia:null, confianca:0, justificativa:'Resposta da OpenAI nao veio em JSON valido.'})}};
 }
 const fromAI={
   tipo_taxonomia:p.tipo_taxonomia==='DESCONHECIDO'?null:p.tipo_taxonomia,
@@ -353,7 +379,7 @@ const fromAI={
   confianca:typeof p.confianca==='number'?p.confianca:0,
   justificativa:p.justificativa||'',
 };
-return {json:{...item, ...mergeClassification(fromName, fromAI)}};
+return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName, fromAI)}};
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de DIAGNÓSTICO+EXTRAÇÃO (E2) -

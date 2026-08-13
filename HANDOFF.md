@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-11 (sessão 42). **Estado do `main`:** mergeado até o **PR #115**
-(`main` em `b6bdc2a`). Branch de trabalho: **`claude/handoff-review-next-steps-q0i8nz`**.
+**Última atualização:** 2026-08-13 (sessão 43). **Estado do `main`:** mergeado até o **PR #116**
+(`main` em `6d8db16`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -275,6 +275,99 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 43 (2026-08-13) — a recusa vinha de um workflow de julho, e a 2ª chamada era cobrada como se fosse a 1ª
+
+**O QUE O DONO RELATOU:** reexecutou o lote de 35 documentos depois das correções da sessão 42 e
+recebeu a MESMA recusa — *"51 chamadas ≈ US$ 7,65, acima do teto de US$ 3"*. Pedido: **reduzir o
+custo por chamada, para que o lote de 35 não passe de US$ 3.**
+
+### A recusa não podia ter saído deste repositório
+
+US$ 7,65 ÷ 51 chamadas = **US$ 0,15 por chamada** — a constante que vigorou até 07/08/2026, quando a
+medição do book a levou para 0,20 e, na sessão 42, para a estimativa por TAMANHO, que nem cita
+"0,15". A mensagem também não trazia a frase "A conta saiu de…", que nasceu junto com a estimativa
+por tamanho. Ou seja: o n8n estava executando o **JSON importado em julho**.
+
+Merge não reimporta workflow. E o defeito de fundo não é o esquecimento: é que **da tela as duas
+versões têm exatamente a mesma aparência** — as duas recusam, com uma frase parecida. Não havia
+como distinguir "o código está errado" de "o código certo não está lá".
+
+Por isso a primeira mudança desta rodada não é de custo, é de leitura: a recusa começa com
+`[orçamento v3 (2026-08-13)]` e `orcamento_versao` viaja com o item **mesmo quando o lote passa**.
+Um teste exige as duas coisas. Não é cosmética — é a diferença entre diagnosticar e adivinhar, e
+adivinhar já custou uma rodada de teste.
+
+> **E vale dizer o que aquela tela NÃO estava dizendo:** não era limite de crédito da OpenAI. Quem
+> recusou foi o nosso nó, antes da primeira chamada; nada foi enviado e nada foi gasto.
+
+### A redução pedida, em duas alavancas com número
+
+| Alavanca | Efeito medido no book (38 docs) |
+|---|---|
+| **Classificação em `gpt-4o-mini`** (a recomendação nº 1 do `docs/CUSTO_OPENAI.md`, que estava escrita como "agora, sem risco" desde 27/07 e nunca tinha sido acionada) | custo real **US$ 1,41 → US$ 1,33**; a parte de classificação, **US$ 0,0893 → US$ 0,0054** (−94%) |
+| **A 2ª chamada deixa de ser cobrada como se fosse extração** | estimativa do guarda **US$ 2,46 → US$ 1,88** (−24%) |
+
+A segunda é a correção de um erro de modelo, não um afrouxamento: as duas chamadas mandam o MESMO
+PDF, mas a classificação devolve ~120 tokens e a extração devolve centenas de linhas — e a saída é
+~75% da conta. Medido, a classificação custa **13%** de uma extração; o orçamento cobrava 100%. O
+peso agora é DERIVADO da tabela de preço (`0,30 × razão de preço de entrada entre os dois modelos`,
+com piso de 0,05), então trocar o modelo recalcula o orçamento sozinho — e modelo fora da tabela
+cobra cheio, porque desconhecido não é barato.
+
+**A extração continua em `gpt-4o`**, e um teste reprova quem apontá-la para o modelo barato. A
+assimetria que autoriza uma coisa e proíbe a outra: a classificação tem rede (o `diagnostico` da
+própria extração confere tipo/entidade/período e abre pendência quando diverge), a extração não tem
+nada depois dela.
+
+### O desconto vale só onde há medição
+
+O peso reduzido se aplica **apenas quando os bytes chegam ao nó**. Sem tamanho, o guarda continua
+contando chamada cheia a US$ 0,20 — e o motivo é de evidência: o caminho plano é o de "não sei nada
+sobre estes arquivos", e a única calibração que ele tem é um incidente de dinheiro de verdade (o
+v31, que estourou o teto de US$ 5 da OpenAI no meio do lote). Descontar ali com base numa proporção
+medida em PDF sintético seria trocar a evidência cara pela barata. O teste do v31 continua verde,
+palavra por palavra.
+
+### O medidor mentia sobre a máquina que ele mede
+
+`medir-custo-book.mjs` imprimia **"RECUSA"** para um lote que o `Orcamento do Lote` ACEITA desde a
+sessão 42 — porque ele chamava `orcamentoDoLote` sem passar os bytes, caindo na estimativa plana.
+Um medidor que descreve uma versão antiga da coisa medida é pior que nenhum: ele confirma o medo
+errado. Agora ele passa os bytes (que o `METRICAS.json` já tinha), imprime a versão do orçamento e
+mostra os dois vereditos lado a lado — o por tamanho e o plano —, que é a medida do que a sessão 42
+comprou. Os dois modelos também deixaram de ser cópia à mão ("espelho de build-workflow.mjs") e
+passaram a vir da fonte.
+
+### E a metade da conta que ninguém media
+
+Só a extração media o próprio custo. A classificação — justamente a metade cujo preço acabou de
+mudar — saía do pipeline sem número, então a economia prometida só seria verificável na fatura do
+fim do mês, misturada com o resto. `Parse OpenAI Classif` agora devolve `custo_classificacao_usd`,
+pelo mesmo `custoDaChamada` da extração, **em todos os caminhos de saída**: a chamada que falhou
+depois de consumir tokens também foi paga.
+
+### Onde o lote de 35 fica
+
+```
+custo REAL medido (38 documentos, 57 chamadas)   US$ 1,33   ← era 1,41
+estimativa do guarda, por tamanho                US$ 1,88   ← era 2,46 (teto: 3,00)
+lote homogêneo denso (35× o livro razão)         US$ 3,80   → continua RECUSADO (custaria 6,04)
+```
+
+Margem contra o teto: de 18% para **37%**, com o caso caro ainda barrado — que é a única forma de o
+teto significar alguma coisa.
+
+`n8n/test`: 185 → **194**. Migrations, export e e2e inalterados: o diff não toca banco nem portal.
+
+### O que o dono precisa fazer
+
+1. **Reimportar `n8n/workflow.e1-ingestao.json`** — e conferir na tela que a versão apareceu
+   (`orcamento_versao: "v3 (2026-08-13)"`). Sem isso, nada desta rodada existe em produção.
+2. **Rodar o kit sintético** para ver se `gpt-4o-mini` acerta tipo/entidade/período. Custa centavos,
+   e é a única conferência de qualidade que a troca de modelo pede.
+3. **Trazer o custo REAL da OpenAI** depois do lote grande. É com ele que `CUSTO_POR_MB_USD` (10,5) e
+   o peso da classificação se recalibram — até aqui tudo é medição sobre PDF sintético.
 
 ## Sessão 42 (2026-08-11) — o custo mentia por 5×, e o "aguarde" mentia duas vezes
 

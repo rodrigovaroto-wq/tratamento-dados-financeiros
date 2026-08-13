@@ -34,12 +34,16 @@ import {
   orcamentoDoLote,
   CUSTO_ESTIMADO_DOC_USD,
   TETO_EXECUCAO_USD,
+  // Os modelos vêm da FONTE, não de um espelho. Eles eram duas constantes
+  // copiadas à mão aqui com o comentário "espelho de build-workflow.mjs" — e um
+  // espelho de preço é a última coisa que se quer manter à mão num script cujo
+  // propósito é medir preço.
+  MODELO_CLASSIFICACAO,
+  MODELO_EXTRACAO,
 } from './lib/custo.mjs';
 import { SYSTEM_PROMPT } from './lib/extract.mjs';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const MODELO_CLASSIFICACAO = 'gpt-4o'; // espelho de build-workflow.mjs
-const MODELO_EXTRACAO = 'gpt-4o';
 
 // ---------------------------------------------------------------------------
 // As três conversões que transformam um PDF em tokens. Cada uma tem fonte
@@ -138,14 +142,35 @@ const semTipo = medidos.filter((d) => !d.tipo);
 
 // O VEREDITO, pela função que roda em produção. `chamadasPorDocumento` não é
 // suposição: é a média medida sobre os nomes de arquivo REAIS deste book.
-const veredito = orcamentoDoLote({ documentos: medidos.length, chamadasPorDocumento: chamadas / medidos.length });
+//
+// E os BYTES vão junto, que é o que faz este veredito ser o mesmo da produção.
+// Sem eles o script caía na estimativa plana e imprimia "RECUSA" para um lote
+// que o `Orcamento do Lote` ACEITA desde a sessão 42 — um medidor que mente
+// sobre a máquina que ele mede é pior que nenhum, e foi ele que sustentou parte
+// da confusão de 12/08.
+const bytesDoLote = documentos.reduce((s, d) => s + (Number(d.bytes) || 0), 0);
+const veredito = orcamentoDoLote({
+  documentos: medidos.length,
+  chamadasPorDocumento: chamadas / medidos.length,
+  bytes: bytesDoLote > 0 ? bytesDoLote : null,
+});
 // E o mesmo lote depois de renomear tudo para a notação de f0/03 — uma chamada
 // por documento, que é a economia que o renome compra.
-const vereditoRenomeado = orcamentoDoLote({ documentos: medidos.length, chamadasPorDocumento: 1 });
+const vereditoRenomeado = orcamentoDoLote({
+  documentos: medidos.length,
+  chamadasPorDocumento: 1,
+  bytes: bytesDoLote > 0 ? bytesDoLote : null,
+});
+// O veredito PLANO continua sendo impresso ao lado: é o que acontece quando o
+// tamanho do arquivo não chega até o nó (metadado do n8n em modo filesystem,
+// por exemplo), e a diferença entre os dois é a medida do que a estimativa por
+// tamanho comprou.
+const vereditoPlano = orcamentoDoLote({ documentos: medidos.length, chamadasPorDocumento: chamadas / medidos.length });
 
 if (comoJson) {
   console.log(JSON.stringify({
-    livro, documentos: medidos, totalUSD, totalTexto, chamadas, veredito, vereditoRenomeado,
+    livro, documentos: medidos, totalUSD, totalTexto, chamadas, bytesDoLote,
+    veredito, vereditoRenomeado, vereditoPlano,
   }, null, 2));
 } else {
   console.log(`\n== custo medido do ${livro} — ${medidos.length} documentos, ` +
@@ -172,9 +197,12 @@ if (comoJson) {
   console.log(`  • se o PDF fosse enviado como TEXTO em vez de imagem: ${usd(totalTexto)} ` +
     `(${(100 - totalTexto / totalUSD * 100).toFixed(0)}% menos) — a alavanca nº 1 de docs/CUSTO_OPENAI.md.`);
 
-  console.log(`\n== o veredito do orçamento (lib/custo.mjs, teto de US$ ${TETO_EXECUCAO_USD})`);
-  console.log(`  estimativa do guarda: ${chamadas} chamada(s) × US$ ${CUSTO_ESTIMADO_DOC_USD} = ` +
+  console.log(`\n== o veredito do orçamento ${veredito.versao} (lib/custo.mjs, teto de US$ ${TETO_EXECUCAO_USD})`);
+  console.log(`  estimativa do guarda: ${(bytesDoLote / 1024).toFixed(0)} KB × US$ 10,5/MB × ` +
+    `fator ${veredito.fatorCusto} (${chamadas} chamadas, a 2ª pesa ${veredito.fatorCusto === 1 ? '—' : 'pouco'}) = ` +
     `US$ ${veredito.estimadoUSD.toFixed(2)} → ${veredito.cabe ? 'CABE' : 'RECUSA'}`);
+  console.log(`  sem o tamanho (plano): ${chamadas} chamada(s) × US$ ${CUSTO_ESTIMADO_DOC_USD} = ` +
+    `US$ ${vereditoPlano.estimadoUSD.toFixed(2)} → ${vereditoPlano.cabe ? 'CABE' : 'RECUSA'}`);
   console.log(`  custo MEDIDO:        ${usd(totalUSD)} ` +
     `(o guarda ${veredito.estimadoUSD >= totalUSD ? 'superestima' : 'SUBESTIMA'} em ` +
     `${(Math.abs(veredito.estimadoUSD - totalUSD) / totalUSD * 100).toFixed(0)}%)`);
