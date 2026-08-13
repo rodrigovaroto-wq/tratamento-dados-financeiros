@@ -4,9 +4,16 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-07 (sessão 41). **Estado do `main`:** mergeado até o **PR #111**
-(`main` em `13a7a11`). Branch de trabalho: **`claude/robust-testing-real-data-et1jlu`**, reiniciada
-do `main` depois de cada merge.
+**Última atualização:** 2026-08-11 (sessão 42). **Estado do `main`:** mergeado até o **PR #115**
+(`main` em `b6bdc2a`). Branch de trabalho: **`claude/handoff-review-next-steps-q0i8nz`**.
+
+> **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
+> raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
+> existe porque este cabeçalho já passou 17 PRs congelado, e a causa não era descuido: a parte que
+> muda toda rodada morava no mesmo arquivo das partes que nunca mudam. O `db/test/run.sh` REPROVA
+> quando a migration mais nova não está citada lá, então o `ESTADO.md` não envelhece em silêncio.
+> Este `HANDOFF.md` continua sendo o histórico — como se chegou aqui —, e é o que não precisa ser
+> lido para retomar.
 
 **O PRODUTO, EM UMA LINHA:** o portal entrega **dois arquivos** — *dados financeiros* (a conferência
 da ingestão, linha a linha) e *modelagem* (as 14 abas do modelo institucional, projetadas e editáveis
@@ -114,7 +121,7 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 > a pessoa começar errado. **Atualizar o cabeçalho ao fechar a rodada é obrigação**; o que não se
 > toca é a seção de sessão passada.
 
-### Migrations — 50 arquivos, nesta ordem
+### Migrations — 55 arquivos, nesta ordem
 
 `0001`→`0044` (sequência completa, todas aplicadas) e a faixa do colaborador:
 
@@ -126,6 +133,16 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 | `0103_papel_linha_tokeniza_uma_vez` | tokenização uma vez por rótulo, contenção por array: 1,9 s → 270 ms | ✅ (conferida **pelo plano** em produção, não pela lista) |
 | `0104_desativar_premissa` | remover premissa **e** os vínculos que ela dirigia, devolvendo quantos desfez | ✅ aplicada (07/08/2026) |
 | `0105_reconciliar_duplicidade_de_rotulo` | a conta que aparece duas vezes com o mesmo valor vira **achado** da reconciliação, sem apagar nada | ✅ aplicada (07/08/2026) |
+| `0106_rejeitar_pendencia` | o Portão 2 ganha o segundo lado: a pendência que NÃO PROCEDE | ✅ aplicada (11/08/2026) |
+| `0107_papel_ressalva_e_tratamento` | ressalva e estados de tratamento; papel de usuário (removido pela `0110`) | ✅ aplicada (11/08/2026) |
+| `0108_falha_de_execucao` | a falha do n8n vira linha que a TELA lê — e `fn_excluir_caso` | ✅ aplicada (11/08/2026) |
+| `0109_pendencia_tres_botoes` | os três botões, sem formulário e **sem teto de ressalvas** | ✅ aplicada (11/08/2026) |
+| `0110_remove_papel_de_usuario` | o papel sai do schema: sem leitor desde a `0109` | ✅ aplicada (11/08/2026) |
+
+> **O `db/schema.sql` responde "como está o banco hoje"** sem ler as 55 em ordem. Ele é GERADO pelo
+> `db/test/run.sh` (`pg_dump` do banco montado do zero) e o CI confere com `git diff --exit-code`.
+> Existe porque `fn_recomputar_completude` mora na `0004`, na `0006` e na `0036`, e só a última vale
+> — numa revisão de PR ninguém reconstrói isso de cabeça.
 
 `db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
@@ -158,8 +175,8 @@ cd test-data/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 38 docs
 node n8n/medir-custo-book.mjs                                          # o custo do lote, sem gastar
 
 node --test 'n8n/test/*.test.mjs'                                     # 180
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 506
-PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 50 migrations / 325 asserts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 529
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 55 migrations, do zero
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
 ```
@@ -189,171 +206,226 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 
 ## O QUE ESTÁ ABERTO AGORA
 
-**1. Ações do dono:**
+*(O `ESTADO.md`, na raiz, é a versão curta e é ele que o CI mantém em dia. Isto aqui é o mesmo com
+o porquê de cada item.)*
 
-- ~~aplicar a `0104` e a `0105`~~ — **feitas em 07/08/2026**, as duas no Supabase;
-- ~~decidir as premissas do motor~~ — **decididas em 07/08/2026**, ver o quadro abaixo;
-- **exportar o v35 e rodar o aceite**: `auditar-xlsx.mts` + os 10 itens do `docs/ACEITE.md`. É a
-  primeira vez que existe conferência do arquivo ANTES de ele ir a comitê — e agora ele sai com a
-  dívida amortizando, o que muda o fluxo projetado de todo caso;
-- **proteção do `main`**: "Require approvals" em **0** (é isso, e não o CI, que trava a rodada — o
-  GitHub não deixa aprovar o próprio PR) e `suítes` de volta como check obrigatório, já que o CI
-  voltou ao normal nas três frentes. Em 07/08 as rules foram REMOVIDAS por inteiro: hoje nada
-  impede mergear vermelho nem empurrar direto no `main`.
+**1. O TESTE DE PONTA A PONTA COM O `book-canastra` — é o próximo passo, e está destravado.**
 
-### As três decisões de premissa (07/08/2026)
+Os 38 documentos estão prontos para subir. Tudo o que barrava foi removido nesta rodada:
 
-| Decisão | O que ficou valendo | Onde está |
-|---|---|---|
-| **Covenants** | patamares usuais de term sheet: ND/EBITDA ≤ **3,0x**, DSCR ≥ **1,2x**, liquidez corrente ≥ **1,0x** | já existia — célula azul editável ao lado de cada índice no `Output`, teste `ROMPE`/`ok` por ano e corte tracejado nos gráficos |
-| **Amortização** | **linear (SAC) até o vencimento** quando o documento não traz cronograma | implementado nesta rodada, com o **prazo implícito no balanço** (`n = 1 ÷ fração no circulante`) como célula editável por tranche — asserts `0109a`–`0109c` |
-| **CAPEX FINANCING** | **não entra** (0% financiado por dívida nova) | ausência deliberada, registrada no §5 do `CONFORMIDADE.md`: é a hipótese que deixa o rombo aparecer em vez de fechar o caixa no papel |
-
-**2. O espelhamento do Modelo Base — o que FICA, e o motivo de cada um** (fila do §5 do
-`docs/referencia/CONFORMIDADE.md`; três dos seis itens saíram na Fase C):
-
-| Fica | Por quê |
+| | Estado |
 |---|---|
-| tranche em **moeda estrangeira** (`ST Inv. & Debt`) | exige a MOEDA por contrato, que o Kit Básico não coleta. Aplicar câmbio sem saber se a tranche é em dólar erra por ~5× — mesma família do que a `0035` corrigiu |
-| `CAPEX FINANCING` | **decidido: não entra** (0%). Não é pendência, é escolha — ver o quadro acima |
-| espelhos do `Goodwill` | só valem com ágio de verdade; hoje a aba trabalha com saldo zero e espelho de zero é ruído |
-| **vida útil por classe** (`Fixed Assets`) | depende de laudo que o Kit Básico não traz. O que existe é a taxa implícita medida no próprio caso |
+| Orçamento | estima **US$ 2,75** para os 38 (era US$ 8,30) → **passa** |
+| Gasto real esperado | **~US$ 1,41** — 47% do teto de US$ 3 |
+| Timeout do n8n | conferido pelo dono: **desativado** (execução roda até terminar) |
+| Duração | **~23 minutos** (cadência de 33s por extração no Tier 1) |
+| Tela | acompanha por 43 min e mostra progresso |
 
-Nenhum dos quatro é falta de código. **Cosmético** (não muda número): contador invisível da coluna A,
-ordem dos grupos do balanço, três blocos de cenário literais em vez de `CHOOSE`.
+O que trazer de volta do teste, e por quê:
 
-**3. Dívida de produto, fora do motor:** falta UI para **rejeitar pendência do Portão 2** (hoje só
-dá para aprovar).
+- **o custo REAL da OpenAI** (Usage do dia). É a primeira medição de verdade que este projeto vai
+  ter — todo número de custo aqui saiu de aritmética sobre páginas e linhas, nunca de uma fatura.
+  É com ela que o `CUSTO_POR_MB_USD` deve ser recalibrado;
+- **quantos dos 38 chegaram** ao banco;
+- **o que a reconciliação abriu** — em especial se pegou o erro plantado de **R$ 240 mil na planilha
+  de mútuos**. O `pdf/GABARITO.json` tem os números certos e o `GUIA_DE_TESTE.md` lista as 15
+  armadilhas deliberadas.
 
-> **O PLACAR DO ESPELHAMENTO, e a régua certa.** Em **densidade de fórmula por coluna de ano** — a
-> comparação honesta, porque a referência projeta 21 exercícios e o caso v35 projeta 5 — a última
-> medição (sessão 39) deu **89% do Modelo Base**: 533 contra 598 fórmulas por coluna. Em contagem
-> absoluta, 3.157 contra 14.504, e é por isso que a leitura absoluta engana. As linhas que a Fase C
-> acrescentou **não foram remedidas** — o 89% é piso, não teto. Duas coisas que a régua não mostra:
-> **o nosso balanço FECHA em todos os exercícios** (provado por teste) e **o Modelo Base não fecha o
-> dele a partir de 2020**; e das **1.044 fórmulas nomeadas da referência, ZERO estão em uso** (531
-> apontam para `#REF!`), com **667 fórmulas dela já em `#REF!`** — 627 no `Output`, o bloco de
-> tranches inteiro. Não se copia o que está quebrado. Mapa completo em
-> `docs/referencia/MAPA_MODELO_BASE.md`, veredito aba a aba em `CONFORMIDADE.md`; o prompt de
-> retomada é `docs/PROMPT_ESPELHAR_MODELO_BASE.md`.
+> **Se a conta real vier muito abaixo de US$ 1,41**, dá para apertar a margem do estimador (hoje
+> 1,8× o agregado medido) e liberar lotes maiores. Se vier acima, o coeficiente sobe. Enquanto não
+> houver fatura, o número é o melhor palpite instrumentado que existe — não é medição.
 
-> Detalhe das medições do Modelo Base, para quem for mexer nele: os `#REF!` da referência se
-> concentram no bloco de tranches do `Output`; o balanço dela dá `Mismatch` de 16.987 em 2020, 33.974
-> em 2021 e `#VALUE!` de 2022 a 2032, por duas causas rastreadas (parcelamento tributário sem piso, e
-> `Anual!AC86` = texto `nd` na série da Libor). A régua legítima dela é o **horizonte publicado,
-> 2010–2018**. Os 32 padrões de fórmula nomeados e a gramática de cores estão no mapa.
+**2. Fixture de extração do `book-canastra` — a maior lacuna de cobertura viva.**
 
-> A tela de Modelagem já foi exercitada de ponta a ponta pelo dono (sessão 37) e o export completo
-> gera. A **dupla contagem de caixa/dívida**, aberta desde a sessão 32, foi respondida na 38 e hoje o
-> `CHECK` do `Balance Sheet` fecha em todos os exercícios — se ele sair de zero, o defeito voltou, e
-> essa linha é o alarme.
-
-**Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build, em todo
-push e PR, mais `workflow_dispatch` para disparo manual. **PR vermelho é regressão sua — mas confira
-antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
-produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
-
-## Sessão 41 (2026-08-07) — o segundo book, e a primeira medição de custo por documento
-
-O dono pediu **um teste mais robusto**: dados mais bagunçados, mais variáveis, mais completo,
-simulando uma empresa real com tudo o que ela tem, e com **três anos de histórico (2023, 2024,
-2025)**. Saiu `test-data/book-canastra`: **38 documentos, 6 empresas, 3 exercícios**.
-
-**Por que um SEGUNDO book e não estender o primeiro.** O `book-vertentes` é insumo do
-`verificar-export`, do `db/test` e do e2e, e o contrato dele é "extração fiel, nenhuma pendência".
-Mexer nele para caber um terceiro exercício mudaria o gabarito de 877 asserts que hoje estão verdes,
-por uma razão que não é defeito de nenhum deles. O segundo book é aditivo: o primeiro segue provando
-o caminho feliz, o novo existe para ser difícil.
-
-**O que ele tem que o primeiro não tinha:**
-
-| | `book-vertentes` | `book-canastra` |
-|---|---|---|
-| Exercícios | 2 | **3** — comparativo de três colunas, três pontos realizados para o modelo |
-| Empresas | 5 | **6**, uma fornecendo matéria-prima às outras |
-| Documentos / tipos documentais | 14 / 8 | **38 / 16** |
-| Conta que nasce ou morre no meio do histórico | não | **sim** — antecipação de recebíveis e direito de uso nascem em 2024; parcelamento tributário, crédito presumido e tributo diferido em 2025; importações em andamento e a reserva de lucros somem |
-| Nomes de arquivo | todos na notação de f0/03 | **metade como o cliente manda** (`Doc1.pdf`, `digitalizado_20260115_0003.pdf`, ano solto) |
-| Lote cabe no teto de gasto | sim | **não — e é isso que ele mede** |
-
-Os tipos novos não são enfeite: aging AR/AP, posição de estoques **com quantidade física**, situação
-fiscal **separando parcelamento de tributo corrente e de provisão** (que é exatamente a distinção da
-sessão 40h), contingências **por prognóstico** (só o provável está no passivo), composição do
-imobilizado **com taxa por classe** (a vida útil que o §5 do `CONFORMIDADE.md` lista como pendente
-por falta de laudo — aqui ela existe no documento), folha com **efetivo em pessoas**, razão com ~100
-lançamentos, e o PDF **composto** com quatro demonstrações num arquivo só.
-
-**A disciplina é a mesma do primeiro book, e é ela que faz isso ser teste e não PDF bonito:** nenhum
-total é digitado. O balanço fecha nas seis empresas e nos três exercícios; o resultado da DRE de cada
-ano É a variação do PL do próprio balanço; a depreciação, a PECLD e as provisões saem da variação das
-retificadoras; o mapa de dívida soma a dívida bancária e os juros somam a despesa financeira; o aging
-soma as duplicatas; a situação fiscal soma os parcelamentos. **A única divergência é deliberada**
-(R$ 240 mil na planilha de mútuos) e está no gabarito. O gerador MORRE por `assert` se algo deixar de
-fechar — e ele roda no CI, então insumo mentiroso não chega a lugar nenhum.
-
-**Duas escolhas de projeto que diferem do primeiro book.** (1) **Não há calibração por PL-alvo**: lá o
-passivo inteiro é multiplicado por um fator até o PL cair num alvo, o que com DOIS exercícios passa e
-com TRÊS vira distorção entre anos — conta que cresce no plano de contas pode decrescer no balanço só
-porque o fator daquele ano é menor, e o histórico é o insumo do modelo. (2) O número quebrado vem de
-**ruído determinístico pelo RÓTULO** da conta, não pelo par (rótulo, ano): assim terreno e capital
-social ficam iguais nos três exercícios em vez de oscilarem sem documento que explique. Saldos
-intragrupo ficam **fora** do ruído, senão as duas pernas não casam e a eliminação do combinado
-acusaria uma divergência que ninguém escreveu.
-
-### O TESTE DE GASTO: `n8n/medir-custo-book.mjs`, e os três achados dele
-
-O teto de gasto (`lib/custo.mjs`) decidia com UM número — US$ 0,15 por chamada — que nunca tinha sido
-confrontado com documento nenhum: ele saiu de uma conta de guardanapo. O script novo converte páginas
-e linhas **contadas no PDF gerado** em dólares, usando o preço e as funções que rodam em produção
-(`classifyByFilename`, `custoDaChamada`, `orcamentoDoLote`). **Não chama a OpenAI**, então medir custa
-zero e roda no CI. Custo medido do lote: **US$ 1,41 em 57 chamadas**.
-
-1. **O gargalo é a SAÍDA, não a entrada.** ~106 mil tokens de saída contra ~49 mil de entrada, a US$
-   10/M contra US$ 2,50/M: a saída é ~75% da conta. Consequência que corrige o `CUSTO_OPENAI.md`: a
-   "alavanca nº 1" (mandar o PDF como texto em vez de imagem) economiza **5%** neste book, não os
-   60-80% prometidos. Ela continua valendo por qualidade de leitura e pelo gap de `.xlsx`/`.docx` —
-   mas em documento de uma página o PDF é troco.
-2. **Existia documento realista mais caro que a estimativa que sustenta o teto.** O livro razão (3
-   páginas, 461 linhas) mediu **US$ 0,1725 por chamada**, acima dos US$ 0,15. Num lote só dele a
-   promessa de "no máximo US$ 3 por execução" seria quebrada em ~15%. `CUSTO_ESTIMADO_DOC_USD` foi
-   **recalibrado para 0,20** — que é literalmente o que o comentário da constante mandava fazer quando
-   houvesse medição. Custo aceito: o lote máximo cai de 20 para 15 chamadas.
-3. **A estimativa plana erra nos DOIS sentidos, e agora isso está medido.** Para os 38 documentos ela
-   projeta US$ 11,40 contra US$ 1,41 medidos (8× para cima, recusando lote que caberia), e para o
-   documento denso ficava para baixo. Um número plano não acerta os dois, porque o custo depende de
-   páginas e linhas. **A fatia seguinte, já com o número que a justifica:** estimador por TAMANHO DE
-   ARQUIVO — `Listar Arquivos` já conhece os bytes antes de qualquer chamada, e bytes correlacionam
-   com páginas e com densidade. Não foi feito agora porque muda o contrato do nó de orçamento no n8n.
-
-O script reprova (código 1) quando um documento custa mais que a estimativa por chamada — é assim que
-o achado nº 2 apareceu, e é o que impede a próxima recalibração de passar despercebida.
-
-**19 dos 38 documentos pagam o PDF duas vezes**: 6 porque o nome não diz o tipo, 13 porque trazem ano
-solto (sinal fraco, 0,65, abaixo do limiar de 0,70). Renomear tudo para a notação de f0/03 corta 19
-chamadas e **ainda assim o lote não cabe** (38 × 0,20 = US$ 7,60). Com kit de mandato completo,
-dividir em levas não é contorno de nome mal escolhido: é a operação normal.
-
-### E a medição achou um defeito que não é de custo
-
-`17_Livro_Razao_Fornecedores_....pdf` saía classificado como **`AGING_AP` com confiança 0,90** — alta
-o bastante para PULAR a verificação da IA e mandar um livro contábil para a aba de contas a pagar. A
-causa era a ordem de `ALIASES`: `fornecedores`, termo de uma palavra e genérico, era testado antes de
-`livro razao`. A regra escrita no próprio arquivo já era "o mais específico primeiro" — era a ORDEM
-que não a seguia. Corrigido, com teste que reprova religado. **O defeito só apareceu porque um book
-passou a ter razão E aging no mesmo lote**; com um dos dois faltando, a ordem errada nunca é
-exercitada — que é a tese inteira desta rodada.
-
-`n8n/test/*.test.mjs`: 176 → **180**.
-
-### O que este book ainda NÃO tem, e é a fatia seguinte
-
-Ele gera os PDFs, o gabarito e a medição de custo. **Não tem fixture de extração** — o equivalente do
+O book existe no `main` desde o #112 e prova o GERADOR (o balanço fecha nas 6 empresas e nos 3
+exercícios, por `assert`) e o ORÇAMENTO. Não prova a INGESTÃO: não existe o equivalente do
 `db/test/gerar_fixture.py`, que converteria o book em linhas de `campo_extraido` para o `db/test`, o
-`verificar-export` e o e2e rodarem contra ele. E essa fatia é maior do que parece: a fixture do
-`book-vertentes` afirma extração FIEL (zero pendência), enquanto a graça deste book é o contrário —
-as pendências que as escalas mistas, o locale anglo e os prognósticos de contingência **devem** abrir
-são o resultado esperado, e cada uma precisa de assert próprio. Enquanto isso não existe, o book prova
-o GERADOR de casos difíceis e o orçamento; ainda não prova a ingestão sobre eles.
+`verificar-export` e o e2e rodarem contra ele.
+
+A fatia é maior do que parece, e a razão é o contrato: a fixture do `book-vertentes` afirma extração
+**fiel** (zero pendência), enquanto a graça do `canastra` é o contrário — as pendências que escala
+mista, locale anglo e prognóstico de contingência **devem** abrir são o resultado esperado, e cada
+uma precisa de assert próprio.
+
+**3. Do output, o que continua de pé** (detalhe e evidência em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
+
+- **resumo dos três cenários lado a lado** — o de maior valor não feito. A implementação ingênua
+  replica a cascata e cria um SEGUNDO lugar que calcula EBITDA, que é o defeito por trás dos quatro
+  incidentes de dupla contagem. A resposta correta é Data Table do Excel (`{=TABLE(,G2)}`), frágil
+  via ExcelJS e não conferível pelo arnês local. Rodada própria, com item de aceite humano;
+- **proveniência completa na `Premissas`** — hoje a nota traz o documento de origem; página,
+  confiança e status de aceite ficaram nas abas de dado, que saíram do arquivo de modelagem no #109.
+  O caminho certo é estender `fn_linhas_para_modelagem` (muda o tipo de retorno, exige
+  `drop function`); casar por rótulo cru falha em silêncio nas variações de grafia;
+- **Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não vem.
+
+**4. Golden set e concordância medida.** Sem eles o dial de autonomia não sobe e a F4 do `docs/03`
+não começa. `medir-auto-aceite.mts` diz no próprio cabeçalho que, rodado contra fixture, mede o
+instrumento e não o modelo.
+
+**5. Decisões do dono já tomadas, para ninguém reabrir:**
+
+- **proteções do `main`**: ele decidiu NÃO recolocá-las (11/08). Hoje nada impede mergear vermelho
+  nem empurrar direto. Está registrado como risco no diagnóstico, e não é mais item de pendência;
+- **papel de usuário**: removido (`0110`). Não há sênior a cadastrar;
+- **teto de ressalvas, motivo obrigatório, expiração**: removidos (`0109`). O Portão 2 informa, não
+  impede.
+
+**Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build + o
+`db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
+sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
+ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 42 (2026-08-11) — o custo mentia por 5×, e o "aguarde" mentia duas vezes
+
+**O QUE O DONO RELATOU, e é o começo de tudo:** subiu 35 documentos do `book-canastra` e o n8n
+recusou — *"51 chamadas ≈ US$ 7,65, acima do teto de US$ 3"*. E o portal, na outra aba, seguiu
+dizendo **"estamos organizando tudo com cuidado… assim que estiver pronto, avisamos"**.
+
+Dois defeitos numa tela só, e o segundo é pior que o primeiro.
+
+### O estimador plano errava por 5,4×
+
+O book INTEIRO — 38 documentos, 57 chamadas — custa **US$ 1,41**, medido pelo `medir-custo-book.mjs`
+que o próprio #112 trouxe. O estimador dizia US$ 7,65 para 35. Ele era PLANO: US$ 0,20 por chamada,
+sem saber quantas páginas nem quantas linhas o documento tem.
+
+Errar para o lado seguro é o projeto do estimador. Errar por 5× é outra coisa: é impedir o uso do
+sistema para proteger um orçamento que nunca esteve em risco.
+
+Passa a estimar por **tamanho de arquivo**, que o `Listar Arquivos` conhece antes de qualquer
+chamada — a fatia que o #112 já tinha nomeado como próxima. Calibração medida sobre os 38: US$
+5,76/MB agregado, coeficiente em **10,5/MB** (1,8×). **Os dois lados do teste:** o book real estima
+US$ 2,46 e passa; 35 cópias do documento mais denso do book (o livro razão, 461 linhas) estimam 3,80
+e são recusadas, custando 6,04 de verdade. Tamanho desconhecido cai no plano, **nunca em zero** —
+zero deixaria qualquer lote passar.
+
+### A tela de espera mentia sobre um processo morto
+
+`/api/intake/status` deduz progresso de sinais POSITIVOS — documento criado, evento de extração. A
+falha não produz nenhum: ela produz **ausência**. E ausência é o que "ainda processando" também
+produz. Os dois estados tinham a mesma aparência do lado de fora.
+
+Tela de espera sobre processo morto é pior que erro na tela: é **mentira com cara de calma**, e
+custa o dobro — além de não resolver, consome a paciência de quem espera e depois a confiança de
+quem descobre.
+
+`execucao_falha` (`0108`) dá ao erro um lugar para morar; o ramo de recusa do orçamento **grava
+antes de abortar**; e a tela mostra o que houve, a causa técnica **sem tradução** (é o que o
+desenvolvedor precisa ler, e o que some quando a interface "simplifica" demais) e pede para acionar
+o desenvolvedor. Para *qualquer* razão — que não se cobre nó a nó, porque cada `try/catch` cobre o
+erro que alguém imaginou — nasceu o `workflow.erros.json`, um **Error Workflow** do n8n. Ligá-lo é
+passo do dono, documentado no `n8n/README.md`.
+
+### E a mesma mentira, com a causa invertida
+
+Achado ANALISANDO A CONSEQUÊNCIA da correção de custo, não o custo em si.
+
+Deixar 38 documentos passarem leva o sistema a um regime que ele nunca tinha visto. A extração é
+deliberadamente LENTA — uma chamada a cada ~33s no Tier 1, porque `max_tokens` é reserva de TPM e ir
+mais rápido produz 429. São **~23 minutos**. O acompanhamento da tela tinha teto FIXO de ~12.
+
+Enquanto o orçamento recusava lote grande isso nunca apareceu: 14 documentos terminam em ~8 min e
+cabiam. Com o lote passando, a tela desistiria no minuto 12 e voltaria ao "assim que estiver pronto,
+avisamos" — para sempre, sobre um processo **vivo**. É o mesmo defeito da `0108` com a causa
+invertida: lá a tela esperava por um processo morto; aqui parava de esperar por um que ia bem.
+
+A janela passou a sair do LOTE (45s por documento, com margem; 38 arquivos → 43 minutos), desistir
+deixou de ser silencioso, e o **progresso apareceu** — a rota já devolvia `processados`/`esperados`
+desde sempre e a tela lia só o `pronto`.
+
+### O que o dono pediu, e o que saiu do sistema por isso
+
+**Três botões na pendência**, sem campo e sem data: *Contatar o Cliente* (verde, não libera — o
+documento não chegou), *Prosseguir sem resolução* (vermelho), *Pendência não procede* (amarelo). E
+o teto de 3 ressalvas, removido.
+
+A `0109` registra cada guarda que saiu, porque ausência tem de ser escolha e não esquecimento:
+motivo obrigatório (a trilha passa a responder QUEM e QUANDO, deixa de responder POR QUÊ), data de
+expiração, teto, papel sênior. E a **lista fechada de `f0/04` deixou de bloquear** — não foi pedido,
+decorre do pedido: com um botão só, "Prosseguir sem resolução" que não faz prosseguir é um botão que
+mente.
+
+As três funções da `0106`/`0107` foram **dropadas**: duas portas para a mesma decisão com regras
+diferentes é o que produz caso cujo estado ninguém explica seis meses depois. O que fica é o que
+sustenta a decisão — **nada é apagado e tudo é contado**: o Portão 2 deixa de IMPEDIR e passa a
+INFORMAR, com as contagens dentro da própria decisão de aprovação.
+
+Também nesta rodada: **excluir mandato** com confirmação (o diálogo mostra o NOME do caso — com
+várias abas abertas, é o que impede excluir o certo achando que é o outro), a exclusão vai para a
+trilha ANTES do delete, e o **papel de usuário saiu do schema** (`0110`) por não ter mais leitor.
+
+### Três defeitos meus, achados relendo o que eu tinha acabado de escrever
+
+1. **A pendência decidida SUMIA da tela.** A consulta filtrava só os estados não decididos — os
+   botões "adicionam um rótulo" e o rótulo desaparecia junto com o item. O pedido inteiro ficaria
+   invisível.
+2. Comentário de `aprovarCaso` descrevendo o teto de 3, que não existia mais.
+3. `sobrepujavel` viajando do banco até a tela sem ninguém ler — o mesmo defeito que a `0037`
+   corrigiu do outro lado.
+
+### E um erro de processo que custou uma rodada
+
+O **PR #114 foi mergeado às 19:03** com o head em `a5b60b8`; empurrei mais dois commits **depois**
+disso, na mesma branch. PR mergeado não recebe commit novo — as migrations `0108`/`0109`/`0110`
+ficaram fora do `main`, e o dono só descobriu ao tentar aplicá-las. **A lição, em uma linha:**
+depois de mergear, conferir se a branch ficou para trás antes de continuar empurrando nela.
+
+`verificar-export.mts`: 506 → **529** · n8n: 176 → **185** · migrations: 50 → **55**
+
+## Sessão 41 (2026-08-11) — o diagnóstico, e o backlog dele executado por impacto
+
+Pedido do dono: ler o handoff, dizer o que os últimos PRs fizeram, e **fazer um diagnóstico
+completo** do sistema — com olhar crítico, e sobretudo sobre como melhorar o OUTPUT.
+
+**O achado central, e ele organiza tudo o que veio depois:** *o sistema prova o GERADOR muito melhor
+do que prova o RESULTADO, e mede o motor muito melhor do que mede o produto.* Três sintomas do mesmo
+fato — 877 asserts verdes sobre um arquivo entregue errado (sessão 40); a fixture sistematicamente
+mais fácil que a produção (documentado três vezes); e nenhum número de produção governando nada (sem
+golden set, sem concordância medida, sem custo por caso — o dial está onde nasceu na F1).
+
+O documento está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`, com evidência medida, backlog de 14
+itens por impacto ÷ esforço, e uma seção **"o que eu NÃO mudaria"** — um diagnóstico que só lista
+defeitos convida a estragar o que está certo.
+
+### O que saiu executado, na ordem de impacto
+
+**O `Output` passou a DIMENSIONAR o rombo, não só acusá-lo.** Ele já dizia DSCR 0,3 e ND/EBITDA
+10,8x, e o revolver chegava a 122.216 sem que nada dissesse que aquilo **é** a necessidade de
+recursos do caso. O revolver é ficção de fechamento: existe para o balanço fechar, não porque alguém
+vai emprestar 122 milhões a uma empresa com DSCR de 0,3. O bloco novo — necessidade do exercício,
+acumulada, pico e ano do pico; dívida sustentável e serviço suportado lidos dos CORTES em célula
+azul; e a decomposição de para onde vai o caixa — não usa nenhum dado novo: tudo sai do que já
+existia no `Output` e no `Cash Flow`.
+
+> **E o achado do teste vale mais que o bloco.** Ao religar a acumulação de propósito, a suíte
+> continuou VERDE — a fixture principal projeta furo ZERO nos três exercícios, e 0 = 0. É a
+> armadilha registrada três vezes neste projeto. A variante `comFuro` conserta: dívida concentrada
+> no CIRCULANTE, que é como um caso estressado chega, financiada por prejuízo acumulado para o
+> balanço continuar fechando.
+
+**`db/schema.sql`** — o estado do banco deixa de ser uma leitura de 51 migrations em ordem. Gerado
+pelo `run.sh`, conferido pelo CI com `git diff --exit-code`.
+
+**Ciclo de caixa** (PMR/PME/PMP + operacional/financeiro), que a `f0/08` fasejou "até a extração
+isolar as linhas-conceito" — o giro já as isolava. Cada prazo gira contra a linha de DRE correta;
+fornecedor contra CUSTO, não receita. E caso sem conta de clientes publica `"n.a."`, não "0 dias":
+zero dias de recebimento afirma que a empresa vende à vista.
+
+**A máquina de estado da pendência ficou inteira** (`0106`/`0107`): rejeição, ressalva e estados de
+tratamento. *(Boa parte disso foi desfeita na sessão 42, a pedido do dono — ver lá.)*
+
+**`ESTADO.md`**, com guarda de frescor no `run.sh`.
+
+### E o `main` estava vermelho, por um espelho
+
+O #112 recalibrou `CUSTO_ESTIMADO_DOC_USD` de 0,15 para 0,20 e **não regerou o JSON dos workflows**.
+O nó `Orcamento do Lote` commitado seguia com o literal 0,15: importado no n8n, orçaria pelo número
+antigo, e a recalibração existiria no repositório e não em produção. O `git diff --exit-code -- n8n/`
+do CI existe exatamente para isso, e pegou.
+
+O defeito tinha um segundo lado: o teste que lê o nó esperava `2.1` (14 × 0,15) e passava, porque
+lia o JSON velho — a constante nova não era exercitada por ninguém.
 
 ## Sessão 40h (2026-08-07) — o tributo ganhou dono, e o parcelamento passou a ser pago
 

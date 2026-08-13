@@ -16,16 +16,40 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 180 · export 532 · e2e 46 · banco (52 migrations do zero + testes SQL) |
+| **Suítes** | n8n 185 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
-## O que o dono precisa fazer, e só ele pode
+## O próximo passo: o teste de ponta a ponta
+
+Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barrava foi removido:
+
+| | Estado |
+|---|---|
+| Orçamento | estima **US$ 2,75** (era US$ 8,30) → **passa** |
+| Gasto real esperado | **~US$ 1,41** — 47% do teto de US$ 3 |
+| Timeout do n8n | **desativado** (conferido pelo dono em 11/08) |
+| Duração | **~23 minutos** (33s por extração no Tier 1) |
+
+Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
+
+**O que trazer de volta:** o custo REAL da OpenAI (Usage do dia — é a primeira medição de verdade
+que este projeto terá, e é com ela que `CUSTO_POR_MB_USD` se recalibra), quantos dos 38 chegaram, e
+o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
+
+## O que só o dono pode fazer
 
 1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência.
-2. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
-   `docs/ACEITE.md` (10 itens humanos). É a única conferência que nenhuma automação cobre, e ela
-   nunca foi executada sobre um arquivo posterior ao PR #111.
+   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. Confira com:
+   ```sql
+   select proname from pg_proc
+    where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
+   ```
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou (tamanho dos arquivos + ramo de recusa).
+   E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
+   **Error Workflow** nas Settings do Intake (`n8n/README.md`).
+3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
+   `docs/ACEITE.md` (10 itens humanos). É a única conferência que nenhuma automação cobre — e a que
+   faltava quando o arquivo de 06/08 saiu com seis números errados e as suítes verdes.
 
 ## O que está aberto no produto
 
