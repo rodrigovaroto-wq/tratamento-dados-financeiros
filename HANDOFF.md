@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-13 (sessão 44). **Estado do `main`:** mergeado até o **PR #117**
-(`main` em `0540e2f`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
+**Última atualização:** 2026-08-13 (sessão 45). **Estado do `main`:** mergeado até o **PR #119**
+(`main` em `c3aee39`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -275,6 +275,95 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 45 (2026-08-13) — o custo estava resolvido e o dado não estava: 39% de cobertura, e as três camadas
+
+**O QUE O DONO RODOU:** o `book-canastra` inteiro. 35 documentos, **21 minutos, US$ 0,71** contra o
+teto de US$ 3. O custo virou assunto encerrado — e a mesma rodada abriu um buraco maior.
+
+### 1.139 de 2.893
+
+Das células de valor que os PDFs contêm, **39% chegaram ao banco**. Duas famílias, e a diferença
+entre elas é o que organiza a correção:
+
+- **TRUNCAMENTO** (5 documentos, zero linhas). O gpt-4o tem teto de **16.384 tokens de saída**.
+  `01_Balanco_..._2025x2024x2023` tem 326 células — no formato plano daquela rodada, ~20.900 tokens.
+  Não cabia por construção, e nenhum prompt conserta um teto físico. Ao menos falhou ALTO:
+  `finish_reason=length` virou `extracao_falhou` com a causa escrita.
+- **SUB-EXTRAÇÃO SILENCIOSA** (o resto). `17_Livro_Razao_Fornecedores` devolveu **99 de 461** sem
+  estourar teto nenhum e sem abrir uma única pendência. O sistema registrou sucesso.
+
+O `.xlsx` da modelagem exportado dessa rodada passa em **9 de 10** itens do `auditar-xlsx.mts`. O
+único reprovado é o balanço não fechar por **40.169** — o buraco da extração chegando ao arquivo
+entregue. O modelo está sadio; a entrada dele não estava.
+
+### Duas correções minhas, antes do resto
+
+**Eu afirmei que o custo provava que o agrupamento estava ativo naquela rodada. Não provava.** A
+aritmética era compatível com os dois formatos; o print do canvas do dono é que decide, e ele mostra
+a cadeia terminando em `Reconciliar (Classe A)` — sem o `Resumo de Custo`. A rodada foi no workflow
+ANTERIOR ao PR #119. Isso melhora a leitura: **os 39% e os truncamentos são a linha de base, não
+efeito do agrupamento.**
+
+E a previsão de qual documento truncaria estava errada: apontei o livro razão, e quem estourou foram
+os dois balanços grandes. O razão fez pior — devolveu um quinto e disse que estava tudo bem.
+
+### As três camadas
+
+`n8n/lib/cobertura.mjs`, três nós novos, e o desenho importa mais que cada peça:
+
+| | O que faz | Nó |
+|---|---|---|
+| **1. Medir antes de chamar** | lê a camada de texto do PDF na própria instância — sem IA, sem custo — e conta as linhas com número | `Extrair Texto` (nativo) |
+| **2. Fatiar** | acima de 60% do teto, um item por bloco de ≤234 células | `Fatiar Extracao` |
+| **3. Guarda de cobertura** | compara o que voltou com o que o documento tem; abaixo de 60%, pendência com os dois números | `Juntar Blocos` |
+
+**A camada 2 não conserta truncamento — ela o torna impossível.** E o ponto fino dela é a ÂNCORA: o
+modelo continua vendo o PDF inteiro (é onde está o alinhamento das colunas), então "extraia o bloco 2
+de 3" seria pedir que ele adivinhasse onde a faixa começa. Cada bloco carrega o **texto exato** da
+primeira e da última linha da faixa, lidos do PDF pelo extrator. Vira instrução verificável em vez de
+proporção. A instrução vai na mensagem de *user* — o prompt de sistema fica idêntico, senão o cache
+de prefixo para de valer e o fatiamento pagaria o prompt duas vezes.
+
+**A camada 3 promete uma coisa só, e é a única honesta:** ela não impede o modelo de pular uma linha;
+impede que isso seja silencioso. O limiar de 60% é calibrado na rodada real e erra para o lado de
+avisar demais — sadios ficaram em 68%-90% (`02_DRE` 104/115, `06_Balanco` 74/109), incompletos em
+21%-48%. Pendência falsa custa uma olhada; buraco não visto custa o mandato.
+
+### O que eu decidi NÃO fazer, e é a decisão que mais importa aqui
+
+**O texto extraído não substitui o PDF na chamada.** Era a economia óbvia — e seria uma troca ruim
+agora: o texto de uma tabela perde o alinhamento das colunas, e foi exatamente a leitura de coluna
+que acabou de funcionar (o balanço combinado saiu com as 8 colunas de empresa certas, e a guarda de
+desalinhamento não disparou uma vez em 35 documentos). **O texto serve para MEDIR, não para LER.**
+
+### O custo sobe, e é para subir
+
+Extrair o que faltava custa tokens. `book-canastra`: 38 documentos → **41 chamadas** de extração (3
+fatiados), e a projeção sai de US$ 0,71 *com 39% do dado* para **~US$ 1,4 com o dado inteiro** —
+menos da metade do teto. É o que o agrupamento da sessão 44 comprou.
+
+### Segurança da mudança, em uma linha
+
+`Extrair Texto` tem `onError: continueRegularOutput`. PDF escaneado não tem camada de texto e o nó
+falha nele: o documento segue como imagem e as camadas 2 e 3 se calam para ele — `null` é "não sei",
+nunca "zero", porque zero ligaria a guarda com régua inventada justamente onde o modelo mais erra.
+**O pior caso desta mudança é o comportamento de ontem.**
+
+De `Gravar Campos (Sombra)` em diante **nada muda**: um item por documento, com `campos` e
+`falha_motivo`, exatamente como sempre foi.
+
+### Aberto, e nomeado
+
+- **O teto de gasto decide ANTES do `Extrair Texto`** — estima por bytes e não sabe quantos blocos o
+  lote terá. Movê-lo para depois troca byte por linha contada, que é determinístico.
+- **A entidade sai poluída com o período** ("Canastra Industria 2025x2024x2023"): 15 das 22
+  pendências de revisão da rodada.
+- **O erro plantado de R$ 240 mil nos mútuos não apareceu** — `21_Mutuos` extraiu 3 de 6 células, e a
+  reconciliação não tinha o que comparar. Só a próxima rodada, com cobertura, responde se a
+  reconciliação funciona.
+
+`n8n/test`: 207 → **225**.
 
 ## Sessão 44 (2026-08-13) — a primeira fatura real, e metade da saída era contexto repetido
 
