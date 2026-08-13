@@ -29,10 +29,12 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Upsert Caso ............. fn_upsert_caso(nome) → caso_id   [Postgres: NÃO repassa binário]
   → Listar Arquivos ......... fan-out: 1 item por arquivo (binário lido do FORM, chave 'data')
   → Classificar Nome ........ nome + regras → {tipo, período, assinado, confiança} [preserva binário]
-  → Extrair Texto ........... camada de texto do PDF, na instância (sem IA, sem custo)
-                              → conta as linhas com número: a régua do fatiamento e da cobertura
+  ├─→ Extrair Texto ..... camada de texto do PDF, na instância, sem IA e sem custo
+  │                       (RAMO LATERAL — ele SUBSTITUI o item e não repassa o binário;
+  │                        o `Preparar Conteudo` lê a saída dele por referência)
   → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
        │                      csv→texto, xlsx→nota [preserva binário]
+       │                      + conta as linhas com número: a régua do fatiamento e da cobertura
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
        └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
              ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
@@ -77,9 +79,15 @@ como fato aceito.
 1. **Node Postgres não repassa binário** — a saída são as linhas da query. Por isso `Listar
    Arquivos` lê os arquivos por referência direta ao Form (`$('Intake (Form)')`), não do
    `$input`.
-2. **Node HTTP Request substitui o item pela resposta da API** (perde json e binário). Por
-   isso o `Upload Storage` é **ramo lateral** (nada consome a saída dele) e, após as chamadas
-   OpenAI, o contexto volta por `$('Nome do Node').item`.
+2. **Node que SUBSTITUI o item não entra na corrente.** Vale para o *HTTP Request* (troca o
+   item pela resposta da API) **e para o `Extract From File`** (escreve o resultado do PDF no
+   `json` e **não repassa o binário**). Por isso `Upload Storage` e `Extrair Texto` são **ramos
+   laterais** — nada consome a saída deles — e o que eles produzem volta por
+   `$('Nome do Node').item`, como o contexto depois das chamadas OpenAI.
+   > Esta regra estava escrita aqui e foi quebrada mesmo assim: com o `Extrair Texto` no meio da
+   > corrente, o `caso_id` sumia e o banco recusava **todos** os documentos com *"null value in
+   > column caso_id violates not-null constraint"*. Hoje um teste em `workflow-sim.test.mjs`
+   > reprova qualquer nó desse tipo que tenha consumidor.
 3. **Modos dos nós Code:** seis rodam "Run Once for All Items", cada um porque a pergunta dele é
    do LOTE e não do item — `Listar Arquivos` (fan-out, 1 item → N), `Orcamento do Lote` (só o lote
    inteiro diz se ele cabe no teto), `Abortar Lote`, `Fatiar Extracao` (1 documento → N blocos),
