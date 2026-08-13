@@ -567,7 +567,15 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
 // aviso_conteudo viaja junto: o que o preparo ja sabia estar faltando ANTES da
 // chamada (planilha acima do teto, XLSX nao lido) tem de virar pendencia mesmo
 // quando a extracao volta impecavel -- o pedaco que falta nunca chegou a IA.
-return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+// documento_id VIAJA COM O ITEM, e nao e' luxo: depois do fatiamento os nos
+// seguintes nao conseguem mais resolver \`$('Registrar Documento').item\` -- um
+// no' que muda a QUANTIDADE de itens (1 documento -> N blocos -> 1 documento)
+// quebra a cadeia de pareamento do n8n, e a expressao volta \`undefined\`. Foi
+// exatamente isso que derrubou a execucao 6164: "Query Parameters must be a
+// string of comma-separated values" no Registrar Diagnostico e no Reconciliar.
+// Dado que o item CARREGA nao depende de pareamento nenhum.
+const docId=(reg.r&&reg.r.documento_id)||reg.documento_id||null;
+return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
 `.trim();
 
 // --- Code (ALL ITEMS): CAMADA 2 — FATIAR O QUE NÃO CABE NUMA CHAMADA ---------
@@ -590,7 +598,9 @@ return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, avis
 const CODE_FATIAR_EXTRACAO = `
 ${FONTE_COBERTURA}
 const saida=[];
-for(const it of $input.all()){
+const entradas=$input.all();
+for(let idx=0; idx<entradas.length; idx+=1){
+  const it=entradas[idx];
   const j=it.json||{};
   // Documento sem medida (PDF escaneado, sem camada de texto) vai inteiro, como
   // sempre foi. Fatiar as cegas seria pior: sem ancora, "bloco 2 de 3" e' um
@@ -612,7 +622,11 @@ for(const it of $input.all()){
     // \`linhas_do_texto\` fica para tras: ele ja' virou ancora, e levar o
     // documento inteiro em texto por todo o grafo incharia cada item a' toa.
     const {linhas_do_texto:_l, openai_body:_b, ...resto}=j;
-    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos, celulas_do_bloco:f.celulas}});
+    // \`pairedItem\` E' OBRIGATORIO num no' que muda a quantidade de itens. Sem
+    // ele o n8n perde a cadeia e toda referencia a OUTRO no' por \`.item\` rio
+    // abaixo volta undefined -- os nos Postgres recebem "undefined" em Query
+    // Parameters e a execucao morre. Cada bloco aponta para o documento que o gerou.
+    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos, celulas_do_bloco:f.celulas}, pairedItem:{item:idx}});
   }
 }
 return saida;
@@ -633,25 +647,40 @@ return saida;
 const CODE_JUNTAR_BLOCOS = `
 ${FONTE_COBERTURA}
 const porDocumento=new Map();
-for(const it of $input.all()){
-  const j=it.json||{};
-  const chave=j.documento_versao_id||('sem-versao-'+porDocumento.size);
-  if(!porDocumento.has(chave)) porDocumento.set(chave,[]);
+const primeiroIndice=new Map();
+const entradas=$input.all();
+for(let idx=0; idx<entradas.length; idx+=1){
+  const j=entradas[idx].json||{};
+  // A CHAVE NAO PODE SER INVENTADA. A primeira versao usava
+  // \`'sem-versao-'+tamanho\` quando o id faltava, e esse texto ia direto para
+  // \`fn_registrar_campos_extraidos($1::uuid)\`: "invalid input syntax for type
+  // uuid: sem-versao-0", execucao 6164. Um id ausente e' uma FALHA a declarar,
+  // nunca um id de mentira -- agrupa-se sob null e o motivo vai junto.
+  const chave=(typeof j.documento_versao_id==='string'&&j.documento_versao_id)?j.documento_versao_id:'__sem_versao__';
+  if(!porDocumento.has(chave)){ porDocumento.set(chave,[]); primeiroIndice.set(chave,idx); }
   porDocumento.get(chave).push(j);
 }
 const saida=[];
-for(const [documento_versao_id, blocos] of porDocumento){
+for(const [chave, blocos] of porDocumento){
   const r=juntarBlocos(blocos);
   const base=blocos[0]||{};
+  const documento_versao_id=chave==='__sem_versao__'?null:chave;
   const motivos=r.motivos.slice();
+  if(documento_versao_id===null){
+    motivos.push('Bloco(s) de extracao voltaram SEM documento_versao_id: as linhas nao tem onde ser gravadas. Causa provavel: falha no no "Registrar Documento" ou perda de contexto entre os blocos -- ver o log desta execucao.');
+  }
   // A guarda. \`celulas_no_documento\` e' null no PDF sem camada de texto: nesse
   // caso ela se cala, e o silencio e' declarado (nao ha regua, entao nao ha
   // veredito) em vez de fabricado.
   const cobertura=avaliarCobertura({extraidas:r.campos.length, esperadas:base.celulas_no_documento});
   if(cobertura) motivos.push(cobertura.motivo);
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
-  saida.push({json:{
+  saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
     documento_versao_id,
+    // Levado adiante pelo mesmo motivo do documento_versao_id: o Registrar
+    // Diagnostico e o Reconciliar liam o no' de registro por \`.item\`, que nao
+    // pareia mais atraves do fatiamento. Agora leem do proprio item.
+    documento_id:base.documento_id??null,
     campos:r.campos,
     diagnostico:base.diagnostico||null,
     falha_motivo:motivos.length>0?motivos.join(' | '):null,
@@ -678,9 +707,14 @@ ${FONTE_CUSTO_CHAMADA}
 // sabe qual bloco este item e', e um item por bloco significa que o pareamento
 // com o no' anterior a ele deixou de ser 1:1. O fallback existe para o caso de
 // alguem religar o grafo sem o fatiamento.
-let ctx;
+let ctx=null;
 try{ ctx=$('Fatiar Extracao').item.json; }catch(e){ ctx=null; }
-if(!ctx){ ctx=$('Montar Req Extracao').item.json; }
+if(!ctx){ try{ ctx=$('Montar Req Extracao').item.json; }catch(e){ ctx=null; } }
+// NENHUMA das duas leituras pode DERRUBAR o item: se o pareamento se perder, o
+// que se perde e' o contexto, e perder contexto tem de virar falha declarada --
+// nao uma excecao que manda o item inteiro para o ramo de erro sem dizer o que
+// aconteceu (execucao 6164).
+if(!ctx){ ctx={}; }
 const avisoConteudo=ctx.aviso_conteudo??null;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
@@ -751,7 +785,7 @@ const custo_usd=custoDaChamada(resp?.usage, '${MODEL_EXTRACAO}');
 const falhaFinal=[avisoConteudo,falhaMotivo].filter(Boolean).join(' | ')||null;
 // \`bloco\`/\`blocos\`/\`celulas_no_documento\` viajam para o \`Juntar Blocos\`: sem
 // eles a juncao nao sabe a ordem dos pedacos nem tem regua para a cobertura.
-return {json:{documento_versao_id:ctx.documento_versao_id, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
+return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -1045,7 +1079,7 @@ const nodes = [
   node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
-    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}" },
+    options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null] }}" },
   }, 2900, 300, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
@@ -1056,7 +1090,7 @@ const nodes = [
   node('Reconciliar (Classe A)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
-    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
+    options: { queryReplacement: '={{ [$json.documento_id] }}' },
   }, 3100, 300, { credentials: PG_CRED, ...PG_RETRY }),
 
   // O custo do lote em UM painel, no fim da cadeia. `runOnceForAllItems` porque

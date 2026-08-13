@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 225 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 228 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -65,6 +65,12 @@ Três camadas, no `n8n/lib/cobertura.mjs` e no grafo:
 No `book-canastra`: 38 documentos → **41 chamadas** de extração, 3 fatiados. Custo projetado com o
 dado INTEIRO: **~US$ 1,4** (era 0,71 com 39% do dado) — menos da metade do teto.
 
+> **Corrigido na execução 6164 (13/08, mesmo dia):** o fan-out corta a cadeia de `pairedItem` do
+> n8n, e toda expressão `$('Outro Nó').item` rio abaixo virou `undefined` — os nós Postgres
+> receberam "undefined" em Query Parameters. Agora `Fatiar Extracao` e `Juntar Blocos` declaram
+> `pairedItem`, os dois ids viajam com o item, e `Gravar Campos`/`Registrar Diagnostico`/`Reconciliar`
+> leem do PRÓPRIO item. **Quem for reimportar precisa da versão com essa correção.**
+>
 > **O que a camada 3 promete, com precisão:** ela não impede o modelo de pular uma linha. Impede que
 > isso seja silencioso. E o `Extrair Texto` tem `onError: continue` — PDF escaneado não tem camada de
 > texto, o nó falha nele, o documento segue como imagem e as camadas 2 e 3 se calam. **O pior caso da
