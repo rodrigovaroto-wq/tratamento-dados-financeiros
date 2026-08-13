@@ -40,7 +40,14 @@ Intake (Form: nome do mandato + upload de N arquivos)
         └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
               → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
                     → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
+                          → Resumo de Custo ..... o custo REAL do lote, num painel só
 ```
+
+> **`Resumo de Custo` é onde se lê quanto o lote custou.** Último nó do canvas, terminal: custo total,
+> quanto foi extração e quanto foi classificação, o que o `Orcamento do Lote` havia estimado, tokens de
+> entrada/saída/cache e **tokens de saída por linha extraída** (o número que recalibra o estimador).
+> Ele existe porque o custo por documento já saía no `Parse Extracao` desde sempre, e saber o do LOTE
+> exigia abrir um painel por documento e somar à mão.
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
 revisão); **extração (E2) nasce em N0 (sombra)** — registra para medir, não decide, não entra
@@ -62,10 +69,12 @@ como fato aceito.
 2. **Node HTTP Request substitui o item pela resposta da API** (perde json e binário). Por
    isso o `Upload Storage` é **ramo lateral** (nada consome a saída dele) e, após as chamadas
    OpenAI, o contexto volta por `$('Nome do Node').item`.
-3. **Modos dos nós Code:** `Listar Arquivos` = "Run Once for All Items" (único fan-out; usa
-   `$input.first()`; retorna **array**). Os outros 6 = "Run Once for Each Item" (1:1; usam
-   `$input.item`; retornam **objeto único** `{json,...}` — array nesse modo dá o erro
-   `A 'json' property isn't an object`).
+3. **Modos dos nós Code:** quatro rodam "Run Once for All Items", cada um porque a pergunta dele é
+   do LOTE e não do item — `Listar Arquivos` (fan-out, 1 item → N), `Orcamento do Lote` (só o lote
+   inteiro diz se ele cabe no teto), `Abortar Lote` e `Resumo de Custo` (quanto custou o lote). Os
+   demais são "Run Once for Each Item" (1:1; usam `$input.item`; retornam **objeto único**
+   `{json,...}` — array nesse modo dá o erro `A 'json' property isn't an object`). Um teste em
+   `workflow-sim.test.mjs` reprova quem puser um nó no modo errado, com a lista das exceções.
 4. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
    descarta o binário (`Classificar Nome` e `Preparar Conteudo` preservam).
 

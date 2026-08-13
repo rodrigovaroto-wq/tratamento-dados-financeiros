@@ -21,7 +21,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda } from './lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao } from './lib/custo.mjs';
@@ -65,9 +65,17 @@ const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type
 // com `secao` (agrupador de planilha) — mesma chamada que já rodava sempre
 // para extrair linhas (não aumenta o nº de chamadas à OpenAI); espelha
 // n8n/lib/extract.mjs (fonte da verdade).
-const LEGIBILIDADE_ENUM = JSON.stringify(['ok', 'degradado', 'ilegivel']);
-const SECAO_CANONICA_ENUM_JSON = JSON.stringify(SECAO_CANONICA_ENUM);
-const SCHEMA_EXTRACAO = `{name:'diagnostico_e_extracao',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','diagnostico','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},diagnostico:{type:'object',additionalProperties:false,required:['entidade','tipo_confirma','tipo_sugerido','periodo_tipo','periodo_referencia','legibilidade','nota_legibilidade','resumo','justificativa'],properties:{entidade:{type:['string','null']},tipo_confirma:{type:'boolean'},tipo_sugerido:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},legibilidade:{type:'string',enum:${LEGIBILIDADE_ENUM}},nota_legibilidade:{type:['string','null']},resumo:{type:'string'},justificativa:{type:'string'}}},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['s','sc','ec','pc','k','vt','vn','op','cf'],properties:{s:{type:['string','null'],description:'secao: agrupador livre (rótulo do próprio documento)'},sc:{type:'string',enum:${SECAO_CANONICA_ENUM_JSON},description:'secao_canonica: seção padronizada pelo significado contábil'},ec:{type:['string','null'],description:'entidade_coluna: nome da coluna/empresa quando há várias entidades lado a lado'},pc:{type:['string','null'],description:'periodo_coluna: rótulo da coluna de período quando há vários períodos lado a lado'},k:{type:'string',description:'chave: rótulo da conta'},vt:{type:['string','null'],description:'valor_texto: valor como aparece no documento'},vn:{type:['number','null'],description:'valor_num: valor numérico puro'},op:{type:['integer','null'],description:'origem_pagina: página de origem'},cf:{type:'number',description:'confianca: confiança 0-1 desta linha'}}}}}}}`;
+// O SCHEMA DA EXTRAÇÃO SAI DA FONTE, NÃO DE UM ESPELHO À MÃO.
+//
+// Ele era uma linha de 2.400 caracteres copiada de `lib/extract.mjs` e mantida
+// em paralelo — e este repositório já tem a lista dos espelhos manuais que
+// divergiram (o `ALIASES` que parava em BALANCETE, o `normUnid` que perdeu a
+// última cláusula, o schema de classificação que ficou sem `enum` e fez a
+// OpenAI inventar "BAL"). O schema é JSON puro, então serializar a função da
+// fonte é exato e a divergência deixa de ser possível: mudar o formato da saída
+// num arquivo só passa a bastar. `extractionSchema()` já traz `strict`,
+// `diagnostico`, `grupos` e os enums (taxonomia, seção canônica, legibilidade).
+const SCHEMA_EXTRACAO = JSON.stringify(extractionSchema());
 
 // `diagnosticarErroApi` é EMBUTIDA a partir do fonte de lib/extract.mjs (fonte
 // única — o nó Code do n8n não importa arquivo, e cópia à mão neste repositório
@@ -130,6 +138,13 @@ const FONTE_ORCAMENTO_LOTE = [
 ].join('\n');
 const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
 
+// `achatarGrupos` idem — embutida do fonte. Ela é a tradução do formato agrupado
+// (o que cortou 63% da saída) para as linhas que o banco grava, e é o ÚNICO
+// lugar onde valor e coluna são associados. Espelhá-la à mão seria escolher o
+// erro mais caro possível: uma divergência aqui grava o número de 2024 na coluna
+// de 2025, sem sintoma nenhum.
+const FONTE_ACHATAR_GRUPOS = `const achatarGrupos = ${achatarGrupos.toString()};`;
+
 // `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
 // `crypto.subtle`, que o dono MEDIU vindo ausente no sandbox do n8n dele
 // (campo `hash` = null na saída de `Preparar Conteudo`, 2026-07-31); ver o
@@ -176,6 +191,76 @@ const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: cham
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
 return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao }, binary: i.binary }));
+`.trim();
+
+// --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------
+// Nasceu de uma pergunta do dono que não tinha resposta boa: "como acesso isso?"
+// — sobre os tokens por documento. Eles existiam desde sempre, um por item do
+// `Parse Extracao`: para saber o custo do lote era preciso abrir 14 painéis e
+// somar à mão. Custo que só se conhece somando à mão é custo que ninguém mede,
+// e este projeto passou meses decidindo teto de gasto por estimativa porque a
+// medição estava espalhada.
+//
+// É um nó TERMINAL (nada depende dele), então ele não pode quebrar o lote: se
+// não achar as referências, devolve o que achou e diz que achou pouco. E é o
+// último da cadeia de propósito — quando ele aparece, o lote acabou.
+const CODE_RESUMO_CUSTO = `
+// Soma por NÓ, nunca por índice do lote. A tentação é casar item a item com
+// \`$input\`, e estaria errado: só os documentos cujo nome não resolve o tipo
+// passam pelo Parse OpenAI Classif (8 de 14, no book do dono), então o índice i
+// da cadeia principal NÃO é o índice i daquele nó. Casar por índice atribuiria o
+// custo da classificação ao documento errado — e num relatório de custo isso é
+// pior que não ter o relatório.
+const itensDe = (nome) => { try { return $(nome).all() || []; } catch (err) { return []; } };
+const extracoes = itensDe('Parse Extracao');
+const classificacoes = itensDe('Parse OpenAI Classif');
+
+let extracao = 0, entrada = 0, saida = 0, cache = 0, linhas = 0, comFalha = 0, semMedicao = 0;
+for (const it of extracoes) {
+  const e = it?.json || {};
+  if (typeof e.custo_usd === 'number') extracao += e.custo_usd; else semMedicao += 1;
+  if (e.tokens) { entrada += e.tokens.entrada || 0; saida += e.tokens.saida || 0; cache += e.tokens.cache || 0; }
+  if (e.falha_motivo) comFalha += 1;
+  linhas += Array.isArray(e.campos) ? e.campos.length : 0;
+}
+let classificacao = 0;
+for (const it of classificacoes) {
+  const c = it?.json || {};
+  if (typeof c.custo_classificacao_usd === 'number') classificacao += c.custo_classificacao_usd;
+}
+const total = extracao + classificacao;
+const arred = (x) => Number(x.toFixed(4));
+
+// A comparação com o que o ORÇAMENTO estimou fecha o ciclo: é ela que diz se o
+// estimador está calibrado, e é ela que este repositório nunca teve à mão.
+let estimado = null, versao = null;
+try {
+  const o = $('Orcamento do Lote').first().json;
+  estimado = o.orcamento_estimado_usd ?? null;
+  versao = o.orcamento_versao ?? null;
+} catch (err) { estimado = null; }
+
+return [{ json: {
+  resumo: 'Custo REAL deste lote: US$ ' + total.toFixed(4) + ' em ' + extracoes.length + ' documento(s)'
+    + ' (' + classificacoes.length + ' pagaram o PDF duas vezes)'
+    + (estimado !== null ? '. O orçamento havia estimado US$ ' + Number(estimado).toFixed(2) : '')
+    + '. Saída: ' + saida + ' tokens; entrada: ' + entrada + ' (' + cache + ' em cache).',
+  orcamento_versao: versao,
+  documentos: extracoes.length,
+  documentos_com_classificacao: classificacoes.length,
+  custo_total_usd: arred(total),
+  custo_extracao_usd: arred(extracao),
+  custo_classificacao_usd: arred(classificacao),
+  custo_estimado_usd: estimado,
+  tokens: { entrada: entrada, saida: saida, cache: cache },
+  // Tokens de SAÍDA POR LINHA extraída — o número que recalibra o estimador, e o
+  // que estava errado por 45%: o repositório supunha 35 e a fatura do dono disse
+  // 64. Ele é o insumo da próxima calibração, e por isso sai medido, não suposto.
+  tokens_saida_por_linha: linhas > 0 ? Number((saida / linhas).toFixed(1)) : null,
+  linhas_extraidas: linhas,
+  documentos_com_falha: comFalha,
+  documentos_sem_medicao: semMedicao,
+} }];
 `.trim();
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
@@ -458,7 +543,25 @@ const unidade=normUnid(p.unidade);
 // era normalizada e jogada fora aqui, e o book somava USD com BRL.
 const moedaDoc=normMoeda(p.moeda);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
-const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
+${FONTE_ACHATAR_GRUPOS}
+// A saida da OpenAI vem AGRUPADA (uma secao, suas colunas, e uma conta com um
+// valor por coluna) e e' achatada aqui de volta para uma linha por
+// (conta x coluna) -- a forma que \`campo_extraido\` sempre teve. O achatamento
+// vem EMBUTIDO da fonte, nao copiado: se este no' e a lib discordarem sobre como
+// associar valor a coluna, o banco recebe o numero de 2024 no lugar do de 2025.
+const ach=achatarGrupos(p.grupos);
+const campos=ach.linhas.length>0||Array.isArray(p.grupos)
+  ? ach.linhas.map((l,i)=>({ordem:i, ...l, unidade:naoMonet(l.chave,l.valor_texto)?null:unidade, moeda:naoMonet(l.chave,l.valor_texto)?null:moedaDoc}))
+  // FORMATO PLANO ANTIGO -- o caminho de um workflow importado velho responder
+  // no formato de julho. Em 12/08/2026 o n8n do dono rodou dias assim, e "zero
+  // linhas extraidas" sem explicacao seria a pior forma de descobrir.
+  : (Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[]);
+// Conta descartada por desalinhamento de coluna nao pode sumir em silencio: e'
+// dado que o documento tem e o banco nao recebeu.
+if(ach.problemas.length>0){
+  const dizer=ach.problemas.length+' conta(s) descartada(s) por desalinhamento entre colunas e valores (a associacao valor-coluna ficou desconhecida, e adivinha-la trocaria um periodo pelo outro): '+ach.problemas.slice(0,5).join('; ')+(ach.problemas.length>5?'; ...':'');
+  falhaMotivo=falhaMotivo?falhaMotivo+' | '+dizer:dizer;
+}
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,
@@ -767,6 +870,13 @@ const nodes = [
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
     options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
   }, 3100, 300, { credentials: PG_CRED, ...PG_RETRY }),
+
+  // O custo do lote em UM painel, no fim da cadeia. `runOnceForAllItems` porque
+  // a pergunta é do LOTE, não do documento — e `onError` porque um resumo que
+  // derruba o lote que ele resume seria a pior troca possível.
+  node('Resumo de Custo', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_RESUMO_CUSTO,
+  }, 3300, 300, { onError: 'continueRegularOutput' }),
 ];
 
 const connections = {
@@ -804,6 +914,7 @@ const connections = {
   'Parse Extracao': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
   'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
+  'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
 };
 
 const workflow = {

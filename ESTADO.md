@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 194 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 207 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -26,7 +26,7 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 | | Estado |
 |---|---|
 | Orçamento | estima **US$ 1,88** (era US$ 2,46, e US$ 11,40 no estimador plano) → **passa** |
-| Gasto real esperado | **~US$ 1,33** — 44% do teto de US$ 3 |
+| Gasto real esperado | **~US$ 1,25** — 42% do teto de US$ 3 (era 2,23 antes do agrupamento) |
 | Timeout do n8n | **desativado** (conferido pelo dono em 11/08) |
 | Duração | **~23 minutos** (33s por extração no Tier 1) |
 
@@ -39,9 +39,27 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 
 Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
 
-**O que trazer de volta:** o custo REAL da OpenAI (Usage do dia — é a primeira medição de verdade
-que este projeto terá, e é com ela que `CUSTO_POR_MB_USD` se recalibra), quantos dos 38 chegaram, e
-o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
+**O que trazer de volta:** a saída do nó **`Resumo de Custo`** (último do canvas) — ela traz o custo
+real do lote, o que o orçamento estimou e os **tokens de saída por linha**, que é o número com que
+`CUSTO_POR_MB_USD` e o modelo de saída se recalibram. Mais: quantos dos 38 chegaram, e o que a
+reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
+
+### O custo, medido e projetado (13/08/2026)
+
+A primeira fatura real veio dos 14 documentos do `book-vertentes`: **US$ 0,90**, com alvo de US$ 0,50.
+84% era saída de extração, a ~64 tokens por célula de valor — 45% acima do que este repositório
+supunha. A saída passou a ser **agrupada** (uma seção por grupo, colunas declaradas uma vez, conta
+escrita uma vez com um valor por coluna) e o `medir-custo-book.mjs` projeta:
+
+| Book | formato plano | agrupado |
+|---|---:|---:|
+| `book-vertentes` (14 docs) | US$ 0,857 (fatura real: **0,90**) | **US$ 0,471** |
+| `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** |
+
+**Aberto e nomeado:** o livro razão do `book-canastra` (461 células de valor) projeta **109% do teto
+de saída** do gpt-4o mesmo agrupado — vai truncar, abrir pendência e ficar sem parte dos dados. A
+saída é extrair por faixa de página, e é fatia própria. O `medir-custo-book.mjs` avisa em toda
+execução do CI, nomeando o arquivo.
 
 ## O que só o dono pode fazer
 
@@ -51,11 +69,11 @@ o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na
    select proname from pg_proc
     where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
    ```
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 13/08 (classificação em
-   `gpt-4o-mini`, peso da 2ª chamada no orçamento, versão carimbada na recusa), e a execução de
-   12/08 provou que o que está lá dentro ainda é de julho. **Conferência de 5 segundos depois de
-   importar:** abrir o nó `Orcamento do Lote` e procurar `gpt-4o-mini` no `Montar Req Classif`, ou
-   rodar e ver `orcamento_versao: "v3 (2026-08-13)"` na saída do nó.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou duas vezes em 13/08 (classificação em
+   `gpt-4o-mini`, peso da 2ª chamada no orçamento, versão carimbada na recusa, **saída agrupada** e o
+   nó novo `Resumo de Custo`), e a execução de 12/08 provou que o que está lá dentro ainda é de
+   julho. **Conferência de 5 segundos depois de importar:** o canvas tem 23 nós e o último se chama
+   `Resumo de Custo`; rodando, a saída dele traz `orcamento_versao: "v3 (2026-08-13)"`.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +

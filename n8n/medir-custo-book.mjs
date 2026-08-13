@@ -41,7 +41,7 @@ import {
   MODELO_CLASSIFICACAO,
   MODELO_EXTRACAO,
 } from './lib/custo.mjs';
-import { SYSTEM_PROMPT } from './lib/extract.mjs';
+import { SYSTEM_PROMPT, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -59,10 +59,53 @@ const TOKENS_PROMPT_SISTEMA = Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TO
 //    — docs/CUSTO_OPENAI.md, "cada página vira tokens de imagem".
 const TOKENS_POR_PAGINA_IMAGEM = 1000;
 
-// 3) A saída: cada linha financeira extraída devolve um objeto com nove chaves
-//    curtas (s/sc/ec/pc/k/vt/vn/op/cf). Medido sobre o formato real: ~35 tokens
-//    por linha, incluindo pontuação do JSON.
-const TOKENS_POR_LINHA_EXTRAIDA = 35;
+// 3) A saída, e este é o número que dominava a conta.
+//
+//    RECALIBRADO DE 35 PARA 64 EM 13/08/2026, PELA PRIMEIRA FATURA REAL. O dono
+//    rodou os 14 documentos do book-vertentes (1.180 linhas com número) e pagou
+//    **US$ 0,90**; descontada a entrada (~US$ 0,14 de PDF + prompt cacheado),
+//    sobram ~US$ 0,76 de saída = ~76.000 tokens = **64 por linha**. O 35 antigo
+//    contava só a carga útil (rótulo + valor + confiança) e ignorava o CONTEXTO
+//    repetido em cada linha (s/sc/ec/pc/op) e os próprios nomes das chaves.
+//
+//    Errar 45% para BAIXO aqui não é detalhe: era o número que dizia "o book
+//    custa US$ 1,41" quando ele custava mais de 2 — e estimativa que erra para
+//    baixo é a que deixa o lote começar e morrer no meio (o incidente v31).
+const TOKENS_POR_LINHA_PLANO = 64;
+
+// E o formato que roda HOJE: uma seção por grupo, as colunas declaradas uma vez,
+// e a conta escrita uma vez com um valor por coluna. Os três números saem da
+// mesma medição de caracteres do formato real (JSON.stringify / 4):
+//   • cabeçalho do grupo (s + sc + op + cols + a sintaxe): ~30
+//   • conta (rótulo + confiança + sintaxe), sem nenhum valor: ~26
+//   • cada valor da conta (um vt + um vn): ~9
+const TOKENS_CABECALHO_GRUPO = 30;
+const TOKENS_CONTA_BASE = 26;
+const TOKENS_POR_VALOR = 9;
+
+// Quantas contas cabem num grupo, em média. Não é medido no PDF (o gerador não
+// marca seções): é a razão observada nos books — um balanço tem ~8 seções e
+// ~50 contas por coluna, e cada subtotal abre grupo próprio. Declarado como
+// suposição porque ele só afeta o custo do CABEÇALHO, que é ~5% da saída.
+const CONTAS_POR_GRUPO = 8;
+
+// Colunas de valor do documento, LIDAS DO NOME do arquivo pela mesma
+// `classifyByFilename` da produção: "2025x2024x2023" são três colunas de
+// período, "12M25" é uma. O limite fica declarado: colunas de EMPRESA (o balanço
+// combinado tem sete) não aparecem no nome, então este medidor SUBESTIMA a
+// economia justamente nos documentos onde ela é maior.
+function colunasDoDocumento(c) {
+  const ref = c?.periodo?.referencia;
+  if (typeof ref !== 'string') return 1;
+  const partes = ref.split(',').filter(Boolean);
+  return partes.length > 1 ? partes.length : 1;
+}
+
+function tokensDeSaida(linhas, colunas) {
+  const contas = Math.max(1, Math.ceil(linhas / colunas));
+  const grupos = Math.max(1, Math.ceil(contas / CONTAS_POR_GRUPO));
+  return grupos * TOKENS_CABECALHO_GRUPO + contas * (TOKENS_CONTA_BASE + colunas * TOKENS_POR_VALOR);
+}
 
 // A chamada de classificação por conteúdo manda o MESMO PDF e devolve um objeto
 // minúsculo (tipo, entidade, período, confiança).
@@ -71,12 +114,23 @@ const TOKENS_SAIDA_CLASSIFICACAO = 120;
 function medirDocumento(m) {
   const c = classifyByFilename(m.arquivo);
   const entradaPdf = m.paginas * TOKENS_POR_PAGINA_IMAGEM;
+  const colunas = colunasDoDocumento(c);
+  const saida = tokensDeSaida(m.linhas_com_numero, colunas);
+  const saidaPlana = m.linhas_com_numero * TOKENS_POR_LINHA_PLANO;
 
   const extracao = custoDaChamada({
     prompt_tokens: TOKENS_PROMPT_SISTEMA + entradaPdf,
-    completion_tokens: m.linhas_com_numero * TOKENS_POR_LINHA_EXTRAIDA,
+    completion_tokens: saida,
     // O prompt de sistema é idêntico em toda chamada e vem primeiro — é a
     // condição exata do cache de prefixo da OpenAI, e ignorá-lo superestimaria.
+    prompt_tokens_details: { cached_tokens: TOKENS_PROMPT_SISTEMA },
+  }, MODELO_EXTRACAO);
+
+  // O que o MESMO documento custava no formato plano, para a economia do
+  // agrupamento ser um número medido e não uma promessa.
+  const extracaoPlana = custoDaChamada({
+    prompt_tokens: TOKENS_PROMPT_SISTEMA + entradaPdf,
+    completion_tokens: saidaPlana,
     prompt_tokens_details: { cached_tokens: TOKENS_PROMPT_SISTEMA },
   }, MODELO_EXTRACAO);
 
@@ -92,7 +146,7 @@ function medirDocumento(m) {
   const entradaTexto = Math.ceil(m.caracteres / CARACTERES_POR_TOKEN);
   const comoTexto = custoDaChamada({
     prompt_tokens: TOKENS_PROMPT_SISTEMA + entradaTexto,
-    completion_tokens: m.linhas_com_numero * TOKENS_POR_LINHA_EXTRAIDA,
+    completion_tokens: saida,
     prompt_tokens_details: { cached_tokens: TOKENS_PROMPT_SISTEMA },
   }, MODELO_EXTRACAO);
 
@@ -104,11 +158,14 @@ function medirDocumento(m) {
     chamadas: c.precisa_fallback_openai ? 2 : 1,
     paginas: m.paginas,
     linhas: m.linhas_com_numero,
+    colunas,
     tokens_entrada: TOKENS_PROMPT_SISTEMA + entradaPdf,
-    tokens_saida: m.linhas_com_numero * TOKENS_POR_LINHA_EXTRAIDA,
+    tokens_saida: saida,
+    tokens_saida_plano: saidaPlana,
     usd_extracao: extracao,
     usd_classificacao: classificacao,
     usd: Number((extracao + classificacao).toFixed(6)),
+    usd_no_formato_plano: Number((extracaoPlana + classificacao).toFixed(6)),
     usd_se_pdf_fosse_texto: Number((comoTexto + classificacao).toFixed(6)),
   };
 }
@@ -137,6 +194,10 @@ const medidos = documentos.map(medirDocumento);
 const totalUSD = Number(medidos.reduce((s, d) => s + d.usd, 0).toFixed(4));
 const totalTexto = Number(medidos.reduce((s, d) => s + d.usd_se_pdf_fosse_texto, 0).toFixed(4));
 const chamadas = medidos.reduce((s, d) => s + d.chamadas, 0);
+const totalPlano = Number(medidos.reduce((s, d) => s + d.usd_no_formato_plano, 0).toFixed(4));
+const totalSaida = medidos.reduce((s, d) => s + d.tokens_saida, 0);
+const totalSaidaPlano = medidos.reduce((s, d) => s + d.tokens_saida_plano, 0);
+const maisPesado = medidos.reduce((a, b) => (b.tokens_saida > a.tokens_saida ? b : a));
 const dobrados = medidos.filter((d) => d.chamadas === 2);
 const semTipo = medidos.filter((d) => !d.tipo);
 
@@ -169,7 +230,7 @@ const vereditoPlano = orcamentoDoLote({ documentos: medidos.length, chamadasPorD
 
 if (comoJson) {
   console.log(JSON.stringify({
-    livro, documentos: medidos, totalUSD, totalTexto, chamadas, bytesDoLote,
+    livro, documentos: medidos, totalUSD, totalTexto, totalPlano, totalSaida, totalSaidaPlano, chamadas, bytesDoLote,
     veredito, vereditoRenomeado, vereditoPlano,
   }, null, 2));
 } else {
@@ -196,6 +257,13 @@ if (comoJson) {
   }
   console.log(`  • se o PDF fosse enviado como TEXTO em vez de imagem: ${usd(totalTexto)} ` +
     `(${(100 - totalTexto / totalUSD * 100).toFixed(0)}% menos) — a alavanca nº 1 de docs/CUSTO_OPENAI.md.`);
+  console.log(`  • no formato PLANO (uma entrada por conta × coluna, até 13/08/2026): ${usd(totalPlano)} ` +
+    `— o agrupamento cortou ${(100 - totalUSD / totalPlano * 100).toFixed(0)}% ` +
+    `(${totalSaida.toLocaleString('pt-BR')} tokens de saída contra ${totalSaidaPlano.toLocaleString('pt-BR')}).`);
+  console.log(`  • saída do documento mais pesado: ${maisPesado.tokens_saida.toLocaleString('pt-BR')} tokens ` +
+    `(${(maisPesado.tokens_saida / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto de ${MAX_OUTPUT_TOKENS.toLocaleString('pt-BR')}) ` +
+    `— ${maisPesado.arquivo}; no formato plano seriam ${maisPesado.tokens_saida_plano.toLocaleString('pt-BR')} ` +
+    `(${(maisPesado.tokens_saida_plano / MAX_OUTPUT_TOKENS * 100).toFixed(0)}%).`);
 
   console.log(`\n== o veredito do orçamento ${veredito.versao} (lib/custo.mjs, teto de US$ ${TETO_EXECUCAO_USD})`);
   console.log(`  estimativa do guarda: ${(bytesDoLote / 1024).toFixed(0)} KB × US$ 10,5/MB × ` +
@@ -236,6 +304,28 @@ for (const d of medidos) {
 for (const d of medidos) {
   if (!(d.usd > 0) || !(d.paginas > 0)) {
     falhas.push(`${d.arquivo}: métrica ausente ou zerada (páginas=${d.paginas}, US$=${d.usd})`);
+  }
+}
+
+// 3. TRUNCAMENTO: a saída de um documento não cabe no teto de tokens do modelo.
+//    Isto NÃO derruba o script, e a escolha é deliberada — não existe correção
+//    disponível nesta fatia (16.384 é o teto de saída do gpt-4o, não uma
+//    configuração nossa; a saída é dividir o documento em faixas de página, que
+//    é mudança de topologia). Mas também não pode ficar em silêncio: é a
+//    família de defeito do "teste v18", em que 6 de 16 documentos voltaram com o
+//    JSON cortado. Aparece nomeado, com o número, em toda execução do CI.
+const arriscados = medidos
+  .filter((d) => d.tokens_saida > MAX_OUTPUT_TOKENS * 0.8)
+  .sort((a, b) => b.tokens_saida - a.tokens_saida);
+if (arriscados.length && !comoJson) {
+  console.log(`\nATENÇÃO — ${arriscados.length} documento(s) perto ou acima do teto de saída ` +
+    `de ${MAX_OUTPUT_TOKENS.toLocaleString('pt-BR')} tokens. Acima de 100% a resposta vem truncada ` +
+    `(finish_reason=length): abre pendência, não perde em silêncio, mas o documento fica sem parte ` +
+    `dos dados. A saída é extrair por faixa de página — fatia própria, não feita.`);
+  for (const d of arriscados) {
+    console.log(`  • ${d.arquivo}: ${d.tokens_saida.toLocaleString('pt-BR')} tokens ` +
+      `(${(d.tokens_saida / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto) — ` +
+      `${d.linhas} células de valor em ${d.colunas} coluna(s)`);
   }
 }
 

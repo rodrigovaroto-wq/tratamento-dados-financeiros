@@ -39,6 +39,7 @@ for f in feitos: print("  ", f)
 
 # ---------------------------------------------------------------- GABARITO ---
 import json
+import os
 
 c25c, c24c = M.combinado(bp, tot, 2025), M.combinado(bp, tot, 2024)
 anc = {r: v for r, v, t in c25 if t == "ancora"}
@@ -178,3 +179,49 @@ with open(f"{R.OUT}/GUIA_DE_TESTE.md", "w", encoding="utf-8") as fh:
     fh.write(guia)
 
 print("\nGABARITO.json e GUIA_DE_TESTE.md gravados em", R.OUT)
+
+# ------------------------------------------------------------------ MÉTRICAS -
+# O mesmo METRICAS.json que o book-canastra escreve, e pelo mesmo motivo: é o
+# insumo de `n8n/medir-custo-book.mjs`, que converte páginas/linhas em dólares
+# com as funções de orçamento que rodam em produção.
+#
+# Faltava AQUI, e a falta apareceu do pior jeito: este é o book que o dono
+# rodou de verdade (14 documentos, US$ 0,90 de fatura), e era justamente o que
+# o medidor não conseguia abrir. Projetar economia sobre o book sintético
+# enquanto a fatura vinha do outro é comparar duas coisas diferentes.
+import re as _re
+
+import extrai as _extrai
+
+_metricas = []
+for _arquivo in sorted(os.listdir(R.OUT)):
+    if not _arquivo.lower().endswith(".pdf"):
+        continue
+    _caminho = f"{R.OUT}/{_arquivo}"
+    _bruto = open(_caminho, "rb").read()
+    # `extrai.texto` daqui devolve LISTA de fragmentos (um por comando de texto do
+    # PDF) e a do book-canastra devolve string com um fragmento por linha — as
+    # duas descrevem a mesma coisa, então juntar por "\n" iguala a unidade. E a
+    # unidade importa: cada fragmento com dígito é uma CÉLULA de valor, que é o
+    # que vira token de saída, não uma linha de conta (uma conta comparativa tem
+    # uma célula por coluna de período).
+    _bruto_texto = _extrai.texto(_caminho)
+    _texto = "\n".join(_bruto_texto) if isinstance(_bruto_texto, list) else _bruto_texto
+    _linhas = [linha for linha in _texto.split("\n") if linha.strip()]
+    _metricas.append({
+        "arquivo": _arquivo,
+        "paginas": len(_re.findall(rb"/Type\s*/Page[^s]", _bruto)),
+        "bytes": len(_bruto),
+        "caracteres": len(_texto),
+        "linhas_texto": len(_linhas),
+        # Linha com dígito é candidata a virar linha financeira extraída — é ela
+        # que vira token de SAÍDA, o item mais caro da conta.
+        "linhas_com_numero": sum(1 for linha in _linhas if any(ch.isdigit() for ch in linha)),
+    })
+
+with open(f"{R.OUT}/METRICAS.json", "w", encoding="utf-8") as fh:
+    json.dump({"livro": "book-vertentes", "documentos": _metricas}, fh, indent=2, ensure_ascii=False)
+
+print(f"METRICAS.json gravado: {len(_metricas)} documentos, "
+      f"{sum(m['paginas'] for m in _metricas)} páginas, "
+      f"{sum(m['linhas_com_numero'] for m in _metricas)} linhas com número")

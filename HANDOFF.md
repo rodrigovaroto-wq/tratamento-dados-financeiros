@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-13 (sessão 43). **Estado do `main`:** mergeado até o **PR #116**
-(`main` em `6d8db16`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
+**Última atualização:** 2026-08-13 (sessão 44). **Estado do `main`:** mergeado até o **PR #117**
+(`main` em `0540e2f`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -275,6 +275,112 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 44 (2026-08-13) — a primeira fatura real, e metade da saída era contexto repetido
+
+**O QUE O DONO RELATOU:** rodou os 14 documentos do `book-vertentes` e a OpenAI cobrou **US$ 0,90**.
+Alvo: **abaixo de US$ 0,50**. E a pergunta que abriu a rodada: *"como acesso isso?"* — sobre os
+tokens por documento que eu tinha pedido.
+
+### A fatura desmentiu o modelo deste repositório em 45%
+
+Decompondo os US$ 0,90: **84% é saída de extração**, a **~64 tokens por célula de valor**. O
+repositório supunha 35 (`TOKENS_POR_LINHA_EXTRAIDA`), e o 35 não estava errado por descuido — ele
+contava a CARGA ÚTIL da linha e ignorava o resto:
+
+```json
+{"s":"ATIVO CIRCULANTE","sc":"ativo_circulante","ec":null,"pc":"31/12/2025",
+ "k":"Duplicatas a receber","vt":"22.310","vn":22310,"op":1,"cf":0.96}
+```
+
+Os cinco primeiros campos são **contexto**, idêntico em dezenas de linhas consecutivas. E num balanço
+comparativo o rótulo da conta — o campo mais longo — era reescrito **uma vez por coluna de período**,
+porque o prompt mandava "gere uma LINHA SEPARADA para cada (conta × período), com o MESMO chave".
+
+### A saída passou a ser AGRUPADA
+
+Um grupo por seção, as colunas declaradas UMA vez em `cols` (que unifica as duas dimensões — empresa
+e período —, antes descritas em dois parágrafos separados do prompt), e a conta escrita UMA vez com um
+valor por coluna. Medido pelo `medir-custo-book.mjs` sobre os PDFs de verdade:
+
+| Book | formato plano | agrupado | corte |
+|---|---:|---:|---:|
+| `book-vertentes` (14 docs — o que o dono rodou) | US$ 0,857 | **US$ 0,471** | **−45%** |
+| `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** | **−44%** |
+
+**O modelo do formato plano projeta 0,857 contra os 0,90 da fatura — 5% de erro.** É isso que
+autoriza tratar os 0,471 como projeção em vez de esperança, e o alvo de US$ 0,50 está atendido. A
+economia real deve ser um pouco maior: o medidor lê as colunas do NOME do arquivo, então as sete
+colunas de empresa do balanço combinado não entram na conta dele.
+
+**Nada é extraído de menos.** `parseExtractionResponse` e o nó `Parse Extracao` (com a MESMA função
+embutida por `toString`) achatam os grupos de volta para uma linha por (conta × coluna):
+`campo_extraido` fica idêntico — mesmos valores, mesma `ordem` de leitura, mesma escala e moeda.
+
+### As três decisões que o formato de colunas obrigou
+
+1. **Célula em branco OCUPA POSIÇÃO** (`null` no índice), nunca é omitida. Encostar os valores à
+   esquerda poria o número de 2024 na coluna de 2025 — plausível, silencioso, e o pior erro possível
+   aqui.
+2. **Desalinhamento é FALHA, não palpite.** Um valor para duas colunas e a associação valor↔coluna
+   deixou de ser conhecida: a conta é **descartada** e o motivo volta nomeado (rótulo e contagens),
+   virando pendência. Completar com `null` seria inventar dado.
+3. **Subtotal abre grupo PRÓPRIO** com `sc = NAO_CLASSIFICAVEL`. A seção canônica passou a ser do
+   grupo, e um subtotal misturado às contas que ele soma faria a seção ser contada duas vezes na
+   planilha — a mesma aritmética do invariante "uma conta, um lugar".
+
+### E o defeito de 2018… quer dizer, do "teste v18", que isto conserta de graça
+
+Documentos comparativos truncavam (`finish_reason=length`) antes de terminar de listar as contas — 6
+de 16. A correção da época foi encurtar os NOMES das chaves; era meia correção, porque o contexto
+continuava sendo repetido. O documento mais pesado do `book-vertentes` usava 73% do teto de saída e
+agora usa 45%.
+
+E o medidor passou a AVISAR quando a saída projetada passa de 80% do teto, nomeando o arquivo. Ele
+acusa um caso que ninguém tinha visto: o livro razão do `book-canastra` (461 células de valor) fica em
+**109% do teto mesmo agrupado** — vai truncar. A saída é extrair por faixa de página, e é fatia
+própria; fica declarado em vez de descoberto na fatura.
+
+### "Como acesso isso?" — a resposta virou um nó
+
+Os tokens por documento existiam desde sempre, um por item do `Parse Extracao`. Para saber o custo do
+LOTE era preciso abrir 14 painéis e somar à mão — e custo que só se conhece somando à mão é custo que
+ninguém mede. É metade da explicação de por que este projeto decidiu teto de gasto por estimativa
+durante meses.
+
+**`Resumo de Custo`**, novo, último nó do canvas: custo real do lote, quanto foi extração e quanto foi
+classificação, o que o orçamento havia estimado, tokens de entrada/saída/cache e **tokens de saída por
+linha extraída** — o número que recalibra o estimador. Ele soma **por nó**, nunca por índice do lote:
+só 8 dos 14 documentos passam pela classificação, então casar `[i]` com `[i]` atribuiria o custo ao
+documento errado. É terminal e tem `onError`: um resumo que derruba o lote que ele resume seria a pior
+troca possível.
+
+### Dois espelhos à mão morreram no caminho
+
+- **O schema da extração no nó** era uma linha de 2.400 caracteres copiada da lib. Agora é
+  `JSON.stringify(extractionSchema())` — o schema é JSON puro, então serializar a fonte é exato. Um
+  teste compara o schema do nó com a fonte inteira, em vez de conferir um campo por vez.
+- **O achatamento** vem embutido por `toString()`. É o único lugar onde valor e coluna são
+  associados: um espelho que divergisse ali gravaria o número de 2024 na coluna de 2025 sem sintoma.
+
+E o `book-vertentes` passou a escrever `METRICAS.json` como o `book-canastra` já fazia — faltava
+justamente no book que o dono roda de verdade, então o medidor não conseguia abrir o único lote com
+fatura conhecida.
+
+### O que ficou de fora, e por quê
+
+O dono aprovou 1+2+3 (agrupamento, PDF como texto, dedup por hash). Entregue: o **1**, que sozinho
+atinge o alvo. Os outros dois **não** entraram, e não é esquecimento:
+
+- **PDF como texto** exige o nó `Extract From File` no n8n vivo dele. Depois do agrupamento vale
+  ~US$ 0,03 neste book, e o risco (um nó novo no meio da cadeia de intake) ficou grande para o
+  prêmio. Melhor com os tokens de entrada REAIS do `Resumo de Custo` na mão.
+- **Dedup por hash** é o de maior efeito no uso real dele (reexecutar o mesmo book sai de graça), e é
+  o que a própria `0026` descreve como precisando de duas coisas que não existem: um *fingerprint* de
+  prompt+modelo na versão (migration) e um curto-circuito no grafo. A migration diz, com estas
+  palavras, "não às cegas". É a próxima fatia, e agora é a maior.
+
+`n8n/test`: 194 → **207**.
 
 ## Sessão 43 (2026-08-13) — a recusa vinha de um workflow de julho, e a 2ª chamada era cobrada como se fosse a 1ª
 
