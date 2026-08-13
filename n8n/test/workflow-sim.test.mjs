@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO } from '../lib/custo.mjs';
@@ -50,7 +50,12 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
   };
   const $ = (ref) => {
     if (!(ref in refs)) throw new Error(`Referência não mockada no teste: $('${ref}') — o node "${name}" depende dela`);
-    return { first: () => refs[ref], item: refs[ref] };
+    // `.all()` existe porque um nó pode olhar TODOS os itens que passaram por
+    // outro nó — é assim que o `Resumo de Custo` soma o lote. Mock em array
+    // significa "vários itens"; mock em objeto continua sendo um item só.
+    const v = refs[ref];
+    const lista = Array.isArray(v) ? v : [v];
+    return { first: () => lista[0], item: Array.isArray(v) ? lista[itemIndex] : v, all: () => lista };
   };
   const $json = item ? item.json : undefined;
   const thisContext = {
@@ -268,9 +273,15 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  // O schema do nó é o `extractionSchema()` da fonte, serializado — não mais um
+  // espelho à mão de 2.400 caracteres. Conferir a IGUALDADE é o que impede a
+  // divergência voltar; conferir `pc` dentro de `cols` é o que garante que a
+  // coluna de período (db/migrations/0017) continua sendo pedida.
+  assert.deepEqual(req.json.openai_body.response_format.json_schema, extractionSchema());
   assert.ok(
-    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('pc'),
-    'schema gerado pede pc/periodo_coluna por linha (db/migrations/0017)',
+    req.json.openai_body.response_format.json_schema.schema.properties.grupos
+      .items.properties.cols.items.required.includes('pc'),
+    'schema gerado pede pc/periodo_coluna na coluna (db/migrations/0017)',
   );
   assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
@@ -310,6 +321,64 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   for (const campo of refsUsadas) {
     assert.ok(campo in parsed.json.diagnostico, `Registrar Diagnostico espera diagnostico.${campo}, que Parse Extracao não produz`);
   }
+});
+
+test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × coluna)', async () => {
+  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', openai_body: {} } };
+  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Vertentes Metalúrgica Ltda.', tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'multi', periodo_referencia: '24,25', legibilidade: 'ok',
+      nota_legibilidade: null, resumo: 'BP comparativo.', justificativa: 'Duas colunas de ano.',
+    },
+    grupos: [
+      {
+        s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+        cols: [{ ec: null, pc: '31/12/2025' }, { ec: null, pc: '31/12/2024' }],
+        l: [{ k: 'Caixa e bancos', vt: ['380', '1.240'], vn: [380, 1240], cf: 0.98 }],
+      },
+      // O subtotal em grupo PRÓPRIO, que é o que a seção canônica por grupo exige.
+      {
+        s: 'Ativo Circulante', sc: 'NAO_CLASSIFICAVEL', op: 1,
+        cols: [{ ec: null, pc: '31/12/2025' }, { ec: null, pc: '31/12/2024' }],
+        l: [{ k: 'Total do Ativo Circulante', vt: ['45.440', '67.878'], vn: [45440, 67878], cf: 0.99 }],
+      },
+    ],
+  }) } }], usage: { prompt_tokens: 12_000, completion_tokens: 3_000 } } };
+  const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
+  assert.equal(out.json.campos.length, 4);
+  assert.deepEqual(out.json.campos.map((c) => [c.chave, c.periodo_coluna, c.valor_num, c.secao_canonica]), [
+    ['Caixa e bancos', '31/12/2025', 380, 'ativo_circulante'],
+    ['Caixa e bancos', '31/12/2024', 1240, 'ativo_circulante'],
+    ['Total do Ativo Circulante', '31/12/2025', 45440, null],
+    ['Total do Ativo Circulante', '31/12/2024', 67878, null],
+  ]);
+  // A escala do documento continua descendo por linha, normalizada.
+  assert.ok(out.json.campos.every((c) => c.unidade === 'milhar' && c.moeda === 'BRL'));
+  assert.deepEqual(out.json.campos.map((c) => c.ordem), [0, 1, 2, 3]);
+  assert.equal(out.json.falha_motivo, null);
+});
+
+test('Parse Extracao (nó real): desalinhamento de coluna vira falha_motivo, não linha adivinhada', async () => {
+  const req = { json: { documento_versao_id: 'ver-10', tipo: 'BALANCO', openai_body: {} } };
+  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'unidade',
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'multi',
+      periodo_referencia: '24,25', legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'x', justificativa: 'y',
+    },
+    grupos: [{
+      s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+      cols: [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }],
+      l: [{ k: 'Caixa', vt: ['380'], vn: [380], cf: 0.9 }],
+    }],
+  }) } }] } };
+  const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
+  assert.equal(out.json.campos.length, 0, 'não grava meia linha nem inventa null');
+  assert.match(out.json.falha_motivo, /desalinhamento entre colunas e valores/);
+  assert.match(out.json.falha_motivo, /"Caixa"/);
 });
 
 test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHECIDO" literal na pendência)', async () => {
@@ -437,6 +506,40 @@ test('Nós Postgres têm onError+retry — um erro num item não derruba o resto
   }
 });
 
+test('O AGRUPAMENTO corta a saída onde as chaves curtas não chegaram (a metade que faltava)', () => {
+  // As chaves curtas (abaixo) encurtaram o NOME do contexto repetido; o formato
+  // agrupado para de REPETI-LO. Medido no book de 14 documentos do dono: 64
+  // tokens por linha, dos quais ~30 eram contexto idêntico à linha anterior.
+  const cols = [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }];
+  const contas = ['Caixa e equivalentes de caixa', 'Duplicatas a receber de clientes',
+    '(-) Provisão para créditos de liquidação duvidosa', 'Estoques', 'Tributos a recuperar'];
+
+  // Formato plano: uma entrada por (conta × coluna), cada uma reescrevendo os
+  // cinco campos de contexto E o rótulo da conta.
+  const plano = contas.flatMap((k) => cols.map((c) => ({
+    s: 'Ativo Circulante', sc: 'ativo_circulante', ec: c.ec, pc: c.pc, k,
+    vt: '1.234.567,89', vn: 1234567.89, op: 3, cf: 0.95,
+  })));
+  // Formato agrupado: contexto uma vez, colunas uma vez, conta uma vez.
+  const agrupado = [{
+    s: 'Ativo Circulante', sc: 'ativo_circulante', op: 3, cols,
+    l: contas.map((k) => ({ k, vt: ['1.234.567,89', '1.234.567,89'], vn: [1234567.89, 1234567.89], cf: 0.95 })),
+  }];
+
+  const antes = JSON.stringify(plano).length;
+  const depois = JSON.stringify(agrupado).length;
+  const reducao = (1 - depois / antes) * 100;
+  assert.ok(reducao >= 45, `esperava >=45% de redução no documento comparativo, obteve ${reducao.toFixed(1)}%`);
+
+  // E os dois formatos têm de produzir EXATAMENTE as mesmas linhas no banco —
+  // economia que muda o dado gravado não é economia, é perda.
+  const doAgrupado = achatarGrupos(agrupado).linhas;
+  assert.equal(doAgrupado.length, plano.length);
+  assert.deepEqual(
+    doAgrupado.map((l) => [l.secao, l.secao_canonica, l.periodo_coluna, l.chave, l.valor_num, l.origem_pagina, l.confianca]),
+    plano.map((l) => [l.s, l.sc, l.pc, l.k, l.vn, l.op, l.cf]));
+});
+
 test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos densos truncavam antes)', () => {
   // Achado em produção (sessão 7 cont.¹¹): os 3 documentos que truncaram
   // (finish_reason=length) no "teste v18" eram consolidados comparativos
@@ -490,11 +593,13 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
   const nomes = wf.nodes.map((n) => n.name);
   for (const n of wf.nodes) {
     if (n.type === 'n8n-nodes-base.code') {
-      // Dois nós legitimamente veem o LOTE inteiro, por motivos diferentes:
-      // `Listar Arquivos` faz fan-out (1 item → N), e `Orcamento do Lote` é N→N
+      // Quatro nós legitimamente veem o LOTE inteiro, por motivos diferentes:
+      // `Listar Arquivos` faz fan-out (1 item → N); `Orcamento do Lote` é N→N
       // mas precisa contar o lote para decidir se ele cabe no teto de gasto —
-      // uma decisão que por definição não existe olhando um item por vez.
-      if (n.name === 'Listar Arquivos' || n.name === 'Orcamento do Lote' || n.name === 'Abortar Lote') {
+      // uma decisão que por definição não existe olhando um item por vez; e
+      // `Resumo de Custo` responde "quanto custou ESTE LOTE", que é a mesma
+      // classe de pergunta na outra ponta da cadeia.
+      if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo'].includes(n.name)) {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -703,8 +808,16 @@ test('Parse Extracao (nó real): propaga a ORDEM da linha (db/migrations/0027)',
   // v28 continuaria acontecendo em silêncio.
   const parse = wf.nodes.find((n) => n.name === 'Parse Extracao');
   assert.ok(parse, 'nó Parse Extracao não existe');
-  assert.match(parse.parameters.jsCode, /p\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
-    'o mirror não está numerando as linhas pela posição no array');
+  assert.match(parse.parameters.jsCode, /ach\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
+    'o nó não está numerando as linhas pela posição de leitura');
+  // O achatamento vem EMBUTIDO da fonte. É o único lugar onde valor e coluna são
+  // associados: um espelho à mão que divergisse aqui gravaria o número de 2024
+  // na coluna de 2025, sem sintoma nenhum.
+  assert.ok(parse.parameters.jsCode.includes(achatarGrupos.toString()),
+    'o achatamento embutido no nó divergiu da fonte em lib/extract.mjs');
+  // E o caminho do formato plano continua no nó, para um JSON velho importado
+  // não virar "zero linhas extraídas" sem explicação.
+  assert.match(parse.parameters.jsCode, /Array\.isArray\(p\.linhas\)/);
 });
 
 // --- Anti-drift: a entidade do nome no nó É a de lib/classifier.mjs -----------
@@ -890,6 +1003,57 @@ test('Parse Extracao mede o custo real da chamada a partir do usage', async () =
   const out = await run('Parse Extracao', { item: resp, refs: { 'Montar Req Extracao': req } });
   assert.equal(out.json.custo_usd, 0.105, 'custo medido, não estimado');
   assert.deepEqual(out.json.tokens, { entrada: 10_000, saida: 8_000, cache: 0 });
+});
+
+test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação é de um subconjunto)', async () => {
+  // Só os documentos cujo nome não resolve o tipo passam pela classificação — 8
+  // de 14 no book do dono. Casar item a item por índice atribuiria o custo da
+  // classificação ao documento errado, que num relatório de custo é pior que
+  // não ter relatório.
+  const extracoes = [
+    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null } },
+    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou' } },
+    // Documento sem `usage`: conta como SEM MEDIÇÃO, nunca como custo zero.
+    { json: { custo_usd: null, tokens: null, campos: [], falha_motivo: null } },
+  ];
+  const classificacoes = [{ json: { custo_classificacao_usd: 0.0016 } }];
+  const out = await run('Resumo de Custo', {
+    items: extracoes,
+    refs: {
+      'Parse Extracao': extracoes,
+      'Parse OpenAI Classif': classificacoes,
+      'Orcamento do Lote': { json: { orcamento_estimado_usd: 0.42, orcamento_versao: 'v3 (2026-08-13)' } },
+    },
+  });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.documentos, 3);
+  assert.equal(r.documentos_com_classificacao, 1, 'a classificação é de um SUBCONJUNTO');
+  assert.equal(r.custo_extracao_usd, 0.1);
+  assert.equal(r.custo_classificacao_usd, 0.0016);
+  assert.equal(r.custo_total_usd, 0.1016);
+  assert.deepEqual(r.tokens, { entrada: 20_000, saida: 8_000, cache: 5_800 });
+  // 8.000 tokens de saída / 120 linhas — o número que recalibra o estimador.
+  assert.equal(r.tokens_saida_por_linha, 66.7);
+  assert.equal(r.documentos_com_falha, 1);
+  assert.equal(r.documentos_sem_medicao, 1, 'sem usage é sem medição, nunca custo zero');
+  assert.equal(r.custo_estimado_usd, 0.42, 'o estimado vem junto: é a única forma de calibrar');
+  assert.match(r.resumo, /Custo REAL deste lote: US\$ 0\.1016 em 3 documento\(s\)/);
+});
+
+test('Resumo de Custo é TERMINAL e não derruba o lote que ele resume', async () => {
+  const resumo = wf.nodes.find((n) => n.name === 'Resumo de Custo');
+  assert.ok(resumo, 'nó Resumo de Custo não existe');
+  assert.equal(resumo.onError, 'continueRegularOutput');
+  // Nada depende dele: é o último da cadeia, e quando ele aparece o lote acabou.
+  const saidas = Object.values(wf.connections).flatMap((c) => (c.main || []).flat().map((x) => x.node));
+  assert.ok(saidas.includes('Resumo de Custo'), 'alguém tem de alimentá-lo');
+  assert.equal(wf.connections['Resumo de Custo'], undefined, 'nada pode depender do resumo');
+  // E sem NENHUMA referência resolvível ele devolve zero em vez de estourar — um
+  // resumo que explode é um lote inteiro perdido no último passo.
+  const out = await run('Resumo de Custo', { items: [{ json: {} }], refs: {} });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.custo_total_usd, 0);
+  assert.equal(r.custo_estimado_usd, null);
 });
 
 // --- Anti-drift: todo nó Code declara o que faz quando UM item falha ----------
