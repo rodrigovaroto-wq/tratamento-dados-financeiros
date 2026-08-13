@@ -79,6 +79,14 @@
 -- se QUALQUER documento do tipo (versão vigente, 0102) tem a linha. Dois
 -- balanços no caso, um com caixa e um sem: não acusa. Refinar por
 -- entidade/documento é evolução com dado na mão, não chute agora.
+--
+-- DUPLICAÇÃO ASSUMIDA: o seed de origem 'codigo' COPIA termos que continuam
+-- vivos no corpo das reconciliações (0023/0031/0034) — dois lugares para a
+-- mesma verdade, exatamente o que a 0103 desfez para a tokenização. Fica assim
+-- MESMO, por escopo: a convergência (as reconciliações passarem a LER os
+-- termos daqui) mexe em cinco funções auditadas em produção e é evolução fora
+-- desta migration. Até lá, quem mudar termo de reconciliação atualiza o seed
+-- junto — o aviso está repetido na seção do seed.
 -- =============================================================================
 
 alter type pendencia_tipo add value if not exists 'linha_exigida_ausente';
@@ -606,25 +614,37 @@ where e.tipo_taxonomia = 'MAPA_DIVIDA' and e.conceito = 'juros_por_contrato'
 on conflict (exigencia_id, ordem) do nothing;
 
 -- ---- PROPOSTAS (nenhuma checagem lê esses três tipos hoje) ------------------
+-- REDUÇÃO DECLARADA: a entrega aprovada especifica MAIS do que esta tabela
+-- consegue exprimir. A forma daqui é "existe linha com valor casando termos";
+-- a entrega pede ESTRUTURA (par de contrapartes em MUTUOS, par de entidades
+-- por exercício em FAT_INTRAGRUPO) e CAMPOS não numéricos (CONTRATO_SOCIAL).
+-- O que está abaixo é o SUBCONJUNTO que cabe na forma — e cada descricao diz
+-- o que ficou de fora, para a redução não passar por cobertura.
 insert into taxonomia_linha_exigida
   (tipo_taxonomia, conceito, rotulo, checagem, origem, depende_de, descricao)
 values
   ('MUTUOS', 'saldo_de_mutuo', 'Saldo de mútuo por contraparte', 'linha_por_termos', 'proposta',
    array['(proposta) espelhamento mutuo a receber x a pagar entre entidades do grupo — '
          'nenhuma checagem lê MUTUOS hoje'],
-   'Sem ao menos uma linha de mútuo com valor, a posição intragrupo do book sai vazia e um futuro '
-   'espelhamento (crédito de A = débito de B) não tem o que cruzar.'),
+   'REDUÇÃO da entrega: ela especifica, por operação, mutuante, mutuária, saldo devedor e SENTIDO; '
+   'esta tabela só consegue exigir "existe linha de mútuo com valor" — o par de contrapartes fica '
+   'de fora. Sem nem essa linha, a posição intragrupo do book sai vazia e um futuro espelhamento '
+   '(crédito de A = débito de B) não tem o que cruzar.'),
   ('FAT_INTRAGRUPO', 'faturamento_entre_partes', 'Faturamento entre partes relacionadas',
    'linha_por_termos', 'proposta',
    array['(proposta) cruzamento FAT_INTRAGRUPO x FATURAMENTO_24M / eliminacao intragrupo no '
          'combinado — nenhuma checagem lê FAT_INTRAGRUPO hoje'],
-   'Sem linha de faturamento com valor, a eliminação intragrupo e a leitura de dependência entre '
-   'entidades ficam sem insumo.'),
+   'REDUÇÃO da entrega: ela especifica, por par de entidades e por exercício, vendedora, compradora '
+   'e valor; aqui só "existe linha de faturamento com valor". Sem nem essa linha, a eliminação '
+   'intragrupo e a leitura de dependência entre entidades ficam sem insumo.'),
   ('CONTRATO_SOCIAL', 'capital_social', 'Capital social', 'linha_por_termos', 'proposta',
    array['(proposta) conferencia capital social do contrato x linha de capital social do BP '
          '(patrimonio_liquido) — nenhuma checagem lê CONTRATO_SOCIAL hoje'],
-   'É o único número do contrato que cruza com as demonstrações; sem ele o documento cumpre '
-   'presença societária mas não confere nada.')
+   'REDUÇÃO da entrega: ela especifica cinco CAMPOS (razão social, CNPJ, data do registro, '
+   'composição societária com percentuais, cláusula de administração) e diz que o documento não '
+   'tem linha numérica. Capital social é o ÚNICO desses que cabe na forma linha-com-valor desta '
+   'tabela; os outros quatro pedem estrutura de campos, não de linhas. É também o único número do '
+   'contrato que cruza com as demonstrações.')
 on conflict (tipo_taxonomia, conceito) do nothing;
 
 insert into taxonomia_linha_localizador (exigencia_id, ordem, contra, termos_inclui, termos_exclui)
