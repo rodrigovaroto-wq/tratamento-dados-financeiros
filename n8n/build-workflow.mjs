@@ -340,25 +340,34 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 const CODE_PREPARAR_CONTEUDO = `
 ${FONTE_SHA256}
 ${FONTE_COBERTURA}
+const item=$input.item.json;
 // CAMADA 1 -- SABER O QUE O DOCUMENTO TEM ANTES DE CHAMAR A OPENAI.
 //
-// O no' anterior (\`Extrair Texto\`) le a camada de texto do PDF na propria
-// instancia, sem IA e sem custo. Dele sai a unica medida deterministica que este
-// pipeline tem do tamanho do trabalho: quantas linhas com numero o documento
-// contem. Ela alimenta o fatiamento (camada 2) e a guarda de cobertura (3).
+// O \`Extrair Texto\` le a camada de texto do PDF na propria instancia, sem IA e
+// sem custo, e dele sai a unica medida deterministica que este pipeline tem do
+// tamanho do trabalho: quantas linhas com numero o documento contem. Ela
+// alimenta o fatiamento (camada 2) e a guarda de cobertura (3).
 //
-// O CONTEXTO E' RECOMPOSTO DE DUAS FONTES, e nao e' paranoia: o
-// \`Extract From File\` do n8n escreve o resultado no \`json\` do item, e
-// dependendo da versao ele SUBSTITUI o objeto em vez de mesclar -- levando junto
-// caso_id, nome_original e a classificacao. Ler o item anterior por referencia e
-// mesclar por cima faz os dois comportamentos darem no mesmo.
-let ctxAnterior={};
-try{ ctxAnterior=$('Orcamento do Lote').item.json||{}; }catch(e){ ctxAnterior={}; }
-const item={...ctxAnterior, ...$input.item.json};
-// O texto pode vir em \`text\` (o padrao do no') ou em \`texto_pdf\` (quando o
-// destino e' configurado). Ausente = PDF escaneado, sem camada de texto: o
-// pipeline segue exatamente como antes, so' sem as camadas 2 e 3 para ele.
-const textoPdf=(typeof item.text==='string'&&item.text)||(typeof item.texto_pdf==='string'&&item.texto_pdf)||'';
+// ELE E' RAMO LATERAL, E ISSO CUSTOU UMA EXECUCAO INTEIRA PARA SER APRENDIDO DE
+// NOVO. A regra 2 do n8n/README ja' dizia: no' que SUBSTITUI o item (o HTTP
+// Request e' o exemplo de la') nao pode ficar no meio da corrente -- por isso o
+// \`Upload Storage\` sempre foi lateral. O \`Extract From File\` faz exatamente
+// isso: escreve o resultado do PDF no \`json\` e NAO repassa o binario. Posto na
+// corrente, ele levou junto caso_id, classificacao e o arquivo; o
+// \`Registrar Documento\` recebeu \`caso_id\` null e o banco recusou com
+// "null value in column caso_id violates not-null constraint" (execucao de
+// 21:16). Agora ele pendura ao lado, ninguem consome a saida dele, e o texto vem
+// por REFERENCIA -- o mesmo padrao com que o contexto volta depois das chamadas
+// a' OpenAI.
+//
+// Ausencia de texto (PDF escaneado, no' que falhou, referencia que nao resolve)
+// NAO e' erro: o documento segue como imagem, exatamente como antes, e as
+// camadas 2 e 3 se calam para ele.
+let textoPdf='';
+try{
+  const t=$('Extrair Texto').item.json||{};
+  textoPdf=(typeof t.text==='string'&&t.text)||(typeof t.texto_pdf==='string'&&t.texto_pdf)||'';
+}catch(e){ textoPdf=''; }
 const linhasDoTexto=linhasComNumero(textoPdf);
 const temTexto=linhasDoTexto.length>0;
 const binMeta=($input.item.binary||{})['data']||{};
@@ -441,10 +450,10 @@ try{
   // falharem -- ai' sim nao saber e' melhor que errar.
   try{hash=sha256Hex(buf);}catch(e2){hash=null;}
 }
-// \`texto\` NAO segue adiante: ele so' serviu para medir, e carregar o documento
-// inteiro em texto por todo o grafo incharia cada item sem ninguem ler.
-const {text:_t, texto_pdf:_tp, ...semTexto}=item;
-return {json:{...semTexto, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso,
+// O texto NAO segue adiante: ele so' serviu para medir, e carregar o documento
+// inteiro em texto por todo o grafo incharia cada item sem ninguem ler. So' as
+// linhas com numero seguem, e elas viram ancora no fatiamento.
+return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso,
   // A MEDIDA, e as ancoras do fatiamento. \`null\` quando o PDF nao tem camada de
   // texto -- e null aqui significa "nao sei", nunca "zero": tratar desconhecido
   // como zero desligaria a guarda de cobertura justamente no escaneado, que e' o
@@ -1110,8 +1119,15 @@ const connections = {
   // ainda não custou nada (nem chamada à OpenAI, nem linha no banco).
   'Classificar Nome': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
   'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
+  // O `Extrair Texto` é RAMO LATERAL (regra 2 do README: nó que substitui o item
+  // não entra na corrente). Ele vem PRIMEIRO na lista porque a ordem de execução
+  // v1 do n8n segue a ordem das conexões — e o `Preparar Conteudo` lê a saída
+  // dele por referência, então ele precisa já ter rodado.
   'Lote cabe?': { main: [
-    [{ node: 'Extrair Texto', type: 'main', index: 0 }],       // true — segue
+    [
+      { node: 'Extrair Texto', type: 'main', index: 0 },       // true — lateral, mede o PDF
+      { node: 'Preparar Conteudo', type: 'main', index: 0 },   // true — a corrente, com json e binário intactos
+    ],
     [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
   ] },
   'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
@@ -1131,7 +1147,6 @@ const connections = {
     { node: 'Recomputar Completude', type: 'main', index: 0 },
     { node: 'Montar Req Extracao', type: 'main', index: 0 },
   ]] },
-  'Extrair Texto': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
   'Montar Req Extracao': { main: [[{ node: 'Fatiar Extracao', type: 'main', index: 0 }]] },
   'Fatiar Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },

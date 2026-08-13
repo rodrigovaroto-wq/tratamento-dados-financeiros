@@ -573,11 +573,15 @@ test('Topologia: o teto de gasto fica entre a classificação por nome e o conte
   // chegar ao portal — lançando ali mesmo, a mensagem ficava só no log do n8n e
   // a tela seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  // E entre o IF e o preparo entrou o `Extrair Texto`: ler a camada de texto do
-  // PDF na própria instância é grátis, mas mesmo assim fica DEPOIS do teto de
-  // gasto — o lote recusado não abre arquivo nenhum.
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Extrair Texto']);
-  assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  // O `Extrair Texto` pendura no MESMO ponto do preparo, como ramo lateral —
+  // ler a camada de texto do PDF é grátis, mas mesmo assim fica depois do teto
+  // de gasto (lote recusado não abre arquivo nenhum). Ele vem PRIMEIRO na lista
+  // porque a ordem de execução v1 segue a ordem das conexões, e o preparo lê a
+  // saída dele por referência.
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node),
+    ['Extrair Texto', 'Preparar Conteudo']);
+  assert.equal(wf.connections['Extrair Texto'], undefined,
+    'ramo LATERAL: nada pode consumir a saída dele — ele substitui o item e não repassa binário');
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
   // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
   // o portal sem a causa, que é exatamente o defeito que este ramo corrige.
@@ -1093,16 +1097,21 @@ test('Camada 1: Preparar Conteudo MEDE o documento, e ausência de texto vira nu
   const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
   const classificado = await run('Classificar Nome', { item: lote[0], refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
   const texto = ['CNPJ 44.555.667/0001-59', 'ATIVO', 'Caixa   380', 'Duplicatas   22.310'].join('\n');
-  // É assim que o item chega do `Extrair Texto`: o texto do PDF entra no json.
+  // O texto vem por REFERÊNCIA ao ramo lateral — o item da corrente continua
+  // sendo o do `Lote cabe?`, com json e binário intactos. Foi trocar isto que
+  // custou uma execução: com o `Extrair Texto` NA corrente, o `caso_id` sumia.
   const comTexto = await run('Preparar Conteudo', {
-    item: { json: { ...classificado.json, text: texto }, binary: classificado.binary },
-    refs: REFS_BASE, itemIndex: 0, binaryStore: lote,
+    item: classificado,
+    refs: { ...REFS_BASE, 'Extrair Texto': { json: { text: texto } } },
+    itemIndex: 0, binaryStore: lote,
   });
+  assert.equal(comTexto.json.caso_id, 'caso-uuid-1', 'o contexto da corrente sobrevive inteiro');
   assert.equal(comTexto.json.celulas_no_documento, 3);
   assert.equal(comTexto.json.linhas_do_texto.length, 3);
   // O texto NÃO segue adiante: ele já virou medida e âncora, e carregar o
   // documento inteiro por todo o grafo incharia cada item sem ninguém ler.
   assert.equal(comTexto.json.text, undefined);
+  assert.ok(comTexto.binary?.data, 'e o binário segue — é o que a chamada à OpenAI usa');
 
   // Sem camada de texto (escaneado): `null` significa "não sei", e é o que
   // desliga as camadas 2 e 3 para este documento — tratar como zero as ligaria
@@ -1116,6 +1125,52 @@ test('Camada 1: Preparar Conteudo MEDE o documento, e ausência de texto vira nu
   // ler. Mandá-lo no lugar do PDF perderia o alinhamento das colunas, que é
   // justamente o que passou a funcionar (8 colunas de empresa no combinado).
   assert.equal(comTexto.json.content_part.type, 'file');
+});
+
+// A REGRA 2 DO README, AGORA TRAVADA POR TESTE.
+//
+// "Nó que SUBSTITUI o item não entra na corrente." Ela estava escrita desde o
+// `Upload Storage`, e eu a violei mesmo assim ao pôr o `Extrair Texto` entre o
+// `Lote cabe?` e o `Preparar Conteudo`. O `Extract From File` escreve o
+// resultado do PDF no `json` e NÃO repassa o binário: o `caso_id` sumiu, e o
+// banco recusou 35 documentos com "null value in column caso_id violates
+// not-null constraint". Regra escrita em prosa é regra que volta a ser
+// quebrada.
+test('nó que substitui o item é RAMO LATERAL — nada consome a saída dele', () => {
+  const SUBSTITUEM_O_ITEM = ['n8n-nodes-base.extractFromFile'];
+  for (const n of wf.nodes.filter((x) => SUBSTITUEM_O_ITEM.includes(x.type))) {
+    assert.equal(wf.connections[n.name], undefined,
+      `"${n.name}" substitui o item (json e binário) — se alguém consumir a saída dele, o `
+      + 'contexto da corrente morre ali');
+  }
+  // Os HTTP das chamadas à OpenAI são a exceção CONHECIDA: têm consumidor, mas o
+  // consumidor recompõe o contexto por referência em vez de ler `$json`.
+  for (const nome of ['Parse OpenAI Classif', 'Parse Extracao']) {
+    assert.match(code(nome), /\$\('[^']+'\)\.item/,
+      `${nome} consome a saída de um HTTP: tem de recompor o contexto por referência`);
+  }
+});
+
+test('a corrente inteira preserva caso_id e binário até o Registrar Documento', async () => {
+  // O teste que faltava: os anteriores exercitavam cada nó ISOLADO e passavam
+  // enquanto a produção morria no primeiro documento. Aqui a expressão REAL do
+  // nó que quebrou é avaliada contra o item que a corrente REAL produz.
+  const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+  const classificado = await run('Classificar Nome', { item: lote[1], refs: REFS_BASE, itemIndex: 1, binaryStore: lote });
+  const preparado = await run('Preparar Conteudo', {
+    item: classificado,
+    refs: { ...REFS_BASE, 'Extrair Texto': { json: { text: 'Caixa 380\nDuplicatas 22.310' } } },
+    itemIndex: 1, binaryStore: lote,
+  });
+
+  const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters.options.queryReplacement;
+  const params = new Function('$json', 'return (' + q.replace(/^=\{\{/, '').replace(/\}\}$/, '') + ')')(preparado.json);
+  assert.equal(params.length, 14);
+  assert.equal(params[0], 'caso-uuid-1', 'caso_id NÃO pode chegar null — é not-null no banco');
+  assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
+  assert.equal(params[4], 'DRE', 'a classificação sobrevive');
+  assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');
+  assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à OpenAI');
 });
 
 test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intacto', async () => {
