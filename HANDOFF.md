@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-13 (sessão 45). **Estado do `main`:** mergeado até o **PR #119**
-(`main` em `c3aee39`). Branch de trabalho: **`claude/reduce-call-cost-52bban`**.
+**Última atualização:** 2026-08-14 (sessão 46). **Estado do `main`:** mergeado até o **PR #124**
+(`main` em `8dc5e06`). Branch de trabalho: **`claude/reduce-call-cost-52bban`** (PR #125 aberto).
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -275,6 +275,56 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 46 (2026-08-14) — as três camadas rodaram: 39% → 58%, truncamento zerado, e três defeitos seguidos de mecânica do n8n
+
+**O QUE O DONO RODOU:** o `book-canastra` de novo, já com as três camadas da sessão 45 (medir antes
+de chamar / fatiar para sempre caber / guarda de cobertura). Resultado: **1.139 → 1.683 linhas**,
+cobertura **39% → 58%**, e o truncamento — a família que devolvia zero — **eliminada**. Os dois
+maiores documentos saíram de 0 para 281 linhas (86%) e 282 linhas (92%). Custo seguiu em ~US$ 1,0
+pelo book inteiro, com a saída caindo de 64 para **29,2 tokens por linha** (o formato agrupado).
+
+### O que ainda impede os 100%, nomeado
+
+O `.xlsx` da modelagem continua em **9 de 10** no `auditar-xlsx.mts`, e o único reprovado continua
+sendo o balanço não fechar (−40.169). O buraco restante não é mais truncamento: é célula que o
+modelo lê e não devolve. Por isso a próxima etapa proposta é a **comparação contra o
+`test-data/book-canastra/pdf/GABARITO.json`** — é o que transforma "58%" de proporção contra
+heurística em **lista nominal do que faltou**, com prova, e vira teste de regressão permanente.
+
+### Quatro defeitos nesta rodada, três deles a mesma classe: mecânica de item do n8n
+
+Vale registrar juntos porque a lição é uma só — **no n8n, quem quebra o vínculo do item quebra tudo
+que está abaixo, e quase sempre em silêncio**:
+
+| Sintoma | Causa | Fechado em |
+|---|---|---|
+| `invalid input syntax for type uuid: "sem-versao-0"` | o fan-out da fatia não declarava `pairedItem`, e eu ainda fabriquei uma chave falsa para tapar o buraco | PR #121 |
+| `null value in column "caso_id"` | `Extrair Texto` na cadeia principal SUBSTITUI o item (perde json+binário) — regra que já estava escrita no `n8n/README.md` | PR #122 |
+| `celulas_nos_documentos: 0`, sem erro nenhum | `$('Nó').item` só resolve para **ancestral**; ramo irmão devolve undefined | PR #123 |
+| painel de custo mostrando metade do lote | um IF faz o n8n executar a cadeia inteira **uma vez por ramo**; `.all()` sem índice de run vê só uma parte | PR #123 |
+
+As três primeiras viraram **regras numeradas no `n8n/README.md`** (nó que substitui o item; `$().item`
+só de ancestral; nó que muda a contagem declara `pairedItem`) e a terceira virou **teste que caminha
+o grafo** e reprova qualquer `$('X').item` apontando para não-ancestral. A regra não fica só no texto.
+
+### O livro razão perdia 98 de 99 lançamentos porque a coluna não era período
+
+`17_Livro_Razao_Fornecedores` tem **três colunas de valor** — Débito, Crédito, Saldo. O prompt só
+descrevia coluna como *período* ou *empresa*, então o modelo mandava um valor onde o schema esperava
+três, e o `achatarGrupos` — corretamente — descartava a linha inteira por desalinhamento. O conserto
+foi no prompt (PR #124): os **cinco casos** de coluna que não é período estão nomeados (livro razão,
+balancete, aging, estoques, mapa de dívida) e a consequência está escrita junto, em número.
+
+### A régua da cobertura estava na unidade errada
+
+`avaliarCobertura` comparava *linhas com dígito* do PDF contra *pares conta×coluna* extraídos — duas
+unidades diferentes. Um documento visivelmente incompleto marcava **198%**. Trocado por
+`linhasDeConta` (linha que termina em valor E tem rótulo, menos ruído: Página, CNPJ, CRC, notas,
+cabeçalho só com ano) contra chave distinta, e o limiar subiu de 0,6 para **0,85** — porque com a
+régua certa 0,6 aceitava perder 40% calado (PR #125).
+
+**Suítes:** n8n em **235** testes, todas verdes.
 
 ## Sessão 45 (2026-08-13) — o custo estava resolvido e o dado não estava: 39% de cobertura, e as três camadas
 

@@ -27,7 +27,7 @@ import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
-  linhasComNumero, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
+  linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
 } from './lib/cobertura.mjs';
 
@@ -157,6 +157,7 @@ const FONTE_COBERTURA = [
   `const LIMIAR_COBERTURA = ${LIMIAR_COBERTURA};`,
   `const MINIMO_PARA_AVALIAR = ${MINIMO_PARA_AVALIAR};`,
   `const linhasComNumero = ${linhasComNumero.toString()};`,
+  `const linhasDeConta = ${linhasDeConta.toString()};`,
   `const planejarFatias = ${planejarFatias.toString()};`,
   `const instrucaoDaFatia = ${instrucaoDaFatia.toString()};`,
   `const juntarBlocos = ${juntarBlocos.toString()};`,
@@ -260,14 +261,15 @@ const extracoes = itensDe('Juntar Blocos').length > 0 ? itensDe('Juntar Blocos')
 const classificacoes = itensDe('Parse OpenAI Classif');
 
 let extracao = 0, entrada = 0, saida = 0, cache = 0, linhas = 0, comFalha = 0, semMedicao = 0;
-let celulas = 0, fatiados = 0;
+let celulas = 0, contas = 0, fatiados = 0;
 for (const it of extracoes) {
   const e = it?.json || {};
   if (typeof e.custo_usd === 'number') extracao += e.custo_usd; else semMedicao += 1;
   if (e.tokens) { entrada += e.tokens.entrada || 0; saida += e.tokens.saida || 0; cache += e.tokens.cache || 0; }
   if (e.falha_motivo) comFalha += 1;
   linhas += Array.isArray(e.campos) ? e.campos.length : 0;
-  if (Number.isFinite(Number(e.celulas_no_documento))) celulas += Number(e.celulas_no_documento);
+  if (Number.isFinite(Number(e.contas_no_documento))) celulas += Number(e.contas_no_documento);
+  if (Number.isFinite(Number(e.contas_distintas))) contas += Number(e.contas_distintas);
   if (Number(e.blocos) > 1) fatiados += 1;
 }
 let classificacao = 0;
@@ -292,8 +294,9 @@ return [{ json: {
     + ' (' + classificacoes.length + ' pagaram o PDF duas vezes)'
     + (estimado !== null ? '. O orçamento havia estimado US$ ' + Number(estimado).toFixed(2) : '')
     + '. Saída: ' + saida + ' tokens; entrada: ' + entrada + ' (' + cache + ' em cache).'
-    + (celulas > 0 ? ' Cobertura: ' + linhas + ' linhas gravadas de ' + celulas + ' com número nos PDFs ('
-      + (linhas / celulas * 100).toFixed(0) + '%), ' + fatiados + ' documento(s) precisaram de mais de uma chamada.' : ''),
+    + (celulas > 0 ? ' Cobertura: ' + contas + ' contas gravadas de ' + celulas + ' linhas de conta nos PDFs ('
+      + (contas / celulas * 100).toFixed(0) + '%), em ' + linhas + ' pares conta-coluna. '
+      + fatiados + ' documento(s) precisaram de mais de uma chamada.' : ''),
   orcamento_versao: versao,
   documentos: extracoes.length,
   documentos_com_classificacao: classificacoes.length,
@@ -310,8 +313,12 @@ return [{ json: {
   // Cobertura: quantas linhas o documento TINHA (medidas no texto do PDF, sem
   // IA) contra quantas chegaram. E' a resposta para "o custo caiu porque ficou
   // eficiente ou porque deixou de extrair?" — a pergunta que custou uma rodada.
-  celulas_nos_documentos: celulas,
-  cobertura_do_lote: celulas > 0 ? Number((linhas / celulas).toFixed(3)) : null,
+  // Na unidade de CONTAS dos dois lados: contas distintas gravadas contra linhas
+  // de conta do texto. \`linhas_extraidas\` continua sendo pares (conta x coluna),
+  // que e' o que o banco guarda -- as duas coisas sao uteis e nao se misturam.
+  contas_nos_documentos: celulas,
+  contas_extraidas: contas,
+  cobertura_do_lote: celulas > 0 ? Number((contas / celulas).toFixed(3)) : null,
   documentos_fatiados: fatiados,
   documentos_com_falha: comFalha,
   documentos_sem_medicao: semMedicao,
@@ -608,7 +615,14 @@ const temTexto=linhasDoTexto.length>0;
 // calam para ele. \`null\` e' "nao sei", nunca "zero": zero ligaria a guarda de
 // cobertura com regua inventada justamente no documento onde o modelo mais erra.
 return {json:{...item,
+  // DUAS reguas, e a distincao e' o que fez a guarda voltar a enxergar:
+  //   celulas -> toda linha com digito. E' o tamanho da RESPOSTA, e e' o que o
+  //     fatiamento precisa saber (cabecalho tambem gasta token).
+  //   contas  -> so' linha de conta (rotulo + valor), sem cabecalho de ano, CNPJ,
+  //     data nem assinatura. E' a unidade da COBERTURA, comparavel com as contas
+  //     distintas que a extracao grava. Medido no 02_DRE: 46 contra 39.
   celulas_no_documento: temTexto?linhasDoTexto.length:null,
+  contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,
   linhas_do_texto: temTexto?linhasDoTexto:null,
 }};
 `.trim();
@@ -707,7 +721,12 @@ for(const [chave, blocos] of porDocumento){
   // A guarda. \`celulas_no_documento\` e' null no PDF sem camada de texto: nesse
   // caso ela se cala, e o silencio e' declarado (nao ha regua, entao nao ha
   // veredito) em vez de fabricado.
-  const cobertura=avaliarCobertura({extraidas:r.campos.length, esperadas:base.celulas_no_documento});
+  // CONTAS DISTINTAS, nao pares (conta x coluna): num documento de 3 colunas os
+  // pares sao 3x as contas, e comparar par com linha dava 198% de "cobertura" --
+  // a guarda ficava cega justamente no comparativo. \`chave\` repetida (livro razao
+  // com o mesmo historico) conta uma vez so', e a descricao da pendencia diz isso.
+  const contasDistintas=new Set(r.campos.map(c=>c.chave)).size;
+  const cobertura=avaliarCobertura({extraidas:contasDistintas, esperadas:base.contas_no_documento});
   if(cobertura) motivos.push(cobertura.motivo);
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
@@ -721,7 +740,9 @@ for(const [chave, blocos] of porDocumento){
     falha_motivo:motivos.length>0?motivos.join(' | '):null,
     blocos:r.blocos,
     celulas_no_documento:base.celulas_no_documento??null,
-    cobertura:cobertura?cobertura.razao:null,
+    contas_no_documento:base.contas_no_documento??null,
+    contas_distintas:contasDistintas,
+    cobertura:cobertura?cobertura.razao:(base.contas_no_documento>0?Number((contasDistintas/base.contas_no_documento).toFixed(3)):null),
     custo_usd:blocos.reduce((soma,b)=>soma+(typeof b.custo_usd==='number'?b.custo_usd:0),0),
     tokens:blocos.reduce((acc,b)=>b.tokens?{entrada:acc.entrada+(b.tokens.entrada||0), saida:acc.saida+(b.tokens.saida||0), cache:acc.cache+(b.tokens.cache||0)}:acc,{entrada:0,saida:0,cache:0}),
   }});

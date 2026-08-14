@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
+  linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
 import { MAX_OUTPUT_TOKENS } from '../lib/extract.mjs';
@@ -117,22 +117,52 @@ test('juntarBlocos: o motivo de falha de UM bloco não some na junção', () => 
   assert.deepEqual(r.motivos, ['bloco 2: Resposta truncada']);
 });
 
-test('avaliarCobertura: o livro razão (99 de 461) PARA na fila; o documento sadio passa', () => {
-  const razao = avaliarCobertura({ extraidas: 99, esperadas: 461 });
-  assert.ok(razao, '99 de 461 tem de virar pendência — hoje passou como sucesso');
-  assert.equal(razao.razao, 0.215);
-  assert.match(razao.motivo, /99 linha\(s\) gravada\(s\).*461 linha\(s\) com número/);
-  // A descrição tem de dizer que a régua superestima: quem lê a pendência
-  // precisa saber que 100% nunca é o alvo.
-  assert.match(razao.motivo, /superestima/);
+test('a régua conta LINHA DE CONTA, não toda linha com dígito', () => {
+  // O 02_DRE do book, medido: 46 linhas com dígito, 39 linhas de conta. Os 7
+  // descartados são cabeçalho de ano, CNPJ, data por extenso, "Página 1", a nota
+  // de rodapé com percentuais, o CRC e o CPF do bloco de assinatura.
+  const dre = [
+    'Página 1Documento sintético, gerado para teste de sistema.',
+    'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.',
+    'CNPJ 44.555.667/0001-59',
+    'Exercícios encerrados em 31 de dezembro de 2025, 31 de dezembro de 2024',
+    '(Valores expressos em milhares de reais — R$ mil)',
+    '2025 2024 2023',
+    'RECEITA OPERACIONAL BRUTA 188.000 246.000 318.000',
+    'Vendas de embalagens - mercado interno 146.640 191.880 248.040',
+    '(-) ICMS sobre vendas (31.960) (41.820) (54.060)',
+    'Nota — A margem bruta do exercício de 2025 foi de 2,9% (contra 25,2% em 2023)',
+    'Rita M. Andrade — Contadora — CRC 1MG-198.442/O-7',
+    'Paulo Sérgio Canastra — Diretor Presidente — CPF 987.654.321-00',
+  ].join('\n');
+  assert.equal(linhasComNumero(dre).length, 10, 'a régua do FATIAMENTO conta tudo que gasta token');
+  assert.deepEqual(linhasDeConta(dre), [
+    'RECEITA OPERACIONAL BRUTA 188.000 246.000 318.000',
+    'Vendas de embalagens - mercado interno 146.640 191.880 248.040',
+    '(-) ICMS sobre vendas (31.960) (41.820) (54.060)',
+  ]);
+  // Linha só com número não é conta — é célula solta de um extrator que quebrou
+  // a tabela em pedaços.
+  assert.deepEqual(linhasDeConta('ATIVO\n137.624\n1.000'), []);
+});
 
-  // Os três documentos que vieram SADIOS na mesma rodada, com os números reais.
-  assert.equal(avaliarCobertura({ extraidas: 104, esperadas: 115 }), null, '02_DRE: 90%');
-  assert.equal(avaliarCobertura({ extraidas: 91, esperadas: 114 }), null, '22_Aging: 80%');
-  assert.equal(avaliarCobertura({ extraidas: 74, esperadas: 109 }), null, '06_Balanco: 68%');
-  // E os que vieram pela metade.
-  assert.ok(avaliarCobertura({ extraidas: 77, esperadas: 162 }), '15_Balancete: 48%');
-  assert.ok(avaliarCobertura({ extraidas: 0, esperadas: 326 }), '01_Balanco truncado: 0%');
+test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 100%', () => {
+  // O erro que a régua nova corrige: 91 pares (conta × coluna) contra 46 linhas
+  // com dígito dava 198%, e a guarda NUNCA disparava num documento comparativo.
+  assert.equal(avaliarCobertura({ extraidas: 91, esperadas: 46 }), null, 'na unidade errada não dispara');
+  // Na unidade certa, o mesmo documento: ~30 contas distintas contra 39 linhas
+  // de conta = 77%, abaixo do mínimo. Ele ESTÁ incompleto, e ninguém sabia.
+  const dre = avaliarCobertura({ extraidas: 30, esperadas: 39 });
+  assert.ok(dre, '30 de 39 tem de virar pendência');
+  assert.equal(dre.razao, 0.769);
+  assert.match(dre.motivo, /30 conta\(s\) distinta\(s\).*39 linha\(s\)/);
+  assert.match(dre.motivo, /MESMA unidade/);
+  // E a descrição diz onde ela pode errar: rótulo repetido conta uma vez só.
+  assert.match(dre.motivo, /rótulo repetido/);
+
+  // Documento completo passa.
+  assert.equal(avaliarCobertura({ extraidas: 38, esperadas: 39 }), null, '97% passa');
+  assert.equal(avaliarCobertura({ extraidas: 39, esperadas: 39 }), null, '100% passa');
 });
 
 test('avaliarCobertura se cala quando não tem régua ou quando a régua é ruído', () => {
@@ -143,8 +173,10 @@ test('avaliarCobertura se cala quando não tem régua ou quando a régua é ruí
   // Documento minúsculo: com 6 linhas, uma a menos derruba a cobertura em 17% e
   // a razão vira ruído.
   assert.equal(avaliarCobertura({ extraidas: 3, esperadas: 6 }), null);
-  // O limiar é o declarado, e mexer nele é decisão consciente.
-  assert.equal(LIMIAR_COBERTURA, 0.6);
+  // O limiar é o declarado, e mexer nele é decisão consciente. 0,85 porque o
+  // alvo é cobertura total — e ele é o próximo número a recalibrar, com 35
+  // pontos de medição em vez de um.
+  assert.equal(LIMIAR_COBERTURA, 0.85);
 });
 
 test('as funções são AUTO-CONTIDAS (os nós Code as embutem por toString)', () => {
