@@ -54,8 +54,26 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
     // outro nó — é assim que o `Resumo de Custo` soma o lote. Mock em array
     // significa "vários itens"; mock em objeto continua sendo um item só.
     const v = refs[ref];
+    // `{ runs: [[...], [...]] }` simula um nó que EXECUTOU MAIS DE UMA VEZ — o que
+    // acontece com toda a cadeia depois do IF `Precisa Fallback?`, porque o n8n
+    // roda o grafo uma vez por ramo. `.all(branch, run)` estoura quando a
+    // execução não existe, e é assim que o código sabe onde parar.
+    if (v && !Array.isArray(v) && Array.isArray(v.runs)) {
+      return {
+        first: () => v.runs[0][0],
+        item: v.runs[0][itemIndex],
+        all: (_b, run = 0) => {
+          if (run >= v.runs.length) throw new Error(`execução ${run} não existe`);
+          return v.runs[run];
+        },
+      };
+    }
     const lista = Array.isArray(v) ? v : [v];
-    return { first: () => lista[0], item: Array.isArray(v) ? lista[itemIndex] : v, all: () => lista };
+    return {
+      first: () => lista[0],
+      item: Array.isArray(v) ? lista[itemIndex] : v,
+      all: (_b, run = 0) => { if (run > 0) throw new Error(`execução ${run} não existe`); return lista; },
+    };
   };
   const $json = item ? item.json : undefined;
   const thisContext = {
@@ -1058,6 +1076,39 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   assert.equal(r.documentos_fatiados, 1);
   assert.equal(r.custo_estimado_usd, 0.42, 'o estimado vem junto: é a única forma de calibrar');
   assert.match(r.resumo, /Custo REAL deste lote: US\$ 0\.1016 em 3 documento\(s\)/);
+});
+
+test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em dois ramos', async () => {
+  // Achado na rodada de 14/08: o IF `Precisa Fallback?` manda os documentos por
+  // dois caminhos, e o n8n executa a cadeia inteira UMA VEZ POR RAMO. O
+  // `Juntar Blocos` rodou duas vezes — 16 documentos numa, 19 na outra, 35 no
+  // total — e o painel reportava só a última. O custo do lote saiu pela METADE.
+  const doc = (custo, saida, campos, celulas) => ({ json: {
+    custo_usd: custo, tokens: { entrada: 100, saida, cache: 50 },
+    campos: new Array(campos).fill({}), falha_motivo: null,
+    celulas_no_documento: celulas, blocos: 1,
+  } });
+  const out = await run('Resumo de Custo', {
+    items: [doc(0.1, 10, 5, 10)],
+    refs: {
+      'Juntar Blocos': { runs: [
+        [doc(0.1, 10, 5, 10), doc(0.2, 20, 10, 20)],   // ramo 1: 2 documentos
+        [doc(0.3, 30, 15, 30)],                         // ramo 2: 1 documento
+      ] },
+      // E a classificação, que é de UM ramo só: `.all()` sem índice devolveria
+      // tudo em CADA execução, e o custo dela entraria duas vezes na conta.
+      'Parse OpenAI Classif': { runs: [[{ json: { custo_classificacao_usd: 0.001 } }]] },
+      'Orcamento do Lote': { json: { orcamento_estimado_usd: 1.79, orcamento_versao: 'v3 (2026-08-13)' } },
+    },
+  });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.documentos, 3, 'os dois ramos somados, não o último');
+  assert.equal(r.custo_extracao_usd, 0.6);
+  assert.equal(r.custo_classificacao_usd, 0.001, 'a classificação entra UMA vez');
+  assert.equal(r.linhas_extraidas, 30);
+  assert.equal(r.celulas_nos_documentos, 60);
+  assert.equal(r.cobertura_do_lote, 0.5);
+  assert.deepEqual(r.tokens, { entrada: 300, saida: 60, cache: 150 });
 });
 
 test('Resumo de Custo é TERMINAL e não derruba o lote que ele resume', async () => {

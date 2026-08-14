@@ -229,7 +229,29 @@ const CODE_RESUMO_CUSTO = `
 // da cadeia principal NÃO é o índice i daquele nó. Casar por índice atribuiria o
 // custo da classificação ao documento errado — e num relatório de custo isso é
 // pior que não ter o relatório.
-const itensDe = (nome) => { try { return $(nome).all() || []; } catch (err) { return []; } };
+// O LOTE SE PARTE EM DOIS, E O RESUMO TEM DE SOMAR OS DOIS.
+//
+// O IF \`Precisa Fallback?\` manda os documentos por dois caminhos (com e sem
+// classificacao por conteudo), e o n8n executa a cadeia inteira UMA VEZ POR
+// RAMO. Na rodada de 14/08 isso deu 16 documentos numa execucao do
+// \`Juntar Blocos\` e 19 na outra -- 35 no total, nada perdido -- mas o painel
+// reportava so' a ultima, e o custo do lote saiu pela METADE. Pior: \`.all()\` sem
+// indice de execucao devolve, para um no' do OUTRO ramo, tudo o que ele
+// produziu; a classificacao entrava DUAS vezes na conta.
+//
+// Aqui as execucoes sao percorridas uma a uma. O painel sai duas vezes (uma por
+// ramo), agora com o total INTEIRO nas duas -- somar dois paineis parciais a mao
+// e' exatamente o trabalho que este no' existe para acabar.
+const itensDe = (nome) => {
+  const out = [];
+  for (let run = 0; run < 50; run += 1) {
+    let itens = null;
+    try { itens = $(nome).all(0, run); } catch (err) { break; }
+    if (!itens || itens.length === 0) break;
+    for (const it of itens) out.push(it);
+  }
+  return out;
+};
 // \`Juntar Blocos\` e nao \`Parse Extracao\`: desde o fatiamento, o Parse tem um item
 // por BLOCO, e contar blocos como documentos diria "48 documentos" para um lote
 // de 35. O Juntar ja' devolve um item por documento, com o custo dos blocos
