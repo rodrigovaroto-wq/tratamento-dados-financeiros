@@ -141,11 +141,23 @@ export const SYSTEM_PROMPT = [
   '"Custos", "Despesas Operacionais", "Atividades Operacionais", "Atividades de Investimento",',
   '"Atividades de Financiamento" — use os agrupadores que o PRÓPRIO documento usa; null quando as',
   'linhas não pertencerem a nenhuma seção clara (ex.: um total geral solto).',
-  'REGRA DAS COLUNAS (é o coração do formato): "cols" descreve, UMA VEZ por grupo, as colunas de',
-  'valor daquela seção — cada coluna com entidade_coluna (nome da EMPRESA no cabeçalho, quando há',
-  'várias empresas lado a lado) e periodo_coluna (rótulo do PERÍODO, quando há vários períodos lado',
-  'a lado); use null no que não se aplica. Quando o documento tem UMA só coluna de valor (o caso',
-  'comum), devolva "cols" como lista VAZIA. Cada linha traz então "valor_texto" e "valor_num" como',
+  'REGRA DAS COLUNAS (é o coração do formato): "cols" descreve, UMA VEZ por grupo, TODAS as colunas',
+  'de valor daquela seção — não só período e empresa. Cada coluna tem entidade_coluna (nome da',
+  'EMPRESA no cabeçalho, quando há várias empresas lado a lado) e periodo_coluna (o RÓTULO da',
+  'coluna); use null no que não se aplica.',
+  'ATENÇÃO — COLUNA DE VALOR QUE NÃO É PERÍODO NEM EMPRESA. Muito documento contábil tem colunas de',
+  'valor de outra natureza, e elas TAMBÉM vão em "cols", com o rótulo em periodo_coluna:',
+  '- LIVRO RAZÃO e RAZÃO ANALÍTICA: "Débito", "Crédito", "Saldo" (três colunas por lançamento).',
+  '- BALANCETE: "Saldo anterior", "Débito", "Crédito", "Saldo atual".',
+  '- AGING de recebíveis/pagáveis: "A vencer", "1 a 30", "31 a 60", "61 a 90", "Acima de 90", "Total".',
+  '- POSIÇÃO DE ESTOQUES: "Quantidade", "Custo unitário", "Valor total".',
+  '- MAPA DE DÍVIDA: "Saldo devedor", "Curto prazo", "Longo prazo", "Juros do período".',
+  'Declará-las é obrigatório: uma linha com TRÊS valores num grupo que declarou ZERO colunas é',
+  'DESCARTADA inteira, porque não se sabe a que coluna cada número pertence — foi o que aconteceu com',
+  'um livro razão real, e 98 de 99 lançamentos foram perdidos. O número de valores de cada linha tem',
+  'de bater EXATAMENTE com o número de colunas declaradas.',
+  'Só devolva "cols" como lista VAZIA quando o documento tem MESMO uma única coluna de valor. Cada',
+  'linha traz então "valor_texto" e "valor_num" como',
   'LISTAS com exatamente UM valor POR COLUNA de "cols", NA MESMA ORDEM (e exatamente um valor',
   'quando "cols" é vazia). Célula em branco, com traço ("-") ou ilegível vira null NAQUELA POSIÇÃO —',
   'nunca desloque os valores para a esquerda: a posição é o que diz a que coluna o número pertence,',
@@ -266,7 +278,15 @@ export function achatarGrupos(grupos) {
       if (vn.length !== cols.length || vt.length !== cols.length) {
         problemas.push(
           `"${l.k}"${g.s ? ` (${g.s})` : ''}: ${cols.length} coluna(s) declarada(s), `
-          + `${vn.length} valor(es) numérico(s) e ${vt.length} texto(s)`);
+          + `${vn.length} valor(es) numérico(s) e ${vt.length} texto(s)`
+          // A causa quase sempre é a mesma, e dizê-la poupa a investigação: o
+          // documento TEM colunas de valor que o modelo não declarou. Num livro
+          // razão real isso descartou 98 de 99 lançamentos — Débito, Crédito e
+          // Saldo vieram na linha, e `cols` veio vazia.
+          + (cols.length === 1 && vn.length > 1
+            ? ' — provavelmente o documento tem colunas de valor (Débito/Crédito/Saldo, faixas de aging)'
+              + ' que não foram declaradas em "cols"'
+            : ''));
         continue;
       }
       for (let j = 0; j < cols.length; j += 1) {
@@ -368,7 +388,15 @@ export function extractionSchema() {
                   required: ['ec', 'pc'],
                   properties: {
                     ec: { type: ['string', 'null'], description: 'entidade_coluna: empresa do cabeçalho da coluna' },
-                    pc: { type: ['string', 'null'], description: 'periodo_coluna: rótulo do período da coluna' },
+                    // O nome da chave é histórico (`0017`, quando só havia coluna de
+                    // período), mas o SIGNIFICADO é mais largo: é o RÓTULO da coluna,
+                    // seja ele um período ("2024"), uma faixa de aging ("31 a 60") ou a
+                    // natureza do saldo ("Débito"). Ficou assim em vez de virar campo
+                    // novo porque `campo_extraido.periodo_coluna` é texto livre e ninguém
+                    // rio abaixo o interpreta como data: a reconciliação casa por ANO
+                    // (`fn_anos_texto`), então um rótulo sem ano simplesmente não
+                    // participa — que é o certo, já que "Débito" não é um exercício.
+                    pc: { type: ['string', 'null'], description: 'periodo_coluna: rótulo da coluna — o período ("2024", "31/12/2025") quando é comparativo, ou a natureza da coluna quando não é ("Débito", "Crédito", "Saldo", "31 a 60 dias", "Quantidade")' },
                   },
                 },
               },
