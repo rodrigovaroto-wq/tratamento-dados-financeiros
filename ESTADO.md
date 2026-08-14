@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 230 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 231 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -103,8 +103,10 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
    ```
 2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou três vezes em 13/08 (classificação em
    `gpt-4o-mini`, saída agrupada, e as três camadas de cobertura). **Conferência de 5 segundos depois
-   de importar:** o canvas tem **26 nós**; procure `Extrair Texto`, `Fatiar Extracao`, `Juntar Blocos`
-   e, na ponta direita, `Resumo de Custo` — rodando, a saída dele traz a cobertura do lote.
+   de importar:** o canvas tem **27 nós**; procure `Extrair Texto` + `Medir Documento` (na sequência,
+   depois do `Preparar Conteudo`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta direita,
+   `Resumo de Custo` — rodando, a saída dele traz a **cobertura do lote**. Se `cobertura_do_lote`
+   vier `null`, a camada 1 não mediu e as outras duas estão desligadas.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +

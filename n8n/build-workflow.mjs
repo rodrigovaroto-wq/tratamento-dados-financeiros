@@ -339,37 +339,7 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 // Preserva o binário (o Upload Storage roda como ramo a partir deste node).
 const CODE_PREPARAR_CONTEUDO = `
 ${FONTE_SHA256}
-${FONTE_COBERTURA}
 const item=$input.item.json;
-// CAMADA 1 -- SABER O QUE O DOCUMENTO TEM ANTES DE CHAMAR A OPENAI.
-//
-// O \`Extrair Texto\` le a camada de texto do PDF na propria instancia, sem IA e
-// sem custo, e dele sai a unica medida deterministica que este pipeline tem do
-// tamanho do trabalho: quantas linhas com numero o documento contem. Ela
-// alimenta o fatiamento (camada 2) e a guarda de cobertura (3).
-//
-// ELE E' RAMO LATERAL, E ISSO CUSTOU UMA EXECUCAO INTEIRA PARA SER APRENDIDO DE
-// NOVO. A regra 2 do n8n/README ja' dizia: no' que SUBSTITUI o item (o HTTP
-// Request e' o exemplo de la') nao pode ficar no meio da corrente -- por isso o
-// \`Upload Storage\` sempre foi lateral. O \`Extract From File\` faz exatamente
-// isso: escreve o resultado do PDF no \`json\` e NAO repassa o binario. Posto na
-// corrente, ele levou junto caso_id, classificacao e o arquivo; o
-// \`Registrar Documento\` recebeu \`caso_id\` null e o banco recusou com
-// "null value in column caso_id violates not-null constraint" (execucao de
-// 21:16). Agora ele pendura ao lado, ninguem consome a saida dele, e o texto vem
-// por REFERENCIA -- o mesmo padrao com que o contexto volta depois das chamadas
-// a' OpenAI.
-//
-// Ausencia de texto (PDF escaneado, no' que falhou, referencia que nao resolve)
-// NAO e' erro: o documento segue como imagem, exatamente como antes, e as
-// camadas 2 e 3 se calam para ele.
-let textoPdf='';
-try{
-  const t=$('Extrair Texto').item.json||{};
-  textoPdf=(typeof t.text==='string'&&t.text)||(typeof t.texto_pdf==='string'&&t.texto_pdf)||'';
-}catch(e){ textoPdf=''; }
-const linhasDoTexto=linhasComNumero(textoPdf);
-const temTexto=linhasDoTexto.length>0;
 const binMeta=($input.item.binary||{})['data']||{};
 const mt=(binMeta.mimeType||'').toLowerCase();
 // NUNCA ler binMeta.data direto: se o N8N estiver em modo de binario "filesystem"
@@ -450,17 +420,11 @@ try{
   // falharem -- ai' sim nao saber e' melhor que errar.
   try{hash=sha256Hex(buf);}catch(e2){hash=null;}
 }
-// O texto NAO segue adiante: ele so' serviu para medir, e carregar o documento
-// inteiro em texto por todo o grafo incharia cada item sem ninguem ler. So' as
-// linhas com numero seguem, e elas viram ancora no fatiamento.
-return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso,
-  // A MEDIDA, e as ancoras do fatiamento. \`null\` quando o PDF nao tem camada de
-  // texto -- e null aqui significa "nao sei", nunca "zero": tratar desconhecido
-  // como zero desligaria a guarda de cobertura justamente no escaneado, que e' o
-  // documento onde o modelo mais erra.
-  celulas_no_documento: temTexto?linhasDoTexto.length:null,
-  linhas_do_texto: temTexto?linhasDoTexto:null,
-}, binary: $input.item.binary};
+// O binario segue: quem precisa dele depois daqui e' o \`Upload Storage\` (ramo
+// lateral) e o \`Extrair Texto\`, que le a camada de texto do PDF. Da\u00ed para a
+// frente ninguem mais precisa -- o \`content_part\` ja' carrega o arquivo em
+// base64 DENTRO do json, e e' ele que vai para a OpenAI.
+return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
@@ -585,6 +549,46 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
 // Dado que o item CARREGA nao depende de pareamento nenhum.
 const docId=(reg.r&&reg.r.documento_id)||reg.documento_id||null;
 return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+`.trim();
+
+// --- Code (EACH ITEM): CAMADA 1 — a régua do documento ----------------------
+//
+// Roda logo depois do `Extrair Texto` e existe por um motivo de MECÂNICA do n8n
+// que custou duas execuções para ser entendido:
+//
+//   • `Extract From File` SUBSTITUI o item (escreve o resultado do PDF no `json`
+//     e não repassa o binário). Posto entre `Lote cabe?` e `Preparar Conteudo`,
+//     ele levou junto caso_id, classificação e arquivo — 35 documentos recusados
+//     pelo banco com "null value in column caso_id".
+//   • Pendurado como ramo LATERAL, ele parou de derrubar o lote — e parou também
+//     de ser LIDO: `$('Nó').item` só resolve para nós ANCESTRAIS do item atual, e
+//     um ramo irmão não é ancestral. A medição voltou vazia em todos os
+//     documentos (`celulas_nos_documentos: 0`), e com ela as camadas 2 e 3
+//     ficaram desligadas sem ninguém notar.
+//
+// A saída é pôr o `Extrair Texto` na corrente DEPOIS do `Preparar Conteudo`:
+// nesse ponto o binário ainda existe (o preparo o repassa), o `content_part` já
+// carrega o arquivo em base64 dentro do json — então perder o binário daqui para
+// a frente não custa nada — e este nó recompõe o contexto lendo o
+// `Preparar Conteudo`, que agora É ancestral.
+const CODE_MEDIR_DOCUMENTO = `
+${FONTE_COBERTURA}
+// O texto vem do PROPRIO input (o \`Extrair Texto\` e' o no' anterior): nao depende
+// de pareamento nenhum. O contexto vem do \`Preparar Conteudo\`, ancestral.
+const doExtrator=$input.item.json||{};
+const textoPdf=(typeof doExtrator.text==='string'&&doExtrator.text)||(typeof doExtrator.texto_pdf==='string'&&doExtrator.texto_pdf)||'';
+let item={};
+try{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }
+const linhasDoTexto=linhasComNumero(textoPdf);
+const temTexto=linhasDoTexto.length>0;
+// AUSENCIA DE TEXTO NAO E' ERRO: PDF escaneado nao tem camada de texto, e o
+// documento segue como imagem exatamente como antes -- so' as camadas 2 e 3 se
+// calam para ele. \`null\` e' "nao sei", nunca "zero": zero ligaria a guarda de
+// cobertura com regua inventada justamente no documento onde o modelo mais erra.
+return {json:{...item,
+  celulas_no_documento: temTexto?linhasDoTexto.length:null,
+  linhas_do_texto: temTexto?linhasDoTexto:null,
+}};
 `.trim();
 
 // --- Code (ALL ITEMS): CAMADA 2 — FATIAR O QUE NÃO CABE NUMA CHAMADA ---------
@@ -989,8 +993,9 @@ const nodes = [
   // lote perdido.
   node('Extrair Texto', 'n8n-nodes-base.extractFromFile', 1, {
     operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true },
-  }, 640, 400, { onError: 'continueRegularOutput' }),
+  }, 960, 400, { onError: 'continueRegularOutput' }),
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400, CODE_CONTINUA),
+  node('Medir Documento', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_MEDIR_DOCUMENTO }, 1120, 400, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
   // ⚠️ DESABILITADO (2026-07-17): bug de longa data do node HTTP Request do
@@ -1119,23 +1124,23 @@ const connections = {
   // ainda não custou nada (nem chamada à OpenAI, nem linha no banco).
   'Classificar Nome': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
   'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
-  // O `Extrair Texto` é RAMO LATERAL (regra 2 do README: nó que substitui o item
-  // não entra na corrente). Ele vem PRIMEIRO na lista porque a ordem de execução
-  // v1 do n8n segue a ordem das conexões — e o `Preparar Conteudo` lê a saída
-  // dele por referência, então ele precisa já ter rodado.
   'Lote cabe?': { main: [
-    [
-      { node: 'Extrair Texto', type: 'main', index: 0 },       // true — lateral, mede o PDF
-      { node: 'Preparar Conteudo', type: 'main', index: 0 },   // true — a corrente, com json e binário intactos
-    ],
+    [{ node: 'Preparar Conteudo', type: 'main', index: 0 }],   // true — segue
     [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
   ] },
   'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
   // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
+  // O `Extrair Texto` entra AQUI, e não antes do preparo: neste ponto o binário
+  // ainda existe (o preparo o repassa) e o `content_part` já carrega o arquivo em
+  // base64 dentro do json — então o fato de ele descartar o binário deixa de ter
+  // consequência. O `Medir Documento` logo depois recompõe o contexto lendo o
+  // `Preparar Conteudo`, que É ancestral dele (um ramo irmão não seria).
   'Preparar Conteudo': { main: [[
     { node: 'Upload Storage', type: 'main', index: 0 },
-    { node: 'Precisa Fallback?', type: 'main', index: 0 },
+    { node: 'Extrair Texto', type: 'main', index: 0 },
   ]] },
+  'Extrair Texto': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
+  'Medir Documento': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
   'Precisa Fallback?': { main: [
     [{ node: 'Montar Req Classif', type: 'main', index: 0 }],   // true
     [{ node: 'Registrar Documento', type: 'main', index: 0 }],  // false

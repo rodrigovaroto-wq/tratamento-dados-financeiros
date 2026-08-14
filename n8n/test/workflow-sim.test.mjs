@@ -573,15 +573,7 @@ test('Topologia: o teto de gasto fica entre a classificação por nome e o conte
   // chegar ao portal — lançando ali mesmo, a mensagem ficava só no log do n8n e
   // a tela seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  // O `Extrair Texto` pendura no MESMO ponto do preparo, como ramo lateral —
-  // ler a camada de texto do PDF é grátis, mas mesmo assim fica depois do teto
-  // de gasto (lote recusado não abre arquivo nenhum). Ele vem PRIMEIRO na lista
-  // porque a ordem de execução v1 segue a ordem das conexões, e o preparo lê a
-  // saída dele por referência.
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node),
-    ['Extrair Texto', 'Preparar Conteudo']);
-  assert.equal(wf.connections['Extrair Texto'], undefined,
-    'ramo LATERAL: nada pode consumir a saída dele — ele substitui o item e não repassa binário');
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Preparar Conteudo']);
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
   // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
   // o portal sem a causa, que é exatamente o defeito que este ramo corrige.
@@ -591,8 +583,15 @@ test('Topologia: o teto de gasto fica entre a classificação por nome e o conte
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   const destinosDePreparar = wf.connections['Preparar Conteudo'].main[0].map((c) => c.node);
-  assert.deepEqual(destinosDePreparar.sort(), ['Precisa Fallback?', 'Upload Storage'].sort());
+  // O `Extrair Texto` entra AQUI (e não antes do preparo): neste ponto o binário
+  // ainda existe e o `content_part` já carrega o arquivo em base64 dentro do
+  // json, então o fato de ele descartar o binário deixa de ter consequência.
+  assert.ok(destinosDePreparar.includes('Extrair Texto'));
+  assert.deepEqual(destinosDePreparar.sort(), ['Extrair Texto', 'Upload Storage'].sort());
   assert.equal(wf.connections['Upload Storage'], undefined, 'Upload não alimenta nenhum node');
+  // A corrente segue pelo `Extrair Texto` → `Medir Documento` → `Precisa Fallback?`.
+  assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Medir Documento']);
+  assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Precisa Fallback?']);
   const destinosDeRegistrar = wf.connections['Registrar Documento'].main[0].map((c) => c.node);
   assert.deepEqual(destinosDeRegistrar.sort(), ['Montar Req Extracao', 'Recomputar Completude'].sort());
 });
@@ -1093,38 +1092,38 @@ test('Camada 1: Extrair Texto é NATIVO, roda depois do teto de gasto e não der
   assert.equal(n.onError, 'continueRegularOutput');
 });
 
-test('Camada 1: Preparar Conteudo MEDE o documento, e ausência de texto vira null (nunca zero)', async () => {
+test('Camada 1: Medir Documento mede, e ausência de texto vira null (nunca zero)', async () => {
   const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
   const classificado = await run('Classificar Nome', { item: lote[0], refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
-  const texto = ['CNPJ 44.555.667/0001-59', 'ATIVO', 'Caixa   380', 'Duplicatas   22.310'].join('\n');
-  // O texto vem por REFERÊNCIA ao ramo lateral — o item da corrente continua
-  // sendo o do `Lote cabe?`, com json e binário intactos. Foi trocar isto que
-  // custou uma execução: com o `Extrair Texto` NA corrente, o `caso_id` sumia.
-  const comTexto = await run('Preparar Conteudo', {
-    item: classificado,
-    refs: { ...REFS_BASE, 'Extrair Texto': { json: { text: texto } } },
-    itemIndex: 0, binaryStore: lote,
-  });
-  assert.equal(comTexto.json.caso_id, 'caso-uuid-1', 'o contexto da corrente sobrevive inteiro');
-  assert.equal(comTexto.json.celulas_no_documento, 3);
-  assert.equal(comTexto.json.linhas_do_texto.length, 3);
-  // O texto NÃO segue adiante: ele já virou medida e âncora, e carregar o
-  // documento inteiro por todo o grafo incharia cada item sem ninguém ler.
-  assert.equal(comTexto.json.text, undefined);
-  assert.ok(comTexto.binary?.data, 'e o binário segue — é o que a chamada à OpenAI usa');
+  const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
+  // O preparo entrega o arquivo em base64 DENTRO do json — é por isso que perder
+  // o binário depois daqui não custa nada, e é o que permite o `Extrair Texto`
+  // (que descarta binário) entrar na corrente neste ponto.
+  assert.equal(preparado.json.content_part.type, 'file');
+  assert.ok(preparado.binary?.data, 'o binário ainda segue: o Extrair Texto precisa dele');
 
-  // Sem camada de texto (escaneado): `null` significa "não sei", e é o que
-  // desliga as camadas 2 e 3 para este documento — tratar como zero as ligaria
-  // com régua inventada justamente no documento onde o modelo mais erra.
-  const semTexto = await run('Preparar Conteudo', {
-    item: classificado, refs: REFS_BASE, itemIndex: 0, binaryStore: lote,
+  // O texto vem do PRÓPRIO input (o `Extrair Texto` é o nó anterior) e o
+  // contexto, do `Preparar Conteudo`, que é ANCESTRAL — não de um irmão.
+  const texto = ['CNPJ 44.555.667/0001-59', 'ATIVO', 'Caixa   380', 'Duplicatas   22.310'].join('\n');
+  const medido = await run('Medir Documento', {
+    item: { json: { text: texto, numpages: 1 } },
+    refs: { 'Preparar Conteudo': preparado },
+  });
+  assert.equal(medido.json.caso_id, 'caso-uuid-1', 'o contexto da corrente é recomposto inteiro');
+  assert.equal(medido.json.content_part.type, 'file', 'e o conteúdo da chamada sobrevive');
+  assert.equal(medido.json.celulas_no_documento, 3);
+  assert.equal(medido.json.linhas_do_texto.length, 3);
+
+  // Sem camada de texto (escaneado, ou nó que falhou): `null` é "não sei", nunca
+  // "zero" — zero ligaria a guarda de cobertura com régua inventada justamente
+  // no documento onde o modelo mais erra.
+  const semTexto = await run('Medir Documento', {
+    item: { json: { error: 'não foi possível extrair texto' } },
+    refs: { 'Preparar Conteudo': preparado },
   });
   assert.equal(semTexto.json.celulas_no_documento, null);
   assert.equal(semTexto.json.linhas_do_texto, null);
-  // E o conteúdo continua indo como ARQUIVO: o texto serve para medir, não para
-  // ler. Mandá-lo no lugar do PDF perderia o alinhamento das colunas, que é
-  // justamente o que passou a funcionar (8 colunas de empresa no combinado).
-  assert.equal(comTexto.json.content_part.type, 'file');
+  assert.equal(semTexto.json.caso_id, 'caso-uuid-1', 'e o contexto segue mesmo assim');
 });
 
 // A REGRA 2 DO README, AGORA TRAVADA POR TESTE.
@@ -1136,18 +1135,52 @@ test('Camada 1: Preparar Conteudo MEDE o documento, e ausência de texto vira nu
 // banco recusou 35 documentos com "null value in column caso_id violates
 // not-null constraint". Regra escrita em prosa é regra que volta a ser
 // quebrada.
-test('nó que substitui o item é RAMO LATERAL — nada consome a saída dele', () => {
-  const SUBSTITUEM_O_ITEM = ['n8n-nodes-base.extractFromFile'];
+test('quem consome nó que SUBSTITUI o item tem de recompor o contexto por referência', () => {
+  // A regra 2 do README, na forma exata que as duas falhas de 13/08 ensinaram.
+  // Não é "esses nós não podem ter consumidor" — é que o consumidor não pode
+  // simplesmente ler `$json`, porque o item que chega nele não tem mais o
+  // contexto da corrente. `Upload Storage` resolve sendo lateral (ninguém lê);
+  // `Extrair Texto` e os HTTP da OpenAI resolvem com um consumidor que recompõe.
+  const SUBSTITUEM_O_ITEM = ['n8n-nodes-base.extractFromFile', 'n8n-nodes-base.httpRequest'];
   for (const n of wf.nodes.filter((x) => SUBSTITUEM_O_ITEM.includes(x.type))) {
-    assert.equal(wf.connections[n.name], undefined,
-      `"${n.name}" substitui o item (json e binário) — se alguém consumir a saída dele, o `
-      + 'contexto da corrente morre ali');
+    const consumidores = (wf.connections[n.name]?.main || []).flat().map((c) => c.node);
+    if (consumidores.length === 0) continue;   // ramo lateral: ninguém lê, nada a conferir
+    for (const nome of consumidores) {
+      const c = code(nome);
+      assert.ok(c, `${nome} consome "${n.name}" mas não é um nó Code — não tem como recompor`);
+      assert.match(c, /\$\('[^']+'\)\.item/,
+        `"${nome}" consome a saída de "${n.name}", que substitui o item: ele TEM de recompor o `
+        + 'contexto por referência a um nó ANCESTRAL, nunca ler $json direto');
+    }
   }
-  // Os HTTP das chamadas à OpenAI são a exceção CONHECIDA: têm consumidor, mas o
-  // consumidor recompõe o contexto por referência em vez de ler `$json`.
-  for (const nome of ['Parse OpenAI Classif', 'Parse Extracao']) {
-    assert.match(code(nome), /\$\('[^']+'\)\.item/,
-      `${nome} consome a saída de um HTTP: tem de recompor o contexto por referência`);
+});
+
+test('a referência que recompõe o contexto aponta para um ANCESTRAL, nunca para um irmão', () => {
+  // `$('Nó').item` só resolve para nós ancestrais do item atual. Pendurado como
+  // ramo IRMÃO, o `Extrair Texto` parou de derrubar o lote e parou também de ser
+  // LIDO: a medição voltou vazia em 35 documentos (`celulas_nos_documentos: 0`) e
+  // as camadas 2 e 3 ficaram desligadas sem ninguém notar.
+  const ancestrais = (alvo) => {
+    const vistos = new Set();
+    const fila = [alvo];
+    while (fila.length) {
+      const atual = fila.pop();
+      for (const [origem, conn] of Object.entries(wf.connections)) {
+        if (!(conn.main || []).flat().some((c) => c.node === atual)) continue;
+        if (vistos.has(origem)) continue;
+        vistos.add(origem);
+        fila.push(origem);
+      }
+    }
+    return vistos;
+  };
+  for (const n of wf.nodes.filter((x) => x.type === 'n8n-nodes-base.code')) {
+    const meus = ancestrais(n.name);
+    for (const m of n.parameters.jsCode.matchAll(/\$\('([^']+)'\)\.item/g)) {
+      assert.ok(meus.has(m[1]),
+        `"${n.name}" lê $('${m[1]}').item, mas "${m[1]}" NÃO é ancestral dele — `
+        + 'referência a ramo irmão não resolve, e o sintoma é o dado voltar vazio em silêncio');
+    }
   }
 });
 
