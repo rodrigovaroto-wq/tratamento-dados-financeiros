@@ -29,16 +29,15 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Upsert Caso ............. fn_upsert_caso(nome) → caso_id   [Postgres: NÃO repassa binário]
   → Listar Arquivos ......... fan-out: 1 item por arquivo (binário lido do FORM, chave 'data')
   → Classificar Nome ........ nome + regras → {tipo, período, assinado, confiança} [preserva binário]
-  ├─→ Extrair Texto ..... camada de texto do PDF, na instância, sem IA e sem custo
-  │                       (RAMO LATERAL — ele SUBSTITUI o item e não repassa o binário;
-  │                        o `Preparar Conteudo` lê a saída dele por referência)
   → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
        │                      csv→texto, xlsx→nota [preserva binário]
-       │                      + conta as linhas com número: a régua do fatiamento e da cobertura
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
-       └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
-             ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
-             └─ não → direto
+       └─→ Extrair Texto .... camada de texto do PDF, na instância, sem IA e sem custo
+             → Medir Documento .. conta as linhas com número (a régua do fatiamento e da
+             │                    cobertura) e RECOMPÕE o contexto lendo o `Preparar Conteudo`
+             └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
+                   ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
+                   └─ não → direto
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
         └─ [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM no teto
@@ -79,23 +78,30 @@ como fato aceito.
 1. **Node Postgres não repassa binário** — a saída são as linhas da query. Por isso `Listar
    Arquivos` lê os arquivos por referência direta ao Form (`$('Intake (Form)')`), não do
    `$input`.
-2. **Node que SUBSTITUI o item não entra na corrente.** Vale para o *HTTP Request* (troca o
-   item pela resposta da API) **e para o `Extract From File`** (escreve o resultado do PDF no
-   `json` e **não repassa o binário**). Por isso `Upload Storage` e `Extrair Texto` são **ramos
-   laterais** — nada consome a saída deles — e o que eles produzem volta por
-   `$('Nome do Node').item`, como o contexto depois das chamadas OpenAI.
-   > Esta regra estava escrita aqui e foi quebrada mesmo assim: com o `Extrair Texto` no meio da
-   > corrente, o `caso_id` sumia e o banco recusava **todos** os documentos com *"null value in
-   > column caso_id violates not-null constraint"*. Hoje um teste em `workflow-sim.test.mjs`
-   > reprova qualquer nó desse tipo que tenha consumidor.
-3. **Modos dos nós Code:** seis rodam "Run Once for All Items", cada um porque a pergunta dele é
+2. **Node que SUBSTITUI o item exige que o SEGUINTE recomponha o contexto.** Vale para o
+   *HTTP Request* (troca o item pela resposta da API) e para o `Extract From File` (escreve o
+   resultado do PDF no `json` e **não repassa o binário**). Duas saídas legítimas: ser **ramo
+   lateral** (`Upload Storage` — ninguém lê a saída), ou ter um consumidor que recompõe por
+   `$('Nome do Node').item` (`Parse OpenAI Classif`, `Parse Extracao`, `Medir Documento`).
+3. **`$('Nó').item` só resolve para nó ANCESTRAL.** Ramo irmão não resolve — e o sintoma é o
+   dado voltar vazio **em silêncio**, não um erro.
+   > As duas regras acima custaram duas execuções em 13/08, na sequência. Primeiro o
+   > `Extrair Texto` foi posto no meio da corrente e levou junto `caso_id` — o banco recusou 35
+   > documentos com *"null value in column caso_id violates not-null constraint"*. Depois ele
+   > virou ramo IRMÃO, parou de derrubar o lote e parou também de ser lido: a medição voltou
+   > vazia (`celulas_nos_documentos: 0`) e as camadas 2 e 3 ficaram desligadas sem ninguém notar.
+   > A forma certa é a de hoje: ele entra na corrente DEPOIS do `Preparar Conteudo` (onde o
+   > binário ainda existe e o `content_part` já leva o arquivo em base64 no json), e o
+   > `Medir Documento` logo atrás recompõe o contexto lendo um ancestral. Dois testes em
+   > `workflow-sim.test.mjs` travam as duas regras.
+4. **Modos dos nós Code:** seis rodam "Run Once for All Items", cada um porque a pergunta dele é
    do LOTE e não do item — `Listar Arquivos` (fan-out, 1 item → N), `Orcamento do Lote` (só o lote
    inteiro diz se ele cabe no teto), `Abortar Lote`, `Fatiar Extracao` (1 documento → N blocos),
    `Juntar Blocos` (N blocos → 1 documento) e `Resumo de Custo` (quanto custou o lote). Os
    demais são "Run Once for Each Item" (1:1; usam `$input.item`; retornam **objeto único**
    `{json,...}` — array nesse modo dá o erro `A 'json' property isn't an object`). Um teste em
    `workflow-sim.test.mjs` reprova quem puser um nó no modo errado, com a lista das exceções.
-4. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
+5. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
    descarta o binário (`Classificar Nome` e `Preparar Conteudo` preservam).
 
 ## Como usar
