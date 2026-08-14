@@ -761,6 +761,36 @@ test('agrupado: célula em branco ocupa POSIÇÃO e não gera linha', () => {
   assert.deepEqual([linhas[0].periodo_coluna, linhas[0].valor_num], ['2024', 900]);
 });
 
+test('o prompt manda declarar COLUNA DE VALOR que não é período nem empresa', () => {
+  // O caso real que custou 98 de 99 lançamentos: o `17_Livro_Razao` tem Débito,
+  // Crédito e Saldo por linha, o modelo devolveu 3 valores e declarou `cols`
+  // VAZIA — o guarda de desalinhamento descartou o documento inteiro. O guarda
+  // agiu certo; o que faltava era o prompt dizer que essas colunas existem.
+  for (const caso of ['Débito', 'Crédito', 'Saldo', 'A vencer', 'Quantidade']) {
+    assert.ok(SYSTEM_PROMPT.includes(caso), `o prompt não nomeia a coluna "${caso}"`);
+  }
+  assert.match(SYSTEM_PROMPT, /LIVRO RAZÃO/);
+  assert.match(SYSTEM_PROMPT, /BALANCETE/);
+  assert.match(SYSTEM_PROMPT, /AGING/);
+  // E diz a CONSEQUÊNCIA de não declarar, com o número real: instrução sem
+  // consequência é instrução que o modelo negocia.
+  assert.match(SYSTEM_PROMPT, /98 de 99 lançamentos foram perdidos/);
+  // O schema também precisa dizer, senão a `description` do campo contradiz o
+  // prompt — e o modelo tende a seguir a que está mais perto do dado.
+  const pc = extractionSchema().schema.properties.grupos.items.properties.cols.items.properties.pc;
+  assert.match(pc.description, /Débito/);
+});
+
+test('o motivo do desalinhamento NOMEIA a causa provável (coluna não declarada)', () => {
+  const { problemas } = achatarGrupos([{
+    s: 'LIVRO RAZÃO — CONTA 2.1.01.001', sc: 'passivo_circulante', op: 1, cols: [],
+    l: [{ k: 'LC-2025-4000 NF 010000', vt: ['12.000', '0', '12.000'], vn: [12000, 0, 12000], cf: 0.9 }],
+  }]);
+  assert.equal(problemas.length, 1);
+  assert.match(problemas[0], /1 coluna\(s\) declarada\(s\), 3 valor\(es\)/);
+  assert.match(problemas[0], /Débito\/Crédito\/Saldo, faixas de aging/);
+});
+
 test('agrupado: DESALINHAMENTO descarta a conta e VOLTA NOMEADO — nunca adivinha', () => {
   const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
     moeda: 'BRL', unidade: 'unidade',

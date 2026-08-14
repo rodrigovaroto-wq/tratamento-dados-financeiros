@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 232 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 234 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -75,6 +75,25 @@ dado INTEIRO: **~US$ 1,4** (era 0,71 com 39% do dado) — menos da metade do tet
 > isso seja silencioso. E o `Extrair Texto` tem `onError: continue` — PDF escaneado não tem camada de
 > texto, o nó falha nele, o documento segue como imagem e as camadas 2 e 3 se calam. **O pior caso da
 > mudança é o comportamento de ontem.**
+
+### A rodada de 14/08 com o agrupamento: cobertura 39% → 58%
+
+**1.683 linhas gravadas** contra 1.139 (+48%), ainda **sem** as camadas 2 e 3 (elas estavam
+desligadas: a referência a ramo irmão não resolvia). O ganho é todo do agrupamento, e o maior efeito
+foi o fim do truncamento nos dois maiores documentos:
+
+| Documento | células | antes | agora |
+|---|---:|---:|---:|
+| `01_Balanco_..._2025x2024x2023` | 326 | **0** | **281 (86%)** |
+| `35_Demonstracoes_Contabeis_...` | 308 | **0** | **282 (92%)** |
+| `13/14_Balanco_COMBINADO` (8-9 colunas de empresa) | 70 | 57 | 57-64 (81-91%) |
+| `17_Livro_Razao_Fornecedores` | 461 | 99 | **1** ← ver abaixo |
+
+**O livro razão caiu para 1 linha, e o guarda de desalinhamento explicou por quê:** o documento tem
+**três colunas de valor** (Débito, Crédito, Saldo), o modelo devolveu três valores por lançamento e
+declarou `cols` VAZIA — 98 de 99 contas descartadas. O guarda agiu certo; faltava o prompt dizer que
+coluna de valor **não é só período e empresa**. Corrigido em 14/08, com os cinco casos nomeados
+(razão, balancete, aging, estoques, mapa de dívida) e a consequência escrita.
 
 ### O custo, medido e projetado (13/08/2026)
 
