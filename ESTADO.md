@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0110_remove_papel_de_usuario.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 234 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 235 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -94,6 +94,24 @@ foi o fim do truncamento nos dois maiores documentos:
 declarou `cols` VAZIA — 98 de 99 contas descartadas. O guarda agiu certo; faltava o prompt dizer que
 coluna de valor **não é só período e empresa**. Corrigido em 14/08, com os cinco casos nomeados
 (razão, balancete, aging, estoques, mapa de dívida) e a consequência escrita.
+
+### A régua da cobertura estava na UNIDADE ERRADA (corrigido em 14/08)
+
+A guarda comparava **linhas com dígito** (do texto) com **pares conta × coluna** (do banco). São
+unidades diferentes, e num documento comparativo a razão passa de 100%: o `02_DRE` deu 91 pares
+contra 46 linhas = **198%**. A guarda ficava cega justamente onde há mais a perder.
+
+Agora as duas pontas estão em CONTAS:
+
+| | |
+|---|---|
+| régua | **linhas de conta** — termina em valor e tem rótulo; fora cabeçalho de ano, CNPJ, data, página, CRC/CPF (7 de 46 no `02_DRE`) |
+| medida | **contas distintas** gravadas |
+| `02_DRE` | ~30 de 39 = **77%** — ele ESTÁ incompleto, e a régua antiga dizia 198% |
+
+O limiar subiu de 0,60 para **0,85** porque o alvo é cobertura total: isso vai abrir pendência em
+documentos que antes passavam, e é o objetivo. **É o próximo número a recalibrar** — ele tem um ponto
+de medição hoje, e a próxima rodada dá 35.
 
 ### O custo, medido e projetado (13/08/2026)
 

@@ -66,23 +66,80 @@ export const MAX_CELULAS_POR_BLOCO = Math.floor((TETO_SAIDA_TOKENS * FRACAO_DO_T
 // documentos que vieram pela metade ficou em 21%-48% (`17_Livro_Razao` 99 de
 // 461; `15_Balancete` 77 de 162).
 //
-// 0,60 separa os dois grupos, e vai FALHAR PARA O LADO DE AVISAR DEMAIS: um
-// documento sadio com muito cabeçalho numérico pode cair abaixo dele. É a troca
-// deliberada — uma pendência falsa custa uma olhada, um buraco não visto custa
-// o mandato. Quem quiser apertar depois tem os números acima como base.
-export const LIMIAR_COBERTURA = 0.6;
+// 0,60 era o limiar da régua ANTIGA (linhas com dígito × pares conta-coluna),
+// e ele foi calibrado sobre uma razão que não fazia sentido dimensional. Com a
+// régua na unidade certa — LINHAS DE CONTA contra CONTAS DISTINTAS — o mesmo
+// `02_DRE` sai de "198%" para **77%**, que é a cobertura real dele.
+//
+// O limiar sobe para **0,85** porque o alvo declarado pelo dono é cobertura
+// TOTAL. Isso vai abrir pendência em documentos que antes passavam — é o
+// objetivo, não efeito colateral: o `02_DRE` a 77% está mesmo deixando ~9 contas
+// para trás, e ninguém sabia.
+//
+// ESTE NÚMERO É O PRÓXIMO A RECALIBRAR. Ele tem UM ponto de medição na régua
+// nova (o DRE); a próxima rodada dá 35. Se a fila encher de falso positivo, o
+// que se ajusta é ele — e a decisão fica fácil porque a pendência traz os dois
+// números na descrição.
+export const LIMIAR_COBERTURA = 0.85;
 
 // Abaixo de quantas células a guarda se cala. Num documento de 6 linhas a razão
 // é ruído: uma linha a menos derruba a cobertura em 17%.
 export const MINIMO_PARA_AVALIAR = 20;
 
 /**
- * As linhas do texto que contêm ALGUM dígito — a contagem determinística do que
- * o documento tem para extrair, feita sem IA e sem custo.
+ * As linhas do texto que são LINHA DE CONTA — rótulo seguido de valor.
  *
- * Ela superestima de propósito (conta CNPJ, data, número de página), e é por
- * isso que o limiar de cobertura é 0,6 e não 0,95: a régua é grosseira, e uma
- * régua grosseira honesta vale mais que uma precisa inventada.
+ * A RÉGUA ESTAVA NA UNIDADE ERRADA, e isso importa mais que a precisão dela.
+ * A primeira versão contava toda linha com algum dígito e comparava com os
+ * PARES (conta × coluna) que a extração grava. Medido no `02_DRE` do
+ * book-canastra: o texto tem 46 linhas com dígito, a extração gravou 91 pares —
+ * a razão dá 198%, e a guarda de cobertura nunca dispararia. Pior: ela ficava
+ * cega justamente nos documentos COMPARATIVOS, que são os que mais têm a perder.
+ *
+ * Agora a régua conta LINHAS DE CONTA e é comparada com CONTAS DISTINTAS
+ * extraídas — as duas na mesma unidade. No mesmo DRE: 39 linhas de conta contra
+ * ~30 contas extraídas = 77%, que é a cobertura de verdade.
+ *
+ * O que sai da contagem, e é 15% do total naquele documento: cabeçalho de ano
+ * ("2025 2024 2023"), CNPJ, data por extenso, número de página, CRC e CPF do
+ * bloco de assinatura. Nada disso é dado financeiro, e contá-los inflava o
+ * denominador — a régua "grosseira mas honesta" era grosseira de mais.
+ */
+export function linhasDeConta(texto) {
+  if (typeof texto !== 'string' || texto.length === 0) return [];
+  // Uma linha de conta TERMINA em número (o último valor da linha). Rótulo sem
+  // valor — um cabeçalho de seção — não é conta, e o modelo não gera linha nele.
+  const terminaEmValor = /\(?-?[\d][\d.,]*\)?%?\s*$/;
+  // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma
+  // linha real do book, e o comentário evita que alguém "melhore" tirando um.
+  const ruido = [
+    /^p[áa]gina\b/i,                       // "Página 1"
+    /^cnpj\b|\bcnpj\s*[\d.]/i,             // "CNPJ 44.555.667/0001-59"
+    /^cpf\b|\bcpf\s*[\d.]/i,               // assinatura
+    /\bcrc\s*\d|\bcrc\s*[a-z]{2}/i,        // "CRC 1MG-198.442/O-7"
+    /^\(?valores expressos/i,              // "(Valores expressos em milhares…)"
+    /^exerc[íi]cios? encerrados?/i,        // "Exercícios encerrados em 31 de dezembro…"
+    /^(nota|obs)\b|^_{3,}/i,               // nota de rodapé, linha de assinatura
+    // Cabeçalho de coluna: só anos/datas, sem rótulo de conta antes.
+    /^[\s|]*((19|20)\d{2}|\d{2}\/\d{2}\/\d{4})([\s|]+((19|20)\d{2}|\d{2}\/\d{2}\/\d{4}))*[\s|]*$/,
+  ];
+  const out = [];
+  for (const bruta of texto.split('\n')) {
+    const linha = bruta.trim();
+    if (linha.length === 0) continue;
+    if (!terminaEmValor.test(linha)) continue;
+    if (ruido.some((r) => r.test(linha))) continue;
+    // Rótulo mínimo: uma linha que é só número não é conta, é célula solta.
+    if (!/[a-zà-ú]{3}/i.test(linha)) continue;
+    out.push(linha);
+  }
+  return out;
+}
+
+/**
+ * Toda linha com algum dígito. Continua existindo porque é a régua do
+ * FATIAMENTO — ali o que importa é o tamanho da resposta, e cada célula pesa,
+ * inclusive as do cabeçalho. Para COBERTURA use `linhasDeConta`.
  */
 export function linhasComNumero(texto) {
   if (typeof texto !== 'string' || texto.length === 0) return [];
@@ -210,6 +267,10 @@ export function juntarBlocos(blocos) {
  * que dizer" é o caso comum, então ela não polui a fila de revisão.
  */
 export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTURA, minimo = MINIMO_PARA_AVALIAR }) {
+  // `extraidas` = CONTAS DISTINTAS gravadas; `esperadas` = LINHAS DE CONTA do
+  // texto. As duas na mesma unidade — foi trocar isso que fez a guarda ficar
+  // cega nos documentos comparativos, onde 3 colunas por conta faziam a razão
+  // passar de 100% e nada nunca disparar.
   const e = Number(extraidas);
   const t = Number(esperadas);
   if (!Number.isFinite(e) || !Number.isFinite(t) || t < minimo) return null;
@@ -220,12 +281,14 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
     extraidas: e,
     esperadas: t,
     motivo:
-      `Extração INCOMPLETA: ${e} linha(s) gravada(s) para um documento com ${t} linha(s) com número `
-      + `(${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de ${(limiar * 100).toFixed(0)}%). `
-      + `A contagem do documento é feita sobre o texto do PDF, sem IA, e conta linhas que podem não ser `
-      + `dado financeiro (CNPJ, data, número de página) — então ela superestima. Ainda assim, uma diferença `
-      + `deste tamanho quase sempre é dado que o modelo deixou de ler: conferir o documento na fila de `
-      + `revisão antes de usar o book. Se o arquivo tiver mesmo poucas linhas financeiras, a pendência é `
-      + `falso positivo e pode ser resolvida sem ação.`,
+      `Extração INCOMPLETA: ${e} conta(s) distinta(s) gravada(s) para um documento com ${t} linha(s) `
+      + `de conta no texto (${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de `
+      + `${(limiar * 100).toFixed(0)}%). A contagem do documento é feita sobre o texto do PDF, sem IA: `
+      + `linha que termina em valor e tem rótulo, descontados cabeçalho de ano, CNPJ, data, número de `
+      + `página e bloco de assinatura. As duas medidas estão na MESMA unidade (contas, não valores), `
+      + `então a diferença é dado que o modelo deixou de ler — conferir o documento na fila de revisão `
+      + `antes de usar o book. Documento com rótulo repetido (livro razão com o mesmo histórico em `
+      + `lançamentos diferentes) conta menos contas distintas do que tem linhas: aí a pendência é falso `
+      + `positivo e pode ser resolvida sem ação.`,
   };
 }

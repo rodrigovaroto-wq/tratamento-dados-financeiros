@@ -1040,8 +1040,8 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   // classificação ao documento errado, que num relatório de custo é pior que
   // não ter relatório.
   const extracoes = [
-    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null, celulas_no_documento: 100, blocos: 1 } },
-    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou', celulas_no_documento: 200, blocos: 3 } },
+    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null, contas_no_documento: 100, contas_distintas: 40, blocos: 1 } },
+    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou', contas_no_documento: 200, contas_distintas: 80, blocos: 3 } },
     // Documento sem `usage`: conta como SEM MEDIÇÃO, nunca como custo zero.
     { json: { custo_usd: null, tokens: null, campos: [], falha_motivo: null } },
   ];
@@ -1071,7 +1071,8 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
   assert.equal(r.documentos_sem_medicao, 1, 'sem usage é sem medição, nunca custo zero');
   // A cobertura do LOTE no mesmo painel: é a resposta para "o custo caiu porque
   // ficou eficiente ou porque deixou de extrair?".
-  assert.equal(r.celulas_nos_documentos, 300);
+  assert.equal(r.contas_nos_documentos, 300);
+  assert.equal(r.contas_extraidas, 120);
   assert.equal(r.cobertura_do_lote, 0.4);
   assert.equal(r.documentos_fatiados, 1);
   assert.equal(r.custo_estimado_usd, 0.42, 'o estimado vem junto: é a única forma de calibrar');
@@ -1086,7 +1087,7 @@ test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em do
   const doc = (custo, saida, campos, celulas) => ({ json: {
     custo_usd: custo, tokens: { entrada: 100, saida, cache: 50 },
     campos: new Array(campos).fill({}), falha_motivo: null,
-    celulas_no_documento: celulas, blocos: 1,
+    contas_no_documento: celulas, contas_distintas: campos, blocos: 1,
   } });
   const out = await run('Resumo de Custo', {
     items: [doc(0.1, 10, 5, 10)],
@@ -1106,7 +1107,7 @@ test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em do
   assert.equal(r.custo_extracao_usd, 0.6);
   assert.equal(r.custo_classificacao_usd, 0.001, 'a classificação entra UMA vez');
   assert.equal(r.linhas_extraidas, 30);
-  assert.equal(r.celulas_nos_documentos, 60);
+  assert.equal(r.contas_nos_documentos, 60);
   assert.equal(r.cobertura_do_lote, 0.5);
   assert.deepEqual(r.tokens, { entrada: 300, saida: 60, cache: 150 });
 });
@@ -1316,14 +1317,17 @@ test('Camada 2: documento SEM medida (escaneado) vai inteiro, nunca fatiado às 
 test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta dado', async () => {
   const linha = (k, v) => ({ ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null });
   const out = await run('Juntar Blocos', { items: [
-    { json: { documento_versao_id: 'ver-1', bloco: 1, blocos: 2, celulas_no_documento: 461,
+    { json: { documento_versao_id: 'ver-1', bloco: 1, blocos: 2, celulas_no_documento: 461, contas_no_documento: 154,
       campos: [linha('A', 1), linha('B', 2)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
       custo_usd: 0.03, tokens: { entrada: 10, saida: 20, cache: 5 } } },
-    { json: { documento_versao_id: 'ver-1', bloco: 2, blocos: 2, celulas_no_documento: 461,
+    { json: { documento_versao_id: 'ver-1', bloco: 2, blocos: 2, celulas_no_documento: 461, contas_no_documento: 154,
       campos: [linha('B', 2), linha('C', 3)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
       custo_usd: 0.02, tokens: { entrada: 5, saida: 10, cache: 5 } } },
-    { json: { documento_versao_id: 'ver-2', bloco: 1, blocos: 1, celulas_no_documento: 115,
-      campos: Array.from({ length: 104 }, (_, i) => linha(`k${i}`, i)), diagnostico: { entidade: 'X' },
+    // 39 contas distintas para 39 linhas de conta: 100%, nada a dizer. Antes
+    // este item tinha 104 campos contra 115 "linhas com número" — números de
+    // unidades diferentes que davam 90% por coincidência.
+    { json: { documento_versao_id: 'ver-2', bloco: 1, blocos: 1, celulas_no_documento: 46, contas_no_documento: 39,
+      campos: Array.from({ length: 39 }, (_, i) => linha(`k${i}`, i)), diagnostico: { entidade: 'X' },
       falha_motivo: null, custo_usd: 0.05, tokens: { entrada: 1, saida: 2, cache: 0 } } },
   ] });
   assert.equal(out.length, 2, 'volta UM item por documento — daqui para a frente o grafo é o de sempre');
@@ -1332,20 +1336,22 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   // A linha repetida na emenda (o modelo repetiu a âncora) some; o resto fica.
   assert.deepEqual(doc1.campos.map((c) => c.chave), ['A', 'B', 'C']);
   assert.deepEqual(doc1.campos.map((c) => c.ordem), [0, 1, 2], 'ordem renumerada no conjunto');
-  // 3 de 461 — a guarda de cobertura tem de falar.
-  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 linha\(s\).*461/);
+  // 3 contas distintas para 154 linhas de conta — a guarda tem de falar.
+  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 conta\(s\) distinta\(s\).*154 linha\(s\)/);
   assert.match(doc1.falha_motivo, /repetida\(s\) na emenda/);
-  assert.equal(doc1.cobertura, 0.007);
+  assert.equal(doc1.cobertura, 0.019, '3 de 154, na unidade de CONTAS');
+  assert.equal(doc1.contas_distintas, 3);
   // O custo dos blocos SOMA: um documento fatiado custou o que os pedaços dele
   // custaram, e o `Resumo de Custo` lê daqui.
   assert.equal(doc1.custo_usd, 0.05);
   assert.deepEqual(doc1.tokens, { entrada: 15, saida: 30, cache: 10 });
 
-  // 104 de 115 é documento sadio: nada de pendência. Uma guarda que grita em
+  // 39 de 39 é documento completo: nada de pendência. Uma guarda que grita em
   // toda extração é uma guarda que ninguém lê.
   const doc2 = out.find((i) => i.json.documento_versao_id === 'ver-2').json;
   assert.equal(doc2.falha_motivo, null);
-  assert.equal(doc2.campos.length, 104);
+  assert.equal(doc2.campos.length, 39);
+  assert.equal(doc2.cobertura, 1);
 });
 
 test('Camada 3: sem régua (escaneado) a guarda se CALA, em vez de absolver ou acusar', async () => {
