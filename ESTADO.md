@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0112_lote_conferido_documento_por_documento.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 270 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 274 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -213,8 +213,16 @@ Os itens que continuam de pé, em ordem de impacto:
 - **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
   blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
   contagem de linhas determinística. Fatia própria.
-- **A entidade sai poluída com o período** — "Canastra Industria 2025x2024x2023" na rodada real, e é
-  o que gerou 15 das 22 pendências de revisão. Correção pequena em `parseEntidade`.
+- ~~**A entidade sai poluída com o período**~~ — **fechado em 17/08.** Eram quatro famílias de
+  sujeira, não uma: o comparativo de TRÊS exercícios (`2025x2024x2023`, que o regex de um `x` só não
+  pegava), preposições (`Aging De Canastra`), sobra de tipo quando o apelido casado é mais curto que
+  o nome do arquivo (`Composicao Imobilizado Canastra`), e nome sem tipo nenhum virando empresa
+  (`Relatorio Auditor Independente`, `Iv Rev3`). Medido nos 38 nomes do book: **32 entidades limpas,
+  6 nulas** (essas vão ao fallback por conteúdo, que lê a entidade do documento) e **zero sujas**.
+  A remoção de palavra de tipo usa a própria taxonomia como fonte, palavra a palavra, então cresce
+  sozinha. **Fica anotado:** `negativas`, `societario` e `parcelamentos` estão numa lista à mão em
+  `parseEntidade` porque o apelido da taxonomia não os carrega — o lugar certo é o seed
+  `db/migrations/0002`, e isso é migration.
 - **Dedup por hash** (não pagar reextração do mesmo arquivo): a `0026` descreve o que falta —
   *fingerprint* de prompt+modelo na versão e curto-circuito no grafo.
 - **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o

@@ -205,6 +205,77 @@ test('parseEntidade resolve a empresa nos 14 arquivos do teste v31', () => {
   }
 });
 
+// --- A entidade poluída, medida nos 38 nomes do book-canastra (17/08) --------
+// Na rodada real, 15 das 22 pendências de revisão nasceram daqui: o nome dizia
+// "Canastra Industria 2025x2024x2023" e o conteúdo dizia "Canastra Industria",
+// então `fn_registrar_diagnostico` abria pendência de DIVERGÊNCIA em documento
+// que estava certo. Quatro famílias de sujeira, cada uma com o seu caso abaixo.
+
+test('comparativo de TRÊS exercícios não vira parte do nome da empresa', () => {
+  // `^\d{2,4}x\d{2,4}$` casava "2025x2024" e não "2025x2024x2023" — o formato
+  // que os dois maiores documentos do book usam.
+  assert.equal(classifyByFilename('01_Balanco_Patrimonial_Canastra_Industria_2025x2024x2023.pdf').entidade,
+    'Canastra Industria');
+  assert.equal(classifyByFilename('02_DRE_Canastra_Industria_2025x2024x2023.pdf').entidade,
+    'Canastra Industria');
+  // E o comparativo de dois continua valendo, com qualquer profundidade.
+  assert.equal(classifyByFilename('06_Balanco_Patrimonial_Canastra_Comercial_2025x2024.pdf').entidade,
+    'Canastra Comercial');
+});
+
+test('preposição e sobra de tipo saem do nome — a fonte é a própria taxonomia', () => {
+  // "aging de contas a pagar": o alias casado é o pedaço curto, e "aging" ficava.
+  assert.equal(classifyByFilename('23_Aging_de_Contas_a_Pagar_Canastra_Industria_2025.pdf').entidade,
+    'Canastra Industria');
+  assert.equal(classifyByFilename('24_Posicao_de_Estoques_Canastra_Industria_2025.pdf').entidade,
+    'Canastra Industria');
+  assert.equal(classifyByFilename('18_Faturamento_36_meses_Canastra_Industria_2023_a_2025.pdf').entidade,
+    'Canastra Industria');
+  // "grupo" é a exceção protegida: está no vocabulário de tipo (`faturamento
+  // intra grupo`) E no nome que o documento combinado usa no cabeçalho. Tirá-lo
+  // faria o nome divergir do conteúdo — a pendência que isto veio fechar.
+  assert.equal(classifyByFilename('13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf').entidade, 'Grupo Canastra');
+  assert.equal(classifyByFilename('21_Mutuos_Intragrupo_Grupo_Canastra_2025.pdf').entidade, 'Grupo Canastra');
+});
+
+test('nome que não diz o TIPO não arrisca dizer a empresa', () => {
+  // Sem tipo, o que sobra é o próprio nome do documento — e ele não é empresa.
+  assert.equal(classifyByFilename('34_Relatorio_do_Auditor_Independente_2025.pdf').entidade, null);
+  assert.equal(classifyByFilename('28_Folha_de_Pagamento_Canastra_Industria_2025.pdf').entidade, null);
+  assert.equal(classifyByFilename('ANEXO IV - planilha final REV3.pdf').entidade, null);
+  assert.equal(classifyByFilename('Doc1.pdf').entidade, null);
+  // Sequência de scanner: token só de dígitos nunca é nome de empresa.
+  assert.equal(classifyByFilename('digitalizado_20260115_0003.pdf').entidade, null);
+  // E o silêncio não custa hipótese: todos estes vão para a classificação por
+  // conteúdo, que lê a entidade do documento.
+  for (const nome of ['34_Relatorio_do_Auditor_Independente_2025.pdf', 'Doc1.pdf']) {
+    assert.equal(classifyByFilename(nome).precisa_fallback_openai, true, `${nome} vai ao fallback`);
+  }
+});
+
+test('nenhum dos 38 nomes do book produz entidade suja', () => {
+  // A guarda de classe, não de caso: qualquer nome do book ou devolve uma das
+  // sete empresas do grupo, ou devolve null. Nada de terceira opção — foi a
+  // terceira opção que encheu a fila de revisão.
+  const empresas = new Set(['Canastra Industria', 'Canastra Comercial', 'Canastra Participacoes',
+    'Cn Transportes', 'Canastra Agroflorestal', 'Canastra Imobiliaria SPE', 'Grupo Canastra']);
+  const nomes = [
+    '01_Balanco_Patrimonial_Canastra_Industria_2025x2024x2023.pdf',
+    '17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf',
+    '25_Situacao_Fiscal_e_Parcelamentos_Grupo_Canastra_2025.pdf',
+    '27_Composicao_do_Imobilizado_Canastra_Industria_2025.pdf',
+    '30_Certidoes_Negativas_Grupo_Canastra.pdf',
+    '32_Organograma_Societario_Grupo_Canastra.pdf',
+    '33_Notas_Explicativas_Grupo_Canastra_12M25.pdf',
+    '35_Demonstracoes_Contabeis_Canastra_Industria_2024x2023.pdf',
+    '12_Balanco_Patrimonial_Canastra_Imobiliaria_SPE_2025x2024.pdf',
+  ];
+  for (const nome of nomes) {
+    const e = classifyByFilename(nome).entidade;
+    assert.ok(e === null || empresas.has(e), `${nome} → ${JSON.stringify(e)}`);
+  }
+});
+
 // O invariante que protege a doutrina: a entidade é hipótese, e hipótese não
 // compra dispensa da verificação da IA. Se alguém somar a entidade à confiança,
 // os documentos de 0,65 sobem para 0,70+ e PARAM de ser conferidos pela IA —
