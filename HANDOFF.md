@@ -415,6 +415,52 @@ De `Gravar Campos (Sombra)` em diante **nada muda**: um item por documento, com 
 
 `n8n/test`: 207 → **225**.
 
+## Sessão 44b (2026-08-13) — a linha exigida por tipo vira dado, e o Portão 1 cobra pelo nome (0113)
+
+> **Nota de integração (17/08):** esta sessão correu em paralelo à 44 e a migration nasceu como
+> `0111`; entre o desenho e o merge, a `0111` e a `0112` foram ocupadas na `main`. O número final
+> é **`0113`** — o mesmo texto, o mesmo teste, só a numeração conciliada.
+
+**A ENTREGA EXECUTADA:** o dono aprovou a análise do estagiário que define, por tipo do Kit Básico,
+quais linhas precisam existir para o documento ser utilizável. Até aqui essa exigência morava em
+dois lugares ruins: hardcoded nos arrays inclui/exclui dentro das reconciliações, e em lugar NENHUM
+para os tipos que nenhuma checagem lê (MUTUOS, FAT_INTRAGRUPO, CONTRATO_SOCIAL). Quando a linha
+faltava, o sintoma era `precondicao_nao_satisfeita` — pendência mole (importante, sobrepujável),
+publicada por período pelo despachante, e só para as ~10 linhas que as cinco checagens cruzam. Na
+prática ninguém via, e o caso seguia como se tivesse conferido.
+
+**O QUE ENTROU** (`db/migrations/0113_linha_exigida_por_tipo.sql` + `db/test/linha_exigida.test.sql`,
+branch `ian/0108-linha-exigida`): `taxonomia_linha_exigida` (o QUE cada tipo precisa ter, filha da
+taxonomia, com `origem` codigo/proposta e `depende_de` como fato — qual checagem para sem a linha) +
+`taxonomia_linha_localizador` (o COMO: cascata no formato inclui/exclui de `fn_valor_conceito`, com
+`contra` chave/seção/estrutural espelhando 0009/0031/0034 — sem a cascata, "ATIVO" sem a palavra
+"total" viraria falso positivo, o defeito da 0034 de volta). `fn_recomputar_completude` ganhou o
+passo (2b): tipo presente COM conteúdo mas sem linha exigida abre pendência `linha_exigida_ausente`
+que NOMEIA a linha (doutrina da 0033) e resolve sozinha quando ela aparece. Política
+(`severidade`/`sobrepujavel`) nasce NULL — decisão do dono, por linha; o default é o peso de hoje
+(importante, sobrepujável), e `pronto_para_revisao` não mudou. Seed: 11 exigências de origem
+`codigo` (termos copiados literalmente das reconciliações vigentes) + 3 `proposta`.
+
+**O QUE QUEBROU NO CAMINHO:** a migration ia ser a **0108** — é por isso que a branch se chama
+`ian/0108-linha-exigida`. Entre o desenho e a escrita, os PRs #115–117 ocuparam 0108–0110 na main;
+número não se reaproveita (faixas do `db/README.md`, e o `run.sh` reprova prefixo duplicado), então
+saiu **0113**. Fora isso nada quebrou: a suíte inteira passa com o passo (2b) ligado, sem alterar
+teste existente.
+
+**O QUE FICA EM ABERTO:**
+- **A redução das três propostas.** A entrega especifica estrutura (mutuante/mutuária/saldo/sentido
+  por operação em MUTUOS; vendedora/compradora/valor por par de entidades e exercício em
+  FAT_INTRAGRUPO) e campos não numéricos (CONTRATO_SOCIAL: cinco campos, dos quais só capital
+  social cabe na forma linha-com-valor). A tabela só exprime "existe linha com valor" — a redução
+  está declarada no bloco de propostas da migration; fechar a diferença pede outra estrutura.
+- **A duplicação de termos.** O seed `codigo` copia termos que continuam no corpo das
+  reconciliações (0023/0031/0034). A convergência — as reconciliações lerem os termos daqui — é
+  evolução fora do escopo; até lá, mudar termo lá obriga atualizar o seed junto.
+- **Granularidade v1 por TIPO.** Exigência satisfeita se QUALQUER documento do tipo tem a linha:
+  dois balanços no caso, um sem caixa, não acusa. Refinar por entidade/documento é evolução.
+- **Política NULL.** Severidade/sobrepujável por linha esperam decisão do dono (o `depende_de` é o
+  insumo); até lá toda ausência sai importante/sobrepujável.
+
 ## Sessão 44 (2026-08-13) — a primeira fatura real, e metade da saída era contexto repetido
 
 **O QUE O DONO RELATOU:** rodou os 14 documentos do `book-vertentes` e a OpenAI cobrou **US$ 0,90**.
