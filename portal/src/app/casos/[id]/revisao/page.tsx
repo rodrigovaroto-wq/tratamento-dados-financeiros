@@ -62,24 +62,36 @@ export default async function FilaRevisaoPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={`/casos/${id}`} className="text-sm text-neutral-500 underline">
-          ← Voltar ao caso
+        <Link
+          href={`/casos/${id}`}
+          className="text-sm text-tinta-500 transition-colors hover:text-tinta-900"
+        >
+          ← Voltar ao mandato
         </Link>
-        <h1 className="mt-2 text-lg font-semibold">Fila de revisão — classificação e diagnóstico</h1>
-        <p className="text-sm text-neutral-500">
-          Confirme ou corrija a sugestão (classificação por nome/conteúdo, ou divergência
-          apontada pelo diagnóstico de conteúdo). Nada entra na base sem essa decisão (anti-ancoragem).
+        <h1 className="mt-2 text-xl font-semibold text-tinta-900">Revisão</h1>
+        <p className="mt-1 max-w-2xl text-sm text-tinta-500">
+          O sistema não teve certeza sobre o tipo, a empresa ou o período destes documentos.
+          Confirme ou corrija — nada entra na base sem essa decisão, e a sugestão nunca decide
+          sozinha.
         </p>
       </div>
 
       {pendenciasRes.error && (
-        <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-          Erro ao carregar pendências: {pendenciasRes.error.message}
+        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          Não foi possível carregar a fila: {pendenciasRes.error.message}
         </p>
       )}
 
       {pendencias.length === 0 && !pendenciasRes.error && (
-        <p className="text-sm text-neutral-500">Nenhuma pendência de revisão aberta. 🎉</p>
+        <div className="carta px-6 py-12 text-center">
+          <p className="text-sm font-medium text-tinta-900">Nada a revisar</p>
+          <p className="mt-1 text-sm text-tinta-500">
+            Todo documento deste mandato foi classificado com confiança suficiente.
+          </p>
+          <Link href={`/casos/${id}`} className="btn-secundario mt-4">
+            Voltar ao mandato
+          </Link>
+        </div>
       )}
 
       <ul className="space-y-4">
@@ -89,26 +101,26 @@ export default async function FilaRevisaoPage({
           const nomeArquivo = doc.documento_versao?.[0]?.nome_original ?? "(sem nome)";
 
           return (
-            <li key={p.id} className="rounded border border-neutral-200 bg-white p-4">
+            <li key={p.id} className="carta p-4">
               <div className="mb-3">
-                <p className="text-sm font-medium">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-tinta-900">
                   {nomeArquivo}
-                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium uppercase text-amber-800">
+                  <span className="chip bg-amber-100 text-amber-800">
                     {PENDENCIA_TIPO_LABEL[p.tipo] ?? p.tipo}
                   </span>
                 </p>
-                <p className="mt-1 text-xs text-neutral-500">{p.descricao}</p>
+                <p className="mt-1 text-xs text-tinta-500">{p.descricao}</p>
               </div>
 
               <form action={revisarAction} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <input type="hidden" name="documento_id" value={doc.id} />
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-600">Tipo (taxonomia)</label>
+                  <label className="block text-xs font-medium text-tinta-600">Tipo de documento</label>
                   <select
                     name="novo_tipo_taxonomia"
                     defaultValue={doc.tipo_taxonomia ?? ""}
-                    className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm"
                   >
                     <option value="">— sem tipo —</option>
                     {taxonomia.map((t) => (
@@ -120,22 +132,22 @@ export default async function FilaRevisaoPage({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-600">Entidade</label>
+                  <label className="block text-xs font-medium text-tinta-600">Entidade</label>
                   <input
                     type="text"
                     name="nova_entidade_nome"
                     defaultValue={doc.entidade?.razao_social ?? ""}
                     placeholder="Razão social"
-                    className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-600">Período — tipo</label>
+                  <label className="block text-xs font-medium text-tinta-600">Período</label>
                   <select
                     name="novo_periodo_tipo"
                     defaultValue={doc.periodo?.tipo ?? "anual"}
-                    className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm"
                   >
                     <option value="anual">anual</option>
                     <option value="trimestre">trimestre</option>
@@ -146,37 +158,35 @@ export default async function FilaRevisaoPage({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-600">Período — referência</label>
+                  <label className="block text-xs font-medium text-tinta-600">Referência do período</label>
                   <input
                     type="text"
                     name="novo_periodo_ref"
                     defaultValue={doc.periodo?.referencia ?? ""}
                     placeholder="ex.: 12M25, 2025"
-                    className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm"
                   />
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-neutral-600">Motivo / observação</label>
+                  <label className="block text-xs font-medium text-tinta-600">Observação (opcional)</label>
                   <textarea
                     name="motivo"
                     rows={2}
-                    placeholder="Opcional — por que confirmou ou corrigiu"
-                    className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                    placeholder="Por que confirmou ou corrigiu"
+                    className="mt-1 w-full rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm"
                   />
                 </div>
 
-                <div className="sm:col-span-2 flex items-center justify-between text-xs text-neutral-500">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-tinta-100 pt-3 text-xs text-tinta-500 sm:col-span-2">
                   <span>
-                    Sugestão atual: <strong>{formatarTipoTaxonomia(doc.tipo_taxonomia)}</strong>
-                    {doc.confianca != null && ` · confiança ${Math.round(doc.confianca * 100)}%`}
-                    {doc.fonte && ` · fonte ${doc.fonte}`}
+                    O sistema sugeriu <strong className="text-tinta-700">{formatarTipoTaxonomia(doc.tipo_taxonomia)}</strong>
+                    {doc.confianca != null && ` com ${Math.round(doc.confianca * 100)}% de confiança`}
+                    {doc.fonte === "nome_arquivo" && ", pelo nome do arquivo"}
+                    {doc.fonte === "openai_conteudo" && ", lendo o conteúdo"}
                   </span>
-                  <button
-                    type="submit"
-                    className="rounded bg-neutral-900 px-3 py-1.5 font-medium text-white hover:bg-neutral-800"
-                  >
-                    Confirmar / salvar
+                  <button type="submit" className="btn-primario">
+                    Confirmar
                   </button>
                 </div>
               </form>

@@ -15,13 +15,45 @@ import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 import { aprovarCaso } from "./actions";
 import { ItemPendencia } from "./Pendencia";
 import { ExcluirMandato } from "@/components/excluir-mandato";
-import { humanizar } from "@/lib/rotulos";
+import { humanizar, suavizarMensagem } from "@/lib/rotulos";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 
 const LEGIBILIDADE_LABEL: Record<string, string> = {
   degradado: "qualidade degradada",
   ilegivel: "ilegível",
 };
+
+// A COLUNA "FONTE" FALAVA BANCO DE DADOS. Ela mostrava `nome_arquivo` e
+// `openai_conteudo` crus — vocabulário de quem escreveu o pipeline, não de quem
+// confere um mandato. O fato que importa para quem lê é OUTRO: o documento foi
+// reconhecido pelo nome do arquivo (barato, determinístico) ou foi preciso ler o
+// conteúdo com IA (mais caro, e é o caminho de quem manda "Doc1.pdf").
+const FONTE_LABEL: Record<string, string> = {
+  nome_arquivo: "nome do arquivo",
+  openai_conteudo: "leitura do conteúdo",
+  manual: "revisão humana",
+};
+
+// Um indicador do topo. Número grande, rótulo embaixo, e um detalhe opcional em
+// cor quando ele muda a leitura do número (ex.: "2 bloqueantes").
+function Indicador({
+  valor, rotulo, detalhe, tom,
+}: {
+  valor: string | number;
+  rotulo: string;
+  detalhe?: string | null;
+  tom?: "neutro" | "alerta" | "bom";
+}) {
+  const corDetalhe =
+    tom === "alerta" ? "text-red-700" : tom === "bom" ? "text-emerald-700" : "text-tinta-500";
+  return (
+    <div className="px-4 py-3">
+      <p className="indicador-valor">{valor}</p>
+      <p className="indicador-rotulo">{rotulo}</p>
+      {detalhe && <p className={`mt-1 text-xs font-medium ${corDetalhe}`}>{detalhe}</p>}
+    </div>
+  );
+}
 
 export default async function CasoDashboardPage({
   params,
@@ -75,6 +107,22 @@ export default async function CasoDashboardPage({
     // implementação da regra aqui no portal.
     supabase.rpc("fn_avaliar_portao2", { p_caso_id: id }),
   ]);
+
+  // QUANTAS LINHAS CADA DOCUMENTO RENDEU. É o número que o dono procurava
+  // abrindo o export, e ele não existia em tela nenhuma: a tabela dizia que o
+  // documento chegou e foi classificado, não que ele TROUXE dado. Documento
+  // classificado com zero linha é o modo de falha mais caro deste sistema (19 de
+  // 35 numa rodada real), e agora ele aparece na coluna, em vermelho.
+  const versoes = (documentosRes.data as unknown as Documento[] | null ?? [])
+    .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
+    .filter(Boolean);
+  const linhasRes = versoes.length
+    ? await supabase.from("campo_extraido").select("documento_versao_id").in("documento_versao_id", versoes)
+    : { data: [] as Array<{ documento_versao_id: string }>, error: null };
+  const linhasPorVersao = new Map<string, number>();
+  for (const l of (linhasRes.data as Array<{ documento_versao_id: string }> | null) ?? []) {
+    linhasPorVersao.set(l.documento_versao_id, (linhasPorVersao.get(l.documento_versao_id) ?? 0) + 1);
+  }
 
   if (casoRes.error || !casoRes.data) {
     notFound();
@@ -147,26 +195,53 @@ export default async function CasoDashboardPage({
   // O ARQUIVO DE CADA PENDÊNCIA. A mensagem diz o que está errado; sem o nome do
   // arquivo, quem vai conferir tem de adivinhar em qual dos treze documentos olhar.
   // A versão mais recente é a que vale — é ela que a extração usou.
+  // ORDEM DA TABELA: pelo NOME DO ARQUIVO, não pela hora do upload. O cliente
+  // manda o book numerado (`01_Balanco`, `02_DRE`, …) e procura por esse número;
+  // ordenar por `criado_em desc` embaralhava o book na tela e obrigava a varrer
+  // a lista inteira para achar um documento.
+  documentos.sort((a, b) => {
+    const na = (a.documento_versao ?? []).at(-1)?.nome_original ?? "";
+    const nb = (b.documento_versao ?? []).at(-1)?.nome_original ?? "";
+    return na.localeCompare(nb, "pt-BR", { numeric: true });
+  });
+
   const arquivoDoDocumento = new Map<string, string>();
   for (const d of documentos) {
     const nome = (d.documento_versao ?? []).map((v) => v.nome_original).filter(Boolean).at(-1);
     if (nome) arquivoDoDocumento.set(d.id, nome);
   }
 
+  const linhasTotais = [...linhasPorVersao.values()].reduce((a, b) => a + b, 0);
+  const bloqueantesAbertas = pendencias.filter(
+    (p) => emAberto(p) && p.severidade === "bloqueante",
+  ).length;
+  const abertas = pendencias.filter(emAberto).length;
+  const kitPresentes = kitBasico.filter(
+    (i) => tiposPresentes.has(i.codigo) && !tiposSemConteudo.has(i.codigo),
+  ).length;
+  // Documento que chegou, foi classificado e não rendeu UMA linha. É o que o
+  // `fn_conferir_lote` mede do lado do banco; aqui ele vira número de topo,
+  // porque é a pergunta que a rodada v45 respondeu tarde demais.
+  const semLinha = documentos.filter(
+    (d) => ((d.documento_versao ?? []).reduce((n, v) => n + (linhasPorVersao.get(v.id) ?? 0), 0)) === 0,
+  ).length;
+
   return (
     <div className="space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">{caso.nome}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-semibold text-tinta-900">{caso.nome}</h1>
+            <span className={`chip ${CASO_STATUS_COLOR[caso.status]}`}>
+              {CASO_STATUS_LABEL[caso.status]}
+            </span>
+          </div>
           {/* O produto do mandato em português: o banco guarda `reestruturacao`. */}
-          <p className="text-xs text-neutral-500">{humanizar(caso.produto)}</p>
+          <p className="mt-0.5 text-sm text-tinta-500">{humanizar(caso.produto)}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href={`/casos/${id}/adicionar`}
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
-          >
-            + Adicionar arquivos
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href={`/casos/${id}/adicionar`} className="btn-secundario">
+            Adicionar arquivos
           </Link>
           {/* UM EXPORT SÓ NESTA TELA (decisão do dono, 07/08/2026). Esta é a tela de
               CONFERIR O QUE CHEGOU, e o único arquivo que faz sentido aqui é o dos
@@ -174,35 +249,71 @@ export default async function CasoDashboardPage({
               export de modelagem mora na tela de Modelagem, junto das premissas que
               ele usa: oferecê-lo aqui convidava a exportar o modelo antes de dizer
               como cada conta projeta. */}
-          <Link
-            href={`/casos/${id}/modelagem`}
-            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
-          >
-            Modelagem
-          </Link>
           <a
             href={`/casos/${id}/export?modo=dados`}
-            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            className="btn-secundario"
             title="Todas as abas de dado, linha a linha, sem modelagem. Serve para conferir a extração contra os documentos."
           >
-            Exportar dados financeiros ↓
+            Exportar dados
           </a>
-          <span className={`rounded-full px-2 py-1 text-xs font-medium ${CASO_STATUS_COLOR[caso.status]}`}>
-            {CASO_STATUS_LABEL[caso.status]}
-          </span>
+          {/* A ÚNICA AÇÃO PRIMÁRIA DA TELA. Ela era um botão azul-claro entre
+              outros três de peso igual, e a tela não dizia para onde ir depois de
+              conferir o que chegou. */}
+          <Link href={`/casos/${id}/modelagem`} className="btn-primario">
+            Ir para a modelagem
+          </Link>
           {/* Excluir fica por ÚLTIMO e discreto: encontrável por quem procura,
               não esbarrável por quem não. */}
           <ExcluirMandato casoId={id} nome={caso.nome} />
         </div>
       </div>
 
+      {/* O RESUMO QUE A TELA NÃO DAVA. Quem abre um mandato pergunta uma coisa:
+          "posso confiar neste caso?". A resposta exigia rolar seis seções e
+          somar de cabeça. Os quatro números abaixo respondem em um olhar, e o
+          terceiro — documentos sem uma linha extraída — é o que a rodada de
+          15/08 descobriu tarde: documento classificado, checklist verde, e nada
+          no banco. */}
+      <div className="carta grid grid-cols-2 divide-x divide-y divide-tinta-100 sm:grid-cols-4 sm:divide-y-0">
+        <Indicador valor={documentos.length} rotulo="documentos recebidos" />
+        <Indicador
+          valor={linhasTotais.toLocaleString("pt-BR")}
+          rotulo="linhas financeiras extraídas"
+          detalhe={semLinha > 0
+            ? `${semLinha} ${semLinha === 1 ? "documento sem nenhuma linha" : "documentos sem nenhuma linha"}`
+            : null}
+          tom="alerta"
+        />
+        <Indicador
+          valor={`${kitPresentes}/${kitBasico.length}`}
+          rotulo="itens do Kit Básico"
+          detalhe={kitPresentes === kitBasico.length ? "kit completo" : null}
+          tom="bom"
+        />
+        <Indicador
+          valor={abertas}
+          rotulo={abertas === 1 ? "pendência em aberto" : "pendências em aberto"}
+          detalhe={bloqueantesAbertas > 0
+            ? `${bloqueantesAbertas} ${bloqueantesAbertas === 1 ? "bloqueia" : "bloqueiam"} a aprovação`
+            : null}
+          tom="alerta"
+        />
+      </div>
+
       {pendenciasRevisao.filter(emAberto).length > 0 && (
-        <div className="flex items-center justify-between rounded border border-amber-300 bg-amber-50 p-3 text-sm">
-          <span className="text-amber-800">
-            {pendenciasRevisao.filter(emAberto).length} documento(s) com pendência de revisão (classificação, entidade ou período).
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <span className="text-amber-900">
+            <strong className="font-semibold">
+              {pendenciasRevisao.filter(emAberto).length}{" "}
+              {pendenciasRevisao.filter(emAberto).length === 1 ? "documento" : "documentos"}
+            </strong>{" "}
+            com dúvida de classificação, entidade ou período — o sistema quer sua confirmação.
           </span>
-          <Link href={`/casos/${id}/revisao`} className="font-medium text-amber-900 underline">
-            Ir para a fila de revisão →
+          <Link
+            href={`/casos/${id}/revisao`}
+            className="rounded-md bg-amber-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-900"
+          >
+            Revisar agora
           </Link>
         </div>
       )}
@@ -213,22 +324,28 @@ export default async function CasoDashboardPage({
           aparência de "sem pendência bloqueante" para quem olha o dashboard. */}
       {portao2 && (
         <div
-          className={`rounded border p-3 text-sm ${
-            portao2.elegivel
-              ? "border-emerald-300 bg-emerald-50"
-              : "border-neutral-300 bg-neutral-50"
+          className={`rounded-lg border p-4 text-sm ${
+            portao2.elegivel ? "border-emerald-200 bg-emerald-50" : "carta"
           }`}
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className={`font-medium ${portao2.elegivel ? "text-emerald-900" : "text-neutral-800"}`}>
-                Portão 2 —{" "}
-                {portao2.elegivel ? "elegível a aprovação" : "não elegível"}
+              {/* "PORTÃO 2" É NOME INTERNO (f0/04). Quem confere um mandato não
+                  precisa do número da etapa — precisa saber se pode aprovar e o
+                  que falta. O nome fica como legenda, não como manchete. */}
+              <p className={`font-semibold ${portao2.elegivel ? "text-emerald-900" : "text-tinta-900"}`}>
+                {portao2.elegivel
+                  ? "Pronto para aprovação"
+                  : "Ainda não pode ser aprovado"}
+                <span className="ml-2 text-xs font-normal text-tinta-500">conferência final</span>
               </p>
               {!portao2.elegivel && portao2.motivos?.length > 0 && (
-                <ul className="mt-1 list-disc pl-5 text-neutral-700">
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-tinta-700">
+                  {/* A MENSAGEM VEM DO BANCO com "(s)" e caixa alta —
+                      "4 pendência(s) BLOQUEANTE(s) sem decisão". `suavizarMensagem`
+                      já existia para as pendências; o motivo do portão passava direto. */}
                   {portao2.motivos.map((m) => (
-                    <li key={m}>{m}</li>
+                    <li key={m}>{suavizarMensagem(m)}</li>
                   ))}
                 </ul>
               )}
@@ -241,7 +358,7 @@ export default async function CasoDashboardPage({
               {/* A CONTAGEM, sem teto (0109). O limite de 3 saiu por decisão do
                   dono; o número continua na tela porque é o que distingue um caso
                   limpo de um caso que seguiu por cima de seis pendências. */}
-              <p className="mt-1 text-xs text-neutral-600">
+              <p className="mt-1.5 text-xs text-tinta-600">
                 {portao2.ressalvas_ativas === 0
                   ? "Nenhuma pendência foi aceita sem resolução neste caso."
                   : `${portao2.ressalvas_ativas} ${portao2.ressalvas_ativas === 1
@@ -255,7 +372,7 @@ export default async function CasoDashboardPage({
                   tabela por fora, que é a mesma liberação sem rastro). O que dá
                   é não deixar invisível: aqui, e dentro da decisão de aprovação. */}
               {(portao2.rejeitadas ?? 0) > 0 && (
-                <p className="mt-1 text-xs text-neutral-700">
+                <p className="mt-1 text-xs text-tinta-700">
                   <strong>
                     {portao2.rejeitadas === 1
                       ? "1 pendência foi declarada improcedente"
@@ -279,14 +396,13 @@ export default async function CasoDashboardPage({
                 <input
                   type="text"
                   name="motivo"
-                  placeholder="motivo (opcional)"
-                  className="rounded border border-neutral-300 px-2 py-1 text-sm"
+                  placeholder="Observação da aprovação (opcional)"
+                  aria-label="Observação da aprovação"
+                  className="w-56 rounded-md border border-tinta-200 px-2.5 py-1.5 text-sm
+                             placeholder:text-tinta-400"
                 />
-                <button
-                  type="submit"
-                  className="rounded bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
-                >
-                  Aprovar caso
+                <button type="submit" className="btn-aprovar">
+                  Aprovar mandato
                 </button>
               </form>
             )}
@@ -295,7 +411,12 @@ export default async function CasoDashboardPage({
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-700">Kit Básico (obrigatórios)</h2>
+        <div className="mb-2 flex items-baseline justify-between gap-3">
+          <h2 className="titulo-secao">Kit Básico</h2>
+          <p className="text-xs text-tinta-500">
+            os {kitBasico.length} documentos obrigatórios do mandato
+          </p>
+        </div>
         <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {kitBasico.map((item) => {
             const semConteudo = tiposSemConteudo.has(item.codigo);
@@ -305,27 +426,27 @@ export default async function CasoDashboardPage({
             // está lá e pedi-lo de novo ao cliente seria pedir o que ele mandou.
             const presente = tiposPresentes.has(item.codigo) && !semConteudo;
             const cor = presente
-              ? "border-emerald-200 bg-emerald-50"
+              ? "border-emerald-200 bg-emerald-50/60"
               : semConteudo
-                ? "border-amber-300 bg-amber-50"
-                : "border-neutral-200 bg-white";
+                ? "border-amber-200 bg-amber-50"
+                : "border-tinta-200 bg-white";
             const corTexto = presente
               ? "text-emerald-700"
               : semConteudo
                 ? "text-amber-800"
-                : "text-neutral-400";
+                : "text-tinta-400";
             return (
               <li
                 key={item.codigo}
-                className={`flex items-center justify-between gap-3 rounded border px-3 py-2 text-sm ${cor}`}
+                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm ${cor}`}
               >
-                <span>{item.documento}</span>
-                <span className={`shrink-0 ${corTexto}`}>
+                <span className="text-tinta-800">{item.documento}</span>
+                <span className={`shrink-0 text-xs font-medium ${corTexto}`}>
                   {presente
-                    ? "✓ presente"
+                    ? "✓ recebido"
                     : semConteudo
-                      ? "recebido, sem conteúdo extraído"
-                      : "faltante"}
+                      ? "chegou, sem dado extraído"
+                      : "não recebido"}
                 </span>
               </li>
             );
@@ -334,56 +455,111 @@ export default async function CasoDashboardPage({
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-700">Documentos ({documentos.length})</h2>
+        <div className="mb-2 flex items-baseline justify-between gap-3">
+          <h2 className="titulo-secao">Documentos</h2>
+          <p className="text-xs text-tinta-500">
+            {documentos.length} {documentos.length === 1 ? "arquivo recebido" : "arquivos recebidos"}
+          </p>
+        </div>
         {documentos.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nenhum documento recebido ainda.</p>
+          <div className="carta px-6 py-10 text-center text-sm text-tinta-500">
+            Nenhum documento recebido ainda.
+          </div>
         ) : (
-          <div className="overflow-x-auto rounded border border-neutral-200 bg-white">
+          <div className="carta overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+              <thead className="border-b border-tinta-200 bg-tinta-50 text-[11px] uppercase tracking-wide text-tinta-500">
                 <tr>
-                  <th className="px-3 py-2">Arquivo</th>
-                  <th className="px-3 py-2">Tipo</th>
-                  <th className="px-3 py-2">Entidade</th>
-                  <th className="px-3 py-2">Período</th>
-                  <th className="px-3 py-2">Confiança</th>
-                  <th className="px-3 py-2">Fonte</th>
-                  <th className="px-3 py-2">Resumo</th>
-                  <th className="px-3 py-2"></th>
+                  <th className="px-3 py-2.5 font-semibold">Arquivo</th>
+                  <th className="px-3 py-2.5 font-semibold">Tipo</th>
+                  <th className="px-3 py-2.5 font-semibold">Entidade</th>
+                  <th className="px-3 py-2.5 font-semibold">Período</th>
+                  {/* A COLUNA QUE FALTAVA. Sem ela a tabela dizia que o arquivo
+                      chegou e foi entendido, nunca que ele TROUXE dado. */}
+                  <th className="px-3 py-2.5 text-right font-semibold">Linhas</th>
+                  {/* CONFIANÇA E ORIGEM NA MESMA COLUNA. Eram duas, e a tabela
+                      estourava a largura da tela — a coluna de ação saía cortada
+                      ("ve linha"), que é o tipo de defeito que só aparece
+                      olhando a página renderizada. São dois fatos sobre a mesma
+                      pergunta: o quanto o sistema confia, e por quê. */}
+                  <th className="px-3 py-2.5 font-semibold">Confiança</th>
+                  <th className="px-3 py-2.5"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-100">
+              <tbody className="divide-y divide-tinta-100">
                 {documentos.map((doc) => {
                   const versao = doc.documento_versao?.[0];
                   const legibilidadeRuim = versao?.legibilidade && versao.legibilidade !== "ok";
+                  const linhas = (doc.documento_versao ?? []).reduce(
+                    (n, v) => n + (linhasPorVersao.get(v.id) ?? 0), 0,
+                  );
                   return (
-                    <tr key={doc.id}>
-                      <td className="px-3 py-2">
-                        {versao?.nome_original ?? "—"}
+                    <tr key={doc.id} className="align-top transition-colors hover:bg-tinta-50">
+                      <td className="max-w-[15rem] px-3 py-2.5">
+                        <span
+                          className="block truncate font-medium text-tinta-900"
+                          title={versao?.nome_original ?? ""}
+                        >
+                          {versao?.nome_original ?? "—"}
+                        </span>
                         {legibilidadeRuim && (
                           <span
                             title={versao?.nota_legibilidade ?? ""}
-                            className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium uppercase text-red-700"
+                            className="ml-2 chip bg-red-100 text-red-800"
                           >
                             {LEGIBILIDADE_LABEL[versao!.legibilidade!] ?? versao!.legibilidade}
                           </span>
                         )}
+                        {/* O RESUMO SAIU DA COLUNA PRÓPRIA e virou a segunda linha do
+                            arquivo: numa coluna estreita ele aparecia truncado em três
+                            palavras, o que é ruído com cara de informação. */}
+                        {doc.resumo && (
+                          <p className="mt-0.5 max-w-[15rem] truncate text-xs text-tinta-500" title={doc.resumo}>
+                            {doc.resumo}
+                          </p>
+                        )}
                       </td>
-                      <td className="px-3 py-2">{formatarTipoTaxonomia(doc.tipo_taxonomia)}</td>
-                      <td className="px-3 py-2">{doc.entidade?.razao_social ?? "—"}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2.5 whitespace-nowrap text-tinta-700">
+                        {formatarTipoTaxonomia(doc.tipo_taxonomia)}
+                      </td>
+                      <td className="max-w-[10rem] truncate px-3 py-2.5 text-tinta-700"
+                          title={doc.entidade?.razao_social ?? ""}>
+                        {doc.entidade?.razao_social ?? "—"}
+                      </td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-tinta-700">
                         {doc.periodo ? formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia) : "—"}
                       </td>
-                      <td className="px-3 py-2">
-                        {doc.confianca != null ? `${Math.round(doc.confianca * 100)}%` : "—"}
+                      <td className="px-3 py-2.5 text-right">
+                        {linhas > 0 ? (
+                          <span className="tabular-nums text-tinta-900">{linhas.toLocaleString("pt-BR")}</span>
+                        ) : (
+                          <span
+                            className="chip bg-red-100 text-red-800"
+                            title="O documento foi recebido e classificado, mas nenhuma linha financeira foi gravada."
+                          >
+                            nenhuma
+                          </span>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-xs text-neutral-500">{doc.fonte ?? "—"}</td>
-                      <td className="max-w-xs truncate px-3 py-2 text-xs text-neutral-500" title={doc.resumo ?? ""}>
-                        {doc.resumo ?? "—"}
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span className="tabular-nums text-tinta-700">
+                          {doc.confianca != null ? `${Math.round(doc.confianca * 100)}%` : "—"}
+                        </span>
+                        {doc.fonte && (
+                          <span
+                            className="ml-1.5 hidden text-xs text-tinta-500 xl:inline"
+                            title={`Como o documento foi reconhecido: ${FONTE_LABEL[doc.fonte] ?? humanizar(doc.fonte)}`}
+                          >
+                            · {FONTE_LABEL[doc.fonte] ?? humanizar(doc.fonte)}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-xs">
-                        <Link href={`/casos/${id}/documentos/${doc.id}`} className="text-neutral-600 underline">
-                          ver linhas →
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap text-xs">
+                        <Link
+                          href={`/casos/${id}/documentos/${doc.id}`}
+                          className="font-medium text-acento-600 hover:text-acento-700 hover:underline"
+                        >
+                          abrir
                         </Link>
                       </td>
                     </tr>
@@ -397,13 +573,13 @@ export default async function CasoDashboardPage({
 
       {pendenciasOutras.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-            Completude e outras pendências ({pendenciasOutras.length})
-          </h2>
-          <p className="mb-2 text-xs text-neutral-500">
-            São as pendências que impedem a aprovação por falta de documento ou de conteúdo. A
-            grade do Kit Básico acima mostra o mesmo fato pelo lado do checklist; aqui elas
-            aparecem como o que são — o que o Portão 2 conta.
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="titulo-secao">O que falta chegar</h2>
+            <p className="text-xs text-tinta-500">{pendenciasOutras.length} em aberto</p>
+          </div>
+          <p className="mb-2.5 text-xs text-tinta-500">
+            Documento obrigatório ausente, ou que chegou sem nenhuma linha aproveitável. A grade do
+            Kit Básico mostra o mesmo fato; aqui cada item pode ser decidido.
           </p>
           <ul className="space-y-2">
             {[...pendenciasOutras].sort(porDecidirPrimeiro).map((p) => (
@@ -417,13 +593,22 @@ export default async function CasoDashboardPage({
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-          Reconciliação (Classe A/B) ({pendenciasReconciliacao.length})
-        </h2>
-        {pendenciasReconciliacao.length === 0 ? (
-          <p className="text-sm text-neutral-500">
-            Nenhuma divergência ou pré-condição pendente no momento.
+        <div className="mb-2 flex items-baseline justify-between gap-3">
+          {/* "Classe A/B" é vocabulário interno (f0/04): A é o que se confere
+              dentro do próprio documento, B é entre documentos. Para quem lê a
+              tela o que importa é que são números que não fecham. */}
+          <h2 className="titulo-secao">Números que não fecham</h2>
+          <p className="text-xs text-tinta-500">
+            {pendenciasReconciliacao.length === 0
+              ? "conferências automáticas entre documentos"
+              : `${pendenciasReconciliacao.length} divergência(s)`}
           </p>
+        </div>
+        {pendenciasReconciliacao.length === 0 ? (
+          <div className="carta px-4 py-6 text-sm text-tinta-500">
+            Nenhuma divergência encontrada — o balanço fecha, o caixa bate com o fluxo e não há
+            conta contada duas vezes.
+          </div>
         ) : (
           <ul className="space-y-2">
             {[...pendenciasReconciliacao].sort(porDecidirPrimeiro).map((p) => (
@@ -438,9 +623,10 @@ export default async function CasoDashboardPage({
 
       {pendenciasArquivo.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-            Qualidade dos arquivos ({pendenciasArquivo.length})
-          </h2>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="titulo-secao">Arquivos ilegíveis</h2>
+            <p className="text-xs text-tinta-500">{pendenciasArquivo.length} arquivo(s)</p>
+          </div>
           <ul className="space-y-2">
             {[...pendenciasArquivo].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia
@@ -454,9 +640,10 @@ export default async function CasoDashboardPage({
 
       {pendenciasExtracao.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold text-neutral-700">
-            Qualidade da extração ({pendenciasExtracao.length})
-          </h2>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="titulo-secao">Extração incompleta</h2>
+            <p className="text-xs text-tinta-500">{pendenciasExtracao.length} documento(s)</p>
+          </div>
           <ul className="space-y-2">
             {[...pendenciasExtracao].sort(porDecidirPrimeiro).map((p) => (
               <ItemPendencia

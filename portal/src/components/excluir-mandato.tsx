@@ -31,14 +31,14 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
         onClick={() => setAberto(true)}
         title="Excluir este mandato"
         aria-label="Excluir este mandato"
-        className="rounded border border-neutral-300 px-2 py-1.5 text-xs font-medium text-neutral-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+        className="rounded border border-tinta-200 px-2 py-1.5 text-xs font-medium text-tinta-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
       >
         Excluir
       </button>
 
       {aberto && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/50 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="titulo-excluir"
@@ -46,17 +46,17 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
           // clique dentro do diálogo o fecharia no meio da leitura).
           onClick={(e) => { if (e.target === e.currentTarget && !enviando) setAberto(false); }}
         >
-          <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
-            <h2 id="titulo-excluir" className="text-base font-semibold text-neutral-900">
+          <div className="w-full max-w-md rounded-lg border border-tinta-200 bg-white p-5 shadow-xl">
+            <h2 id="titulo-excluir" className="text-base font-semibold text-tinta-900">
               Após a exclusão todos os dados serão perdidos, você tem certeza que deseja excluir
               esse mandato?
             </h2>
             {/* O NOME DO CASO. Com vários mandatos abertos em abas diferentes, é
                 o que impede excluir o certo achando que é o outro. */}
-            <p className="mt-2 text-sm text-neutral-600">
-              Mandato: <strong className="text-neutral-900">{nome}</strong>
+            <p className="mt-2 text-sm text-tinta-600">
+              Mandato: <strong className="text-tinta-900">{nome}</strong>
             </p>
-            <p className="mt-1 text-sm text-neutral-600">
+            <p className="mt-1 text-sm text-tinta-600">
               Serão apagados os documentos recebidos, as linhas extraídas, as pendências e a
               modelagem deste mandato. Não há como desfazer.
             </p>
@@ -66,7 +66,7 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
                 type="button"
                 disabled={enviando}
                 onClick={() => setAberto(false)}
-                className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                className="rounded border border-tinta-200 bg-white px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50 disabled:opacity-50"
               >
                 Cancelar
               </button>

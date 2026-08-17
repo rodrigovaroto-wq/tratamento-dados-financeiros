@@ -72,11 +72,11 @@ export default async function PlanilhaDocumentoPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={`/casos/${id}`} className="text-sm text-neutral-500 underline">
+        <Link href={`/casos/${id}`} className="text-sm text-tinta-500 underline">
           ← Voltar ao caso
         </Link>
         <h1 className="mt-2 text-lg font-semibold">{versao?.nome_original ?? "(sem nome)"}</h1>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-tinta-500">
           {formatarTipoTaxonomia(doc.tipo_taxonomia)}
           {doc.entidade?.razao_social ? ` · ${doc.entidade.razao_social}` : ""}
           {doc.periodo ? ` · ${formatarPeriodo(doc.periodo.tipo, doc.periodo.referencia)}` : ""}
@@ -91,15 +91,15 @@ export default async function PlanilhaDocumentoPage({
       )}
 
       {doc.resumo && (
-        <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
-          <p className="mb-1 text-xs font-medium uppercase text-neutral-500">Resumo</p>
+        <div className="rounded border border-tinta-200 bg-tinta-50 p-3 text-sm text-tinta-600">
+          <p className="mb-1 text-xs font-medium uppercase text-tinta-500">Resumo</p>
           {doc.resumo}
         </div>
       )}
 
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-neutral-700">
+          <h2 className="text-sm font-semibold text-tinta-600">
             Linhas extraídas ({campos.length}) — {nAceitos} de {campos.length} aceitas para o export
           </h2>
         </div>
@@ -111,11 +111,11 @@ export default async function PlanilhaDocumentoPage({
               type="text"
               name="motivo"
               placeholder="Motivo/observação (opcional)"
-              className="flex-1 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+              className="flex-1 rounded border border-tinta-200 px-2 py-1.5 text-sm"
             />
             <button
               type="submit"
-              className="whitespace-nowrap rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800"
+              className="whitespace-nowrap rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-tinta-800"
             >
               Aceitar estes dados para a base
             </button>
@@ -146,12 +146,12 @@ export default async function PlanilhaDocumentoPage({
         ) : (
           <div className="space-y-6">
             {[...grupos.entries()].map(([secao, linhas]) => (
-              <div key={secao} className="overflow-x-auto rounded border border-neutral-200 bg-white">
-                <p className="border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold uppercase text-neutral-600">
+              <div key={secao} className="overflow-x-auto rounded border border-tinta-200 bg-white">
+                <p className="border-b border-tinta-200 bg-tinta-50 px-3 py-1.5 text-xs font-semibold uppercase text-tinta-600">
                   {secao}
                 </p>
                 <table className="w-full text-left text-sm">
-                  <thead className="text-xs uppercase text-neutral-500">
+                  <thead className="text-xs uppercase text-tinta-500">
                     <tr>
                       <th className="px-3 py-1.5">Rótulo</th>
                       <th className="px-3 py-1.5 text-right">Valor</th>
@@ -160,7 +160,7 @@ export default async function PlanilhaDocumentoPage({
                       <th className="px-3 py-1.5">Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-neutral-100">
+                  <tbody className="divide-y divide-tinta-100">
                     {linhas.map((linha) => {
                       const ehTotal = /total/i.test(linha.chave);
                       const aceito = linha.status_aceite === "aceito";
@@ -169,12 +169,12 @@ export default async function PlanilhaDocumentoPage({
                           <td className="px-3 py-1.5">
                             {linha.chave}
                             {linha.entidade_coluna && (
-                              <span className="ml-1 text-xs font-normal text-neutral-500">
+                              <span className="ml-1 text-xs font-normal text-tinta-500">
                                 ({linha.entidade_coluna})
                               </span>
                             )}
                             {linha.periodo_coluna && (
-                              <span className="ml-1 text-xs font-normal text-neutral-400">
+                              <span className="ml-1 text-xs font-normal text-tinta-400">
                                 [{linha.periodo_coluna}]
                               </span>
                             )}
@@ -182,8 +182,8 @@ export default async function PlanilhaDocumentoPage({
                           <td className="px-3 py-1.5 text-right font-mono">
                             {formatValor(linha.valor_num, linha.valor_texto, linha.unidade)}
                           </td>
-                          <td className="px-3 py-1.5 text-neutral-500">{linha.origem_pagina ?? "—"}</td>
-                          <td className="px-3 py-1.5 text-neutral-500">
+                          <td className="px-3 py-1.5 text-tinta-500">{linha.origem_pagina ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-tinta-500">
                             {linha.confianca != null ? `${Math.round(linha.confianca * 100)}%` : "—"}
                           </td>
                           <td className="px-3 py-1.5">

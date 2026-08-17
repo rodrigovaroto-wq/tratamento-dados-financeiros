@@ -409,12 +409,49 @@ const TIPO_TAXONOMIA_LABEL: Record<string, string> = {
   FLUXO_PROJETADO: "Fluxo Projetado",
   DMPL: "Mutações do Patrimônio Líquido",
   DVA: "Demonstração do Valor Adicionado",
+  // O RESTO DA TAXONOMIA. Sem estes, o fallback devolvia o código
+  // "humanizado" sem acento — a tela mostrava "Certidoes", "Razao",
+  // "Contingencias". Erro de português na coluna que o cliente lê primeiro é o
+  // tipo de detalhe que desqualifica um produto inteiro.
+  RAZAO: "Livro Razão",
+  CERTIDOES: "Certidões",
+  ORGANOGRAMA: "Organograma Societário",
+  NOTAS_EXPL: "Notas Explicativas",
+  DF_AUDITADA: "Demonstrações Auditadas",
+  AGING_AR: "Aging de Recebíveis",
+  AGING_AP: "Aging de Pagáveis",
+  ESTOQUE: "Posição de Estoques",
+  SITUACAO_FISCAL: "Situação Fiscal e Parcelamentos",
+  CONTINGENCIAS: "Contingências e Processos",
+  EXTRATO_BANCARIO: "Extratos Bancários",
+  HEADCOUNT: "Folha de Pagamento",
+  APLIC_FINANC: "Aplicações Financeiras",
+  DEBITOS_TRIB: "Débitos Tributários",
+  GARANTIAS: "Garantias Prestadas",
+  AVAIS_FIANCAS: "Avais e Fianças",
+  CONTRATOS_COM: "Contratos Comerciais",
+  CONTRATOS_IC: "Contratos Intercompany",
+  DOCS_SOCIOS: "Documentos dos Sócios",
+  PLANO_NEGOCIOS: "Plano de Negócios",
+  PREMISSAS: "Premissas das Projeções",
+  SPED: "Obrigações Acessórias (SPED)",
 };
 
 // Tipos ainda sem rótulo explícito (fora do Kit Básico + Variáveis já
 // mapeados acima) caem num fallback genérico — "EXTRATO_BANCARIO" vira
 // "Extrato Bancario" em vez do código cru — nunca pior que antes, e já seguem
 // a mesma linha de escrita natural quando entrar um tipo novo.
+/**
+ * O rótulo de um código de taxonomia, ou `null` quando a string não é um código
+ * conhecido. Existe para o caso em que o texto é uma FRASE e não um código: a
+ * descrição de pendência vem do banco com "COMBINADO" no meio, mas também com
+ * "ICMS", "PIS", "CNPJ" e "MESMA" — e traduzir por semelhança de formato
+ * (palavra em caixa alta) transformaria "ICMS" em "Icms".
+ */
+export function rotuloDeTipoConhecido(codigo: string): string | null {
+  return TIPO_TAXONOMIA_LABEL[codigo] ?? null;
+}
+
 export function formatarTipoTaxonomia(codigo: string | null): string {
   if (!codigo) return "Não classificado";
   const label = TIPO_TAXONOMIA_LABEL[codigo];
