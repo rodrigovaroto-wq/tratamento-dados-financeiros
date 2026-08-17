@@ -202,7 +202,7 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/completude_conteudo.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
-echo "== testes de linha exigida por tipo (0111: a exigência vira dado e o Portão 1 cobra pelo nome)"
+echo "== testes de linha exigida por tipo (0113: a exigência vira dado e o Portão 1 cobra pelo nome)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/linha_exigida.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
@@ -249,6 +249,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/modelagem_v35.test.sql 2>&1 \
 echo
 echo "== testes de reconferir (0043: reaplicar as regras de hoje sobre o dado gravado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconferir.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== documento sem dado financeiro (0111) + conferência de lote (0112: documento pulado)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/documento_sem_dado_financeiro.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo

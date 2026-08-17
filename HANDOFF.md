@@ -4,9 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-13 (sessão 44). **Estado do `main`:** mergeado até o **PR #117**
-(`main` em `0540e2f`). Branch de trabalho: **`ian/0108-linha-exigida`** (migration `0111` — a
-numeração divergiu da branch porque 0108–0110 entraram na main antes; ver sessão 44).
+**Última atualização:** 2026-08-14 (sessão 46). **Estado do `main`:** mergeado até o **PR #124**
+(`main` em `8dc5e06`). Branch de trabalho: **`claude/reduce-call-cost-52bban`** (PR #125 aberto).
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -277,7 +276,150 @@ instrumento e não o modelo.
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
 
-## Sessão 44 (2026-08-13) — a linha exigida por tipo vira dado, e o Portão 1 cobra pelo nome (0111)
+## Sessão 46 (2026-08-14) — as três camadas rodaram: 39% → 58%, truncamento zerado, e três defeitos seguidos de mecânica do n8n
+
+**O QUE O DONO RODOU:** o `book-canastra` de novo, já com as três camadas da sessão 45 (medir antes
+de chamar / fatiar para sempre caber / guarda de cobertura). Resultado: **1.139 → 1.683 linhas**,
+cobertura **39% → 58%**, e o truncamento — a família que devolvia zero — **eliminada**. Os dois
+maiores documentos saíram de 0 para 281 linhas (86%) e 282 linhas (92%). Custo seguiu em ~US$ 1,0
+pelo book inteiro, com a saída caindo de 64 para **29,2 tokens por linha** (o formato agrupado).
+
+### O que ainda impede os 100%, nomeado
+
+O `.xlsx` da modelagem continua em **9 de 10** no `auditar-xlsx.mts`, e o único reprovado continua
+sendo o balanço não fechar (−40.169). O buraco restante não é mais truncamento: é célula que o
+modelo lê e não devolve. Por isso a próxima etapa proposta é a **comparação contra o
+`test-data/book-canastra/pdf/GABARITO.json`** — é o que transforma "58%" de proporção contra
+heurística em **lista nominal do que faltou**, com prova, e vira teste de regressão permanente.
+
+### Quatro defeitos nesta rodada, três deles a mesma classe: mecânica de item do n8n
+
+Vale registrar juntos porque a lição é uma só — **no n8n, quem quebra o vínculo do item quebra tudo
+que está abaixo, e quase sempre em silêncio**:
+
+| Sintoma | Causa | Fechado em |
+|---|---|---|
+| `invalid input syntax for type uuid: "sem-versao-0"` | o fan-out da fatia não declarava `pairedItem`, e eu ainda fabriquei uma chave falsa para tapar o buraco | PR #121 |
+| `null value in column "caso_id"` | `Extrair Texto` na cadeia principal SUBSTITUI o item (perde json+binário) — regra que já estava escrita no `n8n/README.md` | PR #122 |
+| `celulas_nos_documentos: 0`, sem erro nenhum | `$('Nó').item` só resolve para **ancestral**; ramo irmão devolve undefined | PR #123 |
+| painel de custo mostrando metade do lote | um IF faz o n8n executar a cadeia inteira **uma vez por ramo**; `.all()` sem índice de run vê só uma parte | PR #123 |
+
+As três primeiras viraram **regras numeradas no `n8n/README.md`** (nó que substitui o item; `$().item`
+só de ancestral; nó que muda a contagem declara `pairedItem`) e a terceira virou **teste que caminha
+o grafo** e reprova qualquer `$('X').item` apontando para não-ancestral. A regra não fica só no texto.
+
+### O livro razão perdia 98 de 99 lançamentos porque a coluna não era período
+
+`17_Livro_Razao_Fornecedores` tem **três colunas de valor** — Débito, Crédito, Saldo. O prompt só
+descrevia coluna como *período* ou *empresa*, então o modelo mandava um valor onde o schema esperava
+três, e o `achatarGrupos` — corretamente — descartava a linha inteira por desalinhamento. O conserto
+foi no prompt (PR #124): os **cinco casos** de coluna que não é período estão nomeados (livro razão,
+balancete, aging, estoques, mapa de dívida) e a consequência está escrita junto, em número.
+
+### A régua da cobertura estava na unidade errada
+
+`avaliarCobertura` comparava *linhas com dígito* do PDF contra *pares conta×coluna* extraídos — duas
+unidades diferentes. Um documento visivelmente incompleto marcava **198%**. Trocado por
+`linhasDeConta` (linha que termina em valor E tem rótulo, menos ruído: Página, CNPJ, CRC, notas,
+cabeçalho só com ano) contra chave distinta, e o limiar subiu de 0,6 para **0,85** — porque com a
+régua certa 0,6 aceitava perder 40% calado (PR #125).
+
+**Suítes:** n8n em **235** testes, todas verdes.
+
+## Sessão 45 (2026-08-13) — o custo estava resolvido e o dado não estava: 39% de cobertura, e as três camadas
+
+**O QUE O DONO RODOU:** o `book-canastra` inteiro. 35 documentos, **21 minutos, US$ 0,71** contra o
+teto de US$ 3. O custo virou assunto encerrado — e a mesma rodada abriu um buraco maior.
+
+### 1.139 de 2.893
+
+Das células de valor que os PDFs contêm, **39% chegaram ao banco**. Duas famílias, e a diferença
+entre elas é o que organiza a correção:
+
+- **TRUNCAMENTO** (5 documentos, zero linhas). O gpt-4o tem teto de **16.384 tokens de saída**.
+  `01_Balanco_..._2025x2024x2023` tem 326 células — no formato plano daquela rodada, ~20.900 tokens.
+  Não cabia por construção, e nenhum prompt conserta um teto físico. Ao menos falhou ALTO:
+  `finish_reason=length` virou `extracao_falhou` com a causa escrita.
+- **SUB-EXTRAÇÃO SILENCIOSA** (o resto). `17_Livro_Razao_Fornecedores` devolveu **99 de 461** sem
+  estourar teto nenhum e sem abrir uma única pendência. O sistema registrou sucesso.
+
+O `.xlsx` da modelagem exportado dessa rodada passa em **9 de 10** itens do `auditar-xlsx.mts`. O
+único reprovado é o balanço não fechar por **40.169** — o buraco da extração chegando ao arquivo
+entregue. O modelo está sadio; a entrada dele não estava.
+
+### Duas correções minhas, antes do resto
+
+**Eu afirmei que o custo provava que o agrupamento estava ativo naquela rodada. Não provava.** A
+aritmética era compatível com os dois formatos; o print do canvas do dono é que decide, e ele mostra
+a cadeia terminando em `Reconciliar (Classe A)` — sem o `Resumo de Custo`. A rodada foi no workflow
+ANTERIOR ao PR #119. Isso melhora a leitura: **os 39% e os truncamentos são a linha de base, não
+efeito do agrupamento.**
+
+E a previsão de qual documento truncaria estava errada: apontei o livro razão, e quem estourou foram
+os dois balanços grandes. O razão fez pior — devolveu um quinto e disse que estava tudo bem.
+
+### As três camadas
+
+`n8n/lib/cobertura.mjs`, três nós novos, e o desenho importa mais que cada peça:
+
+| | O que faz | Nó |
+|---|---|---|
+| **1. Medir antes de chamar** | lê a camada de texto do PDF na própria instância — sem IA, sem custo — e conta as linhas com número | `Extrair Texto` (nativo) |
+| **2. Fatiar** | acima de 60% do teto, um item por bloco de ≤234 células | `Fatiar Extracao` |
+| **3. Guarda de cobertura** | compara o que voltou com o que o documento tem; abaixo de 60%, pendência com os dois números | `Juntar Blocos` |
+
+**A camada 2 não conserta truncamento — ela o torna impossível.** E o ponto fino dela é a ÂNCORA: o
+modelo continua vendo o PDF inteiro (é onde está o alinhamento das colunas), então "extraia o bloco 2
+de 3" seria pedir que ele adivinhasse onde a faixa começa. Cada bloco carrega o **texto exato** da
+primeira e da última linha da faixa, lidos do PDF pelo extrator. Vira instrução verificável em vez de
+proporção. A instrução vai na mensagem de *user* — o prompt de sistema fica idêntico, senão o cache
+de prefixo para de valer e o fatiamento pagaria o prompt duas vezes.
+
+**A camada 3 promete uma coisa só, e é a única honesta:** ela não impede o modelo de pular uma linha;
+impede que isso seja silencioso. O limiar de 60% é calibrado na rodada real e erra para o lado de
+avisar demais — sadios ficaram em 68%-90% (`02_DRE` 104/115, `06_Balanco` 74/109), incompletos em
+21%-48%. Pendência falsa custa uma olhada; buraco não visto custa o mandato.
+
+### O que eu decidi NÃO fazer, e é a decisão que mais importa aqui
+
+**O texto extraído não substitui o PDF na chamada.** Era a economia óbvia — e seria uma troca ruim
+agora: o texto de uma tabela perde o alinhamento das colunas, e foi exatamente a leitura de coluna
+que acabou de funcionar (o balanço combinado saiu com as 8 colunas de empresa certas, e a guarda de
+desalinhamento não disparou uma vez em 35 documentos). **O texto serve para MEDIR, não para LER.**
+
+### O custo sobe, e é para subir
+
+Extrair o que faltava custa tokens. `book-canastra`: 38 documentos → **41 chamadas** de extração (3
+fatiados), e a projeção sai de US$ 0,71 *com 39% do dado* para **~US$ 1,4 com o dado inteiro** —
+menos da metade do teto. É o que o agrupamento da sessão 44 comprou.
+
+### Segurança da mudança, em uma linha
+
+`Extrair Texto` tem `onError: continueRegularOutput`. PDF escaneado não tem camada de texto e o nó
+falha nele: o documento segue como imagem e as camadas 2 e 3 se calam para ele — `null` é "não sei",
+nunca "zero", porque zero ligaria a guarda com régua inventada justamente onde o modelo mais erra.
+**O pior caso desta mudança é o comportamento de ontem.**
+
+De `Gravar Campos (Sombra)` em diante **nada muda**: um item por documento, com `campos` e
+`falha_motivo`, exatamente como sempre foi.
+
+### Aberto, e nomeado
+
+- **O teto de gasto decide ANTES do `Extrair Texto`** — estima por bytes e não sabe quantos blocos o
+  lote terá. Movê-lo para depois troca byte por linha contada, que é determinístico.
+- **A entidade sai poluída com o período** ("Canastra Industria 2025x2024x2023"): 15 das 22
+  pendências de revisão da rodada.
+- **O erro plantado de R$ 240 mil nos mútuos não apareceu** — `21_Mutuos` extraiu 3 de 6 células, e a
+  reconciliação não tinha o que comparar. Só a próxima rodada, com cobertura, responde se a
+  reconciliação funciona.
+
+`n8n/test`: 207 → **225**.
+
+## Sessão 44b (2026-08-13) — a linha exigida por tipo vira dado, e o Portão 1 cobra pelo nome (0113)
+
+> **Nota de integração (17/08):** esta sessão correu em paralelo à 44 e a migration nasceu como
+> `0111`; entre o desenho e o merge, a `0111` e a `0112` foram ocupadas na `main`. O número final
+> é **`0113`** — o mesmo texto, o mesmo teste, só a numeração conciliada.
 
 **A ENTREGA EXECUTADA:** o dono aprovou a análise do estagiário que define, por tipo do Kit Básico,
 quais linhas precisam existir para o documento ser utilizável. Até aqui essa exigência morava em
@@ -287,7 +429,7 @@ faltava, o sintoma era `precondicao_nao_satisfeita` — pendência mole (importa
 publicada por período pelo despachante, e só para as ~10 linhas que as cinco checagens cruzam. Na
 prática ninguém via, e o caso seguia como se tivesse conferido.
 
-**O QUE ENTROU** (`db/migrations/0111_linha_exigida_por_tipo.sql` + `db/test/linha_exigida.test.sql`,
+**O QUE ENTROU** (`db/migrations/0113_linha_exigida_por_tipo.sql` + `db/test/linha_exigida.test.sql`,
 branch `ian/0108-linha-exigida`): `taxonomia_linha_exigida` (o QUE cada tipo precisa ter, filha da
 taxonomia, com `origem` codigo/proposta e `depende_de` como fato — qual checagem para sem a linha) +
 `taxonomia_linha_localizador` (o COMO: cascata no formato inclui/exclui de `fn_valor_conceito`, com
@@ -302,7 +444,7 @@ que NOMEIA a linha (doutrina da 0033) e resolve sozinha quando ela aparece. Pol�
 **O QUE QUEBROU NO CAMINHO:** a migration ia ser a **0108** — é por isso que a branch se chama
 `ian/0108-linha-exigida`. Entre o desenho e a escrita, os PRs #115–117 ocuparam 0108–0110 na main;
 número não se reaproveita (faixas do `db/README.md`, e o `run.sh` reprova prefixo duplicado), então
-saiu **0111**. Fora isso nada quebrou: a suíte inteira passa com o passo (2b) ligado, sem alterar
+saiu **0113**. Fora isso nada quebrou: a suíte inteira passa com o passo (2b) ligado, sem alterar
 teste existente.
 
 **O QUE FICA EM ABERTO:**
@@ -318,6 +460,112 @@ teste existente.
   dois balanços no caso, um sem caixa, não acusa. Refinar por entidade/documento é evolução.
 - **Política NULL.** Severidade/sobrepujável por linha esperam decisão do dono (o `depende_de` é o
   insumo); até lá toda ausência sai importante/sobrepujável.
+
+## Sessão 44 (2026-08-13) — a primeira fatura real, e metade da saída era contexto repetido
+
+**O QUE O DONO RELATOU:** rodou os 14 documentos do `book-vertentes` e a OpenAI cobrou **US$ 0,90**.
+Alvo: **abaixo de US$ 0,50**. E a pergunta que abriu a rodada: *"como acesso isso?"* — sobre os
+tokens por documento que eu tinha pedido.
+
+### A fatura desmentiu o modelo deste repositório em 45%
+
+Decompondo os US$ 0,90: **84% é saída de extração**, a **~64 tokens por célula de valor**. O
+repositório supunha 35 (`TOKENS_POR_LINHA_EXTRAIDA`), e o 35 não estava errado por descuido — ele
+contava a CARGA ÚTIL da linha e ignorava o resto:
+
+```json
+{"s":"ATIVO CIRCULANTE","sc":"ativo_circulante","ec":null,"pc":"31/12/2025",
+ "k":"Duplicatas a receber","vt":"22.310","vn":22310,"op":1,"cf":0.96}
+```
+
+Os cinco primeiros campos são **contexto**, idêntico em dezenas de linhas consecutivas. E num balanço
+comparativo o rótulo da conta — o campo mais longo — era reescrito **uma vez por coluna de período**,
+porque o prompt mandava "gere uma LINHA SEPARADA para cada (conta × período), com o MESMO chave".
+
+### A saída passou a ser AGRUPADA
+
+Um grupo por seção, as colunas declaradas UMA vez em `cols` (que unifica as duas dimensões — empresa
+e período —, antes descritas em dois parágrafos separados do prompt), e a conta escrita UMA vez com um
+valor por coluna. Medido pelo `medir-custo-book.mjs` sobre os PDFs de verdade:
+
+| Book | formato plano | agrupado | corte |
+|---|---:|---:|---:|
+| `book-vertentes` (14 docs — o que o dono rodou) | US$ 0,857 | **US$ 0,471** | **−45%** |
+| `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** | **−44%** |
+
+**O modelo do formato plano projeta 0,857 contra os 0,90 da fatura — 5% de erro.** É isso que
+autoriza tratar os 0,471 como projeção em vez de esperança, e o alvo de US$ 0,50 está atendido. A
+economia real deve ser um pouco maior: o medidor lê as colunas do NOME do arquivo, então as sete
+colunas de empresa do balanço combinado não entram na conta dele.
+
+**Nada é extraído de menos.** `parseExtractionResponse` e o nó `Parse Extracao` (com a MESMA função
+embutida por `toString`) achatam os grupos de volta para uma linha por (conta × coluna):
+`campo_extraido` fica idêntico — mesmos valores, mesma `ordem` de leitura, mesma escala e moeda.
+
+### As três decisões que o formato de colunas obrigou
+
+1. **Célula em branco OCUPA POSIÇÃO** (`null` no índice), nunca é omitida. Encostar os valores à
+   esquerda poria o número de 2024 na coluna de 2025 — plausível, silencioso, e o pior erro possível
+   aqui.
+2. **Desalinhamento é FALHA, não palpite.** Um valor para duas colunas e a associação valor↔coluna
+   deixou de ser conhecida: a conta é **descartada** e o motivo volta nomeado (rótulo e contagens),
+   virando pendência. Completar com `null` seria inventar dado.
+3. **Subtotal abre grupo PRÓPRIO** com `sc = NAO_CLASSIFICAVEL`. A seção canônica passou a ser do
+   grupo, e um subtotal misturado às contas que ele soma faria a seção ser contada duas vezes na
+   planilha — a mesma aritmética do invariante "uma conta, um lugar".
+
+### E o defeito de 2018… quer dizer, do "teste v18", que isto conserta de graça
+
+Documentos comparativos truncavam (`finish_reason=length`) antes de terminar de listar as contas — 6
+de 16. A correção da época foi encurtar os NOMES das chaves; era meia correção, porque o contexto
+continuava sendo repetido. O documento mais pesado do `book-vertentes` usava 73% do teto de saída e
+agora usa 45%.
+
+E o medidor passou a AVISAR quando a saída projetada passa de 80% do teto, nomeando o arquivo. Ele
+acusa um caso que ninguém tinha visto: o livro razão do `book-canastra` (461 células de valor) fica em
+**109% do teto mesmo agrupado** — vai truncar. A saída é extrair por faixa de página, e é fatia
+própria; fica declarado em vez de descoberto na fatura.
+
+### "Como acesso isso?" — a resposta virou um nó
+
+Os tokens por documento existiam desde sempre, um por item do `Parse Extracao`. Para saber o custo do
+LOTE era preciso abrir 14 painéis e somar à mão — e custo que só se conhece somando à mão é custo que
+ninguém mede. É metade da explicação de por que este projeto decidiu teto de gasto por estimativa
+durante meses.
+
+**`Resumo de Custo`**, novo, último nó do canvas: custo real do lote, quanto foi extração e quanto foi
+classificação, o que o orçamento havia estimado, tokens de entrada/saída/cache e **tokens de saída por
+linha extraída** — o número que recalibra o estimador. Ele soma **por nó**, nunca por índice do lote:
+só 8 dos 14 documentos passam pela classificação, então casar `[i]` com `[i]` atribuiria o custo ao
+documento errado. É terminal e tem `onError`: um resumo que derruba o lote que ele resume seria a pior
+troca possível.
+
+### Dois espelhos à mão morreram no caminho
+
+- **O schema da extração no nó** era uma linha de 2.400 caracteres copiada da lib. Agora é
+  `JSON.stringify(extractionSchema())` — o schema é JSON puro, então serializar a fonte é exato. Um
+  teste compara o schema do nó com a fonte inteira, em vez de conferir um campo por vez.
+- **O achatamento** vem embutido por `toString()`. É o único lugar onde valor e coluna são
+  associados: um espelho que divergisse ali gravaria o número de 2024 na coluna de 2025 sem sintoma.
+
+E o `book-vertentes` passou a escrever `METRICAS.json` como o `book-canastra` já fazia — faltava
+justamente no book que o dono roda de verdade, então o medidor não conseguia abrir o único lote com
+fatura conhecida.
+
+### O que ficou de fora, e por quê
+
+O dono aprovou 1+2+3 (agrupamento, PDF como texto, dedup por hash). Entregue: o **1**, que sozinho
+atinge o alvo. Os outros dois **não** entraram, e não é esquecimento:
+
+- **PDF como texto** exige o nó `Extract From File` no n8n vivo dele. Depois do agrupamento vale
+  ~US$ 0,03 neste book, e o risco (um nó novo no meio da cadeia de intake) ficou grande para o
+  prêmio. Melhor com os tokens de entrada REAIS do `Resumo de Custo` na mão.
+- **Dedup por hash** é o de maior efeito no uso real dele (reexecutar o mesmo book sai de graça), e é
+  o que a própria `0026` descreve como precisando de duas coisas que não existem: um *fingerprint* de
+  prompt+modelo na versão (migration) e um curto-circuito no grafo. A migration diz, com estas
+  palavras, "não às cegas". É a próxima fatia, e agora é a maior.
+
+`n8n/test`: 194 → **207**.
 
 ## Sessão 43 (2026-08-13) — a recusa vinha de um workflow de julho, e a 2ª chamada era cobrada como se fosse a 1ª
 

@@ -84,11 +84,18 @@ modelo** — é a tarefa que exige julgamento contábil linha a linha.
 - **Como testar sem gastar:** rode o **kit de PDFs sintéticos** (9 arquivos pequenos) com a
   classificação em mini e confira se tipo/entidade/período saem certos. Custa centavos.
 
-### 6. Saída: já otimizada, sem corte seguro sobrando
-As chaves curtas já cortaram 30-40%. O que resta é **carga útil**: `vt` (valor como impresso) é a
-trilha de auditoria da conversão de sinal/decimal; `cf` (confiança) alimenta o auto-aceite ≥95% e a
-guarda de baixa confiança; `op` (página) é proveniência. Cortar qualquer um troca custo por qualidade
-— exatamente o que você não quer.
+### 6. Saída: era ONDE ESTAVA O DINHEIRO — o agrupamento cortou 45%
+> **Esta seção estava errada e a fatura de 13/08/2026 provou** (ver o último adendo). Ela dizia "já
+> otimizada, sem corte seguro sobrando" porque olhava só a CARGA ÚTIL de cada linha. Metade da saída
+> era **contexto repetido** — `s`/`sc`/`ec`/`pc`/`op` iguais em dezenas de linhas seguidas — e o
+> rótulo da conta reescrito uma vez por coluna de período. A saída passou a ser AGRUPADA e caiu 45%,
+> com o mesmo dado no banco.
+
+As chaves curtas cortaram 30-40% do NOME do contexto; o agrupamento parou de REPETI-LO. O que resta
+agora é carga útil de verdade: `vt` (valor como impresso) é a trilha de auditoria da conversão de
+sinal/decimal; `cf` (confiança) alimenta o auto-aceite ≥95% e a guarda de baixa confiança; `op`
+(página) é proveniência. Cortar qualquer um troca custo por qualidade — e, medido, cada um vale
+centavos: com schema estrito não se pode OMITIR chave, então "só quando relevante" economiza ~zero.
 
 ## Falsas economias (não mexer)
 
@@ -375,3 +382,167 @@ sobram, todas com trade-off que só o dono decide:
   produto, não de custo — muda o que o book entrega.
 - **PDF como texto**: 5% neste book (medido), não os 60-80% que a seção 1 prometia. Continua valendo
   pelo `.docx`/`.xlsx` e pela precisão, não pela economia.
+
+---
+
+## Adendo (2026-08-13, tarde) — a primeira fatura real, e o formato de saída que ela condenou
+
+**A medição que mudou tudo:** o dono rodou os 14 documentos do `book-vertentes` e pagou **US$ 0,90**,
+com o alvo de ficar **abaixo de US$ 0,50**. Foi a primeira fatura real confrontada com o modelo deste
+documento — e o modelo estava errado por 45% para baixo.
+
+### Onde o dinheiro estava, medido
+
+| | US$ | Origem |
+|---|---:|---|
+| **Saída da extração** | **~0,76 (84%)** | ~1.180 células de valor × **~64 tokens** × US$ 10/M |
+| Entrada | ~0,14 | 20 páginas de PDF + 14× prompt de sistema (2.906 tokens, cacheado a 50%) |
+| Classificação (8 chamadas, `gpt-4o-mini`) | ~0,003 | irrelevante desde a troca de modelo |
+
+O `TOKENS_POR_LINHA_EXTRAIDA = 35` deste repositório contava só a **carga útil** da linha. Os outros
+~30 tokens eram **contexto repetido**: `s`, `sc`, `ec`, `pc` e `op` idênticos em dezenas de linhas
+consecutivas, mais os nomes das chaves, mais o rótulo da conta reescrito **uma vez por coluna de
+período**.
+
+### O que mudou: a saída passou a ser AGRUPADA
+
+Antes, uma entrada por (conta × coluna). Agora um **grupo** por seção, com as colunas declaradas uma
+vez em `cols`, e a conta escrita uma vez com um valor por coluna:
+
+```
+antes  {"s":"ATIVO CIRCULANTE","sc":"ativo_circulante","ec":null,"pc":"31/12/2025",
+        "k":"Duplicatas a receber","vt":"22.310","vn":22310,"op":1,"cf":0.96}   ← ×2, uma por ano
+depois {"s":"ATIVO CIRCULANTE","sc":"ativo_circulante","op":1,
+        "cols":[{"ec":null,"pc":"31/12/2025"},{"ec":null,"pc":"31/12/2024"}],
+        "l":[{"k":"Duplicatas a receber","vt":["22.310","29.870"],"vn":[22310,29870],"cf":0.96}]}
+```
+
+**O resultado, medido pelo `medir-custo-book.mjs` sobre os PDFs de verdade:**
+
+| Book | formato plano | agrupado | corte |
+|---|---:|---:|---:|
+| `book-vertentes` (14 docs — o que o dono rodou) | US$ 0,857 | **US$ 0,471** | **−45%** |
+| `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** | **−44%** |
+
+O modelo do formato plano projeta US$ 0,857 contra os **US$ 0,90 da fatura** — 5% de erro, e é isso
+que autoriza tratar os US$ 0,471 como projeção e não como esperança. **O alvo de US$ 0,50 está
+atendido**, e a economia real deve ser um pouco maior: o medidor lê as colunas do NOME do arquivo,
+então as sete colunas de empresa do balanço combinado não entram na conta dele.
+
+### Por que isto não é troca de custo por qualidade
+
+Nada é extraído de menos: `parseExtractionResponse` (e o nó `Parse Extracao`, com a MESMA função
+embutida) achata os grupos de volta para uma linha por (conta × coluna), e `campo_extraido` fica
+idêntico — mesmos valores, mesma `ordem` de leitura, mesma escala e moeda herdadas.
+
+Três decisões de projeto que o formato exigiu, cada uma com o motivo:
+
+1. **Célula em branco ocupa posição** (`null` no índice), nunca é omitida. Encostar valores à
+   esquerda trocaria o número de 2025 pelo de 2024 — plausível e silencioso, o pior tipo de erro.
+2. **Desalinhamento é falha, não palpite.** Se o modelo devolve 1 valor para 2 colunas, a conta é
+   **descartada** e o motivo volta nomeado (vira pendência). Completar com `null` seria inventar.
+3. **Subtotal abre grupo próprio** com `sc = NAO_CLASSIFICAVEL`. A seção canônica passou a ser do
+   grupo; um subtotal misturado às contas que ele soma faria a seção ser contada duas vezes.
+
+### E um defeito antigo que o formato conserta de graça
+
+Documentos comparativos truncavam (`finish_reason=length`) antes de terminar de listar as contas —
+6 de 16 no "teste v18". A resposta na época foi encurtar os **nomes** das chaves; era meia correção,
+porque o contexto continuava sendo repetido. O documento mais pesado do `book-vertentes` usava 73%
+do teto de saída e agora usa **45%**.
+
+O `medir-custo-book.mjs` passou a **avisar, nomeando o arquivo**, quando a saída projetada passa de
+80% do teto. Ele acusa um caso que ninguém tinha visto: o livro razão do `book-canastra` (461
+células) fica em **109% do teto mesmo agrupado** — vai truncar, abrir pendência e ficar sem parte
+dos dados. A saída para ele é extrair por **faixa de página**, que é fatia própria e não está feita.
+
+### E como se olha o custo agora
+
+O nó **`Resumo de Custo`**, no fim da cadeia, devolve num painel só: custo real do lote, quanto foi
+extração e quanto foi classificação, o que o orçamento havia estimado, os tokens de entrada/saída/
+cache e — o número que recalibra tudo — **tokens de saída por linha extraída**. Antes isso existia um
+por documento no `Parse Extracao`, e saber o custo do lote exigia abrir 14 painéis e somar à mão.
+
+---
+
+## Adendo (2026-08-13, noite) — as três camadas contra o truncamento e a extração pela metade
+
+A rodada completa do `book-canastra` (35 documentos, 21 minutos, US$ 0,71) respondeu a pergunta de
+custo e abriu outra, maior: **das 2.893 células de valor dos PDFs, chegaram ao banco 1.139 — 39%.**
+
+> **Nota de método:** essa rodada ainda usava o workflow ANTIGO (formato plano, sem o `Resumo de
+> Custo` no canvas). Os 39% e os truncamentos são a **linha de base**, não efeito do agrupamento.
+
+Duas famílias, com causas e correções diferentes:
+
+| | O que aconteceu | Como falhou |
+|---|---|---|
+| **Truncamento** (5 documentos) | `01_Balanco_..._2025x2024x2023` tem 326 células = ~20.900 tokens de saída, contra o teto de **16.384 do gpt-4o**. Não cabia por construção. | **Alto**: `finish_reason=length` → `extracao_falhou` com a causa escrita. |
+| **Sub-extração** (o resto) | `17_Livro_Razao` devolveu **99 de 461** sem estourar teto nenhum. | **Em silêncio**: o sistema registrou sucesso. |
+
+Nenhum prompt conserta um teto físico, e nenhum modelo garante ler cada linha. A resposta são três
+camadas, e só as três juntas sustentam a promessa:
+
+### Camada 1 — saber o que o documento tem ANTES de chamar
+
+Nó `Extrair Texto` (`extractFromFile`, nativo), entre o teto de gasto e o `Preparar Conteudo`: lê a
+camada de texto do PDF na própria instância, sem IA e sem custo, e dela sai a contagem determinística
+de **linhas com número**. É o insumo das outras duas.
+
+`onError: continueRegularOutput` é o que torna a adição segura: PDF escaneado não tem camada de texto
+e o nó falha nele — o documento segue como imagem e as camadas 2 e 3 se calam para ele. **O pior caso
+desta mudança é o comportamento de ontem.**
+
+> **O texto NÃO substitui o PDF na chamada, e isso é decisão, não esquecimento.** Seria mais barato,
+> mas o texto de uma tabela perde o alinhamento das colunas — e foi justamente a leitura de coluna que
+> passou a funcionar (o balanço combinado saiu com as 8 colunas de empresa certas). **O texto serve
+> para MEDIR, não para LER.**
+
+### Camada 2 — fatiar: nunca fazer o pedido que não cabe
+
+`Fatiar Extracao` projeta a saída (~42 tokens por célula) e, quando ela passa de **60% do teto**,
+emite um item por bloco de no máximo **234 células**. Não é "tentar de novo quando falhar".
+
+O ponto fino é a **âncora**: o modelo continua vendo o PDF inteiro, então "extraia o bloco 2 de 3"
+seria pedir que ele adivinhe onde a faixa começa. Cada bloco carrega o **texto exato** da primeira e
+da última linha da faixa, lidos do PDF pelo extrator — vira instrução verificável em vez de proporção.
+A instrução vai na mensagem de *user*; o prompt de sistema fica idêntico, senão o cache de prefixo
+(alavanca 3) para de valer e o fatiamento pagaria o prompt duas vezes.
+
+No `book-canastra`: **38 documentos → 41 chamadas de extração**, 3 documentos fatiados.
+
+### Camada 3 — a guarda de cobertura
+
+`Juntar Blocos` remonta o documento (renumerando `ordem` no conjunto e limpando linha repetida **na
+emenda**, que é onde o modelo repete a âncora) e compara o que voltou com o que a camada 1 mediu.
+Abaixo de **60%**, escreve o motivo em `falha_motivo` — que `fn_registrar_campos_extraidos` já
+converte em pendência desde a `0016`. Sem migration: o caminho existia, faltava alguém **conferir**.
+
+O limiar é calibrado na rodada real e erra para o lado de avisar demais: documentos sadios ficaram em
+68%-90% (`02_DRE` 104/115, `22_Aging` 91/114, `06_Balanco` 74/109) e os incompletos em 21%-48%
+(`17_Livro_Razao` 99/461, `15_Balancete` 77/162). Uma pendência falsa custa uma olhada; um buraco não
+visto custa o mandato.
+
+**O que a camada 3 promete, com precisão:** ela não impede o modelo de pular uma linha. Impede que
+isso seja silencioso.
+
+### O que muda no grafo, e o que não muda
+
+`Montar Req Extracao` → **`Fatiar Extracao`** → `OpenAI Extrair` → `Parse Extracao` → **`Juntar
+Blocos`** → `Gravar Campos (Sombra)`. De `Gravar Campos` em diante **nada muda**: um item por
+documento, com `campos` e `falha_motivo`, exatamente como antes.
+
+### O custo sobe, e é para subir
+
+Extrair o que faltava custa tokens: mais saída, mais uma passagem do prompt de sistema por bloco. A
+projeção para o `book-canastra` sai de US$ 0,71 (com 39% do dado) para **~US$ 1,4 com o dado
+inteiro** — menos da metade do teto de US$ 3. É o que o agrupamento comprou: folga para pagar o dado
+que faltava.
+
+### O limite que fica declarado
+
+O `Orcamento do Lote` continua decidindo **antes** do `Extrair Texto`, então ele estima por bytes e
+não sabe quantos blocos o lote terá. Isso encolhe a margem dele (ele superestima ~50%, e agora as
+chamadas são mais). O conserto natural é mover o teto para depois da extração de texto — aí a
+estimativa deixa de ser por byte e passa a ser por linha contada, que é determinística. É fatia
+própria, e está no `ESTADO.md`.

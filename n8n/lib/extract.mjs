@@ -107,6 +107,14 @@ export const SYSTEM_PROMPT = [
   '  classificação): páginas faltando, tabela cortada, digitalização ruim, texto ilegível,',
   '  arquivo aparentemente incompleto. nota_legibilidade explica objetivamente QUANDO != "ok"',
   '  (null quando "ok").',
+  'tem_dado_financeiro: false SOMENTE quando o documento, por NATUREZA, não tem NENHUM valor',
+  '  monetário a extrair — certidões negativas, organograma societário, ata, procuração,',
+  '  parecer/relatório de auditoria independente (texto de opinião, sem tabela de valores),',
+  '  contrato sem cifra, correspondência. Nesse caso "grupos" vem VAZIO, e isso é o resultado',
+  '  CORRETO da extração, não uma falha — não gere pendência de "extração vazia" para estes.',
+  '  true em todos os outros casos, inclusive quando você não encontrou nenhuma linha aproveitável',
+  '  num documento que deveria ter (aí sim é sinal de falha real, e uma extração com "grupos"',
+  '  vazio e tem_dado_financeiro=true dispara revisão humana).',
   'resumo: 2-3 frases objetivas do que o documento contém (para alguém decidir sem abrir o',
   '  arquivo).',
   'justificativa: 1-2 frases explicando o diagnóstico acima (o que você viu ou não viu).',
@@ -128,17 +136,43 @@ export const SYSTEM_PROMPT = [
   '  margens em %, lucro POR AÇÃO, quantidades, índices, prazos em dias) não estão nessa escala —',
   '  extraia o número como impresso e mantenha o "%"/unidade no valor_texto para ficar evidente.',
   '',
-  '== LINHAS (planilha) ==',
-  'Cada linha do JSON usa chaves CURTAS (economia de tokens de saída em documentos com muitas',
-  'contas): s=secao, sc=secao_canonica, ec=entidade_coluna, pc=periodo_coluna, k=chave,',
-  'vt=valor_texto, vn=valor_num, op=origem_pagina, cf=confianca. O texto abaixo usa os nomes',
-  'completos (mais claro de explicar) — sempre correspondendo à chave curta do schema.',
+  '== GRUPOS E LINHAS (planilha) ==',
+  'A saída é uma lista de GRUPOS, na ordem em que aparecem no documento. Um grupo é uma SEÇÃO do',
+  'documento com as COLUNAS de valor que ela tem, e dentro dele uma linha por CONTA. Chaves curtas',
+  '(cada caractere é gasto de novo em cada conta): no grupo s=secao, sc=secao_canonica,',
+  'op=origem_pagina, cols=colunas, l=linhas; na linha k=chave, vt=valor_texto, vn=valor_num,',
+  'cf=confianca. O texto abaixo usa os nomes completos (mais claro de explicar) — sempre',
+  'correspondendo à chave curta do schema.',
   'Extraia TODAS as linhas financeiras do documento (rótulo + valor), preservando a estrutura',
-  'original como uma "secao" por linha — ex.: "Ativo Circulante", "Ativo Não Circulante",',
+  'original como a "secao" do grupo — ex.: "Ativo Circulante", "Ativo Não Circulante",',
   '"Passivo Circulante", "Passivo Não Circulante", "Patrimônio Líquido", "Receita Operacional",',
   '"Custos", "Despesas Operacionais", "Atividades Operacionais", "Atividades de Investimento",',
-  '"Atividades de Financiamento" — use os agrupadores que o PRÓPRIO documento usa; null se a',
-  'linha não pertencer a nenhuma seção clara (ex.: um total geral solto).',
+  '"Atividades de Financiamento" — use os agrupadores que o PRÓPRIO documento usa; null quando as',
+  'linhas não pertencerem a nenhuma seção clara (ex.: um total geral solto).',
+  'REGRA DAS COLUNAS (é o coração do formato): "cols" descreve, UMA VEZ por grupo, TODAS as colunas',
+  'de valor daquela seção — não só período e empresa. Cada coluna tem entidade_coluna (nome da',
+  'EMPRESA no cabeçalho, quando há várias empresas lado a lado) e periodo_coluna (o RÓTULO da',
+  'coluna); use null no que não se aplica.',
+  'ATENÇÃO — COLUNA DE VALOR QUE NÃO É PERÍODO NEM EMPRESA. Muito documento contábil tem colunas de',
+  'valor de outra natureza, e elas TAMBÉM vão em "cols", com o rótulo em periodo_coluna:',
+  '- LIVRO RAZÃO e RAZÃO ANALÍTICA: "Débito", "Crédito", "Saldo" (três colunas por lançamento).',
+  '- BALANCETE: "Saldo anterior", "Débito", "Crédito", "Saldo atual".',
+  '- AGING de recebíveis/pagáveis: "A vencer", "1 a 30", "31 a 60", "61 a 90", "Acima de 90", "Total".',
+  '- POSIÇÃO DE ESTOQUES: "Quantidade", "Custo unitário", "Valor total".',
+  '- MAPA DE DÍVIDA: "Saldo devedor", "Curto prazo", "Longo prazo", "Juros do período".',
+  'Declará-las é obrigatório: uma linha com TRÊS valores num grupo que declarou ZERO colunas é',
+  'DESCARTADA inteira, porque não se sabe a que coluna cada número pertence — foi o que aconteceu com',
+  'um livro razão real, e 98 de 99 lançamentos foram perdidos. O número de valores de cada linha tem',
+  'de bater EXATAMENTE com o número de colunas declaradas.',
+  'Só devolva "cols" como lista VAZIA quando o documento tem MESMO uma única coluna de valor. Cada',
+  'linha traz então "valor_texto" e "valor_num" como',
+  'LISTAS com exatamente UM valor POR COLUNA de "cols", NA MESMA ORDEM (e exatamente um valor',
+  'quando "cols" é vazia). Célula em branco, com traço ("-") ou ilegível vira null NAQUELA POSIÇÃO —',
+  'nunca desloque os valores para a esquerda: a posição é o que diz a que coluna o número pertence,',
+  'e deslocar troca o valor de 2025 pelo de 2024. Se você não consegue ler NENHUMA coluna daquela',
+  'conta, omita a conta inteira.',
+  'Assim o rótulo da conta é escrito UMA vez para todas as colunas dela, em vez de repetido em cada',
+  'combinação — é o que permite um balanço comparativo caber na resposta sem truncar.',
   'valor_texto = o valor COMO APARECE no documento (com os separadores e sinais originais).',
   'valor_num = o mesmo valor como número puro, ou null quando não houver número. Regras de',
   'conversão (documentos brasileiros — siga à risca, é fonte comum de erro):',
@@ -156,38 +190,35 @@ export const SYSTEM_PROMPT = [
   'menos com confiança do que inventar.',
   '',
   'DOCUMENTO COM VÁRIAS ENTIDADES/COLUNAS LADO A LADO (ex.: um balanço combinado com colunas',
-  '"Empresa A | Empresa B | Total"): isto é comum e NÃO deve ser resumido num valor só por',
-  'conta — gere uma LINHA SEPARADA para cada combinação (conta × coluna), com o MESMO "chave"',
-  '(rótulo da conta) e "entidade_coluna" preenchido com o nome EXATO do cabeçalho da coluna',
-  '("Empresa A", "Empresa B", "Total", etc.). Nunca some, escolha ou estime um valor único',
-  'representando várias colunas — se não conseguir ler alguma coluna com confiança, omita SÓ',
-  'aquela linha (conta × coluna), não invente. Quando o documento é de uma entidade só (o caso',
-  'comum), deixe "entidade_coluna" null em todas as linhas.',
+  '"Empresa A | Empresa B | Total"): isto é comum e NÃO deve ser resumido num valor só por conta —',
+  'declare UMA COLUNA em "cols" para cada uma, com "entidade_coluna" = o nome EXATO do cabeçalho',
+  '("Empresa A", "Empresa B", "Total", etc.), e cada conta traz um valor por coluna. Nunca some,',
+  'escolha ou estime um valor único representando várias colunas. Quando o documento é de uma',
+  'entidade só (o caso comum), "entidade_coluna" é null.',
   '',
   'DOCUMENTO COMPARATIVO — VÁRIAS COLUNAS DE PERÍODO LADO A LADO (ex.: um balanço ou DRE com',
   'colunas "2023 | 2024", ou "31/12/2023 | 31/12/2024", ou "Exercício atual | Exercício anterior"):',
   'isto é o padrão em demonstrações contábeis e NÃO deve ser resumido num valor só por conta —',
-  'gere uma LINHA SEPARADA para cada (conta × período), com o MESMO "chave" e "periodo_coluna"',
-  'preenchido com o rótulo EXATO da coluna de período ("2023", "2024", "31/12/2024", etc.). Isto é',
-  'ortogonal a "entidade_coluna": um documento pode ter as duas dimensões (várias empresas E vários',
-  'anos), gerando uma linha por (conta × empresa × período), cada uma com entidade_coluna E',
-  'periodo_coluna preenchidos. Quando o documento tem um único período (o caso comum), deixe',
-  '"periodo_coluna" null em todas as linhas. Nunca some, escolha ou estime um valor único cobrindo',
-  'vários períodos.',
+  'declare UMA COLUNA em "cols" para cada período, com "periodo_coluna" = o rótulo EXATO da coluna',
+  '("2023", "2024", "31/12/2024", etc.). Isto é ortogonal a "entidade_coluna": um documento pode ter',
+  'as duas dimensões (várias empresas E vários anos), e então "cols" tem uma entrada por CRUZAMENTO,',
+  'com entidade_coluna E periodo_coluna preenchidos — na ordem em que as colunas aparecem impressas.',
+  'Nunca some nem escolha um valor único cobrindo vários períodos.',
   '',
   'DMPL — DEMONSTRAÇÃO DAS MUTAÇÕES DO PATRIMÔNIO LÍQUIDO (formato de MATRIZ, trate assim SEMPRE,',
   'inclusive quando ela é só uma parte de um arquivo com várias demonstrações): as linhas são',
   'MOVIMENTOS do exercício ("SALDOS EM 31 DE DEZEMBRO DE 2024", "Prejuízo líquido do exercício",',
   '"Aumento de capital", "Dividendos distribuídos", "SALDOS EM 31 DE DEZEMBRO DE 2025") e as',
   'COLUNAS são os componentes do PL ("Capital social", "Capital a integralizar", "Reserva legal",',
-  '"Ajuste de avaliação patrimonial", "Prejuízos acumulados", "Total"). Gere uma linha do JSON para',
-  'cada CRUZAMENTO com valor, com "secao" = o rótulo do MOVIMENTO (a linha da tabela) e "chave" = o',
-  'rótulo do COMPONENTE do PL (o cabeçalho da coluna) — é o componente que é a CONTA. Não use',
-  'entidade_coluna para os componentes do PL: ela é só para colunas de EMPRESAS diferentes. Células',
-  'vazias ou com traço ("-") não geram linha nenhuma. Não some nem recalcule a coluna "Total": se o',
-  'documento a traz, extraia como veio; se não traz, não invente.',
+  '"Ajuste de avaliação patrimonial", "Prejuízos acumulados", "Total"). Aqui os COMPONENTES do PL',
+  'NÃO vão em "cols": um GRUPO por MOVIMENTO, com "secao" = o rótulo do movimento (a linha da',
+  'tabela), "cols" VAZIA, e uma linha por componente, com "chave" = o rótulo do COMPONENTE (o',
+  'cabeçalho da coluna) — é o componente que é a CONTA. Não use entidade_coluna para os componentes',
+  'do PL: ela é só para colunas de EMPRESAS diferentes. Células vazias ou com traço ("-") não geram',
+  'linha nenhuma. Não some nem recalcule a coluna "Total": se o documento a traz, extraia como veio;',
+  'se não traz, não invente.',
   '',
-  'secao_canonica: além da "secao" livre acima, classifique CADA linha em UMA seção canônica',
+  'secao_canonica: além da "secao" livre acima, classifique CADA GRUPO em UMA seção canônica',
   'padronizada (para a planilha final organizar as contas na estrutura de mercado). Use o',
   'julgamento contábil (o significado da conta, não só o nome literal — cada empresa nomeia',
   'diferente). Valores possíveis e seu significado:',
@@ -205,10 +236,91 @@ export const SYSTEM_PROMPT = [
   '- DVA: "dva" para toda linha da Demonstração do Valor Adicionado (tanto a geração — receitas,',
   '  insumos, depreciação, valor adicionado recebido em transferência — quanto a distribuição —',
   '  pessoal, impostos, remuneração de capitais de terceiros e próprios).',
-  'Use "NAO_CLASSIFICAVEL" quando a linha for um TOTAL/subtotal geral, ou quando você não tiver',
-  'segurança de qual seção é — NÃO force um palpite ruim (a linha vai para revisão manual, o que',
+  'Use "NAO_CLASSIFICAVEL" quando o grupo for de TOTAIS/subtotais gerais, ou quando você não tiver',
+  'segurança de qual seção é — NÃO force um palpite ruim (as linhas vão para revisão manual, o que',
   'é preferível a classificar errado). Isto é uma SUGESTÃO revisável por humano, nunca um fato.',
+  'COMO A SEÇÃO CANÔNICA CONVIVE COM OS TOTAIS, e isto é obrigatório: a seção canônica é do GRUPO,',
+  'então uma linha de TOTAL/subtotal impressa dentro de uma seção NÃO pode entrar no grupo daquela',
+  'seção — abra para ela um grupo PRÓPRIO, no lugar em que ela aparece na leitura, com',
+  '"secao_canonica" = "NAO_CLASSIFICAVEL" (a "secao" livre pode continuar sendo a do documento).',
+  'Totais consecutivos podem dividir o mesmo grupo. O motivo é aritmético: um subtotal misturado às',
+  'contas que ele soma faz a seção ser contada duas vezes na planilha.',
 ].join(' ');
+
+/**
+ * Achata os GRUPOS da resposta de volta para uma linha por (conta × coluna) —
+ * a forma que `campo_extraido` sempre teve. Nada rio abaixo sabe que a conversa
+ * com a OpenAI passou a ser agrupada.
+ *
+ * AUTO-CONTIDA de propósito: o nó Code do n8n não importa arquivo, então ela é
+ * embutida lá por `toString()`. Não referencia nada do módulo — se alguém puser
+ * uma constante daqui dentro dela, o nó quebra com ReferenceError na primeira
+ * execução real e nenhum teste daqui pega isso.
+ *
+ * A ORDEM é conta-maior, coluna-menor (a conta e depois as colunas dela), que é
+ * a ordem de leitura do documento e é o que `ordem` significa para o export —
+ * é assim que ele reconhece um subtotal impresso ACIMA dos seus componentes.
+ *
+ * O DESALINHAMENTO É TRATADO COMO FALHA, NUNCA ADIVINHADO. O modelo tem de
+ * devolver um valor por coluna; se devolver menos (ou mais), a associação
+ * valor↔coluna deixou de ser conhecida. Preencher o que falta com null ou
+ * encostar os valores à esquerda trocaria o número de 2025 pelo de 2024 em
+ * silêncio — o pior erro possível aqui. Então a conta é DESCARTADA e o motivo
+ * volta nomeado, com rótulo e contagens, para virar pendência.
+ */
+export function achatarGrupos(grupos) {
+  const linhas = [];
+  const problemas = [];
+  if (!Array.isArray(grupos)) return { linhas, problemas };
+  for (const g of grupos) {
+    if (!g || typeof g !== 'object') continue;
+    const cols = Array.isArray(g.cols) && g.cols.length > 0
+      ? g.cols.map((c) => ({ ec: c?.ec ?? null, pc: c?.pc ?? null }))
+      // Documento de coluna única: o grupo não declara coluna nenhuma e a linha
+      // traz um valor só. É o caso comum, e é o que mantém a resposta enxuta.
+      : [{ ec: null, pc: null }];
+    for (const l of Array.isArray(g.l) ? g.l : []) {
+      if (!l || typeof l !== 'object' || typeof l.k !== 'string') continue;
+      const vt = Array.isArray(l.vt) ? l.vt : [l.vt ?? null];
+      const vn = Array.isArray(l.vn) ? l.vn : [l.vn ?? null];
+      if (vn.length !== cols.length || vt.length !== cols.length) {
+        problemas.push(
+          `"${l.k}"${g.s ? ` (${g.s})` : ''}: ${cols.length} coluna(s) declarada(s), `
+          + `${vn.length} valor(es) numérico(s) e ${vt.length} texto(s)`
+          // A causa quase sempre é a mesma, e dizê-la poupa a investigação: o
+          // documento TEM colunas de valor que o modelo não declarou. Num livro
+          // razão real isso descartou 98 de 99 lançamentos — Débito, Crédito e
+          // Saldo vieram na linha, e `cols` veio vazia.
+          + (cols.length === 1 && vn.length > 1
+            ? ' — provavelmente o documento tem colunas de valor (Débito/Crédito/Saldo, faixas de aging)'
+              + ' que não foram declaradas em "cols"'
+            : ''));
+        continue;
+      }
+      for (let j = 0; j < cols.length; j += 1) {
+        const valorTexto = typeof vt[j] === 'string' ? vt[j] : null;
+        const valorNum = typeof vn[j] === 'number' ? vn[j] : null;
+        // Célula em branco não vira linha — a mesma regra que a DMPL já tinha
+        // ("células vazias ou com traço não geram linha nenhuma"), agora válida
+        // para qualquer documento, porque no formato de colunas a célula vazia
+        // TEM de ocupar posição para não deslocar as outras.
+        if (valorTexto === null && valorNum === null) continue;
+        linhas.push({
+          secao: g.s ?? null,
+          secao_canonica: g.sc && g.sc !== 'NAO_CLASSIFICAVEL' ? g.sc : null,
+          entidade_coluna: cols[j].ec,
+          periodo_coluna: cols[j].pc,
+          chave: l.k,
+          valor_texto: valorTexto,
+          valor_num: valorNum,
+          confianca: typeof l.cf === 'number' ? l.cf : null,
+          origem_pagina: Number.isInteger(g.op) ? g.op : null,
+        });
+      }
+    }
+  }
+  return { linhas, problemas };
+}
 
 export function extractionSchema() {
   return {
@@ -217,7 +329,7 @@ export function extractionSchema() {
     schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['moeda', 'unidade', 'diagnostico', 'linhas'],
+      required: ['moeda', 'unidade', 'diagnostico', 'grupos'],
       properties: {
         moeda: { type: ['string', 'null'] },
         unidade: { type: ['string', 'null'] },
@@ -226,7 +338,7 @@ export function extractionSchema() {
           additionalProperties: false,
           required: [
             'entidade', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo', 'periodo_referencia',
-            'legibilidade', 'nota_legibilidade', 'resumo', 'justificativa',
+            'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro', 'resumo', 'justificativa',
           ],
           properties: {
             entidade: { type: ['string', 'null'] },
@@ -236,39 +348,90 @@ export function extractionSchema() {
             periodo_referencia: { type: ['string', 'null'] },
             legibilidade: { type: 'string', enum: ['ok', 'degradado', 'ilegivel'] },
             nota_legibilidade: { type: ['string', 'null'] },
+            tem_dado_financeiro: { type: 'boolean' },
             resumo: { type: 'string' },
             justificativa: { type: 'string' },
           },
         },
-        // Chaves CURTAS de propósito (s/sc/ec/pc/k/vt/vn/op/cf): `linhas` é o
-        // único bloco que se repete centenas de vezes por documento — cada
-        // caractere de nome de propriedade é gasto de novo A CADA linha no
-        // JSON de saída. Documentos consolidados comparativos (2-3 anos lado
-        // a lado, cada conta vira 2-3 linhas via periodo_coluna) truncavam
-        // (finish_reason=length) antes mesmo de terminar de listar as contas —
-        // achado em produção (sessão 7 cont.¹¹, "teste v18": 6 de 16
-        // documentos, todos consolidados multi-ano). Nomes curtos aqui NÃO
-        // mudam nada gravado no banco — `parseExtractionResponse` remapeia de
-        // volta para os nomes completos (campo_extraido.secao_canonica etc.
-        // continuam com os valores descritivos de sempre, só a REPRESENTAÇÃO
-        // NO FIO com a OpenAI é compacta). `description` em cada campo mantém
-        // o modelo orientado apesar do nome curto.
-        linhas: {
+        // A SAÍDA É AGRUPADA, E O MOTIVO É A CONTA DE LUZ.
+        //
+        // O formato antigo era uma lista plana: uma entrada por (conta × coluna),
+        // cada uma repetindo `s`, `sc`, `ec`, `pc` e `op` — cinco campos de
+        // CONTEXTO idênticos em dezenas de entradas consecutivas — e repetindo o
+        // rótulo da conta uma vez por coluna. Medido no book de 14 documentos do
+        // dono: **~64 tokens por linha**, dos quais só ~30 eram carga útil, e
+        // 84% da fatura de US$ 0,90 era saída de extração.
+        //
+        // Aqui o contexto sobe UMA vez para o grupo, as colunas são declaradas
+        // UMA vez em `cols`, e a conta aparece UMA vez com um valor por coluna.
+        // Medido nos mesmos 14 documentos: **−63% de saída** (−79% no balanço
+        // combinado, que tem 7 colunas de empresa; −39% nos de coluna única).
+        //
+        // E o formato responde a um defeito antigo, não só ao custo: documentos
+        // comparativos truncavam (`finish_reason=length`) antes de terminar de
+        // listar as contas — 6 de 16 no "teste v18" (sessão 7 cont.¹¹). A
+        // resposta na época foi encurtar os NOMES das chaves; foi meia correção,
+        // porque continuava repetindo o contexto. O maior documento deste book
+        // usava 83% do teto de saída; agora usa ~30%.
+        //
+        // O que NÃO muda: nada rio abaixo. `parseExtractionResponse` achata os
+        // grupos de volta para uma linha por (conta × coluna) com os nomes
+        // completos — `campo_extraido` continua idêntico, coluna por coluna.
+        grupos: {
           type: 'array',
+          description: 'seções do documento, na ordem de leitura; cada uma com suas colunas e contas',
           items: {
             type: 'object',
             additionalProperties: false,
-            required: ['s', 'sc', 'ec', 'pc', 'k', 'vt', 'vn', 'op', 'cf'],
+            required: ['s', 'sc', 'op', 'cols', 'l'],
             properties: {
               s: { type: ['string', 'null'], description: 'secao: agrupador livre (rótulo do próprio documento)' },
-              sc: { type: 'string', enum: SECAO_CANONICA_ENUM, description: 'secao_canonica: seção padronizada pelo significado contábil' },
-              ec: { type: ['string', 'null'], description: 'entidade_coluna: nome da coluna/empresa quando há várias entidades lado a lado' },
-              pc: { type: ['string', 'null'], description: 'periodo_coluna: rótulo da coluna de período quando há vários períodos lado a lado' },
-              k: { type: 'string', description: 'chave: rótulo da conta' },
-              vt: { type: ['string', 'null'], description: 'valor_texto: valor como aparece no documento' },
-              vn: { type: ['number', 'null'], description: 'valor_num: valor numérico puro' },
-              op: { type: ['integer', 'null'], description: 'origem_pagina: página de origem' },
-              cf: { type: 'number', description: 'confianca: confiança 0-1 desta linha' },
+              sc: { type: 'string', enum: SECAO_CANONICA_ENUM, description: 'secao_canonica: seção padronizada pelo significado contábil; NAO_CLASSIFICAVEL num grupo só de totais/subtotais' },
+              op: { type: ['integer', 'null'], description: 'origem_pagina: página onde esta seção aparece' },
+              cols: {
+                type: 'array',
+                description: 'colunas de valor desta seção, na ordem impressa; VAZIA quando há uma só coluna',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['ec', 'pc'],
+                  properties: {
+                    ec: { type: ['string', 'null'], description: 'entidade_coluna: empresa do cabeçalho da coluna' },
+                    // O nome da chave é histórico (`0017`, quando só havia coluna de
+                    // período), mas o SIGNIFICADO é mais largo: é o RÓTULO da coluna,
+                    // seja ele um período ("2024"), uma faixa de aging ("31 a 60") ou a
+                    // natureza do saldo ("Débito"). Ficou assim em vez de virar campo
+                    // novo porque `campo_extraido.periodo_coluna` é texto livre e ninguém
+                    // rio abaixo o interpreta como data: a reconciliação casa por ANO
+                    // (`fn_anos_texto`), então um rótulo sem ano simplesmente não
+                    // participa — que é o certo, já que "Débito" não é um exercício.
+                    pc: { type: ['string', 'null'], description: 'periodo_coluna: rótulo da coluna — o período ("2024", "31/12/2025") quando é comparativo, ou a natureza da coluna quando não é ("Débito", "Crédito", "Saldo", "31 a 60 dias", "Quantidade")' },
+                  },
+                },
+              },
+              l: {
+                type: 'array',
+                description: 'contas desta seção',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['k', 'vt', 'vn', 'cf'],
+                  properties: {
+                    k: { type: 'string', description: 'chave: rótulo da conta' },
+                    vt: {
+                      type: 'array',
+                      description: 'valor_texto por coluna, como aparece no documento; um item por coluna de cols (um item quando cols é vazia); null na posição da célula em branco',
+                      items: { type: ['string', 'null'] },
+                    },
+                    vn: {
+                      type: 'array',
+                      description: 'valor_num por coluna, número puro, na MESMA ordem de vt e de cols',
+                      items: { type: ['number', 'null'] },
+                    },
+                    cf: { type: 'number', description: 'confianca: confiança 0-1 na leitura desta conta' },
+                  },
+                },
+              },
             },
           },
         },
@@ -644,6 +807,10 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     diagnostico: {
       entidade: null, tipo_confirma: null, tipo_sugerido: null, periodo_tipo: null,
       periodo_referencia: null, legibilidade: null, nota_legibilidade: null,
+      // null (não false): a chamada falhou, então não há diagnóstico algum — e
+      // "null" no Sinal 3 (0111) se comporta como "documento deveria ter dado",
+      // que é o padrão seguro quando não se sabe.
+      tem_dado_financeiro: null,
       resumo: null, justificativa: '(sem diagnóstico: falha de rede/API ou resposta inválida)',
     },
   });
@@ -682,10 +849,23 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
   // (percentual, LPA, quantidade) não tem moeda, e marcá-la como BRL faria o
   // export tratar "margem 12%" como doze reais.
   const moedaDoc = normalizarMoeda(p.moeda);
-  // Remapeia as chaves curtas do fio (s/sc/ec/pc/k/vt/vn/op/cf) para os nomes
-  // completos usados em todo o resto do sistema (campo_extraido e por diante)
-  // — a compactação é só na conversa com a OpenAI, nada rio abaixo muda.
-  const campos = Array.isArray(p.linhas)
+  // Remapeia as chaves curtas do fio para os nomes completos usados em todo o
+  // resto do sistema (campo_extraido e por diante) — a compactação é só na
+  // conversa com a OpenAI, nada rio abaixo muda.
+  //
+  // DOIS FORMATOS ACEITOS, e o antigo não é gentileza: é a defesa contra o
+  // incidente de 12/08/2026, quando o n8n rodou por dias um workflow importado
+  // meses antes. Enquanto existir um JSON velho em alguma instância, ele vai
+  // responder no formato plano — e responder em formato plano tem de continuar
+  // funcionando, em vez de virar "zero linhas extraídas" sem explicação.
+  const { linhas: linhasAgrupadas, problemas } = achatarGrupos(p.grupos);
+  const camposAgrupados = linhasAgrupadas.map((l, i) => ({
+    ordem: i,
+    ...l,
+    unidade: ehLinhaNaoMonetaria(l.chave, l.valor_texto) ? null : unidade,
+    moeda: ehLinhaNaoMonetaria(l.chave, l.valor_texto) ? null : moedaDoc,
+  }));
+  const camposPlanos = Array.isArray(p.linhas)
     ? p.linhas.map((l, i) => ({
         // ORDEM da linha no documento (db/migrations/0027). NÃO é pedida ao
         // modelo: é a posição no array que ele devolveu, que já é a ordem de
@@ -709,6 +889,10 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
         origem_pagina: Number.isInteger(l.op) ? l.op : null,
       }))
     : [];
+  // O agrupado manda quando veio; o plano é o caminho do JSON velho.
+  const campos = camposAgrupados.length > 0 || Array.isArray(p.grupos)
+    ? camposAgrupados
+    : camposPlanos;
   const d = p.diagnostico || {};
   const diagnostico = {
     entidade: d.entidade ?? null,
@@ -718,6 +902,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     periodo_referencia: d.periodo_referencia ?? null,
     legibilidade: d.legibilidade ?? null,
     nota_legibilidade: d.nota_legibilidade ?? null,
+    tem_dado_financeiro: typeof d.tem_dado_financeiro === 'boolean' ? d.tem_dado_financeiro : null,
     resumo: d.resumo ?? null,
     justificativa: d.justificativa ?? '',
   };
@@ -725,10 +910,23 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
   // no meio de uma string/array e quebra o parse acima), mas se acontecer o
   // conteúdo pode estar incompleto de forma "silenciosa" (JSON bem formado,
   // faltando linhas do fim do documento) — sinaliza mesmo assim.
-  const falhaMotivo = comAviso(finishReason === 'length'
-    ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
-      + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
-    : null);
+  //
+  // E o desalinhamento de coluna entra no MESMO campo, porque é da mesma
+  // família: dado que o documento tem e o banco não recebeu. Sem isto a conta
+  // descartada por `achatarGrupos` sumiria em silêncio — e "silêncio" é o modo
+  // de falha que este projeto passa o tempo corrigindo.
+  const motivos = [
+    finishReason === 'length'
+      ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
+        + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
+      : null,
+    problemas.length > 0
+      ? `${problemas.length} conta(s) descartada(s) por desalinhamento entre colunas e valores `
+        + `(a associação valor↔coluna ficou desconhecida, e adivinhá-la trocaria um período pelo `
+        + `outro): ${problemas.slice(0, 5).join('; ')}${problemas.length > 5 ? '; …' : ''}`
+      : null,
+  ].filter(Boolean);
+  const falhaMotivo = comAviso(motivos.length > 0 ? motivos.join(' | ') : null);
   return { moeda: moedaDoc, unidade, campos, diagnostico, falhaMotivo };
 }
 

@@ -254,7 +254,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     // e o vínculo linha↔premissa. Ausência de qualquer uma NÃO é erro: o arquivo
     // sai com o esqueleto agregado, como sempre saiu.
     const [paramRes, premRes, vincRes, linhasRes, sazoRes] = await Promise.all([
-      supabase.from("caso_modelagem").select("*").eq("caso_id", id).maybeSingle(),
+      // Colunas nomeadas, nunca `*` — ver a nota em modelagem/page.tsx. O tipo
+      // `par`, logo abaixo, é a lista autoritativa do que o export realmente lê.
+      supabase.from("caso_modelagem")
+        .select("entidade, ultimo_exercicio_real, anos_projetados, setor")
+        .eq("caso_id", id).maybeSingle(),
       supabase.from("caso_premissa")
         .select("premissa_codigo, valores, origem, "
           + "premissa_catalogo!inner(nome, formula, unidade, natureza)")

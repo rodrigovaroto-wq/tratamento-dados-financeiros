@@ -140,8 +140,14 @@ export default async function ModelagemPage({
   if (casoRes.error || !casoRes.data) notFound();
   const caso = casoRes.data;
 
+  // Colunas nomeadas, nunca `*`: o tipo logo abaixo já declara exatamente o que
+  // esta tela lê, e `*` traz também `atualizado_por`/`atualizado_em`, que ninguém
+  // aqui usa. É a mesma disciplina que o clipping passou a seguir depois do
+  // egresso de agosto/2026 — a cota é da organização e os dois projetos a dividem.
   const paramRes = await supabase
-    .from("caso_modelagem").select("*").eq("caso_id", id).maybeSingle();
+    .from("caso_modelagem")
+    .select("entidade, ultimo_exercicio_real, indice_macro, setor, anos_projetados")
+    .eq("caso_id", id).maybeSingle();
   const parametros = paramRes.data as {
     entidade: string | null; ultimo_exercicio_real: number | null;
     indice_macro: string | null; setor: string | null; anos_projetados: number;

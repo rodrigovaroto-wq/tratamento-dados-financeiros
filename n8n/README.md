@@ -32,15 +32,34 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
        │                      csv→texto, xlsx→nota [preserva binário]
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
-       └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
-             ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
-             └─ não → direto
+       └─→ Extrair Texto .... camada de texto do PDF, na instância, sem IA e sem custo
+             → Medir Documento .. conta as linhas com número (a régua do fatiamento e da
+             │                    cobertura) e RECOMPÕE o contexto lendo o `Preparar Conteudo`
+             └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
+                   ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
+                   └─ não → direto
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
-        └─ [E2] Montar Req Extracao → OpenAI Extrair → Parse → Gravar Campos (Sombra, N0)
+        └─ [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM no teto
+              de saída) → OpenAI Extrair → Parse → Juntar Blocos (N → 1 doc + guarda de
+              cobertura) → Gravar Campos (Sombra, N0)
               → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
                     → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
+                          → Resumo de Custo ..... o custo REAL do lote, num painel só
 ```
+
+> **As três camadas contra o truncamento e a extração pela metade** (`n8n/lib/cobertura.mjs`):
+> `Extrair Texto` mede o documento antes de qualquer chamada; `Fatiar Extracao` garante que nenhum
+> pedido passe de 60% do teto de saída do modelo (16.384 tokens), com o TEXTO da primeira e da última
+> linha da faixa como âncora; `Juntar Blocos` remonta o documento e **abre pendência quando o que
+> voltou é muito menor que o que o documento tem**. O `Extrair Texto` tem `onError: continue` — PDF
+> escaneado (sem camada de texto) segue como imagem e as duas outras camadas se calam para ele.
+>
+> **`Resumo de Custo` é onde se lê quanto o lote custou.** Último nó do canvas, terminal: custo total,
+> quanto foi extração e quanto foi classificação, o que o `Orcamento do Lote` havia estimado, tokens de
+> entrada/saída/cache e **tokens de saída por linha extraída** (o número que recalibra o estimador).
+> Ele existe porque o custo por documento já saía no `Parse Extracao` desde sempre, e saber o do LOTE
+> exigia abrir um painel por documento e somar à mão.
 
 Autonomia (docs/01): classificação nasce em **N1** (sugestão; humano confirma na fila de
 revisão); **extração (E2) nasce em N0 (sombra)** — registra para medir, não decide, não entra
@@ -59,15 +78,44 @@ como fato aceito.
 1. **Node Postgres não repassa binário** — a saída são as linhas da query. Por isso `Listar
    Arquivos` lê os arquivos por referência direta ao Form (`$('Intake (Form)')`), não do
    `$input`.
-2. **Node HTTP Request substitui o item pela resposta da API** (perde json e binário). Por
-   isso o `Upload Storage` é **ramo lateral** (nada consome a saída dele) e, após as chamadas
-   OpenAI, o contexto volta por `$('Nome do Node').item`.
-3. **Modos dos nós Code:** `Listar Arquivos` = "Run Once for All Items" (único fan-out; usa
-   `$input.first()`; retorna **array**). Os outros 6 = "Run Once for Each Item" (1:1; usam
-   `$input.item`; retornam **objeto único** `{json,...}` — array nesse modo dá o erro
-   `A 'json' property isn't an object`).
-4. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
+2. **Node que SUBSTITUI o item exige que o SEGUINTE recomponha o contexto.** Vale para o
+   *HTTP Request* (troca o item pela resposta da API) e para o `Extract From File` (escreve o
+   resultado do PDF no `json` e **não repassa o binário**). Duas saídas legítimas: ser **ramo
+   lateral** (`Upload Storage` — ninguém lê a saída), ou ter um consumidor que recompõe por
+   `$('Nome do Node').item` (`Parse OpenAI Classif`, `Parse Extracao`, `Medir Documento`).
+3. **`$('Nó').item` só resolve para nó ANCESTRAL.** Ramo irmão não resolve — e o sintoma é o
+   dado voltar vazio **em silêncio**, não um erro.
+   > As duas regras acima custaram duas execuções em 13/08, na sequência. Primeiro o
+   > `Extrair Texto` foi posto no meio da corrente e levou junto `caso_id` — o banco recusou 35
+   > documentos com *"null value in column caso_id violates not-null constraint"*. Depois ele
+   > virou ramo IRMÃO, parou de derrubar o lote e parou também de ser lido: a medição voltou
+   > vazia (`celulas_nos_documentos: 0`) e as camadas 2 e 3 ficaram desligadas sem ninguém notar.
+   > A forma certa é a de hoje: ele entra na corrente DEPOIS do `Preparar Conteudo` (onde o
+   > binário ainda existe e o `content_part` já leva o arquivo em base64 no json), e o
+   > `Medir Documento` logo atrás recompõe o contexto lendo um ancestral. Dois testes em
+   > `workflow-sim.test.mjs` travam as duas regras.
+4. **Modos dos nós Code:** seis rodam "Run Once for All Items", cada um porque a pergunta dele é
+   do LOTE e não do item — `Listar Arquivos` (fan-out, 1 item → N), `Orcamento do Lote` (só o lote
+   inteiro diz se ele cabe no teto), `Abortar Lote`, `Fatiar Extracao` (1 documento → N blocos),
+   `Juntar Blocos` (N blocos → 1 documento) e `Resumo de Custo` (quanto custou o lote). Os
+   demais são "Run Once for Each Item" (1:1; usam `$input.item`; retornam **objeto único**
+   `{json,...}` — array nesse modo dá o erro `A 'json' property isn't an object`). Um teste em
+   `workflow-sim.test.mjs` reprova quem puser um nó no modo errado, com a lista das exceções.
+5. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
    descarta o binário (`Classificar Nome` e `Preparar Conteudo` preservam).
+6. **Posição de nó no canvas NÃO se escreve à mão.** Os quatro geradores chamam
+   `posicionar(nodes, connections)` (`n8n/layout.mjs`) e o desenho sai do próprio grafo:
+   uma coluna por camada (caminho mais longo desde a entrada, então toda linha anda para a
+   direita), o filho de maior alcance herda a faixa do pai (o tronco fica reto), o ramo curto
+   desce para a primeira faixa livre, e aresta que pula colunas ganha **corredor reservado** —
+   nada é posicionado no caminho dela.
+   > Coordenada escolhida a olho, nó a nó, ao longo de 40 sessões, entregou o canvas que o dono
+   > viu na tela em 17/08: `Fatiar Extracao` desenhado por cima do `OpenAI Extrair`,
+   > `Juntar Blocos` por cima do `Gravar Campos (Sombra)`, o tronco pulando entre y=140 e y=560,
+   > e a linha do `false` do fallback atravessando por dentro dos três nós da classificação por
+   > conteúdo. Quem acrescentar um nó agora declara **só a conexão**. Quatro invariantes em
+   > `test/layout.test.mjs` conferem o JSON commitado dos quatro workflows: nó não se sobrepõe a
+   > nó, conexão não volta para trás, linha reta não atravessa nó, e tudo cai na grade de 20px.
 
 ## Como usar
 
@@ -442,7 +490,8 @@ estão presentes no texto que a OpenAI recebe. **Nunca voltar a parafrasear o pr
 n8n/
 ├── lib/            # lógica testável: classifier, completude, openai, extract,
 │                   #                  spreadsheet, taxonomia, normalize
-├── test/           # node:test (53 casos, incl. simulação do workflow)
+├── test/           # node:test (simulação do workflow, layout do canvas, libs)
+├── layout.mjs                # desenha o canvas a partir das conexões (os 4 geradores usam)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
 ├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + Diagnóstico + E2-sombra + E3)
 └── README.md

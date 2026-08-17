@@ -28,10 +28,35 @@ const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 const SEGUNDOS_POR_DOCUMENTO = 45;
 const ESPERA_MINIMA_MS = 12 * 60 * 1000;
 const ESPERA_MAXIMA_MS = 90 * 60 * 1000;
-function tentativasPara(arquivos: number): number {
+function janelaPara(arquivos: number): number {
   const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * 1.5; // 50% de margem
-  const janela = Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));
-  return Math.ceil(janela / INTERVALO_ACOMPANHAMENTO_MS);
+  return Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));
+}
+
+// A CADÊNCIA DESACELERA, A JANELA NÃO MUDA.
+//
+// Perguntar de 8 em 8 segundos durante até 90 minutos são ~675 consultas por
+// lote, cada uma custando um RPC mais duas leituras no Supabase. O egresso é da
+// ORGANIZAÇÃO, dividido com o clipping, e no plano Free estourar derruba os dois
+// projetos juntos — então cadência de tela é custo, não detalhe.
+//
+// Mas desacelerar tudo pioraria a tela onde ela mais importa: lote de 1 ou 2
+// documentos termina em menos de dois minutos, com o analista olhando. Por isso
+// a cadência só afrouxa DEPOIS desses dois minutos — quando o lote é grande, a
+// espera é de dezenas de minutos e ninguém está mais na frente da tela. Lote
+// pequeno não percebe diferença nenhuma; lote grande custa ~3x menos.
+//
+// A JANELA TOTAL é preservada de propósito: ela foi dimensionada no lote real de
+// 38 documentos (~23 min de extração), e encurtá-la traria de volta o defeito que
+// a 0108 corrigiu — a tela desistindo no minuto 12 de um trabalho vivo. Por isso
+// o laço passa a ser guiado por PRAZO decorrido, e não por contagem de
+// tentativas: com intervalo variável, contar tentativas deixa de descrever tempo.
+const CADENCIA_RAPIDA_ATE_MS = 2 * 60 * 1000;
+const INTERVALO_MAXIMO_MS = 30000;
+const FATOR_DESACELERACAO = 1.5;
+function proximoIntervalo(intervaloAtual: number, decorridoMs: number): number {
+  if (decorridoMs < CADENCIA_RAPIDA_ATE_MS) return INTERVALO_ACOMPANHAMENTO_MS;
+  return Math.min(INTERVALO_MAXIMO_MS, Math.round(intervaloAtual * FATOR_DESACELERACAO));
 }
 
 function formatarTamanho(bytes: number): string {
@@ -72,11 +97,13 @@ export default function UploadForm({
   useEffect(() => {
     if (!sucesso || pronto || falha) return;
     let cancelado = false;
-    let tentativas = 0;
+    let intervalo = INTERVALO_ACOMPANHAMENTO_MS;
+    let proximaEspera: ReturnType<typeof setTimeout> | undefined;
+    const comecou = Date.now();
+    const janela = janelaPara(sucesso.arquivos);
 
     const verificar = async () => {
       if (cancelado) return;
-      tentativas += 1;
       try {
         const params = new URLSearchParams({
           caso: sucesso.mandato,
@@ -103,8 +130,10 @@ export default function UploadForm({
         // Falha pontual de rede não interrompe o acompanhamento — só a
         // próxima tentativa (ou o teto de tentativas) decide quando parar.
       }
-      if (!cancelado && tentativas < tentativasPara(sucesso.arquivos)) {
-        setTimeout(verificar, INTERVALO_ACOMPANHAMENTO_MS);
+      const decorrido = Date.now() - comecou;
+      if (!cancelado && decorrido < janela) {
+        intervalo = proximoIntervalo(intervalo, decorrido);
+        proximaEspera = setTimeout(verificar, intervalo);
       } else if (!cancelado) {
         // DESISTIR EM SILÊNCIO É O DEFEITO. Parar de perguntar é legítimo (a aba
         // pode ficar aberta o dia todo); fingir que ainda se está esperando, não.
@@ -112,10 +141,12 @@ export default function UploadForm({
       }
     };
 
-    const primeiraEspera = setTimeout(verificar, INTERVALO_ACOMPANHAMENTO_MS);
+    proximaEspera = setTimeout(verificar, intervalo);
     return () => {
       cancelado = true;
-      clearTimeout(primeiraEspera);
+      // Limpa o timer AGENDADO, seja ele o primeiro ou um reagendamento: agora
+      // que o intervalo varia, `proximaEspera` é sempre o único pendente.
+      clearTimeout(proximaEspera);
     };
   }, [sucesso, pronto, falha, casoId, router]);
 

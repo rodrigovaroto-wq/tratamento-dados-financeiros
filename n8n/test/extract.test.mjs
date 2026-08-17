@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildExtractionRequest, parseExtractionResponse, extractionSchema, SECAO_CANONICA_ENUM,
   normalizarUnidade, normalizarMoeda, SYSTEM_PROMPT, ehLinhaNaoMonetaria, diagnosticarErroApi,
+  achatarGrupos,
 } from '../lib/extract.mjs';
 import {
   spreadsheetToText, parseCsv, avisoTruncamentoPlanilha, colunasDaPlanilha,
@@ -10,23 +11,40 @@ import {
 } from '../lib/spreadsheet.mjs';
 import { contentPartFromFile } from '../lib/openai.mjs';
 
-test('extractionSchema é estrito, tem diagnóstico e array de linhas com chaves curtas', () => {
-  // Chaves curtas de propósito (s/sc/ec/pc/k/vt/vn/op/cf) — economia de
-  // tokens de saída em documentos com muitas contas (sessão 7 cont.¹¹).
+test('extractionSchema é estrito, agrupa por seção e declara as colunas UMA vez', () => {
+  // O contexto (s/sc/op) mora no GRUPO e as colunas em `cols`; a conta traz só
+  // o rótulo e um valor POR COLUNA. É o que tirou 63% da saída — antes cada
+  // (conta × coluna) reescrevia os cinco campos de contexto e o rótulo.
   const s = extractionSchema();
   assert.equal(s.strict, true);
-  assert.equal(s.schema.properties.linhas.type, 'array');
-  assert.equal(s.schema.properties.linhas.items.additionalProperties, false);
-  assert.ok(s.schema.properties.linhas.items.required.includes('s'), 's=secao');
-  assert.ok(s.schema.properties.linhas.items.required.includes('sc'), 'sc=secao_canonica');
-  assert.ok(s.schema.properties.linhas.items.required.includes('ec'), 'ec=entidade_coluna');
-  assert.deepEqual(s.schema.properties.linhas.items.properties.ec.type, ['string', 'null']);
-  assert.deepEqual(s.schema.properties.linhas.items.properties.sc.enum, SECAO_CANONICA_ENUM);
-  assert.ok(s.schema.properties.linhas.items.properties.sc.enum.includes('NAO_CLASSIFICAVEL'));
-  // Cada chave curta carrega uma description explicando o nome completo, pra
-  // não perder a orientação do modelo com o nome cifrado.
-  for (const k of ['s', 'sc', 'ec', 'pc', 'k', 'vt', 'vn', 'op', 'cf']) {
-    assert.ok(s.schema.properties.linhas.items.properties[k].description, `campo ${k} sem description`);
+  const g = s.schema.properties.grupos;
+  assert.equal(g.type, 'array');
+  assert.equal(g.items.additionalProperties, false);
+  assert.deepEqual(g.items.required, ['s', 'sc', 'op', 'cols', 'l']);
+  assert.deepEqual(g.items.properties.sc.enum, SECAO_CANONICA_ENUM);
+  assert.ok(g.items.properties.sc.enum.includes('NAO_CLASSIFICAVEL'));
+
+  // As duas dimensões de coluna (empresa e período) num mecanismo só.
+  const cols = g.items.properties.cols;
+  assert.deepEqual(cols.items.required, ['ec', 'pc']);
+  assert.deepEqual(cols.items.properties.ec.type, ['string', 'null']);
+  assert.deepEqual(cols.items.properties.pc.type, ['string', 'null']);
+
+  // A linha: rótulo + LISTAS de valor. Se `vt`/`vn` deixarem de ser array, a
+  // associação valor↔coluna acaba, e é ela que impede trocar 2025 por 2024.
+  const l = g.items.properties.l;
+  assert.deepEqual(l.items.required, ['k', 'vt', 'vn', 'cf']);
+  assert.equal(l.items.properties.vt.type, 'array');
+  assert.equal(l.items.properties.vn.type, 'array');
+  assert.deepEqual(l.items.properties.vn.items.type, ['number', 'null']);
+
+  // Toda chave curta carrega description: nome cifrado sem explicação faz o
+  // modelo adivinhar o que preencher.
+  for (const k of ['s', 'sc', 'op', 'cols', 'l']) {
+    assert.ok(g.items.properties[k].description, `campo ${k} do grupo sem description`);
+  }
+  for (const k of ['k', 'vt', 'vn', 'cf']) {
+    assert.ok(l.items.properties[k].description, `campo ${k} da linha sem description`);
   }
   assert.equal(s.schema.properties.diagnostico.type, 'object');
   assert.ok(s.schema.properties.diagnostico.required.includes('legibilidade'));
@@ -125,10 +143,11 @@ test('parseExtractionResponse: documento comparativo (várias colunas de períod
   assert.ok(r.campos.every((c) => c.entidade_coluna === null), 'periodo_coluna é ortogonal a entidade_coluna');
 });
 
-test('extractionSchema inclui pc/periodo_coluna (required + string|null)', () => {
+test('extractionSchema inclui pc/periodo_coluna (required + string|null) na COLUNA', () => {
   const s = extractionSchema();
-  assert.ok(s.schema.properties.linhas.items.required.includes('pc'));
-  assert.deepEqual(s.schema.properties.linhas.items.properties.pc.type, ['string', 'null']);
+  const cols = s.schema.properties.grupos.items.properties.cols;
+  assert.ok(cols.items.required.includes('pc'));
+  assert.deepEqual(cols.items.properties.pc.type, ['string', 'null']);
 });
 
 test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', () => {
@@ -152,6 +171,49 @@ test('parseExtractionResponse tolera resposta vazia/ruim', () => {
   assert.deepEqual(parseExtractionResponse({}).campos, []);
   assert.deepEqual(parseExtractionResponse({ choices: [{ message: { content: 'nao-json' } }] }).campos, []);
   assert.equal(parseExtractionResponse({}).diagnostico.entidade, null);
+});
+
+// 0111: certidão/organograma/parecer de auditoria não têm valor monetário por
+// natureza — a IA diz isso no diagnóstico, e o Sinal 3 (banco) deixa de tratar
+// "zero linhas" como falha de extração quando o campo é `false`.
+test('extractionSchema exige tem_dado_financeiro no diagnóstico', () => {
+  const s = extractionSchema();
+  assert.ok(s.schema.properties.diagnostico.required.includes('tem_dado_financeiro'));
+  assert.equal(s.schema.properties.diagnostico.properties.tem_dado_financeiro.type, 'boolean');
+});
+
+test('parseExtractionResponse: documento sem valor monetário por natureza devolve tem_dado_financeiro=false com grupos vazio', () => {
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: 'Grupo Canastra', tipo_confirma: true, tipo_sugerido: 'CERTIDOES',
+      periodo_tipo: 'data-base', periodo_referencia: '2025-08-01',
+      legibilidade: 'ok', nota_legibilidade: null, tem_dado_financeiro: false,
+      resumo: 'Certidões negativas de débito, protesto e falência — sem valor monetário.',
+      justificativa: 'Documento é só texto de certidão; nenhuma tabela de valores.',
+    },
+    grupos: [],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.diagnostico.tem_dado_financeiro, false);
+  assert.deepEqual(r.campos, []);
+  // zero linhas aqui não é falha: falhaMotivo tem de ficar null.
+  assert.equal(r.falhaMotivo, null);
+});
+
+test('parseExtractionResponse: diagnostico sem tem_dado_financeiro (workflow velho) cai para null, nunca false', () => {
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'anual', periodo_referencia: '12M25',
+      legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'r', justificativa: 'j',
+    },
+    grupos: [],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.diagnostico.tem_dado_financeiro, null);
 });
 
 test('buildExtractionRequest define max_tokens explícito (sem isso, documentos combinados grandes truncam a resposta silenciosamente)', () => {
@@ -576,8 +638,13 @@ test('DMPL/DVA: enum de seção canônica, códigos do diagnóstico e contrato d
   //    `chave` = componente do PL (o cabeçalho da coluna). É o que permite ao
   //    export reconstruir a matriz; se o prompt parar de pedir isso, a aba DMPL
   //    vira uma listagem sem sentido.
-  assert.match(SYSTEM_PROMPT, /"secao" = o rótulo do MOVIMENTO/);
-  assert.match(SYSTEM_PROMPT, /"chave" = o\s+rótulo do COMPONENTE do PL/);
+  assert.match(SYSTEM_PROMPT, /um GRUPO por MOVIMENTO, com "secao" = o rótulo do movimento/);
+  assert.match(SYSTEM_PROMPT, /"chave" = o rótulo do COMPONENTE/);
+  // …e que os componentes do PL NÃO viram colunas: no formato agrupado a
+  // tentação é declarar cada componente como uma `col`, o que jogaria o
+  // componente para `periodo_coluna`/`entidade_coluna` e desmontaria a matriz
+  // que o export reconstrói.
+  assert.match(SYSTEM_PROMPT, /os COMPONENTES do PL\s+NÃO vão em "cols"/);
   // e a proibição explícita de reaproveitar entidade_coluna para os componentes
   assert.match(SYSTEM_PROMPT, /Não use\s+entidade_coluna para os componentes do PL/);
   // …e de marcar linha de DMPL como conta do PL (a dupla contagem)
@@ -647,4 +714,192 @@ test('ORDEM da linha vem da posição no array, não do modelo (db/migrations/00
   assert.equal(r.campos[1].ordem, 1);
   // O subtotal é a soma dos DOIS seguintes: é esse padrão que o export procura.
   assert.equal(r.campos[2].valor_num + r.campos[3].valor_num, r.campos[1].valor_num);
+});
+
+// ---------------------------------------------------------------------------
+// O FORMATO AGRUPADO — o que tirou 63% da saída (2026-08-13)
+// ---------------------------------------------------------------------------
+//
+// A medição que motivou tudo: o dono rodou 14 documentos e pagou US$ 0,90, dos
+// quais ~84% era saída de extração, a ~64 tokens por linha. Metade disso era
+// contexto repetido — `s`/`sc`/`ec`/`pc`/`op` idênticos em dezenas de linhas
+// seguidas — e o rótulo da conta reescrito uma vez por coluna de período.
+
+test('agrupado: uma conta com duas colunas de período vira DUAS linhas, na ordem das colunas', () => {
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'milhar',
+    diagnostico: {
+      entidade: 'Vertentes Metalúrgica Ltda.', tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'multi', periodo_referencia: '24,25', legibilidade: 'ok',
+      nota_legibilidade: null, resumo: 'BP comparativo.', justificativa: 'Cabeçalho bate.',
+    },
+    grupos: [{
+      s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+      cols: [{ ec: null, pc: '31/12/2025' }, { ec: null, pc: '31/12/2024' }],
+      l: [
+        { k: 'Caixa e bancos', vt: ['380', '1.240'], vn: [380, 1240], cf: 0.98 },
+        { k: '(-) PCLD', vt: ['(1.900)', '(1.100)'], vn: [-1900, -1100], cf: 0.95 },
+      ],
+    }],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.campos.length, 4);
+  // Conta-maior, coluna-menor: é a ordem de LEITURA do documento, e `ordem` é o
+  // que permite ao export reconhecer subtotal impresso acima dos componentes.
+  assert.deepEqual(r.campos.map((c) => [c.chave, c.periodo_coluna, c.valor_num]), [
+    ['Caixa e bancos', '31/12/2025', 380],
+    ['Caixa e bancos', '31/12/2024', 1240],
+    ['(-) PCLD', '31/12/2025', -1900],
+    ['(-) PCLD', '31/12/2024', -1100],
+  ]);
+  assert.deepEqual(r.campos.map((c) => c.ordem), [0, 1, 2, 3]);
+  // O contexto do grupo desce para TODAS as linhas dele.
+  assert.ok(r.campos.every((c) => c.secao === 'Ativo Circulante'
+    && c.secao_canonica === 'ativo_circulante' && c.origem_pagina === 1 && c.unidade === 'milhar'
+    && c.moeda === 'BRL' && c.entidade_coluna === null));
+  assert.equal(r.falhaMotivo, null);
+});
+
+test('agrupado: cols VAZIA é o caso de coluna única — um valor por conta', () => {
+  const { linhas, problemas } = achatarGrupos([{
+    s: 'Passivo Circulante', sc: 'passivo_circulante', op: 2, cols: [],
+    l: [{ k: 'Fornecedores', vt: ['12.500'], vn: [12500], cf: 0.9 }],
+  }]);
+  assert.deepEqual(problemas, []);
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].periodo_coluna, null);
+  assert.equal(linhas[0].entidade_coluna, null);
+  assert.equal(linhas[0].valor_num, 12500);
+});
+
+test('agrupado: coluna de EMPRESA e de PERÍODO no mesmo mecanismo', () => {
+  // O balanço combinado do book tem 7 colunas de empresa. Antes, cada conta era
+  // reescrita 7 vezes; agora uma vez, com 7 valores — é onde a economia chega a
+  // −79% num documento só.
+  const { linhas } = achatarGrupos([{
+    s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+    cols: [
+      { ec: 'Metalúrgica', pc: '2025' }, { ec: 'Componentes', pc: '2025' },
+      { ec: 'Eliminações', pc: '2025' }, { ec: 'Combinado', pc: '2025' },
+    ],
+    l: [{ k: 'Caixa', vt: ['380', '210', '(50)', '540'], vn: [380, 210, -50, 540], cf: 0.9 }],
+  }]);
+  assert.deepEqual(linhas.map((l) => [l.entidade_coluna, l.valor_num]), [
+    ['Metalúrgica', 380], ['Componentes', 210], ['Eliminações', -50], ['Combinado', 540],
+  ]);
+  assert.ok(linhas.every((l) => l.periodo_coluna === '2025'));
+});
+
+test('agrupado: célula em branco ocupa POSIÇÃO e não gera linha', () => {
+  // Se o modelo encostasse os valores à esquerda em vez de pôr null na posição,
+  // o número de 2024 entraria como se fosse de 2025 — o erro mais caro possível
+  // aqui, porque é silencioso e plausível.
+  const { linhas, problemas } = achatarGrupos([{
+    s: null, sc: 'patrimonio_liquido', op: 1,
+    cols: [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }],
+    l: [{ k: 'Reserva legal', vt: [null, '900'], vn: [null, 900], cf: 0.9 }],
+  }]);
+  assert.deepEqual(problemas, []);
+  assert.equal(linhas.length, 1, 'a célula vazia não vira linha');
+  assert.deepEqual([linhas[0].periodo_coluna, linhas[0].valor_num], ['2024', 900]);
+});
+
+test('o prompt manda declarar COLUNA DE VALOR que não é período nem empresa', () => {
+  // O caso real que custou 98 de 99 lançamentos: o `17_Livro_Razao` tem Débito,
+  // Crédito e Saldo por linha, o modelo devolveu 3 valores e declarou `cols`
+  // VAZIA — o guarda de desalinhamento descartou o documento inteiro. O guarda
+  // agiu certo; o que faltava era o prompt dizer que essas colunas existem.
+  for (const caso of ['Débito', 'Crédito', 'Saldo', 'A vencer', 'Quantidade']) {
+    assert.ok(SYSTEM_PROMPT.includes(caso), `o prompt não nomeia a coluna "${caso}"`);
+  }
+  assert.match(SYSTEM_PROMPT, /LIVRO RAZÃO/);
+  assert.match(SYSTEM_PROMPT, /BALANCETE/);
+  assert.match(SYSTEM_PROMPT, /AGING/);
+  // E diz a CONSEQUÊNCIA de não declarar, com o número real: instrução sem
+  // consequência é instrução que o modelo negocia.
+  assert.match(SYSTEM_PROMPT, /98 de 99 lançamentos foram perdidos/);
+  // O schema também precisa dizer, senão a `description` do campo contradiz o
+  // prompt — e o modelo tende a seguir a que está mais perto do dado.
+  const pc = extractionSchema().schema.properties.grupos.items.properties.cols.items.properties.pc;
+  assert.match(pc.description, /Débito/);
+});
+
+test('o motivo do desalinhamento NOMEIA a causa provável (coluna não declarada)', () => {
+  const { problemas } = achatarGrupos([{
+    s: 'LIVRO RAZÃO — CONTA 2.1.01.001', sc: 'passivo_circulante', op: 1, cols: [],
+    l: [{ k: 'LC-2025-4000 NF 010000', vt: ['12.000', '0', '12.000'], vn: [12000, 0, 12000], cf: 0.9 }],
+  }]);
+  assert.equal(problemas.length, 1);
+  assert.match(problemas[0], /1 coluna\(s\) declarada\(s\), 3 valor\(es\)/);
+  assert.match(problemas[0], /Débito\/Crédito\/Saldo, faixas de aging/);
+});
+
+test('agrupado: DESALINHAMENTO descarta a conta e VOLTA NOMEADO — nunca adivinha', () => {
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'unidade',
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'multi',
+      periodo_referencia: '24,25', legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'x', justificativa: 'y',
+    },
+    grupos: [{
+      s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+      cols: [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }],
+      l: [
+        { k: 'Caixa', vt: ['380'], vn: [380], cf: 0.9 },                    // falta uma coluna
+        { k: 'Estoques', vt: ['1.000', '900'], vn: [1000, 900], cf: 0.9 },  // essa está certa
+      ],
+    }],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  // A boa passa; a torta NÃO entra pela metade nem com null inventado.
+  assert.deepEqual(r.campos.map((c) => c.chave), ['Estoques', 'Estoques']);
+  assert.match(r.falhaMotivo, /1 conta\(s\) descartada\(s\) por desalinhamento/);
+  assert.match(r.falhaMotivo, /"Caixa" \(Ativo Circulante\): 2 coluna\(s\) declarada\(s\), 1 valor/);
+});
+
+test('agrupado: grupo de TOTAIS chega como NAO_CLASSIFICAVEL → secao_canonica null', () => {
+  // A seção canônica é do grupo, então o subtotal impresso dentro de uma seção
+  // precisa de grupo próprio — misturá-lo às contas que ele soma faria a seção
+  // ser contada duas vezes na planilha. O prompt exige isso explicitamente.
+  assert.match(SYSTEM_PROMPT, /abra para ela um grupo PRÓPRIO/);
+  const { linhas } = achatarGrupos([{
+    s: 'Ativo Circulante', sc: 'NAO_CLASSIFICAVEL', op: 1, cols: [],
+    l: [{ k: 'Total do Ativo Circulante', vt: ['45.440'], vn: [45440], cf: 0.99 }],
+  }]);
+  assert.equal(linhas[0].secao_canonica, null);
+  assert.equal(linhas[0].secao, 'Ativo Circulante', 'a seção LIVRE continua sendo a do documento');
+});
+
+test('o formato PLANO antigo continua sendo aceito (workflow importado velho)', () => {
+  // Em 12/08/2026 o n8n do dono rodou por dias um JSON importado em julho. Um
+  // workflow velho responde no formato plano, e "zero linhas extraídas sem
+  // explicação" seria a pior forma de descobrir isso.
+  const api = { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'milhar',
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'DRE', periodo_tipo: 'anual',
+      periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'x', justificativa: 'y',
+    },
+    linhas: [{ s: 'Custos', sc: 'custos', ec: null, pc: null, k: 'CPV', vt: '(6.000)', vn: -6000, op: 1, cf: 0.9 }],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.campos.length, 1);
+  assert.deepEqual(
+    [r.campos[0].chave, r.campos[0].valor_num, r.campos[0].secao_canonica, r.campos[0].unidade],
+    ['CPV', -6000, 'custos', 'milhar']);
+});
+
+test('achatarGrupos é AUTO-CONTIDA (o nó Code do n8n a embute por toString)', () => {
+  // Se ela passar a referenciar constante do módulo, o nó quebra com
+  // ReferenceError na primeira execução real e nenhum teste daqui pega.
+  const isolada = new Function(`return (${achatarGrupos.toString()})`)();
+  const { linhas } = isolada([{ s: 'x', sc: 'custos', op: 1, cols: [], l: [{ k: 'a', vt: ['1'], vn: [1], cf: 1 }] }]);
+  assert.equal(linhas.length, 1);
+  // E resiste a lixo em vez de estourar: resposta malformada vira "nada
+  // extraído com motivo", nunca uma exceção que derruba o item inteiro.
+  for (const entrada of [null, undefined, 42, 'x', [null], [{}], [{ l: 'nao-e-array' }]]) {
+    assert.deepEqual(isolada(entrada).linhas, [], `entrada ${JSON.stringify(entrada)}`);
+  }
 });

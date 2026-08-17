@@ -9,7 +9,7 @@
       "typeVersion": 1,
       "position": [
         0,
-        300
+        0
       ]
     },
     {
@@ -22,8 +22,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        300
+        260,
+        0
       ]
     },
     {
@@ -39,8 +39,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        480,
-        300
+        520,
+        0
       ],
       "credentials": {
         "postgres": {

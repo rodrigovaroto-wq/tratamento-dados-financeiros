@@ -16,16 +16,23 @@
 //    'runOnceForAllItems' retorna ARRAY (único modo que permite fan-out).
 // 4. Code que repassa arquivos deve devolver `binary` explicitamente
 //    (retornar só {json} descarta o binário).
+// 5. Posição de nó no canvas NÃO se escreve aqui: quem desenha é `posicionar()`
+//    (n8n/layout.mjs), a partir das `connections`. Nó novo declara só a conexão.
 
+import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
-import { SECAO_CANONICA_ENUM, SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda } from './lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
+import {
+  linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
+  MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
+} from './lib/cobertura.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -65,9 +72,17 @@ const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type
 // com `secao` (agrupador de planilha) — mesma chamada que já rodava sempre
 // para extrair linhas (não aumenta o nº de chamadas à OpenAI); espelha
 // n8n/lib/extract.mjs (fonte da verdade).
-const LEGIBILIDADE_ENUM = JSON.stringify(['ok', 'degradado', 'ilegivel']);
-const SECAO_CANONICA_ENUM_JSON = JSON.stringify(SECAO_CANONICA_ENUM);
-const SCHEMA_EXTRACAO = `{name:'diagnostico_e_extracao',strict:true,schema:{type:'object',additionalProperties:false,required:['moeda','unidade','diagnostico','linhas'],properties:{moeda:{type:['string','null']},unidade:{type:['string','null']},diagnostico:{type:'object',additionalProperties:false,required:['entidade','tipo_confirma','tipo_sugerido','periodo_tipo','periodo_referencia','legibilidade','nota_legibilidade','resumo','justificativa'],properties:{entidade:{type:['string','null']},tipo_confirma:{type:'boolean'},tipo_sugerido:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},legibilidade:{type:'string',enum:${LEGIBILIDADE_ENUM}},nota_legibilidade:{type:['string','null']},resumo:{type:'string'},justificativa:{type:'string'}}},linhas:{type:'array',items:{type:'object',additionalProperties:false,required:['s','sc','ec','pc','k','vt','vn','op','cf'],properties:{s:{type:['string','null'],description:'secao: agrupador livre (rótulo do próprio documento)'},sc:{type:'string',enum:${SECAO_CANONICA_ENUM_JSON},description:'secao_canonica: seção padronizada pelo significado contábil'},ec:{type:['string','null'],description:'entidade_coluna: nome da coluna/empresa quando há várias entidades lado a lado'},pc:{type:['string','null'],description:'periodo_coluna: rótulo da coluna de período quando há vários períodos lado a lado'},k:{type:'string',description:'chave: rótulo da conta'},vt:{type:['string','null'],description:'valor_texto: valor como aparece no documento'},vn:{type:['number','null'],description:'valor_num: valor numérico puro'},op:{type:['integer','null'],description:'origem_pagina: página de origem'},cf:{type:'number',description:'confianca: confiança 0-1 desta linha'}}}}}}}`;
+// O SCHEMA DA EXTRAÇÃO SAI DA FONTE, NÃO DE UM ESPELHO À MÃO.
+//
+// Ele era uma linha de 2.400 caracteres copiada de `lib/extract.mjs` e mantida
+// em paralelo — e este repositório já tem a lista dos espelhos manuais que
+// divergiram (o `ALIASES` que parava em BALANCETE, o `normUnid` que perdeu a
+// última cláusula, o schema de classificação que ficou sem `enum` e fez a
+// OpenAI inventar "BAL"). O schema é JSON puro, então serializar a função da
+// fonte é exato e a divergência deixa de ser possível: mudar o formato da saída
+// num arquivo só passa a bastar. `extractionSchema()` já traz `strict`,
+// `diagnostico`, `grupos` e os enums (taxonomia, seção canônica, legibilidade).
+const SCHEMA_EXTRACAO = JSON.stringify(extractionSchema());
 
 // `diagnosticarErroApi` é EMBUTIDA a partir do fonte de lib/extract.mjs (fonte
 // única — o nó Code do n8n não importa arquivo, e cópia à mão neste repositório
@@ -130,6 +145,28 @@ const FONTE_ORCAMENTO_LOTE = [
 ].join('\n');
 const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
 
+// `achatarGrupos` idem — embutida do fonte. Ela é a tradução do formato agrupado
+// (o que cortou 63% da saída) para as linhas que o banco grava, e é o ÚNICO
+// lugar onde valor e coluna são associados. Espelhá-la à mão seria escolher o
+// erro mais caro possível: uma divergência aqui grava o número de 2024 na coluna
+// de 2025, sem sintoma nenhum.
+const FONTE_ACHATAR_GRUPOS = `const achatarGrupos = ${achatarGrupos.toString()};`;
+
+// As três camadas contra o truncamento e a extração pela metade (lib/cobertura.mjs),
+// embutidas do fonte como todo o resto. O comentário do topo daquele arquivo tem
+// os números que as motivaram — 1.139 de 2.893 células numa rodada real.
+const FONTE_COBERTURA = [
+  `const MAX_CELULAS_POR_BLOCO = ${MAX_CELULAS_POR_BLOCO};`,
+  `const LIMIAR_COBERTURA = ${LIMIAR_COBERTURA};`,
+  `const MINIMO_PARA_AVALIAR = ${MINIMO_PARA_AVALIAR};`,
+  `const linhasComNumero = ${linhasComNumero.toString()};`,
+  `const linhasDeConta = ${linhasDeConta.toString()};`,
+  `const planejarFatias = ${planejarFatias.toString()};`,
+  `const instrucaoDaFatia = ${instrucaoDaFatia.toString()};`,
+  `const juntarBlocos = ${juntarBlocos.toString()};`,
+  `const avaliarCobertura = ${avaliarCobertura.toString()};`,
+].join('\n');
+
 // `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
 // `crypto.subtle`, que o dono MEDIU vindo ausente no sandbox do n8n dele
 // (campo `hash` = null na saída de `Preparar Conteudo`, 2026-07-31); ver o
@@ -176,6 +213,119 @@ const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: cham
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
 return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao }, binary: i.binary }));
+`.trim();
+
+// --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------
+// Nasceu de uma pergunta do dono que não tinha resposta boa: "como acesso isso?"
+// — sobre os tokens por documento. Eles existiam desde sempre, um por item do
+// `Parse Extracao`: para saber o custo do lote era preciso abrir 14 painéis e
+// somar à mão. Custo que só se conhece somando à mão é custo que ninguém mede,
+// e este projeto passou meses decidindo teto de gasto por estimativa porque a
+// medição estava espalhada.
+//
+// É um nó TERMINAL (nada depende dele), então ele não pode quebrar o lote: se
+// não achar as referências, devolve o que achou e diz que achou pouco. E é o
+// último da cadeia de propósito — quando ele aparece, o lote acabou.
+const CODE_RESUMO_CUSTO = `
+// Soma por NÓ, nunca por índice do lote. A tentação é casar item a item com
+// \`$input\`, e estaria errado: só os documentos cujo nome não resolve o tipo
+// passam pelo Parse OpenAI Classif (8 de 14, no book do dono), então o índice i
+// da cadeia principal NÃO é o índice i daquele nó. Casar por índice atribuiria o
+// custo da classificação ao documento errado — e num relatório de custo isso é
+// pior que não ter o relatório.
+// O LOTE SE PARTE EM DOIS, E O RESUMO TEM DE SOMAR OS DOIS.
+//
+// O IF \`Precisa Fallback?\` manda os documentos por dois caminhos (com e sem
+// classificacao por conteudo), e o n8n executa a cadeia inteira UMA VEZ POR
+// RAMO. Na rodada de 14/08 isso deu 16 documentos numa execucao do
+// \`Juntar Blocos\` e 19 na outra -- 35 no total, nada perdido -- mas o painel
+// reportava so' a ultima, e o custo do lote saiu pela METADE. Pior: \`.all()\` sem
+// indice de execucao devolve, para um no' do OUTRO ramo, tudo o que ele
+// produziu; a classificacao entrava DUAS vezes na conta.
+//
+// Aqui as execucoes sao percorridas uma a uma. O painel sai duas vezes (uma por
+// ramo), agora com o total INTEIRO nas duas -- somar dois paineis parciais a mao
+// e' exatamente o trabalho que este no' existe para acabar.
+const itensDe = (nome) => {
+  const out = [];
+  for (let run = 0; run < 50; run += 1) {
+    let itens = null;
+    try { itens = $(nome).all(0, run); } catch (err) { break; }
+    if (!itens || itens.length === 0) break;
+    for (const it of itens) out.push(it);
+  }
+  return out;
+};
+// \`Juntar Blocos\` e nao \`Parse Extracao\`: desde o fatiamento, o Parse tem um item
+// por BLOCO, e contar blocos como documentos diria "48 documentos" para um lote
+// de 35. O Juntar ja' devolve um item por documento, com o custo dos blocos
+// somado. O fallback existe para o caso de alguem religar o grafo sem fatiamento.
+const extracoes = itensDe('Juntar Blocos').length > 0 ? itensDe('Juntar Blocos') : itensDe('Parse Extracao');
+const classificacoes = itensDe('Parse OpenAI Classif');
+
+let extracao = 0, entrada = 0, saida = 0, cache = 0, linhas = 0, comFalha = 0, semMedicao = 0;
+let celulas = 0, contas = 0, fatiados = 0;
+for (const it of extracoes) {
+  const e = it?.json || {};
+  if (typeof e.custo_usd === 'number') extracao += e.custo_usd; else semMedicao += 1;
+  if (e.tokens) { entrada += e.tokens.entrada || 0; saida += e.tokens.saida || 0; cache += e.tokens.cache || 0; }
+  if (e.falha_motivo) comFalha += 1;
+  linhas += Array.isArray(e.campos) ? e.campos.length : 0;
+  if (Number.isFinite(Number(e.contas_no_documento))) celulas += Number(e.contas_no_documento);
+  if (Number.isFinite(Number(e.contas_distintas))) contas += Number(e.contas_distintas);
+  if (Number(e.blocos) > 1) fatiados += 1;
+}
+let classificacao = 0;
+for (const it of classificacoes) {
+  const c = it?.json || {};
+  if (typeof c.custo_classificacao_usd === 'number') classificacao += c.custo_classificacao_usd;
+}
+const total = extracao + classificacao;
+const arred = (x) => Number(x.toFixed(4));
+
+// A comparação com o que o ORÇAMENTO estimou fecha o ciclo: é ela que diz se o
+// estimador está calibrado, e é ela que este repositório nunca teve à mão.
+let estimado = null, versao = null;
+try {
+  const o = $('Orcamento do Lote').first().json;
+  estimado = o.orcamento_estimado_usd ?? null;
+  versao = o.orcamento_versao ?? null;
+} catch (err) { estimado = null; }
+
+return [{ json: {
+  resumo: 'Custo REAL deste lote: US$ ' + total.toFixed(4) + ' em ' + extracoes.length + ' documento(s)'
+    + ' (' + classificacoes.length + ' pagaram o PDF duas vezes)'
+    + (estimado !== null ? '. O orçamento havia estimado US$ ' + Number(estimado).toFixed(2) : '')
+    + '. Saída: ' + saida + ' tokens; entrada: ' + entrada + ' (' + cache + ' em cache).'
+    + (celulas > 0 ? ' Cobertura: ' + contas + ' contas gravadas de ' + celulas + ' linhas de conta nos PDFs ('
+      + (contas / celulas * 100).toFixed(0) + '%), em ' + linhas + ' pares conta-coluna. '
+      + fatiados + ' documento(s) precisaram de mais de uma chamada.' : ''),
+  orcamento_versao: versao,
+  documentos: extracoes.length,
+  documentos_com_classificacao: classificacoes.length,
+  custo_total_usd: arred(total),
+  custo_extracao_usd: arred(extracao),
+  custo_classificacao_usd: arred(classificacao),
+  custo_estimado_usd: estimado,
+  tokens: { entrada: entrada, saida: saida, cache: cache },
+  // Tokens de SAÍDA POR LINHA extraída — o número que recalibra o estimador, e o
+  // que estava errado por 45%: o repositório supunha 35 e a fatura do dono disse
+  // 64. Ele é o insumo da próxima calibração, e por isso sai medido, não suposto.
+  tokens_saida_por_linha: linhas > 0 ? Number((saida / linhas).toFixed(1)) : null,
+  linhas_extraidas: linhas,
+  // Cobertura: quantas linhas o documento TINHA (medidas no texto do PDF, sem
+  // IA) contra quantas chegaram. E' a resposta para "o custo caiu porque ficou
+  // eficiente ou porque deixou de extrair?" — a pergunta que custou uma rodada.
+  // Na unidade de CONTAS dos dois lados: contas distintas gravadas contra linhas
+  // de conta do texto. \`linhas_extraidas\` continua sendo pares (conta x coluna),
+  // que e' o que o banco guarda -- as duas coisas sao uteis e nao se misturam.
+  contas_nos_documentos: celulas,
+  contas_extraidas: contas,
+  cobertura_do_lote: celulas > 0 ? Number((contas / celulas).toFixed(3)) : null,
+  documentos_fatiados: fatiados,
+  documentos_com_falha: comFalha,
+  documentos_sem_medicao: semMedicao,
+} }];
 `.trim();
 
 // --- Code (ALL ITEMS — fan-out): um item por arquivo enviado no Form ---
@@ -302,6 +452,10 @@ try{
   // falharem -- ai' sim nao saber e' melhor que errar.
   try{hash=sha256Hex(buf);}catch(e2){hash=null;}
 }
+// O binario segue: quem precisa dele depois daqui e' o \`Upload Storage\` (ramo
+// lateral) e o \`Extrair Texto\`, que le a camada de texto do PDF. Da\u00ed para a
+// frente ninguem mais precisa -- o \`content_part\` ja' carrega o arquivo em
+// base64 DENTRO do json, e e' ele que vai para a OpenAI.
 return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};
 `.trim();
 
@@ -349,7 +503,13 @@ function mergeClassification(fromName, fromAI){
   };
 }
 const src=$('Montar Req Classif').item.json;
-const {openai_body, content_part, content_mime, ...item}=src;
+// \`content_part\` FICA no item (antes era descartado aqui junto do openai_body).
+// Motivo: o \`Montar Req Extracao\` precisa do PDF, e ele o buscava em
+// \`$('Preparar Conteudo').item\` -- pareamento que atravessa a convergencia dos
+// dois ramos e por isso nao e' confiavel. Dado que o item CARREGA nao depende de
+// pareamento nenhum. Só o \`openai_body\` da CLASSIFICACAO sai (aquele ja' foi
+// usado, e levá-lo adiante incharia cada item com o base64 duas vezes).
+const {openai_body, ...item}=src;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
 const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
@@ -390,7 +550,7 @@ return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName,
 // também busca entidade e faz o diagnóstico (confere tipo/período/legibilidade).
 const CODE_REQ_EXTRACAO = `
 const reg=$json;
-const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;
+const versaoId=reg.documento_versao_id||null;
 // SEM VERSAO, NAO SE MONTA REQUISICAO -- e' o que impede pagar por uma extracao
 // que nao tem onde ser gravada.
 //
@@ -408,7 +568,18 @@ const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null
 if(!versaoId){
   throw new Error('Documento nao registrado no banco (documento_versao_id ausente): a extracao NAO foi chamada, para nao gastar credito com um documento que nao existe. Causa provavel: falha no no "Registrar Documento" -- ver o log desta execucao.');
 }
-const prep=$('Preparar Conteudo').item.json;
+// O CONTEUDO VEM DO PROPRIO ITEM. O \`Recompor Contexto\` (no' anterior) ja' juntou
+// o resultado do Postgres com o contexto do preparo POR INDICE, entao aqui nao se
+// pareia com no' nenhum -- era a leitura pareada do no' de preparo, feita daqui,
+// que atravessava a convergencia dos dois ramos e perdeu 19 dos 35 no V45.
+const prep=$json;
+// SEM CONTEUDO, NAO SE CHAMA A OPENAI. Uma requisicao montada sem o documento
+// volta "sem nenhuma linha" SEM erro de API -- extracao vazia que parece sucesso,
+// que e' exatamente o silencio que este projeto passa o tempo fechando. Lancar
+// aqui vira item de erro (onError: continue), o lote segue, e o motivo aparece.
+if(!prep.content_part){
+  throw new Error('Conteudo do documento indisponivel ao montar a extracao (content_part ausente): a chamada NAO foi feita, para nao pagar por uma extracao sem o arquivo. Causa provavel: o Recompor Contexto nao encontrou o item de origem -- ver o log desta execucao.');
+}
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
 const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKENS},response_format:{type:'json_schema',json_schema:schema},messages:[
@@ -418,7 +589,235 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
 // aviso_conteudo viaja junto: o que o preparo ja sabia estar faltando ANTES da
 // chamada (planilha acima do teto, XLSX nao lido) tem de virar pendencia mesmo
 // quando a extracao volta impecavel -- o pedaco que falta nunca chegou a IA.
-return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+// documento_id VIAJA COM O ITEM, e nao e' luxo: depois do fatiamento os nos
+// seguintes nao conseguem mais resolver \`$('Registrar Documento').item\` -- um
+// no' que muda a QUANTIDADE de itens (1 documento -> N blocos -> 1 documento)
+// quebra a cadeia de pareamento do n8n, e a expressao volta \`undefined\`. Foi
+// exatamente isso que derrubou a execucao 6164: "Query Parameters must be a
+// string of comma-separated values" no Registrar Diagnostico e no Reconciliar.
+// Dado que o item CARREGA nao depende de pareamento nenhum.
+const docId=reg.documento_id||null;
+return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+`.trim();
+
+// --- Code (ALL ITEMS): recompõe contexto + resultado do Postgres, POR ÍNDICE --
+//
+// Existe porque o nó Postgres SUBSTITUI o item: depois do `Registrar Documento` o
+// item é só `{r:{documento_id, documento_versao_id, ...}}`, e o `content_part`
+// (o PDF) morre ali. O `Montar Req Extracao` buscava o conteúdo de volta em
+// `$('Preparar Conteudo').item` — pareamento que atravessa a convergência dos
+// dois ramos do `Precisa Fallback?`, e foi ele que perdeu 19 dos 35 documentos do
+// "Teste V45 - Canastra" (zero linha, zero evento, zero pendência).
+//
+// A junção é por ÍNDICE, e isso é sólido: `Registrar Documento` roda
+// `executeQuery` uma vez por item de entrada e devolve uma linha por item, na
+// MESMA ordem — 1:1, inclusive quando um item falha (PG_RETRY tem
+// `continueRegularOutput`, então o item de erro ocupa a posição dele). E
+// `$('Juntar Ramos').all()` devolve a saída INTEIRA daquele nó, sem depender de
+// `pairedItem` nenhum: é a diferença entre "me dê o item pareado com este" (que
+// falhou) e "me dê a lista, eu sei minha posição nela".
+//
+// DIVERGÊNCIA DE CONTAGEM É FALHA DECLARADA, nunca ajuste silencioso: se as duas
+// listas tiverem tamanhos diferentes, a correspondência por índice deixou de ser
+// verdadeira, e continuar associaria o PDF de um documento ao id de outro — o
+// pior erro possível aqui. Cada item sem par sai com o motivo escrito, e a guarda
+// do `Gravar Campos` (0016/0043) o converte em pendência visível.
+const CODE_RECOMPOR_CONTEXTO = `
+const regs=$input.all();
+let ctx=[];
+try{ ctx=$('Juntar Ramos').all(); }catch(e){ ctx=[]; }
+const desalinhado=ctx.length!==regs.length;
+const saida=[];
+for(let i=0;i<regs.length;i+=1){
+  const r=regs[i].json||{};
+  const res=r.r||r;
+  const base=(!desalinhado&&ctx[i]&&ctx[i].json)?ctx[i].json:{};
+  const {openai_body:_ob, ...limpo}=base;
+  const motivos=[];
+  if(desalinhado){
+    motivos.push('Recompor Contexto: o Registrar Documento devolveu '+regs.length+' item(ns) e o Juntar Ramos '+ctx.length+' -- a correspondencia por indice deixou de ser verdadeira, e associar o arquivo de um documento ao id de outro seria pior que falhar. Contexto NAO recomposto.');
+  }
+  saida.push({pairedItem:{item:i}, json:{...limpo,
+    documento_id:res.documento_id??null,
+    documento_versao_id:res.documento_versao_id??null,
+    recompor_motivo:motivos.length>0?motivos.join(' | '):null,
+  }});
+}
+return saida;
+`.trim();
+
+// --- Code (EACH ITEM): CAMADA 1 — a régua do documento ----------------------
+//
+// Roda logo depois do `Extrair Texto` e existe por um motivo de MECÂNICA do n8n
+// que custou duas execuções para ser entendido:
+//
+//   • `Extract From File` SUBSTITUI o item (escreve o resultado do PDF no `json`
+//     e não repassa o binário). Posto entre `Lote cabe?` e `Preparar Conteudo`,
+//     ele levou junto caso_id, classificação e arquivo — 35 documentos recusados
+//     pelo banco com "null value in column caso_id".
+//   • Pendurado como ramo LATERAL, ele parou de derrubar o lote — e parou também
+//     de ser LIDO: `$('Nó').item` só resolve para nós ANCESTRAIS do item atual, e
+//     um ramo irmão não é ancestral. A medição voltou vazia em todos os
+//     documentos (`celulas_nos_documentos: 0`), e com ela as camadas 2 e 3
+//     ficaram desligadas sem ninguém notar.
+//
+// A saída é pôr o `Extrair Texto` na corrente DEPOIS do `Preparar Conteudo`:
+// nesse ponto o binário ainda existe (o preparo o repassa), o `content_part` já
+// carrega o arquivo em base64 dentro do json — então perder o binário daqui para
+// a frente não custa nada — e este nó recompõe o contexto lendo o
+// `Preparar Conteudo`, que agora É ancestral.
+const CODE_MEDIR_DOCUMENTO = `
+${FONTE_COBERTURA}
+// O texto vem do PROPRIO input (o \`Extrair Texto\` e' o no' anterior): nao depende
+// de pareamento nenhum. O contexto vem do \`Preparar Conteudo\`, ancestral.
+const doExtrator=$input.item.json||{};
+const textoPdf=(typeof doExtrator.text==='string'&&doExtrator.text)||(typeof doExtrator.texto_pdf==='string'&&doExtrator.texto_pdf)||'';
+let item={};
+try{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }
+const linhasDoTexto=linhasComNumero(textoPdf);
+const temTexto=linhasDoTexto.length>0;
+// AUSENCIA DE TEXTO NAO E' ERRO: PDF escaneado nao tem camada de texto, e o
+// documento segue como imagem exatamente como antes -- so' as camadas 2 e 3 se
+// calam para ele. \`null\` e' "nao sei", nunca "zero": zero ligaria a guarda de
+// cobertura com regua inventada justamente no documento onde o modelo mais erra.
+return {json:{...item,
+  // DUAS reguas, e a distincao e' o que fez a guarda voltar a enxergar:
+  //   celulas -> toda linha com digito. E' o tamanho da RESPOSTA, e e' o que o
+  //     fatiamento precisa saber (cabecalho tambem gasta token).
+  //   contas  -> so' linha de conta (rotulo + valor), sem cabecalho de ano, CNPJ,
+  //     data nem assinatura. E' a unidade da COBERTURA, comparavel com as contas
+  //     distintas que a extracao grava. Medido no 02_DRE: 46 contra 39.
+  celulas_no_documento: temTexto?linhasDoTexto.length:null,
+  contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,
+  linhas_do_texto: temTexto?linhasDoTexto:null,
+}};
+`.trim();
+
+// --- Code (ALL ITEMS): CAMADA 2 — FATIAR O QUE NÃO CABE NUMA CHAMADA ---------
+//
+// O gpt-4o tem teto de 16.384 tokens de SAÍDA. Um documento cuja extração passa
+// disso é cortado no meio (`finish_reason=length`) e volta sem nada de
+// aproveitável — foi o que aconteceu com dois documentos do book-canastra, um
+// com 326 e outro com 308 células de valor.
+//
+// Este nó não conserta truncamento: ele o torna IMPOSSÍVEL. Com a contagem da
+// camada 1, projeta a saída e, quando ela passa de 60% do teto, emite um item
+// por BLOCO — cada um com a mesma requisição, mais uma instrução de faixa.
+//
+// Por que ele existe separado do `Montar Req Extracao` em vez de virar um
+// fan-out lá: aquele nó roda em `runOnceForEachItem` e depende de
+// `$('Preparar Conteudo').item` para achar o contexto do SEU item. Trocar o modo
+// quebraria esse pareamento — e os itens chegam ali por dois caminhos (com e sem
+// classificação por conteúdo), então a ordem não é a de `Preparar Conteudo`.
+// Fatiar DEPOIS, sobre itens que já carregam tudo, não tem esse problema.
+const CODE_FATIAR_EXTRACAO = `
+${FONTE_COBERTURA}
+const saida=[];
+const entradas=$input.all();
+for(let idx=0; idx<entradas.length; idx+=1){
+  const it=entradas[idx];
+  const j=it.json||{};
+  // Documento sem medida (PDF escaneado, sem camada de texto) vai inteiro, como
+  // sempre foi. Fatiar as cegas seria pior: sem ancora, "bloco 2 de 3" e' um
+  // pedido para o modelo adivinhar onde a faixa comeca.
+  const linhas=Array.isArray(j.linhas_do_texto)?j.linhas_do_texto:[];
+  const fatias=linhas.length>0?planejarFatias(linhas, MAX_CELULAS_POR_BLOCO):[{bloco:1,blocos:1,de:0,ate:0,ancoraInicio:null,ancoraFim:null,celulas:0}];
+  for(const f of fatias){
+    // A instrucao da faixa vai na mensagem de USER, nunca no prompt de sistema:
+    // o prefixo tem de continuar identico em toda chamada para o cache de
+    // prefixo da OpenAI valer (docs/CUSTO_OPENAI.md, alavanca 3).
+    const corpo=JSON.parse(JSON.stringify(j.openai_body||{}));
+    const instrucao=instrucaoDaFatia(f);
+    if(instrucao&&Array.isArray(corpo.messages)){
+      const user=corpo.messages[corpo.messages.length-1];
+      if(user&&Array.isArray(user.content)&&user.content[0]&&typeof user.content[0].text==='string'){
+        user.content[0].text=user.content[0].text+instrucao;
+      }
+    }
+    // \`linhas_do_texto\` fica para tras: ele ja' virou ancora, e levar o
+    // documento inteiro em texto por todo o grafo incharia cada item a' toa.
+    // \`content_part\` sai pelo mesmo motivo, e agora ele PRECISA sair: desde que o
+    // conteudo passou a viajar com o item (para nao depender de pareamento), o
+    // base64 do PDF esta no json -- e ele ja' foi copiado para dentro do \`corpo\`.
+    // Levar as duas copias por todo o resto do grafo dobraria a memoria do lote.
+    const {linhas_do_texto:_l, openai_body:_b, content_part:_cp, ...resto}=j;
+    // \`pairedItem\` E' OBRIGATORIO num no' que muda a quantidade de itens. Sem
+    // ele o n8n perde a cadeia e toda referencia a OUTRO no' por \`.item\` rio
+    // abaixo volta undefined -- os nos Postgres recebem "undefined" em Query
+    // Parameters e a execucao morre. Cada bloco aponta para o documento que o gerou.
+    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos, celulas_do_bloco:f.celulas}, pairedItem:{item:idx}});
+  }
+}
+return saida;
+`.trim();
+
+// --- Code (ALL ITEMS): junta os blocos e APLICA A GUARDA DE COBERTURA --------
+//
+// CAMADA 3. Depois de reunir os blocos de cada documento, compara o que voltou
+// com o que a camada 1 mediu. Abaixo do limiar, escreve o motivo em
+// `falha_motivo` — que `fn_registrar_campos_extraidos` já converte em pendência.
+// Não precisa de migration: o caminho de "extração que não trouxe o que devia"
+// já existe desde a `0016`; o que faltava era alguém CONFERIR.
+//
+// É esta camada que responde ao pedido do dono ("que nunca mais apareça"): ela
+// não impede o modelo de pular uma linha — impede que isso seja silencioso. O
+// livro razão devolveu 99 de 461 e passou como sucesso; com isto ele para na
+// fila de revisão com os dois números na descrição.
+const CODE_JUNTAR_BLOCOS = `
+${FONTE_COBERTURA}
+const porDocumento=new Map();
+const primeiroIndice=new Map();
+const entradas=$input.all();
+for(let idx=0; idx<entradas.length; idx+=1){
+  const j=entradas[idx].json||{};
+  // A CHAVE NAO PODE SER INVENTADA. A primeira versao usava
+  // \`'sem-versao-'+tamanho\` quando o id faltava, e esse texto ia direto para
+  // \`fn_registrar_campos_extraidos($1::uuid)\`: "invalid input syntax for type
+  // uuid: sem-versao-0", execucao 6164. Um id ausente e' uma FALHA a declarar,
+  // nunca um id de mentira -- agrupa-se sob null e o motivo vai junto.
+  const chave=(typeof j.documento_versao_id==='string'&&j.documento_versao_id)?j.documento_versao_id:'__sem_versao__';
+  if(!porDocumento.has(chave)){ porDocumento.set(chave,[]); primeiroIndice.set(chave,idx); }
+  porDocumento.get(chave).push(j);
+}
+const saida=[];
+for(const [chave, blocos] of porDocumento){
+  const r=juntarBlocos(blocos);
+  const base=blocos[0]||{};
+  const documento_versao_id=chave==='__sem_versao__'?null:chave;
+  const motivos=r.motivos.slice();
+  if(documento_versao_id===null){
+    motivos.push('Bloco(s) de extracao voltaram SEM documento_versao_id: as linhas nao tem onde ser gravadas. Causa provavel: falha no no "Registrar Documento" ou perda de contexto entre os blocos -- ver o log desta execucao.');
+  }
+  // A guarda. \`celulas_no_documento\` e' null no PDF sem camada de texto: nesse
+  // caso ela se cala, e o silencio e' declarado (nao ha regua, entao nao ha
+  // veredito) em vez de fabricado.
+  // CONTAS DISTINTAS, nao pares (conta x coluna): num documento de 3 colunas os
+  // pares sao 3x as contas, e comparar par com linha dava 198% de "cobertura" --
+  // a guarda ficava cega justamente no comparativo. \`chave\` repetida (livro razao
+  // com o mesmo historico) conta uma vez so', e a descricao da pendencia diz isso.
+  const contasDistintas=new Set(r.campos.map(c=>c.chave)).size;
+  const cobertura=avaliarCobertura({extraidas:contasDistintas, esperadas:base.contas_no_documento});
+  if(cobertura) motivos.push(cobertura.motivo);
+  if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
+  saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
+    documento_versao_id,
+    // Levado adiante pelo mesmo motivo do documento_versao_id: o Registrar
+    // Diagnostico e o Reconciliar liam o no' de registro por \`.item\`, que nao
+    // pareia mais atraves do fatiamento. Agora leem do proprio item.
+    documento_id:base.documento_id??null,
+    campos:r.campos,
+    diagnostico:base.diagnostico||null,
+    falha_motivo:motivos.length>0?motivos.join(' | '):null,
+    blocos:r.blocos,
+    celulas_no_documento:base.celulas_no_documento??null,
+    contas_no_documento:base.contas_no_documento??null,
+    contas_distintas:contasDistintas,
+    cobertura:cobertura?cobertura.razao:(base.contas_no_documento>0?Number((contasDistintas/base.contas_no_documento).toFixed(3)):null),
+    custo_usd:blocos.reduce((soma,b)=>soma+(typeof b.custo_usd==='number'?b.custo_usd:0),0),
+    tokens:blocos.reduce((acc,b)=>b.tokens?{entrada:acc.entrada+(b.tokens.entrada||0), saida:acc.saida+(b.tokens.saida||0), cache:acc.cache+(b.tokens.cache||0)}:acc,{entrada:0,saida:0,cache:0}),
+  }});
+}
+return saida;
 `.trim();
 
 // --- Code (EACH ITEM): parse do diagnóstico+extração → payload p/ Postgres -
@@ -430,8 +829,21 @@ return {json:{documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, avis
 const CODE_PARSE_EXTRACAO = `
 ${FONTE_DIAGNOSTICO_ERRO}
 ${FONTE_CUSTO_CHAMADA}
-const ctx=$('Montar Req Extracao').item.json;
-const avisoConteudo=ctx.aviso_conteudo??null;
+// O contexto vem do FATIAMENTO, nao mais do \`Montar Req Extracao\`: e' ele que
+// sabe qual bloco este item e', e um item por bloco significa que o pareamento
+// com o no' anterior a ele deixou de ser 1:1. O fallback existe para o caso de
+// alguem religar o grafo sem o fatiamento.
+let ctx=null;
+try{ ctx=$('Fatiar Extracao').item.json; }catch(e){ ctx=null; }
+if(!ctx){ try{ ctx=$('Montar Req Extracao').item.json; }catch(e){ ctx=null; } }
+// NENHUMA das duas leituras pode DERRUBAR o item: se o pareamento se perder, o
+// que se perde e' o contexto, e perder contexto tem de virar falha declarada --
+// nao uma excecao que manda o item inteiro para o ramo de erro sem dizer o que
+// aconteceu (execucao 6164).
+if(!ctx){ ctx={}; }
+// O aviso do preparo e o motivo do Recompor Contexto entram JUNTOS: os dois sao
+// "dado que o documento tem e o banco nao recebeu", e cabem no mesmo documento.
+const avisoConteudo=[ctx.aviso_conteudo??null, ctx.recompor_motivo??null].filter(Boolean).join(' | ')||null;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
 const content=resp?.choices?.[0]?.message?.content;
@@ -458,7 +870,25 @@ const unidade=normUnid(p.unidade);
 // era normalizada e jogada fora aqui, e o book somava USD com BRL.
 const moedaDoc=normMoeda(p.moeda);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
-const campos=Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[];
+${FONTE_ACHATAR_GRUPOS}
+// A saida da OpenAI vem AGRUPADA (uma secao, suas colunas, e uma conta com um
+// valor por coluna) e e' achatada aqui de volta para uma linha por
+// (conta x coluna) -- a forma que \`campo_extraido\` sempre teve. O achatamento
+// vem EMBUTIDO da fonte, nao copiado: se este no' e a lib discordarem sobre como
+// associar valor a coluna, o banco recebe o numero de 2024 no lugar do de 2025.
+const ach=achatarGrupos(p.grupos);
+const campos=ach.linhas.length>0||Array.isArray(p.grupos)
+  ? ach.linhas.map((l,i)=>({ordem:i, ...l, unidade:naoMonet(l.chave,l.valor_texto)?null:unidade, moeda:naoMonet(l.chave,l.valor_texto)?null:moedaDoc}))
+  // FORMATO PLANO ANTIGO -- o caminho de um workflow importado velho responder
+  // no formato de julho. Em 12/08/2026 o n8n do dono rodou dias assim, e "zero
+  // linhas extraidas" sem explicacao seria a pior forma de descobrir.
+  : (Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[]);
+// Conta descartada por desalinhamento de coluna nao pode sumir em silencio: e'
+// dado que o documento tem e o banco nao recebeu.
+if(ach.problemas.length>0){
+  const dizer=ach.problemas.length+' conta(s) descartada(s) por desalinhamento entre colunas e valores (a associacao valor-coluna ficou desconhecida, e adivinha-la trocaria um periodo pelo outro): '+ach.problemas.slice(0,5).join('; ')+(ach.problemas.length>5?'; ...':'');
+  falhaMotivo=falhaMotivo?falhaMotivo+' | '+dizer:dizer;
+}
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,
@@ -468,6 +898,7 @@ const diagnostico={
   periodo_referencia: d.periodo_referencia??null,
   legibilidade: d.legibilidade??null,
   nota_legibilidade: d.nota_legibilidade??null,
+  tem_dado_financeiro: (typeof d.tem_dado_financeiro==='boolean')?d.tem_dado_financeiro:null,
   resumo: d.resumo??null,
   justificativa: d.justificativa??'',
 };
@@ -481,13 +912,20 @@ const custo_usd=custoDaChamada(resp?.usage, '${MODEL_EXTRACAO}');
 // planilha cortada E resposta truncada cabem no mesmo documento, e esconder um
 // dos dois e' a falha que esta mudanca fecha.
 const falhaFinal=[avisoConteudo,falhaMotivo].filter(Boolean).join(' | ')||null;
-return {json:{documento_versao_id:ctx.documento_versao_id, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
+// \`bloco\`/\`blocos\`/\`celulas_no_documento\` viajam para o \`Juntar Blocos\`: sem
+// eles a juncao nao sabe a ordem dos pedacos nem tem regua para a cobertura.
+return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
-const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
+// `position` NÃO entra aqui: quem posiciona é `posicionar()` (n8n/layout.mjs), a
+// partir das `connections`, depois que a lista inteira existe. Coordenada
+// escolhida à mão nó a nó foi o que embaralhou o canvas (rótulo em cima de
+// rótulo, linha atravessando nó), e ela não tem como saber do vizinho que ainda
+// nem foi declarado.
+const node = (name, type, typeVersion, parameters, opts = {}) => ({
   parameters, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, type, typeVersion,
-  position: [x, yy],
+  position: [0, 0],
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.disabled ? { disabled: true } : {}),
@@ -630,18 +1068,18 @@ const nodes = [
       { fieldLabel: 'Mandato (nome do caso)', fieldType: 'text', requiredField: true },
       { fieldLabel: 'Arquivos', fieldType: 'file', multipleFiles: true, requiredField: true },
     ] },
-  }, 0, 400),
+  }),
 
   node('Upsert Caso (Postgres)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
     options: { queryReplacement: "={{ [$json['Mandato (nome do caso)']] }}" },
-  }, 200, 400, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
-  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }, 400, 400),
+  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }),
 
-  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400, CODE_CONTINUA),
+  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, CODE_CONTINUA),
 
-  node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }, 700, 260),
+  node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }),
 
   // O CAMINHO DA RECUSA — três nós, e cada um existe por um motivo.
   //
@@ -654,19 +1092,31 @@ const nodes = [
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
       { leftValue: '={{ $json.orcamento_cabe }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
-  }, 760, 260),
+  }),
 
   node('Registrar Recusa', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, null) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $('Intake (Form)').first().json['Mandato (nome do caso)'], 'orcamento', $json.orcamento_mensagem] }}" },
-  }, 900, 140, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Abortar Lote', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems',
     jsCode: `throw new Error($input.first().json.orcamento_mensagem || 'Lote recusado pelo orcamento.');`,
-  }, 1060, 140),
-  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400, CODE_CONTINUA),
+  }),
+  // CAMADA 1 — o texto do PDF lido na própria instância, antes de qualquer
+  // chamada. Nó NATIVO do n8n; não manda nada para fora e não custa nada.
+  //
+  // `onError: continueRegularOutput` é o que torna a adição segura: PDF sem
+  // camada de texto (escaneado, que é o caso em que este nó falha) segue o
+  // caminho de sempre — o documento vai como imagem e as camadas 2 e 3 se calam
+  // para ele. O pior caso desta mudança é o comportamento de ontem, nunca um
+  // lote perdido.
+  node('Extrair Texto', 'n8n-nodes-base.extractFromFile', 1, {
+    operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true },
+  }, { onError: 'continueRegularOutput' }),
+  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, CODE_CONTINUA),
+  node('Medir Documento', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_MEDIR_DOCUMENTO }, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
   // ⚠️ DESABILITADO (2026-07-17): bug de longa data do node HTTP Request do
@@ -690,15 +1140,15 @@ const nodes = [
       { name: 'apikey', value: 'COLE_A_SERVICE_ROLE_KEY_AQUI' },
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data',
-  }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } }, disabled: true }),
+  }, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } }, disabled: true }),
 
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
       { leftValue: '={{ $json.precisa_fallback_openai }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
-  }, 1000, 300),
+  }),
 
-  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, 1200, 200, CODE_CONTINUA),
+  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, CODE_CONTINUA),
 
   // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
@@ -710,9 +1160,28 @@ const nodes = [
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
     options: OPENAI_BATCHING,
-  }, 1400, 200, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200, CODE_CONTINUA),
+  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, CODE_CONTINUA),
+
+  // JUNTA OS DOIS RAMOS DO `Precisa Fallback?` — e existe porque a ausência dele
+  // custou 19 dos 35 documentos do "Teste V45 - Canastra".
+  //
+  // Antes, `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam AMBOS
+  // para o `Registrar Documento`: duas conexões CRUAS no MESMO input. O n8n não
+  // garante uma execução por conexão nesse arranjo — no V45 só o ramo do fallback
+  // propagou, e os 19 documentos do ramo direto (justamente os centrais: Balanço,
+  // DRE, DFC, DMPL, DVA, balancetes, razão, faturamento) desapareceram ENTRE
+  // `Registrar Documento` e `Gravar Campos`. Zero linha, zero evento de extração,
+  // zero pendência — o dado não foi extraído errado, ele nunca foi pedido.
+  //
+  // O Merge em `append` é a resposta canônica do n8n para convergência: uma
+  // execução, um lote com os itens dos dois ramos, uma cadeia linear de
+  // `pairedItem` rio abaixo. É o que devolve a corrente única que o grafo
+  // presumia ter.
+  node('Juntar Ramos', 'n8n-nodes-base.merge', 3, {
+    mode: 'append', numberInputs: 2,
+  }),
 
   // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
   // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
@@ -720,30 +1189,44 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null] }}" },
-  }, 1850, 400, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_recomputar_completude($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
-  }, 2100, 560, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
-  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300, CODE_CONTINUA),
+  node('Recompor Contexto', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_RECOMPOR_CONTEXTO,
+  }, CODE_CONTINUA),
 
+  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, CODE_CONTINUA),
+
+  // CAMADA 2 — um item por BLOCO. Vê o lote inteiro porque é fan-out (N → M).
+  node('Fatiar Extracao', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_FATIAR_EXTRACAO,
+  }, CODE_CONTINUA),
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
     options: OPENAI_BATCHING_EXTRACAO,
-  }, 2300, 300, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300, CODE_CONTINUA),
+  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, CODE_CONTINUA),
 
+  // CAMADA 3 — junta os blocos de volta em UM item por documento e confere a
+  // cobertura. Daqui para a frente o grafo é idêntico ao de sempre: um item por
+  // documento, com `campos` e `falha_motivo`.
+  node('Juntar Blocos', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_JUNTAR_BLOCOS,
+  }, CODE_CONTINUA),
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text) as n_campos',
-    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null] }}" },
-  }, 2700, 300, { credentials: PG_CRED, ...PG_RETRY }),
+    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos',
+    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null] }}" },
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
   // tipo/período/legibilidade só CONFEREM contra o que já está registrado —
@@ -754,8 +1237,8 @@ const nodes = [
   node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
-    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id, $('Parse Extracao').item.json.documento_versao_id, $('Parse Extracao').item.json.diagnostico.entidade, $('Parse Extracao').item.json.diagnostico.tipo_confirma, $('Parse Extracao').item.json.diagnostico.tipo_sugerido, $('Parse Extracao').item.json.diagnostico.periodo_tipo, $('Parse Extracao').item.json.diagnostico.periodo_referencia, $('Parse Extracao').item.json.diagnostico.legibilidade, $('Parse Extracao').item.json.diagnostico.nota_legibilidade, $('Parse Extracao').item.json.diagnostico.resumo, $('Parse Extracao').item.json.diagnostico.justificativa] }}" },
-  }, 2900, 300, { credentials: PG_CRED, ...PG_RETRY }),
+    options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null] }}" },
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
   // documento recém-extraído (docs/04). Só precisa do documento_id — a função
@@ -765,8 +1248,26 @@ const nodes = [
   node('Reconciliar (Classe A)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
-    options: { queryReplacement: "={{ [$('Registrar Documento').item.json.r.documento_id] }}" },
-  }, 3100, 300, { credentials: PG_CRED, ...PG_RETRY }),
+    options: { queryReplacement: '={{ [$json.documento_id] }}' },
+  }, { credentials: PG_CRED, ...PG_RETRY }),
+
+  // O custo do lote em UM painel, no fim da cadeia. `runOnceForAllItems` porque
+  // a pergunta é do LOTE, não do documento — e `onError` porque um resumo que
+  // derruba o lote que ele resume seria a pior troca possível.
+  node('Resumo de Custo', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_RESUMO_CUSTO,
+  }, { onError: 'continueRegularOutput' }),
+
+  // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
+  // se TODO documento registrado passou pela extração. As três camadas de
+  // cobertura medem o que voltou de uma chamada FEITA; nenhuma delas vê a chamada
+  // que não aconteceu — e foi assim que o V45 entregou 16 de 35 documentos com o
+  // checklist verde. Roda uma vez por lote, não gasta IA, e a saída (`lote_integro`)
+  // é o número que decide se a rodada vale.
+  node('Conferir Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery', query: 'select fn_conferir_lote($1::uuid) as resultado',
+    options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 ];
 
 const connections = {
@@ -784,27 +1285,45 @@ const connections = {
   ] },
   'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
   // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
+  // O `Extrair Texto` entra AQUI, e não antes do preparo: neste ponto o binário
+  // ainda existe (o preparo o repassa) e o `content_part` já carrega o arquivo em
+  // base64 dentro do json — então o fato de ele descartar o binário deixa de ter
+  // consequência. O `Medir Documento` logo depois recompõe o contexto lendo o
+  // `Preparar Conteudo`, que É ancestral dele (um ramo irmão não seria).
   'Preparar Conteudo': { main: [[
     { node: 'Upload Storage', type: 'main', index: 0 },
-    { node: 'Precisa Fallback?', type: 'main', index: 0 },
+    { node: 'Extrair Texto', type: 'main', index: 0 },
   ]] },
+  'Extrair Texto': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
+  'Medir Documento': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
+  // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas
+  // conexões cruas no mesmo input, que é o que comeu 19 documentos no V45.
   'Precisa Fallback?': { main: [
-    [{ node: 'Montar Req Classif', type: 'main', index: 0 }],   // true
-    [{ node: 'Registrar Documento', type: 'main', index: 0 }],  // false
+    [{ node: 'Montar Req Classif', type: 'main', index: 0 }],  // true  → classifica por conteúdo
+    [{ node: 'Juntar Ramos', type: 'main', index: 1 }],        // false → direto para o Merge
   ] },
   'Montar Req Classif': { main: [[{ node: 'OpenAI Classificar', type: 'main', index: 0 }]] },
   'OpenAI Classificar': { main: [[{ node: 'Parse OpenAI Classif', type: 'main', index: 0 }]] },
-  'Parse OpenAI Classif': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
+  'Parse OpenAI Classif': { main: [[{ node: 'Juntar Ramos', type: 'main', index: 0 }]] },
+  'Juntar Ramos': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
   'Registrar Documento': { main: [[
     { node: 'Recomputar Completude', type: 'main', index: 0 },
-    { node: 'Montar Req Extracao', type: 'main', index: 0 },
+    { node: 'Recompor Contexto', type: 'main', index: 0 },
   ]] },
-  'Montar Req Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
+  'Recompor Contexto': { main: [[{ node: 'Montar Req Extracao', type: 'main', index: 0 }]] },
+  'Montar Req Extracao': { main: [[{ node: 'Fatiar Extracao', type: 'main', index: 0 }]] },
+  'Fatiar Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
-  'Parse Extracao': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
+  'Parse Extracao': { main: [[{ node: 'Juntar Blocos', type: 'main', index: 0 }]] },
+  'Juntar Blocos': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
   'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
+  'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
+  'Resumo de Custo': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
 };
+
+// O canvas é desenhado a partir do grafo, nunca à mão (ver n8n/layout.mjs).
+posicionar(nodes, connections);
 
 const workflow = {
   name: 'Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',

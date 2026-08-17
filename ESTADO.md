@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0111_linha_exigida_por_tipo.sql` |
+| **Última migration** | `db/migrations/0113_linha_exigida_por_tipo.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 194 · export 529 · e2e 46 · banco (56 migrations do zero + testes SQL) |
+| **Suítes** | n8n 263 · export 529 · e2e 46 · banco (56 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -26,7 +26,7 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 | | Estado |
 |---|---|
 | Orçamento | estima **US$ 1,88** (era US$ 2,46, e US$ 11,40 no estimador plano) → **passa** |
-| Gasto real esperado | **~US$ 1,33** — 44% do teto de US$ 3 |
+| Gasto real esperado | **~US$ 1,25** — 42% do teto de US$ 3 (era 2,23 antes do agrupamento) |
 | Timeout do n8n | **desativado** (conferido pelo dono em 11/08) |
 | Duração | **~23 minutos** (33s por extração no Tier 1) |
 
@@ -39,9 +39,96 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 
 Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
 
-**O que trazer de volta:** o custo REAL da OpenAI (Usage do dia — é a primeira medição de verdade
-que este projeto terá, e é com ela que `CUSTO_POR_MB_USD` se recalibra), quantos dos 38 chegaram, e
-o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
+**O que trazer de volta:** a saída do nó **`Resumo de Custo`** (último do canvas) — ela traz o custo
+real do lote, o que o orçamento estimou e os **tokens de saída por linha**, que é o número com que
+`CUSTO_POR_MB_USD` e o modelo de saída se recalibram. Mais: quantos dos 38 chegaram, e o que a
+reconciliação abriu — em especial o erro plantado de **R$ 240 mil na planilha de mútuos**.
+
+### O buraco que a rodada completa abriu — e as três camadas que o fecham
+
+A rodada do `book-canastra` (35 documentos, 21 min, US$ 0,71, no workflow ANTIGO) respondeu o custo e
+abriu outra coisa: **das 2.893 células de valor dos PDFs, chegaram ao banco 1.139 — 39%**. Duas
+famílias: 5 documentos TRUNCARAM (teto de 16.384 tokens de saída do gpt-4o; `01_Balanco` sozinho pede
+~20.900) e o resto veio pela metade **em silêncio** (`17_Livro_Razao`: 99 de 461, sem uma pendência).
+
+O `.xlsx` da modelagem exportado dessa rodada passa em **9 de 10** itens do auditor; o único reprovado
+é o balanço não fechar por 40.169 — que é o buraco da extração chegando ao arquivo entregue.
+
+Três camadas, no `n8n/lib/cobertura.mjs` e no grafo:
+
+| | O que faz | Onde |
+|---|---|---|
+| **1. Medir antes de chamar** | lê a camada de texto do PDF na instância (sem IA, sem custo) e conta as linhas com número | nó `Extrair Texto` |
+| **2. Fatiar** | acima de 60% do teto, um item por bloco de ≤234 células, cada um com o TEXTO da primeira e última linha da faixa como âncora | nó `Fatiar Extracao` |
+| **3. Guarda de cobertura** | compara o que voltou com o que o documento tem; abaixo de 60% abre pendência com os dois números | nó `Juntar Blocos` |
+
+No `book-canastra`: 38 documentos → **41 chamadas** de extração, 3 fatiados. Custo projetado com o
+dado INTEIRO: **~US$ 1,4** (era 0,71 com 39% do dado) — menos da metade do teto.
+
+> **Corrigido na execução 6164 (13/08, mesmo dia):** o fan-out corta a cadeia de `pairedItem` do
+> n8n, e toda expressão `$('Outro Nó').item` rio abaixo virou `undefined` — os nós Postgres
+> receberam "undefined" em Query Parameters. Agora `Fatiar Extracao` e `Juntar Blocos` declaram
+> `pairedItem`, os dois ids viajam com o item, e `Gravar Campos`/`Registrar Diagnostico`/`Reconciliar`
+> leem do PRÓPRIO item. **Quem for reimportar precisa da versão com essa correção.**
+>
+> **O que a camada 3 promete, com precisão:** ela não impede o modelo de pular uma linha. Impede que
+> isso seja silencioso. E o `Extrair Texto` tem `onError: continue` — PDF escaneado não tem camada de
+> texto, o nó falha nele, o documento segue como imagem e as camadas 2 e 3 se calam. **O pior caso da
+> mudança é o comportamento de ontem.**
+
+### A rodada de 14/08 com o agrupamento: cobertura 39% → 58%
+
+**1.683 linhas gravadas** contra 1.139 (+48%), ainda **sem** as camadas 2 e 3 (elas estavam
+desligadas: a referência a ramo irmão não resolvia). O ganho é todo do agrupamento, e o maior efeito
+foi o fim do truncamento nos dois maiores documentos:
+
+| Documento | células | antes | agora |
+|---|---:|---:|---:|
+| `01_Balanco_..._2025x2024x2023` | 326 | **0** | **281 (86%)** |
+| `35_Demonstracoes_Contabeis_...` | 308 | **0** | **282 (92%)** |
+| `13/14_Balanco_COMBINADO` (8-9 colunas de empresa) | 70 | 57 | 57-64 (81-91%) |
+| `17_Livro_Razao_Fornecedores` | 461 | 99 | **1** ← ver abaixo |
+
+**O livro razão caiu para 1 linha, e o guarda de desalinhamento explicou por quê:** o documento tem
+**três colunas de valor** (Débito, Crédito, Saldo), o modelo devolveu três valores por lançamento e
+declarou `cols` VAZIA — 98 de 99 contas descartadas. O guarda agiu certo; faltava o prompt dizer que
+coluna de valor **não é só período e empresa**. Corrigido em 14/08, com os cinco casos nomeados
+(razão, balancete, aging, estoques, mapa de dívida) e a consequência escrita.
+
+### A régua da cobertura estava na UNIDADE ERRADA (corrigido em 14/08)
+
+A guarda comparava **linhas com dígito** (do texto) com **pares conta × coluna** (do banco). São
+unidades diferentes, e num documento comparativo a razão passa de 100%: o `02_DRE` deu 91 pares
+contra 46 linhas = **198%**. A guarda ficava cega justamente onde há mais a perder.
+
+Agora as duas pontas estão em CONTAS:
+
+| | |
+|---|---|
+| régua | **linhas de conta** — termina em valor e tem rótulo; fora cabeçalho de ano, CNPJ, data, página, CRC/CPF (7 de 46 no `02_DRE`) |
+| medida | **contas distintas** gravadas |
+| `02_DRE` | ~30 de 39 = **77%** — ele ESTÁ incompleto, e a régua antiga dizia 198% |
+
+O limiar subiu de 0,60 para **0,85** porque o alvo é cobertura total: isso vai abrir pendência em
+documentos que antes passavam, e é o objetivo. **É o próximo número a recalibrar** — ele tem um ponto
+de medição hoje, e a próxima rodada dá 35.
+
+### O custo, medido e projetado (13/08/2026)
+
+A primeira fatura real veio dos 14 documentos do `book-vertentes`: **US$ 0,90**, com alvo de US$ 0,50.
+84% era saída de extração, a ~64 tokens por célula de valor — 45% acima do que este repositório
+supunha. A saída passou a ser **agrupada** (uma seção por grupo, colunas declaradas uma vez, conta
+escrita uma vez com um valor por coluna) e o `medir-custo-book.mjs` projeta:
+
+| Book | formato plano | agrupado |
+|---|---:|---:|
+| `book-vertentes` (14 docs) | US$ 0,857 (fatura real: **0,90**) | **US$ 0,471** |
+| `book-canastra` (38 docs) | US$ 2,226 | **US$ 1,252** |
+
+~~**Aberto:** o livro razão projeta 109% do teto de saída mesmo agrupado.~~ **Fechado no mesmo dia
+pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum deles chega perto do teto. O
+`medir-custo-book.mjs` continua avisando, nomeando o arquivo, se algum documento voltar a passar de
+80% do teto numa chamada — a guarda fica de pé mesmo depois de a causa conhecida sumir.
 
 ## O que só o dono pode fazer
 
@@ -51,11 +138,12 @@ o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na
    select proname from pg_proc
     where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
    ```
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 13/08 (classificação em
-   `gpt-4o-mini`, peso da 2ª chamada no orçamento, versão carimbada na recusa), e a execução de
-   12/08 provou que o que está lá dentro ainda é de julho. **Conferência de 5 segundos depois de
-   importar:** abrir o nó `Orcamento do Lote` e procurar `gpt-4o-mini` no `Montar Req Classif`, ou
-   rodar e ver `orcamento_versao: "v3 (2026-08-13)"` na saída do nó.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou três vezes em 13/08 (classificação em
+   `gpt-4o-mini`, saída agrupada, e as três camadas de cobertura). **Conferência de 5 segundos depois
+   de importar:** o canvas tem **27 nós**; procure `Extrair Texto` + `Medir Documento` (na sequência,
+   depois do `Preparar Conteudo`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta direita,
+   `Resumo de Custo` — rodando, a saída dele traz a **cobertura do lote**. Se `cobertura_do_lote`
+   vier `null`, a camada 1 não mediu e as outras duas estão desligadas.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
@@ -67,6 +155,13 @@ o que a reconciliação abriu — em especial o erro plantado de **R$ 240 mil na
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:
 
+- **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
+  blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
+  contagem de linhas determinística. Fatia própria.
+- **A entidade sai poluída com o período** — "Canastra Industria 2025x2024x2023" na rodada real, e é
+  o que gerou 15 das 22 pendências de revisão. Correção pequena em `parseEntidade`.
+- **Dedup por hash** (não pagar reextração do mesmo arquivo): a `0026` descreve o que falta —
+  *fingerprint* de prompt+modelo na versão e curto-circuito no grafo.
 - **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o
   gerador e o orçamento, não a ingestão sobre dado sujo. É a maior lacuna de cobertura viva.
 - **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma

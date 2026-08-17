@@ -1,4 +1,4 @@
--- Testes de "linha exigida por tipo de documento" (db/migrations/0111).
+-- Testes de "linha exigida por tipo de documento" (db/migrations/0113).
 -- Rodar via db/test/run.sh (que aplica as migrations antes).
 --
 -- As propriedades travadas:

@@ -28,6 +28,7 @@
 // e registrar metade — a doutrina deste projeto (docs/01) manda o humano
 // decidir, e para decidir ele precisa primeiro SABER, que é o que faltava.
 
+import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -84,48 +85,56 @@ return [{ json: {
 } }];
 `.trim();
 
+// `position` é [0, 0] em todos: quem desenha o canvas é `posicionar()`
+// (n8n/layout.mjs), a partir das conexões, logo abaixo.
+const nodes = [
+  {
+    parameters: {},
+    id: 'erro-trigger',
+    name: 'Quando algo falha',
+    type: 'n8n-nodes-base.errorTrigger',
+    typeVersion: 1,
+    position: [0, 0],
+  },
+  {
+    parameters: { mode: 'runOnceForAllItems', jsCode: CODE_EXTRAIR },
+    id: 'erro-extrair',
+    name: 'Extrair Causa',
+    type: 'n8n-nodes-base.code',
+    typeVersion: 2,
+    position: [0, 0],
+  },
+  {
+    parameters: {
+      operation: 'executeQuery',
+      query: 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, $5::jsonb) as r',
+      options: {
+        queryReplacement:
+          '={{ [$json.caso_id, $json.mandato, $json.etapa, $json.mensagem, JSON.stringify($json.detalhe)] }}',
+      },
+    },
+    id: 'erro-gravar',
+    name: 'Registrar Falha',
+    type: 'n8n-nodes-base.postgres',
+    typeVersion: 2.5,
+    position: [0, 0],
+    credentials: PG_CRED,
+    // Sem retry: se o banco também estiver fora, insistir aqui só atrasa. A
+    // falha continua visível no n8n, que é o degrau de baixo desta escada.
+  },
+];
+
+const connections = {
+  'Quando algo falha': { main: [[{ node: 'Extrair Causa', type: 'main', index: 0 }]] },
+  'Extrair Causa': { main: [[{ node: 'Registrar Falha', type: 'main', index: 0 }]] },
+};
+
+posicionar(nodes, connections);
+
 const workflow = {
   name: 'Oria — Reportar Erros',
-  nodes: [
-    {
-      parameters: {},
-      id: 'erro-trigger',
-      name: 'Quando algo falha',
-      type: 'n8n-nodes-base.errorTrigger',
-      typeVersion: 1,
-      position: [0, 300],
-    },
-    {
-      parameters: { mode: 'runOnceForAllItems', jsCode: CODE_EXTRAIR },
-      id: 'erro-extrair',
-      name: 'Extrair Causa',
-      type: 'n8n-nodes-base.code',
-      typeVersion: 2,
-      position: [240, 300],
-    },
-    {
-      parameters: {
-        operation: 'executeQuery',
-        query: 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, $5::jsonb) as r',
-        options: {
-          queryReplacement:
-            '={{ [$json.caso_id, $json.mandato, $json.etapa, $json.mensagem, JSON.stringify($json.detalhe)] }}',
-        },
-      },
-      id: 'erro-gravar',
-      name: 'Registrar Falha',
-      type: 'n8n-nodes-base.postgres',
-      typeVersion: 2.5,
-      position: [480, 300],
-      credentials: PG_CRED,
-      // Sem retry: se o banco também estiver fora, insistir aqui só atrasa. A
-      // falha continua visível no n8n, que é o degrau de baixo desta escada.
-    },
-  ],
-  connections: {
-    'Quando algo falha': { main: [[{ node: 'Extrair Causa', type: 'main', index: 0 }]] },
-    'Extrair Causa': { main: [[{ node: 'Registrar Falha', type: 'main', index: 0 }]] },
-  },
+  nodes,
+  connections,
   settings: { executionOrder: 'v1' },
 };
 

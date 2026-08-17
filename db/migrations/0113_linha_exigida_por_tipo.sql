@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 0111 — A LINHA EXIGIDA por tipo de documento vira DADO, e o
+-- Migration 0113 — A LINHA EXIGIDA por tipo de documento vira DADO, e o
 -- Portão 1 passa a cobrá-la pelo nome
 --
 -- (Nasceu como "0108" na entrega aprovada; 0108–0110 entraram na main antes
@@ -270,7 +270,7 @@ declare
   v_status_atual caso_status;
   v_novo_status caso_status;
   v_pend_id uuid;
-  -- 0111: passo (2b)
+  -- 0113: passo (2b)
   v_ex record;
   v_motivos_ausentes text[] := '{}';
   v_linhas_ausentes jsonb := '[]'::jsonb;
@@ -337,7 +337,7 @@ begin
     end if;
   end loop;
 
-  -- ----- (2b) 0111: tipo presente COM conteúdo, mas sem uma LINHA exigida ----
+  -- ----- (2b) 0113: tipo presente COM conteúdo, mas sem uma LINHA exigida ----
   -- É o buraco entre a 0036 e as reconciliações: o documento chegou e rendeu
   -- linhas, só que NÃO as linhas de que o resto do sistema depende. Até aqui,
   -- isso só aparecia como `precondicao_nao_satisfeita` — mole, sobrepujável e
@@ -424,7 +424,7 @@ begin
     'portao1_ok', array_length(v_faltantes,1) is null,
     'faltantes', to_jsonb(v_faltantes),
     'sem_conteudo', to_jsonb(v_sem_conteudo),
-    -- 0111: as linhas exigidas que faltam saem no payload (nó do n8n e portal
+    -- 0113: as linhas exigidas que faltam saem no payload (nó do n8n e portal
     -- mostram sem refazer a consulta). `pronto_para_revisao` NÃO muda:
     -- endurecê-lo com linha exigida é decisão de produto do dono, não efeito
     -- colateral desta migration.
@@ -437,7 +437,7 @@ end;
 $$;
 
 comment on function fn_recomputar_completude(uuid) is
-  'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0111 (passo 2b: tipo com conteúdo mas sem '
+  'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113 (passo 2b: tipo com conteúdo mas sem '
   'uma LINHA exigida — pendência linha_exigida_ausente nomeando a linha e o depende_de; severidade '
   'por linha é do dono, default importante/sobrepujável). `portao1_ok` segue significando "chegou '
   'tudo"; `pronto_para_revisao` segue chegou tudo E tem conteúdo.';
@@ -671,36 +671,36 @@ declare
 begin
   select count(*) into v_n from taxonomia_linha_exigida where origem = 'codigo' and ativo;
   if v_n <> 11 then
-    raise exception '0111: seed de origem ''codigo'' devia ter 11 exigências (3 BALANCO + 3 COMBINADO + 1 FLUXO + 2 DRE + 1 FAT24M + 1 MAPA), achou %', v_n;
+    raise exception '0113: seed de origem ''codigo'' devia ter 11 exigências (3 BALANCO + 3 COMBINADO + 1 FLUXO + 2 DRE + 1 FAT24M + 1 MAPA), achou %', v_n;
   end if;
 
   select count(*) into v_n from taxonomia_linha_exigida where origem = 'proposta' and ativo;
   if v_n <> 3 then
-    raise exception '0111: seed de origem ''proposta'' devia ter 3 exigências (MUTUOS, FAT_INTRAGRUPO, CONTRATO_SOCIAL), achou %', v_n;
+    raise exception '0113: seed de origem ''proposta'' devia ter 3 exigências (MUTUOS, FAT_INTRAGRUPO, CONTRATO_SOCIAL), achou %', v_n;
   end if;
 
   select count(*) into v_n from taxonomia_linha_exigida e
   where e.checagem = 'linha_por_termos'
     and not exists (select 1 from taxonomia_linha_localizador l where l.exigencia_id = e.id);
   if v_n <> 0 then
-    raise exception '0111: % exigência(s) por termos SEM localizador — exigência que não se procura não se satisfaz nunca', v_n;
+    raise exception '0113: % exigência(s) por termos SEM localizador — exigência que não se procura não se satisfaz nunca', v_n;
   end if;
 
   -- Política é do dono: a migration não pode ter definido nenhuma.
   select count(*) into v_n from taxonomia_linha_exigida
   where severidade is not null or sobrepujavel is not null;
   if v_n <> 0 then
-    raise exception '0111: % exigência(s) com política definida no seed — severidade/sobrepujavel são decisão do dono, nascem NULL', v_n;
+    raise exception '0113: % exigência(s) com política definida no seed — severidade/sobrepujavel são decisão do dono, nascem NULL', v_n;
   end if;
 
   -- Caso sem documento: nenhuma exigência é cobrada (ausência de tipo é
   -- item_faltante da 0006, não linha exigida).
-  insert into caso (id, nome, produto) values (v_caso, 'VERIF 0111', 'reestruturacao');
+  insert into caso (id, nome, produto) values (v_caso, 'VERIF 0113', 'reestruturacao');
   select count(*) into v_n from fn_exigencias_do_caso(v_caso);
   if v_n <> 0 then
-    raise exception '0111: caso sem documento devolveu % exigência(s) — a cobrança é só para tipo presente COM conteúdo', v_n;
+    raise exception '0113: caso sem documento devolveu % exigência(s) — a cobrança é só para tipo presente COM conteúdo', v_n;
   end if;
   delete from caso where id = v_caso;
 
-  raise notice '0111 OK — 11 exigências de código + 3 propostas, todas com localizador, política toda NULL (do dono), caso vazio não cobra nada';
+  raise notice '0113 OK — 11 exigências de código + 3 propostas, todas com localizador, política toda NULL (do dono), caso vazio não cobra nada';
 end $$;

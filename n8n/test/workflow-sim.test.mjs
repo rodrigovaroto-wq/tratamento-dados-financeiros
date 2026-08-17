@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO } from '../lib/custo.mjs';
@@ -50,7 +50,30 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
   };
   const $ = (ref) => {
     if (!(ref in refs)) throw new Error(`Referência não mockada no teste: $('${ref}') — o node "${name}" depende dela`);
-    return { first: () => refs[ref], item: refs[ref] };
+    // `.all()` existe porque um nó pode olhar TODOS os itens que passaram por
+    // outro nó — é assim que o `Resumo de Custo` soma o lote. Mock em array
+    // significa "vários itens"; mock em objeto continua sendo um item só.
+    const v = refs[ref];
+    // `{ runs: [[...], [...]] }` simula um nó que EXECUTOU MAIS DE UMA VEZ — o que
+    // acontece com toda a cadeia depois do IF `Precisa Fallback?`, porque o n8n
+    // roda o grafo uma vez por ramo. `.all(branch, run)` estoura quando a
+    // execução não existe, e é assim que o código sabe onde parar.
+    if (v && !Array.isArray(v) && Array.isArray(v.runs)) {
+      return {
+        first: () => v.runs[0][0],
+        item: v.runs[0][itemIndex],
+        all: (_b, run = 0) => {
+          if (run >= v.runs.length) throw new Error(`execução ${run} não existe`);
+          return v.runs[run];
+        },
+      };
+    }
+    const lista = Array.isArray(v) ? v : [v];
+    return {
+      first: () => lista[0],
+      item: Array.isArray(v) ? lista[itemIndex] : v,
+      all: (_b, run = 0) => { if (run > 0) throw new Error(`execução ${run} não existe`); return lista; },
+    };
   };
   const $json = item ? item.json : undefined;
   const thisContext = {
@@ -120,6 +143,19 @@ async function chainFile(idx) {
   const classificado = await run('Classificar Nome', { item: listado, refs: REFS_BASE, itemIndex: idx, binaryStore: lote });
   const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE, itemIndex: idx, binaryStore: lote });
   return { listado, classificado, preparado };
+}
+
+// Emula `Registrar Documento` (Postgres, que SUBSTITUI o item) + `Recompor Contexto`
+// (que devolve o contexto por ÍNDICE contra a saída do `Juntar Ramos`). Passa pelo
+// nó de recomposição DE VERDADE: é ele que reencontra o `content_part` sem
+// pareamento, e testar a cadeia sem ele deixaria de fora justamente o passo que o
+// Teste V45 provou faltar.
+async function recomporPara(preparado, documento_id, documento_versao_id) {
+  const registrado = { json: { r: { documento_id, documento_versao_id } } };
+  const out = await run('Recompor Contexto', {
+    items: [registrado], refs: { 'Juntar Ramos': preparado },
+  });
+  return out[0];
 }
 
 test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o binário', async () => {
@@ -205,8 +241,13 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   assert.equal(parsed.json.entidade, 'Empresa X Ltda');
   assert.equal(parsed.json.confianca, 0.91);
   assert.equal(parsed.json.caso_id, 'caso-uuid-1', 'contexto recomposto');
-  assert.equal(parsed.json.openai_body, undefined, 'campos pesados removidos');
-  assert.equal(parsed.json.content_part, undefined, 'campos pesados removidos');
+  assert.equal(parsed.json.openai_body, undefined, 'o corpo da chamada de classificação sai');
+  // O `content_part` FICA, e a mudança é deliberada: era o descarte dele aqui que
+  // obrigava o `Montar Req Extracao` a reencontrar o PDF por pareamento, através
+  // da convergência dos dois ramos — o caminho que perdeu 19 dos 35 documentos no
+  // Teste V45. O peso volta a sair no `Fatiar Extracao`, depois de o base64 já ter
+  // sido copiado para dentro do corpo da chamada de extração.
+  assert.ok(parsed.json.content_part, 'o conteúdo continua no item, para a extração não precisar parear');
 });
 
 test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num enum (caso real: virou "BAL" sem isso)', async () => {
@@ -261,16 +302,33 @@ test('Parse OpenAI Classif: 429 da OpenAI nomeia a CAUSA na justificativa do doc
 
 test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagnóstico+extração', async () => {
   const { preparado } = await chainFile(1);
-  // Saída do Registrar Documento (Postgres): linha {r: {ids}}
+  // Saída do Registrar Documento (Postgres): linha {r: {ids}} — e o item de
+  // ENTRADA dele (que o Postgres substituiu) volta pelo `Recompor Contexto`, por
+  // ÍNDICE contra a saída do `Juntar Ramos`. É esse passo que devolve o
+  // `content_part` à cadeia sem depender de pareamento.
   const registrado = { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } };
-  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const recompostoLista = await run('Recompor Contexto', {
+    items: [registrado], refs: { 'Juntar Ramos': preparado },
+  });
+  const recomposto = recompostoLista[0];
+  assert.equal(recomposto.json.documento_versao_id, 'ver-1');
+  assert.equal(recomposto.json.recompor_motivo, null, 'contagens batem: sem motivo de falha');
+  assert.ok(recomposto.json.content_part, 'o conteúdo voltou para o item');
+
+  const req = await run('Montar Req Extracao', { item: recomposto, env: {} });
   assert.equal(req.json.documento_versao_id, 'ver-1');
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
   assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  // O schema do nó é o `extractionSchema()` da fonte, serializado — não mais um
+  // espelho à mão de 2.400 caracteres. Conferir a IGUALDADE é o que impede a
+  // divergência voltar; conferir `pc` dentro de `cols` é o que garante que a
+  // coluna de período (db/migrations/0017) continua sendo pedida.
+  assert.deepEqual(req.json.openai_body.response_format.json_schema, extractionSchema());
   assert.ok(
-    req.json.openai_body.response_format.json_schema.schema.properties.linhas.items.required.includes('pc'),
-    'schema gerado pede pc/periodo_coluna por linha (db/migrations/0017)',
+    req.json.openai_body.response_format.json_schema.schema.properties.grupos
+      .items.properties.cols.items.required.includes('pc'),
+    'schema gerado pede pc/periodo_coluna na coluna (db/migrations/0017)',
   );
   assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
   assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
@@ -310,6 +368,64 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   for (const campo of refsUsadas) {
     assert.ok(campo in parsed.json.diagnostico, `Registrar Diagnostico espera diagnostico.${campo}, que Parse Extracao não produz`);
   }
+});
+
+test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × coluna)', async () => {
+  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', openai_body: {} } };
+  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Vertentes Metalúrgica Ltda.', tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'multi', periodo_referencia: '24,25', legibilidade: 'ok',
+      nota_legibilidade: null, resumo: 'BP comparativo.', justificativa: 'Duas colunas de ano.',
+    },
+    grupos: [
+      {
+        s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+        cols: [{ ec: null, pc: '31/12/2025' }, { ec: null, pc: '31/12/2024' }],
+        l: [{ k: 'Caixa e bancos', vt: ['380', '1.240'], vn: [380, 1240], cf: 0.98 }],
+      },
+      // O subtotal em grupo PRÓPRIO, que é o que a seção canônica por grupo exige.
+      {
+        s: 'Ativo Circulante', sc: 'NAO_CLASSIFICAVEL', op: 1,
+        cols: [{ ec: null, pc: '31/12/2025' }, { ec: null, pc: '31/12/2024' }],
+        l: [{ k: 'Total do Ativo Circulante', vt: ['45.440', '67.878'], vn: [45440, 67878], cf: 0.99 }],
+      },
+    ],
+  }) } }], usage: { prompt_tokens: 12_000, completion_tokens: 3_000 } } };
+  const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
+  assert.equal(out.json.campos.length, 4);
+  assert.deepEqual(out.json.campos.map((c) => [c.chave, c.periodo_coluna, c.valor_num, c.secao_canonica]), [
+    ['Caixa e bancos', '31/12/2025', 380, 'ativo_circulante'],
+    ['Caixa e bancos', '31/12/2024', 1240, 'ativo_circulante'],
+    ['Total do Ativo Circulante', '31/12/2025', 45440, null],
+    ['Total do Ativo Circulante', '31/12/2024', 67878, null],
+  ]);
+  // A escala do documento continua descendo por linha, normalizada.
+  assert.ok(out.json.campos.every((c) => c.unidade === 'milhar' && c.moeda === 'BRL'));
+  assert.deepEqual(out.json.campos.map((c) => c.ordem), [0, 1, 2, 3]);
+  assert.equal(out.json.falha_motivo, null);
+});
+
+test('Parse Extracao (nó real): desalinhamento de coluna vira falha_motivo, não linha adivinhada', async () => {
+  const req = { json: { documento_versao_id: 'ver-10', tipo: 'BALANCO', openai_body: {} } };
+  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    moeda: 'BRL', unidade: 'unidade',
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'multi',
+      periodo_referencia: '24,25', legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'x', justificativa: 'y',
+    },
+    grupos: [{
+      s: 'Ativo Circulante', sc: 'ativo_circulante', op: 1,
+      cols: [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }],
+      l: [{ k: 'Caixa', vt: ['380'], vn: [380], cf: 0.9 }],
+    }],
+  }) } }] } };
+  const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
+  assert.equal(out.json.campos.length, 0, 'não grava meia linha nem inventa null');
+  assert.match(out.json.falha_motivo, /desalinhamento entre colunas e valores/);
+  assert.match(out.json.falha_motivo, /"Caixa"/);
 });
 
 test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHECIDO" literal na pendência)', async () => {
@@ -437,6 +553,40 @@ test('Nós Postgres têm onError+retry — um erro num item não derruba o resto
   }
 });
 
+test('O AGRUPAMENTO corta a saída onde as chaves curtas não chegaram (a metade que faltava)', () => {
+  // As chaves curtas (abaixo) encurtaram o NOME do contexto repetido; o formato
+  // agrupado para de REPETI-LO. Medido no book de 14 documentos do dono: 64
+  // tokens por linha, dos quais ~30 eram contexto idêntico à linha anterior.
+  const cols = [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }];
+  const contas = ['Caixa e equivalentes de caixa', 'Duplicatas a receber de clientes',
+    '(-) Provisão para créditos de liquidação duvidosa', 'Estoques', 'Tributos a recuperar'];
+
+  // Formato plano: uma entrada por (conta × coluna), cada uma reescrevendo os
+  // cinco campos de contexto E o rótulo da conta.
+  const plano = contas.flatMap((k) => cols.map((c) => ({
+    s: 'Ativo Circulante', sc: 'ativo_circulante', ec: c.ec, pc: c.pc, k,
+    vt: '1.234.567,89', vn: 1234567.89, op: 3, cf: 0.95,
+  })));
+  // Formato agrupado: contexto uma vez, colunas uma vez, conta uma vez.
+  const agrupado = [{
+    s: 'Ativo Circulante', sc: 'ativo_circulante', op: 3, cols,
+    l: contas.map((k) => ({ k, vt: ['1.234.567,89', '1.234.567,89'], vn: [1234567.89, 1234567.89], cf: 0.95 })),
+  }];
+
+  const antes = JSON.stringify(plano).length;
+  const depois = JSON.stringify(agrupado).length;
+  const reducao = (1 - depois / antes) * 100;
+  assert.ok(reducao >= 45, `esperava >=45% de redução no documento comparativo, obteve ${reducao.toFixed(1)}%`);
+
+  // E os dois formatos têm de produzir EXATAMENTE as mesmas linhas no banco —
+  // economia que muda o dado gravado não é economia, é perda.
+  const doAgrupado = achatarGrupos(agrupado).linhas;
+  assert.equal(doAgrupado.length, plano.length);
+  assert.deepEqual(
+    doAgrupado.map((l) => [l.secao, l.secao_canonica, l.periodo_coluna, l.chave, l.valor_num, l.origem_pagina, l.confianca]),
+    plano.map((l) => [l.s, l.sc, l.pc, l.k, l.vn, l.op, l.cf]));
+});
+
 test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos densos truncavam antes)', () => {
   // Achado em produção (sessão 7 cont.¹¹): os 3 documentos que truncaram
   // (finish_reason=length) no "teste v18" eram consolidados comparativos
@@ -480,21 +630,113 @@ test('Topologia: o teto de gasto fica entre a classificação por nome e o conte
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   const destinosDePreparar = wf.connections['Preparar Conteudo'].main[0].map((c) => c.node);
-  assert.deepEqual(destinosDePreparar.sort(), ['Precisa Fallback?', 'Upload Storage'].sort());
+  // O `Extrair Texto` entra AQUI (e não antes do preparo): neste ponto o binário
+  // ainda existe e o `content_part` já carrega o arquivo em base64 dentro do
+  // json, então o fato de ele descartar o binário deixa de ter consequência.
+  assert.ok(destinosDePreparar.includes('Extrair Texto'));
+  assert.deepEqual(destinosDePreparar.sort(), ['Extrair Texto', 'Upload Storage'].sort());
   assert.equal(wf.connections['Upload Storage'], undefined, 'Upload não alimenta nenhum node');
+  // A corrente segue pelo `Extrair Texto` → `Medir Documento` → `Precisa Fallback?`.
+  assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Medir Documento']);
+  assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Precisa Fallback?']);
   const destinosDeRegistrar = wf.connections['Registrar Documento'].main[0].map((c) => c.node);
-  assert.deepEqual(destinosDeRegistrar.sort(), ['Montar Req Extracao', 'Recomputar Completude'].sort());
+  assert.deepEqual(destinosDeRegistrar.sort(), ['Recompor Contexto', 'Recomputar Completude'].sort());
+});
+
+// O teste que o "Teste V45 - Canastra" pagou para existir: 19 dos 35 documentos
+// desapareceram entre `Registrar Documento` e `Gravar Campos`, e a causa era
+// topológica — `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam
+// AMBOS para o `Registrar Documento`, duas conexões CRUAS no mesmo input. O n8n
+// não garante uma execução por conexão nesse arranjo, e só o ramo do fallback
+// propagou. Nada mediu isso: extração nunca chamada não deixa rastro em
+// `campo_extraido`, nem em `evento_auditoria`, nem em `pendencia`.
+test('Convergência: nenhum node recebe DUAS conexões cruas no mesmo input', () => {
+  const chegadas = new Map(); // "node:index" → [origens]
+  for (const [origem, conf] of Object.entries(wf.connections)) {
+    for (const ramo of conf.main || []) {
+      for (const c of ramo || []) {
+        const chave = `${c.node}:${c.index ?? 0}`;
+        if (!chegadas.has(chave)) chegadas.set(chave, []);
+        chegadas.get(chave).push(origem);
+      }
+    }
+  }
+  for (const [chave, origens] of chegadas) {
+    assert.equal(origens.length, 1,
+      `"${chave}" recebe ${origens.length} conexões (${origens.join(', ')}) — use um Merge: `
+      + 'convergência crua no mesmo input perdeu 19 de 35 documentos no Teste V45');
+  }
+});
+
+test('Os dois ramos do fallback se juntam num Merge, em inputs DIFERENTES', () => {
+  const merge = wf.nodes.find((n) => n.name === 'Juntar Ramos');
+  assert.ok(merge, 'existe o node Juntar Ramos');
+  assert.equal(merge.type, 'n8n-nodes-base.merge');
+  assert.equal(merge.parameters.mode, 'append',
+    'append: o lote é a UNIÃO dos dois ramos, não um casamento entre eles');
+  assert.equal(merge.parameters.numberInputs, 2);
+
+  // true → classifica por conteúdo; false → direto. Cada um no SEU input.
+  assert.deepEqual(wf.connections['Precisa Fallback?'].main[0].map((c) => c.node), ['Montar Req Classif']);
+  const direto = wf.connections['Precisa Fallback?'].main[1];
+  assert.deepEqual(direto.map((c) => c.node), ['Juntar Ramos']);
+  assert.equal(direto[0].index, 1, 'o ramo direto entra no input 1');
+  const viaIA = wf.connections['Parse OpenAI Classif'].main[0];
+  assert.deepEqual(viaIA.map((c) => c.node), ['Juntar Ramos']);
+  assert.equal(viaIA[0].index ?? 0, 0, 'o ramo da IA entra no input 0');
+
+  assert.deepEqual(wf.connections['Juntar Ramos'].main[0].map((c) => c.node), ['Registrar Documento']);
+});
+
+// A extração não pode depender de pareamento para achar o PDF: o nó Postgres
+// SUBSTITUI o item, e o `$('Preparar Conteudo').item` que devolvia o conteúdo
+// atravessava a convergência dos dois ramos. Agora o `Recompor Contexto` junta
+// por ÍNDICE (com `.all()`, que não usa pairedItem) e o conteúdo viaja no item.
+test('Montar Req Extracao lê o conteúdo do PRÓPRIO item, sem parear com outro nó', () => {
+  const c = code('Montar Req Extracao');
+  assert.ok(c.includes('const prep=$json'), 'o conteúdo vem do próprio item');
+  assert.ok(!c.includes("$('Preparar Conteudo')"),
+    'não pareia com o Preparar Conteudo — foi esse pareamento que perdeu 19 documentos');
+  assert.ok(c.includes('content_part'), 'e recusa montar a chamada sem o arquivo');
+
+  const r = code('Recompor Contexto');
+  assert.ok(r.includes("$('Juntar Ramos').all()"),
+    'a junção usa .all() (lista inteira, sem pairedItem), não .item');
+  // Divergência de contagem tem de ser FALHA DECLARADA: associar o arquivo de um
+  // documento ao id de outro é pior que falhar.
+  assert.ok(r.includes('desalinhado'), 'e declara desalinhamento em vez de adivinhar');
+});
+
+// O Parse da classificação PRESERVA o content_part: era ele que o descartava, e
+// por isso o ramo do fallback dependia de pareamento para reencontrar o PDF.
+test('Parse OpenAI Classif preserva o content_part no item', () => {
+  const c = code('Parse OpenAI Classif');
+  assert.ok(c.includes('const {openai_body, ...item}=src'),
+    'só o openai_body da classificação sai; o content_part fica');
+  assert.ok(!/const \{openai_body, content_part/.test(c),
+    'content_part não pode voltar a ser descartado aqui');
 });
 
 test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no canvas', () => {
   const nomes = wf.nodes.map((n) => n.name);
   for (const n of wf.nodes) {
     if (n.type === 'n8n-nodes-base.code') {
-      // Dois nós legitimamente veem o LOTE inteiro, por motivos diferentes:
-      // `Listar Arquivos` faz fan-out (1 item → N), e `Orcamento do Lote` é N→N
+      // Quatro nós legitimamente veem o LOTE inteiro, por motivos diferentes:
+      // `Listar Arquivos` faz fan-out (1 item → N); `Orcamento do Lote` é N→N
       // mas precisa contar o lote para decidir se ele cabe no teto de gasto —
-      // uma decisão que por definição não existe olhando um item por vez.
-      if (n.name === 'Listar Arquivos' || n.name === 'Orcamento do Lote' || n.name === 'Abortar Lote') {
+      // uma decisão que por definição não existe olhando um item por vez; e
+      // `Resumo de Custo` responde "quanto custou ESTE LOTE", que é a mesma
+      // classe de pergunta na outra ponta da cadeia.
+      // `Fatiar Extracao` e `Juntar Blocos` são as duas pontas do fatiamento: um
+      // documento vira N chamadas e N respostas voltam a ser um documento. Nenhum
+      // dos dois é 1:1 por definição.
+      // `Recompor Contexto` entra nessa lista porque a junção dele é POR ÍNDICE
+      // contra a saída inteira do `Juntar Ramos` (`.all()`) — ele precisa das duas
+      // listas completas para saber se elas têm o mesmo tamanho, e essa é
+      // justamente a conferência que impede associar o PDF de um documento ao id
+      // de outro. Em `runOnceForEachItem` não haveria lista para conferir.
+      if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo',
+        'Fatiar Extracao', 'Juntar Blocos', 'Recompor Contexto'].includes(n.name)) {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -648,8 +890,9 @@ test('Parse Extracao (nó real): escala não contamina linha não-monetária', a
   // lucro por ação não pode marcar essas linhas como "milhar" (mis-escala de
   // 1000x quando o fator for aplicado).
   const { preparado } = await chainFile(1);
-  const registrado = { json: { r: { documento_id: 'doc-9', documento_versao_id: 'ver-9' } } };
-  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const req = await run('Montar Req Extracao', {
+    item: await recomporPara(preparado, 'doc-9', 'ver-9'), env: {},
+  });
   const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
     moeda: 'R$', unidade: 'Em milhares de reais',
     diagnostico: {
@@ -680,12 +923,10 @@ test('prefixo cacheável: o system prompt é IDÊNTICO entre documentos (e vem p
   // cache passa a falhar em cada chamada (custo silenciosamente maior) e o
   // teste quebra. O que varia por documento vive na mensagem de USER.
   const a = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_id: 'd0', documento_versao_id: 'v0' } } },
-    refs: { 'Preparar Conteudo': (await chainFile(0)).preparado }, env: {},
+    item: await recomporPara((await chainFile(0)).preparado, 'd0', 'v0'), env: {},
   });
   const b = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_id: 'd1', documento_versao_id: 'v1' } } },
-    refs: { 'Preparar Conteudo': (await chainFile(1)).preparado }, env: {},
+    item: await recomporPara((await chainFile(1)).preparado, 'd1', 'v1'), env: {},
   });
   const msgA = a.json.openai_body.messages;
   const msgB = b.json.openai_body.messages;
@@ -703,8 +944,16 @@ test('Parse Extracao (nó real): propaga a ORDEM da linha (db/migrations/0027)',
   // v28 continuaria acontecendo em silêncio.
   const parse = wf.nodes.find((n) => n.name === 'Parse Extracao');
   assert.ok(parse, 'nó Parse Extracao não existe');
-  assert.match(parse.parameters.jsCode, /p\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
-    'o mirror não está numerando as linhas pela posição no array');
+  assert.match(parse.parameters.jsCode, /ach\.linhas\.map\(\(l,i\)=>\(\{ordem:i,/,
+    'o nó não está numerando as linhas pela posição de leitura');
+  // O achatamento vem EMBUTIDO da fonte. É o único lugar onde valor e coluna são
+  // associados: um espelho à mão que divergisse aqui gravaria o número de 2024
+  // na coluna de 2025, sem sintoma nenhum.
+  assert.ok(parse.parameters.jsCode.includes(achatarGrupos.toString()),
+    'o achatamento embutido no nó divergiu da fonte em lib/extract.mjs');
+  // E o caminho do formato plano continua no nó, para um JSON velho importado
+  // não virar "zero linhas extraídas" sem explicação.
+  assert.match(parse.parameters.jsCode, /Array\.isArray\(p\.linhas\)/);
 });
 
 // --- Anti-drift: a entidade do nome no nó É a de lib/classifier.mjs -----------
@@ -892,6 +1141,422 @@ test('Parse Extracao mede o custo real da chamada a partir do usage', async () =
   assert.deepEqual(out.json.tokens, { entrada: 10_000, saida: 8_000, cache: 0 });
 });
 
+test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação é de um subconjunto)', async () => {
+  // Só os documentos cujo nome não resolve o tipo passam pela classificação — 8
+  // de 14 no book do dono. Casar item a item por índice atribuiria o custo da
+  // classificação ao documento errado, que num relatório de custo é pior que
+  // não ter relatório.
+  const extracoes = [
+    { json: { custo_usd: 0.06, tokens: { entrada: 12_000, saida: 5_000, cache: 2_900 }, campos: new Array(80).fill({}), falha_motivo: null, contas_no_documento: 100, contas_distintas: 40, blocos: 1 } },
+    { json: { custo_usd: 0.04, tokens: { entrada: 8_000, saida: 3_000, cache: 2_900 }, campos: new Array(40).fill({}), falha_motivo: 'truncou', contas_no_documento: 200, contas_distintas: 80, blocos: 3 } },
+    // Documento sem `usage`: conta como SEM MEDIÇÃO, nunca como custo zero.
+    { json: { custo_usd: null, tokens: null, campos: [], falha_motivo: null } },
+  ];
+  const classificacoes = [{ json: { custo_classificacao_usd: 0.0016 } }];
+  const out = await run('Resumo de Custo', {
+    items: extracoes,
+    refs: {
+      // Desde o fatiamento o resumo lê o `Juntar Blocos` (um item por DOCUMENTO)
+      // e não o `Parse Extracao` (um item por BLOCO) — contar blocos como
+      // documentos diria "48 documentos" para um lote de 35.
+      'Juntar Blocos': extracoes,
+      'Parse Extracao': extracoes,
+      'Parse OpenAI Classif': classificacoes,
+      'Orcamento do Lote': { json: { orcamento_estimado_usd: 0.42, orcamento_versao: 'v3 (2026-08-13)' } },
+    },
+  });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.documentos, 3);
+  assert.equal(r.documentos_com_classificacao, 1, 'a classificação é de um SUBCONJUNTO');
+  assert.equal(r.custo_extracao_usd, 0.1);
+  assert.equal(r.custo_classificacao_usd, 0.0016);
+  assert.equal(r.custo_total_usd, 0.1016);
+  assert.deepEqual(r.tokens, { entrada: 20_000, saida: 8_000, cache: 5_800 });
+  // 8.000 tokens de saída / 120 linhas — o número que recalibra o estimador.
+  assert.equal(r.tokens_saida_por_linha, 66.7);
+  assert.equal(r.documentos_com_falha, 1);
+  assert.equal(r.documentos_sem_medicao, 1, 'sem usage é sem medição, nunca custo zero');
+  // A cobertura do LOTE no mesmo painel: é a resposta para "o custo caiu porque
+  // ficou eficiente ou porque deixou de extrair?".
+  assert.equal(r.contas_nos_documentos, 300);
+  assert.equal(r.contas_extraidas, 120);
+  assert.equal(r.cobertura_do_lote, 0.4);
+  assert.equal(r.documentos_fatiados, 1);
+  assert.equal(r.custo_estimado_usd, 0.42, 'o estimado vem junto: é a única forma de calibrar');
+  assert.match(r.resumo, /Custo REAL deste lote: US\$ 0\.1016 em 3 documento\(s\)/);
+});
+
+test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em dois ramos', async () => {
+  // Achado na rodada de 14/08: o IF `Precisa Fallback?` manda os documentos por
+  // dois caminhos, e o n8n executa a cadeia inteira UMA VEZ POR RAMO. O
+  // `Juntar Blocos` rodou duas vezes — 16 documentos numa, 19 na outra, 35 no
+  // total — e o painel reportava só a última. O custo do lote saiu pela METADE.
+  const doc = (custo, saida, campos, celulas) => ({ json: {
+    custo_usd: custo, tokens: { entrada: 100, saida, cache: 50 },
+    campos: new Array(campos).fill({}), falha_motivo: null,
+    contas_no_documento: celulas, contas_distintas: campos, blocos: 1,
+  } });
+  const out = await run('Resumo de Custo', {
+    items: [doc(0.1, 10, 5, 10)],
+    refs: {
+      'Juntar Blocos': { runs: [
+        [doc(0.1, 10, 5, 10), doc(0.2, 20, 10, 20)],   // ramo 1: 2 documentos
+        [doc(0.3, 30, 15, 30)],                         // ramo 2: 1 documento
+      ] },
+      // E a classificação, que é de UM ramo só: `.all()` sem índice devolveria
+      // tudo em CADA execução, e o custo dela entraria duas vezes na conta.
+      'Parse OpenAI Classif': { runs: [[{ json: { custo_classificacao_usd: 0.001 } }]] },
+      'Orcamento do Lote': { json: { orcamento_estimado_usd: 1.79, orcamento_versao: 'v3 (2026-08-13)' } },
+    },
+  });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.documentos, 3, 'os dois ramos somados, não o último');
+  assert.equal(r.custo_extracao_usd, 0.6);
+  assert.equal(r.custo_classificacao_usd, 0.001, 'a classificação entra UMA vez');
+  assert.equal(r.linhas_extraidas, 30);
+  assert.equal(r.contas_nos_documentos, 60);
+  assert.equal(r.cobertura_do_lote, 0.5);
+  assert.deepEqual(r.tokens, { entrada: 300, saida: 60, cache: 150 });
+});
+
+test('Resumo de Custo não derruba o lote que ele resume, e o Conferir Lote fecha a cadeia', async () => {
+  const resumo = wf.nodes.find((n) => n.name === 'Resumo de Custo');
+  assert.ok(resumo, 'nó Resumo de Custo não existe');
+  assert.equal(resumo.onError, 'continueRegularOutput');
+  const saidas = Object.values(wf.connections).flatMap((c) => (c.main || []).flat().map((x) => x.node));
+  assert.ok(saidas.includes('Resumo de Custo'), 'alguém tem de alimentá-lo');
+  // O TERMINAL agora é o `Conferir Lote` (0112): a última pergunta do lote não é
+  // "quanto custou", é "o pipeline passou por TODOS os documentos?". No Teste V45
+  // o resumo de custo fechou a cadeia com 16 de 35 documentos extraídos e nada
+  // reclamou — a conferência de fora existe para essa rodada não se repetir.
+  assert.deepEqual(wf.connections['Resumo de Custo'].main[0].map((c) => c.node), ['Conferir Lote']);
+  assert.equal(wf.connections['Conferir Lote'], undefined, 'o Conferir Lote é o fim da cadeia');
+  const conferir = wf.nodes.find((n) => n.name === 'Conferir Lote');
+  assert.ok(conferir.parameters.query.includes('fn_conferir_lote'));
+  // E sem NENHUMA referência resolvível ele devolve zero em vez de estourar — um
+  // resumo que explode é um lote inteiro perdido no último passo.
+  const out = await run('Resumo de Custo', { items: [{ json: {} }], refs: {} });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+  assert.equal(r.custo_total_usd, 0);
+  assert.equal(r.custo_estimado_usd, null);
+});
+
+// ---------------------------------------------------------------------------
+// AS TRÊS CAMADAS CONTRA O TRUNCAMENTO E A EXTRAÇÃO PELA METADE (13/08/2026)
+// ---------------------------------------------------------------------------
+
+test('Camada 1: Extrair Texto é NATIVO, roda depois do teto de gasto e não derruba o lote', () => {
+  const n = wf.nodes.find((x) => x.name === 'Extrair Texto');
+  assert.ok(n, 'o nó não existe');
+  assert.equal(n.type, 'n8n-nodes-base.extractFromFile');
+  assert.equal(n.parameters.operation, 'pdf');
+  assert.equal(n.parameters.binaryPropertyName, 'data');
+  // PDF escaneado não tem camada de texto e este nó falha nele. `continue` é o
+  // que faz o pior caso desta adição ser "o comportamento de ontem" em vez de
+  // "lote perdido".
+  assert.equal(n.onError, 'continueRegularOutput');
+});
+
+test('Camada 1: Medir Documento mede, e ausência de texto vira null (nunca zero)', async () => {
+  const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+  const classificado = await run('Classificar Nome', { item: lote[0], refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
+  const preparado = await run('Preparar Conteudo', { item: classificado, refs: REFS_BASE, itemIndex: 0, binaryStore: lote });
+  // O preparo entrega o arquivo em base64 DENTRO do json — é por isso que perder
+  // o binário depois daqui não custa nada, e é o que permite o `Extrair Texto`
+  // (que descarta binário) entrar na corrente neste ponto.
+  assert.equal(preparado.json.content_part.type, 'file');
+  assert.ok(preparado.binary?.data, 'o binário ainda segue: o Extrair Texto precisa dele');
+
+  // O texto vem do PRÓPRIO input (o `Extrair Texto` é o nó anterior) e o
+  // contexto, do `Preparar Conteudo`, que é ANCESTRAL — não de um irmão.
+  const texto = ['CNPJ 44.555.667/0001-59', 'ATIVO', 'Caixa   380', 'Duplicatas   22.310'].join('\n');
+  const medido = await run('Medir Documento', {
+    item: { json: { text: texto, numpages: 1 } },
+    refs: { 'Preparar Conteudo': preparado },
+  });
+  assert.equal(medido.json.caso_id, 'caso-uuid-1', 'o contexto da corrente é recomposto inteiro');
+  assert.equal(medido.json.content_part.type, 'file', 'e o conteúdo da chamada sobrevive');
+  assert.equal(medido.json.celulas_no_documento, 3);
+  assert.equal(medido.json.linhas_do_texto.length, 3);
+
+  // Sem camada de texto (escaneado, ou nó que falhou): `null` é "não sei", nunca
+  // "zero" — zero ligaria a guarda de cobertura com régua inventada justamente
+  // no documento onde o modelo mais erra.
+  const semTexto = await run('Medir Documento', {
+    item: { json: { error: 'não foi possível extrair texto' } },
+    refs: { 'Preparar Conteudo': preparado },
+  });
+  assert.equal(semTexto.json.celulas_no_documento, null);
+  assert.equal(semTexto.json.linhas_do_texto, null);
+  assert.equal(semTexto.json.caso_id, 'caso-uuid-1', 'e o contexto segue mesmo assim');
+});
+
+// A REGRA 2 DO README, AGORA TRAVADA POR TESTE.
+//
+// "Nó que SUBSTITUI o item não entra na corrente." Ela estava escrita desde o
+// `Upload Storage`, e eu a violei mesmo assim ao pôr o `Extrair Texto` entre o
+// `Lote cabe?` e o `Preparar Conteudo`. O `Extract From File` escreve o
+// resultado do PDF no `json` e NÃO repassa o binário: o `caso_id` sumiu, e o
+// banco recusou 35 documentos com "null value in column caso_id violates
+// not-null constraint". Regra escrita em prosa é regra que volta a ser
+// quebrada.
+test('quem consome nó que SUBSTITUI o item tem de recompor o contexto por referência', () => {
+  // A regra 2 do README, na forma exata que as duas falhas de 13/08 ensinaram.
+  // Não é "esses nós não podem ter consumidor" — é que o consumidor não pode
+  // simplesmente ler `$json`, porque o item que chega nele não tem mais o
+  // contexto da corrente. `Upload Storage` resolve sendo lateral (ninguém lê);
+  // `Extrair Texto` e os HTTP da OpenAI resolvem com um consumidor que recompõe.
+  const SUBSTITUEM_O_ITEM = ['n8n-nodes-base.extractFromFile', 'n8n-nodes-base.httpRequest'];
+  for (const n of wf.nodes.filter((x) => SUBSTITUEM_O_ITEM.includes(x.type))) {
+    const consumidores = (wf.connections[n.name]?.main || []).flat().map((c) => c.node);
+    if (consumidores.length === 0) continue;   // ramo lateral: ninguém lê, nada a conferir
+    for (const nome of consumidores) {
+      const c = code(nome);
+      assert.ok(c, `${nome} consome "${n.name}" mas não é um nó Code — não tem como recompor`);
+      assert.match(c, /\$\('[^']+'\)\.item/,
+        `"${nome}" consome a saída de "${n.name}", que substitui o item: ele TEM de recompor o `
+        + 'contexto por referência a um nó ANCESTRAL, nunca ler $json direto');
+    }
+  }
+});
+
+test('a referência que recompõe o contexto aponta para um ANCESTRAL, nunca para um irmão', () => {
+  // `$('Nó').item` só resolve para nós ancestrais do item atual. Pendurado como
+  // ramo IRMÃO, o `Extrair Texto` parou de derrubar o lote e parou também de ser
+  // LIDO: a medição voltou vazia em 35 documentos (`celulas_nos_documentos: 0`) e
+  // as camadas 2 e 3 ficaram desligadas sem ninguém notar.
+  const ancestrais = (alvo) => {
+    const vistos = new Set();
+    const fila = [alvo];
+    while (fila.length) {
+      const atual = fila.pop();
+      for (const [origem, conn] of Object.entries(wf.connections)) {
+        if (!(conn.main || []).flat().some((c) => c.node === atual)) continue;
+        if (vistos.has(origem)) continue;
+        vistos.add(origem);
+        fila.push(origem);
+      }
+    }
+    return vistos;
+  };
+  for (const n of wf.nodes.filter((x) => x.type === 'n8n-nodes-base.code')) {
+    const meus = ancestrais(n.name);
+    for (const m of n.parameters.jsCode.matchAll(/\$\('([^']+)'\)\.item/g)) {
+      assert.ok(meus.has(m[1]),
+        `"${n.name}" lê $('${m[1]}').item, mas "${m[1]}" NÃO é ancestral dele — `
+        + 'referência a ramo irmão não resolve, e o sintoma é o dado voltar vazio em silêncio');
+    }
+  }
+});
+
+test('a corrente inteira preserva caso_id e binário até o Registrar Documento', async () => {
+  // O teste que faltava: os anteriores exercitavam cada nó ISOLADO e passavam
+  // enquanto a produção morria no primeiro documento. Aqui a expressão REAL do
+  // nó que quebrou é avaliada contra o item que a corrente REAL produz.
+  const lote = await run('Listar Arquivos', { item: UPSERT_ITEM, items: [UPSERT_ITEM], refs: REFS_BASE });
+  const classificado = await run('Classificar Nome', { item: lote[1], refs: REFS_BASE, itemIndex: 1, binaryStore: lote });
+  const preparado = await run('Preparar Conteudo', {
+    item: classificado,
+    refs: { ...REFS_BASE, 'Extrair Texto': { json: { text: 'Caixa 380\nDuplicatas 22.310' } } },
+    itemIndex: 1, binaryStore: lote,
+  });
+
+  const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters.options.queryReplacement;
+  const params = new Function('$json', 'return (' + q.replace(/^=\{\{/, '').replace(/\}\}$/, '') + ')')(preparado.json);
+  assert.equal(params.length, 14);
+  assert.equal(params[0], 'caso-uuid-1', 'caso_id NÃO pode chegar null — é not-null no banco');
+  assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
+  assert.equal(params[4], 'DRE', 'a classificação sobrevive');
+  assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');
+  assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à OpenAI');
+});
+
+test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intacto', async () => {
+  const grande = {
+    json: {
+      documento_versao_id: 'ver-grande', aviso_conteudo: null, celulas_no_documento: 461,
+      linhas_do_texto: Array.from({ length: 461 }, (_, i) => `PAGTO ${i}  ${1000 + i},00`),
+      openai_body: { model: 'gpt-4o', messages: [
+        { role: 'system', content: 'PROMPT DE SISTEMA' },
+        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: razao.pdf.' }, { type: 'file' }] },
+      ] },
+    },
+  };
+  const pequeno = {
+    json: {
+      documento_versao_id: 'ver-pequeno', aviso_conteudo: null, celulas_no_documento: 30,
+      linhas_do_texto: Array.from({ length: 30 }, (_, i) => `conta ${i}  ${i}`),
+      openai_body: { model: 'gpt-4o', messages: [
+        { role: 'system', content: 'PROMPT DE SISTEMA' },
+        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: dre.pdf.' }, { type: 'file' }] },
+      ] },
+    },
+  };
+  const out = await run('Fatiar Extracao', { items: [grande, pequeno] });
+  const doGrande = out.filter((i) => i.json.documento_versao_id === 'ver-grande');
+  const doPequeno = out.filter((i) => i.json.documento_versao_id === 'ver-pequeno');
+  assert.ok(doGrande.length >= 2, 'o documento que não cabe tem de virar mais de uma chamada');
+  assert.equal(doPequeno.length, 1, 'o que cabe continua sendo UMA chamada');
+
+  // A instrução da faixa vai na mensagem de USER. O prompt de SISTEMA tem de
+  // ficar idêntico em toda chamada, senão o cache de prefixo da OpenAI para de
+  // valer e o fatiamento fica pagando o dobro pelo prompt (docs/CUSTO_OPENAI.md).
+  for (const i of out) {
+    assert.equal(i.json.openai_body.messages[0].content, 'PROMPT DE SISTEMA');
+  }
+  assert.match(doGrande[0].json.openai_body.messages[1].content[0].text, /BLOCO 1 DE/);
+  assert.ok(doGrande[0].json.openai_body.messages[1].content[0].text.includes('PAGTO 0'),
+    'a âncora de início é o TEXTO da linha, que o modelo consegue localizar no PDF');
+  // O documento pequeno não ganha instrução nenhuma: a requisição dele fica
+  // igual à de antes do fatiamento existir.
+  assert.equal(doPequeno[0].json.openai_body.messages[1].content[0].text, 'Nome do arquivo: dre.pdf.');
+  // E o texto do documento fica para trás — ele já virou âncora.
+  assert.equal(doGrande[0].json.linhas_do_texto, undefined);
+  assert.equal(doGrande[0].json.celulas_no_documento, 461, 'a régua da camada 3 segue viajando');
+});
+
+test('Camada 2: documento SEM medida (escaneado) vai inteiro, nunca fatiado às cegas', async () => {
+  const out = await run('Fatiar Extracao', { items: [{ json: {
+    documento_versao_id: 'ver-escaneado', celulas_no_documento: null, linhas_do_texto: null,
+    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+  } }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].json.blocos, 1);
+  // Sem âncora, "bloco 2 de 3" seria um pedido para o modelo adivinhar onde a
+  // faixa começa — e adivinhar faixa é como se perde linha em silêncio.
+  assert.equal(out[0].json.openai_body.messages[1].content[0].text, 'x');
+});
+
+test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta dado', async () => {
+  const linha = (k, v) => ({ ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null });
+  const out = await run('Juntar Blocos', { items: [
+    { json: { documento_versao_id: 'ver-1', bloco: 1, blocos: 2, celulas_no_documento: 461, contas_no_documento: 154,
+      campos: [linha('A', 1), linha('B', 2)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
+      custo_usd: 0.03, tokens: { entrada: 10, saida: 20, cache: 5 } } },
+    { json: { documento_versao_id: 'ver-1', bloco: 2, blocos: 2, celulas_no_documento: 461, contas_no_documento: 154,
+      campos: [linha('B', 2), linha('C', 3)], diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
+      custo_usd: 0.02, tokens: { entrada: 5, saida: 10, cache: 5 } } },
+    // 39 contas distintas para 39 linhas de conta: 100%, nada a dizer. Antes
+    // este item tinha 104 campos contra 115 "linhas com número" — números de
+    // unidades diferentes que davam 90% por coincidência.
+    { json: { documento_versao_id: 'ver-2', bloco: 1, blocos: 1, celulas_no_documento: 46, contas_no_documento: 39,
+      campos: Array.from({ length: 39 }, (_, i) => linha(`k${i}`, i)), diagnostico: { entidade: 'X' },
+      falha_motivo: null, custo_usd: 0.05, tokens: { entrada: 1, saida: 2, cache: 0 } } },
+  ] });
+  assert.equal(out.length, 2, 'volta UM item por documento — daqui para a frente o grafo é o de sempre');
+
+  const doc1 = out.find((i) => i.json.documento_versao_id === 'ver-1').json;
+  // A linha repetida na emenda (o modelo repetiu a âncora) some; o resto fica.
+  assert.deepEqual(doc1.campos.map((c) => c.chave), ['A', 'B', 'C']);
+  assert.deepEqual(doc1.campos.map((c) => c.ordem), [0, 1, 2], 'ordem renumerada no conjunto');
+  // 3 contas distintas para 154 linhas de conta — a guarda tem de falar.
+  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 conta\(s\) distinta\(s\).*154 linha\(s\)/);
+  assert.match(doc1.falha_motivo, /repetida\(s\) na emenda/);
+  assert.equal(doc1.cobertura, 0.019, '3 de 154, na unidade de CONTAS');
+  assert.equal(doc1.contas_distintas, 3);
+  // O custo dos blocos SOMA: um documento fatiado custou o que os pedaços dele
+  // custaram, e o `Resumo de Custo` lê daqui.
+  assert.equal(doc1.custo_usd, 0.05);
+  assert.deepEqual(doc1.tokens, { entrada: 15, saida: 30, cache: 10 });
+
+  // 39 de 39 é documento completo: nada de pendência. Uma guarda que grita em
+  // toda extração é uma guarda que ninguém lê.
+  const doc2 = out.find((i) => i.json.documento_versao_id === 'ver-2').json;
+  assert.equal(doc2.falha_motivo, null);
+  assert.equal(doc2.campos.length, 39);
+  assert.equal(doc2.cobertura, 1);
+});
+
+test('Camada 3: sem régua (escaneado) a guarda se CALA, em vez de absolver ou acusar', async () => {
+  const out = await run('Juntar Blocos', { items: [{ json: {
+    documento_versao_id: 'ver-3', bloco: 1, blocos: 1, celulas_no_documento: null,
+    campos: [{ ordem: 0, chave: 'A' }], diagnostico: {}, falha_motivo: null,
+  } }] });
+  assert.equal(out[0].json.falha_motivo, null);
+  assert.equal(out[0].json.cobertura, null);
+});
+
+// ---------------------------------------------------------------------------
+// O DEFEITO DA EXECUÇÃO 6164 — fan-out quebra o pareamento de itens do n8n
+// ---------------------------------------------------------------------------
+//
+// Um nó que muda a QUANTIDADE de itens (1 documento → N blocos → 1 documento)
+// corta a cadeia de `pairedItem`, e TODA expressão `$('Outro Nó').item` rio
+// abaixo passa a devolver undefined. Em produção isso apareceu como:
+//   • `Registrar Diagnostico` e `Reconciliar`: "Query Parameters must be a
+//     string of comma-separated values or an array of values" (a expressão
+//     inteira virou `undefined`);
+//   • `Gravar Campos`: `invalid input syntax for type uuid: "sem-versao-0"` —
+//     o `Juntar Blocos` FABRICAVA uma chave quando o id faltava, e o texto
+//     inventado foi direto para um parâmetro `::uuid`.
+//
+// Os dois testes abaixo travam as duas metades da correção.
+
+test('6164: os nós de fan-out declaram pairedItem — sem isso o grafo inteiro perde o contexto', async () => {
+  const doc = (id, celulas) => ({ json: {
+    documento_id: 'doc-' + id, documento_versao_id: 'ver-' + id, celulas_no_documento: celulas,
+    linhas_do_texto: Array.from({ length: celulas }, (_, i) => `linha ${i}  ${i},00`),
+    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+  } });
+  const fatiado = await run('Fatiar Extracao', { items: [doc(1, 500), doc(2, 10)] });
+  assert.ok(fatiado.length > 2, 'o documento grande virou mais de um bloco');
+  for (const it of fatiado) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      'todo bloco tem de apontar para o item de entrada que o gerou');
+  }
+  // Os blocos do documento 1 apontam para a entrada 0; o do documento 2, para a 1.
+  const doDoc2 = fatiado.filter((i) => i.json.documento_versao_id === 'ver-2');
+  assert.equal(doDoc2.length, 1);
+  assert.equal(doDoc2[0].pairedItem.item, 1);
+
+  const juntado = await run('Juntar Blocos', { items: fatiado.map((i) => ({ json: {
+    ...i.json, campos: [{ ordem: 0, chave: 'A', valor_num: 1 }], diagnostico: {}, falha_motivo: null,
+  } })) });
+  for (const it of juntado) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      'o documento remontado tem de apontar para um dos blocos que o formaram');
+  }
+});
+
+test('6164: id ausente vira FALHA declarada, nunca um uuid inventado', async () => {
+  // `'sem-versao-0'` foi direto para `fn_registrar_campos_extraidos($1::uuid)`.
+  // Um id que não existe é uma falha a declarar — inventar um texto no formato
+  // errado transforma "não sei onde gravar" em erro de banco três nós à frente.
+  const out = await run('Juntar Blocos', { items: [{ json: {
+    documento_versao_id: undefined, bloco: 1, blocos: 1, celulas_no_documento: null,
+    campos: [{ ordem: 0, chave: 'A' }], diagnostico: {}, falha_motivo: null,
+  } }] });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].json.documento_versao_id, null, 'null, nunca uma string inventada');
+  assert.match(out[0].json.falha_motivo, /SEM documento_versao_id/);
+});
+
+test('6164: os nós Postgres depois do fatiamento leem do PRÓPRIO item', () => {
+  // Nenhum deles pode depender de `$('...').item`: através do fan-out essa
+  // resolução não existe mais, e o sintoma é "undefined" em Query Parameters.
+  for (const nome of ['Gravar Campos (Sombra)', 'Registrar Diagnostico', 'Reconciliar (Classe A)']) {
+    const q = wf.nodes.find((n) => n.name === nome).parameters.options.queryReplacement;
+    assert.ok(!/\$\('[^']+'\)\.item/.test(q),
+      `${nome} ainda lê outro nó por .item — isso quebra depois do fatiamento: ${q}`);
+    assert.match(q, /\$json\./, `${nome} tem de ler do próprio item`);
+  }
+  // E o item que chega até eles carrega os dois ids, que é o que torna isso
+  // possível: `Montar Req Extracao` passou a levar o `documento_id` junto.
+  assert.match(code('Montar Req Extracao'), /documento_id:docId/);
+});
+
+test('Topologia das três camadas: fan-out e volta, com o resto do grafo intacto', () => {
+  assert.deepEqual(wf.connections['Montar Req Extracao'].main[0].map((c) => c.node), ['Fatiar Extracao']);
+  assert.deepEqual(wf.connections['Fatiar Extracao'].main[0].map((c) => c.node), ['OpenAI Extrair']);
+  assert.deepEqual(wf.connections['Parse Extracao'].main[0].map((c) => c.node), ['Juntar Blocos']);
+  // O ponto do desenho: de `Gravar Campos` em diante nada muda. O contrato do
+  // banco (um item por documento, com `campos` e `falha_motivo`) é o mesmo.
+  assert.deepEqual(wf.connections['Juntar Blocos'].main[0].map((c) => c.node), ['Gravar Campos (Sombra)']);
+  const gravar = wf.nodes.find((n) => n.name === 'Gravar Campos (Sombra)');
+  assert.match(gravar.parameters.options.queryReplacement, /\$json\.documento_versao_id/);
+  assert.match(gravar.parameters.options.queryReplacement, /\$json\.falha_motivo/);
+});
+
 // --- Anti-drift: todo nó Code declara o que faz quando UM item falha ----------
 // O invariante antigo ("Nós Postgres têm onError+retry") tem lista de nomes
 // hardcoded, e foi por isso que os 7 nós Code passaram anos sem `onError` sem
@@ -1039,10 +1704,13 @@ test('Preparar Conteudo calcula o MESMO SHA-256 quando o sandbox não expõe cry
 // `fn_registrar_campos_extraidos(null, …)` retornava 0 descartando o
 // `falha_motivo`. A 0029 fecha o lado do banco; esta guarda fecha o do dinheiro.
 test('Montar Req Extracao recusa montar requisição sem documento_versao_id', async () => {
-  const prep = { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: { type: 'text', text: 'x' } } };
-  // item de erro típico do que o nó Postgres empurra quando falha: sem `r`
+  const conteudo = { type: 'text', text: 'x' };
+  // Item de erro típico do que o nó Postgres empurra quando falha: o
+  // `Recompor Contexto` o repassa com os ids nulos, e a guarda pega aqui.
   await assert.rejects(
-    () => run('Montar Req Extracao', { item: { json: { error: 'connection reset' } }, refs: { 'Preparar Conteudo': prep } }),
+    () => run('Montar Req Extracao', {
+      item: { json: { nome_original: 'BP.pdf', content_part: conteudo, documento_versao_id: null } },
+    }),
     (e) => {
       assert.match(e.message, /a extracao NAO foi chamada/, 'a mensagem tem de dizer que não gastou');
       assert.match(e.message, /Registrar Documento/, 'e apontar a causa provável');
@@ -1051,9 +1719,46 @@ test('Montar Req Extracao recusa montar requisição sem documento_versao_id', a
   );
   // E com versão presente, segue montando normalmente.
   const ok = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_versao_id: 'ver-1' } } },
-    refs: { 'Preparar Conteudo': prep },
+    item: { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: conteudo, documento_versao_id: 'ver-1' } },
   });
   assert.equal(ok.json.documento_versao_id, 'ver-1');
   assert.ok(ok.json.openai_body.messages.length === 2);
+});
+
+// A OUTRA metade da guarda, e a que o Teste V45 pagou: sem o arquivo, a chamada
+// volta "sem nenhuma linha" SEM erro de API — extração vazia que passa por
+// sucesso. Recusar montar é o que transforma esse silêncio em motivo escrito.
+test('Montar Req Extracao recusa montar requisição SEM O ARQUIVO (content_part ausente)', async () => {
+  await assert.rejects(
+    () => run('Montar Req Extracao', {
+      item: { json: { nome_original: 'BP.pdf', documento_versao_id: 'ver-1' } },
+    }),
+    (e) => {
+      assert.match(e.message, /content_part ausente/);
+      assert.match(e.message, /NAO foi feita/, 'e diz que não pagou pela chamada');
+      return true;
+    },
+  );
+});
+
+// Desalinhamento de contagem no `Recompor Contexto`: associar o PDF de um
+// documento ao id de outro é pior que falhar, então ele DECLARA em vez de adivinhar.
+test('Recompor Contexto declara desalinhamento em vez de associar arquivo errado', async () => {
+  const regs = [
+    { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } },
+    { json: { r: { documento_id: 'doc-2', documento_versao_id: 'ver-2' } } },
+  ];
+  // O Juntar Ramos devolveu UM item só — as listas não correspondem mais.
+  const out = await run('Recompor Contexto', {
+    items: regs,
+    refs: { 'Juntar Ramos': { json: { nome_original: 'A.pdf', content_part: { type: 'text', text: 'a' } } } },
+  });
+  assert.equal(out.length, 2, 'nenhum item é descartado — cada um sai com o motivo');
+  for (const it of out) {
+    assert.match(it.json.recompor_motivo, /correspondencia por indice deixou de ser verdadeira/);
+    assert.equal(it.json.content_part, undefined, 'e NENHUM conteúdo é associado por palpite');
+  }
+  // Os ids continuam vindo do Postgres: eles são do próprio item, não pareados.
+  assert.equal(out[0].json.documento_versao_id, 'ver-1');
+  assert.equal(out[1].json.documento_versao_id, 'ver-2');
 });
