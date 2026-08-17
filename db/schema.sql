@@ -158,7 +158,8 @@ CREATE TYPE public.pendencia_tipo AS ENUM (
     'extracao_padrao_suspeito',
     'extracao_falhou',
     'item_sem_conteudo',
-    'documento_nao_extraido'
+    'documento_nao_extraido',
+    'linha_exigida_ausente'
 );
 
 --
@@ -1393,6 +1394,68 @@ $$;
 COMMENT ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) IS 'Exclui o mandato e tudo que depende dele (cascade da 0001), devolvendo a contagem do que se perdeu. Grava a exclusão em evento_auditoria ANTES do delete — a trilha não tem FK para caso, então o rastro sobrevive ao caso.';
 
 --
+-- Name: fn_exigencias_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exigencia_id uuid, tipo_taxonomia text, conceito text, rotulo text, origem text, depende_de text[], severidade text, sobrepujavel boolean, descricao text, satisfeita boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  with tipos_com_conteudo as (
+    select distinct d.tipo_taxonomia
+    from documento d
+    where d.caso_id = p_caso_id
+      and fn_linhas_do_tipo(p_caso_id, d.tipo_taxonomia) > 0
+  ),
+  campos as (
+    select d.tipo_taxonomia, ce.chave, ce.secao, ce.secao_canonica
+    from documento d
+    join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+    where d.caso_id = p_caso_id
+      and ce.valor_num is not null
+  )
+  select e.id, e.tipo_taxonomia, e.conceito, e.rotulo, e.origem, e.depende_de,
+         e.severidade, e.sobrepujavel, e.descricao,
+         case e.checagem
+           when 'secao_presente' then exists (
+             select 1 from campos c
+             where c.tipo_taxonomia = e.tipo_taxonomia
+               and c.secao_canonica = e.secao_canonica)
+           when 'serie_mensal' then exists (
+             select 1 from campos c
+             where c.tipo_taxonomia = e.tipo_taxonomia
+               and fn_mes_do_rotulo(c.chave) is not null)
+           else exists (
+             select 1
+             from taxonomia_linha_localizador l, campos c
+             where l.exigencia_id = e.id
+               and c.tipo_taxonomia = e.tipo_taxonomia
+               and case
+                 when l.contra = 'estrutural' then fn_rotulo_estrutural(c.chave, l.termos_inclui)
+                 else
+                   not exists (
+                     select 1 from unnest(l.termos_inclui) t
+                     where fn_normalizar_texto(case when l.contra = 'secao'
+                                               then coalesce(c.secao, '') else c.chave end)
+                       not like '%' || fn_normalizar_texto(t) || '%')
+                   and not exists (
+                     select 1 from unnest(l.termos_exclui) t
+                     where fn_normalizar_texto(case when l.contra = 'secao'
+                                               then coalesce(c.secao, '') else c.chave end)
+                       like '%' || fn_normalizar_texto(t) || '%')
+               end)
+         end as satisfeita
+  from taxonomia_linha_exigida e
+  join tipos_com_conteudo t on t.tipo_taxonomia = e.tipo_taxonomia
+  where e.ativo;
+$$;
+
+--
+-- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009). Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
+
+--
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2447,6 +2510,10 @@ declare
   v_status_atual caso_status;
   v_novo_status caso_status;
   v_pend_id uuid;
+  -- 0113: passo (2b)
+  v_ex record;
+  v_motivos_ausentes text[] := '{}';
+  v_linhas_ausentes jsonb := '[]'::jsonb;
 begin
   -- ----- (1) obrigatório sem NENHUM documento: igual à 0006 ------------------
   select array_agg(t.codigo order by t.codigo) into v_faltantes
@@ -2477,10 +2544,7 @@ begin
     end if;
   end loop;
 
-  -- ----- (2) obrigatório PRESENTE mas sem uma linha aproveitável -------------
-  -- O caso do item #3: o documento chegou, a extração não trouxe nada (formato
-  -- que o pipeline não converte, arquivo ilegível, chamada que falhou), e o item
-  -- ficava ✓ verde. Aqui ele deixa de ficar.
+  -- ----- (2) obrigatório PRESENTE mas sem uma linha aproveitável (0036) ------
   select array_agg(t.codigo order by t.codigo) into v_sem_conteudo
   from taxonomia_tipo_documento t
   where t.obrigatoriedade = 'obrigatorio'
@@ -2491,8 +2555,6 @@ begin
     and fn_linhas_do_tipo(p_caso_id, t.codigo) = 0;
   v_sem_conteudo := coalesce(v_sem_conteudo, array[]::text[]);
 
-  -- Resolve as que passaram a ter conteúdo (a extração de uma versão nova
-  -- resolve sozinha — é o caminho normal de "reenviei o arquivo certo").
   update pendencia p set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:extracao'
   where p.caso_id = p_caso_id and p.tipo = 'item_sem_conteudo' and p.estado <> 'resolvida'
     and not (p.motivo = any (select 'completude:sem_conteudo:'||x from unnest(v_sem_conteudo) x));
@@ -2503,10 +2565,6 @@ begin
       where p.caso_id = p_caso_id and p.tipo = 'item_sem_conteudo'
         and p.estado <> 'resolvida' and p.motivo = 'completude:sem_conteudo:'||v_cod
     ) then
-      -- BLOQUEANTE e NÃO-SOBREPUJÁVEL (sobrepujavel=false), sempre: `docs/07`
-      -- põe "arquivo ilegível de item essencial" na lista fechada que nenhuma
-      -- ressalva libera. Um obrigatório do Kit Básico do qual não saiu UMA linha
-      -- não tem como ser aprovado "com ressalva" — não há o que ressalvar.
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, motivo)
         values (p_caso_id, 'completude', 'item_sem_conteudo', 'bloqueante', false,
                 format('Item obrigatório "%s" foi RECEBIDO, mas nenhuma linha foi extraída de nenhuma '
@@ -2519,9 +2577,63 @@ begin
     end if;
   end loop;
 
-  -- ----- (3) o checklist reflete os três estados -----------------------------
-  -- `recebido_nao_valido` é o vocabulário de `docs/07` ("recebido_não_válido").
-  -- A coluna é texto desde a 0001, com os valores no comentário; este é o quarto.
+  -- ----- (2b) 0113: tipo presente COM conteúdo, mas sem uma LINHA exigida ----
+  -- É o buraco entre a 0036 e as reconciliações: o documento chegou e rendeu
+  -- linhas, só que NÃO as linhas de que o resto do sistema depende. Até aqui,
+  -- isso só aparecia como `precondicao_nao_satisfeita` — mole, sobrepujável e
+  -- publicada por período — e SÓ para as linhas que alguma das cinco checagens
+  -- cruza. Agora a ausência é declarada na completude, NOMEANDO a linha (0033)
+  -- e o que deixa de funcionar sem ela (depende_de).
+  --
+  -- Política por linha é do dono: severidade/sobrepujavel NULL caem em
+  -- 'importante'/true — o peso que a ausência já tem hoje. Pendência existente
+  -- é ATUALIZADA (descrição e política), como a 0009 faz, para uma decisão
+  -- nova do dono valer sem esperar a pendência reabrir.
+  for v_ex in
+    select * from fn_exigencias_do_caso(p_caso_id) x where not x.satisfeita
+  loop
+    v_motivos_ausentes := v_motivos_ausentes
+      || ('completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito);
+    v_linhas_ausentes := v_linhas_ausentes || jsonb_build_object(
+      'tipo', v_ex.tipo_taxonomia, 'conceito', v_ex.conceito,
+      'rotulo', v_ex.rotulo, 'origem', v_ex.origem);
+
+    select id into v_pend_id from pendencia p
+    where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente'
+      and p.estado <> 'resolvida'
+      and p.motivo = 'completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito
+    limit 1;
+
+    if v_pend_id is null then
+      insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, motivo)
+        values (p_caso_id, 'completude', 'linha_exigida_ausente',
+                coalesce(v_ex.severidade, 'importante')::pendencia_severidade,
+                coalesce(v_ex.sobrepujavel, true),
+                format('O tipo %s chegou e rendeu linhas, mas a linha exigida "%s" não foi localizada '
+                       'na versão vigente de nenhum documento do tipo. Sem ela: %s.%s Conferir se o '
+                       'documento traz a linha com outro rótulo (e corrigir na revisão) ou reenviar o '
+                       'arquivo completo.',
+                       v_ex.tipo_taxonomia, v_ex.rotulo,
+                       array_to_string(v_ex.depende_de, '; '),
+                       case when v_ex.origem = 'proposta'
+                            then ' (Exigência PROPOSTA na análise — nenhuma checagem automática a lê hoje.)'
+                            else '' end),
+                'completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito);
+    else
+      update pendencia set
+        severidade   = coalesce(v_ex.severidade, 'importante')::pendencia_severidade,
+        sobrepujavel = coalesce(v_ex.sobrepujavel, true)
+      where id = v_pend_id;
+    end if;
+  end loop;
+
+  -- A linha apareceu (versão nova, revisão que corrigiu o rótulo) — resolve
+  -- sozinha, como as da 0036. Vale também para exigência desativada pelo dono.
+  update pendencia p set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:extracao'
+  where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
+    and not (p.motivo = any (v_motivos_ausentes));
+
+  -- ----- (3) o checklist reflete os três estados (0036) ----------------------
   update checklist_item_status c
     set status = case
                    when fn_linhas_do_tipo(p_caso_id, c.tipo_taxonomia) = 0 then 'recebido_nao_valido'
@@ -2532,11 +2644,7 @@ begin
     and c.documento_id is not null
     and c.status in ('presente', 'recebido_nao_valido');
 
-  -- ----- (4) status do caso: Portão 1 continua sendo CHEGADA -----------------
-  -- Não se mexe aqui de propósito. Quem trava o avanço é a pendência bloqueante
-  -- acima — é assim que `docs/07` desenha o portão ("elegível ao Portão 2 se e
-  -- somente se não há pendência bloqueante aberta"). Redefinir `completude_ok`
-  -- para incluir conteúdo apagaria a separação completude/validade.
+  -- ----- (4) status do caso: Portão 1 continua sendo CHEGADA (0036) ----------
   select status into v_status_atual from caso where id = p_caso_id;
   if array_length(v_faltantes,1) is null then
     v_novo_status := 'completude_ok';
@@ -2555,10 +2663,12 @@ begin
   return jsonb_build_object(
     'portao1_ok', array_length(v_faltantes,1) is null,
     'faltantes', to_jsonb(v_faltantes),
-    -- NOVO: quem chegou e veio vazio. Sai no payload porque o nó do n8n e o
-    -- portal precisam poder mostrar isso sem refazer a consulta.
     'sem_conteudo', to_jsonb(v_sem_conteudo),
-    -- E o que de fato importa para o Portão 2: chegou tudo E tem conteúdo.
+    -- 0113: as linhas exigidas que faltam saem no payload (nó do n8n e portal
+    -- mostram sem refazer a consulta). `pronto_para_revisao` NÃO muda:
+    -- endurecê-lo com linha exigida é decisão de produto do dono, não efeito
+    -- colateral desta migration.
+    'linhas_exigidas_ausentes', v_linhas_ausentes,
     'pronto_para_revisao',
       array_length(v_faltantes,1) is null and array_length(v_sem_conteudo,1) is null,
     'status', v_novo_status
@@ -2570,7 +2680,7 @@ $$;
 -- Name: FUNCTION fn_recomputar_completude(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + o estado novo da 0036: obrigatório RECEBIDO sem uma linha extraída vira pendência bloqueante NÃO-sobrepujável e item `recebido_nao_valido`. `portao1_ok` continua significando "chegou tudo"; `pronto_para_revisao` é chegou tudo E tem conteúdo.';
+COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113 (passo 2b: tipo com conteúdo mas sem uma LINHA exigida — pendência linha_exigida_ausente nomeando a linha e o depende_de; severidade por linha é do dono, default importante/sobrepujável). `portao1_ok` segue significando "chegou tudo"; `pronto_para_revisao` segue chegou tudo E tem conteúdo.';
 
 --
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -5233,6 +5343,92 @@ CREATE TABLE public.reconciliacao (
 );
 
 --
+-- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_exigida (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tipo_taxonomia text NOT NULL,
+    conceito text NOT NULL,
+    rotulo text NOT NULL,
+    checagem text NOT NULL,
+    secao_canonica text,
+    origem text NOT NULL,
+    depende_de text[] DEFAULT '{}'::text[] NOT NULL,
+    descricao text NOT NULL,
+    severidade text,
+    sobrepujavel boolean,
+    ativo boolean DEFAULT true NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
+    CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_exigida; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_exigida IS 'Linhas/seções que um tipo de documento PRECISA ter para ser utilizável (entrega aprovada, sessão de 13/08/2026). Filha da taxonomia: a taxonomia diz QUAIS tipos são obrigatórios; esta diz O QUE cada tipo precisa conter. Lida pelo Portão 1 (fn_recomputar_completude, passo 2b).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.checagem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.checagem IS 'linha_por_termos = existe linha casando algum localizador; secao_presente = existe linha com a secao_canonica; serie_mensal = existe linha cujo rótulo tem mês (fn_mes_do_rotulo, 0042).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.origem IS '''codigo'' = a exigência JÁ está hardcoded numa reconciliação vigente (termos copiados literalmente de 0009/0023/0031/0034); ''proposta'' = saiu da análise do estagiário e NENHUMA checagem a lê hoje. Distinção para o revisor ver a diferença sem abrir o documento da entrega.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.depende_de; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.depende_de IS 'FATO, não política: qual reconciliação/indicador deixa de funcionar sem esta linha. Insumo para o dono definir severidade linha a linha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.severidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então ''importante'' — o mesmo peso que a ausência já tem hoje via precondicao_nao_satisfeita. A migration não endurece nada sozinha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.sobrepujavel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
+
+--
+-- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_localizador (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    exigencia_id uuid NOT NULL,
+    ordem integer NOT NULL,
+    contra text DEFAULT 'chave'::text NOT NULL,
+    termos_inclui text[] NOT NULL,
+    termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localização de uma exigência, em cascata (a ordem espelha o código: o caixa do BP tem 7 tentativas na 0031). Formato de fn_valor_conceito (0009): inclui/exclui por substring do texto normalizado. A exigência satisfaz-se quando QUALQUER localizador casa.';
+
+--
+-- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao (fn_valor_conceito_secao, 0031); ''estrutural'' = fn_rotulo_estrutural(ce.chave, termos_inclui) (0034 — igualdade de tokens estruturais; termos_exclui não se aplica).';
+
+--
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5429,6 +5625,34 @@ ALTER TABLE ONLY public.premissa_catalogo
 
 ALTER TABLE ONLY public.reconciliacao
     ADD CONSTRAINT reconciliacao_pkey PRIMARY KEY (id);
+
+--
+-- Name: taxonomia_linha_exigida taxonomia_linha_exigida_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_exigida
+    ADD CONSTRAINT taxonomia_linha_exigida_pkey PRIMARY KEY (id);
+
+--
+-- Name: taxonomia_linha_exigida taxonomia_linha_exigida_tipo_taxonomia_conceito_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_exigida
+    ADD CONSTRAINT taxonomia_linha_exigida_tipo_taxonomia_conceito_key UNIQUE (tipo_taxonomia, conceito);
+
+--
+-- Name: taxonomia_linha_localizador taxonomia_linha_localizador_exigencia_id_ordem_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_localizador
+    ADD CONSTRAINT taxonomia_linha_localizador_exigencia_id_ordem_key UNIQUE (exigencia_id, ordem);
+
+--
+-- Name: taxonomia_linha_localizador taxonomia_linha_localizador_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_localizador
+    ADD CONSTRAINT taxonomia_linha_localizador_pkey PRIMARY KEY (id);
 
 --
 -- Name: taxonomia_tipo_documento taxonomia_tipo_documento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -5768,6 +5992,20 @@ ALTER TABLE ONLY public.reconciliacao
     ADD CONSTRAINT reconciliacao_periodo_id_fkey FOREIGN KEY (periodo_id) REFERENCES public.periodo(id);
 
 --
+-- Name: taxonomia_linha_exigida taxonomia_linha_exigida_tipo_taxonomia_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_exigida
+    ADD CONSTRAINT taxonomia_linha_exigida_tipo_taxonomia_fkey FOREIGN KEY (tipo_taxonomia) REFERENCES public.taxonomia_tipo_documento(codigo);
+
+--
+-- Name: taxonomia_linha_localizador taxonomia_linha_localizador_exigencia_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.taxonomia_linha_localizador
+    ADD CONSTRAINT taxonomia_linha_localizador_exigencia_id_fkey FOREIGN KEY (exigencia_id) REFERENCES public.taxonomia_linha_exigida(id) ON DELETE CASCADE;
+
+--
 -- Name: campo_extraido; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -6014,6 +6252,30 @@ ALTER TABLE public.reconciliacao ENABLE ROW LEVEL SECURITY;
 CREATE POLICY reconciliacao_authenticated_all ON public.reconciliacao TO authenticated USING (true) WITH CHECK (true);
 
 --
+-- Name: taxonomia_linha_exigida; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.taxonomia_linha_exigida ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: taxonomia_linha_exigida taxonomia_linha_exigida_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY taxonomia_linha_exigida_read ON public.taxonomia_linha_exigida FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: taxonomia_linha_localizador; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.taxonomia_linha_localizador ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: taxonomia_linha_localizador taxonomia_linha_localizador_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY taxonomia_linha_localizador_read ON public.taxonomia_linha_localizador FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: taxonomia_tipo_documento taxonomia_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -6134,6 +6396,12 @@ GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO auth
 --
 
 GRANT ALL ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone); Type: ACL; Schema: public; Owner: -
@@ -6481,6 +6749,22 @@ GRANT ALL ON TABLE public.periodo TO service_role;
 GRANT ALL ON TABLE public.reconciliacao TO anon;
 GRANT ALL ON TABLE public.reconciliacao TO authenticated;
 GRANT ALL ON TABLE public.reconciliacao TO service_role;
+
+--
+-- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO service_role;
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
 
 --
 -- Name: TABLE taxonomia_tipo_documento; Type: ACL; Schema: public; Owner: -
