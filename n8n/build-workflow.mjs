@@ -500,7 +500,13 @@ function mergeClassification(fromName, fromAI){
   };
 }
 const src=$('Montar Req Classif').item.json;
-const {openai_body, content_part, content_mime, ...item}=src;
+// \`content_part\` FICA no item (antes era descartado aqui junto do openai_body).
+// Motivo: o \`Montar Req Extracao\` precisa do PDF, e ele o buscava em
+// \`$('Preparar Conteudo').item\` -- pareamento que atravessa a convergencia dos
+// dois ramos e por isso nao e' confiavel. Dado que o item CARREGA nao depende de
+// pareamento nenhum. Só o \`openai_body\` da CLASSIFICACAO sai (aquele ja' foi
+// usado, e levá-lo adiante incharia cada item com o base64 duas vezes).
+const {openai_body, ...item}=src;
 const resp=$json;
 const content=resp?.choices?.[0]?.message?.content;
 const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
@@ -541,7 +547,7 @@ return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName,
 // também busca entidade e faz o diagnóstico (confere tipo/período/legibilidade).
 const CODE_REQ_EXTRACAO = `
 const reg=$json;
-const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null;
+const versaoId=reg.documento_versao_id||null;
 // SEM VERSAO, NAO SE MONTA REQUISICAO -- e' o que impede pagar por uma extracao
 // que nao tem onde ser gravada.
 //
@@ -559,7 +565,18 @@ const versaoId=(reg.r&&reg.r.documento_versao_id)||reg.documento_versao_id||null
 if(!versaoId){
   throw new Error('Documento nao registrado no banco (documento_versao_id ausente): a extracao NAO foi chamada, para nao gastar credito com um documento que nao existe. Causa provavel: falha no no "Registrar Documento" -- ver o log desta execucao.');
 }
-const prep=$('Preparar Conteudo').item.json;
+// O CONTEUDO VEM DO PROPRIO ITEM. O \`Recompor Contexto\` (no' anterior) ja' juntou
+// o resultado do Postgres com o contexto do preparo POR INDICE, entao aqui nao se
+// pareia com no' nenhum -- era a leitura pareada do no' de preparo, feita daqui,
+// que atravessava a convergencia dos dois ramos e perdeu 19 dos 35 no V45.
+const prep=$json;
+// SEM CONTEUDO, NAO SE CHAMA A OPENAI. Uma requisicao montada sem o documento
+// volta "sem nenhuma linha" SEM erro de API -- extracao vazia que parece sucesso,
+// que e' exatamente o silencio que este projeto passa o tempo fechando. Lancar
+// aqui vira item de erro (onError: continue), o lote segue, e o motivo aparece.
+if(!prep.content_part){
+  throw new Error('Conteudo do documento indisponivel ao montar a extracao (content_part ausente): a chamada NAO foi feita, para nao pagar por uma extracao sem o arquivo. Causa provavel: o Recompor Contexto nao encontrou o item de origem -- ver o log desta execucao.');
+}
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
 const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKENS},response_format:{type:'json_schema',json_schema:schema},messages:[
@@ -576,8 +593,54 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
 // exatamente isso que derrubou a execucao 6164: "Query Parameters must be a
 // string of comma-separated values" no Registrar Diagnostico e no Reconciliar.
 // Dado que o item CARREGA nao depende de pareamento nenhum.
-const docId=(reg.r&&reg.r.documento_id)||reg.documento_id||null;
+const docId=reg.documento_id||null;
 return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+`.trim();
+
+// --- Code (ALL ITEMS): recompõe contexto + resultado do Postgres, POR ÍNDICE --
+//
+// Existe porque o nó Postgres SUBSTITUI o item: depois do `Registrar Documento` o
+// item é só `{r:{documento_id, documento_versao_id, ...}}`, e o `content_part`
+// (o PDF) morre ali. O `Montar Req Extracao` buscava o conteúdo de volta em
+// `$('Preparar Conteudo').item` — pareamento que atravessa a convergência dos
+// dois ramos do `Precisa Fallback?`, e foi ele que perdeu 19 dos 35 documentos do
+// "Teste V45 - Canastra" (zero linha, zero evento, zero pendência).
+//
+// A junção é por ÍNDICE, e isso é sólido: `Registrar Documento` roda
+// `executeQuery` uma vez por item de entrada e devolve uma linha por item, na
+// MESMA ordem — 1:1, inclusive quando um item falha (PG_RETRY tem
+// `continueRegularOutput`, então o item de erro ocupa a posição dele). E
+// `$('Juntar Ramos').all()` devolve a saída INTEIRA daquele nó, sem depender de
+// `pairedItem` nenhum: é a diferença entre "me dê o item pareado com este" (que
+// falhou) e "me dê a lista, eu sei minha posição nela".
+//
+// DIVERGÊNCIA DE CONTAGEM É FALHA DECLARADA, nunca ajuste silencioso: se as duas
+// listas tiverem tamanhos diferentes, a correspondência por índice deixou de ser
+// verdadeira, e continuar associaria o PDF de um documento ao id de outro — o
+// pior erro possível aqui. Cada item sem par sai com o motivo escrito, e a guarda
+// do `Gravar Campos` (0016/0043) o converte em pendência visível.
+const CODE_RECOMPOR_CONTEXTO = `
+const regs=$input.all();
+let ctx=[];
+try{ ctx=$('Juntar Ramos').all(); }catch(e){ ctx=[]; }
+const desalinhado=ctx.length!==regs.length;
+const saida=[];
+for(let i=0;i<regs.length;i+=1){
+  const r=regs[i].json||{};
+  const res=r.r||r;
+  const base=(!desalinhado&&ctx[i]&&ctx[i].json)?ctx[i].json:{};
+  const {openai_body:_ob, ...limpo}=base;
+  const motivos=[];
+  if(desalinhado){
+    motivos.push('Recompor Contexto: o Registrar Documento devolveu '+regs.length+' item(ns) e o Juntar Ramos '+ctx.length+' -- a correspondencia por indice deixou de ser verdadeira, e associar o arquivo de um documento ao id de outro seria pior que falhar. Contexto NAO recomposto.');
+  }
+  saida.push({pairedItem:{item:i}, json:{...limpo,
+    documento_id:res.documento_id??null,
+    documento_versao_id:res.documento_versao_id??null,
+    recompor_motivo:motivos.length>0?motivos.join(' | '):null,
+  }});
+}
+return saida;
 `.trim();
 
 // --- Code (EACH ITEM): CAMADA 1 — a régua do documento ----------------------
@@ -670,7 +733,11 @@ for(let idx=0; idx<entradas.length; idx+=1){
     }
     // \`linhas_do_texto\` fica para tras: ele ja' virou ancora, e levar o
     // documento inteiro em texto por todo o grafo incharia cada item a' toa.
-    const {linhas_do_texto:_l, openai_body:_b, ...resto}=j;
+    // \`content_part\` sai pelo mesmo motivo, e agora ele PRECISA sair: desde que o
+    // conteudo passou a viajar com o item (para nao depender de pareamento), o
+    // base64 do PDF esta no json -- e ele ja' foi copiado para dentro do \`corpo\`.
+    // Levar as duas copias por todo o resto do grafo dobraria a memoria do lote.
+    const {linhas_do_texto:_l, openai_body:_b, content_part:_cp, ...resto}=j;
     // \`pairedItem\` E' OBRIGATORIO num no' que muda a quantidade de itens. Sem
     // ele o n8n perde a cadeia e toda referencia a OUTRO no' por \`.item\` rio
     // abaixo volta undefined -- os nos Postgres recebem "undefined" em Query
@@ -771,7 +838,9 @@ if(!ctx){ try{ ctx=$('Montar Req Extracao').item.json; }catch(e){ ctx=null; } }
 // nao uma excecao que manda o item inteiro para o ramo de erro sem dizer o que
 // aconteceu (execucao 6164).
 if(!ctx){ ctx={}; }
-const avisoConteudo=ctx.aviso_conteudo??null;
+// O aviso do preparo e o motivo do Recompor Contexto entram JUNTOS: os dois sao
+// "dado que o documento tem e o banco nao recebeu", e cabem no mesmo documento.
+const avisoConteudo=[ctx.aviso_conteudo??null, ctx.recompor_motivo??null].filter(Boolean).join(' | ')||null;
 const resp=$json;
 const finishReason=resp?.choices?.[0]?.finish_reason??null;
 const content=resp?.choices?.[0]?.message?.content;
@@ -1087,6 +1156,25 @@ const nodes = [
 
   node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200, CODE_CONTINUA),
 
+  // JUNTA OS DOIS RAMOS DO `Precisa Fallback?` — e existe porque a ausência dele
+  // custou 19 dos 35 documentos do "Teste V45 - Canastra".
+  //
+  // Antes, `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam AMBOS
+  // para o `Registrar Documento`: duas conexões CRUAS no MESMO input. O n8n não
+  // garante uma execução por conexão nesse arranjo — no V45 só o ramo do fallback
+  // propagou, e os 19 documentos do ramo direto (justamente os centrais: Balanço,
+  // DRE, DFC, DMPL, DVA, balancetes, razão, faturamento) desapareceram ENTRE
+  // `Registrar Documento` e `Gravar Campos`. Zero linha, zero evento de extração,
+  // zero pendência — o dado não foi extraído errado, ele nunca foi pedido.
+  //
+  // O Merge em `append` é a resposta canônica do n8n para convergência: uma
+  // execução, um lote com os itens dos dois ramos, uma cadeia linear de
+  // `pairedItem` rio abaixo. É o que devolve a corrente única que o grafo
+  // presumia ter.
+  node('Juntar Ramos', 'n8n-nodes-base.merge', 3, {
+    mode: 'append', numberInputs: 2,
+  }, 1700, 300),
+
   // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
   // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
@@ -1099,6 +1187,10 @@ const nodes = [
     operation: 'executeQuery', query: 'select fn_recomputar_completude($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
   }, 2100, 560, { credentials: PG_CRED, ...PG_RETRY }),
+
+  node('Recompor Contexto', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_RECOMPOR_CONTEXTO,
+  }, 1980, 300, CODE_CONTINUA),
 
   node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300, CODE_CONTINUA),
 
@@ -1157,6 +1249,17 @@ const nodes = [
   node('Resumo de Custo', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_RESUMO_CUSTO,
   }, 3300, 300, { onError: 'continueRegularOutput' }),
+
+  // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
+  // se TODO documento registrado passou pela extração. As três camadas de
+  // cobertura medem o que voltou de uma chamada FEITA; nenhuma delas vê a chamada
+  // que não aconteceu — e foi assim que o V45 entregou 16 de 35 documentos com o
+  // checklist verde. Roda uma vez por lote, não gasta IA, e a saída (`lote_integro`)
+  // é o número que decide se a rodada vale.
+  node('Conferir Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery', query: 'select fn_conferir_lote($1::uuid) as resultado',
+    options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
+  }, 3500, 300, { credentials: PG_CRED, ...PG_RETRY }),
 ];
 
 const connections = {
@@ -1185,17 +1288,21 @@ const connections = {
   ]] },
   'Extrair Texto': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
   'Medir Documento': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
+  // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas
+  // conexões cruas no mesmo input, que é o que comeu 19 documentos no V45.
   'Precisa Fallback?': { main: [
-    [{ node: 'Montar Req Classif', type: 'main', index: 0 }],   // true
-    [{ node: 'Registrar Documento', type: 'main', index: 0 }],  // false
+    [{ node: 'Montar Req Classif', type: 'main', index: 0 }],  // true  → classifica por conteúdo
+    [{ node: 'Juntar Ramos', type: 'main', index: 1 }],        // false → direto para o Merge
   ] },
   'Montar Req Classif': { main: [[{ node: 'OpenAI Classificar', type: 'main', index: 0 }]] },
   'OpenAI Classificar': { main: [[{ node: 'Parse OpenAI Classif', type: 'main', index: 0 }]] },
-  'Parse OpenAI Classif': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
+  'Parse OpenAI Classif': { main: [[{ node: 'Juntar Ramos', type: 'main', index: 0 }]] },
+  'Juntar Ramos': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
   'Registrar Documento': { main: [[
     { node: 'Recomputar Completude', type: 'main', index: 0 },
-    { node: 'Montar Req Extracao', type: 'main', index: 0 },
+    { node: 'Recompor Contexto', type: 'main', index: 0 },
   ]] },
+  'Recompor Contexto': { main: [[{ node: 'Montar Req Extracao', type: 'main', index: 0 }]] },
   'Montar Req Extracao': { main: [[{ node: 'Fatiar Extracao', type: 'main', index: 0 }]] },
   'Fatiar Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
@@ -1204,6 +1311,7 @@ const connections = {
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
   'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
   'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
+  'Resumo de Custo': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
 };
 
 const workflow = {

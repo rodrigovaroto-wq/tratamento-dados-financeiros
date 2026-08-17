@@ -247,7 +247,7 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconferir.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
-echo "== testes de documento sem dado financeiro (0111: certidão sem número não é extração falha)"
+echo "== documento sem dado financeiro (0111) + conferência de lote (0112: documento pulado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/documento_sem_dado_financeiro.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
