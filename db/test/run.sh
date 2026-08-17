@@ -252,7 +252,7 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/documento_sem_dado_financeiro.test.s
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
-echo "== fechar mandato sem excluir (0113)"
+echo "== fechar mandato sem excluir (0114)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fechar_mandato.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 

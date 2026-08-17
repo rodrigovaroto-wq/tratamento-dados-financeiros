@@ -20,10 +20,10 @@ export interface Caso {
   status: CasoStatus;
   criado_em: string;
   /**
-   * db/migrations/0113 — quando o mandato saiu da mesa. `null` = ATIVO.
+   * db/migrations/0114 — quando o mandato saiu da mesa. `null` = ATIVO.
    * Não confundir com `status`, que é onde ele está no trabalho: um mandato
    * aprovado em março e outro aprovado ontem têm o mesmo `status` e situações
-   * opostas. Opcional porque um banco sem a 0113 aplicada não devolve a coluna,
+   * opostas. Opcional porque um banco sem a 0114 aplicada não devolve a coluna,
    * e a tela tem de continuar funcionando (lê como ativo).
    */
   fechado_em?: string | null;

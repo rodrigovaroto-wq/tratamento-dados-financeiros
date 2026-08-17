@@ -1,5 +1,9 @@
 -- FECHAR UM MANDATO É DIFERENTE DE EXCLUIR, e o portal só sabia excluir.
 --
+-- (Esta migration nasceu 0113 e virou 0114 em 17/08: a `0113` ficou com a
+-- exigência de linha por tipo, que é trabalho mais antigo — do PR #118 — e o
+-- número segue a ordem de chegada, não a de merge.)
+--
 -- O QUE FALTAVA, e por que não dá para derivar do que existe. `caso.status`
 -- (f0/04) descreve onde o mandato está no TRABALHO — intake, em triagem, em
 -- revisão, aprovado. Ele não responde a outra pergunta, que é operacional e não

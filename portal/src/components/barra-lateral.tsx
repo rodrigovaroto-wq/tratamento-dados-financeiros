@@ -17,7 +17,7 @@ import type { CasoStatus } from "@/lib/types";
 // "Mandatos" é um LUGAR — abre e mostra o que está na mesa agora. Dar a mesma
 // aparência às duas faria a ação parecer uma pasta vazia.
 //
-// SÓ OS ATIVOS ENTRAM NA LISTA da barra. Mandato fechado (0113) continua
+// SÓ OS ATIVOS ENTRAM NA LISTA da barra. Mandato fechado (0114) continua
 // acessível pela lista completa; o que a barra responde é "no que estou
 // trabalhando", e mandato fechado não é resposta para isso.
 

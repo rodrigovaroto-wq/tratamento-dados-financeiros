@@ -93,7 +93,7 @@ export async function decidirPendencia(
 // componente): o servidor não tem como perguntar "tem certeza?" no meio de uma
 // server action. O que o servidor garante é o resto — que a exclusão deixe
 // rastro na trilha e devolva a contagem do que se perdeu.
-// FECHAR (0113) É A AÇÃO DO DIA A DIA; excluir é a exceção. As duas moram
+// FECHAR (0114) É A AÇÃO DO DIA A DIA; excluir é a exceção. As duas moram
 // juntas de propósito: quem vai apagar um mandato passa por aqui e vê que existe
 // um jeito de tirá-lo da frente sem perder o que a equipe produziu.
 export async function fecharCaso(casoId: string, formData?: FormData) {

@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0113_mandato_fechado.sql` |
+| **Última migration** | `db/migrations/0114_mandato_fechado.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 275 · export 535 · e2e 46 · banco (56 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -29,12 +29,12 @@ lidas para retomar.
   por transparência, **sem redesenhar nada**. O SVG EMBUTE a arte original — vetorizar exigiria
   traçar, e traçar é aproximar. Sextante no cabeçalho e no favicon; a lockup completa no login,
   onde há altura para ela.
-- **Fechar ≠ excluir** (`0113`): `caso.status` diz onde o mandato está no trabalho, e não respondia
+- **Fechar ≠ excluir** (`0114`): `caso.status` diz onde o mandato está no trabalho, e não respondia
   "ainda estamos nisso?". `fechado_em` responde, preservando tudo — para apagar continua existindo
   `fn_excluir_caso`. A lista ganhou o segundo rótulo (**Ativo/Fechado**), uma descrição derivada de
   uma linha (documentos · pendências · data) e as duas ações no rodapé de cada item.
 
-> **Para o dono:** a `0113` precisa ser aplicada no Supabase. Sem ela, a coluna não existe e a lista
+> **Para o dono:** a `0114` precisa ser aplicada no Supabase. Sem ela, a coluna não existe e a lista
 > trata todo mandato como ativo — a tela não quebra, mas o botão de fechar falha.
 
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou

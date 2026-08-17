@@ -1,4 +1,4 @@
--- Testes de "fechar não é excluir" (db/migrations/0113).
+-- Testes de "fechar não é excluir" (db/migrations/0114).
 -- Rodar via db/test/run.sh (que aplica as migrations antes).
 --
 -- O QUE ESTE ARQUIVO PROVA, e cada asserto é uma coisa que dá para errar

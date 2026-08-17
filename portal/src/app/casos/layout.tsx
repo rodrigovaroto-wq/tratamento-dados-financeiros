@@ -17,7 +17,7 @@ export default async function CasosLayout({ children }: { children: React.ReactN
   const supabase = await createClient();
   const [claimsRes, mandatosRes] = await Promise.all([
     supabase.auth.getClaims(),
-    // SÓ OS ATIVOS na barra (0113): ela responde "no que estou trabalhando", e
+    // SÓ OS ATIVOS na barra (0114): ela responde "no que estou trabalhando", e
     // mandato fechado não é resposta para isso — ele continua na lista completa.
     supabase
       .from("caso")
