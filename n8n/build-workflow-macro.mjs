@@ -10,6 +10,7 @@
 // aquele código — aqui as constantes são importadas de `lib/`, não copiadas à
 // mão, que é a origem conhecida de mirror desatualizado neste repositório.
 
+import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +24,11 @@ const FONTE_NUMERO_MACRO = `const numeroMacro = ${numeroMacro.toString()};`;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const node = (name, type, typeVersion, parameters, x, y, opts = {}) => ({
+// Sem `position` à mão: o canvas sai de `posicionar()` (n8n/layout.mjs) a partir
+// das `connections`, depois que a lista existe inteira.
+const node = (name, type, typeVersion, parameters, opts = {}) => ({
   parameters, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, type, typeVersion,
-  position: [x, y],
+  position: [0, 0],
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.retryOnFail ? { retryOnFail: true, maxTries: opts.maxTries ?? 3, waitBetweenTries: 5000 } : {}),
@@ -182,7 +185,7 @@ const PG = { credentials: { postgres: { id: 'SUPABASE_PG', name: 'Supabase Postg
 const nodes = [
   node('Agenda Mensal', 'n8n-nodes-base.scheduleTrigger', 1.2, {
     rule: { interval: [{ field: 'months', triggerAtDayOfMonth: 12, triggerAtHour: 6 }] },
-  }, 0, 300),
+  }),
 
   // Dia 12 e não dia 1: o IPCA do mês anterior é divulgado pelo IBGE por volta
   // do dia 10. Coletar antes disso traria o mês sempre incompleto e faria a
@@ -193,40 +196,40 @@ const nodes = [
     jsCode: `return ${JSON.stringify(
       SERIES_MACRO.map((s) => ({ json: { __serie: s.codigo, __url: urlSgs(s.sgs, { hoje: INICIO_HISTORICO_REF }) } })),
     )};`,
-  }, 220, 200),
+  }),
 
   node('BCB SGS', 'n8n-nodes-base.httpRequest', 4.2, {
     url: '={{ $json.__url }}', options: { response: { response: { neverError: true } } },
-  }, 440, 200, HTTP_TOLERANTE),
+  }, HTTP_TOLERANTE),
 
   node('Manter Contexto SGS', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForEachItem',
     jsCode: "return { json: { __serie: $('Séries a Coletar').item.json.__serie, __fonte: 'BCB/SGS', __corpo: $json } };",
-  }, 660, 200),
+  }),
 
   node('IBGE SIDRA (IPCA)', 'n8n-nodes-base.httpRequest', 4.2, {
     url: urlSidraIpca({ ultimos: MESES_HISTORICO }),
     options: { response: { response: { neverError: true } } },
-  }, 440, 380, HTTP_TOLERANTE),
+  }, HTTP_TOLERANTE),
 
   node('Marcar Fonte IBGE', 'n8n-nodes-base.code', 2, {
     jsCode: "return [{ json: { __serie: 'IPCA', __fonte: 'IBGE/SIDRA', __corpo: $input.all().map(i => i.json) } }];",
-  }, 660, 380),
+  }),
 
-  node('Normalizar Observações', 'n8n-nodes-base.code', 2, { jsCode: CODE_NORMALIZAR }, 880, 290),
+  node('Normalizar Observações', 'n8n-nodes-base.code', 2, { jsCode: CODE_NORMALIZAR }),
 
   node('Gravar Índices', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select * from fn_registrar_indice_macro($1::jsonb)',
     options: { queryReplacement: '={{ JSON.stringify($json.observacoes) }}' },
-  }, 1100, 290, PG),
+  }, PG),
 
   node('Conferir Fontes', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     // A conferência é o que autoriza chamar o dado de validado. Ela não corrige
     // nada: registra a divergência para um humano decidir qual fonte vale.
     query: 'select * from fn_divergencias_indice_macro()',
-  }, 1320, 290, PG),
+  }, PG),
 
   node('Indicadores Focus', 'n8n-nodes-base.code', 2, {
     jsCode: `return ${JSON.stringify(
@@ -235,24 +238,24 @@ const nodes = [
       // default) truncava antes da produção — duas verdades para o mesmo número.
       INDICADORES_FOCUS.map((i) => ({ json: { __serie: i.codigo, __url: urlFocus(i.indicador) } })),
     )};`,
-  }, 220, 560),
+  }),
 
   node('BCB Focus', 'n8n-nodes-base.httpRequest', 4.2, {
     url: '={{ $json.__url }}', options: { response: { response: { neverError: true } } },
-  }, 440, 560, HTTP_TOLERANTE),
+  }, HTTP_TOLERANTE),
 
   node('Manter Contexto Focus', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForEachItem',
     jsCode: "return { json: { __serie: $('Indicadores Focus').item.json.__serie, __corpo: $json } };",
-  }, 660, 560),
+  }),
 
-  node('Normalizar Focus', 'n8n-nodes-base.code', 2, { jsCode: CODE_FOCUS }, 880, 560),
+  node('Normalizar Focus', 'n8n-nodes-base.code', 2, { jsCode: CODE_FOCUS }),
 
   node('Gravar Expectativas', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_expectativa_macro($1::jsonb) as n',
     options: { queryReplacement: '={{ JSON.stringify($json.expectativas) }}' },
-  }, 1100, 560, PG),
+  }, PG),
 ];
 
 const connections = {
@@ -273,6 +276,9 @@ const connections = {
   'Manter Contexto Focus': { main: [[{ node: 'Normalizar Focus', type: 'main', index: 0 }]] },
   'Normalizar Focus': { main: [[{ node: 'Gravar Expectativas', type: 'main', index: 0 }]] },
 };
+
+// O canvas é desenhado a partir do grafo, nunca à mão (ver n8n/layout.mjs).
+posicionar(nodes, connections);
 
 const workflow = {
   name: 'Oria — Índices Macroeconômicos (BCB/SGS + Focus + IBGE)',

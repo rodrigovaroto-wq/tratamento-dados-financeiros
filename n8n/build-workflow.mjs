@@ -16,7 +16,10 @@
 //    'runOnceForAllItems' retorna ARRAY (único modo que permite fan-out).
 // 4. Code que repassa arquivos deve devolver `binary` explicitamente
 //    (retornar só {json} descarta o binário).
+// 5. Posição de nó no canvas NÃO se escreve aqui: quem desenha é `posicionar()`
+//    (n8n/layout.mjs), a partir das `connections`. Nó novo declara só a conexão.
 
+import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -915,9 +918,14 @@ return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.docum
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
-const node = (name, type, typeVersion, parameters, x, yy, opts = {}) => ({
+// `position` NÃO entra aqui: quem posiciona é `posicionar()` (n8n/layout.mjs), a
+// partir das `connections`, depois que a lista inteira existe. Coordenada
+// escolhida à mão nó a nó foi o que embaralhou o canvas (rótulo em cima de
+// rótulo, linha atravessando nó), e ela não tem como saber do vizinho que ainda
+// nem foi declarado.
+const node = (name, type, typeVersion, parameters, opts = {}) => ({
   parameters, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, type, typeVersion,
-  position: [x, yy],
+  position: [0, 0],
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.disabled ? { disabled: true } : {}),
@@ -1060,18 +1068,18 @@ const nodes = [
       { fieldLabel: 'Mandato (nome do caso)', fieldType: 'text', requiredField: true },
       { fieldLabel: 'Arquivos', fieldType: 'file', multipleFiles: true, requiredField: true },
     ] },
-  }, 0, 400),
+  }),
 
   node('Upsert Caso (Postgres)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
     options: { queryReplacement: "={{ [$json['Mandato (nome do caso)']] }}" },
-  }, 200, 400, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
-  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }, 400, 400),
+  node('Listar Arquivos', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_LISTAR }),
 
-  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, 600, 400, CODE_CONTINUA),
+  node('Classificar Nome', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_CLASSIFICAR }, CODE_CONTINUA),
 
-  node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }, 700, 260),
+  node('Orcamento do Lote', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: CODE_ORCAMENTO }),
 
   // O CAMINHO DA RECUSA — três nós, e cada um existe por um motivo.
   //
@@ -1084,18 +1092,18 @@ const nodes = [
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
       { leftValue: '={{ $json.orcamento_cabe }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
-  }, 760, 260),
+  }),
 
   node('Registrar Recusa', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_falha_execucao($1::uuid, $2::text, $3::text, $4::text, null) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $('Intake (Form)').first().json['Mandato (nome do caso)'], 'orcamento', $json.orcamento_mensagem] }}" },
-  }, 900, 140, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Abortar Lote', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems',
     jsCode: `throw new Error($input.first().json.orcamento_mensagem || 'Lote recusado pelo orcamento.');`,
-  }, 1060, 140),
+  }),
   // CAMADA 1 — o texto do PDF lido na própria instância, antes de qualquer
   // chamada. Nó NATIVO do n8n; não manda nada para fora e não custa nada.
   //
@@ -1106,9 +1114,9 @@ const nodes = [
   // lote perdido.
   node('Extrair Texto', 'n8n-nodes-base.extractFromFile', 1, {
     operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true },
-  }, 960, 400, { onError: 'continueRegularOutput' }),
-  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, 800, 400, CODE_CONTINUA),
-  node('Medir Documento', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_MEDIR_DOCUMENTO }, 1120, 400, CODE_CONTINUA),
+  }, { onError: 'continueRegularOutput' }),
+  node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, CODE_CONTINUA),
+  node('Medir Documento', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_MEDIR_DOCUMENTO }, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
   // ⚠️ DESABILITADO (2026-07-17): bug de longa data do node HTTP Request do
@@ -1132,15 +1140,15 @@ const nodes = [
       { name: 'apikey', value: 'COLE_A_SERVICE_ROLE_KEY_AQUI' },
     ] },
     sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data',
-  }, 1000, 560, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } }, disabled: true }),
+  }, { credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'Supabase Service (Header Auth)' } }, disabled: true }),
 
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
       { leftValue: '={{ $json.precisa_fallback_openai }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
-  }, 1000, 300),
+  }),
 
-  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, 1200, 200, CODE_CONTINUA),
+  node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, CODE_CONTINUA),
 
   // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
@@ -1152,9 +1160,9 @@ const nodes = [
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
     options: OPENAI_BATCHING,
-  }, 1400, 200, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, 1600, 200, CODE_CONTINUA),
+  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, CODE_CONTINUA),
 
   // JUNTA OS DOIS RAMOS DO `Precisa Fallback?` — e existe porque a ausência dele
   // custou 19 dos 35 documentos do "Teste V45 - Canastra".
@@ -1173,7 +1181,7 @@ const nodes = [
   // presumia ter.
   node('Juntar Ramos', 'n8n-nodes-base.merge', 3, {
     mode: 'append', numberInputs: 2,
-  }, 1700, 300),
+  }),
 
   // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
   // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
@@ -1181,44 +1189,44 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
     options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null] }}" },
-  }, 1850, 400, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_recomputar_completude($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
-  }, 2100, 560, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recompor Contexto', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_RECOMPOR_CONTEXTO,
-  }, 1980, 300, CODE_CONTINUA),
+  }, CODE_CONTINUA),
 
-  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, 2100, 300, CODE_CONTINUA),
+  node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, CODE_CONTINUA),
 
   // CAMADA 2 — um item por BLOCO. Vê o lote inteiro porque é fan-out (N → M).
   node('Fatiar Extracao', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_FATIAR_EXTRACAO,
-  }, 2250, 300, CODE_CONTINUA),
+  }, CODE_CONTINUA),
   node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
     options: OPENAI_BATCHING_EXTRACAO,
-  }, 2300, 300, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
 
-  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, 2500, 300, CODE_CONTINUA),
+  node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, CODE_CONTINUA),
 
   // CAMADA 3 — junta os blocos de volta em UM item por documento e confere a
   // cobertura. Daqui para a frente o grafo é idêntico ao de sempre: um item por
   // documento, com `campos` e `falha_motivo`.
   node('Juntar Blocos', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_JUNTAR_BLOCOS,
-  }, 2650, 300, CODE_CONTINUA),
+  }, CODE_CONTINUA),
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos',
     options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null] }}" },
-  }, 2700, 300, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
   // tipo/período/legibilidade só CONFEREM contra o que já está registrado —
@@ -1230,7 +1238,7 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
     options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null] }}" },
-  }, 2900, 300, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
   // documento recém-extraído (docs/04). Só precisa do documento_id — a função
@@ -1241,14 +1249,14 @@ const nodes = [
     operation: 'executeQuery',
     query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
     options: { queryReplacement: '={{ [$json.documento_id] }}' },
-  }, 3100, 300, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // O custo do lote em UM painel, no fim da cadeia. `runOnceForAllItems` porque
   // a pergunta é do LOTE, não do documento — e `onError` porque um resumo que
   // derruba o lote que ele resume seria a pior troca possível.
   node('Resumo de Custo', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_RESUMO_CUSTO,
-  }, 3300, 300, { onError: 'continueRegularOutput' }),
+  }, { onError: 'continueRegularOutput' }),
 
   // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
   // se TODO documento registrado passou pela extração. As três camadas de
@@ -1259,7 +1267,7 @@ const nodes = [
   node('Conferir Lote', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery', query: 'select fn_conferir_lote($1::uuid) as resultado',
     options: { queryReplacement: "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}" },
-  }, 3500, 300, { credentials: PG_CRED, ...PG_RETRY }),
+  }, { credentials: PG_CRED, ...PG_RETRY }),
 ];
 
 const connections = {
@@ -1313,6 +1321,9 @@ const connections = {
   'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
   'Resumo de Custo': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
 };
+
+// O canvas é desenhado a partir do grafo, nunca à mão (ver n8n/layout.mjs).
+posicionar(nodes, connections);
 
 const workflow = {
   name: 'Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',
