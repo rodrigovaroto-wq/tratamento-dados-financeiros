@@ -24,6 +24,7 @@
 // Ele não grava nada em banco nenhum e não tem trigger de relógio: só roda quando
 // alguém clica. É diagnóstico, não pipeline.
 
+import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -35,8 +36,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MODELO = 'gpt-4o';
 const INTERVALO_EXTRACAO_MS = Math.ceil(60000 / (TPM_CONTA / MAX_OUTPUT_TOKENS));
 
-const node = (name, type, typeVersion, parameters, x, y, extra = {}) => ({
-  parameters, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, type, typeVersion, position: [x, y], ...extra,
+// Sem `position` à mão: quem desenha o canvas é `posicionar()` (n8n/layout.mjs),
+// a partir das conexões.
+const node = (name, type, typeVersion, parameters, extra = {}) => ({
+  parameters, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, type, typeVersion, position: [0, 0], ...extra,
 });
 
 // Corpo mínimo: 1 token de saída. `max_tokens: 1` reserva 1 token de TPM em vez
@@ -109,8 +112,8 @@ return {json:{passou, causa, http_status: httpStatus, veredito: linhas.join('\\n
 `.trim();
 
 const nodes = [
-  node('Rodar Diagnostico', 'n8n-nodes-base.manualTrigger', 1, {}, 240, 300),
-  node('Montar Chamada Minima', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ }, 460, 300),
+  node('Rodar Diagnostico', 'n8n-nodes-base.manualTrigger', 1, {}),
+  node('Montar Chamada Minima', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ }),
   node('OpenAI (1 token)', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
     url: 'https://api.openai.com/v1/chat/completions',
@@ -122,20 +125,25 @@ const nodes = [
     // Sem isto o 429 volta como AxiosError e o corpo da OpenAI — o único lugar
     // onde a causa REAL aparece — nunca chega ao veredito. É a lição do v30.
     options: { response: { response: { neverError: true } } },
-  }, 680, 300, {
+  }, {
     credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } },
   }),
-  node('Veredito', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_VEREDITO }, 900, 300),
+  node('Veredito', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_VEREDITO }),
 ];
+
+const connections = {
+  'Rodar Diagnostico': { main: [[{ node: 'Montar Chamada Minima', type: 'main', index: 0 }]] },
+  'Montar Chamada Minima': { main: [[{ node: 'OpenAI (1 token)', type: 'main', index: 0 }]] },
+  'OpenAI (1 token)': { main: [[{ node: 'Veredito', type: 'main', index: 0 }]] },
+};
+
+// O canvas é desenhado a partir do grafo, nunca à mão (ver n8n/layout.mjs).
+posicionar(nodes, connections);
 
 const workflow = {
   name: 'Oria — Diagnostico da conta OpenAI (1 token, custo ~zero)',
   nodes,
-  connections: {
-    'Rodar Diagnostico': { main: [[{ node: 'Montar Chamada Minima', type: 'main', index: 0 }]] },
-    'Montar Chamada Minima': { main: [[{ node: 'OpenAI (1 token)', type: 'main', index: 0 }]] },
-    'OpenAI (1 token)': { main: [[{ node: 'Veredito', type: 'main', index: 0 }]] },
-  },
+  connections,
   settings: { executionOrder: 'v1' },
   meta: {
     note: 'Gerado por n8n/build-workflow-diagnostico.mjs. Usa a credencial "OpenAI API" que ja existe. '

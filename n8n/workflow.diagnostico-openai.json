@@ -8,8 +8,8 @@
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        240,
-        300
+        0,
+        0
       ]
     },
     {
@@ -22,8 +22,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        460,
-        300
+        260,
+        0
       ]
     },
     {
@@ -48,8 +48,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        680,
-        300
+        520,
+        0
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -68,8 +68,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        900,
-        300
+        780,
+        0
       ]
     }
   ],

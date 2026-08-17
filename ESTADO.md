@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0112_lote_conferido_documento_por_documento.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 235 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 263 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta

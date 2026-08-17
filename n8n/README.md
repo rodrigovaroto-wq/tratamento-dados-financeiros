@@ -103,6 +103,19 @@ como fato aceito.
    `workflow-sim.test.mjs` reprova quem puser um nó no modo errado, com a lista das exceções.
 5. **Code que repassa arquivo devolve `binary` explicitamente** — retornar só `{json}`
    descarta o binário (`Classificar Nome` e `Preparar Conteudo` preservam).
+6. **Posição de nó no canvas NÃO se escreve à mão.** Os quatro geradores chamam
+   `posicionar(nodes, connections)` (`n8n/layout.mjs`) e o desenho sai do próprio grafo:
+   uma coluna por camada (caminho mais longo desde a entrada, então toda linha anda para a
+   direita), o filho de maior alcance herda a faixa do pai (o tronco fica reto), o ramo curto
+   desce para a primeira faixa livre, e aresta que pula colunas ganha **corredor reservado** —
+   nada é posicionado no caminho dela.
+   > Coordenada escolhida a olho, nó a nó, ao longo de 40 sessões, entregou o canvas que o dono
+   > viu na tela em 17/08: `Fatiar Extracao` desenhado por cima do `OpenAI Extrair`,
+   > `Juntar Blocos` por cima do `Gravar Campos (Sombra)`, o tronco pulando entre y=140 e y=560,
+   > e a linha do `false` do fallback atravessando por dentro dos três nós da classificação por
+   > conteúdo. Quem acrescentar um nó agora declara **só a conexão**. Quatro invariantes em
+   > `test/layout.test.mjs` conferem o JSON commitado dos quatro workflows: nó não se sobrepõe a
+   > nó, conexão não volta para trás, linha reta não atravessa nó, e tudo cai na grade de 20px.
 
 ## Como usar
 
@@ -477,7 +490,8 @@ estão presentes no texto que a OpenAI recebe. **Nunca voltar a parafrasear o pr
 n8n/
 ├── lib/            # lógica testável: classifier, completude, openai, extract,
 │                   #                  spreadsheet, taxonomia, normalize
-├── test/           # node:test (53 casos, incl. simulação do workflow)
+├── test/           # node:test (simulação do workflow, layout do canvas, libs)
+├── layout.mjs                # desenha o canvas a partir das conexões (os 4 geradores usam)
 ├── build-workflow.mjs        # gerador do workflow (JSON válido)
 ├── workflow.e1-ingestao.json # workflow importável no N8N (E1 + Diagnóstico + E2-sombra + E3)
 └── README.md
