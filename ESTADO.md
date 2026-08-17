@@ -39,6 +39,14 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 
 Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
 
+> **A rodada de 17/08 ("Teste V45") já aconteceu, e o que ela achou muda o que a próxima tem de
+> provar.** Foram **438 linhas**: 19 dos 35 documentos — os centrais (Balanço, DRE, DFC, DMPL, DVA,
+> balancetes, razão, faturamento) — **nunca tiveram a extração chamada**, e nada reclamou. A causa era
+> topológica (duas conexões cruas no mesmo input, e só o ramo do fallback propagava), está corrigida
+> com o `Juntar Ramos`, e a classe inteira ficou barrada por teste. O que a próxima rodada precisa
+> trazer, além do custo: **`lote_integro` verdadeiro** no `Conferir Lote` — sem isso, qualquer número
+> de cobertura está medindo só os documentos que chegaram lá.
+
 **O que trazer de volta:** a saída do nó **`Resumo de Custo`** (último do canvas) — ela traz o custo
 real do lote, o que o orçamento estimou e os **tokens de saída por linha**, que é o número com que
 `CUSTO_POR_MB_USD` e o modelo de saída se recalibram. Mais: quantos dos 38 chegaram, e o que a
@@ -133,17 +141,24 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 ## O que só o dono pode fazer
 
 1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. Confira com:
+   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. As duas mais novas são
+   a `0111` (certidão sem valor deixa de virar `extracao_falhou`) e a `0112` (`fn_conferir_lote`).
+   Confira com:
    ```sql
    select proname from pg_proc
-    where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
+    where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso',
+                      'fn_conferir_lote');
    ```
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou três vezes em 13/08 (classificação em
-   `gpt-4o-mini`, saída agrupada, e as três camadas de cobertura). **Conferência de 5 segundos depois
-   de importar:** o canvas tem **27 nós**; procure `Extrair Texto` + `Medir Documento` (na sequência,
-   depois do `Preparar Conteudo`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta direita,
-   `Resumo de Custo` — rodando, a saída dele traz a **cobertura do lote**. Se `cobertura_do_lote`
-   vier `null`, a camada 1 não mediu e as outras duas estão desligadas.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 17/08 (o `Juntar Ramos`, que é o
+   conserto dos 19 documentos que nunca foram extraídos, e o `Conferir Lote`). **Conferência de 5
+   segundos depois de importar:** o canvas tem **30 nós** e agora é uma corrente reta — 26 nós numa
+   linha só, com a recusa de orçamento e o `Upload Storage` como ramos abaixo, e a classificação por
+   conteúdo numa faixa própria (o desenho sai do grafo, ver `n8n/layout.mjs`). Procure `Juntar Ramos`
+   (Merge, logo depois do `Precisa Fallback?`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta
+   direita, `Resumo de Custo` seguido do `Conferir Lote`. Dois números decidem se a rodada vale:
+   `cobertura_do_lote` (se vier `null`, a camada 1 não mediu e as outras duas estão desligadas) e
+   `lote_integro` do `Conferir Lote` — **falso significa documento registrado que nunca teve extração
+   chamada**, e ele nomeia quais.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +

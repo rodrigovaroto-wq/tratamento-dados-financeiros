@@ -4,8 +4,9 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-14 (sessão 46). **Estado do `main`:** mergeado até o **PR #124**
-(`main` em `8dc5e06`). Branch de trabalho: **`claude/reduce-call-cost-52bban`** (PR #125 aberto).
+**Última atualização:** 2026-08-17 (sessão 47). **Estado do `main`:** mergeado até o **PR #128**
+(`main` em `f887552`). Branch de trabalho: **`claude/canvas-node-organization-o1ixcm`** (PR #129
+aberto).
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -275,6 +276,84 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 47 (2026-08-17) — o "Teste V45": 19 dos 35 documentos nunca tiveram a extração chamada
+
+**O QUE O DONO RODOU:** o `book-canastra` no workflow com as três camadas (o "Teste V45 - Canastra").
+Resultado: **438 linhas** onde deveriam ser milhares — pior que as 1.683 da rodada anterior. E a
+análise do dado não apontou para a extração: apontou para o que **não aconteceu**.
+
+### A correlação era perfeita, e por isso a causa não era de qualidade
+
+| `fonte` | documentos | linhas | eventos `extracao_sombra` |
+|---|---:|---:|---:|
+| `nome_arquivo` (classificado pelo nome, sem fallback) | 19 | **0 em todos** | **0 em todos** |
+| `openai_conteudo` (passou pelo fallback) | 16 | todos com linha | 1 em todos |
+
+Sem uma exceção nos 35. Os 19 mudos eram justamente os documentos centrais — Balanço, DRE, DFC, DMPL,
+DVA, os balanços das demais empresas, balancetes, razão, faturamento —, e eles sumiram entre
+`Registrar Documento` e `Gravar Campos` **sem deixar rastro**: nada em `campo_extraido`, nada em
+`evento_auditoria`, nada em `pendencia`. Checklist verde, Portão 1 satisfeito.
+
+**A causa é topológica.** `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam **ambos** para
+o `Registrar Documento` — duas conexões **cruas no mesmo input**. O n8n não garante uma execução por
+conexão nesse arranjo (é para isso que existe o nó Merge), e só o ramo do fallback propagou. Quem
+classificava bem pelo nome — o caminho **barato**, o que deveria ser o caminho feliz — era o que
+morria.
+
+### As três correções (PR #128)
+
+1. **`Juntar Ramos` (Merge, `append`)** — os dois ramos entram em inputs **diferentes**, e o lote
+   volta a ser uma corrente única. Um teste novo proíbe **qualquer** convergência crua no mesmo input,
+   em todo o canvas: a classe inteira do defeito, não o caso.
+2. **`Recompor Contexto`** — o nó Postgres substitui o item, então o `content_part` (o PDF) morria
+   ali e o `Montar Req Extracao` o reencontrava por `$('Preparar Conteudo').item`, pareamento que
+   atravessava a convergência. Agora a junção é **por índice** contra `$('Juntar Ramos').all()`, o
+   conteúdo viaja no item, e montar a chamada **sem o arquivo** virou recusa escrita em vez de "zero
+   linhas" silencioso. Divergência de contagem é falha declarada: associar o PDF de um documento ao
+   id de outro é pior que falhar.
+3. **`fn_conferir_lote` (`0112`) + nó `Conferir Lote`** — toda guarda de extração deste repositório
+   morava **dentro** do caminho da extração, e guarda que mora no caminho não cobre o caminho **não
+   percorrido**. Era o único modo de falha que as três camadas de cobertura não podiam ver, porque as
+   três medem o que voltou de uma chamada **feita**. A conferência mede de fora (documentos
+   registrados × documentos com evento), abre pendência bloqueante não-sobrepujável **por documento**,
+   e `lote_integro` decide se a rodada vale. Não gasta IA, é idempotente, auto-resolve no
+   reprocessamento.
+
+### Certidão sem número não é extração falha (PR #126)
+
+A mesma rodada abriu `extracao_falhou` para certidões negativas, organograma societário e o parecer
+do auditor — três documentos que o próprio `GUIA_DE_TESTE` do book lista como **armadilha
+deliberada**. Zero linha ali é o resultado CERTO. O Sinal 3 do `fn_registrar_campos_extraidos`
+disparava sempre que `v_count = 0`, sem meio de distinguir "a chamada falhou" de "o documento não tem
+valor monetário nenhum". Agora quem responde é **o veredito de quem leu o arquivo**:
+`diagnostico.tem_dado_financeiro` vem da própria chamada de extração, e só `false` explícito silencia
+a guarda — `null` (chamador antigo) e `true` seguem abrindo a falha. `p_falha_motivo` continua
+mandando sempre.
+
+### O canvas parou de ser desenhado à mão (PR #129)
+
+Três sessões acrescentando nós (as três camadas, o Merge, o `Conferir Lote`) com coordenada escolhida
+a olho entregaram um canvas ilegível: `Fatiar Extracao` desenhado por cima do `OpenAI Extrair`,
+`Juntar Blocos` por cima do `Gravar Campos`, o tronco pulando entre y=140 e y=560, e a linha do
+`false` do fallback atravessando por dentro dos três nós da classificação por conteúdo.
+
+`n8n/layout.mjs` deriva a posição do próprio grafo — uma coluna por camada, o filho de maior alcance
+herda a faixa do pai (tronco reto), ramo curto desce, e aresta que pula colunas ganha **corredor
+reservado**. Os quatro geradores usam; `position` sumiu das chamadas de `node(...)`. Quatro
+invariantes conferem o JSON commitado dos quatro workflows, e as quatro **reprovam o canvas
+anterior**.
+
+### O que isto muda no diagnóstico do produto
+
+As três camadas da sessão 45/46 continuam valendo, mas a leitura de "58% de cobertura" da sessão 46
+tem de ser lida com esta sessão junto: **parte do que faltava não era extração incompleta, era
+extração não chamada**. A próxima rodada é a primeira em que os dois números — cobertura por
+documento e integridade do lote — existem ao mesmo tempo.
+
+**Suítes:** n8n **263** (era 235 na sessão 46), banco com as suítes de documento sem dado financeiro
+e de conferência de lote. **Requer do dono:** aplicar `0111` + `0112` e **reimportar** o
+`workflow.e1-ingestao.json` (30 nós).
 
 ## Sessão 46 (2026-08-14) — as três camadas rodaram: 39% → 58%, truncamento zerado, e três defeitos seguidos de mecânica do n8n
 
