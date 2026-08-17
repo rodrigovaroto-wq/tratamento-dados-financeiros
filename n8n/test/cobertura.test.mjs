@@ -108,6 +108,48 @@ test('juntarBlocos: limpa a linha repetida NA EMENDA, e só ela', () => {
   assert.equal(repetida.emendasLimpas, 0);
 });
 
+// --- a unidade da guarda: LINHA, não conta distinta ---------------------------
+// O livro razão do book tem 99 lançamentos e 66 históricos distintos (medido por
+// `medir-regua-cobertura.mjs`). Comparar 66 com as 100 linhas que a régua vê dá
+// 66% — abaixo do limiar — para uma extração que não perdeu NADA. A guarda
+// acusaria de incompleto justamente o documento que motivou as três camadas.
+
+test('juntarBlocos conta LINHAS devolvidas — dois lançamentos do mesmo fornecedor contam dois', () => {
+  const linha = (origem, k, v) => ({ linha_origem: origem, chave: k, valor_num: v, valor_texto: String(v) });
+  const r = juntarBlocos([
+    { bloco: 1, campos: [linha(0, 'PAGTO ARACATI', 150), linha(1, 'PAGTO ARACATI', 221), linha(2, 'PAGTO IPIRANGA', 226)] },
+  ]);
+  assert.equal(r.linhasRetornadas, 3, 'três lançamentos, ainda que dois tenham o mesmo histórico');
+  assert.equal(new Set(r.campos.map((c) => c.chave)).size, 2, 'contas distintas seriam só duas');
+  // Com 3 linhas de conta no texto, a extração está COMPLETA e a guarda se cala.
+  assert.equal(avaliarCobertura({ extraidas: r.linhasRetornadas, esperadas: 3, minimo: 3 }), null);
+  // Era este o falso positivo: 2 de 3 = 67%, o número do livro razão inteiro.
+  assert.ok(avaliarCobertura({ extraidas: 2, esperadas: 3, minimo: 3 }), 'a unidade velha acusaria');
+});
+
+test('juntarBlocos: uma conta com três colunas é UMA linha — o viés oposto também some', () => {
+  // O erro que a régua v1 corrigiu (198%) volta pela outra porta se a contagem
+  // for de PARES: três colunas de um DRE comparativo são três campos, uma linha.
+  const campo = (origem, k, pc, v) => ({ linha_origem: origem, chave: k, periodo_coluna: pc, valor_num: v });
+  const r = juntarBlocos([
+    { bloco: 1, campos: [campo(0, 'Receita', '2025', 1), campo(0, 'Receita', '2024', 2), campo(0, 'Receita', '2023', 3),
+      campo(1, 'Custo', '2025', 4), campo(1, 'Custo', '2024', 5)] },
+  ]);
+  assert.equal(r.campos.length, 5, 'o banco continua recebendo par a par');
+  assert.equal(r.linhasRetornadas, 2, 'mas o documento tem duas linhas');
+});
+
+test('juntarBlocos: `linha_origem` NÃO chega ao banco, e o bloco antigo sem ele não zera a guarda', () => {
+  const r = juntarBlocos([{ bloco: 1, campos: [{ linha_origem: 0, chave: 'A', valor_num: 1 }] }]);
+  assert.equal(Object.hasOwn(r.campos[0], 'linha_origem'), false, 'sai antes de virar campo_extraido');
+  // Formato plano antigo (workflow importado meses atrás): sem `linha_origem` a
+  // contagem é zero, e quem chama cai para as contas distintas — o comportamento
+  // de antes desta correção, em vez de "extraiu zero linhas".
+  const antigo = juntarBlocos([{ bloco: 1, campos: [{ chave: 'A', valor_num: 1 }, { chave: 'B', valor_num: 2 }] }]);
+  assert.equal(antigo.linhasRetornadas, 0);
+  assert.equal(antigo.campos.length, 2);
+});
+
 test('juntarBlocos: o motivo de falha de UM bloco não some na junção', () => {
   const r = juntarBlocos([
     { bloco: 1, campos: [{ chave: 'A' }], falha_motivo: null },
@@ -211,10 +253,10 @@ test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 10
   const dre = avaliarCobertura({ extraidas: 30, esperadas: 39 });
   assert.ok(dre, '30 de 39 tem de virar pendência');
   assert.equal(dre.razao, 0.769);
-  assert.match(dre.motivo, /30 conta\(s\) distinta\(s\).*39 linha\(s\)/);
+  assert.match(dre.motivo, /30 linha\(s\) devolvida\(s\).*39 linha\(s\)/);
   assert.match(dre.motivo, /MESMA unidade/);
-  // E a descrição diz onde ela pode errar: rótulo repetido conta uma vez só.
-  assert.match(dre.motivo, /rótulo repetido/);
+  // A descrição diz o viés conhecido da régua, medido: ela conta ~3% a mais.
+  assert.match(dre.motivo, /erra para cima em cerca de 3%/);
 
   // Documento completo passa.
   assert.equal(avaliarCobertura({ extraidas: 38, esperadas: 39 }), null, '97% passa');

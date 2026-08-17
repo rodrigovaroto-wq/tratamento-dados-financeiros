@@ -1,12 +1,12 @@
 // A RÉGUA DA COBERTURA, medida contra a verdade — sem gastar um centavo.
 //
 // POR QUE ESTE SCRIPT EXISTE. A guarda de cobertura (`lib/cobertura.mjs`) decide
-// se um documento veio pela metade comparando duas contagens: as CONTAS
-// DISTINTAS que a extração gravou e as LINHAS DE CONTA que o documento tem. A
-// segunda é uma HEURÍSTICA sobre o texto do PDF — "linha que termina em valor e
-// tem rótulo, menos o ruído conhecido" — e até aqui ela tinha **um** ponto de
-// medição: o `02_DRE`, conferido a olho numa madrugada (o comentário do
-// `LIMIAR_COBERTURA` diz isso com todas as letras, e pede a recalibração).
+// se um documento veio pela metade comparando duas contagens: as LINHAS que a
+// extração devolveu e as LINHAS DE CONTA que o documento tem. A segunda é uma
+// HEURÍSTICA sobre o texto do PDF — "linha que tem valor e tem identidade, menos
+// o ruído conhecido" — e até aqui ela tinha **um** ponto de medição: o `02_DRE`,
+// conferido a olho numa madrugada (o comentário do `LIMIAR_COBERTURA` dizia isso
+// com todas as letras, e pedia a recalibração).
 //
 // Uma régua errada estraga os dois lados. Se ela conta demais, extração PERFEITA
 // aparece como incompleta e a fila de revisão enche de falso positivo — o jeito
@@ -55,10 +55,10 @@ const ERRO_MAXIMO_PARA_MENOS = 0.05;
 const MAX_FALSOS_POSITIVOS = 0;
 
 // ---------------------------------------------------------------------------
-// O DEFEITO QUE ESTA MEDIÇÃO ACHOU E QUE AINDA NÃO ESTÁ CORRIGIDO.
+// O DEFEITO QUE ESTA MEDIÇÃO ACHOU — E QUE ELA AGORA IMPEDE DE VOLTAR.
 //
-// A guarda compara CONTAS DISTINTAS gravadas contra LINHAS DE CONTA do texto. As
-// duas viram a mesma unidade só quando cada linha tem um rótulo próprio — e num
+// A guarda comparava CONTAS DISTINTAS gravadas contra LINHAS DE CONTA do texto.
+// As duas só viram a mesma unidade quando cada linha tem rótulo próprio — e num
 // livro razão isso é falso por construção: o mesmo fornecedor aparece em vários
 // lançamentos. Medido no book (`contas_distintas_verdade` ÷ `linhas_de_conta_verdade`):
 //
@@ -66,21 +66,17 @@ const MAX_FALSOS_POSITIVOS = 0;
 //     19_Faturamento_Intragrupo . 15 linhas,  7 rótulos distintos → 0,47
 //     20_Mapa_de_Divida ......... 12 linhas,  8 rótulos distintos → 0,67
 //
-// Nesses três, extração PERFEITA se reporta abaixo do limiar de 0,85 e a
-// pendência é falsa. Não é hipótese: é a razão calculada do artefato. A guarda já
-// avisa disso na descrição da pendência ("documento com rótulo repetido… pode ser
-// resolvida sem ação"), o que ameniza para quem lê, mas não conserta a medida.
+// Nos três, extração PERFEITA se reportava abaixo do limiar e a pendência era
+// falsa. Corrigido em 17/08: `achatarGrupos` marca cada entrada com a LINHA do
+// documento que a originou, `juntarBlocos` conta as linhas distintas depois de
+// limpar a emenda, e a guarda compara linha com linha. O `linha_origem` não chega
+// ao banco.
 //
-// A correção certa é a extração informar quantas LINHAS devolveu (e não só quantas
-// contas distintas), para os dois lados ficarem na mesma unidade — mexe em
-// `achatarGrupos`/`juntarBlocos` e é fatia própria. Enquanto ela não vem, a lista
-// abaixo é o que se sabe: documento NOVO com rótulo repetido reprova este script,
-// porque seria um falso positivo que ninguém previu.
-const ROTULO_REPETIDO_CONHECIDO = new Set([
-  '17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf',
-  '19_Faturamento_Intragrupo_Grupo_Canastra_2023_a_2025.pdf',
-  '20_Mapa_de_Divida_Canastra_Industria_2025.pdf',
-]);
+// Este script continua exibindo o segundo cenário — o que aconteceria se a guarda
+// voltasse a se reportar em contas distintas — como EVIDÊNCIA de por que a unidade
+// importa. Ele não reprova por isso: rótulo repetido é propriedade do documento, e
+// o livro razão vai aparecer nessa lista para sempre. Quem tranca a regressão são
+// os testes de unidade, que exigem a contagem em linhas.
 
 // ---------------------------------------------------------------------------
 
@@ -137,8 +133,8 @@ const mediana = erros.length ? erros[Math.floor(erros.length / 2)] : 0;
 const paraMais = avaliados.filter((l) => l.erro > ERRO_MAXIMO_PARA_MAIS);
 const paraMenos = avaliados.filter((l) => l.erro < -ERRO_MAXIMO_PARA_MENOS);
 const falsos = avaliados.filter((l) => l.falsoPositivo);
+// Cenário de regressão: e SE a guarda voltasse a se reportar em contas distintas?
 const porRotulo = avaliados.filter((l) => l.falsoPositivoPorRotulo);
-const rotuloNovo = porRotulo.filter((l) => !ROTULO_REPETIDO_CONHECIDO.has(l.arquivo));
 // A régua que a extração perfeita precisaria vencer: o pior caso manda, porque
 // o limiar é aplicado documento a documento, não na média.
 const piorRazao = avaliados.reduce((pior, l) => Math.min(pior, l.verdade / l.regua), 1);
@@ -180,8 +176,8 @@ if (JSON_SAIDA) {
     for (const l of falsos) console.log(`   ${l.arquivo}: verdade ${l.verdade}, régua ${l.regua} → ${pct(l.verdade / l.regua)}`);
   }
   if (porRotulo.length) {
-    console.log(`\n⚠️  ${porRotulo.length} documento(s) com RÓTULO REPETIDO — a régua acerta, mas a guarda compara`);
-    console.log('    contas distintas com linhas, e extração perfeita se reporta abaixo do limiar:');
+    console.log(`\n⚠️  ${porRotulo.length} documento(s) voltariam a ser falso positivo se a guarda medisse em`);
+    console.log('    CONTAS DISTINTAS em vez de LINHAS — é a evidência de por que a unidade é linha:');
     for (const l of porRotulo) {
       console.log(`   ${l.arquivo}: ${l.verdade} linhas, ${l.distintas} rótulos distintos, régua ${l.regua} → ${pct(l.distintas / l.regua)}`);
     }
@@ -197,11 +193,6 @@ if (paraMenos.length) {
   problemas.push(`${paraMenos.length} documento(s) com a régua contando mais de ${pct(ERRO_MAXIMO_PARA_MENOS)} A MENOS `
     + `— é o erro que deixa passar extração incompleta: `
     + paraMenos.map((l) => `${l.arquivo} (${l.verdade}→${l.regua})`).join(', '));
-}
-if (rotuloNovo.length) {
-  problemas.push(`${rotuloNovo.length} documento(s) NOVOS em que rótulo repetido faria a guarda acusar extração `
-    + `perfeita (a lista conhecida está no topo deste arquivo): `
-    + rotuloNovo.map((l) => `${l.arquivo} (${l.verdade} linhas, ${l.distintas} rótulos)`).join(', '));
 }
 if (falsos.length > MAX_FALSOS_POSITIVOS) {
   problemas.push(`${falsos.length} documento(s) abririam pendência com extração PERFEITA (máximo tolerado: `

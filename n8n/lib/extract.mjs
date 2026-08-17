@@ -272,6 +272,14 @@ export function achatarGrupos(grupos) {
   const linhas = [];
   const problemas = [];
   if (!Array.isArray(grupos)) return { linhas, problemas };
+  // Índice da LINHA DO DOCUMENTO que originou cada entrada. Uma conta com três
+  // colunas vira três entradas com o MESMO `linha_origem`, e é isso que permite
+  // contar de volta quantas linhas o modelo devolveu — a unidade em que a guarda
+  // de cobertura compara. Sem ele só sobrava "contas distintas", que num livro
+  // razão (o mesmo histórico em vários lançamentos) é MENOR que o número de
+  // linhas: extração perfeita se reportava em 66% e abria pendência falsa.
+  // O campo não chega ao banco: `juntarBlocos` o remove depois de contar.
+  let indiceDaLinha = -1;
   for (const g of grupos) {
     if (!g || typeof g !== 'object') continue;
     const cols = Array.isArray(g.cols) && g.cols.length > 0
@@ -281,6 +289,10 @@ export function achatarGrupos(grupos) {
       : [{ ec: null, pc: null }];
     for (const l of Array.isArray(g.l) ? g.l : []) {
       if (!l || typeof l !== 'object' || typeof l.k !== 'string') continue;
+      // Conta a linha ANTES de qualquer descarte: uma linha desalinhada é linha
+      // que o modelo leu, e o índice tem de continuar identificando a MESMA
+      // linha do documento se um dia o descarte mudar.
+      indiceDaLinha += 1;
       const vt = Array.isArray(l.vt) ? l.vt : [l.vt ?? null];
       const vn = Array.isArray(l.vn) ? l.vn : [l.vn ?? null];
       if (vn.length !== cols.length || vt.length !== cols.length) {
@@ -306,6 +318,7 @@ export function achatarGrupos(grupos) {
         // TEM de ocupar posição para não deslocar as outras.
         if (valorTexto === null && valorNum === null) continue;
         linhas.push({
+          linha_origem: indiceDaLinha,
           secao: g.s ?? null,
           secao_canonica: g.sc && g.sc !== 'NAO_CLASSIFICAVEL' ? g.sc : null,
           entidade_coluna: cols[j].ec,

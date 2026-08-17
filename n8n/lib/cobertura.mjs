@@ -91,11 +91,12 @@ export const MAX_CELULAS_POR_BLOCO = Math.floor((TETO_SAIDA_TOKENS * FRACAO_DO_T
 // no número, coluna encavalada, rótulo quebrado em duas linhas. Quando a próxima
 // rodada trouxer 35 documentos reais medidos, aí o número tem base para apertar.
 //
-// O QUE A MESMA MEDIÇÃO ACHOU E NÃO SE CONSERTA COM LIMIAR: onde o rótulo se
+// O QUE A MESMA MEDIÇÃO ACHOU E NÃO SE CONSERTAVA COM LIMIAR: onde o rótulo se
 // repete (livro razão: 99 linhas, 66 históricos distintos), extração PERFEITA se
-// reporta em 66% e a pendência é falsa — as duas pontas deixam de estar na mesma
-// unidade. A correção é a extração informar quantas LINHAS devolveu, não só
-// quantas contas distintas, e está aberta no `ESTADO.md`.
+// reportava em 66% e a pendência era falsa — as duas pontas não estavam na mesma
+// unidade. CORRIGIDO no mesmo dia: a extração passa a informar quantas LINHAS
+// devolveu (`linha_origem` em `achatarGrupos`, contado em `juntarBlocos`), e é
+// isso que a guarda compara. Nenhum limiar consertaria aquilo.
 export const LIMIAR_COBERTURA = 0.85;
 
 // Abaixo de quantas células a guarda se cala. Num documento de 6 linhas a razão
@@ -294,6 +295,7 @@ export function juntarBlocos(blocos) {
   const campos = [];
   const motivos = [];
   let emendasLimpas = 0;
+  const linhas = new Set();
   const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
 
   for (const b of lista) {
@@ -307,7 +309,12 @@ export function juntarBlocos(blocos) {
         emendasLimpas += 1;
       }
     }
-    for (const c of doBloco) campos.push(c);
+    for (const c of doBloco) {
+      campos.push(c);
+      // LINHAS do documento devolvidas, contadas DEPOIS da limpeza da emenda.
+      // Cada bloco numera as suas a partir de zero, então a chave leva o bloco.
+      if (Number.isInteger(c.linha_origem)) linhas.add(`${b.bloco}:${c.linha_origem}`);
+    }
     if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);
   }
 
@@ -315,8 +322,25 @@ export function juntarBlocos(blocos) {
   // documento" e é o que permite ao export reconhecer subtotal impresso acima
   // dos componentes. Cada bloco numera a partir de zero, então manter a
   // numeração do bloco faria o documento ter três linhas de `ordem` 0.
-  const renumerados = campos.map((c, i) => ({ ...c, ordem: i }));
-  return { campos: renumerados, motivos, emendasLimpas, blocos: lista.length };
+  //
+  // `linha_origem` SAI aqui: ele serviu para contar as linhas e não tem lugar em
+  // `campo_extraido`. O que vai ao banco continua sendo exatamente o que sempre
+  // foi — acrescentar coluna a uma tabela de dado por causa de uma contagem
+  // interna seria pagar migration por uma variável de laço.
+  const renumerados = campos.map((c, i) => {
+    const { linha_origem, ...resto } = c;
+    return { ...resto, ordem: i };
+  });
+  return {
+    campos: renumerados,
+    motivos,
+    emendasLimpas,
+    blocos: lista.length,
+    // Zero significa "não dá para saber" (bloco no formato plano antigo, sem
+    // `linha_origem`), e quem chama trata isso caindo para as contas distintas —
+    // o comportamento de antes desta correção.
+    linhasRetornadas: linhas.size,
+  };
 }
 
 /**
@@ -324,10 +348,15 @@ export function juntarBlocos(blocos) {
  * que dizer" é o caso comum, então ela não polui a fila de revisão.
  */
 export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTURA, minimo = MINIMO_PARA_AVALIAR }) {
-  // `extraidas` = CONTAS DISTINTAS gravadas; `esperadas` = LINHAS DE CONTA do
-  // texto. As duas na mesma unidade — foi trocar isso que fez a guarda ficar
-  // cega nos documentos comparativos, onde 3 colunas por conta faziam a razão
-  // passar de 100% e nada nunca disparar.
+  // `extraidas` = LINHAS que a extração devolveu; `esperadas` = LINHAS DE CONTA
+  // do texto. As duas na mesma unidade, e foi preciso errar isso DUAS vezes para
+  // chegar aqui:
+  //   • pares (conta × coluna) contra linhas → 198% num documento incompleto, a
+  //     guarda cega justamente no comparativo;
+  //   • contas DISTINTAS contra linhas → 66% num livro razão PERFEITO, porque o
+  //     mesmo histórico se repete em lançamentos diferentes e some na contagem.
+  // Linha contra linha não tem nenhum dos dois vieses: uma conta com três colunas
+  // conta uma vez, e dois lançamentos do mesmo fornecedor contam dois.
   const e = Number(extraidas);
   const t = Number(esperadas);
   if (!Number.isFinite(e) || !Number.isFinite(t) || t < minimo) return null;
@@ -338,14 +367,15 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
     extraidas: e,
     esperadas: t,
     motivo:
-      `Extração INCOMPLETA: ${e} conta(s) distinta(s) gravada(s) para um documento com ${t} linha(s) `
+      `Extração INCOMPLETA: ${e} linha(s) devolvida(s) para um documento com ${t} linha(s) `
       + `de conta no texto (${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de `
       + `${(limiar * 100).toFixed(0)}%). A contagem do documento é feita sobre o texto do PDF, sem IA: `
-      + `linha que termina em valor e tem rótulo, descontados cabeçalho de ano, CNPJ, data, número de `
-      + `página e bloco de assinatura. As duas medidas estão na MESMA unidade (contas, não valores), `
-      + `então a diferença é dado que o modelo deixou de ler — conferir o documento na fila de revisão `
-      + `antes de usar o book. Documento com rótulo repetido (livro razão com o mesmo histórico em `
-      + `lançamentos diferentes) conta menos contas distintas do que tem linhas: aí a pendência é falso `
-      + `positivo e pode ser resolvida sem ação.`,
+      + `linha que tem valor e tem identidade — rótulo, código de conta, ou linha de tabela numérica —, `
+      + `descontados cabeçalho de ano, CNPJ, data, número de página e bloco de assinatura. As duas `
+      + `medidas estão na MESMA unidade (LINHAS do documento: uma conta com três colunas conta uma vez, `
+      + `e dois lançamentos com o mesmo histórico contam dois), então a diferença é dado que o modelo `
+      + `deixou de ler — conferir o documento na fila de revisão antes de usar o book. A régua erra para `
+      + `cima em cerca de 3% (costuma contar o cabeçalho de colunas como linha), o que já está `
+      + `descontado na folga do limiar.`,
   };
 }

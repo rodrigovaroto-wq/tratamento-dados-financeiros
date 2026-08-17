@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0112_lote_conferido_documento_por_documento.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 266 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 270 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -114,7 +114,7 @@ Agora as duas pontas estão em CONTAS:
 | | |
 |---|---|
 | régua | **linhas de conta** — tem valor e tem identidade (rótulo, código de conta, ou linha de tabela numérica); fora cabeçalho de ano, CNPJ, data, página, CRC/CPF |
-| medida | **contas distintas** gravadas |
+| medida | **linhas devolvidas** pela extração (era contas distintas até 17/08 — ver abaixo) |
 | `02_DRE` | ~30 de 39 = **77%** — ele ESTÁ incompleto, e a régua antiga dizia 198% |
 
 O limiar subiu de 0,60 para **0,85** porque o alvo é cobertura total: isso vai abrir pendência em
@@ -144,6 +144,22 @@ tabela numérica com dois valores ou mais). Erro absoluto médio **29% → 9%**,
 sequer; os avaliados pela guarda passam de 10 para 14. O limiar **fica em 0,85**: o pior documento
 honesto do book se reporta a 96%, então sobram 11 pontos de folga — e a folga é para o documento
 real, que é mais sujo que o sintético. O CI roda a medição a cada push.
+
+### E a unidade do OUTRO lado da guarda: linha, não conta distinta (17/08)
+
+A mesma medição achou o viés oposto, e ele tinha número exato: a guarda comparava **contas distintas
+gravadas** com **linhas do texto**, e num livro razão o mesmo fornecedor aparece em vários
+lançamentos — 99 linhas para **66 históricos distintos**. Uma extração que não perdia NADA se
+reportava em 66% e abria pendência. Foi o segundo erro de unidade da mesma guarda, na direção
+contrária ao primeiro (pares × linhas dava 198%).
+
+Agora as duas pontas são **linha**: `achatarGrupos` marca cada campo com a linha do documento que o
+originou, `juntarBlocos` conta as linhas distintas depois de limpar a emenda, e o campo **não chega
+ao banco** (nada de migration por causa de uma contagem interna). Uma conta com três colunas conta
+uma vez; dois lançamentos do mesmo fornecedor contam dois. Bloco no formato plano antigo, sem a
+marca, cai para as contas distintas — o comportamento de antes, em vez de cobertura zero. O painel do
+`Resumo de Custo` passa a somar a mesma unidade, e `contas_distintas` continua saindo por documento,
+porque é ela que denuncia rótulo repetido.
 
 ### O custo, medido e projetado (13/08/2026)
 
@@ -194,14 +210,6 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:
 
-- **A guarda de cobertura compara unidades diferentes quando o rótulo se repete.** Ela mede *contas
-  distintas gravadas* contra *linhas de conta do texto*, e num livro razão o mesmo fornecedor aparece
-  em vários lançamentos: o book tem **99 linhas e 66 históricos distintos**, então extração PERFEITA
-  se reporta em **66%** e abre pendência falsa (medido por `n8n/medir-regua-cobertura.mjs`; os outros
-  dois casos, faturamento intragrupo e mapa de dívida, ficam abaixo do mínimo e a guarda se cala). A
-  correção é a extração informar quantas **linhas** devolveu, além das contas distintas — mexe em
-  `achatarGrupos`/`juntarBlocos` e é fatia própria. Enquanto não vem, o script reprova quando um
-  documento NOVO entra nessa classe.
 - **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
   blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
   contagem de linhas determinística. Fatia própria.
