@@ -247,6 +247,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconferir.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de documento sem dado financeiro (0111: certidão sem número não é extração falha)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/documento_sem_dado_financeiro.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do dial de autonomia (0041: o dial passa a mandar no auto-aceite)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/dial.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

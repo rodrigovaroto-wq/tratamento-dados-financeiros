@@ -826,6 +826,7 @@ const diagnostico={
   periodo_referencia: d.periodo_referencia??null,
   legibilidade: d.legibilidade??null,
   nota_legibilidade: d.nota_legibilidade??null,
+  tem_dado_financeiro: (typeof d.tem_dado_financeiro==='boolean')?d.tem_dado_financeiro:null,
   resumo: d.resumo??null,
   justificativa: d.justificativa??'',
 };
@@ -1123,8 +1124,8 @@ const nodes = [
   }, 2650, 300, CODE_CONTINUA),
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text) as n_campos',
-    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null] }}" },
+    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos',
+    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null] }}" },
   }, 2700, 300, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;

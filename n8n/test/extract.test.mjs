@@ -173,6 +173,49 @@ test('parseExtractionResponse tolera resposta vazia/ruim', () => {
   assert.equal(parseExtractionResponse({}).diagnostico.entidade, null);
 });
 
+// 0111: certidão/organograma/parecer de auditoria não têm valor monetário por
+// natureza — a IA diz isso no diagnóstico, e o Sinal 3 (banco) deixa de tratar
+// "zero linhas" como falha de extração quando o campo é `false`.
+test('extractionSchema exige tem_dado_financeiro no diagnóstico', () => {
+  const s = extractionSchema();
+  assert.ok(s.schema.properties.diagnostico.required.includes('tem_dado_financeiro'));
+  assert.equal(s.schema.properties.diagnostico.properties.tem_dado_financeiro.type, 'boolean');
+});
+
+test('parseExtractionResponse: documento sem valor monetário por natureza devolve tem_dado_financeiro=false com grupos vazio', () => {
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: 'Grupo Canastra', tipo_confirma: true, tipo_sugerido: 'CERTIDOES',
+      periodo_tipo: 'data-base', periodo_referencia: '2025-08-01',
+      legibilidade: 'ok', nota_legibilidade: null, tem_dado_financeiro: false,
+      resumo: 'Certidões negativas de débito, protesto e falência — sem valor monetário.',
+      justificativa: 'Documento é só texto de certidão; nenhuma tabela de valores.',
+    },
+    grupos: [],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.diagnostico.tem_dado_financeiro, false);
+  assert.deepEqual(r.campos, []);
+  // zero linhas aqui não é falha: falhaMotivo tem de ficar null.
+  assert.equal(r.falhaMotivo, null);
+});
+
+test('parseExtractionResponse: diagnostico sem tem_dado_financeiro (workflow velho) cai para null, nunca false', () => {
+  const api = { choices: [{ message: { content: JSON.stringify({
+    moeda: null, unidade: null,
+    diagnostico: {
+      entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO',
+      periodo_tipo: 'anual', periodo_referencia: '12M25',
+      legibilidade: 'ok', nota_legibilidade: null,
+      resumo: 'r', justificativa: 'j',
+    },
+    grupos: [],
+  }) } }] };
+  const r = parseExtractionResponse(api);
+  assert.equal(r.diagnostico.tem_dado_financeiro, null);
+});
+
 test('buildExtractionRequest define max_tokens explícito (sem isso, documentos combinados grandes truncam a resposta silenciosamente)', () => {
   const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'balanco.pdf' });
   const req = buildExtractionRequest({ tipo: 'COMBINADO', nomeOriginal: 'balanco.pdf', conteudo: parte });
