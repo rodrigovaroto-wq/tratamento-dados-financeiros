@@ -126,6 +126,18 @@ gera("folha", R.pdf_folha, 2025,
 gera("extratos", R.pdf_extratos, bp, 2025,
      "29_Extrato_Bancario_Consolidado_Canastra_Industria_2025.pdf")
 
+# A armadilha 12 do GUIA_DE_TESTE, escrita como DADO e não só como prosa: estes
+# quatro não podem gerar linha financeira, então a verdade deles é zero por
+# declaração — e `medir-regua-cobertura.mjs` cobra a régua quando ela enxerga
+# conta onde não há. É a mesma família que a migration `0111` protege do outro
+# lado (zero linha aqui é resultado certo, não extração falha).
+R.SEM_VALOR_MONETARIO.update({
+    "30_Certidoes_Negativas_Grupo_Canastra.pdf",
+    "31_Contrato_Social_Consolidado_Canastra_Industria.pdf",
+    "32_Organograma_Societario_Grupo_Canastra.pdf",
+    "34_Relatorio_do_Auditor_Independente_2025.pdf",
+})
+
 gera("certidões", R.pdf_certidoes, "30_Certidoes_Negativas_Grupo_Canastra.pdf")
 gera("contrato social", R.pdf_contrato_social, bp, tot,
      "31_Contrato_Social_Consolidado_Canastra_Industria.pdf")
@@ -418,11 +430,19 @@ import re
 import extrai
 
 metricas = []
+texto_por_arquivo = {}
 for arquivo in feitos:
     caminho = f"{R.OUT}/{arquivo}"
     bruto = open(caminho, "rb").read()
     texto = extrai.texto(caminho)
     linhas_texto = [linha for linha in texto.split("\n") if linha.strip()]
+    # As LINHAS de verdade (pedaços agrupados pela coordenada Y), que é a forma
+    # que o nó `Extract From File` do n8n entrega ao pipeline. `texto()` devolve
+    # uma CÉLULA por pedaço, e contar célula como linha afrouxaria a régua.
+    linhas_reais = [linha for linha in extrai.linhas(caminho) if linha.strip()]
+    texto_por_arquivo[arquivo] = linhas_reais
+    verdade = R.CONTAGEM.get(arquivo, {"linhas_de_conta": 0, "celulas_de_valor": 0,
+                                       "contas_distintas": 0})
     metricas.append({
         "arquivo": arquivo,
         "paginas": len(re.findall(rb"/Type\s*/Page[^s]", bruto)),
@@ -432,10 +452,28 @@ for arquivo in feitos:
         # Linha com dígito é candidata a virar linha financeira extraída — é ela
         # que vira token de SAÍDA, que é o item mais caro da conta.
         "linhas_com_numero": sum(1 for linha in linhas_texto if any(ch.isdigit() for ch in linha)),
+        # ---- A VERDADE, declarada por quem escreveu o documento ----
+        # Não é medição do PDF: é a contagem das linhas que o gerador escreveu
+        # (rótulo + pelo menos um valor). É contra ISTO que a régua de cobertura
+        # de `n8n/lib/cobertura.mjs` é calibrada — heurística conferida contra
+        # heurística não prova nada. Ver `n8n/medir-regua-cobertura.mjs`.
+        "linhas_de_conta_verdade": verdade["linhas_de_conta"],
+        "celulas_de_valor_verdade": verdade["celulas_de_valor"],
+        # Rótulos DISTINTOS: é a unidade que a extração grava. Onde ele fica bem
+        # abaixo de `linhas_de_conta_verdade` (livro razão), comparar um com o
+        # outro acusa de incompleta uma extração perfeita.
+        "contas_distintas_verdade": verdade["contas_distintas"],
     })
 
 with open(f"{R.OUT}/METRICAS.json", "w", encoding="utf-8") as fh:
     json.dump({"livro": "book-canastra", "documentos": metricas}, fh, indent=2, ensure_ascii=False)
+
+# O texto que a régua vai ler, gravado como artefato: é o que permite medir a
+# régua de produção (JavaScript) sobre o texto real dos PDFs sem reimplementar
+# leitura de PDF em outra linguagem.
+with open(f"{R.OUT}/TEXTO_EXTRAIDO.json", "w", encoding="utf-8") as fh:
+    json.dump({"livro": "book-canastra", "documentos": texto_por_arquivo}, fh,
+              indent=1, ensure_ascii=False)
 
 print(f"METRICAS.json gravado: {len(metricas)} documentos, "
       f"{sum(m['paginas'] for m in metricas)} páginas, "

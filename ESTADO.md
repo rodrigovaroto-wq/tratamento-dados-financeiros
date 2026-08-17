@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0112_lote_conferido_documento_por_documento.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 263 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 266 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O próximo passo: o teste de ponta a ponta
@@ -113,13 +113,37 @@ Agora as duas pontas estão em CONTAS:
 
 | | |
 |---|---|
-| régua | **linhas de conta** — termina em valor e tem rótulo; fora cabeçalho de ano, CNPJ, data, página, CRC/CPF (7 de 46 no `02_DRE`) |
+| régua | **linhas de conta** — tem valor e tem identidade (rótulo, código de conta, ou linha de tabela numérica); fora cabeçalho de ano, CNPJ, data, página, CRC/CPF |
 | medida | **contas distintas** gravadas |
 | `02_DRE` | ~30 de 39 = **77%** — ele ESTÁ incompleto, e a régua antiga dizia 198% |
 
 O limiar subiu de 0,60 para **0,85** porque o alvo é cobertura total: isso vai abrir pendência em
-documentos que antes passavam, e é o objetivo. **É o próximo número a recalibrar** — ele tem um ponto
-de medição hoje, e a próxima rodada dá 35.
+documentos que antes passavam, e é o objetivo.
+
+### A régua calibrada contra a verdade — e a cegueira que ela escondia (17/08)
+
+`node n8n/medir-regua-cobertura.mjs` confronta a régua com a contagem que o **gerador** do book
+declara (ele sabe quantas linhas escreveu; não é outra leitura do PDF). A primeira medição, nos 38
+documentos, achou o defeito que o limiar nunca resolveria:
+
+| Documento | linhas de verdade | a régua via | |
+|---|---:|---:|---|
+| `17_Livro_Razao` | 99 | **3** | −97% |
+| `15_Balancete` | 78 | **3** | −96% |
+| `22_Aging` | 14 | **2** | −86% |
+| `27_Imobilizado` | 9 | **2** | −78% |
+
+A régua acertava as demonstrações (+2% a +4%) e **desabava nos analíticos — os que perdem dado**. E
+como a guarda se cala abaixo de 20 linhas, a cegueira virava **silêncio**: o livro razão, o caso que
+motivou as três camadas, nunca chegava a ser avaliado por elas. A causa: "termina em valor" pressupõe
+rótulo e valor na mesma linha, e num documento de sistema contábil a linha termina em `D`/`C`, o
+rótulo é código sem letra, ou o histórico é parágrafo que o leitor de PDF deixa sozinho numa linha.
+
+A **régua v2** troca isso por "tem valor E tem identidade" (rótulo, código de conta, ou linha de
+tabela numérica com dois valores ou mais). Erro absoluto médio **29% → 9%**, sem piorar um documento
+sequer; os avaliados pela guarda passam de 10 para 14. O limiar **fica em 0,85**: o pior documento
+honesto do book se reporta a 96%, então sobram 11 pontos de folga — e a folga é para o documento
+real, que é mais sujo que o sintético. O CI roda a medição a cada push.
 
 ### O custo, medido e projetado (13/08/2026)
 
@@ -170,6 +194,14 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:
 
+- **A guarda de cobertura compara unidades diferentes quando o rótulo se repete.** Ela mede *contas
+  distintas gravadas* contra *linhas de conta do texto*, e num livro razão o mesmo fornecedor aparece
+  em vários lançamentos: o book tem **99 linhas e 66 históricos distintos**, então extração PERFEITA
+  se reporta em **66%** e abre pendência falsa (medido por `n8n/medir-regua-cobertura.mjs`; os outros
+  dois casos, faturamento intragrupo e mapa de dívida, ficam abaixo do mínimo e a guarda se cala). A
+  correção é a extração informar quantas **linhas** devolveu, além das contas distintas — mexe em
+  `achatarGrupos`/`juntarBlocos` e é fatia própria. Enquanto não vem, o script reprova quando um
+  documento NOVO entra nessa classe.
 - **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
   blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
   contagem de linhas determinística. Fatia própria.

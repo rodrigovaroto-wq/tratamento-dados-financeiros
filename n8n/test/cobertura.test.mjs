@@ -146,6 +146,62 @@ test('a régua conta LINHA DE CONTA, não toda linha com dígito', () => {
   assert.deepEqual(linhasDeConta('ATIVO\n137.624\n1.000'), []);
 });
 
+// --- os três documentos em que a régua v1 era CEGA ---------------------------
+// Medido em 17/08 por `n8n/medir-regua-cobertura.mjs`, contra a contagem que o
+// gerador do book declara: a v1 via 3 linhas num livro razão de 99 (−97%), 3 num
+// balancete de 78 (−96%) e 2 num aging de 14 (−86%). E como a guarda se cala
+// abaixo de 20 linhas, a cegueira virava silêncio: justamente os documentos
+// analíticos — os que perdem dado — nunca eram avaliados.
+
+test('linha que termina na NATUREZA (D/C) é conta — o balancete inteiro dependia disso', () => {
+  const balancete = [
+    'Código Conta Saldo D/C',           // cabeçalho: sem valor próprio
+    '1.1.01.002 181 D',
+    '1.1.02.003 9.644 C',
+    'Caixa e equivalentes de caixa 24.861 D',
+  ].join('\n');
+  // O rótulo do balancete é o CÓDIGO da conta — não tem uma letra sequer, e a
+  // régua v1 exigia três. As três linhas de valor contam; o cabeçalho não.
+  assert.deepEqual(linhasDeConta(balancete), ['1.1.01.002 181 D', '1.1.02.003 9.644 C',
+    'Caixa e equivalentes de caixa 24.861 D']);
+});
+
+test('linha de tabela numérica conta como conta — é o aging, onde o rótulo cai em outra linha', () => {
+  // O leitor de PDF põe o nome do cliente numa linha e a faixa de valores na
+  // seguinte. Contar a linha dos valores conta a conta UMA vez, que é a unidade
+  // certa; ignorá-la é o que fazia o aging medir 2 de 14.
+  const aging = [
+    'Cliente / sacado A vencer 1-30 31-60 61-90 Total %',
+    'Distribuidora Alfa Ltda.',
+    '1.648 522 402 362 4.019 14,0%',
+    'Comercial Beta S.A.',
+    '1.295 411 316 284 3.158 11,0%',
+  ].join('\n');
+  const contadas = linhasDeConta(aging);
+  assert.ok(contadas.includes('1.648 522 402 362 4.019 14,0%'), 'a linha de valores do cliente A conta');
+  assert.ok(contadas.includes('1.295 411 316 284 3.158 11,0%'), 'a linha de valores do cliente B conta');
+  // O cabeçalho de faixas ("1-30 31-60 61-90") entra junto: ele tem rótulo E
+  // número, e nenhuma regra honesta o separa de uma linha de dado sem saber o
+  // documento. É o viés conhecido da régua — UMA linha a mais por tabela, o que
+  // `medir-regua-cobertura.mjs` mede como +2% a +4% nos documentos grandes e até
+  // +17% nos pequenos. Sobra de denominador é o erro seguro: ela consome folga do
+  // limiar de 0,85, não abre pendência falsa (o pior caso medido no book inteiro
+  // é 96% com extração perfeita).
+  assert.equal(contadas.length, 3, 'as duas contas mais o cabeçalho de faixas');
+});
+
+test('a régua v2 não afrouxou: valor solto, cabeçalho e prosa continuam fora', () => {
+  // Um único número sem identidade nenhuma continua sendo célula solta.
+  assert.deepEqual(linhasDeConta('16.839'), []);
+  // Cabeçalho de ano tem dois valores, mas é ruído declarado.
+  assert.deepEqual(linhasDeConta('2025 2024 2023'), []);
+  assert.deepEqual(linhasDeConta('31/12/2025 31/12/2024'), []);
+  // Nota de rodapé com dois percentuais: prosa, não conta.
+  assert.deepEqual(linhasDeConta('Nota — A margem bruta foi de 2,9% (contra 25,2% em 2023)'), []);
+  // Linha sem valor nenhum: título de seção. O modelo também não gera linha nela.
+  assert.deepEqual(linhasDeConta('ATIVO CIRCULANTE'), []);
+});
+
 test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 100%', () => {
   // O erro que a régua nova corrige: 91 pares (conta × coluna) contra 46 linhas
   // com dígito dava 198%, e a guarda NUNCA disparava num documento comparativo.

@@ -76,10 +76,26 @@ export const MAX_CELULAS_POR_BLOCO = Math.floor((TETO_SAIDA_TOKENS * FRACAO_DO_T
 // objetivo, não efeito colateral: o `02_DRE` a 77% está mesmo deixando ~9 contas
 // para trás, e ninguém sabia.
 //
-// ESTE NÚMERO É O PRÓXIMO A RECALIBRAR. Ele tem UM ponto de medição na régua
-// nova (o DRE); a próxima rodada dá 35. Se a fila encher de falso positivo, o
-// que se ajusta é ele — e a decisão fica fácil porque a pendência traz os dois
-// números na descrição.
+// CALIBRADO CONTRA A VERDADE EM 17/08, e o número FICA em 0,85. Deixou de ter um
+// ponto de medição e passou a ter 38: `node n8n/medir-regua-cobertura.mjs`
+// confronta a régua com a contagem que o gerador do book declara. O resultado
+// (com a régua v2, abaixo):
+//
+//   • erro mediano da régua: +3% — ela conta uma linha a mais por tabela, quase
+//     sempre o cabeçalho de faixas/colunas, que tem rótulo E número;
+//   • pior caso do book com extração PERFEITA: 96% de cobertura aparente.
+//
+// Ou seja, sobram 11 pontos entre o pior documento honesto (96%) e o limiar
+// (85%). Subir para 0,90 caberia na medição e ainda assim NÃO se sobe: a folga
+// existe para o documento real, que é mais sujo que o sintético — rodapé colado
+// no número, coluna encavalada, rótulo quebrado em duas linhas. Quando a próxima
+// rodada trouxer 35 documentos reais medidos, aí o número tem base para apertar.
+//
+// O QUE A MESMA MEDIÇÃO ACHOU E NÃO SE CONSERTA COM LIMIAR: onde o rótulo se
+// repete (livro razão: 99 linhas, 66 históricos distintos), extração PERFEITA se
+// reporta em 66% e a pendência é falsa — as duas pontas deixam de estar na mesma
+// unidade. A correção é a extração informar quantas LINHAS devolveu, não só
+// quantas contas distintas, e está aberta no `ESTADO.md`.
 export const LIMIAR_COBERTURA = 0.85;
 
 // Abaixo de quantas células a guarda se cala. Num documento de 6 linhas a razão
@@ -104,12 +120,46 @@ export const MINIMO_PARA_AVALIAR = 20;
  * ("2025 2024 2023"), CNPJ, data por extenso, número de página, CRC e CPF do
  * bloco de assinatura. Nada disso é dado financeiro, e contá-los inflava o
  * denominador — a régua "grosseira mas honesta" era grosseira de mais.
+ *
+ * ┌─ v2 (17/08), medida contra as 38 verdades do `book-canastra` ──────────────
+ * │ `node n8n/medir-regua-cobertura.mjs` confrontou esta função com a contagem
+ * │ que o GERADOR do book declara (ele sabe quantas linhas escreveu, não é outra
+ * │ leitura do PDF). A régua acertava os documentos de demonstração — balanço,
+ * │ DRE, DFC, faturamento: erro de +2% a +4% — e DESABAVA justamente nos
+ * │ analíticos, que são os que perdem dado:
+ * │
+ * │   livro razão   99 linhas → a régua via  3   (−97%)
+ * │   balancete     78 linhas → a régua via  3   (−96%)
+ * │   aging         14 linhas → a régua via  2   (−86%)
+ * │   imobilizado    9 linhas → a régua via  2   (−78%)
+ * │
+ * │ E como `MINIMO_PARA_AVALIAR` cala a guarda abaixo de 20 linhas, a cegueira
+ * │ virava SILÊNCIO: nesses documentos a guarda nunca chegava a opinar. O livro
+ * │ razão da rodada de 14/08 — o caso que motivou as três camadas — era invisível
+ * │ para a guarda que existe para vigiá-lo.
+ * │
+ * │ A CAUSA: "termina em valor" pressupõe que rótulo e valor caem na MESMA linha
+ * │ do texto extraído. Num documento de sistema contábil isso é falso de três
+ * │ jeitos, e os três foram conferidos no artefato (e num segundo leitor de PDF,
+ * │ o `pdf-parse` que o n8n usa, para não calibrar contra um extrator só):
+ * │   • a linha termina na NATUREZA, não no valor — `1.1.01.002  181  D`;
+ * │   • o rótulo é CÓDIGO de conta, sem letra nenhuma — o mesmo `1.1.01.002`;
+ * │   • o histórico é parágrafo que quebra, e o leitor o deixa numa linha só
+ * │     dele: os valores do lançamento ficam órfãos de rótulo.
+ * │
+ * │ A v2 troca "termina em valor" por "TEM valor E tem identidade", e aceita como
+ * │ identidade três formas: rótulo em letras, código de conta, ou — quando o
+ * │ leitor separou o rótulo — a própria linha de tabela numérica (dois valores ou
+ * │ mais). Erro absoluto médio: 29% → 9%, sem piorar um único documento.
+ * └───────────────────────────────────────────────────────────────────────────
  */
 export function linhasDeConta(texto) {
   if (typeof texto !== 'string' || texto.length === 0) return [];
-  // Uma linha de conta TERMINA em número (o último valor da linha). Rótulo sem
-  // valor — um cabeçalho de seção — não é conta, e o modelo não gera linha nele.
-  const terminaEmValor = /\(?-?[\d][\d.,]*\)?%?\s*$/;
+  // Um valor: número solto, com separador de milhar, decimal, percentual, ou
+  // negativo entre parênteses — as quatro formas que o book usa.
+  const valores = /\(?-?\d[\d.]*(?:,\d+)?\)?%?/g;
+  // Código de conta contábil ("1.1.01.002"): identidade sem uma letra sequer.
+  const codigoDeConta = /\b\d+(?:\.\d+){2,}\b/;
   // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma
   // linha real do book, e o comentário evita que alguém "melhore" tirando um.
   const ruido = [
@@ -127,10 +177,17 @@ export function linhasDeConta(texto) {
   for (const bruta of texto.split('\n')) {
     const linha = bruta.trim();
     if (linha.length === 0) continue;
-    if (!terminaEmValor.test(linha)) continue;
     if (ruido.some((r) => r.test(linha))) continue;
-    // Rótulo mínimo: uma linha que é só número não é conta, é célula solta.
-    if (!/[a-zà-ú]{3}/i.test(linha)) continue;
+    const quantos = (linha.match(valores) ?? []).filter((t) => /\d/.test(t)).length;
+    // Sem valor não é conta: é título, é seção, é prosa. O modelo também não
+    // gera linha para ela.
+    if (quantos === 0) continue;
+    // Identidade da conta, em qualquer uma das três formas. A terceira —
+    // "linha de tabela numérica" — é a que recupera o razão e o aging, onde o
+    // leitor de PDF põe o rótulo numa linha e os valores na seguinte: contar a
+    // linha dos valores é contar a conta UMA vez, que é a unidade certa.
+    const temRotulo = /[a-zà-ú]{3}/i.test(linha);
+    if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) continue;
     out.push(linha);
   }
   return out;
