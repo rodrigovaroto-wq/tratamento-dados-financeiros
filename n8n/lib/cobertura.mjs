@@ -296,6 +296,7 @@ export function juntarBlocos(blocos) {
   const motivos = [];
   let emendasLimpas = 0;
   const linhas = new Set();
+  const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par
   const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
 
   for (const b of lista) {
@@ -313,7 +314,9 @@ export function juntarBlocos(blocos) {
       campos.push(c);
       // LINHAS do documento devolvidas, contadas DEPOIS da limpeza da emenda.
       // Cada bloco numera as suas a partir de zero, então a chave leva o bloco.
-      if (Number.isInteger(c.linha_origem)) linhas.add(`${b.bloco}:${c.linha_origem}`);
+      const chave = Number.isInteger(c.linha_origem) ? `${b.bloco}:${c.linha_origem}` : null;
+      chaveDaLinha.push(chave);
+      if (chave !== null) linhas.add(chave);
     }
     if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);
   }
@@ -327,9 +330,36 @@ export function juntarBlocos(blocos) {
   // `campo_extraido`. O que vai ao banco continua sendo exatamente o que sempre
   // foi — acrescentar coluna a uma tabela de dado por causa de uma contagem
   // interna seria pagar migration por uma variável de laço.
+  // …e `ordem` é a ordem da LINHA, não do par (conta × coluna).
+  //
+  // O DEFEITO QUE ISTO CORRIGE, medido no export da rodada v46 (17/08): a mesma
+  // conta de um balanço comparativo saía em TRÊS linhas do Excel, uma por
+  // exercício, com as outras colunas vazias — "Caixa e bancos conta movimento"
+  // aparecia em 2023, de novo em 2024 e de novo em 2025. O comparativo não
+  // comparava.
+  //
+  // A causa é de unidade, outra vez. A `0027` define `ordem` como "posição na
+  // leitura do DOCUMENTO", e o export conta com isso: ele desempata rótulo
+  // repetido (dois "Outros" num balancete) pelo rank de `ordem` dentro da versão,
+  // supondo que o mesmo rótulo só se repete quando são linhas diferentes. Quando
+  // a saída passou a ser AGRUPADA (uma conta com um valor por coluna), o
+  // achatamento numerou PARES, então uma conta com três colunas virou três
+  // `ordem` distintas — e o export, corretamente segundo a regra dele, entendeu
+  // três linhas diferentes.
+  //
+  // Agora os três pares de uma conta compartilham a `ordem` da linha que os
+  // originou. Rótulo genuinamente repetido continua com `ordem` diferente e
+  // continua em linhas separadas — que é o que a `0027` sempre quis dizer.
+  const ordemDaLinha = new Map();
+  let proxima = 0;
   const renumerados = campos.map((c, i) => {
     const { linha_origem, ...resto } = c;
-    return { ...resto, ordem: i };
+    const chave = chaveDaLinha[i];
+    // Bloco no formato plano antigo (sem `linha_origem`): cada campo é uma linha,
+    // que é exatamente o que ele era antes desta correção.
+    if (chave === null) return { ...resto, ordem: proxima++ };
+    if (!ordemDaLinha.has(chave)) ordemDaLinha.set(chave, proxima++);
+    return { ...resto, ordem: ordemDaLinha.get(chave) };
   });
   return {
     campos: renumerados,

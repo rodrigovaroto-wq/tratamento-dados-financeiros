@@ -5524,6 +5524,86 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   esquecerMemoria(wbMod.getWorksheet("Balance Sheet")!);
 }
 
+// ---------------------------------------------------------------------------
+// O COMPARATIVO TEM DE COMPARAR — a forma que a rodada v46 (17/08) entregou.
+//
+// No arquivo real, "Caixa e bancos conta movimento" saiu em TRÊS linhas do
+// Excel: 2023 numa, 2024 na seguinte, 2025 na terceira, cada uma com as outras
+// duas colunas vazias. Um balanço comparativo que não compara nada.
+//
+// A causa era o rank de ocorrência (o desempate que impede dois "Outros" de um
+// balancete de colapsarem numa linha só) ser calculado por VERSÃO em vez de por
+// COLUNA: os três valores da mesma conta viravam ocorrência 1, 2 e 3.
+//
+// Por que a fixture não pegava: nela cada exercício é um bloco de leitura com
+// `ordem` própria, e nenhum caso conferia o alinhamento de um rótulo repetido
+// entre colunas. Este bloco cobre as duas formas — a agrupada (uma `ordem` para
+// a conta, um valor por coluna) e a antiga (uma `ordem` por par).
+{
+  const V = "vcomp";
+  const anos = ["2025", "2024", "2023"];
+  const documentos: DocumentoParaExport[] = [{
+    id: "dcomp", tipo_taxonomia: "BALANCO", entidade: { razao_social: "Canastra Industria" },
+    periodo: { tipo: "multi", referencia: "23,24,25" }, documento_versao: [{ id: V, nome_original: "bp.pdf" }],
+  }];
+
+  const conferir = (campos: CampoExtraido[], forma: string) => {
+    const ws = buildExportWorkbook({
+      caso: { nome: "C", produto: "rx" }, documentos, campos, agora: new Date("2026-08-17T12:00:00Z"),
+    }).getWorksheet("Balanço")!;
+    const linhas: number[] = [];
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(1).value ?? "") === "Caixa e bancos conta movimento") linhas.push(r);
+    }
+    checar(linhas.length === 1,
+      `(v46-${forma}) conta de balanço comparativo ocupa UMA linha, com um valor por exercício`,
+      `linhas=${linhas.length}`);
+    if (linhas.length !== 1) return;
+    // As três colunas da linha têm de estar preenchidas: era isso que faltava.
+    const preenchidas = ws.getRow(linhas[0]).values as unknown[];
+    const numeros = preenchidas.filter((v) => typeof v === "number" && v !== 0);
+    checar(numeros.length >= 3,
+      `(v46-${forma}) os três exercícios da conta chegam na MESMA linha`,
+      `valores=${numeros.length}`);
+    // …e o rótulo repetido de verdade (duas linhas "Outros" no mesmo exercício)
+    // continua sem colapsar — o defeito que o rank veio fechar.
+    let outros = 0;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (/^Outros/.test(String(ws.getRow(r).getCell(1).value ?? ""))) outros += 1;
+    }
+    checar(outros === 2, `(v46-${forma}) rótulo repetido no mesmo exercício continua em linhas separadas`,
+      `linhas "Outros"=${outros}`);
+  };
+
+  // Forma AGRUPADA (a que o workflow gera desde a correção de 17/08): os três
+  // valores da conta compartilham a `ordem` da linha do documento.
+  const agrupada: CampoExtraido[] = [];
+  anos.forEach((ano) => {
+    agrupada.push(campo({ chave: "Caixa e bancos conta movimento", secao: "Ativo Circulante",
+      valor_num: 606, periodo_coluna: ano, ordem: 0, documento_versao_id: V }));
+    agrupada.push(campo({ chave: "Outros", secao: "Ativo Circulante",
+      valor_num: 11, periodo_coluna: ano, ordem: 1, documento_versao_id: V }));
+    agrupada.push(campo({ chave: "Outros", secao: "Passivo Circulante",
+      valor_num: 22, periodo_coluna: ano, ordem: 2, documento_versao_id: V }));
+  });
+  conferir(agrupada, "agrupada");
+
+  // Forma ANTIGA (um bloco de leitura por exercício, `ordem` correndo): o dado
+  // que já está no banco das rodadas anteriores tem esta cara, e o arquivo
+  // exportado dele tem de sair igualmente alinhado.
+  const antiga: CampoExtraido[] = [];
+  let ordem = 0;
+  anos.forEach((ano) => {
+    antiga.push(campo({ chave: "Caixa e bancos conta movimento", secao: "Ativo Circulante",
+      valor_num: 606, periodo_coluna: ano, ordem: ordem++, documento_versao_id: V }));
+    antiga.push(campo({ chave: "Outros", secao: "Ativo Circulante",
+      valor_num: 11, periodo_coluna: ano, ordem: ordem++, documento_versao_id: V }));
+    antiga.push(campo({ chave: "Outros", secao: "Passivo Circulante",
+      valor_num: 22, periodo_coluna: ano, ordem: ordem++, documento_versao_id: V }));
+  });
+  conferir(antiga, "antiga");
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

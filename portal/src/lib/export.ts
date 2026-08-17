@@ -1224,9 +1224,21 @@ function construirAbaClassificada(
   // maioria) tem rank 1 e se comporta exatamente como antes.
   const ocorrenciaDoCampo = new Map<string, number>();
   {
+    // A chave leva a COLUNA. O rank existe para dois "Outros" do mesmo balancete
+    // não colapsarem numa linha só — e isso só acontece quando os dois disputam a
+    // MESMA célula, ou seja, a mesma coluna. Duas ocorrências do mesmo rótulo em
+    // colunas diferentes (2025 e 2024) são a mesma conta vista em dois
+    // exercícios, e têm de ficar na mesma linha.
+    //
+    // Sem a coluna na chave, o rank ia 1, 2, 3 para os três exercícios da mesma
+    // conta e o export os separava em três linhas — foi o que a rodada v46
+    // entregou: "Caixa e bancos conta movimento" em três linhas, cada uma com
+    // duas colunas vazias. O comentário deste bloco já dizia que a intenção era
+    // "a 1ª ocorrência de uma coluna alinhar com a 1ª da outra"; faltava a
+    // coluna na chave para que fosse isso mesmo que acontecesse.
     const porVersaoERotulo = new Map<string, CampoExtraido[]>();
-    for (const campo of camposDaAba.map((i) => i.campo)) {
-      const k = `${campo.documento_versao_id}${CHAVE_SEP}${normalizar(campo.chave)}`;
+    for (const { campo, colKey } of camposDaAba) {
+      const k = `${campo.documento_versao_id}${CHAVE_SEP}${colKey}${CHAVE_SEP}${normalizar(campo.chave)}`;
       if (!porVersaoERotulo.has(k)) porVersaoERotulo.set(k, []);
       porVersaoERotulo.get(k)!.push(campo);
     }
@@ -1236,6 +1248,9 @@ function construirAbaClassificada(
       // ser estável entre exportações — arquivo que muda de forma sozinho é o
       // problema que os geradores deste repo já combatem.
       const ordenada = [...lista].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.id.localeCompare(b.id));
+      // Dentro de UMA coluna, cada ocorrência do rótulo é uma linha diferente do
+      // documento — é o caso dos dois "Outros" do balancete, e o rank por posição
+      // é o que os mantém separados, na ordem de leitura.
       ordenada.forEach((c, i) => ocorrenciaDoCampo.set(c.id, i + 1));
     }
   }

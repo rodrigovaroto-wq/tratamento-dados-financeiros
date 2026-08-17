@@ -139,6 +139,30 @@ test('juntarBlocos: uma conta com três colunas é UMA linha — o viés oposto 
   assert.equal(r.linhasRetornadas, 2, 'mas o documento tem duas linhas');
 });
 
+test('juntarBlocos: `ordem` é a LINHA do documento, não o par (conta × coluna)', () => {
+  // A `0027` define `ordem` como "posição na leitura do documento", e o export
+  // conta com isso para alinhar a mesma conta ao longo das colunas. Quando a
+  // saída virou agrupada, o achatamento numerava PARES: uma conta com três
+  // exercícios ganhava três `ordem` distintas, e o Excel da rodada v46 saiu com
+  // "Caixa e bancos conta movimento" em três linhas, uma por ano.
+  const c = (origem, chave, periodo, valor) => ({ linha_origem: origem, chave, periodo_coluna: periodo, valor_num: valor });
+  const r = juntarBlocos([{ bloco: 1, campos: [
+    c(0, 'Caixa e bancos', '2025', 606), c(0, 'Caixa e bancos', '2024', 1412), c(0, 'Caixa e bancos', '2023', 2853),
+    c(1, 'Aplicações', '2025', 181), c(1, 'Aplicações', '2024', 2114),
+  ] }]);
+  assert.deepEqual(r.campos.map((x) => x.ordem), [0, 0, 0, 1, 1], 'os pares de uma conta compartilham a ordem da linha');
+  assert.equal(r.linhasRetornadas, 2);
+
+  // Em documento fatiado a numeração é contínua entre blocos, e cada bloco
+  // numera as suas linhas a partir de zero — sem a chave composta, a linha 0 do
+  // bloco 2 colidiria com a linha 0 do bloco 1.
+  const fatiado = juntarBlocos([
+    { bloco: 1, campos: [c(0, 'A', '2025', 1), c(0, 'A', '2024', 2)] },
+    { bloco: 2, campos: [c(0, 'B', '2025', 3), c(1, 'C', '2025', 4)] },
+  ]);
+  assert.deepEqual(fatiado.campos.map((x) => [x.chave, x.ordem]), [['A', 0], ['A', 0], ['B', 1], ['C', 2]]);
+});
+
 test('juntarBlocos: `linha_origem` NÃO chega ao banco, e o bloco antigo sem ele não zera a guarda', () => {
   const r = juntarBlocos([{ bloco: 1, campos: [{ linha_origem: 0, chave: 'A', valor_num: 1 }] }]);
   assert.equal(Object.hasOwn(r.campos[0], 'linha_origem'), false, 'sai antes de virar campo_extraido');

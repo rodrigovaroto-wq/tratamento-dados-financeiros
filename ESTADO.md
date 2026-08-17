@@ -16,8 +16,50 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0112_lote_conferido_documento_por_documento.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 274 · export 529 · e2e 46 · banco (55 migrations do zero + testes SQL) |
+| **Suítes** | n8n 275 · export 535 · e2e 46 · banco (55 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
+
+## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
+
+**9 documentos, 714 linhas, US$ ~0,46.** O defeito que comeu 19 dos 35 documentos na v45 está
+**morto**: todos os 9 tiveram extração chamada, e o único sem linha é a certidão negativa — que é o
+resultado CERTO (`0111`). Conferido contra o gabarito do gerador:
+
+| | |
+|---|---|
+| DFC | caixa inicial 3.621 e final 825 — **exatos** |
+| DVA | valor adicionado a distribuir 49.110 — **exato** |
+| Mútuos | planilha 16.060 (11.160 + 4.900) — **exato**, e o balanço traz 11.400: a divergência plantada de **R$ 240 mil** está no dado, dos dois lados |
+| Livro razão | 99 de 99 linhas — **100%**, no documento que motivou as três camadas |
+| Balancete | 78 de 78 linhas — **100%** |
+| Balanço | 105 de 114 linhas (92%) · DRE 34 de 39 (87%) · DVA 13 de 16 (81%) |
+
+**O que falta são os SUBTOTAIS IMPRESSOS** — "ATIVO CIRCULANTE", "TOTAL DO ATIVO", "RECEITA
+OPERACIONAL BRUTA". Eles viraram metadado (`secao`) em vez de linha. Some-se a isso que os
+subtotais de subgrupo ("Disponível") FORAM extraídos, e a soma bruta de cada seção dá **exatamente
+2× a verdade**. O export já sabe descontar subtotal de subseção; o que falta é o total de topo.
+
+### Defeito 1 — o comparativo não comparava (corrigido)
+
+A mesma conta saía em **três linhas** do Excel, uma por exercício, com as outras colunas vazias. Duas
+causas, nas duas pontas:
+
+- **n8n:** `ordem` numerava PARES (conta × coluna) desde que a saída virou agrupada, mas a `0027` a
+  define como "posição na leitura do DOCUMENTO". Agora os pares de uma conta compartilham a `ordem`
+  da linha que os originou;
+- **portal:** o rank que impede dois "Outros" de colapsarem era calculado por VERSÃO, então os três
+  valores da mesma conta viravam ocorrência 1, 2 e 3. Agora é por versão **e coluna** — que é o que o
+  comentário do próprio bloco dizia querer.
+
+A correção do portal vale para o dado **que já está no banco**: o export da v46 sai alinhado sem
+nova extração. Seis verificações novas cobrem as duas formas (agrupada e antiga), e elas reprovam o
+código anterior.
+
+### Defeito 2 — a entidade poluída (corrigido, exige reimportar)
+
+O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em todas as abas. A
+correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
+mas **só entra em produção quando o workflow for reimportado**.
 
 ## O próximo passo: o teste de ponta a ponta
 
