@@ -145,6 +145,19 @@ async function chainFile(idx) {
   return { listado, classificado, preparado };
 }
 
+// Emula `Registrar Documento` (Postgres, que SUBSTITUI o item) + `Recompor Contexto`
+// (que devolve o contexto por ÍNDICE contra a saída do `Juntar Ramos`). Passa pelo
+// nó de recomposição DE VERDADE: é ele que reencontra o `content_part` sem
+// pareamento, e testar a cadeia sem ele deixaria de fora justamente o passo que o
+// Teste V45 provou faltar.
+async function recomporPara(preparado, documento_id, documento_versao_id) {
+  const registrado = { json: { r: { documento_id, documento_versao_id } } };
+  const out = await run('Recompor Contexto', {
+    items: [registrado], refs: { 'Juntar Ramos': preparado },
+  });
+  return out[0];
+}
+
 test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o binário', async () => {
   const { classificado } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf
   assert.ok(!Array.isArray(classificado), 'each-item deve retornar objeto único');
@@ -228,8 +241,13 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   assert.equal(parsed.json.entidade, 'Empresa X Ltda');
   assert.equal(parsed.json.confianca, 0.91);
   assert.equal(parsed.json.caso_id, 'caso-uuid-1', 'contexto recomposto');
-  assert.equal(parsed.json.openai_body, undefined, 'campos pesados removidos');
-  assert.equal(parsed.json.content_part, undefined, 'campos pesados removidos');
+  assert.equal(parsed.json.openai_body, undefined, 'o corpo da chamada de classificação sai');
+  // O `content_part` FICA, e a mudança é deliberada: era o descarte dele aqui que
+  // obrigava o `Montar Req Extracao` a reencontrar o PDF por pareamento, através
+  // da convergência dos dois ramos — o caminho que perdeu 19 dos 35 documentos no
+  // Teste V45. O peso volta a sair no `Fatiar Extracao`, depois de o base64 já ter
+  // sido copiado para dentro do corpo da chamada de extração.
+  assert.ok(parsed.json.content_part, 'o conteúdo continua no item, para a extração não precisar parear');
 });
 
 test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num enum (caso real: virou "BAL" sem isso)', async () => {
@@ -284,9 +302,20 @@ test('Parse OpenAI Classif: 429 da OpenAI nomeia a CAUSA na justificativa do doc
 
 test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagnóstico+extração', async () => {
   const { preparado } = await chainFile(1);
-  // Saída do Registrar Documento (Postgres): linha {r: {ids}}
+  // Saída do Registrar Documento (Postgres): linha {r: {ids}} — e o item de
+  // ENTRADA dele (que o Postgres substituiu) volta pelo `Recompor Contexto`, por
+  // ÍNDICE contra a saída do `Juntar Ramos`. É esse passo que devolve o
+  // `content_part` à cadeia sem depender de pareamento.
   const registrado = { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } };
-  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const recompostoLista = await run('Recompor Contexto', {
+    items: [registrado], refs: { 'Juntar Ramos': preparado },
+  });
+  const recomposto = recompostoLista[0];
+  assert.equal(recomposto.json.documento_versao_id, 'ver-1');
+  assert.equal(recomposto.json.recompor_motivo, null, 'contagens batem: sem motivo de falha');
+  assert.ok(recomposto.json.content_part, 'o conteúdo voltou para o item');
+
+  const req = await run('Montar Req Extracao', { item: recomposto, env: {} });
   assert.equal(req.json.documento_versao_id, 'ver-1');
   assert.equal(req.json.tipo, 'DRE');
   assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
@@ -611,7 +640,81 @@ test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Medir Documento']);
   assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Precisa Fallback?']);
   const destinosDeRegistrar = wf.connections['Registrar Documento'].main[0].map((c) => c.node);
-  assert.deepEqual(destinosDeRegistrar.sort(), ['Montar Req Extracao', 'Recomputar Completude'].sort());
+  assert.deepEqual(destinosDeRegistrar.sort(), ['Recompor Contexto', 'Recomputar Completude'].sort());
+});
+
+// O teste que o "Teste V45 - Canastra" pagou para existir: 19 dos 35 documentos
+// desapareceram entre `Registrar Documento` e `Gravar Campos`, e a causa era
+// topológica — `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam
+// AMBOS para o `Registrar Documento`, duas conexões CRUAS no mesmo input. O n8n
+// não garante uma execução por conexão nesse arranjo, e só o ramo do fallback
+// propagou. Nada mediu isso: extração nunca chamada não deixa rastro em
+// `campo_extraido`, nem em `evento_auditoria`, nem em `pendencia`.
+test('Convergência: nenhum node recebe DUAS conexões cruas no mesmo input', () => {
+  const chegadas = new Map(); // "node:index" → [origens]
+  for (const [origem, conf] of Object.entries(wf.connections)) {
+    for (const ramo of conf.main || []) {
+      for (const c of ramo || []) {
+        const chave = `${c.node}:${c.index ?? 0}`;
+        if (!chegadas.has(chave)) chegadas.set(chave, []);
+        chegadas.get(chave).push(origem);
+      }
+    }
+  }
+  for (const [chave, origens] of chegadas) {
+    assert.equal(origens.length, 1,
+      `"${chave}" recebe ${origens.length} conexões (${origens.join(', ')}) — use um Merge: `
+      + 'convergência crua no mesmo input perdeu 19 de 35 documentos no Teste V45');
+  }
+});
+
+test('Os dois ramos do fallback se juntam num Merge, em inputs DIFERENTES', () => {
+  const merge = wf.nodes.find((n) => n.name === 'Juntar Ramos');
+  assert.ok(merge, 'existe o node Juntar Ramos');
+  assert.equal(merge.type, 'n8n-nodes-base.merge');
+  assert.equal(merge.parameters.mode, 'append',
+    'append: o lote é a UNIÃO dos dois ramos, não um casamento entre eles');
+  assert.equal(merge.parameters.numberInputs, 2);
+
+  // true → classifica por conteúdo; false → direto. Cada um no SEU input.
+  assert.deepEqual(wf.connections['Precisa Fallback?'].main[0].map((c) => c.node), ['Montar Req Classif']);
+  const direto = wf.connections['Precisa Fallback?'].main[1];
+  assert.deepEqual(direto.map((c) => c.node), ['Juntar Ramos']);
+  assert.equal(direto[0].index, 1, 'o ramo direto entra no input 1');
+  const viaIA = wf.connections['Parse OpenAI Classif'].main[0];
+  assert.deepEqual(viaIA.map((c) => c.node), ['Juntar Ramos']);
+  assert.equal(viaIA[0].index ?? 0, 0, 'o ramo da IA entra no input 0');
+
+  assert.deepEqual(wf.connections['Juntar Ramos'].main[0].map((c) => c.node), ['Registrar Documento']);
+});
+
+// A extração não pode depender de pareamento para achar o PDF: o nó Postgres
+// SUBSTITUI o item, e o `$('Preparar Conteudo').item` que devolvia o conteúdo
+// atravessava a convergência dos dois ramos. Agora o `Recompor Contexto` junta
+// por ÍNDICE (com `.all()`, que não usa pairedItem) e o conteúdo viaja no item.
+test('Montar Req Extracao lê o conteúdo do PRÓPRIO item, sem parear com outro nó', () => {
+  const c = code('Montar Req Extracao');
+  assert.ok(c.includes('const prep=$json'), 'o conteúdo vem do próprio item');
+  assert.ok(!c.includes("$('Preparar Conteudo')"),
+    'não pareia com o Preparar Conteudo — foi esse pareamento que perdeu 19 documentos');
+  assert.ok(c.includes('content_part'), 'e recusa montar a chamada sem o arquivo');
+
+  const r = code('Recompor Contexto');
+  assert.ok(r.includes("$('Juntar Ramos').all()"),
+    'a junção usa .all() (lista inteira, sem pairedItem), não .item');
+  // Divergência de contagem tem de ser FALHA DECLARADA: associar o arquivo de um
+  // documento ao id de outro é pior que falhar.
+  assert.ok(r.includes('desalinhado'), 'e declara desalinhamento em vez de adivinhar');
+});
+
+// O Parse da classificação PRESERVA o content_part: era ele que o descartava, e
+// por isso o ramo do fallback dependia de pareamento para reencontrar o PDF.
+test('Parse OpenAI Classif preserva o content_part no item', () => {
+  const c = code('Parse OpenAI Classif');
+  assert.ok(c.includes('const {openai_body, ...item}=src'),
+    'só o openai_body da classificação sai; o content_part fica');
+  assert.ok(!/const \{openai_body, content_part/.test(c),
+    'content_part não pode voltar a ser descartado aqui');
 });
 
 test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no canvas', () => {
@@ -627,8 +730,13 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
       // `Fatiar Extracao` e `Juntar Blocos` são as duas pontas do fatiamento: um
       // documento vira N chamadas e N respostas voltam a ser um documento. Nenhum
       // dos dois é 1:1 por definição.
+      // `Recompor Contexto` entra nessa lista porque a junção dele é POR ÍNDICE
+      // contra a saída inteira do `Juntar Ramos` (`.all()`) — ele precisa das duas
+      // listas completas para saber se elas têm o mesmo tamanho, e essa é
+      // justamente a conferência que impede associar o PDF de um documento ao id
+      // de outro. Em `runOnceForEachItem` não haveria lista para conferir.
       if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo',
-        'Fatiar Extracao', 'Juntar Blocos'].includes(n.name)) {
+        'Fatiar Extracao', 'Juntar Blocos', 'Recompor Contexto'].includes(n.name)) {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -782,8 +890,9 @@ test('Parse Extracao (nó real): escala não contamina linha não-monetária', a
   // lucro por ação não pode marcar essas linhas como "milhar" (mis-escala de
   // 1000x quando o fator for aplicado).
   const { preparado } = await chainFile(1);
-  const registrado = { json: { r: { documento_id: 'doc-9', documento_versao_id: 'ver-9' } } };
-  const req = await run('Montar Req Extracao', { item: registrado, refs: { 'Preparar Conteudo': preparado }, env: {} });
+  const req = await run('Montar Req Extracao', {
+    item: await recomporPara(preparado, 'doc-9', 'ver-9'), env: {},
+  });
   const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
     moeda: 'R$', unidade: 'Em milhares de reais',
     diagnostico: {
@@ -814,12 +923,10 @@ test('prefixo cacheável: o system prompt é IDÊNTICO entre documentos (e vem p
   // cache passa a falhar em cada chamada (custo silenciosamente maior) e o
   // teste quebra. O que varia por documento vive na mensagem de USER.
   const a = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_id: 'd0', documento_versao_id: 'v0' } } },
-    refs: { 'Preparar Conteudo': (await chainFile(0)).preparado }, env: {},
+    item: await recomporPara((await chainFile(0)).preparado, 'd0', 'v0'), env: {},
   });
   const b = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_id: 'd1', documento_versao_id: 'v1' } } },
-    refs: { 'Preparar Conteudo': (await chainFile(1)).preparado }, env: {},
+    item: await recomporPara((await chainFile(1)).preparado, 'd1', 'v1'), env: {},
   });
   const msgA = a.json.openai_body.messages;
   const msgB = b.json.openai_body.messages;
@@ -1112,14 +1219,20 @@ test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em do
   assert.deepEqual(r.tokens, { entrada: 300, saida: 60, cache: 150 });
 });
 
-test('Resumo de Custo é TERMINAL e não derruba o lote que ele resume', async () => {
+test('Resumo de Custo não derruba o lote que ele resume, e o Conferir Lote fecha a cadeia', async () => {
   const resumo = wf.nodes.find((n) => n.name === 'Resumo de Custo');
   assert.ok(resumo, 'nó Resumo de Custo não existe');
   assert.equal(resumo.onError, 'continueRegularOutput');
-  // Nada depende dele: é o último da cadeia, e quando ele aparece o lote acabou.
   const saidas = Object.values(wf.connections).flatMap((c) => (c.main || []).flat().map((x) => x.node));
   assert.ok(saidas.includes('Resumo de Custo'), 'alguém tem de alimentá-lo');
-  assert.equal(wf.connections['Resumo de Custo'], undefined, 'nada pode depender do resumo');
+  // O TERMINAL agora é o `Conferir Lote` (0112): a última pergunta do lote não é
+  // "quanto custou", é "o pipeline passou por TODOS os documentos?". No Teste V45
+  // o resumo de custo fechou a cadeia com 16 de 35 documentos extraídos e nada
+  // reclamou — a conferência de fora existe para essa rodada não se repetir.
+  assert.deepEqual(wf.connections['Resumo de Custo'].main[0].map((c) => c.node), ['Conferir Lote']);
+  assert.equal(wf.connections['Conferir Lote'], undefined, 'o Conferir Lote é o fim da cadeia');
+  const conferir = wf.nodes.find((n) => n.name === 'Conferir Lote');
+  assert.ok(conferir.parameters.query.includes('fn_conferir_lote'));
   // E sem NENHUMA referência resolvível ele devolve zero em vez de estourar — um
   // resumo que explode é um lote inteiro perdido no último passo.
   const out = await run('Resumo de Custo', { items: [{ json: {} }], refs: {} });
@@ -1591,10 +1704,13 @@ test('Preparar Conteudo calcula o MESMO SHA-256 quando o sandbox não expõe cry
 // `fn_registrar_campos_extraidos(null, …)` retornava 0 descartando o
 // `falha_motivo`. A 0029 fecha o lado do banco; esta guarda fecha o do dinheiro.
 test('Montar Req Extracao recusa montar requisição sem documento_versao_id', async () => {
-  const prep = { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: { type: 'text', text: 'x' } } };
-  // item de erro típico do que o nó Postgres empurra quando falha: sem `r`
+  const conteudo = { type: 'text', text: 'x' };
+  // Item de erro típico do que o nó Postgres empurra quando falha: o
+  // `Recompor Contexto` o repassa com os ids nulos, e a guarda pega aqui.
   await assert.rejects(
-    () => run('Montar Req Extracao', { item: { json: { error: 'connection reset' } }, refs: { 'Preparar Conteudo': prep } }),
+    () => run('Montar Req Extracao', {
+      item: { json: { nome_original: 'BP.pdf', content_part: conteudo, documento_versao_id: null } },
+    }),
     (e) => {
       assert.match(e.message, /a extracao NAO foi chamada/, 'a mensagem tem de dizer que não gastou');
       assert.match(e.message, /Registrar Documento/, 'e apontar a causa provável');
@@ -1603,9 +1719,46 @@ test('Montar Req Extracao recusa montar requisição sem documento_versao_id', a
   );
   // E com versão presente, segue montando normalmente.
   const ok = await run('Montar Req Extracao', {
-    item: { json: { r: { documento_versao_id: 'ver-1' } } },
-    refs: { 'Preparar Conteudo': prep },
+    item: { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: conteudo, documento_versao_id: 'ver-1' } },
   });
   assert.equal(ok.json.documento_versao_id, 'ver-1');
   assert.ok(ok.json.openai_body.messages.length === 2);
+});
+
+// A OUTRA metade da guarda, e a que o Teste V45 pagou: sem o arquivo, a chamada
+// volta "sem nenhuma linha" SEM erro de API — extração vazia que passa por
+// sucesso. Recusar montar é o que transforma esse silêncio em motivo escrito.
+test('Montar Req Extracao recusa montar requisição SEM O ARQUIVO (content_part ausente)', async () => {
+  await assert.rejects(
+    () => run('Montar Req Extracao', {
+      item: { json: { nome_original: 'BP.pdf', documento_versao_id: 'ver-1' } },
+    }),
+    (e) => {
+      assert.match(e.message, /content_part ausente/);
+      assert.match(e.message, /NAO foi feita/, 'e diz que não pagou pela chamada');
+      return true;
+    },
+  );
+});
+
+// Desalinhamento de contagem no `Recompor Contexto`: associar o PDF de um
+// documento ao id de outro é pior que falhar, então ele DECLARA em vez de adivinhar.
+test('Recompor Contexto declara desalinhamento em vez de associar arquivo errado', async () => {
+  const regs = [
+    { json: { r: { documento_id: 'doc-1', documento_versao_id: 'ver-1' } } },
+    { json: { r: { documento_id: 'doc-2', documento_versao_id: 'ver-2' } } },
+  ];
+  // O Juntar Ramos devolveu UM item só — as listas não correspondem mais.
+  const out = await run('Recompor Contexto', {
+    items: regs,
+    refs: { 'Juntar Ramos': { json: { nome_original: 'A.pdf', content_part: { type: 'text', text: 'a' } } } },
+  });
+  assert.equal(out.length, 2, 'nenhum item é descartado — cada um sai com o motivo');
+  for (const it of out) {
+    assert.match(it.json.recompor_motivo, /correspondencia por indice deixou de ser verdadeira/);
+    assert.equal(it.json.content_part, undefined, 'e NENHUM conteúdo é associado por palpite');
+  }
+  // Os ids continuam vindo do Postgres: eles são do próprio item, não pareados.
+  assert.equal(out[0].json.documento_versao_id, 'ver-1');
+  assert.equal(out[1].json.documento_versao_id, 'ver-2');
 });
