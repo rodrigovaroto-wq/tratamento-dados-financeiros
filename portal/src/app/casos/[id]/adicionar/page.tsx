@@ -19,11 +19,11 @@ export default async function AdicionarArquivosPage({
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <Link href={`/casos/${id}`} className="text-sm text-neutral-500 underline">
+        <Link href={`/casos/${id}`} className="text-sm text-tinta-500 underline">
           ← Voltar ao mandato
         </Link>
         <h1 className="mt-2 text-lg font-semibold">Adicionar arquivos — {caso.nome}</h1>
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-tinta-500">
           Os novos arquivos entram neste mesmo mandato e somam ao checklist, à exportação para Excel e
           à checagem de dados já existentes.
         </p>

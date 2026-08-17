@@ -108,6 +108,72 @@ test('juntarBlocos: limpa a linha repetida NA EMENDA, e só ela', () => {
   assert.equal(repetida.emendasLimpas, 0);
 });
 
+// --- a unidade da guarda: LINHA, não conta distinta ---------------------------
+// O livro razão do book tem 99 lançamentos e 66 históricos distintos (medido por
+// `medir-regua-cobertura.mjs`). Comparar 66 com as 100 linhas que a régua vê dá
+// 66% — abaixo do limiar — para uma extração que não perdeu NADA. A guarda
+// acusaria de incompleto justamente o documento que motivou as três camadas.
+
+test('juntarBlocos conta LINHAS devolvidas — dois lançamentos do mesmo fornecedor contam dois', () => {
+  const linha = (origem, k, v) => ({ linha_origem: origem, chave: k, valor_num: v, valor_texto: String(v) });
+  const r = juntarBlocos([
+    { bloco: 1, campos: [linha(0, 'PAGTO ARACATI', 150), linha(1, 'PAGTO ARACATI', 221), linha(2, 'PAGTO IPIRANGA', 226)] },
+  ]);
+  assert.equal(r.linhasRetornadas, 3, 'três lançamentos, ainda que dois tenham o mesmo histórico');
+  assert.equal(new Set(r.campos.map((c) => c.chave)).size, 2, 'contas distintas seriam só duas');
+  // Com 3 linhas de conta no texto, a extração está COMPLETA e a guarda se cala.
+  assert.equal(avaliarCobertura({ extraidas: r.linhasRetornadas, esperadas: 3, minimo: 3 }), null);
+  // Era este o falso positivo: 2 de 3 = 67%, o número do livro razão inteiro.
+  assert.ok(avaliarCobertura({ extraidas: 2, esperadas: 3, minimo: 3 }), 'a unidade velha acusaria');
+});
+
+test('juntarBlocos: uma conta com três colunas é UMA linha — o viés oposto também some', () => {
+  // O erro que a régua v1 corrigiu (198%) volta pela outra porta se a contagem
+  // for de PARES: três colunas de um DRE comparativo são três campos, uma linha.
+  const campo = (origem, k, pc, v) => ({ linha_origem: origem, chave: k, periodo_coluna: pc, valor_num: v });
+  const r = juntarBlocos([
+    { bloco: 1, campos: [campo(0, 'Receita', '2025', 1), campo(0, 'Receita', '2024', 2), campo(0, 'Receita', '2023', 3),
+      campo(1, 'Custo', '2025', 4), campo(1, 'Custo', '2024', 5)] },
+  ]);
+  assert.equal(r.campos.length, 5, 'o banco continua recebendo par a par');
+  assert.equal(r.linhasRetornadas, 2, 'mas o documento tem duas linhas');
+});
+
+test('juntarBlocos: `ordem` é a LINHA do documento, não o par (conta × coluna)', () => {
+  // A `0027` define `ordem` como "posição na leitura do documento", e o export
+  // conta com isso para alinhar a mesma conta ao longo das colunas. Quando a
+  // saída virou agrupada, o achatamento numerava PARES: uma conta com três
+  // exercícios ganhava três `ordem` distintas, e o Excel da rodada v46 saiu com
+  // "Caixa e bancos conta movimento" em três linhas, uma por ano.
+  const c = (origem, chave, periodo, valor) => ({ linha_origem: origem, chave, periodo_coluna: periodo, valor_num: valor });
+  const r = juntarBlocos([{ bloco: 1, campos: [
+    c(0, 'Caixa e bancos', '2025', 606), c(0, 'Caixa e bancos', '2024', 1412), c(0, 'Caixa e bancos', '2023', 2853),
+    c(1, 'Aplicações', '2025', 181), c(1, 'Aplicações', '2024', 2114),
+  ] }]);
+  assert.deepEqual(r.campos.map((x) => x.ordem), [0, 0, 0, 1, 1], 'os pares de uma conta compartilham a ordem da linha');
+  assert.equal(r.linhasRetornadas, 2);
+
+  // Em documento fatiado a numeração é contínua entre blocos, e cada bloco
+  // numera as suas linhas a partir de zero — sem a chave composta, a linha 0 do
+  // bloco 2 colidiria com a linha 0 do bloco 1.
+  const fatiado = juntarBlocos([
+    { bloco: 1, campos: [c(0, 'A', '2025', 1), c(0, 'A', '2024', 2)] },
+    { bloco: 2, campos: [c(0, 'B', '2025', 3), c(1, 'C', '2025', 4)] },
+  ]);
+  assert.deepEqual(fatiado.campos.map((x) => [x.chave, x.ordem]), [['A', 0], ['A', 0], ['B', 1], ['C', 2]]);
+});
+
+test('juntarBlocos: `linha_origem` NÃO chega ao banco, e o bloco antigo sem ele não zera a guarda', () => {
+  const r = juntarBlocos([{ bloco: 1, campos: [{ linha_origem: 0, chave: 'A', valor_num: 1 }] }]);
+  assert.equal(Object.hasOwn(r.campos[0], 'linha_origem'), false, 'sai antes de virar campo_extraido');
+  // Formato plano antigo (workflow importado meses atrás): sem `linha_origem` a
+  // contagem é zero, e quem chama cai para as contas distintas — o comportamento
+  // de antes desta correção, em vez de "extraiu zero linhas".
+  const antigo = juntarBlocos([{ bloco: 1, campos: [{ chave: 'A', valor_num: 1 }, { chave: 'B', valor_num: 2 }] }]);
+  assert.equal(antigo.linhasRetornadas, 0);
+  assert.equal(antigo.campos.length, 2);
+});
+
 test('juntarBlocos: o motivo de falha de UM bloco não some na junção', () => {
   const r = juntarBlocos([
     { bloco: 1, campos: [{ chave: 'A' }], falha_motivo: null },
@@ -146,6 +212,62 @@ test('a régua conta LINHA DE CONTA, não toda linha com dígito', () => {
   assert.deepEqual(linhasDeConta('ATIVO\n137.624\n1.000'), []);
 });
 
+// --- os três documentos em que a régua v1 era CEGA ---------------------------
+// Medido em 17/08 por `n8n/medir-regua-cobertura.mjs`, contra a contagem que o
+// gerador do book declara: a v1 via 3 linhas num livro razão de 99 (−97%), 3 num
+// balancete de 78 (−96%) e 2 num aging de 14 (−86%). E como a guarda se cala
+// abaixo de 20 linhas, a cegueira virava silêncio: justamente os documentos
+// analíticos — os que perdem dado — nunca eram avaliados.
+
+test('linha que termina na NATUREZA (D/C) é conta — o balancete inteiro dependia disso', () => {
+  const balancete = [
+    'Código Conta Saldo D/C',           // cabeçalho: sem valor próprio
+    '1.1.01.002 181 D',
+    '1.1.02.003 9.644 C',
+    'Caixa e equivalentes de caixa 24.861 D',
+  ].join('\n');
+  // O rótulo do balancete é o CÓDIGO da conta — não tem uma letra sequer, e a
+  // régua v1 exigia três. As três linhas de valor contam; o cabeçalho não.
+  assert.deepEqual(linhasDeConta(balancete), ['1.1.01.002 181 D', '1.1.02.003 9.644 C',
+    'Caixa e equivalentes de caixa 24.861 D']);
+});
+
+test('linha de tabela numérica conta como conta — é o aging, onde o rótulo cai em outra linha', () => {
+  // O leitor de PDF põe o nome do cliente numa linha e a faixa de valores na
+  // seguinte. Contar a linha dos valores conta a conta UMA vez, que é a unidade
+  // certa; ignorá-la é o que fazia o aging medir 2 de 14.
+  const aging = [
+    'Cliente / sacado A vencer 1-30 31-60 61-90 Total %',
+    'Distribuidora Alfa Ltda.',
+    '1.648 522 402 362 4.019 14,0%',
+    'Comercial Beta S.A.',
+    '1.295 411 316 284 3.158 11,0%',
+  ].join('\n');
+  const contadas = linhasDeConta(aging);
+  assert.ok(contadas.includes('1.648 522 402 362 4.019 14,0%'), 'a linha de valores do cliente A conta');
+  assert.ok(contadas.includes('1.295 411 316 284 3.158 11,0%'), 'a linha de valores do cliente B conta');
+  // O cabeçalho de faixas ("1-30 31-60 61-90") entra junto: ele tem rótulo E
+  // número, e nenhuma regra honesta o separa de uma linha de dado sem saber o
+  // documento. É o viés conhecido da régua — UMA linha a mais por tabela, o que
+  // `medir-regua-cobertura.mjs` mede como +2% a +4% nos documentos grandes e até
+  // +17% nos pequenos. Sobra de denominador é o erro seguro: ela consome folga do
+  // limiar de 0,85, não abre pendência falsa (o pior caso medido no book inteiro
+  // é 96% com extração perfeita).
+  assert.equal(contadas.length, 3, 'as duas contas mais o cabeçalho de faixas');
+});
+
+test('a régua v2 não afrouxou: valor solto, cabeçalho e prosa continuam fora', () => {
+  // Um único número sem identidade nenhuma continua sendo célula solta.
+  assert.deepEqual(linhasDeConta('16.839'), []);
+  // Cabeçalho de ano tem dois valores, mas é ruído declarado.
+  assert.deepEqual(linhasDeConta('2025 2024 2023'), []);
+  assert.deepEqual(linhasDeConta('31/12/2025 31/12/2024'), []);
+  // Nota de rodapé com dois percentuais: prosa, não conta.
+  assert.deepEqual(linhasDeConta('Nota — A margem bruta foi de 2,9% (contra 25,2% em 2023)'), []);
+  // Linha sem valor nenhum: título de seção. O modelo também não gera linha nela.
+  assert.deepEqual(linhasDeConta('ATIVO CIRCULANTE'), []);
+});
+
 test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 100%', () => {
   // O erro que a régua nova corrige: 91 pares (conta × coluna) contra 46 linhas
   // com dígito dava 198%, e a guarda NUNCA disparava num documento comparativo.
@@ -155,10 +277,10 @@ test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 10
   const dre = avaliarCobertura({ extraidas: 30, esperadas: 39 });
   assert.ok(dre, '30 de 39 tem de virar pendência');
   assert.equal(dre.razao, 0.769);
-  assert.match(dre.motivo, /30 conta\(s\) distinta\(s\).*39 linha\(s\)/);
+  assert.match(dre.motivo, /30 linha\(s\) devolvida\(s\).*39 linha\(s\)/);
   assert.match(dre.motivo, /MESMA unidade/);
-  // E a descrição diz onde ela pode errar: rótulo repetido conta uma vez só.
-  assert.match(dre.motivo, /rótulo repetido/);
+  // A descrição diz o viés conhecido da régua, medido: ela conta ~3% a mais.
+  assert.match(dre.motivo, /erra para cima em cerca de 3%/);
 
   // Documento completo passa.
   assert.equal(avaliarCobertura({ extraidas: 38, esperadas: 39 }), null, '97% passa');

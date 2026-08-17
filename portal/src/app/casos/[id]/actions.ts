@@ -93,6 +93,43 @@ export async function decidirPendencia(
 // componente): o servidor não tem como perguntar "tem certeza?" no meio de uma
 // server action. O que o servidor garante é o resto — que a exclusão deixe
 // rastro na trilha e devolva a contagem do que se perdeu.
+// FECHAR (0114) É A AÇÃO DO DIA A DIA; excluir é a exceção. As duas moram
+// juntas de propósito: quem vai apagar um mandato passa por aqui e vê que existe
+// um jeito de tirá-lo da frente sem perder o que a equipe produziu.
+export async function fecharCaso(casoId: string, formData?: FormData) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const motivo = (formData?.get("motivo") as string | null)?.trim() || null;
+
+  const { data, error } = await supabase.rpc("fn_fechar_caso", {
+    p_caso_id: casoId,
+    p_autor: user?.email ?? "portal:desconhecido",
+    p_motivo: motivo,
+  });
+  if (error) throw new Error(`Falha ao fechar o mandato: ${error.message}`);
+  const r = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (r?.recusado) throw new Error(r.motivo_recusa ?? "Fechamento recusado.");
+
+  revalidatePath("/casos");
+  revalidatePath(`/casos/${casoId}`);
+}
+
+export async function reabrirCaso(casoId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase.rpc("fn_reabrir_caso", {
+    p_caso_id: casoId,
+    p_autor: user?.email ?? "portal:desconhecido",
+  });
+  if (error) throw new Error(`Falha ao reabrir o mandato: ${error.message}`);
+  const r = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (r?.recusado) throw new Error(r.motivo_recusa ?? "Reabertura recusada.");
+
+  revalidatePath("/casos");
+  revalidatePath(`/casos/${casoId}`);
+}
+
 export async function excluirCaso(casoId: string) {
   const supabase = await createClient();
 

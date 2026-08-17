@@ -82,10 +82,10 @@ export default async function AutonomiaPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-lg font-semibold">Autonomia por estágio</h1>
-        <p className="mt-1 text-sm text-neutral-600">
+        <p className="mt-1 text-sm text-tinta-600">
           O estado declarado do sistema: em que nível cada estágio opera hoje, e até onde a
           doutrina permite que ele suba. Esta tela só lê — mudar o dial é ação do dono, por{" "}
-          <code className="rounded bg-neutral-100 px-1 text-xs">fn_mudar_dial</code>, que grava
+          <code className="rounded bg-tinta-100 px-1 text-xs">fn_mudar_dial</code>, que grava
           autor e motivo.
         </p>
       </div>
@@ -96,9 +96,9 @@ export default async function AutonomiaPage() {
         </p>
       )}
 
-      <div className="overflow-x-auto rounded border border-neutral-200 bg-white">
+      <div className="overflow-x-auto rounded border border-tinta-200 bg-white">
         <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+          <thead className="bg-tinta-50 text-left text-xs uppercase text-tinta-500">
             <tr>
               <th className="px-4 py-2 font-medium">Estágio</th>
               <th className="px-4 py-2 font-medium">Hoje</th>
@@ -107,7 +107,7 @@ export default async function AutonomiaPage() {
               <th className="px-4 py-2 font-medium">Última mudança</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-200">
+          <tbody className="divide-y divide-tinta-200">
             {linhas.map((d) => {
               const noTeto = d.nivel_atual === d.teto;
               // Teto N1 é o caso que docs/01 marca com "nunca autônomo": não é um
@@ -117,46 +117,46 @@ export default async function AutonomiaPage() {
                 <tr key={d.estagio} className="align-top">
                   <td className="px-4 py-3">
                     <p className="font-medium">{NOME_ESTAGIO[d.estagio] ?? d.estagio}</p>
-                    <p className="font-mono text-xs text-neutral-400">{d.estagio}</p>
+                    <p className="font-mono text-xs text-tinta-400">{d.estagio}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="rounded bg-neutral-900 px-1.5 py-0.5 text-xs font-semibold text-white">
+                    <span className="rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-semibold text-white">
                       {d.nivel_atual}
                     </span>
-                    <p className="mt-1 text-xs text-neutral-600">
+                    <p className="mt-1 text-xs text-tinta-600">
                       {NIVEL[d.nivel_atual]?.titulo}
                     </p>
-                    <p className="text-xs text-neutral-500">{NIVEL[d.nivel_atual]?.o_que_faz}</p>
+                    <p className="text-xs text-tinta-500">{NIVEL[d.nivel_atual]?.o_que_faz}</p>
                   </td>
-                  <td className="px-4 py-3 text-xs text-neutral-600">
+                  <td className="px-4 py-3 text-xs text-tinta-600">
                     {d.teto}
-                    {noTeto && <span className="ml-1 text-neutral-400">(no teto)</span>}
+                    {noTeto && <span className="ml-1 text-tinta-400">(no teto)</span>}
                     {nuncaAutonomo && (
-                      <p className="mt-1 text-neutral-500">
+                      <p className="mt-1 text-tinta-500">
                         docs/01: nunca autônomo — o teto é por natureza do estágio e nenhuma
                         chamada o sobrepõe.
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-neutral-600">
+                  <td className="px-4 py-3 text-xs text-tinta-600">
                     {d.limiar_auto_clear === null ? (
-                      <span className="text-neutral-500">
+                      <span className="text-tinta-500">
                         sem limiar — não auto-aceita, qualquer que seja o nível
                       </span>
                     ) : (
                       <>
                         {d.limiar_auto_clear}
                         {d.nivel_atual === "N0" || d.nivel_atual === "N1" ? (
-                          <p className="mt-1 text-neutral-500">
+                          <p className="mt-1 text-tinta-500">
                             sem efeito em {d.nivel_atual}: só N2/N3 auto-aceitam.
                           </p>
                         ) : null}
                       </>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-neutral-600">
+                  <td className="px-4 py-3 text-xs text-tinta-600">
                     <p>{dataHora(d.atualizado_em)}</p>
-                    <p className="text-neutral-500">{d.atualizado_por ?? "—"}</p>
+                    <p className="text-tinta-500">{d.atualizado_por ?? "—"}</p>
                   </td>
                 </tr>
               );
@@ -192,14 +192,14 @@ export default async function AutonomiaPage() {
 
       <div>
         <h2 className="text-sm font-semibold">Mudanças de dial</h2>
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-tinta-500">
           docs/01: toda mudança de nível é decisão versionada e reversível. Tentativa recusada
           também fica — passar do teto é justamente o que a trilha precisa guardar.
         </p>
         {trilha.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-500">Nenhuma mudança de dial registrada.</p>
+          <p className="mt-2 text-sm text-tinta-500">Nenhuma mudança de dial registrada.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-neutral-200 rounded border border-neutral-200 bg-white text-sm">
+          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-white text-sm">
             {trilha.map((e, i) => (
               <li key={i} className="px-4 py-2">
                 <div className="flex flex-wrap items-baseline gap-2">
@@ -207,24 +207,24 @@ export default async function AutonomiaPage() {
                     className={
                       e.acao === "mudanca_dial_recusada"
                         ? "rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800"
-                        : "rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-medium text-neutral-700"
+                        : "rounded bg-tinta-100 px-1.5 py-0.5 text-xs font-medium text-tinta-600"
                     }
                   >
                     {e.acao === "mudanca_dial_recusada" ? "recusada" : "aplicada"}
                   </span>
                   <span className="font-mono text-xs">{e.entidade_ref}</span>
-                  <span className="text-xs text-neutral-500">
+                  <span className="text-xs text-tinta-500">
                     {e.ator} · {dataHora(e.criado_em)}
                   </span>
                 </div>
                 {e.acao === "mudanca_dial_recusada" ? (
-                  <p className="mt-1 text-xs text-neutral-600">
+                  <p className="mt-1 text-xs text-tinta-600">
                     pediu {e.depois?.pedido} com teto {e.depois?.teto}
                     {e.depois?.motivo_informado ? ` — "${e.depois.motivo_informado}"` : ""}
                   </p>
                 ) : (
                   e.depois?.motivo && (
-                    <p className="mt-1 text-xs text-neutral-600">{e.depois.motivo}</p>
+                    <p className="mt-1 text-xs text-tinta-600">{e.depois.motivo}</p>
                   )
                 )}
               </li>

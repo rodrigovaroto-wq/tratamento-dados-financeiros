@@ -76,10 +76,27 @@ export const MAX_CELULAS_POR_BLOCO = Math.floor((TETO_SAIDA_TOKENS * FRACAO_DO_T
 // objetivo, não efeito colateral: o `02_DRE` a 77% está mesmo deixando ~9 contas
 // para trás, e ninguém sabia.
 //
-// ESTE NÚMERO É O PRÓXIMO A RECALIBRAR. Ele tem UM ponto de medição na régua
-// nova (o DRE); a próxima rodada dá 35. Se a fila encher de falso positivo, o
-// que se ajusta é ele — e a decisão fica fácil porque a pendência traz os dois
-// números na descrição.
+// CALIBRADO CONTRA A VERDADE EM 17/08, e o número FICA em 0,85. Deixou de ter um
+// ponto de medição e passou a ter 38: `node n8n/medir-regua-cobertura.mjs`
+// confronta a régua com a contagem que o gerador do book declara. O resultado
+// (com a régua v2, abaixo):
+//
+//   • erro mediano da régua: +3% — ela conta uma linha a mais por tabela, quase
+//     sempre o cabeçalho de faixas/colunas, que tem rótulo E número;
+//   • pior caso do book com extração PERFEITA: 96% de cobertura aparente.
+//
+// Ou seja, sobram 11 pontos entre o pior documento honesto (96%) e o limiar
+// (85%). Subir para 0,90 caberia na medição e ainda assim NÃO se sobe: a folga
+// existe para o documento real, que é mais sujo que o sintético — rodapé colado
+// no número, coluna encavalada, rótulo quebrado em duas linhas. Quando a próxima
+// rodada trouxer 35 documentos reais medidos, aí o número tem base para apertar.
+//
+// O QUE A MESMA MEDIÇÃO ACHOU E NÃO SE CONSERTAVA COM LIMIAR: onde o rótulo se
+// repete (livro razão: 99 linhas, 66 históricos distintos), extração PERFEITA se
+// reportava em 66% e a pendência era falsa — as duas pontas não estavam na mesma
+// unidade. CORRIGIDO no mesmo dia: a extração passa a informar quantas LINHAS
+// devolveu (`linha_origem` em `achatarGrupos`, contado em `juntarBlocos`), e é
+// isso que a guarda compara. Nenhum limiar consertaria aquilo.
 export const LIMIAR_COBERTURA = 0.85;
 
 // Abaixo de quantas células a guarda se cala. Num documento de 6 linhas a razão
@@ -104,12 +121,46 @@ export const MINIMO_PARA_AVALIAR = 20;
  * ("2025 2024 2023"), CNPJ, data por extenso, número de página, CRC e CPF do
  * bloco de assinatura. Nada disso é dado financeiro, e contá-los inflava o
  * denominador — a régua "grosseira mas honesta" era grosseira de mais.
+ *
+ * ┌─ v2 (17/08), medida contra as 38 verdades do `book-canastra` ──────────────
+ * │ `node n8n/medir-regua-cobertura.mjs` confrontou esta função com a contagem
+ * │ que o GERADOR do book declara (ele sabe quantas linhas escreveu, não é outra
+ * │ leitura do PDF). A régua acertava os documentos de demonstração — balanço,
+ * │ DRE, DFC, faturamento: erro de +2% a +4% — e DESABAVA justamente nos
+ * │ analíticos, que são os que perdem dado:
+ * │
+ * │   livro razão   99 linhas → a régua via  3   (−97%)
+ * │   balancete     78 linhas → a régua via  3   (−96%)
+ * │   aging         14 linhas → a régua via  2   (−86%)
+ * │   imobilizado    9 linhas → a régua via  2   (−78%)
+ * │
+ * │ E como `MINIMO_PARA_AVALIAR` cala a guarda abaixo de 20 linhas, a cegueira
+ * │ virava SILÊNCIO: nesses documentos a guarda nunca chegava a opinar. O livro
+ * │ razão da rodada de 14/08 — o caso que motivou as três camadas — era invisível
+ * │ para a guarda que existe para vigiá-lo.
+ * │
+ * │ A CAUSA: "termina em valor" pressupõe que rótulo e valor caem na MESMA linha
+ * │ do texto extraído. Num documento de sistema contábil isso é falso de três
+ * │ jeitos, e os três foram conferidos no artefato (e num segundo leitor de PDF,
+ * │ o `pdf-parse` que o n8n usa, para não calibrar contra um extrator só):
+ * │   • a linha termina na NATUREZA, não no valor — `1.1.01.002  181  D`;
+ * │   • o rótulo é CÓDIGO de conta, sem letra nenhuma — o mesmo `1.1.01.002`;
+ * │   • o histórico é parágrafo que quebra, e o leitor o deixa numa linha só
+ * │     dele: os valores do lançamento ficam órfãos de rótulo.
+ * │
+ * │ A v2 troca "termina em valor" por "TEM valor E tem identidade", e aceita como
+ * │ identidade três formas: rótulo em letras, código de conta, ou — quando o
+ * │ leitor separou o rótulo — a própria linha de tabela numérica (dois valores ou
+ * │ mais). Erro absoluto médio: 29% → 9%, sem piorar um único documento.
+ * └───────────────────────────────────────────────────────────────────────────
  */
 export function linhasDeConta(texto) {
   if (typeof texto !== 'string' || texto.length === 0) return [];
-  // Uma linha de conta TERMINA em número (o último valor da linha). Rótulo sem
-  // valor — um cabeçalho de seção — não é conta, e o modelo não gera linha nele.
-  const terminaEmValor = /\(?-?[\d][\d.,]*\)?%?\s*$/;
+  // Um valor: número solto, com separador de milhar, decimal, percentual, ou
+  // negativo entre parênteses — as quatro formas que o book usa.
+  const valores = /\(?-?\d[\d.]*(?:,\d+)?\)?%?/g;
+  // Código de conta contábil ("1.1.01.002"): identidade sem uma letra sequer.
+  const codigoDeConta = /\b\d+(?:\.\d+){2,}\b/;
   // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma
   // linha real do book, e o comentário evita que alguém "melhore" tirando um.
   const ruido = [
@@ -127,10 +178,17 @@ export function linhasDeConta(texto) {
   for (const bruta of texto.split('\n')) {
     const linha = bruta.trim();
     if (linha.length === 0) continue;
-    if (!terminaEmValor.test(linha)) continue;
     if (ruido.some((r) => r.test(linha))) continue;
-    // Rótulo mínimo: uma linha que é só número não é conta, é célula solta.
-    if (!/[a-zà-ú]{3}/i.test(linha)) continue;
+    const quantos = (linha.match(valores) ?? []).filter((t) => /\d/.test(t)).length;
+    // Sem valor não é conta: é título, é seção, é prosa. O modelo também não
+    // gera linha para ela.
+    if (quantos === 0) continue;
+    // Identidade da conta, em qualquer uma das três formas. A terceira —
+    // "linha de tabela numérica" — é a que recupera o razão e o aging, onde o
+    // leitor de PDF põe o rótulo numa linha e os valores na seguinte: contar a
+    // linha dos valores é contar a conta UMA vez, que é a unidade certa.
+    const temRotulo = /[a-zà-ú]{3}/i.test(linha);
+    if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) continue;
     out.push(linha);
   }
   return out;
@@ -237,6 +295,8 @@ export function juntarBlocos(blocos) {
   const campos = [];
   const motivos = [];
   let emendasLimpas = 0;
+  const linhas = new Set();
+  const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par
   const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
 
   for (const b of lista) {
@@ -250,7 +310,14 @@ export function juntarBlocos(blocos) {
         emendasLimpas += 1;
       }
     }
-    for (const c of doBloco) campos.push(c);
+    for (const c of doBloco) {
+      campos.push(c);
+      // LINHAS do documento devolvidas, contadas DEPOIS da limpeza da emenda.
+      // Cada bloco numera as suas a partir de zero, então a chave leva o bloco.
+      const chave = Number.isInteger(c.linha_origem) ? `${b.bloco}:${c.linha_origem}` : null;
+      chaveDaLinha.push(chave);
+      if (chave !== null) linhas.add(chave);
+    }
     if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);
   }
 
@@ -258,8 +325,52 @@ export function juntarBlocos(blocos) {
   // documento" e é o que permite ao export reconhecer subtotal impresso acima
   // dos componentes. Cada bloco numera a partir de zero, então manter a
   // numeração do bloco faria o documento ter três linhas de `ordem` 0.
-  const renumerados = campos.map((c, i) => ({ ...c, ordem: i }));
-  return { campos: renumerados, motivos, emendasLimpas, blocos: lista.length };
+  //
+  // `linha_origem` SAI aqui: ele serviu para contar as linhas e não tem lugar em
+  // `campo_extraido`. O que vai ao banco continua sendo exatamente o que sempre
+  // foi — acrescentar coluna a uma tabela de dado por causa de uma contagem
+  // interna seria pagar migration por uma variável de laço.
+  // …e `ordem` é a ordem da LINHA, não do par (conta × coluna).
+  //
+  // O DEFEITO QUE ISTO CORRIGE, medido no export da rodada v46 (17/08): a mesma
+  // conta de um balanço comparativo saía em TRÊS linhas do Excel, uma por
+  // exercício, com as outras colunas vazias — "Caixa e bancos conta movimento"
+  // aparecia em 2023, de novo em 2024 e de novo em 2025. O comparativo não
+  // comparava.
+  //
+  // A causa é de unidade, outra vez. A `0027` define `ordem` como "posição na
+  // leitura do DOCUMENTO", e o export conta com isso: ele desempata rótulo
+  // repetido (dois "Outros" num balancete) pelo rank de `ordem` dentro da versão,
+  // supondo que o mesmo rótulo só se repete quando são linhas diferentes. Quando
+  // a saída passou a ser AGRUPADA (uma conta com um valor por coluna), o
+  // achatamento numerou PARES, então uma conta com três colunas virou três
+  // `ordem` distintas — e o export, corretamente segundo a regra dele, entendeu
+  // três linhas diferentes.
+  //
+  // Agora os três pares de uma conta compartilham a `ordem` da linha que os
+  // originou. Rótulo genuinamente repetido continua com `ordem` diferente e
+  // continua em linhas separadas — que é o que a `0027` sempre quis dizer.
+  const ordemDaLinha = new Map();
+  let proxima = 0;
+  const renumerados = campos.map((c, i) => {
+    const { linha_origem, ...resto } = c;
+    const chave = chaveDaLinha[i];
+    // Bloco no formato plano antigo (sem `linha_origem`): cada campo é uma linha,
+    // que é exatamente o que ele era antes desta correção.
+    if (chave === null) return { ...resto, ordem: proxima++ };
+    if (!ordemDaLinha.has(chave)) ordemDaLinha.set(chave, proxima++);
+    return { ...resto, ordem: ordemDaLinha.get(chave) };
+  });
+  return {
+    campos: renumerados,
+    motivos,
+    emendasLimpas,
+    blocos: lista.length,
+    // Zero significa "não dá para saber" (bloco no formato plano antigo, sem
+    // `linha_origem`), e quem chama trata isso caindo para as contas distintas —
+    // o comportamento de antes desta correção.
+    linhasRetornadas: linhas.size,
+  };
 }
 
 /**
@@ -267,10 +378,15 @@ export function juntarBlocos(blocos) {
  * que dizer" é o caso comum, então ela não polui a fila de revisão.
  */
 export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTURA, minimo = MINIMO_PARA_AVALIAR }) {
-  // `extraidas` = CONTAS DISTINTAS gravadas; `esperadas` = LINHAS DE CONTA do
-  // texto. As duas na mesma unidade — foi trocar isso que fez a guarda ficar
-  // cega nos documentos comparativos, onde 3 colunas por conta faziam a razão
-  // passar de 100% e nada nunca disparar.
+  // `extraidas` = LINHAS que a extração devolveu; `esperadas` = LINHAS DE CONTA
+  // do texto. As duas na mesma unidade, e foi preciso errar isso DUAS vezes para
+  // chegar aqui:
+  //   • pares (conta × coluna) contra linhas → 198% num documento incompleto, a
+  //     guarda cega justamente no comparativo;
+  //   • contas DISTINTAS contra linhas → 66% num livro razão PERFEITO, porque o
+  //     mesmo histórico se repete em lançamentos diferentes e some na contagem.
+  // Linha contra linha não tem nenhum dos dois vieses: uma conta com três colunas
+  // conta uma vez, e dois lançamentos do mesmo fornecedor contam dois.
   const e = Number(extraidas);
   const t = Number(esperadas);
   if (!Number.isFinite(e) || !Number.isFinite(t) || t < minimo) return null;
@@ -281,14 +397,15 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
     extraidas: e,
     esperadas: t,
     motivo:
-      `Extração INCOMPLETA: ${e} conta(s) distinta(s) gravada(s) para um documento com ${t} linha(s) `
+      `Extração INCOMPLETA: ${e} linha(s) devolvida(s) para um documento com ${t} linha(s) `
       + `de conta no texto (${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de `
       + `${(limiar * 100).toFixed(0)}%). A contagem do documento é feita sobre o texto do PDF, sem IA: `
-      + `linha que termina em valor e tem rótulo, descontados cabeçalho de ano, CNPJ, data, número de `
-      + `página e bloco de assinatura. As duas medidas estão na MESMA unidade (contas, não valores), `
-      + `então a diferença é dado que o modelo deixou de ler — conferir o documento na fila de revisão `
-      + `antes de usar o book. Documento com rótulo repetido (livro razão com o mesmo histórico em `
-      + `lançamentos diferentes) conta menos contas distintas do que tem linhas: aí a pendência é falso `
-      + `positivo e pode ser resolvida sem ação.`,
+      + `linha que tem valor e tem identidade — rótulo, código de conta, ou linha de tabela numérica —, `
+      + `descontados cabeçalho de ano, CNPJ, data, número de página e bloco de assinatura. As duas `
+      + `medidas estão na MESMA unidade (LINHAS do documento: uma conta com três colunas conta uma vez, `
+      + `e dois lançamentos com o mesmo histórico contam dois), então a diferença é dado que o modelo `
+      + `deixou de ler — conferir o documento na fila de revisão antes de usar o book. A régua erra para `
+      + `cima em cerca de 3% (costuma contar o cabeçalho de colunas como linha), o que já está `
+      + `descontado na folga do limiar.`,
   };
 }

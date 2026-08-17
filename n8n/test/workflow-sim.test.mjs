@@ -1450,7 +1450,10 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   assert.deepEqual(doc1.campos.map((c) => c.chave), ['A', 'B', 'C']);
   assert.deepEqual(doc1.campos.map((c) => c.ordem), [0, 1, 2], 'ordem renumerada no conjunto');
   // 3 contas distintas para 154 linhas de conta — a guarda tem de falar.
-  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 conta\(s\) distinta\(s\).*154 linha\(s\)/);
+  // Estes blocos NÃO trazem `linha_origem` (é o formato plano antigo, de um
+  // workflow importado meses atrás): a guarda cai para contas distintas e se
+  // comporta exatamente como antes da correção de unidade, em vez de medir zero.
+  assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 linha\(s\) devolvida\(s\).*154 linha\(s\)/);
   assert.match(doc1.falha_motivo, /repetida\(s\) na emenda/);
   assert.equal(doc1.cobertura, 0.019, '3 de 154, na unidade de CONTAS');
   assert.equal(doc1.contas_distintas, 3);
@@ -1465,6 +1468,35 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   assert.equal(doc2.falha_motivo, null);
   assert.equal(doc2.campos.length, 39);
   assert.equal(doc2.cobertura, 1);
+});
+
+test('Camada 3: o livro razão PERFEITO não vira pendência — a unidade é linha, não conta distinta', async () => {
+  // O caso medido no book: 99 lançamentos, 66 históricos distintos (o mesmo
+  // fornecedor pago várias vezes). Com a régua vendo 100 linhas, a contagem por
+  // conta distinta dava 66% e abria pendência numa extração que não perdeu nada.
+  // Aqui o documento é o mesmo em miniatura: 24 lançamentos, 8 históricos.
+  const campos = Array.from({ length: 24 }, (_, i) => ({
+    linha_origem: i,
+    ordem: i,
+    chave: `PAGTO FORNECEDOR ${i % 8}`,   // 8 históricos distintos em 24 lançamentos
+    valor_num: 100 + i,
+    valor_texto: String(100 + i),
+    entidade_coluna: null,
+    periodo_coluna: null,
+  }));
+  const out = await run('Juntar Blocos', { items: [
+    { json: { documento_versao_id: 'razao-1', bloco: 1, blocos: 1, celulas_no_documento: 30, contas_no_documento: 24,
+      campos, diagnostico: { entidade: 'Canastra' }, falha_motivo: null,
+      custo_usd: 0.04, tokens: { entrada: 10, saida: 20, cache: 0 } } },
+  ] });
+  const doc = out[0].json;
+  assert.equal(doc.linhas_devolvidas, 24, 'as 24 linhas do documento');
+  assert.equal(doc.contas_distintas, 8, 'e apenas 8 históricos distintos');
+  assert.equal(doc.cobertura, 1, '24 de 24 é extração completa');
+  assert.equal(doc.falha_motivo, null, 'extração perfeita NÃO pode virar pendência');
+  // E o campo de contagem não vaza para o banco: `campo_extraido` recebe o que
+  // sempre recebeu.
+  assert.equal(Object.hasOwn(doc.campos[0], 'linha_origem'), false);
 });
 
 test('Camada 3: sem régua (escaneado) a guarda se CALA, em vez de absolver ou acusar', async () => {

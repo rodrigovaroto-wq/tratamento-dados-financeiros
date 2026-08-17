@@ -409,12 +409,49 @@ const TIPO_TAXONOMIA_LABEL: Record<string, string> = {
   FLUXO_PROJETADO: "Fluxo Projetado",
   DMPL: "Mutações do Patrimônio Líquido",
   DVA: "Demonstração do Valor Adicionado",
+  // O RESTO DA TAXONOMIA. Sem estes, o fallback devolvia o código
+  // "humanizado" sem acento — a tela mostrava "Certidoes", "Razao",
+  // "Contingencias". Erro de português na coluna que o cliente lê primeiro é o
+  // tipo de detalhe que desqualifica um produto inteiro.
+  RAZAO: "Livro Razão",
+  CERTIDOES: "Certidões",
+  ORGANOGRAMA: "Organograma Societário",
+  NOTAS_EXPL: "Notas Explicativas",
+  DF_AUDITADA: "Demonstrações Auditadas",
+  AGING_AR: "Aging de Recebíveis",
+  AGING_AP: "Aging de Pagáveis",
+  ESTOQUE: "Posição de Estoques",
+  SITUACAO_FISCAL: "Situação Fiscal e Parcelamentos",
+  CONTINGENCIAS: "Contingências e Processos",
+  EXTRATO_BANCARIO: "Extratos Bancários",
+  HEADCOUNT: "Folha de Pagamento",
+  APLIC_FINANC: "Aplicações Financeiras",
+  DEBITOS_TRIB: "Débitos Tributários",
+  GARANTIAS: "Garantias Prestadas",
+  AVAIS_FIANCAS: "Avais e Fianças",
+  CONTRATOS_COM: "Contratos Comerciais",
+  CONTRATOS_IC: "Contratos Intercompany",
+  DOCS_SOCIOS: "Documentos dos Sócios",
+  PLANO_NEGOCIOS: "Plano de Negócios",
+  PREMISSAS: "Premissas das Projeções",
+  SPED: "Obrigações Acessórias (SPED)",
 };
 
 // Tipos ainda sem rótulo explícito (fora do Kit Básico + Variáveis já
 // mapeados acima) caem num fallback genérico — "EXTRATO_BANCARIO" vira
 // "Extrato Bancario" em vez do código cru — nunca pior que antes, e já seguem
 // a mesma linha de escrita natural quando entrar um tipo novo.
+/**
+ * O rótulo de um código de taxonomia, ou `null` quando a string não é um código
+ * conhecido. Existe para o caso em que o texto é uma FRASE e não um código: a
+ * descrição de pendência vem do banco com "COMBINADO" no meio, mas também com
+ * "ICMS", "PIS", "CNPJ" e "MESMA" — e traduzir por semelhança de formato
+ * (palavra em caixa alta) transformaria "ICMS" em "Icms".
+ */
+export function rotuloDeTipoConhecido(codigo: string): string | null {
+  return TIPO_TAXONOMIA_LABEL[codigo] ?? null;
+}
+
 export function formatarTipoTaxonomia(codigo: string | null): string {
   if (!codigo) return "Não classificado";
   const label = TIPO_TAXONOMIA_LABEL[codigo];
@@ -1224,9 +1261,21 @@ function construirAbaClassificada(
   // maioria) tem rank 1 e se comporta exatamente como antes.
   const ocorrenciaDoCampo = new Map<string, number>();
   {
+    // A chave leva a COLUNA. O rank existe para dois "Outros" do mesmo balancete
+    // não colapsarem numa linha só — e isso só acontece quando os dois disputam a
+    // MESMA célula, ou seja, a mesma coluna. Duas ocorrências do mesmo rótulo em
+    // colunas diferentes (2025 e 2024) são a mesma conta vista em dois
+    // exercícios, e têm de ficar na mesma linha.
+    //
+    // Sem a coluna na chave, o rank ia 1, 2, 3 para os três exercícios da mesma
+    // conta e o export os separava em três linhas — foi o que a rodada v46
+    // entregou: "Caixa e bancos conta movimento" em três linhas, cada uma com
+    // duas colunas vazias. O comentário deste bloco já dizia que a intenção era
+    // "a 1ª ocorrência de uma coluna alinhar com a 1ª da outra"; faltava a
+    // coluna na chave para que fosse isso mesmo que acontecesse.
     const porVersaoERotulo = new Map<string, CampoExtraido[]>();
-    for (const campo of camposDaAba.map((i) => i.campo)) {
-      const k = `${campo.documento_versao_id}${CHAVE_SEP}${normalizar(campo.chave)}`;
+    for (const { campo, colKey } of camposDaAba) {
+      const k = `${campo.documento_versao_id}${CHAVE_SEP}${colKey}${CHAVE_SEP}${normalizar(campo.chave)}`;
       if (!porVersaoERotulo.has(k)) porVersaoERotulo.set(k, []);
       porVersaoERotulo.get(k)!.push(campo);
     }
@@ -1236,6 +1285,9 @@ function construirAbaClassificada(
       // ser estável entre exportações — arquivo que muda de forma sozinho é o
       // problema que os geradores deste repo já combatem.
       const ordenada = [...lista].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.id.localeCompare(b.id));
+      // Dentro de UMA coluna, cada ocorrência do rótulo é uma linha diferente do
+      // documento — é o caso dos dois "Outros" do balancete, e o rank por posição
+      // é o que os mantém separados, na ordem de leitura.
       ordenada.forEach((c, i) => ocorrenciaDoCampo.set(c.id, i + 1));
     }
   }

@@ -1494,6 +1494,46 @@ $_$;
 COMMENT ON FUNCTION public.fn_fator_escala(p_unidade text) IS 'Fator multiplicativo para levar um valor à base (unidade). null quando a escala é ausente ou desconhecida.';
 
 --
+-- Name: fn_fechar_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_nome text;
+  v_ja   timestamptz;
+begin
+  select nome, fechado_em into v_nome, v_ja from caso where id = p_caso_id;
+  if v_nome is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este mandato não existe mais — talvez alguém já o tenha excluído.');
+  end if;
+  -- Idempotente: fechar duas vezes não reescreve quem fechou nem quando. Dois
+  -- cliques no mesmo botão não podem trocar a autoria do primeiro.
+  if v_ja is not null then
+    return jsonb_build_object('fechado', true, 'nome', v_nome, 'fechado_em', v_ja, 'ja_estava', true);
+  end if;
+
+  update caso
+     set fechado_em = now(), fechado_por = p_autor, motivo_fechamento = nullif(btrim(p_motivo), '')
+   where id = p_caso_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values (p_autor, 'caso_fechado', 'caso:'||p_caso_id,
+            jsonb_build_object('nome', v_nome, 'motivo', nullif(btrim(p_motivo), '')));
+
+  return jsonb_build_object('fechado', true, 'nome', v_nome, 'fechado_em', now());
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) IS 'Tira o mandato da mesa sem apagar nada. Idempotente: fechar de novo devolve o fechamento original em vez de reescrever autoria. Reversível por fn_reabrir_caso.';
+
+--
 -- Name: fn_indice_macro_anual(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2329,6 +2369,43 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_radicais_rotulo(p_chave text) IS 'Radicais de 5 letras das palavras de um rótulo, ordenados e sem repetição. Extraído de fn_rotulo_contido na 0102 para ser calculado uma vez por linha lógica em vez de duas vezes por PAR de linhas comparadas.';
+
+--
+-- Name: fn_reabrir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_nome text;
+  v_ja   timestamptz;
+begin
+  select nome, fechado_em into v_nome, v_ja from caso where id = p_caso_id;
+  if v_nome is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este mandato não existe mais — talvez alguém já o tenha excluído.');
+  end if;
+  if v_ja is null then
+    return jsonb_build_object('reaberto', true, 'nome', v_nome, 'ja_estava', true);
+  end if;
+
+  update caso set fechado_em = null, fechado_por = null, motivo_fechamento = null
+   where id = p_caso_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, antes)
+    values (p_autor, 'caso_reaberto', 'caso:'||p_caso_id,
+            jsonb_build_object('nome', v_nome, 'fechado_em', v_ja));
+
+  return jsonb_build_object('reaberto', true, 'nome', v_nome);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reabrir_caso(p_caso_id uuid, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) IS 'Desfaz fn_fechar_caso. Existe para que fechar não precise de coragem: ação sem volta faz a pessoa não usar, e a lista de mandatos volta a crescer sem fim.';
 
 --
 -- Name: fn_reavaliar_guardas_extracao(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -4933,8 +5010,17 @@ CREATE TABLE public.caso (
     nome text NOT NULL,
     produto text DEFAULT 'reestruturacao'::text NOT NULL,
     status public.caso_status DEFAULT 'intake'::public.caso_status NOT NULL,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    fechado_em timestamp with time zone,
+    fechado_por text,
+    motivo_fechamento text
 );
+
+--
+-- Name: COLUMN caso.fechado_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.caso.fechado_em IS 'Quando o mandato saiu da mesa. NULL = ativo. Não é status de trabalho (esse é `status`, f0/04): é a resposta a "ainda estamos nisso?". Fechar preserva tudo — para apagar existe fn_excluir_caso.';
 
 --
 -- Name: caso_linha_premissa; Type: TABLE; Schema: public; Owner: -
@@ -5586,6 +5672,12 @@ CREATE INDEX idx_campo_docversao ON public.campo_extraido USING btree (documento
 --
 
 CREATE INDEX idx_campo_extraido_versao_ordem ON public.campo_extraido USING btree (documento_versao_id, ordem);
+
+--
+-- Name: idx_caso_ativos; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_caso_ativos ON public.caso USING btree (criado_em DESC) WHERE (fechado_em IS NULL);
 
 --
 -- Name: idx_caso_linha_premissa_caso; Type: INDEX; Schema: public; Owner: -
@@ -6318,6 +6410,12 @@ GRANT ALL ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) TO authentica
 GRANT ALL ON FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone) TO authenticated;
 
 --
+-- Name: FUNCTION fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_indice_macro_anual(p_desde_ano integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6402,6 +6500,12 @@ GRANT ALL ON FUNCTION public.fn_premissas_sugeridas(p_setor text) TO authenticat
 --
 
 GRANT ALL ON FUNCTION public.fn_radicais_rotulo(p_chave text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reabrir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reavaliar_guardas_extracao(p_documento_versao_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -

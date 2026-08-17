@@ -43,6 +43,9 @@ const ACENTOS: Record<string, string> = {
   faturamento: "faturamento", balancete: "balancete", balanco: "balanço",
   combinado: "combinado", mensal: "mensal", anual: "anual",
   classificacao: "classificação", entidade: "entidade", conta: "conta",
+  reestruturacao: "reestruturação", certidao: "certidão", certidoes: "certidões",
+  razao: "razão", organograma: "organograma", contingencia: "contingência",
+  contingencias: "contingências", situacao: "situação", imobilizado: "imobilizado",
   contas: "contas", valor: "valor", material: "material", suspeito: "suspeito",
   padrao: "padrão", confianca: "confiança", ilegivel: "ilegível",
   satisfeita: "satisfeita", aritmetica: "aritmética", serie: "série",
@@ -159,6 +162,27 @@ export function suavizarMensagem(texto: string): string {
     .replace(/\bsecao_canonica\b/g, "seção")
     .replace(/\brotulo_norm\b/g, "rótulo")
     .replace(/\bf0\/\d+\b/g, "")
+    // "4 pendência(s) BLOQUEANTE(s) sem decisão" → "4 pendências bloqueantes
+    // sem decisão". O plural entre parênteses e a caixa alta vêm de mensagem de
+    // banco, escrita para caber nos dois casos; na tela isso lê como rascunho.
+    //
+    // A regra mexe SÓ na palavra colada ao "(s)". A tentação é baixar toda
+    // palavra em caixa alta, e isso destrói o que a mensagem tem de mais útil:
+    // CNPJ, ICMS, PIS, COFINS e os códigos da taxonomia aparecem nas descrições
+    // de pendência, e "cnpj" lê como erro de digitação.
+    .replace(
+      // O adjetivo vem colado no substantivo ("4 pendência(s) BLOQUEANTE(s)"), e
+      // os dois têm de concordar com o MESMO número — por isso a segunda palavra
+      // entra na mesma regra, e não numa passada solta que pluralizaria sozinha.
+      /(\d+)\s+([\wà-úÀ-Ú]+)\((s|es)\)(\s+([\wà-úÀ-Ú]+)\((?:s|es)\))?/gi,
+      (_m: string, n: string, p1: string, sufixo: string, _todo: string, p2: string | undefined) => {
+        const caixa = (w: string) => (w === w.toUpperCase() ? w.toLowerCase() : w);
+        const plural = (w: string, suf = sufixo) => (Number(n) === 1 ? caixa(w) : `${caixa(w)}${suf}`);
+        return `${n} ${plural(p1)}${p2 ? ` ${plural(p2, "s")}` : ""}`;
+      },
+    )
+    .replace(/([\wà-úÀ-Ú]+)\((s|es)\)/gi, (_m: string, palavra: string, suf: string) =>
+      `${palavra === palavra.toUpperCase() ? palavra.toLowerCase() : palavra}${suf}`)
     .replace(/\s{2,}/g, " ")
     .trim();
 }

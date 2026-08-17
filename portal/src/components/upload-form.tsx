@@ -222,7 +222,7 @@ export default function UploadForm({
           <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
             O que o sistema respondeu {falha.etapa ? `(etapa: ${falha.etapa})` : null}
           </p>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700">{falha.mensagem}</p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-tinta-600">{falha.mensagem}</p>
         </div>
         <p className="mt-3 font-medium text-red-900">
           Envie esta mensagem ao desenvolvedor do sistema para que ele resolva o problema.
@@ -311,25 +311,25 @@ export default function UploadForm({
         </div>
 
         {pronto && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 px-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/40 px-4">
             <div className="w-full max-w-sm rounded-lg bg-white p-6 text-center shadow-xl">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-2xl">
                 ✓
               </div>
-              <h2 className="text-base font-semibold text-neutral-900">Tudo pronto</h2>
-              <p className="mt-2 text-sm text-neutral-600">
+              <h2 className="text-base font-semibold text-tinta-900">Tudo pronto</h2>
+              <p className="mt-2 text-sm text-tinta-600">
                 Seus documentos foram organizados e já estão disponíveis no mandato “{sucesso.mandato}”.
               </p>
               <div className="mt-5 flex justify-center gap-3">
                 <button
                   onClick={() => (casoId ? router.push(`/casos/${casoId}`) : router.push("/casos"))}
-                  className="rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+                  className="rounded bg-tinta-900 px-4 py-2 text-sm font-medium text-white hover:bg-tinta-600"
                 >
                   Ver mandato →
                 </button>
                 <button
                   onClick={() => setPronto(false)}
-                  className="rounded border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+                  className="rounded border border-tinta-200 px-4 py-2 text-sm font-medium text-tinta-600 hover:bg-tinta-50"
                 >
                   Continuar aqui
                 </button>
@@ -344,7 +344,7 @@ export default function UploadForm({
   return (
     <form onSubmit={enviar} className="space-y-4">
       <div>
-        <label className="mb-1 block text-sm font-medium text-neutral-700">Mandato</label>
+        <label className="mb-1 block text-sm font-medium text-tinta-600">Mandato</label>
         <input
           type="text"
           value={mandato}
@@ -352,10 +352,10 @@ export default function UploadForm({
           readOnly={travarMandato}
           placeholder="ex.: Reestruturação Grupo X"
           className={`w-full rounded border px-3 py-2 text-sm ${
-            travarMandato ? "border-neutral-200 bg-neutral-100 text-neutral-600" : "border-neutral-300"
+            travarMandato ? "border-tinta-200 bg-tinta-100 text-tinta-600" : "border-tinta-200"
           }`}
         />
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-tinta-500">
           {travarMandato
             ? "Os arquivos entram neste mesmo mandato — somam ao checklist, à exportação e à checagem de dados já existentes."
             : "Use o MESMO nome para enviar arquivos em momentos diferentes e acumulá-los no mesmo mandato (mesmo checklist, mesma exportação, mesma reconciliação)."}
@@ -363,7 +363,7 @@ export default function UploadForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-neutral-700">Arquivos</label>
+        <label className="mb-1 block text-sm font-medium text-tinta-600">Arquivos</label>
         <div
           onClick={() => inputRef.current?.click()}
           onDragOver={(e) => {
@@ -377,11 +377,11 @@ export default function UploadForm({
             adicionarArquivos(e.dataTransfer.files);
           }}
           className={`flex cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed px-4 py-8 text-center text-sm transition ${
-            arrastando ? "border-neutral-500 bg-neutral-50" : "border-neutral-300"
+            arrastando ? "border-tinta-500 bg-tinta-50" : "border-tinta-200"
           }`}
         >
-          <span className="font-medium text-neutral-700">Arraste os arquivos aqui</span>
-          <span className="text-neutral-500">ou clique para selecionar (PDF, imagens; vários de uma vez)</span>
+          <span className="font-medium text-tinta-600">Arraste os arquivos aqui</span>
+          <span className="text-tinta-500">ou clique para selecionar (PDF, imagens; vários de uma vez)</span>
           <input
             ref={inputRef}
             type="file"
@@ -393,16 +393,16 @@ export default function UploadForm({
       </div>
 
       {arquivos.length > 0 && (
-        <ul className="divide-y divide-neutral-100 rounded border border-neutral-200 bg-white text-sm">
+        <ul className="divide-y divide-tinta-100 rounded border border-tinta-200 bg-white text-sm">
           {arquivos.map((a, i) => (
             <li key={`${a.name}:${a.size}`} className="flex items-center justify-between px-3 py-2">
               <span className="truncate">
-                {a.name} <span className="text-neutral-400">({formatarTamanho(a.size)})</span>
+                {a.name} <span className="text-tinta-400">({formatarTamanho(a.size)})</span>
               </span>
               <button
                 type="button"
                 onClick={() => removerArquivo(i)}
-                className="ml-3 text-xs text-neutral-500 underline hover:text-red-700"
+                className="ml-3 text-xs text-tinta-500 underline hover:text-red-700"
               >
                 remover
               </button>
@@ -418,9 +418,17 @@ export default function UploadForm({
       <button
         type="submit"
         disabled={enviando}
-        className="rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        className="btn-primario px-4 py-2"
       >
-        {enviando ? "Enviando…" : `Enviar ${arquivos.length || ""} arquivo(s)`}
+        {/* A ação primária da tela usa a cor primária do produto — este botão
+            era grafite enquanto o resto do portal já era acento. E o rótulo
+            conta os arquivos em vez do "(s)": com 38 selecionados, "Enviar 38
+            arquivos" confirma o que vai acontecer. */}
+        {enviando
+          ? "Enviando…"
+          : arquivos.length === 0
+            ? "Enviar arquivos"
+            : `Enviar ${arquivos.length} ${arquivos.length === 1 ? "arquivo" : "arquivos"}`}
       </button>
     </form>
   );

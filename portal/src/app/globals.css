@@ -1,5 +1,123 @@
 @import "tailwindcss";
 
+/* =============================================================================
+   A CARA DA ORIA NA TELA.
+
+   POR QUE ESTE ARQUIVO DEIXOU DE TER TRÊS LINHAS. O portal usava a paleta padrão
+   do Tailwind (`neutral`) e nenhuma cor de marca, enquanto o arquivo ENTREGUE ao
+   cliente já tinha identidade versionada em `src/lib/oria-marca.ts` — grafite
+   institucional, acento, cinzas de faixa. Eram dois produtos com aparências
+   diferentes saindo do mesmo sistema, e o que o cliente vê primeiro (a tela) era
+   o que parecia menos acabado.
+
+   Os tokens abaixo são os MESMOS de `oria-marca.ts`, convertidos de ARGB para
+   hex. Mudar cor de marca é mudar nos dois lugares, e o comentário de lá diz o
+   porquê de cada uma:
+
+     grafite   #1E293B   faixa de seção do modelo → texto e superfícies escuras
+     acento    #0E7490   cabeçalho de ano projetado e capa → ação e foco
+     cinza     #E2E8F0   faixa de linha de conta → bordas
+     cinzaClaro#F1F5F9   HEADER_FILL das abas → fundo de apoio
+
+   REGRA HERDADA DO ENTREGÁVEL, e ela vale mais na tela do que no papel: cor
+   nunca carrega significado sozinha. Todo estado aqui é cor MAIS texto (o chip
+   diz "faltante", não é só âmbar) — é o que mantém a tela legível para quem não
+   distingue verde de vermelho, que é 8% dos homens que vão abrir este portal.
+   ============================================================================ */
+
+@theme {
+  --color-tinta-900: #0f172a;
+  --color-tinta-800: #1e293b;
+  --color-tinta-600: #475569;
+  --color-tinta-500: #64748b;
+  --color-tinta-400: #94a3b8;
+  --color-tinta-200: #e2e8f0;
+  --color-tinta-100: #f1f5f9;
+  --color-tinta-50: #f8fafc;
+  --color-acento-700: #0e5f74;
+  --color-acento-600: #0e7490;
+  --color-acento-50: #ecfeff;
+}
+
+:root {
+  /* Sombras curtas e de baixa opacidade: o produto é dado, não cartão de rede
+     social. Elevação demais compete com o número. */
+  --sombra-carta: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --sombra-topo: 0 1px 0 0 rgb(15 23 42 / 0.06);
+}
+
+html {
+  /* Tabelas de dado com números precisam de tabular alinhado por padrão. */
+  font-variant-numeric: tabular-nums;
+}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Foco visível e consistente. O padrão do navegador some em cima de fundo
+   escuro, e a tela tem ações destrutivas — quem navega por teclado precisa
+   enxergar onde está antes de apertar Enter. */
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-acento-600);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer components {
+  /* --- superfícies --------------------------------------------------------- */
+  .carta {
+    @apply rounded-lg border border-tinta-200 bg-white;
+    box-shadow: var(--sombra-carta);
+  }
+
+  /* --- ações --------------------------------------------------------------- */
+  /* Uma ação primária por tela. As demais são secundárias ou discretas: quando
+     tudo tem o mesmo peso, a tela não diz o que fazer em seguida.
+
+     As quatro repetem a base em vez de aplicarem uma `.btn` comum porque no
+     Tailwind v4 `@apply` não enxerga classe de componente definida na mesma
+     camada — o build falha com "unknown utility class". */
+  .btn-primario {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-acento-600 px-3 py-1.5 text-sm
+           font-medium text-white transition-colors hover:bg-acento-700
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secundario {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-tinta-200 bg-white px-3 py-1.5
+           text-sm font-medium text-tinta-800 transition-colors hover:bg-tinta-50
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-discreto {
+    @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-tinta-500
+           transition-colors hover:bg-tinta-100 hover:text-tinta-900;
+  }
+  .btn-aprovar {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-1.5 text-sm
+           font-medium text-white transition-colors hover:bg-emerald-800;
+  }
+
+  /* --- rótulos de estado --------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium
+           whitespace-nowrap;
+  }
+
+  /* --- estrutura ----------------------------------------------------------- */
+  /* Título de seção: o mesmo tamanho e peso em todas as telas, com a contagem
+     em cinza ao lado. Antes cada seção escolhia o seu, e a página inteira
+     parecia uma lista de coisas sem hierarquia. */
+  .titulo-secao {
+    @apply text-[13px] font-semibold uppercase tracking-wide text-tinta-500;
+  }
+
+  /* Indicador de topo: o número grande, o rótulo pequeno embaixo. */
+  .indicador-valor {
+    @apply text-2xl font-semibold tabular-nums text-tinta-900;
+  }
+  .indicador-rotulo {
+    @apply mt-0.5 text-xs text-tinta-500;
+  }
 }

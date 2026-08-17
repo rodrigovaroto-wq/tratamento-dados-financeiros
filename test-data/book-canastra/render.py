@@ -17,6 +17,7 @@ As bagunças de FORMATO ficam concentradas aqui de propósito (o dado em si é
 """
 
 import os
+import re
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
@@ -117,7 +118,92 @@ def doc(nome_arquivo, paisagem=False, marca=False):
     return d
 
 
+# A VERDADE DE CADA DOCUMENTO, contada de dentro do gerador.
+#
+# Por que aqui e não medindo o PDF: a régua de cobertura que roda em produção
+# (`n8n/lib/cobertura.mjs`) é uma HEURÍSTICA sobre o texto extraído — ela tenta
+# adivinhar quantas contas o documento tem para saber se a extração trouxe
+# pouco. Conferir uma heurística contra outra leitura do mesmo PDF não prova
+# nada. Aqui o gerador SABE: ele acabou de escrever a tabela linha a linha.
+#
+# `linha de conta` = a mesma definição da régua — rótulo com valor. Alguma célula
+# traz um RÓTULO (três letras seguidas, o mesmo mínimo que a régua usa) e alguma
+# OUTRA traz dígito. Cabeçalho ("", "31/12/2025", …) não entra: não tem rótulo.
+# Linha de seção sem valor não entra: nenhuma célula com dígito — e o modelo
+# também não gera linha para ela.
+#
+# O rótulo não mora necessariamente na PRIMEIRA coluna, e a primeira versão
+# disto supôs que sim: no livro razão (Data | Histórico | Débito | Crédito |
+# Saldo) e nos dois balancetes (Código | Conta | …) a coluna 1 é data ou código,
+# e a contagem devolvia ZERO num documento de 461 lançamentos. Errar a verdade
+# para baixo é o pior modo de falha aqui: a régua pareceria contar demais
+# justamente onde ela precisa ser fiscalizada.
+#
+# Documento que o próprio book declara SEM VALOR MONETÁRIO (armadilha 12 do
+# GUIA_DE_TESTE) tem verdade ZERO por declaração, não por contagem: certidão traz
+# número de protocolo e data, organograma traz percentual de participação, e
+# nenhum dos dois é conta. Se a régua enxergar linha financeira ali, é ela que
+# está errada — e é justamente o que a `0111` trata do outro lado.
+SEM_VALOR_MONETARIO = set()
+CONTAGEM = {}
+
+
+def _texto_da_celula(c):
+    """Célula pode ser str, número, Paragraph ou uma lista de flowables."""
+    if c is None:
+        return ""
+    if isinstance(c, str):
+        return c
+    if isinstance(c, (int, float)):
+        return str(c)
+    texto = getattr(c, "text", None)
+    if isinstance(texto, str):
+        return texto
+    if isinstance(c, (list, tuple)):
+        return " ".join(_texto_da_celula(x) for x in c)
+    return ""
+
+
+def _tem_digito(s):
+    return any(ch.isdigit() for ch in s)
+
+
+_TRES_LETRAS = re.compile(r"[^\W\d_]{3}", re.UNICODE)
+
+
+def _conta_linhas(elementos, acc):
+    """Percorre os flowables procurando Table, inclusive dentro de KeepTogether."""
+    for el in elementos:
+        if isinstance(el, Table):
+            for linha in el._cellvalues:
+                celulas = [_texto_da_celula(c).strip() for c in linha]
+                # O rótulo é a primeira célula com texto de verdade, em QUALQUER
+                # coluna; os valores são as demais células com dígito.
+                i_rotulo = next((i for i, c in enumerate(celulas) if _TRES_LETRAS.search(c)), None)
+                if i_rotulo is None:
+                    continue
+                valores = [c for i, c in enumerate(celulas) if i != i_rotulo and _tem_digito(c)]
+                if not valores:
+                    continue
+                acc["linhas_de_conta"] += 1
+                acc["celulas_de_valor"] += len(valores)
+                # O rótulo DISTINTO importa porque é essa a unidade do outro lado
+                # da guarda: a extração grava conta, e duas linhas com o mesmo
+                # histórico viram uma só. Num livro razão isso é a regra, não a
+                # exceção — e a guarda acusaria extração perfeita de incompleta.
+                acc["rotulos"].add(" ".join(celulas[i_rotulo].split()).lower())
+        elif isinstance(el, KeepTogether):
+            _conta_linhas(el._content, acc)
+
+
 def build(d, elementos):
+    arquivo = os.path.basename(d.filename)
+    acc = {"linhas_de_conta": 0, "celulas_de_valor": 0, "rotulos": set()}
+    if arquivo not in SEM_VALOR_MONETARIO:
+        _conta_linhas(elementos, acc)
+    CONTAGEM[arquivo] = {"linhas_de_conta": acc["linhas_de_conta"],
+                         "celulas_de_valor": acc["celulas_de_valor"],
+                         "contas_distintas": len(acc["rotulos"])}
     d.build(elementos, onFirstPage=d._decorador, onLaterPages=d._decorador)
 
 

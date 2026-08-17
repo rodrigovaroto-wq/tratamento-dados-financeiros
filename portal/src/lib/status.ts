@@ -13,7 +13,7 @@ export const CASO_STATUS_LABEL: Record<CasoStatus, string> = {
 };
 
 export const CASO_STATUS_COLOR: Record<CasoStatus, string> = {
-  intake: "bg-neutral-100 text-neutral-700",
+  intake: "bg-tinta-100 text-tinta-600",
   em_triagem: "bg-amber-100 text-amber-800",
   completude_ok: "bg-emerald-100 text-emerald-800",
   em_revisao: "bg-blue-100 text-blue-800",

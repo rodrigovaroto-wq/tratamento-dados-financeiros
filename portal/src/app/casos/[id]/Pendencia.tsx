@@ -23,6 +23,7 @@
 // não tinha o que fazer na tela. `f0/04` prevê esse caminho desde a F0
 // (`rejeitada`); faltava código e faltava botão.
 import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
+import { rotuloDeTipoConhecido } from "@/lib/export";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "@/lib/pendencia";
 import { decidirPendencia } from "./actions";
 
@@ -66,16 +67,21 @@ export function ItemPendencia({
     ? { caixa: "border-red-200 bg-red-50 text-red-900", chip: "bg-red-100 text-red-800", fraco: "text-red-700" }
     : { caixa: "border-amber-200 bg-amber-50 text-amber-900", chip: "bg-amber-100 text-amber-800", fraco: "text-amber-700" };
 
-  const bruto = p.descricao ?? "Sem descrição.";
+  // O CÓDIGO DA TAXONOMIA VIRA O NOME DO DOCUMENTO. A mensagem do banco diz
+  // "Item obrigatório do Kit Básico ausente: COMBINADO" — `COMBINADO` é a chave
+  // primária da taxonomia, não o nome de nada que o cliente reconheça. A tela já
+  // sabe traduzir (`formatarTipoTaxonomia`); faltava aplicar aqui.
+  const bruto = (p.descricao ?? "Sem descrição.").replace(
+    /\b([A-Z][A-Z0-9_]{3,})\b/g,
+    (m) => rotuloDeTipoConhecido(m) ?? m,
+  );
   const rotulos = rotulosCitados(bruto);
   const partes = partesDaDescricao(suavizarMensagem(semALista(bruto)));
 
   return (
-    <li className={`rounded border px-3 py-2 text-sm ${cores.caixa}`}>
+    <li className={`rounded-lg border px-3.5 py-3 text-sm ${cores.caixa}`}>
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cores.chip}`}>
-          {rotuloDaPendencia(p.tipo)}
-        </span>
+        <span className={`chip ${cores.chip}`}>{rotuloDaPendencia(p.tipo)}</span>
         {/* O ARQUIVO, quando se sabe qual é. "Sem arquivo específico" não é falha:
             divergência entre documentos é do CASO, não de um deles — e dizer isso é
             melhor que deixar o espaço vazio, que se lê como informação perdida. */}
@@ -86,9 +92,7 @@ export function ItemPendencia({
             pedida ao cliente é visualmente idêntica a uma que ninguém tocou — e o
             resultado é pedir duas vezes. */}
         {p.estado && p.estado !== "aberta" && (
-          <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-            ROTULO_POR_ESTADO[p.estado]?.chip ?? "bg-neutral-200 text-neutral-700"
-          }`}>
+          <span className={`chip ${ROTULO_POR_ESTADO[p.estado]?.chip ?? "bg-tinta-200 text-tinta-600"}`}>
             {ROTULO_POR_ESTADO[p.estado]?.rotulo ?? rotuloDoEstado(p.estado)}
           </span>
         )}
@@ -96,7 +100,7 @@ export function ItemPendencia({
 
       {/* UM FATO POR LINHA, com travessão. A primeira parte é a frase principal e
           vem sem marcador; as demais são qualificações dela. */}
-      <p>{partes[0]}</p>
+      <p className="font-medium">{partes[0]}</p>
       {partes.length > 1 && (
         <ul className="mt-1 space-y-0.5">
           {partes.slice(1).map((parte, i) => (
@@ -115,7 +119,7 @@ export function ItemPendencia({
           </p>
           <ul className="mt-0.5 flex flex-wrap gap-1">
             {rotulos.map((r) => (
-              <li key={r} className={`rounded px-1.5 py-0.5 text-xs ${cores.chip}`}>{r}</li>
+              <li key={r} className={`chip ${cores.chip}`}>{r}</li>
             ))}
           </ul>
         </div>
@@ -136,7 +140,7 @@ export function ItemPendencia({
               <button
                 type="submit"
                 title={b.efeito}
-                className={`rounded border px-2.5 py-1 text-xs font-semibold ${b.classe}`}
+                className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${b.classe}`}
               >
                 {b.rotulo}
               </button>

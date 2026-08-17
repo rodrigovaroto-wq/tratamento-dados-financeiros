@@ -136,6 +136,21 @@ export function parseEntidade(textoNormalizado, aliases) {
     'analitico', 'analitica', 'sintetico', 'sintetica', 'intragrupo', 'intra',
     'assinado', 'assinada', 'assinados', 'assinadas', 'final', 'rev', 'revisado',
     'versao', 'copia', 'scan', 'digitalizado', 'grupo_', 'exercicio', 'exercicios',
+    // Preposições e artigos: ninguém se chama "De". Sem isto sobrava
+    // "Aging De Canastra Industria" e "Folha De Pagamento Canastra Industria".
+    'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas', 'ao', 'aos', 'por',
+    // Vocabulário de NOME DE ARQUIVO — o que o cliente escreve quando não escreve
+    // o tipo: "ANEXO IV - planilha final REV3.pdf", "Doc1.pdf". São os três
+    // arquivos com nome de vida real do book, e nenhum deles nomeia empresa.
+    'anexo', 'anexos', 'doc', 'doc1', 'documento', 'documentos', 'arquivo', 'planilha',
+    'planilhas', 'pasta', 'meses', 'mes', 'periodo', 'atualizado', 'atualizada', 'novo', 'nova',
+    // Palavras de TIPO que a taxonomia não carrega no apelido, e por isso não são
+    // removidas pela regra do vocabulário abaixo: o nome de arquivo traz
+    // "certidoes NEGATIVAS", "organograma SOCIETARIO", "situacao fiscal e
+    // PARCELAMENTOS", e o alias casado é o pedaço curto. O lugar certo delas é a
+    // taxonomia (`taxonomia_tipo_documento`, seed `db/migrations/0002`, espelhado
+    // em `lib/taxonomia.mjs`) — mexer lá é migration, e fica anotado no ESTADO.md.
+    'negativas', 'negativa', 'societario', 'societaria', 'parcelamentos', 'parcelamento',
   ]);
   // Siglas que ficam feias em Title Case ("Vt Logistica"). Lista curta e
   // explícita: adivinhar por "não tem vogal" erraria em `SPE`.
@@ -144,11 +159,19 @@ export function parseEntidade(textoNormalizado, aliases) {
   const ehPeriodo = (tok) =>
     /^(19|20)?\d{2}$/.test(tok) ||        // 2025, 25
     /^\d{1,3}$/.test(tok) ||              // número de sequência do arquivo (01)
-    /^\d{2,4}x\d{2,4}$/.test(tok) ||      // 2025x2024 (comparativo)
+    // 2025x2024 E 2025x2024x2023: o comparativo de TRÊS exercícios não casava no
+    // `x` único, e era ele que produzia a entidade "Canastra Industria
+    // 2025x2024x2023" na rodada real — 15 das 22 pendências de revisão saíram
+    // daí, porque o diagnóstico do conteúdo diz "Canastra Industria" e a
+    // divergência com o nome registrado abre pendência.
+    /^\d{2,4}(x\d{2,4})+$/.test(tok) ||
     /^\d{1,2}m\d{2,4}$/.test(tok) ||      // 12m25
     /^l\d{1,2}m$/.test(tok) ||            // l24m
     /^\d{1,2}m$/.test(tok) ||             // 24m
-    /^[1-4]t\d{2,4}$/.test(tok);          // 1t25
+    /^[1-4]t\d{2,4}$/.test(tok) ||        // 1t25
+    // Data ou sequência de scanner ("digitalizado_20260115_0003"): token que é
+    // SÓ dígito nunca é nome de empresa, qualquer que seja o comprimento.
+    /^\d+$/.test(tok);
 
   // Remove TODOS os termos de tipo presentes, do mais longo para o mais curto.
   // Parar no primeiro match (como `parseTipo` faz, e deve fazer) deixaria lixo:
@@ -160,9 +183,38 @@ export function parseEntidade(textoNormalizado, aliases) {
   termos.sort((x, y) => y.length - x.length);
   for (const termo of termos) s = s.split(` ${termo} `).join(' ');
 
+  // PALAVRA QUE VIVE NO VOCABULÁRIO DE TIPO NÃO É NOME DE EMPRESA.
+  //
+  // A remoção acima é por FRASE INTEIRA, e o nome de arquivo raramente traz a
+  // frase inteira: `23_Aging_de_Contas_a_Pagar_...` casa o alias "contas a
+  // pagar" e deixa "aging" para trás; `27_Composicao_do_Imobilizado_...` deixa
+  // "composicao" e "imobilizado"; `30_Certidoes_Negativas_...` deixa
+  // "negativas". Medido nos 38 nomes do book: onze entidades saíam com sobra
+  // documental grudada no nome da empresa.
+  //
+  // A fonte é a MESMA taxonomia, palavra a palavra — não uma segunda lista à mão
+  // (o repositório já pagou caro por espelho manual que divergiu). Ela cresce
+  // sozinha quando um tipo novo entra na taxonomia.
+  //
+  // O erro que esta regra pode cometer é remover demais numa empresa que se
+  // chame com uma palavra de tipo, e o resultado disso é `entidade: null` — que
+  // é a saída CONSERVADORA. Esta função é uma hipótese barata: não ter hipótese
+  // é melhor que ter a errada, porque a errada vira pendência de divergência
+  // para um humano resolver.
+  const palavrasDeTipo = new Set();
+  for (const termo of termos) for (const p of termo.split(' ')) if (p.length > 1) palavrasDeTipo.add(p);
+  // "grupo" NÃO sai, e é a exceção que prova a regra: ele existe no vocabulário
+  // de tipo (`faturamento intra grupo`) e ao mesmo tempo é parte do nome de
+  // empresa que os documentos combinados usam — "GRUPO CANASTRA" está impresso no
+  // cabeçalho deles. Removê-lo faria o nome dizer "Canastra" enquanto o conteúdo
+  // diz "Grupo Canastra", e divergência entre os dois é exatamente o que abre a
+  // pendência que esta correção existe para evitar.
+  palavrasDeTipo.delete('grupo');
+
   const tokens = s
     .split(' ')
-    .filter((tok) => tok && tok.length > 1 && !ehPeriodo(tok) && !RUIDO.has(tok));
+    .filter((tok) => tok && tok.length > 1 && !ehPeriodo(tok)
+      && !RUIDO.has(tok) && !palavrasDeTipo.has(tok));
   if (tokens.length === 0) return null;
 
   const nome = tokens
@@ -180,7 +232,18 @@ export function classifyByFilename(nomeOriginal) {
   const tipo = parseTipo(t);
   const periodo = parsePeriodo(t);
   const assinado = parseAssinado(t);
-  const entidade = parseEntidade(t, ALIASES);
+  // NOME QUE NÃO DIZ NEM O TIPO NÃO DIZ A EMPRESA. Sem esta linha, o resto do
+  // nome vira "entidade" por eliminação, e o que sobra é o próprio nome do
+  // documento: `34_Relatorio_do_Auditor_Independente_2025.pdf` saía como a
+  // empresa "Relatorio Auditor Independente", e `ANEXO IV - planilha final
+  // REV3.pdf` como "Iv Rev3". Medido nos 38 nomes do book: seis nomes não têm
+  // tipo, e em quatro deles a entidade era pura sobra documental.
+  //
+  // E não se perde hipótese nenhuma: sem tipo a confiança fica em 0,65 ou menos,
+  // abaixo do limiar — então esses documentos VÃO para a classificação por
+  // conteúdo, que devolve a entidade lida do próprio documento. Trocar um chute
+  // pelo silêncio aqui é trocar pendência de divergência por nada.
+  const entidade = tipo ? parseEntidade(t, ALIASES) : null;
 
   const sinais = { tipo: !!tipo, periodo: !!periodo, assinado: assinado === true, entidade: !!entidade };
 

@@ -105,7 +105,7 @@ const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string 
     rotulo: "derivado",
     explica: "indicador gerencial (resultado de outras contas, não dinheiro) — projetá-lo o faria "
       + "divergir das linhas que o compõem",
-    cor: "bg-neutral-200 text-neutral-700",
+    cor: "bg-tinta-200 text-tinta-600",
   },
 };
 
@@ -314,11 +314,11 @@ export default async function ModelagemPage({
     <main className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-baseline justify-between gap-4">
         <div>
-          <Link href={`/casos/${id}`} className="text-sm text-neutral-500 hover:underline">
+          <Link href={`/casos/${id}`} className="text-sm text-tinta-500 hover:underline">
             ← {caso.nome}
           </Link>
           <h1 className="text-xl font-semibold">Modelagem</h1>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-tinta-500">
             Escolha as premissas deste mandato e diga onde cada uma entra na projeção.
           </p>
         </div>
@@ -332,7 +332,7 @@ export default async function ModelagemPage({
         <div className="flex shrink-0 items-center gap-2">
           <a
             href={`/casos/${id}/export?modo=dados`}
-            className="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            className="rounded border border-tinta-200 bg-white px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50"
             title="As abas de dado, linha a linha, como saíram da extração. Serve para conferir contra os documentos — não projeta nada."
           >
             Exportar dados financeiros ↓
@@ -409,7 +409,7 @@ export default async function ModelagemPage({
               ? "Pronto para o export de modelagem"
               : "Ainda falta algo para o export de modelagem"}
           </p>
-          <ul className="mt-1 space-y-0.5 text-neutral-700">
+          <ul className="mt-1 space-y-0.5 text-tinta-600">
             <li>
               {conf.linhas_com_premissa} de {conf.linhas_do_caso} <strong>contas projetáveis</strong>{" "}
               com premissa — <strong>{conf.linhas_sem_premissa} sem premissa</strong>, que não serão
@@ -418,7 +418,7 @@ export default async function ModelagemPage({
             {/* O que NÃO é projetável fica nomeado, em vez de desaparecer da conta:
                 no v35 a tela dizia "0 de 236" e o alvo real era bem menor. */}
             {conf.linhas_nao_projetaveis && Object.keys(conf.linhas_nao_projetaveis).length > 0 && (
-              <li className="text-neutral-600">
+              <li className="text-tinta-600">
                 Fora da conta por natureza da linha:{" "}
                 {Object.entries(conf.linhas_nao_projetaveis)
                   .map(([p, n]) => `${n} ${PAPEL_INFO[p]?.rotulo ?? p}`)
@@ -448,9 +448,9 @@ export default async function ModelagemPage({
       )}
 
       {/* 1. PARÂMETROS — as três células que saíram do topo da aba Modelagem. */}
-      <section className="rounded border border-neutral-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-neutral-700">1. Parâmetros do mandato</h2>
-        <p className="mb-3 text-xs text-neutral-500">
+      <section className="rounded border border-tinta-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-tinta-600">1. Parâmetros do mandato</h2>
+        <p className="mb-3 text-xs text-tinta-500">
           Entidade modelada, corte do último exercício real e índice macro saíram do topo da planilha
           e vivem aqui — o Excel sai já parametrizado com o que você escolher. O setor filtra as
           premissas sugeridas no passo 2. Entidade e último exercício vêm <strong>sugeridos</strong>{" "}
@@ -458,26 +458,26 @@ export default async function ModelagemPage({
         </p>
         <FormParametros casoId={id}>
           <label className="text-sm">
-            <span className="text-neutral-600">Entidade modelada</span>
+            <span className="text-tinta-600">Entidade modelada</span>
             <input
               type="text" name="entidade" defaultValue={parametros?.entidade ?? entidadeSugerida}
               placeholder="razão social como aparece nas abas de dados"
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full rounded border border-tinta-200 px-2 py-1"
             />
           </label>
           <label className="text-sm">
-            <span className="text-neutral-600">Último exercício realizado</span>
+            <span className="text-tinta-600">Último exercício realizado</span>
             <input
               type="number" name="ultimo_exercicio_real"
               defaultValue={parametros?.ultimo_exercicio_real ?? anoSugerido}
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full rounded border border-tinta-200 px-2 py-1"
             />
           </label>
           <label className="text-sm">
-            <span className="text-neutral-600">Índice macro que dirige a projeção</span>
+            <span className="text-tinta-600">Índice macro que dirige a projeção</span>
             <select
               name="indice_macro" defaultValue={parametros?.indice_macro ?? "IPCA"}
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full rounded border border-tinta-200 px-2 py-1"
             >
               {["IPCA", "IGPM", "INCC", "SELIC", "CAMBIO_USD", "PIB"].map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -485,27 +485,27 @@ export default async function ModelagemPage({
             </select>
           </label>
           <label className="text-sm">
-            <span className="text-neutral-600">Setor do mandato</span>
+            <span className="text-tinta-600">Setor do mandato</span>
             <select
               name="setor" defaultValue={parametros?.setor ?? ""}
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full rounded border border-tinta-200 px-2 py-1"
             >
               <option value="">(ainda não definido — sugere só a base comum)</option>
               {SETORES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
           </label>
           <label className="text-sm">
-            <span className="text-neutral-600">Anos projetados</span>
+            <span className="text-tinta-600">Anos projetados</span>
             <input
               type="number" name="anos_projetados" min={1} max={10}
               defaultValue={parametros?.anos_projetados ?? 5}
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1"
+              className="mt-1 w-full rounded border border-tinta-200 px-2 py-1"
             />
             {/* O horizonte que estes dois campos PRODUZEM, escrito por extenso.
                 "5 anos" a partir de "2025" é uma conta que o analista fazia de
                 cabeça enquanto preenchia premissa — e errar o ano de corte move
                 a projeção inteira sem gerar um único aviso. */}
-            <span className="mt-1 block text-xs tabular-nums text-neutral-500">
+            <span className="mt-1 block text-xs tabular-nums text-tinta-500">
               {anos.join(" · ")}
             </span>
           </label>
@@ -513,16 +513,16 @@ export default async function ModelagemPage({
       </section>
 
       {/* 2. PREMISSAS DO CASO */}
-      <section className="rounded border border-neutral-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-neutral-700">
+      <section className="rounded border border-tinta-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-tinta-600">
           2. Premissas deste caso
           {parametros?.setor && (
-            <span className="ml-2 font-normal text-neutral-500">
+            <span className="ml-2 font-normal text-tinta-500">
               — sugeridas para {SETORES.find(([v]) => v === parametros.setor)?.[1] ?? humanizar(parametros.setor)}
             </span>
           )}
         </h2>
-        <p className="mb-3 text-xs text-neutral-500">
+        <p className="mb-3 text-xs text-tinta-500">
           O setor <strong>sugere</strong>, não restringe: a lista traz a base comum mais as do setor,
           e qualquer premissa ativada aqui pode ser usada em qualquer linha. Ano em branco fica{" "}
           <strong>em branco</strong> — não vira zero, porque projetar com zero é o erro que não se
@@ -534,24 +534,24 @@ export default async function ModelagemPage({
             mensal que o próprio mandato entregou (0040). Mostrá-la aqui é o que
             permite ao analista discordar dela — e, quando ela não existe, saber
             por quê antes de abrir o arquivo. */}
-        <div className="mb-4 rounded border border-neutral-200 bg-neutral-50 p-2 text-xs">
-          <p className="font-medium text-neutral-700">Curva de sazonalidade deste caso</p>
+        <div className="mb-4 rounded border border-tinta-200 bg-tinta-50 p-2 text-xs">
+          <p className="font-medium text-tinta-600">Curva de sazonalidade deste caso</p>
           {curva.length === 12 ? (
             <>
               <div className="mt-1 flex flex-wrap gap-1">
                 {curva.map((c) => (
-                  <span key={c.mes} className="rounded bg-white px-1.5 py-0.5 tabular-nums text-neutral-700">
+                  <span key={c.mes} className="rounded bg-white px-1.5 py-0.5 tabular-nums text-tinta-600">
                     {MESES[c.mes - 1]} {(c.fracao * 100).toFixed(1)}%
                   </span>
                 ))}
               </div>
-              <p className="mt-1 text-neutral-500">
+              <p className="mt-1 text-tinta-500">
                 Derivada do faturamento mensal do próprio caso — nada digitado. É ela que reparte o
                 valor anual das linhas com sazonalidade vinculada.
               </p>
             </>
           ) : (
-            <p className="mt-1 text-neutral-600">
+            <p className="mt-1 text-tinta-600">
               Sem curva: o caso não tem série mensal completa de faturamento (12 meses). As linhas
               ficam <strong>sem distribuição mensal</strong> e o arquivo diz isso — ratear 1/12 seria
               inventar um número que ninguém escolheu, e move caixa de dezembro para março.
@@ -567,14 +567,14 @@ export default async function ModelagemPage({
             erro nenhum, só projeta diferente. O ano agora é rótulo fixo em cima
             da coluna, alinhado com as caixas, e continua no `placeholder` e no
             `title` para quem navega por teclado. */}
-        <div className="flex flex-wrap items-center gap-2 px-2 pb-1 text-xs text-neutral-500">
+        <div className="flex flex-wrap items-center gap-2 px-2 pb-1 text-xs text-tinta-500">
           <span className="min-w-56 flex-1">
-            Horizonte de projeção — <strong className="text-neutral-700">{anos.length} anos</strong>,
+            Horizonte de projeção — <strong className="text-tinta-600">{anos.length} anos</strong>,
             de {anos[0]} a {anos[anos.length - 1]}, derivados do último exercício realizado
             ({ultimoReal}). Mudar em <em>1. Parâmetros do mandato</em>.
           </span>
           {anos.map((ano) => (
-            <span key={ano} className="w-16 text-center font-semibold tabular-nums text-neutral-700">
+            <span key={ano} className="w-16 text-center font-semibold tabular-nums text-tinta-600">
               {ano}
             </span>
           ))}
@@ -585,7 +585,7 @@ export default async function ModelagemPage({
         <div className="space-y-4">
           {[...porNatureza.entries()].map(([natureza, lista]) => (
             <div key={natureza}>
-              <h3 className="mb-1 text-xs font-semibold uppercase text-neutral-500">
+              <h3 className="mb-1 text-xs font-semibold uppercase text-tinta-500">
                 {NATUREZA_LABEL[natureza] ?? humanizar(natureza)}
               </h3>
               <div className="space-y-1">
@@ -595,7 +595,7 @@ export default async function ModelagemPage({
                     <FormPremissa key={p.codigo} casoId={id} codigo={p.codigo} ativa={!!ativa}>
                       <span className="min-w-56 flex-1" title={p.descricao ?? undefined}>
                         {p.nome}
-                        {p.unidade && <span className="ml-1 text-neutral-500">({p.unidade})</span>}
+                        {p.unidade && <span className="ml-1 text-tinta-500">({p.unidade})</span>}
                         {p.setores.length > 0 && (
                           <span className="ml-1 rounded bg-indigo-100 px-1 text-[10px] text-indigo-800">
                             setor
@@ -617,7 +617,7 @@ export default async function ModelagemPage({
                           dizer a UNIDADE, que é o que a caixa realmente pede. */}
                       {anos.map((ano) => (
                         <label key={ano} className="flex w-16 flex-col items-center">
-                          <span className="text-[10px] font-semibold leading-none text-neutral-700 tabular-nums">
+                          <span className="text-[10px] font-semibold leading-none text-tinta-600 tabular-nums">
                             {ano}
                           </span>
                           <input
@@ -625,7 +625,7 @@ export default async function ModelagemPage({
                             defaultValue={ativa?.valores?.[String(ano)] ?? ""}
                             placeholder={p.unidade ?? "valor"}
                             title={`${p.nome} — ${ano}${p.unidade ? ` (${p.unidade})` : ""}`}
-                            className="mt-0.5 w-16 rounded border border-neutral-300 px-1 py-0.5 text-right text-xs"
+                            className="mt-0.5 w-16 rounded border border-tinta-200 px-1 py-0.5 text-right text-xs"
                           />
                         </label>
                       ))}
@@ -639,9 +639,9 @@ export default async function ModelagemPage({
       </section>
 
       {/* 3. LINHAS × PREMISSAS */}
-      <section className="rounded border border-neutral-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-neutral-700">3. Linhas × premissas</h2>
-        <p className="mb-3 text-xs text-neutral-500">
+      <section className="rounded border border-tinta-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-tinta-600">3. Linhas × premissas</h2>
+        <p className="mb-3 text-xs text-tinta-500">
           Cada <strong>conta</strong> pode ter a sua premissa. O <strong>aplicar em lote</strong>{" "}
           resolve a maioria dos casos de uma vez (todas as contas de receita → crescimento real);
           depois é só ajustar as exceções e salvar a seção inteira de uma vez. Linha sem premissa não
@@ -653,13 +653,13 @@ export default async function ModelagemPage({
         <form method="get" className="mb-3 flex items-center gap-2 text-sm">
           <input
             type="text" name="q" defaultValue={busca} placeholder="filtrar por rótulo…"
-            className="w-64 rounded border border-neutral-300 px-2 py-1 text-xs"
+            className="w-64 rounded border border-tinta-200 px-2 py-1 text-xs"
           />
-          <button type="submit" className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100">
+          <button type="submit" className="rounded border border-tinta-200 px-2 py-1 text-xs hover:bg-tinta-100">
             filtrar
           </button>
           {busca && (
-            <Link href={`/casos/${id}/modelagem`} className="text-xs text-neutral-500 hover:underline">
+            <Link href={`/casos/${id}/modelagem`} className="text-xs text-tinta-500 hover:underline">
               limpar filtro ({todasLinhas.length} linhas no total)
             </Link>
           )}
@@ -700,7 +700,7 @@ export default async function ModelagemPage({
               />
             ))}
             {linhasPorSecao.size === 0 && (
-              <p className="text-sm text-neutral-500">
+              <p className="text-sm text-tinta-500">
                 {busca
                   ? `Nenhuma linha com "${busca}" no rótulo.`
                   : falhas.length > 0

@@ -272,7 +272,11 @@ for (const it of extracoes) {
   if (e.falha_motivo) comFalha += 1;
   linhas += Array.isArray(e.campos) ? e.campos.length : 0;
   if (Number.isFinite(Number(e.contas_no_documento))) celulas += Number(e.contas_no_documento);
-  if (Number.isFinite(Number(e.contas_distintas))) contas += Number(e.contas_distintas);
+  // O painel do lote soma a MESMA unidade da guarda: linhas devolvidas contra
+  // linhas de conta do texto. \`contas_distintas\` continua saindo por documento,
+  // porque e' ela que diz se o documento tem rotulo repetido.
+  if (Number.isFinite(Number(e.linhas_devolvidas))) contas += Number(e.linhas_devolvidas);
+  else if (Number.isFinite(Number(e.contas_distintas))) contas += Number(e.contas_distintas);
   if (Number(e.blocos) > 1) fatiados += 1;
 }
 let classificacao = 0;
@@ -796,7 +800,15 @@ for(const [chave, blocos] of porDocumento){
   // a guarda ficava cega justamente no comparativo. \`chave\` repetida (livro razao
   // com o mesmo historico) conta uma vez so', e a descricao da pendencia diz isso.
   const contasDistintas=new Set(r.campos.map(c=>c.chave)).size;
-  const cobertura=avaliarCobertura({extraidas:contasDistintas, esperadas:base.contas_no_documento});
+  // LINHAS devolvidas, nao contas distintas: num livro razao o mesmo historico
+  // aparece em varios lancamentos (99 linhas, 66 historicos no book), e comparar
+  // contas distintas com LINHAS do texto acusava de incompleta uma extracao
+  // PERFEITA -- 66%, abaixo do limiar, pendencia falsa por construcao. As duas
+  // pontas agora sao linha. O fallback para contas distintas cobre o bloco vindo
+  // no formato plano antigo, que nao tem \`linha_origem\`: comportamento identico
+  // ao de antes desta correcao, em vez de cobertura zero.
+  const linhasDevolvidas=r.linhasRetornadas>0?r.linhasRetornadas:contasDistintas;
+  const cobertura=avaliarCobertura({extraidas:linhasDevolvidas, esperadas:base.contas_no_documento});
   if(cobertura) motivos.push(cobertura.motivo);
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
@@ -812,7 +824,8 @@ for(const [chave, blocos] of porDocumento){
     celulas_no_documento:base.celulas_no_documento??null,
     contas_no_documento:base.contas_no_documento??null,
     contas_distintas:contasDistintas,
-    cobertura:cobertura?cobertura.razao:(base.contas_no_documento>0?Number((contasDistintas/base.contas_no_documento).toFixed(3)):null),
+    linhas_devolvidas:linhasDevolvidas,
+    cobertura:cobertura?cobertura.razao:(base.contas_no_documento>0?Number((linhasDevolvidas/base.contas_no_documento).toFixed(3)):null),
     custo_usd:blocos.reduce((soma,b)=>soma+(typeof b.custo_usd==='number'?b.custo_usd:0),0),
     tokens:blocos.reduce((acc,b)=>b.tokens?{entrada:acc.entrada+(b.tokens.entrada||0), saida:acc.saida+(b.tokens.saida||0), cache:acc.cache+(b.tokens.cache||0)}:acc,{entrada:0,saida:0,cache:0}),
   }});

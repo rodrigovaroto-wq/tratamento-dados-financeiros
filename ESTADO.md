@@ -14,10 +14,70 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0113_linha_exigida_por_tipo.sql` |
+| **Última migration** | `db/migrations/0114_mandato_fechado.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 263 · export 529 · e2e 46 · banco (56 migrations do zero + testes SQL) |
+| **Suítes** | n8n 275 · export 535 · e2e 46 · banco (59 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
+
+## O portal (17/08) — navegação, marca e o fim de vida do mandato
+
+- **Barra lateral retrátil** com duas seções que não são simétricas de propósito: *Novo mandato* é
+  AÇÃO (fixa, sem filhos) e *Mandatos* é LUGAR (abre e lista os **ativos**). O estado — recolhida e
+  seção aberta — mora no navegador via `useSyncExternalStore`, para a barra não "piscar" no lugar
+  errado a cada carga. Ela some na tela de abrir mandato, que é de tela cheia.
+- **A marca entrou** (`portal/public/logo-oria*.svg`): o original do dono com o fundo creme trocado
+  por transparência, **sem redesenhar nada**. O SVG EMBUTE a arte original — vetorizar exigiria
+  traçar, e traçar é aproximar. Sextante no cabeçalho e no favicon; a lockup completa no login,
+  onde há altura para ela.
+- **Fechar ≠ excluir** (`0114`): `caso.status` diz onde o mandato está no trabalho, e não respondia
+  "ainda estamos nisso?". `fechado_em` responde, preservando tudo — para apagar continua existindo
+  `fn_excluir_caso`. A lista ganhou o segundo rótulo (**Ativo/Fechado**), uma descrição derivada de
+  uma linha (documentos · pendências · data) e as duas ações no rodapé de cada item.
+
+> **Para o dono:** a `0114` precisa ser aplicada no Supabase. Sem ela, a coluna não existe e a lista
+> trata todo mandato como ativo — a tela não quebra, mas o botão de fechar falha.
+
+## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
+
+**9 documentos, 714 linhas, US$ ~0,46.** O defeito que comeu 19 dos 35 documentos na v45 está
+**morto**: todos os 9 tiveram extração chamada, e o único sem linha é a certidão negativa — que é o
+resultado CERTO (`0111`). Conferido contra o gabarito do gerador:
+
+| | |
+|---|---|
+| DFC | caixa inicial 3.621 e final 825 — **exatos** |
+| DVA | valor adicionado a distribuir 49.110 — **exato** |
+| Mútuos | planilha 16.060 (11.160 + 4.900) — **exato**, e o balanço traz 11.400: a divergência plantada de **R$ 240 mil** está no dado, dos dois lados |
+| Livro razão | 99 de 99 linhas — **100%**, no documento que motivou as três camadas |
+| Balancete | 78 de 78 linhas — **100%** |
+| Balanço | 105 de 114 linhas (92%) · DRE 34 de 39 (87%) · DVA 13 de 16 (81%) |
+
+**O que falta são os SUBTOTAIS IMPRESSOS** — "ATIVO CIRCULANTE", "TOTAL DO ATIVO", "RECEITA
+OPERACIONAL BRUTA". Eles viraram metadado (`secao`) em vez de linha. Some-se a isso que os
+subtotais de subgrupo ("Disponível") FORAM extraídos, e a soma bruta de cada seção dá **exatamente
+2× a verdade**. O export já sabe descontar subtotal de subseção; o que falta é o total de topo.
+
+### Defeito 1 — o comparativo não comparava (corrigido)
+
+A mesma conta saía em **três linhas** do Excel, uma por exercício, com as outras colunas vazias. Duas
+causas, nas duas pontas:
+
+- **n8n:** `ordem` numerava PARES (conta × coluna) desde que a saída virou agrupada, mas a `0027` a
+  define como "posição na leitura do DOCUMENTO". Agora os pares de uma conta compartilham a `ordem`
+  da linha que os originou;
+- **portal:** o rank que impede dois "Outros" de colapsarem era calculado por VERSÃO, então os três
+  valores da mesma conta viravam ocorrência 1, 2 e 3. Agora é por versão **e coluna** — que é o que o
+  comentário do próprio bloco dizia querer.
+
+A correção do portal vale para o dado **que já está no banco**: o export da v46 sai alinhado sem
+nova extração. Seis verificações novas cobrem as duas formas (agrupada e antiga), e elas reprovam o
+código anterior.
+
+### Defeito 2 — a entidade poluída (corrigido, exige reimportar)
+
+O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em todas as abas. A
+correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
+mas **só entra em produção quando o workflow for reimportado**.
 
 ## O próximo passo: o teste de ponta a ponta
 
@@ -38,6 +98,14 @@ Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barr
 > lote passa. Se a versão não aparecer, o workflow importado é velho.
 
 Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
+
+> **A rodada de 17/08 ("Teste V45") já aconteceu, e o que ela achou muda o que a próxima tem de
+> provar.** Foram **438 linhas**: 19 dos 35 documentos — os centrais (Balanço, DRE, DFC, DMPL, DVA,
+> balancetes, razão, faturamento) — **nunca tiveram a extração chamada**, e nada reclamou. A causa era
+> topológica (duas conexões cruas no mesmo input, e só o ramo do fallback propagava), está corrigida
+> com o `Juntar Ramos`, e a classe inteira ficou barrada por teste. O que a próxima rodada precisa
+> trazer, além do custo: **`lote_integro` verdadeiro** no `Conferir Lote` — sem isso, qualquer número
+> de cobertura está medindo só os documentos que chegaram lá.
 
 **O que trazer de volta:** a saída do nó **`Resumo de Custo`** (último do canvas) — ela traz o custo
 real do lote, o que o orçamento estimou e os **tokens de saída por linha**, que é o número com que
@@ -105,13 +173,53 @@ Agora as duas pontas estão em CONTAS:
 
 | | |
 |---|---|
-| régua | **linhas de conta** — termina em valor e tem rótulo; fora cabeçalho de ano, CNPJ, data, página, CRC/CPF (7 de 46 no `02_DRE`) |
-| medida | **contas distintas** gravadas |
+| régua | **linhas de conta** — tem valor e tem identidade (rótulo, código de conta, ou linha de tabela numérica); fora cabeçalho de ano, CNPJ, data, página, CRC/CPF |
+| medida | **linhas devolvidas** pela extração (era contas distintas até 17/08 — ver abaixo) |
 | `02_DRE` | ~30 de 39 = **77%** — ele ESTÁ incompleto, e a régua antiga dizia 198% |
 
 O limiar subiu de 0,60 para **0,85** porque o alvo é cobertura total: isso vai abrir pendência em
-documentos que antes passavam, e é o objetivo. **É o próximo número a recalibrar** — ele tem um ponto
-de medição hoje, e a próxima rodada dá 35.
+documentos que antes passavam, e é o objetivo.
+
+### A régua calibrada contra a verdade — e a cegueira que ela escondia (17/08)
+
+`node n8n/medir-regua-cobertura.mjs` confronta a régua com a contagem que o **gerador** do book
+declara (ele sabe quantas linhas escreveu; não é outra leitura do PDF). A primeira medição, nos 38
+documentos, achou o defeito que o limiar nunca resolveria:
+
+| Documento | linhas de verdade | a régua via | |
+|---|---:|---:|---|
+| `17_Livro_Razao` | 99 | **3** | −97% |
+| `15_Balancete` | 78 | **3** | −96% |
+| `22_Aging` | 14 | **2** | −86% |
+| `27_Imobilizado` | 9 | **2** | −78% |
+
+A régua acertava as demonstrações (+2% a +4%) e **desabava nos analíticos — os que perdem dado**. E
+como a guarda se cala abaixo de 20 linhas, a cegueira virava **silêncio**: o livro razão, o caso que
+motivou as três camadas, nunca chegava a ser avaliado por elas. A causa: "termina em valor" pressupõe
+rótulo e valor na mesma linha, e num documento de sistema contábil a linha termina em `D`/`C`, o
+rótulo é código sem letra, ou o histórico é parágrafo que o leitor de PDF deixa sozinho numa linha.
+
+A **régua v2** troca isso por "tem valor E tem identidade" (rótulo, código de conta, ou linha de
+tabela numérica com dois valores ou mais). Erro absoluto médio **29% → 9%**, sem piorar um documento
+sequer; os avaliados pela guarda passam de 10 para 14. O limiar **fica em 0,85**: o pior documento
+honesto do book se reporta a 96%, então sobram 11 pontos de folga — e a folga é para o documento
+real, que é mais sujo que o sintético. O CI roda a medição a cada push.
+
+### E a unidade do OUTRO lado da guarda: linha, não conta distinta (17/08)
+
+A mesma medição achou o viés oposto, e ele tinha número exato: a guarda comparava **contas distintas
+gravadas** com **linhas do texto**, e num livro razão o mesmo fornecedor aparece em vários
+lançamentos — 99 linhas para **66 históricos distintos**. Uma extração que não perdia NADA se
+reportava em 66% e abria pendência. Foi o segundo erro de unidade da mesma guarda, na direção
+contrária ao primeiro (pares × linhas dava 198%).
+
+Agora as duas pontas são **linha**: `achatarGrupos` marca cada campo com a linha do documento que o
+originou, `juntarBlocos` conta as linhas distintas depois de limpar a emenda, e o campo **não chega
+ao banco** (nada de migration por causa de uma contagem interna). Uma conta com três colunas conta
+uma vez; dois lançamentos do mesmo fornecedor contam dois. Bloco no formato plano antigo, sem a
+marca, cai para as contas distintas — o comportamento de antes, em vez de cobertura zero. O painel do
+`Resumo de Custo` passa a somar a mesma unidade, e `contas_distintas` continua saindo por documento,
+porque é ela que denuncia rótulo repetido.
 
 ### O custo, medido e projetado (13/08/2026)
 
@@ -133,17 +241,24 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 ## O que só o dono pode fazer
 
 1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. Confira com:
+   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. As duas mais novas são
+   a `0111` (certidão sem valor deixa de virar `extracao_falhou`) e a `0112` (`fn_conferir_lote`).
+   Confira com:
    ```sql
    select proname from pg_proc
-    where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso');
+    where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso',
+                      'fn_conferir_lote');
    ```
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou três vezes em 13/08 (classificação em
-   `gpt-4o-mini`, saída agrupada, e as três camadas de cobertura). **Conferência de 5 segundos depois
-   de importar:** o canvas tem **27 nós**; procure `Extrair Texto` + `Medir Documento` (na sequência,
-   depois do `Preparar Conteudo`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta direita,
-   `Resumo de Custo` — rodando, a saída dele traz a **cobertura do lote**. Se `cobertura_do_lote`
-   vier `null`, a camada 1 não mediu e as outras duas estão desligadas.
+2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 17/08 (o `Juntar Ramos`, que é o
+   conserto dos 19 documentos que nunca foram extraídos, e o `Conferir Lote`). **Conferência de 5
+   segundos depois de importar:** o canvas tem **30 nós** e agora é uma corrente reta — 26 nós numa
+   linha só, com a recusa de orçamento e o `Upload Storage` como ramos abaixo, e a classificação por
+   conteúdo numa faixa própria (o desenho sai do grafo, ver `n8n/layout.mjs`). Procure `Juntar Ramos`
+   (Merge, logo depois do `Precisa Fallback?`), `Fatiar Extracao`, `Juntar Blocos` e, na ponta
+   direita, `Resumo de Custo` seguido do `Conferir Lote`. Dois números decidem se a rodada vale:
+   `cobertura_do_lote` (se vier `null`, a camada 1 não mediu e as outras duas estão desligadas) e
+   `lote_integro` do `Conferir Lote` — **falso significa documento registrado que nunca teve extração
+   chamada**, e ele nomeia quais.
    E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
    **Error Workflow** nas Settings do Intake (`n8n/README.md`).
 3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
@@ -158,8 +273,16 @@ Os itens que continuam de pé, em ordem de impacto:
 - **O teto de gasto decide ANTES do `Extrair Texto`**, então estima por bytes e não sabe quantos
   blocos o lote terá. Movê-lo para depois troca a estimativa por byte (que superestima ~50%) por uma
   contagem de linhas determinística. Fatia própria.
-- **A entidade sai poluída com o período** — "Canastra Industria 2025x2024x2023" na rodada real, e é
-  o que gerou 15 das 22 pendências de revisão. Correção pequena em `parseEntidade`.
+- ~~**A entidade sai poluída com o período**~~ — **fechado em 17/08.** Eram quatro famílias de
+  sujeira, não uma: o comparativo de TRÊS exercícios (`2025x2024x2023`, que o regex de um `x` só não
+  pegava), preposições (`Aging De Canastra`), sobra de tipo quando o apelido casado é mais curto que
+  o nome do arquivo (`Composicao Imobilizado Canastra`), e nome sem tipo nenhum virando empresa
+  (`Relatorio Auditor Independente`, `Iv Rev3`). Medido nos 38 nomes do book: **32 entidades limpas,
+  6 nulas** (essas vão ao fallback por conteúdo, que lê a entidade do documento) e **zero sujas**.
+  A remoção de palavra de tipo usa a própria taxonomia como fonte, palavra a palavra, então cresce
+  sozinha. **Fica anotado:** `negativas`, `societario` e `parcelamentos` estão numa lista à mão em
+  `parseEntidade` porque o apelido da taxonomia não os carrega — o lugar certo é o seed
+  `db/migrations/0002`, e isso é migration.
 - **Dedup por hash** (não pagar reextração do mesmo arquivo): a `0026` descreve o que falta —
   *fingerprint* de prompt+modelo na versão e curto-circuito no grafo.
 - **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o

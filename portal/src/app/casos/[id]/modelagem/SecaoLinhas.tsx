@@ -72,7 +72,7 @@ const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string 
     rotulo: "derivado",
     explica: "indicador gerencial (resultado de outras contas, não dinheiro) — projetá-lo o faria "
       + "divergir das linhas que o compõem",
-    cor: "bg-neutral-200 text-neutral-700",
+    cor: "bg-tinta-200 text-tinta-600",
   },
 };
 
@@ -160,7 +160,7 @@ export function SecaoLinhas({
   return (
     <div>
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <h3 className="text-xs font-semibold uppercase text-neutral-500">
+        <h3 className="text-xs font-semibold uppercase text-tinta-500">
           {rotulo}{" "}
           <span className="font-normal">
             ({contas.length} conta(s)
@@ -173,14 +173,14 @@ export function SecaoLinhas({
             <select
               name="premissa" required value={premissaDoLote}
               onChange={(e) => setPremissaDoLote(e.target.value)}
-              className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+              className="rounded border border-tinta-200 px-1 py-0.5 text-xs"
             >
               <option value="" disabled>aplicar em lote…</option>
               {ativas.map((a) => <option key={a.codigo} value={a.codigo}>{a.nome}</option>)}
             </select>
             <button
               type="submit" disabled={aplicando}
-              className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50"
+              className="rounded border border-tinta-200 px-2 py-0.5 text-xs hover:bg-tinta-100 disabled:opacity-50"
             >
               {aplicando ? "aplicando…" : `aplicar às ${contas.length} conta(s)`}
             </button>
@@ -193,9 +193,9 @@ export function SecaoLinhas({
           Antes era um botão por linha — 236 idas ao servidor. */}
       <form action={actSalvar}>
         <input type="hidden" name="secao_canonica" value={semSecao ? "" : secao} />
-        <div className="overflow-x-auto rounded border border-neutral-200">
+        <div className="overflow-x-auto rounded border border-tinta-200">
           <table className="w-full text-left text-sm">
-            <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+            <thead className="bg-tinta-50 text-xs uppercase text-tinta-500">
               <tr>
                 <th className="px-2 py-1">Linha</th>
                 <th className="px-2 py-1 text-right">Último real</th>
@@ -212,10 +212,10 @@ export function SecaoLinhas({
                 return (
                   <tr
                     key={l.rotulo_norm}
-                    className={`border-t border-neutral-100 align-top ${sujo ? "bg-amber-50" : ""}`}
+                    className={`border-t border-tinta-100 align-top ${sujo ? "bg-amber-50" : ""}`}
                   >
                     <td className="px-2 py-1">
-                      <span className={l.papel === "conta" ? "" : "text-neutral-500"}>{l.chave}</span>
+                      <span className={l.papel === "conta" ? "" : "text-tinta-500"}>{l.chave}</span>
                       {info && (
                         <span className={`ml-1 rounded px-1 text-[10px] ${info.cor}`} title={info.explica}>
                           {info.rotulo}
@@ -229,14 +229,14 @@ export function SecaoLinhas({
                           possível sobreposição
                         </span>
                       )}
-                      <span className="block text-[10px] text-neutral-400">
+                      <span className="block text-[10px] text-tinta-400">
                         {(l.documentos ?? []).join(" · ")}
                         {l.n_ocorrencias > 1 && ` · ${l.n_ocorrencias} ocorrências`}
                       </span>
                     </td>
-                    <td className="px-2 py-1 text-right tabular-nums text-neutral-600">
+                    <td className="px-2 py-1 text-right tabular-nums text-tinta-600">
                       {fmt.format(l.valor_ultimo)}
-                      <span className="block text-[10px] text-neutral-400">{escala(l)}</span>
+                      <span className="block text-[10px] text-tinta-400">{escala(l)}</span>
                     </td>
                     {l.papel === "conta" ? (
                       <>
@@ -247,7 +247,7 @@ export function SecaoLinhas({
                           <select
                             name={`premissa__${i}`} value={e.premissa}
                             onChange={(ev) => mudar(l.rotulo_norm, "premissa", ev.target.value)}
-                            className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+                            className="rounded border border-tinta-200 px-1 py-0.5 text-xs"
                           >
                             <option value="">(não projetar)</option>
                             {ativas.map((a) => <option key={a.codigo} value={a.codigo}>{a.nome}</option>)}
@@ -258,7 +258,7 @@ export function SecaoLinhas({
                           <select
                             name={`sazonalidade__${i}`} value={e.sazonalidade}
                             onChange={(ev) => mudar(l.rotulo_norm, "sazonalidade", ev.target.value)}
-                            className="rounded border border-neutral-300 px-1 py-0.5 text-xs"
+                            className="rounded border border-tinta-200 px-1 py-0.5 text-xs"
                             disabled={sazonais.length === 0}
                           >
                             <option value="">(sem sazonalidade)</option>
@@ -269,7 +269,7 @@ export function SecaoLinhas({
                     ) : (
                       // Sem seletor, com o DESTINO escrito: se a linha simplesmente
                       // não tivesse controle, o analista procuraria o defeito na tela.
-                      <td colSpan={2} className="px-2 py-1 text-xs text-neutral-500">
+                      <td colSpan={2} className="px-2 py-1 text-xs text-tinta-500">
                         {info?.explica}
                       </td>
                     )}
@@ -283,11 +283,11 @@ export function SecaoLinhas({
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <button
               type="submit" disabled={salvando}
-              className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50"
+              className="rounded border border-tinta-200 px-2 py-0.5 text-xs hover:bg-tinta-100 disabled:opacity-50"
             >
               {salvando ? "salvando…" : "salvar esta seção"}
             </button>
-            <span className="text-[10px] text-neutral-400">
+            <span className="text-[10px] text-tinta-400">
               só as linhas que você mudou vão ao banco
             </span>
             {/* Alteração não salva é destacada na linha E contada aqui: sair da

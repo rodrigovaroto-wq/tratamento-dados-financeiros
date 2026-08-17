@@ -44,7 +44,7 @@ export function FormParametros({
       <div className="flex items-end gap-2">
         <button
           type="submit" disabled={salvando}
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          className="rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-tinta-600 disabled:opacity-50"
         >
           {salvando ? "Salvando…" : "Salvar parâmetros"}
         </button>
@@ -90,14 +90,14 @@ export function FormPremissa({
     <form
       action={act}
       className={`flex flex-wrap items-center gap-2 rounded border px-2 py-1.5 text-sm ${
-        ativa ? "border-emerald-200 bg-emerald-50" : "border-neutral-200"
+        ativa ? "border-emerald-200 bg-emerald-50" : "border-tinta-200"
       }`}
     >
       <input type="hidden" name="codigo" value={codigo} />
       {children}
       <button
         type="submit" disabled={salvando || removendo}
-        className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50"
+        className="rounded border border-tinta-200 px-2 py-0.5 text-xs hover:bg-tinta-100 disabled:opacity-50"
       >
         {salvando ? "…" : ativa ? "Atualizar" : "Ativar"}
       </button>
