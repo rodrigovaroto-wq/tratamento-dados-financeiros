@@ -1,4 +1,5 @@
 import { hasEnvVars } from "@/lib/supabase/env";
+import { MarcaOria } from "@/components/marca-oria";
 import { login } from "./actions";
 
 export default async function LoginPage({
@@ -14,18 +15,12 @@ export default async function LoginPage({
     // separa "sistema interno" de "produto" na primeira impressão.
     <div className="flex min-h-screen items-center justify-center bg-tinta-50 px-4">
       <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <span
-            aria-hidden
-            className="flex h-11 w-11 items-center justify-center rounded-xl bg-tinta-800 text-lg
-                       font-bold text-white"
-          >
-            O
-          </span>
-          <div>
-            <h1 className="text-lg font-semibold text-tinta-900">Oria</h1>
-            <p className="mt-0.5 text-sm text-tinta-500">Tratamento de dados financeiros</p>
-          </div>
+        <div className="flex flex-col items-center gap-2 text-center">
+          {/* AQUI A MARCA COMPLETA: é a única tela com altura sobrando, e é a
+              primeira coisa que alguém vê do produto. */}
+          <MarcaOria className="h-28 w-28" />
+          <h1 className="sr-only">Oria Partners — Tratamento de dados financeiros</h1>
+          <p className="text-sm text-tinta-500">Tratamento de dados financeiros</p>
         </div>
 
         {!hasEnvVars && (

@@ -19,6 +19,16 @@ export interface Caso {
   produto: string;
   status: CasoStatus;
   criado_em: string;
+  /**
+   * db/migrations/0113 — quando o mandato saiu da mesa. `null` = ATIVO.
+   * Não confundir com `status`, que é onde ele está no trabalho: um mandato
+   * aprovado em março e outro aprovado ontem têm o mesmo `status` e situações
+   * opostas. Opcional porque um banco sem a 0113 aplicada não devolve a coluna,
+   * e a tela tem de continuar funcionando (lê como ativo).
+   */
+  fechado_em?: string | null;
+  fechado_por?: string | null;
+  motivo_fechamento?: string | null;
 }
 
 export interface Entidade {

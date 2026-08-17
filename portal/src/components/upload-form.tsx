@@ -418,9 +418,17 @@ export default function UploadForm({
       <button
         type="submit"
         disabled={enviando}
-        className="rounded bg-tinta-900 px-4 py-2 text-sm font-medium text-white hover:bg-tinta-600 disabled:opacity-50"
+        className="btn-primario px-4 py-2"
       >
-        {enviando ? "Enviando…" : `Enviar ${arquivos.length || ""} arquivo(s)`}
+        {/* A ação primária da tela usa a cor primária do produto — este botão
+            era grafite enquanto o resto do portal já era acento. E o rótulo
+            conta os arquivos em vez do "(s)": com 38 selecionados, "Enviar 38
+            arquivos" confirma o que vai acontecer. */}
+        {enviando
+          ? "Enviando…"
+          : arquivos.length === 0
+            ? "Enviar arquivos"
+            : `Enviar ${arquivos.length} ${arquivos.length === 1 ? "arquivo" : "arquivos"}`}
       </button>
     </form>
   );

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/app/login/actions";
+import { BarraLateral, type MandatoNaBarra } from "@/components/barra-lateral";
+import { MarcaOria } from "@/components/marca-oria";
 
 // O CABEÇALHO É A ÚNICA COISA QUE APARECE EM TODAS AS TELAS, então ele é o que
 // diz se o produto é sério antes de qualquer dado carregar. O que mudou:
@@ -13,24 +15,40 @@ import { logout } from "@/app/login/actions";
 //   • o e-mail e o "Sair" deixaram de ter o mesmo peso do link de navegação.
 export default async function CasosLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  const email = (data?.claims?.email as string | undefined) ?? "";
+  const [claimsRes, mandatosRes] = await Promise.all([
+    supabase.auth.getClaims(),
+    // SÓ OS ATIVOS na barra (0113): ela responde "no que estou trabalhando", e
+    // mandato fechado não é resposta para isso — ele continua na lista completa.
+    supabase
+      .from("caso")
+      .select("id, nome, status, fechado_em")
+      .is("fechado_em", null)
+      .order("criado_em", { ascending: false })
+      .limit(30),
+  ]);
+  const email = (claimsRes.data?.claims?.email as string | undefined) ?? "";
+  const mandatos = ((mandatosRes.data as MandatoNaBarra[] | null) ?? []).map((m) => ({
+    id: m.id, nome: m.nome, status: m.status,
+  }));
 
   return (
     <div className="flex min-h-screen flex-col bg-tinta-50">
       <header className="sticky top-0 z-10 border-b border-tinta-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+          {/* NA BARRA, O SEXTANTE. A marca completa é empilhada (instrumento
+              sobre ORIA sobre PARTNERS) e num cabeçalho de 57px cada palavra
+              ficaria com 9px de altura — ilegível, e mal-educado com a marca.
+              A lockup completa aparece no login, onde há altura para ela. */}
           <Link href="/casos" className="flex items-center gap-2.5">
-            <span
-              aria-hidden
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-tinta-800 text-[13px]
-                         font-bold text-white"
-            >
-              O
-            </span>
+            <MarcaOria variante="sextante" className="h-8 w-8" />
             <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold text-tinta-900">Oria</span>
-              <span className="text-[11px] text-tinta-500">Tratamento de dados financeiros</span>
+              <span className="text-sm font-semibold tracking-wide text-tinta-900">ORIA</span>
+              <span className="text-[10px] uppercase tracking-[0.2em] text-tinta-500">Partners</span>
+            </span>
+            <span className="hidden border-l border-tinta-200 pl-2.5 text-[11px] leading-tight text-tinta-500 lg:block">
+              Tratamento de
+              <br />
+              dados financeiros
             </span>
           </Link>
 
@@ -58,13 +76,18 @@ export default async function CasosLayout({ children }: { children: React.ReactN
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">{children}</main>
+      <div className="flex flex-1">
+        <BarraLateral mandatos={mandatos} />
+        <main className="min-w-0 flex-1 px-6 py-8">
+          <div className="mx-auto w-full max-w-6xl">{children}</div>
+        </main>
+      </div>
 
       {/* O RODAPÉ EXISTE PARA DIZER UMA COISA SÓ, e ela é a mais importante do
           produto: nada aqui é fato até um humano aceitar. Quem abre o portal
           pela primeira vez precisa ler isso sem procurar. */}
       <footer className="border-t border-tinta-200 bg-white">
-        <div className="mx-auto max-w-6xl px-6 py-4 text-xs text-tinta-500">
+        <div className="px-6 py-4 text-xs text-tinta-500">
           Os dados desta tela são extraídos dos documentos enviados e conferidos automaticamente.
           Linha marcada como pendente é sugestão a revisar — não é fato até alguém aceitar.
         </div>
