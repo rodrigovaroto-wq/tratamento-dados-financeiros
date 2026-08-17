@@ -107,6 +107,14 @@ export const SYSTEM_PROMPT = [
   '  classificação): páginas faltando, tabela cortada, digitalização ruim, texto ilegível,',
   '  arquivo aparentemente incompleto. nota_legibilidade explica objetivamente QUANDO != "ok"',
   '  (null quando "ok").',
+  'tem_dado_financeiro: false SOMENTE quando o documento, por NATUREZA, não tem NENHUM valor',
+  '  monetário a extrair — certidões negativas, organograma societário, ata, procuração,',
+  '  parecer/relatório de auditoria independente (texto de opinião, sem tabela de valores),',
+  '  contrato sem cifra, correspondência. Nesse caso "grupos" vem VAZIO, e isso é o resultado',
+  '  CORRETO da extração, não uma falha — não gere pendência de "extração vazia" para estes.',
+  '  true em todos os outros casos, inclusive quando você não encontrou nenhuma linha aproveitável',
+  '  num documento que deveria ter (aí sim é sinal de falha real, e uma extração com "grupos"',
+  '  vazio e tem_dado_financeiro=true dispara revisão humana).',
   'resumo: 2-3 frases objetivas do que o documento contém (para alguém decidir sem abrir o',
   '  arquivo).',
   'justificativa: 1-2 frases explicando o diagnóstico acima (o que você viu ou não viu).',
@@ -330,7 +338,7 @@ export function extractionSchema() {
           additionalProperties: false,
           required: [
             'entidade', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo', 'periodo_referencia',
-            'legibilidade', 'nota_legibilidade', 'resumo', 'justificativa',
+            'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro', 'resumo', 'justificativa',
           ],
           properties: {
             entidade: { type: ['string', 'null'] },
@@ -340,6 +348,7 @@ export function extractionSchema() {
             periodo_referencia: { type: ['string', 'null'] },
             legibilidade: { type: 'string', enum: ['ok', 'degradado', 'ilegivel'] },
             nota_legibilidade: { type: ['string', 'null'] },
+            tem_dado_financeiro: { type: 'boolean' },
             resumo: { type: 'string' },
             justificativa: { type: 'string' },
           },
@@ -798,6 +807,10 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     diagnostico: {
       entidade: null, tipo_confirma: null, tipo_sugerido: null, periodo_tipo: null,
       periodo_referencia: null, legibilidade: null, nota_legibilidade: null,
+      // null (não false): a chamada falhou, então não há diagnóstico algum — e
+      // "null" no Sinal 3 (0111) se comporta como "documento deveria ter dado",
+      // que é o padrão seguro quando não se sabe.
+      tem_dado_financeiro: null,
       resumo: null, justificativa: '(sem diagnóstico: falha de rede/API ou resposta inválida)',
     },
   });
@@ -889,6 +902,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     periodo_referencia: d.periodo_referencia ?? null,
     legibilidade: d.legibilidade ?? null,
     nota_legibilidade: d.nota_legibilidade ?? null,
+    tem_dado_financeiro: typeof d.tem_dado_financeiro === 'boolean' ? d.tem_dado_financeiro : null,
     resumo: d.resumo ?? null,
     justificativa: d.justificativa ?? '',
   };

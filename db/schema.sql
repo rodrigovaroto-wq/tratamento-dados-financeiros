@@ -3236,10 +3236,10 @@ $$;
 COMMENT ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) IS 'Reaplica as regras de HOJE (reconciliação A/B, guardas de extração, completude) sobre o dado já gravado, sem gastar chamada de IA. Existe porque pendência é estado gravado e nada a reavaliava quando uma migration corrigia a regra — o portal mostrava achado corrigido como se fosse corrente (caso real: as duas pendências do v35 que a 0034 já havia fechado).';
 
 --
--- Name: fn_registrar_campos_extraidos(uuid, jsonb, public.nivel_autonomia, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_registrar_campos_extraidos(uuid, jsonb, public.nivel_autonomia, text, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia DEFAULT 'N0'::public.nivel_autonomia, p_falha_motivo text DEFAULT NULL::text) RETURNS integer
+CREATE FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia DEFAULT 'N0'::public.nivel_autonomia, p_falha_motivo text DEFAULT NULL::text, p_tem_dado_financeiro boolean DEFAULT NULL::boolean) RETURNS integer
     LANGUAGE plpgsql
     AS $_$
 declare
@@ -3256,17 +3256,13 @@ declare
   v_nome_original      text;
   v_pendencia_id       uuid;
   v_guarda_disparou    boolean := false;
-  -- 0041: o DIAL manda.
   v_nivel_dial         nivel_autonomia;
   v_limiar             numeric;
   v_auto_permitido     boolean;
-  -- 0043: os três sinais, calculados por fn_avaliar_guardas_extracao.
   v_g                  jsonb;
 begin
   select ea.nivel_atual, ea.limiar_auto_clear into v_nivel_dial, v_limiar
   from estagio_autonomia ea where ea.estagio = 'extracao_linhas_financeiras';
-  -- Sem linha no dial (banco antigo), NADA é auto-aceito. Ausência de configuração
-  -- não pode virar permissão — é o default seguro que a doutrina exige.
   v_auto_permitido := v_nivel_dial in ('N2', 'N3') and v_limiar is not null;
 
   if p_campos is not null and jsonb_typeof(p_campos) = 'array' then
@@ -3275,13 +3271,11 @@ begin
       v_valor := case when (v_item->>'valor_num') ~ '^-?\d+(\.\d+)?$' then (v_item->>'valor_num')::numeric else null end;
       v_confianca := case when (v_item->>'confianca') ~ '^-?\d+(\.\d+)?$' then (v_item->>'confianca')::numeric else null end;
 
-      -- 0029: TODA linha entra como 'pendente'. O auto-aceite acontece DEPOIS das
-      -- guardas — aceitar aqui era aceitar ANTES de saber se a extração é suspeita.
       v_status_aceite := 'pendente';
       v_aceito_por := null;
       v_aceito_em := null;
       if v_auto_permitido and v_confianca is not null and v_confianca >= v_limiar then
-        v_n_auto_aceitos := v_n_auto_aceitos + 1;  -- elegíveis; só viram aceitos se nenhuma guarda disparar
+        v_n_auto_aceitos := v_n_auto_aceitos + 1;
       end if;
 
       insert into campo_extraido
@@ -3314,16 +3308,14 @@ begin
 
   insert into evento_auditoria (ator, acao, entidade_ref, depois)
     values ('sistema:n8n', 'extracao_sombra', 'documento_versao:'||p_documento_versao_id,
-            jsonb_build_object('campos', v_count, 'nivel', p_nivel, 'falha_motivo', p_falha_motivo, 'auto_aceitos', v_n_auto_aceitos));
+            jsonb_build_object('campos', v_count, 'nivel', p_nivel, 'falha_motivo', p_falha_motivo,
+                               'tem_dado_financeiro', p_tem_dado_financeiro, 'auto_aceitos', v_n_auto_aceitos));
 
   select d.id, d.caso_id, dv.nome_original into v_documento_id, v_caso_id, v_nome_original
   from documento_versao dv join documento d on d.id = dv.documento_id
   where dv.id = p_documento_versao_id;
 
   if v_documento_id is null then
-    -- 0029: documento_versao inexistente. FK não dispara com `null`, a extração
-    -- foi PAGA e os campos não têm onde ser gravados — então o registro vai para
-    -- evento_auditoria (append-only, não exige caso) e um warning fica no log.
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
       values ('sistema:n8n', 'extracao_orfa', 'documento_versao:'||coalesce(p_documento_versao_id::text,'null'),
               jsonb_build_object('campos_descartados', v_count, 'falha_motivo', p_falha_motivo,
@@ -3333,9 +3325,6 @@ begin
     return v_count;
   end if;
 
-  -- 0043: os três sinais saem de UMA função, que o caminho de reavaliação também
-  -- usa. Os limiares (≥4 contas repetindo; ≥3 linhas e ≥30% abaixo de 0.70) não
-  -- mudaram — mudou o lugar onde eles são escritos, de dois para um.
   v_g := fn_avaliar_guardas_extracao(p_documento_versao_id);
 
   if v_count > 0 then
@@ -3379,12 +3368,17 @@ begin
     end if;
   end if;
 
-  -- ----- Sinal 3 (0016/0029): a chamada falhou OU respondeu vazia -------------
+  -- ----- Sinal 3 (0016/0029, unidade corrigida por 0111) ---------------------
+  -- "veio vazia" só é sinal de FALHA quando ninguém disse o contrário. Um
+  -- chamador antigo (workflow não reimportado) manda `p_tem_dado_financeiro`
+  -- null, e o comportamento é IDÊNTICO ao de antes desta migration
+  -- (coalesce(null, true) = true). Só o diagnóstico da própria chamada, com
+  -- `false` explícito, prova que zero linhas era o resultado certo.
   select id into v_pendencia_id from pendencia
     where caso_id = v_caso_id and motivo = 'extracao:falhou:' || v_documento_id and estado <> 'resolvida'
     limit 1;
-  if p_falha_motivo is not null or v_count = 0 then
-    v_guarda_disparou := true;  -- extração falha/vazia nunca auto-aceita
+  if p_falha_motivo is not null or (v_count = 0 and coalesce(p_tem_dado_financeiro, true)) then
+    v_guarda_disparou := true;
     if v_pendencia_id is null then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
         values (v_caso_id, 'extracao', 'extracao_falhou', 'importante', true,
@@ -3402,10 +3396,6 @@ begin
   end if;
 
   -- ----- Auto-aceite (0029): DEPOIS das guardas, nunca antes -----------------
-  -- Uma guarda que dispara depois do aceite não é guarda, é legenda: a 0027
-  -- aceitava dentro do loop e nenhuma guarda revertia, então extração alucinada
-  -- (confiança ALTA com valor repetido) entrava como FATO ACEITO. Isso furava a
-  -- anti-ancoragem, que é o princípio inegociável do projeto (docs/01, f0/06).
   if v_n_auto_aceitos > 0 and not v_guarda_disparou then
     update campo_extraido
       set status_aceite = 'aceito',
@@ -3429,10 +3419,6 @@ begin
                                  'porque', 'guarda de extracao disparou; linhas seguem pendentes de revisao humana'));
   end if;
 
-  -- 0036: a completude é recalculada AQUI porque este é o único ponto do
-  -- pipeline que roda DEPOIS da extração (o E1 chama `Recomputar Completude` em
-  -- PARALELO com a extração, então a completude do E1 vê sempre zero linha).
-  -- Roda mesmo com v_count = 0: é justamente o caso que interessa.
   perform fn_recomputar_completude(v_caso_id);
 
   return v_count;
@@ -3440,10 +3426,10 @@ end;
 $_$;
 
 --
--- Name: FUNCTION fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text) IS 'Grava os campos extraídos (E2, sombra). Toda linha entra PENDENTE; o auto-aceite de >=95% é promovido no fim e SÓ se nenhuma guarda disparar (0029). Extração vazia conta como falha. Chaves de pendência são por documento, não por versão, para que reenviar resolva a pendência anterior.';
+COMMENT ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) IS 'Grava campos extraídos e roda as três guardas (0043: fn_avaliar_guardas_extracao). Sinal 3 ("veio vazia") só dispara extracao_falhou quando p_tem_dado_financeiro não é explicitamente false — 0111: documento sem valor monetário por natureza (certidão, organograma, parecer de auditoria) não é falha de extração.';
 
 --
 -- Name: fn_registrar_diagnostico(uuid, uuid, text, boolean, text, text, text, public.legibilidade, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6045,10 +6031,10 @@ GRANT ALL ON FUNCTION public.fn_reavaliar_guardas_extracao(p_documento_versao_id
 GRANT ALL ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) TO authenticated;
 
 --
--- Name: FUNCTION fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -
