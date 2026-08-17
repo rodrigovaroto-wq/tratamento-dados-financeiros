@@ -210,6 +210,45 @@ primeira vez com Supabase real, conferir especialmente:
   Excel/LibreOffice (o teste local só reabriu com `exceljs`, não com um
   programa de planilha de verdade).
 
+## Egresso do Supabase — a cota é dividida com o clipping
+
+A cota de egresso do plano Free é da **organização**, não do projeto. Este portal
+divide 5 GB/mês com o *news-clipping*, e em agosto/2026 a organização chegou a
+**4,54 GB** — causa quase inteira do outro lado (uma consulta que lia uma tabela
+inteira de hora em hora). Se a cota estourar, os dois projetos passam a responder
+**HTTP 402 juntos**, e a restrição só cai no ciclo seguinte: no Free não existe
+pagar excedente.
+
+Este portal não era o problema — as consultas aqui já nomeiam colunas, e o
+`proxy.ts` usa `getClaims()` (verificação local do JWT) em vez de `getUser()`, que
+faria um round-trip de rede a cada requisição. As regras abaixo existem para que
+continue assim:
+
+- **Nomeie as colunas, nunca `select("*")`.** Se há um `as { ... }` logo abaixo da
+  consulta, essa é a lista autoritativa — o `*` só traz o que ninguém lê.
+- **Filtre e agregue no Postgres**, não em TypeScript. Linha que chega para ser
+  descartada foi paga em egresso à toa. É por isso que as telas pesadas chamam
+  RPC (`fn_linhas_para_modelagem`, `fn_conferir_modelagem`) em vez de montar o
+  resultado no Next.
+- **Toda tela que pergunta em laço precisa desacelerar.** O acompanhamento
+  pós-upload (`upload-form.tsx`) mantém a cadência de 8 s nos primeiros 2 minutos
+  — onde o analista está olhando — e afrouxa até 30 s depois disso, preservando a
+  janela total. Cadência de tela multiplica por centenas.
+
+Para saber quem está consumindo, dentro deste banco:
+
+```sql
+select calls, rows, round(rows::numeric / greatest(calls,1), 1) as linhas_por_chamada,
+       left(regexp_replace(query, '\s+', ' ', 'g'), 200) as consulta
+from pg_stat_statements
+order by rows desc limit 20;
+```
+
+`linhas_por_chamada` alto é o sinal — não tempo de execução. A consulta que causou
+o incidente era rápida; ela só devolvia a tabela toda. O clipping tem isso
+empacotado em views (`sql/12_egresso_watch.sql`, naquele repositório), e o número
+autoritativo é sempre o painel do Supabase em *Usage → Egress*.
+
 ## Estrutura
 
 ```
