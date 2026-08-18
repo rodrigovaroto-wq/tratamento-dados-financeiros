@@ -934,9 +934,43 @@ function detectarSubtotaisPorOrdem(
     grupos.get(k)!.push(campo);
   }
 
-  for (const linhas of grupos.values()) {
+  for (const todas of grupos.values()) {
+    todas.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+    // OCORRÊNCIA REPETIDA DO MESMO RÓTULO NÃO É OUTRA LINHA DO DOCUMENTO.
+    //
+    // Este detector lê a SEQUÊNCIA IMPRESSA: um subtotal seguido dos seus
+    // componentes. Ele só funciona se a sequência for a do documento — e a
+    // extração real repete rótulo dentro do mesmo documento o tempo todo: é o que
+    // um comparativo produz quando `periodo_coluna` não vem preenchido (as duas
+    // colunas viram duas linhas com o mesmo rótulo), e o v35 traz cada conta
+    // duplicada exatamente assim.
+    //
+    // COM AS REPETIÇÕES DENTRO, o detector errava dos DOIS lados:
+    //
+    //   • FALSO POSITIVO — a segunda ocorrência do próprio candidato tem o mesmo
+    //     valor dele, então "a soma dos seguintes bate com o candidato" com um
+    //     componente só. Medido no v35: a DESPESA "Provisão para contingências
+    //     trabalhistas e cíveis" (−1.900) e "Imposto de renda e contribuição
+    //     social - corrente" (−420) foram declaradas subtotais e SUMIRAM do
+    //     modelo institucional — SG&A 1.900 menor, EBIT 1.900 maior, sem aviso;
+    //   • FALSO NEGATIVO — os componentes de um subtotal DE VERDADE também vêm
+    //     duplicados, e a soma deles dá o dobro. O acerto de antes vinha da
+    //     coincidência do falso positivo (o candidato casava com a própria
+    //     cópia), não da estrutura.
+    //
+    // Colapsar as repetições ANTES de olhar a sequência resolve os dois: fica uma
+    // linha por rótulo, na posição em que ela aparece primeiro (a posição
+    // impressa). Isto é uma visão LOCAL do detector — não muda o que o arquivo
+    // publica, que continua trazendo cada ocorrência na aba `Dados (linha a
+    // linha)`.
+    const vistos = new Set<string>();
+    const linhas = todas.filter((c) => {
+      const k = normalizar(c.chave);
+      if (vistos.has(k)) return false;
+      vistos.add(k);
+      return true;
+    });
     if (linhas.length < 3) continue; // subtotal + 2 componentes é o mínimo
-    linhas.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
     let i = 0;
     while (i < linhas.length) {
       const candidato = linhas[i];
@@ -2560,6 +2594,7 @@ export function buildExportWorkbook({
   modelagemConfig?: ConfigModelagem;
   modeloInstitucional?: EntradaModeloInstitucional;
 }): ExcelJS.Workbook {
+
   // Mapa documento_versao_id → contexto (entidade/período/tipo/arquivo) —
   // permite juntar campo_extraido (que só sabe a versão) com o resto. Só as
   // versões VIGENTES entram: reextração substitui, não acumula (ver
@@ -2794,6 +2829,26 @@ export function buildExportWorkbook({
   }
 
   const workbook = new ExcelJS.Workbook();
+  // RECALCULAR AO ABRIR — para o arquivo INTEIRO, e não só quando há modelo.
+  //
+  // O QUE ACONTECIA. Este export escreve fórmula e NÃO escreve valor em cache:
+  // todo total de seção das abas classificadas (Balanço, DRE, Fluxo, Combinado,
+  // Balancete…) é um `=SUM(...)` transparente, de propósito. Sem
+  // `fullCalcOnLoad` o Excel abre essas células VAZIAS até alguém apertar F9 — e
+  // vazio, num total, se lê como zero.
+  //
+  // A flag existia, mas era ligada dentro do modelo institucional
+  // (`construirModeloInstitucional`), que só roda no export COMPLETO e só quando
+  // o mandato configurou a modelagem. Ou seja: o arquivo do botão **Exportar
+  // dados** — o que serve justamente para CONFERIR a extração, linha a linha —
+  // saía sem a flag, e com ele todo export de mandato que ainda não modelou.
+  // Medido nos dois arquivos: `xl/workbook.xml` do completo trazia
+  // `fullCalcOnLoad="1"`, o de dados não trazia nada.
+  //
+  // Aqui ela passa a ser propriedade do ARQUIVO, que é onde o fato mora: se há
+  // fórmula sem cache, o arquivo tem de pedir recálculo. O modelo continua
+  // ligando a dele (é idempotente) para quem construir o modelo sozinho.
+  workbook.calcProperties = { ...(workbook.calcProperties ?? {}), fullCalcOnLoad: true };
   workbook.creator = "Oria — Tratamento de Dados Financeiros";
   workbook.created = agora;
 

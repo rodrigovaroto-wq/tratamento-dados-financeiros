@@ -30,7 +30,7 @@ import { execFileSync } from "node:child_process";
 import { buildExportWorkbook, finalizarBufferDoExport, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
 import type { EntradaModeloInstitucional, LinhaModelo } from "../src/lib/modelo-institucional.ts";
 import type { CampoExtraido } from "../src/lib/types.ts";
-import { casarVinculosComLinhas } from "../src/lib/modelagem-linha.ts";
+import { casarVinculosComLinhas, seriesPorLinha, serieDaLinha } from "../src/lib/modelagem-linha.ts";
 
 const DB = process.env.DB ?? "tdf_v35";
 const CASO = process.argv[2];
@@ -105,22 +105,20 @@ let modeloInstitucional: EntradaModeloInstitucional | undefined;
 const entidadeModelada = par?.entidade?.trim() || null;
 const ultimoReal = par?.ultimo_exercicio_real ?? null;
 if (entidadeModelada && ultimoReal) {
-  const valores = q<{ rotulo_norm: string; ano: number; valor: number }>(
-    `select rotulo_norm, ano, valor from fn_valores_por_ano('${CASO}', '${entidadeModelada.replace(/'/g, "''")}')`);
+  // `secao_canonica` VEM JUNTO e não é enfeite: a identidade da linha é o PAR
+  // (seção, rótulo) — ver o comentário da rota. Sem ela, rótulo repetido entre
+  // seções faz uma linha receber a série da outra.
+  const valores = q<{ rotulo_norm: string; secao_canonica: string | null; ano: number; valor: number }>(
+    `select rotulo_norm, secao_canonica, ano, valor from fn_valores_por_ano('${CASO}', '${entidadeModelada.replace(/'/g, "''")}')`);
   const anosHistoricos = [...new Set(valores.map((v) => v.ano))]
     .filter((a) => a <= ultimoReal).sort((a, b) => a - b);
   const nProj = par?.anos_projetados ?? 5;
   const anosProjetados = Array.from({ length: nProj }, (_, i) => ultimoReal + 1 + i);
-  const porRotulo = new Map<string, Record<string, number>>();
-  for (const v of valores) {
-    if (!anosHistoricos.includes(v.ano)) continue;
-    if (!porRotulo.has(v.rotulo_norm)) porRotulo.set(v.rotulo_norm, {});
-    porRotulo.get(v.rotulo_norm)![String(v.ano)] = Number(v.valor);
-  }
+  const series = seriesPorLinha(valores, anosHistoricos);
   const linhasModelo: LinhaModelo[] = linhasRpc.map((l) => ({
     secao_canonica: l.secao_canonica, chave: l.chave, rotulo_norm: l.rotulo_norm,
     papel: l.papel, unidade: l.unidade, moeda: l.moeda, documentos: l.documentos,
-    valores: porRotulo.get(l.rotulo_norm) ?? {},
+    valores: serieDaLinha(series, l.secao_canonica, l.rotulo_norm),
   }));
   const contagem = new Map<string, number>();
   for (const l of linhasModelo) if (l.unidade) contagem.set(l.unidade, (contagem.get(l.unidade) ?? 0) + 1);
@@ -149,8 +147,11 @@ console.log(`caso=${caso.nome} · documentos=${documentos.length} · campos=${ca
   + ` · linhas modelo=${linhasRpc.length} · curva=${curva.length}`
   + ` · modeloInstitucional=${modeloInstitucional ? "SIM" : "não"}`);
 
+// MODO=dados gera o outro botão do portal (as abas de dado cru, sem modelo) —
+// é o arquivo em que "nenhuma linha extraída pode faltar" se mede.
+const modo = (process.env.MODO === "dados" ? "dados" : "completo") as "dados" | "completo";
 const wb = buildExportWorkbook({
-  caso, documentos, campos, modo: "completo", modelagemConfig, modeloInstitucional,
+  caso, documentos, campos, modo, modelagemConfig, modeloInstitucional,
 });
 const saida = process.argv[3] ?? "/tmp/v35-completo.xlsx";
 // O MESMO caminho de saída da rota — sem isto, o arquivo que eu meço localmente
