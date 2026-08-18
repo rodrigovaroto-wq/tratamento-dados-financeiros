@@ -121,3 +121,83 @@ body {
     @apply mt-0.5 text-xs text-tinta-500;
   }
 }
+
+/* =============================================================================
+   MOVIMENTO.
+
+   POR QUE ELE EXISTE NUMA FERRAMENTA DE CONFERÊNCIA. O painel abre com uma
+   apresentação de ~3 segundos, e o pedido do dono foi explícito: que a tela
+   seja bonita e agradável antes de ser útil. O risco de atender isso mal é
+   conhecido — animação em software de trabalho vira imposto: você paga toda vez
+   que abre. As três regras que evitam isso, e elas valem para tudo aqui:
+
+     1. A ABERTURA TOCA UMA VEZ POR SESSÃO do navegador, não a cada navegação.
+        Quem vai e volta do mandato dez vezes na manhã a vê uma vez.
+     2. ELA É INTERROMPÍVEL — clique, tecla ou rolagem cortam na hora. Nunca
+        segure alguém que já sabe o que quer fazer.
+     3. `prefers-reduced-motion` DESLIGA TUDO, sem versão reduzida de consolo:
+        quem marcou isso no sistema normalmente tem um motivo clínico.
+
+   Nada aqui anima `width`, `top` ou `left` — só `opacity`, `transform` e
+   `filter`, que são as três propriedades que o compositor resolve sem
+   recalcular layout. É o que mantém 60fps num notebook de trabalho com o Excel
+   aberto do lado.
+   ============================================================================ */
+
+@keyframes oria-surgir {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes oria-marca-entra {
+  from { opacity: 0; transform: scale(0.9); filter: blur(6px); }
+  60%  { opacity: 1; }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* O nome abre o espacejamento e depois FECHA até a posição final. É o gesto de
+   uma marca se assentando — e ele sai de graça, porque `letter-spacing` aqui
+   está num elemento sozinho, sem nada ao redor para reflowar. */
+@keyframes oria-nome-entra {
+  from { opacity: 0; letter-spacing: 0.85em; }
+  to   { opacity: 1; letter-spacing: 0.34em; }
+}
+
+@keyframes oria-linha-cresce {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@keyframes oria-sai {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.05); }
+}
+
+@layer components {
+  /* Entrada dos blocos do painel. O `--atraso` escalona um bloco depois do
+     outro, que é o que faz a página "montar" em vez de piscar inteira. */
+  .surgir {
+    animation: oria-surgir 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--atraso, 0ms);
+  }
+
+  .intro-marca { animation: oria-marca-entra 1100ms cubic-bezier(0.22, 1, 0.36, 1) 180ms both; }
+  .intro-nome  { animation: oria-nome-entra 1200ms cubic-bezier(0.22, 1, 0.36, 1) 620ms both; }
+  .intro-verso { animation: oria-surgir 900ms cubic-bezier(0.22, 1, 0.36, 1) 1150ms both; }
+  .intro-linha {
+    transform-origin: left;
+    animation: oria-linha-cresce var(--duracao, 2500ms) linear both;
+  }
+  .intro-sai { animation: oria-sai 520ms ease-in both; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surgir,
+  .intro-marca,
+  .intro-nome,
+  .intro-verso,
+  .intro-linha,
+  .intro-sai {
+    animation: none !important;
+  }
+}

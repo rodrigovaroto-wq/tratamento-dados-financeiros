@@ -1271,6 +1271,30 @@ const nodes = [
     mode: 'runOnceForAllItems', jsCode: CODE_RESUMO_CUSTO,
   }, { onError: 'continueRegularOutput' }),
 
+  // O CUSTO PASSA A DURAR (0115). O `Resumo de Custo` sempre soube quanto o lote
+  // custou; o número morria na saída da execução do n8n, e responder "quanto
+  // gastamos neste mandato" exigia abrir o n8n e ler um JSON. Aqui ele vira
+  // linha de tabela, e o painel do portal passa a somar.
+  //
+  // `$execution.id` NÃO É DETALHE — É O QUE IMPEDE O CUSTO DE DOBRAR. Este nó
+  // roda DUAS VEZES por lote (uma por ramo do `Precisa Fallback?`) e, desde a
+  // correção de 14/08, as duas passadas trazem o total INTEIRO. Sem uma chave
+  // por execução, seriam duas linhas e todo custo sairia 2×. A `0115` tem
+  // `unique (caso_id, execucao_ref)` e faz `on conflict do update`: a segunda
+  // passada reescreve a primeira com o mesmo valor.
+  //
+  // O resumo vai INTEIRO, como jsonb — a função escolhe o que conhece. Assim um
+  // campo novo no relatório não pede migration de assinatura, e não existe
+  // ordem de argumentos para alguém trocar sem querer.
+  node('Gravar Uso do Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery',
+    query: 'select fn_registrar_uso_lote($1::uuid,$2::text,$3::jsonb) as resultado',
+    options: {
+      queryReplacement:
+        "={{ [$('Upsert Caso (Postgres)').first().json.caso_id, String($execution.id), JSON.stringify($json)] }}",
+    },
+  }, { credentials: PG_CRED, ...PG_RETRY }),
+
   // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
   // se TODO documento registrado passou pela extração. As três camadas de
   // cobertura medem o que voltou de uma chamada FEITA; nenhuma delas vê a chamada
@@ -1332,7 +1356,8 @@ const connections = {
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
   'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
   'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
-  'Resumo de Custo': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
+  'Resumo de Custo': { main: [[{ node: 'Gravar Uso do Lote', type: 'main', index: 0 }]] },
+  'Gravar Uso do Lote': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
 };
 
 // O canvas é desenhado a partir do grafo, nunca à mão (ver n8n/layout.mjs).

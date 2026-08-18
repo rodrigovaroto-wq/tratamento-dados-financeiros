@@ -32,7 +32,15 @@ export default async function CasosLayout({ children }: { children: React.ReactN
   }));
 
   return (
-    <div className="flex min-h-screen flex-col bg-tinta-50">
+    /* SEM `bg-tinta-50` AQUI, e não é descuido: o `body` já pinta essa mesma
+       cor (ver `app/layout.tsx`). Repeti-la neste `div` criava uma camada
+       OPACA em cima do plano de fundo — e era ela que engolia a ilustração do
+       painel, que é um `fixed` em `-z-10`. Elemento em z negativo pinta acima
+       do fundo da raiz e ABAIXO de qualquer bloco do fluxo; com a cor no `div`,
+       o bloco do fluxo era a tela inteira. Tirando a cor daqui, a ilustração
+       aparece nos vãos e continua coberta por tudo o que tem fundo próprio: a
+       barra, o cabeçalho, o rodapé e as cartas. */
+    <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 border-b border-tinta-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
           {/* NA BARRA, O SEXTANTE. A marca completa é empilhada (instrumento

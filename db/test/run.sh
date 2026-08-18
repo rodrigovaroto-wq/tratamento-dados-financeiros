@@ -262,6 +262,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fechar_mandato.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o custo do lote passa a durar, sem dobrar (0115)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/custo_do_lote.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do dial de autonomia (0041: o dial passa a mandar no auto-aceite)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/dial.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

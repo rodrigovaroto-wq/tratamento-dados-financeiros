@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0114_mandato_fechado.sql` |
+| **Última migration** | `db/migrations/0115_custo_do_lote.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 275 · export 535 · e2e 46 · banco (59 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -36,6 +36,44 @@ lidas para retomar.
 
 > **Para o dono:** a `0114` precisa ser aplicada no Supabase. Sem ela, a coluna não existe e a lista
 > trata todo mandato como ativo — a tela não quebra, mas o botão de fechar falha.
+
+## O portal (18/08) — a home deixou de ser a lista
+
+- **A barra lateral rola sozinha.** O `nav` era `sticky` mas não tinha altura: com mais mandatos
+  do que cabe na tela, os últimos ficavam abaixo da dobra do elemento grudado e só apareciam
+  quando a PÁGINA terminava de rolar. Agora ela tem a altura da viewport abaixo do cabeçalho e a
+  lista rola dentro dela, com o topo (Painel, Novo mandato, Mandatos) parado.
+- **`/casos` virou o PAINEL e a lista completa foi para `/casos/todos`.** A home repetia inteira a
+  lista que a barra já dá em um clique — duas telas para "o que existe", e nenhuma para *o que
+  precisa de mim agora*. O painel tem três blocos: indicadores da mesa (mandatos, documentos,
+  linhas extraídas, pendências e quantas bloqueiam), a **fila de pendências atravessando os
+  mandatos** ordenada por severidade — que antes só existia dentro de um caso por vez —, e o que
+  chegou, com as linhas de cada documento (zero linhas em vermelho).
+- **A regra que saiu disso:** nenhuma função da barra lateral se repete no conteúdo. O botão
+  "Novo mandato" saiu da lista completa; quem precisa dele o tem na barra, sempre visível.
+- **Os sete indicadores do painel** (escolhidos pelo dono): mandatos ativos, mandatos fechados,
+  linhas extraídas, tempo médio de processamento, gasto médio de API por mandato, gasto total de
+  API, pendências em aberto.
+- **A abertura e a ilustração.** O painel abre com uma cena de ~3s — o sextante da marca desenhado
+  em vetor próprio (a arte original NÃO é tocada), com o limbo crescendo e a constelação acendendo
+  em cascata. Toca **uma vez por sessão** do navegador, **qualquer gesto corta**, e
+  `prefers-reduced-motion` pula por completo. O mesmo motivo fica de fundo no painel a ~15% de
+  opacidade, na goteira à direita: **gira com a rolagem** e a constelação deriva com o ponteiro.
+
+- **O custo passou a durar (`0115`)**, e com ele veio o **oitavo indicador: cobertura da extração**.
+  `lote_execucao` guarda uma linha por execução de ingestão (custo real, custo estimado, tokens,
+  linhas, cobertura), gravada pelo nó novo `Gravar Uso do Lote`. A chave `(caso_id, execucao_ref)`
+  é o que impede o custo de sair **dobrado**: o `Resumo de Custo` roda uma vez por ramo do lote e
+  as duas passadas trazem o total inteiro.
+
+> **PARA OS TRÊS INDICADORES NOVOS ACENDEREM, DUAS COISAS PRECISAM ACONTECER FORA DO GIT:** aplicar
+> a `0115` no Supabase e **reimportar o `n8n/workflow.e1-ingestao.json`** (o n8n executa o JSON
+> importado, e merge não reimporta). Sem a migration, a tela mostra um traço com a causa escrita —
+> não zero. Sem a reimportação, a tabela existe e fica vazia. O **tempo médio** não depende de
+> nenhuma das duas: é uma janela derivada — de
+> `caso.criado_em` (gravado pelo `Upsert Caso`, no envio do intake) até o `criado_em` do último
+> documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
+> mede espera pelo cliente, não processamento.
 
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 

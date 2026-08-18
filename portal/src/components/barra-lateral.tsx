@@ -76,9 +76,13 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
   const alternarBarra = () => definirRecolhida(!recolhida);
   const alternarMandatos = () => definirMandatosAbertos(!mandatosAbertos);
 
-  const emMandatos = caminho === "/casos" || caminho.startsWith("/casos/");
-  const naLista = caminho === "/casos";
+  // AS TRÊS PERGUNTAS QUE A BARRA RESPONDE, e elas mudaram de endereço em 18/08:
+  // `/casos` é o PAINEL (o que precisa de mim hoje) e `/casos/todos` é a lista
+  // completa. Antes eram a mesma URL, e a barra repetia a tela inteira.
+  const noPainel = caminho === "/casos";
+  const naLista = caminho === "/casos/todos";
   const naCriacao = caminho === "/casos/novo";
+  const emMandatos = naLista || (caminho.startsWith("/casos/") && !naCriacao && !noPainel);
 
   // ABRIR UM MANDATO É TELA CHEIA. A barra existe para trocar de caso, e nesse
   // momento não há caso para trocar — ela só roubaria largura de um formulário
@@ -97,8 +101,8 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
           title="Mostrar o menu"
           aria-label="Mostrar o menu"
           aria-expanded={false}
-          className="flex h-full w-11 items-start justify-center pt-4 text-tinta-400
-                     transition-colors hover:bg-tinta-50 hover:text-tinta-900"
+          className="sticky top-[57px] flex h-[calc(100vh-57px)] w-11 items-start justify-center
+                     pt-4 text-tinta-400 transition-colors hover:bg-tinta-50 hover:text-tinta-900"
         >
           <span aria-hidden className="text-lg leading-none">
             »
@@ -112,7 +116,15 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
     <aside
       className="w-60 shrink-0 border-r border-tinta-200 bg-white"
     >
-      <nav className="sticky top-[57px] flex flex-col gap-1 p-3">
+      {/* A BARRA ROLA POR CONTA PRÓPRIA.
+          Antes o `nav` era sticky mas sem altura: com mais mandatos do que cabe
+          na tela, os últimos ficavam abaixo da dobra do elemento grudado e só
+          apareciam quando a PÁGINA terminava de rolar — ou seja, dependiam do
+          comprimento do conteúdo ao lado. Agora ela tem exatamente a altura da
+          viewport abaixo do cabeçalho (57px), e o que passa disso rola AQUI
+          dentro. O topo (Menu, Novo mandato, o próprio "Mandatos") fica parado:
+          quem rola procura um caso, não o botão de criar. */}
+      <nav className="sticky top-[57px] flex h-[calc(100vh-57px)] flex-col gap-1 overflow-hidden p-3">
         <div className="mb-1 flex items-center justify-between px-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-tinta-400">
             Menu
@@ -131,6 +143,22 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
           </button>
         </div>
 
+        {/* O PAINEL — a primeira tela do dia. Fica acima da ação porque é para
+            onde se volta, não o que se faz: é o "início" desta ferramenta. */}
+        <Link
+          href="/casos"
+          className={`mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            noPainel
+              ? "bg-acento-50 text-acento-700"
+              : "text-tinta-700 hover:bg-tinta-50 hover:text-tinta-900"
+          }`}
+        >
+          <span aria-hidden className="text-base leading-none">
+            ◧
+          </span>
+          Painel
+        </Link>
+
         {/* AÇÃO — fixa, sem filhos. */}
         <Link
           href="/casos/novo"
@@ -147,14 +175,14 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
         </Link>
 
         {/* LUGAR — abre e mostra o que está na mesa. */}
-        <div className="mt-2">
+        <div className={`mt-2 flex min-h-0 flex-col ${mandatosAbertos ? "flex-1" : ""}`}>
           <div
             className={`flex items-center rounded-md ${
               emMandatos && !naCriacao ? "bg-tinta-100" : ""
             }`}
           >
             <Link
-              href="/casos"
+              href="/casos/todos"
               className={`flex-1 rounded-l-md px-3 py-2 text-sm font-medium transition-colors ${
                 naLista ? "text-tinta-900" : "text-tinta-700 hover:text-tinta-900"
               }`}
@@ -180,7 +208,10 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
           </div>
 
           {mandatosAbertos && (
-            <ul className="mt-1 space-y-0.5 border-l border-tinta-200 pl-2">
+            <ul
+              className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain
+                         border-l border-tinta-200 pb-2 pl-2"
+            >
               {mandatos.length === 0 ? (
                 <li className="px-2 py-1.5 text-xs text-tinta-400">Nenhum mandato aberto</li>
               ) : (
