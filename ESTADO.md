@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0120_banco_de_perguntas.sql` |
+| **Última migration** | `db/migrations/0121_diagnostico_nao_duplica_entidade.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (65 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (66 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -145,7 +145,7 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | Aplicar `0116` a `0120` no Supabase (a lista de comandos está no `db/README.md`) | dono |
+| 1 | Aplicar `0116` a `0121` no Supabase (a lista de comandos está no `db/README.md`) | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
@@ -154,6 +154,35 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### A 0121 — o achado que o dado real do dono entregou (18/08)
+
+**Não veio de teste: veio da base.** Rodando o diagnóstico de entidades antes da rodada de
+validação, quatro mandatos voltaram com **três linhas para a mesma empresa** —
+`Canastra Industria 2025x2024x2023`, `CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.` e
+`Meses Canastra Industria`. A primeira e a terceira são sujeira de nome de arquivo, já corrigida na
+origem em 17/08. **A segunda não é sujeira: é a razão social correta**, e continuava sendo criada
+como linha nova — em mandato novo, com o workflow já reimportado.
+
+**A causa é uma metade esquecida da `0030`.** Aquela migration ensinou `fn_registrar_documento` a
+casar entidade pela forma canônica, porque o nome chega de duas fontes que escrevem diferente: o
+arquivo e o diagnóstico do conteúdo. `fn_registrar_diagnostico` — que é **a segunda fonte** — ficou
+comparando `lower(razao_social) = lower(nome)`. Os dois efeitos, reproduzidos em base limpa antes de
+consertar:
+
+1. **duplica a empresa** quando o documento chega sem entidade (o classificador se abstém em 6 dos
+   38 do book) e o diagnóstico traz a razão social completa;
+2. **abre pendência falsa** de `entidade_incorreta` entre duas grafias da mesma companhia — que
+   `fn_mesma_entidade` já reconhecia como a mesma.
+
+**Por que ficou caro agora:** antes da `0119`, entidade duplicada partia colunas do export. Depois
+dela, a entidade é o **eixo** da cobrança de linha exigida — a mesma empresa é cobrada duas vezes,
+abre pendência em dobro, e a `0120` gera duas perguntas ao cliente sobre a mesma coisa.
+
+**O que deliberadamente NÃO foi feito:** limpar as entidades já duplicadas. Os quatro mandatos são
+de teste (v41, V45, v46, v4x); fusão de entidades para arrumar dado de teste é trabalho que não se
+paga. Corrigida a função que as produz, mandato novo nasce limpo — e a validação deve rodar num
+mandato novo. Se a duplicata aparecer um dia em mandato de cliente, a fusão vira fatia própria.
 
 ### O PR #138 do Ian, incorporado com seis correções (0120)
 
