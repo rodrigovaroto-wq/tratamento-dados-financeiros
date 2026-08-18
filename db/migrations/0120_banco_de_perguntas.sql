@@ -92,12 +92,13 @@
 --     versão do PR #135 têm as outras duas, inline). A extração para um helper
 --     único é a evolução da 0103 — e se faz quando as duas estiverem na main,
 --     não daqui de dentro de um PR aberto alheio.
---   • A 5.1 NASCE COM O MOTIVO DEFASADO, de propósito: o texto da entrega diz
---     que "MUTUOS … não são cruzados … por nenhuma reconciliação", e a
---     0117_reconciliar_mutuos (mergeada depois da entrega) criou exatamente
---     esse cruzamento para mútuos (FAT_INTRAGRUPO segue sem). O texto é da
---     entrega e não se parafraseia por conta própria; o ajuste é do autor.
---     Ver a nota no seed.
+--   • O MOTIVO DA 5.1 FOI AJUSTADO PELO AUTOR em 18/08: o texto original da
+--     entrega (13/08) dizia que mútuos não eram cruzados por nenhuma
+--     reconciliação, e a 0117_reconciliar_mutuos (mergeada depois) criou o
+--     cruzamento balanço × planilha. O motivo vigente registra o que a
+--     checagem nova NÃO faz — verificar perímetro — que é o que sustenta a
+--     pergunta. Texto de terceiro não se parafraseia por conta própria; o
+--     ajuste veio do autor. Ver a nota no seed.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -406,17 +407,18 @@ values
    $q$fn_somar_conceito sobre MAPA_DIVIDA retorna zero linhas de juros.$q$,
    $q$Migration 0015.$q$),
 
-  -- NOTA DE DEFASAGEM (17/08, registrada na 0120 e não corrigida aqui de
-  -- propósito): o MOTIVO da 5.1 é texto verbatim da entrega e afirma que
-  -- mútuos não são cruzados por nenhuma reconciliação. A 0117_reconciliar_
-  -- mutuos, mergeada DEPOIS da entrega, criou o cruzamento balanço × planilha
-  -- para mútuos (FAT_INTRAGRUPO segue sem nenhum). A pergunta em si continua
-  -- válida — a checagem nova não verifica PERÍMETRO. Ajustar o texto é do
-  -- autor da entrega; quando a espécie "resultado de reconciliação" existir,
-  -- o gatilho natural desta pergunta é a checagem de mútuos da 0117.
+  -- NOTA DE DEFASAGEM E AJUSTE. O motivo original da entrega (13/08) dizia
+  -- que mútuos não eram cruzados por nenhuma reconciliação — verdade na data,
+  -- defasada quando a 0117_reconciliar_mutuos (mergeada depois) criou o
+  -- cruzamento balanço × planilha. O AUTOR DA ENTREGA ajustou o motivo em
+  -- 18/08 para o texto abaixo: a pergunta continua válida porque a checagem
+  -- nova não verifica PERÍMETRO — contraparte fora das combinadas fecha o
+  -- cruzamento e ainda assim deixa a eliminação sem conferência. Quando a
+  -- espécie "resultado de reconciliação" existir, o gatilho natural desta
+  -- pergunta é a checagem de mútuos da 0117.
   ('5.1', 'Perímetro dos mútuos', 2, 'sempre', null, null,
    $q$A relação de mútuos informa {saldo_mutuos} em operações entre empresas do grupo. Confirmam que todas as entidades envolvidas nessas operações estão dentro do perímetro das demonstrações combinadas enviadas?$q$,
-   $q$O sistema não tem como verificar a eliminação intragrupo — MUTUOS e FAT_INTRAGRUPO são obrigatórios mas não são cruzados com o COMBINADO por nenhuma reconciliação.$q$,
+   $q$A 0117 passou a cruzar o saldo de mútuos entre o balanço e a planilha, mas não verifica PERÍMETRO: se a contraparte de uma operação está fora das demonstrações combinadas, o cruzamento fecha e a eliminação continua sem conferência. FAT_INTRAGRUPO segue sem nenhuma checagem.$q$,
    $q$Societário e contábil: uma entidade fora do perímetro deixa a operação sem contrapartida, e o passivo ou a receita fica contado uma vez a mais.$q$,
    $q$Muda o tamanho declarado do grupo — receita e dívida consolidadas — que é a base de toda negociação.$q$,
    $q$Linhas cujo rótulo contém 'mutuo' com entidade_coluna fora da lista de entidades presentes no COMBINADO, ou mútuos a receber e a pagar que não se anulam.$q$,
