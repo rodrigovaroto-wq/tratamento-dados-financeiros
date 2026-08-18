@@ -51,6 +51,23 @@ lidas para retomar.
   chegou, com as linhas de cada documento (zero linhas em vermelho).
 - **A regra que saiu disso:** nenhuma função da barra lateral se repete no conteúdo. O botão
   "Novo mandato" saiu da lista completa; quem precisa dele o tem na barra, sempre visível.
+- **Os sete indicadores do painel** (escolhidos pelo dono): mandatos ativos, mandatos fechados,
+  linhas extraídas, tempo médio de processamento, gasto médio de API por mandato, gasto total de
+  API, pendências em aberto.
+- **A abertura e a ilustração.** O painel abre com uma cena de ~3s — o sextante da marca desenhado
+  em vetor próprio (a arte original NÃO é tocada), com o limbo crescendo e a constelação acendendo
+  em cascata. Toca **uma vez por sessão** do navegador, **qualquer gesto corta**, e
+  `prefers-reduced-motion` pula por completo. O mesmo motivo fica de fundo no painel a ~15% de
+  opacidade, na goteira à direita: **gira com a rolagem** e a constelação deriva com o ponteiro.
+
+> **DOIS DOS SETE INDICADORES NÃO TÊM FONTE, e a tela diz isso em vez de mostrar zero.** O custo de
+> API é calculado em `n8n/lib/custo.mjs` (nó `Resumo de Custo`) e morre na saída da execução do
+> n8n: **nenhuma tabela do Postgres tem coluna de dólar**. Para "gasto total" e "gasto médio por
+> mandato" acenderem falta uma migration com uma tabela de uso (caso, modelo, tokens, custo) e um
+> nó que grave nela ao fim do lote. O **tempo médio** é real, mas é uma janela derivada — de
+> `caso.criado_em` (gravado pelo `Upsert Caso`, no envio do intake) até o `criado_em` do último
+> documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
+> mede espera pelo cliente, não processamento.
 
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 
