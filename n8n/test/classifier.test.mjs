@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize } from '../lib/normalize.mjs';
 import { classifyByFilename, parseEntidade, parsePeriodo, parseTipo } from '../lib/classifier.mjs';
+import { ALIASES } from '../lib/taxonomia.mjs';
 
 test('normalize remove acento, extensão e separadores', () => {
   assert.equal(normalize('12M25_DRE (Assinado).pdf'), '12m25 dre (assinado)');
@@ -305,6 +306,34 @@ test('parseEntidade se abstém quando o nome não carrega empresa', () => {
   // pode estourar quando eles não vêm.
   assert.equal(parseEntidade('bp vertentes metalurgica 2025', []), 'Bp Vertentes Metalurgica');
   assert.equal(parseEntidade('bp vertentes metalurgica 2025', undefined), 'Bp Vertentes Metalurgica');
+});
+
+test('a palavra de tipo sai pela TAXONOMIA, sem lista à mão no classificador', () => {
+  // Três nomes reais do book, e a sobra que cada um deixava grudada na empresa:
+  // "Certidoes NEGATIVAS", "Organograma SOCIETARIO", "Situacao Fiscal e
+  // PARCELAMENTOS". O alias que casava era o pedaço curto ('certidao',
+  // 'organograma', 'situacao fiscal'), a segunda palavra sobrava, e
+  // `parseEntidade` a removia por uma lista de RUÍDO escrita à mão — que é
+  // exatamente o tipo de espelho manual que este repositório já viu divergir.
+  for (const [nome, esperado] of [
+    ['30_Certidoes_Negativas_Canastra_Industria_2025.pdf', 'Canastra Industria'],
+    ['31_Organograma_Societario_Grupo_Canastra.pdf', 'Grupo Canastra'],
+    ['32_Situacao_Fiscal_e_Parcelamentos_Canastra_Industria.pdf', 'Canastra Industria'],
+  ]) {
+    assert.equal(parseEntidade(normalize(nome), ALIASES), esperado, nome);
+  }
+
+  // E a PROVA de que quem faz o trabalho é a taxonomia, não uma lista escondida:
+  // sem os aliases, as palavras de tipo VOLTAM a aparecer na entidade. Se alguém
+  // reintroduzir a lista à mão, esta asserção falha — e é ela que impede o
+  // conserto de virar dois lugares para manter de novo.
+  assert.match(parseEntidade(normalize('30_Certidoes_Negativas_Canastra_Industria_2025.pdf'), []),
+    /Negativas/);
+  for (const palavra of ['negativas', 'societario', 'parcelamentos']) {
+    assert.ok(
+      ALIASES.some((a) => a.termos.includes(palavra)),
+      `"${palavra}" tem de ser termo da taxonomia — é de lá que a remoção sai`);
+  }
 });
 
 // --- O achado do book-canastra: razão de fornecedores não é aging de pagáveis -

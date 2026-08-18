@@ -38,18 +38,50 @@ do $$
 declare
   v_caso uuid := '11111111-1111-1111-1111-111111111111';
   v_n int;
+  v_num numeric;
   v_txt text;
 begin
   raise notice '--- 1. extração fiel dos 14 documentos ---';
   perform teste_reconciliar_tudo(v_caso);
 
+  -- A ÚNICA pendência esperada é a dos mútuos, e ela é o ACERTO da 0117.
+  --
+  -- Até a 0117 este assert cobrava ZERO pendência, e passava — porque a
+  -- divergência de mútuos que o book planta DE PROPÓSITO não era olhada por
+  -- checagem nenhuma. O gerador é explícito sobre isso
+  -- (`test-data/book-vertentes/demonstracoes.py`, `mutuos_intragrupo`): "de
+  -- propósito com uma divergência pequena (R$ 180 mil) contra o balanço —
+  -- planilha de controle mantida à parte do razão, exatamente o tipo de
+  -- divergência que a reconciliação deve mostrar ao humano em vez de esconder".
+  -- O teste verde era, portanto, a prova de que a checagem faltava.
   select count(*) into v_n from pendencia
-  where caso_id = v_caso and estado <> 'resolvida';
+  where caso_id = v_caso and estado <> 'resolvida'
+    and motivo <> 'reconciliacao:mutuos_planilha_vs_balanco';
   perform teste_assert(v_n = 0,
-    'extração fiel não abre nenhuma pendência de reconciliação',
+    'extração fiel não abre pendência nenhuma além da divergência plantada de mútuos',
     format('%s pendência(s): %s', v_n,
       (select string_agg(left(descricao, 90), ' | ') from pendencia
-       where caso_id = v_caso and estado <> 'resolvida')));
+       where caso_id = v_caso and estado <> 'resolvida'
+         and motivo <> 'reconciliacao:mutuos_planilha_vs_balanco')));
+
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and estado <> 'resolvida'
+    and motivo = 'reconciliacao:mutuos_planilha_vs_balanco';
+  perform teste_assert(v_n = 1,
+    'a divergência plantada de mútuos ABRE pendência (era o buraco que a 0117 fecha)',
+    format('%s pendência(s)', v_n));
+
+  -- E ela acusa o NÚMERO plantado, não um número qualquer: 180 mil, em reais.
+  -- Sem esta linha, a checagem poderia estar acusando pela razão errada (a soma
+  -- dos dois lados, por exemplo, daria 11.453 mil de "divergência") e o teste
+  -- acima continuaria verde.
+  select divergencia_abs into v_num from reconciliacao
+  where caso_id = v_caso and tipo = 'mutuos_planilha_vs_balanco'
+    and resultado = 'zona_cinzenta'
+  order by criado_em desc limit 1;
+  perform teste_assert(v_num between 179000 and 181000,
+    'a divergência medida é a plantada: R$ 180 mil',
+    format('%s', v_num));
 
   -- As checagens têm de ter CHEGADO a um veredito, não ficado caladas.
   -- Cinco tipos desde a 0105 (as quatro A/B mais a duplicidade de rótulo). O número

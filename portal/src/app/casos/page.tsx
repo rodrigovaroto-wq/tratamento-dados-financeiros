@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import {
   PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
   type Caso,
   type Pendencia,
 } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
-import { rotuloDaPendencia, partesDaDescricao, suavizarMensagem } from "@/lib/rotulos";
+import { rotuloDaPendencia, nomeDaChecagem, partesDaDescricao, suavizarMensagem } from "@/lib/rotulos";
 import { formatarTipoTaxonomia } from "@/lib/export";
 import { PainelIntro } from "@/components/painel-intro";
 import { CeuOria } from "@/components/ceu-oria";
@@ -188,50 +189,63 @@ export default async function PainelPage() {
   // `fechado_em` é filtrado em JAVASCRIPT, não no `where`, pelo mesmo motivo da
   // lista completa: em um banco sem a 0114 aplicada a coluna não existe, e um
   // `.is("fechado_em", null)` derrubaria a tela inteira em vez de degradar.
-  const casosRes = await supabase
-    .from("caso")
-    .select("id, nome, status, criado_em, fechado_em")
-    .order("criado_em", { ascending: false });
+  const casosRes = await paginar<Caso>((de, ate) =>
+    supabase
+      .from("caso")
+      .select("id, nome, status, criado_em, fechado_em")
+      .order("criado_em", { ascending: false })
+      .range(de, ate),
+  );
 
-  const casos = (casosRes.data as Caso[] | null) ?? [];
+  const casos = casosRes.data;
   const ativos = casos.filter((c) => !c.fechado_em);
   const fechados = casos.filter((c) => c.fechado_em);
   const ids = casos.map((c) => c.id);
   const idsAtivos = ativos.map((c) => c.id);
   const nomePorCaso = new Map(casos.map((c) => [c.id, c.nome] as const));
 
+  // AS DUAS LISTAS SÃO PAGINADAS, e não é otimização: é correção.
+  //
+  // Elas alimentam cálculo por LINHA — o tempo médio por mandato e a fila de
+  // pendências —, então não dá para trocá-las por um `count` como se fez com o
+  // total de linhas extraídas. E o teto do PostgREST (`db-max-rows`, 1000 no
+  // Supabase por padrão) corta em SILÊNCIO: no dia em que a mesa passar de mil
+  // documentos, o tempo médio passaria a ser o dos mil mais recentes e a tela
+  // não teria como dizer isso. Hoje são 475 documentos e 541 pendências — o
+  // conserto entra ANTES de o número doer, porque depois ele não dói: ele
+  // mente. `paginar` lê de mil em mil até a página vir incompleta.
   const [documentosRes, pendenciasRes] = ids.length
     ? await Promise.all([
         // TODOS os mandatos, não só os ativos: "linhas extraídas" e "tempo médio"
         // são números da OPERAÇÃO, e um mandato fechado com sucesso é justamente
         // o que se quer ter no denominador de uma média de tempo.
-        //
-        // ESTA LISTA (E A DE PENDÊNCIAS LOGO ABAIXO) CONTINUA SUJEITA AO TETO DO
-        // POSTGREST (`db-max-rows`, 1000 no Supabase por padrão) — o mesmo que
-        // fez "linhas extraídas" mostrar exatamente 1.000 (ver o comentário perto
-        // de `totalLinhasRes`). Não corrigido aqui de propósito: hoje são 475
-        // documentos e 541 pendências, longe do teto, e as duas listas alimentam
-        // cálculo por LINHA (tempo médio por caso, a fila) — não dá para virar
-        // count. Quando a mesa se aproximar de 1000 documentos ou pendências
-        // ativas, isto pede paginação (`.range()` em laço) ou uma função no banco
-        // que agregue por caso, como se fez para o total de linhas.
-        supabase
-          .from("documento")
-          .select("id, caso_id, tipo_taxonomia, status, criado_em, documento_versao(id)")
-          .in("caso_id", ids)
-          .order("criado_em", { ascending: false }),
+        paginar<DocumentoNoPainel>((de, ate) =>
+          supabase
+            .from("documento")
+            .select("id, caso_id, tipo_taxonomia, status, criado_em, documento_versao(id)")
+            .in("caso_id", ids)
+            .order("criado_em", { ascending: false })
+            .range(de, ate),
+        ),
         // A FILA, ao contrário, é só dos ATIVOS: pendência de mandato fechado não
         // é trabalho de hoje, e listá-la encheria a tela de coisa que ninguém vai
         // fazer.
         idsAtivos.length
-          ? supabase
-              .from("pendencia")
-              .select("id, caso_id, tipo, severidade, estado, descricao, documento_id, criada_em")
-              .in("caso_id", idsAtivos)
-              .in("estado", ESTADOS_EM_ABERTO)
-          : Promise.resolve({ data: [] }),
+          ? paginar<Pendencia>((de, ate) =>
+              supabase
+                .from("pendencia")
+                .select("id, caso_id, tipo, severidade, estado, descricao, documento_id, criada_em, motivo")
+                .in("caso_id", idsAtivos)
+                .in("estado", ESTADOS_EM_ABERTO)
+                .order("criada_em", { ascending: false })
+                .range(de, ate),
+            )
+          : Promise.resolve({ data: [] as Pendencia[], error: null, truncado: false }),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [
+        { data: [] as DocumentoNoPainel[], error: null, truncado: false },
+        { data: [] as Pendencia[], error: null, truncado: false },
+      ];
 
   // O USO DE IA POR EXECUÇÃO (0115). Consulta à parte e TOLERANTE A FALHA: num
   // banco sem a migration aplicada a tabela não existe, e o painel inteiro não
@@ -259,8 +273,8 @@ export default async function PainelPage() {
     criado_em: string;
     documento_versao: Array<{ id: string }> | null;
   };
-  const documentos = (documentosRes.data as unknown as DocumentoNoPainel[] | null) ?? [];
-  const pendencias = (pendenciasRes.data as Pendencia[] | null) ?? [];
+  const documentos = documentosRes.data;
+  const pendencias = pendenciasRes.data;
 
   // O TOTAL DE LINHAS É UM COUNT, NÃO A SOMA DE LINHAS BAIXADAS.
   //
@@ -540,6 +554,19 @@ export default async function PainelPage() {
         </div>
       </Surgir>
 
+      {/* O TETO DE LEITURA, QUANDO BATE, APARECE — a razão de existir deste
+          aviso é o defeito que ele fecha: o corte do PostgREST é silencioso, e
+          um painel que mostra números de um pedaço da mesa como se fossem da
+          mesa inteira é pior que um painel que não abre. Em operação normal
+          este bloco nunca renderiza (o teto é 50 mil linhas). */}
+      {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado) && (
+        <p className="carta border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          Os números acima leem no máximo 50 mil registros por lista, e esse teto foi atingido —
+          eles descrevem parte da mesa, não a mesa inteira. Isto pede agregação no banco, não mais
+          páginas.
+        </p>
+      )}
+
       {ativos.length === 0 ? (
         /* SEM MANDATO, O PAINEL NÃO INVENTA CONTEÚDO — e também não repete o
            botão de criar, que mora no menu. Ele aponta para lá. */
@@ -593,6 +620,17 @@ export default async function PainelPage() {
                         <div className="min-w-0 flex-1">
                           <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
                             <span className="font-semibold text-tinta-900">{rotuloDaPendencia(p.tipo)}</span>
+                            {/* QUAL checagem acusou. Seis reconciliações
+                                diferentes chegam aqui com o mesmo tipo
+                                ("os documentos não batem"), e sem este pedaço
+                                a fila mostra seis linhas iguais — o analista
+                                tem de abrir cada uma para saber do que se
+                                trata, que é o oposto de uma fila de triagem. */}
+                            {nomeDaChecagem(p.motivo ?? null) && (
+                              <span className="text-xs text-tinta-500">
+                                · {nomeDaChecagem(p.motivo ?? null)}
+                              </span>
+                            )}
                             <span className="truncate text-xs text-tinta-500">
                               {nomePorCaso.get(p.caso_id) ?? "mandato"}
                             </span>

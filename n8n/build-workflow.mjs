@@ -24,10 +24,11 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/openai.mjs';
+import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
@@ -117,6 +118,24 @@ const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString(
 // que o nó e a lib normalizem "US$"/"dolar"/"usd" para o MESMO 'USD'. Divergir
 // aqui reintroduziria exatamente a soma de moedas diferentes que a coluna
 // `campo_extraido.moeda` existe para impedir.
+// O FINGERPRINT DA EXTRAÇÃO — o que autoriza NÃO pagar a mesma extração duas
+// vezes (db/migrations/0118).
+//
+// Ele responde a uma pergunta só: "a extração que já está no banco foi feita
+// com as MESMAS regras que eu usaria agora?". As regras são três — o prompt de
+// sistema, o modelo e o esquema de resposta —, e todas as três mudam neste
+// repositório com frequência (a 0116 acabou de mexer no prompt). Calculado aqui,
+// no BUILD, e embutido como literal na chamada de registro: assim o valor muda
+// junto com o workflow, e um workflow importado em julho nunca casa com a
+// extração de hoje.
+//
+// Os 16 primeiros hex bastam: é identidade, não segurança — colisão acidental
+// em 64 bits de conteúdo controlado não é um risco que valha uma coluna maior.
+const FINGERPRINT_EXTRACAO = createHash('sha256')
+  .update([SYSTEM_PROMPT, MODELO_EXTRACAO, JSON.stringify(extractionSchema())].join('\u0000'))
+  .digest('hex')
+  .slice(0, 16);
+
 const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};`;
 
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
@@ -142,6 +161,27 @@ const FONTE_ORCAMENTO_LOTE = [
   `const VERSAO_ORCAMENTO = ${JSON.stringify(VERSAO_ORCAMENTO)};`,
   `const pesoDaChamadaDeClassificacao = ${pesoDaChamadaDeClassificacao.toString()};`,
   `const orcamentoDoLote = ${orcamentoDoLote.toString()};`,
+  // A estimativa POR CONTEÚDO e as seis constantes dela. Mesma regra de
+  // sempre: `toString()` não leva o escopo do módulo, então tudo o que o
+  // corpo referencia é declarado aqui — inclusive o tamanho do prompt de
+  // sistema, que é calculado no BUILD a partir do texto real (o nó não tem
+  // como importar `extract.mjs` para medi-lo em execução).
+  `const TOKENS_POR_PAGINA_IMAGEM = ${TOKENS_POR_PAGINA_IMAGEM};`,
+  `const TOKENS_CABECALHO_GRUPO = ${TOKENS_CABECALHO_GRUPO};`,
+  `const TOKENS_CONTA_BASE = ${TOKENS_CONTA_BASE};`,
+  `const TOKENS_POR_VALOR = ${TOKENS_POR_VALOR};`,
+  `const CONTAS_POR_GRUPO = ${CONTAS_POR_GRUPO};`,
+  `const TOKENS_SAIDA_CLASSIFICACAO = ${TOKENS_SAIDA_CLASSIFICACAO};`,
+  `const MARGEM_ORCAMENTO_CONTEUDO = ${MARGEM_ORCAMENTO_CONTEUDO};`,
+  `const TOKENS_PROMPT_SISTEMA = ${Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TOKEN)};`,
+  // `custoDaChamada` é o que converte tokens em dólares, e ela também não vem
+  // de graça: sem esta linha o nó estoura `ReferenceError` na primeira
+  // execução REAL — que é o modo de falha mais caro possível, porque a suíte
+  // fica verde e o lote morre no cliente.
+  `const custoDaChamada = ${custoDaChamada.toString()};`,
+  `const tokensDeSaida = ${tokensDeSaida.toString()};`,
+  `const custoEstimadoPorConteudo = ${custoEstimadoPorConteudo.toString()};`,
+  `const orcamentoDoLotePorConteudo = ${orcamentoDoLotePorConteudo.toString()};`,
 ].join('\n');
 const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
 
@@ -176,43 +216,70 @@ const FONTE_CUSTO_CHAMADA = `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO
 const custoDaChamada = ${custoDaChamada.toString()};`;
 
 // --- Code (ALL ITEMS): o TETO DE GASTO POR EXECUÇÃO -------------------------
-// Roda depois de `Classificar Nome` e antes de `Preparar Conteudo`, e o lugar é
-// o ponto todo: aqui o número de chamadas do lote é EXATO (cada item já sabe se
-// `precisa_fallback_openai`), e nada foi enviado à OpenAI nem gravado no banco.
-// Barrar aqui custa zero; barrar depois é o v31 — 8 documentos registrados sem
-// extração porque o teto da OpenAI cortou no meio.
+// RODA DEPOIS DO `Medir Documento`, e a mudança de lugar É a correção.
 //
-// Por que contar as chamadas em vez dos documentos: um documento cujo nome não
-// resolve o tipo paga o PDF DUAS vezes (classificação por conteúdo + extração).
-// No v31 isso valia para 8 dos 14 — 22 chamadas num lote de 14 documentos, que
-// com este teto de US$ 3 teria sido RECUSADO antes de gastar. Depois de renomear
-// para a notação de f0/03 (`12M25`/`L24M`), o mesmo lote são 14 chamadas e passa.
+// Onde ele ficava: entre `Classificar Nome` e `Preparar Conteudo`. Ali o guarda
+// tem o nome do arquivo e os bytes, e mais nada — então estimava por TAMANHO,
+// com uma margem de 1,8× que superestima o lote típico em ~50%, e não tinha
+// como saber quantos BLOCOS a extração ia gastar (documento acima de
+// `MAX_CELULAS_POR_BLOCO` é fatiado, e cada fatia reenvia o PDF inteiro). Errava
+// para cima no lote comum e para baixo no documento grande, que é o caro.
+//
+// Onde ele fica: logo depois de o texto do PDF ter sido lido e medido. Aqui as
+// duas coisas que mandam no custo são EXATAS — as linhas com número saem do
+// próprio documento, e o número de blocos sai de `planejarFatias`, a mesma
+// função que o `Fatiar Extracao` vai executar adiante.
+//
+// E CONTINUA SENDO ANTES DE GASTAR, que é a propriedade inegociável: entre o
+// `Medir Documento` e a primeira chamada à OpenAI (`OpenAI Classificar`) não há
+// gasto nenhum. O `Extrair Texto` é local, o `Upload Storage` é ramo lateral e
+// está desligado, e nenhum documento foi registrado — `Registrar Documento` vem
+// depois do `Juntar Ramos`. Barrar aqui continua custando zero.
+//
+// A ESTIMATIVA POR BYTE NÃO FOI EMBORA: ela é o caminho de quando o conteúdo não
+// pôde ser medido. PDF escaneado não tem camada de texto, e um lote com QUALQUER
+// documento assim cai inteiro no caminho antigo — medir só os que dá
+// subestimaria o lote na exata proporção do que não se sabe.
 const CODE_ORCAMENTO = `
 ${FONTE_ORCAMENTO_LOTE}
+${FONTE_COBERTURA}
 const itens = $input.all();
-const comFallback = itens.filter(i => i.json.precisa_fallback_openai).length;
-const chamadas = itens.length + comFallback;
-// Soma os bytes que o \`Listar Arquivos\` mediu. Se QUALQUER arquivo veio sem
-// tamanho, o lote inteiro cai na estimativa plana: somar só os conhecidos
-// subestimaria o lote na exata proporção do que não se sabe.
-const semTamanho = itens.some(i => !Number.isFinite(Number(i.json.bytes)) || Number(i.json.bytes) <= 0);
-const bytes = semTamanho ? null : itens.reduce((s, i) => s + Number(i.json.bytes), 0);
-const r = orcamentoDoLote({ documentos: itens.length, chamadasPorDocumento: chamadas / itens.length, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, bytes });
+const docs = itens.map((i) => {
+  const j = i.json || {};
+  // Blocos: a MESMA conta que o \`Fatiar Extracao\` fará. Documento sem camada de
+  // texto vai inteiro (uma chamada), como sempre foi.
+  const linhas = Array.isArray(j.linhas_do_texto) ? j.linhas_do_texto : [];
+  const blocos = linhas.length > 0 ? planejarFatias(linhas, MAX_CELULAS_POR_BLOCO).length : 1;
+  // Colunas de valor, lidas da referência de período que a classificação por
+  // nome já resolveu ("25,24,23" são três colunas; "12M25" é uma). O limite fica
+  // declarado: coluna de EMPRESA não aparece no nome, então um combinado com
+  // sete empresas é SUBESTIMADO na economia do agrupamento — ou seja, o guarda
+  // erra para cima, que é o lado certo de errar.
+  const ref = typeof j.periodo_ref === 'string' ? j.periodo_ref.split(',').filter(Boolean) : [];
+  return {
+    celulas: Number(j.celulas_no_documento),
+    paginas: Number(j.paginas_do_documento),
+    colunas: ref.length > 1 ? ref.length : 1,
+    blocos,
+    precisaFallback: !!j.precisa_fallback_openai,
+    bytes: Number(j.bytes),
+  };
+});
+const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, tokensPromptSistema: TOKENS_PROMPT_SISTEMA });
 // Recusa o lote INTEIRO. Não existe "roda os que cabem" de propósito: metade
 // registrada sem extração e metade sem registro nenhum é estado que dá mais
 // trabalho para desfazer do que o reenvio que esta mensagem pede.
 //
-// E A RECUSA NÃO LANÇA MAIS AQUI. Lançar punha a mensagem certa no lugar errado:
-// ela ficava só no log do n8n, e o portal — que deduz progresso da ausência de
-// documentos — seguia dizendo "estamos organizando tudo com cuidado" para
+// E A RECUSA NÃO LANÇA AQUI: ela marca. Lançar punha a mensagem certa no lugar
+// errado — ficava só no log do n8n, e o portal, que deduz progresso da ausência
+// de documentos, seguia dizendo "estamos organizando tudo com cuidado" para
 // sempre. Agora o item segue marcado, o IF manda a recusa para o nó que a GRAVA
-// no banco, e só depois o lote é abortado. Nada foi enviado à OpenAI em nenhum
-// dos caminhos: a decisão continua sendo antes de gastar.
+// no banco, e só depois o lote é abortado.
 //
 // \`orcamento_versao\` viaja com o item mesmo quando o lote PASSA. É o que
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
-return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao }, binary: i.binary }));
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------
@@ -644,6 +711,11 @@ for(let i=0;i<regs.length;i+=1){
   saida.push({pairedItem:{item:i}, json:{...limpo,
     documento_id:res.documento_id??null,
     documento_versao_id:res.documento_versao_id??null,
+    // 0118: o banco JA' SABE se esta extracao foi feita antes com o mesmo prompt.
+    // O flag viaja daqui para o IF \`Extracao ja feita?\`, que e' quem pula a
+    // chamada a' OpenAI. Ausente (workflow contra banco sem a 0118) vira false --
+    // pular por omissao seria deixar de extrair de graca.
+    reaproveitou_extracao:res.reaproveitou_extracao===true,
     recompor_motivo:motivos.length>0?motivos.join(' | '):null,
   }});
 }
@@ -694,6 +766,13 @@ return {json:{...item,
   celulas_no_documento: temTexto?linhasDoTexto.length:null,
   contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,
   linhas_do_texto: temTexto?linhasDoTexto:null,
+  // PAGINAS: quem paga a entrada da chamada e' a IMAGEM do PDF (~1.000 tokens
+  // por pagina), entao o teto de gasto precisa deste numero -- e ele so' existe
+  // aqui, na saida do \`Extrair Texto\` (o \`pdf-parse\` publica \`numpages\`).
+  // \`null\` quando o extrator nao disse: o orcamento entao cai para a conta por
+  // BYTE, que e' a saida conservadora, em vez de supor uma pagina.
+  paginas_do_documento: Number.isFinite(Number(doExtrator.numpages))?Number(doExtrator.numpages)
+    :(Number.isFinite(Number(doExtrator.numPages))?Number(doExtrator.numPages):null),
 }};
 `.trim();
 
@@ -1200,8 +1279,8 @@ const nodes = [
   // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text) as r',
-    options: { queryReplacement: "={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null] }}" },
+    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text) as r',
+    options: { queryReplacement: `={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null, '${FINGERPRINT_EXTRACAO}'] }}` },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
@@ -1212,6 +1291,27 @@ const nodes = [
   node('Recompor Contexto', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_RECOMPOR_CONTEXTO,
   }, CODE_CONTINUA),
+
+  // O CURTO-CIRCUITO DO DEDUP (0118). A `fn_registrar_documento` já respondeu se
+  // este arquivo foi extraído antes com o MESMO prompt+modelo+esquema e se aquela
+  // extração tem linha no banco. Quando sim, não há nada a pedir à OpenAI: o dado
+  // já está lá, sob a mesma versão, e o item pula direto para a reconciliação.
+  //
+  // O IF fica AQUI, e não dentro do `Montar Req Extracao`, por uma restrição do
+  // n8n que a 0026 já tinha mapeado: aquele nó é `runOnceForEachItem` e não pode
+  // devolver zero itens. Filtrar com um IF é o jeito que o motor oferece.
+  node('Extracao ja feita?', 'n8n-nodes-base.if', 2, {
+    conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
+      { leftValue: '={{ $json.reaproveitou_extracao }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+    ] },
+  }),
+
+  // E o Merge que junta quem extraiu com quem não precisou. Merge, e não duas
+  // conexões cruas no mesmo input: foi convergência crua que fez 19 de 35
+  // documentos desaparecerem no Teste V45 (ver `Juntar Ramos`).
+  node('Juntar Extraidos', 'n8n-nodes-base.merge', 3, {
+    mode: 'append', numberInputs: 2,
+  }),
 
   node('Montar Req Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_EXTRACAO }, CODE_CONTINUA),
 
@@ -1311,15 +1411,7 @@ const connections = {
   'Intake (Form)': { main: [[{ node: 'Upsert Caso (Postgres)', type: 'main', index: 0 }]] },
   'Upsert Caso (Postgres)': { main: [[{ node: 'Listar Arquivos', type: 'main', index: 0 }]] },
   'Listar Arquivos': { main: [[{ node: 'Classificar Nome', type: 'main', index: 0 }]] },
-  // O orçamento entra AQUI, entre a classificação por nome e o preparo do
-  // conteúdo: é o último ponto em que o lote inteiro está visível de uma vez e
-  // ainda não custou nada (nem chamada à OpenAI, nem linha no banco).
-  'Classificar Nome': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
-  'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
-  'Lote cabe?': { main: [
-    [{ node: 'Preparar Conteudo', type: 'main', index: 0 }],   // true — segue
-    [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
-  ] },
+  'Classificar Nome': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
   'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
   // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
   // O `Extrair Texto` entra AQUI, e não antes do preparo: neste ponto o binário
@@ -1332,7 +1424,19 @@ const connections = {
     { node: 'Extrair Texto', type: 'main', index: 0 },
   ]] },
   'Extrair Texto': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
-  'Medir Documento': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
+  // O ORÇAMENTO ENTRA AQUI, e não antes do preparo do conteúdo (onde ficava até
+  // a rodada de 18/08). Este é o primeiro ponto em que o lote inteiro está
+  // visível de uma vez COM o documento já medido — linhas com número e número de
+  // blocos —, e ainda é o último ponto antes de qualquer gasto: a primeira
+  // chamada à OpenAI é o `OpenAI Classificar`, logo depois do `Precisa
+  // Fallback?`, e nenhum documento foi registrado no banco até o `Registrar
+  // Documento`, muito mais adiante.
+  'Medir Documento': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
+  'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
+  'Lote cabe?': { main: [
+    [{ node: 'Precisa Fallback?', type: 'main', index: 0 }],   // true — segue
+    [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
+  ] },
   // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas
   // conexões cruas no mesmo input, que é o que comeu 19 documentos no V45.
   'Precisa Fallback?': { main: [
@@ -1347,14 +1451,19 @@ const connections = {
     { node: 'Recomputar Completude', type: 'main', index: 0 },
     { node: 'Recompor Contexto', type: 'main', index: 0 },
   ]] },
-  'Recompor Contexto': { main: [[{ node: 'Montar Req Extracao', type: 'main', index: 0 }]] },
+  'Recompor Contexto': { main: [[{ node: 'Extracao ja feita?', type: 'main', index: 0 }]] },
+  'Extracao ja feita?': { main: [
+    [{ node: 'Juntar Extraidos', type: 'main', index: 1 }],     // true  → já extraído: pula a OpenAI
+    [{ node: 'Montar Req Extracao', type: 'main', index: 0 }],  // false → extrai
+  ] },
   'Montar Req Extracao': { main: [[{ node: 'Fatiar Extracao', type: 'main', index: 0 }]] },
   'Fatiar Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
   'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
   'Parse Extracao': { main: [[{ node: 'Juntar Blocos', type: 'main', index: 0 }]] },
   'Juntar Blocos': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
-  'Registrar Diagnostico': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
+  'Registrar Diagnostico': { main: [[{ node: 'Juntar Extraidos', type: 'main', index: 0 }]] },
+  'Juntar Extraidos': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
   'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
   'Resumo de Custo': { main: [[{ node: 'Gravar Uso do Lote', type: 'main', index: 0 }]] },
   'Gravar Uso do Lote': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
