@@ -207,6 +207,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/linha_exigida.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de linha exigida POR ENTIDADE (0119: o grupo de oito balanços, e a guarda seed×código)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/linha_exigida_entidade.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do banco de perguntas ao cliente (0120: a pergunta pronta vira dado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/perguntas.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
