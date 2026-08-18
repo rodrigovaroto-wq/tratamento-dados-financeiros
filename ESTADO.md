@@ -85,13 +85,15 @@ lidas para retomar.
 | **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`) — a tela que faltava para a `0120` existir para quem usa o produto | **branch `claude/client-question-suggestions-ves2ty`** |
 
 **Nada da sessão 50 ficou pendente de merge** — o `main` já tem os sete itens, e a branch da sessão
-51 sai dele. O que continua pendente daquela rodada não é git: são as migrations `0116` a `0121` no
-Supabase e a reimportação do workflow, no quadro "O próximo passo".
+51 sai dele. As migrations `0116` a `0121` **já estão aplicadas** (o dono confirmou em 18/08); o que
+continua pendente daquela rodada é a reimportação do workflow e a rodada real, no quadro "O próximo
+passo".
 
 **O risco que a sessão 50 fechou, e que estava anotado aqui como "não se resolve sozinho":** as
 listas de `documento` e `pendencia` do painel continuavam sujeitas ao teto de 1000 do PostgREST.
 Agora elas paginam (`portal/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
-painel avisa se o teto de segurança de 50 mil for atingido.
+painel avisa se o teto de segurança for atingido. **A sessão 51 terminou o serviço** — ver "O teto
+de 1000 deixou de existir para o portal".
 
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 
@@ -137,26 +139,64 @@ mas **só entra em produção quando o workflow for reimportado**.
 
 ## O próximo passo (para quem retomar depois de 18/08, sessão 51)
 
-**O dono já fez os dois passos que só ele pode fazer**, e disse isso nesta sessão: as migrations
-até a `0115` foram aplicadas no Supabase e o workflow foi reimportado. **Mas a sessão 50 escreveu
-três migrations novas (`0116`, `0117`, `0118`) e mexeu no workflow de novo** — então os dois
-passos voltam a estar pendentes, agora para o que esta rodada produziu.
+**O DONO APLICOU TODAS AS MIGRATIONS DO REPOSITÓRIO** — confirmado em 18/08 (sessão 51), até a
+`0121`. O banco deixou de ser o passo pendente; o que falta da sessão 50 é a REIMPORTAÇÃO do
+workflow e a rodada real.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | Aplicar `0116` a `0121` no Supabase (a lista de comandos está no `db/README.md`) | dono |
+| 1 | ~~Aplicar `0116` a `0121` no Supabase~~ — **feito em 18/08** | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
 
-> **A aba "Perguntas ao cliente" só acende com a `0120` aplicada.** Ela lê `fn_sugerir_perguntas` e
-> `caso_pergunta`; sem a migration, a aba abre e explica que falta aplicá-la (não quebra, e o resto
-> do mandato não depende dela), e o botão do cabeçalho do mandato aparece sem a contagem.
+> **Opcional, e só isso: o `Max rows` do Supabase.** Com a `0120` aplicada, a aba "Perguntas ao
+> cliente" já lista. O teto de 1000 linhas do PostgREST (*Project Settings → API → Max rows*)
+> continua no padrão, e **nenhuma tela depende mais dele** — o `paginar` lê em janelas até o banco
+> acabar, qualquer que seja o teto. Subi-lo só deixa cada leitura mais barata.
 
 > **A `0118` muda o que se vê ao reenviar um arquivo.** Reenviar o MESMO PDF sem que prompt, modelo
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O teto de 1000 deixou de existir para o portal (18/08, sessão 51)
+
+Pedido do dono, literal: *"a lista pagina não deve ser restringida, remova o teto de 1000 do
+PostgREST"*. O teto mora em dois lugares, e os dois foram tratados:
+
+**1. No servidor — e lá ele é do DONO, não do repositório.** É o `db-max-rows` do PostgREST
+(*painel do Supabase → Project Settings → API → Max rows*, padrão 1000). Subi-lo para 100000 remove
+o teto na prática e deixa cada leitura mais barata. **Está documentado no `db/README.md`, com o
+caminho exato — e é opcional**, pelo motivo abaixo.
+
+**2. No portal — e aqui ele acabou de verdade.** Duas mudanças:
+
+- **`paginar` deixou de depender do teto do servidor.** A parada era "página com menos linhas que a
+  janela = acabou", e isso só era correto porque a janela (1000) era exatamente o teto padrão. Com
+  `Max rows` abaixo de 1000, TODA página voltaria curta e a leitura pararia na primeira — o defeito
+  original de volta, escondido dentro da própria defesa contra ele. Agora a leitura anda pelo número
+  de linhas REALMENTE devolvidas e só termina quando uma página volta **vazia**: vale para qualquer
+  teto, e custa uma requisição a mais por consulta. O teto de segurança subiu de 50 mil para **500
+  mil linhas** e continua declarando (`truncado`) em vez de entregar o pedaço como se fosse o todo.
+- **As leituras que ainda escapavam passaram a paginar** — e uma delas já estava a meses de
+  quebrar:
+
+| Onde | O que era truncado | Por que importa |
+|---|---|---|
+| `indice_macro_obs` (export) | as observações macro | **920 linhas hoje**, +72 por ano. Ao passar de 1000, o corte cairia nas MAIS RECENTES (ordem crescente por data) — e é a última observação que dá o câmbio de fechamento do ano |
+| `indice_macro_expectativa` (export) | as coletas do Focus | cada coleta acrescenta linhas; truncar não deixa o arquivo sem macro, deixa com a expectativa ERRADA |
+| `fn_linhas_para_modelagem` (export e tela) | as linhas do modelo | é o conteúdo das 14 abas e da seção 3 da Modelagem |
+| `fn_valores_por_ano` (export) | a série histórica por conta | 400 rótulos × 3 exercícios já passam de mil; cortar aqui dá a uma conta menos anos do que ela tem |
+| `caso_linha_premissa` (export e tela) | os vínculos linha→premissa | truncado, o analista reescolhe premissa de linha que já tinha uma |
+
+Todas com **ordem total e estável** (o desempate que impede duas páginas de repetirem e omitirem a
+mesma linha), e o export passou a **declarar** no cabeçalho `X-Oria-Leitura-Truncada` se algum teto
+de segurança for atingido — um arquivo incompleto que não se anuncia é pior que um erro.
+
+Ficam de fora, de propósito e por não crescerem com a mesa: catálogos (taxonomia, premissas, séries
+macro, banco de perguntas), consultas de linha única e as duas listas com `limit` deliberado (barra
+lateral, trilha de autonomia).
 
 ### As perguntas ao cliente ganharam a ABA que faltava (18/08, sessão 51)
 
@@ -491,21 +531,23 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 
 ## O que só o dono pode fazer
 
-1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. O dono confirmou em
-   18/08 que aplicou até a `0115`. **Três estão pendentes**, todas da sessão 50: `0116` (o papel dos
-   totais impressos), `0117` (a reconciliação de mútuos) e `0118` (o dedup por fingerprint —
-   `documento_versao` ganha coluna). Confira com:
+1. ~~**Aplicar as migrations novas no Supabase.**~~ **Feito: o dono confirmou em 18/08 (sessão 51)
+   que aplicou TODAS as que estão no repositório — até a `0121`.** Merge continua não sendo apply,
+   e da tela "aplicada" e "não aplicada" têm a mesma aparência, então a conferência de 30 segundos
+   vale a pena depois de qualquer rodada nova:
    ```sql
    select proname from pg_proc
     where proname in ('fn_papel_linha','fn_reconciliar_mutuos','fn_lado_do_mutuo',
-                      'fn_registrar_documento');
+                      'fn_sugerir_perguntas','fn_registrar_pergunta_acao');
    -- a 0118 acrescenta coluna, não só função:
    select column_name from information_schema.columns
     where table_name = 'documento_versao' and column_name = 'fingerprint_extracao';
    -- e a 0118 exige que sobre UMA assinatura de fn_registrar_documento (a de 16 args):
    select pronargs from pg_proc where proname = 'fn_registrar_documento';
+   -- a 0120 seedou 11 perguntas ativas:
+   select count(*) from pergunta_catalogo where ativo;
    ```
+   Com a `0120` no banco, a aba **Perguntas ao cliente** do mandato passa a listar de verdade.
 2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 18/08, e a mudança é
    estrutural: o teto de gasto saiu do começo da corrente e o dedup entrou. **Conferência de 5
    segundos depois de importar:** o canvas tem **33 nós** (eram 31). Procure, em ordem:

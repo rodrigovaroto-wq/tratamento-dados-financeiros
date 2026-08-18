@@ -259,6 +259,27 @@ psql "$SUPABASE_DB_URL" -f db/migrations/0002_seed_taxonomia_e_dial.sql
 psql "$SUPABASE_DB_URL" -f db/migrations/0003_rls_e_storage.sql
 ```
 
+## O teto de 1000 linhas do PostgREST (`db-max-rows`) — o que é, e onde ele mora
+
+O Supabase serve a API por **PostgREST**, e ele devolve no máximo `db-max-rows` linhas por
+requisição — **1000 por padrão**, cortando acima disso **em silêncio, sem erro nenhum**. Não é
+configuração deste repositório: é do PROJETO, e só o dono a alcança.
+
+**Onde mudar:** painel do Supabase → *Project Settings* → *API* → **Max rows**. O valor vale para
+toda a API do projeto (portal e n8n). Subir para 100000, ou para o maior número que o projeto
+aceitar, remove o teto na prática; salvar recarrega o PostgREST sozinho.
+
+**O portal não depende mais desse ajuste, e essa é a parte que importa.** Toda leitura que pode
+crescer passa por `portal/src/lib/supabase/paginar.ts`, que lê em janelas até o banco não ter mais
+o que dar — **qualquer que seja o teto do servidor**, alto, baixo ou removido. Subir o `Max rows`
+deixa cada leitura mais barata (menos idas ao banco); não subir não corta nada.
+
+**O que continua exigindo atenção:** consulta nova que devolva lista e não passe pelo `paginar`
+volta a estar sujeita ao teto — e o sintoma é um número redondo (exatamente 1000) ou uma lista que
+"termina" cedo, nunca um erro. Ficam fora de propósito, porque não crescem com a mesa: catálogos
+(taxonomia, premissas, séries macro, banco de perguntas), consultas de linha única (`.single()`,
+`.maybeSingle()`) e as duas listas com `limit` deliberado (barra lateral, trilha de autonomia).
+
 ## Notas de segurança (LGPD) — ler antes de conectar clientes
 
 - **service_role ignora RLS** (é o que o N8N usa como orquestrador). O portal Vercel **nunca**
