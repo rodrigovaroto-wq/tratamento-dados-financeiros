@@ -205,6 +205,16 @@ export default async function PainelPage() {
         // TODOS os mandatos, não só os ativos: "linhas extraídas" e "tempo médio"
         // são números da OPERAÇÃO, e um mandato fechado com sucesso é justamente
         // o que se quer ter no denominador de uma média de tempo.
+        //
+        // ESTA LISTA (E A DE PENDÊNCIAS LOGO ABAIXO) CONTINUA SUJEITA AO TETO DO
+        // POSTGREST (`db-max-rows`, 1000 no Supabase por padrão) — o mesmo que
+        // fez "linhas extraídas" mostrar exatamente 1.000 (ver o comentário perto
+        // de `totalLinhasRes`). Não corrigido aqui de propósito: hoje são 475
+        // documentos e 541 pendências, longe do teto, e as duas listas alimentam
+        // cálculo por LINHA (tempo médio por caso, a fila) — não dá para virar
+        // count. Quando a mesa se aproximar de 1000 documentos ou pendências
+        // ativas, isto pede paginação (`.range()` em laço) ou uma função no banco
+        // que agregue por caso, como se fez para o total de linhas.
         supabase
           .from("documento")
           .select("id, caso_id, tipo_taxonomia, status, criado_em, documento_versao(id)")
@@ -252,20 +262,58 @@ export default async function PainelPage() {
   const documentos = (documentosRes.data as unknown as DocumentoNoPainel[] | null) ?? [];
   const pendencias = (pendenciasRes.data as Pendencia[] | null) ?? [];
 
-  // QUANTAS LINHAS CADA DOCUMENTO RENDEU — a mesma conta que a tela do mandato
-  // faz, aqui somada sobre a operação inteira. Uma ida ao banco para todas as
-  // versões, não uma por documento.
-  const versoes = documentos.flatMap((d) => (d.documento_versao ?? []).map((v) => v.id)).filter(Boolean);
-  const linhasRes = versoes.length
-    ? await supabase.from("campo_extraido").select("documento_versao_id").in("documento_versao_id", versoes)
+  // O TOTAL DE LINHAS É UM COUNT, NÃO A SOMA DE LINHAS BAIXADAS.
+  //
+  // O DEFEITO QUE ISTO CORRIGE, e ele já apareceu em produção: a versão
+  // anterior buscava CADA linha de `campo_extraido` (`.select(...)` sem
+  // paginação) e somava no JavaScript. O PostgREST do Supabase devolve no
+  // máximo `db-max-rows` por consulta — **1000**, por padrão — e acima disso
+  // corta em silêncio, sem erro. Com 475 documentos de dado financeiro real, o
+  // total verdadeiro passa longe de 1000, e a tela mostrava exatamente
+  // "1.000 linhas extraídas": não era o dado, era o TETO.
+  //
+  // A CORREÇÃO É PEDIR UM COUNT, NÃO LINHAS. `count: "exact", head: true` faz o
+  // Postgres calcular `COUNT(*)` e devolver só o número — sem corpo de linhas,
+  // não há o que paginar, e o teto não se aplica. O FILTRO é pelo CASO, via o
+  // relacionamento embutido (`documento_versao!inner(documento!inner(caso_id))`),
+  // e não pela lista de versões já carregada em `documentos`: assim o total
+  // continua CORRETO mesmo se um dia a lista de documentos também passar de
+  // 1000 — as duas consultas deixam de compartilhar o mesmo teto.
+  const totalLinhasRes = ids.length
+    ? await supabase
+        .from("campo_extraido")
+        .select("id, documento_versao!inner(documento!inner(caso_id))", { count: "exact", head: true })
+        .in("documento_versao.documento.caso_id", ids)
+    : { count: 0 };
+  const totalLinhas = totalLinhasRes.count ?? 0;
+
+  // MESMO TETO, MESMA CORREÇÃO: quantos documentos existem é outro COUNT, não
+  // o tamanho do array que a lista de "O que chegou" já baixou (esse array
+  // POR SI está sujeito ao mesmo `db-max-rows` — hoje 475 documentos, folgado,
+  // mas o dia em que passar de 1000 esta consulta continua certa mesmo que a
+  // lista abaixo pare de crescer).
+  const totalDocumentosRes = ids.length
+    ? await supabase.from("documento").select("id", { count: "exact", head: true }).in("caso_id", ids)
+    : { count: 0 };
+  const totalDocumentos = totalDocumentosRes.count ?? 0;
+
+  // A CONTAGEM POR DOCUMENTO só serve para os 10 itens visíveis em "O que
+  // chegou" — não para o total (que já saiu acima). Por isso a consulta é
+  // pequena e ESCOPADA aos 10 mais recentes, em vez de baixar linhas de TODOS
+  // os documentos só para exibir dez.
+  const recentes = documentos.slice(0, 10);
+  const versoesRecentes = recentes
+    .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
+    .filter(Boolean);
+  const linhasRecentesRes = versoesRecentes.length
+    ? await supabase.from("campo_extraido").select("documento_versao_id").in("documento_versao_id", versoesRecentes)
     : { data: [] as Array<{ documento_versao_id: string }> };
   const linhasPorVersao = new Map<string, number>();
-  for (const l of (linhasRes.data as Array<{ documento_versao_id: string }> | null) ?? []) {
+  for (const l of (linhasRecentesRes.data as Array<{ documento_versao_id: string }> | null) ?? []) {
     linhasPorVersao.set(l.documento_versao_id, (linhasPorVersao.get(l.documento_versao_id) ?? 0) + 1);
   }
   const linhasDoDocumento = (d: DocumentoNoPainel) =>
     (d.documento_versao ?? []).reduce((s, v) => s + (linhasPorVersao.get(v.id) ?? 0), 0);
-  const totalLinhas = documentos.reduce((s, d) => s + linhasDoDocumento(d), 0);
 
   // TEMPO MÉDIO DE PROCESSAMENTO — do intake ao último documento registrado.
   //
@@ -353,8 +401,6 @@ export default async function PainelPage() {
     )
     .slice(0, 12);
 
-  const recentes = documentos.slice(0, 10);
-
   // A LINHA DO TEMPO É AGRUPADA POR DIA, e o cabeçalho do grupo é escrito uma
   // vez só — repetir "Hoje" em dez linhas é ruído que empurra o conteúdo para
   // baixo.
@@ -431,7 +477,7 @@ export default async function PainelPage() {
           <Indicador
             valor={numero(totalLinhas)}
             rotulo={totalLinhas === 1 ? "linha extraída" : "linhas extraídas"}
-            detalhe={documentos.length ? `de ${numero(documentos.length)} documentos` : null}
+            detalhe={totalDocumentos ? `de ${numero(totalDocumentos)} documentos` : null}
           />
           <Indicador
             valor={numero(pendencias.length)}
