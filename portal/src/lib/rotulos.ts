@@ -108,10 +108,38 @@ const PENDENCIAS = new Map<string, string>([
   ["classificacao_incerta", "classificação a confirmar"],
   ["entidade_incerta", "entidade a confirmar"],
   ["periodo_incerto", "período a confirmar"],
+  ["divergencia_reconciliacao", "os documentos não batem"],
 ]);
 
 export function rotuloDaPendencia(tipo: string): string {
   return PENDENCIAS.get(tipo) ?? humanizar(tipo);
+}
+
+/**
+ * QUAL checagem de reconciliação abriu a pendência.
+ *
+ * O TIPO da pendência responde "que espécie de problema é este" e seis
+ * checagens diferentes respondem a mesma coisa: `divergencia_reconciliacao`.
+ * Na fila do painel, seis linhas iguais dizendo "os documentos não batem" não
+ * dão para triar — e triagem é a única coisa que aquela fila faz. O `motivo`
+ * (`reconciliacao:<tipo>`) é quem sabe qual foi, e este mapa o põe em português.
+ *
+ * Devolve null para pendência que não veio de reconciliação — a tela então não
+ * escreve nada, em vez de escrever um nome técnico só porque existe um campo.
+ */
+const CHECAGENS = new Map<string, string>([
+  ["ativo_passivo_pl", "ativo × passivo + PL"],
+  ["caixa_bp_fluxo", "caixa: balanço × fluxo"],
+  ["duplicidade_de_rotulo", "mesma conta, dois rótulos"],
+  ["receita_dre_vs_faturamento", "receita: DRE × faturamento"],
+  ["despfin_dre_vs_divida", "despesa financeira × dívida"],
+  ["mutuos_planilha_vs_balanco", "mútuos: planilha × balanço"],
+]);
+
+export function nomeDaChecagem(motivo: string | null): string | null {
+  if (!motivo?.startsWith("reconciliacao:")) return null;
+  const tipo = motivo.slice("reconciliacao:".length);
+  return CHECAGENS.get(tipo) ?? humanizar(tipo);
 }
 
 /**

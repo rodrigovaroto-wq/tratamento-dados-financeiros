@@ -4,14 +4,14 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-18 (sessão 49). **Estado do `main`:** mergeado até o **PR #133**
-(`main` em `a2f2523`) — barra lateral rolável, `/casos` vira Painel com 8 indicadores, lista completa
-em `/casos/todos`, abertura animada, e a migration `0115` (custo do lote em `lote_execucao`).
-**Há uma branch de trabalho com PR aberto:** `claude/sidebar-scroll-home-redesign-k67agj`, **PR #134**
-— corrige "linhas extraídas" do Painel mostrando exatamente 1.000 (o teto padrão do
-Supabase/PostgREST, não o dado real). **Leia o `ESTADO.md` primeiro** — a seção "Estado dos PRs desta
-rodada" explica por que há dois PRs para o mesmo trabalho e o que fazer se o #134 ainda estiver
-aberto.
+**Última atualização:** 2026-08-18 (sessão 50). **Estado do `main`:** mergeado até o **PR #133**
+(`main` em `a2f2523`). **Há trabalho em duas branches:** o **PR #134** (corrige "linhas extraídas"
+mostrando exatamente 1.000 — o teto do PostgREST, não o dado) e a branch da **sessão 50**
+(`claude/handoff-next-steps-ke4omr`), que contém os commits do #134 mais os **sete itens da lista
+"o que está aberto"**, atacados em ordem a pedido do dono: os subtotais impressos, a checagem de
+mútuos, a tela de Modelagem, os apelidos da taxonomia, o teto de gasto por conteúdo, o dedup por
+fingerprint e o teto de 1000 nas listas do painel. **Leia o `ESTADO.md` primeiro** — a seção
+"O que a sessão 50 fez, e o que ficou de fora" tem o resumo item a item, com as ressalvas.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

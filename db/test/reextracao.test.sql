@@ -102,17 +102,95 @@ begin
   perform teste_assert_rx(v_n = 5, 'hash nulo não casa (comportamento de antes)',
     format('documentos=%s (esperado 5)', v_n));
 
-  raise notice '--- 6. o overload morto de 14 argumentos não existe mais ---';
+  raise notice '--- 6. UMA assinatura só (o overload morto não voltou) ---';
+  -- A 0026 matou o de 14 args; a 0118 acrescentou o 16º (o fingerprint) e teve
+  -- de MATAR o de 15 pelo mesmo motivo: com dois vivos, a chamada do n8n (13
+  -- posicionais + o resto por nome) casa com AMBOS e o Postgres recusa com
+  -- "function is not unique" — no meio de um lote real, não em teste.
+  select count(*) into v_n from pg_proc where proname = 'fn_registrar_documento';
+  perform teste_assert_rx(v_n = 1, 'existe exatamente UMA fn_registrar_documento',
+    format('assinaturas vivas=%s', v_n));
   select count(*) into v_n from pg_proc
-    where proname = 'fn_registrar_documento' and pronargs = 14;
-  perform teste_assert_rx(v_n = 0, 'só a assinatura de 15 args sobrevive',
-    format('assinaturas de 14 args=%s', v_n));
+    where proname = 'fn_registrar_documento' and pronargs = 16;
+  perform teste_assert_rx(v_n = 1, 'e ela é a de 16 args (com o fingerprint da 0118)',
+    format('assinaturas de 16 args=%s', v_n));
 
   raise notice '--- 7. a reextração fica no rastro de auditoria ---';
   select count(*) into v_n from evento_auditoria
     where acao = 'documento_reextraido' and entidade_ref = 'documento:'||(v_r1->>'documento_id');
   perform teste_assert_rx(v_n = 1, 'evento próprio (documento_reextraido), não silêncio',
     format('eventos=%s', v_n));
+
+  raise notice '--- 8. FINGERPRINT (0118): mesmo arquivo + mesmo prompt não paga de novo ---';
+  -- O par (hash, fingerprint) só autoriza reaproveitar quando a versão antiga TEM
+  -- linha extraída. Aqui a primeira versão recebe uma linha, e é isso que faz o
+  -- segundo registro devolver a MESMA versão em vez de abrir outra.
+  v_caso := (fn_upsert_caso('Caso fingerprint'))::uuid;
+  v_r1 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok',
+    p_fingerprint_extracao => 'FP-1');
+  insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca)
+    values ((v_r1->>'documento_versao_id')::uuid, 'Caixa', 100, 'unidade', 0.99);
+
+  v_r2 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok',
+    p_fingerprint_extracao => 'FP-1');
+  perform teste_assert_rx((v_r2->>'reaproveitou_extracao')::boolean,
+    'mesmo hash + mesmo fingerprint + já tem linha => reaproveita a extração');
+  perform teste_assert_rx(
+    (v_r1->>'documento_versao_id') = (v_r2->>'documento_versao_id'),
+    'e NÃO cria versão nova — é a mesma versão que volta',
+    format('%s vs %s', v_r1->>'documento_versao_id', v_r2->>'documento_versao_id'));
+  select count(*) into v_n from documento_versao
+    where documento_id = (v_r1->>'documento_id')::uuid;
+  perform teste_assert_rx(v_n = 1, 'uma versão só, depois de dois registros',
+    format('versões=%s', v_n));
+  select count(*) into v_n from evento_auditoria
+    where acao = 'documento_extracao_reaproveitada';
+  perform teste_assert_rx(v_n = 1, 'o reaproveitamento fica no rastro de auditoria',
+    format('eventos=%s', v_n));
+
+  raise notice '--- 9. fingerprint DIFERENTE volta a pagar (é a reextração deliberada) ---';
+  -- É o caso de o prompt ter mudado — a 0116 mexeu nele, e uma extração feita com
+  -- o prompt de ontem não vale como a de hoje. Aqui tem de nascer versão nova.
+  v_r3 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok',
+    p_fingerprint_extracao => 'FP-2');
+  perform teste_assert_rx(not (v_r3->>'reaproveitou_extracao')::boolean,
+    'fingerprint diferente NÃO reaproveita');
+  perform teste_assert_rx((v_r3->>'reaproveitou_documento')::boolean,
+    'mas continua sendo o MESMO documento (a idempotência da 0026 segue valendo)');
+  perform teste_assert_rx((v_r3->>'n_versao')::int = 2, 'e a versão é a 2',
+    format('n_versao=%s', v_r3->>'n_versao'));
+
+  raise notice '--- 10. EXTRAÇÃO QUE FALHOU não vale como extração feita ---';
+  -- A propriedade que impede o pior erro desta migration. A versão 3 nasce com o
+  -- fingerprint FP-3 e NENHUMA linha (extração truncada/recusada). Reenviar o
+  -- arquivo — que é o conserto — tem de chamar a IA de novo.
+  v_r4 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok',
+    p_fingerprint_extracao => 'FP-3');
+  perform teste_assert_rx(not (v_r4->>'reaproveitou_extracao')::boolean,
+    'a versão com FP-3 nasceu sem linha nenhuma');
+  v_r4 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok',
+    p_fingerprint_extracao => 'FP-3');
+  perform teste_assert_rx(not (v_r4->>'reaproveitou_extracao')::boolean,
+    'e o reenvio com o MESMO fingerprint volta a pagar a extração — sem linha, não há o que reaproveitar');
+
+  raise notice '--- 11. sem fingerprint, o comportamento é o da 0026 ---';
+  -- Workflow antigo (que não manda o campo) não pode virar reaproveitamento
+  -- silencioso: fingerprint nulo nunca casa, igual a hash nulo.
+  v_r4 := fn_registrar_documento(
+    v_caso, 'Delta Ltda.', 'anual', '2025', 'BALANCO', 0.95, 'nome_arquivo',
+    'supabase_storage', 'bucket/d.pdf', 'BP Delta.pdf', true, 'HASH-D', 'ok');
+  perform teste_assert_rx(not (v_r4->>'reaproveitou_extracao')::boolean,
+    'fingerprint nulo não casa');
 
   raise notice 'TODOS OS TESTES DE REEXTRAÇÃO PASSARAM';
 end $$;

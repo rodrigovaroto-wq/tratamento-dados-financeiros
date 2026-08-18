@@ -610,22 +610,54 @@ test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos 
   assert.ok(reducaoPct >= 15, `esperava >=15% de redução por linha, obteve ${reducaoPct.toFixed(1)}%`);
 });
 
-// O guarda de orçamento tem de estar ANTES de qualquer gasto: depois da
-// classificação por nome (que é grátis e diz quantas chamadas o lote fará) e
-// antes de `Preparar Conteudo`, que abre os binários para as chamadas.
-test('Topologia: o teto de gasto fica entre a classificação por nome e o conteúdo', () => {
-  assert.deepEqual(wf.connections['Classificar Nome'].main[0].map((c) => c.node), ['Orcamento do Lote']);
-  // O orçamento não segue mais direto para o conteúdo: entre os dois há o IF que
-  // separa "cabe" de "não cabe". O ramo do NÃO existe porque a recusa precisava
-  // chegar ao portal — lançando ali mesmo, a mensagem ficava só no log do n8n e
-  // a tela seguia dizendo "estamos organizando tudo com cuidado" para sempre.
+// O guarda de orçamento tem de estar DEPOIS da medição do documento e ANTES de
+// qualquer gasto. As duas metades são igualmente obrigatórias:
+//
+//   • depois do `Medir Documento`, porque é de lá que vêm as linhas com número e
+//     o número de blocos — sem isso o guarda volta a estimar por byte, com a
+//     margem de 1,8× que recusava lote que cabia;
+//   • antes do `Precisa Fallback?`, porque a primeira chamada à OpenAI sai dali
+//     (`OpenAI Classificar`). Entre o `Medir Documento` e esse IF não há gasto
+//     nenhum: o `Extrair Texto` é local, o `Upload Storage` é ramo lateral, e
+//     nenhum documento foi registrado ainda.
+//
+// Este teste é o que impede alguém de "arrumar" o grafo movendo o guarda de
+// volta para antes do conteúdo — ou, pior, para depois da primeira chamada.
+test('Topologia: o teto de gasto fica entre a medição do documento e a primeira chamada', () => {
+  assert.deepEqual(wf.connections['Classificar Nome'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Orcamento do Lote']);
+  // O orçamento não segue direto: entre ele e a cadeia há o IF que separa "cabe"
+  // de "não cabe". O ramo do NÃO existe porque a recusa precisava chegar ao
+  // portal — lançando ali mesmo, a mensagem ficava só no log do n8n e a tela
+  // seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Preparar Conteudo']);
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Precisa Fallback?']);
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
   // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
   // o portal sem a causa, que é exatamente o defeito que este ramo corrige.
   assert.deepEqual(wf.connections['Registrar Recusa'].main[0].map((c) => c.node), ['Abortar Lote']);
   assert.equal(wf.connections['Abortar Lote'], undefined, 'abortar é o fim do ramo');
+
+  // E A PROPRIEDADE QUE NÃO PODE CAIR, escrita como caminho e não como nome de
+  // nó: nenhum nó que fale com a OpenAI é alcançável a partir do `Intake` sem
+  // passar pelo `Lote cabe?`. É isso que "barrar de graça" significa.
+  const alcancaveisSemOGuarda = new Set(['Intake (Form)']);
+  let mudou = true;
+  while (mudou) {
+    mudou = false;
+    for (const [origem, conf] of Object.entries(wf.connections)) {
+      if (!alcancaveisSemOGuarda.has(origem) || origem === 'Lote cabe?') continue;
+      for (const ramo of conf.main || []) {
+        for (const c of ramo || []) {
+          if (!alcancaveisSemOGuarda.has(c.node)) { alcancaveisSemOGuarda.add(c.node); mudou = true; }
+        }
+      }
+    }
+  }
+  for (const nome of ['OpenAI Classificar', 'OpenAI Extrair']) {
+    assert.ok(!alcancaveisSemOGuarda.has(nome),
+      `${nome} é alcançável sem passar pelo "Lote cabe?" — o teto deixou de barrar antes de gastar`);
+  }
 });
 
 test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
@@ -636,9 +668,10 @@ test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
   assert.ok(destinosDePreparar.includes('Extrair Texto'));
   assert.deepEqual(destinosDePreparar.sort(), ['Extrair Texto', 'Upload Storage'].sort());
   assert.equal(wf.connections['Upload Storage'], undefined, 'Upload não alimenta nenhum node');
-  // A corrente segue pelo `Extrair Texto` → `Medir Documento` → `Precisa Fallback?`.
+  // A corrente segue pelo `Extrair Texto` → `Medir Documento` → o guarda de
+  // orçamento → `Precisa Fallback?`.
   assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Medir Documento']);
-  assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Precisa Fallback?']);
+  assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Orcamento do Lote']);
   const destinosDeRegistrar = wf.connections['Registrar Documento'].main[0].map((c) => c.node);
   assert.deepEqual(destinosDeRegistrar.sort(), ['Recompor Contexto', 'Recomputar Completude'].sort());
 });
@@ -666,6 +699,67 @@ test('Convergência: nenhum node recebe DUAS conexões cruas no mesmo input', ()
       `"${chave}" recebe ${origens.length} conexões (${origens.join(', ')}) — use um Merge: `
       + 'convergência crua no mesmo input perdeu 19 de 35 documentos no Teste V45');
   }
+});
+
+test('Dedup (0118): o curto-circuito existe, e junta por Merge — nunca convergência crua', () => {
+  // A segunda metade da 0026, que ela mesma deixou escrita como fatia própria:
+  // não PAGAR a extração quando o arquivo é idêntico e o prompt não mudou.
+  // Quem responde isso é o banco (`reaproveitou_extracao`); quem age é este IF.
+  const iff = wf.nodes.find((n) => n.name === 'Extracao ja feita?');
+  assert.ok(iff, 'existe o IF do dedup');
+  assert.equal(iff.type, 'n8n-nodes-base.if');
+  assert.match(JSON.stringify(iff.parameters), /reaproveitou_extracao/);
+
+  // O IF vem DEPOIS do registro (é de lá que sai a resposta) e ANTES de montar a
+  // requisição — o `Montar Req Extracao` é runOnceForEachItem e não pode devolver
+  // zero itens, restrição que a 0026 já havia mapeado.
+  assert.deepEqual(wf.connections['Recompor Contexto'].main[0].map((c) => c.node), ['Extracao ja feita?']);
+  assert.deepEqual(wf.connections['Extracao ja feita?'].main[1].map((c) => c.node), ['Montar Req Extracao']);
+
+  // O ramo do "já extraído" NÃO pode passar por nenhum nó que fale com a OpenAI.
+  const reaproveitado = wf.connections['Extracao ja feita?'].main[0];
+  assert.deepEqual(reaproveitado.map((c) => c.node), ['Juntar Extraidos']);
+  assert.equal(reaproveitado[0].index, 1, 'o ramo do dedup entra no input 1 do Merge');
+
+  const merge = wf.nodes.find((n) => n.name === 'Juntar Extraidos');
+  assert.ok(merge, 'existe o Merge que junta os dois ramos');
+  assert.equal(merge.type, 'n8n-nodes-base.merge');
+  assert.equal(merge.parameters.mode, 'append');
+  assert.equal(merge.parameters.numberInputs, 2);
+  const viaExtracao = wf.connections['Registrar Diagnostico'].main[0];
+  assert.deepEqual(viaExtracao.map((c) => c.node), ['Juntar Extraidos']);
+  assert.equal(viaExtracao[0].index ?? 0, 0, 'quem extraiu entra no input 0');
+  assert.deepEqual(wf.connections['Juntar Extraidos'].main[0].map((c) => c.node), ['Reconciliar (Classe A)']);
+
+  // E a cauda do lote continua rodando para os dois: reconciliação, custo,
+  // gravação do uso e a conferência de integridade do lote.
+  assert.deepEqual(wf.connections['Reconciliar (Classe A)'].main[0].map((c) => c.node), ['Resumo de Custo']);
+});
+
+test('Dedup (0118): o fingerprint sai do prompt+modelo+esquema, e viaja no registro', () => {
+  const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters;
+  assert.match(q.query, /p_fingerprint_extracao=>\$15::text/,
+    'o registro tem de MANDAR o fingerprint — sem ele a 0118 nunca reaproveita nada');
+
+  // O valor é calculado no BUILD a partir do prompt real. Recalculá-lo aqui, do
+  // mesmo jeito, é o que garante que ele acompanhe a mudança do prompt: a `0116`
+  // mexeu no prompt, e uma extração feita com o prompt de ontem NÃO vale como a
+  // de hoje (foi assim que a DMPL classificada como MUTUOS ficou presa no código
+  // errado antes da 0024).
+  const esperado = createHash('sha256')
+    .update([SYSTEM_PROMPT, MODELO_EXTRACAO, JSON.stringify(extractionSchema())].join('\u0000'))
+    .digest('hex')
+    .slice(0, 16);
+  assert.ok(q.options.queryReplacement.includes(`'${esperado}'`),
+    'o fingerprint embutido no nó divergiu do prompt/modelo/esquema em uso');
+
+  // E a prova de que ele MUDA quando o prompt muda — se não mudasse, o dedup
+  // reaproveitaria extração feita com regra velha, que é pior que não deduplicar.
+  const comOutroPrompt = createHash('sha256')
+    .update([`${SYSTEM_PROMPT} nota nova`, MODELO_EXTRACAO, JSON.stringify(extractionSchema())].join('\u0000'))
+    .digest('hex')
+    .slice(0, 16);
+  assert.notEqual(esperado, comOutroPrompt);
 });
 
 test('Os dois ramos do fallback se juntam num Merge, em inputs DIFERENTES', () => {
@@ -1050,6 +1144,65 @@ test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobre
   assert.equal(out[13].binary.data.fileName, '14_BP_X_12M25.pdf');
 });
 
+test('Orcamento do Lote decide POR CONTEÚDO quando o documento já foi medido', async () => {
+  // O ponto do trabalho de 18/08: com o texto do PDF já lido, o guarda para de
+  // estimar por byte. Estes 14 documentos trazem a medida que o `Medir
+  // Documento` produz — linhas com número e páginas —, e o lote inteiro custa
+  // uma fração do que a conta por byte dizia.
+  const items = Array.from({ length: 14 }, (_, i) => ({
+    json: {
+      caso_id: 'c-1', nome_original: `${i + 1}_BP_X_12M25.pdf`, precisa_fallback_openai: false,
+      bytes: 90_000, periodo_ref: '12M25',
+      celulas_no_documento: 80, paginas_do_documento: 2,
+      linhas_do_texto: Array.from({ length: 80 }, (_, l) => `Conta ${l} 1.234,00`),
+    },
+    binary: { data: { fileName: `${i + 1}_BP_X_12M25.pdf`, mimeType: 'application/pdf', data: '' } },
+  }));
+  const out = await run('Orcamento do Lote', { items });
+  assert.equal(out.length, 14);
+  assert.equal(out[0].json.orcamento_por_conteudo, true, 'decidiu pela medida, não pelo tamanho');
+  assert.equal(out[0].json.orcamento_cabe, true);
+  // 14 documentos de 2 páginas e 80 linhas custam centavos — e a estimativa por
+  // byte dos MESMOS arquivos (14 × 90 KB = 1,2 MB × US$ 10,5/MB) daria US$ 12,9
+  // e RECUSARIA o lote. É essa diferença que o trabalho corrige.
+  assert.ok(out[0].json.orcamento_estimado_usd < 1,
+    `esperava menos de US$ 1, veio ${out[0].json.orcamento_estimado_usd}`);
+  assert.ok(out[13].binary?.data, 'o binário do último item sobreviveu ao nó');
+});
+
+test('Orcamento do Lote conta os BLOCOS do fatiamento, não os documentos', async () => {
+  // Um documento denso é FATIADO, e cada fatia é uma chamada nova que reenvia o
+  // PDF inteiro. A conta por byte não tinha como saber disso e subestimava
+  // justamente o documento caro. Aqui o número de blocos sai de `planejarFatias`
+  // — a mesma função que o `Fatiar Extracao` vai executar adiante.
+  const linhas = Array.from({ length: 900 }, (_, l) => `Conta analitica ${l} 1.234,00`);
+  const items = [{
+    json: {
+      caso_id: 'c-1', nome_original: '01_Razao_X_12M25.pdf', precisa_fallback_openai: false,
+      bytes: 400_000, periodo_ref: '12M25',
+      celulas_no_documento: linhas.length, paginas_do_documento: 30, linhas_do_texto: linhas,
+    },
+    binary: { data: { fileName: '01_Razao_X_12M25.pdf', mimeType: 'application/pdf', data: '' } },
+  }];
+  const out = await run('Orcamento do Lote', { items });
+  assert.equal(out[0].json.orcamento_por_conteudo, true);
+  assert.ok(out[0].json.orcamento_chamadas > 1,
+    `um documento de ${linhas.length} linhas gasta mais de uma chamada; veio ${out[0].json.orcamento_chamadas}`);
+});
+
+test('Orcamento do Lote cai para a conta por BYTE quando falta medida', async () => {
+  // PDF escaneado não tem camada de texto: `celulas_no_documento` vem nulo. O
+  // lote inteiro cai no caminho antigo de propósito — medir só os documentos que
+  // dá subestimaria o lote na exata proporção do que não se sabe.
+  const items = [
+    { json: { caso_id: 'c-1', nome_original: '1_BP_X_12M25.pdf', bytes: 90_000, celulas_no_documento: 80, paginas_do_documento: 2, linhas_do_texto: ['Caixa 1,00'] }, binary: {} },
+    { json: { caso_id: 'c-1', nome_original: '2_BP_Y_12M25.pdf', bytes: 90_000, celulas_no_documento: null, paginas_do_documento: null, linhas_do_texto: null }, binary: {} },
+  ];
+  const out = await run('Orcamento do Lote', { items });
+  assert.equal(out[0].json.orcamento_por_conteudo, false,
+    'um documento sem medida joga o lote inteiro para a conta por byte');
+});
+
 test('Orcamento do Lote carrega o MESMO orcamentoDoLote de lib/custo.mjs', () => {
   assert.ok(code('Orcamento do Lote').includes(orcamentoDoLote.toString()),
     'o orçamento embutido no nó divergiu da fonte em lib/custo.mjs');
@@ -1428,8 +1581,13 @@ test('a corrente inteira preserva caso_id e binário até o Registrar Documento'
 
   const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters.options.queryReplacement;
   const params = new Function('$json', 'return (' + q.replace(/^=\{\{/, '').replace(/\}\}$/, '') + ')')(preparado.json);
-  assert.equal(params.length, 14);
+  // 15 desde a 0118: o 15º é o fingerprint de prompt+modelo+esquema, calculado no
+  // BUILD e embutido como literal. Ele é o que autoriza não pagar a mesma
+  // extração duas vezes.
+  assert.equal(params.length, 15);
   assert.equal(params[0], 'caso-uuid-1', 'caso_id NÃO pode chegar null — é not-null no banco');
+  assert.match(params[14], /^[0-9a-f]{16}$/,
+    'o fingerprint tem de ser um valor fixo e não vazio — nulo aqui desliga o dedup em silêncio');
   assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
   assert.equal(params[4], 'DRE', 'a classificação sobrevive');
   assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');

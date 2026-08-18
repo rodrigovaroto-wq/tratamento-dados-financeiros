@@ -540,6 +540,28 @@ test('linha não-monetária não herda moeda (mesma regra da escala)', () => {
 });
 
 // --- Prompt: instruções que blindam a variação entre contratos --------------
+test('SYSTEM_PROMPT exige o TOTAL IMPRESSO como linha, e não só como nome de seção', () => {
+  // O defeito medido na auditoria da rodada v46 (17/08): o balanço chegou com
+  // todas as contas e NENHUM dos totais de topo. "ATIVO CIRCULANTE",
+  // "TOTAL DO ATIVO", "RECEITA OPERACIONAL BRUTA" viraram `secao` — que é um
+  // NOME, não guarda número — e o valor impresso ao lado deles sumiu. Sem o
+  // total impresso, a conferência do export não tem contra o que conferir: a
+  // soma das contas vira a única verdade disponível, que é exatamente o que a
+  // conferência existe para evitar.
+  assert.match(SYSTEM_PROMPT, /O TOTAL IMPRESSO É LINHA, E NÃO SÓ NOME DE SEÇÃO/);
+  assert.match(SYSTEM_PROMPT, /"secao" é o nome do agrupamento, não guarda\s+número nenhum/);
+  // As três alturas têm de estar nomeadas: total geral, seção e subgrupo. Um
+  // prompt que só cita "total" deixa passar o cabeçalho de seção com valor,
+  // que foi o caso real.
+  for (const altura of ['TOTAL DO ATIVO', 'Passivo Não', 'Disponível']) {
+    assert.ok(SYSTEM_PROMPT.includes(altura), `o prompt não exemplifica "${altura}"`);
+  }
+  // E a fronteira: o total que o documento NÃO imprime continua proibido —
+  // extrair total calculado seria inventar dado, e o sistema inteiro depende de
+  // o extraído ser só o que está escrito.
+  assert.match(SYSTEM_PROMPT, /se a\s+documento não imprime o total, não calcule|documento não imprime o total, não calcule/);
+});
+
 test('SYSTEM_PROMPT instrui a notação CANÔNICA de período na emissão', () => {
   // Sem isto, a IA emitia o período em notação livre ("2025", "31/12/2024",
   // "12M25") — inconsistente com o lado do nome (lib/classifier.mjs).
