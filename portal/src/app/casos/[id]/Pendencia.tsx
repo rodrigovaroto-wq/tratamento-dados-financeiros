@@ -22,6 +22,7 @@
 // pendência que NÃO PROCEDE — o motor errou, a conta está no outro documento —
 // não tinha o que fazer na tela. `f0/04` prevê esse caminho desde a F0
 // (`rejeitada`); faltava código e faltava botão.
+import Link from "next/link";
 import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
 import { rotuloDeTipoConhecido } from "@/lib/export";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "@/lib/pendencia";
@@ -146,6 +147,26 @@ export function ItemPendencia({
               </button>
             </form>
           ))}
+          {/* A PONTE PARA A ABA DAS PERGUNTAS (0120), e só depois de "Contatar o
+              Cliente" ter sido clicado.
+
+              O botão rotula a pendência — ele não escreve o e-mail. Quem
+              acabou de dizer "vou falar com o cliente" está exatamente no
+              momento em que precisa do texto pronto, e sem esta linha não há
+              nada na tela que diga que ele existe.
+
+              É UM LINK, não a pergunta embutida aqui: a lista de pendências é
+              decisão sobre problema medido, e a aba é o que ainda não foi
+              perguntado. As duas continuam separadas — o que se acrescenta é o
+              caminho de uma para a outra. */}
+          {p.estado === "reenviada_ao_cliente" && (
+            <Link
+              href={`/casos/${casoId}/perguntas`}
+              className={`text-xs font-medium underline-offset-2 hover:underline ${cores.fraco}`}
+            >
+              ver a pergunta pronta para o cliente
+            </Link>
+          )}
         </div>
       )}
     </li>

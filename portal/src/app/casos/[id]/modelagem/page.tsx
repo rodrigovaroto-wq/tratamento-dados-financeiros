@@ -178,9 +178,17 @@ export default async function ModelagemPage({
     medir(supabase.rpc("fn_premissas_sugeridas", { p_setor: parametros?.setor ?? null })),
     medir(supabase.from("caso_premissa").select("premissa_codigo, valores, origem")
       .eq("caso_id", id).eq("ativo", true)),
-    medir(supabase.from("caso_linha_premissa")
-      .select("secao_canonica, rotulo_norm, entidade, premissa_codigo, sazonalidade_codigo")
-      .eq("caso_id", id)),
+    // PAGINADA: é um vínculo por LINHA do mandato, então cresce com o book —
+    // e é ela que diz como cada conta projeta. Truncada, a tela mostraria
+    // contas "sem premissa" que já têm uma, e o analista escolheria de novo.
+    medir(paginar<{ secao_canonica: string | null; rotulo_norm: string; entidade: string | null;
+                    premissa_codigo: string | null; sazonalidade_codigo: string | null }>(
+      (de, ate) => supabase.from("caso_linha_premissa")
+        .select("secao_canonica, rotulo_norm, entidade, premissa_codigo, sazonalidade_codigo")
+        .eq("caso_id", id)
+        .order("rotulo_norm", { ascending: true })
+        .order("secao_canonica", { ascending: true, nullsFirst: true })
+        .range(de, ate))),
     medir(supabase.rpc("fn_conferir_modelagem", { p_caso_id: id })),
     // As linhas do caso — por FUNÇÃO (0039/0042), não por consulta direta.
     //
@@ -188,7 +196,16 @@ export default async function ModelagemPage({
     // documento_versao → documento`. A primeira versão desta tela consultava a
     // tabela direto e, com a RLS aberta a qualquer autenticado, trazia as linhas
     // de TODOS os mandatos. O escopo por caso vive em UM lugar, coberto por teste.
-    medir(supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id })),
+    //
+    // PAGINADA pelo mesmo motivo do export: é uma linha por (seção, rótulo)
+    // do mandato inteiro, e é o conteúdo da seção 3 desta tela. A ordem
+    // (seção, rótulo) é a que a própria função declara — e é total, porque é
+    // exatamente por esse par que ela agrupa.
+    medir(paginar<LinhaDoCaso>((de, ate) =>
+      supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id })
+        .order("secao_canonica", { ascending: true, nullsFirst: false })
+        .order("rotulo_norm", { ascending: true })
+        .range(de, ate))),
     // A curva de sazonalidade é DERIVADA do faturamento mensal do caso (0040):
     // ninguém digita 12 percentuais que o documento já afirma.
     medir(supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id })),
@@ -294,7 +311,7 @@ export default async function ModelagemPage({
   // A função já devolve UMA linha por (seção, rótulo normalizado): o agrupamento
   // por rótulo é dela, não daqui, para a tela e o lote concordarem sobre o que é
   // "uma linha".
-  const todasLinhas = (camposRes.data as LinhaDoCaso[] | null) ?? [];
+  const todasLinhas = camposRes.data;
   const alvo = busca.toLowerCase();
   const linhasPorSecao = new Map<string, LinhaDoCaso[]>();
   for (const c of todasLinhas) {

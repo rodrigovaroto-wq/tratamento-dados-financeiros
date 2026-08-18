@@ -17,7 +17,18 @@
 --   #6  ação humana: enviada sem texto é RECUSADA (jsonb, não exceção);
 --       enviada com texto grava, audita, e a sugestão passa a ja_enviada=true
 --       SEM sumir da lista; código inexistente é recusado;
---   #7  sugerir é SÓ LEITURA: nada muda em campo_extraido nem em pendencia.
+--   #7  sugerir é SÓ LEITURA: nada muda em campo_extraido nem em pendencia;
+--   #8  append-only é REGRA do banco: caso_pergunta sem política de UPDATE/DELETE;
+--   #9  o período do marcador é o mais recente por ANO, não por texto;
+--   #10 a pergunta NOMEIA a empresa (e a contextual, de propósito, não);
+--   #11 o par (código, empresa) é ÚNICO na saída — é ele que torna TOTAL a ordem
+--       (prioridade, codigo, entidade_id) com que a aba do portal pagina a
+--       função, e sem ordem total duas páginas repetem e omitem a mesma linha;
+--   #12 (0122) O TEXTO QUE VAI AO CLIENTE está em português: período por
+--       extenso ("2023 a 2025", nunca "23,24,25"), valor em reais
+--       ("R$ 16.060 mil", nunca "16060 milhar"), janela móvel que não vira ano
+--       (L36M não é 2036) e período POR EMPRESA — a pergunta sobre a Beta não
+--       cita o exercício que só a Alfa tem.
 
 \set ON_ERROR_STOP on
 
@@ -93,8 +104,10 @@ begin
   ]'::jsonb, 'N0');
 
   select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso) s where s.codigo = '5.1';
-  perform teste_assert_pg(v_txt like '%150 milhar%',
-    'duas linhas na MESMA escala: soma com a unidade (150 milhar)', left(v_txt, 140));
+  -- 0122: era "150 milhar" — a soma com o nome INTERNO da escala. O texto vai ao
+  -- cliente, então sai em reais, com a escala em palavra.
+  perform teste_assert_pg(v_txt like '%R$ 150 mil%',
+    'duas linhas na MESMA escala: soma em reais (R$ 150 mil)', left(v_txt, 140));
 
   v_r := fn_registrar_documento(
     v_caso, 'Quero Perguntas Ltda', 'anual', '2025', 'MUTUOS', 0.9, 'nome_arquivo',
@@ -241,7 +254,123 @@ begin
     'pergunta contextual (sempre) NÃO ganha prefixo de empresa — não é de ninguém em particular',
     'achou ' || v_n);
 
-  raise notice 'perguntas OK — A3 dispara e A1/A2 calam; sempre só com conteúdo; marcadores resolvidos ou visíveis; saldo por escala única; linha_presente pronta para o upgrade do dono; ação humana auditada; só leitura; append-only imposto; período por ano; pergunta com o nome da empresa';
+  raise notice '--- 11. (código, empresa) é ÚNICO na saída — o que a aba do portal pagina ---';
+  -- POR QUE ISTO É TESTE DE BANCO, e não detalhe de tela. A aba "Perguntas ao
+  -- cliente" lê esta função PAGINADA (o PostgREST corta em 1000 linhas em
+  -- silêncio, e a sugestão é uma por pergunta × empresa desde a 0119), e pagina
+  -- ordenando por (prioridade, codigo, entidade_id). Ordem de página só é
+  -- confiável se for TOTAL: se duas linhas empatarem nas três colunas, o
+  -- Postgres pode devolvê-las em ordens diferentes em duas requisições, e aí
+  -- uma linha aparece nas duas páginas enquanto outra não aparece em nenhuma —
+  -- pior que truncar, porque o total continua plausível.
+  --
+  -- O empate só não acontece porque o par (código, empresa) é único aqui. Isso
+  -- é propriedade da função, não da tela: uma espécie de gatilho nova que
+  -- devolvesse a mesma pergunta duas vezes para a mesma empresa quebraria a
+  -- paginação sem quebrar teste nenhum — a menos deste.
+  select count(*) into v_n from (
+    select s.codigo, s.entidade_id from fn_sugerir_perguntas(v_caso) s
+     group by s.codigo, s.entidade_id having count(*) > 1) d;
+  perform teste_assert_pg(v_n = 0,
+    'nenhum par (código, empresa) repetido — a ordem (prioridade, codigo, entidade_id) é total',
+    'achou ' || v_n || ' par(es) repetido(s)');
+
+  -- E O NOME E O ID DA EMPRESA ANDAM JUNTOS. A tela mostra `entidade` e casa a
+  -- ação humana por `entidade_id`; se um viesse sem o outro, duas empresas
+  -- diferentes cairiam na mesma chave (ou uma sugestão nomeada viraria
+  -- irregistrável), e "já enviada" passaria a mentir sobre qual empresa.
+  select count(*) into v_n from fn_sugerir_perguntas(v_caso) s
+   where (s.entidade is null) <> (s.entidade_id is null);
+  perform teste_assert_pg(v_n = 0,
+    'entidade e entidade_id são nulos juntos ou preenchidos juntos', 'achou ' || v_n);
+
+  -- ---------------------------------------------------------------------------
+  -- 12. O TEXTO QUE SAI DA CASA (0122)
+  -- ---------------------------------------------------------------------------
+  raise notice '--- 12. o texto vai ao CLIENTE: período por extenso e valor em reais ---';
+  -- MEDIDO NO BOOK DA CANASTRA, antes da 0122, e é daí que esta seção nasceu:
+  --   "Na DRE de 24,25 não localizamos a linha de despesas financeiras."
+  --   "no faturamento de L36M?"      (L36M vencia 2025: fn_anos_texto lia 2036)
+  --   "A relação de mútuos informa 16060 milhar…"
+  -- Nenhuma errada no dado; as três erradas no LEITOR, que aqui é o cliente.
+
+  perform teste_assert_pg(fn_anos_texto('L36M') = '{}'::int[],
+    'L36M não é ano nenhum — é o tamanho da janela', fn_anos_texto('L36M')::text);
+  perform teste_assert_pg(fn_anos_texto('12M25') = '{2025}'::int[],
+    '…e 12M25 continua sendo 2025 (ali o final É o ano)', fn_anos_texto('12M25')::text);
+
+  perform teste_assert_pg(fn_periodo_por_extenso('multi', '23,24,25') = '2023 a 2025',
+    'três exercícios seguidos viram intervalo', fn_periodo_por_extenso('multi', '23,24,25'));
+  perform teste_assert_pg(fn_periodo_por_extenso('multi', '24,25') = '2024 e 2025',
+    'dois viram "e"', fn_periodo_por_extenso('multi', '24,25'));
+  perform teste_assert_pg(fn_periodo_por_extenso('multi', '21,23,25') = '2021, 2023 e 2025',
+    'com buraco vira LISTA — o intervalo afirmaria exercício que o documento não traz',
+    fn_periodo_por_extenso('multi', '21,23,25'));
+  perform teste_assert_pg(fn_periodo_por_extenso('multi', 'L36M') = 'um período de 36 meses',
+    'janela móvel é dita como janela', fn_periodo_por_extenso('multi', 'L36M'));
+  perform teste_assert_pg(fn_periodo_por_extenso('trimestre', '1T25') = '2025 (1º trimestre)',
+    'trimestre com o ANO NA FRENTE — cabe depois de "de"', fn_periodo_por_extenso('trimestre', '1T25'));
+  perform teste_assert_pg(fn_periodo_por_extenso('anual', 'REV3') = 'REV3',
+    'rótulo que não diz ano SAI COMO VEIO — esconder o que não se entendeu é pior',
+    coalesce(fn_periodo_por_extenso('anual', 'REV3'), 'null'));
+
+  perform teste_assert_pg(fn_valor_pt_br(16060, 'milhar') = 'R$ 16.060 mil',
+    'valor em reais, escala em palavra', fn_valor_pt_br(16060, 'milhar'));
+  perform teste_assert_pg(fn_valor_pt_br(-240, 'milhar') = '-R$ 240 mil',
+    'o sinal vem antes da moeda', fn_valor_pt_br(-240, 'milhar'));
+  perform teste_assert_pg(fn_valor_pt_br(1, 'milhao') = 'R$ 1 milhão',
+    'um milhão no singular', fn_valor_pt_br(1, 'milhao'));
+  perform teste_assert_pg(fn_valor_pt_br(999, 'sacos') = 'R$ 999 sacos',
+    'escala desconhecida fica VISÍVEL, com a palavra do documento', fn_valor_pt_br(999, 'sacos'));
+
+  -- Ponta a ponta: um caso novo, com duas empresas cujos exercícios DIFEREM.
+  v_caso2 := (fn_upsert_caso('Caso perguntas — texto ao cliente'))::uuid;
+  -- Alfa: DRE de três exercícios, sem despesa financeira → dispara A6.
+  v_r := fn_registrar_documento(
+    v_caso2, 'Alfa Ltda', 'multi', '23,24,25', 'DRE', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/dre-alfa.pdf', 'DRE Alfa.pdf', true, 'HASH-PG-T1', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "RECEITA OPERACIONAL BRUTA", "valor_num": "1000", "unidade": "milhar", "confianca": "0.9"},
+    {"chave": "RESULTADO FINANCEIRO LIQUIDO", "valor_num": "-80", "unidade": "milhar", "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+  -- Beta: DRE de UM exercício só, também sem despesa financeira.
+  v_r := fn_registrar_documento(
+    v_caso2, 'Beta Ltda', 'anual', '2025', 'DRE', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/dre-beta.pdf', 'DRE Beta.pdf', true, 'HASH-PG-T2', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "RECEITA OPERACIONAL BRUTA", "valor_num": "500", "unidade": "milhar", "confianca": "0.9"},
+    {"chave": "RESULTADO FINANCEIRO LIQUIDO", "valor_num": "-30", "unidade": "milhar", "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+  -- E um mútuo de escala única, para o marcador de valor.
+  v_r := fn_registrar_documento(
+    v_caso2, 'Alfa Ltda', 'anual', '2025', 'MUTUOS', 0.9, 'nome_arquivo',
+    'supabase_storage', 'bucket/mut-t.pdf', 'Mutuos Texto.pdf', true, 'HASH-PG-T3', 'ok');
+  perform fn_registrar_campos_extraidos((v_r->>'documento_versao_id')::uuid, '[
+    {"chave": "Mútuo a receber - Beta", "valor_num": "11160", "unidade": "milhar", "confianca": "0.9"},
+    {"chave": "Mútuo a pagar - Gama",   "valor_num": "4900",  "unidade": "milhar", "confianca": "0.9"}
+  ]'::jsonb, 'N0');
+
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso2) s
+   where s.codigo = 'A6' and s.entidade = 'Alfa Ltda';
+  perform teste_assert_pg(v_txt like '%Na DRE de 2023 a 2025%',
+    'a pergunta da Alfa cita os exercícios da DRE DELA', left(coalesce(v_txt, 'null'), 140));
+
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso2) s
+   where s.codigo = 'A6' and s.entidade = 'Beta Ltda';
+  perform teste_assert_pg(v_txt like '%Na DRE de 2025%' and v_txt not like '%2023%',
+    'e a da Beta cita SÓ 2025 — o exercício que a DRE dela tem', left(coalesce(v_txt, 'null'), 140));
+
+  select count(*) into v_n from fn_sugerir_perguntas(v_caso2) s
+   where s.pergunta like '%23,24,25%' or s.pergunta like '%12M%' or s.pergunta like '%L36M%'
+      or s.pergunta like '%milhar%';
+  perform teste_assert_pg(v_n = 0,
+    'NENHUMA pergunta do caso publica referência crua nem nome de escala', 'achou ' || v_n);
+
+  select s.pergunta into v_txt from fn_sugerir_perguntas(v_caso2) s where s.codigo = '5.1';
+  perform teste_assert_pg(v_txt like '%R$ 16.060 mil%',
+    'o saldo de mútuos sai em reais, com separador de milhar', left(coalesce(v_txt, 'null'), 140));
+
+  raise notice 'perguntas OK — A3 dispara e A1/A2 calam; sempre só com conteúdo; marcadores resolvidos ou visíveis; saldo por escala única; linha_presente pronta para o upgrade do dono; ação humana auditada; só leitura; append-only imposto; período por ano; pergunta com o nome da empresa; par (código, empresa) único para a paginação da aba; texto ao cliente em português (0122)';
 end $$;
 
 drop function teste_assert_pg(boolean, text, text);

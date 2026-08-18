@@ -165,11 +165,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // indisponível não pode impedir alguém de baixar a planilha do mandato.
   const [anuaisRes, expRes, obsRes] = await Promise.all([
     supabase.rpc("fn_indice_macro_anual", { p_desde_ano: new Date().getFullYear() - 11 }),
-    supabase
-      .from("indice_macro_expectativa")
-      .select("serie, ano_ref, mediana, coletado_em")
-      .gte("ano_ref", new Date().getFullYear() - 1)
-      .order("coletado_em", { ascending: false }),
+    // PAGINADA: cada coleta do Focus acrescenta linhas (série × ano projetado),
+    // então esta tabela cresce sozinha com o tempo — e a leitura escolhe a
+    // coleta MAIS RECENTE de cada (série, ano). Truncar aqui não deixa o
+    // arquivo sem macro: deixa o arquivo com a expectativa ERRADA, que é pior.
+    // O desempate por (serie, ano_ref) é o que torna a ordem total — sem ele
+    // duas páginas podem repetir e omitir a mesma coleta.
+    paginar<MacroExpectativa>((de, ate) =>
+      supabase
+        .from("indice_macro_expectativa")
+        .select("serie, ano_ref, mediana, coletado_em")
+        .gte("ano_ref", new Date().getFullYear() - 1)
+        .order("coletado_em", { ascending: false })
+        .order("serie", { ascending: true })
+        .order("ano_ref", { ascending: true })
+        .range(de, ate)),
     // AS OBSERVAÇÕES CRUAS, para as séries de NÍVEL.
     //
     // `fn_indice_macro_anual` devolve, para série de nível, a VARIAÇÃO entre o
@@ -181,10 +191,20 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     //
     // O nível de fechamento do ano vem daqui, da própria observação. Sem migration:
     // a tabela já é legível pelo papel `authenticated` (0028).
-    supabase
-      .from("indice_macro_obs")
-      .select("serie, data_ref, valor")
-      .order("data_ref", { ascending: true }),
+    //
+    // PAGINADA, e esta é a que já estava perto do teto: são seis séries
+    // mensais com histórico longo — 920 observações no seed versionado, mais
+    // ~72 por ano que passa. Ao cruzar 1000, o PostgREST cortaria **as mais
+    // recentes** (a ordem é crescente por data), e a mais recente é exatamente
+    // a que dá o nível de fechamento do ano usado na linha de câmbio. O
+    // sintoma seria um câmbio velho num arquivo novo, sem erro nenhum.
+    paginar<{ serie: string; data_ref: string; valor: number }>((de, ate) =>
+      supabase
+        .from("indice_macro_obs")
+        .select("serie, data_ref, valor")
+        .order("data_ref", { ascending: true })
+        .order("serie", { ascending: true })
+        .range(de, ate)),
   ]);
 
   // Erro de CONSULTA (RLS sem policy volta 0 linhas sem erro; função sem
@@ -291,10 +311,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         .select("premissa_codigo, valores, origem, "
           + "premissa_catalogo!inner(nome, formula, unidade, natureza)")
         .eq("caso_id", id).eq("ativo", true),
-      supabase.from("caso_linha_premissa")
-        .select("rotulo_norm, secao_canonica, premissa_codigo, sazonalidade_codigo")
-        .eq("caso_id", id),
-      supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id }),
+      // OS VÍNCULOS e AS LINHAS do modelo, PAGINADOS: os dois crescem com o
+      // tamanho do mandato (uma linha por rótulo distinto do book), e são o
+      // conteúdo das 14 abas. Truncar aqui produziria um modelo que abre
+      // normalmente com contas faltando — o modo de falha mais caro deste
+      // sistema. A ordem de `fn_linhas_para_modelagem` (seção, rótulo) é a que
+      // a própria função declara, e ela já é TOTAL: a função agrupa por esse
+      // par exato.
+      paginar<VinculoParaCasar>((de, ate) =>
+        supabase.from("caso_linha_premissa")
+          .select("rotulo_norm, secao_canonica, premissa_codigo, sazonalidade_codigo")
+          .eq("caso_id", id)
+          .order("rotulo_norm", { ascending: true })
+          .order("secao_canonica", { ascending: true, nullsFirst: true })
+          .range(de, ate)),
+      paginar<LinhaParaCasar & Record<string, unknown>>((de, ate) =>
+        supabase.rpc("fn_linhas_para_modelagem", { p_caso_id: id })
+          .order("secao_canonica", { ascending: true, nullsFirst: false })
+          .order("rotulo_norm", { ascending: true })
+          .range(de, ate)),
       // A curva mensal do caso (0040). Vem vazia quando não há FATURAMENTO_24M —
       // e aí as linhas com sazonalidade ficam sem distribuição mensal, dizendo
       // por quê, em vez de rateio uniforme.
@@ -374,12 +409,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const entidadeModelada = par?.entidade?.trim() || null;
     const ultimoReal = par?.ultimo_exercicio_real ?? null;
     if (entidadeModelada && ultimoReal) {
-      const valoresRes = await supabase.rpc("fn_valores_por_ano", {
-        p_caso_id: id, p_entidade: entidadeModelada,
-      });
-      const valores = (valoresRes.data ?? []) as unknown as Array<{
+      // PAGINADA: uma linha por (rótulo × exercício). Com três exercícios, 400
+      // rótulos distintos já passam de mil — e o book da Canastra tem 3.034
+      // linhas com número. É daqui que sai a SÉRIE HISTÓRICA de cada conta do
+      // modelo: cortar aqui não deixa buraco visível, deixa uma conta com menos
+      // anos do que ela tem, e a projeção parte de uma base falsa.
+      //
+      // A ordem da função é (rótulo, ano); a seção entra como desempate final
+      // porque o mesmo rótulo existe em seções diferentes (`Empréstimos e
+      // Financiamentos` no circulante e no não circulante), e é o trio que a
+      // função agrupa — ou seja, o que torna a ordem TOTAL.
+      const valoresRes = await paginar<{
         rotulo_norm: string; secao_canonica: string | null; ano: number; valor: number;
-      }>;
+      }>((de, ate) =>
+        supabase.rpc("fn_valores_por_ano", { p_caso_id: id, p_entidade: entidadeModelada })
+          .order("rotulo_norm", { ascending: true })
+          .order("ano", { ascending: true })
+          .order("secao_canonica", { ascending: true, nullsFirst: true })
+          .range(de, ate));
+      const valores = valoresRes.data;
       // Só exercícios ATÉ o último realizado entram como histórico: um balancete
       // do ano corrente não é exercício fechado, e tratá-lo como tal faria a
       // projeção partir de meio ano.
@@ -484,10 +532,32 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const sufixo = modo === "dados" ? "dados-financeiros" : "modelagem";
   const filename = `${nomeArquivoSanitizado(caso.nome)}-${sufixo}-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
+  // O TETO DE SEGURANÇA DA LEITURA, quando ele for atingido, SAI DO SILÊNCIO.
+  //
+  // `paginar` lê até meio milhão de linhas por consulta e, se parar aí, declara
+  // (`truncado`). Meio milhão está muito além de qualquer mandato — mas este é o
+  // arquivo que vai a comitê, e o defeito que originou toda esta linhagem foi
+  // exatamente um corte silencioso numa leitura. Um arquivo incompleto que não
+  // se anuncia é pior que um erro: ele abre normalmente e parece completo.
+  const truncadas = [
+    documentosRes.truncado && "documentos",
+    camposRes.truncado && "linhas extraídas",
+    falhasRes.truncado && "causas de falha",
+    expRes.truncado && "expectativas macro",
+    obsRes.truncado && "observações macro",
+  ].filter(Boolean) as string[];
+  if (truncadas.length > 0) {
+    console.error(`[export] leitura interrompida pelo teto de segurança: ${truncadas.join(", ")}`,
+      { caso_id: id });
+  }
+
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${filename}"`,
+      ...(truncadas.length > 0
+        ? { "X-Oria-Leitura-Truncada": truncadas.join(", ") }
+        : {}),
     },
   });
 }

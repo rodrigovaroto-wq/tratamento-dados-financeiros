@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0121_diagnostico_nao_duplica_entidade.sql` |
+| **Última migration** | `db/migrations/0122_pergunta_em_portugues.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (66 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (67 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -75,24 +75,25 @@ lidas para retomar.
 > documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
 > mede espera pelo cliente, não processamento.
 
-## Estado dos PRs (18/08, sessão 50 — leia isto antes de continuar)
+## Estado dos PRs (18/08, sessão 51 — leia isto antes de continuar)
 
 | PR | O quê | Estado |
 |---|---|---|
 | **#133** | Barra lateral rolável, `/casos` vira Painel (8 indicadores), lista completa em `/casos/todos`, abertura animada, migration `0115` (custo do lote em `lote_execucao`) | **mergeado no `main`** |
-| **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **aberto quando a sessão 50 começou** — https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/134 |
-| **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **branch `claude/handoff-next-steps-ke4omr`** |
+| **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **mergeado no `main`** |
+| **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **mergeado no `main`** (PRs #137, #139, #140, #141) |
+| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`), o fim do teto de 1000 no portal e a `0122` (o texto que vai ao cliente em português) | **PR #142**, branch `claude/client-question-suggestions-ves2ty` |
 
-**A branch da sessão 50 CONTÉM os dois commits do #134.** Ela foi criada a partir da ponta daquela
-branch, e não do `main`, porque o item 7 mexe no mesmo arquivo (`portal/src/app/casos/page.tsx`) e
-partir do `main` produziria conflito com trabalho que já estava pronto e revisado. Consequência
-prática: **se o #134 for mergeado primeiro, os commits dele somem do diff desta branch sozinhos**;
-se o dono preferir, dá para mergear só esta e fechar o #134 como incluído.
+**Nada da sessão 50 ficou pendente de merge** — o `main` já tem os sete itens, e a branch da sessão
+51 sai dele. As migrations `0116` a `0121` **já estão aplicadas** (o dono confirmou em 18/08); o que
+continua pendente daquela rodada é a reimportação do workflow e a rodada real, no quadro "O próximo
+passo".
 
 **O risco que a sessão 50 fechou, e que estava anotado aqui como "não se resolve sozinho":** as
 listas de `documento` e `pendencia` do painel continuavam sujeitas ao teto de 1000 do PostgREST.
 Agora elas paginam (`portal/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
-painel avisa se o teto de segurança de 50 mil for atingido.
+painel avisa se o teto de segurança for atingido. **A sessão 51 terminou o serviço** — ver "O teto
+de 1000 deixou de existir para o portal".
 
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 
@@ -136,24 +137,149 @@ O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em toda
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
 
-## O próximo passo (para quem retomar depois de 18/08, sessão 50)
+## O próximo passo (para quem retomar depois de 18/08, sessão 51)
 
-**O dono já fez os dois passos que só ele pode fazer**, e disse isso nesta sessão: as migrations
-até a `0115` foram aplicadas no Supabase e o workflow foi reimportado. **Mas a sessão 50 escreveu
-três migrations novas (`0116`, `0117`, `0118`) e mexeu no workflow de novo** — então os dois
-passos voltam a estar pendentes, agora para o que esta rodada produziu.
+**O DONO APLICOU TODAS AS MIGRATIONS DO REPOSITÓRIO** — confirmado em 18/08 (sessão 51), até a
+`0121`. O banco deixou de ser o passo pendente; o que falta da sessão 50 é a REIMPORTAÇÃO do
+workflow e a rodada real.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | Aplicar `0116` a `0121` no Supabase (a lista de comandos está no `db/README.md`) | dono |
+| 1 | ~~Aplicar `0116` a `0121` no Supabase~~ — **feito em 18/08**. **Falta a `0122`**, escrita depois: sem ela a pergunta ao cliente sai dizendo "Na DRE de 24,25" e "16060 milhar" | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
+
+> **Opcional, e só isso: o `Max rows` do Supabase.** Com a `0120` aplicada, a aba "Perguntas ao
+> cliente" já lista. O teto de 1000 linhas do PostgREST (*Project Settings → API → Max rows*)
+> continua no padrão, e **nenhuma tela depende mais dele** — o `paginar` lê em janelas até o banco
+> acabar, qualquer que seja o teto. Subi-lo só deixa cada leitura mais barata.
 
 > **A `0118` muda o que se vê ao reenviar um arquivo.** Reenviar o MESMO PDF sem que prompt, modelo
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O teto de 1000 deixou de existir para o portal (18/08, sessão 51)
+
+Pedido do dono, literal: *"a lista pagina não deve ser restringida, remova o teto de 1000 do
+PostgREST"*. O teto mora em dois lugares, e os dois foram tratados:
+
+**1. No servidor — e lá ele é do DONO, não do repositório.** É o `db-max-rows` do PostgREST
+(*painel do Supabase → Project Settings → API → Max rows*, padrão 1000). Subi-lo para 100000 remove
+o teto na prática e deixa cada leitura mais barata. **Está documentado no `db/README.md`, com o
+caminho exato — e é opcional**, pelo motivo abaixo.
+
+**2. No portal — e aqui ele acabou de verdade.** Duas mudanças:
+
+- **`paginar` deixou de depender do teto do servidor.** A parada era "página com menos linhas que a
+  janela = acabou", e isso só era correto porque a janela (1000) era exatamente o teto padrão. Com
+  `Max rows` abaixo de 1000, TODA página voltaria curta e a leitura pararia na primeira — o defeito
+  original de volta, escondido dentro da própria defesa contra ele. Agora a leitura anda pelo número
+  de linhas REALMENTE devolvidas e só termina quando uma página volta **vazia**: vale para qualquer
+  teto, e custa uma requisição a mais por consulta. O teto de segurança subiu de 50 mil para **500
+  mil linhas** e continua declarando (`truncado`) em vez de entregar o pedaço como se fosse o todo.
+- **As leituras que ainda escapavam passaram a paginar** — e uma delas já estava a meses de
+  quebrar:
+
+| Onde | O que era truncado | Por que importa |
+|---|---|---|
+| `indice_macro_obs` (export) | as observações macro | **920 linhas hoje**, +72 por ano. Ao passar de 1000, o corte cairia nas MAIS RECENTES (ordem crescente por data) — e é a última observação que dá o câmbio de fechamento do ano |
+| `indice_macro_expectativa` (export) | as coletas do Focus | cada coleta acrescenta linhas; truncar não deixa o arquivo sem macro, deixa com a expectativa ERRADA |
+| `fn_linhas_para_modelagem` (export e tela) | as linhas do modelo | é o conteúdo das 14 abas e da seção 3 da Modelagem |
+| `fn_valores_por_ano` (export) | a série histórica por conta | 400 rótulos × 3 exercícios já passam de mil; cortar aqui dá a uma conta menos anos do que ela tem |
+| `caso_linha_premissa` (export e tela) | os vínculos linha→premissa | truncado, o analista reescolhe premissa de linha que já tinha uma |
+
+Todas com **ordem total e estável** (o desempate que impede duas páginas de repetirem e omitirem a
+mesma linha), e o export passou a **declarar** no cabeçalho `X-Oria-Leitura-Truncada` se algum teto
+de segurança for atingido — um arquivo incompleto que não se anuncia é pior que um erro.
+
+Ficam de fora, de propósito e por não crescerem com a mesa: catálogos (taxonomia, premissas, séries
+macro, banco de perguntas), consultas de linha única e as duas listas com `limit` deliberado (barra
+lateral, trilha de autonomia).
+
+### A `0122` — o texto que vai AO CLIENTE passa a ser escrito em português (18/08, sessão 51)
+
+**Achado rodando a aba nova sobre o book da Canastra**, e é o tipo de defeito que só aparece com
+dado real na tela. As perguntas saíam assim, literal:
+
+| Saía | Sai agora |
+|---|---|
+| "Na DRE de **24,25** não localizamos a linha de despesas financeiras" | "Na DRE de **2024 e 2025**…" |
+| "no faturamento de **L36M**?" | "no faturamento de **2025**?" |
+| "A relação de mútuos informa **16060 milhar**" | "…informa **R$ 16.060 mil**" |
+
+Nenhuma delas está errada no DADO — `24,25` é a referência multi-ano do classificador, `L36M` é a
+notação de janela móvel de `f0/03`, `16060 milhar` é a soma com a escala declarada. Estão erradas no
+LEITOR, e o leitor aqui é o cliente do mandato: **este é o único texto do sistema que sai da casa**,
+e ele não pode falar em chave interna.
+
+São três consertos, e o terceiro **não é de redação**:
+
+1. **`fn_periodo_por_extenso`** — o período na forma que cabe depois de "de"/"em": `2025`,
+   `2024 e 2025`, `2023 a 2025`, `2021, 2023 e 2025` (com buraco vira lista: o intervalo afirmaria
+   um exercício que o documento não traz), `2025 (1º trimestre)` e `um período de 36 meses`. Rótulo
+   que não diz ano nenhum **sai como veio**.
+2. **`fn_valor_pt_br`** — `R$ 16.060 mil`, com separador de milhar do país, escala em palavra, sinal
+   antes da moeda (`-R$ 240 mil`) e escala desconhecida **visível**. Independe do `lc_numeric` do
+   servidor.
+3. **`fn_anos_texto` deixa de ler `L36M` como o ano 2036.** A regra de "dois dígitos no fim"
+   (`0023`) foi escrita para `dez/25` e `12M25`; em `L36M` o que está no fim é o **tamanho da
+   janela**. Duas consequências, as duas invisíveis: na `0120` o período da pergunta é escolhido
+   pelo maior ano do caso, então um documento `L36M` **vencia** um 2025 real (foi exatamente o que a
+   Canastra produziu); e em `fn_valores_por_ano` uma coluna `L24M` entraria no modelo como o
+   exercício de 2024 — janela móvel tratada como ano fechado. Corrigir só o texto teria trocado
+   `L36M` por `2036`: um ano plausível e errado.
+
+**E o período passou a ser o DA EMPRESA de que a pergunta fala.** A sugestão é por (pergunta ×
+entidade) desde a `0119` e o período não acompanhava: num grupo em que a DRE da Indústria cobre
+2023–2025 e a da Comercial só 2024–2025, a pergunta sobre a Comercial citava um exercício que o
+documento dela não tem — e quem recebe não reconhece o próprio documento na pergunta.
+
+Dezesseis asserts novos em `db/test/perguntas.test.sql` (`#12`), incluindo o que vale por todos:
+**nenhuma pergunta do caso publica referência crua nem nome de escala**.
+
+### As perguntas ao cliente ganharam a ABA que faltava (18/08, sessão 51)
+
+A `0120` construiu o motor inteiro e **nenhuma tela o chamava**: `fn_sugerir_perguntas(caso)`
+devolve a pergunta pronta — com motivo, risco, impacto, os marcadores resolvidos e o nome da
+empresa — e a única forma de ver uma sugestão era rodar a função no SQL Editor. Para quem usa o
+produto, a `0120` não existia.
+
+**Onde ela ficou, e por que não onde o desenho anterior previa.** O plano era abrir a pergunta
+dentro do botão "Contatar o Cliente" da fila de pendências (`0109`). O dono redirecionou, e a razão
+é boa: **essas perguntas são sugestões que provavelmente ainda não foram feitas a ninguém** —
+pendência é decisão sobre problema já medido, sugestão é rascunho de conversa. Numa lista só, a
+segunda herda a aparência de tarefa concluída da primeira. Então elas moram numa aba própria,
+`/casos/[id]/perguntas`, com entrada no cabeçalho do mandato (com a contagem) e um link a partir da
+pendência **depois** que ela é marcada como pedida ao cliente — que é o momento exato em que o
+analista precisa do texto.
+
+O que a aba faz, em ordem de uso:
+
+| | |
+|---|---|
+| **Mostra o texto pronto** | renderizado pelo banco, com `{data_base}`/`{saldo_mutuos}` resolvidos e a empresa no prefixo. Bloco próprio, para ser lido como citação do que vai sair da casa |
+| **Copia** | `BotaoCopiar` com plano B (`execCommand`) para o portal aberto fora de contexto seguro — e que **declara** quando não conseguiu, em vez de piscar "copiado" |
+| **Registra o envio** | `fn_registrar_pergunta_acao`, com o texto EXATO da tela num campo oculto: é ele que a `0120` congela. Append-only — reenviar é linha nova, e não há como apagar |
+| **Registra o descarte** | "Não vou perguntar" grava a decisão sem sumir com a sugestão: quem chegar depois vê que alguém já olhou |
+| **Diz quem e quando** | `ja_enviada` vem do banco (casado por empresa); autor e data vêm de `caso_pergunta` |
+| **Explica o porquê** | motivo, risco, impacto e o gatilho traduzido, recolhidos num `<details>` — sustentam a pergunta numa reunião, e ninguém quer relê-los para copiar um texto |
+
+Três cuidados que não são enfeite:
+
+- **A lista é paginada**, como todas as outras — e isto vale para função que devolve tabela como
+  vale para consulta: o PostgREST corta em 1000 linhas em silêncio, e a sugestão é uma por
+  (pergunta × empresa que não satisfaz) desde a `0119`. A ordem é `(prioridade, codigo,
+  entidade_id)`, **total e estável**; o teste `#11` da `perguntas.test.sql` trava a propriedade que
+  torna essa ordem total (o par código × empresa é único na saída) — sem ela, duas páginas repetem
+  uma linha e omitem outra.
+- **A tela diz, em cima, que nada foi perguntado ainda e que nada é enviado automaticamente.** Uma
+  lista de textos prontos com um botão verde se parece com caixa de saída; não é. O canal continua
+  sendo o analista.
+- **Banco sem a `0120` aplicada não quebra nada.** A aba explica que a migration falta e mostra a
+  resposta do banco; a tela do mandato perde só o número do botão. Merge não é apply, e o dono
+  aplica à mão — banco atrasado é estado normal, não defeito.
 
 ### O teto de 1000 linhas: agora em TODAS as telas, e o pior deles era o export
 
@@ -446,21 +572,30 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 
 ## O que só o dono pode fazer
 
-1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. O dono confirmou em
-   18/08 que aplicou até a `0115`. **Três estão pendentes**, todas da sessão 50: `0116` (o papel dos
-   totais impressos), `0117` (a reconciliação de mútuos) e `0118` (o dedup por fingerprint —
-   `documento_versao` ganha coluna). Confira com:
+1. **Aplicar a `0122`** — a única pendente. O dono confirmou em 18/08 (sessão 51) que aplicou
+   todas até a `0121`; a `0122` nasceu depois, na mesma sessão, e é o que faz a pergunta ao cliente
+   sair em português (período por extenso, valor em reais) e a janela móvel `L36M` parar de ser
+   lida como o ano 2036. Merge continua não sendo apply,
+   e da tela "aplicada" e "não aplicada" têm a mesma aparência, então a conferência de 30 segundos
+   vale a pena depois de qualquer rodada nova:
    ```sql
+   -- a 0122 acrescenta duas funções e muda uma:
+   select fn_periodo_por_extenso('multi','23,24,25');  -- esperado: 2023 a 2025
+   select fn_valor_pt_br(16060, 'milhar');             -- esperado: R$ 16.060 mil
+   select fn_anos_texto('L36M');                       -- esperado: {} (antes: {2036})
+
    select proname from pg_proc
     where proname in ('fn_papel_linha','fn_reconciliar_mutuos','fn_lado_do_mutuo',
-                      'fn_registrar_documento');
+                      'fn_sugerir_perguntas','fn_registrar_pergunta_acao');
    -- a 0118 acrescenta coluna, não só função:
    select column_name from information_schema.columns
     where table_name = 'documento_versao' and column_name = 'fingerprint_extracao';
    -- e a 0118 exige que sobre UMA assinatura de fn_registrar_documento (a de 16 args):
    select pronargs from pg_proc where proname = 'fn_registrar_documento';
+   -- a 0120 seedou 11 perguntas ativas:
+   select count(*) from pergunta_catalogo where ativo;
    ```
+   Com a `0120` no banco, a aba **Perguntas ao cliente** do mandato passa a listar de verdade.
 2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 18/08, e a mudança é
    estrutural: o teto de gasto saiu do começo da corrente e o dedup entrou. **Conferência de 5
    segundos depois de importar:** o canvas tem **33 nós** (eram 31). Procure, em ordem:
@@ -485,13 +620,12 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 > fez". Dois deles com uma ressalva registrada lá: o dos subtotais só a rodada real prova, e a
 > checagem de mútuos cobre mútuo contra mútuo, não a planilha intragrupo inteira.
 
-- **AS PERGUNTAS AO CLIENTE NÃO TÊM TELA.** A `0120` construiu o motor —
-  `fn_sugerir_perguntas` devolve a pergunta pronta, com motivo/risco/impacto, marcadores resolvidos
-  e o nome da empresa — e **nenhuma tela do portal a chama**. Hoje a única forma de ver a sugestão é
-  rodar a função no SQL Editor. O lugar natural dela é o botão "Contatar o Cliente" da fila de
-  pendências (`0109`), que hoje só rotula: ele deveria abrir a pergunta pronta para copiar, e
-  registrar o envio por `fn_registrar_pergunta_acao` (que exige o texto renderizado, congelado).
-  Enquanto isso não existe, a `0120` é invisível para quem usa o produto.
+- ~~**AS PERGUNTAS AO CLIENTE NÃO TÊM TELA**~~ — **fechado em 18/08 (sessão 51)**: elas ganharam
+  uma **aba própria**, `/casos/[id]/perguntas`, com o texto pronto para copiar, o registro de envio
+  por `fn_registrar_pergunta_acao` (texto congelado) e o de descarte. Ficaram FORA da fila de
+  pendências por decisão do dono — sugestão que ninguém fez ainda não se mistura com decisão sobre
+  problema medido. Ver "As perguntas ao cliente ganharam a ABA que faltava". **Depende da `0120`
+  estar aplicada no Supabase**; sem ela a aba explica o que falta em vez de quebrar.
 - **A conferência das linhas intragrupo que NÃO são mútuo** (conta corrente rotativa, aluguel entre
   coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
   cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É
