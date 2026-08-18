@@ -342,6 +342,28 @@ end;
 $$;
 
 --
+-- Name: fn_anos_do_periodo(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_anos_do_periodo(p_referencia text) RETURNS integer[]
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  select case
+    when p_referencia is null then '{}'::int[]
+    when p_referencia ~ '^\s*[0-9]{2}\s*(,\s*[0-9]{2}\s*)+$' then (
+      select array_agg(distinct ('20' || trim(t))::int order by ('20' || trim(t))::int)
+      from unnest(string_to_array(p_referencia, ',')) t)
+    else fn_anos_texto(p_referencia)
+  end;
+$_$;
+
+--
+-- Name: FUNCTION fn_anos_do_periodo(p_referencia text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_anos_do_periodo(p_referencia text) IS 'Anos que uma referência de PERÍODO denota (0122). Difere de fn_anos_texto por expandir a lista de dois dígitos do formato multi ("23,24,25" → 2023, 2024, 2025), que é formato nosso — em rótulo de coluna de planilha a mesma sequência pode ser um valor.';
+
+--
 -- Name: fn_anos_periodo(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -382,16 +404,24 @@ declare
   anos int[] := '{}';
   tok  text;
   m    text[];
+  txt  text;
 begin
   if p_texto is null then return anos; end if;
-  foreach tok in array regexp_split_to_array(p_texto, '[^0-9]+') loop
+  -- A NOTAÇÃO DE JANELA MÓVEL SAI ANTES DE PROCURAR ANO. `L24M`, `L36M`, `L12M`
+  -- (f0/03) dizem QUANTOS MESES a série cobre, não em que ano ela termina. A
+  -- borda de palavra impede comer o "L" de outra coisa, e a limpeza é cirúrgica:
+  -- "L24M 2025" continua devolvendo 2025, e `12M25` continua devolvendo 2025
+  -- (lá o final é o ano, e a janela está na frente).
+  txt := regexp_replace(p_texto, '(^|[^0-9A-Za-z])[Ll][0-9]{1,3}[Mm]([^0-9A-Za-z]|$)',
+                        '\1 \2', 'g');
+  foreach tok in array regexp_split_to_array(txt, '[^0-9]+') loop
     if tok ~ '^(19|20)[0-9]{2}$' then
       anos := anos || (tok)::int;
     end if;
   end loop;
   if cardinality(anos) = 0 then
     -- ano de 2 dígitos no fim ("dez/25", "12M25")
-    m := regexp_match(p_texto, '([0-9]{2})[^0-9]*$');
+    m := regexp_match(txt, '([0-9]{2})[^0-9]*$');
     if m is not null then
       anos := anos || ('20' || m[1])::int;
     end if;
@@ -400,6 +430,12 @@ begin
   return coalesce(anos, '{}'::int[]);
 end;
 $_$;
+
+--
+-- Name: FUNCTION fn_anos_texto(p_texto text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_anos_texto(p_texto text) IS 'Anos que um rótulo de período/coluna denota (0023). Desde a 0122 a notação de JANELA MÓVEL (L24M, L36M) não é lida como ano: ela diz o tamanho da série, não o exercício — antes L36M devolvia 2036 e vencia a escolha de período da pergunta ao cliente.';
 
 --
 -- Name: fn_aplicar_premissa_em_lote(uuid, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -2386,6 +2422,73 @@ begin
   return r;                                                             -- texto livre normalizado
 end;
 $_$;
+
+--
+-- Name: fn_periodo_por_extenso(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_periodo_por_extenso(p_tipo text, p_referencia text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  anos  int[];
+  m     text[];
+  trim_ text;
+  lista text;
+begin
+  if p_referencia is null or length(trim(p_referencia)) = 0 then
+    return null;
+  end if;
+
+  -- JANELA MÓVEL: é uma janela, e a frase diz isso. Não tem ano para dizer —
+  -- desde a 0122 `fn_anos_texto` também não inventa um.
+  m := regexp_match(p_referencia, '(^|[^0-9A-Za-z])[Ll]([0-9]{1,3})[Mm]([^0-9A-Za-z]|$)');
+  if m is not null then
+    return 'um período de ' || m[2] || ' meses';
+  end if;
+
+  anos := fn_anos_do_periodo(p_referencia);
+
+  -- TRIMESTRE: o ano vem primeiro (ver o cabeçalho), o trimestre entre
+  -- parênteses. Sem ano identificado, cai no fallback do fim.
+  m := regexp_match(p_referencia, '([1-4])[Tt]([0-9]{2,4})');
+  if m is not null and cardinality(anos) >= 1 then
+    return anos[cardinality(anos)]::text || ' (' || m[1] || 'º trimestre)';
+  end if;
+
+  if cardinality(anos) = 0 then
+    -- NÃO ENTENDI O RÓTULO: devolvo o rótulo. Um período que o sistema não
+    -- soube ler tem de aparecer como está, para quem lê perceber — sumir com
+    -- ele deixaria a pergunta afirmando um exercício que ninguém verificou.
+    return trim(p_referencia);
+  end if;
+
+  if cardinality(anos) = 1 then
+    return anos[1]::text;
+  end if;
+
+  if cardinality(anos) = 2 then
+    return anos[1]::text || ' e ' || anos[2]::text;
+  end if;
+
+  -- Três ou mais: intervalo quando são seguidos ("2023 a 2025"), lista quando
+  -- há buraco ("2021, 2023 e 2025") — o intervalo afirmaria exercícios que o
+  -- documento não traz.
+  if anos[cardinality(anos)] - anos[1] = cardinality(anos) - 1 then
+    return anos[1]::text || ' a ' || anos[cardinality(anos)]::text;
+  end if;
+
+  select string_agg(a::text, ', ' order by a) into lista
+  from unnest(anos[1:cardinality(anos) - 1]) a;
+  return lista || ' e ' || anos[cardinality(anos)]::text;
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_periodo_por_extenso(p_tipo text, p_referencia text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_periodo_por_extenso(p_tipo text, p_referencia text) IS 'O período como se escreve para o CLIENTE (0122), na forma que cabe depois de "de"/"em": "2025", "2024 e 2025", "2023 a 2025", "2021, 2023 e 2025", "2025 (1º trimestre)", "um período de 36 meses". Rótulo sem ano identificável volta como veio.';
 
 --
 -- Name: fn_periodos_compativeis(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -5072,23 +5175,9 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
       where d.caso_id = p_caso_id and ce.valor_num is not null
     ) as ok
   ),
-  -- Quais códigos disparam. DISTINCT de propósito: sob a assinatura por
-  -- entidade (futura 0119), fn_exigencias_do_caso devolve uma linha por
-  -- entidade e a pergunta dispararia N vezes — na v1 a sugestão é por caso.
-  -- QUAIS CÓDIGOS DISPARAM, E PARA QUEM.
-  --
-  -- A versão original devolvia só o código, com `distinct`, porque
-  -- `fn_exigencias_do_caso` ainda era por CASO. Desde a 0119 ela é por
-  -- ENTIDADE, e a pendência `linha_exigida_ausente` nomeia a empresa. A
-  -- pergunta é o lado externo da MESMA avaliação — o texto que vai ao cliente —,
-  -- e num grupo de oito balanços "no balanço de 31/12/2025 não localizamos uma
-  -- linha de Ativo Total" não diz de QUAL empresa se está falando. Quem recebe
-  -- não tem como responder, e quem enviou não tem como saber que faltou.
-  --
-  -- Então o disparo carrega a entidade quando ela existe, e a sugestão passa a
-  -- ser uma por (pergunta × entidade que não satisfaz) — espelhando exatamente
-  -- as pendências. Em mandato de uma empresa só, `entidade` vem nula e nada
-  -- muda: nomear a única empresa do caso seria ruído.
+  -- QUAIS CÓDIGOS DISPARAM, E PARA QUEM (0120/0119): a espécie `sempre` vale
+  -- para o caso; as ancoradas disparam uma vez por ENTIDADE que não satisfaz,
+  -- espelhando a pendência `linha_exigida_ausente`.
   disparos as (
     select pc.codigo, null::text as entidade, null::uuid as entidade_id
     from pergunta_catalogo pc
@@ -5106,12 +5195,13 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
   ),
   -- {saldo_mutuos}: soma das linhas que casam MUTUOS:saldo_de_mutuo na versão
   -- vigente. Escala única acompanha; escalas mistas NÃO são somadas às cegas.
-  -- (Terceira cópia da expressão de casamento — ver LIMITAÇÕES no cabeçalho.)
   saldo_mutuos as (
     select case
       when count(*) = 0 then null
       when count(distinct coalesce(c.unidade, '')) > 1 then '(valores em escalas mistas — conferir)'
-      else trim(sum(c.valor_num)::text || ' ' || coalesce(max(nullif(c.unidade, '')), ''))
+      -- 0122: era `sum(valor)::text || ' ' || unidade`, que produzia
+      -- "16060 milhar" no texto enviado ao cliente.
+      else fn_valor_pt_br(sum(c.valor_num), max(nullif(c.unidade, '')))
     end as txt
     from (
       select ce.valor_num, ce.unidade
@@ -5141,30 +5231,20 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
             end)
     ) c
   )
-  -- `entidade_id` SAI JUNTO, e não é enfeite: é o que quem registra a ação
-  -- humana precisa devolver em `fn_registrar_pergunta_acao`. Sem ele na saída,
-  -- o chamador teria de reencontrar a empresa pelo nome — e errar isso não dá
-  -- erro nenhum: a pergunta simplesmente nunca aparece como enviada.
   select pc.codigo, pc.titulo, pc.prioridade, di.entidade, di.entidade_id,
-         -- A ENTIDADE ENTRA COMO PREFIXO, e não reescrevendo o texto da
-         -- entrega. O corpo da pergunta é verbatim do capítulo 10 e continua
-         -- sendo; o que se acrescenta é a única coisa que ele não podia saber —
-         -- de qual empresa do grupo se fala. Nula (mandato de uma empresa,
-         -- pergunta `sempre`), o prefixo não existe.
+         -- A ENTIDADE ENTRA COMO PREFIXO, e não reescrevendo o texto da entrega.
          case when di.entidade is not null then 'Sobre a ' || di.entidade || ': ' else '' end ||
          replace(replace(replace(pc.pergunta,
-           '{data_base}',    coalesce(per.referencia, '(período não informado)')),
-           '{ano}',          coalesce(per.referencia, '(período não informado)')),
+           -- 0122: o período vai POR EXTENSO. Era a `referencia` crua, e o que
+           -- chegava ao cliente era "Na DRE de 24,25" / "de L36M" / "de 12M25".
+           '{data_base}',    coalesce(per.por_extenso, '(período não informado)')),
+           '{ano}',          coalesce(per.por_extenso, '(período não informado)')),
            '{saldo_mutuos}', coalesce(sm.txt, '(não localizado)')) as pergunta,
          pc.motivo, pc.risco, pc.impacto,
          case when pc.gatilho_especie = 'sempre' then 'sempre'
               else pc.gatilho_especie || ':' || pc.gatilho_tipo_taxonomia || ':' || pc.gatilho_conceito
          end as gatilho,
          pc.fonte,
-         -- `ja_enviada` POR ENTIDADE quando há entidade: enviar a pergunta
-         -- sobre a Alfa não responde a mesma pergunta sobre a Beta, e marcar as
-         -- duas como enviadas esconderia a que falta. `caso_pergunta.entidade_id`
-         -- já existia para isso, reservado desde a v1.
          exists (
            select 1 from caso_pergunta cp
            where cp.caso_id = p_caso_id and cp.pergunta_codigo = pc.codigo and cp.acao = 'enviada'
@@ -5173,30 +5253,29 @@ CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo
   from pergunta_catalogo pc
   join disparos di on di.codigo = pc.codigo
   cross join saldo_mutuos sm
-  -- O PERÍODO MAIS RECENTE É POR ANO, NÃO POR ORDEM ALFABÉTICA.
-  --
-  -- Era `max(p2.referencia)` — máximo de TEXTO sobre rótulos que não são
-  -- comparáveis como texto. Num caso com os períodos "2025" e "L24M", o `max`
-  -- devolve **L24M**, e a pergunta saía assim, para o cliente:
-  --
-  --   "No balanço de L24M não localizamos uma linha de Ativo Total."
-  --
-  -- L24M é rótulo de janela móvel (últimos 24 meses), não data de balanço — e
-  -- nem era o mais recente. Isto não é detalhe de formatação: é o texto que sai
-  -- do sistema e chega ao cliente, e a única coisa que a pergunta tem de acertar
-  -- sozinha é a qual exercício ela se refere.
-  --
-  -- `fn_anos_texto` (0030) já sabe ler o ano de qualquer uma das notações do
-  -- projeto ("2025", "12M25", "25,24", "1T25"). Ordena-se pelo MAIOR ano que o
-  -- rótulo denota; rótulo sem ano nenhum (o "L24M" da vida) vai para o fim em
-  -- vez de para a frente, e só é escolhido se for o único que existe.
+  -- O PERÍODO MAIS RECENTE É POR ANO, NÃO POR ORDEM ALFABÉTICA (0120) — e desde
+  -- a 0122 a janela móvel não finge um ano para vencer essa escolha: `L36M`
+  -- devolvia 2036 e ganhava de um 2025 real.
   left join lateral (
-    select p2.referencia
+    select fn_periodo_por_extenso(p2.tipo, p2.referencia) as por_extenso
     from documento d2
     join periodo p2 on p2.id = d2.periodo_id
     where d2.caso_id = p_caso_id
       and (pc.gatilho_tipo_taxonomia is null or d2.tipo_taxonomia = pc.gatilho_tipo_taxonomia)
-    order by coalesce((select max(a) from unnest(fn_anos_texto(p2.referencia)) a), -1) desc,
+      -- O PERÍODO É O DA EMPRESA DE QUE A PERGUNTA FALA (0122). A sugestão é
+      -- por (pergunta × entidade) desde a 0119, e o período não acompanhava:
+      -- num grupo em que a DRE da Indústria cobre 2023–2025 e a da Comercial
+      -- só 2024–2025, a pergunta sobre a Comercial saía dizendo "Na DRE de
+      -- 2023 a 2025" — um exercício que o documento DELA não tem. Quem recebe
+      -- não reconhece o próprio documento na pergunta.
+      and (di.entidade_id is null or d2.entidade_id = di.entidade_id)
+    order by coalesce((select max(a) from unnest(fn_anos_do_periodo(p2.referencia)) a), -1) desc,
+             -- EMPATE NO ANO MAIS RECENTE: ganha o período MAIS ESPECÍFICO. Um
+             -- caso com "2025" e "24,25" tem os dois terminando em 2025, e
+             -- perguntar "no faturamento de 2025" é mais preciso que "de 2024 e
+             -- 2025". Sem este critério o desempate era alfabético — e o
+             -- alfabeto punha o comparativo na frente.
+             cardinality(coalesce(fn_anos_do_periodo(p2.referencia), '{}'::int[])) asc,
              p2.referencia desc
     limit 1
   ) per on true
@@ -5207,7 +5286,7 @@ $$;
 -- Name: FUNCTION fn_sugerir_perguntas(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) IS 'Perguntas ao cliente SUGERIDAS para o caso (0120): exigencia_ausente/linha_presente avaliadas sobre fn_exigencias_do_caso (a mesma fonte da pendência linha_exigida_ausente — as duas faces nunca divergem); sempre = caso com conteúdo. Marcadores {data_base}/{ano}/{saldo_mutuos} preenchidos; desconhecidos ficam visíveis. Nada é gravado ao sugerir; ja_enviada informa, não filtra. Uma sugestão por (pergunta × entidade que não satisfaz) desde que fn_exigencias_do_caso passou a ser por entidade (0119) — o texto nomeia a empresa, como a pendência já faz.';
+COMMENT ON FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) IS 'Perguntas ao cliente SUGERIDAS para o caso (0120): exigencia_ausente/linha_presente avaliadas sobre fn_exigencias_do_caso (a mesma fonte da pendência linha_exigida_ausente — as duas faces nunca divergem); sempre = caso com conteúdo. Marcadores {data_base}/{ano} saem por EXTENSO e {saldo_mutuos} em reais (0122); desconhecidos ficam visíveis. Nada é gravado ao sugerir; ja_enviada informa, não filtra. Uma sugestão por (pergunta × entidade que não satisfaz).';
 
 --
 -- Name: fn_tem_palavra_longa(text); Type: FUNCTION; Schema: public; Owner: -
@@ -5587,6 +5666,55 @@ CREATE FUNCTION public.fn_valor_estrutural_col(p_documento_versao_id uuid, p_tok
   order by coalesce(ce.confianca, 0) desc, length(ce.chave) desc
   limit 1;
 $$;
+
+--
+-- Name: fn_valor_pt_br(numeric, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text DEFAULT NULL::text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  num    text;
+  escala text;
+begin
+  if p_valor is null then return null; end if;
+
+  -- Centavos só quando existem: "R$ 16.060 mil" e não "R$ 16.060,00 mil".
+  if p_valor = trunc(p_valor) then
+    num := to_char(abs(p_valor), 'FM999,999,999,999,990');
+  else
+    num := to_char(abs(p_valor), 'FM999,999,999,999,990.00');
+  end if;
+  num := translate(num, '.,', ',.');
+  -- O SINAL VEM ANTES DA MOEDA ("-R$ 240 mil"), que é como se escreve — e não
+  -- "R$ -240 mil", que é como o `to_char` entregaria.
+  if p_valor < 0 then num := '-R$ ' || num; else num := 'R$ ' || num; end if;
+
+  escala := case fn_normalizar_texto(coalesce(p_unidade, ''))
+    when 'milhar'  then ' mil'
+    when 'milhares' then ' mil'
+    when 'mil'     then ' mil'
+    -- Singular quando é UM milhão. Detalhe pequeno e visível: o texto sai da casa.
+    when 'milhao'  then case when abs(p_valor) = 1 then ' milhão' else ' milhões' end
+    when 'milhoes' then case when abs(p_valor) = 1 then ' milhão' else ' milhões' end
+    when 'unidade' then ''
+    when ''        then ''
+    -- ESCALA QUE NÃO CONHEÇO FICA VISÍVEL, com a palavra que veio do documento:
+    -- é informação sobre a extração, e some-la faria o número mudar de tamanho
+    -- em silêncio.
+    else ' ' || p_unidade
+  end;
+
+  return num || escala;
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_valor_pt_br(p_valor numeric, p_unidade text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text) IS 'Valor em reais como se escreve no Brasil (0122): "R$ 16.060 mil". A escala vira palavra (milhar → mil, milhao → milhões); escala desconhecida fica visível no fim. Independe do lc_numeric do servidor — o texto sai igual em qualquer instalação.';
 
 --
 -- Name: fn_valores_por_ano(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -7273,6 +7401,12 @@ GRANT ALL ON FUNCTION public.fn_aceitar_extracao(p_documento_versao_id uuid, p_a
 GRANT ALL ON FUNCTION public.fn_ano_da_coluna(p_periodo_coluna text, p_referencia text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_anos_do_periodo(p_referencia text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_anos_do_periodo(p_referencia text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_aplicar_premissa_em_lote(p_caso_id uuid, p_secao_canonica text, p_premissa text, p_autor text, p_sazonalidade text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7447,6 +7581,12 @@ GRANT ALL ON FUNCTION public.fn_papel_linha(p_chave text, p_tipo_taxonomia text,
 GRANT ALL ON FUNCTION public.fn_papel_prioridade(p_papel text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_periodo_por_extenso(p_tipo text, p_referencia text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_periodo_por_extenso(p_tipo text, p_referencia text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_premissa_valores_sugeridos(p_codigo text, p_ano_inicial integer, p_anos integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7600,6 +7740,12 @@ GRANT ALL ON TABLE public.campo_extraido TO service_role;
 --
 
 GRANT ALL ON FUNCTION public.fn_valor_estrutural_col(p_documento_versao_id uuid, p_tokens text[], p_entidade_coluna text, p_periodo_coluna text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_valor_pt_br(p_valor numeric, p_unidade text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_valores_por_ano(p_caso_id uuid, p_entidade text); Type: ACL; Schema: public; Owner: -

@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0121_diagnostico_nao_duplica_entidade.sql` |
+| **Última migration** | `db/migrations/0122_pergunta_em_portugues.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (66 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (67 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -82,7 +82,7 @@ lidas para retomar.
 | **#133** | Barra lateral rolável, `/casos` vira Painel (8 indicadores), lista completa em `/casos/todos`, abertura animada, migration `0115` (custo do lote em `lote_execucao`) | **mergeado no `main`** |
 | **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **mergeado no `main`** |
 | **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **mergeado no `main`** (PRs #137, #139, #140, #141) |
-| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`) — a tela que faltava para a `0120` existir para quem usa o produto | **branch `claude/client-question-suggestions-ves2ty`** |
+| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`), o fim do teto de 1000 no portal e a `0122` (o texto que vai ao cliente em português) | **PR #142**, branch `claude/client-question-suggestions-ves2ty` |
 
 **Nada da sessão 50 ficou pendente de merge** — o `main` já tem os sete itens, e a branch da sessão
 51 sai dele. As migrations `0116` a `0121` **já estão aplicadas** (o dono confirmou em 18/08); o que
@@ -145,7 +145,7 @@ workflow e a rodada real.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | ~~Aplicar `0116` a `0121` no Supabase~~ — **feito em 18/08** | dono |
+| 1 | ~~Aplicar `0116` a `0121` no Supabase~~ — **feito em 18/08**. **Falta a `0122`**, escrita depois: sem ela a pergunta ao cliente sai dizendo "Na DRE de 24,25" e "16060 milhar" | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
@@ -197,6 +197,47 @@ de segurança for atingido — um arquivo incompleto que não se anuncia é pior
 Ficam de fora, de propósito e por não crescerem com a mesa: catálogos (taxonomia, premissas, séries
 macro, banco de perguntas), consultas de linha única e as duas listas com `limit` deliberado (barra
 lateral, trilha de autonomia).
+
+### A `0122` — o texto que vai AO CLIENTE passa a ser escrito em português (18/08, sessão 51)
+
+**Achado rodando a aba nova sobre o book da Canastra**, e é o tipo de defeito que só aparece com
+dado real na tela. As perguntas saíam assim, literal:
+
+| Saía | Sai agora |
+|---|---|
+| "Na DRE de **24,25** não localizamos a linha de despesas financeiras" | "Na DRE de **2024 e 2025**…" |
+| "no faturamento de **L36M**?" | "no faturamento de **2025**?" |
+| "A relação de mútuos informa **16060 milhar**" | "…informa **R$ 16.060 mil**" |
+
+Nenhuma delas está errada no DADO — `24,25` é a referência multi-ano do classificador, `L36M` é a
+notação de janela móvel de `f0/03`, `16060 milhar` é a soma com a escala declarada. Estão erradas no
+LEITOR, e o leitor aqui é o cliente do mandato: **este é o único texto do sistema que sai da casa**,
+e ele não pode falar em chave interna.
+
+São três consertos, e o terceiro **não é de redação**:
+
+1. **`fn_periodo_por_extenso`** — o período na forma que cabe depois de "de"/"em": `2025`,
+   `2024 e 2025`, `2023 a 2025`, `2021, 2023 e 2025` (com buraco vira lista: o intervalo afirmaria
+   um exercício que o documento não traz), `2025 (1º trimestre)` e `um período de 36 meses`. Rótulo
+   que não diz ano nenhum **sai como veio**.
+2. **`fn_valor_pt_br`** — `R$ 16.060 mil`, com separador de milhar do país, escala em palavra, sinal
+   antes da moeda (`-R$ 240 mil`) e escala desconhecida **visível**. Independe do `lc_numeric` do
+   servidor.
+3. **`fn_anos_texto` deixa de ler `L36M` como o ano 2036.** A regra de "dois dígitos no fim"
+   (`0023`) foi escrita para `dez/25` e `12M25`; em `L36M` o que está no fim é o **tamanho da
+   janela**. Duas consequências, as duas invisíveis: na `0120` o período da pergunta é escolhido
+   pelo maior ano do caso, então um documento `L36M` **vencia** um 2025 real (foi exatamente o que a
+   Canastra produziu); e em `fn_valores_por_ano` uma coluna `L24M` entraria no modelo como o
+   exercício de 2024 — janela móvel tratada como ano fechado. Corrigir só o texto teria trocado
+   `L36M` por `2036`: um ano plausível e errado.
+
+**E o período passou a ser o DA EMPRESA de que a pergunta fala.** A sugestão é por (pergunta ×
+entidade) desde a `0119` e o período não acompanhava: num grupo em que a DRE da Indústria cobre
+2023–2025 e a da Comercial só 2024–2025, a pergunta sobre a Comercial citava um exercício que o
+documento dela não tem — e quem recebe não reconhece o próprio documento na pergunta.
+
+Dezesseis asserts novos em `db/test/perguntas.test.sql` (`#12`), incluindo o que vale por todos:
+**nenhuma pergunta do caso publica referência crua nem nome de escala**.
 
 ### As perguntas ao cliente ganharam a ABA que faltava (18/08, sessão 51)
 
@@ -531,11 +572,18 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 
 ## O que só o dono pode fazer
 
-1. ~~**Aplicar as migrations novas no Supabase.**~~ **Feito: o dono confirmou em 18/08 (sessão 51)
-   que aplicou TODAS as que estão no repositório — até a `0121`.** Merge continua não sendo apply,
+1. **Aplicar a `0122`** — a única pendente. O dono confirmou em 18/08 (sessão 51) que aplicou
+   todas até a `0121`; a `0122` nasceu depois, na mesma sessão, e é o que faz a pergunta ao cliente
+   sair em português (período por extenso, valor em reais) e a janela móvel `L36M` parar de ser
+   lida como o ano 2036. Merge continua não sendo apply,
    e da tela "aplicada" e "não aplicada" têm a mesma aparência, então a conferência de 30 segundos
    vale a pena depois de qualquer rodada nova:
    ```sql
+   -- a 0122 acrescenta duas funções e muda uma:
+   select fn_periodo_por_extenso('multi','23,24,25');  -- esperado: 2023 a 2025
+   select fn_valor_pt_br(16060, 'milhar');             -- esperado: R$ 16.060 mil
+   select fn_anos_texto('L36M');                       -- esperado: {} (antes: {2036})
+
    select proname from pg_proc
     where proname in ('fn_papel_linha','fn_reconciliar_mutuos','fn_lado_do_mutuo',
                       'fn_sugerir_perguntas','fn_registrar_pergunta_acao');
