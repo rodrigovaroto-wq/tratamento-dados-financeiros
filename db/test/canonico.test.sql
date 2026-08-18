@@ -164,6 +164,55 @@ begin
     '"Caixa" puro é achado (as tentativas antigas exigiam equivalentes ou bancos)',
     'cascata do caixa: rotulo de uma palavra');
 
+  -- ---- 4. A OUTRA FONTE DE NOME: o diagnóstico de conteúdo (0121) -----------
+  -- O comentário do bloco 1 diz que a entidade vem de DUAS fontes que escrevem
+  -- diferente — o nome do arquivo e o diagnóstico da IA. A 0030 canonizou a
+  -- primeira (`fn_registrar_documento`) e deixou a SEGUNDA para trás: até a
+  -- 0121, `fn_registrar_diagnostico` casava por `lower(razao_social) =
+  -- lower(nome)`. Achado em dado real: quatro mandatos do dono com TRÊS linhas
+  -- para a mesma empresa, uma delas criada por aqui — em mandato novo, com o
+  -- workflow já reimportado. Depois da 0119 isso deixou de ser cosmético: a
+  -- entidade virou o EIXO da cobrança de linha exigida, então a mesma empresa
+  -- passa a ser cobrada duas vezes e a 0120 manda duas perguntas ao cliente.
+  v_caso := (fn_upsert_caso('canonico diagnostico'))::uuid;
+  insert into entidade (caso_id, razao_social) values (v_caso, 'Canastra Industria');
+
+  -- (a) documento SEM entidade (o classificador se abstém quando o nome do
+  --     arquivo não carrega empresa — 6 dos 38 do book) + diagnóstico com a
+  --     razão social completa: reaproveita, não cria outra.
+  v_r := fn_registrar_documento(v_caso, null, 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+           'supabase_storage', 'b/diag-a.pdf', 'BP.pdf', true, 'H-DIAG-A', 'ok');
+  perform fn_registrar_diagnostico((v_r->>'documento_id')::uuid, (v_r->>'documento_versao_id')::uuid,
+            'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.', true, 'BALANCO', 'anual', '2025', 'ok', null, 'r', 'j');
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_rx(v_n = 1,
+    'o diagnóstico REAPROVEITA a empresa que já existe, com outra grafia (0121)',
+    format('entidades no caso: %s', v_n));
+
+  -- (b) documento COM entidade + diagnóstico com outra grafia da MESMA empresa:
+  --     não é divergência, e não pode virar pendência.
+  v_r := fn_registrar_documento(v_caso, 'Canastra Industria', 'anual', '2025', 'DRE', 0.9, 'nome_arquivo',
+           'supabase_storage', 'b/diag-b.pdf', 'DRE.pdf', true, 'H-DIAG-B', 'ok');
+  perform fn_registrar_diagnostico((v_r->>'documento_id')::uuid, (v_r->>'documento_versao_id')::uuid,
+            'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.', true, 'DRE', 'anual', '2025', 'ok', null, 'r', 'j');
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and tipo = 'entidade_incorreta' and estado <> 'resolvida';
+  perform teste_assert_rx(v_n = 0,
+    'duas grafias da MESMA empresa não abrem pendência de divergência (0121)',
+    format('pendências: %s', v_n));
+
+  -- (c) e a divergência de VERDADE continua acusada — o conserto não pode ter
+  --     transformado a guarda em peneira.
+  v_r := fn_registrar_documento(v_caso, 'Canastra Industria', 'anual', '2025', 'FLUXO_CAIXA', 0.9, 'nome_arquivo',
+           'supabase_storage', 'b/diag-c.pdf', 'DFC.pdf', true, 'H-DIAG-C', 'ok');
+  perform fn_registrar_diagnostico((v_r->>'documento_id')::uuid, (v_r->>'documento_versao_id')::uuid,
+            'Vertentes Metalurgica Ltda.', true, 'FLUXO_CAIXA', 'anual', '2025', 'ok', null, 'r', 'j');
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and tipo = 'entidade_incorreta' and estado <> 'resolvida';
+  perform teste_assert_rx(v_n = 1,
+    'empresa DIFERENTE continua abrindo pendência — o conserto não virou peneira',
+    format('pendências: %s', v_n));
+
   delete from caso where id = v_caso;
   raise notice 'TODOS OS TESTES DE CANONICALIZAÇÃO PASSARAM';
 end

@@ -4140,12 +4140,13 @@ begin
   -- ----- Entidade: preenche a lacuna se ainda vazia; senão só confere -----
   if p_entidade_nome is not null and length(trim(p_entidade_nome)) > 0 then
     if v_entidade_id is null then
-      select id into v_entidade_id from entidade
-        where caso_id = v_caso_id and lower(razao_social) = lower(trim(p_entidade_nome)) limit 1;
-      if v_entidade_id is null then
-        insert into entidade (caso_id, razao_social) values (v_caso_id, trim(p_entidade_nome))
-          returning id into v_entidade_id;
-      end if;
+      -- 0121: `fn_upsert_entidade` (0030), e não mais igualdade exata de texto.
+      -- Era ela quem criava a segunda linha da MESMA empresa: o classificador
+      -- não resolvia a entidade pelo nome do arquivo (6 dos 38 documentos do
+      -- book), o diagnóstico lia a razão social completa do conteúdo
+      -- ("CANASTRA INDÚSTRIA DE EMBALAGENS LTDA."), não achava igualdade exata
+      -- com a que já existia ("Canastra Industria") e INSERIA outra.
+      v_entidade_id := fn_upsert_entidade(v_caso_id, p_entidade_nome);
       update documento set entidade_id = v_entidade_id where id = p_documento_id;
       v_entidade_criada := true;
     else
@@ -4153,7 +4154,12 @@ begin
       select id into v_pendencia_id from pendencia
         where caso_id = v_caso_id and motivo = 'diagnostico:entidade:' || p_documento_id and estado <> 'resolvida'
         limit 1;
-      if lower(trim(coalesce(v_entidade_atual_nome, ''))) <> lower(trim(p_entidade_nome)) then
+      -- 0121: divergência de ENTIDADE passa a ser medida pela forma canônica,
+      -- como o período já é desde a 0022. "Canastra Industria" e "CANASTRA
+      -- INDÚSTRIA DE EMBALAGENS LTDA." são a mesma empresa, e `fn_mesma_entidade`
+      -- já sabia disso — só esta comparação não perguntava, e por isso abria
+      -- pendência de divergência entre dois nomes da mesma companhia.
+      if not fn_mesma_entidade(v_entidade_atual_nome, p_entidade_nome) then
         if v_pendencia_id is null then
           insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
             values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
@@ -4244,6 +4250,12 @@ begin
     'entidade_criada', v_entidade_criada);
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade passa a casar e a divergir pela forma CANÔNICA (fn_upsert_entidade/fn_mesma_entidade, 0030) — antes, igualdade exata de texto criava uma segunda linha para a mesma empresa e abria pendência de divergência entre duas grafias dela.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -7495,6 +7507,12 @@ GRANT ALL ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) TO
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: ACL; Schema: public; Owner: -
