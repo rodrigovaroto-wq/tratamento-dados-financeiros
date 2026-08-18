@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import type { EntradaModeloInstitucional, LinhaModelo } from "@/lib/modelo-institucional";
 import {
   buildExportWorkbook, finalizarBufferDoExport, nomeArquivoSanitizado, type ConfigModelagem,
@@ -25,18 +26,22 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const [casoRes, documentosRes] = await Promise.all([
     supabase.from("caso").select("id, nome, produto").eq("id", id).single(),
-    supabase
-      .from("documento")
-      .select(
-        // `n_versao` é o que permite ao export saber qual extração é a VIGENTE
-        // quando o mesmo arquivo foi reextraído (db/migrations/0026 registra a
-        // reextração como versão nova do mesmo documento) — sem ela, as duas
-        // extrações entrariam juntas e a soma da seção contaria as duas.
-        `id, tipo_taxonomia,
-         entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-         documento_versao(id, nome_original, n_versao)`,
-      )
-      .eq("caso_id", id),
+    paginar<DocumentoParaExport>((de, ate) =>
+      supabase
+        .from("documento")
+        .select(
+          // `n_versao` é o que permite ao export saber qual extração é a VIGENTE
+          // quando o mesmo arquivo foi reextraído (db/migrations/0026 registra a
+          // reextração como versão nova do mesmo documento) — sem ela, as duas
+          // extrações entrariam juntas e a soma da seção contaria as duas.
+          `id, tipo_taxonomia,
+           entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
+           documento_versao(id, nome_original, n_versao)`,
+        )
+        .eq("caso_id", id)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
   ]);
 
   if (casoRes.error || !casoRes.data) {
@@ -66,25 +71,44 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       { status: 500 },
     );
   }
-  const documentos = (documentosRes.data as unknown as DocumentoParaExport[] | null) ?? [];
+  const documentos = documentosRes.data;
 
   const versaoIds = documentos.flatMap((doc) => (doc.documento_versao ?? []).map((v) => v.id));
+  // PAGINADO, E AQUI ERA O PIOR LUGAR PARA NÃO ESTAR.
+  //
+  // O PostgREST do Supabase devolve no máximo `db-max-rows` por consulta — 1000
+  // por padrão — e corta acima disso EM SILÊNCIO, sem erro. Este é o `.xlsx`
+  // que vai a comitê: um mandato com mais de mil linhas extraídas gerava um
+  // arquivo faltando linhas, que abre normalmente e parece completo. O book de
+  // teste sozinho tem ~3.000 linhas com número.
+  //
+  // Não dá para trocar por `count` como se fez com o indicador do painel: aqui
+  // as LINHAS são o produto. Então lê de mil em mil, na mesma ordem.
   const camposRes = versaoIds.length
-    ? await supabase
-        .from("campo_extraido")
-        .select(
-          "id, documento_versao_id, secao, secao_canonica, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, ordem, status_aceite, aceito_por, aceito_em",
-        )
-        .in("documento_versao_id", versaoIds)
-        // ORDEM DO DOCUMENTO (db/migrations/0027). Sem isto o PostgREST devolve
-        // as linhas em ordem arbitrária, e a detecção de "subtotal impresso
-        // acima dos seus componentes" — que é o que conserta o Ativo Circulante
-        // da VT Logística (7.254 onde o documento diz 3.961) — não tem sinal
-        // nenhum para trabalhar. `nullsFirst: false` mantém a extração ANTIGA
-        // (ordem nula) no fim, sem embaralhar o que tem ordem.
-        .order("documento_versao_id", { ascending: true })
-        .order("ordem", { ascending: true, nullsFirst: false })
-    : { data: [] as CampoExtraido[], error: null };
+    ? await paginar<CampoExtraido>((de, ate) =>
+        supabase
+          .from("campo_extraido")
+          .select(
+            "id, documento_versao_id, secao, secao_canonica, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, ordem, status_aceite, aceito_por, aceito_em",
+          )
+          .in("documento_versao_id", versaoIds)
+          // ORDEM DO DOCUMENTO (db/migrations/0027). Sem isto o PostgREST devolve
+          // as linhas em ordem arbitrária, e a detecção de "subtotal impresso
+          // acima dos seus componentes" — que é o que conserta o Ativo Circulante
+          // da VT Logística (7.254 onde o documento diz 3.961) — não tem sinal
+          // nenhum para trabalhar. `nullsFirst: false` mantém a extração ANTIGA
+          // (ordem nula) no fim, sem embaralhar o que tem ordem.
+          //
+          // A ordem também é o que torna a paginação CORRETA: sem ordem total e
+          // estável, duas páginas podem repetir e omitir a mesma linha. `id`
+          // fecha o desempate — `documento_versao_id` e `ordem` empatam entre si
+          // na extração antiga, que não tem ordem.
+          .order("documento_versao_id", { ascending: true })
+          .order("ordem", { ascending: true, nullsFirst: false })
+          .order("id", { ascending: true })
+          .range(de, ate),
+      )
+    : { data: [] as CampoExtraido[], error: null, truncado: false };
 
   if (camposRes.error) {
     console.error(`[export] consulta de campos extraídos falhou: ${camposRes.error.message}`, { caso_id: id });
@@ -97,19 +121,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       { status: 500 },
     );
   }
-  const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
+  const campos = camposRes.data;
 
   // POR QUE a extração falhou, e não só QUAIS documentos falharam. No "teste v30"
   // os 14 documentos falharam e o export listava os nomes — a CAUSA (que a
   // pendência já registrava) ficava só na fila de revisão, numa tela diferente.
   // Quem abre o book precisa saber, ali, se o problema é crédito da OpenAI, cota
   // do dia ou cadência: as três pedem ações diferentes e só uma delas é nossa.
-  const falhasRes = await supabase
-    .from("pendencia")
-    .select("descricao, documento_id")
-    .eq("caso_id", id)
-    .eq("tipo", "extracao_falhou")
-    .neq("estado", "resolvida");
+  const falhasRes = await paginar<{ descricao: string | null; documento_id: string | null }>((de, ate) =>
+    supabase
+      .from("pendencia")
+      .select("descricao, documento_id")
+      .eq("caso_id", id)
+      .eq("tipo", "extracao_falhou")
+      .neq("estado", "resolvida")
+      .order("id", { ascending: true })
+      .range(de, ate),
+  );
   // Esta é auxiliar (a lista de causas), então segue a doutrina do macro: declara
   // que não deu para ler, em vez de abortar o book inteiro ou omitir em silêncio.
   if (falhasRes.error) {
@@ -120,7 +148,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       ? [`(não foi possível ler as causas registradas: ${falhasRes.error.message})`]
       : []),
     ...new Set(
-      ((falhasRes.data as Array<{ descricao: string | null }> | null) ?? [])
+      (falhasRes.data)
         .map((p) => p.descricao ?? "")
         // A descrição da pendência é "Extração de 'X.pdf' falhou ... Motivo: <causa>".
         // Só a causa interessa aqui: o nome do arquivo já vai na outra coluna, e

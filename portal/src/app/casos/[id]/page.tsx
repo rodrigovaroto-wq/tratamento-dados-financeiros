@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import {
   PENDENCIA_TIPOS_RECONCILIACAO,
   PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS,
@@ -70,19 +71,29 @@ export default async function CasoDashboardPage({
       .select("codigo, categoria, documento, obrigatoriedade")
       .eq("obrigatoriedade", "obrigatorio")
       .order("codigo"),
-    supabase
-      .from("documento")
-      .select(
-        `id, tipo_taxonomia, status, confianca, fonte, justificativa, resumo, criado_em,
-         entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-         documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
-      )
-      .eq("caso_id", id)
-      .order("criado_em", { ascending: false }),
-    supabase
-      .from("pendencia")
-      .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em")
-      .eq("caso_id", id)
+    // AS LISTAS DESTA TELA SÃO PAGINADAS. O teto do PostgREST (`db-max-rows`,
+    // 1000 no Supabase) corta em silêncio, e aqui as linhas são o conteúdo: a
+    // tabela de documentos, a fila de pendências do mandato e a contagem de
+    // linhas por documento. Um mandato grande passava a mostrar só os mil
+    // primeiros de cada, sem nada na tela dizendo isso.
+    paginar<Documento>((de, ate) =>
+      supabase
+        .from("documento")
+        .select(
+          `id, tipo_taxonomia, status, confianca, fonte, justificativa, resumo, criado_em,
+           entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
+           documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
+        )
+        .eq("caso_id", id)
+        .order("criado_em", { ascending: false })
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
+    paginar<Pendencia>((de, ate) =>
+      supabase
+        .from("pendencia")
+        .select("id, tipo, severidade, estado, descricao, documento_id, caso_id, criada_em")
+        .eq("caso_id", id)
       // A PENDÊNCIA DECIDIDA CONTINUA NA TELA — e isto é o que faz os três
       // botões (0109) terem sentido. Eles "adicionam um rótulo na pendência";
       // se o item sumisse ao ser decidido, o rótulo não existiria para ninguém
@@ -90,9 +101,12 @@ export default async function CasoDashboardPage({
       //
       // Fica de fora só `resolvida`, que é do SISTEMA: o problema deixou de
       // existir, não há decisão humana para exibir nem nada a reconsiderar.
-      .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
-                     "aceita_com_ressalva", "rejeitada"])
-      .order("criada_em", { ascending: false }),
+        .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente",
+                       "aceita_com_ressalva", "rejeitada"])
+        .order("criada_em", { ascending: false })
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
     // db/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
     // ter documento e ainda assim não ter uma linha extraída
     // (`recebido_nao_valido`). Antes o dashboard derivava "presente" só da
@@ -113,14 +127,16 @@ export default async function CasoDashboardPage({
   // documento chegou e foi classificado, não que ele TROUXE dado. Documento
   // classificado com zero linha é o modo de falha mais caro deste sistema (19 de
   // 35 numa rodada real), e agora ele aparece na coluna, em vermelho.
-  const versoes = (documentosRes.data as unknown as Documento[] | null ?? [])
+  const versoes = documentosRes.data
     .flatMap((d) => (d.documento_versao ?? []).map((v) => v.id))
     .filter(Boolean);
   const linhasRes = versoes.length
-    ? await supabase.from("campo_extraido").select("documento_versao_id").in("documento_versao_id", versoes)
+    ? await paginar<{ documento_versao_id: string }>((de, ate) =>
+        supabase.from("campo_extraido").select("documento_versao_id")
+          .in("documento_versao_id", versoes).order("id", { ascending: true }).range(de, ate))
     : { data: [] as Array<{ documento_versao_id: string }>, error: null };
   const linhasPorVersao = new Map<string, number>();
-  for (const l of (linhasRes.data as Array<{ documento_versao_id: string }> | null) ?? []) {
+  for (const l of linhasRes.data) {
     linhasPorVersao.set(l.documento_versao_id, (linhasPorVersao.get(l.documento_versao_id) ?? 0) + 1);
   }
 
@@ -130,8 +146,8 @@ export default async function CasoDashboardPage({
 
   const caso = casoRes.data as Caso;
   const kitBasico = (kitBasicoRes.data as TaxonomiaTipoDocumento[] | null) ?? [];
-  const documentos = (documentosRes.data as unknown as Documento[] | null) ?? [];
-  const pendencias = (pendenciasRes.data as Pendencia[] | null) ?? [];
+  const documentos = documentosRes.data;
+  const pendencias = pendenciasRes.data;
 
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
   // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o

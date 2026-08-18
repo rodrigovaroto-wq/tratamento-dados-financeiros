@@ -4,13 +4,20 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-18 (sessão 50). **Estado do `main`:** mergeado até o **PR #133**
-(`main` em `a2f2523`). **Há trabalho em duas branches:** o **PR #134** (corrige "linhas extraídas"
-mostrando exatamente 1.000 — o teto do PostgREST, não o dado) e a branch da **sessão 50**
-(`claude/handoff-next-steps-ke4omr`), que contém os commits do #134 mais os **sete itens da lista
-"o que está aberto"**, atacados em ordem a pedido do dono: os subtotais impressos, a checagem de
-mútuos, a tela de Modelagem, os apelidos da taxonomia, o teto de gasto por conteúdo, o dedup por
-fingerprint e o teto de 1000 nas listas do painel — **tudo isso já está mergeado** (PR #136). Depois dele vieram as incorporações dos PRs do Ian, revisadas e corrigidas: o **#135** (linha exigida por entidade) como `0119`, com quatro correções, e o **#138** (banco de perguntas ao cliente) como `0120`, com seis. **Leia o `ESTADO.md` primeiro** — as seções "O PR #135 do Ian, incorporado com quatro correções" e "O que a sessão 50 fez" têm o resumo item a item, com as ressalvas.
+**Última atualização:** 2026-08-18 (sessão 50). **Estado do `main`:** mergeado até o **PR #140**.
+A rodada entregou seis migrations — `0116` (o total impresso vira linha), `0117` (reconciliação de
+mútuos), `0118` (dedup por fingerprint de prompt+modelo), `0119` (linha exigida por entidade, do PR
+#135 do Ian, com quatro correções), `0120` (banco de perguntas ao cliente, do PR #138, com seis) e
+`0121` (o diagnóstico de conteúdo para de duplicar a empresa — achado no dado real do dono, antes da
+rodada de validação) — mais o portal (painel, Modelagem, e o teto de 1000 linhas removido de TODAS
+as telas, inclusive do export) e o workflow do n8n reestruturado para 33 nós.
+
+**O que falta é do dono e não é código:** aplicar as migrations, reimportar o workflow e RODAR o
+book num mandato NOVO. **Leia o `ESTADO.md` primeiro** — ele tem os passos, o SQL de conferência de
+cada migration e as três coisas a trazer da rodada.
+
+**O maior buraco aberto:** as perguntas ao cliente da `0120` não têm tela — o motor existe e nenhuma
+página o chama.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

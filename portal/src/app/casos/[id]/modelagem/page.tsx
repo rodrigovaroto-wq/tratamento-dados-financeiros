@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import { SecaoLinhas } from "./SecaoLinhas";
 import { FormParametros, FormPremissa } from "./FormsTopo";
 import { chaveDaLinha, vinculoPorLinha } from "@/lib/modelagem-linha";
@@ -192,8 +193,10 @@ export default async function ModelagemPage({
     // ninguém digita 12 percentuais que o documento já afirma.
     medir(supabase.rpc("fn_sazonalidade_do_caso", { p_caso_id: id })),
     // Só para SUGERIR entidade e último exercício no passo 1 (ver abaixo).
-    medir(supabase.from("documento")
-      .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)").eq("caso_id", id)),
+    medir(paginar<{ tipo_taxonomia: string | null; entidade: { razao_social: string } | null; periodo: { referencia: string } | null }>(
+      (de, ate) => supabase.from("documento")
+        .select("tipo_taxonomia, entidade(razao_social), periodo(referencia)")
+        .eq("caso_id", id).order("id", { ascending: true }).range(de, ate))),
   ]);
 
   // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import type { Caso } from "@/lib/types";
 import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 import { humanizar } from "@/lib/rotulos";
@@ -44,26 +45,38 @@ function dataCurta(iso: string | null | undefined): string {
 export default async function CasosPage() {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("caso")
-    .select("id, nome, produto, status, criado_em, fechado_em")
-    .order("criado_em", { ascending: false });
+  const { data, error } = await paginar<Caso>((de, ate) =>
+    supabase
+      .from("caso")
+      .select("id, nome, produto, status, criado_em, fechado_em")
+      .order("criado_em", { ascending: false })
+      .order("id", { ascending: true })
+      .range(de, ate),
+  );
 
-  const casos = (data as Caso[] | null) ?? [];
+  const casos = data;
 
   // UMA consulta para todos os mandatos, não uma por linha: a lista com 30 casos
   // faria 90 idas ao banco, e a tela é a primeira que abre no dia.
   const ids = casos.map((c) => c.id);
   const [docsRes, pendRes] = ids.length
     ? await Promise.all([
-        supabase.from("documento").select("id, caso_id").in("caso_id", ids),
-        supabase
-          .from("pendencia")
-          .select("id, caso_id, severidade, estado")
-          .in("caso_id", ids)
-          .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente"]),
+        paginar<{ id: string; caso_id: string }>((de, ate) =>
+          supabase.from("documento").select("id, caso_id").in("caso_id", ids)
+            .order("id", { ascending: true }).range(de, ate)),
+        paginar<{ id: string; caso_id: string; severidade: string; estado: string }>((de, ate) =>
+          supabase
+            .from("pendencia")
+            .select("id, caso_id, severidade, estado")
+            .in("caso_id", ids)
+            .in("estado", ["aberta", "em_correcao_interna", "reenviada_ao_cliente"])
+            .order("id", { ascending: true })
+            .range(de, ate)),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [
+        { data: [] as Array<{ id: string; caso_id: string }>, error: null, truncado: false },
+        { data: [] as Array<{ id: string; caso_id: string; severidade: string; estado: string }>, error: null, truncado: false },
+      ];
 
   const docsPorCaso = new Map<string, number>();
   for (const d of (docsRes.data as Array<{ caso_id: string }> | null) ?? []) {

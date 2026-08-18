@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 
 // Consultado pelo portal (polling) depois de um upload, pra saber quando os
 // arquivos enviados já passaram pela classificação E pela extração — não tem
@@ -57,34 +58,46 @@ export async function GET(request: Request) {
     return NextResponse.json({ classificados: 0, processados: 0, esperados, pronto: false });
   }
 
-  const { data: documentos, error: docErr } = await supabase
-    .from("documento")
-    .select("id, documento_versao(id)")
-    .eq("caso_id", caso.id)
-    .gte("criado_em", desde);
+  // PAGINADO: estes dois são CONTADORES DE PROGRESSO da ingestão, e o teto do
+  // PostgREST (1000 por consulta, silencioso) faria a barra parar em mil
+  // documentos e o lote parecer travado quando está andando.
+  const { data: documentos, error: docErr } = await paginar<{ id: string; documento_versao: { id: string }[] }>(
+    (de, ate) =>
+      supabase
+        .from("documento")
+        .select("id, documento_versao(id)")
+        .eq("caso_id", caso.id)
+        .gte("criado_em", desde)
+        .order("id", { ascending: true })
+        .range(de, ate),
+  );
 
   if (docErr) {
     return NextResponse.json({ error: docErr.message }, { status: 500 });
   }
 
-  const docs = (documentos as unknown as Array<{ id: string; documento_versao: { id: string }[] }>) ?? [];
+  const docs = documentos;
   const classificados = docs.length;
   const versaoIds = docs.flatMap((d) => (d.documento_versao ?? []).map((v) => v.id));
 
   let processados = 0;
   if (versaoIds.length > 0) {
     const refs = versaoIds.map((id) => `documento_versao:${id}`);
-    const { data: eventos, error: evtErr } = await supabase
-      .from("evento_auditoria")
-      .select("entidade_ref")
-      .eq("acao", "extracao_sombra")
-      .gte("criado_em", desde)
-      .in("entidade_ref", refs);
+    const { data: eventos, error: evtErr } = await paginar<{ entidade_ref: string }>((de, ate) =>
+      supabase
+        .from("evento_auditoria")
+        .select("entidade_ref")
+        .eq("acao", "extracao_sombra")
+        .gte("criado_em", desde)
+        .in("entidade_ref", refs)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    );
 
     if (evtErr) {
       return NextResponse.json({ error: evtErr.message }, { status: 500 });
     }
-    processados = new Set((eventos ?? []).map((e) => e.entidade_ref)).size;
+    processados = new Set(eventos.map((e) => e.entidade_ref)).size;
   }
 
   const pronto = classificados >= esperados && processados >= esperados;

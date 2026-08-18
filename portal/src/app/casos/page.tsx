@@ -252,11 +252,15 @@ export default async function PainelPage() {
   // pode cair por causa de três indicadores. `error` aqui vira "sem medição",
   // não uma tela vermelha.
   const usoRes = ids.length
-    ? await supabase
-        .from("lote_execucao")
-        .select("caso_id, custo_total_usd, contas_nos_documentos, contas_extraidas")
-        .in("caso_id", ids)
-    : { data: [], error: null };
+    ? await paginar<UsoDoLote>((de, ate) =>
+        supabase
+          .from("lote_execucao")
+          .select("caso_id, custo_total_usd, contas_nos_documentos, contas_extraidas")
+          .in("caso_id", ids)
+          .order("id", { ascending: true })
+          .range(de, ate),
+      )
+    : { data: [] as UsoDoLote[], error: null, truncado: false };
 
   type UsoDoLote = {
     caso_id: string;
