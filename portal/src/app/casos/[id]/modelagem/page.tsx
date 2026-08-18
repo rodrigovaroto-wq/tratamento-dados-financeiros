@@ -310,15 +310,54 @@ export default async function ModelagemPage({
   const premissasSazonais = ativas.filter((a) => a.premissa_codigo.includes("SAZON")
     || a.premissa_codigo === "CRONOGRAMA_FISICO" || a.premissa_codigo === "PARADA_MANUTENCAO");
 
+  // OS TRÊS PASSOS, COM O QUE JÁ ESTÁ FEITO EM CADA UM. A tela tem três seções
+  // longas empilhadas e nenhuma delas cabe na dobra: sem isto, saber "em que pé
+  // estou" exigia rolar as três e somar de cabeça. O número ao lado do passo é o
+  // estado dele, não decoração.
+  const passos = [
+    {
+      id: "parametros",
+      titulo: "Parâmetros",
+      feito: !!parametros?.entidade && !!parametros?.ultimo_exercicio_real,
+      nota: parametros?.entidade
+        ? `${parametros.entidade} · ${anos[0]}–${anos[anos.length - 1]}`
+        : "entidade e exercício ainda sugeridos",
+    },
+    {
+      id: "premissas",
+      titulo: "Premissas",
+      feito: ativas.length > 0 && !conf?.premissas_sem_valor?.length,
+      nota: ativas.length === 0
+        ? "nenhuma ativa"
+        : `${ativas.length} ativa(s)` +
+          (conf?.premissas_sem_valor?.length ? ` · ${conf.premissas_sem_valor.length} sem valor` : ""),
+    },
+    {
+      id: "linhas",
+      titulo: "Linhas × premissas",
+      feito: !!conf && conf.linhas_sem_premissa === 0 && conf.linhas_do_caso > 0,
+      nota: conf
+        ? `${conf.linhas_com_premissa} de ${conf.linhas_do_caso} contas com premissa`
+        : `${todasLinhas.length} linhas`,
+    },
+  ];
+
   return (
-    <main className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-baseline justify-between gap-4">
-        <div>
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <Link href={`/casos/${id}`} className="text-sm text-tinta-500 hover:underline">
             ← {caso.nome}
           </Link>
-          <h1 className="text-xl font-semibold">Modelagem</h1>
-          <p className="text-xs text-tinta-500">
+          <div className="mt-0.5 flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-semibold text-tinta-900">Modelagem</h1>
+            {conf && (
+              <span className={`chip ${conf.pronto ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>
+                {conf.pronto ? "pronto para exportar" : "falta algo"}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-sm text-tinta-500">
             Escolha as premissas deste mandato e diga onde cada uma entra na projeção.
           </p>
         </div>
@@ -329,28 +368,58 @@ export default async function ModelagemPage({
             "modelagem" entrega as 14 abas do modelo; "dados financeiros" entrega
             a conferência da ingestão, linha a linha. O de dados vem primeiro por
             ser o que se usa ANTES de modelar. */}
-        <div className="flex shrink-0 items-center gap-2">
+        {/* AS DUAS AÇÕES, COM PESOS DIFERENTES. Eram dois botões de peso igual, e
+            a tela não dizia qual é o produto DELA: o export de modelagem. O de
+            dados continua aqui (é o que se usa para conferir antes de modelar),
+            mas como ação secundária — a mesma hierarquia da tela do mandato. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <a
             href={`/casos/${id}/export?modo=dados`}
-            className="rounded border border-tinta-200 bg-white px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50"
+            className="btn-secundario"
             title="As abas de dado, linha a linha, como saíram da extração. Serve para conferir contra os documentos — não projeta nada."
           >
-            Exportar dados financeiros ↓
+            Exportar dados
           </a>
           <a
             href={`/casos/${id}/export`}
-            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
+            className="btn-primario"
             title="As 14 abas do modelo institucional, projetadas e editáveis dentro do Excel, mais a Modelagem e os índices macro. Sem as abas de dado cru."
           >
-            Exportar modelagem ↓
+            Exportar modelagem
           </a>
         </div>
       </div>
 
+      {/* A TRILHA DOS TRÊS PASSOS. Ela é navegação e estado ao mesmo tempo: leva
+          direto à seção (a página é longa demais para rolagem cega) e diz o que
+          falta em cada uma sem obrigar a abrir. */}
+      <nav aria-label="Passos da modelagem" className="carta flex flex-wrap divide-x divide-tinta-100">
+        {passos.map((p, i) => (
+          <a
+            key={p.id}
+            href={`#${p.id}`}
+            className="flex min-w-52 flex-1 items-start gap-3 px-4 py-3 transition-colors hover:bg-tinta-50"
+          >
+            <span
+              aria-hidden
+              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                p.feito ? "bg-emerald-600 text-white" : "bg-tinta-200 text-tinta-600"
+              }`}
+            >
+              {p.feito ? "✓" : i + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-tinta-900">{p.titulo}</span>
+              <span className="block truncate text-xs text-tinta-500">{p.nota}</span>
+            </span>
+          </a>
+        ))}
+      </nav>
+
       {/* CONSULTA QUE FALHOU aparece ANTES de tudo, e nomeada. Enquanto isto não
           existia, uma RPC quebrada saía da tela como "este caso não tem linha". */}
       {falhas.length > 0 && (
-        <section className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+        <section className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">
           <p className="font-semibold">
             {falhas.length} consulta(s) ao banco FALHARAM — o que está faltando nesta tela é efeito
             disso, não é o caso estar vazio.
@@ -400,7 +469,7 @@ export default async function ModelagemPage({
           da decisão. */}
       {conf && (
         <section
-          className={`rounded border p-3 text-sm ${
+          className={`rounded-lg border p-3 text-sm ${
             conf.pronto ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"
           }`}
         >
@@ -448,13 +517,19 @@ export default async function ModelagemPage({
       )}
 
       {/* 1. PARÂMETROS — as três células que saíram do topo da aba Modelagem. */}
-      <section className="rounded border border-tinta-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-tinta-600">1. Parâmetros do mandato</h2>
-        <p className="mb-3 text-xs text-tinta-500">
-          Entidade modelada, corte do último exercício real e índice macro saíram do topo da planilha
-          e vivem aqui — o Excel sai já parametrizado com o que você escolher. O setor filtra as
-          premissas sugeridas no passo 2. Entidade e último exercício vêm <strong>sugeridos</strong>{" "}
-          pelo que os documentos deste caso dizem; confira antes de salvar.
+      <section id="parametros" className="carta scroll-mt-20 p-4">
+        <h2 className="titulo-secao">1 · Parâmetros do mandato</h2>
+        {/* O TEXTO DE APOIO ENCOLHEU, e o que saiu dele não se perdeu: virou
+            comentário. A tela tinha quatro parágrafos de explicação antes do
+            primeiro campo, e explicação que ninguém lê é ruído que empurra o
+            trabalho para baixo da dobra. O que ficou é o que muda o que a pessoa
+            faz agora: que os valores são SUGESTÕES a conferir.
+            O resto continua valendo e mora aqui: o Excel sai parametrizado com o
+            que for escolhido, o setor só SUGERE as premissas do passo 2, e o
+            horizonte de projeção é derivado do último exercício realizado. */}
+        <p className="mb-3 mt-1 text-xs text-tinta-500">
+          Entidade e último exercício vêm <strong>sugeridos</strong> pelos documentos deste caso —
+          confira antes de salvar. O Excel sai parametrizado com o que estiver aqui.
         </p>
         <FormParametros casoId={id}>
           <label className="text-sm">
@@ -513,21 +588,23 @@ export default async function ModelagemPage({
       </section>
 
       {/* 2. PREMISSAS DO CASO */}
-      <section className="rounded border border-tinta-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-tinta-600">
-          2. Premissas deste caso
+      <section id="premissas" className="carta scroll-mt-20 p-4">
+        <h2 className="titulo-secao">
+          2 · Premissas deste caso
           {parametros?.setor && (
             <span className="ml-2 font-normal text-tinta-500">
               — sugeridas para {SETORES.find(([v]) => v === parametros.setor)?.[1] ?? humanizar(parametros.setor)}
             </span>
           )}
         </h2>
-        <p className="mb-3 text-xs text-tinta-500">
-          O setor <strong>sugere</strong>, não restringe: a lista traz a base comum mais as do setor,
-          e qualquer premissa ativada aqui pode ser usada em qualquer linha. Ano em branco fica{" "}
-          <strong>em branco</strong> — não vira zero, porque projetar com zero é o erro que não se
-          denuncia. Premissa <strong>macro</strong> ativada sem valor puxa a expectativa do Focus que
-          está no banco, com a origem declarada.
+        {/* Duas regras ficam na tela porque mudam o que se digita; o resto virou
+            comentário. As que ficaram: ano vazio NÃO vira zero (projetar com zero
+            é o erro que não se denuncia), e premissa macro sem valor puxa o Focus
+            sozinha. O que saiu: que o setor sugere sem restringir — isso o próprio
+            cabeçalho da seção já diz, com o nome do setor ao lado. */}
+        <p className="mb-3 mt-1 text-xs text-tinta-500">
+          Ano em branco fica <strong>em branco</strong>, não vira zero. Premissa{" "}
+          <strong>macro</strong> ativada sem valor puxa a expectativa do Focus que está no banco.
         </p>
 
         {/* A CURVA DE SAZONALIDADE não é digitada: ela é derivada do faturamento
@@ -639,13 +716,16 @@ export default async function ModelagemPage({
       </section>
 
       {/* 3. LINHAS × PREMISSAS */}
-      <section className="rounded border border-tinta-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-tinta-600">3. Linhas × premissas</h2>
-        <p className="mb-3 text-xs text-tinta-500">
-          Cada <strong>conta</strong> pode ter a sua premissa. O <strong>aplicar em lote</strong>{" "}
-          resolve a maioria dos casos de uma vez (todas as contas de receita → crescimento real);
-          depois é só ajustar as exceções e salvar a seção inteira de uma vez. Linha sem premissa não
-          é projetada — e isso é escolha legítima, que o arquivo declara.
+      <section id="linhas" className="carta scroll-mt-20 p-4">
+        <h2 className="titulo-secao">
+          3 · Linhas × premissas
+          <span className="ml-2 font-normal normal-case tracking-normal text-tinta-500">
+            — {todasLinhas.length} linha(s) no caso
+          </span>
+        </h2>
+        <p className="mb-3 mt-1 text-xs text-tinta-500">
+          Comece pelo <strong>aplicar em lote</strong> de cada seção e ajuste as exceções depois.
+          Linha sem premissa não é projetada — escolha legítima, que o arquivo declara.
         </p>
 
         {/* Busca por rótulo: com 236 linhas, achar "Fornecedores nacionais" rolando
@@ -714,6 +794,6 @@ export default async function ModelagemPage({
           </div>
         )}
       </section>
-    </main>
+    </div>
   );
 }

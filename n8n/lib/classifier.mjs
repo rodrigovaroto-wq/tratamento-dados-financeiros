@@ -144,13 +144,16 @@ export function parseEntidade(textoNormalizado, aliases) {
     // arquivos com nome de vida real do book, e nenhum deles nomeia empresa.
     'anexo', 'anexos', 'doc', 'doc1', 'documento', 'documentos', 'arquivo', 'planilha',
     'planilhas', 'pasta', 'meses', 'mes', 'periodo', 'atualizado', 'atualizada', 'novo', 'nova',
-    // Palavras de TIPO que a taxonomia não carrega no apelido, e por isso não são
-    // removidas pela regra do vocabulário abaixo: o nome de arquivo traz
-    // "certidoes NEGATIVAS", "organograma SOCIETARIO", "situacao fiscal e
-    // PARCELAMENTOS", e o alias casado é o pedaço curto. O lugar certo delas é a
-    // taxonomia (`taxonomia_tipo_documento`, seed `db/migrations/0002`, espelhado
-    // em `lib/taxonomia.mjs`) — mexer lá é migration, e fica anotado no ESTADO.md.
-    'negativas', 'negativa', 'societario', 'societaria', 'parcelamentos', 'parcelamento',
+    // AQUI NÃO MORA MAIS PALAVRA DE TIPO. 'negativas', 'societario' e
+    // 'parcelamentos' ficaram nesta lista por um tempo com um comentário
+    // dizendo que o lugar certo era a taxonomia — e era mesmo: agora eles são
+    // termos de CERTIDOES, ORGANOGRAMA e SITUACAO_FISCAL em `lib/taxonomia.mjs`,
+    // e a regra do vocabulário logo abaixo os remove sozinha, junto com toda
+    // palavra de tipo que entrar na taxonomia daqui para a frente.
+    //
+    // O que sobrou nesta lista é de outra natureza, e por isso continua: ruído
+    // de nome de ARQUIVO ("rev3", "scan", "anexo") e preposição. Nada disso é
+    // tipo de documento, então nada disso tem lugar na taxonomia.
   ]);
   // Siglas que ficam feias em Title Case ("Vt Logistica"). Lista curta e
   // explícita: adivinhar por "não tem vogal" erraria em `SPE`.

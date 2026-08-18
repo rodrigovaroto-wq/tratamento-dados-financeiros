@@ -76,9 +76,18 @@ export const ALIASES = [
   { codigo: 'AGING_AR', termos: ['aging de recebiveis', 'aging ar', 'contas a receber', 'aging de contas a receber'] },
   { codigo: 'AGING_AP', termos: ['aging de pagaveis', 'aging ap', 'contas a pagar', 'fornecedores'] },
   { codigo: 'ESTOQUE', termos: ['estoque', 'estoques'] },
-  { codigo: 'CERTIDOES', termos: ['certidao', 'certidoes', 'cnd'] },
+  // 'negativas', 'societario' e 'parcelamentos' entram AQUI, no vocabulário de
+  // tipo, e não numa lista à parte. Eles são a segunda palavra do nome que o
+  // cliente escreve ("30_Certidoes_Negativas_...", "organograma SOCIETARIO",
+  // "situacao fiscal e PARCELAMENTOS") e o alias que casa é o pedaço curto, então
+  // a sobra grudava no nome da empresa: `parseEntidade` mantinha os três numa
+  // lista de RUÍDO escrita à mão, com um comentário dizendo que o lugar certo
+  // era a taxonomia. É este o lugar certo — a remoção de palavra de tipo em
+  // `parseEntidade` varre o vocabulário palavra a palavra, então quem entra aqui
+  // passa a ser removido de graça, e a lista à mão deixou de existir.
+  { codigo: 'CERTIDOES', termos: ['certidao', 'certidoes', 'cnd', 'certidoes negativas', 'negativas', 'negativa'] },
   { codigo: 'CONTINGENCIAS', termos: ['contingencia', 'contingencias', 'processos judiciais'] },
-  { codigo: 'SITUACAO_FISCAL', termos: ['situacao fiscal', 'parcelamento', 'refis'] },
-  { codigo: 'ORGANOGRAMA', termos: ['organograma'] },
+  { codigo: 'SITUACAO_FISCAL', termos: ['situacao fiscal', 'parcelamento', 'parcelamentos', 'refis'] },
+  { codigo: 'ORGANOGRAMA', termos: ['organograma', 'organograma societario', 'societario', 'societaria'] },
   { codigo: 'NOTAS_EXPL', termos: ['notas explicativas'] },
 ];

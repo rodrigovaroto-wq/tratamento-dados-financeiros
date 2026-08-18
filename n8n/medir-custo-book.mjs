@@ -32,8 +32,19 @@ import { classifyByFilename } from './lib/classifier.mjs';
 import {
   custoDaChamada,
   orcamentoDoLote,
+  orcamentoDoLotePorConteudo,
   CUSTO_ESTIMADO_DOC_USD,
   TETO_EXECUCAO_USD,
+  // AS CONSTANTES DA CONVERSÃO VÊM DA FONTE, e isto passou a importar de
+  // verdade em 18/08: elas eram declaradas aqui e o guarda de orçamento não as
+  // usava (ele estimava por byte). Agora o guarda decide pela MESMA conta que
+  // este medidor faz — e duas cópias de um modelo de custo é o jeito conhecido
+  // de o medidor dizer uma coisa e o guarda fazer outra.
+  CARACTERES_POR_TOKEN,
+  MARGEM_ORCAMENTO_CONTEUDO,
+  TOKENS_POR_PAGINA_IMAGEM,
+  TOKENS_SAIDA_CLASSIFICACAO,
+  tokensDeSaida,
   // Os modelos vêm da FONTE, não de um espelho. Eles eram duas constantes
   // copiadas à mão aqui com o comentário "espelho de build-workflow.mjs" — e um
   // espelho de preço é a última coisa que se quer manter à mão num script cujo
@@ -52,14 +63,11 @@ const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // 1) Prompt de sistema: o texto REAL, não um número lembrado. ~4 caracteres por
 //    token é a razão média do tokenizador do gpt-4o em português.
-const CARACTERES_POR_TOKEN = 4;
 const TOKENS_PROMPT_SISTEMA = Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TOKEN);
 
-// 2) O PDF como IMAGEM (é o que o pipeline faz hoje): ~1.000 tokens por página
-//    — docs/CUSTO_OPENAI.md, "cada página vira tokens de imagem".
-const TOKENS_POR_PAGINA_IMAGEM = 1000;
-
-// 3) A saída, e este é o número que dominava a conta.
+// 2) A saída no formato PLANO — o que o documento custava até 13/08/2026. Fica
+//    AQUI, e não em lib/custo.mjs, porque só este script o usa: ele serve para
+//    medir a economia do agrupamento, não para decidir nada.
 //
 //    RECALIBRADO DE 35 PARA 64 EM 13/08/2026, PELA PRIMEIRA FATURA REAL. O dono
 //    rodou os 14 documentos do book-vertentes (1.180 linhas com número) e pagou
@@ -73,22 +81,6 @@ const TOKENS_POR_PAGINA_IMAGEM = 1000;
 //    baixo é a que deixa o lote começar e morrer no meio (o incidente v31).
 const TOKENS_POR_LINHA_PLANO = 64;
 
-// E o formato que roda HOJE: uma seção por grupo, as colunas declaradas uma vez,
-// e a conta escrita uma vez com um valor por coluna. Os três números saem da
-// mesma medição de caracteres do formato real (JSON.stringify / 4):
-//   • cabeçalho do grupo (s + sc + op + cols + a sintaxe): ~30
-//   • conta (rótulo + confiança + sintaxe), sem nenhum valor: ~26
-//   • cada valor da conta (um vt + um vn): ~9
-const TOKENS_CABECALHO_GRUPO = 30;
-const TOKENS_CONTA_BASE = 26;
-const TOKENS_POR_VALOR = 9;
-
-// Quantas contas cabem num grupo, em média. Não é medido no PDF (o gerador não
-// marca seções): é a razão observada nos books — um balanço tem ~8 seções e
-// ~50 contas por coluna, e cada subtotal abre grupo próprio. Declarado como
-// suposição porque ele só afeta o custo do CABEÇALHO, que é ~5% da saída.
-const CONTAS_POR_GRUPO = 8;
-
 // Colunas de valor do documento, LIDAS DO NOME do arquivo pela mesma
 // `classifyByFilename` da produção: "2025x2024x2023" são três colunas de
 // período, "12M25" é uma. O limite fica declarado: colunas de EMPRESA (o balanço
@@ -101,15 +93,6 @@ function colunasDoDocumento(c) {
   return partes.length > 1 ? partes.length : 1;
 }
 
-function tokensDeSaida(linhas, colunas) {
-  const contas = Math.max(1, Math.ceil(linhas / colunas));
-  const grupos = Math.max(1, Math.ceil(contas / CONTAS_POR_GRUPO));
-  return grupos * TOKENS_CABECALHO_GRUPO + contas * (TOKENS_CONTA_BASE + colunas * TOKENS_POR_VALOR);
-}
-
-// A chamada de classificação por conteúdo manda o MESMO PDF e devolve um objeto
-// minúsculo (tipo, entidade, período, confiança).
-const TOKENS_SAIDA_CLASSIFICACAO = 120;
 
 function medirDocumento(m) {
   const c = classifyByFilename(m.arquivo);
@@ -227,6 +210,22 @@ const vereditoRenomeado = orcamentoDoLote({
 // por exemplo), e a diferença entre os dois é a medida do que a estimativa por
 // tamanho comprou.
 const vereditoPlano = orcamentoDoLote({ documentos: medidos.length, chamadasPorDocumento: chamadas / medidos.length });
+// E O VEREDITO QUE PASSOU A VALER EM PRODUÇÃO (18/08): o guarda mudou de lugar
+// no grafo e agora decide DEPOIS de o texto do PDF ter sido lido, com as linhas
+// e as páginas do documento na mão. Imprimir os dois lado a lado é o que mostra
+// o tamanho do conserto — e o que denuncia, na próxima vez, se a conta por
+// conteúdo começar a divergir do custo medido.
+//
+// `blocos: 1` aqui é honesto e limitado: este medidor lê o METRICAS.json do
+// gerador, que conta linhas mas não as tem para fatiar. Em produção o número de
+// blocos vem de `planejarFatias` sobre o texto real.
+const vereditoPorConteudo = orcamentoDoLotePorConteudo({
+  documentos: medidos.map((d) => ({
+    celulas: d.linhas, paginas: d.paginas, colunas: d.colunas, blocos: 1,
+    precisaFallback: d.chamadas > 1, bytes: null,
+  })),
+  tokensPromptSistema: TOKENS_PROMPT_SISTEMA,
+});
 
 if (comoJson) {
   console.log(JSON.stringify({
@@ -271,6 +270,9 @@ if (comoJson) {
     `US$ ${veredito.estimadoUSD.toFixed(2)} → ${veredito.cabe ? 'CABE' : 'RECUSA'}`);
   console.log(`  sem o tamanho (plano): ${chamadas} chamada(s) × US$ ${CUSTO_ESTIMADO_DOC_USD} = ` +
     `US$ ${vereditoPlano.estimadoUSD.toFixed(2)} → ${vereditoPlano.cabe ? 'CABE' : 'RECUSA'}`);
+  console.log(`  estimativa POR CONTEÚDO (o que roda desde 18/08): ` +
+    `${vereditoPorConteudo.celulas} linha(s) com número × margem de ${MARGEM_ORCAMENTO_CONTEUDO}× = ` +
+    `US$ ${vereditoPorConteudo.estimadoUSD.toFixed(2)} → ${vereditoPorConteudo.cabe ? 'CABE' : 'RECUSA'}`);
   console.log(`  custo MEDIDO:        ${usd(totalUSD)} ` +
     `(o guarda ${veredito.estimadoUSD >= totalUSD ? 'superestima' : 'SUBESTIMA'} em ` +
     `${(Math.abs(veredito.estimadoUSD - totalUSD) / totalUSD * 100).toFixed(0)}%)`);

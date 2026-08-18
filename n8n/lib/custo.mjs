@@ -332,3 +332,200 @@ export function orcamentoDoLote({
     fatorCusto: Number(fatorCusto.toFixed(4)),
   };
 }
+
+// ===========================================================================
+// A ESTIMATIVA POR CONTEÚDO — o que o teto passa a usar quando o texto do
+// documento já foi lido.
+// ===========================================================================
+//
+// O DEFEITO QUE ISTO CORRIGE, e ele é de LUGAR antes de ser de fórmula. O teto
+// decidia entre `Classificar Nome` e `Preparar Conteudo`, ou seja, com o nome
+// do arquivo e o tamanho em bytes na mão e mais nada. Dali não dá para saber
+// duas coisas que mandam no custo:
+//
+//   • QUANTAS LINHAS o documento tem. Bytes de PDF não são tokens — um PDF de
+//     texto rende quatro vezes mais linha por byte que um escaneado (medido no
+//     book), e por isso a estimativa por byte carrega uma margem de 1,8× que
+//     superestima o lote típico em ~50%. Um lote que cabe é recusado.
+//   • QUANTOS BLOCOS a extração vai gastar. Documento acima de
+//     `MAX_CELULAS_POR_BLOCO` é FATIADO, e cada fatia é uma chamada nova que
+//     reenvia o PDF inteiro. A conta por byte não tem como saber disso, então
+//     ela subestima justamente o documento grande — que é o caro.
+//
+// Depois do `Extrair Texto` os dois números existem e são EXATOS: as linhas com
+// número saem do texto do próprio PDF, e o número de blocos sai de
+// `planejarFatias`, a MESMA função que o `Fatiar Extracao` vai executar. Deixa
+// de ser estimativa por proxy e passa a ser a conta do que vai acontecer.
+//
+// O QUE NÃO MUDA: continua sendo ANTES de qualquer chamada à OpenAI. Entre o
+// `Medir Documento` e a primeira chamada não há gasto nenhum — o `Extrair
+// Texto` é local e o `Upload Storage` é ramo lateral (e desligado). O teto
+// continua barrando de graça.
+//
+// A CALIBRAÇÃO É A MESMA de `medir-custo-book.mjs`, e agora é literalmente o
+// mesmo código: aquele script tinha estas constantes copiadas, e o único jeito
+// de o medidor e o guarda discordarem é serem dois arquivos.
+
+/** ~4 caracteres por token — razão média do tokenizador do gpt-4o em português. */
+export const CARACTERES_POR_TOKEN = 4;
+
+/** O PDF vira imagem: ~1.000 tokens por página (docs/CUSTO_OPENAI.md). */
+export const TOKENS_POR_PAGINA_IMAGEM = 1000;
+
+// A saída, no formato AGRUPADO que roda hoje (uma seção por grupo, as colunas
+// declaradas uma vez, a conta escrita uma vez com um valor por coluna). Os três
+// números saem da medição de caracteres do formato real (JSON.stringify / 4).
+export const TOKENS_CABECALHO_GRUPO = 30;
+export const TOKENS_CONTA_BASE = 26;
+export const TOKENS_POR_VALOR = 9;
+
+// Quantas contas cabem num grupo, em média. Não é medido no PDF: é a razão
+// observada nos books — um balanço tem ~8 seções e ~50 contas por coluna, e cada
+// subtotal abre grupo próprio. Declarado como SUPOSIÇÃO porque só afeta o custo
+// do cabeçalho, que é ~5% da saída.
+export const CONTAS_POR_GRUPO = 8;
+
+/** A classificação por conteúdo manda o mesmo PDF e devolve um objeto minúsculo. */
+export const TOKENS_SAIDA_CLASSIFICACAO = 120;
+
+// A MARGEM DO GUARDA, e por que ela é 1,25 e não 1,8.
+//
+// A estimativa por byte carrega 1,8× porque bytes de PDF não dizem quase nada
+// sobre tokens (4× de diferença entre os extremos medidos no book). Aqui a
+// conta é de linhas lidas do próprio documento, e o modelo foi conferido contra
+// a única fatura REAL que existe: o dono rodou o book-vertentes e pagou
+// US$ 0,90; o mesmo modelo, no formato daquela época, estima US$ 0,87 — 3%
+// abaixo. Margem grande em cima de uma conta dessas seria recusar lote que cabe,
+// que é o defeito que este trabalho existe para tirar.
+//
+// O QUE A MARGEM COBRE, e é honesto listar: duas suposições não medidas —
+// `CONTAS_POR_GRUPO` (afeta ~5% da saída) e os ~4 caracteres por token — mais o
+// documento escaneado que entra no lote sem camada de texto (esse cai no
+// caminho por byte inteiro, mas um lote misto ainda passa por aqui). Um quarto
+// de folga cobre isso com sobra e continua muito abaixo do erro que se está
+// corrigindo.
+export const MARGEM_ORCAMENTO_CONTEUDO = 1.25;
+
+/**
+ * Tokens de SAÍDA de uma extração com `celulas` células em `colunas` colunas.
+ *
+ * Célula é toda linha com número; a mesma conta em três exercícios são três
+ * células e UMA conta — é essa divisão que o formato agrupado explora, e é por
+ * isso que a conta não é linear no número de células.
+ */
+export function tokensDeSaida(celulas, colunas = 1) {
+  const cel = Math.max(0, Number(celulas) || 0);
+  const cols = Math.max(1, Number(colunas) || 1);
+  const contas = Math.max(1, Math.ceil(cel / cols));
+  const grupos = Math.max(1, Math.ceil(contas / CONTAS_POR_GRUPO));
+  return grupos * TOKENS_CABECALHO_GRUPO + contas * (TOKENS_CONTA_BASE + cols * TOKENS_POR_VALOR);
+}
+
+/**
+ * Custo estimado de UM documento, a partir do que já foi MEDIDO nele.
+ *
+ * `blocos` é o número de chamadas de extração: cada fatia reenvia o PDF inteiro
+ * (a entrada se repete) e devolve a sua parte da saída (a saída se divide).
+ * Ignorar isso é o erro que a estimativa por byte comete no documento grande.
+ */
+export function custoEstimadoPorConteudo({
+  celulas, paginas, colunas = 1, blocos = 1, precisaFallback = false, tokensPromptSistema = 0,
+}) {
+  const cel = Math.max(0, Number(celulas) || 0);
+  const pag = Math.max(1, Number(paginas) || 1);
+  const nBlocos = Math.max(1, Number(blocos) || 1);
+  const sistema = Math.max(0, Number(tokensPromptSistema) || 0);
+  const entradaPdf = pag * TOKENS_POR_PAGINA_IMAGEM;
+  const saidaTotal = tokensDeSaida(cel, colunas);
+
+  let usd = 0;
+  for (let b = 0; b < nBlocos; b += 1) {
+    // A saída se reparte entre os blocos; a entrada, não — cada bloco reenvia o
+    // PDF. Repartir por igual é a aproximação certa aqui: `planejarFatias` corta
+    // por número de células, então os blocos saem do mesmo tamanho.
+    usd += custoDaChamada({
+      prompt_tokens: sistema + entradaPdf,
+      completion_tokens: Math.ceil(saidaTotal / nBlocos),
+      // O prompt de sistema é idêntico em toda chamada e vem primeiro — é a
+      // condição do cache de prefixo da OpenAI, e ignorá-lo superestimaria ~40%.
+      prompt_tokens_details: { cached_tokens: sistema },
+    }, MODELO_EXTRACAO) ?? 0;
+  }
+
+  if (precisaFallback) {
+    usd += custoDaChamada({
+      prompt_tokens: entradaPdf + 400,
+      completion_tokens: TOKENS_SAIDA_CLASSIFICACAO,
+    }, MODELO_CLASSIFICACAO) ?? 0;
+  }
+
+  return Number(usd.toFixed(6));
+}
+
+/**
+ * A decisão de orçamento do lote QUANDO O CONTEÚDO JÁ FOI LIDO.
+ *
+ * Cai para `orcamentoDoLote` (byte/plano) quando QUALQUER documento do lote não
+ * traz medida de conteúdo — PDF escaneado não tem camada de texto, e medir só
+ * os que dá subestimaria o lote na exata proporção do que não se sabe. É a
+ * mesma doutrina que a estimativa por byte já aplica ao tamanho ausente.
+ */
+export function orcamentoDoLotePorConteudo({
+  documentos = [],
+  teto = TETO_EXECUCAO_USD,
+  custoPorChamada = CUSTO_ESTIMADO_DOC_USD,
+  tokensPromptSistema = 0,
+}) {
+  const docs = Array.isArray(documentos) ? documentos : [];
+  const n = docs.length;
+  const medido = (d) =>
+    Number.isFinite(Number(d?.celulas)) && Number(d.celulas) > 0 &&
+    Number.isFinite(Number(d?.paginas)) && Number(d.paginas) > 0;
+
+  if (n === 0 || !docs.every(medido)) {
+    const semTamanho = docs.some((d) => !Number.isFinite(Number(d?.bytes)) || Number(d.bytes) <= 0);
+    const bytes = semTamanho ? null : docs.reduce((s, d) => s + Number(d.bytes), 0);
+    const chamadas = n + docs.filter((d) => d?.precisaFallback).length;
+    return {
+      ...orcamentoDoLote({
+        documentos: n,
+        chamadasPorDocumento: n > 0 ? chamadas / n : 1,
+        teto,
+        custoPorChamada,
+        bytes,
+      }),
+      porConteudo: false,
+    };
+  }
+
+  const chamadas = docs.reduce(
+    (s, d) => s + Math.max(1, Number(d.blocos) || 1) + (d.precisaFallback ? 1 : 0), 0);
+  const estimadoUSD = Number((
+    docs.reduce((s, d) => s + custoEstimadoPorConteudo({ ...d, tokensPromptSistema }), 0)
+    * MARGEM_ORCAMENTO_CONTEUDO
+  ).toFixed(2));
+  const cabe = estimadoUSD <= teto;
+  const custoMedioPorDoc = n > 0 ? estimadoUSD / n : custoPorChamada;
+  const maxDocumentos = custoMedioPorDoc > 0
+    ? Math.max(0, Math.floor(teto / custoMedioPorDoc))
+    : n;
+  const celulas = docs.reduce((s, d) => s + Number(d.celulas), 0);
+
+  const mensagem = cabe
+    ? null
+    : `[orçamento ${VERSAO_ORCAMENTO}] ` +
+      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
+      `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
+      `A conta saiu de ${celulas} linha(s) com número lidas dos próprios PDFs (mais ${MARGEM_ORCAMENTO_CONTEUDO}× ` +
+      `de margem), e não de uma estimativa por tamanho de arquivo. ` +
+      `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
+      `Nada foi enviado à OpenAI e nenhum documento foi registrado, então reenviar não duplica nem custa. ` +
+      `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (n8n/lib/custo.mjs) ` +
+      `— e subir ele exige subir também o teto do projeto na OpenAI, senão a API barra no meio.`;
+
+  return {
+    cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem,
+    porTamanho: false, porConteudo: true, celulas,
+    versao: VERSAO_ORCAMENTO,
+  };
+}

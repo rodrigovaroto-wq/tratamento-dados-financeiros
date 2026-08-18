@@ -33,20 +33,39 @@ Intake (Form: nome do mandato + upload de N arquivos)
        │                      csv→texto, xlsx→nota [preserva binário]
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
        └─→ Extrair Texto .... camada de texto do PDF, na instância, sem IA e sem custo
-             → Medir Documento .. conta as linhas com número (a régua do fatiamento e da
-             │                    cobertura) e RECOMPÕE o contexto lendo o `Preparar Conteudo`
+             → Medir Documento .. conta as linhas com número e as PÁGINAS (a régua do
+             │                    fatiamento, da cobertura e do teto de gasto) e RECOMPÕE o
+             │                    contexto lendo o `Preparar Conteudo`
+             → Orcamento do Lote → Lote cabe? ... o TETO DE GASTO, decidido com o documento
+             │     │                             já medido (linhas e blocos exatos) e ainda
+             │     │                             antes da primeira chamada à OpenAI
+             │     └─ não cabe → Registrar Recusa → Abortar Lote
              └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
                    ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
                    └─ não → direto
-  → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id}
+  → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id,
+        │                     reaproveitou_extracao}
         ├─ Recomputar Completude ... fn_recomputar_completude(caso_id) → Portão 1 + status
-        └─ [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM no teto
-              de saída) → OpenAI Extrair → Parse → Juntar Blocos (N → 1 doc + guarda de
-              cobertura) → Gravar Campos (Sombra, N0)
-              → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
-                    → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(documento_id)
-                          → Resumo de Custo ..... o custo REAL do lote, num painel só
+        └─ Recompor Contexto → Extracao ja feita? ... o mesmo arquivo já foi extraído com o
+              │                  MESMO prompt+modelo+esquema, e aquela extração tem linha?
+              ├─ sim → Juntar Extraidos (não paga a extração de novo — db/migrations/0118)
+              └─ não → [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM
+                    no teto de saída) → OpenAI Extrair → Parse → Juntar Blocos (N → 1 doc +
+                    guarda de cobertura) → Gravar Campos (Sombra, N0)
+                    → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
+                          → Juntar Extraidos
+                                → [E3] Reconciliar (Classe A) ... fn_reconciliar_por_documento(...)
+                                      → Resumo de Custo ..... o custo REAL do lote, num painel só
+                                            → Gravar Uso do Lote → Conferir Lote
 ```
+
+> **O TETO DE GASTO MUDOU DE LUGAR (18/08) e isso é o que mais se nota no canvas.** Ele decidia
+> entre `Classificar Nome` e `Preparar Conteudo`, onde só existiam o nome do arquivo e os bytes —
+> e estimava por TAMANHO, com margem de 1,8× que recusava lote que cabia, sem saber quantos blocos
+> a extração gastaria. Agora ele decide depois do `Medir Documento`: linhas com número e número de
+> blocos são exatos, e continua sendo antes de qualquer gasto (o `Extrair Texto` é local e o
+> `Upload Storage` é ramo lateral). Lote sem camada de texto em algum documento cai na conta por
+> byte, como antes.
 
 > **As três camadas contra o truncamento e a extração pela metade** (`n8n/lib/cobertura.mjs`):
 > `Extrair Texto` mede o documento antes de qualquer chamada; `Fatiar Extracao` garante que nenhum

@@ -157,6 +157,12 @@ export function SecaoLinhas({
     escolhas[l.rotulo_norm]?.premissa !== gravado[l.rotulo_norm]?.premissa
     || escolhas[l.rotulo_norm]?.sazonalidade !== gravado[l.rotulo_norm]?.sazonalidade).length;
 
+  // O `id` do formulário desta seção existe para o botão de salvar poder aparecer
+  // DUAS vezes — no cabeçalho e no rodapé — sem aninhar formulário (o HTML não
+  // permite, e o de "aplicar em lote" já mora no cabeçalho). `form=` é o
+  // mecanismo padrão para um botão fora do formulário submetê-lo.
+  const idForm = `secao-${secao.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
   return (
     <div>
       <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -167,6 +173,25 @@ export function SecaoLinhas({
             {linhas.length !== contas.length && ` + ${linhas.length - contas.length} não projetável(is)`})
           </span>
         </h3>
+        {/* SALVAR TAMBÉM NO TOPO, e o aviso de pendência junto.
+            Uma seção de balanço tem dezenas de linhas: o botão só existia no
+            rodapé, e o aviso "N alterações ainda NÃO salvas" também — os dois
+            fora da tela justamente enquanto se edita. Sair da página com escolha
+            pendente é a maneira mais fácil de perder trabalho nesta tela, e o
+            aviso que impede isso não pode viver onde ninguém está olhando. */}
+        {pendentes > 0 && (
+          <>
+            <span className="chip bg-amber-100 text-amber-900">
+              {pendentes} não salva(s)
+            </span>
+            <button
+              type="submit" form={idForm} disabled={salvando}
+              className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {salvando ? "salvando…" : "salvar esta seção"}
+            </button>
+          </>
+        )}
         {!semSecao && contas.length > 0 && (
           <form action={actLote} className="flex items-center gap-1">
             <input type="hidden" name="secao_canonica" value={secao} />
@@ -191,11 +216,15 @@ export function SecaoLinhas({
 
       {/* UM formulário por seção: as exceções se ajustam e salvam de uma vez.
           Antes era um botão por linha — 236 idas ao servidor. */}
-      <form action={actSalvar}>
+      <form action={actSalvar} id={idForm}>
         <input type="hidden" name="secao_canonica" value={semSecao ? "" : secao} />
         <div className="overflow-x-auto rounded border border-tinta-200">
           <table className="w-full text-left text-sm">
-            <thead className="bg-tinta-50 text-xs uppercase text-tinta-500">
+            {/* CABEÇALHO GRUDADO: numa seção de 60 linhas, rolar até a conta que
+                se quer ajustar deixava as três colunas sem nome — e "premissa que
+                dirige" e "sazonalidade" são dois seletores parecidos lado a lado.
+                Escolher no seletor errado não dá erro nenhum, só projeta diferente. */}
+            <thead className="sticky top-0 z-10 bg-tinta-50 text-xs uppercase text-tinta-500 shadow-[0_1px_0_var(--color-tinta-200)]">
               <tr>
                 <th className="px-2 py-1">Linha</th>
                 <th className="px-2 py-1 text-right">Último real</th>

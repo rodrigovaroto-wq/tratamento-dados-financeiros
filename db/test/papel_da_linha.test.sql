@@ -72,6 +72,32 @@ begin
     fn_papel_linha('Caixa líquido gerado pelas (aplicado nas) atividades operacionais') = 'subtotal',
     'o subtotal do Fluxo é subtotal');
 
+  -- 0116: os totais que só passam a CHEGAR agora que o prompt exige o valor
+  -- impresso na linha do agrupamento (antes eles viravam `secao` e o número
+  -- sumia). Chegando como conta, seriam dupla contagem na Modelagem.
+  perform teste_assert_papel(fn_papel_linha('RECEITA OPERACIONAL BRUTA') = 'subtotal',
+    'RECEITA OPERACIONAL BRUTA é subtotal (o topo da DRE completa)');
+  perform teste_assert_papel(fn_papel_linha('(-) Deduções da receita bruta') = 'conta',
+    'o rótulo COM o redutor impresso continua conta — quem soma é o bloco, não esta linha');
+  perform teste_assert_papel(fn_papel_linha('Deduções da Receita Bruta') = 'subtotal',
+    'Deduções da Receita Bruta é subtotal');
+  perform teste_assert_papel(fn_papel_linha('Valor adicionado total a distribuir') = 'subtotal',
+    'o total da DVA é subtotal');
+  perform teste_assert_papel(fn_papel_linha('Distribuição do Valor Adicionado') = 'subtotal',
+    'a distribuição da DVA repete o mesmo montante — é subtotal');
+  perform teste_assert_papel(fn_papel_linha('Valor adicionado bruto') = 'subtotal',
+    'Valor adicionado bruto é subtotal');
+
+  -- E o que ficou DE FORA da lista de propósito (ver o cabeçalho da 0116): em
+  -- DRE resumida estas SÃO as linhas do modelo, e marcá-las subtotal as tira da
+  -- Modelagem — que é pior que somar demais, porque a linha some sem aviso.
+  perform teste_assert_papel(fn_papel_linha('Receita bruta') = 'conta',
+    'Receita bruta (forma curta) continua conta — em DRE resumida é a receita');
+  perform teste_assert_papel(fn_papel_linha('Receita bruta de vendas') = 'conta',
+    'Receita bruta de vendas continua conta');
+  perform teste_assert_papel(fn_papel_linha('Despesas operacionais') = 'conta',
+    'Despesas operacionais continua conta');
+
   -- E as CONTAS que um filtro por substring pegaria por engano. Este bloco é o
   -- que impede a lista fechada de virar peneira: errar para subtotal ESCONDE a
   -- conta da tela, e o analista não descobre por quê.

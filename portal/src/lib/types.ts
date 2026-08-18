@@ -130,6 +130,17 @@ export interface Pendencia {
   descricao: string | null;
   documento_id: string | null;
   criada_em: string;
+  /**
+   * A CHAVE DA CHECAGEM que abriu a pendência (`reconciliacao:<tipo>`), quando
+   * ela veio de uma. É o que distingue seis divergências diferentes que
+   * compartilham o mesmo `tipo` — sem ele a fila do painel mostra seis linhas
+   * idênticas e a triagem vira adivinhação. Nulo para pendência de outra origem.
+   *
+   * OPCIONAL porque nem toda tela precisa dele: a tela do mandato não pede a
+   * coluna, e um campo obrigatório aqui obrigaria a mudar aquela consulta sem
+   * que nada lá o usasse.
+   */
+  motivo?: string | null;
   // `sobrepujavel` NÃO entra aqui de propósito. A coluna existe e continua sendo
   // contada pelo banco (`fn_avaliar_portao2` publica quantas não-sobrepujáveis
   // seguiram sem decisão), mas desde a 0109 ela não muda nada na TELA: os três

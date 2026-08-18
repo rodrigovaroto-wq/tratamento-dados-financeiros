@@ -1,4 +1,4 @@
--- Testes de "linha exigida POR ENTIDADE" (db/migrations/0116).
+-- Testes de "linha exigida POR ENTIDADE" (db/migrations/0119).
 -- Rodar via db/test/run.sh (que aplica as migrations antes).
 --
 -- As propriedades travadas:
@@ -125,7 +125,7 @@ begin
   raise notice '--- 2. transição: pendência do formato VELHO resolve no primeiro recomputo ---';
   insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, motivo)
     values (v_caso, 'completude', 'linha_exigida_ausente', 'importante', true,
-            'formato da 0113, sem entidade (simulando pendência anterior à 0116)',
+            'formato da 0113, sem entidade (simulando pendência anterior à 0119)',
             'completude:linha_exigida:BALANCO:caixa_e_equivalentes');
   perform fn_recomputar_completude(v_caso);
   select count(*) into v_n from pendencia

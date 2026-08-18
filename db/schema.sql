@@ -1516,7 +1516,7 @@ $$;
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0116): uma linha de resultado por (exigência × entidade do eixo), entidade NULL no escopo-caso e nos fallbacks. Escopo = escopo_entidade da exigência, ou (NULL) a granularidade do tipo na taxonomia. Eixo = entidades REGISTRADAS que trouxeram linha do tipo, via coalesce(entidade_coluna, razao_social) + fn_mesma_entidade (0030/0105), resolvido uma vez por nome (0101). Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009).';
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0119): uma linha de resultado por (exigência × entidade do eixo), entidade NULL no escopo-caso e nos fallbacks. Escopo = escopo_entidade da exigência, ou (NULL) a granularidade do tipo na taxonomia. Eixo = entidades REGISTRADAS que trouxeram linha do tipo, via coalesce(entidade_coluna, razao_social) + fn_mesma_entidade (0030/0105), resolvido uma vez por nome (0101). Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009).';
 
 --
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
@@ -1668,6 +1668,34 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_indice_macro_anual(p_desde_ano integer) IS 'Retorno acumulado por ano-calendário. Série de TAXA acumula por composição; série de NÍVEL varia entre FECHAMENTOS (dez do ano anterior → dez do ano), e o primeiro ano da série sai com retorno NULL por não ter base. `meses` revela ano incompleto — incluí-lo numa média de 3/5/10 anos como ano cheio distorce a média.';
+
+--
+-- Name: fn_lado_do_mutuo(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica text DEFAULT NULL::text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    -- A seção canônica é o sinal FORTE: ela vem da classificação contábil da
+    -- linha, não da grafia do rótulo.
+    when p_secao_canonica like 'ativo%'   then 'ativo'
+    when p_secao_canonica like 'passivo%' then 'passivo'
+    -- Sem seção, o rótulo. "a pagar" antes de "a receber" de propósito: o
+    -- rótulo composto ("Mútuos a pagar para controladas a receber de terceiros")
+    -- é raro, mas quando aparece o lado que manda é o do começo — e a ordem
+    -- aqui é o que decide. Empate real devolve null, e null PARA a checagem.
+    when fn_normalizar_texto(p_chave) ~ '(a pagar|tomado|passivo|devedor|obrigac)' then 'passivo'
+    when fn_normalizar_texto(p_chave) ~ '(a receber|concedid|ativo|credor|direito)' then 'ativo'
+    else null
+  end;
+$$;
+
+--
+-- Name: FUNCTION fn_lado_do_mutuo(p_chave text, p_secao_canonica text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica text) IS 'Lado contábil de uma linha de mútuo: ativo (emprestou) | passivo (tomou) | null (o documento não diz). Usada pela reconciliação de mútuos, que compara lado a lado — somar os dois juntos acusa divergência que não existe.';
 
 --
 -- Name: fn_linhas_do_tipo(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -2098,6 +2126,29 @@ CREATE FUNCTION public.fn_papel_linha(p_chave text, p_tipo_taxonomia text DEFAUL
         'lucro liquido','prejuizo liquido','resultado do exercicio',
         'resultado financeiro liquido','resultado financeiro')
       then 'subtotal'
+    -- (c2) 0116: o TOPO da DRE, que só passa a chegar agora que o total
+    --      impresso vira linha. A forma longa ("receita operacional bruta") é o
+    --      cabeçalho do bloco de receita na estrutura completa — o valor dela é
+    --      a soma das receitas por segmento/produto que vêm abaixo.
+    when (select t from n) in (
+        'receita operacional bruta','receitas operacionais brutas',
+        'receita bruta operacional',
+        'deducoes da receita bruta','deducoes da receita',
+        'resultado antes do resultado financeiro',
+        'resultado operacional')
+      then 'subtotal'
+    -- (c3) 0116: os totais da DVA. A DVA é feita de blocos que terminam em
+    --      total ("Valor adicionado bruto", "Valor adicionado líquido
+    --      produzido", "Valor adicionado total a distribuir") e a distribuição
+    --      repete o mesmo montante por destinatário — contar o total junto com
+    --      os destinatários dobra a demonstração inteira.
+    when (select t from n) in (
+        'valor adicionado bruto',
+        'valor adicionado liquido produzido','valor adicionado liquido',
+        'valor adicionado recebido em transferencia',
+        'valor adicionado total a distribuir','valor adicionado a distribuir',
+        'valor adicionado total','distribuicao do valor adicionado')
+      then 'subtotal'
     when (select t from n) ~ '^caixa liquido (gerado|aplicado|gerado pelas)'
       or (select t from n) ~ '^(aumento|reducao|variacao) liquida? (de|do|da) caixa'
       then 'subtotal'
@@ -2110,7 +2161,7 @@ $$;
 -- Name: FUNCTION fn_papel_linha(p_chave text, p_tipo_taxonomia text, p_unidade text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_papel_linha(p_chave text, p_tipo_taxonomia text, p_unidade text) IS 'Papel da linha na modelagem: conta | subtotal | derivado | serie_mensal. Lista FECHADA de padrões (não heurística de semelhança) porque errar para subtotal esconde conta de verdade e errar para conta deixa passar dupla contagem. 0102: tokeniza o rótulo uma vez e compara os nove grupos contra o resultado, em vez de nove chamadas a fn_rotulo_estrutural.';
+COMMENT ON FUNCTION public.fn_papel_linha(p_chave text, p_tipo_taxonomia text, p_unidade text) IS 'Papel da linha na modelagem: conta | subtotal | derivado | serie_mensal. Lista FECHADA de padrões (não heurística de semelhança) porque errar para subtotal esconde conta de verdade e errar para conta deixa passar dupla contagem. 0102: tokeniza o rótulo uma vez e compara os nove grupos contra o resultado, em vez de nove chamadas a fn_rotulo_estrutural. 0116: cobre o topo da DRE e os totais da DVA, que só passam a chegar depois de o prompt exigir o total IMPRESSO como linha.';
 
 --
 -- Name: fn_papel_prioridade(text); Type: FUNCTION; Schema: public; Owner: -
@@ -2573,7 +2624,7 @@ declare
   v_status_atual caso_status;
   v_novo_status caso_status;
   v_pend_id uuid;
-  -- 0113/0116: passo (2b)
+  -- 0113/0119: passo (2b)
   v_ex record;
   v_motivo text;
   v_motivos_ausentes text[] := '{}';
@@ -2641,8 +2692,8 @@ begin
     end if;
   end loop;
 
-  -- ----- (2b) 0113/0116: tipo COM conteúdo, mas sem uma LINHA exigida --------
-  -- 0116: a cobrança desce ao nível da ENTIDADE quando o escopo pede. O motivo
+  -- ----- (2b) 0113/0119: tipo COM conteúdo, mas sem uma LINHA exigida --------
+  -- 0119: a cobrança desce ao nível da ENTIDADE quando o escopo pede. O motivo
   -- ganha o sufixo canônico da entidade (chave estável mesmo que a grafia da
   -- razão social varie entre extrações), `entidade_id` vai na pendência, e a
   -- descrição nomeia a empresa. Pendência de formato velho (sem sufixo) sai da
@@ -2705,7 +2756,7 @@ begin
   end loop;
 
   -- A linha apareceu, a exigência foi desativada, ou o formato do motivo mudou
-  -- (a transição 0113 → 0116): resolve sozinha, como as da 0036.
+  -- (a transição 0113 → 0119): resolve sozinha, como as da 0036.
   update pendencia p set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:extracao'
   where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
     and not (p.motivo = any (v_motivos_ausentes));
@@ -2741,7 +2792,7 @@ begin
     'portao1_ok', array_length(v_faltantes,1) is null,
     'faltantes', to_jsonb(v_faltantes),
     'sem_conteudo', to_jsonb(v_sem_conteudo),
-    -- 0116: cada ausência agora pode nomear a entidade. `pronto_para_revisao`
+    -- 0119: cada ausência agora pode nomear a entidade. `pronto_para_revisao`
     -- segue intocado — endurecê-lo é decisão de produto do dono, não efeito
     -- colateral (0113).
     'linhas_exigidas_ausentes', v_linhas_ausentes,
@@ -2756,7 +2807,7 @@ $$;
 -- Name: FUNCTION fn_recomputar_completude(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0116 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id na pendência, descrição nomeando a empresa). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
+COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0119 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id na pendência, descrição nomeando a empresa). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
 
 --
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -3326,6 +3377,225 @@ $$;
 COMMENT ON FUNCTION public.fn_reconciliar_duplicidade(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação: acha a MESMA conta transposta com dois rótulos e abre pendência com o valor dobrado. Não apaga nem reescreve dado — decisão humana. Por caso/entidade (a duplicidade é fato da estrutura dos documentos, não de um exercício), daí periodo_id nulo.';
 
 --
+-- Name: fn_reconciliar_mutuos(uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 50000, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_doc_mut uuid;
+  v_ver_mut uuid;
+  v_ano int;
+  v_col_mut text;
+  v_unid_mut text;
+  v_bp   record;
+  v_pl   record;
+  v_lados_bp text[] := '{}';
+  v_a numeric; v_b numeric; v_div numeric; v_tol numeric;
+  v_resultado text := 'ok';
+  v_partes text[] := '{}';
+  v_n int := 0;
+  v_pior_abs numeric; v_pior_pct numeric;
+  v_fonte_a jsonb; v_fonte_b jsonb;
+  v_tem_balanco boolean;
+begin
+  -- A PLANILHA É DO GRUPO E O SALDO É DE CADA EMPRESA — por isso esta checagem
+  -- é por CASO, e não por (caso, entidade) como as outras.
+  --
+  -- Foi a primeira versão desta função que ensinou isso, errando: ela procurava
+  -- o balanço DA MESMA entidade dona da planilha. No book Vertentes a planilha é
+  -- do "GRUPO VERTENTES" e a única demonstração dessa entidade é a COMBINADA —
+  -- que, por definição, ELIMINA o intragrupo e não tem uma linha de mútuo
+  -- sequer. A checagem "não achava o par" e abria pendência de pré-condição num
+  -- caso que está perfeitamente em ordem. O par certo é o outro: a planilha
+  -- lista "A → B", e o saldo mora no balanço de A (a receber) ou de B (a pagar).
+  v_doc_mut := fn_documento_por_tipo(p_caso_id, null, p_periodo_id, 'MUTUOS');
+  if v_doc_mut is null then
+    v_doc_mut := fn_documento_por_tipo(p_caso_id, null, null, 'MUTUOS');
+  end if;
+
+  select exists (
+    select 1 from documento d
+    where d.caso_id = p_caso_id
+      and d.tipo_taxonomia in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA')
+  ) into v_tem_balanco;
+
+  if v_doc_mut is null or not v_tem_balanco then
+    return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+      'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
+      'documento_ausente', null, null,
+      jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
+      format('Sem par para reconciliar mútuos: %s não foi entregue neste mandato.',
+        case when v_doc_mut is null and not v_tem_balanco then 'a planilha de mútuos e nenhum balanço'
+             when v_doc_mut is null then 'a planilha de mútuos' else 'nenhum balanço' end));
+  end if;
+
+  v_ver_mut  := fn_versao_atual(v_doc_mut);
+  v_unid_mut := fn_unidade_predominante(v_ver_mut);
+
+  foreach v_ano in array fn_anos_alvo(p_periodo_id) loop
+    v_col_mut := case when v_ano is null then null
+                      else fn_coluna_periodo_do_ano(v_ver_mut, v_ano) end;
+
+    -- ---- LADO A: o saldo de mútuos, somado sobre TODOS os balanços do caso --
+    -- Soma, e não `fn_valor_conceito_col`: o saldo aparece numa conta por
+    -- empresa, e pegar UMA compararia parte do saldo com a planilha inteira.
+    -- A escala entra linha a linha (`fn_valor_em_base`), então um caso com um
+    -- balanço em milhar e outro em unidade continua somando certo.
+    for v_bp in
+      select fn_lado_do_mutuo(ce.chave, ce.secao_canonica) as lado,
+             sum(fn_valor_em_base(ce.valor_num, ce.unidade)) as soma_base,
+             count(*)::int as n,
+             count(distinct d.id)::int as n_docs,
+             min(ce.chave) as exemplo,
+             bool_or(ce.unidade is null) as tem_sem_escala
+      from (
+        -- UM DOCUMENTO POR ENTIDADE, e isto é correção de defeito medido, não
+        -- zelo: o book Vertentes entrega para a mesma controlada um BALANÇO e
+        -- um BALANCETE do mesmo exercício, com o mesmo saldo de mútuo (3.974).
+        -- Somando os dois, o lado passivo saía 15.427 contra 11.453 do ativo e
+        -- a checagem acusava 2.394 de divergência — uma divergência que ela
+        -- mesma tinha criado. Balanço e balancete são a MESMA realidade dita
+        -- duas vezes; a ordem abaixo escolhe a peça mais definitiva.
+        select distinct on (d.entidade_id) d.id, d.entidade_id
+        from documento d
+        where d.caso_id = p_caso_id
+          and d.tipo_taxonomia in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA')
+        order by d.entidade_id,
+                 array_position(array['BALANCO','COMBINADO','DF_AUDITADA','BALANCETE'],
+                                d.tipo_taxonomia),
+                 d.criado_em desc
+      ) d
+      join lateral (select fn_versao_atual(d.id) as ver) v on true
+      join campo_extraido ce on ce.documento_versao_id = v.ver
+      where ce.valor_num is not null
+        and fn_normalizar_texto(ce.chave) like '%mutuo%'
+        and fn_papel_linha(ce.chave) <> 'subtotal'
+        and (fn_coluna_periodo_do_ano(v.ver, v_ano) is null
+             or fn_normalizar_texto(ce.periodo_coluna)
+                = fn_normalizar_texto(fn_coluna_periodo_do_ano(v.ver, v_ano)))
+      group by 1
+    loop
+      if v_bp.lado is null then continue; end if;
+      v_lados_bp := v_lados_bp || v_bp.lado;
+
+      -- ---- LADO B: a planilha, do MESMO lado ------------------------------
+      -- A linha da planilha que NÃO declara lado ("Participações → Metalúrgica
+      -- — Mútuo" é o formato normal) entra no lado do balanço com que está
+      -- sendo comparada. Isso só é honesto porque o bloco abaixo interrompe a
+      -- checagem quando o balanço tem os DOIS lados: aí a linha sem lado
+      -- caberia nos dois, e escolher um é chute.
+      select coalesce(sum(fn_valor_em_base(ce.valor_num, ce.unidade)), 0) as soma_base,
+             coalesce(sum(ce.valor_num), 0) as soma_bruta,
+             count(*)::int as n
+        into v_pl
+      from campo_extraido ce
+      where ce.documento_versao_id = v_ver_mut
+        and ce.valor_num is not null
+        and fn_papel_linha(ce.chave) <> 'subtotal'
+        -- MÚTUO CONTRA MÚTUO. A planilha de intragrupo lista mais coisa do que
+        -- mútuo — conta corrente rotativa, aluguel entre coligadas, rateio de
+        -- despesa —, e o balanço registra cada uma dessas num lugar diferente
+        -- ("Outros créditos", "Contas a pagar"). Comparar a planilha INTEIRA
+        -- contra as contas de mútuo do balanço acusa como divergência aquilo
+        -- que é só natureza diferente: no book Vertentes isso somava a conta
+        -- corrente de 1.400 de um lado só e inventava 1.400 de diferença.
+        -- Fica anotado o que ISTO deixa de fora: a conferência das linhas
+        -- intragrupo que NÃO são mútuo continua sem checagem. É trabalho
+        -- próprio — exige casar cada linha com a conta certa de cada balanço,
+        -- que é outro problema (e outro par de olhos humanos).
+        and fn_normalizar_texto(ce.chave) like '%mutuo%'
+        and coalesce(fn_lado_do_mutuo(ce.chave, ce.secao_canonica), v_bp.lado) = v_bp.lado
+        and (v_col_mut is null
+             or fn_normalizar_texto(ce.periodo_coluna) = fn_normalizar_texto(v_col_mut));
+      if coalesce(v_pl.n, 0) = 0 then continue; end if;
+
+      -- Escala ausente de um dos lados é o mesmo critério conservador da 0009:
+      -- não há o que converter, e afirmar "confere" seria pior que calar.
+      if v_bp.tem_sem_escala <> (v_unid_mut is null) then
+        continue;
+      end if;
+
+      v_a := abs(coalesce(v_bp.soma_base, 0));
+      v_b := abs(coalesce(v_pl.soma_base, 0));
+      v_n := v_n + 1;
+      v_div := abs(v_a - v_b);
+      -- Tolerância em MOEDA BASE (reais), não na escala do documento: o mesmo
+      -- número tem de significar a mesma coisa num balanço em milhar e noutro
+      -- em unidade, senão a checagem é mais frouxa justamente onde os valores
+      -- são maiores.
+      v_tol := greatest(p_tolerancia_abs, v_a * p_tolerancia_pct);
+
+      if v_div > v_tol then
+        v_resultado := 'zona_cinzenta';
+        v_partes := v_partes || format(
+          '%s (%s): balanço soma %s em %s linha(s) de %s documento(s) e a planilha soma %s em %s '
+          || 'linha(s) — diferença de %s (em reais, já convertidas as escalas)',
+          v_ano, v_bp.lado, round(v_a), v_bp.n, v_bp.n_docs, round(v_b), v_pl.n, round(v_div));
+        if v_pior_abs is null or v_div > v_pior_abs then
+          v_pior_abs := v_div;
+          v_pior_pct := case when v_a <> 0 then v_div / v_a end;
+        end if;
+      else
+        v_partes := v_partes || format('%s (%s): confere (balanço %s = planilha %s, em reais)',
+          v_ano, v_bp.lado, round(v_a), round(v_b));
+      end if;
+
+      v_fonte_a := jsonb_build_object('lado', v_bp.lado, 'soma_base', v_a,
+        'n_linhas', v_bp.n, 'n_documentos', v_bp.n_docs, 'exemplo', v_bp.exemplo, 'ano', v_ano);
+      v_fonte_b := jsonb_build_object('lado', v_bp.lado, 'soma_base', v_b,
+        'soma_bruta', v_pl.soma_bruta, 'n_linhas', v_pl.n, 'unidade', v_unid_mut,
+        'documento_versao_id', v_ver_mut);
+    end loop;
+
+    -- OS DOIS LADOS NÃO SE SOMAM: ELES SE ESPELHAM — e a primeira versão desta
+    -- função errou aqui também. Um mútuo intragrupo aparece DUAS vezes dentro
+    -- do mesmo mandato: como "a receber" no balanço de quem emprestou e como
+    -- "a pagar" no de quem tomou. No book Vertentes é exatamente isto: a
+    -- holding registra 11.453 a receber, e as duas controladas registram
+    -- 7.479 + 3.974 = 11.453 a pagar. É a MESMA dívida vista dos dois lados.
+    --
+    -- Por isso a planilha é comparada contra CADA lado separadamente (e não
+    -- contra a soma dos dois, que daria o dobro), e a linha da planilha que não
+    -- declara lado — "Participações → Metalúrgica — Mútuo", que é o formato
+    -- normal — entra nas duas comparações: ela É as duas pontas.
+  end loop;
+
+  if v_n = 0 then
+    -- SEM PENDÊNCIA, e é decisão de projeto: `documento_ausente` é o único
+    -- resultado que `fn_registrar_reconciliacao` não transforma em pendência.
+    -- Não achar linha de mútuo NO BALANÇO é o caso comum e correto — a
+    -- demonstração combinada elimina o intragrupo, e o balanço individual pode
+    -- agregar o saldo em "outras partes relacionadas". Abrir pendência aqui
+    -- encheria a fila de todo mandato com um aviso que não pede ação nenhuma,
+    -- e uma fila assim é uma fila que ninguém lê.
+    return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+      'mutuos_planilha_vs_balanco', 'B', v_doc_mut, null, null,
+      'documento_ausente', null, null,
+      jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
+      'Planilha de mútuos presente, mas nenhum balanço do mandato traz conta de mútuo com lado '
+      || 'reconhecível (combinado elimina intragrupo; individual às vezes agrega em "partes '
+      || 'relacionadas"). Sem par, não há o que conferir.');
+  end if;
+
+  return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+    'mutuos_planilha_vs_balanco', 'B', v_doc_mut, v_fonte_a, v_fonte_b, v_resultado,
+    v_pior_abs, v_pior_pct,
+    jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct,
+                       'comparacoes', v_n),
+    format('Mútuos: a planilha intragrupo contra o saldo dos balanços em %s comparação(ões) — %s.',
+           v_n, array_to_string(v_partes, '; ')));
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Checagem B: a planilha de mútuos (abertura por contraparte) contra o saldo de mútuos do balanço, LADO A LADO (ativo/passivo). Não corrige nada — divergência vira pendência para decisão humana. 0117.';
+
+--
 -- Name: fn_reconciliar_por_documento(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3392,6 +3662,15 @@ begin
     v_checagens := v_checagens || jsonb_build_array(v_res);
   end if;
 
+  -- Mútuos (0117). Pelos dois lados: quem chega por último fecha o par.
+  if v_tipo in ('MUTUOS', 'BALANCO', 'COMBINADO', 'DF_AUDITADA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_mutuos(v_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
   -- Duplicidade de rótulo (0105). Sem loop de período: é por caso/entidade.
   if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
     v_checagens := v_checagens || jsonb_build_array(
@@ -3406,7 +3685,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Dispara as checagens A/B pertinentes ao tipo do documento. Ausência do documento par NÃO abre pendência (é do checklist do Kit Básico).';
+COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Dispara as checagens A/B pertinentes ao tipo do documento. Ausência do documento par NÃO abre pendência (é do checklist do Kit Básico). 0117: inclui a de mútuos, disparada pelos dois lados do par.';
 
 --
 -- Name: fn_reconciliar_receita_dre_vs_faturamento(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -3938,10 +4217,10 @@ end;
 $$;
 
 --
--- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text) RETURNS jsonb
+CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text, p_fingerprint_extracao text DEFAULT NULL::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -3952,19 +4231,58 @@ declare
   v_n_versao    int := 1;
   v_obrig obrigatoriedade;
   v_reaproveitou boolean := false;
+  v_versao_reuso uuid;
+  v_doc_reuso    uuid;
+  v_n_reuso      int;
 begin
-  -- 0030: casamento por forma CANÔNICA. Era `lower(razao_social) = lower(...)`, e
-  -- desde o PR #65 a entidade vem de duas fontes que escrevem diferente ("Vertentes
-  -- Metalurgica" do nome do arquivo, sem acento; "Vertentes Metalúrgica Ltda." do
-  -- diagnóstico) — `lower()` não aproxima as duas e criava DUAS empresas.
-  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome);
+  -- ---- REAPROVEITAMENTO DE EXTRAÇÃO: a primeira pergunta, e a mais barata ----
+  -- Vem ANTES do upsert de entidade/período de propósito: se o arquivo já foi
+  -- extraído com este mesmo prompt, nada precisa ser criado — nem versão, nem
+  -- entidade, nem período. Sair daqui é o caminho de custo zero.
+  if p_hash is not null and length(trim(p_hash)) > 0
+     and p_fingerprint_extracao is not null and length(trim(p_fingerprint_extracao)) > 0 then
+    select dv.id, dv.documento_id, dv.n_versao
+      into v_versao_reuso, v_doc_reuso, v_n_reuso
+    from documento_versao dv
+    join documento d on d.id = dv.documento_id
+    where d.caso_id = p_caso_id
+      and dv.hash = p_hash
+      and dv.fingerprint_extracao = p_fingerprint_extracao
+      -- TEM LINHA: extração que falhou não vale como extração feita (ver o
+      -- cabeçalho). É o que mantém o reenvio como conserto possível.
+      and exists (select 1 from campo_extraido ce where ce.documento_versao_id = dv.id)
+    order by dv.n_versao desc
+    limit 1;
+  end if;
 
-  -- 0030: idem para período. '2025' e '12M25' são o MESMO exercício; gravar cru
-  -- fragmentava em duas linhas `periodo` e o documento ficava ligado a uma delas.
+  if v_versao_reuso is not null then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+      values ('sistema:n8n', 'documento_extracao_reaproveitada',
+              'documento_versao:' || v_versao_reuso,
+              jsonb_build_object('documento_id', v_doc_reuso, 'hash', p_hash,
+                                 'fingerprint_extracao', p_fingerprint_extracao,
+                                 'nome_original', p_nome_original));
+    return jsonb_build_object(
+      'documento_id', v_doc_reuso,
+      'documento_versao_id', v_versao_reuso,
+      'n_versao', v_n_reuso,
+      'reaproveitou_documento', true,
+      'reaproveitou_extracao', true
+    );
+  end if;
+
+  -- ENTIDADE E PERÍODO PELA FORMA CANÔNICA (0030), e não por `lower()`. Esta é a
+  -- parte que a primeira versão desta migration perdeu por copiar o corpo da
+  -- 0026 em vez do corpo VIGENTE: o teste de canonicalização reprovou na hora
+  -- ("as duas grafias da mesma empresa viram UMA entidade — achei 2"), que é
+  -- exatamente o defeito que a 0030 tinha corrigido. Republicar função neste
+  -- banco significa partir do corpo mais recente, nunca do da migration que a
+  -- gente está lendo.
+  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome);
   v_periodo_id := fn_upsert_periodo(p_caso_id, p_periodo_tipo, p_periodo_ref);
 
   -- Já existe ESTE arquivo (mesmo hash) neste caso? Então é reextração/reenvio:
-  -- versão nova sob o mesmo documento. Hash nulo nunca casa (ver cabeçalho).
+  -- versão nova sob o mesmo documento. Hash nulo nunca casa (ver 0026).
   if p_hash is not null and length(trim(p_hash)) > 0 then
     select dv.documento_id into v_documento_id
     from documento_versao dv
@@ -3999,9 +4317,11 @@ begin
   end if;
 
   insert into documento_versao
-    (documento_id, n_versao, origem_arquivo, arquivo_ref, nome_original, assinado, hash, legibilidade)
+    (documento_id, n_versao, origem_arquivo, arquivo_ref, nome_original, assinado, hash,
+     legibilidade, fingerprint_extracao)
     values (v_documento_id, v_n_versao, coalesce(p_origem_arquivo,'supabase_storage'),
-            p_arquivo_ref, p_nome_original, p_assinado, p_hash, p_legibilidade)
+            p_arquivo_ref, p_nome_original, p_assinado, p_hash, p_legibilidade,
+            p_fingerprint_extracao)
     returning id into v_versao_id;
 
   -- Checklist: só na PRIMEIRA vez. Reextração não é documento novo — inserir de
@@ -4016,10 +4336,7 @@ begin
               coalesce(v_obrig,'complementar'), 'presente', v_documento_id);
   end if;
 
-  -- Pendência de classificação incerta: idempotente por documento. Antes cada
-  -- reenvio abria mais uma (documento novo, pendência nova); agora, se já existe
-  -- uma aberta para este documento, ela continua sendo a mesma pendência — a
-  -- reextração não multiplica cartões na fila do dono.
+  -- Pendência de classificação incerta: idempotente por documento.
   if p_tipo_taxonomia is null or coalesce(p_confianca,0) < p_threshold then
     if not exists (
       select 1 from pendencia p
@@ -4042,22 +4359,23 @@ begin
             'documento:'||v_documento_id,
             jsonb_build_object('tipo', p_tipo_taxonomia, 'confianca', p_confianca, 'fonte', p_fonte,
                                'justificativa', p_justificativa, 'n_versao', v_n_versao,
-                               'hash', p_hash));
+                               'hash', p_hash, 'fingerprint_extracao', p_fingerprint_extracao));
 
   return jsonb_build_object(
     'documento_id', v_documento_id,
     'documento_versao_id', v_versao_id,
     'n_versao', v_n_versao,
-    'reaproveitou_documento', v_reaproveitou
+    'reaproveitou_documento', v_reaproveitou,
+    'reaproveitou_extracao', false
   );
 end;
 $$;
 
 --
--- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text) IS 'Registra um arquivo classificado (E1). Idempotente por (caso_id, hash): o MESMO arquivo reenviado/reextraído vira nova documento_versao sob o mesmo documento (n_versao+1), sem duplicar documento, checklist nem pendência. Hash nulo não casa. Classificação da máquina não sobrepõe revisão humana (documento.fonte = ''humano'').';
+COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) IS 'Registra um arquivo classificado (E1). Idempotente por (caso_id, hash): o MESMO arquivo reenviado/reextraído vira nova documento_versao sob o mesmo documento (n_versao+1), sem duplicar documento, checklist nem pendência. 0118: quando o hash E o fingerprint de prompt+modelo+esquema batem com uma versão que JÁ TEM linha extraída, nem versão nova é criada — devolve a existente com reaproveitou_extracao=true, e o workflow pula a chamada à OpenAI. Hash nulo não casa. Classificação da máquina não sobrepõe revisão humana.';
 
 --
 -- Name: fn_registrar_expectativa_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
@@ -5323,7 +5641,8 @@ CREATE TABLE public.documento_versao (
     hash text,
     legibilidade public.legibilidade,
     criada_em timestamp with time zone DEFAULT now() NOT NULL,
-    nota_legibilidade text
+    nota_legibilidade text,
+    fingerprint_extracao text
 );
 
 --
@@ -5331,6 +5650,12 @@ CREATE TABLE public.documento_versao (
 --
 
 COMMENT ON COLUMN public.documento_versao.nota_legibilidade IS 'Motivo objetivo quando legibilidade != ok (ex.: páginas faltando, digitalização ruim).';
+
+--
+-- Name: COLUMN documento_versao.fingerprint_extracao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.documento_versao.fingerprint_extracao IS 'Impressão do que determinou a extração desta versão: prompt de sistema + modelo + esquema de resposta, calculada no build do workflow. É o que autoriza NÃO pagar a extração de novo quando o mesmo arquivo volta — junto com a exigência de a versão ter linha extraída (0118).';
 
 --
 -- Name: entidade; Type: TABLE; Schema: public; Owner: -
@@ -5943,6 +6268,12 @@ CREATE INDEX idx_decisao_caso ON public.decisao USING btree (caso_id);
 --
 
 CREATE INDEX idx_documento_caso ON public.documento USING btree (caso_id);
+
+--
+-- Name: idx_documento_versao_hash_fingerprint; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_documento_versao_hash_fingerprint ON public.documento_versao USING btree (hash, fingerprint_extracao) WHERE ((hash IS NOT NULL) AND (fingerprint_extracao IS NOT NULL));
 
 --
 -- Name: idx_docversao_documento; Type: INDEX; Schema: public; Owner: -
@@ -6676,6 +7007,12 @@ GRANT ALL ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_moti
 GRANT ALL ON FUNCTION public.fn_indice_macro_anual(p_desde_ano integer) TO authenticated;
 
 --
+-- Name: FUNCTION fn_lado_do_mutuo(p_chave text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_linhas_do_tipo(p_caso_id uuid, p_codigo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6768,6 +7105,18 @@ GRANT ALL ON FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) TO au
 GRANT ALL ON FUNCTION public.fn_reavaliar_guardas_extracao(p_documento_versao_id uuid, p_autor text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_reconferir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6778,6 +7127,12 @@ GRANT ALL ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) TO
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -
