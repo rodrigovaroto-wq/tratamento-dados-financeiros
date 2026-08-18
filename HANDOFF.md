@@ -4,7 +4,7 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-18 (sessão 50). **Estado do `main`:** mergeado até o **PR #140**.
+**Última atualização:** 2026-08-18 (sessão 51). **Estado do `main`:** mergeado até o **PR #141**.
 A rodada entregou seis migrations — `0116` (o total impresso vira linha), `0117` (reconciliação de
 mútuos), `0118` (dedup por fingerprint de prompt+modelo), `0119` (linha exigida por entidade, do PR
 #135 do Ian, com quatro correções), `0120` (banco de perguntas ao cliente, do PR #138, com seis) e
@@ -16,8 +16,12 @@ as telas, inclusive do export) e o workflow do n8n reestruturado para 33 nós.
 book num mandato NOVO. **Leia o `ESTADO.md` primeiro** — ele tem os passos, o SQL de conferência de
 cada migration e as três coisas a trazer da rodada.
 
-**O maior buraco aberto:** as perguntas ao cliente da `0120` não têm tela — o motor existe e nenhuma
-página o chama.
+~~**O maior buraco aberto:** as perguntas ao cliente da `0120` não têm tela.~~ **Fechado na sessão
+51:** elas ganharam uma **aba própria** (`/casos/[id]/perguntas`) — texto pronto para copiar,
+registro de envio com o texto congelado (`fn_registrar_pergunta_acao`) e registro de descarte. Ficou
+FORA da fila de pendências por decisão do dono: sugestão que ninguém fez ainda não se mistura com
+decisão sobre problema já medido. A aba **depende da `0120` estar aplicada no Supabase** — sem ela,
+explica o que falta em vez de quebrar.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

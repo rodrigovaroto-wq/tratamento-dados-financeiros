@@ -17,7 +17,13 @@
 --   #6  ação humana: enviada sem texto é RECUSADA (jsonb, não exceção);
 --       enviada com texto grava, audita, e a sugestão passa a ja_enviada=true
 --       SEM sumir da lista; código inexistente é recusado;
---   #7  sugerir é SÓ LEITURA: nada muda em campo_extraido nem em pendencia.
+--   #7  sugerir é SÓ LEITURA: nada muda em campo_extraido nem em pendencia;
+--   #8  append-only é REGRA do banco: caso_pergunta sem política de UPDATE/DELETE;
+--   #9  o período do marcador é o mais recente por ANO, não por texto;
+--   #10 a pergunta NOMEIA a empresa (e a contextual, de propósito, não);
+--   #11 o par (código, empresa) é ÚNICO na saída — é ele que torna TOTAL a ordem
+--       (prioridade, codigo, entidade_id) com que a aba do portal pagina a
+--       função, e sem ordem total duas páginas repetem e omitem a mesma linha.
 
 \set ON_ERROR_STOP on
 
@@ -241,7 +247,37 @@ begin
     'pergunta contextual (sempre) NÃO ganha prefixo de empresa — não é de ninguém em particular',
     'achou ' || v_n);
 
-  raise notice 'perguntas OK — A3 dispara e A1/A2 calam; sempre só com conteúdo; marcadores resolvidos ou visíveis; saldo por escala única; linha_presente pronta para o upgrade do dono; ação humana auditada; só leitura; append-only imposto; período por ano; pergunta com o nome da empresa';
+  raise notice '--- 11. (código, empresa) é ÚNICO na saída — o que a aba do portal pagina ---';
+  -- POR QUE ISTO É TESTE DE BANCO, e não detalhe de tela. A aba "Perguntas ao
+  -- cliente" lê esta função PAGINADA (o PostgREST corta em 1000 linhas em
+  -- silêncio, e a sugestão é uma por pergunta × empresa desde a 0119), e pagina
+  -- ordenando por (prioridade, codigo, entidade_id). Ordem de página só é
+  -- confiável se for TOTAL: se duas linhas empatarem nas três colunas, o
+  -- Postgres pode devolvê-las em ordens diferentes em duas requisições, e aí
+  -- uma linha aparece nas duas páginas enquanto outra não aparece em nenhuma —
+  -- pior que truncar, porque o total continua plausível.
+  --
+  -- O empate só não acontece porque o par (código, empresa) é único aqui. Isso
+  -- é propriedade da função, não da tela: uma espécie de gatilho nova que
+  -- devolvesse a mesma pergunta duas vezes para a mesma empresa quebraria a
+  -- paginação sem quebrar teste nenhum — a menos deste.
+  select count(*) into v_n from (
+    select s.codigo, s.entidade_id from fn_sugerir_perguntas(v_caso) s
+     group by s.codigo, s.entidade_id having count(*) > 1) d;
+  perform teste_assert_pg(v_n = 0,
+    'nenhum par (código, empresa) repetido — a ordem (prioridade, codigo, entidade_id) é total',
+    'achou ' || v_n || ' par(es) repetido(s)');
+
+  -- E O NOME E O ID DA EMPRESA ANDAM JUNTOS. A tela mostra `entidade` e casa a
+  -- ação humana por `entidade_id`; se um viesse sem o outro, duas empresas
+  -- diferentes cairiam na mesma chave (ou uma sugestão nomeada viraria
+  -- irregistrável), e "já enviada" passaria a mentir sobre qual empresa.
+  select count(*) into v_n from fn_sugerir_perguntas(v_caso) s
+   where (s.entidade is null) <> (s.entidade_id is null);
+  perform teste_assert_pg(v_n = 0,
+    'entidade e entidade_id são nulos juntos ou preenchidos juntos', 'achou ' || v_n);
+
+  raise notice 'perguntas OK — A3 dispara e A1/A2 calam; sempre só com conteúdo; marcadores resolvidos ou visíveis; saldo por escala única; linha_presente pronta para o upgrade do dono; ação humana auditada; só leitura; append-only imposto; período por ano; pergunta com o nome da empresa; par (código, empresa) único para a paginação da aba';
 end $$;
 
 drop function teste_assert_pg(boolean, text, text);

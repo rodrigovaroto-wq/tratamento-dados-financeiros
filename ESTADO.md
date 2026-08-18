@@ -75,19 +75,18 @@ lidas para retomar.
 > documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
 > mede espera pelo cliente, não processamento.
 
-## Estado dos PRs (18/08, sessão 50 — leia isto antes de continuar)
+## Estado dos PRs (18/08, sessão 51 — leia isto antes de continuar)
 
 | PR | O quê | Estado |
 |---|---|---|
 | **#133** | Barra lateral rolável, `/casos` vira Painel (8 indicadores), lista completa em `/casos/todos`, abertura animada, migration `0115` (custo do lote em `lote_execucao`) | **mergeado no `main`** |
-| **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **aberto quando a sessão 50 começou** — https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/134 |
-| **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **branch `claude/handoff-next-steps-ke4omr`** |
+| **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **mergeado no `main`** |
+| **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **mergeado no `main`** (PRs #137, #139, #140, #141) |
+| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`) — a tela que faltava para a `0120` existir para quem usa o produto | **branch `claude/client-question-suggestions-ves2ty`** |
 
-**A branch da sessão 50 CONTÉM os dois commits do #134.** Ela foi criada a partir da ponta daquela
-branch, e não do `main`, porque o item 7 mexe no mesmo arquivo (`portal/src/app/casos/page.tsx`) e
-partir do `main` produziria conflito com trabalho que já estava pronto e revisado. Consequência
-prática: **se o #134 for mergeado primeiro, os commits dele somem do diff desta branch sozinhos**;
-se o dono preferir, dá para mergear só esta e fechar o #134 como incluído.
+**Nada da sessão 50 ficou pendente de merge** — o `main` já tem os sete itens, e a branch da sessão
+51 sai dele. O que continua pendente daquela rodada não é git: são as migrations `0116` a `0121` no
+Supabase e a reimportação do workflow, no quadro "O próximo passo".
 
 **O risco que a sessão 50 fechou, e que estava anotado aqui como "não se resolve sozinho":** as
 listas de `documento` e `pendencia` do painel continuavam sujeitas ao teto de 1000 do PostgREST.
@@ -136,7 +135,7 @@ O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em toda
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
 
-## O próximo passo (para quem retomar depois de 18/08, sessão 50)
+## O próximo passo (para quem retomar depois de 18/08, sessão 51)
 
 **O dono já fez os dois passos que só ele pode fazer**, e disse isso nesta sessão: as migrations
 até a `0115` foram aplicadas no Supabase e o workflow foi reimportado. **Mas a sessão 50 escreveu
@@ -150,10 +149,56 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
 
+> **A aba "Perguntas ao cliente" só acende com a `0120` aplicada.** Ela lê `fn_sugerir_perguntas` e
+> `caso_pergunta`; sem a migration, a aba abre e explica que falta aplicá-la (não quebra, e o resto
+> do mandato não depende dela), e o botão do cabeçalho do mandato aparece sem a contagem.
+
 > **A `0118` muda o que se vê ao reenviar um arquivo.** Reenviar o MESMO PDF sem que prompt, modelo
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### As perguntas ao cliente ganharam a ABA que faltava (18/08, sessão 51)
+
+A `0120` construiu o motor inteiro e **nenhuma tela o chamava**: `fn_sugerir_perguntas(caso)`
+devolve a pergunta pronta — com motivo, risco, impacto, os marcadores resolvidos e o nome da
+empresa — e a única forma de ver uma sugestão era rodar a função no SQL Editor. Para quem usa o
+produto, a `0120` não existia.
+
+**Onde ela ficou, e por que não onde o desenho anterior previa.** O plano era abrir a pergunta
+dentro do botão "Contatar o Cliente" da fila de pendências (`0109`). O dono redirecionou, e a razão
+é boa: **essas perguntas são sugestões que provavelmente ainda não foram feitas a ninguém** —
+pendência é decisão sobre problema já medido, sugestão é rascunho de conversa. Numa lista só, a
+segunda herda a aparência de tarefa concluída da primeira. Então elas moram numa aba própria,
+`/casos/[id]/perguntas`, com entrada no cabeçalho do mandato (com a contagem) e um link a partir da
+pendência **depois** que ela é marcada como pedida ao cliente — que é o momento exato em que o
+analista precisa do texto.
+
+O que a aba faz, em ordem de uso:
+
+| | |
+|---|---|
+| **Mostra o texto pronto** | renderizado pelo banco, com `{data_base}`/`{saldo_mutuos}` resolvidos e a empresa no prefixo. Bloco próprio, para ser lido como citação do que vai sair da casa |
+| **Copia** | `BotaoCopiar` com plano B (`execCommand`) para o portal aberto fora de contexto seguro — e que **declara** quando não conseguiu, em vez de piscar "copiado" |
+| **Registra o envio** | `fn_registrar_pergunta_acao`, com o texto EXATO da tela num campo oculto: é ele que a `0120` congela. Append-only — reenviar é linha nova, e não há como apagar |
+| **Registra o descarte** | "Não vou perguntar" grava a decisão sem sumir com a sugestão: quem chegar depois vê que alguém já olhou |
+| **Diz quem e quando** | `ja_enviada` vem do banco (casado por empresa); autor e data vêm de `caso_pergunta` |
+| **Explica o porquê** | motivo, risco, impacto e o gatilho traduzido, recolhidos num `<details>` — sustentam a pergunta numa reunião, e ninguém quer relê-los para copiar um texto |
+
+Três cuidados que não são enfeite:
+
+- **A lista é paginada**, como todas as outras — e isto vale para função que devolve tabela como
+  vale para consulta: o PostgREST corta em 1000 linhas em silêncio, e a sugestão é uma por
+  (pergunta × empresa que não satisfaz) desde a `0119`. A ordem é `(prioridade, codigo,
+  entidade_id)`, **total e estável**; o teste `#11` da `perguntas.test.sql` trava a propriedade que
+  torna essa ordem total (o par código × empresa é único na saída) — sem ela, duas páginas repetem
+  uma linha e omitem outra.
+- **A tela diz, em cima, que nada foi perguntado ainda e que nada é enviado automaticamente.** Uma
+  lista de textos prontos com um botão verde se parece com caixa de saída; não é. O canal continua
+  sendo o analista.
+- **Banco sem a `0120` aplicada não quebra nada.** A aba explica que a migration falta e mostra a
+  resposta do banco; a tela do mandato perde só o número do botão. Merge não é apply, e o dono
+  aplica à mão — banco atrasado é estado normal, não defeito.
 
 ### O teto de 1000 linhas: agora em TODAS as telas, e o pior deles era o export
 
@@ -485,13 +530,12 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 > fez". Dois deles com uma ressalva registrada lá: o dos subtotais só a rodada real prova, e a
 > checagem de mútuos cobre mútuo contra mútuo, não a planilha intragrupo inteira.
 
-- **AS PERGUNTAS AO CLIENTE NÃO TÊM TELA.** A `0120` construiu o motor —
-  `fn_sugerir_perguntas` devolve a pergunta pronta, com motivo/risco/impacto, marcadores resolvidos
-  e o nome da empresa — e **nenhuma tela do portal a chama**. Hoje a única forma de ver a sugestão é
-  rodar a função no SQL Editor. O lugar natural dela é o botão "Contatar o Cliente" da fila de
-  pendências (`0109`), que hoje só rotula: ele deveria abrir a pergunta pronta para copiar, e
-  registrar o envio por `fn_registrar_pergunta_acao` (que exige o texto renderizado, congelado).
-  Enquanto isso não existe, a `0120` é invisível para quem usa o produto.
+- ~~**AS PERGUNTAS AO CLIENTE NÃO TÊM TELA**~~ — **fechado em 18/08 (sessão 51)**: elas ganharam
+  uma **aba própria**, `/casos/[id]/perguntas`, com o texto pronto para copiar, o registro de envio
+  por `fn_registrar_pergunta_acao` (texto congelado) e o de descarte. Ficaram FORA da fila de
+  pendências por decisão do dono — sugestão que ninguém fez ainda não se mistura com decisão sobre
+  problema medido. Ver "As perguntas ao cliente ganharam a ABA que faltava". **Depende da `0120`
+  estar aplicada no Supabase**; sem ela a aba explica o que falta em vez de quebrar.
 - **A conferência das linhas intragrupo que NÃO são mútuo** (conta corrente rotativa, aluguel entre
   coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
   cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É
