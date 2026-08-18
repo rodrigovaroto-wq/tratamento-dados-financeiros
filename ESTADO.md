@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0118_dedup_por_fingerprint.sql` |
+| **Última migration** | `db/migrations/0120_banco_de_perguntas.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (63 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (64 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
