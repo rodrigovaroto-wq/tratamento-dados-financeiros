@@ -111,6 +111,7 @@ export async function fecharCaso(casoId: string, formData?: FormData) {
   if (r?.recusado) throw new Error(r.motivo_recusa ?? "Fechamento recusado.");
 
   revalidatePath("/casos");
+  revalidatePath("/casos/todos");
   revalidatePath(`/casos/${casoId}`);
 }
 
@@ -127,6 +128,7 @@ export async function reabrirCaso(casoId: string) {
   if (r?.recusado) throw new Error(r.motivo_recusa ?? "Reabertura recusada.");
 
   revalidatePath("/casos");
+  revalidatePath("/casos/todos");
   revalidatePath(`/casos/${casoId}`);
 }
 
@@ -150,8 +152,10 @@ export async function excluirCaso(casoId: string) {
     throw new Error(r.motivo_recusa ?? "Exclusão recusada.");
   }
 
-  // A lista, não o caso: o caso não existe mais, e `revalidatePath` nele
-  // deixaria a navegação apontando para uma página que vai dar 404.
+  // A lista e o painel, não o caso: o caso não existe mais, e
+  // `revalidatePath` nele deixaria a navegação apontando para uma página que
+  // vai dar 404. Quem excluiu estava NA lista, e é para lá que volta.
   revalidatePath("/casos");
-  redirect("/casos");
+  revalidatePath("/casos/todos");
+  redirect("/casos/todos");
 }

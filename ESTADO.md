@@ -37,6 +37,21 @@ lidas para retomar.
 > **Para o dono:** a `0114` precisa ser aplicada no Supabase. Sem ela, a coluna não existe e a lista
 > trata todo mandato como ativo — a tela não quebra, mas o botão de fechar falha.
 
+## O portal (18/08) — a home deixou de ser a lista
+
+- **A barra lateral rola sozinha.** O `nav` era `sticky` mas não tinha altura: com mais mandatos
+  do que cabe na tela, os últimos ficavam abaixo da dobra do elemento grudado e só apareciam
+  quando a PÁGINA terminava de rolar. Agora ela tem a altura da viewport abaixo do cabeçalho e a
+  lista rola dentro dela, com o topo (Painel, Novo mandato, Mandatos) parado.
+- **`/casos` virou o PAINEL e a lista completa foi para `/casos/todos`.** A home repetia inteira a
+  lista que a barra já dá em um clique — duas telas para "o que existe", e nenhuma para *o que
+  precisa de mim agora*. O painel tem três blocos: indicadores da mesa (mandatos, documentos,
+  linhas extraídas, pendências e quantas bloqueiam), a **fila de pendências atravessando os
+  mandatos** ordenada por severidade — que antes só existia dentro de um caso por vez —, e o que
+  chegou, com as linhas de cada documento (zero linhas em vermelho).
+- **A regra que saiu disso:** nenhuma função da barra lateral se repete no conteúdo. O botão
+  "Novo mandato" saiu da lista completa; quem precisa dele o tem na barra, sempre visível.
+
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 
 **9 documentos, 714 linhas, US$ ~0,46.** O defeito que comeu 19 dos 35 documentos na v45 está

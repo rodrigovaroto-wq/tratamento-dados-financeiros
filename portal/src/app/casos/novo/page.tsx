@@ -19,7 +19,7 @@ export default function NovoMandatoPage() {
         {/* COLUNA DA AÇÃO */}
         <div className="order-2 lg:order-1">
           <Link
-            href="/casos"
+            href="/casos/todos"
             className="text-sm text-tinta-500 transition-colors hover:text-tinta-900"
           >
             ← Voltar aos mandatos
