@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0119_linha_exigida_por_entidade.sql` |
+| **Última migration** | `db/migrations/0120_banco_de_perguntas.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (64 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (65 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -145,7 +145,7 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | Aplicar `0116`, `0117`, `0118` e `0119` no Supabase (a lista de comandos está no `db/README.md`) | dono |
+| 1 | Aplicar `0116` a `0120` no Supabase (a lista de comandos está no `db/README.md`) | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
@@ -154,6 +154,30 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O PR #138 do Ian, incorporado com seis correções (0120)
+
+**O que ele resolve:** o capítulo 10 do onboarding define 36 perguntas a fazer ao cliente depois que
+a extração roda. Nenhuma era sistema — quando o analista clicava "Contatar o Cliente", o que
+perguntar saía da cabeça dele. Agora `fn_sugerir_perguntas` devolve a pergunta pronta, com
+motivo/risco/impacto e os marcadores preenchidos. O encaixe é o melhor da entrega:
+`exigencia_ausente` lê a **mesma** `fn_exigencias_do_caso` da pendência — pendência e pergunta são
+duas faces da mesma avaliação e não podem divergir. Escopo declarado: 11 das 36, com as outras 25
+nomeadas família a família.
+
+**As seis correções feitas na incorporação:**
+
+| | O quê | Por quê |
+|---|---|---|
+| 1 | **Conflito com o `main` resolvido, e a `0120` entrou na lista de comandos** | O `#137` mergeou depois da base dele. E a migration não estava no `db/README.md` — o portão do `run.sh` reprovava. |
+| 2 | **A migration voltou a ser reaplicável** | `create policy` sem `drop policy if exists`: rerodar morria em *"policy already exists"*. O resto do arquivo já era reaplicável (`create table if not exists`, `on conflict do nothing`) — só as políticas escapavam, e a casa já tem o padrão (`0009`, `0107`, `0108`, `0115`). |
+| 3 | **`caso_pergunta` virou append-only de verdade** | A tabela dizia "append-only por desenho" e publicava `for all to authenticated`. Medido: `set role authenticated; delete from caso_pergunta` **apagou a linha**. Agora são duas políticas, SELECT e INSERT — o desenho do `evento_auditoria` (0003), que é onde ele já estava certo. |
+| 4 | **`{data_base}`/`{ano}` deixaram de errar o exercício** | O período saía de `max(referencia)` — máximo de TEXTO. Num caso com `2025` e `L24M`, a pergunta ia ao cliente dizendo *"No balanço de **L24M**…"*: rótulo de janela móvel, não data de balanço, e nem o mais recente. Agora ordena por ano com `fn_anos_texto`. |
+| 5 | **A verificação embutida deixou de ser alçapão** | `count(*) where ativo <> 11 → exception`: bastava você **desativar uma pergunta** (a coluna `ativo` existe para isso) para a reaplicação morrer. É o mesmo defeito que a `0119` teve, na mesma posição do arquivo. Agora ela confere as 11 pelo código, e o que você fizer depois vira NOTICE. |
+| 6 | **A pergunta passou a nomear a empresa** | A pendência nomeia a entidade desde a `0119`; a pergunta, não — e ela é **enviada ao cliente**. Num grupo de oito balanços, *"no balanço de 2025 não localizamos Ativo Total"* não diz de qual empresa se fala. Era o reemit que ele mesmo previu quando a `0119` ainda não existia. `ja_enviada` passou a ser por entidade junto: enviar sobre a Alfa não responde pela Beta. |
+
+Menor, também feito: índice em `caso_pergunta (caso_id, pergunta_codigo)`, que o `ja_enviada` usa a
+cada sugestão.
 
 ### O PR #135 do Ian, incorporado com quatro correções (0119)
 

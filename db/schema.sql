@@ -4526,6 +4526,50 @@ end;
 $$;
 
 --
+-- Name: fn_registrar_pergunta_acao(uuid, text, text, text, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_id uuid;
+begin
+  if p_acao not in ('enviada', 'descartada') then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Ação "%s" não existe: as ações são enviada e descartada.', p_acao));
+  end if;
+  if not exists (select 1 from pergunta_catalogo pc where pc.codigo = p_codigo and pc.ativo) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A pergunta "%s" não existe no catálogo (ou está inativa).', p_codigo));
+  end if;
+  if p_acao = 'enviada' and (p_texto is null or length(trim(p_texto)) = 0) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Enviar exige o TEXTO enviado: o template pode mudar depois, e a trilha '
+        || 'precisa dizer O QUE foi perguntado ao cliente, não só que se perguntou.');
+  end if;
+
+  insert into caso_pergunta (caso_id, pergunta_codigo, entidade_id, acao, texto_enviado, autor)
+    values (p_caso_id, p_codigo, p_entidade_id, p_acao,
+            case when p_acao = 'enviada' then p_texto end, p_autor)
+    returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values (p_autor, 'pergunta_' || p_acao, 'caso:' || p_caso_id,
+            jsonb_build_object('pergunta_codigo', p_codigo, 'caso_pergunta_id', v_id,
+                               'entidade_id', p_entidade_id));
+
+  return jsonb_build_object('caso_pergunta_id', v_id, 'pergunta_codigo', p_codigo, 'acao', p_acao);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) IS 'Registra a ação HUMANA sobre uma pergunta sugerida (0120). Enviada exige o texto renderizado (congelado na linha). Recusa em jsonb, nunca exceção — o rastro fica. Append-only: reenviar é linha nova.';
+
+--
 -- Name: fn_registrar_reconciliacao(uuid, uuid, uuid, text, text, uuid, jsonb, jsonb, text, numeric, numeric, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5000,6 +5044,158 @@ CREATE FUNCTION public.fn_somar_faturamento_ano(p_documento_versao_id uuid, p_an
     and fn_normalizar_texto(ce.chave) not like '%media%'
     and fn_normalizar_texto(ce.chave) not like '%médi%';
 $_$;
+
+--
+-- Name: fn_sugerir_perguntas(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) RETURNS TABLE(codigo text, titulo text, prioridade integer, entidade text, entidade_id uuid, pergunta text, motivo text, risco text, impacto text, gatilho text, fonte text, ja_enviada boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  with tem_conteudo as (
+    select exists (
+      select 1
+      from documento d
+      join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+      where d.caso_id = p_caso_id and ce.valor_num is not null
+    ) as ok
+  ),
+  -- Quais códigos disparam. DISTINCT de propósito: sob a assinatura por
+  -- entidade (futura 0119), fn_exigencias_do_caso devolve uma linha por
+  -- entidade e a pergunta dispararia N vezes — na v1 a sugestão é por caso.
+  -- QUAIS CÓDIGOS DISPARAM, E PARA QUEM.
+  --
+  -- A versão original devolvia só o código, com `distinct`, porque
+  -- `fn_exigencias_do_caso` ainda era por CASO. Desde a 0119 ela é por
+  -- ENTIDADE, e a pendência `linha_exigida_ausente` nomeia a empresa. A
+  -- pergunta é o lado externo da MESMA avaliação — o texto que vai ao cliente —,
+  -- e num grupo de oito balanços "no balanço de 31/12/2025 não localizamos uma
+  -- linha de Ativo Total" não diz de QUAL empresa se está falando. Quem recebe
+  -- não tem como responder, e quem enviou não tem como saber que faltou.
+  --
+  -- Então o disparo carrega a entidade quando ela existe, e a sugestão passa a
+  -- ser uma por (pergunta × entidade que não satisfaz) — espelhando exatamente
+  -- as pendências. Em mandato de uma empresa só, `entidade` vem nula e nada
+  -- muda: nomear a única empresa do caso seria ruído.
+  disparos as (
+    select pc.codigo, null::text as entidade, null::uuid as entidade_id
+    from pergunta_catalogo pc
+    where pc.ativo and pc.gatilho_especie = 'sempre'
+      and (select ok from tem_conteudo)
+    union
+    select distinct pc.codigo, x.entidade, x.entidade_id
+    from pergunta_catalogo pc
+    join fn_exigencias_do_caso(p_caso_id) x
+      on x.tipo_taxonomia = pc.gatilho_tipo_taxonomia
+     and x.conceito = pc.gatilho_conceito
+    where pc.ativo
+      and ((pc.gatilho_especie = 'exigencia_ausente' and not x.satisfeita)
+        or (pc.gatilho_especie = 'linha_presente' and x.satisfeita))
+  ),
+  -- {saldo_mutuos}: soma das linhas que casam MUTUOS:saldo_de_mutuo na versão
+  -- vigente. Escala única acompanha; escalas mistas NÃO são somadas às cegas.
+  -- (Terceira cópia da expressão de casamento — ver LIMITAÇÕES no cabeçalho.)
+  saldo_mutuos as (
+    select case
+      when count(*) = 0 then null
+      when count(distinct coalesce(c.unidade, '')) > 1 then '(valores em escalas mistas — conferir)'
+      else trim(sum(c.valor_num)::text || ' ' || coalesce(max(nullif(c.unidade, '')), ''))
+    end as txt
+    from (
+      select ce.valor_num, ce.unidade
+      from documento d
+      join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
+      where d.caso_id = p_caso_id
+        and d.tipo_taxonomia = 'MUTUOS'
+        and ce.valor_num is not null
+        and exists (
+          select 1
+          from taxonomia_linha_exigida e
+          join taxonomia_linha_localizador l on l.exigencia_id = e.id
+          where e.tipo_taxonomia = 'MUTUOS' and e.conceito = 'saldo_de_mutuo' and e.ativo
+            and case
+              when l.contra = 'estrutural' then fn_rotulo_estrutural(ce.chave, l.termos_inclui)
+              else
+                not exists (
+                  select 1 from unnest(l.termos_inclui) t
+                  where fn_normalizar_texto(case when l.contra = 'secao'
+                                            then coalesce(ce.secao, '') else ce.chave end)
+                    not like '%' || fn_normalizar_texto(t) || '%')
+                and not exists (
+                  select 1 from unnest(l.termos_exclui) t
+                  where fn_normalizar_texto(case when l.contra = 'secao'
+                                            then coalesce(ce.secao, '') else ce.chave end)
+                    like '%' || fn_normalizar_texto(t) || '%')
+            end)
+    ) c
+  )
+  -- `entidade_id` SAI JUNTO, e não é enfeite: é o que quem registra a ação
+  -- humana precisa devolver em `fn_registrar_pergunta_acao`. Sem ele na saída,
+  -- o chamador teria de reencontrar a empresa pelo nome — e errar isso não dá
+  -- erro nenhum: a pergunta simplesmente nunca aparece como enviada.
+  select pc.codigo, pc.titulo, pc.prioridade, di.entidade, di.entidade_id,
+         -- A ENTIDADE ENTRA COMO PREFIXO, e não reescrevendo o texto da
+         -- entrega. O corpo da pergunta é verbatim do capítulo 10 e continua
+         -- sendo; o que se acrescenta é a única coisa que ele não podia saber —
+         -- de qual empresa do grupo se fala. Nula (mandato de uma empresa,
+         -- pergunta `sempre`), o prefixo não existe.
+         case when di.entidade is not null then 'Sobre a ' || di.entidade || ': ' else '' end ||
+         replace(replace(replace(pc.pergunta,
+           '{data_base}',    coalesce(per.referencia, '(período não informado)')),
+           '{ano}',          coalesce(per.referencia, '(período não informado)')),
+           '{saldo_mutuos}', coalesce(sm.txt, '(não localizado)')) as pergunta,
+         pc.motivo, pc.risco, pc.impacto,
+         case when pc.gatilho_especie = 'sempre' then 'sempre'
+              else pc.gatilho_especie || ':' || pc.gatilho_tipo_taxonomia || ':' || pc.gatilho_conceito
+         end as gatilho,
+         pc.fonte,
+         -- `ja_enviada` POR ENTIDADE quando há entidade: enviar a pergunta
+         -- sobre a Alfa não responde a mesma pergunta sobre a Beta, e marcar as
+         -- duas como enviadas esconderia a que falta. `caso_pergunta.entidade_id`
+         -- já existia para isso, reservado desde a v1.
+         exists (
+           select 1 from caso_pergunta cp
+           where cp.caso_id = p_caso_id and cp.pergunta_codigo = pc.codigo and cp.acao = 'enviada'
+             and cp.entidade_id is not distinct from di.entidade_id
+         ) as ja_enviada
+  from pergunta_catalogo pc
+  join disparos di on di.codigo = pc.codigo
+  cross join saldo_mutuos sm
+  -- O PERÍODO MAIS RECENTE É POR ANO, NÃO POR ORDEM ALFABÉTICA.
+  --
+  -- Era `max(p2.referencia)` — máximo de TEXTO sobre rótulos que não são
+  -- comparáveis como texto. Num caso com os períodos "2025" e "L24M", o `max`
+  -- devolve **L24M**, e a pergunta saía assim, para o cliente:
+  --
+  --   "No balanço de L24M não localizamos uma linha de Ativo Total."
+  --
+  -- L24M é rótulo de janela móvel (últimos 24 meses), não data de balanço — e
+  -- nem era o mais recente. Isto não é detalhe de formatação: é o texto que sai
+  -- do sistema e chega ao cliente, e a única coisa que a pergunta tem de acertar
+  -- sozinha é a qual exercício ela se refere.
+  --
+  -- `fn_anos_texto` (0030) já sabe ler o ano de qualquer uma das notações do
+  -- projeto ("2025", "12M25", "25,24", "1T25"). Ordena-se pelo MAIOR ano que o
+  -- rótulo denota; rótulo sem ano nenhum (o "L24M" da vida) vai para o fim em
+  -- vez de para a frente, e só é escolhido se for o único que existe.
+  left join lateral (
+    select p2.referencia
+    from documento d2
+    join periodo p2 on p2.id = d2.periodo_id
+    where d2.caso_id = p_caso_id
+      and (pc.gatilho_tipo_taxonomia is null or d2.tipo_taxonomia = pc.gatilho_tipo_taxonomia)
+    order by coalesce((select max(a) from unnest(fn_anos_texto(p2.referencia)) a), -1) desc,
+             p2.referencia desc
+    limit 1
+  ) per on true
+  order by pc.prioridade, pc.codigo, di.entidade nulls first;
+$$;
+
+--
+-- Name: FUNCTION fn_sugerir_perguntas(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) IS 'Perguntas ao cliente SUGERIDAS para o caso (0120): exigencia_ausente/linha_presente avaliadas sobre fn_exigencias_do_caso (a mesma fonte da pendência linha_exigida_ausente — as duas faces nunca divergem); sempre = caso com conteúdo. Marcadores {data_base}/{ano}/{saldo_mutuos} preenchidos; desconhecidos ficam visíveis. Nada é gravado ao sugerir; ja_enviada informa, não filtra. Uma sugestão por (pergunta × entidade que não satisfaz) desde que fn_exigencias_do_caso passou a ser por entidade (0119) — o texto nomeia a empresa, como a pendência já faz.';
 
 --
 -- Name: fn_tem_palavra_longa(text); Type: FUNCTION; Schema: public; Owner: -
@@ -5568,6 +5764,29 @@ CREATE TABLE public.caso_modelagem (
 );
 
 --
+-- Name: caso_pergunta; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.caso_pergunta (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    pergunta_codigo text NOT NULL,
+    entidade_id uuid,
+    acao text NOT NULL,
+    texto_enviado text,
+    autor text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT caso_pergunta_acao_check CHECK ((acao = ANY (ARRAY['enviada'::text, 'descartada'::text]))),
+    CONSTRAINT caso_pergunta_check CHECK (((acao <> 'enviada'::text) OR ((texto_enviado IS NOT NULL) AND (length(TRIM(BOTH FROM texto_enviado)) > 0))))
+);
+
+--
+-- Name: TABLE caso_pergunta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.caso_pergunta IS 'Ação HUMANA sobre uma pergunta sugerida: enviada (com o texto renderizado congelado) ou descartada. O sistema sugere, o humano decide (docs/01); nenhum envio é automático — o canal continua sendo o analista (o botão da 0109 só rotula a pendência).';
+
+--
 -- Name: caso_premissa; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5873,6 +6092,48 @@ CREATE TABLE public.pendencia (
 );
 
 --
+-- Name: pergunta_catalogo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pergunta_catalogo (
+    codigo text NOT NULL,
+    titulo text NOT NULL,
+    pergunta text NOT NULL,
+    motivo text NOT NULL,
+    risco text NOT NULL,
+    impacto text NOT NULL,
+    prioridade integer NOT NULL,
+    gatilho_especie text NOT NULL,
+    gatilho_tipo_taxonomia text,
+    gatilho_conceito text,
+    gatilho_descricao text NOT NULL,
+    fonte text NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    CONSTRAINT pergunta_catalogo_check CHECK (((gatilho_especie = 'sempre'::text) = ((gatilho_tipo_taxonomia IS NULL) AND (gatilho_conceito IS NULL)))),
+    CONSTRAINT pergunta_catalogo_gatilho_especie_check CHECK ((gatilho_especie = ANY (ARRAY['exigencia_ausente'::text, 'linha_presente'::text, 'sempre'::text]))),
+    CONSTRAINT pergunta_catalogo_prioridade_check CHECK (((prioridade >= 1) AND (prioridade <= 4)))
+);
+
+--
+-- Name: TABLE pergunta_catalogo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.pergunta_catalogo IS 'Banco de perguntas ao cliente (onboarding cap. 10 + análise aprovada, sessão de 13/08/2026). Texto VERBATIM da entrega. gatilho_especie é o que o motor avalia; gatilho_descricao é a condição como a entrega a descreveu — insumo das espécies futuras (ver cabeçalho da 0120).';
+
+--
+-- Name: COLUMN pergunta_catalogo.prioridade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pergunta_catalogo.prioridade IS '1 crítica … 4 contextual — dado da entrega. NENHUM comportamento é atrelado a ela (corte, envio automático, teto seriam política do dono); a função de sugestão apenas ordena por ela.';
+
+--
+-- Name: COLUMN pergunta_catalogo.gatilho_descricao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pergunta_catalogo.gatilho_descricao IS 'O gatilho nas palavras da ENTREGA, inclusive quando pede espécie que ainda não existe. Fato, não configuração: é daqui que as espécies futuras (reconciliação, comparação, limiar…) saem.';
+
+--
 -- Name: periodo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6042,6 +6303,13 @@ ALTER TABLE ONLY public.caso_modelagem
     ADD CONSTRAINT caso_modelagem_pkey PRIMARY KEY (caso_id);
 
 --
+-- Name: caso_pergunta caso_pergunta_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.caso_pergunta
+    ADD CONSTRAINT caso_pergunta_pkey PRIMARY KEY (id);
+
+--
 -- Name: caso caso_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6182,6 +6450,13 @@ ALTER TABLE ONLY public.pendencia
     ADD CONSTRAINT pendencia_pkey PRIMARY KEY (id);
 
 --
+-- Name: pergunta_catalogo pergunta_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pergunta_catalogo
+    ADD CONSTRAINT pergunta_catalogo_pkey PRIMARY KEY (codigo);
+
+--
 -- Name: periodo periodo_caso_id_tipo_referencia_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6273,6 +6548,12 @@ CREATE INDEX idx_caso_linha_premissa_caso ON public.caso_linha_premissa USING bt
 --
 
 CREATE UNIQUE INDEX idx_caso_linha_premissa_unica ON public.caso_linha_premissa USING btree (caso_id, rotulo_norm, COALESCE(entidade, ''::text), COALESCE(secao_canonica, ''::text));
+
+--
+-- Name: idx_caso_pergunta_caso_codigo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_caso_pergunta_caso_codigo ON public.caso_pergunta USING btree (caso_id, pergunta_codigo);
 
 --
 -- Name: idx_caso_premissa_caso; Type: INDEX; Schema: public; Owner: -
@@ -6410,6 +6691,27 @@ ALTER TABLE ONLY public.caso_linha_premissa
 
 ALTER TABLE ONLY public.caso_modelagem
     ADD CONSTRAINT caso_modelagem_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: caso_pergunta caso_pergunta_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.caso_pergunta
+    ADD CONSTRAINT caso_pergunta_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: caso_pergunta caso_pergunta_entidade_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.caso_pergunta
+    ADD CONSTRAINT caso_pergunta_entidade_id_fkey FOREIGN KEY (entidade_id) REFERENCES public.entidade(id);
+
+--
+-- Name: caso_pergunta caso_pergunta_pergunta_codigo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.caso_pergunta
+    ADD CONSTRAINT caso_pergunta_pergunta_codigo_fkey FOREIGN KEY (pergunta_codigo) REFERENCES public.pergunta_catalogo(codigo);
 
 --
 -- Name: caso_premissa caso_premissa_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -6566,6 +6868,13 @@ ALTER TABLE ONLY public.pendencia
     ADD CONSTRAINT pendencia_periodo_id_fkey FOREIGN KEY (periodo_id) REFERENCES public.periodo(id);
 
 --
+-- Name: pergunta_catalogo pergunta_catalogo_gatilho_tipo_taxonomia_gatilho_conceito_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pergunta_catalogo
+    ADD CONSTRAINT pergunta_catalogo_gatilho_tipo_taxonomia_gatilho_conceito_fkey FOREIGN KEY (gatilho_tipo_taxonomia, gatilho_conceito) REFERENCES public.taxonomia_linha_exigida(tipo_taxonomia, conceito);
+
+--
 -- Name: periodo periodo_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6654,6 +6963,24 @@ ALTER TABLE public.caso_modelagem ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY caso_modelagem_authenticated_all ON public.caso_modelagem TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: caso_pergunta; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.caso_pergunta ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: caso_pergunta caso_pergunta_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY caso_pergunta_insert ON public.caso_pergunta FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: caso_pergunta caso_pergunta_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY caso_pergunta_read ON public.caso_pergunta FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: caso_premissa; Type: ROW SECURITY; Schema: public; Owner: -
@@ -6828,6 +7155,18 @@ ALTER TABLE public.pendencia ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY pendencia_authenticated_all ON public.pendencia TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: pergunta_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pergunta_catalogo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pergunta_catalogo pergunta_catalogo_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY pergunta_catalogo_read ON public.pergunta_catalogo FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: periodo; Type: ROW SECURITY; Schema: public; Owner: -
@@ -7171,6 +7510,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_
 GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) TO service_role;
 
 --
+-- Name: FUNCTION fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7199,6 +7544,12 @@ GRANT ALL ON FUNCTION public.fn_rotulo_estrutural(p_chave text, p_tokens_exigido
 --
 
 GRANT ALL ON FUNCTION public.fn_sazonalidade_do_caso(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_sugerir_perguntas(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_sugerir_perguntas(p_caso_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_tem_palavra_longa(p_chave text); Type: ACL; Schema: public; Owner: -
@@ -7273,6 +7624,14 @@ GRANT ALL ON TABLE public.caso_linha_premissa TO service_role;
 GRANT ALL ON TABLE public.caso_modelagem TO anon;
 GRANT ALL ON TABLE public.caso_modelagem TO authenticated;
 GRANT ALL ON TABLE public.caso_modelagem TO service_role;
+
+--
+-- Name: TABLE caso_pergunta; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.caso_pergunta TO anon;
+GRANT ALL ON TABLE public.caso_pergunta TO authenticated;
+GRANT ALL ON TABLE public.caso_pergunta TO service_role;
 
 --
 -- Name: TABLE caso_premissa; Type: ACL; Schema: public; Owner: -
@@ -7385,6 +7744,14 @@ GRANT ALL ON TABLE public.lote_execucao TO service_role;
 GRANT ALL ON TABLE public.pendencia TO anon;
 GRANT ALL ON TABLE public.pendencia TO authenticated;
 GRANT ALL ON TABLE public.pendencia TO service_role;
+
+--
+-- Name: TABLE pergunta_catalogo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.pergunta_catalogo TO anon;
+GRANT ALL ON TABLE public.pergunta_catalogo TO authenticated;
+GRANT ALL ON TABLE public.pergunta_catalogo TO service_role;
 
 --
 -- Name: TABLE periodo; Type: ACL; Schema: public; Owner: -
