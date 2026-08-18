@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 0116 — A linha exigida passa a ser cobrada POR ENTIDADE
+-- Migration 0119 — A linha exigida passa a ser cobrada POR ENTIDADE
 --
 -- O CASO QUE MOTIVA (apontado pelo dono na revisão da 0113): um grupo econômico
 -- com OITO balanços no caso, sete sem a linha de caixa e um com. A 0113
@@ -226,7 +226,7 @@ as $$
 $$;
 
 comment on function fn_exigencias_do_caso(uuid) is
-  'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0116): uma linha de '
+  'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0119): uma linha de '
   'resultado por (exigência × entidade do eixo), entidade NULL no escopo-caso e nos fallbacks. '
   'Escopo = escopo_entidade da exigência, ou (NULL) a granularidade do tipo na taxonomia. Eixo = '
   'entidades REGISTRADAS que trouxeram linha do tipo, via coalesce(entidade_coluna, razao_social) '
@@ -253,7 +253,7 @@ declare
   v_status_atual caso_status;
   v_novo_status caso_status;
   v_pend_id uuid;
-  -- 0113/0116: passo (2b)
+  -- 0113/0119: passo (2b)
   v_ex record;
   v_motivo text;
   v_motivos_ausentes text[] := '{}';
@@ -321,8 +321,8 @@ begin
     end if;
   end loop;
 
-  -- ----- (2b) 0113/0116: tipo COM conteúdo, mas sem uma LINHA exigida --------
-  -- 0116: a cobrança desce ao nível da ENTIDADE quando o escopo pede. O motivo
+  -- ----- (2b) 0113/0119: tipo COM conteúdo, mas sem uma LINHA exigida --------
+  -- 0119: a cobrança desce ao nível da ENTIDADE quando o escopo pede. O motivo
   -- ganha o sufixo canônico da entidade (chave estável mesmo que a grafia da
   -- razão social varie entre extrações), `entidade_id` vai na pendência, e a
   -- descrição nomeia a empresa. Pendência de formato velho (sem sufixo) sai da
@@ -385,7 +385,7 @@ begin
   end loop;
 
   -- A linha apareceu, a exigência foi desativada, ou o formato do motivo mudou
-  -- (a transição 0113 → 0116): resolve sozinha, como as da 0036.
+  -- (a transição 0113 → 0119): resolve sozinha, como as da 0036.
   update pendencia p set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:extracao'
   where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
     and not (p.motivo = any (v_motivos_ausentes));
@@ -421,7 +421,7 @@ begin
     'portao1_ok', array_length(v_faltantes,1) is null,
     'faltantes', to_jsonb(v_faltantes),
     'sem_conteudo', to_jsonb(v_sem_conteudo),
-    -- 0116: cada ausência agora pode nomear a entidade. `pronto_para_revisao`
+    -- 0119: cada ausência agora pode nomear a entidade. `pronto_para_revisao`
     -- segue intocado — endurecê-lo é decisão de produto do dono, não efeito
     -- colateral (0113).
     'linhas_exigidas_ausentes', v_linhas_ausentes,
@@ -433,7 +433,7 @@ end;
 $$;
 
 comment on function fn_recomputar_completude(uuid) is
-  'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0116 (passo 2b: linha exigida ausente, '
+  'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0119 (passo 2b: linha exigida ausente, '
   'cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id '
   'na pendência, descrição nomeando a empresa). Política por linha é do dono; default = '
   'importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou '
@@ -460,11 +460,11 @@ begin
   -- A alavanca nasce NULL em todo o seed: política é do dono.
   select count(*) into v_n from taxonomia_linha_exigida where escopo_entidade is not null;
   if v_n <> 0 then
-    raise exception '0116: % exigência(s) com escopo_entidade definido no seed — a alavanca é do dono, nasce NULL', v_n;
+    raise exception '0119: % exigência(s) com escopo_entidade definido no seed — a alavanca é do dono, nasce NULL', v_n;
   end if;
 
   -- Dois balanços, A com caixa e B sem: cobra SÓ a entidade B, nomeando-a.
-  insert into caso (id, nome, produto) values (v_caso, 'VERIF 0116', 'reestruturacao');
+  insert into caso (id, nome, produto) values (v_caso, 'VERIF 0119', 'reestruturacao');
   insert into entidade (id, caso_id, razao_social) values
     (v_ent_a, v_caso, 'Alfa Participações Ltda.'),
     (v_ent_b, v_caso, 'Beta Logística S.A.');
@@ -492,17 +492,17 @@ begin
      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes:%'
    limit 1;
   if v_n <> 1 or v_ent <> v_ent_b then
-    raise exception '0116: dois balanços (A com caixa, B sem) deviam abrir UMA pendência para B — achou % (entidade %)', v_n, v_ent;
+    raise exception '0119: dois balanços (A com caixa, B sem) deviam abrir UMA pendência para B — achou % (entidade %)', v_n, v_ent;
   end if;
   select count(*) into v_n from pendencia
    where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
      and entidade_id = v_ent_a;
   if v_n <> 0 then
-    raise exception '0116: a entidade COM a linha foi cobrada (% pendência/s) — o eixo por entidade está errado', v_n;
+    raise exception '0119: a entidade COM a linha foi cobrada (% pendência/s) — o eixo por entidade está errado', v_n;
   end if;
 
   delete from caso where id = v_caso;
-  raise notice '0116 OK — escopo_entidade nasce NULL; A com caixa e B sem ⇒ só B cobrada, com entidade_id';
+  raise notice '0119 OK — escopo_entidade nasce NULL; A com caixa e B sem ⇒ só B cobrada, com entidade_id';
 end $$;
 
 -- =============================================================================
@@ -531,5 +531,5 @@ begin
     perform fn_recomputar_completude(v_caso.id);
     v_n := v_n + 1;
   end loop;
-  raise notice '0116: varredura recomputou a completude de % caso(s) existente(s)', v_n;
+  raise notice '0119: varredura recomputou a completude de % caso(s) existente(s)', v_n;
 end $$;
