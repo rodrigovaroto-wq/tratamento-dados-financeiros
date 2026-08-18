@@ -10,8 +10,7 @@ mostrando exatamente 1.000 — o teto do PostgREST, não o dado) e a branch da *
 (`claude/handoff-next-steps-ke4omr`), que contém os commits do #134 mais os **sete itens da lista
 "o que está aberto"**, atacados em ordem a pedido do dono: os subtotais impressos, a checagem de
 mútuos, a tela de Modelagem, os apelidos da taxonomia, o teto de gasto por conteúdo, o dedup por
-fingerprint e o teto de 1000 nas listas do painel. **Leia o `ESTADO.md` primeiro** — a seção
-"O que a sessão 50 fez, e o que ficou de fora" tem o resumo item a item, com as ressalvas.
+fingerprint e o teto de 1000 nas listas do painel — **tudo isso já está mergeado** (PR #136). Depois dele veio a incorporação do **PR #135 do Ian** (linha exigida por entidade), revisada e corrigida em quatro pontos, como `0119`. **Leia o `ESTADO.md` primeiro** — as seções "O PR #135 do Ian, incorporado com quatro correções" e "O que a sessão 50 fez" têm o resumo item a item, com as ressalvas.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

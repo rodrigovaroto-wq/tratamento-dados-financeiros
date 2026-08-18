@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0118_dedup_por_fingerprint.sql` |
+| **Última migration** | `db/migrations/0119_linha_exigida_por_entidade.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (63 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (64 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -145,7 +145,7 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 
 | | Passo | De quem |
 |---|---|---|
-| 1 | Aplicar `0116`, `0117` e `0118` no Supabase (a lista de comandos está no `db/README.md`) | dono |
+| 1 | Aplicar `0116`, `0117`, `0118` e `0119` no Supabase (a lista de comandos está no `db/README.md`) | dono |
 | 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
 | 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
 | 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
@@ -154,6 +154,31 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O PR #135 do Ian, incorporado com quatro correções (0119)
+
+**O que ele resolve, e o número que prova:** a `0113` perguntava "algum documento do tipo tem a
+linha?". Num grupo com oito balanços, sete sem a linha de caixa, o oitavo respondia sim e as sete
+ausências sumiam — **zero pendência**. A `0119` pergunta "cada entidade que trouxe linhas desse tipo
+tem a linha NELA?": sete pendências, cada uma nomeando a empresa, e a oitava limpa.
+
+**A suspeita que eu tinha, e que a medição derrubou:** granularidade fina costuma virar máquina de
+pendência falsa. Medi num banco limpo, com o fixture Vertentes (5 entidades, 14 documentos, extração
+fiel): **1 pendência antes, 1 depois — idêntico**. Os dois fallbacks dele funcionam. (Na primeira
+medição vi 7, mas era lixo de outro teste no mesmo caso; num banco limpo o número não se move.)
+
+**As quatro correções feitas na incorporação:**
+
+| | O quê | Por quê |
+|---|---|---|
+| 1 | **Renumerada `0116` → `0119`** | A faixa 0116-0118 foi ocupada pelo PR #136, mergeado antes. O portão de prefixo duplicado do `run.sh` reprovava — e com razão. |
+| 2 | **A verificação embutida deixou de ser alçapão** | Ela abortava a migration se encontrasse qualquer `escopo_entidade` não nulo. No dia em que o dono ligasse o override do COMBINADO — que é o que o cabeçalho manda ele fazer — e reaplicasse a lista do `db/README.md`, a migration **morreria no meio por causa de uma decisão legítima dele**. Medido: a versão original aborta. Agora prova o que interessa (a coluna não tem DEFAULT) e o override vira NOTICE. |
+| 3 | **A varredura saiu da migration** para `db/varredura_linha_exigida.sql` | Era a única parte que tocava caso já gravado, e o efeito visível é uma leva de pendências novas na fila do painel sem ninguém ter enviado nada. Separada, o dono aplica a estrutura hoje e escolhe a hora da varredura — ou roda num mandato só. O script diz quantas pendências entraram. |
+| 4 | **`fn_exigencias_do_caso` ficou 5,9× mais rápida** | O `explain analyze` mostrou 662 ms dos 914 ms num único filtro: `fn_linhas_do_tipo` rodando uma vez por DOCUMENTO em vez de por tipo. Separar em duas CTEs não mudou nada — o Postgres achata CTE simples e empurrava o filtro de volta. Com `as materialized`: **693 ms → 116 ms** num caso de 400 documentos. |
+
+As duas propriedades novas estão travadas em teste (`db/test/linha_exigida_entidade.test.sql`,
+blocos 8 e 9), e a do `materialized` é teste de TEXTO de propósito: medir por relógio daria um teste
+que falha em máquina lenta e passa com o defeito de volta em máquina rápida.
 
 ### O que a sessão 50 (18/08) fez, e o que ficou de fora
 
