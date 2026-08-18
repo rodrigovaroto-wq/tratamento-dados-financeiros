@@ -79,9 +79,36 @@ O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em toda
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
 
-## O próximo passo: o teste de ponta a ponta
+## O próximo passo (para quem retomar em 18/08)
 
-Os 38 documentos do `book-canastra` estão prontos para subir, e tudo o que barrava foi removido:
+**A ordem importa, e o passo 1 não é código.** As `0111`–`0114` ainda não foram aplicadas no
+Supabase e o workflow do n8n não foi reimportado desde as correções de 17/08 — enquanto isso não
+acontece, o que o dono vê na tela é o comportamento de ANTEONTEM, e qualquer diagnóstico novo mede o
+sistema errado.
+
+| | Passo | De quem |
+|---|---|---|
+| 1 | Aplicar `0111`, `0112`, `0113` e `0114` no Supabase (ver "O que só o dono pode fazer") | dono |
+| 2 | Reimportar `n8n/workflow.e1-ingestao.json` (30 nós) | dono |
+| 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
+| 4 | Com a rodada na mão: recalibrar o limiar de 0,85 com 35 pontos reais em vez de 38 sintéticos | próxima sessão |
+
+**O que a próxima sessão pode fazer SEM esperar a rodada** (em ordem de impacto):
+
+1. **Os subtotais impressos** (ver "O que está aberto") — é o que fecha o balanço e o único item
+   reprovado do auditor. Exige mudar o prompt e gastar uma extração para verificar.
+2. **A checagem de mútuos**, que não existe — o erro plantado de R$ 240 mil nunca foi acusado. Vai
+   no painel, não na planilha (decisão do dono).
+3. **A tela de Modelagem**, que ficou de fora da passada de UX de 17/08.
+
+> **Como auditar uma rodada sem gastar crédito, se ela vier:** o export `.xlsx` de dados pode ser
+> reproduzido contra as funções de produção num Postgres local (foi assim que a v46 foi auditada em
+> 17/08 — 9 documentos, 714 linhas, `lote_integro: true`). O caminho está descrito na sessão 48 do
+> `HANDOFF.md`.
+
+### O book inteiro, quando houver crédito
+
+Os 38 documentos do `book-canastra` estão prontos para subir:
 
 | | Estado |
 |---|---|
@@ -241,13 +268,17 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 ## O que só o dono pode fazer
 
 1. **Aplicar as migrations novas no Supabase.** Merge não é apply: a lista de comandos está em
-   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. As duas mais novas são
-   a `0111` (certidão sem valor deixa de virar `extracao_falhou`) e a `0112` (`fn_conferir_lote`).
-   Confira com:
+   `db/README.md`, e da tela "aplicada" e "não aplicada" têm a mesma aparência. **Quatro estão
+   pendentes**: `0111` (certidão sem valor deixa de virar `extracao_falhou`), `0112`
+   (`fn_conferir_lote`), `0113` (linha exigida por tipo — o PR do estagiário) e `0114` (fechar
+   mandato sem excluir). Sem a `0114` a coluna `fechado_em` não existe: a tela não quebra, mas o
+   botão de fechar falha. Confira com:
    ```sql
    select proname from pg_proc
     where proname in ('fn_decidir_pendencia','fn_registrar_falha_execucao','fn_excluir_caso',
-                      'fn_conferir_lote');
+                      'fn_conferir_lote','fn_fechar_caso','fn_reabrir_caso');
+   -- e a exigência de linha por tipo (0113):
+   select count(*) from taxonomia_linha_exigida;
    ```
 2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 17/08 (o `Juntar Ramos`, que é o
    conserto dos 19 documentos que nunca foram extraídos, e o `Conferir Lote`). **Conferência de 5
@@ -266,6 +297,27 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
    faltava quando o arquivo de 06/08 saiu com seis números errados e as suítes verdes.
 
 ## O que está aberto no produto
+
+> **Os dois primeiros são de 17/08 e não existiam na lista antes — saíram de auditar a rodada v46
+> contra o gabarito, e são os que mais separam o sistema de "confiável sem ressalva".**
+
+- **Os subtotais IMPRESSOS não são extraídos.** "ATIVO CIRCULANTE", "TOTAL DO ATIVO", "RECEITA
+  OPERACIONAL BRUTA" viram metadado (`secao`) em vez de linha. Como os subtotais de subgrupo
+  ("Disponível") SÃO extraídos, a soma bruta de cada seção do balanço dá **exatamente 2× a verdade**
+  — o export sabe descontar subtotal de subseção, mas o total de topo não está no dado. É mudança de
+  prompt + nova extração, e não dá para verificar sem gastar crédito.
+- **A divergência de mútuos não é acusada — a checagem NÃO EXISTE.** O erro plantado de R$ 240 mil
+  está no dado dos dois lados (planilha 11.160 × balanço 11.400), e as cinco reconciliações
+  implementadas (`ativo_passivo_pl`, `caixa_bp_fluxo`, `duplicidade_de_rotulo`,
+  `receita_dre_vs_faturamento`, `despfin_dre_vs_divida`) não comparam mútuos com o saldo do balanço.
+  O `ESTADO.md` cobrava esse erro como "o que trazer de volta da rodada", o que sugeria que alguém
+  esperava que fosse pego. **Decisão do dono (17/08): quando for escrita, a divergência aparece no
+  PAINEL, não na planilha.**
+- **A tela de Modelagem (713 linhas) recebeu só a paleta nova** — o fluxo, os textos e a densidade
+  dela não foram revisados. É a maior tela do portal e a única que ficou de fora da passada de 17/08.
+- **`negativas`, `societario`, `parcelamentos`** estão numa lista à mão em `parseEntidade` porque o
+  apelido da taxonomia não os carrega. O lugar certo é o seed `db/migrations/0002` — e isso é
+  migration.
 
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:

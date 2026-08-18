@@ -4,9 +4,9 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-17 (sessão 47). **Estado do `main`:** mergeado até o **PR #128**
-(`main` em `f887552`). Branch de trabalho: **`claude/canvas-node-organization-o1ixcm`** (PR #129
-aberto).
+**Última atualização:** 2026-08-17 (sessão 48). **Estado do `main`:** mergeado até o **PR #131**
+(`main` em `31ce376`), incluindo o #130 (o PR #118 do estagiário, integrado). **Não há branch de
+trabalho aberta** — a próxima sessão começa do `main`.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
@@ -276,6 +276,136 @@ instrumento e não o modelo.
 `db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
 sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
 ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+## Sessão 48 (2026-08-17) — a v46 auditada contra o gabarito, dois erros de unidade, e o portal com a cara da Oria
+
+**O QUE O DONO RODOU:** o subconjunto de 9 documentos do `book-canastra` (o orçamento de crédito da
+OpenAI era US$ 0,75, e o book inteiro custa US$ 1,27 — a seleção foi calculada para caber e ainda
+exercitar todas as correções). Resultado: **714 linhas, ~US$ 0,46**, e o export foi auditado LINHA A
+LINHA contra o `GABARITO.json` que o gerador declara.
+
+### O defeito da v45 está morto, e agora com prova
+
+| | |
+|---|---|
+| Extração chamada | **9 de 9** — nenhum documento mudo (eram 19 de 35 na v45) |
+| DFC | caixa inicial 3.621 e final 825 — **exatos** |
+| DVA | valor adicionado a distribuir 49.110 — **exato** |
+| Livro razão | **99 de 99 linhas** — o documento que motivou as três camadas |
+| Balancete | **78 de 78 linhas** |
+| Certidão negativa | zero linhas e **nenhuma pendência falsa** — a `0111` funcionou |
+| Balanço / DRE / DVA | 105 de 114 · 34 de 39 · 13 de 16 |
+
+O dado da rodada foi **reproduzido num Postgres local** contra as funções de produção
+(`fn_registrar_campos_extraidos`, `fn_reconciliar_por_documento`, `fn_conferir_lote`), e o
+`lote_integro` voltou **true**. É a primeira vez que a integridade do lote foi verificada de fora.
+
+### O mistério do "balanço não fecha por 40.169" tem nome
+
+A guarda `duplicidade_de_rotulo` acusa **7 pares de rótulos que são a mesma conta escrita duas
+vezes**, somando 136.441 — e o primeiro deles é `Capital Social` = `Capital social subscrito e
+integralizado`, **40.169,00**. Era o subtotal do grupo somado junto com a conta-filha. O número que
+estava no `ESTADO.md` desde a sessão 45 como "o buraco da extração" era, na verdade, contagem dupla,
+e o sistema já sabia dizer isso sozinho.
+
+### Dois erros de unidade, na mesma semana, em pontas opostas
+
+**1. A guarda de cobertura acusava o livro razão PERFEITO.** Ela comparava CONTAS DISTINTAS gravadas
+com LINHAS DE CONTA do texto, e as duas só coincidem quando cada linha tem rótulo próprio — num
+razão o mesmo fornecedor aparece em vários lançamentos (99 linhas, 66 históricos = 66%, abaixo do
+limiar). Foi o segundo erro de unidade da MESMA guarda, na direção contrária ao primeiro (pares ×
+linhas dava 198%). Agora `achatarGrupos` marca cada campo com a linha que o originou, `juntarBlocos`
+conta linhas distintas depois de limpar a emenda, e a marca **não chega ao banco**.
+
+**2. O comparativo não comparava.** No Excel entregue, a mesma conta ocupava **três linhas** — 2023
+numa, 2024 na seguinte, 2025 na terceira, cada uma com as outras colunas vazias. Duas causas, uma em
+cada ponta: no n8n, `ordem` numerava PARES (conta × coluna) desde que a saída virou agrupada,
+contrariando a `0027` ("posição na leitura do documento"); no portal, o rank que impede dois "Outros"
+de um balancete de colapsarem era calculado por VERSÃO em vez de por COLUNA. **A correção do portal
+vale para o dado que já está no banco** — reexportar a v46 sai alinhado, sem nova extração (provado
+reprocessando os 281 campos reais do balanço pelo código novo).
+
+### A régua da cobertura, calibrada contra a verdade
+
+`n8n/medir-regua-cobertura.mjs` (novo) confronta a régua com a contagem que o **gerador do book
+declara** — não outra leitura do PDF. Conferir heurística contra heurística não prova nada. A v1
+acertava as demonstrações (+2% a +4%) e DESABAVA nos analíticos, que são os que perdem dado: livro
+razão 99 linhas → ela via 3; balancete 78 → 3; aging 14 → 2. A v2 troca "termina em valor" por "tem
+valor E tem identidade" (rótulo, código de conta, ou linha de tabela numérica): erro absoluto médio
+**29% → 9%**, avaliados pela guarda de 10 para 14 documentos. O limiar **fica em 0,85**, agora com 38
+pontos de medição em vez de um.
+
+### A entidade parou de sair suja: eram QUATRO famílias, não uma
+
+`Canastra Industria 2025x2024x2023` gerou 15 das 22 pendências de revisão da rodada real, porque o
+nome divergia do conteúdo. Medindo `parseEntidade` contra os 38 nomes do book: comparativo triplo
+(`2025x2024x2023` não casava no regex de um `x` só), preposições (`Aging De Canastra`), sobra de tipo
+quando o apelido da taxonomia é mais curto que o nome do arquivo, e nome sem TIPO virando empresa por
+eliminação (`Relatorio Auditor Independente`, `Iv Rev3`). Resultado: **32 limpas, 6 nulas, zero
+sujas** — e as 6 nulas vão ao fallback por conteúdo, que lê a entidade do documento. A remoção de
+palavra de tipo usa a PRÓPRIA taxonomia como fonte (cresce sozinha), com `grupo` como exceção
+protegida: ele está no vocabulário de tipo E no cabeçalho dos combinados.
+
+### O portal ganhou navegação, marca e fim de vida do mandato
+
+- **Marca** (`portal/public/logo-oria*.svg`): os arquivos que o dono subiu com UMA operação — o creme
+  do fundo virou transparência. A arte não foi redesenhada nem traçada; o SVG **embute o original**,
+  porque vetorizar exigiria aproximar as curvas, e a instrução foi não mexer na arte. Sextante no
+  cabeçalho e no favicon; a lockup completa no login. **Não existe versão clara para fundo escuro** —
+  seria recolorir, e ficou como decisão do dono.
+- **Barra lateral retrátil**, duas seções assimétricas de propósito: *Novo mandato* é AÇÃO (fixa, sem
+  filhos) e *Mandatos* é LUGAR (abre e lista os ativos). Estado no navegador via
+  `useSyncExternalStore` — copiar `localStorage` num `useEffect` renderiza o valor errado primeiro e
+  a barra se fecharia sozinha na frente de quem a fechou ontem (o ESLint do projeto também reprova).
+- **Fechar ≠ excluir (`0114`)**: `caso.status` diz onde o mandato está no TRABALHO e não respondia
+  "ainda estamos nisso?". `fechado_em` responde preservando tudo; idempotente e reversível.
+- **Resumo no topo do mandato** (documentos · linhas extraídas · Kit Básico · pendências) e a coluna
+  **Linhas** na tabela — ela dizia que o arquivo chegou e foi entendido, nunca que ele TROUXE dado.
+- **Vocabulário**: "Portão 2" → "Pronto para aprovação"; "Reconciliação Classe A/B" → "Números que
+  não fecham"; `COMBINADO` → "Demonstrações Combinadas"; 23 tipos ganharam rótulo (a tela mostrava
+  "Certidoes", "Razao", "Contingencias").
+
+**Três defeitos só apareceram olhando a PÁGINA RENDERIZADA** com o dado real carregado num banco
+local: a coluna de ação cortada ("ve linha"), o produto sem acento ("Reestruturacao") e o período
+quebrado em três linhas. Nenhum é visível lendo o JSX — e o `next build` pegou um quarto que `tsc` e
+`eslint` não pegam (no Tailwind v4, `@apply` não enxerga classe de componente da mesma camada).
+
+### O PR #118 do estagiário foi integrado, e o número de migration virou regra
+
+O PR #118 (@ianmaxi05, linha exigida por tipo) estava travado por conflito havia 4 dias. O conflito
+era de **numeração**: a branch criou a `0111` no dia 13, e a `main` ocupou `0111` e `0112` no
+caminho. Resolvido em `claude/linha-exigida-0113-integrada` (PR #130), com os commits dele
+preservados: a migration virou **`0113`**, e a minha (fechar mandato) cedeu o lugar e virou **`0114`**
+— **o critério é ordem de CHEGADA, não de merge**. Quem esperou não deve ser empurrado para trás.
+
+O `db/schema.sql` NÃO foi resolvido à mão nas duas vezes que conflitou: ele é gerado, então saiu do
+`db/test/run.sh`. E o contador de migrations do `ESTADO.md` não foi somado de cabeça — o próprio
+`run.sh` diz quantas aplica ("as 59 migrations estão na lista de aplicação").
+
+**As três guardas de extração são famílias DIFERENTES**, e vale ler juntas: `0111` (o documento não
+tem valor monetário por natureza), `0112` (a extração nunca foi chamada) e `0113` (a extração rodou,
+mas a linha exigida não veio). A `0113` é a única que olha o conteúdo do que chegou.
+
+### O que fica ABERTO, nomeado
+
+- **Os subtotais IMPRESSOS não são extraídos.** "ATIVO CIRCULANTE", "TOTAL DO ATIVO", "RECEITA
+  OPERACIONAL BRUTA" viram metadado (`secao`) em vez de linha. Somado ao fato de os subtotais de
+  subgrupo ("Disponível") SEREM extraídos, a soma bruta de cada seção do balanço dá **exatamente 2×
+  a verdade**. É mudança de prompt + nova extração; não dá para verificar sem gastar.
+- **A divergência de mútuos não é acusada, e não podia ser: a checagem não existe.** O erro plantado
+  de R$ 240 mil está no dado dos dois lados (planilha 11.160, balanço 11.400), mas as cinco
+  reconciliações implementadas (`ativo_passivo_pl`, `caixa_bp_fluxo`, `duplicidade_de_rotulo`,
+  `receita_dre_vs_faturamento`, `despfin_dre_vs_divida`) não comparam mútuos com o saldo do balanço.
+  **Decisão do dono (17/08): quando for escrita, a divergência aparece no PAINEL, não na planilha.**
+- **A tela de Modelagem (713 linhas) recebeu só a paleta nova** — o fluxo dela não foi revisado.
+- **`negativas`, `societario`, `parcelamentos`** estão numa lista à mão em `parseEntidade` porque o
+  apelido da taxonomia não os carrega; o lugar certo é o seed `db/migrations/0002`, e isso é
+  migration.
+- Seguem abertos de antes: o teto de gasto que decide ANTES da medição (estima por bytes, ~+50%),
+  dedup por hash, e o golden set.
+
+**Suítes:** n8n **275** (era 244) · export **535** (era 529) · e2e 46 · banco **59 migrations do
+zero** · tsc/eslint/build do portal. PRs #130 e #131 mergeados; `main` em `31ce376`.
 
 ## Sessão 47 (2026-08-17) — o "Teste V45": 19 dos 35 documentos nunca tiveram a extração chamada
 
