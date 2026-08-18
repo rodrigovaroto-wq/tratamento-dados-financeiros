@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import { PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS, type TaxonomiaTipoDocumento } from "@/lib/types";
 import { formatarTipoTaxonomia } from "@/lib/export";
 import { revisarDocumento } from "./actions";
@@ -37,24 +38,32 @@ export default async function FilaRevisaoPage({
   const supabase = await createClient();
 
   const [pendenciasRes, taxonomiaRes] = await Promise.all([
-    supabase
-      .from("pendencia")
-      .select(
-        `id, tipo, descricao, criada_em,
-         documento:documento_id(
-           id, tipo_taxonomia, confianca, fonte, justificativa,
-           entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-           documento_versao(nome_original)
-         )`,
-      )
-      .eq("caso_id", id)
-      .in("tipo", PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS)
-      .eq("estado", "aberta")
-      .order("criada_em", { ascending: true }),
+    // Paginada: esta É a fila de trabalho do mandato, e desde a 0119 a cobrança
+    // de linha exigida é por ENTIDADE — num grupo econômico o número de
+    // pendências multiplica pelo de empresas. O teto do PostgREST corta em
+    // silêncio, e uma fila truncada parece uma fila terminada.
+    paginar<PendenciaComDocumento>((de, ate) =>
+      supabase
+        .from("pendencia")
+        .select(
+          `id, tipo, descricao, criada_em,
+           documento:documento_id(
+             id, tipo_taxonomia, confianca, fonte, justificativa,
+             entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
+             documento_versao(nome_original)
+           )`,
+        )
+        .eq("caso_id", id)
+        .in("tipo", PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS)
+        .eq("estado", "aberta")
+        .order("criada_em", { ascending: true })
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
     supabase.from("taxonomia_tipo_documento").select("codigo, categoria, documento, obrigatoriedade").order("codigo"),
   ]);
 
-  const pendencias = (pendenciasRes.data as unknown as PendenciaComDocumento[] | null) ?? [];
+  const pendencias = pendenciasRes.data;
   const taxonomia = (taxonomiaRes.data as TaxonomiaTipoDocumento[] | null) ?? [];
 
   const revisarAction = revisarDocumento.bind(null, id);

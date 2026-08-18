@@ -155,6 +155,33 @@ passos voltam a estar pendentes, agora para o que esta rodada produziu.
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
 
+### O teto de 1000 linhas: agora em TODAS as telas, e o pior deles era o export
+
+O PR #136 tirou do teto do PostgREST as três listas do PAINEL. Faltavam as de DENTRO do mandato — e
+entre elas estava a mais cara de todas: **o export baixava `campo_extraido` sem paginação**. Um
+mandato com mais de mil linhas extraídas gerava um `.xlsx` faltando linhas, que abre normalmente e
+parece completo. O book de teste sozinho tem ~3.000 linhas com número.
+
+Passaram a paginar (`portal/src/lib/supabase/paginar.ts`, de mil em mil):
+
+| Onde | O que era truncado |
+|---|---|
+| **`/casos/[id]/export`** | as **linhas extraídas** (o produto), os documentos e as causas de falha |
+| `/casos/[id]` | documentos, fila de pendências do mandato, contagem de linhas por documento |
+| `/casos/[id]/documentos/[docId]` | as linhas do documento (um razão real passa de mil sozinho) |
+| `/casos/[id]/revisao` | a fila de revisão — que desde a `0119` multiplica pelo número de empresas |
+| `/casos/todos` | mandatos, documentos e pendências |
+| `/casos` (painel) | `lote_execucao`, que alimenta os indicadores de custo |
+| `/api/intake/status` | os **contadores de progresso** da ingestão: a barra parava em mil e o lote parecia travado |
+| `/casos/[id]/modelagem` | a lista que sugere entidade e último exercício |
+
+**Toda consulta paginada ganhou desempate por `id` na ordenação** — sem ordem total e estável, duas
+páginas podem repetir e omitir a mesma linha, que é um jeito pior de errar do que truncar.
+
+Ficaram DE PROPÓSITO sem paginação, e não são defeito: a barra lateral (`limit(30)` deliberado), a
+trilha de autonomia (`limit(15)`) e as consultas de linha única (`.single()`) ou de catálogo
+(taxonomia, índices macro), que não crescem com a mesa.
+
 ### A 0121 — o achado que o dado real do dono entregou (18/08)
 
 **Não veio de teste: veio da base.** Rodando o diagnóstico de entidades antes da rodada de
@@ -458,6 +485,13 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 > fez". Dois deles com uma ressalva registrada lá: o dos subtotais só a rodada real prova, e a
 > checagem de mútuos cobre mútuo contra mútuo, não a planilha intragrupo inteira.
 
+- **AS PERGUNTAS AO CLIENTE NÃO TÊM TELA.** A `0120` construiu o motor —
+  `fn_sugerir_perguntas` devolve a pergunta pronta, com motivo/risco/impacto, marcadores resolvidos
+  e o nome da empresa — e **nenhuma tela do portal a chama**. Hoje a única forma de ver a sugestão é
+  rodar a função no SQL Editor. O lugar natural dela é o botão "Contatar o Cliente" da fila de
+  pendências (`0109`), que hoje só rotula: ele deveria abrir a pergunta pronta para copiar, e
+  registrar o envio por `fn_registrar_pergunta_acao` (que exige o texto renderizado, congelado).
+  Enquanto isso não existe, a `0120` é invisível para quem usa o produto.
 - **A conferência das linhas intragrupo que NÃO são mútuo** (conta corrente rotativa, aluguel entre
   coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
   cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É

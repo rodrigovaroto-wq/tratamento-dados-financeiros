@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { paginar } from "@/lib/supabase/paginar";
 import type { CampoExtraido, Documento } from "@/lib/types";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 import { aceitarExtracao } from "./actions";
@@ -53,17 +54,24 @@ export default async function PlanilhaDocumentoPage({
   const versao = doc.documento_versao?.[0];
 
   const camposRes = versao
-    ? await supabase
-        .from("campo_extraido")
-        .select(
-          "id, documento_versao_id, secao, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
-        )
-        .eq("documento_versao_id", versao.id)
-        .order("origem_pagina", { ascending: true, nullsFirst: false })
-        .order("criado_em", { ascending: true })
-    : { data: [], error: null };
+    ? await paginar<CampoExtraido>((de, ate) =>
+        supabase
+          .from("campo_extraido")
+          .select(
+            "id, documento_versao_id, secao, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, status_aceite, aceito_por, aceito_em",
+          )
+          .eq("documento_versao_id", versao.id)
+          // Paginado: um documento denso passa de mil linhas (o livro razão do
+          // book tem 461 células numa coluna só, e um razão real vai muito além),
+          // e o teto do PostgREST corta em silêncio — a tela mostraria parte da
+          // extração como se fosse toda ela.
+          .order("origem_pagina", { ascending: true, nullsFirst: false })
+          .order("criado_em", { ascending: true })
+          .order("id", { ascending: true })
+          .range(de, ate))
+    : { data: [] as CampoExtraido[], error: null, truncado: false };
 
-  const campos = (camposRes.data as CampoExtraido[] | null) ?? [];
+  const campos = camposRes.data;
   const grupos = agruparPorSecao(campos);
   const nAceitos = campos.filter((c) => c.status_aceite === "aceito").length;
   const tudoAceito = campos.length > 0 && nAceitos === campos.length;
