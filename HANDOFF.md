@@ -4,9 +4,14 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-17 (sessão 48). **Estado do `main`:** mergeado até o **PR #131**
-(`main` em `31ce376`), incluindo o #130 (o PR #118 do estagiário, integrado). **Não há branch de
-trabalho aberta** — a próxima sessão começa do `main`.
+**Última atualização:** 2026-08-18 (sessão 49). **Estado do `main`:** mergeado até o **PR #133**
+(`main` em `a2f2523`) — barra lateral rolável, `/casos` vira Painel com 8 indicadores, lista completa
+em `/casos/todos`, abertura animada, e a migration `0115` (custo do lote em `lote_execucao`).
+**Há uma branch de trabalho com PR aberto:** `claude/sidebar-scroll-home-redesign-k67agj`, **PR #134**
+— corrige "linhas extraídas" do Painel mostrando exatamente 1.000 (o teto padrão do
+Supabase/PostgREST, não o dado real). **Leia o `ESTADO.md` primeiro** — a seção "Estado dos PRs desta
+rodada" explica por que há dois PRs para o mesmo trabalho e o que fazer se o #134 ainda estiver
+aberto.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

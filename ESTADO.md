@@ -75,6 +75,35 @@ lidas para retomar.
 > documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
 > mede espera pelo cliente, não processamento.
 
+## Estado dos PRs desta rodada (18/08, fim de sessão — leia isto antes de continuar)
+
+| PR | O quê | Estado |
+|---|---|---|
+| **#133** | Barra lateral rolável, `/casos` vira Painel (8 indicadores), lista completa em `/casos/todos`, abertura animada, migration `0115` (custo do lote em `lote_execucao`) | **mergeado no `main`** |
+| **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **aberto, aguardando revisão/merge** — https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/134 |
+
+**Por que existem dois PRs para o mesmo trabalho.** O dono mergeou o #133 antes de eu terminar de
+lapidar o Painel; o commit da correção do teto (`ac04fca`) tinha sido empurrado depois, na mesma
+branch, e ficou de fora do merge. A branch `claude/sidebar-scroll-home-redesign-k67agj` foi
+**reiniciada a partir do `main` pós-merge** (`git rebase origin/main`) para carregar só esse commit
+excedente, e o #134 foi aberto contra o `main` com ele. **Se o #134 ainda estiver aberto na próxima
+sessão, é só revisar/mergear — não precisa reabrir nem re-diagnosticar**: o problema, a causa e a
+correção estão na descrição do PR e no commit.
+
+**O que a próxima sessão encontra, dependendo do que o dono já fez:**
+
+- Se **só o #133** estiver no `main`: o Painel mostra "linhas extraídas" truncado em 1.000 quando o
+  total real passar disso (o achado do dono nesta sessão, pela redondeza exata do número). O #134
+  resolve — é só mergeá-lo.
+- Depois que os dois estiverem no `main`, ainda faltam os **dois passos fora do git** já citados
+  acima: aplicar a `0115` no Supabase e reimportar o workflow, para os três indicadores de custo e
+  cobertura saírem do traço.
+- **Risco conhecido e JÁ COMENTADO no código** (`portal/src/app/casos/page.tsx`, perto do fetch de
+  `documento`/`pendencia`): essas duas listas continuam sujeitas ao mesmo teto de 1000 linhas do
+  Supabase. Hoje (475 documentos, 541 pendências) estão longe disso; quando a mesa se aproximar de
+  1000, elas vão precisar do mesmo tratamento que "linhas extraídas" já recebeu — um `count` exato
+  desacoplado da lista, ou paginação. Não é urgente, mas não se resolve sozinho.
+
 ## A rodada v46 (17/08) — o que ela provou e os dois defeitos que ela achou
 
 **9 documentos, 714 linhas, US$ ~0,46.** O defeito que comeu 19 dos 35 documentos na v45 está
