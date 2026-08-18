@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0122_pergunta_em_portugues.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 535 · e2e 46 · banco (67 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 546 · e2e 46 · banco (67 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -82,7 +82,8 @@ lidas para retomar.
 | **#133** | Barra lateral rolável, `/casos` vira Painel (8 indicadores), lista completa em `/casos/todos`, abertura animada, migration `0115` (custo do lote em `lote_execucao`) | **mergeado no `main`** |
 | **#134** | Correção: "1.000 linhas extraídas" no Painel era o teto padrão do Supabase/PostgREST (`db-max-rows`), não o dado real | **mergeado no `main`** |
 | **sessão 50** | Os sete itens de "o que está aberto", atacados em ordem a pedido do dono: subtotais impressos, mútuos, Modelagem, apelidos, teto de gasto, dedup e o teto de 1000 nas listas | **mergeado no `main`** (PRs #137, #139, #140, #141) |
-| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`), o fim do teto de 1000 no portal e a `0122` (o texto que vai ao cliente em português) | **PR #142**, branch `claude/client-question-suggestions-ves2ty` |
+| **sessão 51** | A aba "Perguntas ao cliente" (`/casos/[id]/perguntas`), o fim do teto de 1000 no portal e a `0122` (o texto que vai ao cliente em português) | **mergeado no `main`** (PR #142) |
+| **sessão 51 (cont.)** | Os cinco defeitos de número do EXPORT do Excel, achados rodando o arquivo do caso de referência | **branch `claude/client-question-suggestions-ves2ty`** |
 
 **Nada da sessão 50 ficou pendente de merge** — o `main` já tem os sete itens, e a branch da sessão
 51 sai dele. As migrations `0116` a `0121` **já estão aplicadas** (o dono confirmou em 18/08); o que
@@ -159,6 +160,73 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O EXPORT DO EXCEL: cinco defeitos de número, achados rodando o arquivo (18/08, sessão 51)
+
+**De onde isto saiu:** gerar o export completo do caso de referência
+(`db/test/fixture_modelagem_v35.sql` — o caso REAL capturado da produção) e rodar o
+`auditar-xlsx.mts` nele. **Três dos dez itens reprovavam:**
+
+| Item | Medida |
+|---|---|
+| o balanço fecha? | **NÃO** — Ativo − (Passivo+PL) = **−20.529** nas seis colunas |
+| a DRE reproduz o documento? | **NÃO** — receita −440, lucro bruto −800, EBIT **+9.409**, resultado líquido **+20.780** |
+| o ativo é o do documento? | **NÃO** — **+10.277** |
+
+Modelo que não fecha não projeta: fluxo, revolver e alavancagem viram aritmética sobre um
+balanço impossível. Os cinco defeitos, cada um com o número que ele movia:
+
+1. **A série histórica de cada conta vinha indexada só pelo RÓTULO.** `fn_valores_por_ano`
+   agrupa por (rotulo_norm, secao_canonica, ano) e devolve a seção porque demonstração real
+   repete rótulo entre seções; a rota indexava só pelo rótulo e a última seção lida
+   sobrescrevia as outras. É o irmão do defeito que a `modelagem-linha.ts` já tinha
+   corrigido para os VÍNCULOS — ficou de fora justamente onde decide os NÚMEROS. Medido no
+   v35: **treze rótulos** em duas seções com valores diferentes (`Empréstimos e
+   Financiamentos` 37.379 × 44.474, `Obrigações Tributárias` 13.549 × 7.895, `Provisão para
+   contingências` −1.900 na despesa × 2.567 no passivo…). A dívida existente do modelo saía
+   **3.176 errada (12%)**. O casamento virou `seriesPorLinha`/`serieDaLinha` na lib, e a
+   rota e o gerador local passaram a chamar a MESMA função.
+2. **Ocorrência repetida do mesmo rótulo era lida como componente de subtotal.** O detector
+   por ordem lê a sequência impressa; a extração repete rótulo dentro do mesmo documento
+   (é o que um comparativo produz sem `periodo_coluna`). Errava dos dois lados: declarava
+   subtotal uma DESPESA REAL (a provisão de −1.900 e o IR de −420 **sumiam** do modelo —
+   SG&A 1.900 menor, EBIT 1.900 maior) e deixava de reconhecer subtotal de verdade, porque
+   os componentes dele também vinham duplicados.
+3. **Cabeçalho de grupo impresso entrava como conta** quando a `ordem` não é a do documento.
+   `Contas a Receber`, `Disponível`, `Estoques` não estão na lista fechada da
+   `fn_papel_linha`. A remoção nova exige PROVA: rótulo exatamente igual a um nome de grupo,
+   o documento informando o total daquele grupo, a soma EXCEDENDO esse total, e a remoção
+   aproximando sem ultrapassar — documento simples nunca perde a conta, e valor idêntico ao
+   de outra linha do bloco não é removido (é a mesma conta transposta, e a doutrina é não
+   apagar conta).
+4. **O balanço não reconciliava com o TOTAL GERAL do documento.** Cada grupo já seguia o
+   total informado, mas os totais de grupo do próprio documento não somam o total geral
+   dele (67.878 + 101.200 = 169.078 contra `TOTAL DO ATIVO` **158.801**). Agora há uma linha
+   de reconciliação por lado, e ela **só entra quando o documento informa os DOIS totais
+   gerais e eles concordam** — evidência dupla; senão nada é ajustado e o CHECK continua
+   acusando. A DRE ganhou o mesmo nos quatro níveis que o documento informa. Junto veio o
+   desempate de âncora: `PASSIVO E PATRIMÔNIO LÍQUIDO` (121.198) × `TOTAL DO PASSIVO E DO
+   PATRIMÔNIO LÍQUIDO` (158.801) passa a ser decidido pelo rótulo que **diz "total"**, e não
+   pela ordem em que o banco devolveu.
+5. **O export de DADOS não pedia recálculo ao abrir.** Todo total das abas classificadas é
+   `=SUM(...)` sem valor em cache: sem `fullCalcOnLoad` o Excel abre a célula VAZIA até
+   alguém apertar F9. A flag era ligada dentro do modelo institucional — então o arquivo do
+   botão **Exportar dados**, o que serve para CONFERIR a extração, saía sem ela.
+
+**O auditor ganhou dentes e perdeu alarme falso.** Item novo — *o resíduo de reconciliação é
+imaterial (≤5% da base)?* — porque sem ele "o balanço fecha" e "a DRE reproduz o documento"
+passariam por CONSTRUÇÃO; o tamanho do resíduo é a medida direta da qualidade da extração
+(no v35 ele acusa **18% do ativo**, que é a verdade daquele caso: conta duplicada com dois
+rótulos, que nenhum código desambigua). E arquivo SEM modelo (export de dados, ou mandato
+sem modelagem) deixou de receber cinco reprovações de itens que não se aplicam.
+
+**Resultado no caso de referência: 10 de 10 itens do modelo OK** (era 7/10), com o resíduo
+declarado e medido. Balanço fechando nas seis colunas, ativo total igual ao documento em
+todos os exercícios, DRE realizada reproduzindo o documento nas 24 células conferidas.
+
+**Desempenho, medido antes de mexer:** o build do export é LINEAR no número de campos
+(1.000 → 299 ms; 16.000 → 3.543 ms; 30.000 → 6.257 ms — ~0,21 ms por campo). Não há O(n²)
+nesse caminho e nada foi "otimizado" às cegas.
 
 ### O teto de 1000 deixou de existir para o portal (18/08, sessão 51)
 

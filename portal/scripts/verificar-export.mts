@@ -4824,6 +4824,107 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       `espelho ${JSON.stringify(vEsp)} · origem ${JSON.stringify(vOrig)}`);
   }
 
+  // ---- (0109g) CABEÇALHO DE GRUPO IMPRESSO SAI DA SOMA, COM PROVA --------
+  //
+  // `Estoques`, `Contas a Receber`, `Disponível` e afins não estão na lista
+  // fechada da `fn_papel_linha`, então chegam ao modelo como CONTA — e o
+  // documento os imprime como cabeçalho, com os componentes logo abaixo. Somados
+  // junto, o grupo entra duas vezes. O detector estrutural do export resolve isso
+  // quando a `ordem` das linhas é a ordem impressa; quando não é, o modelo
+  // precisa da própria prova aritmética: o total informado do grupo.
+  //
+  // Aqui o grupo informa 100 e as contas somam 160 (`Estoques` 60 + os dois
+  // componentes dele, 40 e 20, + `Clientes` 40). O excesso é exatamente o
+  // cabeçalho: ele sai da composição e a reconciliação fica em ZERO — nem um
+  // centavo escondido.
+  {
+    const entradaCab = {
+      ...entradaModelo,
+      anosHistoricos: [2025], anosProjetados: [2026],
+      linhas: [
+        linhaAnos("ativo_circulante", "Ativo Circulante", { "2025": 100 }, "BALANCO", "subtotal"),
+        linhaAnos("ativo_circulante", "Estoques", { "2025": 60 }),
+        linhaAnos("ativo_circulante", "Produtos acabados", { "2025": 40 }),
+        linhaAnos("ativo_circulante", "Matérias-primas", { "2025": 20 }),
+        linhaAnos("ativo_circulante", "Clientes - mercado interno", { "2025": 40 }),
+      ],
+      vinculos: [], premissas: [],
+    };
+    const wbCab = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: entradaCab as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const wc = wbCab.getWorksheet("Working Capital");
+    const rotulos: string[] = [];
+    if (wc) {
+      for (let r = 1; r <= wc.rowCount; r++) rotulos.push(String(wc.getRow(r).getCell(3).value ?? "").trim());
+    }
+    checar(!rotulos.includes("Estoques") && rotulos.includes("Produtos acabados")
+      && rotulos.includes("Matérias-primas"),
+      "(0109g) o cabeçalho de grupo impresso fica FORA da composição do modelo, e os "
+      + "componentes dele continuam lá — o grupo não dobra",
+      `Estoques: ${rotulos.includes("Estoques")} · componentes: `
+      + `${rotulos.includes("Produtos acabados")}/${rotulos.includes("Matérias-primas")}`);
+
+    const bsCab = wbCab.getWorksheet("Balance Sheet");
+    let rReconc: number | null = null;
+    if (bsCab) {
+      for (let r = 1; r <= bsCab.rowCount; r++) {
+        if (String(bsCab.getRow(r).getCell(3).value ?? "").trim()
+            === "reconciliação com o ativo circulante informado no documento") { rReconc = r; break; }
+      }
+    }
+    const vReconc = bsCab && rReconc !== null ? avaliarCelula(bsCab, "E", rReconc) : null;
+    checar(typeof vReconc === "number" && Math.abs(vReconc) < 0.5,
+      "(0109g) …e a reconciliação do grupo fica em ZERO: a soma das contas passa a ser o "
+      + "total informado, sem resíduo inventado",
+      JSON.stringify(vReconc));
+  }
+
+  // ---- (0109f) PATRIMÔNIO NEGATIVO NÃO FAZ O MODELO APAGAR CONTA ---------
+  //
+  // A remoção de CABEÇALHO DE GRUPO IMPRESSO (`Contas a Receber`, `Estoques`,
+  // `Capital social`…) só age quando a soma das contas EXCEDE o total que o
+  // documento informa para aquele grupo. Com total NEGATIVO — patrimônio líquido
+  // a descoberto, que é o caso normal num mandato de reestruturação (a Canastra
+  // Indústria do book tem PL −4.221) — comparar com `informado * 1.005` inverte o
+  // sentido da desigualdade e a regra passaria a "achar excesso" onde não há,
+  // apagando conta justamente na empresa mais frágil do grupo.
+  //
+  // Aqui o PL informado é NEGATIVO e as duas contas somam exatamente ele: não há
+  // excesso, e nenhuma das duas pode sumir do balanço do modelo.
+  {
+    const entradaPLneg = {
+      ...entradaModelo,
+      anosHistoricos: [2025], anosProjetados: [2026],
+      linhas: [
+        linhaAnos("patrimonio_liquido", "Capital social", { "2025": 40000 }),
+        linhaAnos("patrimonio_liquido", "Prejuízos acumulados", { "2025": -44221 }),
+        linhaAnos("patrimonio_liquido", "Patrimônio Líquido", { "2025": -4221 }, "BALANCO", "subtotal"),
+        linhaAnos("ativo_circulante", "Caixa e equivalentes de caixa", { "2025": 1000 }),
+      ],
+      vinculos: [], premissas: [],
+    };
+    const wbPL = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: entradaPLneg as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const bsPL = wbPL.getWorksheet("Balance Sheet");
+    const temRotulo = (rot: string) => {
+      if (!bsPL) return false;
+      for (let r = 1; r <= bsPL.rowCount; r++) {
+        if (String(bsPL.getRow(r).getCell(3).value ?? "").trim() === rot) return true;
+      }
+      return false;
+    };
+    checar(temRotulo("Capital social") && temRotulo("Prejuízos acumulados"),
+      "(0109f) com patrimônio líquido NEGATIVO e sem excesso, nenhuma conta do PL é removida "
+      + "do modelo — nem a que tem nome de cabeçalho de grupo",
+      `Capital social: ${temRotulo("Capital social")} · Prejuízos acumulados: ${temRotulo("Prejuízos acumulados")}`);
+  }
+
   // ---- (0109e) O ARQUIVO DE DADOS TAMBÉM RECALCULA AO ABRIR --------------
   //
   // As abas classificadas escrevem todo total como `=SUM(...)` e NÃO gravam valor

@@ -965,8 +965,15 @@ function contexto(ent: EntradaModeloInstitucional): Ctx {
       if (typeof informado !== "number" || informado === 0) continue;
       const valorDe = (l: LinhaModelo) => l.valores[String(anoBase)] ?? 0;
       let soma = lista.reduce((s, l) => s + valorDe(l), 0);
-      // Tolerância de meio por cento: arredondamento de escala não é dupla contagem.
-      if (soma <= informado * 1.005) continue;
+      // TOLERÂNCIA EM MÓDULO, e não `informado * 1.005`. O total informado pode
+      // ser NEGATIVO — patrimônio líquido a descoberto é o caso normal num
+      // mandato de reestruturação (a Canastra Indústria do book tem PL −4.221) —
+      // e multiplicar um número negativo por 1,005 afrouxa o limiar para o lado
+      // errado. Nos cenários que medi as duas formas decidem igual (a segunda
+      // guarda segura o caso), mas "meio por cento do tamanho" é o que a regra
+      // quer dizer, e é o que ela passa a dizer.
+      const tolerancia = Math.abs(informado) * 0.005;
+      if (soma - informado <= tolerancia) continue;
       const candidatos = lista
         .filter((l) => CABECALHOS_DE_GRUPO.has(chaveDeAncora(l.chave))
           || CABECALHOS_DE_GRUPO.has(chaveDeAncora(l.rotulo_norm)))
@@ -984,8 +991,9 @@ function contexto(ent: EntradaModeloInstitucional): Ctx {
         // centavo com um deles é assinatura de transposição, não de agrupamento.
         if (lista.some((o) => o !== c && Math.abs(valorDe(o) - v) < 0.5)) continue;
         const depois = soma - v;
-        // Só remove o que APROXIMA do informado sem passar do ponto.
-        if (depois < informado * 0.995) continue;
+        // Só remove o que APROXIMA do informado sem passar do ponto — as duas
+        // comparações em MÓDULO, pelo mesmo motivo da tolerância acima.
+        if (depois - informado < -tolerancia) continue;
         if (Math.abs(depois - informado) >= Math.abs(soma - informado)) continue;
         remover.add(c);
         soma = depois;

@@ -34,15 +34,32 @@ sem reclamar" não são a mesma afirmação.
 ## Antes de começar
 
 Rode o auditor primeiro. **Item reprovado ali não se resolve no checklist** — é número lido
-do arquivo, e a correção é no código. O checklist só faz sentido sobre um arquivo que já
-passou nos 10 itens automáticos.
+do arquivo, e a correção é no código (ou, no caso do resíduo, na extração). O checklist só
+faz sentido sobre um arquivo que já passou nos itens automáticos.
 
 O que o auditor cobre hoje (para não repetir aqui): as 14 abas existem · o balanço fecha em
 todo exercício · a DRE do realizado reproduz o documento · o ativo total é o informado · o
 modelo tem conteúdo (não é um balanço vazio que "fecha") · nenhuma fórmula nasce com
 `#REF!` · o arquivo pede recálculo ao abrir · as 14 abas declaram área de impressão · o
-painel de premissas compõe índice × spread · a linha de câmbio traz nível · os 8 gráficos
-caem dentro da área de impressão do `Output`.
+painel de premissas compõe índice × spread · a linha de câmbio traz nível · **o resíduo de
+reconciliação é imaterial** · os 8 gráficos caem dentro da área de impressão do `Output`.
+
+> **O item do RESÍDUO é diferente dos outros, e é o que você lê primeiro quando ele
+> reprova.** O modelo fecha o exercício realizado NO NÚMERO DO DOCUMENTO: cada grupo do
+> balanço, os dois totais gerais e os quatro níveis da DRE têm uma linha de reconciliação
+> que absorve a diferença entre a soma das contas extraídas e o total impresso. É o que
+> torna o modelo utilizável — balanço que não fecha não projeta — e é também o que faz "o
+> balanço fecha" e "a DRE reproduz o documento" passarem por construção. O que **não** passa
+> por construção é o TAMANHO desse resíduo: ele é a medida direta da qualidade da extração
+> daquele caso. Zero significa que as contas somam exatamente o que o documento imprime;
+> 18% do ativo significa que os totais estão certos e a abertura por conta, por baixo deles,
+> não fecha — e aí a conferência do item 9 abaixo tem de ser feita em MAIS de um número,
+> porque a composição não é confiável.
+
+> **Arquivo sem as 14 abas não é arquivo quebrado.** O botão *Exportar dados* entrega as
+> abas linha a linha, sem projeção — e o auditor diz isso na primeira linha, marcando os
+> itens do modelo como não aplicáveis. Nesse arquivo valem os itens do arquivo inteiro
+> (fórmula com erro, recálculo ao abrir) e o checklist humano se resume aos itens 1, 2 e 10.
 
 ## Checklist (10 itens, ~15 minutos)
 
