@@ -207,6 +207,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/linha_exigida.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de linha exigida POR ENTIDADE (0116: o grupo de oito balanços, e a guarda seed×código)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/linha_exigida_entidade.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do Portão 2 por caso (0037: a regra de f0/04 virou código)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/portao2.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

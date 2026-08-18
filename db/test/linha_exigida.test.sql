@@ -18,6 +18,11 @@
 --   #8  idempotência: recomputar de novo não duplica;
 --   #9  a checagem só LÊ campo_extraido.
 --
+-- 0116: BALANCO passou a ser cobrado POR ENTIDADE, e o motivo ganhou o sufixo
+-- da entidade. Os asserts daqui casam por PREFIXO de propósito: este arquivo
+-- trava as propriedades da 0113 (existe, nomeia, resolve, política), e a
+-- granularidade é travada em db/test/linha_exigida_entidade.test.sql.
+--
 -- Os cenários passam pela COSTURA real (registrar → extrair → recomputar),
 -- como o teste da 0036: escrever o estado final na mão passaria com o defeito
 -- ligado.
@@ -99,7 +104,7 @@ begin
     into v_n, v_txt, v_sev, v_sobre
   from pendencia
   where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-    and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+    and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_n = 1, 'abre exatamente uma pendência para o caixa ausente', 'achou ' || v_n);
   perform teste_assert_le(v_txt like '%Caixa e equivalentes%',
     'a descrição NOMEIA a linha exigida (doutrina da 0033)', left(v_txt, 120));
@@ -112,7 +117,7 @@ begin
   select count(*) into v_n from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
       and motivo like 'completude:linha_exigida:BALANCO:%'
-      and motivo <> 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo not like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_n = 0,
     'Ativo e Passivo+PL presentes NÃO são cobrados', 'abriu ' || v_n || ' a mais');
 
@@ -129,12 +134,12 @@ begin
 
   select count(*) into v_n from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_n = 0, 'a pendência do caixa resolve sozinha quando a linha aparece');
   select count(*) into v_n from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado = 'resolvida'
       and resolvida_por = 'sistema:extracao'
-      and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_n = 1, '…resolvida por sistema:extracao, com rastro', 'achou ' || v_n);
 
   raise notice '--- 5. documento VAZIO não vira linha exigida (já é item_sem_conteudo) ---';
@@ -189,7 +194,7 @@ begin
 
   select min(severidade::text), bool_and(sobrepujavel) into v_sev, v_sobre from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_sev = 'bloqueante' and not v_sobre,
     'pendência nova nasce com a política do dono (bloqueante, não-sobrepujável)',
     coalesce(v_sev, 'null') || '/' || coalesce(v_sobre::text, 'null'));
@@ -201,7 +206,7 @@ begin
   perform fn_recomputar_completude(v_caso);
   select min(severidade::text), bool_and(sobrepujavel) into v_sev, v_sobre from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_sev = 'importante' and v_sobre,
     'voltar a política para NULL propaga no recomputo (de volta ao default)',
     coalesce(v_sev, 'null') || '/' || coalesce(v_sobre::text, 'null'));
@@ -212,7 +217,7 @@ begin
   perform fn_recomputar_completude(v_caso);
   select count(*) into v_n from pendencia
     where caso_id = v_caso and tipo = 'linha_exigida_ausente' and estado <> 'resolvida'
-      and motivo = 'completude:linha_exigida:BALANCO:caixa_e_equivalentes';
+      and motivo like 'completude:linha_exigida:BALANCO:caixa_e_equivalentes%';
   perform teste_assert_le(v_n = 1, 'recomputar de novo não duplica a pendência', 'achou ' || v_n);
 
   raise notice '--- 9. a checagem só LÊ campo_extraido ---';

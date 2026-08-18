@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0115_custo_do_lote.sql` |
+| **Última migration** | `db/migrations/0116_linha_exigida_por_entidade.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 275 · export 535 · e2e 46 · banco (59 migrations do zero + testes SQL) |
+| **Suítes** | n8n 275 · export 535 · e2e 46 · banco (61 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato

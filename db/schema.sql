@@ -1397,7 +1397,7 @@ COMMENT ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) IS 'Exc
 -- Name: fn_exigencias_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exigencia_id uuid, tipo_taxonomia text, conceito text, rotulo text, origem text, depende_de text[], severidade text, sobrepujavel boolean, descricao text, satisfeita boolean)
+CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exigencia_id uuid, tipo_taxonomia text, conceito text, rotulo text, origem text, depende_de text[], severidade text, sobrepujavel boolean, descricao text, entidade text, entidade_id uuid, satisfeita boolean)
     LANGUAGE sql STABLE
     AS $$
   with tipos_com_conteudo as (
@@ -1407,45 +1407,108 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
       and fn_linhas_do_tipo(p_caso_id, d.tipo_taxonomia) > 0
   ),
   campos as (
-    select d.tipo_taxonomia, ce.chave, ce.secao, ce.secao_canonica
+    select d.tipo_taxonomia,
+           ce.chave, ce.secao, ce.secao_canonica,
+           coalesce(ce.entidade_coluna, ent.razao_social) as ent_txt
     from documento d
+    left join entidade ent on ent.id = d.entidade_id
     join campo_extraido ce on ce.documento_versao_id = fn_versao_com_extracao(d.id)
     where d.caso_id = p_caso_id
       and ce.valor_num is not null
+  ),
+  -- O NOME vira ENTIDADE REGISTRADA uma vez por nome DISTINTO (lição da 0101:
+  -- fn_mesma_entidade custa; pagar por ocorrência seria pagar 770 vezes por
+  -- ~10 respostas). Nome que não casa com registro nenhum fica NULL — fallback
+  -- deliberado nº 1 do cabeçalho.
+  nomes_resolvidos as (
+    select n.ent_txt,
+           (select e.id from entidade e
+             where e.caso_id = p_caso_id
+               and fn_mesma_entidade(n.ent_txt, e.razao_social)
+             order by e.razao_social, e.id limit 1) as entidade_id
+    from (select distinct c.ent_txt from campos c where c.ent_txt is not null) n
+  ),
+  campos_ent as (
+    select c.*, nr.entidade_id
+    from campos c
+    left join nomes_resolvidos nr on nr.ent_txt = c.ent_txt
+  ),
+  -- O CASAMENTO exigência × rótulo é avaliado uma vez por LINHA DISTINTA
+  -- (mesma lição): fn_normalizar_texto por (rótulo × termo) é o custo, e o
+  -- caso real tem ~250 rótulos distintos para ~770 ocorrências.
+  linhas_distintas as (
+    select distinct c.tipo_taxonomia, c.chave, c.secao, c.secao_canonica from campos c
+  ),
+  casadas as (
+    select e.id as exigencia_id, ld.tipo_taxonomia, ld.chave, ld.secao, ld.secao_canonica
+    from taxonomia_linha_exigida e
+    join linhas_distintas ld on ld.tipo_taxonomia = e.tipo_taxonomia
+    where e.ativo
+      and case e.checagem
+        when 'secao_presente' then ld.secao_canonica = e.secao_canonica
+        when 'serie_mensal'   then fn_mes_do_rotulo(ld.chave) is not null
+        else exists (
+          select 1 from taxonomia_linha_localizador l
+          where l.exigencia_id = e.id
+            and case
+              when l.contra = 'estrutural' then fn_rotulo_estrutural(ld.chave, l.termos_inclui)
+              else
+                not exists (
+                  select 1 from unnest(l.termos_inclui) t
+                  where fn_normalizar_texto(case when l.contra = 'secao'
+                                            then coalesce(ld.secao, '') else ld.chave end)
+                    not like '%' || fn_normalizar_texto(t) || '%')
+                and not exists (
+                  select 1 from unnest(l.termos_exclui) t
+                  where fn_normalizar_texto(case when l.contra = 'secao'
+                                            then coalesce(ld.secao, '') else ld.chave end)
+                    like '%' || fn_normalizar_texto(t) || '%')
+            end)
+      end
+  ),
+  -- Quais (exigência, entidade) estão SATISFEITAS: a linha casada volta às
+  -- ocorrências para saber DE QUEM ela é.
+  satisfazedores as (
+    select distinct ca.exigencia_id, c.entidade_id
+    from casadas ca
+    join campos_ent c
+      on c.tipo_taxonomia = ca.tipo_taxonomia
+     and c.chave = ca.chave
+     and c.secao is not distinct from ca.secao
+     and c.secao_canonica is not distinct from ca.secao_canonica
+  ),
+  -- O EIXO: entidades registradas que TROUXERAM linha do tipo. Quem tem
+  -- documento mas nenhuma linha atribuível não entra — cobrar conteúdo de quem
+  -- não tem conteúdo é assunto da 0036/0112, não daqui.
+  eixo as (
+    select distinct c.tipo_taxonomia, c.entidade_id
+    from campos_ent c
+    where c.entidade_id is not null
   )
   select e.id, e.tipo_taxonomia, e.conceito, e.rotulo, e.origem, e.depende_de,
          e.severidade, e.sobrepujavel, e.descricao,
-         case e.checagem
-           when 'secao_presente' then exists (
-             select 1 from campos c
-             where c.tipo_taxonomia = e.tipo_taxonomia
-               and c.secao_canonica = e.secao_canonica)
-           when 'serie_mensal' then exists (
-             select 1 from campos c
-             where c.tipo_taxonomia = e.tipo_taxonomia
-               and fn_mes_do_rotulo(c.chave) is not null)
-           else exists (
-             select 1
-             from taxonomia_linha_localizador l, campos c
-             where l.exigencia_id = e.id
-               and c.tipo_taxonomia = e.tipo_taxonomia
-               and case
-                 when l.contra = 'estrutural' then fn_rotulo_estrutural(c.chave, l.termos_inclui)
-                 else
-                   not exists (
-                     select 1 from unnest(l.termos_inclui) t
-                     where fn_normalizar_texto(case when l.contra = 'secao'
-                                               then coalesce(c.secao, '') else c.chave end)
-                       not like '%' || fn_normalizar_texto(t) || '%')
-                   and not exists (
-                     select 1 from unnest(l.termos_exclui) t
-                     where fn_normalizar_texto(case when l.contra = 'secao'
-                                               then coalesce(c.secao, '') else c.chave end)
-                       like '%' || fn_normalizar_texto(t) || '%')
-               end)
+         ent.razao_social, ax.entidade_id,
+         case when ax.entidade_id is null
+              then exists (select 1 from satisfazedores s where s.exigencia_id = e.id)
+              else exists (select 1 from satisfazedores s
+                            where s.exigencia_id = e.id and s.entidade_id = ax.entidade_id)
          end as satisfeita
   from taxonomia_linha_exigida e
   join tipos_com_conteudo t on t.tipo_taxonomia = e.tipo_taxonomia
+  join taxonomia_tipo_documento tx on tx.codigo = e.tipo_taxonomia
+  cross join lateral (
+    -- Escopo entidade COM eixo: uma linha por entidade. Senão: a linha única
+    -- com entidade NULL (escopo caso, ou fallback nº 2 do cabeçalho).
+    select x.entidade_id
+    from eixo x
+    where x.tipo_taxonomia = e.tipo_taxonomia
+      and coalesce(e.escopo_entidade, tx.granularidade::text in ('entidade', 'entidade_periodo'))
+    union all
+    select null::uuid
+    where not (coalesce(e.escopo_entidade, tx.granularidade::text in ('entidade', 'entidade_periodo'))
+               and exists (select 1 from eixo x2 where x2.tipo_taxonomia = e.tipo_taxonomia))
+  ) ax
+  left join entidade ent on ent.id = ax.entidade_id
   where e.ativo;
 $$;
 
@@ -1453,7 +1516,7 @@ $$;
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009). Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0116): uma linha de resultado por (exigência × entidade do eixo), entidade NULL no escopo-caso e nos fallbacks. Escopo = escopo_entidade da exigência, ou (NULL) a granularidade do tipo na taxonomia. Eixo = entidades REGISTRADAS que trouxeram linha do tipo, via coalesce(entidade_coluna, razao_social) + fn_mesma_entidade (0030/0105), resolvido uma vez por nome (0101). Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009).';
 
 --
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
@@ -2510,8 +2573,9 @@ declare
   v_status_atual caso_status;
   v_novo_status caso_status;
   v_pend_id uuid;
-  -- 0113: passo (2b)
+  -- 0113/0116: passo (2b)
   v_ex record;
+  v_motivo text;
   v_motivos_ausentes text[] := '{}';
   v_linhas_ausentes jsonb := '[]'::jsonb;
 begin
@@ -2577,48 +2641,61 @@ begin
     end if;
   end loop;
 
-  -- ----- (2b) 0113: tipo presente COM conteúdo, mas sem uma LINHA exigida ----
-  -- É o buraco entre a 0036 e as reconciliações: o documento chegou e rendeu
-  -- linhas, só que NÃO as linhas de que o resto do sistema depende. Até aqui,
-  -- isso só aparecia como `precondicao_nao_satisfeita` — mole, sobrepujável e
-  -- publicada por período — e SÓ para as linhas que alguma das cinco checagens
-  -- cruza. Agora a ausência é declarada na completude, NOMEANDO a linha (0033)
-  -- e o que deixa de funcionar sem ela (depende_de).
-  --
-  -- Política por linha é do dono: severidade/sobrepujavel NULL caem em
-  -- 'importante'/true — o peso que a ausência já tem hoje. Pendência existente
-  -- é ATUALIZADA (descrição e política), como a 0009 faz, para uma decisão
-  -- nova do dono valer sem esperar a pendência reabrir.
+  -- ----- (2b) 0113/0116: tipo COM conteúdo, mas sem uma LINHA exigida --------
+  -- 0116: a cobrança desce ao nível da ENTIDADE quando o escopo pede. O motivo
+  -- ganha o sufixo canônico da entidade (chave estável mesmo que a grafia da
+  -- razão social varie entre extrações), `entidade_id` vai na pendência, e a
+  -- descrição nomeia a empresa. Pendência de formato velho (sem sufixo) sai da
+  -- lista corrente e é resolvida no fim do bloco — é a transição, e a trilha
+  -- guarda as duas gerações.
   for v_ex in
     select * from fn_exigencias_do_caso(p_caso_id) x where not x.satisfeita
   loop
-    v_motivos_ausentes := v_motivos_ausentes
-      || ('completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito);
+    v_motivo := 'completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito
+                || case when v_ex.entidade is not null
+                        then ':' || fn_entidade_canonica(v_ex.entidade)
+                        else '' end;
+    v_motivos_ausentes := v_motivos_ausentes || v_motivo;
     v_linhas_ausentes := v_linhas_ausentes || jsonb_build_object(
       'tipo', v_ex.tipo_taxonomia, 'conceito', v_ex.conceito,
-      'rotulo', v_ex.rotulo, 'origem', v_ex.origem);
+      'rotulo', v_ex.rotulo, 'origem', v_ex.origem,
+      'entidade', v_ex.entidade);
 
     select id into v_pend_id from pendencia p
     where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente'
       and p.estado <> 'resolvida'
-      and p.motivo = 'completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito
+      and p.motivo = v_motivo
     limit 1;
 
     if v_pend_id is null then
-      insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, motivo)
+      insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel,
+                             descricao, entidade_id, motivo)
         values (p_caso_id, 'completude', 'linha_exigida_ausente',
                 coalesce(v_ex.severidade, 'importante')::pendencia_severidade,
                 coalesce(v_ex.sobrepujavel, true),
-                format('O tipo %s chegou e rendeu linhas, mas a linha exigida "%s" não foi localizada '
-                       'na versão vigente de nenhum documento do tipo. Sem ela: %s.%s Conferir se o '
-                       'documento traz a linha com outro rótulo (e corrigir na revisão) ou reenviar o '
-                       'arquivo completo.',
-                       v_ex.tipo_taxonomia, v_ex.rotulo,
-                       array_to_string(v_ex.depende_de, '; '),
-                       case when v_ex.origem = 'proposta'
-                            then ' (Exigência PROPOSTA na análise — nenhuma checagem automática a lê hoje.)'
-                            else '' end),
-                'completude:linha_exigida:' || v_ex.tipo_taxonomia || ':' || v_ex.conceito);
+                case when v_ex.entidade is not null then
+                  format('Nos documentos de %s da entidade "%s", a linha exigida "%s" não foi '
+                         'localizada na versão vigente. Sem ela, PARA ESTA ENTIDADE: %s.%s Conferir '
+                         'se o documento dela traz a linha com outro rótulo (e corrigir na revisão) '
+                         'ou reenviar o arquivo completo.',
+                         v_ex.tipo_taxonomia, v_ex.entidade, v_ex.rotulo,
+                         array_to_string(v_ex.depende_de, '; '),
+                         case when v_ex.origem = 'proposta'
+                              then ' (Exigência PROPOSTA na análise — nenhuma checagem automática a lê hoje.)'
+                              else '' end)
+                else
+                  format('O tipo %s chegou e rendeu linhas, mas a linha exigida "%s" não foi '
+                         'localizada na versão vigente de nenhum documento do tipo. Sem ela: %s.%s '
+                         'Conferir se o documento traz a linha com outro rótulo (e corrigir na '
+                         'revisão) ou reenviar o arquivo completo.',
+                         v_ex.tipo_taxonomia, v_ex.rotulo,
+                         array_to_string(v_ex.depende_de, '; '),
+                         case when v_ex.origem = 'proposta'
+                              then ' (Exigência PROPOSTA na análise — nenhuma checagem automática a lê hoje.)'
+                              else '' end)
+                end,
+                v_ex.entidade_id,
+                v_motivo);
     else
       update pendencia set
         severidade   = coalesce(v_ex.severidade, 'importante')::pendencia_severidade,
@@ -2627,8 +2704,8 @@ begin
     end if;
   end loop;
 
-  -- A linha apareceu (versão nova, revisão que corrigiu o rótulo) — resolve
-  -- sozinha, como as da 0036. Vale também para exigência desativada pelo dono.
+  -- A linha apareceu, a exigência foi desativada, ou o formato do motivo mudou
+  -- (a transição 0113 → 0116): resolve sozinha, como as da 0036.
   update pendencia p set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:extracao'
   where p.caso_id = p_caso_id and p.tipo = 'linha_exigida_ausente' and p.estado <> 'resolvida'
     and not (p.motivo = any (v_motivos_ausentes));
@@ -2664,10 +2741,9 @@ begin
     'portao1_ok', array_length(v_faltantes,1) is null,
     'faltantes', to_jsonb(v_faltantes),
     'sem_conteudo', to_jsonb(v_sem_conteudo),
-    -- 0113: as linhas exigidas que faltam saem no payload (nó do n8n e portal
-    -- mostram sem refazer a consulta). `pronto_para_revisao` NÃO muda:
-    -- endurecê-lo com linha exigida é decisão de produto do dono, não efeito
-    -- colateral desta migration.
+    -- 0116: cada ausência agora pode nomear a entidade. `pronto_para_revisao`
+    -- segue intocado — endurecê-lo é decisão de produto do dono, não efeito
+    -- colateral (0113).
     'linhas_exigidas_ausentes', v_linhas_ausentes,
     'pronto_para_revisao',
       array_length(v_faltantes,1) is null and array_length(v_sem_conteudo,1) is null,
@@ -2680,7 +2756,7 @@ $$;
 -- Name: FUNCTION fn_recomputar_completude(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113 (passo 2b: tipo com conteúdo mas sem uma LINHA exigida — pendência linha_exigida_ausente nomeando a linha e o depende_de; severidade por linha é do dono, default importante/sobrepujável). `portao1_ok` segue significando "chegou tudo"; `pronto_para_revisao` segue chegou tudo E tem conteúdo.';
+COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0116 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id na pendência, descrição nomeando a empresa). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
 
 --
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -5492,6 +5568,7 @@ CREATE TABLE public.taxonomia_linha_exigida (
     sobrepujavel boolean,
     ativo boolean DEFAULT true NOT NULL,
     versao integer DEFAULT 1 NOT NULL,
+    escopo_entidade boolean,
     CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
     CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
     CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
@@ -5533,6 +5610,12 @@ COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO
 --
 
 COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.escopo_entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.escopo_entidade IS 'DECISÃO DO DONO, por exigência. NULL (default do seed) = o escopo segue a granularidade do tipo na taxonomia: entidade/entidade_periodo cobram POR ENTIDADE, caso/periodo cobram por caso. true força por entidade (ex.: COMBINADO, granularidade periodo mas linhas com entidade_coluna); false força por caso. Mesmo padrão de severidade/sobrepujavel (0113): a migration não define política.';
 
 --
 -- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
