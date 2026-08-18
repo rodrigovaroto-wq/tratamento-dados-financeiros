@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0114_mandato_fechado.sql` |
+| **Última migration** | `db/migrations/0115_custo_do_lote.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 275 · export 535 · e2e 46 · banco (59 migrations do zero + testes SQL) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -60,11 +60,17 @@ lidas para retomar.
   `prefers-reduced-motion` pula por completo. O mesmo motivo fica de fundo no painel a ~15% de
   opacidade, na goteira à direita: **gira com a rolagem** e a constelação deriva com o ponteiro.
 
-> **DOIS DOS SETE INDICADORES NÃO TÊM FONTE, e a tela diz isso em vez de mostrar zero.** O custo de
-> API é calculado em `n8n/lib/custo.mjs` (nó `Resumo de Custo`) e morre na saída da execução do
-> n8n: **nenhuma tabela do Postgres tem coluna de dólar**. Para "gasto total" e "gasto médio por
-> mandato" acenderem falta uma migration com uma tabela de uso (caso, modelo, tokens, custo) e um
-> nó que grave nela ao fim do lote. O **tempo médio** é real, mas é uma janela derivada — de
+- **O custo passou a durar (`0115`)**, e com ele veio o **oitavo indicador: cobertura da extração**.
+  `lote_execucao` guarda uma linha por execução de ingestão (custo real, custo estimado, tokens,
+  linhas, cobertura), gravada pelo nó novo `Gravar Uso do Lote`. A chave `(caso_id, execucao_ref)`
+  é o que impede o custo de sair **dobrado**: o `Resumo de Custo` roda uma vez por ramo do lote e
+  as duas passadas trazem o total inteiro.
+
+> **PARA OS TRÊS INDICADORES NOVOS ACENDEREM, DUAS COISAS PRECISAM ACONTECER FORA DO GIT:** aplicar
+> a `0115` no Supabase e **reimportar o `n8n/workflow.e1-ingestao.json`** (o n8n executa o JSON
+> importado, e merge não reimporta). Sem a migration, a tela mostra um traço com a causa escrita —
+> não zero. Sem a reimportação, a tabela existe e fica vazia. O **tempo médio** não depende de
+> nenhuma das duas: é uma janela derivada — de
 > `caso.criado_em` (gravado pelo `Upsert Caso`, no envio do intake) até o `criado_em` do último
 > documento do mandato; janelas acima de 12h são contadas à parte, porque a partir daí o número
 > mede espera pelo cliente, não processamento.

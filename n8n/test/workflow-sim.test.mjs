@@ -1229,7 +1229,11 @@ test('Resumo de Custo não derruba o lote que ele resume, e o Conferir Lote fech
   // "quanto custou", é "o pipeline passou por TODOS os documentos?". No Teste V45
   // o resumo de custo fechou a cadeia com 16 de 35 documentos extraídos e nada
   // reclamou — a conferência de fora existe para essa rodada não se repetir.
-  assert.deepEqual(wf.connections['Resumo de Custo'].main[0].map((c) => c.node), ['Conferir Lote']);
+  // Entre os dois entrou a GRAVAÇÃO do custo (0115) — o resumo passa a durar em
+  // tabela antes de a conferência dar o veredito. A ordem importa: o custo é
+  // fato do lote, e o `Conferir Lote` continua sendo o último a falar.
+  assert.deepEqual(wf.connections['Resumo de Custo'].main[0].map((c) => c.node), ['Gravar Uso do Lote']);
+  assert.deepEqual(wf.connections['Gravar Uso do Lote'].main[0].map((c) => c.node), ['Conferir Lote']);
   assert.equal(wf.connections['Conferir Lote'], undefined, 'o Conferir Lote é o fim da cadeia');
   const conferir = wf.nodes.find((n) => n.name === 'Conferir Lote');
   assert.ok(conferir.parameters.query.includes('fn_conferir_lote'));
@@ -1239,6 +1243,67 @@ test('Resumo de Custo não derruba o lote que ele resume, e o Conferir Lote fech
   const r = Array.isArray(out) ? out[0].json : out.json;
   assert.equal(r.custo_total_usd, 0);
   assert.equal(r.custo_estimado_usd, null);
+});
+
+test('Gravar Uso do Lote é idempotente POR EXECUÇÃO — sem isso todo custo sai dobrado', () => {
+  const n = wf.nodes.find((x) => x.name === 'Gravar Uso do Lote');
+  assert.ok(n, 'o nó não existe');
+  assert.equal(n.type, 'n8n-nodes-base.postgres');
+  assert.ok(n.parameters.query.includes('fn_registrar_uso_lote'), 'chama a função da 0115');
+
+  const repl = n.parameters.options.queryReplacement;
+  // O DEFEITO QUE ESTE TESTE EXISTE PARA BARRAR, e ele é o mais caro que esta
+  // gravação poderia ter: o nó roda DUAS VEZES por lote (uma por ramo do
+  // `Precisa Fallback?`) e as duas passadas trazem o total INTEIRO. Sem uma
+  // chave por execução seriam duas linhas, e o custo de todo mandato sairia
+  // 2× — um número errado PARA CIMA, que passa por prudência e ninguém
+  // questiona. A idempotência mora na 0115 (`unique (caso_id, execucao_ref)`),
+  // e ela só funciona se o nó mandar a referência.
+  assert.match(repl, /\$execution\.id/,
+    'sem $execution.id não há chave de idempotência, e as duas passadas do lote viram duas linhas');
+  // O caso vem do nó de origem, não de `$json`: o item que chega aqui é o painel
+  // de custo, e ele não carrega o caso_id.
+  assert.match(repl, /\$\('Upsert Caso \(Postgres\)'\)/, 'o caso_id tem de vir do nó que o criou');
+  assert.match(repl, /JSON\.stringify\(\$json\)/, 'o resumo inteiro vai como jsonb');
+
+  // Uma gravação de RELATÓRIO nunca pode derrubar o lote que ela relata — é a
+  // mesma razão do `onError` do `Resumo de Custo`, um nó antes.
+  assert.equal(n.onError, 'continueRegularOutput');
+  assert.ok(n.credentials?.postgres, 'nó Postgres sem credencial não roda');
+});
+
+test('o que o Resumo de Custo publica é o que a 0115 grava — os nomes têm de bater', async () => {
+  // O ACOPLAMENTO É REAL E INVISÍVEL: a função lê o jsonb por NOME de campo
+  // (`p_resumo->>'custo_total_usd'`). Renomear um campo do resumo não quebraria
+  // teste nenhum — só faria a coluna virar NULL em silêncio, que é a forma mais
+  // cara de errar num número de dinheiro. Este teste liga as duas pontas.
+  const out = await run('Resumo de Custo', {
+    items: [{ json: {} }],
+    refs: {
+      'Juntar Blocos': [[{ json: {
+        custo_usd: 0.02, tokens: { entrada: 100, saida: 20, cache: 50 },
+        campos: [{}, {}], contas_no_documento: 10, linhas_devolvidas: 8,
+      } }]],
+      'Parse OpenAI Classif': [[{ json: { custo_classificacao_usd: 0.001 } }]],
+    },
+  });
+  const r = Array.isArray(out) ? out[0].json : out.json;
+
+  const sql = readFileSync(new URL('../../db/migrations/0115_custo_do_lote.sql', import.meta.url), 'utf8');
+  for (const campo of [
+    'documentos', 'documentos_com_classificacao', 'documentos_fatiados',
+    'documentos_com_falha', 'documentos_sem_medicao',
+    'custo_total_usd', 'custo_extracao_usd', 'custo_classificacao_usd', 'custo_estimado_usd',
+    'linhas_extraidas', 'contas_nos_documentos', 'contas_extraidas', 'orcamento_versao',
+  ]) {
+    assert.ok(campo in r, `o Resumo de Custo deixou de publicar "${campo}"`);
+    assert.ok(sql.includes(`'${campo}'`), `a 0115 não lê "${campo}" do resumo`);
+  }
+  // Os tokens são aninhados, e a função os lê por caminho (`#>>`).
+  assert.ok(r.tokens && 'entrada' in r.tokens && 'saida' in r.tokens && 'cache' in r.tokens);
+  for (const t of ['entrada', 'saida', 'cache']) {
+    assert.ok(sql.includes(`{tokens,${t}}`), `a 0115 não lê tokens.${t}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

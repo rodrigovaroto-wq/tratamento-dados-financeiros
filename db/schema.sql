@@ -4191,6 +4191,97 @@ CREATE FUNCTION public.fn_registrar_reconciliacao_b(p_caso_id uuid, p_entidade_i
 $$;
 
 --
+-- Name: fn_registrar_uso_lote(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_id uuid;
+  v_num numeric;
+begin
+  if p_caso_id is null then
+    return jsonb_build_object('gravado', false, 'motivo', 'caso_id ausente');
+  end if;
+  if nullif(btrim(coalesce(p_execucao_ref, '')), '') is null then
+    -- SEM REFERÊNCIA DE EXECUÇÃO NÃO SE GRAVA. É a chave que impede a
+    -- duplicidade; sem ela, a segunda passada viraria uma segunda linha e o
+    -- custo do mandato sairia dobrado — exatamente o que esta tabela existe
+    -- para não deixar acontecer.
+    return jsonb_build_object('gravado', false, 'motivo', 'execucao_ref ausente');
+  end if;
+
+  -- Cobertura recalculada aqui, e não lida do resumo: é uma divisão, e divisão
+  -- feita em dois lugares é divisão que diverge. O resumo continua trazendo a
+  -- dele — se um dia os dois discordarem, a diferença é o sintoma.
+  v_num := nullif((p_resumo->>'contas_nos_documentos')::numeric, 0);
+
+  insert into lote_execucao (
+    caso_id, execucao_ref,
+    documentos, documentos_com_classificacao, documentos_fatiados,
+    documentos_com_falha, documentos_sem_medicao,
+    custo_total_usd, custo_extracao_usd, custo_classificacao_usd, custo_estimado_usd,
+    tokens_entrada, tokens_saida, tokens_cache,
+    linhas_extraidas, contas_nos_documentos, contas_extraidas, cobertura,
+    orcamento_versao
+  ) values (
+    p_caso_id, btrim(p_execucao_ref),
+    (p_resumo->>'documentos')::int,
+    (p_resumo->>'documentos_com_classificacao')::int,
+    (p_resumo->>'documentos_fatiados')::int,
+    (p_resumo->>'documentos_com_falha')::int,
+    (p_resumo->>'documentos_sem_medicao')::int,
+    (p_resumo->>'custo_total_usd')::numeric,
+    (p_resumo->>'custo_extracao_usd')::numeric,
+    (p_resumo->>'custo_classificacao_usd')::numeric,
+    (p_resumo->>'custo_estimado_usd')::numeric,
+    (p_resumo#>>'{tokens,entrada}')::bigint,
+    (p_resumo#>>'{tokens,saida}')::bigint,
+    (p_resumo#>>'{tokens,cache}')::bigint,
+    (p_resumo->>'linhas_extraidas')::int,
+    (p_resumo->>'contas_nos_documentos')::int,
+    (p_resumo->>'contas_extraidas')::int,
+    case when v_num is null then null
+         else round((p_resumo->>'contas_extraidas')::numeric / v_num, 4) end,
+    p_resumo->>'orcamento_versao'
+  )
+  on conflict (caso_id, execucao_ref) do update set
+    atualizado_em                = now(),
+    documentos                   = excluded.documentos,
+    documentos_com_classificacao = excluded.documentos_com_classificacao,
+    documentos_fatiados          = excluded.documentos_fatiados,
+    documentos_com_falha         = excluded.documentos_com_falha,
+    documentos_sem_medicao       = excluded.documentos_sem_medicao,
+    custo_total_usd              = excluded.custo_total_usd,
+    custo_extracao_usd           = excluded.custo_extracao_usd,
+    custo_classificacao_usd      = excluded.custo_classificacao_usd,
+    custo_estimado_usd           = excluded.custo_estimado_usd,
+    tokens_entrada               = excluded.tokens_entrada,
+    tokens_saida                 = excluded.tokens_saida,
+    tokens_cache                 = excluded.tokens_cache,
+    linhas_extraidas             = excluded.linhas_extraidas,
+    contas_nos_documentos        = excluded.contas_nos_documentos,
+    contas_extraidas             = excluded.contas_extraidas,
+    cobertura                    = excluded.cobertura,
+    orcamento_versao             = excluded.orcamento_versao
+  returning id into v_id;
+
+  return jsonb_build_object(
+    'gravado', true,
+    'lote_execucao_id', v_id,
+    'custo_total_usd', (p_resumo->>'custo_total_usd')::numeric
+  );
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) IS 'Grava (ou reescreve) o resumo de custo/cobertura de UMA execução de ingestão. Idempotente por (caso_id, execucao_ref): o Resumo de Custo roda uma vez por ramo do lote e as duas passadas trazem o total inteiro — sem isto, todo custo sairia dobrado.';
+
+--
 -- Name: fn_revisar_documento(uuid, text, text, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5288,6 +5379,47 @@ CREATE TABLE public.indice_macro_serie (
 COMMENT ON COLUMN public.indice_macro_serie.natureza IS 'taxa = variação % do mês (o ano acumula por COMPOSIÇÃO); nivel = preço/estoque na data (o ano é o fechamento). Compor nível, ou somar taxa, é erro conceitual.';
 
 --
+-- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.lote_execucao (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    execucao_ref text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    documentos integer,
+    documentos_com_classificacao integer,
+    documentos_fatiados integer,
+    documentos_com_falha integer,
+    documentos_sem_medicao integer,
+    custo_total_usd numeric(12,6),
+    custo_extracao_usd numeric(12,6),
+    custo_classificacao_usd numeric(12,6),
+    custo_estimado_usd numeric(12,6),
+    tokens_entrada bigint,
+    tokens_saida bigint,
+    tokens_cache bigint,
+    linhas_extraidas integer,
+    contas_nos_documentos integer,
+    contas_extraidas integer,
+    cobertura numeric(6,4),
+    orcamento_versao text
+);
+
+--
+-- Name: TABLE lote_execucao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.lote_execucao IS 'Uma linha por execução de ingestão: quanto custou de IA, quantos tokens, quantas linhas e que cobertura. Existe porque o custo era calculado e morria na saída do nó do n8n — ninguém respondia "quanto gastamos neste mandato". A chave (caso_id, execucao_ref) é o que impede o custo de sair DOBRADO: o Resumo de Custo roda uma vez por ramo, as duas com o total inteiro.';
+
+--
+-- Name: COLUMN lote_execucao.cobertura; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.lote_execucao.cobertura IS 'contas_extraidas / contas_nos_documentos, 0..1. NULL quando a camada 1 não conseguiu medir o texto do PDF — e NULL aqui é honesto: sem medição não há cobertura, e 0 diria o contrário.';
+
+--
 -- Name: pendencia; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5592,6 +5724,20 @@ ALTER TABLE ONLY public.indice_macro_serie
     ADD CONSTRAINT indice_macro_serie_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: lote_execucao lote_execucao_caso_id_execucao_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lote_execucao
+    ADD CONSTRAINT lote_execucao_caso_id_execucao_ref_key UNIQUE (caso_id, execucao_ref);
+
+--
+-- Name: lote_execucao lote_execucao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lote_execucao
+    ADD CONSTRAINT lote_execucao_pkey PRIMARY KEY (id);
+
+--
 -- Name: pendencia pendencia_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5756,6 +5902,12 @@ CREATE INDEX idx_indice_macro_exp_serie_ano ON public.indice_macro_expectativa U
 --
 
 CREATE INDEX idx_indice_macro_obs_serie_data ON public.indice_macro_obs USING btree (serie, data_ref);
+
+--
+-- Name: idx_lote_execucao_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_lote_execucao_caso ON public.lote_execucao USING btree (caso_id, criado_em DESC);
 
 --
 -- Name: idx_pendencia_caso; Type: INDEX; Schema: public; Owner: -
@@ -5934,6 +6086,13 @@ ALTER TABLE ONLY public.indice_macro_expectativa
 
 ALTER TABLE ONLY public.indice_macro_obs
     ADD CONSTRAINT indice_macro_obs_serie_fkey FOREIGN KEY (serie) REFERENCES public.indice_macro_serie(codigo);
+
+--
+-- Name: lote_execucao lote_execucao_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lote_execucao
+    ADD CONSTRAINT lote_execucao_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
 
 --
 -- Name: pendencia pendencia_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -6202,6 +6361,18 @@ ALTER TABLE public.indice_macro_serie ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY indice_macro_serie_read ON public.indice_macro_serie FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: lote_execucao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.lote_execucao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: lote_execucao lote_execucao_authenticated_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY lote_execucao_authenticated_all ON public.lote_execucao TO authenticated USING (true) WITH CHECK (true);
 
 --
 -- Name: pendencia; Type: ROW SECURITY; Schema: public; Owner: -
@@ -6533,6 +6704,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_
 GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) TO service_role;
 
 --
+-- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) TO authenticated;
+
+--
 -- Name: FUNCTION fn_revisar_documento(p_documento_id uuid, p_autor text, p_novo_tipo_taxonomia text, p_nova_entidade_nome text, p_novo_periodo_tipo text, p_novo_periodo_ref text, p_motivo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -6725,6 +6902,14 @@ GRANT ALL ON TABLE public.indice_macro_obs TO service_role;
 GRANT ALL ON TABLE public.indice_macro_serie TO anon;
 GRANT ALL ON TABLE public.indice_macro_serie TO authenticated;
 GRANT ALL ON TABLE public.indice_macro_serie TO service_role;
+
+--
+-- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.lote_execucao TO anon;
+GRANT ALL ON TABLE public.lote_execucao TO authenticated;
+GRANT ALL ON TABLE public.lote_execucao TO service_role;
 
 --
 -- Name: TABLE pendencia; Type: ACL; Schema: public; Owner: -

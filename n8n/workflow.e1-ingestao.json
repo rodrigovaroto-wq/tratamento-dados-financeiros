@@ -644,6 +644,33 @@
     {
       "parameters": {
         "operation": "executeQuery",
+        "query": "select fn_registrar_uso_lote($1::uuid,$2::text,$3::jsonb) as resultado",
+        "options": {
+          "queryReplacement": "={{ [$('Upsert Caso (Postgres)').first().json.caso_id, String($execution.id), JSON.stringify($json)] }}"
+        }
+      },
+      "id": "gravar-uso-do-lote",
+      "name": "Gravar Uso do Lote",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        6500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE",
+          "name": "Supabase Postgres (Session Pooler)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
         "query": "select fn_conferir_lote($1::uuid) as resultado",
         "options": {
           "queryReplacement": "={{ $('Upsert Caso (Postgres)').first().json.caso_id }}"
@@ -654,7 +681,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6500,
+        6760,
         0
       ],
       "credentials": {
@@ -970,6 +997,17 @@
       ]
     },
     "Resumo de Custo": {
+      "main": [
+        [
+          {
+            "node": "Gravar Uso do Lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar Uso do Lote": {
       "main": [
         [
           {

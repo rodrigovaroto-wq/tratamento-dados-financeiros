@@ -31,12 +31,22 @@ import { Surgir } from "@/components/surgir";
 // quanto dado já foi arrancado dos PDFs (linhas), quanto tempo cada mandato
 // leva, quanto custa, e o que está parado esperando alguém.
 //
-// DOIS DELES NÃO TÊM DE ONDE SAIR AINDA, e a tela DIZ ISSO em vez de inventar.
-// O custo de API é calculado no n8n (`n8n/lib/custo.mjs`, nó `Resumo de Custo`)
-// e vive só na saída da execução — nenhuma tabela do Postgres guarda um dólar.
-// Mostrar zero seria mentira barata; mostrar "sem medição" com a causa escrita
-// ao lado é o que permite alguém decidir se vale instrumentar. Ver o rodapé
-// desta tela e o `ESTADO.md`.
+// O OITAVO É A COBERTURA, e ele é o único que responde "o número acima é bom?".
+// "1.139 linhas extraídas" parece ótimo até alguém dizer que os documentos
+// tinham 2.893 — que foi exatamente a rodada em que 39% do dado chegou com o
+// checklist verde. Ele fecha a fileira porque uma fração ao lado de totais é o
+// que impede um total grande de passar por bom resultado.
+//
+// O CUSTO PASSOU A TER DE ONDE SAIR (0115). Ele sempre foi calculado no n8n
+// (`n8n/lib/custo.mjs`, nó `Resumo de Custo`), mas morria na saída da execução:
+// nenhuma tabela guardava um dólar. Agora o nó `Gravar Uso do Lote` grava uma
+// linha por execução em `lote_execucao`, e os dois indicadores de dinheiro — e
+// a COBERTURA — são somas dessa tabela.
+//
+// A TELA CONTINUA SABENDO DIZER "NÃO SEI". Se a `0115` não estiver aplicada no
+// banco, a consulta falha e os três indicadores mostram um traço com a causa,
+// em vez de zero. Zero e "não medido" são frases diferentes, e num número de
+// dinheiro a diferença é a que importa.
 
 export const dynamic = "force-dynamic";
 
@@ -130,7 +140,7 @@ function resumoDaPendencia(descricao: string | null): string {
  * "ainda não medimos" — que é informação, não buraco.
  */
 function Indicador({
-  valor, rotulo, detalhe, tom, nota,
+  valor, rotulo, detalhe, tom, nota, barra,
 }: {
   valor: string | null;
   rotulo: string;
@@ -138,6 +148,8 @@ function Indicador({
   tom?: "neutro" | "alerta" | "bom";
   /** por que não há número — só aparece quando `valor` é nulo */
   nota?: string;
+  /** 0..1 — desenha a fração embaixo do número. Só onde a fração É o número. */
+  barra?: number | null;
 }) {
   const corDetalhe =
     tom === "alerta" ? "text-red-700" : tom === "bom" ? "text-emerald-700" : "text-tinta-500";
@@ -151,6 +163,17 @@ function Indicador({
         <p className="indicador-valor">{valor}</p>
       )}
       <p className="indicador-rotulo">{rotulo}</p>
+      {/* A BARRA SÓ EXISTE ONDE A FRAÇÃO É O NÚMERO — hoje, a cobertura. Uma
+          barra ao lado de um total (linhas, dólares) sugeriria um limite que
+          não existe, e barra que insinua meta é pior que barra nenhuma. */}
+      {typeof barra === "number" && (
+        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-tinta-100">
+          <div
+            className={`h-full rounded-full ${barra >= 0.9 ? "bg-emerald-600" : barra >= 0.6 ? "bg-amber-500" : "bg-red-500"}`}
+            style={{ width: `${Math.min(100, Math.max(2, barra * 100))}%` }}
+          />
+        </div>
+      )}
       <p className={`mt-1 min-h-4 text-xs font-medium ${valor === null ? "text-tinta-400" : corDetalhe}`}>
         {valor === null ? (nota ?? "") : (detalhe ?? "")}
       </p>
@@ -199,6 +222,24 @@ export default async function PainelPage() {
           : Promise.resolve({ data: [] }),
       ])
     : [{ data: [] }, { data: [] }];
+
+  // O USO DE IA POR EXECUÇÃO (0115). Consulta à parte e TOLERANTE A FALHA: num
+  // banco sem a migration aplicada a tabela não existe, e o painel inteiro não
+  // pode cair por causa de três indicadores. `error` aqui vira "sem medição",
+  // não uma tela vermelha.
+  const usoRes = ids.length
+    ? await supabase
+        .from("lote_execucao")
+        .select("caso_id, custo_total_usd, contas_nos_documentos, contas_extraidas")
+        .in("caso_id", ids)
+    : { data: [], error: null };
+
+  type UsoDoLote = {
+    caso_id: string;
+    custo_total_usd: number | string | null;
+    contas_nos_documentos: number | null;
+    contas_extraidas: number | null;
+  };
 
   type DocumentoNoPainel = {
     id: string;
@@ -261,14 +302,40 @@ export default async function PainelPage() {
     ? janelas.reduce((s, v) => s + v, 0) / janelas.length
     : null;
 
-  // GASTO COM API — SEM FONTE. O cálculo existe e é bom (`n8n/lib/custo.mjs`
-  // conhece o preço por milhão de tokens dos dois modelos e mede a chamada de
-  // verdade), mas o resultado morre na saída da execução do n8n: nenhuma tabela
-  // do Postgres tem uma coluna de dólar. Enquanto isso for verdade, estes dois
-  // indicadores dizem "sem medição" — e o rodapé diz o que falta para eles
-  // acenderem.
-  const gastoTotalUsd: number | null = null;
-  const gastoMedioUsd: number | null = null;
+  // GASTO E COBERTURA — as somas da `lote_execucao`.
+  //
+  // O MÉDIO É POR MANDATO QUE GASTOU, não pelo total de mandatos. Dividir pelos
+  // 12 da mesa quando só 4 rodaram ingestão daria um número três vezes menor que
+  // a verdade, e a leitura de quem olha ("cada mandato me custa X") ficaria
+  // errada exatamente na direção confortável.
+  //
+  // A COBERTURA é a razão de DUAS SOMAS, não a média das razões. Um lote de 400
+  // linhas com 90% e um de 4 linhas com 25% não fazem 57,5% — fazem 89,4%. Média
+  // de porcentagem é o erro clássico aqui, e ele dá peso de lote grande a lote
+  // minúsculo.
+  const usoErro = Boolean((usoRes as { error?: unknown }).error);
+  const usos = (usoRes.data as UsoDoLote[] | null) ?? [];
+  const casosComGasto = new Set(usos.map((u) => u.caso_id)).size;
+  const gastoTotalUsd: number | null = usoErro || usos.length === 0
+    ? null
+    : usos.reduce((s, u) => s + (Number(u.custo_total_usd) || 0), 0);
+  const gastoMedioUsd: number | null =
+    gastoTotalUsd === null || casosComGasto === 0 ? null : gastoTotalUsd / casosComGasto;
+
+  let contasNosDocs = 0;
+  let contasExtraidas = 0;
+  for (const u of usos) {
+    if (!u.contas_nos_documentos) continue;
+    contasNosDocs += u.contas_nos_documentos;
+    contasExtraidas += u.contas_extraidas ?? 0;
+  }
+  const cobertura: number | null = usoErro || contasNosDocs === 0 ? null : contasExtraidas / contasNosDocs;
+
+  // A causa do traço, escrita uma vez e usada nos três: banco sem a migration é
+  // um problema; nenhuma ingestão ainda é outro; e quem lê precisa saber qual.
+  const semMedicao = usoErro
+    ? "sem medição — a migration 0115 não está aplicada"
+    : "sem medição — nenhuma ingestão registrada ainda";
 
   const dinheiro = (v: number) =>
     v.toLocaleString("pt-BR", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
@@ -379,6 +446,24 @@ export default async function PainelPage() {
             tom={bloqueantes > 0 ? "alerta" : "bom"}
           />
 
+          {/* A COBERTURA É O INDICADOR MAIS DURO DESTA TELA, e por isso ela tem
+              barra: os outros são totais, este é uma FRAÇÃO — quanto do que
+              estava escrito no PDF chegou ao banco. Foi o número que faltava na
+              rodada em que 39% das células chegaram e o checklist ficou verde:
+              "1.139 linhas extraídas" parece ótimo até alguém dizer que o
+              documento tinha 2.893. */}
+          <Indicador
+            valor={cobertura === null ? null : `${Math.round(cobertura * 100)}%`}
+            rotulo="cobertura da extração"
+            barra={cobertura}
+            detalhe={
+              cobertura === null
+                ? null
+                : `${numero(contasExtraidas)} de ${numero(contasNosDocs)} linhas de conta`
+            }
+            tom={cobertura !== null && cobertura < 0.6 ? "alerta" : "bom"}
+            nota={semMedicao}
+          />
           <Indicador
             valor={tempoMedioMs === null ? null : duracaoCurta(tempoMedioMs)}
             rotulo="tempo médio de processamento"
@@ -393,18 +478,19 @@ export default async function PainelPage() {
           <Indicador
             valor={gastoMedioUsd === null ? null : dinheiro(gastoMedioUsd)}
             rotulo="gasto médio de API por mandato"
-            nota="sem medição — o custo não é gravado no banco"
+            detalhe={
+              casosComGasto
+                ? `sobre ${numero(casosComGasto)} ${casosComGasto === 1 ? "mandato que rodou" : "mandatos que rodaram"}`
+                : null
+            }
+            nota={semMedicao}
           />
           <Indicador
             valor={gastoTotalUsd === null ? null : dinheiro(gastoTotalUsd)}
             rotulo="gasto total de API"
-            nota="sem medição — o custo não é gravado no banco"
+            detalhe={usos.length ? `${numero(usos.length)} ${usos.length === 1 ? "execução" : "execuções"}` : null}
+            nota={semMedicao}
           />
-          <div className="bg-white px-4 py-4 text-[11px] leading-relaxed text-tinta-400">
-            O custo por chamada é calculado na ingestão e só aparece na execução
-            do n8n. Para os dois indicadores acima acenderem, ele precisa ser
-            gravado por mandato — hoje nenhuma tabela tem coluna de dólar.
-          </div>
         </div>
       </Surgir>
 
