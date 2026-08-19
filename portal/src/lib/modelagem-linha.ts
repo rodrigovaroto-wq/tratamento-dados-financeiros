@@ -103,3 +103,63 @@ export function vinculoPorLinha(
 ): Map<string, VinculoParaCasar> {
   return new Map(vinculos.map((v) => [chaveDaLinha(v.secao_canonica, v.rotulo_norm), v]));
 }
+
+/** Uma linha de `fn_valores_por_ano`: o valor de um ano para uma linha do caso. */
+export interface ValorPorAno {
+  rotulo_norm: string;
+  secao_canonica: string | null;
+  ano: number;
+  valor: number | string;
+}
+
+/**
+ * A SÉRIE HISTÓRICA DE CADA LINHA, indexada pela MESMA identidade das outras
+ * duas funções deste arquivo: o par (seção canônica, rótulo normalizado).
+ *
+ * POR QUE ELA VIVE AQUI, e não solta na rota do export: era o terceiro lugar do
+ * portal que casava linha por rótulo, e foi o único que ficou de fora quando a
+ * `chaveDaLinha` corrigiu os outros dois — justamente o que decide os NÚMEROS do
+ * modelo. `fn_valores_por_ano` agrupa por (rotulo_norm, secao_canonica, ano) e
+ * devolve a seção; indexando só pelo rótulo, a última seção lida sobrescrevia as
+ * anteriores e todas as linhas homônimas recebiam a mesma série.
+ *
+ * MEDIDO no caso v35: treze rótulos aparecem em duas seções com valores
+ * diferentes — `Empréstimos e Financiamentos` (37.379 no circulante × 44.474 no
+ * não circulante), `Obrigações Tributárias` (13.549 × 7.895), `Financiamentos
+ * FINAME/BNDES` (11.393 × 3.618), `Arrendamentos` (3.118 × 908), `Provisão para
+ * contingências` (−1.900 na despesa × 2.567 no passivo), `Capital social`
+ * (43.000 na DMPL × 45.000 no PL). Cada um entrava no modelo com o número da
+ * OUTRA seção, e o arquivo saía plausível e falso.
+ *
+ * Só os anos de `anosHistoricos` entram: um balancete do ano corrente não é
+ * exercício fechado, e tratá-lo como tal faria a projeção partir de meio ano.
+ */
+export function seriesPorLinha(
+  valores: ValorPorAno[],
+  anosHistoricos: number[],
+): Map<string, Record<string, number>> {
+  const anos = new Set(anosHistoricos);
+  const series = new Map<string, Record<string, number>>();
+  for (const v of valores) {
+    if (!anos.has(v.ano)) continue;
+    const k = chaveDaLinha(v.secao_canonica, v.rotulo_norm);
+    let serie = series.get(k);
+    if (!serie) { serie = {}; series.set(k, serie); }
+    serie[String(v.ano)] = Number(v.valor);
+  }
+  return series;
+}
+
+/**
+ * A série de UMA linha. Linha sem série devolve objeto vazio — é o que acontece
+ * com a conta de outra empresa do grupo (a consulta de valores filtra pela
+ * entidade modelada) e é o comportamento certo: zero explícito, não o número da
+ * empresa ao lado.
+ */
+export function serieDaLinha(
+  series: Map<string, Record<string, number>>,
+  secaoCanonica: string | null,
+  rotuloNorm: string,
+): Record<string, number> {
+  return series.get(chaveDaLinha(secaoCanonica, rotuloNorm)) ?? {};
+}

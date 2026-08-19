@@ -862,6 +862,30 @@ function contexto(ent: EntradaModeloInstitucional): Ctx {
         ancoras.set(alvo.chave, { ...l, valores });
         continue;
       }
+      // DOIS RÓTULOS DIFERENTES PARA A MESMA ÂNCORA: ganha o que DIZ "TOTAL".
+      //
+      // O documento imprime o cabeçalho do grupo e o total do grupo, e os dois
+      // casam com a mesma âncora. Medido no v35: `PASSIVO E PATRIMÔNIO LÍQUIDO`
+      // vale 121.198 (é o cabeçalho da metade direita, sem o passivo circulante
+      // inteiro) e `TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO` vale 158.801 — o
+      // fechamento de verdade, igual ao `TOTAL DO ATIVO`. Antes vencia o primeiro
+      // que a iteração encontrasse: ordem de banco decidindo qual número o modelo
+      // chama de "informado no documento".
+      //
+      // "Total" no rótulo é declaração do próprio documento, não heurística
+      // nossa — e é o critério que a contabilidade usa para distinguir cabeçalho
+      // de fechamento. Quando nenhum dos dois diz "total", o primeiro continua
+      // valendo (é o comportamento anterior, e não há sinal para desempatar).
+      const dizTotal = (x: LinhaModelo) => /\btotal\b/i.test(x.chave) || /\btotal\b/i.test(x.rotulo_norm);
+      if (dizTotal(l) && !dizTotal(atual)) {
+        const anosDoAntigo = atual.valores;
+        const novo: LinhaModelo = { ...l, valores };
+        for (const [ano, v] of Object.entries(anosDoAntigo)) {
+          if (novo.valores[ano] === undefined) novo.valores[ano] = v;
+        }
+        ancoras.set(alvo.chave, novo);
+        continue;
+      }
       for (const [ano, v] of Object.entries(valores)) {
         if (atual.valores[ano] === undefined) atual.valores[ano] = v;
       }
@@ -877,6 +901,107 @@ function contexto(ent: EntradaModeloInstitucional): Ctx {
     const b = blocoDaLinha(l);
     if (!linhasPorBloco.has(b)) linhasPorBloco.set(b, []);
     linhasPorBloco.get(b)!.push(l);
+  }
+
+  // ---- CABEÇALHO DE GRUPO IMPRESSO: fora da soma, e só COM PROVA ----------
+  //
+  // O PROBLEMA. Um balanço brasileiro imprime, dentro de cada seção, o nome do
+  // grupo com o total dele e as contas embaixo: `Contas a Receber 30.020`,
+  // depois `Duplicatas a receber…`, `Clientes…`. Para a extração as duas coisas
+  // são linhas iguais, e `fn_papel_linha` (lista fechada) não reconhece esses
+  // nomes como subtotal — o comentário de `rotulosDeSubtotalInformado` já nomeia
+  // os seis mais comuns. Somando tudo, o grupo entra DUAS VEZES no modelo.
+  //
+  // O detector estrutural do export resolve isso quando a `ordem` das linhas é a
+  // ordem impressa. Quando ela não é — extração antiga sem `ordem`, documento
+  // recomposto, captura por rótulo — não há sequência para ler, e o modelo ficava
+  // sem defesa nenhuma: no v35 o ativo circulante operacional saía 155.939 contra
+  // 67.878 informados, e a linha de reconciliação absorvia 99 mil, ou seja, mais
+  // do que o próprio grupo.
+  //
+  // A REGRA AQUI EXIGE PROVA ARITMÉTICA, e é isso que a torna segura:
+  //
+  //   1. o rótulo tem de ser EXATAMENTE um nome de grupo (lista fechada abaixo) —
+  //      "Estoques" entra, "Estoques de matéria-prima" não;
+  //   2. o documento tem de informar o total DAQUELE grupo (a âncora DOC_*);
+  //   3. a soma das contas extraídas tem de EXCEDER esse total — sem excesso não
+  //      há dupla contagem para explicar, e nada é removido;
+  //   4. remover a linha tem de APROXIMAR a soma do informado, nunca ultrapassá-lo.
+  //
+  // Com isso, o documento simples — que imprime "Estoques" como conta-folha, sem
+  // abertura — nunca perde a conta: lá a soma não excede o informado, e a
+  // condição 3 já barra. A remoção é do MODELO; a linha continua no arquivo, na
+  // aba de dados, com o valor que a extração trouxe.
+  const CABECALHOS_DE_GRUPO = new Set([
+    // ativo circulante
+    "disponivel", "disponibilidades", "caixa e equivalentes", "caixa e equivalentes de caixa",
+    "contas a receber", "clientes", "estoques", "tributos a recuperar", "impostos a recuperar",
+    "outros creditos", "despesas antecipadas", "adiantamentos", "aplicacoes financeiras",
+    "titulos e valores mobiliarios",
+    // ativo não circulante
+    "realizavel a longo prazo", "investimentos", "imobilizado", "intangivel", "ativo permanente",
+    // passivo
+    "fornecedores", "emprestimos e financiamentos", "financiamentos", "obrigacoes tributarias",
+    "obrigacoes fiscais", "obrigacoes trabalhistas", "obrigacoes trabalhistas e sociais",
+    "obrigacoes sociais e trabalhistas", "tributos a recolher", "impostos a recolher",
+    "outras obrigacoes", "outras contas a pagar", "partes relacionadas", "provisoes",
+    "arrendamentos", "adiantamentos de clientes",
+    // patrimônio líquido
+    "capital social", "reservas", "reservas de lucros", "reservas de capital",
+    "ajustes de avaliacao patrimonial",
+  ]);
+  const ANCORA_DO_BLOCO: Partial<Record<BlocoModelo, string>> = {
+    ativo_circulante: "DOC_AC", ativo_nao_circulante: "DOC_ANC",
+    passivo_circulante: "DOC_PC", passivo_nao_circulante: "DOC_PNC",
+    patrimonio_liquido: "DOC_PL",
+  };
+  const anoBase = [...ent.anosHistoricos].sort((a, b) => b - a)[0];
+  if (anoBase !== undefined) {
+    for (const [bloco, chaveAncora] of Object.entries(ANCORA_DO_BLOCO) as Array<[BlocoModelo, string]>) {
+      const lista = linhasPorBloco.get(bloco);
+      const ancora = ancoras.get(chaveAncora);
+      if (!lista || lista.length === 0 || !ancora) continue;
+      const informado = ancora.valores[String(anoBase)];
+      if (typeof informado !== "number" || informado === 0) continue;
+      const valorDe = (l: LinhaModelo) => l.valores[String(anoBase)] ?? 0;
+      let soma = lista.reduce((s, l) => s + valorDe(l), 0);
+      // TOLERÂNCIA EM MÓDULO, e não `informado * 1.005`. O total informado pode
+      // ser NEGATIVO — patrimônio líquido a descoberto é o caso normal num
+      // mandato de reestruturação (a Canastra Indústria do book tem PL −4.221) —
+      // e multiplicar um número negativo por 1,005 afrouxa o limiar para o lado
+      // errado. Nos cenários que medi as duas formas decidem igual (a segunda
+      // guarda segura o caso), mas "meio por cento do tamanho" é o que a regra
+      // quer dizer, e é o que ela passa a dizer.
+      const tolerancia = Math.abs(informado) * 0.005;
+      if (soma - informado <= tolerancia) continue;
+      const candidatos = lista
+        .filter((l) => CABECALHOS_DE_GRUPO.has(chaveDeAncora(l.chave))
+          || CABECALHOS_DE_GRUPO.has(chaveDeAncora(l.rotulo_norm)))
+        .sort((a, b) => Math.abs(valorDe(b)) - Math.abs(valorDe(a)));
+      const remover = new Set<LinhaModelo>();
+      for (const c of candidatos) {
+        const v = valorDe(c);
+        if (v === 0) continue;
+        // VALOR IGUAL AO DE OUTRA LINHA DO BLOCO NÃO É CABEÇALHO — é a MESMA
+        // CONTA TRANSPOSTA COM DOIS RÓTULOS, e a doutrina desta casa (invariante
+        // nº 6, teste 0106h) é explícita: não se apaga conta, segue-se o total
+        // informado e DECLARA-SE o resíduo. "Reservas de lucros 5.000" ao lado de
+        // "Reserva de lucros acumulados 5.000" são duas grafias do mesmo saldo;
+        // um cabeçalho de grupo é a SOMA de vários componentes, e coincidir no
+        // centavo com um deles é assinatura de transposição, não de agrupamento.
+        if (lista.some((o) => o !== c && Math.abs(valorDe(o) - v) < 0.5)) continue;
+        const depois = soma - v;
+        // Só remove o que APROXIMA do informado sem passar do ponto — as duas
+        // comparações em MÓDULO, pelo mesmo motivo da tolerância acima.
+        if (depois - informado < -tolerancia) continue;
+        if (Math.abs(depois - informado) >= Math.abs(soma - informado)) continue;
+        remover.add(c);
+        soma = depois;
+      }
+      if (remover.size > 0) {
+        linhasPorBloco.set(bloco, lista.filter((l) => !remover.has(l)));
+      }
+    }
   }
 
   // ---- normalização de sinal, bloco a bloco --------------------------------
@@ -1674,6 +1799,60 @@ function escreverReconc(
   });
 }
 
+/**
+ * A reconciliação com o TOTAL GERAL do balanço (ativo / passivo+PL).
+ *
+ * Difere da de grupo em UMA coisa, e é a que a torna segura: ela exige que o
+ * documento informe os DOIS totais gerais e que eles concordem entre si. É o
+ * único caso em que "o documento fecha em X" é fato dele, e não escolha nossa —
+ * `TOTAL DO ATIVO` e `TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO` são duas linhas
+ * independentes dizendo o mesmo número. Faltando uma delas, ou discordando as
+ * duas, o ajuste NÃO entra e o CHECK continua acusando: sem evidência dupla, o
+ * modelo não tem como saber qual lado está certo, e escolher um seria inventar.
+ */
+function escreverReconcTotal(
+  g: Grade, ctx: Ctx, r: { chave: string; ancora: string } | null,
+  outraAncora: string, ano: number, hist: boolean, ant: number | null, termos: string[],
+): void {
+  if (!r) return;
+  if (!hist) {
+    g.set(r.chave, ano, ant === null ? 0 : `=${g.ref(r.chave, ant)}`, {
+      fmt: NUM2,
+      nota: "Mantida constante: é o resíduo do REALIZADO (ver a nota do exercício realizado).",
+    });
+    return;
+  }
+  const e = valorDaAncora(ctx, r.ancora, ano);
+  const o = valorDaAncora(ctx, outraAncora, ano);
+  if (!e || !o) {
+    g.set(r.chave, ano, 0, {
+      fmt: NUM2,
+      nota: "O documento deste exercício não informa OS DOIS totais gerais (ativo e passivo+PL). "
+        + "Sem as duas pontas não há evidência de quanto o balanço fecha, e nada é ajustado — o "
+        + "CHECK abaixo mostra a diferença que sobra.",
+    });
+    return;
+  }
+  if (Math.abs(e.valor - o.valor) > 0.5) {
+    g.set(r.chave, ano, 0, {
+      fmt: NUM2,
+      nota: `Os dois totais gerais informados DISCORDAM entre si (${e.valor.toLocaleString("pt-BR")} `
+        + `× ${o.valor.toLocaleString("pt-BR")}): o próprio documento não fecha, ou a extração leu `
+        + "um deles errado. Nada é ajustado — escolher um lado seria inventar o fechamento.",
+    });
+    return;
+  }
+  const soma = termos.length > 0 ? termos.join("+") : "0";
+  g.set(r.chave, ano, `=${e.valor}-(${soma})`, {
+    fmt: NUM2,
+    nota: `Total geral informado no documento: ${e.valor.toLocaleString("pt-BR")}, confirmado pela `
+      + `outra metade do balanço. ${e.nota}\n\n`
+      + "Este resíduo é a diferença entre os totais de GRUPO informados e o total GERAL informado — "
+      + "os dois vêm do mesmo documento e não somam entre si. É dado a reconciliar com quem "
+      + "produziu o documento, não premissa.",
+  });
+}
+
 /** Soma célula a célula, ou zero explícito quando o bloco está vazio. */
 function somaOuZero(g: Grade, chave: string, ano: number, termos: string[], negrito = false) {
   if (termos.length === 0) {
@@ -1740,9 +1919,40 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
 
   g.linha("GROSS", { sinal: "+", rotulo: "GROSS REVENUES", negrito: true, fmt: NUM });
   g.linha("DEDUC", { sinal: "(-)", rotulo: "Deductions", fmt: NUM });
+  // AS RECONCILIAÇÕES DA DRE — o mesmo desenho do balanço, pelo mesmo motivo.
+  //
+  // O QUE ACONTECIA: a cascata soma as CONTAS extraídas e o documento imprime os
+  // SUBTOTAIS dele; extração real repete conta com dois rótulos, perde conta e
+  // classifica conta de resultado fora dos blocos, então os dois nunca batem. No
+  // v35 a DRE do modelo saía com EBIT 7.509 acima e resultado líquido 18.460
+  // acima do que o próprio documento informa — e a linha de conferência acusava,
+  // sem que nada no modelo fosse corrigido. Modelo que não reproduz o realizado
+  // do documento não serve para projetar a partir dele: a base já está errada.
+  //
+  // Cada nível que o documento informa ganha um resíduo DECLARADO, e o total
+  // daquele nível passa a ser o do documento por construção. O resíduo é
+  // constante na projeção (mesma doutrina do balanço: zerá-lo na virada criaria
+  // um salto artificial), e o seu tamanho é o que diz se a extração está boa —
+  // é por isso que ele é uma LINHA, e não um ajuste escondido na fórmula.
+  const recDRE = (chave: string, ancora: string) => ctx.ancoras.has(ancora)
+    ? { chave: `RECONC_${chave}`, ancora } : null;
+  const rNetRev = recDRE("NET_REV", "DOC_RECEITA_LIQUIDA");
+  const rGrossProfit = recDRE("GROSS_PROFIT", "DOC_LUCRO_BRUTO");
+  const rEbit = recDRE("EBIT", "DOC_EBIT");
+  const rNetProfit = recDRE("NET_PROFIT", "DOC_LUCRO_LIQUIDO");
+  const linhaRecDRE = (r: { chave: string; ancora: string } | null, oQue: string) => {
+    if (!r) return;
+    g.linha(r.chave, {
+      rotulo: `    reconciliação com ${oQue} informado no documento`, fmt: NUM2,
+      nota: "dado a reconciliar",
+    });
+  };
+
+  linhaRecDRE(rNetRev, "a receita líquida");
   g.linha("NET_REV", { sinal: "=", rotulo: "NET REVENUES", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("COGS", { sinal: "(-)", rotulo: "COGS", fmt: NUM });
+  linhaRecDRE(rGrossProfit, "o lucro bruto");
   g.linha("GROSS_PROFIT", { sinal: "=", rotulo: "GROSS PROFIT", negrito: true, topo: true, fmt: NUM });
   g.linha("GROSS_MARGIN", { rotulo: "    % margem bruta", fmt: PCT });
   g.pular();
@@ -1751,6 +1961,7 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
   g.linha("EBITDA_MARGIN", { rotulo: "    % margem EBITDA", fmt: PCT });
   g.pular();
   g.linha("DA", { sinal: "(-)", rotulo: "Depreciation and Amortization", fmt: NUM });
+  linhaRecDRE(rEbit, "o EBIT");
   g.linha("EBIT", { sinal: "=", rotulo: "EBIT", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("FIN_RESULT", { sinal: "+", rotulo: "Financial Result", fmt: NUM });
@@ -1762,6 +1973,7 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
   g.linha("TAX", { sinal: "(-)", rotulo: "Income tax", fmt: NUM });
   g.linha("TAX_RATE", { rotulo: "    Alíquota efetiva aplicada", fmt: PCT });
   g.pular();
+  linhaRecDRE(rNetProfit, "o resultado líquido");
   g.linha("NET_PROFIT", { sinal: "=", rotulo: "NET PROFIT", negrito: true, topo: true, fmt: NUM });
   g.linha("NET_MARGIN", { rotulo: "    % margem líquida", fmt: PCT });
 
@@ -1805,11 +2017,22 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
 
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
+    const ant = g.anoAnterior(ano);
     g.set("GROSS", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "GROSS_REVENUES", ano)}`, { fmt: NUM, negrito: true });
     g.set("DEDUC", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "DEDUCOES", ano)}`, { fmt: NUM });
-    g.set("NET_REV", ano, `=${g.ref("GROSS", ano)}-${g.ref("DEDUC", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconc(g, ctx, rNetRev, ano, hist, ant,
+      [`${g.ref("GROSS", ano)}-${g.ref("DEDUC", ano)}`]);
+    g.set("NET_REV", ano,
+      `=${[`${g.ref("GROSS", ano)}-${g.ref("DEDUC", ano)}`,
+           ...(rNetRev ? [g.ref(rNetRev.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("COGS", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "CUSTOS", ano)}`, { fmt: NUM });
-    g.set("GROSS_PROFIT", ano, `=${g.ref("NET_REV", ano)}-${g.ref("COGS", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconc(g, ctx, rGrossProfit, ano, hist, ant,
+      [`${g.ref("NET_REV", ano)}-${g.ref("COGS", ano)}`]);
+    g.set("GROSS_PROFIT", ano,
+      `=${[`${g.ref("NET_REV", ano)}-${g.ref("COGS", ano)}`,
+           ...(rGrossProfit ? [g.ref(rGrossProfit.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("GROSS_MARGIN", ano, `=IF(${g.ref("NET_REV", ano)}<>0,${g.ref("GROSS_PROFIT", ano)}/${g.ref("NET_REV", ano)},0)`, { fmt: PCT });
     g.set("SGA", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "SGA", ano)}`, { fmt: NUM });
     // EBITDA = lucro bruto - SG&A + depreciação que está DENTRO de custo/despesa.
@@ -1820,7 +2043,12 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
       { fmt: NUM, negrito: true });
     g.set("EBITDA_MARGIN", ano, `=IF(${g.ref("NET_REV", ano)}<>0,${g.ref("EBITDA", ano)}/${g.ref("NET_REV", ano)},0)`, { fmt: PCT });
     g.set("DA", ano, `=${g.externa("Revenues, COGS & SG&A", gRec, "DEPRECIACAO", ano)}`, { fmt: NUM });
-    g.set("EBIT", ano, `=${g.ref("EBITDA", ano)}-${g.ref("DA", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconc(g, ctx, rEbit, ano, hist, ant,
+      [`${g.ref("EBITDA", ano)}-${g.ref("DA", ano)}`]);
+    g.set("EBIT", ano,
+      `=${[`${g.ref("EBITDA", ano)}-${g.ref("DA", ano)}`,
+           ...(rEbit ? [g.ref(rEbit.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("FIN_RESULT", ano, `=${g.ref("FIN_EXP", ano)}+${g.ref("FIN_INC", ano)}+${g.ref("FIN_OUTROS", ano)}`, { fmt: NUM });
     g.set("EBT", ano, `=${g.ref("EBIT", ano)}+${g.ref("FIN_RESULT", ano)}`, { fmt: NUM, negrito: true });
     // TRIBUTO SÓ SOBRE LUCRO POSITIVO. Aplicar a alíquota sobre prejuízo geraria
@@ -1858,7 +2086,12 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
       });
       g.set("TAX", ano, `=-MAX(0,${g.ref("EBT", ano)})*${g.ref("TAX_RATE", ano)}`, { fmt: NUM });
     }
-    g.set("NET_PROFIT", ano, `=${g.ref("EBT", ano)}+${g.ref("TAX", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconc(g, ctx, rNetProfit, ano, hist, ant,
+      [`${g.ref("EBT", ano)}+${g.ref("TAX", ano)}`]);
+    g.set("NET_PROFIT", ano,
+      `=${[`${g.ref("EBT", ano)}+${g.ref("TAX", ano)}`,
+           ...(rNetProfit ? [g.ref(rNetProfit.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
     g.set("NET_MARGIN", ano, `=IF(${g.ref("NET_REV", ano)}<>0,${g.ref("NET_PROFIT", ano)}/${g.ref("NET_REV", ano)},0)`, { fmt: PCT });
 
     // ---- a conferência, ano a ano -------------------------------------------
@@ -3042,6 +3275,32 @@ function abaBalanco(
   for (const l of ancNaoImob) g.linha(chaveLinha("anc", l), { rotulo: l.chave, fmt: NUM });
   linhaReconc(rANC, "ativo não circulante");
   g.linha("ANC", { rotulo: "ATIVO NÃO CIRCULANTE", negrito: true, topo: true, fmt: NUM });
+  // A RECONCILIAÇÃO COM O TOTAL GERAL — o passo que faltava para o modelo FECHAR.
+  //
+  // O QUE ACONTECIA, medido no v35: cada GRUPO já seguia o total informado (as
+  // linhas de reconciliação acima), mas os totais de grupo do próprio documento
+  // não somam o total geral dele — circulante 67.878 + não circulante 101.200 =
+  // 169.078 contra `TOTAL DO ATIVO` 158.801. Do outro lado a diferença é maior
+  // ainda. Resultado: `ATIVO TOTAL` 10.277 acima do documento e o CHECK em
+  // −20.529 em TODAS as colunas. Um modelo que não fecha não se move: fluxo,
+  // revolver e alavancagem passam a ser aritmética sobre um balanço impossível.
+  //
+  // A REGRA É CONSERVADORA DE PROPÓSITO. O ajuste só entra quando o documento
+  // informa OS DOIS totais gerais (ativo e passivo+PL) e eles CONCORDAM entre si
+  // — aí a evidência é dupla e o fechamento do documento é fato, não escolha
+  // nossa. Se ele informa só um lado, ou se os dois discordam, NADA é ajustado: o
+  // CHECK continua acusando, porque nesse caso o modelo não tem como saber qual
+  // número é o certo, e forçar um deles seria inventar.
+  const temTotaisGerais = ctx.ancoras.has("DOC_ATIVO") && ctx.ancoras.has("DOC_PASSIVO_PL");
+  const rTotalAtivo = temTotaisGerais ? { chave: "RECONC_ATIVO_TOTAL", ancora: "DOC_ATIVO" } : null;
+  const rTotalPassivo = temTotaisGerais
+    ? { chave: "RECONC_PASSIVO_TOTAL", ancora: "DOC_PASSIVO_PL" } : null;
+  if (rTotalAtivo) {
+    g.linha(rTotalAtivo.chave, {
+      rotulo: "    reconciliação com o ATIVO TOTAL informado no documento", fmt: NUM2,
+      nota: "dado a reconciliar",
+    });
+  }
   g.linha("ATIVO", { rotulo: "ATIVO TOTAL", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("PC_OPER", { rotulo: "Passivo circulante operacional", fmt: NUM });
@@ -3061,6 +3320,12 @@ function abaBalanco(
   g.linha("REPERFILAMENTO", { rotulo: "Redução de dívida SEM efeito caixa (acumulada)", fmt: NUM });
   linhaReconc(rPL, "patrimônio líquido");
   g.linha("PL", { rotulo: "PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
+  if (rTotalPassivo) {
+    g.linha(rTotalPassivo.chave, {
+      rotulo: "    reconciliação com o PASSIVO + PL informado no documento", fmt: NUM2,
+      nota: "dado a reconciliar",
+    });
+  }
   g.linha("PASSIVO_PL", { rotulo: "PASSIVO + PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   g.pular();
   g.linha("CHECK", { rotulo: "CHECK — Ativo − (Passivo + PL) deve ser ZERO", negrito: true, fmt: NUM2 });
@@ -3108,7 +3373,12 @@ function abaBalanco(
     const somaANC = [g.ref("IMOB", ano), ...ancNaoImob.map((l) => g.ref(chaveLinha("anc", l), ano))];
     escreverReconc(g, ctx, rANC, ano, hist, ant, somaANC);
     somaOuZero(g, "ANC", ano, [...somaANC, ...(rANC ? [g.ref(rANC.chave, ano)] : [])], true);
-    g.set("ATIVO", ano, `=${g.ref("AC", ano)}+${g.ref("ANC", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconcTotal(g, ctx, rTotalAtivo, "DOC_PASSIVO_PL", ano, hist, ant,
+      [g.ref("AC", ano), g.ref("ANC", ano)]);
+    g.set("ATIVO", ano,
+      `=${[g.ref("AC", ano), g.ref("ANC", ano),
+           ...(rTotalAtivo ? [g.ref(rTotalAtivo.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
 
     g.set("PC_OPER", ano, `=${g.externa("Working Capital", gWC, "ESP_PC", ano)}`, { fmt: NUM });
     g.set("DIVIDA_CP", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_DIVIDA_CP", ano)}`, {
@@ -3179,7 +3449,12 @@ function abaBalanco(
     somaOuZero(g, "PL", ano,
       [...somaPLextraido, g.ref("LUCROS_ACUM", ano), g.ref("REPERFILAMENTO", ano),
        ...(rPL ? [g.ref(rPL.chave, ano)] : [])], true);
-    g.set("PASSIVO_PL", ano, `=${g.ref("PC", ano)}+${g.ref("PNC", ano)}+${g.ref("PL", ano)}`, { fmt: NUM, negrito: true });
+    escreverReconcTotal(g, ctx, rTotalPassivo, "DOC_ATIVO", ano, hist, ant,
+      [g.ref("PC", ano), g.ref("PNC", ano), g.ref("PL", ano)]);
+    g.set("PASSIVO_PL", ano,
+      `=${[g.ref("PC", ano), g.ref("PNC", ano), g.ref("PL", ano),
+           ...(rTotalPassivo ? [g.ref(rTotalPassivo.chave, ano)] : [])].join("+")}`,
+      { fmt: NUM, negrito: true });
 
     // O CHECK. Formatação condicional não seria suficiente: o número tem de estar
     // na cara, e o diagnóstico tem de dizer o que fazer.

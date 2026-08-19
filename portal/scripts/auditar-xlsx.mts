@@ -84,12 +84,32 @@ export function auditarWorkbook(
     itens.push({ chave, pergunta, ok, medida, naoAplicavel });
 
   // ---- 1. As 14 abas do modelo existem ------------------------------------
+  //
+  // ARQUIVO SEM MODELO NÃO É ARQUIVO QUEBRADO. O portal tem DOIS botões: o de
+  // dados (as abas linha a linha, sem projeção nenhuma) e o de modelagem. E
+  // mesmo no completo, o modelo só é construído quando o mandato configurou a
+  // modelagem — antes disso o arquivo sai legítimo e sem as 14 abas.
+  //
+  // Auditar esse arquivo item a item do modelo produzia CINCO reprovações
+  // seguidas ("balanço não fecha", "sem área de impressão", …) sobre um arquivo
+  // correto. Alarme falso em ferramenta de aceite custa o mesmo que alarme
+  // ausente: quem vê cinco vermelhos num arquivo bom aprende a ignorar o
+  // vermelho. Aqui o auditor DIZ o que está auditando e cala o que não se
+  // aplica — os itens do arquivo inteiro (fórmula com erro, recálculo ao abrir)
+  // continuam valendo, porque esses valem para qualquer .xlsx que saia daqui.
   const faltando = ABAS_MODELO.filter((a) => !wb.getWorksheet(a));
-  add("abas", "As 14 abas do modelo institucional estão no arquivo?",
-    faltando.length === 0, faltando.length ? `faltam: ${faltando.join(", ")}` : "14 de 14");
+  const semModelo = faltando.length === ABAS_MODELO.length;
+  if (semModelo) {
+    add("abas", "Este arquivo traz o modelo institucional?", true,
+      "não — é o export de DADOS (ou um mandato sem modelagem configurada). Os itens do modelo "
+      + "não se aplicam; os do arquivo inteiro, abaixo, sim.", true);
+  } else {
+    add("abas", "As 14 abas do modelo institucional estão no arquivo?",
+      faltando.length === 0, faltando.length ? `faltam: ${faltando.join(", ")}` : "14 de 14");
+  }
 
-  const bs = wb.getWorksheet("Balance Sheet");
-  const is = wb.getWorksheet("Income Statement");
+  const bs = semModelo ? undefined : wb.getWorksheet("Balance Sheet");
+  const is = semModelo ? undefined : wb.getWorksheet("Income Statement");
 
   // ---- 2. O BALANÇO FECHA, em toda coluna ---------------------------------
   //
@@ -107,7 +127,7 @@ export function auditarWorkbook(
     add("balanco_fecha", "O balanço fecha (Ativo − Passivo − PL = 0) em TODOS os exercícios?",
       r !== null && desvios.length === 0,
       desvios.length ? desvios.join(" · ") : `zero nas ${cols.length} colunas`);
-  } else {
+  } else if (!semModelo) {
     add("balanco_fecha", "O balanço fecha em todos os exercícios?", false, "aba ausente");
   }
 
@@ -167,7 +187,7 @@ export function auditarWorkbook(
   // produzia antes da Fase A (`secao_canonica` nula: 132 contas caíam fora dos
   // blocos), e nenhum invariante acusava porque tudo "fechava". Este item existe
   // para "não recebi dado" nunca mais se parecer com "a empresa não tem operação".
-  {
+  if (!semModelo) {
     const rec2 = wb.getWorksheet("Revenues, COGS & SG&A");
     const cols = bs ? colunasDeAno(bs) : [];
     const rAtivo = bs ? linhaPorRotulo(bs, "ATIVO TOTAL") : null;
@@ -224,18 +244,20 @@ export function auditarWorkbook(
       : `xl/workbook.xml: fullCalcOnLoad ${recalculoNoArquivo ? "presente" : "AUSENTE"}`);
 
   // ---- 7. As 14 abas imprimem -------------------------------------------
-  const semArea = ABAS_MODELO.filter((a) => {
-    const ws = wb.getWorksheet(a);
-    return !ws || !ws.pageSetup?.printArea;
-  });
-  add("imprime", "As 14 abas do modelo declaram área de impressão?",
-    semArea.length === 0, semArea.length ? `sem área: ${semArea.join(", ")}` : "14 de 14");
+  if (!semModelo) {
+    const semArea = ABAS_MODELO.filter((a) => {
+      const ws = wb.getWorksheet(a);
+      return !ws || !ws.pageSetup?.printArea;
+    });
+    add("imprime", "As 14 abas do modelo declaram área de impressão?",
+      semArea.length === 0, semArea.length ? `sem área: ${semArea.join(", ")}` : "14 de 14");
+  }
 
   // ---- 8. O painel de premissas está montado e COMPÕE --------------------
   //
   // A promessa de editar dentro do Excel. Aqui se confere a mecânica (a fórmula
   // compõe índice e spread); que o dropdown reprojeta ao clicar é item humano.
-  const rec = wb.getWorksheet("Revenues, COGS & SG&A");
+  const rec = semModelo ? undefined : wb.getWorksheet("Revenues, COGS & SG&A");
   const rPainel = rec ? linhaPorRotulo(rec, "= crescimento nominal aplicado") : null;
   if (rec && rPainel !== null) {
     const cols = colunasDeAno(rec);
@@ -244,13 +266,13 @@ export function auditarWorkbook(
     const compoe = /\(1\+N\(/.test(f) && /\)\*\(1\+/.test(f);
     add("painel", "O painel de premissas COMPÕE índice macro × spread (não soma)?",
       compoe, compoe ? f.slice(0, 60) : `fórmula inesperada: ${f.slice(0, 60)}`);
-  } else {
+  } else if (!semModelo) {
     add("painel", "O painel de premissas está montado?", true,
       "o caso não tem premissa de crescimento — painel não se aplica", true);
   }
 
   // ---- 9. Série de NÍVEL não carrega variação ----------------------------
-  const anual = wb.getWorksheet("Anual");
+  const anual = semModelo ? undefined : wb.getWorksheet("Anual");
   const rFx = anual ? linhaPorRotulo(anual, "R$/US$ — final de período") : null;
   if (anual && rFx !== null) {
     const cols = colunasDeAno(anual);
@@ -263,6 +285,69 @@ export function auditarWorkbook(
     }
     add("cambio", "A linha de câmbio traz NÍVEL (nunca variação, nunca negativo)?",
       fora.length === 0, fora.length ? fora.join(" · ") : "todos os anos plausíveis ou vazios");
+  }
+
+  // ---- 9b. O TAMANHO DO RESÍDUO DE RECONCILIAÇÃO -------------------------
+  //
+  // POR QUE ESTE ITEM EXISTE, e por que sem ele os dois itens acima passariam a
+  // ser decorativos. O modelo fecha o realizado NO NÚMERO DO DOCUMENTO: cada
+  // grupo do balanço, os dois totais gerais e os quatro níveis da DRE têm uma
+  // linha de reconciliação que absorve a diferença entre a soma das contas
+  // extraídas e o total impresso. É o que torna o modelo utilizável — um balanço
+  // que não fecha não projeta — e é também o que faz "o balanço fecha" e "a DRE
+  // reproduz o documento" passarem por construção.
+  //
+  // O que NÃO passa por construção é o TAMANHO do resíduo. Ele é a medida direta
+  // da qualidade da extração daquele caso: zero significa que as contas extraídas
+  // somam exatamente o que o documento imprime; 13% da receita significa que o
+  // modelo está apoiado no total do documento e que as contas por baixo dele não
+  // fecham — o analista precisa saber disso ANTES de usar a abertura por conta.
+  //
+  // O corte de 5% é de materialidade, na faixa usual de auditoria (5% do
+  // resultado, 0,5–1% de receita/ativo): abaixo dele o resíduo é ruído de
+  // arredondamento e classificação; acima, é o tipo de buraco que muda a leitura
+  // de uma linha inteira.
+  if (!semModelo) {
+    const alvos: Array<{ aba: string; base: string }> = [
+      { aba: "Balance Sheet", base: "ATIVO TOTAL" },
+      { aba: "Income Statement", base: "NET REVENUES" },
+    ];
+    const achados: string[] = [];
+    let pior = 0;
+    let medidos = 0;
+    for (const { aba, base } of alvos) {
+      const ws = wb.getWorksheet(aba);
+      if (!ws) continue;
+      const rBase = linhaPorRotulo(ws, base);
+      if (rBase === null) continue;
+      const cols = colunasDeAno(ws);
+      for (let r = 1; r <= ws.rowCount; r++) {
+        const rot = String(ws.getRow(r).getCell(3).value ?? "");
+        if (!/^\s*reconciliação com /.test(rot)) continue;
+        for (const c of cols) {
+          const v = avaliarCelula(ws, c, r);
+          const b = avaliarCelula(ws, c, rBase);
+          if (typeof v !== "number" || typeof b !== "number" || Math.abs(b) < 0.5) continue;
+          medidos++;
+          const pct = Math.abs(v) / Math.abs(b);
+          if (pct > pior) pior = pct;
+          if (pct > 0.05) {
+            achados.push(`${aba}!${c}${r} ${rot.trim().slice(0, 46)}: `
+              + `${v.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} `
+              + `(${(pct * 100).toFixed(1)}% de ${base})`);
+          }
+        }
+      }
+    }
+    add("residuo_reconciliacao",
+      "O resíduo de reconciliação com o documento é IMATERIAL (≤5% da base)?",
+      achados.length === 0,
+      medidos === 0
+        ? "o caso não tem linha de reconciliação — as contas extraídas somam o total informado"
+        : achados.length > 0
+          ? `${achados.length} acima de 5% · ${achados.slice(0, 3).join(" · ")}`
+          : `maior resíduo: ${(pior * 100).toFixed(1)}% da base`,
+      medidos === 0);
   }
 
   // ---- 10. Os gráficos, e se eles imprimem ------------------------------

@@ -8,7 +8,8 @@ import {
 } from "@/lib/export";
 import type { CampoExtraido } from "@/lib/types";
 import {
-  casarVinculosComLinhas, type LinhaParaCasar, type VinculoParaCasar,
+  casarVinculosComLinhas, seriesPorLinha, serieDaLinha,
+  type LinhaParaCasar, type VinculoParaCasar,
 } from "@/lib/modelagem-linha";
 
 // exceljs (usado em lib/export.ts) usa Buffer/streams do Node — precisa do
@@ -436,12 +437,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       const nProj = par?.anos_projetados ?? 5;
       const anosProjetados = Array.from({ length: nProj }, (_, i) => ultimoReal + 1 + i);
 
-      const porRotulo = new Map<string, Record<string, number>>();
-      for (const v of valores) {
-        if (!anosHistoricos.includes(v.ano)) continue;
-        if (!porRotulo.has(v.rotulo_norm)) porRotulo.set(v.rotulo_norm, {});
-        porRotulo.get(v.rotulo_norm)![String(v.ano)] = Number(v.valor);
-      }
+      // A série histórica de cada conta vem indexada pelo PAR (seção, rótulo) —
+      // a mesma identidade do banco. Ver `seriesPorLinha`: indexar só pelo
+      // rótulo fazia a linha de uma seção receber os números da outra.
+      const series = seriesPorLinha(valores, anosHistoricos);
       const linhasModelo: LinhaModelo[] = ((linhasRes.data ?? []) as unknown as Array<{
         secao_canonica: string | null; chave: string; rotulo_norm: string;
         papel: LinhaModelo["papel"]; unidade: string | null; moeda: string | null;
@@ -449,7 +448,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       }>).map((l) => ({
         secao_canonica: l.secao_canonica, chave: l.chave, rotulo_norm: l.rotulo_norm,
         papel: l.papel, unidade: l.unidade, moeda: l.moeda, documentos: l.documentos,
-        valores: porRotulo.get(l.rotulo_norm) ?? {},
+        valores: serieDaLinha(series, l.secao_canonica, l.rotulo_norm),
       }));
 
       // A base macro do modelo: realizado + Focus, com a fonte de cada célula.

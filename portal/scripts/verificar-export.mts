@@ -42,10 +42,15 @@
 import { readFileSync } from "node:fs";
 import type ExcelJS from "exceljs";
 import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
-import { buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade, tipoColunaNaoEntidade, type DocumentoParaExport } from "../src/lib/export";
+import {
+  buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade,
+  rotulosDeSubtotalInformado, tipoColunaNaoEntidade, type DocumentoParaExport,
+} from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 import { classificarConta } from "../src/lib/statement-templates.ts";
-import { casarVinculosComLinhas, chaveDaLinha, vinculoPorLinha } from "../src/lib/modelagem-linha.ts";
+import {
+  casarVinculosComLinhas, chaveDaLinha, serieDaLinha, seriesPorLinha, vinculoPorLinha,
+} from "../src/lib/modelagem-linha.ts";
 import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
@@ -3900,6 +3905,87 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(casarVinculosComLinhas(semSecao, linhasDoCaso)[0].valorBase === null,
     "(0104b) …e ele fica órfão, com valor base nulo, em vez de herdar o de um homônimo qualquer");
 
+  // ---- (0109d) OCORRÊNCIA REPETIDA NÃO É COMPONENTE DE SUBTOTAL ----------
+  //
+  // O detector estrutural por ORDEM lê a sequência impressa: subtotal, depois os
+  // componentes dele. A extração real repete o mesmo rótulo dentro do mesmo
+  // documento — é o que um comparativo produz quando `periodo_coluna` não vem
+  // preenchido, e o caso v35 traz TODA conta duplicada assim.
+  //
+  // Com as repetições dentro da sequência o detector errava dos dois lados, e os
+  // dois estão travados aqui:
+  //
+  //   (a) FALSO POSITIVO: a segunda ocorrência do próprio candidato bate com ele,
+  //       e uma DESPESA REAL virava "subtotal" — sumia do modelo. Medido no v35:
+  //       SG&A 1.900 menor e EBIT 1.900 maior, sem nenhum aviso;
+  //   (b) FALSO NEGATIVO: os componentes de um subtotal DE VERDADE também vêm
+  //       duplicados e somam o dobro — o subtotal deixava de ser reconhecido e
+  //       era somado junto com os componentes, dobrando o grupo.
+  {
+    const dup = (c: CampoExtraido) => [c, { ...c, id: `${c.id}#2` }];
+    const itensDRE = [
+      ...dup(campo({ chave: "Despesas gerais e administrativas", secao_canonica: "despesas_operacionais",
+                     valor_num: -9640, documento_versao_id: "vDup", ordem: 1 })),
+      ...dup(campo({ chave: "Provisão para contingências trabalhistas e cíveis",
+                     secao_canonica: "despesas_operacionais",
+                     valor_num: -1900, documento_versao_id: "vDup", ordem: 3 })),
+      ...dup(campo({ chave: "Imposto de renda e contribuição social - corrente",
+                     secao_canonica: "impostos_lucro",
+                     valor_num: -420, documento_versao_id: "vDup", ordem: 5 })),
+    ].map((c) => ({ campo: c, colKey: "2025" }));
+    const achadosDRE = rotulosDeSubtotalInformado(new Map([["DRE", itensDRE]]), null);
+    checar(!achadosDRE.some((r) => /provisao para contingencias|imposto de renda/.test(r)),
+      "(0109d) despesa repetida no mesmo documento NÃO é declarada subtotal de si mesma",
+      achadosDRE.join(" · ") || "(nenhum)");
+
+    const itensBP = [
+      ...dup(campo({ chave: "Provisões", secao_canonica: "passivo_nao_circulante",
+                     valor_num: 5000, documento_versao_id: "vDup2", ordem: 1 })),
+      ...dup(campo({ chave: "Provisão para contingências cíveis", secao_canonica: "passivo_nao_circulante",
+                     valor_num: 2000, documento_versao_id: "vDup2", ordem: 3 })),
+      ...dup(campo({ chave: "Provisão para contingências trabalhistas", secao_canonica: "passivo_nao_circulante",
+                     valor_num: 3000, documento_versao_id: "vDup2", ordem: 5 })),
+    ].map((c) => ({ campo: c, colKey: "2025" }));
+    const achadosBP = rotulosDeSubtotalInformado(new Map([["Balanço", itensBP]]), null);
+    checar(achadosBP.some((r) => r.endsWith("||provisoes")),
+      "(0109d) …e o subtotal DE VERDADE continua sendo reconhecido mesmo com todas as "
+      + "ocorrências duplicadas — sem isto o grupo dobrava",
+      achadosBP.join(" · ") || "(nenhum)");
+  }
+
+  // ---- (0104c) A SÉRIE HISTÓRICA TAMBÉM É POR (SEÇÃO, RÓTULO) -------------
+  //
+  // O terceiro lugar que casava linha por rótulo, e o mais caro: as SÉRIES que
+  // viram os números do modelo. `fn_valores_por_ano` devolve (rotulo_norm,
+  // secao_canonica, ano, valor) — indexando só pelo rótulo, a última seção lida
+  // sobrescrevia as anteriores e a linha do circulante passava a projetar com o
+  // saldo do NÃO circulante. Nada dava erro: o arquivo saía plausível e falso.
+  {
+    const valores = [
+      { rotulo_norm: "emprestimos e financiamentos", secao_canonica: "passivo_circulante",
+        ano: 2025, valor: 44474 },
+      { rotulo_norm: "emprestimos e financiamentos", secao_canonica: "passivo_nao_circulante",
+        ano: 2025, valor: 37379 },
+      { rotulo_norm: "emprestimos e financiamentos", secao_canonica: "passivo_circulante",
+        ano: 2024, valor: 40000 },
+      // Exercício FORA do histórico (balancete do ano corrente): não entra.
+      { rotulo_norm: "emprestimos e financiamentos", secao_canonica: "passivo_circulante",
+        ano: 2026, valor: 99999 },
+    ];
+    const series = seriesPorLinha(valores, [2024, 2025]);
+    const pc = serieDaLinha(series, "passivo_circulante", "emprestimos e financiamentos");
+    const pnc = serieDaLinha(series, "passivo_nao_circulante", "emprestimos e financiamentos");
+    checar(pc["2025"] === 44474 && pnc["2025"] === 37379,
+      "(0104c) cada seção recebe a SUA série — o homônimo da outra seção não sobrescreve",
+      `PC ${JSON.stringify(pc)} · PNC ${JSON.stringify(pnc)}`);
+    checar(pc["2024"] === 40000 && pc["2026"] === undefined,
+      "(0104c) …a série acumula os anos históricos e IGNORA exercício fora do histórico",
+      JSON.stringify(pc));
+    checar(Object.keys(serieDaLinha(series, "custos", "conta de outra empresa")).length === 0,
+      "(0104c) …e linha sem série (conta de outra empresa do grupo) devolve VAZIO — zero "
+      + "explícito, nunca o número do homônimo");
+  }
+
   // Órfão de verdade (documento reextraído com outro rótulo) segue aparecendo:
   // sumir com ele esconderia configuração que `fn_conferir_modelagem` denuncia.
   const orfao = casarVinculosComLinhas([{
@@ -4738,6 +4824,134 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       `espelho ${JSON.stringify(vEsp)} · origem ${JSON.stringify(vOrig)}`);
   }
 
+  // ---- (0109g) CABEÇALHO DE GRUPO IMPRESSO SAI DA SOMA, COM PROVA --------
+  //
+  // `Estoques`, `Contas a Receber`, `Disponível` e afins não estão na lista
+  // fechada da `fn_papel_linha`, então chegam ao modelo como CONTA — e o
+  // documento os imprime como cabeçalho, com os componentes logo abaixo. Somados
+  // junto, o grupo entra duas vezes. O detector estrutural do export resolve isso
+  // quando a `ordem` das linhas é a ordem impressa; quando não é, o modelo
+  // precisa da própria prova aritmética: o total informado do grupo.
+  //
+  // Aqui o grupo informa 100 e as contas somam 160 (`Estoques` 60 + os dois
+  // componentes dele, 40 e 20, + `Clientes` 40). O excesso é exatamente o
+  // cabeçalho: ele sai da composição e a reconciliação fica em ZERO — nem um
+  // centavo escondido.
+  {
+    const entradaCab = {
+      ...entradaModelo,
+      anosHistoricos: [2025], anosProjetados: [2026],
+      linhas: [
+        linhaAnos("ativo_circulante", "Ativo Circulante", { "2025": 100 }, "BALANCO", "subtotal"),
+        linhaAnos("ativo_circulante", "Estoques", { "2025": 60 }),
+        linhaAnos("ativo_circulante", "Produtos acabados", { "2025": 40 }),
+        linhaAnos("ativo_circulante", "Matérias-primas", { "2025": 20 }),
+        linhaAnos("ativo_circulante", "Clientes - mercado interno", { "2025": 40 }),
+      ],
+      vinculos: [], premissas: [],
+    };
+    const wbCab = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: entradaCab as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const wc = wbCab.getWorksheet("Working Capital");
+    const rotulos: string[] = [];
+    if (wc) {
+      for (let r = 1; r <= wc.rowCount; r++) rotulos.push(String(wc.getRow(r).getCell(3).value ?? "").trim());
+    }
+    checar(!rotulos.includes("Estoques") && rotulos.includes("Produtos acabados")
+      && rotulos.includes("Matérias-primas"),
+      "(0109g) o cabeçalho de grupo impresso fica FORA da composição do modelo, e os "
+      + "componentes dele continuam lá — o grupo não dobra",
+      `Estoques: ${rotulos.includes("Estoques")} · componentes: `
+      + `${rotulos.includes("Produtos acabados")}/${rotulos.includes("Matérias-primas")}`);
+
+    const bsCab = wbCab.getWorksheet("Balance Sheet");
+    let rReconc: number | null = null;
+    if (bsCab) {
+      for (let r = 1; r <= bsCab.rowCount; r++) {
+        if (String(bsCab.getRow(r).getCell(3).value ?? "").trim()
+            === "reconciliação com o ativo circulante informado no documento") { rReconc = r; break; }
+      }
+    }
+    const vReconc = bsCab && rReconc !== null ? avaliarCelula(bsCab, "E", rReconc) : null;
+    checar(typeof vReconc === "number" && Math.abs(vReconc) < 0.5,
+      "(0109g) …e a reconciliação do grupo fica em ZERO: a soma das contas passa a ser o "
+      + "total informado, sem resíduo inventado",
+      JSON.stringify(vReconc));
+  }
+
+  // ---- (0109f) PATRIMÔNIO NEGATIVO NÃO FAZ O MODELO APAGAR CONTA ---------
+  //
+  // A remoção de CABEÇALHO DE GRUPO IMPRESSO (`Contas a Receber`, `Estoques`,
+  // `Capital social`…) só age quando a soma das contas EXCEDE o total que o
+  // documento informa para aquele grupo. Com total NEGATIVO — patrimônio líquido
+  // a descoberto, que é o caso normal num mandato de reestruturação (a Canastra
+  // Indústria do book tem PL −4.221) — comparar com `informado * 1.005` inverte o
+  // sentido da desigualdade e a regra passaria a "achar excesso" onde não há,
+  // apagando conta justamente na empresa mais frágil do grupo.
+  //
+  // Aqui o PL informado é NEGATIVO e as duas contas somam exatamente ele: não há
+  // excesso, e nenhuma das duas pode sumir do balanço do modelo.
+  {
+    const entradaPLneg = {
+      ...entradaModelo,
+      anosHistoricos: [2025], anosProjetados: [2026],
+      linhas: [
+        linhaAnos("patrimonio_liquido", "Capital social", { "2025": 40000 }),
+        linhaAnos("patrimonio_liquido", "Prejuízos acumulados", { "2025": -44221 }),
+        linhaAnos("patrimonio_liquido", "Patrimônio Líquido", { "2025": -4221 }, "BALANCO", "subtotal"),
+        linhaAnos("ativo_circulante", "Caixa e equivalentes de caixa", { "2025": 1000 }),
+      ],
+      vinculos: [], premissas: [],
+    };
+    const wbPL = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "completo",
+      modeloInstitucional: entradaPLneg as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+    const bsPL = wbPL.getWorksheet("Balance Sheet");
+    const temRotulo = (rot: string) => {
+      if (!bsPL) return false;
+      for (let r = 1; r <= bsPL.rowCount; r++) {
+        if (String(bsPL.getRow(r).getCell(3).value ?? "").trim() === rot) return true;
+      }
+      return false;
+    };
+    checar(temRotulo("Capital social") && temRotulo("Prejuízos acumulados"),
+      "(0109f) com patrimônio líquido NEGATIVO e sem excesso, nenhuma conta do PL é removida "
+      + "do modelo — nem a que tem nome de cabeçalho de grupo",
+      `Capital social: ${temRotulo("Capital social")} · Prejuízos acumulados: ${temRotulo("Prejuízos acumulados")}`);
+  }
+
+  // ---- (0109e) O ARQUIVO DE DADOS TAMBÉM RECALCULA AO ABRIR --------------
+  //
+  // As abas classificadas escrevem todo total como `=SUM(...)` e NÃO gravam valor
+  // em cache — é o que torna o arquivo auditável dentro do Excel. Sem
+  // `fullCalcOnLoad` essas células abrem VAZIAS até alguém apertar F9, e vazio
+  // num total se lê como zero.
+  //
+  // A flag era ligada dentro do modelo institucional, que só existe no export
+  // COMPLETO de mandato já modelado. O arquivo do botão "Exportar dados" — o que
+  // serve para conferir a extração — saía sem ela. Medido no `xl/workbook.xml`
+  // dos dois arquivos antes da correção.
+  {
+    const wbDados = buildExportWorkbook({
+      caso: entradaModelo.caso, documentos: docsModelo, campos: camposModelo,
+      agora: new Date("2026-08-05T12:00:00Z"), modo: "dados",
+    });
+    const calc = (wbDados as unknown as { calcProperties?: { fullCalcOnLoad?: boolean } }).calcProperties;
+    checar(calc?.fullCalcOnLoad === true,
+      "(0109e) o export de DADOS pede recálculo ao abrir — sem isso todo total sai vazio no Excel",
+      JSON.stringify(calc ?? null));
+    const itensDados = auditarWorkbook(wbDados, true);
+    const reprovadosDados = itensDados.filter((i) => !i.ok && !i.naoAplicavel);
+    checar(reprovadosDados.length === 0,
+      "(0109e) …e o auditor NÃO inventa reprovação de modelo num arquivo que não tem modelo",
+      reprovadosDados.map((i) => `${i.chave} (${i.medida})`).join(" · ") || "(nenhuma)");
+  }
+
   // ---- (0108) O AUDITOR DO ARQUIVO ENTREGUE NÃO PODE MENTIR ---------------
   //
   // `auditar-xlsx.mts` é a Fase D: o comando que responde, sobre um .xlsx pronto, o
@@ -4750,9 +4964,27 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   {
     const itens = auditarWorkbook(wbMod);
     const reprovados = itens.filter((i) => !i.ok && !i.naoAplicavel);
-    checar(itens.length >= 8 && reprovados.length === 0,
-      "(0108) o auditor do arquivo entregue aprova o modelo desta fixture em todos os itens",
-      `${itens.length} itens · reprovados: ${reprovados.map((i) => `${i.chave} (${i.medida})`).join(" · ")}`);
+    // O RESÍDUO DE RECONCILIAÇÃO É REPROVADO NESTA FIXTURE DE PROPÓSITO, e ele é
+    // a prova de que o item novo funciona.
+    //
+    // Esta fixture carrega, deliberadamente, a MESMA conta com dois rótulos
+    // ("Reservas de lucros" e "Reserva de lucros acumulados", 5.000 cada — ver
+    // 0106h). O modelo segue o total informado no documento e escreve a diferença
+    // numa linha de reconciliação, sem apagar conta nenhuma; o auditor mede o
+    // TAMANHO dessa linha e diz que ela é material. As duas coisas estão certas ao
+    // mesmo tempo: o arquivo está internamente coerente E a extração por trás dele
+    // tem um buraco que o analista precisa ver antes de usar a abertura por conta.
+    //
+    // Por isso o esperado aqui não é "zero reprovados": é "nada além do resíduo".
+    const semResiduo = reprovados.filter((i) => i.chave !== "residuo_reconciliacao");
+    checar(itens.length >= 8 && semResiduo.length === 0,
+      "(0108) o auditor do arquivo entregue aprova o modelo desta fixture em todos os itens "
+      + "(menos o resíduo de reconciliação, que esta fixture tem de propósito)",
+      `${itens.length} itens · reprovados: ${semResiduo.map((i) => `${i.chave} (${i.medida})`).join(" · ")}`);
+    const residuo = itens.find((i) => i.chave === "residuo_reconciliacao");
+    checar(residuo !== undefined && !residuo.ok && /patrim/i.test(residuo.medida),
+      "(0108) …e ACUSA o resíduo da conta duplicada do patrimônio líquido, com o tamanho dele",
+      residuo ? `${residuo.ok ? "aprovou" : "reprovou"}: ${residuo.medida}` : "item ausente");
 
     // E TEM DE REPROVAR o que está errado, ITEM POR ITEM. "Reprovou alguma coisa"
     // não serve como prova: um auditor com um único item sensível e oito itens
