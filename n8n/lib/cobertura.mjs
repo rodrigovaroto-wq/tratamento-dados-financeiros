@@ -212,6 +212,68 @@ export function linhasComNumero(texto) {
 }
 
 /**
+ * Quantas CÉLULAS DE VALOR uma linha do texto vai produzir na extração.
+ *
+ * ISTO CONSERTA UM ERRO DE UNIDADE QUE DESLIGAVA O FATIAMENTO INTEIRO, e o erro
+ * é o terceiro da mesma família neste arquivo (os dois primeiros estão nos
+ * comentários de `linhasDeConta` e de `LIMIAR_COBERTURA`). `MAX_CELULAS_POR_BLOCO`
+ * é derivado como "quantas CÉLULAS cabem em 60% do teto de saída" — 234 — e vinha
+ * sendo aplicado a uma contagem de LINHAS. Não é a mesma coisa: o nó `Extract From
+ * File` entrega o texto agrupado por linha (pela coordenada Y), e uma linha de
+ * balanço comparativo de três exercícios produz TRÊS células.
+ *
+ * MEDIDO NOS 38 DOCUMENTOS DO `book-canastra`, com o texto real que o nó entrega
+ * (`pdf/TEXTO_EXTRAIDO.json`): a razão células/linha vai de **1,67 a 6,81** (o
+ * aging tem seis faixas por linha). Consequência, também medida: **NENHUM
+ * documento do book era fatiado** — todos davam `blocos = 1`, porque nem o mais
+ * denso passava de 234 LINHAS. E o `17_Livro_Razao_Fornecedores`, com 393 células
+ * em 102 linhas, ia inteiro numa chamada: **16.506 tokens de saída, 101% do teto**
+ * — truncamento certo, no documento que motivou as três camadas.
+ *
+ * A CORREÇÃO ANOTADA NO `ESTADO.md` ERA OUTRA, e era a errada: "extrair por faixa
+ * de PÁGINA — mudança de topologia". Não é preciso mudar topologia nenhuma. Com o
+ * peso em células, o fatiamento por ÂNCORA que já existe corta o razão em blocos
+ * que cabem, e um bloco pode chegar a UMA linha. Página nunca foi o eixo do
+ * problema; a unidade era.
+ *
+ * A CONTAGEM ERRA PARA CIMA DE PROPÓSITO, e o número está medido: somando todo
+ * token numérico da linha, o estimador dá **+64% agregado** sobre a verdade
+ * declarada pelo gerador do book (pior caso +187%, no razão — data, número de
+ * lançamento e código de conta são números que não viram célula). Errar para cima
+ * fatia mais fino que o necessário: no book inteiro são ~4 chamadas a mais, ~US$
+ * 0,12 sobre US$ 1,29 (+9%). Errar para BAIXO trunca, e truncar custa o dado —
+ * é a mesma escolha que `FRACAO_DO_TETO` já documenta.
+ *
+ * MEDI A VERSÃO REFINADA E ELA FOI REJEITADA: tirando data, CNPJ, código de conta
+ * (`1.1.01.001`) e percentual, o erro agregado cai de +64% para +23% — mas
+ * **quatro documentos passam a SUBESTIMAR**, e o balancete analítico subestima em
+ * 43%. Menos erro médio pelo preço de errar para o lado que trunca é troca ruim.
+ * Fica registrado para quem for tentar de novo: o ganho existe, o risco também.
+ */
+export function celulasDaLinha(linha) {
+  const texto = typeof linha === 'string' ? linha : String(linha ?? '');
+  // Número com separador de milhar/decimal OU número simples, com o parêntese
+  // contábil de negativo tolerado nas duas pontas.
+  const achados = texto.match(/-?\d{1,3}(?:\.\d{3})+(?:,\d+)?|-?\d+(?:[.,]\d+)?/g);
+  // MÍNIMO 1: a linha veio de `linhasComNumero`, então ela TEM dígito. Devolver
+  // zero faria o acumulador do fatiamento não avançar e um bloco crescer sem fim.
+  return achados && achados.length > 0 ? achados.length : 1;
+}
+
+/**
+ * O peso, em células, de cada linha — paralelo à lista de linhas.
+ *
+ * Existe como função própria porque `planejarFatias` tem de continuar
+ * AUTO-CONTIDA (os nós Code a embutem por `toString()`, e uma referência a outra
+ * função do módulo vira `ReferenceError` na primeira execução real). Então quem
+ * chama calcula os pesos e passa; a expressão do que é uma célula fica em UM
+ * lugar só.
+ */
+export function celulasEstimadas(linhas) {
+  return (Array.isArray(linhas) ? linhas : []).map((l) => celulasDaLinha(l));
+}
+
+/**
  * O plano de fatiamento de UM documento.
  *
  * Devolve sempre pelo menos um bloco — documento pequeno é "um bloco só", não
@@ -225,35 +287,88 @@ export function linhasComNumero(texto) {
  * extrator: "comece em «Duplicatas a receber ... 22.310» e termine em «(-) PCLD
  * ... (1.900)»". Vira uma instrução verificável em vez de uma proporção.
  */
-export function planejarFatias(linhas, maxPorBloco) {
+export function planejarFatias(linhas, maxPorBloco, pesos) {
   const lista = Array.isArray(linhas) ? linhas : [];
   const max = Number.isFinite(Number(maxPorBloco)) && Number(maxPorBloco) > 0
     ? Math.floor(Number(maxPorBloco))
     : 234;
   const total = lista.length;
-  if (total <= max) {
-    return [{ bloco: 1, blocos: 1, de: 0, ate: Math.max(0, total - 1), ancoraInicio: null, ancoraFim: null, celulas: total }];
+  // O PESO É EM CÉLULAS, e sem ele cada linha vale 1 — que é o comportamento
+  // antigo e continua correto para documento de uma coluna. Quem tem o texto
+  // calcula os pesos com `celulasEstimadas` e passa; esta função não pode
+  // chamá-la (tem de ficar auto-contida para os nós Code).
+  const peso = (i) => {
+    const p = Array.isArray(pesos) ? Number(pesos[i]) : 1;
+    return Number.isFinite(p) && p > 0 ? p : 1;
+  };
+  let soma = 0;
+  for (let i = 0; i < total; i += 1) soma += peso(i);
+  if (soma <= max) {
+    return [{
+      bloco: 1, blocos: 1, de: 0, ate: Math.max(0, total - 1),
+      ancoraInicio: null, ancoraFim: null, celulas: soma, linhas: total, acimaDoTeto: false,
+    }];
   }
-  // Blocos de tamanho PAREJO em vez de "enche o primeiro e sobra um toco": um
-  // bloco final de 3 linhas dá ao modelo uma faixa curta demais para ancorar.
-  const blocos = Math.ceil(total / max);
-  const porBloco = Math.ceil(total / blocos);
-  const out = [];
-  for (let i = 0; i < blocos; i += 1) {
-    const de = i * porBloco;
-    const ate = Math.min(total - 1, de + porBloco - 1);
-    if (de > ate) break;
-    out.push({
-      bloco: i + 1,
-      blocos,
-      de,
-      ate,
-      ancoraInicio: lista[de],
-      ancoraFim: lista[ate],
-      celulas: ate - de + 1,
-    });
-  }
-  return out;
+
+  // DUAS PASSADAS, e a primeira existe porque `ceil(soma / max)` MENTE. Ela
+  // supõe que o corte cai onde se quiser; ele cai entre LINHAS, e a linha nunca
+  // é partida (ela é a âncora, e meia âncora não localiza nada no PDF). Com
+  // linhas de peso 4 e teto 10, `ceil` prevê 4 blocos e o alvo de 10 produz
+  // blocos de 12 — acima do teto que a função existe para respeitar. Medido
+  // assim, escrevendo esta função: [12, 12, 12, 4].
+  //
+  // Passada 1: guloso com o TETO como restrição dura, para saber de quantos
+  // blocos o documento precisa DE FATO.
+  const cortarCom = (alvo) => {
+    const out = [];
+    let de = 0;
+    let acumulado = 0;
+    for (let i = 0; i < total; i += 1) {
+      const p = peso(i);
+      // Estourou o teto ao incluir esta linha? Fecha ANTES dela — a menos que o
+      // bloco esteja vazio, e aí a linha sozinha já passa do teto e não há o que
+      // fazer além de declarar (`acimaDoTeto`).
+      if (acumulado > 0 && acumulado + p > max) {
+        out.push({ de, ate: i - 1, celulas: acumulado });
+        de = i;
+        acumulado = 0;
+      }
+      acumulado += p;
+      const ultima = i === total - 1;
+      // Cumpriu o alvo de equilíbrio? Fecha, desde que sobre linha para os
+      // blocos que faltam.
+      const podeFechar = alvo > 0 && acumulado >= alvo && !ultima;
+      if (ultima || podeFechar) {
+        out.push({ de, ate: i, celulas: acumulado });
+        de = i + 1;
+        acumulado = 0;
+      }
+    }
+    return out;
+  };
+
+  const semAlvo = cortarCom(0);
+  // Passada 2: agora que o número REAL de blocos é conhecido, reparte parejo.
+  // Sem isto o último bloco vira um toco de uma linha, curto demais para ancorar.
+  const alvo = soma / semAlvo.length;
+  const cortes = cortarCom(alvo);
+  const reais = cortes.length;
+  return cortes.map((c, k) => ({
+    bloco: k + 1,
+    // O DECLARADO TEM DE SER O REAL: se a instrução diz "bloco 2 de 3" num plano
+    // de 2, o modelo procura um terço que não existe.
+    blocos: reais,
+    de: c.de,
+    ate: c.ate,
+    ancoraInicio: lista[c.de],
+    ancoraFim: lista[c.ate],
+    celulas: c.celulas,
+    linhas: c.ate - c.de + 1,
+    // UMA LINHA SÓ QUE JÁ PASSA DO TETO. Não há corte mais fino que a linha, e o
+    // caso não pode ficar em silêncio: é o único resíduo de truncamento que
+    // sobra depois desta correção, e ele tem de aparecer para quem lê a execução.
+    acimaDoTeto: c.celulas > max,
+  }));
 }
 
 /**
@@ -319,6 +434,15 @@ export function juntarBlocos(blocos) {
       if (chave !== null) linhas.add(chave);
     }
     if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);
+    // O RESÍDUO DE TRUNCAMENTO QUE O FATIAMENTO NÃO RESOLVE. Uma linha que
+    // sozinha já passa do teto de saída não tem corte mais fino — ela é a
+    // âncora, e meia âncora não localiza nada no PDF. Isso tem de chegar à fila
+    // de revisão: é a diferença entre "não deu" e a perda silenciosa que as três
+    // camadas existem para acabar.
+    if (b.bloco_acima_do_teto) {
+      motivos.push(`bloco ${b.bloco}: uma linha sozinha já passa do teto de saída do modelo — `
+        + 'não há corte mais fino que a linha, e a resposta deste bloco pode ter vindo cortada');
+    }
   }
 
   // `ordem` é renumerada no conjunto: ela significa "posição na leitura do

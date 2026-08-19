@@ -1638,6 +1638,40 @@ test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intac
   assert.equal(doGrande[0].json.celulas_no_documento, 461, 'a régua da camada 3 segue viajando');
 });
 
+test('Camada 2: o COMPARATIVO é fatiado pelas CÉLULAS, não pelas linhas', async () => {
+  // O DEFEITO QUE ISTO TRAVA. `MAX_CELULAS_POR_BLOCO` são 234 CÉLULAS (60% do teto
+  // de saída ÷ 42 tokens por célula), e o nó aplicava esse número a uma contagem
+  // de LINHAS. O `Extract From File` entrega o texto agrupado por linha, e uma
+  // linha de comparativo de três exercícios produz TRÊS células — o corte ficava
+  // 3× mais frouxo do que o nome dele diz. Medido nos 38 documentos do
+  // book-canastra: NENHUM era fatiado, e o livro razão ia inteiro numa chamada
+  // pedindo 101% do teto de saída.
+  //
+  // 180 linhas de TRÊS colunas são 540 células: cabiam pela conta de linhas
+  // (180 < 234) e não cabem pela de células.
+  const comparativo = {
+    json: {
+      documento_versao_id: 'ver-comparativo',
+      linhas_do_texto: Array.from({ length: 180 },
+        (_, i) => `conta ${'x'.repeat(1 + (i % 4))}  1.000  2.000  3.000`),
+      openai_body: { model: 'gpt-4o', messages: [
+        { role: 'system', content: 'PROMPT DE SISTEMA' },
+        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: bp.pdf.' }, { type: 'file' }] },
+      ] },
+    },
+  };
+  const out = await run('Fatiar Extracao', { items: [comparativo] });
+  assert.ok(out.length >= 3, `540 células não cabem em 234: viraram ${out.length} bloco(s)`);
+  // Todo bloco declara o MESMO total, e é o total REAL — "bloco 2 de 3" num plano
+  // de 2 manda o modelo procurar um terço que não existe.
+  for (const i of out) assert.equal(i.json.blocos, out.length);
+  assert.match(out[0].json.openai_body.messages[1].content[0].text,
+    new RegExp(`BLOCO 1 DE ${out.length}`));
+  // E as faixas cobrem o documento inteiro, sem buraco.
+  assert.equal(out[0].json.bloco_de, 0);
+  assert.equal(out[out.length - 1].json.bloco_ate, 179);
+});
+
 test('Camada 2: documento SEM medida (escaneado) vai inteiro, nunca fatiado às cegas', async () => {
   const out = await run('Fatiar Extracao', { items: [{ json: {
     documento_versao_id: 'ver-escaneado', celulas_no_documento: null, linhas_do_texto: null,

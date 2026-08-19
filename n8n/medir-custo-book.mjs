@@ -52,6 +52,10 @@ import {
   MODELO_CLASSIFICACAO,
   MODELO_EXTRACAO,
 } from './lib/custo.mjs';
+import {
+  linhasComNumero, celulasEstimadas, planejarFatias,
+  MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS,
+} from './lib/cobertura.mjs';
 import { SYSTEM_PROMPT, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,12 +85,43 @@ const TOKENS_PROMPT_SISTEMA = Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TO
 //    baixo é a que deixa o lote começar e morrer no meio (o incidente v31).
 const TOKENS_POR_LINHA_PLANO = 64;
 
-// Colunas de valor do documento, LIDAS DO NOME do arquivo pela mesma
-// `classifyByFilename` da produção: "2025x2024x2023" são três colunas de
-// período, "12M25" é uma. O limite fica declarado: colunas de EMPRESA (o balanço
-// combinado tem sete) não aparecem no nome, então este medidor SUBESTIMA a
-// economia justamente nos documentos onde ela é maior.
-function colunasDoDocumento(c) {
+// AS CÉLULAS, AS COLUNAS E OS BLOCOS — MEDIDOS NO TEXTO, com as MESMAS funções
+// que rodam em produção (`lib/cobertura.mjs`).
+//
+// Até 19/08 as colunas eram LIDAS DO NOME do arquivo ("2025x2024x2023" são três,
+// "12M25" é uma) e os blocos eram fixados em 1, com o comentário declarando as
+// duas limitações: coluna de EMPRESA não aparece no nome, e "este medidor lê o
+// METRICAS.json, que conta linhas mas não as tem para fatiar".
+//
+// A SEGUNDA LIMITAÇÃO NUNCA FOI REAL: o mesmo `gerar.py` grava
+// `TEXTO_EXTRAIDO.json` — o texto agrupado por linha, que é exatamente a forma
+// que o nó `Extract From File` entrega ao pipeline. Com ele, este medidor deixa
+// de estimar por proxy e passa a rodar a conta de produção sobre o insumo de
+// produção. É o que um medidor tem de fazer para poder acusar divergência.
+function medidasDoTexto(linhasDoTexto) {
+  const linhas = linhasComNumero((linhasDoTexto || []).join('\n'));
+  if (linhas.length === 0) return null;
+  const pesos = celulasEstimadas(linhas);
+  const celulas = pesos.reduce((a, b) => a + b, 0);
+  const fatias = planejarFatias(linhas, MAX_CELULAS_POR_BLOCO, pesos);
+  return {
+    linhas: linhas.length,
+    celulas,
+    // A razão células/linhas É o número de colunas de valor, e conta a de
+    // EMPRESA junto — sem ler nome de arquivo nenhum.
+    colunas: Math.max(1, Math.round(celulas / linhas.length)),
+    blocos: fatias.length,
+    // O pior bloco é o que decide se algo trunca. O total do DOCUMENTO não
+    // decide nada desde que o fatiamento existe — e o aviso deste script passou
+    // meses dizendo o contrário.
+    piorBlocoCelulas: Math.max(...fatias.map((f) => f.celulas)),
+    algumBlocoAcimaDoTeto: fatias.some((f) => f.acimaDoTeto),
+  };
+}
+
+// Fallback: sem o texto (book antigo, sem `TEXTO_EXTRAIDO.json`), volta a ler as
+// colunas do NOME, como antes. Fica declarado que é o caminho pior.
+function colunasDoNome(c) {
   const ref = c?.periodo?.referencia;
   if (typeof ref !== 'string') return 1;
   const partes = ref.split(',').filter(Boolean);
@@ -94,12 +129,32 @@ function colunasDoDocumento(c) {
 }
 
 
-function medirDocumento(m) {
+function medirDocumento(m, linhasDoTexto) {
   const c = classifyByFilename(m.arquivo);
   const entradaPdf = m.paginas * TOKENS_POR_PAGINA_IMAGEM;
-  const colunas = colunasDoDocumento(c);
+  const med = medidasDoTexto(linhasDoTexto);
+  // O CUSTO DE REFERÊNCIA NÃO MUDA DE RÉGUA, e a razão é que ele está CALIBRADO
+  // contra a única fatura real que existe: o dono rodou o book-vertentes e pagou
+  // US$ 0,90; este modelo, no formato daquela época, estima US$ 0,87. Trocar a
+  // entrada dele pela estimativa nova de células mexeria no número que serve de
+  // referência para tudo — e a estimativa nova erra +53% para cima de propósito
+  // (ver `celulasDaLinha`), o que é bom para NÃO TRUNCAR e ruim para prever
+  // fatura. Duas perguntas, duas réguas, e cada uma com a sua.
+  const colunas = colunasDoNome(c);
   const saida = tokensDeSaida(m.linhas_com_numero, colunas);
   const saidaPlana = m.linhas_com_numero * TOKENS_POR_LINHA_PLANO;
+  // E ESTAS SÃO AS MEDIDAS DE PRODUÇÃO, que respondem outra pergunta: em quantas
+  // chamadas o documento vai sair, e o PIOR BLOCO cabe no teto?
+  //
+  // É o pior BLOCO que decide truncamento, não o documento. Desde que o `Fatiar
+  // Extracao` existe, comparar a saída do DOCUMENTO com o teto responde uma
+  // pergunta que ninguém faz — e foi essa comparação que fez este script
+  // anunciar, por meses, que o livro razão ia truncar e que "a saída é extrair
+  // por faixa de página, não feita".
+  const celulasEstim = med ? med.celulas : m.linhas_com_numero;
+  const colunasEstim = med ? med.colunas : colunas;
+  const blocos = med ? med.blocos : 1;
+  const saidaPiorBloco = med ? tokensDeSaida(med.piorBlocoCelulas, colunasEstim) : saida;
 
   const extracao = custoDaChamada({
     prompt_tokens: TOKENS_PROMPT_SISTEMA + entradaPdf,
@@ -141,7 +196,12 @@ function medirDocumento(m) {
     chamadas: c.precisa_fallback_openai ? 2 : 1,
     paginas: m.paginas,
     linhas: m.linhas_com_numero,
+    celulas_estimadas: celulasEstim,
+    colunas_estimadas: colunasEstim,
     colunas,
+    blocos,
+    tokens_saida_pior_bloco: saidaPiorBloco,
+    bloco_acima_do_teto: med ? med.algumBlocoAcimaDoTeto : false,
     tokens_entrada: TOKENS_PROMPT_SISTEMA + entradaPdf,
     tokens_saida: saida,
     tokens_saida_plano: saidaPlana,
@@ -172,7 +232,14 @@ if (!existsSync(caminhoMetricas)) {
 }
 
 const { livro, documentos } = JSON.parse(readFileSync(caminhoMetricas, 'utf8'));
-const medidos = documentos.map(medirDocumento);
+// O TEXTO REAL, na forma que o nó `Extract From File` entrega. Ausente em book
+// gerado por versão antiga do gerador — e aí cada documento cai no caminho de
+// proxy (colunas pelo nome, um bloco), que é o comportamento anterior.
+const caminhoTexto = resolve(dir, 'TEXTO_EXTRAIDO.json');
+const textoPorArquivo = existsSync(caminhoTexto)
+  ? (JSON.parse(readFileSync(caminhoTexto, 'utf8')).documentos ?? {})
+  : {};
+const medidos = documentos.map((m) => medirDocumento(m, textoPorArquivo[m.arquivo]));
 
 const totalUSD = Number(medidos.reduce((s, d) => s + d.usd, 0).toFixed(4));
 const totalTexto = Number(medidos.reduce((s, d) => s + d.usd_se_pdf_fosse_texto, 0).toFixed(4));
@@ -216,12 +283,15 @@ const vereditoPlano = orcamentoDoLote({ documentos: medidos.length, chamadasPorD
 // o tamanho do conserto — e o que denuncia, na próxima vez, se a conta por
 // conteúdo começar a divergir do custo medido.
 //
-// `blocos: 1` aqui é honesto e limitado: este medidor lê o METRICAS.json do
-// gerador, que conta linhas mas não as tem para fatiar. Em produção o número de
-// blocos vem de `planejarFatias` sobre o texto real.
+// AGORA COM AS TRÊS MEDIDAS DE PRODUÇÃO: células estimadas do texto, colunas
+// pela razão células/linhas, e blocos por `planejarFatias` sobre o texto real. O
+// `blocos: 1` de antes vinha com a ressalva "este medidor lê o METRICAS.json, que
+// conta linhas mas não as tem para fatiar" — e a ressalva era falsa: o mesmo
+// gerador grava `TEXTO_EXTRAIDO.json`, que é o texto agrupado por linha.
 const vereditoPorConteudo = orcamentoDoLotePorConteudo({
   documentos: medidos.map((d) => ({
-    celulas: d.linhas, paginas: d.paginas, colunas: d.colunas, blocos: 1,
+    celulas: d.celulas_estimadas, paginas: d.paginas, colunas: d.colunas_estimadas,
+    blocos: d.blocos,
     precisaFallback: d.chamadas > 1, bytes: null,
   })),
   tokensPromptSistema: TOKENS_PROMPT_SISTEMA,
@@ -259,10 +329,20 @@ if (comoJson) {
   console.log(`  • no formato PLANO (uma entrada por conta × coluna, até 13/08/2026): ${usd(totalPlano)} ` +
     `— o agrupamento cortou ${(100 - totalUSD / totalPlano * 100).toFixed(0)}% ` +
     `(${totalSaida.toLocaleString('pt-BR')} tokens de saída contra ${totalSaidaPlano.toLocaleString('pt-BR')}).`);
+  // O DOCUMENTO INTEIRO E O PIOR BLOCO, lado a lado — porque só o segundo decide
+  // truncamento, e a primeira metade desta linha, sozinha, já disse "109% do
+  // teto" sobre um documento que sai em quatro chamadas.
   console.log(`  • saída do documento mais pesado: ${maisPesado.tokens_saida.toLocaleString('pt-BR')} tokens ` +
     `(${(maisPesado.tokens_saida / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto de ${MAX_OUTPUT_TOKENS.toLocaleString('pt-BR')}) ` +
     `— ${maisPesado.arquivo}; no formato plano seriam ${maisPesado.tokens_saida_plano.toLocaleString('pt-BR')} ` +
     `(${(maisPesado.tokens_saida_plano / MAX_OUTPUT_TOKENS * 100).toFixed(0)}%).`);
+  console.log(`    ele sai em ${maisPesado.blocos} bloco(s), e é o BLOCO que precisa caber: o pior ` +
+    `deles pede ${maisPesado.tokens_saida_pior_bloco.toLocaleString('pt-BR')} tokens ` +
+    `(${(maisPesado.tokens_saida_pior_bloco / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto).`);
+  const fatiados = medidos.filter((d) => d.blocos > 1);
+  console.log(`  • fatiamento: ${fatiados.length} documento(s) em mais de um bloco, ` +
+    `${medidos.reduce((a, d) => a + d.blocos, 0)} chamada(s) de extração no total ` +
+    `(uma por bloco)${fatiados.length ? ` — ${fatiados.map((d) => `${d.arquivo.replace(/\.pdf$/, '')} (${d.blocos})`).join(', ')}` : ''}.`);
 
   console.log(`\n== o veredito do orçamento ${veredito.versao} (lib/custo.mjs, teto de US$ ${TETO_EXECUCAO_USD})`);
   console.log(`  estimativa do guarda: ${(bytesDoLote / 1024).toFixed(0)} KB × US$ 10,5/MB × ` +
@@ -309,25 +389,50 @@ for (const d of medidos) {
   }
 }
 
-// 3. TRUNCAMENTO: a saída de um documento não cabe no teto de tokens do modelo.
-//    Isto NÃO derruba o script, e a escolha é deliberada — não existe correção
-//    disponível nesta fatia (16.384 é o teto de saída do gpt-4o, não uma
-//    configuração nossa; a saída é dividir o documento em faixas de página, que
-//    é mudança de topologia). Mas também não pode ficar em silêncio: é a
-//    família de defeito do "teste v18", em que 6 de 16 documentos voltaram com o
-//    JSON cortado. Aparece nomeado, com o número, em toda execução do CI.
+// 3. TRUNCAMENTO: A PERGUNTA É SOBRE O PIOR BLOCO, NÃO SOBRE O DOCUMENTO.
+//
+//    ESTE AVISO ESTAVA MEDINDO A COISA ERRADA, e o texto dele dizia "a saída é
+//    extrair por faixa de página — fatia própria, não feita". Duas coisas
+//    erradas numa frase: o `Fatiar Extracao` EXISTE desde 13/08 e corta o
+//    documento por faixa ancorada, e faixa de PÁGINA nunca foi o eixo do
+//    problema. O que estava quebrado era a UNIDADE do corte — o fatiamento
+//    recebia contagem de LINHAS onde o teto é em CÉLULAS, e por isso nenhum dos
+//    38 documentos do book era fatiado (ver `celulasDaLinha` em lib/cobertura).
+//
+//    Corrigida a unidade, o que interessa é: cada BLOCO cabe? A saída do
+//    documento inteiro deixou de decidir qualquer coisa. No book, depois da
+//    correção: o livro razão sai em 4 blocos, o pior deles a 28% do teto.
+//
+//    O aviso continua sem derrubar o script, e continua nomeando com número — é
+//    a família de defeito do "teste v18", em que 6 de 16 documentos voltaram com
+//    o JSON cortado. O que resta de irreparável é UMA linha que sozinha não
+//    caiba no teto: não há corte mais fino que a linha (ela é a âncora), e
+//    `planejarFatias` marca esse bloco com `acimaDoTeto` em vez de calar.
 const arriscados = medidos
-  .filter((d) => d.tokens_saida > MAX_OUTPUT_TOKENS * 0.8)
-  .sort((a, b) => b.tokens_saida - a.tokens_saida);
+  .filter((d) => d.tokens_saida_pior_bloco > MAX_OUTPUT_TOKENS * 0.8)
+  .sort((a, b) => b.tokens_saida_pior_bloco - a.tokens_saida_pior_bloco);
 if (arriscados.length && !comoJson) {
-  console.log(`\nATENÇÃO — ${arriscados.length} documento(s) perto ou acima do teto de saída ` +
-    `de ${MAX_OUTPUT_TOKENS.toLocaleString('pt-BR')} tokens. Acima de 100% a resposta vem truncada ` +
-    `(finish_reason=length): abre pendência, não perde em silêncio, mas o documento fica sem parte ` +
-    `dos dados. A saída é extrair por faixa de página — fatia própria, não feita.`);
+  console.log(`\nATENÇÃO — ${arriscados.length} documento(s) com BLOCO perto ou acima do teto de ` +
+    `saída de ${MAX_OUTPUT_TOKENS.toLocaleString('pt-BR')} tokens. Acima de 100% a resposta vem ` +
+    `truncada (finish_reason=length): abre pendência, não perde em silêncio, mas o bloco fica sem ` +
+    `parte dos dados. O corte mais fino possível é UMA linha — ela é a âncora, e meia âncora não ` +
+    `localiza nada no PDF.`);
   for (const d of arriscados) {
-    console.log(`  • ${d.arquivo}: ${d.tokens_saida.toLocaleString('pt-BR')} tokens ` +
-      `(${(d.tokens_saida / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto) — ` +
-      `${d.linhas} células de valor em ${d.colunas} coluna(s)`);
+    console.log(`  • ${d.arquivo}: pior bloco com ${d.tokens_saida_pior_bloco.toLocaleString('pt-BR')} ` +
+      `tokens (${(d.tokens_saida_pior_bloco / MAX_OUTPUT_TOKENS * 100).toFixed(0)}% do teto) em ` +
+      `${d.blocos} bloco(s)${d.bloco_acima_do_teto ? ' — LINHA ÚNICA acima do teto, sem corte possível' : ''}`);
+  }
+}
+
+// 3b. E O CONTRÁRIO TAMBÉM É INVARIANTE: documento cujo pior bloco passa do teto
+//     e que NÃO foi fatiado é o defeito que a correção da unidade consertou. Se
+//     ele voltar, é regressão — e esta vez REPROVA, porque agora existe conserto.
+for (const d of medidos) {
+  if (d.tokens_saida_pior_bloco > MAX_OUTPUT_TOKENS && d.blocos <= 1 && !d.bloco_acima_do_teto) {
+    falhas.push(
+      `${d.arquivo}: pior bloco em ${d.tokens_saida_pior_bloco} tokens (acima do teto de ` +
+      `${MAX_OUTPUT_TOKENS}) e o documento NÃO foi fatiado — o fatiamento por células deixou de ` +
+      `funcionar`);
   }
 }
 

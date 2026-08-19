@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0123_mutuos_a_natureza_fora_da_linha.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 546 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
+| **Suítes** | n8n 293 · export 546 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -160,6 +160,69 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O FATIAMENTO ESTAVA DESLIGADO — e a correção anotada aqui era a errada (19/08, sessão 52)
+
+**O que estava escrito nesta lista:** *"O item mais denso do book ainda estoura o teto de saída:
+`17_Livro_Razao_Fornecedores` mede 17.875 tokens (109% dos 16.384). O `Fatiar Extracao` cobre isso
+hoje partindo o documento; o que falta é o caso de o BLOCO mais denso ainda não caber — extrair por
+faixa de PÁGINA."*
+
+**Medi antes de mexer, e as duas metades estavam erradas.** Rodando `planejarFatias` sobre o texto
+real dos 38 PDFs (`pdf/TEXTO_EXTRAIDO.json`, que é a forma que o nó `Extract From File` entrega):
+
+| | |
+|---|---|
+| documentos fatiados | **ZERO de 38** — todos davam `blocos = 1` |
+| livro razão | ia **inteiro numa chamada**, pedindo 16.506 tokens = **101% do teto** |
+| razão células/linha no book | **1,67 a 6,81** (o aging tem seis faixas por linha) |
+
+**A causa é de UNIDADE, e é a terceira da mesma família no mesmo arquivo** (as outras duas estão nos
+comentários de `linhasDeConta` e de `LIMIAR_COBERTURA`, ambas já corrigidas). `MAX_CELULAS_POR_BLOCO`
+é derivado como *"quantas CÉLULAS cabem em 60% do teto de saída"* — 234 — e vinha sendo aplicado a
+uma contagem de **LINHAS**. Uma linha de comparativo de três exercícios produz três células, então o
+corte ficava de 1,7× a 6,8× mais frouxo do que o nome dele diz. Na prática: nunca disparava.
+
+**Não era preciso mudar topologia nenhuma.** Faixa de página nunca foi o eixo do problema. Com o peso
+em células, o fatiamento por âncora que já existe corta o razão em blocos que cabem — e um bloco pode
+descer a UMA linha, que é mais fino que qualquer página.
+
+**Medido depois:**
+
+| | antes | depois |
+|---|---|---|
+| chamadas de extração no book | 38 | **44** (+6) |
+| documentos que estouravam o teto | 1 | **0** |
+| pior bloco do livro razão | 101% do teto | **16%** |
+| o guarda de gasto contra o custo medido | +45% | **+10%** (US$ 1,42 previsto × 1,29 medido) |
+
+**A contagem erra para CIMA de propósito, e o número está medido: +64% agregado** sobre a verdade
+declarada pelo gerador (pior caso +187%, no razão — data, número de lançamento e código de conta são
+números que não viram célula). Errar para cima fatia mais fino que o necessário: ~6 chamadas a mais,
+~US$ 0,12 sobre US$ 1,29. Errar para baixo trunca, e truncar custa o dado — é a mesma escolha que
+`FRACAO_DO_TETO` já documentava.
+
+**Medi a versão refinada e ela foi REJEITADA:** tirando data, CNPJ, código de conta (`1.1.01.001`) e
+percentual, o erro agregado cai de +64% para +23% — mas **quatro documentos passam a SUBESTIMAR**, e
+o balancete analítico subestima em 43%. Menos erro médio pelo preço de errar para o lado que trunca é
+troca ruim. Ficou registrado em `celulasDaLinha` para quem tentar de novo.
+
+**O orçamento também estava errado, e do outro lado.** Ele recebia `celulas = contagem de LINHAS` e
+`colunas` lidas do NOME do arquivo — e `tokensDeSaida` usa `colunas` para **dividir** células em
+contas, então passar linha onde ele espera célula fazia `contas = linhas / colunas` num lugar em que a
+linha JÁ É a conta. Duas pontas erradas ao mesmo tempo, e os erros se somavam em vez de cancelar.
+Agora as duas quantidades saem do próprio texto, e a razão células/linhas conta a coluna de EMPRESA
+junto — que a leitura do nome nunca viu (o comentário de então já declarava essa cegueira).
+
+**O que sobra de irreparável, e agora aparece:** uma linha que SOZINHA passe do teto. Não há corte
+mais fino que a linha (ela é a âncora, e meia âncora não localiza nada no PDF). `planejarFatias` marca
+esse bloco com `acimaDoTeto`, o nó propaga em `bloco_acima_do_teto`, e `juntarBlocos` escreve o motivo
+— que a `0016` já converte em pendência. Nenhum documento do book cai nesse caso.
+
+**E o aviso do `medir-custo-book.mjs` mentia por construção:** ele comparava a saída do DOCUMENTO com
+o teto, o que deixou de significar algo no dia em que o fatiamento nasceu. Agora ele compara o pior
+BLOCO, lista quantos blocos cada documento vai gerar, e ganhou um invariante que **REPROVA** se um
+documento voltar a passar do teto sem ser fatiado.
 
 ### A FIXTURE DE EXTRAÇÃO DO BOOK-CANASTRA, e os três defeitos que ela achou na primeira rodada (19/08, sessão 52)
 
@@ -750,9 +813,12 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
   coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
   cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É
   trabalho próprio.
-- **O item mais denso do book ainda estoura o teto de saída**: `17_Livro_Razao_Fornecedores...`
-  mede 17.875 tokens (109% dos 16.384). O `Fatiar Extracao` cobre isso hoje partindo o documento;
-  o que falta é o caso de o BLOCO mais denso ainda não caber — extrair por faixa de PÁGINA.
+- ~~**O item mais denso do book ainda estoura o teto de saída**~~ — **fechado em 19/08 (sessão 52),
+  e a correção anotada aqui era a errada.** Não faltava extrair por faixa de PÁGINA: o fatiamento
+  estava desligado por erro de unidade (teto em CÉLULAS aplicado a uma contagem de LINHAS), e ZERO
+  dos 38 documentos era fatiado. Ver "O FATIAMENTO ESTAVA DESLIGADO". **O que sobra, e agora aparece
+  na fila:** linha que sozinha passe do teto — sem corte mais fino possível; nenhum documento do book
+  cai nesse caso.
 
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:

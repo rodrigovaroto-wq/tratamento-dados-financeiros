@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
+  linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
+  planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
 import { MAX_OUTPUT_TOKENS } from '../lib/extract.mjs';
@@ -63,6 +64,119 @@ test('planejarFatias: o livro razão (461 linhas) vira blocos que CABEM, com ân
   // localizar no PDF que ele está vendo.
   assert.equal(f[0].ancoraInicio, linhas[0]);
   assert.equal(f[1].ancoraInicio, linhas[f[0].ate + 1]);
+});
+
+// ---------------------------------------------------------------------------
+// O PESO DA LINHA EM CÉLULAS — o erro de unidade que desligava o fatiamento.
+// ---------------------------------------------------------------------------
+test('celulasDaLinha conta as CÉLULAS da linha, não a linha', () => {
+  // Uma linha de comparativo de três exercícios produz TRÊS células. Era isto que
+  // o fatiamento contava como 1, e é por isso que ele nunca disparava.
+  assert.equal(celulasDaLinha('Caixa e bancos conta movimento 610 1.420 2.870'), 3);
+  // O parêntese contábil de negativo não parte o número em dois.
+  assert.equal(celulasDaLinha('(-) Perdas estimadas (6.267) (2.858)'), 2);
+  assert.equal(celulasDaLinha('TOTAL DO ATIVO 158.801'), 1);
+  // Decimal com vírgula é UM número, não dois.
+  assert.equal(celulasDaLinha('Bobina kraft 180 g/m2 1.240 t 2.513'), 4);
+  // MÍNIMO 1: a linha veio de `linhasComNumero`, então tem dígito. Zero faria o
+  // acumulador do fatiamento não avançar e um bloco crescer sem fim.
+  assert.equal(celulasDaLinha('Nota 2 sem valor'), 1);
+  assert.equal(celulasDaLinha(''), 1);
+  assert.equal(celulasDaLinha(null), 1);
+});
+
+test('celulasEstimadas devolve um peso por linha, na ordem', () => {
+  const pesos = celulasEstimadas(['a 1', 'b 1 2 3', 'c 1 2']);
+  assert.deepEqual(pesos, [1, 3, 2]);
+  assert.deepEqual(celulasEstimadas(null), []);
+});
+
+test('planejarFatias corta por CÉLULA: o comparativo de 3 colunas vira 3× mais blocos', () => {
+  // 200 linhas de UMA coluna cabem num bloco (200 <= 234). O rótulo NÃO leva
+  // dígito de propósito: número no rótulo (índice, número de lançamento, código)
+  // conta como célula, e é justamente daí que vem o erro para cima de +64% que
+  // `celulasDaLinha` documenta e aceita.
+  const umaColuna = Array.from({ length: 200 }, (_, i) => `conta ${'x'.repeat(1 + (i % 5))} 1.000`);
+  assert.equal(planejarFatias(umaColuna, MAX_CELULAS_POR_BLOCO, celulasEstimadas(umaColuna)).length, 1);
+  // AS MESMAS 200 LINHAS com três colunas são 600 células e NÃO cabem — pela
+  // contagem de linhas cabiam, e era exatamente esse o defeito.
+  const tresColunas = Array.from({ length: 200 }, (_, i) => `conta ${'x'.repeat(1 + (i % 5))} 1.000 2.000 3.000`);
+  const semPeso = planejarFatias(tresColunas, MAX_CELULAS_POR_BLOCO);
+  const comPeso = planejarFatias(tresColunas, MAX_CELULAS_POR_BLOCO, celulasEstimadas(tresColunas));
+  assert.equal(semPeso.length, 1, 'a contagem por LINHA achava que cabia — é o defeito');
+  assert.ok(comPeso.length >= 3, `por CÉLULA são ${comPeso.length} blocos`);
+  for (const b of comPeso) {
+    assert.ok(b.celulas <= MAX_CELULAS_POR_BLOCO, `bloco ${b.bloco} com ${b.celulas} células`);
+    assert.ok(b.celulas * TOKENS_POR_CELULA <= TETO_SAIDA_TOKENS, 'e portanto cabe no teto de saída');
+  }
+});
+
+test('planejarFatias: os blocos cobrem tudo, sem buraco nem sobreposição, com peso', () => {
+  const linhas = Array.from({ length: 461 }, (_, i) => `PAGTO ${i} 1.000,00 2.000,00`);
+  const f = planejarFatias(linhas, MAX_CELULAS_POR_BLOCO, celulasEstimadas(linhas));
+  assert.equal(f[0].de, 0);
+  assert.equal(f[f.length - 1].ate, 460);
+  for (let i = 1; i < f.length; i += 1) assert.equal(f[i].de, f[i - 1].ate + 1);
+  // O `blocos` declarado é o REAL: instrução dizendo "bloco 2 de 3" num plano de
+  // 2 manda o modelo procurar um terço que não existe.
+  for (const b of f) assert.equal(b.blocos, f.length);
+  // Parejo em CÉLULAS (é o que gasta token), com a folga de uma linha inteira —
+  // a linha não é partida porque ela é a âncora.
+  const cel = f.map((b) => b.celulas);
+  const pesoMax = Math.max(...celulasEstimadas(linhas));
+  assert.ok(Math.max(...cel) - Math.min(...cel) <= pesoMax, `células por bloco: ${cel}`);
+});
+
+test('planejarFatias: `ceil(soma/max)` mentiria — o corte cai entre LINHAS', () => {
+  // Dez linhas de peso 4, teto 10. `ceil(40/10)` prevê 4 blocos, e o alvo de 10
+  // produziria blocos de 12 — ACIMA do teto que a função existe para respeitar.
+  // Medido assim ao escrever a função: [12, 12, 12, 4].
+  const linhas = Array.from({ length: 10 }, (_, i) => `linha ${i} 1 2 3`);
+  const f = planejarFatias(linhas, 10, linhas.map(() => 4));
+  assert.equal(f.length, 5, 'cinco blocos, não os quatro que a divisão prevê');
+  for (const b of f) assert.ok(b.celulas <= 10, `bloco com ${b.celulas}`);
+  // E nada de toco no fim: a segunda passada reparte parejo.
+  const cel = f.map((b) => b.celulas);
+  assert.deepEqual(cel, [8, 8, 8, 8, 8]);
+});
+
+test('planejarFatias: linha que SOZINHA passa do teto é declarada, não escondida', () => {
+  // Não há corte mais fino que a linha — ela é a âncora, e meia âncora não
+  // localiza nada no PDF. O único resíduo de truncamento que sobra tem de
+  // APARECER, senão volta a ser perda silenciosa.
+  const linhas = ['gigante 1 2 3', 'normal 1'];
+  const f = planejarFatias(linhas, 10, [300, 1]);
+  assert.equal(f[0].acimaDoTeto, true);
+  assert.equal(f[1].acimaDoTeto, false);
+});
+
+test('juntarBlocos NOMEIA o bloco cuja linha sozinha não cabia', () => {
+  // A promessa de `planejarFatias` ("declarada, não escondida") só vale se o
+  // aviso CHEGAR a algum lugar. Ele chega aqui, no mesmo campo em que a guarda de
+  // cobertura escreve — e `fn_registrar_campos_extraidos` converte isso em
+  // pendência desde a 0016.
+  const r = juntarBlocos([
+    { bloco: 1, blocos: 2, bloco_acima_do_teto: true, campos: [{ chave: 'a', valor_num: 1 }] },
+    { bloco: 2, blocos: 2, bloco_acima_do_teto: false, campos: [{ chave: 'b', valor_num: 2 }] },
+  ]);
+  // `juntarBlocos` devolve `motivos`; é o nó `Juntar Blocos` que os junta em
+  // `falha_motivo`, e daí `fn_registrar_campos_extraidos` faz a pendência.
+  const texto = r.motivos.join(' | ');
+  assert.match(texto, /bloco 1/);
+  assert.match(texto, /não há corte mais fino que a linha/);
+  assert.ok(!/bloco 2/.test(texto), 'o bloco que cabia não é acusado');
+  // E o dado dos DOIS blocos continua chegando: o aviso não descarta nada.
+  assert.equal(r.campos.length, 2);
+});
+
+test('planejarFatias sem pesos = comportamento antigo (uma célula por linha)', () => {
+  // Compatibilidade que importa: o `Orcamento do Lote` e o `Fatiar Extracao`
+  // passam pesos, mas a função tem de continuar correta sem eles — documento de
+  // uma coluna é o caso em que linha e célula coincidem.
+  const linhas = Array.from({ length: 500 }, (_, i) => `linha ${i}`);
+  const f = planejarFatias(linhas, 200);
+  assert.equal(f.length, 3);
+  assert.equal(f.reduce((a, b) => a + b.linhas, 0), 500);
 });
 
 test('instrucaoDaFatia vai na mensagem de USER e nomeia as duas pontas da faixa', () => {
@@ -304,7 +418,8 @@ test('avaliarCobertura se cala quando não tem régua ou quando a régua é ruí
 test('as funções são AUTO-CONTIDAS (os nós Code as embutem por toString)', () => {
   // Se alguma passar a referenciar constante do módulo, o nó quebra com
   // ReferenceError na primeira execução real e nenhum teste daqui pega.
-  for (const fn of [linhasComNumero, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura]) {
+  for (const fn of [linhasComNumero, celulasDaLinha, celulasEstimadas,
+    planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura]) {
     assert.doesNotThrow(() => new Function(`return (${fn.toString()})`)(), `${fn.name} não é auto-contida`);
   }
   // `planejarFatias` e `avaliarCobertura` têm default nos parâmetros que vêm de

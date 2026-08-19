@@ -31,7 +31,8 @@ import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
-  linhasComNumero, linhasDeConta, planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
+  linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
+  planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
 } from './lib/cobertura.mjs';
 
@@ -201,6 +202,8 @@ const FONTE_COBERTURA = [
   `const MINIMO_PARA_AVALIAR = ${MINIMO_PARA_AVALIAR};`,
   `const linhasComNumero = ${linhasComNumero.toString()};`,
   `const linhasDeConta = ${linhasDeConta.toString()};`,
+  `const celulasDaLinha = ${celulasDaLinha.toString()};`,
+  `const celulasEstimadas = ${celulasEstimadas.toString()};`,
   `const planejarFatias = ${planejarFatias.toString()};`,
   `const instrucaoDaFatia = ${instrucaoDaFatia.toString()};`,
   `const juntarBlocos = ${juntarBlocos.toString()};`,
@@ -249,17 +252,32 @@ const docs = itens.map((i) => {
   // Blocos: a MESMA conta que o \`Fatiar Extracao\` fará. Documento sem camada de
   // texto vai inteiro (uma chamada), como sempre foi.
   const linhas = Array.isArray(j.linhas_do_texto) ? j.linhas_do_texto : [];
-  const blocos = linhas.length > 0 ? planejarFatias(linhas, MAX_CELULAS_POR_BLOCO).length : 1;
-  // Colunas de valor, lidas da referência de período que a classificação por
-  // nome já resolveu ("25,24,23" são três colunas; "12M25" é uma). O limite fica
-  // declarado: coluna de EMPRESA não aparece no nome, então um combinado com
-  // sete empresas é SUBESTIMADO na economia do agrupamento — ou seja, o guarda
-  // erra para cima, que é o lado certo de errar.
-  const ref = typeof j.periodo_ref === 'string' ? j.periodo_ref.split(',').filter(Boolean) : [];
+  // A MESMA CONTA DO \`Fatiar Extracao\`, com os MESMOS pesos. Duas estimativas da
+  // mesma quantidade e' como elas divergem: se o orcamento previsse 1 bloco e o
+  // fatiamento fizesse 4, o guarda de gasto mediria um lote que nao e' o que vai
+  // rodar.
+  const pesos = linhas.length > 0 ? celulasEstimadas(linhas) : [];
+  const blocos = linhas.length > 0 ? planejarFatias(linhas, MAX_CELULAS_POR_BLOCO, pesos).length : 1;
+  // CELULAS E COLUNAS, as duas MEDIDAS no texto.
+  //
+  // Antes as colunas vinham do NOME do arquivo ("25,24,23" são três; "12M25" é
+  // uma), e o comentário de então declarava esse limite: coluna de EMPRESA não
+  // aparece no nome. O que ele NÃO dizia é que \`celulas\` recebia a contagem de
+  // LINHAS — e \`tokensDeSaida\` usa \`colunas\` para DIVIDIR células em contas, de
+  // modo que passar linha onde ele espera célula fazia \`contas = linhas / colunas\`
+  // num lugar em que a linha JÁ É a conta. As duas pontas erradas de uma vez, e o
+  // erro se somava com o do fatiamento em vez de cancelar.
+  //
+  // Agora as duas saem do próprio texto (\`Medir Documento\`), e a razão
+  // células/linhas conta a coluna de empresa junto — sem ler nome de arquivo.
+  const celulas = Number.isFinite(Number(j.celulas_estimadas)) ? Number(j.celulas_estimadas)
+    : Number(j.celulas_no_documento);
+  const colunas = Number.isFinite(Number(j.colunas_estimadas)) && Number(j.colunas_estimadas) > 0
+    ? Number(j.colunas_estimadas) : 1;
   return {
-    celulas: Number(j.celulas_no_documento),
+    celulas,
     paginas: Number(j.paginas_do_documento),
-    colunas: ref.length > 1 ? ref.length : 1,
+    colunas,
     blocos,
     precisaFallback: !!j.precisa_fallback_openai,
     bytes: Number(j.bytes),
@@ -752,6 +770,13 @@ let item={};
 try{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }
 const linhasDoTexto=linhasComNumero(textoPdf);
 const temTexto=linhasDoTexto.length>0;
+// AS CELULAS, contadas linha a linha. O \`Extract From File\` entrega o texto
+// AGRUPADO POR LINHA, e uma linha de comparativo de tres exercicios produz TRES
+// celulas -- contar linha como celula deixava o fatiamento de 1,7x a 6,8x mais
+// frouxo do que o nome dele diz, e na pratica DESLIGADO: medido, nenhum dos 38
+// documentos do book-canastra era fatiado. Ver o comentario de \`celulasDaLinha\`.
+const pesosDaLinha=temTexto?celulasEstimadas(linhasDoTexto):[];
+const celulasEstim=pesosDaLinha.reduce((a,b)=>a+b,0);
 // AUSENCIA DE TEXTO NAO E' ERRO: PDF escaneado nao tem camada de texto, e o
 // documento segue como imagem exatamente como antes -- so' as camadas 2 e 3 se
 // calam para ele. \`null\` e' "nao sei", nunca "zero": zero ligaria a guarda de
@@ -766,6 +791,13 @@ return {json:{...item,
   celulas_no_documento: temTexto?linhasDoTexto.length:null,
   contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,
   linhas_do_texto: temTexto?linhasDoTexto:null,
+  // A TERCEIRA regua, e e' ela que decide o FATIAMENTO e o custo de SAIDA:
+  // celulas de valor estimadas do proprio texto. \`colunas_estimadas\` sai da
+  // razao celulas/linhas -- e substitui a leitura do NOME do arquivo, que so'
+  // via coluna de PERIODO ("2025x2024x2023") e era cega a coluna de EMPRESA
+  // (um combinado de seis empresas contava como uma coluna).
+  celulas_estimadas: temTexto?celulasEstim:null,
+  colunas_estimadas: temTexto?Math.max(1,Math.round(celulasEstim/linhasDoTexto.length)):null,
   // PAGINAS: quem paga a entrada da chamada e' a IMAGEM do PDF (~1.000 tokens
   // por pagina), entao o teto de gasto precisa deste numero -- e ele so' existe
   // aqui, na saida do \`Extrair Texto\` (o \`pdf-parse\` publica \`numpages\`).
@@ -804,7 +836,10 @@ for(let idx=0; idx<entradas.length; idx+=1){
   // sempre foi. Fatiar as cegas seria pior: sem ancora, "bloco 2 de 3" e' um
   // pedido para o modelo adivinhar onde a faixa comeca.
   const linhas=Array.isArray(j.linhas_do_texto)?j.linhas_do_texto:[];
-  const fatias=linhas.length>0?planejarFatias(linhas, MAX_CELULAS_POR_BLOCO):[{bloco:1,blocos:1,de:0,ate:0,ancoraInicio:null,ancoraFim:null,celulas:0}];
+  // OS PESOS EM CELULAS, e nao a contagem de linhas: \`MAX_CELULAS_POR_BLOCO\` e'
+  // derivado de quantas CELULAS cabem em 60% do teto de saida, e aplica-lo a
+  // linhas era o erro de unidade que desligava este no' na pratica.
+  const fatias=linhas.length>0?planejarFatias(linhas, MAX_CELULAS_POR_BLOCO, celulasEstimadas(linhas)):[{bloco:1,blocos:1,de:0,ate:0,ancoraInicio:null,ancoraFim:null,celulas:0,linhas:0,acimaDoTeto:false}];
   for(const f of fatias){
     // A instrucao da faixa vai na mensagem de USER, nunca no prompt de sistema:
     // o prefixo tem de continuar identico em toda chamada para o cache de
@@ -828,7 +863,15 @@ for(let idx=0; idx<entradas.length; idx+=1){
     // ele o n8n perde a cadeia e toda referencia a OUTRO no' por \`.item\` rio
     // abaixo volta undefined -- os nos Postgres recebem "undefined" em Query
     // Parameters e a execucao morre. Cada bloco aponta para o documento que o gerou.
-    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos, celulas_do_bloco:f.celulas}, pairedItem:{item:idx}});
+    // A FAIXA VIAJA COM O ITEM. Sem \`bloco_de\`/\`bloco_ate\` a unica forma de
+    // saber qual pedaco do documento uma chamada cobriu e' reler o texto que o
+    // item nem leva mais -- e quando um bloco volta vazio, e' isso que se
+    // pergunta primeiro. \`bloco_acima_do_teto\` e' a promessa de
+    // \`planejarFatias\` chegando a quem le a execucao: linha que sozinha nao cabe
+    // no teto nao tem corte mais fino, e o caso nao pode ficar em silencio.
+    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos,
+      celulas_do_bloco:f.celulas, linhas_do_bloco:f.linhas??null,
+      bloco_de:f.de, bloco_ate:f.ate, bloco_acima_do_teto:!!f.acimaDoTeto}, pairedItem:{item:idx}});
   }
 }
 return saida;
