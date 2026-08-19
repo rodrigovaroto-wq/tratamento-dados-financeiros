@@ -6060,7 +6060,9 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const lerVeredito = (wb: ExcelJS.Workbook, linha: number): string => {
     const out = wb.getWorksheet("Output");
     if (!out) return "(sem aba Output)";
-    esquecerMemoria();
+    // `esquecerMemoria` é POR ABA (a memória do avaliador é por planilha), e cada
+    // `montar()` devolve um workbook novo — então aqui ela é só defensiva.
+    esquecerMemoria(out);
     const v = avaliarCelula(out, "G", linha);
     return typeof v === "string" ? v : String(v ?? "");
   };
@@ -6117,7 +6119,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         alvo.getRow(200).getCell(7).value = {
           formula: `N('Revenues, COGS & SG&A'!F${rNum})+N('Revenues, COGS & SG&A'!G${rNum})`,
         };
-        esquecerMemoria();
+        esquecerMemoria(alvo);
         const v = avaliarCelula(alvo, "G", 200);
         checar(typeof v === "number" && v > 0,
           "(35) o avaliador atravessa nome de aba com VÍRGULA dentro de função (buraco do arnês)",
@@ -6138,7 +6140,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
     checar(rDifCli > 0, "(35) a linha de distância do Cliente Case existe na aba de receita");
     if (rDifCli > 0) {
-      esquecerMemoria();
+      esquecerMemoria(rec);
       // 2026 é a primeira coluna projetada.
       let colProj = -1;
       for (let c = 5; c <= 40; c++) {
