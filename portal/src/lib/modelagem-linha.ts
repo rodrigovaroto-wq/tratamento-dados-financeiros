@@ -110,6 +110,34 @@ export interface ValorPorAno {
   secao_canonica: string | null;
   ano: number;
   valor: number | string;
+  /**
+   * A PROVENIÊNCIA DAQUELA CÉLULA (0125): de que arquivo, de que página, com que
+   * confiança e com que aceite veio ESTE valor NESTE ano.
+   *
+   * Por ANO, e isto não é detalhe: a `fn_linhas_para_modelagem` também sabe dizer
+   * de onde veio uma linha, mas a resposta dela é da ocorrência de maior módulo
+   * ENTRE OS EXERCÍCIOS. Usada na nota de uma célula de 2023, ela descreveria com
+   * toda a convicção a célula de 2025 — e rastreabilidade que aponta para o lugar
+   * errado é pior que rastreabilidade nenhuma, porque convida a conferir e engana.
+   *
+   * Opcionais porque a extração pode não ter dito: PDF sem página identificada,
+   * campo sem confiança. `null` é "não sei", e a nota escreve isso em vez de
+   * inventar um número.
+   */
+  arquivo?: string | null;
+  origem_pagina?: number | null;
+  confianca?: number | string | null;
+  status_aceite?: string | null;
+  aceito_por?: string | null;
+}
+
+/** A proveniência de uma célula, como a nota do Excel a consome. */
+export interface ProvenienciaCelula {
+  arquivo: string | null;
+  pagina: number | null;
+  confianca: number | null;
+  statusAceite: string | null;
+  aceitoPor: string | null;
 }
 
 /**
@@ -162,4 +190,45 @@ export function serieDaLinha(
   rotuloNorm: string,
 ): Record<string, number> {
   return series.get(chaveDaLinha(secaoCanonica, rotuloNorm)) ?? {};
+}
+
+/**
+ * A PROVENIÊNCIA POR ANO de cada linha, na MESMA identidade das outras funções
+ * deste arquivo — o par (seção canônica, rótulo normalizado).
+ *
+ * Separada de `seriesPorLinha` de propósito, e não é gosto: aquela função decide
+ * NÚMERO e é lida por quem confere número. Misturar dez campos de metadado no
+ * mesmo `Record<string, number>` obrigaria a mudar o tipo dela — e o tipo estreito
+ * é o que faz um `serie[ano] = "aceito"` não compilar.
+ */
+export function provenienciaPorLinha(
+  valores: ValorPorAno[],
+  anosHistoricos: number[],
+): Map<string, Record<string, ProvenienciaCelula>> {
+  const anos = new Set(anosHistoricos);
+  const mapa = new Map<string, Record<string, ProvenienciaCelula>>();
+  for (const v of valores) {
+    if (!anos.has(v.ano)) continue;
+    const k = chaveDaLinha(v.secao_canonica, v.rotulo_norm);
+    let porAno = mapa.get(k);
+    if (!porAno) { porAno = {}; mapa.set(k, porAno); }
+    const conf = v.confianca == null ? null : Number(v.confianca);
+    porAno[String(v.ano)] = {
+      arquivo: v.arquivo ?? null,
+      pagina: v.origem_pagina ?? null,
+      confianca: conf === null || Number.isNaN(conf) ? null : conf,
+      statusAceite: v.status_aceite ?? null,
+      aceitoPor: v.aceito_por ?? null,
+    };
+  }
+  return mapa;
+}
+
+/** A proveniência de UMA linha, por ano. Linha sem série devolve objeto vazio. */
+export function provenienciaDaLinha(
+  mapa: Map<string, Record<string, ProvenienciaCelula>>,
+  secaoCanonica: string | null,
+  rotuloNorm: string,
+): Record<string, ProvenienciaCelula> {
+  return mapa.get(chaveDaLinha(secaoCanonica, rotuloNorm)) ?? {};
 }

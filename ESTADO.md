@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0122_pergunta_em_portugues.sql` |
+| **Última migration** | `db/migrations/0125_proveniencia_por_linha_e_ano.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 546 · e2e 46 · banco (67 migrations do zero + testes SQL) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -160,6 +160,277 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### "OS TRÊS CENÁRIOS SÃO TRÊS?" — e o buraco que a pergunta abriu no arnês (19/08, sessão 52)
+
+**O §2.2 do diagnóstico pedia um bloco "Resumo dos três cenários" lado a lado. Ao medir para
+construí-lo, apareceu algo antes:** o `Cliente Case` nasce como `=<Base Case>` em TODA conta do modelo
+(convenção do Modelo Base, e certa como ponto de partida). Num arquivo recém-exportado, **girar o dial
+de 1 para 2 não muda um número sequer — e nada dizia isso.** Um "Cliente Case" que é, número por
+número, o Base Case podia chegar a um comitê sem a planilha o contradizer, com o dropdown de três
+opções servindo de evidência de que ela deveria contradizer.
+
+O Stress tem a forma espelhada do mesmo risco: é o Base vezes um haircut único
+(`Considerações!$F$8`). Zerada aquela célula, o Stress vira o Base e o dropdown continua oferecendo
+três.
+
+**O que entrou:** um painel `OS TRÊS CENÁRIOS SÃO TRÊS?` no `Output`, ao lado do interruptor, dizendo
+por cenário se ele está **diferenciado** ou **IDÊNTICO AO BASE**. A medida é EXATA e vem da linha
+`DIF_CENARIO` da aba de receita: a soma, conta a conta e ano a ano, de `ABS(premissa do cenário −
+premissa do Base)`. Zero significa premissas idênticas e não pode significar outra coisa — somar as
+premissas em vez das diferenças em módulo seria mais curto e errado (dois conjuntos diferentes podem
+ter a mesma soma). E é **fórmula viva**: no minuto em que o analista digitar a primeira premissa
+própria do Cliente Case dentro do Excel, o aviso some sozinho.
+
+#### O BURACO QUE ESTE TESTE ACHOU NO ARNÊS
+
+O teste do painel reprovava dizendo **"IDÊNTICO AO BASE" sobre um Stress de 20%**. A causa não estava
+no produto: o nome da aba principal do modelo tem VÍRGULA (`Revenues, COGS & SG&A`), então toda
+referência a ela vai entre apóstrofos — e o scanner de argumentos de função do `avaliar-formula.mts`
+pulava trecho entre **aspas duplas** e não entre **apóstrofos**. A vírgula de dentro do nome partia o
+argumento em dois, `N('Revenues` não avaliava nada, e o resultado era **0. Em silêncio.**
+
+**O efeito:** qualquer assert que avaliasse uma fórmula referenciando a aba principal do modelo dentro
+de uma função lia zero e passava por não conseguir avaliar — a forma mais silenciosa de teste que não
+prova nada. Corrigido nos dois scanners do arquivo, e travado por assert próprio. Conferido que a
+correção não mudou nenhum assert antigo: a contagem foi de 559 para 566 com exatamente 7 asserts
+novos.
+
+#### O QUE NÃO FOI FEITO DO §2.2, E POR QUÊ
+
+O bloco numérico com as métricas dos três cenários lado a lado **não entrou**, e a razão é que a
+especificação dele não fecha:
+
+1. **A lista de métricas mistura duas famílias.** Receita e EBITDA saem de uma cascata paralela sobre
+   as premissas (que existem por cenário no arquivo). **DSCR mínimo e necessidade de pico não** — eles
+   saem do `Cash Flow` e da lógica do revolver, e não há como avaliá-los para um cenário INATIVO sem
+   replicar o modelo inteiro, que é o "caminho caro (e desnecessário)" que o próprio §2.2 descarta.
+2. **A metade viável custa duplicar a projeção.** As contas se projetam por quatro formas diferentes
+   (`pct_de_linha`, `indice_macro` com e sem painel, crescimento composto, e "sem premissa"). Uma
+   cascata paralela reescreveria essas quatro regras num segundo lugar — e esta sessão já pagou duas
+   vezes a lição de duas réguas sobre a mesma quantidade (a `0123` e o par fatiamento×orçamento). O
+   caminho correto é PARAMETRIZAR a cascata pelo cenário e emiti-la quatro vezes do mesmo código, com
+   um CHECK provando que a sombra do cenário ativo é igual à linha ativa — é refatoração da aba que
+   produz os números do modelo, e merece decisão própria.
+3. **E a coluna do meio nasceria vazia:** com o Cliente Case idêntico ao Base por construção, duas das
+   três colunas mostrariam o mesmo número até alguém preencher as premissas. É exatamente o que o
+   painel novo passa a denunciar — e denunciar isso vale mais, hoje, do que exibir duas colunas iguais.
+
+### A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ (19/08, sessão 52)
+
+O §2.3 do diagnóstico de 11/08 tinha medido a perda: antes do PR #109 cada célula de dado trazia
+documento, **página, confiança e status de aceite**; o #109 separou os dois exports — decisão certa e
+medida — e a camada saiu junto com as abas de dado.
+
+**E nem o nome do arquivo estava lá.** Achado ao ler o código para consertar: o que a nota mostrava é
+`documentos`, que a `fn_linhas_para_modelagem` monta como `array_agg(distinct tipo_taxonomia)` — o
+TIPO. A nota dizia *"Extraído de BALANCO, DF_AUDITADA"*. Num mandato com oito balanços, isso é a
+categoria e não a peça.
+
+**A mudança é na `fn_valores_por_ano`, e não na `fn_linhas_para_modelagem` — esse é o ponto.** A
+segunda devolve UMA linha por (seção, rótulo), e a proveniência dela é da ocorrência de maior módulo
+**entre os exercícios**. Usada na nota de uma célula de 2023, ela descreveria a célula de 2025 com
+toda a convicção. Rastreabilidade que aponta para o lugar errado é pior que rastreabilidade nenhuma:
+a primeira convida a conferir e leva ao lugar errado.
+
+**O número não podia mudar por causa disto,** e não mudou: `valor` continua sendo
+`(array_agg(valor order by abs(valor) desc))[1]`, letra por letra. Reescrever com janela seria
+elegante e arriscado — em empate de módulo com sinais opostos (`abs(-1900) = abs(1900)`) duas formas
+de "maior módulo" escolhem valores diferentes, e isso é número de modelo mudando de graça. A
+proveniência vem por join de volta na ocorrência que tem aquele valor, com desempate declarado.
+
+**A nota melhora nas CATORZE abas de uma vez.** O §2.3 pedia a `Premissas`; `valorNaEscala` é o
+caminho único por onde valor de documento entra no arquivo, então sair por ele custa o mesmo e não
+deixa aba de segunda classe.
+
+A nota agora diz, nesta ordem — primeiro onde procurar, depois o quanto confiar:
+
+> `Extraído de 01_Balanco_2025x2024.pdf · página 3 · confiança da extração 97% · ACEITO por rodrigo@oria`
+
+e, quando ninguém conferiu:
+
+> `… · aceite: pendente — este número ainda NÃO foi conferido por ninguém`
+
+Campo que a extração não informou sai FORA da frase: `null` é "não sei", e escrever "página 0" seria
+dar precisão falsa. Os 7 asserts substantivos foram conferidos reprovando com o código antigo.
+
+### O INTRAGRUPO QUE NÃO É MÚTUO passa a ser conferido — pelo ESPELHO (19/08, sessão 52)
+
+**O item estava aberto com a dificuldade certa escrita:** *"cada uma casa com uma conta DIFERENTE do
+balanço — e escolher errado inventa divergência."*
+
+**A primeira ideia era errada e não foi usada.** Comparar a planilha contra o balanço, como a `0117`
+faz com mútuos, é comparar FLUXO com ESTOQUE: o documento que a taxonomia tem para as outras naturezas
+é `FAT_INTRAGRUPO`, faturamento do exercício. No book os números coincidem por construção (nada foi
+pago no ano), então a checagem teria saído verde sobre uma comparação sem sentido — a mesma forma de
+defeito que a `0123` acabou de achar.
+
+**O que se confere é o ESPELHO.** Todo saldo intragrupo aparece duas vezes dentro do mandato: a receber
+no balanço de quem tem o crédito, a pagar no de quem tem a obrigação. É identidade contábil, e não
+precisa de segundo documento — os balanços que o mandato já tem bastam.
+
+**E o pareamento é pelo PAR DE EMPRESAS, não pela natureza** — é essa a resposta à dificuldade. O dado
+do book mostra por quê:
+
+| | |
+|---|---|
+| Canastra Indústria | `Contas a receber intragrupo - Canastra Comercial` |
+| Canastra Comercial | `Fornecedores intragrupo - Canastra Indústria` |
+
+Quem vende chama de "contas a receber"; quem compra chama de "fornecedores". **Pela natureza elas nunca
+se encontram; pelo par de empresas, sempre.** E nenhuma linha precisa ser casada com "a conta certa": a
+linha DIZ com quem é. A contraparte sai do sufixo do rótulo contra a lista de entidades do caso —
+medido: **6 de 6 rótulos intragrupo do book casados com a empresa certa, 3 de 3 de terceiro
+corretamente ignorados** (`terceiros`, `nacionais`, `mercado interno`).
+
+**Ficam fora, com o motivo escrito:** mútuo (é da `fn_reconciliar_mutuos` — uma linha, uma régua),
+mútuo com sócio (não tem espelho), o documento COMBINADO (as linhas intragrupo dele são eliminações,
+que nomeiam as duas pontas) e par em que uma das empresas não entregou balanço (aí a falta de espelho é
+falta de documento, e o Portão 1 já cobra).
+
+**Canastra: os quatro pares fecham** — aluguel 940, conta corrente 1.900, fornecimento 2.900 e 5.200.
+Zero pendências, que é o certo para um book cuja única divergência plantada é a de mútuos.
+
+#### E ela achou um defeito no book VERTENTES, na primeira vez que rodou
+
+A `escalar_passivo` do `motor.py` multiplica o passivo INTEIRO de cada controlada por um fator até o PL
+cair num alvo — e a conta corrente ia junto. Resultado: a VT Logística registrava **978** a pagar
+contra os **1.400** que a Metalúrgica registrava a receber. **422 de diferença, num book que declara
+ter UMA divergência só** (os 180 dos mútuos).
+
+O próprio gerador já declarava o invariante que estava violando, no comentário de `construir`:
+*"contrapartes intragrupo que faltavam na Metalúrgica (o combinado precisa dos dois lados para as
+eliminações fecharem)"*. Elas não fechavam.
+
+**Saldo intragrupo é fixado pela contraparte e não é livre para calibração.** As contas de
+`INTRAGRUPO_FIXO` saíram do fator, que passou a ser recalculado sobre o resto do passivo — o PL-alvo
+continua sendo atingido. É a segunda consequência ruim da calibração por PL-alvo; o `book-canastra` já
+tinha abandonado a técnica pela primeira (com três exercícios o fator vira distorção ENTRE anos).
+
+#### E um portão que faltava no CI
+
+Do mesmo `gerar_fixture.py` saem TRÊS artefatos versionados — o SQL da suíte de banco, o JSON da suíte
+de export e (via `gerar.py`) o GABARITO. Os workflows do n8n têm `git diff --exit-code` desde a sessão
+20, com o motivo escrito: *"o JSON commitado pode divergir da fonte que o gera"*. **As fixtures não
+tinham, e o mesmo defeito aconteceu aqui:** a correção do `motor.py` mudou o SQL e o GABARITO, o JSON
+ficou para trás, e a suíte de export reprovou em 5 itens comparando um export NOVO com um gabarito NOVO
+a partir de uma fixture VELHA. O portão entrou, e cobre as três fixtures (as duas de Vertentes e a do
+Canastra).
+
+### O FATIAMENTO ESTAVA DESLIGADO — e a correção anotada aqui era a errada (19/08, sessão 52)
+
+**O que estava escrito nesta lista:** *"O item mais denso do book ainda estoura o teto de saída:
+`17_Livro_Razao_Fornecedores` mede 17.875 tokens (109% dos 16.384). O `Fatiar Extracao` cobre isso
+hoje partindo o documento; o que falta é o caso de o BLOCO mais denso ainda não caber — extrair por
+faixa de PÁGINA."*
+
+**Medi antes de mexer, e as duas metades estavam erradas.** Rodando `planejarFatias` sobre o texto
+real dos 38 PDFs (`pdf/TEXTO_EXTRAIDO.json`, que é a forma que o nó `Extract From File` entrega):
+
+| | |
+|---|---|
+| documentos fatiados | **ZERO de 38** — todos davam `blocos = 1` |
+| livro razão | ia **inteiro numa chamada**, pedindo 16.506 tokens = **101% do teto** |
+| razão células/linha no book | **1,67 a 6,81** (o aging tem seis faixas por linha) |
+
+**A causa é de UNIDADE, e é a terceira da mesma família no mesmo arquivo** (as outras duas estão nos
+comentários de `linhasDeConta` e de `LIMIAR_COBERTURA`, ambas já corrigidas). `MAX_CELULAS_POR_BLOCO`
+é derivado como *"quantas CÉLULAS cabem em 60% do teto de saída"* — 234 — e vinha sendo aplicado a
+uma contagem de **LINHAS**. Uma linha de comparativo de três exercícios produz três células, então o
+corte ficava de 1,7× a 6,8× mais frouxo do que o nome dele diz. Na prática: nunca disparava.
+
+**Não era preciso mudar topologia nenhuma.** Faixa de página nunca foi o eixo do problema. Com o peso
+em células, o fatiamento por âncora que já existe corta o razão em blocos que cabem — e um bloco pode
+descer a UMA linha, que é mais fino que qualquer página.
+
+**Medido depois:**
+
+| | antes | depois |
+|---|---|---|
+| chamadas de extração no book | 38 | **44** (+6) |
+| documentos que estouravam o teto | 1 | **0** |
+| pior bloco do livro razão | 101% do teto | **16%** |
+| o guarda de gasto contra o custo medido | +45% | **+10%** (US$ 1,42 previsto × 1,29 medido) |
+
+**A contagem erra para CIMA de propósito, e o número está medido: +64% agregado** sobre a verdade
+declarada pelo gerador (pior caso +187%, no razão — data, número de lançamento e código de conta são
+números que não viram célula). Errar para cima fatia mais fino que o necessário: ~6 chamadas a mais,
+~US$ 0,12 sobre US$ 1,29. Errar para baixo trunca, e truncar custa o dado — é a mesma escolha que
+`FRACAO_DO_TETO` já documentava.
+
+**Medi a versão refinada e ela foi REJEITADA:** tirando data, CNPJ, código de conta (`1.1.01.001`) e
+percentual, o erro agregado cai de +64% para +23% — mas **quatro documentos passam a SUBESTIMAR**, e
+o balancete analítico subestima em 43%. Menos erro médio pelo preço de errar para o lado que trunca é
+troca ruim. Ficou registrado em `celulasDaLinha` para quem tentar de novo.
+
+**O orçamento também estava errado, e do outro lado.** Ele recebia `celulas = contagem de LINHAS` e
+`colunas` lidas do NOME do arquivo — e `tokensDeSaida` usa `colunas` para **dividir** células em
+contas, então passar linha onde ele espera célula fazia `contas = linhas / colunas` num lugar em que a
+linha JÁ É a conta. Duas pontas erradas ao mesmo tempo, e os erros se somavam em vez de cancelar.
+Agora as duas quantidades saem do próprio texto, e a razão células/linhas conta a coluna de EMPRESA
+junto — que a leitura do nome nunca viu (o comentário de então já declarava essa cegueira).
+
+**O que sobra de irreparável, e agora aparece:** uma linha que SOZINHA passe do teto. Não há corte
+mais fino que a linha (ela é a âncora, e meia âncora não localiza nada no PDF). `planejarFatias` marca
+esse bloco com `acimaDoTeto`, o nó propaga em `bloco_acima_do_teto`, e `juntarBlocos` escreve o motivo
+— que a `0016` já converte em pendência. Nenhum documento do book cai nesse caso.
+
+**E o aviso do `medir-custo-book.mjs` mentia por construção:** ele comparava a saída do DOCUMENTO com
+o teto, o que deixou de significar algo no dia em que o fatiamento nasceu. Agora ele compara o pior
+BLOCO, lista quantos blocos cada documento vai gerar, e ganhou um invariante que **REPROVA** se um
+documento voltar a passar do teto sem ser fatiado.
+
+### A FIXTURE DE EXTRAÇÃO DO BOOK-CANASTRA, e os três defeitos que ela achou na primeira rodada (19/08, sessão 52)
+
+**A lacuna que ela fecha.** O `book-canastra` está no repositório desde o PR #112 e provava duas
+coisas: que os números do gerador fecham no papel, e que o lote não cabe no teto de gasto. **A
+ingestão nunca havia sido exercitada sobre ele** — era a maior lacuna de cobertura viva, e estava
+anotada como tal neste arquivo.
+
+Agora existe `db/test/gerar_fixture_canastra.py` → `db/test/fixture_book_canastra.sql` (28
+documentos, 1.264 linhas) e `db/test/canastra.test.sql`, ligados ao `db/test/run.sh`. A regra que ele
+trava é a de Vertentes, sobre documento **difícil**: *extração fiel => a única pendência é a
+divergência que o book planta de propósito* (R$ 240 mil de mútuos). Cada uma das 15 armadilhas que
+virasse pendência seria falso positivo.
+
+**Carregada e reconciliada, ela abriu ZERO pendência.** Num caso que planta uma. Três defeitos, e a
+`0123` os corrige:
+
+| | O defeito | O número |
+|---|---|---|
+| 1 | A checagem procurava a palavra "mútuo" no **rótulo de cada linha** da planilha. Nenhuma planilha real a repete ali — ela diz a natureza **uma vez, no título** ("RELAÇÃO DE MÚTUOS ENTRE PARTES RELACIONADAS" / "Mutuante \| Mutuária \| Saldo devedor"). O filtro zerava o lado B e a função devolvia `documento_ausente`, o único resultado que **não** abre pendência: a divergência não estava "não encontrada", estava **declarada inexistente**. | R$ 240 mil invisíveis |
+| 2 | A guarda que o comentário da `0117` prometia **não existia**: `v_lados_bp` era atribuída e nunca lida. | — |
+| 3 | Achado ao ligar a guarda: **mútuo com SÓCIO não tem espelho** no mandato (a contraparte é o quotista) e estava somado junto com o intragrupo. | 14.000 na SPE, que esconderiam os 240 atrás de um número 60× maior |
+
+**Por que o defeito 1 passou seis sessões.** O `fixture_book_vertentes.sql` escreve o rótulo como
+`"A → B — Mútuo"`, colando a natureza dentro do nome da linha. Isso não vem de PDF nenhum — é um
+enfeite do gerador do fixture. A checagem estava aprovada por um dado que só existia no teste.
+
+**A guarda prometida está errada, e isso foi MEDIDO, não deduzido.** "Interromper quando há os dois
+lados" calaria a checagem exatamente onde a evidência é mais forte: no Canastra os dois lados dão
+16.300 cada — eles se confirmam, e é a planilha (16.060) que discorda. A regra que entrou: lados que
+**concordam** estabelecem o saldo por dupla evidência (uma comparação, não uma por lado); lados que
+**discordam** são eles o achado, e aí a planilha não é atribuída a nenhum deles.
+
+**E a primeira versão da correção repetiu o defeito que consertava.** Ler "rótulo OU seção" sem
+ordem fez a suíte de Vertentes reprovar na hora: o fixture de lá põe `secao = "MÚTUOS E CONTAS
+INTRAGRUPO"`, um agrupador que nomeia DUAS naturezas, e com a seção valendo por si a conta corrente
+(1.400) e o aluguel (640) entraram na soma — **a divergência saltou de R$ 180 mil para R$ 2.220
+mil**. É textualmente o que o comentário da `0117` já avisava. A régua final tem **precedência
+estrita**: o rótulo, quando fala, é a autoridade sobre a linha dele; a seção só vale quando os
+rótulos estão calados; nada dizer significa que o documento inteiro é a relação de mútuos, que é o
+que a taxonomia já afirmou ao classificá-lo.
+
+**O que fica aberto, e está dito na migration:** mútuo com sócio passa a não ser conferido por
+ninguém — o par dele não é a planilha intragrupo, é o contrato com o quotista, e ninguém cruza isso
+hoje. Antes da `0123` ele também não era conferido; a diferença é que agora está escrito.
+
+**Duas coisas que a fixture ensinou sobre a forma FIEL de extrair, e que valem para o prompt:**
+matriz se extrai como um grupo por COLUNA (`secao` = nome da coluna, `chave` = o rótulo da linha) —
+escrever "Terrenos — custo" cola a coluna dentro do nome da conta e cria três rótulos que nenhuma
+outra peça reconhece; e **a taxonomia não tem tipo para anexo de composição de imobilizado** (conferi
+o seed `0002`), então ele entrou como `NOTAS_EXPL`, que é a semântica certa (detalhamento
+complementar que não se soma debaixo do total do balanço) mas não o nome certo.
 
 ### O EXPORT DO EXCEL: cinco defeitos de número, achados rodando o arquivo (18/08, sessão 51)
 
@@ -694,13 +965,17 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
   pendências por decisão do dono — sugestão que ninguém fez ainda não se mistura com decisão sobre
   problema medido. Ver "As perguntas ao cliente ganharam a ABA que faltava". **Depende da `0120`
   estar aplicada no Supabase**; sem ela a aba explica o que falta em vez de quebrar.
-- **A conferência das linhas intragrupo que NÃO são mútuo** (conta corrente rotativa, aluguel entre
-  coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
-  cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É
-  trabalho próprio.
-- **O item mais denso do book ainda estoura o teto de saída**: `17_Livro_Razao_Fornecedores...`
-  mede 17.875 tokens (109% dos 16.384). O `Fatiar Extracao` cobre isso hoje partindo o documento;
-  o que falta é o caso de o BLOCO mais denso ainda não caber — extrair por faixa de PÁGINA.
+- ~~**A conferência das linhas intragrupo que NÃO são mútuo**~~ — **fechado em 19/08 (sessão 52)**,
+  pelo ESPELHO entre cada par de empresas (`0124`), não pela planilha: a planilha de faturamento
+  intragrupo é FLUXO e o balanço é ESTOQUE. Ver "O INTRAGRUPO QUE NÃO É MÚTUO". **O que ela NÃO cobre,
+  e fica anotado:** rateio de despesa que não deixa saldo no balanço (não há espelho para conferir), e
+  mútuo com sócio — cujo par é o contrato com o quotista, que ninguém cruza hoje.
+- ~~**O item mais denso do book ainda estoura o teto de saída**~~ — **fechado em 19/08 (sessão 52),
+  e a correção anotada aqui era a errada.** Não faltava extrair por faixa de PÁGINA: o fatiamento
+  estava desligado por erro de unidade (teto em CÉLULAS aplicado a uma contagem de LINHAS), e ZERO
+  dos 38 documentos era fatiado. Ver "O FATIAMENTO ESTAVA DESLIGADO". **O que sobra, e agora aparece
+  na fila:** linha que sozinha passe do teto — sem corte mais fino possível; nenhum documento do book
+  cai nesse caso.
 
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens que continuam de pé, em ordem de impacto:
@@ -715,12 +990,22 @@ Os itens que continuam de pé, em ordem de impacto:
   sozinha. **Fica anotado:** `negativas`, `societario` e `parcelamentos` estão numa lista à mão em
   `parseEntidade` porque o apelido da taxonomia não os carrega — o lugar certo é o seed
   `db/migrations/0002`, e isso é migration.
-- **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o
-  gerador e o orçamento, não a ingestão sobre dado sujo. É a maior lacuna de cobertura viva.
-- **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma
-  fórmula a mais: ver a análise no diagnóstico (§2.2 e a nota de execução).
-- **Proveniência completa na aba `Premissas`** — a nota traz o documento de origem; página,
-  confiança e status de aceite ficaram nas abas de dado, que saíram do arquivo de modelagem.
+- ~~**Fixture de extração do `book-canastra`**~~ — **fechado em 19/08 (sessão 52)**: existe
+  `fixture_book_canastra.sql` (28 documentos, 1.264 linhas) e `canastra.test.sql` no `run.sh`, e a
+  primeira rodada dela achou três defeitos na checagem de mútuos (`0123`). Ver "A FIXTURE DE
+  EXTRAÇÃO DO BOOK-CANASTRA". **Fica anotado o que ela NÃO cobre:** ela prova a ingestão sobre
+  documento difícil com extração FIEL — a extração real sobre os PDFs sujos (o que o modelo de
+  verdade lê deles) continua sendo provada só pela rodada do dono.
+- **Resumo dos três cenários lado a lado** — **parcialmente atacado em 19/08 (sessão 52)**, e o que
+  ficou de fora está dimensionado. Entrou o painel `OS TRÊS CENÁRIOS SÃO TRÊS?`, que denuncia cenário
+  não diferenciado (o Cliente Case nasce idêntico ao Base). NÃO entrou o bloco numérico lado a lado:
+  a lista de métricas do §2.2 mistura o que uma cascata paralela alcança (receita, EBITDA) com o que
+  exige replicar o modelo inteiro (DSCR mínimo, necessidade de pico), e a metade viável custa
+  PARAMETRIZAR a cascata da aba de receita pelo cenário — refatoração da aba que produz os números do
+  modelo, com um CHECK provando que a sombra do cenário ativo é igual à linha ativa. Ver "OS TRÊS
+  CENÁRIOS SÃO TRÊS?".
+- ~~**Proveniência completa na aba `Premissas`**~~ — **fechado em 19/08 (sessão 52)** e em todas as
+  catorze abas, não só na `Premissas` (`0125`). Ver "A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ".
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do
   `docs/03` não começa.
 - **Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não vem.

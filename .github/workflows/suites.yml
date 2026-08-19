@@ -9,10 +9,12 @@
 #
 # O QUE ELE COBRE, e por que cada peça:
 #   • n8n            libs e nós simulados.
-#   • geradores      regeram os 4 workflows E `git diff --exit-code`. Sem essa
-#                    segunda metade, o JSON commitado pode divergir da fonte que
-#                    o gera, e é o JSON que o dono importa no n8n — a fonte
-#                    "certa" no repositório não conserta a produção.
+#   • geradores      regeram os 4 workflows E as 3 fixtures do book, com
+#                    `git diff --exit-code` em cima. Sem essa segunda metade, o
+#                    arquivo commitado pode divergir da fonte que o gera — e é o
+#                    commitado que roda (o JSON que o dono importa no n8n, a
+#                    fixture que as suítes leem). A fonte "certa" no repositório
+#                    não conserta nem a produção nem o teste.
 #   • export         invariantes do arquivo entregue ao cliente.
 #   • db             migrations aplicadas do zero + testes SQL, contra Postgres 16.
 #   • e2e            a ÚNICA suíte que cobre a costura extração → banco → export.
@@ -132,6 +134,39 @@ jobs:
         run: |
           python3 -m pip install --quiet reportlab
           PYTHONPATH=. python3 gerar.py
+
+      # ---- os DERIVADOS do gerador do book, conferidos como os workflows ----
+      - name: Fixtures derivadas do gerador do book (SQL, JSON) e git diff
+        # POR QUE ESTE PASSO EXISTE (achado em 19/08/2026). Do MESMO
+        # `db/test/gerar_fixture.py` saem TRÊS artefatos versionados:
+        #
+        #   • db/test/fixture_book_vertentes.sql        (suíte de banco)
+        #   • portal/scripts/fixtures/book-vertentes.json (suíte de export)
+        #   • test-data/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
+        #
+        # Os workflows do n8n já têm este portão desde a sessão 20, com o motivo
+        # escrito: "o JSON commitado pode divergir da fonte que o gera". As
+        # fixtures do book NÃO tinham, e o mesmo defeito aconteceu: uma correção
+        # no `motor.py` (a calibração por PL-alvo deixou de escalar conta
+        # intragrupo, ver a `0124`) mudou o SQL e o GABARITO, e o JSON ficou para
+        # trás — a suíte de export reprovou em 5 itens comparando o export NOVO
+        # com um gabarito NOVO a partir de uma fixture VELHA.
+        #
+        # O portão é o mesmo dos workflows, e por isso ele é barato: regera e
+        # compara. Aqui ele é MAIS necessário que lá, porque as três pontas se
+        # comparam entre si — desincronizar uma faz as outras duas mentirem sobre
+        # a terceira.
+        run: |
+          cd test-data/book-vertentes
+          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py > ../../db/test/fixture_book_vertentes.sql
+          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json
+          cd ../book-canastra
+          PYTHONPATH=. python3 ../../db/test/gerar_fixture_canastra.py > ../../db/test/fixture_book_canastra.sql
+          cd ../..
+          git diff --exit-code -- db/test/fixture_book_vertentes.sql \
+            portal/scripts/fixtures/book-vertentes.json \
+            db/test/fixture_book_canastra.sql \
+            || { echo "::error::as fixtures commitadas divergem do gerador — rode os geradores de fixture e commite o resultado"; exit 1; }
 
       # ---- o book difícil: 38 documentos, 3 exercícios, e o custo do lote ----
       - name: Gerar o book-canastra

@@ -144,6 +144,27 @@ export interface LinhaModelo {
    * ninguém confere.
    */
   sinalNormalizado?: boolean;
+  /**
+   * A PROVENIÊNCIA DE CADA CÉLULA HISTÓRICA, por ano: arquivo, página, confiança e
+   * aceite (`0125`).
+   *
+   * POR QUE POR ANO, e não por linha. `documentos` (acima) é da LINHA e é o que a
+   * nota mostrava até aqui — e ele é a lista de TIPOS de documento
+   * (`array_agg(distinct tipo_taxonomia)`), não de arquivos: a nota dizia "Extraído
+   * de BALANCO, DF_AUDITADA", que num mandato com oito balanços não localiza nada.
+   * A proveniência que serve para conferir é da CÉLULA, e a célula é (linha, ano).
+   *
+   * Ausente quando a rota não a carregou (é opcional de propósito, para o
+   * verificador do export poder montar `LinhaModelo` à mão sem ela) — e aí a nota
+   * volta a dizer só o que sabe.
+   */
+  proveniencia?: Record<string, {
+    arquivo: string | null;
+    pagina: number | null;
+    confianca: number | null;
+    statusAceite: string | null;
+    aceitoPor: string | null;
+  }>;
 }
 
 export interface PremissaModelo {
@@ -570,6 +591,44 @@ function fatorDeEscala(unidadeLinha: string | null, unidadeModelo: string): numb
   return alvo === 1 ? f : f * 1000;
 }
 
+/**
+ * A PROVENIÊNCIA DA CÉLULA, escrita para quem vai conferir o número no documento.
+ *
+ * O QUE ELA CONSERTA (§2.3 do diagnóstico de 11/08). Antes do PR #109 o arquivo de
+ * modelagem carregava as abas de dado, e cada célula delas trazia documento,
+ * PÁGINA, CONFIANÇA e STATUS DE ACEITE. O #109 separou os dois exports — decisão
+ * certa e medida — e com as abas de dado saiu essa camada. O que restou nas células
+ * históricas foi `Extraído de ${documentos}`.
+ *
+ * E ESSE RESTO ERA MENOS DO QUE PARECIA: `documentos` é
+ * `array_agg(distinct tipo_taxonomia)`, ou seja o TIPO do documento. A nota dizia
+ * "Extraído de BALANCO, DF_AUDITADA" — num mandato com oito balanços, isso é a
+ * categoria, não a peça. Para responder "de onde veio o 106.580" faltava tudo o que
+ * localiza: o arquivo, a página, e se alguém já olhou aquilo.
+ *
+ * A ORDEM DAS FRASES É A DA CONFERÊNCIA: primeiro onde procurar (arquivo, página),
+ * depois o quanto confiar (confiança, aceite). E cada pedaço só aparece se
+ * EXISTIR — `null` é "a extração não disse", e escrever "página null" seria pior
+ * que calar. Sem proveniência carregada, a nota volta ao texto antigo, com os tipos.
+ */
+function frasesDeProveniencia(l: LinhaModelo, ano: number): string {
+  const p = l.proveniencia?.[String(ano)];
+  if (!p) return `Extraído de ${(l.documentos ?? ["?"]).join(", ")}`;
+  const partes: string[] = [
+    `Extraído de ${p.arquivo ?? (l.documentos ?? ["?"]).join(", ")}`,
+  ];
+  if (p.pagina != null) partes.push(`página ${p.pagina}`);
+  if (p.confianca != null) partes.push(`confiança da extração ${Math.round(p.confianca * 100)}%`);
+  if (p.statusAceite) {
+    // ACEITE É O QUE SEPARA "o modelo leu" de "um humano conferiu", e é a única
+    // frase daqui que muda o peso do número numa conversa com credor.
+    partes.push(p.statusAceite === "aceito"
+      ? `ACEITO${p.aceitoPor ? ` por ${p.aceitoPor}` : ""}`
+      : `aceite: ${p.statusAceite} — este número ainda NÃO foi conferido por ninguém`);
+  }
+  return partes.join(" · ");
+}
+
 /** Valor histórico já na escala do modelo, com o aviso quando houve conversão. */
 function valorNaEscala(l: LinhaModelo, ano: number, unidadeModelo: string):
   { valor: number; nota: string } | null {
@@ -584,7 +643,7 @@ function valorNaEscala(l: LinhaModelo, ano: number, unidadeModelo: string):
     ? ` · SINAL NORMALIZADO: o documento traz ${(-bruto).toLocaleString("pt-BR")} (despesa negativa) `
       + "e o modelo usa magnitude positiva, subtraída na cascata — ver a coluna de sinal \"(-)\"."
     : "";
-  const proveniencia = `Extraído de ${(l.documentos ?? ["?"]).join(", ")}${sinal}`;
+  const proveniencia = `${frasesDeProveniencia(l, ano)}${sinal}`;
   if (f === null) {
     return {
       valor: bruto,
@@ -1741,6 +1800,58 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
     somaOuZero(g, "SGA", ano, sga.map((l) => g.ref(chaveLinha("sga", l), ano)), true);
     g.set("CUSTOS_PCT", ano, `=IF(${g.ref("RECEITA_LIQUIDA", ano)}<>0,${g.ref("CUSTOS", ano)}/${g.ref("RECEITA_LIQUIDA", ano)},0)`, { fmt: PCT });
     g.set("SGA_PCT", ano, `=IF(${g.ref("RECEITA_LIQUIDA", ano)}<>0,${g.ref("SGA", ano)}/${g.ref("RECEITA_LIQUIDA", ano)},0)`, { fmt: PCT });
+  }
+
+  // ===========================================================================
+  // O CENÁRIO É DIFERENTE DO BASE? — a pergunta que o arquivo não respondia.
+  //
+  // O QUE ISTO DENUNCIA, e é um defeito de PRODUTO, não de código: o `Cliente
+  // Case` nasce como `=<Base Case>` em TODA conta deste modelo (é a convenção do
+  // Modelo Base, e está certa como ponto de partida). A consequência é que, num
+  // arquivo recém-exportado, girar o dial de 1 para 2 não muda NADA — e nada no
+  // arquivo diz isso. Um analista pode levar a um comitê um "Cliente Case" que é,
+  // número por número, o Base Case, e a planilha não o contradiz.
+  //
+  // O Stress tem o problema espelhado: ele é o Base multiplicado por um haircut
+  // único (`Considerações!$F$8`). Se alguém zerar aquela célula, o Stress vira o
+  // Base e, de novo, o arquivo continua mostrando três cenários no dropdown.
+  //
+  // A MEDIDA É EXATA, não é heurística: para cada conta e cada exercício
+  // projetado, `ABS(cenário − base)`. Zero em tudo significa premissas idênticas,
+  // e nada mais pode significar. Somar as premissas (em vez das diferenças em
+  // módulo) seria mais curto e ERRADO: dois conjuntos diferentes podem ter a
+  // mesma soma, e aí o indicador diria "diferenciado" sobre um cenário que não é.
+  //
+  // A linha é por ANO porque a fórmula de todos os anos junta não caberia: são
+  // uma conta por termo, e um caso com centenas de contas estoura o limite de
+  // 8.192 caracteres de fórmula do Excel.
+  // ===========================================================================
+  const comCenario = g.chaves()
+    .filter((k) => k.endsWith("#cli"))
+    .map((k) => k.slice(0, -"#cli".length));
+  g.pular();
+  g.linha("DIF_CENARIO", {
+    rotulo: "O CENÁRIO ESTÁ DIFERENCIADO DO BASE?", bloco: true,
+  });
+  g.linha("DIF_CENARIO#cli", {
+    rotulo: "    Cliente Case — distância das premissas ao Base", fmt: PCT2,
+    nota: "0 = idêntico ao Base",
+  });
+  g.linha("DIF_CENARIO#str", {
+    rotulo: "    Stress Case — distância das premissas ao Base", fmt: PCT2,
+    nota: "0 = idêntico ao Base",
+  });
+  for (const ano of ctx.anos) {
+    if (!g.ehProjetado(ano)) continue;
+    for (const [alvo, sufixo] of [["DIF_CENARIO#cli", "#cli"], ["DIF_CENARIO#str", "#str"]] as const) {
+      const termos = comCenario.map(
+        (ch) => `ABS(N(${g.ref(`${ch}${sufixo}`, ano)})-N(${g.ref(`${ch}#base`, ano)}))`,
+      );
+      // `N()` em cada ponta: célula VAZIA (conta sem premissa) vale zero aqui, e
+      // sem ele a subtração de duas vazias ainda é 0 — mas a de uma vazia com um
+      // texto seria `#VALUE!`, e um erro nesta linha apagaria o indicador inteiro.
+      g.set(alvo, ano, termos.length > 0 ? `=${termos.join("+")}` : "=0", { fmt: PCT2 });
+    }
   }
 
   // Esta aba nunca congelava nem tinha área de impressão — medido no arquivo
@@ -3840,8 +3951,60 @@ function abaOutput(
       + "aquela aba perdeu o vínculo com o dial — e que os números dela são de outro cenário.",
     );
   });
+  // ---- OS TRÊS CENÁRIOS SÃO TRÊS? -----------------------------------------
+  //
+  // O `CHECK SCENARIO` acima responde "todas as abas estão no mesmo cenário?".
+  // Esta linha responde a OUTRA pergunta, que o arquivo não respondia: **os
+  // cenários são diferentes entre si?**
+  //
+  // POR QUE ELA PRECISA EXISTIR. O `Cliente Case` nasce como `=<Base Case>` em
+  // toda conta do modelo — convenção do Modelo Base, e certa como ponto de
+  // partida. O efeito é que, num arquivo recém-exportado, girar o dial de 1 para
+  // 2 não muda um número sequer, e nada denuncia isso. Um "Cliente Case" que é o
+  // Base Case pode chegar a um comitê sem que a planilha o contradiga — e o
+  // dropdown com três opções é a evidência de que ela deveria contradizer.
+  //
+  // O Stress tem a forma espelhada do mesmo risco: ele é o Base vezes um haircut
+  // único (`Considerações!$F$8`). Zerada aquela célula, o Stress vira o Base e o
+  // dropdown continua oferecendo três.
+  //
+  // A medida é EXATA e vem da aba de receita (`DIF_CENARIO`): a soma, conta a
+  // conta e ano a ano, de `ABS(premissa do cenário − premissa do Base)`. Zero em
+  // todos os anos significa premissas idênticas, e não pode significar outra
+  // coisa. E ela é FÓRMULA VIVA: no minuto em que o analista digitar a primeira
+  // premissa própria do Cliente Case dentro do Excel, o aviso some sozinho.
+  g.celula(7, COL_ROTULO).value = "OS TRÊS CENÁRIOS SÃO TRÊS?";
+  g.celula(7, COL_ROTULO).font = fonte({ bold: true });
+  const projetadosDoDial = ctx.anos.filter((a) => g.ehProjetado(a));
+  [["Cliente Case", "DIF_CENARIO#cli"], ["Stress Case", "DIF_CENARIO#str"]].forEach(
+    ([nome, chave], i) => {
+      const r = 8 + i;
+      g.celula(r, COL_ROTULO).value = `    ${nome} vs Base`;
+      g.celula(r, COL_ROTULO).font = fonte({ size: 9 });
+      const soma = projetadosDoDial
+        .map((a) => `N(${g.externa("Revenues, COGS & SG&A", gRec, chave, a)})`)
+        .join("+");
+      const cel = g.celula(r, 7);
+      cel.value = { formula: soma.length > 0
+        ? `IF((${soma})=0,"IDÊNTICO AO BASE","diferenciado")`
+        : `"sem exercício projetado"` };
+      cel.font = fonte({ bold: true, color: { argb: FONTE_COR.externo } });
+      cel.note = comoNota(
+        `Soma, conta a conta e em todos os exercícios projetados, de ABS(premissa do ${nome} − `
+        + "premissa do Base). Zero significa que este cenário NÃO foi diferenciado: girar o dial "
+        + "para ele não muda um número sequer do modelo.\n\n"
+        + (nome === "Cliente Case"
+          ? "É o estado NORMAL de um arquivo recém-exportado — o Cliente Case nasce espelhando o "
+            + "Base, e é o analista que o preenche, na aba \"Revenues, COGS & SG&A\". O aviso some "
+            + "sozinho na primeira premissa própria que for digitada."
+          : "O Stress é o Base vezes o haircut de Considerações!$F$8. \"IDÊNTICO AO BASE\" aqui "
+            + "significa que aquele haircut está zerado — e um cenário de estresse sem estresse é "
+            + "pior que não ter cenário de estresse, porque parece que alguém olhou."),
+      );
+    });
+
   // Sincroniza o cursor com o que foi escrito à mão acima.
-  g.pular(5 - g.proximaLinha() + 1);
+  g.pular(9 - g.proximaLinha() + 1);
 
   // ---- O AVISO QUE IMPEDE UM MODELO VAZIO DE PARECER UM MODELO --------------
   //

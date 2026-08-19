@@ -987,6 +987,36 @@ CREATE FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) RET
 $$;
 
 --
+-- Name: fn_contraparte_intragrupo(uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid DEFAULT NULL::uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+  with pedacos as (
+    select trim(x) as parte
+    from unnest(regexp_split_to_array(coalesce(p_chave, ''), '\s+(?:-|—|–|×|x|→)\s+')) as x
+    -- O primeiro pedaço é o QUE a conta é ("Conta corrente a pagar"); a
+    -- contraparte está nos seguintes. Sem este corte, "Fornecedores nacionais"
+    -- casaria com qualquer empresa cujo nome tivesse um token em comum.
+    offset 1
+  )
+  select e.id
+  from entidade e, pedacos p
+  where e.caso_id = p_caso_id
+    and (p_entidade_dona is null or e.id <> p_entidade_dona)
+    and length(p.parte) >= 4
+    and fn_mesma_entidade(p.parte, e.razao_social)
+  limit 1;
+$$;
+
+--
+-- Name: FUNCTION fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid) IS '0124: a empresa DO CASO que o rótulo nomeia como contraparte (o sufixo depois do separador), ou null. É o que permite conferir intragrupo sem adivinhar qual conta casa com qual.';
+
+--
 -- Name: fn_decidir_pendencia(uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1763,6 +1793,29 @@ $$;
 COMMENT ON FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica text) IS 'Lado contábil de uma linha de mútuo: ativo (emprestou) | passivo (tomou) | null (o documento não diz). Usada pela reconciliação de mútuos, que compara lado a lado — somar os dois juntos acusa divergência que não existe.';
 
 --
+-- Name: fn_lado_intragrupo(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_lado_intragrupo(p_chave text, p_secao_canonica text DEFAULT NULL::text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    when p_secao_canonica like 'ativo%'   then 'ativo'
+    when p_secao_canonica like 'passivo%' then 'passivo'
+    -- Sem seção canônica, cai no critério da 0117 sobre o rótulo.
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'a receber|a recuperar|credito' then 'ativo'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'a pagar|fornecedor|obrigac' then 'passivo'
+    else null
+  end;
+$$;
+
+--
+-- Name: FUNCTION fn_lado_intragrupo(p_chave text, p_secao_canonica text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_lado_intragrupo(p_chave text, p_secao_canonica text) IS '0124: crédito (ativo) ou obrigação (passivo) de uma linha intragrupo. Seção canônica primeiro; rótulo só como desempate, porque "Fornecedores intragrupo - X" não diz "a pagar".';
+
+--
 -- Name: fn_linhas_do_tipo(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2088,6 +2141,52 @@ begin
   return fn_dial(p_estagio);
 end;
 $$;
+
+--
+-- Name: fn_mutuo_com_socio(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text DEFAULT NULL::text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select fn_normalizar_texto(coalesce(p_chave, '') || ' ' || coalesce(p_secao, ''))
+         ~ '(socio|quotista|cotista|acionista)';
+$$;
+
+--
+-- Name: FUNCTION fn_mutuo_com_socio(p_chave text, p_secao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text) IS '0123: mútuo cuja contraparte é o SÓCIO, não outra empresa do grupo — não tem espelho no mandato e não se confere contra a planilha intragrupo.';
+
+--
+-- Name: fn_natureza_intragrupo(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text DEFAULT NULL::text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    when fn_normalizar_texto(coalesce(p_chave, '') || ' ' || coalesce(p_secao, '')) ~ 'mutuo'
+      then 'mútuo'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'conta corrente'  then 'conta corrente'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'alugue|locac|arrendament'
+      then 'aluguel'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'frete|logistic|transport'
+      then 'frete'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'fornecedor|compra|insumo|materia'
+      then 'fornecimento'
+    when fn_normalizar_texto(coalesce(p_chave, '')) ~ 'rateio|compartilh|servic|honorar'
+      then 'rateio de despesa'
+    else 'conta intragrupo'
+  end;
+$$;
+
+--
+-- Name: FUNCTION fn_natureza_intragrupo(p_chave text, p_secao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) IS '0124: a natureza da linha intragrupo, para a MENSAGEM dizer onde procurar. Não é chave de pareamento — cada ponta da relação usa o vocabulário dela.';
 
 --
 -- Name: fn_normalizar_texto(text); Type: FUNCTION; Schema: public; Owner: -
@@ -3509,6 +3608,145 @@ $$;
 COMMENT ON FUNCTION public.fn_reconciliar_duplicidade(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação: acha a MESMA conta transposta com dois rótulos e abre pendência com o valor dobrado. Não apaga nem reescreve dado — decisão humana. Por caso/entidade (a duplicidade é fato da estrutura dos documentos, não de um exercício), daí periodo_id nulo.';
 
 --
+-- Name: fn_reconciliar_intragrupo(uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 50000, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_ano int;
+  v_par record;
+  v_resultado text := 'ok';
+  v_partes text[] := '{}';
+  v_n int := 0;
+  v_pior_abs numeric; v_pior_pct numeric;
+  v_div numeric; v_tol numeric;
+  v_fonte_a jsonb := '[]'::jsonb;
+  v_pares_conferidos int := 0;
+begin
+  foreach v_ano in array fn_anos_alvo(p_periodo_id) loop
+    for v_par in
+      with balancos as (
+        -- UM DOCUMENTO POR ENTIDADE, e `COMBINADO` fica FORA (ver o cabeçalho:
+        -- as linhas intragrupo dele são eliminações, que nomeiam as duas pontas).
+        select distinct on (d.entidade_id) d.id, d.entidade_id
+        from documento d
+        where d.caso_id = p_caso_id
+          and d.tipo_taxonomia in ('BALANCO', 'BALANCETE', 'DF_AUDITADA')
+          and d.entidade_id is not null
+        order by d.entidade_id,
+                 array_position(array['BALANCO','DF_AUDITADA','BALANCETE'], d.tipo_taxonomia),
+                 d.criado_em desc
+      ), linhas as (
+        select
+          b.entidade_id as dona,
+          fn_contraparte_intragrupo(p_caso_id, ce.chave, b.entidade_id) as contraparte,
+          fn_lado_intragrupo(ce.chave, ce.secao_canonica) as lado,
+          fn_valor_em_base(ce.valor_num, ce.unidade) as valor_base,
+          fn_natureza_intragrupo(ce.chave, ce.secao) as natureza,
+          ce.chave,
+          ce.unidade
+        from balancos b
+        join lateral (select fn_versao_atual(b.id) as ver) v on true
+        join campo_extraido ce on ce.documento_versao_id = v.ver
+        where ce.valor_num is not null
+          and ce.valor_num <> 0
+          and fn_papel_linha(ce.chave) <> 'subtotal'
+          -- MÚTUO É DA OUTRA CHECAGEM. Uma linha, uma régua.
+          and not fn_texto_nomeia_mutuo(ce.chave)
+          and not fn_mutuo_com_socio(ce.chave, ce.secao)
+          and (fn_coluna_periodo_do_ano(v.ver, v_ano) is null
+               or fn_normalizar_texto(ce.periodo_coluna)
+                  = fn_normalizar_texto(fn_coluna_periodo_do_ano(v.ver, v_ano)))
+      ), intragrupo as (
+        select * from linhas
+        where contraparte is not null and lado is not null
+          -- ESCALA AUSENTE NÃO SE CONVERTE, e o critério é o da 0009: sem saber a
+          -- escala, afirmar "confere" seria pior que calar.
+          and unidade is not null
+      )
+      select
+        least(dona, contraparte)    as ent_a,
+        greatest(dona, contraparte) as ent_b,
+        sum(case when lado = 'ativo'   then abs(valor_base) else 0 end) as receber,
+        sum(case when lado = 'passivo' then abs(valor_base) else 0 end) as pagar,
+        count(*)::int as n_linhas,
+        string_agg(distinct natureza, ', ' order by natureza) as naturezas,
+        min(chave) as exemplo
+      from intragrupo
+      group by 1, 2
+      having
+        -- OS DOIS LADOS TÊM DE EXISTIR, e a exigência é sobre o par: A e B ambas
+        -- com balanço no mandato. Sem isso a falta de espelho é a falta do
+        -- documento — que o Portão 1 já cobra — e não erro de número.
+        count(distinct dona) = 2
+    loop
+      v_pares_conferidos := v_pares_conferidos + 1;
+      v_div := abs(v_par.receber - v_par.pagar);
+      -- Tolerância em MOEDA BASE, como no resto da família (0117/0123): o mesmo
+      -- número tem de significar a mesma coisa num balanço em milhar e noutro em
+      -- unidade.
+      v_tol := greatest(p_tolerancia_abs, greatest(v_par.receber, v_par.pagar) * p_tolerancia_pct);
+      v_fonte_a := v_fonte_a || jsonb_build_array(jsonb_build_object(
+        'ano', v_ano,
+        'entidade_a', (select razao_social from entidade where id = v_par.ent_a),
+        'entidade_b', (select razao_social from entidade where id = v_par.ent_b),
+        'a_receber', v_par.receber, 'a_pagar', v_par.pagar,
+        'naturezas', v_par.naturezas, 'n_linhas', v_par.n_linhas, 'exemplo', v_par.exemplo));
+      if v_div > v_tol then
+        v_n := v_n + 1;
+        v_resultado := 'zona_cinzenta';
+        v_partes := v_partes || format(
+          '%s — %s × %s (%s): um lado registra %s a receber e o outro %s a pagar, diferença de %s '
+          || '(em reais, já convertidas as escalas). A mesma posição intragrupo tem de fechar nos '
+          || 'dois balanços; exemplo de linha: "%s"',
+          v_ano,
+          (select razao_social from entidade where id = v_par.ent_a),
+          (select razao_social from entidade where id = v_par.ent_b),
+          v_par.naturezas, round(v_par.receber), round(v_par.pagar), round(v_div), v_par.exemplo);
+        if v_pior_abs is null or v_div > v_pior_abs then
+          v_pior_abs := v_div;
+          v_pior_pct := case when greatest(v_par.receber, v_par.pagar) <> 0
+                             then v_div / greatest(v_par.receber, v_par.pagar) end;
+        end if;
+      end if;
+    end loop;
+  end loop;
+
+  if v_pares_conferidos = 0 then
+    -- SEM PENDÊNCIA, pela mesma doutrina da 0117: não haver par intragrupo com os
+    -- DOIS balanços no mandato é o caso comum e correto — mandato de uma empresa
+    -- só não tem intragrupo, e mandato de grupo pode não ter recebido todos os
+    -- balanços. Abrir pendência aqui encheria a fila com um aviso que não pede
+    -- ação, e fila assim é fila que ninguém lê.
+    return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+      'intragrupo_espelho', 'B', null, null, null,
+      'documento_ausente', null, null,
+      jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct),
+      'Nenhum par intragrupo com os DOIS balanços no mandato: não há espelho para conferir.');
+  end if;
+
+  return fn_registrar_reconciliacao(p_caso_id, null, p_periodo_id,
+    'intragrupo_espelho', 'B', null, v_fonte_a, null, v_resultado,
+    v_pior_abs, v_pior_pct,
+    jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct,
+                       'pares_conferidos', v_pares_conferidos, 'pares_divergentes', v_n),
+    case when v_n = 0
+      then format('Intragrupo (fora mútuo): %s par(es) de empresas conferido(s) pelo espelho — '
+                  || 'todos fecham nos dois balanços.', v_pares_conferidos)
+      else format('Intragrupo (fora mútuo): %s de %s par(es) de empresas NÃO fecham — %s.',
+                  v_n, v_pares_conferidos, array_to_string(v_partes, '; ')) end);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0124: a posição intragrupo entre cada PAR de empresas fecha nos dois balanços? Pareia pelo par de empresas (a contraparte vem do rótulo), não pela natureza — cada ponta usa o vocabulário dela. Mútuo fica com fn_reconciliar_mutuos.';
+
+--
 -- Name: fn_reconciliar_mutuos(uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3523,7 +3761,6 @@ declare
   v_unid_mut text;
   v_bp   record;
   v_pl   record;
-  v_lados_bp text[] := '{}';
   v_a numeric; v_b numeric; v_div numeric; v_tol numeric;
   v_resultado text := 'ok';
   v_partes text[] := '{}';
@@ -3531,6 +3768,16 @@ declare
   v_pior_abs numeric; v_pior_pct numeric;
   v_fonte_a jsonb; v_fonte_b jsonb;
   v_tem_balanco boolean;
+  -- 0123: os dois degraus específicos, respondidos sobre o DOCUMENTO. Algum
+  -- rótulo nomeia (degrau 1)? Alguma seção nomeia (degrau 2)? Nenhum dos dois é
+  -- o degrau 3.
+  v_pl_rotulo boolean;
+  v_pl_secao  boolean;
+  -- 0123: os lados do balanço, colhidos ANTES de comparar — é o que permite
+  -- perguntar se eles concordam entre si, que a versão anterior não fazia.
+  v_lados record;
+  v_lado_alvo text;
+  v_rotulo_lado text;
 begin
   -- A PLANILHA É DO GRUPO E O SALDO É DE CADA EMPRESA — por isso esta checagem
   -- é por CASO, e não por (caso, entidade) como as outras.
@@ -3566,6 +3813,21 @@ begin
   v_ver_mut  := fn_versao_atual(v_doc_mut);
   v_unid_mut := fn_unidade_predominante(v_ver_mut);
 
+  -- OS DEGRAUS SÃO RESOLVIDOS UMA VEZ, PARA O DOCUMENTO TODO — e é essencial que
+  -- seja assim, não linha a linha. A pergunta do degrau é "este documento
+  -- diferencia natureza no rótulo?"; respondê-la por linha faria a linha calada de
+  -- um documento que diferencia entrar junto (que é justamente o erro), e a de um
+  -- que não diferencia ficar de fora (que é o outro erro).
+  select bool_or(fn_texto_nomeia_mutuo(ce.chave)),
+         bool_or(fn_texto_nomeia_mutuo(ce.secao))
+    into v_pl_rotulo, v_pl_secao
+  from campo_extraido ce
+  where ce.documento_versao_id = v_ver_mut
+    and ce.valor_num is not null
+    and fn_papel_linha(ce.chave) <> 'subtotal';
+  v_pl_rotulo := coalesce(v_pl_rotulo, false);
+  v_pl_secao  := coalesce(v_pl_secao, false);
+
   foreach v_ano in array fn_anos_alvo(p_periodo_id) loop
     v_col_mut := case when v_ano is null then null
                       else fn_coluna_periodo_do_ano(v_ver_mut, v_ano) end;
@@ -3575,123 +3837,191 @@ begin
     -- empresa, e pegar UMA compararia parte do saldo com a planilha inteira.
     -- A escala entra linha a linha (`fn_valor_em_base`), então um caso com um
     -- balanço em milhar e outro em unidade continua somando certo.
-    for v_bp in
-      select fn_lado_do_mutuo(ce.chave, ce.secao_canonica) as lado,
-             sum(fn_valor_em_base(ce.valor_num, ce.unidade)) as soma_base,
-             count(*)::int as n,
-             count(distinct d.id)::int as n_docs,
-             min(ce.chave) as exemplo,
-             bool_or(ce.unidade is null) as tem_sem_escala
-      from (
-        -- UM DOCUMENTO POR ENTIDADE, e isto é correção de defeito medido, não
-        -- zelo: o book Vertentes entrega para a mesma controlada um BALANÇO e
-        -- um BALANCETE do mesmo exercício, com o mesmo saldo de mútuo (3.974).
-        -- Somando os dois, o lado passivo saía 15.427 contra 11.453 do ativo e
-        -- a checagem acusava 2.394 de divergência — uma divergência que ela
-        -- mesma tinha criado. Balanço e balancete são a MESMA realidade dita
-        -- duas vezes; a ordem abaixo escolhe a peça mais definitiva.
-        select distinct on (d.entidade_id) d.id, d.entidade_id
-        from documento d
-        where d.caso_id = p_caso_id
-          and d.tipo_taxonomia in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA')
-        order by d.entidade_id,
-                 array_position(array['BALANCO','COMBINADO','DF_AUDITADA','BALANCETE'],
-                                d.tipo_taxonomia),
-                 d.criado_em desc
-      ) d
+    --
+    -- 0123: o resultado é AGREGADO em uma linha só (um objeto por lado), em vez
+    -- de percorrido lado a lado. É essa mudança de forma que torna possível
+    -- perguntar "os dois lados concordam?" antes de comparar qualquer coisa.
+    with balancos as (
+      -- UM DOCUMENTO POR ENTIDADE, e isto é correção de defeito medido, não
+      -- zelo: o book Vertentes entrega para a mesma controlada um BALANÇO e
+      -- um BALANCETE do mesmo exercício, com o mesmo saldo de mútuo (3.974).
+      -- Somando os dois, o lado passivo saía 15.427 contra 11.453 do ativo e
+      -- a checagem acusava 2.394 de divergência — uma divergência que ela
+      -- mesma tinha criado. Balanço e balancete são a MESMA realidade dita
+      -- duas vezes; a ordem abaixo escolhe a peça mais definitiva.
+      select distinct on (d.entidade_id) d.id, d.entidade_id
+      from documento d
+      where d.caso_id = p_caso_id
+        and d.tipo_taxonomia in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA')
+      order by d.entidade_id,
+               array_position(array['BALANCO','COMBINADO','DF_AUDITADA','BALANCETE'],
+                              d.tipo_taxonomia),
+               d.criado_em desc
+    ), linhas as (
+      select d.id as doc_id,
+             fn_lado_do_mutuo(ce.chave, ce.secao_canonica) as lado,
+             fn_valor_em_base(ce.valor_num, ce.unidade) as valor_base,
+             ce.chave,
+             ce.unidade
+      from balancos d
       join lateral (select fn_versao_atual(d.id) as ver) v on true
       join campo_extraido ce on ce.documento_versao_id = v.ver
       where ce.valor_num is not null
-        and fn_normalizar_texto(ce.chave) like '%mutuo%'
+        -- O LADO DO BALANÇO CONTINUA LENDO O RÓTULO, e isto é deliberado: o
+        -- defeito medido é do lado da PLANILHA, e nos balanços do Canastra e de
+        -- Vertentes a conta diz "Mútuos a pagar" / "Mútuos a receber" no próprio
+        -- rótulo. Alargar aqui para a seção seria consertar um caso que não
+        -- existe — e traria a mesma over-inclusão: a subseção de balanço é
+        -- "Partes Relacionadas", que agrupa mútuo, conta corrente e aluguel.
+        and fn_texto_nomeia_mutuo(ce.chave)
+        -- 0123: mútuo com SÓCIO sai — a outra ponta dele não está no mandato,
+        -- então ele não espelha e não é da população da planilha intragrupo.
+        and not fn_mutuo_com_socio(ce.chave, ce.secao)
         and fn_papel_linha(ce.chave) <> 'subtotal'
         and (fn_coluna_periodo_do_ano(v.ver, v_ano) is null
              or fn_normalizar_texto(ce.periodo_coluna)
                 = fn_normalizar_texto(fn_coluna_periodo_do_ano(v.ver, v_ano)))
-      group by 1
-    loop
-      if v_bp.lado is null then continue; end if;
-      v_lados_bp := v_lados_bp || v_bp.lado;
+        and fn_lado_do_mutuo(ce.chave, ce.secao_canonica) is not null
+    ), por_lado as (
+      select lado, abs(sum(valor_base)) as soma_base
+      from linhas group by lado
+    )
+    select
+      (select count(*)::int from por_lado) as n_lados,
+      (select soma_base from por_lado where lado = 'ativo')   as soma_ativo,
+      (select soma_base from por_lado where lado = 'passivo') as soma_passivo,
+      -- CONTAGENS SOBRE AS LINHAS, não sobre os lados agregados: com os dois
+      -- lados somados num número, `max(n_docs)` por lado dizia "2 documentos"
+      -- num par que vem de 3. O que a mensagem promete é quantas peças
+      -- sustentam o número, e isso só se conta antes de agrupar.
+      count(*)::int as n_linhas,
+      count(distinct doc_id)::int as n_docs,
+      min(chave) as exemplo,
+      bool_or(unidade is null) as tem_sem_escala
+    into v_lados
+    from linhas;
 
-      -- ---- LADO B: a planilha, do MESMO lado ------------------------------
-      -- A linha da planilha que NÃO declara lado ("Participações → Metalúrgica
-      -- — Mútuo" é o formato normal) entra no lado do balanço com que está
-      -- sendo comparada. Isso só é honesto porque o bloco abaixo interrompe a
-      -- checagem quando o balanço tem os DOIS lados: aí a linha sem lado
-      -- caberia nos dois, e escolher um é chute.
-      select coalesce(sum(fn_valor_em_base(ce.valor_num, ce.unidade)), 0) as soma_base,
-             coalesce(sum(ce.valor_num), 0) as soma_bruta,
-             count(*)::int as n
-        into v_pl
-      from campo_extraido ce
-      where ce.documento_versao_id = v_ver_mut
-        and ce.valor_num is not null
-        and fn_papel_linha(ce.chave) <> 'subtotal'
-        -- MÚTUO CONTRA MÚTUO. A planilha de intragrupo lista mais coisa do que
-        -- mútuo — conta corrente rotativa, aluguel entre coligadas, rateio de
-        -- despesa —, e o balanço registra cada uma dessas num lugar diferente
-        -- ("Outros créditos", "Contas a pagar"). Comparar a planilha INTEIRA
-        -- contra as contas de mútuo do balanço acusa como divergência aquilo
-        -- que é só natureza diferente: no book Vertentes isso somava a conta
-        -- corrente de 1.400 de um lado só e inventava 1.400 de diferença.
-        -- Fica anotado o que ISTO deixa de fora: a conferência das linhas
-        -- intragrupo que NÃO são mútuo continua sem checagem. É trabalho
-        -- próprio — exige casar cada linha com a conta certa de cada balanço,
-        -- que é outro problema (e outro par de olhos humanos).
-        and fn_normalizar_texto(ce.chave) like '%mutuo%'
-        and coalesce(fn_lado_do_mutuo(ce.chave, ce.secao_canonica), v_bp.lado) = v_bp.lado
-        and (v_col_mut is null
-             or fn_normalizar_texto(ce.periodo_coluna) = fn_normalizar_texto(v_col_mut));
-      if coalesce(v_pl.n, 0) = 0 then continue; end if;
+    if coalesce(v_lados.n_lados, 0) = 0 then
+      continue;
+    end if;
 
-      -- Escala ausente de um dos lados é o mesmo critério conservador da 0009:
-      -- não há o que converter, e afirmar "confere" seria pior que calar.
-      if v_bp.tem_sem_escala <> (v_unid_mut is null) then
-        continue;
-      end if;
+    -- Escala ausente de um dos lados é o mesmo critério conservador da 0009:
+    -- não há o que converter, e afirmar "confere" seria pior que calar.
+    if coalesce(v_lados.tem_sem_escala, false) <> (v_unid_mut is null) then
+      continue;
+    end if;
 
-      v_a := abs(coalesce(v_bp.soma_base, 0));
-      v_b := abs(coalesce(v_pl.soma_base, 0));
-      v_n := v_n + 1;
-      v_div := abs(v_a - v_b);
-      -- Tolerância em MOEDA BASE (reais), não na escala do documento: o mesmo
-      -- número tem de significar a mesma coisa num balanço em milhar e noutro
-      -- em unidade, senão a checagem é mais frouxa justamente onde os valores
-      -- são maiores.
-      v_tol := greatest(p_tolerancia_abs, v_a * p_tolerancia_pct);
-
+    -- OS DOIS LADOS SE ESPELHAM: CONFERI-LOS ENTRE SI VEM PRIMEIRO.
+    if v_lados.n_lados = 2 then
+      v_div := abs(v_lados.soma_ativo - v_lados.soma_passivo);
+      v_tol := greatest(p_tolerancia_abs, v_lados.soma_ativo * p_tolerancia_pct);
       if v_div > v_tol then
+        -- O achado é dos BALANÇOS, e a planilha não é comparada neste ano:
+        -- atribuir a um dos lados uma linha de planilha que não declara lado
+        -- seria escolher por sorteio qual metade da contradição é a verdade.
+        v_n := v_n + 1;
         v_resultado := 'zona_cinzenta';
         v_partes := v_partes || format(
-          '%s (%s): balanço soma %s em %s linha(s) de %s documento(s) e a planilha soma %s em %s '
-          || 'linha(s) — diferença de %s (em reais, já convertidas as escalas)',
-          v_ano, v_bp.lado, round(v_a), v_bp.n, v_bp.n_docs, round(v_b), v_pl.n, round(v_div));
+          '%s: os DOIS LADOS do mesmo mútuo não fecham DENTRO do mandato — a receber soma %s e '
+          || 'a pagar soma %s, diferença de %s (em reais). A planilha não foi comparada neste '
+          || 'exercício: sem saber qual lado é o correto, atribuir a linha da planilha a um deles '
+          || 'seria chute.',
+          v_ano, round(v_lados.soma_ativo), round(v_lados.soma_passivo), round(v_div));
         if v_pior_abs is null or v_div > v_pior_abs then
           v_pior_abs := v_div;
-          v_pior_pct := case when v_a <> 0 then v_div / v_a end;
+          v_pior_pct := case when v_lados.soma_ativo <> 0
+                             then v_div / v_lados.soma_ativo end;
         end if;
-      else
-        v_partes := v_partes || format('%s (%s): confere (balanço %s = planilha %s, em reais)',
-          v_ano, v_bp.lado, round(v_a), round(v_b));
+        continue;
       end if;
+      -- Concordam: o saldo do balanço está estabelecido por dupla evidência.
+      -- UMA comparação, contra o número que as duas pontas confirmam.
+      v_lado_alvo := null;
+      v_a := v_lados.soma_ativo;
+      v_rotulo_lado := 'os dois lados';
+    else
+      v_lado_alvo := case when v_lados.soma_ativo is not null then 'ativo' else 'passivo' end;
+      v_a := coalesce(v_lados.soma_ativo, v_lados.soma_passivo);
+      v_rotulo_lado := v_lado_alvo;
+    end if;
 
-      v_fonte_a := jsonb_build_object('lado', v_bp.lado, 'soma_base', v_a,
-        'n_linhas', v_bp.n, 'n_documentos', v_bp.n_docs, 'exemplo', v_bp.exemplo, 'ano', v_ano);
-      v_fonte_b := jsonb_build_object('lado', v_bp.lado, 'soma_base', v_b,
-        'soma_bruta', v_pl.soma_bruta, 'n_linhas', v_pl.n, 'unidade', v_unid_mut,
-        'documento_versao_id', v_ver_mut);
-    end loop;
+    -- ---- LADO B: a planilha ----------------------------------------------
+    select coalesce(sum(fn_valor_em_base(ce.valor_num, ce.unidade)), 0) as soma_base,
+           coalesce(sum(ce.valor_num), 0) as soma_bruta,
+           count(*)::int as n
+      into v_pl
+    from campo_extraido ce
+    where ce.documento_versao_id = v_ver_mut
+      and ce.valor_num is not null
+      and fn_papel_linha(ce.chave) <> 'subtotal'
+      -- MÚTUO CONTRA MÚTUO — nos degraus 1 e 2. A planilha de intragrupo lista
+      -- mais coisa do que mútuo (conta corrente rotativa, aluguel entre
+      -- coligadas, rateio de despesa), e o balanço registra cada uma num lugar
+      -- diferente ("Outros créditos", "Contas a pagar"). Comparar a planilha
+      -- INTEIRA contra as contas de mútuo do balanço acusa como divergência
+      -- aquilo que é só natureza diferente: no book Vertentes isso somava a
+      -- conta corrente de 1.400 de um lado só e inventava 1.400 de diferença.
+      --
+      -- OS TRÊS DEGRAUS, NA ORDEM. O `case` é o que impede o degrau 2 de valer
+      -- quando o degrau 1 existe — sem isso, seção larga ("MÚTUOS E CONTAS
+      -- INTRAGRUPO") passa a incluir a conta corrente que o rótulo já tinha
+      -- separado, que é o defeito de novo.
+      --
+      -- Fica anotado o que ISTO deixa de fora: a conferência das linhas
+      -- intragrupo que NÃO são mútuo continua sem checagem. É trabalho próprio
+      -- — exige casar cada linha com a conta certa de cada balanço.
+      and (case
+             when v_pl_rotulo then fn_texto_nomeia_mutuo(ce.chave)
+             when v_pl_secao  then fn_texto_nomeia_mutuo(ce.secao)
+             else true
+           end)
+      -- A MESMA RÉGUA DOS DOIS LADOS. Se o balanço exclui o mútuo com sócio e a
+      -- planilha não, a diferença que sobra é da régua e não do dado — é o defeito
+      -- que esta migration está consertando, cometido de novo em espelho.
+      and not fn_mutuo_com_socio(ce.chave, ce.secao)
+      -- Quando o balanço tem um lado só, a linha da planilha que DECLARA lado
+      -- tem de ser do mesmo; a que não declara entra (ela é as duas pontas).
+      -- Com os dois lados concordando, `v_lado_alvo` é nulo e não há o que
+      -- filtrar: compara-se a planilha inteira contra o saldo estabelecido.
+      and (v_lado_alvo is null
+           or coalesce(fn_lado_do_mutuo(ce.chave, ce.secao_canonica), v_lado_alvo) = v_lado_alvo)
+      and (v_col_mut is null
+           or fn_normalizar_texto(ce.periodo_coluna) = fn_normalizar_texto(v_col_mut));
+    if coalesce(v_pl.n, 0) = 0 then continue; end if;
 
-    -- OS DOIS LADOS NÃO SE SOMAM: ELES SE ESPELHAM — e a primeira versão desta
-    -- função errou aqui também. Um mútuo intragrupo aparece DUAS vezes dentro
-    -- do mesmo mandato: como "a receber" no balanço de quem emprestou e como
-    -- "a pagar" no de quem tomou. No book Vertentes é exatamente isto: a
-    -- holding registra 11.453 a receber, e as duas controladas registram
-    -- 7.479 + 3.974 = 11.453 a pagar. É a MESMA dívida vista dos dois lados.
-    --
-    -- Por isso a planilha é comparada contra CADA lado separadamente (e não
-    -- contra a soma dos dois, que daria o dobro), e a linha da planilha que não
-    -- declara lado — "Participações → Metalúrgica — Mútuo", que é o formato
-    -- normal — entra nas duas comparações: ela É as duas pontas.
+    v_b := abs(coalesce(v_pl.soma_base, 0));
+    v_a := abs(coalesce(v_a, 0));
+    v_n := v_n + 1;
+    v_div := abs(v_a - v_b);
+    -- Tolerância em MOEDA BASE (reais), não na escala do documento: o mesmo
+    -- número tem de significar a mesma coisa num balanço em milhar e noutro
+    -- em unidade, senão a checagem é mais frouxa justamente onde os valores
+    -- são maiores.
+    v_tol := greatest(p_tolerancia_abs, v_a * p_tolerancia_pct);
+
+    if v_div > v_tol then
+      v_resultado := 'zona_cinzenta';
+      v_partes := v_partes || format(
+        '%s (%s): balanço soma %s em %s linha(s) de %s documento(s) e a planilha soma %s em %s '
+        || 'linha(s) — diferença de %s (em reais, já convertidas as escalas)',
+        v_ano, v_rotulo_lado, round(v_a), v_lados.n_linhas, v_lados.n_docs, round(v_b),
+        v_pl.n, round(v_div));
+      if v_pior_abs is null or v_div > v_pior_abs then
+        v_pior_abs := v_div;
+        v_pior_pct := case when v_a <> 0 then v_div / v_a end;
+      end if;
+    else
+      v_partes := v_partes || format('%s (%s): confere (balanço %s = planilha %s, em reais)',
+        v_ano, v_rotulo_lado, round(v_a), round(v_b));
+    end if;
+
+    v_fonte_a := jsonb_build_object('lado', v_rotulo_lado, 'soma_base', v_a,
+      'n_linhas', v_lados.n_linhas, 'n_documentos', v_lados.n_docs,
+      'exemplo', v_lados.exemplo, 'ano', v_ano);
+    v_fonte_b := jsonb_build_object('lado', v_rotulo_lado, 'soma_base', v_b,
+      'soma_bruta', v_pl.soma_bruta, 'n_linhas', v_pl.n, 'unidade', v_unid_mut,
+      'documento_versao_id', v_ver_mut,
+      'natureza_no_rotulo', v_pl_rotulo, 'natureza_na_secao', v_pl_secao);
   end loop;
 
   if v_n = 0 then
@@ -3715,7 +4045,9 @@ begin
     'mutuos_planilha_vs_balanco', 'B', v_doc_mut, v_fonte_a, v_fonte_b, v_resultado,
     v_pior_abs, v_pior_pct,
     jsonb_build_object('tolerancia_abs', p_tolerancia_abs, 'tolerancia_pct', p_tolerancia_pct,
-                       'comparacoes', v_n),
+                       'comparacoes', v_n,
+                       'natureza_no_rotulo', v_pl_rotulo,
+                       'natureza_na_secao', v_pl_secao),
     format('Mútuos: a planilha intragrupo contra o saldo dos balanços em %s comparação(ões) — %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
@@ -3725,7 +4057,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Checagem B: a planilha de mútuos (abertura por contraparte) contra o saldo de mútuos do balanço, LADO A LADO (ativo/passivo). Não corrige nada — divergência vira pendência para decisão humana. 0117.';
+COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0123: a natureza "mútuo" é lida na linha OU na seção, e um documento MUTUOS que não a nomeia em lugar nenhum conta inteiro. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
 
 --
 -- Name: fn_reconciliar_por_documento(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -3794,10 +4126,21 @@ begin
     v_checagens := v_checagens || jsonb_build_array(v_res);
   end if;
 
-  -- Mútuos (0117). Pelos dois lados: quem chega por último fecha o par.
+  -- Mútuos (0117/0123). Pelos dois lados: quem chega por último fecha o par.
   if v_tipo in ('MUTUOS', 'BALANCO', 'COMBINADO', 'DF_AUDITADA') then
     foreach v_per in array v_periodos loop
       v_res := fn_reconciliar_mutuos(v_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
+  -- Intragrupo FORA mútuo (0124). Disparada por balanço individual, que é a
+  -- única peça de que ela precisa — não há documento par a esperar. `COMBINADO`
+  -- não dispara e não é lido: as linhas intragrupo dele são eliminações.
+  if v_tipo in ('BALANCO', 'BALANCETE', 'DF_AUDITADA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_intragrupo(v_caso_id, v_per);
       exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
     end loop;
     v_checagens := v_checagens || jsonb_build_array(v_res);
@@ -3817,7 +4160,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Dispara as checagens A/B pertinentes ao tipo do documento. Ausência do documento par NÃO abre pendência (é do checklist do Kit Básico). 0117: inclui a de mútuos, disparada pelos dois lados do par.';
+COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Dispara as checagens A/B pertinentes ao tipo do documento. Ausência do documento par NÃO abre pendência (é do checklist do Kit Básico). 0117: mútuos, pelos dois lados. 0124: intragrupo fora mútuo, pelo espelho entre cada par de empresas.';
 
 --
 -- Name: fn_reconciliar_receita_dre_vs_faturamento(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -5324,6 +5667,22 @@ CREATE FUNCTION public.fn_teto_ressalvas() RETURNS integer
 COMMENT ON FUNCTION public.fn_teto_ressalvas() IS 'Teto de pendências aceitas com ressalva ATIVAS por caso. 3 é o valor que o dono confirmou em f0/04 ("Teto de ressalvas confirmado em 3") — não é palpite deste código.';
 
 --
+-- Name: fn_texto_nomeia_mutuo(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_texto_nomeia_mutuo(p_texto text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select fn_normalizar_texto(coalesce(p_texto, '')) like '%mutuo%';
+$$;
+
+--
+-- Name: FUNCTION fn_texto_nomeia_mutuo(p_texto text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_texto_nomeia_mutuo(p_texto text) IS '0123: a natureza "mútuo" nomeada NESTE texto. Usada no rótulo (degrau 1) e na seção (degrau 2), com precedência do rótulo — nunca nos dois de uma vez.';
+
+--
 -- Name: fn_tokens_estruturais(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5720,16 +6079,21 @@ COMMENT ON FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text) IS 'V
 -- Name: fn_valores_por_ano(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAULT NULL::text) RETURNS TABLE(rotulo_norm text, secao_canonica text, ano integer, valor numeric, n_ocorrencias bigint)
+CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAULT NULL::text) RETURNS TABLE(rotulo_norm text, secao_canonica text, ano integer, valor numeric, n_ocorrencias bigint, arquivo text, origem_pagina integer, confianca numeric, status_aceite text, aceito_por text)
     LANGUAGE sql STABLE
     AS $$
-  -- marca-0102
+  -- marca-0125
   with ocorrencias as (
     select
       fn_normalizar_texto(ce.chave) as rotulo_norm,
       ce.secao_canonica,
       fn_ano_da_coluna(ce.periodo_coluna, p.referencia) as ano,
-      ce.valor_num as valor
+      ce.valor_num as valor,
+      dv.nome_original as arquivo,
+      ce.origem_pagina,
+      ce.confianca,
+      ce.status_aceite,
+      ce.aceito_por
     from campo_extraido ce
     join documento_versao dv on dv.id = ce.documento_versao_id
     join documento d on d.id = dv.documento_id
@@ -5740,23 +6104,50 @@ CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAUL
       and (p_entidade is null
            or fn_mesma_entidade(coalesce(ce.entidade_coluna, e.razao_social, ''), p_entidade))
       and dv.id = fn_versao_com_extracao(d.id)
+  ),
+  agrupado as (
+    select o.rotulo_norm, o.secao_canonica, o.ano,
+           -- Maior módulo COM SINAL, igual à 0042. Duas grafias da mesma conta no
+           -- mesmo exercício não somam: representam o mesmo saldo.
+           --
+           -- NÃO REESCREVER esta expressão. Ver o cabeçalho: em empate de módulo
+           -- com sinais opostos, outra forma de "maior módulo" pode escolher outro
+           -- valor, e isso é número de modelo mudando de graça.
+           (array_agg(o.valor order by abs(o.valor) desc))[1] as valor,
+           count(*) as n_ocorrencias
+    from ocorrencias o
+    where o.ano is not null
+    group by o.rotulo_norm, o.secao_canonica, o.ano
+  ),
+  -- A PROVENIÊNCIA DA OCORRÊNCIA QUE DEU O VALOR, e não de uma qualquer do grupo.
+  -- O desempate entre ocorrências de valor idêntico é declarado, para a nota não
+  -- mudar de conteúdo entre duas execuções sobre o mesmo dado: maior confiança
+  -- primeiro (é a que o sistema considera mais confiável), depois a página mais
+  -- baixa (é onde um humano procuraria primeiro).
+  com_proveniencia as (
+    select distinct on (a.rotulo_norm, a.secao_canonica, a.ano)
+           a.rotulo_norm, a.secao_canonica, a.ano, a.valor, a.n_ocorrencias,
+           o.arquivo, o.origem_pagina, o.confianca, o.status_aceite, o.aceito_por
+    from agrupado a
+    left join ocorrencias o
+      on o.rotulo_norm = a.rotulo_norm
+     and o.secao_canonica is not distinct from a.secao_canonica
+     and o.ano = a.ano
+     and o.valor = a.valor
+    order by a.rotulo_norm, a.secao_canonica, a.ano,
+             o.confianca desc nulls last, o.origem_pagina asc nulls last, o.arquivo
   )
-  select o.rotulo_norm, o.secao_canonica, o.ano,
-         -- Maior módulo COM SINAL, igual à 0042. Duas grafias da mesma conta no
-         -- mesmo exercício não somam: representam o mesmo saldo.
-         (array_agg(o.valor order by abs(o.valor) desc))[1] as valor,
-         count(*) as n_ocorrencias
-  from ocorrencias o
-  where o.ano is not null
-  group by o.rotulo_norm, o.secao_canonica, o.ano
-  order by o.rotulo_norm, o.ano;
+  select rotulo_norm, secao_canonica, ano, valor, n_ocorrencias,
+         arquivo, origem_pagina, confianca, status_aceite, aceito_por
+  from com_proveniencia
+  order by rotulo_norm, ano;
 $$;
 
 --
 -- Name: FUNCTION fn_valores_por_ano(p_caso_id uuid, p_entidade text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) IS 'O valor de cada linha lógica por exercício — é a fonte dos números do .xlsx entregue. O filtro de entidade não é opcional (0044). 0102: só a versão vigente de cada documento, senão uma ocorrência superada de módulo maior vence a corrigida e sai no entregável.';
+COMMENT ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) IS 'Série histórica por (rótulo, seção, ano) — valor de maior módulo com sinal (0042), só da versão vigente (0102). 0125: acrescenta a proveniência DA CÉLULA (arquivo, página, confiança, aceite), da ocorrência que produziu aquele valor naquele ano — nunca a de outro exercício.';
 
 --
 -- Name: fn_versao_atual(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -7455,6 +7846,12 @@ GRANT ALL ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) TO authentica
 GRANT ALL ON FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7527,6 +7924,12 @@ GRANT ALL ON FUNCTION public.fn_indice_macro_anual(p_desde_ano integer) TO authe
 GRANT ALL ON FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_lado_intragrupo(p_chave text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_lado_intragrupo(p_chave text, p_secao_canonica text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_linhas_do_tipo(p_caso_id uuid, p_codigo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7561,6 +7964,18 @@ GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric) TO authenticated;
+
+--
+-- Name: FUNCTION fn_mutuo_com_socio(p_chave text, p_secao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_natureza_intragrupo(p_chave text, p_secao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_papel_do_rotulo_no_caso(p_caso_id uuid, p_rotulo_norm text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
@@ -7623,6 +8038,12 @@ GRANT ALL ON FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) TO au
 --
 
 GRANT ALL ON FUNCTION public.fn_reavaliar_guardas_extracao(p_documento_versao_id uuid, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
@@ -7720,6 +8141,12 @@ GRANT ALL ON FUNCTION public.fn_tem_palavra_longa(p_chave text) TO authenticated
 --
 
 GRANT ALL ON FUNCTION public.fn_teto_ressalvas() TO authenticated;
+
+--
+-- Name: FUNCTION fn_texto_nomeia_mutuo(p_texto text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_texto_nomeia_mutuo(p_texto text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_tokens_estruturais(p_chave text); Type: ACL; Schema: public; Owner: -

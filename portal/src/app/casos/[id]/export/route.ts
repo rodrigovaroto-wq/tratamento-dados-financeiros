@@ -9,6 +9,7 @@ import {
 import type { CampoExtraido } from "@/lib/types";
 import {
   casarVinculosComLinhas, seriesPorLinha, serieDaLinha,
+  provenienciaPorLinha, provenienciaDaLinha,
   type LinhaParaCasar, type VinculoParaCasar,
 } from "@/lib/modelagem-linha";
 
@@ -422,6 +423,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       // função agrupa — ou seja, o que torna a ordem TOTAL.
       const valoresRes = await paginar<{
         rotulo_norm: string; secao_canonica: string | null; ano: number; valor: number;
+        // 0125: a proveniência DA CÉLULA vem na mesma consulta. Uma segunda ida ao
+        // banco para buscá-la seria pagar de novo pela linha que já está na mão — e
+        // abriria a chance de as duas discordarem entre si.
+        arquivo: string | null; origem_pagina: number | null; confianca: number | null;
+        status_aceite: string | null; aceito_por: string | null;
       }>((de, ate) =>
         supabase.rpc("fn_valores_por_ano", { p_caso_id: id, p_entidade: entidadeModelada })
           .order("rotulo_norm", { ascending: true })
@@ -441,6 +447,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       // a mesma identidade do banco. Ver `seriesPorLinha`: indexar só pelo
       // rótulo fazia a linha de uma seção receber os números da outra.
       const series = seriesPorLinha(valores, anosHistoricos);
+      // A PROVENIÊNCIA POR (LINHA, ANO) — mesma identidade, mesma consulta (0125).
+      // Ela vai para a nota de TODA célula histórica do modelo, não só da
+      // `Premissas`: `valorNaEscala` é o caminho único por onde valor de documento
+      // entra no arquivo, então melhorar a nota lá melhora as catorze abas de uma
+      // vez. O §2.3 do diagnóstico pedia a `Premissas`; sair pelo caminho comum
+      // custa o mesmo e não deixa aba de segunda classe.
+      const proveniencias = provenienciaPorLinha(valores, anosHistoricos);
       const linhasModelo: LinhaModelo[] = ((linhasRes.data ?? []) as unknown as Array<{
         secao_canonica: string | null; chave: string; rotulo_norm: string;
         papel: LinhaModelo["papel"]; unidade: string | null; moeda: string | null;
@@ -449,6 +462,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         secao_canonica: l.secao_canonica, chave: l.chave, rotulo_norm: l.rotulo_norm,
         papel: l.papel, unidade: l.unidade, moeda: l.moeda, documentos: l.documentos,
         valores: serieDaLinha(series, l.secao_canonica, l.rotulo_norm),
+        proveniencia: provenienciaDaLinha(proveniencias, l.secao_canonica, l.rotulo_norm),
       }));
 
       // A base macro do modelo: realizado + Focus, com a fonte de cada célula.
