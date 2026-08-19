@@ -6079,16 +6079,21 @@ COMMENT ON FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text) IS 'V
 -- Name: fn_valores_por_ano(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAULT NULL::text) RETURNS TABLE(rotulo_norm text, secao_canonica text, ano integer, valor numeric, n_ocorrencias bigint)
+CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAULT NULL::text) RETURNS TABLE(rotulo_norm text, secao_canonica text, ano integer, valor numeric, n_ocorrencias bigint, arquivo text, origem_pagina integer, confianca numeric, status_aceite text, aceito_por text)
     LANGUAGE sql STABLE
     AS $$
-  -- marca-0102
+  -- marca-0125
   with ocorrencias as (
     select
       fn_normalizar_texto(ce.chave) as rotulo_norm,
       ce.secao_canonica,
       fn_ano_da_coluna(ce.periodo_coluna, p.referencia) as ano,
-      ce.valor_num as valor
+      ce.valor_num as valor,
+      dv.nome_original as arquivo,
+      ce.origem_pagina,
+      ce.confianca,
+      ce.status_aceite,
+      ce.aceito_por
     from campo_extraido ce
     join documento_versao dv on dv.id = ce.documento_versao_id
     join documento d on d.id = dv.documento_id
@@ -6099,23 +6104,50 @@ CREATE FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text DEFAUL
       and (p_entidade is null
            or fn_mesma_entidade(coalesce(ce.entidade_coluna, e.razao_social, ''), p_entidade))
       and dv.id = fn_versao_com_extracao(d.id)
+  ),
+  agrupado as (
+    select o.rotulo_norm, o.secao_canonica, o.ano,
+           -- Maior módulo COM SINAL, igual à 0042. Duas grafias da mesma conta no
+           -- mesmo exercício não somam: representam o mesmo saldo.
+           --
+           -- NÃO REESCREVER esta expressão. Ver o cabeçalho: em empate de módulo
+           -- com sinais opostos, outra forma de "maior módulo" pode escolher outro
+           -- valor, e isso é número de modelo mudando de graça.
+           (array_agg(o.valor order by abs(o.valor) desc))[1] as valor,
+           count(*) as n_ocorrencias
+    from ocorrencias o
+    where o.ano is not null
+    group by o.rotulo_norm, o.secao_canonica, o.ano
+  ),
+  -- A PROVENIÊNCIA DA OCORRÊNCIA QUE DEU O VALOR, e não de uma qualquer do grupo.
+  -- O desempate entre ocorrências de valor idêntico é declarado, para a nota não
+  -- mudar de conteúdo entre duas execuções sobre o mesmo dado: maior confiança
+  -- primeiro (é a que o sistema considera mais confiável), depois a página mais
+  -- baixa (é onde um humano procuraria primeiro).
+  com_proveniencia as (
+    select distinct on (a.rotulo_norm, a.secao_canonica, a.ano)
+           a.rotulo_norm, a.secao_canonica, a.ano, a.valor, a.n_ocorrencias,
+           o.arquivo, o.origem_pagina, o.confianca, o.status_aceite, o.aceito_por
+    from agrupado a
+    left join ocorrencias o
+      on o.rotulo_norm = a.rotulo_norm
+     and o.secao_canonica is not distinct from a.secao_canonica
+     and o.ano = a.ano
+     and o.valor = a.valor
+    order by a.rotulo_norm, a.secao_canonica, a.ano,
+             o.confianca desc nulls last, o.origem_pagina asc nulls last, o.arquivo
   )
-  select o.rotulo_norm, o.secao_canonica, o.ano,
-         -- Maior módulo COM SINAL, igual à 0042. Duas grafias da mesma conta no
-         -- mesmo exercício não somam: representam o mesmo saldo.
-         (array_agg(o.valor order by abs(o.valor) desc))[1] as valor,
-         count(*) as n_ocorrencias
-  from ocorrencias o
-  where o.ano is not null
-  group by o.rotulo_norm, o.secao_canonica, o.ano
-  order by o.rotulo_norm, o.ano;
+  select rotulo_norm, secao_canonica, ano, valor, n_ocorrencias,
+         arquivo, origem_pagina, confianca, status_aceite, aceito_por
+  from com_proveniencia
+  order by rotulo_norm, ano;
 $$;
 
 --
 -- Name: FUNCTION fn_valores_por_ano(p_caso_id uuid, p_entidade text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) IS 'O valor de cada linha lógica por exercício — é a fonte dos números do .xlsx entregue. O filtro de entidade não é opcional (0044). 0102: só a versão vigente de cada documento, senão uma ocorrência superada de módulo maior vence a corrigida e sai no entregável.';
+COMMENT ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) IS 'Série histórica por (rótulo, seção, ano) — valor de maior módulo com sinal (0042), só da versão vigente (0102). 0125: acrescenta a proveniência DA CÉLULA (arquivo, página, confiança, aceite), da ocorrência que produziu aquele valor naquele ano — nunca a de outro exercício.';
 
 --
 -- Name: fn_versao_atual(uuid); Type: FUNCTION; Schema: public; Owner: -

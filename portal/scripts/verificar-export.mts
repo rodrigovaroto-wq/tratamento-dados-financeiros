@@ -5836,6 +5836,163 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   conferir(antiga, "antiga");
 }
 
+// ============================================================================
+// (34) A PROVENIÊNCIA DA CÉLULA: arquivo, PÁGINA, CONFIANÇA e ACEITE (0125)
+// ============================================================================
+//
+// O QUE ISTO TRAVA. O §2.3 do diagnóstico de 11/08 mediu uma perda de
+// rastreabilidade que ninguém decidiu: antes do PR #109 cada célula de dado
+// trazia documento, página, confiança e status de aceite; o #109 separou os dois
+// exports (decisão certa) e a camada saiu junto. O que sobrou nas células
+// históricas do arquivo de comitê era `Extraído de ${documentos}` — e `documentos`
+// é a lista de TIPOS (`array_agg(distinct tipo_taxonomia)`), não de arquivos.
+//
+// "De onde veio o 106.580" se respondia com "BALANCO". Num mandato com oito
+// balanços, isso é a categoria e não a peça.
+{
+  const comProv = (
+    secao: string, chave: string, valores: Record<string, number>,
+    prov: Record<string, {
+      arquivo: string | null; pagina: number | null; confianca: number | null;
+      statusAceite: string | null; aceitoPor: string | null;
+    }>,
+  ) => ({
+    secao_canonica: secao, chave, rotulo_norm: chave.toLowerCase(),
+    papel: "conta" as const, unidade: "milhar", moeda: "BRL",
+    documentos: ["BALANCO"], valores, proveniencia: prov,
+  });
+
+  const entradaProv = {
+    caso: { nome: "Proveniência da célula", produto: "reestruturacao" },
+    agora: new Date("2026-08-19T12:00:00Z"),
+    entidade: "VERTENTES METALÚRGICA LTDA.",
+    setor: "industria",
+    anosHistoricos: [2024, 2025],
+    anosProjetados: [2026, 2027],
+    stressPct: 0.2, caixaMinimo: 0, aliquotaTributos: 0.34,
+    linhas: [
+      // A MESMA CONTA COM PROVENIÊNCIA DIFERENTE EM CADA ANO — é este o caso que
+      // a `0125` existe para servir, e o que uma proveniência por LINHA (e não
+      // por célula) descreveria errado: 2024 veio de um arquivo, 2025 de outro,
+      // em página diferente e com aceite diferente.
+      comProv("receita_bruta", "Vendas de produtos", { "2024": 26000, "2025": 30000 }, {
+        "2024": {
+          arquivo: "06_Balanco_2024.pdf", pagina: 2, confianca: 0.91,
+          statusAceite: "pendente", aceitoPor: null,
+        },
+        "2025": {
+          arquivo: "01_Balanco_2025x2024.pdf", pagina: 3, confianca: 0.97,
+          statusAceite: "aceito", aceitoPor: "rodrigo@oria",
+        },
+      }),
+      // E a linha SEM proveniência carregada: a nota tem de continuar saindo, com
+      // o texto antigo. É o caminho de quem monta `LinhaModelo` à mão.
+      comProv("custos", "Matérias-primas", { "2024": 15000, "2025": 18000 }, {}),
+    ],
+    premissas: [], vinculos: [], macro: [], unidade: "R$ mil",
+  };
+
+  const VPRV = "vProv";
+  const camposProv: CampoExtraido[] = [
+    campo({ chave: "Vendas de produtos", secao: "Receita Bruta", valor_num: 30000,
+            periodo_coluna: "2025", ordem: 0, documento_versao_id: VPRV }),
+  ];
+  const docsProv: DocumentoParaExport[] = [{
+    id: "dProv", tipo_taxonomia: "BALANCO",
+    entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+    periodo: { tipo: "multi", referencia: "24,25" },
+    documento_versao: [{ id: VPRV, nome_original: "01_Balanco_2025x2024.pdf" }],
+  }];
+
+  const wb = buildExportWorkbook({
+    caso: entradaProv.caso, documentos: docsProv, campos: camposProv,
+    agora: entradaProv.agora,
+    modeloInstitucional: entradaProv as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+  });
+  const ws = wb.getWorksheet("Premissas");
+  checar(!!ws, "(34) a aba Premissas existe no arquivo de modelagem");
+  if (ws) {
+    // O RÓTULO MORA NA COLUNA 3 (`COL_ROTULO`), não na 1 — as duas primeiras são a
+    // sangria do Modelo Base. Procurar na 1 devolve -1 para tudo, e um teste que
+    // não acha a linha "passa" nos asserts seguintes por não chegar neles.
+    const COL_ROT = 3;
+    const acharLinha = (rot: string) => {
+      for (let r = 1; r <= ws.rowCount; r++) {
+        if (String(ws.getRow(r).getCell(COL_ROT).value ?? "").trim() === rot) return r;
+      }
+      return -1;
+    };
+    const texto = (r: number, c: number) => String(
+      (ws.getRow(r).getCell(c).note as { texts?: Array<{ text: string }> } | undefined)
+        ?.texts?.map((t) => t.text).join("") ?? "",
+    );
+    // A COLUNA DO PRIMEIRO EXERCÍCIO é a única com o ano LITERAL: a partir dela o
+    // cabeçalho é fórmula (`=<coluna anterior>+1`, como no Modelo Base), então
+    // procurar o texto "2025" não acha nada. Os anos ocupam colunas consecutivas,
+    // e o assert seguinte prova isso em vez de supor.
+    let c24 = -1;
+    for (let r = 1; r <= 12 && c24 < 0; r++) {
+      for (let c = 2; c <= 30; c++) {
+        if (ws.getRow(r).getCell(c).value === 2024) { c24 = c; break; }
+      }
+    }
+    const c25 = c24 > 0 ? c24 + 1 : -1;
+    const rCli = acharLinha("Vendas de produtos");
+    checar(rCli > 0 && c24 > 0,
+      "(34) a linha e a coluna do primeiro exercício estão no arquivo",
+      `linha=${rCli} col2024=${c24}`);
+    if (c24 > 0) {
+      // O ano seguinte é a coluna ao lado, e ele é FÓRMULA encadeada — se um dia
+      // deixar de ser, este teste passaria a ler a célula errada em silêncio.
+      let achouFormula = false;
+      for (let r = 1; r <= 12; r++) {
+        const f = (ws.getRow(r).getCell(c25).value as { formula?: string } | undefined)?.formula;
+        if (f && /\+1$/.test(f)) { achouFormula = true; break; }
+      }
+      checar(achouFormula,
+        "(34) …e a coluna seguinte é o exercício seguinte, por fórmula encadeada");
+    }
+    if (rCli > 0 && c24 > 0 && c25 > 0) {
+      const n25 = texto(rCli, c25);
+      const n24 = texto(rCli, c24);
+      // ---- o ARQUIVO, não o tipo do documento
+      checar(/01_Balanco_2025x2024\.pdf/.test(n25),
+        "(34) a nota nomeia o ARQUIVO de origem, não o tipo do documento", n25.slice(0, 200));
+      checar(!/^Extraído de BALANCO/.test(n25),
+        "(34) …e não cai de volta em \"Extraído de BALANCO\", que é a categoria", n25.slice(0, 120));
+      // ---- página, confiança e ACEITE
+      checar(/página 3/.test(n25), "(34) a nota traz a PÁGINA", n25.slice(0, 200));
+      checar(/confiança da extração 97%/.test(n25),
+        "(34) …a CONFIANÇA, em porcentagem legível", n25.slice(0, 200));
+      checar(/ACEITO por rodrigo@oria/.test(n25),
+        "(34) …e o ACEITE com quem aceitou — o que separa \"o modelo leu\" de \"alguém conferiu\"",
+        n25.slice(0, 200));
+      // ---- E A CÉLULA DE 2024 DESCREVE 2024, não 2025.
+      //
+      // É este assert que prova por que a 0125 mexeu na `fn_valores_por_ano` e não
+      // na `fn_linhas_para_modelagem`: a segunda devolve UMA proveniência por
+      // linha, da ocorrência de maior módulo entre os exercícios — e aqui ela
+      // poria "página 3, 97%, ACEITO" na célula de 2024, que veio de outro
+      // arquivo, outra página, e NÃO foi aceita por ninguém.
+      checar(/06_Balanco_2024\.pdf/.test(n24) && /página 2/.test(n24),
+        "(34) a célula de 2024 descreve a origem DE 2024, não a de 2025", n24.slice(0, 200));
+      checar(/NÃO foi conferido por ninguém/.test(n24),
+        "(34) …e diz que o número de 2024 está PENDENTE de aceite", n24.slice(0, 200));
+      checar(!/ACEITO/.test(n24),
+        "(34) …sem afirmar aceite que não houve", n24.slice(0, 200));
+    }
+    // ---- linha sem proveniência carregada: a nota antiga continua saindo.
+    const rForn = acharLinha("Matérias-primas");
+    if (rForn > 0 && c25 > 0) {
+      const nf = texto(rForn, c25);
+      checar(/Extraído de BALANCO/.test(nf),
+        "(34) linha SEM proveniência carregada volta ao texto antigo, sem quebrar", nf.slice(0, 160));
+      checar(!/página|confiança/.test(nf),
+        "(34) …e não inventa página nem confiança que não existem", nf.slice(0, 160));
+    }
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

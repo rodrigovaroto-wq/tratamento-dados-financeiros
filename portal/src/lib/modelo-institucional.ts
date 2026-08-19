@@ -144,6 +144,27 @@ export interface LinhaModelo {
    * ninguém confere.
    */
   sinalNormalizado?: boolean;
+  /**
+   * A PROVENIÊNCIA DE CADA CÉLULA HISTÓRICA, por ano: arquivo, página, confiança e
+   * aceite (`0125`).
+   *
+   * POR QUE POR ANO, e não por linha. `documentos` (acima) é da LINHA e é o que a
+   * nota mostrava até aqui — e ele é a lista de TIPOS de documento
+   * (`array_agg(distinct tipo_taxonomia)`), não de arquivos: a nota dizia "Extraído
+   * de BALANCO, DF_AUDITADA", que num mandato com oito balanços não localiza nada.
+   * A proveniência que serve para conferir é da CÉLULA, e a célula é (linha, ano).
+   *
+   * Ausente quando a rota não a carregou (é opcional de propósito, para o
+   * verificador do export poder montar `LinhaModelo` à mão sem ela) — e aí a nota
+   * volta a dizer só o que sabe.
+   */
+  proveniencia?: Record<string, {
+    arquivo: string | null;
+    pagina: number | null;
+    confianca: number | null;
+    statusAceite: string | null;
+    aceitoPor: string | null;
+  }>;
 }
 
 export interface PremissaModelo {
@@ -570,6 +591,44 @@ function fatorDeEscala(unidadeLinha: string | null, unidadeModelo: string): numb
   return alvo === 1 ? f : f * 1000;
 }
 
+/**
+ * A PROVENIÊNCIA DA CÉLULA, escrita para quem vai conferir o número no documento.
+ *
+ * O QUE ELA CONSERTA (§2.3 do diagnóstico de 11/08). Antes do PR #109 o arquivo de
+ * modelagem carregava as abas de dado, e cada célula delas trazia documento,
+ * PÁGINA, CONFIANÇA e STATUS DE ACEITE. O #109 separou os dois exports — decisão
+ * certa e medida — e com as abas de dado saiu essa camada. O que restou nas células
+ * históricas foi `Extraído de ${documentos}`.
+ *
+ * E ESSE RESTO ERA MENOS DO QUE PARECIA: `documentos` é
+ * `array_agg(distinct tipo_taxonomia)`, ou seja o TIPO do documento. A nota dizia
+ * "Extraído de BALANCO, DF_AUDITADA" — num mandato com oito balanços, isso é a
+ * categoria, não a peça. Para responder "de onde veio o 106.580" faltava tudo o que
+ * localiza: o arquivo, a página, e se alguém já olhou aquilo.
+ *
+ * A ORDEM DAS FRASES É A DA CONFERÊNCIA: primeiro onde procurar (arquivo, página),
+ * depois o quanto confiar (confiança, aceite). E cada pedaço só aparece se
+ * EXISTIR — `null` é "a extração não disse", e escrever "página null" seria pior
+ * que calar. Sem proveniência carregada, a nota volta ao texto antigo, com os tipos.
+ */
+function frasesDeProveniencia(l: LinhaModelo, ano: number): string {
+  const p = l.proveniencia?.[String(ano)];
+  if (!p) return `Extraído de ${(l.documentos ?? ["?"]).join(", ")}`;
+  const partes: string[] = [
+    `Extraído de ${p.arquivo ?? (l.documentos ?? ["?"]).join(", ")}`,
+  ];
+  if (p.pagina != null) partes.push(`página ${p.pagina}`);
+  if (p.confianca != null) partes.push(`confiança da extração ${Math.round(p.confianca * 100)}%`);
+  if (p.statusAceite) {
+    // ACEITE É O QUE SEPARA "o modelo leu" de "um humano conferiu", e é a única
+    // frase daqui que muda o peso do número numa conversa com credor.
+    partes.push(p.statusAceite === "aceito"
+      ? `ACEITO${p.aceitoPor ? ` por ${p.aceitoPor}` : ""}`
+      : `aceite: ${p.statusAceite} — este número ainda NÃO foi conferido por ninguém`);
+  }
+  return partes.join(" · ");
+}
+
 /** Valor histórico já na escala do modelo, com o aviso quando houve conversão. */
 function valorNaEscala(l: LinhaModelo, ano: number, unidadeModelo: string):
   { valor: number; nota: string } | null {
@@ -584,7 +643,7 @@ function valorNaEscala(l: LinhaModelo, ano: number, unidadeModelo: string):
     ? ` · SINAL NORMALIZADO: o documento traz ${(-bruto).toLocaleString("pt-BR")} (despesa negativa) `
       + "e o modelo usa magnitude positiva, subtraída na cascata — ver a coluna de sinal \"(-)\"."
     : "";
-  const proveniencia = `Extraído de ${(l.documentos ?? ["?"]).join(", ")}${sinal}`;
+  const proveniencia = `${frasesDeProveniencia(l, ano)}${sinal}`;
   if (f === null) {
     return {
       valor: bruto,

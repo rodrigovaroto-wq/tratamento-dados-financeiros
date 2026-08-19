@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0124_intragrupo_que_nao_e_mutuo.sql` |
+| **Última migration** | `db/migrations/0125_proveniencia_por_linha_e_ano.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 546 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
+| **Suítes** | n8n 293 · export 559 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -160,6 +160,44 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ (19/08, sessão 52)
+
+O §2.3 do diagnóstico de 11/08 tinha medido a perda: antes do PR #109 cada célula de dado trazia
+documento, **página, confiança e status de aceite**; o #109 separou os dois exports — decisão certa e
+medida — e a camada saiu junto com as abas de dado.
+
+**E nem o nome do arquivo estava lá.** Achado ao ler o código para consertar: o que a nota mostrava é
+`documentos`, que a `fn_linhas_para_modelagem` monta como `array_agg(distinct tipo_taxonomia)` — o
+TIPO. A nota dizia *"Extraído de BALANCO, DF_AUDITADA"*. Num mandato com oito balanços, isso é a
+categoria e não a peça.
+
+**A mudança é na `fn_valores_por_ano`, e não na `fn_linhas_para_modelagem` — esse é o ponto.** A
+segunda devolve UMA linha por (seção, rótulo), e a proveniência dela é da ocorrência de maior módulo
+**entre os exercícios**. Usada na nota de uma célula de 2023, ela descreveria a célula de 2025 com
+toda a convicção. Rastreabilidade que aponta para o lugar errado é pior que rastreabilidade nenhuma:
+a primeira convida a conferir e leva ao lugar errado.
+
+**O número não podia mudar por causa disto,** e não mudou: `valor` continua sendo
+`(array_agg(valor order by abs(valor) desc))[1]`, letra por letra. Reescrever com janela seria
+elegante e arriscado — em empate de módulo com sinais opostos (`abs(-1900) = abs(1900)`) duas formas
+de "maior módulo" escolhem valores diferentes, e isso é número de modelo mudando de graça. A
+proveniência vem por join de volta na ocorrência que tem aquele valor, com desempate declarado.
+
+**A nota melhora nas CATORZE abas de uma vez.** O §2.3 pedia a `Premissas`; `valorNaEscala` é o
+caminho único por onde valor de documento entra no arquivo, então sair por ele custa o mesmo e não
+deixa aba de segunda classe.
+
+A nota agora diz, nesta ordem — primeiro onde procurar, depois o quanto confiar:
+
+> `Extraído de 01_Balanco_2025x2024.pdf · página 3 · confiança da extração 97% · ACEITO por rodrigo@oria`
+
+e, quando ninguém conferiu:
+
+> `… · aceite: pendente — este número ainda NÃO foi conferido por ninguém`
+
+Campo que a extração não informou sai FORA da frase: `null` é "não sei", e escrever "página 0" seria
+dar precisão falsa. Os 7 asserts substantivos foram conferidos reprovando com o código antigo.
 
 ### O INTRAGRUPO QUE NÃO É MÚTUO passa a ser conferido — pelo ESPELHO (19/08, sessão 52)
 
@@ -905,8 +943,8 @@ Os itens que continuam de pé, em ordem de impacto:
   verdade lê deles) continua sendo provada só pela rodada do dono.
 - **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma
   fórmula a mais: ver a análise no diagnóstico (§2.2 e a nota de execução).
-- **Proveniência completa na aba `Premissas`** — a nota traz o documento de origem; página,
-  confiança e status de aceite ficaram nas abas de dado, que saíram do arquivo de modelagem.
+- ~~**Proveniência completa na aba `Premissas`**~~ — **fechado em 19/08 (sessão 52)** e em todas as
+  catorze abas, não só na `Premissas` (`0125`). Ver "A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ".
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do
   `docs/03` não começa.
 - **Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não vem.

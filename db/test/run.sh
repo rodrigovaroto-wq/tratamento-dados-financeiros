@@ -185,6 +185,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== proveniência POR CÉLULA (0125: arquivo, página, confiança e aceite, por ano)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/proveniencia.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de índices macro"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/macro.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
