@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0123_mutuos_a_natureza_fora_da_linha.sql` |
+| **Última migration** | `db/migrations/0124_intragrupo_que_nao_e_mutuo.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 293 · export 546 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -160,6 +160,69 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### O INTRAGRUPO QUE NÃO É MÚTUO passa a ser conferido — pelo ESPELHO (19/08, sessão 52)
+
+**O item estava aberto com a dificuldade certa escrita:** *"cada uma casa com uma conta DIFERENTE do
+balanço — e escolher errado inventa divergência."*
+
+**A primeira ideia era errada e não foi usada.** Comparar a planilha contra o balanço, como a `0117`
+faz com mútuos, é comparar FLUXO com ESTOQUE: o documento que a taxonomia tem para as outras naturezas
+é `FAT_INTRAGRUPO`, faturamento do exercício. No book os números coincidem por construção (nada foi
+pago no ano), então a checagem teria saído verde sobre uma comparação sem sentido — a mesma forma de
+defeito que a `0123` acabou de achar.
+
+**O que se confere é o ESPELHO.** Todo saldo intragrupo aparece duas vezes dentro do mandato: a receber
+no balanço de quem tem o crédito, a pagar no de quem tem a obrigação. É identidade contábil, e não
+precisa de segundo documento — os balanços que o mandato já tem bastam.
+
+**E o pareamento é pelo PAR DE EMPRESAS, não pela natureza** — é essa a resposta à dificuldade. O dado
+do book mostra por quê:
+
+| | |
+|---|---|
+| Canastra Indústria | `Contas a receber intragrupo - Canastra Comercial` |
+| Canastra Comercial | `Fornecedores intragrupo - Canastra Indústria` |
+
+Quem vende chama de "contas a receber"; quem compra chama de "fornecedores". **Pela natureza elas nunca
+se encontram; pelo par de empresas, sempre.** E nenhuma linha precisa ser casada com "a conta certa": a
+linha DIZ com quem é. A contraparte sai do sufixo do rótulo contra a lista de entidades do caso —
+medido: **6 de 6 rótulos intragrupo do book casados com a empresa certa, 3 de 3 de terceiro
+corretamente ignorados** (`terceiros`, `nacionais`, `mercado interno`).
+
+**Ficam fora, com o motivo escrito:** mútuo (é da `fn_reconciliar_mutuos` — uma linha, uma régua),
+mútuo com sócio (não tem espelho), o documento COMBINADO (as linhas intragrupo dele são eliminações,
+que nomeiam as duas pontas) e par em que uma das empresas não entregou balanço (aí a falta de espelho é
+falta de documento, e o Portão 1 já cobra).
+
+**Canastra: os quatro pares fecham** — aluguel 940, conta corrente 1.900, fornecimento 2.900 e 5.200.
+Zero pendências, que é o certo para um book cuja única divergência plantada é a de mútuos.
+
+#### E ela achou um defeito no book VERTENTES, na primeira vez que rodou
+
+A `escalar_passivo` do `motor.py` multiplica o passivo INTEIRO de cada controlada por um fator até o PL
+cair num alvo — e a conta corrente ia junto. Resultado: a VT Logística registrava **978** a pagar
+contra os **1.400** que a Metalúrgica registrava a receber. **422 de diferença, num book que declara
+ter UMA divergência só** (os 180 dos mútuos).
+
+O próprio gerador já declarava o invariante que estava violando, no comentário de `construir`:
+*"contrapartes intragrupo que faltavam na Metalúrgica (o combinado precisa dos dois lados para as
+eliminações fecharem)"*. Elas não fechavam.
+
+**Saldo intragrupo é fixado pela contraparte e não é livre para calibração.** As contas de
+`INTRAGRUPO_FIXO` saíram do fator, que passou a ser recalculado sobre o resto do passivo — o PL-alvo
+continua sendo atingido. É a segunda consequência ruim da calibração por PL-alvo; o `book-canastra` já
+tinha abandonado a técnica pela primeira (com três exercícios o fator vira distorção ENTRE anos).
+
+#### E um portão que faltava no CI
+
+Do mesmo `gerar_fixture.py` saem TRÊS artefatos versionados — o SQL da suíte de banco, o JSON da suíte
+de export e (via `gerar.py`) o GABARITO. Os workflows do n8n têm `git diff --exit-code` desde a sessão
+20, com o motivo escrito: *"o JSON commitado pode divergir da fonte que o gera"*. **As fixtures não
+tinham, e o mesmo defeito aconteceu aqui:** a correção do `motor.py` mudou o SQL e o GABARITO, o JSON
+ficou para trás, e a suíte de export reprovou em 5 itens comparando um export NOVO com um gabarito NOVO
+a partir de uma fixture VELHA. O portão entrou, e cobre as três fixtures (as duas de Vertentes e a do
+Canastra).
 
 ### O FATIAMENTO ESTAVA DESLIGADO — e a correção anotada aqui era a errada (19/08, sessão 52)
 
@@ -809,10 +872,11 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
   pendências por decisão do dono — sugestão que ninguém fez ainda não se mistura com decisão sobre
   problema medido. Ver "As perguntas ao cliente ganharam a ABA que faltava". **Depende da `0120`
   estar aplicada no Supabase**; sem ela a aba explica o que falta em vez de quebrar.
-- **A conferência das linhas intragrupo que NÃO são mútuo** (conta corrente rotativa, aluguel entre
-  coligadas, rateio de despesa). Elas moram na mesma planilha que a `0117` passou a conferir, mas
-  cada uma casa com uma conta diferente do balanço — e escolher errado inventa divergência. É
-  trabalho próprio.
+- ~~**A conferência das linhas intragrupo que NÃO são mútuo**~~ — **fechado em 19/08 (sessão 52)**,
+  pelo ESPELHO entre cada par de empresas (`0124`), não pela planilha: a planilha de faturamento
+  intragrupo é FLUXO e o balanço é ESTOQUE. Ver "O INTRAGRUPO QUE NÃO É MÚTUO". **O que ela NÃO cobre,
+  e fica anotado:** rateio de despesa que não deixa saldo no balanço (não há espelho para conferir), e
+  mútuo com sócio — cujo par é o contrato com o quotista, que ninguém cruza hoje.
 - ~~**O item mais denso do book ainda estoura o teto de saída**~~ — **fechado em 19/08 (sessão 52),
   e a correção anotada aqui era a errada.** Não faltava extrair por faixa de PÁGINA: o fatiamento
   estava desligado por erro de unidade (teto em CÉLULAS aplicado a uma contagem de LINHAS), e ZERO

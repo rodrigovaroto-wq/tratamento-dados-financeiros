@@ -84,13 +84,22 @@ begin
     format('%s', v_num));
 
   -- As checagens têm de ter CHEGADO a um veredito, não ficado caladas.
-  -- Cinco tipos desde a 0105 (as quatro A/B mais a duplicidade de rótulo). O número
-  -- é explícito de propósito: checagem nova que nasce muda passa despercebida, e foi
-  -- para isso que este assert foi escrito.
+  -- SEIS tipos desde a 0124 (as quatro A/B, a duplicidade de rótulo da 0105 e o
+  -- espelho intragrupo). O número é explícito de propósito: checagem nova que nasce
+  -- muda passa despercebida, e foi para isso que este assert foi escrito — ele
+  -- acabou de cumprir o papel dele, subindo de 5 para 6.
+  --
+  -- E A CHECAGEM NOVA ACHOU UM DEFEITO NESTE PRÓPRIO BOOK, antes de chegar a "ok":
+  -- a `escalar_passivo` multiplicava o passivo INTEIRO da VT Logística pelo fator
+  -- do PL-alvo, então a conta corrente saía 978 no balanço dela contra os 1.400 que
+  -- a Metalúrgica registrava a receber — 422 de diferença num book que declara ter
+  -- UMA divergência só. Saldo intragrupo é fixado pela contraparte e não é livre
+  -- para calibração; as contas de `INTRAGRUPO_FIXO` ficaram fora do fator, e o
+  -- PL-alvo continua sendo atingido pelo resto do passivo.
   select count(distinct tipo) into v_n from reconciliacao
   where caso_id = v_caso and resultado = 'ok';
-  perform teste_assert(v_n = 5,
-    'as 5 checagens (4 A/B + duplicidade de rótulo) chegam a "ok" com número (nenhuma fica muda)',
+  perform teste_assert(v_n = 6,
+    'as 6 checagens (4 A/B + duplicidade de rótulo + espelho intragrupo) chegam a "ok" com número',
     format('%s tipo(s) com ok: %s', v_n,
       (select string_agg(distinct tipo, ', ') from reconciliacao
        where caso_id = v_caso and resultado = 'ok')));

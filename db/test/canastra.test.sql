@@ -50,6 +50,7 @@ declare
   v_num numeric;
   v_txt text;
   v_desc text;
+  v_json jsonb;
 begin
   raise notice '--- 1. o book difícil chegou inteiro ao banco ---';
 
@@ -318,7 +319,111 @@ begin
   perform teste_assert(v_n >= 3,
     'os três prognósticos estão separados por seção', format('%s seções', v_n));
 
-  raise notice '--- 13. NEGATIVO: a checagem de mútuos ainda pega o erro real ---';
+  raise notice '--- 13. o INTRAGRUPO que não é mútuo fecha nos dois balanços (0124) ---';
+  -- O ESPELHO É A CHECAGEM, e o pareamento é pelo PAR DE EMPRESAS, não pela
+  -- natureza. O book mostra por quê: quem vende chama de "Contas a receber
+  -- intragrupo - Canastra Comercial" e quem compra chama de "Fornecedores
+  -- intragrupo - Canastra Indústria" — pela natureza elas nunca se encontram.
+  -- O ID VEM DA CHAMADA, não de `order by criado_em desc limit 1`: `reconciliacao`
+  -- é log append-only e todas as linhas de uma transação compartilham o
+  -- `criado_em`, então ordenar por ele escolhe uma linha arbitrária entre as do
+  -- mesmo instante. Foi assim que este assert falhou ao ser escrito — leu a linha
+  -- de um período MULTI (que confere os pares de três exercícios) achando que lia
+  -- a de 2025.
+  select fn_reconciliar_intragrupo(v_caso, p.id) into v_json
+  from periodo p where p.caso_id = v_caso and p.tipo = 'anual' and p.referencia = '2025';
+  perform teste_assert(v_json->>'resultado' = 'ok',
+    'os pares intragrupo de 2025 fecham: aluguel 940, conta corrente 1.900, fornecimento 2.900 e 5.200',
+    format('resultado: %s', v_json->>'resultado'));
+
+  select r.materialidade->>'pares_conferidos' into v_txt from reconciliacao r
+  where r.id = (v_json->>'reconciliacao_id')::uuid;
+  perform teste_assert(v_txt = '4',
+    'e são os QUATRO pares do book, num exercício só', format('pares: %s', v_txt));
+
+  -- No período MULTI a contagem soma os exercícios, e é o que se espera: a
+  -- Comercial tem coluna de 2024 e as demais não, então 2024 contribui com o par
+  -- Indústria × Comercial e 2023 com nenhum.
+  select fn_reconciliar_intragrupo(v_caso, p.id) into v_json
+  from periodo p where p.caso_id = v_caso and p.tipo = 'multi' and p.referencia = '23,24,25';
+  select r.materialidade->>'pares_conferidos' into v_txt from reconciliacao r
+  where r.id = (v_json->>'reconciliacao_id')::uuid;
+  perform teste_assert(v_txt = '5',
+    'nos três exercícios são 5 conferências de par (4 em 2025 + 1 em 2024)',
+    format('pares: %s', v_txt));
+  perform teste_assert(v_json->>'resultado' = 'ok', 'e todas fecham');
+
+  -- A CONTRAPARTE SAI DO RÓTULO, e é isso que dispensa adivinhar qual conta casa
+  -- com qual. Seis rótulos intragrupo do book casam com a empresa certa; três
+  -- rótulos de terceiro não casam com ninguém.
+  perform teste_assert(
+    fn_contraparte_intragrupo(v_caso, 'Conta corrente a pagar - CN Transportes e Logística')
+      = (select id from entidade where caso_id = v_caso and razao_social ilike 'CN TRANSPORTES%'),
+    'o rótulo nomeia a contraparte, e ela é achada na lista de entidades do caso');
+  perform teste_assert(
+    fn_contraparte_intragrupo(v_caso, 'Aluguéis a receber - terceiros') is null,
+    'e "terceiros" NÃO casa com empresa nenhuma — senão a checagem inventaria par');
+  perform teste_assert(
+    fn_contraparte_intragrupo(v_caso, 'Duplicatas a receber de clientes - mercado interno') is null,
+    'nem "mercado interno"');
+  -- A própria empresa não é contraparte de si: rótulo redundante não é relação.
+  perform teste_assert(
+    fn_contraparte_intragrupo(v_caso, 'Fornecedores intragrupo - Canastra Agroflorestal',
+      (select id from entidade where caso_id = v_caso and razao_social ilike 'CANASTRA AGRO%')) is null,
+    'linha do balanço de A que nomeia A não é intragrupo');
+
+  -- O LADO vem da SEÇÃO CANÔNICA primeiro. "Fornecedores intragrupo - X" é
+  -- obrigação e não tem "a pagar" no nome: quem decidir só pelo rótulo erra o
+  -- lado e a soma sai dos dois lados errada de uma vez.
+  perform teste_assert(fn_lado_intragrupo('Fornecedores intragrupo - X', 'passivo_circulante') = 'passivo',
+    'a seção canônica decide o lado');
+  perform teste_assert(fn_lado_intragrupo('Fornecedores intragrupo - X', null) = 'passivo',
+    'e sem ela o rótulo "fornecedor" ainda diz obrigação');
+  perform teste_assert(fn_lado_intragrupo('Contas a receber intragrupo - X', null) = 'ativo',
+    'e "a receber" diz crédito');
+
+  raise notice '--- 14. NEGATIVO: o espelho intragrupo pega o lado que não fecha ---';
+  -- Mexe em UM lado do par Indústria × CN Transportes (a conta corrente de 1.900)
+  -- e a checagem tem de acusar — nomeando as duas empresas e a natureza.
+  update campo_extraido ce set valor_num = 1900 + 900
+  where ce.chave = 'Conta corrente a receber - Canastra Indústria'
+    and ce.documento_versao_id in (
+      select fn_versao_atual(d.id) from documento d
+      where d.caso_id = v_caso and d.tipo_taxonomia = 'BALANCO');
+  perform teste_reconciliar_tudo(v_caso);
+
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and estado <> 'resolvida'
+    and motivo = 'reconciliacao:intragrupo_espelho';
+  perform teste_assert(v_n = 1, 'o par que não fecha abre UMA pendência',
+    format('%s pendência(s)', v_n));
+
+  select descricao into v_desc from pendencia
+  where caso_id = v_caso and motivo = 'reconciliacao:intragrupo_espelho';
+  perform teste_assert(v_desc like '%CN TRANSPORTES%' and v_desc like '%CANASTRA INDÚSTRIA%',
+    'e ela NOMEIA as duas empresas do par', v_desc);
+  perform teste_assert(v_desc like '%conta corrente%',
+    'e a natureza, para o analista saber onde procurar', v_desc);
+  perform teste_assert(v_desc like '%900000%',
+    'e a diferença em reais (900 mil, escalas já convertidas)', v_desc);
+  -- E SÓ o par mexido: os outros três continuam fechando, então não podem
+  -- aparecer na mensagem. Uma pendência que cita par que fecha é ruído.
+  perform teste_assert(v_desc not like '%IMOBILIÁRIA%' and v_desc not like '%AGROFLORESTAL%',
+    'os pares que fecham não são citados', v_desc);
+
+  update campo_extraido ce set valor_num = 1900
+  where ce.chave = 'Conta corrente a receber - Canastra Indústria'
+    and ce.documento_versao_id in (
+      select fn_versao_atual(d.id) from documento d
+      where d.caso_id = v_caso and d.tipo_taxonomia = 'BALANCO');
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and estado <> 'resolvida'
+    and motivo = 'reconciliacao:intragrupo_espelho';
+  perform teste_assert(v_n = 0, 'corrigido o lado, a pendência auto-resolve',
+    format('%s pendência(s) ainda abertas', v_n));
+
+  raise notice '--- 15. NEGATIVO: a checagem de mútuos ainda pega o erro real ---';
   -- Uma checagem que passou a achar mais coisa tem de continuar sabendo dizer
   -- "confere". Alinhando a planilha com o balanço, a pendência resolve.
   update campo_extraido ce set valor_num = valor_num + 240

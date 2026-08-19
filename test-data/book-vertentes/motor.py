@@ -32,21 +32,72 @@ def soma_folhas(secao_dict):
     return t
 
 
+# CONTA QUE A CALIBRAÇÃO NÃO PODE TOCAR — porque ela não é livre.
+#
+# UM SALDO INTRAGRUPO É FIXADO PELA CONTRAPARTE. Se a VT Logística deve 1.400 à
+# Metalúrgica, a Metalúrgica tem 1.400 a receber da VT Logística: é o mesmo fato
+# escrito em dois balanços, e multiplicar UM dos lados por um fator de calibração
+# produz uma impossibilidade contábil.
+#
+# ERA EXATAMENTE O QUE ACONTECIA, e foi a checagem de espelho intragrupo da
+# `0124` que achou: a `escalar_passivo` multiplicava o passivo INTEIRO da VT
+# Logística pelo fator do PL-alvo (≈0,70), então a conta corrente saía 978 no
+# balanço dela contra os 1.400 que a Metalúrgica registrava a receber — **422 de
+# diferença, num book que declara ter UMA divergência só** (os 180 dos mútuos).
+#
+# E o próprio gerador já declarava o invariante que estava violando, no comentário
+# de `construir`: *"contrapartes intragrupo que faltavam na Metalúrgica (o
+# combinado precisa dos dois lados para as eliminações fecharem)"*. As eliminações
+# não fechavam.
+#
+# É a segunda consequência ruim da calibração por PL-alvo, e o `book-canastra` já
+# tinha abandonado a técnica pela primeira (com três exercícios o fator vira
+# distorção ENTRE anos — ver o README dele). Aqui ela FICA, porque é o que dá ao
+# book números não redondos, mas passa a respeitar o que não é livre.
+INTRAGRUPO_FIXO = (
+    "Mútuos a pagar",
+    "Conta corrente",
+    "Aluguéis a pagar - Vertentes",
+    "Fornecedores intragrupo",
+)
+
+
+def _fixo_por_contraparte(rotulo):
+    return any(rotulo.startswith(p) for p in INTRAGRUPO_FIXO)
+
+
 def escalar_passivo(bp, pl_alvo):
     """Calibra a MAGNITUDE do passivo para que o PL caia no alvo, preservando a
     COMPOSIÇÃO curada (é a composição que conta a história de distress: dívida
     concentrada no curto prazo, fornecedor em atraso, parcelamento tributário).
     Efeito colateral desejável: os valores deixam de ser todos redondos —
-    demonstração real é cheia de número quebrado."""
+    demonstração real é cheia de número quebrado.
+
+    As contas fixadas por contraparte (`INTRAGRUPO_FIXO`) ficam de fora, e o fator
+    é recalculado sobre o resto — o PL-alvo continua sendo atingido, só não à
+    custa de quebrar o espelho intragrupo."""
     ativo = soma_folhas(bp["AC"]) + soma_folhas(bp["ANC"])
     passivo_atual = soma_folhas(bp["PC"]) + soma_folhas(bp["PNC"])
+    fixo = sum(
+        v
+        for secao in ("PC", "PNC")
+        for _sub, contas in bp[secao].items()
+        for rot, v in contas
+        if _fixo_por_contraparte(rot)
+    )
     passivo_alvo = ativo - pl_alvo
-    if passivo_atual <= 0 or passivo_alvo <= 0:
+    # O fator vale só para a parte LIVRE do passivo, dos dois lados da razão.
+    livre_atual = passivo_atual - fixo
+    livre_alvo = passivo_alvo - fixo
+    if livre_atual <= 0 or livre_alvo <= 0:
         return bp
-    f = passivo_alvo / passivo_atual
+    f = livre_alvo / livre_atual
     for secao in ("PC", "PNC"):
         for sub, contas in bp[secao].items():
-            bp[secao][sub] = [(rot, int(round(v * f))) for rot, v in contas]
+            bp[secao][sub] = [
+                (rot, v if _fixo_por_contraparte(rot) else int(round(v * f)))
+                for rot, v in contas
+            ]
     return bp
 
 
