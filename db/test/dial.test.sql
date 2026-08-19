@@ -147,8 +147,30 @@ begin
   -- 0.98 estava sendo aceita no cenário 2. Com o limiar em 0.99, a MESMA linha,
   -- pela MESMA função, passa a ficar pendente. Nenhum SQL de função mudou entre
   -- os dois cenários — é a definição de "o limiar virou dado".
+  --
+  -- 0126: VOLTAR PARA N2 PASSOU A EXIGIR BASE DECLARADA, e este cenário é onde
+  -- isso apareceu. O dial está em N1 (cenário 4), então a chamada abaixo é uma
+  -- SUBIDA que alcança auto-clear num estágio interpretativo — a regra de ouro do
+  -- docs/01 cobra medição ou motivo assumido.
+  --
+  -- E o que este bloco descobriu vale mais que a correção: sem o motivo, a
+  -- subida é recusada, o dial FICA EM N1, e o assert seguinte ("com limiar 0.99 a
+  -- linha de 0.98 fica pendente") passaria VERDE pelo motivo errado — pendente
+  -- por N1, não pelo limiar. Um cenário inteiro medindo outra coisa e dizendo que
+  -- passou. Por isso a recusa é afirmada aqui, e não só na golden.test.sql: é
+  -- neste ponto que ela decide se o resto do cenário significa algo.
+  v_r := fn_mudar_dial('extracao_linhas_financeiras', 'N2', 'teste:dial',
+                       'subindo sem declarar base — deve ser recusado', 0.99);
+  perform teste_assert_dial((v_r->>'recusado')::boolean,
+    'voltar a N2 sem rodada de golden set nem motivo assumido é RECUSADO (0126)', v_r::text);
+  select nivel_atual::text into v_txt from estagio_autonomia
+    where estagio = 'extracao_linhas_financeiras';
+  perform teste_assert_dial(v_txt = 'N1',
+    'e a recusa não mexeu no nível — continua em N1', coalesce(v_txt, '(null)'));
+
   perform fn_mudar_dial('extracao_linhas_financeiras', 'N2', 'teste:dial',
-                        'subindo o limiar para conferir que ele sai da tabela', 0.99);
+                        'subindo o limiar para conferir que ele sai da tabela', 0.99,
+                        null, 'arnês de teste restaurando o N2 da 0041; não é medição');
   v_ver := teste_dial_extrair(v_caso, 'HASH-LIMIAR', v_campos);
   select status_aceite into v_txt from campo_extraido
     where documento_versao_id = v_ver and chave = 'Caixa e equivalentes';
@@ -239,11 +261,21 @@ begin
   -- Os cenários acima mexeram no dial. Restaurar aqui não é cosmético: os testes
   -- rodam todos no MESMO banco, e um dial deixado em N0 faria qualquer teste
   -- futuro de auto-aceite passar/reprovar por motivo errado.
+  -- O motivo assumido vai junto para a restauração funcionar VINDO DE QUALQUER
+  -- nível: hoje o dial chega aqui em N2 (então não é subida e nada seria cobrado),
+  -- mas um cenário novo inserido acima que baixe o dial faria a restauração ser
+  -- recusada em silêncio, e o banco terminaria a suíte em N0.
   perform fn_mudar_dial('extracao_linhas_financeiras', 'N2', 'teste:dial',
-                        'restaurando o estado declarado pela 0041', 0.95);
+                        'restaurando o estado declarado pela 0041', 0.95,
+                        null, 'arnês de teste restaurando o N2 da 0041; não é medição');
   v_r := fn_dial('extracao_linhas_financeiras');
   perform teste_assert_dial((v_r->>'nivel_atual') = 'N2' and (v_r->>'limiar_auto_clear')::numeric = 0.95,
     'dial restaurado em N2 / 0.95', v_r::text);
+  -- 0126: e o N2 restaurado se declara pelo que ele é. Este assert é o que
+  -- impede a base de voltar a ser indistinguível — se algum dia uma subida sem
+  -- medição gravar 'medida', é aqui que aparece.
+  perform teste_assert_dial((v_r->>'base_do_nivel') = 'declarada',
+    'e ele se declara DECLARADO, não medido (0126)', v_r::text);
 
   raise notice 'TODOS OS TESTES DO DIAL PASSARAM';
 end $$;

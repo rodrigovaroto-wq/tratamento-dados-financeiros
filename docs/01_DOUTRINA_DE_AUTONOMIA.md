@@ -63,3 +63,21 @@ de nível é uma **decisão versionada e reversível** (gera evento na trilha de
 
 > **Nada de subir o dial de autonomia de um estágio interpretativo sem golden set e
 > concordância medida.** É o que mantém "construir tudo primeiro" à prova de erro.
+
+**Onde ela é EXECUTADA (`db/migrations/0126_golden_set.sql`, 19/08/2026).** Esta regra passou da
+`0019` até a `0126` sendo apenas texto: `fn_mudar_dial` (0041) conferia o teto e nada mais, então
+subir a extração para N2 com um motivo em texto livre era aceito — e foi assim que ela subiu.
+A partir da `0126`:
+
+- `fn_mudar_dial` **recusa** subida que alcance N2/N3 num estágio de `natureza = 'interpretativo'`
+  sem uma rodada de golden set congelada que satisfaça `golden_criterio`;
+- a **natureza** de cada estágio (a primeira coluna da tabela de teto acima) é coluna de
+  `estagio_autonomia`, não lista dentro de uma função;
+- subir por decisão continua possível, com `p_sem_medicao_porque` — um motivo, não um sinalizador —
+  que grava `mudanca_dial_sem_medicao` na trilha e deixa `base_do_nivel = 'declarada'`. É isso que
+  torna "declarada" e "medida" distinguíveis, o que antes não eram;
+- **descer nunca pede nada.** Freio que exige evidência não é freio.
+
+O portão morde na entrada do **auto-clear**, não em toda subida: N1 mantém revisão de 100% e o
+fechamento #5 (anti-ancoragem) inteiro, e cobrar medição para exibir uma sugestão travaria o caminho
+que esta doutrina manda percorrer — os estágios nascem baixos justamente para subir.
