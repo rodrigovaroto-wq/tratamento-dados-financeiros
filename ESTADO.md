@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0125_proveniencia_por_linha_e_ano.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 559 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -160,6 +160,61 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### "OS TRÊS CENÁRIOS SÃO TRÊS?" — e o buraco que a pergunta abriu no arnês (19/08, sessão 52)
+
+**O §2.2 do diagnóstico pedia um bloco "Resumo dos três cenários" lado a lado. Ao medir para
+construí-lo, apareceu algo antes:** o `Cliente Case` nasce como `=<Base Case>` em TODA conta do modelo
+(convenção do Modelo Base, e certa como ponto de partida). Num arquivo recém-exportado, **girar o dial
+de 1 para 2 não muda um número sequer — e nada dizia isso.** Um "Cliente Case" que é, número por
+número, o Base Case podia chegar a um comitê sem a planilha o contradizer, com o dropdown de três
+opções servindo de evidência de que ela deveria contradizer.
+
+O Stress tem a forma espelhada do mesmo risco: é o Base vezes um haircut único
+(`Considerações!$F$8`). Zerada aquela célula, o Stress vira o Base e o dropdown continua oferecendo
+três.
+
+**O que entrou:** um painel `OS TRÊS CENÁRIOS SÃO TRÊS?` no `Output`, ao lado do interruptor, dizendo
+por cenário se ele está **diferenciado** ou **IDÊNTICO AO BASE**. A medida é EXATA e vem da linha
+`DIF_CENARIO` da aba de receita: a soma, conta a conta e ano a ano, de `ABS(premissa do cenário −
+premissa do Base)`. Zero significa premissas idênticas e não pode significar outra coisa — somar as
+premissas em vez das diferenças em módulo seria mais curto e errado (dois conjuntos diferentes podem
+ter a mesma soma). E é **fórmula viva**: no minuto em que o analista digitar a primeira premissa
+própria do Cliente Case dentro do Excel, o aviso some sozinho.
+
+#### O BURACO QUE ESTE TESTE ACHOU NO ARNÊS
+
+O teste do painel reprovava dizendo **"IDÊNTICO AO BASE" sobre um Stress de 20%**. A causa não estava
+no produto: o nome da aba principal do modelo tem VÍRGULA (`Revenues, COGS & SG&A`), então toda
+referência a ela vai entre apóstrofos — e o scanner de argumentos de função do `avaliar-formula.mts`
+pulava trecho entre **aspas duplas** e não entre **apóstrofos**. A vírgula de dentro do nome partia o
+argumento em dois, `N('Revenues` não avaliava nada, e o resultado era **0. Em silêncio.**
+
+**O efeito:** qualquer assert que avaliasse uma fórmula referenciando a aba principal do modelo dentro
+de uma função lia zero e passava por não conseguir avaliar — a forma mais silenciosa de teste que não
+prova nada. Corrigido nos dois scanners do arquivo, e travado por assert próprio. Conferido que a
+correção não mudou nenhum assert antigo: a contagem foi de 559 para 566 com exatamente 7 asserts
+novos.
+
+#### O QUE NÃO FOI FEITO DO §2.2, E POR QUÊ
+
+O bloco numérico com as métricas dos três cenários lado a lado **não entrou**, e a razão é que a
+especificação dele não fecha:
+
+1. **A lista de métricas mistura duas famílias.** Receita e EBITDA saem de uma cascata paralela sobre
+   as premissas (que existem por cenário no arquivo). **DSCR mínimo e necessidade de pico não** — eles
+   saem do `Cash Flow` e da lógica do revolver, e não há como avaliá-los para um cenário INATIVO sem
+   replicar o modelo inteiro, que é o "caminho caro (e desnecessário)" que o próprio §2.2 descarta.
+2. **A metade viável custa duplicar a projeção.** As contas se projetam por quatro formas diferentes
+   (`pct_de_linha`, `indice_macro` com e sem painel, crescimento composto, e "sem premissa"). Uma
+   cascata paralela reescreveria essas quatro regras num segundo lugar — e esta sessão já pagou duas
+   vezes a lição de duas réguas sobre a mesma quantidade (a `0123` e o par fatiamento×orçamento). O
+   caminho correto é PARAMETRIZAR a cascata pelo cenário e emiti-la quatro vezes do mesmo código, com
+   um CHECK provando que a sombra do cenário ativo é igual à linha ativa — é refatoração da aba que
+   produz os números do modelo, e merece decisão própria.
+3. **E a coluna do meio nasceria vazia:** com o Cliente Case idêntico ao Base por construção, duas das
+   três colunas mostrariam o mesmo número até alguém preencher as premissas. É exatamente o que o
+   painel novo passa a denunciar — e denunciar isso vale mais, hoje, do que exibir duas colunas iguais.
 
 ### A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ (19/08, sessão 52)
 
@@ -941,8 +996,14 @@ Os itens que continuam de pé, em ordem de impacto:
   EXTRAÇÃO DO BOOK-CANASTRA". **Fica anotado o que ela NÃO cobre:** ela prova a ingestão sobre
   documento difícil com extração FIEL — a extração real sobre os PDFs sujos (o que o modelo de
   verdade lê deles) continua sendo provada só pela rodada do dono.
-- **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma
-  fórmula a mais: ver a análise no diagnóstico (§2.2 e a nota de execução).
+- **Resumo dos três cenários lado a lado** — **parcialmente atacado em 19/08 (sessão 52)**, e o que
+  ficou de fora está dimensionado. Entrou o painel `OS TRÊS CENÁRIOS SÃO TRÊS?`, que denuncia cenário
+  não diferenciado (o Cliente Case nasce idêntico ao Base). NÃO entrou o bloco numérico lado a lado:
+  a lista de métricas do §2.2 mistura o que uma cascata paralela alcança (receita, EBITDA) com o que
+  exige replicar o modelo inteiro (DSCR mínimo, necessidade de pico), e a metade viável custa
+  PARAMETRIZAR a cascata da aba de receita pelo cenário — refatoração da aba que produz os números do
+  modelo, com um CHECK provando que a sombra do cenário ativo é igual à linha ativa. Ver "OS TRÊS
+  CENÁRIOS SÃO TRÊS?".
 - ~~**Proveniência completa na aba `Premissas`**~~ — **fechado em 19/08 (sessão 52)** e em todas as
   catorze abas, não só na `Premissas` (`0125`). Ver "A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ".
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do

@@ -172,6 +172,8 @@ function enderecoDeIndex(bruto: string, ws: ExcelJS.Worksheet, prof: number): { 
     if (ch === "(") nivel++;
     if (ch === ")") nivel--;
     if (ch === '"') { atual += ch; k++; while (k < dentro.length && dentro[k] !== '"') atual += dentro[k++]; atual += '"'; continue; }
+    // Idem para nome de aba entre apóstrofos — mesma vírgula, mesmo estrago.
+    if (ch === "'") { atual += ch; k++; while (k < dentro.length && dentro[k] !== "'") atual += dentro[k++]; atual += "'"; continue; }
     if (ch === "," && nivel === 0) { partes.push(atual.trim()); atual = ""; continue; }
     atual += ch;
   }
@@ -372,6 +374,15 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
           if (ch === ")") { if (nivel === 0) break; nivel--; }
           if (ch === "," && nivel === 0) break;
           if (ch === '"') { i++; while (i < s.length && s[i] !== '"') i++; }
+          // ASPAS SIMPLES TAMBÉM, e este era um BURACO REAL do arnês: nome de aba
+          // com vírgula vai entre apóstrofos (`'Revenues, COGS & SG&A'!F39`), e sem
+          // pular esse trecho a vírgula DE DENTRO DO NOME partia o argumento em
+          // dois. `N('Revenues` não avalia nada e devolve 0 — então TODA fórmula
+          // que referenciasse a aba principal do modelo dentro de uma função
+          // avaliava zero, em silêncio, e o assert passava por não conseguir
+          // avaliar. Achado ao escrever o teste do painel de cenários, que
+          // reprovava dizendo "IDÊNTICO AO BASE" sobre um Stress de 20%.
+          if (ch === "'") { i++; while (i < s.length && s[i] !== "'") i++; }
           i++;
         }
         brutos.push(s.slice(inicio, i).trim());

@@ -72,6 +72,13 @@ function avaliar(ws: import("exceljs").Worksheet, col: string, row: number): num
 
 // No ExcelJS a nota de célula é um objeto (`{texts:[{text}]}`), não string — ler
 // com String() devolve "[object Object]" e o invariante passaria a testar nada.
+/** Índice de coluna (1-based) → letra A1. O avaliador recebe letra, não número. */
+function colLetraDoIndice(i: number): string {
+  let n = i, out = "";
+  while (n > 0) { const r = (n - 1) % 26; out = String.fromCharCode(65 + r) + out; n = Math.floor((n - 1) / 26); }
+  return out;
+}
+
 function notaDaLinha(ws: import("exceljs").Worksheet, row: number): string {
   const r = ws.getRow(row);
   const partes: string[] = [];
@@ -5989,6 +5996,160 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         "(34) linha SEM proveniência carregada volta ao texto antigo, sem quebrar", nf.slice(0, 160));
       checar(!/página|confiança/.test(nf),
         "(34) …e não inventa página nem confiança que não existem", nf.slice(0, 160));
+    }
+  }
+}
+
+// ============================================================================
+// (35) "OS TRÊS CENÁRIOS SÃO TRÊS?" — o Cliente Case que nasce igual ao Base
+// ============================================================================
+//
+// O QUE ISTO DENUNCIA, e é defeito de PRODUTO e não de código: o `Cliente Case`
+// nasce como `=<Base Case>` em toda conta do modelo (convenção do Modelo Base, e
+// certa como ponto de partida). O efeito é que, num arquivo recém-exportado,
+// girar o dial de 1 para 2 não muda um número sequer — e até aqui NADA no arquivo
+// dizia isso. Um "Cliente Case" que é, número por número, o Base Case podia
+// chegar a um comitê sem a planilha o contradizer.
+//
+// O Stress tem a forma espelhada: ele é o Base vezes um haircut único
+// (`Considerações!$F$8`). Zerada aquela célula, o Stress vira o Base e o dropdown
+// continua oferecendo três cenários.
+{
+  const montar = (stress: number) => {
+    const linhaRec = (chave: string, v: number) => ({
+      secao_canonica: "receita_bruta", chave, rotulo_norm: chave.toLowerCase(),
+      papel: "conta" as const, unidade: "milhar", moeda: "BRL",
+      documentos: ["DRE"], valores: { "2025": v },
+    });
+    const ent = {
+      caso: { nome: "Três cenários", produto: "reestruturacao" },
+      agora: new Date("2026-08-19T12:00:00Z"),
+      entidade: "VERTENTES METALÚRGICA LTDA.", setor: "industria",
+      anosHistoricos: [2025], anosProjetados: [2026, 2027],
+      stressPct: stress, caixaMinimo: 0, aliquotaTributos: 0.34,
+      linhas: [linhaRec("Vendas de produtos", 100000)],
+      // A premissa é o que dá as três linhas de cenário: sem ela a conta é
+      // "mantida constante" e não há Base/Cliente/Stress para comparar.
+      premissas: [{
+        codigo: "cresc_receita", nome: "Crescimento da receita", natureza: "taxa",
+        formula: "crescimento_composto", unidade: "%",
+        valores: { "2026": 10, "2027": 8 }, origem: "digitado",
+      }],
+      vinculos: [{
+        rotulo_norm: "vendas de produtos", premissa_codigo: "cresc_receita",
+        sazonalidade_codigo: null,
+      }],
+      macro: [], unidade: "R$ mil",
+    };
+    const V = `vCen${Math.round(stress * 100)}`;
+    return buildExportWorkbook({
+      caso: ent.caso,
+      documentos: [{
+        id: `d${V}`, tipo_taxonomia: "DRE",
+        entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+        periodo: { tipo: "anual", referencia: "2025" },
+        documento_versao: [{ id: V, nome_original: "dre.pdf" }],
+      }],
+      campos: [campo({ chave: "Vendas de produtos", secao: "Receita Bruta", valor_num: 100000,
+                       periodo_coluna: "2025", ordem: 0, documento_versao_id: V })],
+      agora: ent.agora,
+      modeloInstitucional: ent as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+  };
+
+  const lerVeredito = (wb: ExcelJS.Workbook, linha: number): string => {
+    const out = wb.getWorksheet("Output");
+    if (!out) return "(sem aba Output)";
+    esquecerMemoria();
+    const v = avaliarCelula(out, "G", linha);
+    return typeof v === "string" ? v : String(v ?? "");
+  };
+
+  // Linha 8 = Cliente Case, linha 9 = Stress Case (ver `abaOutput`).
+  const wbComStress = montar(0.2);
+  const out = wbComStress.getWorksheet("Output");
+  checar(String(out?.getRow(7).getCell(3).value ?? "") === "OS TRÊS CENÁRIOS SÃO TRÊS?",
+    "(35) o painel existe no Output, ao lado do interruptor de cenário",
+    String(out?.getRow(7).getCell(3).value ?? ""));
+
+  const cli = lerVeredito(wbComStress, 8);
+  checar(cli === "IDÊNTICO AO BASE",
+    "(35) num arquivo recém-exportado, o Cliente Case É o Base Case — e o arquivo DIZ isso", cli);
+
+  const str = lerVeredito(wbComStress, 9);
+  checar(str === "diferenciado",
+    "(35) …e o Stress, com haircut de 20%, aparece como diferenciado", str);
+
+  // ---- NEGATIVO: haircut zerado faz o Stress virar o Base, e tem de aparecer.
+  //
+  // Um cenário de estresse sem estresse é PIOR que não ter cenário de estresse,
+  // porque parece que alguém olhou. Este é o caso que o indicador precisa pegar.
+  const semStress = montar(0);
+  const strZero = lerVeredito(semStress, 9);
+  checar(strZero === "IDÊNTICO AO BASE",
+    "(35) NEGATIVO: com o haircut zerado, o Stress é o Base — e o painel acusa", strZero);
+
+  // ---- O ARNÊS TINHA UM BURACO, e foi este teste que o achou.
+  //
+  // O nome da aba principal do modelo tem VÍRGULA (`Revenues, COGS & SG&A`), então
+  // toda referência a ela vai entre apóstrofos. O scanner de argumentos de função
+  // do `avaliar-formula.mts` pulava trecho entre ASPAS DUPLAS e não entre
+  // apóstrofos — a vírgula de dentro do nome partia o argumento em dois,
+  // `N('Revenues` não avaliava nada, e o resultado era 0. Em silêncio.
+  //
+  // O efeito: QUALQUER assert que avaliasse uma fórmula referenciando aquela aba
+  // dentro de uma função lia zero e passava por não conseguir avaliar — a forma
+  // mais silenciosa de teste que não prova nada, que é justamente o que este
+  // arquivo existe para não ser. Foi assim que ele apareceu: o painel de cenários
+  // dizia "IDÊNTICO AO BASE" sobre um Stress de 20%.
+  {
+    const alvo = wbComStress.getWorksheet("Output");
+    const rec0 = wbComStress.getWorksheet("Revenues, COGS & SG&A");
+    if (alvo && rec0) {
+      // Uma célula de teste que soma DUAS referências à aba de nome com vírgula,
+      // dentro de funções — exatamente a forma que quebrava.
+      let rNum = -1;
+      for (let r = 1; r <= rec0.rowCount; r++) {
+        if (/Base Case/.test(String(rec0.getRow(r).getCell(3).value ?? ""))) { rNum = r; break; }
+      }
+      checar(rNum > 0, "(35) há uma linha numérica na aba de nome com vírgula para o teste do arnês");
+      if (rNum > 0) {
+        alvo.getRow(200).getCell(7).value = {
+          formula: `N('Revenues, COGS & SG&A'!F${rNum})+N('Revenues, COGS & SG&A'!G${rNum})`,
+        };
+        esquecerMemoria();
+        const v = avaliarCelula(alvo, "G", 200);
+        checar(typeof v === "number" && v > 0,
+          "(35) o avaliador atravessa nome de aba com VÍRGULA dentro de função (buraco do arnês)",
+          String(v));
+      }
+    }
+  }
+
+  // ---- E A MEDIDA É EXATA, não é "parece diferente": a linha DIF_CENARIO da aba
+  // de receita soma ABS(cenário − base) conta a conta. Zero significa premissas
+  // idênticas e não pode significar outra coisa.
+  const rec = wbComStress.getWorksheet("Revenues, COGS & SG&A");
+  if (rec) {
+    let rDifCli = -1;
+    for (let r = 1; r <= rec.rowCount; r++) {
+      if (/Cliente Case — distância das premissas ao Base/
+        .test(String(rec.getRow(r).getCell(3).value ?? ""))) { rDifCli = r; break; }
+    }
+    checar(rDifCli > 0, "(35) a linha de distância do Cliente Case existe na aba de receita");
+    if (rDifCli > 0) {
+      esquecerMemoria();
+      // 2026 é a primeira coluna projetada.
+      let colProj = -1;
+      for (let c = 5; c <= 40; c++) {
+        if (rec.getRow(rDifCli).getCell(c).value != null) { colProj = c; break; }
+      }
+      checar(colProj > 0, "(35) …e ela tem célula nos exercícios projetados");
+      if (colProj > 0) {
+        const v = avaliarCelula(rec, colLetraDoIndice(colProj), rDifCli);
+        checar(v === 0,
+          "(35) …valendo ZERO, que é a medida exata de \"Cliente idêntico ao Base\"", String(v));
+      }
     }
   }
 }
