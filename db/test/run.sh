@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Aplica as migrations num Postgres local, carrega o fixture do book Vertentes e
-# roda os testes de reconciliação.
+# Aplica as migrations num Postgres local, carrega os fixtures dos DOIS books
+# (Vertentes, o fácil; Canastra, o difícil) e roda os testes de reconciliação.
 #
 #   db/test/run.sh                     # usa um Postgres já rodando (PGHOST/PGPORT/PGUSER)
 #   PGPORT=5599 db/test/run.sh         # porta alternativa
@@ -172,8 +172,16 @@ echo "   $(grep -c '^CREATE ' db/schema.sql) objetos criados · $(wc -l < db/sch
 echo "== fixture (book Vertentes, extração fiel dos 14 documentos)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fixture_book_vertentes.sql
 
+echo "== fixture (book CANASTRA, extração fiel dos documentos DIFÍCEIS)"
+psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fixture_book_canastra.sql
+
 echo "== testes de reconciliação"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercícios, 6 empresas)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo

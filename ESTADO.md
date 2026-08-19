@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0122_pergunta_em_portugues.sql` |
+| **Última migration** | `db/migrations/0123_mutuos_a_natureza_fora_da_linha.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 284 · export 546 · e2e 46 · banco (67 migrations do zero + testes SQL) |
+| **Suítes** | n8n 284 · export 546 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -160,6 +160,58 @@ workflow e a rodada real.
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+### A FIXTURE DE EXTRAÇÃO DO BOOK-CANASTRA, e os três defeitos que ela achou na primeira rodada (19/08, sessão 52)
+
+**A lacuna que ela fecha.** O `book-canastra` está no repositório desde o PR #112 e provava duas
+coisas: que os números do gerador fecham no papel, e que o lote não cabe no teto de gasto. **A
+ingestão nunca havia sido exercitada sobre ele** — era a maior lacuna de cobertura viva, e estava
+anotada como tal neste arquivo.
+
+Agora existe `db/test/gerar_fixture_canastra.py` → `db/test/fixture_book_canastra.sql` (28
+documentos, 1.264 linhas) e `db/test/canastra.test.sql`, ligados ao `db/test/run.sh`. A regra que ele
+trava é a de Vertentes, sobre documento **difícil**: *extração fiel => a única pendência é a
+divergência que o book planta de propósito* (R$ 240 mil de mútuos). Cada uma das 15 armadilhas que
+virasse pendência seria falso positivo.
+
+**Carregada e reconciliada, ela abriu ZERO pendência.** Num caso que planta uma. Três defeitos, e a
+`0123` os corrige:
+
+| | O defeito | O número |
+|---|---|---|
+| 1 | A checagem procurava a palavra "mútuo" no **rótulo de cada linha** da planilha. Nenhuma planilha real a repete ali — ela diz a natureza **uma vez, no título** ("RELAÇÃO DE MÚTUOS ENTRE PARTES RELACIONADAS" / "Mutuante \| Mutuária \| Saldo devedor"). O filtro zerava o lado B e a função devolvia `documento_ausente`, o único resultado que **não** abre pendência: a divergência não estava "não encontrada", estava **declarada inexistente**. | R$ 240 mil invisíveis |
+| 2 | A guarda que o comentário da `0117` prometia **não existia**: `v_lados_bp` era atribuída e nunca lida. | — |
+| 3 | Achado ao ligar a guarda: **mútuo com SÓCIO não tem espelho** no mandato (a contraparte é o quotista) e estava somado junto com o intragrupo. | 14.000 na SPE, que esconderiam os 240 atrás de um número 60× maior |
+
+**Por que o defeito 1 passou seis sessões.** O `fixture_book_vertentes.sql` escreve o rótulo como
+`"A → B — Mútuo"`, colando a natureza dentro do nome da linha. Isso não vem de PDF nenhum — é um
+enfeite do gerador do fixture. A checagem estava aprovada por um dado que só existia no teste.
+
+**A guarda prometida está errada, e isso foi MEDIDO, não deduzido.** "Interromper quando há os dois
+lados" calaria a checagem exatamente onde a evidência é mais forte: no Canastra os dois lados dão
+16.300 cada — eles se confirmam, e é a planilha (16.060) que discorda. A regra que entrou: lados que
+**concordam** estabelecem o saldo por dupla evidência (uma comparação, não uma por lado); lados que
+**discordam** são eles o achado, e aí a planilha não é atribuída a nenhum deles.
+
+**E a primeira versão da correção repetiu o defeito que consertava.** Ler "rótulo OU seção" sem
+ordem fez a suíte de Vertentes reprovar na hora: o fixture de lá põe `secao = "MÚTUOS E CONTAS
+INTRAGRUPO"`, um agrupador que nomeia DUAS naturezas, e com a seção valendo por si a conta corrente
+(1.400) e o aluguel (640) entraram na soma — **a divergência saltou de R$ 180 mil para R$ 2.220
+mil**. É textualmente o que o comentário da `0117` já avisava. A régua final tem **precedência
+estrita**: o rótulo, quando fala, é a autoridade sobre a linha dele; a seção só vale quando os
+rótulos estão calados; nada dizer significa que o documento inteiro é a relação de mútuos, que é o
+que a taxonomia já afirmou ao classificá-lo.
+
+**O que fica aberto, e está dito na migration:** mútuo com sócio passa a não ser conferido por
+ninguém — o par dele não é a planilha intragrupo, é o contrato com o quotista, e ninguém cruza isso
+hoje. Antes da `0123` ele também não era conferido; a diferença é que agora está escrito.
+
+**Duas coisas que a fixture ensinou sobre a forma FIEL de extrair, e que valem para o prompt:**
+matriz se extrai como um grupo por COLUNA (`secao` = nome da coluna, `chave` = o rótulo da linha) —
+escrever "Terrenos — custo" cola a coluna dentro do nome da conta e cria três rótulos que nenhuma
+outra peça reconhece; e **a taxonomia não tem tipo para anexo de composição de imobilizado** (conferi
+o seed `0002`), então ele entrou como `NOTAS_EXPL`, que é a semântica certa (detalhamento
+complementar que não se soma debaixo do total do balanço) mas não o nome certo.
 
 ### O EXPORT DO EXCEL: cinco defeitos de número, achados rodando o arquivo (18/08, sessão 51)
 
@@ -715,8 +767,12 @@ Os itens que continuam de pé, em ordem de impacto:
   sozinha. **Fica anotado:** `negativas`, `societario` e `parcelamentos` estão numa lista à mão em
   `parseEntidade` porque o apelido da taxonomia não os carrega — o lugar certo é o seed
   `db/migrations/0002`, e isso é migration.
-- **Fixture de extração do `book-canastra`** — o book existe (PR #112, no `main`), mas ainda prova o
-  gerador e o orçamento, não a ingestão sobre dado sujo. É a maior lacuna de cobertura viva.
+- ~~**Fixture de extração do `book-canastra`**~~ — **fechado em 19/08 (sessão 52)**: existe
+  `fixture_book_canastra.sql` (28 documentos, 1.264 linhas) e `canastra.test.sql` no `run.sh`, e a
+  primeira rodada dela achou três defeitos na checagem de mútuos (`0123`). Ver "A FIXTURE DE
+  EXTRAÇÃO DO BOOK-CANASTRA". **Fica anotado o que ela NÃO cobre:** ela prova a ingestão sobre
+  documento difícil com extração FIEL — a extração real sobre os PDFs sujos (o que o modelo de
+  verdade lê deles) continua sendo provada só pela rodada do dono.
 - **Resumo dos três cenários lado a lado** — hoje o arquivo mostra um cenário por vez. Não é uma
   fórmula a mais: ver a análise no diagnóstico (§2.2 e a nota de execução).
 - **Proveniência completa na aba `Premissas`** — a nota traz o documento de origem; página,
