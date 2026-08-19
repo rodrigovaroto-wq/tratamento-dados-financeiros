@@ -4,24 +4,38 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-18 (sessão 51). **Estado do `main`:** mergeado até o **PR #141**.
-A rodada entregou seis migrations — `0116` (o total impresso vira linha), `0117` (reconciliação de
-mútuos), `0118` (dedup por fingerprint de prompt+modelo), `0119` (linha exigida por entidade, do PR
-#135 do Ian, com quatro correções), `0120` (banco de perguntas ao cliente, do PR #138, com seis) e
-`0121` (o diagnóstico de conteúdo para de duplicar a empresa — achado no dado real do dono, antes da
-rodada de validação) — mais o portal (painel, Modelagem, e o teto de 1000 linhas removido de TODAS
-as telas, inclusive do export) e o workflow do n8n reestruturado para 33 nós.
+**Última atualização:** 2026-08-19 (sessão 52). **Estado do `main`:** mergeado até o **PR #144**.
 
-**O que falta é do dono e não é código:** aplicar as migrations, reimportar o workflow e RODAR o
-book num mandato NOVO. **Leia o `ESTADO.md` primeiro** — ele tem os passos, o SQL de conferência de
-cada migration e as três coisas a trazer da rodada.
+**AS DUAS PENDÊNCIAS DE INFRA ACABARAM.** O dono aplicou as migrations **até a `0125`** e reimportou
+o `workflow.e1-ingestao.json`. Não há mais nada de banco nem de n8n esperando.
 
-~~**O maior buraco aberto:** as perguntas ao cliente da `0120` não têm tela.~~ **Fechado na sessão
-51:** elas ganharam uma **aba própria** (`/casos/[id]/perguntas`) — texto pronto para copiar,
-registro de envio com o texto congelado (`fn_registrar_pergunta_acao`) e registro de descarte. Ficou
-FORA da fila de pendências por decisão do dono: sugestão que ninguém fez ainda não se mistura com
-decisão sobre problema já medido. A aba **depende da `0120` estar aplicada no Supabase** — sem ela,
-explica o que falta em vez de quebrar.
+**Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Nesta rodada isso pesa mais que
+nas anteriores, porque a sessão 52 acrescentou **três checagens e um conserto de motor que nunca
+viram dado real**. Os sete pontos que a rodada prova estão tabelados no `ESTADO.md`, em "O próximo
+passo" — o primeiro deles é que **o fatiamento passa a existir em produção**: até agora ele estava
+desligado, e zero dos 38 documentos do book era fatiado.
+
+**O que a sessão 52 entregou** (PR #144, os quatro itens abertos que não dependiam do dono):
+
+- **`0123`** — a checagem de mútuos parava de funcionar quando a planilha não repetia a palavra
+  "mútuo" em cada linha, que é como toda planilha real é. Devolvia `documento_ausente`: a divergência
+  não era "não encontrada", era declarada inexistente. Passou seis sessões escondida porque o fixture
+  de Vertentes escrevia a natureza dentro do rótulo — um enfeite do gerador, que só existia no teste.
+- **`0124`** — a conferência do intragrupo que NÃO é mútuo, pelo ESPELHO entre cada par de empresas.
+  O pareamento é pelo PAR, não pela natureza: quem vende chama de "contas a receber" e quem compra
+  chama de "fornecedores".
+- **`0125`** — a proveniência (arquivo, página, confiança, aceite) volta às catorze abas do export.
+- **A fixture do `book-canastra`** — a maior lacuna de cobertura viva. Foi ela que achou tudo acima.
+- **O fatiamento**, que estava desligado por erro de unidade (teto em CÉLULAS aplicado a contagem de
+  LINHAS). A correção anotada aqui — "extrair por faixa de página" — era a errada.
+
+**Duas das quatro correções anotadas no `ESTADO.md` estavam ERRADAS**, e medir antes de escrever
+código foi o que mostrou isso. Fica como método, não como anedota.
+
+> **O HISTÓRICO ABAIXO PARA NA SESSÃO 39.** As sessões 40 a 52 não estão aqui, e isso é escolha, não
+> esquecimento: desde a 41 o que muda toda rodada mora no `ESTADO.md`, e duplicar a narrativa nos dois
+> arquivos é como o cabeçalho daqui passou 17 PRs mentindo. O que está abaixo continua valendo como
+> referência do COMO SE CHEGOU AQUI até a 39 — para o que o sistema faz HOJE, o `ESTADO.md` é a fonte.
 
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele

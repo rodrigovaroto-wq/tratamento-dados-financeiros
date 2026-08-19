@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0125_proveniencia_por_linha_e_ano.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (68 migrations do zero + testes SQL, agora com os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (70 migrations do zero + testes SQL, agora com os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -138,28 +138,49 @@ O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em toda
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
 
-## O próximo passo (para quem retomar depois de 18/08, sessão 51)
+## O próximo passo (para quem retomar depois de 19/08, sessão 52)
 
-**O DONO APLICOU TODAS AS MIGRATIONS DO REPOSITÓRIO** — confirmado em 18/08 (sessão 51), até a
-`0121`. O banco deixou de ser o passo pendente; o que falta da sessão 50 é a REIMPORTAÇÃO do
-workflow e a rodada real.
+**O DONO FEZ AS DUAS COISAS QUE FALTAVAM** — confirmado em 19/08: as migrations estão aplicadas
+**até a `0125`** e o `workflow.e1-ingestao.json` foi **reimportado**. Não há mais nada de infra
+pendente.
 
-| | Passo | De quem |
-|---|---|---|
-| 1 | ~~Aplicar `0116` a `0121` no Supabase~~ — **feito em 18/08**. **Falta a `0122`**, escrita depois: sem ela a pergunta ao cliente sai dizendo "Na DRE de 24,25" e "16060 milhar" | dono |
-| 2 | **Reimportar `n8n/workflow.e1-ingestao.json` — agora 33 nós** (o teto de gasto mudou de lugar e o dedup entrou) | dono |
-| 3 | Rodar o book e trazer `lote_integro`, `cobertura_do_lote` e o `Resumo de Custo` | dono |
-| 4 | Com a rodada na mão: conferir se os SUBTOTAIS IMPRESSOS passaram a chegar (é a única mudança desta rodada que só a extração real prova) e recalibrar o limiar de 0,85 com pontos reais | próxima sessão |
+**Sobrou UM bloqueio, e é grande: NINGUÉM RODOU O BOOK AINDA.**
 
-> **Opcional, e só isso: o `Max rows` do Supabase.** Com a `0120` aplicada, a aba "Perguntas ao
-> cliente" já lista. O teto de 1000 linhas do PostgREST (*Project Settings → API → Max rows*)
-> continua no padrão, e **nenhuma tela depende mais dele** — o `paginar` lê em janelas até o banco
-> acabar, qualquer que seja o teto. Subi-lo só deixa cada leitura mais barata.
+Isso importa mais nesta rodada do que nas anteriores, e o motivo é aritmético: a sessão 52 acrescentou
+**três checagens novas e um conserto de motor que nunca rodaram sobre dado real**. O fixture prova que
+elas funcionam sobre extração FIEL; a rodada é a única coisa que prova que elas funcionam sobre o que
+o modelo de verdade lê de um PDF sujo.
+
+| | O que a rodada prova | De onde vem | Como saber que passou |
+|---|---|---|---|
+| 1 | **O fatiamento liga em produção** — ele estava DESLIGADO até agora (zero de 38 documentos fatiados) | sessão 52 | o lote sai com **~44 chamadas de extração**, não 38; o `17_Livro_Razao` vira **4 blocos** |
+| 2 | Os **SUBTOTAIS IMPRESSOS** chegam | `0116`, sessão 50 | "TOTAL DO ATIVO" e "RECEITA OPERACIONAL BRUTA" aparecem como LINHA, não só como `secao` |
+| 3 | A **divergência de mútuos** aparece quando existe | `0123` | pendência `reconciliacao:mutuos_planilha_vs_balanco`, se o caso tiver planilha e balanço |
+| 4 | O **espelho intragrupo** não dá falso positivo | `0124` | `reconciliacao:intragrupo_espelho` só abre se um par de empresas realmente não fechar |
+| 5 | A **proveniência** chega ao arquivo | `0125` | a nota de uma célula histórica diz arquivo, página, confiança e aceite — não "Extraído de BALANCO" |
+| 6 | `lote_integro` e `cobertura_do_lote` | sessão 50 | `cobertura_do_lote` **não pode vir `null`** (null = a camada 1 não mediu e as outras duas estão mudas) |
+| 7 | O custo bate com o previsto | sessões 50-52 | o guarda prevê ~US$ 1,42 para o book sintético contra US$ 1,29 medido (+10%); num mandato real o desvio é o número a olhar |
+
+**Ordem sugerida:** rodar o book num mandato NOVO → exportar o completo → passar o
+`auditar-xlsx.mts` e o `docs/ACEITE.md` por cima. Os três juntos levam menos de uma hora e são a
+única evidência que nenhuma suíte substitui.
+
+**Com a rodada na mão, a próxima sessão tem duas tarefas que só existem depois dela:**
+
+1. **Recalibrar o limiar de cobertura de 0,85** com pontos REAIS. Hoje ele está calibrado contra os
+   38 documentos SINTÉTICOS do book (erro mediano da régua +3%, pior caso 96% com extração perfeita).
+   O documento real é mais sujo, e a folga de 11 pontos existe para ele — mas ninguém mediu ainda.
+2. **Conferir se o fatiamento cortou onde devia** e se a emenda entre blocos não duplicou linha. A
+   `juntarBlocos` limpa emenda repetida, mas ela nunca viu bloco de verdade.
 
 > **A `0118` muda o que se vê ao reenviar um arquivo.** Reenviar o MESMO PDF sem que prompt, modelo
 > ou esquema tenham mudado não chama mais a OpenAI: o documento aparece no lote, sem custo e sem
 > versão nova. Se a intenção era reextrair de verdade, mude o prompt (ou espere a próxima mudança
 > dele) — o fingerprint muda junto e a extração volta a acontecer.
+
+> **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
+> (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
+> `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
 
 ### "OS TRÊS CENÁRIOS SÃO TRÊS?" — e o buraco que a pergunta abriu no arnês (19/08, sessão 52)
 
@@ -911,46 +932,45 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 
 ## O que só o dono pode fazer
 
-1. **Aplicar a `0122`** — a única pendente. O dono confirmou em 18/08 (sessão 51) que aplicou
-   todas até a `0121`; a `0122` nasceu depois, na mesma sessão, e é o que faz a pergunta ao cliente
-   sair em português (período por extenso, valor em reais) e a janela móvel `L36M` parar de ser
-   lida como o ano 2036. Merge continua não sendo apply,
-   e da tela "aplicada" e "não aplicada" têm a mesma aparência, então a conferência de 30 segundos
-   vale a pena depois de qualquer rodada nova:
-   ```sql
-   -- a 0122 acrescenta duas funções e muda uma:
-   select fn_periodo_por_extenso('multi','23,24,25');  -- esperado: 2023 a 2025
-   select fn_valor_pt_br(16060, 'milhar');             -- esperado: R$ 16.060 mil
-   select fn_anos_texto('L36M');                       -- esperado: {} (antes: {2036})
+**As duas primeiras linhas desta lista saíram em 19/08** — as migrations estão aplicadas até a `0125`
+e o workflow foi reimportado. Sobrou uma, e ela é a que nenhuma automação cobre.
 
-   select proname from pg_proc
-    where proname in ('fn_papel_linha','fn_reconciliar_mutuos','fn_lado_do_mutuo',
-                      'fn_sugerir_perguntas','fn_registrar_pergunta_acao');
-   -- a 0118 acrescenta coluna, não só função:
-   select column_name from information_schema.columns
-    where table_name = 'documento_versao' and column_name = 'fingerprint_extracao';
-   -- e a 0118 exige que sobre UMA assinatura de fn_registrar_documento (a de 16 args):
-   select pronargs from pg_proc where proname = 'fn_registrar_documento';
-   -- a 0120 seedou 11 perguntas ativas:
-   select count(*) from pergunta_catalogo where ativo;
-   ```
-   Com a `0120` no banco, a aba **Perguntas ao cliente** do mandato passa a listar de verdade.
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** — mudou de novo em 18/08, e a mudança é
-   estrutural: o teto de gasto saiu do começo da corrente e o dedup entrou. **Conferência de 5
-   segundos depois de importar:** o canvas tem **33 nós** (eram 31). Procure, em ordem:
-   `Medir Documento` → **`Orcamento do Lote` → `Lote cabe?`** (o teto agora decide AQUI, com o
-   documento já medido, e não lá no começo), `Precisa Fallback?` → `Juntar Ramos`,
-   `Registrar Documento` → `Recompor Contexto` → **`Extracao ja feita?`** (o dedup) e
-   **`Juntar Extraidos`** (o Merge que junta quem extraiu com quem não precisou), e na ponta direita
-   `Resumo de Custo` → `Gravar Uso do Lote` → `Conferir Lote`. Dois números decidem se a rodada
-   vale: `cobertura_do_lote` (se vier `null`, a camada 1 não mediu e as outras duas estão
-   desligadas) e `lote_integro` do `Conferir Lote` — **falso significa documento registrado que
-   nunca teve extração chamada**, e ele nomeia quais.
-   E, para cobrir falha de qualquer origem, importar `workflow.erros.json` e ligá-lo como
-   **Error Workflow** nas Settings do Intake (`n8n/README.md`).
-3. **Rodar o aceite sobre um export de verdade**: `auditar-xlsx.mts` (10 itens automáticos) +
-   `docs/ACEITE.md` (10 itens humanos). É a única conferência que nenhuma automação cobre — e a que
-   faltava quando o arquivo de 06/08 saiu com seis números errados e as suítes verdes.
+1. **RODAR O BOOK NUM MANDATO NOVO, e depois o aceite sobre o export de verdade.** É o único item
+   pendente, e o que ele prova está na tabela de "O próximo passo" — sete coisas, três delas
+   checagens que nunca viram dado real. O aceite são duas peças: `auditar-xlsx.mts` (10 itens
+   automáticos) e `docs/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
+   06/08, um arquivo com seis números errados e as suítes verdes.
+
+> **A conferência de 30 segundos, depois de qualquer rodada nova.** Merge não é apply, e da tela
+> "aplicada" e "não aplicada" têm a mesma aparência. Vale reconferir quando algo parecer não ter
+> mudado:
+> ```sql
+> -- 0122: a pergunta ao cliente em português
+> select fn_periodo_por_extenso('multi','23,24,25');  -- esperado: 2023 a 2025
+> select fn_valor_pt_br(16060, 'milhar');             -- esperado: R$ 16.060 mil
+> select fn_anos_texto('L36M');                       -- esperado: {} (antes: {2036})
+>
+> -- 0123/0124/0125: as funções que a sessão 52 acrescentou
+> select proname from pg_proc
+>  where proname in ('fn_texto_nomeia_mutuo','fn_mutuo_com_socio',
+>                    'fn_contraparte_intragrupo','fn_lado_intragrupo',
+>                    'fn_natureza_intragrupo','fn_reconciliar_intragrupo');
+> -- esperado: as SEIS
+>
+> -- 0125 muda o TIPO DE RETORNO da fn_valores_por_ano (quatro colunas novas):
+> select count(*) from information_schema.routines r
+>  join information_schema.parameters p on p.specific_name = r.specific_name
+>  where r.routine_name = 'fn_valores_por_ano' and p.parameter_name = 'arquivo';
+> -- esperado: 1. Zero significa que a 0125 não entrou, e a nota do export volta
+> -- a dizer só "Extraído de BALANCO" sem quebrar nada — falha silenciosa.
+> ```
+
+> **Conferência de 5 segundos do workflow, se a rodada sair estranha:** o canvas tem **33 nós**.
+> Procure, em ordem: `Medir Documento` → `Orcamento do Lote` → `Lote cabe?`, `Precisa Fallback?` →
+> `Juntar Ramos`, `Registrar Documento` → `Recompor Contexto` → `Extracao ja feita?` (o dedup) e
+> `Juntar Extraidos`, e na ponta direita `Resumo de Custo` → `Gravar Uso do Lote` → `Conferir Lote`.
+> E, para cobrir falha de qualquer origem, o `workflow.erros.json` ligado como **Error Workflow** nas
+> Settings do Intake (`n8n/README.md`).
 
 ## O que está aberto no produto
 
@@ -977,8 +997,45 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
   na fila:** linha que sozinha passe do teto — sem corte mais fino possível; nenhum documento do book
   cai nesse caso.
 
+### O QUE SOBROU, em ordem de quem destrava o quê (19/08, sessão 52)
+
+**DEPENDE DA RODADA DO DONO — não dá para começar antes:**
+
+1. **Recalibrar o limiar de cobertura (0,85)** com pontos reais. Hoje ele está calibrado contra 38
+   documentos SINTÉTICOS.
+2. **Conferir o fatiamento em produção** — ele nunca rodou ligado. Cortou onde devia? A emenda entre
+   blocos duplicou linha? A `juntarBlocos` limpa emenda repetida e nunca viu bloco de verdade.
+3. **Conferir os subtotais impressos** (`0116`) — a única mudança daquela rodada que só a extração
+   real prova.
+
+**NÃO DEPENDE DE NADA — pode começar já:**
+
+4. **Golden set e concordância medida.** É o item de maior alcance da lista: sem ele o dial de
+   autonomia não sobe e a F4 do `docs/03` não começa. Tudo o que o sistema faz hoje é conferido
+   contra fixture escrita por nós; o golden set é o que mede acerto contra julgamento humano.
+5. **Bloco numérico dos três cenários lado a lado** — dimensionado abaixo, e é decisão do dono se
+   vale: exige PARAMETRIZAR a cascata da aba que produz os números do modelo.
+6. **Modo A do `f0/07`** (base viva consultável no portal) — **ou a decisão escrita de que ele não
+   vem.** Está tomada por omissão há meses; o §2.4 do diagnóstico pede que se escreva qual das duas
+   é a verdade.
+
+**BLOQUEADOS POR DADO QUE O KIT BÁSICO NÃO COLETA** — não são trabalho, são espera:
+
+7. **Tranche em moeda estrangeira** (falta a MOEDA por tranche; aplicar câmbio sem saber erra ~5×).
+8. **Vida útil por classe de imobilizado** (exige laudo).
+9. **Goodwill** — os três blocos de espelho só valem quando houver ágio de verdade no caso.
+
+**ANOTADOS, PEQUENOS, NÃO RECONFERIDOS NESTA SESSÃO:**
+
+10. **`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor"** — vem da sessão 39. O
+    critério em vigor (`0101`) é `valores is null or valores = '{}'`, e uma premissa de sazonalidade
+    guarda os fatores em outro lugar. **Não reconferi contra dado real** — fica como suspeita, não
+    como fato.
+11. **"Sugerir do realizado"** (proposta, nunca feita): oito premissas saem do próprio balanço/DRE do
+    caso, com `origem = 'historico'`, que o schema da `0038` já prevê.
+
 O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
-Os itens que continuam de pé, em ordem de impacto:
+Os itens acima, com o histórico de cada um:
 
 - ~~**A entidade sai poluída com o período**~~ — **fechado em 17/08.** Eram quatro famílias de
   sujeira, não uma: o comparativo de TRÊS exercícios (`2025x2024x2023`, que o regex de um `x` só não
@@ -987,9 +1044,10 @@ Os itens que continuam de pé, em ordem de impacto:
   (`Relatorio Auditor Independente`, `Iv Rev3`). Medido nos 38 nomes do book: **32 entidades limpas,
   6 nulas** (essas vão ao fallback por conteúdo, que lê a entidade do documento) e **zero sujas**.
   A remoção de palavra de tipo usa a própria taxonomia como fonte, palavra a palavra, então cresce
-  sozinha. **Fica anotado:** `negativas`, `societario` e `parcelamentos` estão numa lista à mão em
-  `parseEntidade` porque o apelido da taxonomia não os carrega — o lugar certo é o seed
-  `db/migrations/0002`, e isso é migration.
+  sozinha. ~~Fica anotado: `negativas`, `societario` e `parcelamentos` numa lista à mão~~ — **já
+  resolvido**: os três viraram termos de `CERTIDOES`, `ORGANOGRAMA` e `SITUACAO_FISCAL` em
+  `n8n/lib/taxonomia.mjs`, e a regra do vocabulário os remove sozinha. O que sobrou naquela lista é
+  de outra natureza (ruído de nome de arquivo: `rev3`, `scan`, `anexo`) e não tem lugar na taxonomia.
 - ~~**Fixture de extração do `book-canastra`**~~ — **fechado em 19/08 (sessão 52)**: existe
   `fixture_book_canastra.sql` (28 documentos, 1.264 linhas) e `canastra.test.sql` no `run.sh`, e a
   primeira rodada dela achou três defeitos na checagem de mútuos (`0123`). Ver "A FIXTURE DE
