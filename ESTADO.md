@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0127_o_dial_obedecido.sql` |
+| **Última migration** | `db/migrations/0128_classificacao_contabil_sombra.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (735 asserts, 72 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (775 asserts, 73 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -188,6 +188,61 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### A CLASSIFICAÇÃO CONTÁBIL PASSA A EXISTIR, em sombra (20/08, sessão 53) — `0128`
+
+**O oitavo estágio do MVP, com zero linha de código até aqui.** O `docs/03` o lista entre os que
+"existem na v1 de produção", o `docs/05` o especifica por inteiro (taxonomia de cinco rótulos, as
+três condições de auto-aceite, o registro de justificativa, o de override) e a `0002` o semeia no
+dial em N0. Medido antes de escrever: `grep` por `classe_contabil` devolvia UMA ocorrência — a coluna
+que a `0126` criou no golden set para guardar o rótulo humano de uma classificação que ninguém
+produzia. O EBITDA saía do modelo como linha de cascata, sem nenhuma noção de recorrência.
+
+**É a forma inversa do defeito que a `0127` corrigiu:** lá o dial subestimava a realidade; aqui ele
+afirmava a existência de um estágio.
+
+**Como ela decide (decisão do dono): regra determinística sobre rubrica.** Sem IA e sem custo por
+documento — é a condição 2 do próprio `docs/05` ("bate com um padrão conhecido pré-registrado"). O
+catálogo de rubricas é DADO versionado, com `justificativa` NOT NULL por linha, e rubrica que ele não
+conhece cai em `revisar_manual`.
+
+**Em N0 ela não toca em número nenhum do arquivo entregue** (decisão do dono, e leitura fiel de N0): a
+sugestão fica registrada e visível, o `.xlsx` sai idêntico. É isso que permite acumular concordância
+sem risco de número errado chegar a comitê.
+
+| | |
+|---|---|
+| Cobertura medida | **207 de 231** rubricas reais de resultado — **89,6%** |
+| O que sobra em `revisar_manual` | 6 subtotais impressos que a `fn_papel_linha` não reconhece, 1 genuinamente ambíguo, e artefato de fixture |
+| O seed | **corrigido duas vezes pela medição**, e as duas correções estão comentadas nele |
+
+#### TRÊS DECISÕES, E A PRIMEIRA VEIO DE UMA MEDIÇÃO
+
+1. **A regra só roda em linha de RESULTADO.** Conta de balanço não é recorrente nem não recorrente —
+   a pergunta não se aplica. Rodar em tudo produziria **3.195 pedidos de revisão** contra 527 linhas
+   em que a pergunta cabe, e analista que recebe 3.195 itens não revisa nenhum (é a lição do Sinal 1
+   refinado na `0022`). **Ausência de sugestão é a forma de dizer "não se aplica"** — não entra um
+   sexto rótulo para isso.
+2. **A taxonomia é TABELA, não enum.** Os cinco do `docs/05`, sem acréscimo. Mas como linhas de
+   catálogo, porque um sexto rótulo deve custar uma linha de seed e não uma migration que altera tipo.
+3. **O auto-aceite do `docs/05` NÃO foi implementado, e o motivo é uma contradição do documento.** Ele
+   tem uma seção sobre "quando a sugestão pode ser aceita" e abre dizendo "teto N1 **para sempre**".
+   Sob teto N1 auto-aceite não pode acontecer: as três condições descrevem o que a própria doutrina do
+   documento proíbe. Implementá-las seria código morto que alguém liga por engano.
+
+#### O SINAL DE CALIBRAÇÃO, e é ele que faz isto valer a pena em sombra
+
+`fn_classe_contabil_concordancia` responde a frase do `docs/05` — *"o override vira sinal de
+calibração"* — em número, e nomeia **as rubricas que mais erram**, que é o que permite ajustar a
+REGRA e não o modelo. É a mesma economia que a `0126` achou na Classe A: o rótulo vem do trabalho que
+o analista já faz, sem rotulagem dedicada. Denominador = linhas com os dois lados; quem ninguém olhou
+fica fora e é contado à parte.
+
+#### E UMA RESSALVA MEDIDA, que está escrita no corpo da regra
+
+`fn_papel_linha` **não pega todo subtotal impresso** — conferido: ela devolve `conta` para "CUSTO DOS
+PRODUTOS VENDIDOS" e para "(-) DESPESAS OPERACIONAIS". Então o filtro de subtotal reduz o ruído sem
+eliminá-lo, e dizer o contrário seria prometer o que ele não cumpre.
 
 ### O DIAL PASSA A SER OBEDECIDO — e dois níveis declarados eram falsos (20/08, sessão 53) — `0127`
 
