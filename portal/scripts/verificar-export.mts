@@ -52,7 +52,7 @@ import { classificarConta } from "../src/lib/statement-templates.ts";
 import {
   casarVinculosComLinhas, chaveDaLinha, serieDaLinha, seriesPorLinha, vinculoPorLinha,
 } from "../src/lib/modelagem-linha.ts";
-import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
+import { ABAS_MODELO as ABAS_DO_MODELO, ehDividaFinanceira } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "../src/lib/pendencia.ts";
@@ -6422,6 +6422,63 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       && /Income Statement/.test(String((cel as { formula: string }).formula)),
       "(36) …sendo ESPELHO do Income Statement, não um segundo cálculo do EBITDA",
       String(typeof cel === "object" && cel && "formula" in cel ? (cel as { formula: string }).formula : cel));
+  }
+}
+
+// =============================================================================
+// (37) O VOCABULÁRIO DE DÍVIDA FINANCEIRA — e este bloco é RELIGAMENTO, não enfeite.
+//
+// Havia SEIS lugares no `modelo-institucional.ts` fazendo a mesma pergunta ("esta
+// linha é dívida, e portanto NÃO é giro?") com TRÊS regexes diferentes. O efeito
+// media-se no book: "Conta garantida" (1.550) e "Duplicatas descontadas e
+// antecipação de recebíveis" (5.277) ficavam no passivo OPERACIONAL e eram
+// projetadas por DIAS DE GIRO CONTRA RECEITA — 6.827, ou 9,6% do passivo
+// circulante informado. O resíduo de reconciliação do passivo circulante caiu de
+// −19.987 (20,9% do ativo) para −15.149 (15,8%) com a unificação; o que sobra é
+// divergência entre o mapa de dívida (43.542) e o balanço (28.393), que é dado a
+// reconciliar e não defeito de código.
+//
+// Cada linha da tabela abaixo é um rótulo que APARECE em balanço brasileiro. Se
+// alguém estreitar o vocabulário, o assert correspondente cai — que é o único
+// jeito de este bloco valer alguma coisa.
+{
+  const DIVIDA: string[] = [
+    // os que as três variantes já pegavam
+    "Empréstimos bancários - capital de giro",
+    "Financiamentos - FINAME/BNDES",
+    "Debêntures a pagar",
+    "Arrendamentos a pagar - CPC 06 (R2)",
+    // …e os que NENHUMA delas pegava, medidos no book
+    "Conta garantida",
+    "Duplicatas descontadas e antecipação de recebíveis",
+    "Cheque especial",
+    "Desconto de recebíveis",
+    "Adiantamento de contrato de câmbio",
+    // só a variante mais completa (C) conhecia estes dois — agora todas conhecem
+    "Leasing operacional a pagar",
+    "Nota promissória comercial",
+    "Cédula de crédito bancário",
+  ];
+  // O CONTRAPONTO É OBRIGATÓRIO: sem ele um `() => true` passaria em tudo acima.
+  const GIRO: string[] = [
+    "Fornecedores nacionais",
+    "Salários e ordenados a pagar",
+    "Adiantamentos de clientes",
+    "Provisão de férias e encargos",
+    "Outras contas a pagar",
+    "Aluguéis a pagar - Vertentes Imóveis SPE",
+    "Mútuos a pagar - Vertentes Participações S.A.",
+    // Supplier finance fica FORA de propósito: se é dívida ou fornecedor é
+    // julgamento contábil em aberto, e decidi-lo num regex mudaria resultado
+    // financeiro por conta própria. Está escrito no vocabulário.
+    "Risco sacado a pagar",
+    "Confirming - fornecedores",
+  ];
+  for (const r of DIVIDA) {
+    checar(ehDividaFinanceira(r), `(37) "${r}" é dívida financeira (não gira contra receita)`);
+  }
+  for (const r of GIRO) {
+    checar(!ehDividaFinanceira(r), `(37) "${r}" continua sendo giro operacional`);
   }
 }
 

@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 615 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,72 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## A DÍVIDA BANCÁRIA QUE ERA PROJETADA COMO GIRO (20/08, sessão 55)
+
+**Achado rodando o arquivo, não lendo código** — o método que a sessão 51 provou valer. Gerei o
+export completo da fixture e passei o `auditar-xlsx.mts`: **10 de 11 itens verdes e um reprovado**,
+o resíduo de reconciliação, com `Balance Sheet!F24` em **−19.987 — 20,9% do ativo total**.
+
+**A decomposição, medida célula a célula:**
+
+| Componente do passivo circulante | Modelo | Balanço | Excesso |
+|---|---|---|---|
+| Operacional (`ESP_PC` do giro) | 42.698 | 37.894 | +4.804 |
+| Dívida CP (`ST Inv. & Debt`) | 41.553 | 28.393 | +13.160 |
+| Tributos circulante | 6.881 | 4.858 | +2.023 |
+| **Soma** | **91.132** | **71.145** | **19.987** |
+
+**A causa: seis lugares faziam a MESMA pergunta com TRÊS regexes diferentes.** "Esta linha é dívida,
+e portanto não é giro?" era respondida por `empréstimo|financiamento|debênture|arrendamento` no
+`Working Capital`, pela mesma coisa `+leasing` no `Cash Flow` e no passivo não circulante, e por
+`+nota promissória|cédula de crédito` na origem da dívida. **As diferenças não eram deliberadas** —
+os três sítios dão o MESMO motivo no comentário ("contaria duas vezes"). O efeito era classificação
+que muda de aba para aba dentro do mesmo arquivo: *"Leasing operacional a pagar"* é dívida no Cash
+Flow e **giro** no Working Capital.
+
+**E as três deixavam passar dívida bancária com nome brasileiro:** `Conta garantida` (1.550) e
+`Duplicatas descontadas e antecipação de recebíveis` (5.277) — **6.827, ou 9,6% do passivo
+circulante informado** — ficavam no passivo operacional e eram projetadas por **dias de giro contra
+receita**. É exatamente o que o comentário do `abaCapitalGiro` proíbe em voz alta: *"o passivo
+operacional carregaria dívida, e a NCG passaria a MELHORAR quando a empresa se endivida mais."*
+
+**A correção:** um vocabulário único, `PADROES_DIVIDA_FINANCEIRA`, no idioma do `PADROES_CAIXA` que
+já existia ao lado — a união das três variantes mais os instrumentos que faltavam. Os seis sítios
+passam a chamar `ehDividaFinanceira`. **Resíduo: −19.987 → −15.149** (20,9% → 15,8% do ativo).
+
+**O que FICOU DE FORA de propósito:** risco sacado, confirming, forfait e vendor. São supplier
+finance, e se são dívida ou fornecedor é julgamento contábil em aberto. Classificá-los num regex
+mudaria resultado financeiro por decisão nossa — e a regra do `PROMPT_ESPELHAR_MODELO_BASE` é
+explícita: divergência de mecanismo que muda número é decisão do dono. Há assert garantindo que eles
+continuam como giro, para a decisão não ser tomada por descuido depois.
+
+**O religamento, com o número da reprovação:** estreitando o vocabulário de volta à variante antiga,
+**8 asserts caem** e o resíduo volta a **−19.987 (20,9%)**.
+
+### O que SOBRA, e é pergunta para o dono — não defeito de código
+
+Os **−15.149** restantes são **divergência entre dois documentos**: o mapa de dívida diz **43.542**
+de dívida de curto prazo e o balanço diz **28.393**. O modelo declara a diferença na linha de
+reconciliação em vez de escondê-la, que é o desenho certo, e o auditor a reprova por materialidade,
+o que também está certo — o comentário dele já dizia que o resíduo *"é a medida direta da qualidade
+da extração daquele caso"*.
+
+> **Para o dono:** qual das duas fontes manda quando elas discordam? Hoje o modelo usa o MAPA (é o
+> detalhe por contrato, com juros) e reconcilia contra o balanço. Se o balanço é que manda, é uma
+> linha de código — mas é decisão de produto, e muda número que vai a comitê.
+
+### Duas coisas que investiguei e NÃO mexi, para não fugir do Modelo Base
+
+- **`INSS a recolher` e `FGTS a recolher` vão para a aba de Tributos**, não para o giro
+  (`ehTributoARecolher` inclui `inss|fgts|previd` de propósito). São encargos mensais e recorrentes,
+  então o cronograma decrescente da aba de tributos é discutível — mas é classificação deliberada,
+  documentada, e mudá-la muda número.
+- **A projeção da fixture explode** (passivo circulante de 71.145 para 5,7 milhões em 5 anos) porque
+  `modelo-da-fixture.mts` liga UMA premissa `PMR = 60 dias` a **toda** conta de circulante: vinte
+  contas × 60 dias = 1.200 dias de receita em giro. É artefato da fixture de demonstração, não do
+  motor — o portal manda as premissas reais. Fica anotado porque o arquivo de demonstração é o que
+  alguém abre para conferir o modelo, e hoje ele mostra um absurdo plausível.
 
 ## A SEÇÃO PASSA A TER DE FECHAR (20/08, sessão 55) — `0133`
 
