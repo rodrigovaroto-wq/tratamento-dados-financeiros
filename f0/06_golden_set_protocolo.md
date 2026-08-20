@@ -83,6 +83,52 @@ monitorar taxa de erro em produção; regrediu? ──►  descer o dial
   nuance de acúmulo por granularidade; ✅ métricas definidas por tipo/campo; ✅ protocolo de
   rotulagem acordado; ✅ armazenamento com controle de acesso LGPD definido; ✅ laço de
   calibração definido.
+- **Máquina do protocolo (`db/migrations/0126_golden_set.sql`, 19/08/2026):** ✅ o protocolo deixou
+  de ser só documento — ver a seção final. O que continua em aberto é a rotulagem.
 - **Golden set físico (execução — em aberto):** ⏳ montagem com N/tipo suficiente e estratificado
   por qualidade. Roda em paralelo à F1, começando com os casos disponíveis. **Não bloqueia** o
   esqueleto da F1 (que nasce em N0/N1); é pré-requisito para **subir o dial** (F4).
+
+## O que deste documento virou código (`0126`, 19/08/2026)
+
+Este protocolo ficou um mês como v1 fechada sem um lugar onde morar: `grep -ril golden` devolvia
+documentação, o comentário de um script e prosa de migration. A `0126` fechou essa distância — e o
+que a motivou não foi este documento, foi a **regra de ouro** do `docs/01`, que `fn_mudar_dial`
+(0041) não executava: ela conferia só o teto, e subir a extração para N2 com um motivo em texto
+livre era aceito.
+
+| Deste documento | Onde está agora |
+|---|---|
+| "o que é rotulado" (tipo, entidade, período, assinado, legibilidade, item do checklist, campos-chave, classe contábil) | `golden_rotulo` e `golden_campo` |
+| amostragem estratificada por qualidade | `golden_documento.estrato` (`digital`/`pdf_nativo`/`escaneado`/`foto`) |
+| "tipos core = os 8 do Kit Básico" | **não** virou lista: sai de `obrigatoriedade = 'obrigatorio'` na taxonomia (0002), que já marcava exatamente esses oito |
+| nuance de acúmulo por granularidade | `granularidade` no retorno de `fn_golden_cobertura` — tipo por CASO rende ~1 por mandato, e a demora aparece em vez de parecer negligência |
+| as cinco métricas | `fn_golden_classificacao`, `fn_golden_identificadores`, `fn_golden_campos`, `fn_golden_inter_avaliador`, `fn_golden_classe_a` |
+| dois rotuladores; "se humanos discordam, a máquina não tem como acertar" | `fn_golden_consenso`: campo sem consenso **sai** do placar da máquina e é contado à parte |
+| "congelado por rodada; ampliado, não editado retroativamente" | `golden_rodada.congelada_em`, com gatilho — rodada congelada não aceita rótulo, não descongela e não é renomeada |
+| armazenamento com controle de acesso | RLS append-only (SELECT+INSERT, nenhuma de UPDATE/DELETE) nas três tabelas de rótulo |
+| o laço de calibração (o losango "concordância alta e estável?") | `fn_golden_suficiente`, consultada por `fn_mudar_dial` |
+
+**Três coisas que este documento não decidia e a `0126` teve de decidir:**
+
+1. **O LIMIAR de concordância.** Este protocolo dimensiona o **N** e diz "concordância alta e
+   estável" sem número. O limiar entrou como **dado** (`golden_criterio.concordancia_minima`,
+   default 0,95) e o default tem motivo verificável: é o `limiar_auto_clear` em vigor desde a
+   `0019`. Auto-aceitar linha a 0,95 com medição abaixo de 0,95 seria apostar acima do que se sabe.
+2. **Onde o portão morde.** Na subida que **alcança N2/N3** — não em toda subida. N1 é sugestão com
+   revisão de 100%: cobrar medição para exibir sugestão travaria o caminho que a doutrina manda
+   percorrer. Descer nunca pede nada.
+3. **Golden sintético não sobe dial** (`golden_documento.origem`). Não estava previsto aqui, e é o
+   que impede o portão de ser teatro: os books do repositório têm `GABARITO.json`, rotulá-los é de
+   graça, e a concordância sairia ~100% por construção — medindo o instrumento, não o modelo.
+
+**E uma lacuna deste protocolo, agora nomeada:** ele raciocina por **tipo** ("se para algum tipo não
+houver ~20 exemplos, aquele tipo permanece em N0/N1"), e o dial do `f0/04` é por **estágio**.
+Autonomia por (estágio × tipo) não existe no schema. Enquanto não existir, `fn_golden_suficiente`
+adota a leitura conservadora — **o tipo mais fraco governa o estágio** —, que é o fechamento
+default-para-humano aplicado à própria calibração. Mudar isso é decisão de modelo de dados, e não
+se toma de lado.
+
+**O que continua sendo execução, e não muda:** a rotulagem. Documento real de cliente, com controle
+de acesso, ~20 por tipo core, estratificado, dois rotuladores nos casos ambíguos, rodada congelada
+ao fim. Era o que este documento já dizia em 14/07 e continua verdadeiro.

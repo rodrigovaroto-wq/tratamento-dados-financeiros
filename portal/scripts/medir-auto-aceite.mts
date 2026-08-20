@@ -20,8 +20,21 @@
 // caso possível — PDF gerado por reportlab, texto limpo, layout conhecido, sem
 // scan, sem carimbo, sem coluna torta. Documento real de cliente é o outro extremo,
 // e `docs/01` exige concordância medida no estrato que vai para produção antes de
-// tratar N2 como autonomia medida. O golden set físico é o §7.4 #8 do Onboarding e
-// não existe ainda.
+// tratar N2 como autonomia medida.
+//
+// ONDE ISSO MORA AGORA (0126). A ressalva dos dois parágrafos acima deixou de ser
+// só um comentário: o golden set existe como DADO (`golden_rodada`,
+// `golden_documento`, `golden_rotulo`, `golden_campo`), as métricas do `f0/06` são
+// funções, e `fn_mudar_dial` RECUSA subir dial de estágio interpretativo para
+// N2/N3 sem concordância medida. Duas consequências para quem usa este script:
+//
+//   • a advertência "isto mede o instrumento, não o modelo" virou GUARDA:
+//     `golden_documento.origem` distingue 'real' de 'sintetico', e rodada
+//     sintética não autoriza subida nenhuma. Rotular este book aqui não sobe dial;
+//   • o que continua faltando é só a ROTULAGEM (documento real, com LGPD) — o
+//     §7.4 #8 do Onboarding. A máquina que a consome já está de pé, e
+//     `fn_golden_campos` calcula a cobertura abaixo com rótulo de verdade em vez
+//     da tabela SIGLA_BALANCO deste arquivo, que é exaustiva à mão de propósito.
 //
 // A MÉTRICA QUE MAIS IMPORTA não é a concordância: é a COBERTURA. Linha
 // auto-aceita que nenhum gabarito consegue conferir virou fato sem que ninguém —

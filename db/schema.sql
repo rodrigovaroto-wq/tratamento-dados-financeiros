@@ -66,6 +66,38 @@ CREATE TYPE public.documento_status AS ENUM (
 );
 
 --
+-- Name: golden_estrato; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.golden_estrato AS ENUM (
+    'digital',
+    'pdf_nativo',
+    'escaneado',
+    'foto'
+);
+
+--
+-- Name: TYPE golden_estrato; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TYPE public.golden_estrato IS 'Qualidade de captura do documento (f0/06, amostragem estratificada). A métrica agregada sobre estratos misturados esconde o pior caso, que é justamente o que decide se o dial pode subir.';
+
+--
+-- Name: golden_origem; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.golden_origem AS ENUM (
+    'real',
+    'sintetico'
+);
+
+--
+-- Name: TYPE golden_origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TYPE public.golden_origem IS 'real = documento de cliente. sintetico = book gerado (test-data/). As métricas que governam o dial contam SÓ real: rotular um book cujo GABARITO.json já se conhece mede o instrumento, não o modelo — é a ressalva que o cabeçalho do medir-auto-aceite.mts carrega desde que existe.';
+
+--
 -- Name: granularidade; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -1297,6 +1329,11 @@ CREATE FUNCTION public.fn_dial(p_estagio text) RETURNS jsonb
     'teto', ea.teto,
     'limiar_auto_clear', ea.limiar_auto_clear,
     'no_teto', ea.nivel_atual = ea.teto,
+    'natureza', ea.natureza,
+    'base_do_nivel', ea.base_do_nivel,
+    'medicao_rodada_id', ea.medicao_rodada_id,
+    'medicao_em', ea.medicao_em,
+    'medicao_resumo', ea.medicao_resumo,
     'atualizado_por', ea.atualizado_por,
     'atualizado_em', ea.atualizado_em
   )
@@ -1690,6 +1727,637 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) IS 'Tira o mandato da mesa sem apagar nada. Idempotente: fechar de novo devolve o fechamento original em vez de reescrever autoria. Reversível por fn_reabrir_caso.';
+
+--
+-- Name: fn_golden_campos(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_origem DEFAULT 'real'::public.golden_origem) RETURNS TABLE(tipo text, n_rotulado integer, n_exato integer, n_dentro_tolerancia integer, n_errado integer, n_ausente integer, acerto numeric, n_auto_aceito integer, n_auto_aceito_sem_rotulo integer, cobertura_conferida numeric, n_sem_consenso integer)
+    LANGUAGE sql STABLE
+    AS $$
+  with docs as (
+    select gd.documento_id, d.tipo_taxonomia, fn_versao_com_extracao(d.id) as versao_id
+    from golden_documento gd
+    join documento d on d.id = gd.documento_id
+    where gd.rodada_id = p_rodada and gd.origem = p_origem
+  ),
+  -- Consenso do CAMPO. Regra diferente da do documento, de propósito: aqui basta
+  -- que os rotuladores que julgaram este campo concordem. O f0/06 pede dois
+  -- rotuladores "nos casos ambíguos", então o segundo confere uma AMOSTRA das
+  -- linhas — exigir que ele tenha julgado todas jogaria fora o rótulo do
+  -- primeiro em tudo o que a amostra não cobriu.
+  rotulo as (
+    select gc.documento_id,
+           fn_normalizar_texto(gc.chave)            as chave_norm,
+           coalesce(gc.periodo_coluna, '')          as periodo,
+           coalesce(gc.entidade_coluna, '')         as entidade,
+           min(gc.valor_correto)                    as valor_correto,
+           max(gc.tolerancia)                       as tolerancia,
+           (count(distinct gc.valor_correto) = 1)   as consenso
+    from golden_campo gc
+    join docs on docs.documento_id = gc.documento_id
+    where gc.rodada_id = p_rodada and gc.valor_correto is not null
+    group by 1, 2, 3, 4
+  ),
+  maquina as (
+    select docs.documento_id, docs.tipo_taxonomia,
+           fn_normalizar_texto(ce.chave)      as chave_norm,
+           coalesce(ce.periodo_coluna, '')    as periodo,
+           coalesce(ce.entidade_coluna, '')   as entidade,
+           -- Mesma regra de desempate da fn_valores_por_ano (0125): quando o
+           -- mesmo par volta duas vezes, vale a ocorrência de maior módulo.
+           (array_agg(ce.valor_num order by abs(ce.valor_num) desc))[1] as valor_num,
+           bool_or(ce.status_aceite = 'aceito' and ce.aceito_por like 'sistema:auto_aceite%')
+             as auto_aceito
+    from docs
+    join campo_extraido ce on ce.documento_versao_id = docs.versao_id
+    where ce.valor_num is not null
+    group by 1, 2, 3, 4, 5
+  ),
+  par as (
+    select docs.tipo_taxonomia as tipo, r.consenso,
+           m.valor_num, r.valor_correto, r.tolerancia
+    from rotulo r
+    join docs on docs.documento_id = r.documento_id
+    left join maquina m
+      on m.documento_id = r.documento_id and m.chave_norm = r.chave_norm
+     and m.periodo = r.periodo and m.entidade = r.entidade
+  ),
+  -- A cobertura olha o conjunto INVERSO: linha auto-aceita da máquina que nenhum
+  -- rótulo confere.
+  cob as (
+    select m.tipo_taxonomia as tipo,
+           count(*) filter (where m.auto_aceito)::int as n_auto,
+           count(*) filter (where m.auto_aceito and r.valor_correto is null)::int as n_auto_sem
+    from maquina m
+    left join rotulo r
+      on r.documento_id = m.documento_id and r.chave_norm = m.chave_norm
+     and r.periodo = m.periodo and r.entidade = m.entidade
+    group by 1
+  )
+  select coalesce(p.tipo, c.tipo),
+         count(p.consenso) filter (where p.consenso)::int,
+         count(*) filter (where p.consenso and p.valor_num is not null
+                            and p.valor_num = p.valor_correto)::int,
+         count(*) filter (where p.consenso and p.valor_num is not null
+                            and p.valor_num <> p.valor_correto
+                            and abs(p.valor_num - p.valor_correto) <= p.tolerancia)::int,
+         count(*) filter (where p.consenso and p.valor_num is not null
+                            and abs(p.valor_num - p.valor_correto) > p.tolerancia)::int,
+         count(*) filter (where p.consenso and p.valor_num is null)::int,
+         case when count(*) filter (where p.consenso) = 0 then null
+              else round(count(*) filter (where p.consenso and p.valor_num is not null
+                                            and abs(p.valor_num - p.valor_correto)
+                                                <= p.tolerancia)::numeric
+                         / count(*) filter (where p.consenso), 4) end,
+         coalesce(max(c.n_auto), 0),
+         coalesce(max(c.n_auto_sem), 0),
+         case when coalesce(max(c.n_auto), 0) = 0 then null
+              else round((max(c.n_auto) - max(c.n_auto_sem))::numeric / max(c.n_auto), 4) end,
+         count(*) filter (where not p.consenso)::int
+  from par p full outer join cob c on c.tipo = p.tipo
+  group by 1;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_campos(p_rodada uuid, p_origem public.golden_origem); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_origem) IS 'Erro de extração de campo financeiro (f0/06) com AUSENTE separado de ERRADO — perda silenciosa é outra família de defeito, e foi ela que custou as três camadas de cobertura. Traz junto a cobertura_conferida: fração das linhas AUTO-ACEITAS que algum rótulo consegue conferir. O resto virou fato sem ninguém olhar, e reduzi-lo exige rótulo mais fino, não limiar mais alto.';
+
+--
+-- Name: fn_golden_classe_a(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_classe_a(p_caso_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with a as (
+    select p.id, p.estado, p.resolvida_por
+    from pendencia p
+    where p.origem_estagio = 'reconciliacao'
+      and (p_caso_id is null or p.caso_id = p_caso_id)
+      and exists (
+        select 1 from reconciliacao r
+        where r.caso_id = p.caso_id
+          and r.classe = 'A'
+          and p.motivo = 'reconciliacao:' || r.tipo
+      )
+  ), v as (
+    select
+      count(*) filter (where estado = 'rejeitada')::int as falso_positivo,
+      count(*) filter (where estado in ('resolvida', 'aceita_com_ressalva')
+                         and coalesce(resolvida_por, '') not like 'sistema:%')::int as procedia,
+      count(*) filter (where estado = 'resolvida'
+                         and coalesce(resolvida_por, '') like 'sistema:%')::int as sumiu_sozinha,
+      count(*) filter (where estado in ('aberta','em_correcao_interna','reenviada_ao_cliente'))::int
+        as sem_veredito
+    from a
+  )
+  select jsonb_build_object(
+    'com_veredito_humano', falso_positivo + procedia,
+    'falso_positivo', falso_positivo,
+    'procedia', procedia,
+    'taxa_falso_positivo',
+      case when falso_positivo + procedia = 0 then null
+           else round(falso_positivo::numeric / (falso_positivo + procedia), 4) end,
+    -- O critério é "mais alto e melhor", como os outros três, para a comparação
+    -- em fn_golden_suficiente ser uma só.
+    'nao_falso_positivo',
+      case when falso_positivo + procedia = 0 then null
+           else round(1 - falso_positivo::numeric / (falso_positivo + procedia), 4) end,
+    'resolvida_pelo_sistema_sem_veredito', sumiu_sozinha,
+    'ainda_sem_veredito', sem_veredito,
+    'como_ler', 'O rótulo é o veredito humano registrado pela 0106: rejeitada = não procede = falso '
+                'positivo do motor. Pendência que o próprio sistema resolveu não conta em nenhum dos '
+                'dois lados — ninguém disse que ela procedia.'
+  ) from v;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_classe_a(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_classe_a(p_caso_id uuid) IS 'Taxa de falso-positivo da reconciliação Classe A (f0/06, linha 5). Única das cinco métricas que NÃO precisa de rotulagem: o rótulo é o estado "rejeitada" que a 0106 define como "não procede (falso positivo do motor)", e o analista o produz desde 11/08. Denominador = vereditos humanos; pendência que o sistema resolveu sozinho fica fora, contada à parte.';
+
+--
+-- Name: fn_golden_classificacao(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_classificacao(p_rodada uuid, p_origem public.golden_origem DEFAULT 'real'::public.golden_origem) RETURNS TABLE(tipo text, n_verdade integer, n_maquina integer, tp integer, fp integer, fn_ integer, precisao numeric, recall numeric, f1 numeric)
+    LANGUAGE sql STABLE
+    AS $$
+  with medido as (
+    select c.documento_id, c.tipo_correto, d.tipo_taxonomia as tipo_maquina
+    from fn_golden_consenso(p_rodada) c
+    join documento d on d.id = c.documento_id
+    where c.origem = p_origem and c.tipo_consenso
+  ),
+  -- O universo de tipos é a UNIÃO do que a verdade diz com o que a máquina diz.
+  -- Sem a união, um tipo que a máquina inventa (só falso-positivo, nenhum caso
+  -- verdadeiro) desapareceria do relatório — e é o erro mais caro que existe
+  -- aqui, porque manda o documento para o checklist errado.
+  tipos as (
+    select tipo_correto as tipo from medido where tipo_correto is not null
+    union
+    select tipo_maquina from medido where tipo_maquina is not null
+  )
+  select t.tipo,
+         count(*) filter (where m.tipo_correto = t.tipo)::int,
+         count(*) filter (where m.tipo_maquina = t.tipo)::int,
+         count(*) filter (where m.tipo_maquina = t.tipo and m.tipo_correto = t.tipo)::int,
+         count(*) filter (where m.tipo_maquina = t.tipo
+                            and m.tipo_correto is distinct from t.tipo)::int,
+         count(*) filter (where m.tipo_correto = t.tipo
+                            and m.tipo_maquina is distinct from t.tipo)::int,
+         case when count(*) filter (where m.tipo_maquina = t.tipo) = 0 then null
+              else round(count(*) filter (where m.tipo_maquina = t.tipo
+                                            and m.tipo_correto = t.tipo)::numeric
+                         / count(*) filter (where m.tipo_maquina = t.tipo), 4) end,
+         case when count(*) filter (where m.tipo_correto = t.tipo) = 0 then null
+              else round(count(*) filter (where m.tipo_maquina = t.tipo
+                                            and m.tipo_correto = t.tipo)::numeric
+                         / count(*) filter (where m.tipo_correto = t.tipo), 4) end,
+         -- F1 = 2PR/(P+R), calculado dos contadores em vez de P e R já
+         -- arredondados: arredondar antes de combinar propaga o erro para a
+         -- métrica que decide.
+         case when 2 * count(*) filter (where m.tipo_maquina = t.tipo and m.tipo_correto = t.tipo)
+                   + count(*) filter (where m.tipo_maquina = t.tipo
+                                        and m.tipo_correto is distinct from t.tipo)
+                   + count(*) filter (where m.tipo_correto = t.tipo
+                                        and m.tipo_maquina is distinct from t.tipo) = 0
+              then null
+              else round(
+                (2.0 * count(*) filter (where m.tipo_maquina = t.tipo and m.tipo_correto = t.tipo))
+                / (2 * count(*) filter (where m.tipo_maquina = t.tipo and m.tipo_correto = t.tipo)
+                   + count(*) filter (where m.tipo_maquina = t.tipo
+                                        and m.tipo_correto is distinct from t.tipo)
+                   + count(*) filter (where m.tipo_correto = t.tipo
+                                        and m.tipo_maquina is distinct from t.tipo)), 4) end
+  from tipos t cross join medido m
+  group by t.tipo;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_classificacao(p_rodada uuid, p_origem public.golden_origem); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_classificacao(p_rodada uuid, p_origem public.golden_origem) IS 'Precisão/recall/F1 da classificação doc->tipo, POR TIPO (f0/06). O universo de tipos é a união da verdade com a saída da máquina, senão tipo que a máquina inventa (só FP) não apareceria — e é o erro mais caro, porque manda o documento para o item errado do checklist.';
+
+--
+-- Name: fn_golden_cobertura(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem DEFAULT 'real'::public.golden_origem) RETURNS TABLE(tipo text, granularidade public.granularidade, n_documentos integer, n_dois_rotuladores integer, estratos text[], n_minimo integer, atinge_minimo boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  with alvo as (
+    -- Um n_minimo por rodada: o critério é por ESTÁGIO, e a cobertura por tipo é
+    -- a mesma exigência para todos eles. O maior dos critérios é o que vale, para
+    -- a cobertura não aprovar um tipo que o estágio mais exigente reprovaria.
+    select coalesce(max(gc.n_minimo), 20) as n from golden_criterio gc
+  ),
+  -- O TIPO AQUI É O DA VERDADE, NÃO O DA MÁQUINA, e esta linha é a correção de um
+  -- defeito que o teste desta migration achou na primeira execução. Agrupar por
+  -- `documento.tipo_taxonomia` faria a COBERTURA DO GROUND TRUTH ser medida pela
+  -- resposta que está sob avaliação: numa rodada com 25 balanços dos quais o
+  -- classificador chamou 5 de DRE, a cobertura reportava "BALANCO 20, DRE 5" e
+  -- reprovava por N — quando a rodada tem 25 balanços rotulados e o que ela
+  -- deveria acusar é a classificação errada, não falta de amostra. É a mesma
+  -- confusão de autoridade das três de unidade que a sessão 52 achou.
+  --
+  -- Documento em que os rotuladores discordam do tipo não entra em tipo nenhum:
+  -- ele não TEM tipo acordado, e atribuí-lo ao palpite de um dos dois seria
+  -- inventar a verdade que falta.
+  rot as (
+    select c.documento_id, c.tipo_correto, c.n_rotuladores as n_rot, c.estrato
+    from fn_golden_consenso(p_rodada) c
+    where c.origem = p_origem and c.tipo_consenso
+  )
+  select t.codigo,
+         t.granularidade,
+         count(rot.documento_id)::int,
+         count(rot.documento_id) filter (where rot.n_rot >= 2)::int,
+         coalesce(array_agg(distinct rot.estrato::text)
+                    filter (where rot.estrato is not null), '{}'),
+         (select n from alvo)::int,
+         count(rot.documento_id) >= (select n from alvo)
+  from taxonomia_tipo_documento t
+  left join rot on rot.tipo_correto = t.codigo
+  where t.obrigatoriedade = 'obrigatorio' and t.ativo
+  group by t.codigo, t.granularidade;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem) IS 'Quantos documentos rotulados a rodada tem por tipo CORE, contra o alvo do f0/06 (~20-30). Core sai de obrigatoriedade=obrigatorio na taxonomia (0002), que são os mesmos 8 do Kit Básico — não de uma lista repetida aqui. granularidade vem no resultado porque tipo por CASO rende ~1 por mandato: demorar a juntar 20 é esperado, e o f0/06 diz isso.';
+
+--
+-- Name: fn_golden_consenso(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_consenso(p_rodada uuid) RETURNS TABLE(documento_id uuid, estrato public.golden_estrato, origem public.golden_origem, n_rotuladores integer, tipo_correto text, tipo_consenso boolean, entidade_correta text, entidade_consenso boolean, periodo_correto text, periodo_consenso boolean, assinado_correto boolean, assinado_consenso boolean, legibilidade_correta public.legibilidade, legibilidade_consenso boolean, item_checklist_correto text, item_consenso boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  with base as (
+    -- Colunas nomeadas, não `gr.*`: golden_rotulo TAMBÉM tem documento_id, e o
+    -- `*` faria a CTE devolver duas colunas com esse nome — o `group by
+    -- b.documento_id` sai como "column reference is ambiguous".
+    select gd.documento_id, gd.estrato, gd.origem,
+           gr.rotulador, gr.tipo_correto, gr.entidade_correta, gr.periodo_correto,
+           gr.assinado_correto, gr.legibilidade, gr.item_checklist_correto,
+           -- O primeiro rotulador (ordem estável por nome) é a referência da
+           -- comparação de entidade: fn_mesma_entidade é par a par, e comparar
+           -- todos contra um só é o que a torna agregável.
+           first_value(gr.entidade_correta) over (
+             partition by gd.documento_id order by gr.rotulador
+           ) as entidade_ref
+    from golden_documento gd
+    join golden_rotulo gr
+      on gr.rodada_id = gd.rodada_id and gr.documento_id = gd.documento_id
+    where gd.rodada_id = p_rodada
+  )
+  select
+    b.documento_id,
+    min(b.estrato) as estrato,
+    min(b.origem)  as origem,
+    count(*)::int  as n_rotuladores,
+
+    -- Consenso: só devolve valor quando TODOS julgaram e todos disseram o mesmo.
+    -- `count(x) = count(*)` é o que exige que ninguém tenha se calado, e
+    -- `count(distinct x) = 1` é o que exige que todos digam o mesmo.
+    case when count(b.tipo_correto) = count(*) and count(distinct b.tipo_correto) = 1
+         then min(b.tipo_correto) end,
+    (count(b.tipo_correto) = count(*) and count(distinct b.tipo_correto) = 1),
+
+    case when count(b.entidade_correta) = count(*)
+              and bool_and(fn_mesma_entidade(b.entidade_correta, b.entidade_ref))
+         then min(b.entidade_ref) end,
+    (count(b.entidade_correta) = count(*)
+       and bool_and(fn_mesma_entidade(b.entidade_correta, b.entidade_ref))),
+
+    case when count(b.periodo_correto) = count(*) and count(distinct b.periodo_correto) = 1
+         then min(b.periodo_correto) end,
+    (count(b.periodo_correto) = count(*) and count(distinct b.periodo_correto) = 1),
+
+    case when count(b.assinado_correto) = count(*) and count(distinct b.assinado_correto) = 1
+         then bool_and(b.assinado_correto) end,
+    (count(b.assinado_correto) = count(*) and count(distinct b.assinado_correto) = 1),
+
+    case when count(b.legibilidade) = count(*) and count(distinct b.legibilidade) = 1
+         then min(b.legibilidade) end,
+    (count(b.legibilidade) = count(*) and count(distinct b.legibilidade) = 1),
+
+    case when count(b.item_checklist_correto) = count(*)
+              and count(distinct b.item_checklist_correto) = 1
+         then min(b.item_checklist_correto) end,
+    (count(b.item_checklist_correto) = count(*)
+       and count(distinct b.item_checklist_correto) = 1)
+  from base b
+  group by b.documento_id;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_consenso(p_rodada uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_consenso(p_rodada uuid) IS 'O ground truth consolidado de uma rodada, campo a campo. Onde os rotuladores discordam o campo volta null com consenso=false, e as métricas o EXCLUEM: f0/06, "se humanos discordam, a máquina não tem como acertar". null de rotulador é "não julgou", que também não vira consenso.';
+
+--
+-- Name: fn_golden_identificadores(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem DEFAULT 'real'::public.golden_origem) RETURNS TABLE(identificador text, n_medido integer, n_acerto integer, acuracia numeric, n_sem_consenso integer)
+    LANGUAGE sql STABLE
+    AS $$
+  with c as (select * from fn_golden_consenso(p_rodada) where origem = p_origem),
+  j as (
+    select c.*,
+           d.tipo_taxonomia as tipo_maquina,
+           (select p.referencia from periodo p where p.id = d.periodo_id)  as periodo_maquina,
+           (select e.razao_social from entidade e where e.id = d.entidade_id) as entidade_maquina
+    from c join documento d on d.id = c.documento_id
+  ), m as (
+    select 'tipo' as identificador, tipo_consenso as tem_consenso,
+           (tipo_maquina = tipo_correto) as acertou from j
+    union all
+    select 'periodo', periodo_consenso,
+           (periodo_maquina = periodo_correto) from j
+    union all
+    select 'entidade', entidade_consenso,
+           -- fn_mesma_entidade nunca devolve null aqui: o consenso garante os
+           -- dois lados preenchidos do lado da verdade, e do lado da máquina o
+           -- coalesce evita que documento sem entidade some da conta — ele é
+           -- ERRO quando a verdade nomeia uma empresa, não item não medido.
+           fn_mesma_entidade(coalesce(entidade_maquina, ''), entidade_correta) from j
+  )
+  select m.identificador,
+         count(*) filter (where m.tem_consenso)::int,
+         count(*) filter (where m.tem_consenso and m.acertou)::int,
+         case when count(*) filter (where m.tem_consenso) = 0 then null
+              else round(count(*) filter (where m.tem_consenso and m.acertou)::numeric
+                         / count(*) filter (where m.tem_consenso), 4) end,
+         count(*) filter (where not m.tem_consenso)::int
+  from m group by m.identificador;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem) IS 'Acurácia de tipo/período/entidade separadamente (f0/06). Separados porque as causas de erro são distintas — a 0121 foi entidade pura, a 0122 período puro — e o agregado esconderia a coluna que precisa de trabalho. Entidade casa por fn_mesma_entidade: grafia diferente não é erro.';
+
+--
+-- Name: fn_golden_inter_avaliador(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem DEFAULT 'real'::public.golden_origem) RETURNS TABLE(campo text, n_com_dois_ou_mais integer, n_concordam integer, concordancia numeric)
+    LANGUAGE sql STABLE
+    AS $$
+  with c as (
+    select * from fn_golden_consenso(p_rodada) where origem = p_origem
+  ), m as (
+    select 'tipo' as campo, n_rotuladores, tipo_consenso as ok from c
+    union all select 'entidade',     n_rotuladores, entidade_consenso     from c
+    union all select 'periodo',      n_rotuladores, periodo_consenso      from c
+    union all select 'assinado',     n_rotuladores, assinado_consenso     from c
+    union all select 'legibilidade', n_rotuladores, legibilidade_consenso from c
+    union all select 'item_checklist', n_rotuladores, item_consenso       from c
+  )
+  select m.campo,
+         count(*) filter (where m.n_rotuladores >= 2)::int,
+         count(*) filter (where m.n_rotuladores >= 2 and m.ok)::int,
+         case when count(*) filter (where m.n_rotuladores >= 2) = 0 then null
+              else round(count(*) filter (where m.n_rotuladores >= 2 and m.ok)::numeric
+                         / count(*) filter (where m.n_rotuladores >= 2), 4) end
+  from m group by m.campo;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem) IS 'Concordância entre rotuladores, por campo (f0/06). Conta só documento com 2+ rotuladores — com um só não há discordância possível, e incluí-lo inflaria a concordância humana com itens que ninguém conferiu duas vezes. Não mede o sistema: mede se a pergunta é respondível.';
+
+--
+-- Name: fn_golden_rodada_congelada(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_rodada_congelada() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_rodada uuid := new.rodada_id;
+  v_congelada timestamptz;
+  v_nome text;
+begin
+  select gr.congelada_em, gr.nome into v_congelada, v_nome
+  from golden_rodada gr where gr.id = v_rodada;
+  if v_congelada is not null then
+    raise exception 'A rodada de golden set "%" foi congelada em % e não aceita mais rótulo. '
+                    'O f0/06 manda AMPLIAR criando rodada nova, não editando a medida: a rodada '
+                    'congelada é a evidência de uma decisão de dial já tomada.',
+                    coalesce(v_nome, v_rodada::text), v_congelada
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+
+--
+-- Name: fn_golden_rodada_congelada_imutavel(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_rodada_congelada_imutavel() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if old.congelada_em is null then
+    return new;   -- rodada aberta: nome, nota e versão ainda são editáveis
+  end if;
+  if new.congelada_em is null then
+    raise exception 'A rodada "%" já foi congelada em % e não descongela. Ampliar o golden set é '
+                    'rodada NOVA (f0/06); descongelar permitiria reescrever a evidência depois de '
+                    'ela ter autorizado uma subida de dial.', old.nome, old.congelada_em
+      using errcode = 'check_violation';
+  end if;
+  if new.nome <> old.nome or new.taxonomia_versao <> old.taxonomia_versao then
+    raise exception 'A rodada "%" está congelada: nome e taxonomia_versao não mudam mais. O nome é '
+                    'citado na trilha e em estagio_autonomia.medicao_resumo, e a versão da '
+                    'taxonomia é a premissa dos rótulos — mudar qualquer um reescreve a evidência '
+                    'de uma decisão de dial sem tocar em um rótulo.', old.nome
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$$;
+
+--
+-- Name: fn_golden_suficiente(text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_natureza  text;
+  v_crit      golden_criterio;
+  v_rodada    golden_rodada;
+  v_falhas    jsonb := '[]'::jsonb;
+  v_detalhe   jsonb;
+  v_pior      numeric;
+  v_n_min_ok  boolean;
+  v_classe_a  jsonb;
+begin
+  select natureza into v_natureza from estagio_autonomia where estagio = p_estagio;
+  if v_natureza is null then
+    return jsonb_build_object('aplica', false, 'suficiente', false,
+      'porque', format('Estágio "%s" não existe no dial.', p_estagio));
+  end if;
+
+  -- Determinístico: a regra de ouro do docs/01 fala de estágio INTERPRETATIVO. A
+  -- confiança em aritmética e integridade de arquivo não vem de concordância
+  -- humana, e pedir rotulador para conferir se um zip abre não mediria nada.
+  if v_natureza = 'deterministico' then
+    return jsonb_build_object('aplica', false, 'suficiente', true,
+      'porque', 'Estágio determinístico objetivo (docs/01): a regra de ouro governa os '
+                'interpretativos. A garantia dele é teste, não concordância medida.');
+  end if;
+
+  select * into v_crit from golden_criterio where estagio = p_estagio;
+  if v_crit.estagio is null then
+    return jsonb_build_object('aplica', true, 'suficiente', false,
+      'porque', format('Não há critério de golden set para "%s" em golden_criterio, então não há '
+                       'como medir se a concordância basta. Estágio de teto N1 (reconciliação '
+                       'Classe B/C, classificação contábil) nunca chega aqui — o teto recusa antes, '
+                       'e docs/01 os marca como "nunca autônomo".', p_estagio));
+  end if;
+
+  if p_rodada is null then
+    return jsonb_build_object('aplica', true, 'suficiente', false,
+      'criterio', to_jsonb(v_crit),
+      'porque', 'Nenhuma rodada de golden set informada. docs/01, regra de ouro: subir dial de '
+                'estágio interpretativo exige concordância MEDIDA — sem rodada não há medição.');
+  end if;
+
+  select * into v_rodada from golden_rodada where id = p_rodada;
+  if v_rodada.id is null then
+    return jsonb_build_object('aplica', true, 'suficiente', false, 'criterio', to_jsonb(v_crit),
+      'porque', format('Rodada de golden set %s não existe.', p_rodada));
+  end if;
+  if v_rodada.congelada_em is null then
+    return jsonb_build_object('aplica', true, 'suficiente', false, 'criterio', to_jsonb(v_crit),
+      'rodada', v_rodada.nome,
+      'porque', format('A rodada "%s" não está CONGELADA. O f0/06 congela a rodada por medição, e '
+                       'evidência que ainda pode mudar não sustenta uma decisão registrada contra '
+                       'ela.', v_rodada.nome));
+  end if;
+
+  -- --- cobertura: o N do f0/06, por tipo core PRESENTE na rodada ---------------
+  -- Tipo com zero documento não reprova a subida: o f0/06 diz que tipo sem
+  -- exemplo "permanece em N0/N1", e essa é uma afirmação sobre o TIPO, não sobre
+  -- o estágio. Reprovar por ausência travaria toda subida para sempre, porque
+  -- CONTRATO_SOCIAL rende 1 por mandato.
+  select jsonb_agg(to_jsonb(c)), bool_and(c.atinge_minimo)
+    into v_detalhe, v_n_min_ok
+  from fn_golden_cobertura(p_rodada) c where c.n_documentos > 0;
+
+  if v_detalhe is null then
+    return jsonb_build_object('aplica', true, 'suficiente', false, 'criterio', to_jsonb(v_crit),
+      'rodada', v_rodada.nome,
+      'porque', 'A rodada não tem nenhum documento de tipo CORE com origem "real". Rotular o book '
+                'sintético mede o instrumento, não o modelo — é a ressalva que o '
+                'medir-auto-aceite.mts carrega no cabeçalho, e aqui ela é guarda.');
+  end if;
+
+  if not coalesce(v_n_min_ok, false) then
+    v_falhas := v_falhas || jsonb_build_object('falha', 'n_minimo',
+      'detalhe', format('Tipo core presente na rodada com menos de %s documentos rotulados. O tipo '
+                        'mais fraco governa: o dial é por ESTÁGIO e o f0/06 raciocina por TIPO, '
+                        'então subir com um tipo fraco sobe autonomia sobre ele também.',
+                        v_crit.n_minimo));
+  end if;
+
+  -- --- a métrica que governa este estágio -------------------------------------
+  if v_crit.metrica = 'f1_classificacao' then
+    -- `n_verdade > 0`: só tipo para o qual a rodada TEM verdade participa do
+    -- "mais fraco governa". Um tipo que aparece apenas como falso-positivo da
+    -- máquina tem F1 zero por construção (precisão 0, recall indefinido), e
+    -- deixá-lo entrar daria poder de VETO a um único documento — pior, o mesmo
+    -- erro seria contado duas vezes, porque o documento cuja verdade era X e que
+    -- a máquina chamou de Y já é falso-negativo de X. O erro é contado uma vez,
+    -- no tipo que tinha a verdade, que é onde ele tem denominador.
+    select min(f1) into v_pior from fn_golden_classificacao(p_rodada) c
+      join taxonomia_tipo_documento t on t.codigo = c.tipo
+     where t.obrigatoriedade = 'obrigatorio' and c.f1 is not null and c.n_verdade > 0;
+
+  elsif v_crit.metrica = 'acuracia_identificadores' then
+    -- Aqui o "mais fraco" é o IDENTIFICADOR, não o tipo: a função mede tipo,
+    -- período e entidade separadamente porque as causas de erro são distintas, e
+    -- é a pior das três que diz o que o estágio entrega.
+    select min(acuracia) into v_pior from fn_golden_identificadores(p_rodada)
+     where acuracia is not null;
+
+  elsif v_crit.metrica = 'acerto_campos' then
+    select min(acerto) into v_pior from fn_golden_campos(p_rodada) c
+      join taxonomia_tipo_documento t on t.codigo = c.tipo
+     where t.obrigatoriedade = 'obrigatorio' and c.acerto is not null;
+
+  elsif v_crit.metrica = 'nao_falso_positivo_classe_a' then
+    -- A única que não sai da rodada: o rótulo dela é o veredito humano da 0106,
+    -- produzido em produção. A rodada continua sendo exigida acima porque o N e o
+    -- congelamento são o que datam a decisão.
+    v_classe_a := fn_golden_classe_a();
+    v_pior := (v_classe_a->>'nao_falso_positivo')::numeric;
+    v_detalhe := jsonb_build_object('cobertura', v_detalhe, 'classe_a', v_classe_a);
+    if (v_classe_a->>'com_veredito_humano')::int < v_crit.n_minimo then
+      v_falhas := v_falhas || jsonb_build_object('falha', 'n_minimo_vereditos',
+        'detalhe', format('%s veredito(s) humano(s) sobre divergência Classe A, contra o mínimo de '
+                          '%s. Pendência que o próprio sistema resolveu não conta: ninguém disse '
+                          'que ela procedia.',
+                          v_classe_a->>'com_veredito_humano', v_crit.n_minimo));
+    end if;
+
+  else
+    return jsonb_build_object('aplica', true, 'suficiente', false, 'criterio', to_jsonb(v_crit),
+      'porque', format('Métrica "%s" não é calculada por nenhuma função desta migration. Critério '
+                       'com métrica desconhecida RECUSA — aprovar por não saber medir é o oposto '
+                       'do que a regra de ouro pede.', v_crit.metrica));
+  end if;
+
+  if v_pior is null then
+    v_falhas := v_falhas || jsonb_build_object('falha', 'sem_medicao',
+      'detalhe', 'A rodada existe e está congelada, mas a métrica deste estágio não pôde ser '
+                 'calculada em nenhum tipo core — sem rótulo conferível não há concordância.');
+  elsif v_pior < v_crit.concordancia_minima then
+    v_falhas := v_falhas || jsonb_build_object('falha', 'concordancia',
+      'detalhe', format('Pior caso medido %s, contra o mínimo de %s.',
+                        v_pior, v_crit.concordancia_minima));
+  end if;
+
+  return jsonb_build_object(
+    'aplica', true,
+    'suficiente', jsonb_array_length(v_falhas) = 0,
+    'estagio', p_estagio,
+    'rodada', v_rodada.nome,
+    'rodada_id', v_rodada.id,
+    'congelada_em', v_rodada.congelada_em,
+    'criterio', to_jsonb(v_crit),
+    'metrica', v_crit.metrica,
+    'pior_caso', v_pior,
+    'detalhe', v_detalhe,
+    'falhas', v_falhas
+  );
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_suficiente(p_estagio text, p_rodada uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid) IS 'A pergunta do laço de calibração do f0/06 ("concordância alta e estável?"), respondida em número. O TIPO MAIS FRACO governa: o dial é por estágio e o f0/06 raciocina por tipo, e autonomia por (estágio x tipo) não existe no schema — enquanto não existir, a leitura conservadora é a única honesta. Rodada não congelada não autoriza nada. Métrica desconhecida RECUSA.';
 
 --
 -- Name: fn_indice_macro_anual(integer); Type: FUNCTION; Schema: public; Owner: -
@@ -2088,17 +2756,24 @@ CREATE FUNCTION public.fn_motivo_escala_incomparavel(p_unidade_a text, p_unidade
 $$;
 
 --
--- Name: fn_mudar_dial(text, public.nivel_autonomia, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_mudar_dial(text, public.nivel_autonomia, text, text, numeric, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text DEFAULT NULL::text, p_limiar numeric DEFAULT NULL::numeric) RETURNS jsonb
+CREATE FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text DEFAULT NULL::text, p_limiar numeric DEFAULT NULL::numeric, p_rodada_golden uuid DEFAULT NULL::uuid, p_sem_medicao_porque text DEFAULT NULL::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
-  v_antes  jsonb;
-  v_teto   nivel_autonomia;
+  v_antes     jsonb;
+  v_teto      nivel_autonomia;
+  v_nivel_ant nivel_autonomia;
+  v_natureza  text;
+  v_sobe_para_autonomia boolean;
+  v_med       jsonb;
+  v_base      text;
+  v_resumo    jsonb;
 begin
-  select to_jsonb(ea), ea.teto into v_antes, v_teto
+  select to_jsonb(ea), ea.teto, ea.nivel_atual, ea.natureza
+    into v_antes, v_teto, v_nivel_ant, v_natureza
   from estagio_autonomia ea where ea.estagio = p_estagio;
 
   if v_antes is null then
@@ -2121,22 +2796,78 @@ begin
                               'doutrina, por migration.', p_estagio, v_teto, p_nivel));
   end if;
 
+  -- ----- A REGRA DE OURO (0126) ---------------------------------------------
+  -- "Subida que ALCANÇA N2/N3": `p_nivel > v_nivel_ant` é o que faz descer e
+  -- reafirmar o mesmo nível passarem livres. Reafirmar importa na prática — é o
+  -- que a 0041 faz ao ser reaplicada, e o que qualquer `update` do limiar faz.
+  v_sobe_para_autonomia := p_nivel > v_nivel_ant
+                           and p_nivel in ('N2', 'N3')
+                           and v_natureza = 'interpretativo';
+
+  v_base := case when p_nivel in ('N2','N3') and v_natureza = 'interpretativo'
+                 then 'declarada' else 'nao_se_aplica' end;
+
+  if v_sobe_para_autonomia then
+    if p_rodada_golden is not null then
+      v_med := fn_golden_suficiente(p_estagio, p_rodada_golden);
+      if not coalesce((v_med->>'suficiente')::boolean, false) then
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+          values (p_autor, 'mudanca_dial_recusada', 'estagio:'||p_estagio,
+                  jsonb_build_object('pedido', p_nivel, 'de', v_nivel_ant,
+                                     'motivo_informado', p_motivo, 'medicao', v_med));
+        return jsonb_build_object('recusado', true, 'medicao', v_med,
+          'motivo_recusa', format('A concordância medida contra a rodada de golden set não basta '
+                                  'para subir "%s" de %s para %s. docs/01, regra de ouro: nada de '
+                                  'subir dial de estágio interpretativo sem golden set e '
+                                  'concordância medida. O que faltou está em "medicao".',
+                                  p_estagio, v_nivel_ant, p_nivel));
+      end if;
+      v_base := 'medida';
+      v_resumo := v_med;
+
+    elsif p_sem_medicao_porque is null then
+      insert into evento_auditoria (ator, acao, entidade_ref, depois)
+        values (p_autor, 'mudanca_dial_recusada', 'estagio:'||p_estagio,
+                jsonb_build_object('pedido', p_nivel, 'de', v_nivel_ant,
+                                   'motivo_informado', p_motivo,
+                                   'porque', 'sem rodada de golden set e sem motivo declarado'));
+      return jsonb_build_object('recusado', true,
+        'motivo_recusa', format('Subir "%s" de %s para %s é entrar em auto-clear num estágio '
+                                'INTERPRETATIVO, e docs/01 exige concordância medida para isso. '
+                                'Dois caminhos: passe `p_rodada_golden` com uma rodada CONGELADA que '
+                                'satisfaça golden_criterio, ou assuma a decisão em '
+                                '`p_sem_medicao_porque` — nesse caso a subida acontece, fica '
+                                'registrada como mudanca_dial_sem_medicao e o nível passa a valer '
+                                'como DECLARADO, não medido.', p_estagio, v_nivel_ant, p_nivel));
+    end if;
+  end if;
+
   update estagio_autonomia
     set nivel_atual = p_nivel,
         limiar_auto_clear = coalesce(p_limiar, limiar_auto_clear),
+        base_do_nivel = v_base,
+        -- Ponteiro e resumo só sobrevivem enquanto o nível que eles justificam
+        -- sobrevive: descer para N1 e subir de novo não pode reaproveitar a
+        -- medição de antes como se ela tivesse sido feita agora.
+        medicao_rodada_id = case when v_base = 'medida' then p_rodada_golden else null end,
+        medicao_em        = case when v_base = 'medida' then now() else null end,
+        medicao_resumo    = case when v_base = 'medida' then v_resumo else null end,
         atualizado_por = p_autor,
         atualizado_em = now()
   where estagio = p_estagio;
 
-  -- 'mudanca_dial' existe no enum desde a 0001 e nunca foi usado. Aqui é.
-  -- `decisao` exige caso_id, e mudança de dial é GLOBAL (não é de um mandato) —
-  -- então o registro append-only vai para `evento_auditoria`, que não exige caso.
-  -- Registrar num caso arbitrário seria pior: faria a trilha daquele mandato
-  -- afirmar uma decisão que não é dele.
+  -- 'mudanca_dial' existe no enum desde a 0001. `mudanca_dial_sem_medicao` é da
+  -- 0126 e existe para que o dial declarado seja CONTÁVEL: sem ação própria, ele
+  -- fica indistinguível do medido dentro de uma lista de 'mudanca_dial'.
   insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-    values (p_autor, 'mudanca_dial', 'estagio:'||p_estagio, v_antes,
+    values (p_autor,
+            case when v_sobe_para_autonomia and p_rodada_golden is null
+                 then 'mudanca_dial_sem_medicao' else 'mudanca_dial' end,
+            'estagio:'||p_estagio, v_antes,
             (select to_jsonb(ea) from estagio_autonomia ea where ea.estagio = p_estagio)
-            || jsonb_build_object('motivo', p_motivo));
+            || jsonb_build_object('motivo', p_motivo,
+                                  'sem_medicao_porque', p_sem_medicao_porque,
+                                  'medicao', v_resumo));
 
   return fn_dial(p_estagio);
 end;
@@ -6458,7 +7189,14 @@ CREATE TABLE public.estagio_autonomia (
     teto public.nivel_autonomia NOT NULL,
     atualizado_por text,
     atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
-    limiar_auto_clear numeric DEFAULT 0.95
+    limiar_auto_clear numeric DEFAULT 0.95,
+    natureza text DEFAULT 'interpretativo'::text NOT NULL,
+    base_do_nivel text DEFAULT 'nao_se_aplica'::text NOT NULL,
+    medicao_rodada_id uuid,
+    medicao_em timestamp with time zone,
+    medicao_resumo jsonb,
+    CONSTRAINT estagio_autonomia_base_check CHECK ((base_do_nivel = ANY (ARRAY['nao_se_aplica'::text, 'declarada'::text, 'medida'::text]))),
+    CONSTRAINT estagio_autonomia_natureza_check CHECK ((natureza = ANY (ARRAY['deterministico'::text, 'interpretativo'::text])))
 );
 
 --
@@ -6472,6 +7210,24 @@ COMMENT ON TABLE public.estagio_autonomia IS 'O "dial" de autonomia por estágio
 --
 
 COMMENT ON COLUMN public.estagio_autonomia.limiar_auto_clear IS 'Confiança mínima para auto-aceite quando o estágio está em N2/N3. Era 0.95 HARDCODED em fn_registrar_campos_extraidos (0019); virou dado na 0041 para poder ser ajustado sem migration. Null = não auto-aceita, independentemente do nível.';
+
+--
+-- Name: COLUMN estagio_autonomia.natureza; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estagio_autonomia.natureza IS 'docs/01, "regra de teto por natureza do estágio": deterministico = aritmética/integridade, cuja confiança não vem de concordância humana; interpretativo = tudo o que a regra de ouro governa. Default interpretativo porque, em dúvida, a regra APLICA — estágio novo nasce cobrado.';
+
+--
+-- Name: COLUMN estagio_autonomia.base_do_nivel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estagio_autonomia.base_do_nivel IS 'Em que o nível de HOJE se apoia: nao_se_aplica (N0/N1, ou determinístico), declarada (N2/N3 por decisão do dono, sem medição — o caso da 0019/0041) ou medida (N2/N3 contra rodada de golden set). Existe porque "N2 medido" e "N2 decidido" eram indistinguíveis para quem lê o estado do sistema, e a tela adivinhava por prefixo do nome do estágio.';
+
+--
+-- Name: COLUMN estagio_autonomia.medicao_resumo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estagio_autonomia.medicao_resumo IS 'A medição que autorizou o nível, congelada no momento da subida. Guardar o resultado (e não só o ponteiro para a rodada) é o que permite responder "com que número isto subiu?" mesmo depois de o golden set crescer em rodadas seguintes.';
 
 --
 -- Name: evento_auditoria; Type: TABLE; Schema: public; Owner: -
@@ -6508,6 +7264,132 @@ CREATE TABLE public.execucao_falha (
 --
 
 COMMENT ON TABLE public.execucao_falha IS 'Falha do pipeline (n8n) que a TELA precisa mostrar. Existe porque o portal deduzia progresso de sinais positivos, e falha produz ausência — indistinguível de "ainda processando". Tabela própria e não evento_auditoria: isto é estado operacional que se marca como visto, não trilha.';
+
+--
+-- Name: golden_campo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.golden_campo (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rodada_id uuid NOT NULL,
+    documento_id uuid NOT NULL,
+    rotulador text NOT NULL,
+    chave text NOT NULL,
+    periodo_coluna text,
+    entidade_coluna text,
+    valor_correto numeric,
+    classe_contabil_correta text,
+    tolerancia numeric DEFAULT 0 NOT NULL,
+    rotulado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: TABLE golden_campo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.golden_campo IS 'Os campos_chave do f0/06: que valor o humano leu no documento, para a linha que a extração devolve. tolerancia é por LINHA porque escala é por documento — 1 unidade é arredondamento legítimo em milhares e é cegueira em milhões.';
+
+--
+-- Name: COLUMN golden_campo.classe_contabil_correta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.golden_campo.classe_contabil_correta IS 'A classe contábil que o humano atribuiu (recorrente/EBITDA…). É o ground truth da quinta linha da tabela de métricas do f0/06 — e o estágio classificacao_contabil tem teto N1 em docs/01, então este número serve para MANTER o teto honesto, nunca para soltá-lo.';
+
+--
+-- Name: golden_criterio; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.golden_criterio (
+    estagio text NOT NULL,
+    n_minimo integer DEFAULT 20 NOT NULL,
+    concordancia_minima numeric DEFAULT 0.95 NOT NULL,
+    metrica text NOT NULL,
+    nota text
+);
+
+--
+-- Name: TABLE golden_criterio; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.golden_criterio IS 'O que "concordância alta e estável" (f0/06) significa em número, por estágio. n_minimo vem do f0/06 (~20-30 por tipo core); concordancia_minima é DECISÃO e entra em 0.95 porque é o limiar_auto_clear em vigor desde a 0019 — auto-aceitar a 0.95 com medição abaixo de 0.95 seria apostar acima do que se sabe. Dado, não constante: muda por update.';
+
+--
+-- Name: COLUMN golden_criterio.metrica; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.golden_criterio.metrica IS 'Qual das cinco métricas do f0/06 governa este estágio. É o mapa que fn_golden_suficiente segue, e existe como dado para que acrescentar estágio não exija reescrever aquela função.';
+
+--
+-- Name: golden_documento; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.golden_documento (
+    rodada_id uuid NOT NULL,
+    documento_id uuid NOT NULL,
+    estrato public.golden_estrato NOT NULL,
+    origem public.golden_origem NOT NULL,
+    incluido_em timestamp with time zone DEFAULT now() NOT NULL,
+    incluido_por text,
+    nota text
+);
+
+--
+-- Name: TABLE golden_documento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.golden_documento IS 'Quais documentos a rodada cobre. A resposta da MÁQUINA para cada um já está em documento/campo_extraido — não existe tabela de predição de propósito: medir contra o estado de produção é medir o sistema, e não uma cópia dele que pode divergir.';
+
+--
+-- Name: golden_rodada; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.golden_rodada (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nome text NOT NULL,
+    taxonomia_versao integer NOT NULL,
+    criada_em timestamp with time zone DEFAULT now() NOT NULL,
+    criada_por text,
+    congelada_em timestamp with time zone,
+    congelada_por text,
+    nota text
+);
+
+--
+-- Name: TABLE golden_rodada; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.golden_rodada IS 'Rodada de calibração do golden set (f0/06). Congelada = não aceita mais rótulo; ampliar é rodada nova, nunca edição da anterior — senão a evidência que autorizou uma subida de dial muda depois da subida. taxonomia_versao amarra os rótulos à versão da taxonomia em que foram feitos, porque tipo correto em v1 pode não ser tipo correto em v2.';
+
+--
+-- Name: golden_rotulo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.golden_rotulo (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rodada_id uuid NOT NULL,
+    documento_id uuid NOT NULL,
+    rotulador text NOT NULL,
+    tipo_correto text,
+    entidade_correta text,
+    periodo_correto text,
+    assinado_correto boolean,
+    legibilidade public.legibilidade,
+    item_checklist_correto text,
+    rotulado_em timestamp with time zone DEFAULT now() NOT NULL,
+    nota text
+);
+
+--
+-- Name: TABLE golden_rotulo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.golden_rotulo IS 'O ground truth por rotulador (f0/06, "o que é rotulado"). Campo null = "este rotulador não julgou isto", que NÃO é o mesmo que discordar: entra como item não medido, nunca como acerto.';
+
+--
+-- Name: COLUMN golden_rotulo.entidade_correta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.golden_rotulo.entidade_correta IS 'Razão social como o humano leu NO documento. A comparação usa fn_mesma_entidade (0030), então duas grafias da mesma companhia não contam como erro da máquina nem como discordância entre rotuladores — foi exatamente esse par de grafias que a 0121 mostrou duplicando empresa.';
 
 --
 -- Name: indice_macro_expectativa; Type: TABLE; Schema: public; Owner: -
@@ -6925,6 +7807,55 @@ ALTER TABLE ONLY public.execucao_falha
     ADD CONSTRAINT execucao_falha_pkey PRIMARY KEY (id);
 
 --
+-- Name: golden_campo golden_campo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_campo
+    ADD CONSTRAINT golden_campo_pkey PRIMARY KEY (id);
+
+--
+-- Name: golden_criterio golden_criterio_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_criterio
+    ADD CONSTRAINT golden_criterio_pkey PRIMARY KEY (estagio);
+
+--
+-- Name: golden_documento golden_documento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_documento
+    ADD CONSTRAINT golden_documento_pkey PRIMARY KEY (rodada_id, documento_id);
+
+--
+-- Name: golden_rodada golden_rodada_nome_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_rodada
+    ADD CONSTRAINT golden_rodada_nome_key UNIQUE (nome);
+
+--
+-- Name: golden_rodada golden_rodada_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_rodada
+    ADD CONSTRAINT golden_rodada_pkey PRIMARY KEY (id);
+
+--
+-- Name: golden_rotulo golden_rotulo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_rotulo
+    ADD CONSTRAINT golden_rotulo_pkey PRIMARY KEY (id);
+
+--
+-- Name: golden_rotulo golden_rotulo_rodada_id_documento_id_rotulador_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_rotulo
+    ADD CONSTRAINT golden_rotulo_rodada_id_documento_id_rotulador_key UNIQUE (rodada_id, documento_id, rotulador);
+
+--
 -- Name: indice_macro_expectativa indice_macro_expectativa_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7147,6 +8078,18 @@ CREATE INDEX idx_execucao_falha_caso ON public.execucao_falha USING btree (caso_
 CREATE INDEX idx_execucao_falha_nome ON public.execucao_falha USING btree (lower(caso_nome), criado_em DESC);
 
 --
+-- Name: idx_golden_campo_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_golden_campo_unico ON public.golden_campo USING btree (rodada_id, documento_id, rotulador, chave, COALESCE(periodo_coluna, ''::text), COALESCE(entidade_coluna, ''::text));
+
+--
+-- Name: idx_golden_documento_rodada; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_golden_documento_rodada ON public.golden_documento USING btree (rodada_id, origem);
+
+--
 -- Name: idx_indice_macro_exp_serie_ano; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7187,6 +8130,30 @@ CREATE INDEX idx_periodo_caso ON public.periodo USING btree (caso_id);
 --
 
 CREATE INDEX idx_reconciliacao_caso ON public.reconciliacao USING btree (caso_id);
+
+--
+-- Name: golden_campo trg_golden_campo_congelada; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_golden_campo_congelada BEFORE INSERT OR UPDATE ON public.golden_campo FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada();
+
+--
+-- Name: golden_documento trg_golden_documento_congelada; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_golden_documento_congelada BEFORE INSERT OR UPDATE ON public.golden_documento FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada();
+
+--
+-- Name: golden_rodada trg_golden_rodada_imutavel; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_golden_rodada_imutavel BEFORE UPDATE ON public.golden_rodada FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada_imutavel();
+
+--
+-- Name: golden_rotulo trg_golden_rotulo_congelada; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_golden_rotulo_congelada BEFORE INSERT OR UPDATE ON public.golden_rotulo FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada();
 
 --
 -- Name: campo_extraido campo_extraido_documento_versao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -7343,11 +8310,53 @@ ALTER TABLE ONLY public.entidade
     ADD CONSTRAINT entidade_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
 
 --
+-- Name: estagio_autonomia estagio_autonomia_medicao_rodada_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.estagio_autonomia
+    ADD CONSTRAINT estagio_autonomia_medicao_rodada_id_fkey FOREIGN KEY (medicao_rodada_id) REFERENCES public.golden_rodada(id);
+
+--
 -- Name: execucao_falha execucao_falha_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.execucao_falha
     ADD CONSTRAINT execucao_falha_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: golden_campo golden_campo_rodada_id_documento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_campo
+    ADD CONSTRAINT golden_campo_rodada_id_documento_id_fkey FOREIGN KEY (rodada_id, documento_id) REFERENCES public.golden_documento(rodada_id, documento_id) ON DELETE CASCADE;
+
+--
+-- Name: golden_criterio golden_criterio_estagio_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_criterio
+    ADD CONSTRAINT golden_criterio_estagio_fkey FOREIGN KEY (estagio) REFERENCES public.estagio_autonomia(estagio) ON DELETE CASCADE;
+
+--
+-- Name: golden_documento golden_documento_documento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_documento
+    ADD CONSTRAINT golden_documento_documento_id_fkey FOREIGN KEY (documento_id) REFERENCES public.documento(id) ON DELETE CASCADE;
+
+--
+-- Name: golden_documento golden_documento_rodada_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_documento
+    ADD CONSTRAINT golden_documento_rodada_id_fkey FOREIGN KEY (rodada_id) REFERENCES public.golden_rodada(id) ON DELETE CASCADE;
+
+--
+-- Name: golden_rotulo golden_rotulo_rodada_id_documento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.golden_rotulo
+    ADD CONSTRAINT golden_rotulo_rodada_id_documento_id_fkey FOREIGN KEY (rodada_id, documento_id) REFERENCES public.golden_documento(rodada_id, documento_id) ON DELETE CASCADE;
 
 --
 -- Name: indice_macro_expectativa indice_macro_expectativa_serie_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -7626,6 +8635,84 @@ ALTER TABLE public.execucao_falha ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY execucao_falha_authenticated_all ON public.execucao_falha TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: golden_campo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.golden_campo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: golden_campo golden_campo_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_campo_insert ON public.golden_campo FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: golden_campo golden_campo_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_campo_read ON public.golden_campo FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: golden_documento; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.golden_documento ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: golden_documento golden_documento_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_documento_insert ON public.golden_documento FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: golden_documento golden_documento_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_documento_read ON public.golden_documento FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: golden_rodada; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.golden_rodada ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: golden_rodada golden_rodada_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_rodada_insert ON public.golden_rodada FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: golden_rodada golden_rodada_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_rodada_read ON public.golden_rodada FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: golden_rodada golden_rodada_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_rodada_update ON public.golden_rodada FOR UPDATE TO authenticated USING (true);
+
+--
+-- Name: golden_rotulo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.golden_rotulo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: golden_rotulo golden_rotulo_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_rotulo_insert ON public.golden_rotulo FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: golden_rotulo golden_rotulo_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY golden_rotulo_read ON public.golden_rotulo FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: indice_macro_expectativa; Type: ROW SECURITY; Schema: public; Owner: -
@@ -7912,6 +8999,54 @@ GRANT ALL ON FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timesta
 GRANT ALL ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_golden_campos(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_classe_a(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_classe_a(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_classificacao(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_classificacao(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_consenso(p_rodada uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_consenso(p_rodada uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_suficiente(p_estagio text, p_rodada uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_indice_macro_anual(p_desde_ano integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -7960,10 +9095,10 @@ GRANT ALL ON FUNCTION public.fn_mes_do_rotulo(p_chave text) TO authenticated;
 GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 
 --
--- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_mutuo_com_socio(p_chave text, p_secao text); Type: ACL; Schema: public; Owner: -
@@ -8295,6 +9430,46 @@ GRANT ALL ON TABLE public.evento_auditoria TO service_role;
 GRANT ALL ON TABLE public.execucao_falha TO anon;
 GRANT ALL ON TABLE public.execucao_falha TO authenticated;
 GRANT ALL ON TABLE public.execucao_falha TO service_role;
+
+--
+-- Name: TABLE golden_campo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.golden_campo TO anon;
+GRANT ALL ON TABLE public.golden_campo TO authenticated;
+GRANT ALL ON TABLE public.golden_campo TO service_role;
+
+--
+-- Name: TABLE golden_criterio; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.golden_criterio TO anon;
+GRANT ALL ON TABLE public.golden_criterio TO authenticated;
+GRANT ALL ON TABLE public.golden_criterio TO service_role;
+
+--
+-- Name: TABLE golden_documento; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.golden_documento TO anon;
+GRANT ALL ON TABLE public.golden_documento TO authenticated;
+GRANT ALL ON TABLE public.golden_documento TO service_role;
+
+--
+-- Name: TABLE golden_rodada; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.golden_rodada TO anon;
+GRANT ALL ON TABLE public.golden_rodada TO authenticated;
+GRANT ALL ON TABLE public.golden_rodada TO service_role;
+
+--
+-- Name: TABLE golden_rotulo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.golden_rotulo TO anon;
+GRANT ALL ON TABLE public.golden_rotulo TO authenticated;
+GRANT ALL ON TABLE public.golden_rotulo TO service_role;
 
 --
 -- Name: TABLE indice_macro_expectativa; Type: ACL; Schema: public; Owner: -

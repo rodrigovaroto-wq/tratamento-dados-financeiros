@@ -21,6 +21,15 @@ type Dial = {
   nivel_atual: "N0" | "N1" | "N2" | "N3";
   teto: "N0" | "N1" | "N2" | "N3";
   limiar_auto_clear: number | null;
+  // 0126: a natureza do estágio (docs/01, "regra de teto por natureza") e em que
+  // o nível de hoje se apoia. Antes desta migration a tela DEDUZIA a segunda por
+  // `estagio.startsWith("extracao")` — heurística de nome, que errava nos dois
+  // sentidos: estágio de extração que ganhasse medição continuava recebendo o
+  // aviso, e estágio de outro nome que subisse sem medição não recebia nenhum.
+  natureza: "deterministico" | "interpretativo";
+  base_do_nivel: "nao_se_aplica" | "declarada" | "medida";
+  medicao_rodada_id: string | null;
+  medicao_em: string | null;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -29,8 +38,32 @@ type EventoDial = {
   ator: string;
   acao: string;
   entidade_ref: string;
-  depois: { motivo?: string; motivo_informado?: string; pedido?: string; teto?: string } | null;
+  depois: {
+    motivo?: string;
+    motivo_informado?: string;
+    pedido?: string;
+    teto?: string;
+    sem_medicao_porque?: string;
+  } | null;
   criado_em: string;
+};
+
+type Rodada = {
+  id: string;
+  nome: string;
+  taxonomia_versao: number;
+  congelada_em: string | null;
+  criada_em: string;
+};
+
+type Cobertura = {
+  tipo: string;
+  granularidade: string;
+  n_documentos: number;
+  n_dois_rotuladores: number;
+  estratos: string[];
+  n_minimo: number;
+  atinge_minimo: boolean;
 };
 
 // docs/01, tabela de níveis. O texto é o da doutrina, palavra por palavra, porque
@@ -62,21 +95,47 @@ function dataHora(iso: string | null) {
 export default async function AutonomiaPage() {
   const supabase = await createClient();
 
-  const [{ data: dials, error: erroDial }, { data: eventos }] = await Promise.all([
-    supabase
-      .from("estagio_autonomia")
-      .select("estagio, nivel_atual, teto, limiar_auto_clear, atualizado_por, atualizado_em")
-      .order("estagio"),
-    supabase
-      .from("evento_auditoria")
-      .select("ator, acao, entidade_ref, depois, criado_em")
-      .in("acao", ["mudanca_dial", "mudanca_dial_recusada"])
-      .order("criado_em", { ascending: false })
-      .limit(15),
-  ]);
+  const [{ data: dials, error: erroDial }, { data: eventos }, { data: rodadas }] =
+    await Promise.all([
+      supabase
+        .from("estagio_autonomia")
+        .select(
+          "estagio, nivel_atual, teto, limiar_auto_clear, natureza, base_do_nivel, " +
+            "medicao_rodada_id, medicao_em, atualizado_por, atualizado_em",
+        )
+        .order("estagio"),
+      supabase
+        .from("evento_auditoria")
+        .select("ator, acao, entidade_ref, depois, criado_em")
+        // `mudanca_dial_sem_medicao` (0126) entra na lista: é o registro de uma
+        // subida que o dono assumiu sem medir. Fora dela, ele não apareceria em
+        // tela nenhuma — e é o evento que mais precisa ser visto.
+        .in("acao", ["mudanca_dial", "mudanca_dial_recusada", "mudanca_dial_sem_medicao"])
+        .order("criado_em", { ascending: false })
+        .limit(15),
+      // Catálogo pequeno e que não cresce com a mesa (uma linha por rodada de
+      // calibração), então não pagina — mesma regra das outras listas de catálogo.
+      supabase
+        .from("golden_rodada")
+        .select("id, nome, taxonomia_versao, congelada_em, criada_em")
+        .order("criada_em", { ascending: false })
+        .limit(10),
+    ]);
 
   const linhas = (dials as Dial[] | null) ?? [];
   const trilha = (eventos as EventoDial[] | null) ?? [];
+  const listaRodadas = (rodadas as Rodada[] | null) ?? [];
+
+  // A cobertura é mostrada da rodada CONGELADA mais recente, que é a única que
+  // pode autorizar uma subida (0126). Rodada em montagem não decide nada, e
+  // mostrar a cobertura dela sugeriria que decide.
+  const rodadaVigente = listaRodadas.find((r) => r.congelada_em !== null) ?? null;
+  const { data: coberturaBruta } = rodadaVigente
+    ? await supabase.rpc("fn_golden_cobertura", { p_rodada: rodadaVigente.id })
+    : { data: null };
+  const cobertura = (coberturaBruta as Cobertura[] | null) ?? [];
+
+  const declarados = linhas.filter((d) => d.base_do_nivel === "declarada");
 
   return (
     <div className="space-y-6">
@@ -104,6 +163,7 @@ export default async function AutonomiaPage() {
               <th className="px-4 py-2 font-medium">Hoje</th>
               <th className="px-4 py-2 font-medium">Teto</th>
               <th className="px-4 py-2 font-medium">Limiar de auto-clear</th>
+              <th className="px-4 py-2 font-medium">Apoia-se em</th>
               <th className="px-4 py-2 font-medium">Última mudança</th>
             </tr>
           </thead>
@@ -154,6 +214,36 @@ export default async function AutonomiaPage() {
                       </>
                     )}
                   </td>
+                  {/* 0126: o que a tela adivinhava por prefixo do nome agora é
+                      coluna. "declarada" é o único estado que pede leitura: o
+                      sistema está em auto-clear sem que ninguém tenha medido. */}
+                  <td className="px-4 py-3 text-xs">
+                    {d.base_do_nivel === "medida" ? (
+                      <>
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800">
+                          concordância medida
+                        </span>
+                        <p className="mt-1 text-tinta-500">
+                          contra golden set em {dataHora(d.medicao_em)}
+                        </p>
+                      </>
+                    ) : d.base_do_nivel === "declarada" ? (
+                      <>
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900">
+                          decisão declarada
+                        </span>
+                        <p className="mt-1 text-tinta-500">
+                          auto-clear ligado sem concordância medida
+                        </p>
+                      </>
+                    ) : (
+                      <span className="text-tinta-500">
+                        {d.natureza === "deterministico"
+                          ? "determinístico: a garantia é teste, não concordância"
+                          : "não se aplica — abaixo do auto-clear"}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-xs text-tinta-600">
                     <p>{dataHora(d.atualizado_em)}</p>
                     <p className="text-tinta-500">{d.atualizado_por ?? "—"}</p>
@@ -166,29 +256,135 @@ export default async function AutonomiaPage() {
       </div>
 
       {/* A RESSALVA QUE VIAJA COM O NÚMERO. Sem isto, alguém lê "N2" na extração e
-          conclui que houve medição de concordância contra golden set. Não houve —
-          é decisão de produto do dono, registrada assim na 0019 e na 0041, e o
-          golden set físico é item aberto (§7.4 #8 do material de Onboarding). */}
-      {linhas.some(
-        (d) =>
-          (d.nivel_atual === "N2" || d.nivel_atual === "N3") &&
-          d.estagio.startsWith("extracao"),
-      ) && (
+          conclui que houve medição de concordância contra golden set.
+
+          0126: a condição saiu de `estagio.startsWith("extracao")` — heurística de
+          NOME — para `base_do_nivel === "declarada"`, que é o fato. E o bloco passa
+          a NOMEAR os estágios: antes ele dizia "os estágios de extração" mesmo
+          quando só um estava assim, e ficaria calado sobre um estágio de outro
+          nome que subisse sem medir. */}
+      {declarados.length > 0 && (
         <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <p className="font-medium">Autonomia declarada, não medida</p>
+          <p className="font-medium">
+            Autonomia declarada, não medida — {declarados.length}{" "}
+            {declarados.length === 1 ? "estágio" : "estágios"}
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {declarados.map((d) => (
+              <li key={d.estagio}>
+                <strong>{NOME_ESTAGIO[d.estagio] ?? d.estagio}</strong> em {d.nivel_atual}
+              </li>
+            ))}
+          </ul>
           <p className="mt-1">
-            Os estágios de <strong>extração</strong> acima de N1 estão nesse nível por decisão de
-            produto, não por concordância medida: <code>docs/01</code> exige comparação contra um
-            golden set para subir dial de estágio interpretativo, e o golden set físico ainda não
-            existe. Quando existir, a medição confirma ou derruba estes níveis.
+            Estão nesse nível por decisão de produto, não por concordância medida:{" "}
+            <code>docs/01</code> exige comparação contra um golden set para subir dial de estágio
+            interpretativo. Desde a <code>0126</code> subir sem isso continua possível, mas exige
+            um motivo assumido por escrito — e é ele que aparece na trilha abaixo como{" "}
+            <em>sem medição</em>. Quando houver golden set, a medição confirma ou derruba estes
+            níveis.
           </p>
           <p className="mt-1">
             A medição que já é possível hoje roda contra o book sintético (
             <code>portal/scripts/medir-auto-aceite.mts</code>) e vale como piso, não como
-            equivalente: o book é o melhor caso — PDF gerado, texto limpo, layout conhecido.
+            equivalente: o book é o melhor caso — PDF gerado, texto limpo, layout conhecido. Por
+            isso rodada de golden set com <code>origem = sintetico</code> não autoriza subida.
           </p>
         </div>
       )}
+
+      {/* O GOLDEN SET, e o que falta para ele destravar uma subida. Sem este bloco,
+          "o golden set ainda não existe" é uma frase que ninguém consegue conferir
+          — e continuaria sendo verdade no texto muito depois de deixar de ser. */}
+      <div>
+        <h2 className="text-sm font-semibold">Golden set</h2>
+        <p className="mt-1 text-xs text-tinta-500">
+          <code>f0/06</code>: ~{cobertura[0]?.n_minimo ?? 20} documentos rotulados por tipo core,
+          estratificados por qualidade de captura. Só rodada <strong>congelada</strong> e de{" "}
+          <strong>origem real</strong> autoriza subir dial — rotular um book cujo gabarito já se
+          conhece mede o instrumento, não o modelo.
+        </p>
+
+        {listaRodadas.length === 0 ? (
+          <p className="mt-2 text-sm text-tinta-500">
+            Nenhuma rodada de calibração registrada. O protocolo está fechado como v1 desde
+            14/07/2026 e o esquema existe desde a <code>0126</code>; o que falta é a rotulagem —
+            documento real de cliente, com controle de acesso, que é trabalho de execução e não
+            de código.
+          </p>
+        ) : (
+          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-white text-sm">
+            {listaRodadas.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-baseline gap-2 px-4 py-2">
+                <span className="font-medium">{r.nome}</span>
+                <span
+                  className={
+                    r.congelada_em
+                      ? "rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-medium text-white"
+                      : "rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900"
+                  }
+                >
+                  {r.congelada_em ? "congelada" : "em montagem"}
+                </span>
+                <span className="text-xs text-tinta-500">
+                  taxonomia v{r.taxonomia_versao} · criada {dataHora(r.criada_em)}
+                  {r.congelada_em ? ` · congelada ${dataHora(r.congelada_em)}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {rodadaVigente && cobertura.length > 0 && (
+          <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-white">
+            <table className="w-full text-sm">
+              <caption className="px-4 pt-2 text-left text-xs text-tinta-500">
+                Cobertura de <strong>{rodadaVigente.nome}</strong>, por tipo do Kit Básico. O tipo
+                mais fraco governa: o dial é por estágio e o <code>f0/06</code> raciocina por
+                tipo, então um tipo fraco sobe autonomia sobre ele também.
+              </caption>
+              <thead className="bg-tinta-50 text-left text-xs uppercase text-tinta-500">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Tipo</th>
+                  <th className="px-4 py-2 font-medium">Rotulados</th>
+                  <th className="px-4 py-2 font-medium">Com 2 rotuladores</th>
+                  <th className="px-4 py-2 font-medium">Estratos</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-tinta-200">
+                {cobertura.map((c) => (
+                  <tr key={c.tipo}>
+                    <td className="px-4 py-2">
+                      <p className="font-mono text-xs">{c.tipo}</p>
+                      {/* A granularidade explica a demora em vez de deixá-la
+                          parecer negligência: tipo por CASO rende ~1 por mandato,
+                          e o f0/06 diz que ficar mais tempo em N0/N1 é esperado. */}
+                      {(c.granularidade === "caso" || c.granularidade === "periodo") && (
+                        <p className="text-xs text-tinta-500">
+                          ~1 por mandato: juntar {c.n_minimo} demora, e é esperado
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-xs">
+                      <span className={c.atinge_minimo ? "text-emerald-700" : "text-amber-800"}>
+                        {c.n_documentos} de {c.n_minimo}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-tinta-600">{c.n_dois_rotuladores}</td>
+                    <td className="px-4 py-2 text-xs text-tinta-600">
+                      {c.estratos.length === 0 ? (
+                        <span className="text-tinta-400">—</span>
+                      ) : (
+                        c.estratos.join(", ")
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <div>
         <h2 className="text-sm font-semibold">Mudanças de dial</h2>
@@ -207,10 +403,16 @@ export default async function AutonomiaPage() {
                     className={
                       e.acao === "mudanca_dial_recusada"
                         ? "rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800"
-                        : "rounded bg-tinta-100 px-1.5 py-0.5 text-xs font-medium text-tinta-600"
+                        : e.acao === "mudanca_dial_sem_medicao"
+                          ? "rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900"
+                          : "rounded bg-tinta-100 px-1.5 py-0.5 text-xs font-medium text-tinta-600"
                     }
                   >
-                    {e.acao === "mudanca_dial_recusada" ? "recusada" : "aplicada"}
+                    {e.acao === "mudanca_dial_recusada"
+                      ? "recusada"
+                      : e.acao === "mudanca_dial_sem_medicao"
+                        ? "sem medição"
+                        : "aplicada"}
                   </span>
                   <span className="font-mono text-xs">{e.entidade_ref}</span>
                   <span className="text-xs text-tinta-500">
@@ -223,9 +425,20 @@ export default async function AutonomiaPage() {
                     {e.depois?.motivo_informado ? ` — "${e.depois.motivo_informado}"` : ""}
                   </p>
                 ) : (
-                  e.depois?.motivo && (
-                    <p className="mt-1 text-xs text-tinta-600">{e.depois.motivo}</p>
-                  )
+                  <>
+                    {e.depois?.motivo && (
+                      <p className="mt-1 text-xs text-tinta-600">{e.depois.motivo}</p>
+                    )}
+                    {/* O motivo assumido é o que separa "subiu porque mediu" de
+                        "subiu porque decidiu", e é o texto que alguém escreveu
+                        sabendo que não mediu. Esconder isto devolveria a
+                        indistinguibilidade que a 0126 acabou de tirar. */}
+                    {e.depois?.sem_medicao_porque && (
+                      <p className="mt-1 text-xs text-amber-900">
+                        sem medição: {e.depois.sem_medicao_porque}
+                      </p>
+                    )}
+                  </>
                 )}
               </li>
             ))}

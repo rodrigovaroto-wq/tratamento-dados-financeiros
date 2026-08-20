@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0125_proveniencia_por_linha_e_ano.sql` |
+| **Última migration** | `db/migrations/0126_golden_set.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (70 migrations do zero + testes SQL, agora com os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (71 migrations do zero + testes SQL, agora com os DOIS books e com a suíte do golden set) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -138,11 +138,18 @@ O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em toda
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
 
-## O próximo passo (para quem retomar depois de 19/08, sessão 52)
+## O próximo passo (para quem retomar depois de 19/08, sessão 53)
 
 **O DONO FEZ AS DUAS COISAS QUE FALTAVAM** — confirmado em 19/08: as migrations estão aplicadas
 **até a `0125`** e o `workflow.e1-ingestao.json` foi **reimportado**. Não há mais nada de infra
-pendente.
+pendente **daquela rodada**.
+
+> **A sessão 53 acrescentou a `0126`, e ela precisa ser aplicada** — é a única coisa de banco
+> pendente agora. Ela não muda o comportamento da ingestão nem do export: cria as tabelas do golden
+> set, as funções de medição, e faz `fn_mudar_dial` cobrar concordância medida para subir dial de
+> estágio interpretativo. **Nenhum nível de autonomia muda ao aplicá-la**; o que muda é que o N2 da
+> extração passa a se declarar como `declarada` em vez de ficar indistinguível de um N2 medido.
+> Isso NÃO altera a prioridade do bloqueio abaixo: rodar o book continua sendo o próximo passo.
 
 **Sobrou UM bloqueio, e é grande: NINGUÉM RODOU O BOOK AINDA.**
 
@@ -181,6 +188,95 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### A REGRA DE OURO PASSA A SER EXECUTADA (19/08, sessão 53) — `0126`
+
+**O `docs/01` fecha com uma regra de ouro, em negrito e sem ressalva:** *"nada de subir o dial de
+autonomia de um estágio interpretativo sem golden set e concordância medida."* **E `fn_mudar_dial`
+(0041) conferia UMA coisa: o teto.** Pedir N2 num estágio de teto N2 era aceito com um `p_motivo` em
+texto livre, e nada olhava para medição alguma — não existia onde olhar. A regra estava escrita na
+doutrina, repetida no cabeçalho de duas migrations, impressa em letras âmbar na tela de autonomia, e
+não era código em lugar nenhum.
+
+**Quem fez isso primeiro foi a própria `0041`, e ela declara que fez:** *"este N2 é decisão de
+produto do dono, NÃO autonomia medida… o golden set físico ainda não existe."* É a mesma forma dos
+defeitos que a `0123` achou — `v_lados_bp` atribuída e nunca lida, "a guarda que o comentário da
+`0117` prometia não existia" —, com a diferença de que aqui a promessa é do documento fundador.
+
+**E o protocolo estava pronto desde 14/07.** O `f0/06` foi fechado como v1: dimensionamento (~20–30
+por tipo core), o que se rotula, uma tabela de CINCO métricas, rotulagem com dois avaliadores e o
+laço de calibração desenhado. No banco não havia uma linha disso — `grep -ril golden` devolvia
+documentação, o comentário de um script e prosa de migration.
+
+| O que entrou | Onde |
+|---|---|
+| Ground truth: rodada que **congela**, documento com **estrato** e **origem**, rótulo **por rotulador**, e `golden_campo` com tolerância declarada no rótulo | `0126` |
+| As **cinco métricas** do `f0/06`: F1 da classificação por tipo, acurácia dos identificadores, erro de campo, concordância contábil e falso-positivo da Classe A | `fn_golden_*` |
+| `natureza` e `base_do_nivel` em `estagio_autonomia` — a tabela de teto do `docs/01` e a ressalva "declarada, não medida" saem da prosa | `0126` |
+| O **portão**: subida que alcança N2/N3 em estágio interpretativo exige medição, ou motivo assumido | `fn_mudar_dial` |
+| O painel de autonomia mostrando a base, a cobertura por tipo e o que falta | `/autonomia` |
+
+**AS TRÊS DECISÕES QUE VALE LER:**
+
+1. **O portão morde na subida que ALCANÇA N2/N3, não em toda subida.** A leitura literal cobraria
+   golden set para ir de N0 a N1 — e N1 é "sugestão, humano confirma todo item": nada é automatizado,
+   e a anti-ancoragem continua inteira. O risco que a regra guarda é automatizar erro em escala, e a
+   escala começa no auto-clear. Cobrar medição para exibir sugestão travaria o caminho que a própria
+   doutrina manda percorrer. **Descer nunca pede nada** — freio que exige papelada não é freio.
+2. **Golden SINTÉTICO não sobe dial, e isso é coluna.** Sem `origem`, o portão seria teatro: os dois
+   books têm `GABARITO.json`, rotulá-los é de graça, a concordância sairia ~100% por construção e o
+   dial subiria com a medição do INSTRUMENTO. O cabeçalho do `medir-auto-aceite.mts` avisa disso em
+   prosa há sessões; agora o aviso é guarda. Medido no teste: os MESMOS 20 documentos, o MESMO F1,
+   e a subida é recusada só por a origem ser sintética.
+3. **A decisão declarada continua possível — e passa a ser CONTÁVEL.** `p_sem_medicao_porque` é um
+   MOTIVO, não um booleano (booleano vira `true` e se esquece; motivo é lido por quem revisa a
+   trilha). Com ele a subida acontece, a trilha grava `mudanca_dial_sem_medicao` e o nível fica
+   `declarada`. Sem essa porta, a cadeia de migrations deixaria de aplicar do zero — é a lição das
+   verificações-alçapão que a `0119` e a `0120` tiveram de ter desarmadas: guarda que impede o estado
+   legítimo do dono não é guarda.
+
+#### A MÉTRICA QUE NUNCA PRECISOU DE GOLDEN SET, E NINGUÉM SOMOU
+
+A quinta linha da tabela do `f0/06` é *"taxa de falso-positivo da reconciliação Classe A → subir
+Classe A de N1 para N2"*. **O rótulo dela existe desde a `0106`**, cujo cabeçalho define `rejeitada`
+como *"a pendência não procede (falso positivo do motor)"*, com essas palavras. Ou seja: desde 11 de
+agosto o sistema coleta, a cada rejeição de analista, um ponto de dado sobre a qualidade da própria
+reconciliação — e ninguém tinha somado. `fn_golden_classe_a` soma, com o denominador certo: **só
+vereditos humanos.** Pendência que o próprio sistema resolveu (o sintoma sumiu) não é ninguém dizendo
+que ela procedia, então fica fora dos dois lados e é contada à parte.
+
+#### O QUE O TESTE ACHOU, E É UM DEFEITO DE AUTORIDADE
+
+A `fn_golden_cobertura` agrupava a cobertura por `documento.tipo_taxonomia` — **o tipo que a MÁQUINA
+disse.** Cobertura de ground truth medida pela resposta que está sob avaliação. Numa rodada com 25
+balanços rotulados dos quais o classificador chamou 5 de DRE, ela reportava "BALANCO 20, DRE 5" e
+reprovava por falta de amostra — quando a rodada tem 25 balanços e o que ela deveria acusar é a
+classificação errada. Agora o tipo vem do CONSENSO dos rotuladores. É a mesma família das três
+confusões de unidade da sessão 52, num eixo diferente: autoridade, não unidade.
+
+**E um segundo, achado ao escrever o critério:** contar no "tipo mais fraco governa" um tipo que só
+existe como falso-positivo daria **poder de veto a um único documento** (precisão 0, recall
+indefinido, F1 zero) — e contaria o mesmo erro duas vezes, porque o documento cuja verdade era X e a
+máquina chamou de Y já é falso-negativo de X. O erro é contado uma vez, onde tem denominador. Medido:
+sem o filtro, o pior caso da rodada de teste cai de 0,8889 para **0,0000**.
+
+#### E O CENÁRIO DO DIAL QUE PASSARIA PELO MOTIVO ERRADO
+
+Ligar o portão derrubou um cenário da `dial.test.sql`, e o motivo vale mais que a correção. O cenário
+5 ("o limiar vem da tabela") vinha depois do cenário 4, que deixa o dial em **N1**. Com o portão, a
+volta para N2 é recusada — e o assert seguinte, *"com limiar 0.99 a linha de 0.98 fica pendente"*,
+**passaria verde pelo motivo errado**: pendente por N1, não pelo limiar. Um cenário inteiro medindo
+outra coisa e dizendo que passou. A recusa passou a ser afirmada ali mesmo, porque é ela que decide
+se o resto do cenário significa algo.
+
+**O que NÃO foi feito, e é honesto dizer:** o golden set FÍSICO. Rotular documento real de cliente,
+com controle de acesso LGPD, é o que o `f0/06` já classificava como "tarefa de execução" que "não se
+monta em documentação" — continua sendo do dono. O que mudou é que agora existe onde colocar, o que
+mede, e um portão que cobra. **E fica anotada a decisão de schema que falta:** o dial é por ESTÁGIO
+(`0001`/`0002`) e o `f0/06` raciocina por TIPO — ele chega a dizer que "tipo sem ~20 exemplos
+permanece em N0/N1". Autonomia por (estágio × tipo) não existe no schema, e inventá-la de lado seria
+decidir uma mudança de modelo de dados por tabela. Enquanto não existir, vale a leitura conservadora:
+o tipo mais fraco governa.
 
 ### "OS TRÊS CENÁRIOS SÃO TRÊS?" — e o buraco que a pergunta abriu no arnês (19/08, sessão 52)
 
@@ -932,14 +1028,25 @@ pelo fatiamento** (camada 2): ele vira 2 blocos de ≤234 células e nenhum dele
 
 ## O que só o dono pode fazer
 
-**As duas primeiras linhas desta lista saíram em 19/08** — as migrations estão aplicadas até a `0125`
-e o workflow foi reimportado. Sobrou uma, e ela é a que nenhuma automação cobre.
+**As duas linhas de infra da sessão 52 saíram em 19/08** — migrations até a `0125` aplicadas, workflow
+reimportado. A sessão 53 acrescentou uma migration e um item que não é de infra.
 
-1. **RODAR O BOOK NUM MANDATO NOVO, e depois o aceite sobre o export de verdade.** É o único item
-   pendente, e o que ele prova está na tabela de "O próximo passo" — sete coisas, três delas
-   checagens que nunca viram dado real. O aceite são duas peças: `auditar-xlsx.mts` (10 itens
+1. **RODAR O BOOK NUM MANDATO NOVO, e depois o aceite sobre o export de verdade.** Continua sendo o
+   item que destrava mais, e o que ele prova está na tabela de "O próximo passo" — sete coisas, três
+   delas checagens que nunca viram dado real. O aceite são duas peças: `auditar-xlsx.mts` (10 itens
    automáticos) e `docs/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
    06/08, um arquivo com seis números errados e as suítes verdes.
+
+2. **Aplicar a `0126`.** Não muda nível de autonomia nenhum nem comportamento de ingestão/export —
+   cria o golden set e o portão da regra de ouro. Depois de aplicar, `/autonomia` passa a dizer em
+   que cada nível se apoia; hoje ela adivinha pelo nome do estágio.
+
+3. **A ROTULAGEM DO GOLDEN SET — e este não é de infra, é de julgamento.** A máquina está pronta e
+   testada; o que falta é o `f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por
+   qualidade de captura (digital, PDF nativo, escaneado, foto), dois rotuladores nos casos ambíguos, e
+   a rodada **congelada** ao fim. Rotular o book não serve e o banco recusa (`origem = 'sintetico'`):
+   o gabarito dele já é conhecido, então a concordância mediria o instrumento. É o item de maior
+   alcance que existe hoje — sem ele o dial não sobe por medição e a F4 do `docs/03` não começa.
 
 > **A conferência de 30 segundos, depois de qualquer rodada nova.** Merge não é apply, e da tela
 > "aplicada" e "não aplicada" têm a mesma aparência. Vale reconferir quando algo parecer não ter
@@ -1010,9 +1117,12 @@ e o workflow foi reimportado. Sobrou uma, e ela é a que nenhuma automação cob
 
 **NÃO DEPENDE DE NADA — pode começar já:**
 
-4. **Golden set e concordância medida.** É o item de maior alcance da lista: sem ele o dial de
-   autonomia não sobe e a F4 do `docs/03` não começa. Tudo o que o sistema faz hoje é conferido
-   contra fixture escrita por nós; o golden set é o que mede acerto contra julgamento humano.
+4. **Golden set e concordância medida** — **a MÁQUINA foi feita em 19/08 (sessão 53, `0126`); o que
+   falta é a ROTULAGEM.** O esquema, as cinco métricas do `f0/06` e o portão que cobra existem e
+   estão travados por teste; rotular documento real de cliente continua sendo trabalho de execução
+   do dono, com LGPD, e o `f0/06` já dizia que não se monta em documentação. Ver "A REGRA DE OURO
+   PASSA A SER EXECUTADA". Sem a rotulagem o dial continua não subindo por medição — a diferença é
+   que agora ele também não sobe **em silêncio**.
 5. **Bloco numérico dos três cenários lado a lado** — dimensionado abaixo, e é decisão do dono se
    vale: exige PARAMETRIZAR a cascata da aba que produz os números do modelo.
 6. **Modo A do `f0/07`** (base viva consultável no portal) — **ou a decisão escrita de que ele não
