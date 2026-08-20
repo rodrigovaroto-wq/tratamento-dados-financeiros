@@ -89,15 +89,78 @@ export function avisoTruncamentoPlanilha(
 
 // CSV simples → array de objetos (separador , ou ;). Suficiente para o fallback;
 // casos complexos (aspas com vírgula) o dono valida/ajusta no N8N.
+/**
+ * CSV → objetos, com ASPAS TRATADAS. Segue o RFC 4180 no que importa aqui.
+ *
+ * O QUE ESTAVA ERRADO, e é corrupção silenciosa de dado. A versão anterior era
+ * `linha.split(sep)`, sem noção de aspas. Num CSV brasileiro isso quebra no caso
+ * mais comum que existe — razão social com vírgula:
+ *
+ *     Empresa,"Silva, João & Cia",1000
+ *     split(',')  →  ['Empresa', '"Silva', ' João & Cia"', '1000']
+ *
+ * Quatro células onde há três. O cabeçalho é lido pelo mesmo split, então TODA
+ * coluna depois da que tem vírgula desliza uma casa, e os valores passam a ser
+ * gravados sob o rótulo errado. Não estoura, não avisa, e o número chega ao
+ * modelo debaixo de outro nome — a família de defeito que este projeto existe
+ * para não ter.
+ *
+ * A máquina de estados abaixo resolve os três casos do formato de uma vez:
+ * separador dentro de aspas, aspas escapadas (`""` vira `"`), e quebra de linha
+ * dentro de campo — esta última é legal no RFC e era impossível de tratar
+ * enquanto o código começava por `split(/\r?\n/)`.
+ *
+ * O SEPARADOR é detectado CONTANDO FORA DAS ASPAS, pelo mesmo motivo: numa linha
+ * como `Nome;"a,b,c";1` a vírgula aparece três vezes e o ponto e vírgula uma —
+ * contar sem olhar aspas elegia a vírgula e quebrava o arquivo inteiro.
+ */
+function contarForaDeAspas(texto, alvo) {
+  let n = 0, dentro = false;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (c === '"') {
+      if (dentro && texto[i + 1] === '"') { i++; continue; }
+      dentro = !dentro;
+    } else if (c === alvo && !dentro) n++;
+    else if ((c === '\n') && !dentro) break; // só o primeiro registro decide
+  }
+  return n;
+}
+
+function registrosDoCsv(texto, sep) {
+  const regs = [];
+  let campo = '', reg = [], dentro = false;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (dentro) {
+      if (c === '"') {
+        if (texto[i + 1] === '"') { campo += '"'; i++; } else dentro = false;
+      } else campo += c;
+      continue;
+    }
+    if (c === '"') { dentro = true; continue; }
+    if (c === sep) { reg.push(campo); campo = ''; continue; }
+    if (c === '\r') continue;
+    if (c === '\n') { reg.push(campo); regs.push(reg); reg = []; campo = ''; continue; }
+    campo += c;
+  }
+  reg.push(campo);
+  regs.push(reg);
+  // Registro totalmente vazio é linha em branco, não dado.
+  return regs.filter((r) => r.some((x) => x.trim() !== ''));
+}
+
 export function parseCsv(texto) {
-  const linhas = String(texto || '').split(/\r?\n/).filter((l) => l.trim() !== '');
-  if (linhas.length === 0) return [];
-  const sep = (linhas[0].match(/;/g) || []).length > (linhas[0].match(/,/g) || []).length ? ';' : ',';
-  const cabecalho = linhas[0].split(sep).map((c) => c.trim());
-  return linhas.slice(1).map((l) => {
-    const celulas = l.split(sep);
+  const src = String(texto || '');
+  if (src.trim() === '') return [];
+  const sep = contarForaDeAspas(src, ';') > contarForaDeAspas(src, ',') ? ';' : ',';
+  const regs = registrosDoCsv(src, sep);
+  if (regs.length === 0) return [];
+  const cabecalho = regs[0].map((c) => c.trim());
+  return regs.slice(1).map((celulas) => {
     const obj = {};
     cabecalho.forEach((c, i) => { obj[c || `col${i}`] = (celulas[i] ?? '').trim(); });
     return obj;
   });
 }
+

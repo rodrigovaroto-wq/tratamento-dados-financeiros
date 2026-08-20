@@ -158,29 +158,6 @@ export async function desativarPremissa(
     + "Os valores digitados ficam guardados: reativar devolve o que estava lá.");
 }
 
-export async function vincularLinha(
-  casoId: string, _prev: Resultado, formData: FormData,
-): Promise<Resultado> {
-  const supabase = await createClient();
-  const premissa = String(formData.get("premissa") || "");
-  const { data, error } = await supabase.rpc("fn_vincular_linha_premissa", {
-    p_caso_id: casoId,
-    p_secao_canonica: String(formData.get("secao_canonica") || "") || null,
-    p_rotulo: String(formData.get("rotulo") || ""),
-    p_entidade: String(formData.get("entidade") || "") || null,
-    // Vazio = desvincular. Linha sem premissa não é projetada, e o arquivo diz
-    // isso — é escolha legítima, não estado incompleto.
-    p_premissa: premissa || null,
-    p_autor: await autor(),
-    p_sazonalidade: String(formData.get("sazonalidade") || "") || null,
-  });
-  if (error) return erro(`Falha ao vincular a linha: ${error.message}`);
-  const r = recusa(data, "Vínculo recusado.");
-  if (r) return r;
-  revalidatePath(`/casos/${casoId}/modelagem`);
-  return ok("Linha vinculada.");
-}
-
 // Salvar a seção inteira de uma vez.
 //
 // POR QUE ISTO EXISTE: no v35 a tela listou 236 linhas, cada uma com o seu botão

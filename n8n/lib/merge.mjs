@@ -31,7 +31,19 @@ export function mergeClassification(fromName, fromAI) {
     periodo_ref: fromAI.periodo_ref ?? fromName.periodo_ref ?? null,
     assinado: fromAI.assinado ?? fromName.assinado ?? null,
     entidade: fromAI.entidade ?? fromName.entidade ?? null,
-    confianca: Math.max(fromName.confianca || 0, fromAI.confianca || 0),
+  // A CONFIANÇA É A DO VENCEDOR, NUNCA O MÁXIMO DAS DUAS.
+  //
+  // `Math.max` estava aqui e é um defeito de SEGURANÇA, não de estética: a
+  // confiança devolvida passa a decidir, em `fn_registrar_documento`, se abre
+  // `classificacao_pendente` (limiar do dial, 0,70). O caso concreto e alcançável:
+  // a IA responde DESCONHECIDO com confiança 0,9 — ela está SEGURA de que o
+  // documento é ilegível —, `tipo_taxonomia` vira `null`, o palpite do NOME vence
+  // com 0,5… e saía 0,9. Um documento que a IA declarou ilegível entrava
+  // classificado, sem humano nenhum olhar, apoiado num palpite de 0,5.
+  //
+  // Com o vencedor, os quatro casos ficam certos e o `max` some sem perda: quando
+  // as duas têm tipo, o vencedor JÁ É o de maior confiança, então vencedor === max.
+    confianca: winner.confianca ?? 0,
     fonte: winner === fromAI ? 'openai_conteudo' : 'nome_arquivo',
     justificativa: fromAI.justificativa || '',
   };

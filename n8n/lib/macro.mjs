@@ -270,4 +270,3 @@ export function mediaAnualGeometrica(retornosAnuais, janela) {
   return (Math.pow(fator, 1 / janela) - 1) * 100;
 }
 
-export const JANELAS_MEDIA = [3, 5, 10];

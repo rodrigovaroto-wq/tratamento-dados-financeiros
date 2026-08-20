@@ -410,5 +410,5 @@ como um roadmap deixa de orientar.
 | **sob demanda** | B4.2, B4.3 | — | pedido do comitê |
 
 **A primeira linha não é de engenharia** — e é por isso que este mapa começa por ela. O sistema tem
-133 migrations aplicadas, sete suítes e CI verde. Com o B0 fechado, **o que falta para ele valer é
+78 migrations aplicadas (numeradas até a `0133`), sete suítes e CI verde. Com o B0 fechado, **o que falta para ele valer é
 uma hora de execução**, não uma linha de código.

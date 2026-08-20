@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 615 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 298 · export 615 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,104 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, um defeito aberto
+
+**Decisão do dono, registrada:** quando o **mapa de dívida** e o **balanço** discordam, o **mapa
+manda** e o balanço é reconciliado. É o desenho que já estava em vigor; agora está escrito.
+
+### Bug 1 — a confiança da classificação era a MAIOR das duas, não a do vencedor
+
+`mergeClassification` escolhe entre o palpite do NOME do arquivo e o da IA por confiança, e devolvia
+`Math.max` das duas. O caso alcançável: a IA responde `DESCONHECIDO` **com confiança 0,9** — ela está
+segura de que o documento é ilegível —, o tipo vira `null`, o palpite do nome vence com **0,5**… e
+saía **0,9**. O limiar que abre `classificacao_pendente` é **0,70**. **Um documento que a IA declarou
+ilegível entrava classificado, sem humano nenhum olhar, apoiado num palpite de 0,5.**
+
+Corrigido para a confiança do VENCEDOR. Quando as duas têm tipo, o vencedor JÁ É o de maior
+confiança — então o `max` some sem perda em nenhum dos quatro ramos.
+
+### Bug 2 — `parseCsv` não tratava aspas, e isso é corrupção silenciosa
+
+Era `linha.split(sep)`, sem noção de aspas. Num CSV brasileiro quebra no caso mais comum que existe:
+
+```
+nome,obs,v
+Empresa,"Silva, João & Cia",1000
+    →  { nome: "Empresa", obs: '"Silva', v: 'João & Cia"' }
+```
+
+O valor **1000 desapareceu** e a coluna `v` recebeu um pedaço do nome. O cabeçalho é lido pelo mesmo
+`split`, então toda coluna depois da vírgula desliza uma casa. Sem estouro e sem aviso. Vale para
+todo upload `text/csv` e `text/plain`.
+
+Reescrito como máquina de estados: separador dentro de aspas, aspas escapadas (`""`), quebra de linha
+dentro do campo, e **detecção do separador contando FORA das aspas** — sem isso, `n;o` com `"a,b,c"`
+elegia a vírgula e quebrava o arquivo inteiro.
+
+### E a causa comum dos dois: ESPELHO SEM GUARDA
+
+As duas funções moram em DOIS lugares — a lib (`n8n/lib/*.mjs`), que os testes exercitam, e uma cópia
+LITERAL dentro do `build-workflow.mjs`, que é a que vai para o JSON e **a única que o n8n executa**.
+Nós de Code do n8n não importam módulo, então a duplicação é estrutural. O que dava para remover era
+o silêncio: corrigir a lib e esquecer a cópia deixava a suíte VERDE e a produção errada.
+
+`n8n/test/espelho-inline.test.mjs` **extrai a função do JSON commitado** e roda a mesma tabela de
+casos nas duas, exigindo resultado idêntico. Não compara texto — comparar fonte reprovaria por espaço
+em branco e convidaria a "consertar" formatando. Compara COMPORTAMENTO. Religamento medido:
+estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
+
+### O DEFEITO QUE FICA ABERTO, com reprodução exata e sem correção especulativa
+
+**Uma conta legítima de 9.200 some do modelo institucional.** No balanço da Vertentes Metalúrgica
+(2025), o bloco `ativo_circulante` do modelo tem **16 linhas somando 36.240** enquanto as folhas do
+documento são **17 somando exatamente 45.440** — o informado. A que falta é
+**"Matérias-primas e insumos" (9.200)**, e ela é conta, não subtotal.
+
+| | soma |
+|---|---|
+| folhas do documento (árvore por `secao`) | **45.440** = informado |
+| bloco do modelo | **36.240** |
+| diferença | **9.200** = "Matérias-primas e insumos" |
+
+**Onde está, e onde eu parei:** o descarte é `ehSubtotalEstrutural` (`modelo-institucional.ts:951`),
+que consulta `subtotaisEstruturais` — um conjunto com chave `(secao_canonica, rótulo)`. Conferi os
+dois detectores que o alimentam e **nenhum explica a marcação**: em `detectarSubtotaisPorOrdem` os
+seguintes de 9.200 dão 9.500 / 10.280 / 7.930, e em `detectarSubtotaisInformados` (B) os irmãos somam
+7.930 — nenhum bate com 9.200 dentro da tolerância.
+
+**A hipótese que sobra, e que NÃO confirmei:** `rotulosDeSubtotalInformado` detecta sobre a ABA
+INTEIRA de propósito (o comentário dela explica por quê), e o veredito é gravado por
+`(secao_canonica, rótulo)` — não por documento. Se for isso, uma coincidência aritmética no balanço de
+OUTRA empresa do grupo apaga a conta desta. O book tem 6 empresas × 3 exercícios, então há 17 outras
+chances de coincidência.
+
+> **Por que não corrigi:** este caminho decide quais contas entram no arquivo que vai a comitê, e a
+> chave grosseira pode ser deliberada (o comentário defende explicitamente detectar sobre a aba
+> inteira, para a aba analítica e o modelo darem o MESMO veredito). Estreitar a chave para incluir o
+> documento muda esse contrato. Mexer sem fechar a causa trocaria um defeito medido por um risco não
+> medido — e o resíduo de reconciliação já declara a diferença hoje, então o arquivo não mente: ele
+> mostra a conta faltando na linha de reconciliação em vez de escondê-la.
+
+### Limpeza: o que saiu, e por que tenho certeza
+
+| Removido | Prova |
+|---|---|
+| `vincularLinha` (server action, 22 linhas) | superseded por `salvarSecao` — o comentário do próprio arquivo conta a troca ("236 idas ao servidor, uma por clique"); zero referências. A RPC `fn_vincular_linha_premissa` **continua viva**, chamada por `salvarSecao` |
+| `JANELAS_MEDIA` (`n8n/lib/macro.mjs`) | declarada uma vez, referenciada em lugar nenhum. O portal tem a sua própria (`JANELAS_MEDIA_EXPORT`), independente |
+| `FILL_TOTAL` (`oria-marca.ts`) | idem |
+| `ChecklistItem` (`types.ts`) | idem |
+| `docs/pr-test.md` | o arquivo diz de si mesmo: *"Pode ser removido com segurança."* |
+
+**O que NÃO removi, e por quê:** `portal/scripts/_dump.mts` não é referenciado por nada, mas é
+ferramenta manual de depuração da mesma família das que o `PROMPT_ESPELHAR_MODELO_BASE` §6 documenta.
+"Sem referência" não é "nunca mais será usado", e a instrução era remover só o que é certo. Os outros
+~45 `export` sem uso externo são tipos e constantes usados DENTRO do próprio arquivo: tirar o
+`export` é cosmético e mexe em 20 arquivos para não corrigir defeito nenhum.
+
+> **Falso positivo que a varredura pegou e eu não segui:** `metadata` em `layout.tsx` aparece como
+> "sem uso" e é consumido pelo Next por convenção. Ferramenta de código morto que ninguém confere
+> apaga o que funciona.
 
 ## A DÍVIDA BANCÁRIA QUE ERA PROJETADA COMO GIRO (20/08, sessão 55)
 

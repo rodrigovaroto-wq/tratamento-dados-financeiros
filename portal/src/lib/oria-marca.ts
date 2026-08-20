@@ -93,7 +93,6 @@ export const preencher = (argb: string): ExcelJS.Fill =>
 
 export const FILL_SECAO = preencher(ORIA.grafite);
 export const FILL_SUBTOTAL = preencher(ORIA.cinza);
-export const FILL_TOTAL = preencher(ORIA.grafiteClaro);
 export const FILL_ENTRADA = preencher(ORIA.entrada);
 export const FILL_ANO_REALIZADO = preencher(ORIA.cinza);
 export const FILL_ANO_PROJETADO = preencher(ORIA.acento);
