@@ -1,7 +1,7 @@
 # Mapa de execução — daqui até o projeto fechado
 
-**Data:** 20/08/2026, depois do PR #153 · **Base conferida:** `main` em `75abcee`, CI verde
-(execução 352), última migration `0132`.
+**Data:** 20/08/2026, sessão 55 · **Base conferida:** `main` em `75abcee`, CI verde (execução 352).
+**Última migration:** `0133` — acrescentada nesta sessão, ver `ESTADO.md`.
 
 ## Como ler este arquivo
 
@@ -25,8 +25,8 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 | # | Frente | Estado | Quem destrava | Bloqueia |
 |---|---|---|---|---|
-| **B0** | **Instalação do banco** — 7 migrations (`0126`–`0132`) não aplicadas | 🔴 pendente | **dono** (20 min) | tudo o que é tela e medição |
-| **B1** | **A rodada real do book** num mandato novo + aceite | 🔴 nunca aconteceu | **dono** (~1 h) | 7 provas, B2 inteiro |
+| **B0** | **Instalação do banco** — 8 migrations (`0126`–`0133`) não aplicadas | 🔴 pendente | **dono** (20 min) | tudo o que é tela e medição |
+| **B1** | **A rodada real do book** num mandato novo + aceite | 🔴 nunca aconteceu | **dono** (~1 h) | 11 provas, B2 inteiro |
 | **B2** | Recalibrar cobertura, conferir fatiamento e subtotais | ⚪ não começou | engenharia, **depois** de B1 | a confiança nos números |
 | **B3** | **A autonomia sem rotulagem manual** — decisão em aberto | 🟠 contradição viva | **dono decide** | a F4 do `docs/03` |
 | **B4** | Dívidas do output (alavancas, três cenários completos, 25 perguntas) | 🟠 dimensionadas | dono prioriza | o valor no comitê |
@@ -58,10 +58,10 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 **O que não está, e é o assunto deste mapa:**
 
-- **Sete migrations no repositório e não no banco.** O dono confirmou apply até a `0125` em 19/08.
+- **Oito migrations no repositório e não no banco.** O dono confirmou apply até a `0125` em 19/08.
   Desde então entraram `0126` (golden set), `0127` (dial obedecido), `0128` (classificação contábil
   em sombra), `0129` (transcrição assistida), `0130` (golden rotulável), `0131` (instalação que se
-  declara) e `0132` (a sonda que não cresce). **Nenhuma foi aplicada.**
+  declara), `0132` (a sonda que não cresce) e `0133` (a seção que não fecha). **Nenhuma foi aplicada.**
 - **Ninguém rodou o book.** É o mesmo bloqueio de três sessões atrás, e a cada sessão ele fica mais
   caro: agora são **três checagens novas, um conserto de motor e três estágios inteiros** que nunca
   viram dado real.
@@ -72,8 +72,8 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 ## 3. B0 — A instalação (dono, ~20 minutos, faz tudo o mais ficar verdadeiro)
 
-**Por que este bloco vem antes de todos.** Sete migrations pendentes significam que sete rodadas de
-trabalho estão no repositório e **não no sistema**. E o sintoma disso é o pior possível para um
+**Por que este bloco vem antes de todos.** Oito migrations pendentes significam oito rodadas de
+trabalho no repositório e **não no sistema**. E o sintoma disso é o pior possível para um
 produto cuja proposta é honestidade sobre os próprios números: a tela **não quebra**. Mostra um
 traço, ou zero, ou trata todo mandato como ativo. Tem cara de funcionando.
 
@@ -92,6 +92,7 @@ db/migrations/0129_transcricao_humana_assistida.sql
 db/migrations/0130_golden_set_rotulavel.sql
 db/migrations/0131_instalacao_que_se_declara.sql
 db/migrations/0132_a_sonda_nao_cresce_com_o_dado.sql
+db/migrations/0133_a_secao_que_nao_fecha.sql
 ```
 
 ### Critério de pronto
@@ -132,7 +133,7 @@ escala mista) está fora do alcance de todas elas, por construção.
 Foi a falta desse par que deixou sair, em 06/08, um arquivo com seis números errados e as suítes
 verdes.
 
-### As sete coisas que só a rodada prova
+### As onze coisas que só a rodada prova
 
 | | O que ela prova | De onde vem | Como saber que passou |
 |---|---|---|---|
@@ -151,6 +152,7 @@ verdes.
 | 8 | A **classificação contábil em sombra** grava sugestão sem decidir — e a rubrica do documento real casa com `rubrica_classe` | `0128` |
 | 9 | A **transcrição assistida** não contamina: linha transcrita entra como `origem_valor` humana e não vira insumo de medição da máquina | `0129` |
 | 10 | O **dial obedecido** recusa auto-aceite em estágio interpretativo sem concordância medida — na prática, não só no teste | `0127` |
+| 11 | A **árvore da seção** fecha sobre PDF sujo — e quantas seções ela não consegue conferir por unidade mista ou rótulo duplicado, que é o número que diz se a extração real tem forma | `0133` |
 
 ### Critério de pronto
 
@@ -171,7 +173,8 @@ redescobri-los.
    `juntarBlocos` limpa emenda repetida e **nunca viu bloco de verdade**.
 3. **Conferir os subtotais impressos** (`0116`) — a única mudança daquela rodada que só a extração
    real prova.
-4. **Medir o custo por caso REAL** e comparar com o teto de lote. Hoje o custo é medido *offline*
+4. **Ler o que a `0133` disse na rodada.** A taxa de seções que fecham, por tipo de documento, é a primeira medida de qualidade de extração que não custa hora humana — e é o insumo para calibrar o limiar do item 1 por evidência em vez de por chute.
+5. **Medir o custo por caso REAL** e comparar com o teto de lote. Hoje o custo é medido *offline*
    (`medir-custo-book.mjs`, sem chamar a API); a `0115` grava o custo real em `lote_execucao` mas
    nenhuma execução real passou por lá ainda.
 

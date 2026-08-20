@@ -98,8 +98,8 @@ begin
   -- PL-alvo continua sendo atingido pelo resto do passivo.
   select count(distinct tipo) into v_n from reconciliacao
   where caso_id = v_caso and resultado = 'ok';
-  perform teste_assert(v_n = 6,
-    'as 6 checagens (4 A/B + duplicidade de rótulo + espelho intragrupo) chegam a "ok" com número',
+  perform teste_assert(v_n = 7,
+    'as 7 checagens (4 A/B + duplicidade + espelho intragrupo + árvore da seção) chegam a "ok" com número',
     format('%s tipo(s) com ok: %s', v_n,
       (select string_agg(distinct tipo, ', ') from reconciliacao
        where caso_id = v_caso and resultado = 'ok')));
