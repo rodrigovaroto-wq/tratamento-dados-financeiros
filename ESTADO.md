@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0130_golden_set_rotulavel.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 574 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 574 · transcrição 35 · tela cega 18 · e2e 46 · banco (833 asserts, 75 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -240,6 +240,31 @@ cujo gabarito já se conhece.
 > qualidade real, não uma estimativa dela**. Conservador é o lado certo para errar, e mesmo assim
 > quem lê "acerto 0,91" tem direito de saber que 0,91 é um piso. `fn_golden_congelar` devolve esse
 > aviso.
+
+**A TELA (`/autonomia/golden`).** Três páginas: as rodadas, o detalhe de uma rodada (progresso por
+tipo, inclusão da amostra com estrato sugerido, congelamento) e **a tela cega de um documento**. A
+tela cega carrega o **nome do arquivo e nada mais** — não o tipo, não a empresa, não o período, não
+os valores, e não o `resumo`/`justificativa`, que é o vazamento mais fácil de não notar: um resumo
+dizendo *"balanço da Alfa em 31/12/2024"* entrega as três primeiras métricas do `f0/06` numa frase. A
+tela **explica por que é cega**, porque sem isso esconder a resposta parece falta de informação em vez
+de método, e a primeira reação de quem rotula é procurar onde está o palpite.
+
+**A pergunta mais importante da tela é a das linhas livres:** *"o documento tem alguma linha que não
+está na lista acima?"*. Uma tabela só com as rubricas que a extração achou faria a extração parecer
+perfeita justamente nos documentos de que ela perdeu metade — quem rotula confirmaria as 40 listadas
+e nunca notaria as 3 que faltam. `n_ausente` só chega a ser medido por ali, então a pergunta é feita
+com palavra e em destaque, não deixada implícita numa linha vazia no fim.
+
+> **E existe uma suíte só para o vazamento, porque ele não tem sintoma** —
+> `portal/scripts/verificar-tela-cega.mts`, 18 asserts. Se a tela passar a mostrar o que a extração
+> leu, **tudo continua funcionando**: a página renderiza, os rótulos gravam, as cinco métricas saem,
+> o painel mostra números bonitos. Só que os números param de medir algo, porque quem rotula passou a
+> conferir em vez de julgar. Nenhum teste de comportamento pega isso — o comportamento fica correto.
+> A suíte então olha o que a página **pede ao banco**: extrai as colunas de cada `.select()` e reprova
+> as dez que respondem ao que o rótulo tem de julgar. Ela ignora comentários de propósito, senão a
+> própria explicação da regra reprovaria o arquivo — e a saída natural seria apagar a explicação.
+> Religamento medido: acrescentar `tipo_taxonomia, resumo, confianca` à consulta derruba 3 asserts;
+> dar um campo `valor_num` ao tipo `Linha` derruba outro (o defeito ali é ter *onde o dado pousar*).
 
 ### A TRANSCRIÇÃO HUMANA ASSISTIDA, e a contaminação que ela criaria (20/08, sessão 53) — `0129`
 
