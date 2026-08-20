@@ -1421,9 +1421,24 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
    que agora ele também não sobe **em silêncio**.
 5. **Bloco numérico dos três cenários lado a lado** — dimensionado abaixo, e é decisão do dono se
    vale: exige PARAMETRIZAR a cascata da aba que produz os números do modelo.
-6. **Modo A do `f0/07`** (base viva consultável no portal) — **ou a decisão escrita de que ele não
-   vem.** Está tomada por omissão há meses; o §2.4 do diagnóstico pede que se escreva qual das duas
-   é a verdade.
+6. ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
+   vem~~ — **fechado em 20/08 (sessão 53): ele VEIO.** `/casos/[id]/base` filtra por empresa,
+   período, conta e status de aceite atravessando os documentos, com proveniência e confiança de
+   cada número. As duas saídas que o §2.4 do diagnóstico pedia eram "construir" ou "escrever que não
+   vem"; a primeira foi tomada. Ver "O MODO A DO `f0/07` PASSA A EXISTIR". **O que ela
+   deliberadamente NÃO faz, e fica anotado:** não SOMA — consolidar demonstração é o que o export
+   paga com 574 verificações atrás, e uma tela que somasse produziria um segundo total para a mesma
+   pergunta, mais fraco que o do arquivo de comitê.
+
+**BLOQUEADO PELO TEXTO DA ENTREGA — não é engenharia, é transcrição que ninguém pode inventar:**
+
+6-b. **As outras 25 perguntas ao cliente** (`0120` entregou 11 das 36 do capítulo 10, com as 25
+   restantes nomeadas família a família). O que falta não é a máquina — `fn_sugerir_perguntas`, os
+   marcadores, o registro de envio com texto congelado e a aba já existem, e acrescentar pergunta é
+   uma linha de `seed`. Falta o **texto**: a `0120` declara que o enunciado é *VERBATIM da entrega*, e
+   o repositório não tem os códigos `1.1`–`8.3` / `A1`–`A12` do capítulo 10. Redigi-los "no espírito"
+   produziria 25 perguntas que o cliente recebe em nome da casa e que ninguém aprovou — e elas
+   pareceriam aprovadas, porque saem do sistema. **Destrava com o arquivo do capítulo 10 no repo.**
 
 **BLOQUEADOS POR DADO QUE O KIT BÁSICO NÃO COLETA** — não são trabalho, são espera:
 
@@ -1472,7 +1487,9 @@ Os itens acima, com o histórico de cada um:
   catorze abas, não só na `Premissas` (`0125`). Ver "A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ".
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do
   `docs/03` não começa.
-- **Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não vem.
+- ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
+  vem~~ — **fechado em 20/08 (sessão 53)**: `/casos/[id]/base`. Ver o item 6 da fila e a seção
+  "O MODO A DO `f0/07` PASSA A EXISTIR".
 
 ## Os comandos que funcionam
 
