@@ -59,6 +59,19 @@ de nível é uma **decisão versionada e reversível** (gera evento na trilha de
 7. **Trilha append-only** de tudo; toda decisão e toda mudança de autonomia é reversível.
 8. **Reconciliação não "reconcilia" o interpretativo.** No máximo *aproxima para humano*.
 
+**Onde o nº 2 é EXECUTADO (`db/migrations/0129_transcricao_humana_assistida.sql` + a planilha no
+portal, 20/08/2026).** Era o único dos oito sem código: o gate existia (a `0010`/`0020` abrem
+`arquivo_ilegivel`) e a saída existia em outra forma — reenviar ao cliente, rejeitar —, mas a
+transcrição assistida em si, que é a saída que serve quando o cliente **não tem** outra via do
+arquivo, nunca foi construída. Agora: `fn_registrar_transcricao_humana` grava as linhas digitadas
+numa **versão nova** do documento (doutrina da `0026`), com a versão ilegível preservada contando por
+que houve transcrição; as **guardas de extração não rodam** (elas pegam alucinação de modelo) e a
+confiança fica **nula**, porque não existe autoavaliação de pessoa; a pendência de ilegibilidade
+fecha com o **nome de quem transcreveu**; e `campo_extraido.origem_valor` mantém a linha transcrita
+**fora da medição da extração** — acerto de máquina medido contra número que uma pessoa digitou não
+mediria nada. A forma é planilha modelo (`portal/src/lib/transcricao.ts`), não formulário web:
+ninguém digita balanço em campo de tela se puder usar Excel.
+
 ## Regra de ouro
 
 > **Nada de subir o dial de autonomia de um estágio interpretativo sem golden set e

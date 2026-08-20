@@ -5,6 +5,8 @@ import { paginar } from "@/lib/supabase/paginar";
 import type { CampoExtraido, Documento } from "@/lib/types";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 import { aceitarExtracao } from "./actions";
+import { ClasseContabil } from "@/components/classe-contabil";
+import { TranscricaoHumana } from "@/components/transcricao-humana";
 
 function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
   if (valorNum != null) {
@@ -40,7 +42,7 @@ export default async function PlanilhaDocumentoPage({
     .select(
       `id, tipo_taxonomia, resumo, justificativa, confianca, fonte,
        entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-       documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
+       documento_versao(id, n_versao, nome_original, legibilidade, nota_legibilidade)`,
     )
     .eq("caso_id", id)
     .eq("id", docId)
@@ -51,7 +53,31 @@ export default async function PlanilhaDocumentoPage({
   }
 
   const doc = documentoRes.data as unknown as Documento;
-  const versao = doc.documento_versao?.[0];
+
+  // A VERSÃO VIGENTE, e não "a primeira que o PostgREST devolveu".
+  //
+  // Esta linha era `doc.documento_versao?.[0]`, e passava despercebida enquanto
+  // quase todo documento tinha uma versão só. A 0129 acabou com isso: transcrição
+  // humana SEMPRE cria uma versão nova (doutrina da 0026), e a versão antiga —
+  // aquela com zero linhas, a ilegível — continuaria sendo a exibida. O sintoma
+  // seria o pior possível para quem acabou de digitar um balanço à mão: a tela
+  // recarrega dizendo "nenhuma linha foi extraída deste documento" e oferecendo o
+  // bloco de transcrição de novo, como se o trabalho tivesse sido perdido.
+  //
+  // A regra é a da 0102 (`fn_versao_com_extracao`): a mais recente que TEM linha.
+  // Chamada em vez de reimplementada aqui, porque ela carrega uma distinção que
+  // "max(n_versao)" não tem — entre registrar a versão e extrair nela existe uma
+  // janela em que a mais recente está vazia, e nessa janela a tela deve continuar
+  // mostrando o último conteúdo que existe.
+  const vigenteRes = await supabase.rpc("fn_versao_com_extracao", { p_documento_id: docId });
+  const versoes = [...(doc.documento_versao ?? [])].sort(
+    (a, b) => (b.n_versao ?? 0) - (a.n_versao ?? 0),
+  );
+  // Nenhuma versão tem linha (documento ilegível, extração que falhou): cai na mais
+  // recente, que é onde a legibilidade a ser mostrada está — e é exatamente o estado
+  // em que o bloco de transcrição deve aparecer.
+  const versao =
+    versoes.find((v) => v.id === (vigenteRes.data as string | null)) ?? versoes[0];
 
   const camposRes = versao
     ? await paginar<CampoExtraido>((de, ate) =>
@@ -72,6 +98,56 @@ export default async function PlanilhaDocumentoPage({
     : { data: [] as CampoExtraido[], error: null, truncado: false };
 
   const campos = camposRes.data;
+
+  // A CLASSIFICAÇÃO CONTÁBIL DESTAS LINHAS (0128), em duas leituras de catálogo.
+  //
+  // Por que aqui e não por linha: uma chamada por linha seriam centenas de idas ao
+  // banco numa página que já pagina as linhas justamente porque um razão real
+  // passa de mil. As duas consultas abaixo trazem tudo de uma vez e são casadas em
+  // memória.
+  //
+  // Ambas são CATÁLOGO ou escopo de versão — não crescem com a mesa —, então não
+  // paginam, pela mesma regra das outras listas de catálogo do portal.
+  const [classesRes, sugRes, ovrRes] = await Promise.all([
+    supabase
+      .from("classe_contabil_catalogo")
+      .select("codigo, nome")
+      .eq("ativo", true)
+      .order("ordem"),
+    supabase
+      .from("campo_classe_sugerida")
+      .select("campo_extraido_id, classe_codigo, justificativa, criado_em")
+      .in("campo_extraido_id", campos.map((c) => c.id).slice(0, 1000))
+      .order("criado_em", { ascending: true }),
+    supabase
+      .from("campo_classe_override")
+      .select("campo_extraido_id, classe_final, autor, criado_em")
+      .in("campo_extraido_id", campos.map((c) => c.id).slice(0, 1000))
+      .order("criado_em", { ascending: true }),
+  ]);
+
+  const classes = (classesRes.data as { codigo: string; nome: string }[] | null) ?? [];
+  // A ÚLTIMA de cada linha é a que vale, nas duas tabelas: as duas são append-only,
+  // então reclassificar acrescenta em vez de substituir. Ordenado crescente acima e
+  // sobrescrevendo no laço, a última leitura ganha — que é a mais recente.
+  const sugestaoDe = new Map<string, { classe: string; justificativa: string }>();
+  for (const r of (sugRes.data ?? []) as {
+    campo_extraido_id: string; classe_codigo: string; justificativa: string;
+  }[]) {
+    sugestaoDe.set(r.campo_extraido_id, {
+      classe: r.classe_codigo,
+      justificativa: r.justificativa,
+    });
+  }
+  const overrideDe = new Map<string, { classe: string; autor: string }>();
+  for (const r of (ovrRes.data ?? []) as {
+    campo_extraido_id: string; classe_final: string; autor: string;
+  }[]) {
+    overrideDe.set(r.campo_extraido_id, { classe: r.classe_final, autor: r.autor });
+  }
+  const nClassificaveis = campos.filter((c) => sugestaoDe.has(c.id)).length;
+  const nDecididas = campos.filter((c) => overrideDe.has(c.id)).length;
+
   const grupos = agruparPorSecao(campos);
   const nAceitos = campos.filter((c) => c.status_aceite === "aceito").length;
   const tudoAceito = campos.length > 0 && nAceitos === campos.length;
@@ -98,6 +174,24 @@ export default async function PlanilhaDocumentoPage({
         </div>
       )}
 
+      {/* A SAÍDA DO GATE DE CAPTURA (fechamento #2 do docs/01), oferecida exatamente
+          nos dois estados em que o documento está parado: arquivo que não se lê, ou
+          extração que não trouxe linha nenhuma. Nos outros estados o bloco não
+          aparece — transcrição grava linha aceita sem guarda de extração, e
+          oferecê-la ao lado de uma extração que funcionou seria abrir um atalho para
+          digitar o número que fecha. */}
+      {(() => {
+        const ilegivel = !!versao?.legibilidade && versao.legibilidade !== "ok";
+        if (!versao || (!ilegivel && campos.length > 0)) return null;
+        return (
+          <TranscricaoHumana
+            casoId={id}
+            docId={docId}
+            motivo={ilegivel ? "ilegivel" : "sem_linhas"}
+          />
+        );
+      })()}
+
       {doc.resumo && (
         <div className="rounded border border-tinta-200 bg-tinta-50 p-3 text-sm text-tinta-600">
           <p className="mb-1 text-xs font-medium uppercase text-tinta-500">Resumo</p>
@@ -110,6 +204,21 @@ export default async function PlanilhaDocumentoPage({
           <h2 className="text-sm font-semibold text-tinta-600">
             Linhas extraídas ({campos.length}) — {nAceitos} de {campos.length} aceitas para o export
           </h2>
+          {/* 0128: o contador da classificação contábil fica SEPARADO do de aceite,
+              e não somado a ele, porque são duas decisões diferentes sobre a mesma
+              linha: aceitar o NÚMERO e classificar a NATUREZA dele. Somá-las daria
+              um "N de M decidido" que não corresponde a nada. */}
+          {nClassificaveis > 0 && (
+            <p className="text-xs text-tinta-500">
+              Classe contábil: {nDecididas} de {nClassificaveis} decididas por humano
+              {nClassificaveis < campos.length && (
+                <span className="text-tinta-400">
+                  {" "}
+                  · {campos.length - nClassificaveis} linhas não são de resultado
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         {campos.length > 0 && !tudoAceito && aceitarAction && (
@@ -166,6 +275,7 @@ export default async function PlanilhaDocumentoPage({
                       <th className="px-3 py-1.5">Página</th>
                       <th className="px-3 py-1.5">Confiança</th>
                       <th className="px-3 py-1.5">Status</th>
+                      <th className="px-3 py-1.5">Classe contábil</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-tinta-100">
@@ -203,6 +313,18 @@ export default async function PlanilhaDocumentoPage({
                             >
                               {aceito ? "aceito" : "pendente"}
                             </span>
+                          </td>
+                          <td className="px-3 py-1.5 align-top font-normal">
+                            <ClasseContabil
+                              casoId={id}
+                              docId={docId}
+                              campoId={linha.id}
+                              classes={classes}
+                              sugestao={sugestaoDe.get(linha.id)?.classe ?? null}
+                              justificativa={sugestaoDe.get(linha.id)?.justificativa ?? null}
+                              override={overrideDe.get(linha.id)?.classe ?? null}
+                              overridePor={overrideDe.get(linha.id)?.autor ?? null}
+                            />
                           </td>
                         </tr>
                       );

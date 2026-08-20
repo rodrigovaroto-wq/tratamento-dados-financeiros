@@ -50,6 +50,11 @@ export type Legibilidade = "ok" | "degradado" | "ilegivel";
 
 export interface DocumentoVersao {
   id: string;
+  // `n_versao` é o que permite distinguir a versão VIGENTE das anteriores. Um
+  // documento pode ter várias (reextração — 0026 — e transcrição humana — 0129),
+  // e o PostgREST devolve o embed sem ordem garantida: sem este campo, quem lê
+  // pega uma versão qualquer.
+  n_versao?: number;
   nome_original: string | null;
   legibilidade: Legibilidade | null;
   nota_legibilidade: string | null;

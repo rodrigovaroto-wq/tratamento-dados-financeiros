@@ -775,6 +775,259 @@ $$;
 COMMENT ON FUNCTION public.fn_avaliar_portao2(p_caso_id uuid) IS 'Portão 2 (0109): elegível quando não há pendência BLOQUEANTE sem decisão. O teto de ressalvas e a lista fechada de f0/04 deixaram de bloquear por decisão do dono — as contagens continuam publicadas como informação, e vão gravadas dentro da decisão de aprovação.';
 
 --
+-- Name: fn_classe_contabil_concordancia(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_classe_contabil_concordancia(p_caso_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with par as (
+    select s.classe_codigo as sugerida, o.classe_final as humana, s.rubrica_id
+    from campo_classe_sugerida s
+    join lateral (
+      select o.classe_final from campo_classe_override o
+      where o.campo_extraido_id = s.campo_extraido_id
+      order by o.criado_em desc, o.id desc limit 1
+    ) o on true
+    join campo_extraido ce on ce.id = s.campo_extraido_id
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d on d.id = dv.documento_id
+    where (p_caso_id is null or d.caso_id = p_caso_id)
+      and s.criado_em = (select max(s2.criado_em) from campo_classe_sugerida s2
+                          where s2.campo_extraido_id = s.campo_extraido_id)
+  ),
+  sem_veredito as (
+    select count(*) as n
+    from campo_classe_sugerida s
+    join campo_extraido ce on ce.id = s.campo_extraido_id
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d on d.id = dv.documento_id
+    where (p_caso_id is null or d.caso_id = p_caso_id)
+      and not exists (select 1 from campo_classe_override o
+                       where o.campo_extraido_id = s.campo_extraido_id)
+  )
+  select jsonb_build_object(
+    'com_veredito_humano', (select count(*) from par),
+    'concordaram', (select count(*) from par where sugerida = humana),
+    'concordancia', case when (select count(*) from par) = 0 then null
+                        else round((select count(*) from par where sugerida = humana)::numeric
+                                   / (select count(*) from par), 4) end,
+    'sem_veredito_humano', (select n from sem_veredito),
+    'rubricas_que_mais_erram', (
+      select coalesce(jsonb_agg(x order by x->>'erros' desc), '[]'::jsonb) from (
+        select jsonb_build_object(
+                 'padrao', rc.padrao, 'sugeria', rc.classe_codigo,
+                 'erros', count(*),
+                 'humano_disse', jsonb_agg(distinct par.humana)) as x
+        from par join rubrica_classe rc on rc.id = par.rubrica_id
+        where par.sugerida <> par.humana
+        group by rc.padrao, rc.classe_codigo
+        order by count(*) desc limit 10
+      ) t),
+    'como_ler', 'O denominador são as linhas com sugestao E override. Linha que ninguem olhou fica '
+                'FORA, contada a parte: "a maquina acertou" e "ninguem conferiu" sao estados '
+                'diferentes. E este numero NAO autoriza subir o dial por si: o teto de '
+                'classificacao_contabil e N1 para sempre (docs/01).'
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_classe_contabil_concordancia(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_classe_contabil_concordancia(p_caso_id uuid) IS 'A concordância humano-máquina na classe contábil — o "sinal de calibração" que o docs/05 pede, em número, mais as rubricas que mais erram. Da mesma família do achado da 0126 sobre a Classe A: o rótulo vem do trabalho que o analista já faz, sem rotulagem dedicada. Denominador = linhas com os DOIS lados; quem ninguém olhou fica fora e é contado à parte.';
+
+--
+-- Name: fn_classe_contabil_do_campo(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_classe_contabil_do_campo(p_campo_extraido_id uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with sug as (
+    select s.classe_codigo, s.confianca, s.justificativa, s.criado_em, s.nivel_autonomia
+    from campo_classe_sugerida s
+    where s.campo_extraido_id = p_campo_extraido_id
+    order by s.criado_em desc, s.id desc limit 1
+  ), ovr as (
+    select o.classe_final, o.autor, o.motivo, o.criado_em
+    from campo_classe_override o
+    where o.campo_extraido_id = p_campo_extraido_id
+    order by o.criado_em desc, o.id desc limit 1
+  )
+  select jsonb_build_object(
+    -- SÓ o override. A sugestão nunca vira fato — fechamento #5 do docs/01.
+    'classe_efetiva', (select classe_final from ovr),
+    'aceita_por_humano', exists (select 1 from ovr),
+    'sugestao', (select jsonb_build_object(
+                   'classe', classe_codigo, 'confianca', confianca,
+                   'justificativa', justificativa, 'em', criado_em,
+                   'nivel_quando_sugerida', nivel_autonomia) from sug),
+    'override', (select jsonb_build_object(
+                   'classe', classe_final, 'autor', autor, 'motivo', motivo,
+                   'em', criado_em) from ovr),
+    'humano_discordou', (select o.classe_final from ovr o) is not null
+                        and (select s.classe_codigo from sug s) is not null
+                        and (select o.classe_final from ovr o)
+                            <> (select s.classe_codigo from sug s)
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_classe_contabil_do_campo(p_campo_extraido_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_classe_contabil_do_campo(p_campo_extraido_id uuid) IS 'A classe contábil efetiva de uma linha — e ela é SÓ o override humano. A sugestão vem no mesmo objeto, separada, e nunca conta como fato: é o fechamento #5 do docs/01 aplicado à classificação, e a razão de o teto dela ser N1 para sempre. Mudar isso exige mudar esta função, de propósito.';
+
+--
+-- Name: fn_classe_contabil_sugerir(text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_canonica text, p_tipo_taxonomia text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_norm text;
+  v_r    record;
+begin
+  if not fn_secao_e_de_resultado(p_secao_canonica) then
+    return null;   -- a pergunta não se aplica; ausência de sugestão é a resposta
+  end if;
+
+  v_norm := fn_normalizar_texto(coalesce(p_chave, ''));
+  if v_norm = '' then
+    return null;
+  end if;
+
+  -- SUBTOTAL NÃO TEM RECORRÊNCIA PRÓPRIA: ela é herdada dos componentes. Mandar um
+  -- subtotal para revisão humana é pedir uma decisão que não existe.
+  --
+  -- E aqui vai a ressalva medida, porque ela importa: `fn_papel_linha` NÃO pega
+  -- todo subtotal impresso. Conferido — ela devolve `conta` para
+  -- "CUSTO DOS PRODUTOS VENDIDOS" e para "(-) DESPESAS OPERACIONAIS", que são
+  -- subtotais no documento. Então este filtro REDUZ o ruído sem eliminá-lo, e
+  -- dizer o contrário seria prometer o que ele não cumpre. Quando ela diz
+  -- `subtotal` ou `derivado`, aí é confiável — e é só nesse caso que se pula.
+  if fn_papel_linha(p_chave, p_tipo_taxonomia, null) in ('subtotal', 'derivado') then
+    return null;
+  end if;
+
+  -- Mais específico ganha, e o desempate é DECLARADO (especificidade, depois
+  -- comprimento do padrão): duas regras que casam a mesma linha não podem dar
+  -- resultado dependente da ordem em que o banco devolveu.
+  select rc.id, rc.classe_codigo, rc.confianca, rc.justificativa, rc.versao
+    into v_r
+  from rubrica_classe rc
+  where rc.ativo
+    and position(fn_normalizar_texto(rc.padrao) in v_norm) > 0
+    and (rc.secao_canonica is null or rc.secao_canonica = p_secao_canonica)
+    and (rc.tipo_taxonomia is null or rc.tipo_taxonomia = p_tipo_taxonomia)
+  order by rc.especificidade desc, length(rc.padrao) desc, rc.padrao
+  limit 1;
+
+  if v_r.id is null then
+    return jsonb_build_object(
+      'classe', 'revisar_manual',
+      'confianca', null,
+      'rubrica_id', null,
+      'justificativa', format('Nenhuma rubrica do catálogo casa com "%s". O docs/05 manda o default '
+                              'ser conservador: rubrica nova vai para revisão humana, não recebe '
+                              'palpite.', p_chave),
+      'versao_taxonomia', (select max(versao) from classe_contabil_catalogo));
+  end if;
+
+  return jsonb_build_object(
+    'classe', v_r.classe_codigo,
+    'confianca', v_r.confianca,
+    'rubrica_id', v_r.id,
+    'justificativa', v_r.justificativa,
+    'versao_taxonomia', v_r.versao);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_classe_contabil_sugerir(p_chave text, p_secao_canonica text, p_tipo_taxonomia text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_canonica text, p_tipo_taxonomia text) IS 'A regra determinística do docs/05 (condição 2: casa com padrão pré-registrado). NULL = a pergunta não se aplica (linha que não é de resultado); revisar_manual = ela se aplica e o catálogo não sabe. Confundir as duas produziria 3.195 pedidos de revisão em vez de 527. Desempate DECLARADO por especificidade: duas regras que casam a mesma linha não podem depender da ordem do banco.';
+
+--
+-- Name: fn_classificar_contabil(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_nivel   nivel_autonomia;
+  v_c       record;
+  v_sug     jsonb;
+  v_ultima  text;
+  v_n       int := 0;
+begin
+  select ea.nivel_atual into v_nivel
+  from estagio_autonomia ea where ea.estagio = 'classificacao_contabil';
+  -- Sem linha no dial (banco antigo), NÃO classifica. Ausência de configuração não
+  -- é permissão para escrever — mesma regra da 0041 e da 0127.
+  if v_nivel is null then
+    return 0;
+  end if;
+
+  for v_c in
+    select ce.id, ce.chave, ce.secao_canonica, d.tipo_taxonomia
+    from campo_extraido ce
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d on d.id = dv.documento_id
+    where ce.documento_versao_id = p_documento_versao_id
+      and fn_secao_e_de_resultado(ce.secao_canonica)
+  loop
+    v_sug := fn_classe_contabil_sugerir(v_c.chave, v_c.secao_canonica, v_c.tipo_taxonomia);
+    if v_sug is null then
+      continue;   -- a pergunta não se aplica a esta linha
+    end if;
+
+    select s.classe_codigo into v_ultima
+    from campo_classe_sugerida s
+    where s.campo_extraido_id = v_c.id
+    order by s.criado_em desc, s.id desc
+    limit 1;
+
+    if v_ultima is not null and v_ultima = (v_sug->>'classe') then
+      continue;   -- a regra não mudou de opinião: não há o que acrescentar
+    end if;
+
+    insert into campo_classe_sugerida
+      (campo_extraido_id, classe_codigo, confianca, rubrica_id, justificativa,
+       versao_taxonomia, nivel_autonomia)
+    values (v_c.id, v_sug->>'classe',
+            (v_sug->>'confianca')::numeric,
+            (v_sug->>'rubrica_id')::uuid,
+            v_sug->>'justificativa',
+            coalesce((v_sug->>'versao_taxonomia')::int, 1),
+            v_nivel);
+    v_n := v_n + 1;
+  end loop;
+
+  if v_n > 0 then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+      values ('sistema:classificacao_contabil', 'classificacao_contabil_sombra',
+              'documento_versao:'||p_documento_versao_id,
+              jsonb_build_object('sugestoes', v_n, 'nivel', v_nivel,
+                                 'porque', 'N0: registra a sugestao e nao influencia decisao '
+                                           '(docs/01). Nenhuma pendencia aberta, nenhum numero '
+                                           'do export tocado.'));
+  end if;
+  return v_n;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_classificar_contabil(p_documento_versao_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) IS 'Roda a classificação contábil sobre uma versão e REGISTRA a sugestão — a primeira metade de N0. A segunda ("não influencia decisão") é garantida por construção: só escreve em campo_classe_sugerida, não abre pendência e não entra em caminho de export. Append-only sem duplicar: grava só quando a regra muda de opinião, e aí a sequência é o histórico.';
+
+--
 -- Name: fn_coluna_entidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1816,6 +2069,17 @@ CREATE FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_or
     from docs
     join campo_extraido ce on ce.documento_versao_id = docs.versao_id
     where ce.valor_num is not null
+      -- 0129: LINHA TRANSCRITA POR HUMANO SAI DA MEDIÇÃO DA EXTRAÇÃO.
+      --
+      -- Ela mora na mesma tabela das linhas que a IA leu, e sem este filtro a
+      -- primeira transcrição contaminaria o número: linha digitada por uma pessoa
+      -- olhando o documento bate com o rótulo do golden set quase sempre, e o
+      -- acerto sairia creditado à EXTRAÇÃO. Pior, subiria justamente nos
+      -- documentos mais difíceis — os que precisaram de transcrição.
+      --
+      -- É a mesma armadilha que golden_documento.origem fecha do outro lado
+      -- (rotular book sintético mede o instrumento), reaparecendo por outra porta.
+      and ce.origem_valor = 'extracao'
     group by 1, 2, 3, 4, 5
   ),
   par as (
@@ -2672,6 +2936,27 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) IS 'Linhas lógicas do caso para a tela de Modelagem, com PAPEL (conta/subtotal/derivado/serie_mensal), valor COM SINAL, unidade/moeda, documentos de origem e marca de sobreposição. Existe como função porque campo_extraido não tem caso_id — o escopo por caso mora aqui. 0101: papel calculado uma vez por rótulo e sobreposição por join, para caber no statement_timeout. 0102: só a versão VIGENTE de cada documento (reextração deixava a versão superada somando ocorrência e podendo ditar o valor_ultimo).';
+
+--
+-- Name: fn_linhas_para_transcrever(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) RETURNS TABLE(conceito text, rotulo text, descricao text, secao_canonica text, checagem text, severidade text)
+    LANGUAGE sql STABLE
+    AS $$
+  select le.conceito, le.rotulo, le.descricao, le.secao_canonica, le.checagem,
+         coalesce(le.severidade, 'importante')
+  from documento d
+  join taxonomia_linha_exigida le on le.tipo_taxonomia = d.tipo_taxonomia
+  where d.id = p_documento_id and le.ativo
+  order by coalesce(le.severidade, 'importante'), le.conceito;
+$$;
+
+--
+-- Name: FUNCTION fn_linhas_para_transcrever(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) IS 'As linhas que o Portão 1 vai COBRAR deste tipo de documento, para a planilha de transcrição listá-las. São poucas de propósito: taxonomia_linha_exigida é o MÍNIMO exigido, não um gabarito de demonstração — planilha que fingisse listar todas as contas de um balanço estaria inventando a estrutura do documento do cliente. O resto vai em linha livre.';
 
 --
 -- Name: fn_marcar_falha_vista(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -5318,6 +5603,23 @@ begin
 
   perform fn_recomputar_completude(v_caso_id);
 
+  -- 0128: A CLASSIFICAÇÃO CONTÁBIL RODA AQUI, e o lugar não é arbitrário.
+  --
+  -- Este é o único ponto do pipeline que roda DEPOIS da extração — é o mesmo
+  -- motivo pelo qual a 0036 pôs a recomputação de completude nesta linha, e o
+  -- comentário dela explica: `Registrar Documento` liga em paralelo para a
+  -- completude e para a extração, então nada que dependa das linhas extraídas pode
+  -- morar antes daqui.
+  --
+  -- Pendurar aqui também é o que evita REIMPORTAR o workflow: um nó novo no canvas
+  -- exigiria isso do dono, e o n8n executa o JSON importado (merge não reimporta).
+  --
+  -- E é seguro por construção: em N0 a função só escreve em campo_classe_sugerida.
+  -- Não abre pendência, não toca em campo_extraido, não entra em caminho de export.
+  -- O pior caso dela é não fazer nada — se o dial não tiver a linha do estágio, ela
+  -- devolve zero e segue.
+  perform fn_classificar_contabil(p_documento_versao_id);
+
   return v_count;
 end;
 $_$;
@@ -5327,6 +5629,63 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) IS 'Grava campos extraídos e roda as três guardas (0043: fn_avaliar_guardas_extracao). Sinal 3 ("veio vazia") só dispara extracao_falhou quando p_tem_dado_financeiro não é explicitamente false — 0111: documento sem valor monetário por natureza (certidão, organograma, parecer de auditoria) não é falha de extração.';
+
+--
+-- Name: fn_registrar_classe_override(uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_sug   text;
+  v_id    uuid;
+begin
+  if not exists (select 1 from campo_extraido where id = p_campo_extraido_id) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Linha extraída %s não existe.', p_campo_extraido_id));
+  end if;
+  if not exists (select 1 from classe_contabil_catalogo
+                  where codigo = p_classe_final and ativo) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('"%s" não é uma classe contábil ativa. A taxonomia é FECHADA '
+                              '(docs/05) e mora em classe_contabil_catalogo — rótulo novo entra por '
+                              'linha de catálogo, não por chamada.', p_classe_final));
+  end if;
+  if coalesce(trim(p_autor), '') = '' then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Override sem autor não é override: o docs/05 exige autor no registro, e sem '
+                       'ele o sinal de calibração não tem de quem discordar.');
+  end if;
+
+  select s.classe_codigo into v_sug
+  from campo_classe_sugerida s
+  where s.campo_extraido_id = p_campo_extraido_id
+  order by s.criado_em desc, s.id desc limit 1;
+
+  insert into campo_classe_override
+    (campo_extraido_id, classe_final, sugestao_original, autor, motivo)
+  values (p_campo_extraido_id, p_classe_final, v_sug, trim(p_autor), p_motivo)
+  returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+    values (trim(p_autor), 'classe_contabil_override',
+            'campo_extraido:'||p_campo_extraido_id,
+            jsonb_build_object('sugestao', v_sug),
+            jsonb_build_object('classe_final', p_classe_final, 'motivo', p_motivo,
+                               'discordou', v_sug is not null and v_sug <> p_classe_final));
+
+  return jsonb_build_object('override_id', v_id, 'classe_final', p_classe_final,
+                            'sugestao_original', v_sug,
+                            'discordou', v_sug is not null and v_sug <> p_classe_final);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text) IS 'A decisão humana sobre a classe contábil (docs/05, "registro de override humano"). Append-only: reclassificar é linha nova. Recusa RETORNADA e não exceção, senão o registro da própria tentativa seria desfeito. Autor é obrigatório: sem ele o sinal de calibração não tem de quem discordar.';
 
 --
 -- Name: fn_registrar_diagnostico(uuid, uuid, text, boolean, text, text, text, public.legibilidade, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -5960,6 +6319,169 @@ CREATE FUNCTION public.fn_registrar_reconciliacao_b(p_caso_id uuid, p_entidade_i
 $$;
 
 --
+-- Name: fn_registrar_transcricao_humana(uuid, jsonb, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+declare
+  v_caso_id     uuid;
+  v_ref         text;
+  v_nome        text;
+  v_origem      origem_arquivo;
+  v_hash        text;
+  v_n_versao    int;
+  v_versao_id   uuid;
+  v_item        jsonb;
+  v_valor       numeric;
+  v_n           int := 0;
+  v_pendencia   uuid;
+  v_autor       text := nullif(trim(coalesce(p_autor, '')), '');
+begin
+  if v_autor is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Transcrição sem autor não é transcrição. O número passa a valer como fato '
+                       'na base de modelagem, e a única coisa que o sustenta é quem o digitou — '
+                       'não há guarda de máquina para isso, por desenho.');
+  end if;
+
+  if p_linhas is null or jsonb_typeof(p_linhas) <> 'array' or jsonb_array_length(p_linhas) = 0 then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Nenhuma linha para transcrever. Gravar uma versão vazia criaria um documento '
+                       'que parece transcrito e não tem número nenhum — o pior dos dois estados.');
+  end if;
+
+  select d.caso_id into v_caso_id from documento d where d.id = p_documento_id;
+  if v_caso_id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Documento %s não existe.', p_documento_id));
+  end if;
+
+  -- A versão de referência é a mais recente: dela saem o arquivo e o nome, para a
+  -- versão transcrita apontar para o MESMO arquivo. Transcrição não é upload novo.
+  select dv.arquivo_ref, dv.nome_original, dv.origem_arquivo, dv.hash
+    into v_ref, v_nome, v_origem, v_hash
+  from documento_versao dv
+  where dv.documento_id = p_documento_id
+  order by dv.n_versao desc
+  limit 1;
+
+  if v_ref is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'O documento não tem nenhuma versão. Transcrição é leitura nova de um arquivo '
+                       'que já está no sistema, não um caminho para inserir arquivo.');
+  end if;
+
+  -- VERSÃO NOVA (doutrina da 0026): a transcrição é uma leitura nova do mesmo
+  -- arquivo, e `fn_versao_com_extracao` (0102) a elege como vigente por ela ter
+  -- linhas. A versão ilegível fica preservada, com suas zero linhas, contando a
+  -- história de por que houve transcrição.
+  select coalesce(max(dv.n_versao), 0) + 1 into v_n_versao
+    from documento_versao dv where dv.documento_id = p_documento_id;
+
+  insert into documento_versao
+    (documento_id, n_versao, origem_arquivo, arquivo_ref, nome_original, hash,
+     legibilidade, nota_legibilidade)
+  values (p_documento_id, v_n_versao, v_origem, v_ref, v_nome, v_hash,
+          -- A legibilidade da VERSÃO TRANSCRITA é 'ok': o conteúdo dela é legível
+          -- por construção, foi uma pessoa que o escreveu. O arquivo continua
+          -- ilegível, e é a versão anterior que guarda esse fato.
+          'ok',
+          format('Transcrição humana assistida por %s%s', v_autor,
+                 case when p_motivo is null then '' else ' — ' || p_motivo end))
+  returning id into v_versao_id;
+
+  -- AS GUARDAS DE EXTRAÇÃO NÃO RODAM AQUI, e por isso não se chama
+  -- `fn_registrar_campos_extraidos`. Elas existem para pegar alucinação de modelo;
+  -- "quatro contas com o mesmo valor" é padrão suspeito numa saída de IA e é rotina
+  -- num balanço com contas zeradas. O que substitui a guarda é a AUTORIA.
+  for v_item in select * from jsonb_array_elements(p_linhas)
+  loop
+    v_valor := case when (v_item->>'valor_num') ~ '^-?\d+(\.\d+)?$'
+                    then (v_item->>'valor_num')::numeric else null end;
+
+    insert into campo_extraido
+      (documento_versao_id, chave, valor_texto, valor_num, unidade, moeda,
+       secao, secao_canonica, entidade_coluna, periodo_coluna, ordem,
+       origem_pagina, origem_linha,
+       -- Confiança NULA de propósito: confiança é a autoavaliação de um modelo, e
+       -- não existe equivalente para uma pessoa. Escrever 1.0 aqui inventaria uma
+       -- medida e faria a linha transcrita passar em qualquer filtro de limiar.
+       confianca,
+       origem_valor, status_aceite, aceito_por, aceito_em)
+    values (
+      v_versao_id,
+      coalesce(nullif(trim(v_item->>'chave'), ''), '(sem rótulo)'),
+      v_item->>'valor_texto', v_valor,
+      v_item->>'unidade', v_item->>'moeda',
+      v_item->>'secao', v_item->>'secao_canonica',
+      v_item->>'entidade_coluna', v_item->>'periodo_coluna',
+      case when (v_item->>'ordem') ~ '^\d+$' then (v_item->>'ordem')::int else v_n end,
+      case when (v_item->>'origem_pagina') ~ '^\d+$' then (v_item->>'origem_pagina')::int end,
+      v_item->>'origem_linha',
+      null,
+      'transcricao_humana', 'aceito', v_autor, now());
+    v_n := v_n + 1;
+  end loop;
+
+  -- A SAÍDA FOI TOMADA: a pendência de ilegibilidade fecha, com o nome de quem a
+  -- fechou. É isto que faz o gate deixar de ser "dead-end de pendência infinita" —
+  -- e é a única metade do fechamento #2 que já existia pela metade.
+  select p.id into v_pendencia from pendencia p
+   where p.documento_id = p_documento_id
+     and p.tipo = 'arquivo_ilegivel'
+     and p.estado <> 'resolvida'
+   limit 1;
+  if v_pendencia is not null then
+    update pendencia
+       set estado = 'resolvida', resolvida_em = now(),
+           resolvida_por = v_autor
+     where id = v_pendencia;
+  end if;
+
+  insert into decisao (caso_id, tipo, autor, motivo, payload)
+    values (v_caso_id, 'aprovacao', v_autor,
+      format('Transcrição humana assistida de "%s": %s linha(s) digitadas a partir do arquivo '
+             'ilegível.%s', coalesce(v_nome, '?'), v_n,
+             case when p_motivo is null then '' else ' Motivo: ' || p_motivo end),
+      jsonb_build_object('documento_id', p_documento_id, 'documento_versao_id', v_versao_id,
+                         'n_versao', v_n_versao, 'linhas', v_n,
+                         'pendencia_resolvida', v_pendencia));
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values (v_autor, 'transcricao_humana', 'documento_versao:'||v_versao_id,
+            jsonb_build_object('documento_id', p_documento_id, 'linhas', v_n,
+                               'n_versao', v_n_versao,
+                               'porque', 'fechamento #2 do docs/01: gate de captura COM SAIDA. As '
+                                         'guardas de extracao nao rodam (elas pegam alucinacao de '
+                                         'modelo) e origem_valor marca as linhas para elas nao '
+                                         'contaminarem a medicao da extracao.'));
+
+  -- A completude precisa saber que as linhas chegaram, senão o Portão 1 continua
+  -- cobrando o que já foi transcrito.
+  perform fn_recomputar_completude(v_caso_id);
+
+  -- E a classificação contábil roda sobre a versão nova, como roda sobre qualquer
+  -- outra: em sombra, sem tocar em nada.
+  perform fn_classificar_contabil(v_versao_id);
+
+  return jsonb_build_object(
+    'documento_versao_id', v_versao_id,
+    'n_versao', v_n_versao,
+    'linhas', v_n,
+    'pendencia_resolvida', v_pendencia,
+    'autor', v_autor);
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text) IS 'A SAÍDA do gate de captura (fechamento #2 do docs/01), que era o único dos oito fechamentos sem código. Cria VERSÃO NOVA (doutrina da 0026), marca as linhas com origem_valor=''transcricao_humana'' para elas não contaminarem fn_golden_campos, NÃO roda as guardas de extração (elas pegam alucinação de modelo, e acusariam um humano de fabricar por ler um balanço com contas zeradas), grava confiança NULA (não existe autoavaliação de pessoa) e resolve a pendência de ilegibilidade com o nome de quem a fechou.';
+
+--
 -- Name: fn_registrar_uso_lote(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6262,6 +6784,23 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_sazonalidade_do_caso(p_caso_id uuid) IS 'Curva de sazonalidade DERIVADA do faturamento mensal do caso (0040), 12 meses ou nada. 0102: só a versão vigente do documento de faturamento — versão superada faria o mesmo mês entrar duas vezes e deslocaria a curva que reparte o valor anual no Excel.';
+
+--
+-- Name: fn_secao_e_de_resultado(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_secao_e_de_resultado(p_secao text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select coalesce(p_secao, '') in
+    ('receita_bruta', 'custos', 'despesas_operacionais', 'resultado_financeiro', 'impostos_lucro');
+$$;
+
+--
+-- Name: FUNCTION fn_secao_e_de_resultado(p_secao text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_secao_e_de_resultado(p_secao text) IS 'Esta seção canônica é de RESULTADO? Só nelas a pergunta "é recorrente?" faz sentido — conta de balanço não é recorrente nem não recorrente. Medido: rodar a classificação em tudo produziria 3.195 pedidos de revisão contra 527 linhas em que a pergunta cabe, e um analista que recebe 3.195 itens não revisa nenhum (é a lição do Sinal 1 refinado na 0022).';
 
 --
 -- Name: fn_soma_secao(uuid, text[], text, text, text[], text[]); Type: FUNCTION; Schema: public; Owner: -
@@ -6700,6 +7239,8 @@ CREATE TABLE public.campo_extraido (
     periodo_coluna text,
     ordem integer,
     moeda text,
+    origem_valor text DEFAULT 'extracao'::text NOT NULL,
+    CONSTRAINT campo_extraido_origem_valor_check CHECK ((origem_valor = ANY (ARRAY['extracao'::text, 'transcricao_humana'::text]))),
     CONSTRAINT campo_extraido_status_aceite_check CHECK ((status_aceite = ANY (ARRAY['pendente'::text, 'aceito'::text, 'com_ressalva'::text])))
 );
 
@@ -6744,6 +7285,12 @@ COMMENT ON COLUMN public.campo_extraido.ordem IS 'Posição 0-based da linha no 
 --
 
 COMMENT ON COLUMN public.campo_extraido.moeda IS 'Moeda ISO da linha (BRL/USD/EUR/…), herdada do documento pela extração; null = desconhecida, NUNCA presumida. Separada de `unidade`, que é a ESCALA (milhar/unidade). Somar linhas de moedas diferentes é erro pelo câmbio inteiro — ver o cabeçalho da 0035.';
+
+--
+-- Name: COLUMN campo_extraido.origem_valor; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.campo_extraido.origem_valor IS 'De onde veio o número: extracao (a IA leu o arquivo) ou transcricao_humana (uma pessoa digitou, porque o arquivo não se lê — fechamento #2 do docs/01). Existe porque sem ela a primeira transcrição contaminaria fn_golden_campos: linha digitada por humano bate com o rótulo do golden set quase sempre, e o acerto sairia creditado à EXTRAÇÃO. Default extracao: nenhuma linha existente muda de significado.';
 
 --
 -- Name: fn_valor_conceito(uuid, text[], text[]); Type: FUNCTION; Schema: public; Owner: -
@@ -7087,6 +7634,48 @@ end;
 $$;
 
 --
+-- Name: campo_classe_override; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.campo_classe_override (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    campo_extraido_id uuid NOT NULL,
+    classe_final text NOT NULL,
+    sugestao_original text,
+    autor text NOT NULL,
+    motivo text,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: TABLE campo_classe_override; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.campo_classe_override IS 'A decisão humana sobre a classe contábil de uma linha (docs/05, "registro de override humano"). Append-only: reclassificar é linha nova, e a sequência é o histórico. É ele o SINAL DE CALIBRAÇÃO da F4 — cada override é um ponto de concordância medida que o uso do produto gera sozinho, sem rotulagem dedicada.';
+
+--
+-- Name: campo_classe_sugerida; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.campo_classe_sugerida (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    campo_extraido_id uuid NOT NULL,
+    classe_codigo text NOT NULL,
+    confianca numeric,
+    rubrica_id uuid,
+    justificativa text NOT NULL,
+    versao_taxonomia integer NOT NULL,
+    nivel_autonomia public.nivel_autonomia NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: TABLE campo_classe_sugerida; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.campo_classe_sugerida IS 'A sugestão da classificação contábil, com a justificativa que o docs/05 exige de toda sugestão. AUSÊNCIA de linha aqui significa "a pergunta não se aplica" — linha de balanço não é recorrente nem não recorrente. nivel_autonomia guarda em que nível o estágio estava quando sugeriu, porque uma sugestão feita em N0 e uma feita em N1 têm peso diferente na leitura de quem confere.';
+
+--
 -- Name: caso; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7191,6 +7780,25 @@ CREATE TABLE public.checklist_item_status (
     documento_id uuid,
     atualizado_em timestamp with time zone DEFAULT now() NOT NULL
 );
+
+--
+-- Name: classe_contabil_catalogo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.classe_contabil_catalogo (
+    codigo text NOT NULL,
+    nome text NOT NULL,
+    descricao text NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    ordem integer NOT NULL
+);
+
+--
+-- Name: TABLE classe_contabil_catalogo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.classe_contabil_catalogo IS 'A taxonomia contábil fechada do docs/05 (recorrente, nao_recorrente, extraordinario, candidato_ajuste_ebitda, revisar_manual). TABELA e não enum de propósito: acrescentar um sexto rótulo deve custar uma linha de seed, não uma migration que altera tipo — no Postgres alterar enum não remove valor e não volta atrás. Mesma escolha que a 0038 fez com premissas.';
 
 --
 -- Name: decisao; Type: TABLE; Schema: public; Owner: -
@@ -7692,6 +8300,42 @@ CREATE TABLE public.reconciliacao (
 );
 
 --
+-- Name: rubrica_classe; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.rubrica_classe (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    padrao text NOT NULL,
+    classe_codigo text NOT NULL,
+    secao_canonica text,
+    tipo_taxonomia text,
+    especificidade integer DEFAULT 100 NOT NULL,
+    confianca numeric DEFAULT 1.0 NOT NULL,
+    justificativa text NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: TABLE rubrica_classe; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.rubrica_classe IS 'Mapeamento rubrica -> classe contábil: a "condição 2" do docs/05 ("bate com um padrão conhecido pré-registrado"). Semeado SÓ com rubricas medidas nos dois books e no caso de referência — rubrica imaginada criaria uma segunda régua. justificativa é NOT NULL porque o docs/05 exige justificativa em toda sugestão, e a da sugestão é a da regra que a produziu.';
+
+--
+-- Name: COLUMN rubrica_classe.padrao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.rubrica_classe.padrao IS 'Casado contra fn_normalizar_texto(chave) por CONTENÇÃO de substring normalizada. Não é regex: padrão de regex em tabela editável por humano é a porta para uma linha quebrar a classificação do caso inteiro sem ninguém saber por quê.';
+
+--
+-- Name: COLUMN rubrica_classe.especificidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.rubrica_classe.especificidade IS 'Desempate: mais ALTO ganha. Regra com seção e tipo declarados é mais específica que a genérica, e sem desempate declarado duas regras que casam a mesma linha dariam resultado dependente da ordem em que o banco devolveu — que é a forma de erro que a 0125 corrigiu na proveniência.';
+
+--
 -- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7808,6 +8452,20 @@ CREATE TABLE public.taxonomia_tipo_documento (
 COMMENT ON TABLE public.taxonomia_tipo_documento IS 'Taxonomia documental v1 (f0/03). Kit Básico = obrigatorio; Variáveis = complementar.';
 
 --
+-- Name: campo_classe_override campo_classe_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_override
+    ADD CONSTRAINT campo_classe_override_pkey PRIMARY KEY (id);
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_sugerida
+    ADD CONSTRAINT campo_classe_sugerida_pkey PRIMARY KEY (id);
+
+--
 -- Name: campo_extraido campo_extraido_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7862,6 +8520,13 @@ ALTER TABLE ONLY public.caso_premissa
 
 ALTER TABLE ONLY public.checklist_item_status
     ADD CONSTRAINT checklist_item_status_pkey PRIMARY KEY (id);
+
+--
+-- Name: classe_contabil_catalogo classe_contabil_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.classe_contabil_catalogo
+    ADD CONSTRAINT classe_contabil_catalogo_pkey PRIMARY KEY (codigo);
 
 --
 -- Name: decisao decisao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -8060,6 +8725,13 @@ ALTER TABLE ONLY public.reconciliacao
     ADD CONSTRAINT reconciliacao_pkey PRIMARY KEY (id);
 
 --
+-- Name: rubrica_classe rubrica_classe_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.rubrica_classe
+    ADD CONSTRAINT rubrica_classe_pkey PRIMARY KEY (id);
+
+--
 -- Name: taxonomia_linha_exigida taxonomia_linha_exigida_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8095,10 +8767,28 @@ ALTER TABLE ONLY public.taxonomia_tipo_documento
     ADD CONSTRAINT taxonomia_tipo_documento_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: idx_campo_classe_override_campo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campo_classe_override_campo ON public.campo_classe_override USING btree (campo_extraido_id, criado_em DESC);
+
+--
+-- Name: idx_campo_classe_sugerida_campo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campo_classe_sugerida_campo ON public.campo_classe_sugerida USING btree (campo_extraido_id, criado_em DESC);
+
+--
 -- Name: idx_campo_docversao; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_campo_docversao ON public.campo_extraido USING btree (documento_versao_id);
+
+--
+-- Name: idx_campo_extraido_origem_valor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campo_extraido_origem_valor ON public.campo_extraido USING btree (documento_versao_id, origem_valor);
 
 --
 -- Name: idx_campo_extraido_versao_ordem; Type: INDEX; Schema: public; Owner: -
@@ -8245,6 +8935,12 @@ CREATE INDEX idx_periodo_caso ON public.periodo USING btree (caso_id);
 CREATE INDEX idx_reconciliacao_caso ON public.reconciliacao USING btree (caso_id);
 
 --
+-- Name: idx_rubrica_classe_unica; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_rubrica_classe_unica ON public.rubrica_classe USING btree (padrao, COALESCE(secao_canonica, ''::text), COALESCE(tipo_taxonomia, ''::text), versao);
+
+--
 -- Name: golden_campo trg_golden_campo_congelada; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8267,6 +8963,41 @@ CREATE TRIGGER trg_golden_rodada_imutavel BEFORE UPDATE ON public.golden_rodada 
 --
 
 CREATE TRIGGER trg_golden_rotulo_congelada BEFORE INSERT OR UPDATE ON public.golden_rotulo FOR EACH ROW EXECUTE FUNCTION public.fn_golden_rodada_congelada();
+
+--
+-- Name: campo_classe_override campo_classe_override_campo_extraido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_override
+    ADD CONSTRAINT campo_classe_override_campo_extraido_id_fkey FOREIGN KEY (campo_extraido_id) REFERENCES public.campo_extraido(id) ON DELETE CASCADE;
+
+--
+-- Name: campo_classe_override campo_classe_override_classe_final_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_override
+    ADD CONSTRAINT campo_classe_override_classe_final_fkey FOREIGN KEY (classe_final) REFERENCES public.classe_contabil_catalogo(codigo);
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_campo_extraido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_sugerida
+    ADD CONSTRAINT campo_classe_sugerida_campo_extraido_id_fkey FOREIGN KEY (campo_extraido_id) REFERENCES public.campo_extraido(id) ON DELETE CASCADE;
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_classe_codigo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_sugerida
+    ADD CONSTRAINT campo_classe_sugerida_classe_codigo_fkey FOREIGN KEY (classe_codigo) REFERENCES public.classe_contabil_catalogo(codigo);
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_rubrica_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campo_classe_sugerida
+    ADD CONSTRAINT campo_classe_sugerida_rubrica_id_fkey FOREIGN KEY (rubrica_id) REFERENCES public.rubrica_classe(id);
 
 --
 -- Name: campo_extraido campo_extraido_documento_versao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -8556,6 +9287,13 @@ ALTER TABLE ONLY public.reconciliacao
     ADD CONSTRAINT reconciliacao_periodo_id_fkey FOREIGN KEY (periodo_id) REFERENCES public.periodo(id);
 
 --
+-- Name: rubrica_classe rubrica_classe_classe_codigo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.rubrica_classe
+    ADD CONSTRAINT rubrica_classe_classe_codigo_fkey FOREIGN KEY (classe_codigo) REFERENCES public.classe_contabil_catalogo(codigo);
+
+--
 -- Name: taxonomia_linha_exigida taxonomia_linha_exigida_tipo_taxonomia_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8568,6 +9306,42 @@ ALTER TABLE ONLY public.taxonomia_linha_exigida
 
 ALTER TABLE ONLY public.taxonomia_linha_localizador
     ADD CONSTRAINT taxonomia_linha_localizador_exigencia_id_fkey FOREIGN KEY (exigencia_id) REFERENCES public.taxonomia_linha_exigida(id) ON DELETE CASCADE;
+
+--
+-- Name: campo_classe_override; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.campo_classe_override ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: campo_classe_override campo_classe_override_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY campo_classe_override_insert ON public.campo_classe_override FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: campo_classe_override campo_classe_override_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY campo_classe_override_read ON public.campo_classe_override FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: campo_classe_sugerida; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.campo_classe_sugerida ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY campo_classe_sugerida_insert ON public.campo_classe_sugerida FOR INSERT TO authenticated WITH CHECK (true);
+
+--
+-- Name: campo_classe_sugerida campo_classe_sugerida_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY campo_classe_sugerida_read ON public.campo_classe_sugerida FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: campo_extraido; Type: ROW SECURITY; Schema: public; Owner: -
@@ -8658,6 +9432,18 @@ ALTER TABLE public.checklist_item_status ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY checklist_item_status_authenticated_all ON public.checklist_item_status TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: classe_contabil_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.classe_contabil_catalogo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: classe_contabil_catalogo classe_contabil_catalogo_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY classe_contabil_catalogo_read ON public.classe_contabil_catalogo FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: decisao; Type: ROW SECURITY; Schema: public; Owner: -
@@ -8936,6 +9722,18 @@ ALTER TABLE public.reconciliacao ENABLE ROW LEVEL SECURITY;
 CREATE POLICY reconciliacao_authenticated_all ON public.reconciliacao TO authenticated USING (true) WITH CHECK (true);
 
 --
+-- Name: rubrica_classe; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.rubrica_classe ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: rubrica_classe rubrica_classe_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rubrica_classe_read ON public.rubrica_classe FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: taxonomia_linha_exigida; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -9026,6 +9824,30 @@ GRANT ALL ON FUNCTION public.fn_avaliar_guardas_extracao(p_documento_versao_id u
 --
 
 GRANT ALL ON FUNCTION public.fn_avaliar_portao2(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_classe_contabil_concordancia(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_classe_contabil_concordancia(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_classe_contabil_do_campo(p_campo_extraido_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_classe_contabil_do_campo(p_campo_extraido_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_classe_contabil_sugerir(p_chave text, p_secao_canonica text, p_tipo_taxonomia text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_canonica text, p_tipo_taxonomia text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_classificar_contabil(p_documento_versao_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_conferir_lote(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
@@ -9202,6 +10024,12 @@ GRANT ALL ON FUNCTION public.fn_linhas_do_tipo(p_caso_id uuid, p_codigo text) TO
 GRANT ALL ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_linhas_para_transcrever(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_marcar_falha_vista(p_falha_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -9330,6 +10158,12 @@ GRANT ALL ON FUNCTION public.fn_reconferir_caso(p_caso_id uuid, p_autor text) TO
 GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id uuid, p_campos jsonb, p_nivel public.nivel_autonomia, p_falha_motivo text, p_tem_dado_financeiro boolean) TO authenticated;
 
 --
+-- Name: FUNCTION fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -9353,6 +10187,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: ACL; Schema: public; Owner: -
@@ -9383,6 +10223,12 @@ GRANT ALL ON FUNCTION public.fn_rotulo_estrutural(p_chave text, p_tokens_exigido
 --
 
 GRANT ALL ON FUNCTION public.fn_sazonalidade_do_caso(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_secao_e_de_resultado(p_secao text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_secao_e_de_resultado(p_secao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_sugerir_perguntas(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
@@ -9453,6 +10299,22 @@ GRANT ALL ON FUNCTION public.fn_versao_com_extracao(p_documento_id uuid) TO auth
 GRANT ALL ON FUNCTION public.fn_vincular_linha_premissa(p_caso_id uuid, p_secao_canonica text, p_rotulo text, p_entidade text, p_premissa text, p_autor text, p_sazonalidade text) TO authenticated;
 
 --
+-- Name: TABLE campo_classe_override; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.campo_classe_override TO anon;
+GRANT ALL ON TABLE public.campo_classe_override TO authenticated;
+GRANT ALL ON TABLE public.campo_classe_override TO service_role;
+
+--
+-- Name: TABLE campo_classe_sugerida; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.campo_classe_sugerida TO anon;
+GRANT ALL ON TABLE public.campo_classe_sugerida TO authenticated;
+GRANT ALL ON TABLE public.campo_classe_sugerida TO service_role;
+
+--
 -- Name: TABLE caso; Type: ACL; Schema: public; Owner: -
 --
 
@@ -9499,6 +10361,14 @@ GRANT ALL ON TABLE public.caso_premissa TO service_role;
 GRANT ALL ON TABLE public.checklist_item_status TO anon;
 GRANT ALL ON TABLE public.checklist_item_status TO authenticated;
 GRANT ALL ON TABLE public.checklist_item_status TO service_role;
+
+--
+-- Name: TABLE classe_contabil_catalogo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.classe_contabil_catalogo TO anon;
+GRANT ALL ON TABLE public.classe_contabil_catalogo TO authenticated;
+GRANT ALL ON TABLE public.classe_contabil_catalogo TO service_role;
 
 --
 -- Name: TABLE decisao; Type: ACL; Schema: public; Owner: -
@@ -9659,6 +10529,14 @@ GRANT ALL ON TABLE public.periodo TO service_role;
 GRANT ALL ON TABLE public.reconciliacao TO anon;
 GRANT ALL ON TABLE public.reconciliacao TO authenticated;
 GRANT ALL ON TABLE public.reconciliacao TO service_role;
+
+--
+-- Name: TABLE rubrica_classe; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.rubrica_classe TO anon;
+GRANT ALL ON TABLE public.rubrica_classe TO authenticated;
+GRANT ALL ON TABLE public.rubrica_classe TO service_role;
 
 --
 -- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -

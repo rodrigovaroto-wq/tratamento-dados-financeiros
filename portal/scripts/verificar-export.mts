@@ -44,6 +44,7 @@ import type ExcelJS from "exceljs";
 import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
 import {
   buildExportWorkbook, chaveCronologicaPeriodo, consolidarNomesDeEntidade,
+  entidadePeriodoDaLinha,
   rotulosDeSubtotalInformado, tipoColunaNaoEntidade, type DocumentoParaExport,
 } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
@@ -6154,6 +6155,61 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       }
     }
   }
+}
+
+// ---- 36: A REGRA DE ENTIDADE E PERÍODO DA LINHA, agora compartilhada -------
+//
+// Esta regra era uma linha solta dentro do laço do `buildExportWorkbook`, e virou
+// função exportada quando a tela do Modo A (`f0/07`) passou a precisar da mesma
+// resposta. A extração é comportamento-preservador — os 568 asserts anteriores
+// continuam verdes —, mas ela agora tem DOIS leitores, e é isso que a torna digna
+// de assert próprio: um defeito aqui erra o arquivo entregue E a tela, do mesmo
+// jeito, e a coincidência das duas telas esconderia o erro em vez de expô-lo.
+{
+  const ctx = { entidade: "ALFA INDÚSTRIA LTDA", periodo: "2024" };
+  const canon = new Map([["Componentes", "VERTENTES COMPONENTES AUTOMOTIVOS LTDA."]]);
+  const linha = (entidade_coluna: string | null, periodo_coluna: string | null) =>
+    entidadePeriodoDaLinha({ entidade_coluna, periodo_coluna }, ctx, canon);
+
+  // Sem coluna: a linha é do documento. É o caso da esmagadora maioria.
+  const base = linha(null, null);
+  checar(base.entidade === "ALFA INDÚSTRIA LTDA" && base.periodo === "2024",
+    "(36) linha sem coluna herda entidade e período do DOCUMENTO",
+    `${base.entidade} / ${base.periodo}`);
+
+  // Com `entidade_coluna` (0014): a linha é da COLUNA. Se isto cair, um balanço
+  // combinado joga as linhas de todas as empresas na entidade principal.
+  const comEnt = linha("Certsys Tecn", null);
+  checar(comEnt.entidade === "Certsys Tecn",
+    "(36) `entidade_coluna` VENCE a entidade do documento (0014)", comEnt.entidade);
+
+  // …e o apelido da coluna é promovido à razão social quando o caso conhece uma só
+  // que case. Sem isso a mesma empresa vira duas — duas colunas no arquivo, dois
+  // chips no filtro da tela —, e qualquer soma do grupo a conta 2x (teste v27).
+  const promovido = linha("Componentes", null);
+  checar(promovido.entidade === "VERTENTES COMPONENTES AUTOMOTIVOS LTDA.",
+    "(36) o apelido da coluna é promovido à razão social canônica", promovido.entidade);
+
+  // Com `periodo_coluna` (0017): a linha é do período da COLUNA, FORMATADO — o
+  // valor vem cru da extração, e sem formatar o mesmo exercício aparece em dois
+  // rótulos diferentes ("31/12/2023" e "2023").
+  const comPer = linha(null, "31/12/2023");
+  checar(comPer.periodo === "2023",
+    "(36) `periodo_coluna` vence o período do documento, JÁ CONSOLIDADO (0017)",
+    comPer.periodo);
+
+  // Os dois eixos são ORTOGONAIS: combinado comparativo tem entidade × período.
+  const ambos = linha("Certsys Tecn", "2023");
+  checar(ambos.entidade === "Certsys Tecn" && ambos.periodo === "2023",
+    "(36) entidade e período da coluna valem JUNTOS, sem um anular o outro",
+    `${ambos.entidade} / ${ambos.periodo}`);
+
+  // Coluna vazia não é coluna: string vazia cai no documento, não numa entidade
+  // chamada "". (O `||` da regra existe por isso; um `??` deixaria passar.)
+  const vazia = linha("", null);
+  checar(vazia.entidade === "ALFA INDÚSTRIA LTDA",
+    "(36) `entidade_coluna` vazia cai no documento, não numa empresa sem nome",
+    vazia.entidade);
 }
 
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);

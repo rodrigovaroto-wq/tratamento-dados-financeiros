@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0127_o_dial_obedecido.sql` |
+| **Última migration** | `db/migrations/0129_transcricao_humana_assistida.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (735 asserts, 72 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 574 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -188,6 +188,238 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### A TRANSCRIÇÃO HUMANA ASSISTIDA, e a contaminação que ela criaria (20/08, sessão 53) — `0129`
+
+**O fechamento nº 2 do `docs/01` era o único dos oito sem código:** *"gate de captura com saída. Input
+ilegível/corrompido → transcrição humana assistida, nunca dead-end de pendência infinita."* O gate
+existia (a `0010`/`0020` abrem `arquivo_ilegivel`) e a saída existia em outra forma (reenviar ao
+cliente, rejeitar) — **a transcrição assistida em si nunca foi construída**, e ela é a saída que serve
+quando o cliente não tem outra via do arquivo, que em reestruturação é o caso comum.
+
+**A forma: planilha modelo preenchida pelo analista** (decisão do dono). Não é tela de digitação linha
+a linha — ninguém digita balanço em formulário web se puder usar Excel. A planilha é ferramenta de
+mesa e não sai da casa, então pode usar o vocabulário interno sem o cuidado que a `0122` teve de dar
+às perguntas ao cliente.
+
+#### A CONTAMINAÇÃO QUE ELA CRIARIA, e que a mesma migration fecha
+
+Linha transcrita mora em `campo_extraido`, do lado das que a IA leu — e `fn_golden_campos` mede a
+extração comparando `campo_extraido` com o rótulo do golden set. **Sem uma distinção, a primeira
+transcrição inflaria a medição da autonomia:** linha que uma pessoa digitou olhando o documento bate
+com o rótulo quase sempre, e o acerto sairia creditado à extração — subindo justamente nos documentos
+difíceis, que são os transcritos. É a armadilha que a `0126` fechou com `golden_documento.origem`,
+reaparecendo por outra porta.
+
+`campo_extraido.origem_valor` distingue `extracao` de `transcricao_humana`, e `fn_golden_campos` passa
+a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas transcritas voltam como
+`n_exato = 2` — acerto perfeito da IA sobre um número que ela nunca leu.
+
+#### TRÊS DECISÕES
+
+1. **A transcrição é VERSÃO NOVA** (doutrina da `0026`), e `fn_versao_com_extracao` a elege como
+   vigente por ela ter linhas. A versão ilegível fica preservada, com zero linhas, contando por que
+   houve transcrição.
+2. **As guardas de extração NÃO rodam.** Elas pegam alucinação de modelo: "quatro contas com o mesmo
+   valor" é padrão suspeito numa saída de IA e é **rotina** num balanço com contas zeradas. Acusar de
+   fabricação alguém que está lendo o papel seria guarda que só atrapalha. O que substitui é a
+   **autoria** — e a confiança fica **NULA**, porque não existe autoavaliação de pessoa e escrever 1,0
+   inventaria uma medida.
+3. **A linha nasce aceita, e isso não fura a anti-ancoragem.** O fechamento #5 exige aceite humano
+   antes de um número entrar na base; aqui o humano não aceita a sugestão de uma máquina — ele é a
+   **fonte**. Pedir que ele "aceite" o que ele mesmo digitou seria clique cerimonial, e cerimônia vazia
+   é o que ensina a clicar sem ler.
+
+**E a pendência de ilegibilidade fecha com o nome de quem transcreveu**, não por "sistema". É isso que
+faz o gate deixar de ser dead-end.
+
+### O MODO A DO `f0/07` PASSA A EXISTIR — a base viva (20/08, sessão 53)
+
+**O modo declarado PRINCIPAL da entrega não tinha tela.** O `f0/07` define dois modos: *"Modo A — base
+viva no portal · **principal**"*, onde o analista *"consulta/filtra os dados curados na tela, por
+Entidade × Período × Conta/linha financeira"*, cada valor carregando *"sua proveniência e seu status de
+aceite"*; e o Modo B, o export. **Só o B existia.** O portal tinha a tela de UM documento e o `.xlsx`;
+perguntar *"o que a base diz sobre Estoques na Alfa em 2024"* exigia abrir os documentos um a um ou
+baixar o arquivo — que é o outro modo.
+
+`/casos/[id]/base` responde isso: filtra por empresa, período, conta e status de aceite, atravessando
+os documentos, com o arquivo/página/confiança de cada número ao lado.
+
+#### A DECISÃO CENTRAL DELA É NÃO SOMAR
+
+Consolidar demonstração é difícil de um jeito que não aparece — subtotal impresso que não pode entrar
+na soma, conta sem vocabulário que herda a seção dos irmãos, escalas diferentes no mesmo caso, o mesmo
+rótulo sendo subtotal num documento e conta-folha em outro. **O export paga esse preço com 574
+verificações atrás dele.** Uma tela que somasse "para ficar mais útil" produziria um SEGUNDO total para
+a mesma pergunta, mais fraco — e dois números para o mesmo fato é o defeito que este sistema mais
+persegue. Então não há total, não há AV% e não há conversão de escala: cada linha aparece como o
+documento a trouxe, com a unidade ao lado, e **a tela diz isso com palavra**, porque sem a frase alguém
+somaria a coluna no olho e a culpa pareceria dele.
+
+O que ela faz que o arquivo não faz: responder rápido, com proveniência à mão, e sobre a base **viva** —
+incluindo as linhas **pendentes** de aceite, que o export por doutrina não trata como fato. Pendente é
+visualmente distinto *e* escrito com palavra (exigência do `f0/07`; cor sozinha não carrega significado).
+
+#### UMA REGRA QUE VIROU COMPARTILHADA, em vez de uma segunda implementação
+
+"De qual empresa e de qual período é este número" não é trivial: a linha pode pertencer à COLUNA
+(`entidade_coluna`, `0014`; `periodo_coluna`, `0017`) e não ao documento, o apelido da coluna precisa
+ser promovido à razão social (`consolidarNomesDeEntidade`), e o período vem cru da extração. Isso era
+**uma linha solta dentro do laço do `buildExportWorkbook`** — suficiente enquanto o arquivo era o único
+leitor. A tela faz a mesma pergunta, então a regra saiu para `entidadePeriodoDaLinha`, exportada, e o
+export passou a chamá-la: **uma regra, dois leitores**, em vez de duas respostas para a mesma pergunta
+em duas telas.
+
+**A extração é comportamento-preservador** (os 568 asserts anteriores seguem verdes) e ganhou 6 asserts
+próprios — porque com dois leitores um defeito ali erra o arquivo E a tela do mesmo jeito, e a
+coincidência esconderia o erro em vez de expô-lo. **Religamento medido:** trocar o `||` por `??` derruba
+o assert da coluna vazia; ignorar `periodo_coluna` derruba os asserts novos **e 4 antigos**, que é a
+prova de que a função extraída é de fato a que o arquivo usa.
+
+#### O TETO DA LISTA SAI DO SILÊNCIO
+
+A tela mostra 500 linhas e **diz** quantas ficaram fora, com o que fazer a respeito. Cortar em 500 sem
+dizer nada seria o mesmo defeito do teto do PostgREST que este código já matou duas vezes: a lista abre
+normalmente e parece completa. O teto da paginação também é anunciado, e erro de leitura é dito em vez
+de virar tela vazia — vazio por erro de RLS mente com mais convicção que um erro, porque quem lê conclui
+que a base está vazia.
+
+### A PLANILHA DE TRANSCRIÇÃO, e a versão que a tela não estava mostrando (20/08, sessão 53)
+
+**A `0129` ficou com a função no banco e nada a chamando** — foi dito no commit dela e aqui. Isto é a
+outra metade: a planilha existe, se baixa, se preenche e se reimporta.
+
+`portal/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
+Não é conveniência: o formato é um contrato entre quem escreve e quem lê, e as duas pontas são este
+sistema. Separá-las é a receita para a coluna mudar de lugar num lado e não no outro, e o sintoma disso
+não é um erro — é uma transcrição importada com o valor na coluna da unidade.
+
+**A rota** `GET /casos/[id]/documentos/[docId]/transcricao` devolve o `.xlsx` com o padrão de resposta
+da rota de export. **A ação** `importarTranscricao` lê a planilha e chama `fn_registrar_transcricao_humana`.
+**O bloco na tela** aparece em exatamente dois estados — arquivo ilegível, ou zero linha extraída — e em
+nenhum outro: transcrição grava linha aceita sem passar por guarda, e oferecê-la ao lado de uma extração
+que funcionou seria abrir um atalho para digitar o número que fecha.
+
+#### A GUARDA DO ID DO DOCUMENTO, que o banco não teria como fazer
+
+A planilha carrega o `documento_id` na célula `B5`, e a importação **recusa** quando ele não é o desta
+tela. O banco não tem como pegar isso: para ele chegariam linhas plausíveis, e ele as gravaria
+**aceitas, com o nome de quem enviou**. Enviar a planilha do balanço da Alfa na tela da Beta é erro
+plausível de quem tem seis arquivos abertos, e o resultado seria um número errado *com autor* — o pior
+tipo, porque ninguém volta a desconfiar de número que tem dono. A recusa nomeia os dois ids, para a
+próxima tentativa não ser chute.
+
+**E a recusa é DEVOLVIDA, não lançada** — ao contrário das outras duas ações desta tela. Não é
+inconsistência: é a doutrina de recusa retornada da casa uma camada acima, e aqui ela é obrigatória por
+um motivo mecânico. O Next redige a mensagem de erro de server action em produção; um `throw` entregaria
+um digest opaco no lugar de *"esta planilha foi gerada para outro documento"*. Nas outras ações o texto
+da recusa é secundário; aqui o texto **é** o produto — ele diz o que fazer com o arquivo que a pessoa
+tem na mão.
+
+#### O DEFEITO QUE UM ASSERT PEGOU: `(1.234)` valia −1,234
+
+A leitura de número em pt-BR tinha a regra *"se tem vírgula, o ponto é milhar; sem vírgula, o ponto pode
+ser decimal"*. Ela está **certa** para `0.75` e **catastrófica** para `1.234`, que é como um PDF
+brasileiro escreve mil duzentos e trinta e quatro: o valor voltava três ordens de grandeza abaixo, num
+número plausível o bastante para passar por revisão. É o mesmo defeito do `parseFloat` um passo adiante.
+
+O ramo novo lê ponto separando grupos de **exatamente três dígitos** como milhar. A ambiguidade é real e
+a escolha está escrita: numa planilha em pt-BR o decimal se escreve com vírgula, e o grupo de três
+dígitos é o que distingue — `1.5`, `0.75` e `12.34` seguem sendo decimais, porque nenhum milhar tem um
+ou dois dígitos depois do ponto. Nove asserts travam essa fronteira, para a regra não ser "simplificada"
+para *tira todo ponto* e `0,75` virar 75.
+
+#### E A TELA MOSTRAVA A VERSÃO ERRADA — defeito que a `0129` tornou agudo
+
+A página do documento lia `doc.documento_versao?.[0]`: a primeira que o PostgREST devolvesse, sem ordem
+garantida. Passava despercebido enquanto quase todo documento tinha uma versão só. **Transcrição sempre
+cria versão nova** (doutrina da `0026`) — então a versão exibida continuaria sendo a antiga, a ilegível,
+a de zero linhas. O sintoma seria o pior possível para quem acabou de digitar um balanço à mão: a tela
+recarrega dizendo *"nenhuma linha foi extraída deste documento"* e oferecendo o bloco de transcrição de
+novo, como se o trabalho tivesse sido perdido. Agora a página chama `fn_versao_com_extracao` (`0102`) —
+a regra canônica, não uma reimplementação em TypeScript.
+
+**A suíte nova, `portal/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
+— gera, escreve o `.xlsx`, lê de volta —, porque o defeito que interessa é a coluna que muda de lugar em
+uma das duas metades. Ela também trava que sobra em branco **não** vira linha: a planilha traz 60 linhas
+livres, e se elas entrassem, cada transcrição gravaria dezenas de linhas afirmando que o documento diz
+zero.
+
+### A CLASSIFICAÇÃO CONTÁBIL PASSA A EXISTIR, em sombra (20/08, sessão 53) — `0128`
+
+**O oitavo estágio do MVP, com zero linha de código até aqui.** O `docs/03` o lista entre os que
+"existem na v1 de produção", o `docs/05` o especifica por inteiro (taxonomia de cinco rótulos, as
+três condições de auto-aceite, o registro de justificativa, o de override) e a `0002` o semeia no
+dial em N0. Medido antes de escrever: `grep` por `classe_contabil` devolvia UMA ocorrência — a coluna
+que a `0126` criou no golden set para guardar o rótulo humano de uma classificação que ninguém
+produzia. O EBITDA saía do modelo como linha de cascata, sem nenhuma noção de recorrência.
+
+**É a forma inversa do defeito que a `0127` corrigiu:** lá o dial subestimava a realidade; aqui ele
+afirmava a existência de um estágio.
+
+**Como ela decide (decisão do dono): regra determinística sobre rubrica.** Sem IA e sem custo por
+documento — é a condição 2 do próprio `docs/05` ("bate com um padrão conhecido pré-registrado"). O
+catálogo de rubricas é DADO versionado, com `justificativa` NOT NULL por linha, e rubrica que ele não
+conhece cai em `revisar_manual`.
+
+**Em N0 ela não toca em número nenhum do arquivo entregue** (decisão do dono, e leitura fiel de N0): a
+sugestão fica registrada e visível, o `.xlsx` sai idêntico. É isso que permite acumular concordância
+sem risco de número errado chegar a comitê.
+
+| | |
+|---|---|
+| Cobertura medida | **207 de 231** rubricas reais de resultado — **89,6%** |
+| O que sobra em `revisar_manual` | 6 subtotais impressos que a `fn_papel_linha` não reconhece, 1 genuinamente ambíguo, e artefato de fixture |
+| O seed | **corrigido duas vezes pela medição**, e as duas correções estão comentadas nele |
+
+#### TRÊS DECISÕES, E A PRIMEIRA VEIO DE UMA MEDIÇÃO
+
+1. **A regra só roda em linha de RESULTADO.** Conta de balanço não é recorrente nem não recorrente —
+   a pergunta não se aplica. Rodar em tudo produziria **3.195 pedidos de revisão** contra 527 linhas
+   em que a pergunta cabe, e analista que recebe 3.195 itens não revisa nenhum (é a lição do Sinal 1
+   refinado na `0022`). **Ausência de sugestão é a forma de dizer "não se aplica"** — não entra um
+   sexto rótulo para isso.
+2. **A taxonomia é TABELA, não enum.** Os cinco do `docs/05`, sem acréscimo. Mas como linhas de
+   catálogo, porque um sexto rótulo deve custar uma linha de seed e não uma migration que altera tipo.
+3. **O auto-aceite do `docs/05` NÃO foi implementado, e o motivo é uma contradição do documento.** Ele
+   tem uma seção sobre "quando a sugestão pode ser aceita" e abre dizendo "teto N1 **para sempre**".
+   Sob teto N1 auto-aceite não pode acontecer: as três condições descrevem o que a própria doutrina do
+   documento proíbe. Implementá-las seria código morto que alguém liga por engano.
+
+#### E A TELA, porque sem ela a 0128 não produz sinal nenhum
+
+A classe é por LINHA extraída, então a casa dela é `/casos/[id]/documentos/[docId]` — a mesma tela em
+que o analista já aceita linha por linha. Mesmo lugar, mesmo ato.
+
+- **A sugestão e a decisão ficam visíveis ao mesmo tempo.** Se a tela substituísse uma pela outra, o
+  analista perderia de vista do que está discordando, e quem abrisse depois não saberia que houve
+  discordância — que é justamente o dado.
+- **A sugestão NÃO vem pré-selecionada no seletor**, e é deliberado: seletor que abre preenchido com o
+  palpite da máquina transforma "confirmar" no caminho de menor esforço, e o aceite deixa de ser
+  decisão para virar clique de inércia. É a anti-ancoragem aplicada à interface.
+- **Sem sugestão, sem seletor.** Linha de balanço não recebe um controle que convidaria a inventar
+  resposta.
+- **O contador da classe é SEPARADO do de aceite**, não somado: aceitar o NÚMERO e classificar a
+  NATUREZA dele são duas decisões sobre a mesma linha, e somá-las daria um "N de M" que não
+  corresponde a nada.
+
+E a **concordância medida** entrou no `/autonomia`, ao lado do dial que ela governa — com a tabela das
+**rubricas que mais erram**, que é por onde se ajusta o catálogo. Corrigir a regra é mais barato e mais
+auditável que reclassificar linha a linha para sempre.
+
+#### O SINAL DE CALIBRAÇÃO, e é ele que faz isto valer a pena em sombra
+
+`fn_classe_contabil_concordancia` responde a frase do `docs/05` — *"o override vira sinal de
+calibração"* — em número, e nomeia **as rubricas que mais erram**, que é o que permite ajustar a
+REGRA e não o modelo. É a mesma economia que a `0126` achou na Classe A: o rótulo vem do trabalho que
+o analista já faz, sem rotulagem dedicada. Denominador = linhas com os dois lados; quem ninguém olhou
+fica fora e é contado à parte.
+
+#### E UMA RESSALVA MEDIDA, que está escrita no corpo da regra
+
+`fn_papel_linha` **não pega todo subtotal impresso** — conferido: ela devolve `conta` para "CUSTO DOS
+PRODUTOS VENDIDOS" e para "(-) DESPESAS OPERACIONAIS". Então o filtro de subtotal reduz o ruído sem
+eliminá-lo, e dizer o contrário seria prometer o que ele não cumpre.
 
 ### O DIAL PASSA A SER OBEDECIDO — e dois níveis declarados eram falsos (20/08, sessão 53) — `0127`
 
