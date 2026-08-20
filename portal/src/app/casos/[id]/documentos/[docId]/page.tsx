@@ -5,6 +5,7 @@ import { paginar } from "@/lib/supabase/paginar";
 import type { CampoExtraido, Documento } from "@/lib/types";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 import { aceitarExtracao } from "./actions";
+import { ClasseContabil } from "@/components/classe-contabil";
 
 function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
   if (valorNum != null) {
@@ -72,6 +73,56 @@ export default async function PlanilhaDocumentoPage({
     : { data: [] as CampoExtraido[], error: null, truncado: false };
 
   const campos = camposRes.data;
+
+  // A CLASSIFICAÇÃO CONTÁBIL DESTAS LINHAS (0128), em duas leituras de catálogo.
+  //
+  // Por que aqui e não por linha: uma chamada por linha seriam centenas de idas ao
+  // banco numa página que já pagina as linhas justamente porque um razão real
+  // passa de mil. As duas consultas abaixo trazem tudo de uma vez e são casadas em
+  // memória.
+  //
+  // Ambas são CATÁLOGO ou escopo de versão — não crescem com a mesa —, então não
+  // paginam, pela mesma regra das outras listas de catálogo do portal.
+  const [classesRes, sugRes, ovrRes] = await Promise.all([
+    supabase
+      .from("classe_contabil_catalogo")
+      .select("codigo, nome")
+      .eq("ativo", true)
+      .order("ordem"),
+    supabase
+      .from("campo_classe_sugerida")
+      .select("campo_extraido_id, classe_codigo, justificativa, criado_em")
+      .in("campo_extraido_id", campos.map((c) => c.id).slice(0, 1000))
+      .order("criado_em", { ascending: true }),
+    supabase
+      .from("campo_classe_override")
+      .select("campo_extraido_id, classe_final, autor, criado_em")
+      .in("campo_extraido_id", campos.map((c) => c.id).slice(0, 1000))
+      .order("criado_em", { ascending: true }),
+  ]);
+
+  const classes = (classesRes.data as { codigo: string; nome: string }[] | null) ?? [];
+  // A ÚLTIMA de cada linha é a que vale, nas duas tabelas: as duas são append-only,
+  // então reclassificar acrescenta em vez de substituir. Ordenado crescente acima e
+  // sobrescrevendo no laço, a última leitura ganha — que é a mais recente.
+  const sugestaoDe = new Map<string, { classe: string; justificativa: string }>();
+  for (const r of (sugRes.data ?? []) as {
+    campo_extraido_id: string; classe_codigo: string; justificativa: string;
+  }[]) {
+    sugestaoDe.set(r.campo_extraido_id, {
+      classe: r.classe_codigo,
+      justificativa: r.justificativa,
+    });
+  }
+  const overrideDe = new Map<string, { classe: string; autor: string }>();
+  for (const r of (ovrRes.data ?? []) as {
+    campo_extraido_id: string; classe_final: string; autor: string;
+  }[]) {
+    overrideDe.set(r.campo_extraido_id, { classe: r.classe_final, autor: r.autor });
+  }
+  const nClassificaveis = campos.filter((c) => sugestaoDe.has(c.id)).length;
+  const nDecididas = campos.filter((c) => overrideDe.has(c.id)).length;
+
   const grupos = agruparPorSecao(campos);
   const nAceitos = campos.filter((c) => c.status_aceite === "aceito").length;
   const tudoAceito = campos.length > 0 && nAceitos === campos.length;
@@ -110,6 +161,21 @@ export default async function PlanilhaDocumentoPage({
           <h2 className="text-sm font-semibold text-tinta-600">
             Linhas extraídas ({campos.length}) — {nAceitos} de {campos.length} aceitas para o export
           </h2>
+          {/* 0128: o contador da classificação contábil fica SEPARADO do de aceite,
+              e não somado a ele, porque são duas decisões diferentes sobre a mesma
+              linha: aceitar o NÚMERO e classificar a NATUREZA dele. Somá-las daria
+              um "N de M decidido" que não corresponde a nada. */}
+          {nClassificaveis > 0 && (
+            <p className="text-xs text-tinta-500">
+              Classe contábil: {nDecididas} de {nClassificaveis} decididas por humano
+              {nClassificaveis < campos.length && (
+                <span className="text-tinta-400">
+                  {" "}
+                  · {campos.length - nClassificaveis} linhas não são de resultado
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         {campos.length > 0 && !tudoAceito && aceitarAction && (
@@ -166,6 +232,7 @@ export default async function PlanilhaDocumentoPage({
                       <th className="px-3 py-1.5">Página</th>
                       <th className="px-3 py-1.5">Confiança</th>
                       <th className="px-3 py-1.5">Status</th>
+                      <th className="px-3 py-1.5">Classe contábil</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-tinta-100">
@@ -203,6 +270,18 @@ export default async function PlanilhaDocumentoPage({
                             >
                               {aceito ? "aceito" : "pendente"}
                             </span>
+                          </td>
+                          <td className="px-3 py-1.5 align-top font-normal">
+                            <ClasseContabil
+                              casoId={id}
+                              docId={docId}
+                              campoId={linha.id}
+                              classes={classes}
+                              sugestao={sugestaoDe.get(linha.id)?.classe ?? null}
+                              justificativa={sugestaoDe.get(linha.id)?.justificativa ?? null}
+                              override={overrideDe.get(linha.id)?.classe ?? null}
+                              overridePor={overrideDe.get(linha.id)?.autor ?? null}
+                            />
                           </td>
                         </tr>
                       );

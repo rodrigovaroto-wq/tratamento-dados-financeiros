@@ -230,6 +230,27 @@ sem risco de número errado chegar a comitê.
    Sob teto N1 auto-aceite não pode acontecer: as três condições descrevem o que a própria doutrina do
    documento proíbe. Implementá-las seria código morto que alguém liga por engano.
 
+#### E A TELA, porque sem ela a 0128 não produz sinal nenhum
+
+A classe é por LINHA extraída, então a casa dela é `/casos/[id]/documentos/[docId]` — a mesma tela em
+que o analista já aceita linha por linha. Mesmo lugar, mesmo ato.
+
+- **A sugestão e a decisão ficam visíveis ao mesmo tempo.** Se a tela substituísse uma pela outra, o
+  analista perderia de vista do que está discordando, e quem abrisse depois não saberia que houve
+  discordância — que é justamente o dado.
+- **A sugestão NÃO vem pré-selecionada no seletor**, e é deliberado: seletor que abre preenchido com o
+  palpite da máquina transforma "confirmar" no caminho de menor esforço, e o aceite deixa de ser
+  decisão para virar clique de inércia. É a anti-ancoragem aplicada à interface.
+- **Sem sugestão, sem seletor.** Linha de balanço não recebe um controle que convidaria a inventar
+  resposta.
+- **O contador da classe é SEPARADO do de aceite**, não somado: aceitar o NÚMERO e classificar a
+  NATUREZA dele são duas decisões sobre a mesma linha, e somá-las daria um "N de M" que não
+  corresponde a nada.
+
+E a **concordância medida** entrou no `/autonomia`, ao lado do dial que ela governa — com a tabela das
+**rubricas que mais erram**, que é por onde se ajusta o catálogo. Corrigir a regra é mais barato e mais
+auditável que reclassificar linha a linha para sempre.
+
 #### O SINAL DE CALIBRAÇÃO, e é ele que faz isto valer a pena em sombra
 
 `fn_classe_contabil_concordancia` responde a frase do `docs/05` — *"o override vira sinal de

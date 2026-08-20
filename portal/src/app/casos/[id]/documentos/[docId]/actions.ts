@@ -46,3 +46,53 @@ export async function aceitarExtracao(casoId: string, docId: string, formData: F
   revalidatePath(`/casos/${casoId}/documentos/${docId}`);
   revalidatePath(`/casos/${casoId}`);
 }
+
+// Chama fn_registrar_classe_override (db/migrations/0128) — a decisão HUMANA sobre
+// a classe contábil de uma linha.
+//
+// POR QUE ESTA AÇÃO EXISTE, E POR QUE ELA É O PRODUTO DA 0128. A classificação
+// contábil roda em N0: ela sugere e não decide nada. Sem um lugar onde o humano
+// discorde, a sugestão fica sendo um número que ninguém confirmou nem derrubou — e
+// é justamente a DISCORDÂNCIA que o docs/05 chama de "sinal de calibração", o dado
+// que a F4 consome. Uma classificação em sombra sem tela de override não gera
+// sinal nenhum; ela só ocupa espaço no banco.
+//
+// APPEND-ONLY: reclassificar é linha nova em campo_classe_override, e a sequência
+// é o histórico. Não há como apagar uma decisão.
+export async function registrarClasseContabil(
+  casoId: string,
+  docId: string,
+  formData: FormData,
+) {
+  const supabase = await createClient();
+
+  const campoId = String(formData.get("campo_extraido_id") || "");
+  const classe = String(formData.get("classe") || "");
+  const motivo = String(formData.get("motivo") || "").trim() || null;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase.rpc("fn_registrar_classe_override", {
+    p_campo_extraido_id: campoId,
+    p_classe_final: classe,
+    p_autor: user?.email ?? "portal:desconhecido",
+    p_motivo: motivo,
+  });
+
+  if (error) {
+    throw new Error(`Falha ao registrar a classe contábil: ${error.message}`);
+  }
+
+  // RECUSA RETORNADA, não exceção — mesmo padrão do aceite acima, e ler este campo
+  // é igualmente obrigatório. A 0128 recusa rótulo fora do catálogo (a taxonomia do
+  // docs/05 é FECHADA) e override sem autor; nos dois casos `error` vem nulo, e sem
+  // esta leitura a tela recarregaria como se a classificação tivesse sido gravada.
+  const resultado = data as { recusado?: boolean; motivo_recusa?: string } | null;
+  if (resultado?.recusado) {
+    throw new Error(resultado.motivo_recusa ?? "Classificação recusada.");
+  }
+
+  revalidatePath(`/casos/${casoId}/documentos/${docId}`);
+}

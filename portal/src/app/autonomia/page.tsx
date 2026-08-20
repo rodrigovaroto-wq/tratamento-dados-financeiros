@@ -56,6 +56,14 @@ type Rodada = {
   criada_em: string;
 };
 
+type ConcordanciaCC = {
+  com_veredito_humano: number;
+  concordaram: number;
+  concordancia: number | null;
+  sem_veredito_humano: number;
+  rubricas_que_mais_erram: { padrao: string; sugeria: string; erros: number }[];
+};
+
 type Cobertura = {
   tipo: string;
   granularidade: string;
@@ -134,6 +142,20 @@ export default async function AutonomiaPage() {
     ? await supabase.rpc("fn_golden_cobertura", { p_rodada: rodadaVigente.id })
     : { data: null };
   const cobertura = (coberturaBruta as Cobertura[] | null) ?? [];
+
+  // A CONCORDÂNCIA DA CLASSIFICAÇÃO CONTÁBIL (0128), e ela mora AQUI por um motivo:
+  // é o único estágio do sistema cuja concordância humano-máquina já pode ser
+  // medida sem golden set nenhum. O rótulo vem do override que o analista registra
+  // na página do documento — o mesmo desenho que a 0126 achou na Classe A, onde o
+  // rótulo é o veredito da 0106.
+  //
+  // Fica ao lado do dial porque é ele que este número governa: o docs/05 diz que
+  // "onde humanos discordam sistematicamente da máquina, ajusta-se regra/threshold
+  // (ou não se sobe o dial daquele estágio)".
+  const { data: ccBruto } = await supabase.rpc("fn_classe_contabil_concordancia", {
+    p_caso_id: null,
+  });
+  const cc = ccBruto as ConcordanciaCC | null;
 
   const declarados = linhas.filter((d) => d.base_do_nivel === "declarada");
 
@@ -385,6 +407,93 @@ export default async function AutonomiaPage() {
           </div>
         )}
       </div>
+
+      {/* A CONCORDÂNCIA QUE JÁ EXISTE HOJE, sem golden set. Este bloco é a resposta
+          à pergunta que o dial faz e que, para os outros estágios, ainda não tem
+          resposta nenhuma. */}
+      {cc && (
+        <div>
+          <h2 className="text-sm font-semibold">Concordância na classificação contábil</h2>
+          <p className="mt-1 text-xs text-tinta-500">
+            O único estágio cuja concordância humano-máquina já dá para medir sem golden set: o
+            rótulo é o <strong>override</strong> que o analista registra na linha, e cada
+            discordância é um ponto de calibração. <code>docs/05</code>: onde humanos discordam
+            sistematicamente, ajusta-se a <strong>regra</strong> — não se sobe o dial.
+          </p>
+
+          {cc.com_veredito_humano === 0 ? (
+            <p className="mt-2 text-sm text-tinta-500">
+              Nenhuma linha classificada por humano ainda. A regra já sugere; a concordância
+              começa a existir quando alguém confirmar ou derrubar a primeira sugestão, na página
+              de um documento.
+              {cc.sem_veredito_humano > 0 && (
+                <>
+                  {" "}
+                  Há <strong>{cc.sem_veredito_humano}</strong> sugestões esperando veredito.
+                </>
+              )}
+            </p>
+          ) : (
+            <>
+              <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                <div className="rounded border border-tinta-200 bg-white p-3">
+                  <p className="text-lg font-semibold">
+                    {cc.concordancia == null
+                      ? "—"
+                      : `${(cc.concordancia * 100).toFixed(1)}%`}
+                  </p>
+                  <p className="text-xs text-tinta-500">
+                    concordância — {cc.concordaram} de {cc.com_veredito_humano} com veredito
+                  </p>
+                </div>
+                <div className="rounded border border-tinta-200 bg-white p-3">
+                  <p className="text-lg font-semibold">
+                    {cc.com_veredito_humano - cc.concordaram}
+                  </p>
+                  <p className="text-xs text-tinta-500">
+                    discordâncias — é este o dado de calibração
+                  </p>
+                </div>
+                <div className="rounded border border-tinta-200 bg-white p-3">
+                  <p className="text-lg font-semibold">{cc.sem_veredito_humano}</p>
+                  <p className="text-xs text-tinta-500">
+                    sem veredito — ficam FORA da conta: &quot;acertou&quot; e &quot;ninguém
+                    conferiu&quot; são estados diferentes
+                  </p>
+                </div>
+              </div>
+
+              {cc.rubricas_que_mais_erram.length > 0 && (
+                <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-white">
+                  <table className="w-full text-sm">
+                    <caption className="px-4 pt-2 text-left text-xs text-tinta-500">
+                      As rubricas em que a regra mais erra. É por aqui que se ajusta o catálogo —
+                      corrigir a <strong>regra</strong> é mais barato e mais auditável que
+                      reclassificar linha a linha para sempre.
+                    </caption>
+                    <thead className="bg-tinta-50 text-left text-xs uppercase text-tinta-500">
+                      <tr>
+                        <th className="px-4 py-2 font-medium">Padrão do catálogo</th>
+                        <th className="px-4 py-2 font-medium">A regra sugeria</th>
+                        <th className="px-4 py-2 font-medium">Vezes que o humano discordou</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-tinta-200">
+                      {cc.rubricas_que_mais_erram.map((r) => (
+                        <tr key={r.padrao}>
+                          <td className="px-4 py-2 font-mono text-xs">{r.padrao}</td>
+                          <td className="px-4 py-2 text-xs text-tinta-600">{r.sugeria}</td>
+                          <td className="px-4 py-2 text-xs">{r.erros}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div>
         <h2 className="text-sm font-semibold">Mudanças de dial</h2>
