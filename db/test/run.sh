@@ -295,6 +295,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/dial.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes da transcrição humana assistida (0129: o fechamento #2 do docs/01)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/transcricao_humana.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes da classificação contábil em sombra (0128: o oitavo estágio do MVP)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/classificacao_contabil.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

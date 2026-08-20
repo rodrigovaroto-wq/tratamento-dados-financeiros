@@ -2069,6 +2069,17 @@ CREATE FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_or
     from docs
     join campo_extraido ce on ce.documento_versao_id = docs.versao_id
     where ce.valor_num is not null
+      -- 0129: LINHA TRANSCRITA POR HUMANO SAI DA MEDIÇÃO DA EXTRAÇÃO.
+      --
+      -- Ela mora na mesma tabela das linhas que a IA leu, e sem este filtro a
+      -- primeira transcrição contaminaria o número: linha digitada por uma pessoa
+      -- olhando o documento bate com o rótulo do golden set quase sempre, e o
+      -- acerto sairia creditado à EXTRAÇÃO. Pior, subiria justamente nos
+      -- documentos mais difíceis — os que precisaram de transcrição.
+      --
+      -- É a mesma armadilha que golden_documento.origem fecha do outro lado
+      -- (rotular book sintético mede o instrumento), reaparecendo por outra porta.
+      and ce.origem_valor = 'extracao'
     group by 1, 2, 3, 4, 5
   ),
   par as (
@@ -2925,6 +2936,27 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) IS 'Linhas lógicas do caso para a tela de Modelagem, com PAPEL (conta/subtotal/derivado/serie_mensal), valor COM SINAL, unidade/moeda, documentos de origem e marca de sobreposição. Existe como função porque campo_extraido não tem caso_id — o escopo por caso mora aqui. 0101: papel calculado uma vez por rótulo e sobreposição por join, para caber no statement_timeout. 0102: só a versão VIGENTE de cada documento (reextração deixava a versão superada somando ocorrência e podendo ditar o valor_ultimo).';
+
+--
+-- Name: fn_linhas_para_transcrever(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) RETURNS TABLE(conceito text, rotulo text, descricao text, secao_canonica text, checagem text, severidade text)
+    LANGUAGE sql STABLE
+    AS $$
+  select le.conceito, le.rotulo, le.descricao, le.secao_canonica, le.checagem,
+         coalesce(le.severidade, 'importante')
+  from documento d
+  join taxonomia_linha_exigida le on le.tipo_taxonomia = d.tipo_taxonomia
+  where d.id = p_documento_id and le.ativo
+  order by coalesce(le.severidade, 'importante'), le.conceito;
+$$;
+
+--
+-- Name: FUNCTION fn_linhas_para_transcrever(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) IS 'As linhas que o Portão 1 vai COBRAR deste tipo de documento, para a planilha de transcrição listá-las. São poucas de propósito: taxonomia_linha_exigida é o MÍNIMO exigido, não um gabarito de demonstração — planilha que fingisse listar todas as contas de um balanço estaria inventando a estrutura do documento do cliente. O resto vai em linha livre.';
 
 --
 -- Name: fn_marcar_falha_vista(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6287,6 +6319,169 @@ CREATE FUNCTION public.fn_registrar_reconciliacao_b(p_caso_id uuid, p_entidade_i
 $$;
 
 --
+-- Name: fn_registrar_transcricao_humana(uuid, jsonb, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+declare
+  v_caso_id     uuid;
+  v_ref         text;
+  v_nome        text;
+  v_origem      origem_arquivo;
+  v_hash        text;
+  v_n_versao    int;
+  v_versao_id   uuid;
+  v_item        jsonb;
+  v_valor       numeric;
+  v_n           int := 0;
+  v_pendencia   uuid;
+  v_autor       text := nullif(trim(coalesce(p_autor, '')), '');
+begin
+  if v_autor is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Transcrição sem autor não é transcrição. O número passa a valer como fato '
+                       'na base de modelagem, e a única coisa que o sustenta é quem o digitou — '
+                       'não há guarda de máquina para isso, por desenho.');
+  end if;
+
+  if p_linhas is null or jsonb_typeof(p_linhas) <> 'array' or jsonb_array_length(p_linhas) = 0 then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Nenhuma linha para transcrever. Gravar uma versão vazia criaria um documento '
+                       'que parece transcrito e não tem número nenhum — o pior dos dois estados.');
+  end if;
+
+  select d.caso_id into v_caso_id from documento d where d.id = p_documento_id;
+  if v_caso_id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Documento %s não existe.', p_documento_id));
+  end if;
+
+  -- A versão de referência é a mais recente: dela saem o arquivo e o nome, para a
+  -- versão transcrita apontar para o MESMO arquivo. Transcrição não é upload novo.
+  select dv.arquivo_ref, dv.nome_original, dv.origem_arquivo, dv.hash
+    into v_ref, v_nome, v_origem, v_hash
+  from documento_versao dv
+  where dv.documento_id = p_documento_id
+  order by dv.n_versao desc
+  limit 1;
+
+  if v_ref is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'O documento não tem nenhuma versão. Transcrição é leitura nova de um arquivo '
+                       'que já está no sistema, não um caminho para inserir arquivo.');
+  end if;
+
+  -- VERSÃO NOVA (doutrina da 0026): a transcrição é uma leitura nova do mesmo
+  -- arquivo, e `fn_versao_com_extracao` (0102) a elege como vigente por ela ter
+  -- linhas. A versão ilegível fica preservada, com suas zero linhas, contando a
+  -- história de por que houve transcrição.
+  select coalesce(max(dv.n_versao), 0) + 1 into v_n_versao
+    from documento_versao dv where dv.documento_id = p_documento_id;
+
+  insert into documento_versao
+    (documento_id, n_versao, origem_arquivo, arquivo_ref, nome_original, hash,
+     legibilidade, nota_legibilidade)
+  values (p_documento_id, v_n_versao, v_origem, v_ref, v_nome, v_hash,
+          -- A legibilidade da VERSÃO TRANSCRITA é 'ok': o conteúdo dela é legível
+          -- por construção, foi uma pessoa que o escreveu. O arquivo continua
+          -- ilegível, e é a versão anterior que guarda esse fato.
+          'ok',
+          format('Transcrição humana assistida por %s%s', v_autor,
+                 case when p_motivo is null then '' else ' — ' || p_motivo end))
+  returning id into v_versao_id;
+
+  -- AS GUARDAS DE EXTRAÇÃO NÃO RODAM AQUI, e por isso não se chama
+  -- `fn_registrar_campos_extraidos`. Elas existem para pegar alucinação de modelo;
+  -- "quatro contas com o mesmo valor" é padrão suspeito numa saída de IA e é rotina
+  -- num balanço com contas zeradas. O que substitui a guarda é a AUTORIA.
+  for v_item in select * from jsonb_array_elements(p_linhas)
+  loop
+    v_valor := case when (v_item->>'valor_num') ~ '^-?\d+(\.\d+)?$'
+                    then (v_item->>'valor_num')::numeric else null end;
+
+    insert into campo_extraido
+      (documento_versao_id, chave, valor_texto, valor_num, unidade, moeda,
+       secao, secao_canonica, entidade_coluna, periodo_coluna, ordem,
+       origem_pagina, origem_linha,
+       -- Confiança NULA de propósito: confiança é a autoavaliação de um modelo, e
+       -- não existe equivalente para uma pessoa. Escrever 1.0 aqui inventaria uma
+       -- medida e faria a linha transcrita passar em qualquer filtro de limiar.
+       confianca,
+       origem_valor, status_aceite, aceito_por, aceito_em)
+    values (
+      v_versao_id,
+      coalesce(nullif(trim(v_item->>'chave'), ''), '(sem rótulo)'),
+      v_item->>'valor_texto', v_valor,
+      v_item->>'unidade', v_item->>'moeda',
+      v_item->>'secao', v_item->>'secao_canonica',
+      v_item->>'entidade_coluna', v_item->>'periodo_coluna',
+      case when (v_item->>'ordem') ~ '^\d+$' then (v_item->>'ordem')::int else v_n end,
+      case when (v_item->>'origem_pagina') ~ '^\d+$' then (v_item->>'origem_pagina')::int end,
+      v_item->>'origem_linha',
+      null,
+      'transcricao_humana', 'aceito', v_autor, now());
+    v_n := v_n + 1;
+  end loop;
+
+  -- A SAÍDA FOI TOMADA: a pendência de ilegibilidade fecha, com o nome de quem a
+  -- fechou. É isto que faz o gate deixar de ser "dead-end de pendência infinita" —
+  -- e é a única metade do fechamento #2 que já existia pela metade.
+  select p.id into v_pendencia from pendencia p
+   where p.documento_id = p_documento_id
+     and p.tipo = 'arquivo_ilegivel'
+     and p.estado <> 'resolvida'
+   limit 1;
+  if v_pendencia is not null then
+    update pendencia
+       set estado = 'resolvida', resolvida_em = now(),
+           resolvida_por = v_autor
+     where id = v_pendencia;
+  end if;
+
+  insert into decisao (caso_id, tipo, autor, motivo, payload)
+    values (v_caso_id, 'aprovacao', v_autor,
+      format('Transcrição humana assistida de "%s": %s linha(s) digitadas a partir do arquivo '
+             'ilegível.%s', coalesce(v_nome, '?'), v_n,
+             case when p_motivo is null then '' else ' Motivo: ' || p_motivo end),
+      jsonb_build_object('documento_id', p_documento_id, 'documento_versao_id', v_versao_id,
+                         'n_versao', v_n_versao, 'linhas', v_n,
+                         'pendencia_resolvida', v_pendencia));
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values (v_autor, 'transcricao_humana', 'documento_versao:'||v_versao_id,
+            jsonb_build_object('documento_id', p_documento_id, 'linhas', v_n,
+                               'n_versao', v_n_versao,
+                               'porque', 'fechamento #2 do docs/01: gate de captura COM SAIDA. As '
+                                         'guardas de extracao nao rodam (elas pegam alucinacao de '
+                                         'modelo) e origem_valor marca as linhas para elas nao '
+                                         'contaminarem a medicao da extracao.'));
+
+  -- A completude precisa saber que as linhas chegaram, senão o Portão 1 continua
+  -- cobrando o que já foi transcrito.
+  perform fn_recomputar_completude(v_caso_id);
+
+  -- E a classificação contábil roda sobre a versão nova, como roda sobre qualquer
+  -- outra: em sombra, sem tocar em nada.
+  perform fn_classificar_contabil(v_versao_id);
+
+  return jsonb_build_object(
+    'documento_versao_id', v_versao_id,
+    'n_versao', v_n_versao,
+    'linhas', v_n,
+    'pendencia_resolvida', v_pendencia,
+    'autor', v_autor);
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text) IS 'A SAÍDA do gate de captura (fechamento #2 do docs/01), que era o único dos oito fechamentos sem código. Cria VERSÃO NOVA (doutrina da 0026), marca as linhas com origem_valor=''transcricao_humana'' para elas não contaminarem fn_golden_campos, NÃO roda as guardas de extração (elas pegam alucinação de modelo, e acusariam um humano de fabricar por ler um balanço com contas zeradas), grava confiança NULA (não existe autoavaliação de pessoa) e resolve a pendência de ilegibilidade com o nome de quem a fechou.';
+
+--
 -- Name: fn_registrar_uso_lote(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7044,6 +7239,8 @@ CREATE TABLE public.campo_extraido (
     periodo_coluna text,
     ordem integer,
     moeda text,
+    origem_valor text DEFAULT 'extracao'::text NOT NULL,
+    CONSTRAINT campo_extraido_origem_valor_check CHECK ((origem_valor = ANY (ARRAY['extracao'::text, 'transcricao_humana'::text]))),
     CONSTRAINT campo_extraido_status_aceite_check CHECK ((status_aceite = ANY (ARRAY['pendente'::text, 'aceito'::text, 'com_ressalva'::text])))
 );
 
@@ -7088,6 +7285,12 @@ COMMENT ON COLUMN public.campo_extraido.ordem IS 'Posição 0-based da linha no 
 --
 
 COMMENT ON COLUMN public.campo_extraido.moeda IS 'Moeda ISO da linha (BRL/USD/EUR/…), herdada do documento pela extração; null = desconhecida, NUNCA presumida. Separada de `unidade`, que é a ESCALA (milhar/unidade). Somar linhas de moedas diferentes é erro pelo câmbio inteiro — ver o cabeçalho da 0035.';
+
+--
+-- Name: COLUMN campo_extraido.origem_valor; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.campo_extraido.origem_valor IS 'De onde veio o número: extracao (a IA leu o arquivo) ou transcricao_humana (uma pessoa digitou, porque o arquivo não se lê — fechamento #2 do docs/01). Existe porque sem ela a primeira transcrição contaminaria fn_golden_campos: linha digitada por humano bate com o rótulo do golden set quase sempre, e o acerto sairia creditado à EXTRAÇÃO. Default extracao: nenhuma linha existente muda de significado.';
 
 --
 -- Name: fn_valor_conceito(uuid, text[], text[]); Type: FUNCTION; Schema: public; Owner: -
@@ -8582,6 +8785,12 @@ CREATE INDEX idx_campo_classe_sugerida_campo ON public.campo_classe_sugerida USI
 CREATE INDEX idx_campo_docversao ON public.campo_extraido USING btree (documento_versao_id);
 
 --
+-- Name: idx_campo_extraido_origem_valor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campo_extraido_origem_valor ON public.campo_extraido USING btree (documento_versao_id, origem_valor);
+
+--
 -- Name: idx_campo_extraido_versao_ordem; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9815,6 +10024,12 @@ GRANT ALL ON FUNCTION public.fn_linhas_do_tipo(p_caso_id uuid, p_codigo text) TO
 GRANT ALL ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_linhas_para_transcrever(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_linhas_para_transcrever(p_documento_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_marcar_falha_vista(p_falha_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -9972,6 +10187,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_transcricao_humana(p_documento_id uuid, p_linhas jsonb, p_autor text, p_motivo text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: ACL; Schema: public; Owner: -

@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0128_classificacao_contabil_sombra.sql` |
+| **Última migration** | `db/migrations/0129_transcricao_humana_assistida.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (775 asserts, 73 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -188,6 +188,50 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### A TRANSCRIÇÃO HUMANA ASSISTIDA, e a contaminação que ela criaria (20/08, sessão 53) — `0129`
+
+**O fechamento nº 2 do `docs/01` era o único dos oito sem código:** *"gate de captura com saída. Input
+ilegível/corrompido → transcrição humana assistida, nunca dead-end de pendência infinita."* O gate
+existia (a `0010`/`0020` abrem `arquivo_ilegivel`) e a saída existia em outra forma (reenviar ao
+cliente, rejeitar) — **a transcrição assistida em si nunca foi construída**, e ela é a saída que serve
+quando o cliente não tem outra via do arquivo, que em reestruturação é o caso comum.
+
+**A forma: planilha modelo preenchida pelo analista** (decisão do dono). Não é tela de digitação linha
+a linha — ninguém digita balanço em formulário web se puder usar Excel. A planilha é ferramenta de
+mesa e não sai da casa, então pode usar o vocabulário interno sem o cuidado que a `0122` teve de dar
+às perguntas ao cliente.
+
+#### A CONTAMINAÇÃO QUE ELA CRIARIA, e que a mesma migration fecha
+
+Linha transcrita mora em `campo_extraido`, do lado das que a IA leu — e `fn_golden_campos` mede a
+extração comparando `campo_extraido` com o rótulo do golden set. **Sem uma distinção, a primeira
+transcrição inflaria a medição da autonomia:** linha que uma pessoa digitou olhando o documento bate
+com o rótulo quase sempre, e o acerto sairia creditado à extração — subindo justamente nos documentos
+difíceis, que são os transcritos. É a armadilha que a `0126` fechou com `golden_documento.origem`,
+reaparecendo por outra porta.
+
+`campo_extraido.origem_valor` distingue `extracao` de `transcricao_humana`, e `fn_golden_campos` passa
+a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas transcritas voltam como
+`n_exato = 2` — acerto perfeito da IA sobre um número que ela nunca leu.
+
+#### TRÊS DECISÕES
+
+1. **A transcrição é VERSÃO NOVA** (doutrina da `0026`), e `fn_versao_com_extracao` a elege como
+   vigente por ela ter linhas. A versão ilegível fica preservada, com zero linhas, contando por que
+   houve transcrição.
+2. **As guardas de extração NÃO rodam.** Elas pegam alucinação de modelo: "quatro contas com o mesmo
+   valor" é padrão suspeito numa saída de IA e é **rotina** num balanço com contas zeradas. Acusar de
+   fabricação alguém que está lendo o papel seria guarda que só atrapalha. O que substitui é a
+   **autoria** — e a confiança fica **NULA**, porque não existe autoavaliação de pessoa e escrever 1,0
+   inventaria uma medida.
+3. **A linha nasce aceita, e isso não fura a anti-ancoragem.** O fechamento #5 exige aceite humano
+   antes de um número entrar na base; aqui o humano não aceita a sugestão de uma máquina — ele é a
+   **fonte**. Pedir que ele "aceite" o que ele mesmo digitou seria clique cerimonial, e cerimônia vazia
+   é o que ensina a clicar sem ler.
+
+**E a pendência de ilegibilidade fecha com o nome de quem transcreveu**, não por "sistema". É isso que
+faz o gate deixar de ser dead-end.
 
 ### A CLASSIFICAÇÃO CONTÁBIL PASSA A EXISTIR, em sombra (20/08, sessão 53) — `0128`
 
