@@ -315,6 +315,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/golden.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes do caminho de ESCRITA do golden set: rotulagem cega (0130)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/golden_rotulagem.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/seed_macro.test.sql 2>&1 \

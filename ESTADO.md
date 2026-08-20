@@ -14,7 +14,7 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0129_transcricao_humana_assistida.sql` |
+| **Última migration** | `db/migrations/0130_golden_set_rotulavel.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 293 · export 574 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -188,6 +188,58 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### O GOLDEN SET PASSA A SER ROTULÁVEL, e a rotulagem é CEGA (20/08, sessão 54) — `0130`
+
+**A `0126` construiu o golden set inteiro do lado da leitura e nada do lado da escrita.** Quatro
+tabelas, as cinco métricas do `f0/06`, o portão `fn_golden_suficiente`, a regra de ouro executada em
+`fn_mudar_dial` — e nenhuma função para abrir rodada, incluir documento, gravar rótulo ou congelar.
+Rotular só era possível escrevendo `insert` à mão no psql. **O portão estava construído e não havia
+estrada até ele**, que é o mesmo defeito que a `0126`, a `0127` e a `0128` corrigiram uma camada
+acima — e o que travava a F4 do `docs/03` não era decisão nenhuma: era a falta de um formulário.
+
+**A decisão que governa o desenho: a rotulagem é CEGA.** `fn_golden_linhas_para_rotular` devolve as
+rubricas que a extração achou **sem os valores**. É o fechamento #5 do `docs/01` (anti-ancoragem)
+aplicado onde a aposta é maior que numa tela de aceite: o rótulo do golden set é a EVIDÊNCIA que
+autoriza subir autonomia. Quem vê a resposta da máquina enquanto rotula não produz ground truth,
+produz uma conferência — e conferência tem viés de confirmação conhecido: o número plausível passa. A
+métrica então sobe sem que nada tenha melhorado, e o dial sobe com ela. **O sistema certificaria a si
+mesmo.** O assert que trava isso não compara valores: ele exige que a palavra "valor" não apareça em
+chave nenhuma do retorno, para um apelido novo acrescentado daqui a um ano cair no teste.
+
+**E devolve as rubricas, em vez de esconder tudo.** Porque o que se mede é o VALOR e a rubrica é só a
+chave de casamento: `fn_golden_campos` junta por `fn_normalizar_texto(chave)` + período + entidade.
+Esconder as rubricas faria o rotulador digitar a grafia dele ("Receita líquida de vendas" contra
+"Receita Líquida"), o par não casaria, e a linha entraria como **AUSENTE** — a família de defeito mais
+grave do placar — creditada à máquina por uma diferença de datilografia. A medição passaria a medir a
+coincidência de grafia entre duas pessoas. Ver a rubrica não ancora o julgamento do valor: o valor
+continua tendo de ser lido no papel.
+
+**A contrapartida é obrigatória.** Uma lista só das rubricas que a máquina achou deixaria a perda
+silenciosa invisível — o rotulador confirmaria as 40 linhas extraídas e nunca notaria as 3 que a
+extração perdeu. Então `fn_golden_rotular_campos` **aceita rubrica fora da lista** (é o único caminho
+pelo qual `n_ausente` chega a ser medido) e **revela o casamento só depois de gravar**. Revelar antes
+seria ancoragem pela porta de trás: "sua linha não casou" durante a digitação é um convite a procurar
+a grafia que casa, e aí o rótulo passa a perseguir a máquina. Depois é informação — quem vê 3 de 12
+sem par sabe que ou a extração perdeu três linhas, ou ele escreveu três rubricas que o normalizador
+não reconhece, e as duas coisas importam.
+
+**As recusas retornadas, e por que cada uma existe:** tipo fora do catálogo (typo em rótulo
+append-only vira falso negativo PERMANENTE da máquina no F1 daquele tipo, e ninguém relê um rótulo
+que não se edita); rótulo vazio (contaria como documento rotulado na cobertura sem medir nada — o
+jeito mais fácil de bater o N mínimo sem produzir evidência); rodada congelada, com o caminho de
+saída escrito (rodada nova, nunca edição); rodada sem nenhum rótulo no congelamento (apareceria na
+lista de rodadas parecendo evidência). Estrato e origem são **obrigatórios e não inferidos**: o banco
+não distingue documento de cliente do book sintético, e chutar isso inflaria a amostra com aquilo
+cujo gabarito já se conhece.
+
+> **Um rotulador só é escolha legítima com consequência medível, e ela fica dita no ato de congelar.**
+> O `f0/06` pede dois rotuladores nos casos ambíguos para que a discordância entre humanos seja
+> EXCLUÍDA do placar da máquina. Com um só não há discordância a excluir: o documento genuinamente
+> ambíguo entra como erro dela, e a medição fica **conservadora — o número que sai é um PISO da
+> qualidade real, não uma estimativa dela**. Conservador é o lado certo para errar, e mesmo assim
+> quem lê "acerto 0,91" tem direito de saber que 0,91 é um piso. `fn_golden_congelar` devolve esse
+> aviso.
 
 ### A TRANSCRIÇÃO HUMANA ASSISTIDA, e a contaminação que ela criaria (20/08, sessão 53) — `0129`
 
