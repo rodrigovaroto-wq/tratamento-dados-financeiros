@@ -2,7 +2,8 @@
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
-lidas para retomar.
+lidas para retomar. E `docs/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
+critério de pronto de cada bloco — é o arquivo para abrir antes de escolher o que fazer na sessão.
 
 > **Por que os dois são arquivos separados.** O cabeçalho do `HANDOFF.md` já passou 17 PRs congelado
 > em "PR #70, migrations até `0034`", e mandava quem chegava começar errado. A causa não é descuido:
