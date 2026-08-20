@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { lerPlanilhaTranscricao } from "@/lib/transcricao";
 
 // Chama fn_aceitar_extracao (db/migrations/0011_aceite_export_e4.sql) — o
 // Portão 2 mínimo do E4 (f0/07_output_spec.md): humano aceita TODAS as linhas
@@ -95,4 +96,111 @@ export async function registrarClasseContabil(
   }
 
   revalidatePath(`/casos/${casoId}/documentos/${docId}`);
+}
+
+// Chama fn_registrar_transcricao_humana (db/migrations/0129) — a SAÍDA do gate de
+// captura (fechamento #2 do docs/01), a partir da planilha preenchida.
+//
+// POR QUE ESTA AÇÃO É O QUE FECHA A 0129. A função no banco existia e nada a
+// chamava: sem planilha e sem importação, o gate continuava sendo o dead-end de
+// pendência infinita que o docs/01 nomeia — "arquivo ilegível" abria pendência e
+// não havia caminho nenhum para sair dela a não ser o cliente reenviar um arquivo
+// melhor, que às vezes não existe.
+//
+// A GUARDA DE DOCUMENTO RODA AQUI, ANTES DO BANCO. `lerPlanilhaTranscricao` confere
+// o id gravado na planilha contra o documento desta tela e RECUSA quando divergem.
+// Isso não é redundância com o banco: o banco não tem como saber que a planilha foi
+// gerada para outro documento — para ele chegariam linhas plausíveis, e ele as
+// gravaria aceitas, com o nome de quem enviou. Um número errado com autor é o pior
+// tipo de número errado, porque ninguém volta a desconfiar dele.
+//
+// E POR QUE ESTA AÇÃO DEVOLVE A RECUSA EM VEZ DE LANÇAR, ao contrário das duas
+// acima. Não é inconsistência: é a mesma doutrina de recusa retornada da casa,
+// aplicada uma camada acima, e aqui ela é OBRIGATÓRIA por um motivo mecânico. O
+// Next redige a mensagem de erro de server action em produção — quem recebesse um
+// throw veria um digest opaco no lugar de "esta planilha foi gerada para OUTRO
+// documento". Nas outras ações a recusa é rara e o texto é secundário; aqui o texto
+// É o produto: ele diz à pessoa exatamente o que fazer com o arquivo que ela tem na
+// mão. Lançar destruiria justamente a parte útil.
+export type ResultadoImportacao =
+  | { ok: true; linhas: number; n_versao: number; pendencia_resolvida: boolean }
+  | { ok: false; erro: string };
+
+export async function importarTranscricao(
+  casoId: string,
+  docId: string,
+  formData: FormData,
+): Promise<ResultadoImportacao> {
+  const supabase = await createClient();
+
+  const arquivo = formData.get("planilha");
+  const motivo = String(formData.get("motivo") || "").trim() || null;
+
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return { ok: false, erro: "Selecione a planilha preenchida (.xlsx) antes de importar." };
+  }
+
+  const leitura = await lerPlanilhaTranscricao(await arquivo.arrayBuffer(), docId);
+  if (!leitura.ok) {
+    return { ok: false, erro: leitura.erro };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // AUTOR: a 0129 recusa transcrição sem autor, e o motivo está escrito lá — o
+  // número passa a valer como fato e a única coisa que o sustenta é quem o digitou.
+  // Aqui isso quer dizer que um usuário sem e-mail na sessão NÃO transcreve: o
+  // "portal:desconhecido" que serve para um aceite (onde há uma extração de máquina
+  // por baixo) não serve para uma linha cujo único lastro é a pessoa.
+  const autor = user?.email ?? null;
+  if (!autor) {
+    return {
+      ok: false,
+      erro:
+        "Não identifiquei quem está transcrevendo. Transcrição sem autor não é " +
+        "transcrição: o número passa a valer como fato na base e a única coisa que o " +
+        "sustenta é quem o digitou. Entre novamente na sessão e repita a importação.",
+    };
+  }
+
+  const { data, error } = await supabase.rpc("fn_registrar_transcricao_humana", {
+    p_documento_id: docId,
+    p_linhas: leitura.linhas,
+    p_autor: autor,
+    p_motivo: motivo,
+  });
+
+  if (error) {
+    return { ok: false, erro: `Falha ao gravar a transcrição: ${error.message}` };
+  }
+
+  // RECUSA RETORNADA pelo banco — ler este campo é obrigatório, como nas duas ações
+  // acima. A 0129 recusa documento inexistente, documento sem nenhuma versão
+  // (transcrição é leitura nova de arquivo que já está aqui, não porta de entrada de
+  // arquivo) e lista vazia. Sem esta leitura, `error` nulo faria a recusa passar por
+  // sucesso e a tela diria "N linhas gravadas" sem nenhuma linha gravada.
+  const resultado = data as {
+    recusado?: boolean;
+    motivo_recusa?: string;
+    linhas?: number;
+    n_versao?: number;
+    pendencia_resolvida?: string | null;
+  } | null;
+  if (resultado?.recusado) {
+    return { ok: false, erro: resultado.motivo_recusa ?? "Transcrição recusada." };
+  }
+
+  // A transcrição cria uma VERSÃO NOVA do documento (doutrina da 0026) e recomputa a
+  // completude do caso — então as duas telas mudam, não só esta.
+  revalidatePath(`/casos/${casoId}/documentos/${docId}`);
+  revalidatePath(`/casos/${casoId}`);
+
+  return {
+    ok: true,
+    linhas: resultado?.linhas ?? leitura.linhas.length,
+    n_versao: resultado?.n_versao ?? 0,
+    pendencia_resolvida: resultado?.pendencia_resolvida != null,
+  };
 }

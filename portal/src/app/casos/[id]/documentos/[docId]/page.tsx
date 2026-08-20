@@ -6,6 +6,7 @@ import type { CampoExtraido, Documento } from "@/lib/types";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
 import { aceitarExtracao } from "./actions";
 import { ClasseContabil } from "@/components/classe-contabil";
+import { TranscricaoHumana } from "@/components/transcricao-humana";
 
 function formatValor(valorNum: number | null, valorTexto: string | null, unidade: string | null) {
   if (valorNum != null) {
@@ -41,7 +42,7 @@ export default async function PlanilhaDocumentoPage({
     .select(
       `id, tipo_taxonomia, resumo, justificativa, confianca, fonte,
        entidade:entidade_id(razao_social), periodo:periodo_id(tipo, referencia),
-       documento_versao(id, nome_original, legibilidade, nota_legibilidade)`,
+       documento_versao(id, n_versao, nome_original, legibilidade, nota_legibilidade)`,
     )
     .eq("caso_id", id)
     .eq("id", docId)
@@ -52,7 +53,31 @@ export default async function PlanilhaDocumentoPage({
   }
 
   const doc = documentoRes.data as unknown as Documento;
-  const versao = doc.documento_versao?.[0];
+
+  // A VERSÃO VIGENTE, e não "a primeira que o PostgREST devolveu".
+  //
+  // Esta linha era `doc.documento_versao?.[0]`, e passava despercebida enquanto
+  // quase todo documento tinha uma versão só. A 0129 acabou com isso: transcrição
+  // humana SEMPRE cria uma versão nova (doutrina da 0026), e a versão antiga —
+  // aquela com zero linhas, a ilegível — continuaria sendo a exibida. O sintoma
+  // seria o pior possível para quem acabou de digitar um balanço à mão: a tela
+  // recarrega dizendo "nenhuma linha foi extraída deste documento" e oferecendo o
+  // bloco de transcrição de novo, como se o trabalho tivesse sido perdido.
+  //
+  // A regra é a da 0102 (`fn_versao_com_extracao`): a mais recente que TEM linha.
+  // Chamada em vez de reimplementada aqui, porque ela carrega uma distinção que
+  // "max(n_versao)" não tem — entre registrar a versão e extrair nela existe uma
+  // janela em que a mais recente está vazia, e nessa janela a tela deve continuar
+  // mostrando o último conteúdo que existe.
+  const vigenteRes = await supabase.rpc("fn_versao_com_extracao", { p_documento_id: docId });
+  const versoes = [...(doc.documento_versao ?? [])].sort(
+    (a, b) => (b.n_versao ?? 0) - (a.n_versao ?? 0),
+  );
+  // Nenhuma versão tem linha (documento ilegível, extração que falhou): cai na mais
+  // recente, que é onde a legibilidade a ser mostrada está — e é exatamente o estado
+  // em que o bloco de transcrição deve aparecer.
+  const versao =
+    versoes.find((v) => v.id === (vigenteRes.data as string | null)) ?? versoes[0];
 
   const camposRes = versao
     ? await paginar<CampoExtraido>((de, ate) =>
@@ -148,6 +173,24 @@ export default async function PlanilhaDocumentoPage({
           {versao.nota_legibilidade ? ` — ${versao.nota_legibilidade}` : ""}
         </div>
       )}
+
+      {/* A SAÍDA DO GATE DE CAPTURA (fechamento #2 do docs/01), oferecida exatamente
+          nos dois estados em que o documento está parado: arquivo que não se lê, ou
+          extração que não trouxe linha nenhuma. Nos outros estados o bloco não
+          aparece — transcrição grava linha aceita sem guarda de extração, e
+          oferecê-la ao lado de uma extração que funcionou seria abrir um atalho para
+          digitar o número que fecha. */}
+      {(() => {
+        const ilegivel = !!versao?.legibilidade && versao.legibilidade !== "ok";
+        if (!versao || (!ilegivel && campos.length > 0)) return null;
+        return (
+          <TranscricaoHumana
+            casoId={id}
+            docId={docId}
+            motivo={ilegivel ? "ilegivel" : "sem_linhas"}
+          />
+        );
+      })()}
 
       {doc.resumo && (
         <div className="rounded border border-tinta-200 bg-tinta-50 p-3 text-sm text-tinta-600">

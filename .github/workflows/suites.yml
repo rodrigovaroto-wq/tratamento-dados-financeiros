@@ -201,6 +201,14 @@ jobs:
         # depender do que estiver publicado no dia.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 
+      - name: Suíte da planilha de transcrição (ida e volta do formato)
+        # A planilha da 0129 grava linha ACEITA, com autor e sem guarda nenhuma —
+        # então um erro de leitura aqui não gera pendência: gera um número errado
+        # que tem dono, e ninguém volta a desconfiar de número com dono. A suíte é
+        # round-trip (gerar → .xlsx → ler) porque o defeito que interessa é a coluna
+        # que muda de lugar em UMA das duas metades do formato.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
+
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: db/test/run.sh

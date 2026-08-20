@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0129_transcricao_humana_assistida.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 568 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -232,6 +232,67 @@ a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas 
 
 **E a pendência de ilegibilidade fecha com o nome de quem transcreveu**, não por "sistema". É isso que
 faz o gate deixar de ser dead-end.
+
+### A PLANILHA DE TRANSCRIÇÃO, e a versão que a tela não estava mostrando (20/08, sessão 53)
+
+**A `0129` ficou com a função no banco e nada a chamando** — foi dito no commit dela e aqui. Isto é a
+outra metade: a planilha existe, se baixa, se preenche e se reimporta.
+
+`portal/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
+Não é conveniência: o formato é um contrato entre quem escreve e quem lê, e as duas pontas são este
+sistema. Separá-las é a receita para a coluna mudar de lugar num lado e não no outro, e o sintoma disso
+não é um erro — é uma transcrição importada com o valor na coluna da unidade.
+
+**A rota** `GET /casos/[id]/documentos/[docId]/transcricao` devolve o `.xlsx` com o padrão de resposta
+da rota de export. **A ação** `importarTranscricao` lê a planilha e chama `fn_registrar_transcricao_humana`.
+**O bloco na tela** aparece em exatamente dois estados — arquivo ilegível, ou zero linha extraída — e em
+nenhum outro: transcrição grava linha aceita sem passar por guarda, e oferecê-la ao lado de uma extração
+que funcionou seria abrir um atalho para digitar o número que fecha.
+
+#### A GUARDA DO ID DO DOCUMENTO, que o banco não teria como fazer
+
+A planilha carrega o `documento_id` na célula `B5`, e a importação **recusa** quando ele não é o desta
+tela. O banco não tem como pegar isso: para ele chegariam linhas plausíveis, e ele as gravaria
+**aceitas, com o nome de quem enviou**. Enviar a planilha do balanço da Alfa na tela da Beta é erro
+plausível de quem tem seis arquivos abertos, e o resultado seria um número errado *com autor* — o pior
+tipo, porque ninguém volta a desconfiar de número que tem dono. A recusa nomeia os dois ids, para a
+próxima tentativa não ser chute.
+
+**E a recusa é DEVOLVIDA, não lançada** — ao contrário das outras duas ações desta tela. Não é
+inconsistência: é a doutrina de recusa retornada da casa uma camada acima, e aqui ela é obrigatória por
+um motivo mecânico. O Next redige a mensagem de erro de server action em produção; um `throw` entregaria
+um digest opaco no lugar de *"esta planilha foi gerada para outro documento"*. Nas outras ações o texto
+da recusa é secundário; aqui o texto **é** o produto — ele diz o que fazer com o arquivo que a pessoa
+tem na mão.
+
+#### O DEFEITO QUE UM ASSERT PEGOU: `(1.234)` valia −1,234
+
+A leitura de número em pt-BR tinha a regra *"se tem vírgula, o ponto é milhar; sem vírgula, o ponto pode
+ser decimal"*. Ela está **certa** para `0.75` e **catastrófica** para `1.234`, que é como um PDF
+brasileiro escreve mil duzentos e trinta e quatro: o valor voltava três ordens de grandeza abaixo, num
+número plausível o bastante para passar por revisão. É o mesmo defeito do `parseFloat` um passo adiante.
+
+O ramo novo lê ponto separando grupos de **exatamente três dígitos** como milhar. A ambiguidade é real e
+a escolha está escrita: numa planilha em pt-BR o decimal se escreve com vírgula, e o grupo de três
+dígitos é o que distingue — `1.5`, `0.75` e `12.34` seguem sendo decimais, porque nenhum milhar tem um
+ou dois dígitos depois do ponto. Nove asserts travam essa fronteira, para a regra não ser "simplificada"
+para *tira todo ponto* e `0,75` virar 75.
+
+#### E A TELA MOSTRAVA A VERSÃO ERRADA — defeito que a `0129` tornou agudo
+
+A página do documento lia `doc.documento_versao?.[0]`: a primeira que o PostgREST devolvesse, sem ordem
+garantida. Passava despercebido enquanto quase todo documento tinha uma versão só. **Transcrição sempre
+cria versão nova** (doutrina da `0026`) — então a versão exibida continuaria sendo a antiga, a ilegível,
+a de zero linhas. O sintoma seria o pior possível para quem acabou de digitar um balanço à mão: a tela
+recarrega dizendo *"nenhuma linha foi extraída deste documento"* e oferecendo o bloco de transcrição de
+novo, como se o trabalho tivesse sido perdido. Agora a página chama `fn_versao_com_extracao` (`0102`) —
+a regra canônica, não uma reimplementação em TypeScript.
+
+**A suíte nova, `portal/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
+— gera, escreve o `.xlsx`, lê de volta —, porque o defeito que interessa é a coluna que muda de lugar em
+uma das duas metades. Ela também trava que sobra em branco **não** vira linha: a planilha traz 60 linhas
+livres, e se elas entrassem, cada transcrição gravaria dezenas de linhas afirmando que o documento diz
+zero.
 
 ### A CLASSIFICAÇÃO CONTÁBIL PASSA A EXISTIR, em sombra (20/08, sessão 53) — `0128`
 
