@@ -6212,6 +6212,219 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     vazia.entidade);
 }
 
+// ============================================================================
+// (36) O RESUMO DOS TRÊS CENÁRIOS — a comparação que o arquivo não fazia
+// ============================================================================
+//
+// O `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2: o arquivo tem UM interruptor de
+// cenário e todas as abas leem dele, então ele mostra um cenário por vez e "a
+// comparação base × cliente × stress — que é o motivo de existirem três — não está
+// em lugar nenhum". O teste (35) acima já cobre o indicador QUALITATIVO ("os três
+// cenários são três?"). Este cobre o bloco NUMÉRICO.
+//
+// O QUE ELE TRAVA, em ordem de importância:
+//
+//   1. O CHECK É EXATAMENTE ZERO. A cascata paralela e a cascata ativa saem do
+//      mesmo código (`formulaConta`, com o cenário como parâmetro). Se este assert
+//      cair, as duas se separaram — e o pior é que nada mais quebraria: os dois
+//      blocos continuariam produzindo números plausíveis, e o comitê leria uma
+//      comparação de cenários que não descreve o modelo ao lado.
+//   2. O STRESS DIFERE DO BASE EM NÚMERO, não só em premissa. O indicador (35) mede
+//      distância de PREMISSA; este mede o efeito dela na receita e no EBITDA. Um
+//      arquivo em que a premissa difere e o número não é um arquivo em que a
+//      cascata paralela não está ligada em alguma conta.
+//   3. O CLIENTE CASE É IGUAL AO BASE EM NÚMERO, num arquivo recém-exportado —
+//      porque ele nasce espelhando o Base. É o negativo do assert 2: se o Cliente
+//      aparecesse diferente sem ninguém ter digitado premissa própria, a sombra
+//      estaria calculando outra coisa.
+//   4. A SOMBRA NÃO EXISTE NO REALIZADO. O passado é um; três colunas históricas
+//      com o mesmo número convidariam a procurar uma diferença que não existe.
+//
+// OS ASSERTS 1 E 2 SÃO COMPLEMENTARES, e isso foi MEDIDO no religamento em vez de
+// suposto. O CHECK só compara a sombra do cenário ATIVO com a linha ativa — e num
+// arquivo recém-exportado o cenário ativo é o Base. Religamento A (a sombra passou
+// a usar sempre a taxa do Base, ignorando o cenário): o CHECK continuou ZERO, e
+// quem caiu foram os asserts do Stress. Religamento B (a agregação da sombra
+// deixou de somar uma conta de custo): o CHECK acusou 42.000 e 44.100, e os asserts
+// do Stress passaram. Nenhum dos dois pega o defeito do outro — um CHECK verde não
+// prova que os três cenários estão ligados, e três cenários diferentes não provam
+// que a sombra bate com o modelo. Tirar qualquer um dos dois grupos deixa metade do
+// bloco sem guarda.
+{
+  // Compara SEM a indentação dos dois lados: os rótulos do modelo carregam recuo
+  // (é ele que faz a hierarquia ser legível na planilha), e comparar um lado
+  // aparado com o outro cru é o jeito mais fácil de este teste "não achar" a linha
+  // e reprovar um bloco que está correto.
+  // `apos` NÃO É CONVENIÊNCIA: "EBITDA" é rótulo do SUMMARY e também do bloco dos
+  // cenários, e a primeira versão deste teste leu o do SUMMARY — o assert do EBITDA
+  // do Cliente comparou 58.162 com 0,49, que é a MARGEM da linha de baixo. O teste
+  // reprovou um bloco correto, e por um motivo que parecia um defeito de sinal.
+  const linhaDe = (ws: import("exceljs").Worksheet, rotulo: string, apos = 0): number => {
+    const alvo = rotulo.trim();
+    for (let r = apos + 1; r <= ws.rowCount; r++) {
+      if (String(ws.getRow(r).getCell(3).value ?? "").trim() === alvo) return r;
+    }
+    return -1;
+  };
+
+  const montar = (stress: number) => {
+    const linhaMod = (chave: string, v: number, secao: string) => ({
+      secao_canonica: secao, chave, rotulo_norm: chave.toLowerCase(),
+      papel: "conta" as const, unidade: "milhar", moeda: "BRL",
+      documentos: ["DRE"], valores: { "2025": v },
+    });
+    const ent = {
+      caso: { nome: "Resumo dos cenários", produto: "reestruturacao" },
+      agora: new Date("2026-08-20T12:00:00Z"),
+      entidade: "VERTENTES METALÚRGICA LTDA.", setor: "industria",
+      anosHistoricos: [2025], anosProjetados: [2026, 2027],
+      stressPct: stress, caixaMinimo: 0, aliquotaTributos: 0.34,
+      linhas: [
+        linhaMod("Vendas de produtos", 100000, "receita_bruta"),
+        linhaMod("Materia prima", 40000, "custos"),
+        linhaMod("Salarios administrativos", 15000, "despesas_operacionais"),
+      ],
+      premissas: [
+        { codigo: "cresc_receita", nome: "Crescimento da receita", natureza: "taxa",
+          formula: "crescimento_composto", unidade: "%",
+          valores: { "2026": 10, "2027": 8 }, origem: "digitado" },
+        { codigo: "cresc_custo", nome: "Inflação de custo", natureza: "taxa",
+          formula: "crescimento_composto", unidade: "%",
+          valores: { "2026": 5, "2027": 5 }, origem: "digitado" },
+      ],
+      vinculos: [
+        { rotulo_norm: "vendas de produtos", premissa_codigo: "cresc_receita", sazonalidade_codigo: null },
+        { rotulo_norm: "materia prima", premissa_codigo: "cresc_custo", sazonalidade_codigo: null },
+        { rotulo_norm: "salarios administrativos", premissa_codigo: "cresc_custo", sazonalidade_codigo: null },
+      ],
+      macro: [], unidade: "R$ mil",
+    };
+    return buildExportWorkbook({
+      caso: ent.caso,
+      documentos: [{
+        id: "dcen", tipo_taxonomia: "DRE",
+        entidade: { razao_social: "VERTENTES METALÚRGICA LTDA." },
+        periodo: { tipo: "anual", referencia: "2025" },
+        documento_versao: [{ id: "vcen", nome_original: "dre.pdf" }],
+      }] as unknown as DocumentoParaExport[],
+      campos: [campo({ chave: "Vendas de produtos", secao: "Receita Bruta", valor_num: 100000,
+                       periodo_coluna: "2025", ordem: 0, documento_versao_id: "vcen" })],
+      agora: ent.agora,
+      modeloInstitucional: ent as unknown as Parameters<typeof buildExportWorkbook>[0]["modeloInstitucional"],
+    });
+  };
+
+  const wb = montar(0.2);
+  const out = wb.getWorksheet("Output")!;
+  const rec = wb.getWorksheet("Revenues, COGS & SG&A")!;
+  checar(out != null && rec != null, "(36) as duas abas do bloco de cenários existem");
+
+  const rTitulo = linhaDe(out, "RESUMO DOS TRÊS CENÁRIOS (não olha o interruptor)");
+  checar(rTitulo > 0, "(36) o bloco existe na aba Output", String(rTitulo));
+
+  const rCheck = linhaDe(out, "CHECK: o cenário ativo bate com a cascata paralela (0 = bate)", rTitulo);
+  const rRecBase = linhaDe(out, "Base Case", rTitulo);
+  checar(rCheck > 0 && rRecBase > 0, "(36) as linhas do bloco estão nomeadas como o código as escreve");
+
+  // ---- 1. O CHECK É ZERO — nos dois exercícios projetados.
+  esquecerMemoria(out);
+  for (const col of ["F", "G"]) {
+    const v = avaliarCelula(out, col, rCheck);
+    checar(typeof v === "number" && Math.abs(v) < 1e-9,
+      `(36) CHECK zero em ${col}: a cascata paralela do cenário ATIVO bate com a cascata ativa`,
+      String(v));
+  }
+
+  // ---- 2 e 3. os números dos três cenários, no último exercício projetado.
+  //
+  // As três linhas de cada métrica são contíguas na ordem Base/Cliente/Stress —
+  // a ordem do CHOOSE, e o próprio código diz que trocá-la faria o arquivo
+  // comparar o Stress contra a coluna do Cliente sem nada denunciar.
+  const trio = (rotuloMetrica: string, col: string) => {
+    const r0 = linhaDe(out, rotuloMetrica, rTitulo);
+    esquecerMemoria(out);
+    return [0, 1, 2].map((i) => {
+      const v = avaliarCelula(out, col, r0 + 1 + i);
+      return typeof v === "number" ? v : NaN;
+    });
+  };
+
+  const [recB, recC, recS] = trio("Receita líquida", "G");
+  checar(recB > 0, "(36) a receita líquida do Base Case sai positiva no bloco", String(recB));
+  checar(recC === recB,
+    "(36) o Cliente Case é IGUAL ao Base em NÚMERO num arquivo recém-exportado (ele nasce espelhando)",
+    `${recC} vs ${recB}`);
+  checar(recS < recB && recS > 0,
+    "(36) e o Stress Case é MENOR que o Base em número — a premissa diferente virou efeito",
+    `${recS} vs ${recB}`);
+
+  const [ebB, ebC, ebS] = trio("EBITDA", "G");
+  checar(ebC === ebB, "(36) o EBITDA do Cliente também espelha o Base", `${ebC} vs ${ebB}`);
+  // O STRESS PIORA OS DOIS LADOS: receita menor E custo maior. O EBITDA dele tem de
+  // cair mais que a receita — se caísse menos, o haircut estaria sendo aplicado com
+  // o sinal errado no custo, que é o erro clássico do modelo de estresse feito por
+  // multiplicação cega (e a `modelo-institucional.ts` comenta exatamente isso).
+  checar(ebS < ebB, "(36) o EBITDA do Stress é menor que o do Base", `${ebS} vs ${ebB}`);
+  checar((ebB - ebS) / ebB > (recB - recS) / recB,
+    "(36) …e cai MAIS que a receita, porque no Stress o custo também piora",
+    `EBITDA -${(((ebB - ebS) / ebB) * 100).toFixed(1)}% vs receita -${(((recB - recS) / recB) * 100).toFixed(1)}%`);
+
+  // ---- 4. a sombra não existe no realizado (coluna E).
+  const rRec0 = linhaDe(out, "Receita líquida", rTitulo);
+  for (const i of [1, 2, 3]) {
+    checar(out.getRow(rRec0 + i).getCell(5).value == null,
+      "(36) a coluna do exercício REALIZADO fica vazia no bloco: o passado é um só",
+      String(out.getRow(rRec0 + i).getCell(5).value));
+  }
+
+  // ---- NEGATIVO: haircut zerado faz o Stress virar o Base EM NÚMERO.
+  //
+  // O par do assert (35): lá o indicador diz "IDÊNTICO AO BASE" por premissa; aqui
+  // o número tem de coincidir. Um cenário de estresse sem estresse é pior que não
+  // ter cenário de estresse, porque parece que alguém olhou.
+  {
+    const semStress = montar(0);
+    const out0 = semStress.getWorksheet("Output")!;
+    const r0 = linhaDe(out0, "Receita líquida",
+      linhaDe(out0, "RESUMO DOS TRÊS CENÁRIOS (não olha o interruptor)"));
+    esquecerMemoria(out0);
+    const b = avaliarCelula(out0, "G", r0 + 1);
+    const st = avaliarCelula(out0, "G", r0 + 3);
+    checar(typeof b === "number" && b === st,
+      "(36) NEGATIVO: com o haircut zerado, o Stress é o Base também em número", `${st} vs ${b}`);
+  }
+
+  // ---- A LINHA QUE DIZ O QUE FICOU FORA, e ela não é decoração: um bloco que
+  // omitisse ND/EBITDA sem dizer que os omite deixaria quem lê supondo que a
+  // comparação é completa.
+  const rFora = (() => {
+    for (let r = 1; r <= out.rowCount; r++) {
+      if (/Fora deste bloco/.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
+    }
+    return -1;
+  })();
+  checar(rFora > 0, "(36) o bloco DIZ o que ficou fora dele");
+  const txtFora = String(out.getRow(rFora).getCell(3).value ?? "");
+  checar(/ND\/EBITDA/.test(txtFora) && /DSCR/.test(txtFora) && /pico de caixa/.test(txtFora),
+    "(36) …nomeando as três métricas que exigiriam replicar dívida e fluxo de caixa", txtFora.slice(0, 120));
+
+  // ---- E O EBITDA DA ABA DE RECEITA DEIXOU DE SER UMA LINHA VAZIA.
+  //
+  // Ela era DECLARADA e nunca preenchida — rótulo "EBITDA" com todas as colunas em
+  // branco, o mesmo estado que a linha `DEPRECIACAO` já teve na mesma aba. Agora é
+  // espelho do Income Statement, que é onde o EBITDA reconcilia com o documento.
+  {
+    const rEb = linhaDe(rec, "EBITDA");
+    checar(rEb > 0, "(36) a aba de receita tem a linha de EBITDA");
+    const cel = rec.getRow(rEb).getCell(7).value;
+    checar(cel != null, "(36) …e ela NÃO está mais vazia", String(cel));
+    checar(typeof cel === "object" && cel != null && "formula" in cel
+      && /Income Statement/.test(String((cel as { formula: string }).formula)),
+      "(36) …sendo ESPELHO do Income Statement, não um segundo cálculo do EBITDA",
+      String(typeof cel === "object" && cel && "formula" in cel ? (cel as { formula: string }).formula : cel));
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

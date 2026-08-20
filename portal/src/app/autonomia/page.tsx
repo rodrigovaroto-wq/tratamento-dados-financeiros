@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 // Painel de autonomia — SOMENTE LEITURA.
@@ -327,12 +328,25 @@ export default async function AutonomiaPage() {
           conhece mede o instrumento, não o modelo.
         </p>
 
+        {/* A PORTA DE ENTRADA DA ROTULAGEM, e ela fica aqui porque este painel é
+            onde a pergunta nasce ("por que o dial não sobe?"). O painel continua
+            somente leitura quanto ao DIAL — o que este link abre é o trabalho de
+            mesa que produz a evidência, que é outra atividade. */}
+        <p className="mt-2 text-sm">
+          <Link href="/autonomia/golden" className="font-medium underline">
+            Rotular o golden set →
+          </Link>
+          <span className="ml-2 text-xs text-tinta-500">
+            abrir rodada, escolher a amostra, rotular em cego e congelar
+          </span>
+        </p>
+
         {listaRodadas.length === 0 ? (
           <p className="mt-2 text-sm text-tinta-500">
             Nenhuma rodada de calibração registrada. O protocolo está fechado como v1 desde
-            14/07/2026 e o esquema existe desde a <code>0126</code>; o que falta é a rotulagem —
-            documento real de cliente, com controle de acesso, que é trabalho de execução e não
-            de código.
+            14/07/2026, o esquema existe desde a <code>0126</code> e a <code>0130</code> abriu o
+            caminho de escrita — o que falta agora é a rotulagem em si, que é trabalho de mesa
+            sobre documento real de cliente.
           </p>
         ) : (
           <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-white text-sm">

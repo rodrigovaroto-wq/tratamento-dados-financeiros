@@ -2026,6 +2026,60 @@ $$;
 COMMENT ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) IS 'Tira o mandato da mesa sem apagar nada. Idempotente: fechar de novo devolve o fechamento original em vez de reescrever autoria. Reversível por fn_reabrir_caso.';
 
 --
+-- Name: fn_golden_abrir_rodada(text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text DEFAULT NULL::text, p_taxonomia_versao integer DEFAULT NULL::integer) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_nome   text := nullif(trim(coalesce(p_nome, '')), '');
+  v_autor  text := nullif(trim(coalesce(p_autor, '')), '');
+  v_versao int;
+  v_id     uuid;
+begin
+  if v_nome is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Rodada sem nome. O nome é a referência que uma decisão de dial cita '
+                       '("subiu com base na rodada X"), e "a rodada de agosto" não é referência.');
+  end if;
+
+  if v_autor is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Rodada sem autor. Quem abriu a rodada é parte da evidência: o golden set '
+                       'autoriza subir autonomia, e evidência sem procedência não autoriza nada.');
+  end if;
+
+  if exists (select 1 from golden_rodada r where r.nome = v_nome) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Já existe uma rodada chamada "%s". O f0/06 amplia o golden set com '
+                              'rodada NOVA e nunca editando a anterior — reusar o nome faria duas '
+                              'evidências diferentes responderem pela mesma citação.', v_nome));
+  end if;
+
+  v_versao := coalesce(p_taxonomia_versao,
+                       (select max(t.versao) from taxonomia_tipo_documento t where t.ativo),
+                       1);
+
+  insert into golden_rodada (nome, taxonomia_versao, criada_por, nota)
+  values (v_nome, v_versao, v_autor, p_nota)
+  returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (v_autor, 'golden_rodada_aberta', 'golden_rodada:'||v_id,
+          jsonb_build_object('nome', v_nome, 'taxonomia_versao', v_versao));
+
+  return jsonb_build_object('rodada_id', v_id, 'nome', v_nome, 'taxonomia_versao', v_versao);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text, p_taxonomia_versao integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text, p_taxonomia_versao integer) IS 'Abre uma rodada de calibração do f0/06. Recusa nome repetido em vez de deixar o unique estourar: ampliar o golden set é rodada nova, e o nome é o que uma decisão de dial cita como evidência.';
+
+--
 -- Name: fn_golden_campos(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2132,6 +2186,50 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_origem) IS 'Erro de extração de campo financeiro (f0/06) com AUSENTE separado de ERRADO — perda silenciosa é outra família de defeito, e foi ela que custou as três camadas de cobertura. Traz junto a cobertura_conferida: fração das linhas AUTO-ACEITAS que algum rótulo consegue conferir. O resto virou fato sem ninguém olhar, e reduzi-lo exige rótulo mais fino, não limiar mais alto.';
+
+--
+-- Name: fn_golden_candidatos(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_candidatos(p_rodada uuid DEFAULT NULL::uuid) RETURNS TABLE(documento_id uuid, caso_id uuid, caso_nome text, nome_original text, tipo_maquina text, tipo_nome text, obrigatoriedade text, legibilidade text, n_linhas integer, estrato_sugerido text, estrato_porque text, ja_na_rodada boolean, ja_rotulado boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  select d.id,
+         d.caso_id,
+         c.nome,
+         dv.nome_original,
+         d.tipo_taxonomia,
+         t.documento,
+         t.obrigatoriedade::text,
+         dv.legibilidade::text,
+         (select count(*)::int from campo_extraido ce
+           where ce.documento_versao_id = fn_versao_com_extracao(d.id)),
+         (fn_golden_estrato_sugerido(d.id)->>'estrato'),
+         (fn_golden_estrato_sugerido(d.id)->>'porque'),
+         (p_rodada is not null and exists (
+            select 1 from golden_documento gd
+             where gd.rodada_id = p_rodada and gd.documento_id = d.id)),
+         (p_rodada is not null and exists (
+            select 1 from golden_rotulo gr
+             where gr.rodada_id = p_rodada and gr.documento_id = d.id))
+  from documento d
+  join caso c on c.id = d.caso_id
+  left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
+  left join lateral (
+    select dv2.nome_original, dv2.legibilidade
+    from documento_versao dv2
+    where dv2.documento_id = d.id
+    order by dv2.n_versao desc
+    limit 1
+  ) dv on true
+  order by c.nome, d.tipo_taxonomia nulls last, dv.nome_original;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_candidatos(p_rodada uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_candidatos(p_rodada uuid) IS 'Os documentos que podem entrar numa rodada, com estrato sugerido e as bandeiras de já-incluído / já-rotulado. Não sorteia a amostra de propósito: a estratificação do f0/06 é escolha humana, e amostra sorteada por função é amostra que ninguém consegue defender.';
 
 --
 -- Name: fn_golden_classe_a(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -2303,6 +2401,105 @@ $$;
 COMMENT ON FUNCTION public.fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem) IS 'Quantos documentos rotulados a rodada tem por tipo CORE, contra o alvo do f0/06 (~20-30). Core sai de obrigatoriedade=obrigatorio na taxonomia (0002), que são os mesmos 8 do Kit Básico — não de uma lista repetida aqui. granularidade vem no resultado porque tipo por CASO rende ~1 por mandato: demorar a juntar 20 é esperado, e o f0/06 diz isso.';
 
 --
+-- Name: fn_golden_congelar(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_congelar(p_rodada uuid, p_autor text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_rodada     golden_rodada;
+  v_autor      text := nullif(trim(coalesce(p_autor, '')), '');
+  v_n_doc      int;
+  v_n_rot      int;
+  v_n_campos   int;
+  v_n_sem_rot  int;
+  v_rotuladores text[];
+begin
+  if v_autor is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Congelar sem autor. O congelamento é o ato que transforma rótulo em '
+                       'evidência datada, e evidência sem quem a fechou não datou nada.');
+  end if;
+
+  select * into v_rodada from golden_rodada where id = p_rodada;
+  if v_rodada.id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Rodada %s não existe.', p_rodada));
+  end if;
+
+  if v_rodada.congelada_em is not null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A rodada "%s" já foi congelada em %s por %s. Descongelar é recusado '
+                              'pelo gatilho da 0126: uma rodada que volta a aceitar rótulo depois '
+                              'de ter autorizado uma subida de dial reabre o furo que congelar '
+                              'fecha.', v_rodada.nome, v_rodada.congelada_em::date,
+                              coalesce(v_rodada.congelada_por, '?')));
+  end if;
+
+  select count(*)::int into v_n_doc
+    from golden_documento gd where gd.rodada_id = p_rodada;
+  select count(*)::int into v_n_rot
+    from golden_rotulo gr where gr.rodada_id = p_rodada;
+  select count(*)::int into v_n_campos
+    from golden_campo gc where gc.rodada_id = p_rodada;
+
+  if v_n_rot = 0 then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A rodada "%s" tem %s documento(s) e nenhum rótulo. Congelada assim '
+                              'ela apareceria na lista de rodadas parecendo evidência, e não é: '
+                              'congelar dá DATA a um julgamento que aqui não existe.',
+                              v_rodada.nome, v_n_doc));
+  end if;
+
+  select count(*)::int into v_n_sem_rot
+  from golden_documento gd
+  where gd.rodada_id = p_rodada
+    and not exists (select 1 from golden_rotulo gr
+                     where gr.rodada_id = gd.rodada_id and gr.documento_id = gd.documento_id);
+
+  select array_agg(distinct gr.rotulador order by gr.rotulador) into v_rotuladores
+    from golden_rotulo gr where gr.rodada_id = p_rodada;
+
+  update golden_rodada
+     set congelada_em = now(), congelada_por = v_autor
+   where id = p_rodada;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (v_autor, 'golden_rodada_congelada', 'golden_rodada:'||p_rodada,
+          jsonb_build_object('nome', v_rodada.nome, 'n_documentos', v_n_doc,
+                             'n_rotulos', v_n_rot, 'n_campos', v_n_campos,
+                             'n_documentos_sem_rotulo', v_n_sem_rot,
+                             'rotuladores', to_jsonb(v_rotuladores)));
+
+  return jsonb_build_object(
+    'rodada_id', p_rodada, 'nome', v_rodada.nome, 'congelada_por', v_autor,
+    'n_documentos', v_n_doc, 'n_rotulos', v_n_rot, 'n_campos', v_n_campos,
+    'n_documentos_sem_rotulo', v_n_sem_rot,
+    'rotuladores', to_jsonb(v_rotuladores),
+    -- UM ROTULADOR SÓ É UMA ESCOLHA LEGÍTIMA COM UMA CONSEQUÊNCIA MEDÍVEL, e ela
+    -- fica dita no ato de congelar em vez de descoberta quando o número não
+    -- fecha. O f0/06 pede dois rotuladores "nos casos ambíguos" para que a
+    -- discordância entre humanos seja EXCLUÍDA do placar da máquina. Com um só,
+    -- não há discordância a excluir: o documento genuinamente ambíguo entra como
+    -- erro da máquina, e a medição fica CONSERVADORA — subestima a qualidade.
+    -- Conservador é o lado certo para errar, e mesmo assim precisa estar escrito:
+    -- quem lê "acerto 0,91" tem direito de saber que 0,91 é um piso.
+    'aviso_rotulador_unico', case when coalesce(array_length(v_rotuladores, 1), 0) > 1 then null else
+      format('Rodada rotulada só por %s. fn_golden_inter_avaliador não terá dado, e nada será '
+             'excluído do placar por "humanos discordam" — documento ambíguo conta como erro da '
+             'máquina. A medição fica conservadora: o número que sair é um PISO da qualidade real, '
+             'não uma estimativa dela.', coalesce(v_rotuladores[1], '?')) end);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_congelar(p_rodada uuid, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_congelar(p_rodada uuid, p_autor text) IS 'Congela a rodada — o ato que dá DATA à evidência e sem o qual fn_golden_suficiente não autoriza subida. Recusa rodada sem nenhum rótulo (apareceria na lista parecendo evidência) e não recusa documento incluído sem rótulo (ele não entra em métrica, e exigi-lo produziria rótulo ruim, que é pior que rótulo nenhum). Avisa quando houve um rotulador só: aí a medição é um piso.';
+
+--
 -- Name: fn_golden_consenso(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2374,6 +2571,67 @@ $$;
 COMMENT ON FUNCTION public.fn_golden_consenso(p_rodada uuid) IS 'O ground truth consolidado de uma rodada, campo a campo. Onde os rotuladores discordam o campo volta null com consenso=false, e as métricas o EXCLUEM: f0/06, "se humanos discordam, a máquina não tem como acertar". null de rotulador é "não julgou", que também não vira consenso.';
 
 --
+-- Name: fn_golden_estrato_sugerido(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_estrato_sugerido(p_documento_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $_$
+declare
+  v_nome  text;
+  v_leg   legibilidade;
+  v_ext   text;
+begin
+  select dv.nome_original, dv.legibilidade into v_nome, v_leg
+  from documento_versao dv
+  where dv.documento_id = p_documento_id
+  order by dv.n_versao desc
+  limit 1;
+
+  if v_nome is null and v_leg is null then
+    return jsonb_build_object('estrato', null,
+      'porque', 'O documento não tem versão com nome de arquivo — não há de onde inferir.');
+  end if;
+
+  v_ext := lower(coalesce(substring(v_nome from '\.([A-Za-z0-9]+)$'), ''));
+
+  if v_ext in ('xlsx', 'xls', 'csv', 'docx', 'doc', 'txt') then
+    return jsonb_build_object('estrato', 'digital',
+      'porque', format('Extensão .%s: arquivo de escritório, texto nativo.', v_ext));
+  end if;
+
+  if v_ext in ('jpg', 'jpeg', 'png', 'heic', 'webp') then
+    return jsonb_build_object('estrato', 'foto',
+      'porque', format('Extensão .%s: imagem, o pior estrato de captura.', v_ext));
+  end if;
+
+  if v_ext = 'pdf' then
+    -- A legibilidade é o único sinal que o banco tem sobre a qualidade da
+    -- captura, e ela é o veredito da extração, não do arquivo. Serve para
+    -- separar "PDF que se leu bem" de "PDF que não se leu" — que é quase sempre
+    -- um scan ruim. Quase: um PDF nativo com layout hostil também degrada.
+    if v_leg is null or v_leg = 'ok' then
+      return jsonb_build_object('estrato', 'pdf_nativo',
+        'porque', 'PDF que a extração leu sem apontar degradação. CONFIRA: um scan legível cai '
+                  'aqui por engano, e escaneado é o estrato que decide se o dial pode subir.');
+    end if;
+    return jsonb_build_object('estrato', 'escaneado',
+      'porque', format('PDF com legibilidade "%s" — degradação é o sintoma típico de scan.', v_leg));
+  end if;
+
+  return jsonb_build_object('estrato', null,
+    'porque', format('Extensão "%s" não está em nenhuma das quatro faixas. Diga você.',
+                     coalesce(nullif(v_ext, ''), '(sem extensão)')));
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_golden_estrato_sugerido(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_estrato_sugerido(p_documento_id uuid) IS 'Sugere o golden_estrato pela extensão e pela legibilidade. É SUGESTÃO: o banco não distingue PDF nativo de PDF escaneado sem olhar as páginas, e escaneado é justamente o estrato cujo pior caso decide a subida de dial. Sugerir aqui não ancora julgamento nenhum — estrato é propriedade do arquivo, não leitura de conteúdo.';
+
+--
 -- Name: fn_golden_identificadores(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2418,6 +2676,78 @@ $$;
 COMMENT ON FUNCTION public.fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem) IS 'Acurácia de tipo/período/entidade separadamente (f0/06). Separados porque as causas de erro são distintas — a 0121 foi entidade pura, a 0122 período puro — e o agregado esconderia a coluna que precisa de trabalho. Entidade casa por fn_mesma_entidade: grafia diferente não é erro.';
 
 --
+-- Name: fn_golden_incluir_documento(uuid, uuid, public.golden_estrato, public.golden_origem, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_incluir_documento(p_rodada uuid, p_documento_id uuid, p_estrato public.golden_estrato, p_origem public.golden_origem, p_autor text, p_nota text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_rodada golden_rodada;
+  v_autor  text := nullif(trim(coalesce(p_autor, '')), '');
+begin
+  if v_autor is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Sem autor: quem escolheu a amostra é parte da evidência.');
+  end if;
+
+  select * into v_rodada from golden_rodada where id = p_rodada;
+  if v_rodada.id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Rodada %s não existe.', p_rodada));
+  end if;
+
+  -- O gatilho da 0126 já barra isto com exceção. Aqui a recusa é RETORNADA
+  -- porque a tela precisa dizer o que fazer — e o que fazer é abrir rodada nova,
+  -- não tentar de novo.
+  if v_rodada.congelada_em is not null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A rodada "%s" foi congelada em %s. Rodada congelada não recebe mais '
+                              'documento: o f0/06 amplia com rodada NOVA, senão a evidência que '
+                              'autorizou uma subida de dial muda depois da subida.',
+                              v_rodada.nome, v_rodada.congelada_em::date));
+  end if;
+
+  if not exists (select 1 from documento d where d.id = p_documento_id) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Documento %s não existe.', p_documento_id));
+  end if;
+
+  if exists (select 1 from golden_documento gd
+              where gd.rodada_id = p_rodada and gd.documento_id = p_documento_id) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este documento já está nesta rodada. Como estrato e origem não se editam '
+                       '(append-only), corrigi-los é rodada nova — e um documento incluído duas '
+                       'vezes contaria em dobro na cobertura.');
+  end if;
+
+  if p_estrato is null or p_origem is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Estrato e origem são obrigatórios. Estrato porque a métrica agregada sobre '
+                       'estratos misturados esconde o pior caso, que é justamente o que decide a '
+                       'subida; origem porque as métricas do dial contam só documento real.');
+  end if;
+
+  insert into golden_documento (rodada_id, documento_id, estrato, origem, incluido_por, nota)
+  values (p_rodada, p_documento_id, p_estrato, p_origem, v_autor, p_nota);
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (v_autor, 'golden_documento_incluido', 'golden_rodada:'||p_rodada,
+          jsonb_build_object('documento_id', p_documento_id,
+                             'estrato', p_estrato, 'origem', p_origem));
+
+  return jsonb_build_object('rodada_id', p_rodada, 'documento_id', p_documento_id,
+                            'estrato', p_estrato, 'origem', p_origem);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_incluir_documento(p_rodada uuid, p_documento_id uuid, p_estrato public.golden_estrato, p_origem public.golden_origem, p_autor text, p_nota text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_incluir_documento(p_rodada uuid, p_documento_id uuid, p_estrato public.golden_estrato, p_origem public.golden_origem, p_autor text, p_nota text) IS 'Inclui um documento na rodada. Estrato e origem são obrigatórios e não inferidos: o banco não distingue documento de cliente do book sintético, e chutar isso inflaria a amostra com aquilo cujo gabarito já se conhece — que é medir o instrumento, não o modelo.';
+
+--
 -- Name: fn_golden_inter_avaliador(uuid, public.golden_origem); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2448,6 +2778,83 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem) IS 'Concordância entre rotuladores, por campo (f0/06). Conta só documento com 2+ rotuladores — com um só não há discordância possível, e incluí-lo inflaria a concordância humana com itens que ninguém conferiu duas vezes. Não mede o sistema: mede se a pergunta é respondível.';
+
+--
+-- Name: fn_golden_linhas_para_rotular(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_linhas_para_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text DEFAULT NULL::text) RETURNS TABLE(chave text, secao text, periodo_coluna text, entidade_coluna text, origem_pagina integer, unidade text, ja_rotulada boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  select ce.chave, ce.secao, ce.periodo_coluna, ce.entidade_coluna, ce.origem_pagina, ce.unidade,
+         exists (
+           select 1 from golden_campo gc
+            where gc.rodada_id = p_rodada
+              and gc.documento_id = p_documento_id
+              and (p_rotulador is null or gc.rotulador = p_rotulador)
+              and fn_normalizar_texto(gc.chave) = fn_normalizar_texto(ce.chave)
+              and coalesce(gc.periodo_coluna, '') = coalesce(ce.periodo_coluna, '')
+              and coalesce(gc.entidade_coluna, '') = coalesce(ce.entidade_coluna, '')
+         )
+  from campo_extraido ce
+  where ce.documento_versao_id = fn_versao_com_extracao(p_documento_id)
+    and ce.valor_num is not null
+  order by ce.origem_pagina nulls last, ce.ordem, ce.chave;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_linhas_para_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_linhas_para_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text) IS 'As rubricas que a extração achou, SEM O VALOR. Rotulagem cega (fechamento #5 do docs/01): quem vê o palpite da máquina produz conferência, não ground truth, e a métrica sobe sem nada melhorar. A rubrica vem porque é a chave de casamento de fn_golden_campos — esconde-la faria diferença de grafia entrar como AUSENTE, cobrando da máquina um erro de datilografia.';
+
+--
+-- Name: fn_golden_progresso(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_progresso(p_rodada uuid) RETURNS TABLE(tipo text, tipo_nome text, obrigatoriedade text, n_incluidos integer, n_rotulados integer, n_rotulados_verdade integer, n_minimo integer, falta integer)
+    LANGUAGE sql STABLE
+    AS $$
+  with alvo as (
+    select coalesce(max(gc.n_minimo), 20) as n from golden_criterio gc
+  ),
+  incl as (
+    select d.tipo_taxonomia as tipo,
+           count(*)::int as n_incluidos,
+           count(*) filter (where exists (
+             select 1 from golden_rotulo gr
+              where gr.rodada_id = gd.rodada_id and gr.documento_id = gd.documento_id))::int
+             as n_rotulados
+    from golden_documento gd
+    join documento d on d.id = gd.documento_id
+    where gd.rodada_id = p_rodada and gd.origem = 'real'
+    group by 1
+  ),
+  -- A contagem pela VERDADE, para a divergência ficar à vista: é este número que
+  -- o portão do dial usa, via fn_golden_cobertura.
+  verdade as (
+    select c.tipo, c.n_documentos::int as n
+    from fn_golden_cobertura(p_rodada) c
+  )
+  select coalesce(i.tipo, v.tipo),
+         t.documento,
+         t.obrigatoriedade::text,
+         coalesce(i.n_incluidos, 0),
+         coalesce(i.n_rotulados, 0),
+         coalesce(v.n, 0),
+         (select n from alvo),
+         greatest((select n from alvo) - coalesce(v.n, 0), 0)
+  from incl i
+  full outer join verdade v on v.tipo = i.tipo
+  left join taxonomia_tipo_documento t on t.codigo = coalesce(i.tipo, v.tipo)
+  order by t.obrigatoriedade, 1;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_progresso(p_rodada uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_progresso(p_rodada uuid) IS 'Quanto falta para a rodada bater o N do f0/06, por tipo. Traz DUAS contagens de propósito: n_rotulados agrupa pelo tipo que a MÁQUINA diz (é a etiqueta que existe na hora de montar a amostra) e n_rotulados_verdade pelo consenso humano (é o que o portão do dial conta). Divergirem não é bug: é o erro de classificação aparecendo.';
 
 --
 -- Name: fn_golden_rodada_congelada(); Type: FUNCTION; Schema: public; Owner: -
@@ -2501,6 +2908,264 @@ begin
   return new;
 end;
 $$;
+
+--
+-- Name: fn_golden_rotular(uuid, uuid, text, text, text, text, boolean, public.legibilidade, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_tipo_correto text DEFAULT NULL::text, p_entidade_correta text DEFAULT NULL::text, p_periodo_correto text DEFAULT NULL::text, p_assinado_correto boolean DEFAULT NULL::boolean, p_legibilidade public.legibilidade DEFAULT NULL::public.legibilidade, p_item_checklist_correto text DEFAULT NULL::text, p_nota text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_rodada    golden_rodada;
+  v_rotulador text := nullif(trim(coalesce(p_rotulador, '')), '');
+  v_tipo      text := nullif(trim(coalesce(p_tipo_correto, '')), '');
+  v_id        uuid;
+begin
+  if v_rotulador is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Rótulo sem rotulador. O f0/06 mede concordância ENTRE rotuladores, e a '
+                       'chave da tabela é (rodada, documento, rotulador) exatamente para isso — '
+                       'rótulo anônimo não tem como participar de concordância nenhuma.');
+  end if;
+
+  select * into v_rodada from golden_rodada where id = p_rodada;
+  if v_rodada.id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Rodada %s não existe.', p_rodada));
+  end if;
+  if v_rodada.congelada_em is not null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A rodada "%s" está congelada desde %s e não aceita mais rótulo. '
+                              'Ampliar é rodada nova: evidência que ainda muda não sustenta uma '
+                              'decisão registrada contra ela.',
+                              v_rodada.nome, v_rodada.congelada_em::date));
+  end if;
+
+  if not exists (select 1 from golden_documento gd
+                  where gd.rodada_id = p_rodada and gd.documento_id = p_documento_id) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este documento não está nesta rodada. Inclua-o primeiro, declarando estrato '
+                       'e origem — são eles que fazem a amostra ser estratificada em vez de ser um '
+                       'monte de arquivos.');
+  end if;
+
+  if exists (select 1 from golden_rotulo gr
+              where gr.rodada_id = p_rodada and gr.documento_id = p_documento_id
+                and gr.rotulador = v_rotulador) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('%s já rotulou este documento nesta rodada, e rótulo é append-only: '
+                              'corrigir um rótulo depois da medição é reescrever a justificativa de '
+                              'uma decisão de dial a posteriori. Se o rótulo estava errado, a '
+                              'correção é rodada nova.', v_rotulador));
+  end if;
+
+  if v_tipo is not null
+     and not exists (select 1 from taxonomia_tipo_documento t where t.codigo = v_tipo) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('"%s" não é um código de tipo do catálogo. Tipo digitado errado não '
+                              'fica errado só no rótulo: ele vira falso negativo permanente da '
+                              'máquina no F1 daquele tipo, e ninguém relê um rótulo append-only.',
+                              v_tipo));
+  end if;
+
+  -- Rótulo com todos os campos nulos é ruído: ele CONTA como documento rotulado
+  -- na cobertura (a 0126 conta a existência da linha) e não mede nada. Seria a
+  -- forma mais fácil de bater o n_minimo sem produzir evidência.
+  if v_tipo is null and p_entidade_correta is null and p_periodo_correto is null
+     and p_assinado_correto is null and p_legibilidade is null
+     and p_item_checklist_correto is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Rótulo vazio. Ele contaria como documento rotulado na cobertura e não '
+                       'mediria nada — é o jeito mais fácil de bater o N mínimo do f0/06 sem '
+                       'produzir evidência. Julgue ao menos um campo.');
+  end if;
+
+  insert into golden_rotulo
+    (rodada_id, documento_id, rotulador, tipo_correto, entidade_correta, periodo_correto,
+     assinado_correto, legibilidade, item_checklist_correto, nota)
+  values
+    (p_rodada, p_documento_id, v_rotulador, v_tipo,
+     nullif(trim(coalesce(p_entidade_correta, '')), ''),
+     nullif(trim(coalesce(p_periodo_correto, '')), ''),
+     p_assinado_correto, p_legibilidade,
+     nullif(trim(coalesce(p_item_checklist_correto, '')), ''), p_nota)
+  returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (v_rotulador, 'golden_rotulo', 'golden_rodada:'||p_rodada,
+          jsonb_build_object('documento_id', p_documento_id, 'rotulo_id', v_id,
+                             'porque', 'rotulagem CEGA: o rotulador nao viu a resposta da maquina '
+                                       '(fn_golden_linhas_para_rotular nao devolve valor). '
+                                       'fechamento #5 do docs/01.'));
+
+  return jsonb_build_object('rotulo_id', v_id, 'rotulador', v_rotulador,
+                            'documento_id', p_documento_id);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_golden_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_tipo_correto text, p_entidade_correta text, p_periodo_correto text, p_assinado_correto boolean, p_legibilidade public.legibilidade, p_item_checklist_correto text, p_nota text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_tipo_correto text, p_entidade_correta text, p_periodo_correto text, p_assinado_correto boolean, p_legibilidade public.legibilidade, p_item_checklist_correto text, p_nota text) IS 'Grava o julgamento humano do documento (f0/06, "o que é rotulado"), um por rotulador. Recusa tipo fora do catálogo porque typo em rótulo append-only vira falso negativo permanente da máquina, e recusa rótulo vazio porque ele contaria na cobertura sem medir nada.';
+
+--
+-- Name: fn_golden_rotular_campos(uuid, uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_golden_rotular_campos(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_campos jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+declare
+  v_rodada    golden_rodada;
+  v_rotulador text := nullif(trim(coalesce(p_rotulador, '')), '');
+  v_versao    uuid;
+  v_item      jsonb;
+  v_chave     text;
+  v_valor     numeric;
+  v_tol       numeric;
+  v_classe    text;
+  v_per       text;
+  v_ent       text;
+  v_casou     boolean;
+  v_gravados  jsonb := '[]'::jsonb;
+  v_pulados   jsonb := '[]'::jsonb;
+  v_n_sem_par int := 0;
+begin
+  if v_rotulador is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Rótulo de campo sem rotulador.');
+  end if;
+
+  select * into v_rodada from golden_rodada where id = p_rodada;
+  if v_rodada.id is null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('Rodada %s não existe.', p_rodada));
+  end if;
+  if v_rodada.congelada_em is not null then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', format('A rodada "%s" está congelada desde %s.',
+                              v_rodada.nome, v_rodada.congelada_em::date));
+  end if;
+
+  if not exists (select 1 from golden_documento gd
+                  where gd.rodada_id = p_rodada and gd.documento_id = p_documento_id) then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Este documento não está nesta rodada.');
+  end if;
+
+  if p_campos is null or jsonb_typeof(p_campos) <> 'array' or jsonb_array_length(p_campos) = 0 then
+    return jsonb_build_object('recusado', true,
+      'motivo_recusa', 'Nenhum campo para rotular.');
+  end if;
+
+  v_versao := fn_versao_com_extracao(p_documento_id);
+
+  for v_item in select * from jsonb_array_elements(p_campos)
+  loop
+    v_chave := nullif(trim(coalesce(v_item->>'chave', '')), '');
+    v_per   := nullif(trim(coalesce(v_item->>'periodo_coluna', '')), '');
+    v_ent   := nullif(trim(coalesce(v_item->>'entidade_coluna', '')), '');
+    v_valor := case when (v_item->>'valor_correto') ~ '^-?\d+(\.\d+)?$'
+                    then (v_item->>'valor_correto')::numeric end;
+    v_tol   := coalesce(case when (v_item->>'tolerancia') ~ '^\d+(\.\d+)?$'
+                             then (v_item->>'tolerancia')::numeric end, 0);
+    v_classe := nullif(trim(coalesce(v_item->>'classe_contabil_correta', '')), '');
+
+    if v_chave is null then
+      v_pulados := v_pulados || jsonb_build_object(
+        'chave', v_item->>'chave', 'porque', 'sem rubrica: não haveria como casar com linha nenhuma');
+      continue;
+    end if;
+
+    -- Campo sem valor é descartado e DITO. `fn_golden_campos` filtra
+    -- `valor_correto is not null`, então gravá-lo criaria uma linha que existe no
+    -- banco e não aparece em métrica nenhuma — o pior estado, porque quem conta
+    -- rótulos acha que rotulou.
+    if v_valor is null then
+      v_pulados := v_pulados || jsonb_build_object(
+        'chave', v_chave,
+        'porque', 'sem valor numérico: fn_golden_campos só conta rótulo com valor, então esta '
+                  'linha existiria no banco sem entrar em métrica nenhuma');
+      continue;
+    end if;
+
+    if v_classe is not null
+       and not exists (select 1 from classe_contabil_catalogo cc where cc.codigo = v_classe) then
+      v_pulados := v_pulados || jsonb_build_object(
+        'chave', v_chave,
+        'porque', format('classe contábil "%s" não está no catálogo das cinco do docs/05', v_classe));
+      continue;
+    end if;
+
+    if exists (select 1 from golden_campo gc
+                where gc.rodada_id = p_rodada and gc.documento_id = p_documento_id
+                  and gc.rotulador = v_rotulador
+                  and gc.chave = v_chave
+                  and coalesce(gc.periodo_coluna, '') = coalesce(v_per, '')
+                  and coalesce(gc.entidade_coluna, '') = coalesce(v_ent, '')) then
+      v_pulados := v_pulados || jsonb_build_object(
+        'chave', v_chave,
+        'porque', 'já rotulada por você nesta rodada (append-only: corrigir é rodada nova)');
+      continue;
+    end if;
+
+    insert into golden_campo
+      (rodada_id, documento_id, rotulador, chave, periodo_coluna, entidade_coluna,
+       valor_correto, classe_contabil_correta, tolerancia)
+    values
+      (p_rodada, p_documento_id, v_rotulador, v_chave, v_per, v_ent, v_valor, v_classe, v_tol);
+
+    -- A REVELAÇÃO, calculada com o mesmo casamento de `fn_golden_campos`: chave
+    -- normalizada + período + entidade. Usar outro critério aqui faria a tela
+    -- prometer um par que a métrica não vai encontrar.
+    select exists (
+      select 1 from campo_extraido ce
+       where ce.documento_versao_id = v_versao
+         and ce.valor_num is not null
+         and fn_normalizar_texto(ce.chave) = fn_normalizar_texto(v_chave)
+         and coalesce(ce.periodo_coluna, '') = coalesce(v_per, '')
+         and coalesce(ce.entidade_coluna, '') = coalesce(v_ent, '')
+    ) into v_casou;
+
+    if not v_casou then v_n_sem_par := v_n_sem_par + 1; end if;
+
+    v_gravados := v_gravados || jsonb_build_object(
+      'chave', v_chave, 'periodo_coluna', v_per, 'entidade_coluna', v_ent,
+      'valor_correto', v_valor, 'tolerancia', v_tol, 'casou_com_a_extracao', v_casou);
+  end loop;
+
+  if jsonb_array_length(v_gravados) > 0 then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values (v_rotulador, 'golden_campos', 'golden_rodada:'||p_rodada,
+            jsonb_build_object('documento_id', p_documento_id,
+                               'n_gravados', jsonb_array_length(v_gravados),
+                               'n_sem_par', v_n_sem_par,
+                               'n_pulados', jsonb_array_length(v_pulados)));
+  end if;
+
+  return jsonb_build_object(
+    'gravados', v_gravados,
+    'pulados', v_pulados,
+    'n_gravados', jsonb_array_length(v_gravados),
+    'n_sem_par', v_n_sem_par,
+    -- O texto do aviso mora aqui e não na tela: o motivo é o mesmo de sempre
+    -- nesta casa — quem lê o retorno da função no psql precisa ver a mesma coisa
+    -- que quem lê a tela, senão existem duas verdades.
+    'aviso_sem_par', case when v_n_sem_par = 0 then null else format(
+      '%s linha(s) que você rotulou não casaram com nenhuma linha da extração. Isso conta como '
+      'AUSENTE no placar (perda silenciosa) e pode ser uma de duas coisas: a extração perdeu a '
+      'linha de verdade, ou a rubrica que você escreveu não é reconhecível como a mesma. As duas '
+      'importam, e são diferentes.', v_n_sem_par) end);
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_golden_rotular_campos(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_campos jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_golden_rotular_campos(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_campos jsonb) IS 'Grava os valores lidos pelo humano e REVELA, depois de gravar, quais casaram com a extração. Aceita rubrica fora da lista da máquina de propósito: é o único caminho pelo qual a perda silenciosa (n_ausente) chega a ser medida. Revelar antes de gravar seria ancoragem pela porta de trás — o rótulo passaria a perseguir a grafia que casa.';
 
 --
 -- Name: fn_golden_suficiente(text, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -9946,10 +10611,22 @@ GRANT ALL ON FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timesta
 GRANT ALL ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text, p_taxonomia_versao integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text, p_taxonomia_versao integer) TO authenticated;
+
+--
 -- Name: FUNCTION fn_golden_campos(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_golden_campos(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_candidatos(p_rodada uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_candidatos(p_rodada uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_golden_classe_a(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
@@ -9970,10 +10647,22 @@ GRANT ALL ON FUNCTION public.fn_golden_classificacao(p_rodada uuid, p_origem pub
 GRANT ALL ON FUNCTION public.fn_golden_cobertura(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
 
 --
+-- Name: FUNCTION fn_golden_congelar(p_rodada uuid, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_congelar(p_rodada uuid, p_autor text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_golden_consenso(p_rodada uuid); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_golden_consenso(p_rodada uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_estrato_sugerido(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_estrato_sugerido(p_documento_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
@@ -9982,10 +10671,40 @@ GRANT ALL ON FUNCTION public.fn_golden_consenso(p_rodada uuid) TO authenticated;
 GRANT ALL ON FUNCTION public.fn_golden_identificadores(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
 
 --
+-- Name: FUNCTION fn_golden_incluir_documento(p_rodada uuid, p_documento_id uuid, p_estrato public.golden_estrato, p_origem public.golden_origem, p_autor text, p_nota text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_incluir_documento(p_rodada uuid, p_documento_id uuid, p_estrato public.golden_estrato, p_origem public.golden_origem, p_autor text, p_nota text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_golden_inter_avaliador(p_rodada uuid, p_origem public.golden_origem) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_linhas_para_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_linhas_para_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_progresso(p_rodada uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_progresso(p_rodada uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_tipo_correto text, p_entidade_correta text, p_periodo_correto text, p_assinado_correto boolean, p_legibilidade public.legibilidade, p_item_checklist_correto text, p_nota text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_rotular(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_tipo_correto text, p_entidade_correta text, p_periodo_correto text, p_assinado_correto boolean, p_legibilidade public.legibilidade, p_item_checklist_correto text, p_nota text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_golden_rotular_campos(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_campos jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_golden_rotular_campos(p_rodada uuid, p_documento_id uuid, p_rotulador text, p_campos jsonb) TO authenticated;
 
 --
 -- Name: FUNCTION fn_golden_suficiente(p_estagio text, p_rodada uuid); Type: ACL; Schema: public; Owner: -
