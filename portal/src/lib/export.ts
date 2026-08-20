@@ -308,6 +308,46 @@ export function periodoConsolidado(periodoFormatado: string): string {
   return fim ? fim[1] : periodoFormatado;
 }
 
+/**
+ * A ENTIDADE E O PERÍODO EFETIVOS DE UMA LINHA — a regra, num lugar só.
+ *
+ * Uma linha extraída não pertence necessariamente à entidade nem ao período do
+ * DOCUMENTO. Duas migrations abriram essa distinção, e ignorar qualquer uma delas
+ * perde dado sem avisar:
+ *
+ *  • `entidade_coluna` (0014) — o balanço combinado traz várias colunas de
+ *    empresa. A entidade da LINHA é a da coluna, não a principal do documento; e o
+ *    apelido da coluna ("Componentes") é promovido à razão social quando o caso
+ *    conhece uma só que case (`consolidarNomesDeEntidade`), senão a mesma empresa
+ *    fica em duas colunas e qualquer soma do grupo a conta duas vezes.
+ *  • `periodo_coluna` (0017) — o balanço comparativo traz 2023 e 2024 lado a lado.
+ *    O período da LINHA é o da coluna; colapsá-los no período único do documento
+ *    perde um exercício inteiro. Vem CRU da extração ("2024", "31/12/2024") e
+ *    precisa passar por `formatarPeriodo` + `periodoConsolidado`, senão o MESMO
+ *    exercício aparece em dois rótulos diferentes.
+ *
+ * POR QUE É UMA FUNÇÃO EXPORTADA, e não a linha solta que era. Esta regra vivia
+ * dentro do laço do `buildExportWorkbook`, e enquanto o arquivo era o único a
+ * precisar dela isso era suficiente. A tela do Modo A (`f0/07`) responde à mesma
+ * pergunta — "de qual empresa e de qual período é este número" —, e uma segunda
+ * implementação dela seria duas respostas para a mesma pergunta em duas telas: o
+ * defeito que este código já pagou caro para nomear em outros lugares. Uma regra,
+ * dois leitores.
+ */
+export function entidadePeriodoDaLinha(
+  campo: Pick<CampoExtraido, "entidade_coluna" | "periodo_coluna">,
+  contexto: { entidade: string; periodo: string },
+  nomeCanonico: Map<string, string>,
+): { entidade: string; periodo: string } {
+  const entidadeBruta = campo.entidade_coluna || contexto.entidade;
+  return {
+    entidade: nomeCanonico.get(entidadeBruta) ?? entidadeBruta,
+    periodo: periodoConsolidado(
+      campo.periodo_coluna ? formatarPeriodo(null, campo.periodo_coluna) : contexto.periodo,
+    ),
+  };
+}
+
 // Comparador de coluna: entidade (alfabética) → período (CRONOLÓGICO) → rótulo
 // como desempate estável para períodos sem âncora temporal.
 function compararColunas(
@@ -2776,8 +2816,8 @@ export function buildExportWorkbook({
     // …e o apelido dessa coluna é promovido à razão social quando o caso conhece
     // uma só que case (`consolidarNomesDeEntidade`) — sem isso a mesma empresa
     // fica em duas colunas, uma por grafia (teste v27).
-    const entidadeBruta = campo.entidade_coluna || ctx.entidade;
-    const entidadeColuna = nomeCanonico.get(entidadeBruta) ?? entidadeBruta;
+    const { entidade: entidadeColuna, periodo: periodoColuna } =
+      entidadePeriodoDaLinha(campo, ctx, nomeCanonico);
     // Documento comparativo (db/migrations/0017): quando a linha traz
     // `periodo_coluna` (ex.: "2023"/"2024" num balanço 2023×2024), o período da
     // COLUNA do export é o da linha, não o período único do documento — é o que
@@ -2791,9 +2831,7 @@ export function buildExportWorkbook({
     // `periodoConsolidado` fecha o mesmo buraco do lado do período: o combinado
     // declara "2025" e o balanço individual "31/12/2025" — o mesmo exercício em
     // duas colunas (teste v27).
-    const periodoColuna = periodoConsolidado(
-      campo.periodo_coluna ? formatarPeriodo(null, campo.periodo_coluna) : ctx.periodo,
-    );
+
     // Separador improvável na chave: com espaço simples, entidade "A B" +
     // período "C" colidia com entidade "A" + período "B C" (colunas de
     // entidade×período diferentes fundidas numa só).

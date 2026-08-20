@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0129_transcricao_humana_assistida.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 574 · transcrição 35 · e2e 46 · banco (799 asserts, 74 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -232,6 +232,57 @@ a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas 
 
 **E a pendência de ilegibilidade fecha com o nome de quem transcreveu**, não por "sistema". É isso que
 faz o gate deixar de ser dead-end.
+
+### O MODO A DO `f0/07` PASSA A EXISTIR — a base viva (20/08, sessão 53)
+
+**O modo declarado PRINCIPAL da entrega não tinha tela.** O `f0/07` define dois modos: *"Modo A — base
+viva no portal · **principal**"*, onde o analista *"consulta/filtra os dados curados na tela, por
+Entidade × Período × Conta/linha financeira"*, cada valor carregando *"sua proveniência e seu status de
+aceite"*; e o Modo B, o export. **Só o B existia.** O portal tinha a tela de UM documento e o `.xlsx`;
+perguntar *"o que a base diz sobre Estoques na Alfa em 2024"* exigia abrir os documentos um a um ou
+baixar o arquivo — que é o outro modo.
+
+`/casos/[id]/base` responde isso: filtra por empresa, período, conta e status de aceite, atravessando
+os documentos, com o arquivo/página/confiança de cada número ao lado.
+
+#### A DECISÃO CENTRAL DELA É NÃO SOMAR
+
+Consolidar demonstração é difícil de um jeito que não aparece — subtotal impresso que não pode entrar
+na soma, conta sem vocabulário que herda a seção dos irmãos, escalas diferentes no mesmo caso, o mesmo
+rótulo sendo subtotal num documento e conta-folha em outro. **O export paga esse preço com 574
+verificações atrás dele.** Uma tela que somasse "para ficar mais útil" produziria um SEGUNDO total para
+a mesma pergunta, mais fraco — e dois números para o mesmo fato é o defeito que este sistema mais
+persegue. Então não há total, não há AV% e não há conversão de escala: cada linha aparece como o
+documento a trouxe, com a unidade ao lado, e **a tela diz isso com palavra**, porque sem a frase alguém
+somaria a coluna no olho e a culpa pareceria dele.
+
+O que ela faz que o arquivo não faz: responder rápido, com proveniência à mão, e sobre a base **viva** —
+incluindo as linhas **pendentes** de aceite, que o export por doutrina não trata como fato. Pendente é
+visualmente distinto *e* escrito com palavra (exigência do `f0/07`; cor sozinha não carrega significado).
+
+#### UMA REGRA QUE VIROU COMPARTILHADA, em vez de uma segunda implementação
+
+"De qual empresa e de qual período é este número" não é trivial: a linha pode pertencer à COLUNA
+(`entidade_coluna`, `0014`; `periodo_coluna`, `0017`) e não ao documento, o apelido da coluna precisa
+ser promovido à razão social (`consolidarNomesDeEntidade`), e o período vem cru da extração. Isso era
+**uma linha solta dentro do laço do `buildExportWorkbook`** — suficiente enquanto o arquivo era o único
+leitor. A tela faz a mesma pergunta, então a regra saiu para `entidadePeriodoDaLinha`, exportada, e o
+export passou a chamá-la: **uma regra, dois leitores**, em vez de duas respostas para a mesma pergunta
+em duas telas.
+
+**A extração é comportamento-preservador** (os 568 asserts anteriores seguem verdes) e ganhou 6 asserts
+próprios — porque com dois leitores um defeito ali erra o arquivo E a tela do mesmo jeito, e a
+coincidência esconderia o erro em vez de expô-lo. **Religamento medido:** trocar o `||` por `??` derruba
+o assert da coluna vazia; ignorar `periodo_coluna` derruba os asserts novos **e 4 antigos**, que é a
+prova de que a função extraída é de fato a que o arquivo usa.
+
+#### O TETO DA LISTA SAI DO SILÊNCIO
+
+A tela mostra 500 linhas e **diz** quantas ficaram fora, com o que fazer a respeito. Cortar em 500 sem
+dizer nada seria o mesmo defeito do teto do PostgREST que este código já matou duas vezes: a lista abre
+normalmente e parece completa. O teto da paginação também é anunciado, e erro de leitura é dito em vez
+de virar tela vazia — vazio por erro de RLS mente com mais convicção que um erro, porque quem lê conclui
+que a base está vazia.
 
 ### A PLANILHA DE TRANSCRIÇÃO, e a versão que a tela não estava mostrando (20/08, sessão 53)
 

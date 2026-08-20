@@ -28,6 +28,23 @@ Cada valor exibido carrega sua **proveniência** (ver abaixo) e seu **status de 
 (aceito / pendente / com ressalva). É a fonte viva — reflete o estado atual do caso em tempo
 real (Realtime do Supabase).
 
+> **ONDE ISTO EXISTE (20/08/2026):** `/casos/[id]/base` — *"Consultar a base"* no painel do
+> mandato. Filtra por empresa, período, conta e status de aceite, atravessando os documentos,
+> com arquivo/página/confiança de cada número ao lado. Só a **versão vigente** de cada documento
+> entra (reextração e transcrição substituem, não acumulam).
+>
+> **Uma decisão de desenho, e ela contraria a leitura literal de "visão consolidada":** a tela
+> **não totaliza e não converte escala**. "Consolidada" ali significa *todas as empresas na mesma
+> lista* — o recorte —, não uma soma. Consolidar demonstração de verdade é difícil de um jeito que
+> não aparece (subtotal impresso que não pode entrar na soma, conta sem vocabulário que herda a
+> seção dos irmãos, escalas diferentes no mesmo caso), e o Modo B paga esse preço com 574
+> verificações atrás dele. Uma segunda soma, mais fraca, ao lado da primeira seria **dois números
+> para o mesmo fato**. O consolidado é o arquivo; a tela diz isso ao analista com palavra.
+>
+> Ainda **não usa Realtime**: a tela é renderizada no servidor a cada visita. O estado é o atual a
+> cada carregamento, sem push — a diferença aparece só para quem deixa a tela aberta esperando um
+> número mudar.
+
 ### Modo B — Export para Excel · sob demanda
 Botão que gera uma **planilha padronizada**, **uma aba por demonstração**, consolidando
 **entidades × períodos**, pronta para o analista levar ao modelo dele. O export é um *snapshot*
