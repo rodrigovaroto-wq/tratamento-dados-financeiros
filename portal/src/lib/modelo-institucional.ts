@@ -94,6 +94,17 @@ const COL_PRIMEIRO_ANO = 5;
 
 const CENARIOS = ["Base Case", "Cliente Case", "Stress Case"] as const;
 
+// Os três cenários pelo sufixo com que vivem nas chaves da grade. A ORDEM é a do
+// `CHOOSE` (1=Base, 2=Cliente, 3=Stress) e não é decorativa: o `CHECK_SOMBRA` e o
+// bloco do Output indexam por ela, e trocá-la faria o arquivo comparar o Stress
+// contra a coluna do Cliente sem nada denunciar.
+const CENARIOS_SUF = [
+  ["base", "Base Case"],
+  ["cli", "Cliente Case"],
+  ["str", "Stress Case"],
+] as const;
+type CenSuf = (typeof CENARIOS_SUF)[number][0];
+
 // Estilo: vem de `oria-marca.ts`, que é onde a identidade visual do entregável
 // mora e onde está escrito o que cada cor SIGNIFICA. Os aliases abaixo são só
 // para o corpo deste arquivo continuar legível.
@@ -1647,8 +1658,125 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
   g.linha("EBITDA", { sinal: "=", rotulo: "EBITDA", negrito: true, topo: true, fmt: NUM });
   g.linha("EBITDA_MARGEM", { rotulo: "    Margem EBITDA (% receita líquida)", fmt: PCT });
 
+  // ===========================================================================
+  // AS TRÊS CASCATAS EM PARALELO — o bloco que faz os cenários serem comparáveis.
+  //
+  // O DEFEITO QUE ISTO FECHA (`docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`, §2.2): o
+  // arquivo tem UM interruptor de cenário (`Output!$G$2`) e todas as abas leem
+  // dele por `CHOOSE`. Ter um interruptor só é a decisão certa — dois produziriam
+  // um arquivo em dois cenários ao mesmo tempo, sem nada denunciar. A consequência
+  // é que o arquivo mostra **um cenário por vez**, e a comparação base × cliente ×
+  // stress — que é o motivo de existirem três — não estava em lugar nenhum.
+  //
+  // O QUE ENTRA AQUI, e a fronteira é a da CASCATA. Estas linhas recalculam, em
+  // paralelo e sem olhar o interruptor, exatamente o que esta aba já sabe
+  // calcular: receita, deduções, custos, SG&A e EBITDA. Ficam de fora ND/EBITDA,
+  // DSCR e pico de caixa — eles exigiriam replicar a cascata de dívida e o fluxo
+  // de caixa por cenário, isto é, três modelos paralelos dentro do arquivo, e cada
+  // linha nova é uma chance de o arquivo que vai a comitê passar a mentir. O que
+  // ficou fora está DITO na aba Output, ao lado do bloco, em vez de silenciado.
+  //
+  // POR QUE ESTAS LINHAS NÃO DUPLICAM A LÓGICA DA CASCATA ATIVA. Elas não são um
+  // segundo cálculo: são o MESMO código emitindo fórmula quatro vezes, com o
+  // cenário como parâmetro (`preencherConta` abaixo). Uma sombra escrita à parte
+  // divergiria da linha ativa no primeiro dia em que alguém mexesse numa das duas
+  // — e divergiria em silêncio, porque as duas continuariam produzindo números
+  // plausíveis. Além disso o próprio arquivo confere: `CHECK_SOMBRA` mede a
+  // distância entre a sombra do cenário ATIVO e a linha ativa, e ela é zero por
+  // construção. Se aparecer diferente de zero, as duas se separaram.
+  // ===========================================================================
+  g.pular();
+  g.linha("__sombra_titulo", {
+    rotulo: "OS TRÊS CENÁRIOS EM NÚMERO (cascata paralela, não olha o interruptor)",
+    bloco: true,
+  });
+  g.linha("CHECK_SOMBRA", {
+    rotulo: "    CHECK: sombra do cenário ATIVO − linha ativa (0 = as duas concordam)",
+    fmt: NUM,
+    nota: "Se este número não for zero, a cascata paralela se separou da cascata ativa e o "
+      + "bloco de comparação dos cenários deixou de descrever este modelo. Ele é zero por "
+      + "construção: as duas saem do mesmo código, com o cenário como parâmetro.",
+  });
+  for (const [suf, nome] of CENARIOS_SUF) {
+    g.pular();
+    g.linha(`__sombra_${suf}`, { rotulo: `— ${nome} —`, bloco: true });
+    for (const [bloco, lista] of [["receita", receitas], ["deducao", deducoes],
+                                  ["custo", custos], ["sga", sga]] as const) {
+      for (const l of lista) {
+        g.linha(`${chaveLinha(bloco, l)}#v_${suf}`, { rotulo: `    ${l.chave}`, fmt: NUM });
+      }
+    }
+    g.linha(`GROSS_REVENUES#v_${suf}`, { rotulo: "    Receita bruta", fmt: NUM });
+    g.linha(`DEDUCOES#v_${suf}`, { rotulo: "    Deduções", fmt: NUM });
+    g.linha(`RECEITA_LIQUIDA#v_${suf}`, { rotulo: "    Receita líquida", negrito: true, fmt: NUM });
+    g.linha(`CUSTOS#v_${suf}`, { rotulo: "    Custos", fmt: NUM });
+    g.linha(`SGA#v_${suf}`, { rotulo: "    SG&A", fmt: NUM });
+    g.linha(`EBITDA#v_${suf}`, { rotulo: "    EBITDA", negrito: true, fmt: NUM });
+    g.linha(`EBITDA_MARGEM#v_${suf}`, { rotulo: "    Margem EBITDA", fmt: PCT });
+  }
+
   // ---------------------------------------------------------------- preencher
   const fmtCel = { fmt: NUM };
+
+  // A FÓRMULA DE VALOR DE UMA CONTA, E ELA É UMA SÓ.
+  //
+  // Tanto a linha ATIVA (que decide por `CHOOSE` no interruptor) quanto as três
+  // sombras do bloco de comparação saem desta função, com o cenário como
+  // parâmetro. Escrever a sombra à parte seria o defeito clássico de duas
+  // verdades: as duas divergiriam no primeiro dia em que alguém mexesse numa
+  // delas, e divergiriam em SILÊNCIO, porque as duas continuariam produzindo
+  // números plausíveis. O que fica fora daqui é só nota, cor e formato — que são
+  // da linha ativa, a que a pessoa lê.
+  //
+  // `cenS === null` significa "a linha ativa".
+  const alvoCen = (ch: string, cenS: CenSuf | null) => (cenS === null ? ch : `${ch}#v_${cenS}`);
+  const taxaCen = (ch: string, ano: number, cenS: CenSuf | null) =>
+    cenS === null
+      ? `CHOOSE(${cen},${g.ref(`${ch}#base`, ano)},${g.ref(`${ch}#cli`, ano)},`
+        + `${g.ref(`${ch}#str`, ano)})`
+      : g.ref(`${ch}#${cenS}`, ano);
+
+  const formulaConta = (
+    bloco: "receita" | "custo" | "sga",
+    l: LinhaModelo,
+    ano: number,
+    ant: number,
+    cenS: CenSuf | null,
+  ): string => {
+    const ch = chaveLinha(bloco, l);
+    const p = ctx.premissaPorLinha.get(l.rotulo_norm);
+    // A RAIZ DA SOMBRA É A LINHA ATIVA, e este detalhe é a diferença entre o bloco
+    // funcionar e ele sair todo zero. As sombras existem só na projeção (o passado
+    // é um), então no PRIMEIRO ano projetado o "ano anterior" da sombra é uma
+    // célula que não existe — e uma referência a célula vazia vale zero em Excel,
+    // silenciosamente: as três cascatas partiriam de zero e o comitê leria três
+    // cenários de receita nula sem uma única célula vermelha. O ano anterior
+    // histórico é lido da linha ATIVA, que é onde o realizado mora, e é o mesmo
+    // número para os três cenários por definição.
+    const anterior = g.ref(
+      cenS !== null && !g.ehProjetado(ant) ? ch : alvoCen(ch, cenS), ant);
+    // Conta sem premissa: constante. Vale para os três cenários igualmente — não
+    // projetar é não projetar em cenário nenhum.
+    if (!p) return `=${anterior}`;
+
+    if (bloco !== "receita" && p.formula === "pct_de_linha") {
+      return `=${taxaCen(ch, ano, cenS)}*${g.ref(alvoCen("RECEITA_LIQUIDA", cenS), ano)}`;
+    }
+
+    if (bloco !== "receita" && p.formula === "indice_macro" && !painel.get(p.codigo)) {
+      // Caminho sem painel: a conta segue a série macro e é IMÓVEL entre cenários.
+      // A sombra reproduz isso em vez de "consertar" — o bloco de comparação existe
+      // para mostrar o modelo como ele é, e uma conta que não responde ao cenário é
+      // exatamente o tipo de coisa que a comparação tem de deixar ver.
+      const refMacro = gAnual.tem(`macro:${p.codigo}`)
+        ? Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n(`macro:${p.codigo}`))
+        : null;
+      return `=${anterior}*(1+${refMacro ? `N(${refMacro})/100` : g.ref(`${ch}#base`, ano)})`;
+    }
+
+    return `=${anterior}*(1+${taxaCen(ch, ano, cenS)})`;
+  };
+
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
     const ant = g.anoAnterior(ano);
@@ -1697,9 +1825,7 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
       });
       g.set(`${ch}#cli`, ano, `=${g.ref(`${ch}#base`, ano)}`, { fmt: PCT });
       g.set(`${ch}#str`, ano, `=${g.ref(`${ch}#base`, ano)}*(1-${refStress()})`, { fmt: PCT });
-      g.set(ch, ano,
-        `=${g.ref(ch, ant!)}*(1+CHOOSE(${cen},${g.ref(`${ch}#base`, ano)},`
-        + `${g.ref(`${ch}#cli`, ano)},${g.ref(`${ch}#str`, ano)}))`, fmtCel);
+      g.set(ch, ano, formulaConta("receita", l, ano, ant!, null), fmtCel);
     }
     somaOuZero(g, "GROSS_REVENUES", ano, receitas.map((l) => g.ref(chaveLinha("receita", l), ano)), true);
 
@@ -1772,27 +1898,17 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
               + "(1-stress) faria o cenário ruim parecer melhor que o base.",
           });
         }
-        if (p.formula === "pct_de_linha") {
-          g.set(ch, ano,
-            `=CHOOSE(${cen},${g.ref(`${ch}#base`, ano)},${g.ref(`${ch}#cli`, ano)},`
-            + `${g.ref(`${ch}#str`, ano)})*${g.ref("RECEITA_LIQUIDA", ano)}`, fmtCel);
-        } else if (p.formula === "indice_macro" && !doPainel) {
-          // Caminho antigo, para quando não há painel (nenhuma série macro no caso):
-          // referência direta à `Anual`. Com painel, a linha cai no caso geral abaixo
-          // e passa a responder ao dial de cenário — antes uma conta corrigida por
-          // índice ficava IMÓVEL no Stress, o que é o oposto do que um cenário de
-          // estresse tem de mostrar.
-          const serie = p.codigo;
-          const refMacro = gAnual.tem(`macro:${serie}`)
-            ? Grade.refExterna("Anual", gAnual.letraDoAno(ano), gAnual.n(`macro:${serie}`))
-            : null;
-          g.set(ch, ano,
-            `=${g.ref(ch, ant!)}*(1+${refMacro ? `N(${refMacro})/100` : g.ref(`${ch}#base`, ano)})`,
-            { fmt: NUM, nota: `Corrigido pela série ${serie} da aba Anual (dado versionado, não digitado).` });
+        // As três saídas saem do MESMO `formulaConta` que faz as sombras — a nota
+        // do caminho macro continua aqui porque nota é da linha que a pessoa lê.
+        if (p.formula === "indice_macro" && !doPainel) {
+          g.set(ch, ano, formulaConta(bloco, l, ano, ant!, null), {
+            fmt: NUM,
+            nota: `Corrigido pela série ${p.codigo} da aba Anual (dado versionado, não digitado). `
+              + "Sem painel de premissas, esta conta é IMÓVEL entre cenários — o bloco de "
+              + "comparação dos três cenários mostra isso em vez de esconder.",
+          });
         } else {
-          g.set(ch, ano,
-            `=${g.ref(ch, ant!)}*(1+CHOOSE(${cen},${g.ref(`${ch}#base`, ano)},`
-            + `${g.ref(`${ch}#cli`, ano)},${g.ref(`${ch}#str`, ano)}))`, fmtCel);
+          g.set(ch, ano, formulaConta(bloco, l, ano, ant!, null), fmtCel);
         }
       }
     }
@@ -1800,6 +1916,68 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
     somaOuZero(g, "SGA", ano, sga.map((l) => g.ref(chaveLinha("sga", l), ano)), true);
     g.set("CUSTOS_PCT", ano, `=IF(${g.ref("RECEITA_LIQUIDA", ano)}<>0,${g.ref("CUSTOS", ano)}/${g.ref("RECEITA_LIQUIDA", ano)},0)`, { fmt: PCT });
     g.set("SGA_PCT", ano, `=IF(${g.ref("RECEITA_LIQUIDA", ano)}<>0,${g.ref("SGA", ano)}/${g.ref("RECEITA_LIQUIDA", ano)},0)`, { fmt: PCT });
+
+    // ---- AS TRÊS SOMBRAS, e SÓ NA PROJEÇÃO.
+    //
+    // Histórico não tem cenário: o passado é um. Preencher as três colunas
+    // históricas com o mesmo número três vezes convidaria a pessoa a procurar uma
+    // diferença que não existe, e pior — no realizado o EBITDA reconcilia com o
+    // documento, então a sombra e a linha ativa poderiam divergir por um motivo
+    // legítimo e o CHECK acusaria um defeito que não há.
+    if (!hist) {
+      for (const [suf] of CENARIOS_SUF) {
+        for (const [bl, lista] of [["receita", receitas], ["custo", custos], ["sga", sga]] as const) {
+          for (const l of lista) {
+            g.set(`${chaveLinha(bl, l)}#v_${suf}`, ano,
+              formulaConta(bl, l, ano, ant!, suf), { fmt: NUM });
+          }
+        }
+        somaOuZero(g, `GROSS_REVENUES#v_${suf}`, ano,
+          receitas.map((l) => g.ref(`${chaveLinha("receita", l)}#v_${suf}`, ano)));
+
+        // As deduções são % da receita BRUTA, e o percentual não depende de
+        // cenário (é o último histórico, mantido) — o que muda é a base.
+        for (const l of deducoes) {
+          const chD = chaveLinha("deducao", l);
+          g.set(`${chD}#v_${suf}`, ano,
+            `=${g.ref(`${chD}#pct`, ano)}*${g.ref(`GROSS_REVENUES#v_${suf}`, ano)}`, { fmt: NUM });
+        }
+        somaOuZero(g, `DEDUCOES#v_${suf}`, ano,
+          deducoes.map((l) => g.ref(`${chaveLinha("deducao", l)}#v_${suf}`, ano)));
+
+        g.set(`RECEITA_LIQUIDA#v_${suf}`, ano,
+          `=${g.ref(`GROSS_REVENUES#v_${suf}`, ano)}-${g.ref(`DEDUCOES#v_${suf}`, ano)}`,
+          { fmt: NUM, negrito: true });
+        somaOuZero(g, `CUSTOS#v_${suf}`, ano,
+          custos.map((l) => g.ref(`${chaveLinha("custo", l)}#v_${suf}`, ano)));
+        somaOuZero(g, `SGA#v_${suf}`, ano,
+          sga.map((l) => g.ref(`${chaveLinha("sga", l)}#v_${suf}`, ano)));
+
+        // EBITDA da sombra: na PROJEÇÃO o Income Statement calcula exatamente isto
+        // (NET_REV − COGS − SG&A + D&A, com NET_REV = bruta − deduções e sem termo
+        // de reconciliação, que só existe no realizado). A depreciação vem da aba
+        // de ativo fixo e não depende de cenário.
+        g.set(`EBITDA#v_${suf}`, ano,
+          `=${g.ref(`RECEITA_LIQUIDA#v_${suf}`, ano)}-${g.ref(`CUSTOS#v_${suf}`, ano)}`
+          + `-${g.ref(`SGA#v_${suf}`, ano)}+${g.ref("DEPRECIACAO", ano)}`,
+          { fmt: NUM, negrito: true });
+        g.set(`EBITDA_MARGEM#v_${suf}`, ano,
+          `=IF(${g.ref(`RECEITA_LIQUIDA#v_${suf}`, ano)}<>0,`
+          + `${g.ref(`EBITDA#v_${suf}`, ano)}/${g.ref(`RECEITA_LIQUIDA#v_${suf}`, ano)},0)`,
+          { fmt: PCT });
+      }
+
+      // O CHECK: a sombra do cenário ATIVO menos a linha ativa, nas três
+      // agregadas desta aba. Zero por construção — as quatro saem do mesmo
+      // `formulaConta`. Diferente de zero significa que alguém separou as duas, e
+      // aí o bloco de comparação dos cenários deixou de descrever este modelo.
+      const dist = (chv: string) =>
+        `ABS(CHOOSE(${cen},${CENARIOS_SUF.map(([su]) => g.ref(`${chv}#v_${su}`, ano)).join(",")})`
+        + `-${g.ref(chv, ano)})`;
+      g.set("CHECK_SOMBRA", ano,
+        `=${["RECEITA_LIQUIDA", "CUSTOS", "SGA"].map(dist).join("+")}`,
+        { fmt: NUM });
+    }
   }
 
   // ===========================================================================
@@ -4069,6 +4247,54 @@ function abaOutput(
   g.linha("FCL", { rotulo: "Free Cash Flow", negrito: true, fmt: NUM });
   g.pular();
 
+  // ---- RESUMO DOS TRÊS CENÁRIOS --------------------------------------------
+  //
+  // O bloco que o `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2 pediu: "um bloco
+  // 'Resumo dos três cenários' calculado INDEPENDENTEMENTE do seletor — as três
+  // cascatas em paralelo para essas poucas linhas, não para o modelo inteiro".
+  //
+  // O SUMMARY logo acima mostra um cenário por vez, porque lê o interruptor. Este
+  // mostra os três ao mesmo tempo, porque lê a cascata paralela da aba de receita.
+  // Sem ele, o motivo de existirem três cenários não estava em lugar nenhum do
+  // arquivo: para comparar, o analista girava o dial e anotava números num papel.
+  //
+  // A FRONTEIRA DO BLOCO É A DA CASCATA, e ela está DITA na aba (linha
+  // `CEN_FORA`), não silenciada. Receita, EBITDA e margem saem da cascata de
+  // receita, que já é parametrizada por cenário. ND/EBITDA, DSCR e pico de caixa
+  // NÃO entram: eles exigiriam replicar a cascata de dívida e o fluxo de caixa por
+  // cenário — três modelos paralelos dentro do arquivo —, e num arquivo que vai a
+  // credor cada linha nova é uma chance de ele passar a mentir. Um bloco que
+  // mostrasse ND/EBITDA "dos três cenários" lendo a dívida de UM seria pior que a
+  // ausência dele: o número existiria, pareceria comparação, e não seria.
+  g.linha(null, { rotulo: "RESUMO DOS TRÊS CENÁRIOS (não olha o interruptor)", bloco: true });
+  g.linha("CEN_CHECK", {
+    rotulo: "    CHECK: o cenário ativo bate com a cascata paralela (0 = bate)", fmt: NUM,
+  });
+  // A ORDEM DAS TRÊS LINHAS DE CADA MÉTRICA É A DO `CHOOSE` (Base, Cliente,
+  // Stress), como em `CENARIOS_SUF`. O teste (36) lê por deslocamento a partir do
+  // rótulo da métrica, então trocar a ordem aqui faria o arquivo comparar o Stress
+  // contra a coluna do Cliente — e o teste cai, que é o ponto.
+  for (const [chave, rotulo, fmt] of [
+    ["CEN_REC", "Receita líquida", NUM],
+    ["CEN_CRESC", "    % crescimento da receita", PCT],
+    ["CEN_EBITDA", "EBITDA", NUM],
+    ["CEN_MG", "    Margem EBITDA", PCT],
+  ] as const) {
+    g.linha(null, { rotulo, negrito: fmt === NUM });
+    for (const [suf, nome] of CENARIOS_SUF) {
+      g.linha(`${chave}#${suf}`, { rotulo: `        ${nome}`, fmt });
+    }
+  }
+  const rCenFora = g.linha("CEN_FORA", {
+    rotulo: "    Fora deste bloco, e por quê: ND/EBITDA, DSCR e pico de caixa. Eles exigiriam "
+      + "replicar a cascata de dívida e o fluxo de caixa por cenário — três modelos paralelos "
+      + "dentro do arquivo. Para compará-los, gire o interruptor e leia o SUMMARY acima.",
+  });
+  g.celula(rCenFora, COL_ROTULO).font = fonte({ italic: true, size: 9 });
+  g.celula(rCenFora, COL_ROTULO).alignment = { wrapText: true };
+  g.ws.getRow(rCenFora).height = 28;
+  g.pular();
+
   // ---- BALANCE SHEET (espelho) ---------------------------------------------
   //
   // CONTA A CONTA, não só os totais (§5.1 do CONFORMIDADE.md — era o item de maior
@@ -4321,6 +4547,45 @@ function abaOutput(
     g.set("CAPEX", ano, ext("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano), { fmt: NUM });
     g.set("VAR_NCG", ano, ext("Working Capital", gWC, "ESP_VAR_NCG", ano), { fmt: NUM });
     g.set("FCL", ano, ext("Cash Flow", gCF, "FCL", ano), { fmt: NUM, negrito: true });
+
+    // RESUMO DOS TRÊS CENÁRIOS — os três ao mesmo tempo, lendo a cascata paralela
+    // da aba de receita. As sombras existem só na projeção (o passado é um), então
+    // as colunas realizadas ficam vazias aqui de propósito: repetir o mesmo número
+    // três vezes convidaria a procurar uma diferença que não existe.
+    if (g.ehProjetado(ano)) {
+      for (const [suf] of CENARIOS_SUF) {
+        g.set(`CEN_REC#${suf}`, ano,
+          ext("Revenues, COGS & SG&A", gRec, `RECEITA_LIQUIDA#v_${suf}`, ano), { fmt: NUM });
+        // O crescimento do PRIMEIRO ano projetado é medido contra o realizado, que
+        // é comum aos três — e é por isso que ele usa a linha ativa da aba de
+        // receita como base. Sem isso, o primeiro ano ficaria sem crescimento
+        // justamente onde a diferença entre os cenários começa.
+        const baseAnterior = ant === null
+          ? null
+          : g.ehProjetado(ant)
+            ? g.ref(`CEN_REC#${suf}`, ant)
+            : ext("Revenues, COGS & SG&A", gRec, "RECEITA_LIQUIDA", ant).slice(1);
+        g.set(`CEN_CRESC#${suf}`, ano, baseAnterior === null ? null
+          : `=IF(${baseAnterior}<>0,${g.ref(`CEN_REC#${suf}`, ano)}/${baseAnterior}-1,0)`,
+          { fmt: PCT });
+        g.set(`CEN_EBITDA#${suf}`, ano,
+          ext("Revenues, COGS & SG&A", gRec, `EBITDA#v_${suf}`, ano), { fmt: NUM });
+        g.set(`CEN_MG#${suf}`, ano,
+          `=IF(${g.ref(`CEN_REC#${suf}`, ano)}<>0,`
+          + `${g.ref(`CEN_EBITDA#${suf}`, ano)}/${g.ref(`CEN_REC#${suf}`, ano)},0)`, { fmt: PCT });
+      }
+      // O CHECK vem da aba de receita, onde a comparação é feita entre a sombra do
+      // cenário ativo e a linha ativa. Trazê-lo para cá é o que faz o comitê ver o
+      // zero sem abrir outra aba — e ver diferente de zero se as duas cascatas se
+      // separarem.
+      g.set("CEN_CHECK", ano, ext("Revenues, COGS & SG&A", gRec, "CHECK_SOMBRA", ano), {
+        fmt: NUM,
+        nota: "Distância entre a cascata paralela do cenário ATIVO e as linhas ativas da aba de "
+          + "receita (receita líquida, custos e SG&A). Zero por construção: as duas saem do mesmo "
+          + "código. Diferente de zero significa que alguém separou as duas, e aí este bloco "
+          + "deixou de descrever o modelo ao lado.",
+      });
+    }
 
     // BALANCE SHEET
     g.set("BS_CAIXA", ano, ext("Balance Sheet", gBS, "CAIXA", ano), { fmt: NUM });
@@ -4969,6 +5234,33 @@ export function construirModeloInstitucional(
     gDiv.set("ST_FIM", ano,
       `=MAX(0,${Grade.refExterna("Cash Flow", gCF.letraDoAno(ano), gCF.n("CAIXA_FIM"))}-${gDiv.ref("CAIXA_MIN", ano)})`,
       { fmt: NUM });
+  }
+
+  // O EBITDA DA ABA DE RECEITA ESTAVA DECLARADO E VAZIO — rótulo "EBITDA" com
+  // todas as colunas em branco, que é exatamente o que a linha `DEPRECIACAO`
+  // logo abaixo já foi antes de alguém notar. Duas linhas declaradas e nunca
+  // preenchidas, na mesma aba, pelo mesmo motivo: ambas dependem de uma aba
+  // construída depois desta.
+  //
+  // Ele é ESPELHO do Income Statement e não um segundo cálculo. Naquela aba o
+  // EBITDA carrega, no realizado, a reconciliação com o número que o documento
+  // informou (`escreverReconc`); recomputá-lo aqui daria duas respostas para "qual
+  // foi o EBITDA de 2025", que é a família de defeito que a convenção "o total da
+  // seção é o que o documento informou" existe para matar. Na PROJEÇÃO as duas
+  // contas coincidem — e é isso que faz a sombra por cenário (que soma a cascata
+  // desta aba) poder ser comparada com este número sem ressalva.
+  for (const ano of ctx.anos) {
+    gRec.set("EBITDA", ano,
+      `=${Grade.refExterna("Income Statement", gDRE.letraDoAno(ano), gDRE.n("EBITDA"))}`, {
+      fmt: NUM, negrito: true,
+      nota: "Espelho do EBITDA da aba Income Statement, que é onde ele é calculado e onde, no "
+        + "realizado, ele reconcilia com o valor informado no documento. Uma segunda conta aqui "
+        + "daria duas respostas para a mesma pergunta.",
+    });
+    gRec.set("EBITDA_MARGEM", ano,
+      `=IF(${gRec.ref("RECEITA_LIQUIDA", ano)}<>0,`
+      + `${gRec.ref("EBITDA", ano)}/${gRec.ref("RECEITA_LIQUIDA", ano)},0)`,
+      { fmt: PCT });
   }
 
   // A DEPRECIAÇÃO CHEGANDO À DRE — o defeito que esta rodada encontrou no NOSSO

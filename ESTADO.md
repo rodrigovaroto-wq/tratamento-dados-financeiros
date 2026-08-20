@@ -16,7 +16,7 @@ lidas para retomar.
 |---|---|
 | **Última migration** | `db/migrations/0130_golden_set_rotulavel.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 574 · transcrição 35 · tela cega 18 · e2e 46 · banco (833 asserts, 75 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 594 · transcrição 35 · tela cega 18 · e2e 46 · banco (833 asserts, 75 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -188,6 +188,56 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### OS TRÊS CENÁRIOS PASSAM A SER COMPARÁVEIS (20/08, sessão 54)
+
+**O defeito, do `§2.2` do diagnóstico de 11/08:** o arquivo tem UM interruptor de cenário
+(`Output!$G$2`) e todas as abas leem dele por `CHOOSE`. Ter um interruptor só é a decisão **certa** —
+dois produziriam um arquivo em dois cenários ao mesmo tempo, sem nada denunciar. A consequência é que
+o arquivo mostra **um cenário por vez**, e a comparação base × cliente × stress, que é o motivo de
+existirem três, não estava em lugar nenhum. Para comparar, o analista girava o dial e anotava números
+num papel.
+
+**O que entrou:** uma cascata paralela na aba de receita (`OS TRÊS CENÁRIOS EM NÚMERO`) e o bloco de
+leitura no `Output` (`RESUMO DOS TRÊS CENÁRIOS`), com receita líquida, crescimento, EBITDA e margem
+para os três cenários ao mesmo tempo, sem olhar o interruptor.
+
+**A fronteira é a da cascata, e está DITA na aba.** Ficam fora ND/EBITDA, DSCR e pico de caixa: eles
+exigiriam replicar a cascata de dívida e o fluxo de caixa por cenário — três modelos paralelos dentro
+do arquivo —, e num arquivo que vai a credor cada linha nova é uma chance de ele passar a mentir. Um
+bloco que mostrasse "ND/EBITDA dos três cenários" lendo a dívida de UM seria pior que a ausência
+dele: o número existiria, pareceria comparação, e não seria. A linha que diz isso está no bloco, não
+num comentário de código.
+
+**As sombras não duplicam a lógica da cascata ativa.** As quatro linhas — a ativa e as três — saem do
+mesmo `formulaConta`, com o cenário como parâmetro. Uma sombra escrita à parte divergiria no primeiro
+dia em que alguém mexesse numa das duas, e divergiria **em silêncio**, porque as duas continuariam
+produzindo números plausíveis.
+
+> **E as sombras existem só na PROJEÇÃO, porque o passado é um.** No realizado o EBITDA reconcilia com
+> o número que o documento informou, então sombra e linha ativa poderiam divergir por um motivo
+> legítimo e o CHECK acusaria um defeito que não há. Três colunas históricas com o mesmo número também
+> convidariam a procurar uma diferença que não existe.
+
+**Um defeito achado no caminho, e ele era do tipo que sai zero em silêncio:** as sombras existem só na
+projeção, então no primeiro ano projetado o "ano anterior" da sombra é uma célula que não existe — e
+referência a célula vazia vale **zero** em Excel. As três cascatas partiriam de zero e o comitê leria
+três cenários de receita nula sem uma única célula vermelha. A raiz passou a ser lida da linha ATIVA,
+que é onde o realizado mora e é o mesmo número para os três cenários por definição.
+
+**E a linha `EBITDA` da aba de receita estava declarada e VAZIA** — rótulo "EBITDA" com todas as
+colunas em branco, exatamente o estado que a linha `DEPRECIACAO` da mesma aba já teve antes de alguém
+notar. Duas linhas declaradas e nunca preenchidas, na mesma aba, pelo mesmo motivo: dependem de uma
+aba construída depois dela. Agora é **espelho** do Income Statement, não um segundo cálculo — recomputá-la
+aqui daria duas respostas para "qual foi o EBITDA de 2025".
+
+> **Os dois grupos de assert são complementares, e isso foi medido no religamento em vez de suposto.**
+> O CHECK só compara a sombra do cenário ATIVO com a linha ativa, e num arquivo recém-exportado o
+> ativo é o Base. Religamento A (a sombra passou a usar sempre a taxa do Base): o **CHECK continuou
+> zero** e caíram os asserts do Stress. Religamento B (a agregação da sombra deixou de somar uma conta
+> de custo): o CHECK acusou 42.000 e 44.100 e os asserts do Stress **passaram**. Nenhum pega o defeito
+> do outro — um CHECK verde não prova que os três cenários estão ligados, e três cenários diferentes
+> não provam que a sombra bate com o modelo.
 
 ### O GOLDEN SET PASSA A SER ROTULÁVEL, e a rotulagem é CEGA (20/08, sessão 54) — `0130`
 

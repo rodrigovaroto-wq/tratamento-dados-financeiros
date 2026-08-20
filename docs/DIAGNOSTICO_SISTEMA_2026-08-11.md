@@ -81,6 +81,16 @@ EBITDA, ND/EBITDA, DSCR mínimo, necessidade de pico, ano do pico), calculado **
 seletor** — as três cascatas em paralelo para essas poucas linhas, não para o modelo inteiro. O
 caminho caro (e desnecessário) seria triplicar as 14 abas.
 
+> **FECHADO em 20/08 (sessão 54), com a fronteira menor do que esta lista.** O bloco existe no
+> `Output` (`RESUMO DOS TRÊS CENÁRIOS`) alimentado por uma cascata paralela na aba de receita, e traz
+> receita líquida, crescimento, EBITDA e margem para os três cenários ao mesmo tempo. **ND/EBITDA,
+> DSCR e pico de caixa ficaram fora, por decisão medida:** eles não saem da cascata de receita —
+> exigiriam replicar a cascata de dívida e o fluxo de caixa por cenário, que é a triplicação que este
+> mesmo parágrafo chama de desnecessária. Um bloco que os mostrasse lendo a dívida de UM cenário seria
+> pior que a ausência: pareceria comparação sem ser. O que ficou fora está escrito na própria aba, ao
+> lado do bloco. Guardado por 20 asserts em `verificar-export.mts` (36), incluindo um CHECK que mede a
+> distância entre a cascata paralela do cenário ativo e as linhas ativas — zero por construção.
+
 ### 2.3 A proveniência do arquivo entregue encolheu, e ninguém decidiu isso (MÉDIO, BAIXO)
 
 Antes do PR #109 o arquivo de modelagem carregava as abas de dado, e cada célula delas tinha nota de
