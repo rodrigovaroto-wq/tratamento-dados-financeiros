@@ -295,6 +295,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/dial.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes do dial OBEDECIDO (0127: o nível passa a ser lido, não só declarado)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/dial_obedecido.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes do golden set e do portão da regra de ouro (0126)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/golden.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

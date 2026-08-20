@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0126_golden_set.sql` |
+| **Última migration** | `db/migrations/0127_o_dial_obedecido.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (71 migrations do zero + testes SQL, agora com os DOIS books e com a suíte do golden set) |
+| **Suítes** | n8n 293 · export 568 · e2e 46 · banco (735 asserts, 72 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -188,6 +188,70 @@ o modelo de verdade lê de um PDF sujo.
 > **Opcional, e só isso: o `Max rows` do Supabase.** O teto de 1000 linhas do PostgREST
 > (*Project Settings → API → Max rows*) continua no padrão, e **nenhuma tela depende dele** — o
 > `paginar` lê em janelas até o banco acabar. Subi-lo só deixa cada leitura mais barata.
+
+### O DIAL PASSA A SER OBEDECIDO — e dois níveis declarados eram falsos (20/08, sessão 53) — `0127`
+
+**A `0126` cuidou de COMO O DIAL MUDA. Ela não cuidou de o dial ser LIDO.** E a `0041` já havia
+diagnosticado isso com um comando: *"`grep -rl estagio_autonomia portal/src n8n` não retornava NADA
+— a tabela não tinha um único leitor"*. Ela consertou para **um** estágio. Rodando a mesma busca
+hoje, estágio por estágio, os outros **sete** continuavam sem leitor: mudar o nível deles era
+validado contra o teto, cobrado contra golden set pela `0126`, gravado na trilha — e **inerte**.
+
+**E dois deles não só não eram lidos: declaravam o nível ERRADO.**
+
+| Estágio | Declarava | Fazia | Onde estava o número |
+|---|---|---|---|
+| `classificacao_doc_checklist` | N1, limiar 0,95 | **N2, limiar 0,70** — documento com confiança 0,80 entrava classificado sem humano olhar | `p_threshold default 0.7` **e** `THRESHOLD_AUTO` no `classifier.mjs` — duas réguas, nenhuma o dial |
+| `reconciliacao_classe_bc` | N0 ("não influencia decisão") | **N1** — abre pendência desde a `0015`, e pendência entra na fila e conta no Portão 2 | a classe nunca era olhada em `fn_registrar_reconciliacao` |
+
+**Por que isso é pior do que parece:** quem lê o dial para decidir se confia num achado da Classe
+B/C conclui "sombra, não influencia" e está errado. E quem baixasse a classificação para N1 para
+forçar revisão de tudo não conseguiria — o nível não era lido.
+
+**A `0127` não muda comportamento nenhum.** É a escolha da `0041`, pelo mesmo motivo: o dial passa a
+declarar o que o sistema já faz, e a partir daí mudar de verdade passa a ser uma chamada.
+
+- **`fn_dial_permite_auto`** — o leitor ÚNICO de "este estágio, nesta confiança, pode seguir sem
+  humano?". Uma função e não a regra copiada, porque quatro cópias de uma regra de doutrina voltam a
+  divergir — que é o defeito que a `0041` e a `0126` existem para fechar.
+- **`fn_dial_influencia`** — o leitor de N0, que é significado diferente: não é sobre limiar, é sobre
+  o resultado poder chegar à fila de alguém. **Os defaults seguros são opostos de propósito:** sem
+  linha no dial, `permite_auto` devolve false (ausência de configuração não é permissão) e
+  `influencia` devolve true (calar achado por falta de configuração esconde problema).
+- **A classificação tira o limiar do dial**, com o parâmetro ficando como queda para banco sem a
+  linha semeada — sem essa queda, um banco antigo passaria a abrir pendência em TODO documento no
+  instante em que a migration entrasse. E a mensagem da pendência passa a dizer **qual** limiar
+  reprovou, porque o limiar agora é dado e pode ter mudado desde ontem.
+- **A Classe B/C respeita o nível:** em N0 registra em `reconciliacao` e não abre pendência. "Roda e
+  registra" é a primeira metade da definição de sombra, e é ela que permite medir antes de confiar.
+
+#### O RAMO QUE FALTAVA, E É O ASSERT MAIS IMPORTANTE DA SUÍTE NOVA
+
+Silenciar um estágio com divergência **presente** cairia no `elsif` que fecha pendência, e marcaria
+a pendência aberta como *"resolvida por sistema:reconciliacao"*. Mas o sintoma não sumiu: o estágio
+foi silenciado. Resolver ali escreveria na trilha que o problema acabou, quando o que acabou foi o
+direito daquele estágio de falar — e a trilha é append-only justamente para não permitir esse tipo
+de reescrita. O ramo novo registra `reconciliacao_em_sombra` e **deixa em paz** a pendência que um
+humano já pode estar tratando.
+
+#### E A CORREÇÃO DA CLASSIFICAÇÃO PASSOU PELO PORTÃO DA 0126
+
+N1 → N2 alcança auto-clear em estágio interpretativo, então exigiu `p_sem_medicao_porque`. O painel
+passa a mostrar **dois** estágios como "declarada" em vez de um. Não é regressão: é o tamanho real
+da autonomia não medida, que estava escondido num default de parâmetro.
+
+**Um teste frágil que isto expôs, e o conserto vale mais que ele:** o cenário 1 da `golden.test.sql`
+confiava em a classificação estar em N1 *por semeadura*. No dia em que uma migration declarou o N2
+que ela já praticava, o cenário passou a testar "N2 → N2" — que não é subida — e reprovou. Agora ele
+**estabelece a própria pré-condição** (baixar é sempre livre); depender de um default global é que
+custa.
+
+**O que a `0127` deliberadamente NÃO fez, com o motivo escrito:** `extracao_identificadores` continua
+sem leitor porque para obedecer ao dial ele precisa de uma CONFIANÇA que hoje não chega ao banco —
+`fn_registrar_diagnostico` recebe `p_tipo_confirma boolean`, com a decisão já tomada no nó do n8n, e
+um dial no banco não alcança decisão tomada fora dele. Fechar exige mudar a assinatura **e** o nó, o
+que obriga a reimportar o workflow. Os dois estágios determinísticos também seguem sem leitor, e ali
+a razão é de natureza: a garantia deles é aritmética, não concordância humana.
 
 ### A REGRA DE OURO PASSA A SER EXECUTADA (19/08, sessão 53) — `0126`
 
