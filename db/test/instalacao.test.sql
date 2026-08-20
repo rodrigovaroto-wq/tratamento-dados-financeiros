@@ -32,6 +32,15 @@
 --      diferentes ("aplique a migration" contra "rode o seed"), e a 0131 as separa
 --      em tipos justamente porque uma migration parcialmente aplicada passa na
 --      sonda de estrutura.
+--   6. O CUSTO DA SONDA NÃO CRESCE COM O DADO (0132). Um dos requisitos é
+--      `lote_execucao`, que ganha uma linha por execução de ingestão e nunca para
+--      de crescer — e a sonda roda a cada carga do painel. Com `count(*)`, a tela
+--      mais usada da casa fica linearmente mais lenta pelo resto da vida do
+--      produto, sem nunca quebrar: o defeito não tem sintoma até virar lentidão
+--      difusa que ninguém sabe atribuir. O que trava a volta do `count(*)` é o
+--      TEXTO do detalhe ("ou mais"), não um assert de relógio — a versão com
+--      relógio passou no religamento e foi removida, com o motivo escrito no
+--      bloco 6.
 --
 -- RELIGAMENTO — os defeitos foram reintroduzidos e MEDIDOS:
 --
@@ -182,7 +191,7 @@ begin
     '…e o detalhe diz QUANTAS linhas há, não "a tabela nem existe"',
     coalesce(v_detalhe, '<null>'));
 
-  raise notice '--- 6. O CATÁLOGO É COERENTE CONSIGO MESMO ---';
+  raise notice '--- 7. O CATÁLOGO É COERENTE CONSIGO MESMO ---';
 
   -- `porque` descreve o SINTOMA para quem lê a tela. Um requisito sem sintoma é
   -- um requisito que ninguém sabe o que fazer com — e a coluna é NOT NULL, então
@@ -201,6 +210,52 @@ begin
     'toda migration do catálogo é citada como quatro dígitos (o painel os ordena)',
     format('%s fora do formato', v_n_total));
 
+  raise notice '--- 6. O CUSTO DA SONDA NÃO CRESCE COM O DADO (0132) ---';
+
+  -- A PROVA É COMPORTAMENTAL, não uma leitura do corpo da função: um requisito de
+  -- seed com critério 1 sobre a MAIOR tabela do banco tem de responder no mesmo
+  -- tempo que um sobre a menor. Com `count(*)` a diferença aparece; com a
+  -- contagem limitada ao critério, não.
+  insert into instalacao_requisito (chave, migration, tipo, objeto, criterio_seed, porque, severidade, ordem)
+  values ('_teste_seed_tabela_grande', '9999', 'seed', 'campo_extraido', 1,
+          'Requisito fabricado pelo teste.', 'informativo', 9999),
+         ('_teste_seed_tabela_pequena', '9999', 'seed', 'estagio_autonomia', 1,
+          'Requisito fabricado pelo teste.', 'informativo', 9999);
+
+  select count(*)::int into v_n_total from campo_extraido;
+  raise notice '      (a tabela grande tem % linhas)', v_n_total;
+
+  select presente into v_presente from fn_instalacao_conferir() where chave = '_teste_seed_tabela_grande';
+  perform teste_assert_inst(v_presente, 'requisito de seed sobre a tabela grande responde presente');
+
+  select presente into v_presente from fn_instalacao_conferir() where chave = '_teste_seed_tabela_pequena';
+  perform teste_assert_inst(v_presente, 'requisito de seed sobre a tabela pequena responde presente');
+
+  -- NÃO HÁ ASSERT DE TEMPO AQUI, e a ausência foi MEDIDA em vez de suposta.
+  --
+  -- A primeira versão deste bloco comparava o relógio das duas sondagens
+  -- (`grande < pequena * 3`). No religamento — 0131 reaplicada, `count(*)` de
+  -- volta — esse assert PASSOU: 3.738 linhas contam rápido demais para a
+  -- diferença aparecer. Ele alegava cobertura que não tinha, que é a forma de
+  -- teste mais perigosa que existe nesta casa: some da lista de riscos sem nunca
+  -- ter olhado para o risco. Aumentar a massa de dados até o relógio doer tornaria
+  -- a suíte lenta para todos e o assert intermitente conforme a máquina do CI.
+  --
+  -- O que ficou é o assert abaixo, e ele PEGOU a regressão no mesmo religamento:
+  -- `"ou mais"` só existe na forma limitada, porque a forma limitada é a única que
+  -- NÃO conhece o total. O texto é consequência direta da implementação, e é
+  -- verificável em qualquer volume de dado. As medições que justificam a 0132
+  -- (5,9 ms contra 0,218 ms com 50 mil lotes) estão no cabeçalho da migration,
+  -- que é onde medição de custo pertence — não num assert que não a reproduz.
+  --
+  -- E o detalhe do caso PRESENTE não promete o total exato, porque a 0132 não o
+  -- conhece mais — prometer um número que não se mediu é o defeito que este
+  -- projeto persegue desde a 0028.
+  select detalhe into v_detalhe from fn_instalacao_conferir() where chave = '_teste_seed_tabela_grande';
+  perform teste_assert_inst(v_detalhe = '1 linha(s) ou mais',
+    '…e o detalhe diz "ou mais" em vez de afirmar um total que não foi contado',
+    coalesce(v_detalhe, '<null>'));
+
   -- LIMPEZA dos requisitos fabricados. Sem ela, o assert 1 de uma execução futura
   -- sobre este mesmo banco reprovaria por causa deste teste.
   delete from instalacao_requisito where chave like '\_teste\_%';
@@ -208,7 +263,7 @@ begin
   select count(*)::int into v_n_total from instalacao_requisito where chave like '\_teste\_%';
   perform teste_assert_inst(v_n_total = 0, 'os requisitos fabricados pelo teste foram removidos');
 
-  raise notice '--- 7. E A INSTALAÇÃO COMPLETA SE DECLARA COMPLETA ---';
+  raise notice '--- 8. E A INSTALAÇÃO COMPLETA SE DECLARA COMPLETA ---';
 
   -- Com os fabricados fora, sobra o estado real deste banco: tudo presente exceto
   -- o requisito de COMPORTAMENTO, que nenhum CI pode satisfazer. Este assert é o

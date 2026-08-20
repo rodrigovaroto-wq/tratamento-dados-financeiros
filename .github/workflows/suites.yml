@@ -209,17 +209,6 @@ jobs:
         # que muda de lugar em UMA das duas metades do formato.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 
-      - name: Suíte da tela cega do golden set (o vazamento sem sintoma)
-        # A rotulagem cega (0130) é a única propriedade deste sistema cujo defeito
-        # NÃO produz sintoma: se a tela passar a mostrar o que a extração leu, tudo
-        # continua funcionando — a página renderiza, os rótulos gravam, as cinco
-        # métricas saem. Só param de medir algo, porque quem rotula passou a
-        # conferir, e conferência confirma o plausível: a concordância sobe sem
-        # nada ter melhorado e o dial sobe com ela. Nenhum teste de comportamento
-        # pega isso, porque o comportamento fica correto. Esta suíte olha o que a
-        # página PEDE ao banco, que é onde o defeito entraria.
-        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-tela-cega.mts
-
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: db/test/run.sh

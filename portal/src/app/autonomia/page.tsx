@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 // Painel de autonomia — SOMENTE LEITURA.
@@ -328,17 +327,22 @@ export default async function AutonomiaPage() {
           conhece mede o instrumento, não o modelo.
         </p>
 
-        {/* A PORTA DE ENTRADA DA ROTULAGEM, e ela fica aqui porque este painel é
-            onde a pergunta nasce ("por que o dial não sobe?"). O painel continua
-            somente leitura quanto ao DIAL — o que este link abre é o trabalho de
-            mesa que produz a evidência, que é outra atividade. */}
-        <p className="mt-2 text-sm">
-          <Link href="/autonomia/golden" className="font-medium underline">
-            Rotular o golden set →
-          </Link>
-          <span className="ml-2 text-xs text-tinta-500">
-            abrir rodada, escolher a amostra, rotular em cego e congelar
-          </span>
+        {/* NÃO HÁ PORTA DE ENTRADA DE ROTULAGEM AQUI, e a ausência é decisão, não
+            lacuna. A casa optou por NÃO manter um fluxo de rotulagem manual: o
+            objetivo é o sistema rodar sem triagem humana, e uma tela que convida a
+            uma tarde de mesa por rodada orienta o oposto disso. O caminho de escrita
+            existe no banco (`0130`) e continua chamável — o que saiu foi o convite.
+
+            O que isto significa para o dial, dito sem rodeio: enquanto não houver
+            concordância medida por ALGUMA fonte, os estágios interpretativos ficam
+            onde estão. É o que a regra de ouro determina, e é o comportamento
+            correto — não um item pendente de configuração. */}
+        <p className="mt-2 rounded border border-tinta-200 bg-tinta-50 px-3 py-2 text-xs text-tinta-600">
+          <strong>Não existe fluxo de rotulagem manual neste portal, por decisão.</strong> O
+          objetivo é o sistema operar sem triagem humana, e uma tela que pede uma tarde de
+          mesa por rodada orienta o contrário. Consequência assumida: sem concordância
+          medida, os estágios interpretativos <strong>não sobem</strong> — a regra de ouro
+          recusa, e recusar é o comportamento certo.
         </p>
 
         {listaRodadas.length === 0 ? (

@@ -3417,6 +3417,8 @@ declare
   v_ok      boolean;
   v_det     text;
   v_n       bigint;
+  v_alvo    regclass;
+  v_crit    int;
 begin
   for r in select * from instalacao_requisito order by ordem, chave loop
     v_ok  := false;
@@ -3438,24 +3440,47 @@ begin
       end;
 
     elsif r.tipo = 'coluna' then
+      -- 0132: `pg_attribute` em vez de `information_schema.columns` — mesma
+      -- resposta, 14× mais barato (3,4 ms → 0,25 ms medidos). A view do
+      -- information_schema junta várias tabelas de catálogo e filtra por
+      -- privilégio linha a linha; aqui a pergunta é "existe esta coluna", e
+      -- `attrelid` já vem resolvido por `to_regclass`.
+      --
+      -- `to_regclass` devolvendo NULL não é erro: significa que a TABELA não
+      -- existe, e aí a coluna também não — `attrelid = null` não casa com nada e
+      -- o `exists` dá false, que é a resposta certa. É a mesma proteção do ramo
+      -- de seed abaixo, obtida de graça pela forma da consulta.
       v_ok := exists (
-        select 1 from information_schema.columns c
-         where c.table_schema = 'public'
-           and c.table_name   = split_part(r.objeto, '.', 1)
-           and c.column_name  = split_part(r.objeto, '.', 2));
+        select 1 from pg_attribute a
+         where a.attrelid  = to_regclass('public.' || split_part(r.objeto, '.', 1))
+           and a.attname   = split_part(r.objeto, '.', 2)
+           and a.attnum    > 0
+           and not a.attisdropped);
 
     elsif r.tipo in ('seed', 'comportamento') then
       -- A tabela pode não existir ainda: contar nela levantaria erro e derrubaria
       -- a sonda inteira, transformando "um requisito faltando" em "o painel não
       -- abre". A sonda de instalação é o último lugar do sistema que pode falhar
       -- por causa do que ela existe para medir.
-      if to_regclass('public.' || r.objeto) is null then
+      v_alvo := to_regclass('public.' || r.objeto);
+      if v_alvo is null then
         v_ok  := false;
         v_det := 'a tabela nem existe';
       else
-        execute format('select count(*) from public.%I', r.objeto) into v_n;
-        v_ok  := v_n >= coalesce(r.criterio_seed, 1);
-        v_det := format('%s linha(s)', v_n);
+        -- 0132: CONTAGEM LIMITADA AO CRITÉRIO. Ver o cabeçalho: a pergunta é
+        -- ">= criterio", e varrer a tabela inteira para respondê-la faz o custo
+        -- do painel crescer junto com `lote_execucao`, que cresce para sempre.
+        v_crit := greatest(coalesce(r.criterio_seed, 1), 1);
+        execute format('select count(*) from (select 1 from public.%I limit %s) x',
+                       r.objeto, v_crit)
+           into v_n;
+        v_ok := v_n >= v_crit;
+        -- No caso PRESENTE o total exato não é conhecido (nem usado pela tela).
+        -- No caso AUSENTE ele é exato por construção — a varredura parou antes do
+        -- limite, logo passou por tudo — e é nele que o número informa algo:
+        -- "3 linha(s)" com critério 8 diz que o seed rodou pela metade.
+        v_det := case when v_ok then format('%s linha(s) ou mais', v_crit)
+                      else format('%s linha(s)', v_n) end;
       end if;
     end if;
 
@@ -3469,7 +3494,7 @@ $$;
 -- Name: FUNCTION fn_instalacao_conferir(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Sonda cada requisito de instalacao_requisito contra o catálogo do banco em que ela roda. Responde "o objeto existe", que NÃO é "a migration foi aplicada corretamente" — o corpo de uma função trocada por create or replace passa igual. O que ela garante é o contrapositivo, que é a parte útil: objeto ausente é migration ausente.';
+COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. 0132: o custo NÃO cresce com o dado — a contagem de seed é limitada ao critério (lote_execucao cresce por execução, e o painel a sonda a cada carga) e a checagem de coluna usa pg_attribute em vez de information_schema. Garante o contrapositivo, não o positivo: objeto ausente é migration ausente; objeto presente não prova que o corpo está na versão certa.';
 
 --
 -- Name: fn_instalacao_resumo(); Type: FUNCTION; Schema: public; Owner: -
