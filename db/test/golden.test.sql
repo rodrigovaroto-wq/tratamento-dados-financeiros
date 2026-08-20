@@ -118,9 +118,18 @@ begin
   -- ==========================================================================
   raise notice '--- 1. o portão: subir para auto-clear sem medição é RECUSADO ---';
   -- ==========================================================================
-  -- `classificacao_doc_checklist` nasce em N1 com teto N2 (0002). É o estágio
-  -- interpretativo que a regra de ouro governa e que ainda NÃO foi subido por
-  -- ninguém — usar a extração aqui mediria o estado já declarado pela 0041.
+  -- `classificacao_doc_checklist` tem teto N2, então é um estágio interpretativo
+  -- que a regra de ouro governa — usar a extração aqui mediria o estado já
+  -- declarado pela 0041.
+  --
+  -- O CENÁRIO ESTABELECE A PRÓPRIA PRÉ-CONDIÇÃO, e isto é conserto de um teste
+  -- frágil que a 0127 expôs. Antes ele confiava em o estágio estar em N1 por
+  -- semeadura (0002) — e no dia em que uma migration declarou o N2 que a
+  -- classificação já praticava, o cenário passou a testar "N2 → N2", que não é
+  -- subida, e reprovou. Baixar aqui é sempre permitido e não custa nada; depender
+  -- de um default global é que custa.
+  perform fn_mudar_dial('classificacao_doc_checklist', 'N1', 'teste:golden',
+                        'o cenário precisa partir de N1 para que a subida seja subida');
   v_r := fn_mudar_dial('classificacao_doc_checklist', 'N2', 'teste:golden',
                        'subindo sem nada nas mãos');
   perform teste_assert_golden((v_r->>'recusado')::boolean,
@@ -590,8 +599,11 @@ begin
   -- Os cenários mexeram no dial, e os testes rodam todos no MESMO banco: um dial
   -- deixado fora do lugar faria qualquer teste futuro de auto-aceite passar ou
   -- reprovar por motivo errado. É a mesma disciplina do cenário 10 da dial.test.
-  perform fn_mudar_dial('classificacao_doc_checklist', 'N1', 'teste:golden',
-                        'restaurando o N1 da 0002');
+  -- Restaura o estado que as MIGRATIONS deixaram, que desde a 0127 é N2/0,70 para
+  -- a classificação — e não o N1 da semeadura da 0002.
+  perform fn_mudar_dial('classificacao_doc_checklist', 'N2', 'teste:golden',
+                        'restaurando o estado declarado pela 0127', 0.70,
+                        null, 'arnês de teste restaurando o N2 da 0127; não é medição');
   perform fn_mudar_dial('extracao_linhas_financeiras', 'N2', 'teste:golden',
                         'restaurando o estado declarado pela 0041', 0.95,
                         null, 'arnês de teste restaurando o N2 da 0041; não é medição');
@@ -602,8 +614,10 @@ begin
   perform teste_assert_golden(v_n = 1,
     'extracao_linhas_financeiras de volta em N2 / 0.95 / declarada');
   select count(*) into v_n from estagio_autonomia
-   where estagio = 'classificacao_doc_checklist' and nivel_atual = 'N1';
-  perform teste_assert_golden(v_n = 1, 'e classificacao_doc_checklist de volta em N1');
+   where estagio = 'classificacao_doc_checklist'
+     and nivel_atual = 'N2' and limiar_auto_clear = 0.70 and base_do_nivel = 'declarada';
+  perform teste_assert_golden(v_n = 1,
+    'e classificacao_doc_checklist de volta em N2 / 0,70 / declarada (o estado da 0127)');
 
   raise notice 'TODOS OS TESTES DO GOLDEN SET PASSARAM';
 end $$;

@@ -1341,6 +1341,50 @@ CREATE FUNCTION public.fn_dial(p_estagio text) RETURNS jsonb
 $$;
 
 --
+-- Name: fn_dial_influencia(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_dial_influencia(p_estagio text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  select coalesce(
+    (select ea.nivel_atual <> 'N0' from estagio_autonomia ea where ea.estagio = p_estagio),
+    -- Sem linha no dial, INFLUENCIA. Aqui o default seguro é o oposto do de
+    -- fn_dial_permite_auto, e de propósito: calar um achado por falta de
+    -- configuração esconderia problema, enquanto auto-aceitar por falta de
+    -- configuração criaria fato. Em dúvida, mostre para o humano.
+    true);
+$$;
+
+--
+-- Name: FUNCTION fn_dial_influencia(p_estagio text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_dial_influencia(p_estagio text) IS 'O resultado deste estágio pode chegar à fila de alguém? False só em N0, que o docs/01 define como "roda, registra, NÃO influencia decisão" — estágio em N0 que abre pendência não está em N0. Sem linha no dial devolve TRUE (oposto de fn_dial_permite_auto, de propósito: calar achado por falta de configuração esconde problema; auto-aceitar por falta de configuração cria fato).';
+
+--
+-- Name: fn_dial_permite_auto(text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca numeric) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  select coalesce(
+    (select ea.nivel_atual in ('N2','N3')
+              and ea.limiar_auto_clear is not null
+              and p_confianca is not null
+              and p_confianca >= ea.limiar_auto_clear
+       from estagio_autonomia ea where ea.estagio = p_estagio),
+    false);
+$$;
+
+--
+-- Name: FUNCTION fn_dial_permite_auto(p_estagio text, p_confianca numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca numeric) IS 'Este estágio, nesta confiança, pode seguir SEM humano? Leitor único da regra de auto-clear do docs/01, para ela não existir copiada em quatro funções. Sem linha no dial devolve false: ausência de configuração não é permissão (fechamento #1, default-para-humano).';
+
+--
 -- Name: fn_divergencias_indice_macro(numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5442,6 +5486,8 @@ CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome te
     LANGUAGE plpgsql
     AS $$
 declare
+  -- 0127: o limiar da classificacao passa a vir do DIAL.
+  v_auto_classif   boolean;
   v_entidade_id uuid;
   v_periodo_id  uuid;
   v_documento_id uuid;
@@ -5555,7 +5601,23 @@ begin
   end if;
 
   -- Pendência de classificação incerta: idempotente por documento.
-  if p_tipo_taxonomia is null or coalesce(p_confianca,0) < p_threshold then
+  --
+  -- 0127: O LIMIAR SAI DO PARÂMETRO E PASSA A VIR DO DIAL. Até aqui ele era
+  -- `p_threshold`, default 0.7 — e o dial de `classificacao_doc_checklist` dizia
+  -- limiar 0,95, lido por ninguém. O sistema declarava 0,95 e aplicava 0,70.
+  --
+  -- O parâmetro fica como QUEDA, para banco que ainda não tem a linha do dial
+  -- (a semeadura é da 0002). Não é cortesia: sem a queda, um banco antigo passaria
+  -- a abrir pendência de classificação em TODO documento no instante em que esta
+  -- migration entrasse, e o motivo seria invisível.
+  v_auto_classif := case
+    when exists (select 1 from estagio_autonomia
+                  where estagio = 'classificacao_doc_checklist')
+      then fn_dial_permite_auto('classificacao_doc_checklist', p_confianca)
+    else coalesce(p_confianca, 0) >= p_threshold
+  end;
+
+  if p_tipo_taxonomia is null or not v_auto_classif then
     if not exists (
       select 1 from pendencia p
       where p.documento_id = v_documento_id
@@ -5564,8 +5626,15 @@ begin
     ) then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id)
         values (p_caso_id, 'classificacao', 'classificacao_pendente', 'importante', true,
-                format('Classificação incerta (conf=%s, fonte=%s) para "%s". Motivo: %s',
-                       coalesce(p_confianca,0), coalesce(p_fonte,'?'), coalesce(p_nome_original,'?'),
+                -- 0127: a mensagem passa a dizer QUAL limiar reprovou. Sem isso, o
+                -- analista lê "conf=0,62" e não sabe contra o que ela perdeu — e
+                -- o limiar agora é dado, então pode ter mudado desde ontem.
+                format('Classificação incerta (conf=%s, limiar do dial=%s, fonte=%s) para "%s". Motivo: %s',
+                       coalesce(p_confianca,0),
+                       coalesce((select ea.limiar_auto_clear::text from estagio_autonomia ea
+                                  where ea.estagio = 'classificacao_doc_checklist'),
+                                p_threshold::text || ' (queda: dial sem linha)'),
+                       coalesce(p_fonte,'?'), coalesce(p_nome_original,'?'),
                        coalesce(nullif(trim(p_justificativa), ''), 'nenhuma justificativa fornecida')),
                 v_documento_id);
     end if;
@@ -5773,8 +5842,30 @@ declare
   -- ele é gravado como pré-condição não satisfeita (é o que ele é).
   v_res_log          text := case when p_resultado = 'documento_ausente'
                                   then 'precondicao_nao_satisfeita' else p_resultado end;
-  v_abre_pendencia   boolean := p_resultado not in ('ok', 'documento_ausente');
+  -- 0127: a decisão passa para o corpo, porque agora ela depende do DIAL da
+  -- classe — e o dial não se lê no declare sem esconder a regra.
+  v_divergente       boolean := p_resultado not in ('ok', 'documento_ausente');
+  v_abre_pendencia   boolean;
+  v_estagio_dial     text;
+  v_influencia       boolean;
 begin
+  -- 0127: O DIAL DA CLASSE DECIDE SE O ACHADO CHEGA À FILA DE ALGUÉM.
+  --
+  -- `reconciliacao_classe_bc` declarava N0 — "roda, registra a saída, mas NÃO
+  -- influencia decisão" (docs/01) — e abria pendência: as checagens B passam 'B'
+  -- para cá e esta função nunca olhou a classe. Pendência entra na fila do painel
+  -- e é contada na avaliação do Portão 2; isso é influenciar. O comportamento era
+  -- N1, que é o teto dela — não era inseguro, era MAL DECLARADO.
+  --
+  -- Note que o registro em `reconciliacao` acontece SEMPRE, inclusive em N0: "roda
+  -- e registra" é a primeira metade da definição de sombra, e é ela que permite
+  -- medir um estágio antes de confiar nele.
+  v_estagio_dial := case when upper(coalesce(p_classe, 'A')) = 'A'
+                         then 'reconciliacao_classe_a'
+                         else 'reconciliacao_classe_bc' end;
+  v_influencia := fn_dial_influencia(v_estagio_dial);
+  v_abre_pendencia := v_divergente and v_influencia;
+
   insert into reconciliacao
     (caso_id, entidade_id, periodo_id, tipo, classe, fonte_a, fonte_b,
      precondicoes_ok, resultado, divergencia_abs, divergencia_pct, materialidade)
@@ -5813,6 +5904,28 @@ begin
     else
       update pendencia set descricao = p_descricao where id = v_pendencia_id;
     end if;
+  elsif v_divergente and not v_influencia then
+    -- 0127: SOMBRA COM DIVERGÊNCIA PRESENTE — e este ramo existe para não mentir.
+    --
+    -- Sem ele, este caso cairia no `elsif` de baixo e a pendência aberta seria
+    -- marcada "resolvida por sistema:reconciliacao". Mas o sintoma NÃO sumiu: o
+    -- estágio foi silenciado. Resolver aqui escreveria na trilha que o problema
+    -- acabou, quando o que acabou foi o direito daquele estágio de falar — e a
+    -- trilha é append-only justamente para não permitir esse tipo de reescrita.
+    --
+    -- Então: registra em sombra, e deixa em paz a pendência que um humano já pode
+    -- estar tratando.
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+      values ('sistema:reconciliacao', 'reconciliacao_em_sombra',
+              'reconciliacao:' || v_reconciliacao_id,
+              jsonb_build_object('estagio', v_estagio_dial, 'classe', p_classe,
+                                 'tipo', p_tipo, 'resultado', p_resultado,
+                                 'divergencia_abs', p_divergencia_abs,
+                                 'pendencia_preexistente', v_pendencia_id,
+                                 'porque', 'estagio em N0: registra e nao abre pendencia (docs/01). '
+                                           'Pendencia anterior, se existe, NAO foi resolvida: o '
+                                           'sintoma nao sumiu, o estagio foi silenciado.'));
+
   elsif v_pendencia_id is not null then
     -- Sumiu o sintoma (reextração corrigiu, ou a pendência era falsa e a regra
     -- nova não a emite mais): fecha. Não escreve número nenhum em base viva.
@@ -8967,6 +9080,18 @@ GRANT ALL ON FUNCTION public.fn_diagnostico_modelagem(p_caso_id uuid) TO authent
 --
 
 GRANT ALL ON FUNCTION public.fn_dial(p_estagio text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_dial_influencia(p_estagio text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_dial_influencia(p_estagio text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_dial_permite_auto(p_estagio text, p_confianca numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca numeric) TO authenticated;
 
 --
 -- Name: FUNCTION fn_documentos_nao_extraidos(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
