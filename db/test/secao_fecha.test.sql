@@ -1,0 +1,308 @@
+-- =============================================================================
+-- A ÁRVORE DA SEÇÃO (0133) — e o teste que importa aqui é o RELIGAMENTO.
+--
+-- Uma checagem verde sobre extração fiel não prova NADA sobre poder de detecção:
+-- `select 'ok'` passaria em todos os asserts positivos deste arquivo. O que
+-- prova é apagar uma linha e exigir que ela seja pega — e, no caso desta
+-- migration, exigir ao mesmo tempo que a checagem ANTIGA continue verde, porque
+-- é a cegueira dela que justifica a nova existir.
+--
+-- O bloco 2 é o coração do arquivo: ele mede a cegueira em vez de afirmá-la.
+-- =============================================================================
+
+create or replace function teste_assert(p_cond boolean, p_nome text, p_detalhe text default null)
+returns void language plpgsql as $$
+begin
+  if p_cond then
+    raise notice 'ok    %', p_nome;
+  else
+    raise exception 'FALHOU: % %', p_nome, coalesce(' — ' || p_detalhe, '');
+  end if;
+end $$;
+
+create or replace function teste_reconciliar_tudo(p_caso uuid)
+returns void language plpgsql as $$
+declare r record;
+begin
+  for r in select id from documento where caso_id = p_caso order by id loop
+    perform fn_reconciliar_por_documento(r.id);
+  end loop;
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000001';
+  v_n    int;
+  v_txt  text;
+begin
+  raise notice '--- 1. POSITIVO: o book fiel fecha, e fecha com NÚMERO ---';
+
+  -- PRÉ-CONDIÇÃO DE ORDEM, e ela falha ALTO de propósito. O bloco 6 do
+  -- reconciliacao.test.sql renomeia toda chave desta versão para "XPTO <uuid>"
+  -- e toda seção para "BLOCO SEM NOME", e não desfaz. Este arquivo tem de rodar
+  -- ANTES dele; sem este assert, uma reordenação faria os asserts abaixo
+  -- falharem com "0 seções ok", que não diz a ninguém o que aconteceu.
+  select count(*) into v_n from campo_extraido
+   where documento_versao_id = v_ver and chave = 'ATIVO';
+  perform teste_assert(v_n > 0,
+    'PRÉ-CONDIÇÃO: o fixture está intacto (este arquivo roda ANTES do reconciliacao.test.sql, '
+    || 'cujo bloco 6 renomeia toda chave desta versão para XPTO e não desfaz)',
+    format('%s linha(s) "ATIVO" — zero significa que a ordem do run.sh mudou', v_n));
+
+  select count(*) into v_n from fn_conferir_arvore(v_ver) where resultado = 'ok';
+  perform teste_assert(v_n >= 10,
+    'o balanço do book tem dezenas de seções conferidas, não duas',
+    format('%s seções ok', v_n));
+
+  select count(*) into v_n from fn_conferir_arvore(v_ver) where resultado = 'divergente';
+  perform teste_assert(v_n = 0,
+    'extração FIEL não produz divergência nenhuma na árvore',
+    format('%s divergente(s)', v_n));
+
+  -- A REAFIRMAÇÃO É RECONHECIDA, e este assert é o que impede a regressão que
+  -- a primeira versão desta migration teve: "TOTAL DO ATIVO" contado como
+  -- parcela fazia a soma dar EXATAMENTE 2x o pai, em 31 seções do book.
+  select count(*) into v_n from fn_conferir_arvore(v_ver)
+   where resultado = 'ok' and n_reafirmacoes > 0;
+  perform teste_assert(v_n > 0,
+    'o total reafirmado pelo documento ("TOTAL DO ATIVO") é reconhecido, não somado como parcela',
+    format('%s seção(ões) com reafirmação conferida', v_n));
+
+  select soma_filhos into v_txt from fn_conferir_arvore(v_ver)
+   where fn_normalizar_texto(pai) = 'ativo' and periodo_coluna = '2025';
+  perform teste_assert(v_txt::numeric = 95780,
+    'e a soma das parcelas do ATIVO dá o próprio ATIVO (não o dobro dele)',
+    format('soma = %s', v_txt));
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'e nenhuma pendência de seção abre sobre o book fiel', format('%s pendência(s)', v_n));
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso   uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver    uuid := '55555555-0000-0000-0000-000000000001';
+  v_id     uuid;
+  v_valor  numeric;
+  v_n_arv  int;
+  v_n_apl  int;
+  v_desc   text;
+begin
+  raise notice '--- 2. LINHA PERDIDA: o defeito que a checagem antiga NÃO vê ---';
+
+  -- "Produtos acabados" (6.400) é parcela de "Estoques" (17.130). Apagá-la é
+  -- exatamente o que uma extração que pula uma linha produz.
+  select id, valor_num into v_id, v_valor from campo_extraido
+   where documento_versao_id = v_ver and chave = 'Produtos acabados'
+     and periodo_coluna = '2025' limit 1;
+  perform teste_assert(v_id is not null, 'a linha alvo do religamento existe no fixture');
+  delete from campo_extraido where id = v_id;
+
+  perform teste_reconciliar_tudo(v_caso);
+
+  -- A PROVA DE CEGUEIRA — e é medida, não afirmada. Ativo = Passivo + PL
+  -- continua VERDE com uma conta de 6.400 faltando no meio, porque desde a 0116
+  -- os dois lados dela são totais impressos e o documento bate consigo mesmo.
+  select count(*) into v_n_apl from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:ativo_passivo_pl' and estado <> 'resolvida';
+  perform teste_assert(v_n_apl = 0,
+    'CEGUEIRA MEDIDA: com a linha apagada, ativo_passivo_pl continua verde',
+    format('%s pendência(s) — se isto virar 1, a 0133 perdeu o motivo de existir', v_n_apl));
+
+  select count(*) into v_n_arv from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n_arv = 1,
+    '…e a árvore da seção PEGA, que é a única que pega',
+    format('%s pendência(s)', v_n_arv));
+
+  select descricao into v_desc from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida' limit 1;
+  perform teste_assert(v_desc like '%Estoques%',
+    '…e nomeia a SEÇÃO, para quem lê reextrair um bloco e não o documento inteiro',
+    coalesce(v_desc, '(nula)'));
+  perform teste_assert(v_desc like '%6400%',
+    '…com o tamanho do buraco, que é o número que decide se é material',
+    coalesce(v_desc, '(nula)'));
+
+  -- UMA pendência por documento, não uma por seção: "Estoques" quebrado também
+  -- quebra "Ativo Circulante" e "ATIVO" acima dele, e três pendências para um
+  -- defeito é o oposto do que fazer com o tempo de quem lê a fila.
+  perform teste_assert(v_n_arv = 1,
+    'o defeito sobe a árvore (Estoques → Ativo Circulante → ATIVO) e mesmo assim é UMA pendência');
+
+  -- Desfaz.
+  insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca,
+                              secao, secao_canonica, periodo_coluna, status_aceite)
+    values (v_ver, 'Produtos acabados', v_valor, 'milhar', 0.97,
+            'Estoques', 'ativo_circulante', '2025', 'aceito');
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n_arv from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n_arv = 0, 'recolocada a linha, a pendência auto-resolve');
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000001';
+  v_n    int;
+begin
+  raise notice '--- 3. VALOR ERRADO e SINAL INVERTIDO ---';
+
+  -- Dígito trocado: 9.200 -> 9.900 em "Matérias-primas e insumos".
+  update campo_extraido set valor_num = 9900
+   where documento_versao_id = v_ver and chave = 'Matérias-primas e insumos'
+     and periodo_coluna = '2025';
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 1, 'dígito trocado numa parcela quebra o pai e é pego',
+    format('%s pendência(s)', v_n));
+  update campo_extraido set valor_num = 9200
+   where documento_versao_id = v_ver and chave = 'Matérias-primas e insumos'
+     and periodo_coluna = '2025';
+
+  -- Sinal invertido: a provisão de obsolescência é NEGATIVA (-2.350). Lida
+  -- positiva, o total não muda de ordem de grandeza — é o erro mais fácil de
+  -- não ver a olho, e o que mais estraga a Modelagem.
+  update campo_extraido set valor_num = 2350
+   where documento_versao_id = v_ver
+     and chave = '(-) Provisão para obsolescência de estoques' and periodo_coluna = '2025';
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 1, 'sinal invertido numa dedutora é pego (4.700 de diferença)',
+    format('%s pendência(s)', v_n));
+  update campo_extraido set valor_num = -2350
+   where documento_versao_id = v_ver
+     and chave = '(-) Provisão para obsolescência de estoques' and periodo_coluna = '2025';
+
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 0, 'corrigidos os dois, a pendência auto-resolve');
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000001';
+  v_n    int;
+  v_res  text;
+  v_ach  text;
+begin
+  raise notice '--- 4. O TOTAL DECLARADO DUAS VEZES QUE DISCORDA ---';
+
+  -- "ATIVO" e "TOTAL DO ATIVO" são a mesma quantidade impressa duas vezes.
+  -- Ler uma delas errado NÃO é "a seção não fecha" — é um defeito de outra
+  -- natureza, e o diagnóstico certo poupa o analista de procurar uma parcela
+  -- perdida que não existe.
+  update campo_extraido set valor_num = 95000
+   where documento_versao_id = v_ver and chave = 'TOTAL DO ATIVO' and periodo_coluna = '2025';
+
+  select resultado, achado into v_res, v_ach from fn_conferir_arvore(v_ver)
+   where fn_normalizar_texto(pai) = 'ativo' and periodo_coluna = '2025';
+  perform teste_assert(v_res = 'divergente',
+    'total reafirmado que discorda do próprio pai é divergência', coalesce(v_res, 'nulo'));
+  perform teste_assert(v_ach = 'total_declarado_diverge',
+    '…e o ACHADO o distingue de "a seção não fecha" — são investigações diferentes',
+    coalesce(v_ach, 'nulo'));
+
+  update campo_extraido set valor_num = 95780
+   where documento_versao_id = v_ver and chave = 'TOTAL DO ATIVO' and periodo_coluna = '2025';
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 0, 'corrigido o total reafirmado, auto-resolve');
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_caso uuid := '11111111-1111-1111-1111-111111111111';
+  v_ver  uuid := '55555555-0000-0000-0000-000000000001';
+  v_n     int;
+  v_res   text;
+  v_ach   text;
+  v_dup   uuid;
+begin
+  raise notice '--- 5. AS GUARDAS: o que ela se RECUSA a acusar ---';
+
+  -- UNIDADE MISTA. Uma parcela em reais sob um pai em milhar daria divergência
+  -- de 1000x. Não é achado — é comparação que não se pode fazer.
+  update campo_extraido set unidade = 'unidade'
+   where documento_versao_id = v_ver and chave = 'Produtos acabados' and periodo_coluna = '2025';
+  select resultado, achado into v_res, v_ach from fn_conferir_arvore(v_ver)
+   where fn_normalizar_texto(pai) = 'estoques' and periodo_coluna = '2025';
+  perform teste_assert(v_res = 'precondicao_nao_satisfeita',
+    'parcela em unidade diferente do pai NÃO vira divergência', coalesce(v_res, 'nulo'));
+  perform teste_assert(v_ach = 'unidade_mista',
+    '…e diz por quê, em vez de calar', coalesce(v_ach, 'nulo'));
+  update campo_extraido set unidade = 'milhar'
+   where documento_versao_id = v_ver and chave = 'Produtos acabados' and periodo_coluna = '2025';
+
+  -- PARCELA DUPLICADA. A soma passaria do pai e esta checagem acusaria — mas
+  -- quem cobra rótulo repetido é a 0105, e duas pendências para um defeito são
+  -- dois toques humanos onde cabe um.
+  insert into campo_extraido (documento_versao_id, chave, valor_num, unidade, confianca,
+                              secao, secao_canonica, periodo_coluna, status_aceite)
+    values (v_ver, 'Produtos acabados', 6400, 'milhar', 0.97,
+            'Estoques', 'ativo_circulante', '2025', 'aceito')
+    returning id into v_dup;
+  select resultado, achado into v_res, v_ach from fn_conferir_arvore(v_ver)
+   where fn_normalizar_texto(pai) = 'estoques' and periodo_coluna = '2025';
+  perform teste_assert(v_res = 'precondicao_nao_satisfeita',
+    'parcela com rótulo repetido NÃO abre a segunda pendência', coalesce(v_res, 'nulo'));
+  perform teste_assert(v_ach = 'rotulo_duplicado',
+    '…e aponta a checagem que manda (0105), em vez de somar ruído',
+    coalesce(v_ach, 'nulo'));
+
+  delete from campo_extraido where id = v_dup;
+
+  perform teste_reconciliar_tudo(v_caso);
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'reconciliacao:secao_fecha' and estado <> 'resolvida';
+  perform teste_assert(v_n = 0, 'desfeitas as duas, o fixture volta a fechar');
+end $$;
+
+-- =============================================================================
+do $$
+declare
+  v_n int;
+begin
+  raise notice '--- 6. A FRONTEIRA: cascata não é partição ---';
+
+  -- A DRE é CASCATA: os filhos de "RESULTADO ANTES DOS TRIBUTOS" são o IRPJ e o
+  -- IR diferido, que levam ao lucro líquido — não são parcelas que somam ao pai.
+  -- Medido no book: a checagem, se rodasse sobre DRE, acusaria 3 seções que
+  -- estão CERTAS. Este assert trava o gate para que ninguém "conserte" isso
+  -- acrescentando DRE de volta e inundando a fila.
+  select count(*) into v_n from documento d
+    join documento_versao dv on dv.documento_id = d.id
+    cross join lateral fn_conferir_arvore(dv.id) a
+   where d.tipo_taxonomia = 'DRE' and a.resultado = 'divergente';
+  perform teste_assert(v_n > 0,
+    'a DRE do book REALMENTE não fecha por soma de filhos (a cascata é real, não hipótese)',
+    format('%s seção(ões) divergiriam', v_n));
+
+  select count(*) into v_n from pendencia p
+    join documento d on d.caso_id = p.caso_id
+   where p.motivo = 'reconciliacao:secao_fecha' and p.estado <> 'resolvida'
+     and d.tipo_taxonomia = 'DRE';
+  perform teste_assert(v_n = 0,
+    '…e mesmo assim NENHUMA pendência abre sobre DRE — o gate é o que separa',
+    format('%s pendência(s)', v_n));
+end $$;
+
+-- =============================================================================
+do $$ begin raise notice 'TODOS OS TESTES DA ÁRVORE DA SEÇÃO (0133) PASSARAM'; end $$;
+
+drop function teste_assert(boolean, text, text);
+drop function teste_reconciliar_tudo(uuid);

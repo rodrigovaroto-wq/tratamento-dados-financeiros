@@ -176,6 +176,17 @@ echo "== fixture (book CANASTRA, extração fiel dos documentos DIFÍCEIS)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f db/test/fixture_book_canastra.sql
 
 echo "== testes de reconciliação"
+# A ÁRVORE DA SEÇÃO VEM ANTES DA RECONCILIAÇÃO, E A ORDEM É OBRIGATÓRIA.
+# O bloco 6 do reconciliacao.test.sql renomeia TODA chave da versão ...0001 para
+# "XPTO <uuid>" e toda seção para "BLOCO SEM NOME" (é o teste de rótulo
+# irreconhecível) e não desfaz — nada depois dele dependia daquela versão. O
+# teste da 0133 depende: ele precisa da árvore de verdade para religar defeito
+# nela. Se alguém reordenar, o primeiro assert do arquivo falha dizendo isto.
+echo "== a árvore da seção (0133): o documento conferindo a si mesmo"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/secao_fecha.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 

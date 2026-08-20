@@ -1110,6 +1110,189 @@ end;
 $$;
 
 --
+-- Name: fn_conferir_arvore(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TABLE(entidade_coluna text, periodo_coluna text, pai text, pai_valor numeric, soma_filhos numeric, n_filhos integer, n_reafirmacoes integer, unidade text, divergencia_abs numeric, tolerancia numeric, resultado text, achado text, porque text, filhos text[])
+    LANGUAGE sql STABLE
+    AS $$
+  with linha as (
+    select ce.chave,
+           fn_normalizar_texto(ce.chave) as chave_norm,
+           fn_normalizar_texto(ce.secao) as secao_norm,
+           ce.valor_num,
+           ce.unidade,
+           ce.entidade_coluna,
+           ce.periodo_coluna,
+           coalesce(fn_normalizar_texto(ce.entidade_coluna), '') as ck_ent,
+           coalesce(fn_normalizar_texto(ce.periodo_coluna),  '') as ck_per,
+           fn_papel_linha(ce.chave, d.tipo_taxonomia, ce.unidade) as papel
+      from campo_extraido ce
+      join documento_versao dv on dv.id = ce.documento_versao_id
+      join documento d         on d.id  = dv.documento_id
+     where ce.documento_versao_id = p_documento_versao_id
+       and ce.valor_num is not null
+  ),
+  eh_pai as (
+    select distinct f.secao_norm as pai_norm, f.ck_ent, f.ck_per
+      from linha f
+     where f.secao_norm is not null
+       and f.chave_norm is distinct from f.secao_norm
+  ),
+  pai as (
+    select l.chave_norm as pai_norm, l.ck_ent, l.ck_per,
+           min(l.chave)           as pai_chave,
+           min(l.valor_num)       as pai_valor,
+           min(l.unidade)         as pai_unidade,
+           min(l.entidade_coluna) as ent_col,
+           min(l.periodo_coluna)  as per_col,
+           count(*)::int          as n_pai
+      from linha l
+      join eh_pai e
+        on e.pai_norm = l.chave_norm
+       and e.ck_ent   = l.ck_ent
+       and e.ck_per   = l.ck_per
+     group by l.chave_norm, l.ck_ent, l.ck_per
+  ),
+  -- O CLASSIFICADOR DE FILHO. Esta é a parte que a primeira versão errou, e o
+  -- fixture disse na cara: a soma dava EXATAMENTE 2x o pai em 31 seções.
+  --
+  -- Depois da 0116 o total impresso chega como LINHA, e ele fica na MESMA seção
+  -- que as parcelas — "TOTAL DO ATIVO" é irmão de "Ativo Circulante", não pai
+  -- dele. Somá-lo às parcelas conta a seção duas vezes. Ele não é parcela: é a
+  -- REAFIRMAÇÃO do pai, e o próprio documento a imprime para ser conferida.
+  --
+  -- A regra é por VALOR, não por rótulo, e isso foi medido: "TOTAL DO PASSIVO E
+  -- DO PATRIMÔNIO LÍQUIDO" contra a seção "PASSIVO E PATRIMÔNIO LÍQUIDO" não
+  -- casa por texto (sobra o "do" do meio), e casar por semelhança traria de
+  -- volta a adivinhação que `secao` existe para evitar.
+  --
+  -- E a reafirmação que NÃO bate não é descartada — vira achado PRÓPRIO. Se
+  -- "TOTAL DO ATIVO" foi lido 95.000 com "ATIVO" em 95.780, o defeito não é
+  -- "a seção não fecha": é "o documento declara o mesmo total duas vezes e as
+  -- duas leituras discordam". Tratá-la como parcela produziria uma divergência
+  -- de ~95.000 e um diagnóstico errado sobre um defeito verdadeiro.
+  filho as (
+    select p.pai_norm, p.ck_ent, p.ck_per, p.pai_valor, p.pai_unidade,
+           f.chave, f.valor_num, f.unidade,
+           f.chave_norm,
+           case
+             when f.papel = 'derivado'  then 'derivado'
+             when f.papel = 'subtotal' and f.valor_num = p.pai_valor
+               then 'reafirmacao'
+             when f.papel = 'subtotal'
+                  and fn_normalizar_texto(f.chave) ~ '^(total|soma)\y'
+                  and f.valor_num is distinct from p.pai_valor
+               then 'reafirmacao_divergente'
+             else 'parcela'
+           end as tipo
+      from pai p
+      join linha f
+        on f.secao_norm = p.pai_norm
+       and f.ck_ent     = p.ck_ent
+       and f.ck_per     = p.ck_per
+       and f.chave_norm is distinct from f.secao_norm
+  ),
+  agregado as (
+    select p.ent_col, p.per_col, p.pai_chave, p.pai_valor, p.pai_unidade, p.n_pai,
+           coalesce(sum(c.valor_num) filter (where c.tipo = 'parcela'), 0) as soma,
+           count(*) filter (where c.tipo = 'parcela')::int                 as n,
+           count(*) filter (where c.tipo = 'reafirmacao')::int             as n_reaf,
+           count(*) filter (where c.tipo = 'reafirmacao_divergente')::int  as n_reaf_div,
+           array_agg(c.chave order by c.chave)
+             filter (where c.tipo = 'parcela')                             as chaves,
+           min(c.chave) filter (where c.tipo = 'reafirmacao_divergente')   as reaf_div_chave,
+           min(c.valor_num) filter (where c.tipo = 'reafirmacao_divergente') as reaf_div_valor,
+           count(*) filter (
+             where c.tipo = 'parcela'
+               and c.unidade is not null and p.pai_unidade is not null
+               and fn_normalizar_texto(c.unidade) <> fn_normalizar_texto(p.pai_unidade)
+           )::int                                                          as n_unid_dif,
+           (count(*) filter (where c.tipo = 'parcela')
+            - count(distinct c.chave_norm) filter (where c.tipo = 'parcela'))::int
+                                                                           as n_parcela_dup
+      from pai p
+      join filho c
+        on c.pai_norm = p.pai_norm
+       and c.ck_ent   = p.ck_ent
+       and c.ck_per   = p.ck_per
+     group by p.ent_col, p.per_col, p.pai_chave, p.pai_valor, p.pai_unidade, p.n_pai
+  ),
+  medido as (
+    select a.*,
+           abs(a.pai_valor - a.soma)                    as div_abs,
+           greatest(1, ceil(0.5 * (a.n + 1)))::numeric  as tol
+      from agregado a
+  )
+  select m.ent_col, m.per_col, m.pai_chave, m.pai_valor, m.soma, m.n, m.n_reaf, m.pai_unidade,
+         m.div_abs, m.tol,
+         case
+           when m.n_pai > 1          then 'precondicao_nao_satisfeita'
+           when m.n_parcela_dup > 0  then 'precondicao_nao_satisfeita'
+           when m.n_unid_dif > 0     then 'precondicao_nao_satisfeita'
+           when m.n_reaf_div > 0   then 'divergente'
+           when m.n = 0            then 'precondicao_nao_satisfeita'
+           when m.div_abs > m.tol  then 'divergente'
+           else 'ok'
+         end,
+         case
+           when m.n_pai > 1         then 'rotulo_duplicado'
+           when m.n_parcela_dup > 0 then 'rotulo_duplicado'
+           when m.n_unid_dif > 0    then 'unidade_mista'
+           when m.n_reaf_div > 0 then 'total_declarado_diverge'
+           when m.n = 0          then 'sem_parcela'
+           when m.div_abs > m.tol then 'secao_nao_fecha'
+           else 'ok'
+         end,
+         case
+           when m.n_pai > 1 then
+             format('O rótulo "%s" aparece %s vezes nesta coluna: o pai é ambíguo e a soma não '
+                    'decide nada. Quem cobra isso é reconciliacao:duplicidade_de_rotulo (0105) — '
+                    'duas pendências para um defeito seriam dois toques humanos onde cabe um.',
+                    m.pai_chave, m.n_pai)
+           when m.n_parcela_dup > 0 then
+             format('%s parcela(s) de "%s" aparecem com o rótulo repetido nesta coluna. A soma '
+                    'passaria do pai e esta checagem acusaria — mas o defeito já tem dono, '
+                    'reconciliacao:duplicidade_de_rotulo (0105), e duas pendências para um defeito '
+                    'seriam dois toques humanos onde cabe um.',
+                    m.n_parcela_dup, m.pai_chave)
+           when m.n_unid_dif > 0 then
+             format('%s de %s parcelas de "%s" estão em unidade diferente da do pai (%s). Somar '
+                    'unidades diferentes erraria por ordem de grandeza, e descartar a parcela '
+                    'divergente produziria uma soma errada com cara de certa.',
+                    m.n_unid_dif, m.n, m.pai_chave, coalesce(m.pai_unidade, 'não declarada'))
+           when m.n_reaf_div > 0 then
+             format('O documento declara o total de "%s" DUAS vezes e as duas leituras discordam: '
+                    'a seção diz %s e "%s" diz %s. Uma das duas foi lida errado — não é a soma das '
+                    'parcelas que está em questão aqui.',
+                    m.pai_chave, m.pai_valor, m.reaf_div_chave, m.reaf_div_valor)
+           when m.n = 0 then
+             format('"%s" nomeia uma seção, mas nenhum filho dela é parcela somável nesta coluna '
+                    '(só reafirmação do próprio total, derivados, ou linhas sem número).',
+                    m.pai_chave)
+           when m.div_abs > m.tol then
+             format('"%s" informa %s e a soma das %s parcelas dá %s — diferença de %s (tolerância '
+                    'de arredondamento: %s). Ou a extração perdeu/errou uma linha desta seção, ou '
+                    'o documento não fecha consigo mesmo; as duas exigem olhar o PDF.',
+                    m.pai_chave, m.pai_valor, m.n, m.soma, m.div_abs, m.tol)
+           else
+             format('"%s" = soma das %s parcelas (%s)%s.', m.pai_chave, m.n, m.soma,
+                    case when m.n_reaf > 0
+                         then format(', e o total reafirmado pelo documento (%s vez) confere',
+                                     m.n_reaf)
+                         else '' end)
+         end,
+         m.chaves
+    from medido m;
+$$;
+
+--
+-- Name: FUNCTION fn_conferir_arvore(p_documento_versao_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) IS 'Confere, por (pai × coluna), se o valor da linha-pai é igual à soma dos filhos diretos — a identidade que todo demonstrativo obedece e que a extração teve de satisfazer sem saber que seria conferida. `campo_extraido.secao` é o pai IMEDIATO, então "os filhos de P" é pergunta exata e não casamento por semelhança. Pega linha perdida, valor errado, linha duplicada e sinal invertido, e localiza o defeito na seção. Tolerância é de ARREDONDAMENTO (~0,5·(n+1)), não percentual: 0,5% de um Ativo grande deixaria passar a conta inteira que a checagem existe para achar.';
+
+--
 -- Name: fn_conferir_lote(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4884,6 +5067,114 @@ $$;
 COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0119 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id na pendência, descrição nomeando a empresa). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
 
 --
+-- Name: fn_reconciliar_arvore(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_id     uuid;
+  v_entidade_id uuid;
+  v_periodo_id  uuid;
+  v_tipo        text;
+  v_versao      uuid;
+  v_n_ok        int := 0;
+  v_n_div       int := 0;
+  v_n_prec      int := 0;
+  v_pior_abs    numeric;
+  v_pior_pct    numeric;
+  v_pior_pai    text;
+  v_partes      text[] := '{}';
+  v_resultado   text;
+  v_desc        text;
+begin
+  select caso_id, entidade_id, periodo_id, tipo_taxonomia
+    into v_caso_id, v_entidade_id, v_periodo_id, v_tipo
+  from documento where id = p_documento_id;
+
+  if v_caso_id is null then
+    return jsonb_build_object('executado', false, 'motivo', 'documento não encontrado');
+  end if;
+
+  v_versao := fn_versao_atual(p_documento_id);
+  if v_versao is null then
+    return jsonb_build_object('executado', false, 'motivo', 'documento sem versão');
+  end if;
+
+  select count(*) filter (where resultado = 'ok'),
+         count(*) filter (where resultado = 'divergente'),
+         count(*) filter (where resultado = 'precondicao_nao_satisfeita')
+    into v_n_ok, v_n_div, v_n_prec
+  from fn_conferir_arvore(v_versao);
+
+  -- Nenhum pai com filho: documento de lista (aging, razão, mapa de dívida) ou
+  -- extração sem hierarquia. Não é achado — é ausência de árvore para conferir.
+  if v_n_ok + v_n_div + v_n_prec = 0 then
+    return fn_registrar_reconciliacao(v_caso_id, v_entidade_id, v_periodo_id,
+      'secao_fecha', 'A', p_documento_id, null, null, 'documento_ausente', null, null,
+      jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1)'),
+      'Este documento não tem seção com filhos — não há árvore a conferir. É o esperado em '
+      || 'documento de lista (razão, aging, mapa de dívida), não um achado.');
+  end if;
+
+  select a.divergencia_abs,
+         case when a.pai_valor <> 0 then a.divergencia_abs / abs(a.pai_valor) end,
+         a.pai
+    into v_pior_abs, v_pior_pct, v_pior_pai
+  from fn_conferir_arvore(v_versao) a
+  where a.resultado = 'divergente'
+  order by a.divergencia_abs desc
+  limit 1;
+
+  select array_agg(
+           format('%s%s: informa %s, filhos somam %s (dif. %s)',
+                  a.pai,
+                  case when coalesce(a.periodo_coluna, '') <> ''
+                       then ' [' || a.periodo_coluna || ']' else '' end,
+                  a.pai_valor, a.soma_filhos, a.divergencia_abs)
+           order by a.divergencia_abs desc)
+    into v_partes
+  from (select * from fn_conferir_arvore(v_versao)
+         where resultado = 'divergente'
+         order by divergencia_abs desc limit 5) a;
+
+  v_resultado := case when v_n_div > 0 then 'divergente' else 'ok' end;
+
+  if v_n_div > 0 then
+    v_desc := format(
+      '%s seção(ões) não fecham com as próprias linhas neste documento (%s conferem). %s. '
+      || 'Ou a extração perdeu/errou linha nessas seções, ou o documento não fecha consigo '
+      || 'mesmo — as duas exigem olhar o PDF, e a diferença decide entre reextrair e perguntar '
+      || 'ao cliente.',
+      v_n_div, v_n_ok, array_to_string(v_partes, '; '));
+    if v_n_div > 5 then
+      v_desc := v_desc || format(' (mostrando as 5 maiores de %s; muitas seções quebrando de uma '
+                                 'vez costuma ser escala ou coluna, não linha perdida.)', v_n_div);
+    end if;
+  else
+    v_desc := format('As %s seções deste documento fecham com as próprias linhas. %s ficaram sem '
+                     'conferir por pré-condição (rótulo duplicado ou unidade mista).',
+                     v_n_ok, v_n_prec);
+  end if;
+
+  return fn_registrar_reconciliacao(v_caso_id, v_entidade_id, v_periodo_id,
+    'secao_fecha', 'A', p_documento_id,
+    jsonb_build_object('secoes_conferidas', v_n_ok + v_n_div, 'pior_secao', v_pior_pai),
+    jsonb_build_object('divergentes', v_n_div, 'sem_conferir', v_n_prec),
+    v_resultado, v_pior_abs, v_pior_pct,
+    jsonb_build_object('tolerancia', 'arredondamento ~0,5*(n+1) na unidade do documento'),
+    v_desc);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_arvore(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) IS 'Registra, como reconciliação Classe A, se as seções do documento fecham com as próprias linhas. UMA pendência por documento (não uma por seção): erro de escala quebra todas as seções de uma vez, e trinta pendências para um defeito é o oposto do que fazer com o tempo de quem lê a fila.';
+
+--
 -- Name: fn_reconciliar_ativo_passivo_pl(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5928,6 +6219,18 @@ begin
     return jsonb_build_object('executado', false, 'motivo', 'documento não encontrado');
   end if;
 
+  -- 0133: a conferência INTRA-documento vem PRIMEIRO. Se as seções do próprio
+  -- documento não fecham, as comparações entre documentos abaixo estão sendo
+  -- feitas sobre números que já não se sustentam — e é melhor que a fila diga
+  -- isso antes de dizer que o Ativo bate com o Passivo (que, com totais
+  -- impressos dos dois lados, bate mesmo quando faltam contas no meio).
+  --
+  -- Sem loop de período: a árvore é INTRA-documento, então o período do
+  -- documento é o único que existe aqui — não há documento par a procurar.
+  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
+    v_checagens := v_checagens || jsonb_build_array(fn_reconciliar_arvore(p_documento_id));
+  end if;
+
   select array_agg(p.id order by (p.id = v_periodo_id) desc, p.referencia)
     into v_periodos
   from periodo p
@@ -6003,7 +6306,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Dispara as checagens A/B pertinentes ao tipo do documento. Ausência do documento par NÃO abre pendência (é do checklist do Kit Básico). 0117: mútuos, pelos dois lados. 0124: intragrupo fora mútuo, pelo espelho entre cada par de empresas.';
+COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Roda as reconciliações que o tipo do documento autoriza. Desde a 0133 começa pela conferência INTRA-documento (fn_reconciliar_arvore): com totais impressos dos dois lados, Ativo = Passivo+PL fecha mesmo quando faltam contas no meio, então a árvore tem de falar primeiro.';
 
 --
 -- Name: fn_reconciliar_receita_dre_vs_faturamento(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -10687,6 +10990,12 @@ GRANT ALL ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_ca
 GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_conferir_arvore(p_documento_versao_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_conferir_lote(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -11029,6 +11338,12 @@ GRANT ALL ON FUNCTION public.fn_reabrir_caso(p_caso_id uuid, p_autor text) TO au
 --
 
 GRANT ALL ON FUNCTION public.fn_reavaliar_guardas_extracao(p_documento_versao_id uuid, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_arvore(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -

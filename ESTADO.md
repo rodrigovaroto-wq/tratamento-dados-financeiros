@@ -2,7 +2,8 @@
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
-lidas para retomar.
+lidas para retomar. E `docs/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
+critério de pronto de cada bloco — é o arquivo para abrir antes de escolher o que fazer na sessão.
 
 > **Por que os dois são arquivos separados.** O cabeçalho do `HANDOFF.md` já passou 17 PRs congelado
 > em "PR #70, migrations até `0034`", e mandava quem chegava começar errado. A causa não é descuido:
@@ -14,9 +15,10 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0132_a_sonda_nao_cresce_com_o_dado.sql` |
+| **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
+| **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (858 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -178,9 +180,9 @@ aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assi
 nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a sonda
 garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem dúvida.**
 
-> **Para o dono:** aplicar a `0131` é o que faz esta seção deixar de ser mais um recado em prosa.
-> Depois dela, `/instalacao` responde no lugar deste arquivo — e responde sobre o banco em que
-> você está de fato conectado, que é a pergunta que este arquivo nunca pôde responder.
+> **APLICADA em 20/08.** A partir daqui `/instalacao` responde no lugar deste arquivo — e responde
+> sobre o banco em que você está de fato conectado, que é a pergunta que este arquivo nunca pôde
+> responder. Se algum recado em prosa acima e a tela discordarem, **a tela é que está certa.**
 
 ## A rotulagem manual SAIU, e a passada de eficiência (o que foi medido e o que NÃO era lento)
 
@@ -218,18 +220,84 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
+## A SEÇÃO PASSA A TER DE FECHAR (20/08, sessão 55) — `0133`
+
+**O defeito foi ABERTO por uma correção nossa, e estava vivo desde a `0116`.**
+
+`fn_reconciliar_ativo_passivo_pl` prefere o TOTAL IMPRESSO e só soma a seção quando o total não
+existe. Até a `0116` isso era conservador: o prompt não trazia os totais, a checagem SOMAVA as
+contas, e uma conta perdida quebrava a soma. A `0116` mandou o total impresso chegar como LINHA — e
+estava certa, sem ele o export não tem contra o que conferir. O efeito colateral é que **os dois
+lados da checagem viraram totais impressos, e total impresso contra total impresso fecha por
+construção**: o balanço do cliente bate consigo mesmo.
+
+**Medido no religamento, não afirmado:** apagar "Produtos acabados" (6.400) do Estoques do book e
+rodar a reconciliação inteira deixa `ativo_passivo_pl` **VERDE**. É o assert
+`CEGUEIRA MEDIDA` do `db/test/secao_fecha.test.sql`, e ele existe para que a `0133` perca o motivo
+de existir no dia em que deixar de ser verdade.
+
+**A correção é barata porque a árvore já estava no banco.** `campo_extraido.secao` guarda o PAI
+IMEDIATO, não o grupo de topo — então "os filhos de P" é pergunta EXATA (as linhas cuja `secao` é a
+`chave` de P), não casamento por semelhança. E a identidade que todo demonstrativo obedece é
+**pai = soma dos filhos diretos**, que a extração teve de satisfazer sem saber que seria conferida.
+
+| Pega | Como |
+|---|---|
+| **linha perdida** | some um filho, o pai deixa de bater |
+| **valor errado** | dígito trocado quebra o pai |
+| **linha duplicada** | fica com a `0105`, de propósito (ver guardas) |
+| **sinal invertido** | "(-) Provisão" lida positiva quebra o pai por 2× o valor |
+| **total declarado 2× que discorda** | achado PRÓPRIO, não "a seção não fecha" |
+
+E **localiza na seção**: quem lê "Estoques não fecha por 6.400" reextrai um bloco, não o documento.
+
+**As guardas, e elas são a razão entre autonomia e trabalho humano em código.** Pendência que abre
+sem defeito custa mesa e não compra qualidade — é regressão pura. Então: rótulo duplicado (no pai ou
+na parcela) vira pré-condição e aponta a `0105`, porque duas pendências para um defeito são dois
+toques onde cabe um; unidade mista não se soma, e a parcela divergente **não é descartada em
+silêncio**; linha derivada não é parcela; e **UMA pendência por documento**, não uma por seção — erro
+de escala quebra todas de uma vez.
+
+**A tolerância é de ARREDONDAMENTO (~0,5·(n+1)), não os 0,5% das outras checagens.** As outras
+comparam DOCUMENTOS diferentes, que arredondam diferente; aqui os dois lados saem da mesma coluna do
+mesmo documento. 0,5% de um Ativo de 95.780 é 479 — deixaria passar a conta de meio milhão que a
+checagem existe para achar.
+
+**A FRONTEIRA, e ela foi medida antes de ser escrita: cascata não é partição.** Os filhos de
+"RESULTADO ANTES DOS TRIBUTOS" são o IRPJ e o IR diferido, que levam ao lucro líquido — não parcelas
+que somam ao pai. Rodar sobre DRE acusaria **3 seções do book que estão CERTAS**. O gate é
+`BALANCO`/`BALANCETE`/`COMBINADO`, e há um assert que prova que a DRE realmente não fecha por soma,
+para que ninguém "conserte" isso acrescentando DRE de volta e inundando a fila.
+
+**Dois defeitos meus que o fixture achou, e valem mais que a correção:**
+
+1. A primeira versão contava "TOTAL DO ATIVO" como parcela — a soma dava **exatamente 2× o pai em 31
+   seções**. Ele é irmão das parcelas, não pai delas: é a REAFIRMAÇÃO do total, e o documento a
+   imprime justamente para ser conferida. A regra de reconhecimento é por VALOR e não por rótulo,
+   e isso também foi medido: "TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO" não casa por texto com a
+   seção "PASSIVO E PATRIMÔNIO LÍQUIDO" (sobra o "do" do meio).
+2. Eu redefini `fn_reconciliar_por_documento` a partir do corpo da `0023` e **apaguei em silêncio o
+   que a `0117`, a `0124` e a `0105` acrescentaram** — mútuos, espelho intragrupo e duplicidade
+   sumiram da rodada. A suíte pegou na hora ("a divergência plantada de mútuos ABRE pendência — 0
+   pendência(s)"). **A lição é de processo:** `create or replace` numa função que migrations
+   posteriores reescreveram tem de partir da versão VIGENTE, não da que o `grep` acha primeiro.
+
+> **APLICADA** — o dono confirmou em 20/08 que a fila inteira (`0126`–`0133`) entrou no Supabase.
+> A `0133` não muda ingestão nem export: acrescenta uma checagem Classe A que só fala quando uma
+> seção não fecha. **O que ela passa a produzir a partir da próxima rodada** é a taxa de seções que
+> fecham por tipo de documento — a primeira medida de qualidade de extração que não custa hora
+> humana.
+
 ## O próximo passo (para quem retomar depois de 19/08, sessão 53)
 
 **O DONO FEZ AS DUAS COISAS QUE FALTAVAM** — confirmado em 19/08: as migrations estão aplicadas
 **até a `0125`** e o `workflow.e1-ingestao.json` foi **reimportado**. Não há mais nada de infra
 pendente **daquela rodada**.
 
-> **A sessão 53 acrescentou a `0126`, e ela precisa ser aplicada** — é a única coisa de banco
-> pendente agora. Ela não muda o comportamento da ingestão nem do export: cria as tabelas do golden
-> set, as funções de medição, e faz `fn_mudar_dial` cobrar concordância medida para subir dial de
-> estágio interpretativo. **Nenhum nível de autonomia muda ao aplicá-la**; o que muda é que o N2 da
-> extração passa a se declarar como `declarada` em vez de ficar indistinguível de um N2 medido.
-> Isso NÃO altera a prioridade do bloqueio abaixo: rodar o book continua sendo o próximo passo.
+> **NÃO HÁ MAIS NADA DE BANCO PENDENTE.** A `0126` (golden set) e tudo o que veio depois dela até a
+> `0133` foram aplicadas — o dono confirmou em 20/08. Nenhum nível de autonomia mudou com elas; o
+> que mudou é que o N2 da extração passa a se declarar como `declarada` em vez de ficar
+> indistinguível de um N2 medido. **O bloqueio abaixo é agora o único que sobra: rodar o book.**
 
 **Sobrou UM bloqueio, e é grande: NINGUÉM RODOU O BOOK AINDA.**
 
@@ -1540,9 +1608,10 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
    automáticos) e `docs/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
    06/08, um arquivo com seis números errados e as suítes verdes.
 
-2. **Aplicar a `0126`.** Não muda nível de autonomia nenhum nem comportamento de ingestão/export —
-   cria o golden set e o portão da regra de ouro. Depois de aplicar, `/autonomia` passa a dizer em
-   que cada nível se apoia; hoje ela adivinha pelo nome do estágio.
+2. ~~**Aplicar a `0126`.**~~ — **FEITO em 20/08**, junto com todo o resto até a `0133`. Não sobrou
+   nada de banco pendente. `/autonomia` passa a dizer em que cada nível se apoia em vez de adivinhar
+   pelo nome do estágio, e `/instalacao` responde sobre o banco em que você está de fato conectado —
+   que é onde esta pergunta deve ser feita daqui em diante, não neste arquivo.
 
 3. **A ROTULAGEM DO GOLDEN SET — e este não é de infra, é de julgamento.** A máquina está pronta e
    testada; o que falta é o `f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por

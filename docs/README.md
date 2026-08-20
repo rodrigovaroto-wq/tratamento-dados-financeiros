@@ -43,7 +43,13 @@ no dia 1, mas **não confia em si mesmo até medir que pode**. Ver
 | [`08_RISCOS.md`](08_RISCOS.md) | Riscos prováveis e mitigações |
 | [`09_PLANO_DE_EXECUCAO.md`](09_PLANO_DE_EXECUCAO.md) | Alterações, plano executável por fase, próximos passos |
 
-Fora da série numerada: [`ACEITE.md`](ACEITE.md) é o aceite de um `.xlsx` exportado — 10 itens que
+Fora da série numerada: [`MAPA_DE_EXECUCAO.md`](MAPA_DE_EXECUCAO.md) é **o que falta até o projeto
+fechar**, em ordem, com o critério de pronto de cada bloco e a distinção entre o que é pendência, o
+que é decisão do dono e o que é espera por dado de terceiro. Os três documentos de estado respondem
+perguntas diferentes: `ESTADO.md` diz onde estamos, `HANDOFF.md` diz como chegamos, e este diz para
+onde vamos.
+
+[`ACEITE.md`](ACEITE.md) é o aceite de um `.xlsx` exportado — 10 itens que
 exigem o Excel de verdade (o arquivo abre, o gráfico desenha, o dropdown reprojeta), com o resto
 respondido pelo comando `portal/scripts/auditar-xlsx.mts`.
 
