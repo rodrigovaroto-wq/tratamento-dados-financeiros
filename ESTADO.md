@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0131_instalacao_que_se_declara.sql` |
+| **Última migration** | `db/migrations/0132_a_sonda_nao_cresce_com_o_dado.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 594 · transcrição 35 · tela cega 18 · e2e 46 · banco (855 asserts, 76 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (858 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -181,6 +181,42 @@ garante é o contrapositivo, que é a parte útil: **objeto ausente é migration
 > **Para o dono:** aplicar a `0131` é o que faz esta seção deixar de ser mais um recado em prosa.
 > Depois dela, `/instalacao` responde no lugar deste arquivo — e responde sobre o banco em que
 > você está de fato conectado, que é a pergunta que este arquivo nunca pôde responder.
+
+## A rotulagem manual SAIU, e a passada de eficiência (o que foi medido e o que NÃO era lento)
+
+**Decisão do dono:** não haverá fluxo de rotulagem manual. O objetivo é o sistema operar sem
+triagem humana, e uma tela que pede uma tarde de mesa por rodada orienta o contrário.
+
+O que saiu: as quatro telas de rotulagem (`/autonomia/golden` e filhas), os cinco componentes, a
+suíte `verificar-tela-cega.mts` e o passo dela no CI. **O que FICOU, e por quê:** o caminho de
+escrita no banco (`0130`) — ele não custa nada parado, e `fn_golden_classe_a` mede falso-positivo
+de Classe A a partir de **veredito de produção**, sem rotulagem nenhuma. O painel de autonomia
+agora diz a consequência em vez de convidar: sem concordância medida, estágio interpretativo
+**não sobe**, e a regra de ouro recusa.
+
+### A passada de eficiência — e o valor dela está no que NÃO mudou
+
+Quatro hipóteses foram medidas e **três foram descartadas pela medição**, o que é o resultado
+mais útil que uma passada dessas produz: ninguém precisa refazer esta caça.
+
+| Hipótese | Medição | Veredito |
+|---|---|---|
+| `fn_normalizar_texto` por (rótulo × termo) em `fn_exigencias_do_caso` | 243 ms → 254 ms | **5% PIOR.** Não é o gargalo. |
+| `linhas_distintas` achatada pelo planejador (faltava `as materialized`) | 228 ms → 232 ms | **2% pior.** O `distinct` já estava valendo. |
+| Índice ausente em caminho quente | `idx_documento_caso` e os outros existem | **Nada faltando.** A varredura sequencial em `documento` é escolha correta do planejador com 177 linhas. |
+| Cache de prompt da OpenAI não sendo acertado | sistema estático vem PRIMEIRO; `cached_tokens` já é lido pela contabilidade | **Já está certo.** Classificação já usa o modelo barato. |
+
+**O que era real, e virou a `0132`:** a sonda de instalação da `0131` fazia `count(*)` por requisito
+de seed — e um dos requisitos é `lote_execucao`, que ganha uma linha por execução e **nunca para de
+crescer**, sondada a cada carga do painel. Medido com 50 mil lotes: sonda inteira **7,9 ms → 0,5 ms**.
+Mais `pg_attribute` no lugar de `information_schema.columns` (3,4 ms → 0,25 ms). Nenhum veredito muda.
+
+**O que foi medido e está saudável:** export de 28 documentos / 1.260 linhas em **450 ms** (montar +
+serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a sonda quente em
+0,5 ms. **Onde o tempo de um lote realmente vai:** nas chamadas à OpenAI, não no Postgres —
+`fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
+mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
+**reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
 ## O próximo passo (para quem retomar depois de 19/08, sessão 53)
 
