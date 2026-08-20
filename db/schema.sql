@@ -3406,6 +3406,99 @@ $$;
 COMMENT ON FUNCTION public.fn_indice_macro_anual(p_desde_ano integer) IS 'Retorno acumulado por ano-calendário. Série de TAXA acumula por composição; série de NÍVEL varia entre FECHAMENTOS (dez do ano anterior → dez do ano), e o primeiro ano da série sai com retorno NULL por não ter base. `meses` revela ano incompleto — incluí-lo numa média de 3/5/10 anos como ano cheio distorce a média.';
 
 --
+-- Name: fn_instalacao_conferir(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_instalacao_conferir() RETURNS TABLE(chave text, migration text, tipo text, objeto text, presente boolean, detalhe text, porque text, severidade text)
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  r         instalacao_requisito;
+  v_ok      boolean;
+  v_det     text;
+  v_n       bigint;
+begin
+  for r in select * from instalacao_requisito order by ordem, chave loop
+    v_ok  := false;
+    v_det := null;
+
+    if r.tipo = 'tabela' then
+      v_ok := to_regclass('public.' || r.objeto) is not null;
+
+    elsif r.tipo = 'funcao' then
+      -- `to_regproc` falha quando a função tem sobrecargas ambíguas; o nome sem
+      -- argumentos resolve pelo único candidato, e sobrecarga é sinal de que o
+      -- requisito devia declarar a assinatura. Nenhum dos requisitos abaixo tem.
+      begin
+        v_ok := to_regproc('public.' || r.objeto) is not null;
+      exception when others then
+        -- Ambiguidade significa que EXISTE mais de uma — logo, existe.
+        v_ok := true;
+        v_det := 'mais de uma assinatura com este nome';
+      end;
+
+    elsif r.tipo = 'coluna' then
+      v_ok := exists (
+        select 1 from information_schema.columns c
+         where c.table_schema = 'public'
+           and c.table_name   = split_part(r.objeto, '.', 1)
+           and c.column_name  = split_part(r.objeto, '.', 2));
+
+    elsif r.tipo in ('seed', 'comportamento') then
+      -- A tabela pode não existir ainda: contar nela levantaria erro e derrubaria
+      -- a sonda inteira, transformando "um requisito faltando" em "o painel não
+      -- abre". A sonda de instalação é o último lugar do sistema que pode falhar
+      -- por causa do que ela existe para medir.
+      if to_regclass('public.' || r.objeto) is null then
+        v_ok  := false;
+        v_det := 'a tabela nem existe';
+      else
+        execute format('select count(*) from public.%I', r.objeto) into v_n;
+        v_ok  := v_n >= coalesce(r.criterio_seed, 1);
+        v_det := format('%s linha(s)', v_n);
+      end if;
+    end if;
+
+    return query select r.chave, r.migration, r.tipo, r.objeto, v_ok, v_det,
+                        r.porque, r.severidade;
+  end loop;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_instalacao_conferir(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Sonda cada requisito de instalacao_requisito contra o catálogo do banco em que ela roda. Responde "o objeto existe", que NÃO é "a migration foi aplicada corretamente" — o corpo de uma função trocada por create or replace passa igual. O que ela garante é o contrapositivo, que é a parte útil: objeto ausente é migration ausente.';
+
+--
+-- Name: fn_instalacao_resumo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_instalacao_resumo() RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with c as (select * from fn_instalacao_conferir())
+  select jsonb_build_object(
+    'total',        (select count(*) from c),
+    'presentes',    (select count(*) from c where presente),
+    'ausentes',     (select count(*) from c where not presente),
+    'bloqueantes_ausentes',
+                    (select count(*) from c where not presente and severidade = 'bloqueante'),
+    'completa',     (select not exists (select 1 from c where not presente)),
+    'faltando',     coalesce((select jsonb_agg(jsonb_build_object(
+                       'chave', chave, 'migration', migration, 'porque', porque,
+                       'severidade', severidade) order by severidade, chave)
+                     from c where not presente), '[]'::jsonb));
+$$;
+
+--
+-- Name: FUNCTION fn_instalacao_resumo(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_instalacao_resumo() IS 'O veredito de uma linha sobre a instalação, para o painel. "completa" só é true quando NENHUM requisito falta — inclusive os informativos, porque um requisito que não vale a pena conferir não devia estar no catálogo.';
+
+--
 -- Name: fn_lado_do_mutuo(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8827,6 +8920,41 @@ CREATE TABLE public.indice_macro_serie (
 COMMENT ON COLUMN public.indice_macro_serie.natureza IS 'taxa = variação % do mês (o ano acumula por COMPOSIÇÃO); nivel = preço/estoque na data (o ano é o fechamento). Compor nível, ou somar taxa, é erro conceitual.';
 
 --
+-- Name: instalacao_requisito; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instalacao_requisito (
+    chave text NOT NULL,
+    migration text NOT NULL,
+    tipo text NOT NULL,
+    objeto text NOT NULL,
+    criterio_seed integer,
+    porque text NOT NULL,
+    severidade text DEFAULT 'importante'::text NOT NULL,
+    ordem integer DEFAULT 100 NOT NULL,
+    CONSTRAINT instalacao_requisito_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text, 'informativo'::text]))),
+    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text])))
+);
+
+--
+-- Name: TABLE instalacao_requisito; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instalacao_requisito IS 'O que precisa existir no banco de PRODUÇÃO para o portal não mentir — um requisito por linha, com o sintoma visível escrito. Existe porque estes requisitos moravam em prosa no ESTADO.md, onde nada os executa: quem abre o portal não lê o ESTADO.md, e a tela sem a migration não quebra, mostra um traço.';
+
+--
+-- Name: COLUMN instalacao_requisito.tipo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.instalacao_requisito.tipo IS 'comportamento é o único que não sonda o catálogo: alguns requisitos não são de banco (reimportar o workflow do n8n) e só se provam pelo EFEITO — a tabela que aquele nó grava tem linha.';
+
+--
+-- Name: COLUMN instalacao_requisito.porque; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.instalacao_requisito.porque IS 'O SINTOMA VISÍVEL da ausência, não a descrição da migration. É o que torna o painel acionável para quem está com a tela aberta e não com o repositório.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9332,6 +9460,13 @@ ALTER TABLE ONLY public.indice_macro_obs
 
 ALTER TABLE ONLY public.indice_macro_serie
     ADD CONSTRAINT indice_macro_serie_pkey PRIMARY KEY (codigo);
+
+--
+-- Name: instalacao_requisito instalacao_requisito_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instalacao_requisito
+    ADD CONSTRAINT instalacao_requisito_pkey PRIMARY KEY (chave);
 
 --
 -- Name: lote_execucao lote_execucao_caso_id_execucao_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -10315,6 +10450,18 @@ ALTER TABLE public.indice_macro_serie ENABLE ROW LEVEL SECURITY;
 CREATE POLICY indice_macro_serie_read ON public.indice_macro_serie FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: instalacao_requisito; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.instalacao_requisito ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: instalacao_requisito instalacao_requisito_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY instalacao_requisito_read ON public.instalacao_requisito FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: lote_execucao; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -10717,6 +10864,18 @@ GRANT ALL ON FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid)
 --
 
 GRANT ALL ON FUNCTION public.fn_indice_macro_anual(p_desde_ano integer) TO authenticated;
+
+--
+-- Name: FUNCTION fn_instalacao_conferir(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_instalacao_conferir() TO authenticated;
+
+--
+-- Name: FUNCTION fn_instalacao_resumo(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_instalacao_resumo() TO authenticated;
 
 --
 -- Name: FUNCTION fn_lado_do_mutuo(p_chave text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
@@ -11208,6 +11367,14 @@ GRANT ALL ON TABLE public.indice_macro_obs TO service_role;
 GRANT ALL ON TABLE public.indice_macro_serie TO anon;
 GRANT ALL ON TABLE public.indice_macro_serie TO authenticated;
 GRANT ALL ON TABLE public.indice_macro_serie TO service_role;
+
+--
+-- Name: TABLE instalacao_requisito; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_requisito TO anon;
+GRANT ALL ON TABLE public.instalacao_requisito TO authenticated;
+GRANT ALL ON TABLE public.instalacao_requisito TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -

@@ -14,9 +14,9 @@ lidas para retomar.
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0130_golden_set_rotulavel.sql` |
+| **Última migration** | `db/migrations/0131_instalacao_que_se_declara.sql` |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 594 · transcrição 35 · tela cega 18 · e2e 46 · banco (833 asserts, 75 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 293 · export 594 · transcrição 35 · tela cega 18 · e2e 46 · banco (855 asserts, 76 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -137,6 +137,50 @@ código anterior.
 O export da v46 mostra `Canastra Industria 2025x2024x2023` como entidade em todas as abas. A
 correção está no repositório desde 17/08 (32 entidades limpas, 6 nulas, zero sujas nos 38 nomes),
 mas **só entra em produção quando o workflow for reimportado**.
+
+## A instalação passa a se DECLARAR (`0131`) — e os recados em prosa deixam de ser o mecanismo
+
+Este arquivo carrega, espalhados pelas seções acima, recados corretos que **nada executa**:
+
+> **Para o dono:** a `0114` precisa ser aplicada no Supabase.
+> **PARA OS TRÊS INDICADORES ACENDEREM:** aplicar a `0115` e **reimportar** o workflow.
+
+Cada um está certo e nenhum é conferido por ninguém. Quem abre o portal não lê este arquivo; quem
+lê este arquivo não está com o portal aberto. **E o sintoma no meio é o pior possível** para um
+sistema cuja proposta é honestidade sobre os próprios números: a tela **não quebra** — mostra um
+traço, ou zero, ou trata todo mandato como ativo. Tem cara de funcionando. É a mesma família do
+corte silencioso de leitura que a `0028` matou, um nível acima: não é o dado que é cortado, é o
+requisito que é esquecido.
+
+A `0131` põe isso onde se executa:
+
+- **`instalacao_requisito`** é o catálogo — 13 requisitos, um por linha. Dado, não lista dentro de
+  função: é a lição do limiar `0.95` no corpo de `fn_registrar_campos_extraidos` (corrigida pela
+  `0041`) e da `estagio.startsWith("extracao")` na tela de autonomia (corrigida pela `0126`).
+  Quem acrescenta requisito não deveria precisar reescrever a função que os confere.
+- **`porque` guarda o SINTOMA VISÍVEL**, não a descrição da migration. "0115 ausente" não serve
+  para quem não tem o repositório na outra aba; "os indicadores de custo do painel mostram um
+  traço" serve. É a coluna mais importante da tabela.
+- **`fn_instalacao_conferir`** sonda por `to_regclass`/`to_regproc` — resolvem pelo `search_path` e
+  devolvem NULL em vez de erro — e **sobrevive ao objeto ausente**: sem o guarda, o `count(*)` de
+  um seed cuja tabela não existe derrubaria com exceção justamente o painel que existe para dizer
+  o que fazer.
+- **O tipo `comportamento`** é o único que não sonda catálogo. "O workflow do n8n foi reimportado"
+  não é uma pergunta de banco, e só se prova pelo EFEITO: a tabela que aquele nó grava tem linha.
+  Neste banco de teste ele é o **único** requisito ausente, e o teste trava exatamente isso.
+- **No portal:** `/instalacao` lista tudo com o sintoma de cada item e o comando de aplicação; e o
+  painel (`/casos`) ganha um aviso no topo que **só aparece quando falta algo** — selo verde
+  permanente é ruído, e ruído permanente é a receita para não se ver o dia em que ele fica
+  vermelho.
+
+**O que ela NÃO promete, e está escrito na própria tela:** "o objeto existe" não é "a migration foi
+aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assinatura idêntica, e
+nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a sonda
+garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem dúvida.**
+
+> **Para o dono:** aplicar a `0131` é o que faz esta seção deixar de ser mais um recado em prosa.
+> Depois dela, `/instalacao` responde no lugar deste arquivo — e responde sobre o banco em que
+> você está de fato conectado, que é a pergunta que este arquivo nunca pôde responder.
 
 ## O próximo passo (para quem retomar depois de 19/08, sessão 53)
 
