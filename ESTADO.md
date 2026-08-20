@@ -16,6 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
+| **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -179,9 +180,9 @@ aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assi
 nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a sonda
 garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem dúvida.**
 
-> **Para o dono:** aplicar a `0131` é o que faz esta seção deixar de ser mais um recado em prosa.
-> Depois dela, `/instalacao` responde no lugar deste arquivo — e responde sobre o banco em que
-> você está de fato conectado, que é a pergunta que este arquivo nunca pôde responder.
+> **APLICADA em 20/08.** A partir daqui `/instalacao` responde no lugar deste arquivo — e responde
+> sobre o banco em que você está de fato conectado, que é a pergunta que este arquivo nunca pôde
+> responder. Se algum recado em prosa acima e a tela discordarem, **a tela é que está certa.**
 
 ## A rotulagem manual SAIU, e a passada de eficiência (o que foi medido e o que NÃO era lento)
 
@@ -281,9 +282,11 @@ para que ninguém "conserte" isso acrescentando DRE de volta e inundando a fila.
    pendência(s)"). **A lição é de processo:** `create or replace` numa função que migrations
    posteriores reescreveram tem de partir da versão VIGENTE, não da que o `grep` acha primeiro.
 
-> **Para o dono:** a `0133` entra na fila de aplicação — são **oito** migrations pendentes agora
-> (`0126`–`0133`). Ela não muda ingestão nem export: acrescenta uma checagem Classe A que só fala
-> quando uma seção não fecha.
+> **APLICADA** — o dono confirmou em 20/08 que a fila inteira (`0126`–`0133`) entrou no Supabase.
+> A `0133` não muda ingestão nem export: acrescenta uma checagem Classe A que só fala quando uma
+> seção não fecha. **O que ela passa a produzir a partir da próxima rodada** é a taxa de seções que
+> fecham por tipo de documento — a primeira medida de qualidade de extração que não custa hora
+> humana.
 
 ## O próximo passo (para quem retomar depois de 19/08, sessão 53)
 
@@ -291,12 +294,10 @@ para que ninguém "conserte" isso acrescentando DRE de volta e inundando a fila.
 **até a `0125`** e o `workflow.e1-ingestao.json` foi **reimportado**. Não há mais nada de infra
 pendente **daquela rodada**.
 
-> **A sessão 53 acrescentou a `0126`, e ela precisa ser aplicada** — é a única coisa de banco
-> pendente agora. Ela não muda o comportamento da ingestão nem do export: cria as tabelas do golden
-> set, as funções de medição, e faz `fn_mudar_dial` cobrar concordância medida para subir dial de
-> estágio interpretativo. **Nenhum nível de autonomia muda ao aplicá-la**; o que muda é que o N2 da
-> extração passa a se declarar como `declarada` em vez de ficar indistinguível de um N2 medido.
-> Isso NÃO altera a prioridade do bloqueio abaixo: rodar o book continua sendo o próximo passo.
+> **NÃO HÁ MAIS NADA DE BANCO PENDENTE.** A `0126` (golden set) e tudo o que veio depois dela até a
+> `0133` foram aplicadas — o dono confirmou em 20/08. Nenhum nível de autonomia mudou com elas; o
+> que mudou é que o N2 da extração passa a se declarar como `declarada` em vez de ficar
+> indistinguível de um N2 medido. **O bloqueio abaixo é agora o único que sobra: rodar o book.**
 
 **Sobrou UM bloqueio, e é grande: NINGUÉM RODOU O BOOK AINDA.**
 
@@ -1607,9 +1608,10 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
    automáticos) e `docs/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
    06/08, um arquivo com seis números errados e as suítes verdes.
 
-2. **Aplicar a `0126`.** Não muda nível de autonomia nenhum nem comportamento de ingestão/export —
-   cria o golden set e o portão da regra de ouro. Depois de aplicar, `/autonomia` passa a dizer em
-   que cada nível se apoia; hoje ela adivinha pelo nome do estágio.
+2. ~~**Aplicar a `0126`.**~~ — **FEITO em 20/08**, junto com todo o resto até a `0133`. Não sobrou
+   nada de banco pendente. `/autonomia` passa a dizer em que cada nível se apoia em vez de adivinhar
+   pelo nome do estágio, e `/instalacao` responde sobre o banco em que você está de fato conectado —
+   que é onde esta pergunta deve ser feita daqui em diante, não neste arquivo.
 
 3. **A ROTULAGEM DO GOLDEN SET — e este não é de infra, é de julgamento.** A máquina está pronta e
    testada; o que falta é o `f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por

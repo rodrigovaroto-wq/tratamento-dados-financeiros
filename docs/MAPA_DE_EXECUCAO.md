@@ -25,7 +25,7 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 | # | Frente | Estado | Quem destrava | Bloqueia |
 |---|---|---|---|---|
-| **B0** | **Instalação do banco** — 8 migrations (`0126`–`0133`) não aplicadas | 🔴 pendente | **dono** (20 min) | tudo o que é tela e medição |
+| **B0** | ~~Instalação do banco~~ — `0126`–`0133` **aplicadas em 20/08** | 🟢 **fechado** | — | — |
 | **B1** | **A rodada real do book** num mandato novo + aceite | 🔴 nunca aconteceu | **dono** (~1 h) | 11 provas, B2 inteiro |
 | **B2** | Recalibrar cobertura, conferir fatiamento e subtotais | ⚪ não começou | engenharia, **depois** de B1 | a confiança nos números |
 | **B3** | **A autonomia sem rotulagem manual** — decisão em aberto | 🟠 contradição viva | **dono decide** | a F4 do `docs/03` |
@@ -34,8 +34,9 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 | **B6** | **Operação** — proteção do `main`, observabilidade, backup | 🔴 aberta e barata | dono + engenharia | a segurança do processo |
 | **B7** | Bloqueados por dado que não temos | ⚫ espera | terceiros | nada — são espera |
 
-**O caminho crítico é curto e não é de engenharia:** `B0 → B1 → B2` e, em paralelo, `B3` (decisão) e
-`B6` (higiene). Tudo o mais é melhoria sobre um sistema que já funciona.
+**O caminho crítico encurtou: `B0` fechou em 20/08.** Sobra `B1 → B2` e, em paralelo, `B3` (decisão)
+e `B6` (higiene). E `B1` — a rodada real — é agora **o único bloqueio do projeto**: não há mais nada
+de infra entre o repositório e o sistema.
 
 ---
 
@@ -58,10 +59,10 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 **O que não está, e é o assunto deste mapa:**
 
-- **Oito migrations no repositório e não no banco.** O dono confirmou apply até a `0125` em 19/08.
-  Desde então entraram `0126` (golden set), `0127` (dial obedecido), `0128` (classificação contábil
-  em sombra), `0129` (transcrição assistida), `0130` (golden rotulável), `0131` (instalação que se
-  declara), `0132` (a sonda que não cresce) e `0133` (a seção que não fecha). **Nenhuma foi aplicada.**
+- **A fila de migrations ZEROU.** `0126`–`0133` foram aplicadas em 20/08 (confirmado pelo dono), e
+  com isso o único intervalo que restava entre "mergeado" e "no ar" fechou. Quem confere isso contra
+  o banco de verdade é `/instalacao`, não este arquivo — é para isso que a `0131` existe.
+
 - **Ninguém rodou o book.** É o mesmo bloqueio de três sessões atrás, e a cada sessão ele fica mais
   caro: agora são **três checagens novas, um conserto de motor e três estágios inteiros** que nunca
   viram dado real.
@@ -70,48 +71,28 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 
 ---
 
-## 3. B0 — A instalação (dono, ~20 minutos, faz tudo o mais ficar verdadeiro)
+## 3. B0 — A instalação · **FECHADO em 20/08**
 
-**Por que este bloco vem antes de todos.** Oito migrations pendentes significam oito rodadas de
-trabalho no repositório e **não no sistema**. E o sintoma disso é o pior possível para um
-produto cuja proposta é honestidade sobre os próprios números: a tela **não quebra**. Mostra um
-traço, ou zero, ou trata todo mandato como ativo. Tem cara de funcionando.
+As oito migrations (`0126`–`0133`) foram aplicadas no Supabase. Nada de banco fica entre o
+repositório e o sistema.
 
-A `0131` existe exatamente para tirar isto da prosa: `instalacao_requisito` é o catálogo dos 13
-requisitos, `fn_instalacao_conferir` sonda cada um, e `/instalacao` responde **sobre o banco em que
-você está de fato conectado** — que é a pergunta que nenhum arquivo `.md` pode responder.
-
-### O que fazer
-
-```bash
-# Na ordem, no SQL Editor do Supabase (ou psql), uma de cada vez:
-db/migrations/0126_golden_set.sql
-db/migrations/0127_o_dial_obedecido.sql
-db/migrations/0128_classificacao_contabil_sombra.sql
-db/migrations/0129_transcricao_humana_assistida.sql
-db/migrations/0130_golden_set_rotulavel.sql
-db/migrations/0131_instalacao_que_se_declara.sql
-db/migrations/0132_a_sonda_nao_cresce_com_o_dado.sql
-db/migrations/0133_a_secao_que_nao_fecha.sql
-```
-
-### Critério de pronto
-
-Abrir `/instalacao` no portal. **Os 13 requisitos verdes** — e o aviso no topo do painel (`/casos`)
-desaparecido, porque ele só aparece quando falta algo.
+**A conferência que vale, e não é este arquivo:** abrir `/instalacao` no portal. Os **13 requisitos
+verdes**, e o aviso no topo do painel (`/casos`) ausente — ele só aparece quando falta algo. Se a
+tela e qualquer recado em prosa deste repositório discordarem, **a tela é que está certa**: ela
+responde sobre o banco em que você está de fato conectado.
 
 > **A ressalva que a própria tela publica, e que continua valendo:** "o objeto existe" não é "a
-> migration foi aplicada corretamente". `create or replace` sobre um corpo velho deixa a assinatura
+> migration foi aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assinatura
 > idêntica e nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a
 > sonda garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem
 > dúvida.**
 
-### O item de fundo que este bloco expõe (B6.4)
+### O que este bloco deixa para trás (B6.4)
 
-Aplicar migration à mão já custou uma rodada inteira (a `0101`, sessão 33) e é o item 3.2 do
-diagnóstico. A `0131` mitiga — agora se **vê** o que falta. O que ela não faz é **aplicar**. Enquanto
-o apply for manual, o intervalo entre "mergeado" e "no ar" continua sendo um lugar onde trabalho se
-perde em silêncio.
+Aplicar migration à mão já custou uma rodada inteira (a `0101`, sessão 33). A `0131` fez a parte que
+dá para fazer de dentro do produto — **declarar** o que falta. O que ela não faz é **aplicar**.
+Enquanto o apply for manual, o intervalo volta a existir na próxima migration; a diferença é que
+agora ele é visível em vez de silencioso.
 
 ---
 
@@ -398,7 +379,7 @@ proposta, porque propor sem saber a restrição produz plano que não se executa
 
 Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja uma sensação:
 
-- [ ] **`/instalacao` com os 13 requisitos verdes** no banco de produção (B0)
+- [x] ~~**`/instalacao` com os 13 requisitos verdes** no banco de produção~~ (B0) — **20/08**
 - [ ] **Uma rodada real completa**, exportada, com o `ACEITE.md` preenchido e os 10 asserts do
       `auditar-xlsx.mts` verdes sobre o arquivo de verdade (B1)
 - [ ] **O limiar de cobertura recalibrado** com pontos reais, e o fatiamento conferido em produção (B2)
@@ -420,14 +401,14 @@ como um roadmap deixa de orientar.
 
 | Sessão | O quê | Quem | Pré-requisito |
 |---|---|---|---|
-| **agora** | B0 (apply das 7) + B6.1 (proteger `main`) + B6.5 (podar branches) | dono, ~40 min | nenhum |
-| **agora+1** | **B1 — a rodada real e o aceite** | dono, ~1 h | B0 |
+| ~~agora~~ | ~~B0 (apply)~~ — **feito em 20/08** | dono | — |
+| **agora** | **B1 — a rodada real e o aceite** · e, em paralelo, B6.1 (proteger `main`) + B6.5 (podar branches) | dono, ~1h40 | nada |
 | **S1** | B2 inteiro: recalibrar cobertura, conferir fatiamento e subtotais, medir custo real | engenharia | B1 |
 | **S2** | B3 — implementar a saída escolhida da autonomia | engenharia | decisão do dono |
 | **S3** | B6.2 (painel de operação) + B6.3 (backup/LGPD) + B4.4a (a suspeita da sazonalidade) | engenharia | nenhum |
 | **S4** | B4.1, se o capítulo 10 chegar ao repositório | engenharia | o arquivo |
 | **sob demanda** | B4.2, B4.3 | — | pedido do comitê |
 
-**As duas primeiras linhas não são de engenharia** — e é por isso que este mapa começa por elas. O
-sistema tem 133 migrations, sete suítes e CI verde. O que falta para ele valer não está no
-repositório.
+**A primeira linha não é de engenharia** — e é por isso que este mapa começa por ela. O sistema tem
+133 migrations aplicadas, sete suítes e CI verde. Com o B0 fechado, **o que falta para ele valer é
+uma hora de execução**, não uma linha de código.
