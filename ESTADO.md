@@ -16,7 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
-| **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
+| **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `select * from fn_instalacao_conferir()` (`0131`), não este arquivo — a TELA `/instalacao` saiu do portal em 21/08 (ver "O PORTAL ENCOLHE") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -170,19 +170,22 @@ A `0131` põe isso onde se executa:
 - **O tipo `comportamento`** é o único que não sonda catálogo. "O workflow do n8n foi reimportado"
   não é uma pergunta de banco, e só se prova pelo EFEITO: a tabela que aquele nó grava tem linha.
   Neste banco de teste ele é o **único** requisito ausente, e o teste trava exatamente isso.
-- **No portal:** `/instalacao` lista tudo com o sintoma de cada item e o comando de aplicação; e o
-  painel (`/casos`) ganha um aviso no topo que **só aparece quando falta algo** — selo verde
-  permanente é ruído, e ruído permanente é a receita para não se ver o dia em que ele fica
-  vermelho.
+- **No portal, até 21/08:** `/instalacao` listava tudo com o sintoma de cada item, e o painel
+  (`/casos`) trazia um aviso no topo que só aparecia quando faltava algo. **As duas telas saíram
+  em 21/08 por decisão do dono** — ver "O PORTAL ENCOLHE". O catálogo e as duas funções ficaram
+  inteiros no banco: quem confere agora é `select * from fn_instalacao_conferir()`, e a suíte
+  `db/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade.
 
 **O que ela NÃO promete, e está escrito na própria tela:** "o objeto existe" não é "a migration foi
 aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assinatura idêntica, e
 nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a sonda
 garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem dúvida.**
 
-> **APLICADA em 20/08.** A partir daqui `/instalacao` responde no lugar deste arquivo — e responde
-> sobre o banco em que você está de fato conectado, que é a pergunta que este arquivo nunca pôde
-> responder. Se algum recado em prosa acima e a tela discordarem, **a tela é que está certa.**
+> **APLICADA em 20/08.** A partir daqui quem responde no lugar deste arquivo é
+> `fn_instalacao_conferir()` — e ela responde sobre o banco em que você está de fato conectado, que
+> é a pergunta que este arquivo nunca pôde responder. Se algum recado em prosa acima e a função
+> discordarem, **a função é que está certa.** (Até 21/08 a mesma resposta vinha por tela; a tela
+> saiu, a resposta não.)
 
 ## A rotulagem manual SAIU, e a passada de eficiência (o que foi medido e o que NÃO era lento)
 
@@ -220,6 +223,69 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
+## O PORTAL ENCOLHE (21/08, sessão 57) — três telas saem, e o painel passa a falar com o analista
+
+**Decisões do dono, e todas de produto, não de engenharia.** O que saiu funcionava; saiu por não
+valer o espaço que ocupava na tela. A regra que as une: **o portal é do analista**, e o que sobra
+nele tem de responder a uma pergunta de mandato. Instalação, operação e um segundo caminho para o
+mesmo dado não respondem.
+
+**1. O aviso de instalação e a tela `/instalacao` saíram do portal.** O aviso era a primeira coisa
+no painel — a tela mais aberta da casa — e o que ele anunciava era um item de infraestrutura
+(`lote_execucao` sem linha, isto é, o workflow do n8n a reimportar). Um alerta permanente sobre a
+própria instalação, no topo da tela de trabalho, cobra de quem abre o portal para trabalhar uma
+dívida que é de quem opera o banco.
+
+**O motor ficou inteiro, e isto é o ponto:** `instalacao_requisito`, `fn_instalacao_conferir` e
+`fn_instalacao_resumo` (`0131`/`0132`) continuam no banco, os `grant`s continuam de pé, e
+`db/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade a cada execução do
+`db/test/run.sh`. O que mudou é o CANAL: a pergunta *"este banco tem tudo o que o portal precisa
+para não mentir?"* passa a ser feita por SQL, por quem aplica migration, e não por quem abre um
+mandato:
+
+```sql
+select chave, migration, tipo, objeto, presente, detalhe, porque
+  from fn_instalacao_conferir() where not presente order by 1;
+```
+
+**O que se perde, e fica dito:** o sintoma volta a não ter voz na tela. A `0131` existiu porque um
+requisito ausente não quebra o portal — produz um traço no lugar de um número, uma lista tratando
+todo mandato como ativo, uma aba de perguntas vazia. Isso continua verdadeiro; o que muda é que
+ninguém será avisado enquanto estiver olhando. A troca é deliberada.
+
+**2. "Consultar a base" saiu — o Modo A do `f0/07` é descontinuado.** O `§2.4` do diagnóstico de
+11/08 dava duas saídas para o Modo A: construir, ou escrever que ele não vem. A sessão 53 tomou a
+primeira; o dono tomou a segunda em 21/08, com a razão em uma linha: **o que a tela consultava já
+está na planilha, e a planilha está entregue.** Um segundo caminho para o mesmo dado é um segundo
+lugar para ele divergir — a mesma família do defeito que este projeto mais persegue, dois números
+para o mesmo fato.
+
+**3. A tela `/operacao` saiu, um dia depois de entrar.** Ela foi entregue na sessão 56 e é a mesma
+troca das outras duas: lotes, custo por execução, tokens e alertas de pipeline são a saúde da
+MÁQUINA, não trabalho de mandato — e a barra lateral do analista não é lugar para isso. O motor
+outra vez ficou inteiro: `fn_operacao_lotes` e `fn_operacao_resumo` (`0135`), os quatro alertas
+decididos no banco e `db/test/operacao.test.sql` continuam de pé, com a mediana e a contraprova do
+1,4× que não acende. A leitura passa a ser por SQL:
+
+```sql
+select * from fn_operacao_resumo(30);
+select * from fn_operacao_lotes(30, 50) where cardinality(alertas) > 0;
+```
+
+**4. E o painel passou a ser escrito para quem usa, não para quem construiu.** A tela mais aberta da
+casa carregava vocabulário de dentro: *"gasto de API"*, *"cobertura da extração"*, *"sem medição, a
+migration 0115 não está aplicada"*. Nada disso é pergunta de analista. O painel agora diz
+**custo de processamento**, **linhas financeiras lidas**, **cobertura da leitura**,
+**mandatos em andamento** e **mandatos encerrados**; o traço de "não medido" explica a ausência sem
+citar migration; e os travessões que emendavam as frases saíram. Os números e a lógica são os
+mesmos: mudou a língua.
+
+Saíram `portal/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
+`portal/src/app/instalacao/page.tsx`, `portal/src/components/instalacao-aviso.tsx`,
+`portal/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
+tocado, nenhuma migration nova, nenhum teste removido:** as suítes continuam com a mesma contagem, e
+o `f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
+
 ## OS TRÊS ITENS DE OBSERVABILIDADE, ESPELHO E DADO (21/08, sessão 56)
 
 Itens 3, 4 e 5 do ranking. Nenhum deles muda um número do output — os três mudam **o que se
@@ -237,8 +303,9 @@ custo desta entrega foi ler o que já estava lá, não instrumentar de novo.
 
 `fn_operacao_lotes(p_dias, p_limite)` devolve uma linha por execução com os **alertas já decididos no
 banco**, e `fn_operacao_resumo(p_dias)` faz o cabeçalho. O veredito não mora na tela de propósito:
-repetir a régua em `/operacao` criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
+repetir a régua na tela criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
 que esta casa já pagou três vezes — e a segunda divergiria no dia em que existisse um segundo leitor.
+(A tela `/operacao` que lia estas funções saiu do portal em 21/08; ver "O PORTAL ENCOLHE".)
 
 | Alerta | O que ele pega |
 |---|---|
@@ -293,7 +360,7 @@ cliente vai à OpenAI** — desenho do produto, não efeito colateral; (b) hoje 
 é escolha por omissão**; (c) **o schema e o pipeline se remontam do repositório sozinhos** —
 migrations em ordem reconstroem o banco (é o que o `run.sh` faz a cada execução) e os quatro
 workflows saem de geradores conferidos por `git diff --exit-code`, então **o que não se recupera de
-backup é o DADO**; (d) o teste de restauração que falta, com `/instalacao` como veredito e **o tempo
+backup é o DADO**; (d) o teste de restauração que falta, com `fn_instalacao_conferir()` como veredito e **o tempo
 anotado**, porque "temos backup" e "voltamos em 40 minutos" são afirmações diferentes; (e) o acesso é
 **binário** — qualquer autenticado vê todos os mandatos, aceitável com duas pessoas e não com a
 terceira.
@@ -880,6 +947,11 @@ a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas 
 faz o gate deixar de ser dead-end.
 
 ### O MODO A DO `f0/07` PASSA A EXISTIR — a base viva (20/08, sessão 53)
+
+> **DESCONTINUADO EM 21/08 (sessão 57), por decisão do dono.** A tela `/casos/[id]/base` e o botão
+> *"Consultar a base"* saíram do portal: o que ela consultava já está na planilha, entregue. O texto
+> abaixo fica como registro de por que ela existiu e do que ela deliberadamente não fazia — a
+> decisão de NÃO SOMAR continua valendo para o export, que é a entrega. Ver "O PORTAL ENCOLHE".
 
 **O modo declarado PRINCIPAL da entrega não tinha tela.** O `f0/07` define dois modos: *"Modo A — base
 viva no portal · **principal**"*, onde o analista *"consulta/filtra os dados curados na tela, por
@@ -1981,8 +2053,9 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 
 2. ~~**Aplicar a `0126`.**~~ — **FEITO em 20/08**, junto com todo o resto até a `0133`. Não sobrou
    nada de banco pendente. `/autonomia` passa a dizer em que cada nível se apoia em vez de adivinhar
-   pelo nome do estágio, e `/instalacao` responde sobre o banco em que você está de fato conectado —
-   que é onde esta pergunta deve ser feita daqui em diante, não neste arquivo.
+   pelo nome do estágio, e `fn_instalacao_conferir()` responde sobre o banco em que você está de fato
+   conectado — que é onde esta pergunta deve ser feita daqui em diante, não neste arquivo. (A tela
+   `/instalacao` saiu em 21/08; a função ficou.)
 
 3. **A ROTULAGEM DO GOLDEN SET — e este não é de infra, é de julgamento.** A máquina está pronta e
    testada; o que falta é o `f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por
@@ -2069,7 +2142,10 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 5. **Bloco numérico dos três cenários lado a lado** — dimensionado abaixo, e é decisão do dono se
    vale: exige PARAMETRIZAR a cascata da aba que produz os números do modelo.
 6. ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
-   vem~~ — **fechado em 20/08 (sessão 53): ele VEIO.** `/casos/[id]/base` filtra por empresa,
+   vem~~ — **fechado DUAS vezes, e a segunda é a que vale.** Em 20/08 (sessão 53) ele veio; em
+   21/08 (sessão 57) o dono o TIROU, que era a outra saída que o §2.4 do diagnóstico admitia — a
+   decisão escrita de que ele não vem. O que segue descreve a tela enquanto ela existiu:
+   `/casos/[id]/base` filtrava por empresa,
    período, conta e status de aceite atravessando os documentos, com proveniência e confiança de
    cada número. As duas saídas que o §2.4 do diagnóstico pedia eram "construir" ou "escrever que não
    vem"; a primeira foi tomada. Ver "O MODO A DO `f0/07` PASSA A EXISTIR". **O que ela
@@ -2135,8 +2211,9 @@ Os itens acima, com o histórico de cada um:
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do
   `docs/03` não começa.
 - ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
-  vem~~ — **fechado em 20/08 (sessão 53)**: `/casos/[id]/base`. Ver o item 6 da fila e a seção
-  "O MODO A DO `f0/07` PASSA A EXISTIR".
+  vem~~ — **fechado em 21/08 (sessão 57) pela SEGUNDA saída**: o Modo A foi construído em 20/08 e
+  descontinuado pelo dono em 21/08, e o `f0/07` passou a dizer isso. A entrega é o Modo B, o
+  `.xlsx`. Ver "O PORTAL ENCOLHE".
 
 ## Os comandos que funcionam
 

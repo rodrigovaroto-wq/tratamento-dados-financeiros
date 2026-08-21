@@ -61,7 +61,9 @@ de infra entre o repositório e o sistema.
 
 - **A fila de migrations ZEROU.** `0126`–`0133` foram aplicadas em 20/08 (confirmado pelo dono), e
   com isso o único intervalo que restava entre "mergeado" e "no ar" fechou. Quem confere isso contra
-  o banco de verdade é `/instalacao`, não este arquivo — é para isso que a `0131` existe.
+  o banco de verdade é `select * from fn_instalacao_conferir()`, não este arquivo — é para isso que
+  a `0131` existe. (A TELA `/instalacao` e o aviso no painel saíram do portal em 21/08, por decisão
+  do dono; o catálogo, as duas funções e a suíte ficaram inteiros no banco.)
 
 - **Ninguém rodou o book.** É o mesmo bloqueio de três sessões atrás, e a cada sessão ele fica mais
   caro: agora são **três checagens novas, um conserto de motor e três estágios inteiros** que nunca
@@ -76,12 +78,19 @@ de infra entre o repositório e o sistema.
 As oito migrations (`0126`–`0133`) foram aplicadas no Supabase. Nada de banco fica entre o
 repositório e o sistema.
 
-**A conferência que vale, e não é este arquivo:** abrir `/instalacao` no portal. Os **13 requisitos
-verdes**, e o aviso no topo do painel (`/casos`) ausente — ele só aparece quando falta algo. Se a
-tela e qualquer recado em prosa deste repositório discordarem, **a tela é que está certa**: ela
-responde sobre o banco em que você está de fato conectado.
+**A conferência que vale, e não é este arquivo:** rodar a sonda contra o banco —
 
-> **A ressalva que a própria tela publica, e que continua valendo:** "o objeto existe" não é "a
+```sql
+select chave, migration, tipo, objeto, presente, detalhe, porque
+  from fn_instalacao_conferir() where not presente order by 1;
+```
+
+— e não obter linha nenhuma: os **13 requisitos verdes**. Se a sonda e qualquer recado em prosa
+deste repositório discordarem, **a sonda é que está certa**: ela responde sobre o banco em que você
+está de fato conectado. (Até 21/08 a mesma resposta vinha pela tela `/instalacao` e por um aviso no
+topo do painel; o dono tirou as duas do portal, e o motor no banco não mudou.)
+
+> **A ressalva que a própria sonda publica, e que continua valendo:** "o objeto existe" não é "a
 > migration foi aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assinatura
 > idêntica e nenhuma sonda de catálogo vê isso. Quem confere comportamento é a suíte, no CI. O que a
 > sonda garante é o contrapositivo, que é a parte útil: **objeto ausente é migration ausente, sem
@@ -326,7 +335,7 @@ commitado divergir da fonte. Um merge vermelho não quebra a build — ele deixa
 importa no n8n** divergir da fonte que o gera. É exatamente a família de defeito que este projeto
 inteiro foi construído para não ter.
 
-### B6.2 — ~~Observabilidade zero~~ · **FECHADA em 21/08** (`0135` + `/operacao`)
+### B6.2 — ~~Observabilidade zero~~ · **FECHADA em 21/08** (`0135`)
 
 Item #14 do backlog. O portal tem **8 `console.error`** e nada mais: nenhuma métrica, nenhum alerta.
 Existe o `workflow.erros.json` ligado como *Error Workflow* no Intake, que é a metade certa — falha
@@ -336,7 +345,7 @@ O que não existe: **documentos/dia, taxa de falha, custo por caso, tempo de lot
 tudo isso em `lote_execucao` desde a sessão 50 — o dado está no banco. Falta uma tela e um limite que
 avise.
 
-**Executado, e a proposta barata era a certa:** a tela `/operacao` lê `lote_execucao` dos últimos 30
+**Executado, e a proposta barata era a certa:** `fn_operacao_lotes` lê `lote_execucao` dos últimos 30
 dias. O que mudou em relação à proposta é **onde o veredito mora**: os quatro alertas são decididos
 por `fn_operacao_lotes` (`0135`), no banco, e não na tela — repetir a régua em TypeScript criaria
 duas réguas sobre a mesma quantidade, e a segunda divergiria no dia em que existisse um segundo
@@ -388,7 +397,7 @@ proposta, porque propor sem saber a restrição produz plano que não se executa
 
 Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja uma sensação:
 
-- [x] ~~**`/instalacao` com os 13 requisitos verdes** no banco de produção~~ (B0) — **20/08**
+- [x] ~~**Os 13 requisitos de `fn_instalacao_conferir()` verdes** no banco de produção~~ (B0) — **20/08**
 - [ ] **Uma rodada real completa**, exportada, com o `ACEITE.md` preenchido e os 10 asserts do
       `auditar-xlsx.mts` verdes sobre o arquivo de verdade (B1)
 - [ ] **O limiar de cobertura recalibrado** com pontos reais, e o fatiamento conferido em produção (B2)
@@ -396,7 +405,7 @@ Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja
       implementado e travado por suíte (B3)
 - [ ] **O `main` protegido** com o check `suítes` obrigatório (B6.1)
 - [x] ~~**Backup, retenção e LGPD** escritos em `docs/`~~ (B6.3) — **21/08**; sobram os [A CONFIRMAR] do dono e o teste de restauração
-- [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` + `/operacao`
+- [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` (a tela saiu do portal no mesmo dia, por decisão do dono; a leitura é por SQL)
 - [ ] As 25 perguntas **ou** a decisão escrita de que 11 bastam (B4.1)
 
 O que fica **deliberadamente fora** desta lista, e a distinção é o ponto: B4.2 (ND/EBITDA por

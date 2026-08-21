@@ -288,18 +288,6 @@ export default async function CasoDashboardPage({
           >
             Exportar dados
           </a>
-          {/* A BASE VIVA — o Modo A do `f0/07`, que era o modo declarado PRINCIPAL
-              e não tinha tela. Fica ao lado do export de propósito: são os dois
-              modos de entrega do mesmo spec, e a diferença entre eles é o que a
-              tela de lá explica (a base viva responde rápido e mostra o pendente;
-              o arquivo consolida, com subtotal tratado e escala única). */}
-          <Link
-            href={`/casos/${id}/base`}
-            className="btn-secundario"
-            title="Consulta a base linha a linha, atravessando os documentos: filtra por empresa, período e conta, com a proveniência e o status de aceite de cada valor."
-          >
-            Consultar a base
-          </Link>
           {/* A ABA DAS PERGUNTAS AO CLIENTE (0120), que até aqui não tinha
               entrada em tela nenhuma — o motor existia e ninguém no produto
               chegava nele.

@@ -12,14 +12,19 @@ Rodrigo Varoto (dono) em 2026-07-14. Estado **v0** — o layout fino é refináv
 
 ## Princípio inegociável (anti-ancoragem)
 
-Nenhum número entra na base viva ou no export sem uma `decisao` de **aceite humano** ligada
+Nenhum número entra no export sem uma `decisao` de **aceite humano** ligada
 (ver `docs/05_CLASSIFICACAO_CONTABIL.md` e 0.5). **O output é consequência do Portão 2**, não
 paralelo a ele. Dado sem aceite não é entregue como fato — no máximo aparece como *sugestão
 pendente de revisão*, visualmente distinta.
 
-## Dois modos de entrega
+## Dois modos de entrega — e hoje só o B é entrega
 
-### Modo A — Base viva no portal (Vercel) · principal
+> **LEIA ISTO ANTES DA SEÇÃO:** o Modo A foi construído em 20/08/2026 e **descontinuado em
+> 21/08/2026** (ver a nota logo abaixo dele). A entrega do produto é o **Modo B**, o `.xlsx`. O
+> texto do Modo A fica preservado porque ele é a especificação de 14/07 e explica o que a
+> proveniência por célula serve para sustentar.
+
+### Modo A — Base viva no portal (Vercel) · ~~principal~~ · DESCONTINUADO em 21/08/2026
 O analista acessa o portal e **consulta/filtra** os dados curados na tela, por:
 - **Entidade** (empresa do grupo) × **Período** × **Conta/linha financeira**.
 - Visão consolidada do caso e visão por entidade.
@@ -28,22 +33,20 @@ Cada valor exibido carrega sua **proveniência** (ver abaixo) e seu **status de 
 (aceito / pendente / com ressalva). É a fonte viva — reflete o estado atual do caso em tempo
 real (Realtime do Supabase).
 
-> **ONDE ISTO EXISTE (20/08/2026):** `/casos/[id]/base` — *"Consultar a base"* no painel do
-> mandato. Filtra por empresa, período, conta e status de aceite, atravessando os documentos,
-> com arquivo/página/confiança de cada número ao lado. Só a **versão vigente** de cada documento
-> entra (reextração e transcrição substituem, não acumulam).
+> **ESTE MODO FOI DESCONTINUADO EM 21/08/2026, por decisão do dono.** Ele existiu por um dia:
+> `/casos/[id]/base` — *"Consultar a base"* no painel do mandato — foi construída em 20/08 e
+> removida em 21/08. **A entrega é o Modo B.** A razão, em uma linha: o que a tela consultava já
+> está na planilha, entregue — e um segundo caminho para o mesmo dado é um segundo lugar para ele
+> divergir, que é o defeito que este projeto mais persegue (dois números para o mesmo fato).
 >
-> **Uma decisão de desenho, e ela contraria a leitura literal de "visão consolidada":** a tela
-> **não totaliza e não converte escala**. "Consolidada" ali significa *todas as empresas na mesma
-> lista* — o recorte —, não uma soma. Consolidar demonstração de verdade é difícil de um jeito que
-> não aparece (subtotal impresso que não pode entrar na soma, conta sem vocabulário que herda a
-> seção dos irmãos, escalas diferentes no mesmo caso), e o Modo B paga esse preço com 574
-> verificações atrás dele. Uma segunda soma, mais fraca, ao lado da primeira seria **dois números
-> para o mesmo fato**. O consolidado é o arquivo; a tela diz isso ao analista com palavra.
+> **O que o §2.4 do `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md` cobrava eram duas saídas — construir o
+> Modo A, ou escrever que ele não vem. Este parágrafo é a segunda.** O texto do Modo A fica acima
+> como registro do que foi especificado em 14/07, não como pendência.
 >
-> Ainda **não usa Realtime**: a tela é renderizada no servidor a cada visita. O estado é o atual a
-> cada carregamento, sem push — a diferença aparece só para quem deixa a tela aberta esperando um
-> número mudar.
+> **A decisão de desenho que a tela tomou continua valendo, e vale para o export:** consolidar
+> demonstração de verdade é difícil de um jeito que não aparece (subtotal impresso que não pode
+> entrar na soma, conta sem vocabulário que herda a seção dos irmãos, escalas diferentes no mesmo
+> caso), e o Modo B paga esse preço com 574 verificações atrás dele. **O consolidado é o arquivo.**
 
 ### Modo B — Export para Excel · sob demanda
 Botão que gera uma **planilha padronizada**, **uma aba por demonstração**, consolidando
@@ -69,7 +72,7 @@ A ordem reflete o que tem mais valor tratar primeiro (decisão 0.2/planejamento)
 
 ## Proveniência por célula (o que diferencia de "copiar do PDF")
 
-Todo número entregue — na base viva e no export — é rastreável até a origem:
+Todo número entregue no export é rastreável até a origem:
 
 | Campo | Descrição |
 |---|---|

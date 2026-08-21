@@ -91,8 +91,10 @@ Um procedimento de restauração que nunca foi executado **não é um procedimen
 seção:
 
 1. Restaurar um backup num projeto Supabase **descartável**;
-2. Apontar um portal local para ele e abrir `/instalacao` — os 13 requisitos verdes provam que o
-   banco restaurado é o banco esperado, e essa tela existe exatamente para responder isso;
+2. Rodar `select * from fn_instalacao_conferir() where not presente` contra ele — nenhuma linha, os
+   13 requisitos verdes, prova que o banco restaurado é o banco esperado; a sonda da `0131` existe
+   exatamente para responder isso (até 21/08 ela tinha tela no portal, `/instalacao`, removida por
+   decisão do dono; a função ficou);
 3. Abrir um mandato e conferir que documento, extração e trilha vieram juntos;
 4. **Anotar o tempo que levou** — porque "temos backup" e "voltamos em 40 minutos" são afirmações
    diferentes, e só a segunda serve para responder a um cliente.

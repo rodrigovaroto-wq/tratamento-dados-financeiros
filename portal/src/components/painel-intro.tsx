@@ -127,7 +127,7 @@ export function PainelIntro() {
           Oria Partners
         </p>
         <p className="intro-verso mt-3 max-w-sm text-[13px] leading-relaxed text-tinta-500">
-          Tratamento de dados financeiros — nada aqui é fato até alguém aceitar.
+          Tratamento de dados financeiros. Nada aqui é fato até alguém aceitar.
         </p>
       </div>
 
