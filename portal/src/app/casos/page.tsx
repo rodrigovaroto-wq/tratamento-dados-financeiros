@@ -10,7 +10,6 @@ import { CASO_STATUS_LABEL, CASO_STATUS_COLOR } from "@/lib/status";
 import { rotuloDaPendencia, nomeDaChecagem, partesDaDescricao, suavizarMensagem } from "@/lib/rotulos";
 import { formatarTipoTaxonomia } from "@/lib/export";
 import { PainelIntro } from "@/components/painel-intro";
-import { InstalacaoAviso } from "@/components/instalacao-aviso";
 import { CeuOria } from "@/components/ceu-oria";
 import { Surgir } from "@/components/surgir";
 
@@ -457,12 +456,6 @@ export default async function PainelPage() {
           `fixed` e não `absolute`: assim ele fica parado enquanto o conteúdo
           rola por cima, e o giro que a rolagem provoca fica visível. */}
       <CeuOria modo="fundo" className="pointer-events-none fixed inset-0 -z-10 h-full w-full" />
-
-      {/* 0131: o aviso só aparece quando falta algo, e ele vem ANTES da saudação
-          de propósito. Requisito de instalação ausente não produz tela quebrada —
-          produz um traço no lugar de um número — e por isso precisa ser dito antes
-          de qualquer número desta página. */}
-      <InstalacaoAviso />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>

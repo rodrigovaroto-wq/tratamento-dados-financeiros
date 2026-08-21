@@ -111,8 +111,8 @@ export default async function OperacaoPage() {
           {resumoRes.error?.message ?? lotesRes.error?.message}
           <p className="mt-2">
             Se a mensagem fala em função inexistente, falta aplicar a migration{" "}
-            <code>0135</code>. A tela <Link className="underline" href="/instalacao">Instalação</Link>{" "}
-            responde o que está faltando neste banco.
+            <code>0135</code> neste banco — as migrations e o comando de aplicação
+            estão no <code>db/README.md</code>.
           </p>
         </div>
       </main>
