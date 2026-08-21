@@ -16,7 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
-| **Aplicadas no Supabase** | **todas MENOS a `0133`**, medido no banco em 21/08 e não declarado de memória. A `0134` e a `0135` estão lá; a `0133` NÃO — ver "A `0133` QUE FALTOU". Quem confere é a sonda das 80 migrations (abaixo), não este arquivo |
+| **Aplicadas no Supabase** | **as 80**, com a `0133` fechando a fila em 21/08 depois de a sonda achá-la faltando. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das 80 migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -225,7 +225,11 @@ mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o
 
 ## A `0133` QUE FALTOU, e a sonda que a achou (21/08, sessão 58)
 
-**O arquivo dizia "aplicadas até a `0133`" e estava errado — a `0133` é justamente a que não está.**
+> **FECHADO no mesmo dia:** o dono aplicou a `0133` em 21/08, e as três conferências abaixo passaram
+> a responder `true`. O registro fica porque o método que a achou vale mais que o item, e porque a
+> forma do engano se repete: **três arquivos afirmavam, de memória, um estado do banco.**
+
+**O arquivo dizia "aplicadas até a `0133`" e estava errado — a `0133` era justamente a que não estava.**
 A `0134` e a `0135`, posteriores, estão aplicadas. Medido no banco de produção, não declarado de
 memória, e é a terceira vez que o mesmo tipo de engano aparece: quem responde sobre um banco é o
 banco.
@@ -248,8 +252,9 @@ select 'fn_reconciliar_arvore abre a pendencia secao_fecha',
                  and position('secao_fecha' in pg_get_functiondef(p.oid)) > 0);
 ```
 
-Os dois falsos significam que ela nunca rodou. O conserto é aplicar
-`db/migrations/0133_a_secao_que_nao_fecha.sql` e rodar a conferência de novo. **Ela é posterior à
+Os dois falsos significam que ela nunca rodou; foi o que voltou em 21/08, junto com um terceiro
+(`fn_reconciliar_por_documento` não chamava a árvore), o que descartou aplicação pela metade. O
+conserto foi aplicar `db/migrations/0133_a_secao_que_nao_fecha.sql` e rodar a conferência de novo. **Ela é posterior à
 `0134`/`0135` na ordem de aplicação, e isso não é problema:** a `0133` só reescreve as três funções
 de reconciliação, que nenhuma das duas seguintes toca.
 
