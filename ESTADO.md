@@ -223,6 +223,41 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
+## AS PREMISSAS PASSAM A SAIR DO REALIZADO (21/08, sessão 58)
+
+**Oito das premissas que a tela de Modelagem pedia em campo vazio já estavam respondidas pelo
+próprio caso.** O balanço diz em quantos dias a empresa recebe, estoca e paga; a DRE diz quanto o
+custo e o SG&A consomem da receita e a que alíquota o lucro foi tributado. Digitar de cabeça o que o
+documento afirma é a forma mais barata de o modelo deixar de reproduzir o balanço de onde saiu.
+
+Agora a seção 2 abre com o bloco **"Sugerido pelo realizado"**: CUSTO_VARIAVEL, SGA_PCT, PMR, PME,
+PMP, ALIQUOTA, PARCELA_ONEROSA e TAXA_DIVIDA, cada uma com **a divisão que a produziu à vista**
+(numerador, denominador e a conta em palavras). Um clique grava com `origem = 'historico'`, que o
+schema da `0038` já previa e nada usava.
+
+**As duas regras que sustentam isso, e são elas que o teste trava:**
+
+- **ZERO NÃO É RESPOSTA.** Sem a conta que serve de numerador, ou sem a base que serve de
+  denominador, a sugestão não sai: sai o motivo. Zero dias de recebimento não é "não sei", é a
+  afirmação de que a empresa vende à vista. Numerador zero com a conta PRESENTE passa, porque aí é
+  fato do documento.
+- **A BASE DE CADA RAZÃO É A QUE O MODELO APLICA.** Fornecedor gira contra CUSTOS; cliente e estoque
+  giram contra RECEITA LÍQUIDA. Medir num denominador e aplicar noutro é o defeito que o próprio
+  `modelo-institucional` denuncia no Modelo Base, onde ele infla o passivo projetado em ~1,27×. O
+  PME contra receita contraria o manual de propósito: a base é a que o `Working Capital` usa para
+  projetar a conta.
+
+Para as duas pontas concordarem sobre o que é cliente, estoque e fornecedor, os três classificadores
+**subiram** de dentro da aba `Working Capital` para exportados do `modelo-institucional`, e as duas
+os importam. As 623 verificações do export rodaram sem uma linha alterada, que é a prova de que o
+hoisting não mudou comportamento.
+
+**Um achado que fica anotado, e não foi consertado aqui:** o `export-modelagem` aplica TODA premissa
+de `dias_de_giro` sobre a receita total do caso, inclusive a de fornecedor, enquanto o
+`modelo-institucional` aplica a de fornecedor sobre custos. São duas réguas para a mesma quantidade,
+e a nota da célula do export já declara a base que usou. Não mexi porque mexer é mudar número de
+arquivo entregue, e isso pede a rodada real antes.
+
 ## O VEREDITO DE PRODUÇÃO PASSA A CONTAR (21/08, sessão 58) — `0136`, a saída B do B3
 
 **A contradição que estava aberta era aritmética.** A `0126` pôs a regra de ouro do `docs/01` dentro

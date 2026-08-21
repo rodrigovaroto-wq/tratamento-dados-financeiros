@@ -287,7 +287,7 @@ que o primeiro comitê vai fazer.
 | b | **Linha que sozinha passa do teto de saída** — sem corte mais fino possível | anotado; nenhum documento do book cai nesse caso |
 | c | **Rateio de despesa intragrupo que não deixa saldo no balanço** — não há espelho para conferir | limite conhecido da `0124`, sem solução barata |
 | d | **Mútuo com sócio** — o par é o contrato com o quotista, que ninguém cruza hoje | limite conhecido da `0123` |
-| e | **"Sugerir do realizado"** — oito premissas saem do próprio balanço/DRE do caso, com `origem = 'historico'`, que o schema da `0038` já prevê | proposta, nunca feita |
+| e | ~~**"Sugerir do realizado"**~~ | **FEITO em 21/08.** As oito saem do próprio balanço e DRE do caso, gravadas com `origem = 'historico'`. `portal/src/lib/premissas-do-realizado.ts`, 25 asserts em `verificar-premissas-do-realizado.mts`, no CI. Duas regras sustentam: **zero não é resposta** (sem a conta, sai o motivo e não um número) e **a base de cada razão é a que o modelo aplica ao projetar** — fornecedor contra custos, o resto contra receita líquida —, senão o dia sugerido não reproduz o saldo de onde saiu |
 
 ---
 

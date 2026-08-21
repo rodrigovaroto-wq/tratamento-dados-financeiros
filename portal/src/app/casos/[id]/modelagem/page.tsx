@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { paginar } from "@/lib/supabase/paginar";
 import { SecaoLinhas } from "./SecaoLinhas";
 import { FormParametros, FormPremissa } from "./FormsTopo";
+import { SugestoesDoRealizado } from "./SugestoesDoRealizado";
+import { sugerirDoRealizado } from "@/lib/premissas-do-realizado";
 import { chaveDaLinha, vinculoPorLinha } from "@/lib/modelagem-linha";
 import { humanizar, rotuloDaSecao } from "@/lib/rotulos";
 
@@ -309,6 +311,12 @@ export default async function ModelagemPage({
   const ultimoReal = parametros?.ultimo_exercicio_real ?? anoSugerido;
   const nAnos = parametros?.anos_projetados ?? 5;
   const anos = Array.from({ length: nAnos }, (_, i) => ultimoReal + 1 + i);
+
+  // AS OITO QUE O PRÓPRIO CASO RESPONDE. Derivadas das mesmas linhas que a seção
+  // 3 lista, com os mesmos classificadores que o modelo usa para projetar — a
+  // ponta que mede e a ponta que aplica precisam concordar sobre o que é cliente,
+  // estoque e fornecedor, senão o dia sugerido não reproduz o saldo de onde saiu.
+  const sugestoes = sugerirDoRealizado(camposRes.data);
 
   // Linhas do caso agrupadas por seção canônica — é a unidade do aplicar-em-lote.
   // A função já devolve UMA linha por (seção, rótulo normalizado): o agrupamento
@@ -691,6 +699,13 @@ export default async function ModelagemPage({
           {/* Espelha a largura do botão da linha para os anos ficarem sobre as caixas. */}
           <span aria-hidden className="invisible px-2 py-0.5 text-xs">Atualizar</span>
         </div>
+
+        <SugestoesDoRealizado
+          casoId={id}
+          anos={anos}
+          sugestoes={sugestoes}
+          ativas={new Set(ativasPorCodigo.keys())}
+        />
 
         <div className="space-y-4">
           {[...porNatureza.entries()].map(([natureza, lista]) => (
