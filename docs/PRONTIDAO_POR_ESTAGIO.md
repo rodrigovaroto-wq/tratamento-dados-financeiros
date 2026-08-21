@@ -124,7 +124,7 @@ Legenda: 🔴 bloqueia o objetivo · 🟠 degrada · ⚪ decisão pendente · �
 | | Item | Estado |
 |---|---|---|
 | 🔴 | **`main` sem proteção — NÃO CONFERIDO.** Esta sessão não lê configuração de branch. O indício, que não é prova: PRs mergeados 5 minutos depois de abertos, com o CI levando ~3,5 | dono, trivial |
-| ✅ | ~~Observabilidade zero~~ — **fechado em 21/08** (`0135` + `/operacao`): `fn_operacao_lotes` decide quatro alertas no banco (cobertura não medida, documento com falha, documento sem medição, custo acima de 1,5× o previsto) e `fn_operacao_resumo` publica o cabeçalho, inclusive há quantos dias nada roda | |
+| ✅ | ~~Observabilidade zero~~ — **fechado em 21/08** (`0135`): `fn_operacao_lotes` decide quatro alertas no banco (cobertura não medida, documento com falha, documento sem medição, custo acima de 1,5× o previsto) e `fn_operacao_resumo` publica o cabeçalho, inclusive há quantos dias nada roda | |
 | 🟠 | **Backup, retenção e LGPD** — **escritos em 21/08** (`docs/10`): onde o dado mora, o que se remonta do repositório sozinho, o teste de restauração que falta e quem vê o quê. Continua laranja porque as linhas **[A CONFIRMAR]** dependem do console do Supabase, e o teste de restauração **nunca foi executado** | dono |
 | 🟠 | **Migration aplicada à mão.** A `0131` declara o que falta; aplicar continua manual, e o intervalo entre "mergeado" e "no ar" volta a existir na próxima | infra |
 

@@ -81,7 +81,6 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
   // completa. Antes eram a mesma URL, e a barra repetia a tela inteira.
   const noPainel = caminho === "/casos";
   const naLista = caminho === "/casos/todos";
-  const naOperacao = caminho === "/operacao";
   const naCriacao = caminho === "/casos/novo";
   const emMandatos = naLista || (caminho.startsWith("/casos/") && !naCriacao && !noPainel);
 
@@ -247,24 +246,6 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
           )}
         </div>
 
-        {/* SISTEMA — no rodapé da barra, e não entre os mandatos, porque não é
-            trabalho de mandato: é o estado da máquina. Fica visível o tempo todo
-            de propósito — o diagnóstico de 11/08 registrou que "uma falha em
-            produção só aparece quando alguém abre a tela", e uma tela que ninguém
-            alcança não conserta isso. */}
-        <Link
-          href="/operacao"
-          className={`mt-2 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-            naOperacao
-              ? "bg-acento-50 text-acento-700"
-              : "text-tinta-600 hover:bg-tinta-50 hover:text-tinta-900"
-          }`}
-        >
-          <span aria-hidden className="text-base leading-none">
-            ◔
-          </span>
-          Operação
-        </Link>
       </nav>
     </aside>
   );

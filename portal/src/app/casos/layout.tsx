@@ -97,7 +97,7 @@ export default async function CasosLayout({ children }: { children: React.ReactN
       <footer className="border-t border-tinta-200 bg-white">
         <div className="px-6 py-4 text-xs text-tinta-500">
           Os dados desta tela são extraídos dos documentos enviados e conferidos automaticamente.
-          Linha marcada como pendente é sugestão a revisar — não é fato até alguém aceitar.
+          Linha marcada como pendente é sugestão a revisar. Nada é fato até alguém aceitar.
         </div>
       </footer>
     </div>

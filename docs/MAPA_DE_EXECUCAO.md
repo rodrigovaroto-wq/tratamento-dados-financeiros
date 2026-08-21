@@ -335,7 +335,7 @@ commitado divergir da fonte. Um merge vermelho não quebra a build — ele deixa
 importa no n8n** divergir da fonte que o gera. É exatamente a família de defeito que este projeto
 inteiro foi construído para não ter.
 
-### B6.2 — ~~Observabilidade zero~~ · **FECHADA em 21/08** (`0135` + `/operacao`)
+### B6.2 — ~~Observabilidade zero~~ · **FECHADA em 21/08** (`0135`)
 
 Item #14 do backlog. O portal tem **8 `console.error`** e nada mais: nenhuma métrica, nenhum alerta.
 Existe o `workflow.erros.json` ligado como *Error Workflow* no Intake, que é a metade certa — falha
@@ -345,7 +345,7 @@ O que não existe: **documentos/dia, taxa de falha, custo por caso, tempo de lot
 tudo isso em `lote_execucao` desde a sessão 50 — o dado está no banco. Falta uma tela e um limite que
 avise.
 
-**Executado, e a proposta barata era a certa:** a tela `/operacao` lê `lote_execucao` dos últimos 30
+**Executado, e a proposta barata era a certa:** `fn_operacao_lotes` lê `lote_execucao` dos últimos 30
 dias. O que mudou em relação à proposta é **onde o veredito mora**: os quatro alertas são decididos
 por `fn_operacao_lotes` (`0135`), no banco, e não na tela — repetir a régua em TypeScript criaria
 duas réguas sobre a mesma quantidade, e a segunda divergiria no dia em que existisse um segundo
@@ -405,7 +405,7 @@ Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja
       implementado e travado por suíte (B3)
 - [ ] **O `main` protegido** com o check `suítes` obrigatório (B6.1)
 - [x] ~~**Backup, retenção e LGPD** escritos em `docs/`~~ (B6.3) — **21/08**; sobram os [A CONFIRMAR] do dono e o teste de restauração
-- [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` + `/operacao`
+- [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` (a tela saiu do portal no mesmo dia, por decisão do dono; a leitura é por SQL)
 - [ ] As 25 perguntas **ou** a decisão escrita de que 11 bastam (B4.1)
 
 O que fica **deliberadamente fora** desta lista, e a distinção é o ponto: B4.2 (ND/EBITDA por

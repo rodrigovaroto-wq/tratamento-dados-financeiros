@@ -223,10 +223,12 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
-## O PORTAL ENCOLHE (21/08, sessão 57) — a instalação sai da tela, e o Modo A é descontinuado
+## O PORTAL ENCOLHE (21/08, sessão 57) — três telas saem, e o painel passa a falar com o analista
 
-**Duas decisões do dono, e as duas são de produto, não de engenharia.** O que saiu funcionava; saiu
-por não valer o espaço que ocupava na tela.
+**Decisões do dono, e todas de produto, não de engenharia.** O que saiu funcionava; saiu por não
+valer o espaço que ocupava na tela. A regra que as une: **o portal é do analista**, e o que sobra
+nele tem de responder a uma pergunta de mandato. Instalação, operação e um segundo caminho para o
+mesmo dado não respondem.
 
 **1. O aviso de instalação e a tela `/instalacao` saíram do portal.** O aviso era a primeira coisa
 no painel — a tela mais aberta da casa — e o que ele anunciava era um item de infraestrutura
@@ -258,10 +260,31 @@ está na planilha, e a planilha está entregue.** Um segundo caminho para o mesm
 lugar para ele divergir — a mesma família do defeito que este projeto mais persegue, dois números
 para o mesmo fato.
 
+**3. A tela `/operacao` saiu, um dia depois de entrar.** Ela foi entregue na sessão 56 e é a mesma
+troca das outras duas: lotes, custo por execução, tokens e alertas de pipeline são a saúde da
+MÁQUINA, não trabalho de mandato — e a barra lateral do analista não é lugar para isso. O motor
+outra vez ficou inteiro: `fn_operacao_lotes` e `fn_operacao_resumo` (`0135`), os quatro alertas
+decididos no banco e `db/test/operacao.test.sql` continuam de pé, com a mediana e a contraprova do
+1,4× que não acende. A leitura passa a ser por SQL:
+
+```sql
+select * from fn_operacao_resumo(30);
+select * from fn_operacao_lotes(30, 50) where cardinality(alertas) > 0;
+```
+
+**4. E o painel passou a ser escrito para quem usa, não para quem construiu.** A tela mais aberta da
+casa carregava vocabulário de dentro: *"gasto de API"*, *"cobertura da extração"*, *"sem medição, a
+migration 0115 não está aplicada"*. Nada disso é pergunta de analista. O painel agora diz
+**custo de processamento**, **linhas financeiras lidas**, **cobertura da leitura**,
+**mandatos em andamento** e **mandatos encerrados**; o traço de "não medido" explica a ausência sem
+citar migration; e os travessões que emendavam as frases saíram. Os números e a lógica são os
+mesmos: mudou a língua.
+
 Saíram `portal/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
-`portal/src/app/instalacao/page.tsx` e `portal/src/components/instalacao-aviso.tsx`. **Nada de banco
-foi tocado, nenhuma migration nova, nenhum teste removido:** as suítes continuam com a mesma
-contagem, e o `f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
+`portal/src/app/instalacao/page.tsx`, `portal/src/components/instalacao-aviso.tsx`,
+`portal/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
+tocado, nenhuma migration nova, nenhum teste removido:** as suítes continuam com a mesma contagem, e
+o `f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
 
 ## OS TRÊS ITENS DE OBSERVABILIDADE, ESPELHO E DADO (21/08, sessão 56)
 
@@ -280,8 +303,9 @@ custo desta entrega foi ler o que já estava lá, não instrumentar de novo.
 
 `fn_operacao_lotes(p_dias, p_limite)` devolve uma linha por execução com os **alertas já decididos no
 banco**, e `fn_operacao_resumo(p_dias)` faz o cabeçalho. O veredito não mora na tela de propósito:
-repetir a régua em `/operacao` criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
+repetir a régua na tela criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
 que esta casa já pagou três vezes — e a segunda divergiria no dia em que existisse um segundo leitor.
+(A tela `/operacao` que lia estas funções saiu do portal em 21/08; ver "O PORTAL ENCOLHE".)
 
 | Alerta | O que ele pega |
 |---|---|
