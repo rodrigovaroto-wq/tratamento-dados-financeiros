@@ -1798,6 +1798,71 @@ CREATE FUNCTION public.fn_dial(p_estagio text) RETURNS jsonb
 $$;
 
 --
+-- Name: fn_dial_auto_promover(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_dial_auto_promover(p_estagio text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  r         record;
+  v_med     jsonb;
+  v_res     jsonb;
+  v_feitos  jsonb := '[]'::jsonb;
+begin
+  for r in
+    select ea.estagio, ea.nivel_atual, ea.teto, ea.auto_promocao, ea.natureza
+      from estagio_autonomia ea
+     where (p_estagio is null or ea.estagio = p_estagio)
+       and ea.natureza = 'interpretativo'
+       and ea.auto_promocao
+       and ea.nivel_atual < 'N2'::nivel_autonomia
+       and ea.teto >= 'N2'::nivel_autonomia
+  loop
+    v_med := fn_veredito_producao(r.estagio);
+    if not coalesce((v_med->>'suficiente')::boolean, false) then
+      continue;
+    end if;
+
+    -- A PROMOÇÃO PASSA PELA MESMA PORTA DE SEMPRE. Chamar `fn_mudar_dial` em vez
+    -- de dar `update` na tabela é o que garante que a automação não escape de
+    -- nenhuma guarda: o teto, a regra de ouro e a trilha continuam sendo os
+    -- mesmos, e o dia em que uma guarda nova for acrescentada lá ela passa a
+    -- valer aqui sem ninguém lembrar de copiar.
+    v_res := fn_mudar_dial(
+      r.estagio, 'N2'::nivel_autonomia, 'sistema:auto_dial',
+      format('Promoção automática (0137): o veredito de produção alcançou o critério — %s vereditos '
+             'a %s de concordância, mínimo %s a %s. O número é PISO enviesado, e por isso a subida '
+             'para em N2.',
+             v_med->>'n', v_med->>'concordancia',
+             v_med->>'n_minimo', v_med->>'concordancia_minima'),
+      null, null, null, true);
+
+    v_feitos := v_feitos || jsonb_build_object(
+      'estagio', r.estagio,
+      'de', r.nivel_atual,
+      'para', v_res->>'nivel_atual',
+      'recusado', coalesce((v_res->>'recusado')::boolean, false),
+      'medicao', v_med);
+  end loop;
+
+  return jsonb_build_object(
+    'promovidos', v_feitos,
+    'quantos', jsonb_array_length(v_feitos),
+    'como_ler', 'Promoção automática por veredito de produção (0137). Ela sobe no máximo até N2, '
+                'nunca N3: o veredito mede um PISO enviesado, e piso não sustenta autonomia plena. '
+                'Estágio com auto_promocao = false não entra aqui — é o freio de quem baixou o '
+                'nível à mão, e religá-lo é decisão explícita.');
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_dial_auto_promover(p_estagio text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_dial_auto_promover(p_estagio text) IS 'Sobe para N2 todo estágio interpretativo elegível cujo veredito de produção alcançou o critério (0137). Sobe pela fn_mudar_dial, nunca por update direto, para não escapar de guarda nenhuma. Para em N2 por decisão: piso enviesado não sustenta autonomia plena.';
+
+--
 -- Name: fn_dial_influencia(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4087,6 +4152,7 @@ declare
   v_med       jsonb;
   v_base      text;
   v_resumo    jsonb;
+  v_freia     boolean;
 begin
   select to_jsonb(ea), ea.teto, ea.nivel_atual, ea.natureza
     into v_antes, v_teto, v_nivel_ant, v_natureza
@@ -4115,6 +4181,9 @@ begin
   v_base := case when p_nivel in ('N2','N3') and v_natureza = 'interpretativo'
                  then 'declarada' else 'nao_se_aplica' end;
 
+  -- A TRAVA 2 (0137): descida feita por humano desliga a promoção automática.
+  v_freia := p_nivel < v_nivel_ant and coalesce(p_autor, '') not like 'sistema:%';
+
   if v_sobe_para_autonomia then
     if p_rodada_golden is not null then
       v_med := fn_golden_suficiente(p_estagio, p_rodada_golden);
@@ -4134,9 +4203,6 @@ begin
       v_resumo := v_med;
 
     elsif p_por_veredito then
-      -- A PORTA DA 0136. Recusa e aprovação usam o MESMO objeto de medição, e ele
-      -- vai para a trilha nos dois casos: a tentativa que não passou é o registro
-      -- de quanto faltava, e é ela que diz se o número está subindo com o uso.
       v_med := fn_veredito_producao(p_estagio);
       if not coalesce((v_med->>'suficiente')::boolean, false) then
         insert into evento_auditoria (ator, acao, entidade_ref, depois)
@@ -4174,15 +4240,24 @@ begin
     set nivel_atual = p_nivel,
         limiar_auto_clear = coalesce(p_limiar, limiar_auto_clear),
         base_do_nivel = v_base,
-        -- O ponteiro de rodada só existe no caminho do golden set. No caminho do
-        -- veredito não há rodada para apontar, e é o `medicao_resumo` que carrega
-        -- de onde o número veio — inclusive o aviso de que ele é piso.
         medicao_rodada_id = case when v_base = 'medida' then p_rodada_golden else null end,
         medicao_em        = case when v_base in ('medida', 'medida_por_veredito') then now() else null end,
         medicao_resumo    = case when v_base in ('medida', 'medida_por_veredito') then v_resumo else null end,
+        -- O FREIO GRUDA. Uma vez desligada por descida humana, a promoção
+        -- automática só volta por `update` explícito: quem desconfiou é quem
+        -- decide voltar a confiar.
+        auto_promocao = case when v_freia then false else auto_promocao end,
         atualizado_por = p_autor,
         atualizado_em = now()
   where estagio = p_estagio;
+
+  if v_freia then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+      values (p_autor, 'auto_promocao_desligada', 'estagio:'||p_estagio,
+              jsonb_build_object('de', v_nivel_ant, 'para', p_nivel, 'motivo_informado', p_motivo,
+                                 'porque', 'descida feita por humano desliga a promoção automática '
+                                           '(0137); religar é update explícito'));
+  end if;
 
   insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
     values (p_autor,
@@ -4202,7 +4277,7 @@ $$;
 -- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) IS 'Muda o nível de autonomia de um estágio aplicando a regra de ouro do docs/01. Três portas para subir interpretativo a N2/N3, em ordem de força: rodada de golden set congelada (base medida), veredito de produção suficiente (base medida_por_veredito, piso enviesado, 0136), ou motivo declarado (base declarada). Descer nunca pede nada. Recusa é RETORNADA, não exceção.';
+COMMENT ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) IS 'Muda o nível de autonomia de um estágio aplicando a regra de ouro do docs/01. Três portas para subir interpretativo a N2/N3, em ordem de força: rodada de golden set congelada (base medida), veredito de produção suficiente (base medida_por_veredito, piso enviesado, 0136), ou motivo declarado (base declarada). Descer nunca pede nada, e desde a 0137 DESCIDA FEITA POR HUMANO desliga a promoção automática daquele estágio. Recusa é RETORNADA, não exceção.';
 
 --
 -- Name: fn_mutuo_com_socio(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -8290,6 +8365,40 @@ $$;
 COMMENT ON FUNCTION public.fn_tokens_estruturais(p_chave text) IS 'Palavras estruturais de um rótulo (sem ligação, ruído de rodapé e a palavra "total"), ordenadas e sem repetição. Extraída de fn_rotulo_estrutural na 0102 para ser calculada UMA vez por rótulo: fn_papel_linha comparava nove grupos e pagava nove tokenizações iguais.';
 
 --
+-- Name: fn_trg_auto_promover_dial(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_trg_auto_promover_dial() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_r jsonb;
+begin
+  if pg_trigger_depth() > 1 then
+    return null;
+  end if;
+
+  begin
+    v_r := fn_dial_auto_promover();
+    if coalesce((v_r->>'quantos')::int, 0) > 0 then
+      raise notice '0137: promoção automática do dial — %', v_r->'promovidos';
+    end if;
+  exception when others then
+    raise notice '0137: a promoção automática falhou e foi ignorada (a decisão que a disparou está '
+                 'gravada). Erro: %', sqlerrm;
+  end;
+
+  return null;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_trg_auto_promover_dial(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_trg_auto_promover_dial() IS 'Gatilho da promoção automática (0137): toda decisão humana nova pode ter completado o critério do veredito de produção. NUNCA derruba a transação de quem o disparou — falha vira NOTICE, porque o analista não pode perder a rejeição de uma pendência por causa do dial.';
+
+--
 -- Name: fn_unidade_predominante(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9269,6 +9378,7 @@ CREATE TABLE public.estagio_autonomia (
     medicao_rodada_id uuid,
     medicao_em timestamp with time zone,
     medicao_resumo jsonb,
+    auto_promocao boolean DEFAULT true NOT NULL,
     CONSTRAINT estagio_autonomia_base_check CHECK ((base_do_nivel = ANY (ARRAY['nao_se_aplica'::text, 'declarada'::text, 'medida'::text, 'medida_por_veredito'::text]))),
     CONSTRAINT estagio_autonomia_natureza_check CHECK ((natureza = ANY (ARRAY['deterministico'::text, 'interpretativo'::text])))
 );
@@ -9302,6 +9412,12 @@ COMMENT ON COLUMN public.estagio_autonomia.base_do_nivel IS 'Em que o nível de 
 --
 
 COMMENT ON COLUMN public.estagio_autonomia.medicao_resumo IS 'A medição que autorizou o nível, congelada no momento da subida. Guardar o resultado (e não só o ponteiro para a rodada) é o que permite responder "com que número isto subiu?" mesmo depois de o golden set crescer em rodadas seguintes.';
+
+--
+-- Name: COLUMN estagio_autonomia.auto_promocao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estagio_autonomia.auto_promocao IS 'Se este estágio pode subir SOZINHO quando o veredito de produção alcançar o critério (0137). Nasce ligado. É DESLIGADO automaticamente quando um humano baixa o nível, para que o freio não seja desfeito pela máquina no veredito seguinte, e religar é um update explícito — a decisão de voltar a confiar é de quem desconfiou.';
 
 --
 -- Name: evento_auditoria; Type: TABLE; Schema: public; Owner: -
@@ -10343,6 +10459,12 @@ CREATE INDEX idx_reconciliacao_caso ON public.reconciliacao USING btree (caso_id
 CREATE UNIQUE INDEX idx_rubrica_classe_unica ON public.rubrica_classe USING btree (padrao, COALESCE(secao_canonica, ''::text), COALESCE(tipo_taxonomia, ''::text), versao);
 
 --
+-- Name: decisao trg_auto_promover_dial; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_auto_promover_dial AFTER INSERT ON public.decisao FOR EACH ROW EXECUTE FUNCTION public.fn_trg_auto_promover_dial();
+
+--
 -- Name: golden_campo trg_golden_campo_congelada; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -11322,6 +11444,12 @@ GRANT ALL ON FUNCTION public.fn_diagnostico_modelagem(p_caso_id uuid) TO authent
 --
 
 GRANT ALL ON FUNCTION public.fn_dial(p_estagio text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_dial_auto_promover(p_estagio text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_dial_auto_promover(p_estagio text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_dial_influencia(p_estagio text); Type: ACL; Schema: public; Owner: -

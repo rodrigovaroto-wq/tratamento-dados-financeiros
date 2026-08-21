@@ -28,6 +28,7 @@ type Dial = {
   // aviso, e estágio de outro nome que subisse sem medição não recebia nenhum.
   natureza: "deterministico" | "interpretativo";
   base_do_nivel: "nao_se_aplica" | "declarada" | "medida" | "medida_por_veredito";
+  auto_promocao: boolean;
   medicao_rodada_id: string | null;
   medicao_em: string | null;
   atualizado_por: string | null;
@@ -108,7 +109,7 @@ export default async function AutonomiaPage() {
       supabase
         .from("estagio_autonomia")
         .select(
-          "estagio, nivel_atual, teto, limiar_auto_clear, natureza, base_do_nivel, " +
+          "estagio, nivel_atual, teto, limiar_auto_clear, natureza, base_do_nivel, auto_promocao, " +
             "medicao_rodada_id, medicao_em, atualizado_por, atualizado_em",
         )
         .order("estagio"),
@@ -276,6 +277,14 @@ export default async function AutonomiaPage() {
                           : "não se aplica — abaixo do auto-clear"}
                       </span>
                     )}
+                    {/* 0137: o freio precisa ser VISÍVEL. Um estágio com a
+                        promoção automática desligada e ninguém sabendo é o
+                        mesmo que um estágio que parou de subir sem motivo. */}
+                    {d.natureza === "interpretativo" && !d.auto_promocao && (
+                      <p className="mt-1 text-amber-800">
+                        promoção automática desligada por uma descida manual
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-tinta-600">
                     <p>{dataHora(d.atualizado_em)}</p>
@@ -316,6 +325,15 @@ export default async function AutonomiaPage() {
             um motivo assumido por escrito — e é ele que aparece na trilha abaixo como{" "}
             <em>sem medição</em>. Quando houver golden set, a medição confirma ou derruba estes
             níveis.
+          </p>
+          <p className="mt-1">
+            Desde a <code>0137</code> essa subida acontece <strong>sozinha</strong>: alcançado o
+            critério, o estágio vai a N2 no instante em que a nota que o completou é registrada,
+            com ator <code>sistema:auto_dial</code> na trilha e a medição que autorizou anexada. Ela
+            para em N2 e nunca chega a N3, porque piso enviesado não sustenta autonomia plena. E se
+            alguém <strong>baixar</strong> o nível de um estágio à mão, a automação dele é desligada
+            na hora e só volta por decisão explícita: o freio não pode ser desfeito pela máquina no
+            veredito seguinte.
           </p>
           <p className="mt-1">
             Desde a <code>0136</code> existe um terceiro caminho, e ele não depende de rotulagem:

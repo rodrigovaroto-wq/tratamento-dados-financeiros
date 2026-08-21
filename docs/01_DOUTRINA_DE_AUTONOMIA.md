@@ -135,6 +135,33 @@ importante da suíte é justamente que ele **nunca** vira `medida`.
 - **passar do teto por natureza do estágio.** Nenhuma quantidade de veredito sobe reconciliação
   Classe B/C ou classificação contábil acima de N1. O teto é doutrina e só muda por migration.
 
+### A promoção passa a ser automática (decisão de 21/08/2026, `0137`)
+
+**Alcançado o critério, o estágio sobe sozinho.** Não há mais mão humana entre a medição e a
+subida: a nota que completa os 30 vereditos promove o estágio no instante em que é registrada.
+
+**Isto contraria a leitura mais conservadora da regra de ouro, e é deliberado.** A `0126` existe
+para impedir que o sistema se autorize a si mesmo, e é exatamente o que passa a acontecer, com uma
+medida que o próprio sistema declara enviesada para cima. O que torna a troca aceitável é o teto da
+automação: ela alcança **N2**, nunca N3. Em N2 todos os oito fechamentos fail-safe desta doutrina
+continuam de pé — pendência abre, guarda dispara, o Portão 2 pede aceite humano onde é pedido. O que
+muda é o volume de linha que passa sem toque num estágio onde a máquina demonstrou 95% de acerto em
+30 casos.
+
+**As quatro travas, e nenhuma delas é decorativa:**
+
+1. **Para em N2.** Autonomia plena continua sendo decisão humana explícita.
+2. **O freio gruda.** Baixar o nível de um estágio à mão desliga a promoção automática dele na
+   hora. Sem isto o freio duraria até o próximo veredito e a máquina desfaria a decisão de quem o
+   puxou — o pior defeito possível num mecanismo de segurança, porque ele **parece funcionar**.
+   Religar é `update` explícito: quem desconfiou é quem decide voltar a confiar.
+3. **Interruptor por estágio, em dado** (`estagio_autonomia.auto_promocao`), não em código.
+4. **Tudo na trilha**, com ator `sistema:auto_dial` e a medição que autorizou anexada.
+
+**O que continua proibido:** subir além de N2 por veredito, promover estágio determinístico (a
+garantia dele é teste, não concordância) e passar do teto por natureza do estágio, que só muda por
+migration.
+
 **A rotulagem cega continua sendo o caminho, e não foi apagada.** O caminho de escrita da `0130`
 está inteiro no banco, e o dia em que for preciso um número que sustente subir dial para fora da
 casa — auditoria, cliente, credor — é rodada de golden set que responde. A saída C do `B3`
