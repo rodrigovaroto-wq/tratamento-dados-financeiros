@@ -250,7 +250,10 @@ export function CeuOria({
 
         ctx.beginPath();
         ctx.arc(x, y, e.r * (intro ? 1 : 0.85), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(14, 116, 144, ${a * (intro ? 0.5 : 0.5)})`;
+        // 0,5 nos dois estados: este ternário não decidia nada (os outros desta
+        // função decidem — `intro ? 1 : 0.85` logo acima). Mantido o valor de hoje;
+        // mudar a opacidade seria redesenhar a cena por conta própria.
+        ctx.fillStyle = `rgba(14, 116, 144, ${a * 0.5})`;
         ctx.fill();
       });
 

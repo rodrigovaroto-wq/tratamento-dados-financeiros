@@ -249,7 +249,9 @@ export function avaliarExpressao(src: string, ws: ExcelJS.Worksheet, prof = 0): 
       if (s[i] !== "&") return acc;
       i++;
       const d = soma();
-      const txt = (v: Valor) => (v == null ? "" : typeof v === "number" ? String(v) : String(v));
+      // Os dois ramos de `typeof v === "number"` eram String(v) — o ternário não
+      // decidia nada. `String` já cobre número, texto e booleano.
+      const txt = (v: Valor) => (v == null ? "" : String(v));
       acc = txt(acc) + txt(d);
     }
   };
