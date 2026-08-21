@@ -251,7 +251,14 @@ do sistema.
 **Destrava com um arquivo:** o capítulo 10 da entrega, commitado em `docs/`. Depois disso é meia
 sessão.
 
-### B4.2 — Os três cenários: a metade que ficou de fora · **decisão + engenharia média**
+### B4.2 — Os três cenários · **PARCIALMENTE FECHADO em 21/08: sensibilidade declarada**
+
+> **O que entrou:** ND/EBITDA e DSCR por cenário como SENSIBILIDADE — o EBITDA varia, a dívida é a
+> do cenário ativo —, com o teste de rompimento em cada linha e um CHECK provando que a coluna do
+> cenário ativo reproduz o bloco de RATIOS. A nota de rodapé declara que a leitura é um PISO da
+> deterioração: no cenário pior o revolver saca mais. **"Rompe aqui" implica "rompe lá"; o contrário
+> não vale.** O que continua fora é a réplica completa (três cascatas de dívida e três fluxos de
+> caixa) e o pico de caixa por cenário. O texto abaixo é o diagnóstico que levou a isso.
 
 A sessão 54 entregou a cascata paralela (receita líquida, crescimento, EBITDA, margem para os três
 cenários simultâneos) e **declarou a fronteira na própria aba**: ficam fora **ND/EBITDA, DSCR e pico
@@ -267,7 +274,14 @@ a sombra do cenário ativo é igual à linha ativa — o mesmo desenho que já p
 receita (os dois religamentos da sessão 54 mostraram que os dois grupos de assert são
 complementares). É uma sessão inteira, e só vale depois de alguém pedir.
 
-### B4.3 — As alavancas de reestruturação · **escopo novo, e é a pergunta que o produto vai receber**
+### B4.3 — As alavancas de reestruturação · **PRIMEIRA ALAVANCA ENTREGUE em 21/08**
+
+> **O que entrou:** carência por tranche (célula de entrada ao lado do prazo, que já era editável) e
+> o bloco REPERFILAMENTO no `Output`, com serviço antes, serviço depois, alívio por exercício e o
+> DSCR nos dois mundos. O veredito diz se ATRAVESSOU o corte do covenant e, quando não atravessa,
+> nomeia os caminhos seguintes: prazo maior, haircut pela chave de efeito caixa, dinheiro novo. O
+> alívio publicado é piso — o efeito de segunda ordem no revolver não entra no lado "antes". O que
+> continua fora: conversão em equity com diluição calculada e new money com custo próprio.
 
 §2.6 do diagnóstico. Quando o `Output` diz DSCR 0,3 e ND/EBITDA 10,8×, a próxima pergunta do mandato
 é: **qual reestruturação resolve?** Alongamento, carência, haircut, conversão, new money — o modelo

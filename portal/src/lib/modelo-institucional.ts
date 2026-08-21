@@ -826,6 +826,17 @@ export const ehFornecedor = (chave: string) =>
   /\bfornecedor/i.test(chave) || /\bcontas? a pagar\b/i.test(chave)
   || /\bduplicatas? a pagar\b/i.test(chave);
 
+// LUCROS RETIDOS, dentro do patrimônio líquido. Existe para o X2 do Altman, e é
+// lista fechada pelo mesmo motivo dos outros: `reserva de capital` e `ajuste de
+// avaliação patrimonial` também são PL e NÃO são lucro retido — somá-los infla o
+// índice justamente na empresa que capitalizou para cobrir prejuízo.
+export const ehLucrosRetidos = (chave: string) =>
+  /\blucros? (ou preju(í|i)zos? )?acumulados?\b/i.test(chave)
+  || /\bpreju(í|i)zos? acumulados?\b/i.test(chave)
+  || /\breservas? de lucros?\b/i.test(chave)
+  || /\breserva legal\b/i.test(chave)
+  || /\breservas? de reten(ç|c)(ã|a)o de lucros?\b/i.test(chave);
+
 
 // -----------------------------------------------------------------------------
 // A CONVENÇÃO DE SINAL DO MODELO, e por que ela precisa ser imposta na fronteira.
@@ -3117,11 +3128,19 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     const ch = chaveLinha("dv", l);
     g.linha(`${ch}#ini`, { rotulo: `${l.chave} — saldo de abertura`, fmt: NUM });
     g.linha(`${ch}#prazo`, { rotulo: "    prazo de amortização (anos)", fmt: NUM2 });
+    g.linha(`${ch}#carencia`, { rotulo: "    carência (anos sem amortizar)", fmt: NUM2 });
     g.linha(`${ch}#pct`, { rotulo: "    % amortizado no período (SAC)", fmt: PCT });
     g.linha(`${ch}#amort`, { rotulo: "    amortização do período", fmt: NUM });
     g.linha(`${ch}#fim`, { rotulo: "    saldo de fechamento", fmt: NUM });
     g.linha(`${ch}#taxa`, { rotulo: "    custo efetivo aplicado", fmt: PCT2 });
     g.linha(`${ch}#juros`, { rotulo: "    juros do período", fmt: NUM });
+    // A SOMBRA DO CRONOGRAMA ORIGINAL, que é o "antes" do reperfilamento. Ela
+    // roda com carência ZERO e com o prazo IMPLÍCITO no balanço — não com o que
+    // estiver digitado acima —, senão editar o prazo moveria os dois lados da
+    // comparação e o alívio apareceria como zero.
+    g.linha(`${ch}#ini0`, { rotulo: "    (antes) saldo de abertura", fmt: NUM });
+    g.linha(`${ch}#amort0`, { rotulo: "    (antes) amortização do período", fmt: NUM });
+    g.linha(`${ch}#juros0`, { rotulo: "    (antes) juros do período", fmt: NUM });
   }
   // `P29 CHAVE-DE-EFEITO-CAIXA` — o Modelo Base tem uma célula por tranche com
   // validação de lista "S,N" (`ST Inv. & Debt!D128`) que decide se a amortização
@@ -3162,6 +3181,13 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   g.linha("TOTAL_AMORT_CAIXA", { rotulo: "    da qual COM efeito caixa", fmt: NUM });
   g.linha("TOTAL_AMORT", { rotulo: "Amortização total do período", fmt: NUM });
   g.linha("TOTAL_JUROS", { rotulo: "Juros totais do período", fmt: NUM });
+  g.linha("SERVICO_ORIG", {
+    rotulo: "Serviço das tranches ANTES do reperfilamento (cronograma original)", fmt: NUM,
+    nota: "Amortização mais juros que as tranches existentes exigiriam no cronograma que veio do "
+      + "balanço: sem carência e no prazo implícito. É o \"antes\" do bloco de reperfilamento do "
+      + "Output, e não muda quando alguém edita prazo ou carência acima — se mudasse, os dois lados "
+      + "da comparação andariam juntos e o alívio sairia sempre zero.",
+  });
   g.pular();
 
   // ---- DÍVIDA NOVA POR SAFRA (`P14`) ---------------------------------------
@@ -3338,14 +3364,34 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       //
       // O `MIN(1;…)` é o cinto de segurança do prazo fracionário: com n = 0,5 a conta
       // daria 200% do saldo, e uma tranche amortizaria mais do que deve.
+      // A CARÊNCIA, e ela é a alavanca de reestruturação que faltava.
+      //
+      // Durante os anos de carência a tranche NÃO amortiza e continua rendendo
+      // juros — que é o que um alongamento negociado faz. Depois dela, o que
+      // sobrou se reparte no prazo que resta: é carência DENTRO do prazo, não
+      // além dele. Para empurrar o vencimento junto, o caminho é aumentar o
+      // prazo na célula acima, e as duas coisas se somam.
+      const refCarencia = g.ref(`${ch}#carencia`, g.anos[g.nHist], "$");
+      g.set(`${ch}#carencia`, ano, iProj === 0 ? 0 : `=${refCarencia}`, {
+        fmt: NUM2, fill: iProj === 0 ? FILL_INPUT : undefined,
+        nota: iProj === 0
+          ? "CARÊNCIA em anos: quantos exercícios esta tranche passa sem amortizar. Nasce em ZERO, "
+            + "porque carência é negociação e não fato do balanço. Durante a carência a dívida "
+            + "continua rendendo juros; depois dela o saldo se reparte no prazo que resta, então "
+            + "a parcela sobe. Para empurrar o vencimento junto, aumente também o prazo acima.\n\n"
+            + "O efeito no serviço da dívida aparece no bloco REPERFILAMENTO do Output, comparado "
+            + "com o cronograma original."
+          : "Mesma carência da primeira coluna projetada. Edite a célula azul de lá, não esta.",
+      });
       g.set(`${ch}#pct`, ano,
-        `=IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj})))`, {
+        `=IF(${iProj}<${g.ref(`${ch}#carencia`, ano)},0,`
+        + `IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj}))))`, {
         fmt: PCT,
-        nota: "Amortização LINEAR (SAC) até o vencimento: 1 ÷ (prazo − anos já decorridos). "
-          + "Dá parcela de principal constante e zera a tranche no vencimento. Depois do "
-          + "vencimento a célula devolve zero — não existe amortização negativa. Para um "
-          + "cronograma irregular (carência, balão), digite o percentual do ano por cima desta "
-          + "fórmula: o saldo e os juros seguem a célula.",
+        nota: "Amortização LINEAR (SAC) até o vencimento: 1 ÷ (prazo − anos já decorridos), e ZERO "
+          + "enquanto durar a carência. Dá parcela de principal constante e zera a tranche no "
+          + "vencimento. Depois do vencimento a célula devolve zero — não existe amortização "
+          + "negativa. Para um cronograma irregular (balão), digite o percentual do ano por cima "
+          + "desta fórmula: o saldo e os juros seguem a célula.",
       });
       g.set(`${ch}#amort`, ano, `=${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#pct`, ano)}`, { fmt: NUM });
       g.set(`${ch}#fim`, ano, `=${g.ref(`${ch}#ini`, ano)}-${g.ref(`${ch}#amort`, ano)}`, { fmt: NUM });
@@ -3353,6 +3399,22 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       // Juros sobre o saldo de ABERTURA — ver NOTA_CIRCULARIDADE.
       g.set(`${ch}#juros`, ano, `=-${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#taxa`, ano)}`,
         { fmt: NUM, nota: NOTA_CIRCULARIDADE });
+
+      // ---- A SOMBRA DO CRONOGRAMA ORIGINAL ("antes") ----------------------
+      //
+      // Mesma matemática, com dois números CONGELADOS: carência zero e o prazo
+      // implícito no balanço, escrito como literal. Referenciar as células
+      // editáveis faria os dois lados da comparação andarem juntos, e o alívio
+      // do reperfilamento sairia sempre zero — que é justamente o defeito que
+      // um bloco "antes × depois" precisa não ter.
+      const pct0 = prazoImplicito - iProj <= 0
+        ? 0
+        : Math.min(1, 1 / (prazoImplicito - iProj));
+      g.set(`${ch}#ini0`, ano,
+        iProj === 0 ? `=${g.ref(`${ch}#ini`, ano)}` : `=${g.ref(`${ch}#ini0`, ant!)}*${(1 - (prazoImplicito - (iProj - 1) <= 0 ? 0 : Math.min(1, 1 / (prazoImplicito - (iProj - 1))))).toFixed(6)}`,
+        { fmt: NUM, nota: "Saldo que esta tranche teria no cronograma original, sem carência." });
+      g.set(`${ch}#amort0`, ano, `=${g.ref(`${ch}#ini0`, ano)}*${pct0.toFixed(6)}`, { fmt: NUM });
+      g.set(`${ch}#juros0`, ano, `=-${g.ref(`${ch}#ini0`, ano)}*${g.ref(`${ch}#taxa`, ano)}`, { fmt: NUM });
     }
     // A dívida do exercício, com a origem decidida POR ANO (ver `anosSemMapa`).
     if (g.tem("DIV_BALANCO")) {
@@ -3378,6 +3440,13 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     }
     somaOuZero(g, "TOTAL_AMORT", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#amort", ano)));
     somaOuZero(g, "TOTAL_JUROS", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#juros", ano)));
+    // O SERVIÇO DO CRONOGRAMA ORIGINAL: amortização mais juros, em módulo, como
+    // a linha de serviço do Output. É o "antes" da comparação.
+    somaOuZero(g, "SERVICO_ORIG", ano,
+      dividas.flatMap((l) => [
+        g.ref(chaveLinha("dv", l) + "#amort0", ano),
+        `ABS(${g.ref(chaveLinha("dv", l) + "#juros0", ano)})`,
+      ]));
     somaOuZero(g, "TOTAL_AMORT_CAIXA", ano, dividas.map((l) => {
       const chAmort = chaveLinha("dv", l) + "#amort";
       const chave = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
@@ -3773,6 +3842,11 @@ function abaBalanco(
   for (const l of pl) g.linha(chaveLinha("pl", l), { rotulo: l.chave, fmt: NUM });
   g.linha("LUCROS_ACUM", { rotulo: "Lucros (prejuízos) acumulados do modelo", fmt: NUM });
   g.linha("REPERFILAMENTO", { rotulo: "Redução de dívida SEM efeito caixa (acumulada)", fmt: NUM });
+  // LUCROS RETIDOS TOTAIS — as contas de retenção que o documento trouxe, mais o
+  // que o modelo acumulou. Existe para o Altman Z'' do `Output`, e é linha em vez
+  // de soma escondida dentro do índice porque quem discorda do Z'' precisa poder
+  // ver de onde saiu o X2.
+  g.linha("PL_RETIDO", { rotulo: "    dos quais LUCROS RETIDOS (para o Altman)", fmt: NUM });
   linhaReconc(rPL, "patrimônio líquido");
   g.linha("PL", { rotulo: "PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   if (rTotalPassivo) {
@@ -3877,6 +3951,30 @@ function abaBalanco(
         + "Somar lucro acumulado aqui contaria o mesmo patrimônio duas vezes."
         : undefined,
     });
+    // OS LUCROS RETIDOS, para o X2 do Altman. Soma as contas de retenção que o
+    // documento trouxe (`ehLucrosRetidos`) mais o que o modelo acumulou.
+    //
+    // SEM NENHUMA CONTA EXTRAÍDA, A LINHA PUBLICA "n.a." E O ÍNDICE NÃO SAI.
+    // Zero aqui não é neutro: ele derruba o Z'' em até 3,26 pontos e joga uma
+    // empresa saudável na zona de aflição. Documento que não isola lucro retido
+    // não autoriza afirmar que ele é zero.
+    {
+      const retidas = pl.filter((l) => ehLucrosRetidos(l.chave));
+      g.set("PL_RETIDO", ano,
+        retidas.length === 0
+          ? '="n.a."'
+          : `=${[...retidas.map((l) => g.ref(chaveLinha("pl", l), ano)),
+                 g.ref("LUCROS_ACUM", ano)].join("+")}`, {
+          fmt: NUM,
+          nota: retidas.length === 0
+            ? "Nenhuma conta de lucro retido foi isolada no documento deste caso, então o Altman "
+              + "Z'' não sai. Zero aqui não seria neutro: ele derruba o índice em até 3,26 pontos."
+            : `Soma de ${retidas.length} conta(s) de retenção do documento mais o resultado que o `
+              + "modelo acumulou. É o X2 do Altman, e fica em linha própria para quem discordar do "
+              + "índice poder ver de onde ele saiu.",
+        });
+    }
+
     // A CONTRAPARTIDA DO REPERFILAMENTO. A chave "Efeito caixa? = N" de uma
     // tranche faz o saldo dela cair SEM pagamento — e uma redução de passivo sem
     // saída de caixa precisa de contrapartida, senão o balanço abre exatamente no
@@ -4451,10 +4549,48 @@ function abaOutput(
       g.linha(`${chave}#${suf}`, { rotulo: `        ${nome}`, fmt });
     }
   }
+
+  // ---- OS DOIS ÍNDICES QUE O CREDOR OLHA, POR CENÁRIO ----------------------
+  //
+  // ELES SÃO SENSIBILIDADE, NÃO COMPARAÇÃO COMPLETA, e a diferença está escrita
+  // na tela porque ela muda o que o número autoriza concluir.
+  //
+  // O que varia entre as três colunas é o EBITDA, que vem da cascata paralela. O
+  // que NÃO varia é a dívida: os três leem a dívida líquida e o serviço do
+  // cenário ATIVO. Replicar a dívida por cenário exigiria três cascatas de
+  // amortização e três fluxos de caixa dentro do arquivo, porque o revolver saca
+  // conforme o caixa — e é justamente no cenário pior que ele saca mais.
+  //
+  // POR QUE ISSO AINDA VALE: a leitura é um PISO da deterioração. No cenário
+  // conservador a dívida também sobe, então o ND/EBITDA verdadeiro é PIOR que o
+  // publicado e o DSCR verdadeiro é MENOR. Logo "rompe aqui" implica "rompe lá",
+  // que é a pergunta que o credor faz. O contrário não vale, e é isso que a nota
+  // impede alguém de concluir.
+  g.linha(null, { rotulo: "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)", bloco: true });
+  // OS RÓTULOS NÃO REPETEM OS DO BLOCO DE RATIOS, de propósito: dois rótulos
+  // idênticos na mesma aba fazem quem procura achar o primeiro e ler o outro. O
+  // teste tropeçou nisso antes do comitê.
+  for (const [chave, rotulo, fmt] of [
+    ["CEN_ND", "Net Debt / EBITDA por cenário", MULT],
+    ["CEN_DSCR", "DSCR por cenário", MULT],
+  ] as const) {
+    g.linha(null, { rotulo, negrito: true });
+    for (const [suf, nome] of CENARIOS_SUF) {
+      g.linha(`${chave}#${suf}`, { rotulo: `        ${nome}`, fmt });
+      g.linha(`${chave}#${suf}#t`, { rotulo: "            rompe?" });
+    }
+  }
+  g.linha("CEN_CHECK_DIV", {
+    rotulo: "    CHECK: a coluna do cenário ATIVO bate com os índices acima (0 = bate)", fmt: NUM2,
+    nota: "Distância entre a sensibilidade do cenário ativo e as linhas de ND/EBITDA e DSCR do "
+      + "bloco de RATIOS. Zero por construção: as duas leem a mesma dívida e o mesmo EBITDA. "
+      + "Diferente de zero significa que este bloco deixou de descrever o modelo ao lado.",
+  });
   const rCenFora = g.linha("CEN_FORA", {
-    rotulo: "    Fora deste bloco, e por quê: ND/EBITDA, DSCR e pico de caixa. Eles exigiriam "
-      + "replicar a cascata de dívida e o fluxo de caixa por cenário — três modelos paralelos "
-      + "dentro do arquivo. Para compará-los, gire o interruptor e leia o SUMMARY acima.",
+    rotulo: "    A sensibilidade acima segura a DÍVIDA do cenário ativo e move só o EBITDA, então "
+      + "ela é um PISO: no cenário pior o revolver saca mais, a dívida sobe, e o índice verdadeiro "
+      + "é pior que o publicado. \"Rompe aqui\" implica \"rompe lá\"; o contrário não vale. O pico "
+      + "de caixa por cenário continua fora — ele exigiria três fluxos de caixa dentro do arquivo.",
   });
   g.celula(rCenFora, COL_ROTULO).font = fonte({ italic: true, size: 9 });
   g.celula(rCenFora, COL_ROTULO).alignment = { wrapText: true };
@@ -4494,6 +4630,7 @@ function abaOutput(
   ];
   const detalhePL = [
     { chave: "LUCROS_ACUM", rotulo: "    Retained earnings (model)" },
+    { chave: "PL_RETIDO", rotulo: "    Retained earnings (extracted + model)" },
     { chave: "REPERFILAMENTO", rotulo: "    Debt-to-equity conversion (cumulative)" },
     ...(gBS.tem("RECONC_PL") ? [{ chave: "RECONC_PL", rotulo: "    reconciliation w/ reported total" }] : []),
   ];
@@ -4602,7 +4739,53 @@ function abaOutput(
   g.linha("C_LIQ_CORR", { rotulo: "    corte sugerido (covenant)", fmt: MULT });
   g.linha("T_LIQ_CORR", { rotulo: "    rompe?" });
   g.linha("R_LIQ_SECA", { rotulo: "Liquidez seca (sem estoque)", fmt: MULT });
+  g.linha("R_LIQ_IMED", { rotulo: "Liquidez imediata (só caixa)", fmt: MULT });
   g.linha("R_ALAV_PL", { rotulo: "Dívida bruta / Patrimônio líquido", fmt: MULT });
+  g.pular();
+
+  // ---- RETORNO E SOLVÊNCIA -------------------------------------------------
+  //
+  // O `f0/08` fasejou ROA, ROE e Altman "até a extração isolar as linhas-conceito
+  // necessárias". Ela isola desde as 14 abas: o balanço tem ativo total e
+  // patrimônio líquido, a DRE tem lucro líquido e EBIT. O bloqueio documentado lá
+  // deixou de valer para o arquivo de modelagem, e ninguém tinha revisitado.
+  //
+  // POR QUE O Z'' E NÃO O Z ORIGINAL. O Z de 1968 usa VALOR DE MERCADO do
+  // patrimônio, que empresa fechada não tem, e foi calibrado em indústria de
+  // capital aberto. O Z'' (Altman, mercados emergentes) troca por valor contábil
+  // e derruba o giro do ativo, justamente para servir a empresa fechada e não
+  // industrial — que é o universo destes mandatos.
+  g.linha(null, { rotulo: "RETORNO E SOLVÊNCIA", bloco: true });
+  g.linha("R_ROA", { rotulo: "ROA — lucro líquido / ativo total", fmt: PCT });
+  g.linha("R_ROE", { rotulo: "ROE — lucro líquido / patrimônio líquido", fmt: PCT });
+  g.linha("R_ALTMAN", { rotulo: "Altman Z\u2033 (mercados emergentes)", negrito: true, fmt: NUM2 });
+  g.linha("T_ALTMAN", { rotulo: "    zona" });
+  g.pular();
+
+  // ---- REPERFILAMENTO: a alavanca, e o que ela resolve ---------------------
+  //
+  // O §2.6 do diagnóstico: quando o Output diz DSCR 0,3 e ND/EBITDA 10,8x, a
+  // pergunta seguinte do mandato é QUAL REESTRUTURAÇÃO RESOLVE. O arquivo
+  // diagnosticava e não tinha alavanca nenhuma.
+  //
+  // A alavanca é a CARÊNCIA por tranche, na aba de dívida, ao lado do prazo que
+  // já era editável. Este bloco mostra o que ela fez: o serviço que o cronograma
+  // original exigia, o serviço depois do que foi negociado, e o alívio de cada
+  // exercício — com o DSCR nos dois lados, que é onde o alívio vira ou não vira
+  // covenant cumprido.
+  //
+  // O QUE ELE COMPARA, e está escrito na tela: as TRANCHES EXISTENTES. O efeito
+  // de segunda ordem — menos serviço, mais caixa, menos revolver, menos juros de
+  // revolver — não entra no "antes", porque o "antes" teria de ser um modelo
+  // inteiro rodando em paralelo. Isso torna o alívio publicado um PISO: o
+  // benefício real é maior.
+  g.linha(null, { rotulo: "REPERFILAMENTO — o que a carência negociada resolve", bloco: true });
+  g.linha("RP_ANTES", { rotulo: "Serviço das tranches no cronograma original", fmt: NUM });
+  g.linha("RP_DEPOIS", { rotulo: "Serviço das mesmas tranches como está negociado", fmt: NUM });
+  g.linha("RP_ALIVIO", { rotulo: "Alívio do exercício (antes − depois)", negrito: true, fmt: NUM });
+  g.linha("RP_DSCR_SEM", { rotulo: "DSCR que o cronograma original produziria", fmt: MULT });
+  g.linha("RP_DSCR_COM", { rotulo: "DSCR de hoje (o do bloco de RATIOS)", negrito: true, fmt: MULT });
+  g.linha("RP_VEREDITO", { rotulo: "    a negociação resolve o covenant?" });
   g.pular();
 
   // ---- CICLO DE CAIXA ------------------------------------------------------
@@ -4751,6 +4934,57 @@ function abaOutput(
           + "código. Diferente de zero significa que alguém separou as duas, e aí este bloco "
           + "deixou de descrever o modelo ao lado.",
       });
+
+      // A SENSIBILIDADE DOS DOIS COVENANTS. O EBITDA é o do cenário; a dívida
+      // líquida e o serviço são os do cenário ATIVO, e a nota diz isso em toda
+      // célula porque é o que separa esta leitura de uma comparação completa.
+      for (const [suf, nome] of CENARIOS_SUF) {
+        const ebitdaCen = g.ref(`CEN_EBITDA#${suf}`, ano);
+        g.set(`CEN_ND#${suf}`, ano,
+          `=IF(${ebitdaCen}<=0,"EBITDA<=0",${g.ref("DV_LIQ", ano)}/${ebitdaCen})`, {
+          fmt: MULT,
+          nota: `Dívida líquida do cenário ATIVO dividida pelo EBITDA do ${nome}. É PISO: no `
+            + "cenário pior o revolver saca mais e a dívida sobe, então o índice verdadeiro é maior "
+            + "que este.",
+        });
+        g.set(`CEN_ND#${suf}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(`CEN_ND#${suf}`, ano)})),"n.a.",`
+          + `IF(${g.ref(`CEN_ND#${suf}`, ano)}>${g.ref("C_ND_EBITDA", ano)},"ROMPE","ok"))`, {});
+        g.set(`CEN_DSCR#${suf}`, ano,
+          `=IF(${g.ref("DV_SERVICO", ano)}<=0,"sem serviço de dívida",${ebitdaCen}/${g.ref("DV_SERVICO", ano)})`, {
+          fmt: MULT,
+          nota: `Serviço da dívida do cenário ATIVO contra o EBITDA do ${nome}. É PISO da `
+            + "deterioração, pelo mesmo motivo do índice acima.",
+        });
+        g.set(`CEN_DSCR#${suf}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(`CEN_DSCR#${suf}`, ano)})),"n.a.",`
+          + `IF(${g.ref(`CEN_DSCR#${suf}`, ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
+      }
+
+      // O CHECK QUE PRENDE O BLOCO AO MODELO. A coluna do cenário ativo tem de
+      // reproduzir exatamente as linhas de RATIOS, e o `CHOOSE` é o que escolhe
+      // qual das três é a ativa. Sem este zero, o bloco poderia derivar do
+      // modelo em silêncio — os números continuariam plausíveis.
+      {
+        // O INTERRUPTOR DO `Output` NÃO É O `celulaCenario` DA GRADE. Nas outras
+        // abas o dial mora na coluna de nota, linha 1; aqui ele é a célula de
+        // input `$G$2`, que é a que o comitê gira. Usar o da grade fazia o CHOOSE
+        // ler célula vazia e devolver zero — o CHECK acusou na primeira execução.
+        const celCen = `$${colLetra(7)}$2`;
+        const escolhe = (ch: string) =>
+          `CHOOSE(${celCen},${CENARIOS_SUF.map(([su]) => g.ref(`${ch}#${su}`, ano)).join(",")})`;
+        g.set("CEN_CHECK_DIV", ano,
+          `=IF(OR(NOT(ISNUMBER(${escolhe("CEN_ND")})),NOT(ISNUMBER(${g.ref("R_ND_EBITDA", ano)}))),0,`
+          + `${escolhe("CEN_ND")}-${g.ref("R_ND_EBITDA", ano)})`
+          + `+IF(OR(NOT(ISNUMBER(${escolhe("CEN_DSCR")})),NOT(ISNUMBER(${g.ref("R_COBERTURA", ano)}))),0,`
+          + `${escolhe("CEN_DSCR")}-${g.ref("R_COBERTURA", ano)})`, {
+          fmt: NUM2,
+          nota: "Soma das duas distâncias entre a coluna do cenário ATIVO e as linhas de RATIOS. "
+            + "Zero por construção: os dois blocos leem a mesma dívida e o mesmo EBITDA. Índice "
+            + "que não é número (EBITDA negativo, sem serviço de dívida) entra como zero, porque "
+            + "comparar texto com número daria #VALUE! e esconderia o resto do CHECK.",
+        });
+      }
     }
 
     // BALANCE SHEET
@@ -4824,6 +5058,67 @@ function abaOutput(
     });
     g.set("DV_AMORT", ano, ext("ST Inv. & Debt", gDiv, "ESP_AMORT", ano), { fmt: NUM });
     g.set("DV_SERVICO", ano, `=${g.ref("DV_JUROS", ano)}+${g.ref("DV_AMORT", ano)}`, { fmt: NUM, negrito: true });
+    // ---- REPERFILAMENTO: antes × depois --------------------------------
+    //
+    // O "depois" é o serviço que o modelo já calcula (`DV_SERVICO`). O "antes"
+    // vem da sombra da aba de dívida, que roda o cronograma original com
+    // carência zero e prazo implícito. Os dois lados são das TRANCHES
+    // EXISTENTES: o revolver e as captações novas ficam fora dos dois, porque
+    // não é sobre eles que se negocia carência.
+    g.set("RP_ANTES", ano, ext("ST Inv. & Debt", gDiv, "SERVICO_ORIG", ano), {
+      fmt: NUM,
+      nota: "Amortização mais juros que as tranches existentes exigiriam no cronograma que veio do "
+        + "balanço: sem carência, no prazo implícito. Não se move quando alguém edita prazo ou "
+        + "carência — é o ponto de partida da negociação.",
+    });
+    // MAÇÃ COM MAÇÃ: os dois lados são as MESMAS tranches existentes. Usar o
+    // serviço total do modelo aqui misturaria revolver e captação nova de um
+    // lado só, e o alívio da negociação apareceria contaminado pelo que o
+    // revolver fez — que é outra conversa.
+    g.set("RP_DEPOIS", ano,
+      `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano).slice(1)}`
+      + `+ABS(${ext("ST Inv. & Debt", gDiv, "TOTAL_JUROS", ano).slice(1)})`, {
+      fmt: NUM,
+      nota: "Amortização mais juros das MESMAS tranches, com a carência e o prazo que estiverem na "
+        + "aba de dívida. Revolver e captações novas ficam fora dos dois lados: não é sobre eles "
+        + "que se negocia carência.",
+    });
+    g.set("RP_ALIVIO", ano, `=${g.ref("RP_ANTES", ano)}-${g.ref("RP_DEPOIS", ano)}`, {
+      fmt: NUM, negrito: true,
+      nota: "Quanto de caixa a negociação libera neste exercício. É PISO: o alívio real é maior, "
+        + "porque menos serviço significa menos revolver sacado e menos juros de revolver no ano "
+        + "seguinte, e esse efeito de segunda ordem não está no lado \"antes\".",
+    });
+    // O CONTRAFACTUAL, e ele é UM só. O DSCR de hoje é o do bloco de RATIOS,
+    // referenciado e não recalculado — recalcular criaria um segundo DSCR na
+    // mesma página, com o mesmo nome e outro número. O que este bloco
+    // acrescenta é o DSCR que existiria SEM a negociação: o serviço de hoje com
+    // o alívio de volta, tudo o mais igual.
+    g.set("RP_DSCR_SEM", ano,
+      `=IF((${g.ref("DV_SERVICO", ano)}+${g.ref("RP_ALIVIO", ano)})<=0,"sem serviço",`
+      + `${g.ref("EBITDA", ano)}/(${g.ref("DV_SERVICO", ano)}+${g.ref("RP_ALIVIO", ano)}))`, {
+      fmt: MULT,
+      nota: "O DSCR que o modelo teria se as tranches seguissem o cronograma original: o serviço "
+        + "de hoje com o alívio devolvido, mantido todo o resto. Tudo o mais igual é hipótese, e "
+        + "ela é conservadora — sem a negociação o caixa seria menor e o revolver, maior.",
+    });
+    g.set("RP_DSCR_COM", ano, `=${g.ref("R_COBERTURA", ano)}`, {
+      fmt: MULT, negrito: true,
+      nota: "É a MESMA linha do bloco de RATIOS, por referência. Recalcular aqui criaria um "
+        + "segundo DSCR na mesma página, com o mesmo nome e outro número.",
+    });
+    // O VEREDITO É A ÚNICA LINHA QUE O COMITÊ PRECISA LER DEPOIS DE NEGOCIAR.
+    // Ele não diz "melhorou": diz se atravessou o corte, que é a pergunta.
+    g.set("RP_VEREDITO", ano,
+      `=IF(OR(NOT(ISNUMBER(${g.ref("RP_DSCR_COM", ano)})),NOT(ISNUMBER(${g.ref("RP_DSCR_SEM", ano)}))),"n.a.",`
+      + `IF(${g.ref("RP_DSCR_COM", ano)}>=${g.ref("C_COBERTURA", ano)},`
+      + `IF(${g.ref("RP_DSCR_SEM", ano)}>=${g.ref("C_COBERTURA", ano)},"já cumpria","SIM — passou a cumprir"),`
+      + `"não basta"))`, {
+      nota: "Compara o DSCR depois da negociação com o corte de covenant. \"não basta\" significa "
+        + "que a carência ajudou e não foi suficiente: o caminho seguinte é prazo maior, haircut "
+        + "(a chave de efeito caixa na aba de dívida) ou dinheiro novo.",
+    });
+
     g.set("DV_TRIB", ano, temTrib ? ext("Tributos a Recolher", gTrib, "TOTAL", ano) : 0, {
       fmt: NUM,
       nota: temTrib
@@ -4882,8 +5177,79 @@ function abaOutput(
       fmt: MULT,
       nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez que depende de vender estoque.",
     });
+    // Liquidez IMEDIATA: só o caixa, sem contar com receber de ninguém. É a
+    // pergunta que o credor faz primeiro numa mesa de reestruturação — "quanto
+    // dá para pagar hoje" —, e ela não é a liquidez seca: esta ainda conta o
+    // recebível, que depende de o cliente pagar.
+    g.set("R_LIQ_IMED", ano,
+      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_CAIXA", ano)}/${g.ref("BS_PC", ano)},"PC=0")`, {
+      fmt: MULT,
+      nota: "Caixa e aplicações sobre o passivo circulante. Diferente da liquidez seca, que ainda "
+        + "conta o recebível: aqui não se conta com ninguém pagar.",
+    });
     g.set("R_ALAV_PL", ano,
       `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+
+    // ---- RETORNO E SOLVÊNCIA ----------------------------------------------
+    //
+    // PL NEGATIVO NÃO VIRA PORCENTAGEM. Empresa em reestruturação com patrimônio
+    // a descoberto produziria um ROE positivo enorme (prejuízo ÷ PL negativo), e
+    // esse número lido rápido diz o contrário do que acontece. Publicar "PL<=0"
+    // é a leitura honesta: o indicador não se aplica.
+    g.set("R_ROA", ano,
+      `=IF(${g.ref("BS_ATIVO", ano)}<=0,"sem ativo",${g.ref("LUCRO", ano)}/${g.ref("BS_ATIVO", ano)})`,
+      { fmt: PCT });
+    g.set("R_ROE", ano,
+      `=IF(${g.ref("BS_PL", ano)}<=0,"PL<=0",${g.ref("LUCRO", ano)}/${g.ref("BS_PL", ano)})`, {
+      fmt: PCT,
+      nota: "Com patrimônio líquido negativo o indicador não se aplica, e a célula diz isso: "
+        + "prejuízo dividido por PL negativo daria um retorno POSITIVO, que lido rápido afirma o "
+        + "contrário do que está acontecendo.",
+    });
+
+    // ALTMAN Z'' — quatro razões, e nenhuma inventada.
+    //
+    //   Z'' = 6,56·X1 + 3,26·X2 + 6,72·X3 + 1,05·X4
+    //   X1 = capital de giro ÷ ativo total      (AC − PC)
+    //   X2 = lucros retidos ÷ ativo total
+    //   X3 = EBIT ÷ ativo total
+    //   X4 = patrimônio líquido ÷ passivo total (valor CONTÁBIL, não de mercado)
+    //
+    // ZONAS: acima de 2,6 segura; entre 1,1 e 2,6 cinzenta; abaixo de 1,1
+    // aflição. Elas vêm do próprio Altman e entram como texto ao lado, porque um
+    // número sozinho obriga quem lê a saber os cortes de cabeça.
+    //
+    // X2 É O QUE PODE FALTAR, e aí o índice inteiro não sai. Lucros retidos é
+    // linha do patrimônio líquido, e nem todo documento a isola — quando o
+    // extrator não achou nenhuma e o modelo ainda não acumulou resultado, a
+    // célula publica "sem lucros retidos" em vez de tratar a ausência como zero.
+    // Zero em X2 não é neutro: ele derruba o Z'' em até 3,26 pontos e joga uma
+    // empresa saudável na zona de aflição.
+    {
+      const at = g.ref("BS_ATIVO", ano);
+      const x1 = `(${g.ref("BS_AC", ano)}-${g.ref("BS_PC", ano)})/${at}`;
+      const x2 = `${g.ref("bsd:PL_RETIDO", ano)}/${at}`;
+      const x3 = `${g.ref("EBIT", ano)}/${at}`;
+      const x4 = `${g.ref("BS_PL", ano)}/(${g.ref("BS_PC", ano)}+${g.ref("BS_PNC", ano)})`;
+      g.set("R_ALTMAN", ano,
+        `=IF(${at}<=0,"sem ativo",IF(NOT(ISNUMBER(${g.ref("bsd:PL_RETIDO", ano)})),"sem lucros retidos",`
+        + `IF((${g.ref("BS_PC", ano)}+${g.ref("BS_PNC", ano)})<=0,"sem passivo",`
+        + `6.56*(${x1})+3.26*(${x2})+6.72*(${x3})+1.05*(${x4}))))`, {
+        fmt: NUM2, negrito: true,
+        nota: "Altman Z\u2033, a versão para mercados emergentes e empresa de capital fechado: usa "
+          + "o valor CONTÁBIL do patrimônio (o Z original usa valor de mercado, que empresa "
+          + "fechada não tem) e não usa giro do ativo, para não penalizar quem não é indústria.\n\n"
+          + "Z'' = 6,56×(capital de giro/ativo) + 3,26×(lucros retidos/ativo) + "
+          + "6,72×(EBIT/ativo) + 1,05×(PL/passivo).",
+      });
+      g.set("T_ALTMAN", ano,
+        `=IF(NOT(ISNUMBER(${g.ref("R_ALTMAN", ano)})),"n.a.",`
+        + `IF(${g.ref("R_ALTMAN", ano)}>2.6,"segura",`
+        + `IF(${g.ref("R_ALTMAN", ano)}>=1.1,"cinzenta","AFLIÇÃO")))`, {
+        nota: "Cortes do próprio Altman para o Z'': acima de 2,6 zona segura, de 1,1 a 2,6 zona "
+          + "cinzenta, abaixo de 1,1 zona de aflição.",
+      });
+    }
 
     // CICLO DE CAIXA — dias, a partir dos espelhos do giro.
     //
