@@ -59,11 +59,13 @@ de infra entre o repositório e o sistema.
 
 **O que não está, e é o assunto deste mapa:**
 
-- **A fila de migrations ZEROU.** `0126`–`0133` foram aplicadas em 20/08 (confirmado pelo dono), e
-  com isso o único intervalo que restava entre "mergeado" e "no ar" fechou. Quem confere isso contra
-  o banco de verdade é `select * from fn_instalacao_conferir()`, não este arquivo — é para isso que
-  a `0131` existe. (A TELA `/instalacao` e o aviso no painel saíram do portal em 21/08, por decisão
-  do dono; o catálogo, as duas funções e a suíte ficaram inteiros no banco.)
+- **A fila de migrations zerou em 21/08, e o caminho até isso é a lição.** Este arquivo dizia que
+  ela já tinha zerado em 20/08; a sonda das 80 migrations mostrou que a **`0133`** havia ficado para
+  trás enquanto a `0134` e a `0135`, posteriores, entraram. Sem ela a checagem de balanço fechava por
+  construção e seção com buraco não abria pendência. O dono aplicou no mesmo dia e a conferência
+  fechou. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. (A TELA `/instalacao` e o aviso no painel saíram
+  do portal em 21/08, por decisão do dono; o catálogo, as duas funções e a suíte ficaram inteiros no
+  banco.)
 
 - **Ninguém rodou o book.** É o mesmo bloqueio de três sessões atrás, e a cada sessão ele fica mais
   caro: agora são **três checagens novas, um conserto de motor e três estágios inteiros** que nunca

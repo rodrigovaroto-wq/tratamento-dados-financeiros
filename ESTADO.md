@@ -16,7 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
-| **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `select * from fn_instalacao_conferir()` (`0131`), não este arquivo — a TELA `/instalacao` saiu do portal em 21/08 (ver "O PORTAL ENCOLHE") |
+| **Aplicadas no Supabase** | **as 80**, com a `0133` fechando a fila em 21/08 depois de a sonda achá-la faltando. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das 80 migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -222,6 +222,66 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## A `0133` QUE FALTOU, e a sonda que a achou (21/08, sessão 58)
+
+> **FECHADO no mesmo dia:** o dono aplicou a `0133` em 21/08, e as três conferências abaixo passaram
+> a responder `true`. O registro fica porque o método que a achou vale mais que o item, e porque a
+> forma do engano se repete: **três arquivos afirmavam, de memória, um estado do banco.**
+
+**O arquivo dizia "aplicadas até a `0133`" e estava errado — a `0133` era justamente a que não estava.**
+A `0134` e a `0135`, posteriores, estão aplicadas. Medido no banco de produção, não declarado de
+memória, e é a terceira vez que o mesmo tipo de engano aparece: quem responde sobre um banco é o
+banco.
+
+**O que a `0133` faz, e o que está acontecendo sem ela.** Ela é a correção do defeito que a nossa
+própria `0116` abriu. `fn_reconciliar_ativo_passivo_pl` prefere o TOTAL IMPRESSO e só soma a seção
+quando o total não existe; depois da `0116` os dois lados da checagem passaram a ser totais
+impressos, e **total impresso contra total impresso fecha por construção**. Hoje, no banco do dono:
+apagar metade das contas do Ativo Circulante não abre pendência nenhuma, `lote_integro` fica verde e
+a Modelagem recebe uma seção com buraco. Não parece erro, parece documento em ordem.
+
+**Como conferir e como resolver:**
+
+```sql
+select 'fn_conferir_arvore existe' as item,
+       exists (select 1 from pg_proc where proname = 'fn_conferir_arvore') as ok
+union all
+select 'fn_reconciliar_arvore abre a pendencia secao_fecha',
+       exists (select 1 from pg_proc p where p.proname = 'fn_reconciliar_arvore'
+                 and position('secao_fecha' in pg_get_functiondef(p.oid)) > 0);
+```
+
+Os dois falsos significam que ela nunca rodou; foi o que voltou em 21/08, junto com um terceiro
+(`fn_reconciliar_por_documento` não chamava a árvore), o que descartou aplicação pela metade. O
+conserto foi aplicar `db/migrations/0133_a_secao_que_nao_fecha.sql` e rodar a conferência de novo. **Ela é posterior à
+`0134`/`0135` na ordem de aplicação, e isso não é problema:** a `0133` só reescreve as três funções
+de reconciliação, que nenhuma das duas seguintes toca.
+
+**A SONDA DAS 80 MIGRATIONS.** O `fn_instalacao_conferir` (`0131`) responde por 13 requisitos
+escolhidos; esta pergunta era outra, "quais das 80 rodaram", e não tinha resposta. A sonda que a
+respondeu é uma consulta só de catálogo, montada com três cuidados que valem mais que ela:
+
+- **um objeto SOBREVIVENTE por migration**, conferido contra o `db/schema.sql`, senão objeto criado
+  numa migration e removido em outra acusaria falta falsa;
+- **17 migrations não criam nada**, só reescrevem função, e nessas a existência não prova coisa
+  alguma: a conferência é por um trecho de código que só a versão nova tem (`attisdropped` na sonda,
+  `secao_nao_fecha` na árvore, `sazonalidade_sem_curva` na modelagem);
+- **uma é honestamente inconferível** e sai como `n/d`: a `0006` recria funções que a `0004` e a
+  `0005` já criam, sem deixar marca própria.
+
+Testada nos dois sentidos: contra um banco com as 80 aplicadas do zero, tudo verde; e com tabela,
+coluna, função e marcador derrubados de propósito, as quatro linhas certas acusaram e nenhuma outra
+se mexeu.
+
+## A ABERTURA PASSA A APARECER (21/08, sessão 58)
+
+Ela existia e quase nunca tocava. A marca de "já vista" morava no `sessionStorage`, que **sobrevive
+ao recarregamento**: quem abriu o portal uma vez de manhã não a via mais no dia inteiro. Agora a
+marca mora na memória do módulo, que morre com a carga da página, e é comparada contra a **sessão do
+Supabase**. O resultado são três regras: abrir ou recarregar o portal toca; entrar de novo toca,
+porque a sessão muda de identidade no login; e voltar de um mandato para o painel **não** toca, que
+é a única exceção e a que impede a abertura de virar pedágio na tela mais usada da casa.
 
 ## O PORTAL ENCOLHE (21/08, sessão 57) — três telas saem, e o painel passa a falar com o analista
 

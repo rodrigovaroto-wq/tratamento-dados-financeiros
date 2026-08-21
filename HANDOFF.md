@@ -7,9 +7,11 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 **Última atualização:** 2026-08-21 (sessão 56). **Estado do `main`:** mergeado até o **PR #154**;
 a sessão 56 está no **PR #155**, aberto.
 
-**NADA DE INFRA ESTÁ ESPERANDO.** O dono aplicou as migrations **até a `0133`** e reimportou o
-`workflow.e1-ingestao.json`. As **`0134` e `0135` ainda não foram aplicadas** — quem responde isso
-contra o banco de verdade é a tela `/instalacao` (`0131`), não este arquivo.
+**NADA DE INFRA ESTÁ ESPERANDO, e desta vez foi medido.** A sonda das 80 migrations achou a `0133`
+faltando em 21/08 (a `0134` e a `0135`, posteriores, estavam lá), o dono aplicou no mesmo dia e a
+conferência fechou. O `workflow.e1-ingestao.json` foi reimportado. O que este parágrafo NÃO é: a
+autoridade sobre o estado do banco. Quem responde isso é a sonda, contra o banco de verdade, e é
+assim que o engano foi achado — ver "A `0133` QUE FALTOU" no `ESTADO.md`.
 
 **Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
 nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada — as sessões 52 a 56
