@@ -125,14 +125,30 @@ que ninguém consegue julgar depois.
   juntos). São a forma como este código é escrito, com comentário ao lado. Regra
   de estilo, não de correção.
 
-## O que só o dono pode fazer
+## Decisões do dono, tomadas em 21/08 — para ninguém reabrir
 
-1. **Decidir entre Análise Automática e análise no CI.** Hoje é automática. Ela
-   não faz cobertura de teste, não analisa branch que não seja a padrão, não
-   decora PR e não deixa escolher dialeto de SQL. Trocar exige criar um
-   `SONAR_TOKEN` em *My Account → Security*, guardá-lo em *Settings → Secrets and
-   variables → Actions* do repositório, e desligar a análise automática no projeto.
-2. **Definir um Quality Gate.** Hoje é `NONE`: o Sonar mede e não reprova nada. Com
-   1.700 achados fora de escopo, gate nenhum fazia sentido — depois que este
-   arquivo chegar à branch padrão, faz.
-3. **Merge deste arquivo para a branch padrão**, senão as exclusões não valem.
+**1. FICA NA ANÁLISE AUTOMÁTICA.** A alternativa era scanner no CI, que traria
+cobertura de teste, análise por branch, decoração de PR e escopo com curinga — ao
+custo de um `SONAR_TOKEN` como segredo do repositório e de desligar a automática.
+Decidido que não compensa agora. A limitação que sobra é não medir cobertura de
+teste, e ela pesa pouco aqui: as suítes deste repositório já são a medida de
+cobertura, com contadores que **reprovam quando caem** (`n8n 321 · export 650 ·
+transcrição 35 · premissas 32 · e2e 46`). O que o Sonar acrescenta é a classe de
+defeito que teste não pega — ternário morto, `sort()` sem comparador, dependência
+sem versão presa —, e isso a automática entrega.
+
+**2. QUALITY GATE FICA PARA DEPOIS DAS EXCLUSÕES.** Hoje é `NONE`: o Sonar mede e
+não reprova nada. Com 1.700 achados fora de escopo, gate nenhum era honesto — ele
+reprovaria por PL/SQL mal interpretado. Quando o `.sonarcloud.properties` chegar à
+branch padrão e a próxima análise rodar, aí vale definir, e **sobre código NOVO**,
+não sobre o acumulado: gate retroativo em repositório com histórico só ensina a
+ignorar o gate.
+
+## O que ainda depende do dono
+
+**Merge do `.sonarcloud.properties` para a branch padrão.** É o único passo que
+falta, e sem ele nada acima vale: a Análise Automática só lê esse arquivo na
+branch padrão. Depois do merge, a próxima análise deve cair de **3.091 para ~770**
+achados — e esse número é a conferência de que a exclusão pegou. Se continuar em
+3.000, a exclusão não foi aplicada e o motivo mais provável é sintaxe: sem
+curinga, caminho literal.
