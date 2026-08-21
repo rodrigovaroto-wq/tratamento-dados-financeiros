@@ -4689,6 +4689,65 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
   }
 
+  // ---- (0139) REPERFILAMENTO: a alavanca move o número, e diz o que não moveu
+  //
+  // O §2.6 do diagnóstico: o arquivo dizia DSCR 0,3 e não tinha alavanca nenhuma
+  // para responder "qual reestruturação resolve". A alavanca é a carência por
+  // tranche; este bloco mostra o que ela fez.
+  //
+  // O QUE ESTES ASSERTS PROTEGEM é a honestidade da comparação, não a existência
+  // dela: os dois lados têm de ser as MESMAS tranches, o lado "antes" não pode se
+  // mexer quando alguém edita a carência, e o DSCR de hoje tem de ser o mesmo
+  // número do bloco de RATIOS — senão a página passa a ter dois DSCR.
+  {
+    const i2026 = iAnoDe(2026);
+    const antes = valorNaAba("Output", "Serviço das tranches no cronograma original", i2026);
+    const depois = valorNaAba("Output", "Serviço das mesmas tranches como está negociado", i2026);
+    const alivio = valorNaAba("Output", "Alívio do exercício (antes − depois)", i2026);
+    checar(typeof antes === "number" && typeof depois === "number",
+      "(0139) o bloco publica os dois lados do reperfilamento",
+      `${String(antes)} / ${String(depois)}`);
+
+    // SEM CARÊNCIA NEGOCIADA, O ALÍVIO É ZERO. É o assert mais importante do
+    // grupo: um "antes" que não coincide com o "depois" no estado de partida
+    // significa que os dois lados não estão medindo as mesmas tranches, e o
+    // bloco publicaria um alívio que ninguém negociou.
+    if (typeof alivio === "number") {
+      checar(Math.abs(alivio) < 0.5,
+        "(0139) no estado de partida (carência zero) o alívio é ZERO: os dois lados são as mesmas tranches",
+        String(alivio));
+    }
+
+    // O DSCR DE HOJE É O MESMO NÚMERO DO BLOCO DE RATIOS, por referência. Se
+    // divergir, a página tem dois DSCR com o mesmo nome.
+    const dscrBloco = valorNaAba("Output", "DSCR de hoje (o do bloco de RATIOS)", i2026);
+    const dscrRatios = valorNaAba("Output", "EBITDA / Serviço da dívida (DSCR)", i2026);
+    if (typeof dscrBloco === "number" && typeof dscrRatios === "number") {
+      checar(Math.abs(dscrBloco - dscrRatios) < 1e-6,
+        "(0139) o DSCR do bloco é o MESMO do RATIOS, por referência e não por recálculo",
+        `${dscrBloco} vs ${dscrRatios}`);
+    }
+
+    // O VEREDITO responde a pergunta do comitê, e não "melhorou".
+    const veredito = valorNaAba("Output", "a negociação resolve o covenant?", i2026);
+    checar(["já cumpria", "SIM — passou a cumprir", "não basta", "n.a."].includes(String(veredito)),
+      "(0139) o veredito diz se ATRAVESSOU o corte, não se melhorou", String(veredito));
+
+    // A CARÊNCIA É EDITÁVEL, uma célula por tranche, na aba de dívida.
+    const rCar = linhaDoRotulo("ST Inv. & Debt", "carência (anos sem amortizar)");
+    checar(rCar !== null, "(0139) a carência existe como linha por tranche na aba de dívida");
+    if (rCar !== null) {
+      const wsDiv = wbMod.getWorksheet("ST Inv. & Debt")!;
+      const cel = wsDiv.getRow(rCar).getCell(wsDiv.getColumn(COLS_ANO[iAnoDe(2026)]).number);
+      const fill = cel.fill as { fgColor?: { argb?: string } } | undefined;
+      checar(cel.value === 0,
+        "(0139) …nascendo em ZERO, porque carência é negociação e não fato do balanço",
+        JSON.stringify(cel.value));
+      checar(fill?.fgColor?.argb != null,
+        "(0139) …e marcada como célula de entrada, para quem negocia saber onde digitar");
+    }
+  }
+
   // ---- (0105i) o revolver cobre o furo e o caixa nunca fica abaixo do mínimo
   {
     const desvios: string[] = [];
@@ -6463,7 +6522,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // que ela seja lida como comparação completa — um bloco que insinua o que não
   // faz é pior que um bloco ausente.
   {
-    const rND = linhaDe(out, "Net Debt / EBITDA",
+    const rND = linhaDe(out, "Net Debt / EBITDA por cenário",
       linhaDe(out, "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)"));
     checar(rND > 0, "(36) o bloco publica ND/EBITDA por cenário", String(rND));
     // Cada métrica tem 3 cenários × 2 linhas (valor e teste de rompimento).
@@ -6483,7 +6542,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         "(36) …e o índice do Stress é maior EM MÓDULO, porque o EBITDA dele é menor",
         `Stress ${ndStress.toFixed(2)}x vs Base ${ndBase.toFixed(2)}x`);
     }
-    const rDSCR = linhaDe(out, "EBITDA / Serviço da dívida (DSCR)",
+    const rDSCR = linhaDe(out, "DSCR por cenário",
       linhaDe(out, "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)"));
     const dscrBase = avaliarCelula(out, "G", rDSCR + 1);
     const dscrStress = avaliarCelula(out, "G", rDSCR + 5);

@@ -3128,11 +3128,19 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     const ch = chaveLinha("dv", l);
     g.linha(`${ch}#ini`, { rotulo: `${l.chave} — saldo de abertura`, fmt: NUM });
     g.linha(`${ch}#prazo`, { rotulo: "    prazo de amortização (anos)", fmt: NUM2 });
+    g.linha(`${ch}#carencia`, { rotulo: "    carência (anos sem amortizar)", fmt: NUM2 });
     g.linha(`${ch}#pct`, { rotulo: "    % amortizado no período (SAC)", fmt: PCT });
     g.linha(`${ch}#amort`, { rotulo: "    amortização do período", fmt: NUM });
     g.linha(`${ch}#fim`, { rotulo: "    saldo de fechamento", fmt: NUM });
     g.linha(`${ch}#taxa`, { rotulo: "    custo efetivo aplicado", fmt: PCT2 });
     g.linha(`${ch}#juros`, { rotulo: "    juros do período", fmt: NUM });
+    // A SOMBRA DO CRONOGRAMA ORIGINAL, que é o "antes" do reperfilamento. Ela
+    // roda com carência ZERO e com o prazo IMPLÍCITO no balanço — não com o que
+    // estiver digitado acima —, senão editar o prazo moveria os dois lados da
+    // comparação e o alívio apareceria como zero.
+    g.linha(`${ch}#ini0`, { rotulo: "    (antes) saldo de abertura", fmt: NUM });
+    g.linha(`${ch}#amort0`, { rotulo: "    (antes) amortização do período", fmt: NUM });
+    g.linha(`${ch}#juros0`, { rotulo: "    (antes) juros do período", fmt: NUM });
   }
   // `P29 CHAVE-DE-EFEITO-CAIXA` — o Modelo Base tem uma célula por tranche com
   // validação de lista "S,N" (`ST Inv. & Debt!D128`) que decide se a amortização
@@ -3173,6 +3181,13 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   g.linha("TOTAL_AMORT_CAIXA", { rotulo: "    da qual COM efeito caixa", fmt: NUM });
   g.linha("TOTAL_AMORT", { rotulo: "Amortização total do período", fmt: NUM });
   g.linha("TOTAL_JUROS", { rotulo: "Juros totais do período", fmt: NUM });
+  g.linha("SERVICO_ORIG", {
+    rotulo: "Serviço das tranches ANTES do reperfilamento (cronograma original)", fmt: NUM,
+    nota: "Amortização mais juros que as tranches existentes exigiriam no cronograma que veio do "
+      + "balanço: sem carência e no prazo implícito. É o \"antes\" do bloco de reperfilamento do "
+      + "Output, e não muda quando alguém edita prazo ou carência acima — se mudasse, os dois lados "
+      + "da comparação andariam juntos e o alívio sairia sempre zero.",
+  });
   g.pular();
 
   // ---- DÍVIDA NOVA POR SAFRA (`P14`) ---------------------------------------
@@ -3349,14 +3364,34 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       //
       // O `MIN(1;…)` é o cinto de segurança do prazo fracionário: com n = 0,5 a conta
       // daria 200% do saldo, e uma tranche amortizaria mais do que deve.
+      // A CARÊNCIA, e ela é a alavanca de reestruturação que faltava.
+      //
+      // Durante os anos de carência a tranche NÃO amortiza e continua rendendo
+      // juros — que é o que um alongamento negociado faz. Depois dela, o que
+      // sobrou se reparte no prazo que resta: é carência DENTRO do prazo, não
+      // além dele. Para empurrar o vencimento junto, o caminho é aumentar o
+      // prazo na célula acima, e as duas coisas se somam.
+      const refCarencia = g.ref(`${ch}#carencia`, g.anos[g.nHist], "$");
+      g.set(`${ch}#carencia`, ano, iProj === 0 ? 0 : `=${refCarencia}`, {
+        fmt: NUM2, fill: iProj === 0 ? FILL_INPUT : undefined,
+        nota: iProj === 0
+          ? "CARÊNCIA em anos: quantos exercícios esta tranche passa sem amortizar. Nasce em ZERO, "
+            + "porque carência é negociação e não fato do balanço. Durante a carência a dívida "
+            + "continua rendendo juros; depois dela o saldo se reparte no prazo que resta, então "
+            + "a parcela sobe. Para empurrar o vencimento junto, aumente também o prazo acima.\n\n"
+            + "O efeito no serviço da dívida aparece no bloco REPERFILAMENTO do Output, comparado "
+            + "com o cronograma original."
+          : "Mesma carência da primeira coluna projetada. Edite a célula azul de lá, não esta.",
+      });
       g.set(`${ch}#pct`, ano,
-        `=IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj})))`, {
+        `=IF(${iProj}<${g.ref(`${ch}#carencia`, ano)},0,`
+        + `IF(${g.ref(`${ch}#prazo`, ano)}-${iProj}<=0,0,MIN(1,1/(${g.ref(`${ch}#prazo`, ano)}-${iProj}))))`, {
         fmt: PCT,
-        nota: "Amortização LINEAR (SAC) até o vencimento: 1 ÷ (prazo − anos já decorridos). "
-          + "Dá parcela de principal constante e zera a tranche no vencimento. Depois do "
-          + "vencimento a célula devolve zero — não existe amortização negativa. Para um "
-          + "cronograma irregular (carência, balão), digite o percentual do ano por cima desta "
-          + "fórmula: o saldo e os juros seguem a célula.",
+        nota: "Amortização LINEAR (SAC) até o vencimento: 1 ÷ (prazo − anos já decorridos), e ZERO "
+          + "enquanto durar a carência. Dá parcela de principal constante e zera a tranche no "
+          + "vencimento. Depois do vencimento a célula devolve zero — não existe amortização "
+          + "negativa. Para um cronograma irregular (balão), digite o percentual do ano por cima "
+          + "desta fórmula: o saldo e os juros seguem a célula.",
       });
       g.set(`${ch}#amort`, ano, `=${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#pct`, ano)}`, { fmt: NUM });
       g.set(`${ch}#fim`, ano, `=${g.ref(`${ch}#ini`, ano)}-${g.ref(`${ch}#amort`, ano)}`, { fmt: NUM });
@@ -3364,6 +3399,22 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       // Juros sobre o saldo de ABERTURA — ver NOTA_CIRCULARIDADE.
       g.set(`${ch}#juros`, ano, `=-${g.ref(`${ch}#ini`, ano)}*${g.ref(`${ch}#taxa`, ano)}`,
         { fmt: NUM, nota: NOTA_CIRCULARIDADE });
+
+      // ---- A SOMBRA DO CRONOGRAMA ORIGINAL ("antes") ----------------------
+      //
+      // Mesma matemática, com dois números CONGELADOS: carência zero e o prazo
+      // implícito no balanço, escrito como literal. Referenciar as células
+      // editáveis faria os dois lados da comparação andarem juntos, e o alívio
+      // do reperfilamento sairia sempre zero — que é justamente o defeito que
+      // um bloco "antes × depois" precisa não ter.
+      const pct0 = prazoImplicito - iProj <= 0
+        ? 0
+        : Math.min(1, 1 / (prazoImplicito - iProj));
+      g.set(`${ch}#ini0`, ano,
+        iProj === 0 ? `=${g.ref(`${ch}#ini`, ano)}` : `=${g.ref(`${ch}#ini0`, ant!)}*${(1 - (prazoImplicito - (iProj - 1) <= 0 ? 0 : Math.min(1, 1 / (prazoImplicito - (iProj - 1))))).toFixed(6)}`,
+        { fmt: NUM, nota: "Saldo que esta tranche teria no cronograma original, sem carência." });
+      g.set(`${ch}#amort0`, ano, `=${g.ref(`${ch}#ini0`, ano)}*${pct0.toFixed(6)}`, { fmt: NUM });
+      g.set(`${ch}#juros0`, ano, `=-${g.ref(`${ch}#ini0`, ano)}*${g.ref(`${ch}#taxa`, ano)}`, { fmt: NUM });
     }
     // A dívida do exercício, com a origem decidida POR ANO (ver `anosSemMapa`).
     if (g.tem("DIV_BALANCO")) {
@@ -3389,6 +3440,13 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     }
     somaOuZero(g, "TOTAL_AMORT", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#amort", ano)));
     somaOuZero(g, "TOTAL_JUROS", ano, dividas.map((l) => g.ref(chaveLinha("dv", l) + "#juros", ano)));
+    // O SERVIÇO DO CRONOGRAMA ORIGINAL: amortização mais juros, em módulo, como
+    // a linha de serviço do Output. É o "antes" da comparação.
+    somaOuZero(g, "SERVICO_ORIG", ano,
+      dividas.flatMap((l) => [
+        g.ref(chaveLinha("dv", l) + "#amort0", ano),
+        `ABS(${g.ref(chaveLinha("dv", l) + "#juros0", ano)})`,
+      ]));
     somaOuZero(g, "TOTAL_AMORT_CAIXA", ano, dividas.map((l) => {
       const chAmort = chaveLinha("dv", l) + "#amort";
       const chave = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
@@ -4509,9 +4567,12 @@ function abaOutput(
   // que é a pergunta que o credor faz. O contrário não vale, e é isso que a nota
   // impede alguém de concluir.
   g.linha(null, { rotulo: "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)", bloco: true });
+  // OS RÓTULOS NÃO REPETEM OS DO BLOCO DE RATIOS, de propósito: dois rótulos
+  // idênticos na mesma aba fazem quem procura achar o primeiro e ler o outro. O
+  // teste tropeçou nisso antes do comitê.
   for (const [chave, rotulo, fmt] of [
-    ["CEN_ND", "Net Debt / EBITDA", MULT],
-    ["CEN_DSCR", "EBITDA / Serviço da dívida (DSCR)", MULT],
+    ["CEN_ND", "Net Debt / EBITDA por cenário", MULT],
+    ["CEN_DSCR", "DSCR por cenário", MULT],
   ] as const) {
     g.linha(null, { rotulo, negrito: true });
     for (const [suf, nome] of CENARIOS_SUF) {
@@ -4699,6 +4760,32 @@ function abaOutput(
   g.linha("R_ROE", { rotulo: "ROE — lucro líquido / patrimônio líquido", fmt: PCT });
   g.linha("R_ALTMAN", { rotulo: "Altman Z\u2033 (mercados emergentes)", negrito: true, fmt: NUM2 });
   g.linha("T_ALTMAN", { rotulo: "    zona" });
+  g.pular();
+
+  // ---- REPERFILAMENTO: a alavanca, e o que ela resolve ---------------------
+  //
+  // O §2.6 do diagnóstico: quando o Output diz DSCR 0,3 e ND/EBITDA 10,8x, a
+  // pergunta seguinte do mandato é QUAL REESTRUTURAÇÃO RESOLVE. O arquivo
+  // diagnosticava e não tinha alavanca nenhuma.
+  //
+  // A alavanca é a CARÊNCIA por tranche, na aba de dívida, ao lado do prazo que
+  // já era editável. Este bloco mostra o que ela fez: o serviço que o cronograma
+  // original exigia, o serviço depois do que foi negociado, e o alívio de cada
+  // exercício — com o DSCR nos dois lados, que é onde o alívio vira ou não vira
+  // covenant cumprido.
+  //
+  // O QUE ELE COMPARA, e está escrito na tela: as TRANCHES EXISTENTES. O efeito
+  // de segunda ordem — menos serviço, mais caixa, menos revolver, menos juros de
+  // revolver — não entra no "antes", porque o "antes" teria de ser um modelo
+  // inteiro rodando em paralelo. Isso torna o alívio publicado um PISO: o
+  // benefício real é maior.
+  g.linha(null, { rotulo: "REPERFILAMENTO — o que a carência negociada resolve", bloco: true });
+  g.linha("RP_ANTES", { rotulo: "Serviço das tranches no cronograma original", fmt: NUM });
+  g.linha("RP_DEPOIS", { rotulo: "Serviço das mesmas tranches como está negociado", fmt: NUM });
+  g.linha("RP_ALIVIO", { rotulo: "Alívio do exercício (antes − depois)", negrito: true, fmt: NUM });
+  g.linha("RP_DSCR_SEM", { rotulo: "DSCR que o cronograma original produziria", fmt: MULT });
+  g.linha("RP_DSCR_COM", { rotulo: "DSCR de hoje (o do bloco de RATIOS)", negrito: true, fmt: MULT });
+  g.linha("RP_VEREDITO", { rotulo: "    a negociação resolve o covenant?" });
   g.pular();
 
   // ---- CICLO DE CAIXA ------------------------------------------------------
@@ -4971,6 +5058,67 @@ function abaOutput(
     });
     g.set("DV_AMORT", ano, ext("ST Inv. & Debt", gDiv, "ESP_AMORT", ano), { fmt: NUM });
     g.set("DV_SERVICO", ano, `=${g.ref("DV_JUROS", ano)}+${g.ref("DV_AMORT", ano)}`, { fmt: NUM, negrito: true });
+    // ---- REPERFILAMENTO: antes × depois --------------------------------
+    //
+    // O "depois" é o serviço que o modelo já calcula (`DV_SERVICO`). O "antes"
+    // vem da sombra da aba de dívida, que roda o cronograma original com
+    // carência zero e prazo implícito. Os dois lados são das TRANCHES
+    // EXISTENTES: o revolver e as captações novas ficam fora dos dois, porque
+    // não é sobre eles que se negocia carência.
+    g.set("RP_ANTES", ano, ext("ST Inv. & Debt", gDiv, "SERVICO_ORIG", ano), {
+      fmt: NUM,
+      nota: "Amortização mais juros que as tranches existentes exigiriam no cronograma que veio do "
+        + "balanço: sem carência, no prazo implícito. Não se move quando alguém edita prazo ou "
+        + "carência — é o ponto de partida da negociação.",
+    });
+    // MAÇÃ COM MAÇÃ: os dois lados são as MESMAS tranches existentes. Usar o
+    // serviço total do modelo aqui misturaria revolver e captação nova de um
+    // lado só, e o alívio da negociação apareceria contaminado pelo que o
+    // revolver fez — que é outra conversa.
+    g.set("RP_DEPOIS", ano,
+      `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano).slice(1)}`
+      + `+ABS(${ext("ST Inv. & Debt", gDiv, "TOTAL_JUROS", ano).slice(1)})`, {
+      fmt: NUM,
+      nota: "Amortização mais juros das MESMAS tranches, com a carência e o prazo que estiverem na "
+        + "aba de dívida. Revolver e captações novas ficam fora dos dois lados: não é sobre eles "
+        + "que se negocia carência.",
+    });
+    g.set("RP_ALIVIO", ano, `=${g.ref("RP_ANTES", ano)}-${g.ref("RP_DEPOIS", ano)}`, {
+      fmt: NUM, negrito: true,
+      nota: "Quanto de caixa a negociação libera neste exercício. É PISO: o alívio real é maior, "
+        + "porque menos serviço significa menos revolver sacado e menos juros de revolver no ano "
+        + "seguinte, e esse efeito de segunda ordem não está no lado \"antes\".",
+    });
+    // O CONTRAFACTUAL, e ele é UM só. O DSCR de hoje é o do bloco de RATIOS,
+    // referenciado e não recalculado — recalcular criaria um segundo DSCR na
+    // mesma página, com o mesmo nome e outro número. O que este bloco
+    // acrescenta é o DSCR que existiria SEM a negociação: o serviço de hoje com
+    // o alívio de volta, tudo o mais igual.
+    g.set("RP_DSCR_SEM", ano,
+      `=IF((${g.ref("DV_SERVICO", ano)}+${g.ref("RP_ALIVIO", ano)})<=0,"sem serviço",`
+      + `${g.ref("EBITDA", ano)}/(${g.ref("DV_SERVICO", ano)}+${g.ref("RP_ALIVIO", ano)}))`, {
+      fmt: MULT,
+      nota: "O DSCR que o modelo teria se as tranches seguissem o cronograma original: o serviço "
+        + "de hoje com o alívio devolvido, mantido todo o resto. Tudo o mais igual é hipótese, e "
+        + "ela é conservadora — sem a negociação o caixa seria menor e o revolver, maior.",
+    });
+    g.set("RP_DSCR_COM", ano, `=${g.ref("R_COBERTURA", ano)}`, {
+      fmt: MULT, negrito: true,
+      nota: "É a MESMA linha do bloco de RATIOS, por referência. Recalcular aqui criaria um "
+        + "segundo DSCR na mesma página, com o mesmo nome e outro número.",
+    });
+    // O VEREDITO É A ÚNICA LINHA QUE O COMITÊ PRECISA LER DEPOIS DE NEGOCIAR.
+    // Ele não diz "melhorou": diz se atravessou o corte, que é a pergunta.
+    g.set("RP_VEREDITO", ano,
+      `=IF(OR(NOT(ISNUMBER(${g.ref("RP_DSCR_COM", ano)})),NOT(ISNUMBER(${g.ref("RP_DSCR_SEM", ano)}))),"n.a.",`
+      + `IF(${g.ref("RP_DSCR_COM", ano)}>=${g.ref("C_COBERTURA", ano)},`
+      + `IF(${g.ref("RP_DSCR_SEM", ano)}>=${g.ref("C_COBERTURA", ano)},"já cumpria","SIM — passou a cumprir"),`
+      + `"não basta"))`, {
+      nota: "Compara o DSCR depois da negociação com o corte de covenant. \"não basta\" significa "
+        + "que a carência ajudou e não foi suficiente: o caminho seguinte é prazo maior, haircut "
+        + "(a chave de efeito caixa na aba de dívida) ou dinheiro novo.",
+    });
+
     g.set("DV_TRIB", ano, temTrib ? ext("Tributos a Recolher", gTrib, "TOTAL", ano) : 0, {
       fmt: NUM,
       nota: temTrib
