@@ -361,6 +361,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/veredito_producao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes da promoção automática do dial (0137) — sobe sozinha, e o freio gruda"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/auto_promocao_dial.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes da sonda de instalação (0131) — o catálogo conferido contra a realidade"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/instalacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

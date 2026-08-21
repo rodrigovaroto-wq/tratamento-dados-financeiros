@@ -15,8 +15,8 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0136_veredito_de_producao.sql` |
-| **Aplicadas no Supabase** | **as 80**, com a `0133` fechando a fila em 21/08 depois de a sonda achá-la faltando. **A `0136` é nova e ainda NÃO foi aplicada.** Este arquivo não é a autoridade sobre isso: quem responde é a sonda das 80 migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
+| **Última migration** | `db/migrations/0137_a_promocao_automatica_do_dial.sql` |
+| **Aplicadas no Supabase** | **as 81**, com a `0133` e a `0136` aplicadas em 21/08. **A `0137` é nova e ainda NÃO foi aplicada.** Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -222,6 +222,50 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## O DIAL PASSA A SUBIR SOZINHO (21/08, sessão 59) — `0137`, e as quatro travas
+
+**Decisão do dono:** quando o veredito de produção alcançar o critério (30 vereditos, 95% de
+concordância), o estágio sobe sem ninguém chamar função nenhuma.
+
+**O que isso muda na doutrina, dito sem rodeio, porque quem ler daqui a um ano precisa saber que foi
+deliberado.** A `0126` pôs a regra de ouro dentro de `fn_mudar_dial` para impedir exatamente uma
+coisa: o sistema se autorizar a si mesmo. A `0136` abriu uma porta medida, mas ainda exigia mão
+humana para atravessá-la. **A `0137` tira a mão.** A partir daqui o sistema promove a si mesmo com
+base numa medida que ele próprio declara enviesada para cima.
+
+**Por que isso é aceitável, e é uma razão só:** o que a promoção automática alcança é **N2**, que é
+auto-clear de linha de alta confiança, e não N3. Em N2 todos os fechamentos fail-safe do `docs/01`
+continuam valendo: pendência abre, guarda dispara, o Portão 2 pede aceite humano onde a doutrina
+pede. O que muda é o volume de linha que passa sem toque, num estágio onde a máquina demonstrou 95%
+de acerto em 30 casos.
+
+### As quatro travas, e cada uma responde a uma forma conhecida de isto dar errado
+
+| | Trava | O que ela impede |
+|---|---|---|
+| 1 | **Para em N2, nunca N3** | Piso enviesado não sustenta autonomia plena. O topo continua sendo decisão humana explícita |
+| 2 | **O freio gruda** | Humano que BAIXA o nível desliga a automação daquele estágio na hora. Sem isto o freio duraria até o próximo veredito e a máquina desfaria a decisão de quem o puxou, que é o pior defeito possível num mecanismo de segurança: **ele parece funcionar** |
+| 3 | **Interruptor por estágio, em dado** | `estagio_autonomia.auto_promocao`. Desligar é um `update`, sem migration e sem deploy |
+| 4 | **Tudo na trilha** | Ator próprio (`sistema:auto_dial`) e a medição que autorizou anexada. Promoção que ninguém audita depois é indistinguível de promoção que não deveria ter acontecido |
+
+**A promoção passa pela própria `fn_mudar_dial`**, e não por `update` na tabela. É o que garante que
+a automação não escape de guarda nenhuma, e que guarda nova acrescentada lá passe a valer aqui sem
+ninguém lembrar de copiar.
+
+**O gatilho é `after insert on decisao`**, porque toda fonte de veredito da `0136` grava uma linha
+lá: revisão de documento, rejeição de pendência (`0106`) e override de classe contábil (`0128`). Um
+agendador precisaria de `pg_cron` e promoveria com até uma hora de atraso; o gatilho promove no
+instante em que a 30ª nota chega. **Ele jamais derruba a ação de quem o disparou:** erro dentro dele
+vira NOTICE, porque o analista não pode perder a rejeição de uma pendência por causa do dial.
+
+**Religar depois de um freio é explícito:**
+
+```sql
+update estagio_autonomia set auto_promocao = true where estagio = 'classificacao_doc_checklist';
+```
+
+Quem desconfiou é quem decide voltar a confiar.
 
 ## AS PREMISSAS PASSAM A SAIR DO REALIZADO (21/08, sessão 58)
 
