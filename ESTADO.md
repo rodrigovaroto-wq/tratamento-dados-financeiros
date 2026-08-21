@@ -298,6 +298,22 @@ anotado**, porque "temos backup" e "voltamos em 40 minutos" são afirmações di
 **binário** — qualquer autenticado vê todos os mandatos, aceitável com duas pessoas e não com a
 terceira.
 
+### E um portão que reprovava por RUÍDO — o `db/schema.sql` e o dono do DEFAULT ACL
+
+Achado pelo CI da própria sessão, e vale mais como lição do que como conserto. O `run.sh` filtra do
+`pg_dump` a versão do servidor e o token aleatório do `\restrict` — ruído que mudaria a cada
+execução — e conta com `--no-owner` para o resto. **`--no-owner` não cobre o DEFAULT ACL:**
+`ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega o nome do superusuário que aplicou as
+migrations. Num container que só tem `root`, o arquivo saía com `FOR ROLE root` contra o
+`FOR ROLE postgres` do CI: **schema idêntico, portão vermelho.**
+
+Normalizado para `postgres`, que é o nome verdadeiro no Supabase — então o arquivo publicado
+continua sendo o que produção tem. O GRANT em si (a `anon`/`authenticated`/`service_role`) **não** é
+tocado: é ele que carrega a informação, e é ele que este arquivo existe para denunciar. A regra é a
+que o próprio comentário do `run.sh` já defendia: **um portão que acusa sempre é um portão que se
+aprende a ignorar**, e o jeito de honrá-la é o portão medir o schema, não medir quem digitou o
+comando.
+
 ## AS DUAS TRAVAS DE FLUIDEZ, EXECUTADAS (20/08, sessão 55) — `0134` e a guarda do giro
 
 Ranqueadas por (impacto no output × fluidez do processo) ÷ esforço, e as duas de topo eram
