@@ -3652,9 +3652,22 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     `parâmetros na linha ${rParam + 1}`);
 }
 
-// ---- 49: projeção POR LINHA dirigida pela configuração do portal (7.4) ------
-// O coração do pedido: "cada caso vai vir com linhas diferentes… projetar cada
-// linha baseado em cada premissa".
+// ---- 49: a aba Modelagem REGISTRA a configuração e NÃO projeta (21/08) ------
+//
+// ESTE GRUPO MUDOU DE CONTRATO, e o que ele protege agora vale mais do que o que
+// protegia antes.
+//
+// Ele nasceu provando que a aba projetava cada linha pela premissa vinculada.
+// Só que as 14 abas do modelo institucional projetam AS MESMAS LINHAS, com base
+// contábil diferente: aqui todo percentual e todo prazo incidiam sobre a receita
+// TOTAL do caso; lá o fornecedor gira contra CUSTOS e o resto contra RECEITA
+// LÍQUIDA. Dois números para o mesmo fato, no mesmo arquivo de comitê.
+//
+// A aba passou a ser o REGISTRO da configuração. Os asserts travam as duas
+// metades disso: o que ela guarda (premissa por linha, valor por exercício,
+// último realizado, curva do caso) e — o mais importante — o que ela NÃO faz
+// mais. Sem o assert de ausência a projeção volta na primeira refatoração e
+// ninguém percebe, porque número em célula parece certo.
 {
   const V = "vProj";
   const campos: CampoExtraido[] = [
@@ -3705,74 +3718,67 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const rotulos: string[] = [];
   for (let r = 1; r <= mod.rowCount; r++) rotulos.push(String(mod.getRow(r).getCell(1).value ?? ""));
 
-  checar(rotulos.some((x) => x.startsWith("PROJEÇÃO POR LINHA")),
-    "(49) o bloco de projeção por linha existe quando há configuração");
+  checar(rotulos.some((x) => x.startsWith("A CONFIGURAÇÃO DE MODELAGEM")),
+    "(49) o bloco de configuração existe quando há configuração");
   const rRec = rotulos.indexOf("Receita de vendas") + 1;
   checar(rRec > 0, "(49) a linha configurada aparece pelo rótulo do documento");
 
-  // Crescimento composto: 1000 × 1,10 = 1100 no primeiro projetado, 1210 no
-  // segundo. É a conta que o analista faria à mão, e é a que o arquivo tem de
-  // fazer — em FÓRMULA, não em número colado.
-  // A geometria da aba é DECLARADA (coluna 1 = rótulo, 2 = unidade, e por ano 12
-  // meses + 1 consolidado), e é o que os invariantes do modelo já usam: "2 + nAnos
-  // × 13". Procurar a coluna pelo VALOR da linha do Exercício não funciona — ela é
-  // fórmula (cada janeiro deriva do anterior), então `.value` é o objeto da
-  // fórmula, não o ano.
   const primeiroAnoDaAba = 2025;  // único exercício com dado nesta fixture
   const colDe = (ano: number) => mod.getColumn(3 + (ano - primeiroAnoDaAba) * 13 + 12).letter;
+  const c2025 = colDe(2025);
   const c2026 = colDe(2026);
-  checar(c2026 !== "", "(49) a coluna consolidada de 2026 existe na timeline", c2026);
-  checar(Math.round(Number(avaliar(mod, c2026, rRec))) === 1100,
-    "(49) crescimento composto projeta 1000 × 1,10 = 1100",
-    String(avaliar(mod, c2026, rRec)));
   const c2027 = colDe(2027);
-  checar(Math.round(Number(avaliar(mod, c2027, rRec))) === 1210,
-    "(49) …e compõe no ano seguinte (1210)", String(avaliar(mod, c2027, rRec)));
+  checar(c2026 !== "", "(49) a coluna consolidada de 2026 existe na timeline", c2026);
 
-  // Valor por ano: a premissa É a linha.
-  const rCapex = rotulos.indexOf("Capex do plano") + 1;
-  checar(Math.round(Number(avaliar(mod, c2026, rCapex))) === 50,
-    "(49) valor por ano entra como o próprio valor da premissa",
-    String(avaliar(mod, c2026, rCapex)));
+  // ---- O QUE A ABA GUARDA --------------------------------------------------
 
-  // pct_de_linha (7.5): incide sobre a RECEITA TOTAL do caso, por decisão do dono.
-  // A receita projetada de 2026 é 1100, então 40% dela é 440.
-  const rBase = rotulos.findIndex((x) => x.startsWith("↳ Receita total do caso")) + 1;
-  checar(rBase > 0, "(49) a linha de RECEITA TOTAL (base dos percentuais) é explícita");
-  checar(Math.round(Number(avaliar(mod, c2026, rBase))) === 1100,
-    "(49) …e soma as linhas de receita (1100)", String(avaliar(mod, c2026, rBase)));
+  // O último realizado, na coluna do próprio exercício de corte. Sem ele o
+  // registro diria "premissa X vinculada" sem dizer a que número ela se aplica.
+  checar(Math.round(Number(mod.getRow(rRec).getCell(mod.getColumn(c2025).number).value)) === 1000,
+    "(49) o último realizado fica registrado na coluna do exercício de corte",
+    String(mod.getRow(rRec).getCell(mod.getColumn(c2025).number).value));
 
-  const rCusto = rotulos.indexOf("Custo dos produtos vendidos") + 1;
-  checar(Math.round(Number(avaliar(mod, c2026, rCusto))) === 440,
-    "(49) pct_de_linha aplica 40% sobre a receita total (440)",
-    String(avaliar(mod, c2026, rCusto)));
-  // A nota NOMEIA a base — é o que permite ao analista discordar quando a base
-  // certa não é a receita (depreciação % do imobilizado é o caso clássico).
-  checar(notaDaLinha(mod, rCusto).includes("RECEITA TOTAL"),
-    "(49) …e a nota nomeia a base usada, para o analista poder discordar",
-    notaDaLinha(mod, rCusto).slice(0, 90));
+  // A premissa continua sendo INPUT, com o valor de cada exercício: é a
+  // configuração propriamente dita, e é o que se audita sem abrir o portal.
+  const rPremCresc = rotulos.indexOf("↳ Crescimento real da receita") + 1;
+  checar(rPremCresc > 0, "(49) a premissa do caso tem linha própria");
+  checar(Math.abs(Number(mod.getRow(rPremCresc).getCell(mod.getColumn(c2026).number).value) - 0.1) < 1e-9,
+    "(49) …com o valor configurado para cada exercício",
+    String(mod.getRow(rPremCresc).getCell(mod.getColumn(c2026).number).value));
 
-  // dias_de_giro: receita × dias / 360 (ano comercial). 1100 × 45 / 360 = 137,5.
-  const rDup = rotulos.indexOf("Duplicatas a receber") + 1;
-  checar(Math.abs(Number(avaliar(mod, c2026, rDup)) - 137.5) < 0.01,
-    "(49) dias_de_giro usa a mesma base e o ano comercial de 360 dias (137,5)",
-    String(avaliar(mod, c2026, rDup)));
+  // A nota da linha diz ONDE o número projetado vive. Célula vazia sem
+  // explicação é lida como "o sistema não conseguiu", que é outra coisa.
+  checar(notaDaLinha(mod, rRec).includes("abas do modelo"),
+    "(49) a nota da linha aponta para onde a projeção vive",
+    notaDaLinha(mod, rRec).slice(0, 90));
 
-  // Primitiva que SEGUE não desenhada: célula VAZIA com nota, nunca um número
-  // inventado. Zero num modelo financeiro é um valor, e projeção errada com cara
-  // de pronta é pior do que célula vazia que diz por que está vazia.
-  const rUn = rotulos.indexOf("Receita por unidade") + 1;
-  const celUn = mod.getRow(rUn).getCell(mod.getColumn(c2026).number);
-  checar(celUn.value == null || celUn.value === "",
-    "(49) primitiva não desenhada deixa a célula VAZIA (nada de zero inventado)",
-    JSON.stringify(celUn.value));
-  checar(notaDaLinha(mod, rUn).includes("ainda não desenha"),
-    "(49) …e a nota diz que a fórmula ainda não é desenhada",
-    notaDaLinha(mod, rUn).slice(0, 120));
+  // ---- O QUE ELA NÃO FAZ MAIS, e é o assert que protege o invariante -------
 
-  // curva_mensal (7.5): a sazonalidade REPARTE o anual nos 12 meses, e a curva vem
-  // do histórico do caso. Aqui a curva concentra dezembro (20%), e o resto divide
-  // os 80% — é o que um varejo de verdade parece.
+  // NENHUMA célula de exercício PROJETADO tem número ou fórmula. Se este assert
+  // cair, o arquivo voltou a ter dois números para o mesmo fato.
+  const projetadasComValor: string[] = [];
+  for (const rot of ["Receita de vendas", "Custo dos produtos vendidos",
+                     "Duplicatas a receber", "Capex do plano"]) {
+    const rr = rotulos.indexOf(rot) + 1;
+    if (rr <= 0) continue;
+    for (const col of [c2026, c2027]) {
+      const cel = mod.getRow(rr).getCell(mod.getColumn(col).number);
+      if (cel.value != null && cel.value !== "") projetadasComValor.push(`${rot}@${col}`);
+    }
+  }
+  checar(projetadasComValor.length === 0,
+    "(49) NENHUMA linha do caso tem valor em exercício projetado: a aba não projeta",
+    projetadasComValor.join(" / "));
+
+  checar(!rotulos.some((x) => x.startsWith("↳ Receita total do caso")),
+    "(49) a linha de RECEITA TOTAL (base dos percentuais) não existe mais");
+
+  // ---- A CURVA DO CASO CONTINUA PUBLICADA, como fato -----------------------
+  //
+  // A distribuição mensal saiu com a projeção: ela repartia o valor projetado, e
+  // sem projeção não há o que repartir. A curva NÃO saiu, porque é derivada do
+  // faturamento que o cliente entregou — perder a curva junto seria perder
+  // informação do mandato por causa de um número que estava no lugar errado.
   {
     const curva = [0.05, 0.05, 0.07, 0.07, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.20];
     const wbSazo = buildExportWorkbook({
@@ -3784,8 +3790,6 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         premissas: [
           { codigo: "CRESC_REAL", nome: "Crescimento real da receita", formula: "crescimento_composto",
             unidade: "%", valores: { "2026": 0.1 } },
-          { codigo: "SAZONALIDADE", nome: "Sazonalidade mensal", formula: "curva_mensal",
-            unidade: "%", valores: {} },
         ],
         linhas: [
           { rotulo: "Receita de vendas", secaoCanonica: "receita_bruta",
@@ -3796,18 +3800,20 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const ms = wbSazo.getWorksheet("Modelagem")!;
     const rotS: string[] = [];
     for (let r = 1; r <= ms.rowCount; r++) rotS.push(String(ms.getRow(r).getCell(1).value ?? ""));
-    const rRecS = rotS.indexOf("Receita de vendas") + 1;
-    // Dezembro de 2026: coluna do 12º mês do ano y=1 → 3 + 1*13 + 11.
-    const colDez = ms.getColumn(3 + 1 * 13 + 11).letter;
-    checar(Math.round(Number(avaliar(ms, colDez, rRecS))) === 220,
-      "(49) a sazonalidade reparte o anual: dezembro fica com 20% de 1100 = 220",
-      String(avaliar(ms, colDez, rRecS)));
-    const colJan = ms.getColumn(3 + 1 * 13 + 0).letter;
-    checar(Math.round(Number(avaliar(ms, colJan, rRecS))) === 55,
-      "(49) …e janeiro com 5% (55) — não 1/12 uniforme",
-      String(avaliar(ms, colJan, rRecS)));
+    const rCurva = rotS.findIndex((x) => x.startsWith("↳ Curva de sazonalidade")) + 1;
+    checar(rCurva > 0, "(49) a curva de sazonalidade do caso é publicada como linha própria");
+    if (rCurva > 0) {
+      const doze: number[] = [];
+      for (let m = 0; m < 12; m++) doze.push(Number(ms.getRow(rCurva).getCell(3 + m).value));
+      checar(Math.abs(doze.reduce((a, b) => a + b, 0) - 1) < 1e-9,
+        "(49) …e os doze meses dela somam 1", doze.join(" "));
+      checar(Math.abs(doze[11] - 0.2) < 1e-9,
+        "(49) …com dezembro concentrando 20%, que é o fato do caso e não 1/12",
+        String(doze[11]));
+    }
 
-    // Sem curva, a linha fica só no anual e a nota diz por quê.
+    // Sem curva no caso, a linha não aparece: ausência de dado não vira curva
+    // uniforme inventada.
     const wbSemCurva = buildExportWorkbook({
       caso: { nome: "C", produto: "rx" }, documentos, campos,
       agora: new Date("2026-07-27T12:00:00Z"),
@@ -3816,8 +3822,6 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         premissas: [
           { codigo: "CRESC_REAL", nome: "Crescimento real da receita", formula: "crescimento_composto",
             unidade: "%", valores: { "2026": 0.1 } },
-          { codigo: "SAZONALIDADE", nome: "Sazonalidade mensal", formula: "curva_mensal",
-            unidade: "%", valores: {} },
         ],
         linhas: [
           { rotulo: "Receita de vendas", secaoCanonica: "receita_bruta",
@@ -3828,14 +3832,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const msc = wbSemCurva.getWorksheet("Modelagem")!;
     const rotSC: string[] = [];
     for (let r = 1; r <= msc.rowCount; r++) rotSC.push(String(msc.getRow(r).getCell(1).value ?? ""));
-    const rRecSC = rotSC.indexOf("Receita de vendas") + 1;
-    const celJanSC = msc.getRow(rRecSC).getCell(3 + 1 * 13 + 0);
-    checar(celJanSC.value == null || celJanSC.value === "",
-      "(49) sem curva no caso, os meses ficam VAZIOS (nada de 1/12 inventado)",
-      JSON.stringify(celJanSC.value));
-    checar(notaDaLinha(msc, rRecSC).includes("dezembro para março"),
-      "(49) …e a nota explica o custo do rateio uniforme",
-      notaDaLinha(msc, rRecSC).slice(0, 100));
+    checar(!rotSC.some((x) => x.startsWith("↳ Curva de sazonalidade")),
+      "(49) sem faturamento mensal no caso, curva nenhuma é publicada");
   }
 
   // Sem configuração, o arquivo continua saindo como antes: o esqueleto agregado
@@ -3847,8 +3845,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const modSem = semConfig.getWorksheet("Modelagem")!;
   const rotSem: string[] = [];
   for (let r = 1; r <= modSem.rowCount; r++) rotSem.push(String(modSem.getRow(r).getCell(1).value ?? ""));
-  checar(!rotSem.some((x) => x.startsWith("PROJEÇÃO POR LINHA")),
-    "(49) sem configuração, não há bloco por linha — o esqueleto agregado é o fallback");
+  checar(!rotSem.some((x) => x.startsWith("A CONFIGURAÇÃO DE MODELAGEM")),
+    "(49) sem configuração, não há bloco de registro — o esqueleto agregado é o fallback");
   checar(rotSem.some((x) => x.startsWith("PARÂMETROS DO MODELO")),
     "(49) …e o bloco de parâmetros continua existindo de todo jeito");
 }
