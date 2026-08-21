@@ -804,6 +804,28 @@ const PADROES_DIVIDA_FINANCEIRA = [
 export const ehDividaFinanceira = (chave: string) =>
   PADROES_DIVIDA_FINANCEIRA.some((re) => re.test(chave));
 
+// AS TRÊS CONTAS DO CICLO DE CAIXA, isoladas por nome.
+//
+// Elas moravam dentro da aba `Working Capital` como filtros locais. Subiram para
+// cá quando a tela de Modelagem passou a sugerir premissa a partir do realizado
+// (`premissas-do-realizado.ts`): as duas precisam responder "o que é cliente,
+// estoque e fornecedor" com a MESMA lista, senão o dia sugerido na tela não é o
+// dia que o modelo aplica, e a diferença aparece como saldo que não reproduz o
+// balanço de onde saiu.
+export const ehCliente = (chave: string) =>
+  /\bclientes?\b/i.test(chave) || /\bcontas? a receber\b/i.test(chave)
+  || /\bduplicatas? a receber\b/i.test(chave)
+  || /\bt(í|i)tulos? a receber\b/i.test(chave) || /\btitulos? a receber\b/i.test(chave);
+
+export const ehEstoque = (chave: string) =>
+  /\bestoque/i.test(chave) || /\bmercadoria/i.test(chave)
+  || /\bprodutos? (acabados?|em (elabora|processo))/i.test(chave)
+  || /\bmat(é|e)ria.prima/i.test(chave);
+
+export const ehFornecedor = (chave: string) =>
+  /\bfornecedor/i.test(chave) || /\bcontas? a pagar\b/i.test(chave)
+  || /\bduplicatas? a pagar\b/i.test(chave);
+
 
 // -----------------------------------------------------------------------------
 // A CONVENÇÃO DE SINAL DO MODELO, e por que ela precisa ser imposta na fronteira.
@@ -2519,15 +2541,12 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // O estoque é giro (fica aqui), mas é identificado à parte porque a LIQUIDEZ
   // SECA do Output precisa dele: num mandato de reestruturação o estoque é o
   // ativo circulante que menos vira caixa.
-  const estoques = ativos.filter((l) => /\bestoque/i.test(l.chave) || /\bmercadoria/i.test(l.chave)
-    || /\bprodutos? (acabados?|em (elabora|processo))/i.test(l.chave) || /\bmat(é|e)ria.prima/i.test(l.chave));
+  const estoques = ativos.filter((l) => ehEstoque(l.chave));
   // CLIENTES, pela mesma razão e para o mesmo destino: o CICLO DE CAIXA do
   // `Output` precisa do recebível isolado. `f0/08` lista PMR/PME/PMP como
   // faseados "até a extração isolar as linhas-conceito" — e o giro já as isola
   // aqui para aplicar dias, então o que faltava era publicar o espelho.
-  const clientes = ativos.filter((l) => /\bclientes?\b/i.test(l.chave)
-    || /\bcontas? a receber\b/i.test(l.chave) || /\bduplicatas? a receber\b/i.test(l.chave)
-    || /\btítulos? a receber\b/i.test(l.chave) || /\btitulos? a receber\b/i.test(l.chave));
+  const clientes = ativos.filter((l) => ehCliente(l.chave));
   // A dívida bancária de curto prazo também não é giro: ela vive no
   // `ST Inv. & Debt`. Deixá-la aqui faria o passivo operacional carregar dívida,
   // e a NCG passaria a "melhorar" quando a empresa se endivida mais.
@@ -2640,8 +2659,6 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // Aqui a base é a MESMA nas duas pontas, e é a base contábil correta de cada
   // conta: fornecedor gira contra CUSTO (é o PMP de manual), o resto gira contra
   // RECEITA LÍQUIDA.
-  const ehFornecedor = (chave: string) =>
-    /\bfornecedor/i.test(chave) || /\bcontas? a pagar\b/i.test(chave) || /\bduplicatas? a pagar\b/i.test(chave);
   const baseDe = (pref: "wc_a" | "wc_p", l: LinhaModelo, ano: number) =>
     pref === "wc_p" && ehFornecedor(l.chave) ? g.ref("BASE_COGS", ano) : g.ref("NET_REV", ano);
   const nomeBase = (pref: "wc_a" | "wc_p", l: LinhaModelo) =>

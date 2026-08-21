@@ -172,7 +172,16 @@ redescobri-los.
 
 ---
 
-## 6. B3 — A autonomia sem rotulagem manual: a contradição que ficou aberta
+## 6. B3 — ~~A autonomia sem rotulagem manual~~ · **DECIDIDO em 21/08: saída B** (`0136`)
+
+> **A decisão está escrita em `docs/01_DOUTRINA_DE_AUTONOMIA.md`**, na seção "Como se mede a
+> concordância quando não há rotulagem", que é o critério de pronto deste bloco. Em uma linha: o
+> veredito que o trabalho normal já produz passa a contar, com `base_do_nivel = 'medida_por_veredito'`,
+> declarado como PISO enviesado — quem julga na revisão vê o palpite da máquina antes de decidir. A
+> rotulagem cega continua sendo o caminho para o número que sustenta o dial para fora da casa, e a
+> saída C fica guardada para esse dia. O texto abaixo é o diagnóstico que levou à decisão.
+
+### O diagnóstico, preservado
 
 **Esta é a única pendência estrutural do projeto, e ela não é um bug — é uma decisão que ficou pela
 metade.**
@@ -215,10 +224,12 @@ A `0127` foi escrita exatamente para impedir isso, e dois níveis declarados era
 chegou. Se a saída A for a escolhida, ela precisa ser **escrita**, senão daqui a três sessões alguém
 vai propor afrouxar `fn_mudar_dial` para destravar algo — e vai parecer razoável.
 
-### Critério de pronto
+### Critério de pronto · **ATENDIDO em 21/08**
 
-Uma seção nova em `docs/01_DOUTRINA_DE_AUTONOMIA.md` dizendo qual saída foi tomada e por quê. Se for
-B ou C, mais a migration que implementa o portão correspondente e a suíte que o trava.
+Uma seção nova em `docs/01_DOUTRINA_DE_AUTONOMIA.md` dizendo qual saída foi tomada e por quê, mais a
+migration que implementa o portão e a suíte que o trava. Entregue: a seção "Como se mede a
+concordância quando não há rotulagem", a `0136` e `db/test/veredito_producao.test.sql`, cujo assert
+central é que o veredito de produção **nunca** vira `base_do_nivel = 'medida'`.
 
 ---
 
@@ -272,11 +283,11 @@ que o primeiro comitê vai fazer.
 
 | | Defeito | Estado |
 |---|---|---|
-| a | **`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor".** O critério da `0101` é `valores is null or valores = '{}'`, e sazonalidade guarda os fatores em outro lugar | **suspeita, NÃO reconferida** desde a sessão 39. Custo de conferir: 10 minutos |
+| a | ~~**`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor".**~~ | **FECHADO pela `0134`** (sessão 55): premissa de `curva_mensal` deixou de contar como sem valor, porque a curva é derivada do documento mensal e não digitada. O caso ruim de verdade ganhou nome próprio, `sazonalidade_sem_curva`, que informa e não bloqueia |
 | b | **Linha que sozinha passa do teto de saída** — sem corte mais fino possível | anotado; nenhum documento do book cai nesse caso |
 | c | **Rateio de despesa intragrupo que não deixa saldo no balanço** — não há espelho para conferir | limite conhecido da `0124`, sem solução barata |
 | d | **Mútuo com sócio** — o par é o contrato com o quotista, que ninguém cruza hoje | limite conhecido da `0123` |
-| e | **"Sugerir do realizado"** — oito premissas saem do próprio balanço/DRE do caso, com `origem = 'historico'`, que o schema da `0038` já prevê | proposta, nunca feita |
+| e | ~~**"Sugerir do realizado"**~~ | **FEITO em 21/08.** As oito saem do próprio balanço e DRE do caso, gravadas com `origem = 'historico'`. `portal/src/lib/premissas-do-realizado.ts`, 25 asserts em `verificar-premissas-do-realizado.mts`, no CI. Duas regras sustentam: **zero não é resposta** (sem a conta, sai o motivo e não um número) e **a base de cada razão é a que o modelo aplica ao projetar** — fornecedor contra custos, o resto contra receita líquida —, senão o dia sugerido não reproduz o saldo de onde saiu |
 
 ---
 

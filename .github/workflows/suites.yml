@@ -209,6 +209,15 @@ jobs:
         # que muda de lugar em UMA das duas metades do formato.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 
+      - name: Suíte das premissas sugeridas do realizado
+        # A tela de Modelagem sugere oito premissas lidas do próprio balanço e da
+        # própria DRE do caso, e o analista aceita com um clique — a partir daí
+        # aquele número dirige a projeção inteira. Um erro aqui não tem sintoma:
+        # produz um modelo que parece calibrado pelo histórico e não é. A suíte
+        # trava as duas regras que sustentam isso: zero não é resposta, e a base de
+        # cada razão é a MESMA que o modelo aplica ao projetar.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
+
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: db/test/run.sh
