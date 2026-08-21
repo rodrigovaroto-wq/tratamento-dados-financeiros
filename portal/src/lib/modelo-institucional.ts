@@ -830,6 +830,24 @@ export const ehFornecedor = (chave: string) =>
 // lista fechada pelo mesmo motivo dos outros: `reserva de capital` e `ajuste de
 // avaliação patrimonial` também são PL e NÃO são lucro retido — somá-los infla o
 // índice justamente na empresa que capitalizou para cobrir prejuízo.
+// DESPESA FINANCEIRA, dentro do resultado financeiro. Existe porque a taxa média
+// da dívida se mede com o que a dívida CUSTA, e o bloco `resultado_financeiro`
+// traz as duas pontas: o juro pago e o rendimento da aplicação. Somar as duas em
+// módulo — que é o que a magnitude faz — INFLA a taxa implícita pelo rendimento,
+// e o número volta como premissa de custo de dívida.
+//
+// Lista fechada pela mesma razão dos outros classificadores desta seção, e o
+// sinal NÃO serve de critério: o documento publica despesa ora positiva, ora
+// negativa, conforme a convenção de quem o emitiu.
+export const ehDespesaFinanceira = (chave: string) =>
+  /\bdespesas? financeiras?\b/i.test(chave)
+  || /\bjuros\b/i.test(chave)
+  || /\bencargos? financeiros?\b/i.test(chave)
+  || /\bvaria(ç|c)(ã|a)o cambial passiva\b/i.test(chave)
+  || /\b(iof|cpmf)\b/i.test(chave)
+  || /\bdescontos? concedidos?\b/i.test(chave)
+  || /\bcomiss(õ|o)es? e taxas? banc(á|a)rias?\b/i.test(chave);
+
 export const ehLucrosRetidos = (chave: string) =>
   /\blucros? (ou preju(í|i)zos? )?acumulados?\b/i.test(chave)
   || /\bpreju(í|i)zos? acumulados?\b/i.test(chave)
@@ -5075,13 +5093,26 @@ function abaOutput(
     // serviço total do modelo aqui misturaria revolver e captação nova de um
     // lado só, e o alívio da negociação apareceria contaminado pelo que o
     // revolver fez — que é outra conversa.
+    //
+    // E O "DEPOIS" É AMORTIZAÇÃO DE CAIXA (`TOTAL_AMORT_CAIXA`), NÃO A BRUTA.
+    // Este bloco mede caixa liberado, e a chave "Efeito caixa? = N" da aba de
+    // dívida existe exatamente para dizer que aquela tranche cai SEM pagamento —
+    // haircut, capitalização, conversão em equity. Com a amortização bruta aqui,
+    // o haircut movia o `DV_SERVICO` (que lê `ESP_AMORT`, e essa já é de caixa) e
+    // NÃO movia este lado: o alívio saía ZERO para a alavanca que o próprio
+    // veredito abaixo manda usar, e o contrafactual `RP_DSCR_SEM` — que soma o
+    // alívio de volta ao serviço — andava sozinho. Medido: com uma chave virada
+    // para "N", o serviço caía de 55.150 para 52.917 e o alívio continuava em
+    // zero. As duas pontas passam a ler a mesma base, e o contrafactual fica
+    // parado quando se puxa a alavanca, que é o que ele tem de fazer.
     g.set("RP_DEPOIS", ano,
-      `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano).slice(1)}`
+      `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT_CAIXA", ano).slice(1)}`
       + `+ABS(${ext("ST Inv. & Debt", gDiv, "TOTAL_JUROS", ano).slice(1)})`, {
       fmt: NUM,
-      nota: "Amortização mais juros das MESMAS tranches, com a carência e o prazo que estiverem na "
-        + "aba de dívida. Revolver e captações novas ficam fora dos dois lados: não é sobre eles "
-        + "que se negocia carência.",
+      nota: "Amortização COM EFEITO CAIXA mais juros das MESMAS tranches, com a carência e o prazo "
+        + "que estiverem na aba de dívida. Tranche marcada \"Efeito caixa? = N\" sai daqui — ela "
+        + "reduz o saldo sem pagamento, e este bloco mede caixa. Revolver e captações novas ficam "
+        + "fora dos dois lados: não é sobre eles que se negocia carência.",
     });
     g.set("RP_ALIVIO", ano, `=${g.ref("RP_ANTES", ano)}-${g.ref("RP_DEPOIS", ano)}`, {
       fmt: NUM, negrito: true,
@@ -5159,8 +5190,20 @@ function abaOutput(
       + `IF(${g.ref("R_COBERTURA", ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
     g.set("R_JUROS", ano,
       `=IF(${g.ref("DV_JUROS", ano)}<=0,"sem juros",${g.ref("EBITDA", ano)}/${g.ref("DV_JUROS", ano)})`, { fmt: MULT });
+    // ZERO NÃO É "SEM PASSIVO CIRCULANTE", e a diferença acendia um covenant que
+    // não existe. Com PC = 0 esta célula devolvia o NÚMERO 0, e `T_LIQ_CORR`
+    // testa `ISNUMBER` para decidir se o teste se aplica: zero é número, então o
+    // teste rodava, comparava 0 < corte e publicava "ROMPE". A empresa com a
+    // MELHOR liquidez possível — nada a pagar no curto prazo — era reportada ao
+    // comitê como quebrando o covenant de liquidez. A célula passa a devolver
+    // texto, como `R_LIQ_IMED` já fazia ao lado, e aí o teste diz "n.a.".
     g.set("R_LIQ_CORR", ano,
-      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_AC", ano)}/${g.ref("BS_PC", ano)},0)`, { fmt: MULT });
+      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_AC", ano)}/${g.ref("BS_PC", ano)},"PC=0")`, {
+      fmt: MULT,
+      nota: "Ativo circulante sobre passivo circulante. Sem passivo circulante a razão não existe e "
+        + "a célula diz isso: publicar zero faria o teste de covenant ao lado ler 0 < corte e "
+        + "acusar rompimento justamente na empresa que não deve nada no curto prazo.",
+    });
     g.set("C_LIQ_CORR", ano, COVENANT_LIQUIDEZ, {
       fmt: MULT, fill: FILL_INPUT,
       nota: `Corte sugerido de liquidez corrente (${COVENANT_LIQUIDEZ}x). Premissa de negociação.`,
@@ -5173,9 +5216,11 @@ function abaOutput(
     // liquidez se conseguir vender tudo".
     g.set("R_LIQ_SECA", ano,
       `=IF(${g.ref("BS_PC", ano)}<>0,(${g.ref("BS_AC", ano)}-${g.externa("Working Capital", gWC, "ESP_ESTOQUE", ano)})`
-      + `/${g.ref("BS_PC", ano)},0)`, {
+      + `/${g.ref("BS_PC", ano)},"PC=0")`, {
       fmt: MULT,
-      nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez que depende de vender estoque.",
+      nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez "
+        + "que depende de vender estoque. Sem passivo circulante a razão não existe, e a célula diz "
+        + "isso em vez de publicar zero — zero aqui se lê como a PIOR liquidez e é a melhor.",
     });
     // Liquidez IMEDIATA: só o caixa, sem contar com receber de ninguém. É a
     // pergunta que o credor faz primeiro numa mesa de reestruturação — "quanto
@@ -5187,8 +5232,19 @@ function abaOutput(
       nota: "Caixa e aplicações sobre o passivo circulante. Diferente da liquidez seca, que ainda "
         + "conta o recebível: aqui não se conta com ninguém pagar.",
     });
+    // A GUARDA DIZIA "PL<=0" E TESTAVA "<>0" — e com patrimônio a descoberto ela
+    // publicava um múltiplo NEGATIVO. Medido na própria fixture: PL de −632.191
+    // saía como alavancagem de −1,03x, que lido rápido diz "quase sem dívida" e
+    // significa o oposto — o patrimônio foi consumido inteiro. É a mesma
+    // armadilha que o `R_ROE` logo abaixo já evita com a guarda certa, e que o
+    // `R_ND_EBITDA` evita para EBITDA negativo. O rótulo passa a ser verdade.
     g.set("R_ALAV_PL", ano,
-      `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+      `=IF(${g.ref("BS_PL", ano)}<=0,"PL<=0",${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)})`, {
+      fmt: MULT,
+      nota: "Dívida bruta sobre patrimônio líquido. Com PL zero ou negativo a razão não se aplica: "
+        + "dívida dividida por patrimônio negativo dá múltiplo NEGATIVO, que parece alavancagem "
+        + "baixa e é patrimônio a descoberto.",
+    });
 
     // ---- RETORNO E SOLVÊNCIA ----------------------------------------------
     //

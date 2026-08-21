@@ -193,6 +193,63 @@ console.log("8. o caso vazio não inventa nada");
      "e todas as oito dizem por que não saíram");
 }
 
+console.log("9. PREJUÍZO ANTES DOS TRIBUTOS não vira alíquota negativa");
+{
+  // Este é o caso NORMAL do produto, não a exceção: mandato de reestruturação é
+  // empresa que perde dinheiro. Custos 900 + SG&A 250 contra receita líquida 1.000
+  // dão LAIR = 1.000 − 900 − 250 − 50 = −200, e a empresa ainda recolhe 40 de
+  // tributo (adição de indedutível, lucro presumido, IRPJ de exercício anterior).
+  //
+  // A conta 40 ÷ (−200) = −20% entrava como PREMISSA de alíquota efetiva. Aplicada
+  // à projeção, alíquota negativa faz o fisco PAGAR a empresa sobre o lucro
+  // futuro — o modelo inventa caixa na direção que lisonjeia o caso.
+  const comPrejuizo: LinhaRealizada[] = [
+    conta("receita_bruta", "Receita bruta de vendas", 1200),
+    conta("receita_bruta", "Deduções da receita bruta", 200),
+    conta("custos", "Custo dos produtos vendidos", 900),
+    conta("despesas_operacionais", "Despesas administrativas", 250),
+    conta("resultado_financeiro", "Despesas financeiras", -50),
+    conta("impostos_lucro", "IRPJ e CSLL", 40),
+    conta("passivo_circulante", "Empréstimos e financiamentos", 400),
+    conta("passivo_circulante", "Salários a pagar", 600),
+  ];
+  const s = sugerirDoRealizado(comPrejuizo);
+  const a = achar(s, "ALIQUOTA");
+  ok(a.valor === null, "com LAIR negativo a alíquota NÃO sai", String(a.valor));
+  ok(a.porQueNao !== null && a.porQueNao.includes("NEGATIVO"),
+     "e o motivo nomeia o prejuízo, em vez de devolver −20%", String(a.porQueNao));
+  // O CONTRAPONTO É OBRIGATÓRIO: sem ele, `valor = null` sempre passaria.
+  ok(achar(s, "CUSTO_VARIAVEL").valor !== null,
+     "as demais premissas do mesmo caso continuam saindo — a recusa é da alíquota, não do caso");
+}
+
+console.log("10. RECEITA financeira não infla a taxa da dívida");
+{
+  // O bloco `resultado_financeiro` tem as DUAS pontas. Somando em magnitude,
+  // 50 de despesa + 30 de rendimento davam 80 ÷ 400 = 20% onde a dívida custa
+  // 50 ÷ 400 = 12,5%. Sete pontos e meio de custo de dívida, entrando no modelo
+  // como premissa a partir de dinheiro que a empresa GANHOU.
+  const comRendimento: LinhaRealizada[] = [
+    ...casoCompleto,
+    conta("resultado_financeiro", "Receitas financeiras sobre aplicações", 30),
+  ];
+  const s = sugerirDoRealizado(comRendimento);
+  const t = achar(s, "TAXA_DIVIDA");
+  ok(perto(t.valor, 0.125),
+     "a taxa continua 12,5% — só a DESPESA financeira entra no numerador", String(t.valor));
+  ok(!perto(t.valor, 0.2), "e NÃO os 20% que a soma em módulo das duas pontas dava");
+  ok(t.conta.includes("despesa financeira"),
+     "e a conta publicada declara que o numerador é despesa", t.conta);
+  // Sem NENHUMA linha de despesa financeira, zero não é resposta: sai o motivo.
+  const semDespesa = sugerirDoRealizado([
+    ...casoCompleto.filter((l) => l.chave !== "Despesas financeiras"),
+    conta("resultado_financeiro", "Receitas financeiras sobre aplicações", 30),
+  ]);
+  ok(achar(semDespesa, "TAXA_DIVIDA").valor === null,
+     "e um caso que só tem RECEITA financeira não devolve taxa nenhuma",
+     String(achar(semDespesa, "TAXA_DIVIDA").valor));
+}
+
 console.log(`\n${passou} asserts passaram, ${falhas} falharam`);
 if (falhas > 0) process.exit(1);
 console.log("PREMISSAS DO REALIZADO OK — zero não é resposta, a base é a do modelo, subtotal não soma");
