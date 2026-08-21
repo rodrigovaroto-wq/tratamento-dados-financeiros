@@ -721,7 +721,7 @@ divergência entre o **mapa de dívida** (43.542 de curto prazo) e o **balanço*
 decidiu: **o mapa manda** e o balanço é reconciliado. O arquivo declara a diferença em vez de
 escondê-la.
 
-## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, um defeito aberto
+## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, e o terceiro achado que já estava corrigido
 
 **Decisão do dono, registrada:** quando o **mapa de dívida** e o **balanço** discordam, o **mapa
 manda** e o balanço é reconciliado. É o desenho que já estava em vigor; agora está escrito.
@@ -767,37 +767,64 @@ casos nas duas, exigindo resultado idêntico. Não compara texto — comparar fo
 em branco e convidaria a "consertar" formatando. Compara COMPORTAMENTO. Religamento medido:
 estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
 
-### O DEFEITO QUE FICA ABERTO, com reprodução exata e sem correção especulativa
+### ~~O DEFEITO QUE FICA ABERTO~~ — **FECHADO na mesma sessão, e esta entrada mentiu por dois dias**
 
-**Uma conta legítima de 9.200 some do modelo institucional.** No balanço da Vertentes Metalúrgica
-(2025), o bloco `ativo_circulante` do modelo tem **16 linhas somando 36.240** enquanto as folhas do
-documento são **17 somando exatamente 45.440** — o informado. A que falta é
-**"Matérias-primas e insumos" (9.200)**, e ela é conta, não subtotal.
+> **Esta seção dava um defeito por aberto depois de ele ter sido corrigido**, e ficou assim de 20/08
+> a 21/08. A causa não é descuido: a varredura escreveu o achado ANTES da passada que o consertou, na
+> mesma sessão 55, e ninguém voltou para reconciliar as duas seções do mesmo arquivo. É exatamente a
+> forma de erro contra a qual o `docs/MAPA_DE_EXECUCAO.md` avisa — *"a lista de pendências do
+> `ESTADO.md` já disse uma vez que o Modo A não existia depois de ele existir"*. O texto original
+> fica abaixo, riscado, porque a hipótese que ele registra é a parte que ensina.
 
-| | soma |
+**O que era:** uma conta legítima de 9.200 sumia do modelo institucional. No balanço da Vertentes
+Metalúrgica (2025), o bloco `ativo_circulante` tinha **16 linhas somando 36.240** enquanto as folhas
+do documento são **17 somando 45.440** — o informado. A que faltava era **"Matérias-primas e insumos"
+(9.200)**, e ela é conta, não subtotal.
+
+**Onde foi corrigido:** commit `dbc5eec`, "Os dois defeitos que se mascaravam, e o ativo circulante
+passa a fechar em ZERO" — o defeito (a) daquele par. O religamento é o assert **(38)** do
+`verificar-export.mts`, que olha o RESULTADO (resíduo zero) e não cada causa, porque os dois defeitos
+se cancelavam parcialmente.
+
+**Conferido de novo em 21/08, contra o código de hoje** (`566810e`), e não pela leitura do commit:
+
+| Medição | Resultado |
 |---|---|
-| folhas do documento (árvore por `secao`) | **45.440** = informado |
-| bloco do modelo | **36.240** |
-| diferença | **9.200** = "Matérias-primas e insumos" |
+| suíte de export | **638 / 638**, zero falhas |
+| resíduo da "reconciliação com o ativo circulante informado" (`Balance Sheet`) | **0,00 nas sete colunas** |
+| "Matérias-primas e insumos" nas linhas que chegam ao modelo | presente, `papel=conta`, `secao=ativo_circulante`, **9.200 em 2025** e 12.400 em 2024 |
+| `rotulosDeSubtotalInformado` na chamada REAL do export | **35 rótulos**, e "materias primas e insumos" **não é um deles** |
 
-**Onde está, e onde eu parei:** o descarte é `ehSubtotalEstrutural` (`modelo-institucional.ts:951`),
-que consulta `subtotaisEstruturais` — um conjunto com chave `(secao_canonica, rótulo)`. Conferi os
-dois detectores que o alimentam e **nenhum explica a marcação**: em `detectarSubtotaisPorOrdem` os
-seguintes de 9.200 dão 9.500 / 10.280 / 7.930, e em `detectarSubtotaisInformados` (B) os irmãos somam
-7.930 — nenhum bate com 9.200 dentro da tolerância.
+> **E a medição acima derrubou um segundo receio, que eu levantei nesta conferência e não se
+> sustentou.** Uma primeira sonda deu o conjunto de subtotais VAZIO, o que sugeriria que a regra de
+> acordo entre colunas tinha matado junto a detecção estrutural (A) — a que pega "Estoques", "Contas
+> a Receber" e os outros cabeçalhos de grupo. Estava medindo o lugar errado: o vazio era do
+> `entradaModeloDaFixture` (o construtor da fixture do script), e não da chamada de
+> `rotulosDeSubtotalInformado` dentro do `buildExportWorkbook`, que é a que o modelo de fato recebe.
+> Instrumentada a chamada real, ela devolve **35 rótulos** e os cabeçalhos de grupo estão todos lá.
+> A claim que o comentário do código fazia — *"não enfraquece o cabeçalho de grupo de verdade"* —
+> passa de afirmação a número. **Sonda no lugar errado responde com confiança sobre outra coisa**, e
+> é a versão barata do mesmo erro que a `0133` cobrou caro.
 
-**A hipótese que sobra, e que NÃO confirmei:** `rotulosDeSubtotalInformado` detecta sobre a ABA
-INTEIRA de propósito (o comentário dela explica por quê), e o veredito é gravado por
-`(secao_canonica, rótulo)` — não por documento. Se for isso, uma coincidência aritmética no balanço de
-OUTRA empresa do grupo apaga a conta desta. O book tem 6 empresas × 3 exercícios, então há 17 outras
-chances de coincidência.
+### E a hipótese anotada estava errada no mecanismo — é o que vale guardar
 
-> **Por que não corrigi:** este caminho decide quais contas entram no arquivo que vai a comitê, e a
-> chave grosseira pode ser deliberada (o comentário defende explicitamente detectar sobre a aba
-> inteira, para a aba analítica e o modelo darem o MESMO veredito). Estreitar a chave para incluir o
-> documento muda esse contrato. Mexer sem fechar a causa trocaria um defeito medido por um risco não
-> medido — e o resíduo de reconciliação já declara a diferença hoje, então o arquivo não mente: ele
-> mostra a conta faltando na linha de reconciliação em vez de escondê-la.
+A nota original apostava que a chave grosseira vazava pelo **documento**: *"uma coincidência
+aritmética no balanço de OUTRA empresa do grupo apaga a conta desta"*, e concluía que corrigir exigia
+estreitar a chave para incluir o documento — mexendo no contrato que o comentário de
+`rotulosDeSubtotalInformado` defende (detectar sobre a aba inteira, para a aba analítica e o modelo
+darem o MESMO veredito).
+
+A dimensão que faltava na chave não era o documento: era a **coluna**. `detectarSubtotaisPorOrdem`
+marcou o rótulo na coluna de **2024** (12.400), onde as linhas seguintes somavam por coincidência o
+valor dele; o veredito era gravado como `(secao_canonica, rótulo)`, sem coluna, e por isso apagava a
+conta em 2025 — e, de quebra, nas outras empresas. A correção **não estreitou a chave**: passou a
+exigir **acordo entre colunas** (subtotal numa coluna só não basta), que é o que
+`detectarSubtotaisInformados` (B) já fazia. O contrato que a nota temia quebrar ficou inteiro.
+
+> **A lição, que é a mesma de sempre neste repositório:** a hipótese acertou a FAMÍLIA da causa
+> (chave grosseira demais) e errou a DIMENSÃO — e a correção que ela propunha teria mexido no
+> contrato errado. Foi medir que separou as duas coisas. O que a nota fez de certo, e por isso ela
+> valeu a pena existir, foi **não corrigir sem fechar a causa**.
 
 ### Limpeza: o que saiu, e por que tenho certeza
 
