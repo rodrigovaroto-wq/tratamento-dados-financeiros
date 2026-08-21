@@ -6456,19 +6456,67 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(36) NEGATIVO: com o haircut zerado, o Stress é o Base também em número", `${st} vs ${b}`);
   }
 
-  // ---- A LINHA QUE DIZ O QUE FICOU FORA, e ela não é decoração: um bloco que
-  // omitisse ND/EBITDA sem dizer que os omite deixaria quem lê supondo que a
-  // comparação é completa.
+  // ---- OS DOIS COVENANTS POR CENÁRIO, e a linha que diz o que eles NÃO são.
+  //
+  // Eles entraram como SENSIBILIDADE: o EBITDA varia com o cenário, a dívida é a
+  // do cenário ativo. É leitura de PISO, e a linha de rodapé existe para impedir
+  // que ela seja lida como comparação completa — um bloco que insinua o que não
+  // faz é pior que um bloco ausente.
+  {
+    const rND = linhaDe(out, "Net Debt / EBITDA",
+      linhaDe(out, "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)"));
+    checar(rND > 0, "(36) o bloco publica ND/EBITDA por cenário", String(rND));
+    // Cada métrica tem 3 cenários × 2 linhas (valor e teste de rompimento).
+    const ndBase = avaliarCelula(out, "G", rND + 1);
+    const ndStress = avaliarCelula(out, "G", rND + 5);
+    checar(typeof ndBase === "number" && typeof ndStress === "number",
+      "(36) …com número nos três cenários", `${String(ndBase)} / ${String(ndStress)}`);
+    if (typeof ndBase === "number" && typeof ndStress === "number") {
+      // Mesma dívida, EBITDA menor: o índice do Stress é MAIOR EM MÓDULO.
+      //
+      // Em módulo, e não em valor, porque a dívida líquida pode ser NEGATIVA —
+      // caixa maior que dívida, que é o caso desta fixture. Aí o índice é
+      // negativo e "pior" significa mais distante de zero, não maior. Escrever
+      // `>` puro fazia o assert cobrar o contrário justamente na empresa sem
+      // dívida líquida, e foi o que ele acusou na primeira execução.
+      checar(Math.abs(ndStress) > Math.abs(ndBase),
+        "(36) …e o índice do Stress é maior EM MÓDULO, porque o EBITDA dele é menor",
+        `Stress ${ndStress.toFixed(2)}x vs Base ${ndBase.toFixed(2)}x`);
+    }
+    const rDSCR = linhaDe(out, "EBITDA / Serviço da dívida (DSCR)",
+      linhaDe(out, "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)"));
+    const dscrBase = avaliarCelula(out, "G", rDSCR + 1);
+    const dscrStress = avaliarCelula(out, "G", rDSCR + 5);
+    if (typeof dscrBase === "number" && typeof dscrStress === "number") {
+      checar(dscrStress < dscrBase,
+        "(36) o DSCR do Stress é MENOR que o do Base, pelo mesmo motivo",
+        `Stress ${dscrStress.toFixed(2)}x vs Base ${dscrBase.toFixed(2)}x`);
+    }
+
+    // O CHECK que prende o bloco ao modelo: a coluna do cenário ativo tem de
+    // reproduzir as linhas de RATIOS. Sem este zero o bloco poderia derivar em
+    // silêncio, com números que continuariam plausíveis.
+    const rChk = linhaDe(out, "CHECK: a coluna do cenário ATIVO bate com os índices acima (0 = bate)");
+    checar(rChk > 0, "(36) o bloco tem CHECK contra as linhas de RATIOS", String(rChk));
+    if (rChk > 0) {
+      const v = avaliarCelula(out, "G", rChk);
+      checar(typeof v === "number" && Math.abs(v) < 0.005,
+        "(36) …e ele fecha em zero: a sensibilidade do cenário ativo é o próprio modelo",
+        String(v));
+    }
+  }
+
   const rFora = (() => {
     for (let r = 1; r <= out.rowCount; r++) {
-      if (/Fora deste bloco/.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
+      if (/segura a DÍVIDA do cenário ativo/.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
     }
     return -1;
   })();
-  checar(rFora > 0, "(36) o bloco DIZ o que ficou fora dele");
+  checar(rFora > 0, "(36) o bloco DIZ o que ele não é");
   const txtFora = String(out.getRow(rFora).getCell(3).value ?? "");
-  checar(/ND\/EBITDA/.test(txtFora) && /DSCR/.test(txtFora) && /pico de caixa/.test(txtFora),
-    "(36) …nomeando as três métricas que exigiriam replicar dívida e fluxo de caixa", txtFora.slice(0, 120));
+  checar(/PISO/.test(txtFora) && /pico de caixa/.test(txtFora),
+    "(36) …declarando que a leitura é um piso e nomeando o que continua fora",
+    txtFora.slice(0, 140));
 
   // ---- E O EBITDA DA ABA DE RECEITA DEIXOU DE SER UMA LINHA VAZIA.
   //

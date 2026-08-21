@@ -4491,10 +4491,45 @@ function abaOutput(
       g.linha(`${chave}#${suf}`, { rotulo: `        ${nome}`, fmt });
     }
   }
+
+  // ---- OS DOIS ÍNDICES QUE O CREDOR OLHA, POR CENÁRIO ----------------------
+  //
+  // ELES SÃO SENSIBILIDADE, NÃO COMPARAÇÃO COMPLETA, e a diferença está escrita
+  // na tela porque ela muda o que o número autoriza concluir.
+  //
+  // O que varia entre as três colunas é o EBITDA, que vem da cascata paralela. O
+  // que NÃO varia é a dívida: os três leem a dívida líquida e o serviço do
+  // cenário ATIVO. Replicar a dívida por cenário exigiria três cascatas de
+  // amortização e três fluxos de caixa dentro do arquivo, porque o revolver saca
+  // conforme o caixa — e é justamente no cenário pior que ele saca mais.
+  //
+  // POR QUE ISSO AINDA VALE: a leitura é um PISO da deterioração. No cenário
+  // conservador a dívida também sobe, então o ND/EBITDA verdadeiro é PIOR que o
+  // publicado e o DSCR verdadeiro é MENOR. Logo "rompe aqui" implica "rompe lá",
+  // que é a pergunta que o credor faz. O contrário não vale, e é isso que a nota
+  // impede alguém de concluir.
+  g.linha(null, { rotulo: "Sensibilidade dos covenants ao cenário (dívida do cenário ativo)", bloco: true });
+  for (const [chave, rotulo, fmt] of [
+    ["CEN_ND", "Net Debt / EBITDA", MULT],
+    ["CEN_DSCR", "EBITDA / Serviço da dívida (DSCR)", MULT],
+  ] as const) {
+    g.linha(null, { rotulo, negrito: true });
+    for (const [suf, nome] of CENARIOS_SUF) {
+      g.linha(`${chave}#${suf}`, { rotulo: `        ${nome}`, fmt });
+      g.linha(`${chave}#${suf}#t`, { rotulo: "            rompe?" });
+    }
+  }
+  g.linha("CEN_CHECK_DIV", {
+    rotulo: "    CHECK: a coluna do cenário ATIVO bate com os índices acima (0 = bate)", fmt: NUM2,
+    nota: "Distância entre a sensibilidade do cenário ativo e as linhas de ND/EBITDA e DSCR do "
+      + "bloco de RATIOS. Zero por construção: as duas leem a mesma dívida e o mesmo EBITDA. "
+      + "Diferente de zero significa que este bloco deixou de descrever o modelo ao lado.",
+  });
   const rCenFora = g.linha("CEN_FORA", {
-    rotulo: "    Fora deste bloco, e por quê: ND/EBITDA, DSCR e pico de caixa. Eles exigiriam "
-      + "replicar a cascata de dívida e o fluxo de caixa por cenário — três modelos paralelos "
-      + "dentro do arquivo. Para compará-los, gire o interruptor e leia o SUMMARY acima.",
+    rotulo: "    A sensibilidade acima segura a DÍVIDA do cenário ativo e move só o EBITDA, então "
+      + "ela é um PISO: no cenário pior o revolver saca mais, a dívida sobe, e o índice verdadeiro "
+      + "é pior que o publicado. \"Rompe aqui\" implica \"rompe lá\"; o contrário não vale. O pico "
+      + "de caixa por cenário continua fora — ele exigiria três fluxos de caixa dentro do arquivo.",
   });
   g.celula(rCenFora, COL_ROTULO).font = fonte({ italic: true, size: 9 });
   g.celula(rCenFora, COL_ROTULO).alignment = { wrapText: true };
@@ -4812,6 +4847,57 @@ function abaOutput(
           + "código. Diferente de zero significa que alguém separou as duas, e aí este bloco "
           + "deixou de descrever o modelo ao lado.",
       });
+
+      // A SENSIBILIDADE DOS DOIS COVENANTS. O EBITDA é o do cenário; a dívida
+      // líquida e o serviço são os do cenário ATIVO, e a nota diz isso em toda
+      // célula porque é o que separa esta leitura de uma comparação completa.
+      for (const [suf, nome] of CENARIOS_SUF) {
+        const ebitdaCen = g.ref(`CEN_EBITDA#${suf}`, ano);
+        g.set(`CEN_ND#${suf}`, ano,
+          `=IF(${ebitdaCen}<=0,"EBITDA<=0",${g.ref("DV_LIQ", ano)}/${ebitdaCen})`, {
+          fmt: MULT,
+          nota: `Dívida líquida do cenário ATIVO dividida pelo EBITDA do ${nome}. É PISO: no `
+            + "cenário pior o revolver saca mais e a dívida sobe, então o índice verdadeiro é maior "
+            + "que este.",
+        });
+        g.set(`CEN_ND#${suf}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(`CEN_ND#${suf}`, ano)})),"n.a.",`
+          + `IF(${g.ref(`CEN_ND#${suf}`, ano)}>${g.ref("C_ND_EBITDA", ano)},"ROMPE","ok"))`, {});
+        g.set(`CEN_DSCR#${suf}`, ano,
+          `=IF(${g.ref("DV_SERVICO", ano)}<=0,"sem serviço de dívida",${ebitdaCen}/${g.ref("DV_SERVICO", ano)})`, {
+          fmt: MULT,
+          nota: `Serviço da dívida do cenário ATIVO contra o EBITDA do ${nome}. É PISO da `
+            + "deterioração, pelo mesmo motivo do índice acima.",
+        });
+        g.set(`CEN_DSCR#${suf}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(`CEN_DSCR#${suf}`, ano)})),"n.a.",`
+          + `IF(${g.ref(`CEN_DSCR#${suf}`, ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
+      }
+
+      // O CHECK QUE PRENDE O BLOCO AO MODELO. A coluna do cenário ativo tem de
+      // reproduzir exatamente as linhas de RATIOS, e o `CHOOSE` é o que escolhe
+      // qual das três é a ativa. Sem este zero, o bloco poderia derivar do
+      // modelo em silêncio — os números continuariam plausíveis.
+      {
+        // O INTERRUPTOR DO `Output` NÃO É O `celulaCenario` DA GRADE. Nas outras
+        // abas o dial mora na coluna de nota, linha 1; aqui ele é a célula de
+        // input `$G$2`, que é a que o comitê gira. Usar o da grade fazia o CHOOSE
+        // ler célula vazia e devolver zero — o CHECK acusou na primeira execução.
+        const celCen = `$${colLetra(7)}$2`;
+        const escolhe = (ch: string) =>
+          `CHOOSE(${celCen},${CENARIOS_SUF.map(([su]) => g.ref(`${ch}#${su}`, ano)).join(",")})`;
+        g.set("CEN_CHECK_DIV", ano,
+          `=IF(OR(NOT(ISNUMBER(${escolhe("CEN_ND")})),NOT(ISNUMBER(${g.ref("R_ND_EBITDA", ano)}))),0,`
+          + `${escolhe("CEN_ND")}-${g.ref("R_ND_EBITDA", ano)})`
+          + `+IF(OR(NOT(ISNUMBER(${escolhe("CEN_DSCR")})),NOT(ISNUMBER(${g.ref("R_COBERTURA", ano)}))),0,`
+          + `${escolhe("CEN_DSCR")}-${g.ref("R_COBERTURA", ano)})`, {
+          fmt: NUM2,
+          nota: "Soma das duas distâncias entre a coluna do cenário ATIVO e as linhas de RATIOS. "
+            + "Zero por construção: os dois blocos leem a mesma dívida e o mesmo EBITDA. Índice "
+            + "que não é número (EBITDA negativo, sem serviço de dívida) entra como zero, porque "
+            + "comparar texto com número daria #VALUE! e esconderia o resto do CHECK.",
+        });
+      }
     }
 
     // BALANCE SHEET
