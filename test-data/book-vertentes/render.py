@@ -492,7 +492,6 @@ def pdf_balancete(bp, arquivo):
 # ------------------------------------------------------------------ NOTAS ---
 def pdf_notas(tot, arquivo):
     t25, t24 = tot[2025]["metalurgica"], tot[2024]["metalurgica"]
-    c25 = M.combinado(*M.construir(), 2025) if False else None
     d = doc(arquivo)
     el = cabecalho(D.GRUPO, None, "NOTAS EXPLICATIVAS ÀS DEMONSTRAÇÕES CONTÁBEIS",
                    "Exercício encerrado em 31 de dezembro de 2025", "")

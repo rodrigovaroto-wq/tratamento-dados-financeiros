@@ -843,7 +843,6 @@ export function construirAbaModelagem(
   const refEntidade = `$C$${LINHA_PARAM_INICIO + 1}`;
   const refCorte = `$C$${LINHA_PARAM_INICIO + 2}`;
   let linhaAno = 3;
-  let linhaData = 4;
 
   sheet.getColumn(1).width = 52;
   sheet.getColumn(2).width = 11;
@@ -897,7 +896,11 @@ export function construirAbaModelagem(
   let escreverMacroLocal: () => void = () => {};
   // Idem para o seletor de índice macro: a célula vive no rodapé (7.4) e só pode
   // ser TOCADA depois de o modelo estar escrito.
-  let escreverSeletorMacro: () => void = () => {};
+  // Sem valor inicial de propósito: a atribuição lá embaixo é INCONDICIONAL (bloco
+  // nu, não `if`), então um noop aqui seria store morto — e store morto num ponteiro
+  // de função é o tipo de coisa que faz alguém acreditar que existe caminho em que
+  // nada é escrito. Se a atribuição virar condicional, o tsc reclama aqui.
+  let escreverSeletorMacro: () => void;
   if (macro && macroDados) {
     const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
     const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort();
@@ -1130,7 +1133,7 @@ export function construirAbaModelagem(
   marcarInput(sheet.getRow(linhaAno).getCell(idxMes(0, 0)));
 
   const rData = linha("Período");
-  linhaData = rData.number;
+  const linhaData = rData.number;
   for (let y = 0; y < nAnos; y++) {
     for (let m = 0; m < 12; m++) {
       const cell = sheet.getRow(linhaData).getCell(idxMes(y, m));
@@ -1201,12 +1204,16 @@ export function construirAbaModelagem(
 
     // As premissas do caso, uma linha cada, com um valor por exercício projetado.
     // Ficam AQUI, e não no bloco de premissas fixas, porque são as premissas
-    // DESTE caso — e é a célula delas que as linhas abaixo citam.
-    const linhaDaPremissa = new Map<string, number>();
+    // DESTE caso.
+    //
+    // O comentário anterior dizia "e é a célula delas que as linhas abaixo citam",
+    // e isso NÃO acontecia: havia um `Map` de código→linha aqui, preenchido e nunca
+    // lido — as linhas abaixo não referenciam célula de premissa nenhuma. O mapa
+    // saiu, e o texto que prometia a referência cruzada também. Se um dia a citação
+    // for para existir, ela se constrói de novo — e aí com quem a leia.
     for (const p of config.premissas) {
       const r = linha(`↳ ${p.nome}`, p.unidade ?? "");
       r.font = { italic: true, size: 9, color: { argb: "FF334155" } };
-      linhaDaPremissa.set(p.codigo, r.number);
       for (let y = 0; y < nAnos; y++) {
         const ano = primeiroAno + y;
         if (ano <= ultimoReal) continue;               // premissa só vale no projetado
@@ -1229,12 +1236,11 @@ export function construirAbaModelagem(
       }
     }
 
-    const linhaDoRotulo = new Map<string, number>();
+    // (aqui havia um `Map` rótulo→linha, preenchido e nunca lido — saiu junto.)
     for (const l of config.linhas) {
       if (!l.premissaCodigo) continue;
       const premissa = config.premissas.find((p) => p.codigo === l.premissaCodigo);
       const r = linha(l.rotulo, l.secaoCanonica ?? "");
-      linhaDoRotulo.set(l.rotulo, r.number);
       const implementada = premissa && PRIMITIVAS_IMPLEMENTADAS.has(premissa.formula);
 
       // O ÚLTIMO REALIZADO FICA, e é o que dá sentido ao registro: sem ele a

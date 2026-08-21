@@ -6033,6 +6033,5 @@ export function construirModeloInstitucional(
   // conferido no runtime da versão do lock). A especificação sai daqui e é
   // injetada no .xlsx já gerado por `injetarGraficosNoBuffer`, no mesmo
   // pós-processamento que já amplia a caixa das notas.
-  void gGW;
   return saidaOutput.graficos;
 }

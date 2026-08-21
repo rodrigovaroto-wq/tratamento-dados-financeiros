@@ -254,7 +254,6 @@ const casoId = psql(`insert into caso (nome) values ('e2e book vertentes') retur
 
 // Registra cada documento pela função de produção e grava os campos que o NÓ
 // produziu (não os da fixture) — é isso que fecha a costura produtor→banco.
-const versaoNova = new Map<string, string>();
 for (const doc of fixture.documentos) {
   const versaoOriginal = doc.documento_versao?.[0];
   if (!versaoOriginal) continue;
@@ -268,7 +267,6 @@ for (const doc of fixture.documentos) {
     '${(versaoOriginal.nome_original ?? "x.pdf").replace(/'/g, "''")}',
     null, 'HASH-E2E-${versaoOriginal.id}', 'ok')::text`).trim();
   const novaVersao = JSON.parse(r).documento_versao_id as string;
-  versaoNova.set(versaoOriginal.id, novaVersao);
 
   const campos = camposDoProdutor.get(versaoOriginal.id) ?? [];
   const json = JSON.stringify(campos).replace(/'/g, "''");

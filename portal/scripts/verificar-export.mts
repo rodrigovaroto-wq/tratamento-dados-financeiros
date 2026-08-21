@@ -1041,8 +1041,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       for (let r = 1; r <= ws.rowCount && !usada; r++) {
         if (r === rp) continue;
         const f = formulaDe(`${letra}${r}`);
-        if (f && refsDe(f).includes(`${letra}${rp}`)) usada = true;
-        else if (alcanca(`${letra}${r}`, alvo) && r !== rp) usada = true;
+        // Os dois testes levam ao MESMO efeito, então são um OU — escrevê-los como
+        // if/else fazia parecer que havia dois caminhos com resultados diferentes.
+        if ((f && refsDe(f).includes(`${letra}${rp}`))
+            || (alcanca(`${letra}${r}`, alvo) && r !== rp)) usada = true;
       }
       if (usada) break;
     }
@@ -3050,15 +3052,12 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // não depende de saber quais abas existem, e pega qualquer uma nova.
   const abasCitadas = new Set<string>();
   let nFormulas = 0;
-  const numerosEscritos: string[] = [];
   for (let r = 1; r <= mod.rowCount; r++) {
     for (let c = 1; c <= mod.columnCount; c++) {
       const v = mod.getRow(r).getCell(c).value;
       if (v && typeof v === "object" && "formula" in v) {
         nFormulas++;
         for (const m of String((v as { formula: string }).formula).matchAll(/'([^']+)'!/g)) abasCitadas.add(m[1]);
-      } else if (typeof v === "number") {
-        numerosEscritos.push(`${mod.getRow(r).getCell(c).address}`);
       }
     }
   }
@@ -3244,7 +3243,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const nA = 5;
   const colFY = (y: number) => 3 + y * 13 + 12;
   const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
-  const linhaDe = (x: string) => { for (let r = 1; r <= mod.rowCount; r++) if (rotuloDe(r) === x) return r; return -1; };
+  const linhaDe = (x: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) { if (rotuloDe(r) === x) return r; }
+    return -1;
+  };
 
   // (a) TODAS as fórmulas do modelo resolvem. `null` aqui é o avaliador dizendo
   //     "não sei" — o que, para as funções que ele cobre, significa erro de

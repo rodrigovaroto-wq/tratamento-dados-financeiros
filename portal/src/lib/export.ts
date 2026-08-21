@@ -25,8 +25,8 @@ import {
   construirAbaMacro, construirAbaMacroSemDado,
   type ConfigModelagem,
   construirAbaModelagem,
+  type MacroParaExport,
 } from "./export-modelagem";
-import type { MacroParaExport } from "./export-modelagem";
 import { injetarGraficosNoBuffer, type EspecGrafico } from "./xlsx-graficos";
 import {
   ABAS_MODELO, construirModeloInstitucional, type EntradaModeloInstitucional,
@@ -118,11 +118,11 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
   if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(ref)) return ref;
 
   // Mês por nome/abreviação + ano: "jan/25", "dez-24", "fevereiro/2025"
-  const mesNome = low.match(/^([a-zç]{3,9})[\/\-. ](\d{2,4})$/);
+  const mesNome = low.match(/^([a-zç]{3,9})[/\-. ](\d{2,4})$/);
   if (mesNome && MES_POR_NOME[mesNome[1]] != null) return mesAno(MES_POR_NOME[mesNome[1]], mesNome[2]);
 
   // MM/AAAA ou MM-AAAA (mês numérico + ano de 4 dígitos): "02/2025", "12/2025"
-  const mmAno = ref.match(/^(\d{1,2})[\/-](\d{4})$/);
+  const mmAno = ref.match(/^(\d{1,2})[/-](\d{4})$/);
   if (mmAno && Number(mmAno[1]) >= 1 && Number(mmAno[1]) <= 12) return mesAno(Number(mmAno[1]), mmAno[2]);
 
   if (t === "data-base") return formatarDataBR(ref);

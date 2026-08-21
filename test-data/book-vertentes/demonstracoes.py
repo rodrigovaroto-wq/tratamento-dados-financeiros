@@ -55,8 +55,8 @@ def dre_metalurgica(tot):
     ]
 
     # resolve o PLUG para o prejuízo bater com o BP
-    def soma(tipo_filtro):
-        return sum(v for _, v, t in linhas_2025 if t == "conta" and isinstance(v, int))
+    # (havia aqui um `def soma(tipo_filtro)` nunca chamado, cujo corpo ignorava o
+    #  parâmetro e repetia exatamente a linha abaixo — sobra de refatoração.)
     conhecido = sum(v for _, v, t in linhas_2025 if t == "conta" and isinstance(v, int))
     plug = alvo_2025 - conhecido
     linhas_2025 = [(r, (plug if v == "PLUG" else v), t) for r, v, t in linhas_2025]
