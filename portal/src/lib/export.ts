@@ -1163,10 +1163,46 @@ export function rotulosDeSubtotalInformado(
       ...detectarSubtotaisPorOrdem(itens),
     ]);
     if (ids.size === 0) continue;
+    // O VEREDITO É POR RÓTULO, MAS A DETECÇÃO É POR CÉLULA — e a diferença
+    // apagava conta de verdade.
+    //
+    // MEDIDO no book: `detectarSubtotaisPorOrdem` marcou "Matérias-primas e
+    // insumos" na coluna de 2024 (12.400), porque ali as linhas seguintes
+    // somavam por COINCIDÊNCIA o valor dela. O rótulo entrava no conjunto sem a
+    // coluna, e com isso a conta sumia do modelo em TODAS as colunas e em todas
+    // as empresas do grupo: em 2025 o bloco `ativo_circulante` ficava com 16
+    // linhas somando 36.240 onde o documento tem 17 somando 45.440 — os 9.200
+    // dela. Uma coincidência num exercício apagava a conta no outro.
+    //
+    // A REGRA PASSA A SER: subtotal em UMA coluna não basta; tem de ser subtotal
+    // em TODAS as ocorrências com valor. É o que `detectarSubtotaisInformados`
+    // (B) já exigia — ele confere a soma dos irmãos em cada coluna e desiste ao
+    // primeiro desacordo. `PorOrdem` era o único que decidia por uma célula.
+    //
+    // E ISSO NÃO ENFRAQUECE O CABEÇALHO DE GRUPO DE VERDADE, que é o que o
+    // conjunto existe para pegar: "Estoques" é nome de seção declarada pelo
+    // documento e cai na regra (A), estrutural, que não depende de aritmética
+    // nenhuma e marca todas as ocorrências de uma vez. Quem passa a precisar de
+    // acordo entre colunas é só a detecção que se apoia SÓ em soma — que é
+    // exatamente a que produz coincidência.
+    // O acordo é por COLUNA, não por ocorrência — e a diferença é o caso do
+    // rótulo REPETIDO. Um comparativo sem `periodo_coluna` traz a mesma conta
+    // duas vezes na mesma coluna, e `detectarSubtotaisPorOrdem` colapsa as
+    // repetições de propósito (o comentário dele explica por quê), marcando só a
+    // primeira. Exigir "todas as ocorrências marcadas" reprovava o subtotal de
+    // verdade nesse caso e devolvia a dupla contagem — foi o assert (0109d) que
+    // pegou. Uma coluna conta como marcada quando QUALQUER ocorrência dela foi.
+    const porRotulo = new Map<string, Map<string, boolean>>();
     for (const { campo, colKey } of itens) {
-      if (!ids.has(campo.id)) continue;
       if (alvo !== null && normalizar(colKey.split(CHAVE_SEP)[0] ?? "") !== alvo) continue;
-      rotulos.add(`${normalizar(campo.secao_canonica ?? "")}||${normalizar(campo.chave)}`);
+      if (typeof campo.valor_num !== "number") continue;
+      const k = `${normalizar(campo.secao_canonica ?? "")}||${normalizar(campo.chave)}`;
+      if (!porRotulo.has(k)) porRotulo.set(k, new Map());
+      const cols = porRotulo.get(k)!;
+      cols.set(colKey, (cols.get(colKey) ?? false) || ids.has(campo.id));
+    }
+    for (const [k, cols] of porRotulo) {
+      if (cols.size > 0 && [...cols.values()].every(Boolean)) rotulos.add(k);
     }
   }
   return [...rotulos];

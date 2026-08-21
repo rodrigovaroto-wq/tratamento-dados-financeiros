@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 298 · export 615 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 298 · export 618 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,53 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## OS DOIS DEFEITOS QUE SE MASCARAVAM, e o ativo circulante fecha em ZERO (20/08, sessão 55)
+
+O resíduo de reconciliação do **ativo circulante** era de −3.200 — pequeno o bastante para passar
+por arredondamento. Eram **dois defeitos de sinais opostos**, e é por isso que nenhum foi achado
+antes: **corrigir só um PIORAVA o número.**
+
+| Estado | Resíduo do AC |
+|---|---|
+| com os dois defeitos | −3.200 |
+| só (a) corrigido | −12.400 |
+| só (b) corrigido | +9.200 |
+| **os dois corrigidos** | **ZERO** |
+
+**(a) Uma coincidência aritmética em 2024 apagava uma conta em 2025 — e em todo o grupo.**
+`detectarSubtotaisPorOrdem` marcou "Matérias-primas e insumos" na coluna de 2024 (12.400) porque ali
+as linhas seguintes somavam, **por coincidência**, o valor dela. O veredito era gravado como
+`(secao_canonica, rótulo)` — **sem a coluna**. Resultado: a conta sumia do modelo em todas as colunas
+e em todas as empresas. Em 2025 o bloco `ativo_circulante` ficava com **16 linhas somando 36.240**
+onde o documento tem **17 somando 45.440**.
+
+A regra passa a exigir **acordo entre colunas**: subtotal numa coluna só não basta, tem de ser
+subtotal em todas as colunas com valor. É o que `detectarSubtotaisInformados` (B) já fazia. E isso
+**não enfraquece o cabeçalho de grupo de verdade** — "Estoques" é nome de seção declarada e cai na
+regra (A), estrutural, que não depende de aritmética. Quem passa a precisar de acordo é só a detecção
+que se apoia SÓ em soma, que é exatamente a que produz coincidência.
+
+> **O acordo é por COLUNA, não por ocorrência** — e a diferença tem assert próprio. Um comparativo
+> sem `periodo_coluna` traz a mesma conta duas vezes na mesma coluna, e o detector colapsa as
+> repetições de propósito, marcando só a primeira. Exigir "todas as ocorrências" reprovava o subtotal
+> de verdade e devolvia a dupla contagem. Foi o assert `(0109d)` que pegou, na primeira tentativa.
+
+**(b) `Math.abs` no histórico do giro somava as contas redutoras.** Conta redutora é negativa por
+natureza: "(-) Perdas estimadas" (−3.850) e "(-) Provisão para obsolescência" (−2.350) **reduzem** o
+circulante. Em módulo passavam a SOMAR, e o erro é o **dobro** delas: +12.400 num ativo circulante de
+45.440 — **27%**. Os blocos de balanço não passam pela normalização de sinal (ela só toca
+`BLOCOS_DE_DESPESA`, da DRE), então o sinal do documento é a verdade. **A magnitude FICA no passivo**,
+onde o documento às vezes publica saldo negativo por convenção de partida dobrada.
+
+**Religamento, com os números:** desfazendo (a) → falha com 12.400; desfazendo (b) → falha com
+12.400; os dois juntos → **zero**. O assert `(38)` olha o RESULTADO e não cada causa, justamente
+porque os dois se cancelam parcialmente.
+
+**O que sobra no auditor, e é decisão registrada:** os −15.149 do passivo circulante são a
+divergência entre o **mapa de dívida** (43.542 de curto prazo) e o **balanço** (28.393). O dono
+decidiu: **o mapa manda** e o balanço é reconciliado. O arquivo declara a diferença em vez de
+escondê-la.
 
 ## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, um defeito aberto
 

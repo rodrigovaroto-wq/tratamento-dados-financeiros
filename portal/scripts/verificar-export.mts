@@ -40,6 +40,7 @@
  *     soma tem de ficar visível numa linha de checagem — nunca virar o total.
  */
 import { readFileSync } from "node:fs";
+import { entradaModeloDaFixture } from "./lib/modelo-da-fixture.mts";
 import type ExcelJS from "exceljs";
 import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
 import {
@@ -6479,6 +6480,59 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
   for (const r of GIRO) {
     checar(!ehDividaFinanceira(r), `(37) "${r}" continua sendo giro operacional`);
+  }
+}
+
+// =============================================================================
+// (38) OS DOIS DEFEITOS QUE SE MASCARAVAM — e a prova é o ATIVO fechando em ZERO.
+//
+// (a) `detectarSubtotaisPorOrdem` marcou "Matérias-primas e insumos" na coluna de
+//     2024 (12.400), porque ali as linhas seguintes somavam POR COINCIDÊNCIA o
+//     valor dela. O veredito era gravado como (secao_canonica, rótulo), SEM a
+//     coluna — então a conta sumia do modelo em TODAS as colunas e em todas as
+//     empresas. Em 2025 o bloco `ativo_circulante` ficava com 16 linhas somando
+//     36.240 onde o documento tem 17 somando 45.440: os 9.200 dela.
+//
+// (b) O `Working Capital` gravava o histórico em `Math.abs`, e conta REDUTORA é
+//     negativa por natureza. As duas provisões do book (−3.850 e −2.350) viravam
+//     positivas e passavam a SOMAR: erro de +12.400, o DOBRO delas.
+//
+// OS DOIS SE ANULAVAM PARCIALMENTE: −9.200 de (a) contra +12.400 de (b) deixavam
+// um resíduo de −3.200, pequeno o bastante para passar por arredondamento.
+// Corrigir só um PIORAVA o número — é por isso que nenhum dos dois foi achado
+// antes, e é por isso que este assert olha o RESULTADO e não cada causa.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wbBook = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const wsBS = wbBook.getWorksheet("Balance Sheet");
+  checar(wsBS != null, "(38) o book monta o modelo institucional");
+  if (wsBS) {
+    let rAC = 0;
+    for (let r = 1; r <= wsBS.rowCount; r++) {
+      if (/reconcilia..o com o ativo circulante/.test(String(wsBS.getRow(r).getCell(3).value ?? ""))) {
+        rAC = r; break;
+      }
+    }
+    checar(rAC > 0, "(38) a linha de reconciliação do ativo circulante existe no book");
+    if (rAC > 0) {
+      esquecerMemoria(wsBS);
+      let pior = 0;
+      for (const c of ["E", "F", "G", "H", "I", "J", "K"]) {
+        const v = avaliarCelula(wsBS, c, rAC);
+        if (typeof v === "number") pior = Math.max(pior, Math.abs(v));
+      }
+      checar(pior < 1,
+        "(38) o ATIVO CIRCULANTE reconcilia em ZERO — as contas extraídas somam o total informado",
+        `maior resíduo: ${pior.toFixed(2)} (era 3.200 com os dois defeitos, `
+        + `12.400 com só (a) corrigido e 9.200 com só (b))`);
+    }
   }
 }
 

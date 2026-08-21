@@ -2626,7 +2626,27 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         const base = baseDe(pref, l, ano);
         if (hist) {
           const e = valorNaEscala(l, ano, ctx.ent.unidade);
-          if (e) g.set(ch, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
+          // O ATIVO ENTRA COM O SINAL DO DOCUMENTO; o PASSIVO, em magnitude.
+          //
+          // `Math.abs` valia para os dois lados e era erro aritmético no ativo:
+          // conta REDUTORA é negativa por natureza — "(-) Perdas estimadas em
+          // créditos de liquidação duvidosa" (−3.850) e "(-) Provisão para
+          // obsolescência de estoques" (−2.350) reduzem o circulante. Em módulo
+          // elas passavam a SOMAR, e o erro é o DOBRO do valor delas: medido no
+          // book, +12.400 num ativo circulante de 45.440 (27%), absorvido em
+          // silêncio pela linha de reconciliação.
+          //
+          // Os blocos de BALANÇO não passam pela normalização de sinal (ela só
+          // toca `BLOCOS_DE_DESPESA`, da DRE), então aqui o sinal do documento é
+          // a verdade e não há convenção a impor.
+          //
+          // No PASSIVO a magnitude FICA: lá o documento às vezes publica o saldo
+          // negativo por convenção de partida dobrada, e a cascata do modelo
+          // soma passivo como número positivo. Trocar os dois de uma vez faria o
+          // balanço deixar de fechar por motivo diferente do que se está
+          // corrigindo — e o lado do ativo é o que tem conta redutora de verdade.
+          if (e) g.set(ch, ano, pref === "wc_a" ? e.valor : Math.abs(e.valor),
+            { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
           // Dias IMPLÍCITOS do histórico: saldo ÷ base × 360, com a guarda
           // `IF(base>0)` do Modelo Base (`P27`). É o número que o analista precisa
           // ver antes de escolher o dia projetado — sem ele, a premissa é palpite.
