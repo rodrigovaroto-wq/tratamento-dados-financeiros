@@ -6,36 +6,45 @@ import { CeuOria } from "./ceu-oria";
 
 // A ABERTURA DO PAINEL.
 //
-// O PEDIDO E O PERIGO. O dono pediu uma introdução de ~3 segundos, bonita, antes
-// do painel. Três segundos é muito tempo em software que alguém usa todo dia — a
-// diferença entre uma abertura de que se gosta e um pedágio de que se odeia está
-// inteira em QUANDO ela toca e em QUÃO FÁCIL é sair dela. Por isso:
+// QUANDO ELA TOCA (pedido do dono, 21/08): toda vez que o sistema abre e toda
+// vez que alguém entra. Na prática são três gatilhos, e o `sessao` cobre os três:
 //
-//   • UMA VEZ POR SESSÃO do navegador (`sessionStorage`). Voltar do mandato para
-//     o painel não toca de novo; fechar o navegador e abrir amanhã, sim.
-//   • QUALQUER GESTO CORTA — clique, tecla, rolagem, toque. Quem já sabe o que
-//     vai fazer nunca é segurado.
-//   • `prefers-reduced-motion` PULA por completo, sem versão reduzida.
-//   • Ela não bloqueia nada: o painel já está montado e pronto ATRÁS dela. Os
-//     três segundos são de véu, não de carregamento — se a rede estiver lenta, o
-//     que aparece ao fim é a tela pronta, não um spinner.
+//   • abrir o portal, recarregar a página ou abrir outra aba, porque a marca
+//     abaixo mora na memória do módulo e some junto com a carga;
+//   • entrar de novo, porque a sessão do Supabase muda de identidade a cada
+//     login e a marca deixa de valer;
+//   • ir a um mandato e voltar ao painel NÃO toca, que é a única exceção. É
+//     navegação dentro da mesma sessão, e três segundos de véu a cada volta
+//     viraria pedágio na tela mais usada da casa.
 //
-// POR QUE `useSyncExternalStore` PARA A PREFERÊNCIA. Mesma razão da barra
-// lateral: `sessionStorage` é estado FORA do React. Copiá-lo num efeito faria o
-// servidor renderizar "toca" e o cliente corrigir para "não toca" — ou seja, um
-// lampejo de véu preto em cima do painel de quem já viu a abertura, que é
-// exatamente o defeito que ela não pode ter. O `getServerSnapshot` devolve
-// "já vista": no servidor não existe navegador, e o padrão seguro é não cobrir
-// a tela.
+// Qualquer gesto corta a cena (clique, tecla, rolagem, toque), e quem pediu
+// `prefers-reduced-motion` no sistema não vê nenhuma versão dela. A abertura
+// também não segura carregamento: o painel já está pronto atrás do véu, então o
+// que aparece ao fim é a tela, nunca um spinner.
+//
+// POR QUE `useSyncExternalStore`. A marca é estado fora do React. Copiá-la num
+// efeito faria o servidor renderizar uma coisa e o cliente corrigir para outra,
+// que é o lampejo de véu que esta tela não pode ter. O `getServerSnapshot`
+// devolve "já vista", porque no servidor não existe navegador e o padrão seguro
+// é não cobrir a tela.
 
-const CHAVE = "oria.painel.abertura";
 const EVENTO = "oria:abertura";
+
+/**
+ * A sessão para a qual a abertura já tocou.
+ *
+ * Mora no MÓDULO e não no `sessionStorage` de propósito: `sessionStorage`
+ * sobrevive ao recarregamento, e era isso que fazia a abertura quase nunca
+ * aparecer. Na memória do módulo ela morre com a carga da página, que é
+ * exatamente o gatilho "o sistema abriu".
+ */
+let sessaoJaVista: string | null = null;
 
 /** 2,5s de cena + 0,5s de saída. Os 3 segundos pedidos, com o fim já contado. */
 const DURACAO_MS = 2500;
 const SAIDA_MS = 520;
 
-function useJaVista(): [boolean, () => void] {
+function useJaVista(sessao: string): [boolean, () => void] {
   const assinar = useCallback((avisar: () => void) => {
     window.addEventListener(EVENTO, avisar);
     return () => window.removeEventListener(EVENTO, avisar);
@@ -43,19 +52,23 @@ function useJaVista(): [boolean, () => void] {
   const jaVista = useSyncExternalStore(
     assinar,
     () =>
-      window.sessionStorage.getItem(CHAVE) === "1" ||
+      sessaoJaVista === sessao ||
       (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false),
     () => true,
   );
   const marcar = useCallback(() => {
-    window.sessionStorage.setItem(CHAVE, "1");
+    sessaoJaVista = sessao;
     window.dispatchEvent(new Event(EVENTO));
-  }, []);
+  }, [sessao]);
   return [jaVista, marcar];
 }
 
-export function PainelIntro() {
-  const [jaVista, marcar] = useJaVista();
+/**
+ * `sessao` identifica quem está logado AGORA. Ela vem do painel, que a lê do
+ * token do Supabase: trocou de valor, houve login novo, e a abertura toca.
+ */
+export function PainelIntro({ sessao }: { sessao: string }) {
+  const [jaVista, marcar] = useJaVista(sessao);
   const [saindo, setSaindo] = useState(false);
 
   // O ENCERRAMENTO É EM DOIS TEMPOS: primeiro a cena começa a sair (opacidade e

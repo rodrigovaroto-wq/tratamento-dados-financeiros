@@ -7,9 +7,11 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 **Última atualização:** 2026-08-21 (sessão 56). **Estado do `main`:** mergeado até o **PR #154**;
 a sessão 56 está no **PR #155**, aberto.
 
-**NADA DE INFRA ESTÁ ESPERANDO.** O dono aplicou as migrations **até a `0133`** e reimportou o
-`workflow.e1-ingestao.json`. As **`0134` e `0135` ainda não foram aplicadas** — quem responde isso
-contra o banco de verdade é a tela `/instalacao` (`0131`), não este arquivo.
+**FALTA UMA MIGRATION, E ELA É A `0133`.** Medido no banco em 21/08 com a sonda das 80 migrations:
+tudo está aplicado, inclusive a `0134` e a `0135`, MENOS a `0133`. Sem ela a checagem de balanço
+compara total impresso com total impresso e fecha por construção, então seção com metade das contas
+faltando não abre pendência. O `ESTADO.md` tem a consulta de conferência e o conserto, na seção
+"A `0133` QUE FALTOU". O `workflow.e1-ingestao.json` foi reimportado.
 
 **Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
 nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada — as sessões 52 a 56
