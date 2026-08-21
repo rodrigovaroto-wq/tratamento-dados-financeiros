@@ -223,6 +223,53 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
 
+## O ARQUIVO DE COMITÊ, EM QUATRO FRENTES (21/08, sessão 59)
+
+Pedido do dono: executar tudo o que melhora o resultado no export. Quatro frentes, e a primeira é
+uma correção que valia mais que as outras três.
+
+### 1. A aba Modelagem parou de projetar, e o arquivo deixou de ter dois números
+
+**O invariante que isto restaura é o que organiza o projeto: UMA CONTA, UM LUGAR.** A aba Modelagem
+nasceu na fase 7.4 projetando cada linha pela premissa vinculada, e estava certa enquanto era o
+único modelo do arquivo. Depois vieram as 14 abas do modelo institucional, que projetam AS MESMAS
+LINHAS com base diferente: lá o fornecedor gira contra CUSTOS e o resto contra RECEITA LÍQUIDA; aqui
+todo percentual e todo prazo incidiam sobre a receita TOTAL. A diferença entre as duas projeções é a
+razão receita/custo, e as duas iam no mesmo arquivo ao comitê.
+
+Ficou o REGISTRO: qual premissa em cada linha, com que valor por exercício, e o último realizado. A
+distribuição mensal saiu junto, e é perda declarada — ela repartia o valor projetado. **A curva não
+se perdeu:** é fato derivado do faturamento do cliente e passa a ser publicada em linha própria.
+
+### 2. Os quatro índices que o `f0/08` fasejou
+
+Liquidez imediata, ROA, ROE e Altman Z''. O `f0/08` os deixou de fora "até a extração isolar as
+linhas-conceito", e ela isola desde as 14 abas. **PL negativo publica "PL<=0"** em vez de número:
+prejuízo sobre patrimônio a descoberto dá retorno positivo, que lido rápido afirma o contrário. **E
+o Altman se recusa sem o X2:** sem conta de lucro retido isolada, zero derrubaria o índice em até
+3,26 pontos e jogaria empresa saudável na zona de aflição.
+
+### 3. Os dois covenants por cenário, como SENSIBILIDADE
+
+O EBITDA varia com o cenário; a dívida é a do cenário ativo. **Não é a comparação completa**, e a
+nota de rodapé diz isso: é PISO da deterioração, porque no cenário pior o revolver saca mais. "Rompe
+aqui" implica "rompe lá"; o contrário não vale. O CHECK contra o bloco de RATIOS achou um defeito na
+primeira execução — eu lia o interruptor da grade em vez do `$G$2` do Output, e o `CHOOSE` devolvia
+zero em silêncio.
+
+### 4. A alavanca de reestruturação: carência por tranche
+
+O `§2.6` do diagnóstico. O arquivo dizia DSCR 0,3 e não tinha alavanca nenhuma. Agora tem carência
+editável ao lado do prazo, e o bloco REPERFILAMENTO mostra o serviço antes, depois, o alívio e o
+DSCR nos dois mundos. **O veredito não diz "melhorou": diz se atravessou o corte**, e quando não
+atravessa nomeia o caminho seguinte.
+
+Três cuidados que o teste trava: o lado "antes" roda com números congelados (senão os dois lados
+andam juntos e o alívio sai sempre zero); os dois lados são as MESMAS tranches (revolver fora dos
+dois); e o DSCR de hoje é REFERÊNCIA à linha de RATIOS, nunca recálculo.
+
+**638 verificações no export**, contra 623 antes.
+
 ## O DIAL PASSA A SUBIR SOZINHO (21/08, sessão 59) — `0137`, e as quatro travas
 
 **Decisão do dono:** quando o veredito de produção alcançar o critério (30 vereditos, 95% de
