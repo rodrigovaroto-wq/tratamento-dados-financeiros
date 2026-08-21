@@ -16,9 +16,9 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0137_a_promocao_automatica_do_dial.sql` |
-| **Aplicadas no Supabase** | **as 81**, com a `0133` e a `0136` aplicadas em 21/08. **A `0137` é nova e ainda NÃO foi aplicada.** Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
+| **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 321 · export 638 · transcrição 35 · premissas do realizado 25 · e2e 46 · banco (954 asserts, 82 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato

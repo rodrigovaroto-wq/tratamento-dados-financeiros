@@ -4,21 +4,36 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-21 (sessão 56). **Estado do `main`:** mergeado até o **PR #154**;
-a sessão 56 está no **PR #155**, aberto.
+**Última atualização:** 2026-08-21 (sessões 57 a 59). **Estado do `main`:** mergeado até o **PR
+#160**, que levou as quatro frentes do arquivo de comitê e a promoção automática do dial. Não há
+código de engenharia esperando merge.
 
 **NADA DE INFRA ESTÁ ESPERANDO, e desta vez foi medido.** A sonda das 80 migrations achou a `0133`
-faltando em 21/08 (a `0134` e a `0135`, posteriores, estavam lá), o dono aplicou no mesmo dia e a
-conferência fechou. O `workflow.e1-ingestao.json` foi reimportado. O que este parágrafo NÃO é: a
+faltando em 21/08 (a `0134` e a `0135`, posteriores, estavam lá); o dono aplicou no mesmo dia, e
+depois disso aplicou a `0136` e a `0137`. O banco está na `0137`. O que este parágrafo NÃO é: a
 autoridade sobre o estado do banco. Quem responde isso é a sonda, contra o banco de verdade, e é
 assim que o engano foi achado — ver "A `0133` QUE FALTOU" no `ESTADO.md`.
 
 **Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
-nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada — as sessões 52 a 56
-acrescentaram **seis checagens e quatro consertos de motor que nunca viram dado real**. É o **B1** do
-`docs/MAPA_DE_EXECUCAO.md`, é cerca de uma hora, e depois dele o B2 inteiro abre.
+nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada. As sessões 52 a 59
+acrescentaram seis checagens, quatro consertos de motor e agora **quatro frentes novas no arquivo de
+comitê — o Altman, a sensibilidade dos covenants por cenário, o reperfilamento por carência e as
+premissas lidas do realizado — que nunca viram dado real.** É o **B1** do `docs/MAPA_DE_EXECUCAO.md`,
+é cerca de uma hora, e depois dele o B2 inteiro abre.
 
-**O QUE MUDOU DA 52 PARA A 56, em uma linha cada** — a narrativa completa de cada uma está no
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem:**
+
+1. **B1, a rodada real** — é do dono, é uma hora, e é o que mais destrava. Nada de engenharia está
+   esperando por ele; ele é que está esperando;
+2. **o que a 59 deliberadamente NÃO fez, e está escrito na própria planilha:** a sensibilidade dos
+   covenants é DECLARADA por elasticidade, não é a cascata de caixa e dívida recalculada por cenário.
+   Ela é PISO da deterioração — "rompe aqui" implica "rompe lá", o contrário não vale. Refazer a
+   cascata inteira por cenário é trabalho grande e só vale depois que o comitê pedir;
+3. **os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
+   capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao cliente, B4.1) e preencher
+   os `[A CONFIRMAR]` do `docs/10`.
+
+**O QUE MUDOU DA 52 PARA A 59, em uma linha cada** — a narrativa completa de cada uma está no
 `ESTADO.md`, que é onde ela deve ser lida:
 
 | Sessão | O que ficou de pé |
@@ -26,7 +41,10 @@ acrescentaram **seis checagens e quatro consertos de motor que nunca viram dado 
 | 53 | O dial passa a ser **obedecido** (`0127`) e dois níveis declarados eram falsos; a classificação contábil em sombra (`0128`); a transcrição humana assistida (`0129`) e a contaminação que ela criaria |
 | 54 | O golden set passa a ser rotulável, e a rotulagem é **cega** (`0130`); os três cenários viram comparáveis; a passada de eficiência — cujo valor está no que **não** mudou |
 | 55 | A instalação passa a se **declarar** (`0131`/`0132`); a **seção do balanço tem de fechar** (`0133`); a dívida que era projetada como giro; os **dois defeitos que se mascaravam** e o ativo circulante fechando em ZERO; a guarda do giro agregado; a sazonalidade que travava o `pronto` (`0134`) |
-| 56 | A **operação passa a ser vista** (`0135` + `/operacao`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
+| 56 | A **operação passa a ser vista** (`0135`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
+| 57 | **O portal encolhe:** saem a página de instalação, o aviso dela no painel, a consulta à base e a tela de operação; o painel inteiro passa a falar com o **analista**, não com o desenvolvedor. Nenhum motor foi removido junto: o que as telas mostravam vive nas funções do banco |
+| 58 | A sonda das 80 migrations, que achou a **`0133` nunca aplicada** enquanto três documentos a davam por aplicada; a abertura do painel passa a aparecer **em todo login**; o **veredito de produção passa a contar** para o dial (`0136`), como piso declaradamente enviesado; as **premissas passam a sair do realizado** — oito delas, com a conta à vista |
+| 59 | O **dial sobe sozinho** ao critério (`0137`), com quatro travas — e o freio de quem baixou o nível não é desfeito pela máquina; e as **quatro frentes do arquivo de comitê** (Modelagem para de projetar, quatro índices novos, covenants por cenário, reperfilamento por carência) |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
@@ -35,7 +53,13 @@ correção nossa, a `0116`) e com os dois defeitos que se mascaravam na 55, onde
 piorava o número** — o resíduo do ativo circulante era −3.200 com os dois, −12.400 com um e +9.200
 com o outro. Fica como método, não como anedota.
 
-> **O HISTÓRICO ABAIXO PARA NA SESSÃO 39.** As sessões 40 a 52 não estão aqui, e isso é escolha, não
+**E a 58 acrescentou a versão mais cara dele: documento não é medição.** Três arquivos deste repo
+afirmavam que a `0133` estava aplicada, e nenhum dos três tinha ido olhar — a afirmação vinha da
+sessão que escreveu a migration, e foi copiada adiante. Uma consulta de catálogo com 80 marcadores,
+que leva um minuto, desmentiu os três. Antes de escrever "está aplicado", "está rodando" ou "está
+verde" sobre o banco de produção, rode a sonda; o `ESTADO.md` hoje diz isso de si mesmo.
+
+> **O HISTÓRICO ABAIXO PARA NA SESSÃO 39.** As sessões 40 a 59 não estão aqui, e isso é escolha, não
 > esquecimento: desde a 41 o que muda toda rodada mora no `ESTADO.md`, e duplicar a narrativa nos dois
 > arquivos é como o cabeçalho daqui passou 17 PRs mentindo. O que está abaixo continua valendo como
 > referência do COMO SE CHEGOU AQUI até a 39 — para o que o sistema faz HOJE, o `ESTADO.md` é a fonte.
@@ -256,7 +280,7 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 
 **1. ~~O teste de ponta a ponta com o `book-canastra`~~ — CONTINUA SENDO O ÚNICO BLOQUEIO REAL, e é
 do dono.** É o **B1** do mapa. O que mudou desde a 52 é que **tudo o que dependia de engenharia foi
-entregue**: as migrations estão aplicadas até a `0133`, o workflow foi reimportado, o fatiamento foi
+entregue**: as migrations estão aplicadas até a `0137`, o workflow foi reimportado, o fatiamento foi
 religado, o orçamento passa, e a tela acompanha. O que a rodada tem de trazer de volta continua
 tabelado no `ESTADO.md`, em "O próximo passo" — e o item de maior valor segue sendo **o custo REAL
 da OpenAI**, porque todo número de custo deste repositório saiu de aritmética sobre páginas e linhas,
@@ -280,14 +304,19 @@ origem continua em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
   confiança e aceite voltaram às catorze abas do arquivo de comitê;
 - ~~**Modo A do `f0/07`**~~ — **feito na 53**: a base viva é consultável no portal.
 
-**4. Golden set e concordância medida — ABERTO, e é a decisão B3 do mapa.** A `0130` fez a metade de
-engenharia: o golden set passa a ser **rotulável**, e a rotulagem é **cega**. O que falta não é
-código, é a **saída escrita em `docs/01`** — A, B ou C — porque sem concordância medida o dial não
-sobe e a F4 do `docs/03` não começa. A recomendação registrada: medir por **veredito de produção**
-como piso permanente (cada aceite ou rejeição na tela de revisão já é um rótulo, produzido pelo
-trabalho normal, e portanto não custa hora humana), **publicando que é um piso enviesado**.
-`medir-auto-aceite.mts` continua dizendo no próprio cabeçalho que, rodado contra fixture, mede o
-instrumento e não o modelo.
+**4. ~~Golden set e concordância medida~~ — FECHADO nas sessões 58 e 59, pela saída B.** A `0130`
+tinha feito a metade de engenharia (o golden set rotulável, a rotulagem cega) e o que faltava era
+uma decisão escrita: A, B ou C no `docs/01`. Ficou **B — medir por veredito de produção**, porque
+cada aceite ou rejeição na tela de revisão já é um rótulo produzido pelo trabalho normal e não custa
+hora humana, **desde que o sistema publique que é um piso enviesado**. `medir-auto-aceite.mts`
+continua dizendo no próprio cabeçalho que, rodado contra fixture, mede o instrumento e não o modelo.
+
+> **O que a 58 e a 59 fizeram com isso.** A saída B foi escrita no `docs/01` e virou motor: a `0136`
+> mede a concordância do veredito de produção (30 vereditos, 95%) e grava `base_do_nivel =
+> 'medida_por_veredito'`, que é o rótulo dizendo em toda tela que o piso é enviesado; a `0137` faz a
+> promoção acontecer sozinha, até **N2 e nunca N3**, com quatro travas. A trava que importa: **humano
+> que baixa o nível desliga a automação daquele estágio**, e o veredito seguinte não desfaz o freio —
+> religar é decisão explícita. `db/test/auto_promocao_dial.test.sql` existe só para isso.
 
 **5. Decisões do dono já tomadas, para ninguém reabrir:**
 
@@ -301,8 +330,8 @@ instrumento e não o modelo.
 - **teto de ressalvas, motivo obrigatório, expiração**: removidos (`0109`). O Portão 2 informa, não
   impede.
 
-**Existe CI** (`.github/workflows/suites.yml`): as **cinco suítes** (n8n, export, transcrição, banco,
-e2e) + os quatro geradores de workflow e os três de fixture + tsc/eslint/build + o `db/schema.sql`
+**Existe CI** (`.github/workflows/suites.yml`): as **seis suítes** (n8n, export, transcrição,
+premissas do realizado, banco, e2e) + os quatro geradores de workflow e os três de fixture + tsc/eslint/build + o `db/schema.sql`
 conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.

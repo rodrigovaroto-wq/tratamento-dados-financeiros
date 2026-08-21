@@ -449,11 +449,11 @@ como um roadmap deixa de orientar.
 | ~~agora~~ | ~~B0 (apply)~~ — **feito em 20/08** | dono | — |
 | **agora** | **B1 — a rodada real e o aceite** · e, em paralelo, B6.1 (proteger `main`) + B6.5 (podar branches) | dono, ~1h40 | nada |
 | **S1** | B2 inteiro: recalibrar cobertura, conferir fatiamento e subtotais, medir custo real | engenharia | B1 |
-| **S2** | B3 — implementar a saída escolhida da autonomia | engenharia | decisão do dono |
+| ~~**S2**~~ | ~~B3 — implementar a saída escolhida da autonomia~~ — **feito em 21/08** (`0136` mede, `0137` promove sozinha até N2) | engenharia | — |
 | ~~**S3**~~ | ~~B6.2 (painel de operação) + B6.3 (backup/LGPD) + B4.4a (a suspeita da sazonalidade)~~ — **feito em 20–21/08** | engenharia | — |
 | **S4** | B4.1, se o capítulo 10 chegar ao repositório | engenharia | o arquivo |
 | **sob demanda** | B4.2, B4.3 | — | pedido do comitê |
 
 **A primeira linha não é de engenharia** — e é por isso que este mapa começa por ela. O sistema tem
-78 migrations aplicadas (numeradas até a `0133`), sete suítes e CI verde. Com o B0 fechado, **o que falta para ele valer é
+**82 migrations aplicadas** (numeradas até a `0137`), seis suítes e CI verde. Com o B0 fechado, **o que falta para ele valer é
 uma hora de execução**, não uma linha de código.
