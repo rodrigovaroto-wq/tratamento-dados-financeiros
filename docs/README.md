@@ -42,6 +42,7 @@ no dia 1, mas **não confia em si mesmo até medir que pode**. Ver
 | [`07_STATUS_E_PENDENCIAS.md`](07_STATUS_E_PENDENCIAS.md) | Máquina de status, severidades, limites do portão |
 | [`08_RISCOS.md`](08_RISCOS.md) | Riscos prováveis e mitigações |
 | [`09_PLANO_DE_EXECUCAO.md`](09_PLANO_DE_EXECUCAO.md) | Alterações, plano executável por fase, próximos passos |
+| [`10_DADOS_RETENCAO_E_LGPD.md`](10_DADOS_RETENCAO_E_LGPD.md) | Onde o dado do cliente mora, retenção, recuperação e quem vê o quê |
 
 Fora da série numerada: [`PRONTIDAO_POR_ESTAGIO.md`](PRONTIDAO_POR_ESTAGIO.md) mede o projeto
 contra o objetivo do `00` — estágio por estágio (ingestão, tratamento, 1º export, modelagem, 2º

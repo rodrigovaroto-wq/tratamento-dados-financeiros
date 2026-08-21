@@ -4246,6 +4246,81 @@ CREATE FUNCTION public.fn_normalizar_texto(p_texto text) RETURNS text
 $$;
 
 --
+-- Name: fn_operacao_lotes(integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_operacao_lotes(p_dias integer DEFAULT 30, p_limite integer DEFAULT 50) RETURNS TABLE(lote_id uuid, caso_id uuid, caso_nome text, execucao_ref text, quando timestamp with time zone, documentos integer, com_falha integer, sem_medicao integer, fatiados integer, linhas_extraidas integer, cobertura numeric, custo_usd numeric, custo_estimado numeric, razao_custo numeric, alertas text[])
+    LANGUAGE sql STABLE
+    AS $$
+  select
+    le.id, le.caso_id, c.nome, le.execucao_ref, le.criado_em,
+    le.documentos, le.documentos_com_falha, le.documentos_sem_medicao,
+    le.documentos_fatiados, le.linhas_extraidas, le.cobertura,
+    le.custo_total_usd, le.custo_estimado_usd,
+    case when coalesce(le.custo_estimado_usd, 0) > 0
+         then round(le.custo_total_usd / le.custo_estimado_usd, 2) end,
+    array_remove(array[
+      case when le.cobertura is null then 'cobertura_nao_medida' end,
+      case when coalesce(le.documentos_com_falha, 0) > 0 then 'documento_com_falha' end,
+      case when coalesce(le.documentos_sem_medicao, 0) > 0 then 'documento_sem_medicao' end,
+      case when coalesce(le.custo_estimado_usd, 0) > 0
+                and le.custo_total_usd > le.custo_estimado_usd * 1.5
+           then 'custo_acima_do_previsto' end
+    ], null)
+  from lote_execucao le
+  left join caso c on c.id = le.caso_id
+  where le.criado_em >= now() - make_interval(days => p_dias)
+  order by le.criado_em desc
+  limit p_limite;
+$$;
+
+--
+-- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_operacao_lotes(p_dias integer, p_limite integer) IS 'Uma linha por execução de ingestão na janela, com os alertas já decididos NO BANCO — para não haver duas réguas sobre a mesma quantidade no dia em que existir um segundo leitor.';
+
+--
+-- Name: fn_operacao_resumo(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_operacao_resumo(p_dias integer DEFAULT 30) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with l as (select * from fn_operacao_lotes(p_dias, 100000))
+  select jsonb_build_object(
+    'janela_dias', p_dias,
+    'lotes', (select count(*) from l),
+    'documentos', (select coalesce(sum(documentos), 0) from l),
+    'linhas_extraidas', (select coalesce(sum(linhas_extraidas), 0) from l),
+    'custo_usd', (select coalesce(round(sum(custo_usd), 2), 0) from l),
+    'custo_por_documento', (select case when coalesce(sum(documentos), 0) > 0
+      then round(sum(custo_usd) / sum(documentos), 4) end from l),
+    'cobertura_mediana', (select round(
+      percentile_cont(0.5) within group (order by cobertura)::numeric, 3)
+      from l where cobertura is not null),
+    'lotes_com_alerta', (select count(*) from l where cardinality(alertas) > 0),
+    -- Por TIPO de alerta, porque "3 lotes com alerta" não diz o que fazer e
+    -- "3 sem cobertura medida" diz.
+    'por_alerta', coalesce((
+      select jsonb_object_agg(a, n) from (
+        select unnest(alertas) as a, count(*) as n from l where cardinality(alertas) > 0 group by 1
+      ) x), '{}'::jsonb),
+    'ultimo_lote', (select max(quando) from l),
+    -- O SILÊNCIO TAMBÉM É ESTADO. Um painel que mostra "0 alertas" quando não
+    -- roda nada há duas semanas é pior que um painel vazio: ele afirma saúde.
+    'dias_desde_o_ultimo', (select case when max(quando) is not null
+      then round(extract(epoch from (now() - max(quando))) / 86400) end from l)
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_operacao_resumo(p_dias integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_operacao_resumo(p_dias integer) IS 'Resumo da operação na janela. Cobertura é MEDIANA e não média — média mistura lote de 40 documentos com lote de 1 e descreve nenhum dos dois. Publica `dias_desde_o_ultimo` porque silêncio também é estado: "0 alertas" sem nenhuma execução afirma saúde que ninguém mediu.';
+
+--
 -- Name: fn_papel_do_rotulo_no_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11299,6 +11374,18 @@ GRANT ALL ON FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text) TO a
 GRANT ALL ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_operacao_lotes(p_dias integer, p_limite integer) TO authenticated;
+
+--
+-- Name: FUNCTION fn_operacao_resumo(p_dias integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_operacao_resumo(p_dias integer) TO authenticated;
+
+--
 -- Name: FUNCTION fn_papel_do_rotulo_no_caso(p_caso_id uuid, p_rotulo_norm text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -11813,17 +11900,17 @@ GRANT ALL ON TABLE public.taxonomia_tipo_documento TO service_role;
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: -
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
 
 --
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: -
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT ALL ON TABLES TO service_role;
 
 --
 --

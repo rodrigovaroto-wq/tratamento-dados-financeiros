@@ -15,10 +15,10 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0134_sazonalidade_nao_e_premissa_sem_valor.sql` |
+| **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 298 · export 623 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,84 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## OS TRÊS ITENS DE OBSERVABILIDADE, ESPELHO E DADO (21/08, sessão 56)
+
+Itens 3, 4 e 5 do ranking. Nenhum deles muda um número do output — os três mudam **o que se
+consegue ver**, que é a condição para que um número errado não sobreviva à próxima rodada.
+
+### 3. A operação passa a ser vista (`0135`) — e o dado já estava gravado
+
+O diagnóstico de 11/08 chamou isto de *"zero observabilidade"*: uma falha em produção só aparece
+quando alguém abre a tela. O portal tem oito `console.error` e nenhuma métrica.
+
+**O achado é que não faltava instrumentação — faltava a pergunta.** A `0115` criou `lote_execucao` e
+o nó `Gravar Uso do Lote` a alimenta desde então: uma linha por execução, com documentos, falhas,
+custo real, custo estimado, tokens, linhas extraídas e cobertura. **Nunca foi lida por ninguém.** O
+custo desta entrega foi ler o que já estava lá, não instrumentar de novo.
+
+`fn_operacao_lotes(p_dias, p_limite)` devolve uma linha por execução com os **alertas já decididos no
+banco**, e `fn_operacao_resumo(p_dias)` faz o cabeçalho. O veredito não mora na tela de propósito:
+repetir a régua em `/operacao` criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
+que esta casa já pagou três vezes — e a segunda divergiria no dia em que existisse um segundo leitor.
+
+| Alerta | O que ele pega |
+|---|---|
+| `cobertura_nao_medida` | O mais importante e o menos óbvio: **não é cobertura baixa** (disso a guarda já cuida) — é a guarda **não ter opinado** sobre o lote. As três camadas ficam mudas juntas e o lote passa parecendo normal. |
+| `documento_com_falha` | A falha já virou pendência tipada; o painel diz que ela existe sem exigir abrir mandato por mandato. |
+| `documento_sem_medicao` | Nem falha, nem sucesso. O estado que mais se parece com normalidade e menos é. |
+| `custo_acima_do_previsto` | Custo real acima de **1,5× a estimativa daquele lote**. A régua é razão contra a própria previsão, não teto em dólar — teto absoluto depende do tamanho do lote e envelhece na primeira mudança de preço. |
+
+**Duas decisões que o teste trava, e o teste tem contraprova:** a cobertura publicada é **mediana e
+não média** (média mistura lote de 40 documentos com lote de 1 e não descreve nenhum dos dois — o
+assert fixa 0,900 contra a média de 0,906); e o resumo publica `dias_desde_o_ultimo`, porque
+**silêncio é estado** — "0 alertas" sem execução nenhuma afirmaria uma saúde que ninguém mediu, e a
+tela vazia diz isso com todas as letras em vez de pintar verde. O 1,4× que **não** acende é assert
+próprio: alerta que dispara para variação de token vira ruído e ninguém olha a tela em duas semanas.
+
+### 4. O espelho lib↔workflow passa a ser conferido nas 26 funções, não em duas
+
+**A causa comum dos dois bugs de triagem da sessão 55 era esta**, e ela continuava aberta. Toda
+função de `n8n/lib/*.mjs` mora em dois lugares: a lib, que as suítes exercitam, e uma cópia literal
+dentro do `build-workflow.mjs` — **a única que o n8n executa**. Nó de Code não importa módulo; a
+duplicação é estrutural. O que dava para remover era o silêncio: corrigir a lib e esquecer a cópia
+deixava a suíte verde e a produção errada, e foi exatamente o que aconteceu duas vezes.
+
+`n8n/test/espelho-inline.test.mjs` extrai cada função embutida do JSON do workflow e roda **os mesmos
+casos** nela e na lib. **Compara comportamento, não texto** — as cópias são minificadas de propósito,
+com nomes próprios de variável; comparar fonte reprovaria por formatação e convidaria a "consertar"
+formatando, o pior desfecho possível para um teste.
+
+**O assert que faz o arquivo durar é o penúltimo:** ele varre o workflow, lista TODA função duplicada
+e exige que cada uma esteja coberta ou declarada em `SEM_CASO` **com motivo**. A 27ª função duplicada
+não entra em silêncio. O último confere que o inventário não encolheu sem alguém notar. Verificado
+por religamento: reintroduzir o `Math.max` da confiança ou o `parseCsv` sem aspas reprova **dois**
+casos, um por função.
+
+> **A divergência que o teste documenta em vez de esconder:** `parseTipo` devolve objeto na lib e
+> apenas o código no workflow. Está anotado no `porque` da tabela e projetado no comparador — um
+> contrato diferente de propósito não é defeito, mas precisa estar escrito onde alguém tropece nele.
+
+### 5. Onde o dado do cliente mora, quanto tempo fica e quem vê (`docs/10`)
+
+O diagnóstico registrava *"sem backup/retenção declarados — dado de cliente em Supabase, sem
+procedimento de recuperação escrito"*, e a sessão 36 mostrou por que não é burocracia: houve um susto
+de perda de dado e a resposta teve de ser montada na hora. **A pergunta "como se recupera?" aparece
+sob pressão, que é o pior momento para descobrir a resposta.**
+
+O documento **não preenche por dedução** o que depende do console: onde a resposta não está no
+repositório, ele escreve **[A CONFIRMAR]** em vez de uma frase tranquilizadora. Política de backup
+que ninguém testou é crença, não controle — e este projeto existe para não confundir as duas.
+
+**O que ele fixa, e vale ler:** (a) o fato que abre qualquer conversa de LGPD é que **o documento do
+cliente vai à OpenAI** — desenho do produto, não efeito colateral; (b) hoje **não há expurgo, e isso
+é escolha por omissão**; (c) **o schema e o pipeline se remontam do repositório sozinhos** —
+migrations em ordem reconstroem o banco (é o que o `run.sh` faz a cada execução) e os quatro
+workflows saem de geradores conferidos por `git diff --exit-code`, então **o que não se recupera de
+backup é o DADO**; (d) o teste de restauração que falta, com `/instalacao` como veredito e **o tempo
+anotado**, porque "temos backup" e "voltamos em 40 minutos" são afirmações diferentes; (e) o acesso é
+**binário** — qualquer autenticado vê todos os mandatos, aceitável com duas pessoas e não com a
+terceira.
 
 ## AS DUAS TRAVAS DE FLUIDEZ, EXECUTADAS (20/08, sessão 55) — `0134` e a guarda do giro
 

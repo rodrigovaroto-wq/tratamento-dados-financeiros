@@ -67,7 +67,7 @@ Legenda: 🔴 bloqueia o objetivo · 🟠 degrada · ⚪ decisão pendente · �
 | 🔴 | **A rodada real nunca aconteceu.** O fatiamento nunca ligou em produção (0 de 38 documentos fatiados); a `juntarBlocos` nunca viu bloco de verdade; a dedup por fingerprint (`0118`) nunca viu reenvio real | só o dono destrava |
 | 🔴 | **O limiar de cobertura (0,85) está calibrado contra 38 documentos SINTÉTICOS.** A folga de 11 pontos existe para o documento sujo, e ninguém mediu se basta | depende da rodada |
 | 🟠 | **`classificacao_doc_checklist` opera em N2 `declarada`** — auto-clear a 0,70 **sem concordância medida**. Documento com confiança 0,71 entra classificado sem humano olhar | ver E-AUTONOMIA |
-| 🟠 | **O espelho lib ↔ workflow só tem guarda para 2 funções.** `mergeClassification` e `parseCsv` estão travados; as demais funções embutidas nos nós Code continuam podendo divergir da lib em silêncio | engenharia |
+| ✅ | ~~O espelho lib ↔ workflow só tinha guarda para 2 funções~~ — **fechado em 21/08**: `n8n/test/espelho-inline.test.mjs` roda os mesmos casos nas **26** funções embutidas e na lib, e o penúltimo assert exige que toda função duplicada esteja coberta ou declarada com motivo | |
 | ✅ | ~~A confiança da classificação era a maior das duas~~ — corrigido; documento que a IA declarou ilegível não entra mais sem revisão | |
 | ✅ | ~~`parseCsv` não tratava aspas~~ — corrigido; `"Silva, João"` não desloca mais as colunas | |
 
@@ -124,8 +124,8 @@ Legenda: 🔴 bloqueia o objetivo · 🟠 degrada · ⚪ decisão pendente · �
 | | Item | Estado |
 |---|---|---|
 | 🔴 | **`main` sem proteção — NÃO CONFERIDO.** Esta sessão não lê configuração de branch. O indício, que não é prova: PRs mergeados 5 minutos depois de abertos, com o CI levando ~3,5 | dono, trivial |
-| 🔴 | **Observabilidade zero.** Oito `console.error` no portal, nenhuma métrica, nenhum alerta. O dado já existe em `lote_execucao` desde a `0115` — falta uma tela e um limite | meia sessão |
-| 🔴 | **Backup, retenção e LGPD não escritos.** Dado de cliente no Supabase sem procedimento de recuperação | meia página |
+| ✅ | ~~Observabilidade zero~~ — **fechado em 21/08** (`0135` + `/operacao`): `fn_operacao_lotes` decide quatro alertas no banco (cobertura não medida, documento com falha, documento sem medição, custo acima de 1,5× o previsto) e `fn_operacao_resumo` publica o cabeçalho, inclusive há quantos dias nada roda | |
+| 🟠 | **Backup, retenção e LGPD** — **escritos em 21/08** (`docs/10`): onde o dado mora, o que se remonta do repositório sozinho, o teste de restauração que falta e quem vê o quê. Continua laranja porque as linhas **[A CONFIRMAR]** dependem do console do Supabase, e o teste de restauração **nunca foi executado** | dono |
 | 🟠 | **Migration aplicada à mão.** A `0131` declara o que falta; aplicar continua manual, e o intervalo entre "mergeado" e "no ar" volta a existir na próxima | infra |
 
 ---
@@ -136,7 +136,7 @@ Legenda: 🔴 bloqueia o objetivo · 🟠 degrada · ⚪ decisão pendente · �
    substitui: toda suíte prova a ingestão sobre extração fiel, por construção.
 2. **A decisão da autonomia (B3)** — sem ela, dois estágios ficam permanentemente em autonomia não
    medida e a F4 não começa. Não depende da rodada; pode ser hoje.
-3. **Processo** (`main`, observabilidade, backup) — barato, e protege tudo o mais.
+3. **Processo** — a observabilidade e o documento de dados fecharam em 21/08; sobra a **proteção do `main`** (dono, trivial) e o **teste de restauração** do `docs/10`, que é o único que transforma a crença de backup em controle.
 4. **Pós-rodada:** recalibrar cobertura, conferir fatiamento, medir custo real.
 5. **Guarda de giro agregado** na modelagem, e a suspeita da sazonalidade.
 6. **Sob demanda:** ND/EBITDA por cenário, as 25 perguntas, alavancas.

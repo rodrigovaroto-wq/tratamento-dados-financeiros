@@ -31,7 +31,7 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 | **B3** | **A autonomia sem rotulagem manual** — decisão em aberto | 🟠 contradição viva | **dono decide** | a F4 do `docs/03` |
 | **B4** | Dívidas do output (alavancas, três cenários completos, 25 perguntas) | 🟠 dimensionadas | dono prioriza | o valor no comitê |
 | **B5** | Eficiência — o que sobrou depois da passada da sessão 54 | 🟢 quase fechada | engenharia | nada crítico |
-| **B6** | **Operação** — proteção do `main`, observabilidade, backup | 🔴 aberta e barata | dono + engenharia | a segurança do processo |
+| **B6** | **Operação** — proteção do `main`, ~~observabilidade~~, ~~backup~~ | 🟠 **B6.2 e B6.3 fechadas em 21/08**; sobra o `main` | dono | a segurança do processo |
 | **B7** | Bloqueados por dado que não temos | ⚫ espera | terceiros | nada — são espera |
 
 **O caminho crítico encurtou: `B0` fechou em 20/08.** Sobra `B1 → B2` e, em paralelo, `B3` (decisão)
@@ -326,7 +326,7 @@ commitado divergir da fonte. Um merge vermelho não quebra a build — ele deixa
 importa no n8n** divergir da fonte que o gera. É exatamente a família de defeito que este projeto
 inteiro foi construído para não ter.
 
-### B6.2 — Observabilidade zero · **médio, e cresce de importância com a operação real**
+### B6.2 — ~~Observabilidade zero~~ · **FECHADA em 21/08** (`0135` + `/operacao`)
 
 Item #14 do backlog. O portal tem **8 `console.error`** e nada mais: nenhuma métrica, nenhum alerta.
 Existe o `workflow.erros.json` ligado como *Error Workflow* no Intake, que é a metade certa — falha
@@ -336,19 +336,28 @@ O que não existe: **documentos/dia, taxa de falha, custo por caso, tempo de lot
 tudo isso em `lote_execucao` desde a sessão 50 — o dado está no banco. Falta uma tela e um limite que
 avise.
 
-**Proposta barata:** uma seção no `/instalacao` (ou um bloco no painel) lendo `lote_execucao`:
-últimos 30 lotes, custo, cobertura, duração, e destaque para lote com `cobertura_do_lote is null` ou
-custo acima do previsto. Meia sessão, e usa dado que já existe.
+**Executado, e a proposta barata era a certa:** a tela `/operacao` lê `lote_execucao` dos últimos 30
+dias. O que mudou em relação à proposta é **onde o veredito mora**: os quatro alertas são decididos
+por `fn_operacao_lotes` (`0135`), no banco, e não na tela — repetir a régua em TypeScript criaria
+duas réguas sobre a mesma quantidade, e a segunda divergiria no dia em que existisse um segundo
+leitor. Os alertas: **cobertura não medida** (o mais importante — não é cobertura baixa, é a guarda
+não ter opinado), **documento com falha**, **documento sem medição** e **custo acima de 1,5× a
+estimativa daquele lote** (razão contra a própria previsão, não teto em dólar). A cobertura publicada
+é **mediana**, e o resumo diz **há quantos dias nada roda**, porque silêncio é estado. 13 asserts em
+`db/test/operacao.test.sql`, com contraprova de que 1,4× **não** acende.
 
-### B6.3 — Backup e retenção não declarados · **baixo esforço, alto se der errado**
+### B6.3 — ~~Backup e retenção não declarados~~ · **ESCRITO em 21/08** (`docs/10`)
 
 Dado de cliente no Supabase, **sem procedimento de recuperação escrito**. `docs/08_RISCOS.md`
 menciona o risco; não há runbook. O susto da sessão 36 ("o susto do Supabase, que não era perda de
 dado") mostrou que a pergunta aparece sob pressão, que é o pior momento para descobrir a resposta.
 
-**Critério de pronto:** meia página em `docs/` — o que o plano do Supabase retém, por quanto tempo,
-como se restaura, e quem tem acesso. Mais a política LGPD que `f0/05` pede e que está mencionada em
-cinco documentos sem estar escrita em nenhum.
+**Critério de pronto — atendido pela parte que é de engenharia:** `docs/10_DADOS_RETENCAO_E_LGPD.md`
+escreve onde o dado do cliente mora (inclusive o fato de que **o documento vai à OpenAI**), que hoje
+**não há expurgo e isso é escolha por omissão**, que **o schema e o pipeline se remontam do
+repositório sozinhos** — logo o que não se recupera de backup é o DADO — e que o acesso é **binário**
+hoje. **O que sobra é do dono, e está marcado [A CONFIRMAR]**: região e plano do Supabase, PITR, e
+— o único que transforma crença em controle — **executar o teste de restauração** e anotar o tempo.
 
 ### B6.4 — Migration aplicada à mão
 
@@ -386,8 +395,8 @@ Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja
 - [ ] **A saída da autonomia escrita em `docs/01`** — A, B ou C — e, se B ou C, o portão
       implementado e travado por suíte (B3)
 - [ ] **O `main` protegido** com o check `suítes` obrigatório (B6.1)
-- [ ] **Backup, retenção e LGPD** escritos em `docs/` (B6.3)
-- [ ] **Um painel de operação** lendo `lote_execucao` (B6.2)
+- [x] ~~**Backup, retenção e LGPD** escritos em `docs/`~~ (B6.3) — **21/08**; sobram os [A CONFIRMAR] do dono e o teste de restauração
+- [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` + `/operacao`
 - [ ] As 25 perguntas **ou** a decisão escrita de que 11 bastam (B4.1)
 
 O que fica **deliberadamente fora** desta lista, e a distinção é o ponto: B4.2 (ND/EBITDA por
@@ -405,7 +414,7 @@ como um roadmap deixa de orientar.
 | **agora** | **B1 — a rodada real e o aceite** · e, em paralelo, B6.1 (proteger `main`) + B6.5 (podar branches) | dono, ~1h40 | nada |
 | **S1** | B2 inteiro: recalibrar cobertura, conferir fatiamento e subtotais, medir custo real | engenharia | B1 |
 | **S2** | B3 — implementar a saída escolhida da autonomia | engenharia | decisão do dono |
-| **S3** | B6.2 (painel de operação) + B6.3 (backup/LGPD) + B4.4a (a suspeita da sazonalidade) | engenharia | nenhum |
+| ~~**S3**~~ | ~~B6.2 (painel de operação) + B6.3 (backup/LGPD) + B4.4a (a suspeita da sazonalidade)~~ — **feito em 20–21/08** | engenharia | — |
 | **S4** | B4.1, se o capítulo 10 chegar ao repositório | engenharia | o arquivo |
 | **sob demanda** | B4.2, B4.3 | — | pedido do comitê |
 
