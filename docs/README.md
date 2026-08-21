@@ -42,8 +42,13 @@ no dia 1, mas **não confia em si mesmo até medir que pode**. Ver
 | [`07_STATUS_E_PENDENCIAS.md`](07_STATUS_E_PENDENCIAS.md) | Máquina de status, severidades, limites do portão |
 | [`08_RISCOS.md`](08_RISCOS.md) | Riscos prováveis e mitigações |
 | [`09_PLANO_DE_EXECUCAO.md`](09_PLANO_DE_EXECUCAO.md) | Alterações, plano executável por fase, próximos passos |
+| [`10_DADOS_RETENCAO_E_LGPD.md`](10_DADOS_RETENCAO_E_LGPD.md) | Onde o dado do cliente mora, retenção, recuperação e quem vê o quê |
 
-Fora da série numerada: [`MAPA_DE_EXECUCAO.md`](MAPA_DE_EXECUCAO.md) é **o que falta até o projeto
+Fora da série numerada: [`PRONTIDAO_POR_ESTAGIO.md`](PRONTIDAO_POR_ESTAGIO.md) mede o projeto
+contra o objetivo do `00` — estágio por estágio (ingestão, tratamento, 1º export, modelagem, 2º
+export), com o que não está 100% e o que já foi fechado. Declara no fim o que NÃO cobriu.
+
+[`MAPA_DE_EXECUCAO.md`](MAPA_DE_EXECUCAO.md) é **o que falta até o projeto
 fechar**, em ordem, com o critério de pronto de cada bloco e a distinção entre o que é pendência, o
 que é decisão do dono e o que é espera por dado de terceiro. Os três documentos de estado respondem
 perguntas diferentes: `ESTADO.md` diz onde estamos, `HANDOFF.md` diz como chegamos, e este diz para

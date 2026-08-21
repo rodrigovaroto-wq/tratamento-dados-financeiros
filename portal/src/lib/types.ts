@@ -117,14 +117,6 @@ export interface CampoExtraido {
   aceito_em: string | null;
 }
 
-export interface ChecklistItem {
-  id: string;
-  caso_id: string;
-  tipo_taxonomia: string;
-  obrigatoriedade: Obrigatoriedade;
-  status: string;
-  documento_id: string | null;
-}
 
 export interface Pendencia {
   id: string;

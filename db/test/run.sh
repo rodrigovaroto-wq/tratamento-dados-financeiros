@@ -164,8 +164,20 @@ echo "== schema materializado (db/schema.sql)"
 # ALEATÓRIO. Sem tirá-las, o `git diff --exit-code` do CI ficaria vermelho toda
 # vez, por ruído — e um portão que acusa sempre é um portão que se aprende a
 # ignorar, que é pior do que não ter portão.
+#
+# E O `--no-owner` NÃO COBRE O DEFAULT ACL — foi o que reprovou o CI em 21/08.
+# `ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega o nome do superusuário que
+# aplicou as migrations: `postgres` no CI e no Supabase, mas o que estiver logado
+# na máquina de quem roda (num container que só tem `root`, sai `FOR ROLE root`).
+# Isso é a MESMA informação que o `--no-owner` já decidiu que não é do schema, só
+# num lugar onde a flag não chega. Normalizar para `postgres` deixa o portão
+# medir o schema em vez de medir quem digitou o comando — e `postgres` é o nome
+# verdadeiro em produção, então o arquivo publicado continua sendo o que o
+# Supabase tem. O GRANT em si (a anon/authenticated/service_role) não é tocado:
+# é ele que carrega a informação, e é ele que o arquivo existe para denunciar.
 pg_dump --schema-only --no-owner --schema=public -d "$DB" \
   | grep -vE '^(-- (Dumped (from|by)|PostgreSQL database dump)|\\(un)?restrict )' \
+  | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE [^ ]+ /ALTER DEFAULT PRIVILEGES FOR ROLE postgres /' \
   | sed -E '/^$/N;/^\n$/D' > db/schema.sql
 echo "   $(grep -c '^CREATE ' db/schema.sql) objetos criados · $(wc -l < db/schema.sql) linhas"
 
@@ -253,6 +265,19 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/pendencia_decisao.test.sql 2>&1 \
 echo
 echo "== testes do catálogo de premissas e da modelagem por caso (0038)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/premissas.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+# DEPOIS do premissas.test.sql de propósito: é ele que deixa um caso com
+# `caso_modelagem` configurado, e sem um caso configurado não há "pronto" a
+# conferir. O primeiro assert do arquivo falha alto se essa ordem mudar.
+echo "== o painel de operação (0135)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/operacao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== a sazonalidade no \"pronto\" da Modelagem (0134)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/sazonalidade_pronto.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo

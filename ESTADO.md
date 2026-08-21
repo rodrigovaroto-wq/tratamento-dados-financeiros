@@ -2,7 +2,7 @@
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
-lidas para retomar. E `docs/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
+lidas para retomar. E `docs/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `docs/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
 critério de pronto de cada bloco — é o arquivo para abrir antes de escolher o que fazer na sessão.
 
 > **Por que os dois são arquivos separados.** O cabeçalho do `HANDOFF.md` já passou 17 PRs congelado
@@ -15,10 +15,10 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
+| **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 293 · export 594 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,377 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## OS TRÊS ITENS DE OBSERVABILIDADE, ESPELHO E DADO (21/08, sessão 56)
+
+Itens 3, 4 e 5 do ranking. Nenhum deles muda um número do output — os três mudam **o que se
+consegue ver**, que é a condição para que um número errado não sobreviva à próxima rodada.
+
+### 3. A operação passa a ser vista (`0135`) — e o dado já estava gravado
+
+O diagnóstico de 11/08 chamou isto de *"zero observabilidade"*: uma falha em produção só aparece
+quando alguém abre a tela. O portal tem oito `console.error` e nenhuma métrica.
+
+**O achado é que não faltava instrumentação — faltava a pergunta.** A `0115` criou `lote_execucao` e
+o nó `Gravar Uso do Lote` a alimenta desde então: uma linha por execução, com documentos, falhas,
+custo real, custo estimado, tokens, linhas extraídas e cobertura. **Nunca foi lida por ninguém.** O
+custo desta entrega foi ler o que já estava lá, não instrumentar de novo.
+
+`fn_operacao_lotes(p_dias, p_limite)` devolve uma linha por execução com os **alertas já decididos no
+banco**, e `fn_operacao_resumo(p_dias)` faz o cabeçalho. O veredito não mora na tela de propósito:
+repetir a régua em `/operacao` criaria **duas réguas sobre a mesma quantidade** — a forma de defeito
+que esta casa já pagou três vezes — e a segunda divergiria no dia em que existisse um segundo leitor.
+
+| Alerta | O que ele pega |
+|---|---|
+| `cobertura_nao_medida` | O mais importante e o menos óbvio: **não é cobertura baixa** (disso a guarda já cuida) — é a guarda **não ter opinado** sobre o lote. As três camadas ficam mudas juntas e o lote passa parecendo normal. |
+| `documento_com_falha` | A falha já virou pendência tipada; o painel diz que ela existe sem exigir abrir mandato por mandato. |
+| `documento_sem_medicao` | Nem falha, nem sucesso. O estado que mais se parece com normalidade e menos é. |
+| `custo_acima_do_previsto` | Custo real acima de **1,5× a estimativa daquele lote**. A régua é razão contra a própria previsão, não teto em dólar — teto absoluto depende do tamanho do lote e envelhece na primeira mudança de preço. |
+
+**Duas decisões que o teste trava, e o teste tem contraprova:** a cobertura publicada é **mediana e
+não média** (média mistura lote de 40 documentos com lote de 1 e não descreve nenhum dos dois — o
+assert fixa 0,900 contra a média de 0,906); e o resumo publica `dias_desde_o_ultimo`, porque
+**silêncio é estado** — "0 alertas" sem execução nenhuma afirmaria uma saúde que ninguém mediu, e a
+tela vazia diz isso com todas as letras em vez de pintar verde. O 1,4× que **não** acende é assert
+próprio: alerta que dispara para variação de token vira ruído e ninguém olha a tela em duas semanas.
+
+### 4. O espelho lib↔workflow passa a ser conferido nas 26 funções, não em duas
+
+**A causa comum dos dois bugs de triagem da sessão 55 era esta**, e ela continuava aberta. Toda
+função de `n8n/lib/*.mjs` mora em dois lugares: a lib, que as suítes exercitam, e uma cópia literal
+dentro do `build-workflow.mjs` — **a única que o n8n executa**. Nó de Code não importa módulo; a
+duplicação é estrutural. O que dava para remover era o silêncio: corrigir a lib e esquecer a cópia
+deixava a suíte verde e a produção errada, e foi exatamente o que aconteceu duas vezes.
+
+`n8n/test/espelho-inline.test.mjs` extrai cada função embutida do JSON do workflow e roda **os mesmos
+casos** nela e na lib. **Compara comportamento, não texto** — as cópias são minificadas de propósito,
+com nomes próprios de variável; comparar fonte reprovaria por formatação e convidaria a "consertar"
+formatando, o pior desfecho possível para um teste.
+
+**O assert que faz o arquivo durar é o penúltimo:** ele varre o workflow, lista TODA função duplicada
+e exige que cada uma esteja coberta ou declarada em `SEM_CASO` **com motivo**. A 27ª função duplicada
+não entra em silêncio. O último confere que o inventário não encolheu sem alguém notar. Verificado
+por religamento: reintroduzir o `Math.max` da confiança ou o `parseCsv` sem aspas reprova **dois**
+casos, um por função.
+
+> **A divergência que o teste documenta em vez de esconder:** `parseTipo` devolve objeto na lib e
+> apenas o código no workflow. Está anotado no `porque` da tabela e projetado no comparador — um
+> contrato diferente de propósito não é defeito, mas precisa estar escrito onde alguém tropece nele.
+
+### 5. Onde o dado do cliente mora, quanto tempo fica e quem vê (`docs/10`)
+
+O diagnóstico registrava *"sem backup/retenção declarados — dado de cliente em Supabase, sem
+procedimento de recuperação escrito"*, e a sessão 36 mostrou por que não é burocracia: houve um susto
+de perda de dado e a resposta teve de ser montada na hora. **A pergunta "como se recupera?" aparece
+sob pressão, que é o pior momento para descobrir a resposta.**
+
+O documento **não preenche por dedução** o que depende do console: onde a resposta não está no
+repositório, ele escreve **[A CONFIRMAR]** em vez de uma frase tranquilizadora. Política de backup
+que ninguém testou é crença, não controle — e este projeto existe para não confundir as duas.
+
+**O que ele fixa, e vale ler:** (a) o fato que abre qualquer conversa de LGPD é que **o documento do
+cliente vai à OpenAI** — desenho do produto, não efeito colateral; (b) hoje **não há expurgo, e isso
+é escolha por omissão**; (c) **o schema e o pipeline se remontam do repositório sozinhos** —
+migrations em ordem reconstroem o banco (é o que o `run.sh` faz a cada execução) e os quatro
+workflows saem de geradores conferidos por `git diff --exit-code`, então **o que não se recupera de
+backup é o DADO**; (d) o teste de restauração que falta, com `/instalacao` como veredito e **o tempo
+anotado**, porque "temos backup" e "voltamos em 40 minutos" são afirmações diferentes; (e) o acesso é
+**binário** — qualquer autenticado vê todos os mandatos, aceitável com duas pessoas e não com a
+terceira.
+
+### E um portão que reprovava por RUÍDO — o `db/schema.sql` e o dono do DEFAULT ACL
+
+Achado pelo CI da própria sessão, e vale mais como lição do que como conserto. O `run.sh` filtra do
+`pg_dump` a versão do servidor e o token aleatório do `\restrict` — ruído que mudaria a cada
+execução — e conta com `--no-owner` para o resto. **`--no-owner` não cobre o DEFAULT ACL:**
+`ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega o nome do superusuário que aplicou as
+migrations. Num container que só tem `root`, o arquivo saía com `FOR ROLE root` contra o
+`FOR ROLE postgres` do CI: **schema idêntico, portão vermelho.**
+
+Normalizado para `postgres`, que é o nome verdadeiro no Supabase — então o arquivo publicado
+continua sendo o que produção tem. O GRANT em si (a `anon`/`authenticated`/`service_role`) **não** é
+tocado: é ele que carrega a informação, e é ele que este arquivo existe para denunciar. A regra é a
+que o próprio comentário do `run.sh` já defendia: **um portão que acusa sempre é um portão que se
+aprende a ignorar**, e o jeito de honrá-la é o portão medir o schema, não medir quem digitou o
+comando.
+
+## AS DUAS TRAVAS DE FLUIDEZ, EXECUTADAS (20/08, sessão 55) — `0134` e a guarda do giro
+
+Ranqueadas por (impacto no output × fluidez do processo) ÷ esforço, e as duas de topo eram
+executáveis sem depender de ninguém.
+
+### 1. A guarda do giro agregado — o output
+
+**O defeito não tinha sintoma nenhum.** Cada conta de giro é projetada por `dias ÷ 360 × base`, e
+**nada olhava o agregado**. Vincular a MESMA premissa de prazo a N contas — um clique por linha na
+tela de Modelagem, e o caminho natural de quem está com pressa — prende **N × dias de receita** em
+capital de giro. E o balanço **continua fechando**, porque o patrimônio líquido absorve a diferença.
+O arquivo ia ao comitê com passivo circulante crescendo **oitenta vezes em cinco anos** e nenhuma
+célula vermelha.
+
+**A régua não julga o negócio — compara a HIPÓTESE com o FATO.** Não existe limiar absoluto de
+"quantos dias de giro são demais": depende do setor e do ciclo. O que não depende de opinião é a
+razão entre o giro projetado e o giro que **a própria empresa** teve no último exercício realizado.
+
+| | realizado | projetado |
+|---|---|---|
+| Ativo de giro, em dias de receita | 157 | **767** |
+| Passivo de giro, em dias de receita | 84 | **852** |
+| **CHECK — projetado ÷ realizado** | — | **5,9×** (limiar 2×) |
+
+> **O `modelo-da-fixture.mts` fazia exatamente a patologia** — uma premissa de 60 dias ligada a toda
+> conta de circulante. Isso era defeito da fixture; passa a ser o **caso de teste** da guarda. O
+> arquivo de demonstração agora **declara** o problema em vez de escondê-lo, que é o comportamento
+> certo dos dois lados.
+
+**Duas decisões de desenho que valem ler:** a razão **não é publicada no realizado** (contra o próprio
+último ano ela é 1 por construção, e número que não decide nada ensina o leitor a ignorar a linha); e
+o denominador é a **receita líquida nos dois lados**, inclusive no passivo — aqui a régua é de ordem
+de grandeza, e bases diferentes tornariam ativo e passivo incomparáveis entre si. Cada conta continua
+girando contra a base contábil correta dela.
+
+### 2. A sazonalidade travava o "pronto" para sempre (`0134`) — a fluidez
+
+Suspeita anotada desde a sessão 39, **medida agora**. `fn_conferir_modelagem` listava toda premissa
+ativa com `valores` vazio e exigia a lista vazia para dar `pronto`. Certo para quase tudo — `SGA_PCT`
+sem percentual É premissa pela metade. Mas três premissas do catálogo têm `formula = 'curva_mensal'`
+e nelas **`valores` vazio é o estado CERTO**: a curva sai de `fn_sazonalidade_do_caso` (`0040`),
+derivada do documento mensal, **não digitada**.
+
+```
+antes de vincular:  pronto=false, sem_valor=[SGA_PCT]
+depois de vincular: pronto=false, sem_valor=[SAZONALIDADE, SGA_PCT]
+```
+
+O analista faz a coisa certa — vincula a sazonalidade, que é o que a aba existe para permitir — e a
+tela passa a cobrar **uma ação que não existe**. Não há campo para preencher. A saída que sobra para
+quem tem pressa é **desvincular a sazonalidade** e perder a distribuição mensal para calar o aviso.
+
+O critério passa a ser a **fórmula do catálogo**, não uma lista de códigos: quem acrescentar a quarta
+curva mensal não vai ter de lembrar de editar a função — mesma lição do limiar `0.95` dentro da
+`fn_registrar_campos_extraidos` (`0041`).
+
+**E o caso ruim de verdade não foi calado.** Curva ativa num caso **sem** documento mensal ganhou
+nome próprio, `sazonalidade_sem_curva`, que **informa e não bloqueia**: os números ANUAIS continuam
+certos, só o rateio dentro do ano fica liso. Travar o portão por isso devolveria o atrito pela porta
+dos fundos, e o analista aprenderia a ignorar o portão. **O portão trava o que está errado; o que
+está pior do que poderia estar é informação, e informação se publica.**
+
+> **Religamento nos dois:** desfazendo o filtro da `0134`, o teste falha nomeando
+> `CRONOGRAMA_FISICO`; a contraprova (premissa de fórmula normal sem valor) continua travando o
+> `pronto`, provando que o portão não foi afrouxado — só deixou de cobrar o impossível.
+
+## OS DOIS DEFEITOS QUE SE MASCARAVAM, e o ativo circulante fecha em ZERO (20/08, sessão 55)
+
+O resíduo de reconciliação do **ativo circulante** era de −3.200 — pequeno o bastante para passar
+por arredondamento. Eram **dois defeitos de sinais opostos**, e é por isso que nenhum foi achado
+antes: **corrigir só um PIORAVA o número.**
+
+| Estado | Resíduo do AC |
+|---|---|
+| com os dois defeitos | −3.200 |
+| só (a) corrigido | −12.400 |
+| só (b) corrigido | +9.200 |
+| **os dois corrigidos** | **ZERO** |
+
+**(a) Uma coincidência aritmética em 2024 apagava uma conta em 2025 — e em todo o grupo.**
+`detectarSubtotaisPorOrdem` marcou "Matérias-primas e insumos" na coluna de 2024 (12.400) porque ali
+as linhas seguintes somavam, **por coincidência**, o valor dela. O veredito era gravado como
+`(secao_canonica, rótulo)` — **sem a coluna**. Resultado: a conta sumia do modelo em todas as colunas
+e em todas as empresas. Em 2025 o bloco `ativo_circulante` ficava com **16 linhas somando 36.240**
+onde o documento tem **17 somando 45.440**.
+
+A regra passa a exigir **acordo entre colunas**: subtotal numa coluna só não basta, tem de ser
+subtotal em todas as colunas com valor. É o que `detectarSubtotaisInformados` (B) já fazia. E isso
+**não enfraquece o cabeçalho de grupo de verdade** — "Estoques" é nome de seção declarada e cai na
+regra (A), estrutural, que não depende de aritmética. Quem passa a precisar de acordo é só a detecção
+que se apoia SÓ em soma, que é exatamente a que produz coincidência.
+
+> **O acordo é por COLUNA, não por ocorrência** — e a diferença tem assert próprio. Um comparativo
+> sem `periodo_coluna` traz a mesma conta duas vezes na mesma coluna, e o detector colapsa as
+> repetições de propósito, marcando só a primeira. Exigir "todas as ocorrências" reprovava o subtotal
+> de verdade e devolvia a dupla contagem. Foi o assert `(0109d)` que pegou, na primeira tentativa.
+
+**(b) `Math.abs` no histórico do giro somava as contas redutoras.** Conta redutora é negativa por
+natureza: "(-) Perdas estimadas" (−3.850) e "(-) Provisão para obsolescência" (−2.350) **reduzem** o
+circulante. Em módulo passavam a SOMAR, e o erro é o **dobro** delas: +12.400 num ativo circulante de
+45.440 — **27%**. Os blocos de balanço não passam pela normalização de sinal (ela só toca
+`BLOCOS_DE_DESPESA`, da DRE), então o sinal do documento é a verdade. **A magnitude FICA no passivo**,
+onde o documento às vezes publica saldo negativo por convenção de partida dobrada.
+
+**Religamento, com os números:** desfazendo (a) → falha com 12.400; desfazendo (b) → falha com
+12.400; os dois juntos → **zero**. O assert `(38)` olha o RESULTADO e não cada causa, justamente
+porque os dois se cancelam parcialmente.
+
+**O que sobra no auditor, e é decisão registrada:** os −15.149 do passivo circulante são a
+divergência entre o **mapa de dívida** (43.542 de curto prazo) e o **balanço** (28.393). O dono
+decidiu: **o mapa manda** e o balanço é reconciliado. O arquivo declara a diferença em vez de
+escondê-la.
+
+## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, um defeito aberto
+
+**Decisão do dono, registrada:** quando o **mapa de dívida** e o **balanço** discordam, o **mapa
+manda** e o balanço é reconciliado. É o desenho que já estava em vigor; agora está escrito.
+
+### Bug 1 — a confiança da classificação era a MAIOR das duas, não a do vencedor
+
+`mergeClassification` escolhe entre o palpite do NOME do arquivo e o da IA por confiança, e devolvia
+`Math.max` das duas. O caso alcançável: a IA responde `DESCONHECIDO` **com confiança 0,9** — ela está
+segura de que o documento é ilegível —, o tipo vira `null`, o palpite do nome vence com **0,5**… e
+saía **0,9**. O limiar que abre `classificacao_pendente` é **0,70**. **Um documento que a IA declarou
+ilegível entrava classificado, sem humano nenhum olhar, apoiado num palpite de 0,5.**
+
+Corrigido para a confiança do VENCEDOR. Quando as duas têm tipo, o vencedor JÁ É o de maior
+confiança — então o `max` some sem perda em nenhum dos quatro ramos.
+
+### Bug 2 — `parseCsv` não tratava aspas, e isso é corrupção silenciosa
+
+Era `linha.split(sep)`, sem noção de aspas. Num CSV brasileiro quebra no caso mais comum que existe:
+
+```
+nome,obs,v
+Empresa,"Silva, João & Cia",1000
+    →  { nome: "Empresa", obs: '"Silva', v: 'João & Cia"' }
+```
+
+O valor **1000 desapareceu** e a coluna `v` recebeu um pedaço do nome. O cabeçalho é lido pelo mesmo
+`split`, então toda coluna depois da vírgula desliza uma casa. Sem estouro e sem aviso. Vale para
+todo upload `text/csv` e `text/plain`.
+
+Reescrito como máquina de estados: separador dentro de aspas, aspas escapadas (`""`), quebra de linha
+dentro do campo, e **detecção do separador contando FORA das aspas** — sem isso, `n;o` com `"a,b,c"`
+elegia a vírgula e quebrava o arquivo inteiro.
+
+### E a causa comum dos dois: ESPELHO SEM GUARDA
+
+As duas funções moram em DOIS lugares — a lib (`n8n/lib/*.mjs`), que os testes exercitam, e uma cópia
+LITERAL dentro do `build-workflow.mjs`, que é a que vai para o JSON e **a única que o n8n executa**.
+Nós de Code do n8n não importam módulo, então a duplicação é estrutural. O que dava para remover era
+o silêncio: corrigir a lib e esquecer a cópia deixava a suíte VERDE e a produção errada.
+
+`n8n/test/espelho-inline.test.mjs` **extrai a função do JSON commitado** e roda a mesma tabela de
+casos nas duas, exigindo resultado idêntico. Não compara texto — comparar fonte reprovaria por espaço
+em branco e convidaria a "consertar" formatando. Compara COMPORTAMENTO. Religamento medido:
+estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
+
+### O DEFEITO QUE FICA ABERTO, com reprodução exata e sem correção especulativa
+
+**Uma conta legítima de 9.200 some do modelo institucional.** No balanço da Vertentes Metalúrgica
+(2025), o bloco `ativo_circulante` do modelo tem **16 linhas somando 36.240** enquanto as folhas do
+documento são **17 somando exatamente 45.440** — o informado. A que falta é
+**"Matérias-primas e insumos" (9.200)**, e ela é conta, não subtotal.
+
+| | soma |
+|---|---|
+| folhas do documento (árvore por `secao`) | **45.440** = informado |
+| bloco do modelo | **36.240** |
+| diferença | **9.200** = "Matérias-primas e insumos" |
+
+**Onde está, e onde eu parei:** o descarte é `ehSubtotalEstrutural` (`modelo-institucional.ts:951`),
+que consulta `subtotaisEstruturais` — um conjunto com chave `(secao_canonica, rótulo)`. Conferi os
+dois detectores que o alimentam e **nenhum explica a marcação**: em `detectarSubtotaisPorOrdem` os
+seguintes de 9.200 dão 9.500 / 10.280 / 7.930, e em `detectarSubtotaisInformados` (B) os irmãos somam
+7.930 — nenhum bate com 9.200 dentro da tolerância.
+
+**A hipótese que sobra, e que NÃO confirmei:** `rotulosDeSubtotalInformado` detecta sobre a ABA
+INTEIRA de propósito (o comentário dela explica por quê), e o veredito é gravado por
+`(secao_canonica, rótulo)` — não por documento. Se for isso, uma coincidência aritmética no balanço de
+OUTRA empresa do grupo apaga a conta desta. O book tem 6 empresas × 3 exercícios, então há 17 outras
+chances de coincidência.
+
+> **Por que não corrigi:** este caminho decide quais contas entram no arquivo que vai a comitê, e a
+> chave grosseira pode ser deliberada (o comentário defende explicitamente detectar sobre a aba
+> inteira, para a aba analítica e o modelo darem o MESMO veredito). Estreitar a chave para incluir o
+> documento muda esse contrato. Mexer sem fechar a causa trocaria um defeito medido por um risco não
+> medido — e o resíduo de reconciliação já declara a diferença hoje, então o arquivo não mente: ele
+> mostra a conta faltando na linha de reconciliação em vez de escondê-la.
+
+### Limpeza: o que saiu, e por que tenho certeza
+
+| Removido | Prova |
+|---|---|
+| `vincularLinha` (server action, 22 linhas) | superseded por `salvarSecao` — o comentário do próprio arquivo conta a troca ("236 idas ao servidor, uma por clique"); zero referências. A RPC `fn_vincular_linha_premissa` **continua viva**, chamada por `salvarSecao` |
+| `JANELAS_MEDIA` (`n8n/lib/macro.mjs`) | declarada uma vez, referenciada em lugar nenhum. O portal tem a sua própria (`JANELAS_MEDIA_EXPORT`), independente |
+| `FILL_TOTAL` (`oria-marca.ts`) | idem |
+| `ChecklistItem` (`types.ts`) | idem |
+| `docs/pr-test.md` | o arquivo diz de si mesmo: *"Pode ser removido com segurança."* |
+
+**O que NÃO removi, e por quê:** `portal/scripts/_dump.mts` não é referenciado por nada, mas é
+ferramenta manual de depuração da mesma família das que o `PROMPT_ESPELHAR_MODELO_BASE` §6 documenta.
+"Sem referência" não é "nunca mais será usado", e a instrução era remover só o que é certo. Os outros
+~45 `export` sem uso externo são tipos e constantes usados DENTRO do próprio arquivo: tirar o
+`export` é cosmético e mexe em 20 arquivos para não corrigir defeito nenhum.
+
+> **Falso positivo que a varredura pegou e eu não segui:** `metadata` em `layout.tsx` aparece como
+> "sem uso" e é consumido pelo Next por convenção. Ferramenta de código morto que ninguém confere
+> apaga o que funciona.
+
+## A DÍVIDA BANCÁRIA QUE ERA PROJETADA COMO GIRO (20/08, sessão 55)
+
+**Achado rodando o arquivo, não lendo código** — o método que a sessão 51 provou valer. Gerei o
+export completo da fixture e passei o `auditar-xlsx.mts`: **10 de 11 itens verdes e um reprovado**,
+o resíduo de reconciliação, com `Balance Sheet!F24` em **−19.987 — 20,9% do ativo total**.
+
+**A decomposição, medida célula a célula:**
+
+| Componente do passivo circulante | Modelo | Balanço | Excesso |
+|---|---|---|---|
+| Operacional (`ESP_PC` do giro) | 42.698 | 37.894 | +4.804 |
+| Dívida CP (`ST Inv. & Debt`) | 41.553 | 28.393 | +13.160 |
+| Tributos circulante | 6.881 | 4.858 | +2.023 |
+| **Soma** | **91.132** | **71.145** | **19.987** |
+
+**A causa: seis lugares faziam a MESMA pergunta com TRÊS regexes diferentes.** "Esta linha é dívida,
+e portanto não é giro?" era respondida por `empréstimo|financiamento|debênture|arrendamento` no
+`Working Capital`, pela mesma coisa `+leasing` no `Cash Flow` e no passivo não circulante, e por
+`+nota promissória|cédula de crédito` na origem da dívida. **As diferenças não eram deliberadas** —
+os três sítios dão o MESMO motivo no comentário ("contaria duas vezes"). O efeito era classificação
+que muda de aba para aba dentro do mesmo arquivo: *"Leasing operacional a pagar"* é dívida no Cash
+Flow e **giro** no Working Capital.
+
+**E as três deixavam passar dívida bancária com nome brasileiro:** `Conta garantida` (1.550) e
+`Duplicatas descontadas e antecipação de recebíveis` (5.277) — **6.827, ou 9,6% do passivo
+circulante informado** — ficavam no passivo operacional e eram projetadas por **dias de giro contra
+receita**. É exatamente o que o comentário do `abaCapitalGiro` proíbe em voz alta: *"o passivo
+operacional carregaria dívida, e a NCG passaria a MELHORAR quando a empresa se endivida mais."*
+
+**A correção:** um vocabulário único, `PADROES_DIVIDA_FINANCEIRA`, no idioma do `PADROES_CAIXA` que
+já existia ao lado — a união das três variantes mais os instrumentos que faltavam. Os seis sítios
+passam a chamar `ehDividaFinanceira`. **Resíduo: −19.987 → −15.149** (20,9% → 15,8% do ativo).
+
+**O que FICOU DE FORA de propósito:** risco sacado, confirming, forfait e vendor. São supplier
+finance, e se são dívida ou fornecedor é julgamento contábil em aberto. Classificá-los num regex
+mudaria resultado financeiro por decisão nossa — e a regra do `PROMPT_ESPELHAR_MODELO_BASE` é
+explícita: divergência de mecanismo que muda número é decisão do dono. Há assert garantindo que eles
+continuam como giro, para a decisão não ser tomada por descuido depois.
+
+**O religamento, com o número da reprovação:** estreitando o vocabulário de volta à variante antiga,
+**8 asserts caem** e o resíduo volta a **−19.987 (20,9%)**.
+
+### O que SOBRA, e é pergunta para o dono — não defeito de código
+
+Os **−15.149** restantes são **divergência entre dois documentos**: o mapa de dívida diz **43.542**
+de dívida de curto prazo e o balanço diz **28.393**. O modelo declara a diferença na linha de
+reconciliação em vez de escondê-la, que é o desenho certo, e o auditor a reprova por materialidade,
+o que também está certo — o comentário dele já dizia que o resíduo *"é a medida direta da qualidade
+da extração daquele caso"*.
+
+> **Para o dono:** qual das duas fontes manda quando elas discordam? Hoje o modelo usa o MAPA (é o
+> detalhe por contrato, com juros) e reconcilia contra o balanço. Se o balanço é que manda, é uma
+> linha de código — mas é decisão de produto, e muda número que vai a comitê.
+
+### Duas coisas que investiguei e NÃO mexi, para não fugir do Modelo Base
+
+- **`INSS a recolher` e `FGTS a recolher` vão para a aba de Tributos**, não para o giro
+  (`ehTributoARecolher` inclui `inss|fgts|previd` de propósito). São encargos mensais e recorrentes,
+  então o cronograma decrescente da aba de tributos é discutível — mas é classificação deliberada,
+  documentada, e mudá-la muda número.
+- **A projeção da fixture explode** (passivo circulante de 71.145 para 5,7 milhões em 5 anos) porque
+  `modelo-da-fixture.mts` liga UMA premissa `PMR = 60 dias` a **toda** conta de circulante: vinte
+  contas × 60 dias = 1.200 dias de receita em giro. É artefato da fixture de demonstração, não do
+  motor — o portal manda as premissas reais. Fica anotado porque o arquivo de demonstração é o que
+  alguém abre para conferir o modelo, e hoje ele mostra um absurdo plausível.
 
 ## A SEÇÃO PASSA A TER DE FECHAR (20/08, sessão 55) — `0133`
 

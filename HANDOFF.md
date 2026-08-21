@@ -4,33 +4,34 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-19 (sessão 52). **Estado do `main`:** mergeado até o **PR #144**.
+**Última atualização:** 2026-08-21 (sessão 56). **Estado do `main`:** mergeado até o **PR #154**;
+a sessão 56 está no **PR #155**, aberto.
 
-**AS DUAS PENDÊNCIAS DE INFRA ACABARAM.** O dono aplicou as migrations **até a `0125`** e reimportou
-o `workflow.e1-ingestao.json`. Não há mais nada de banco nem de n8n esperando.
+**NADA DE INFRA ESTÁ ESPERANDO.** O dono aplicou as migrations **até a `0133`** e reimportou o
+`workflow.e1-ingestao.json`. As **`0134` e `0135` ainda não foram aplicadas** — quem responde isso
+contra o banco de verdade é a tela `/instalacao` (`0131`), não este arquivo.
 
-**Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Nesta rodada isso pesa mais que
-nas anteriores, porque a sessão 52 acrescentou **três checagens e um conserto de motor que nunca
-viram dado real**. Os sete pontos que a rodada prova estão tabelados no `ESTADO.md`, em "O próximo
-passo" — o primeiro deles é que **o fatiamento passa a existir em produção**: até agora ele estava
-desligado, e zero dos 38 documentos do book era fatiado.
+**Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
+nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada — as sessões 52 a 56
+acrescentaram **seis checagens e quatro consertos de motor que nunca viram dado real**. É o **B1** do
+`docs/MAPA_DE_EXECUCAO.md`, é cerca de uma hora, e depois dele o B2 inteiro abre.
 
-**O que a sessão 52 entregou** (PR #144, os quatro itens abertos que não dependiam do dono):
+**O QUE MUDOU DA 52 PARA A 56, em uma linha cada** — a narrativa completa de cada uma está no
+`ESTADO.md`, que é onde ela deve ser lida:
 
-- **`0123`** — a checagem de mútuos parava de funcionar quando a planilha não repetia a palavra
-  "mútuo" em cada linha, que é como toda planilha real é. Devolvia `documento_ausente`: a divergência
-  não era "não encontrada", era declarada inexistente. Passou seis sessões escondida porque o fixture
-  de Vertentes escrevia a natureza dentro do rótulo — um enfeite do gerador, que só existia no teste.
-- **`0124`** — a conferência do intragrupo que NÃO é mútuo, pelo ESPELHO entre cada par de empresas.
-  O pareamento é pelo PAR, não pela natureza: quem vende chama de "contas a receber" e quem compra
-  chama de "fornecedores".
-- **`0125`** — a proveniência (arquivo, página, confiança, aceite) volta às catorze abas do export.
-- **A fixture do `book-canastra`** — a maior lacuna de cobertura viva. Foi ela que achou tudo acima.
-- **O fatiamento**, que estava desligado por erro de unidade (teto em CÉLULAS aplicado a contagem de
-  LINHAS). A correção anotada aqui — "extrair por faixa de página" — era a errada.
+| Sessão | O que ficou de pé |
+|---|---|
+| 53 | O dial passa a ser **obedecido** (`0127`) e dois níveis declarados eram falsos; a classificação contábil em sombra (`0128`); a transcrição humana assistida (`0129`) e a contaminação que ela criaria |
+| 54 | O golden set passa a ser rotulável, e a rotulagem é **cega** (`0130`); os três cenários viram comparáveis; a passada de eficiência — cujo valor está no que **não** mudou |
+| 55 | A instalação passa a se **declarar** (`0131`/`0132`); a **seção do balanço tem de fechar** (`0133`); a dívida que era projetada como giro; os **dois defeitos que se mascaravam** e o ativo circulante fechando em ZERO; a guarda do giro agregado; a sazonalidade que travava o `pronto` (`0134`) |
+| 56 | A **operação passa a ser vista** (`0135` + `/operacao`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
 
-**Duas das quatro correções anotadas no `ESTADO.md` estavam ERRADAS**, e medir antes de escrever
-código foi o que mostrou isso. Fica como método, não como anedota.
+**O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
+antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
+por faixa de página" era a correção errada), com a `0133` na 55 (a cegueira foi **aberta** por uma
+correção nossa, a `0116`) e com os dois defeitos que se mascaravam na 55, onde **corrigir só um
+piorava o número** — o resíduo do ativo circulante era −3.200 com os dois, −12.400 com um e +9.200
+com o outro. Fica como método, não como anedota.
 
 > **O HISTÓRICO ABAIXO PARA NA SESSÃO 39.** As sessões 40 a 52 não estão aqui, e isso é escolha, não
 > esquecimento: desde a 41 o que muda toda rodada mora no `ESTADO.md`, e duplicar a narrativa nos dois
@@ -151,7 +152,14 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 > a pessoa começar errado. **Atualizar o cabeçalho ao fechar a rodada é obrigação**; o que não se
 > toca é a seção de sessão passada.
 
-### Migrations — 55 arquivos, nesta ordem
+### Migrations — a lista NÃO mora mais aqui
+
+> **A tabela abaixo parou de ser mantida na sessão 52, e o número no título estava errado desde
+> antes.** A **fonte** é `db/README.md`: ele tem a tabela completa e a lista de comandos de
+> aplicação, e o `db/test/run.sh` **reprova** quando uma migration existe e não está nas duas. Uma
+> lista paralela sem portão é exatamente a forma como o cabeçalho deste arquivo passou 17 PRs
+> mentindo — fica o trecho abaixo como referência histórica até a `0118`, não como ordem de
+> aplicação.
 
 `0001`→`0044` (sequência completa, todas aplicadas) e a faixa do colaborador:
 
@@ -236,75 +244,74 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 
 ## O QUE ESTÁ ABERTO AGORA
 
-*(O `ESTADO.md`, na raiz, é a versão curta e é ele que o CI mantém em dia. Isto aqui é o mesmo com
-o porquê de cada item.)*
+> **ESTA SEÇÃO NÃO É MAIS A FONTE, e dizer isso é o conserto.** Ela ficou parada na sessão 52 e
+> chegou à 56 com dois itens **já entregues** listados como abertos — que é a única forma de erro
+> que um documento de estado pode cometer sozinho. Hoje a pergunta "o que falta?" tem três respostas
+> com dono e com portão: **`ESTADO.md`** (onde estamos, e o `run.sh` reprova se envelhecer),
+> **`docs/MAPA_DE_EXECUCAO.md`** (o que falta até fechar, em ordem, com critério de pronto) e
+> **`docs/PRONTIDAO_POR_ESTAGIO.md`** (o projeto medido contra o próprio objetivo, estágio por
+> estágio). O que sobra abaixo é o **porquê** de cada item, que continua valendo.
 
-**1. O TESTE DE PONTA A PONTA COM O `book-canastra` — é o próximo passo, e está destravado.**
+**1. ~~O teste de ponta a ponta com o `book-canastra`~~ — CONTINUA SENDO O ÚNICO BLOQUEIO REAL, e é
+do dono.** É o **B1** do mapa. O que mudou desde a 52 é que **tudo o que dependia de engenharia foi
+entregue**: as migrations estão aplicadas até a `0133`, o workflow foi reimportado, o fatiamento foi
+religado, o orçamento passa, e a tela acompanha. O que a rodada tem de trazer de volta continua
+tabelado no `ESTADO.md`, em "O próximo passo" — e o item de maior valor segue sendo **o custo REAL
+da OpenAI**, porque todo número de custo deste repositório saiu de aritmética sobre páginas e linhas,
+**nunca de uma fatura**.
 
-Os 38 documentos estão prontos para subir. Tudo o que barrava foi removido nesta rodada:
+**2. ~~Fixture de extração do `book-canastra`~~ — FEITA na sessão 52, e foi ela que achou o resto.**
+`db/test/fixture_book_canastra.sql` está no `main` e roda em toda execução do `run.sh`, ao lado da de
+Vertentes. O contrato é o que a seção original já antecipava e vale reler: **Vertentes afirma
+extração fiel (zero pendência) e Canastra afirma o contrário** — escala mista, locale anglo e
+prognóstico de contingência **devem** abrir pendência, e cada uma tem assert próprio. Ela achou os
+três defeitos da primeira rodada, o intragrupo que não é mútuo e a cegueira da `0133`.
 
-| | Estado |
-|---|---|
-| Orçamento | estima **US$ 2,75** para os 38 (era US$ 8,30) → **passa** |
-| Gasto real esperado | **~US$ 1,41** — 47% do teto de US$ 3 |
-| Timeout do n8n | conferido pelo dono: **desativado** (execução roda até terminar) |
-| Duração | **~23 minutos** (cadência de 33s por extração no Tier 1) |
-| Tela | acompanha por 43 min e mostra progresso |
+**3. Do output — os TRÊS itens desta lista foram fechados entre a 52 e a 54** (o diagnóstico de
+origem continua em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
 
-O que trazer de volta do teste, e por quê:
+- ~~**resumo dos três cenários lado a lado**~~ — **feito na 54.** O receio registrado aqui estava
+  certo e foi ele que guiou a solução: a implementação ingênua replica a cascata e cria um SEGUNDO
+  lugar que calcula EBITDA, que é o defeito por trás dos quatro incidentes de dupla contagem. Não há
+  segundo lugar de cálculo;
+- ~~**proveniência completa na `Premissas`**~~ — **feita na 52** (`0125`): arquivo, página,
+  confiança e aceite voltaram às catorze abas do arquivo de comitê;
+- ~~**Modo A do `f0/07`**~~ — **feito na 53**: a base viva é consultável no portal.
 
-- **o custo REAL da OpenAI** (Usage do dia). É a primeira medição de verdade que este projeto vai
-  ter — todo número de custo aqui saiu de aritmética sobre páginas e linhas, nunca de uma fatura.
-  É com ela que o `CUSTO_POR_MB_USD` deve ser recalibrado;
-- **quantos dos 38 chegaram** ao banco;
-- **o que a reconciliação abriu** — em especial se pegou o erro plantado de **R$ 240 mil na planilha
-  de mútuos**. O `pdf/GABARITO.json` tem os números certos e o `GUIA_DE_TESTE.md` lista as 15
-  armadilhas deliberadas.
-
-> **Se a conta real vier muito abaixo de US$ 1,41**, dá para apertar a margem do estimador (hoje
-> 1,8× o agregado medido) e liberar lotes maiores. Se vier acima, o coeficiente sobe. Enquanto não
-> houver fatura, o número é o melhor palpite instrumentado que existe — não é medição.
-
-**2. Fixture de extração do `book-canastra` — a maior lacuna de cobertura viva.**
-
-O book existe no `main` desde o #112 e prova o GERADOR (o balanço fecha nas 6 empresas e nos 3
-exercícios, por `assert`) e o ORÇAMENTO. Não prova a INGESTÃO: não existe o equivalente do
-`db/test/gerar_fixture.py`, que converteria o book em linhas de `campo_extraido` para o `db/test`, o
-`verificar-export` e o e2e rodarem contra ele.
-
-A fatia é maior do que parece, e a razão é o contrato: a fixture do `book-vertentes` afirma extração
-**fiel** (zero pendência), enquanto a graça do `canastra` é o contrário — as pendências que escala
-mista, locale anglo e prognóstico de contingência **devem** abrir são o resultado esperado, e cada
-uma precisa de assert próprio.
-
-**3. Do output, o que continua de pé** (detalhe e evidência em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
-
-- **resumo dos três cenários lado a lado** — o de maior valor não feito. A implementação ingênua
-  replica a cascata e cria um SEGUNDO lugar que calcula EBITDA, que é o defeito por trás dos quatro
-  incidentes de dupla contagem. A resposta correta é Data Table do Excel (`{=TABLE(,G2)}`), frágil
-  via ExcelJS e não conferível pelo arnês local. Rodada própria, com item de aceite humano;
-- **proveniência completa na `Premissas`** — hoje a nota traz o documento de origem; página,
-  confiança e status de aceite ficaram nas abas de dado, que saíram do arquivo de modelagem no #109.
-  O caminho certo é estender `fn_linhas_para_modelagem` (muda o tipo de retorno, exige
-  `drop function`); casar por rótulo cru falha em silêncio nas variações de grafia;
-- **Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não vem.
-
-**4. Golden set e concordância medida.** Sem eles o dial de autonomia não sobe e a F4 do `docs/03`
-não começa. `medir-auto-aceite.mts` diz no próprio cabeçalho que, rodado contra fixture, mede o
+**4. Golden set e concordância medida — ABERTO, e é a decisão B3 do mapa.** A `0130` fez a metade de
+engenharia: o golden set passa a ser **rotulável**, e a rotulagem é **cega**. O que falta não é
+código, é a **saída escrita em `docs/01`** — A, B ou C — porque sem concordância medida o dial não
+sobe e a F4 do `docs/03` não começa. A recomendação registrada: medir por **veredito de produção**
+como piso permanente (cada aceite ou rejeição na tela de revisão já é um rótulo, produzido pelo
+trabalho normal, e portanto não custa hora humana), **publicando que é um piso enviesado**.
+`medir-auto-aceite.mts` continua dizendo no próprio cabeçalho que, rodado contra fixture, mede o
 instrumento e não o modelo.
 
 **5. Decisões do dono já tomadas, para ninguém reabrir:**
 
-- **proteções do `main`**: ele decidiu NÃO recolocá-las (11/08). Hoje nada impede mergear vermelho
-  nem empurrar direto. Está registrado como risco no diagnóstico, e não é mais item de pendência;
+- **proteções do `main`**: ele decidiu NÃO recolocá-las (11/08) — **e isto hoje se contradiz com o
+  `docs/MAPA_DE_EXECUCAO.md`, que lista "proteger o `main`" como B6.1 aberta.** A contradição fica
+  escrita em vez de resolvida por conta própria, porque a decisão é do dono e não de engenharia. O
+  fato, medido: hoje nada impede mergear vermelho nem empurrar direto, e o
+  `docs/PRONTIDAO_POR_ESTAGIO.md` marca o item como **não conferido** — nenhuma sessão lê
+  configuração de branch;
 - **papel de usuário**: removido (`0110`). Não há sênior a cadastrar;
 - **teto de ressalvas, motivo obrigatório, expiração**: removidos (`0109`). O Portão 2 informa, não
   impede.
 
-**Existe CI** (`.github/workflows/suites.yml`): quatro suítes + geradores + tsc/eslint/build + o
-`db/schema.sql` conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão
-sua — mas confira antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço
-ficou sem runner e produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+**Existe CI** (`.github/workflows/suites.yml`): as **cinco suítes** (n8n, export, transcrição, banco,
+e2e) + os quatro geradores de workflow e os três de fixture + tsc/eslint/build + o `db/schema.sql`
+conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão sua — mas confira
+antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
+produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
+
+> **E um portão pode reprovar por RUÍDO, o que é pior que não reprovar — aconteceu em 21/08.** O
+> `pg_dump --no-owner` não cobre o DEFAULT ACL: `ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega
+> o nome do superusuário que aplicou as migrations, e num container que só tem `root` o
+> `db/schema.sql` saía com `FOR ROLE root` contra o `FOR ROLE postgres` do CI. Schema idêntico,
+> portão vermelho. O `run.sh` passa a normalizar essa linha para `postgres` — que é o nome verdadeiro
+> no Supabase —, pela mesma razão que já filtra a versão do `pg_dump` e o token aleatório do
+> `\restrict`: **o portão tem de medir o schema, não quem digitou o comando.**
 
 ## Sessão 48 (2026-08-17) — a v46 auditada contra o gabarito, dois erros de unidade, e o portal com a cara da Oria
 

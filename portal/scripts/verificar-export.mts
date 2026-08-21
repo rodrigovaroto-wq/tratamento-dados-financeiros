@@ -40,6 +40,7 @@
  *     soma tem de ficar visível numa linha de checagem — nunca virar o total.
  */
 import { readFileSync } from "node:fs";
+import { entradaModeloDaFixture } from "./lib/modelo-da-fixture.mts";
 import type ExcelJS from "exceljs";
 import { avaliarCelula, esquecerMemoria, linhaVazia } from "./lib/avaliar-formula.mts";
 import {
@@ -52,7 +53,7 @@ import { classificarConta } from "../src/lib/statement-templates.ts";
 import {
   casarVinculosComLinhas, chaveDaLinha, serieDaLinha, seriesPorLinha, vinculoPorLinha,
 } from "../src/lib/modelagem-linha.ts";
-import { ABAS_MODELO as ABAS_DO_MODELO } from "../src/lib/modelo-institucional.ts";
+import { ABAS_MODELO as ABAS_DO_MODELO, ehDividaFinanceira } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
 import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "../src/lib/pendencia.ts";
@@ -6422,6 +6423,181 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       && /Income Statement/.test(String((cel as { formula: string }).formula)),
       "(36) …sendo ESPELHO do Income Statement, não um segundo cálculo do EBITDA",
       String(typeof cel === "object" && cel && "formula" in cel ? (cel as { formula: string }).formula : cel));
+  }
+}
+
+// =============================================================================
+// (37) O VOCABULÁRIO DE DÍVIDA FINANCEIRA — e este bloco é RELIGAMENTO, não enfeite.
+//
+// Havia SEIS lugares no `modelo-institucional.ts` fazendo a mesma pergunta ("esta
+// linha é dívida, e portanto NÃO é giro?") com TRÊS regexes diferentes. O efeito
+// media-se no book: "Conta garantida" (1.550) e "Duplicatas descontadas e
+// antecipação de recebíveis" (5.277) ficavam no passivo OPERACIONAL e eram
+// projetadas por DIAS DE GIRO CONTRA RECEITA — 6.827, ou 9,6% do passivo
+// circulante informado. O resíduo de reconciliação do passivo circulante caiu de
+// −19.987 (20,9% do ativo) para −15.149 (15,8%) com a unificação; o que sobra é
+// divergência entre o mapa de dívida (43.542) e o balanço (28.393), que é dado a
+// reconciliar e não defeito de código.
+//
+// Cada linha da tabela abaixo é um rótulo que APARECE em balanço brasileiro. Se
+// alguém estreitar o vocabulário, o assert correspondente cai — que é o único
+// jeito de este bloco valer alguma coisa.
+{
+  const DIVIDA: string[] = [
+    // os que as três variantes já pegavam
+    "Empréstimos bancários - capital de giro",
+    "Financiamentos - FINAME/BNDES",
+    "Debêntures a pagar",
+    "Arrendamentos a pagar - CPC 06 (R2)",
+    // …e os que NENHUMA delas pegava, medidos no book
+    "Conta garantida",
+    "Duplicatas descontadas e antecipação de recebíveis",
+    "Cheque especial",
+    "Desconto de recebíveis",
+    "Adiantamento de contrato de câmbio",
+    // só a variante mais completa (C) conhecia estes dois — agora todas conhecem
+    "Leasing operacional a pagar",
+    "Nota promissória comercial",
+    "Cédula de crédito bancário",
+  ];
+  // O CONTRAPONTO É OBRIGATÓRIO: sem ele um `() => true` passaria em tudo acima.
+  const GIRO: string[] = [
+    "Fornecedores nacionais",
+    "Salários e ordenados a pagar",
+    "Adiantamentos de clientes",
+    "Provisão de férias e encargos",
+    "Outras contas a pagar",
+    "Aluguéis a pagar - Vertentes Imóveis SPE",
+    "Mútuos a pagar - Vertentes Participações S.A.",
+    // Supplier finance fica FORA de propósito: se é dívida ou fornecedor é
+    // julgamento contábil em aberto, e decidi-lo num regex mudaria resultado
+    // financeiro por conta própria. Está escrito no vocabulário.
+    "Risco sacado a pagar",
+    "Confirming - fornecedores",
+  ];
+  for (const r of DIVIDA) {
+    checar(ehDividaFinanceira(r), `(37) "${r}" é dívida financeira (não gira contra receita)`);
+  }
+  for (const r of GIRO) {
+    checar(!ehDividaFinanceira(r), `(37) "${r}" continua sendo giro operacional`);
+  }
+}
+
+// =============================================================================
+// (38) OS DOIS DEFEITOS QUE SE MASCARAVAM — e a prova é o ATIVO fechando em ZERO.
+//
+// (a) `detectarSubtotaisPorOrdem` marcou "Matérias-primas e insumos" na coluna de
+//     2024 (12.400), porque ali as linhas seguintes somavam POR COINCIDÊNCIA o
+//     valor dela. O veredito era gravado como (secao_canonica, rótulo), SEM a
+//     coluna — então a conta sumia do modelo em TODAS as colunas e em todas as
+//     empresas. Em 2025 o bloco `ativo_circulante` ficava com 16 linhas somando
+//     36.240 onde o documento tem 17 somando 45.440: os 9.200 dela.
+//
+// (b) O `Working Capital` gravava o histórico em `Math.abs`, e conta REDUTORA é
+//     negativa por natureza. As duas provisões do book (−3.850 e −2.350) viravam
+//     positivas e passavam a SOMAR: erro de +12.400, o DOBRO delas.
+//
+// OS DOIS SE ANULAVAM PARCIALMENTE: −9.200 de (a) contra +12.400 de (b) deixavam
+// um resíduo de −3.200, pequeno o bastante para passar por arredondamento.
+// Corrigir só um PIORAVA o número — é por isso que nenhum dos dois foi achado
+// antes, e é por isso que este assert olha o RESULTADO e não cada causa.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wbBook = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const wsBS = wbBook.getWorksheet("Balance Sheet");
+  checar(wsBS != null, "(38) o book monta o modelo institucional");
+  if (wsBS) {
+    let rAC = 0;
+    for (let r = 1; r <= wsBS.rowCount; r++) {
+      if (/reconcilia..o com o ativo circulante/.test(String(wsBS.getRow(r).getCell(3).value ?? ""))) {
+        rAC = r; break;
+      }
+    }
+    checar(rAC > 0, "(38) a linha de reconciliação do ativo circulante existe no book");
+    if (rAC > 0) {
+      esquecerMemoria(wsBS);
+      let pior = 0;
+      for (const c of ["E", "F", "G", "H", "I", "J", "K"]) {
+        const v = avaliarCelula(wsBS, c, rAC);
+        if (typeof v === "number") pior = Math.max(pior, Math.abs(v));
+      }
+      checar(pior < 1,
+        "(38) o ATIVO CIRCULANTE reconcilia em ZERO — as contas extraídas somam o total informado",
+        `maior resíduo: ${pior.toFixed(2)} (era 3.200 com os dois defeitos, `
+        + `12.400 com só (a) corrigido e 9.200 com só (b))`);
+    }
+  }
+}
+
+// =============================================================================
+// (39) A GUARDA DO GIRO AGREGADO — e o fixture é o caso de teste dela.
+//
+// Cada conta de giro é projetada por `dias ÷ 360 × base`, e nada olhava o
+// AGREGADO. Vincular a MESMA premissa de prazo a N contas — um clique por linha
+// na tela, o caminho natural de quem tem pressa — prende N × dias de receita em
+// capital de giro, e o balanço CONTINUA FECHANDO porque o patrimônio líquido
+// absorve. O arquivo ia ao comitê com passivo circulante crescendo oitenta vezes
+// em cinco anos e nenhuma célula vermelha.
+//
+// O `modelo-da-fixture.mts` faz exatamente isso: liga UMA premissa de 60 dias a
+// TODA conta de circulante. Isso era um defeito da fixture; passa a ser o CASO DE
+// TESTE da guarda — o arquivo de demonstração agora DECLARA o problema em vez de
+// escondê-lo, que é o comportamento certo dos dois lados.
+//
+// Medido: histórico 157 + 84 = 241 dias; projetado 767 + 852 = 1.619 dias; razão
+// 5,9× contra o limiar de 2×.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wbG = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const wsG = wbG.getWorksheet("Working Capital");
+  checar(wsG != null, "(39) a aba Working Capital existe");
+  if (wsG) {
+    const acha = (re: RegExp) => {
+      for (let r = 1; r <= wsG.rowCount; r++) {
+        if (re.test(String(wsG.getRow(r).getCell(3).value ?? ""))) return r;
+      }
+      return 0;
+    };
+    const rAC = acha(/Ativo de giro, em dias de receita/);
+    const rPC = acha(/Passivo de giro, em dias de receita/);
+    const rCk = acha(/CHECK — giro projetado/);
+    checar(rAC > 0 && rPC > 0 && rCk > 0,
+      "(39) as três linhas da guarda do giro agregado existem", `${rAC}/${rPC}/${rCk}`);
+    if (rAC > 0 && rCk > 0) {
+      esquecerMemoria(wsG);
+      // O realizado NÃO publica razão: contra o próprio último ano ela é 1 por
+      // construção, e número que não decide nada ensina a ignorar a linha.
+      const noHist = avaliarCelula(wsG, "E", rCk);
+      checar(typeof noHist !== "number",
+        "(39) a razão NÃO é publicada nas colunas de realizado", String(noHist));
+      // E na projeção ela EXISTE e ACUSA — a fixture é patológica de propósito.
+      let pior = 0;
+      for (const c of ["G", "H", "I", "J", "K"]) {
+        const v = avaliarCelula(wsG, c, rCk);
+        if (typeof v === "number") pior = Math.max(pior, v);
+      }
+      checar(pior > 2,
+        "(39) a guarda ACUSA a fixture, que liga uma premissa de 60 dias a toda conta de circulante",
+        `razão máxima: ${pior.toFixed(1)}× (limiar 2×)`);
+      const diasProj = avaliarCelula(wsG, "G", rAC);
+      checar(typeof diasProj === "number" && diasProj > 400,
+        "(39) …e o número que sustenta o veredito está publicado, em dias",
+        `ativo de giro projetado: ${typeof diasProj === "number" ? diasProj.toFixed(0) : diasProj} dias`);
+    }
   }
 }
 

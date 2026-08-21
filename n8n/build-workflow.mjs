@@ -483,7 +483,7 @@ const mt=(binMeta.mimeType||'').toLowerCase();
 // lote) em vez do literal 0.
 const buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');
 const b64=buf.toString('base64');
-function parseCsv(t){const L=String(t||'').split(/\\r?\\n/).filter(x=>x.trim()!=='');if(!L.length)return [];const sep=(L[0].match(/;/g)||[]).length>(L[0].match(/,/g)||[]).length?';':',';const h=L[0].split(sep).map(c=>c.trim());return L.slice(1).map(l=>{const c=l.split(sep);const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]||'').trim());return o;});}
+function csvConta(t,alvo){let n=0,d=false;for(let i=0;i<t.length;i++){const c=t[i];if(c==='"'){if(d&&t[i+1]==='"'){i++;continue;}d=!d;}else if(c===alvo&&!d)n++;else if(c==='\\n'&&!d)break;}return n;}\nfunction csvRegs(t,sep){const R=[];let f='',r=[],d=false;for(let i=0;i<t.length;i++){const c=t[i];if(d){if(c==='"'){if(t[i+1]==='"'){f+='"';i++;}else d=false;}else f+=c;continue;}if(c==='"'){d=true;continue;}if(c===sep){r.push(f);f='';continue;}if(c==='\\r')continue;if(c==='\\n'){r.push(f);R.push(r);r=[];f='';continue;}f+=c;}r.push(f);R.push(r);return R.filter(x=>x.some(y=>y.trim()!==''));}\nfunction parseCsv(t){const s=String(t||'');if(s.trim()==='')return [];const sep=csvConta(s,';')>csvConta(s,',')?';':',';const R=csvRegs(s,sep);if(!R.length)return [];const h=R[0].map(c=>c.trim());return R.slice(1).map(c=>{const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]??'').trim());return o;});}
 // TETOS: 2000x60, nao 50x25 -- espelha lib/spreadsheet.mjs (MAX_LINHAS_PLANILHA).
 // 50 linhas e' menos do que um documento real tem (24 meses x 5 entidades = 120;
 // balancete analitico passa de 500) e o resto ia embora com uma nota no prompt
@@ -586,7 +586,7 @@ function mergeClassification(fromName, fromAI){
     periodo_ref:fromAI.periodo_ref??fromName.periodo_ref??null,
     assinado:fromAI.assinado??fromName.assinado??null,
     entidade:fromAI.entidade??fromName.entidade??null,
-    confianca:Math.max(fromName.confianca||0, fromAI.confianca||0),
+    confianca:winner.confianca??0,
     fonte:winner===fromAI?'openai_conteudo':'nome_arquivo',
     justificativa:fromAI.justificativa||'',
   };

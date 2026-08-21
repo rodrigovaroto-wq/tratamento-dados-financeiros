@@ -759,6 +759,53 @@ const PADROES_CAIXA = [
 const ehCaixa = (chave: string) => PADROES_CAIXA.some((re) => re.test(chave));
 
 // -----------------------------------------------------------------------------
+// DÍVIDA FINANCEIRA — o vocabulário ÚNICO, e por que ele passou a existir.
+//
+// Seis lugares deste arquivo faziam a MESMA pergunta — "esta linha é dívida, que
+// vive na aba de dívida, e portanto NÃO é giro?" — com TRÊS regexes diferentes:
+//
+//   A. `abaCapitalGiro` (giro) e a repartição CP/LP …… empréstimo|financiamento|
+//                                                      debênture|arrendamento
+//   B. `Cash Flow` e o passivo não circulante ………… A + leasing
+//   C. a origem da dívida do `ST Inv. & Debt` ……… B + nota promissória|
+//                                                      cédula de crédito
+//
+// As diferenças não eram deliberadas: os três sítios dão o MESMO motivo no
+// comentário ("contaria duas vezes"). E o efeito era uma classificação que muda
+// de aba para aba dentro do mesmo arquivo: "Leasing operacional a pagar" é dívida
+// no Cash Flow e no balanço (B) e é GIRO no Working Capital (A); "Nota
+// promissória" é dívida só em C. Duas réguas sobre a mesma quantidade é a forma
+// de defeito que esta casa já pagou três vezes.
+//
+// E AS TRÊS DEIXAVAM PASSAR DÍVIDA BANCÁRIA COM NOME BRASILEIRO, medido no book:
+// "Conta garantida" (1.550) e "Duplicatas descontadas e antecipação de
+// recebíveis" (5.277) — 6.827, ou 9,6% do passivo circulante informado — ficavam
+// no passivo OPERACIONAL e eram projetadas por DIAS DE GIRO CONTRA RECEITA. É
+// exatamente o que o comentário do `abaCapitalGiro` proíbe em voz alta: "o
+// passivo operacional carregaria dívida, e a NCG passaria a MELHORAR quando a
+// empresa se endivida mais".
+//
+// O QUE FICOU DE FORA, DE PROPÓSITO: risco sacado, confirming, forfait e vendor.
+// São supplier finance, e se eles são dívida ou fornecedor é julgamento contábil
+// em aberto (depende de quem assume o risco e do prazo original). Classificá-los
+// aqui mudaria resultado financeiro por decisão nossa — e isso é decisão do dono,
+// não de um regex.
+// -----------------------------------------------------------------------------
+const PADROES_DIVIDA_FINANCEIRA = [
+  /empr(é|e)stimo/i, /financiamento/i, /deb(ê|e)nture/i, /arrendamento/i, /leasing/i,
+  /nota promiss(ó|o)ria/i, /c(é|e)dula de cr(é|e)dito/i,
+  // Instrumentos bancários de curto prazo com nome próprio no Brasil. Nenhum
+  // deles traz a palavra "empréstimo", e todos são dívida com banco.
+  /conta garantida/i, /cheque especial/i,
+  /duplicatas? descontadas?/i, /desconto de (duplicatas?|receb(í|i)veis|t(í|i)tulos)/i,
+  /antecipa(ç|c)(ã|a)o de receb(í|i)veis/i,
+  /adiantamento de contrato de c(â|a)mbio/i, /\bACC\b/, /\bACE\b/,
+];
+export const ehDividaFinanceira = (chave: string) =>
+  PADROES_DIVIDA_FINANCEIRA.some((re) => re.test(chave));
+
+
+// -----------------------------------------------------------------------------
 // A CONVENÇÃO DE SINAL DO MODELO, e por que ela precisa ser imposta na fronteira.
 //
 // Toda a cascata deste modelo SUBTRAI despesa: `RECEITA_LIQUIDA = GROSS −
@@ -2490,12 +2537,12 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // é o contrário do que acontece. Quem o projeta é a aba `Tributos a Recolher`, e o
   // balanço lê o espelho dela.
   const passivos = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
-    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave))
+    .filter((l) => !ehDividaFinanceira(l.chave))
     .filter((l) => !ehTributoARecolher(l.chave));
   const tributoFora = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
     .filter((l) => ehTributoARecolher(l.chave));
   const dividaFora = (ctx.linhasPorBloco.get("passivo_circulante") ?? [])
-    .filter((l) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(l.chave));
+    .filter((l) => ehDividaFinanceira(l.chave));
 
   // `P18` — o espelho: é DAQUI que o `Balance Sheet` e o `Cash Flow` leem.
   g.espelho("BALANCE SHEET ACCOUNTS", [
@@ -2549,6 +2596,39 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   g.linha("NCG", { rotulo: "NECESSIDADE DE CAPITAL DE GIRO (AC − PC)", negrito: true, topo: true, fmt: NUM });
   g.linha("VAR_NCG", { rotulo: "Variação da NCG (efeito no caixa, sinal invertido)", fmt: NUM });
 
+  // ---- A GUARDA DO GIRO AGREGADO ------------------------------------------
+  //
+  // O DEFEITO QUE ELA EXISTE PARA DENUNCIAR, e ele não tem sintoma nenhum hoje.
+  // Cada conta de giro é projetada por `dias ÷ 360 × base`, e nada olha o
+  // AGREGADO. Vincular a MESMA premissa de prazo a N contas — que é um clique
+  // por linha na tela de Modelagem, e o caminho natural de quem está com pressa —
+  // produz N × dias de receita presos em capital de giro. Vinte contas a 60 dias
+  // são 1.200 dias, e o balanço CONTINUA FECHANDO, porque o patrimônio líquido
+  // absorve a diferença. O arquivo vai ao comitê com um passivo circulante que
+  // cresce oitenta vezes em cinco anos e nenhuma célula vermelha.
+  //
+  // A RÉGUA NÃO JULGA O NEGÓCIO — compara a HIPÓTESE com o FATO. Não há limiar
+  // absoluto de "quantos dias de giro são demais": depende do setor, do ciclo, do
+  // mandato. O que não depende de opinião é a razão entre o giro PROJETADO e o
+  // giro que a própria empresa teve no último exercício REALIZADO. Uma projeção
+  // que multiplica por cinco o giro histórico não é uma tese agressiva, é um erro
+  // de configuração — e é isso, e só isso, que esta linha acusa.
+  //
+  // O DENOMINADOR É A RECEITA LÍQUIDA nos dois lados, inclusive no passivo, e
+  // isso é DELIBERADO: aqui a régua é de ORDEM DE GRANDEZA, e trocar a base do
+  // passivo para custo faria a razão do passivo e a do ativo não serem
+  // comparáveis entre si. Cada CONTA continua girando contra a base contábil
+  // certa dela — o que muda é só o denominador desta leitura agregada, e a nota
+  // da célula diz isso.
+  g.pular();
+  g.linha(null, { rotulo: "GUARDA DO GIRO AGREGADO (hipótese × fato)", bloco: true });
+  g.linha("DIAS_AC_TOT", { rotulo: "Ativo de giro, em dias de receita", fmt: DIAS });
+  g.linha("DIAS_PC_TOT", { rotulo: "Passivo de giro, em dias de receita", fmt: DIAS });
+  g.linha("CHECK_GIRO", {
+    rotulo: "CHECK — giro projetado ÷ último realizado (>2× é erro de configuração)",
+    fmt: MULT, negrito: true,
+  });
+
   // A BASE DE CADA CONTA — e uma incoerência do Modelo Base que NÃO se replica.
   //
   // Lá o prazo médio HISTÓRICO de uma conta de fornecedor é medido contra o CUSTO
@@ -2579,7 +2659,27 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         const base = baseDe(pref, l, ano);
         if (hist) {
           const e = valorNaEscala(l, ano, ctx.ent.unidade);
-          if (e) g.set(ch, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
+          // O ATIVO ENTRA COM O SINAL DO DOCUMENTO; o PASSIVO, em magnitude.
+          //
+          // `Math.abs` valia para os dois lados e era erro aritmético no ativo:
+          // conta REDUTORA é negativa por natureza — "(-) Perdas estimadas em
+          // créditos de liquidação duvidosa" (−3.850) e "(-) Provisão para
+          // obsolescência de estoques" (−2.350) reduzem o circulante. Em módulo
+          // elas passavam a SOMAR, e o erro é o DOBRO do valor delas: medido no
+          // book, +12.400 num ativo circulante de 45.440 (27%), absorvido em
+          // silêncio pela linha de reconciliação.
+          //
+          // Os blocos de BALANÇO não passam pela normalização de sinal (ela só
+          // toca `BLOCOS_DE_DESPESA`, da DRE), então aqui o sinal do documento é
+          // a verdade e não há convenção a impor.
+          //
+          // No PASSIVO a magnitude FICA: lá o documento às vezes publica o saldo
+          // negativo por convenção de partida dobrada, e a cascata do modelo
+          // soma passivo como número positivo. Trocar os dois de uma vez faria o
+          // balanço deixar de fechar por motivo diferente do que se está
+          // corrigindo — e o lado do ativo é o que tem conta redutora de verdade.
+          if (e) g.set(ch, ano, pref === "wc_a" ? e.valor : Math.abs(e.valor),
+            { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
           // Dias IMPLÍCITOS do histórico: saldo ÷ base × 360, com a guarda
           // `IF(base>0)` do Modelo Base (`P27`). É o número que o analista precisa
           // ver antes de escolher o dia projetado — sem ele, a premissa é palpite.
@@ -2617,6 +2717,37 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
       fmt: NUM,
       nota: "Giro que CRESCE consome caixa — por isso o sinal aqui é o inverso do saldo.",
     });
+
+    // A GUARDA DO GIRO AGREGADO, por exercício. Ver o comentário longo acima.
+    const notaBase = "Denominador é a receita líquida nos DOIS lados, de propósito: aqui a régua é "
+      + "de ordem de grandeza, e bases diferentes tornariam ativo e passivo incomparáveis entre si. "
+      + "Cada conta continua girando contra a base contábil correta dela.";
+    g.set("DIAS_AC_TOT", ano,
+      `=IF(${g.ref("NET_REV", ano)}>0,${g.ref("TOTAL_AC", ano)}/${g.ref("NET_REV", ano)}*360,"")`,
+      { fmt: DIAS, nota: notaBase });
+    g.set("DIAS_PC_TOT", ano,
+      `=IF(${g.ref("NET_REV", ano)}>0,${g.ref("TOTAL_PC", ano)}/${g.ref("NET_REV", ano)}*360,"")`,
+      { fmt: DIAS, nota: notaBase });
+    // No REALIZADO a razão é 1 por construção contra o próprio último ano, então
+    // ela só é publicada na PROJEÇÃO — é lá que a hipótese existe para ser
+    // conferida. Publicar 1,00 nas colunas históricas encheria a linha de um
+    // número que não decide nada, e número que não decide nada é o que ensina o
+    // leitor a ignorar a linha inteira.
+    if (hist) {
+      g.set("CHECK_GIRO", ano, "", { fmt: MULT });
+    } else {
+      const ref = `(${g.ref("DIAS_AC_TOT", ctx.ultimoHist)}+${g.ref("DIAS_PC_TOT", ctx.ultimoHist)})`;
+      const proj = `(${g.ref("DIAS_AC_TOT", ano)}+${g.ref("DIAS_PC_TOT", ano)})`;
+      g.set("CHECK_GIRO", ano, `=IF(${ref}>0,${proj}/${ref},"")`, {
+        fmt: MULT,
+        nota: "Giro agregado projetado dividido pelo do último exercício realizado. A régua não "
+          + "julga o negócio: ela compara a HIPÓTESE com o FATO da própria empresa. Acima de 2× "
+          + "quase sempre é a MESMA premissa de prazo vinculada a várias contas — cada uma passa a "
+          + "prender os mesmos dias de receita, e o balanço continua fechando porque o patrimônio "
+          + "líquido absorve. Soma ativo E passivo para que um giro que cresce dos dois lados, sem "
+          + "mexer na NCG líquida, também apareça.",
+      });
+    }
     // `P18` — o espelho, que é o que as demonstrações leem.
     g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
     somaOuZero(g, "ESP_ESTOQUE", ano, estoques.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
@@ -2626,6 +2757,28 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     g.set("ESP_PC", ano, `=${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
     g.set("ESP_VAR_NCG", ano, `=${g.ref("VAR_NCG", ano)}`, { fmt: NUM });
   }
+  // O VERMELHO É O QUE FAZ A LINHA SER VISTA. Sem ele a razão fica publicada e
+  // some entre trinta outras — o mesmo motivo pelo qual o CHECK do balanço tem
+  // realce desde a 0101. Acima de 2× é erro de configuração; abaixo de 0,5× é a
+  // hipótese oposta (giro que MELHORA sozinho), que também não se sustenta sem
+  // alguém ter dito por quê.
+  {
+    const linhaCheck = g.n("CHECK_GIRO");
+    if (linhaCheck) {
+      const colIni = colLetra(COL_PRIMEIRO_ANO);
+      const colFim = colLetra(COL_PRIMEIRO_ANO + ctx.anos.length - 1);
+      g.ws.addConditionalFormatting({
+        ref: `${colIni}${linhaCheck}:${colFim}${linhaCheck}`,
+        rules: [
+          { type: "expression", formulae: [`AND(ISNUMBER(${colIni}${linhaCheck}),OR(${colIni}${linhaCheck}>2,${colIni}${linhaCheck}<0.5))`],
+            style: { fill: FILL_CHECK_ERRO }, priority: 1 },
+          { type: "expression", formulae: [`ISNUMBER(${colIni}${linhaCheck})`],
+            style: { fill: FILL_CHECK_OK }, priority: 2 },
+        ],
+      });
+    }
+  }
+
   g.finalizar("__unidade");
   return g;
 }
@@ -2824,14 +2977,11 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   //   2. as LINHAS DE DÍVIDA BANCÁRIA DO BALANÇO, sempre que o mapa não traz —
   //      é o número auditado da demonstração, e ele nunca falta.
   // Nunca as duas juntas: somar mapa e balanço contaria a mesma dívida duas vezes.
-  const ehBancariaChave = (chave: string) =>
-    /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing|nota promiss(ó|o)ria|c(é|e)dula de cr(é|e)dito/i
-      .test(chave);
   const doMapa = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /saldo|principal/i.test(l.chave));
   const doBalanco = [
     ...(ctx.linhasPorBloco.get("passivo_circulante") ?? []),
     ...(ctx.linhasPorBloco.get("passivo_nao_circulante") ?? []),
-  ].filter((l) => ehBancariaChave(l.chave));
+  ].filter((l) => ehDividaFinanceira(l.chave));
   const dividas = doMapa.length > 0 ? doMapa : doBalanco;
   const origemDaDivida = doMapa.length > 0 ? "mapa de dívida" : "linhas de dívida bancária do balanço";
   const jurosDoMapa = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /juros/i.test(l.chave));
@@ -2841,10 +2991,9 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   // dívida bancária total). Antes vivia em `abaBalanco`, e o balanço acabava
   // sabendo de dívida — o que é exatamente o acoplamento que o espelho (`P18`)
   // existe para evitar. Sem base para medir, 30% declarado na nota.
-  const ehBancaria = (chave: string) => /empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento/i.test(chave);
   const somaBancaria = (bloco: BlocoModelo, ano: number) =>
     (ctx.linhasPorBloco.get(bloco) ?? [])
-      .filter((l) => ehBancaria(l.chave))
+      .filter((l) => ehDividaFinanceira(l.chave))
       .reduce((acc, l) => acc + Math.abs(valorNaEscala(l, ano, ctx.ent.unidade)?.valor ?? 0), 0);
   const saldoCP = somaBancaria("passivo_circulante", ctx.ultimoHist);
   const saldoLP = somaBancaria("passivo_nao_circulante", ctx.ultimoHist);
@@ -3353,7 +3502,7 @@ function abaFluxo(
       .filter((l) => !ehImobilizado(l.chave) && !ehCaixa(l.chave))
       .map((l) => ({ l, pref: "wc_a" as const })),
     ...(ctx.linhasPorBloco.get("passivo_circulante") ?? [])
-      .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave))
+      .filter((l) => !ehDividaFinanceira(l.chave))
       .map((l) => ({ l, pref: "wc_p" as const })),
   ];
   g.linha("VAR_NCG", { sinal: "+/-", rotulo: "Variação da necessidade de capital de giro", fmt: NUM });
@@ -3511,7 +3660,7 @@ function abaBalanco(
   // projetada pela aba de dívida e entra por `DIVIDA_LP`. Listá-la aqui também a
   // contaria duas vezes — o mesmo defeito que o giro tinha.
   const pnc = (ctx.linhasPorBloco.get("passivo_nao_circulante") ?? [])
-    .filter((l) => !/empr(é|e)stimo|financiamento|deb(ê|e)nture|arrendamento|leasing/i.test(l.chave))
+    .filter((l) => !ehDividaFinanceira(l.chave))
     // Tributo e parcelamento de longo prazo entram por `TRIB_PNC`, o espelho da aba que
     // conhece o cronograma. Listá-los aqui também os contaria duas vezes.
     .filter((l) => !ehTributoARecolher(l.chave));

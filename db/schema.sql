@@ -1396,11 +1396,29 @@ CREATE FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) RETURNS jsonb
     select jsonb_object_agg(papel, n) as j
     from (select papel, count(*) as n from linhas where papel <> 'conta' group by papel) x
   ),
+  -- 0134: a premissa ativa, com a FÓRMULA dela ao lado. É a fórmula que decide
+  -- se `valores` vazio é defeito ou é o estado normal — não o código, que
+  -- envelheceria a cada premissa nova.
+  ativas as (
+    select cp.premissa_codigo, cp.valores, pc.formula
+    from caso_premissa cp
+    join premissa_catalogo pc on pc.codigo = cp.premissa_codigo
+    where cp.caso_id = p_caso_id and cp.ativo
+  ),
   premissas as (
-    select count(*) filter (where ativo) as ativas,
+    select count(*) as ativas,
            array_agg(premissa_codigo order by premissa_codigo)
-             filter (where ativo and (valores is null or valores = '{}'::jsonb)) as sem_valor
-    from caso_premissa where caso_id = p_caso_id
+             filter (where formula <> 'curva_mensal'
+                       and (valores is null or valores = '{}'::jsonb)) as sem_valor,
+           -- O caso ruim DE VERDADE: curva mensal ativa e o caso sem documento
+           -- mensal de onde derivá-la. As linhas vinculadas ficam com rateio
+           -- liso, e isso precisa ser DITO — não bloqueia, porque o anual
+           -- continua certo.
+           array_agg(premissa_codigo order by premissa_codigo)
+             filter (where formula = 'curva_mensal'
+                       and not exists (select 1 from fn_sazonalidade_do_caso(p_caso_id)))
+             as saz_sem_curva
+    from ativas
   ),
   param as (
     select to_jsonb(m) as j from caso_modelagem m where m.caso_id = p_caso_id
@@ -1409,6 +1427,9 @@ CREATE FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) RETURNS jsonb
     'parametros', (select j from param),
     'premissas_ativas', (select ativas from premissas),
     'premissas_sem_valor', to_jsonb(coalesce((select sem_valor from premissas), array[]::text[])),
+    -- 0134: informação, não bloqueio. Ver o cabeçalho.
+    'sazonalidade_sem_curva',
+      to_jsonb(coalesce((select saz_sem_curva from premissas), array[]::text[])),
     'linhas_do_caso', (select count(*) from contas),
     'linhas_nao_projetaveis', coalesce((select j from nao_projetaveis), '{}'::jsonb),
     'linhas_com_premissa', (select count(*) from vinculadas),
@@ -1425,7 +1446,7 @@ $$;
 -- Name: FUNCTION fn_conferir_modelagem(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Conferência da modelagem do caso. 0101: uma única passada por fn_linhas_para_modelagem (antes eram cinco, duas delas dentro de exists correlacionado — uma execução completa por vínculo), o que a tirava do statement_timeout do Supabase.';
+COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstico da Modelagem de um caso. Desde a 0134, premissa de `curva_mensal` (SAZONALIDADE, CRONOGRAMA_FISICO, PARADA_MANUTENCAO) NÃO conta como "sem valor": a curva dela é derivada do documento mensal por fn_sazonalidade_do_caso, não digitada, e cobrá-la travava o "pronto" com uma pendência sem ação possível. O caso ruim de verdade — curva ativa e caso sem documento mensal — ganhou nome próprio em `sazonalidade_sem_curva`, que informa e não bloqueia, porque os números ANUAIS continuam certos e só o rateio mensal fica liso.';
 
 --
 -- Name: fn_contas_repetindo_valor(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -4223,6 +4244,81 @@ CREATE FUNCTION public.fn_normalizar_texto(p_texto text) RETURNS text
     AS $$
   select trim(regexp_replace(lower(unaccent(coalesce(p_texto, ''))), '\s+', ' ', 'g'));
 $$;
+
+--
+-- Name: fn_operacao_lotes(integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_operacao_lotes(p_dias integer DEFAULT 30, p_limite integer DEFAULT 50) RETURNS TABLE(lote_id uuid, caso_id uuid, caso_nome text, execucao_ref text, quando timestamp with time zone, documentos integer, com_falha integer, sem_medicao integer, fatiados integer, linhas_extraidas integer, cobertura numeric, custo_usd numeric, custo_estimado numeric, razao_custo numeric, alertas text[])
+    LANGUAGE sql STABLE
+    AS $$
+  select
+    le.id, le.caso_id, c.nome, le.execucao_ref, le.criado_em,
+    le.documentos, le.documentos_com_falha, le.documentos_sem_medicao,
+    le.documentos_fatiados, le.linhas_extraidas, le.cobertura,
+    le.custo_total_usd, le.custo_estimado_usd,
+    case when coalesce(le.custo_estimado_usd, 0) > 0
+         then round(le.custo_total_usd / le.custo_estimado_usd, 2) end,
+    array_remove(array[
+      case when le.cobertura is null then 'cobertura_nao_medida' end,
+      case when coalesce(le.documentos_com_falha, 0) > 0 then 'documento_com_falha' end,
+      case when coalesce(le.documentos_sem_medicao, 0) > 0 then 'documento_sem_medicao' end,
+      case when coalesce(le.custo_estimado_usd, 0) > 0
+                and le.custo_total_usd > le.custo_estimado_usd * 1.5
+           then 'custo_acima_do_previsto' end
+    ], null)
+  from lote_execucao le
+  left join caso c on c.id = le.caso_id
+  where le.criado_em >= now() - make_interval(days => p_dias)
+  order by le.criado_em desc
+  limit p_limite;
+$$;
+
+--
+-- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_operacao_lotes(p_dias integer, p_limite integer) IS 'Uma linha por execução de ingestão na janela, com os alertas já decididos NO BANCO — para não haver duas réguas sobre a mesma quantidade no dia em que existir um segundo leitor.';
+
+--
+-- Name: fn_operacao_resumo(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_operacao_resumo(p_dias integer DEFAULT 30) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with l as (select * from fn_operacao_lotes(p_dias, 100000))
+  select jsonb_build_object(
+    'janela_dias', p_dias,
+    'lotes', (select count(*) from l),
+    'documentos', (select coalesce(sum(documentos), 0) from l),
+    'linhas_extraidas', (select coalesce(sum(linhas_extraidas), 0) from l),
+    'custo_usd', (select coalesce(round(sum(custo_usd), 2), 0) from l),
+    'custo_por_documento', (select case when coalesce(sum(documentos), 0) > 0
+      then round(sum(custo_usd) / sum(documentos), 4) end from l),
+    'cobertura_mediana', (select round(
+      percentile_cont(0.5) within group (order by cobertura)::numeric, 3)
+      from l where cobertura is not null),
+    'lotes_com_alerta', (select count(*) from l where cardinality(alertas) > 0),
+    -- Por TIPO de alerta, porque "3 lotes com alerta" não diz o que fazer e
+    -- "3 sem cobertura medida" diz.
+    'por_alerta', coalesce((
+      select jsonb_object_agg(a, n) from (
+        select unnest(alertas) as a, count(*) as n from l where cardinality(alertas) > 0 group by 1
+      ) x), '{}'::jsonb),
+    'ultimo_lote', (select max(quando) from l),
+    -- O SILÊNCIO TAMBÉM É ESTADO. Um painel que mostra "0 alertas" quando não
+    -- roda nada há duas semanas é pior que um painel vazio: ele afirma saúde.
+    'dias_desde_o_ultimo', (select case when max(quando) is not null
+      then round(extract(epoch from (now() - max(quando))) / 86400) end from l)
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_operacao_resumo(p_dias integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_operacao_resumo(p_dias integer) IS 'Resumo da operação na janela. Cobertura é MEDIANA e não média — média mistura lote de 40 documentos com lote de 1 e descreve nenhum dos dois. Publica `dias_desde_o_ultimo` porque silêncio também é estado: "0 alertas" sem nenhuma execução afirma saúde que ninguém mediu.';
 
 --
 -- Name: fn_papel_do_rotulo_no_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11276,6 +11372,18 @@ GRANT ALL ON FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text) TO a
 --
 
 GRANT ALL ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_operacao_lotes(p_dias integer, p_limite integer) TO authenticated;
+
+--
+-- Name: FUNCTION fn_operacao_resumo(p_dias integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_operacao_resumo(p_dias integer) TO authenticated;
 
 --
 -- Name: FUNCTION fn_papel_do_rotulo_no_caso(p_caso_id uuid, p_rotulo_norm text, p_secao_canonica text); Type: ACL; Schema: public; Owner: -
