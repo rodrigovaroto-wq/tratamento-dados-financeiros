@@ -4626,6 +4626,69 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       JSON.stringify(nd));
   }
 
+  // ---- (0138) RETORNO E SOLVÊNCIA: os quatro índices que o f0/08 fasejou ----
+  //
+  // O `f0/08` deixou ROA, ROE, liquidez imediata e Altman de fora "até a extração
+  // isolar as linhas-conceito". Ela isola desde as 14 abas, e ninguém tinha
+  // revisitado. O que estes asserts protegem não é a existência das linhas: é o
+  // comportamento delas diante do caso ruim, que é o caso destes mandatos.
+  {
+    const i2026 = iAnoDe(2026);
+
+    // 1. A liquidez imediata é MENOR OU IGUAL à seca, sempre. Caixa é um pedaço
+    //    do ativo circulante sem estoque, então uma imediata maior que a seca
+    //    significa que uma das duas está lendo a conta errada.
+    const imed = valorNaAba("Output", "Liquidez imediata (só caixa)", i2026);
+    const seca = valorNaAba("Output", "Liquidez seca (sem estoque)", i2026);
+    checar(typeof imed === "number", "(0138) a liquidez imediata sai como número", JSON.stringify(imed));
+    if (typeof imed === "number" && typeof seca === "number") {
+      checar(imed <= seca + 1e-9,
+        "(0138) …e é menor ou igual à liquidez seca: caixa é um pedaço do que ela mede",
+        `imediata ${imed.toFixed(3)} × seca ${seca.toFixed(3)}`);
+    }
+
+    // 2. ROA e ROE saem, ou dizem por que não. "PL<=0" é resposta, zero não é:
+    //    prejuízo sobre PL negativo daria retorno POSITIVO, que lido rápido
+    //    afirma o contrário do que está acontecendo.
+    const roa = valorNaAba("Output", "ROA — lucro líquido / ativo total", i2026);
+    const roe = valorNaAba("Output", "ROE — lucro líquido / patrimônio líquido", i2026);
+    checar(typeof roa === "number" || roa === "sem ativo",
+      "(0138) o ROA é número ou texto explícito", JSON.stringify(roa));
+    checar(typeof roe === "number" || roe === "PL<=0",
+      "(0138) o ROE é número, ou 'PL<=0' quando o patrimônio está a descoberto",
+      JSON.stringify(roe));
+
+    // 3. O Altman e a zona CONCORDAM. Um número sem a zona obriga quem lê a
+    //    saber os cortes de cabeça; a zona sem o número é opinião.
+    const z = valorNaAba("Output", "Altman Z\u2033 (mercados emergentes)", i2026);
+    const zona = valorNaAba("Output", "zona", i2026);
+    checar(typeof z === "number" || typeof z === "string",
+      "(0138) o Altman Z'' aparece no Output", JSON.stringify(z));
+    if (typeof z === "number") {
+      const esperada = z > 2.6 ? "segura" : z >= 1.1 ? "cinzenta" : "AFLIÇÃO";
+      checar(zona === esperada,
+        "(0138) …e a zona publicada corresponde aos cortes do próprio Altman",
+        `Z''=${z.toFixed(2)} → publicou "${String(zona)}", esperado "${esperada}"`);
+    } else {
+      checar(zona === "n.a.",
+        "(0138) …e quando o índice não sai, a zona diz n.a. em vez de arriscar",
+        JSON.stringify(zona));
+    }
+
+    // 4. O X2 do Altman é LINHA, não soma escondida: quem discorda do índice
+    //    precisa poder ver de onde ele saiu.
+    const retido = valorNaAba("Output", "Retained earnings (extracted + model)", i2026);
+    checar(typeof retido === "number" || retido === "n.a.",
+      "(0138) os lucros retidos que alimentam o X2 são publicados em linha própria",
+      JSON.stringify(retido));
+    // E a amarração entre os dois: sem lucro retido isolado, o índice não sai.
+    if (retido === "n.a.") {
+      checar(z === "sem lucros retidos",
+        "(0138) …e sem eles o Altman se recusa, em vez de tratar a ausência como zero",
+        JSON.stringify(z));
+    }
+  }
+
   // ---- (0105i) o revolver cobre o furo e o caixa nunca fica abaixo do mínimo
   {
     const desvios: string[] = [];

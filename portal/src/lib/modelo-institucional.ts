@@ -826,6 +826,17 @@ export const ehFornecedor = (chave: string) =>
   /\bfornecedor/i.test(chave) || /\bcontas? a pagar\b/i.test(chave)
   || /\bduplicatas? a pagar\b/i.test(chave);
 
+// LUCROS RETIDOS, dentro do patrimônio líquido. Existe para o X2 do Altman, e é
+// lista fechada pelo mesmo motivo dos outros: `reserva de capital` e `ajuste de
+// avaliação patrimonial` também são PL e NÃO são lucro retido — somá-los infla o
+// índice justamente na empresa que capitalizou para cobrir prejuízo.
+export const ehLucrosRetidos = (chave: string) =>
+  /\blucros? (ou preju(í|i)zos? )?acumulados?\b/i.test(chave)
+  || /\bpreju(í|i)zos? acumulados?\b/i.test(chave)
+  || /\breservas? de lucros?\b/i.test(chave)
+  || /\breserva legal\b/i.test(chave)
+  || /\breservas? de reten(ç|c)(ã|a)o de lucros?\b/i.test(chave);
+
 
 // -----------------------------------------------------------------------------
 // A CONVENÇÃO DE SINAL DO MODELO, e por que ela precisa ser imposta na fronteira.
@@ -3773,6 +3784,11 @@ function abaBalanco(
   for (const l of pl) g.linha(chaveLinha("pl", l), { rotulo: l.chave, fmt: NUM });
   g.linha("LUCROS_ACUM", { rotulo: "Lucros (prejuízos) acumulados do modelo", fmt: NUM });
   g.linha("REPERFILAMENTO", { rotulo: "Redução de dívida SEM efeito caixa (acumulada)", fmt: NUM });
+  // LUCROS RETIDOS TOTAIS — as contas de retenção que o documento trouxe, mais o
+  // que o modelo acumulou. Existe para o Altman Z'' do `Output`, e é linha em vez
+  // de soma escondida dentro do índice porque quem discorda do Z'' precisa poder
+  // ver de onde saiu o X2.
+  g.linha("PL_RETIDO", { rotulo: "    dos quais LUCROS RETIDOS (para o Altman)", fmt: NUM });
   linhaReconc(rPL, "patrimônio líquido");
   g.linha("PL", { rotulo: "PATRIMÔNIO LÍQUIDO", negrito: true, topo: true, fmt: NUM });
   if (rTotalPassivo) {
@@ -3877,6 +3893,30 @@ function abaBalanco(
         + "Somar lucro acumulado aqui contaria o mesmo patrimônio duas vezes."
         : undefined,
     });
+    // OS LUCROS RETIDOS, para o X2 do Altman. Soma as contas de retenção que o
+    // documento trouxe (`ehLucrosRetidos`) mais o que o modelo acumulou.
+    //
+    // SEM NENHUMA CONTA EXTRAÍDA, A LINHA PUBLICA "n.a." E O ÍNDICE NÃO SAI.
+    // Zero aqui não é neutro: ele derruba o Z'' em até 3,26 pontos e joga uma
+    // empresa saudável na zona de aflição. Documento que não isola lucro retido
+    // não autoriza afirmar que ele é zero.
+    {
+      const retidas = pl.filter((l) => ehLucrosRetidos(l.chave));
+      g.set("PL_RETIDO", ano,
+        retidas.length === 0
+          ? '="n.a."'
+          : `=${[...retidas.map((l) => g.ref(chaveLinha("pl", l), ano)),
+                 g.ref("LUCROS_ACUM", ano)].join("+")}`, {
+          fmt: NUM,
+          nota: retidas.length === 0
+            ? "Nenhuma conta de lucro retido foi isolada no documento deste caso, então o Altman "
+              + "Z'' não sai. Zero aqui não seria neutro: ele derruba o índice em até 3,26 pontos."
+            : `Soma de ${retidas.length} conta(s) de retenção do documento mais o resultado que o `
+              + "modelo acumulou. É o X2 do Altman, e fica em linha própria para quem discordar do "
+              + "índice poder ver de onde ele saiu.",
+        });
+    }
+
     // A CONTRAPARTIDA DO REPERFILAMENTO. A chave "Efeito caixa? = N" de uma
     // tranche faz o saldo dela cair SEM pagamento — e uma redução de passivo sem
     // saída de caixa precisa de contrapartida, senão o balanço abre exatamente no
@@ -4494,6 +4534,7 @@ function abaOutput(
   ];
   const detalhePL = [
     { chave: "LUCROS_ACUM", rotulo: "    Retained earnings (model)" },
+    { chave: "PL_RETIDO", rotulo: "    Retained earnings (extracted + model)" },
     { chave: "REPERFILAMENTO", rotulo: "    Debt-to-equity conversion (cumulative)" },
     ...(gBS.tem("RECONC_PL") ? [{ chave: "RECONC_PL", rotulo: "    reconciliation w/ reported total" }] : []),
   ];
@@ -4602,7 +4643,27 @@ function abaOutput(
   g.linha("C_LIQ_CORR", { rotulo: "    corte sugerido (covenant)", fmt: MULT });
   g.linha("T_LIQ_CORR", { rotulo: "    rompe?" });
   g.linha("R_LIQ_SECA", { rotulo: "Liquidez seca (sem estoque)", fmt: MULT });
+  g.linha("R_LIQ_IMED", { rotulo: "Liquidez imediata (só caixa)", fmt: MULT });
   g.linha("R_ALAV_PL", { rotulo: "Dívida bruta / Patrimônio líquido", fmt: MULT });
+  g.pular();
+
+  // ---- RETORNO E SOLVÊNCIA -------------------------------------------------
+  //
+  // O `f0/08` fasejou ROA, ROE e Altman "até a extração isolar as linhas-conceito
+  // necessárias". Ela isola desde as 14 abas: o balanço tem ativo total e
+  // patrimônio líquido, a DRE tem lucro líquido e EBIT. O bloqueio documentado lá
+  // deixou de valer para o arquivo de modelagem, e ninguém tinha revisitado.
+  //
+  // POR QUE O Z'' E NÃO O Z ORIGINAL. O Z de 1968 usa VALOR DE MERCADO do
+  // patrimônio, que empresa fechada não tem, e foi calibrado em indústria de
+  // capital aberto. O Z'' (Altman, mercados emergentes) troca por valor contábil
+  // e derruba o giro do ativo, justamente para servir a empresa fechada e não
+  // industrial — que é o universo destes mandatos.
+  g.linha(null, { rotulo: "RETORNO E SOLVÊNCIA", bloco: true });
+  g.linha("R_ROA", { rotulo: "ROA — lucro líquido / ativo total", fmt: PCT });
+  g.linha("R_ROE", { rotulo: "ROE — lucro líquido / patrimônio líquido", fmt: PCT });
+  g.linha("R_ALTMAN", { rotulo: "Altman Z\u2033 (mercados emergentes)", negrito: true, fmt: NUM2 });
+  g.linha("T_ALTMAN", { rotulo: "    zona" });
   g.pular();
 
   // ---- CICLO DE CAIXA ------------------------------------------------------
@@ -4882,8 +4943,79 @@ function abaOutput(
       fmt: MULT,
       nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez que depende de vender estoque.",
     });
+    // Liquidez IMEDIATA: só o caixa, sem contar com receber de ninguém. É a
+    // pergunta que o credor faz primeiro numa mesa de reestruturação — "quanto
+    // dá para pagar hoje" —, e ela não é a liquidez seca: esta ainda conta o
+    // recebível, que depende de o cliente pagar.
+    g.set("R_LIQ_IMED", ano,
+      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_CAIXA", ano)}/${g.ref("BS_PC", ano)},"PC=0")`, {
+      fmt: MULT,
+      nota: "Caixa e aplicações sobre o passivo circulante. Diferente da liquidez seca, que ainda "
+        + "conta o recebível: aqui não se conta com ninguém pagar.",
+    });
     g.set("R_ALAV_PL", ano,
       `=IF(${g.ref("BS_PL", ano)}<>0,${g.ref("DV_TOTAL", ano)}/${g.ref("BS_PL", ano)},"PL<=0")`, { fmt: MULT });
+
+    // ---- RETORNO E SOLVÊNCIA ----------------------------------------------
+    //
+    // PL NEGATIVO NÃO VIRA PORCENTAGEM. Empresa em reestruturação com patrimônio
+    // a descoberto produziria um ROE positivo enorme (prejuízo ÷ PL negativo), e
+    // esse número lido rápido diz o contrário do que acontece. Publicar "PL<=0"
+    // é a leitura honesta: o indicador não se aplica.
+    g.set("R_ROA", ano,
+      `=IF(${g.ref("BS_ATIVO", ano)}<=0,"sem ativo",${g.ref("LUCRO", ano)}/${g.ref("BS_ATIVO", ano)})`,
+      { fmt: PCT });
+    g.set("R_ROE", ano,
+      `=IF(${g.ref("BS_PL", ano)}<=0,"PL<=0",${g.ref("LUCRO", ano)}/${g.ref("BS_PL", ano)})`, {
+      fmt: PCT,
+      nota: "Com patrimônio líquido negativo o indicador não se aplica, e a célula diz isso: "
+        + "prejuízo dividido por PL negativo daria um retorno POSITIVO, que lido rápido afirma o "
+        + "contrário do que está acontecendo.",
+    });
+
+    // ALTMAN Z'' — quatro razões, e nenhuma inventada.
+    //
+    //   Z'' = 6,56·X1 + 3,26·X2 + 6,72·X3 + 1,05·X4
+    //   X1 = capital de giro ÷ ativo total      (AC − PC)
+    //   X2 = lucros retidos ÷ ativo total
+    //   X3 = EBIT ÷ ativo total
+    //   X4 = patrimônio líquido ÷ passivo total (valor CONTÁBIL, não de mercado)
+    //
+    // ZONAS: acima de 2,6 segura; entre 1,1 e 2,6 cinzenta; abaixo de 1,1
+    // aflição. Elas vêm do próprio Altman e entram como texto ao lado, porque um
+    // número sozinho obriga quem lê a saber os cortes de cabeça.
+    //
+    // X2 É O QUE PODE FALTAR, e aí o índice inteiro não sai. Lucros retidos é
+    // linha do patrimônio líquido, e nem todo documento a isola — quando o
+    // extrator não achou nenhuma e o modelo ainda não acumulou resultado, a
+    // célula publica "sem lucros retidos" em vez de tratar a ausência como zero.
+    // Zero em X2 não é neutro: ele derruba o Z'' em até 3,26 pontos e joga uma
+    // empresa saudável na zona de aflição.
+    {
+      const at = g.ref("BS_ATIVO", ano);
+      const x1 = `(${g.ref("BS_AC", ano)}-${g.ref("BS_PC", ano)})/${at}`;
+      const x2 = `${g.ref("bsd:PL_RETIDO", ano)}/${at}`;
+      const x3 = `${g.ref("EBIT", ano)}/${at}`;
+      const x4 = `${g.ref("BS_PL", ano)}/(${g.ref("BS_PC", ano)}+${g.ref("BS_PNC", ano)})`;
+      g.set("R_ALTMAN", ano,
+        `=IF(${at}<=0,"sem ativo",IF(NOT(ISNUMBER(${g.ref("bsd:PL_RETIDO", ano)})),"sem lucros retidos",`
+        + `IF((${g.ref("BS_PC", ano)}+${g.ref("BS_PNC", ano)})<=0,"sem passivo",`
+        + `6.56*(${x1})+3.26*(${x2})+6.72*(${x3})+1.05*(${x4}))))`, {
+        fmt: NUM2, negrito: true,
+        nota: "Altman Z\u2033, a versão para mercados emergentes e empresa de capital fechado: usa "
+          + "o valor CONTÁBIL do patrimônio (o Z original usa valor de mercado, que empresa "
+          + "fechada não tem) e não usa giro do ativo, para não penalizar quem não é indústria.\n\n"
+          + "Z'' = 6,56×(capital de giro/ativo) + 3,26×(lucros retidos/ativo) + "
+          + "6,72×(EBIT/ativo) + 1,05×(PL/passivo).",
+      });
+      g.set("T_ALTMAN", ano,
+        `=IF(NOT(ISNUMBER(${g.ref("R_ALTMAN", ano)})),"n.a.",`
+        + `IF(${g.ref("R_ALTMAN", ano)}>2.6,"segura",`
+        + `IF(${g.ref("R_ALTMAN", ano)}>=1.1,"cinzenta","AFLIÇÃO")))`, {
+        nota: "Cortes do próprio Altman para o Z'': acima de 2,6 zona segura, de 1,1 a 2,6 zona "
+          + "cinzenta, abaixo de 1,1 zona de aflição.",
+      });
+    }
 
     // CICLO DE CAIXA — dias, a partir dos espelhos do giro.
     //
