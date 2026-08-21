@@ -265,6 +265,9 @@ export default async function ModelagemPage({
   const vinculos = (vinculosRes.data as LinhaVinculo[] | null) ?? [];
   const conf = confRes.data as {
     premissas_ativas: number; premissas_sem_valor: string[];
+    // 0134: informação, não bloqueio — curva mensal ativa num caso sem documento
+    // mensal de onde derivá-la.
+    sazonalidade_sem_curva?: string[];
     linhas_do_caso: number; linhas_com_premissa: number; linhas_sem_premissa: number;
     linhas_nao_projetaveis: Record<string, number>;
     vinculos_orfaos: string[]; pronto: boolean;
@@ -523,6 +526,16 @@ export default async function ModelagemPage({
                 ativa sem valor projetaria com zero, então ela impede o &quot;pronto&quot;. Premissa
                 macro puxa o Focus sozinha ao ser ativada sem valor; se ficou vazia, é porque o Focus
                 não publica expectativa para esses anos.
+              </li>
+            )}
+            {(conf.sazonalidade_sem_curva?.length ?? 0) > 0 && (
+              <li className="text-tinta-600">
+                <strong>Sazonalidade sem curva para derivar:</strong>{" "}
+                {conf.sazonalidade_sem_curva!.join(", ")} — a curva mensal NÃO é digitada: ela sai do
+                documento mensal do caso (rótulos &quot;jan/2024&quot;), e este caso ainda não tem um.
+                As linhas vinculadas ficam com o valor anual rateado liso pelos doze meses.{" "}
+                <strong>Não impede o &quot;pronto&quot;</strong>: o número ANUAL continua certo, só a
+                distribuição dentro do ano fica sem forma.
               </li>
             )}
             {conf.vinculos_orfaos?.length > 0 && (

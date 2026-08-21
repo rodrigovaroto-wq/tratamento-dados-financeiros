@@ -1396,11 +1396,29 @@ CREATE FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) RETURNS jsonb
     select jsonb_object_agg(papel, n) as j
     from (select papel, count(*) as n from linhas where papel <> 'conta' group by papel) x
   ),
+  -- 0134: a premissa ativa, com a FÓRMULA dela ao lado. É a fórmula que decide
+  -- se `valores` vazio é defeito ou é o estado normal — não o código, que
+  -- envelheceria a cada premissa nova.
+  ativas as (
+    select cp.premissa_codigo, cp.valores, pc.formula
+    from caso_premissa cp
+    join premissa_catalogo pc on pc.codigo = cp.premissa_codigo
+    where cp.caso_id = p_caso_id and cp.ativo
+  ),
   premissas as (
-    select count(*) filter (where ativo) as ativas,
+    select count(*) as ativas,
            array_agg(premissa_codigo order by premissa_codigo)
-             filter (where ativo and (valores is null or valores = '{}'::jsonb)) as sem_valor
-    from caso_premissa where caso_id = p_caso_id
+             filter (where formula <> 'curva_mensal'
+                       and (valores is null or valores = '{}'::jsonb)) as sem_valor,
+           -- O caso ruim DE VERDADE: curva mensal ativa e o caso sem documento
+           -- mensal de onde derivá-la. As linhas vinculadas ficam com rateio
+           -- liso, e isso precisa ser DITO — não bloqueia, porque o anual
+           -- continua certo.
+           array_agg(premissa_codigo order by premissa_codigo)
+             filter (where formula = 'curva_mensal'
+                       and not exists (select 1 from fn_sazonalidade_do_caso(p_caso_id)))
+             as saz_sem_curva
+    from ativas
   ),
   param as (
     select to_jsonb(m) as j from caso_modelagem m where m.caso_id = p_caso_id
@@ -1409,6 +1427,9 @@ CREATE FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) RETURNS jsonb
     'parametros', (select j from param),
     'premissas_ativas', (select ativas from premissas),
     'premissas_sem_valor', to_jsonb(coalesce((select sem_valor from premissas), array[]::text[])),
+    -- 0134: informação, não bloqueio. Ver o cabeçalho.
+    'sazonalidade_sem_curva',
+      to_jsonb(coalesce((select saz_sem_curva from premissas), array[]::text[])),
     'linhas_do_caso', (select count(*) from contas),
     'linhas_nao_projetaveis', coalesce((select j from nao_projetaveis), '{}'::jsonb),
     'linhas_com_premissa', (select count(*) from vinculadas),
@@ -1425,7 +1446,7 @@ $$;
 -- Name: FUNCTION fn_conferir_modelagem(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Conferência da modelagem do caso. 0101: uma única passada por fn_linhas_para_modelagem (antes eram cinco, duas delas dentro de exists correlacionado — uma execução completa por vínculo), o que a tirava do statement_timeout do Supabase.';
+COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstico da Modelagem de um caso. Desde a 0134, premissa de `curva_mensal` (SAZONALIDADE, CRONOGRAMA_FISICO, PARADA_MANUTENCAO) NÃO conta como "sem valor": a curva dela é derivada do documento mensal por fn_sazonalidade_do_caso, não digitada, e cobrá-la travava o "pronto" com uma pendência sem ação possível. O caso ruim de verdade — curva ativa e caso sem documento mensal — ganhou nome próprio em `sazonalidade_sem_curva`, que informa e não bloqueia, porque os números ANUAIS continuam certos e só o rateio mensal fica liso.';
 
 --
 -- Name: fn_contas_repetindo_valor(uuid); Type: FUNCTION; Schema: public; Owner: -

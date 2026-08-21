@@ -2596,6 +2596,39 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   g.linha("NCG", { rotulo: "NECESSIDADE DE CAPITAL DE GIRO (AC − PC)", negrito: true, topo: true, fmt: NUM });
   g.linha("VAR_NCG", { rotulo: "Variação da NCG (efeito no caixa, sinal invertido)", fmt: NUM });
 
+  // ---- A GUARDA DO GIRO AGREGADO ------------------------------------------
+  //
+  // O DEFEITO QUE ELA EXISTE PARA DENUNCIAR, e ele não tem sintoma nenhum hoje.
+  // Cada conta de giro é projetada por `dias ÷ 360 × base`, e nada olha o
+  // AGREGADO. Vincular a MESMA premissa de prazo a N contas — que é um clique
+  // por linha na tela de Modelagem, e o caminho natural de quem está com pressa —
+  // produz N × dias de receita presos em capital de giro. Vinte contas a 60 dias
+  // são 1.200 dias, e o balanço CONTINUA FECHANDO, porque o patrimônio líquido
+  // absorve a diferença. O arquivo vai ao comitê com um passivo circulante que
+  // cresce oitenta vezes em cinco anos e nenhuma célula vermelha.
+  //
+  // A RÉGUA NÃO JULGA O NEGÓCIO — compara a HIPÓTESE com o FATO. Não há limiar
+  // absoluto de "quantos dias de giro são demais": depende do setor, do ciclo, do
+  // mandato. O que não depende de opinião é a razão entre o giro PROJETADO e o
+  // giro que a própria empresa teve no último exercício REALIZADO. Uma projeção
+  // que multiplica por cinco o giro histórico não é uma tese agressiva, é um erro
+  // de configuração — e é isso, e só isso, que esta linha acusa.
+  //
+  // O DENOMINADOR É A RECEITA LÍQUIDA nos dois lados, inclusive no passivo, e
+  // isso é DELIBERADO: aqui a régua é de ORDEM DE GRANDEZA, e trocar a base do
+  // passivo para custo faria a razão do passivo e a do ativo não serem
+  // comparáveis entre si. Cada CONTA continua girando contra a base contábil
+  // certa dela — o que muda é só o denominador desta leitura agregada, e a nota
+  // da célula diz isso.
+  g.pular();
+  g.linha(null, { rotulo: "GUARDA DO GIRO AGREGADO (hipótese × fato)", bloco: true });
+  g.linha("DIAS_AC_TOT", { rotulo: "Ativo de giro, em dias de receita", fmt: DIAS });
+  g.linha("DIAS_PC_TOT", { rotulo: "Passivo de giro, em dias de receita", fmt: DIAS });
+  g.linha("CHECK_GIRO", {
+    rotulo: "CHECK — giro projetado ÷ último realizado (>2× é erro de configuração)",
+    fmt: MULT, negrito: true,
+  });
+
   // A BASE DE CADA CONTA — e uma incoerência do Modelo Base que NÃO se replica.
   //
   // Lá o prazo médio HISTÓRICO de uma conta de fornecedor é medido contra o CUSTO
@@ -2684,6 +2717,37 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
       fmt: NUM,
       nota: "Giro que CRESCE consome caixa — por isso o sinal aqui é o inverso do saldo.",
     });
+
+    // A GUARDA DO GIRO AGREGADO, por exercício. Ver o comentário longo acima.
+    const notaBase = "Denominador é a receita líquida nos DOIS lados, de propósito: aqui a régua é "
+      + "de ordem de grandeza, e bases diferentes tornariam ativo e passivo incomparáveis entre si. "
+      + "Cada conta continua girando contra a base contábil correta dela.";
+    g.set("DIAS_AC_TOT", ano,
+      `=IF(${g.ref("NET_REV", ano)}>0,${g.ref("TOTAL_AC", ano)}/${g.ref("NET_REV", ano)}*360,"")`,
+      { fmt: DIAS, nota: notaBase });
+    g.set("DIAS_PC_TOT", ano,
+      `=IF(${g.ref("NET_REV", ano)}>0,${g.ref("TOTAL_PC", ano)}/${g.ref("NET_REV", ano)}*360,"")`,
+      { fmt: DIAS, nota: notaBase });
+    // No REALIZADO a razão é 1 por construção contra o próprio último ano, então
+    // ela só é publicada na PROJEÇÃO — é lá que a hipótese existe para ser
+    // conferida. Publicar 1,00 nas colunas históricas encheria a linha de um
+    // número que não decide nada, e número que não decide nada é o que ensina o
+    // leitor a ignorar a linha inteira.
+    if (hist) {
+      g.set("CHECK_GIRO", ano, "", { fmt: MULT });
+    } else {
+      const ref = `(${g.ref("DIAS_AC_TOT", ctx.ultimoHist)}+${g.ref("DIAS_PC_TOT", ctx.ultimoHist)})`;
+      const proj = `(${g.ref("DIAS_AC_TOT", ano)}+${g.ref("DIAS_PC_TOT", ano)})`;
+      g.set("CHECK_GIRO", ano, `=IF(${ref}>0,${proj}/${ref},"")`, {
+        fmt: MULT,
+        nota: "Giro agregado projetado dividido pelo do último exercício realizado. A régua não "
+          + "julga o negócio: ela compara a HIPÓTESE com o FATO da própria empresa. Acima de 2× "
+          + "quase sempre é a MESMA premissa de prazo vinculada a várias contas — cada uma passa a "
+          + "prender os mesmos dias de receita, e o balanço continua fechando porque o patrimônio "
+          + "líquido absorve. Soma ativo E passivo para que um giro que cresce dos dois lados, sem "
+          + "mexer na NCG líquida, também apareça.",
+      });
+    }
     // `P18` — o espelho, que é o que as demonstrações leem.
     g.set("ESP_AC", ano, `=${g.ref("TOTAL_AC", ano)}`, { fmt: NUM, negrito: true });
     somaOuZero(g, "ESP_ESTOQUE", ano, estoques.map((l) => g.ref(chaveLinha("wc_a", l), ano)));
@@ -2693,6 +2757,28 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     g.set("ESP_PC", ano, `=${g.ref("TOTAL_PC", ano)}`, { fmt: NUM, negrito: true });
     g.set("ESP_VAR_NCG", ano, `=${g.ref("VAR_NCG", ano)}`, { fmt: NUM });
   }
+  // O VERMELHO É O QUE FAZ A LINHA SER VISTA. Sem ele a razão fica publicada e
+  // some entre trinta outras — o mesmo motivo pelo qual o CHECK do balanço tem
+  // realce desde a 0101. Acima de 2× é erro de configuração; abaixo de 0,5× é a
+  // hipótese oposta (giro que MELHORA sozinho), que também não se sustenta sem
+  // alguém ter dito por quê.
+  {
+    const linhaCheck = g.n("CHECK_GIRO");
+    if (linhaCheck) {
+      const colIni = colLetra(COL_PRIMEIRO_ANO);
+      const colFim = colLetra(COL_PRIMEIRO_ANO + ctx.anos.length - 1);
+      g.ws.addConditionalFormatting({
+        ref: `${colIni}${linhaCheck}:${colFim}${linhaCheck}`,
+        rules: [
+          { type: "expression", formulae: [`AND(ISNUMBER(${colIni}${linhaCheck}),OR(${colIni}${linhaCheck}>2,${colIni}${linhaCheck}<0.5))`],
+            style: { fill: FILL_CHECK_ERRO }, priority: 1 },
+          { type: "expression", formulae: [`ISNUMBER(${colIni}${linhaCheck})`],
+            style: { fill: FILL_CHECK_OK }, priority: 2 },
+        ],
+      });
+    }
+  }
+
   g.finalizar("__unidade");
   return g;
 }

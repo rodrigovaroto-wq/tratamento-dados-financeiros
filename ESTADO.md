@@ -15,10 +15,10 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0133_a_secao_que_nao_fecha.sql` |
+| **Última migration** | `db/migrations/0134_sazonalidade_nao_e_premissa_sem_valor.sql` |
 | **Aplicadas no Supabase** | **até a `0133`** — o dono confirmou em 20/08. Quem confere contra o banco de verdade é `/instalacao` (`0131`), não este arquivo |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 298 · export 618 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 298 · export 623 · transcrição 35 · e2e 46 · banco (884 asserts, 77 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -219,6 +219,72 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## AS DUAS TRAVAS DE FLUIDEZ, EXECUTADAS (20/08, sessão 55) — `0134` e a guarda do giro
+
+Ranqueadas por (impacto no output × fluidez do processo) ÷ esforço, e as duas de topo eram
+executáveis sem depender de ninguém.
+
+### 1. A guarda do giro agregado — o output
+
+**O defeito não tinha sintoma nenhum.** Cada conta de giro é projetada por `dias ÷ 360 × base`, e
+**nada olhava o agregado**. Vincular a MESMA premissa de prazo a N contas — um clique por linha na
+tela de Modelagem, e o caminho natural de quem está com pressa — prende **N × dias de receita** em
+capital de giro. E o balanço **continua fechando**, porque o patrimônio líquido absorve a diferença.
+O arquivo ia ao comitê com passivo circulante crescendo **oitenta vezes em cinco anos** e nenhuma
+célula vermelha.
+
+**A régua não julga o negócio — compara a HIPÓTESE com o FATO.** Não existe limiar absoluto de
+"quantos dias de giro são demais": depende do setor e do ciclo. O que não depende de opinião é a
+razão entre o giro projetado e o giro que **a própria empresa** teve no último exercício realizado.
+
+| | realizado | projetado |
+|---|---|---|
+| Ativo de giro, em dias de receita | 157 | **767** |
+| Passivo de giro, em dias de receita | 84 | **852** |
+| **CHECK — projetado ÷ realizado** | — | **5,9×** (limiar 2×) |
+
+> **O `modelo-da-fixture.mts` fazia exatamente a patologia** — uma premissa de 60 dias ligada a toda
+> conta de circulante. Isso era defeito da fixture; passa a ser o **caso de teste** da guarda. O
+> arquivo de demonstração agora **declara** o problema em vez de escondê-lo, que é o comportamento
+> certo dos dois lados.
+
+**Duas decisões de desenho que valem ler:** a razão **não é publicada no realizado** (contra o próprio
+último ano ela é 1 por construção, e número que não decide nada ensina o leitor a ignorar a linha); e
+o denominador é a **receita líquida nos dois lados**, inclusive no passivo — aqui a régua é de ordem
+de grandeza, e bases diferentes tornariam ativo e passivo incomparáveis entre si. Cada conta continua
+girando contra a base contábil correta dela.
+
+### 2. A sazonalidade travava o "pronto" para sempre (`0134`) — a fluidez
+
+Suspeita anotada desde a sessão 39, **medida agora**. `fn_conferir_modelagem` listava toda premissa
+ativa com `valores` vazio e exigia a lista vazia para dar `pronto`. Certo para quase tudo — `SGA_PCT`
+sem percentual É premissa pela metade. Mas três premissas do catálogo têm `formula = 'curva_mensal'`
+e nelas **`valores` vazio é o estado CERTO**: a curva sai de `fn_sazonalidade_do_caso` (`0040`),
+derivada do documento mensal, **não digitada**.
+
+```
+antes de vincular:  pronto=false, sem_valor=[SGA_PCT]
+depois de vincular: pronto=false, sem_valor=[SAZONALIDADE, SGA_PCT]
+```
+
+O analista faz a coisa certa — vincula a sazonalidade, que é o que a aba existe para permitir — e a
+tela passa a cobrar **uma ação que não existe**. Não há campo para preencher. A saída que sobra para
+quem tem pressa é **desvincular a sazonalidade** e perder a distribuição mensal para calar o aviso.
+
+O critério passa a ser a **fórmula do catálogo**, não uma lista de códigos: quem acrescentar a quarta
+curva mensal não vai ter de lembrar de editar a função — mesma lição do limiar `0.95` dentro da
+`fn_registrar_campos_extraidos` (`0041`).
+
+**E o caso ruim de verdade não foi calado.** Curva ativa num caso **sem** documento mensal ganhou
+nome próprio, `sazonalidade_sem_curva`, que **informa e não bloqueia**: os números ANUAIS continuam
+certos, só o rateio dentro do ano fica liso. Travar o portão por isso devolveria o atrito pela porta
+dos fundos, e o analista aprenderia a ignorar o portão. **O portão trava o que está errado; o que
+está pior do que poderia estar é informação, e informação se publica.**
+
+> **Religamento nos dois:** desfazendo o filtro da `0134`, o teste falha nomeando
+> `CRONOGRAMA_FISICO`; a contraprova (premissa de fórmula normal sem valor) continua travando o
+> `pronto`, provando que o portão não foi afrouxado — só deixou de cobrar o impossível.
 
 ## OS DOIS DEFEITOS QUE SE MASCARAVAM, e o ativo circulante fecha em ZERO (20/08, sessão 55)
 

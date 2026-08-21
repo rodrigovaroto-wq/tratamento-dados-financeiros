@@ -6536,6 +6536,71 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+// =============================================================================
+// (39) A GUARDA DO GIRO AGREGADO — e o fixture é o caso de teste dela.
+//
+// Cada conta de giro é projetada por `dias ÷ 360 × base`, e nada olhava o
+// AGREGADO. Vincular a MESMA premissa de prazo a N contas — um clique por linha
+// na tela, o caminho natural de quem tem pressa — prende N × dias de receita em
+// capital de giro, e o balanço CONTINUA FECHANDO porque o patrimônio líquido
+// absorve. O arquivo ia ao comitê com passivo circulante crescendo oitenta vezes
+// em cinco anos e nenhuma célula vermelha.
+//
+// O `modelo-da-fixture.mts` faz exatamente isso: liga UMA premissa de 60 dias a
+// TODA conta de circulante. Isso era um defeito da fixture; passa a ser o CASO DE
+// TESTE da guarda — o arquivo de demonstração agora DECLARA o problema em vez de
+// escondê-lo, que é o comportamento certo dos dois lados.
+//
+// Medido: histórico 157 + 84 = 241 dias; projetado 767 + 852 = 1.619 dias; razão
+// 5,9× contra o limiar de 2×.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wbG = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const wsG = wbG.getWorksheet("Working Capital");
+  checar(wsG != null, "(39) a aba Working Capital existe");
+  if (wsG) {
+    const acha = (re: RegExp) => {
+      for (let r = 1; r <= wsG.rowCount; r++) {
+        if (re.test(String(wsG.getRow(r).getCell(3).value ?? ""))) return r;
+      }
+      return 0;
+    };
+    const rAC = acha(/Ativo de giro, em dias de receita/);
+    const rPC = acha(/Passivo de giro, em dias de receita/);
+    const rCk = acha(/CHECK — giro projetado/);
+    checar(rAC > 0 && rPC > 0 && rCk > 0,
+      "(39) as três linhas da guarda do giro agregado existem", `${rAC}/${rPC}/${rCk}`);
+    if (rAC > 0 && rCk > 0) {
+      esquecerMemoria(wsG);
+      // O realizado NÃO publica razão: contra o próprio último ano ela é 1 por
+      // construção, e número que não decide nada ensina a ignorar a linha.
+      const noHist = avaliarCelula(wsG, "E", rCk);
+      checar(typeof noHist !== "number",
+        "(39) a razão NÃO é publicada nas colunas de realizado", String(noHist));
+      // E na projeção ela EXISTE e ACUSA — a fixture é patológica de propósito.
+      let pior = 0;
+      for (const c of ["G", "H", "I", "J", "K"]) {
+        const v = avaliarCelula(wsG, c, rCk);
+        if (typeof v === "number") pior = Math.max(pior, v);
+      }
+      checar(pior > 2,
+        "(39) a guarda ACUSA a fixture, que liga uma premissa de 60 dias a toda conta de circulante",
+        `razão máxima: ${pior.toFixed(1)}× (limiar 2×)`);
+      const diasProj = avaliarCelula(wsG, "G", rAC);
+      checar(typeof diasProj === "number" && diasProj > 400,
+        "(39) …e o número que sustenta o veredito está publicado, em dias",
+        `ativo de giro projetado: ${typeof diasProj === "number" ? diasProj.toFixed(0) : diasProj} dias`);
+    }
+  }
+}
+
 console.log(`${ok} verificações OK / ${falhas.length} falhas`);
 for (const f of falhas) console.log("  FALHOU:", f);
 process.exit(falhas.length ? 1 : 0);

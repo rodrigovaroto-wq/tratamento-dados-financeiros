@@ -256,6 +256,14 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/premissas.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+# DEPOIS do premissas.test.sql de propósito: é ele que deixa um caso com
+# `caso_modelagem` configurado, e sem um caso configurado não há "pronto" a
+# conferir. O primeiro assert do arquivo falha alto se essa ordem mudar.
+echo "== a sazonalidade no \"pronto\" da Modelagem (0134)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/sazonalidade_pronto.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de REMOVER premissa (0104: desativar limpa o vínculo que ela dirigia)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/desativar_premissa.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
