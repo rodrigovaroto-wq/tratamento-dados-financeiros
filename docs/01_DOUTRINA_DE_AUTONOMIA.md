@@ -94,3 +94,49 @@ A partir da `0126`:
 O portão morde na entrada do **auto-clear**, não em toda subida: N1 mantém revisão de 100% e o
 fechamento #5 (anti-ancoragem) inteiro, e cobrar medição para exibir uma sugestão travaria o caminho
 que esta doutrina manda percorrer — os estágios nascem baixos justamente para subir.
+
+## Como se mede a concordância quando não há rotulagem (decisão de 21/08/2026)
+
+A regra de ouro criou uma consequência aritmética que ficou aberta por três sessões, e ela merece
+estar escrita aqui e não só num mapa de execução.
+
+A `0126` passou a **executar** a regra. Na sessão 53 o dono removeu o fluxo de rotulagem manual: o
+objetivo é o sistema operar sem triagem humana, e uma tela que pede uma tarde de mesa por rodada
+orienta o contrário. Só que sem rotulagem nenhuma rodada de golden set congela, e sem rodada
+congelada nenhum estágio interpretativo sobe. **O sistema passou a se recusar a certificar a si
+mesmo.** Isso está certo, e é um estado terminal: não é um caminho, é uma parede.
+
+**A decisão do dono, em 21/08, foi a seguinte: o veredito que o trabalho normal já produz passa a
+contar, declarando o que ele é.** Toda vez que o analista confirma ou corrige o palpite da máquina
+na tela de revisão, ele emite um rótulo — de graça, sem tarde de mesa. A `0136`
+(`fn_veredito_producao`) lê esse rastro e o liga ao dial como terceira porta.
+
+**As três portas para subir um estágio interpretativo a N2/N3, em ordem de força da evidência:**
+
+| Porta | `base_do_nivel` | O que o número vale |
+|---|---|---|
+| Rodada de golden set congelada | `medida` | Rótulo **cego**: quem rotulou não viu o palpite da máquina. É a única que sustenta o número para fora da casa |
+| Veredito de produção suficiente | `medida_por_veredito` | Rótulo **enviesado**: quem julgou viu o palpite antes de decidir. Mede um **piso** |
+| Motivo assumido por escrito | `declarada` | Não é medição nenhuma. Continua possível, continua contável na trilha |
+
+**Por que o piso é honesto e a média não seria.** O viés de confirmação tem direção conhecida:
+concordar com o que já está na tela é mais barato que discordar, então o número sai para cima. Um
+piso enviesado responde "a máquina acerta **pelo menos** isto", que é uma afirmação verdadeira e
+útil. O que seria desonesto é chamar esse número de concordância medida e deixá-lo indistinguível do
+rótulo cego na mesma coluna — por isso `medida_por_veredito` é valor próprio, e o assert mais
+importante da suíte é justamente que ele **nunca** vira `medida`.
+
+**O que esta decisão NÃO autoriza:**
+
+- **subir dial porque a rodada foi bem.** É o risco que a `0126` foi escrita para impedir, e dois
+  níveis declarados eram falsos quando ela chegou. Rodada boa não é medição;
+- **afrouxar `fn_mudar_dial`** para destravar alguma coisa. Se um estágio não sobe, a leitura certa
+  é que falta evidência, não que falta permissão;
+- **passar do teto por natureza do estágio.** Nenhuma quantidade de veredito sobe reconciliação
+  Classe B/C ou classificação contábil acima de N1. O teto é doutrina e só muda por migration.
+
+**A rotulagem cega continua sendo o caminho, e não foi apagada.** O caminho de escrita da `0130`
+está inteiro no banco, e o dia em que for preciso um número que sustente subir dial para fora da
+casa — auditoria, cliente, credor — é rodada de golden set que responde. A saída C do `B3`
+(exportar o lote cego em planilha, rotular fora do portal, importar de volta) fica guardada para
+esse dia; a máquina de ida e volta já existe desde a `0129`.

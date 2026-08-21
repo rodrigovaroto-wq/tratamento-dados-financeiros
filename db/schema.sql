@@ -4072,10 +4072,10 @@ CREATE FUNCTION public.fn_motivo_escala_incomparavel(p_unidade_a text, p_unidade
 $$;
 
 --
--- Name: fn_mudar_dial(text, public.nivel_autonomia, text, text, numeric, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_mudar_dial(text, public.nivel_autonomia, text, text, numeric, uuid, text, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text DEFAULT NULL::text, p_limiar numeric DEFAULT NULL::numeric, p_rodada_golden uuid DEFAULT NULL::uuid, p_sem_medicao_porque text DEFAULT NULL::text) RETURNS jsonb
+CREATE FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text DEFAULT NULL::text, p_limiar numeric DEFAULT NULL::numeric, p_rodada_golden uuid DEFAULT NULL::uuid, p_sem_medicao_porque text DEFAULT NULL::text, p_por_veredito boolean DEFAULT false) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -4098,10 +4098,6 @@ begin
                               '(f0/04) — estágio novo entra por migration, não por chamada.', p_estagio));
   end if;
 
-  -- O TETO É POR NATUREZA DO ESTÁGIO e é inegociável (docs/01, "regra de teto"):
-  -- reconciliação Classe B/C e classificação contábil têm teto N1 e NUNCA viram
-  -- autônomas. Recusar aqui é o que impede uma chamada de fazer o que a doutrina
-  -- proíbe.
   if p_nivel > v_teto then
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
       values (p_autor, 'mudanca_dial_recusada', 'estagio:'||p_estagio,
@@ -4112,10 +4108,6 @@ begin
                               'doutrina, por migration.', p_estagio, v_teto, p_nivel));
   end if;
 
-  -- ----- A REGRA DE OURO (0126) ---------------------------------------------
-  -- "Subida que ALCANÇA N2/N3": `p_nivel > v_nivel_ant` é o que faz descer e
-  -- reafirmar o mesmo nível passarem livres. Reafirmar importa na prática — é o
-  -- que a 0041 faz ao ser reaplicada, e o que qualquer `update` do limiar faz.
   v_sobe_para_autonomia := p_nivel > v_nivel_ant
                            and p_nivel in ('N2', 'N3')
                            and v_natureza = 'interpretativo';
@@ -4141,20 +4133,40 @@ begin
       v_base := 'medida';
       v_resumo := v_med;
 
+    elsif p_por_veredito then
+      -- A PORTA DA 0136. Recusa e aprovação usam o MESMO objeto de medição, e ele
+      -- vai para a trilha nos dois casos: a tentativa que não passou é o registro
+      -- de quanto faltava, e é ela que diz se o número está subindo com o uso.
+      v_med := fn_veredito_producao(p_estagio);
+      if not coalesce((v_med->>'suficiente')::boolean, false) then
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+          values (p_autor, 'mudanca_dial_recusada', 'estagio:'||p_estagio,
+                  jsonb_build_object('pedido', p_nivel, 'de', v_nivel_ant,
+                                     'motivo_informado', p_motivo, 'medicao', v_med));
+        return jsonb_build_object('recusado', true, 'medicao', v_med,
+          'motivo_recusa', format('O veredito de produção não basta para subir "%s" de %s para %s. '
+                                  'O que faltou está em "medicao"; a fonte do rótulo está em '
+                                  '"fonte". Lembrando que este caminho mede um PISO, e o piso ainda '
+                                  'não alcançou o critério.', p_estagio, v_nivel_ant, p_nivel));
+      end if;
+      v_base := 'medida_por_veredito';
+      v_resumo := v_med;
+
     elsif p_sem_medicao_porque is null then
       insert into evento_auditoria (ator, acao, entidade_ref, depois)
         values (p_autor, 'mudanca_dial_recusada', 'estagio:'||p_estagio,
                 jsonb_build_object('pedido', p_nivel, 'de', v_nivel_ant,
                                    'motivo_informado', p_motivo,
-                                   'porque', 'sem rodada de golden set e sem motivo declarado'));
+                                   'porque', 'sem rodada de golden set, sem veredito e sem motivo declarado'));
       return jsonb_build_object('recusado', true,
         'motivo_recusa', format('Subir "%s" de %s para %s é entrar em auto-clear num estágio '
                                 'INTERPRETATIVO, e docs/01 exige concordância medida para isso. '
-                                'Dois caminhos: passe `p_rodada_golden` com uma rodada CONGELADA que '
-                                'satisfaça golden_criterio, ou assuma a decisão em '
+                                'Três caminhos: `p_rodada_golden` com uma rodada CONGELADA, '
+                                '`p_por_veredito` para medir pelo veredito de produção (0136, e o '
+                                'número é um piso enviesado), ou assumir a decisão em '
                                 '`p_sem_medicao_porque` — nesse caso a subida acontece, fica '
                                 'registrada como mudanca_dial_sem_medicao e o nível passa a valer '
-                                'como DECLARADO, não medido.', p_estagio, v_nivel_ant, p_nivel));
+                                'como DECLARADO.', p_estagio, v_nivel_ant, p_nivel));
     end if;
   end if;
 
@@ -4162,22 +4174,19 @@ begin
     set nivel_atual = p_nivel,
         limiar_auto_clear = coalesce(p_limiar, limiar_auto_clear),
         base_do_nivel = v_base,
-        -- Ponteiro e resumo só sobrevivem enquanto o nível que eles justificam
-        -- sobrevive: descer para N1 e subir de novo não pode reaproveitar a
-        -- medição de antes como se ela tivesse sido feita agora.
+        -- O ponteiro de rodada só existe no caminho do golden set. No caminho do
+        -- veredito não há rodada para apontar, e é o `medicao_resumo` que carrega
+        -- de onde o número veio — inclusive o aviso de que ele é piso.
         medicao_rodada_id = case when v_base = 'medida' then p_rodada_golden else null end,
-        medicao_em        = case when v_base = 'medida' then now() else null end,
-        medicao_resumo    = case when v_base = 'medida' then v_resumo else null end,
+        medicao_em        = case when v_base in ('medida', 'medida_por_veredito') then now() else null end,
+        medicao_resumo    = case when v_base in ('medida', 'medida_por_veredito') then v_resumo else null end,
         atualizado_por = p_autor,
         atualizado_em = now()
   where estagio = p_estagio;
 
-  -- 'mudanca_dial' existe no enum desde a 0001. `mudanca_dial_sem_medicao` é da
-  -- 0126 e existe para que o dial declarado seja CONTÁVEL: sem ação própria, ele
-  -- fica indistinguível do medido dentro de uma lista de 'mudanca_dial'.
   insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
     values (p_autor,
-            case when v_sobe_para_autonomia and p_rodada_golden is null
+            case when v_sobe_para_autonomia and p_rodada_golden is null and not p_por_veredito
                  then 'mudanca_dial_sem_medicao' else 'mudanca_dial' end,
             'estagio:'||p_estagio, v_antes,
             (select to_jsonb(ea) from estagio_autonomia ea where ea.estagio = p_estagio)
@@ -4188,6 +4197,12 @@ begin
   return fn_dial(p_estagio);
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) IS 'Muda o nível de autonomia de um estágio aplicando a regra de ouro do docs/01. Três portas para subir interpretativo a N2/N3, em ordem de força: rodada de golden set congelada (base medida), veredito de produção suficiente (base medida_por_veredito, piso enviesado, 0136), ou motivo declarado (base declarada). Descer nunca pede nada. Recusa é RETORNADA, não exceção.';
 
 --
 -- Name: fn_mutuo_com_socio(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -8723,6 +8738,162 @@ $$;
 COMMENT ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) IS 'Série histórica por (rótulo, seção, ano) — valor de maior módulo com sinal (0042), só da versão vigente (0102). 0125: acrescenta a proveniência DA CÉLULA (arquivo, página, confiança, aceite), da ocorrência que produziu aquele valor naquele ano — nunca a de outro exercício.';
 
 --
+-- Name: fn_veredito_producao(text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_veredito_producao(p_estagio text, p_caso_id uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_natureza  text;
+  v_crit      record;
+  v_n         int     := 0;
+  v_conc      numeric;
+  v_por_tipo  jsonb   := '[]'::jsonb;
+  v_fonte     text;
+  v_pior      jsonb;
+  v_falhas    text[]  := '{}';
+  v_delegado  jsonb;
+begin
+  select natureza into v_natureza from estagio_autonomia where estagio = p_estagio;
+  if v_natureza is null then
+    return jsonb_build_object(
+      'estagio', p_estagio, 'suficiente', false,
+      'motivo', format('Estágio "%s" não existe no dial.', p_estagio));
+  end if;
+
+  select n_minimo_veredito, concordancia_minima, metrica
+    into v_crit
+    from golden_criterio where estagio = p_estagio;
+
+  if v_crit is null then
+    return jsonb_build_object(
+      'estagio', p_estagio, 'suficiente', false,
+      'motivo', format('O estágio "%s" não tem linha em golden_criterio, então não há limiar '
+                       'contra o que comparar. Critério é dado (0126): acrescente a linha.',
+                       p_estagio));
+  end if;
+
+  if p_estagio = 'classificacao_doc_checklist' then
+    -- O VEREDITO É A REVISÃO DE DOCUMENTO. `fn_revisar_documento` grava
+    -- 'correcao_classificacao' quando o humano trocou o tipo e 'aprovacao' quando
+    -- não trocou, com `tipo_de`/`tipo_para` no payload. O payload é o filtro que
+    -- separa esta decisão das outras 'aprovacao' do sistema — a do auto-aceite,
+    -- por exemplo, que não é veredito sobre classificação nenhuma.
+    --
+    -- AUTOR HUMANO, e a exclusão é por prefixo 'sistema:' porque é assim que a
+    -- casa marca ator de máquina desde a 0019. Contar o auto-aceite aqui seria a
+    -- máquina se dando razão.
+    v_fonte := 'decisao (fn_revisar_documento): aprovacao = tipo confirmado, '
+               'correcao_classificacao = tipo trocado';
+    with v as (
+      select d.payload->>'tipo_de' as tipo_sugerido,
+             (d.tipo = 'aprovacao') as concordou
+        from decisao d
+       where d.payload ? 'tipo_para'
+         -- SEM PALPITE NÃO HÁ VEREDITO. Documento que chegou à revisão sem tipo
+         -- nenhum (`tipo_de` nulo) não tem com o que concordar: contar a correção
+         -- dele como erro da máquina puniria o classificador por uma resposta que
+         -- ele não deu. Achado no book, onde uma linha assim derrubava a
+         -- concordância de 1,00 para 0,83 sozinha.
+         and d.payload->>'tipo_de' is not null
+         and coalesce(d.autor, '') not like 'sistema:%'
+         and d.tipo in ('aprovacao', 'correcao_classificacao')
+         and (p_caso_id is null or d.caso_id = p_caso_id)
+    ), por_tipo as (
+      select tipo_sugerido,
+             count(*)::int as n,
+             count(*) filter (where concordou)::int as acertos,
+             round(count(*) filter (where concordou)::numeric / count(*), 4) as concordancia
+        from v group by tipo_sugerido
+    )
+    select coalesce(sum(n), 0)::int,
+           case when coalesce(sum(n), 0) = 0 then null
+                else round(sum(acertos)::numeric / sum(n), 4) end,
+           coalesce(jsonb_agg(jsonb_build_object(
+             'tipo', tipo_sugerido, 'n', n, 'acertos', acertos, 'concordancia', concordancia)
+             order by concordancia, tipo_sugerido), '[]'::jsonb)
+      into v_n, v_conc, v_por_tipo
+      from por_tipo;
+
+  elsif p_estagio = 'reconciliacao_classe_a' then
+    -- Já existia desde a 0126 e nunca esteve ligada ao dial. Delegar em vez de
+    -- reescrever: duas contagens da mesma quantidade divergem no dia em que
+    -- alguém corrigir uma só.
+    v_fonte := 'fn_golden_classe_a (0126): rejeitada = falso positivo do motor';
+    v_delegado := fn_golden_classe_a(p_caso_id);
+    v_n    := coalesce((v_delegado->>'com_veredito_humano')::int, 0);
+    v_conc := (v_delegado->>'nao_falso_positivo')::numeric;
+
+  elsif p_estagio = 'classificacao_contabil' then
+    -- A 0128 mede isto desde que existe. O teto deste estágio é N1, então o
+    -- número não sobe dial nenhum hoje; ele entra aqui para a tela de autonomia
+    -- poder mostrar medição onde existe, em vez de silêncio.
+    v_fonte := 'fn_classe_contabil_concordancia (0128): sugestão em sombra contra override humano';
+    v_delegado := fn_classe_contabil_concordancia(p_caso_id);
+    v_n    := coalesce((v_delegado->>'com_veredito_humano')::int, 0);
+    v_conc := (v_delegado->>'concordancia')::numeric;
+
+  else
+    return jsonb_build_object(
+      'estagio', p_estagio, 'suficiente', false, 'n', 0,
+      'metrica', v_crit.metrica,
+      'motivo', format('Não há veredito de produção para "%s". O trabalho normal não emite rótulo '
+                       'sobre este estágio: o analista não confirma nem corrige a saída dele numa '
+                       'tela, então não existe o que contar. Medir este estágio exige rotulagem, e '
+                       'é o caso que a saída C do B3 cobre.', p_estagio));
+  end if;
+
+  -- O TIPO MAIS FRACO, quando há tipo. Um tipo com N pequeno não reprova sozinho:
+  -- ele não tem massa para afirmar nada, e tratá-lo como reprovação faria o
+  -- estágio inteiro depender do tipo mais raro da mesa.
+  select jsonb_agg(t) filter (where (t->>'n')::int >= greatest(v_crit.n_minimo_veredito / 4, 5)
+                                and (t->>'concordancia')::numeric < v_crit.concordancia_minima)
+    into v_pior
+    from jsonb_array_elements(v_por_tipo) t;
+
+  if v_n < v_crit.n_minimo_veredito then
+    v_falhas := v_falhas || format('vereditos de produção: %s, mínimo %s',
+                                   v_n, v_crit.n_minimo_veredito);
+  end if;
+  if v_conc is null then
+    v_falhas := v_falhas || 'concordância: não medida (nenhum veredito com os dois lados)';
+  elsif v_conc < v_crit.concordancia_minima then
+    v_falhas := v_falhas || format('concordância: %s, mínimo %s', v_conc, v_crit.concordancia_minima);
+  end if;
+  if v_pior is not null then
+    v_falhas := v_falhas || format('%s tipo(s) com massa e concordância abaixo do mínimo',
+                                   jsonb_array_length(v_pior));
+  end if;
+
+  return jsonb_build_object(
+    'estagio', p_estagio,
+    'suficiente', array_length(v_falhas, 1) is null,
+    'fonte', v_fonte,
+    'metrica', v_crit.metrica,
+    'n', v_n,
+    'n_minimo', v_crit.n_minimo_veredito,
+    'concordancia', v_conc,
+    'concordancia_minima', v_crit.concordancia_minima,
+    'por_tipo', v_por_tipo,
+    'tipos_abaixo_do_minimo', coalesce(v_pior, '[]'::jsonb),
+    'falhas', coalesce(to_jsonb(v_falhas), '[]'::jsonb),
+    'piso_enviesado', true,
+    'como_ler', 'Este número é um PISO, não um ground truth. O veredito vem do trabalho normal, e '
+                'quem o emite VÊ o palpite da máquina antes de decidir — o viés de confirmação '
+                'empurra a concordância para cima. Serve para dizer "a máquina acerta pelo menos '
+                'isto"; não substitui rotulagem cega no dia em que for preciso sustentar o número '
+                'para fora.');
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_veredito_producao(p_estagio text, p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_veredito_producao(p_estagio text, p_caso_id uuid) IS 'Concordância medida a partir do veredito que o trabalho normal já produz (saída B do B3, 21/08). Despacha por estágio e RECUSA o que não sabe medir, em vez de devolver zero. É PISO ENVIESADO: quem emite o veredito vê o palpite da máquina, e o viés de confirmação puxa para cima. Vale menos que rodada de golden set congelada e mais que nível declarado.';
+
+--
 -- Name: fn_versao_atual(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9098,7 +9269,7 @@ CREATE TABLE public.estagio_autonomia (
     medicao_rodada_id uuid,
     medicao_em timestamp with time zone,
     medicao_resumo jsonb,
-    CONSTRAINT estagio_autonomia_base_check CHECK ((base_do_nivel = ANY (ARRAY['nao_se_aplica'::text, 'declarada'::text, 'medida'::text]))),
+    CONSTRAINT estagio_autonomia_base_check CHECK ((base_do_nivel = ANY (ARRAY['nao_se_aplica'::text, 'declarada'::text, 'medida'::text, 'medida_por_veredito'::text]))),
     CONSTRAINT estagio_autonomia_natureza_check CHECK ((natureza = ANY (ARRAY['deterministico'::text, 'interpretativo'::text])))
 );
 
@@ -9124,7 +9295,7 @@ COMMENT ON COLUMN public.estagio_autonomia.natureza IS 'docs/01, "regra de teto 
 -- Name: COLUMN estagio_autonomia.base_do_nivel; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.estagio_autonomia.base_do_nivel IS 'Em que o nível de HOJE se apoia: nao_se_aplica (N0/N1, ou determinístico), declarada (N2/N3 por decisão do dono, sem medição — o caso da 0019/0041) ou medida (N2/N3 contra rodada de golden set). Existe porque "N2 medido" e "N2 decidido" eram indistinguíveis para quem lê o estado do sistema, e a tela adivinhava por prefixo do nome do estágio.';
+COMMENT ON COLUMN public.estagio_autonomia.base_do_nivel IS 'Em que o nível de HOJE se apoia. nao_se_aplica = N0/N1 ou determinístico; declarada = N2/N3 por decisão, sem medição; medida_por_veredito = concordância medida no trabalho normal, que é PISO ENVIESADO (0136); medida = concordância contra rodada de golden set congelada, que é a única cega. A ordem da lista é a da força da evidência.';
 
 --
 -- Name: COLUMN estagio_autonomia.medicao_resumo; Type: COMMENT; Schema: public; Owner: -
@@ -9207,7 +9378,8 @@ CREATE TABLE public.golden_criterio (
     n_minimo integer DEFAULT 20 NOT NULL,
     concordancia_minima numeric DEFAULT 0.95 NOT NULL,
     metrica text NOT NULL,
-    nota text
+    nota text,
+    n_minimo_veredito integer DEFAULT 30 NOT NULL
 );
 
 --
@@ -9221,6 +9393,12 @@ COMMENT ON TABLE public.golden_criterio IS 'O que "concordância alta e estável
 --
 
 COMMENT ON COLUMN public.golden_criterio.metrica IS 'Qual das cinco métricas do f0/06 governa este estágio. É o mapa que fn_golden_suficiente segue, e existe como dado para que acrescentar estágio não exija reescrever aquela função.';
+
+--
+-- Name: COLUMN golden_criterio.n_minimo_veredito; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.golden_criterio.n_minimo_veredito IS 'Quantos vereditos de produção este estágio precisa para o dial aceitá-los como base (0136). Maior que n_minimo (20, do f0/06) de propósito: o veredito de produção vê o palpite da máquina, então é rótulo enviesado, e rótulo enviesado precisa de mais massa para dizer a mesma coisa. DECISÃO, não medição — muda por update, como o 0.95 da 0126.';
 
 --
 -- Name: golden_documento; Type: TABLE; Schema: public; Owner: -
@@ -11356,10 +11534,10 @@ GRANT ALL ON FUNCTION public.fn_mes_do_rotulo(p_chave text) TO authenticated;
 GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 
 --
--- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) TO authenticated;
 
 --
 -- Name: FUNCTION fn_mutuo_com_socio(p_chave text, p_secao text); Type: ACL; Schema: public; Owner: -
@@ -11611,6 +11789,12 @@ GRANT ALL ON FUNCTION public.fn_valor_pt_br(p_valor numeric, p_unidade text) TO 
 --
 
 GRANT ALL ON FUNCTION public.fn_valores_por_ano(p_caso_id uuid, p_entidade text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_veredito_producao(p_estagio text, p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_veredito_producao(p_estagio text, p_caso_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_versao_com_extracao(p_documento_id uuid); Type: ACL; Schema: public; Owner: -

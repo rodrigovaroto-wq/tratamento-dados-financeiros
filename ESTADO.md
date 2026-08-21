@@ -15,8 +15,8 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0135_a_operacao_passa_a_ser_vista.sql` |
-| **Aplicadas no Supabase** | **as 80**, com a `0133` fechando a fila em 21/08 depois de a sonda achá-la faltando. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das 80 migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
+| **Última migration** | `db/migrations/0136_veredito_de_producao.sql` |
+| **Aplicadas no Supabase** | **as 80**, com a `0133` fechando a fila em 21/08 depois de a sonda achá-la faltando. **A `0136` é nova e ainda NÃO foi aplicada.** Este arquivo não é a autoridade sobre isso: quem responde é a sonda das 80 migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | n8n 321 · export 623 · transcrição 35 · e2e 46 · banco (905 asserts, 80 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -222,6 +222,47 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## O VEREDITO DE PRODUÇÃO PASSA A CONTAR (21/08, sessão 58) — `0136`, a saída B do B3
+
+**A contradição que estava aberta era aritmética.** A `0126` pôs a regra de ouro do `docs/01` dentro
+de `fn_mudar_dial`: estágio interpretativo só sobe para N2/N3 com concordância medida contra rodada
+de golden set CONGELADA. A sessão 53 removeu o fluxo de rotulagem manual, por decisão do dono, porque
+o objetivo é o sistema operar sem triagem humana. Sem rotulagem nenhuma rodada congela; sem rodada
+nenhum interpretativo sobe. **O sistema passou a se recusar a certificar a si mesmo** — o que está
+certo, e é um estado terminal, não um caminho.
+
+**A saída escolhida (dono, 21/08) é a B: o trabalho normal já produz rótulo.** Toda vez que o
+analista confirma ou corrige o palpite da máquina na tela de revisão, ele emite um veredito. A casa
+já lia isso em dois lugares e nunca ligara ao dial: `fn_golden_classe_a` (`0126`) e
+`fn_classe_contabil_concordancia` (`0128`). A `0136` generaliza os dois numa porta só.
+
+**`fn_veredito_producao(estagio)` despacha por estágio e RECUSA o que não sabe medir.** Hoje tem
+fonte para três: classificação de documento (a decisão que `fn_revisar_documento` grava, `aprovacao`
+contra `correcao_classificacao`), reconciliação Classe A e classificação contábil. Para os demais ela
+devolve `suficiente = false` com o motivo, e nunca uma concordância inventada a partir de zero
+veredito — **"não medi" e "medi e deu ruim" são frases diferentes**, e a segunda não se produz a
+partir da primeira. É a mesma distinção que a `0131` faz entre tabela ausente e tabela vazia.
+
+**O que ela não finge ser, e isto é a parte que não pode sumir da tela.** Quem emite o veredito **vê
+o palpite da máquina** antes de decidir; o rotulador cego do `f0/06` decide sem ver. A diferença tem
+direção conhecida: o viés de confirmação empurra a concordância para cima. Então o número é um
+**PISO** — "a máquina acerta pelo menos isto" — e nunca um ground truth.
+
+Por isso `base_do_nivel` ganhou valor próprio, **`medida_por_veredito`**, que vale menos que `medida`
+e mais que `declarada`. **O assert mais importante da suíte é que ela nunca vira `medida`:** no dia
+em que rótulo cego e rótulo enviesado ficarem indistinguíveis naquela coluna, a honestidade do dial
+acaba sem sintoma nenhum, porque o número é o mesmo.
+
+**Três decisões que o teste trava:** massa antes de concordância (cinco vereditos com 100% de acerto
+não autorizam nada, e a falha nomeia o número que faltou); o **tipo mais fraco governa** quando tem
+massa, mas tipo raro não reprova o estágio inteiro sozinho; e a recusa vai para a trilha **com a
+medição junto**, que é o que responde "quanto faltava, e está subindo?" daqui a três meses. O
+`n_minimo_veredito` entra em 30 contra os 20 do `f0/06`, porque rótulo enviesado precisa de mais
+massa, e é dado: muda por update.
+
+**O que NÃO mudou:** o teto por natureza do estágio segue inegociável, e descer continua sem pedir
+nada. Freio que exige papelada não é freio.
 
 ## A `0133` QUE FALTOU, e a sonda que a achou (21/08, sessão 58)
 

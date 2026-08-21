@@ -27,7 +27,7 @@ type Dial = {
   // sentidos: estágio de extração que ganhasse medição continuava recebendo o
   // aviso, e estágio de outro nome que subisse sem medição não recebia nenhum.
   natureza: "deterministico" | "interpretativo";
-  base_do_nivel: "nao_se_aplica" | "declarada" | "medida";
+  base_do_nivel: "nao_se_aplica" | "declarada" | "medida" | "medida_por_veredito";
   medicao_rodada_id: string | null;
   medicao_em: string | null;
   atualizado_por: string | null;
@@ -237,8 +237,9 @@ export default async function AutonomiaPage() {
                     )}
                   </td>
                   {/* 0126: o que a tela adivinhava por prefixo do nome agora é
-                      coluna. "declarada" é o único estado que pede leitura: o
-                      sistema está em auto-clear sem que ninguém tenha medido. */}
+                      coluna. 0136: três estados de medição em vez de dois, e a
+                      cor separa o rótulo cego do enviesado. Verde é golden set;
+                      azul é veredito de produção, que mede um piso. */}
                   <td className="px-4 py-3 text-xs">
                     {d.base_do_nivel === "medida" ? (
                       <>
@@ -247,6 +248,16 @@ export default async function AutonomiaPage() {
                         </span>
                         <p className="mt-1 text-tinta-500">
                           contra golden set em {dataHora(d.medicao_em)}
+                        </p>
+                      </>
+                    ) : d.base_do_nivel === "medida_por_veredito" ? (
+                      <>
+                        <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900">
+                          medida por veredito
+                        </span>
+                        <p className="mt-1 text-tinta-500">
+                          piso, não ground truth: quem julgou viu o palpite da máquina
+                          {d.medicao_em ? ` (${dataHora(d.medicao_em)})` : ""}
                         </p>
                       </>
                     ) : d.base_do_nivel === "declarada" ? (
@@ -305,6 +316,15 @@ export default async function AutonomiaPage() {
             um motivo assumido por escrito — e é ele que aparece na trilha abaixo como{" "}
             <em>sem medição</em>. Quando houver golden set, a medição confirma ou derruba estes
             níveis.
+          </p>
+          <p className="mt-1">
+            Desde a <code>0136</code> existe um terceiro caminho, e ele não depende de rotulagem:
+            o veredito que o trabalho normal já produz. Cada vez que alguém confirma ou corrige o
+            tipo de um documento na revisão, isso é um rótulo. O dial aceita esse número como base
+            (<code>fn_mudar_dial</code> com <code>p_por_veredito</code>), e o nível resultante fica
+            marcado como <strong>medida por veredito</strong>, nunca como medida. A diferença não é
+            formalidade: quem julga na revisão vê o palpite da máquina antes de decidir, então o
+            viés de confirmação empurra o número para cima e o que se mede é um piso.
           </p>
           <p className="mt-1">
             A medição que já é possível hoje roda contra o book sintético (

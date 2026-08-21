@@ -356,6 +356,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/golden_rotulagem.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes do veredito de produção (0136) — a terceira porta do dial"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/veredito_producao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes da sonda de instalação (0131) — o catálogo conferido contra a realidade"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/instalacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
