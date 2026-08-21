@@ -272,7 +272,7 @@ que o primeiro comitê vai fazer.
 
 | | Defeito | Estado |
 |---|---|---|
-| a | **`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor".** O critério da `0101` é `valores is null or valores = '{}'`, e sazonalidade guarda os fatores em outro lugar | **suspeita, NÃO reconferida** desde a sessão 39. Custo de conferir: 10 minutos |
+| a | ~~**`fn_conferir_modelagem` conta premissa de sazonalidade como "sem valor".**~~ | **FECHADO pela `0134`** (sessão 55): premissa de `curva_mensal` deixou de contar como sem valor, porque a curva é derivada do documento mensal e não digitada. O caso ruim de verdade ganhou nome próprio, `sazonalidade_sem_curva`, que informa e não bloqueia |
 | b | **Linha que sozinha passa do teto de saída** — sem corte mais fino possível | anotado; nenhum documento do book cai nesse caso |
 | c | **Rateio de despesa intragrupo que não deixa saldo no balanço** — não há espelho para conferir | limite conhecido da `0124`, sem solução barata |
 | d | **Mútuo com sócio** — o par é o contrato com o quotista, que ninguém cruza hoje | limite conhecido da `0123` |
