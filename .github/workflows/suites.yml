@@ -244,6 +244,19 @@ jobs:
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
 
+      - name: Arnês de variações — a cadeia real sobre documento sujo
+        # POR QUE ELE ESTÁ NO CI. Cinco rodadas de variantes trocadas por completo
+        # acharam cinco defeitos que nenhuma das outras suítes pega, porque todas
+        # elas medem a ingestão sobre extração FIEL. Documento de mandato real não
+        # é fiel, e as variantes que pegaram cada defeito ficaram aqui como
+        # religamento — desfazer qualquer uma das cinco correções deixa este passo
+        # vermelho. Roda em ~3 min: o banco é clonado de um molde já migrado.
+        env:
+          PGHOST: /tmp
+          PGUSER: postgres
+          E2E_PSQL: psql
+        run: ./portal/node_modules/.bin/tsx test/e2e/variacoes.mts
+
       - name: Build do portal
         working-directory: portal
         run: npx next build

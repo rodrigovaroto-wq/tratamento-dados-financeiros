@@ -15,10 +15,10 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0137_a_promocao_automatica_do_dial.sql` |
+| **Última migration** | `db/migrations/0139_reafirmar_nao_apaga_medicao.sql` (a `0138` e a `0139` saíram da rodada de variações de 22/08 — ver "O LOOP DE VARIAÇÕES") |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (82 migrations do zero, os DOIS books) |
+| **Suítes** | variações **24** (a cadeia real sobre documento sujo) · n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (82 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -222,6 +222,74 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## O LOOP DE VARIAÇÕES (22/08) — cinco defeitos que nenhuma suíte pegava
+
+**O buraco que ele fecha, em uma frase:** as seis suítes provam a ingestão sobre
+extração **fiel** — PDF gerado por `reportlab`, texto limpo, layout conhecido.
+Documento de mandato real não é fiel, e **tudo o que o sistema faz depois de ler o
+PDF nunca tinha sido exercitado sobre entrada suja.**
+
+`test/e2e/variacoes.mts` injeta a sujeira **no ponto em que a OpenAI responde** e
+deixa o resto correr igual: o código do nó sai do JSON gerado (o mesmo que o dono
+importa no n8n), o banco é o das 84 migrations, o export é o do portal. Zero
+chamada de API, ~3 minutos, banco clonado de um molde já migrado (0,2 s por
+variante).
+
+> **O que ele NÃO prova, e precisa estar escrito:** a leitura do PDF em si. Scan
+> torto, carimbo, coluna deslocada e tabela quebrada entre páginas são defeitos da
+> OpenAI lendo o arquivo, e nenhum arnês que começa DEPOIS da resposta dela os
+> alcança. **O B1 continua de pé.**
+
+### O método: cinco rodadas com as variantes TROCADAS por completo
+
+| Rodada | Variantes | Achados do sistema |
+|---|---|---|
+| 1–4 | escala mista, locale anglo, parênteses, sem subtotais, comparativo sem período, moeda mista, PC zero, entidade vazia, truncado, ruído de rodapé… (22) | **2** (`0138`, `0139`) |
+| 5–6 | só balanço / só DRE, empresa única, um exercício, código contábil, caixa alta/baixa, texto sem número, percentual misturado, redutora invertida… (22) | **3** |
+| 7–8 | nota como conta, subtotais da DRE, moeda no rótulo, sinal com hífen, NaN/Infinity, 1.167 linhas, caracteres de controle, razão social gigante… (22) | **0** |
+| 9–10 | subtotal ≠ soma, PL a descoberto, receita zero, caixa negativo, insolvência, colunas mensais, anos diferentes, oito casas decimais… (22) | **0** |
+| 11 | rejeitados, aceite sem autor, página absurda, seção em texto livre, moeda minúscula, tipo colapsado, hash repetido… (13) | **0** |
+
+**Convergiu:** as duas últimas rodadas não acharam defeito nenhum do sistema — só
+erros da minha própria régua, que também foram corrigidos.
+
+### Os cinco defeitos, e o que cada um custava
+
+| # | Onde | O que era | Como aparecia |
+|---|---|---|---|
+| 1 | `fn_veredito_producao` (`0136`) | `v_falhas text[] \|\| 'literal cru'` — ambiguidade de operador do Postgres | **exceção** sempre que não havia veredito: em banco novo a promoção automática morria em TODA inserção de decisão, em silêncio |
+| 2 | `fn_mudar_dial` (`0137`) | reafirmar o nível corrente caía no default `'declarada'` | **apagava** `base_do_nivel`, `medicao_em` e `medicao_resumo` — o sistema subdeclarava a própria evidência |
+| 3 | `abaDivida` | `#fim` do histórico só é escrito quando há valor; a abertura projetada referenciava célula vazia | **a dívida evaporava**: 23.462 + 14.257 → ZERO no primeiro ano projetado, com amortização zero |
+| 4 | `chaveDeAncora` | o código contábil do ERP entrava na chave da âncora | **`1.1.01.002 TOTAL DO ATIVO` não casava com `total do ativo`** → sem reconciliação, balanço abria em −36.116 |
+| 5 | `normalizar` | `\s` não cobre U+200B, U+200C–F, U+00AD, U+2060 | **um caractere invisível partia a conta em duas**, a série virava dois pontos de um, o balanço abria em 180 |
+
+E um sexto, que não é bug e sim ausência de resposta: **o export MORRIA** com
+`ano null fora do horizonte` quando nenhuma linha tinha valor numérico — o
+analista não recebia arquivo nenhum. Agora o modelo se recusa nomeando a falta e o
+arquivo sai com as abas de dado mais a explicação em três linhas.
+
+### O que os cinco têm em comum
+
+**Todos moram DEPOIS da extração**, que é justamente onde nenhuma suíte olhava com
+entrada suja. E três deles (1, 3, 5) são da mesma família: *falha sem sintoma* —
+a promoção que morre calada, a dívida que some sem pagamento, a conta que se
+divide em duas. O único a reclamar era o CHECK do balanço, colunas adiante.
+
+**O que mais assusta no nº 3:** dívida não paga que desaparece é a mentira mais
+lisonjeira que este arquivo pode contar num mandato de reestruturação. Uma empresa
+com 37,7 milhões projetava como se não devesse nada.
+
+### O arnês virou portão
+
+As cinco variantes que pegaram cada defeito ficaram no conjunto consolidado,
+marcadas `[PEGOU]`, e **desfazer qualquer uma das cinco correções deixa o passo
+vermelho** — conferido uma a uma. Dois dos religamentos exigiram auditar o
+INVARIANTE em vez do efeito colateral: "a dívida evapora na virada" e "índice de
+liquidez sobre base impossível". Antes disso, duas correções passavam sem teste
+que as defendesse — que é o mesmo que não ter correção.
+
+Está no CI (`.github/workflows/suites.yml`), depois do e2e.
 
 ## A VARREDURA FRIA DOS DEZ ÚLTIMOS PRs (21/08) — seis defeitos, e cinco medidos
 

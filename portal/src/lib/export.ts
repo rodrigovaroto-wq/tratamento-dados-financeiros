@@ -3232,7 +3232,37 @@ export function buildExportWorkbook({
 
     // O MODELO INSTITUCIONAL. Só no modo completo: ele projeta, e projetar é o que
     // o modo "dados" deliberadamente não faz.
-    if (modeloInstitucional && modeloInstitucional.anosProjetados.length > 0) {
+    // `anosHistoricos.length > 0` entrou aqui junto com a recusa nomeada de
+    // `construirModeloInstitucional`: sem realizado o modelo não tem de onde
+    // projetar, e antes disso o export inteiro MORRIA com "ano null fora do
+    // horizonte" — o analista não recebia arquivo nenhum. Agora ele recebe as abas
+    // de dado e uma explicação de por que a modelagem não veio.
+    const semRealizado = modeloInstitucional != null
+      && modeloInstitucional.anosProjetados.length > 0
+      && modeloInstitucional.anosHistoricos.length === 0;
+    if (semRealizado) {
+      const ws = workbook.addWorksheet("Modelagem não montada");
+      ws.columns = [{ width: 40 }, { width: 96 }];
+      ws.addRow(["Modelagem — não montada"]).font = { bold: true, size: 12 };
+      ws.addRows([
+        ["Por quê",
+          "Nenhum exercício tem valor NUMÉRICO. O modelo projeta a partir do realizado, e não há "
+          + "realizado para ler: as linhas extraídas chegaram sem valor numérico."],
+        ["O que costuma ser",
+          "Extração que devolveu o TEXTO do valor e não o número — PDF de baixa qualidade, coluna "
+          + "que a leitura não alcançou, ou escala que o documento não declarou. As abas de dado "
+          + "deste arquivo mostram o que chegou, linha a linha."],
+        ["O que fazer",
+          "Confira as abas de dado e a fila de revisão. Se o valor está lá como texto, é caso de "
+          + "reextrair o documento — não de projetar. Projetar sem realizado inventaria a série "
+          + "inteira."],
+      ]);
+      for (let r = 2; r <= ws.rowCount; r++) {
+        ws.getRow(r).alignment = { wrapText: true, vertical: "top" };
+        ws.getRow(r).height = 56;
+      }
+    }
+    if (modeloInstitucional && modeloInstitucional.anosProjetados.length > 0 && !semRealizado) {
       // A MESMA detecção de subtotal das abas analíticas, injetada no modelo. Sem
       // isto o `Balance Sheet` soma o subtotal informado E os componentes dele, e
       // sai 2x o documento (medido: 195.090 contra 95.780 no arquivo do v35).

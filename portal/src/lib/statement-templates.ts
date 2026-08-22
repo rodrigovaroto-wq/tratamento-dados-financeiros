@@ -19,10 +19,24 @@
 
 import type { CampoExtraido } from "./types";
 
+// CARACTERE INVISÍVEL NÃO É IDENTIDADE DE CONTA.
+//
+// `\s` do JavaScript já cobre tabulação, retorno de carro, espaço inquebrável
+// (U+00A0) e BOM — mas NÃO cobre o espaço de largura zero (U+200B), nem os
+// juntadores (U+200C–U+200F, U+2060), nem o hífen suave (U+00AD). Achado no arnês
+// de variações: com um U+200B no fim do rótulo, "Caixa e bancos" e
+// "Caixa e bancos<U+200B>" viram DUAS contas — a série do ano quebra em duas
+// linhas de um ponto cada, a âncora deixa de casar e o balanço abre (medido: 180).
+//
+// É corriqueiro fora do arnês: PDF, colagem de planilha e exportação de ERP
+// carregam esses caracteres o tempo todo, e nenhum deles aparece na tela.
+const INVISIVEIS = /[\u200b-\u200f\u00ad\u2060\ufeff]/g;
+
 export function normalizar(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
+    .replace(INVISIVEIS, "")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();

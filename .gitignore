@@ -16,3 +16,6 @@
 # segurança para quando algum comando roda da raiz).
 node_modules/
 .next/
+
+# Saída do arnês de variações — .xlsx e relatório são gerados a cada rodada.
+test/e2e/saida/
