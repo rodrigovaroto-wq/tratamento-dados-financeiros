@@ -180,14 +180,48 @@ begin
   raise notice '--- 10. limpeza ---';
 
   delete from decisao where autor = 'analista:teste';
+  raise notice '--- 7. DE N0 ELA SALTA DOIS NÍVEIS, e isso é comportamento PINADO, não acidente ---';
+
+  -- POR QUE ESTE CASO EXISTE. O cabeçalho da 0137 escreve a trava 1 como "a
+  -- promoção automática sobe UM nível e para em N2", e o resto da migration (o
+  -- `como_ler`, o comment da função e o aviso final) diz "sobe ATÉ N2". As duas
+  -- leituras só divergem quando o estágio parte de N0 — e nenhum teste partia de
+  -- N0, então a divergência não tinha árbitro.
+  --
+  -- O QUE O CÓDIGO FAZ, medido aqui: a varredura seleciona `nivel_atual < N2` e
+  -- promove direto para 'N2'. De N0 isso é DOIS níveis num passo, sem passar por
+  -- N1. Hoje nenhum estágio semeado está nessa posição (`extracao_linhas_financeiras`
+  -- é N0 no seed da 0002 mas chegou a N2 com o freio puxado; `classificacao_contabil`
+  -- tem teto N1 e nem entra), então isto é LATENTE — e latente é exatamente o que
+  -- muda de sentido sozinho quando alguém semeia um estágio novo.
+  --
+  -- Este assert não julga qual das duas leituras é a certa: essa é decisão de
+  -- doutrina, do dono, e está nomeada no ESTADO.md. Ele PINA a de hoje, para que
+  -- mudá-la seja um teste vermelho e não uma descoberta em produção.
+
+  delete from decisao where autor = 'analista:teste';
+  update estagio_autonomia
+     set nivel_atual = 'N0', base_do_nivel = 'nao_se_aplica', auto_promocao = true,
+         medicao_em = null, medicao_resumo = null
+   where estagio = 'classificacao_doc_checklist';
+
+  perform teste_ap_semear(v_caso, 'balanco_patrimonial', 30, 30);
+
+  select nivel_atual into v_nivel
+    from estagio_autonomia where estagio = 'classificacao_doc_checklist';
+  perform teste_assert_ap(v_nivel = 'N2',
+    'partindo de N0 a promoção automática vai direto a N2 — DOIS níveis, sem escala em N1',
+    coalesce(v_nivel, '(null)'));
+
   delete from caso where id = v_caso;
   update estagio_autonomia
      set nivel_atual = 'N1', base_do_nivel = 'nao_se_aplica', auto_promocao = true,
          medicao_em = null, medicao_resumo = null
    where estagio = 'classificacao_doc_checklist';
 
-  raise notice 'auto-promoção do dial OK — sobe sozinha ao critério, para em N2, respeita o teto, e '
-               'o freio de quem baixou o nível NÃO é desfeito pela máquina';
+  raise notice 'auto-promoção do dial OK — sobe sozinha ao critério, para em N2, respeita o teto, '
+               'o freio de quem baixou o nível NÃO é desfeito pela máquina, e o salto de N0 direto '
+               'a N2 está pinado (ver ESTADO.md: a trava 1 diz "um nível" e o código diz "até N2")';
 end $$;
 
 drop function teste_ap_semear(uuid, text, int, int);

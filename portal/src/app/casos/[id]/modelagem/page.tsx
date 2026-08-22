@@ -801,7 +801,13 @@ export default async function ModelagemPage({
           </p>
         ) : (
           <div className="space-y-5">
-            {[...linhasPorSecao.entries()].sort().map(([secao, linhas]) => (
+            {/* Ordena pelo NOME DA SEÇÃO. `sort()` sem comparador converte cada entrada
+                em texto — e a entrada é `[secao, linhas]`, então o critério incluía as
+                linhas estringadas ("[object Object],[object Object]…"). A ordem saía
+                certa por acidente do prefixo, não por decisão. */}
+            {[...linhasPorSecao.entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([secao, linhas]) => (
               <SecaoLinhas
                 key={secao}
                 casoId={id}

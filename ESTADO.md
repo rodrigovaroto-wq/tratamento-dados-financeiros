@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0137_a_promocao_automatica_do_dial.sql` |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | n8n 321 · export 638 · transcrição 35 · premissas do realizado 25 · e2e 46 · banco (954 asserts, 82 migrations do zero, os DOIS books) |
+| **Suítes** | n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (82 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -222,6 +222,64 @@ serializar); `fn_conferir_modelagem` em 347 ms (era 9.344 ms antes da `0101`); a
 `fn_recomputar_completude` custa 237 ms e roda uma vez por documento (trabalho quadrático no lote),
 mas isso é <5% do relógio de um lote de 38 documentos. Consertar exige mudar o workflow do n8n e
 **reimportar** — risco desproporcional ao ganho, e fica registrado aqui em vez de feito.
+
+## A VARREDURA FRIA DOS DEZ ÚLTIMOS PRs (21/08) — seis defeitos, e cinco medidos
+
+Revisão dos PRs **#152 a #161** sem partir do pressuposto de que estavam certos. A base era verde
+antes e continua verde depois: n8n 321, export **650** (eram 638), premissas do realizado **32**
+(eram 25), e2e 46, banco completo, `tsc`/`eslint` limpos, `db/schema.sql` idêntico e `git diff` de
+`n8n/` vazio. **Nenhum dos 638 asserts existentes reprovava com qualquer um dos seis defeitos no
+lugar** — e é isso que os torna dignos de nota, não a gravidade de cada um.
+
+| # | Onde | O que estava errado | Medido |
+|---|---|---|---|
+| 1 | `RP_DEPOIS` (#160) | o "depois" do reperfilamento lia amortização **bruta**; todo o resto lê a de **caixa** | serviço 55.150 → 52.917 com o haircut, e o alívio **imóvel em zero** |
+| 2 | `R_LIQ_CORR` | devolvia **0 numérico** com passivo circulante zero, e o covenant leu `ROMPE` | `PC=0` → liquidez `0,00` e veredito **"ROMPE"** |
+| 3 | `R_LIQ_SECA` | idem, sem teste de covenant — só engana quem lê | idem |
+| 4 | `R_ALAV_PL` | guarda testava `<>0` e o rótulo prometia `PL<=0` | a fixture publicava **−1,03x** com PL de −632.191 |
+| 5 | `ALIQUOTA` (#158) | alíquota efetiva sobre **prejuízo** virava taxa negativa | **−5,85%** num caso de LAIR −20.500 |
+| 6 | `TAXA_DIVIDA` (#158) | somava **receita** financeira em módulo junto da despesa | **35%** onde a dívida custa 30% |
+
+### O que os seis têm em comum, e é a única generalização que vale
+
+**Todos publicam um NÚMERO onde a razão não existe.** Nenhum deles quebra, nenhum acende vermelho, e
+cada um é lido pela ponta seguinte como se fosse dado: o covenant lê `0` e acusa rompimento; o comitê
+lê `−1,03x` e entende alavancagem baixa; a projeção lê alíquota negativa e faz o fisco **pagar** a
+empresa. É a mesma família dos quatro incidentes de UMA CONTA, UM LUGAR — e, como eles, **erra
+sempre para o lado de parecer melhor**, com uma exceção que prova a regra: o `ROMPE` falso da
+liquidez erra para o lado de parecer pior, e por isso teria sido o primeiro a ser notado.
+
+O arquivo já sabia a regra e a aplicava **ao lado**: `R_ND_EBITDA` se recusa a publicar múltiplo com
+EBITDA negativo, `R_ROE` se recusa com PL negativo, e o `R_LIQ_IMED` que a #160 acrescentou **três
+linhas acima** do `R_LIQ_CORR` já devolvia texto. A doutrina estava escrita; o que faltava era ela
+valer nas linhas vizinhas.
+
+### O defeito 1 é o mais caro, e o motivo é o que ele desmente
+
+O bloco REPERFILAMENTO existe para responder "qual reestruturação resolve?", e o veredito dele manda
+o leitor usar três alavancas quando a carência não basta — prazo maior, **haircut**, dinheiro novo.
+Com a amortização bruta no "depois", **a alavanca do haircut media zero**: o serviço de caixa caía e
+o bloco não via. Pior que isso, o contrafactual `RP_DSCR_SEM` — que soma o alívio de volta ao serviço
+— **andava** quando a alavanca era puxada, quando ele é justamente o lado que precisa ficar parado.
+O assert (40) olha as duas pontas de propósito: o alívio tem de **mexer** e o contrafactual tem de
+**ficar**; cada uma sozinha passa com o defeito pela metade.
+
+### E um sétimo achado que NÃO foi corrigido, porque a correção é doutrina
+
+**A 0137 se contradiz sobre quantos níveis a máquina pode subir de uma vez.** O cabeçalho da trava 1
+diz *"a promoção automática sobe UM nível e para em N2"*; o `como_ler`, o comentário da função e o
+aviso final dizem *"sobe ATÉ N2"*. As duas leituras só divergem partindo de **N0**, e nenhum teste
+partia de N0 — a divergência não tinha árbitro. O código promove **direto a N2**, dois níveis num
+passo.
+
+Hoje isto é **latente**: nenhum estágio semeado está nessa posição (`extracao_linhas_financeiras`
+nasce em N0 mas está em N2 com o freio puxado; `classificacao_contabil` tem teto N1 e nem entra na
+varredura). Latente é exatamente o que muda de sentido sozinho quando alguém semear um estágio novo.
+
+Não mudei o comportamento: **quantos níveis a máquina pode subir sozinha é decisão do dono**, não de
+engenharia, e o peso do texto está do lado de "até N2" (três das quatro declarações). O que fiz foi
+tirar a ambiguidade do escuro — o caso 7 de `db/test/auto_promocao_dial.test.sql` **pina** o salto
+N0→N2, então mudá-lo passa a ser um teste vermelho e não uma descoberta em produção.
 
 ## O ARQUIVO DE COMITÊ, EM QUATRO FRENTES (21/08, sessão 59)
 
@@ -721,7 +779,7 @@ divergência entre o **mapa de dívida** (43.542 de curto prazo) e o **balanço*
 decidiu: **o mapa manda** e o balanço é reconciliado. O arquivo declara a diferença em vez de
 escondê-la.
 
-## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, um defeito aberto
+## A VARREDURA CRÍTICA DO CÓDIGO (20/08, sessão 55) — dois bugs de triagem, e o terceiro achado que já estava corrigido
 
 **Decisão do dono, registrada:** quando o **mapa de dívida** e o **balanço** discordam, o **mapa
 manda** e o balanço é reconciliado. É o desenho que já estava em vigor; agora está escrito.
@@ -767,37 +825,64 @@ casos nas duas, exigindo resultado idêntico. Não compara texto — comparar fo
 em branco e convidaria a "consertar" formatando. Compara COMPORTAMENTO. Religamento medido:
 estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
 
-### O DEFEITO QUE FICA ABERTO, com reprodução exata e sem correção especulativa
+### ~~O DEFEITO QUE FICA ABERTO~~ — **FECHADO na mesma sessão, e esta entrada mentiu por dois dias**
 
-**Uma conta legítima de 9.200 some do modelo institucional.** No balanço da Vertentes Metalúrgica
-(2025), o bloco `ativo_circulante` do modelo tem **16 linhas somando 36.240** enquanto as folhas do
-documento são **17 somando exatamente 45.440** — o informado. A que falta é
-**"Matérias-primas e insumos" (9.200)**, e ela é conta, não subtotal.
+> **Esta seção dava um defeito por aberto depois de ele ter sido corrigido**, e ficou assim de 20/08
+> a 21/08. A causa não é descuido: a varredura escreveu o achado ANTES da passada que o consertou, na
+> mesma sessão 55, e ninguém voltou para reconciliar as duas seções do mesmo arquivo. É exatamente a
+> forma de erro contra a qual o `docs/MAPA_DE_EXECUCAO.md` avisa — *"a lista de pendências do
+> `ESTADO.md` já disse uma vez que o Modo A não existia depois de ele existir"*. O texto original
+> fica abaixo, riscado, porque a hipótese que ele registra é a parte que ensina.
 
-| | soma |
+**O que era:** uma conta legítima de 9.200 sumia do modelo institucional. No balanço da Vertentes
+Metalúrgica (2025), o bloco `ativo_circulante` tinha **16 linhas somando 36.240** enquanto as folhas
+do documento são **17 somando 45.440** — o informado. A que faltava era **"Matérias-primas e insumos"
+(9.200)**, e ela é conta, não subtotal.
+
+**Onde foi corrigido:** commit `dbc5eec`, "Os dois defeitos que se mascaravam, e o ativo circulante
+passa a fechar em ZERO" — o defeito (a) daquele par. O religamento é o assert **(38)** do
+`verificar-export.mts`, que olha o RESULTADO (resíduo zero) e não cada causa, porque os dois defeitos
+se cancelavam parcialmente.
+
+**Conferido de novo em 21/08, contra o código de hoje** (`566810e`), e não pela leitura do commit:
+
+| Medição | Resultado |
 |---|---|
-| folhas do documento (árvore por `secao`) | **45.440** = informado |
-| bloco do modelo | **36.240** |
-| diferença | **9.200** = "Matérias-primas e insumos" |
+| suíte de export | **638 / 638**, zero falhas |
+| resíduo da "reconciliação com o ativo circulante informado" (`Balance Sheet`) | **0,00 nas sete colunas** |
+| "Matérias-primas e insumos" nas linhas que chegam ao modelo | presente, `papel=conta`, `secao=ativo_circulante`, **9.200 em 2025** e 12.400 em 2024 |
+| `rotulosDeSubtotalInformado` na chamada REAL do export | **35 rótulos**, e "materias primas e insumos" **não é um deles** |
 
-**Onde está, e onde eu parei:** o descarte é `ehSubtotalEstrutural` (`modelo-institucional.ts:951`),
-que consulta `subtotaisEstruturais` — um conjunto com chave `(secao_canonica, rótulo)`. Conferi os
-dois detectores que o alimentam e **nenhum explica a marcação**: em `detectarSubtotaisPorOrdem` os
-seguintes de 9.200 dão 9.500 / 10.280 / 7.930, e em `detectarSubtotaisInformados` (B) os irmãos somam
-7.930 — nenhum bate com 9.200 dentro da tolerância.
+> **E a medição acima derrubou um segundo receio, que eu levantei nesta conferência e não se
+> sustentou.** Uma primeira sonda deu o conjunto de subtotais VAZIO, o que sugeriria que a regra de
+> acordo entre colunas tinha matado junto a detecção estrutural (A) — a que pega "Estoques", "Contas
+> a Receber" e os outros cabeçalhos de grupo. Estava medindo o lugar errado: o vazio era do
+> `entradaModeloDaFixture` (o construtor da fixture do script), e não da chamada de
+> `rotulosDeSubtotalInformado` dentro do `buildExportWorkbook`, que é a que o modelo de fato recebe.
+> Instrumentada a chamada real, ela devolve **35 rótulos** e os cabeçalhos de grupo estão todos lá.
+> A claim que o comentário do código fazia — *"não enfraquece o cabeçalho de grupo de verdade"* —
+> passa de afirmação a número. **Sonda no lugar errado responde com confiança sobre outra coisa**, e
+> é a versão barata do mesmo erro que a `0133` cobrou caro.
 
-**A hipótese que sobra, e que NÃO confirmei:** `rotulosDeSubtotalInformado` detecta sobre a ABA
-INTEIRA de propósito (o comentário dela explica por quê), e o veredito é gravado por
-`(secao_canonica, rótulo)` — não por documento. Se for isso, uma coincidência aritmética no balanço de
-OUTRA empresa do grupo apaga a conta desta. O book tem 6 empresas × 3 exercícios, então há 17 outras
-chances de coincidência.
+### E a hipótese anotada estava errada no mecanismo — é o que vale guardar
 
-> **Por que não corrigi:** este caminho decide quais contas entram no arquivo que vai a comitê, e a
-> chave grosseira pode ser deliberada (o comentário defende explicitamente detectar sobre a aba
-> inteira, para a aba analítica e o modelo darem o MESMO veredito). Estreitar a chave para incluir o
-> documento muda esse contrato. Mexer sem fechar a causa trocaria um defeito medido por um risco não
-> medido — e o resíduo de reconciliação já declara a diferença hoje, então o arquivo não mente: ele
-> mostra a conta faltando na linha de reconciliação em vez de escondê-la.
+A nota original apostava que a chave grosseira vazava pelo **documento**: *"uma coincidência
+aritmética no balanço de OUTRA empresa do grupo apaga a conta desta"*, e concluía que corrigir exigia
+estreitar a chave para incluir o documento — mexendo no contrato que o comentário de
+`rotulosDeSubtotalInformado` defende (detectar sobre a aba inteira, para a aba analítica e o modelo
+darem o MESMO veredito).
+
+A dimensão que faltava na chave não era o documento: era a **coluna**. `detectarSubtotaisPorOrdem`
+marcou o rótulo na coluna de **2024** (12.400), onde as linhas seguintes somavam por coincidência o
+valor dele; o veredito era gravado como `(secao_canonica, rótulo)`, sem coluna, e por isso apagava a
+conta em 2025 — e, de quebra, nas outras empresas. A correção **não estreitou a chave**: passou a
+exigir **acordo entre colunas** (subtotal numa coluna só não basta), que é o que
+`detectarSubtotaisInformados` (B) já fazia. O contrato que a nota temia quebrar ficou inteiro.
+
+> **A lição, que é a mesma de sempre neste repositório:** a hipótese acertou a FAMÍLIA da causa
+> (chave grosseira demais) e errou a DIMENSÃO — e a correção que ela propunha teria mexido no
+> contrato errado. Foi medir que separou as duas coisas. O que a nota fez de certo, e por isso ela
+> valeu a pena existir, foi **não corrigir sem fechar a causa**.
 
 ### Limpeza: o que saiu, e por que tenho certeza
 

@@ -1,6 +1,6 @@
 import {
   blocoDaLinha, ehCliente, ehEstoque, ehFornecedor, ehDividaFinanceira,
-  type LinhaModelo,
+  ehDespesaFinanceira, type LinhaModelo,
 } from "./modelo-institucional";
 
 // SUGERIR A PREMISSA A PARTIR DO QUE A EMPRESA JÁ FEZ.
@@ -87,6 +87,13 @@ const comoModelo = (l: LinhaRealizada): LinhaModelo => ({
 function razao(
   codigo: string, nome: string, unidade: "%" | "dias", conta: string,
   num: Bolsa, den: Bolsa, fator = 1,
+  /**
+   * Quando a base só faz sentido POSITIVA, o texto do porquê. Existe porque
+   * `den.valor === 0` não é a única base impossível: base NEGATIVA produz uma
+   * razão negativa, e uma razão negativa publicada como premissa é pior que a
+   * ausência dela — ela entra no modelo e projeta o contrário do que aconteceu.
+   */
+  basePositivaPorque?: string,
 ): PremissaSugerida {
   const base: PremissaSugerida = {
     codigo, nome, unidade, conta, valor: null, porQueNao: null,
@@ -98,6 +105,9 @@ function razao(
   }
   if (den.n === 0 || den.valor === 0) {
     return { ...base, porQueNao: `o caso não tem ${den.rotulo} com valor, e é a base desta conta` };
+  }
+  if (basePositivaPorque !== undefined && den.valor < 0) {
+    return { ...base, porQueNao: basePositivaPorque };
   }
   // NUMERADOR ZERO COM CONTA EXISTENTE é diferente de conta ausente, e passa: uma
   // empresa pode de fato não ter estoque no fechamento. O que não passa é inventar
@@ -135,7 +145,14 @@ export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[]
   const custos = somar(de("custo"), "custos", () => true);
   const sga = somar(de("sga"), "SG&A", () => true);
   const tributos = somar(de("tributos"), "tributos sobre o lucro", () => true);
-  const financeiro = somar(de("resultado_financeiro"), "resultado financeiro", () => true);
+  // A TAXA DA DÍVIDA SE MEDE COM O QUE A DÍVIDA CUSTA, e o bloco
+  // `resultado_financeiro` tem as DUAS pontas: o juro pago e o rendimento da
+  // aplicação. Somar as duas em magnitude — que era o que estava aqui — INFLA a
+  // taxa pelo rendimento. Medido: despesa 9.000 e receita 1.500 sobre dívida de
+  // 30.000 devolviam 35% onde o custo é 30%. Cinco pontos de custo de dívida,
+  // entrando no modelo como premissa.
+  const despesaFinanceira = somar(de("resultado_financeiro"), "despesa financeira",
+    (l) => ehDespesaFinanceira(l.chave));
 
   // O resultado antes dos tributos, pela mesma cascata: RL − custos − SG&A ± financeiro.
   // O sinal do financeiro volta a importar aqui, então ele é lido da linha e não da
@@ -176,11 +193,21 @@ export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[]
       "estoques ÷ receita líquida × 360", estoques, receitaLiquida, 360),
     razao("PMP", "Prazo médio de pagamento", "dias",
       "fornecedores ÷ custos × 360", fornecedores, custos, 360),
+    // ALÍQUOTA COM PREJUÍZO NÃO É ALÍQUOTA NEGATIVA. Este produto atende mandato
+    // de REESTRUTURAÇÃO, então LAIR negativo é o caso normal e não a exceção —
+    // e tributo dividido por prejuízo devolvia, medido, −5,85%. Uma alíquota
+    // negativa aplicada à projeção faz o fisco PAGAR a empresa sobre o lucro
+    // futuro: o modelo passa a inventar caixa exatamente na direção que lisonjeia
+    // o caso. É a mesma doutrina do `Output`, que se recusa a publicar ROE com PL
+    // negativo em vez de imprimir um retorno positivo enganoso.
     razao("ALIQUOTA", "Alíquota efetiva de tributos", "%",
-      "tributos sobre o lucro ÷ resultado antes dos tributos", tributos, lair),
+      "tributos sobre o lucro ÷ resultado antes dos tributos", tributos, lair, 1,
+      "o resultado antes dos tributos é NEGATIVO neste caso, e alíquota efetiva sobre prejuízo "
+      + "não é uma taxa: aplicada à projeção ela devolveria crédito onde há lucro. Digite a "
+      + "alíquota que o caso vai usar daqui para frente"),
     razao("PARCELA_ONEROSA", "Parcela onerosa do passivo", "%",
       "dívida financeira ÷ passivo total", divida, passivoTotal),
     razao("TAXA_DIVIDA", "Taxa média da dívida", "%",
-      "resultado financeiro ÷ dívida financeira", financeiro, divida),
+      "despesa financeira ÷ dívida financeira", despesaFinanceira, divida),
   ];
 }

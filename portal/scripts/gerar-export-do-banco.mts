@@ -35,6 +35,15 @@ import { casarVinculosComLinhas, seriesPorLinha, serieDaLinha } from "../src/lib
 const DB = process.env.DB ?? "tdf_v35";
 const CASO = process.argv[2];
 if (!CASO) throw new Error("uso: repro-export.mts <caso_id>");
+// O `caso_id` entra CRU em várias das consultas abaixo, por interpolação de texto.
+// Isto aqui é ferramenta local de repro e o argumento vem do teclado do dono, então
+// o risco prático é baixo — mas "baixo" não é "nenhum", e um id com aspa simples
+// vira SQL arbitrário rodando como o dono do banco. Um caso é sempre um UUID
+// (`caso.id` é `uuid` desde a 0001), então exigir o formato fecha o buraco inteiro
+// sem trocar o jeito de escrever as consultas.
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CASO)) {
+  throw new Error(`caso_id "${CASO}" não é um UUID — é assim que caso.id é gravado desde a 0001.`);
+}
 
 function q<T>(sql: string): T[] {
   const out = execFileSync("psql", ["-d", DB, "-tAc",

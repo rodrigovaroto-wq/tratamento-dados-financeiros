@@ -132,7 +132,12 @@ jobs:
         # morre com ENOENT no GABARITO — não é bug, é insumo faltando.
         working-directory: test-data/book-vertentes
         run: |
-          python3 -m pip install --quiet reportlab
+          # VERSÃO PRESA, e não é higiene genérica: o book sintético é o ORÁCULO das
+          # suítes, e `pip install reportlab` sem versão faz o CI baixar o que for a
+          # última no dia. Um release que mude a renderização quebra o gerador — ou,
+          # pior, muda o PDF sem quebrar nada e o oráculo passa a medir outra coisa.
+          # 5.0.1 é a versão com que a suíte inteira roda verde (conferido em 21/08).
+          python3 -m pip install --quiet 'reportlab==5.0.1'
           PYTHONPATH=. python3 gerar.py
 
       # ---- os DERIVADOS do gerador do book, conferidos como os workflows ----

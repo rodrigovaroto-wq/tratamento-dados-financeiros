@@ -85,7 +85,12 @@ function contemAlgumaFrase(tokens: Set<string>, frases: string[]): boolean {
 // Marcadores de CONTA DE DETALHE: uma linha assim nunca é o total da seção.
 // "(-) ..."/"(+) ..." é lançamento; "Outras/Outros ..." é conta residual;
 // "Variação em ..." é ajuste do método indireto.
-const RE_CONTA_DETALHE = /^\s*[([]?\s*[-+]|^\s*outr[ao]s?\b|^\s*variac|^\s*\(-\)/i;
+// `(?:[([]\s*)?` e não `[([]?\s*`: com o opcional FORA, os dois `\s*` ficavam
+// adjacentes quando não havia parêntese, e `\s*\s*` é a forma-livro de
+// backtracking super-linear — esta regex roda uma vez por linha extraída de cada
+// documento. Conferido equivalente em 200 mil entradas: mesma linguagem, sem a
+// ambiguidade.
+const RE_CONTA_DETALHE = /^\s*(?:[([]\s*)?[-+]|^\s*outr[ao]s?\b|^\s*variac|^\s*\(-\)/i;
 
 /**
  * A linha É a legenda de um total/resultado (âncora), e não uma conta que por

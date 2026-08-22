@@ -1041,8 +1041,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       for (let r = 1; r <= ws.rowCount && !usada; r++) {
         if (r === rp) continue;
         const f = formulaDe(`${letra}${r}`);
-        if (f && refsDe(f).includes(`${letra}${rp}`)) usada = true;
-        else if (alcanca(`${letra}${r}`, alvo) && r !== rp) usada = true;
+        // Os dois testes levam ao MESMO efeito, então são um OU — escrevê-los como
+        // if/else fazia parecer que havia dois caminhos com resultados diferentes.
+        if ((f && refsDe(f).includes(`${letra}${rp}`))
+            || (alcanca(`${letra}${r}`, alvo) && r !== rp)) usada = true;
       }
       if (usada) break;
     }
@@ -3050,15 +3052,12 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   // não depende de saber quais abas existem, e pega qualquer uma nova.
   const abasCitadas = new Set<string>();
   let nFormulas = 0;
-  const numerosEscritos: string[] = [];
   for (let r = 1; r <= mod.rowCount; r++) {
     for (let c = 1; c <= mod.columnCount; c++) {
       const v = mod.getRow(r).getCell(c).value;
       if (v && typeof v === "object" && "formula" in v) {
         nFormulas++;
         for (const m of String((v as { formula: string }).formula).matchAll(/'([^']+)'!/g)) abasCitadas.add(m[1]);
-      } else if (typeof v === "number") {
-        numerosEscritos.push(`${mod.getRow(r).getCell(c).address}`);
       }
     }
   }
@@ -3244,7 +3243,10 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const nA = 5;
   const colFY = (y: number) => 3 + y * 13 + 12;
   const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
-  const linhaDe = (x: string) => { for (let r = 1; r <= mod.rowCount; r++) if (rotuloDe(r) === x) return r; return -1; };
+  const linhaDe = (x: string) => {
+    for (let r = 1; r <= mod.rowCount; r++) { if (rotuloDe(r) === x) return r; }
+    return -1;
+  };
 
   // (a) TODAS as fórmulas do modelo resolvem. `null` aqui é o avaliador dizendo
   //     "não sei" — o que, para as funções que ele cobre, significa erro de
@@ -6766,6 +6768,159 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         "(39) …e o número que sustenta o veredito está publicado, em dias",
         `ativo de giro projetado: ${typeof diasProj === "number" ? diasProj.toFixed(0) : diasProj} dias`);
     }
+  }
+}
+
+// =============================================================================
+// (40) O REPERFILAMENTO MEDE CAIXA — e a prova é a alavanca de HAIRCUT mexer nele.
+//
+// O bloco REPERFILAMENTO compara o serviço do cronograma original com o serviço
+// negociado, e o veredito dele manda o leitor usar três alavancas quando a
+// carência não basta: prazo maior, HAIRCUT (a chave "Efeito caixa?" da aba de
+// dívida) ou dinheiro novo. O "depois" lia `TOTAL_AMORT` — a amortização BRUTA —
+// enquanto todo o resto do arquivo lê `ESP_AMORT`, que é a de CAIXA. Consequência
+// medida: virar a chave para "N" derrubava o serviço de 55.150 para 52.917 e o
+// alívio continuava ZERO; e o contrafactual `RP_DSCR_SEM`, que soma o alívio de
+// volta ao serviço, ANDAVA — quando ele é justamente o lado que tem de ficar
+// parado quando se puxa uma alavanca de negociação.
+//
+// Este assert olha as DUAS pontas, porque cada uma sozinha passaria com o defeito
+// pela metade: o alívio tem de MEXER, e o contrafactual tem de FICAR.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const montar = () => buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const acharEm = (ws: ExcelJS.Worksheet, re: RegExp) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (re.test(String(ws.getRow(r).getCell(3).value ?? ""))) return r;
+    }
+    return 0;
+  };
+  const COL = "G";
+  const medir = (wb: ExcelJS.Workbook) => {
+    const out = wb.getWorksheet("Output")!;
+    esquecerMemoria(out);
+    const v = (re: RegExp) => {
+      const r = acharEm(out, re);
+      return r ? avaliarCelula(out, COL, r) : undefined;
+    };
+    return {
+      antes: v(/Serviço das tranches no cronograma original/),
+      depois: v(/Serviço das mesmas tranches como está negociado/),
+      alivio: v(/Alívio do exercício/),
+      dscrSem: v(/DSCR que o cronograma original produziria/),
+    };
+  };
+
+  const semHaircut = medir(montar());
+  checar(typeof semHaircut.depois === "number" && semHaircut.depois > 0,
+    "(40) o bloco de reperfilamento publica um serviço negociado",
+    String(semHaircut.depois));
+  checar(typeof semHaircut.alivio === "number" && Math.abs(semHaircut.alivio) < 1,
+    "(40) sem carência e sem haircut, o alívio é ZERO — os dois lados são o mesmo cronograma",
+    String(semHaircut.alivio));
+
+  // Puxa a alavanca: a primeira tranche passa a reduzir saldo SEM pagamento.
+  const wbH = montar();
+  const wsDiv = wbH.getWorksheet("ST Inv. & Debt")!;
+  let virou = false;
+  for (let r = 1; r <= wsDiv.rowCount && !virou; r++) {
+    const cel = wsDiv.getRow(r).getCell(4);
+    if (String(cel.value ?? "") === "S") { cel.value = "N"; virou = true; }
+  }
+  checar(virou, "(40) a fixture tem chave de efeito caixa para virar");
+  const comHaircut = medir(wbH);
+
+  const moveu = typeof semHaircut.depois === "number" && typeof comHaircut.depois === "number"
+    ? semHaircut.depois - comHaircut.depois : 0;
+  checar(moveu > 1,
+    "(40) o HAIRCUT reduz o serviço NEGOCIADO — o 'depois' lê amortização de caixa, não a bruta",
+    `serviço: ${String(semHaircut.depois)} → ${String(comHaircut.depois)} (era imóvel com TOTAL_AMORT)`);
+  checar(typeof comHaircut.alivio === "number" && comHaircut.alivio > 1,
+    "(40) …e o ALÍVIO passa a existir para a alavanca que o próprio veredito recomenda",
+    `alívio: ${String(comHaircut.alivio)}`);
+  // O "antes" é o cronograma ORIGINAL: haircut é negociação, não faz parte dele.
+  checar(typeof semHaircut.antes === "number" && typeof comHaircut.antes === "number"
+    && Math.abs(semHaircut.antes - comHaircut.antes) < 0.01,
+    "(40) o 'antes' NÃO se move: haircut é negociação, e o cronograma original a desconhece",
+    `${String(semHaircut.antes)} → ${String(comHaircut.antes)}`);
+  // E a ponta que o defeito revelava: o contrafactual tem de ficar PARADO.
+  const sem = semHaircut.dscrSem, com = comHaircut.dscrSem;
+  checar(typeof sem === "number" && typeof com === "number" && Math.abs(sem - com) < 1e-6,
+    "(40) o CONTRAFACTUAL fica parado quando se puxa a alavanca — serviço e alívio na mesma base",
+    `DSCR sem negociação: ${String(sem)} → ${String(com)}`);
+}
+
+// =============================================================================
+// (41) AS GUARDAS DOS ÍNDICES DIZEM A VERDADE — zero não é "não se aplica".
+//
+// Dois defeitos da mesma família, e os dois publicavam NÚMERO onde a razão não
+// existe. Número mente duas vezes aqui: uma para quem lê, e outra para o teste de
+// covenant ao lado, que decide se roda por `ISNUMBER`.
+//
+// (a) `R_LIQ_CORR` devolvia 0 com passivo circulante ZERO. Zero é número, o teste
+//     rodava, comparava 0 < corte e publicava "ROMPE" — a empresa com a MELHOR
+//     liquidez possível reportada ao comitê como rompendo o covenant.
+// (b) `R_ALAV_PL` testava `<>0` e rotulava "PL<=0". Com patrimônio a descoberto
+//     ele dividia e saía múltiplo NEGATIVO: a própria fixture publicava −1,03x,
+//     que se lê como "quase sem dívida" e significa patrimônio consumido.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const montar = () => buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const acharEm = (ws: ExcelJS.Worksheet, re: RegExp) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (re.test(String(ws.getRow(r).getCell(3).value ?? ""))) return r;
+    }
+    return 0;
+  };
+  const COL = "G";
+
+  // (b) A FIXTURE JÁ TEM PL NEGATIVO — este assert não fabrica o caso, ele o lê.
+  {
+    const wb = montar(); const out = wb.getWorksheet("Output")!;
+    esquecerMemoria(out);
+    const rPL = acharEm(out, /^Shareholder's Equity$/);
+    const pl = avaliarCelula(out, COL, rPL);
+    checar(typeof pl === "number" && pl < 0,
+      "(41) a fixture tem patrimônio líquido NEGATIVO nesta coluna — o caso é real",
+      String(pl));
+    const alav = avaliarCelula(out, COL, acharEm(out, /^Dívida bruta \/ Patrim/));
+    checar(alav === "PL<=0",
+      "(41) com PL a descoberto a alavancagem NÃO vira múltiplo negativo, e a célula diz por quê",
+      `publicou: ${JSON.stringify(alav)} (era −1,03x)`);
+  }
+
+  // (a) Passivo circulante zerado: a razão some e o covenant não acusa nada.
+  {
+    const wb = montar(); const out = wb.getWorksheet("Output")!;
+    out.getRow(acharEm(out, /^Current Liabilities$/)).getCell(COL).value = 0;
+    esquecerMemoria(out);
+    const rLC = acharEm(out, /^Liquidez corrente/);
+    const liq = avaliarCelula(out, COL, rLC);
+    checar(liq === "PC=0",
+      "(41) sem passivo circulante a liquidez corrente não é ZERO — ela não existe",
+      `publicou: ${JSON.stringify(liq)}`);
+    // A linha seguinte é o corte, a de baixo é o veredito (R, C, T nessa ordem).
+    const rompe = avaliarCelula(out, COL, rLC + 2);
+    checar(rompe === "n.a.",
+      "(41) …e o teste de covenant diz \"n.a.\" em vez de acusar ROMPE em quem não deve nada",
+      `publicou: ${JSON.stringify(rompe)}`);
+    const seca = avaliarCelula(out, COL, acharEm(out, /^Liquidez seca/));
+    checar(seca === "PC=0",
+      "(41) a liquidez seca segue a mesma regra", `publicou: ${JSON.stringify(seca)}`);
   }
 }
 

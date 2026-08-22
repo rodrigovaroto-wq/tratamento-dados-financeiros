@@ -229,12 +229,14 @@ export default function UploadForm({
         </p>
         <div className="mt-3 flex gap-3">
           <button
+            type="button"
             onClick={() => { setFalha(null); setSucesso(null); }}
             className="rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
           >
             Tentar de novo
           </button>
           <button
+            type="button"
             onClick={() => router.push(casoId ? `/casos/${casoId}` : "/casos")}
             className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
           >
@@ -285,6 +287,7 @@ export default function UploadForm({
           <div className="mt-3 flex gap-3">
             {casoId ? (
               <button
+                type="button"
                 onClick={() => router.push(`/casos/${casoId}`)}
                 className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
               >
@@ -292,6 +295,7 @@ export default function UploadForm({
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => router.push("/casos")}
                 className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
               >
@@ -299,6 +303,7 @@ export default function UploadForm({
               </button>
             )}
             <button
+              type="button"
               onClick={() => {
                 setSucesso(null);
                 setPronto(false);
@@ -322,12 +327,14 @@ export default function UploadForm({
               </p>
               <div className="mt-5 flex justify-center gap-3">
                 <button
+                  type="button"
                   onClick={() => (casoId ? router.push(`/casos/${casoId}`) : router.push("/casos"))}
                   className="rounded bg-tinta-900 px-4 py-2 text-sm font-medium text-white hover:bg-tinta-600"
                 >
                   Ver mandato →
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPronto(false)}
                   className="rounded border border-tinta-200 px-4 py-2 text-sm font-medium text-tinta-600 hover:bg-tinta-50"
                 >

@@ -54,7 +54,7 @@ import {
 } from './lib/custo.mjs';
 import {
   linhasComNumero, celulasEstimadas, planejarFatias,
-  MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS,
+  MAX_CELULAS_POR_BLOCO,
 } from './lib/cobertura.mjs';
 import { SYSTEM_PROMPT, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
 
