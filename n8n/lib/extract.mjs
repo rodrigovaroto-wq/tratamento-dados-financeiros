@@ -592,10 +592,59 @@ export function normalizarMoeda(bruto) {
 // de uma conta monetária legítima): "%" no valor ou no rótulo, "por ação"/LPA,
 // "percentual", "quantidade", "número de ações". Note que "margem" NÃO entra —
 // "margem de contribuição" é conta monetária de verdade.
-const RE_NAO_MONETARIA = /%|\bpercentual|\bpor acao\b|\blpa\b|\bquantidade\b|numero de acoes/;
-export function ehLinhaNaoMonetaria(chave, valorTexto) {
-  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  return RE_NAO_MONETARIA.test(norm(chave)) || String(valorTexto ?? '').includes('%');
+// A COLUNA TAMBÉM DECIDE, e ignorar isso custou o achado da rodada v47.
+//
+// A regra acima olha o RÓTULO DA LINHA — e num documento tabular o rótulo é o
+// mesmo nas quatro colunas. No `24_Posicao_de_Estoques`, "Bobina kraft 180 g/m²"
+// aparece em `Quantidade`, `Custo unitário (R$)` e `Valor (R$ mil)`: a linha é
+// idêntica, e só a COLUNA diz o que aquele número é. Resultado medido: 1.240
+// unidades de bobina e 96 pessoas de efetivo foram gravadas com a escala e a
+// moeda do documento, prontas para virar 1,24 bilhão e 96 milhões de pessoas.
+//
+// Terceiro parâmetro, e não uma função nova, porque a pergunta é a mesma —
+// "este número é dinheiro na escala do documento?" — e ter duas respostas para
+// ela em lugares diferentes é como este repositório descreve seus piores
+// defeitos.
+//
+// AUTO-CONTIDA, como `diagnosticarErroApi` e pelo mesmo motivo: o gerador embute
+// o `toString()` desta função no nó Code do n8n, e nó Code não enxerga constante
+// de módulo. Referenciar as regex de fora daria `ReferenceError` na primeira
+// linha de todo documento — em produção, não no teste.
+export function ehLinhaNaoMonetaria(chave, valorTexto, coluna) {
+  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const reLinha = /%|\bpercentual|\bpor acao\b|\blpa\b|\bquantidade\b|numero de acoes/;
+  // UMA alternância ancorada, grupos não-capturantes e `String.raw`: as três
+  // coisas que o Sonar pediu, e as três deixam o padrão mais legível do que
+  // estava. O rótulo TEM de casar inteiro (`^…$`) — "valor" não pode virar
+  // dimensão porque contém "valor unitario" —, exceto na segunda alternância,
+  // que casa por palavra dentro do rótulo.
+  const reColuna = new RegExp(String.raw`^(?:qtde?|quantidade|unidade|efetivo(?: \(pessoas\))?|pessoas`
+    + `|headcount|dias|prazo|exercicio|ano|natureza|tipo|classe|categoria|situacao|status`
+    + `|moeda|indexador|contraparte|banco|contrato|historico|documento|empresa.*)$`
+    + String.raw`|(?:^|\s)(?:%|percentual|participacao|(?:custo|preco|valor) unitario|taxa)(?:$|\s)`);
+  if (reLinha.test(norm(chave))) return true;
+  if (String(valorTexto ?? '').includes('%')) return true;
+  return coluna != null && coluna !== '' && reColuna.test(norm(coluna));
+}
+
+// A ESCALA QUE A COLUNA DECLARA MANDA NA QUE O DOCUMENTO DECLARA.
+//
+// Também da v47: o `24_Posicao_de_Estoques` e o `28_Folha_de_Pagamento` têm
+// "(R$ mil)" escrito em CADA cabeçalho de coluna, e mesmo assim a escala do
+// documento voltou `milhao` — em todas as 84 linhas. Os VALORES estavam certos
+// (TOTAL DOS ESTOQUES = 15.605, igual ao gabarito); o multiplicador é que estava
+// mil vezes errado.
+//
+// A coluna é mais específica que o cabeçalho do documento e é onde a escala
+// costuma estar escrita por extenso, então quando ela declara uma escala de
+// forma inequívoca, é ela que vale. Só nesse caso: sem declaração explícita
+// devolve null e a escala do documento continua valendo, porque adivinhar aqui
+// seria trocar um erro de 1.000× por outro.
+export function escalaDeclaradaNaColuna(coluna) {
+  const t = String(coluna ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  if (/\bmilhao|\bmilhoes|\bmi\b|r\$\s*mm\b/.test(t)) return 'milhao';
+  if (/\bmil\b|\bmilhar|\bmilhares/.test(t)) return 'milhar';
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -937,8 +986,12 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = 
   const camposAgrupados = linhasAgrupadas.map((l, i) => ({
     ordem: i,
     ...l,
-    unidade: ehLinhaNaoMonetaria(l.chave, l.valor_texto) ? null : unidade,
-    moeda: ehLinhaNaoMonetaria(l.chave, l.valor_texto) ? null : moedaDoc,
+    // A coluna manda: bloqueia a herança quando ela não é de dinheiro, e troca a
+    // escala quando ela própria declara uma (ver v47, docs 24 e 28).
+    unidade: ehLinhaNaoMonetaria(l.chave, l.valor_texto, l.periodo_coluna)
+      ? null
+      : (escalaDeclaradaNaColuna(l.periodo_coluna) ?? unidade),
+    moeda: ehLinhaNaoMonetaria(l.chave, l.valor_texto, l.periodo_coluna) ? null : moedaDoc,
   }));
   const camposPlanos = Array.isArray(p.linhas)
     ? p.linhas.map((l, i) => ({
@@ -958,8 +1011,10 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = 
         valor_texto: l.vt ?? null,
         valor_num: typeof l.vn === 'number' ? l.vn : null,
         // escala e moeda do documento, EXCETO em linha não-monetária (ver acima)
-        unidade: ehLinhaNaoMonetaria(l.k, l.vt) ? null : unidade,
-        moeda: ehLinhaNaoMonetaria(l.k, l.vt) ? null : moedaDoc,
+        unidade: ehLinhaNaoMonetaria(l.k, l.vt, l.pc)
+          ? null
+          : (escalaDeclaradaNaColuna(l.pc) ?? unidade),
+        moeda: ehLinhaNaoMonetaria(l.k, l.vt, l.pc) ? null : moedaDoc,
         confianca: typeof l.cf === 'number' ? l.cf : null,
         origem_pagina: Number.isInteger(l.op) ? l.op : null,
       }))

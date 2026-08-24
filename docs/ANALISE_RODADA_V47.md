@@ -190,28 +190,86 @@ Os **valores** estão certos (TOTAL DOS ESTOQUES = 15.605, igual ao gabarito). �
 inflaciona o estoque em mil vezes. É exatamente o erro que o comentário do
 `db/diagnostico_rodada.sql` diz que este projeto já pagou caro.
 
-**Agravante — a escala é do documento, não da coluna.** No mesmo `24_`, colunas
+**Agravante — a escala era do documento, não da coluna.** No mesmo `24_`, colunas
 não-monetárias herdaram a escala e a moeda: `Quantidade = 1.240` e
-`Custo unitário (R$) = 2.026,61` estão gravados como `milhao`/`BRL`. Em `28_`,
-`Efetivo (pessoas) = 96` idem. **279 pessoas viram 279 milhões de pessoas** se alguém
-multiplicar. A correção não é só acertar o rótulo: é a escala passar a ser **por coluna**.
+`Custo unitário (R$) = 2.026,61` estavam gravados como `milhao`/`BRL`. Em `28_`,
+`Efetivo (pessoas) = 96` idem. **279 pessoas virariam 279 milhões de pessoas** se alguém
+multiplicasse.
+
+**CORRIGIDO (24/08).** A escala passa a ser **por coluna**, que é o que a análise concluiu
+ser a correção certa. Duas regras novas em `n8n/lib/extract.mjs`:
+
+- `ehLinhaNaoMonetaria` ganha um terceiro parâmetro, a **coluna**. A regra antiga olhava só
+  o rótulo da LINHA — e num documento tabular o rótulo é o mesmo nas quatro colunas, então
+  ela não tinha como distinguir. Agora `Quantidade`, `Efetivo (pessoas)`, `Exercício` e
+  `Custo unitário` bloqueiam a herança de escala e moeda;
+- `escalaDeclaradaNaColuna` — quando a coluna declara a escala de forma inequívoca
+  (`Valor (R$ mil)`), **ela manda** sobre a do documento, porque é mais específica e é onde
+  a escala costuma estar escrita. Sem declaração explícita devolve `null` e nada muda:
+  adivinhar aqui trocaria um erro de 1.000× por outro.
+
+Efeito medido sobre as linhas reais da v47:
+
+| Linha | Coluna | Antes | Depois |
+|---|---|---|---|
+| Bobina kraft 180 g/m² | `Valor (R$ mil)` | `milhao` | **`milhar`** |
+| Bobina kraft 180 g/m² | `Quantidade` | `milhao` | **`null`** |
+| Bobina kraft 180 g/m² | `Custo unitário (R$)` | `milhao` | **`null`** |
+| TOTAL DOS ESTOQUES | `Valor (R$ mil)` | `milhao` | **`milhar`** |
+| Produção - turno A | `Efetivo (pessoas)` | `milhao` | **`null`** |
+| Produção - turno A | `Custo anual com encargos (R$ mil)` | `milhao` | **`milhar`** |
+
+**E morreu uma cópia à mão junto.** O `naoMonet` do `build-workflow.mjs` era transcrição
+manual da função da lib — e o nó Code é o que RODA. Corrigir a lib e esquecer a cópia
+deixaria a suíte verde e a produção errada, que é como este repositório descreve seus dois
+piores incidentes. As duas agora saem do mesmo `toString()`, e o `espelho-inline.test.mjs`
+confere — ele **reprovou** quando registrei as funções sem incluí-las na tabela.
 
 Há ainda 14 linhas com valor numérico e escala/moeda **nulas** (docs 08, 22, 23, 27) —
 o outro lado do mesmo problema.
 
 ### 2.3 🟠 A confiança por linha está saturada em 1,00 — o sinal morreu
 
-**2.460 de 2.460 linhas com `confianca = 1.00` exatamente.** Não é média: é a distribuição
-inteira. O mesmo vale para a v41 (1.139/1.139) e a v45 (438/438), então **também não é do
-Gemini** — é anterior.
+**2.460 de 2.460 linhas da v47 com `confianca = 1.00` exatamente.** Não é média: é a
+distribuição inteira. E ampliando para **todo o banco, todas as rodadas**, o quadro é ainda
+mais claro — e mais grave:
 
-Isso importa porque `fn_dial_permite_auto(estagio, confianca)` decide auto-aceite comparando
-a confiança ao limiar do dial. Com a confiança constante em 1,00, **o limiar nunca reprova
-nada**: o dial parece configurado e não filtra. É um portão de segurança desligado sem que
-nenhuma tela diga isso.
+| | |
+|---|---|
+| Linhas gravadas por este sistema | **15.030** |
+| Valores de confiança já observados | **0,95 · 0,99 · 1** |
+| Linhas abaixo de 0,70 (limiar da guarda de baixa confiança) | **0** |
+| Limiar de auto-aceite (`extracao_linhas_financeiras`) | **0,95** |
+| Linhas auto-aceitas | **14.470 (96%)** |
+
+**O limiar é exatamente o PISO do que o modelo emite.** `confianca >= 0,95` é satisfeito por
+toda linha que já existiu — não é um filtro, é uma formalidade. As 560 linhas que não foram
+auto-aceitas foram barradas por **guarda**, nunca por confiança.
+
+E são **dois** mecanismos inertes, não um:
+
+1. o auto-aceite, que aprova tudo o que a guarda não barrou;
+2. a guarda de baixa confiança (Sinal 2, limiar 0,70), que **nunca disparou e não tem como**:
+   zero linhas abaixo de 0,70 em toda a história do banco.
+
+**Não é do Gemini** — a v41 e a v45, na OpenAI, têm a mesma saturação.
 
 Contraste: a confiança de **classificação** varia (0,90 / 0,95 / 1,00) e discrimina. É só a
 de extração que está morta.
+
+**CORRIGIDO EM PARTE, E APLICADO EM PRODUÇÃO (24/08)** — migration `0141`. Decisão do dono:
+**declarar sem mudar comportamento**. Bloquear o auto-aceite mandaria ~96% das linhas para
+revisão humana, e isso é decisão de operação, não de engenharia.
+
+A `decisao` de auto-aceite passa a registrar `n_excluidas_pelo_limiar` e
+`limiar_discriminou`, e quando o limiar exclui zero o motivo diz com todas as letras: *"O
+limiar NÃO excluiu nenhuma das N linhas: a confiança auto-reportada não discriminou nada
+nesta versão, e o que barra linha aqui são as guardas."* Um portão que aprova tudo e não
+declara que aprovou tudo é pior que portão nenhum — ele parece funcionar.
+
+**O que continua aberto:** o sinal segue sem valor. Trocar a confiança auto-reportada por
+uma **derivada de evidência verificável** (a linha bate com o total da seção? a âncora
+fecha?) é fatia própria e provavelmente uma sessão inteira.
 
 ### 2.4 🟠 O detector de padrão suspeito acusou uma coluna de dimensão
 

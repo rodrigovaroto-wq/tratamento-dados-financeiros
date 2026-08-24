@@ -40,6 +40,7 @@ import {
 } from '../lib/custo.mjs';
 import {
   normalizarUnidade, normalizarMoeda, diagnosticarErroApi, achatarGrupos,
+  ehLinhaNaoMonetaria, escalaDeclaradaNaColuna,
 } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 
@@ -341,6 +342,26 @@ const TABELA = [
     casos: [['mil'], ['R$ mil'], ['milhões'], ['unidade'], ['sacas'], [null], ['']] },
   { nome: 'normalizarMoeda', lib: normalizarMoeda,
     casos: [['R$'], ['US$'], ['EUR'], ['reais'], ['iene'], [null], ['']] },
+
+  // Os casos da v47 estão aqui de propósito: são os que a versão ANTERIOR desta
+  // função errava, com a coluna ignorada. `Quantidade` e `Efetivo (pessoas)`
+  // herdavam escala e moeda do documento — 1.240 bobinas e 96 pessoas prontas
+  // para virar bilhão e milhão de pessoas.
+  { nome: 'ehLinhaNaoMonetaria', lib: ehLinhaNaoMonetaria, casos: [
+    ['Bobina kraft 180 g/m²', '2.513', 'Valor (R$ mil)'],
+    ['Bobina kraft 180 g/m²', '1.240', 'Quantidade'],
+    ['Produção - turno A', '96', 'Efetivo (pessoas)'],
+    ['2023 - Agro para Indústria', '2023', 'Exercício'],
+    ['Margem de contribuição', '12%', null],
+    ['Ativo Circulante', '44.022', '31/12/2025'],
+    [null, null, null], ['', '', ''],
+  ] },
+  // E aqui os dois documentos que declaravam "R$ mil" em cada coluna e vieram
+  // com `milhao` no cabeçalho do documento.
+  { nome: 'escalaDeclaradaNaColuna', lib: escalaDeclaradaNaColuna, casos: [
+    ['Valor (R$ mil)'], ['Custo anual com encargos (R$ mil)'], ['Saldo (R$ milhões)'],
+    ['31/12/2025'], ['Saldo devedor (R$)'], [null], [''],
+  ] },
   { nome: 'diagnosticarErroApi', lib: diagnosticarErroApi, casos: [
     [{ error: { message: 'rate limit', code: 'rate_limit_exceeded' } }],
     [{ choices: [{ finish_reason: 'length' }] }],
