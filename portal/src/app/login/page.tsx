@@ -24,13 +24,13 @@ export default async function LoginPage({
         </div>
 
         {!hasEnvVars && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="rounded-lg border border-alerta-200 bg-alerta-50 p-3 text-sm text-alerta-800">
             Variáveis de ambiente do Supabase não configuradas — ver <code>portal/README.md</code>.
           </p>
         )}
 
         {error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>
+          <p className="rounded-lg border border-risco-200 bg-risco-50 p-3 text-sm text-risco-800">{error}</p>
         )}
 
         <form action={login} className="carta space-y-4 p-6">

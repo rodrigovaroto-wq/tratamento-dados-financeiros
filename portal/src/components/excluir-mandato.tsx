@@ -31,7 +31,7 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
         onClick={() => setAberto(true)}
         title="Excluir este mandato"
         aria-label="Excluir este mandato"
-        className="rounded border border-tinta-200 px-2 py-1.5 text-xs font-medium text-tinta-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+        className="rounded border border-tinta-200 px-2 py-1.5 text-xs font-medium text-tinta-500 hover:border-risco-300 hover:bg-risco-50 hover:text-risco-700"
       >
         Excluir
       </button>
@@ -46,7 +46,7 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
           // clique dentro do diálogo o fecharia no meio da leitura).
           onClick={(e) => { if (e.target === e.currentTarget && !enviando) setAberto(false); }}
         >
-          <div className="w-full max-w-md rounded-lg border border-tinta-200 bg-white p-5 shadow-xl">
+          <div className="w-full max-w-md rounded-lg border border-tinta-200 bg-folha p-5 shadow-xl">
             <h2 id="titulo-excluir" className="text-base font-semibold text-tinta-900">
               Após a exclusão todos os dados serão perdidos, você tem certeza que deseja excluir
               esse mandato?
@@ -66,7 +66,7 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
                 type="button"
                 disabled={enviando}
                 onClick={() => setAberto(false)}
-                className="rounded border border-tinta-200 bg-white px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50 disabled:opacity-50"
+                className="rounded border border-tinta-200 bg-folha px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -86,7 +86,7 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
                 <button
                   type="submit"
                   disabled={enviando}
-                  className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                  className="rounded bg-risco-600 px-3 py-1.5 text-sm font-semibold text-papel hover:bg-risco-700 disabled:opacity-50"
                 >
                   {enviando ? "Excluindo…" : "Excluir mandato"}
                 </button>

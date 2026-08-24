@@ -159,7 +159,9 @@ export default async function PlanilhaDocumentoPage({
         <Link href={`/casos/${id}`} className="text-sm text-tinta-500 underline">
           ← Voltar ao caso
         </Link>
-        <h1 className="mt-2 text-lg font-semibold">{versao?.nome_original ?? "(sem nome)"}</h1>
+        <h1 className="mt-2 font-dado text-base font-semibold break-all text-tinta-900">
+          {versao?.nome_original ?? "(sem nome)"}
+        </h1>
         <p className="text-xs text-tinta-500">
           {formatarTipoTaxonomia(doc.tipo_taxonomia)}
           {doc.entidade?.razao_social ? ` · ${doc.entidade.razao_social}` : ""}
@@ -168,7 +170,7 @@ export default async function PlanilhaDocumentoPage({
       </div>
 
       {versao?.legibilidade && versao.legibilidade !== "ok" && (
-        <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+        <div className="rounded border border-risco-300 bg-risco-50 p-3 text-sm text-risco-800">
           <strong className="uppercase">{versao.legibilidade}</strong>
           {versao.nota_legibilidade ? ` — ${versao.nota_legibilidade}` : ""}
         </div>
@@ -222,7 +224,7 @@ export default async function PlanilhaDocumentoPage({
         </div>
 
         {campos.length > 0 && !tudoAceito && aceitarAction && (
-          <form action={aceitarAction} className="mb-4 flex items-center gap-3 rounded border border-amber-200 bg-amber-50 p-3">
+          <form action={aceitarAction} className="mb-4 flex items-center gap-3 rounded border border-alerta-200 bg-alerta-50 p-3">
             <input type="hidden" name="documento_versao_id" value={versao!.id} />
             <input
               type="text"
@@ -232,14 +234,14 @@ export default async function PlanilhaDocumentoPage({
             />
             <button
               type="submit"
-              className="whitespace-nowrap rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-tinta-800"
+              className="whitespace-nowrap rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-papel hover:bg-tinta-800"
             >
               Aceitar estes dados para a base
             </button>
           </form>
         )}
         {tudoAceito && (
-          <p className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <p className="mb-4 rounded border border-ok-200 bg-ok-50 px-3 py-2 text-sm text-ok-800">
             ✓ Todas as linhas foram aceitas — já entram no export como fato.
           </p>
         )}
@@ -250,7 +252,7 @@ export default async function PlanilhaDocumentoPage({
           // fila: quem lia esperava. Na prática, se a extração já rodou, este
           // documento NÃO tem nada no banco e sai vazio do book — e, sendo
           // obrigatório do Kit Básico, agora abre pendência bloqueante.
-          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="rounded border border-alerta-300 bg-alerta-50 p-3 text-sm text-alerta-900">
             <p className="font-medium">Nenhuma linha foi extraída deste documento.</p>
             <p className="mt-1">
               Se a extração já rodou, isto não é fila: não há nada deste arquivo no banco, e a parte
@@ -263,7 +265,7 @@ export default async function PlanilhaDocumentoPage({
         ) : (
           <div className="space-y-6">
             {[...grupos.entries()].map(([secao, linhas]) => (
-              <div key={secao} className="overflow-x-auto rounded border border-tinta-200 bg-white">
+              <div key={secao} className="overflow-x-auto rounded border border-tinta-200 bg-folha">
                 <p className="border-b border-tinta-200 bg-tinta-50 px-3 py-1.5 text-xs font-semibold uppercase text-tinta-600">
                   {secao}
                 </p>
@@ -307,7 +309,7 @@ export default async function PlanilhaDocumentoPage({
                           <td className="px-3 py-1.5">
                             <span
                               className={`rounded px-1.5 py-0.5 text-xs font-medium uppercase ${
-                                aceito ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                                aceito ? "bg-ok-100 text-ok-700" : "bg-alerta-100 text-alerta-700"
                               }`}
                               title={aceito && linha.aceito_por ? `Aceito por ${linha.aceito_por}` : ""}
                             >

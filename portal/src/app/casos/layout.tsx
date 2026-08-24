@@ -41,7 +41,7 @@ export default async function CasosLayout({ children }: { children: React.ReactN
        aparece nos vãos e continua coberta por tudo o que tem fundo próprio: a
        barra, o cabeçalho, o rodapé e as cartas. */
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-10 border-b border-tinta-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-tinta-200 bg-folha/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
           {/* NA BARRA, O SEXTANTE. A marca completa é empilhada (instrumento
               sobre ORIA sobre PARTNERS) e num cabeçalho de 57px cada palavra
@@ -94,7 +94,7 @@ export default async function CasosLayout({ children }: { children: React.ReactN
       {/* O RODAPÉ EXISTE PARA DIZER UMA COISA SÓ, e ela é a mais importante do
           produto: nada aqui é fato até um humano aceitar. Quem abre o portal
           pela primeira vez precisa ler isso sem procurar. */}
-      <footer className="border-t border-tinta-200 bg-white">
+      <footer className="border-t border-tinta-200 bg-folha">
         <div className="px-6 py-4 text-xs text-tinta-500">
           Os dados desta tela são extraídos dos documentos enviados e conferidos automaticamente.
           Linha marcada como pendente é sugestão a revisar. Nada é fato até alguém aceitar.

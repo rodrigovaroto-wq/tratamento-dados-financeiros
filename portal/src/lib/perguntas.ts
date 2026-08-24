@@ -80,17 +80,17 @@ export function chaveDaSugestao(codigo: string, entidadeId: string | null): stri
 export const PRIORIDADE: Record<number, { rotulo: string; chip: string; explicacao: string }> = {
   1: {
     rotulo: "crítica",
-    chip: "bg-red-100 text-red-800",
+    chip: "bg-risco-100 text-risco-800",
     explicacao: "sem a resposta, uma conferência do sistema não roda de jeito nenhum",
   },
   2: {
     rotulo: "importante",
-    chip: "bg-amber-100 text-amber-900",
+    chip: "bg-alerta-100 text-alerta-900",
     explicacao: "a análise anda sem a resposta, mas com um número sem contraprova",
   },
   3: {
     rotulo: "complementar",
-    chip: "bg-sky-100 text-sky-800",
+    chip: "bg-info-100 text-info-800",
     explicacao: "melhora a leitura do caso; nada trava por ela",
   },
   4: {

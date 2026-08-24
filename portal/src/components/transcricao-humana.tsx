@@ -66,7 +66,7 @@ export function TranscricaoHumana({
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <a
           href={`/casos/${casoId}/documentos/${docId}/transcricao`}
-          className="rounded border border-tinta-300 bg-white px-3 py-1.5 text-sm font-medium text-tinta-700 hover:bg-tinta-100"
+          className="rounded border border-tinta-300 bg-folha px-3 py-1.5 text-sm font-medium text-tinta-700 hover:bg-tinta-100"
         >
           Baixar planilha
         </a>
@@ -100,12 +100,12 @@ export function TranscricaoHumana({
             type="text"
             name="motivo"
             placeholder="Por que houve transcrição (opcional)"
-            className="w-64 rounded border border-tinta-300 bg-white px-2 py-1 text-sm"
+            className="w-64 rounded border border-tinta-300 bg-folha px-2 py-1 text-sm"
           />
           <button
             type="submit"
             disabled={enviando}
-            className="rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-papel disabled:opacity-50"
           >
             {enviando ? "importando…" : "Importar transcrição"}
           </button>
@@ -116,12 +116,12 @@ export function TranscricaoHumana({
           texto diz o que fazer com o arquivo que a pessoa tem na mão — e o caso mais
           importante ("esta planilha é de outro documento") só é evitável se ela ler. */}
       {resultado && !resultado.ok && (
-        <p className="mt-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p className="mt-3 rounded border border-risco-300 bg-risco-50 px-3 py-2 text-sm text-risco-800">
           {resultado.erro}
         </p>
       )}
       {resultado?.ok && (
-        <p className="mt-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="mt-3 rounded border border-ok-200 bg-ok-50 px-3 py-2 text-sm text-ok-800">
           ✓ {resultado.linhas} linha(s) transcritas na versão {resultado.n_versao}.
           {resultado.pendencia_resolvida
             ? " A pendência de arquivo ilegível foi resolvida com o seu nome."

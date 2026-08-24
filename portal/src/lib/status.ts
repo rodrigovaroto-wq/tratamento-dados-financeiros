@@ -14,11 +14,11 @@ export const CASO_STATUS_LABEL: Record<CasoStatus, string> = {
 
 export const CASO_STATUS_COLOR: Record<CasoStatus, string> = {
   intake: "bg-tinta-100 text-tinta-600",
-  em_triagem: "bg-amber-100 text-amber-800",
-  completude_ok: "bg-emerald-100 text-emerald-800",
-  em_revisao: "bg-blue-100 text-blue-800",
-  aprovado: "bg-emerald-100 text-emerald-800",
-  pronto_para_base: "bg-emerald-100 text-emerald-800",
-  bloqueado: "bg-red-100 text-red-800",
-  aguardando_cliente: "bg-amber-100 text-amber-800",
+  em_triagem: "bg-alerta-100 text-alerta-800",
+  completude_ok: "bg-ok-100 text-ok-800",
+  em_revisao: "bg-info-100 text-info-800",
+  aprovado: "bg-ok-100 text-ok-800",
+  pronto_para_base: "bg-ok-100 text-ok-800",
+  bloqueado: "bg-risco-100 text-risco-800",
+  aguardando_cliente: "bg-alerta-100 text-alerta-800",
 };

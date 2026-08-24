@@ -94,7 +94,7 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
     // ícones que digam o que a palavra diz — e ícone ambíguo em ferramenta de
     // trabalho custa mais que os 220px que ele economiza.
     return (
-      <aside className="shrink-0 border-r border-tinta-200 bg-white">
+      <aside className="shrink-0 border-r border-tinta-200 bg-folha">
         <button
           type="button"
           onClick={alternarBarra}
@@ -114,7 +114,7 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
 
   return (
     <aside
-      className="w-60 shrink-0 border-r border-tinta-200 bg-white"
+      className="w-60 shrink-0 border-r border-tinta-200 bg-folha"
     >
       {/* A BARRA ROLA POR CONTA PRÓPRIA.
           Antes o `nav` era sticky mas sem altura: com mais mandatos do que cabe
@@ -164,8 +164,8 @@ export function BarraLateral({ mandatos }: { mandatos: MandatoNaBarra[] }) {
           href="/casos/novo"
           className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             naCriacao
-              ? "bg-acento-600 text-white"
-              : "bg-tinta-900 text-white hover:bg-tinta-800"
+              ? "bg-acento-600 text-papel"
+              : "bg-tinta-900 text-papel hover:bg-tinta-800"
           }`}
         >
           <span aria-hidden className="text-base leading-none">

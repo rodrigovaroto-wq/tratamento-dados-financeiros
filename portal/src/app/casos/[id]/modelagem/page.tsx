@@ -96,13 +96,13 @@ const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string 
     rotulo: "subtotal",
     explica: "sai no Excel como a SOMA dos componentes projetados — se move sozinho, e por isso "
       + "não recebe premissa (projetá-lo contaria o mesmo dinheiro duas vezes)",
-    cor: "bg-sky-100 text-sky-800",
+    cor: "bg-info-100 text-info-800",
   },
   serie_mensal: {
     rotulo: "série mensal",
     explica: "alimenta a curva de sazonalidade, derivada do próprio histórico do caso — não é uma "
       + "conta a projetar",
-    cor: "bg-violet-100 text-violet-800",
+    cor: "bg-serie-100 text-serie-800",
   },
   derivado: {
     rotulo: "derivado",
@@ -383,7 +383,7 @@ export default async function ModelagemPage({
           <div className="mt-0.5 flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-semibold text-tinta-900">Modelagem</h1>
             {conf && (
-              <span className={`chip ${conf.pronto ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>
+              <span className={`chip ${conf.pronto ? "bg-ok-100 text-ok-800" : "bg-alerta-100 text-alerta-900"}`}>
                 {conf.pronto ? "pronto para exportar" : "falta algo"}
               </span>
             )}
@@ -434,7 +434,7 @@ export default async function ModelagemPage({
             <span
               aria-hidden
               className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
-                p.feito ? "bg-emerald-600 text-white" : "bg-tinta-200 text-tinta-600"
+                p.feito ? "bg-ok-600 text-papel" : "bg-tinta-200 text-tinta-600"
               }`}
             >
               {p.feito ? "✓" : i + 1}
@@ -450,7 +450,7 @@ export default async function ModelagemPage({
       {/* CONSULTA QUE FALHOU aparece ANTES de tudo, e nomeada. Enquanto isto não
           existia, uma RPC quebrada saía da tela como "este caso não tem linha". */}
       {falhas.length > 0 && (
-        <section className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+        <section className="rounded-lg border border-risco-300 bg-risco-50 p-3 text-sm text-risco-900">
           <p className="font-semibold">
             {falhas.length} consulta(s) ao banco FALHARAM — o que está faltando nesta tela é efeito
             disso, não é o caso estar vazio.
@@ -490,7 +490,7 @@ export default async function ModelagemPage({
           {/* A linha de base: o tempo das SETE chamadas, inclusive as que deram
               certo. É o que separa "duas funções não couberam" de "a instância
               inteira está lenta" — e a segunda não se resolve com SQL. */}
-          <p className="mt-2 font-mono text-[10px] text-red-800">{tempos}</p>
+          <p className="mt-2 font-mono text-[10px] text-risco-800">{tempos}</p>
         </section>
       )}
 
@@ -501,10 +501,10 @@ export default async function ModelagemPage({
       {conf && (
         <section
           className={`rounded-lg border p-3 text-sm ${
-            conf.pronto ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"
+            conf.pronto ? "border-ok-300 bg-ok-50" : "border-alerta-300 bg-alerta-50"
           }`}
         >
-          <p className={`font-medium ${conf.pronto ? "text-emerald-900" : "text-amber-900"}`}>
+          <p className={`font-medium ${conf.pronto ? "text-ok-900" : "text-alerta-900"}`}>
             {conf.pronto
               ? "Pronto para o export de modelagem"
               : "Ainda falta algo para o export de modelagem"}
@@ -529,7 +529,7 @@ export default async function ModelagemPage({
             )}
             <li>{conf.premissas_ativas} premissa(s) ativa(s) neste caso.</li>
             {conf.premissas_sem_valor?.length > 0 && (
-              <li className="text-amber-900">
+              <li className="text-alerta-900">
                 <strong>Sem valor preenchido:</strong> {conf.premissas_sem_valor.join(", ")} — premissa
                 ativa sem valor projetaria com zero, então ela impede o &quot;pronto&quot;. Premissa
                 macro puxa o Focus sozinha ao ser ativada sem valor; se ficou vazia, é porque o Focus
@@ -547,7 +547,7 @@ export default async function ModelagemPage({
               </li>
             )}
             {conf.vinculos_orfaos?.length > 0 && (
-              <li className="text-amber-900">
+              <li className="text-alerta-900">
                 <strong>Configuração apontando para linha que não existe:</strong>{" "}
                 {conf.vinculos_orfaos.join(", ")} — o documento não chegou, ou foi reextraído com
                 outro rótulo.
@@ -658,7 +658,7 @@ export default async function ModelagemPage({
             <>
               <div className="mt-1 flex flex-wrap gap-1">
                 {curva.map((c) => (
-                  <span key={c.mes} className="rounded bg-white px-1.5 py-0.5 tabular-nums text-tinta-600">
+                  <span key={c.mes} className="rounded bg-folha px-1.5 py-0.5 tabular-nums text-tinta-600">
                     {MESES[c.mes - 1]} {(c.fracao * 100).toFixed(1)}%
                   </span>
                 ))}
@@ -722,12 +722,12 @@ export default async function ModelagemPage({
                         {p.nome}
                         {p.unidade && <span className="ml-1 text-tinta-500">({p.unidade})</span>}
                         {p.setores.length > 0 && (
-                          <span className="ml-1 rounded bg-indigo-100 px-1 text-[10px] text-indigo-800">
+                          <span className="ml-1 rounded bg-serie-100 px-1 text-[10px] text-serie-800">
                             setor
                           </span>
                         )}
                         {ativa?.origem === "focus" && (
-                          <span className="ml-1 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">
+                          <span className="ml-1 rounded bg-ok-100 px-1 text-[10px] text-ok-800">
                             Focus
                           </span>
                         )}
@@ -794,7 +794,7 @@ export default async function ModelagemPage({
         </form>
 
         {ativas.length === 0 ? (
-          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+          <p className="rounded border border-alerta-300 bg-alerta-50 p-2 text-sm text-alerta-900">
             Ative pelo menos uma premissa no passo 2 antes de vincular linhas. Vincular linha a
             premissa não ativada é recusado no banco, de propósito: a linha sairia
             &quot;projetada&quot; por uma premissa vazia.

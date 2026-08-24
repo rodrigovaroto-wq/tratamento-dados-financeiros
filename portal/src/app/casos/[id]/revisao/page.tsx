@@ -86,7 +86,7 @@ export default async function FilaRevisaoPage({
       </div>
 
       {pendenciasRes.error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <p className="rounded-lg border border-risco-200 bg-risco-50 p-3 text-sm text-risco-800">
           Não foi possível carregar a fila: {pendenciasRes.error.message}
         </p>
       )}
@@ -114,7 +114,7 @@ export default async function FilaRevisaoPage({
               <div className="mb-3">
                 <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-tinta-900">
                   {nomeArquivo}
-                  <span className="chip bg-amber-100 text-amber-800">
+                  <span className="chip bg-alerta-100 text-alerta-800">
                     {PENDENCIA_TIPO_LABEL[p.tipo] ?? p.tipo}
                   </span>
                 </p>

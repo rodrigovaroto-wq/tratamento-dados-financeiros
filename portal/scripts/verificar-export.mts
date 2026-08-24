@@ -5835,11 +5835,20 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(0114) …e o rótulo que fica na pendência é o do botão que a decidiu",
       semVolta.map(([d]) => d).join(", "));
 
-    // As três cores são distintas: verde, vermelho, amarelo. Duas iguais e a
-    // tela perde a única informação que ela dá sem texto.
+    // As três cores são distintas. Duas iguais e a tela perde a única informação
+    // que ela dá sem texto.
+    //
+    // POR QUE OS NOMES MUDARAM AQUI. Este teste travava `emerald`/`red`/`amber`,
+    // as famílias cruas do Tailwind. Quando o portal herdou o mundo visual da
+    // Oria, elas viraram `ok`/`risco`/`alerta` — famílias SEMÂNTICAS, afinadas
+    // para o fundo creme (as cruas são calibradas para fundo branco e lavam em
+    // cima do papel). O que o teste protege não mudou: continuam sendo três
+    // cores separadas, e continuam significando prosseguir / recusar / esperar.
+    // O que mudou é que agora o nome diz o SIGNIFICADO, então um redesenho
+    // futuro não pode trocar a cor sem trocar o significado junto.
     const cores = BOTOES_DECISAO.map((b) => b.classe.match(/bg-(\w+)-\d+/)?.[1]);
-    checar(new Set(cores).size === 3 && cores.includes("emerald") && cores.includes("red") && cores.includes("amber"),
-      "(0114) …com as três cores separadas (verde, vermelho, amarelo)",
+    checar(new Set(cores).size === 3 && cores.includes("ok") && cores.includes("risco") && cores.includes("alerta"),
+      "(0114) …com as três cores separadas (ok · risco · alerta)",
       cores.join(" · "));
 
     // Cada botão diz o que ACONTECE COM O CASO. Sem campo e sem confirmação, é

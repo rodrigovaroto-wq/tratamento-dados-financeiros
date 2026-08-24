@@ -32,22 +32,22 @@ export const BOTOES_DECISAO: BotaoDecisao[] = [
     decisao: "contatar_cliente",
     rotulo: "Contatar o Cliente",
     efeito: "O caso continua aguardando: o documento ainda não chegou.",
-    classe: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
-    chip: "bg-emerald-100 text-emerald-800",
+    classe: "border-ok-200 bg-ok-50 text-ok-800 hover:bg-ok-100",
+    chip: "bg-ok-100 text-ok-800",
   },
   {
     decisao: "prosseguir",
     rotulo: "Prosseguir sem resolução",
     efeito: "O caso deixa de ser travado por esta pendência, e ela fica registrada como aceita.",
-    classe: "border-red-200 bg-red-50 text-red-800 hover:bg-red-100",
-    chip: "bg-red-100 text-red-800",
+    classe: "border-risco-200 bg-risco-50 text-risco-800 hover:bg-risco-100",
+    chip: "bg-risco-100 text-risco-800",
   },
   {
     decisao: "nao_procede",
     rotulo: "Pendência não procede",
     efeito: "A pendência é declarada improcedente e deixa de travar o caso.",
-    classe: "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100",
-    chip: "bg-amber-100 text-amber-900",
+    classe: "border-alerta-200 bg-alerta-50 text-alerta-900 hover:bg-alerta-100",
+    chip: "bg-alerta-100 text-alerta-900",
   },
 ];
 

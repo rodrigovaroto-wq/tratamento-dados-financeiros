@@ -173,12 +173,12 @@ export default async function AutonomiaPage() {
       </div>
 
       {erroDial && (
-        <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+        <p className="rounded border border-risco-300 bg-risco-50 p-3 text-sm text-risco-700">
           Erro ao ler o dial: {erroDial.message}
         </p>
       )}
 
-      <div className="overflow-x-auto rounded border border-tinta-200 bg-white">
+      <div className="overflow-x-auto rounded border border-tinta-200 bg-folha">
         <table className="w-full text-sm">
           <thead className="bg-tinta-50 text-left text-xs uppercase text-tinta-500">
             <tr>
@@ -203,7 +203,7 @@ export default async function AutonomiaPage() {
                     <p className="font-mono text-xs text-tinta-400">{d.estagio}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-semibold text-white">
+                    <span className="rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-semibold text-papel">
                       {d.nivel_atual}
                     </span>
                     <p className="mt-1 text-xs text-tinta-600">
@@ -244,7 +244,7 @@ export default async function AutonomiaPage() {
                   <td className="px-4 py-3 text-xs">
                     {d.base_do_nivel === "medida" ? (
                       <>
-                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800">
+                        <span className="rounded bg-ok-100 px-1.5 py-0.5 font-medium text-ok-800">
                           concordância medida
                         </span>
                         <p className="mt-1 text-tinta-500">
@@ -253,7 +253,7 @@ export default async function AutonomiaPage() {
                       </>
                     ) : d.base_do_nivel === "medida_por_veredito" ? (
                       <>
-                        <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900">
+                        <span className="rounded bg-info-100 px-1.5 py-0.5 font-medium text-info-900">
                           medida por veredito
                         </span>
                         <p className="mt-1 text-tinta-500">
@@ -263,7 +263,7 @@ export default async function AutonomiaPage() {
                       </>
                     ) : d.base_do_nivel === "declarada" ? (
                       <>
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900">
+                        <span className="rounded bg-alerta-100 px-1.5 py-0.5 font-medium text-alerta-900">
                           decisão declarada
                         </span>
                         <p className="mt-1 text-tinta-500">
@@ -281,7 +281,7 @@ export default async function AutonomiaPage() {
                         promoção automática desligada e ninguém sabendo é o
                         mesmo que um estágio que parou de subir sem motivo. */}
                     {d.natureza === "interpretativo" && !d.auto_promocao && (
-                      <p className="mt-1 text-amber-800">
+                      <p className="mt-1 text-alerta-800">
                         promoção automática desligada por uma descida manual
                       </p>
                     )}
@@ -306,7 +306,7 @@ export default async function AutonomiaPage() {
           quando só um estava assim, e ficaria calado sobre um estágio de outro
           nome que subisse sem medir. */}
       {declarados.length > 0 && (
-        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded border border-alerta-300 bg-alerta-50 p-3 text-sm text-alerta-900">
           <p className="font-medium">
             Autonomia declarada, não medida — {declarados.length}{" "}
             {declarados.length === 1 ? "estágio" : "estágios"}
@@ -391,15 +391,15 @@ export default async function AutonomiaPage() {
             sobre documento real de cliente.
           </p>
         ) : (
-          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-white text-sm">
+          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-folha text-sm">
             {listaRodadas.map((r) => (
               <li key={r.id} className="flex flex-wrap items-baseline gap-2 px-4 py-2">
                 <span className="font-medium">{r.nome}</span>
                 <span
                   className={
                     r.congelada_em
-                      ? "rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-medium text-white"
-                      : "rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900"
+                      ? "rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-medium text-papel"
+                      : "rounded bg-alerta-100 px-1.5 py-0.5 text-xs font-medium text-alerta-900"
                   }
                 >
                   {r.congelada_em ? "congelada" : "em montagem"}
@@ -414,7 +414,7 @@ export default async function AutonomiaPage() {
         )}
 
         {rodadaVigente && cobertura.length > 0 && (
-          <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-white">
+          <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-folha">
             <table className="w-full text-sm">
               <caption className="px-4 pt-2 text-left text-xs text-tinta-500">
                 Cobertura de <strong>{rodadaVigente.nome}</strong>, por tipo do Kit Básico. O tipo
@@ -444,7 +444,7 @@ export default async function AutonomiaPage() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-xs">
-                      <span className={c.atinge_minimo ? "text-emerald-700" : "text-amber-800"}>
+                      <span className={c.atinge_minimo ? "text-ok-700" : "text-alerta-800"}>
                         {c.n_documentos} de {c.n_minimo}
                       </span>
                     </td>
@@ -492,7 +492,7 @@ export default async function AutonomiaPage() {
           ) : (
             <>
               <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                <div className="rounded border border-tinta-200 bg-white p-3">
+                <div className="rounded border border-tinta-200 bg-folha p-3">
                   <p className="text-lg font-semibold">
                     {cc.concordancia == null
                       ? "—"
@@ -502,7 +502,7 @@ export default async function AutonomiaPage() {
                     concordância — {cc.concordaram} de {cc.com_veredito_humano} com veredito
                   </p>
                 </div>
-                <div className="rounded border border-tinta-200 bg-white p-3">
+                <div className="rounded border border-tinta-200 bg-folha p-3">
                   <p className="text-lg font-semibold">
                     {cc.com_veredito_humano - cc.concordaram}
                   </p>
@@ -510,7 +510,7 @@ export default async function AutonomiaPage() {
                     discordâncias — é este o dado de calibração
                   </p>
                 </div>
-                <div className="rounded border border-tinta-200 bg-white p-3">
+                <div className="rounded border border-tinta-200 bg-folha p-3">
                   <p className="text-lg font-semibold">{cc.sem_veredito_humano}</p>
                   <p className="text-xs text-tinta-500">
                     sem veredito — ficam FORA da conta: &quot;acertou&quot; e &quot;ninguém
@@ -520,7 +520,7 @@ export default async function AutonomiaPage() {
               </div>
 
               {cc.rubricas_que_mais_erram.length > 0 && (
-                <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-white">
+                <div className="mt-3 overflow-x-auto rounded border border-tinta-200 bg-folha">
                   <table className="w-full text-sm">
                     <caption className="px-4 pt-2 text-left text-xs text-tinta-500">
                       As rubricas em que a regra mais erra. É por aqui que se ajusta o catálogo —
@@ -560,16 +560,16 @@ export default async function AutonomiaPage() {
         {trilha.length === 0 ? (
           <p className="mt-2 text-sm text-tinta-500">Nenhuma mudança de dial registrada.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-white text-sm">
+          <ul className="mt-2 divide-y divide-tinta-200 rounded border border-tinta-200 bg-folha text-sm">
             {trilha.map((e, i) => (
               <li key={i} className="px-4 py-2">
                 <div className="flex flex-wrap items-baseline gap-2">
                   <span
                     className={
                       e.acao === "mudanca_dial_recusada"
-                        ? "rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800"
+                        ? "rounded bg-risco-100 px-1.5 py-0.5 text-xs font-medium text-risco-800"
                         : e.acao === "mudanca_dial_sem_medicao"
-                          ? "rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900"
+                          ? "rounded bg-alerta-100 px-1.5 py-0.5 text-xs font-medium text-alerta-900"
                           : "rounded bg-tinta-100 px-1.5 py-0.5 text-xs font-medium text-tinta-600"
                     }
                   >
@@ -599,7 +599,7 @@ export default async function AutonomiaPage() {
                         sabendo que não mediu. Esconder isto devolveria a
                         indistinguibilidade que a 0126 acabou de tirar. */}
                     {e.depois?.sem_medicao_porque && (
-                      <p className="mt-1 text-xs text-amber-900">
+                      <p className="mt-1 text-xs text-alerta-900">
                         sem medição: {e.depois.sem_medicao_porque}
                       </p>
                     )}

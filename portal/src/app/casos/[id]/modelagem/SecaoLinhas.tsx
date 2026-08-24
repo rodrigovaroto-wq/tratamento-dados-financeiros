@@ -60,13 +60,13 @@ const PAPEL_INFO: Record<string, { rotulo: string; explica: string; cor: string 
     rotulo: "subtotal",
     explica: "sai no Excel como a SOMA dos componentes projetados — se move sozinho, e por isso "
       + "não recebe premissa (projetá-lo contaria o mesmo dinheiro duas vezes)",
-    cor: "bg-sky-100 text-sky-800",
+    cor: "bg-info-100 text-info-800",
   },
   serie_mensal: {
     rotulo: "série mensal",
     explica: "alimenta a curva de sazonalidade, derivada do próprio histórico do caso — não é uma "
       + "conta a projetar",
-    cor: "bg-violet-100 text-violet-800",
+    cor: "bg-serie-100 text-serie-800",
   },
   derivado: {
     rotulo: "derivado",
@@ -88,7 +88,7 @@ function Aviso({ r }: { r: Resultado }) {
     <span
       role="status"
       className={`rounded px-2 py-0.5 text-xs ${
-        r.tom === "ok" ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"
+        r.tom === "ok" ? "bg-ok-100 text-ok-900" : "bg-alerta-100 text-alerta-900"
       }`}
     >
       {r.texto}
@@ -181,12 +181,12 @@ export function SecaoLinhas({
             aviso que impede isso não pode viver onde ninguém está olhando. */}
         {pendentes > 0 && (
           <>
-            <span className="chip bg-amber-100 text-amber-900">
+            <span className="chip bg-alerta-100 text-alerta-900">
               {pendentes} não salva(s)
             </span>
             <button
               type="submit" form={idForm} disabled={salvando}
-              className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              className="rounded border border-alerta-300 bg-alerta-50 px-2 py-0.5 text-xs font-medium text-alerta-900 hover:bg-alerta-100 disabled:opacity-50"
             >
               {salvando ? "salvando…" : "salvar esta seção"}
             </button>
@@ -241,7 +241,7 @@ export function SecaoLinhas({
                 return (
                   <tr
                     key={l.rotulo_norm}
-                    className={`border-t border-tinta-100 align-top ${sujo ? "bg-amber-50" : ""}`}
+                    className={`border-t border-tinta-100 align-top ${sujo ? "bg-alerta-50" : ""}`}
                   >
                     <td className="px-2 py-1">
                       <span className={l.papel === "conta" ? "" : "text-tinta-500"}>{l.chave}</span>
@@ -252,7 +252,7 @@ export function SecaoLinhas({
                       )}
                       {l.sobreposicao_suspeita && (
                         <span
-                          className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800"
+                          className="ml-1 rounded bg-alerta-100 px-1 text-[10px] text-alerta-800"
                           title="Outra linha desta seção tem o MESMO valor e um rótulo que descreve a mesma conta de forma mais grossa — provavelmente o balanço sintético e o balancete analítico. Projetar as duas dobra a conta: escolha uma."
                         >
                           possível sobreposição
@@ -323,7 +323,7 @@ export function SecaoLinhas({
                 tela com escolha pendente é a maneira mais fácil de perder
                 trabalho, e nada avisava. */}
             {pendentes > 0 && (
-              <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] text-amber-900">
+              <span className="rounded bg-alerta-100 px-2 py-0.5 text-[10px] text-alerta-900">
                 {pendentes} alteração(ões) ainda NÃO salva(s) nesta seção
               </span>
             )}

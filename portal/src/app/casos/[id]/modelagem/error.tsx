@@ -27,23 +27,23 @@ export default function ErroModelagem({
 }) {
   return (
     <div className="mx-auto max-w-2xl p-6">
-      <div className="rounded border border-red-300 bg-red-50 p-4">
-        <h2 className="text-sm font-semibold text-red-900">
+      <div className="rounded border border-risco-300 bg-risco-50 p-4">
+        <h2 className="text-sm font-semibold text-risco-900">
           A tela de Modelagem falhou ao processar esta ação
         </h2>
-        <p className="mt-2 text-sm text-red-900">
+        <p className="mt-2 text-sm text-risco-900">
           Nada foi perdido: o que já estava salvo continua salvo. Tente de novo — se repetir,
           é falha do servidor ou uma migration que ainda não foi aplicada no banco.
         </p>
         {error.digest && (
-          <p className="mt-2 font-mono text-xs text-red-800">
+          <p className="mt-2 font-mono text-xs text-risco-800">
             identificador da ocorrência: {error.digest}
           </p>
         )}
         <div className="mt-3 flex gap-2">
           <button
             type="button" onClick={reset}
-            className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800"
+            className="rounded bg-risco-700 px-3 py-1.5 text-sm font-medium text-papel hover:bg-risco-800"
           >
             Tentar de novo
           </button>

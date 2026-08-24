@@ -39,7 +39,7 @@ export function FecharMandato({
         <button
           type="submit"
           disabled={enviando}
-          className="rounded-md border border-tinta-200 bg-white px-2.5 py-1 text-xs font-medium
+          className="rounded-md border border-tinta-200 bg-folha px-2.5 py-1 text-xs font-medium
                      text-tinta-700 transition-colors hover:border-acento-600 hover:text-acento-700
                      disabled:opacity-50"
         >
@@ -55,7 +55,7 @@ export function FecharMandato({
         type="button"
         onClick={() => setAberto(true)}
         title="Fechar este mandato (o dado continua guardado)"
-        className="rounded-md border border-tinta-200 bg-white px-2.5 py-1 text-xs font-medium
+        className="rounded-md border border-tinta-200 bg-folha px-2.5 py-1 text-xs font-medium
                    text-tinta-700 transition-colors hover:border-tinta-400 hover:bg-tinta-50"
       >
         Fechar
@@ -68,7 +68,7 @@ export function FecharMandato({
           aria-label="Fechar mandato"
           className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/40 p-4"
         >
-          <div className="w-full max-w-md rounded-xl border border-tinta-200 bg-white p-5 shadow-xl">
+          <div className="w-full max-w-md rounded-xl border border-tinta-200 bg-folha p-5 shadow-xl">
             <h2 className="text-sm font-semibold text-tinta-900">Fechar “{nome}”?</h2>
             <p className="mt-1.5 text-sm text-tinta-600">
               O mandato sai da lista de ativos e da barra lateral. <strong>Nada é apagado</strong> —

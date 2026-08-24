@@ -46,7 +46,7 @@ function Indicador({
   tom?: "neutro" | "alerta" | "bom";
 }) {
   const corDetalhe =
-    tom === "alerta" ? "text-red-700" : tom === "bom" ? "text-emerald-700" : "text-tinta-500";
+    tom === "alerta" ? "text-risco-700" : tom === "bom" ? "text-ok-700" : "text-tinta-500";
   return (
     <div className="px-4 py-3">
       <p className="indicador-valor">{valor}</p>
@@ -263,7 +263,9 @@ export default async function CasoDashboardPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-xl font-semibold text-tinta-900">{caso.nome}</h1>
+            <h1 className="font-titulo text-2xl font-medium tracking-tight text-tinta-900">
+              {caso.nome}
+            </h1>
             <span className={`chip ${CASO_STATUS_COLOR[caso.status]}`}>
               {CASO_STATUS_LABEL[caso.status]}
             </span>
@@ -352,8 +354,8 @@ export default async function CasoDashboardPage({
       </div>
 
       {pendenciasRevisao.filter(emAberto).length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
-          <span className="text-amber-900">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-alerta-200 bg-alerta-50 px-4 py-3 text-sm">
+          <span className="text-alerta-900">
             <strong className="font-semibold">
               {pendenciasRevisao.filter(emAberto).length}{" "}
               {pendenciasRevisao.filter(emAberto).length === 1 ? "documento" : "documentos"}
@@ -362,7 +364,7 @@ export default async function CasoDashboardPage({
           </span>
           <Link
             href={`/casos/${id}/revisao`}
-            className="rounded-md bg-amber-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-900"
+            className="rounded-md bg-alerta-800 px-3 py-1.5 text-xs font-semibold text-papel hover:bg-alerta-900"
           >
             Revisar agora
           </Link>
@@ -376,7 +378,7 @@ export default async function CasoDashboardPage({
       {portao2 && (
         <div
           className={`rounded-lg border p-4 text-sm ${
-            portao2.elegivel ? "border-emerald-200 bg-emerald-50" : "carta"
+            portao2.elegivel ? "border-ok-200 bg-ok-50" : "carta"
           }`}
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -384,7 +386,7 @@ export default async function CasoDashboardPage({
               {/* "PORTÃO 2" É NOME INTERNO (f0/04). Quem confere um mandato não
                   precisa do número da etapa — precisa saber se pode aprovar e o
                   que falta. O nome fica como legenda, não como manchete. */}
-              <p className={`font-semibold ${portao2.elegivel ? "text-emerald-900" : "text-tinta-900"}`}>
+              <p className={`font-semibold ${portao2.elegivel ? "text-ok-900" : "text-tinta-900"}`}>
                 {portao2.elegivel
                   ? "Pronto para aprovação"
                   : "Ainda não pode ser aprovado"}
@@ -477,14 +479,14 @@ export default async function CasoDashboardPage({
             // está lá e pedi-lo de novo ao cliente seria pedir o que ele mandou.
             const presente = tiposPresentes.has(item.codigo) && !semConteudo;
             const cor = presente
-              ? "border-emerald-200 bg-emerald-50/60"
+              ? "border-ok-200 bg-ok-50/60"
               : semConteudo
-                ? "border-amber-200 bg-amber-50"
-                : "border-tinta-200 bg-white";
+                ? "border-alerta-200 bg-alerta-50"
+                : "border-tinta-200 bg-folha";
             const corTexto = presente
-              ? "text-emerald-700"
+              ? "text-ok-700"
               : semConteudo
-                ? "text-amber-800"
+                ? "text-alerta-800"
                 : "text-tinta-400";
             return (
               <li
@@ -556,7 +558,7 @@ export default async function CasoDashboardPage({
                         {legibilidadeRuim && (
                           <span
                             title={versao?.nota_legibilidade ?? ""}
-                            className="ml-2 chip bg-red-100 text-red-800"
+                            className="ml-2 chip bg-risco-100 text-risco-800"
                           >
                             {LEGIBILIDADE_LABEL[versao!.legibilidade!] ?? versao!.legibilidade}
                           </span>
@@ -585,7 +587,7 @@ export default async function CasoDashboardPage({
                           <span className="tabular-nums text-tinta-900">{linhas.toLocaleString("pt-BR")}</span>
                         ) : (
                           <span
-                            className="chip bg-red-100 text-red-800"
+                            className="chip bg-risco-100 text-risco-800"
                             title="O documento foi recebido e classificado, mas nenhuma linha financeira foi gravada."
                           >
                             nenhuma
