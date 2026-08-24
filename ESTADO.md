@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0139_reafirmar_nao_apaga_medicao.sql` (a `0138` e a `0139` saíram da rodada de variações de 22/08 — ver "O LOOP DE VARIAÇÕES") |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **24** (a cadeia real sobre documento sujo) · n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (82 migrations do zero, os DOIS books) |
+| **Suítes** | variações **25** (a cadeia real sobre documento sujo) · n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (84 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
@@ -283,7 +283,7 @@ com 37,7 milhões projetava como se não devesse nada.
 ### O arnês virou portão
 
 As cinco variantes que pegaram cada defeito ficaram no conjunto consolidado,
-marcadas `[PEGOU]`, e **desfazer qualquer uma das cinco correções deixa o passo
+marcadas `[PEGOU]` (25 variantes no total), e **desfazer qualquer uma das cinco correções deixa o passo
 vermelho** — conferido uma a uma. Dois dos religamentos exigiram auditar o
 INVARIANTE em vez do efeito colateral: "a dívida evapora na virada" e "índice de
 liquidez sobre base impossível". Antes disso, duas correções passavam sem teste
