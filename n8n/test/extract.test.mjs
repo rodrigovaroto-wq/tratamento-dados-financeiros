@@ -1016,6 +1016,30 @@ test('a resposta é lida no dialeto de cada provedor, e o corte por teto é o ME
   }
 });
 
+test('o token de RACIOCÍNIO conta como saída — ele é cobrado como saída', () => {
+  // Achado na primeira chamada real (24/08): o catálogo declara `thinking: true`
+  // para toda a linha 3.x. Um modelo que pensa gasta orçamento de saída antes de
+  // escrever a primeira chave do JSON, e esses tokens vêm em campo próprio.
+  //
+  // Contar só o `candidates` subdeclarava a conta pela parte que não se vê — e
+  // subdeclarar POR CIMA de um teto de gasto é o pior lado para errar.
+  const u = usoDaChamada(PROVEDORES.google, {
+    usageMetadata: { promptTokenCount: 12000, candidatesTokenCount: 3000, thoughtsTokenCount: 2500 },
+  });
+  assert.equal(u.completion_tokens, 5500, 'JSON + raciocínio, porque a fatura soma os dois');
+  assert.equal(u.thoughts_tokens, 2500, 'e a parcela fica declarada, para se poder decidir sobre ela');
+
+  // A RESPOSTA REAL da chamada de 1 token não traz `candidatesTokenCount` NENHUM
+  // (o modelo não chegou a escrever nada). Ausência não pode virar NaN: o custo
+  // iria para null e uma chamada paga sumiria do relatório.
+  const minima = usoDaChamada(PROVEDORES.google, {
+    usageMetadata: { promptTokenCount: 2, totalTokenCount: 2 },
+  });
+  assert.equal(minima.completion_tokens, 0);
+  assert.equal(minima.thoughts_tokens, 0);
+  assert.equal(typeof minima.prompt_tokens, 'number');
+});
+
 test('o `usage` do Google é traduzido para a forma que a conta de custo já sabia ler', () => {
   // `custoDaChamada` é o único lugar do sistema que faz conta de dinheiro, e ele
   // lê `prompt_tokens`/`completion_tokens`/`cached_tokens`. Traduzir na fronteira
