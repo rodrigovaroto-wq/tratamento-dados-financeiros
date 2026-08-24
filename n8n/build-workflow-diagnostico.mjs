@@ -10,8 +10,16 @@
 // responderia a pergunta errada).
 //
 // O que ele faz, e o que NÃO faz:
-//   • manda UMA chamada de 1 token de saída. Se a conta estiver barrada, a OpenAI
-//     recusa antes de processar e o custo é ZERO;
+//   • LISTA OS MODELOS da conta primeiro — um GET, zero token — e confere se o
+//     que o workflow de ingestão usa está lá. Isto entrou em 24/08 e é a metade
+//     que faltava: o id do modelo é a única coisa deste sistema que nenhum teste
+//     prova (só a API do provedor valida a string), e um id errado faz TODA
+//     chamada do lote voltar 404. O `--modelos` do script de terminal responde
+//     isso — e o dono não usa terminal, que é o motivo de este workflow existir.
+//     Deixar a checagem só na versão de terminal seria pôr a resposta onde quem
+//     precisa dela não alcança;
+//   • manda UMA chamada de 1 token de saída. Se a conta estiver barrada, o
+//     provedor recusa antes de processar e o custo é ZERO;
 //   • classifica a resposta com `diagnosticarErroApi` — o MESMO código de
 //     produção, embutido por `toString()`, então o veredito daqui é o veredito que
 //     o pipeline daria;
@@ -29,8 +37,11 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA } from './lib/extract.mjs';
-import { custoDaChamada, PRECO_USD_POR_MILHAO, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, MODELO_EXTRACAO } from './lib/custo.mjs';
-import { provedor, urlDaChamada, montarCorpoIA, parteDeTexto, conteudoDaResposta, usoDaChamada } from './lib/provedor.mjs';
+import { custoDaChamada, PRECO_USD_POR_MILHAO, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from './lib/custo.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, conteudoDaResposta, usoDaChamada,
+  modelosDoCatalogo, modelosParecidos,
+} from './lib/provedor.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -76,6 +87,10 @@ const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
 const custoDaChamada = ${custoDaChamada.toString()};
 const PROVEDOR = ${JSON.stringify(PROV)};
 const usoDaChamada = ${usoDaChamada.toString()};
+const modelosDoCatalogo = ${modelosDoCatalogo.toString()};
+const modelosParecidos = ${modelosParecidos.toString()};
+const MODELO_EXTRACAO = ${JSON.stringify(MODELO_EXTRACAO)};
+const MODELO_CLASSIFICACAO = ${JSON.stringify(MODELO_CLASSIFICACAO)};
 
 const resp = $input.item.json;
 // Com neverError o erro chega como CORPO, não como exceção — é a instrumentação
@@ -85,6 +100,49 @@ const httpStatus = resp?.error?.status ?? resp?.statusCode ?? (temErro ? 429 : 2
 
 const linhas = [];
 let passou = false, causa = null, motivo = null;
+
+// ---------------------------------------------------------------------------
+// PRIMEIRO O CATÁLOGO — a checagem que custa zero e explica o 404 antes dele
+// ---------------------------------------------------------------------------
+//
+// Vem antes de qualquer coisa no relatório porque é a única falha desta lista
+// que tem conserto imediato E depende de saber o que EXISTE: "o modelo não
+// existe" é meia informação; "não existe, e o que existe é isto" é a correção
+// inteira.
+let listaOk = false;
+let modelosDaConta = [];
+try {
+  const respLista = $('Listar Modelos').item.json;
+  modelosDaConta = modelosDoCatalogo(PROVEDOR, respLista);
+  listaOk = modelosDaConta.length > 0;
+} catch (e) { listaOk = false; }
+
+const configurados = MODELO_EXTRACAO === MODELO_CLASSIFICACAO
+  ? [MODELO_EXTRACAO]
+  : [MODELO_EXTRACAO, MODELO_CLASSIFICACAO];
+const faltando = listaOk ? configurados.filter((m) => modelosDaConta.indexOf(m) === -1) : [];
+
+linhas.push('--- MODELOS DA CONTA (GET no catalogo, zero token) ---');
+if (!listaOk) {
+  linhas.push('NAO FOI POSSIVEL LISTAR os modelos desta conta.');
+  linhas.push('Causa provavel: a credencial do no "Listar Modelos" nao foi selecionada,');
+  linhas.push('ou a chave nao tem permissao. Sem a lista, um 404 abaixo fica sem explicacao.');
+} else {
+  linhas.push('A conta lista ' + modelosDaConta.length + ' modelo(s).');
+  linhas.push('Configurado no workflow de ingestao: ' + configurados.join(', '));
+  if (faltando.length === 0) {
+    linhas.push('OK -- todos existem nesta conta. O id do modelo esta certo.');
+  } else {
+    linhas.push('*** PROBLEMA: ' + faltando.join(', ') + ' NAO existe(m) nesta conta. ***');
+    linhas.push('Toda chamada do lote voltaria 404. O que existe de mais parecido:');
+    for (const m of faltando) {
+      linhas.push('  para "' + m + '": ' + (modelosParecidos(m, modelosDaConta, 5).join(', ') || '(nada parecido)'));
+    }
+    linhas.push('Corrija MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs, rode');
+    linhas.push('node n8n/build-workflow.mjs e reimporte os workflows.');
+  }
+}
+linhas.push('');
 
 if (temErro) {
   const d = diagnosticarErroApi({ statusCode: httpStatus, body: resp });
@@ -140,6 +198,19 @@ return {json:{passou, causa, http_status: httpStatus, veredito: linhas.join('\\n
 
 const nodes = [
   node('Rodar Diagnostico', 'n8n-nodes-base.manualTrigger', 1, {}),
+  // GET no catálogo: nenhum token, nenhum corpo. `neverError` pela mesma razão
+  // do nó de baixo — sem ele, uma chave inválida vira exceção e o veredito nunca
+  // chega a dizer o que houve.
+  node('Listar Modelos', 'n8n-nodes-base.httpRequest', 4.2, {
+    method: 'GET',
+    url: PROV.catalogo,
+    authentication: 'genericCredentialType',
+    genericAuthType: 'httpHeaderAuth',
+    options: { response: { response: { neverError: true } } },
+  }, {
+    onError: 'continueRegularOutput',
+    credentials: { httpHeaderAuth: { id: 'REPLACE', name: PROV.credencial } },
+  }),
   node('Montar Chamada Minima', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ }),
   node('IA (1 token)', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
@@ -159,7 +230,8 @@ const nodes = [
 ];
 
 const connections = {
-  'Rodar Diagnostico': { main: [[{ node: 'Montar Chamada Minima', type: 'main', index: 0 }]] },
+  'Rodar Diagnostico': { main: [[{ node: 'Listar Modelos', type: 'main', index: 0 }]] },
+  'Listar Modelos': { main: [[{ node: 'Montar Chamada Minima', type: 'main', index: 0 }]] },
   'Montar Chamada Minima': { main: [[{ node: 'IA (1 token)', type: 'main', index: 0 }]] },
   'IA (1 token)': { main: [[{ node: 'Veredito', type: 'main', index: 0 }]] },
 };
@@ -175,7 +247,8 @@ const workflow = {
   meta: {
     note: 'Gerado por n8n/build-workflow-diagnostico.mjs. '
       + `Usa a credencial "${PROV.credencial}", a MESMA da ingestao. `
-      + 'Uma chamada de 1 token: se a conta estiver barrada o custo e zero. Nao grava nada em banco. '
+      + 'Lista os modelos da conta (GET, zero token) e faz UMA chamada de 1 token: se a conta '
+      + 'estiver barrada o custo e zero. Nao grava nada em banco. '
       + 'O veredito sai do MESMO diagnosticarErroApi da producao (embutido por toString()).',
   },
 };

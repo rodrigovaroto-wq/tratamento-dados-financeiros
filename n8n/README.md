@@ -411,6 +411,12 @@ community node, se for esse o caminho).
   workflow usa e, se o configurado não estiver lá, sugere os ids mais parecidos. O mesmo comando
   sem `--modelos` faz uma chamada de 1 token e diagnostica crédito/cota/cadência.
 
+  **SEM TERMINAL, é a mesma coisa em dois cliques:** importe `n8n/workflow.diagnostico-ia.json`,
+  selecione a credencial nos **dois** nós HTTP dele (`Listar Modelos` e `IA (1 token)`) e execute.
+  Ele lista o catálogo, confere se o modelo configurado está lá — nomeando os parecidos quando não
+  está — e só então faz a chamada de 1 token para separar crédito de cota de cadência. Não grava
+  nada em banco nenhum.
+
 ### Testar sem pôr crédito — o que dá e o que NÃO dá
 
 O Google tem um **nível gratuito** da API do Gemini (chave do `aistudio.google.com/apikey`, sem

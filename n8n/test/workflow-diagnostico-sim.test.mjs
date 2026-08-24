@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { diagnosticarErroApi } from '../lib/extract.mjs';
 import { provedor } from '../lib/provedor.mjs';
-import { PRECO_USD_POR_MILHAO, MODELO_EXTRACAO } from '../lib/custo.mjs';
+import { PRECO_USD_POR_MILHAO, MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from '../lib/custo.mjs';
 
 const PROV = provedor();
 const GEMINI = PROV.dialeto === 'gemini';
@@ -113,4 +113,78 @@ test('Veredito: a aritmética da cadência e o teto de gasto aparecem sempre', a
     // o dono precisa saber que o teto do provedor tem de ficar ACIMA do do código
     assert.match(out.json.veredito, /deve ficar ACIMA disso \(US\$ 5\)/);
   }
+});
+
+// ===========================================================================
+// A CHECAGEM DO ID DO MODELO — e por que ela tem de estar AQUI, e não só no CLI
+// ===========================================================================
+//
+// O id do modelo é a única coisa deste sistema que nenhum teste prova: é uma
+// string que só a API do provedor valida, e errá-la faz TODA chamada do lote
+// voltar 404. O script de terminal responde isso com `--modelos`.
+//
+// O dono NÃO USA TERMINAL, e disse isso com todas as letras ("não sei onde roda
+// isso") — é o motivo de este workflow existir. Deixar a checagem só na versão
+// de terminal seria pôr a resposta exatamente onde quem precisa dela não
+// alcança, que é a forma mais silenciosa de um diagnóstico não diagnosticar.
+
+const respostaDaLista = (ids) => (GEMINI
+  ? { models: ids.map((id) => ({ name: `models/${id}` })) }
+  : { data: ids.map((id) => ({ id })) });
+
+const rodarVeredito = async (lista, resposta) => {
+  const code = (nome) => {
+    const n = wf.nodes.find((x) => x.name === nome);
+    return n.parameters.jsCode;
+  };
+  const item = { json: resposta };
+  const $input = { item, first: () => item, all: () => [item] };
+  const $ = (ref) => {
+    if (ref !== 'Listar Modelos') throw new Error(`ref não mockada: ${ref}`);
+    return { item: { json: lista }, first: () => ({ json: lista }) };
+  };
+  return new AsyncFunction('$input', '$', '$json', code('Veredito')).call({}, $input, $, item.json);
+};
+
+test('o GET do catálogo vem ANTES da chamada paga, e usa a mesma credencial', () => {
+  const n = wf.nodes.find((x) => x.name === 'Listar Modelos');
+  assert.equal(n.parameters.method, 'GET', 'listar não manda corpo e não gasta token');
+  assert.equal(n.parameters.url, PROV.catalogo);
+  assert.equal(n.credentials.httpHeaderAuth.name, PROV.credencial);
+  // `neverError` pela mesma razão do nó pago: sem ele uma chave inválida vira
+  // exceção e o veredito nunca chega a dizer o que houve.
+  assert.equal(n.parameters.options.response.response.neverError, true);
+  // A ORDEM importa: a checagem grátis vem primeiro, e é ela que explica um 404
+  // da chamada seguinte. Invertida, o dono lê "404" e só depois descobre o porquê.
+  assert.deepEqual(wf.connections['Rodar Diagnostico'].main[0][0].node, 'Listar Modelos');
+  assert.deepEqual(wf.connections['Listar Modelos'].main[0][0].node, 'Montar Chamada Minima');
+});
+
+test('Veredito: quando o modelo configurado EXISTE, diz que o id está certo', async () => {
+  const lista = respostaDaLista([MODELO_EXTRACAO, MODELO_CLASSIFICACAO, 'outro-qualquer']);
+  const out = await rodarVeredito(lista, respostaComUso('ok', { prompt_tokens: 1, completion_tokens: 1 }));
+  assert.match(out.json.veredito, /MODELOS DA CONTA/);
+  assert.match(out.json.veredito, /O id do modelo esta certo/);
+});
+
+test('Veredito: modelo configurado que NÃO existe é nomeado, com os parecidos', async () => {
+  // O caso que este trabalho inteiro existe para pegar: o id veio de uma lista
+  // de marketing e a API chama a coisa por outro nome. Sem isto, o sintoma é
+  // "todas as 57 chamadas deram 404" e a causa fica a uma pesquisa de distância.
+  const lista = respostaDaLista([`${MODELO_EXTRACAO}-002`, 'text-embedding-004']);
+  const out = await rodarVeredito(lista, respostaComUso('ok', { prompt_tokens: 1, completion_tokens: 1 }));
+  assert.match(out.json.veredito, /PROBLEMA/);
+  assert.match(out.json.veredito, new RegExp(MODELO_EXTRACAO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(out.json.veredito, /Toda chamada do lote voltaria 404/);
+  assert.match(out.json.veredito, new RegExp(`${MODELO_EXTRACAO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-002`),
+    'tem de sugerir o que existe — "não existe" sozinho é meia informação');
+});
+
+test('Veredito: catálogo que não veio NÃO vira "modelo não existe"', async () => {
+  // A distinção que decide a ação: "não consegui listar" (credencial do nó de
+  // listagem) é outro problema de "listei e o seu modelo não está lá" (id
+  // errado). Confundi-los mandaria o dono corrigir o arquivo errado.
+  const out = await rodarVeredito({}, respostaComUso('ok', { prompt_tokens: 1, completion_tokens: 1 }));
+  assert.match(out.json.veredito, /NAO FOI POSSIVEL LISTAR/);
+  assert.ok(!/PROBLEMA/.test(out.json.veredito), 'sem lista, não se afirma nada sobre o id');
 });
