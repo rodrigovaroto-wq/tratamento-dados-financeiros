@@ -4,7 +4,7 @@
 -- Achado do "teste v25" (book Vertentes): o documento 09 é uma DEMONSTRAÇÃO DAS
 -- MUTAÇÕES DO PATRIMÔNIO LÍQUIDO e saiu classificado como `MUTUOS`. Não é erro
 -- da IA nem do prompt: `tipo_sugerido` é um enum fechado com os códigos que
--- EXISTEM na taxonomia (n8n/lib/openai.mjs → codigosConhecidos), e não havia
+-- EXISTEM na taxonomia (n8n/lib/ia.mjs → codigosConhecidos), e não havia
 -- código nenhum para DMPL — o modelo escolheu o mais próximo do que existe
 -- ("mútuos" partilha o vocabulário de movimentação entre contas). A DVA tem o
 -- mesmo problema em potencial (companhia aberta é obrigada a publicá-la,

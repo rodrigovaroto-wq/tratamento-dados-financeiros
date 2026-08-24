@@ -67,5 +67,11 @@ Decorrência da Opção B, registrada para não gerar ambiguidade futura:
   preferencialmente dentro do perímetro Azure já confiado (ex.: Azure OpenAI). **Pendência
   paralela:** jurídico revisar os NDAs quanto a um novo processador de dados na cadeia.
 
+  > **Atualização de 24/08/2026:** o provedor de IA passou a ser uma ESCOLHA declarada em
+  > `n8n/lib/provedor.mjs`, e o padrão hoje é o **Google (Gemini)** — antes era a OpenAI, por API
+  > direta, fora do perímetro Azure nos dois casos. O critério deste item não mudou; o que mudou é
+  > que a pendência de contrato/DPA **volta ao zero a cada troca de provedor**: acordo com um não
+  > vale para o outro. Trocar o provedor é uma variável de ambiente; trocar o acordo, não.
+
 **Critério de pronto (DoD):** ✅ opção escolhida com justificativa; ✅ **um** dono de operação
 nomeado; ✅ decisão assinada pelo sócio responsável. *(Orçamento de tempo semanal a definir.)*

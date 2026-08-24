@@ -5,15 +5,21 @@
 //
 // São DUAS defesas em camadas diferentes, e a distinção importa:
 //
-//   • O teto de US$ 5 é configurado NA OPENAI (Settings → Projects → Limits). É
-//     a defesa dura: se este código falhar em qualquer hipótese, a OpenAI recusa
-//     a chamada e o pipeline registra `limite_de_gasto` com causa nomeada — foi
+//   • O teto de US$ 5 é configurado NO PROVEDOR (na OpenAI: Settings → Projects
+//     → Limits; no Google: o orçamento do projeto no Cloud Billing). É a defesa
+//     dura: se este código falhar em qualquer hipótese, o provedor recusa a
+//     chamada e o pipeline registra `limite_de_gasto` com causa nomeada — foi
 //     exatamente o que aconteceu no v31. Nenhuma linha daqui pode substituir
 //     isso, e é bom que não possa: um teto que o próprio sistema controla é um
 //     teto que um bug do próprio sistema fura.
 //
+//     TROCAR DE PROVEDOR NÃO HERDA O TETO. Ele é configuração de conta, não de
+//     código: a conta nova começa SEM teto nenhum, e a defesa dura fica ausente
+//     até alguém ir lá pôr. É o primeiro item do checklist de troca em
+//     docs/CUSTO_IA.md, e é o único que este repositório não consegue conferir.
+//
 //   • O teto de US$ 3 por execução é ESTE arquivo. Ele existe para o lote nunca
-//     CHEGAR no limite da OpenAI, porque chegar lá é caro de outra forma: no v31
+//     CHEGAR no limite do provedor, porque chegar lá é caro de outra forma: no v31
 //     o teto cortou no meio do lote e 8 documentos morreram sem extração. A
 //     diferença entre US$ 3 e US$ 5 é a folga que garante que quem barra o lote
 //     seja este código (que explica o que fazer) e não a API (que só devolve 429).
@@ -25,14 +31,33 @@
 // tipo de trabalho que a doutrina (docs/01) manda não criar. Recusar antes de
 // gastar não custa nada e diz o que fazer.
 
-// Preço do gpt-4o, US$ por MILHÃO de tokens (platform.openai.com/pricing).
+import { provedorAtivo, provedor } from './provedor.mjs';
+
+// Preço, US$ por MILHÃO de tokens, POR PROVEDOR.
 // ⚠️ Preço de terceiro muda sem avisar e este arquivo não tem como saber. Se a
 // conta divergir do que `custoDaChamada` reporta, é AQUI que se corrige — e o
 // sintoma é o orçamento parecer folgado enquanto a fatura não é.
-export const PRECO_USD_POR_MILHAO = {
-  'gpt-4o': { entrada: 2.5, entrada_cache: 1.25, saida: 10.0 },
-  'gpt-4o-mini': { entrada: 0.15, entrada_cache: 0.075, saida: 0.6 },
+//
+// `entrada_cache` é o preço do token de entrada que o provedor serviu do cache
+// de prefixo. Na OpenAI é metade do cheio e está na página de preço; no Google é
+// um quarto. Os dois estão DECLARADOS aqui, não medidos por nós — e é por isso
+// que `custoDaChamada` só o aplica quando a resposta DIZ quantos tokens vieram
+// do cache, em vez de supor que vieram.
+export const PRECOS_POR_PROVEDOR = {
+  openai: {
+    'gpt-4o': { entrada: 2.5, entrada_cache: 1.25, saida: 10.0 },
+    'gpt-4o-mini': { entrada: 0.15, entrada_cache: 0.075, saida: 0.6 },
+  },
+  google: {
+    'gemini-3.5-flash-lite': { entrada: 0.30, entrada_cache: 0.075, saida: 2.50 },
+    'gemini-2.5-flash-lite': { entrada: 0.10, entrada_cache: 0.025, saida: 0.40 },
+  },
 };
+
+// A tabela do provedor ATIVO. O nome não mudou de propósito: `custoDaChamada` e
+// a cópia dele que roda dentro do nó Code do n8n leem esta constante, e um
+// provedor a mais no catálogo não deve reescrever nenhum dos dois.
+export const PRECO_USD_POR_MILHAO = PRECOS_POR_PROVEDOR[provedorAtivo()];
 
 // Teto por execução completa (pedido do dono). Menor que o teto da OpenAI de
 // propósito — ver o comentário do topo.
@@ -48,18 +73,28 @@ export const TETO_EXECUCAO_USD = 3;
 // um preço derivado de um modelo declarado em outro arquivo é a mesma cópia à
 // mão que este repositório já viu divergir três vezes. O build importa daqui.
 //
-// `MODELO_CLASSIFICACAO` é `gpt-4o-mini` desde 13/08/2026 — a recomendação nº 1
-// de `docs/CUSTO_OPENAI.md` ("agora, sem risco"), acionada quando o dono pediu
-// redução de custo por chamada. A tarefa é a mais leve do pipeline (escolher um
-// código de um enum + entidade/período) e ela tem REDE: o `diagnostico` da
-// extração — que segue no modelo forte — confere tipo/entidade/período contra o
-// conteúdo e abre pendência quando diverge. Erro de classificação é detectado,
-// não silencioso.
+// NA OPENAI eles eram DOIS: `gpt-4o-mini` classificava e `gpt-4o` extraía. A
+// separação nasceu de uma diferença de preço de 17× entre os dois, e ela tinha
+// rede — o `diagnostico` da extração, que rodava no modelo forte, confere
+// tipo/entidade/período contra o conteúdo e abre pendência quando o barato erra.
 //
-// `MODELO_EXTRACAO` NÃO muda. É a tarefa que exige julgamento contábil linha a
-// linha, e ela não tem rede nenhuma depois dela.
-export const MODELO_CLASSIFICACAO = 'gpt-4o-mini';
-export const MODELO_EXTRACAO = 'gpt-4o';
+// NO GOOGLE eles são UM SÓ, e não é economia de linha de código: a linha
+// Flash-Lite já entra no preço em que o modelo "barato" da OpenAI entrava, então
+// a razão que justificava dois desapareceu. Rebaixar a classificação para uma
+// geração anterior economizaria ~US$ 0,005 no book inteiro (a classificação é
+// 0,4% da conta medida) e reintroduziria o único erro que a separação sempre
+// custou: um tipo errado que só o diagnóstico pega, uma etapa adiante.
+//
+// A ESTRUTURA CONTINUA DE DOIS, e é de propósito. `pesoDaChamadaDeClassificacao`,
+// o orçamento e os nós do workflow seguem lendo duas constantes distintas — se
+// um dia valer separar de novo, é uma linha aqui, e não um refatoramento.
+export const MODELOS_POR_PROVEDOR = {
+  openai: { classificacao: 'gpt-4o-mini', extracao: 'gpt-4o' },
+  google: { classificacao: 'gemini-3.5-flash-lite', extracao: 'gemini-3.5-flash-lite' },
+};
+
+export const MODELO_CLASSIFICACAO = MODELOS_POR_PROVEDOR[provedorAtivo()].classificacao;
+export const MODELO_EXTRACAO = MODELOS_POR_PROVEDOR[provedorAtivo()].extracao;
 
 // ---------------------------------------------------------------------------
 // O PESO DA SEGUNDA CHAMADA — o defeito de estimativa que restava
@@ -109,7 +144,13 @@ export function pesoDaChamadaDeClassificacao(
 // merge no `main` não reimporta nada. Da tela, código novo e código velho têm a
 // mesma aparência: os dois recusam. Com a versão na mensagem, "o n8n está com o
 // workflow velho" deixa de ser hipótese e vira leitura.
-export const VERSAO_ORCAMENTO = 'v3 (2026-08-13)';
+//
+// SOBE PARA v4 NA TROCA DE PROVEDOR, e é o uso mais importante que ela já teve:
+// os três números da calibração mudaram de ordem de grandeza (US$ 0,20 → 0,055
+// por chamada), então um n8n rodando o JSON velho recusa lotes que o código novo
+// aceita — e recusa com uma mensagem que parece a mesma. Com a versão na
+// mensagem, "o n8n está com o workflow velho" volta a ser leitura, não hipótese.
+export const VERSAO_ORCAMENTO = 'v4 (2026-08-24)';
 
 // Custo estimado de UM documento, usado só para decidir se o lote cabe antes de
 // existir qualquer medição.
@@ -134,11 +175,22 @@ export const VERSAO_ORCAMENTO = 'v3 (2026-08-13)';
 // preço de a recusa continuar acontecendo AQUI (com mensagem que diz o que
 // fazer) e não na API (que só devolve 429 no meio do lote).
 //
-// O limite que 0,20 NÃO resolve, e que fica declarado: o estimador é PLANO — ele
-// não sabe quantas páginas nem quantas linhas o documento tem. Acima de ~550
-// linhas extraíveis o custo real volta a passar de 0,20. Enquanto for plano, a
-// defesa dura continua sendo o teto de US$ 5 do projeto na OpenAI.
-export const CUSTO_ESTIMADO_DOC_USD = 0.20;
+// O limite que ele NÃO resolve, e que fica declarado: o estimador é PLANO — não
+// sabe quantas páginas nem quantas linhas o documento tem. Acima de ~550 linhas
+// extraíveis o custo real volta a passar dele. Enquanto for plano, a defesa dura
+// continua sendo o teto do projeto configurado no provedor.
+//
+// RECALIBRADO DE 0,20 PARA 0,055 EM 24/08/2026, NA TROCA DE PROVEDOR, E PELA
+// MESMA MEDIÇÃO. O mesmo `medir-custo-book.mjs` sobre o mesmo book-canastra, só
+// que com a tabela de preço do provedor novo: o documento mais caro dos 38 — o
+// livro razão, 3 páginas e 461 linhas, o mesmo de sempre — passou de US$ 0,1725
+// para **US$ 0,0459**, e o lote inteiro de US$ 1,2932 para **US$ 0,2821**.
+//
+// 0,055 é 1,2× o documento mais caro medido, que é a MESMA folga que 0,20 tinha
+// sobre 0,1725. Deixar 0,20 de pé teria sido pior que um número velho: seria um
+// guarda cego recusando lotes de quatro vezes o tamanho que o teto comporta, e
+// "o sistema não deixa rodar" é indistinguível de "o sistema está quebrado".
+export const CUSTO_ESTIMADO_DOC_USD = 0.055;
 
 // ---------------------------------------------------------------------------
 // ESTIMATIVA POR TAMANHO — o que substitui o número plano quando os bytes são
@@ -181,8 +233,33 @@ export const CUSTO_ESTIMADO_DOC_USD = 0.20;
 // pior documento isolado — para isso continua valendo a defesa dura, o teto de
 // US$ 5 do projeto na OpenAI. Um lote que estimasse exatamente no teto de US$ 3
 // e fosse inteiro do tipo mais denso custaria ~US$ 4,8: cabe no teto duro.
-export const CUSTO_POR_MB_USD = 10.5;
-export const CUSTO_MINIMO_CHAMADA_USD = 0.012;
+//
+// OS DOIS NÚMEROS ABAIXO FORAM ESCALADOS EM 24/08/2026, na troca de provedor.
+// A calibração ACIMA continua valendo inteira — ela é sobre a relação entre
+// bytes e tokens, que é física do PDF e não muda com quem cobra. O que mudou foi
+// o PREÇO do token, e escalar (em vez de recalibrar do zero) preserva a margem
+// que foi calibrada contra dinheiro de verdade.
+//
+// E A ESCOLHA DA RAZÃO IMPORTA, porque existem DUAS e elas não são iguais:
+//
+//   • o lote inteiro do book caiu 0,218× (US$ 1,2932 → US$ 0,2821);
+//   • o documento mais DENSO dele caiu 0,266× (US$ 0,1725 → US$ 0,0459).
+//
+// Elas divergem porque o preço da SAÍDA caiu menos que o da entrada, e documento
+// denso é o que gasta saída. Um escalar só não preserva as duas propriedades, e
+// entre elas a escolha não é ambígua: escalar pelo AGREGADO (0,218) fazia o lote
+// homogêneo denso — o caso que o teto existe para barrar — passar a ser ACEITO.
+// Trocar "recusa lote que caberia" por "aceita lote que não cabe" é exatamente o
+// v31 de novo, e é o erro caro. Vale a razão do documento denso.
+//
+//   10,5 × 0,266 = 2,79 → 2,80      0,012 × 0,266 = 0,0032
+//
+// O CUSTO DA ESCOLHA, declarado: o guarda por byte fica ~2× acima do custo real
+// de um lote típico (era ~1,45×). Continua muito longe de barrar trabalho — o
+// book inteiro estima US$ 0,58 contra um teto de US$ 3 —, e quem decide o lote
+// típico hoje é a estimativa por CONTEÚDO, que erra 3%.
+export const CUSTO_POR_MB_USD = 2.80;
+export const CUSTO_MINIMO_CHAMADA_USD = 0.0032;
 
 const BYTES_POR_MB = 1024 * 1024;
 
@@ -226,11 +303,20 @@ export function bytesDoBinario(bin) {
   return null;
 }
 
-// Custo REAL de uma chamada, a partir do bloco `usage` da resposta da OpenAI.
+// Custo REAL de uma chamada, a partir do bloco `usage` da resposta.
 // Não estima nada: se o `usage` não vier, devolve null em vez de chutar — um
 // custo inventado num relatório de custo é pior que um campo vazio.
-export function custoDaChamada(usage, modelo) {
-  const p = PRECO_USD_POR_MILHAO[modelo];
+//
+// O `usage` chega aqui SEMPRE na forma da OpenAI, inclusive vindo do Google: a
+// tradução acontece na fronteira (`usoDaChamada`, em lib/provedor.mjs), e é o
+// que mantém esta função como o único lugar do sistema que faz conta de
+// dinheiro — em vez de dois formatos de uso espalhados.
+//
+// `tabela` existe para o teste poder cobrar um modelo que não é o do provedor
+// ativo. Em produção nunca é passada: o padrão é a tabela do ativo, que é a
+// mesma constante que o nó Code do n8n recebe embutida.
+export function custoDaChamada(usage, modelo, tabela = PRECO_USD_POR_MILHAO) {
+  const p = tabela[modelo];
   if (!p || !usage) return null;
   const entradaTotal = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
   const saida = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
@@ -318,13 +404,13 @@ export function orcamentoDoLote({
   const mensagem = cabe
     ? null
     : `[orçamento ${VERSAO_ORCAMENTO}] ` +
-      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
+      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) de IA ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
       `A conta saiu de ${base}. ` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
-      `Nada foi enviado à OpenAI e nada foi gravado, então reenviar não duplica nem custa. ` +
+      `Nada foi enviado ao provedor de IA e nada foi gravado, então reenviar não duplica nem custa. ` +
       `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (n8n/lib/custo.mjs) ` +
-      `— e subir ele exige subir também o teto do projeto na OpenAI, senão a API barra no meio.`;
+      `— e subir ele exige subir também o teto do projeto no provedor, senão a API barra no meio.`;
 
   return {
     cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem, porTamanho,
@@ -357,7 +443,7 @@ export function orcamentoDoLote({
 // `planejarFatias`, a MESMA função que o `Fatiar Extracao` vai executar. Deixa
 // de ser estimativa por proxy e passa a ser a conta do que vai acontecer.
 //
-// O QUE NÃO MUDA: continua sendo ANTES de qualquer chamada à OpenAI. Entre o
+// O QUE NÃO MUDA: continua sendo ANTES de qualquer chamada de IA. Entre o
 // `Medir Documento` e a primeira chamada não há gasto nenhum — o `Extrair
 // Texto` é local e o `Upload Storage` é ramo lateral (e desligado). O teto
 // continua barrando de graça.
@@ -514,14 +600,14 @@ export function orcamentoDoLotePorConteudo({
   const mensagem = cabe
     ? null
     : `[orçamento ${VERSAO_ORCAMENTO}] ` +
-      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) à OpenAI ` +
+      `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) de IA ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
       `A conta saiu de ${celulas} linha(s) com número lidas dos próprios PDFs (mais ${MARGEM_ORCAMENTO_CONTEUDO}× ` +
       `de margem), e não de uma estimativa por tamanho de arquivo. ` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
-      `Nada foi enviado à OpenAI e nenhum documento foi registrado, então reenviar não duplica nem custa. ` +
+      `Nada foi enviado ao provedor de IA e nenhum documento foi registrado, então reenviar não duplica nem custa. ` +
       `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (n8n/lib/custo.mjs) ` +
-      `— e subir ele exige subir também o teto do projeto na OpenAI, senão a API barra no meio.`;
+      `— e subir ele exige subir também o teto do projeto no provedor, senão a API barra no meio.`;
 
   return {
     cabe, estimadoUSD, maxDocumentos, teto, chamadas, mensagem,

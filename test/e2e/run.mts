@@ -25,13 +25,37 @@
 //   npx tsx test/e2e/run.mts
 //
 // Cria e destrói o próprio banco (`tdf_e2e`), não toca em Supabase e não chama
-// OpenAI nenhuma — o insumo é o book determinístico de `test-data/book-vertentes`.
+// chamada de IA nenhuma — o insumo é o book determinístico de `test-data/book-vertentes`.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { buildExportWorkbook } from "../../portal/src/lib/export.ts";
 import type { CampoExtraido, DocumentoParaExport } from "../../portal/src/lib/types.ts";
 import { avaliarCelula } from "../../portal/scripts/lib/avaliar-formula.mts";
+import { provedor } from "../../n8n/lib/provedor.mjs";
+
+// O ARNÊS FALA O DIALETO DO PROVEDOR ATIVO. Ele injeta a resposta no ponto em
+// que a IA responde, então escrevê-la na forma da OpenAI enquanto o nó lê a do
+// Google significaria testar a cadeia inteira contra uma resposta que o nó não
+// entende — e o sintoma seria "zero campos", exatamente o silêncio que este
+// arnês existe para não deixar passar.
+const PROV = provedor();
+
+function envelopeDaResposta(conteudo: string, uso: { prompt_tokens: number; completion_tokens: number }) {
+  return PROV.dialeto === "gemini"
+    ? {
+      candidates: [{ content: { parts: [{ text: conteudo }] }, finishReason: "STOP" }],
+      usageMetadata: {
+        promptTokenCount: uso.prompt_tokens,
+        candidatesTokenCount: uso.completion_tokens,
+        cachedContentTokenCount: 0,
+      },
+    }
+    : {
+      choices: [{ finish_reason: "stop", message: { content: conteudo } }],
+      usage: uso,
+    };
+}
 
 const RAIZ = new URL("../../", import.meta.url).pathname;
 const DB = process.env.E2E_DB ?? "tdf_e2e";
@@ -72,7 +96,7 @@ function psqlJson<T>(sql: string): T {
 // ---------------------------------------------------------------------------
 // FASE 1 — o produtor REAL de campos.
 //
-// Reconstrói a resposta da OpenAI a partir do book e roda o código do nó
+// Reconstrói a resposta da IA a partir do book e roda o código do nó
 // `Parse Extracao` extraído do JSON GERADO (não a lib): é o mesmo padrão de
 // `n8n/test/workflow-sim.test.mjs`, e é o que garante que o que se testa é o que
 // o dono importa no n8n.
@@ -115,57 +139,50 @@ for (const c of fixture.campos) {
   camposPorVersao.set(c.documento_versao_id, lista);
 }
 
-// A resposta da OpenAI usa chaves CURTAS (s/sc/ec/pc/k/vt/vn/op/cf) — foi uma
+// A resposta da IA usa chaves CURTAS (s/sc/ec/pc/k/vt/vn/op/cf) — foi uma
 // otimização de custo de output. Reconstruí-las aqui é o que exercita o mapeamento
 // curto→longo do nó, que é exatamente um dos seams não cobertos.
-function respostaDaOpenAI(campos: CampoExtraido[]) {
+function respostaDaIA(campos: CampoExtraido[]) {
   const unidade = campos.find((c) => c.unidade)?.unidade ?? null;
   return {
-    json: {
-      choices: [
-        {
-          finish_reason: "stop",
-          message: {
-            content: JSON.stringify({
-              moeda: "BRL",
-              unidade,
-              diagnostico: {
-                entidade: null,
-                tipo_confirma: true,
-                tipo_sugerido: "BALANCO",
-                periodo_tipo: "anual",
-                periodo_referencia: "12M25",
-                legibilidade: "ok",
-                nota_legibilidade: null,
-                resumo: "e2e",
-                justificativa: "e2e",
-              },
-              linhas: campos.map((c, i) => ({
-                s: c.secao,
-                sc: c.secao_canonica ?? "NAO_CLASSIFICAVEL",
-                ec: c.entidade_coluna,
-                pc: c.periodo_coluna,
-                k: c.chave,
-                vt: c.valor_texto,
-                vn: c.valor_num,
-                op: c.origem_pagina,
-                cf: c.confianca ?? 0.9,
-                ordem: i,
-              })),
-            }),
-          },
+    json: envelopeDaResposta(
+      JSON.stringify({
+        moeda: "BRL",
+        unidade,
+        diagnostico: {
+          entidade: null,
+          tipo_confirma: true,
+          tipo_sugerido: "BALANCO",
+          periodo_tipo: "anual",
+          periodo_referencia: "12M25",
+          legibilidade: "ok",
+          nota_legibilidade: null,
+          resumo: "e2e",
+          justificativa: "e2e",
         },
-      ],
-      usage: { prompt_tokens: 1000, completion_tokens: 500 },
-    },
+        linhas: campos.map((c, i) => ({
+          s: c.secao,
+          sc: c.secao_canonica ?? "NAO_CLASSIFICAVEL",
+          ec: c.entidade_coluna,
+          pc: c.periodo_coluna,
+          k: c.chave,
+          vt: c.valor_texto,
+          vn: c.valor_num,
+          op: c.origem_pagina,
+          cf: c.confianca ?? 0.9,
+          ordem: i,
+        })),
+      }),
+      { prompt_tokens: 1000, completion_tokens: 500 },
+    ),
   };
 }
 
 console.log("== fase 1: o produtor real de campos (nó Parse Extracao)");
 const camposDoProdutor = new Map<string, Array<Record<string, unknown>>>();
 for (const [versaoId, campos] of camposPorVersao) {
-  const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", openai_body: {} } };
-  const out = await rodarNo("Parse Extracao", respostaDaOpenAI(campos), { "Montar Req Extracao": req });
+  const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", ia_body: {} } };
+  const out = await rodarNo("Parse Extracao", respostaDaIA(campos), { "Montar Req Extracao": req });
   camposDoProdutor.set(versaoId, out.json.campos as Array<Record<string, unknown>>);
 }
 
@@ -177,16 +194,16 @@ for (const [versaoId, campos] of camposPorVersao) {
 {
   const [versaoId, campos] = [...camposPorVersao.entries()][0];
   const aviso = "Planilha maior que o teto de envio: 137 de 2137 linhas não foram enviadas à extração (teto de 2000).";
-  const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", aviso_conteudo: aviso, openai_body: {} } };
-  const out = await rodarNo("Parse Extracao", respostaDaOpenAI(campos), { "Montar Req Extracao": req });
+  const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", aviso_conteudo: aviso, ia_body: {} } };
+  const out = await rodarNo("Parse Extracao", respostaDaIA(campos), { "Montar Req Extracao": req });
   const motivo = String(out.json.falha_motivo ?? "");
   checar(motivo.includes("137 de 2137 linhas"),
     "o aviso do preparo de conteúdo chega a falha_motivo (vira pendência)", motivo.slice(0, 120));
   checar((out.json.campos as unknown[]).length === campos.length,
     "…e as linhas que VIERAM continuam valendo — o aviso não descarta extração");
 
-  const semAviso = await rodarNo("Parse Extracao", respostaDaOpenAI(campos),
-    { "Montar Req Extracao": { json: { documento_versao_id: versaoId, tipo: "BALANCO", openai_body: {} } } });
+  const semAviso = await rodarNo("Parse Extracao", respostaDaIA(campos),
+    { "Montar Req Extracao": { json: { documento_versao_id: versaoId, tipo: "BALANCO", ia_body: {} } } });
   checar(semAviso.json.falha_motivo == null,
     "…e sem aviso nenhum o motivo continua nulo (nada de pendência inventada)",
     String(semAviso.json.falha_motivo));

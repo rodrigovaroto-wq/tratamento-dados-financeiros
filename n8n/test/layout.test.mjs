@@ -2,7 +2,7 @@
 //
 // Este arquivo existe porque as coordenadas dos nós eram escolhidas à mão, uma a
 // uma, ao longo de 40 sessões — e ninguém nunca conferiu o resultado. O que o
-// dono viu na tela: `Fatiar Extracao` desenhado por cima do `OpenAI Extrair`,
+// dono viu na tela: `Fatiar Extracao` desenhado por cima do `IA Extrair`,
 // `Juntar Blocos` por cima do `Gravar Campos (Sombra)`, o tronco subindo e
 // descendo entre y=140 e y=560 sem motivo, e a aresta longa do `false` do
 // fallback atravessando por dentro dos três nós da classificação por conteúdo.
@@ -25,7 +25,7 @@ const ler = (arq) => JSON.parse(readFileSync(join(AQUI, '..', arq), 'utf8'));
 const WORKFLOWS = [
   'workflow.e1-ingestao.json',
   'workflow.macro.json',
-  'workflow.diagnostico-openai.json',
+  'workflow.diagnostico-ia.json',
   'workflow.erros.json',
 ].map((arq) => [arq, ler(arq)]);
 
@@ -70,7 +70,7 @@ for (const [arq, wf] of WORKFLOWS) {
   // as duas pontas estão na MESMA altura, ela é um segmento reto — e qualquer nó
   // parado nessa altura entre elas é atravessado pelo traço. É exatamente o que
   // acontecia com `Precisa Fallback?`[false] → `Juntar Ramos`, que cruzava por
-  // dentro do `Montar Req Classif`, do `OpenAI Classificar` e do `Parse OpenAI
+  // dentro do `Montar Req Classif`, do `IA Classificar` e do `Parse OpenAI
   // Classif`.
   test(`${arq}: nenhuma linha reta atravessa um nó pelo caminho`, () => {
     const nos = porNome(wf);

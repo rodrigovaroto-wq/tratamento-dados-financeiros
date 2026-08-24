@@ -23,9 +23,13 @@ import { posicionar } from './layout.mjs';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { codigosConhecidos } from './lib/openai.mjs';
+import { codigosConhecidos } from './lib/ia.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, schemaDoProvedor, parteDeArquivo, parteDeTexto,
+  conteudoDaResposta, cortadoPorLimite, usoDaChamada, acrescentarInstrucao,
+} from './lib/provedor.mjs';
 import { createHash } from 'node:crypto';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
@@ -38,7 +42,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Enums da classificação — IMPORTADOS de lib/openai.mjs (fonte única), não
+// Enums da classificação — IMPORTADOS de lib/ia.mjs (fonte única), não
 // copiados à mão: um mirror manual desses códigos já ficou desatualizado uma
 // vez (permitindo a OpenAI inventar "BAL" em vez de "BALANCO", sem nenhum
 // enum travando a saída) e só foi pego testando com documento real no N8N.
@@ -68,7 +72,7 @@ const ALIASES_JSON = JSON.stringify(ALIASES);
 const MODEL_CLASSIFICACAO = MODELO_CLASSIFICACAO;
 const MODEL_EXTRACAO = MODELO_EXTRACAO;
 
-// Schemas estritos (mesma forma dos módulos lib/openai.mjs e lib/extract.mjs).
+// Schemas estritos (mesma forma dos módulos lib/ia.mjs e lib/extract.mjs).
 const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
 // Diagnóstico (entidade/confere tipo+período/legibilidade/resumo) + linhas
 // com `secao` (agrupador de planilha) — mesma chamada que já rodava sempre
@@ -218,6 +222,34 @@ const FONTE_SHA256 = `const sha256Hex = ${sha256Hex.toString()};`;
 const FONTE_CUSTO_CHAMADA = `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
 const custoDaChamada = ${custoDaChamada.toString()};`;
 
+// ---------------------------------------------------------------------------
+// O PROVEDOR DENTRO DOS NÓS
+// ---------------------------------------------------------------------------
+//
+// O provedor ativo entra nos nós Code como um LITERAL (`const PROVEDOR = {...}`)
+// e as funções que falam com ele entram por `toString()`, como todas as outras
+// funções espelhadas. É por isso que `lib/provedor.mjs` descreve cada provedor
+// como dado puro e não como objeto com métodos: dado atravessa a fronteira do nó
+// Code, método não.
+//
+// O QUE ISSO COMPRA, e é o ponto da troca inteira: trocar de provedor deixa de
+// ser achar cada literal `choices[0].message.content` espalhado pelo gerador e
+// passa a ser uma variável de ambiente mais um rebuild. As funções abaixo são as
+// MESMAS que a lib usa e que as suítes exercitam — não há uma segunda
+// implementação minificada do dialeto vivendo aqui dentro.
+const PROV = provedor();
+const FONTE_PROVEDOR = [
+  `const PROVEDOR = ${JSON.stringify(PROV)};`,
+  `const parteDeTexto = ${parteDeTexto.toString()};`,
+  `const parteDeArquivo = ${parteDeArquivo.toString()};`,
+  `const schemaDoProvedor = ${schemaDoProvedor.toString()};`,
+  `const montarCorpoIA = ${montarCorpoIA.toString()};`,
+  `const conteudoDaResposta = ${conteudoDaResposta.toString()};`,
+  `const cortadoPorLimite = ${cortadoPorLimite.toString()};`,
+  `const usoDaChamada = ${usoDaChamada.toString()};`,
+  `const acrescentarInstrucao = ${acrescentarInstrucao.toString()};`,
+].join('\n');
+
 // --- Code (ALL ITEMS): o TETO DE GASTO POR EXECUÇÃO -------------------------
 // RODA DEPOIS DO `Medir Documento`, e a mudança de lugar É a correção.
 //
@@ -234,7 +266,7 @@ const custoDaChamada = ${custoDaChamada.toString()};`;
 // função que o `Fatiar Extracao` vai executar adiante.
 //
 // E CONTINUA SENDO ANTES DE GASTAR, que é a propriedade inegociável: entre o
-// `Medir Documento` e a primeira chamada à OpenAI (`OpenAI Classificar`) não há
+// `Medir Documento` e a primeira chamada à OpenAI (`IA Classificar`) não há
 // gasto nenhum. O `Extrair Texto` é local, o `Upload Storage` é ramo lateral e
 // está desligado, e nenhum documento foi registrado — `Registrar Documento` vem
 // depois do `Juntar Ramos`. Barrar aqui continua custando zero.
@@ -279,7 +311,7 @@ const docs = itens.map((i) => {
     paginas: Number(j.paginas_do_documento),
     colunas,
     blocos,
-    precisaFallback: !!j.precisa_fallback_openai,
+    precisaFallback: !!j.precisa_fallback_ia,
     bytes: Number(j.bytes),
   };
 });
@@ -314,7 +346,7 @@ return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_me
 const CODE_RESUMO_CUSTO = `
 // Soma por NÓ, nunca por índice do lote. A tentação é casar item a item com
 // \`$input\`, e estaria errado: só os documentos cujo nome não resolve o tipo
-// passam pelo Parse OpenAI Classif (8 de 14, no book do dono), então o índice i
+// passam pelo Parse Classif (8 de 14, no book do dono), então o índice i
 // da cadeia principal NÃO é o índice i daquele nó. Casar por índice atribuiria o
 // custo da classificação ao documento errado — e num relatório de custo isso é
 // pior que não ter o relatório.
@@ -346,7 +378,7 @@ const itensDe = (nome) => {
 // de 35. O Juntar ja' devolve um item por documento, com o custo dos blocos
 // somado. O fallback existe para o caso de alguem religar o grafo sem fatiamento.
 const extracoes = itensDe('Juntar Blocos').length > 0 ? itensDe('Juntar Blocos') : itensDe('Parse Extracao');
-const classificacoes = itensDe('Parse OpenAI Classif');
+const classificacoes = itensDe('Parse Classif');
 
 let extracao = 0, entrada = 0, saida = 0, cache = 0, linhas = 0, comFalha = 0, semMedicao = 0;
 let celulas = 0, contas = 0, fatiados = 0;
@@ -452,7 +484,7 @@ const t=normalize(item.nome_original);
 const tipo=parseTipo(t), periodo=parsePeriodo(t);
 const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
 let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=(periodo.fraco?0.05:0.3); if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
-return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_openai:(conf<0.7|| !tipo)}, binary: $input.item.binary};
+return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_ia:(conf<0.7|| !tipo)}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): prepara a parte de CONTEUDO (para todos os docs) ---
@@ -460,6 +492,7 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 // Preserva o binário (o Upload Storage roda como ramo a partir deste node).
 const CODE_PREPARAR_CONTEUDO = `
 ${FONTE_SHA256}
+${FONTE_PROVEDOR}
 const item=$input.item.json;
 const binMeta=($input.item.binary||{})['data']||{};
 const mt=(binMeta.mimeType||'').toLowerCase();
@@ -495,17 +528,21 @@ function colsPlan(rows){const s=new Set();for(const r of rows){if(r&&typeof r===
 function sheetTxt(rows,mr=2000,mc=60){if(!rows.length)return '(planilha vazia)';const cols=colsPlan(rows).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
 // O que ficou de fora vira PENDENCIA (falha_motivo -> 0016), nao nota no prompt.
 function avisoSheet(rows,mr=2000,mc=60){if(!Array.isArray(rows)||!rows.length)return null;const nc=colsPlan(rows).length;const p=[];if(rows.length>mr)p.push((rows.length-mr)+' de '+rows.length+' linhas nao foram enviadas a extracao (teto de '+mr+')');if(nc>mc)p.push((nc-mc)+' de '+nc+' colunas nao foram enviadas a extracao (teto de '+mc+')');if(!p.length)return null;return 'Planilha maior que o teto de envio: '+p.join('; ')+'. A extracao deste documento esta INCOMPLETA -- o que falta nao esta no banco nem no book. Reenvie o arquivo fatiado ou peca ao dono para elevar o teto.';}
+// A FORMA DA PARTE E' DO PROVEDOR, e por isso ela sai de \`parteDeArquivo\`, a
+// mesma funcao que a lib usa -- nao de tres literais escritos aqui. Eram eles
+// que faziam a troca de provedor ser "achar cada lugar": um PDF montado na forma
+// da OpenAI e' 400 no Google, e o 400 chega como falha da chamada, sem dizer que
+// o defeito estava no PREPARO.
 let part; let aviso=null;
-if(/pdf/.test(mt)) part={type:'file',file:{filename:item.nome_original||'documento.pdf',file_data:'data:application/pdf;base64,'+b64}};
-else if(mt.indexOf('image/')===0) part={type:'image_url',image_url:{url:'data:'+mt+';base64,'+b64}};
-else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');const rows=parseCsv(txt);part={type:'text',text:sheetTxt(rows)};aviso=avisoSheet(rows);}
+if(/pdf/.test(mt)||mt.indexOf('image/')===0) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});
+else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');const rows=parseCsv(txt);part=parteDeTexto(PROVEDOR,sheetTxt(rows));aviso=avisoSheet(rows);}
 // XLSX: o conteudo NAO e' extraido. A versao anterior mandava esta frase como se
 // fosse o documento -- a IA recebia um recado de configuracao no lugar do balanco,
 // devolvia "nao ha linhas", e a pendencia dizia que a EXTRACAO falhou, nao que o
 // arquivo nunca foi lido. A chamada continua sendo feita (pular exige no' IF, e'
 // mudanca de topologia da fase 3); o que muda e' que o motivo real vira pendencia.
-else if(/spreadsheetml|ms-excel|excel/.test(mt)){part={type:'text',text:'(XLSX nao extraido: habilitar Extract From File no N8N -- ver README. Nome: '+(item.nome_original||'')+')'};aviso='Arquivo .xlsx/.xls NAO foi lido: o no "Extract From File" nao esta habilitado nesta instancia do n8n, entao NENHUM dado deste documento chegou a extracao. O que este documento contem nao esta no banco nem no book.';}
-else {part={type:'text',text:'(conteudo nao suportado: '+mt+')'};aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}
+else if(/spreadsheetml|ms-excel|excel/.test(mt)){part=parteDeTexto(PROVEDOR,'(XLSX nao extraido: habilitar Extract From File no N8N -- ver README. Nome: '+(item.nome_original||'')+')');aviso='Arquivo .xlsx/.xls NAO foi lido: o no "Extract From File" nao esta habilitado nesta instancia do n8n, entao NENHUM dado deste documento chegou a extracao. O que este documento contem nao esta no banco nem no book.';}
+else {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+mt+')');aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}
 // HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.
 // A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob
 // o MESMO documento, em vez de documento novo. Como o pipeline mandava null no
@@ -550,18 +587,16 @@ return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteud
 
 // --- Code (EACH ITEM): monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
 const CODE_REQ_CLASSIF = `
+${FONTE_PROVEDOR}
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
-const body={model:'${MODEL_CLASSIFICACAO}',temperature:0,response_format:{type:'json_schema',json_schema:schema},messages:[
-  {role:'system',content:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'},
-  {role:'user',content:[{type:'text',text:'Nome (pista fraca): '+(item.nome_original||'')}, item.content_part]}
-]};
-return {json:{...item, openai_body: body}};
+const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_CLASSIFICACAO}',schema,partes:[parteDeTexto(PROVEDOR,'Nome (pista fraca): '+(item.nome_original||'')), item.content_part],sistema:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'});
+return {json:{...item, ia_body: body}};
 `.trim();
 
 // --- Code (EACH ITEM): parse da classificação -----------------------------
 // Contexto vem do node anterior por referência (a resposta HTTP substituiu o
-// item). Remove os campos pesados (openai_body/content_part) do que segue.
+// item). Remove os campos pesados (ia_body/content_part) do que segue.
 // Espelha n8n/lib/merge.mjs: fica com a MAIOR confiança entre nome-do-arquivo
 // e IA (não sobrescreve cegamente); entidade/assinado da IA sempre aproveitados.
 // E ele passou a MEDIR o custo desta chamada (13/08/2026). Até aqui só a
@@ -573,6 +608,7 @@ return {json:{...item, openai_body: body}};
 const CODE_PARSE_CLASSIF = `
 ${FONTE_DIAGNOSTICO_ERRO}
 ${FONTE_CUSTO_CHAMADA}
+${FONTE_PROVEDOR}
 function mergeClassification(fromName, fromAI){
   const nameHasTipo=!!fromName.tipo_taxonomia, aiHasTipo=!!fromAI.tipo_taxonomia;
   let winner;
@@ -592,21 +628,21 @@ function mergeClassification(fromName, fromAI){
   };
 }
 const src=$('Montar Req Classif').item.json;
-// \`content_part\` FICA no item (antes era descartado aqui junto do openai_body).
+// \`content_part\` FICA no item (antes era descartado aqui junto do ia_body).
 // Motivo: o \`Montar Req Extracao\` precisa do PDF, e ele o buscava em
 // \`$('Preparar Conteudo').item\` -- pareamento que atravessa a convergencia dos
 // dois ramos e por isso nao e' confiavel. Dado que o item CARREGA nao depende de
-// pareamento nenhum. Só o \`openai_body\` da CLASSIFICACAO sai (aquele ja' foi
+// pareamento nenhum. Só o \`ia_body\` da CLASSIFICACAO sai (aquele ja' foi
 // usado, e levá-lo adiante incharia cada item com o base64 duas vezes).
-const {openai_body, ...item}=src;
+const {ia_body, ...item}=src;
 const resp=$json;
-const content=resp?.choices?.[0]?.message?.content;
+const content=conteudoDaResposta(PROVEDOR,resp);
 const fromName={tipo_taxonomia:item.tipo_taxonomia, periodo_tipo:item.periodo_tipo, periodo_ref:item.periodo_ref, assinado:item.assinado, entidade:item.entidade, confianca:item.confianca};
 // Custo REAL desta chamada, pelo mesmo \`custoDaChamada\` da extracao e pelo
 // modelo que ESTE no' pediu. Vai em TODOS os caminhos de saida: a chamada que
 // falhou depois de consumir tokens tambem foi paga, e um custo que so' aparece
 // no caminho feliz e' um custo subdeclarado.
-const custo_classificacao_usd=custoDaChamada(resp?.usage, '${MODEL_CLASSIFICACAO}');
+const custo_classificacao_usd=custoDaChamada(usoDaChamada(PROVEDOR,resp), '${MODEL_CLASSIFICACAO}');
 if(!content){
   // A classificação DEGRADA para o nome do arquivo quando a IA falha — e isso é
   // o certo (fail-safe). O que não pode é a justificativa dizer só "falha de
@@ -638,6 +674,7 @@ return {json:{...item, custo_classificacao_usd, ...mergeClassification(fromName,
 // é a ÚNICA leitura de conteúdo garantida para todo documento, por isso
 // também busca entidade e faz o diagnóstico (confere tipo/período/legibilidade).
 const CODE_REQ_EXTRACAO = `
+${FONTE_PROVEDOR}
 const reg=$json;
 const versaoId=reg.documento_versao_id||null;
 // SEM VERSAO, NAO SE MONTA REQUISICAO -- e' o que impede pagar por uma extracao
@@ -671,10 +708,9 @@ if(!prep.content_part){
 }
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
-const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKENS},response_format:{type:'json_schema',json_schema:schema},messages:[
-  {role:'system',content:promptSistema},
-  {role:'user',content:[{type:'text',text:'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'}, prep.content_part]}
-]};
+const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_EXTRACAO}',sistema:promptSistema,schema,maxTokens:${MAX_OUTPUT_TOKENS},partes:[
+  parteDeTexto(PROVEDOR,'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'),
+  prep.content_part]});
 // aviso_conteudo viaja junto: o que o preparo ja sabia estar faltando ANTES da
 // chamada (planilha acima do teto, XLSX nao lido) tem de virar pendencia mesmo
 // quando a extracao volta impecavel -- o pedaco que falta nunca chegou a IA.
@@ -686,7 +722,7 @@ const body={model:'${MODEL_EXTRACAO}',temperature:0,max_tokens:${MAX_OUTPUT_TOKE
 // string of comma-separated values" no Registrar Diagnostico e no Reconciliar.
 // Dado que o item CARREGA nao depende de pareamento nenhum.
 const docId=reg.documento_id||null;
-return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, openai_body:body}};
+return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, ia_body:body}};
 `.trim();
 
 // --- Code (ALL ITEMS): recompõe contexto + resultado do Postgres, POR ÍNDICE --
@@ -721,7 +757,7 @@ for(let i=0;i<regs.length;i+=1){
   const r=regs[i].json||{};
   const res=r.r||r;
   const base=(!desalinhado&&ctx[i]&&ctx[i].json)?ctx[i].json:{};
-  const {openai_body:_ob, ...limpo}=base;
+  const {ia_body:_ob, ...limpo}=base;
   const motivos=[];
   if(desalinhado){
     motivos.push('Recompor Contexto: o Registrar Documento devolveu '+regs.length+' item(ns) e o Juntar Ramos '+ctx.length+' -- a correspondencia por indice deixou de ser verdadeira, e associar o arquivo de um documento ao id de outro seria pior que falhar. Contexto NAO recomposto.');
@@ -827,6 +863,7 @@ return {json:{...item,
 // Fatiar DEPOIS, sobre itens que já carregam tudo, não tem esse problema.
 const CODE_FATIAR_EXTRACAO = `
 ${FONTE_COBERTURA}
+${FONTE_PROVEDOR}
 const saida=[];
 const entradas=$input.all();
 for(let idx=0; idx<entradas.length; idx+=1){
@@ -844,21 +881,17 @@ for(let idx=0; idx<entradas.length; idx+=1){
     // A instrucao da faixa vai na mensagem de USER, nunca no prompt de sistema:
     // o prefixo tem de continuar identico em toda chamada para o cache de
     // prefixo da OpenAI valer (docs/CUSTO_OPENAI.md, alavanca 3).
-    const corpo=JSON.parse(JSON.stringify(j.openai_body||{}));
-    const instrucao=instrucaoDaFatia(f);
-    if(instrucao&&Array.isArray(corpo.messages)){
-      const user=corpo.messages[corpo.messages.length-1];
-      if(user&&Array.isArray(user.content)&&user.content[0]&&typeof user.content[0].text==='string'){
-        user.content[0].text=user.content[0].text+instrucao;
-      }
-    }
+    const corpo=JSON.parse(JSON.stringify(j.ia_body||{}));
+    // ONDE a instrucao entra e' do provedor (\`contents\` no Google, \`messages\`
+    // na OpenAI); QUE ela nao entra no prompt de sistema e' invariante nosso.
+    acrescentarInstrucao(PROVEDOR,corpo,instrucaoDaFatia(f));
     // \`linhas_do_texto\` fica para tras: ele ja' virou ancora, e levar o
     // documento inteiro em texto por todo o grafo incharia cada item a' toa.
     // \`content_part\` sai pelo mesmo motivo, e agora ele PRECISA sair: desde que o
     // conteudo passou a viajar com o item (para nao depender de pareamento), o
     // base64 do PDF esta no json -- e ele ja' foi copiado para dentro do \`corpo\`.
     // Levar as duas copias por todo o resto do grafo dobraria a memoria do lote.
-    const {linhas_do_texto:_l, openai_body:_b, content_part:_cp, ...resto}=j;
+    const {linhas_do_texto:_l, ia_body:_b, content_part:_cp, ...resto}=j;
     // \`pairedItem\` E' OBRIGATORIO num no' que muda a quantidade de itens. Sem
     // ele o n8n perde a cadeia e toda referencia a OUTRO no' por \`.item\` rio
     // abaixo volta undefined -- os nos Postgres recebem "undefined" em Query
@@ -869,7 +902,7 @@ for(let idx=0; idx<entradas.length; idx+=1){
     // pergunta primeiro. \`bloco_acima_do_teto\` e' a promessa de
     // \`planejarFatias\` chegando a quem le a execucao: linha que sozinha nao cabe
     // no teto nao tem corte mais fino, e o caso nao pode ficar em silencio.
-    saida.push({json:{...resto, openai_body:corpo, bloco:f.bloco, blocos:f.blocos,
+    saida.push({json:{...resto, ia_body:corpo, bloco:f.bloco, blocos:f.blocos,
       celulas_do_bloco:f.celulas, linhas_do_bloco:f.linhas??null,
       bloco_de:f.de, bloco_ate:f.ate, bloco_acima_do_teto:!!f.acimaDoTeto}, pairedItem:{item:idx}});
   }
@@ -964,6 +997,7 @@ return saida;
 const CODE_PARSE_EXTRACAO = `
 ${FONTE_DIAGNOSTICO_ERRO}
 ${FONTE_CUSTO_CHAMADA}
+${FONTE_PROVEDOR}
 // O contexto vem do FATIAMENTO, nao mais do \`Montar Req Extracao\`: e' ele que
 // sabe qual bloco este item e', e um item por bloco significa que o pareamento
 // com o no' anterior a ele deixou de ser 1:1. O fallback existe para o caso de
@@ -980,23 +1014,23 @@ if(!ctx){ ctx={}; }
 // "dado que o documento tem e o banco nao recebeu", e cabem no mesmo documento.
 const avisoConteudo=[ctx.aviso_conteudo??null, ctx.recompor_motivo??null].filter(Boolean).join(' | ')||null;
 const resp=$json;
-const finishReason=resp?.choices?.[0]?.finish_reason??null;
-const content=resp?.choices?.[0]?.message?.content;
+const cortado=cortadoPorLimite(PROVEDOR,resp);
+const content=conteudoDaResposta(PROVEDOR,resp);
 let p={}; let falhaMotivo=null;
 if(resp?.error){
   falhaMotivo=diagnosticarErroApi(resp.error).motivo;
 }else if(!content){
-  falhaMotivo='Resposta da OpenAI sem conteudo (falha de rede/API).';
+  falhaMotivo='Resposta do provedor de IA ('+PROVEDOR.rotulo+') sem conteudo (falha de rede/API).';
 }else{
   try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
-    falhaMotivo=(finishReason==='length')
-      ?'Resposta da OpenAI truncada por limite de tokens de saida (finish_reason=length) -- o JSON ficou incompleto e nao pode ser interpretado. Documento provavelmente grande/denso demais (muitas contas/entidades) para uma unica chamada.'
-      :'Resposta da OpenAI nao veio em JSON valido.';
+    falhaMotivo=cortado
+      ?'Resposta do provedor de IA truncada por limite de tokens de saida -- o JSON ficou incompleto e nao pode ser interpretado. Documento provavelmente grande/denso demais (muitas contas/entidades) para uma unica chamada.'
+      :'Resposta do provedor de IA nao veio em JSON valido.';
     p={};
   }
 }
-if(!falhaMotivo&&finishReason==='length'){
-  falhaMotivo='Resposta da OpenAI atingiu o limite de tokens de saida (finish_reason=length); o JSON veio valido, mas o conteudo pode estar incompleto (faltando linhas do fim do documento).';
+if(!falhaMotivo&&cortado){
+  falhaMotivo='Resposta do provedor de IA atingiu o limite de tokens de saida; o JSON veio valido, mas o conteudo pode estar incompleto (faltando linhas do fim do documento).';
 }
 ${FONTE_NORMALIZAR_UNIDADE}
 ${FONTE_NORMALIZAR_MOEDA}
@@ -1006,7 +1040,7 @@ const unidade=normUnid(p.unidade);
 const moedaDoc=normMoeda(p.moeda);
 function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
 ${FONTE_ACHATAR_GRUPOS}
-// A saida da OpenAI vem AGRUPADA (uma secao, suas colunas, e uma conta com um
+// A saida da IA vem AGRUPADA (uma secao, suas colunas, e uma conta com um
 // valor por coluna) e e' achatada aqui de volta para uma linha por
 // (conta x coluna) -- a forma que \`campo_extraido\` sempre teve. O achatamento
 // vem EMBUTIDO da fonte, nao copiado: se este no' e a lib discordarem sobre como
@@ -1042,14 +1076,15 @@ const diagnostico={
 // execução do n8n. É com ele que CUSTO_ESTIMADO_DOC_USD deve ser recalibrado:
 // hoje o teto de US$ 3 por execução decide em cima de uma ESTIMATIVA declarada,
 // e trocar estimativa por medição é o único jeito honesto de apertar o teto.
-const custo_usd=custoDaChamada(resp?.usage, '${MODEL_EXTRACAO}');
+const uso=usoDaChamada(PROVEDOR,resp);
+const custo_usd=custoDaChamada(uso, '${MODEL_EXTRACAO}');
 // O aviso do preparo SOMA-SE ao motivo da chamada em vez de competir com ele:
 // planilha cortada E resposta truncada cabem no mesmo documento, e esconder um
 // dos dois e' a falha que esta mudanca fecha.
 const falhaFinal=[avisoConteudo,falhaMotivo].filter(Boolean).join(' | ')||null;
 // \`bloco\`/\`blocos\`/\`celulas_no_documento\` viajam para o \`Juntar Blocos\`: sem
 // eles a juncao nao sabe a ordem dos pedacos nem tem regua para a cobertura.
-return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:resp?.usage?{entrada:resp.usage.prompt_tokens??null, saida:resp.usage.completion_tokens??null, cache:resp.usage.prompt_tokens_details?.cached_tokens??0}:null}};
+return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:uso?{entrada:uso.prompt_tokens??null, saida:uso.completion_tokens??null, cache:uso.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };
@@ -1131,7 +1166,25 @@ const node = (name, type, typeVersion, parameters, opts = {}) => ({
 // o caminho é reverter esta opção — não empilhar as duas.
 const RESPOSTA_COM_CORPO_NO_ERRO = { response: { response: { neverError: true } } };
 
-const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000 } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
+// O PISO DE 6s É HISTÓRICO E FICA: veio do "teste v18", em que 3 de 16
+// documentos ainda tomaram 429 com 3s. Ele não depende de provedor — é a folga
+// mínima que a experiência com o n8n do dono mostrou ser necessária.
+const PISO_BATCHING_MS = 6000;
+
+// O QUE DEPENDE DO PROVEDOR É O LIMITE POR CHAMADA. Quando ele existe (RPM), o
+// intervalo tem de respeitá-lo contando que um documento mal nomeado faz DUAS
+// chamadas — a de classificação e a de extração, em nós diferentes, no mesmo
+// minuto. Dividir o minuto pelo RPM e esquecer a segunda chamada é o jeito
+// aritmeticamente garantido de tomar 429 no meio do lote: os dois nós somam.
+const CHAMADAS_MAX_POR_DOCUMENTO = 2;
+const INTERVALO_POR_RPM_MS = RPM_CONTA
+  ? Math.ceil((60000 / RPM_CONTA) * CHAMADAS_MAX_POR_DOCUMENTO)
+  : 0;
+
+const IA_BATCHING = {
+  batching: { batch: { batchSize: 1, batchInterval: Math.max(PISO_BATCHING_MS, INTERVALO_POR_RPM_MS) } },
+  ...RESPOSTA_COM_CORPO_NO_ERRO,
+};
 
 // A CADÊNCIA DA EXTRAÇÃO É ARITMÉTICA, NÃO CHUTE — e isto é a correção do v30.
 //
@@ -1154,15 +1207,29 @@ const OPENAI_BATCHING = { batching: { batch: { batchSize: 1, batchInterval: 6000
 // lote de 14 documentos NÃO tinha como passar, nem a 6s nem a 12s, e o problema
 // não era "espaçar um pouco mais".
 //
-// TPM_CONTA é o ÚNICO número a ajustar, e ele mora em lib/extract.mjs (junto de
-// MAX_OUTPUT_TOKENS) porque o teste de cadência e o diagnosticar-openai.mjs leem
-// o MESMO valor — duplicar aqui faria os três discordarem no primeiro ajuste.
-// Tier 2 do gpt-4o são 450.000 TPM, e aí o intervalo cai para ~2,2s — a
-// diferença entre 8 minutos e 30 segundos para o mesmo lote.
+// TPM_CONTA/RPM_CONTA são os ÚNICOS números a ajustar, e eles moram no provedor
+// (`lib/provedor.mjs`), lidos por `lib/extract.mjs` junto de MAX_OUTPUT_TOKENS,
+// porque o teste de cadência e o `diagnosticar-ia.mjs` leem os MESMOS valores —
+// duplicar aqui faria os três discordarem no primeiro ajuste. Subir de tier é
+// mexer numa linha lá: no Tier 2 da OpenAI (450.000 TPM) o intervalo cai para
+// ~2,2s, a diferença entre 8 minutos e 30 segundos para o mesmo lote.
+// E AGORA O RPM ENTRA NA CONTA, porque nem todo provedor tem o mesmo gargalo.
+// Na OpenAI o balde de TOKENS sempre chega primeiro (a reserva de `max_tokens`
+// garante isso), e o intervalo é o de sempre: ~33s no Tier 1. Na linha
+// Flash-Lite do Google o balde de tokens é folgado e o limite é de CHAMADAS: só
+// pelo TPM o intervalo daria ~1 segundo, e o lote tomaria 429 na terceira.
+//
+// O intervalo é o MAIOR dos três — o do balde de tokens, o do limite de
+// chamadas, e o piso histórico de 6s. É o mesmo princípio de sempre: errar para
+// o lento atrasa; errar para o rápido FALHA, e falha custa a rodada inteira.
 const CHAMADAS_POR_MINUTO = TPM_CONTA / MAX_OUTPUT_TOKENS;
-const INTERVALO_EXTRACAO_MS = Math.ceil(60000 / CHAMADAS_POR_MINUTO);
+const INTERVALO_EXTRACAO_MS = Math.max(
+  Math.ceil(60000 / CHAMADAS_POR_MINUTO),
+  INTERVALO_POR_RPM_MS,
+  PISO_BATCHING_MS,
+);
 
-const OPENAI_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
+const IA_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
 
 // Retry para os nós Postgres: SEM onError, um erro transitório (conexão sob
 // carga, timeout pontual) num ÚNICO item PARA A EXECUÇÃO INTEIRA — todos os
@@ -1279,30 +1346,35 @@ const nodes = [
 
   node('Precisa Fallback?', 'n8n-nodes-base.if', 2, {
     conditions: { options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and', conditions: [
-      { leftValue: '={{ $json.precisa_fallback_openai }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+      { leftValue: '={{ $json.precisa_fallback_ia }}', rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
     ] },
   }),
 
   node('Montar Req Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_REQ_CLASSIF }, CODE_CONTINUA),
 
-  // Falha da OpenAI NÃO derruba o workflow: segue com a resposta de erro, o
+  // Falha do provedor NÃO derruba o workflow: segue com a resposta de erro, o
   // Parse produz confiança 0 → pendência de classificação (fail-safe).
-  // Auth via credencial Header Auth (Name=Authorization, Value=Bearer sk-...),
-  // o setup real do dono — sem $env (bloqueado por padrão no N8N).
-  node('OpenAI Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
-    method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
+  //
+  // Auth via credencial Header Auth do n8n — sem `$env`, que é bloqueado por
+  // padrão. O NOME da credencial e o header que ela preenche saem do provedor
+  // ativo (`lib/provedor.mjs`): na OpenAI é "Authorization: Bearer sk-...", no
+  // Google é "x-goog-api-key: ...". A chave NUNCA vai na URL como `?key=`: a URL
+  // do nó aparece na tela de execução e no log, e isso é segredo em lugar de
+  // leitura.
+  node('IA Classificar', 'n8n-nodes-base.httpRequest', 4.2, {
+    method: 'POST', url: urlDaChamada(PROV, MODEL_CLASSIFICACAO),
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
-    sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-    options: OPENAI_BATCHING,
-  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+    sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.ia_body) }}',
+    options: IA_BATCHING,
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: PROV.credencial } } }),
 
-  node('Parse OpenAI Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, CODE_CONTINUA),
+  node('Parse Classif', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_CLASSIF }, CODE_CONTINUA),
 
   // JUNTA OS DOIS RAMOS DO `Precisa Fallback?` — e existe porque a ausência dele
   // custou 19 dos 35 documentos do "Teste V45 - Canastra".
   //
-  // Antes, `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam AMBOS
+  // Antes, `Precisa Fallback?`[false] e `Parse Classif` apontavam AMBOS
   // para o `Registrar Documento`: duas conexões CRUAS no MESMO input. O n8n não
   // garante uma execução por conexão nesse arranjo — no V45 só o ramo do fallback
   // propagou, e os 19 documentos do ramo direto (justamente os centrais: Balanço,
@@ -1362,13 +1434,13 @@ const nodes = [
   node('Fatiar Extracao', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_FATIAR_EXTRACAO,
   }, CODE_CONTINUA),
-  node('OpenAI Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
-    method: 'POST', url: 'https://api.openai.com/v1/chat/completions',
+  node('IA Extrair', 'n8n-nodes-base.httpRequest', 4.2, {
+    method: 'POST', url: urlDaChamada(PROV, MODEL_EXTRACAO),
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
-    sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.openai_body) }}',
-    options: OPENAI_BATCHING_EXTRACAO,
-  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } }),
+    sendBody: true, specifyBody: 'json', jsonBody: '={{ JSON.stringify($json.ia_body) }}',
+    options: IA_BATCHING_EXTRACAO,
+  }, { onError: 'continueRegularOutput', retryOnFail: true, credentials: { httpHeaderAuth: { id: 'REPLACE', name: PROV.credencial } } }),
 
   node('Parse Extracao', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PARSE_EXTRACAO }, CODE_CONTINUA),
 
@@ -1471,7 +1543,7 @@ const connections = {
   // a rodada de 18/08). Este é o primeiro ponto em que o lote inteiro está
   // visível de uma vez COM o documento já medido — linhas com número e número de
   // blocos —, e ainda é o último ponto antes de qualquer gasto: a primeira
-  // chamada à OpenAI é o `OpenAI Classificar`, logo depois do `Precisa
+  // chamada à OpenAI é o `IA Classificar`, logo depois do `Precisa
   // Fallback?`, e nenhum documento foi registrado no banco até o `Registrar
   // Documento`, muito mais adiante.
   'Medir Documento': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
@@ -1486,9 +1558,9 @@ const connections = {
     [{ node: 'Montar Req Classif', type: 'main', index: 0 }],  // true  → classifica por conteúdo
     [{ node: 'Juntar Ramos', type: 'main', index: 1 }],        // false → direto para o Merge
   ] },
-  'Montar Req Classif': { main: [[{ node: 'OpenAI Classificar', type: 'main', index: 0 }]] },
-  'OpenAI Classificar': { main: [[{ node: 'Parse OpenAI Classif', type: 'main', index: 0 }]] },
-  'Parse OpenAI Classif': { main: [[{ node: 'Juntar Ramos', type: 'main', index: 0 }]] },
+  'Montar Req Classif': { main: [[{ node: 'IA Classificar', type: 'main', index: 0 }]] },
+  'IA Classificar': { main: [[{ node: 'Parse Classif', type: 'main', index: 0 }]] },
+  'Parse Classif': { main: [[{ node: 'Juntar Ramos', type: 'main', index: 0 }]] },
   'Juntar Ramos': { main: [[{ node: 'Registrar Documento', type: 'main', index: 0 }]] },
   'Registrar Documento': { main: [[
     { node: 'Recomputar Completude', type: 'main', index: 0 },
@@ -1500,8 +1572,8 @@ const connections = {
     [{ node: 'Montar Req Extracao', type: 'main', index: 0 }],  // false → extrai
   ] },
   'Montar Req Extracao': { main: [[{ node: 'Fatiar Extracao', type: 'main', index: 0 }]] },
-  'Fatiar Extracao': { main: [[{ node: 'OpenAI Extrair', type: 'main', index: 0 }]] },
-  'OpenAI Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
+  'Fatiar Extracao': { main: [[{ node: 'IA Extrair', type: 'main', index: 0 }]] },
+  'IA Extrair': { main: [[{ node: 'Parse Extracao', type: 'main', index: 0 }]] },
   'Parse Extracao': { main: [[{ node: 'Juntar Blocos', type: 'main', index: 0 }]] },
   'Juntar Blocos': { main: [[{ node: 'Gravar Campos (Sombra)', type: 'main', index: 0 }]] },
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },

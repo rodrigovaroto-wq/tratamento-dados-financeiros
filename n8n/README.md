@@ -38,10 +38,10 @@ Intake (Form: nome do mandato + upload de N arquivos)
              │                    contexto lendo o `Preparar Conteudo`
              → Orcamento do Lote → Lote cabe? ... o TETO DE GASTO, decidido com o documento
              │     │                             já medido (linhas e blocos exatos) e ainda
-             │     │                             antes da primeira chamada à OpenAI
+             │     │                             antes da primeira chamada à IA
              │     └─ não cabe → Registrar Recusa → Abortar Lote
              └─→ Precisa Fallback? ... confiança < 0.7 ou tipo desconhecido?
-                   ├─ sim → Montar Req Classif → OpenAI Classificar → Parse (recompõe contexto)
+                   ├─ sim → Montar Req Classif → IA Classificar → Parse (recompõe contexto)
                    └─ não → direto
   → Registrar Documento ..... fn_registrar_documento(...) → {documento_id, documento_versao_id,
         │                     reaproveitou_extracao}
@@ -50,7 +50,7 @@ Intake (Form: nome do mandato + upload de N arquivos)
               │                  MESMO prompt+modelo+esquema, e aquela extração tem linha?
               ├─ sim → Juntar Extraidos (não paga a extração de novo — db/migrations/0118)
               └─ não → [E2] Montar Req Extracao → Fatiar Extracao (1 doc → N blocos que CABEM
-                    no teto de saída) → OpenAI Extrair → Parse → Juntar Blocos (N → 1 doc +
+                    no teto de saída) → IA Extrair → Parse → Juntar Blocos (N → 1 doc +
                     guarda de cobertura) → Gravar Campos (Sombra, N0)
                     → [Diagnóstico] Registrar Diagnostico ... fn_registrar_diagnostico(...)
                           → Juntar Extraidos
@@ -101,7 +101,7 @@ como fato aceito.
    *HTTP Request* (troca o item pela resposta da API) e para o `Extract From File` (escreve o
    resultado do PDF no `json` e **não repassa o binário**). Duas saídas legítimas: ser **ramo
    lateral** (`Upload Storage` — ninguém lê a saída), ou ter um consumidor que recompõe por
-   `$('Nome do Node').item` (`Parse OpenAI Classif`, `Parse Extracao`, `Medir Documento`).
+   `$('Nome do Node').item` (`Parse Classif`, `Parse Extracao`, `Medir Documento`).
 3. **`$('Nó').item` só resolve para nó ANCESTRAL.** Ramo irmão não resolve — e o sintoma é o
    dado voltar vazio **em silêncio**, não um erro.
    > As duas regras acima custaram duas execuções em 13/08, na sequência. Primeiro o
@@ -129,7 +129,7 @@ como fato aceito.
    desce para a primeira faixa livre, e aresta que pula colunas ganha **corredor reservado** —
    nada é posicionado no caminho dela.
    > Coordenada escolhida a olho, nó a nó, ao longo de 40 sessões, entregou o canvas que o dono
-   > viu na tela em 17/08: `Fatiar Extracao` desenhado por cima do `OpenAI Extrair`,
+   > viu na tela em 17/08: `Fatiar Extracao` desenhado por cima do `IA Extrair`,
    > `Juntar Blocos` por cima do `Gravar Campos (Sombra)`, o tronco pulando entre y=140 e y=560,
    > e a linha do `false` do fallback atravessando por dentro dos três nós da classificação por
    > conteúdo. Quem acrescentar um nó agora declara **só a conexão**. Quatro invariantes em
@@ -221,7 +221,7 @@ uma credencial Header Auth **separada** para o Supabase (ver Credenciais acima).
 **Documentos classificados com sucesso (tipo/entidade/período/confiança ok) mas 0 linhas
 extraídas — export sai com "Linhas totais extraídas: 0", todos os nós do N8N em verde, e
 reprocessar não muda nada:** achado em produção (sessão 7 cont.⁷, "teste v14") — a chamada de
-extração (`OpenAI Extrair`) veio truncada (`finish_reason=length`, teto de tokens de saída
+extração (`IA Extrair`) veio truncada (`finish_reason=length`, teto de tokens de saída
 estourado por um documento combinado grande) ou com erro de API, mas `onError:
 continueRegularOutput` faz o node aparecer verde mesmo assim, e o JSON incompleto falhava o
 parse silenciosamente. Corrigido (`db/migrations/0016`): `max_tokens` explícito na chamada +
@@ -235,12 +235,13 @@ the batching settings" em VÁRIOS/TODOS os documentos de um upload em lote:** é
 da OpenAI — o N8N disparou muitas chamadas de extração quase simultâneas e a API throttlou (achado
 sessão 7 cont.⁸, "teste v15": 16 documentos, 16 falhas idênticas). **Não é problema de formato de
 arquivo** (se fosse, os erros seriam diferentes por arquivo, e a classificação — que lê o mesmo
-conteúdo — teria falhado também). Corrigido: os nós `OpenAI Classificar`/`OpenAI Extrair` vêm com
+conteúdo — teria falhado também). Corrigido: os nós `IA Classificar`/`IA Extrair` vêm com
 **batching** (1 chamada por vez, 6s de intervalo — era 3s, endurecido na cont.¹¹) + **retry** (6
 tentativas — era 4 — 5s entre elas) — 1 chamada por vez espalha RPM/TPM no tempo. Se persistir
-mesmo com batching, sua conta OpenAI pode estar num tier de limite muito baixo (subir o tier, ou
-aumentar `batchInterval` no node — `OPENAI_BATCHING` em `n8n/build-workflow.mjs`). **Reimporte o
-workflow** para pegar o batching. Trade-off: um lote de N documentos fica ~N×6s mais lento, mas
+mesmo com batching, sua conta pode estar num tier de limite muito baixo. O número a ajustar NÃO é
+o `batchInterval` do nó: são `tpm`/`rpm` do provedor em `n8n/lib/provedor.mjs`, de onde o intervalo
+é DERIVADO (`node n8n/build-workflow.mjs` depois). Editar o nó à mão faz o teste de cadência e o
+workflow discordarem no primeiro rebuild. **Reimporte o workflow** para pegar o batching. Trade-off: um lote de N documentos fica ~N×6s mais lento, mas
 confiável.
 
 **Documentos CONSOLIDADOS COMPARATIVOS MULTI-ANO (ex. "Balanço Consolidado 2022 e 2023.pdf") ainda
@@ -258,9 +259,15 @@ validada contra uma instância viva — ver "Itens adiados" em `HANDOFF.md` (con
 
 **429 persiste em TODOS os documentos, mesmo pequenos e simples (ex. um PDF de 2-3 KB), mesmo com
 batching:** confirmado em produção (sessão 7 cont.¹³, "teste v19") que a causa raiz pode ser o
-**tier de rate limit da própria conta OpenAI** estar no teto — nenhum espaçamento de código resolve
-isso sozinho. Confira em platform.openai.com → Settings → Limits o RPM/TPM do `gpt-4o` da sua
-conta; se estiver baixo, suba o tier (ou adicione forma de pagamento, se a conta for nova/trial).
+**tier de rate limit da própria conta** estar no teto — nenhum espaçamento de código resolve isso
+sozinho. Confira no console do provedor (OpenAI: Settings → Limits; Google: as cotas do projeto) o
+RPM/TPM do modelo em uso; se estiver baixo, suba o tier (ou adicione forma de pagamento, se a conta
+for nova/trial), e ajuste `tpm`/`rpm` em `n8n/lib/provedor.mjs` para o valor real — subir o tier e
+não contar isso ao código deixa o lote lento à toa.
+
+Atalho: `IA_API_KEY=... node n8n/diagnosticar-ia.mjs` faz uma chamada de 1 token e diz a causa
+classificada pelo MESMO código que a pendência usa. Quem não usa terminal importa
+`n8n/workflow.diagnostico-ia.json` e clica.
 
 **Alguns arquivos do upload em lote NUNCA aparecem no dashboard (nem "não classificado", nem
 pendência nenhuma) — simplesmente somem:** achado em produção (sessão 7 cont.¹³, "teste v19": 9
@@ -291,7 +298,7 @@ com o Supabase/OpenAI. Limpar o cache de execução e recarregar a página **nã
 reproduzível. Ver seção "Upload Storage — pendência conhecida" abaixo.
 
 **Erro `401 - "Your authentication token is not from a valid issuer"` (`invalid_issuer`) nos
-nós `OpenAI Classificar`/`OpenAI Extrair`:** a credencial Header Auth selecionada no node não é
+nós `IA Classificar`/`IA Extrair`:** a credencial Header Auth selecionada no node não é
 a chave da OpenAI (`sk-...`) — é um **JWT** (token de 3 partes com um campo `iss`), tipicamente
 a chave `anon`/`service_role` do **Supabase** selecionada por engano (o inverso do bug já visto
 no Upload Storage). Corrigir: no node, abrir a credencial Header Auth e conferir que o valor é
@@ -306,7 +313,7 @@ enviado à OpenAI (nó `Montar Req Classif`) **não travava `tipo_taxonomia`/`pe
 em vez de usar exatamente um código da taxonomia — e até confundir `periodo_tipo` com a
 referência (`"12M25"` em vez de `"anual"`). Corrigido em `n8n/build-workflow.mjs`: o enum de
 `tipo_taxonomia` agora é **importado diretamente** de `codigosConhecidos()`
-(`lib/openai.mjs`), não copiado à mão — e há um teste (`workflow-sim.test.mjs`) que trava essa
+(`lib/ia.mjs`), não copiado à mão — e há um teste (`workflow-sim.test.mjs`) que trava essa
 regressão. **Reimporte o workflow atualizado** (o node `Montar Req Classif` mudou) para pegar o
 fix; nenhum dado ficou corrompido no banco porque o `insert` falhou e reverteu (a
 constraint fez o trabalho dela).
@@ -372,18 +379,33 @@ community node, se for esse o caminho).
   Pegadinhas herdadas: usar o **Session Pooler** (IPv4 + SSL), usuário com sufixo
   `.projectref`. O N8N usa conexão de serviço, que **ignora RLS** por design (é o orquestrador)
   — ver `db/migrations/0003`.
-- **OpenAI** — nos nós `OpenAI Classificar` e `OpenAI Extrair`: Authentication já vem como
-  *Generic Credential Type → Header Auth*; criar (ou reaproveitar) uma credencial **Header
-  Auth** com **Name=`Authorization`, Value=`Bearer sk-...`** (a palavra `Bearer` + espaço antes
-  da chave — sem isso a OpenAI recusa) e selecioná-la nos dois nós. Modelo fixado em `gpt-4o`
-  no código (trocar nos nós `Montar Req *` se quiser outro).
+- **Provedor de IA** — nos nós `IA Classificar` e `IA Extrair`. Authentication já vem como
+  *Generic Credential Type → Header Auth*; o **nome da credencial e o header que ela preenche
+  dependem do provedor ativo** (`n8n/lib/provedor.mjs`), e o JSON gerado já aponta para o nome
+  certo:
+
+  | Provedor ativo | Nome da credencial no n8n | Name | Value |
+  |---|---|---|---|
+  | **Google (Gemini)** — padrão desde 24/08/2026 | `Google AI (Gemini)` | `x-goog-api-key` | a chave, **sem prefixo nenhum** |
+  | OpenAI | `OpenAI API` | `Authorization` | `Bearer sk-...` (a palavra `Bearer` + espaço) |
+
+  A chave do Google sai de `aistudio.google.com/apikey`. Ela vai no **header**, nunca na URL
+  como `?key=`: a URL do nó aparece na tela de execução e no log do n8n, e chave em URL é
+  segredo em lugar de leitura.
+
+  O modelo NÃO se troca no nó: ele é escrito pelo gerador a partir de `MODELOS_POR_PROVEDOR`
+  (`n8n/lib/custo.mjs`), porque o orçamento depende do preço dele. Editar o nó à mão faz o
+  guarda de US$ 3 passar a decidir com o preço do modelo errado.
+
+  **Para voltar para a OpenAI:** `IA_PROVEDOR=openai node n8n/build-workflow.mjs`, reimportar o
+  JSON, e criar/selecionar a credencial `OpenAI API`. Nenhuma linha de código muda.
 - **Upload Storage** — duas configurações no node:
   1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase — **atenção:** é a URL da
      **API** (`https://<ref>.supabase.co/storage/v1/object/documentos/...`), **não** a URL do
      painel (`https://supabase.com/dashboard/project/<ref>/...`, que é só para humanos no
      navegador). A ref aparece em ambas as URLs; confirme também em Settings → API → Project URL.
   2. **Credencial:** Authentication já vem como *Generic → Header Auth*; criar credencial
-     **Header Auth NOVA** (não reaproveitar a da OpenAI!) com Name=`Authorization`,
+     **Header Auth NOVA** (não reaproveitar a do provedor de IA!) com Name=`Authorization`,
      Value=`Bearer <service role key>` — pegue em Settings → API → `service_role` (a chave
      secreta, não a `anon`).
   3. **Header `apikey`:** o gateway do Supabase exige esse header **além** do `Authorization`
@@ -394,11 +416,11 @@ community node, se for esse o caminho).
 - **Sem a credencial/URL do Upload**, o node falha (e para a execução — falha explícita de
   propósito: linha no banco apontando para arquivo inexistente seria um "falso-limpo"). Para
   um dry-run sem storage, **desative** o node Upload Storage.
-- **Sem a credencial OpenAI**, os nós OpenAI falham mas **não derrubam o workflow**
+- **Sem a credencial do provedor**, os nós de IA falham mas **não derrubam o workflow**
   (`onError: continue`): o parse produz confiança 0 → pendência de classificação / extração
   vazia (fail-safe coerente com a doutrina).
 
-## Fallback OpenAI (conteúdo) — como funciona
+## Fallback de classificação por conteúdo — como funciona
 
 Quando o classificador por nome não tem confiança, a chamada leva o **conteúdo real do
 arquivo** (montado no `Preparar Conteudo`, que roda para todos):
@@ -415,7 +437,7 @@ arquivo** (montado no `Preparar Conteudo`, que roda para todos):
 
 Diferente do fallback de classificação acima (que só roda com confiança baixa), o diagnóstico
 roda **para todo documento, sempre** — é a MESMA chamada que já fazia a extração linha a linha
-(`Montar Req Extracao` → `OpenAI Extrair` → `Parse Extracao`), só que agora o schema
+(`Montar Req Extracao` → `IA Extrair` → `Parse Extracao`), só que agora o schema
 (`n8n/lib/extract.mjs`) também pede um bloco `diagnostico`:
 
 - **Entidade**: se visível no conteúdo. `fn_registrar_diagnostico` só preenche `documento.entidade_id`
@@ -448,7 +470,7 @@ Testando com um documento real (`BALANÇO ACUMULADO 2025.pdf`), a classificaçã
    vence. Entidade e assinado da IA são sempre aproveitados (o nome nunca informa isso). Se a
    chamada à OpenAI falhar tecnicamente, o sistema não zera a confiança à toa — mantém o que o
    nome já sabia.
-3. **Prompt menos conservador + justificativa objetiva** (`n8n/lib/openai.mjs`): antes, o
+3. **Prompt menos conservador + justificativa objetiva** (`n8n/lib/ia.mjs`): antes, o
    prompt incentivava "se incerto, use DESCONHECIDO" — na prática, isso fazia o modelo desistir
    fácil demais. Agora ele é instruído a **sempre tentar um palpite específico** (reservando
    `DESCONHECIDO` só para documento genuinamente ilegível/não-financeiro), e o campo
@@ -470,7 +492,7 @@ Os quatro itens do feedback original estão validados de ponta a ponta com docum
 ## ⚠️ Estado honesto desta entrega
 
 - **Executado ponta a ponta no N8N real do dono (2026-07-17):** Upsert Caso → Listar Arquivos
-  → Classificar Nome → Preparar Conteudo → (fallback OpenAI) → Registrar Documento →
+  → Classificar Nome → Preparar Conteudo → (fallback por conteúdo) → Registrar Documento →
   Recomputar Completude → Extração E2 → Gravar Campos — **todos passaram** com um caso real
   (arquivos com nome/acento reais, ex. "BALANÇO ACUMULADO 2025.pdf").
 - **Upload Storage: desabilitado** por um bug de plataforma do N8N (ver seção dedicada acima)
@@ -481,7 +503,7 @@ Os quatro itens do feedback original estão validados de ponta a ponta com docum
 - **Fluxo entre nós: simulado por teste** — `n8n/test/workflow-sim.test.mjs` executa os códigos
   **reais** do JSON gerado com a semântica de passagem de dados do N8N (Postgres sem binário,
   HTTP substituindo o item, referências `$('Node')`), nos dois ramos.
-- **Fallback OpenAI (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos**, cobertos por
+- **Fallback por conteúdo (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos**, cobertos por
   testes de corpo/schema/parse e confirmados no N8N real.
 - **Diagnóstico de conteúdo (entidade/tipo/período/legibilidade/resumo/planilha) e Reconciliação
   Classe A (E3): construídos e testados** (testes unitários + simulação de fluxo + Postgres 16
@@ -495,7 +517,7 @@ workflow **espelham** essa lógica (inline, porque nós Code não importam arqui
 lógica: mude `lib/`, rode os testes, e **regenere** com `node n8n/build-workflow.mjs` — o teste
 `workflow-sim` valida o JSON regenerado.
 
-**O que NÃO é mais espelhado à mão:** os enums da classificação (importados de `lib/openai.mjs`) e
+**O que NÃO é mais espelhado à mão:** os enums da classificação (importados de `lib/ia.mjs`) e
 o **prompt de extração** — `build-workflow.mjs` importa `SYSTEM_PROMPT` de `lib/extract.mjs` e o
 embute literalmente (via `JSON.stringify`). Antes havia uma paráfrase manual do prompt no gerador,
 e ela já tinha divergido da fonte: melhorias aplicadas em `lib/` não chegavam à produção até
@@ -507,7 +529,7 @@ estão presentes no texto que a OpenAI recebe. **Nunca voltar a parafrasear o pr
 
 ```
 n8n/
-├── lib/            # lógica testável: classifier, completude, openai, extract,
+├── lib/            # lógica testável: provedor, classifier, completude, ia, extract,
 │                   #                  spreadsheet, taxonomia, normalize
 ├── test/           # node:test (simulação do workflow, layout do canvas, libs)
 ├── layout.mjs                # desenha o canvas a partir das conexões (os 4 geradores usam)

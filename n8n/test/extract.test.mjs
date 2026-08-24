@@ -9,7 +9,48 @@ import {
   spreadsheetToText, parseCsv, avisoTruncamentoPlanilha, colunasDaPlanilha,
   MAX_LINHAS_PLANILHA, MAX_COLUNAS_PLANILHA,
 } from '../lib/spreadsheet.mjs';
-import { contentPartFromFile } from '../lib/openai.mjs';
+import { contentPartFromFile } from '../lib/ia.mjs';
+import {
+  PROVEDORES, provedor, conteudoDaResposta, cortadoPorLimite, usoDaChamada,
+} from '../lib/provedor.mjs';
+
+// AS FIXTURAS DESTE ARQUIVO SÃO ESCRITAS NA FORMA DA OPENAI, E ISSO É ESCOLHA.
+//
+// O que se testa aqui é DOMÍNIO — achatar grupos, herdar escala e moeda, não
+// engolir uma conta desalinhada, transformar erro de API em pendência nomeada.
+// Nada disso muda com o provedor, e reescrever as ~30 fixturas no dialeto do
+// provedor da vez tornaria cada uma ilegível para provar a mesma coisa.
+//
+// `resposta()` traduz a fixtura para o dialeto do provedor ATIVO antes de
+// entregá-la ao parser. Ou seja: o mesmo corpo de teste roda contra quem estiver
+// configurado, e trocar `IA_PROVEDOR` reexecuta a suíte inteira no outro
+// dialeto. O que é específico de dialeto tem testes próprios, no fim do arquivo.
+function resposta(apiOpenAI) {
+  const prov = provedor();
+  if (prov.dialeto !== 'gemini') return apiOpenAI;
+  if (!apiOpenAI || !Array.isArray(apiOpenAI.choices)) return apiOpenAI;
+  const c = apiOpenAI.choices[0] || {};
+  const fora = {
+    candidates: [{
+      content: { parts: [{ text: c.message ? c.message.content : '' }] },
+      finishReason: c.finish_reason === 'length' ? 'MAX_TOKENS' : 'STOP',
+    }],
+  };
+  if (apiOpenAI.usage) {
+    fora.usageMetadata = {
+      promptTokenCount: apiOpenAI.usage.prompt_tokens,
+      candidatesTokenCount: apiOpenAI.usage.completion_tokens,
+      cachedContentTokenCount: apiOpenAI.usage.prompt_tokens_details
+        ? apiOpenAI.usage.prompt_tokens_details.cached_tokens : 0,
+    };
+  }
+  return fora;
+}
+
+/** O parser, sempre pela porta do provedor ativo. */
+function parseExtracao(api, opts = {}) {
+  return parseExtractionResponse(resposta(api), opts);
+}
 
 test('extractionSchema é estrito, agrupa por seção e declara as colunas UMA vez', () => {
   // O contexto (s/sc/op) mora no GRUPO e as colunas em `cols`; a conta traz só
@@ -52,11 +93,21 @@ test('extractionSchema é estrito, agrupa por seção e declara as colunas UMA v
 });
 
 test('buildExtractionRequest inclui o conteúdo, o nome do arquivo e o schema de diagnóstico+extração', () => {
-  const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'dre.pdf' });
-  const req = buildExtractionRequest({ tipo: 'DRE', nomeOriginal: 'dre.pdf', conteudo: parte });
-  assert.equal(req.body.response_format.json_schema.name, 'diagnostico_e_extracao');
-  assert.ok(req.body.messages[1].content.some((c) => c.type === 'file'));
-  assert.match(req.body.messages[1].content[0].text, /dre\.pdf/);
+  for (const prov of Object.values(PROVEDORES)) {
+    const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'dre.pdf' }, prov);
+    const req = buildExtractionRequest({ tipo: 'DRE', nomeOriginal: 'dre.pdf', conteudo: parte, prov });
+    const partes = prov.dialeto === 'gemini'
+      ? req.body.contents[0].parts
+      : req.body.messages[1].content;
+    // O SCHEMA TEM DE CHEGAR, seja qual for o dialeto: sem ele a saída é texto
+    // livre e o achatamento recebe qualquer coisa.
+    const schema = prov.dialeto === 'gemini'
+      ? req.body.generationConfig.responseSchema
+      : req.body.response_format.json_schema.schema;
+    assert.deepEqual(Object.keys(schema.properties), ['moeda', 'unidade', 'diagnostico', 'grupos'], prov.id);
+    assert.deepEqual(partes[1], parte, prov.id);
+    assert.match(partes[0].text, /dre\.pdf/, prov.id);
+  }
 });
 
 test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', () => {
@@ -75,7 +126,7 @@ test('parseExtractionResponse normaliza linhas (com seção) e diagnóstico', ()
       { s: null, sc: 'NAO_CLASSIFICAVEL', k: 'Total geral', vt: '4.000', vn: 4000, op: 1, cf: 0.9 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.unidade, 'milhar', '"R$ mil" é normalizado para a escala canônica');
   assert.equal(r.campos.length, 3);
   assert.equal(r.campos[0].secao, 'Receita Operacional');
@@ -113,7 +164,7 @@ test('parseExtractionResponse: documento com várias entidades/colunas lado a la
       { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: 'Total', k: 'Bens Numerários', vt: '51,29', vn: 51.29, op: 1, cf: 0.95 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.campos.length, 4, 'uma linha por (conta x coluna), não uma linha só');
   assert.deepEqual(r.campos.map((c) => c.entidade_coluna), ['Certsys Tecn', 'Certsys Part', 'Certsys Com', 'Total']);
   assert.ok(r.campos.every((c) => c.chave === 'Bens Numerários'), 'mesma chave, colunas diferentes');
@@ -136,7 +187,7 @@ test('parseExtractionResponse: documento comparativo (várias colunas de períod
       { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: '2024', k: 'Caixa', vt: '120', vn: 120, op: 1, cf: 0.9 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.campos.length, 2, 'uma linha por (conta × período), não colapsada');
   assert.deepEqual(r.campos.map((c) => c.periodo_coluna), ['2023', '2024']);
   assert.ok(r.campos.every((c) => c.chave === 'Caixa'), 'mesma chave, períodos diferentes');
@@ -161,16 +212,16 @@ test('parseExtractionResponse normaliza tipo_sugerido=DESCONHECIDO para null', (
     },
     linhas: [],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.diagnostico.tipo_sugerido, null);
   assert.equal(r.diagnostico.legibilidade, 'ilegivel');
   assert.equal(r.diagnostico.nota_legibilidade, 'Digitalização ilegível, páginas em branco.');
 });
 
 test('parseExtractionResponse tolera resposta vazia/ruim', () => {
-  assert.deepEqual(parseExtractionResponse({}).campos, []);
-  assert.deepEqual(parseExtractionResponse({ choices: [{ message: { content: 'nao-json' } }] }).campos, []);
-  assert.equal(parseExtractionResponse({}).diagnostico.entidade, null);
+  assert.deepEqual(parseExtracao({}).campos, []);
+  assert.deepEqual(parseExtracao({ choices: [{ message: { content: 'nao-json' } }] }).campos, []);
+  assert.equal(parseExtracao({}).diagnostico.entidade, null);
 });
 
 // 0111: certidão/organograma/parecer de auditoria não têm valor monetário por
@@ -194,7 +245,7 @@ test('parseExtractionResponse: documento sem valor monetário por natureza devol
     },
     grupos: [],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.diagnostico.tem_dado_financeiro, false);
   assert.deepEqual(r.campos, []);
   // zero linhas aqui não é falha: falhaMotivo tem de ficar null.
@@ -212,14 +263,19 @@ test('parseExtractionResponse: diagnostico sem tem_dado_financeiro (workflow vel
     },
     grupos: [],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.diagnostico.tem_dado_financeiro, null);
 });
 
 test('buildExtractionRequest define max_tokens explícito (sem isso, documentos combinados grandes truncam a resposta silenciosamente)', () => {
-  const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'balanco.pdf' });
-  const req = buildExtractionRequest({ tipo: 'COMBINADO', nomeOriginal: 'balanco.pdf', conteudo: parte });
-  assert.equal(req.body.max_tokens, 16384);
+  for (const prov of Object.values(PROVEDORES)) {
+    const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'balanco.pdf' }, prov);
+    const req = buildExtractionRequest({ tipo: 'COMBINADO', nomeOriginal: 'balanco.pdf', conteudo: parte, prov });
+    const teto = prov.dialeto === 'gemini'
+      ? req.body.generationConfig.maxOutputTokens
+      : req.body.max_tokens;
+    assert.equal(teto, 16384, prov.id);
+  }
 });
 
 test('parseExtractionResponse: resposta ok não tem falhaMotivo', () => {
@@ -232,19 +288,19 @@ test('parseExtractionResponse: resposta ok não tem falhaMotivo', () => {
     },
     linhas: [],
   }) } }] };
-  assert.equal(parseExtractionResponse(api).falhaMotivo, null);
+  assert.equal(parseExtracao(api).falhaMotivo, null);
 });
 
-test('parseExtractionResponse: JSON truncado (finish_reason=length) vira falhaMotivo explicativo, não 0 campos silencioso', () => {
+test('parseExtractionResponse: JSON truncado (limite de tokens de saída) vira falhaMotivo explicativo, não 0 campos silencioso', () => {
   // Achado em produção (sessão 7 cont.⁷, "teste v14"): 16 documentos combinados
   // grandes classificados com sucesso mas extraídos com 0 linhas — a chamada
   // de extração vinha truncada e o parse falhava silenciosamente, sem
   // sinalizar nada. Isso é o que passou a detectar.
   const api = { choices: [{ finish_reason: 'length', message: { content: '{"moeda":"BRL","diagnostico":{"entidade":"Grupo Y"' } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.deepEqual(r.campos, []);
   assert.match(r.falhaMotivo, /truncada/i);
-  assert.match(r.falhaMotivo, /finish_reason=length/);
+  assert.match(r.falhaMotivo, /limite de tokens de saída/);
 });
 
 test('diagnosticarErroApi: separa TETO DE GASTO de falta de crédito (a conta "está OK" e recusa)', () => {
@@ -309,13 +365,13 @@ test('diagnosticarErroApi: o AxiosError REAL do v30 não é lido como código da
 
 test('parseExtractionResponse: erro da API OpenAI vira falhaMotivo com a mensagem original', () => {
   const api = { error: { message: 'You exceeded your current quota', code: 'insufficient_quota' } };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.deepEqual(r.campos, []);
   assert.match(r.falhaMotivo, /You exceeded your current quota/);
 });
 
 test('parseExtractionResponse: sem conteúdo (falha de rede/API) vira falhaMotivo, não só diagnóstico genérico', () => {
-  const r = parseExtractionResponse({});
+  const r = parseExtracao({});
   assert.deepEqual(r.campos, []);
   assert.ok(r.falhaMotivo, 'deve haver um motivo textual, não silêncio');
 });
@@ -399,10 +455,10 @@ test('avisoConteudo entra em falhaMotivo mesmo quando a extração volta impecá
       }) },
     }],
   };
-  const semAviso = parseExtractionResponse(boa);
+  const semAviso = parseExtracao(boa);
   assert.equal(semAviso.falhaMotivo, null, 'sem aviso e sem erro ⇒ nada a relatar');
 
-  const comAviso = parseExtractionResponse(boa, { avisoConteudo: 'Planilha maior que o teto de envio: 70 de 120 linhas não foram enviadas.' });
+  const comAviso = parseExtracao(boa, { avisoConteudo: 'Planilha maior que o teto de envio: 70 de 120 linhas não foram enviadas.' });
   assert.equal(comAviso.campos.length, 1, 'as linhas que vieram continuam valendo');
   assert.match(comAviso.falhaMotivo, /70 de 120 linhas/, 'o aviso tem de virar pendência');
 });
@@ -411,9 +467,9 @@ test('avisoConteudo SOMA-SE ao motivo da chamada, não o substitui', () => {
   // Planilha cortada E resposta truncada cabem no mesmo documento; esconder um
   // dos dois é a falha que esta mudança fecha.
   const truncada = { choices: [{ finish_reason: 'length', message: { content: '{"linhas":[' } }] };
-  const r = parseExtractionResponse(truncada, { avisoConteudo: 'XLSX nao foi lido' });
+  const r = parseExtracao(truncada, { avisoConteudo: 'XLSX nao foi lido' });
   assert.match(r.falhaMotivo, /XLSX nao foi lido/);
-  assert.match(r.falhaMotivo, /finish_reason=length/);
+  assert.match(r.falhaMotivo, /limite de tokens de saída/);
 });
 
 test('parseCsv detecta separador e monta objetos', () => {
@@ -461,7 +517,7 @@ test('parseExtractionResponse normaliza escala e moeda do documento', () => {
     },
     linhas: [{ s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: 'Caixa', vt: '1.000', vn: 1000, op: 1, cf: 0.9 }],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.moeda, 'BRL');
   assert.equal(r.unidade, 'milhar');
   assert.equal(r.campos[0].unidade, 'milhar', 'a escala normalizada é a herdada por linha');
@@ -487,10 +543,10 @@ test('cada linha carrega a moeda do documento — é o que chega ao banco', () =
     ],
   }) } }] });
 
-  const emDolar = parseExtractionResponse(doc('US$'));
+  const emDolar = parseExtracao(doc('US$'));
   assert.deepEqual(emDolar.campos.map((c) => c.moeda), ['USD', 'USD']);
 
-  const emReal = parseExtractionResponse(doc('R$'));
+  const emReal = parseExtracao(doc('R$'));
   assert.deepEqual(emReal.campos.map((c) => c.moeda), ['BRL', 'BRL']);
 
   // Duas linhas de MESMO valor numérico e moedas diferentes: sem a coluna, são
@@ -510,7 +566,7 @@ test('moeda desconhecida fica null — nunca BRL presumido', () => {
     },
     linhas: [{ s: null, sc: 'ATIVO_CIRCULANTE', ec: null, pc: null, k: 'Caixa', vt: '10', vn: 10, op: 1, cf: 0.9 }],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.moeda, null);
   assert.equal(r.campos[0].moeda, null, 'sem moeda declarada, a linha fica sem moeda');
 });
@@ -530,7 +586,7 @@ test('linha não-monetária não herda moeda (mesma regra da escala)', () => {
       { s: null, sc: null, ec: null, pc: null, k: 'Lucro por ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.campos[0].moeda, 'BRL', 'conta monetária herda');
   assert.equal(r.campos[1].moeda, null, 'percentual não herda moeda');
   assert.equal(r.campos[2].moeda, null, 'LPA não herda moeda');
@@ -627,7 +683,7 @@ test('parseExtractionResponse: escala do documento NÃO contamina linha não-mon
       { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Lucro por Ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.unidade, 'milhar', 'escala do documento');
   assert.equal(r.campos[0].unidade, 'milhar', 'conta monetária herda a escala');
   assert.equal(r.campos[1].unidade, null, 'linha em % não herda escala (null = desconhecida)');
@@ -695,7 +751,7 @@ test('DMPL: parse mapeia a matriz para linhas (movimento × componente)', () => 
       },
     }],
   };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.falhaMotivo, null);
   assert.equal(r.campos.length, 3);
   // o movimento vai em `secao` e o componente em `chave` — é assim que o export
@@ -728,7 +784,7 @@ test('ORDEM da linha vem da posição no array, não do modelo (db/migrations/00
       { s: 'Ativo Circulante', sc: 'ativo_circulante', ec: null, pc: null, k: '(-) PECLD', vt: '(269)', vn: -269, op: 1, cf: 0.97 },
     ],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.deepEqual(r.campos.map((c) => c.ordem), [0, 1, 2, 3]);
   // A ordem tem de acompanhar o rótulo — se elas se descolarem, o export
   // reconhece o subtotal errado e tira da soma uma conta legítima.
@@ -764,7 +820,7 @@ test('agrupado: uma conta com duas colunas de período vira DUAS linhas, na orde
       ],
     }],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.campos.length, 4);
   // Conta-maior, coluna-menor: é a ordem de LEITURA do documento, e `ordem` é o
   // que permite ao export reconhecer subtotal impresso acima dos componentes.
@@ -873,7 +929,7 @@ test('agrupado: DESALINHAMENTO descarta a conta e VOLTA NOMEADO — nunca adivin
       ],
     }],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   // A boa passa; a torta NÃO entra pela metade nem com null inventado.
   assert.deepEqual(r.campos.map((c) => c.chave), ['Estoques', 'Estoques']);
   assert.match(r.falhaMotivo, /1 conta\(s\) descartada\(s\) por desalinhamento/);
@@ -906,7 +962,7 @@ test('o formato PLANO antigo continua sendo aceito (workflow importado velho)', 
     },
     linhas: [{ s: 'Custos', sc: 'custos', ec: null, pc: null, k: 'CPV', vt: '(6.000)', vn: -6000, op: 1, cf: 0.9 }],
   }) } }] };
-  const r = parseExtractionResponse(api);
+  const r = parseExtracao(api);
   assert.equal(r.campos.length, 1);
   assert.deepEqual(
     [r.campos[0].chave, r.campos[0].valor_num, r.campos[0].secao_canonica, r.campos[0].unidade],
@@ -924,4 +980,92 @@ test('achatarGrupos é AUTO-CONTIDA (o nó Code do n8n a embute por toString)', 
   for (const entrada of [null, undefined, 42, 'x', [null], [{}], [{ l: 'nao-e-array' }]]) {
     assert.deepEqual(isolada(entrada).linhas, [], `entrada ${JSON.stringify(entrada)}`);
   }
+});
+
+// ===========================================================================
+// O QUE É ESPECÍFICO DE DIALETO — a metade que a tradução das fixturas não cobre
+// ===========================================================================
+//
+// Os testes acima provam que o DOMÍNIO não muda com o provedor. Estes provam a
+// fronteira: que a resposta de cada um é lida como ela realmente vem, e que um
+// erro do provedor novo é diagnosticado com a mesma precisão que o do antigo —
+// que era, literalmente, o que custou o "teste v30".
+
+test('a resposta é lida no dialeto de cada provedor, e o corte por teto é o MESMO fato', () => {
+  const conteudo = '{"ok":true}';
+  const casos = [
+    {
+      prov: PROVEDORES.openai,
+      ok: { choices: [{ message: { content: conteudo }, finish_reason: 'stop' }] },
+      cortada: { choices: [{ message: { content: conteudo }, finish_reason: 'length' }] },
+    },
+    {
+      prov: PROVEDORES.google,
+      ok: { candidates: [{ content: { parts: [{ text: conteudo }] }, finishReason: 'STOP' }] },
+      cortada: { candidates: [{ content: { parts: [{ text: conteudo }] }, finishReason: 'MAX_TOKENS' }] },
+    },
+  ];
+  for (const { prov, ok, cortada } of casos) {
+    assert.equal(conteudoDaResposta(prov, ok), conteudo, prov.id);
+    assert.equal(cortadoPorLimite(prov, ok), false, prov.id);
+    assert.equal(cortadoPorLimite(prov, cortada), true, prov.id);
+    // Resposta vazia é `null`, nunca string vazia: quem lê rio abaixo trata
+    // null como "não veio nada" e abre pendência; '' passaria pelo `if` e
+    // morreria no JSON.parse, com a mensagem errada.
+    assert.equal(conteudoDaResposta(prov, {}), null, prov.id);
+  }
+});
+
+test('o `usage` do Google é traduzido para a forma que a conta de custo já sabia ler', () => {
+  // `custoDaChamada` é o único lugar do sistema que faz conta de dinheiro, e ele
+  // lê `prompt_tokens`/`completion_tokens`/`cached_tokens`. Traduzir na fronteira
+  // é o que impede um segundo formato de `usage` de se espalhar — e é o que faz o
+  // relatório de custo continuar comparável entre provedores.
+  const u = usoDaChamada(PROVEDORES.google, {
+    usageMetadata: { promptTokenCount: 12000, candidatesTokenCount: 3000, cachedContentTokenCount: 2500 },
+  });
+  assert.equal(u.prompt_tokens, 12000);
+  assert.equal(u.completion_tokens, 3000);
+  assert.equal(u.prompt_tokens_details.cached_tokens, 2500);
+  // Sem bloco de uso, `null` — e não zero. Um custo de zero num relatório de
+  // custo é um número INVENTADO, que é pior que um campo vazio.
+  assert.equal(usoDaChamada(PROVEDORES.google, {}), null);
+  assert.equal(usoDaChamada(PROVEDORES.openai, {}), null);
+});
+
+test('diagnosticarErroApi nomeia a causa também no corpo de erro do Google', () => {
+  // O corpo do Google não tem `type` e o `code` dele é NÚMERO — antes de
+  // 24/08/2026 nada disso era reconhecido como corpo de erro, e um 429 dele
+  // teria caído em "desconhecida" com a frase do n8n. É exatamente o cego que
+  // custou o v30, agora do outro lado.
+  const cadencia = diagnosticarErroApi({
+    error: { error: { code: 429, message: 'Quota exceeded for quota metric ... PerMinute', status: 'RESOURCE_EXHAUSTED' } },
+  });
+  assert.equal(cadencia.causa, 'limite_cadencia');
+  assert.equal(cadencia.status, 429, 'o HTTP do Google vem em error.code, e é número');
+
+  const chave = diagnosticarErroApi({
+    error: { error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } },
+  });
+  assert.equal(chave.causa, 'chave_invalida');
+
+  const modelo = diagnosticarErroApi({
+    error: { error: { code: 404, message: 'models/gemini-x is not found for API version v1beta', status: 'NOT_FOUND' } },
+  });
+  assert.equal(modelo.causa, 'modelo_indisponivel');
+
+  const cobranca = diagnosticarErroApi({
+    error: { error: { code: 403, message: 'This API method requires billing to be enabled', status: 'PERMISSION_DENIED' } },
+  });
+  assert.equal(cobranca.causa, 'sem_credito',
+    'cobrança desligada é falta de dinheiro, não falta de permissão — e a ação é outra');
+});
+
+test('a cadência sai do limite MAIS restritivo do provedor, e o Google limita por CHAMADA', () => {
+  // Pelo balde de tokens sozinho, 250.000 TPM com reserva de 16.384 dariam ~15
+  // chamadas por minuto — que é, por coincidência, o mesmo número. A coincidência
+  // não é o ponto: o ponto é que o RPM existe declarado, porque num tier acima o
+  // TPM sobe e o RPM pode não subir junto, e aí é ele que manda.
+  assert.equal(PROVEDORES.google.rpm, 15);
+  assert.equal(PROVEDORES.openai.rpm, null, 'na OpenAI o gargalo é o balde de tokens, não a contagem de chamadas');
 });

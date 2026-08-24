@@ -30,13 +30,23 @@ uma frase tranquilizadora. Uma política de backup que não foi testada é uma c
 |---|---|---|
 | **Supabase / Postgres** | Todo o estado: mandatos, entidades, períodos, documentos e versões, campos extraídos, pendências, decisões, trilha de auditoria | **[A CONFIRMAR]** — depende da região do projeto |
 | **Supabase / Storage** | Os **arquivos originais** enviados pelo cliente (PDF, XLSX, CSV) | idem |
-| **OpenAI** | O conteúdo do documento vai na chamada de classificação e de extração | **Sim** — servidores da OpenAI |
+| **Provedor de IA** — hoje **Google (Gemini)**, antes OpenAI | O conteúdo do documento vai na chamada de classificação e de extração | **Sim** — servidores do provedor |
 | **Vercel** | Nada persistente. O portal renderiza no servidor e não guarda dado de cliente | logs de requisição |
 | **n8n** | Estado de execução do workflow, incluindo o binário do documento durante o lote | **[A CONFIRMAR]** — onde a instância roda |
 
 > **O item que mais importa desta tabela é o terceiro.** Documento financeiro de cliente é enviado a
-> um terceiro (OpenAI) para ser lido. Isso é o desenho do produto, não um efeito colateral — e é o
-> primeiro fato que qualquer conversa de LGPD com o cliente precisa ter à frente.
+> um terceiro para ser lido. Isso é o desenho do produto, não um efeito colateral — e é o primeiro
+> fato que qualquer conversa de LGPD com o cliente precisa ter à frente.
+>
+> **E O TERCEIRO MUDOU EM 24/08/2026:** era a OpenAI, passou a ser o Google (Gemini). Quem é ele hoje
+> está declarado em `n8n/lib/provedor.mjs` (`PROVEDOR_PADRAO`), e a troca é uma variável de ambiente
+> mais um rebuild — o que significa que **este parágrafo pode envelhecer sem ninguém perceber**.
+> Antes de qualquer conversa de LGPD, confira lá qual provedor está ativo.
+>
+> **[A CONFIRMAR] — e este é o item que a troca deixou EM ABERTO:** o acordo de tratamento
+> (zero-retention / DPA) **não se herda de um provedor para o outro**. Qualquer acerto que existisse
+> com a OpenAI não vale para o Google. Enquanto isso não estiver fechado com o provedor ATIVO, dado
+> real de cliente não deve rodar no pipeline — ver `f0/02`.
 
 ---
 
@@ -133,7 +143,7 @@ Não é "dado financeiro" genérico. O que de fato passa por aqui:
 - **Folha de pagamento agregada** — e, em alguns headcounts, individualizada;
 - **Razão social e CNPJ** das empresas, que não são dado pessoal mas identificam o mandato.
 
-**Onde isso aparece fora do banco:** no prompt enviado à OpenAI (o documento inteiro vai como
+**Onde isso aparece fora do banco:** no prompt enviado ao provedor de IA (o documento inteiro vai como
 imagem/PDF) e nos logs do n8n durante a execução. **[A CONFIRMAR]** por quanto tempo o n8n retém
 dados de execução na instância em uso — é a configuração `EXECUTIONS_DATA_MAX_AGE`, e o padrão
 guarda mais do que a maioria das pessoas imagina.

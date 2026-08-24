@@ -8,7 +8,7 @@
 -- Adiciona p_justificativa como parâmetro TRAILING com default (CREATE OR
 -- REPLACE aceita isso sem precisar de DROP, ao contrário de mudar o tipo de
 -- retorno — ver 0005/0006). A justificativa (sempre preenchida pelo prompt
--- ajustado — ver n8n/lib/openai.mjs) vai direto na descrição da pendência.
+-- ajustado — ver n8n/lib/ia.mjs) vai direto na descrição da pendência.
 -- =============================================================================
 
 create or replace function fn_registrar_documento(

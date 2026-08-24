@@ -34,6 +34,7 @@ import {
   orcamentoDoLote,
   orcamentoDoLotePorConteudo,
   CUSTO_ESTIMADO_DOC_USD,
+  CUSTO_POR_MB_USD,
   TETO_EXECUCAO_USD,
   // AS CONSTANTES DA CONVERSÃO VÊM DA FONTE, e isto passou a importar de
   // verdade em 18/08: elas eram declaradas aqui e o guarda de orçamento não as
@@ -172,7 +173,7 @@ function medirDocumento(m, linhasDoTexto) {
     prompt_tokens_details: { cached_tokens: TOKENS_PROMPT_SISTEMA },
   }, MODELO_EXTRACAO);
 
-  const classificacao = c.precisa_fallback_openai
+  const classificacao = c.precisa_fallback_ia
     ? custoDaChamada({
       prompt_tokens: entradaPdf + 400,
       completion_tokens: TOKENS_SAIDA_CLASSIFICACAO,
@@ -193,7 +194,7 @@ function medirDocumento(m, linhasDoTexto) {
     tipo: c.tipo_taxonomia,
     periodo: c.periodo ? `${c.periodo.tipo} ${c.periodo.referencia}` : null,
     confianca: c.confianca,
-    chamadas: c.precisa_fallback_openai ? 2 : 1,
+    chamadas: c.precisa_fallback_ia ? 2 : 1,
     paginas: m.paginas,
     linhas: m.linhas_com_numero,
     celulas_estimadas: celulasEstim,
@@ -345,7 +346,11 @@ if (comoJson) {
     `(uma por bloco)${fatiados.length ? ` — ${fatiados.map((d) => `${d.arquivo.replace(/\.pdf$/, '')} (${d.blocos})`).join(', ')}` : ''}.`);
 
   console.log(`\n== o veredito do orçamento ${veredito.versao} (lib/custo.mjs, teto de US$ ${TETO_EXECUCAO_USD})`);
-  console.log(`  estimativa do guarda: ${(bytesDoLote / 1024).toFixed(0)} KB × US$ 10,5/MB × ` +
+  // O preço por MB sai da CONSTANTE, e não de um literal no texto: este relatório
+  // é lido para decidir recalibração, e um número escrito à mão aqui mentiria
+  // exatamente na hora em que a constante mudasse — que é a hora em que alguém
+  // está lendo este relatório.
+  console.log(`  estimativa do guarda: ${(bytesDoLote / 1024).toFixed(0)} KB × US$ ${CUSTO_POR_MB_USD}/MB × ` +
     `fator ${veredito.fatorCusto} (${chamadas} chamadas, a 2ª pesa ${veredito.fatorCusto === 1 ? '—' : 'pouco'}) = ` +
     `US$ ${veredito.estimadoUSD.toFixed(2)} → ${veredito.cabe ? 'CABE' : 'RECUSA'}`);
   console.log(`  sem o tamanho (plano): ${chamadas} chamada(s) × US$ ${CUSTO_ESTIMADO_DOC_USD} = ` +

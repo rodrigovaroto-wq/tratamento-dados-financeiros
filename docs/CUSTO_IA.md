@@ -1,11 +1,19 @@
-# Custo da OpenAI — onde o dinheiro vai e como reduzir sem perder qualidade
+# Custo da IA — onde o dinheiro vai e como reduzir sem perder qualidade
+
+> **ESTE ARQUIVO CHAMAVA-SE `CUSTO_OPENAI.md` até 24/08/2026.** O provedor virou escolha
+> (`n8n/lib/provedor.mjs`) e o padrão passou a ser o **Google (Gemini 3.5 Flash-Lite)`**. O corpo do
+> documento abaixo foi escrito com os preços do `gpt-4o` e **fica como está**: as alavancas que ele
+> descreve — mandar texto em vez de imagem, não pagar o PDF duas vezes, cache de prefixo, não pagar
+> re-extração, agrupar a saída — são todas sobre **quantos tokens** se gasta, e nenhuma delas muda
+> com quem cobra por eles. O que mudou foi o preço do token, e isso está no **último adendo**, que é
+> por onde começar se a pergunta for "quanto custa hoje".
 
 **Data:** 2026-07-27. Pergunta do dono: *"gostaria de reduzir um pouco o custo sem comprometer a
 qualidade, como fazemos isso?"*
 
 > Âncora real medida pelo dono: o **"teste v18" (16 documentos reais) custou ~US$ 3**. As estimativas
-> abaixo são coerentes com essa ordem de grandeza. Confirmar preços atuais na página de pricing da
-> OpenAI antes de decidir — eles mudam.
+> abaixo são coerentes com essa ordem de grandeza. Confirmar preços atuais na página de pricing do
+> provedor antes de decidir — eles mudam.
 
 ## Onde o dinheiro vai hoje
 
@@ -256,7 +264,7 @@ custo é pior que campo vazio.
 
 ### Diagnóstico sem terminal
 
-`n8n/workflow.diagnostico-openai.json` (gerado por `build-workflow-diagnostico.mjs`) faz o mesmo que
+`n8n/workflow.diagnostico-ia.json` (gerado por `build-workflow-diagnostico.mjs`) faz o mesmo que
 `diagnosticar-openai.mjs`, mas como **workflow importável**: trigger manual, uma chamada de 1 token na
 credencial `OpenAI API` que já existe, e um veredito em texto. Nasceu porque o dono não usa terminal — e
 um diagnóstico que o dono não consegue rodar não diagnostica nada. Não grava em banco, não tem trigger
@@ -528,7 +536,7 @@ isso seja silencioso.
 
 ### O que muda no grafo, e o que não muda
 
-`Montar Req Extracao` → **`Fatiar Extracao`** → `OpenAI Extrair` → `Parse Extracao` → **`Juntar
+`Montar Req Extracao` → **`Fatiar Extracao`** → `IA Extrair` → `Parse Extracao` → **`Juntar
 Blocos`** → `Gravar Campos (Sombra)`. De `Gravar Campos` em diante **nada muda**: um item por
 documento, com `campos` e `falha_motivo`, exatamente como antes.
 
@@ -546,3 +554,96 @@ não sabe quantos blocos o lote terá. Isso encolhe a margem dele (ele superesti
 chamadas são mais). O conserto natural é mover o teto para depois da extração de texto — aí a
 estimativa deixa de ser por byte e passa a ser por linha contada, que é determinística. É fatia
 própria, e está no `ESTADO.md`.
+
+
+---
+
+## Adendo (2026-08-24) — a troca de provedor: o que caiu, o que foi recalibrado, e o que NÃO mudou
+
+O dono pediu a troca de provedor com uma frase direta: *"essa do gpt não estou vendo vantagens do
+que trocar para outras melhores"*. A escolha foi **Google, Gemini 3.5 Flash-Lite**, e ela é uma
+troca de PROVEDOR, não de arquitetura: o pipeline continua mandando o PDF inteiro, numa chamada por
+documento, com a saída presa a um schema.
+
+### O número, medido e não estimado
+
+`n8n/medir-custo-book.mjs` sobre os MESMOS 38 PDFs do `book-canastra`, só trocando a tabela de preço:
+
+| | gpt-4o + gpt-4o-mini | Gemini 3.5 Flash-Lite | |
+|---|---|---|---|
+| lote inteiro (57 chamadas) | US$ 1,2932 | **US$ 0,2821** | −78% |
+| documento mais caro (livro razão, 461 linhas) | US$ 0,1725 | **US$ 0,0459** | −73% |
+| classificação das 19 mal nomeadas | US$ 0,0054 | US$ 0,0137 | +154% (e continua sendo 5% da conta) |
+
+A classificação subiu porque os dois modelos passaram a ser **o mesmo**: na OpenAI havia 17× de
+diferença de preço entre `gpt-4o` e `gpt-4o-mini`, e a linha Flash-Lite já entra no preço em que o
+"barato" da OpenAI entrava. Rebaixar a classificação para uma geração anterior economizaria US$ 0,005
+no book inteiro e reintroduziria o único erro que a separação sempre custou — um tipo errado que só
+o diagnóstico pega, uma etapa adiante. A ESTRUTURA de dois modelos ficou de pé
+(`MODELOS_POR_PROVEDOR`, em `n8n/lib/custo.mjs`): se um dia valer separar de novo, é uma linha.
+
+### O que foi recalibrado, e por que os números não foram só divididos
+
+Três constantes do guarda de orçamento eram calibradas contra o preço do `gpt-4o`:
+
+| Constante | Antes | Depois | Como saiu |
+|---|---|---|---|
+| `CUSTO_ESTIMADO_DOC_USD` | 0,20 | **0,055** | 1,2× o documento mais caro MEDIDO (US$ 0,0459) — a mesma folga que 0,20 tinha sobre 0,1725 |
+| `CUSTO_POR_MB_USD` | 10,5 | **2,80** | escalado por **0,266** |
+| `CUSTO_MINIMO_CHAMADA_USD` | 0,012 | **0,0032** | escalado por 0,266 |
+
+**Por que 0,266 e não 0,218.** Existem duas razões medidas e elas não são iguais: o lote inteiro caiu
+0,218× e o documento mais DENSO caiu 0,266×. Divergem porque o preço da saída caiu menos que o da
+entrada, e documento denso é o que gasta saída. Um escalar só não preserva as duas propriedades — e
+escalar pelo agregado fazia o **lote homogêneo denso**, que é o caso que o teto existe para barrar,
+passar a ser ACEITO. Trocar "recusa lote que caberia" por "aceita lote que não cabe" é o v31 de novo.
+Vale a razão do denso. O custo declarado: o guarda por byte ficou ~2× acima do custo real do lote
+típico (era ~1,45×), e continua muito longe de barrar trabalho — o book inteiro estima US$ 0,58
+contra um teto de US$ 3.
+
+**A estimativa por CONTEÚDO não precisou de nada.** Ela deriva do preço pela mesma
+`custoDaChamada` que mede a conta real, então seguiu sozinha: estima US$ 0,29 contra US$ 0,2821
+medidos — 3% acima, a mesma precisão de antes.
+
+### O que a troca comprou em COMPORTAMENTO, e não em preço
+
+- **O lote do v31 cabe.** Os 14 documentos que estouraram o teto de US$ 5 da OpenAI no meio da
+  execução em 31/07/2026 — matando 8 sem extração — hoje estimam menos da metade do teto de US$ 3.
+  Está travado por teste em `n8n/test/custo.test.mjs`.
+- **O book de 38 documentos deixou de precisar de levas** pelo estimador plano (o caminho cego), se
+  os nomes estiverem na notação de `f0/03`.
+- **A cadência mudou de gargalo, e para melhor.** Na OpenAI o intervalo entre extrações era de ~33s,
+  aritmética do balde de TPM (`max_tokens` é RESERVA — ver o adendo do v30). No Google o balde de
+  tokens é folgado e o limite é de CHAMADAS: o intervalo caiu para **8s**, derivado de 15 RPM
+  contando que um documento mal nomeado faz DUAS chamadas. O lote de 57 chamadas passou de ~31
+  minutos para ~7,6.
+
+### O que NÃO mudou, e é o que mais importa
+
+Nada do domínio. O prompt de sistema é o mesmo texto, o schema tem as mesmas propriedades na mesma
+ordem, o achatamento dos grupos é o mesmo código, a normalização de escala e moeda é a mesma, e o
+diagnóstico de erro é a mesma função — que agora reconhece também os corpos de erro do Google.
+
+As alavancas deste documento continuam todas de pé, e a **nº 1 continua sendo a maior**: mandar o PDF
+como TEXTO em vez de imagem. Medido no book com o preço novo, ela vale 3% — menos que os 5% de antes,
+porque a entrada barateou mais que a saída, mas ela nunca foi só sobre custo: texto extraído não tem
+erro de leitura visual de número.
+
+### O checklist da troca — o que o código NÃO consegue conferir
+
+1. **O teto de gasto do projeto no provedor NOVO.** Ele é configuração de conta e **não se herda**:
+   a conta nova começa sem teto nenhum, e a defesa dura (a que barra quando este código falha) fica
+   ausente até alguém ir lá pôr. É o único item desta lista que nenhuma suíte alcança.
+2. **A credencial no n8n**, com o nome que o JSON gerado espera: `Google AI (Gemini)`, header
+   `x-goog-api-key`, valor sem prefixo. Ver `n8n/README.md`.
+3. **Zero-retention / DPA com o provedor novo** antes de dado real de cliente. Trocar de provedor não
+   herda o acordo do anterior — ver `docs/10_DADOS_RETENCAO_E_LGPD.md` e `f0/02`.
+4. **Reimportar o workflow.** A versão do orçamento subiu para `v4 (2026-08-24)` e ela vai na mensagem
+   de recusa justamente para isto: um n8n rodando o JSON velho recusa lotes que o código novo aceita,
+   com uma mensagem que parece a mesma.
+
+### Voltar atrás é uma variável de ambiente
+
+`IA_PROVEDOR=openai node n8n/build-workflow.mjs` e reimportar. A OpenAI continua inteira no catálogo
+e testada — as suítes de fronteira rodam nos DOIS dialetos, e trocar a variável reexecuta a suíte
+inteira contra o outro. Nenhuma linha de código muda.
