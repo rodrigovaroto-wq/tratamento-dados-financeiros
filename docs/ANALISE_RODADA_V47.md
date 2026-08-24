@@ -346,6 +346,22 @@ tokens de saída — 89% do teto de 16.384**, sem fatiar. Um balanço um pouco m
 | `15_Balancete_12M25` | 5.838 | 35,6% | 155 | US$ 0,0164 |
 | soma do lote | 116.905 | — | 2.460 | US$ 0,3566 |
 
+**E o estimador do repositório está descalibrado para o Gemini.** O
+`n8n/medir-custo-book.mjs` — que roda no CI e é de onde saiu a premissa dos 17.875 —
+prevê, para este mesmo book:
+
+| | Estimado | Real | |
+|---|---:|---:|---|
+| saída do documento mais pesado | 17.875 (`17_Livro_Razao`) | 10.007 | **1,8× a mais** |
+| documentos fatiados | 4 | **0** | |
+| chamadas de extração | 44 | 38 | |
+
+Ele erra o alvo (aponta o `17`, o real é o `35`), erra a magnitude em 1,8× e por isso
+prevê fatiamento onde não há. Não é defeito novo — é o modelo de tokens de saída, herdado
+do gpt-4o, aplicado a um modelo que agrupa a saída de outro jeito. **É a origem da premissa
+errada que a decisão 4.1 quase seguiu**, e enquanto não for recalibrado o CI vai continuar
+afirmando "109% do teto" para um documento que usa 61%.
+
 **Duas coisas que a projeção tinha errado**, e vale registrar as duas:
 
 1. **o documento mais caro não é o mais numeroso.** O `35` tem *menos* pares que o `01`

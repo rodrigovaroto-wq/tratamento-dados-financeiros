@@ -1028,6 +1028,39 @@ $$;
 COMMENT ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) IS 'Roda a classificação contábil sobre uma versão e REGISTRA a sugestão — a primeira metade de N0. A segunda ("não influencia decisão") é garantida por construção: só escreve em campo_classe_sugerida, não abre pendência e não entra em caminho de export. Append-only sem duplicar: grava só quando a regra muda de opinião, e aí a sequência é o histórico.';
 
 --
+-- Name: fn_coluna_de_dimensao(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_coluna_de_dimensao(p_coluna text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  select case
+    when p_coluna is null or btrim(p_coluna) = '' then false
+    -- Os parênteses em volta do padrão NÃO são estilo: `~` liga mais forte que
+    -- `||`, então sem eles o Postgres lê `(texto ~ 'a') || 'b'` — booleano
+    -- concatenado com texto — e a função devolve texto em vez de booleano.
+    else fn_normalizar_texto(p_coluna) ~ (
+      -- Dimensões temporais que NÃO são período de valor: o ano solto numa
+      -- coluna própria (v47, doc 19).
+      '^(exercicio|ano|periodo|competencia|data|mes|vencimento)$'
+      -- Contagens e medidas físicas: repetem por natureza e não são dinheiro.
+      || '|^(quantidade|qtd|qtde|unidade|efetivo|efetivo \(pessoas\)|pessoas|headcount|dias|prazo)$'
+      -- Classificadores textuais.
+      || '|^(natureza|tipo|classe|categoria|situacao|status|moeda|indexador|empresa.*|contraparte|banco|contrato|historico|documento)$'
+      -- Proporções e unitários: 100,00 repetido em "% do total" é aritmética,
+      -- não alucinação; e custo unitário repete entre itens do mesmo insumo.
+      || '|(^|\s)(%|percentual|participacao|custo unitario|preco unitario|valor unitario|taxa)($|\s)'
+    )
+  end;
+$_$;
+
+--
+-- Name: FUNCTION fn_coluna_de_dimensao(p_coluna text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_coluna_de_dimensao(p_coluna text) IS 'A coluna ROTULA a linha (exercício, quantidade, natureza, %) em vez de medi-la em dinheiro. Nasceu do falso positivo da v47: a guarda de padrão suspeito acusou o ano 2023 repetido na coluna "Exercício" como alucinação (0140).';
+
+--
 -- Name: fn_coluna_entidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1470,10 +1503,19 @@ CREATE FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) RET
     -- terem o mesmo valor por construção contábil.
     and not fn_rotulo_estrutural(ce.chave, array['ativo'])
     and not fn_rotulo_estrutural(ce.chave, array['passivo','patrimonio'])
+    -- 0140: …e a coluna mede dinheiro. `Exercício` repetindo 2023 é o ano, não
+    -- alucinação — foi o falso positivo da v47.
+    and not fn_coluna_de_dimensao(ce.periodo_coluna)
   group by ce.valor_num, coalesce(ce.entidade_coluna, ''), coalesce(ce.periodo_coluna, '')
   order by count(distinct ce.chave) desc
   limit 1;
 $$;
+
+--
+-- Name: FUNCTION fn_contas_repetindo_valor(p_documento_versao_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uuid) IS 'O valor material mais repetido entre contas DISTINTAS da mesma coluna, ignorando os totais estruturais (0034) e as colunas de dimensão (0140). Insumo do sinal 1 da guarda de extração (0013).';
 
 --
 -- Name: fn_contraparte_intragrupo(uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
