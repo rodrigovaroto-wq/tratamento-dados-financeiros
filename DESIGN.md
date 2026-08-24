@@ -1,0 +1,286 @@
+---
+name: Portal Oria — Tratamento de Dados Financeiros
+description: O mundo visual da Oria Partners traduzido de página de marketing para mesa de conferência.
+colors:
+  papel: "#f6f4ef"
+  folha: "#fcfbf8"
+  tinta: "#11161d"
+  tinta-secundaria: "#6e6a62"
+  linha: "#d2cdc1"
+  acento: "#b6482f"
+  risco: "#78223a"
+  alerta: "#805a1e"
+  ok: "#3a643c"
+  info: "#2f5b6f"
+  serie: "#563965"
+typography:
+  documento:
+    fontFamily: "Fraunces, ui-serif, Georgia, serif"
+    fontSize: "1.5rem"
+    fontWeight: 500
+    lineHeight: 1.2
+    letterSpacing: "-0.025em"
+  corpo:
+    fontFamily: "Inter Tight, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.5
+    letterSpacing: "normal"
+  rotulo-secao:
+    fontFamily: "Inter Tight, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.8125rem"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "0.025em"
+  dado:
+    fontFamily: "JetBrains Mono, ui-monospace, monospace"
+    fontSize: "1.5rem"
+    fontWeight: 600
+    lineHeight: 1.2
+    letterSpacing: "-0.025em"
+rounded:
+  sm: "4px"
+  md: "6px"
+  lg: "8px"
+  full: "9999px"
+spacing:
+  xs: "6px"
+  sm: "8px"
+  md: "16px"
+  lg: "32px"
+components:
+  button-primary:
+    backgroundColor: "{colors.tinta}"
+    textColor: "{colors.papel}"
+    rounded: "{rounded.md}"
+    padding: "6px 12px"
+  button-primary-hover:
+    backgroundColor: "#1e242c"
+    textColor: "{colors.papel}"
+  button-secondary:
+    backgroundColor: "{colors.folha}"
+    textColor: "#1e242c"
+    rounded: "{rounded.md}"
+    padding: "6px 12px"
+  button-approve:
+    backgroundColor: "{colors.ok}"
+    textColor: "{colors.papel}"
+    rounded: "{rounded.md}"
+    padding: "6px 12px"
+  chip:
+    backgroundColor: "#efe4d2"
+    textColor: "#6b4c19"
+    rounded: "{rounded.full}"
+    padding: "2px 8px"
+  card:
+    backgroundColor: "{colors.folha}"
+    textColor: "{colors.tinta}"
+    rounded: "{rounded.lg}"
+    padding: "16px"
+  input:
+    backgroundColor: "{colors.folha}"
+    textColor: "{colors.tinta}"
+    rounded: "{rounded.md}"
+    padding: "8px 12px"
+---
+
+# Design System: Portal Oria — Tratamento de Dados Financeiros
+
+Este arquivo governa `portal/`. Ele **não** governa o entregável em Excel
+(`portal/src/lib/oria-marca.ts` + `export-estilo.ts`), que segue grafite/ciano
+por decisão registrada — ver *Do's and Don'ts*.
+
+## Overview
+
+O mundo é o da própria Oria Partners, medido no site em produção e trazido
+para dentro da ferramenta: **papel creme, tinta quase-preta, um acento
+terracota**. O que muda da página de marketing para cá não é a paleta — é o
+regime. No site, o design é o produto e pode falar alto. Aqui o usuário está
+numa tarefa: conferir linha por linha se a máquina leu o balanço direito, por
+horas. Expressão que atrapalha a tarefa é defeito.
+
+Disso saem as três decisões que estruturam tudo:
+
+**A tinta é a ação, o terracota é a identidade.** No site, `--accent` e
+`--destructive` são a mesma cor, e `--primary` é a tinta. Copiar isso para um
+portal com "excluir mandato" pintaria a marca com a cor do perigo. Então o
+botão primário é tinta (como no site), o terracota fica com seleção, foco,
+item ativo e link, e o risco ganhou um oxblood próprio.
+
+**Nenhuma superfície é branca.** Mesa (`papel`), folha (`folha`) e faixa de
+navegação (`tinta-50`) são três temperaturas do mesmo creme. Branco puro ao
+lado de creme lê como papel de outro lote.
+
+**Cor nunca carrega significado sozinha.** Todo estado é cor **mais** palavra.
+A regra veio do entregável impresso e vale mais na tela: cerca de 8% dos homens
+que abrem este portal não distinguem verde de vermelho.
+
+## Colors
+
+Estratégia: **Restrained** — neutros quentes mais um acento, que é o piso para
+superfície de trabalho. O terracota nunca decora: ele marca onde você está e o
+que está selecionado.
+
+### Primary
+
+`acento` **#b6482f** — terracota. Seleção corrente, anel de foco, item ativo da
+navegação, link. Medido em `hsl(11 59% 45%)` no site.
+Rampa: `700 #93381f` · `600 #b6482f` · `100 #f2ddd6` · `50 #f9eeea`.
+
+### Secondary
+
+`tinta` **#11161d** — a ação primária e todo o texto forte. É o `--primary` do
+site, não uma invenção nossa. Rampa completa de 900 a 50, descendo em direção
+ao papel e não ao cinza: os degraus claros carregam o amarelo da mesa.
+
+### Tertiary
+
+Cinco famílias de estado, geradas com saturação alta nas faixas claras porque
+sobre creme um tom claro lavado vira o próprio papel:
+
+| Família | 700 | Significa |
+|---|---|---|
+| `risco` | #78223a | divergência, bloqueio, erro, ação destrutiva |
+| `alerta` | #805a1e | pendente, faltante, aguardando |
+| `ok` | #3a643c | conferido, aceito, completo |
+| `info` | #2f5b6f | nota do sistema, subtotal — nem bom nem ruim |
+| `serie` | #563965 | categoria de linha derivada (taxonomia, não estado) |
+
+### Neutral
+
+`papel #f6f4ef` (mesa) · `folha #fcfbf8` (superfície de dado) ·
+`tinta-50 #f1eee6` (faixa de navegação) · `linha #d2cdc1` (fio).
+
+### Named Rules
+
+- **A regra do acento reservado.** Terracota só aparece em foco, seleção, item
+  ativo e link. Nunca em botão de salvar, nunca em preenchimento decorativo.
+- **A regra dos 28 graus.** O risco vive a pelo menos 28° de matiz do acento e
+  mais escuro que ele. Sem essa distância, "excluir" e "a marca" viram a mesma
+  mancha vermelha na periferia da visão.
+- **A regra do par medido.** Nenhum par texto/preenchimento entra sem ser
+  medido. Todos os que o código usa passam AA; o pior é 5,39:1.
+- **`tinta-400` é o piso do texto** (3,62:1). Abaixo dele só fio, ícone
+  desativado e marca-d'água. Placeholder é `tinta-500`.
+
+## Typography
+
+Três famílias, todas do site, todas auto-hospedadas por `next/font`.
+
+### Hierarchy
+
+| Papel | Família | Onde |
+|---|---|---|
+| `documento` | Fraunces 500, -0.025em | Nome do mandato; título da tela de abrir mandato |
+| `corpo` | Inter Tight 400/500/600 | **Toda** a interface: rótulo, botão, chip, célula, prosa |
+| `rotulo-secao` | Inter Tight 600, versalete, +0.025em | Título de seção (`.titulo-secao`) |
+| `dado` | JetBrains Mono 400/600, tabular | Valor monetário, contagem, indicador, nome de arquivo |
+
+Escala em rem fixa, nunca fluida: o analista lê em DPI constante e um `h1` que
+encolhe dentro de um painel piora, não melhora.
+
+### Named Rules
+
+- **Fraunces nomeia documento, não interface.** Serifa de display em rótulo,
+  botão, chip ou célula é o erro clássico de UI de produto. Ela toca em dois
+  lugares no portal inteiro.
+- **Mono só onde há medição.** Número, contagem, identificador, proveniência.
+  Mono em texto corrido para parecer técnico é fantasia, não tipografia.
+- **`tabular-nums` é global** (`html`), porque coluna de dinheiro que dança
+  entre linhas custa tempo de conferência.
+
+## Layout
+
+Densidade a serviço da conferência. Tabela pode passar de 120ch; prosa fica em
+65–75ch. Comportamento responsivo é **estrutural** — a barra lateral recolhe, a
+tabela vira lista —, nunca tipografia fluida.
+
+Regra de navegação herdada e mantida: **nenhuma função da barra lateral se
+repete no conteúdo.**
+
+## Elevation & Depth
+
+Elevação mínima. O produto é dado; sombra demais compete com o número.
+
+### Shadow Vocabulary
+
+- `--sombra-carta` `0 1px 2px 0 rgb(17 22 29 / .05), 0 1px 3px 0 rgb(17 22 29 / .07)`
+- `--sombra-topo` `0 1px 0 0 rgb(17 22 29 / .07)`
+
+Ambas tingidas da tinta. Sombra cinza-neutro sobre creme lê como sujeira.
+
+### Named Rules
+
+- **Separação vem de fio e espaço, não de sombra.** A sombra só distingue a
+  folha da mesa; hierarquia dentro da folha é espaçamento.
+
+## Shapes
+
+`4px` campo compacto · `6px` botão e input · `8px` carta e bloco de pendência ·
+`full` chip. Sem cantos vivos, sem raio grande: raio grande infantiliza tabela
+de dado.
+
+## Components
+
+### Buttons
+
+Um primário por tela. `btn-primario` (tinta), `btn-secundario` (folha com fio),
+`btn-aprovar` (`ok-700` — reservado ao aceite que leva dado para a base),
+`btn-discreto` (sem preenchimento). Todos com `disabled:opacity-50` e
+`cursor-not-allowed`.
+
+### Chips
+
+`.chip` é pílula de `text-xs font-medium`, sempre `bg-<família>-100` com
+`text-<família>-800/900`. **Todo chip carrega a palavra do estado.**
+
+### Cards / Containers
+
+`.carta` — `folha`, fio `tinta-200`, raio 8px, `--sombra-carta`. Carta dentro
+de carta é proibido.
+
+### Inputs / Fields
+
+Fio `tinta-200` (ou `tinta-300` em campo compacto), fundo `folha`, raio 6px.
+Foco: contorno terracota de 2px com deslocamento de 2px — nunca só mudança de
+cor de borda.
+
+### Navigation
+
+Barra lateral retrátil sobre `tinta-50`, item em `tinta-700`, item ativo com o
+acento. Estado (recolhida, seção aberta) mora no navegador.
+
+### Superfícies do navegador
+
+Seleção em `acento-100`, cursor em `acento-600`, marcador de lista em
+`tinta-400`, barra de rolagem `thin` em `tinta-200`, sublinhado com
+`text-underline-offset: 0.2em`. Nenhum comportamento é reinventado — só
+recolorido.
+
+## Motion
+
+Uma curva: `cubic-bezier(0.22, 1, 0.36, 1)` (ease-out-quint). Transições de
+estado em `transition-colors`. A abertura do painel toca **uma vez por sessão**
+do navegador, qualquer gesto corta, e `prefers-reduced-motion` desliga tudo sem
+versão reduzida de consolo. Nada anima `width`, `top` ou `left`.
+
+## Do's and Don'ts
+
+### Do:
+
+- Escreva estado como cor **mais** palavra, sempre.
+- Meça o par texto/fundo antes de adicionar um tom.
+- Use `folha` para superfície de dado e `papel` para a mesa.
+- Deixe Fraunces nomear documento e Mono medir número.
+- Prefira fio e espaço a sombra para separar.
+
+### Don't:
+
+- Não pinte ação primária de terracota. Ação primária é tinta.
+- Não use branco puro em superfície nenhuma.
+- Não ponha serifa de display em rótulo, botão, chip ou célula.
+- Não aninhe cartas.
+- Não mexa em `oria-marca.ts` ao mudar cor de tela. **O Excel diverge de
+  propósito:** modelo de crédito é lido em impressão preto e branco por comitê,
+  e a gramática de cor de fonte de lá (azul = digitado, preto = calculado,
+  verde = outra aba) é convenção de mercado.

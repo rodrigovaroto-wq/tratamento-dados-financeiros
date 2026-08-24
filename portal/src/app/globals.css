@@ -3,47 +3,171 @@
 /* =============================================================================
    A CARA DA ORIA NA TELA.
 
-   POR QUE ESTE ARQUIVO DEIXOU DE TER TRÊS LINHAS. O portal usava a paleta padrão
-   do Tailwind (`neutral`) e nenhuma cor de marca, enquanto o arquivo ENTREGUE ao
-   cliente já tinha identidade versionada em `src/lib/oria-marca.ts` — grafite
-   institucional, acento, cinzas de faixa. Eram dois produtos com aparências
-   diferentes saindo do mesmo sistema, e o que o cliente vê primeiro (a tela) era
-   o que parecia menos acabado.
+   POR QUE ESTE ARQUIVO MUDOU DE MUNDO. Até aqui o portal usava a paleta `slate`
+   do Tailwind com um acento ciano — cores derivadas do ENTREGÁVEL em Excel
+   (`src/lib/oria-marca.ts`), que por sua vez foram derivadas do modelo
+   institucional. Só que a Oria tem uma identidade própria, viva em produção em
+   oriapartners.com, e o portal não se parecia com ela. Eram dois produtos com
+   caras diferentes saindo da mesma casa, e o que o cliente vê primeiro — a tela
+   — era o que parecia menos acabado.
 
-   Os tokens abaixo são os MESMOS de `oria-marca.ts`, convertidos de ARGB para
-   hex. Mudar cor de marca é mudar nos dois lugares, e o comentário de lá diz o
-   porquê de cada uma:
+   Os valores abaixo foram MEDIDOS no site em produção (`assets/index-*.css`,
+   tokens `--background`, `--foreground`, `--accent`, `--border`), convertidos de
+   HSL para hex:
 
-     grafite   #1E293B   faixa de seção do modelo → texto e superfícies escuras
-     acento    #0E7490   cabeçalho de ano projetado e capa → ação e foco
-     cinza     #E2E8F0   faixa de linha de conta → bordas
-     cinzaClaro#F1F5F9   HEADER_FILL das abas → fundo de apoio
+     papel      #F6F4EF   hsl(44 27% 95%)   fundo do site
+     tinta      #11161D   hsl(213 26% 9%)   texto e AÇÃO PRIMÁRIA (é o
+                                            `--primary` do próprio site)
+     acento     #B6482F   hsl(11 59% 45%)   terracota
+     linha      #D2CDC1   hsl(44 16% 79%)   fio/borda
+
+   A DECISÃO QUE ESTE ARQUIVO NÃO TOMA SOZINHO, e que antes ele afirmava: o
+   Excel NÃO acompanha. `oria-marca.ts` continua grafite + ciano, de propósito.
+   Modelo de crédito é lido em impressão preto e branco por comitê, e a gramática
+   de cor de fonte de lá (azul = digitado, preto = calculado, verde = outra aba)
+   é convenção de mercado que um analista lê sem legenda. Tela e papel de comitê
+   são meios diferentes com leitores diferentes; divergir aqui é decisão, não
+   dívida. Mudar cor de marca NÃO é mais mudar nos dois lugares.
+
+   O QUE O SITE FAZ E NÃO PODE SER COPIADO PARA CÁ. No site, `--accent` e
+   `--destructive` são a MESMA cor. Numa página de marketing isso passa; num
+   portal que tem "excluir mandato" não passa — a cor da marca não pode ser a
+   cor do perigo. Então o terracota ficou com IDENTIDADE (seleção, foco, item
+   ativo, links) e o risco ganhou um oxblood próprio, #78223A na faixa 700, a
+   28° de matiz do acento e mais escuro que ele.
 
    REGRA HERDADA DO ENTREGÁVEL, e ela vale mais na tela do que no papel: cor
    nunca carrega significado sozinha. Todo estado aqui é cor MAIS texto (o chip
    diz "faltante", não é só âmbar) — é o que mantém a tela legível para quem não
    distingue verde de vermelho, que é 8% dos homens que vão abrir este portal.
+
+   As rampas de estado foram geradas com saturação alta nas faixas claras, de
+   propósito: sobre creme, um tom claro pouco saturado vira o próprio papel e o
+   chip some. Todos os pares texto/preenchimento usados no código foram medidos
+   e passam AA (o pior é 5,39:1, em `alerta-700` sobre `alerta-50`).
    ============================================================================ */
 
 @theme {
-  --color-tinta-900: #0f172a;
-  --color-tinta-800: #1e293b;
-  --color-tinta-600: #475569;
-  --color-tinta-500: #64748b;
-  --color-tinta-400: #94a3b8;
-  --color-tinta-200: #e2e8f0;
-  --color-tinta-100: #f1f5f9;
-  --color-tinta-50: #f8fafc;
-  --color-acento-700: #0e5f74;
-  --color-acento-600: #0e7490;
-  --color-acento-50: #ecfeff;
+  /* --- as três camadas de papel -------------------------------------------
+     Mesa (`papel`) é o fundo do app e o tom da marca. `folha` é a superfície
+     que recebe dado — mais clara que a mesa, como uma página limpa sobre o
+     mata-borrão. `tinta-50` é a faixa de navegação, um passo mais funda.
+     Nenhuma delas é branco: branco puro ao lado de creme lê como papel de
+     outro lote. */
+  --color-papel: #f6f4ef;
+  --color-folha: #fcfbf8;
+
+  /* --- tinta ---------------------------------------------------------------
+     A rampa sai do `--foreground` do site (#11161D) e desce em direção ao
+     papel, não em direção ao cinza: os passos claros carregam o amarelo da
+     mesa. `tinta-400` é o piso do que pode ser TEXTO (3,62:1 sobre papel) e
+     por isso só serve a fio, ícone desativado e marca-d'água — nunca corpo,
+     nunca placeholder. Placeholder é `tinta-500`, que passa AA.
+
+     `tinta-300` e `tinta-700` entraram junto com o mundo novo porque o código
+     JÁ os usava — barra lateral, borda de input, ponto de severidade
+     `complementar` — contra um tema que nunca os declarou. Classe sem token
+     não gera regra: esses elementos vinham renderizando sem a cor pedida. */
+  --color-tinta-900: #11161d;
+  --color-tinta-800: #1e242c;
+  --color-tinta-700: #2c323a;
+  --color-tinta-600: #3a4048;
+  --color-tinta-500: #6e6a62;
+  --color-tinta-400: #847f77;
+  --color-tinta-300: #bdb7ab;
+  --color-tinta-200: #d2cdc1;
+  --color-tinta-100: #e7e2d8;
+  --color-tinta-50: #f1eee6;
+
+  /* --- acento: identidade, nunca alarme ------------------------------------
+     Seleção corrente, foco, item ativo da navegação, link. NÃO é a cor de
+     ação primária: essa é a tinta, exatamente como no site. */
+  --color-acento-700: #93381f;
+  --color-acento-600: #b6482f;
+  --color-acento-100: #f2ddd6;
+  --color-acento-50: #f9eeea;
+
+  /* --- estados -------------------------------------------------------------
+     risco   = divergência, bloqueio, erro, ação destrutiva
+     alerta  = pendente, faltante, aguardando
+     ok      = conferido, aceito, completo
+     info    = nota do sistema, subtotal (não é bom nem ruim)
+     serie   = categoria de linha derivada/série (taxonomia, não estado) */
+  --color-risco-50: #f3e7ea;
+  --color-risco-100: #eed3db;
+  --color-risco-200: #e0aebc;
+  --color-risco-300: #d08097;
+  --color-risco-500: #b73459;
+  --color-risco-600: #972b49;
+  --color-risco-700: #78223a;
+  --color-risco-800: #671d32;
+  --color-risco-900: #541829;
+
+  --color-alerta-50: #f4efe6;
+  --color-alerta-100: #efe4d2;
+  --color-alerta-200: #e3cdab;
+  --color-alerta-300: #d5b37c;
+  --color-alerta-500: #be862d;
+  --color-alerta-600: #9d6f25;
+  --color-alerta-700: #805a1e;
+  --color-alerta-800: #6b4c19;
+  --color-alerta-900: #573d14;
+
+  --color-ok-50: #eaf0ea;
+  --color-ok-100: #dae7db;
+  --color-ok-200: #bbd3bc;
+  --color-ok-300: #96bb97;
+  --color-ok-500: #579459;
+  --color-ok-600: #487a49;
+  --color-ok-700: #3a643c;
+  --color-ok-800: #315432;
+  --color-ok-900: #284329;
+
+  --color-info-50: #e9eff2;
+  --color-info-100: #d7e4ea;
+  --color-info-200: #b5cdd9;
+  --color-info-300: #8cb3c5;
+  --color-info-500: #4687a4;
+  --color-info-600: #3a6f88;
+  --color-info-700: #2f5b6f;
+  --color-info-800: #284c5d;
+  --color-info-900: #203d4b;
+
+  --color-serie-50: #eeeaf0;
+  --color-serie-100: #e3dae7;
+  --color-serie-200: #cbbbd3;
+  --color-serie-300: #af94bc;
+  --color-serie-500: #805496;
+  --color-serie-600: #6a467c;
+  --color-serie-700: #563965;
+  --color-serie-800: #483055;
+  --color-serie-900: #3b2745;
+
+  /* --- tipografia ----------------------------------------------------------
+     As três famílias do site, carregadas em `layout.tsx` via `next/font`
+     (auto-hospedadas — nenhuma requisição a terceiro, nenhum salto de layout).
+
+     ONDE CADA UMA PODE APARECER, e isto é regra, não sugestão. Fraunces é uma
+     serifa de display: numa ferramenta de conferência ela não vai para rótulo,
+     botão, chip nem célula de tabela — display em lugar de rótulo é o erro
+     clássico de UI de produto. Ela nomeia DOCUMENTOS: o nome do mandato e a
+     lockup do login. Todo o resto da interface é Inter Tight.
+
+     JetBrains Mono só onde há MEDIÇÃO: valor monetário, contagem, referência de
+     proveniência. Mono como fantasia de "técnico" em texto corrido é costume,
+     não tipografia. */
+  --font-texto: var(--fonte-texto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-titulo: var(--fonte-titulo), ui-serif, Georgia, "Times New Roman", serif;
+  --font-dado: var(--fonte-dado), ui-monospace, "SF Mono", "Cascadia Mono", monospace;
 }
 
 :root {
   /* Sombras curtas e de baixa opacidade: o produto é dado, não cartão de rede
-     social. Elevação demais compete com o número. */
-  --sombra-carta: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
-  --sombra-topo: 0 1px 0 0 rgb(15 23 42 / 0.06);
+     social. Elevação demais compete com o número. Agora tingidas da tinta
+     (#11161D) em vez do slate antigo — sombra cinza sobre creme lê como
+     sujeira. */
+  --sombra-carta: 0 1px 2px 0 rgb(17 22 29 / 0.05), 0 1px 3px 0 rgb(17 22 29 / 0.07);
+  --sombra-topo: 0 1px 0 0 rgb(17 22 29 / 0.07);
 }
 
 html {
@@ -52,9 +176,44 @@ html {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+  font-family: var(--font-texto);
   -webkit-font-smoothing: antialiased;
+}
+
+/* =============================================================================
+   AS SUPERFÍCIES QUE O NAVEGADOR DESENHA.
+
+   Seleção, cursor, barra de rolagem, marcador de lista e sublinhado saem com o
+   padrão do navegador, que não pertence a design system nenhum — azul de
+   sistema no meio de uma tela creme entrega que a página foi montada, não
+   desenhada. Todas abaixo saem da paleta.
+   ============================================================================ */
+
+::selection {
+  background-color: var(--color-acento-100);
+  color: var(--color-tinta-900);
+}
+
+:where(input, textarea) {
+  caret-color: var(--color-acento-600);
+}
+
+:where(a) {
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: from-font;
+}
+
+::marker {
+  color: var(--color-tinta-400);
+}
+
+/* Barra de rolagem tingida do papel — a mesma mesa, um fio mais funda. Só
+   afinada e recolorida; nenhum comportamento de rolagem é reinventado. */
+@supports (scrollbar-color: auto) {
+  :where(html) {
+    scrollbar-color: var(--color-tinta-200) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 /* Foco visível e consistente. O padrão do navegador some em cima de fundo
@@ -69,7 +228,7 @@ body {
 @layer components {
   /* --- superfícies --------------------------------------------------------- */
   .carta {
-    @apply rounded-lg border border-tinta-200 bg-white;
+    @apply rounded-lg border border-tinta-200 bg-folha;
     box-shadow: var(--sombra-carta);
   }
 
@@ -81,12 +240,12 @@ body {
      Tailwind v4 `@apply` não enxerga classe de componente definida na mesma
      camada — o build falha com "unknown utility class". */
   .btn-primario {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-acento-600 px-3 py-1.5 text-sm
-           font-medium text-white transition-colors hover:bg-acento-700
+    @apply inline-flex items-center gap-1.5 rounded-md bg-tinta-900 px-3 py-1.5 text-sm
+           font-medium text-papel transition-colors hover:bg-tinta-800
            disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-secundario {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-tinta-200 bg-white px-3 py-1.5
+    @apply inline-flex items-center gap-1.5 rounded-md border border-tinta-200 bg-folha px-3 py-1.5
            text-sm font-medium text-tinta-800 transition-colors hover:bg-tinta-50
            disabled:cursor-not-allowed disabled:opacity-50;
   }
@@ -95,8 +254,8 @@ body {
            transition-colors hover:bg-tinta-100 hover:text-tinta-900;
   }
   .btn-aprovar {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-1.5 text-sm
-           font-medium text-white transition-colors hover:bg-emerald-800;
+    @apply inline-flex items-center gap-1.5 rounded-md bg-ok-700 px-3 py-1.5 text-sm
+           font-medium text-papel transition-colors hover:bg-ok-800;
   }
 
   /* --- rótulos de estado --------------------------------------------------- */
@@ -115,7 +274,7 @@ body {
 
   /* Indicador de topo: o número grande, o rótulo pequeno embaixo. */
   .indicador-valor {
-    @apply text-2xl font-semibold tabular-nums text-tinta-900;
+    @apply font-dado text-2xl font-semibold tabular-nums tracking-tight text-tinta-900;
   }
   .indicador-rotulo {
     @apply mt-0.5 text-xs text-tinta-500;

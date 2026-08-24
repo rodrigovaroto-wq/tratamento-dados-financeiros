@@ -47,7 +47,7 @@ function Sugestao({
     <form
       action={act}
       className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded border px-2 py-1.5 text-xs ${
-        p.valor === null ? "border-tinta-200 bg-tinta-50" : "border-sky-200 bg-sky-50"
+        p.valor === null ? "border-tinta-200 bg-tinta-50" : "border-info-200 bg-info-50"
       }`}
     >
       <input type="hidden" name="codigo" value={p.codigo} />
@@ -83,7 +83,7 @@ function Sugestao({
       )}
 
       {r && (
-        <span className={`w-full ${r.tom === "ok" ? "text-emerald-700" : "text-red-700"}`}>
+        <span className={`w-full ${r.tom === "ok" ? "text-ok-700" : "text-risco-700"}`}>
           {r.texto}
         </span>
       )}
@@ -102,7 +102,7 @@ export function SugestoesDoRealizado({
   const comValor = sugestoes.filter((s) => s.valor !== null).length;
 
   return (
-    <div className="mb-4 rounded border border-sky-200 bg-white p-2">
+    <div className="mb-4 rounded border border-info-200 bg-folha p-2">
       <p className="text-xs font-medium text-tinta-700">
         Sugerido pelo realizado — {comValor} de {sugestoes.length}
       </p>

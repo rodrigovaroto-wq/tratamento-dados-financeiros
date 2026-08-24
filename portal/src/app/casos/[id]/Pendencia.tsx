@@ -65,8 +65,8 @@ export function ItemPendencia({
   casoId?: string;
 }) {
   const cores = tom === "red"
-    ? { caixa: "border-red-200 bg-red-50 text-red-900", chip: "bg-red-100 text-red-800", fraco: "text-red-700" }
-    : { caixa: "border-amber-200 bg-amber-50 text-amber-900", chip: "bg-amber-100 text-amber-800", fraco: "text-amber-700" };
+    ? { caixa: "border-risco-200 bg-risco-50 text-risco-900", chip: "bg-risco-100 text-risco-800", fraco: "text-risco-700" }
+    : { caixa: "border-alerta-200 bg-alerta-50 text-alerta-900", chip: "bg-alerta-100 text-alerta-800", fraco: "text-alerta-700" };
 
   // O CÓDIGO DA TAXONOMIA VIRA O NOME DO DOCUMENTO. A mensagem do banco diz
   // "Item obrigatório do Kit Básico ausente: COMBINADO" — `COMBINADO` é a chave
@@ -135,7 +135,7 @@ export function ItemPendencia({
           não fosse o caminho mais curto. Com três botões e nenhum campo, esse
           cuidado vira só atrito: a decisão agora É a interface. */}
       {casoId && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/40 pt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-folha/40 pt-2">
           {BOTOES_DECISAO.map((b) => (
             <form key={b.decisao} action={decidirPendencia.bind(null, casoId, p.id, b.decisao)}>
               <button

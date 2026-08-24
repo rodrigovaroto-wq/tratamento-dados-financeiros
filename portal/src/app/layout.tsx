@@ -1,5 +1,34 @@
 import type { Metadata } from "next";
+import { Fraunces, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+/* As três famílias do site da Oria, auto-hospedadas pelo `next/font`: os
+   arquivos são baixados no build e servidos do nosso próprio domínio. Nada de
+   `<link>` para o Google em runtime — uma requisição a menos para um terceiro,
+   e `display: swap` com métricas de fallback ajustadas evita o salto de layout
+   que trocar de fonte costuma causar.
+
+   `titulo` (Fraunces) só nomeia DOCUMENTO — mandato e a lockup do login.
+   `dado` (JetBrains Mono) só onde há medição. O resto da interface é `texto`
+   (Inter Tight). A regra completa está no comentário de `globals.css`. */
+const texto = Inter_Tight({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--fonte-texto",
+});
+
+const titulo = Fraunces({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--fonte-titulo",
+  axes: ["opsz"],
+});
+
+const dado = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--fonte-dado",
+});
 
 export const metadata: Metadata = {
   title: "Oria Partners · Tratamento de Dados Financeiros",
@@ -10,8 +39,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR" className="h-full">
-      <body className="min-h-full bg-tinta-50 text-tinta-900 antialiased">{children}</body>
+    <html
+      lang="pt-BR"
+      className={`h-full ${texto.variable} ${titulo.variable} ${dado.variable}`}
+    >
+      <body className="min-h-full bg-papel font-texto text-tinta-900 antialiased">{children}</body>
     </html>
   );
 }

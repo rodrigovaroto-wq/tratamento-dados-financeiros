@@ -24,7 +24,7 @@ export default function NovoMandatoPage() {
           >
             ← Voltar aos mandatos
           </Link>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-tinta-900">
+          <h1 className="mt-3 font-titulo text-3xl font-medium tracking-tight text-tinta-900">
             Novo mandato
           </h1>
           <p className="mt-1.5 max-w-lg text-sm text-tinta-600">

@@ -175,7 +175,7 @@ export default async function PerguntasAoClientePage({
             {pendentes.length === 1 ? "pergunta a fazer" : "perguntas a fazer"}
           </p>
           {enviadas > 0 && (
-            <p className="mt-1 text-xs font-medium text-emerald-700">
+            <p className="mt-1 text-xs font-medium text-ok-700">
               {enviadas} {enviadas === 1 ? "já registrada como enviada" : "já registradas como enviadas"}
             </p>
           )}
@@ -183,7 +183,7 @@ export default async function PerguntasAoClientePage({
       </div>
 
       {semMigration && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="rounded-lg border border-alerta-200 bg-alerta-50 p-4 text-sm text-alerta-900">
           <p className="font-semibold">O banco de perguntas ainda não foi aplicado neste banco.</p>
           <p className="mt-1">
             Esta aba lê a migration <code className="font-mono">0120_banco_de_perguntas.sql</code>,
@@ -191,21 +191,21 @@ export default async function PerguntasAoClientePage({
             pendentes conforme <code className="font-mono">db/README.md</code> e recarregue esta
             tela. O restante do mandato não depende disso.
           </p>
-          <p className="mt-2 text-xs text-amber-800">
+          <p className="mt-2 text-xs text-alerta-800">
             Resposta do banco: {sugestoesRes.error?.message ?? acoesRes.error?.message}
           </p>
         </div>
       )}
 
       {!semMigration && (sugestoesRes.error || acoesRes.error) && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <p className="rounded-lg border border-risco-200 bg-risco-50 p-3 text-sm text-risco-800">
           Não foi possível carregar as sugestões:{" "}
           {sugestoesRes.error?.message ?? acoesRes.error?.message}
         </p>
       )}
 
       {(sugestoesRes.truncado || acoesRes.truncado) && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <p className="rounded-lg border border-alerta-200 bg-alerta-50 p-3 text-sm text-alerta-900">
           A lista bateu no teto de leitura do portal e pode estar incompleta. Rode
           <code className="mx-1 font-mono">select * from fn_sugerir_perguntas(&#39;{id}&#39;)</code>
           para ver todas.
@@ -270,7 +270,7 @@ export default async function PerguntasAoClientePage({
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`chip ${a.acao === "enviada"
-                      ? "bg-emerald-100 text-emerald-800"
+                      ? "bg-ok-100 text-ok-800"
                       : "bg-tinta-200 text-tinta-600"}`}
                   >
                     {a.acao === "enviada" ? "enviada" : "descartada"}

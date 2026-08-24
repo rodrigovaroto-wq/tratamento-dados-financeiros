@@ -61,7 +61,7 @@ export function ClasseContabil({
     <div className="space-y-1">
       {override ? (
         <>
-          <span className="inline-block rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-medium text-white">
+          <span className="inline-block rounded bg-tinta-900 px-1.5 py-0.5 text-xs font-medium text-papel">
             {nomeDe(override)}
           </span>
           <p className="text-xs text-tinta-500">
@@ -69,7 +69,7 @@ export function ClasseContabil({
             {discordou && (
               <>
                 {" · "}
-                <span className="text-amber-800">
+                <span className="text-alerta-800">
                   a regra sugeria {nomeDe(sugestao)}
                 </span>
               </>
@@ -110,7 +110,7 @@ export function ClasseContabil({
             required
             defaultValue=""
             aria-label="Classe contábil"
-            className="rounded border border-tinta-300 bg-white px-1 py-0.5 text-xs"
+            className="rounded border border-tinta-300 bg-folha px-1 py-0.5 text-xs"
           >
             {/* Vazio e obrigatório: o navegador barra o envio sem escolha, e a
                 sugestão da máquina não fica pré-selecionada. */}
@@ -127,12 +127,12 @@ export function ClasseContabil({
             type="text"
             name="motivo"
             placeholder="motivo (opcional)"
-            className="w-40 rounded border border-tinta-300 bg-white px-1 py-0.5 text-xs"
+            className="w-40 rounded border border-tinta-300 bg-folha px-1 py-0.5 text-xs"
           />
           <button
             type="submit"
             disabled={enviando}
-            className="rounded bg-tinta-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-50"
+            className="rounded bg-tinta-900 px-2 py-0.5 text-xs font-medium text-papel disabled:opacity-50"
           >
             {enviando ? "gravando…" : "gravar"}
           </button>

@@ -210,35 +210,35 @@ export default function UploadForm({
   // ajudar começa perguntando "qual erro apareceu?" e a resposta é "deu erro".
   if (sucesso && falha) {
     return (
-      <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+      <div className="rounded border border-risco-300 bg-risco-50 p-4 text-sm text-risco-900">
         <p className="font-medium">
           Não foi possível processar os {sucesso.arquivos} arquivo(s) do mandato “{sucesso.mandato}”.
         </p>
-        <p className="mt-1 text-red-800">
+        <p className="mt-1 text-risco-800">
           O envio chegou, mas o processamento parou antes de terminar. Nada foi cobrado e nada ficou
           pela metade — os arquivos podem ser reenviados depois que o problema for resolvido.
         </p>
-        <div className="mt-3 rounded border border-red-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+        <div className="mt-3 rounded border border-risco-200 bg-folha p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-risco-700">
             O que o sistema respondeu {falha.etapa ? `(etapa: ${falha.etapa})` : null}
           </p>
           <p className="mt-1 whitespace-pre-wrap text-xs text-tinta-600">{falha.mensagem}</p>
         </div>
-        <p className="mt-3 font-medium text-red-900">
+        <p className="mt-3 font-medium text-risco-900">
           Envie esta mensagem ao desenvolvedor do sistema para que ele resolva o problema.
         </p>
         <div className="mt-3 flex gap-3">
           <button
             type="button"
             onClick={() => { setFalha(null); setSucesso(null); }}
-            className="rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+            className="rounded bg-risco-700 px-3 py-1.5 text-xs font-medium text-papel hover:bg-risco-800"
           >
             Tentar de novo
           </button>
           <button
             type="button"
             onClick={() => router.push(casoId ? `/casos/${casoId}` : "/casos")}
-            className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
+            className="rounded border border-risco-300 px-3 py-1.5 text-xs font-medium text-risco-800 hover:bg-risco-100"
           >
             {casoId ? "Voltar ao mandato →" : "Ver mandatos →"}
           </button>
@@ -250,7 +250,7 @@ export default function UploadForm({
   if (sucesso) {
     return (
       <>
-        <div className="rounded border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">
+        <div className="rounded border border-ok-300 bg-ok-50 p-4 text-sm text-ok-900">
           <p className="font-medium">
             {sucesso.arquivos} arquivo(s) enviado(s) para o mandato “{sucesso.mandato}”.
           </p>
@@ -258,7 +258,7 @@ export default function UploadForm({
               se perguntar. Cada documento passa pela IA com espaçamento entre as
               chamadas (o limite de uso da conta obriga), então 38 arquivos são
               ~20 minutos — e quem não sabe disso lê a demora como travamento. */}
-          <p className="mt-1 text-emerald-800">
+          <p className="mt-1 text-ok-800">
             Estamos organizando tudo com cuidado. São cerca de{" "}
             <strong>{Math.max(1, Math.round((sucesso.arquivos * SEGUNDOS_POR_DOCUMENTO) / 60))} minutos</strong>
             {" "}para {sucesso.arquivos} arquivo(s) — cada um é lido separadamente. Você pode aguardar
@@ -266,19 +266,19 @@ export default function UploadForm({
           </p>
           {progresso && progresso.processados > 0 && (
             <div className="mt-2">
-              <div className="h-1.5 w-full overflow-hidden rounded bg-emerald-200">
+              <div className="h-1.5 w-full overflow-hidden rounded bg-ok-200">
                 <div
-                  className="h-full bg-emerald-600 transition-all"
+                  className="h-full bg-ok-600 transition-all"
                   style={{ width: `${Math.min(100, (progresso.processados / Math.max(1, progresso.esperados)) * 100)}%` }}
                 />
               </div>
-              <p className="mt-1 text-xs text-emerald-800">
+              <p className="mt-1 text-xs text-ok-800">
                 {progresso.processados} de {progresso.esperados} organizados
               </p>
             </div>
           )}
           {demorou && (
-            <p className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <p className="mt-2 rounded border border-alerta-300 bg-alerta-50 p-2 text-xs text-alerta-900">
               Está levando mais tempo que o previsto e paramos de acompanhar por aqui — o
               processamento pode continuar em segundo plano. Abra o mandato para ver o estado atual;
               se nada tiver chegado, acione o desenvolvedor do sistema.
@@ -289,7 +289,7 @@ export default function UploadForm({
               <button
                 type="button"
                 onClick={() => router.push(`/casos/${casoId}`)}
-                className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
+                className="rounded bg-ok-700 px-3 py-1.5 text-xs font-medium text-papel hover:bg-ok-800"
               >
                 Voltar ao mandato →
               </button>
@@ -297,7 +297,7 @@ export default function UploadForm({
               <button
                 type="button"
                 onClick={() => router.push("/casos")}
-                className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
+                className="rounded bg-ok-700 px-3 py-1.5 text-xs font-medium text-papel hover:bg-ok-800"
               >
                 Ver mandatos →
               </button>
@@ -308,7 +308,7 @@ export default function UploadForm({
                 setSucesso(null);
                 setPronto(false);
               }}
-              className="rounded border border-emerald-300 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+              className="rounded border border-ok-300 px-3 py-1.5 text-xs font-medium text-ok-800 hover:bg-ok-100"
             >
               Enviar mais arquivos
             </button>
@@ -317,8 +317,8 @@ export default function UploadForm({
 
         {pronto && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/40 px-4">
-            <div className="w-full max-w-sm rounded-lg bg-white p-6 text-center shadow-xl">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-2xl">
+            <div className="w-full max-w-sm rounded-lg bg-folha p-6 text-center shadow-xl">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-ok-100 text-2xl">
                 ✓
               </div>
               <h2 className="text-base font-semibold text-tinta-900">Tudo pronto</h2>
@@ -329,7 +329,7 @@ export default function UploadForm({
                 <button
                   type="button"
                   onClick={() => (casoId ? router.push(`/casos/${casoId}`) : router.push("/casos"))}
-                  className="rounded bg-tinta-900 px-4 py-2 text-sm font-medium text-white hover:bg-tinta-600"
+                  className="rounded bg-tinta-900 px-4 py-2 text-sm font-medium text-papel hover:bg-tinta-600"
                 >
                   Ver mandato →
                 </button>
@@ -400,7 +400,7 @@ export default function UploadForm({
       </div>
 
       {arquivos.length > 0 && (
-        <ul className="divide-y divide-tinta-100 rounded border border-tinta-200 bg-white text-sm">
+        <ul className="divide-y divide-tinta-100 rounded border border-tinta-200 bg-folha text-sm">
           {arquivos.map((a, i) => (
             <li key={`${a.name}:${a.size}`} className="flex items-center justify-between px-3 py-2">
               <span className="truncate">
@@ -409,7 +409,7 @@ export default function UploadForm({
               <button
                 type="button"
                 onClick={() => removerArquivo(i)}
-                className="ml-3 text-xs text-tinta-500 underline hover:text-red-700"
+                className="ml-3 text-xs text-tinta-500 underline hover:text-risco-700"
               >
                 remover
               </button>
@@ -419,7 +419,7 @@ export default function UploadForm({
       )}
 
       {erro && (
-        <p className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>
+        <p className="rounded border border-risco-300 bg-risco-50 px-3 py-2 text-sm text-risco-700">{erro}</p>
       )}
 
       <button

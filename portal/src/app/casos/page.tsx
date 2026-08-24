@@ -38,9 +38,9 @@ const PESO_SEVERIDADE: Record<string, number> = {
 };
 
 const TOM_SEVERIDADE: Record<string, { ponto: string; chip: string; rotulo: string }> = {
-  bloqueante: { ponto: "bg-red-500", chip: "bg-red-100 text-red-800", rotulo: "bloqueia a aprovação" },
-  importante: { ponto: "bg-amber-500", chip: "bg-amber-100 text-amber-900", rotulo: "importante" },
-  complementar: { ponto: "bg-tinta-300", chip: "bg-tinta-100 text-tinta-600", rotulo: "complementar" },
+  bloqueante: { ponto: "bg-risco-500", chip: "bg-risco-100 text-risco-800", rotulo: "bloqueia a aprovação" },
+  importante: { ponto: "bg-alerta-500", chip: "bg-alerta-100 text-alerta-900", rotulo: "importante" },
+  complementar: { ponto: "bg-tinta-400", chip: "bg-tinta-100 text-tinta-600", rotulo: "complementar" },
 };
 
 const REVISAVEIS = new Set<string>(PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS);
@@ -113,9 +113,9 @@ function Indicador({
   barra?: number | null;
 }) {
   const corDetalhe =
-    tom === "alerta" ? "text-red-700" : tom === "bom" ? "text-emerald-700" : "text-tinta-500";
+    tom === "alerta" ? "text-risco-700" : tom === "bom" ? "text-ok-700" : "text-tinta-500";
   return (
-    <div className="bg-white px-4 py-4">
+    <div className="bg-folha px-4 py-4">
       {valor === null ? (
         <p className="text-2xl font-semibold text-tinta-300" title={nota}>
           —
@@ -129,7 +129,7 @@ function Indicador({
       {typeof barra === "number" && (
         <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-tinta-100">
           <div
-            className={`h-full rounded-full ${barra >= 0.9 ? "bg-emerald-600" : barra >= 0.6 ? "bg-amber-500" : "bg-red-500"}`}
+            className={`h-full rounded-full ${barra >= 0.9 ? "bg-ok-600" : barra >= 0.6 ? "bg-alerta-500" : "bg-risco-500"}`}
             style={{ width: `${Math.min(100, Math.max(2, barra * 100))}%` }}
           />
         </div>
@@ -385,7 +385,7 @@ export default async function PainelPage() {
       </div>
 
       {casosRes.error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <p className="rounded-lg border border-risco-200 bg-risco-50 p-3 text-sm text-risco-800">
           Não foi possível carregar o painel. {casosRes.error.message}
         </p>
       )}
@@ -471,7 +471,7 @@ export default async function PainelPage() {
       {/* O corte do PostgREST é silencioso, então quando o teto bate a tela diz.
           Em operação normal este bloco nunca aparece (o teto é 50 mil linhas). */}
       {(casosRes.truncado || documentosRes.truncado || pendenciasRes.truncado) && (
-        <p className="carta border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <p className="carta border-alerta-200 bg-alerta-50 px-4 py-3 text-xs text-alerta-900">
           Os números acima leem no máximo 50 mil registros por lista, e esse limite foi atingido.
           Eles descrevem parte da carteira, não a carteira inteira.
         </p>
@@ -502,9 +502,9 @@ export default async function PainelPage() {
             </div>
 
             {pendencias.length === 0 ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-10 text-center">
-                <p className="text-sm font-medium text-emerald-900">Nenhuma pendência em aberto</p>
-                <p className="mt-1 text-sm text-emerald-800">
+              <div className="rounded-lg border border-ok-200 bg-ok-50 px-5 py-10 text-center">
+                <p className="text-sm font-medium text-ok-900">Nenhuma pendência em aberto</p>
+                <p className="mt-1 text-sm text-ok-800">
                   Todos os documentos recebidos foram conferidos.
                 </p>
               </div>
@@ -632,7 +632,7 @@ export default async function PainelPage() {
                           >
                             <span className="min-w-0">
                               <span className="block truncate text-xs font-medium text-tinta-900">{c.nome}</span>
-                              <span className="block text-[11px] text-red-700">
+                              <span className="block text-[11px] text-risco-700">
                                 {quantas} {quantas === 1 ? "pendência travando" : "pendências travando"}
                               </span>
                             </span>

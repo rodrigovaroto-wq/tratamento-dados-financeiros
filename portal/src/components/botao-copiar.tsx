@@ -75,7 +75,7 @@ export function BotaoCopiar({
           quem usa leitor de tela clica e não fica sabendo se copiou. */}
       <span
         aria-live="polite"
-        className={`text-xs font-medium ${estado === "falhou" ? "text-red-700" : "text-emerald-700"}`}
+        className={`text-xs font-medium ${estado === "falhou" ? "text-risco-700" : "text-ok-700"}`}
       >
         {estado === "copiado" && "copiado"}
         {estado === "falhou" && "não foi possível copiar — selecione o texto acima"}

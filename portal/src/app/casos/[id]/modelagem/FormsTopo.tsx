@@ -23,7 +23,7 @@ function Aviso({ r }: { r: Resultado }) {
     <span
       role="status"
       className={`rounded px-2 py-0.5 text-xs ${
-        r.tom === "ok" ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"
+        r.tom === "ok" ? "bg-ok-100 text-ok-900" : "bg-alerta-100 text-alerta-900"
       }`}
     >
       {r.texto}
@@ -44,7 +44,7 @@ export function FormParametros({
       <div className="flex items-end gap-2">
         <button
           type="submit" disabled={salvando}
-          className="rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-tinta-600 disabled:opacity-50"
+          className="rounded bg-tinta-900 px-3 py-1.5 text-sm font-medium text-papel hover:bg-tinta-600 disabled:opacity-50"
         >
           {salvando ? "Salvando…" : "Salvar parâmetros"}
         </button>
@@ -90,7 +90,7 @@ export function FormPremissa({
     <form
       action={act}
       className={`flex flex-wrap items-center gap-2 rounded border px-2 py-1.5 text-sm ${
-        ativa ? "border-emerald-200 bg-emerald-50" : "border-tinta-200"
+        ativa ? "border-ok-200 bg-ok-50" : "border-tinta-200"
       }`}
     >
       <input type="hidden" name="codigo" value={codigo} />
@@ -111,7 +111,7 @@ export function FormPremissa({
           type="submit" formAction={actRemover} disabled={salvando || removendo}
           title={"Desativa a premissa neste caso e desfaz os vínculos que ela dirigia. "
             + "Os valores digitados ficam guardados."}
-          className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+          className="rounded border border-risco-200 px-2 py-0.5 text-xs text-risco-700 hover:bg-risco-50 disabled:opacity-50"
         >
           {removendo ? "removendo…" : "Remover"}
         </button>

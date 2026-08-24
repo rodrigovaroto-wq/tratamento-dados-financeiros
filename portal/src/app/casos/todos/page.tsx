@@ -178,7 +178,7 @@ export default async function CasosPage() {
       </div>
 
       {error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <p className="rounded-lg border border-risco-200 bg-risco-50 p-3 text-sm text-risco-800">
           Não foi possível carregar os mandatos: {error.message}
         </p>
       )}

@@ -56,7 +56,7 @@ export function CartaoPergunta({
           <span className="chip bg-tinta-100 text-tinta-700">{p.entidade}</span>
         )}
         {enviada && (
-          <span className="chip bg-emerald-100 text-emerald-800">já enviada</span>
+          <span className="chip bg-ok-100 text-ok-800">já enviada</span>
         )}
         {descartadaAgora && (
           <span className="chip bg-tinta-200 text-tinta-600">descartada</span>
@@ -90,8 +90,8 @@ export function CartaoPergunta({
               "Registra que esta pergunta foi enviada ao cliente, com o texto exato acima. "
               + "O registro é append-only: não há como apagá-lo, e enviar de novo vira outra linha."
             }
-            className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs
-                       font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
+            className="rounded-md border border-ok-200 bg-ok-50 px-2.5 py-1.5 text-xs
+                       font-semibold text-ok-800 transition-colors hover:bg-ok-100"
           >
             {enviada ? "Registrar novo envio" : "Marcar como enviada"}
           </button>
@@ -108,7 +108,7 @@ export function CartaoPergunta({
               "Registra que esta pergunta NÃO será feita — a sugestão continua na lista, com o "
               + "rótulo. Serve para dizer à equipe que alguém já olhou e decidiu não perguntar."
             }
-            className="rounded-md border border-tinta-200 bg-white px-2.5 py-1.5 text-xs
+            className="rounded-md border border-tinta-200 bg-folha px-2.5 py-1.5 text-xs
                        font-medium text-tinta-600 transition-colors hover:bg-tinta-50"
           >
             Não vou perguntar
