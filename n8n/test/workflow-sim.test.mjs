@@ -2268,3 +2268,43 @@ test('a estimativa que o PORTAL mostra é coerente com a cadência REAL do workf
     `a tela promete ${segundosPorDocumento}s por documento contra uma cadência de ${cadenciaS}s `
     + '— a estimativa ficou para trás de uma mudança de cadência');
 });
+
+test('O nó Postgres devolve o contexto que o próximo nó lê (a reconciliação que ficou 11 dias desligada)', () => {
+  // ACHADO EM PRODUÇÃO, execução 7030 (rodada v47, 24/08). O nó Postgres do n8n
+  // SUBSTITUI o item pelo resultado da query. O `Gravar Campos (Sombra)`
+  // devolvia só `{n_campos}`, e os dois nós seguintes leem `$json.documento_id`:
+  // recebiam `undefined`, chamavam as funções com NULL e recebiam de volta
+  // "documento não encontrado" — retorno VÁLIDO, nó VERDE, zero linha gravada.
+  //
+  // Custou onze dias de silêncio: as rodadas v42, v4x, v45 e v47 gravaram ZERO
+  // reconciliações (a v41, antes da quebra, gravou 73) e a v45 chegou a
+  // `aprovado` assim. Nenhuma tela mostrava a ausência, e o motor estava intacto
+  // o tempo todo — chamada à mão sobre o mesmo dado roda as seis checagens e
+  // ainda acha dois defeitos reais.
+  //
+  // A trava é genérica de propósito: qualquer nó que leia `$json.X` do item de
+  // um nó Postgres anterior exige que aquele nó devolva `X` como COLUNA.
+  const anterior = {
+    'Registrar Diagnostico': 'Gravar Campos (Sombra)',
+    'Reconciliar (Classe A)': 'Registrar Diagnostico',
+  };
+
+  for (const [nome, fonte] of Object.entries(anterior)) {
+    const no = byName[nome];
+    const upstream = byName[fonte];
+    assert.ok(no && upstream, `${nome} ou ${fonte} sumiu do workflow`);
+    assert.equal(upstream.type, 'n8n-nodes-base.postgres', `${fonte} deixou de ser nó Postgres — reveja esta trava`);
+
+    const lidos = [...no.parameters.options.queryReplacement.matchAll(/\$json\.(\w+)/g)].map((m) => m[1]);
+    assert.ok(lidos.length > 0, `${nome}: nenhum \$json lido — o teste perdeu o alvo`);
+
+    // As colunas que o nó anterior REALMENTE devolve: `... as nome`.
+    const devolvidas = [...upstream.parameters.query.matchAll(/\bas\s+(\w+)/g)].map((m) => m[1]);
+
+    for (const campo of new Set(lidos)) {
+      assert.ok(devolvidas.includes(campo),
+        `${nome} lê $json.${campo}, mas ${fonte} devolve apenas [${devolvidas.join(', ')}] — `
+        + 'o item chega sem esse campo e a função é chamada com NULL, em silêncio');
+    }
+  }
+});
