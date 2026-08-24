@@ -43,6 +43,12 @@ uma frase tranquilizadora. Uma política de backup que não foi testada é uma c
 > mais um rebuild — o que significa que **este parágrafo pode envelhecer sem ninguém perceber**.
 > Antes de qualquer conversa de LGPD, confira lá qual provedor está ativo.
 >
+> **NÍVEL GRATUITO É OUTRO TRATAMENTO, e a diferença é exatamente esta.** No nível gratuito da API
+> do Gemini o provedor usa o conteúdo enviado para melhorar os produtos dele; no pago, não. Ou seja:
+> **documento real de cliente não pode rodar numa chave de nível gratuito** — só material sintético
+> (`test-data/book-canastra`, `test-data/book-vertentes`). Confirme os termos vigentes no console do
+> provedor antes de qualquer rodada com dado real.
+>
 > **[A CONFIRMAR] — e este é o item que a troca deixou EM ABERTO:** o acordo de tratamento
 > (zero-retention / DPA) **não se herda de um provedor para o outro**. Qualquer acerto que existisse
 > com a OpenAI não vale para o Google. Enquanto isso não estiver fechado com o provedor ATIVO, dado

@@ -2,6 +2,7 @@
 // pipeline.
 //
 //   IA_API_KEY=... node n8n/diagnosticar-ia.mjs
+//   IA_API_KEY=... node n8n/diagnosticar-ia.mjs --modelos   (só lista, zero token)
 //
 // O provedor testado é o ATIVO (`lib/provedor.mjs`, padrão Google). Para testar
 // o outro sem mexer em código:  IA_PROVEDOR=openai IA_API_KEY=sk-... node ...
@@ -37,7 +38,10 @@
 
 import { readFileSync } from 'node:fs';
 import { diagnosticarErroApi, DEFAULT_MODEL, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA } from './lib/extract.mjs';
-import { provedor, urlDaChamada, montarCorpoIA, parteDeTexto } from './lib/provedor.mjs';
+import { MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from './lib/custo.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, modelosDoCatalogo, modelosParecidos,
+} from './lib/provedor.mjs';
 
 const PROV = provedor();
 
@@ -63,7 +67,73 @@ if (!chave) {
   process.exit(2);
 }
 
-const modelo = process.argv[2] || DEFAULT_MODEL;
+const args = process.argv.slice(2);
+const soListar = args.includes('--modelos');
+const modelo = args.find((a) => !a.startsWith('--')) || DEFAULT_MODEL;
+
+// ---------------------------------------------------------------------------
+// O CATÁLOGO — a checagem que não gasta token e responde antes de a conta pagar
+// ---------------------------------------------------------------------------
+//
+// O id do modelo é a única coisa deste sistema que NÃO pode ser conferida por
+// teste: ele é uma string que só a API do provedor sabe validar, e errá-la por
+// um sufixo faz TODA chamada do lote voltar 404. `diagnosticarErroApi` nomeia
+// esse caso, mas nomear depois de o lote morrer é tarde — e um 404 diz "este id
+// não existe" sem dizer quais existem.
+//
+// Isto é um GET no catálogo da conta: custo zero, nenhum token, e responde as
+// duas perguntas de uma vez — a chave funciona, e o id configurado está lá.
+async function listarModelos() {
+  try {
+    const r = await fetch(PROV.catalogo, {
+      headers: { [PROV.auth.nome]: `${PROV.auth.prefixo}${chave}` },
+    });
+    const corpoLista = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, status: r.status, corpo: corpoLista, modelos: [] };
+    return { ok: true, status: r.status, corpo: corpoLista, modelos: modelosDoCatalogo(PROV, corpoLista) };
+  } catch (e) {
+    return { ok: false, erro: e?.message ?? String(e), modelos: [] };
+  }
+}
+
+if (soListar) {
+  const cat = await listarModelos();
+  if (!cat.ok) {
+    console.log(`NÃO FOI POSSÍVEL LISTAR os modelos de ${PROV.rotulo}.`);
+    if (cat.erro) {
+      console.log(`  Falha de rede: ${cat.erro}`);
+      console.log('  Se o terminal está atrás de proxy/firewall, é aí que olhar.');
+    } else {
+      // O MESMO diagnóstico da produção, e não uma segunda leitura do erro: se
+      // a chave está errada aqui, a pendência do documento vai dizer a mesma
+      // coisa com as mesmas palavras.
+      const dl = diagnosticarErroApi({ httpCode: cat.status, ...(cat.corpo ?? {}) });
+      console.log(`  CAUSA: ${dl.causa}`);
+      console.log(`  ${dl.motivo}`);
+    }
+    process.exit(1);
+  }
+  console.log(`Modelos disponíveis para esta chave em ${PROV.rotulo} (${cat.modelos.length}):\n`);
+  for (const id of cat.modelos.slice().sort()) {
+    const usado = id === MODELO_EXTRACAO ? '  ← MODELO_EXTRACAO'
+      : (id === MODELO_CLASSIFICACAO ? '  ← MODELO_CLASSIFICACAO' : '');
+    console.log(`  ${id}${usado}`);
+  }
+  const faltando = [MODELO_EXTRACAO, MODELO_CLASSIFICACAO]
+    .filter((m, i, a) => a.indexOf(m) === i)
+    .filter((m) => !cat.modelos.includes(m));
+  if (faltando.length > 0) {
+    console.log(`\n⚠️  CONFIGURADO MAS NÃO DISPONÍVEL: ${faltando.join(', ')}`);
+    for (const m of faltando) {
+      console.log(`  parecidos com "${m}": ${modelosParecidos(m, cat.modelos, 5).join(', ') || '(nenhum)'}`);
+    }
+    console.log('  Corrija MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs, rode');
+    console.log('  `node n8n/build-workflow.mjs` e reimporte o workflow.');
+    process.exit(1);
+  }
+  console.log('\nOK — os modelos configurados existem nesta conta.');
+  process.exit(0);
+}
 
 console.log(`Testando a conta ${PROV.rotulo} com o modelo ${modelo} (1 token de saída)...\n`);
 
@@ -156,6 +226,21 @@ if (resposta.ok) {
 const d = diagnosticarErroApi({ httpCode: resposta.status, ...corpo });
 console.log(`CAUSA: ${d.causa}\n`);
 console.log(d.motivo);
+// MODELO INDISPONÍVEL É O ÚNICO CASO QUE TEM CONSERTO IMEDIATO, e o conserto
+// depende de saber o que EXISTE. Listar aqui é automático de propósito: é o
+// momento em que a informação vale, e pedir ao dono que rode outro comando
+// depois de uma falha é como se perde a correção que estava a um GET de
+// distância.
+if (d.causa === 'modelo_indisponivel') {
+  const cat = await listarModelos();
+  if (cat.ok) {
+    console.log(`\nO QUE EXISTE nesta conta (${cat.modelos.length} modelos). Mais parecidos com "${modelo}":`);
+    for (const id of modelosParecidos(modelo, cat.modelos, 8)) console.log(`  ${id}`);
+    console.log('\nCorrija MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs, rode');
+    console.log('`node n8n/build-workflow.mjs` e reimporte o workflow no n8n.');
+  }
+}
+
 console.log(`\n--- resposta bruta de ${PROV.rotulo} (para o registro) ---`);
 console.log(JSON.stringify(corpo).slice(0, 800));
 const retryAfter = resposta.headers.get('retry-after');

@@ -642,6 +642,21 @@ erro de leitura visual de número.
    de recusa justamente para isto: um n8n rodando o JSON velho recusa lotes que o código novo aceita,
    com uma mensagem que parece a mesma.
 
+### Provar a troca sem pôr crédito
+
+O Google tem nível gratuito da API do Gemini, e ele basta para provar a costura inteira —
+credencial, corpo, leitura do PDF, schema, banco, export. Duas ressalvas que não são opcionais:
+
+- **Só material sintético.** No nível gratuito o provedor usa o conteúdo enviado para melhorar os
+  produtos dele; no pago, não. `test-data/book-canastra` (38 PDFs com gabarito) é o material certo.
+- **Não é o B1.** Toda suíte deste repositório prova a ingestão sobre extração FIEL, e é por isso que
+  o B1 existe. Rodar o book sintético no Gemini prova que a TROCA funciona; não prova que o sistema
+  lê documento de verdade.
+
+Antes de qualquer lote: `IA_API_KEY=... node n8n/diagnosticar-ia.mjs --modelos`. É um GET no
+catálogo da conta — zero token — e responde a única coisa que nenhum teste prova: se o id do modelo
+configurado existe para aquela chave.
+
 ### Voltar atrás é uma variável de ambiente
 
 `IA_PROVEDOR=openai node n8n/build-workflow.mjs` e reimportar. A OpenAI continua inteira no catálogo

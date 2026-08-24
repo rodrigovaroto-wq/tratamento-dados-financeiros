@@ -11,7 +11,9 @@ import {
   classificationSchema,
   codigosConhecidos,
 } from '../lib/ia.mjs';
-import { PROVEDORES, schemaDoProvedor } from '../lib/provedor.mjs';
+import {
+  PROVEDORES, schemaDoProvedor, modelosDoCatalogo, modelosParecidos,
+} from '../lib/provedor.mjs';
 
 /** A mesma resposta, escrita como cada provedor a escreveria. */
 function respostaDe(prov, objeto) {
@@ -140,4 +142,57 @@ test('resposta sem conteúdo lança erro que NOMEIA o provedor', () => {
   // provedor novo não foi criada" — as duas chegam aqui como resposta vazia.
   assert.throws(() => parseClassificationResponse({ choices: [] }, PROVEDORES.openai), /OpenAI.*sem conteúdo/);
   assert.throws(() => parseClassificationResponse({ candidates: [] }, PROVEDORES.google), /Gemini.*sem conteúdo/);
+});
+
+// ===========================================================================
+// O CATÁLOGO DE MODELOS — a única checagem que nenhum teste pode fazer sozinho
+// ===========================================================================
+//
+// O id do modelo é a única coisa deste sistema que não se prova offline: ele é
+// uma string que só a API do provedor valida, e errá-la por um sufixo faz TODA
+// chamada do lote voltar 404. O que DÁ para travar aqui é a leitura do catálogo
+// — porque as duas respostas têm formas diferentes, e ler a do Google errado
+// produziria um "seu modelo não existe" falso, que é pior que não checar.
+
+test('modelosDoCatalogo lê as duas formas de resposta, e tira o prefixo do Google', () => {
+  assert.deepEqual(
+    modelosDoCatalogo(PROVEDORES.openai, { data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }),
+    ['gpt-4o', 'gpt-4o-mini'],
+  );
+  // `models/` é prefixo do RECURSO, não parte do id. Mandá-lo de volta no lugar
+  // do id monta uma URL com `models/models/x` — 404 causado pela própria
+  // checagem que existe para evitar 404.
+  assert.deepEqual(
+    modelosDoCatalogo(PROVEDORES.google, {
+      models: [{ name: 'models/gemini-3.5-flash-lite' }, { name: 'models/text-embedding-004' }],
+    }),
+    ['gemini-3.5-flash-lite', 'text-embedding-004'],
+  );
+  // Resposta inesperada vira lista VAZIA, nunca exceção: "não consegui listar"
+  // e "listei e seu modelo não está lá" pedem ações diferentes, e quem chama
+  // precisa poder distinguir os dois.
+  for (const lixo of [null, undefined, {}, { models: 'x' }, { data: 7 }]) {
+    assert.deepEqual(modelosDoCatalogo(PROVEDORES.google, lixo), []);
+    assert.deepEqual(modelosDoCatalogo(PROVEDORES.openai, lixo), []);
+  }
+});
+
+test('modelosParecidos põe na frente o que erra só no sufixo', () => {
+  // O erro real num id de modelo é sufixo de versão ou geração trocada — por
+  // isso a semelhança é por PREFIXO comum. Distância de edição traria vizinhos
+  // que não têm nada a ver, e uma sugestão ruim é pior que nenhuma.
+  const disponiveis = ['text-embedding-004', 'gemini-2.5-flash', 'gemini-3.5-flash-lite-002', 'gemini-3.5-pro'];
+  const p = modelosParecidos('gemini-3.5-flash-lite', disponiveis, 2);
+  assert.equal(p[0], 'gemini-3.5-flash-lite-002');
+  assert.equal(p.length, 2);
+  assert.deepEqual(modelosParecidos('x', [], 5), [], 'catálogo vazio não inventa sugestão');
+});
+
+test('todo provedor do catálogo sabe dizer ONDE listar os seus modelos', () => {
+  // Sem `catalogo`, a checagem mais barata do sistema simplesmente não existe
+  // para aquele provedor — e o defeito só apareceria no dia da troca.
+  for (const [id, prov] of Object.entries(PROVEDORES)) {
+    assert.match(prov.catalogo, /^https:\/\//, `provedor "${id}" sem URL de catálogo`);
+    assert.ok(prov.console, `provedor "${id}" sem console para o dono abrir`);
+  }
 });
