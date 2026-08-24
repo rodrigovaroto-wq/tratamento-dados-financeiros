@@ -613,12 +613,15 @@ export function normalizarMoeda(bruto) {
 export function ehLinhaNaoMonetaria(chave, valorTexto, coluna) {
   const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   const reLinha = /%|\bpercentual|\bpor acao\b|\blpa\b|\bquantidade\b|numero de acoes/;
-  const reColuna = new RegExp(
-    '^(quantidade|qtd|qtde|unidade|efetivo|efetivo \\(pessoas\\)|pessoas|headcount|dias|prazo)$'
-    + '|^(exercicio|ano|natureza|tipo|classe|categoria|situacao|status|moeda|indexador'
-    + '|contraparte|banco|contrato|historico|documento|empresa.*)$'
-    + '|(^|\\s)(%|percentual|participacao|custo unitario|preco unitario|valor unitario|taxa)($|\\s)',
-  );
+  // UMA alternância ancorada, grupos não-capturantes e `String.raw`: as três
+  // coisas que o Sonar pediu, e as três deixam o padrão mais legível do que
+  // estava. O rótulo TEM de casar inteiro (`^…$`) — "valor" não pode virar
+  // dimensão porque contém "valor unitario" —, exceto na segunda alternância,
+  // que casa por palavra dentro do rótulo.
+  const reColuna = new RegExp(String.raw`^(?:qtde?|quantidade|unidade|efetivo(?: \(pessoas\))?|pessoas`
+    + String.raw`|headcount|dias|prazo|exercicio|ano|natureza|tipo|classe|categoria|situacao|status`
+    + String.raw`|moeda|indexador|contraparte|banco|contrato|historico|documento|empresa.*)$`
+    + String.raw`|(?:^|\s)(?:%|percentual|participacao|(?:custo|preco|valor) unitario|taxa)(?:$|\s)`);
   if (reLinha.test(norm(chave))) return true;
   if (String(valorTexto ?? '').includes('%')) return true;
   return coluna != null && coluna !== '' && reColuna.test(norm(coluna));
