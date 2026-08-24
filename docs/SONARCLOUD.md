@@ -217,7 +217,9 @@ para não ter. **Esta regra fica desobedecida de propósito, nos três pontos.**
 | `S5850` precedência em regex | 2 | `^cnpj\b\|\bcnpj\s*[\d.]` faz exatamente o que o comentário ao lado diz |
 | `S8786`/`S5843` outras regex | 8 | Quadráticas no pior caso, com entrada curta e própria. Não são ReDoS exploráveis |
 | `S6505`/`S8543` `npx` e `npm ci` no CI | 7 | `--ignore-scripts` quebra instalação que dependa de *postinstall*; os `npx` resolvem do `node_modules` local, que o `npm ci` já fixa pelo lock |
-| `S4036`/`S5443`/`S8707`/`S5145` | 8 | Ferramentas **locais** de repro e diagnóstico: caminho vindo do `argv` é o propósito de um CLI, e `execFileSync` com vetor de argumentos não abre shell |
+| `S4036`/`S5443`/`S8707` | 6 | Ferramentas **locais** de repro e diagnóstico: caminho vindo do `argv` é o propósito de um CLI, e `execFileSync` com vetor de argumentos não abre shell |
+| `S5145` em `sonar-achados.mjs` | 2 | Mesma razão: script local que imprime o que a API do Sonar devolveu |
+| ~~`S5145` em `diagnosticar-ia.mjs`~~ | ~~4~~ → **0** | **CORRIGIDOS em 24/08**, e não triados. Estavam aqui como "ferramenta local", e a triagem estava certa sobre o risco e errada sobre o custo: o conserto é uma função de quatro linhas. Tudo que vem da rede passa por `deRemoto()`, que colapsa controle e quebra de linha — uma mensagem de terceiro com `\n` inventava uma linha nova na saída, e linha nova ali parece **veredito do diagnóstico**. Num script cuja saída inteira é lida como veredito, essa confusão é o defeito |
 | `python:S1481`/`S1172` não usados | 13 | Desempacotamento de tupla onde a posição é obrigatória. Trocar por `_` é cosmético |
 
 ## Decisões do dono, tomadas em 21/08 — para ninguém reabrir
