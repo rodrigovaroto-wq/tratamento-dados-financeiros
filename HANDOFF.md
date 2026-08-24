@@ -4,15 +4,31 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-21 (sessões 57 a 59). **Estado do `main`:** mergeado até o **PR
-#160**, que levou as quatro frentes do arquivo de comitê e a promoção automática do dial. Não há
-código de engenharia esperando merge.
+**Última atualização:** 2026-08-22 (sessões 57 a 61). **Estado do `main`:** mergeado até o **PR
+#163**. O PR **#162** levou as três auditorias (o defeito das 9.200, a varredura fria dos dez PRs, o
+SonarCloud). O que **NÃO está no `main`** é a sessão 61 — o loop de variações, com as migrations
+`0138` e `0139` e cinco correções: ela está na branch `claude/handoff-leitura-ukmda7` e **precisa de
+um PR NOVO**, porque o #162 já foi mergeado e PR mergeado não recebe trabalho novo.
 
-**NADA DE INFRA ESTÁ ESPERANDO, e desta vez foi medido.** A sonda das 80 migrations achou a `0133`
-faltando em 21/08 (a `0134` e a `0135`, posteriores, estavam lá); o dono aplicou no mesmo dia, e
-depois disso aplicou a `0136` e a `0137`. O banco está na `0137`. O que este parágrafo NÃO é: a
-autoridade sobre o estado do banco. Quem responde isso é a sonda, contra o banco de verdade, e é
-assim que o engano foi achado — ver "A `0133` QUE FALTOU" no `ESTADO.md`.
+**AGORA HÁ INFRA ESPERANDO, e é a primeira vez em várias sessões.** O banco de produção está na
+`0137`; a `0138` e a `0139` saíram da sessão 61 e **ainda não foram aplicadas**. A `0138` é a que
+pesa: `fn_veredito_producao` levanta exceção sempre que não há veredito para medir — o estado de
+banco novo —, e como a promoção automática roda no gatilho de `decisao` e engole exceção virando
+NOTICE, ela morre em TODA inserção, calada. **Em produção está DORMENTE** e isso foi medido, não
+suposto: em 22/08 havia 96 vereditos de classificação, então a linha do defeito não é alcançada.
+Dormente não é inofensivo — ambiente novo ou expurgo das decisões acorda.
+
+> Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
+> (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
+> foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`.
+
+**O LOOP DE VARIAÇÕES (sessão 61) FECHOU O MAIOR BURACO DE COBERTURA QUE RESTAVA.** As seis suítes
+provam a ingestão sobre extração **fiel**; documento de mandato real não é fiel, e tudo o que o
+sistema faz DEPOIS de ler o PDF nunca tinha sido exercitado sobre entrada suja.
+`test/e2e/variacoes.mts` injeta a sujeira no ponto em que a OpenAI responde e deixa o resto correr
+igual — nó do workflow gerado, banco das 84 migrations, export do portal, zero chamada de API. Cinco
+rodadas com as variantes trocadas por completo (101 variantes) acharam **cinco defeitos**, e as duas
+últimas rodadas não acharam nada: convergiu. Detalhe em "O LOOP DE VARIAÇÕES" no `ESTADO.md`.
 
 **Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
 nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada. As sessões 52 a 59
@@ -23,8 +39,12 @@ premissas lidas do realizado — que nunca viram dado real.** É o **B1** do `do
 
 **POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem:**
 
-1. **B1, a rodada real** — é do dono, é uma hora, e é o que mais destrava. Nada de engenharia está
-   esperando por ele; ele é que está esperando;
+0. **Abrir um PR NOVO para a branch `claude/handoff-leitura-ukmda7`** e aplicar a `0138` e a `0139`
+   no Supabase. É o único item que mudou de estado desde a 59: agora HÁ infra esperando;
+1. **B1, a rodada real** — é do dono, é uma hora, e é o que mais destrava. Nenhuma engenharia está
+   esperando por ele; ele é que está esperando. E o arnês de variações **não o substitui**: ele
+   começa DEPOIS da resposta da OpenAI, então scan torto, carimbo e coluna deslocada continuam fora
+   do alcance de qualquer suíte;
 2. **o que a 59 deliberadamente NÃO fez, e está escrito na própria planilha:** a sensibilidade dos
    covenants é DECLARADA por elasticidade, não é a cascata de caixa e dívida recalculada por cenário.
    Ela é PISO da deterioração — "rompe aqui" implica "rompe lá", o contrário não vale. Refazer a
@@ -44,6 +64,7 @@ premissas lidas do realizado — que nunca viram dado real.** É o **B1** do `do
 | 56 | A **operação passa a ser vista** (`0135`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
 | 57 | **O portal encolhe:** saem a página de instalação, o aviso dela no painel, a consulta à base e a tela de operação; o painel inteiro passa a falar com o **analista**, não com o desenvolvedor. Nenhum motor foi removido junto: o que as telas mostravam vive nas funções do banco |
 | 58 | A sonda das 80 migrations, que achou a **`0133` nunca aplicada** enquanto três documentos a davam por aplicada; a abertura do painel passa a aparecer **em todo login**; o **veredito de produção passa a contar** para o dial (`0136`), como piso declaradamente enviesado; as **premissas passam a sair do realizado** — oito delas, com a conta à vista |
+| 61 | O **loop de variações** (`test/e2e/variacoes.mts`): 101 variantes em cinco rodadas, cinco defeitos que nenhuma suíte pegava — a exceção do veredito (`0138`), a medição apagada ao reafirmar o nível (`0139`), **a dívida que evaporava** na virada para o projetado, o código contábil quebrando a âncora, e o caractere invisível partindo a conta em duas. Mais o export que **morria** sem valor numérico e agora recusa nomeando a falta |
 | 59 | O **dial sobe sozinho** ao critério (`0137`), com quatro travas — e o freio de quem baixou o nível não é desfeito pela máquina; e as **quatro frentes do arquivo de comitê** (Modelagem para de projetar, quatro índices novos, covenants por cenário, reperfilamento por carência) |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir

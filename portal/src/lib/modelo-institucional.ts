@@ -901,8 +901,23 @@ const BLOCOS_DE_DESPESA: readonly BlocoModelo[] = ["deducao", "custo", "sga"];
 // definição de "sem acento, minúscula, espaço único" no projeto) mais a pontuação
 // de apresentação. "Resultado Operacional (EBIT)" e "Resultado operacional -
 // EBIT" são o mesmo rótulo para quem lê, e um documento escreve de cada jeito.
+// CÓDIGO DE CONTA CONTÁBIL NO COMEÇO DO RÓTULO — "1.1.01.002 Caixa e bancos".
+//
+// É como quase todo balancete de ERP brasileiro chega, e ele quebrava a ÂNCORA:
+// `chaveDeAncora` troca ponto por espaço, então "1.1.01.002 TOTAL DO ATIVO" virava
+// "1 1 01 002 total do ativo" e não casava com "total do ativo" da lista fechada.
+// Sem âncora não há linha de reconciliação, e sem reconciliação o balanço não
+// fecha: medido no arnês de variações, resíduo de −36.116 com os mesmos números.
+//
+// Dois dígitos-grupo no mínimo (`\d+(\.\d+){2,}`), que é a mesma definição de
+// código de conta que `n8n/lib/cobertura.mjs` já usa — "identidade sem uma letra
+// sequer". Exigir três grupos evita comer um "2.500" que seja parte do nome.
+// O código não se perde: ele continua no rótulo que o arquivo imprime; o que muda
+// é só o que a âncora COMPARA.
+const CODIGO_DE_CONTA_NO_INICIO = /^\s*\d+(?:\.\d+){2,}\s*[-–—.)]?\s*/;
 const chaveDeAncora = (s: string) =>
-  normalizar(s).replace(/[()[\].,;:/–—-]+/g, " ").replace(/\s+/g, " ").trim();
+  normalizar(String(s ?? "").replace(CODIGO_DE_CONTA_NO_INICIO, ""))
+    .replace(/[()[\].,;:/–—-]+/g, " ").replace(/\s+/g, " ").trim();
 
 // AS ÂNCORAS DO DOCUMENTO — o que permite PROVAR que o modelo não mente.
 //
@@ -3028,7 +3043,38 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     ...(ctx.linhasPorBloco.get("passivo_circulante") ?? []),
     ...(ctx.linhasPorBloco.get("passivo_nao_circulante") ?? []),
   ].filter((l) => ehDividaFinanceira(l.chave));
+  const iProjDoAno = (ano: number) => ctx.anos.indexOf(ano) - ctx.hist.length;
   const dividas = doMapa.length > 0 ? doMapa : doBalanco;
+
+  // A ÚLTIMA COLUNA HISTÓRICA EM QUE CADA TRANCHE TEM VALOR — e por que isto
+  // precisou existir.
+  //
+  // O DEFEITO, achado rodando o arnês de variações: `#fim` do histórico só é
+  // escrito quando a tranche TEM valor naquele ano (`if (e)` abaixo). Quando ela
+  // não tem valor no ÚLTIMO exercício realizado, a célula fica vazia — e a
+  // abertura do primeiro ano projetado, que é `=<#fim do ano anterior>`, referencia
+  // vazio e vale ZERO. A tranche some da projeção SEM AMORTIZAÇÃO NENHUMA.
+  //
+  // Medido: uma variação em que as colunas de período vêm trocadas levou a dívida
+  // de curto prazo de 23.462 e a de longo de 14.257 para ZERO no primeiro ano
+  // projetado, com `Amortização de dívida no período` = 0. Dívida não paga que
+  // desaparece é a mentira mais lisonjeira que este arquivo pode contar num
+  // mandato de reestruturação, e o único a reclamar era o CHECK do balanço, 37.719
+  // colunas adiante.
+  //
+  // É REALISTA fora do arnês: basta o mapa de dívida não trazer uma tranche na
+  // coluna do último exercício — extração que perdeu a célula, tranche que o
+  // documento reporta só até o ano anterior, coluna em branco no PDF.
+  //
+  // A REGRA: a projeção abre no ÚLTIMO SALDO CONHECIDO, e a célula diz de que ano
+  // ele veio. Carregar o último saldo é conservador; zerar afirma que a dívida foi
+  // quitada, e o documento não disse isso.
+  const ultimoAnoComSaldo = new Map<LinhaModelo, number>();
+  for (const l of dividas) {
+    for (const ano of ctx.hist) {
+      if (valorNaEscala(l, ano, ctx.ent.unidade)) ultimoAnoComSaldo.set(l, ano);
+    }
+  }
   const origemDaDivida = doMapa.length > 0 ? "mapa de dívida" : "linhas de dívida bancária do balanço";
   const jurosDoMapa = (ctx.linhasPorBloco.get("divida") ?? []).filter((l) => /juros/i.test(l.chave));
 
@@ -3349,7 +3395,20 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
         if (e) g.set(`${ch}#fim`, ano, Math.abs(e.valor), { fmt: NUM, fill: FILL_HIST, nota: e.nota, tipo: "calc" });
         continue;
       }
-      g.set(`${ch}#ini`, ano, `=${g.ref(`${ch}#fim`, ant!)}`, { fmt: NUM });
+      // ABERTURA: normalmente o fechamento do ano anterior. Quando a tranche não
+      // tem saldo no último realizado, cai para o último ano em que teve — e diz.
+      const anoSaldo = ultimoAnoComSaldo.get(l);
+      const abreEm = iProjDoAno(ano) === 0 && anoSaldo != null && anoSaldo !== ant ? anoSaldo : ant!;
+      g.set(`${ch}#ini`, ano, `=${g.ref(`${ch}#fim`, abreEm)}`, {
+        fmt: NUM,
+        nota: abreEm === ant
+          ? undefined
+          : `Esta tranche NÃO tem saldo no último exercício realizado (${ant}). A projeção abre no `
+            + `último saldo conhecido, de ${abreEm}, e esta nota existe para o número não passar por `
+            + "fato do documento.\n\nA alternativa seria abrir em ZERO, e zero aqui afirmaria que a "
+            + "dívida foi quitada — o documento não disse isso. Se ela foi mesmo liquidada, apague "
+            + "esta célula; se o mapa perdeu a coluna, é dado a reconciliar com quem o produziu.",
+      });
       // `iProj` = 0 no PRIMEIRO exercício projetado. O prazo é uma premissa só, na
       // primeira coluna projetada; os anos seguintes apontam para ela, então UMA
       // edição reprojeta a tranche inteira dentro do Excel.
@@ -5198,11 +5257,13 @@ function abaOutput(
     // comitê como quebrando o covenant de liquidez. A célula passa a devolver
     // texto, como `R_LIQ_IMED` já fazia ao lado, e aí o teste diz "n.a.".
     g.set("R_LIQ_CORR", ano,
-      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_AC", ano)}/${g.ref("BS_PC", ano)},"PC=0")`, {
+      `=IF(${g.ref("BS_PC", ano)}<=0,"PC<=0",IF(${g.ref("BS_AC", ano)}<0,"AC<0",${g.ref("BS_AC", ano)}/${g.ref("BS_PC", ano)}))`, {
       fmt: MULT,
-      nota: "Ativo circulante sobre passivo circulante. Sem passivo circulante a razão não existe e "
-        + "a célula diz isso: publicar zero faria o teste de covenant ao lado ler 0 < corte e "
-        + "acusar rompimento justamente na empresa que não deve nada no curto prazo.",
+      nota: "Ativo circulante sobre passivo circulante. Com passivo circulante ZERO ou NEGATIVO a "
+        + "razão não existe e a célula diz isso. Zero faria o teste de covenant ao lado ler 0 < corte "
+        + "e acusar rompimento justamente na empresa que não deve nada no curto prazo; NEGATIVO é "
+        + "pior — a razão sai negativa e se lê como liquidez péssima, quando o passivo é que ficou "
+        + "impossível. Achado no arnês de variações: PC de −4.680 publicava liquidez de −9,56x.",
     });
     g.set("C_LIQ_CORR", ano, COVENANT_LIQUIDEZ, {
       fmt: MULT, fill: FILL_INPUT,
@@ -5215,8 +5276,9 @@ function abaOutput(
     // ativo que menos vira caixa, e é o que separa "tem liquidez" de "tem
     // liquidez se conseguir vender tudo".
     g.set("R_LIQ_SECA", ano,
-      `=IF(${g.ref("BS_PC", ano)}<>0,(${g.ref("BS_AC", ano)}-${g.externa("Working Capital", gWC, "ESP_ESTOQUE", ano)})`
-      + `/${g.ref("BS_PC", ano)},"PC=0")`, {
+      `=IF(${g.ref("BS_PC", ano)}<=0,"PC<=0",IF(${g.ref("BS_AC", ano)}<0,"AC<0",`
+      + `(${g.ref("BS_AC", ano)}-${g.externa("Working Capital", gWC, "ESP_ESTOQUE", ano)})`
+      + `/${g.ref("BS_PC", ano)}))`, {
       fmt: MULT,
       nota: "Ativo circulante menos estoque, sobre o passivo circulante: separa liquidez de liquidez "
         + "que depende de vender estoque. Sem passivo circulante a razão não existe, e a célula diz "
@@ -5227,7 +5289,7 @@ function abaOutput(
     // dá para pagar hoje" —, e ela não é a liquidez seca: esta ainda conta o
     // recebível, que depende de o cliente pagar.
     g.set("R_LIQ_IMED", ano,
-      `=IF(${g.ref("BS_PC", ano)}<>0,${g.ref("BS_CAIXA", ano)}/${g.ref("BS_PC", ano)},"PC=0")`, {
+      `=IF(${g.ref("BS_PC", ano)}<=0,"PC<=0",${g.ref("BS_CAIXA", ano)}/${g.ref("BS_PC", ano)})`, {
       fmt: MULT,
       nota: "Caixa e aplicações sobre o passivo circulante. Diferente da liquidez seca, que ainda "
         + "conta o recebível: aqui não se conta com ninguém pagar.",
@@ -5770,6 +5832,28 @@ export function construirModeloInstitucional(
 ): EspecGrafico[] {
   if (ent.anosProjetados.length === 0) {
     throw new Error("construirModeloInstitucional: sem anos projetados — nada a modelar.");
+  }
+  // SEM SÉRIE HISTÓRICA NÃO HÁ DE ONDE PROJETAR, e a recusa precisa acontecer AQUI.
+  //
+  // Achado rodando o arnês de variações, na variante em que a extração devolve o
+  // TEXTO do valor e não o número (`valor_num` nulo, `valor_texto` preenchido) —
+  // caso corriqueiro de leitura de PDF ruim. Sem número, `fn_valores_por_ano` não
+  // devolve ano nenhum, `anosHistoricos` chega vazio, `ultimoHist` cai para
+  // `proj[0] - 1` (um ano FORA do eixo) e `anoAnterior` da primeira coluna
+  // projetada é `null`. O arquivo morria 300 linhas adiante com
+  // `modelo-institucional: ano null fora do horizonte` — erro de programador na
+  // cara do analista, e nenhum export saía.
+  //
+  // Recusar aqui, com o motivo, é o que o resto deste arquivo faz o tempo todo:
+  // "EBITDA<=0", "PL<=0", "sem lucros retidos", "PC=0". O chamador decide o que
+  // fazer com a recusa; o que ele não pode é receber um erro que não explica nada.
+  if (ent.anosHistoricos.length === 0) {
+    throw new Error(
+      "construirModeloInstitucional: nenhum exercício com valor NUMÉRICO. O modelo projeta a partir "
+      + "do realizado, e não há realizado — as linhas extraídas chegaram sem `valor_num` (texto que "
+      + "não virou número, ou coluna que a extração não leu). Não é caso de projetar: é caso de "
+      + "voltar à extração.",
+    );
   }
   const ctx = contexto(ent);
 

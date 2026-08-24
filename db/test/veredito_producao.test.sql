@@ -59,6 +59,7 @@ end $$;
 do $$
 declare
   v_caso    uuid;
+  v_guarda  jsonb;
   v_r       jsonb;
   v_dial    jsonb;
   v_base    text;
@@ -95,6 +96,55 @@ begin
   perform teste_assert_vp(
     (v_r->>'suficiente')::boolean is false and v_r->>'motivo' like '%não existe no dial%',
     'estágio inexistente recusa em vez de estourar');
+
+  raise notice '--- 1b. COM fonte, COM critério e ZERO veredito: AVISA, não estoura (0138) ---';
+
+  -- O ESTADO QUE NINGUÉM COBRIA, e é o de banco recém-instalado. Os dois casos
+  -- acima retornam ANTES de montar a lista de falhas: um por não ter fonte, o
+  -- outro por não existir no dial. O caminho que monta a lista só é alcançado
+  -- quando há fonte E critério E a concordância é nula — e ali um literal cru
+  -- sendo acrescentado a `text[]` fazia o Postgres tentar lê-lo como literal de
+  -- array e levantar `malformed array literal`.
+  --
+  -- Custava caro justamente por não aparecer: a promoção automática da 0137 roda
+  -- no gatilho de `decisao` e engole exceção virando NOTICE, então em ambiente
+  -- novo o dial morria em toda inserção, calado.
+  --
+  -- `delete from decisao` acima já deixou o estágio sem veredito nenhum.
+  begin
+    v_r := fn_veredito_producao('classificacao_doc_checklist');
+  exception when others then
+    v_r := jsonb_build_object('ESTOUROU', sqlerrm);
+  end;
+  perform teste_assert_vp(
+    v_r->>'ESTOUROU' is null,
+    'com fonte, com critério e zero veredito a função RESPONDE em vez de estourar',
+    v_r::text);
+  perform teste_assert_vp(
+    (v_r->>'suficiente')::boolean is false,
+    'e a resposta é "não suficiente"', v_r::text);
+  perform teste_assert_vp(
+    v_r->'falhas' @> '["concordância: não medida (nenhum veredito com os dois lados)"]'::jsonb,
+    'e a falta aparece NOMEADA na lista de falhas, que é o ponto da lista existir',
+    v_r::text);
+  -- `->>` e não `->`: a chave EXISTE e vale null de JSON, e `->` devolveria
+  -- `'null'::jsonb`, que não é NULL de SQL. O assert de cima (estágio sem fonte)
+  -- passa com `->` porque lá a chave nem existe — duas ausências diferentes.
+  perform teste_assert_vp(
+    v_r->>'concordancia' is null,
+    'sem veredito não há concordância — nem zero, que seria uma afirmação',
+    v_r::text);
+
+  -- O MESMO para a classe A, que chega ao trecho por outro despacho.
+  begin
+    v_r := fn_veredito_producao('reconciliacao_classe_a');
+  exception when others then
+    v_r := jsonb_build_object('ESTOUROU', sqlerrm);
+  end;
+  perform teste_assert_vp(
+    v_r->>'ESTOUROU' is null,
+    'idem para reconciliacao_classe_a, que despacha por outro caminho',
+    v_r::text);
 
   raise notice '--- 2. massa insuficiente reprova, mesmo com acerto perfeito ---';
 
@@ -172,6 +222,43 @@ begin
   perform teste_assert_vp(
     v_dial->>'nivel_atual' = 'N2',
     'o dial sobe para N2');
+
+  raise notice '--- 5b. REAFIRMAR o nível corrente NÃO apaga a medição (0139) ---';
+
+  -- O DEFEITO que isto religa: `fn_mudar_dial` com o nível que o estágio JÁ TEM
+  -- não é subida, então o bloco que mede é pulado e `v_base` cai no default
+  -- 'declarada' — que era gravado por cima, zerando medicao_em e medicao_resumo.
+  -- `base_do_nivel` é o campo que toda tela lê para dizer se o nível é medido ou
+  -- declarado; trocá-lo faz o sistema subdeclarar a própria evidência.
+  -- Alcançável na operação normal: é por esta função que se ajusta o limiar.
+  perform fn_mudar_dial('classificacao_doc_checklist', 'N2', 'analista:teste',
+                        'reafirmando o nível, mexendo só no limiar', 0.93, null, null, false);
+  select base_do_nivel into v_base from estagio_autonomia where estagio = 'classificacao_doc_checklist';
+  perform teste_assert_vp(
+    v_base = 'medida_por_veredito',
+    'reafirmar o nível mantém a base MEDIDA — não vira "declarada"', coalesce(v_base, '(null)'));
+  perform teste_assert_vp(
+    (select medicao_em is not null and medicao_resumo is not null
+       from estagio_autonomia where estagio = 'classificacao_doc_checklist'),
+    'e a trilha da medição continua lá (medicao_em e medicao_resumo)');
+  perform teste_assert_vp(
+    (select limiar_auto_clear from estagio_autonomia where estagio = 'classificacao_doc_checklist') = 0.93,
+    'e o limiar que a chamada queria mudar mudou de verdade');
+
+  -- CONTRAPONTO: descer de nível é mudança REAL, e aí a medição antiga descreve
+  -- outro nível — tem de sair. Sem este assert, "preservar sempre" passaria.
+  select medicao_resumo into v_guarda from estagio_autonomia
+   where estagio = 'classificacao_doc_checklist';
+  perform fn_mudar_dial('classificacao_doc_checklist', 'N0', 'rodrigo', 'freio de mão');
+  perform teste_assert_vp(
+    (select base_do_nivel = 'nao_se_aplica' and medicao_em is null and medicao_resumo is null
+       from estagio_autonomia where estagio = 'classificacao_doc_checklist'),
+    'mas BAIXAR o nível limpa a medição, que passou a descrever outro nível');
+  -- devolve exatamente o estado de antes, inclusive o resumo — restaurar pela
+  -- metade faria os asserts seguintes medirem a minha limpeza, não o sistema.
+  update estagio_autonomia set nivel_atual = 'N2', base_do_nivel = 'medida_por_veredito',
+         medicao_em = now(), medicao_resumo = v_guarda, auto_promocao = true
+   where estagio = 'classificacao_doc_checklist';
 
   select base_do_nivel into v_base from estagio_autonomia where estagio = 'classificacao_doc_checklist';
   perform teste_assert_vp(

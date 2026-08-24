@@ -244,6 +244,23 @@ jobs:
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
 
+      - name: Arnês de variações — a cadeia real sobre documento sujo
+        # POR QUE ELE ESTÁ NO CI. Cinco rodadas de variantes trocadas por completo
+        # acharam cinco defeitos que nenhuma das outras suítes pega, porque todas
+        # elas medem a ingestão sobre extração FIEL. Documento de mandato real não
+        # é fiel, e as variantes que pegaram cada defeito ficaram aqui como
+        # religamento — desfazer qualquer uma das cinco correções deixa este passo
+        # vermelho. Leva ~6 min no runner: o primeiro minuto e meio é montar o MOLDE
+        # (as 84 migrations, uma vez), e cada variante depois clona dele em 0,2 s.
+        #
+        # SEM `env:` DE PROPÓSITO — ele herda o do job (o serviço `postgres:16` em
+        # `localhost:5432`), exatamente como o passo do e2e acima. A primeira versão
+        # trazia `PGHOST: /tmp`, que é onde o socket fica NA MINHA MÁQUINA e não
+        # existe no runner: o passo morria em `connection to server on socket
+        # "/tmp/.s.PGSQL.5432" failed`. Configuração de sandbox copiada para o CI é
+        # o jeito mais bobo de deixar um portão vermelho.
+        run: ./portal/node_modules/.bin/tsx test/e2e/variacoes.mts
+
       - name: Build do portal
         working-directory: portal
         run: npx next build

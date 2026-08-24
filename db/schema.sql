@@ -4153,6 +4153,7 @@ declare
   v_base      text;
   v_resumo    jsonb;
   v_freia     boolean;
+  v_mede      boolean := false;   -- esta chamada produziu base MEDIDA nova?
 begin
   select to_jsonb(ea), ea.teto, ea.nivel_atual, ea.natureza
     into v_antes, v_teto, v_nivel_ant, v_natureza
@@ -4201,6 +4202,7 @@ begin
       end if;
       v_base := 'medida';
       v_resumo := v_med;
+      v_mede := true;
 
     elsif p_por_veredito then
       v_med := fn_veredito_producao(p_estagio);
@@ -4217,6 +4219,7 @@ begin
       end if;
       v_base := 'medida_por_veredito';
       v_resumo := v_med;
+      v_mede := true;
 
     elsif p_sem_medicao_porque is null then
       insert into evento_auditoria (ator, acao, entidade_ref, depois)
@@ -4236,13 +4239,27 @@ begin
     end if;
   end if;
 
+  -- REAFIRMAR O NÍVEL QUE JÁ VALE NÃO PODE APAGAR A MEDIÇÃO QUE O AUTORIZOU.
+  --
+  -- `v_mede` é verdadeiro só quando ESTA chamada produziu base nova. Quando não
+  -- produziu — e o nível pedido é o que já está lá —, os três campos de medição
+  -- ficam como estavam. Sem isso, `fn_mudar_dial(estagio, <mesmo nível>)` trocava
+  -- `medida_por_veredito` por `declarada` e zerava `medicao_em`/`medicao_resumo`:
+  -- o sistema passava a subdeclarar a própria evidência, e a trilha do que
+  -- autorizou o nível sumia. Ver o cabeçalho desta migration.
   update estagio_autonomia
     set nivel_atual = p_nivel,
         limiar_auto_clear = coalesce(p_limiar, limiar_auto_clear),
-        base_do_nivel = v_base,
-        medicao_rodada_id = case when v_base = 'medida' then p_rodada_golden else null end,
-        medicao_em        = case when v_base in ('medida', 'medida_por_veredito') then now() else null end,
-        medicao_resumo    = case when v_base in ('medida', 'medida_por_veredito') then v_resumo else null end,
+        base_do_nivel = case when v_mede or p_nivel <> v_nivel_ant then v_base else base_do_nivel end,
+        medicao_rodada_id = case when v_mede then (case when v_base = 'medida' then p_rodada_golden else null end)
+                                 when p_nivel <> v_nivel_ant then null
+                                 else medicao_rodada_id end,
+        medicao_em        = case when v_mede then now()
+                                 when p_nivel <> v_nivel_ant then null
+                                 else medicao_em end,
+        medicao_resumo    = case when v_mede then v_resumo
+                                 when p_nivel <> v_nivel_ant then null
+                                 else medicao_resumo end,
         -- O FREIO GRUDA. Uma vez desligada por descida humana, a promoção
         -- automática só volta por `update` explícito: quem desconfiou é quem
         -- decide voltar a confiar.
@@ -4277,7 +4294,7 @@ $$;
 -- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) IS 'Muda o nível de autonomia de um estágio aplicando a regra de ouro do docs/01. Três portas para subir interpretativo a N2/N3, em ordem de força: rodada de golden set congelada (base medida), veredito de produção suficiente (base medida_por_veredito, piso enviesado, 0136), ou motivo declarado (base declarada). Descer nunca pede nada, e desde a 0137 DESCIDA FEITA POR HUMANO desliga a promoção automática daquele estágio. Recusa é RETORNADA, não exceção.';
+COMMENT ON FUNCTION public.fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean) IS 'Muda o nível de autonomia de um estágio aplicando a regra de ouro do docs/01. Três portas para subir interpretativo a N2/N3: rodada de golden set congelada (base medida), veredito de produção suficiente (medida_por_veredito, piso enviesado, 0136), ou motivo declarado. Descer nunca pede nada e DESLIGA a promoção automática daquele estágio (0137). Desde a 0139, reafirmar o nível que já vale NÃO apaga a medição que o autorizou. Recusa é RETORNADA, não exceção.';
 
 --
 -- Name: fn_mutuo_com_socio(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -8966,7 +8983,8 @@ begin
                                    v_n, v_crit.n_minimo_veredito);
   end if;
   if v_conc is null then
-    v_falhas := v_falhas || 'concordância: não medida (nenhum veredito com os dois lados)';
+    -- O `::text` NÃO é enfeite — ver o cabeçalho desta migration.
+    v_falhas := v_falhas || 'concordância: não medida (nenhum veredito com os dois lados)'::text;
   elsif v_conc < v_crit.concordancia_minima then
     v_falhas := v_falhas || format('concordância: %s, mínimo %s', v_conc, v_crit.concordancia_minima);
   end if;

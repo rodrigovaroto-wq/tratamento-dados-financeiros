@@ -6919,7 +6919,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     esquecerMemoria(out);
     const rLC = acharEm(out, /^Liquidez corrente/);
     const liq = avaliarCelula(out, COL, rLC);
-    checar(liq === "PC=0",
+    checar(liq === "PC<=0",
       "(41) sem passivo circulante a liquidez corrente não é ZERO — ela não existe",
       `publicou: ${JSON.stringify(liq)}`);
     // A linha seguinte é o corte, a de baixo é o veredito (R, C, T nessa ordem).
@@ -6928,7 +6928,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(41) …e o teste de covenant diz \"n.a.\" em vez de acusar ROMPE em quem não deve nada",
       `publicou: ${JSON.stringify(rompe)}`);
     const seca = avaliarCelula(out, COL, acharEm(out, /^Liquidez seca/));
-    checar(seca === "PC=0",
+    checar(seca === "PC<=0",
       "(41) a liquidez seca segue a mesma regra", `publicou: ${JSON.stringify(seca)}`);
   }
 }
