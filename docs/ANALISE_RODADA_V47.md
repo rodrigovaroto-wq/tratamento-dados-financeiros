@@ -125,16 +125,25 @@ O nó `Reconciliar (Classe A)` **está no canvas e rodou**. Devolveu isto:
 {"resultado": {"motivo": "documento não encontrado", "executado": false}}
 ```
 
-…para **2 itens, não 38**. O nó é
-`select fn_reconciliar_por_documento($1::uuid)` com
-`queryReplacement = {{ [$json.documento_id] }}`, e o item que chega do `Juntar Extraidos`
-**não tem `documento_id`**. O parâmetro chega nulo, a função não encontra documento e
-retorna sem inserir nada. Toda vez, para todo documento.
+**O nó Postgres do n8n substitui o item pelo resultado da query.** O
+`Gravar Campos (Sombra)` devolvia só `{n_campos: 65}`, e os **dois** nós seguintes leem
+`$json.documento_id`:
+
+| Nó | Lê | Recebia | Resultado |
+|---|---|---|---|
+| `Registrar Diagnostico` | `$json.documento_id` | `undefined` | "documento não encontrado" |
+| `Reconciliar (Classe A)` | `$json.documento_id` | `undefined` | "documento não encontrado" |
+
+As funções eram chamadas com NULL, respondiam com um retorno **válido**, e o nó ficava
+**verde**. Zero linha gravada, nenhuma tela dizendo que as checagens não rodaram.
+
+**São dois nós quebrados, não um.** O diagnóstico (preenchimento de entidade, confirmação
+de tipo e de legibilidade) também nunca rodou nesta rodada — o que está no banco veio do
+`fn_registrar_documento`, lá atrás na classificação, não daqui.
 
 É a classe exata do commit `9b9cd72` — *"O fan-out cortou o pareamento de itens, e três nós
 perderam o contexto"* (13/08 21:08) —, e a janela da quebra (13/08, entre a v41 e a v42)
-bate com `4b96406` *"Três camadas para o dado que não chegava"* (13/08 20:17). O nó não foi
-removido: ele foi **desconectado do seu insumo** e continuou verde.
+bate com `4b96406` *"Três camadas para o dado que não chegava"* (13/08 20:17).
 
 **O motor está intacto.** Chamando `fn_reconciliar_por_documento` à mão sobre o
 `01_Balanco_Patrimonial` da v47 (em transação revertida), ela executa as **6 checagens** e
@@ -156,9 +165,15 @@ O agravante continua: o book é fiel, o balanço fecha, e nada denunciaria a aus
 documento real que não fechasse, o sistema aprovaria calado. **É a mesma forma da `0133`:
 a cegueira foi aberta por uma mudança nossa e nenhuma tela mostra que ela existe.**
 
-**Ação:** repassar `documento_id` no item que alimenta o `Reconciliar (Classe A)`, e travar
-com um teste que reprove quando um mandato com balanço completo produz zero linhas de
-reconciliação — a guarda que faltava para isso não ter passado 11 dias em silêncio.
+**CORRIGIDO (24/08).** `Gravar Campos (Sombra)` passa a devolver `documento_id`,
+`documento_versao_id` e `diagnostico` como **colunas da própria query**, e
+`Registrar Diagnostico` devolve `documento_id`. Colunas, e não `$('nó').item`: pareamento
+por item já quebrou aqui uma vez (o fan-out do fatiamento), e a doutrina desde então é que
+o item carrega o próprio contexto.
+
+A trava está em `n8n/test/workflow-sim.test.mjs` e é genérica: qualquer nó que leia
+`$json.X` do item de um nó Postgres anterior exige que aquele nó devolva `X` como coluna.
+Conferida contra a query antiga — ela **reprova**.
 
 ### 2.2 🔴 Escala `milhao` em documento que diz "R$ mil" — erro de 1.000×
 
@@ -209,9 +224,15 @@ Pendência aberta em `19_Faturamento_Intragrupo`:
 igual nas 4 linhas de 2023. Os valores monetários dessas linhas estão certos e somam certo
 (1.900 + 3.400 + 720 + 1.100 = 7.120 = "Total de 2023" ✅).
 
-**Ação:** o detector deve ignorar colunas não-monetárias (`Exercício`, `Natureza`,
-`Quantidade`, `Unidade`, `% do total`) — a mesma lista que a correção de 2.2 precisa criar.
-Uma correção resolve os dois.
+**CORRIGIDO E APLICADO EM PRODUÇÃO (24/08)** — migration `0140`. Nasce
+`fn_coluna_de_dimensao`, e `fn_contas_repetindo_valor` passa a ignorar colunas que rotulam
+a linha em vez de medi-la.
+
+**Medido contra as 38 versões da v47 ANTES de aplicar**, em transação revertida: o único
+documento que muda de estado é o 19 (de 4 contas repetindo 2023 para 2 repetindo 1.900,
+abaixo do limiar). O maior `n_contas` do lote passa a ser 3, contra um limiar de 4 — a
+guarda **continua com folga, não foi silenciada**. É a diferença entre corrigir um falso
+positivo e desligar a guarda, e ela tinha de ser medida, não presumida.
 
 ### 2.5 🟠 Documento COMBINADO classificado como BALANCO → entidade fantasma → 3 pendências falsas
 
@@ -315,12 +336,33 @@ tokens de saída — 89% do teto de 16.384**, sem fatiar. Um balanço um pouco m
 
 ### 3.2 `thoughts_tokens` e `custo_usd` do `17_Livro_Razao`
 
-**Ainda em aberto — mas não por falta de acesso.** O `Resumo de Custo` da execução `7030`
-foi lido direto do histórico do n8n e só traz o agregado; `lote_execucao` idem. O detalhe
-por documento existe apenas na saída item-a-item do nó `Parse Extracao`, que **não é
-persistida em lugar nenhum** — some quando a execução é expurgada. Isso é, por si só, uma
-lacuna de instrumentação: a decisão do teto de saída depende de um número que o sistema
-não guarda.
+**RESPONDIDA** — o dono enviou a saída do `Parse Extracao`, item a item, dos 38 documentos.
+
+| Documento | Saída (tokens) | % do teto de 16.384 | Pares | Custo |
+|---|---:|---:|---:|---:|
+| `35_Demonstracoes_Contabeis` | **13.534** | **82,6%** | 285 | US$ 0,0361 |
+| `01_Balanco_Patrimonial` | 10.895 | 66,5% | 308 | US$ 0,0292 |
+| `17_Livro_Razao` | 10.007 | 61,1% | 198 | US$ 0,0270 |
+| `15_Balancete_12M25` | 5.838 | 35,6% | 155 | US$ 0,0164 |
+| soma do lote | 116.905 | — | 2.460 | US$ 0,3566 |
+
+**Duas coisas que a projeção tinha errado**, e vale registrar as duas:
+
+1. **o documento mais caro não é o mais numeroso.** O `35` tem *menos* pares que o `01`
+   (285 contra 308) e gasta *mais* saída (13.534 contra 10.895) — ele tem 13 seções
+   canônicas, então cada linha carrega mais estrutura. Densidade não é contagem de linhas;
+2. **o pior caso real é 82,6% do teto, não os ~89% projetados** — e não no documento que
+   eu apontei. A projeção acertou a ordem de grandeza e o alerta; errou o alvo.
+
+`thoughts_tokens` **não aparece separado**: o `Parse Extracao` já soma o raciocínio dentro
+de `tokens.saida`, que é exatamente o que o #169 mandou fazer (é cobrado como saída). A
+correção está funcionando — e o efeito colateral é que **não dá para separar raciocínio de
+JSON** neste dado. Para a decisão 4.2 isso não muda nada (a recomendação já é manter), mas
+significa que "quanto custa o pensamento" segue sem medição direta.
+
+**A lacuna de instrumentação continua:** este detalhe só existe na saída item-a-item da
+execução do n8n e **não é persistido em lugar nenhum** — some no expurgo. A decisão do teto
+de saída depende de um número que o sistema não guarda.
 
 O que dá para dizer do agregado: o raciocínio **está** sendo cobrado e **está** na conta
 (o real ficou 30% acima do piso pré-#169, e a diferença é exatamente essa). O
@@ -341,10 +383,14 @@ Com o teto atual sobrando ~11%, subi-lo agora só faria uma coisa: **enterrar de
 chance de ver o fatiamento disparar numa rodada real**. E o fatiamento é prova obrigatória
 do B1.
 
-**Recomendação:** manter 16.384. Antes de mexer, medir o `01_Balanco_Patrimonial` no nó
-`Parse Extracao`. Se ele estiver acima de ~14.000, a decisão certa não é subir o teto — é
-**testar o fatiamento com um documento propositalmente maior**, que é a prova que falta.
-Se mexer, `TETO_SAIDA_TOKENS` em `n8n/lib/cobertura.mjs` acompanha (há teste travando os dois).
+**Recomendação, agora com a medição na mão: manter 16.384.** O pior caso real do lote é o
+`35_Demonstracoes_Contabeis` com 13.534 tokens — **82,6% do teto**, folga de 17%. É apertado
+o bastante para vigiar e largo o bastante para não mexer agora, e subir o teto enterraria a
+única chance de ver o fatiamento disparar.
+
+O passo certo não é subir o teto: é **testar o fatiamento com um documento propositalmente
+maior**, que é a prova que falta desde a sessão 52. Se um dia mexer, `TETO_SAIDA_TOKENS` em
+`n8n/lib/cobertura.mjs` acompanha (há teste travando os dois).
 
 ### 4.2 Desligar o pensamento na extração? — **Não.**
 
@@ -368,13 +414,15 @@ commits). É fatia própria e provavelmente acende achados antigos.
 
 | # | Item | Seção | Por quê primeiro |
 |---|---|---|---|
-| 1 | Reconciliações não rodam há 3 mandatos | 2.1 | Aprova mandato sem checar amarração. Cegueira, não erro visível |
-| 2 | Escala por coluna (resolve escala 1.000× **e** o falso positivo 2.4) | 2.2 + 2.4 | Erro de mil vezes; uma correção mata dois defeitos |
-| 3 | Confiança de extração saturada em 1,00 | 2.3 | Desliga o dial sem avisar ninguém |
-| 4 | Seção canônica nos totais | 2.6 | Causa raiz de boa parte das 11 pendências falsas |
-| 5 | COMBINADO → BALANCO e entidade fantasma | 2.5 | 3 pendências falsas; normalizar nome de entidade junto |
-| 6 | Balancete 2025 sem seção | 2.7 | 155 linhas, o maior bloco perdido |
-| 7 | Tipo nulo com confiança 0,90 / tipo `FOLHA_PAGAMENTO` | 2.8 | Barato |
+| ✅ | Reconciliação + diagnóstico desligados do insumo | 2.1 | **Corrigido**; falta PUBLICAR a versão do n8n |
+| ✅ | Falso positivo da guarda de padrão suspeito | 2.4 | **Corrigido e aplicado** (`0140`) |
+| 1 | Escala por coluna (o erro de 1.000×) | 2.2 | Erro de mil vezes; é o mais grave em aberto |
+| 2 | Confiança de extração saturada em 1,00 | 2.3 | Desliga o filtro do dial sem avisar ninguém |
+| 3 | Seção canônica nos totais | 2.6 | Causa de boa parte das 11 pendências de linha ausente |
+| 4 | COMBINADO → BALANCO e entidade fantasma | 2.5 | 3 pendências falsas; normalizar nome de entidade junto |
+| 5 | Balancete 2025 sem seção | 2.7 | 155 linhas, o maior bloco perdido |
+| 6 | Tipo nulo com confiança 0,90 / tipo `FOLHA_PAGAMENTO` | 2.8 | Barato |
+| 7 | Persistir tokens por documento | 3.2 | A decisão do teto depende de um número que some |
 | 8 | Contadores de token vs. custo; `cobertura` nula | 2.9 | Relatório, não motor |
 | 9 | `eslint` no `n8n/` | 4.3 | Fatia própria |
 

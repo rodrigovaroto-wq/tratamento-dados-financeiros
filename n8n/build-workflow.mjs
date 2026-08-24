@@ -1450,10 +1450,25 @@ const nodes = [
   node('Juntar Blocos', 'n8n-nodes-base.code', 2, {
     mode: 'runOnceForAllItems', jsCode: CODE_JUNTAR_BLOCOS,
   }, CODE_CONTINUA),
+  // O NÓ POSTGRES SUBSTITUI O ITEM PELO RESULTADO DA QUERY, e foi assim que a
+  // reconciliação passou 11 dias desligada em silêncio (rodadas v42 a v47).
+  // Este nó devolvia só `{n_campos}`; os DOIS nós seguintes leem
+  // `$json.documento_id` e passaram a receber `undefined`, então
+  // `fn_registrar_diagnostico` e `fn_reconciliar_por_documento` eram chamadas
+  // com NULL e respondiam "documento não encontrado" — retorno válido, nó
+  // VERDE, zero linha gravada. Nada na tela dizia que as checagens não rodaram.
+  //
+  // Por isso o que o item precisa adiante viaja de volta COMO COLUNA da própria
+  // query, em vez de ser buscado com `$('nó').item`: pareamento por item já
+  // quebrou aqui uma vez (o fan-out do fatiamento, 13/08) e a doutrina desde
+  // então é que o item carrega o próprio contexto.
   node('Gravar Campos (Sombra)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos',
-    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null] }}" },
+    query: [
+      'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos,',
+      '       $5::uuid as documento_id, $1::uuid as documento_versao_id, $6::jsonb as diagnostico',
+    ].join('\n'),
+    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null, $json.documento_id, JSON.stringify($json.diagnostico ?? null)] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
@@ -1462,9 +1477,15 @@ const nodes = [
   // entidade_incorreta/arquivo_ilegivel), nunca corrige sozinho (anti-
   // ancoragem, docs/01). Roda ANTES da reconciliação para que ela já veja a
   // entidade recém-preenchida, se for o caso.
+  // Mesma razão do nó anterior: o `documento_id` volta como coluna para que o
+  // `Reconciliar (Classe A)` tenha o que passar. Sem isso ele recebe `{resultado}`
+  // e a cadeia inteira de checagens morre calada.
   node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado',
+    query: [
+      'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado,',
+      '       $1::uuid as documento_id',
+    ].join('\n'),
     options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
