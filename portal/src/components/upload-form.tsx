@@ -13,23 +13,46 @@ const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 // QUANTO ESPERAR — calculado a partir do LOTE, não fixo.
 //
 // O teto era fixo em 90 tentativas (~12 minutos), e isso funcionou enquanto o
-// orçamento recusava lote grande: 14 documentos terminam em ~8 min e cabiam.
-// Com a estimativa por tamanho, 38 documentos passam a rodar de uma vez — e a
-// extração é deliberadamente LENTA (uma chamada a cada ~33s no Tier 1, porque
-// `max_tokens` é reserva de TPM e ir mais rápido produz 429). São ~23 minutos.
-//
-// Com o teto fixo, a tela desistiria no minuto 12 de um trabalho que termina no
-// 23, e voltaria a mostrar "assim que estiver pronto, avisamos" para sempre —
+// orçamento recusava lote grande: 14 documentos terminam em minutos e cabiam.
+// Com a estimativa por tamanho, 38 documentos passam a rodar de uma vez. Com o
+// teto fixo, a tela desistiria no meio de um trabalho que ainda está vivo e
+// voltaria a mostrar "assim que estiver pronto, avisamos" para sempre —
 // exatamente o defeito que a 0108 corrigiu, agora com o processo VIVO em vez de
-// morto. O custo destravou o lote grande e destravou este defeito junto.
+// morto.
 //
-// 45s por documento = os ~33s da cadência mais folga para classificação e banco.
-// O piso de 12 minutos preserva o comportamento de lote pequeno.
-const SEGUNDOS_POR_DOCUMENTO = 45;
+// ---------------------------------------------------------------------------
+// O NÚMERO ERA 45s, E ELE MENTIU NA TROCA DE PROVEDOR (24/08/2026)
+// ---------------------------------------------------------------------------
+//
+// 45s vinha dos ~33s da cadência do gpt-4o no Tier 1, onde `max_tokens` é
+// RESERVA de TPM e cada extração reservava 16.384 tokens do minuto. Com o
+// Gemini o gargalo deixou de ser o balde de tokens e passou a ser o de
+// CHAMADAS: o intervalo caiu para 8s nos dois nós.
+//
+// O efeito na tela foi dizer **29 minutos** para um lote de 38 documentos que
+// leva ~8. Não quebrou nada — e é justamente por isso que era o tipo de defeito
+// que sobrevive: a estimativa não tem quem a desminta, e o analista fica
+// esperando um trabalho que já acabou, ou desiste de acompanhar.
+//
+// A conta agora é declarada: ~44 extrações (38 documentos, 4 deles fatiados) +
+// ~19 classificações por conteúdo, a 8s cada, dá 63 × 8 ÷ 38 ≈ 13s por
+// documento. 14 cobre o upload e o banco. `n8n/test/workflow-sim.test.mjs`
+// confere este número contra o `batchInterval` REAL do workflow gerado — se a
+// cadência mudar de novo e este espelho não, a suíte reprova.
+const SEGUNDOS_POR_DOCUMENTO = 14;
+
+// A MARGEM DA JANELA É SEPARADA DA ESTIMATIVA, e a separação é a lição.
+//
+// Os dois números vinham do mesmo lugar, com 50% de folga — então encurtar a
+// estimativa encurtaria a janela junto, e uma janela curta é o defeito da 0108
+// de volta: a tela desiste de um lote que ainda está rodando. Errar para o lado
+// de mostrar "quase pronto" por mais tempo não custa nada; errar para o lado de
+// parar de perguntar custa o acompanhamento inteiro.
+const MARGEM_DA_JANELA = 3;
 const ESPERA_MINIMA_MS = 12 * 60 * 1000;
 const ESPERA_MAXIMA_MS = 90 * 60 * 1000;
 function janelaPara(arquivos: number): number {
-  const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * 1.5; // 50% de margem
+  const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * MARGEM_DA_JANELA;
   return Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));
 }
 
