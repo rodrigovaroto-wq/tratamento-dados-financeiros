@@ -32,59 +32,28 @@ function checar(condicao: boolean, o_que: string) {
 // Não são exemplos inventados: cada uma é a forma que `diagnosticarErroApi`
 // (n8n/lib/extract.mjs), a recusa do orçamento (n8n/lib/custo.mjs) ou o Error
 // Workflow escrevem no banco hoje.
-const CAUSAS_REAIS: Array<{ etapa: string; mensagem: string; esperado: string }> = [
-  {
-    etapa: "orcamento",
-    mensagem: "[orçamento v4 (2026-08-24)] Lote recusado ANTES de gastar: 38 documento(s) = 44 chamada(s) de IA ≈ US$ 3,10, acima do teto de US$ 3,00 por execução.",
-    esperado: "grande demais",
-  },
-  {
-    etapa: "IA Extrair",
-    mensagem: "CHAVE DO PROVEDOR INVÁLIDA, AUSENTE OU SEM PERMISSÃO (401/403). Nada a ver com cadência ou crédito.",
-    esperado: "entrar na conta",
-  },
-  {
-    etapa: "IA Extrair",
-    mensagem: "CONTA DO PROVEDOR SEM CRÉDITO OU SEM COBRANÇA ATIVA. A conta não tem como pagar a chamada.",
-    esperado: "sem saldo",
-  },
-  {
-    etapa: "IA Classificar",
-    mensagem: "TETO DE GASTO ATINGIDO no provedor de IA — e isto NÃO é falta de crédito: há saldo.",
-    esperado: "limite de gasto",
-  },
-  {
-    etapa: "IA Extrair",
-    mensagem: "MODELO INDISPONÍVEL PARA ESTA CONTA (404). O modelo configurado no workflow não existe.",
-    esperado: "não existe mais",
-  },
-  {
-    etapa: "IA Extrair",
-    mensagem: "LIMITE DE CADÊNCIA DO PROVEDOR (rate limit por minuto). Aqui espaçar as chamadas ajuda.",
-    esperado: "rápido demais",
-  },
-  {
-    etapa: "IA Extrair",
-    mensagem: "COTA DIÁRIA DO PROVEDOR ESGOTADA (limite por DIA de tokens/requisições do tier da conta).",
-    esperado: "limite de uso de hoje",
-  },
-  {
-    etapa: "Registrar Documento",
-    mensagem: "connect ETIMEDOUT 10.0.0.1:5432",
-    esperado: "guardar",
-  },
-  {
-    etapa: "desconhecida",
-    mensagem: "O processamento parou sem mensagem de erro.",
-    esperado: "não disse o motivo",
-  },
+// Tuplas e não objetos: são 9 linhas de DADO, e a forma repetida
+// `{ etapa: …, mensagem: …, esperado: … }` nove vezes é ruído que esconde o que
+// varia — além de o próprio Sonar ler o bloco como duplicado, com razão.
+type CausaReal = readonly [etapa: string, mensagem: string, esperadoNoTitulo: string];
+
+const CAUSAS_REAIS: readonly CausaReal[] = [
+  ["orcamento", "[orçamento v4 (2026-08-24)] Lote recusado ANTES de gastar: 38 documento(s) = 44 chamada(s) de IA ≈ US$ 3,10, acima do teto de US$ 3,00 por execução.", "grande demais"],
+  ["IA Extrair", "CHAVE DO PROVEDOR INVÁLIDA, AUSENTE OU SEM PERMISSÃO (401/403). Nada a ver com cadência ou crédito.", "entrar na conta"],
+  ["IA Extrair", "CONTA DO PROVEDOR SEM CRÉDITO OU SEM COBRANÇA ATIVA. A conta não tem como pagar a chamada.", "sem saldo"],
+  ["IA Classificar", "TETO DE GASTO ATINGIDO no provedor de IA — e isto NÃO é falta de crédito: há saldo.", "limite de gasto"],
+  ["IA Extrair", "MODELO INDISPONÍVEL PARA ESTA CONTA (404). O modelo configurado no workflow não existe.", "não existe mais"],
+  ["IA Extrair", "LIMITE DE CADÊNCIA DO PROVEDOR (rate limit por minuto). Aqui espaçar as chamadas ajuda.", "rápido demais"],
+  ["IA Extrair", "COTA DIÁRIA DO PROVEDOR ESGOTADA (limite por DIA de tokens/requisições do tier da conta).", "limite de uso de hoje"],
+  ["Registrar Documento", "connect ETIMEDOUT 10.0.0.1:5432", "guardar"],
+  ["desconhecida", "O processamento parou sem mensagem de erro.", "não disse o motivo"],
 ];
 
-for (const caso of CAUSAS_REAIS) {
-  const e = explicarFalha({ etapa: caso.etapa, mensagem: caso.mensagem });
+for (const [etapa, mensagem, esperado] of CAUSAS_REAIS) {
+  const e = explicarFalha({ etapa, mensagem });
   checar(
-    e.titulo.toLowerCase().includes(caso.esperado.toLowerCase()),
-    `"${caso.esperado}" — causa real de "${caso.etapa}" caiu em: "${e.titulo}"`,
+    e.titulo.toLowerCase().includes(esperado.toLowerCase()),
+    `"${esperado}" — causa real de "${etapa}" caiu em: "${e.titulo}"`,
   );
 }
 
@@ -108,7 +77,7 @@ function textoVisivel(e: FalhaExplicada): string {
 }
 
 const TODAS: FalhaExplicada[] = [
-  ...CAUSAS_REAIS.map((c) => explicarFalha({ etapa: c.etapa, mensagem: c.mensagem })),
+  ...CAUSAS_REAIS.map(([etapa, mensagem]) => explicarFalha({ etapa, mensagem })),
   explicarFalha({ etapa: "Fatiar Extracao", mensagem: "Cannot read properties of undefined" }),
   explicarParada({ processados: 12, esperados: 38 }),
   explicarParada({ processados: 0, esperados: 38 }),
