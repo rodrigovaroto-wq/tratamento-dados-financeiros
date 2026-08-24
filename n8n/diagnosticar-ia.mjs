@@ -131,7 +131,9 @@ if (soListar) {
       // O MESMO diagnóstico da produção, e não uma segunda leitura do erro: se
       // a chave está errada aqui, a pendência do documento vai dizer a mesma
       // coisa com as mesmas palavras.
-      const dl = diagnosticarErroApi({ httpCode: cat.status, ...(cat.corpo ?? {}) });
+      // Sem `?? {}`: espalhar `null` já rende objeto vazio em JS, e o fallback
+      // só fazia parecer que havia um caso a tratar onde não há.
+      const dl = diagnosticarErroApi({ httpCode: cat.status, ...cat.corpo });
       console.log(`  CAUSA: ${dl.causa}`);
       // 1200: o `motivo` é quase todo TEXTO NOSSO, com um trecho do provedor
       // encaixado — cortá-lo em 400 truncaria a instrução do que fazer, que é a
@@ -140,11 +142,18 @@ if (soListar) {
     }
     process.exit(1);
   }
+  // Qual papel este modelo cumpre no workflow, se cumpre algum. Fora do laço e
+  // com nome próprio: aninhar dois ternários numa expressão faz a leitura
+  // depender de contar parênteses, e o que se lê aqui é a resposta à pergunta
+  // que o dono veio fazer — "o que eu configurei está nesta lista?".
+  const papelDoModelo = (id) => {
+    if (id === MODELO_EXTRACAO) return '  ← MODELO_EXTRACAO';
+    if (id === MODELO_CLASSIFICACAO) return '  ← MODELO_CLASSIFICACAO';
+    return '';
+  };
   console.log(`Modelos disponíveis para esta chave em ${PROV.rotulo} (${cat.modelos.length}):\n`);
   for (const id of cat.modelos.slice().sort()) {
-    const usado = id === MODELO_EXTRACAO ? '  ← MODELO_EXTRACAO'
-      : (id === MODELO_CLASSIFICACAO ? '  ← MODELO_CLASSIFICACAO' : '');
-    console.log(`  ${deRemoto(id, 120)}${usado}`);
+    console.log(`  ${deRemoto(id, 120)}${papelDoModelo(id)}`);
   }
   const faltando = [MODELO_EXTRACAO, MODELO_CLASSIFICACAO]
     .filter((m, i, a) => a.indexOf(m) === i)
