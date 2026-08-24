@@ -29,7 +29,7 @@ import {
   conteudoDaResposta, cortadoPorLimite, usoDaChamada, acrescentarInstrucao,
 } from './lib/provedor.mjs';
 import { createHash } from 'node:crypto';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos } from './lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
@@ -119,6 +119,15 @@ const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};
 // 1000x. O comentário da própria fonte diz "errar em 1000x é pior que não saber";
 // perder a escala silenciosamente entrega exatamente esse 1000x.
 const FONTE_NORMALIZAR_UNIDADE = `const normUnid = ${normalizarUnidade.toString()};`;
+
+// `naoMonet` ERA CÓPIA À MÃO, e a lógica dela mudou na v47 (a coluna passou a
+// decidir). Cópia à mão neste repositório já divergiu duas vezes, e esta seria a
+// terceira: a lib teria a regra nova e o nó Code do n8n — que é o que roda —
+// continuaria com a antiga, gravando escala de milhão em coluna de pessoas sem
+// que nenhum teste notasse. Agora as duas saem do MESMO `toString()`, e o
+// `espelho-inline.test.mjs` confere.
+const FONTE_NAO_MONETARIA = `const naoMonet = ${ehLinhaNaoMonetaria.toString()};`;
+const FONTE_ESCALA_COLUNA = `const escalaCol = ${escalaDeclaradaNaColuna.toString()};`;
 // Idem para a moeda: embutida do fonte, nunca copiada à mão — é o que garante
 // que o nó e a lib normalizem "US$"/"dolar"/"usd" para o MESMO 'USD'. Divergir
 // aqui reintroduziria exatamente a soma de moedas diferentes que a coluna
@@ -1038,7 +1047,8 @@ const unidade=normUnid(p.unidade);
 // Moeda do documento herdada por linha, mesma regra da escala (item 2 do 7.4):
 // era normalizada e jogada fora aqui, e o book somava USD com BRL.
 const moedaDoc=normMoeda(p.moeda);
-function naoMonet(k,vt){const n=String(k??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();return /%|\\bpercentual|\\bpor acao\\b|\\blpa\\b|\\bquantidade\\b|numero de acoes/.test(n)||String(vt??'').includes('%');}
+${FONTE_NAO_MONETARIA}
+${FONTE_ESCALA_COLUNA}
 ${FONTE_ACHATAR_GRUPOS}
 // A saida da IA vem AGRUPADA (uma secao, suas colunas, e uma conta com um
 // valor por coluna) e e' achatada aqui de volta para uma linha por
@@ -1047,11 +1057,11 @@ ${FONTE_ACHATAR_GRUPOS}
 // associar valor a coluna, o banco recebe o numero de 2024 no lugar do de 2025.
 const ach=achatarGrupos(p.grupos);
 const campos=ach.linhas.length>0||Array.isArray(p.grupos)
-  ? ach.linhas.map((l,i)=>({ordem:i, ...l, unidade:naoMonet(l.chave,l.valor_texto)?null:unidade, moeda:naoMonet(l.chave,l.valor_texto)?null:moedaDoc}))
+  ? ach.linhas.map((l,i)=>({ordem:i, ...l, unidade:naoMonet(l.chave,l.valor_texto,l.periodo_coluna)?null:(escalaCol(l.periodo_coluna)??unidade), moeda:naoMonet(l.chave,l.valor_texto,l.periodo_coluna)?null:moedaDoc}))
   // FORMATO PLANO ANTIGO -- o caminho de um workflow importado velho responder
   // no formato de julho. Em 12/08/2026 o n8n do dono rodou dias assim, e "zero
   // linhas extraidas" sem explicacao seria a pior forma de descobrir.
-  : (Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt)?null:unidade, moeda:naoMonet(l.k,l.vt)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[]);
+  : (Array.isArray(p.linhas)?p.linhas.map((l,i)=>({ordem:i, secao:l.s??null, secao_canonica:(l.sc&&l.sc!=='NAO_CLASSIFICAVEL')?l.sc:null, entidade_coluna:l.ec??null, periodo_coluna:l.pc??null, chave:l.k, valor_texto:l.vt??null, valor_num:(typeof l.vn==='number')?l.vn:null, unidade:naoMonet(l.k,l.vt,l.pc)?null:(escalaCol(l.pc)??unidade), moeda:naoMonet(l.k,l.vt,l.pc)?null:moedaDoc, confianca:(typeof l.cf==='number')?l.cf:null, origem_pagina:Number.isInteger(l.op)?l.op:null})):[]);
 // Conta descartada por desalinhamento de coluna nao pode sumir em silencio: e'
 // dado que o documento tem e o banco nao recebeu.
 if(ach.problemas.length>0){

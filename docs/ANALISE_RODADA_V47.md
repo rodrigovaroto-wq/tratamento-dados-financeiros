@@ -190,11 +190,40 @@ Os **valores** estão certos (TOTAL DOS ESTOQUES = 15.605, igual ao gabarito). �
 inflaciona o estoque em mil vezes. É exatamente o erro que o comentário do
 `db/diagnostico_rodada.sql` diz que este projeto já pagou caro.
 
-**Agravante — a escala é do documento, não da coluna.** No mesmo `24_`, colunas
+**Agravante — a escala era do documento, não da coluna.** No mesmo `24_`, colunas
 não-monetárias herdaram a escala e a moeda: `Quantidade = 1.240` e
-`Custo unitário (R$) = 2.026,61` estão gravados como `milhao`/`BRL`. Em `28_`,
-`Efetivo (pessoas) = 96` idem. **279 pessoas viram 279 milhões de pessoas** se alguém
-multiplicar. A correção não é só acertar o rótulo: é a escala passar a ser **por coluna**.
+`Custo unitário (R$) = 2.026,61` estavam gravados como `milhao`/`BRL`. Em `28_`,
+`Efetivo (pessoas) = 96` idem. **279 pessoas virariam 279 milhões de pessoas** se alguém
+multiplicasse.
+
+**CORRIGIDO (24/08).** A escala passa a ser **por coluna**, que é o que a análise concluiu
+ser a correção certa. Duas regras novas em `n8n/lib/extract.mjs`:
+
+- `ehLinhaNaoMonetaria` ganha um terceiro parâmetro, a **coluna**. A regra antiga olhava só
+  o rótulo da LINHA — e num documento tabular o rótulo é o mesmo nas quatro colunas, então
+  ela não tinha como distinguir. Agora `Quantidade`, `Efetivo (pessoas)`, `Exercício` e
+  `Custo unitário` bloqueiam a herança de escala e moeda;
+- `escalaDeclaradaNaColuna` — quando a coluna declara a escala de forma inequívoca
+  (`Valor (R$ mil)`), **ela manda** sobre a do documento, porque é mais específica e é onde
+  a escala costuma estar escrita. Sem declaração explícita devolve `null` e nada muda:
+  adivinhar aqui trocaria um erro de 1.000× por outro.
+
+Efeito medido sobre as linhas reais da v47:
+
+| Linha | Coluna | Antes | Depois |
+|---|---|---|---|
+| Bobina kraft 180 g/m² | `Valor (R$ mil)` | `milhao` | **`milhar`** |
+| Bobina kraft 180 g/m² | `Quantidade` | `milhao` | **`null`** |
+| Bobina kraft 180 g/m² | `Custo unitário (R$)` | `milhao` | **`null`** |
+| TOTAL DOS ESTOQUES | `Valor (R$ mil)` | `milhao` | **`milhar`** |
+| Produção - turno A | `Efetivo (pessoas)` | `milhao` | **`null`** |
+| Produção - turno A | `Custo anual com encargos (R$ mil)` | `milhao` | **`milhar`** |
+
+**E morreu uma cópia à mão junto.** O `naoMonet` do `build-workflow.mjs` era transcrição
+manual da função da lib — e o nó Code é o que RODA. Corrigir a lib e esquecer a cópia
+deixaria a suíte verde e a produção errada, que é como este repositório descreve seus dois
+piores incidentes. As duas agora saem do mesmo `toString()`, e o `espelho-inline.test.mjs`
+confere — ele **reprovou** quando registrei as funções sem incluí-las na tabela.
 
 Há ainda 14 linhas com valor numérico e escala/moeda **nulas** (docs 08, 22, 23, 27) —
 o outro lado do mesmo problema.
