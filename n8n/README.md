@@ -399,6 +399,43 @@ community node, se for esse o caminho).
 
   **Para voltar para a OpenAI:** `IA_PROVEDOR=openai node n8n/build-workflow.mjs`, reimportar o
   JSON, e criar/selecionar a credencial `OpenAI API`. Nenhuma linha de código muda.
+
+  **Confira o id do modelo ANTES de rodar um lote** — é a única coisa deste sistema que nenhum
+  teste prova, porque só a API do provedor valida a string, e errá-la faz TODA chamada voltar 404:
+
+  ```
+  IA_API_KEY=<sua-chave> node n8n/diagnosticar-ia.mjs --modelos
+  ```
+
+  É um GET no catálogo da conta: **zero token, zero custo**. Ele lista o que existe, marca o que o
+  workflow usa e, se o configurado não estiver lá, sugere os ids mais parecidos. O mesmo comando
+  sem `--modelos` faz uma chamada de 1 token e diagnostica crédito/cota/cadência.
+
+### Testar sem pôr crédito — o que dá e o que NÃO dá
+
+O Google tem um **nível gratuito** da API do Gemini (chave do `aistudio.google.com/apikey`, sem
+cartão). Ele serve para provar a costura inteira — credencial, formato do corpo, leitura do PDF,
+schema, gravação no banco, export — sem gastar nada.
+
+> ⚠️ **NÃO USE DOCUMENTO REAL DE CLIENTE NO NÍVEL GRATUITO.** A diferença entre o gratuito e o pago
+> não é só cota: no gratuito o provedor usa o conteúdo enviado para melhorar os produtos dele, e no
+> pago não. Documento de mandato é dado de cliente sob NDA — ver `docs/10_DADOS_RETENCAO_E_LGPD.md`.
+> **Confirme os termos vigentes no console antes de decidir**, e enquanto isso rode só o material
+> sintético.
+
+O material sintético existe e é o certo para esta prova: `test-data/book-canastra` (38 PDFs, 6
+empresas, 3 exercícios, com `GABARITO.json` para comparar) e `test-data/book-vertentes` (14). Gere
+com `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`.
+
+**O que o nível gratuito NÃO substitui:** ele não é o **B1** do `docs/MAPA_DE_EXECUCAO.md`. O B1
+existe justamente porque toda suíte prova a ingestão sobre extração FIEL — PDF gerado por
+`reportlab`, texto limpo, layout conhecido —, e scan torto, carimbo, coluna deslocada e escala mista
+estão fora do alcance dela por construção. Rodar o book sintético no Gemini prova que **a troca de
+provedor funciona**; não prova que o sistema lê documento de verdade.
+
+**A cadência já está dimensionada para o nível de entrada:** 8s entre chamadas em cada um dos dois
+nós, derivado de 15 chamadas/minuto contando que um documento mal nomeado faz duas. Se a sua cota
+for outra, o número a mexer é `tpm`/`rpm` em `n8n/lib/provedor.mjs` — não o `batchInterval` do nó.
 - **Upload Storage** — duas configurações no node:
   1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase — **atenção:** é a URL da
      **API** (`https://<ref>.supabase.co/storage/v1/object/documentos/...`), **não** a URL do

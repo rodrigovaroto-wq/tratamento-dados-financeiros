@@ -2,6 +2,7 @@
 // pipeline.
 //
 //   IA_API_KEY=... node n8n/diagnosticar-ia.mjs
+//   IA_API_KEY=... node n8n/diagnosticar-ia.mjs --modelos   (só lista, zero token)
 //
 // O provedor testado é o ATIVO (`lib/provedor.mjs`, padrão Google). Para testar
 // o outro sem mexer em código:  IA_PROVEDOR=openai IA_API_KEY=sk-... node ...
@@ -37,9 +38,36 @@
 
 import { readFileSync } from 'node:fs';
 import { diagnosticarErroApi, DEFAULT_MODEL, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA } from './lib/extract.mjs';
-import { provedor, urlDaChamada, montarCorpoIA, parteDeTexto } from './lib/provedor.mjs';
+import { MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from './lib/custo.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, modelosDoCatalogo, modelosParecidos,
+} from './lib/provedor.mjs';
 
 const PROV = provedor();
+
+// ---------------------------------------------------------------------------
+// NADA QUE VEIO DO OUTRO LADO DA REDE VAI CRU PARA A TELA
+// ---------------------------------------------------------------------------
+//
+// Tudo o que este script imprime sobre a falha vem da resposta do provedor —
+// mensagem de erro, id de modelo, valor de header. É o propósito do script, e
+// não há como diagnosticar sem mostrar. O que NÃO pode é ir literal: uma string
+// com `\n` inventa uma linha nova, e uma linha nova aqui parece saída do
+// diagnóstico. É a diferença entre "o provedor disse X" e "o diagnóstico
+// concluiu X" — e num script cuja saída inteira é para ser lida como veredito,
+// essa confusão é o defeito.
+//
+// Colapsa controle e quebra de linha em espaço, e corta no tamanho: o resto da
+// mensagem de um terceiro não acrescenta nada que decida alguma coisa. É a
+// mesma regra que o `diagnosticarErroApi` já aplica ao cortar em 200/300
+// caracteres o que entra no motivo da pendência.
+const LIMITE_TEXTO_REMOTO = 400;
+function deRemoto(valor, limite = LIMITE_TEXTO_REMOTO) {
+  const t = typeof valor === 'string' ? valor : JSON.stringify(valor ?? null);
+  // eslint-disable-next-line no-control-regex
+  const limpo = String(t).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+  return limpo.length > limite ? `${limpo.slice(0, limite)}…` : limpo;
+}
 
 // O intervalo REALMENTE gerado no workflow — lido do JSON, não reescrito aqui.
 // Comparar o configurado com o que o TPM real suporta é o ponto do script; ler de
@@ -63,7 +91,86 @@ if (!chave) {
   process.exit(2);
 }
 
-const modelo = process.argv[2] || DEFAULT_MODEL;
+const args = process.argv.slice(2);
+const soListar = args.includes('--modelos');
+const modelo = args.find((a) => !a.startsWith('--')) || DEFAULT_MODEL;
+
+// ---------------------------------------------------------------------------
+// O CATÁLOGO — a checagem que não gasta token e responde antes de a conta pagar
+// ---------------------------------------------------------------------------
+//
+// O id do modelo é a única coisa deste sistema que NÃO pode ser conferida por
+// teste: ele é uma string que só a API do provedor sabe validar, e errá-la por
+// um sufixo faz TODA chamada do lote voltar 404. `diagnosticarErroApi` nomeia
+// esse caso, mas nomear depois de o lote morrer é tarde — e um 404 diz "este id
+// não existe" sem dizer quais existem.
+//
+// Isto é um GET no catálogo da conta: custo zero, nenhum token, e responde as
+// duas perguntas de uma vez — a chave funciona, e o id configurado está lá.
+async function listarModelos() {
+  try {
+    const r = await fetch(PROV.catalogo, {
+      headers: { [PROV.auth.nome]: `${PROV.auth.prefixo}${chave}` },
+    });
+    const corpoLista = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, status: r.status, corpo: corpoLista, modelos: [] };
+    return { ok: true, status: r.status, corpo: corpoLista, modelos: modelosDoCatalogo(PROV, corpoLista) };
+  } catch (e) {
+    return { ok: false, erro: e?.message ?? String(e), modelos: [] };
+  }
+}
+
+if (soListar) {
+  const cat = await listarModelos();
+  if (!cat.ok) {
+    console.log(`NÃO FOI POSSÍVEL LISTAR os modelos de ${PROV.rotulo}.`);
+    if (cat.erro) {
+      console.log(`  Falha de rede: ${cat.erro}`);
+      console.log('  Se o terminal está atrás de proxy/firewall, é aí que olhar.');
+    } else {
+      // O MESMO diagnóstico da produção, e não uma segunda leitura do erro: se
+      // a chave está errada aqui, a pendência do documento vai dizer a mesma
+      // coisa com as mesmas palavras.
+      // Sem `?? {}`: espalhar `null` já rende objeto vazio em JS, e o fallback
+      // só fazia parecer que havia um caso a tratar onde não há.
+      const dl = diagnosticarErroApi({ httpCode: cat.status, ...cat.corpo });
+      console.log(`  CAUSA: ${dl.causa}`);
+      // 1200: o `motivo` é quase todo TEXTO NOSSO, com um trecho do provedor
+      // encaixado — cortá-lo em 400 truncaria a instrução do que fazer, que é a
+      // metade útil. O que veio de fora já entra ali cortado em 200.
+      console.log(`  ${deRemoto(dl.motivo, 1200)}`);
+    }
+    process.exit(1);
+  }
+  // Qual papel este modelo cumpre no workflow, se cumpre algum. Fora do laço e
+  // com nome próprio: aninhar dois ternários numa expressão faz a leitura
+  // depender de contar parênteses, e o que se lê aqui é a resposta à pergunta
+  // que o dono veio fazer — "o que eu configurei está nesta lista?".
+  const papelDoModelo = (id) => {
+    if (id === MODELO_EXTRACAO) return '  ← MODELO_EXTRACAO';
+    if (id === MODELO_CLASSIFICACAO) return '  ← MODELO_CLASSIFICACAO';
+    return '';
+  };
+  console.log(`Modelos disponíveis para esta chave em ${PROV.rotulo} (${cat.modelos.length}):\n`);
+  for (const id of cat.modelos.slice().sort()) {
+    console.log(`  ${deRemoto(id, 120)}${papelDoModelo(id)}`);
+  }
+  const faltando = [MODELO_EXTRACAO, MODELO_CLASSIFICACAO]
+    .filter((m, i, a) => a.indexOf(m) === i)
+    .filter((m) => !cat.modelos.includes(m));
+  if (faltando.length > 0) {
+    console.log(`\n⚠️  CONFIGURADO MAS NÃO DISPONÍVEL: ${faltando.join(', ')}`);
+    for (const m of faltando) {
+      const perto = modelosParecidos(m, cat.modelos, 5).map((x) => deRemoto(x, 120));
+      console.log(`  parecidos com "${m}": ${perto.join(', ') || '(nenhum)'}`);
+    }
+    console.log('  Corrija MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs, rode');
+    console.log('  `node n8n/build-workflow.mjs` e reimporte o workflow.');
+    process.exit(1);
+  }
+  console.log('\nOK — os modelos configurados existem nesta conta.');
+  process.exit(0);
+}
 
 console.log(`Testando a conta ${PROV.rotulo} com o modelo ${modelo} (1 token de saída)...\n`);
 
@@ -88,14 +195,14 @@ try {
   corpo = await resposta.json().catch(() => ({}));
 } catch (erro) {
   console.log(`FALHA DE REDE ao chegar em ${PROV.rotulo} (nem o servidor respondeu):`);
-  console.log(`  ${erro?.message ?? erro}`);
+  console.log(`  ${deRemoto(erro?.message ?? erro)}`);
   console.log('\nSe o N8N está atrás de proxy/firewall, é aí que olhar — não é conta nem cadência.');
   process.exit(1);
 }
 
 if (resposta.ok) {
   console.log('A CONTA ESTÁ RESPONDENDO NORMALMENTE.');
-  console.log(`  HTTP ${resposta.status} · modelo ${corpo?.model ?? modelo}`);
+  console.log(`  HTTP ${resposta.status} · modelo ${deRemoto(corpo?.model ?? modelo, 120)}`);
   console.log('\nUma chamada avulsa passar NÃO descarta duas causas — as duas ficam invisíveis aqui:');
   console.log('  1. TETO DE GASTO já atingido no momento do LOTE (do projeto da chave ou orçamento');
   console.log('     mensal da org). Não aparece na tela de cobrança nem na de limites do tier.');
@@ -114,7 +221,7 @@ if (resposta.ok) {
   ].map((h) => [h, resposta.headers.get(h)]).filter(([, v]) => v);
   if (cabecalhos.length) {
     console.log(`\nLimites informados por ${PROV.rotulo} para esta chave/modelo:`);
-    for (const [h, v] of cabecalhos) console.log(`  ${h.replace('x-ratelimit-', '')}: ${v}`);
+    for (const [h, v] of cabecalhos) console.log(`  ${h.replace('x-ratelimit-', '')}: ${deRemoto(v, 80)}`);
   }
 
   // A ARITMÉTICA, com o TPM REAL da conta em vez do palpite. A OpenAI conta o
@@ -155,9 +262,24 @@ if (resposta.ok) {
 // A resposta de erro real do provedor, classificada pelo MESMO código de produção.
 const d = diagnosticarErroApi({ httpCode: resposta.status, ...corpo });
 console.log(`CAUSA: ${d.causa}\n`);
-console.log(d.motivo);
+console.log(deRemoto(d.motivo, 1200));
+// MODELO INDISPONÍVEL É O ÚNICO CASO QUE TEM CONSERTO IMEDIATO, e o conserto
+// depende de saber o que EXISTE. Listar aqui é automático de propósito: é o
+// momento em que a informação vale, e pedir ao dono que rode outro comando
+// depois de uma falha é como se perde a correção que estava a um GET de
+// distância.
+if (d.causa === 'modelo_indisponivel') {
+  const cat = await listarModelos();
+  if (cat.ok) {
+    console.log(`\nO QUE EXISTE nesta conta (${cat.modelos.length} modelos). Mais parecidos com "${modelo}":`);
+    for (const id of modelosParecidos(modelo, cat.modelos, 8)) console.log(`  ${deRemoto(id, 120)}`);
+    console.log('\nCorrija MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs, rode');
+    console.log('`node n8n/build-workflow.mjs` e reimporte o workflow no n8n.');
+  }
+}
+
 console.log(`\n--- resposta bruta de ${PROV.rotulo} (para o registro) ---`);
-console.log(JSON.stringify(corpo).slice(0, 800));
+console.log(deRemoto(JSON.stringify(corpo), 800));
 const retryAfter = resposta.headers.get('retry-after');
-if (retryAfter) console.log(`\nRetry-After: ${retryAfter}s`);
+if (retryAfter) console.log(`\nRetry-After: ${deRemoto(retryAfter, 40)}s`);
 process.exit(1);

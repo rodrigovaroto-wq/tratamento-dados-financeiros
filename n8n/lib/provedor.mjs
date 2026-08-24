@@ -54,6 +54,12 @@ export const PROVEDORES = {
     credencial: 'OpenAI API',
     auth: { nome: 'Authorization', prefixo: 'Bearer ' },
     console: 'platform.openai.com',
+    // O CATÁLOGO DE MODELOS DA CONTA. É um GET, não consome token nenhum, e
+    // responde a única pergunta que uma chamada de 1 token responde MAL: um 404
+    // diz "este id não existe para esta conta" sem dizer QUAIS existem — e a
+    // diferença entre um id errado por um dígito e um modelo sem acesso é
+    // exatamente a que decide o que fazer.
+    catalogo: 'https://api.openai.com/v1/models',
     // Cadência: os dois limites da conta, e o intervalo sai do MAIS restritivo.
     // TPM importa porque `max_tokens` é RESERVA de balde (ver extract.mjs);
     // RPM importa porque um provedor pode limitar por CHAMADA e não por token.
@@ -71,6 +77,7 @@ export const PROVEDORES = {
     // grava no log — é segredo em lugar de leitura.
     auth: { nome: 'x-goog-api-key', prefixo: '' },
     console: 'aistudio.google.com/apikey',
+    catalogo: 'https://generativelanguage.googleapis.com/v1beta/models',
     // 250.000 TPM e 15 RPM é o patamar de entrada anunciado para a linha
     // Flash-Lite. Declarado no PISO de propósito, pela mesma regra que já valia
     // para o Tier 1 da OpenAI: errar para o lento faz a extração demorar; errar
@@ -327,4 +334,53 @@ export function acrescentarInstrucao(prov, corpo, instrucao) {
   const parte = m && Array.isArray(m.content) ? m.content[0] : null;
   if (parte && typeof parte.text === 'string') parte.text += instrucao;
   return corpo;
+}
+
+
+/**
+ * Os ids de modelo que o catálogo do provedor devolveu.
+ *
+ * As duas respostas têm formas diferentes — `{data:[{id}]}` na OpenAI,
+ * `{models:[{name:'models/x'}]}` no Google — e o `models/` do Google é prefixo
+ * do RECURSO, não parte do id: mandá-lo de volta no lugar do id monta uma URL
+ * com `models/models/x`. Tirar aqui é o que faz a lista ser comparável com o que
+ * `MODELOS_POR_PROVEDOR` declara.
+ *
+ * Devolve sempre um array — resposta inesperada vira lista vazia, e quem chama
+ * trata "não consegui listar" separado de "listei e seu modelo não está lá".
+ */
+export function modelosDoCatalogo(prov, json) {
+  if (!json || typeof json !== 'object') return [];
+  if (prov.dialeto === 'gemini') {
+    const m = Array.isArray(json.models) ? json.models : [];
+    return m
+      .map((x) => (x && typeof x.name === 'string' ? x.name.replace(/^models\//, '') : null))
+      .filter(Boolean);
+  }
+  const d = Array.isArray(json.data) ? json.data : [];
+  return d.map((x) => (x && typeof x.id === 'string' ? x.id : null)).filter(Boolean);
+}
+
+/**
+ * Os candidatos mais parecidos com um id que não existe.
+ *
+ * Serve para a mensagem de erro: "gemini-3.5-flash-lite não existe" é meia
+ * informação; "não existe, e o que existe é gemini-3.5-flash-lite-002" é a
+ * correção inteira. A semelhança é por PREFIXO comum, que é o que erra de
+ * verdade num id de modelo (sufixo de versão, geração trocada) — comparar por
+ * distância de edição acharia vizinhos que não têm nada a ver.
+ */
+export function modelosParecidos(alvo, disponiveis, quantos = 8) {
+  const a = String(alvo || '').toLowerCase();
+  const prefixo = (x) => {
+    const b = String(x).toLowerCase();
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+    return i;
+  };
+  return (Array.isArray(disponiveis) ? disponiveis : [])
+    .map((x) => ({ id: x, p: prefixo(x) }))
+    .sort((x, y) => y.p - x.p || x.id.localeCompare(y.id))
+    .slice(0, quantos)
+    .map((x) => x.id);
 }
