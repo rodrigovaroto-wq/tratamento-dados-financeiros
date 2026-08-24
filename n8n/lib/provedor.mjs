@@ -305,10 +305,29 @@ export function usoDaChamada(prov, resp) {
     const u = resp && resp.usageMetadata;
     if (!u) return null;
     const cache = Number(u.cachedContentTokenCount || 0);
+    // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.
+    //
+    // Achado na PRIMEIRA chamada real, em 24/08: o catálogo declara
+    // `thinking: true` para toda a linha 3.x, e um modelo que pensa gasta
+    // orçamento de saída ANTES de escrever a primeira chave do JSON. Esses
+    // tokens vêm em `thoughtsTokenCount`, separados de `candidatesTokenCount`.
+    //
+    // Contar só o `candidates` era subdeclarar a conta pela parte que não se vê
+    // — e subdeclarar POR CIMA de um teto de gasto é o pior lado para errar: o
+    // guarda dos US$ 3 deixaria passar um lote que o provedor cobra mais caro.
+    // A medição do book (US$ 0,28) foi feita sem esta parcela e é, portanto, um
+    // PISO; o número real sai da primeira rodada de verdade.
+    const raciocinio = Number(u.thoughtsTokenCount || 0);
+    const saida = Number(u.candidatesTokenCount || 0);
     return {
       prompt_tokens: Number(u.promptTokenCount || 0),
-      completion_tokens: Number(u.candidatesTokenCount || 0),
+      completion_tokens: (Number.isFinite(saida) ? saida : 0)
+        + (Number.isFinite(raciocinio) ? raciocinio : 0),
       prompt_tokens_details: { cached_tokens: Number.isFinite(cache) ? cache : 0 },
+      // Declarado à parte para quem lê a execução: sem isto, "a saída custou X"
+      // não distingue JSON de raciocínio, e é essa distinção que decide se vale
+      // desligar o pensamento no prompt de extração.
+      thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,
     };
   }
   return (resp && resp.usage) || null;
