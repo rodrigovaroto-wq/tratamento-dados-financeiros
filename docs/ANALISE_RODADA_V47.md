@@ -1,0 +1,353 @@
+# Análise da rodada v47 — primeira rodada real com o Gemini
+
+**Mandato:** "Teste v47 - Grupo Canastra + Gemini API" (`caso_id 648f3251-…`)
+**Execução n8n:** `7030`, 24/08/2026 20:10→20:19 UTC. **38 documentos, 0 falhas.**
+**Insumo:** `test-data/book-canastra` (38 PDFs sintéticos), conferido contra o
+`pdf/GABARITO.json` regerado nesta sessão.
+
+> **Como esta análise foi feita.** Não por leitura de tela: por consulta ao banco de
+> produção (`db/diagnostico_rodada.sql`, `db/pendencias_do_mandato.sql` e derivadas) e
+> confronto conta a conta com o gabarito. É a regra da casa — documento não é medição.
+
+---
+
+## Veredito em uma linha
+
+**A troca de provedor foi um sucesso sem ressalvas, e a rodada expôs seis defeitos que não
+são do Gemini.** A extração bateu o gabarito no centavo em todos os totais conferidos, o
+custo caiu 3,5× e o lote rodou em 9 minutos. Os problemas encontrados são de *classificação,
+seccionamento e checagem* — quatro deles anteriores à troca, e um deles grave o bastante
+para bloquear o B1.
+
+---
+
+## 1. O que está excelente
+
+### 1.1 A extração acertou o gabarito, conta a conta
+
+Conferi todos os totais materiais do book contra o `GABARITO.json`. **Nenhuma divergência.**
+
+| Conta | Gabarito | Extraído | |
+|---|---:|---:|:-:|
+| Ativo Circulante Indústria 2025 | 44.022 | 44.022 | ✅ |
+| Ativo Não Circulante 2025 | 93.602 | 93.602 | ✅ |
+| **TOTAL DO ATIVO 2025** | **137.624** | **137.624** | ✅ |
+| Total Passivo + PL 2025 | 137.624 | 137.624 | ✅ |
+| Passivo Não Circulante 2025 | 29.473 | 29.473 | ✅ |
+| Receita Operacional Bruta 2025 | 188.000 | 188.000 | ✅ |
+| (-) Deduções da Receita Bruta 2025 | −48.128 | −48.128 | ✅ |
+| Receita Operacional Líquida 2025 | 139.872 | 139.872 | ✅ |
+| Dívida bancária (saldo devedor) | 52.063.000 | 52.063.000 | ✅ |
+| Juros do exercício | 14.802.000 | 14.802.000 | ✅ |
+| Faturamento 2023 / 2024 / 2025 | 318M / 246M / 188M | 318M / 246M / 188M | ✅ |
+| Aging AR total | 28.706 | 28.706 | ✅ |
+| Aging AP total | 25.734 | 25.734 | ✅ |
+| Estoques total / provisão | 15.605 / −3.127 | 15.605 / −3.127 | ✅ |
+| Imobilizado custo / depr. / líquido | 140.231 / −59.682 / 80.549 | 140.231 / −59.682 / 80.549 | ✅ |
+| DFC caixa inicial / final | 3.621 / 825 | 3.621 / 825 | ✅ |
+
+O balanço **fecha** (Ativo = Passivo + PL, nos três exercícios) e o DFC **amarra**
+(3.082 + 304 − 6.182 = −2.796; 3.621 − 2.796 = 825). Os comparativos de 3 colunas
+saíram com as 3 colunas, e os dois documentos COMBINADOS saíram com as 8 entidades
+lado a lado — o achatamento de comparativo, que era risco, não aconteceu.
+
+### 1.2 Volume de extração: 2,2× a melhor rodada anterior
+
+| Rodada | Provedor | Linhas extraídas |
+|---|---|---:|
+| v41 (13/08) | OpenAI | 1.139 |
+| v45 (14/08) | OpenAI | 438 |
+| **v47 (24/08)** | **Gemini** | **2.460** |
+
+2.460 pares (conta × coluna) sobre 1.081 contas distintas, em 34 dos 38 documentos.
+Os 4 sem valor numérico são os que não têm número mesmo (certidões, organograma,
+notas explicativas, parecer do auditor) — correto.
+
+### 1.3 O custo caiu 3,5× e bateu a estimativa
+
+| | Valor |
+|---|---:|
+| `custo_total_usd` | **US$ 0,3680** |
+| `custo_estimado_usd` (previsto antes de rodar) | US$ 0,3200 |
+| extração | US$ 0,3566 |
+| classificação | US$ 0,0114 |
+| tokens entrada / saída | 214.469 / 116.905 |
+| duração do lote | ~9 min (20:10 → 20:19) |
+
+A estimativa errou **15% para menos** — aceitável, e o erro é do lado seguro para o dono
+(quem estima gasto por baixo assusta; aqui a diferença é de 5 centavos). Confere com a
+tabela de preço do `n8n/lib/custo.mjs` (`0,30`/`2,50` por milhão) no sexto decimal:
+`214.469 × 0,30 + 116.905 × 2,50 = 0,356603` → `0,356600` gravado. **A conta de custo
+está certa.**
+
+Comparado ao piso projetado no `docs/PROMPT_ANALISE_DA_RODADA.md` (US$ 0,2821, calculado
+antes da correção do #169), o real ficou 30% acima — que é exatamente o que o #169 previu:
+**o token de raciocínio apareceu na conta.** A correção estava certa.
+
+### 1.4 As guardas que funcionaram
+
+- **Zero falhas** em 38 documentos (`documentos_com_falha = 0`, `documentos_sem_medicao = 0`);
+- as 7 pendências bloqueantes de `item_sem_conteudo` abriram e **fecharam sozinhas** quando
+  o conteúdo chegou — o ciclo de vida da pendência funciona;
+- o detector de padrão suspeito **disparou** (ver 2.4 — disparou errado, mas disparou);
+- a `0138` **está aplicada** em produção: conferi o corpo de `fn_veredito_producao` e o
+  `RAISE EXCEPTION` não está mais lá. O `ESTADO.md`, que registrava o banco na `0137`,
+  estava desatualizado.
+
+---
+
+## 2. O que precisa ser corrigido
+
+Em ordem de gravidade.
+
+### 2.1 🔴 Nenhuma reconciliação rodou — e faz três rodadas que é assim
+
+**Zero linhas em `reconciliacao` para o v47.** O mandato chegou a `completude_ok` sem que
+uma única checagem de amarração fosse computada.
+
+| Mandato | Data | Reconciliações |
+|---|---|---:|
+| Teste v41 | 13/08 | **6.570** |
+| Teste v4x | 13/08 | 0 |
+| Teste V45 | 14/08 | 0 |
+| **Teste v47** | **24/08** | **0** |
+
+**Isto não é do Gemini** — quebrou entre a v41 e a v4x, ambas em 13/08, onze dias antes da
+troca de provedor. É o achado mais grave da rodada: as checagens que existem justamente
+para pegar "Ativo ≠ Passivo + PL" não estão sendo executadas, e o mandato **aprova mesmo
+assim**. A v45 chegou a `aprovado` com zero reconciliações.
+
+O agravante é que o book é fiel: o balanço fecha, então nada denunciaria a ausência. Num
+documento real que não fechasse, o sistema aprovaria calado. **É a mesma forma da `0133`:
+a cegueira foi aberta por uma mudança nossa e nenhuma tela mostra que ela existe.**
+
+**Ação:** achar o commit entre v41 e v4x que parou o gatilho/etapa de reconciliação, e
+travar com um teste que reprove quando um mandato com balanço completo produz zero linhas.
+
+### 2.2 🔴 Escala `milhao` em documento que diz "R$ mil" — erro de 1.000×
+
+Dois documentos gravaram `unidade = 'milhao'` em **todas** as linhas, e em ambos o
+cabeçalho da coluna diz literalmente **"R$ mil"**:
+
+| Documento | Linhas | Colunas cujo rótulo diz "mil" | `unidade` gravada |
+|---|---:|---:|---|
+| `24_Posicao_de_Estoques` | 50 | 17 | `milhao` |
+| `28_Folha_de_Pagamento` | 34 | 25 | `milhao` |
+
+Os **valores** estão certos (TOTAL DOS ESTOQUES = 15.605, igual ao gabarito). É o
+**multiplicador** que está errado: quem ler `15.605 × 10⁶` em vez de `15.605 × 10³`
+inflaciona o estoque em mil vezes. É exatamente o erro que o comentário do
+`db/diagnostico_rodada.sql` diz que este projeto já pagou caro.
+
+**Agravante — a escala é do documento, não da coluna.** No mesmo `24_`, colunas
+não-monetárias herdaram a escala e a moeda: `Quantidade = 1.240` e
+`Custo unitário (R$) = 2.026,61` estão gravados como `milhao`/`BRL`. Em `28_`,
+`Efetivo (pessoas) = 96` idem. **279 pessoas viram 279 milhões de pessoas** se alguém
+multiplicar. A correção não é só acertar o rótulo: é a escala passar a ser **por coluna**.
+
+Há ainda 14 linhas com valor numérico e escala/moeda **nulas** (docs 08, 22, 23, 27) —
+o outro lado do mesmo problema.
+
+### 2.3 🟠 A confiança por linha está saturada em 1,00 — o sinal morreu
+
+**2.460 de 2.460 linhas com `confianca = 1.00` exatamente.** Não é média: é a distribuição
+inteira. O mesmo vale para a v41 (1.139/1.139) e a v45 (438/438), então **também não é do
+Gemini** — é anterior.
+
+Isso importa porque `fn_dial_permite_auto(estagio, confianca)` decide auto-aceite comparando
+a confiança ao limiar do dial. Com a confiança constante em 1,00, **o limiar nunca reprova
+nada**: o dial parece configurado e não filtra. É um portão de segurança desligado sem que
+nenhuma tela diga isso.
+
+Contraste: a confiança de **classificação** varia (0,90 / 0,95 / 1,00) e discrimina. É só a
+de extração que está morta.
+
+### 2.4 🟠 O detector de padrão suspeito acusou uma coluna de dimensão
+
+Pendência aberta em `19_Faturamento_Intragrupo`:
+
+> "4 contas diferentes, na MESMA coluna, vieram com o MESMO valor material (2023.00) —
+> padrão típico de fabricação/alucinação"
+
+**É falso positivo.** A coluna é `Exercício`, e o valor repetido é o **ano**, legitimamente
+igual nas 4 linhas de 2023. Os valores monetários dessas linhas estão certos e somam certo
+(1.900 + 3.400 + 720 + 1.100 = 7.120 = "Total de 2023" ✅).
+
+**Ação:** o detector deve ignorar colunas não-monetárias (`Exercício`, `Natureza`,
+`Quantidade`, `Unidade`, `% do total`) — a mesma lista que a correção de 2.2 precisa criar.
+Uma correção resolve os dois.
+
+### 2.5 🟠 Documento COMBINADO classificado como BALANCO → entidade fantasma → 3 pendências falsas
+
+Dois documentos gêmeos, saída oposta — **ambos com confiança 1,00**:
+
+| Arquivo | Tipo | Confiança |
+|---|---|---:|
+| `13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf` | **BALANCO** ❌ | 1,00 |
+| `14_Balanco_COMBINADO_Grupo_Canastra_2024.pdf` | COMBINADO ✅ | 1,00 |
+
+A justificativa do 13 descreve corretamente "um Balanço Patrimonial **Combinado**" e mesmo
+assim carimba `BALANCO`. **Confiança 1,00 numa resposta errada** — reforça 2.3.
+
+O estrago é em cadeia. A tabela `entidade` tem **7 linhas para um grupo de 6 empresas**: a
+sétima é `Grupo Canastra`, sem CNPJ, criada pelo documento misclassificado. E como o
+sistema passou a exigir de "Grupo Canastra" as linhas de um balanço de empresa, abriram-se
+**3 das 11 pendências** do mandato (Ativo Total, Passivo + PL e Caixa e equivalentes "não
+localizadas" para essa entidade que não existe). Uma classificação errada gerou três
+pedidos de trabalho humano que não têm o que resolver.
+
+**Segundo problema na mesma tabela:** os nomes não são normalizados —
+`CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.` convive com `Cn Transportes` e
+`Canastra Imobiliaria SPE`. Dois documentos que grafem a mesma empresa de formas
+diferentes viram duas entidades.
+
+### 2.6 🟠 Os totais não recebem seção canônica — e é o que gera as pendências de "linha exigida ausente"
+
+Achado sistemático: **linha de total/subtotal fica com `secao_canonica = null`.**
+
+Nos documentos que têm seção (BALANCO, DRE, COMBINADO, BALANCETE, DF_AUDITADA): 1.607
+linhas, **368 sem seção**. Dessas, **147 são linhas em CAIXA ALTA** — ou seja, **87% das
+linhas em caixa alta (147 de 169) ficam sem seção**, contra praticamente todas as linhas
+de detalhe seccionadas corretamente.
+
+Confirmado no dado: `TOTAL DO ATIVO`, `TOTAL DO PASSIVO E DO PATRIMÔNIO LÍQUIDO`,
+`RECEITA OPERACIONAL BRUTA`, `(-) DEDUÇÕES DA RECEITA BRUTA`, `RECEITA OPERACIONAL LÍQUIDA`
+— todas extraídas com o valor certo, todas sem seção.
+
+É a **causa raiz** de boa parte das 11 pendências de `linha_exigida_ausente`: a linha *está*
+no banco com o valor correto, mas o localizador não a encontra porque procura por seção.
+Essas linhas também caem em "Contas Não Classificadas" no export.
+
+### 2.7 🟡 O balancete de 2025 perdeu todas as seções; o de 2024 não
+
+Mesmo gerador, mesmo layout, anos diferentes:
+
+| Documento | Linhas | Com seção |
+|---|---:|---:|
+| `15_Balancete_Analitico_…_12M25` | 155 | **0** |
+| `16_Balancete_Analitico_…_12M24` | 145 | 144 |
+
+O 16 distribuiu certinho (46 PC, 42 AC, 36 ANC, 14 PNC, 6 PL). O 15 mandou **as 155 linhas
+para "sem seção"**. Não há diferença estrutural entre os dois documentos que justifique —
+é **não-determinismo do seccionamento**, e é o maior bloco isolado de linhas perdidas do
+lote.
+
+### 2.8 🟡 `tipo_taxonomia` nulo gravado com confiança 0,90
+
+`28_Folha_de_Pagamento` ficou com **tipo nulo**. A justificativa do modelo é honesta e
+correta — *"tipo não contemplado nas categorias financeiras padrão da taxonomia"* — e a
+pendência de `classificacao_pendente` abriu como devia. O defeito é o **número**: gravar
+`confianca = 0.90` para uma resposta que é "não sei" é registrar como quase-certeza aquilo
+que o próprio modelo declarou fora da taxonomia. Deveria ser confiança baixa, ou nula.
+
+Sugestão de produto: a folha de pagamento é insumo real de análise de crédito (headcount,
+custo com encargos). Vale um tipo `FOLHA_PAGAMENTO` na taxonomia.
+
+### 2.9 🟡 Os contadores de token não incluem a classificação, mas o custo inclui
+
+`tokens_entrada`/`tokens_saida` (214.469/116.905) explicam **exatamente** o
+`custo_extracao_usd`, e só ele. Os tokens das 19 chamadas de classificação (US$ 0,0114)
+não estão em lugar nenhum. Na mesma linha da tabela, "tokens" e "custo" são universos
+diferentes — quem dividir custo por token vai errar.
+
+Além disso, `cobertura` está **nula** porque `contas_nos_documentos = 0` (denominador
+zerado), então o oitavo indicador do painel não tem o que mostrar. E `tokens_cache = 0`:
+nenhum cache foi aproveitado em 38 chamadas.
+
+---
+
+## 3. As duas perguntas que a rodada existia para responder
+
+### 3.1 Quantas chamadas o lote fez — 38 ou ~44?
+
+**38. `documentos_fatiados = 0`.**
+
+**O fatiamento continua nunca tendo sido visto ligado em produção** — 0 de 38 na sessão 52,
+0 de 38 agora. Segue sendo o item nº 1 das onze provas do B1, e **não foi provado**.
+
+O motivo é mensurável: a saída média foi **116.905 / 2.460 ≈ 47,5 tokens por linha**
+(raciocínio incluído). Nenhum documento chegou perto do teto de 16.384.
+
+**Mas a margem é menor do que parece.** O documento mais denso do lote é o
+`01_Balanco_Patrimonial` com **308 pares**; a 47,5 tokens/linha isso projeta **~14.600
+tokens de saída — 89% do teto de 16.384**, sem fatiar. Um balanço um pouco maior trunca.
+
+> Ressalva honesta: 47,5 tok/linha é a média do lote, não a medição do documento 01. A
+> medição por documento **não está no banco** — só na saída do nó `Parse Extracao` do n8n.
+> A projeção indica risco, não o comprova.
+
+### 3.2 `thoughts_tokens` e `custo_usd` do `17_Livro_Razao`
+
+**Não respondível pelo banco.** `lote_execucao` guarda só o agregado do lote; o detalhe por
+documento vive na saída do nó `Parse Extracao`, que não é persistida. Segue sendo o único
+item desta análise que depende do dono.
+
+O que dá para dizer do agregado: o raciocínio **está** sendo cobrado e **está** na conta
+(o real ficou 30% acima do piso pré-#169, e a diferença é exatamente essa). O
+`17_Livro_Razao` rendeu 198 pares — é o 4º mais denso, não o 1º; para a decisão do teto,
+**o documento a medir é o `01_Balanco_Patrimonial` (308 pares)**, não o razão.
+
+---
+
+## 4. As três decisões, agora com a medição na mão
+
+### 4.1 Subir `MAX_OUTPUT_TOKENS` de 16.384? — **Não agora. E não pelo motivo previsto.**
+
+A premissa registrada ("o documento mais denso já pede 17.875 tokens de saída") **não se
+confirmou**: o lote inteiro consumiu 116.905 tokens de saída, e a projeção do pior
+documento é ~14.600. **Medir desmentiu a correção anotada** — de novo.
+
+Com o teto atual sobrando ~11%, subi-lo agora só faria uma coisa: **enterrar de vez a única
+chance de ver o fatiamento disparar numa rodada real**. E o fatiamento é prova obrigatória
+do B1.
+
+**Recomendação:** manter 16.384. Antes de mexer, medir o `01_Balanco_Patrimonial` no nó
+`Parse Extracao`. Se ele estiver acima de ~14.000, a decisão certa não é subir o teto — é
+**testar o fatiamento com um documento propositalmente maior**, que é a prova que falta.
+Se mexer, `TETO_SAIDA_TOKENS` em `n8n/lib/cobertura.mjs` acompanha (há teste travando os dois).
+
+### 4.2 Desligar o pensamento na extração? — **Não.**
+
+O raciocínio custou ~30% do lote — cerca de **US$ 0,11 num lote de US$ 0,37**. Em troca
+dele, a extração acertou o gabarito no centavo em 16 de 16 totais conferidos, com 2,2× o
+volume da melhor rodada anterior. **Onze centavos por 38 documentos é o melhor negócio
+desta rodada.**
+
+Somado ao risco não verificado já anotado (se o modelo recusar `thinkingConfig`, toda
+chamada vira 400), não há caso para desligar. **Decisão: manter, e tirar do backlog.**
+
+### 4.3 Estender o `eslint` ao diretório `n8n/`? — **Sim, e continua valendo.**
+
+Nada nesta rodada muda a avaliação: hoje o lint roda com `working-directory: portal` e os
+geradores do n8n só são vistos pelo Sonar (foi assim que um import morto viveu dois
+commits). É fatia própria e provavelmente acende achados antigos.
+
+---
+
+## 5. Ordem de trabalho sugerida
+
+| # | Item | Seção | Por quê primeiro |
+|---|---|---|---|
+| 1 | Reconciliações não rodam há 3 mandatos | 2.1 | Aprova mandato sem checar amarração. Cegueira, não erro visível |
+| 2 | Escala por coluna (resolve escala 1.000× **e** o falso positivo 2.4) | 2.2 + 2.4 | Erro de mil vezes; uma correção mata dois defeitos |
+| 3 | Confiança de extração saturada em 1,00 | 2.3 | Desliga o dial sem avisar ninguém |
+| 4 | Seção canônica nos totais | 2.6 | Causa raiz de boa parte das 11 pendências falsas |
+| 5 | COMBINADO → BALANCO e entidade fantasma | 2.5 | 3 pendências falsas; normalizar nome de entidade junto |
+| 6 | Balancete 2025 sem seção | 2.7 | 155 linhas, o maior bloco perdido |
+| 7 | Tipo nulo com confiança 0,90 / tipo `FOLHA_PAGAMENTO` | 2.8 | Barato |
+| 8 | Contadores de token vs. custo; `cobertura` nula | 2.9 | Relatório, não motor |
+| 9 | `eslint` no `n8n/` | 4.3 | Fatia própria |
+
+**Do dono, e só dele:** o teto de gasto do projeto no Google (não se herda da OpenAI — a
+conta nova começa **sem teto**) e o zero-retention/DPA antes de qualquer dado real de
+cliente. E a medição do `01_Balanco_Patrimonial` no `Parse Extracao`, que é o único número
+desta análise que o banco não deu.
+
+---
+
+## 6. Correção ao `ESTADO.md`
+
+O `ESTADO.md` registra o banco de produção na `0137`. **Medido nesta sessão:**
+`fn_veredito_producao` já não contém `RAISE EXCEPTION` — a **`0138` está aplicada**. A
+sonda `fn_instalacao_conferir()` respondeu **14 requisitos, todos presentes**, sem nenhum
+bloqueante ausente.
