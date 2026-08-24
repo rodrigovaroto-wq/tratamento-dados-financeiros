@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { explicarFalha, explicarParada, explicarLoteVazio, type FalhaExplicada } from "@/lib/falha-em-portugues";
 import { useRouter } from "next/navigation";
 
 const MB = 1024 * 1024;
@@ -49,6 +50,31 @@ const SEGUNDOS_POR_DOCUMENTO = 14;
 // de mostrar "quase pronto" por mais tempo não custa nada; errar para o lado de
 // parar de perguntar custa o acompanhamento inteiro.
 const MARGEM_DA_JANELA = 3;
+
+// QUANTO TEMPO SEM ANDAR É "PAROU".
+//
+// A 0108 deu ao erro um lugar para morar, e cobre duas fontes: a recusa do
+// orçamento e o Error Workflow do n8n. Sobra um caso, e ele é o mais teimoso: o
+// Error Workflow é um passo MANUAL de configuração, e um nó que morre com esse
+// registro desligado não escreve linha nenhuma. A tela volta a deduzir "está
+// processando" de uma ausência que na verdade é morte.
+//
+// A saída é não depender de ninguém registrar nada. Se o número de arquivos
+// organizados PAROU DE SUBIR por tempo demais, o trabalho não está andando —
+// isso é medível daqui, sem banco e sem n8n.
+//
+// O NÚMERO SAI DA CADÊNCIA, não do gosto: um documento leva ~14s, então 5
+// minutos são ~20 documentos que deveriam ter aparecido e não apareceram. Curto
+// demais acusa parada no meio de um documento grande (que faz várias leituras
+// antes de registrar qualquer coisa); longo demais devolve a espera eterna que
+// isto existe para acabar.
+const SEM_PROGRESSO_MS = 5 * 60 * 1000;
+
+// ANTES DO PRIMEIRO SINAL A FOLGA É MAIOR, e a assimetria é medida, não
+// cautela genérica: entre o envio e o primeiro documento registrado o sistema lê
+// o texto de TODOS os arquivos e decide o orçamento do lote — nada disso produz
+// contagem. Num lote de 38 esse silêncio inicial é legítimo e dura minutos.
+const SEM_PRIMEIRO_SINAL_MS = 8 * 60 * 1000;
 const ESPERA_MINIMA_MS = 12 * 60 * 1000;
 const ESPERA_MAXIMA_MS = 90 * 60 * 1000;
 function janelaPara(arquivos: number): number {
@@ -114,16 +140,26 @@ export default function UploadForm({
   // esperar tranquilo e achar que travou.
   const [progresso, setProgresso] = useState<{ processados: number; esperados: number } | null>(null);
   const [demorou, setDemorou] = useState(false);
+  // A PARADA SEM REGISTRO — o caso que a 0108 não alcança (ver SEM_PROGRESSO_MS).
+  const [parada, setParada] = useState<{ processados: number; esperados: number } | null>(null);
+  // O LOTE QUE TERMINOU VAZIO. Vem do status, e só existe depois de `pronto`.
+  const [loteVazio, setLoteVazio] = useState<{ comLinhas: number; documentos: number } | null>(null);
 
   // Acompanha silenciosamente, em segundo plano, até os arquivos enviados
   // estarem organizados — sem nomear nenhuma ferramenta ou etapa técnica.
   useEffect(() => {
-    if (!sucesso || pronto || falha) return;
+    if (!sucesso || pronto || falha || parada) return;
     let cancelado = false;
     let intervalo = INTERVALO_ACOMPANHAMENTO_MS;
     let proximaEspera: ReturnType<typeof setTimeout> | undefined;
     const comecou = Date.now();
     const janela = janelaPara(sucesso.arquivos);
+    // O RELÓGIO DA PARADA anda em paralelo ao da janela e mede outra coisa: a
+    // janela pergunta "já esperei demais?", este pergunta "está andando?". Um
+    // lote lento e vivo não pode acionar o segundo; um lote morto tem de acionar
+    // antes de o primeiro estourar, senão a tela cala como sempre calou.
+    let ultimoAvanco = Date.now();
+    let ultimoVisto = -1;
 
     const verificar = async () => {
       if (cancelado) return;
@@ -143,11 +179,37 @@ export default function UploadForm({
         }
         if (!cancelado && resp.ok && typeof json.processados === "number") {
           setProgresso({ processados: json.processados, esperados: json.esperados });
+          // AVANÇO é qualquer um dos dois contadores subindo. Só o de extração
+          // deixaria a fase inicial inteira — upload, orçamento, registro dos
+          // documentos — parecer parada, e ela pode durar minutos num lote grande.
+          const marca = (json.classificados ?? 0) + json.processados;
+          if (marca > ultimoVisto) {
+            ultimoVisto = marca;
+            ultimoAvanco = Date.now();
+          }
         }
         if (!cancelado && resp.ok && json.pronto) {
           setPronto(true);
+          // `comLinhas` só vem no fim, e `null` significa "não consegui conferir"
+          // — que NÃO é zero. Tratar os dois igual acusaria lote vazio por causa
+          // de uma consulta que falhou, e um alarme falso desses ensina a
+          // ignorar o alarme.
+          if (typeof json.comLinhas === "number") {
+            setLoteVazio({ comLinhas: json.comLinhas, documentos: json.esperados });
+          }
           if (casoId) router.refresh();
           return;
+        }
+        // PAROU DE ANDAR: declara, em vez de continuar perguntando com cara de
+        // calma. O limite é maior enquanto nada apareceu ainda — nessa fase o
+        // silêncio é legítimo.
+        if (!cancelado && resp.ok) {
+          const parado = Date.now() - ultimoAvanco;
+          const limite = ultimoVisto > 0 ? SEM_PROGRESSO_MS : SEM_PRIMEIRO_SINAL_MS;
+          if (parado > limite) {
+            setParada({ processados: json.processados ?? 0, esperados: json.esperados ?? sucesso.arquivos });
+            return;
+          }
         }
       } catch {
         // Falha pontual de rede não interrompe o acompanhamento — só a
@@ -171,7 +233,7 @@ export default function UploadForm({
       // que o intervalo varia, `proximaEspera` é sempre o único pendente.
       clearTimeout(proximaEspera);
     };
-  }, [sucesso, pronto, falha, casoId, router]);
+  }, [sucesso, pronto, falha, parada, casoId, router]);
 
   function adicionarArquivos(lista: FileList | null) {
     if (!lista) return;
@@ -224,39 +286,70 @@ export default function UploadForm({
     }
   }
 
-  // O PROCESSAMENTO FALHOU — e a tela diz isso, com a causa.
+  // UM CARTÃO PARA AS TRÊS FORMAS DE NÃO TER DADO CERTO.
   //
-  // O texto tem três partes, nesta ordem, e a ordem é o que o torna útil: (1) o
-  // que aconteceu, em uma frase; (2) a causa TÉCNICA como o sistema a produziu,
-  // sem tradução — é o que o desenvolvedor precisa ler e o que some quando a
-  // interface "simplifica" demais; (3) o que fazer agora. Sem a (2), quem for
-  // ajudar começa perguntando "qual erro apareceu?" e a resposta é "deu erro".
-  if (sucesso && falha) {
+  // Elas chegam por caminhos diferentes — falha registrada no banco, parada sem
+  // registro nenhum, lote que terminou vazio — e para quem lê são a mesma
+  // notícia: não terminou como devia, e isto é o que aconteceu. Três cartões
+  // diferentes fariam o analista aprender três telas para uma informação só.
+  //
+  // A ORDEM DA LEITURA É A ORDEM DA PERGUNTA: o que aconteceu, o que fazer, e —
+  // só se pedirem — o texto técnico. Ele continua ali porque sem ele quem for
+  // ajudar começa perguntando "qual erro apareceu?"; mas fechado, porque quem
+  // precisa dele não é quem está olhando a tela.
+  const explicacao: FalhaExplicada | null = falha
+    ? explicarFalha(falha)
+    : parada
+      ? explicarParada(parada)
+      : loteVazio
+        ? explicarLoteVazio(loteVazio)
+        : null;
+
+  if (sucesso && explicacao) {
+    const tecnico = falha
+      ? `${falha.etapa ? `Etapa: ${falha.etapa}\n` : ""}${falha.mensagem}`
+      : parada
+        ? `Sem progresso por mais de ${Math.round(SEM_PROGRESSO_MS / 60000)} minutos. `
+          + `Organizados: ${parada.processados} de ${parada.esperados}. Mandato: "${sucesso.mandato}". `
+          + `Envio: ${new Date(sucesso.desde).toLocaleString("pt-BR")}.`
+        : `Lote concluído com ${loteVazio?.comLinhas ?? 0} de ${loteVazio?.documentos ?? 0} documentos `
+          + `com linhas extraídas. Mandato: "${sucesso.mandato}". `
+          + `Envio: ${new Date(sucesso.desde).toLocaleString("pt-BR")}.`;
+
     return (
       <div className="rounded border border-risco-300 bg-risco-50 p-4 text-sm text-risco-900">
-        <p className="font-medium">
-          Não foi possível processar os {sucesso.arquivos} arquivo(s) do mandato “{sucesso.mandato}”.
+        <p className="text-xs font-semibold uppercase tracking-wide text-risco-700">
+          O sistema parou por um problema técnico
         </p>
-        <p className="mt-1 text-risco-800">
-          O envio chegou, mas o processamento parou antes de terminar. Nada foi cobrado e nada ficou
-          pela metade — os arquivos podem ser reenviados depois que o problema for resolvido.
-        </p>
+        <p className="mt-2 text-base font-medium">{explicacao.titulo}</p>
+        <p className="mt-2 text-risco-800">{explicacao.explicacao}</p>
+
         <div className="mt-3 rounded border border-risco-200 bg-folha p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-risco-700">
-            O que o sistema respondeu {falha.etapa ? `(etapa: ${falha.etapa})` : null}
+            {explicacao.quemResolve === "voce" ? "O que você pode fazer" : "Quem resolve isto"}
           </p>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-tinta-600">{falha.mensagem}</p>
+          <p className="mt-1 text-risco-900">{explicacao.oQueFazer}</p>
         </div>
-        <p className="mt-3 font-medium text-risco-900">
-          Envie esta mensagem ao desenvolvedor do sistema para que ele resolva o problema.
-        </p>
+
+        {/* FECHADO POR PADRÃO, e presente por escolha. A causa técnica é o que
+            um desenvolvedor precisa e o que some quando a interface "simplifica"
+            demais — mas ela não é a primeira coisa que o analista deve ler. */}
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs text-risco-700 hover:text-risco-900">
+            Ver detalhes técnicos (para enviar a quem cuida do sistema)
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap rounded border border-risco-200 bg-folha p-3 text-xs text-tinta-600">
+            {tecnico}
+          </p>
+        </details>
+
         <div className="mt-3 flex gap-3">
           <button
             type="button"
-            onClick={() => { setFalha(null); setSucesso(null); }}
+            onClick={() => { setFalha(null); setParada(null); setLoteVazio(null); setSucesso(null); }}
             className="rounded bg-risco-700 px-3 py-1.5 text-xs font-medium text-papel hover:bg-risco-800"
           >
-            Tentar de novo
+            Enviar de novo
           </button>
           <button
             type="button"

@@ -214,6 +214,14 @@ jobs:
         # que muda de lugar em UMA das duas metades do formato.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 
+      - name: Suíte da mensagem de falha (o texto do dia ruim)
+        # POR QUE ELA ESTÁ NO CI. Este é o único texto do sistema cujo defeito
+        # não aparece enquanto tudo funciona: ele só é lido quando algo quebrou.
+        # Uma assinatura que deixou de casar, ou uma frase que voltou a citar
+        # ferramenta, não derruba tela nenhuma — e só se descobre no momento em
+        # que alguém precisa de ajuda e recebe "deu erro".
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
+
       - name: Suíte das premissas sugeridas do realizado
         # A tela de Modelagem sugere oito premissas lidas do próprio balanço e da
         # própria DRE do caso, e o analista aceita com um clique — a partir daí
