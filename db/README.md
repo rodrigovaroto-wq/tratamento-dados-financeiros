@@ -366,3 +366,17 @@ também não está aqui — `fn_aceitar_extracao` (0011) é só o aceite mínimo
 não a regra de portão do caso inteiro. Ver o plano da F1 e `f0/05_schema_conceitual.md`.
 (`campo_extraido` entrou em `0005`; `reconciliacao` — Classe A — entrou em `0009`; aceite/E4
 entrou em `0011`.)
+
+## Consultas de leitura (não são migration, não mudam nada)
+
+Ficam na raiz de `db/` e se rodam no SQL Editor do Supabase. Cada uma responde uma pergunta
+que, sem ela, é uma tarde clicando no portal — e que não deixa rastro nenhum depois.
+
+| Arquivo | Responde |
+|---|---|
+| `diagnostico_rodada.sql` | O raio-X de um mandato depois de uma rodada: uma linha por documento, com tipo, confiança, quem classificou, contas e colunas extraídas, escala, moeda, seções canônicas e pendências |
+| `pendencias_do_mandato.sql` | Toda pendência aberta do mandato, por severidade, com descrição e motivo |
+| `diagnostico_modelagem.sql` | O estado da modelagem de um caso |
+| `varredura_linha_exigida.sql` | As linhas exigidas pelo modelo institucional |
+
+Em todas, o nome do mandato vai na primeira linha.
