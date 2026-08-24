@@ -107,22 +107,58 @@ uma única checagem de amarração fosse computada.
 
 | Mandato | Data | Reconciliações |
 |---|---|---:|
-| Teste v41 | 13/08 | **6.570** |
-| Teste v4x | 13/08 | 0 |
+| Teste v41 | 13/08 19:28 | **73** |
+| Teste v4x | 13/08 21:35 | 0 |
 | Teste V45 | 14/08 | 0 |
 | **Teste v47** | **24/08** | **0** |
 
-**Isto não é do Gemini** — quebrou entre a v41 e a v4x, ambas em 13/08, onze dias antes da
-troca de provedor. É o achado mais grave da rodada: as checagens que existem justamente
-para pegar "Ativo ≠ Passivo + PL" não estão sendo executadas, e o mandato **aprova mesmo
-assim**. A v45 chegou a `aprovado` com zero reconciliações.
+**Isto não é do Gemini** — quebrou em 13/08, entre 19:40 e 20:57, onze dias antes da troca
+de provedor. As checagens que existem justamente para pegar "Ativo ≠ Passivo + PL" não
+estão sendo executadas, e o mandato **aprova mesmo assim**: a v45 chegou a `aprovado` com
+zero reconciliações.
 
-O agravante é que o book é fiel: o balanço fecha, então nada denunciaria a ausência. Num
+#### A causa raiz, medida na execução `7030`
+
+O nó `Reconciliar (Classe A)` **está no canvas e rodou**. Devolveu isto:
+
+```json
+{"resultado": {"motivo": "documento não encontrado", "executado": false}}
+```
+
+…para **2 itens, não 38**. O nó é
+`select fn_reconciliar_por_documento($1::uuid)` com
+`queryReplacement = {{ [$json.documento_id] }}`, e o item que chega do `Juntar Extraidos`
+**não tem `documento_id`**. O parâmetro chega nulo, a função não encontra documento e
+retorna sem inserir nada. Toda vez, para todo documento.
+
+É a classe exata do commit `9b9cd72` — *"O fan-out cortou o pareamento de itens, e três nós
+perderam o contexto"* (13/08 21:08) —, e a janela da quebra (13/08, entre a v41 e a v42)
+bate com `4b96406` *"Três camadas para o dado que não chegava"* (13/08 20:17). O nó não foi
+removido: ele foi **desconectado do seu insumo** e continuou verde.
+
+**O motor está intacto.** Chamando `fn_reconciliar_por_documento` à mão sobre o
+`01_Balanco_Patrimonial` da v47 (em transação revertida), ela executa as **6 checagens** e
+ainda acha **dois defeitos reais** que a rodada engoliu:
+
+| Checagem | Resultado |
+|---|---|
+| `secao_fecha` (a `0133`) | **divergente** |
+| `ativo_passivo_pl` | ok |
+| `caixa_bp_fluxo` | ok |
+| `mutuos_planilha_vs_balanco` | documento_ausente |
+| `intragrupo_espelho` | ok |
+| `duplicidade_de_rotulo` | **divergência** |
+
+Ou seja: não é preciso escrever nenhuma checagem nova. **É preciso religar um fio** — e a
+rodada passa a acusar dois defeitos que hoje não aparecem em lugar nenhum.
+
+O agravante continua: o book é fiel, o balanço fecha, e nada denunciaria a ausência. Num
 documento real que não fechasse, o sistema aprovaria calado. **É a mesma forma da `0133`:
 a cegueira foi aberta por uma mudança nossa e nenhuma tela mostra que ela existe.**
 
-**Ação:** achar o commit entre v41 e v4x que parou o gatilho/etapa de reconciliação, e
-travar com um teste que reprove quando um mandato com balanço completo produz zero linhas.
+**Ação:** repassar `documento_id` no item que alimenta o `Reconciliar (Classe A)`, e travar
+com um teste que reprove quando um mandato com balanço completo produz zero linhas de
+reconciliação — a guarda que faltava para isso não ter passado 11 dias em silêncio.
 
 ### 2.2 🔴 Escala `milhao` em documento que diz "R$ mil" — erro de 1.000×
 
@@ -272,15 +308,19 @@ O motivo é mensurável: a saída média foi **116.905 / 2.460 ≈ 47,5 tokens p
 `01_Balanco_Patrimonial` com **308 pares**; a 47,5 tokens/linha isso projeta **~14.600
 tokens de saída — 89% do teto de 16.384**, sem fatiar. Um balanço um pouco maior trunca.
 
-> Ressalva honesta: 47,5 tok/linha é a média do lote, não a medição do documento 01. A
-> medição por documento **não está no banco** — só na saída do nó `Parse Extracao` do n8n.
-> A projeção indica risco, não o comprova.
+> O próprio nó `Resumo de Custo` da execução `7030` publica `tokens_saida_por_linha: 47.5`
+> — a média confere. Ressalva honesta: é a média do lote, não a medição do documento 01.
+> A medição por documento **não é persistida** (só existe na saída do nó `Parse Extracao`,
+> item a item). A projeção indica risco, não o comprova.
 
 ### 3.2 `thoughts_tokens` e `custo_usd` do `17_Livro_Razao`
 
-**Não respondível pelo banco.** `lote_execucao` guarda só o agregado do lote; o detalhe por
-documento vive na saída do nó `Parse Extracao`, que não é persistida. Segue sendo o único
-item desta análise que depende do dono.
+**Ainda em aberto — mas não por falta de acesso.** O `Resumo de Custo` da execução `7030`
+foi lido direto do histórico do n8n e só traz o agregado; `lote_execucao` idem. O detalhe
+por documento existe apenas na saída item-a-item do nó `Parse Extracao`, que **não é
+persistida em lugar nenhum** — some quando a execução é expurgada. Isso é, por si só, uma
+lacuna de instrumentação: a decisão do teto de saída depende de um número que o sistema
+não guarda.
 
 O que dá para dizer do agregado: o raciocínio **está** sendo cobrado e **está** na conta
 (o real ficou 30% acima do piso pré-#169, e a diferença é exatamente essa). O
