@@ -10,11 +10,114 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { codigosConhecidos } from '../lib/openai.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
+import { codigosConhecidos } from '../lib/ia.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
-import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO } from '../lib/custo.mjs';
+import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD } from '../lib/custo.mjs';
+import { provedor, schemaDoProvedor } from '../lib/provedor.mjs';
+
+// ---------------------------------------------------------------------------
+// O DIALETO DO PROVEDOR ATIVO — os acessos que este arquivo fazia à mão
+// ---------------------------------------------------------------------------
+//
+// Estas asserções liam `body.messages[1].content` e `resp.choices[0].message`
+// direto, ou seja: elas testavam o workflow E o dialeto da OpenAI ao mesmo
+// tempo, sem distinguir os dois. Com o provedor virando escolha, o que este
+// arquivo tem de provar é o WORKFLOW — que o conteúdo do arquivo chega à
+// chamada, que o schema trava o enum, que a resposta vira campo no banco —, e
+// isso não muda com o dialeto.
+//
+// Os acessadores abaixo são a fronteira. Trocar `IA_PROVEDOR` e rodar a suíte
+// de novo exercita os mesmos ~90 testes contra o outro dialeto, o que é
+// exatamente a garantia que se quer ao manter dois provedores vivos.
+const PROV = provedor();
+const GEMINI = PROV.dialeto === 'gemini';
+
+/** As partes da mensagem de USUÁRIO do corpo montado. */
+const partesDaReq = (body) => (GEMINI
+  ? body.contents[body.contents.length - 1].parts
+  : body.messages[body.messages.length - 1].content);
+
+/** O prompt de SISTEMA — em campo próprio nos dois dialetos (condição do cache). */
+const sistemaDaReq = (body) => (GEMINI ? body.systemInstruction.parts[0].text : body.messages[0].content);
+
+/** O schema que prende a saída. */
+const schemaDaReq = (body) => (GEMINI
+  ? body.generationConfig.responseSchema
+  : body.response_format.json_schema.schema);
+
+/** O teto de tokens de saída. */
+const tetoDaReq = (body) => (GEMINI ? body.generationConfig.maxOutputTokens : body.max_tokens);
+
+/** Esta parte carrega o ARQUIVO (e não texto)? */
+const ehParteDeArquivo = (parte) => (GEMINI
+  ? !!(parte && parte.inlineData)
+  : !!(parte && (parte.type === 'file' || parte.type === 'image_url')));
+
+/**
+ * Um corpo de chamada FALSO, no dialeto ativo, para os testes do `Fatiar
+ * Extracao` — que trabalha em cima de um corpo já montado e não precisa que ele
+ * seja de verdade. Escrito à mão em `messages` como estava, ele testava o
+ * fatiamento no dialeto errado e passava por acidente (o nó não achava
+ * `contents`, não acrescentava instrução nenhuma, e o assert de "sem instrução"
+ * do documento pequeno passava por omissão).
+ */
+function corpoFalso({ sistema, texto }) {
+  return GEMINI
+    ? {
+      systemInstruction: { parts: [{ text: sistema }] },
+      contents: [{ role: 'user', parts: [{ text: texto }, { inlineData: { mimeType: 'application/pdf', data: 'QUJD' } }] }],
+      generationConfig: { temperature: 0 },
+    }
+    : {
+      model: 'modelo-de-teste',
+      messages: [
+        { role: 'system', content: sistema },
+        { role: 'user', content: [{ type: 'text', text: texto }, { type: 'file' }] },
+      ],
+    };
+}
+
+/** Os bytes (base64) que uma parte de arquivo carrega. */
+const base64DaParte = (parte) => {
+  if (!parte) return null;
+  if (parte.inlineData) return parte.inlineData.data;
+  if (parte.file) return String(parte.file.file_data).split('base64,')[1];
+  if (parte.image_url) return String(parte.image_url.url).split('base64,')[1];
+  return null;
+};
+
+/** O texto da primeira parte da mensagem de usuário. */
+const textoDaReq = (body) => partesDaReq(body)[0].text;
+
+/**
+ * A resposta da IA como o provedor ativo a devolveria.
+ *
+ * `conteudo` é string (o JSON que o modelo escreveu — pode vir cortado de
+ * propósito, para simular truncamento). `cortada` marca o corte por teto de
+ * tokens, que é o mesmo fato com dois nomes: `finish_reason:'length'` na
+ * OpenAI, `finishReason:'MAX_TOKENS'` no Google.
+ */
+function respostaIA(conteudo, { cortada = false, uso = null } = {}) {
+  const texto = typeof conteudo === 'string' ? conteudo : JSON.stringify(conteudo);
+  if (GEMINI) {
+    const r = {
+      candidates: [{ content: { parts: [{ text: texto }] }, finishReason: cortada ? 'MAX_TOKENS' : 'STOP' }],
+    };
+    if (uso) {
+      r.usageMetadata = {
+        promptTokenCount: uso.prompt_tokens,
+        candidatesTokenCount: uso.completion_tokens,
+        cachedContentTokenCount: uso.prompt_tokens_details ? uso.prompt_tokens_details.cached_tokens : 0,
+      };
+    }
+    return r;
+  }
+  const r = { choices: [{ message: { content: texto }, finish_reason: cortada ? 'length' : 'stop' }] };
+  if (uso) r.usage = uso;
+  return r;
+}
 
 const wf = JSON.parse(readFileSync(new URL('../workflow.e1-ingestao.json', import.meta.url)));
 const byName = Object.fromEntries(wf.nodes.map((n) => [n.name, n]));
@@ -162,14 +265,14 @@ test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o biná
   const { classificado } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf
   assert.ok(!Array.isArray(classificado), 'each-item deve retornar objeto único');
   assert.equal(classificado.json.tipo_taxonomia, 'BALANCO');
-  assert.equal(classificado.json.precisa_fallback_openai, true, 'sem período no nome → confiança 0.6 → fallback');
+  assert.equal(classificado.json.precisa_fallback_ia, true, 'sem período no nome → confiança 0.6 → fallback');
   assert.ok(classificado.binary?.data, 'binário preservado para os nós seguintes');
 
   const { classificado: dre } = await chainFile(1); // 12M25 DRE (Assinado).pdf
   assert.equal(dre.json.tipo_taxonomia, 'DRE');
   assert.equal(dre.json.periodo_ref, '12M25');
   assert.equal(dre.json.assinado, true);
-  assert.equal(dre.json.precisa_fallback_openai, false, 'nome completo → alta confiança → direto');
+  assert.equal(dre.json.precisa_fallback_ia, false, 'nome completo → alta confiança → direto');
 });
 
 test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não do campo .data direto)', async () => {
@@ -180,8 +283,8 @@ test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não d
   // IA só "leu" o nome do arquivo, porque o conteúdo enviado era lixo).
   const { preparado } = await chainFile(0);
   assert.ok(!Array.isArray(preparado));
-  assert.equal(preparado.json.content_part.type, 'file');
-  assert.match(preparado.json.content_part.file.file_data, /^data:application\/pdf;base64,QUJD$/);
+  assert.ok(ehParteDeArquivo(preparado.json.content_part), 'o PDF vai como ARQUIVO, não como texto');
+  assert.ok(JSON.stringify(preparado.json.content_part).includes('QUJD'), 'e os bytes do arquivo vão junto');
   assert.equal(preparado.json.caso_id, 'caso-uuid-1', 'contexto (caso_id) atravessa a cadeia');
   assert.ok(preparado.binary?.data, 'binário preservado (Upload é ramo a partir daqui)');
 });
@@ -197,9 +300,9 @@ test('Preparar Conteudo: com 2+ arquivos no MESMO lote, cada item lê o SEU PRÓ
   // do que o nome dizia). Fix: usar $itemIndex em vez do literal 0.
   const { preparado: item0 } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf (base64 "QUJD")
   const { preparado: item1 } = await chainFile(1); // 12M25 DRE (Assinado).pdf (base64 "REVG")
-  assert.match(item0.json.content_part.file.file_data, /base64,QUJD$/, 'item 0 deve ler o PRÓPRIO binário');
-  assert.match(item1.json.content_part.file.file_data, /base64,REVG$/, 'item 1 deve ler o PRÓPRIO binário, não o do item 0');
-  assert.notEqual(item0.json.content_part.file.file_data, item1.json.content_part.file.file_data);
+  assert.equal(base64DaParte(item0.json.content_part), 'QUJD', 'item 0 deve ler o PRÓPRIO binário');
+  assert.equal(base64DaParte(item1.json.content_part), 'REVG', 'item 1 deve ler o PRÓPRIO binário, não o do item 0');
+  assert.notEqual(base64DaParte(item0.json.content_part), base64DaParte(item1.json.content_part));
 });
 
 test('Upload Storage: URL usa encodeURIComponent (nomes com espaço/acento)', () => {
@@ -226,22 +329,30 @@ test('Ramo fallback: Montar Req → (HTTP substitui item) → Parse recompõe pe
   // a ligação, e foi o que aconteceu quando a classificação virou `gpt-4o-mini`.
   // O que este assert trava de verdade é que o nó usa o modelo de CLASSIFICAÇÃO,
   // não o de extração — trocar os dois é o erro caro, e ele é invisível a olho.
-  assert.equal(req.json.openai_body.model, MODELO_CLASSIFICACAO);
+  // O MODELO vai no CORPO na OpenAI e na URL no Google — o que este assert trava
+  // é o mesmo dos dois lados: que este nó usa o modelo de CLASSIFICAÇÃO e não o
+  // de extração. Trocar os dois é o erro caro, e ele é invisível a olho.
   assert.notEqual(MODELO_CLASSIFICACAO, undefined);
-  assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'), 'conteúdo do arquivo vai na chamada');
+  if (GEMINI) {
+    assert.equal(req.json.ia_body.model, undefined, 'no Google o modelo vai na URL do nó, não no corpo');
+    assert.match(byName['IA Classificar'].parameters.url, new RegExp(`models/${MODELO_CLASSIFICACAO}:`));
+  } else {
+    assert.equal(req.json.ia_body.model, MODELO_CLASSIFICACAO);
+  }
+  assert.ok(partesDaReq(req.json.ia_body).some(ehParteDeArquivo), 'conteúdo do arquivo vai na chamada');
 
   // O N8N substitui o item pela resposta da OpenAI:
-  const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
+  const respostaOpenAI = { json: respostaIA(JSON.stringify({
     tipo_taxonomia: 'BALANCO', entidade: 'Empresa X Ltda', periodo_tipo: 'anual',
     periodo_referencia: '12M25', assinado: true, confianca: 0.91, justificativa: 'cabeçalho',
-  }) } }] } };
-  const parsed = await run('Parse OpenAI Classif', { item: respostaOpenAI, refs: { 'Montar Req Classif': req } });
+  })) };
+  const parsed = await run('Parse Classif', { item: respostaOpenAI, refs: { 'Montar Req Classif': req } });
   assert.ok(!Array.isArray(parsed));
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
   assert.equal(parsed.json.entidade, 'Empresa X Ltda');
   assert.equal(parsed.json.confianca, 0.91);
   assert.equal(parsed.json.caso_id, 'caso-uuid-1', 'contexto recomposto');
-  assert.equal(parsed.json.openai_body, undefined, 'o corpo da chamada de classificação sai');
+  assert.equal(parsed.json.ia_body, undefined, 'o corpo da chamada de classificação sai');
   // O `content_part` FICA, e a mudança é deliberada: era o descarte dele aqui que
   // obrigava o `Montar Req Extracao` a reencontrar o PDF por pareamento, através
   // da convergência dos dois ramos — o caminho que perdeu 19 dos 35 documentos no
@@ -258,7 +369,7 @@ test('Montar Req Classif: schema da OpenAI TRAVA tipo_taxonomia/periodo_tipo num
   // restringe de fato quando o schema declara o enum explicitamente.
   const { preparado } = await chainFile(0);
   const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
-  const schema = req.json.openai_body.response_format.json_schema.schema;
+  const schema = schemaDaReq(req.json.ia_body);
   const tipoEnum = schema.properties.tipo_taxonomia.enum;
   const periodoEnum = schema.properties.periodo_tipo.enum;
   assert.ok(Array.isArray(tipoEnum), 'tipo_taxonomia precisa de enum (senão a IA pode inventar código)');
@@ -271,7 +382,7 @@ test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome
   const { preparado } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf: nome já dava BALANCO @ 0.65
   const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
   const erro = { json: { error: 'timeout' } }; // resposta de erro qualquer (sem content)
-  const parsed = await run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
+  const parsed = await run('Parse Classif', { item: erro, refs: { 'Montar Req Classif': req } });
   // Merge: falha técnica da IA não deve descartar um sinal que o nome já dava.
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO');
   assert.equal(parsed.json.confianca, 0.65, 'mantém a confiança do nome, não zera por falha técnica da IA');
@@ -282,11 +393,11 @@ test('Ramo fallback: falha da OpenAI (onError continue) → mantém o que o nome
   // chamada — o dono não tinha como ligar uma coisa à outra.
   assert.match(parsed.json.justificativa, /valeu o nome do arquivo/);
   assert.match(parsed.json.justificativa, /timeout/, 'a falha real aparece, não uma frase genérica');
-  assert.equal(byName['OpenAI Classificar'].onError, 'continueRegularOutput');
-  assert.equal(byName['OpenAI Extrair'].onError, 'continueRegularOutput');
+  assert.equal(byName['IA Classificar'].onError, 'continueRegularOutput');
+  assert.equal(byName['IA Extrair'].onError, 'continueRegularOutput');
 });
 
-test('Parse OpenAI Classif: 429 da OpenAI nomeia a CAUSA na justificativa do documento', async () => {
+test('Parse Classif: 429 da OpenAI nomeia a CAUSA na justificativa do documento', async () => {
   // O sintoma real do v30: o n8n devolve a própria dica ("Try spacing your
   // requests out...") e nada mais. Antes isso virava "falha de rede/API"; agora
   // vira "limite atingido, e não sabemos qual — confira crédito", que é
@@ -294,8 +405,8 @@ test('Parse OpenAI Classif: 429 da OpenAI nomeia a CAUSA na justificativa do doc
   const { preparado } = await chainFile(0);
   const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
   const erro = { json: { error: { message: "Try spacing your requests out using the batching settings under 'Options'" } } };
-  const parsed = await run('Parse OpenAI Classif', { item: erro, refs: { 'Montar Req Classif': req } });
-  assert.match(parsed.json.justificativa, /LIMITE DA OPENAI ATINGIDO \(HTTP 429\)/);
+  const parsed = await run('Parse Classif', { item: erro, refs: { 'Montar Req Classif': req } });
+  assert.match(parsed.json.justificativa, /LIMITE DO PROVEDOR ATINGIDO \(HTTP 429\)/);
   assert.match(parsed.json.justificativa, /crédito/i, 'diz que pode ser crédito — a causa que espaçar NÃO resolve');
   assert.equal(parsed.json.tipo_taxonomia, 'BALANCO', 'e o nome do arquivo continua valendo');
 });
@@ -318,22 +429,22 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   const req = await run('Montar Req Extracao', { item: recomposto, env: {} });
   assert.equal(req.json.documento_versao_id, 'ver-1');
   assert.equal(req.json.tipo, 'DRE');
-  assert.ok(req.json.openai_body.messages[1].content.some((c) => c.type === 'file'));
-  assert.equal(req.json.openai_body.response_format.json_schema.name, 'diagnostico_e_extracao');
+  assert.ok(partesDaReq(req.json.ia_body).some(ehParteDeArquivo));
+  assert.equal(extractionSchema().name, 'diagnostico_e_extracao');
   // O schema do nó é o `extractionSchema()` da fonte, serializado — não mais um
   // espelho à mão de 2.400 caracteres. Conferir a IGUALDADE é o que impede a
   // divergência voltar; conferir `pc` dentro de `cols` é o que garante que a
   // coluna de período (db/migrations/0017) continua sendo pedida.
-  assert.deepEqual(req.json.openai_body.response_format.json_schema, extractionSchema());
+  assert.deepEqual(schemaDaReq(req.json.ia_body), schemaDoProvedor(PROV, extractionSchema()));
   assert.ok(
-    req.json.openai_body.response_format.json_schema.schema.properties.grupos
+    schemaDaReq(req.json.ia_body).properties.grupos
       .items.properties.cols.items.required.includes('pc'),
     'schema gerado pede pc/periodo_coluna na coluna (db/migrations/0017)',
   );
-  assert.equal(req.json.openai_body.max_tokens, 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
-  assert.match(req.json.openai_body.messages[1].content[0].text, /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
+  assert.equal(tetoDaReq(req.json.ia_body), 16384, 'teto de tokens de saída explícito (sessão 7 cont.⁷: sem isso, documentos combinados grandes truncavam a resposta silenciosamente)');
+  assert.match(textoDaReq(req.json.ia_body), /12M25 DRE \(Assinado\)\.pdf/, 'nome do arquivo vai no prompt (base do diagnóstico de tipo/período)');
 
-  const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
+  const respostaOpenAI = { json: respostaIA(JSON.stringify({
     moeda: 'BRL', unidade: 'R$ mil',
     diagnostico: {
       entidade: 'Empresa Teste Ltda', tipo_confirma: false, tipo_sugerido: 'BALANCO',
@@ -345,7 +456,7 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
       { s: 'Ativo Circulante', sc: 'ativo_circulante', k: 'Caixa e equivalentes', vt: '10.000', vn: 10000, op: 1, cf: 0.8 },
       { s: 'Passivo Circulante', sc: 'NAO_CLASSIFICAVEL', k: 'Fornecedores', vt: '2.500', vn: 2500, op: 2, cf: 0.7 },
     ],
-  }) } }] } };
+  })) };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.documento_versao_id, 'ver-1');
   assert.equal(parsed.json.campos.length, 2);
@@ -371,8 +482,8 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
 });
 
 test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × coluna)', async () => {
-  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', openai_body: {} } };
-  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', ia_body: {} } };
+  const resposta = { json: respostaIA(JSON.stringify({
     moeda: 'BRL', unidade: 'R$ mil',
     diagnostico: {
       entidade: 'Vertentes Metalúrgica Ltda.', tipo_confirma: true, tipo_sugerido: 'BALANCO',
@@ -392,7 +503,7 @@ test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × 
         l: [{ k: 'Total do Ativo Circulante', vt: ['45.440', '67.878'], vn: [45440, 67878], cf: 0.99 }],
       },
     ],
-  }) } }], usage: { prompt_tokens: 12_000, completion_tokens: 3_000 } } };
+  }), { uso: { prompt_tokens: 12_000, completion_tokens: 3_000 } }) };
   const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
   assert.equal(out.json.campos.length, 4);
   assert.deepEqual(out.json.campos.map((c) => [c.chave, c.periodo_coluna, c.valor_num, c.secao_canonica]), [
@@ -408,8 +519,8 @@ test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × 
 });
 
 test('Parse Extracao (nó real): desalinhamento de coluna vira falha_motivo, não linha adivinhada', async () => {
-  const req = { json: { documento_versao_id: 'ver-10', tipo: 'BALANCO', openai_body: {} } };
-  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+  const req = { json: { documento_versao_id: 'ver-10', tipo: 'BALANCO', ia_body: {} } };
+  const resposta = { json: respostaIA(JSON.stringify({
     moeda: 'BRL', unidade: 'unidade',
     diagnostico: {
       entidade: null, tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'multi',
@@ -421,7 +532,7 @@ test('Parse Extracao (nó real): desalinhamento de coluna vira falha_motivo, nã
       cols: [{ ec: null, pc: '2025' }, { ec: null, pc: '2024' }],
       l: [{ k: 'Caixa', vt: ['380'], vn: [380], cf: 0.9 }],
     }],
-  }) } }] } };
+  })) };
   const out = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
   assert.equal(out.json.campos.length, 0, 'não grava meia linha nem inventa null');
   assert.match(out.json.falha_motivo, /desalinhamento entre colunas e valores/);
@@ -429,8 +540,8 @@ test('Parse Extracao (nó real): desalinhamento de coluna vira falha_motivo, nã
 });
 
 test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHECIDO" literal na pendência)', async () => {
-  const req = { json: { documento_versao_id: 'ver-2', tipo: 'BALANCO', openai_body: {} } };
-  const respostaOpenAI = { json: { choices: [{ message: { content: JSON.stringify({
+  const req = { json: { documento_versao_id: 'ver-2', tipo: 'BALANCO', ia_body: {} } };
+  const respostaOpenAI = { json: respostaIA(JSON.stringify({
     moeda: null, unidade: null,
     diagnostico: {
       entidade: null, tipo_confirma: false, tipo_sugerido: 'DESCONHECIDO',
@@ -439,24 +550,24 @@ test('Diagnóstico com resposta DESCONHECIDO/ilegível vira null (não "DESCONHE
       resumo: 'Não foi possível ler.', justificativa: 'Ilegível.',
     },
     linhas: [],
-  }) } }] } };
+  })) };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.diagnostico.tipo_sugerido, null);
   assert.equal(parsed.json.diagnostico.legibilidade, 'ilegivel');
 });
 
 test('Parse Extracao: resposta truncada (finish_reason=length, JSON incompleto) vira falha_motivo, não 0 campos silencioso', async () => {
-  const req = { json: { documento_versao_id: 'ver-3', tipo: 'COMBINADO', openai_body: {} } };
+  const req = { json: { documento_versao_id: 'ver-3', tipo: 'COMBINADO', ia_body: {} } };
   // JSON deliberadamente cortado no meio (simula o corte real de um output
   // que estourou o teto de tokens antes de fechar o array `linhas`).
-  const respostaOpenAI = { json: { choices: [{ finish_reason: 'length', message: { content: '{"moeda":"BRL","unidade":null,"diagnostico":{"entidade":"Grupo X"' } }] } };
+  const respostaOpenAI = { json: respostaIA('{"moeda":"BRL","unidade":null,"diagnostico":{"entidade":"Grupo X"', { cortada: true }) };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.campos.length, 0);
-  assert.match(parsed.json.falha_motivo, /truncada.*finish_reason=length/i);
+  assert.match(parsed.json.falha_motivo, /truncada por limite de tokens de saida/i);
 });
 
 test('Parse Extracao: erro da API OpenAI vira falha_motivo (não silencioso)', async () => {
-  const req = { json: { documento_versao_id: 'ver-4', tipo: 'BALANCO', openai_body: {} } };
+  const req = { json: { documento_versao_id: 'ver-4', tipo: 'BALANCO', ia_body: {} } };
   const respostaOpenAI = { json: { error: { message: 'Rate limit reached', code: 'rate_limit_exceeded' } } };
   const parsed = await run('Parse Extracao', { item: respostaOpenAI, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.campos.length, 0);
@@ -473,7 +584,7 @@ test('Nós OpenAI têm batching + retry (evita o 429 de rate limit num upload em
   // Achado em produção (sessão 7 cont.⁸, "teste v15"): 16 documentos → 16
   // chamadas OpenAI quase simultâneas → 429 em TODAS ("Try spacing your
   // requests out"). Batching espaça no tempo; retry cobre o 429 residual.
-  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+  for (const nm of ['IA Classificar', 'IA Extrair']) {
     const n = byName[nm];
     assert.equal(n.parameters.options?.batching?.batch?.batchSize, 1, `${nm}: 1 chamada por vez`);
     assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 1000, `${nm}: intervalo entre chamadas`);
@@ -490,7 +601,12 @@ test('Batching endurecido após "teste v18" (3 de 16 docs ainda deram 429 com 3s
   // O piso de 6s vale para as DUAS chamadas; a extração subiu para 12s depois do
   // v28 (teste próprio abaixo), então aqui a asserção é o PISO, não a igualdade —
   // travar 6000 exato reprovaria justamente o endurecimento seguinte.
-  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+  //
+  // E o piso continua sendo 6s DEPOIS da troca de provedor: ele não veio da
+  // OpenAI, veio do n8n do dono com documento real. O que a troca acrescentou foi
+  // um segundo piso — o limite de CHAMADAS por minuto do provedor, quando ele
+  // existe —, e o intervalo é o maior dos dois. Nunca menor que 6s.
+  for (const nm of ['IA Classificar', 'IA Extrair']) {
     const n = byName[nm];
     assert.ok(n.parameters.options?.batching?.batch?.batchInterval >= 6000, `${nm}: intervalo endurecido`);
     assert.equal(n.maxTries, 6, `${nm}: mais tentativas`);
@@ -507,7 +623,7 @@ test('Os dois nós OpenAI pedem o CORPO da resposta de erro (`neverError`)', () 
   // teto de gasto, cota diária, cadência — ficam indistinguíveis. Com
   // `neverError`, a resposta 429 vem como item normal E COM CORPO, e o
   // diagnóstico deixa de precisar adivinhar.
-  for (const nm of ['OpenAI Classificar', 'OpenAI Extrair']) {
+  for (const nm of ['IA Classificar', 'IA Extrair']) {
     const n = byName[nm];
     assert.equal(n.parameters.options?.response?.response?.neverError, true,
       `${nm}: sem neverError o corpo do erro da OpenAI é descartado antes do parse`);
@@ -521,14 +637,36 @@ test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () =
   // então cada extração RESERVA MAX_OUTPUT_TOKENS por chamada, independente do
   // tamanho do PDF. Isso torna o intervalo mínimo uma conta, não uma opinião:
   // TPM / max_tokens = chamadas por minuto.
-  const intervalo = byName['OpenAI Extrair'].parameters.options.batching.batch.batchInterval;
+  // E DESDE 24/08/2026 SÃO DOIS BALDES, não um. A reserva de tokens é o gargalo
+  // da OpenAI; provedor que limita por CHAMADA (o Google, 15/min no patamar de
+  // entrada) tem o balde de tokens folgado e o de chamadas apertado. A cadência
+  // tem de caber nos DOIS, e é isso que este teste passou a exigir.
+  const intervalo = byName['IA Extrair'].parameters.options.batching.batch.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
   const tpmReservado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
   assert.ok(tpmReservado <= TPM_CONTA + 1,
     `a cadência reserva ${Math.round(tpmReservado)} TPM, acima do teto da conta (${TPM_CONTA}) — o 429 é matemático`);
-  // E não pode ser lenta a ponto de não usar a conta: pelo menos metade do balde.
-  assert.ok(tpmReservado >= TPM_CONTA / 2,
-    `${Math.round(tpmReservado)} TPM desperdiça mais da metade do limite disponível (${TPM_CONTA})`);
+  if (RPM_CONTA) {
+    // Um documento mal nomeado faz DUAS chamadas, em dois nós, no mesmo minuto —
+    // e os dois baldes são o mesmo. Contar só a extração é o jeito aritmeticamente
+    // garantido de tomar 429 no meio do lote.
+    const chamadasDeClassificacao = 60000
+      / byName['IA Classificar'].parameters.options.batching.batch.batchInterval;
+    assert.ok(chamadasPorMinuto + chamadasDeClassificacao <= RPM_CONTA + 0.001,
+      `os dois nós somam ${(chamadasPorMinuto + chamadasDeClassificacao).toFixed(1)} chamadas/min, `
+      + `acima do limite do provedor (${RPM_CONTA}/min)`);
+  }
+  // E não pode ser lenta a ponto de não usar a conta: pelo menos metade do balde
+  // QUE MANDA. Qual dos dois manda depende do provedor, e travar o de tokens
+  // quando o gargalo é o de chamadas exigiria uma cadência que toma 429.
+  const mandaOTpm = !RPM_CONTA || (TPM_CONTA / MAX_OUTPUT_TOKENS) <= RPM_CONTA / 2;
+  if (mandaOTpm) {
+    assert.ok(tpmReservado >= TPM_CONTA / 2,
+      `${Math.round(tpmReservado)} TPM desperdiça mais da metade do limite disponível (${TPM_CONTA})`);
+  } else {
+    assert.ok(chamadasPorMinuto >= RPM_CONTA / 4,
+      `${chamadasPorMinuto.toFixed(1)} chamadas/min desperdiça o limite de ${RPM_CONTA}/min`);
+  }
 });
 
 test('Nós Postgres têm onError+retry — um erro num item não derruba o resto do lote em silêncio', () => {
@@ -617,7 +755,7 @@ test('Chaves curtas de linhas cortam o overhead de tokens de saída (documentos 
 //     o número de blocos — sem isso o guarda volta a estimar por byte, com a
 //     margem de 1,8× que recusava lote que cabia;
 //   • antes do `Precisa Fallback?`, porque a primeira chamada à OpenAI sai dali
-//     (`OpenAI Classificar`). Entre o `Medir Documento` e esse IF não há gasto
+//     (`IA Classificar`). Entre o `Medir Documento` e esse IF não há gasto
 //     nenhum: o `Extrair Texto` é local, o `Upload Storage` é ramo lateral, e
 //     nenhum documento foi registrado ainda.
 //
@@ -654,7 +792,7 @@ test('Topologia: o teto de gasto fica entre a medição do documento e a primeir
       }
     }
   }
-  for (const nome of ['OpenAI Classificar', 'OpenAI Extrair']) {
+  for (const nome of ['IA Classificar', 'IA Extrair']) {
     assert.ok(!alcancaveisSemOGuarda.has(nome),
       `${nome} é alcançável sem passar pelo "Lote cabe?" — o teto deixou de barrar antes de gastar`);
   }
@@ -678,7 +816,7 @@ test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
 
 // O teste que o "Teste V45 - Canastra" pagou para existir: 19 dos 35 documentos
 // desapareceram entre `Registrar Documento` e `Gravar Campos`, e a causa era
-// topológica — `Precisa Fallback?`[false] e `Parse OpenAI Classif` apontavam
+// topológica — `Precisa Fallback?`[false] e `Parse Classif` apontavam
 // AMBOS para o `Registrar Documento`, duas conexões CRUAS no mesmo input. O n8n
 // não garante uma execução por conexão nesse arranjo, e só o ramo do fallback
 // propagou. Nada mediu isso: extração nunca chamada não deixa rastro em
@@ -775,7 +913,7 @@ test('Os dois ramos do fallback se juntam num Merge, em inputs DIFERENTES', () =
   const direto = wf.connections['Precisa Fallback?'].main[1];
   assert.deepEqual(direto.map((c) => c.node), ['Juntar Ramos']);
   assert.equal(direto[0].index, 1, 'o ramo direto entra no input 1');
-  const viaIA = wf.connections['Parse OpenAI Classif'].main[0];
+  const viaIA = wf.connections['Parse Classif'].main[0];
   assert.deepEqual(viaIA.map((c) => c.node), ['Juntar Ramos']);
   assert.equal(viaIA[0].index ?? 0, 0, 'o ramo da IA entra no input 0');
 
@@ -803,11 +941,11 @@ test('Montar Req Extracao lê o conteúdo do PRÓPRIO item, sem parear com outro
 
 // O Parse da classificação PRESERVA o content_part: era ele que o descartava, e
 // por isso o ramo do fallback dependia de pareamento para reencontrar o PDF.
-test('Parse OpenAI Classif preserva o content_part no item', () => {
-  const c = code('Parse OpenAI Classif');
-  assert.ok(c.includes('const {openai_body, ...item}=src'),
-    'só o openai_body da classificação sai; o content_part fica');
-  assert.ok(!/const \{openai_body, content_part/.test(c),
+test('Parse Classif preserva o content_part no item', () => {
+  const c = code('Parse Classif');
+  assert.ok(c.includes('const {ia_body, ...item}=src'),
+    'só o ia_body da classificação sai; o content_part fica');
+  assert.ok(!/const \{ia_body, content_part/.test(c),
     'content_part não pode voltar a ser descartado aqui');
 });
 
@@ -858,7 +996,7 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
 // diagnosticam erro carregam exatamente o mesmo código da lib.
 test('os nós de parse carregam o MESMO diagnosticarErroApi de lib/extract.mjs', () => {
   const fonte = diagnosticarErroApi.toString();
-  for (const nome of ['Parse Extracao', 'Parse OpenAI Classif']) {
+  for (const nome of ['Parse Extracao', 'Parse Classif']) {
     assert.ok(code(nome).includes(fonte),
       `${nome}: o diagnóstico embutido divergiu da fonte em lib/extract.mjs`);
   }
@@ -868,7 +1006,7 @@ test('os nós de parse carregam o MESMO diagnosticarErroApi de lib/extract.mjs',
 // do "teste v30" (o n8n devolve só a própria dica de 429) tem de virar causa
 // nomeada, e uma causa que espaçar NÃO resolve tem de dizer isso.
 test('Parse Extracao: 429 sem corpo vira causa nomeada; quota diz que espaçar não resolve', async () => {
-  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', openai_body: {} } };
+  const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', ia_body: {} } };
   const soDica = { json: { error: { message: "Try spacing your requests out using the batching settings under 'Options'" } } };
   const p1 = await run('Parse Extracao', { item: soDica, refs: { 'Montar Req Extracao': req } });
   assert.equal(p1.json.campos.length, 0);
@@ -877,7 +1015,7 @@ test('Parse Extracao: 429 sem corpo vira causa nomeada; quota diz que espaçar n
 
   const comQuota = { json: { error: { httpCode: '429', cause: { error: { type: 'insufficient_quota', message: 'You exceeded your current quota' } } } } };
   const p2 = await run('Parse Extracao', { item: comQuota, refs: { 'Montar Req Extracao': req } });
-  assert.match(p2.json.falha_motivo, /CRÉDITO DA OPENAI ESGOTADO/);
+  assert.match(p2.json.falha_motivo, /SEM CRÉDITO OU SEM COBRANÇA ATIVA/);
   assert.match(p2.json.falha_motivo, /NÃO resolve/, 'diz explicitamente o que não resolve');
   assert.match(p2.json.falha_motivo, /insufficient_quota/, 'o detalhe técnico vai junto');
 });
@@ -916,29 +1054,45 @@ test('a cadência da extração É a aritmética do TPM, não um número escolhi
   // TPM da conta sem recalcular a cadência, ele reprova. Era exatamente esse
   // acoplamento que faltava — eu subi 6s→12s sem olhar o max_tokens, e 12s
   // suportava 5 chamadas/min = 81.920 TPM, quase 3x o teto do Tier 1.
-  const intervalo = byName['OpenAI Extrair'].parameters.options?.batching?.batch?.batchInterval;
+  //
+  // O NÚMERO DO TIER SAI DO PROVEDOR, e não mais de uma constante escrita aqui.
+  // `TPM_TIER1_GPT4O = 30000` era a mesma verdade dita num segundo lugar, e no
+  // dia em que o provedor mudou ela virou uma afirmação sobre uma conta que o
+  // sistema não usa mais.
+  const intervalo = byName['IA Extrair'].parameters.options?.batching?.batch?.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
   const tpmDemandado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
-  const TPM_TIER1_GPT4O = 30000;
-  assert.ok(tpmDemandado <= TPM_TIER1_GPT4O,
-    `a cadência demanda ${Math.round(tpmDemandado)} TPM, acima do Tier 1 (${TPM_TIER1_GPT4O}) — `
+  assert.ok(tpmDemandado <= TPM_CONTA,
+    `a cadência demanda ${Math.round(tpmDemandado)} TPM, acima do limite da conta (${TPM_CONTA}) — `
     + `com intervalo de ${intervalo}ms e max_tokens de ${MAX_OUTPUT_TOKENS}`);
-  // …e não folgado ao ponto de ser lentidão gratuita: no limite do tier, o
-  // intervalo certo usa a banda quase toda.
-  assert.ok(tpmDemandado > TPM_TIER1_GPT4O * 0.8,
-    `a cadência usa só ${Math.round(tpmDemandado)} de ${TPM_TIER1_GPT4O} TPM — lentidão sem ganho`);
+  // …e não folgado ao ponto de ser lentidão gratuita — quando é o balde de
+  // TOKENS que manda. Quando o gargalo é o de CHAMADAS, exigir 80% do balde de
+  // tokens seria exigir uma cadência que toma 429 na terceira chamada.
+  if (!RPM_CONTA) {
+    assert.ok(tpmDemandado > TPM_CONTA * 0.8,
+      `a cadência usa só ${Math.round(tpmDemandado)} de ${TPM_CONTA} TPM — lentidão sem ganho`);
+  }
 });
 
-test('OpenAI Extrair espaça mais que OpenAI Classificar, e as duas têm retry', () => {
-  const extrair = byName['OpenAI Extrair'];
-  const classificar = byName['OpenAI Classificar'];
+test('IA Extrair nunca espaça MENOS que IA Classificar, e as duas têm retry', () => {
+  // ERA "espaça MAIS", e a mudança para "nunca menos" é a leitura certa do que o
+  // teste sempre quis dizer. A extração espaçava mais na OpenAI por um motivo
+  // específico: `max_tokens` reserva TPM, então cada extração pesa 16.384 tokens
+  // do balde e a classificação pesa quase nada. Onde o gargalo é o número de
+  // CHAMADAS, as duas pesam IGUAL — uma chamada é uma chamada — e as duas caem
+  // no mesmo intervalo. Exigir estritamente mais ali seria exigir uma lentidão
+  // que não compra nada.
+  const extrair = byName['IA Extrair'];
+  const classificar = byName['IA Classificar'];
   const intervalo = (n) => n.parameters.options?.batching?.batch?.batchInterval;
   assert.equal(n8nBatchSize(extrair), 1, 'extração: um documento por vez');
   assert.ok(
-    intervalo(extrair) > intervalo(classificar),
-    `extração (${intervalo(extrair)}ms) tem de espaçar mais que classificação (${intervalo(classificar)}ms)`,
+    intervalo(extrair) >= intervalo(classificar),
+    `extração (${intervalo(extrair)}ms) não pode espaçar menos que classificação (${intervalo(classificar)}ms)`,
   );
-  assert.ok(intervalo(extrair) >= 12000, `intervalo da extração = ${intervalo(extrair)}ms (< 12s não bastou no v28)`);
+  if (!RPM_CONTA) {
+    assert.ok(intervalo(extrair) >= 12000, `intervalo da extração = ${intervalo(extrair)}ms (< 12s não bastou no v28)`);
+  }
   for (const n of [extrair, classificar]) {
     assert.equal(n.retryOnFail, true, `${n.name}: retry no nível do node`);
     assert.ok(n.maxTries >= 4, `${n.name}: maxTries=${n.maxTries}`);
@@ -987,7 +1141,7 @@ test('Parse Extracao (nó real): escala não contamina linha não-monetária', a
   const req = await run('Montar Req Extracao', {
     item: await recomporPara(preparado, 'doc-9', 'ver-9'), env: {},
   });
-  const resposta = { json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+  const resposta = { json: respostaIA(JSON.stringify({
     moeda: 'R$', unidade: 'Em milhares de reais',
     diagnostico: {
       entidade: 'Empresa Teste Ltda', tipo_confirma: true, tipo_sugerido: 'DRE',
@@ -999,7 +1153,7 @@ test('Parse Extracao (nó real): escala não contamina linha não-monetária', a
       { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Margem Líquida %', vt: '12,5%', vn: 12.5, op: 1, cf: 0.9 },
       { s: null, sc: 'NAO_CLASSIFICAVEL', ec: null, pc: null, k: 'Lucro por Ação', vt: '1,25', vn: 1.25, op: 1, cf: 0.9 },
     ],
-  }) } }] } };
+  })) };
   const parsed = await run('Parse Extracao', { item: resposta, refs: { 'Montar Req Extracao': req } });
   assert.equal(parsed.json.campos[0].unidade, 'milhar', 'conta monetária herda a escala normalizada');
   assert.equal(parsed.json.campos[1].unidade, null, 'linha em % não herda escala');
@@ -1022,14 +1176,23 @@ test('prefixo cacheável: o system prompt é IDÊNTICO entre documentos (e vem p
   const b = await run('Montar Req Extracao', {
     item: await recomporPara((await chainFile(1)).preparado, 'd1', 'v1'), env: {},
   });
-  const msgA = a.json.openai_body.messages;
-  const msgB = b.json.openai_body.messages;
-  assert.equal(msgA[0].role, 'system', 'system prompt é a PRIMEIRA mensagem (prefixo)');
-  assert.equal(msgA[0].content, msgB[0].content, 'system prompt idêntico entre documentos diferentes');
-  assert.ok(msgA[0].content.length > 3000, 'prefixo grande o suficiente para o cache valer');
+  const sistemaA = sistemaDaReq(a.json.ia_body);
+  const sistemaB = sistemaDaReq(b.json.ia_body);
+  // O prompt de sistema tem CASA PRÓPRIA nos dois dialetos (`role:'system'` na
+  // OpenAI, `systemInstruction` no Google) — é o que permite ao provedor
+  // reconhecer o prefixo. Concatená-lo na mensagem do usuário funcionaria e
+  // custaria ~40% a mais em toda chamada.
+  if (GEMINI) {
+    assert.ok(a.json.ia_body.systemInstruction, 'o prompt de sistema tem campo próprio');
+    assert.equal(a.json.ia_body.contents.length, 1, 'e não vira mais uma mensagem de conversa');
+  } else {
+    assert.equal(a.json.ia_body.messages[0].role, 'system', 'system prompt é a PRIMEIRA mensagem (prefixo)');
+  }
+  assert.equal(sistemaA, sistemaB, 'system prompt idêntico entre documentos diferentes');
+  assert.ok(sistemaA.length > 3000, 'prefixo grande o suficiente para o cache valer');
   // E o que varia (nome do arquivo) está na mensagem de user, não no prefixo.
-  assert.notEqual(msgA[1].content[0].text, msgB[1].content[0].text, 'o que varia por documento fica no user');
-  assert.ok(!msgA[0].content.includes('BALANÇO ACUMULADO'), 'nada de nome de arquivo no system prompt');
+  assert.notEqual(textoDaReq(a.json.ia_body), textoDaReq(b.json.ia_body), 'o que varia por documento fica no user');
+  assert.ok(!sistemaA.includes('BALANÇO ACUMULADO'), 'nada de nome de arquivo no system prompt');
 });
 
 test('Parse Extracao (nó real): propaga a ORDEM da linha (db/migrations/0027)', () => {
@@ -1074,7 +1237,7 @@ test('Classificar Nome: entidade sai do nome do arquivo, e a confiança não mud
     const out = await run('Classificar Nome', { item: { json: { caso_id: 'c-1', nome_original: nome } } });
     assert.equal(out.json.entidade, entidade, `entidade de ${nome} no nó`);
     assert.equal(out.json.confianca, conf, `confiança de ${nome} no nó`);
-    assert.equal(out.json.precisa_fallback_openai, fallback, `fallback de ${nome} no nó`);
+    assert.equal(out.json.precisa_fallback_ia, fallback, `fallback de ${nome} no nó`);
     // o nó e a lib têm de concordar — é o ponto de existir um mirror testado
     assert.equal(out.json.entidade, classifyByFilename(nome).entidade, `nó × lib para ${nome}`);
   }
@@ -1086,25 +1249,31 @@ test('Classificar Nome: entidade sai do nome do arquivo, e a confiança não mud
 // substitui a outra — ver o comentário do topo de lib/custo.mjs. Este teste cobre
 // a de dentro: recusar o lote ANTES da primeira chamada.
 const itemDoc = (nome, precisaFallback) => ({
-  json: { caso_id: 'c-1', nome_original: nome, precisa_fallback_openai: precisaFallback },
+  json: { caso_id: 'c-1', nome_original: nome, precisa_fallback_ia: precisaFallback },
   binary: { data: { fileName: nome, mimeType: 'application/pdf', data: '' } },
 });
 
-test('Orcamento do Lote: o lote do v31 é RECUSADO antes do renome', async () => {
-  // 14 documentos, 8 deles precisando da classificação por conteúdo = 22 chamadas.
-  const items = [
-    ...Array.from({ length: 6 }, (_, i) => itemDoc(`0${i + 1}_BP_X_2025x2024.pdf`, false)),
-    ...Array.from({ length: 8 }, (_, i) => itemDoc(`1${i}_DFC_X_2025.pdf`, true)),
-  ];
+test('Orcamento do Lote: o lote que NÃO cabe é recusado antes de gastar', async () => {
+  // ERA "o lote do v31 é RECUSADO", com 14 documentos e 22 chamadas — e com o
+  // preço do provedor novo esses 14 documentos custam ~US$ 0,30 e PASSAM. O
+  // teste passou a montar o lote a partir da própria constante de custo, e não
+  // de um tamanho que só era grande no preço de agosto: o que ele prova é o
+  // GUARDA (recusa antes de gastar, com mensagem acionável), e o guarda não tem
+  // opinião sobre quantos documentos são muitos — ele tem uma sobre dinheiro.
+  //
+  // O lote do v31 continua no teste, uma etapa abaixo, agora do outro lado: ele
+  // PASSA, e é a medição da troca de provedor num assert.
+  const chamadasQueNaoCabem = Math.ceil(TETO_EXECUCAO_USD / CUSTO_ESTIMADO_DOC_USD) + 1;
+  const items = Array.from({ length: chamadasQueNaoCabem }, (_, i) => itemDoc(`${i + 1}_BP_X_2025x2024.pdf`, false));
   // O nó não LANÇA mais: ele marca. A diferença existe para a recusa poder ser
   // GRAVADA no banco antes de a execução morrer — lançando aqui, a mensagem
   // ficava só no log do n8n e o portal seguia num "aguarde" eterno.
   const out = await run('Orcamento do Lote', { items });
   assert.equal(out[0].json.orcamento_cabe, false, 'o lote é recusado');
   assert.match(out[0].json.orcamento_mensagem, /Lote recusado ANTES de gastar/);
-  assert.match(out[0].json.orcamento_mensagem, /22 chamada/,
+  assert.match(out[0].json.orcamento_mensagem, new RegExp(`${chamadasQueNaoCabem} chamada`),
     'a mensagem conta as CHAMADAS, não os documentos');
-  assert.match(out[0].json.orcamento_mensagem, /Nada foi enviado à OpenAI e nada foi gravado/,
+  assert.match(out[0].json.orcamento_mensagem, /Nada foi enviado ao provedor de IA e nada foi gravado/,
     'quem lê o erro precisa saber que reenviar é seguro');
   // Estes 14 documentos não trazem tamanho (o fixture tem binário vazio), então
   // quem decidiu foi o estimador PLANO — e a mensagem tem de dizer isso, senão
@@ -1119,6 +1288,18 @@ test('Orcamento do Lote: o lote do v31 é RECUSADO antes do renome', async () =>
       return true;
     },
   );
+
+  // O LOTE DO v31, QUE ERA O CASO DESTE TESTE, AGORA PASSA — 14 documentos, 8
+  // deles pagando o PDF duas vezes = 22 chamadas. É o que a troca de provedor
+  // comprou, escrito como assert e não como afirmação: o mesmo lote que estourou
+  // o teto de US$ 5 no meio da execução em 31/07 cabe com folga.
+  const v31 = [
+    ...Array.from({ length: 6 }, (_, i) => itemDoc(`0${i + 1}_BP_X_2025x2024.pdf`, false)),
+    ...Array.from({ length: 8 }, (_, i) => itemDoc(`1${i}_DFC_X_2025.pdf`, true)),
+  ];
+  const outV31 = await run('Orcamento do Lote', { items: v31 });
+  assert.equal(outV31[0].json.orcamento_cabe, true, 'o lote do v31 cabe no preço de hoje');
+  assert.equal(outV31[0].json.orcamento_chamadas, 22);
 });
 
 test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobrevive', async () => {
@@ -1126,16 +1307,13 @@ test('Orcamento do Lote: depois do renome o mesmo lote passa, e o binário sobre
   const items = Array.from({ length: 14 }, (_, i) => itemDoc(`${i + 1}_BP_X_12M25.pdf`, false));
   const out = await run('Orcamento do Lote', { items });
   assert.equal(out.length, 14, 'passa os 14 adiante');
-  // 14 × CUSTO_ESTIMADO_DOC_USD. Era 2.10 (a 0,15) e passou a 2.80 quando a
-  // medição do `book-canastra` recalibrou a constante para 0,20 — o livro razão
-  // mediu US$ 0,1725 POR CHAMADA, acima do 0,15 que sustentava o teto.
-  //
-  // O NÚMERO QUE IMPORTA AQUI NÃO É O 2.80, É A MARGEM. O teto de execução é
-  // US$ 3,00: este lote passou a consumir 93% dele, contra 70% antes. Um lote de
-  // 15 documentos com nome resolvido já NÃO cabe (3,00 exatos é o limite, e o
-  // 16º recusa). Se este assert voltar a falhar por cima, não é o teste que está
-  // velho — é o teto que ficou pequeno para o tamanho de lote que se usa.
-  assert.equal(out[0].json.orcamento_estimado_usd, 2.8);
+  // 14 × CUSTO_ESTIMADO_DOC_USD, e o valor sai da CONSTANTE em vez de estar
+  // escrito à mão. O literal já foi 2.10, depois 2.80, e agora seria 0.77 — três
+  // vezes o mesmo teste reprovando por causa de um número que ele não estava
+  // testando. O que importa é a MARGEM contra o teto, e é ela que fica travada.
+  assert.equal(out[0].json.orcamento_estimado_usd, Number((14 * CUSTO_ESTIMADO_DOC_USD).toFixed(2)));
+  assert.ok(out[0].json.orcamento_estimado_usd <= TETO_EXECUCAO_USD,
+    'um lote de 14 documentos bem nomeados tem de caber — é o tamanho de lote que o dono usa');
   assert.equal(out[0].json.orcamento_chamadas, 14);
   // Regra 4 do topo do gerador: Code que repassa arquivo DEVE devolver `binary`.
   // Perder isso aqui deixaria `Preparar Conteudo` sem arquivo — e o sintoma seria
@@ -1151,7 +1329,7 @@ test('Orcamento do Lote decide POR CONTEÚDO quando o documento já foi medido',
   // uma fração do que a conta por byte dizia.
   const items = Array.from({ length: 14 }, (_, i) => ({
     json: {
-      caso_id: 'c-1', nome_original: `${i + 1}_BP_X_12M25.pdf`, precisa_fallback_openai: false,
+      caso_id: 'c-1', nome_original: `${i + 1}_BP_X_12M25.pdf`, precisa_fallback_ia: false,
       bytes: 90_000, periodo_ref: '12M25',
       celulas_no_documento: 80, paginas_do_documento: 2,
       linhas_do_texto: Array.from({ length: 80 }, (_, l) => `Conta ${l} 1.234,00`),
@@ -1178,7 +1356,7 @@ test('Orcamento do Lote conta os BLOCOS do fatiamento, não os documentos', asyn
   const linhas = Array.from({ length: 900 }, (_, l) => `Conta analitica ${l} 1.234,00`);
   const items = [{
     json: {
-      caso_id: 'c-1', nome_original: '01_Razao_X_12M25.pdf', precisa_fallback_openai: false,
+      caso_id: 'c-1', nome_original: '01_Razao_X_12M25.pdf', precisa_fallback_ia: false,
       bytes: 400_000, periodo_ref: '12M25',
       celulas_no_documento: linhas.length, paginas_do_documento: 30, linhas_do_texto: linhas,
     },
@@ -1247,50 +1425,62 @@ test('a recusa do orçamento CARIMBA a versão — é como se vê que o n8n est�
 // classificação tem rede (o `diagnostico` da própria extração confere
 // tipo/entidade/período e abre pendência). É essa assimetria que autoriza o
 // modelo barato de um lado e proíbe do outro — e é ela que este teste trava.
-test('a extração roda no modelo forte; só a classificação pode baratear', () => {
-  assert.equal(MODELO_EXTRACAO, 'gpt-4o');
-  assert.ok(code('Montar Req Extracao').includes(`model:'${MODELO_EXTRACAO}'`));
-  assert.ok(code('Montar Req Classif').includes(`model:'${MODELO_CLASSIFICACAO}'`));
+test('cada nó pede o SEU modelo, e a extração nunca pede o mais barato', () => {
+  // ERA `assert.equal(MODELO_EXTRACAO, 'gpt-4o')`, e travar o nome do modelo era
+  // travar o fornecedor: o teste reprovava a troca de provedor sem ter opinião
+  // nenhuma sobre o que a troca fazia de errado. O que ele sempre quis provar é
+  // a ASSIMETRIA — a extração não tem rede depois dela, a classificação tem — e
+  // isso se prova comparando os dois, não citando um nome.
+  assert.ok(code('Montar Req Extracao').includes(`modelo:'${MODELO_EXTRACAO}'`));
+  assert.ok(code('Montar Req Classif').includes(`modelo:'${MODELO_CLASSIFICACAO}'`));
+  const precoExtracao = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  const precoClassificacao = PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO];
+  assert.ok(precoExtracao && precoClassificacao, 'modelo sem preço não entra em produção');
+  assert.ok(precoExtracao.entrada >= precoClassificacao.entrada,
+    'a extração nunca pode rodar no modelo MAIS BARATO que a classificação — seria a troca ao contrário');
 });
 
-test('Parse OpenAI Classif mede o custo da SEGUNDA chamada (a metade da conta que ninguém olhava)', async () => {
+test('Parse Classif mede o custo da SEGUNDA chamada (a metade da conta que ninguém olhava)', async () => {
   const { preparado } = await chainFile(0);
   const req = await run('Montar Req Classif', { item: preparado, refs: REFS_BASE, env: {} });
-  const resp = { json: {
-    choices: [{ message: { content: JSON.stringify({
+  const resp = { json: respostaIA(JSON.stringify({
       tipo_taxonomia: 'BALANCO', entidade: 'Empresa X Ltda', periodo_tipo: 'anual',
       periodo_referencia: '12M25', assinado: true, confianca: 0.91, justificativa: 'cabeçalho',
-    }) } }],
-    usage: { prompt_tokens: 10_000, completion_tokens: 120 },
-  } };
-  const ok = await run('Parse OpenAI Classif', { item: resp, refs: { 'Montar Req Classif': req } });
-  // gpt-4o-mini: 10k × 0,15/M + 120 × 0,60/M = 0,001572. No gpt-4o seriam
-  // 0,026200 — 17× mais, e é a economia inteira desta rodada em um número.
-  assert.equal(ok.json.custo_classificacao_usd, 0.001572);
+    }), { uso: { prompt_tokens: 10_000, completion_tokens: 120 } }) };
+  const ok = await run('Parse Classif', { item: resp, refs: { 'Montar Req Classif': req } });
+  // O VALOR SAI DA TABELA, não de um literal: o que este teste prova é que o nó
+  // MEDE (e mede com o modelo certo, o de classificação), não quanto custa o
+  // modelo da vez. Travar 0,001572 aqui foi o que fez este teste reprovar a troca
+  // de provedor sem ter nada a dizer sobre ela.
+  const pc = PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO];
+  assert.equal(ok.json.custo_classificacao_usd,
+    Number(((10_000 * pc.entrada + 120 * pc.saida) / 1e6).toFixed(6)));
 
   // E o caminho da FALHA também declara o custo: a chamada que voltou sem
   // conteúdo depois de consumir tokens foi paga do mesmo jeito.
-  const falha = await run('Parse OpenAI Classif', {
-    item: { json: { error: { message: 'timeout' }, usage: { prompt_tokens: 10_000, completion_tokens: 0 } } },
+  const falha = await run('Parse Classif', {
+    // O `usage` vem NA FORMA DO PROVEDOR: a chamada que falhou depois de
+    // consumir tokens também foi paga, e um custo que só aparece no caminho feliz
+    // é um custo subdeclarado.
+    item: { json: { error: { message: 'timeout' }, ...respostaIA('', { uso: { prompt_tokens: 10_000, completion_tokens: 0 } }) } },
     refs: { 'Montar Req Classif': req },
   });
-  assert.equal(falha.json.custo_classificacao_usd, 0.0015);
+  assert.equal(falha.json.custo_classificacao_usd, Number(((10_000 * pc.entrada) / 1e6).toFixed(6)));
 });
 
 test('Parse Extracao mede o custo real da chamada a partir do usage', async () => {
-  const req = { json: { documento_versao_id: 'ver-1', tipo: 'BALANCO', openai_body: {} } };
+  const req = { json: { documento_versao_id: 'ver-1', tipo: 'BALANCO', ia_body: {} } };
   const resp = {
-    json: {
-      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+    json: respostaIA(JSON.stringify({
         moeda: 'BRL', unidade: 'milhar',
         diagnostico: { entidade: 'Vertentes Metalurgica', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual', periodo_referencia: '12M25', legibilidade: 'ok', nota_legibilidade: null, resumo: 'ok', justificativa: 'ok' },
         linhas: [{ s: 'Ativo', sc: 'ativo_circulante', ec: null, pc: null, k: 'Caixa', vt: '1.000', vn: 1000, op: 1, cf: 0.9 }],
-      }) } }],
-      usage: { prompt_tokens: 10_000, completion_tokens: 8_000 },
-    },
+      }), { uso: { prompt_tokens: 10_000, completion_tokens: 8_000 } }),
   };
   const out = await run('Parse Extracao', { item: resp, refs: { 'Montar Req Extracao': req } });
-  assert.equal(out.json.custo_usd, 0.105, 'custo medido, não estimado');
+  const pe = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  assert.equal(out.json.custo_usd,
+    Number(((10_000 * pe.entrada + 8_000 * pe.saida) / 1e6).toFixed(6)), 'custo medido, não estimado');
   assert.deepEqual(out.json.tokens, { entrada: 10_000, saida: 8_000, cache: 0 });
 });
 
@@ -1314,7 +1504,7 @@ test('Resumo de Custo: soma o lote por NÓ, não por índice (a classificação 
       // documentos diria "48 documentos" para um lote de 35.
       'Juntar Blocos': extracoes,
       'Parse Extracao': extracoes,
-      'Parse OpenAI Classif': classificacoes,
+      'Parse Classif': classificacoes,
       'Orcamento do Lote': { json: { orcamento_estimado_usd: 0.42, orcamento_versao: 'v3 (2026-08-13)' } },
     },
   });
@@ -1358,7 +1548,7 @@ test('Resumo de Custo soma TODAS as execuções do nó — o lote se parte em do
       ] },
       // E a classificação, que é de UM ramo só: `.all()` sem índice devolveria
       // tudo em CADA execução, e o custo dela entraria duas vezes na conta.
-      'Parse OpenAI Classif': { runs: [[{ json: { custo_classificacao_usd: 0.001 } }]] },
+      'Parse Classif': { runs: [[{ json: { custo_classificacao_usd: 0.001 } }]] },
       'Orcamento do Lote': { json: { orcamento_estimado_usd: 1.79, orcamento_versao: 'v3 (2026-08-13)' } },
     },
   });
@@ -1437,7 +1627,7 @@ test('o que o Resumo de Custo publica é o que a 0115 grava — os nomes têm de
         custo_usd: 0.02, tokens: { entrada: 100, saida: 20, cache: 50 },
         campos: [{}, {}], contas_no_documento: 10, linhas_devolvidas: 8,
       } }]],
-      'Parse OpenAI Classif': [[{ json: { custo_classificacao_usd: 0.001 } }]],
+      'Parse Classif': [[{ json: { custo_classificacao_usd: 0.001 } }]],
     },
   });
   const r = Array.isArray(out) ? out[0].json : out.json;
@@ -1482,7 +1672,7 @@ test('Camada 1: Medir Documento mede, e ausência de texto vira null (nunca zero
   // O preparo entrega o arquivo em base64 DENTRO do json — é por isso que perder
   // o binário depois daqui não custa nada, e é o que permite o `Extrair Texto`
   // (que descarta binário) entrar na corrente neste ponto.
-  assert.equal(preparado.json.content_part.type, 'file');
+  assert.ok(ehParteDeArquivo(preparado.json.content_part));
   assert.ok(preparado.binary?.data, 'o binário ainda segue: o Extrair Texto precisa dele');
 
   // O texto vem do PRÓPRIO input (o `Extrair Texto` é o nó anterior) e o
@@ -1493,7 +1683,7 @@ test('Camada 1: Medir Documento mede, e ausência de texto vira null (nunca zero
     refs: { 'Preparar Conteudo': preparado },
   });
   assert.equal(medido.json.caso_id, 'caso-uuid-1', 'o contexto da corrente é recomposto inteiro');
-  assert.equal(medido.json.content_part.type, 'file', 'e o conteúdo da chamada sobrevive');
+  assert.ok(ehParteDeArquivo(medido.json.content_part), 'e o conteúdo da chamada sobrevive');
   assert.equal(medido.json.celulas_no_documento, 3);
   assert.equal(medido.json.linhas_do_texto.length, 3);
 
@@ -1591,7 +1781,7 @@ test('a corrente inteira preserva caso_id e binário até o Registrar Documento'
   assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
   assert.equal(params[4], 'DRE', 'a classificação sobrevive');
   assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');
-  assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à OpenAI');
+  assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à IA');
 });
 
 test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intacto', async () => {
@@ -1599,20 +1789,14 @@ test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intac
     json: {
       documento_versao_id: 'ver-grande', aviso_conteudo: null, celulas_no_documento: 461,
       linhas_do_texto: Array.from({ length: 461 }, (_, i) => `PAGTO ${i}  ${1000 + i},00`),
-      openai_body: { model: 'gpt-4o', messages: [
-        { role: 'system', content: 'PROMPT DE SISTEMA' },
-        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: razao.pdf.' }, { type: 'file' }] },
-      ] },
+      ia_body: corpoFalso({ sistema: 'PROMPT DE SISTEMA', texto: 'Nome do arquivo: razao.pdf.' }),
     },
   };
   const pequeno = {
     json: {
       documento_versao_id: 'ver-pequeno', aviso_conteudo: null, celulas_no_documento: 30,
       linhas_do_texto: Array.from({ length: 30 }, (_, i) => `conta ${i}  ${i}`),
-      openai_body: { model: 'gpt-4o', messages: [
-        { role: 'system', content: 'PROMPT DE SISTEMA' },
-        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: dre.pdf.' }, { type: 'file' }] },
-      ] },
+      ia_body: corpoFalso({ sistema: 'PROMPT DE SISTEMA', texto: 'Nome do arquivo: dre.pdf.' }),
     },
   };
   const out = await run('Fatiar Extracao', { items: [grande, pequeno] });
@@ -1625,14 +1809,14 @@ test('Camada 2: Fatiar Extracao parte o documento grande e deixa o pequeno intac
   // ficar idêntico em toda chamada, senão o cache de prefixo da OpenAI para de
   // valer e o fatiamento fica pagando o dobro pelo prompt (docs/CUSTO_OPENAI.md).
   for (const i of out) {
-    assert.equal(i.json.openai_body.messages[0].content, 'PROMPT DE SISTEMA');
+    assert.equal(sistemaDaReq(i.json.ia_body), 'PROMPT DE SISTEMA');
   }
-  assert.match(doGrande[0].json.openai_body.messages[1].content[0].text, /BLOCO 1 DE/);
-  assert.ok(doGrande[0].json.openai_body.messages[1].content[0].text.includes('PAGTO 0'),
+  assert.match(textoDaReq(doGrande[0].json.ia_body), /BLOCO 1 DE/);
+  assert.ok(textoDaReq(doGrande[0].json.ia_body).includes('PAGTO 0'),
     'a âncora de início é o TEXTO da linha, que o modelo consegue localizar no PDF');
   // O documento pequeno não ganha instrução nenhuma: a requisição dele fica
   // igual à de antes do fatiamento existir.
-  assert.equal(doPequeno[0].json.openai_body.messages[1].content[0].text, 'Nome do arquivo: dre.pdf.');
+  assert.equal(textoDaReq(doPequeno[0].json.ia_body), 'Nome do arquivo: dre.pdf.');
   // E o texto do documento fica para trás — ele já virou âncora.
   assert.equal(doGrande[0].json.linhas_do_texto, undefined);
   assert.equal(doGrande[0].json.celulas_no_documento, 461, 'a régua da camada 3 segue viajando');
@@ -1654,10 +1838,7 @@ test('Camada 2: o COMPARATIVO é fatiado pelas CÉLULAS, não pelas linhas', asy
       documento_versao_id: 'ver-comparativo',
       linhas_do_texto: Array.from({ length: 180 },
         (_, i) => `conta ${'x'.repeat(1 + (i % 4))}  1.000  2.000  3.000`),
-      openai_body: { model: 'gpt-4o', messages: [
-        { role: 'system', content: 'PROMPT DE SISTEMA' },
-        { role: 'user', content: [{ type: 'text', text: 'Nome do arquivo: bp.pdf.' }, { type: 'file' }] },
-      ] },
+      ia_body: corpoFalso({ sistema: 'PROMPT DE SISTEMA', texto: 'Nome do arquivo: bp.pdf.' }),
     },
   };
   const out = await run('Fatiar Extracao', { items: [comparativo] });
@@ -1665,7 +1846,7 @@ test('Camada 2: o COMPARATIVO é fatiado pelas CÉLULAS, não pelas linhas', asy
   // Todo bloco declara o MESMO total, e é o total REAL — "bloco 2 de 3" num plano
   // de 2 manda o modelo procurar um terço que não existe.
   for (const i of out) assert.equal(i.json.blocos, out.length);
-  assert.match(out[0].json.openai_body.messages[1].content[0].text,
+  assert.match(textoDaReq(out[0].json.ia_body),
     new RegExp(`BLOCO 1 DE ${out.length}`));
   // E as faixas cobrem o documento inteiro, sem buraco.
   assert.equal(out[0].json.bloco_de, 0);
@@ -1675,13 +1856,13 @@ test('Camada 2: o COMPARATIVO é fatiado pelas CÉLULAS, não pelas linhas', asy
 test('Camada 2: documento SEM medida (escaneado) vai inteiro, nunca fatiado às cegas', async () => {
   const out = await run('Fatiar Extracao', { items: [{ json: {
     documento_versao_id: 'ver-escaneado', celulas_no_documento: null, linhas_do_texto: null,
-    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+    ia_body: corpoFalso({ sistema: 'S', texto: 'x' }),
   } }] });
   assert.equal(out.length, 1);
   assert.equal(out[0].json.blocos, 1);
   // Sem âncora, "bloco 2 de 3" seria um pedido para o modelo adivinhar onde a
   // faixa começa — e adivinhar faixa é como se perde linha em silêncio.
-  assert.equal(out[0].json.openai_body.messages[1].content[0].text, 'x');
+  assert.equal(textoDaReq(out[0].json.ia_body), 'x');
 });
 
 test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta dado', async () => {
@@ -1785,7 +1966,7 @@ test('6164: os nós de fan-out declaram pairedItem — sem isso o grafo inteiro 
   const doc = (id, celulas) => ({ json: {
     documento_id: 'doc-' + id, documento_versao_id: 'ver-' + id, celulas_no_documento: celulas,
     linhas_do_texto: Array.from({ length: celulas }, (_, i) => `linha ${i}  ${i},00`),
-    openai_body: { messages: [{ role: 'system', content: 'S' }, { role: 'user', content: [{ type: 'text', text: 'x' }] }] },
+    ia_body: corpoFalso({ sistema: 'S', texto: 'x' }),
   } });
   const fatiado = await run('Fatiar Extracao', { items: [doc(1, 500), doc(2, 10)] });
   assert.ok(fatiado.length > 2, 'o documento grande virou mais de um bloco');
@@ -1836,7 +2017,7 @@ test('6164: os nós Postgres depois do fatiamento leem do PRÓPRIO item', () => 
 
 test('Topologia das três camadas: fan-out e volta, com o resto do grafo intacto', () => {
   assert.deepEqual(wf.connections['Montar Req Extracao'].main[0].map((c) => c.node), ['Fatiar Extracao']);
-  assert.deepEqual(wf.connections['Fatiar Extracao'].main[0].map((c) => c.node), ['OpenAI Extrair']);
+  assert.deepEqual(wf.connections['Fatiar Extracao'].main[0].map((c) => c.node), ['IA Extrair']);
   assert.deepEqual(wf.connections['Parse Extracao'].main[0].map((c) => c.node), ['Juntar Blocos']);
   // O ponto do desenho: de `Gravar Campos` em diante nada muda. O contrato do
   // banco (um item por documento, com `campos` e `falha_motivo`) é o mesmo.
@@ -2011,7 +2192,7 @@ test('Montar Req Extracao recusa montar requisição sem documento_versao_id', a
     item: { json: { nome_original: 'BP.pdf', tipo_taxonomia: 'BALANCO', content_part: conteudo, documento_versao_id: 'ver-1' } },
   });
   assert.equal(ok.json.documento_versao_id, 'ver-1');
-  assert.ok(ok.json.openai_body.messages.length === 2);
+  assert.equal(partesDaReq(ok.json.ia_body).length, 2, 'a dica do nome e o conteúdo');
 });
 
 // A OUTRA metade da guarda, e a que o Teste V45 pagou: sem o arquivo, a chamada

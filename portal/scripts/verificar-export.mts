@@ -1883,7 +1883,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // ---- 21: a CAUSA da falha de extração aparece no book ------------------------
 // Teste v30: 14 de 14 documentos sem linha extraída. O Resumo listava os nomes —
 // e a causa (que a pendência JÁ registrava) ficava só na fila de revisão, em
-// outra tela. As causas possíveis pedem ações opostas (crédito da OpenAI, cota do
+// outra tela. As causas possíveis pedem ações opostas (crédito do provedor de IA, cota do
 // dia, cadência), então listar o arquivo sem a causa é meia informação.
 {
   const V = "vFalhou";

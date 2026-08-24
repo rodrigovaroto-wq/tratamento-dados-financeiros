@@ -101,7 +101,7 @@ test('classifyByFilename — nomes descritivos dão alta confiança', () => {
   assert.deepEqual(r.periodo, { tipo: 'anual', referencia: '12M25' });
   assert.equal(r.assinado, true);
   assert.ok(r.confianca >= 0.9, `confianca=${r.confianca}`);
-  assert.equal(r.precisa_fallback_openai, false);
+  assert.equal(r.precisa_fallback_ia, false);
 });
 
 test('classifyByFilename — nome genérico cai para fallback OpenAI', () => {
@@ -109,7 +109,7 @@ test('classifyByFilename — nome genérico cai para fallback OpenAI', () => {
   assert.equal(r.tipo_taxonomia, null);
   assert.equal(r.periodo, null);
   assert.ok(r.confianca < 0.7);
-  assert.equal(r.precisa_fallback_openai, true);
+  assert.equal(r.precisa_fallback_ia, true);
 });
 
 test('classifyByFilename — tipo sem período ainda pede fallback (confiança 0.6)', () => {
@@ -117,7 +117,7 @@ test('classifyByFilename — tipo sem período ainda pede fallback (confiança 0
   assert.equal(r.tipo_taxonomia, 'BALANCO');
   assert.equal(r.periodo, null);
   assert.equal(r.confianca, 0.6);
-  assert.equal(r.precisa_fallback_openai, true); // < 0.7
+  assert.equal(r.precisa_fallback_ia, true); // < 0.7
 });
 
 test('classifyByFilename — tipo + ano isolado NÃO ultrapassa o limiar sozinho (sempre verifica com a IA)', () => {
@@ -127,7 +127,7 @@ test('classifyByFilename — tipo + ano isolado NÃO ultrapassa o limiar sozinho
   assert.equal(r.tipo_taxonomia, 'BALANCO');
   assert.deepEqual(r.periodo, { tipo: 'anual', referencia: '2025', fraco: true });
   assert.equal(r.confianca, 0.65, `confianca=${r.confianca} deve ficar abaixo do limiar 0.7`);
-  assert.equal(r.precisa_fallback_openai, true, 'ano isolado não deve pular a verificação da IA');
+  assert.equal(r.precisa_fallback_ia, true, 'ano isolado não deve pular a verificação da IA');
 });
 
 test('classifyByFilename — o CONJUNTO do exercício é DF_AUDITADA, e nome com demonstração principal não é', () => {
@@ -250,7 +250,7 @@ test('nome que não diz o TIPO não arrisca dizer a empresa', () => {
   // E o silêncio não custa hipótese: todos estes vão para a classificação por
   // conteúdo, que lê a entidade do documento.
   for (const nome of ['34_Relatorio_do_Auditor_Independente_2025.pdf', 'Doc1.pdf']) {
-    assert.equal(classifyByFilename(nome).precisa_fallback_openai, true, `${nome} vai ao fallback`);
+    assert.equal(classifyByFilename(nome).precisa_fallback_ia, true, `${nome} vai ao fallback`);
   }
 });
 
@@ -291,7 +291,7 @@ test('entidade do nome NÃO altera confiança nem o limiar de fallback', () => {
     const r = classifyByFilename(nome);
     assert.ok(r.entidade, `${nome} tem hipótese de entidade`);
     assert.equal(r.confianca, conf, `confiança de ${nome} intacta`);
-    assert.equal(r.precisa_fallback_openai, fallback, `fallback de ${nome} intacto`);
+    assert.equal(r.precisa_fallback_ia, fallback, `fallback de ${nome} intacto`);
   }
 });
 
@@ -383,12 +383,12 @@ test('a notação do nome decide se o documento paga o PDF uma ou duas vezes', (
   ];
   for (const nome of umaChamada) {
     const r = classifyByFilename(nome);
-    assert.equal(r.precisa_fallback_openai, false, `${nome} deveria dispensar a IA (conf ${r.confianca})`);
+    assert.equal(r.precisa_fallback_ia, false, `${nome} deveria dispensar a IA (conf ${r.confianca})`);
     assert.ok(r.confianca >= 0.7, `${nome}: confiança ${r.confianca}`);
   }
   for (const nome of duasChamadas) {
     const r = classifyByFilename(nome);
-    assert.equal(r.precisa_fallback_openai, true, `${nome} deveria cair na IA (conf ${r.confianca})`);
+    assert.equal(r.precisa_fallback_ia, true, `${nome} deveria cair na IA (conf ${r.confianca})`);
   }
 });
 

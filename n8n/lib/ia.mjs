@@ -1,20 +1,35 @@
-// Integração OpenAI (API direta) — fallback de classificação por CONTEÚDO.
+// Classificação por CONTEÚDO — o fallback de quando o NOME não basta.
 //
 // Usada quando o classificador por nome não tem confiança (nome genérico).
-// Modelo multimodal + Structured Outputs: força a saída num JSON Schema, então
-// não há parsing frágil de texto livre.
+// Modelo multimodal + saída presa a um JSON Schema, então não há parsing frágil
+// de texto livre.
+//
+// ESTE ARQUIVO CHAMAVA-SE `openai.mjs` até 24/08/2026, e o nome era metade do
+// problema que a troca de provedor encontrou: o que ele sempre teve dentro é a
+// TAXONOMIA e o PROMPT da classificação — coisas do domínio, que não mudam com
+// o provedor —, e junto morava o endereço da OpenAI, o formato do corpo dela e o
+// jeito dela de devolver resposta. O que era do provedor mudou-se para
+// `provedor.mjs`; o que é da Oria ficou aqui, e o arquivo passou a se chamar
+// pelo que faz.
 //
 // Autonomia: continua N1 — a saída é SUGESTÃO para a fila de revisão, com
 // confiança e justificativa. Nada é aceito sem humano (anti-ancoragem, docs/01).
 //
-// LGPD: API direta está fora do perímetro Azure. Antes de dados reais em
-// produção, ativar zero-retention/DPA da OpenAI (ver f0/02). Migração p/ Azure
-// OpenAI é trivial (trocar baseURL + auth).
+// LGPD: API direta está fora do perímetro Azure, e isso vale para QUALQUER
+// provedor daqui. Antes de dado real em produção, zero-retention/DPA acertado
+// com quem estiver ativo (ver f0/02 e docs/10) — trocar de provedor não herda o
+// acordo do anterior.
 
 import { ALIASES, KIT_BASICO } from './taxonomia.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, parteDeArquivo, parteDeTexto, conteudoDaResposta,
+} from './provedor.mjs';
+import { MODELO_CLASSIFICACAO } from './custo.mjs';
 
-const DEFAULT_MODEL = 'gpt-4o'; // configurável via env OPENAI_MODEL no N8N
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+// O modelo padrão é o do PROVEDOR ATIVO, e sai de `lib/custo.mjs` — que é onde
+// ele mora desde 13/08/2026, porque o orçamento depende do preço dele. Um
+// `DEFAULT_MODEL` próprio aqui seria a terceira cópia do mesmo fato.
+const DEFAULT_MODEL = MODELO_CLASSIFICACAO;
 
 // Enum de códigos possíveis para a classificação (taxonomia conhecida + escape).
 export function codigosConhecidos() {
@@ -70,28 +85,24 @@ export function classificationSchema() {
   };
 }
 
-// Monta o corpo da chamada. `conteudo` é uma parte multimodal já pronta:
-//   - { type:'image_url', image_url:{ url:'data:...'} } para página/imagem
-//   - { type:'text', text:'...'} quando já houver texto extraído
-export function buildClassificationRequest({ nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
+// Monta a chamada inteira — URL, método e corpo — no dialeto do provedor.
+// `conteudo` é uma parte (ou lista de partes) já pronta, vinda de
+// `contentPartFromFile`, e por isso já está no dialeto certo.
+export function buildClassificationRequest({
+  nomeOriginal, conteudo, model = DEFAULT_MODEL, prov = provedor(),
+}) {
   return {
-    url: OPENAI_URL,
+    url: urlDaChamada(prov, model),
     method: 'POST',
-    body: {
-      model,
-      temperature: 0,
-      response_format: { type: 'json_schema', json_schema: classificationSchema() },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `Nome do arquivo (pista fraca): ${nomeOriginal || '(sem nome)'}` },
-            ...(Array.isArray(conteudo) ? conteudo : [conteudo]),
-          ],
-        },
+    body: montarCorpoIA(prov, {
+      modelo: model,
+      sistema: SYSTEM_PROMPT,
+      partes: [
+        parteDeTexto(prov, `Nome do arquivo (pista fraca): ${nomeOriginal || '(sem nome)'}`),
+        ...(Array.isArray(conteudo) ? conteudo : [conteudo]),
       ],
-    },
+      schema: classificationSchema(),
+    }),
   };
 }
 
@@ -100,41 +111,24 @@ export function isSpreadsheet(mimeType) {
   return /spreadsheetml|ms-excel|excel|csv/i.test(mimeType || '');
 }
 
-// Constrói a "parte de conteúdo" multimodal a partir de um arquivo.
-//   - PDF   → { type:'file', file:{ filename, file_data:'data:application/pdf;base64,...' } }
-//   - imagem→ { type:'image_url', image_url:{ url:'data:<mt>;base64,...' } }
-//   - texto (ex.: planilha já extraída) → { type:'text', text }
-// Nunca lança: tipo não suportado vira uma parte de texto sinalizando o caso,
-// para o workflow não dar dead-end (comportamento fail-safe).
-export function contentPartFromFile({ mimeType, base64, filename, text } = {}) {
-  const mt = (mimeType || '').toLowerCase();
-  if (text != null && text !== '') {
-    return { type: 'text', text: String(text).slice(0, 20000) };
-  }
-  if (/pdf/.test(mt)) {
-    return {
-      type: 'file',
-      file: { filename: filename || 'documento.pdf', file_data: `data:application/pdf;base64,${base64}` },
-    };
-  }
-  if (mt.startsWith('image/')) {
-    return { type: 'image_url', image_url: { url: `data:${mt};base64,${base64}` } };
-  }
-  return {
-    type: 'text',
-    text: `(conteúdo não enviado: tipo "${mt || 'desconhecido'}" requer extração prévia; classificar só pelo nome "${filename || ''}")`,
-  };
+// A "parte de conteúdo" multimodal a partir de um arquivo — a forma exata é do
+// provedor (`lib/provedor.mjs`), inclusive a garantia de nunca lançar: tipo não
+// suportado vira parte de TEXTO declarando o caso, para o workflow não dar
+// dead-end (fail-safe). Fica reexportado com o nome antigo porque metade do
+// sistema o chama assim, e renomear função não era o assunto desta troca.
+export function contentPartFromFile(arquivo = {}, prov = provedor()) {
+  return parteDeArquivo(prov, arquivo);
 }
 
-// Extrai e valida o JSON da resposta da OpenAI (Chat Completions).
-export function parseClassificationResponse(apiJson) {
-  const content = apiJson?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Resposta OpenAI sem content');
+// Extrai e valida o JSON da resposta, seja qual for o dialeto.
+export function parseClassificationResponse(apiJson, prov = provedor()) {
+  const content = conteudoDaResposta(prov, apiJson);
+  if (!content) throw new Error(`Resposta do provedor (${prov.rotulo}) sem conteúdo`);
   let parsed;
   try {
     parsed = typeof content === 'string' ? JSON.parse(content) : content;
   } catch (e) {
-    throw new Error(`Conteúdo OpenAI não é JSON válido: ${e.message}`);
+    throw new Error(`Conteúdo do provedor (${prov.rotulo}) não é JSON válido: ${e.message}`);
   }
   // Normaliza para o mesmo formato do classificador por nome.
   return {
@@ -145,9 +139,13 @@ export function parseClassificationResponse(apiJson) {
       : null,
     assinado: parsed.assinado ?? null,
     confianca: typeof parsed.confianca === 'number' ? parsed.confianca : 0,
+    // `fonte` é valor de DADO — ele está gravado em linha de banco de produção e
+    // em CHECK de migration (0033), então trocá-lo por "ia_conteudo" seria
+    // reescrever histórico para arrumar um nome. Fica como está, e o que ele
+    // significa é "veio da leitura do conteúdo", não "veio da OpenAI".
     fonte: 'openai_conteudo',
     justificativa: parsed.justificativa || '',
   };
 }
 
-export { DEFAULT_MODEL, OPENAI_URL };
+export { DEFAULT_MODEL };

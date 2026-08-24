@@ -12,46 +12,91 @@ import {
   VERSAO_ORCAMENTO,
   MODELO_CLASSIFICACAO,
   MODELO_EXTRACAO,
+  MODELOS_POR_PROVEDOR,
   pesoDaChamadaDeClassificacao,
   PRECO_USD_POR_MILHAO,
+  PRECOS_POR_PROVEDOR,
 } from '../lib/custo.mjs';
+import { PROVEDORES, provedorAtivo } from '../lib/provedor.mjs';
 
 // O teto que o dono pediu, travado por teste. Se alguém mexer no número sem
-// mexer também no teto do projeto na OpenAI (US$ 5), o lote volta a ser barrado
+// mexer também no teto do projeto no provedor (US$ 5), o lote volta a ser barrado
 // PELA API no meio — que é o v31 — em vez de aqui, antes de gastar.
 test('o teto por execução é o que o dono pediu: US$ 3', () => {
   assert.equal(TETO_EXECUCAO_USD, 3);
 });
 
-// A assimetria que autoriza o modelo barato de um lado e o proíbe do outro: a
-// classificação tem rede (o `diagnostico` da extração confere tipo/entidade/
-// período e abre pendência quando diverge); a extração não tem nada depois dela.
-test('a extração fica no modelo forte, e os dois modelos têm preço conhecido', () => {
-  assert.equal(MODELO_EXTRACAO, 'gpt-4o');
-  assert.ok(PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO], 'modelo sem preço não pode entrar em produção');
-  assert.ok(PRECO_USD_POR_MILHAO[MODELO_CLASSIFICACAO].entrada <= PRECO_USD_POR_MILHAO[MODELO_EXTRACAO].entrada,
-    'a classificação nunca pode custar MAIS que a extração — seria a troca ao contrário');
+// TODO PROVEDOR DO CATÁLOGO TEM DE SER UTILIZÁVEL, não só o ativo. Um provedor
+// com um modelo sem preço não é uma opção: o orçamento devolveria `null` como
+// custo, e `custoDaChamada` trata null como "não sei" — o lote passaria pelo
+// guarda sem ninguém saber quanto ia custar. É a única forma de o teto de US$ 3
+// deixar de existir sem ninguém apagar uma linha.
+test('todo provedor do catálogo tem modelo declarado e preço para os dois', () => {
+  for (const id of Object.keys(PROVEDORES)) {
+    const modelos = MODELOS_POR_PROVEDOR[id];
+    assert.ok(modelos, `provedor "${id}" sem modelos declarados`);
+    const tabela = PRECOS_POR_PROVEDOR[id];
+    assert.ok(tabela, `provedor "${id}" sem tabela de preço`);
+    for (const papel of ['classificacao', 'extracao']) {
+      const preco = tabela[modelos[papel]];
+      assert.ok(preco, `${id}: modelo de ${papel} ("${modelos[papel]}") sem preço não entra em produção`);
+      assert.ok(preco.entrada > 0 && preco.saida > 0, `${id}: preço de ${papel} tem de ser positivo`);
+    }
+    // A classificação nunca pode custar MAIS que a extração — seria a troca ao
+    // contrário: pagar o modelo caro na tarefa que TEM rede (o `diagnostico` da
+    // extração confere tipo/entidade/período) e o barato na que não tem nenhuma.
+    assert.ok(tabela[modelos.classificacao].entrada <= tabela[modelos.extracao].entrada, id);
+  }
 });
 
-// O caso REAL do v31, nas duas versões, porque é o que dá sentido ao guarda.
-test('orçamento: o lote do v31 é recusado ANTES do renome e passa DEPOIS', () => {
-  // Antes: 8 dos 14 documentos tinham nome que não resolvia o período, então
-  // pagavam o PDF duas vezes → 22 chamadas.
-  const antes = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 22 / 14 });
-  assert.equal(antes.chamadas, 22);
-  assert.equal(antes.cabe, false, '22 chamadas ≈ US$ 4,40 estoura o teto de US$ 3');
+test('as constantes exportadas são as do provedor ATIVO', () => {
+  const ativo = provedorAtivo();
+  assert.equal(MODELO_EXTRACAO, MODELOS_POR_PROVEDOR[ativo].extracao);
+  assert.equal(MODELO_CLASSIFICACAO, MODELOS_POR_PROVEDOR[ativo].classificacao);
+  assert.equal(PRECO_USD_POR_MILHAO, PRECOS_POR_PROVEDOR[ativo]);
+});
+
+// O RENOME CONTINUA VALENDO DINHEIRO, e é isso que este teste prova — não um
+// valor em dólar. Documento cujo nome não resolve tipo+período paga o PDF duas
+// vezes, e a recusa acontece ANTES da primeira chamada.
+//
+// Ele testava o lote do v31 (14 documentos, 22 chamadas) contra o teto, e o
+// número que fazia isso funcionar era US$ 0,20 por chamada. No preço do provedor
+// novo esse lote custa ~US$ 0,30 e passa — como deve passar. O tamanho do lote
+// passou a sair da própria constante: o que o guarda promete é sobre DINHEIRO,
+// não sobre uma quantidade de arquivos.
+test('orçamento: o renome muda a conta, e o lote que não cabe é recusado antes de gastar', () => {
+  const cabemNoTeto = Math.floor(TETO_EXECUCAO_USD / CUSTO_ESTIMADO_DOC_USD);
+  // Um lote em que TODO documento paga o PDF duas vezes: metade dos documentos
+  // do teto, e ainda assim o dobro de chamadas — é o que estoura.
+  const documentos = Math.ceil(cabemNoTeto / 2) + 1;
+  const antes = orcamentoDoLote({ documentos, chamadasPorDocumento: 2 });
+  assert.equal(antes.chamadas, documentos * 2);
+  assert.equal(antes.cabe, false, 'nome mal escolhido dobra as chamadas e estoura o teto');
   assert.match(antes.mensagem, /Lote recusado ANTES de gastar/);
-  assert.match(antes.mensagem, /Nada foi enviado à OpenAI/);
-  assert.ok(antes.maxDocumentos > 0 && antes.maxDocumentos < 14,
+  assert.match(antes.mensagem, /Nada foi enviado ao provedor de IA/);
+  assert.ok(antes.maxDocumentos > 0 && antes.maxDocumentos < documentos,
     'a mensagem tem de dizer um número de documentos por leva que seja acionável');
 
   // Depois do renome para a notação de f0/03 (12M25 / L24M): 1 chamada por
-  // documento → 14 chamadas, US$ 2,80, cabe.
-  const depois = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 1 });
-  assert.equal(depois.chamadas, 14);
+  // documento, e o MESMO lote cabe.
+  const depois = orcamentoDoLote({ documentos, chamadasPorDocumento: 1 });
+  assert.equal(depois.chamadas, documentos);
   assert.equal(depois.cabe, true);
-  assert.equal(depois.estimadoUSD, 2.8);
+  assert.equal(depois.estimadoUSD, Number((documentos * CUSTO_ESTIMADO_DOC_USD).toFixed(2)));
   assert.equal(depois.mensagem, null, 'lote que cabe não produz mensagem de recusa');
+});
+
+// A MEDIÇÃO DA TROCA DE PROVEDOR, escrita como assert: o lote do v31 — 14
+// documentos, 8 deles pagando o PDF duas vezes = 22 chamadas — estourou o teto
+// de US$ 5 da OpenAI no meio da execução em 31/07/2026, e 8 documentos morreram
+// sem extração. No preço de hoje ele cabe, e cabe com folga.
+test('o lote do v31, que estourou o teto em produção, cabe no preço de hoje', () => {
+  const v31 = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 22 / 14 });
+  assert.equal(v31.chamadas, 22);
+  assert.equal(v31.cabe, true);
+  assert.ok(v31.estimadoUSD < TETO_EXECUCAO_USD / 2,
+    `o lote que quebrou o teto agora usa menos da metade dele (US$ ${v31.estimadoUSD})`);
 });
 
 // O book-canastra é o primeiro lote do repositório que NÃO CABE nem depois de
@@ -59,7 +104,11 @@ test('orçamento: o lote do v31 é recusado ANTES do renome e passa DEPOIS', () 
 // Ele existe para exercitar exatamente isto — que a decisão seja NÃO antes da
 // primeira chamada, e que a mensagem diga em quantas levas o trabalho cabe.
 // O custo MEDIDO desse lote está em `n8n/medir-custo-book.mjs`.
-test('orçamento: o lote do book-canastra é recusado, e recusado de novo depois do renome', () => {
+test('orçamento: o lote do book-canastra é recusado pelo estimador PLANO, e recusado de novo depois do renome', () => {
+  // Continua sendo o lote que não cabe NO CAMINHO CEGO — o plano, de "não sei
+  // nada sobre estes arquivos". Pelos bytes e pelo conteúdo ele passa (testes
+  // abaixo, e a medição em `medir-custo-book.mjs`: US$ 0,28 de verdade). É
+  // exatamente essa diferença que justifica os três estimadores existirem.
   const comoEsta = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38 });
   assert.equal(comoEsta.chamadas, 57);
   assert.equal(comoEsta.cabe, false);
@@ -70,16 +119,25 @@ test('orçamento: o lote do book-canastra é recusado, e recusado de novo depois
   // porque o teto é `<=`. Deixar de perder um documento por arredondamento é
   // ganho pequeno e real; o que importa é que a conta passou a ser a mesma que
   // decide o `cabe`, em vez de uma segunda fórmula parecida.
-  assert.equal(comoEsta.maxDocumentos, 10);
-  assert.match(comoEsta.mensagem, /Envie no máximo 10 documento\(s\) por vez \(4 levas\)/);
+  // O máximo por leva sai da MESMA conta que decide o `cabe` — antes havia uma
+  // segunda fórmula parecida, e o `floor` dela comia um documento por
+  // arredondamento. O valor exato depende da calibração; a propriedade não.
+  assert.ok(comoEsta.maxDocumentos > 0 && comoEsta.maxDocumentos < 38);
+  assert.match(comoEsta.mensagem,
+    new RegExp(`Envie no máximo ${comoEsta.maxDocumentos} documento\\(s\\) por vez`));
 
   // Renomear tudo para a notação de f0/03 corta 19 chamadas — e ainda assim o
   // lote não cabe. Ou seja: com kit de mandato completo, dividir em levas não é
   // contorno de nome mal escolhido, é a operação normal.
+  // E DEPOIS DO RENOME ELE PASSA A CABER — 38 × US$ 0,055 = US$ 2,09 contra o
+  // teto de US$ 3. Era o contrário até 24/08/2026 (38 × US$ 0,20 = US$ 7,60), e a
+  // mudança é a troca de provedor: o book completo do mandato deixou de precisar
+  // ser dividido em levas quando os nomes estão na notação de f0/03. Continua
+  // sendo o caminho CEGO — o mais conservador dos três.
   const renomeado = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 1 });
   assert.equal(renomeado.chamadas, 38);
-  assert.equal(renomeado.cabe, false, '38 × US$ 0,20 = US$ 7,60 continua acima do teto');
-  assert.equal(renomeado.maxDocumentos, 15);
+  assert.equal(renomeado.cabe, true, `38 × US$ ${CUSTO_ESTIMADO_DOC_USD} cabe no teto de US$ ${TETO_EXECUCAO_USD}`);
+  assert.equal(renomeado.maxDocumentos, Math.floor(TETO_EXECUCAO_USD / CUSTO_ESTIMADO_DOC_USD));
 });
 
 test('orçamento: fronteira exata do teto', () => {
@@ -93,11 +151,15 @@ test('orçamento: fronteira exata do teto', () => {
 
 // Custo REAL, do `usage` da própria OpenAI. É o que permite trocar a estimativa
 // por medição depois do próximo lote.
-test('custoDaChamada mede a partir do usage e cobra cache pela metade', () => {
+test('custoDaChamada mede a partir do usage e cobra o cache mais barato', () => {
+  // A tabela vai EXPLÍCITA nesta conta: o número conferível à mão é o do gpt-4o,
+  // e ele tem de continuar conferindo mesmo quando o provedor ativo é outro —
+  // é a aritmética da função que está sob teste, não o preço da vez.
+  const tabela = PRECOS_POR_PROVEDOR.openai;
   // gpt-4o: US$ 2,50/1M entrada, US$ 10,00/1M saída, cache US$ 1,25/1M.
   // 10.000 de entrada sem cache + 8.000 de saída = 0,025 + 0,08 = 0,105
   assert.equal(
-    custoDaChamada({ prompt_tokens: 10_000, completion_tokens: 8_000 }, 'gpt-4o'),
+    custoDaChamada({ prompt_tokens: 10_000, completion_tokens: 8_000 }, 'gpt-4o', tabela),
     0.105,
   );
   // Mesmos tokens, metade da entrada em cache: 5.000×2,50 + 5.000×1,25 = 0,01875
@@ -107,16 +169,34 @@ test('custoDaChamada mede a partir do usage e cobra cache pela metade', () => {
     custoDaChamada(
       { prompt_tokens: 10_000, completion_tokens: 8_000, prompt_tokens_details: { cached_tokens: 5_000 } },
       'gpt-4o',
+      tabela,
     ),
     0.09875,
   );
+  // E a mesma conta no provedor ativo: 10.000 × 0,30 + 8.000 × 2,50, por milhão.
+  const p = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  assert.equal(
+    custoDaChamada({ prompt_tokens: 10_000, completion_tokens: 8_000 }, MODELO_EXTRACAO),
+    Number(((10_000 * p.entrada + 8_000 * p.saida) / 1e6).toFixed(6)),
+  );
+  // MODELO FORA DA TABELA NÃO VIRA ZERO: vira null. Um custo de zero num
+  // relatório de custo é um número inventado, e o guarda o somaria como se o
+  // documento fosse de graça.
+  assert.equal(custoDaChamada({ prompt_tokens: 10_000, completion_tokens: 8_000 }, 'modelo-que-nao-existe'), null);
   // O estimador por documento tem de ficar ACIMA do custo medido, senão o teto
   // de US$ 3 mente para o lado perigoso. O piso não é mais o cálculo de
   // guardanapo (US$ 0,105): é o documento MAIS CARO já medido num book real — o
   // livro razão do book-canastra, US$ 0,1725 por chamada (3 páginas, 461
   // linhas). Foi ele que obrigou a recalibração de 0,15 para 0,20.
-  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.1725,
+  // O estimador plano tem de ficar ACIMA do custo medido, senão o teto de US$ 3
+  // mente para o lado perigoso. O piso é o documento MAIS CARO já medido num book
+  // real — o livro razão do book-canastra, 3 páginas e 461 linhas. No provedor
+  // novo ele mede US$ 0,0459 (era US$ 0,1725 no gpt-4o), medido pelo mesmo
+  // `medir-custo-book.mjs` sobre os mesmos PDFs.
+  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.0459,
     'a estimativa precisa cobrir o documento mais caro já medido, não o típico');
+  assert.ok(CUSTO_ESTIMADO_DOC_USD < 0.0459 * 2,
+    'e não pode ser tão folgada a ponto de recusar lote que cabe — foi o defeito de deixar 0,20 de pé');
 });
 
 test('custoDaChamada devolve null em vez de chutar quando não pode medir', () => {
@@ -140,21 +220,35 @@ test('orçamento por tamanho: o lote real do book-canastra PASSA', () => {
   const r = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38, bytes: 183_139 });
   assert.equal(r.porTamanho, true);
   assert.ok(r.cabe, `o lote real tem de caber — estimou US$ ${r.estimadoUSD}`);
-  // A estimativa fica ACIMA do custo medido (US$ 1,41) e ABAIXO do teto: é a
-  // faixa onde o estimador é útil. Fora dela ele ou mente ou trava o trabalho.
-  assert.ok(r.estimadoUSD > 1.41, 'estima acima do medido — a margem existe');
-  assert.ok(r.estimadoUSD <= 3, 'e abaixo do teto');
+  // A estimativa fica ACIMA do custo medido e ABAIXO do teto: é a faixa onde o
+  // estimador é útil. Fora dela ele ou mente ou trava o trabalho.
+  //
+  // O custo MEDIDO deste lote é US$ 0,2821 no provedor de hoje (era US$ 1,2932
+  // no gpt-4o), pelo `n8n/medir-custo-book.mjs` sobre os mesmos 38 PDFs.
+  assert.ok(r.estimadoUSD > 0.2821, `estima acima do medido — a margem existe (US$ ${r.estimadoUSD})`);
+  assert.ok(r.estimadoUSD <= TETO_EXECUCAO_USD, 'e abaixo do teto');
 });
 
 test('orçamento por tamanho: lote homogêneo DENSO continua sendo recusado', () => {
-  // 35 cópias do documento mais denso do book (livro razão, 10.849 bytes, 461
-  // linhas). Custo REAL medido: US$ 0,1725 por chamada = US$ 6,04 no lote.
+  // Cópias do documento mais denso do book (livro razão, 10.849 bytes, 461
+  // linhas). No provedor de hoje ele mede US$ 0,0459 por chamada, então o lote
+  // que estoura o teto é maior — e o TAMANHO sai da conta, não de um número
+  // escrito à mão que valia no preço de agosto.
+  //
   // Este é o caso que o teto existe para barrar, e a estimativa por tamanho tem
   // de continuar barrando — senão trocamos um erro (recusar o que cabe) por
   // outro pior (aceitar o que não cabe), que é o incidente v31.
-  const r = orcamentoDoLote({ documentos: 35, chamadasPorDocumento: 1, bytes: 10_849 * 35 });
+  const BYTES_DO_MAIS_DENSO = 10_849;
+  const CUSTO_MEDIDO_DO_MAIS_DENSO = 0.0459;
+  const documentos = Math.ceil(TETO_EXECUCAO_USD / custoEstimadoPorTamanho(BYTES_DO_MAIS_DENSO)) + 1;
+  const r = orcamentoDoLote({ documentos, chamadasPorDocumento: 1, bytes: BYTES_DO_MAIS_DENSO * documentos });
   assert.equal(r.cabe, false);
   assert.match(r.mensagem, /KB de arquivo/, 'a mensagem diz de onde saiu a conta');
+  // E o lote recusado é, DE VERDADE, um lote que não cabia: o guarda por byte
+  // subestima o documento denso (é o limite declarado em lib/custo.mjs), então o
+  // que ele barra custa mais que o teto, e não menos.
+  assert.ok(documentos * CUSTO_MEDIDO_DO_MAIS_DENSO > TETO_EXECUCAO_USD,
+    'recusar um lote que caberia seria travar trabalho à toa');
 });
 
 // ---------------------------------------------------------------------------
@@ -171,9 +265,16 @@ test('a chamada de classificação NÃO custa o mesmo que a de extração', () =
   // extrações. Cobrar cheio é o que fazia o mesmo lote estimar 46% mais caro.
   assert.ok(comFallback.estimadoUSD > semFallback.estimadoUSD,
     'a segunda chamada continua custando ALGUMA coisa — barato não é grátis');
-  assert.ok(comFallback.estimadoUSD < semFallback.estimadoUSD * 1.1,
+  assert.ok(comFallback.estimadoUSD < semFallback.estimadoUSD * 1.2,
     `19 classificações não podem pesar 50% do lote (${semFallback.estimadoUSD} → ${comFallback.estimadoUSD})`);
-  assert.ok(comFallback.fatorCusto > 1 && comFallback.fatorCusto < 1.05);
+  // O TETO DO PESO É A PARCELA DE ENTRADA, e ele SUBIU na troca de provedor —
+  // de ~1,03 para 1,15 — porque os dois modelos passaram a ser o mesmo. Não é
+  // regressão: com modelos iguais, a classificação custa a ENTRADA de uma
+  // chamada cheia (0,30 declarado, 25% medido), e não 6% dela. O que continua
+  // valendo, e é o que este assert trava, é que ela nunca conta como chamada
+  // inteira — contar 2 chamadas = 2× o custo é o que inflava o lote em 46%.
+  assert.ok(comFallback.fatorCusto > 1 && comFallback.fatorCusto < 1.2,
+    `a segunda chamada pesa, mas não como uma inteira (fator ${comFallback.fatorCusto})`);
   // E as 57 chamadas continuam sendo REPORTADAS como 57: o que mudou é o peso
   // de cada uma na conta, não a contagem — a mensagem seguiria mentindo se
   // dissesse "39 chamadas" para um lote que faz 57.
@@ -187,16 +288,16 @@ test('a chamada de classificação NÃO custa o mesmo que a de extração', () =
 test('o desconto da 2ª chamada vale SÓ quando o tamanho é conhecido', () => {
   const plano = orcamentoDoLote({ documentos: 14, chamadasPorDocumento: 22 / 14 });
   assert.equal(plano.porTamanho, false);
-  assert.equal(plano.estimadoUSD, 4.4, '22 chamadas cheias × US$ 0,20 — como sempre foi');
+  assert.equal(plano.estimadoUSD, Number((22 * CUSTO_ESTIMADO_DOC_USD).toFixed(2)),
+    '22 chamadas CHEIAS — no caminho cego não há desconto');
   assert.equal(plano.fatorCusto, Number((22 / 14).toFixed(4)));
-  assert.equal(plano.cabe, false);
 });
 
 test('modelo fora da tabela de preço cobra CHEIO', () => {
   // Desconhecido não é barato. Se alguém apontar a classificação para um modelo
   // que este arquivo não conhece, o orçamento volta a contar chamada inteira em
   // vez de aplicar um desconto que ninguém mediu.
-  const peso = pesoDaChamadaDeClassificacao('modelo-que-nao-existe', 'gpt-4o');
+  const peso = pesoDaChamadaDeClassificacao('modelo-que-nao-existe', MODELO_EXTRACAO);
   assert.equal(peso, 1);
   const r = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 2, bytes: 183_139, pesoClassificacao: peso });
   assert.equal(r.fatorCusto, 2);

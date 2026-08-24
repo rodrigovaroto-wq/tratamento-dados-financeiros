@@ -128,7 +128,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // POR QUE a extração falhou, e não só QUAIS documentos falharam. No "teste v30"
   // os 14 documentos falharam e o export listava os nomes — a CAUSA (que a
   // pendência já registrava) ficava só na fila de revisão, numa tela diferente.
-  // Quem abre o book precisa saber, ali, se o problema é crédito da OpenAI, cota
+  // Quem abre o book precisa saber, ali, se o problema é crédito do provedor de IA, cota
   // do dia ou cadência: as três pedem ações diferentes e só uma delas é nossa.
   const falhasRes = await paginar<{ descricao: string | null; documento_id: string | null }>((de, ate) =>
     supabase

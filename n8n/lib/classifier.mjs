@@ -2,7 +2,7 @@
 //
 // Autonomia: classificação doc→checklist nasce em N1 (sugere, humano confirma).
 // Este classificador é o passo barato/determinístico; quando não tem confiança,
-// o workflow N8N faz fallback para a OpenAI ler o conteúdo (ver openai.mjs).
+// o workflow N8N faz fallback para a IA ler o conteúdo (ver ia.mjs e provedor.mjs).
 //
 // Não decide nada sozinho: devolve uma SUGESTÃO com confiança e os sinais que
 // a sustentam, para a fila de revisão.
@@ -10,7 +10,7 @@
 import { normalize } from './normalize.mjs';
 import { ALIASES } from './taxonomia.mjs';
 
-const THRESHOLD_AUTO = 0.7; // abaixo disso → fallback OpenAI / pendência de classificação
+const THRESHOLD_AUTO = 0.7; // abaixo disso → fallback por conteúdo / pendência de classificação
 
 // --- Período -----------------------------------------------------------------
 // Reconhece as convenções de f0/03 (12M25, 1T25/1T26, L24M, listas multi-ano)
@@ -267,7 +267,7 @@ export function classifyByFilename(nomeOriginal) {
     assinado, // true | null
     confianca,
     fonte: 'nome_arquivo',
-    precisa_fallback_openai: precisaFallback,
+    precisa_fallback_ia: precisaFallback,
     sinais,
     // Hipótese barata, NUNCA fato — e deliberadamente fora do cálculo de
     // `confianca` acima (ver o comentário de `parseEntidade`).

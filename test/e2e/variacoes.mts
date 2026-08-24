@@ -33,6 +33,29 @@ import type { CampoExtraido, DocumentoParaExport } from "../../portal/src/lib/ty
 import { avaliarCelula, esquecerMemoria } from "../../portal/scripts/lib/avaliar-formula.mts";
 import type { EntradaModeloInstitucional, LinhaModelo } from "../../portal/src/lib/modelo-institucional.ts";
 import { seriesPorLinha, serieDaLinha } from "../../portal/src/lib/modelagem-linha.ts";
+import { provedor } from "../../n8n/lib/provedor.mjs";
+
+// O arnês injeta a sujeira NO PONTO EM QUE A IA RESPONDE — então o envelope tem
+// de ser o do provedor ATIVO. Escrito na forma da OpenAI enquanto o nó lê a do
+// Google, toda variação viraria "zero campos": o arnês estaria medindo o
+// desalinhamento dele mesmo, não a robustez da cadeia.
+const PROV = provedor();
+
+function envelopeDaResposta(conteudo: string, uso: { prompt_tokens: number; completion_tokens: number }) {
+  return PROV.dialeto === "gemini"
+    ? {
+      candidates: [{ content: { parts: [{ text: conteudo }] }, finishReason: "STOP" }],
+      usageMetadata: {
+        promptTokenCount: uso.prompt_tokens,
+        candidatesTokenCount: uso.completion_tokens,
+        cachedContentTokenCount: 0,
+      },
+    }
+    : {
+      choices: [{ finish_reason: "stop", message: { content: conteudo } }],
+      usage: uso,
+    };
+}
 
 const RAIZ = new URL("../../", import.meta.url).pathname;
 const PSQL = (process.env.E2E_PSQL ?? "psql").split(/\s+/);
@@ -78,33 +101,29 @@ const fixture = JSON.parse(
   readFileSync(`${RAIZ}portal/scripts/fixtures/book-vertentes.json`, "utf8"),
 ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
 
-function respostaDaOpenAI(campos: CampoExtraido[], moeda = "BRL") {
+function respostaDaIA(campos: CampoExtraido[], moeda = "BRL") {
   const unidade = campos.find((c) => c.unidade)?.unidade ?? null;
   return {
-    json: {
-      choices: [{
-        finish_reason: "stop",
-        message: {
-          content: JSON.stringify({
-            moeda, unidade,
-            diagnostico: {
-              entidade: null, tipo_confirma: true, tipo_sugerido: "BALANCO",
-              periodo_tipo: "anual", periodo_referencia: "12M25",
-              legibilidade: "ok", nota_legibilidade: null, resumo: "var", justificativa: "var",
-            },
-            linhas: campos.map((c, i) => ({
-              s: c.secao, sc: c.secao_canonica ?? "NAO_CLASSIFICAVEL",
-              ec: c.entidade_coluna, pc: c.periodo_coluna, k: c.chave,
-              vt: c.valor_texto, vn: c.valor_num, op: c.origem_pagina,
-              cf: c.confianca ?? 0.9, ordem: i,
-              ...(c.unidade ? { u: c.unidade } : {}),
-              ...(c.moeda ? { m: c.moeda } : {}),
-            })),
-          }),
+    json: envelopeDaResposta(
+      JSON.stringify({
+        moeda,
+        unidade,
+        diagnostico: {
+          entidade: null, tipo_confirma: true, tipo_sugerido: "BALANCO",
+          periodo_tipo: "anual", periodo_referencia: "12M25",
+          legibilidade: "ok", nota_legibilidade: null, resumo: "var", justificativa: "var",
         },
-      }],
-      usage: { prompt_tokens: 1000, completion_tokens: 500 },
-    },
+        linhas: campos.map((c, i) => ({
+          s: c.secao, sc: c.secao_canonica ?? "NAO_CLASSIFICAVEL",
+          ec: c.entidade_coluna, pc: c.periodo_coluna, k: c.chave,
+          vt: c.valor_texto, vn: c.valor_num, op: c.origem_pagina,
+          cf: c.confianca ?? 0.9, ordem: i,
+          ...(c.unidade ? { u: c.unidade } : {}),
+          ...(c.moeda ? { m: c.moeda } : {}),
+        })),
+      }),
+      { prompt_tokens: 1000, completion_tokens: 500 },
+    ),
   };
 }
 
@@ -575,9 +594,9 @@ async function rodar(v: Variacao) {
   const produzidos = new Map<string, Array<Record<string, unknown>>>();
   let falhasDoNo = 0;
   for (const [versaoId, campos] of porVersao) {
-    const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", openai_body: {} } };
+    const req = { json: { documento_versao_id: versaoId, tipo: "BALANCO", ia_body: {} } };
     try {
-      const out = await rodarNo("Parse Extracao", respostaDaOpenAI(campos, v.moeda), { "Montar Req Extracao": req });
+      const out = await rodarNo("Parse Extracao", respostaDaIA(campos, v.moeda), { "Montar Req Extracao": req });
       produzidos.set(versaoId, (out.json.campos ?? []) as Array<Record<string, unknown>>);
     } catch (e) {
       falhasDoNo++;

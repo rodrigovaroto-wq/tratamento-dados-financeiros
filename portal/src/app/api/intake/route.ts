@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 // `name` INTERNO diferente do rótulo. O webhook aceitava o POST (200 OK — "o
 // upload deu certo" no portal) mas o workflow não recebia arquivo nenhum sob
 // o nome esperado, o node `Listar Arquivos` lançava erro e a execução morria
-// ANTES de qualquer chamada à OpenAI — daí "sucesso na tela, 0 tokens gastos".
+// ANTES de qualquer chamada de IA — daí "sucesso na tela, 0 tokens gastos".
 const CAMPO_MANDATO_ENV = process.env.N8N_INTAKE_FIELD_MANDATO || null;
 const CAMPO_ARQUIVOS_ENV = process.env.N8N_INTAKE_FIELD_ARQUIVOS || null;
 // Fallback de último recurso, só usado se não houver env E a descoberta falhar

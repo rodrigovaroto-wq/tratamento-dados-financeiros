@@ -4,7 +4,7 @@
 // `node(...)`, e cada nó novo era encaixado "no espaço que sobrava" — 50px à
 // direita do anterior aqui, 120px ali. O resultado no canvas do dono era o que
 // se esperava de números escolhidos um a um ao longo de 40 sessões: rótulos
-// sobrepostos (`Fatiar Extracao` em cima do `OpenAI Extrair`, `Juntar Blocos`
+// sobrepostos (`Fatiar Extracao` em cima do `IA Extrair`, `Juntar Blocos`
 // em cima do `Gravar Campos`), o tronco subindo e descendo sem motivo, e a
 // aresta longa `Precisa Fallback?`[false] → `Juntar Ramos` atravessando por
 // dentro dos três nós da classificação por conteúdo.

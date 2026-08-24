@@ -18,8 +18,79 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0139_reafirmar_nao_apaga_medicao.sql` (a `0138` e a `0139` saíram da rodada de variações de 22/08 — ver "O LOOP DE VARIAÇÕES") |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **25** (a cadeia real sobre documento sujo) · n8n 321 · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (84 migrations do zero, os DOIS books) |
+| **Suítes** | variações **25** (a cadeia real sobre documento sujo) · n8n **331** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (84 migrations do zero, os DOIS books) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
+| **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## O PROVEDOR DE IA VIROU ESCOLHA, E O PADRÃO PASSOU A SER O GOOGLE (24/08)
+
+O dono pediu a troca com uma frase direta: *"essa do gpt não estou vendo vantagens do que trocar
+para outras melhores"*. A escolha foi **Gemini 3.5 Flash-Lite**, e o que ela custou de trabalho não
+foi falar com o Google — foi que **não havia "um provedor" neste repositório para trocar**. Havia a
+OpenAI espalhada: a URL em dois módulos, o formato do corpo em três lugares (dois na lib e mais um
+minificado dentro do gerador), a leitura de `choices[0].message.content` em quatro, e o `usage` dela
+lido direto pelo medidor de custo. Trocar era, literalmente, achar todos.
+
+**O que passou a existir:** `n8n/lib/provedor.mjs`, onde cada provedor é um objeto de DADOS (URL,
+header de auth, nome da credencial no n8n, tpm/rpm) e as diferenças de dialeto viram sete funções.
+Dado puro, e não objeto com métodos, porque nó Code do n8n não importa módulo — o gerador escreve o
+provedor no nó como literal e embute as funções por `toString()`, o mesmo mecanismo de espelho que
+já valia para `diagnosticarErroApi` e as 26 funções do `espelho-inline.test.mjs`.
+
+**A API NATIVA DO GOOGLE, e não a camada de compatibilidade dele com o `/chat/completions`.** Usar a
+camada de imitação faria o arquivo quase desaparecer — e entregaria o subconjunto que o formato da
+OpenAI comporta. O que esta troca busca é leitura de DOCUMENTO, e é a API nativa que recebe o PDF
+como parte (`inlineData`) e aceita `responseSchema`. Pagar a migração para ficar com o subconjunto do
+provedor antigo seria não levar a mercadoria.
+
+**O número, medido e não estimado** — `n8n/medir-custo-book.mjs` sobre os MESMOS 38 PDFs do
+`book-canastra`, trocando só a tabela de preço:
+
+| | gpt-4o + gpt-4o-mini | Gemini 3.5 Flash-Lite |
+|---|---|---|
+| lote inteiro (57 chamadas) | US$ 1,2932 | **US$ 0,2821** (−78%) |
+| documento mais caro (livro razão) | US$ 0,1725 | **US$ 0,0459** (−73%) |
+| intervalo entre extrações | ~33s (balde de TPM) | **8s** (limite de chamadas) |
+
+**O que a troca comprou em COMPORTAMENTO:** o lote do v31 — os 14 documentos que estouraram o teto
+de US$ 5 no meio da execução em 31/07 e mataram 8 sem extração — hoje cabe em menos da metade do teto
+de US$ 3, e isso está travado por teste. O book de 38 deixou de precisar de levas. E o lote de 57
+chamadas passou de ~31 minutos para ~7,6.
+
+**O erro que a recalibração quase cometeu, e é o que vale guardar.** Três constantes do guarda de
+orçamento eram calibradas contra o preço do `gpt-4o`, e o instinto é dividir todas pela razão medida
+do lote (0,218×). Fazer isso fazia o **lote homogêneo denso** — o caso que o teto existe para
+barrar — passar a ser ACEITO, porque existem DUAS razões e elas divergem: o lote caiu 0,218× e o
+documento mais denso caiu 0,266×, já que o preço da saída caiu menos que o da entrada. Trocar
+"recusa lote que caberia" por "aceita lote que não cabe" é o v31 de novo. Vale a razão do denso.
+Detalhe e o custo declarado dessa escolha em `docs/CUSTO_IA.md`.
+
+**As suítes passaram a rodar nos DOIS dialetos.** Os testes de fronteira liam
+`body.messages[1].content` e `resp.choices[0]` direto — ou seja, testavam o workflow E o dialeto da
+OpenAI sem distinguir os dois, e por isso reprovavam a troca sem ter nada a dizer sobre ela. Agora
+as fixturas são escritas uma vez e traduzidas para o dialeto do provedor ATIVO: trocar `IA_PROVEDOR`
+reexecuta a suíte inteira contra o outro. O mesmo vale para o arnês de variações e o e2e, que
+injetam a resposta no ponto em que a IA responde.
+
+**O que só o dono destrava, e nenhuma suíte alcança:**
+
+1. **O teto de gasto do projeto no provedor NOVO.** Ele é configuração de conta e **não se herda**:
+   a conta nova começa sem teto nenhum, e a defesa dura — a que barra quando este código falha —
+   fica ausente até alguém ir lá pôr;
+2. **A credencial no n8n** com o nome que o JSON gerado espera: `Google AI (Gemini)`, header
+   `x-goog-api-key`, valor sem prefixo (a chave NUNCA na URL como `?key=`, que apareceria no log);
+3. **Zero-retention / DPA com o Google** antes de dado real de cliente — acordo com um provedor não
+   vale para o outro (`docs/10`, `f0/02`);
+4. **Reimportar o workflow.** A versão do orçamento subiu para `v4 (2026-08-24)` e ela vai na
+   mensagem de recusa justamente para isto: um n8n com o JSON velho recusa lotes que o código novo
+   aceita, com uma mensagem que parece a mesma.
+
+**Renomes que acompanharam** (o nome era metade do problema): `lib/openai.mjs` → `lib/ia.mjs` (o que
+mora nele é a taxonomia e o prompt, que não mudam com o provedor), `diagnosticar-openai.mjs` →
+`diagnosticar-ia.mjs`, `docs/CUSTO_OPENAI.md` → `docs/CUSTO_IA.md`, os nós `OpenAI Classificar`/
+`OpenAI Extrair` → `IA Classificar`/`IA Extrair`, e o campo `openai_body` → `ia_body`. O valor
+`fonte='openai_conteudo'` **não** foi renomeado: ele está em linha de produção e em CHECK de
+migration (`0033`), e trocá-lo seria reescrever histórico para arrumar um nome.
 
 ## O portal (17/08) — navegação, marca e o fim de vida do mandato
 

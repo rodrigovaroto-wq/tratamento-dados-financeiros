@@ -1,4 +1,10 @@
-// Extração + DIAGNÓSTICO do documento (E2) via OpenAI — modo SOMBRA (N0/N1).
+// Extração + DIAGNÓSTICO do documento (E2) via IA — modo SOMBRA (N0/N1).
+//
+// QUEM é a IA está em `lib/provedor.mjs` e este arquivo não sabe: ele monta a
+// chamada e lê a resposta pelas funções de lá. O que muda com o provedor é
+// endereço, formato de corpo e forma da resposta; o que NÃO muda — o prompt, o
+// schema, a normalização de escala e moeda, o diagnóstico de erro — é tudo o que
+// está escrito aqui.
 //
 // Antes, esta chamada só extraía linhas financeiras (chave+valor). Ela já
 // rodava SEMPRE (para todo documento, independente da confiança da
@@ -24,10 +30,13 @@
 // db/migrations/0010_diagnostico_e1e2.sql → fn_registrar_diagnostico);
 // linhas continuam em N0 (sombra), sem entrar em base sem aceite humano.
 
-import { codigosConhecidos } from './openai.mjs';
+import { codigosConhecidos } from './ia.mjs';
+import {
+  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, conteudoDaResposta, cortadoPorLimite,
+} from './provedor.mjs';
+import { MODELO_EXTRACAO } from './custo.mjs';
 
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const DEFAULT_MODEL = 'gpt-4o';
+const DEFAULT_MODEL = MODELO_EXTRACAO;
 
 const PERIODO_TIPO_ENUM = ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido'];
 
@@ -475,7 +484,7 @@ export function extractionSchema() {
   };
 }
 
-// Teto de tokens de saída do gpt-4o (16384) — explícito porque documentos
+// Teto de tokens de SAÍDA por chamada (16384) — explícito porque documentos
 // combinados grandes (grupo com várias entidades × várias demonstrações no
 // mesmo PDF) exigem um array `linhas` extenso; sem isso fica sujeito a um
 // default menor de max_tokens dependendo da conta/API, que corta a resposta
@@ -484,45 +493,47 @@ export function extractionSchema() {
 // reprocessando "teste v14", sessão 7 cont.⁷).
 export const MAX_OUTPUT_TOKENS = 16384;
 
-// TPM (tokens por minuto) da conta OpenAI, LIDO e não estimado:
-// platform.openai.com → Settings → Limits → o modelo da extração.
+// TPM (tokens por minuto) e RPM (chamadas por minuto) DA CONTA — os dois limites
+// que decidem a cadência, e agora eles vêm do provedor ativo (`lib/provedor.mjs`).
 //
-// Vive aqui, e não no gerador, porque TRÊS lugares dependem do mesmo número e
-// precisam concordar: o gerador (calcula o batchInterval a partir dele), o teste
-// que trava a cadência, e `diagnosticar-openai.mjs` (compara o configurado com o
-// que a API informa nos headers). Duplicado, o dono ajustaria um e os outros
-// dois passariam a mentir.
+// Continuam sendo lidos daqui, e não do gerador, porque TRÊS lugares dependem do
+// mesmo número e precisam concordar: o gerador (calcula o batchInterval a partir
+// deles), o teste que trava a cadência, e `diagnosticar-ia.mjs` (compara o
+// configurado com o que a API informa). Duplicado, o dono ajustaria um e os
+// outros dois passariam a mentir.
 //
-// Padrão no Tier 1 (30.000) porque é o mais restritivo: errar para o lento faz a
-// extração demorar; errar para o rápido faz ela FALHAR, e falha custa uma rodada
-// inteira. Tier 2 do gpt-4o são 450.000 TPM.
-export const TPM_CONTA = 30000;
+// POR QUE DOIS NÚMEROS AGORA, e não só o TPM. Na OpenAI o gargalo é sempre o
+// balde de tokens, porque `max_tokens` é RESERVA — toda extração reserva 16.384
+// tokens do minuto, para um PDF de 2 KB ou de 40 páginas. Já a linha Flash-Lite
+// do Google entra com um balde de tokens folgado e um limite de CHAMADAS
+// apertado (15 por minuto no patamar de entrada): pelo TPM sozinho o intervalo
+// daria ~1 segundo, e o lote tomaria 429 na terceira chamada. Quem manda é o
+// mais restritivo dos dois, e `RPM_CONTA` null significa "este provedor não
+// limita por chamada" (o caso da OpenAI).
+export const TPM_CONTA = provedor().tpm;
+export const RPM_CONTA = provedor().rpm;
 
-// conteudo: parte multimodal (file/image/text) — reaproveita contentPartFromFile.
-export function buildExtractionRequest({ tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL }) {
+// conteudo: parte multimodal (arquivo/imagem/texto) — reaproveita contentPartFromFile.
+export function buildExtractionRequest({
+  tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL, prov = provedor(),
+}) {
   return {
-    url: OPENAI_URL,
+    url: urlDaChamada(prov, model),
     method: 'POST',
-    body: {
-      model,
-      temperature: 0,
-      max_tokens: MAX_OUTPUT_TOKENS,
-      response_format: { type: 'json_schema', json_schema: extractionSchema() },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Nome do arquivo: ${nomeOriginal || '(sem nome)'}. Dica de tipo (do nome, pode estar `
-                + `errada): ${tipo || 'desconhecido'}. Diagnostique e extraia as linhas financeiras.`,
-            },
-            ...(Array.isArray(conteudo) ? conteudo : [conteudo]),
-          ],
-        },
+    body: montarCorpoIA(prov, {
+      modelo: model,
+      sistema: SYSTEM_PROMPT,
+      maxTokens: MAX_OUTPUT_TOKENS,
+      schema: extractionSchema(),
+      partes: [
+        parteDeTexto(
+          prov,
+          `Nome do arquivo: ${nomeOriginal || '(sem nome)'}. Dica de tipo (do nome, pode estar `
+          + `errada): ${tipo || 'desconhecido'}. Diagnostique e extraia as linhas financeiras.`,
+        ),
+        ...(Array.isArray(conteudo) ? conteudo : [conteudo]),
       ],
-    },
+    }),
   };
 }
 
@@ -660,14 +671,19 @@ export function diagnosticarErroApi(erro) {
     // OpenAI: `type`, ou um `code` que não seja de TRANSPORTE. Sem essa guarda,
     // um AxiosError entraria aqui e `ERR_BAD_REQUEST` seria reportado como se
     // fosse o código da OpenAI — pista falsa, pior que pista nenhuma.
-    (e) => (e && (e.type || (e.code && !/^ERR_/i.test(String(e.code))))) ? e : null,
+    // `status` textual entra aqui pelo Google: o corpo de erro dele é
+    // `{error:{code:429, message, status:'RESOURCE_EXHAUSTED'}}` — sem `type`, e
+    // com um `code` que é NÚMERO. Sem reconhecer o `status`, esse corpo não era
+    // aceito como corpo e o diagnóstico caía em "desconhecida" com a frase do
+    // n8n, que é exatamente o cego que esta função existe para não ser.
+    (e) => (e && (e.type || e.status || (e.code && !/^ERR_/i.test(String(e.code))))) ? e : null,
   ];
   const corpoDeErroOpenAI = (e) => {
     if (!e || typeof e !== 'object') return null;
     for (const caminho of CAMINHOS) {
       let c;
       try { c = caminho(e); } catch { continue; }
-      if (c && typeof c === 'object' && (c.type || c.code || c.message)) return c;
+      if (c && typeof c === 'object' && (c.type || c.code || c.status || c.message)) return c;
     }
     return null;
   };
@@ -678,9 +694,19 @@ export function diagnosticarErroApi(erro) {
   // evidência de que houve 429. Reconhecê-la separa "sei que é limite, não sei
   // qual" de "não sei nada" — e a primeira já dá um passo concreto ao dono.
   const RE_DICA_429_N8N = /spacing your requests out|too many requests from you/i;
-  const statusHttpDoErro = (e) => {
+  // Recebe o CORPO já extraído como segundo argumento, e não é detalhe: o
+  // Google põe o HTTP em `code` DENTRO do corpo, e o corpo pode estar embrulhado
+  // em uma ou duas camadas pelo n8n. Procurar `code` por caminho fixo seria
+  // acertar um embrulho e falhar calado nos outros; o corpo já foi achado pelos
+  // CAMINHOS acima, então usá-lo cobre todos de uma vez.
+  const statusHttpDoErro = (e, corpoDoErro) => {
     const candidatos = [
       e && e.httpCode, e && e.status, e && e.statusCode,
+      // Só NÚMERO entra: o `code` de transporte do axios é string
+      // ('ERR_BAD_REQUEST'), e aceitá-lo faria o diagnóstico reportar um status
+      // que não existiu — a pista falsa que o v30 ensinou a não dar.
+      (e && typeof e.code === 'number') ? e.code : null,
+      (corpoDoErro && typeof corpoDoErro.code === 'number') ? corpoDoErro.code : null,
       e && e.cause && e.cause.status, e && e.cause && e.cause.statusCode,
       e && e.response && e.response.status, e && e.context && e.context.httpCode,
     ];
@@ -699,7 +725,7 @@ export function diagnosticarErroApi(erro) {
   };
 
   const corpo = corpoDeErroOpenAI(erro);
-  const status = statusHttpDoErro(erro);
+  const status = statusHttpDoErro(erro, corpo);
   const tipo = corpo?.type ?? null;
   // `code` de TRANSPORTE (axios: ERR_BAD_REQUEST, ECONNRESET...) não é o código
   // da OpenAI — a doc dela manda inspecionar `error.code`, e confundir os dois
@@ -734,50 +760,64 @@ export function diagnosticarErroApi(erro) {
   if (tem('spend_limit_exceeded', 'spend limit', 'usage_limit_exceeded',
     'usage limit', 'budget')) {
     causa = 'limite_de_gasto';
-    motivo = 'TETO DE GASTO ATINGIDO na OpenAI — e isto NÃO é falta de crédito: há saldo, o tier '
-      + 'está normal, e é por isso que as páginas de Billing e de Limits parecem em ordem. O que '
-      + 'estourou é um LIMITE CONFIGURADO: teto do PROJETO a que a chave pertence, ou orçamento '
-      + 'mensal da organização. Onde olhar: platform.openai.com → Settings → Limits (orçamento '
-      + 'mensal da org) E Settings → Projects → o projeto da chave → Limits (teto do projeto). '
-      + 'Espaçar as chamadas não resolve; subir o teto resolve na hora.';
+    motivo = 'TETO DE GASTO ATINGIDO no provedor de IA — e isto NÃO é falta de crédito: há saldo, o '
+      + 'tier está normal, e é por isso que as páginas de cobrança e de limites parecem em ordem. O '
+      + 'que estourou é um LIMITE CONFIGURADO: teto do PROJETO a que a chave pertence, ou orçamento '
+      + 'mensal da organização. Onde olhar — na OpenAI: Settings → Limits (orçamento da org) E '
+      + 'Settings → Projects → o projeto da chave → Limits; no Google: o orçamento do projeto no '
+      + 'Cloud Billing. Espaçar as chamadas não resolve; subir o teto resolve na hora.';
   } else if (tem('insufficient_quota', 'exceeded your current quota', 'billing_hard_limit',
     'billing hard limit', 'check your plan and billing', 'account is not active',
-    'credit_balance_exhausted', 'no prepaid credits')) {
+    'credit_balance_exhausted', 'no prepaid credits',
+    // O Google não diz "sem crédito": ele diz que o projeto não tem cobrança
+    // ligada, e o efeito é o mesmo — nenhuma chamada passa até alguém entrar na
+    // conta. Sem estas assinaturas o caso caía em "limite indeterminado" e o
+    // dono ia procurar cadência onde o problema era cadastro.
+    'billing_disabled', 'billing account', 'billing to be enabled', 'consumer_suspended')) {
     causa = 'sem_credito';
-    motivo = 'CRÉDITO DA OPENAI ESGOTADO (insufficient_quota / credit_balance_exhausted). A conta '
-      + 'não tem saldo pré-pago para processar. Espaçar as chamadas NÃO resolve isto — é preciso '
-      + 'recarregar crédito em platform.openai.com/settings/organization/billing.';
-  } else if (tem('tokens per day', 'requests per day', 'tpd', 'rpd', 'daily limit', 'per-day')) {
+    motivo = 'CONTA DO PROVEDOR SEM CRÉDITO OU SEM COBRANÇA ATIVA. A conta não tem como pagar a '
+      + 'chamada — na OpenAI é saldo pré-pago esgotado (insufficient_quota), no Google é o projeto '
+      + 'sem billing habilitado. Espaçar as chamadas NÃO resolve: é preciso recarregar crédito '
+      + '(platform.openai.com/settings/organization/billing) ou ligar a cobrança do projeto.';
+  } else if (tem('tokens per day', 'requests per day', 'tpd', 'rpd', 'daily limit', 'per-day',
+    'perday', 'generate_content_free_tier_requests')) {
     causa = 'limite_diario';
-    motivo = 'COTA DIÁRIA DA OPENAI ESGOTADA (limite por DIA de tokens/requisições do tier da conta). '
-      + 'Espaçar as chamadas não resolve hoje: a cota reabre na virada da janela diária, ou sobe '
-      + 'junto com o tier da conta.';
+    motivo = 'COTA DIÁRIA DO PROVEDOR ESGOTADA (limite por DIA de tokens/requisições do tier da '
+      + 'conta). Espaçar as chamadas não resolve hoje: a cota reabre na virada da janela diária, ou '
+      + 'sobe junto com o tier da conta.';
   } else if (tem('rate_limit_exceeded', 'rate limit', 'too many requests', 'tokens per min',
-    'requests per min', 'tpm', 'rpm')) {
+    'requests per min', 'tpm', 'rpm', 'resource_exhausted', 'perminute')) {
     causa = 'limite_cadencia';
-    motivo = 'LIMITE DE CADÊNCIA DA OPENAI (rate limit por minuto). Aqui espaçar as chamadas ajuda '
-      + 'de fato — é o único caso em que ajuda. Reduzir o tamanho do que é enviado (PDF como texto '
-      + 'em vez de imagem) ataca a causa, porque o limite por minuto é de TOKENS, não de arquivos.';
-  } else if (status === 401 || tem('invalid_api_key', 'incorrect api key', 'invalid authentication')) {
+    motivo = 'LIMITE DE CADÊNCIA DO PROVEDOR (rate limit por minuto). Aqui espaçar as chamadas ajuda '
+      + 'de fato — é o único caso em que ajuda. E o número a mexer é TPM_CONTA/RPM_CONTA do provedor '
+      + 'ativo (n8n/lib/provedor.mjs): é dele que sai o intervalo entre chamadas, e ajustá-lo no nó '
+      + 'à mão faz o teste da cadência e o workflow discordarem no primeiro rebuild.';
+  } else if (status === 401 || status === 403
+    || tem('invalid_api_key', 'incorrect api key', 'invalid authentication',
+      'api key not valid', 'api_key_invalid', 'permission_denied', 'permission denied')) {
     causa = 'chave_invalida';
-    motivo = 'CHAVE DA OPENAI INVÁLIDA OU AUSENTE (401). Nada a ver com cadência ou crédito: a '
-      + 'credencial do nó HTTP no N8N precisa ser corrigida (header Authorization: Bearer sk-...).';
-  } else if (status === 404 || tem('model_not_found', 'does not exist or you do not have access')) {
+    motivo = 'CHAVE DO PROVEDOR INVÁLIDA, AUSENTE OU SEM PERMISSÃO (401/403). Nada a ver com '
+      + 'cadência ou crédito: a credencial do nó HTTP no N8N precisa ser corrigida — na OpenAI é o '
+      + 'header "Authorization: Bearer sk-...", no Google é "x-goog-api-key: ...". O nome da '
+      + 'credencial que o workflow espera está em n8n/lib/provedor.mjs (campo `credencial`).';
+  } else if (status === 404 || tem('model_not_found', 'does not exist or you do not have access',
+    'is not found for api version', 'not_found')) {
     causa = 'modelo_indisponivel';
     motivo = 'MODELO INDISPONÍVEL PARA ESTA CONTA (404). O modelo configurado no workflow não existe '
-      + 'ou a conta não tem acesso a ele — conferir MODEL_EXTRACAO em n8n/build-workflow.mjs contra '
-      + 'os modelos disponíveis na conta.';
+      + 'ou a conta não tem acesso a ele — conferir MODELOS_POR_PROVEDOR em n8n/lib/custo.mjs contra '
+      + 'os modelos que a conta lista. No Google o nome do modelo vai na URL, então um id errado é '
+      + '404 no endereço, não erro de corpo.';
   } else if (status === 429) {
     // 429 sem assinatura reconhecível: NÃO afirmar cadência. Foi exatamente o
     // palpite errado do v28→v30, e afirmar causa sem evidência é o defeito que
     // este diagnóstico existe para não repetir.
     causa = 'limite_indeterminado';
-    motivo = 'LIMITE DA OPENAI ATINGIDO (HTTP 429), mas a resposta não disse QUAL: pode ser crédito '
-      + 'esgotado (insufficient_quota), cota diária, ou cadência por minuto — e cada um pede ação '
-      + 'diferente. Confira em platform.openai.com: se houver saldo/limite disponível, é cadência; '
-      + 'se não houver, é crédito. Espaçar as chamadas só resolve o caso de cadência.';
+    motivo = 'LIMITE DO PROVEDOR ATINGIDO (HTTP 429), mas a resposta não disse QUAL: pode ser '
+      + 'crédito esgotado, cota diária, ou cadência por minuto — e cada um pede ação diferente. '
+      + 'Confira no console do provedor: se houver saldo/limite disponível, é cadência; se não '
+      + 'houver, é crédito. Espaçar as chamadas só resolve o caso de cadência.';
   } else {
-    motivo = `ERRO NA CHAMADA À OPENAI${status ? ` (HTTP ${status})` : ''}: `
+    motivo = `ERRO NA CHAMADA AO PROVEDOR DE IA${status ? ` (HTTP ${status})` : ''}: `
       + `${mensagemOpenAI || mensagemBruta || textoDoErro(erro).slice(0, 300)}`;
   }
 
@@ -808,7 +848,7 @@ export function diagnosticarErroApi(erro) {
     limiteTokens ? `limite_tokens_min=${limiteTokens}` : null,
     restamTokens ? `restavam=${restamTokens}` : null,
     esperar ? `esperar=${esperar}` : null,
-    mensagemOpenAI ? `openai="${String(mensagemOpenAI).slice(0, 200)}"` : null,
+    mensagemOpenAI ? `provedor="${String(mensagemOpenAI).slice(0, 200)}"` : null,
     // A mensagem do n8n entra por último e IDENTIFICADA como dele: ela é a que
     // enganou a rodada passada, então fica claro de quem é a frase.
     (mensagemBruta && mensagemBruta !== mensagemOpenAI)
@@ -834,8 +874,8 @@ export function diagnosticarErroApi(erro) {
 // da própria chamada em vez de competir com ele: os dois cabem no mesmo
 // documento (planilha cortada E resposta truncada), e esconder um dos dois já é
 // a falha que estamos fechando.
-export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) {
-  const finishReason = apiJson?.choices?.[0]?.finish_reason ?? null;
+export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = provedor() } = {}) {
+  const cortado = cortadoPorLimite(prov, apiJson);
   const comAviso = (motivo) => [avisoConteudo, motivo].filter(Boolean).join(' | ') || null;
   const vazio = (falhaMotivo) => ({
     moeda: null, unidade: null, campos: [], falhaMotivo: comAviso(falhaMotivo),
@@ -854,22 +894,22 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     // `diagnosticarErroApi` acima e o que o "teste v30" custou sem isto.
     return vazio(diagnosticarErroApi(apiJson.error).motivo);
   }
-  const content = apiJson?.choices?.[0]?.message?.content;
+  const content = conteudoDaResposta(prov, apiJson);
   if (!content) {
-    return vazio('Resposta da OpenAI sem conteúdo (falha de rede/API).');
+    return vazio(`Resposta do provedor de IA (${prov.rotulo}) sem conteúdo (falha de rede/API).`);
   }
   let p;
   try {
     p = typeof content === 'string' ? JSON.parse(content) : content;
   } catch {
-    if (finishReason === 'length') {
+    if (cortado) {
       return vazio(
-        'Resposta da OpenAI truncada por limite de tokens de saída (finish_reason=length) — o JSON '
-        + 'ficou incompleto e não pôde ser interpretado. Documento provavelmente grande/denso demais '
+        'Resposta do provedor de IA truncada por limite de tokens de saída — o JSON ficou '
+        + 'incompleto e não pôde ser interpretado. Documento provavelmente grande/denso demais '
         + '(muitas contas/entidades) para uma única chamada.',
       );
     }
-    return vazio('Resposta da OpenAI não veio em JSON válido.');
+    return vazio('Resposta do provedor de IA não veio em JSON válido.');
   }
   const unidade = normalizarUnidade(p.unidade);
   // MOEDA DO DOCUMENTO, HERDADA POR LINHA — item 2 do §7.4 do Onboarding.
@@ -886,7 +926,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
   const moedaDoc = normalizarMoeda(p.moeda);
   // Remapeia as chaves curtas do fio para os nomes completos usados em todo o
   // resto do sistema (campo_extraido e por diante) — a compactação é só na
-  // conversa com a OpenAI, nada rio abaixo muda.
+  // conversa com a IA, nada rio abaixo muda.
   //
   // DOIS FORMATOS ACEITOS, e o antigo não é gentileza: é a defesa contra o
   // incidente de 12/08/2026, quando o n8n rodou por dias um workflow importado
@@ -941,7 +981,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
     resumo: d.resumo ?? null,
     justificativa: d.justificativa ?? '',
   };
-  // finish_reason 'length' com JSON válido é raro (o corte quase sempre cai
+  // Corte por teto COM JSON válido é raro (o corte quase sempre cai
   // no meio de uma string/array e quebra o parse acima), mas se acontecer o
   // conteúdo pode estar incompleto de forma "silenciosa" (JSON bem formado,
   // faltando linhas do fim do documento) — sinaliza mesmo assim.
@@ -951,9 +991,9 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
   // descartada por `achatarGrupos` sumiria em silêncio — e "silêncio" é o modo
   // de falha que este projeto passa o tempo corrigindo.
   const motivos = [
-    finishReason === 'length'
-      ? 'Resposta da OpenAI atingiu o limite de tokens de saída (finish_reason=length); o JSON veio '
-        + 'válido, mas o conteúdo pode estar incompleto (faltando linhas do fim do documento).'
+    cortado
+      ? 'Resposta do provedor de IA atingiu o limite de tokens de saída; o JSON veio válido, mas o '
+        + 'conteúdo pode estar incompleto (faltando linhas do fim do documento).'
       : null,
     problemas.length > 0
       ? `${problemas.length} conta(s) descartada(s) por desalinhamento entre colunas e valores `
@@ -965,4 +1005,4 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null } = {}) 
   return { moeda: moedaDoc, unidade, campos, diagnostico, falhaMotivo };
 }
 
-export { OPENAI_URL, DEFAULT_MODEL, PERIODO_TIPO_ENUM };
+export { DEFAULT_MODEL, PERIODO_TIPO_ENUM };
