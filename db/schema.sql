@@ -6772,6 +6772,7 @@ declare
   v_nivel_dial         nivel_autonomia;
   v_limiar             numeric;
   v_auto_permitido     boolean;
+  v_n_excluidas        int := 0;
   v_g                  jsonb;
 begin
   select ea.nivel_atual, ea.limiar_auto_clear into v_nivel_dial, v_limiar
@@ -6909,6 +6910,23 @@ begin
   end if;
 
   -- ----- Auto-aceite (0029): DEPOIS das guardas, nunca antes -----------------
+  --
+  -- 0141: E A TRILHA PASSA A DIZER QUANTO O LIMIAR FILTROU, porque medido em
+  -- 24/08 ele nunca filtrou nada. Em 15.030 linhas gravadas por este sistema, a
+  -- confiança auto-reportada assumiu TRÊS valores — 0,95, 0,99 e 1 — e o limiar
+  -- de `extracao_linhas_financeiras` é 0,95. O limiar é exatamente o PISO do que
+  -- o modelo já emitiu: `confianca >= v_limiar` é satisfeito por toda linha que
+  -- já existiu, e 14.470 das 15.030 foram auto-aceitas (as outras 560 foram
+  -- barradas por GUARDA, não por confiança).
+  --
+  -- A guarda de baixa confiança (Sinal 2, limiar 0,70) nunca disparou pelo mesmo
+  -- motivo: zero linhas abaixo de 0,70 em toda a história do banco.
+  --
+  -- Isto NÃO muda comportamento — decisão do dono, 24/08. O que muda é que a
+  -- decisão passa a registrar quantas linhas o limiar excluiu. Quando exclui
+  -- zero, ela diz isso com todas as letras, porque um portão que aprova tudo e
+  -- não declara que aprovou tudo é pior que portão nenhum: ele parece funcionar.
+  v_n_excluidas := greatest(v_count - v_n_auto_aceitos, 0);
   if v_n_auto_aceitos > 0 and not v_guarda_disparou then
     update campo_extraido
       set status_aceite = 'aceito',
@@ -6921,17 +6939,25 @@ begin
 
     insert into decisao (caso_id, tipo, autor, motivo, payload)
       values (v_caso_id, 'aprovacao', 'sistema:auto_aceite',
-        format('%s linha(s) auto-aceitas na extração de "%s" — dial %s, limiar %s, nenhuma guarda disparou.',
-               v_n_auto_aceitos, coalesce(v_nome_original, '?'), v_nivel_dial, v_limiar),
+        format('%s linha(s) auto-aceitas na extração de "%s" — dial %s, limiar %s, nenhuma guarda disparou. %s',
+               v_n_auto_aceitos, coalesce(v_nome_original, '?'), v_nivel_dial, v_limiar,
+               case when v_n_excluidas = 0
+                 then format('O limiar NAO excluiu nenhuma das %s linhas: a confiança auto-reportada não '
+                             'discriminou nada nesta versão, e o que barra linha aqui são as guardas.', v_count)
+                 else format('O limiar deixou %s de %s linha(s) pendentes.', v_n_excluidas, v_count)
+               end),
         jsonb_build_object('documento_id', v_documento_id, 'documento_versao_id', p_documento_versao_id,
-                           'n_auto_aceitos', v_n_auto_aceitos));
+                           'n_auto_aceitos', v_n_auto_aceitos,
+                           'n_excluidas_pelo_limiar', v_n_excluidas,
+                           'limiar_discriminou', v_n_excluidas > 0));
   elsif v_n_auto_aceitos > 0 then
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
       values ('sistema:auto_aceite', 'auto_aceite_suprimido', 'documento_versao:'||p_documento_versao_id,
               jsonb_build_object('n_elegiveis', v_n_auto_aceitos,
+                                 'n_excluidas_pelo_limiar', v_n_excluidas,
+                                 'limiar_discriminou', v_n_excluidas > 0,
                                  'porque', 'guarda de extracao disparou; linhas seguem pendentes de revisao humana'));
   end if;
-
   perform fn_recomputar_completude(v_caso_id);
 
   -- 0128: A CLASSIFICAÇÃO CONTÁBIL RODA AQUI, e o lugar não é arbitrário.

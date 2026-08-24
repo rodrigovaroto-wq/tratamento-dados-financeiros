@@ -15,7 +15,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0140_a_coluna_de_dimensao_nao_e_valor.sql` — **aplicada em produção em 24/08**, e medida contra as 38 versões da v47 antes de aplicar: tira o falso positivo em que a guarda de padrão suspeito acusou o ANO repetido na coluna `Exercício` como alucinação. A `0138` e a `0139` saíram da rodada de variações de 22/08 (ver "O LOOP DE VARIAÇÕES") |
+| **Última migration** | `db/migrations/0141_o_limiar_que_nunca_excluiu_nada.sql` — a trilha do auto-aceite passa a dizer quantas linhas o limiar excluiu, porque medido em 24/08 ele nunca excluiu nenhuma: em 15.030 linhas a confiança auto-reportada só assumiu 0,95 / 0,99 / 1, e o limiar é 0,95. A `0140` (coluna de dimensão) foi aplicada em produção em 24/08 |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08 — e a **`0138` aplicada**, medido em 24/08 na análise da v47: `fn_veredito_producao` já não contém `RAISE EXCEPTION`. A sonda `fn_instalacao_conferir()` respondeu 14 requisitos, todos presentes. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | variações **25** (a cadeia real sobre documento sujo) · n8n **331** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (84 migrations do zero, os DOIS books) |
