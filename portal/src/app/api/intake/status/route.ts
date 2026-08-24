@@ -101,5 +101,38 @@ export async function GET(request: Request) {
   }
 
   const pronto = classificados >= esperados && processados >= esperados;
-  return NextResponse.json({ classificados, processados, esperados, pronto });
+
+  // TERMINOU E NÃO TROUXE NADA — o estado que passava por SUCESSO.
+  //
+  // `pronto` mede que o pipeline TENTOU ler cada arquivo: um evento
+  // `extracao_sombra` por documento, gravado por `fn_registrar_campos_extraidos`
+  // tanto no acerto quanto na falha (0016). É a medida certa para saber que o
+  // trabalho acabou — e é cega para o que ele produziu. Um lote em que TODA
+  // leitura falhou emite exatamente os mesmos eventos de um lote perfeito, e a
+  // tela dizia "pronto" para os dois.
+  //
+  // `comLinhas` conta quantos documentos deixaram ao menos uma linha no banco.
+  // É a diferença entre "tentou" e "conseguiu".
+  //
+  // SÓ QUANDO `pronto`, e a condição é o que torna isto barato: é uma consulta a
+  // mais no ÚLTIMO polling, não a cada 8 segundos durante 20 minutos. Perguntar
+  // antes também não responderia nada — um documento sem linhas no meio do lote
+  // é um documento que ainda não foi lido.
+  let comLinhas: number | null = null;
+  if (pronto && versaoIds.length > 0) {
+    const { data: campos, error: campoErr } = await paginar<{ documento_versao_id: string }>((de, ate) =>
+      supabase
+        .from("campo_extraido")
+        .select("documento_versao_id")
+        .in("documento_versao_id", versaoIds)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    );
+    // ERRO AQUI NÃO DERRUBA O `pronto`. O lote terminou de verdade, e trocar
+    // essa notícia por uma tela de erro porque a CONFERÊNCIA falhou seria pior
+    // que não conferir. `null` diz "não sei", e quem lê trata diferente de zero.
+    if (!campoErr) comLinhas = new Set(campos.map((c) => c.documento_versao_id)).size;
+  }
+
+  return NextResponse.json({ classificados, processados, esperados, pronto, comLinhas });
 }

@@ -2232,3 +2232,39 @@ test('Recompor Contexto declara desalinhamento em vez de associar arquivo errado
   assert.equal(out[0].json.documento_versao_id, 'ver-1');
   assert.equal(out[1].json.documento_versao_id, 'ver-2');
 });
+
+test('a estimativa que o PORTAL mostra é coerente com a cadência REAL do workflow', () => {
+  // O DEFEITO QUE ISTO FECHA, achado com o dono olhando a tela em 24/08/2026: o
+  // portal dizia "cerca de 29 minutos" para um lote de 38 documentos que leva
+  // ~8. O número (45s por documento) vinha dos ~33s da cadência do gpt-4o, e a
+  // troca de provedor derrubou a cadência para 8s sem que nada avisasse.
+  //
+  // Não quebrou coisa nenhuma — e é por isso que sobreviveria: uma estimativa
+  // não tem quem a desminta. O analista espera um trabalho que já acabou, ou
+  // desiste de acompanhar.
+  //
+  // O portal é TypeScript e não importa `n8n/lib/*.mjs`; a fronteira de build
+  // não permite. Então o espelho é por TESTE, como as 26 funções do
+  // `espelho-inline.test.mjs` — lê a constante do fonte do portal e confronta
+  // com o `batchInterval` que o gerador REALMENTE escreveu no nó.
+  const fonte = readFileSync(new URL('../../portal/src/components/upload-form.tsx', import.meta.url), 'utf8');
+  const m = /const SEGUNDOS_POR_DOCUMENTO = (\d+);/.exec(fonte);
+  assert.ok(m, 'SEGUNDOS_POR_DOCUMENTO sumiu do portal — o espelho perdeu o outro lado');
+  const segundosPorDocumento = Number(m[1]);
+
+  const cadenciaS = byName['IA Extrair'].parameters.options.batching.batch.batchInterval / 1000;
+
+  // PISO: um documento nunca custa menos que UMA chamada de extração. Abaixo
+  // disso a tela promete um tempo que a cadência não consegue cumprir, e o
+  // analista fecha a página achando que travou.
+  assert.ok(segundosPorDocumento >= cadenciaS,
+    `a tela promete ${segundosPorDocumento}s por documento, e uma chamada sozinha já leva ${cadenciaS}s`);
+
+  // TETO: um documento faz, no pior caso realista, uma classificação por
+  // conteúdo mais alguns blocos de extração. Quatro chamadas cobre isso com
+  // folga; acima, a estimativa deixou de acompanhar a cadência — que é
+  // exatamente o que aconteceu quando 45s sobreviveu à queda de 33s para 8s.
+  assert.ok(segundosPorDocumento <= cadenciaS * 4,
+    `a tela promete ${segundosPorDocumento}s por documento contra uma cadência de ${cadenciaS}s `
+    + '— a estimativa ficou para trás de uma mudança de cadência');
+});
