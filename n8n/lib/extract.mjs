@@ -619,8 +619,8 @@ export function ehLinhaNaoMonetaria(chave, valorTexto, coluna) {
   // dimensão porque contém "valor unitario" —, exceto na segunda alternância,
   // que casa por palavra dentro do rótulo.
   const reColuna = new RegExp(String.raw`^(?:qtde?|quantidade|unidade|efetivo(?: \(pessoas\))?|pessoas`
-    + String.raw`|headcount|dias|prazo|exercicio|ano|natureza|tipo|classe|categoria|situacao|status`
-    + String.raw`|moeda|indexador|contraparte|banco|contrato|historico|documento|empresa.*)$`
+    + `|headcount|dias|prazo|exercicio|ano|natureza|tipo|classe|categoria|situacao|status`
+    + `|moeda|indexador|contraparte|banco|contrato|historico|documento|empresa.*)$`
     + String.raw`|(?:^|\s)(?:%|percentual|participacao|(?:custo|preco|valor) unitario|taxa)(?:$|\s)`);
   if (reLinha.test(norm(chave))) return true;
   if (String(valorTexto ?? '').includes('%')) return true;
