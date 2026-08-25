@@ -65,6 +65,30 @@ export const SECAO_CANONICA_ENUM = [
   'NAO_CLASSIFICAVEL',
 ];
 
+// OS TIPOS DE FATO MATERIAL — espelho de `fato_tipo_catalogo` (db/migrations/0148).
+//
+// POR QUE HÁ DUAS CÓPIAS, e por que isso é aceitável aqui: o enum precisa ir no
+// `responseSchema` da chamada de IA (onde o banco não alcança) e a SEVERIDADE
+// precisa morar no banco (onde a tela alcança). São dois consumidores em dois
+// mundos, sem import cruzado — o mesmo arranjo de `SECAO_CANONICA_ENUM` acima.
+//
+// O que impede as duas cópias de divergirem em silêncio é um teste, não a boa
+// vontade: `db/test/fato_material.test.sql` compara esta lista com o catálogo do
+// banco e reprova na primeira diferença. Um tipo que exista só aqui é recusado
+// por `fn_registrar_fatos` como "tipo desconhecido" — o fato seria lido do
+// documento e jogado fora, que é o pior desfecho possível para esta fatia.
+export const FATO_TIPO_ENUM = [
+  'continuidade_operacional',
+  'ressalva_auditoria',
+  'covenant_rompido',
+  'reclassificacao_divida',
+  'litigio_relevante',
+  'garantia_dada',
+  'evento_subsequente',
+  'parte_relacionada',
+  'mudanca_criterio_contabil',
+];
+
 // Exportado de propósito: `build-workflow.mjs` embute ESTE texto no nó Code do
 // workflow (via JSON.stringify), em vez de manter uma paráfrase manual. Antes
 // havia três cópias do prompt (aqui, no gerador e no JSON gerado) e elas já
@@ -127,6 +151,34 @@ export const SYSTEM_PROMPT = [
   'resumo: 2-3 frases objetivas do que o documento contém (para alguém decidir sem abrir o',
   '  arquivo).',
   'justificativa: 1-2 frases explicando o diagnóstico acima (o que você viu ou não viu).',
+  '',
+  '== FATOS MATERIAIS ("fatos") — o que o documento diz em TEXTO ==',
+  'Alguns documentos não têm tabela nenhuma e mesmo assim carregam o fato mais importante do',
+  'trabalho: uma nota explicativa que declara covenant rompido, um parecer com ressalva, uma',
+  'incerteza sobre continuidade operacional. Eles são o motivo real por trás de números que, sozinhos,',
+  'parecem apenas ruins — e quem decide precisa vê-los ANTES da planilha.',
+  'Percorra o texto corrido do documento e declare em "fatos" um item para cada ocorrência de:',
+  '- continuidade_operacional: dúvida relevante sobre a empresa seguir operando.',
+  '- ressalva_auditoria: opinião COM RESSALVA, adversa, ou abstenção de opinião.',
+  '- covenant_rompido: índice/cláusula contratada NÃO atingida no período.',
+  '- reclassificacao_divida: saldo movido do passivo não circulante para o circulante.',
+  '- litigio_relevante: processo ou contingência com valor material declarado.',
+  '- garantia_dada: ativo dado em garantia, alienação fiduciária, penhor, ônus.',
+  '- evento_subsequente: fato posterior à data do balanço que muda a leitura dele.',
+  '- parte_relacionada: operação relevante com controlada, controladora ou sócio.',
+  '- mudanca_criterio_contabil: critério que mudou entre exercícios.',
+  '',
+  'REGRA DA EVIDÊNCIA, e ela é obrigatória: "tr" tem de ser o TRECHO LITERAL do documento —',
+  'copiado, não reescrito, não resumido, com no mínimo 20 caracteres. Quem lê o alerta precisa',
+  'poder abrir a página e encontrar aquela frase. Um item cujo "tr" seja um resumo seu, ou uma',
+  'paráfrase, é DESCARTADO na gravação e o fato se perde. Em "le" vai a leitura — o que aquilo',
+  'significa para quem decide, em UMA frase; ela complementa a evidência e nunca a substitui.',
+  '',
+  'NA DÚVIDA, NÃO DECLARE. Uma nota que menciona a existência de covenants sem dizer que algum foi',
+  'rompido NÃO é covenant_rompido; um parecer LIMPO não é ressalva. Alerta falso nesta lista é mais',
+  'caro que fato ausente, porque esta lista é curta e é lida primeiro — e uma lista curta com um',
+  'item errado é a que ensina o leitor a desconfiar dela inteira.',
+  'A resposta comum e CERTA é lista vazia: quase todo documento é tabela e não declara nada disso.',
   '',
   '== MOEDA E ESCALA (nível do documento) ==',
   'moeda: código ISO da moeda em que os valores estão expressos — "BRL" para Real, "USD" para',
@@ -410,6 +462,7 @@ export function extractionSchema() {
           required: [
             'entidade', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo', 'periodo_referencia',
             'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro', 'resumo', 'justificativa',
+            'fatos',
           ],
           properties: {
             entidade: { type: ['string', 'null'] },
@@ -422,6 +475,36 @@ export function extractionSchema() {
             tem_dado_financeiro: { type: 'boolean' },
             resumo: { type: 'string' },
             justificativa: { type: 'string' },
+            // O FATO QUE O DOCUMENTO DIZ EM TEXTO, e não em tabela.
+            //
+            // Nasceu do ANEXO A.2 da v48: as Notas Explicativas e o Parecer do
+            // Auditor não têm tabela nenhuma, extraem ZERO linha corretamente —
+            // e carregam o rompimento de covenant e a ressalva, que é o que um
+            // comitê de crédito lê primeiro. Eles entravam, eram classificados e
+            // ficavam mudos.
+            //
+            // `tr` é o TRECHO LITERAL e o banco o exige (`fn_registrar_fatos`
+            // recusa entrada sem ele): um resumo escrito pelo modelo é
+            // afirmação, a frase copiada é evidência — e este alerta é o que vai
+            // ao comitê. `le` é a leitura em uma frase, COMPLEMENTO da evidência
+            // e nunca substituto.
+            //
+            // Vazio é a resposta comum e certa: quase todo documento é tabela.
+            fatos: {
+              type: 'array',
+              description: 'fatos materiais declarados EM TEXTO por este documento; [] na maioria (documento de tabela não declara nada)',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['ft', 'tr', 'le', 'pg'],
+                properties: {
+                  ft: { type: 'string', enum: FATO_TIPO_ENUM, description: 'tipo do fato' },
+                  tr: { type: 'string', description: 'trecho LITERAL do documento, copiado sem reescrever, com no mínimo 20 caracteres; é a evidência e sem ele o fato é descartado' },
+                  le: { type: 'string', description: 'leitura: o que o trecho significa para quem decide, em UMA frase' },
+                  pg: { type: ['integer', 'null'], description: 'página em que o trecho aparece' },
+                },
+              },
+            },
           },
         },
         // A SAÍDA É AGRUPADA, E O MOTIVO É A CONTA DE LUZ.
@@ -1062,6 +1145,23 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = 
     tem_dado_financeiro: typeof d.tem_dado_financeiro === 'boolean' ? d.tem_dado_financeiro : null,
     resumo: d.resumo ?? null,
     justificativa: d.justificativa ?? '',
+    // Os fatos viajam para `fn_registrar_fatos` no MESMO nó que grava o
+    // diagnóstico. `null` quando a chave não veio (workflow antigo) é diferente
+    // de `[]` (o modelo leu e não achou nada): o banco NÃO apaga os fatos de uma
+    // versão quando recebe null, porque apagar trilha por causa de um workflow
+    // desatualizado é o defeito do `Gravar Campos` que desligou a reconciliação
+    // por onze dias.
+    fatos: Array.isArray(d.fatos)
+      ? d.fatos
+        .filter((f) => f && typeof f === 'object' && typeof f.ft === 'string'
+                       && typeof f.tr === 'string' && f.tr.trim().length >= 20)
+        .map((f) => ({
+          tipo: f.ft,
+          trecho: f.tr.trim(),
+          leitura: typeof f.le === 'string' && f.le.trim() !== '' ? f.le.trim() : null,
+          pagina: Number.isInteger(f.pg) ? f.pg : null,
+        }))
+      : null,
   };
   // Corte por teto COM JSON válido é raro (o corte quase sempre cai
   // no meio de uma string/array e quebra o parse acima), mas se acontecer o
