@@ -7115,8 +7115,15 @@ begin
   select id into v_pendencia_id from pendencia
     where caso_id = v_caso_id and motivo = 'diagnostico:tipo:' || p_documento_id and estado <> 'resolvida'
     limit 1;
-  if coalesce(p_tipo_confirma, true) = false
-     or (p_tipo_sugerido is not null and p_tipo_sugerido is distinct from v_tipo_atual) then
+  -- 0142: exige divergência ACIONÁVEL. "Não confirmo" sozinho não basta —
+  -- o modelo diz isso também quando reconhece o mesmo tipo com outro nome
+  -- (doc 27 da v48: NOTAS_EXPL contra NOTAS_EXPL) ou quando não sabe o que o
+  -- documento é ("?" contra "(nenhum)", doc 28). Nos dois casos a pendência
+  -- pedia decisão sobre uma diferença que não existe.
+  if (p_tipo_sugerido is not null and p_tipo_sugerido is distinct from v_tipo_atual)
+     or (coalesce(p_tipo_confirma, true) = false
+         and v_tipo_atual is not null
+         and coalesce(p_tipo_sugerido, '') <> coalesce(v_tipo_atual, '')) then
     if v_pendencia_id is null then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
         values (v_caso_id, 'diagnostico', 'tipo_incorreto', 'importante', true,

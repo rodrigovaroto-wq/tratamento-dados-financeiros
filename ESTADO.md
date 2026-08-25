@@ -15,7 +15,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0141_o_limiar_que_nunca_excluiu_nada.sql` — a trilha do auto-aceite passa a dizer quantas linhas o limiar excluiu, porque medido em 24/08 ele nunca excluiu nenhuma: em 15.030 linhas a confiança auto-reportada só assumiu 0,95 / 0,99 / 1, e o limiar é 0,95. A `0140` (coluna de dimensão) foi aplicada em produção em 24/08 |
+| **Última migration** | `db/migrations/0142_tipo_incorreto_precisa_de_divergencia.sql` — a pendência de tipo passa a exigir divergência acionável; medido na v48, mantém o achado real (doc 14) e derruba dois falsos (docs 27 e 28). A `0140` e a `0141` foram aplicadas em produção em 24/08 |
 | **Aplicadas no Supabase** | **as 82**, com a `0133`, a `0136` e a `0137` aplicadas em 21/08 — e a **`0138` aplicada**, medido em 24/08 na análise da v47: `fn_veredito_producao` já não contém `RAISE EXCEPTION`. A sonda `fn_instalacao_conferir()` respondeu 14 requisitos, todos presentes. Este arquivo não é a autoridade sobre isso: quem responde é a sonda das migrations, contra o banco em que você está conectado (ver "A `0133` QUE FALTOU") |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | variações **25** (a cadeia real sobre documento sujo) · n8n **331** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (84 migrations do zero, os DOIS books) |
