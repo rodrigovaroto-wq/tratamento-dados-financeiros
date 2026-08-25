@@ -97,6 +97,76 @@ rodada própria para medir, e é a próxima fatia.
 `precondicao_nao_satisfeita: hierarquia_achatada` em vez de acusar. Recusar-se a acusar
 quando não dá para conferir é a doutrina desta casa.
 
+### E o achatamento produz DUAS famílias de falso positivo, não uma
+
+Cruzando o HTML do portal com o banco, a checagem de **duplicidade de rótulo** é vítima do
+mesmo defeito. Os "pares que podem ser a mesma conta" são, na verdade, **subtotal e seu
+único filho** — que têm o mesmo valor por construção:
+
+| Par acusado | O que realmente é | Medido no doc 12 |
+|---|---|---|
+| `Caixa` = `Disponível` (241) | `Disponível` é o grupo, `Caixa` o único filho | ordem 2 e 3, mesma `secao` |
+| `Empréstimos` = `Financiamento imobiliário - longo prazo` (7.726) | idem | ordem 20 e 21 |
+| `Lucros acumulados` = `Lucros ou Prejuízos Acumulados` | idem | recorrente em 6 documentos |
+
+Não são rótulos duplicados. **São pai e filho, e só parecem duplicados porque a hierarquia
+foi achatada.** Uma causa, duas famílias de pendência falsa.
+
+### 🔴 E um defeito próprio: a pendência aponta para o arquivo ERRADO
+
+A pendência que lista `Capital Social`, `Lucros ou Prejuízos Acumulados` e
+`Capital social subscrito e integralizado` está anexada ao
+**`20_Mapa_de_Divida_Canastra_Industria_2025.pdf`** — confirmado no banco,
+`tipo_taxonomia = MAPA_DIVIDA`.
+
+**Um mapa de dívida não tem Capital Social.** A checagem `fn_reconciliar_duplicidade` é por
+(caso, entidade), não por documento, e a pendência cai no documento que por acaso a
+disparou. O analista abre o arquivo indicado, procura a conta e ela não está lá — o pior
+tipo de pendência, porque queima confiança na fila inteira.
+
+**Correção:** pendência de checagem por entidade não deve carregar `documento_id`; deve
+declarar-se como "vale para a entidade", que é o formato que o portal já sabe renderizar
+("Vale para o caso, não para um arquivo específico").
+
+---
+
+## 1.b A conta que fecha a rodada: 17 das 27 pendências são falsas
+
+| Origem | Qtd | Veredito |
+|---|---:|---|
+| `secao_fecha` (razão 2,0000) | 6 | ❌ achatamento |
+| `duplicidade_de_rotulo` (pai ≡ filho) | 6 | ❌ achatamento |
+| `linha_exigida` da entidade fantasma `GRUPO CANASTRA` | 3 | ❌ misclassificação |
+| `tipo_incorreto` sem divergência | 2 | ❌ corrigido pela `0142` |
+| **Subtotal de falso positivo** | **17** | **63% da fila** |
+| `linha_exigida` legítimas | 6 | ✅ |
+| `tipo_incorreto` real (doc 14) | 1 | ✅ |
+| demais | 3 | ✅ |
+
+**Doze das dezessete saem de UMA causa: a `secao` achatada.**
+
+---
+
+## 1.c A extração está certa — as checagens é que não
+
+Conferi os totais materiais da v48 contra o `GABARITO.json`. **Nenhuma divergência:**
+
+| Conta | Gabarito | v48 |
+|---|---:|---:|
+| TOTAL DO ATIVO 2025 | 137.624 | 137.624 ✅ |
+| Passivo + PL 2025 | 137.624 | 137.624 ✅ |
+| Ativo Circulante / Não Circulante | 44.022 / 93.602 | 44.022 / 93.602 ✅ |
+| Receita Bruta / Líquida 2025 | 188.000 / 139.872 | 188.000 / 139.872 ✅ |
+| DFC caixa inicial / final | 3.621 / 825 | 3.621 / 825 ✅ |
+| Dívida / juros | 52.063.000 / 14.802.000 | idem ✅ |
+| Aging AR | 28.706 | 28.706 ✅ |
+| Estoques | 15.605 | 15.605 ✅ |
+| Imobilizado custo/depr./líquido | 140.231 / −59.682 / 80.549 | idem ✅ |
+
+**Esta é a conclusão que mais importa da comparação com o portal:** o sistema está lendo os
+documentos corretamente e **apontando as questões erradas**. O dado entregue é bom; a fila
+de revisão é que está poluída — e por uma causa só.
+
 ---
 
 ## 2. ✅ CORRIGIDO: `tipo_incorreto` acusava sem ter divergência
