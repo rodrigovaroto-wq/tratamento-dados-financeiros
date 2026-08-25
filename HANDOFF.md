@@ -4,17 +4,21 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-25 (sessões 62 a 66). **Estado do `main`:** mergeado até o **PR
-#174**. Não há trabalho pendente fora do `main`: as sessões 62 a 66 foram todas mergeadas (PRs #164
-a #174). **Não há infra esperando** — as migrations `0140` a `0146` estão aplicadas em produção, e
-isso foi CONFERIDO contra o banco, não copiado adiante: sete consultas de catálogo, uma por
-migration, todas presentes em 25/08.
+**Última atualização:** 2026-08-25 (sessões 62 a **67**). **Estado do `main`:** mergeado até o **PR
+#175**; a sessão 67 está na branch `claude/handoff-leitura-xlct1q`, verde e pronta. **HÁ INFRA
+ESPERANDO, e é a primeira coisa a fazer:** a `0147` e a `0148` não estão aplicadas, e o workflow do
+n8n precisa ser REIMPORTADO — quatro nós mudaram. Enquanto isso não acontecer, as duas frentes de
+extração da sessão 67 existem só no repositório. As migrations `0140` a `0146` continuam aplicadas e
+conferidas contra o banco.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
-> foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **E a sonda hoje cobre só 13
-> marcadores**, que param antes da `0140`: para as migrations novas é preciso conferir função a
-> função, como foi feito aqui. Estender o catálogo da sonda é item aberto.
+> foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **Desde a `0147` (sessão 67) a sonda
+> cobre 23 marcadores e enxerga o CORPO da função** — que é o que distingue uma correção aplicada de
+> uma função homônima com o corpo velho, e é a maior parte das migrations recentes. E o
+> `db/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova, então ele não
+> volta a envelhecer calado. **Mas a própria `0147` só responde depois de aplicada:** num banco sem
+> ela, a sonda continua sendo a de 13 marcadores.
 
 **O BLOQUEIO QUE ATRAVESSOU DEZ SESSÕES CAIU: O DONO RODOU O BOOK.** Duas vezes — a **v47** (23/08,
 38 documentos, 9min01) e a **v48** (24/08, os mesmos 38, 10min08). É o **B1** do
@@ -54,24 +58,27 @@ localizador tem de existir também na checagem que o consome. Sem esse quarto pa
 ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
 trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
-**POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem:**
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem** — e os três primeiros são do DONO, não de
+engenharia. A sessão 67 fechou as quatro frentes de código que estavam nesta lista; o que sobrou é
+justamente o que nenhuma suíte alcança:
 
-1. **A hierarquia, na EXTRAÇÃO.** É a causa raiz de 12 das 20 pendências falsas, e a `0143`/`0144`
-   só ensinaram as checagens a se recusarem a acusar o que não conseguem conferir — **nenhuma
-   reconstrói a árvore**. O conserto é `secao` trazer o grupo IMEDIATO, é mudança de prompt/schema,
-   e precisa de rodada própria para medir. Um reconstrutor por `ordem` e aritmética foi escrito e
-   **deliberadamente não entregue**: resolvia 3 das 15 seções, e meio-conserto aqui é pior que
-   nenhum, porque as 12 restantes passariam a mentir com aparência de resolvidas;
-2. **A escala do `Parse Extracao` não foi publicada no n8n.** O `jsCode` tem 34.087 caracteres e o
-   nó vivo ainda roda a versão anterior à correção. O dono já liberou a publicação;
-3. **Os 3 documentos fora de escopo (33 e 34).** Eles carregam o rompimento de covenant e a ressalva
-   do parecer de auditoria, e **não produzem nada no portal**. É lacuna de ESCOPO, não de extração;
-4. **Estender o catálogo da sonda** para além dos 13 marcadores — hoje ela para antes da `0140`;
+1. **REIMPORTAR o `n8n/workflow.e1-ingestao.json`.** Quatro nós mudaram: `Montar Req Extracao`,
+   `Orcamento do Lote` e `Registrar Documento` (a hierarquia) e `Registrar Diagnostico` (os fatos
+   materiais). Sem isso, as duas maiores entregas da 67 não existem em produção — e a tela não
+   quebra, que é o modo de falha que este projeto passa o tempo corrigindo;
+2. **APLICAR a `0147` e a `0148`** (`db/README.md` tem os comandos, em ordem);
+3. **RODAR o book de novo.** É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
+   acha os fatos materiais nas Notas Explicativas e no Parecer. O teste prova a aritmética da
+   conferência; só a rodada real prova a leitura. **Espere a hierarquia derrubar as 12 pendências
+   falsas de seção/duplicidade — e confira se derrubou, porque essa é a medida da frente inteira;**
+4. **Os 2 testes vermelhos no dialeto OpenAI**, que já estavam vermelhos antes da 67 (conferido
+   rodando o `886b7f3`). Não bloqueiam nada — o provedor ativo é o Google —, mas o `ESTADO.md` diz
+   "a OpenAI continua testada" e isso hoje tem duas exceções;
 5. **Os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
    capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao cliente, B4.1) e preencher
    os `[A CONFIRMAR]` do `docs/10`.
 
-**O QUE MUDOU DA 52 PARA A 66, em uma linha cada** — a narrativa completa de cada uma está no
+**O QUE MUDOU DA 52 PARA A 67, em uma linha cada** — a narrativa completa de cada uma está no
 `ESTADO.md`, que é onde ela deve ser lida:
 
 | Sessão | O que ficou de pé |
@@ -87,6 +94,7 @@ trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome n�
 | 62-63 | **O provedor de IA vira escolha** e o padrão passa a ser o Google (`gemini-3.5-flash-lite`): não havia "um provedor" para trocar — havia a OpenAI espalhada por quatro módulos. Agora cada provedor é um objeto de DADOS em `n8n/lib/provedor.mjs` |
 | 64 | **A v47, a primeira rodada real.** A reconciliação parada havia onze dias em silêncio; a coluna de dimensão que virava valor (`0140`); o limiar que nunca excluiu nada (`0141`) |
 | 65-66 | **A v48 e as quatro causas de pendência falsa** (`0142` a `0146`); a conferência linha a linha que provou a extração certa; a estimativa de tempo antes do envio; a modelagem da v48 com as premissas derivadas do próprio realizado |
+| **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair

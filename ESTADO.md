@@ -16,11 +16,120 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
-| **Aplicadas no Supabase** | **as 91**, com a `0140` a `0146` aplicadas em 24-25/08 nas análises da v47 e da v48 — conferidas função a função contra o catálogo, sete de sete presentes. **A sonda `fn_instalacao_conferir()` cobre só 13 marcadores e para antes da `0140`**: para as migrations novas é preciso conferir a função, como foi feito. Este arquivo não é a autoridade sobre isso: quem responde é o catálogo do banco em que você está conectado (ver "A `0133` QUE FALTOU") |
+| **Aplicadas no Supabase** | **as 91** até a `0146`, conferidas função a função em 24-25/08. **A `0147` e a `0148` NÃO estão aplicadas** — são desta sessão e esperam o dono (`db/README.md`). A sonda `fn_instalacao_conferir()` passou a cobrir **23 marcadores** e a enxergar o CORPO da função; e desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados) · n8n **343** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**91 migrations** do zero, os DOIS books) — todas medidas em 25/08 |
+| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados) · n8n **353** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — todas medidas em 25/08, e o pipeline inteiro do CI rodado **três vezes seguidas, três vezes verde** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 67 (25/08) — as quatro frentes que o handoff deixou em ordem
+
+O handoff da 66 listava cinco itens em ordem. Quatro foram feitos nesta sessão, e o quinto (os
+itens que só o dono destrava) continua sendo dele. **O que ficou aberto está no fim desta seção,
+nomeado.**
+
+### 1. A hierarquia na extração — `secao` passa a ser o agrupador IMEDIATO
+
+Era a causa raiz de 12 das 20 pendências falsas da v48. `secao` trazia a seção de TOPO para toda
+linha, então o subgrupo e os filhos dele entravam na MESMA soma e a seção era contada duas vezes.
+
+**Medir antes de escrever desmentiu o plano, de novo.** A hipótese era que `fn_conferir_arvore`
+precisaria de conserto. Montei o mesmo documento de três alturas nos dois estados e rodei a função
+contra os dois:
+
+| | conferências | soma dos filhos | resultado |
+|---|---|---|---|
+| achatado | 1 | 44.847 | `divergente` |
+| hierárquico | 2 | 44.022 **e** 825 | as duas `ok` |
+
+**`fn_conferir_arvore` não precisou de uma linha:** ela já é recursiva por construção — todo rótulo
+que aparece como `secao` de alguém vira pai. O defeito nunca esteve nela, estava no insumo. E o
+hierárquico ainda GANHA uma conferência que não existia: o subgrupo passa a conferir a si mesmo.
+
+**Um achado que estreita a conclusão da v48:** neste caso a razão é **1,0187, não 2,0000**. A guarda
+de `hierarquia_achatada` da `0143` só reconhece a assinatura quando TODOS os subgrupos estão
+achatados; com um só achatado, a pendência sai como divergência normal e o piso honesto não cobre.
+
+**E o CI nunca tinha visto isso** porque o fixture do `book-vertentes` tem DOIS níveis. O bloco 7 do
+`secao_fecha.test.sql` acrescenta o caso de três alturas, nos dois estados, com as mesmas sete
+linhas — 8 asserts.
+
+**O risco que a mudança cria, medido:** `secao` encolhe, e há localizadores que casam contra ela. Das
+três exigências que usam `contra='secao'`, TODAS têm alternativa por `chave`. Um assert novo garante
+que a próxima não nasça dependendo só da seção.
+
+### 2. O `Parse Extracao` foi publicado no n8n — e a conferência é por hash
+
+O nó vivo rodava a versão anterior ao PR #173. Agora roda a do repositório: `escalaDeclaradaNaColuna`
+presente e aplicada nos dois formatos, moeda herdada por linha, contexto religado ao `Fatiar`.
+**575 das 579 linhas batem byte a byte.**
+
+**As 4 que não batem, e por quê — isto importa para a próxima sessão.** São os quatro ranges NFD. O
+transporte MCP **decodifica `\uXXXX` antes de o texto chegar ao `jsCode`**, então o range grava o
+caractere combinante CRU em vez do escape. Quatro tentativas, quatro vezes o mesmo. A equivalência
+foi MEDIDA e não suposta: **160 comparações das duas formas, 0 divergências.** Para bater por hash
+basta o dono importar o `n8n/workflow.e1-ingestao.json` pela tela — o que ele vai precisar fazer de
+qualquer jeito (ver "o que ficou aberto").
+
+### 3. A sonda de instalação passa a enxergar o CORPO da função (`0147`)
+
+O catálogo tinha 13 marcadores e parava na `0130`, com o banco na `0146`. Dezesseis migrations sem
+cobertura — e **a fatia de fora era a cara**: das 16, só sete criam objeto novo. As outras nove
+apenas republicam corpo de função (a `0142`, a `0143`, a `0144`, a `0145`, a `0146`), e todas mudam
+**o que o sistema acusa**. Um banco sem elas abre pendência falsa e parece perfeitamente instalado,
+porque cada função que elas corrigem existe.
+
+Essa cegueira a própria `0131` já tinha declarado de si mesma e deixado aberta. O tipo `corpo` a
+fecha: o requisito exige que um trecho apareça em `pg_get_functiondef`.
+
+**Religamento medido:** um banco montado do zero com tudo MENOS a `0142`, a `0143` e a `0146` faz a
+sonda nomear as três, com o detalhe *"a função existe, mas o corpo é ANTERIOR a esta migration"*. O
+mesmo banco, antes da `0147`, se declarava instalado. **Os marcadores foram medidos contra o banco —
+três dos meus primeiros palpites estavam errados.**
+
+E `instalacao_cobertura` declara até onde o catálogo foi revisado, com o `run.sh` reprovando quando
+ela fica para trás. A `0148` foi a primeira a pagar esse portão, na mesma sessão.
+
+### 4. O que o documento diz em TEXTO deixa de ficar mudo (`0148`)
+
+Dos 38 documentos, quatro não rendem linha e os quatro estão certos. Mas dois carregam os fatos mais
+importantes do mandato: o `33_Notas_Explicativas` declara o **covenant rompido** e a reclassificação
+que explica o Passivo Circulante em 112.372; o `34_Relatorio_do_Auditor` traz **ressalva** e
+**incerteza sobre continuidade operacional**. Nenhum dos dois chegava ao portal.
+
+**Duas decisões de produto, e elas são a parte discutível:**
+
+1. **Fato material NÃO é pendência.** Pendência significa "há algo a corrigir"; covenant rompido não
+   é defeito do dado, é o dado. Canal próprio, e ele **abre** a tela do mandato.
+2. **O fato carrega o trecho LITERAL, `not null`.** Resumo do modelo é afirmação; frase copiada é
+   evidência — e este é o alerta que vai ao comitê. Na tela o trecho vem primeiro, como citação.
+
+Nenhuma chamada de IA nova (o modelo já lê o PDF inteiro) e nenhum nó novo no canvas
+(`fn_registrar_fatos` entra na MESMA query do `Registrar Diagnostico`, porque cada nó Postgres a mais
+é mais uma chance de perder `documento_id` — v47, onze dias parados).
+
+### E o caractere que ninguém vê saiu do arquivo que vai à mão para o n8n
+
+Três das quatro classes NFD do `extract.mjs` carregavam os combinantes CRUS; a quarta, na MESMA
+função, já usava a forma escapada. Medido: dos quatro workflows gerados, **os 6 caracteres do
+repositório inteiro estavam TODOS no `Parse Extracao`** — o nó que faltava publicar. O
+`caracteres.test.mjs` passa a varrer os quatro JSONs commitados.
+
+### O que ficou aberto, e de quem é
+
+1. **REIMPORTAR o `n8n/workflow.e1-ingestao.json`** (dono). Três nós mudaram com a hierarquia
+   (`Montar Req Extracao`, `Orcamento do Lote`, `Registrar Documento`) e um quarto com os fatos
+   (`Registrar Diagnostico`). Sem isso, nada das frentes 1 e 4 chega à produção;
+2. **APLICAR a `0147` e a `0148`** no Supabase (dono, `db/README.md`);
+3. **RODAR o book** (dono). É o que mede se o modelo obedece ao prompt novo — o bloco 7 prova a
+   aritmética da conferência, não a leitura do documento. Vale para as duas frentes;
+4. **O dialeto OpenAI tem 2 testes vermelhos** (`Ramo E2: Registrar → Montar Req Extracao → Parse` e
+   `a estimativa que o PORTAL mostra é coerente com a cadência REAL`), e eles **já estavam vermelhos
+   no início desta sessão** — conferido rodando o commit `886b7f3` do mesmo jeito. Não bloqueiam: o
+   provedor ativo é o Google e o CI roda o dialeto padrão. Mas a linha da tabela acima diz "a OpenAI
+   continua testada", e hoje isso é verdade com duas exceções;
+5. **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), o capítulo
+   10 no repositório (B4.1) e os `[A CONFIRMAR]` do `docs/10`.
 
 ## O PROVEDOR DE IA VIROU ESCOLHA, E O PADRÃO PASSOU A SER O GOOGLE (24/08)
 
