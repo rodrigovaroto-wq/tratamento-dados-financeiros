@@ -556,7 +556,7 @@ export function buildExtractionRequest({
 export function normalizarUnidade(bruto) {
   if (bruto == null) return null;
   const t = String(bruto)
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().trim();
   if (!t) return null;
   if (/\bmilhao|milhoes|\bmm\b|r\$\s*mi\b|\bmi\b/.test(t)) return 'milhao';
@@ -571,7 +571,7 @@ export function normalizarUnidade(bruto) {
 export function normalizarMoeda(bruto) {
   if (bruto == null) return null;
   const t = String(bruto)
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().trim();
   if (!t) return null;
   if (/\bbrl\b|r\$|real|reais/.test(t)) return 'BRL';
@@ -641,7 +641,7 @@ export function ehLinhaNaoMonetaria(chave, valorTexto, coluna) {
 // devolve null e a escala do documento continua valendo, porque adivinhar aqui
 // seria trocar um erro de 1.000× por outro.
 export function escalaDeclaradaNaColuna(coluna) {
-  const t = String(coluna ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const t = String(coluna ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   if (/\bmilhao|\bmilhoes|\bmi\b|r\$\s*mm\b/.test(t)) return 'milhao';
   if (/\bmil\b|\bmilhar|\bmilhares/.test(t)) return 'milhar';
   return null;
