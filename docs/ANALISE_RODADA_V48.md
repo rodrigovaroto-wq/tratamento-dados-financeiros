@@ -269,3 +269,123 @@ acontece — o item do estimador descalibrado continua aberto.
 | 5 | **Entidade fantasma + normalização de nome** | 7 entidades para 6 empresas |
 | 6 | Estimador, `FOLHA_PAGAMENTO`, persistir tokens, `eslint` no `n8n/` | Baratos |
 | 7 | Confiança derivada de evidência | Fatia própria |
+
+---
+
+# ANEXO — Conferência linha a linha contra os PDFs
+
+Feita com o oráculo do próprio repositório: `pdf/METRICAS.json` (a verdade declarada pelo
+gerador, não medição do PDF) e `extrai.py` (lê o texto do PDF sem dependência externa).
+
+## A.1 A extração está completa — e a métrica de cobertura engana
+
+Primeira comparação, ingênua: `celulas_de_valor_verdade` contra células extraídas com
+número deu **83,2% de cobertura**, com 12 documentos "faltando" células — o `17_Livro_Razao`
+faltando 195, os balancetes ~75 cada.
+
+**Esse número está errado, e o erro é da métrica.** `render.py` conta como "célula de valor"
+**toda célula da tabela que contenha um dígito**, exceto a do rótulo. Isso inclui:
+
+| Documento | Colunas que a verdade conta como "valor" | São valor? |
+|---|---|---|
+| `15/16_Balancete` | `Código` (1.1.01.001) | ❌ identificador |
+| `17_Livro_Razao` | `Data` (01/12/2025), `Lançamento` (LC-2025-4000) | ❌ identificadores |
+| `20_Mapa_de_Divida` | `Contrato` (CG-2021-884.117), `Vencimento`, `Taxa` | ❌ identificadores |
+| `29_Extrato` | `Agência` (0341), `Conta` (12.884-7) | ❌ identificadores |
+
+Conferido documento a documento, **o sistema pegou os valores financeiros que existem**:
+
+| Documento | O que o PDF tem | O que o sistema extraiu | |
+|---|---|---|---|
+| `17_Livro_Razao` | 99 lançamentos × (Débito **ou** Crédito) + Saldo | Débito 35 + Crédito 64 + Saldo 99 = **198** | ✅ completo |
+| `15_Balancete` | 78 contas × Saldo (+ D/C textual) | Saldo 78 + D/C 78 | ✅ completo |
+| `29_Extrato` | 5 bancos + TOTAL = **6 saldos** | **6 saldos** (280, 214, 148, 99, 84, 825) | ✅ completo |
+| `20_Mapa_de_Divida` | Saldo devedor, Juros, Saldo US$ (1 contrato) | 12 + 12 + 1 = **25** | ✅ completo |
+| `27_Imobilizado` | Custo, Depreciação (7 de 9 depreciam), Líquido | 9 + 7 + 9 | ✅ completo |
+| `22/23_Aging` | 8 e 7 colunas de faixa | as 8 e as 7 | ✅ completo |
+
+**Conclusão: a cobertura real de valores financeiros é ~100%, não 83%.** O que o sistema
+"não extrai" são código de conta, data, número de lançamento, agência e taxa — e **não
+extrair isso está certo.**
+
+> Fica um item de manutenção: `n8n/lib/cobertura.mjs` é calibrado contra essa mesma métrica
+> inflada (`n8n/medir-regua-cobertura.mjs`). Uma régua calibrada contra um denominador que
+> conta identificador como valor vai subestimar a cobertura em documento de muitas colunas.
+
+## A.2 Os quatro documentos sem linha nenhuma: os quatro estão CERTOS
+
+| Doc | Conteúdo | Tem valor financeiro? |
+|---|---|---|
+| `30_Certidoes` | Empresa, certidão, órgão, situação, validade | ❌ nenhum — só datas |
+| `32_Organograma` | Controladora, controlada, participação %, país | ❌ nenhum — só percentuais societários |
+| `33_Notas_Explicativas` | Texto corrido | ❌ nenhuma tabela |
+| `34_Parecer_do_Auditor` | Texto corrido | ❌ nenhum número |
+
+Extrair zero linha dos quatro é **o comportamento correto**, e a verdade do gerador
+concorda (`celulas_de_valor_verdade = 0` nos quatro).
+
+### 🔶 Mas dois deles carregam os fatos mais importantes do mandato
+
+Não é defeito de extração — é **lacuna de escopo**, e vale mais que várias das pendências:
+
+- **`33_Notas_Explicativas`** traz, em texto: *"o índice apurado em 31/12/2025 não atingiu o
+  mínimo contratado… os saldos originalmente classificados no passivo não circulante foram
+  integralmente reclassificados para o passivo circulante"*. **É a explicação de por que o
+  Passivo Circulante saltou para 112.372** — e o motivo real de a empresa parecer ilíquida;
+- **`34_Relatorio_do_Auditor`** traz **OPINIÃO COM RESSALVA** e **INCERTEZA RELEVANTE SOBRE
+  CONTINUIDADE OPERACIONAL**.
+
+Ressalva de auditor e quebra de covenant são exatamente o que um comitê de crédito precisa
+ver primeiro, e hoje **não chegam ao portal de forma nenhuma** — nem como linha, nem como
+alerta. Os documentos entram, são classificados e ficam mudos.
+
+## A.3 As 9 pendências de "linha exigida ausente", uma a uma
+
+| # | Pendência | Conferido no PDF | Veredito |
+|---|---|---|---|
+| 1-3 | `GRUPO CANASTRA`: Ativo Total, Passivo+PL, Caixa | A entidade não existe — nasceu do doc 14 misclassificado | ❌ **falsa** |
+| 4 | `COMBINADO`: Caixa e equivalentes | O combinado só tem linhas de SEÇÃO (Ativo Circulante, ANC…). **Não há linha de caixa** | ✅ **legítima** |
+| 5 | `DRE Comercial`: Despesa Financeira | A DRE só traz `Resultado financeiro líquido` — valor LÍQUIDO | ✅ **legítima** |
+| 6 | `DRE CN Transportes`: Despesa Financeira | idem | ✅ **legítima** |
+| 7 | `MAPA_DIVIDA`: Juros por contrato | **Extraído**: coluna `Juros do exercício (R$)`, 12 células | ❌ **falsa** |
+| 8 | `MUTUOS`: Saldo de mútuo | **Extraído**: coluna `Saldo devedor`, 3 células (11.160 / 4.900 / 16.060) | ❌ **falsa** |
+| 9 | `FAT_INTRAGRUPO`: Faturamento entre partes | **Extraído**: coluna `Valor`, 15 células | ❌ **falsa** |
+
+### A causa das três últimas é uma só, e é estrutural
+
+Os localizadores de 7, 8 e 9 procuram o conceito com `contra = 'chave'` — no **rótulo da
+linha**:
+
+| Conceito | Procura | Onde o dado realmente está |
+|---|---|---|
+| `juros_por_contrato` | "juros" na chave | coluna `Juros do exercício (R$)`; a chave é o nome do banco |
+| `saldo_de_mutuo` | "mutuo" na chave | coluna `Saldo devedor`; a chave é o par mutuante/mutuária |
+| `faturamento_entre_partes` | "faturamento" na chave | coluna `Valor`; a chave é "2023 - Agro para Indústria" |
+
+**Em documento matricial o conceito é a COLUNA, não a linha.** O localizador não tem
+`contra = 'coluna'`, então cobra do cliente um dado que já está no banco. **Correção:
+acrescentar `contra = 'coluna'` ao localizador** — as três pendências somem juntas.
+
+### E as três legítimas são boas perguntas
+
+As duas de **Despesa Financeira** são o achado de negócio da rodada: as DREs da Comercial e
+da CN Transportes publicam só o **resultado financeiro LÍQUIDO**, e com ele não dá para
+conferir os juros do mapa de dívida — receita e despesa vêm somadas. Pedir a abertura ao
+cliente é exatamente o que um analista faria.
+
+## A.4 A conta revisada: 20 das 27 pendências são falsas
+
+| Origem | Qtd | |
+|---|---:|---|
+| `secao_fecha` (razão 2,0000) | 6 | ❌ achatamento da hierarquia |
+| `duplicidade_de_rotulo` (pai ≡ filho) | 6 | ❌ achatamento da hierarquia |
+| `linha_exigida` da entidade fantasma | 3 | ❌ misclassificação do doc 14 |
+| `linha_exigida` com conceito na coluna | 3 | ❌ localizador só olha a linha |
+| `tipo_incorreto` sem divergência | 2 | ❌ corrigido pela `0142` |
+| **Falso positivo** | **20** | **74% da fila** |
+| `linha_exigida` legítimas | 3 | ✅ |
+| `tipo_incorreto` real (doc 14) | 1 | ✅ |
+| demais | 3 | ✅ |
+
+**Quatro causas explicam as vinte.** E nenhuma delas é erro de leitura: **a extração está
+correta em ~100% dos valores financeiros dos 38 documentos.**
