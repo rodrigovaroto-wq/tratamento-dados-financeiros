@@ -218,7 +218,47 @@ begin
               where p.proname = 'fn_reconciliar_despfin_dre_vs_divida')) > 0,
     'fn_reconciliar_despfin_dre_vs_divida carrega o ramo da coluna (0145 passo 4)');
 
-  raise notice 'eixo_documento_e_coluna OK — duplicidade só entre documentos, nos dois sentidos; conceito na coluna acha e não passa livre; a checagem enxerga o mesmo eixo que o localizador';
+  -- ---------------------------------------------------------------------------
+  -- 5 e 6. A ENTIDADE QUE O DOCUMENTO NUNCA DECLAROU (0146).
+  --
+  -- Num documento de VÁRIAS empresas, a linha sem coluna não é da capa. Foram 7
+  -- linhas assim, nos dois balanços combinados da v48, que inscreveram "GRUPO
+  -- CANASTRA" — que não é empresa e não levanta balanço — no eixo de quem deve
+  -- um Ativo Total. Três pendências impossíveis de resolver.
+  --
+  -- E o outro sentido importa tanto quanto: num documento de UMA empresa o
+  -- fallback para a capa é a ÚNICA fonte da atribuição, e tem de continuar
+  -- valendo. Os dois casos abaixo diferem só na quantidade de colunas.
+  -- ---------------------------------------------------------------------------
+  raise notice '--- 5. documento de UMA empresa: a capa responde pela linha sem coluna ---';
+
+  -- O balanço do caso 1 não tem `entidade_coluna` em linha nenhuma e é da EIXO
+  -- INDÚSTRIA: ela tem de estar no eixo de BALANCO, cobrada nominalmente.
+  select count(*) into v_n
+  from fn_exigencias_do_caso(v_caso) x
+  where x.tipo_taxonomia = 'BALANCO' and x.entidade_id = v_ent;
+  perform teste_assert_eixo(v_n > 0,
+    'em documento de UMA empresa a capa segue atribuindo a linha sem coluna (0146 não regrediu)',
+    format('%s exigência(s) nominais para a entidade da capa', v_n));
+
+  raise notice '--- 6. documento de VÁRIAS: a capa deixa de responder ---';
+
+  -- O mesmo balanço vira matricial: as linhas ganham coluna de entidade, e duas
+  -- ficam SEM — como o cabeçalho de seção e o total do combinado real.
+  update campo_extraido set entidade_coluna = 'Empresa A'
+  where documento_versao_id = v_ver_bp and chave = 'Capital Social';
+  update campo_extraido set entidade_coluna = 'Empresa B'
+  where documento_versao_id = v_ver_bp and chave = 'Prejuízos acumulados';
+  -- 'Patrimônio Líquido' e 'Lucros ou Prejuízos Acumulados' continuam sem coluna.
+
+  select count(*) into v_n
+  from fn_exigencias_do_caso(v_caso) x
+  where x.tipo_taxonomia = 'BALANCO' and x.entidade_id = v_ent;
+  perform teste_assert_eixo(v_n = 0,
+    'em documento de VÁRIAS empresas a capa não é mais cobrada pela linha sem coluna (0146)',
+    format('%s exigência(s) nominais — a entidade da capa virou fantasma', v_n));
+
+  raise notice 'eixo_documento_e_coluna OK — duplicidade só entre documentos, nos dois sentidos; conceito na coluna acha e não passa livre; a checagem enxerga o mesmo eixo que o localizador; a capa responde por uma empresa e não por oito';
 end $$;
 
 drop function teste_assert_eixo(boolean, text, text);

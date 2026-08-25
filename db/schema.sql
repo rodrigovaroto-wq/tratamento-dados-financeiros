@@ -2125,24 +2125,12 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     LANGUAGE sql STABLE
     AS $$
   -- UMA CHAMADA POR TIPO, E NÃO POR DOCUMENTO — e o `materialized` é a metade
-  -- que faz a diferença existir.
-  --
-  -- A forma herdada da 0113 era `select distinct d.tipo_taxonomia from documento
-  -- where fn_linhas_do_tipo(...) > 0`: o `distinct` roda DEPOIS do filtro, então
-  -- a função — que por dentro varre `campo_extraido` e chama
-  -- `fn_versao_com_extracao` — era executada uma vez para cada DOCUMENTO.
-  --
-  -- MEDIDO, num caso sintético de 400 documentos e 16 mil linhas: o
-  -- `explain analyze` mostra 662 ms dos 914 ms totais nesse único filtro. E a
-  -- primeira tentativa de conserto — separar em duas CTEs — não mudou NADA no
-  -- relógio, porque o Postgres achata CTE simples e empurrou o filtro de volta
-  -- para baixo do agrupamento, desfazendo a intenção. É por isso que a primeira
-  -- CTE é `as materialized`: ela é a barreira que obriga o agrupamento a
-  -- acontecer ANTES da pergunta cara. Sem a palavra, o comentário estaria
+  -- que faz a diferença existir. A forma herdada da 0113 rodava
+  -- `fn_linhas_do_tipo` uma vez por DOCUMENTO (662 ms de 914 num caso de 400
+  -- documentos), e separar em duas CTEs simples não mudou nada, porque o
+  -- Postgres achata CTE e empurra o filtro de volta para baixo do agrupamento.
+  -- É a palavra `materialized` que impede isso; sem ela este comentário estaria
   -- descrevendo uma otimização que não acontece.
-  --
-  -- Agrupar antes de perguntar não muda o resultado: `fn_linhas_do_tipo`
-  -- depende de (caso, tipo), não do documento.
   with tipos_do_caso as materialized (
     select distinct d.tipo_taxonomia from documento d where d.caso_id = p_caso_id
   ),
@@ -2150,15 +2138,22 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     select t.tipo_taxonomia from tipos_do_caso t
     where fn_linhas_do_tipo(p_caso_id, t.tipo_taxonomia) > 0
   ),
-  -- A VERSÃO VIGENTE DE CADA DOCUMENTO, resolvida UMA vez. `fn_versao_com_extracao`
-  -- estava na condição do join, o que a fazia ser reavaliada durante o
-  -- casamento das linhas; aqui ela é uma coluna, calculada uma vez por
-  -- documento. Mesma lição de custo da 0101, aplicada ao outro lado da consulta.
+  -- A VERSÃO VIGENTE DE CADA DOCUMENTO, resolvida UMA vez (lição de custo da
+  -- 0101), e — 0146 — QUANTAS COLUNAS DE ENTIDADE o documento declara.
+  --
+  -- É esse número que decide se a capa do documento pode responder pela linha
+  -- que não tem coluna. Uma coluna (ou nenhuma): o documento é de uma empresa e
+  -- a capa é a única fonte. Mais de uma: o documento já disse de quem é cada
+  -- número, e a capa não responde por ninguém.
   docs as (
     select d.id, d.tipo_taxonomia, ent.razao_social as ent_doc,
-           fn_versao_com_extracao(d.id) as versao
+           v.versao,
+           (select count(distinct ce.entidade_coluna) from campo_extraido ce
+             where ce.documento_versao_id = v.versao and ce.valor_num is not null) > 1
+             as multi_entidade
     from documento d
     left join entidade ent on ent.id = d.entidade_id
+    cross join lateral (select fn_versao_com_extracao(d.id) as versao) v
     where d.caso_id = p_caso_id
   ),
   campos as (
@@ -2166,15 +2161,18 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
            ce.chave, ce.secao, ce.secao_canonica,
            -- 0145: o outro eixo da matriz.
            ce.periodo_coluna as coluna,
-           coalesce(ce.entidade_coluna, dc.ent_doc) as ent_txt
+           -- 0146: a capa só responde pela linha sem coluna quando o documento é
+           -- de UMA empresa. Num documento de várias, a linha sem coluna fica sem
+           -- entidade — ela vale para o caso, não para a capa.
+           case when dc.multi_entidade then ce.entidade_coluna
+                else coalesce(ce.entidade_coluna, dc.ent_doc) end as ent_txt
     from docs dc
     join campo_extraido ce on ce.documento_versao_id = dc.versao
     where ce.valor_num is not null
   ),
   -- O NOME vira ENTIDADE REGISTRADA uma vez por nome DISTINTO (lição da 0101:
   -- fn_mesma_entidade custa; pagar por ocorrência seria pagar 770 vezes por
-  -- ~10 respostas). Nome que não casa com registro nenhum fica NULL — fallback
-  -- deliberado nº 1 do cabeçalho.
+  -- ~10 respostas). Nome que não casa com registro nenhum fica NULL.
   nomes_resolvidos as (
     select n.ent_txt,
            (select e.id from entidade e
@@ -2189,8 +2187,7 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     left join nomes_resolvidos nr on nr.ent_txt = c.ent_txt
   ),
   -- O CASAMENTO exigência × rótulo é avaliado uma vez por LINHA DISTINTA
-  -- (mesma lição): fn_normalizar_texto por (rótulo × termo) é o custo, e o
-  -- caso real tem ~250 rótulos distintos para ~770 ocorrências.
+  -- (mesma lição): fn_normalizar_texto por (rótulo × termo) é o custo.
   linhas_distintas as (
     select distinct c.tipo_taxonomia, c.chave, c.secao, c.secao_canonica, c.coluna
     from campos c
@@ -2206,11 +2203,7 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
         when 'serie_mensal'   then fn_mes_do_rotulo(ld.chave) is not null
         else exists (
           select 1 from taxonomia_linha_localizador l
-          -- O ALVO do casamento, escolhido pelo modo. `chave` é o padrão; `secao`
-          -- e `coluna` (0145) são os dois eixos que o documento declara em volta
-          -- da célula. Calculado uma vez, num lateral, em vez de repetido nas
-          -- duas condições — a forma antiga repetia o `case` inteiro no inclui e
-          -- no exclui, e a terceira alternativa deixaria isso ilegível.
+          -- O ALVO do casamento, escolhido pelo modo (0145).
           cross join lateral (select fn_normalizar_texto(
             case l.contra
               when 'secao'  then coalesce(ld.secao, '')
@@ -2231,9 +2224,7 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
       end
   ),
   -- Quais (exigência, entidade) estão SATISFEITAS: a linha casada volta às
-  -- ocorrências para saber DE QUEM ela é. A coluna entra no reencontro junto com
-  -- as outras chaves — sem ela, uma célula casada pela coluna traria de volta
-  -- todas as células da mesma linha.
+  -- ocorrências para saber DE QUEM ela é.
   satisfazedores as (
     select distinct ca.exigencia_id, c.entidade_id
     from casadas ca
@@ -2246,7 +2237,8 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
   ),
   -- O EIXO: entidades registradas que TROUXERAM linha do tipo. Quem tem
   -- documento mas nenhuma linha atribuível não entra — cobrar conteúdo de quem
-  -- não tem conteúdo é assunto da 0036/0112, não daqui.
+  -- não tem conteúdo é assunto da 0036/0112, não daqui. E, desde a 0146, "linha
+  -- atribuível" quer dizer atribuída PELO DOCUMENTO quando ele sabe atribuir.
   eixo as (
     select distinct c.tipo_taxonomia, c.entidade_id
     from campos_ent c
@@ -2265,7 +2257,7 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
   join taxonomia_tipo_documento tx on tx.codigo = e.tipo_taxonomia
   cross join lateral (
     -- Escopo entidade COM eixo: uma linha por entidade. Senão: a linha única
-    -- com entidade NULL (escopo caso, ou fallback nº 2 do cabeçalho).
+    -- com entidade NULL (escopo caso, ou fallback nº 2 do cabeçalho da 0119).
     select x.entidade_id
     from eixo x
     where x.tipo_taxonomia = e.tipo_taxonomia
@@ -2283,7 +2275,7 @@ $$;
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), pela chave, pela seção, pela COLUNA (0145) ou pelo rótulo estrutural. Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), pela chave, pela seção, pela COLUNA (0145) ou pelo rótulo estrutural. Num documento que declara VÁRIAS colunas de entidade, a linha sem coluna não é atribuída à capa (0146) — é o que criava a entidade fantasma "GRUPO CANASTRA" devendo balanço. Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
 
 --
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -

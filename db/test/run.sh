@@ -208,7 +208,7 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao.test.sql 2>&1 \
 # teste do repositório continuaria verde. Este arquivo monta um caso próprio e
 # exercita os DOIS sentidos de cada correção.
 echo
-echo "== os dois eixos (0144/0145): duplicidade entre documentos, conceito na coluna"
+echo "== os três eixos (0144/0145/0146): documento, coluna e a capa que não responde por oito"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/eixo_documento_e_coluna.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
