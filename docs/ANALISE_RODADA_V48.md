@@ -389,3 +389,76 @@ cliente é exatamente o que um analista faria.
 
 **Quatro causas explicam as vinte.** E nenhuma delas é erro de leitura: **a extração está
 correta em ~100% dos valores financeiros dos 38 documentos.**
+
+---
+
+# ANEXO II — A modelagem da v48, com as premissas derivadas do realizado
+
+Aplicada em produção em 25/08 pelas funções do próprio sistema (`fn_definir_modelagem`,
+`fn_ativar_premissa`, `fn_vincular_linha_premissa`), **não por INSERT à mão**.
+
+**Configuração:** `CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.`, setor `industria`, índice `IPCA`,
+último exercício real **2025**, **5 anos projetados** (2026–2030).
+
+## As premissas saíram do realizado da v48, não de outro caso
+
+| Premissa | Valor | Conta que a produziu |
+|---|---:|---|
+| `CUSTO_VARIAVEL` | **97,1%** | 135.838 ÷ 139.872 |
+| `SGA_PCT` | 22,4% | 31.296 ÷ 139.872 |
+| `PMR` | 65 dias | 24.861 ÷ 139.872 × 365 |
+| `PME` | 41 dias | 15.605 ÷ 139.872 × 365 |
+| `PMP` | 77 dias | 28.634 ÷ 135.838 × 365 |
+| `TAXA_DIVIDA` | **28,4%** | 14.802 ÷ 52.063 |
+| `PARCELA_ONEROSA` | 36,7% | 52.063 ÷ 141.845 |
+| `CRESC_NOMINAL` | 5,0 → 3,5% | IPCA (ver nota) |
+| `CAPEX_PCT` | 4% | decisão de plano |
+| `DIVIDA_MOV` | −8.000 → −6.000 | decisão de plano |
+
+**Dois números contam a história do mandato sozinhos.** `CUSTO_VARIAVEL = 97,1%` significa
+que o CPV consome quase toda a receita líquida antes de qualquer despesa — a empresa não
+tem margem bruta para pagar SG&A, muito menos juros. E `TAXA_DIVIDA = 28,4%` é o custo
+efetivo de uma dívida de 52 milhões numa empresa nessa situação.
+
+### Três notas sobre o que NÃO foi derivado, e por quê
+
+1. **`ALIQUOTA` não entra.** O LAIR de 2025 é **−47.974**. A regra do repositório é
+   explícita: prejuízo não vira alíquota negativa — a premissa recusa e nomeia o prejuízo;
+2. **`TAXA_DIVIDA` veio do MAPA_DIVIDA, não da DRE.** A DRE publica só
+   `RESULTADO FINANCEIRO LÍQUIDO` (−20.712), que soma receita e despesa financeira. Usá-lo
+   subestimaria a taxa. **É exatamente a pendência legítima que a análise identificou** —
+   e aqui ela deixa de ser teoria: sem a abertura, a premissa teria de ser estimada;
+3. **`CRESC_NOMINAL` é IPCA, e é uma escolha declarada.** A receita CAIU 318 → 246 → 188.
+   Extrapolar a queda seria projetar a morte da empresa; projetar alta seria otimismo sem
+   base. O IPCA é o neutro, e quem discordar troca um número numa tela.
+
+## Conferência do sistema
+
+`fn_conferir_modelagem` respondeu **`pronto: true`**:
+
+| | |
+|---|---:|
+| Premissas ativas | 10 |
+| Premissas sem valor | **0** |
+| Linhas do caso | 559 |
+| Linhas com premissa | 7 |
+| Vínculos órfãos | **0** |
+| Não projetáveis (subtotal / série mensal) | 43 / 36 |
+
+**552 linhas sem premissa não é defeito:** o modelo projeta as linhas que dirigem o
+resultado (receita, custo, SG&A, giro, capex, dívida) e carrega o resto pelo espelho. As
+sete vinculadas são as sete que o modelo institucional exige.
+
+## O que falta para fechar a verificação da planilha
+
+Os inputs estão aplicados e o sistema declara `pronto`. **O passo seguinte é do dono:**
+exportar os dois `.xlsx` pelo portal ("Exportar dados" e "Ir para a modelagem"). Com os
+arquivos em mão, a auditoria é automática:
+
+```bash
+./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <arquivo.xlsx>
+```
+
+São 10 itens automáticos, mais os 10 humanos do `docs/ACEITE.md`. Só então dá para afirmar
+que a planilha está como o modelo do repositório manda — e essa é a última milha que
+nenhuma consulta ao banco substitui.
