@@ -302,6 +302,130 @@ begin
 end $$;
 
 -- =============================================================================
+do $$
+declare
+  v_caso   uuid;
+  v_doc    uuid;
+  v_achat  uuid;   -- o MESMO documento com a hierarquia achatada
+  v_hier   uuid;   -- …e com o agrupador imediato
+  v_n      int;
+  v_soma   numeric;
+  v_res    text;
+begin
+  raise notice '--- 7. TRÊS ALTURAS: o caso que este arquivo não tinha ---';
+
+  -- POR QUE ESTE BLOCO EXISTE, e é a lição mais cara da v48. O gate da seção
+  -- passou desde a 0133 e continuou passando enquanto a rodada real abria DOZE
+  -- pendências falsas — porque o fixture do `book-vertentes` tem DOIS níveis
+  -- (seção → contas) e o defeito só aparece com TRÊS (seção → subgrupo →
+  -- contas). O teste media o que sabia medir; a rodada real trouxe outra coisa.
+  --
+  -- O documento abaixo é o `01_Balanco` reduzido ao osso, com os números que a
+  -- análise da v48 mediu:
+  --
+  --     ATIVO CIRCULANTE ........ 44.022
+  --       Disponível ............     825      ← subgrupo: tem filhos E é filho
+  --         Caixa ...............     800
+  --         Bancos ..............      25
+  --       Contas a receber ...... 12.795
+  --       Estoques .............. 15.605
+  --       Outros ................ 14.797
+  --
+  --     825 + 12.795 + 15.605 + 14.797 = 44.022  ✓
+  --     800 + 25                       =    825  ✓
+  --
+  -- As duas versões carregam AS MESMAS SETE LINHAS e os MESMOS valores. A única
+  -- diferença é para quem `secao` aponta — e é isso que este bloco isola.
+  insert into caso (nome) values ('gate: três alturas') returning id into v_caso;
+  insert into documento (caso_id, tipo_taxonomia)
+    values (v_caso, 'BALANCO') returning id into v_doc;
+  insert into documento_versao (documento_id, n_versao, arquivo_ref, hash)
+    values (v_doc, 1, 'tres_alturas_achatado.pdf', 'test-3n-achatado') returning id into v_achat;
+  insert into documento_versao (documento_id, n_versao, arquivo_ref, hash)
+    values (v_doc, 2, 'tres_alturas_hierarquico.pdf', 'test-3n-hierarquico') returning id into v_hier;
+
+  -- (A) ACHATADO — o que a extração produzia antes desta rodada: TODA linha
+  -- aponta para a seção de topo, inclusive as que pertencem ao subgrupo.
+  insert into campo_extraido
+    (documento_versao_id, ordem, secao, chave, valor_num, unidade, periodo_coluna) values
+    (v_achat, 0, 'Ativo Circulante', 'Disponível',          825, 'milhar', '2024'),
+    (v_achat, 1, 'Ativo Circulante', 'Caixa',               800, 'milhar', '2024'),
+    (v_achat, 2, 'Ativo Circulante', 'Bancos',               25, 'milhar', '2024'),
+    (v_achat, 3, 'Ativo Circulante', 'Contas a receber',  12795, 'milhar', '2024'),
+    (v_achat, 4, 'Ativo Circulante', 'Estoques',          15605, 'milhar', '2024'),
+    (v_achat, 5, 'Ativo Circulante', 'Outros',            14797, 'milhar', '2024'),
+    (v_achat, 6, null,               'Ativo Circulante',  44022, 'milhar', '2024');
+
+  -- (B) HIERÁRQUICO — o agrupador IMEDIATO, que é o que o prompt passa a exigir.
+  insert into campo_extraido
+    (documento_versao_id, ordem, secao, chave, valor_num, unidade, periodo_coluna) values
+    (v_hier, 0, 'Ativo Circulante', 'Disponível',          825, 'milhar', '2024'),
+    (v_hier, 1, 'Disponível',       'Caixa',               800, 'milhar', '2024'),
+    (v_hier, 2, 'Disponível',       'Bancos',               25, 'milhar', '2024'),
+    (v_hier, 3, 'Ativo Circulante', 'Contas a receber',  12795, 'milhar', '2024'),
+    (v_hier, 4, 'Ativo Circulante', 'Estoques',          15605, 'milhar', '2024'),
+    (v_hier, 5, 'Ativo Circulante', 'Outros',            14797, 'milhar', '2024'),
+    (v_hier, 6, null,               'Ativo Circulante',  44022, 'milhar', '2024');
+
+  -- ---- o achatado: UMA conferência, e ela acusa o que está certo ------------
+  select count(*)::int into v_n from fn_conferir_arvore(v_achat);
+  perform teste_assert(v_n = 1,
+    'achatado: sai UMA conferência só — o subgrupo não existe como pai',
+    format('%s conferência(s)', v_n));
+
+  select soma_filhos, resultado into v_soma, v_res
+    from fn_conferir_arvore(v_achat) where pai = 'Ativo Circulante';
+  perform teste_assert(v_soma = 44847,
+    'achatado: a soma dá 44.847 — o Disponível é contado DUAS vezes (44.022 + 825)',
+    format('soma=%s', v_soma));
+  perform teste_assert(v_res = 'divergente',
+    '…e a conferência acusa "divergente" sobre um documento que fecha ao centavo');
+
+  -- E A GUARDA DA 0143 NÃO SALVA ESTE CASO, o que é o achado próprio deste
+  -- bloco. Ela reconhece a assinatura "soma ≈ 2× o pai", que é o que acontece
+  -- quando TODOS os subgrupos estão achatados. Aqui só um está: a razão é
+  -- 1,0187, e a pendência sai como divergência normal. O piso honesto da 0143 é
+  -- mais estreito do que a análise da v48 sugeria, e o conserto de verdade
+  -- continua sendo a hierarquia na extração — que é o que este bloco mede.
+  perform teste_assert(v_soma <> 2 * 44022,
+    '…e a razão NÃO é 2,0000, então a guarda de hierarquia_achatada (0143) não a reconhece',
+    format('razão = %s', round(v_soma / 44022, 4)));
+
+  -- ---- o hierárquico: DUAS conferências, as duas fechando -------------------
+  select count(*)::int into v_n from fn_conferir_arvore(v_hier);
+  perform teste_assert(v_n = 2,
+    'hierárquico: saem DUAS conferências — o subgrupo passa a ser conferido também',
+    format('%s conferência(s)', v_n));
+
+  select soma_filhos, resultado into v_soma, v_res
+    from fn_conferir_arvore(v_hier) where pai = 'Ativo Circulante';
+  perform teste_assert(v_soma = 44022 and v_res = 'ok',
+    'hierárquico: a seção fecha ao centavo (44.022 = 44.022)',
+    format('soma=%s resultado=%s', v_soma, v_res));
+
+  select soma_filhos, resultado into v_soma, v_res
+    from fn_conferir_arvore(v_hier) where pai = 'Disponível';
+  perform teste_assert(v_soma = 825 and v_res = 'ok',
+    '…e o SUBGRUPO fecha também (800 + 25 = 825) — uma conferência que antes não existia',
+    format('soma=%s resultado=%s', v_soma, v_res));
+
+  select count(*)::int into v_n from fn_conferir_arvore(v_hier) where resultado = 'divergente';
+  perform teste_assert(v_n = 0,
+    'hierárquico: NENHUMA divergência — as mesmas sete linhas, a mesma aritmética',
+    format('%s divergente(s)', v_n));
+
+  -- O QUE ESTE BLOCO PROVA, dito por inteiro: `fn_conferir_arvore` não precisou
+  -- mudar. Ela já é recursiva por construção (todo rótulo que aparece como
+  -- `secao` de alguém vira pai), e o defeito nunca esteve nela. Estava no
+  -- insumo. É por isso que a correção é de PROMPT, e é por isso que ela só se
+  -- confirma numa rodada real — este bloco prova a aritmética, não o modelo.
+  delete from campo_extraido where documento_versao_id in (v_achat, v_hier);
+  delete from documento_versao where id in (v_achat, v_hier);
+  delete from documento where id = v_doc;
+  delete from caso where id = v_caso;
+end $$;
+
+-- =============================================================================
 do $$ begin raise notice 'TODOS OS TESTES DA ÁRVORE DA SEÇÃO (0133) PASSARAM'; end $$;
 
 drop function teste_assert(boolean, text, text);

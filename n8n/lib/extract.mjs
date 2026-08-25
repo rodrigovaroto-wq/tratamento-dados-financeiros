@@ -21,7 +21,7 @@
 //      Circulante, PL, etc.).
 //
 // Uma ÚNICA chamada agora faz as duas coisas (não aumenta o número de
-// chamadas à OpenAI): extrai linhas com `secao` (agrupador livre, espelha a
+// chamadas à OpenAI): extrai linhas com `secao` (o agrupador IMEDIATO, espelha a
 // estrutura do documento original) E devolve um bloco `diagnostico` (entidade,
 // confere tipo/período, legibilidade, resumo, justificativa).
 //
@@ -158,6 +158,33 @@ export const SYSTEM_PROMPT = [
   '"Custos", "Despesas Operacionais", "Atividades Operacionais", "Atividades de Investimento",',
   '"Atividades de Financiamento" — use os agrupadores que o PRÓPRIO documento usa; null quando as',
   'linhas não pertencerem a nenhuma seção clara (ex.: um total geral solto).',
+  '',
+  '"secao" É O AGRUPADOR IMEDIATO, NÃO O TÍTULO DA PÁGINA — e esta é a regra mais importante deste',
+  'bloco, porque é a que decide se as contas do documento podem ser CONFERIDAS.',
+  'Quando o documento tem TRÊS alturas — a seção, um subgrupo dentro dela, e as contas do subgrupo —',
+  'cada linha tem de apontar para o agrupador IMEDIATAMENTE acima dela, e não para o de cima de tudo:',
+  '',
+  '    ATIVO CIRCULANTE ............ 44.022     ← linha; "secao" = null ou a seção maior',
+  '      Disponível ................    825     ← linha; "secao" = "Ativo Circulante"',
+  '        Caixa ...................    800     ← linha; "secao" = "Disponível"   (NÃO "Ativo Circulante")',
+  '        Bancos ..................     25     ← linha; "secao" = "Disponível"   (NÃO "Ativo Circulante")',
+  '      Contas a receber .......... 12.795     ← linha; "secao" = "Ativo Circulante"',
+  '      Estoques .................. 15.605     ← linha; "secao" = "Ativo Circulante"',
+  '',
+  'POR QUE ISSO IMPORTA, em uma conta: quem lê esta saída soma os filhos de cada agrupador e compara',
+  'com o valor dele — é assim que o documento confere a si mesmo, sem ninguém digitar nada. Se',
+  '"Caixa" e "Bancos" apontarem para "Ativo Circulante" em vez de "Disponível", eles entram na soma',
+  'do circulante JUNTO com o "Disponível" que já os contém: 44.022 vira 44.847, e o documento passa',
+  'a acusar um erro que não existe. Numa hierarquia inteiramente achatada a soma dá exatamente o',
+  'DOBRO do agrupador. Aconteceu com dado real, e produziu 12 pendências falsas numa rodada só —',
+  'todas apontando para contas corretas.',
+  'A profundidade não tem limite: se o subgrupo tiver subgrupo, a regra é a mesma em cada altura.',
+  'E ela NÃO muda nada do que já vale: cada altura continua saindo como LINHA com o seu valor',
+  '(ver "O TOTAL IMPRESSO É LINHA" abaixo), e "secao_canonica" continua sendo do GRUPO.',
+  'Na dúvida sobre quem é o pai, use a INDENTAÇÃO e a ordem de leitura do documento — o agrupador',
+  'imediato é o rótulo mais próximo ACIMA com recuo MENOR. Quando não há recuo e não dá para saber,',
+  'aponte para o agrupador que você tem certeza: errar para CIMA (apontar para a seção maior) é o',
+  'estado de hoje e é preferível a inventar um pai que o documento não tem.',
   'REGRA DAS COLUNAS (é o coração do formato): "cols" descreve, UMA VEZ por grupo, TODAS as colunas',
   'de valor daquela seção — não só período e empresa. Cada coluna tem entidade_coluna (nome da',
   'EMPRESA no cabeçalho, quando há várias empresas lado a lado) e periodo_coluna (o RÓTULO da',
@@ -429,7 +456,7 @@ export function extractionSchema() {
             additionalProperties: false,
             required: ['s', 'sc', 'op', 'cols', 'l'],
             properties: {
-              s: { type: ['string', 'null'], description: 'secao: agrupador livre (rótulo do próprio documento)' },
+              s: { type: ['string', 'null'], description: 'secao: o agrupador IMEDIATAMENTE acima destas contas (rótulo do próprio documento). Numa hierarquia de três alturas, as contas de "Disponível" têm secao = "Disponível", e não "Ativo Circulante" — apontar para o topo faz o subgrupo ser somado duas vezes' },
               sc: { type: 'string', enum: SECAO_CANONICA_ENUM, description: 'secao_canonica: seção padronizada pelo significado contábil; NAO_CLASSIFICAVEL num grupo só de totais/subtotais' },
               op: { type: ['integer', 'null'], description: 'origem_pagina: página onde esta seção aparece' },
               cols: {

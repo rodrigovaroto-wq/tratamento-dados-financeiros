@@ -408,6 +408,35 @@ begin
     'a CTE dos tipos é MATERIALIZED — é ela que impede o filtro caro de voltar por documento',
     'sem a palavra, fn_linhas_do_tipo volta a rodar uma vez por documento');
 
+  raise notice '--- 10. nenhuma exigência depende SÓ da seção ---';
+  -- POR QUE ESTE ASSERT NASCE AGORA. `campo_extraido.secao` mudou de
+  -- significado: ela passou a ser o agrupador IMEDIATO da linha, e não a seção
+  -- de topo. É a correção da causa raiz de 12 das 20 pendências falsas da v48,
+  -- e ela ENCOLHE o texto que chega aqui — uma linha que trazia "Ativo
+  -- Circulante" passa a trazer "Disponível".
+  --
+  -- Para um localizador `contra = 'secao'` isso corta nos dois sentidos: os
+  -- termos específicos ("disponivel", "caixa") passam a casar MAIS, porque a
+  -- seção ficou mais próxima do conceito; os genéricos ("ativo") podem deixar
+  -- de casar. Medido no catálogo de hoje: as três exigências que usam `secao`
+  -- (ativo_total, caixa_e_equivalentes, receita_bruta) têm TODAS alternativa
+  -- por `chave`, então nenhuma delas fica sem caminho. Este assert existe para
+  -- que a PRÓXIMA não nasça dependendo só da seção — que é onde a mudança de
+  -- significado viraria exigência silenciosamente ausente.
+  select string_agg(x.conceito, ', ' order by x.conceito) into v_txt
+  from (
+    select e.conceito
+      from taxonomia_linha_exigida e
+      join taxonomia_linha_localizador l on l.exigencia_id = e.id
+     group by e.id, e.conceito
+    having count(*) filter (where l.contra = 'secao')  > 0
+       and count(*) filter (where l.contra <> 'secao') = 0
+  ) x;
+  perform teste_assert_lee(v_txt is null,
+    'nenhuma exigência é localizável SÓ por secao — secao passou a ser o agrupador imediato, '
+    'e um localizador sem alternativa por chave fica refém desse significado',
+    coalesce(v_txt, ''));
+
   raise notice 'linha_exigida_entidade OK — 7/8 do caso do Rodrigo; transição de formato; COMBINADO por override reversível; MUTUOS por caso; fallback sem entidade; idempotente; guarda seed×código viva; reaplicação com override; filtro materializado';
 end $$;
 
