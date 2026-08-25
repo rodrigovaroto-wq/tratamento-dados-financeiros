@@ -3749,6 +3749,8 @@ declare
   v_n       bigint;
   v_alvo    regclass;
   v_crit    int;
+  v_proc    regproc;
+  v_src     text;
 begin
   for r in select * from instalacao_requisito order by ordem, chave loop
     v_ok  := false;
@@ -3768,6 +3770,31 @@ begin
         v_ok := true;
         v_det := 'mais de uma assinatura com este nome';
       end;
+
+    elsif r.tipo = 'corpo' then
+      -- 0147: o corpo PUBLICADO tem de conter o marcador.
+      --
+      -- Como todo ramo desta função, ele não pode derrubar a sonda: função
+      -- ausente, nome ambíguo e marcador ausente são três respostas diferentes,
+      -- e as três são `presente = false` com o detalhe dizendo QUAL — porque
+      -- "aplique a migration" e "há duas assinaturas com este nome" pedem ações
+      -- diferentes de quem está lendo a tela.
+      begin
+        v_proc := to_regproc('public.' || r.objeto);
+      exception when others then
+        v_proc := null;
+        v_det  := 'mais de uma assinatura com este nome — o requisito precisa declarar os argumentos';
+      end;
+
+      if v_proc is null then
+        v_ok  := false;
+        v_det := coalesce(v_det, 'a função nem existe');
+      else
+        v_src := pg_get_functiondef(v_proc::oid);
+        v_ok  := v_src is not null and position(r.marcador in v_src) > 0;
+        v_det := case when v_ok then 'corpo com o marcador'
+                      else 'a função existe, mas o corpo é ANTERIOR a esta migration' end;
+      end if;
 
     elsif r.tipo = 'coluna' then
       -- 0132: `pg_attribute` em vez de `information_schema.columns` — mesma
@@ -3824,7 +3851,7 @@ $$;
 -- Name: FUNCTION fn_instalacao_conferir(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. 0132: o custo NÃO cresce com o dado — a contagem de seed é limitada ao critério (lote_execucao cresce por execução, e o painel a sonda a cada carga) e a checagem de coluna usa pg_attribute em vez de information_schema. Garante o contrapositivo, não o positivo: objeto ausente é migration ausente; objeto presente não prova que o corpo está na versão certa.';
+COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo), que é o único jeito de distinguir uma correção aplicada de uma função homônima com o corpo velho.';
 
 --
 -- Name: fn_instalacao_resumo(); Type: FUNCTION; Schema: public; Owner: -
@@ -9782,6 +9809,24 @@ CREATE TABLE public.indice_macro_serie (
 COMMENT ON COLUMN public.indice_macro_serie.natureza IS 'taxa = variação % do mês (o ano acumula por COMPOSIÇÃO); nivel = preço/estoque na data (o ano é o fechamento). Compor nível, ou somar taxa, é erro conceitual.';
 
 --
+-- Name: instalacao_cobertura; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instalacao_cobertura (
+    id boolean DEFAULT true NOT NULL,
+    ate_migration text NOT NULL,
+    revisado_em date DEFAULT CURRENT_DATE NOT NULL,
+    observacao text NOT NULL,
+    CONSTRAINT instalacao_cobertura_id_check CHECK (id)
+);
+
+--
+-- Name: TABLE instalacao_cobertura; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instalacao_cobertura IS 'Até que migration o catálogo instalacao_requisito foi revisado. Uma linha só. O db/test/run.sh reprova quando ela fica para trás da migration mais nova — é o mesmo portão do ESTADO.md, e existe porque o catálogo passou 16 migrations parado na 0130 sem que nada acusasse.';
+
+--
 -- Name: instalacao_requisito; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9794,8 +9839,10 @@ CREATE TABLE public.instalacao_requisito (
     porque text NOT NULL,
     severidade text DEFAULT 'importante'::text NOT NULL,
     ordem integer DEFAULT 100 NOT NULL,
+    marcador text,
+    CONSTRAINT instalacao_requisito_marcador_check CHECK (((tipo <> 'corpo'::text) OR ((marcador IS NOT NULL) AND (length(marcador) >= 4)))),
     CONSTRAINT instalacao_requisito_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text, 'informativo'::text]))),
-    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text])))
+    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text, 'corpo'::text])))
 );
 
 --
@@ -9815,6 +9862,12 @@ COMMENT ON COLUMN public.instalacao_requisito.tipo IS 'comportamento é o único
 --
 
 COMMENT ON COLUMN public.instalacao_requisito.porque IS 'O SINTOMA VISÍVEL da ausência, não a descrição da migration. É o que torna o painel acionável para quem está com a tela aberta e não com o repositório.';
+
+--
+-- Name: COLUMN instalacao_requisito.marcador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.instalacao_requisito.marcador IS 'Para tipo=''corpo'': o TRECHO que precisa aparecer em pg_get_functiondef(objeto). É a única forma de a sonda distinguir uma função corrigida de uma função homônima com o corpo velho — e essa distinção é a maior parte do catálogo, porque a maioria das migrations recentes só republica corpo.';
 
 --
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
@@ -10322,6 +10375,13 @@ ALTER TABLE ONLY public.indice_macro_obs
 
 ALTER TABLE ONLY public.indice_macro_serie
     ADD CONSTRAINT indice_macro_serie_pkey PRIMARY KEY (codigo);
+
+--
+-- Name: instalacao_cobertura instalacao_cobertura_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instalacao_cobertura
+    ADD CONSTRAINT instalacao_cobertura_pkey PRIMARY KEY (id);
 
 --
 -- Name: instalacao_requisito instalacao_requisito_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -11318,6 +11378,18 @@ ALTER TABLE public.indice_macro_serie ENABLE ROW LEVEL SECURITY;
 CREATE POLICY indice_macro_serie_read ON public.indice_macro_serie FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: instalacao_cobertura; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.instalacao_cobertura ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: instalacao_cobertura instalacao_cobertura_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY instalacao_cobertura_read ON public.instalacao_cobertura FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: instalacao_requisito; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -12271,6 +12343,14 @@ GRANT ALL ON TABLE public.indice_macro_obs TO service_role;
 GRANT ALL ON TABLE public.indice_macro_serie TO anon;
 GRANT ALL ON TABLE public.indice_macro_serie TO authenticated;
 GRANT ALL ON TABLE public.indice_macro_serie TO service_role;
+
+--
+-- Name: TABLE instalacao_cobertura; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_cobertura TO anon;
+GRANT ALL ON TABLE public.instalacao_cobertura TO authenticated;
+GRANT ALL ON TABLE public.instalacao_cobertura TO service_role;
 
 --
 -- Name: TABLE instalacao_requisito; Type: ACL; Schema: public; Owner: -

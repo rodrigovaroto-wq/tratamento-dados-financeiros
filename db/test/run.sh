@@ -136,6 +136,41 @@ done
 echo "   $(ls db/migrations/*.sql | wc -l) migrations aplicadas"
 
 # -----------------------------------------------------------------------------
+# O CATALOGO DE INSTALACAO DECLARA ATE ONDE FOI REVISADO — e este portao existe
+# porque ele passou 16 migrations sem que nada acusasse.
+#
+# A sonda `fn_instalacao_conferir` responde "o que precisa existir no banco de
+# PRODUCAO esta la". Ela so responde sobre o que o catalogo LISTA — e o catalogo
+# parou na 0130 enquanto o banco chegava na 0146. Ninguem errou: nada acusa um
+# catalogo que fica para tras, exatamente como nada acusava o cabecalho do
+# HANDOFF.md congelado em "migrations ate 0034".
+#
+# O portao e o MESMO do ESTADO.md logo acima, e por isso e barato: compara a
+# migration mais nova do diretorio com a cobertura declarada pelo banco recem
+# montado. Quem escreve a proxima migration e obrigado a decidir uma das duas
+# coisas — "acrescento um requisito" ou "revisei e nao ha o que acrescentar" —
+# e as duas passam por um `update instalacao_cobertura`. Nenhuma delas e "nao
+# pensei nisso".
+echo "== o catálogo de instalação foi revisado até a migration mais nova"
+num_ultima="${ultima%%_*}"
+cobertura=$(psql -qAt -d "$DB" -c "select ate_migration from instalacao_cobertura" 2>/dev/null | tr -d '[:space:]')
+if [ -z "$cobertura" ]; then
+  echo "FALHOU: instalacao_cobertura está vazia ou não existe — a 0147 não foi aplicada."
+  exit 1
+fi
+if [ "$cobertura" != "$num_ultima" ]; then
+  echo "FALHOU: a migration mais nova é $num_ultima e o catálogo de instalação"
+  echo "   declara revisão só até $cobertura."
+  echo "   Ou a migration nova precisa de um requisito em instalacao_requisito"
+  echo "   (o painel de produção não vê o que o catálogo não lista), ou ela não"
+  echo "   precisa — e nesse caso diga isso, com o motivo:"
+  echo "     update instalacao_cobertura set ate_migration = '$num_ultima',"
+  echo "            revisado_em = current_date, observacao = '<por que nada a acrescentar>';"
+  exit 1
+fi
+echo "   revisado até $cobertura"
+
+# -----------------------------------------------------------------------------
 # O SCHEMA ATUAL, MATERIALIZADO — porque ler 51 migrations não é uma resposta.
 #
 # O PROBLEMA. Uma função deste banco pode ter sido republicada três vezes:
