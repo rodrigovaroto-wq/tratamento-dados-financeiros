@@ -202,6 +202,16 @@ echo
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
+# O CASO POSITIVO das duas correções da v48 — e ele não cabia nos books.
+# Os dois books trazem extração fiel, então provam só o lado "não grita à toa":
+# com eles, a 0144 poderia ter matado a checagem de duplicidade inteira e todo
+# teste do repositório continuaria verde. Este arquivo monta um caso próprio e
+# exercita os DOIS sentidos de cada correção.
+echo
+echo "== os três eixos (0144/0145/0146): documento, coluna e a capa que não responde por oito"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/eixo_documento_e_coluna.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
 echo
 echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercícios, 6 empresas)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/canastra.test.sql 2>&1 \

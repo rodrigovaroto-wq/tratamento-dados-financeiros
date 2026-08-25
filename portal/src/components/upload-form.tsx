@@ -40,7 +40,21 @@ const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 // documento. 14 cobre o upload e o banco. `n8n/test/workflow-sim.test.mjs`
 // confere este número contra o `batchInterval` REAL do workflow gerado — se a
 // cadência mudar de novo e este espelho não, a suíte reprova.
-const SEGUNDOS_POR_DOCUMENTO = 14;
+// RECALIBRADO CONTRA DUAS RODADAS REAIS de 38 documentos, e não contra a conta
+// teórica: a v47 levou 9min01 (14,2s/doc) e a v48 levou 10min08 (16,0s/doc). O
+// 14 vinha da aritmética das chamadas e ficava ABAIXO do observado — e errar
+// para baixo é o defeito que a nota acima descreve, só que invertido: promete
+// cedo e o analista lê o atraso como travamento. 16 é o pior caso medido.
+const SEGUNDOS_POR_DOCUMENTO = 16;
+
+// A ESTIMATIVA É UMA FUNÇÃO SÓ, e isso não é preciosismo. Ela aparece em DOIS
+// lugares — antes de enviar (para decidir se espera) e depois (para acompanhar)
+// — e duas contas iguais escritas em dois lugares é exatamente como este
+// repositório descreve seus piores defeitos: uma muda, a outra não, e a tela
+// passa a se contradizer sem ninguém notar.
+export function estimativaEmMinutos(arquivos: number): number {
+  return Math.max(1, Math.round((arquivos * SEGUNDOS_POR_DOCUMENTO) / 60));
+}
 
 // A MARGEM DA JANELA É SEPARADA DA ESTIMATIVA, e a separação é a lição.
 //
@@ -376,7 +390,7 @@ export default function UploadForm({
               ~20 minutos — e quem não sabe disso lê a demora como travamento. */}
           <p className="mt-1 text-ok-800">
             Estamos organizando tudo com cuidado. São cerca de{" "}
-            <strong>{Math.max(1, Math.round((sucesso.arquivos * SEGUNDOS_POR_DOCUMENTO) / 60))} minutos</strong>
+            <strong>{estimativaEmMinutos(sucesso.arquivos)} minutos</strong>
             {" "}para {sucesso.arquivos} arquivo(s) — cada um é lido separadamente. Você pode aguardar
             aqui ou voltar mais tarde.
           </p>
@@ -532,6 +546,25 @@ export default function UploadForm({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* O TEMPO ESPERADO APARECE ANTES DE ENVIAR, e não só depois.
+          Até aqui a estimativa só existia na tela de sucesso — ou seja, o
+          analista descobria que o lote levaria vinte minutos DEPOIS de já ter
+          mandado, quando a decisão de esperar ou voltar mais tarde já não era
+          dele. Com 38 arquivos selecionados isso é a diferença entre planejar e
+          ser surpreendido. */}
+      {arquivos.length > 0 && (
+        <p className="rounded border border-tinta-200 bg-tinta-50 px-3 py-2 text-sm text-tinta-600">
+          Tempo esperado de processamento:{" "}
+          <strong className="text-tinta-800">
+            ~{estimativaEmMinutos(arquivos.length)}{" "}
+            {estimativaEmMinutos(arquivos.length) === 1 ? "minuto" : "minutos"}
+          </strong>{" "}
+          para {arquivos.length} {arquivos.length === 1 ? "arquivo" : "arquivos"}. Cada arquivo é
+          lido separadamente pela IA, e as chamadas são espaçadas por exigência do limite de uso
+          da conta. Você pode fechar esta aba: o processamento continua.
+        </p>
       )}
 
       {erro && (

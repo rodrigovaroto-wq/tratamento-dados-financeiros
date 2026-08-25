@@ -1265,6 +1265,9 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
            when m.n_unid_dif > 0     then 'precondicao_nao_satisfeita'
            when m.n_reaf_div > 0   then 'divergente'
            when m.n = 0            then 'precondicao_nao_satisfeita'
+           -- 0143: soma ≈ 2× o pai é hierarquia achatada, não divergência.
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol
+                                   then 'precondicao_nao_satisfeita'
            when m.div_abs > m.tol  then 'divergente'
            else 'ok'
          end,
@@ -1274,6 +1277,8 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
            when m.n_unid_dif > 0    then 'unidade_mista'
            when m.n_reaf_div > 0 then 'total_declarado_diverge'
            when m.n = 0          then 'sem_parcela'
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol
+                                  then 'hierarquia_achatada'
            when m.div_abs > m.tol then 'secao_nao_fecha'
            else 'ok'
          end,
@@ -1303,6 +1308,14 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
              format('"%s" nomeia uma seção, mas nenhum filho dela é parcela somável nesta coluna '
                     '(só reafirmação do próprio total, derivados, ou linhas sem número).',
                     m.pai_chave)
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol then
+             format('"%s" informa %s e as %s parcelas somam %s — exatamente o DOBRO. '
+                    'Isto não é a seção deixando de fechar: é a hierarquia do documento chegando '
+                    'ACHATADA, com o subtotal de grupo e as folhas dele no mesmo nível, então a '
+                    'soma conta os dois. Não há o que conferir no PDF — a extração dos valores '
+                    'está correta; o que falta é o nível intermediário da árvore.',
+                    m.pai_chave, m.pai_valor, m.n, m.soma)
+
            when m.div_abs > m.tol then
              format('"%s" informa %s e a soma das %s parcelas dá %s — diferença de %s (tolerância '
                     'de arredondamento: %s). Ou a extração perdeu/errou uma linha desta seção, ou '
@@ -2112,24 +2125,12 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     LANGUAGE sql STABLE
     AS $$
   -- UMA CHAMADA POR TIPO, E NÃO POR DOCUMENTO — e o `materialized` é a metade
-  -- que faz a diferença existir.
-  --
-  -- A forma herdada da 0113 era `select distinct d.tipo_taxonomia from documento
-  -- where fn_linhas_do_tipo(...) > 0`: o `distinct` roda DEPOIS do filtro, então
-  -- a função — que por dentro varre `campo_extraido` e chama
-  -- `fn_versao_com_extracao` — era executada uma vez para cada DOCUMENTO.
-  --
-  -- MEDIDO, num caso sintético de 400 documentos e 16 mil linhas: o
-  -- `explain analyze` mostra 662 ms dos 914 ms totais nesse único filtro. E a
-  -- primeira tentativa de conserto — separar em duas CTEs — não mudou NADA no
-  -- relógio, porque o Postgres achata CTE simples e empurrou o filtro de volta
-  -- para baixo do agrupamento, desfazendo a intenção. É por isso que a primeira
-  -- CTE é `as materialized`: ela é a barreira que obriga o agrupamento a
-  -- acontecer ANTES da pergunta cara. Sem a palavra, o comentário estaria
+  -- que faz a diferença existir. A forma herdada da 0113 rodava
+  -- `fn_linhas_do_tipo` uma vez por DOCUMENTO (662 ms de 914 num caso de 400
+  -- documentos), e separar em duas CTEs simples não mudou nada, porque o
+  -- Postgres achata CTE e empurra o filtro de volta para baixo do agrupamento.
+  -- É a palavra `materialized` que impede isso; sem ela este comentário estaria
   -- descrevendo uma otimização que não acontece.
-  --
-  -- Agrupar antes de perguntar não muda o resultado: `fn_linhas_do_tipo`
-  -- depende de (caso, tipo), não do documento.
   with tipos_do_caso as materialized (
     select distinct d.tipo_taxonomia from documento d where d.caso_id = p_caso_id
   ),
@@ -2137,29 +2138,41 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     select t.tipo_taxonomia from tipos_do_caso t
     where fn_linhas_do_tipo(p_caso_id, t.tipo_taxonomia) > 0
   ),
-  -- A VERSÃO VIGENTE DE CADA DOCUMENTO, resolvida UMA vez. `fn_versao_com_extracao`
-  -- estava na condição do join, o que a fazia ser reavaliada durante o
-  -- casamento das linhas; aqui ela é uma coluna, calculada uma vez por
-  -- documento. Mesma lição de custo da 0101, aplicada ao outro lado da consulta.
+  -- A VERSÃO VIGENTE DE CADA DOCUMENTO, resolvida UMA vez (lição de custo da
+  -- 0101), e — 0146 — QUANTAS COLUNAS DE ENTIDADE o documento declara.
+  --
+  -- É esse número que decide se a capa do documento pode responder pela linha
+  -- que não tem coluna. Uma coluna (ou nenhuma): o documento é de uma empresa e
+  -- a capa é a única fonte. Mais de uma: o documento já disse de quem é cada
+  -- número, e a capa não responde por ninguém.
   docs as (
     select d.id, d.tipo_taxonomia, ent.razao_social as ent_doc,
-           fn_versao_com_extracao(d.id) as versao
+           v.versao,
+           (select count(distinct ce.entidade_coluna) from campo_extraido ce
+             where ce.documento_versao_id = v.versao and ce.valor_num is not null) > 1
+             as multi_entidade
     from documento d
     left join entidade ent on ent.id = d.entidade_id
+    cross join lateral (select fn_versao_com_extracao(d.id) as versao) v
     where d.caso_id = p_caso_id
   ),
   campos as (
     select dc.tipo_taxonomia,
            ce.chave, ce.secao, ce.secao_canonica,
-           coalesce(ce.entidade_coluna, dc.ent_doc) as ent_txt
+           -- 0145: o outro eixo da matriz.
+           ce.periodo_coluna as coluna,
+           -- 0146: a capa só responde pela linha sem coluna quando o documento é
+           -- de UMA empresa. Num documento de várias, a linha sem coluna fica sem
+           -- entidade — ela vale para o caso, não para a capa.
+           case when dc.multi_entidade then ce.entidade_coluna
+                else coalesce(ce.entidade_coluna, dc.ent_doc) end as ent_txt
     from docs dc
     join campo_extraido ce on ce.documento_versao_id = dc.versao
     where ce.valor_num is not null
   ),
   -- O NOME vira ENTIDADE REGISTRADA uma vez por nome DISTINTO (lição da 0101:
   -- fn_mesma_entidade custa; pagar por ocorrência seria pagar 770 vezes por
-  -- ~10 respostas). Nome que não casa com registro nenhum fica NULL — fallback
-  -- deliberado nº 1 do cabeçalho.
+  -- ~10 respostas). Nome que não casa com registro nenhum fica NULL.
   nomes_resolvidos as (
     select n.ent_txt,
            (select e.id from entidade e
@@ -2174,13 +2187,14 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     left join nomes_resolvidos nr on nr.ent_txt = c.ent_txt
   ),
   -- O CASAMENTO exigência × rótulo é avaliado uma vez por LINHA DISTINTA
-  -- (mesma lição): fn_normalizar_texto por (rótulo × termo) é o custo, e o
-  -- caso real tem ~250 rótulos distintos para ~770 ocorrências.
+  -- (mesma lição): fn_normalizar_texto por (rótulo × termo) é o custo.
   linhas_distintas as (
-    select distinct c.tipo_taxonomia, c.chave, c.secao, c.secao_canonica from campos c
+    select distinct c.tipo_taxonomia, c.chave, c.secao, c.secao_canonica, c.coluna
+    from campos c
   ),
   casadas as (
-    select e.id as exigencia_id, ld.tipo_taxonomia, ld.chave, ld.secao, ld.secao_canonica
+    select e.id as exigencia_id, ld.tipo_taxonomia, ld.chave, ld.secao,
+           ld.secao_canonica, ld.coluna
     from taxonomia_linha_exigida e
     join linhas_distintas ld on ld.tipo_taxonomia = e.tipo_taxonomia
     where e.ativo
@@ -2189,20 +2203,23 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
         when 'serie_mensal'   then fn_mes_do_rotulo(ld.chave) is not null
         else exists (
           select 1 from taxonomia_linha_localizador l
+          -- O ALVO do casamento, escolhido pelo modo (0145).
+          cross join lateral (select fn_normalizar_texto(
+            case l.contra
+              when 'secao'  then coalesce(ld.secao, '')
+              when 'coluna' then coalesce(ld.coluna, '')
+              else ld.chave
+            end) as alvo) a
           where l.exigencia_id = e.id
             and case
               when l.contra = 'estrutural' then fn_rotulo_estrutural(ld.chave, l.termos_inclui)
               else
                 not exists (
                   select 1 from unnest(l.termos_inclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ld.secao, '') else ld.chave end)
-                    not like '%' || fn_normalizar_texto(t) || '%')
+                  where a.alvo not like '%' || fn_normalizar_texto(t) || '%')
                 and not exists (
                   select 1 from unnest(l.termos_exclui) t
-                  where fn_normalizar_texto(case when l.contra = 'secao'
-                                            then coalesce(ld.secao, '') else ld.chave end)
-                    like '%' || fn_normalizar_texto(t) || '%')
+                  where a.alvo like '%' || fn_normalizar_texto(t) || '%')
             end)
       end
   ),
@@ -2216,10 +2233,12 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
      and c.chave = ca.chave
      and c.secao is not distinct from ca.secao
      and c.secao_canonica is not distinct from ca.secao_canonica
+     and c.coluna is not distinct from ca.coluna
   ),
   -- O EIXO: entidades registradas que TROUXERAM linha do tipo. Quem tem
   -- documento mas nenhuma linha atribuível não entra — cobrar conteúdo de quem
-  -- não tem conteúdo é assunto da 0036/0112, não daqui.
+  -- não tem conteúdo é assunto da 0036/0112, não daqui. E, desde a 0146, "linha
+  -- atribuível" quer dizer atribuída PELO DOCUMENTO quando ele sabe atribuir.
   eixo as (
     select distinct c.tipo_taxonomia, c.entidade_id
     from campos_ent c
@@ -2238,7 +2257,7 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
   join taxonomia_tipo_documento tx on tx.codigo = e.tipo_taxonomia
   cross join lateral (
     -- Escopo entidade COM eixo: uma linha por entidade. Senão: a linha única
-    -- com entidade NULL (escopo caso, ou fallback nº 2 do cabeçalho).
+    -- com entidade NULL (escopo caso, ou fallback nº 2 do cabeçalho da 0119).
     select x.entidade_id
     from eixo x
     where x.tipo_taxonomia = e.tipo_taxonomia
@@ -2256,7 +2275,7 @@ $$;
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso, POR ENTIDADE quando o escopo pede (0119): uma linha de resultado por (exigência × entidade do eixo), entidade NULL no escopo-caso e nos fallbacks. Escopo = escopo_entidade da exigência, ou (NULL) a granularidade do tipo na taxonomia. Eixo = entidades REGISTRADAS que trouxeram linha do tipo, via coalesce(entidade_coluna, razao_social) + fn_mesma_entidade (0030/0105), resolvido uma vez por nome (0101). Casa contra a versão VIGENTE (0102), no formato de fn_valor_conceito (0009).';
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), pela chave, pela seção, pela COLUNA (0145) ou pelo rótulo estrutural. Num documento que declara VÁRIAS colunas de entidade, a linha sem coluna não é atribuída à capa (0146) — é o que criava a entidade fantasma "GRUPO CANASTRA" devendo balanço. Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
 
 --
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
@@ -4630,7 +4649,8 @@ CREATE FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade te
       ce.chave,
       ce.secao,
       ce.unidade,
-      d.tipo_taxonomia
+      d.tipo_taxonomia,
+      d.id                                         as doc_id
     from campo_extraido ce
     join documento_versao dv on dv.id = ce.documento_versao_id
     join documento d         on d.id = dv.documento_id
@@ -4661,6 +4681,9 @@ CREATE FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade te
            -- A SUBSEÇÃO DECLARADA pelo documento, agregada: é ela que denuncia o
            -- par subtotal × componente (ver o filtro `subtotal_de` abaixo).
            array_agg(distinct fn_normalizar_texto(coalesce(secao, ''))) as secoes,
+           -- 0144: DE QUAIS DOCUMENTOS este rótulo veio. É o que sustenta o
+           -- filtro `mesmo_documento` — o critério novo, e o mais forte dos três.
+           array_agg(distinct doc_id) as docs,
            max(valor_num) as valor_num
     from contas
     group by secao_canonica, rotulo, ent_col, per_col
@@ -4673,6 +4696,19 @@ CREATE FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade te
       min(a.chave) as chave_a, min(b.chave) as chave_b,
       count(*)     as colunas_iguais,
       max(abs(a.valor_num)) as valor,
+      -- 0144: OS DOIS RÓTULOS SAEM DO MESMO DOCUMENTO?
+      --
+      -- Se saem, ele é a autoridade sobre a relação entre eles — e o que ele está
+      -- dizendo é hierarquia, não duplicidade. Uma demonstração é internamente
+      -- consistente por construção: cada conta aparece uma vez, e se aparecesse
+      -- duas a seção não fecharia, que é trabalho da `fn_conferir_arvore` (0133),
+      -- não desta checagem. O dano que a 0105 existe para achar é a soma de DUAS
+      -- FONTES — o balanço e o balancete escrevendo o mesmo fato de dois jeitos.
+      --
+      -- Medido na v48: 33 de 33 pares candidatos estavam no mesmo documento, 32
+      -- deles em linhas VIZINHAS (`ordem` a distância 1). Subtotal de grupo
+      -- seguido do seu único componente, e não conta transposta duas vezes.
+      bool_or(a.docs && b.docs) as mesmo_documento,
       -- É o par SUBTOTAL × COMPONENTE? O documento diz: a subseção declarada de um
       -- é o rótulo do outro. Medido no book (extração fiel): "Obrigações
       -- Tributárias" × "Parcelamentos tributários - longo prazo", "Empréstimos e
@@ -4681,6 +4717,11 @@ CREATE FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade te
       -- São grupo com UM componente, não conta duplicada — e o export já os exclui
       -- da soma pela detecção estrutural. Cobrar de novo aqui encheria a fila de
       -- revisão com o que já está resolvido, que é exatamente o que a 0023 desfez.
+      --
+      -- 0144: ESTE FILTRO CONTINUA, MAS NÃO SE PODE MAIS CONTAR COM ELE SOZINHO.
+      -- Ele depende de `secao` trazer o grupo IMEDIATO, e na v48 `secao` chega
+      -- ACHATADA (subtotal e folhas com a seção de topo) — a mesma causa raiz que
+      -- a 0143 documentou. Com o sinal ausente, `subtotal_de` nunca dispara.
       bool_or(a.rotulo = any(b.secoes) or b.rotulo = any(a.secoes)) as subtotal_de,
       -- MESMA SUBSEÇÃO DECLARADA? Dois rótulos para o MESMO fato estão, por
       -- construção, no mesmo lugar da demonstração. Quando o documento os coloca em
@@ -4727,7 +4768,8 @@ CREATE FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade te
     (fn_tokens_estruturais(pr.chave_a) <@ fn_tokens_estruturais(pr.chave_b)
      or fn_tokens_estruturais(pr.chave_b) <@ fn_tokens_estruturais(pr.chave_a)) as radical_comum
   from pares pr
-  where not pr.subtotal_de
+  where not pr.mesmo_documento
+    and not pr.subtotal_de
     and pr.mesma_subsecao
     and not exists (
     select 1 from discordantes dc
@@ -4745,7 +4787,7 @@ $$;
 -- Name: FUNCTION fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade text) IS 'Pares de rótulos DIFERENTES, na mesma seção canônica, com valor idêntico nas mesmas colunas — candidatos a ser a MESMA conta transposta duas vezes (achado do v35: "Prejuízos acumulados" e "Resultados Acumulados", ambos -39.150). Não decide nada: alimenta a checagem de reconciliação, que abre pendência para decisão humana. Critério estreito de propósito — falso positivo aqui gasta o tempo do analista.';
+COMMENT ON FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade text) IS 'Pares de rótulos DIFERENTES, em DOCUMENTOS DIFERENTES, na mesma seção canônica, com valor idêntico nas mesmas colunas — candidatos a ser a MESMA conta transposta duas vezes (achado do v35: "Prejuízos acumulados" e "Resultados Acumulados", ambos -39.150). Dois rótulos no MESMO documento são a hierarquia DELE (0144), não duplicidade. Não decide nada: alimenta a checagem de reconciliação, que abre pendência para decisão humana. Critério estreito de propósito — falso positivo aqui gasta o tempo do analista.';
 
 --
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -5797,7 +5839,7 @@ $$;
 
 CREATE FUNCTION public.fn_reconciliar_despfin_dre_vs_divida(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric DEFAULT 50000, p_tolerancia_pct numeric DEFAULT 0.05) RETURNS jsonb
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 declare
   v_doc_dre uuid;
   v_doc_div uuid;
@@ -5853,7 +5895,15 @@ begin
     from campo_extraido ce
     where ce.documento_versao_id = v_ver_div
       and ce.valor_num is not null
-      and (fn_normalizar_texto(ce.chave) like '%juros%' or fn_normalizar_texto(ce.chave) like '%encargos%')
+      -- 0145: o conceito pode morar na COLUNA. No mapa de dívida matricial a
+      -- chave é o contrato ("Banco Meridional S.A. - Capital de giro (…)") e o
+      -- cabeçalho é "Juros do exercício (R$)". Sem este segundo ramo a soma vinha
+      -- vazia e a checagem devolvia precondicao_nao_satisfeita sobre um documento
+      -- perfeitamente extraído — pendência da v48 no 02_DRE_Canastra_Industria.
+      and (fn_normalizar_texto(ce.chave) like '%juros%'
+           or fn_normalizar_texto(ce.chave) like '%encargos%'
+           or fn_normalizar_texto(coalesce(ce.periodo_coluna, '')) like '%juros%'
+           or fn_normalizar_texto(coalesce(ce.periodo_coluna, '')) like '%encargos%')
       and fn_normalizar_texto(ce.chave) not like 'total%'
       and fn_normalizar_texto(ce.chave) not like '%total %';
     if coalesce(v_juros.n, 0) = 0 then continue; end if;
@@ -5913,7 +5963,7 @@ begin
     format('Despesa Financeira da DRE vs juros do Mapa de Dívida em %s ano(s): %s.',
            v_n, array_to_string(v_partes, '; ')));
 end;
-$$;
+$_$;
 
 --
 -- Name: fn_reconciliar_duplicidade(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -5974,8 +6024,9 @@ begin
     p_caso_id, p_entidade_id, null, 'duplicidade_de_rotulo', 'A', v_documento,
     jsonb_build_object('pares', v_detalhe), null,
     v_resultado, v_total, null,
-    jsonb_build_object('criterio', 'mesma secao_canonica, valor idêntico na mesma coluna, '
-      || 'papel conta, e (>=2 colunas coincidentes ou radical estrutural compartilhado)'),
+    jsonb_build_object('criterio', 'rótulos em DOCUMENTOS DIFERENTES (0144), mesma secao_canonica, '
+      || 'valor idêntico na mesma coluna, papel conta, e (>=2 colunas coincidentes ou radical '
+      || 'estrutural compartilhado)'),
     v_descricao);
 end;
 $$;
@@ -5984,7 +6035,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_duplicidade(p_caso_id uuid, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_duplicidade(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação: acha a MESMA conta transposta com dois rótulos e abre pendência com o valor dobrado. Não apaga nem reescreve dado — decisão humana. Por caso/entidade (a duplicidade é fato da estrutura dos documentos, não de um exercício), daí periodo_id nulo.';
+COMMENT ON FUNCTION public.fn_reconciliar_duplicidade(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação: acha a MESMA conta transposta com dois rótulos EM DOCUMENTOS DIFERENTES e abre pendência com o valor dobrado. Não apaga nem reescreve dado — decisão humana. Por caso/entidade (a duplicidade é fato da estrutura dos documentos, não de um exercício), daí periodo_id nulo.';
 
 --
 -- Name: fn_reconciliar_intragrupo(uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -7115,8 +7166,15 @@ begin
   select id into v_pendencia_id from pendencia
     where caso_id = v_caso_id and motivo = 'diagnostico:tipo:' || p_documento_id and estado <> 'resolvida'
     limit 1;
-  if coalesce(p_tipo_confirma, true) = false
-     or (p_tipo_sugerido is not null and p_tipo_sugerido is distinct from v_tipo_atual) then
+  -- 0142: exige divergência ACIONÁVEL. "Não confirmo" sozinho não basta —
+  -- o modelo diz isso também quando reconhece o mesmo tipo com outro nome
+  -- (doc 27 da v48: NOTAS_EXPL contra NOTAS_EXPL) ou quando não sabe o que o
+  -- documento é ("?" contra "(nenhum)", doc 28). Nos dois casos a pendência
+  -- pedia decisão sobre uma diferença que não existe.
+  if (p_tipo_sugerido is not null and p_tipo_sugerido is distinct from v_tipo_atual)
+     or (coalesce(p_tipo_confirma, true) = false
+         and v_tipo_atual is not null
+         and coalesce(p_tipo_sugerido, '') <> coalesce(v_tipo_atual, '')) then
     if v_pendencia_id is null then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
         values (v_caso_id, 'diagnostico', 'tipo_incorreto', 'importante', true,
@@ -10010,7 +10068,7 @@ CREATE TABLE public.taxonomia_linha_localizador (
     contra text DEFAULT 'chave'::text NOT NULL,
     termos_inclui text[] NOT NULL,
     termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
-    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text])))
+    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text, 'coluna'::text])))
 );
 
 --
@@ -10023,7 +10081,7 @@ COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localizaç
 -- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao (fn_valor_conceito_secao, 0031); ''estrutural'' = fn_rotulo_estrutural(ce.chave, termos_inclui) (0034 — igualdade de tokens estruturais; termos_exclui não se aplica).';
+COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
 
 --
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
