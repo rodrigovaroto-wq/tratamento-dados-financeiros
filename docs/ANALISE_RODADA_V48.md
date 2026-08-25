@@ -462,3 +462,154 @@ arquivos em mão, a auditoria é automática:
 São 10 itens automáticos, mais os 10 humanos do `docs/ACEITE.md`. Só então dá para afirmar
 que a planilha está como o modelo do repositório manda — e essa é a última milha que
 nenhuma consulta ao banco substitui.
+
+---
+
+# ANEXO III — A conta fechada: as 20 pendências falsas, eliminadas
+
+O ANEXO anterior encerrou com um diagnóstico: **20 das 27 pendências da v48 são
+falsas**, por quatro causas. Este anexo registra a execução, causa por causa, com
+o número medido em produção depois de cada correção.
+
+## O placar
+
+| | v48 como rodou | depois das correções |
+|---|---|---|
+| Pendências abertas no caso | **27** | **8** |
+| `divergencia_reconciliacao` | 12 | **0** |
+| `linha_exigida_ausente` | 9 | **3** (todas verdadeiras) |
+| `precondicao_nao_satisfeita` | 1 | **0** |
+| `tipo_incorreto` | 3 | 3 abertas, **1 verdadeira** — as outras duas não voltam a nascer (0142) |
+| `entidade_incorreta` / `classificacao_pendente` | 2 | 2 (decisão humana legítima) |
+
+Nenhum achado verdadeiro foi perdido. Cada correção foi medida contra os dados
+reais da v48 **antes** de virar código, e cada uma tem caso positivo e negativo
+travados em teste.
+
+## Causa 1 — hierarquia achatada (12 pendências) · migrations 0143 e 0144
+
+As 12 eram **duas manifestações da mesma raiz**, e só a medição separou as duas.
+
+**Seis eram `secao_nao_fecha`.** A razão `soma_filhos / pai_valor` era exatamente
+2,0000 em quinze seções. `campo_extraido.secao` chega achatada — subtotal de grupo
+e folhas com a seção de topo — e a soma conta os dois níveis. A `0143` faz a
+checagem reconhecer a assinatura aritmética e declarar `hierarquia_achatada`. Das
+63 seções de BALANCO da v48, **zero** seguem divergentes e todas as 63 declaram o
+achado novo.
+
+**Seis eram `duplicidade_de_rotulo`, e a raiz é a mesma.** Dos 33 pares
+candidatos, **33 estavam no MESMO documento** e 32 em linhas vizinhas:
+
+```
+"Disponível"             = "Caixa"
+"Empréstimos"            = "FINAME - longo prazo"
+"Obrigações Tributárias" = "IPTU e taxas a recolher"
+"Provisões"              = "Provisão para contingências trabalhistas e cíveis"
+```
+
+Subtotal de grupo seguido do seu único componente. A `0105` previu exatamente esse
+par e o barrou com `subtotal_de` — filtro que depende de `secao` trazer o grupo
+IMEDIATO, e por isso nunca disparou. A `0144` acrescenta o eixo que não depende do
+rótulo: **o par exige que nenhum documento contenha os dois**. O dano que a `0105`
+existe para achar é interdocumental por definição (o balanço e o balancete somando
+o mesmo fato duas vezes); dentro de um documento a demonstração é consistente por
+construção, e se não fosse, quem acusa é a árvore da seção.
+
+Pares no caso real: **33 → 0**. O único par entre documentos distintos já caía nos
+filtros que a `0105` tinha.
+
+## Causa 2 — o conceito que mora na coluna (3 + 1) · migration 0145
+
+Três pendências cobravam dado que está no banco, extraído, correto, conferido
+contra o `GABARITO.json`. Os documentos são **matriciais**: a linha é a entidade
+concreta e o conceito é a coluna.
+
+```
+chave                                          periodo_coluna            valor_num
+"Banco Meridional S.A. - Capital de giro (…)"  "Saldo devedor (R$)"      10.412.600
+"Banco Meridional S.A. - Capital de giro (…)"  "Juros do exercício (R$)"  2.960.400
+```
+
+A palavra "juros" existe e está gravada — em `periodo_coluna`. O localizador tinha
+`contra` em três modos e nenhum olhava para a coluna, então procurava "juros" no
+nome do banco. A `0145` acrescenta `contra = 'coluna'`, casando contra
+`periodo_coluna`, que é onde o dado **já está** — coluna nova exigiria reextrair os
+38 documentos para preencher o que já está preenchido.
+
+**E a checagem que consome o conceito precisava do mesmo eixo.** Este passo quase
+ficou de fora, e quem o cobrou foi a guarda seed×código do
+`linha_exigida_entidade.test.sql`: sem ele a exigência ficaria satisfeita e
+`fn_reconciliar_despfin_dre_vs_divida` continuaria procurando "juros" na chave,
+trocando `linha_exigida_ausente` por `precondicao_nao_satisfeita`. Uma pendência
+falsa virando outra não é correção.
+
+Com o passo, **uma reconciliação que nunca tinha rodado ficou verde**:
+
+```
+DRE  "(-) Despesas financeiras"  −14.802 mil
+mapa  soma dos juros, 11 contratos  14.802.000
+resultado: ok — bate ao centavo
+```
+
+Era a quarta pendência com essa raiz, a `precondicao_nao_satisfeita` do
+`02_DRE_Canastra_Industria`.
+
+## Causa 3 — a entidade fantasma (3) · migration 0146
+
+Três pendências exigiam "Ativo Total", "Caixa e equivalentes" e "Passivo + PL" da
+entidade `GRUPO CANASTRA`. **Grupo não levanta balanço** — as seis operadoras
+levantam, e o combinado é a soma delas menos as eliminações.
+
+A origem, medida: os documentos 13 e 14 declaram **oito** colunas de entidade e
+trazem 58 linhas atribuídas a uma coluna e **7 sem coluna** (cabeçalhos e totais
+que atravessam a matriz). Para essas 7, o fallback
+`coalesce(entidade_coluna, ent_doc)` usava a capa do documento. Sete linhas
+bastaram para inscrever o grupo no eixo de quem deve um balanço.
+
+O fallback não está errado — está fora de lugar. Num balanço de uma empresa,
+nenhuma linha traz coluna de entidade e a capa é a única fonte. Num documento de
+várias, o documento já disse de quem é cada número.
+
+Critério **estrutural**, não lista de nomes: rótulo mente ("GRUPO" é holding num
+caso e razão social noutro), a forma do documento não. Dos 38 documentos,
+exatamente dois declaram mais de uma coluna de entidade, e são os dois combinados.
+`GRUPO CANASTRA` sai de BALANCO e COMBINADO e **continua** em MUTUOS,
+SITUACAO_FISCAL e FAT_INTRAGRUPO, que são de uma coluna e genuinamente do grupo.
+
+## Causa 4 — `tipo_incorreto` sem divergência (2) · migration 0142
+
+Já registrada na seção 2. As duas pendências falsas (doc 27, NOTAS_EXPL contra
+NOTAS_EXPL; doc 28, "?" contra "(nenhum)") não voltam a nascer. As três que
+aparecem hoje na fila são as da rodada v48, gravadas antes da correção — o
+diagnóstico só as reescreve na próxima rodada.
+
+## As três `linha_exigida_ausente` que ficaram são VERDADEIRAS
+
+Medidas uma a uma, e nenhuma delas é ruído:
+
+- **DRE de Cn Transportes e de Canastra Comercial.** As duas trazem só
+  `Resultado financeiro líquido` (−1.993 e −2.302 em 2025), já líquido das
+  receitas. A despesa financeira não está no documento e não dá para isolá-la.
+  Pedir a abertura ao cliente é exatamente a ação certa.
+- **COMBINADO, "Caixa e equivalentes".** O balanço combinado é **condensado**:
+  traz só os totais de grupo por empresa (Ativo Circulante 44.022 para Canastra
+  Ind., 65.286 no combinado), sem abrir caixa. Verdadeiro, e sobrepujável — o
+  dono decide se cobra ou aceita.
+
+## O que continua na fila, e não é falso positivo
+
+| Pendência | Por quê |
+|---|---|
+| `tipo_incorreto` no doc 14 | Registrado como BALANCO e é COMBINADO. Verdadeiro. |
+| `entidade_incorreta` no doc 33 | O diagnóstico sugere Canastra Indústria onde está GRUPO CANASTRA. Decisão humana, e é para isso que a pendência existe. |
+| `classificacao_pendente` no doc 28 | Folha de pagamento não tem tipo na taxonomia. Verdadeiro — o conserto é acrescentar o tipo, não calar a pendência. |
+
+## O que NÃO foi consertado, e é deliberado
+
+**A hierarquia achatada continua achatada.** A `0143` e a `0144` fazem as duas
+checagens pararem de acusar o que não conseguem conferir; nenhuma das duas
+reconstrói a árvore. O conserto de raiz é na extração — `secao` tem de trazer o
+grupo IMEDIATO, não a seção de topo — e é fatia própria, com rodada própria para
+medir. Cheguei a escrever um reconstrutor por `ordem` e aritmética e **não o
+entreguei**: ele resolvia 3 das 15 seções, e meio-conserto aqui é pior que
+nenhum, porque as 12 restantes passariam a mentir com aparência de resolvidas.
