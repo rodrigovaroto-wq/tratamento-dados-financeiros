@@ -4,56 +4,74 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-22 (sessões 57 a 61). **Estado do `main`:** mergeado até o **PR
-#163**. O PR **#162** levou as três auditorias (o defeito das 9.200, a varredura fria dos dez PRs, o
-SonarCloud). O que **NÃO está no `main`** é a sessão 61 — o loop de variações, com as migrations
-`0138` e `0139` e cinco correções: ela está na branch `claude/handoff-leitura-ukmda7` e **precisa de
-um PR NOVO**, porque o #162 já foi mergeado e PR mergeado não recebe trabalho novo.
-
-**AGORA HÁ INFRA ESPERANDO, e é a primeira vez em várias sessões.** O banco de produção está na
-`0137`; a `0138` e a `0139` saíram da sessão 61 e **ainda não foram aplicadas**. A `0138` é a que
-pesa: `fn_veredito_producao` levanta exceção sempre que não há veredito para medir — o estado de
-banco novo —, e como a promoção automática roda no gatilho de `decisao` e engole exceção virando
-NOTICE, ela morre em TODA inserção, calada. **Em produção está DORMENTE** e isso foi medido, não
-suposto: em 22/08 havia 96 vereditos de classificação, então a linha do defeito não é alcançada.
-Dormente não é inofensivo — ambiente novo ou expurgo das decisões acorda.
+**Última atualização:** 2026-08-25 (sessões 62 a 66). **Estado do `main`:** mergeado até o **PR
+#174**. Não há trabalho pendente fora do `main`: as sessões 62 a 66 foram todas mergeadas (PRs #164
+a #174). **Não há infra esperando** — as migrations `0140` a `0146` estão aplicadas em produção, e
+isso foi CONFERIDO contra o banco, não copiado adiante: sete consultas de catálogo, uma por
+migration, todas presentes em 25/08.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
-> foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`.
+> foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **E a sonda hoje cobre só 13
+> marcadores**, que param antes da `0140`: para as migrations novas é preciso conferir função a
+> função, como foi feito aqui. Estender o catálogo da sonda é item aberto.
 
-**O LOOP DE VARIAÇÕES (sessão 61) FECHOU O MAIOR BURACO DE COBERTURA QUE RESTAVA.** As seis suítes
-provam a ingestão sobre extração **fiel**; documento de mandato real não é fiel, e tudo o que o
-sistema faz DEPOIS de ler o PDF nunca tinha sido exercitado sobre entrada suja.
-`test/e2e/variacoes.mts` injeta a sujeira no ponto em que a OpenAI responde e deixa o resto correr
-igual — nó do workflow gerado, banco das 84 migrations, export do portal, zero chamada de API. Cinco
-rodadas com as variantes trocadas por completo (101 variantes) acharam **cinco defeitos**, e as duas
-últimas rodadas não acharam nada: convergiu. Detalhe em "O LOOP DE VARIAÇÕES" no `ESTADO.md`.
+**O BLOQUEIO QUE ATRAVESSOU DEZ SESSÕES CAIU: O DONO RODOU O BOOK.** Duas vezes — a **v47** (23/08,
+38 documentos, 9min01) e a **v48** (24/08, os mesmos 38, 10min08). É o **B1** do
+`docs/MAPA_DE_EXECUCAO.md`, e ele destravou tudo o que estava atrás dele. O que as rodadas reais
+acharam não estava em nenhuma suíte, e a lição vale mais que os defeitos:
 
-**Sobrou UM bloqueio, e ele é do dono: NINGUÉM RODOU O BOOK AINDA.** Continua sendo o único item que
-nenhuma sessão de engenharia consegue destravar, e ele pesa mais a cada rodada. As sessões 52 a 59
-acrescentaram seis checagens, quatro consertos de motor e agora **quatro frentes novas no arquivo de
-comitê — o Altman, a sensibilidade dos covenants por cenário, o reperfilamento por carência e as
-premissas lidas do realizado — que nunca viram dado real.** É o **B1** do `docs/MAPA_DE_EXECUCAO.md`,
-é cerca de uma hora, e depois dele o B2 inteiro abre.
+**AS SUÍTES PROVAM A INGESTÃO; ELAS NÃO PROVAM QUE O ESTÁGIO RODOU.** A v47 revelou uma
+reconciliação parada havia **onze dias em silêncio**: o nó `Gravar Campos` do n8n substitui o item
+pelo resultado da query, então `documento_id` sumia e `fn_registrar_diagnostico` era chamada com
+NULL desde 13/08. Estágio parado não gera achado, e não gerar achado tem exatamente a mesma
+aparência de "está tudo certo". Hoje o `workflow-sim.test.mjs` tem uma guarda genérica: qualquer nó
+que leia `$json.X` de um predecessor Postgres exige que aquele predecessor devolva `X` como coluna.
+
+**A v48 MEDIU AS CORREÇÕES DA v47 — E 20 DAS 27 PENDÊNCIAS ERAM FALSAS.** A extração estava
+**certa**: conferida linha a linha contra os PDFs e o `GABARITO.json`, os 38 documentos batem no
+centavo, e os quatro que não renderam linha nenhuma (30, 32, 33 e 34) estão corretos, não quebrados.
+Quem errava eram as checagens. Quatro causas, cada uma medida antes de virar código:
+
+| Causa | Pendências | Correção |
+|---|---|---|
+| Hierarquia achatada — `secao` traz a seção de topo, não o grupo imediato | 12 | `0143` (a soma dá **exatamente 2,0000× o pai**: declara `hierarquia_achatada` em vez de acusar) e `0144` (**33 de 33** pares de "duplicidade" estavam no MESMO documento: o par passa a exigir documentos distintos) |
+| O conceito mora na COLUNA, e o localizador só olhava a linha | 3 + 1 | `0145` — quarto modo `contra = 'coluna'`, casando contra `periodo_coluna` |
+| Entidade fantasma: 7 linhas sem coluna caíam na capa de um documento de 8 empresas | 3 | `0146` — a capa só responde quando o documento é de UMA empresa (critério estrutural, não lista de nomes) |
+| `tipo_incorreto` acusava sem ter divergência | 2 | `0142` — exige divergência acionável |
+
+**Pendências abertas no caso: 27 → 8, e as 8 restantes são verdadeiras.** Detalhe completo, causa por
+causa e com o número medido depois de cada correção, em `docs/ANALISE_RODADA_V48.md` (ANEXO III).
+
+**UM GANHO QUE NÃO ERA O OBJETIVO E VALE REGISTRAR:** ao ensinar a checagem de juros a olhar para a
+coluna, **uma reconciliação que nunca tinha rodado ficou verde e bate ao centavo** — DRE
+`(-) Despesas financeiras` −14.802 mil contra a soma dos juros de 11 contratos do mapa de dívida,
+14.802.000.
+
+**E A ARMADILHA QUE O TESTE PEGOU, porque ela é o padrão de erro desta fatia:** a `0145` ia sair só
+com o localizador. A guarda seed×código do `linha_exigida_entidade.test.sql` reprovou: todo termo do
+localizador tem de existir também na checagem que o consome. Sem esse quarto passo, a exigência
+ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
+trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
 **POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem:**
 
-0. **Abrir um PR NOVO para a branch `claude/handoff-leitura-ukmda7`** e aplicar a `0138` e a `0139`
-   no Supabase. É o único item que mudou de estado desde a 59: agora HÁ infra esperando;
-1. **B1, a rodada real** — é do dono, é uma hora, e é o que mais destrava. Nenhuma engenharia está
-   esperando por ele; ele é que está esperando. E o arnês de variações **não o substitui**: ele
-   começa DEPOIS da resposta da OpenAI, então scan torto, carimbo e coluna deslocada continuam fora
-   do alcance de qualquer suíte;
-2. **o que a 59 deliberadamente NÃO fez, e está escrito na própria planilha:** a sensibilidade dos
-   covenants é DECLARADA por elasticidade, não é a cascata de caixa e dívida recalculada por cenário.
-   Ela é PISO da deterioração — "rompe aqui" implica "rompe lá", o contrário não vale. Refazer a
-   cascata inteira por cenário é trabalho grande e só vale depois que o comitê pedir;
-3. **os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
+1. **A hierarquia, na EXTRAÇÃO.** É a causa raiz de 12 das 20 pendências falsas, e a `0143`/`0144`
+   só ensinaram as checagens a se recusarem a acusar o que não conseguem conferir — **nenhuma
+   reconstrói a árvore**. O conserto é `secao` trazer o grupo IMEDIATO, é mudança de prompt/schema,
+   e precisa de rodada própria para medir. Um reconstrutor por `ordem` e aritmética foi escrito e
+   **deliberadamente não entregue**: resolvia 3 das 15 seções, e meio-conserto aqui é pior que
+   nenhum, porque as 12 restantes passariam a mentir com aparência de resolvidas;
+2. **A escala do `Parse Extracao` não foi publicada no n8n.** O `jsCode` tem 34.087 caracteres e o
+   nó vivo ainda roda a versão anterior à correção. O dono já liberou a publicação;
+3. **Os 3 documentos fora de escopo (33 e 34).** Eles carregam o rompimento de covenant e a ressalva
+   do parecer de auditoria, e **não produzem nada no portal**. É lacuna de ESCOPO, não de extração;
+4. **Estender o catálogo da sonda** para além dos 13 marcadores — hoje ela para antes da `0140`;
+5. **Os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
    capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao cliente, B4.1) e preencher
    os `[A CONFIRMAR]` do `docs/10`.
 
-**O QUE MUDOU DA 52 PARA A 59, em uma linha cada** — a narrativa completa de cada uma está no
+**O QUE MUDOU DA 52 PARA A 66, em uma linha cada** — a narrativa completa de cada uma está no
 `ESTADO.md`, que é onde ela deve ser lida:
 
 | Sessão | O que ficou de pé |
@@ -64,15 +82,21 @@ premissas lidas do realizado — que nunca viram dado real.** É o **B1** do `do
 | 56 | A **operação passa a ser vista** (`0135`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
 | 57 | **O portal encolhe:** saem a página de instalação, o aviso dela no painel, a consulta à base e a tela de operação; o painel inteiro passa a falar com o **analista**, não com o desenvolvedor. Nenhum motor foi removido junto: o que as telas mostravam vive nas funções do banco |
 | 58 | A sonda das 80 migrations, que achou a **`0133` nunca aplicada** enquanto três documentos a davam por aplicada; a abertura do painel passa a aparecer **em todo login**; o **veredito de produção passa a contar** para o dial (`0136`), como piso declaradamente enviesado; as **premissas passam a sair do realizado** — oito delas, com a conta à vista |
-| 61 | O **loop de variações** (`test/e2e/variacoes.mts`): 101 variantes em cinco rodadas, cinco defeitos que nenhuma suíte pegava — a exceção do veredito (`0138`), a medição apagada ao reafirmar o nível (`0139`), **a dívida que evaporava** na virada para o projetado, o código contábil quebrando a âncora, e o caractere invisível partindo a conta em duas. Mais o export que **morria** sem valor numérico e agora recusa nomeando a falta |
 | 59 | O **dial sobe sozinho** ao critério (`0137`), com quatro travas — e o freio de quem baixou o nível não é desfeito pela máquina; e as **quatro frentes do arquivo de comitê** (Modelagem para de projetar, quatro índices novos, covenants por cenário, reperfilamento por carência) |
+| 61 | O **loop de variações** (`test/e2e/variacoes.mts`): 101 variantes em cinco rodadas, cinco defeitos que nenhuma suíte pegava — a exceção do veredito (`0138`), a medição apagada ao reafirmar o nível (`0139`), **a dívida que evaporava** na virada para o projetado, o código contábil quebrando a âncora, e o caractere invisível partindo a conta em duas. Mais o export que **morria** sem valor numérico e agora recusa nomeando a falta |
+| 62-63 | **O provedor de IA vira escolha** e o padrão passa a ser o Google (`gemini-3.5-flash-lite`): não havia "um provedor" para trocar — havia a OpenAI espalhada por quatro módulos. Agora cada provedor é um objeto de DADOS em `n8n/lib/provedor.mjs` |
+| 64 | **A v47, a primeira rodada real.** A reconciliação parada havia onze dias em silêncio; a coluna de dimensão que virava valor (`0140`); o limiar que nunca excluiu nada (`0141`) |
+| 65-66 | **A v48 e as quatro causas de pendência falsa** (`0142` a `0146`); a conferência linha a linha que provou a extração certa; a estimativa de tempo antes do envio; a modelagem da v48 com as premissas derivadas do próprio realizado |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
 por faixa de página" era a correção errada), com a `0133` na 55 (a cegueira foi **aberta** por uma
 correção nossa, a `0116`) e com os dois defeitos que se mascaravam na 55, onde **corrigir só um
 piorava o número** — o resíduo do ativo circulante era −3.200 com os dois, −12.400 com um e +9.200
-com o outro. Fica como método, não como anedota.
+com o outro. Na 65 aconteceu de novo, duas vezes: a hipótese de que a duplicidade de rótulo e a
+seção que não fecha eram defeitos diferentes caiu na primeira consulta (são a MESMA causa), e a
+suposição de que o mapa de dívida tinha perdido a identidade da coluna estava errada — ela estava
+gravada em `periodo_coluna` o tempo todo. Fica como método, não como anedota.
 
 **E a 58 acrescentou a versão mais cara dele: documento não é medição.** Três arquivos deste repo
 afirmavam que a `0133` estava aplicada, e nenhum dos três tinha ido olhar — a afirmação vinha da
@@ -115,7 +139,16 @@ A regra prática que sai disso: quem projeta uma conta é UMA aba, e as outras l
 foi assim que a variação de giro do `Cash Flow` ficou (aberta conta a conta, com o total vindo do
 espelho e um assert exigindo diferença zero).
 
-**CI: O `main` ESTÁ VERDE, PELA SUÍTE INTEIRA E NO SERVIDOR** — execução
+**CI: O `main` ESTÁ VERDE — medido em 25/08**, execução
+[`32875146847`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/32875146847),
+`push` no merge do PR #174 (`6c2c8d2`), `success` em 8 minutos (16:58→17:06 UTC).
+
+> O parágrafo abaixo é HISTÓRICO e foi mantido porque conta como a dívida de CI foi paga — mas ele
+> afirmava no PRESENTE, por dezenas de sessões, um verde medido em **06/08**. É o mesmo defeito que
+> criou o `ESTADO.md`: afirmação sobre o agora ancorada num fato de antigamente. A linha acima é a
+> que vale, e ela traz a data.
+
+**Como a dívida retroativa foi paga (06/08/2026)** — execução
 [`31128897900`](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/actions/runs/31128897900),
 `workflow_dispatch` no `004092c`, **os 14 passos `success`** em 3 minutos (22:17→22:20 UTC de
 06/08/2026). Como o `004092c` **contém os PRs #103, #104, #105 e #106**, essa execução única **paga a
