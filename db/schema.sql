@@ -1265,6 +1265,9 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
            when m.n_unid_dif > 0     then 'precondicao_nao_satisfeita'
            when m.n_reaf_div > 0   then 'divergente'
            when m.n = 0            then 'precondicao_nao_satisfeita'
+           -- 0143: soma ≈ 2× o pai é hierarquia achatada, não divergência.
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol
+                                   then 'precondicao_nao_satisfeita'
            when m.div_abs > m.tol  then 'divergente'
            else 'ok'
          end,
@@ -1274,6 +1277,8 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
            when m.n_unid_dif > 0    then 'unidade_mista'
            when m.n_reaf_div > 0 then 'total_declarado_diverge'
            when m.n = 0          then 'sem_parcela'
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol
+                                  then 'hierarquia_achatada'
            when m.div_abs > m.tol then 'secao_nao_fecha'
            else 'ok'
          end,
@@ -1303,6 +1308,14 @@ CREATE FUNCTION public.fn_conferir_arvore(p_documento_versao_id uuid) RETURNS TA
              format('"%s" nomeia uma seção, mas nenhum filho dela é parcela somável nesta coluna '
                     '(só reafirmação do próprio total, derivados, ou linhas sem número).',
                     m.pai_chave)
+           when m.pai_valor <> 0 and abs(m.soma - 2 * m.pai_valor) <= m.tol then
+             format('"%s" informa %s e as %s parcelas somam %s — exatamente o DOBRO. '
+                    'Isto não é a seção deixando de fechar: é a hierarquia do documento chegando '
+                    'ACHATADA, com o subtotal de grupo e as folhas dele no mesmo nível, então a '
+                    'soma conta os dois. Não há o que conferir no PDF — a extração dos valores '
+                    'está correta; o que falta é o nível intermediário da árvore.',
+                    m.pai_chave, m.pai_valor, m.n, m.soma)
+
            when m.div_abs > m.tol then
              format('"%s" informa %s e a soma das %s parcelas dá %s — diferença de %s (tolerância '
                     'de arredondamento: %s). Ou a extração perdeu/errou uma linha desta seção, ou '
