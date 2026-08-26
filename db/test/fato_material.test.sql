@@ -59,10 +59,23 @@ declare
   v_out    jsonb;
   v_n      int;
   v_txt    text;
+  v_txt2   text;
+  v_v3     uuid;
+  v_v4     uuid;
+  v_v5     uuid;
+  v_doc2   uuid;
+  v_uuid   uuid;
+  v_presente boolean;
   -- As frases são as do caso real da v48 (ANEXO A.2), encurtadas.
   c_covenant constant text :=
     'o índice apurado em 31/12/2025 não atingiu o mínimo contratado, e os saldos originalmente '
     || 'classificados no passivo não circulante foram integralmente reclassificados para o passivo circulante';
+  c_parte constant text :=
+    'As operacoes com partes relacionadas estao detalhadas na nota 18 e foram realizadas em '
+    || 'condicoes usuais de mercado';
+  c_continuidade constant text :=
+    'existe incerteza relevante que pode levantar duvida significativa quanto a capacidade de '
+    || 'continuidade operacional da Companhia';
   c_ressalva constant text :=
     'Opinião com ressalva sobre as demonstrações contábeis, em razão da limitação de escopo descrita a seguir';
 begin
@@ -204,12 +217,195 @@ begin
     'a lista sai na ordem da GRAVIDADE — o crítico primeiro, para ser lida de cima',
     coalesce(v_txt, '<null>'));
 
-  delete from documento_fato where documento_versao_id in (v_v1, v_v2);
-  delete from documento_versao where id in (v_v1, v_v2);
-  delete from documento where id = v_doc;
+  raise notice '--- 7. A GRAVAÇÃO NÃO DERRUBA O DIAGNÓSTICO (0149) ---';
+
+  -- POR QUE ISTO É O ASSERT MAIS IMPORTANTE DESTE ARQUIVO. `fn_registrar_fatos`
+  -- roda na MESMA query que `fn_registrar_diagnostico` — decisão da 0148, para
+  -- não acrescentar nó ao canvas. O preço dessa economia é que QUALQUER exceção
+  -- aqui aborta a query e o documento perde o DIAGNÓSTICO inteiro: entidade,
+  -- tipo confirmado, período, resumo. Um número de página alucinado pelo modelo
+  -- custaria o estágio.
+  --
+  -- MEDIDO na auditoria: `pagina = 99999999999` levantava
+  -- "value out of range for type integer" [22003], e uma versão inexistente
+  -- levantava violação de chave estrangeira [23503]. As duas derrubavam.
+  v_out := fn_registrar_fatos(v_v1, jsonb_build_array(
+    jsonb_build_object('tipo', 'covenant_rompido', 'trecho', c_covenant, 'pagina', 99999999999)));
+  perform teste_assert_fato((v_out->>'gravados')::int = 1,
+    'página absurda NÃO derruba a gravação — o fato entra, porque a evidência é o TRECHO',
+    v_out::text);
+  perform teste_assert_fato((v_out->>'pagina_descartada')::int = 1,
+    '…e a página descartada é CONTADA, para ninguém achar que o documento não tinha página',
+    v_out::text);
+
+  select pagina into v_n from documento_fato where documento_versao_id = v_v1;
+  perform teste_assert_fato(v_n is null,
+    '…e a página absurda vira NULL em vez de um número que não existe',
+    coalesce(v_n::text, '<null>'));
+
+  -- Página plausível continua entrando: um portão que descarte tudo é um portão
+  -- que não discrimina, e passaria neste bloco com nota máxima.
+  perform fn_registrar_fatos(v_v1, jsonb_build_array(
+    jsonb_build_object('tipo', 'covenant_rompido', 'trecho', c_covenant, 'pagina', 4)));
+  select pagina into v_n from documento_fato where documento_versao_id = v_v1;
+  perform teste_assert_fato(v_n = 4, '…e a página plausível continua entrando (o guarda discrimina)');
+
+  v_out := fn_registrar_fatos('00000000-0000-0000-0000-000000000000'::uuid,
+    jsonb_build_array(jsonb_build_object('tipo', 'covenant_rompido', 'trecho', c_covenant)));
+  perform teste_assert_fato(v_out ? 'erro' and v_out->>'erro' is not null,
+    'versão inexistente vira ERRO DECLARADO no retorno, não exceção que aborta a query',
+    v_out::text);
+  perform teste_assert_fato(v_out->>'sqlstate' = '23503',
+    '…e o retorno diz QUAL erro foi, para o diagnóstico não virar adivinhação',
+    v_out::text);
+
+  -- E o delete tem de ser desfeito junto com o insert que falhou: a versão fica
+  -- com os fatos que já tinha, em vez de ficar sem nenhum por causa de um erro.
+  select count(*)::int into v_n from documento_fato where documento_versao_id = v_v1;
+  perform teste_assert_fato(v_n = 1,
+    '…e um erro na gravação NÃO deixa a versão sem os fatos que ela já tinha',
+    format('%s fato(s)', v_n));
+
+  raise notice '--- 8. O REENVIO DE ARQUIVO NÃO APAGA OS FATOS DA TELA (0149) ---';
+
+  -- DOCUMENTO PRÓPRIO, e a lição é de teste, não de produto: a primeira versão
+  -- deste bloco reaproveitava o documento dos blocos anteriores e media 2 onde
+  -- esperava 1 — o estado de um bloco vazando para o outro. Um assert que
+  -- depende da ordem em que os blocos rodam mede o arquivo, não o sistema.
+  insert into documento (caso_id, tipo_taxonomia)
+    values (v_caso, 'NOTAS_EXPL') returning id into v_doc2;
+  insert into documento_versao (documento_id, n_versao, arquivo_ref, nome_original)
+    values (v_doc2, 1, 'reenvio_v1.pdf', '33_Notas_Explicativas.pdf') returning id into v_v3;
+
+  perform fn_registrar_fatos(v_v3, jsonb_build_array(jsonb_build_object(
+    'tipo', 'covenant_rompido', 'trecho', c_covenant, 'pagina', 4)));
+
+  select count(*)::int into v_n from fn_fatos_do_caso(v_caso) where documento_id = v_doc2;
+  perform teste_assert_fato(v_n = 1, 'PRÉ-CONDIÇÃO: a versão 1 carrega o covenant',
+    format('%s fato(s)', v_n));
+
+  -- MEDIDO na auditoria: com a v1 carregando um covenant e a v2 recém-criada e
+  -- ainda não processada, `fn_fatos_do_caso` devolvia ZERO. O alerta mais
+  -- importante do mandato desaparecia da tela durante um reenvio, sem nada
+  -- acusar — a 0148 escolhia por `n_versao desc` sem perguntar se a versão
+  -- chegou a ser LIDA.
+  insert into documento_versao (documento_id, n_versao, arquivo_ref, nome_original)
+    values (v_doc2, 2, 'reenvio_v2.pdf', '33_Notas_Explicativas.pdf') returning id into v_v4;
+
+  select count(*)::int into v_n from fn_fatos_do_caso(v_caso) where documento_id = v_doc2;
+  perform teste_assert_fato(v_n = 1,
+    'versão nova AINDA NÃO AVALIADA não apaga da tela o que a anterior achou',
+    format('%s fato(s) visível(is)', v_n));
+
+  select documento_versao_id into v_uuid from fn_fatos_do_caso(v_caso) where documento_id = v_doc2;
+  perform teste_assert_fato(v_uuid = v_v3, '…e o fato mostrado é o da versão 1, nomeadamente');
+
+  -- …e quando ela É avaliada e não acha nada, o fato anterior SOME — porque
+  -- releitura que revoga tem de revogar. Sem este lado, a correção viraria "o
+  -- fato nunca some", que é pior que o defeito original.
+  perform fn_registrar_fatos(v_v4, '[]'::jsonb);
+  select count(*)::int into v_n from fn_fatos_do_caso(v_caso) where documento_id = v_doc2;
+  perform teste_assert_fato(v_n = 0,
+    '…mas quando ela É avaliada e não acha nada, o fato anterior é revogado',
+    format('%s fato(s) visível(is)', v_n));
+
+  select fatos_avaliados_em is not null into v_presente from documento_versao where id = v_v4;
+  perform teste_assert_fato(v_presente,
+    '…e a marca de avaliada é gravada mesmo com ZERO fatos (é esse caso que ela separa)');
+
+  -- Resposta SEM a chave (workflow antigo) não marca como avaliada: não foi lida.
+  insert into documento_versao (documento_id, n_versao, arquivo_ref)
+    values (v_doc2, 3, 'reenvio_v3.pdf') returning id into v_v5;
+  perform fn_registrar_fatos(v_v5, null);
+  select fatos_avaliados_em is null into v_presente from documento_versao where id = v_v5;
+  perform teste_assert_fato(v_presente,
+    'resposta sem a chave "fatos" NÃO marca a versão como avaliada — ela não foi lida');
+
+  raise notice '--- 9. A ORDEM DA LISTA É ESTÁVEL (0149) ---';
+
+  -- MEDIDO: três fatos gravados no mesmo `insert` compartilham UM único
+  -- `criado_em` (now() é estável na transação), e o `order by` da 0148 parava
+  -- ali. Numa tela em que a ORDEM SIGNIFICA GRAVIDADE, a mesma lista podia sair
+  -- em ordens diferentes entre duas leituras, sem nunca dar erro.
+  perform fn_registrar_fatos(v_v4, jsonb_build_array(
+    jsonb_build_object('tipo', 'ressalva_auditoria',       'trecho', 'AAA ' || c_ressalva),
+    jsonb_build_object('tipo', 'ressalva_auditoria',       'trecho', 'BBB ' || c_ressalva),
+    jsonb_build_object('tipo', 'ressalva_auditoria',       'trecho', 'CCC ' || c_ressalva),
+    jsonb_build_object('tipo', 'parte_relacionada',        'trecho', c_parte),
+    jsonb_build_object('tipo', 'continuidade_operacional', 'trecho', c_continuidade)));
+
+  select count(distinct criado_em)::int into v_n
+    from documento_fato where documento_versao_id = v_v4;
+  perform teste_assert_fato(v_n = 1,
+    'PRÉ-CONDIÇÃO: os cinco compartilham um só criado_em (senão o teste não mede nada)',
+    format('%s valor(es) distinto(s)', v_n));
+
+  -- E O TESTE PRECISA PERTURBAR O HEAP PARA MEDIR ALGUMA COISA. A primeira
+  -- versão deste assert comparava duas leituras SEGUIDAS e passava com e sem o
+  -- desempate — medido no religamento: tirar `f.id` do `order by` não a fazia
+  -- reprovar. Duas execuções idênticas do mesmo plano devolvem a mesma ordem
+  -- física, então o assert confirmava o que já sabia.
+  --
+  -- Um `update` reescreve a tupla e a joga para o fim da tabela, que é o que
+  -- acontece de verdade quando alguém edita uma linha. Sem desempate, a ordem
+  -- de saída muda junto; com ele, não muda.
+  select string_agg(x.trecho, '|') into v_txt
+    from (select trecho from fn_fatos_do_caso(v_caso) where documento_id = v_doc2) x;
+
+  update documento_fato set leitura = coalesce(leitura, '')
+   where id = (select f.id from documento_fato f
+                where f.documento_versao_id = v_v4 and f.tipo = 'ressalva_auditoria'
+                order by f.trecho limit 1);
+
+  select string_agg(y.trecho, '|') into v_txt2
+    from (select trecho from fn_fatos_do_caso(v_caso) where documento_id = v_doc2) y;
+  perform teste_assert_fato(v_txt = v_txt2,
+    'a ordem NÃO muda quando uma linha é reescrita e muda de lugar no heap',
+    coalesce(v_txt, '<null>') || '  ->  ' || coalesce(v_txt2, '<null>'));
+
+  select string_agg(z.severidade, '>') into v_txt
+    from (select severidade from fn_fatos_do_caso(v_caso) where documento_id = v_doc2) z;
+  perform teste_assert_fato(v_txt = 'critico>critico>critico>critico>informativo',
+    '…e a gravidade continua mandando: os quatro críticos antes do informativo',
+    coalesce(v_txt, '<null>'));
+
+  raise notice '--- 10. A ESCRITA É PERMITIDA PELA POLÍTICA, NÃO PELA CREDENCIAL (0149) ---';
+
+  -- MEDIDO na auditoria: `set local role authenticated` + gravação devolvia
+  -- "new row violates row-level security policy" [42501]. A 0148 deu à tabela
+  -- só política de SELECT — e mesmo assim `grant execute` da função ao papel
+  -- `authenticated`, uma permissão que a política não honrava. Gravava só
+  -- porque o n8n conecta como dono, que ignora RLS: o canal dependia de um
+  -- detalhe da credencial em vez de uma decisão.
+  begin
+    set local role authenticated;
+    v_out := fn_registrar_fatos(v_v1, jsonb_build_array(jsonb_build_object(
+      'tipo', 'covenant_rompido', 'trecho', c_covenant, 'pagina', 4)));
+    reset role;
+    perform teste_assert_fato((v_out->>'gravados')::int = 1,
+      'o papel `authenticated` GRAVA — a permissão da função e a política da tabela concordam',
+      v_out::text);
+  exception when others then
+    reset role;
+    perform teste_assert_fato(false,
+      'o papel `authenticated` GRAVA — a permissão da função e a política da tabela concordam',
+      sqlerrm);
+  end;
+
+  raise notice '--- 11. A COLUNA QUE PROMETIA MEDIÇÃO E ENTREGAVA OPINIÃO SAIU (0149) ---';
+
+  select count(*)::int into v_n from pg_attribute
+   where attrelid = to_regclass('public.documento_fato')
+     and attname = 'confianca' and attnum > 0 and not attisdropped;
+  perform teste_assert_fato(v_n = 0,
+    'documento_fato não tem coluna `confianca` — ela nunca recebeu valor, e a evidência aqui é o trecho');
+
+  delete from documento_fato where documento_versao_id in (v_v1, v_v2, v_v3, v_v4, v_v5);
+  delete from documento_versao where id in (v_v1, v_v2, v_v3, v_v4, v_v5);
+  delete from documento where id in (v_doc, v_doc2);
   delete from caso where id = v_caso;
 
-  raise notice 'fato_material OK — evidência obrigatória; recusa contada; null≠[]; reextrair substitui; enum espelhado; versão corrente e ordem por gravidade';
+  raise notice 'fato_material OK — evidência obrigatória; recusa contada; null≠[]; reextrair substitui; enum espelhado; e os SETE da auditoria: não derruba o diagnóstico, reenvio não apaga, ordem estável, política honra o grant, confianca fora';
 end $$;
 
 drop function teste_assert_fato(boolean, text, text);

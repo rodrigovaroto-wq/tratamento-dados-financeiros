@@ -982,7 +982,17 @@ for(const [chave, blocos] of porDocumento){
     // pareia mais atraves do fatiamento. Agora leem do proprio item.
     documento_id:base.documento_id??null,
     campos:r.campos,
-    diagnostico:base.diagnostico||null,
+    // O DIAGNOSTICO VEM DO BLOCO 1, MAS OS FATOS VEM DE TODOS.
+    //
+    // Entidade, tipo e periodo sao do DOCUMENTO -- todo bloco responde a mesma
+    // coisa. Os fatos nao: cada bloco le um PEDACO diferente do texto, e a nota
+    // que declara o covenant pode estar no bloco 2. Antes desta correcao ela
+    // sumia em silencio, e os documentos fatiados sao justamente os grandes.
+    //
+    // r.fatos e' null quando nenhum bloco trouxe a chave (workflow antigo) e
+    // lista vazia quando algum leu e nao achou nada -- e a diferenca chega ao
+    // banco: null manda NAO TOCAR nos fatos gravados, vazia manda apagar.
+    diagnostico:base.diagnostico?{...base.diagnostico, fatos:r.fatos}:null,
     falha_motivo:motivos.length>0?motivos.join(' | '):null,
     blocos:r.blocos,
     celulas_no_documento:base.celulas_no_documento??null,

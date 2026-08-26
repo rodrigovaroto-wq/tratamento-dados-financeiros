@@ -429,3 +429,93 @@ test('as funções são AUTO-CONTIDAS (os nós Code as embutem por toString)', (
   const avaliar = new Function(`const LIMIAR_COBERTURA=0.6;const MINIMO_PARA_AVALIAR=20;return (${avaliarCobertura.toString()})`)();
   assert.ok(avaliar({ extraidas: 10, esperadas: 100 }));
 });
+
+// =============================================================================
+// OS FATOS MATERIAIS ATRAVESSAM O FATIAMENTO (0148/0149, auditoria)
+//
+// O DEFEITO QUE ESTES TESTES FECHAM, e ele era silencioso: o nó `Juntar Blocos`
+// montava o diagnóstico do documento com `blocos[0].diagnostico`. Para entidade,
+// tipo e período isso está CERTO — são propriedades do documento, e todo bloco
+// responde a mesma coisa. Para os FATOS não: cada bloco lê um PEDAÇO diferente
+// do texto, então um covenant declarado na página 40 chega no bloco 2 e era
+// descartado sem nada acusar.
+//
+// E os documentos fatiados são justamente os grandes: no book de 38, o
+// `35_Demonstracoes_Contabeis` e o `01_Balanco` saem em 2 blocos cada, e o
+// `17_Livro_Razao` em 4. Nota explicativa mora em documento grande.
+test('os fatos de TODOS os blocos sobrevivem à junção', () => {
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { entidade: 'Canastra', fatos: [
+      { tipo: 'covenant_rompido', trecho: 'o indice apurado nao atingiu o minimo contratado', pagina: 4 },
+    ] } },
+    { bloco: 2, campos: [], diagnostico: { entidade: 'Canastra', fatos: [
+      { tipo: 'ressalva_auditoria', trecho: 'opiniao com ressalva em razao da limitacao de escopo', pagina: 41 },
+    ] } },
+    { bloco: 3, campos: [], diagnostico: { entidade: 'Canastra', fatos: [] } },
+  ]);
+  assert.equal(r.fatos.length, 2, 'o fato do bloco 2 não pode se perder');
+  assert.deepEqual(r.fatos.map((f) => f.tipo).sort(),
+    ['covenant_rompido', 'ressalva_auditoria']);
+});
+
+// A EMENDA ENTRE BLOCOS É SOBREPOSTA DE PROPÓSITO (o modelo repete a âncora, ver
+// `emendasLimpas` acima), então um fato que caia na região de emenda é declarado
+// DUAS vezes. Dois alertas idênticos numa lista curta ensinam a desconfiar dela
+// inteira — que é o oposto do que este canal existe para fazer.
+test('o mesmo fato declarado em dois blocos entra UMA vez', () => {
+  const mesmo = 'o indice apurado em 31/12/2025 nao atingiu o minimo contratado';
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { fatos: [{ tipo: 'covenant_rompido', trecho: mesmo, pagina: 4 }] } },
+    // mesmo fato, escrito com espaçamento e caixa diferentes, e outra página —
+    // continua sendo a mesma frase do mesmo documento.
+    { bloco: 2, campos: [], diagnostico: { fatos: [{ tipo: 'covenant_rompido', trecho: '  O INDICE   apurado em 31/12/2025 nao atingiu o MINIMO contratado ', pagina: 5 }] } },
+  ]);
+  assert.equal(r.fatos.length, 1, 'a deduplicação é por (tipo + trecho normalizado)');
+  assert.equal(r.fatos[0].pagina, 4, 'e a primeira ocorrência é a que fica');
+});
+
+// O MESMO TRECHO SOB TIPOS DIFERENTES NÃO É O MESMO FATO. Uma nota que declara a
+// reclassificação E o rompimento na mesma frase é dois fatos, e colapsá-los
+// perderia um alerta.
+test('trecho igual com tipos diferentes conta como dois fatos', () => {
+  const frase = 'o indice nao foi atingido e os saldos foram reclassificados para o circulante';
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { fatos: [
+      { tipo: 'covenant_rompido', trecho: frase },
+      { tipo: 'reclassificacao_divida', trecho: frase },
+    ] } },
+  ]);
+  assert.equal(r.fatos.length, 2);
+});
+
+// `null` NÃO É `[]`, E A DISTINÇÃO ATRAVESSA A JUNÇÃO ATÉ O BANCO.
+//
+// Nenhum bloco trouxe a chave (workflow antigo importado no n8n) → `null`, e
+// `fn_registrar_fatos` NÃO TOCA nos fatos já gravados. Algum bloco leu e não
+// achou nada → `[]`, e o banco APAGA. Colapsar os dois faria um n8n
+// desatualizado destruir trilha em silêncio — o modo de falha do `Gravar
+// Campos` que desligou a reconciliação por onze dias.
+test('nenhum bloco com a chave "fatos" devolve null, não lista vazia', () => {
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { entidade: 'X' } },
+    { bloco: 2, campos: [], diagnostico: { entidade: 'X' } },
+  ]);
+  assert.equal(r.fatos, null);
+});
+
+test('um bloco que leu e não achou nada devolve lista vazia, não null', () => {
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { entidade: 'X', fatos: [] } },
+    { bloco: 2, campos: [], diagnostico: { entidade: 'X' } },
+  ]);
+  assert.deepEqual(r.fatos, []);
+});
+
+// Entrada degenerada dentro da lista não pode derrubar a junção do documento
+// inteiro — o resto dos blocos tem dado bom.
+test('lixo dentro de "fatos" não derruba a junção', () => {
+  const r = juntarBlocos([
+    { bloco: 1, campos: [], diagnostico: { fatos: [null, 42, 'texto', { tipo: 'covenant_rompido', trecho: 'frase que serve como evidencia do rompimento' }] } },
+  ]);
+  assert.equal(r.fatos.length, 1);
+});

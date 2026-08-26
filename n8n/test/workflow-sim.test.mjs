@@ -2427,3 +2427,49 @@ test('fato material: o nó que grava PASSA os fatos, e o schema os PEDE', () => 
   assert.match(SYSTEM_PROMPT, /TRECHO LITERAL do documento/,
     'o prompt exige a evidência — o schema sozinho não ensina a copiar em vez de resumir');
 });
+
+// =============================================================================
+// O NÓ `Juntar Blocos` REAL, com fatos vindos de blocos diferentes.
+//
+// POR QUE ESTE TESTE EXISTE, e ele nasceu de um religamento que FALHOU em
+// acusar: o `cobertura.test.mjs` cobre `juntarBlocos` (a função da lib), e ele
+// pega a perda dos fatos. Mas o nó `Juntar Blocos` monta o diagnóstico com
+// código escrito à mão DENTRO do gerador — `diagnostico: {...base.diagnostico,
+// fatos: r.fatos}` — e essa linha não é a função. Ao desfazê-la e rodar a suíte,
+// os 92 testes do workflow-sim passaram com nota máxima.
+//
+// Ou seja: a lib estava testada e a PRODUÇÃO não. É a mesma deriva de espelho
+// que já custou caro nesta casa, e o que a fecha é exercitar o nó COMMITADO —
+// o que o dono importa no n8n — em vez da função que ele deveria espelhar.
+test('Juntar Blocos (nó real): os fatos de TODOS os blocos chegam ao diagnóstico', async () => {
+  const versao = 'ver-fatiado';
+  const bloco = (n, fatos) => ({ json: {
+    documento_versao_id: versao, documento_id: 'doc-1', bloco: n, blocos: 3,
+    campos: [], celulas_no_documento: null,
+    diagnostico: { entidade: 'Canastra', tem_dado_financeiro: true, fatos },
+  } });
+
+  const r = await run('Juntar Blocos', { items: [
+    bloco(1, [{ tipo: 'covenant_rompido', trecho: 'o indice apurado nao atingiu o minimo contratado', pagina: 4 }]),
+    bloco(2, [{ tipo: 'ressalva_auditoria', trecho: 'opiniao com ressalva em razao da limitacao de escopo', pagina: 41 }]),
+    bloco(3, []),
+  ] });
+
+  assert.equal(r.length, 1, 'os três blocos viram UM documento');
+  const fatos = r[0].json.diagnostico.fatos;
+  assert.ok(Array.isArray(fatos), 'o diagnóstico do documento carrega a lista de fatos');
+  assert.equal(fatos.length, 2, 'o fato do bloco 2 não pode se perder na junção');
+  assert.deepEqual(fatos.map((f) => f.tipo).sort(), ['covenant_rompido', 'ressalva_auditoria']);
+  assert.equal(r[0].json.diagnostico.entidade, 'Canastra',
+    'e o resto do diagnóstico continua vindo do bloco 1, que é o certo');
+});
+
+test('Juntar Blocos (nó real): nenhum bloco com a chave "fatos" devolve null', async () => {
+  // `null` manda `fn_registrar_fatos` NÃO TOCAR nos fatos já gravados; `[]`
+  // manda apagar. Um n8n com o JSON antigo não pode destruir trilha.
+  const r = await run('Juntar Blocos', { items: [
+    { json: { documento_versao_id: 'v1', documento_id: 'd1', bloco: 1, campos: [], diagnostico: { entidade: 'X' } } },
+    { json: { documento_versao_id: 'v1', documento_id: 'd1', bloco: 2, campos: [], diagnostico: { entidade: 'X' } } },
+  ] });
+  assert.equal(r[0].json.diagnostico.fatos, null);
+});
