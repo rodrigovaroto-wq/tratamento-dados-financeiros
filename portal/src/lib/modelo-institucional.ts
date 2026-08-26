@@ -2808,28 +2808,44 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     });
 
     // NCG POR CENÁRIO — só na projeção, mesma regra do `CHECK_SOMBRA` da receita.
+    //
+    // `kv(chave, s)` existe para tirar o gabarito literal aninhado
+    // (`` `${chaveLinha(...)}#v_${suf}` `` dentro doutro template literal) —
+    // achado de revisão (SonarCloud `typescript:S4624`), não só estilo: um
+    // gabarito aninhado é mais fácil de errar a interpolação sem notar.
+    const kv = (chave: string, s: string) => `${chave}#v_${s}`;
     if (!hist) {
       for (const [suf] of CENARIOS_SUF) {
+        const kNcg = kv("NCG", suf);
         // NCG é AC − PC: soma os ativos e SUBTRAI os passivos — `somaOuZero` só
         // soma, então aqui a soma é escrita direto, com o passivo negado.
-        g.set(`NCG#v_${suf}`, ano,
-          `=${ativos.map((l) => g.ref(`${chaveLinha("wc_a", l)}#v_${suf}`, ano)).join("+") || "0"}`
-          + `-(${passivos.map((l) => g.ref(`${chaveLinha("wc_p", l)}#v_${suf}`, ano)).join("+") || "0"})`,
+        g.set(kNcg, ano,
+          `=${ativos.map((l) => g.ref(kv(chaveLinha("wc_a", l), suf), ano)).join("+") || "0"}`
+          + `-(${passivos.map((l) => g.ref(kv(chaveLinha("wc_p", l), suf), ano)).join("+") || "0"})`,
           { fmt: NUM });
         // O ANO ANTERIOR pode ser histórico (primeiro ano projetado): aí a sombra
         // ainda não existe, e a NCG ativa daquele ano — comum aos três cenários —
         // é a base correta. O mesmo desenho do `baseAnterior` no resumo do Output.
-        const ncgAnterior = ant === null ? null
-          : g.ehProjetado(ant) ? g.ref(`NCG#v_${suf}`, ant) : g.ref("NCG", ant);
-        g.set(`VAR_NCG#v_${suf}`, ano, ncgAnterior === null ? 0
-          : `=-(${g.ref(`NCG#v_${suf}`, ano)}-${ncgAnterior})`, { fmt: NUM });
+        // Sem ternário aninhado (achado de revisão, SonarCloud `typescript:S3358`):
+        // três casos viram três `if`, não um ternário dentro doutro.
+        let ncgAnterior: string | null;
+        if (ant === null) {
+          ncgAnterior = null;
+        } else if (g.ehProjetado(ant)) {
+          ncgAnterior = g.ref(kNcg, ant);
+        } else {
+          ncgAnterior = g.ref("NCG", ant);
+        }
+        g.set(kv("VAR_NCG", suf), ano, ncgAnterior === null ? 0
+          : `=-(${g.ref(kNcg, ano)}-${ncgAnterior})`, { fmt: NUM });
       }
       // CHOOSE, não `#v_base` fixo — a NCG ativa segue o CENÁRIO LIGADO, e um
       // Working Capital cujo CHECK só bate com Base mentiria "divergiu" toda
       // vez que o dial estivesse em Cliente ou Stress, que é o estado normal
       // de um arquivo de reestruturação. É o mesmo desenho do `CHECK_SOMBRA`
       // da aba de receita (linha ~2090), que já usa `CHOOSE(cen, ...)`.
-      const escolheNcg = `CHOOSE(${cen},${CENARIOS_SUF.map(([su]) => g.ref(`NCG#v_${su}`, ano)).join(",")})`;
+      const opcoesNcg = CENARIOS_SUF.map(([su]) => g.ref(kv("NCG", su), ano)).join(",");
+      const escolheNcg = `CHOOSE(${cen},${opcoesNcg})`;
       g.set("CHECK_SOMBRA_WC", ano, `=ABS(${escolheNcg}-${g.ref("NCG", ano)})`, {
         fmt: NUM2,
         nota: "Distância entre a sombra do cenário ATIVO e a NCG ativa. Zero por construção: os "
@@ -5181,8 +5197,20 @@ function abaOutput(
       // MESMOS nos três — não dependem de receita — e entram por referência à
       // aba ativa, sem replicar.
       for (const [suf] of CENARIOS_SUF) {
-        g.set(`CEN_EBIT#${suf}`, ano,
-          `=${g.ref(`CEN_EBITDA#${suf}`, ano)}-${ext("Income Statement", gDRE, "DA", ano).slice(1)}`, { fmt: NUM });
+        // `k(chave)` tira o gabarito literal aninhado (`` `CEN_X#${suf}` ``
+        // dentro doutro gabarito) — achado de revisão (SonarCloud
+        // `typescript:S4624`): um gabarito aninhado é mais fácil de errar a
+        // interpolação sem notar, e esta função troca todos por uma chamada.
+        const k = (chave: string) => `${chave}#${suf}`;
+        const kEbit = k("CEN_EBIT"); const kFinExp = k("CEN_FIN_EXP"); const kFinInc = k("CEN_FIN_INC");
+        const kTax = k("CEN_TAX"); const kFco = k("CEN_FCO"); const kCaixaAntes = k("CEN_CAIXA_ANTES");
+        const kFuro = k("CEN_FURO"); const kStFim = k("CEN_ST_FIM"); const kRevIni = k("CEN_REV_INI");
+        const kRevJuros = k("CEN_REV_JUROS"); const kRevSaque = k("CEN_REV_SAQUE"); const kRevFim = k("CEN_REV_FIM");
+        const kCaixaFim = k("CEN_CAIXA_FIM"); const kDivLiq = k("CEN_DIV_LIQ"); const kServico = k("CEN_SERVICO");
+        const kNdReal = k("CEN_ND_REAL"); const kDscrReal = k("CEN_DSCR_REAL"); const kPico = k("CEN_PICO_REVOLVER");
+        const kEbitda = k("CEN_EBITDA"); const kNcgWC = `VAR_NCG#v_${suf}`;
+
+        g.set(kEbit, ano, `=${g.ref(kEbitda, ano)}-${ext("Income Statement", gDRE, "DA", ano).slice(1)}`, { fmt: NUM });
 
         // O ANO ANTERIOR da MESMA sombra — caixa, revolver e aplicação. Três
         // casos, não dois: sem `ant` nenhum (zero anos históricos — o caso que
@@ -5191,89 +5219,90 @@ function abaOutput(
         // com `ant` já projetado (a sombra do próprio ano anterior). O mesmo
         // desenho do `baseAnterior` do resumo de receita logo acima — e do
         // `ncgAnterior` da sombra de NCG no Working Capital, que já tratava os
-        // três casos.
-        const caixaAnterior = ant === null ? "0"
-          : g.ehProjetado(ant) ? g.ref(`CEN_CAIXA_FIM#${suf}`, ant) : ext("Cash Flow", gCF, "CAIXA_FIM", ant).slice(1);
-        const revolverAnterior = ant === null ? "0"
-          : g.ehProjetado(ant) ? g.ref(`CEN_REV_FIM#${suf}`, ant) : ext("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ant).slice(1);
-        const stFimAnterior = ant === null ? "0"
-          : g.ehProjetado(ant) ? g.ref(`CEN_ST_FIM#${suf}`, ant) : ext("ST Inv. & Debt", gDiv, "ST_FIM", ant).slice(1);
+        // três casos. Um helper, não três ternários aninhados copiados — achado
+        // de revisão: os três repetiam a mesma forma e só trocavam a chave e a
+        // referência externa de fallback.
+        const anteriorDe = (chaveSombra: string, aba: string, grade: Grade, chaveAtiva: string): string => {
+          if (ant === null) return "0";
+          if (g.ehProjetado(ant)) return g.ref(chaveSombra, ant);
+          return ext(aba, grade, chaveAtiva, ant).slice(1);
+        };
+        const caixaAnterior = anteriorDe(kCaixaFim, "Cash Flow", gCF, "CAIXA_FIM");
+        const revolverAnterior = anteriorDe(kRevFim, "ST Inv. & Debt", gDiv, "REVOLVER_FIM");
+        const stFimAnterior = anteriorDe(kStFim, "ST Inv. & Debt", gDiv, "ST_FIM");
 
-        g.set(`CEN_REV_INI#${suf}`, ano, `=${revolverAnterior}`, { fmt: NUM });
-        g.set(`CEN_REV_JUROS#${suf}`, ano,
-          `=-${g.ref(`CEN_REV_INI#${suf}`, ano)}*${ext("ST Inv. & Debt", gDiv, "TAXA_REVOLVER", ano).slice(1)}`, {
+        g.set(kRevIni, ano, `=${revolverAnterior}`, { fmt: NUM });
+        g.set(kRevJuros, ano,
+          `=-${g.ref(kRevIni, ano)}*${ext("ST Inv. & Debt", gDiv, "TAXA_REVOLVER", ano).slice(1)}`, {
           fmt: NUM,
           nota: "Juros sobre o saldo de ABERTURA — não sobre o saque deste ano. É a mesma técnica "
             + "do revolver ativo, e é o que evita circularidade sem precisar de cálculo iterativo.",
         });
-        g.set(`CEN_FIN_EXP#${suf}`, ano,
+        g.set(kFinExp, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_JUROS", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_JUROS", ano).slice(1)}`
-          + `+${g.ref(`CEN_REV_JUROS#${suf}`, ano)}`, {
+          + `+${g.ref(kRevJuros, ano)}`, {
           fmt: NUM,
           nota: "Juros das tranches existentes e da captação nova são os MESMOS do cenário ativo "
             + "(cronograma contratual, não depende de receita) — só o juro do revolver é deste "
             + "cenário.",
         });
-        g.set(`CEN_FIN_INC#${suf}`, ano,
+        g.set(kFinInc, ano,
           `=${stFimAnterior}*${ext("ST Inv. & Debt", gDiv, "TAXA_APLIC", ano).slice(1)}`, { fmt: NUM });
-        g.set(`CEN_TAX#${suf}`, ano,
-          `=-MAX(0,${g.ref(`CEN_EBIT#${suf}`, ano)}+${g.ref(`CEN_FIN_EXP#${suf}`, ano)}+${g.ref(`CEN_FIN_INC#${suf}`, ano)})`
+        g.set(kTax, ano,
+          `=-MAX(0,${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)})`
           + `*${ext("Income Statement", gDRE, "TAX_RATE", ano).slice(1)}`, { fmt: NUM });
-        g.set(`CEN_FCO#${suf}`, ano,
-          `=${g.ref(`CEN_EBIT#${suf}`, ano)}+${g.ref(`CEN_FIN_EXP#${suf}`, ano)}+${g.ref(`CEN_FIN_INC#${suf}`, ano)}`
-          + `+${g.ref(`CEN_TAX#${suf}`, ano)}+${ext("Income Statement", gDRE, "DA", ano).slice(1)}`
-          + `+${ext("Working Capital", gWC, `VAR_NCG#v_${suf}`, ano).slice(1)}`
+        g.set(kFco, ano,
+          `=${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)}`
+          + `+${g.ref(kTax, ano)}+${ext("Income Statement", gDRE, "DA", ano).slice(1)}`
+          + `+${ext("Working Capital", gWC, kNcgWC, ano).slice(1)}`
           + `+${ext("Cash Flow", gCF, "PAGO_TRIB", ano).slice(1)}`, {
           fmt: NUM,
           nota: "Lucro líquido deste cenário (EBIT + resultado financeiro deste cenário + tributo "
             + "deste cenário) mais depreciação, mais a variação de NCG deste cenário (Working "
             + "Capital), mais o tributo parcelado pago (o mesmo cronograma do cenário ativo).",
         });
-        g.set(`CEN_CAIXA_ANTES#${suf}`, ano,
-          `=${caixaAnterior}+${g.ref(`CEN_FCO#${suf}`, ano)}+${ext("Cash Flow", gCF, "CAPEX", ano).slice(1)}`
+        g.set(kCaixaAntes, ano,
+          `=${caixaAnterior}+${g.ref(kFco, ano)}+${ext("Cash Flow", gCF, "CAPEX", ano).slice(1)}`
           + `+${ext("Cash Flow", gCF, "CAPTACAO", ano).slice(1)}+${ext("Cash Flow", gCF, "AMORT", ano).slice(1)}`
           + `+${ext("Cash Flow", gCF, "DIVIDENDOS", ano).slice(1)}`, { fmt: NUM });
-        g.set(`CEN_FURO#${suf}`, ano,
-          `=MAX(0,${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)}-${g.ref(`CEN_CAIXA_ANTES#${suf}`, ano)})`,
+        g.set(kFuro, ano,
+          `=MAX(0,${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)}-${g.ref(kCaixaAntes, ano)})`,
           { fmt: NUM });
-        g.set(`CEN_REV_SAQUE#${suf}`, ano,
-          `=IF(${g.ref(`CEN_FURO#${suf}`, ano)}>0,${g.ref(`CEN_FURO#${suf}`, ano)},`
-          + `-MIN(${g.ref(`CEN_REV_INI#${suf}`, ano)},`
-          + `MAX(0,${g.ref(`CEN_CAIXA_ANTES#${suf}`, ano)}-${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)})))`,
+        g.set(kRevSaque, ano,
+          `=IF(${g.ref(kFuro, ano)}>0,${g.ref(kFuro, ano)},`
+          + `-MIN(${g.ref(kRevIni, ano)},`
+          + `MAX(0,${g.ref(kCaixaAntes, ano)}-${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)})))`,
           { fmt: NUM });
-        g.set(`CEN_REV_FIM#${suf}`, ano,
-          `=${g.ref(`CEN_REV_INI#${suf}`, ano)}+${g.ref(`CEN_REV_SAQUE#${suf}`, ano)}`, { fmt: NUM, negrito: true });
+        g.set(kRevFim, ano, `=${g.ref(kRevIni, ano)}+${g.ref(kRevSaque, ano)}`, { fmt: NUM, negrito: true });
         // Caixa antes do revolver, mais o saque — não repete os cinco termos
         // que já compõem `CEN_CAIXA_ANTES`, senão as duas fórmulas têm de ser
         // editadas em par para sempre, e nada aqui garante isso.
-        g.set(`CEN_CAIXA_FIM#${suf}`, ano,
-          `=${g.ref(`CEN_CAIXA_ANTES#${suf}`, ano)}+${g.ref(`CEN_REV_SAQUE#${suf}`, ano)}`,
-          { fmt: NUM, negrito: true });
-        g.set(`CEN_ST_FIM#${suf}`, ano,
-          `=MAX(0,${g.ref(`CEN_CAIXA_FIM#${suf}`, ano)}-${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)})`,
+        g.set(kCaixaFim, ano, `=${g.ref(kCaixaAntes, ano)}+${g.ref(kRevSaque, ano)}`, { fmt: NUM, negrito: true });
+        g.set(kStFim, ano,
+          `=MAX(0,${g.ref(kCaixaFim, ano)}-${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)})`,
           { fmt: NUM });
 
-        g.set(`CEN_DIV_LIQ#${suf}`, ano,
+        g.set(kDivLiq, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_SALDO", ano).slice(1)}`
-          + `+${g.ref(`CEN_REV_FIM#${suf}`, ano)}-${g.ref(`CEN_CAIXA_FIM#${suf}`, ano)}`, { fmt: NUM, negrito: true });
-        g.set(`CEN_SERVICO#${suf}`, ano,
+          + `+${g.ref(kRevFim, ano)}-${g.ref(kCaixaFim, ano)}`, { fmt: NUM, negrito: true });
+        g.set(kServico, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT_CAIXA", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_AMORT", ano).slice(1)}`
-          + `+ABS(${g.ref(`CEN_FIN_EXP#${suf}`, ano)})`, { fmt: NUM });
-        g.set(`CEN_ND_REAL#${suf}`, ano,
-          `=IF(${g.ref(`CEN_EBITDA#${suf}`, ano)}<=0,"EBITDA<=0",`
-          + `${g.ref(`CEN_DIV_LIQ#${suf}`, ano)}/${g.ref(`CEN_EBITDA#${suf}`, ano)})`, { fmt: MULT, negrito: true });
-        g.set(`CEN_ND_REAL#${suf}#t`, ano,
-          `=IF(NOT(ISNUMBER(${g.ref(`CEN_ND_REAL#${suf}`, ano)})),"n.a.",`
-          + `IF(${g.ref(`CEN_ND_REAL#${suf}`, ano)}>${g.ref("C_ND_EBITDA", ano)},"ROMPE","ok"))`, {});
-        g.set(`CEN_DSCR_REAL#${suf}`, ano,
-          `=IF(${g.ref(`CEN_SERVICO#${suf}`, ano)}<=0,"sem serviço de dívida",`
-          + `${g.ref(`CEN_EBITDA#${suf}`, ano)}/${g.ref(`CEN_SERVICO#${suf}`, ano)})`, { fmt: MULT, negrito: true });
-        g.set(`CEN_DSCR_REAL#${suf}#t`, ano,
-          `=IF(NOT(ISNUMBER(${g.ref(`CEN_DSCR_REAL#${suf}`, ano)})),"n.a.",`
-          + `IF(${g.ref(`CEN_DSCR_REAL#${suf}`, ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
+          + `+ABS(${g.ref(kFinExp, ano)})`, { fmt: NUM });
+        g.set(kNdReal, ano,
+          `=IF(${g.ref(kEbitda, ano)}<=0,"EBITDA<=0",${g.ref(kDivLiq, ano)}/${g.ref(kEbitda, ano)})`,
+          { fmt: MULT, negrito: true });
+        g.set(`${kNdReal}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(kNdReal, ano)})),"n.a.",`
+          + `IF(${g.ref(kNdReal, ano)}>${g.ref("C_ND_EBITDA", ano)},"ROMPE","ok"))`, {});
+        g.set(kDscrReal, ano,
+          `=IF(${g.ref(kServico, ano)}<=0,"sem serviço de dívida",${g.ref(kEbitda, ano)}/${g.ref(kServico, ano)})`,
+          { fmt: MULT, negrito: true });
+        g.set(`${kDscrReal}#t`, ano,
+          `=IF(NOT(ISNUMBER(${g.ref(kDscrReal, ano)})),"n.a.",`
+          + `IF(${g.ref(kDscrReal, ano)}<${g.ref("C_COBERTURA", ano)},"ROMPE","ok"))`, {});
 
         // PICO DE USO DO REVOLVER: máximo ACUMULADO até este ano, na MESMA
         // sombra — cada coluna mostra o pico até ali, e a última coluna é o
@@ -5281,8 +5310,8 @@ function abaOutput(
         // primeiro ano projetado desta mesma linha.
         const colAno = g.letraDoAno(ano);
         const colPrimeiroProj = g.letraDoAno(ctx.proj[0]);
-        g.set(`CEN_PICO_REVOLVER#${suf}`, ano,
-          `=MAX(${colPrimeiroProj}${g.n(`CEN_REV_FIM#${suf}`)}:${colAno}${g.n(`CEN_REV_FIM#${suf}`)})`, {
+        const linhaRevFim = g.n(kRevFim);
+        g.set(kPico, ano, `=MAX(${colPrimeiroProj}${linhaRevFim}:${colAno}${linhaRevFim})`, {
           fmt: NUM,
           nota: "Maior saldo de revolver visto do primeiro ano projetado até este — a pergunta "
             + "\"quanto de dinheiro novo este cenário pode exigir, no pior momento\".",
