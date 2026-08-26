@@ -17,6 +17,10 @@ import {
   explicarFalha, explicarParada, explicarLoteVazio, FRACAO_MINIMA_COM_LINHAS,
   type FalhaExplicada,
 } from "../src/lib/falha-em-portugues.ts";
+import {
+  semPrimeiroSinalMs, janelaPara, SEM_PROGRESSO_MS, SEGUNDOS_POR_DOCUMENTO,
+} from "../src/lib/espera-do-lote.ts";
+import { readFileSync } from "node:fs";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -155,6 +159,69 @@ checar(
   "a parada avisa para não reenviar antes de saber a causa — reenviar pode duplicar",
 );
 
+// ---------------------------------------------------------------------------
+// 5. A ESPERA DO LOTE — a outra forma de a tela mentir no dia ruim
+// ---------------------------------------------------------------------------
+//
+// A mensagem de falha responde "o que aconteceu". Estas contas respondem, antes
+// dela, "aconteceu alguma coisa?" — e erram para os dois lados: curtas demais,
+// declaram parada sobre um lote vivo (e o analista reenvia, pagando a IA duas
+// vezes); longas demais, devolvem a espera eterna que a 0108 existe para acabar.
+//
+// A CADÊNCIA VEM DO WORKFLOW, não de um número repetido aqui: é o mesmo
+// `batchInterval` que o nó de classificação tem em produção. O JSON do workflow
+// é dado, não código — lê-lo daqui não cruza a fronteira de build que impede o
+// portal de importar `n8n/lib/*.mjs`.
+const workflow = JSON.parse(
+  readFileSync(new URL("../../n8n/workflow.e1-ingestao.json", import.meta.url), "utf8"),
+) as { nodes: Array<{ name: string; parameters: Record<string, unknown> }> };
+const noClassificar = workflow.nodes.find((n) => n.name === "IA Classificar")!;
+const cadenciaS =
+  (noClassificar.parameters as { options: { batching: { batch: { batchInterval: number } } } })
+    .options.batching.batch.batchInterval / 1000;
+
+// O SILÊNCIO INICIAL É UMA BARREIRA, não uma fila: `Juntar Ramos` (mode append)
+// só emite quando a ÚLTIMA classificação volta, então o pior caso de um lote de
+// N arquivos é N chamadas espaçadas pela cadência — nenhum documento é
+// registrado antes disso, e é isso que a tela mede.
+for (const n of [2, 38, 190]) {
+  const piorSilencioMs = n * cadenciaS * 1000;
+  checar(
+    semPrimeiroSinalMs(n) > piorSilencioMs,
+    `lote de ${n}: a tela desiste em ${(semPrimeiroSinalMs(n) / 60000).toFixed(1)} min e o silêncio `
+      + `legítimo da barreira vai a ${(piorSilencioMs / 60000).toFixed(1)} min`,
+  );
+}
+
+// E O LOTE DE 38 NÃO PODE GANHAR FOLGA: ele é onde o limite antigo (8 minutos
+// fixos) foi calibrado, contra duas rodadas reais. Uma conta nova que afrouxe
+// justamente o caso medido deixou de descrever o mesmo fenômeno.
+checar(
+  semPrimeiroSinalMs(38) <= 8 * 60 * 1000 * 1.1,
+  `o lote de 38 ganhou folga demais: ${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min contra os 8 calibrados`,
+);
+
+// A JANELA TOTAL tem de entregar a margem que ela promete no lote de 190 — o
+// teto de 90 minutos truncava 152 em 90, e a margem de 3x virava 1,77x sem que
+// nada dissesse. Um lote que andasse a 28s por documento (contra os 16 medidos)
+// veria a tela desistir viva.
+for (const n of [38, 190]) {
+  const previstoMs = n * SEGUNDOS_POR_DOCUMENTO * 1000;
+  checar(
+    janelaPara(n) >= previstoMs * 3,
+    `lote de ${n}: a janela entrega ${(janelaPara(n) / previstoMs).toFixed(2)}x do previsto, e a tela promete 3x`,
+  );
+}
+
+// E a parada por falta de AVANÇO continua curta: depois do primeiro documento o
+// progresso anda a cada extração, e 5 minutos são ~20 documentos que deveriam
+// ter aparecido. Ela não pode crescer com o lote — é isso que a distingue do
+// silêncio inicial.
+checar(
+  SEM_PROGRESSO_MS === 5 * 60 * 1000,
+  "o limite de 'parou de andar' deixou de ser 5 minutos — ele mede outra coisa que o silêncio inicial",
+);
+
 if (falhas.length > 0) {
   console.error(`\n${falhas.length} falha(s):`);
   for (const f of falhas) console.error(`  ✗ ${f}`);
@@ -163,3 +230,4 @@ if (falhas.length > 0) {
 }
 console.log(`${ok} verificações OK / 0 falhas`);
 console.log("MENSAGEM DE FALHA OK — toda causa real tem explicação própria, e nenhuma cita ferramenta");
+console.log("ESPERA DO LOTE OK — o silêncio da barreira e a janela cobrem o lote de 190");

@@ -349,3 +349,81 @@ test('bytesDoBinario lê os DOIS formatos que o n8n usa', () => {
   assert.equal(bytesDoBinario(null), null);
   assert.equal(bytesDoBinario({ id: 'abc', fileSize: 'sei lá' }), null);
 });
+
+// ---------------------------------------------------------------------------
+// O LOTE DE 190 DOCUMENTOS — o `book-araucaria`, antes de ele custar dinheiro
+// ---------------------------------------------------------------------------
+//
+// O teto é um NÃO INTEIRO: ou o lote cabe e roda todo, ou não começa. Então a
+// pergunta "190 documentos cabem em US$ 3?" tem de ser respondida ANTES do
+// envio, e não pelo recado de recusa depois de o dono ter subido 190 arquivos.
+//
+// A forma vem do que o gerador MEDIU no book (sessão 70, registrado no
+// HANDOFF): 190 documentos, 247 páginas, 16.081 linhas com número. O
+// `book-araucaria` não está no repositório — foi entregue ao dono por arquivo,
+// por decisão dele —, então o que este teste guarda é a FORMA do lote, que é o
+// que decide o orçamento; os PDFs não acrescentariam nada à conta.
+//
+// E ele guarda um SEGUNDO fato, que é o que quase deu errado: a estimativa por
+// CONTEÚDO devolve US$ 0,93 a US$ 2,30 (conforme quantas colunas os documentos
+// têm e quantos nomes de arquivo não resolvem tipo+período), e a estimativa por
+// TAMANHO — o caminho de queda, que vale para o lote INTEIRO assim que UM
+// documento não trouxer medida de conteúdo — devolve US$ 2,47 a US$ 3,21 para o
+// mesmo lote. No lote de 38 essa diferença era inofensiva (US$ 0,29 medido
+// contra US$ 0,56 estimado, longe do teto); em 190 ela decide se a rodada
+// acontece. Um PDF escaneado no meio do lote é o gatilho.
+import { orcamentoDoLotePorConteudo } from '../lib/custo.mjs';
+import { SYSTEM_PROMPT } from '../lib/extract.mjs';
+
+const ARAUCARIA = { documentos: 190, paginas: 247, celulas: 16081 };
+
+function loteComForma({ colunas, fracaoSemNomeResolvido }) {
+  const docs = [];
+  for (let i = 0; i < ARAUCARIA.documentos; i += 1) {
+    docs.push({
+      celulas: Math.round(ARAUCARIA.celulas / ARAUCARIA.documentos),
+      paginas: Math.max(1, Math.round(ARAUCARIA.paginas / ARAUCARIA.documentos)),
+      colunas,
+      blocos: 1,
+      precisaFallback: i / ARAUCARIA.documentos < fracaoSemNomeResolvido,
+      bytes: Math.round((179 / 49) * 1024 * (ARAUCARIA.paginas / ARAUCARIA.documentos)),
+    });
+  }
+  return docs;
+}
+
+test('o lote de 190 documentos do book-araucaria CABE no teto pela conta de conteúdo', () => {
+  const tokensPromptSistema = Math.ceil(SYSTEM_PROMPT.length / 4);
+  // O pior caso das duas variáveis que o lote não controla: uma coluna por
+  // documento (mais saída por linha) e NENHUM nome de arquivo resolvendo
+  // tipo+período (toda classificação paga o PDF de novo).
+  const r = orcamentoDoLotePorConteudo({
+    documentos: loteComForma({ colunas: 1, fracaoSemNomeResolvido: 1 }),
+    tokensPromptSistema,
+  });
+  assert.equal(r.porConteudo, true, 'a conta caiu para a estimativa por tamanho — reveja a medição');
+  assert.ok(r.cabe,
+    `190 documentos com a forma do book-araucaria foram RECUSADOS: US$ ${r.estimadoUSD} contra o teto `
+    + `de US$ ${TETO_EXECUCAO_USD}. O lote é um não-inteiro: recusado, ele não roda em nenhuma parte.`);
+  assert.equal(r.chamadas, 380, '190 extrações + 190 classificações — se este número mudou, a cadência da tela mudou junto');
+});
+
+test('UM documento sem medida de conteúdo derruba o lote de 190 para a conta por TAMANHO', () => {
+  const tokensPromptSistema = Math.ceil(SYSTEM_PROMPT.length / 4);
+  const docs = loteComForma({ colunas: 1, fracaoSemNomeResolvido: 1 });
+  // Um PDF escaneado: tem tamanho, não tem camada de texto.
+  docs[0] = { ...docs[0], celulas: 0, paginas: 0 };
+
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema });
+
+  // A queda é DOUTRINA, não defeito: medir só os documentos que dá subestimaria
+  // o lote na exata proporção do que não se sabe. O que este teste trava é a
+  // CONSEQUÊNCIA, para que ela nunca seja descoberta no dia do envio: com o
+  // lote inteiro caindo para a conta por tamanho, 190 documentos são recusados.
+  assert.equal(r.porConteudo, false, 'a queda para a conta por tamanho deixou de acontecer');
+  assert.equal(r.cabe, false,
+    'um único PDF escaneado deixou de derrubar o lote de 190 — se isto passou a caber, a conta por '
+    + 'tamanho mudou e o comentário acima envelheceu');
+  assert.match(r.mensagem, /Envie no máximo \d+ documento\(s\) por vez/,
+    'a recusa tem de dizer quantos cabem, senão o dono só sabe que não pode');
+});
