@@ -6576,17 +6576,24 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     }
   }
 
+  // A réplica completa (dívida e caixa por cenário) chegou depois deste teste
+  // (36) ser escrito — o bloco de sensibilidade deixou de ser "o que falta" e
+  // virou uma CONTRAPROVA declarada da réplica. O texto mudou de propósito, e
+  // este assert acompanha a mudança em vez de travar a redação antiga.
   const rFora = (() => {
     for (let r = 1; r <= out.rowCount; r++) {
-      if (/segura a DÍVIDA do cenário ativo/.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
+      if (/CONTRAPROVA do bloco abaixo/.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
     }
     return -1;
   })();
-  checar(rFora > 0, "(36) o bloco DIZ o que ele não é");
+  checar(rFora > 0, "(36) o bloco DIZ o que ele é agora — contraprova, não lacuna");
   const txtFora = String(out.getRow(rFora).getCell(3).value ?? "");
-  checar(/PISO/.test(txtFora) && /pico de caixa/.test(txtFora),
-    "(36) …declarando que a leitura é um piso e nomeando o que continua fora",
+  checar(/PISO/.test(txtFora),
+    "(36) …declarando que esta leitura continua sendo um piso",
     txtFora.slice(0, 140));
+
+  const rReplica = linhaDe(out, "RÉPLICA COMPLETA POR CENÁRIO (dívida e caixa correm nos três, não só no ativo)");
+  checar(rReplica > 0, "(36) …e a réplica completa que resolve a lacuna existe na mesma aba", String(rReplica));
 
   // ---- E O EBITDA DA ABA DE RECEITA DEIXOU DE SER UMA LINHA VAZIA.
   //
@@ -6930,6 +6937,99 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const seca = avaliarCelula(out, COL, acharEm(out, /^Liquidez seca/));
     checar(seca === "PC<=0",
       "(41) a liquidez seca segue a mesma regra", `publicou: ${JSON.stringify(seca)}`);
+  }
+}
+
+// =============================================================================
+// (42) A RÉPLICA COMPLETA POR CENÁRIO — dívida e caixa correm nos três, não só
+// no cenário ativo.
+//
+// O bloco de sensibilidade (36) já provava que a leitura ANTERIOR era um PISO
+// deliberado: só o EBITDA variava, a dívida ficava presa ao cenário ativo. Este
+// teste prova o que veio substituir essa lacuna — uma segunda cascata de
+// revolver, uma por cenário, com a MESMA técnica sem circularidade do revolver
+// ativo (juros sobre o saldo de ABERTURA).
+//
+// O QUE ELE TRAVA:
+//   1. O CHECK É ZERO: a réplica do cenário ATIVO (via CHOOSE) bate com a
+//      dívida líquida do bloco de RATIOS — a prova de que a segunda cascata lê
+//      exatamente os mesmos insumos da primeira.
+//   2. DIREÇÃO, NÃO SÓ ZERO: o revolver do Stress é, em TODO ano projetado,
+//      maior ou igual ao do Base — por indução (EBITDA pior, NCG pior nos dois
+//      lados pela `#diasStr`, CAPEX e serviço da dívida IGUAIS → caixa antes do
+//      revolver do Stress nunca é maior; o revolver dele nunca saca menos). Um
+//      CHECK que só prova zero não pega um sinal trocado que ainda fecha —
+//      pega um sinal trocado que faz o Stress parecer MELHOR, que é
+//      exatamente o defeito que este teste existe para impedir.
+//   3. O PICO DE USO DO REVOLVER — o número que o piso antigo declarava fora
+//      do alcance — publica maior no Stress que no Base no último ano
+//      projetado, pela mesma razão do item 2.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const out = wb.getWorksheet("Output")!;
+  esquecerMemoria(out);
+  const acharEm = (re: RegExp) => {
+    for (let r = 1; r <= out.rowCount; r++) {
+      if (re.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
+    }
+    return 0;
+  };
+  const acharTodos = (re: RegExp) => {
+    const r: number[] = [];
+    for (let i = 1; i <= out.rowCount; i++) {
+      if (re.test(String(out.getRow(i).getCell(3).value ?? ""))) r.push(i);
+    }
+    return r;
+  };
+
+  const rTitulo = acharEm(/^RÉPLICA COMPLETA POR CENÁRIO/);
+  checar(rTitulo > 0, "(42) o bloco da réplica completa existe na aba Output", String(rTitulo));
+
+  const rChk = acharEm(/CHECK: a réplica completa do cenário ATIVO/);
+  checar(rChk > 0, "(42) …com um CHECK contra a dívida líquida ativa", String(rChk));
+  for (const col of ["G", "H", "I", "J"]) {
+    const v = avaliarCelula(out, col, rChk);
+    checar(typeof v === "number" && Math.abs(v) < 0.01,
+      `(42) CHECK zero em ${col}: a réplica do cenário ATIVO é o próprio modelo`, String(v));
+  }
+
+  // As linhas de revolver de fechamento e de pico aparecem uma vez por
+  // cenário, na ordem Base/Cliente/Stress (a ordem do `CHOOSE`).
+  const revRows = acharTodos(/revolver — saldo de fechamento/);
+  const picoRows = acharTodos(/pico de uso do revolver/);
+  checar(revRows.length === 3 && picoRows.length === 3,
+    "(42) o revolver de fechamento e o pico existem nos três cenários",
+    `${revRows.length} / ${picoRows.length}`);
+
+  if (revRows.length === 3) {
+    const [rRevBase, , rRevStress] = revRows;
+    for (const col of ["G", "H", "I", "J"]) {
+      const base = avaliarCelula(out, col, rRevBase);
+      const stress = avaliarCelula(out, col, rRevStress);
+      if (typeof base === "number" && typeof stress === "number") {
+        checar(stress >= base - 0.01,
+          `(42) o revolver do Stress em ${col} não é menor que o do Base — a réplica não inverteu a direção`,
+          `Stress ${stress.toFixed(0)} vs Base ${base.toFixed(0)}`);
+      }
+    }
+  }
+  if (picoRows.length === 3) {
+    const [rPicoBase, , rPicoStress] = picoRows;
+    const base = avaliarCelula(out, "J", rPicoBase);
+    const stress = avaliarCelula(out, "J", rPicoStress);
+    if (typeof base === "number" && typeof stress === "number") {
+      checar(stress >= base - 0.01,
+        "(42) …e o pico do horizonte inteiro (último ano) segue a mesma direção",
+        `Stress ${stress.toFixed(0)} vs Base ${base.toFixed(0)}`);
+    }
   }
 }
 
