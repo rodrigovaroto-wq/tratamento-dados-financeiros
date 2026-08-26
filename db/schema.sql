@@ -2316,6 +2316,38 @@ $_$;
 COMMENT ON FUNCTION public.fn_fator_escala(p_unidade text) IS 'Fator multiplicativo para levar um valor à base (unidade). null quando a escala é ausente ou desconhecida.';
 
 --
+-- Name: fn_fatos_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) RETURNS TABLE(fato_id uuid, documento_id uuid, documento_versao_id uuid, nome_documento text, tipo_taxonomia text, tipo text, rotulo text, severidade text, porque text, trecho text, pagina integer, leitura text, confianca numeric)
+    LANGUAGE sql STABLE
+    AS $$
+  with corrente as (
+    select distinct on (dv.documento_id) dv.id, dv.documento_id, dv.arquivo_ref, dv.nome_original
+      from documento_versao dv
+      join documento d on d.id = dv.documento_id
+     where d.caso_id = p_caso_id
+     order by dv.documento_id, dv.n_versao desc
+  )
+  select f.id, c.documento_id, f.documento_versao_id,
+         coalesce(c.nome_original, c.arquivo_ref),
+         d.tipo_taxonomia,
+         f.tipo, cat.rotulo, cat.severidade, cat.porque,
+         f.trecho, f.pagina, f.leitura, f.confianca
+    from documento_fato f
+    join corrente c            on c.id = f.documento_versao_id
+    join documento d           on d.id = c.documento_id
+    join fato_tipo_catalogo cat on cat.tipo = f.tipo
+   order by cat.ordem, cat.rotulo, f.criado_em;
+$$;
+
+--
+-- Name: FUNCTION fn_fatos_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) IS 'Os fatos materiais do mandato, da versão CORRENTE de cada documento, ordenados por gravidade. Versão anterior é trilha e não aparece: um alerta já substituído por releitura ao lado do novo seria duas verdades sobre a mesma frase.';
+
+--
 -- Name: fn_fechar_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3749,6 +3781,8 @@ declare
   v_n       bigint;
   v_alvo    regclass;
   v_crit    int;
+  v_proc    regproc;
+  v_src     text;
 begin
   for r in select * from instalacao_requisito order by ordem, chave loop
     v_ok  := false;
@@ -3768,6 +3802,31 @@ begin
         v_ok := true;
         v_det := 'mais de uma assinatura com este nome';
       end;
+
+    elsif r.tipo = 'corpo' then
+      -- 0147: o corpo PUBLICADO tem de conter o marcador.
+      --
+      -- Como todo ramo desta função, ele não pode derrubar a sonda: função
+      -- ausente, nome ambíguo e marcador ausente são três respostas diferentes,
+      -- e as três são `presente = false` com o detalhe dizendo QUAL — porque
+      -- "aplique a migration" e "há duas assinaturas com este nome" pedem ações
+      -- diferentes de quem está lendo a tela.
+      begin
+        v_proc := to_regproc('public.' || r.objeto);
+      exception when others then
+        v_proc := null;
+        v_det  := 'mais de uma assinatura com este nome — o requisito precisa declarar os argumentos';
+      end;
+
+      if v_proc is null then
+        v_ok  := false;
+        v_det := coalesce(v_det, 'a função nem existe');
+      else
+        v_src := pg_get_functiondef(v_proc::oid);
+        v_ok  := v_src is not null and position(r.marcador in v_src) > 0;
+        v_det := case when v_ok then 'corpo com o marcador'
+                      else 'a função existe, mas o corpo é ANTERIOR a esta migration' end;
+      end if;
 
     elsif r.tipo = 'coluna' then
       -- 0132: `pg_attribute` em vez de `information_schema.columns` — mesma
@@ -3824,7 +3883,7 @@ $$;
 -- Name: FUNCTION fn_instalacao_conferir(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. 0132: o custo NÃO cresce com o dado — a contagem de seed é limitada ao critério (lote_execucao cresce por execução, e o painel a sonda a cada carga) e a checagem de coluna usa pg_attribute em vez de information_schema. Garante o contrapositivo, não o positivo: objeto ausente é migration ausente; objeto presente não prova que o corpo está na versão certa.';
+COMMENT ON FUNCTION public.fn_instalacao_conferir() IS 'Confere cada requisito de instalacao_requisito contra o catálogo do banco. Sobrevive ao objeto ausente (to_regclass/to_regproc devolvem NULL em vez de erro): a sonda não pode falhar por causa do que ela existe para medir. Desde a 0147 confere também o CORPO da função (tipo=corpo), que é o único jeito de distinguir uma correção aplicada de uma função homônima com o corpo velho.';
 
 --
 -- Name: fn_instalacao_resumo(); Type: FUNCTION; Schema: public; Owner: -
@@ -7508,6 +7567,67 @@ $$;
 COMMENT ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) IS 'Registra falha do pipeline para a TELA mostrar (e para a trilha guardar). Aceita caso_id nulo: a falha pode acontecer antes de o caso existir, e falha órfã é falha invisível.';
 
 --
+-- Name: fn_registrar_fatos(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_gravados  int := 0;
+  v_sem_prova int := 0;
+  v_tipo_ruim int := 0;
+begin
+  if p_documento_versao_id is null then
+    return jsonb_build_object('erro', 'documento_versao_id nulo');
+  end if;
+
+  -- Sem chave `fatos` na resposta (workflow antigo, ou resposta que falhou) NÃO
+  -- é o mesmo que "este documento não tem fato nenhum". Apagar os fatos de uma
+  -- versão porque a chave veio ausente destruiria trilha por causa de um
+  -- workflow desatualizado — o mesmo modo de falha do `Gravar Campos` que
+  -- desligou a reconciliação por onze dias.
+  if p_fatos is null or jsonb_typeof(p_fatos) <> 'array' then
+    return jsonb_build_object('gravados', 0, 'sem_prova', 0, 'tipo_desconhecido', 0,
+                              'nota', 'sem lista de fatos na resposta — nada foi tocado');
+  end if;
+
+  delete from documento_fato where documento_versao_id = p_documento_versao_id;
+
+  insert into documento_fato (documento_versao_id, tipo, trecho, pagina, leitura, confianca)
+  select p_documento_versao_id,
+         f->>'tipo',
+         btrim(f->>'trecho'),
+         case when jsonb_typeof(f->'pagina') = 'number' then (f->>'pagina')::int end,
+         nullif(btrim(coalesce(f->>'leitura', '')), ''),
+         case when jsonb_typeof(f->'confianca') = 'number' then (f->>'confianca')::numeric end
+    from jsonb_array_elements(p_fatos) f
+   where length(btrim(coalesce(f->>'trecho', ''))) >= 20
+     and exists (select 1 from fato_tipo_catalogo c where c.tipo = f->>'tipo');
+  get diagnostics v_gravados = row_count;
+
+  select count(*)::int into v_sem_prova
+    from jsonb_array_elements(p_fatos) f
+   where length(btrim(coalesce(f->>'trecho', ''))) < 20;
+
+  select count(*)::int into v_tipo_ruim
+    from jsonb_array_elements(p_fatos) f
+   where length(btrim(coalesce(f->>'trecho', ''))) >= 20
+     and not exists (select 1 from fato_tipo_catalogo c where c.tipo = f->>'tipo');
+
+  return jsonb_build_object('gravados', v_gravados,
+                            'sem_prova', v_sem_prova,
+                            'tipo_desconhecido', v_tipo_ruim);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb) IS 'Grava os fatos materiais de uma versão de documento, substituindo os anteriores dela. Recusa entrada sem trecho literal (evidência é obrigatória) e tipo fora do catálogo, e CONTA as recusas no retorno — recusa silenciosa vira ausência, e ausência parece "não há fato".';
+
+--
 -- Name: fn_registrar_indice_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9464,6 +9584,34 @@ COMMENT ON COLUMN public.documento.justificativa IS 'Explicação objetiva da cl
 COMMENT ON COLUMN public.documento.resumo IS 'Resumo objetivo (2-3 frases) do conteúdo do documento, gerado no diagnóstico (E2).';
 
 --
+-- Name: documento_fato; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.documento_fato (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    documento_versao_id uuid NOT NULL,
+    tipo text NOT NULL,
+    trecho text NOT NULL,
+    pagina integer,
+    leitura text,
+    confianca numeric,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT documento_fato_trecho_check CHECK ((length(btrim(trecho)) >= 20))
+);
+
+--
+-- Name: TABLE documento_fato; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.documento_fato IS 'Fato material declarado por um documento EM TEXTO — covenant rompido, ressalva de auditoria, continuidade operacional. Não é pendência: pendência significa "há algo a corrigir", e um covenant rompido não é defeito do dado, é o dado. Nasceu da v48, onde as Notas Explicativas e o Parecer do Auditor entravam, eram classificados e ficavam mudos.';
+
+--
+-- Name: COLUMN documento_fato.trecho; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.documento_fato.trecho IS 'A frase COPIADA do documento. NOT NULL e com tamanho mínimo: um resumo escrito pelo modelo é afirmação, a frase do documento é evidência — e este alerta é o que vai ao comitê.';
+
+--
 -- Name: documento_versao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9598,6 +9746,31 @@ CREATE TABLE public.execucao_falha (
 --
 
 COMMENT ON TABLE public.execucao_falha IS 'Falha do pipeline (n8n) que a TELA precisa mostrar. Existe porque o portal deduzia progresso de sinais positivos, e falha produz ausência — indistinguível de "ainda processando". Tabela própria e não evento_auditoria: isto é estado operacional que se marca como visto, não trilha.';
+
+--
+-- Name: fato_tipo_catalogo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fato_tipo_catalogo (
+    tipo text NOT NULL,
+    rotulo text NOT NULL,
+    severidade text NOT NULL,
+    porque text NOT NULL,
+    ordem integer DEFAULT 100 NOT NULL,
+    CONSTRAINT fato_tipo_catalogo_severidade_check CHECK ((severidade = ANY (ARRAY['critico'::text, 'relevante'::text, 'informativo'::text])))
+);
+
+--
+-- Name: TABLE fato_tipo_catalogo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fato_tipo_catalogo IS 'Os tipos de fato material que a extração pode declarar, com a severidade e o rótulo humano. É catálogo e não enum no corpo da função porque acrescentar um tipo não pode exigir reescrever a função — e porque a TELA precisa do rótulo sem manter um switch paralelo.';
+
+--
+-- Name: COLUMN fato_tipo_catalogo.porque; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fato_tipo_catalogo.porque IS 'Por que este fato importa para quem decide. É o texto que a tela mostra abaixo do trecho, e é o que separa um alerta acionável de uma etiqueta.';
 
 --
 -- Name: golden_campo; Type: TABLE; Schema: public; Owner: -
@@ -9782,6 +9955,24 @@ CREATE TABLE public.indice_macro_serie (
 COMMENT ON COLUMN public.indice_macro_serie.natureza IS 'taxa = variação % do mês (o ano acumula por COMPOSIÇÃO); nivel = preço/estoque na data (o ano é o fechamento). Compor nível, ou somar taxa, é erro conceitual.';
 
 --
+-- Name: instalacao_cobertura; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instalacao_cobertura (
+    id boolean DEFAULT true NOT NULL,
+    ate_migration text NOT NULL,
+    revisado_em date DEFAULT CURRENT_DATE NOT NULL,
+    observacao text NOT NULL,
+    CONSTRAINT instalacao_cobertura_id_check CHECK (id)
+);
+
+--
+-- Name: TABLE instalacao_cobertura; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instalacao_cobertura IS 'Até que migration o catálogo instalacao_requisito foi revisado. Uma linha só. O db/test/run.sh reprova quando ela fica para trás da migration mais nova — é o mesmo portão do ESTADO.md, e existe porque o catálogo passou 16 migrations parado na 0130 sem que nada acusasse.';
+
+--
 -- Name: instalacao_requisito; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9794,8 +9985,10 @@ CREATE TABLE public.instalacao_requisito (
     porque text NOT NULL,
     severidade text DEFAULT 'importante'::text NOT NULL,
     ordem integer DEFAULT 100 NOT NULL,
+    marcador text,
+    CONSTRAINT instalacao_requisito_marcador_check CHECK (((tipo <> 'corpo'::text) OR ((marcador IS NOT NULL) AND (length(marcador) >= 4)))),
     CONSTRAINT instalacao_requisito_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text, 'informativo'::text]))),
-    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text])))
+    CONSTRAINT instalacao_requisito_tipo_check CHECK ((tipo = ANY (ARRAY['tabela'::text, 'coluna'::text, 'funcao'::text, 'seed'::text, 'comportamento'::text, 'corpo'::text])))
 );
 
 --
@@ -9815,6 +10008,12 @@ COMMENT ON COLUMN public.instalacao_requisito.tipo IS 'comportamento é o único
 --
 
 COMMENT ON COLUMN public.instalacao_requisito.porque IS 'O SINTOMA VISÍVEL da ausência, não a descrição da migration. É o que torna o painel acionável para quem está com a tela aberta e não com o repositório.';
+
+--
+-- Name: COLUMN instalacao_requisito.marcador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.instalacao_requisito.marcador IS 'Para tipo=''corpo'': o TRECHO que precisa aparecer em pg_get_functiondef(objeto). É a única forma de a sonda distinguir uma função corrigida de uma função homônima com o corpo velho — e essa distinção é a maior parte do catálogo, porque a maioria das migrations recentes só republica corpo.';
 
 --
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
@@ -10191,6 +10390,13 @@ ALTER TABLE ONLY public.decisao
     ADD CONSTRAINT decisao_pkey PRIMARY KEY (id);
 
 --
+-- Name: documento_fato documento_fato_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documento_fato
+    ADD CONSTRAINT documento_fato_pkey PRIMARY KEY (id);
+
+--
 -- Name: documento documento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10238,6 +10444,13 @@ ALTER TABLE ONLY public.evento_auditoria
 
 ALTER TABLE ONLY public.execucao_falha
     ADD CONSTRAINT execucao_falha_pkey PRIMARY KEY (id);
+
+--
+-- Name: fato_tipo_catalogo fato_tipo_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fato_tipo_catalogo
+    ADD CONSTRAINT fato_tipo_catalogo_pkey PRIMARY KEY (tipo);
 
 --
 -- Name: golden_campo golden_campo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -10322,6 +10535,13 @@ ALTER TABLE ONLY public.indice_macro_obs
 
 ALTER TABLE ONLY public.indice_macro_serie
     ADD CONSTRAINT indice_macro_serie_pkey PRIMARY KEY (codigo);
+
+--
+-- Name: instalacao_cobertura instalacao_cobertura_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instalacao_cobertura
+    ADD CONSTRAINT instalacao_cobertura_pkey PRIMARY KEY (id);
 
 --
 -- Name: instalacao_requisito instalacao_requisito_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -10427,6 +10647,12 @@ ALTER TABLE ONLY public.taxonomia_linha_localizador
 
 ALTER TABLE ONLY public.taxonomia_tipo_documento
     ADD CONSTRAINT taxonomia_tipo_documento_pkey PRIMARY KEY (codigo);
+
+--
+-- Name: documento_fato_versao_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX documento_fato_versao_idx ON public.documento_fato USING btree (documento_versao_id);
 
 --
 -- Name: idx_campo_classe_override_campo; Type: INDEX; Schema: public; Owner: -
@@ -10794,6 +11020,20 @@ ALTER TABLE ONLY public.documento
     ADD CONSTRAINT documento_entidade_id_fkey FOREIGN KEY (entidade_id) REFERENCES public.entidade(id);
 
 --
+-- Name: documento_fato documento_fato_documento_versao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documento_fato
+    ADD CONSTRAINT documento_fato_documento_versao_id_fkey FOREIGN KEY (documento_versao_id) REFERENCES public.documento_versao(id) ON DELETE CASCADE;
+
+--
+-- Name: documento_fato documento_fato_tipo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documento_fato
+    ADD CONSTRAINT documento_fato_tipo_fkey FOREIGN KEY (tipo) REFERENCES public.fato_tipo_catalogo(tipo);
+
+--
 -- Name: documento documento_periodo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11138,6 +11378,18 @@ ALTER TABLE public.documento ENABLE ROW LEVEL SECURITY;
 CREATE POLICY documento_authenticated_all ON public.documento TO authenticated USING (true) WITH CHECK (true);
 
 --
+-- Name: documento_fato; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.documento_fato ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: documento_fato documento_fato_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY documento_fato_read ON public.documento_fato FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: documento_versao; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -11202,6 +11454,18 @@ ALTER TABLE public.execucao_falha ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY execucao_falha_authenticated_all ON public.execucao_falha TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: fato_tipo_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fato_tipo_catalogo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fato_tipo_catalogo fato_tipo_catalogo_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fato_tipo_catalogo_read ON public.fato_tipo_catalogo FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: golden_campo; Type: ROW SECURITY; Schema: public; Owner: -
@@ -11316,6 +11580,18 @@ ALTER TABLE public.indice_macro_serie ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY indice_macro_serie_read ON public.indice_macro_serie FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: instalacao_cobertura; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.instalacao_cobertura ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: instalacao_cobertura instalacao_cobertura_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY instalacao_cobertura_read ON public.instalacao_cobertura FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: instalacao_requisito; Type: ROW SECURITY; Schema: public; Owner: -
@@ -11630,6 +11906,12 @@ GRANT ALL ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) TO authentica
 --
 
 GRANT ALL ON FUNCTION public.fn_falhas_abertas(p_caso_nome text, p_desde timestamp with time zone) TO authenticated;
+
+--
+-- Name: FUNCTION fn_fatos_do_caso(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text); Type: ACL; Schema: public; Owner: -
@@ -11959,6 +12241,12 @@ GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_
 GRANT ALL ON FUNCTION public.fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb) TO service_role;
 
 --
+-- Name: FUNCTION fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb) TO authenticated;
+
+--
 -- Name: FUNCTION fn_registrar_pergunta_acao(p_caso_id uuid, p_codigo text, p_acao text, p_texto text, p_autor text, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12169,6 +12457,14 @@ GRANT ALL ON TABLE public.documento TO authenticated;
 GRANT ALL ON TABLE public.documento TO service_role;
 
 --
+-- Name: TABLE documento_fato; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.documento_fato TO anon;
+GRANT ALL ON TABLE public.documento_fato TO authenticated;
+GRANT ALL ON TABLE public.documento_fato TO service_role;
+
+--
 -- Name: TABLE documento_versao; Type: ACL; Schema: public; Owner: -
 --
 
@@ -12207,6 +12503,14 @@ GRANT ALL ON TABLE public.evento_auditoria TO service_role;
 GRANT ALL ON TABLE public.execucao_falha TO anon;
 GRANT ALL ON TABLE public.execucao_falha TO authenticated;
 GRANT ALL ON TABLE public.execucao_falha TO service_role;
+
+--
+-- Name: TABLE fato_tipo_catalogo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.fato_tipo_catalogo TO anon;
+GRANT ALL ON TABLE public.fato_tipo_catalogo TO authenticated;
+GRANT ALL ON TABLE public.fato_tipo_catalogo TO service_role;
 
 --
 -- Name: TABLE golden_campo; Type: ACL; Schema: public; Owner: -
@@ -12271,6 +12575,14 @@ GRANT ALL ON TABLE public.indice_macro_obs TO service_role;
 GRANT ALL ON TABLE public.indice_macro_serie TO anon;
 GRANT ALL ON TABLE public.indice_macro_serie TO authenticated;
 GRANT ALL ON TABLE public.indice_macro_serie TO service_role;
+
+--
+-- Name: TABLE instalacao_cobertura; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_cobertura TO anon;
+GRANT ALL ON TABLE public.instalacao_cobertura TO authenticated;
+GRANT ALL ON TABLE public.instalacao_cobertura TO service_role;
 
 --
 -- Name: TABLE instalacao_requisito; Type: ACL; Schema: public; Owner: -

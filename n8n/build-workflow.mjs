@@ -1080,6 +1080,15 @@ const diagnostico={
   tem_dado_financeiro: (typeof d.tem_dado_financeiro==='boolean')?d.tem_dado_financeiro:null,
   resumo: d.resumo??null,
   justificativa: d.justificativa??'',
+  // Os fatos viajam para fn_registrar_fatos no MESMO no' que grava o
+  // diagnostico. null quando a chave nao veio (workflow antigo) e' DIFERENTE de
+  // [] (o modelo leu e nao achou nada): o banco nao apaga os fatos de uma versao
+  // ao receber null, porque apagar trilha por causa de workflow desatualizado e'
+  // o defeito do Gravar Campos que desligou a reconciliacao por onze dias.
+  fatos: Array.isArray(d.fatos)
+    ? d.fatos.filter((f)=>f&&typeof f==='object'&&typeof f.ft==='string'&&typeof f.tr==='string'&&f.tr.trim().length>=20)
+             .map((f)=>({tipo:f.ft, trecho:f.tr.trim(), leitura:(typeof f.le==='string'&&f.le.trim()!=='')?f.le.trim():null, pagina:Number.isInteger(f.pg)?f.pg:null}))
+    : null,
 };
 // Custo REAL desta chamada, do bloco \`usage\` que a OpenAI devolve. Não vai
 // para o banco (exigiria migration) — vai para a saída do nó, visível na
@@ -1494,9 +1503,16 @@ const nodes = [
     operation: 'executeQuery',
     query: [
       'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado,',
+      // OS FATOS ENTRAM NA MESMA QUERY, e não em nó novo. Dois motivos, os dois
+      // medidos nesta casa: nó a mais é aresta a mais no canvas (o layout.test
+      // existe porque o canvas ficou ilegível), e principalmente — o nó Postgres
+      // SUBSTITUI o item pelo resultado da query, então cada nó novo é mais uma
+      // chance de perder `documento_id` pelo caminho. Foi assim que a
+      // reconciliação passou onze dias parada em silêncio (v47).
+      '       fn_registrar_fatos($2::uuid,$12::jsonb) as fatos,',
       '       $1::uuid as documento_id',
     ].join('\n'),
-    options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null] }}" },
+    options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do

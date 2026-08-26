@@ -80,11 +80,30 @@ begin
   select string_agg(format('%s (%s %s)', chave, tipo, objeto), ', ' order by chave)
     into v_ausentes
   from fn_instalacao_conferir()
-  where not presente and tipo in ('tabela', 'coluna', 'funcao');
+  where not presente and tipo in ('tabela', 'coluna', 'funcao', 'corpo');
 
   perform teste_assert_inst(v_ausentes is null,
     'todo requisito de estrutura do catálogo existe neste banco (nenhum alarme falso)',
     coalesce(v_ausentes, ''));
+
+  -- 0147: `corpo` ENTRA NESTE ASSERT, e é aqui que ele paga o próprio preço.
+  --
+  -- O tipo `corpo` exige que um TRECHO apareça em `pg_get_functiondef` — é assim
+  -- que a sonda distingue `fn_registrar_diagnostico` corrigida pela 0142 da
+  -- homônima com o corpo de antes. Isso o torna sensível a reescrita: uma
+  -- migration futura que republique aquela função sem o comentário `-- 0142`
+  -- faria o painel de produção acusar ausência num banco completo.
+  --
+  -- Deixá-lo FORA do assert acima seria pior das duas maneiras: os marcadores
+  -- nunca seriam conferidos contra a realidade (e um typo em `marcador` viraria
+  -- alarme falso permanente na tela do dono, exatamente o defeito que este
+  -- arquivo existe para não deixar acontecer), e a reescrita passaria calada.
+  -- Dentro, ela reprova no CI na mesma passada em que foi feita.
+  select count(*)::int into v_n_total from instalacao_requisito where tipo = 'corpo';
+  perform teste_assert_inst(v_n_total > 0,
+    'o catálogo tem requisito de CORPO — sem eles a sonda não vê as migrations que só '
+    'republicam função, que são a maioria das recentes',
+    format('%s requisito(s) de corpo', v_n_total));
 
   -- E os seeds também: o `run.sh` aplica as migrations que os semeiam.
   select string_agg(format('%s (%s)', chave, objeto), ', ' order by chave)
@@ -143,6 +162,53 @@ begin
   -- fixo passaria nos dois asserts acima.
   select presente into v_presente from fn_instalacao_conferir() where chave = '_teste_tabela_ok';
   perform teste_assert_inst(v_presente, '…e tabela existente é reportada PRESENTE (a sonda discrimina)');
+
+  raise notice '--- 3b. A SONDA DE CORPO DISTINGUE AS TRÊS CAUSAS (0147) ---';
+
+  -- Uma sonda de corpo que respondesse `true` fixo passaria no assert 1 com nota
+  -- máxima e nunca acusaria uma migration faltando — que é o único trabalho dela.
+  -- Os três casos abaixo são as três respostas possíveis, e cada uma pede uma
+  -- AÇÃO diferente de quem está lendo o painel:
+  --
+  --   função ausente          → aplique a migration que a CRIA
+  --   corpo sem o marcador    → aplique a migration que a CORRIGE (é a nova)
+  --   corpo com o marcador    → nada a fazer
+  --
+  -- As duas primeiras são "presente = false" e seriam indistinguíveis sem o
+  -- detalhe — e mandar alguém procurar a migration errada é o mesmo tipo de
+  -- pista falsa que o diagnóstico de erro da API passou o v30 inteiro dando.
+  insert into instalacao_requisito
+    (chave, migration, tipo, objeto, marcador, porque, severidade, ordem) values
+    ('_teste_corpo_ausente', '9999', 'corpo', 'fn_instalacao_conferir',
+     'ESTE TRECHO NAO EXISTE EM CORPO NENHUM',
+     'Requisito fabricado pelo teste.', 'informativo', 9999),
+    ('_teste_corpo_presente', '9999', 'corpo', 'fn_instalacao_conferir',
+     'instalacao_requisito',
+     'Requisito fabricado pelo teste.', 'informativo', 9999),
+    ('_teste_corpo_fn_ausente', '9999', 'corpo', 'fn_que_nunca_existiu',
+     'qualquer coisa',
+     'Requisito fabricado pelo teste.', 'informativo', 9999);
+
+  select presente, detalhe into v_presente, v_detalhe
+    from fn_instalacao_conferir() where chave = '_teste_corpo_ausente';
+  perform teste_assert_inst(v_presente is not null and not v_presente,
+    'corpo SEM o marcador é reportado ausente (a função existe e a correção não está lá)');
+  perform teste_assert_inst(v_detalhe like '%ANTERIOR a esta migration%',
+    '…e o detalhe manda aplicar a migration que CORRIGE, não a que cria',
+    coalesce(v_detalhe, '<null>'));
+
+  select presente into v_presente
+    from fn_instalacao_conferir() where chave = '_teste_corpo_presente';
+  perform teste_assert_inst(v_presente,
+    '…e corpo COM o marcador é reportado presente (a sonda discrimina, não devolve false fixo)');
+
+  select presente, detalhe into v_presente, v_detalhe
+    from fn_instalacao_conferir() where chave = '_teste_corpo_fn_ausente';
+  perform teste_assert_inst(v_presente is not null and not v_presente,
+    'requisito de corpo sobre função inexistente devolve false em vez de derrubar a sonda');
+  perform teste_assert_inst(v_detalhe = 'a função nem existe',
+    '…e o detalhe distingue "a função nem existe" de "o corpo é anterior"',
+    coalesce(v_detalhe, '<null>'));
 
   raise notice '--- 4. O RESUMO CONTA O MESMO QUE A LISTAGEM ---';
 

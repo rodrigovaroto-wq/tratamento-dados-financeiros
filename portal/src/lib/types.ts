@@ -185,3 +185,33 @@ export interface TaxonomiaTipoDocumento {
   documento: string;
   obrigatoriedade: Obrigatoriedade;
 }
+
+// O FATO MATERIAL (db/migrations/0148) — o que o documento diz em TEXTO.
+//
+// É o único dado do produto cuja saída não é um número: é uma frase lida de
+// texto corrido. Nasceu da v48, onde as Notas Explicativas e o Parecer do
+// Auditor entravam, eram classificados e ficavam mudos — e carregavam o
+// covenant rompido e a ressalva, que é o que um comitê de crédito lê primeiro.
+//
+// `trecho` é a EVIDÊNCIA e vem primeiro na tela; `leitura` é o que o modelo
+// entendeu e vem depois, menor. A ordem não é estética: um resumo do modelo é
+// afirmação e a frase do documento é o que dá para conferir abrindo a página.
+export type FatoSeveridade = "critico" | "relevante" | "informativo";
+
+export interface FatoDoCaso {
+  fato_id: string;
+  documento_id: string;
+  documento_versao_id: string;
+  nome_documento: string | null;
+  tipo_taxonomia: string | null;
+  tipo: string;
+  rotulo: string;
+  severidade: FatoSeveridade;
+  // Por que este fato importa para quem decide — vem do catálogo do banco, e é
+  // o que impede a tela de manter um switch paralelo que envelhece sozinho.
+  porque: string;
+  trecho: string;
+  pagina: number | null;
+  leitura: string | null;
+  confianca: number | null;
+}

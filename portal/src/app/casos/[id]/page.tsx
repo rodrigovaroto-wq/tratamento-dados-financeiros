@@ -9,6 +9,7 @@ import {
   PENDENCIA_TIPO_ARQUIVO_ILEGIVEL,
   type Caso,
   type Documento,
+  type FatoDoCaso,
   type Pendencia,
   type TaxonomiaTipoDocumento,
 } from "@/lib/types";
@@ -56,6 +57,47 @@ function Indicador({
   );
 }
 
+// O QUE O DOCUMENTO DIZ EM TEXTO (db/migrations/0148).
+//
+// POR QUE ESTE BLOCO ABRE A TELA, acima do Kit Básico e das pendências: ele é o
+// único que não fala de conferência. Ressalva de auditoria e covenant rompido
+// não são "algo a corrigir" — são o motivo por trás dos números, e um comitê de
+// crédito os lê ANTES da planilha. Pô-los no meio da fila de trabalho seria
+// pedir que alguém "resolvesse" um fato do mundo.
+//
+// E O TRECHO VEM PRIMEIRO, EM CORPO MAIOR QUE A LEITURA. A frase é do documento
+// e dá para conferir abrindo a página; a leitura é do modelo. Inverter a ordem
+// faria a interpretação parecer a fonte — que é o defeito que este produto passa
+// o tempo corrigindo em número, e aqui seria em prosa.
+const TOM_FATO: Record<string, { caixa: string; chip: string }> = {
+  critico:     { caixa: "border-risco-300 bg-risco-50",   chip: "bg-risco-100 text-risco-800" },
+  relevante:   { caixa: "border-alerta-300 bg-alerta-50", chip: "bg-alerta-100 text-alerta-800" },
+  informativo: { caixa: "border-tinta-200 bg-papel",      chip: "bg-tinta-100 text-tinta-700" },
+};
+
+function FatoMaterial({ f }: { f: FatoDoCaso }) {
+  const tom = TOM_FATO[f.severidade] ?? TOM_FATO.informativo;
+  return (
+    <li className={`rounded-lg border px-4 py-3 ${tom.caixa}`}>
+      <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
+        <span className={`chip ${tom.chip}`}>{f.rotulo}</span>
+        <span className="text-xs text-tinta-500">
+          {f.nome_documento ?? "documento sem nome"}
+          {f.pagina != null && `, p. ${f.pagina}`}
+        </span>
+      </div>
+      {/* A EVIDÊNCIA. Citação, e não parágrafo: a barra à esquerda diz, sem
+          precisar de legenda, que aquelas palavras são do documento e não
+          nossas. */}
+      <blockquote className="border-l-2 border-tinta-300 pl-3 text-sm italic text-tinta-800">
+        “{f.trecho}”
+      </blockquote>
+      {f.leitura && <p className="mt-1.5 text-sm text-tinta-700">{f.leitura}</p>}
+      <p className="mt-1.5 text-xs text-tinta-500">{f.porque}</p>
+    </li>
+  );
+}
+
 export default async function CasoDashboardPage({
   params,
 }: {
@@ -65,7 +107,7 @@ export default async function CasoDashboardPage({
   const supabase = await createClient();
 
   const [casoRes, kitBasicoRes, documentosRes, pendenciasRes, checklistRes, portao2Res,
-         perguntasRes] = await Promise.all([
+         perguntasRes, fatosRes] = await Promise.all([
     supabase.from("caso").select("id, nome, produto, status, criado_em").eq("id", id).single(),
     supabase
       .from("taxonomia_tipo_documento")
@@ -131,6 +173,17 @@ export default async function CasoDashboardPage({
     // continua na tela sem o número; o que não pode é a tela inteira do mandato
     // cair por causa de um contador de outra aba.
     supabase.rpc("fn_sugerir_perguntas", { p_caso_id: id }, { head: true, count: "exact" }),
+    // O QUE OS DOCUMENTOS DIZEM EM TEXTO (0148). Covenant rompido, ressalva de
+    // auditoria, continuidade operacional — os fatos que um comitê lê ANTES da
+    // planilha, e que até a v48 não chegavam ao portal de forma nenhuma: as
+    // Notas Explicativas e o Parecer entravam, eram classificados e ficavam
+    // mudos, porque não têm tabela e o sistema inteiro lê tabela.
+    //
+    // TOLERANTE A ERRO pela mesma razão da linha acima: o dono aplica as
+    // migrations à mão, então banco sem a 0148 é estado normal e não defeito. Aí
+    // esta chamada responde "não achei a função", o bloco não aparece, e o resto
+    // da tela do mandato continua de pé.
+    supabase.rpc("fn_fatos_do_caso", { p_caso_id: id }),
   ]);
 
   // QUANTAS LINHAS CADA DOCUMENTO RENDEU. É o número que o dono procurava
@@ -163,6 +216,10 @@ export default async function CasoDashboardPage({
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
   // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o
   // `recebido_nao_valido` de `docs/07`, e é bloqueante para o Portão 2.
+  // Os fatos materiais. `?? []` e não `!`: banco sem a 0148 devolve erro e
+  // `data` nulo, e a tela tem de sair sem o bloco em vez de quebrar.
+  const fatos = (fatosRes.data as FatoDoCaso[] | null) ?? [];
+
   const portao2 = portao2Res.data as {
     elegivel: boolean; motivos: string[]; ressalvas_ativas: number; teto_ressalvas: number;
     status_atual: string;
@@ -461,6 +518,26 @@ export default async function CasoDashboardPage({
             )}
           </div>
         </div>
+      )}
+
+      {fatos.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="titulo-secao">O que os documentos dizem</h2>
+            <p className="text-xs text-tinta-500">
+              {fatos.filter((f) => f.severidade === "critico").length > 0
+                ? `${fatos.length} fato(s), ${fatos.filter((f) => f.severidade === "critico").length} crítico(s)`
+                : `${fatos.length} fato(s) declarado(s) em texto`}
+            </p>
+          </div>
+          <p className="mb-2.5 text-xs text-tinta-500">
+            Lido do texto dos documentos, não das tabelas — é o que costuma explicar os números.
+            Cada item traz a frase do próprio documento, para conferir na página indicada.
+          </p>
+          <ul className="space-y-2">
+            {fatos.map((f) => <FatoMaterial key={f.fato_id} f={f} />)}
+          </ul>
+        </section>
       )}
 
       <section>

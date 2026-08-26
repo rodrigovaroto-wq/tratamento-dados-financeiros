@@ -2308,3 +2308,122 @@ test('O nó Postgres devolve o contexto que o próximo nó lê (a reconciliaçã
     }
   }
 });
+
+// =============================================================================
+// O FATO MATERIAL (db/migrations/0148) ATRAVESSA OS DOIS ESPELHOS.
+//
+// POR QUE ESTE BLOCO EXISTE. O objeto `diagnostico` é montado DUAS vezes por
+// código escrito à mão: em `parseExtractionResponse` (lib) e no `jsCode` que o
+// gerador embute no nó `Parse Extracao`. O `espelho-inline.test.mjs` cobre as 26
+// FUNÇÕES embutidas por `toString()` — este bloco não é função, é literal, e por
+// isso escapa daquele portão.
+//
+// Divergir aqui não quebra nada visivelmente: o nó continua rodando, o
+// diagnóstico continua sendo gravado, e o campo novo simplesmente não chega —
+// que é a forma de falha que este projeto passa o tempo corrigindo. Foi assim
+// que a reconciliação ficou onze dias parada em silêncio.
+//
+// A guarda é comparar os dois sobre a MESMA resposta e exigir igualdade.
+test('fato material: a lib e o nó real produzem o MESMO diagnostico (os dois espelhos)', async () => {
+  const { parseExtractionResponse } = await import('../lib/extract.mjs');
+  const TRECHO = 'o índice apurado em 31/12/2025 não atingiu o mínimo contratado, e os saldos '
+    + 'foram reclassificados para o passivo circulante';
+
+  const corpo = {
+    moeda: 'BRL', unidade: 'R$ mil',
+    diagnostico: {
+      entidade: 'Canastra Indústria Ltda.', tipo_confirma: true, tipo_sugerido: 'NOTAS_EXPL',
+      periodo_tipo: 'anual', periodo_referencia: '2025', legibilidade: 'ok',
+      nota_legibilidade: null, tem_dado_financeiro: false,
+      resumo: 'Notas explicativas.', justificativa: 'Texto corrido, sem tabela.',
+      fatos: [
+        { ft: 'covenant_rompido', tr: TRECHO, le: 'A dívida virou curto prazo.', pg: 4 },
+        // SEM PROVA: o trecho é um resumo, não uma frase do documento. Tem de
+        // cair nos DOIS espelhos, e cair igual.
+        { ft: 'ressalva_auditoria', tr: 'tem ressalva', le: 'O parecer não é limpo.', pg: 1 },
+      ],
+    },
+    grupos: [],
+  };
+
+  const req = { json: { documento_versao_id: 'ver-fato', tipo: 'NOTAS_EXPL', ia_body: {} } };
+  const doNo = await run('Parse Extracao', {
+    item: { json: respostaIA(JSON.stringify(corpo)) },
+    refs: { 'Montar Req Extracao': req },
+  });
+  // A lib recebe a resposta NO FORMATO DO PROVEDOR, igual ao nó — passar o
+  // conteúdo cru aqui compararia dois caminhos diferentes e o teste mediria
+  // a própria chamada em vez do espelho.
+  const daLib = parseExtractionResponse(respostaIA(JSON.stringify(corpo)));
+
+  assert.deepEqual(
+    doNo.json.diagnostico, daLib.diagnostico,
+    'o diagnostico do nó e o da lib divergiram — o bloco é duplicado à mão e escapa do espelho-inline',
+  );
+
+  // E as propriedades, nomeadas, para o teste dizer O QUE quebrou quando quebrar.
+  assert.equal(doNo.json.diagnostico.fatos.length, 1, 'só o fato COM trecho literal atravessa');
+  assert.equal(doNo.json.diagnostico.fatos[0].tipo, 'covenant_rompido');
+  assert.equal(doNo.json.diagnostico.fatos[0].trecho, TRECHO, 'o trecho vai literal, sem reescrita');
+  assert.equal(doNo.json.diagnostico.fatos[0].pagina, 4);
+  assert.equal(doNo.json.diagnostico.fatos[0].leitura, 'A dívida virou curto prazo.');
+});
+
+test('fato material: sem a chave "fatos" o diagnostico traz null — e null NÃO é lista vazia', async () => {
+  // A DISTINÇÃO É O ASSERT. `null` (workflow antigo, chave ausente) manda
+  // `fn_registrar_fatos` NÃO TOCAR nos fatos já gravados; `[]` (o modelo leu e
+  // não achou nada) manda apagar. Colapsar os dois em `[]` faria um n8n
+  // desatualizado destruir trilha em silêncio — que é exatamente o que o
+  // `Gravar Campos` fez por onze dias na v47.
+  const req = { json: { documento_versao_id: 'ver-sem-fatos', tipo: 'BALANCO', ia_body: {} } };
+  const semChave = await run('Parse Extracao', {
+    item: { json: respostaIA(JSON.stringify({
+      moeda: 'BRL', unidade: 'R$ mil',
+      diagnostico: {
+        entidade: 'X', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual',
+        periodo_referencia: '2025', legibilidade: 'ok', nota_legibilidade: null,
+        resumo: 'r', justificativa: 'j',
+      },
+      grupos: [],
+    })) },
+    refs: { 'Montar Req Extracao': req },
+  });
+  assert.equal(semChave.json.diagnostico.fatos, null,
+    'chave ausente vira null, para o banco saber que não houve leitura');
+
+  const listaVazia = await run('Parse Extracao', {
+    item: { json: respostaIA(JSON.stringify({
+      moeda: 'BRL', unidade: 'R$ mil',
+      diagnostico: {
+        entidade: 'X', tipo_confirma: true, tipo_sugerido: 'BALANCO', periodo_tipo: 'anual',
+        periodo_referencia: '2025', legibilidade: 'ok', nota_legibilidade: null,
+        resumo: 'r', justificativa: 'j', fatos: [],
+      },
+      grupos: [],
+    })) },
+    refs: { 'Montar Req Extracao': req },
+  });
+  assert.deepEqual(listaVazia.json.diagnostico.fatos, [],
+    'lista vazia continua lista vazia — é uma leitura de verdade, e ela apaga');
+});
+
+test('fato material: o nó que grava PASSA os fatos, e o schema os PEDE', () => {
+  // As duas pontas do canal, conferidas no arquivo commitado (que é o que o
+  // dono importa no n8n), e não numa reconstrução.
+  const diag = byName['Registrar Diagnostico'];
+  assert.match(diag.parameters.query, /fn_registrar_fatos\(\$2::uuid,\$12::jsonb\)/,
+    'a query chama fn_registrar_fatos com a versão e o jsonb dos fatos');
+  assert.match(diag.parameters.options.queryReplacement, /diagnostico\?\.fatos/,
+    'o 12º parâmetro sai do diagnostico do Parse Extracao');
+
+  const fatos = extractionSchema().schema.properties.diagnostico.properties.fatos;
+  assert.ok(fatos, 'o schema da resposta pede "fatos" — sem isso o modelo nunca os devolve');
+  assert.deepEqual(fatos.items.required, ['ft', 'tr', 'le', 'pg']);
+  assert.ok(fatos.items.properties.ft.enum.includes('covenant_rompido'));
+  assert.ok(
+    extractionSchema().schema.properties.diagnostico.required.includes('fatos'),
+    'e "fatos" é required: campo opcional em strict mode é campo que o modelo omite',
+  );
+  assert.match(SYSTEM_PROMPT, /TRECHO LITERAL do documento/,
+    'o prompt exige a evidência — o schema sozinho não ensina a copiar em vez de resumir');
+});
