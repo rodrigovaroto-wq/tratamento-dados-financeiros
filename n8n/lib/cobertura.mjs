@@ -410,6 +410,20 @@ export function juntarBlocos(blocos) {
   const campos = [];
   const motivos = [];
   let emendasLimpas = 0;
+  // OS FATOS MATERIAIS SÃO ADITIVOS ENTRE BLOCOS, e o resto do diagnóstico não.
+  //
+  // Entidade, tipo e período são propriedades do DOCUMENTO: todo bloco responde
+  // a mesma coisa, e quem chama pega a do primeiro — está certo. Os fatos não:
+  // cada bloco vê um PEDAÇO diferente do texto, então o covenant declarado na
+  // página 40 chega no bloco 2 e some se só o bloco 1 for lido.
+  //
+  // Era o defeito: `diagnostico: blocos[0].diagnostico` descartava em silêncio
+  // os fatos de todos os blocos seguintes — e os documentos fatiados são
+  // justamente os grandes, que são onde nota explicativa mora (no book, o
+  // `35_Demonstracoes_Contabeis` e o `01_Balanco` saem em 2 blocos cada).
+  const fatos = [];
+  const vistos = new Set();
+  let algumBlocoLeuFatos = false;
   const linhas = new Set();
   const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par
   const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
@@ -432,6 +446,25 @@ export function juntarBlocos(blocos) {
       const chave = Number.isInteger(c.linha_origem) ? `${b.bloco}:${c.linha_origem}` : null;
       chaveDaLinha.push(chave);
       if (chave !== null) linhas.add(chave);
+    }
+    // A DEDUPLICAÇÃO É NECESSÁRIA porque os blocos se SOBREPÕEM de propósito (a
+    // emenda repete a âncora, ver a limpeza acima): um fato que caia na região
+    // de emenda é declarado duas vezes, e dois alertas idênticos numa lista
+    // curta ensinam a desconfiar dela.
+    //
+    // A chave é (tipo + trecho normalizado), não o objeto inteiro: o mesmo
+    // trecho pode voltar com a página do bloco 1 e a do bloco 2, e continua
+    // sendo o mesmo fato. `null` (bloco que não leu fatos) é diferente de `[]`,
+    // e a distinção sobe até o banco.
+    if (Array.isArray(b.diagnostico?.fatos)) {
+      algumBlocoLeuFatos = true;
+      for (const f of b.diagnostico.fatos) {
+        if (!f || typeof f !== 'object') continue;
+        const chave = `${f.tipo}\u0000${String(f.trecho ?? '').toLowerCase().replace(/\s+/g, ' ').trim()}`;
+        if (vistos.has(chave)) continue;
+        vistos.add(chave);
+        fatos.push(f);
+      }
     }
     if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);
     // O RESÍDUO DE TRUNCAMENTO QUE O FATIAMENTO NÃO RESOLVE. Uma linha que
@@ -494,6 +527,10 @@ export function juntarBlocos(blocos) {
     // `linha_origem`), e quem chama trata isso caindo para as contas distintas —
     // o comportamento de antes desta correção.
     linhasRetornadas: linhas.size,
+    // `null` quando NENHUM bloco trouxe a chave `fatos` (workflow antigo), `[]`
+    // quando algum leu e não achou nada. A distinção não é estética: no banco,
+    // `null` manda NÃO TOCAR nos fatos já gravados e `[]` manda apagá-los.
+    fatos: algumBlocoLeuFatos ? fatos : null,
   };
 }
 

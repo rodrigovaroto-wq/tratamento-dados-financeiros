@@ -40,12 +40,12 @@ const FONTE_LABEL: Record<string, string> = {
 // cor quando ele muda a leitura do número (ex.: "2 bloqueantes").
 function Indicador({
   valor, rotulo, detalhe, tom,
-}: {
+}: Readonly<{
   valor: string | number;
   rotulo: string;
   detalhe?: string | null;
   tom?: "neutro" | "alerta" | "bom";
-}) {
+}>) {
   const corDetalhe =
     tom === "alerta" ? "text-risco-700" : tom === "bom" ? "text-ok-700" : "text-tinta-500";
   return (
@@ -75,7 +75,7 @@ const TOM_FATO: Record<string, { caixa: string; chip: string }> = {
   informativo: { caixa: "border-tinta-200 bg-papel",      chip: "bg-tinta-100 text-tinta-700" },
 };
 
-function FatoMaterial({ f }: { f: FatoDoCaso }) {
+function FatoMaterial({ f }: Readonly<{ f: FatoDoCaso }>) {
   const tom = TOM_FATO[f.severidade] ?? TOM_FATO.informativo;
   return (
     <li className={`rounded-lg border px-4 py-3 ${tom.caixa}`}>
@@ -219,6 +219,11 @@ export default async function CasoDashboardPage({
   // Os fatos materiais. `?? []` e não `!`: banco sem a 0148 devolve erro e
   // `data` nulo, e a tela tem de sair sem o bloco em vez de quebrar.
   const fatos = (fatosRes.data as FatoDoCaso[] | null) ?? [];
+  // O MESMO filtro rodava duas vezes no JSX — uma para decidir a frase, outra
+  // para o número dela. `.some()` sozinho não resolveria: a contagem É o dado
+  // que a frase mostra, então o que sobrava era percorrer a lista duas vezes
+  // para responder a mesma pergunta.
+  const fatosCriticos = fatos.filter((f) => f.severidade === "critico").length;
 
   const portao2 = portao2Res.data as {
     elegivel: boolean; motivos: string[]; ressalvas_ativas: number; teto_ressalvas: number;
@@ -525,8 +530,8 @@ export default async function CasoDashboardPage({
           <div className="mb-2 flex items-baseline justify-between gap-3">
             <h2 className="titulo-secao">O que os documentos dizem</h2>
             <p className="text-xs text-tinta-500">
-              {fatos.filter((f) => f.severidade === "critico").length > 0
-                ? `${fatos.length} fato(s), ${fatos.filter((f) => f.severidade === "critico").length} crítico(s)`
+              {fatosCriticos > 0
+                ? `${fatos.length} fato(s), ${fatosCriticos} crítico(s)`
                 : `${fatos.length} fato(s) declarado(s) em texto`}
             </p>
           </div>

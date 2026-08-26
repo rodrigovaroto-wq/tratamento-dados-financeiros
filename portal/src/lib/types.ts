@@ -196,6 +196,12 @@ export interface TaxonomiaTipoDocumento {
 // `trecho` é a EVIDÊNCIA e vem primeiro na tela; `leitura` é o que o modelo
 // entendeu e vem depois, menor. A ordem não é estética: um resumo do modelo é
 // afirmação e a frase do documento é o que dá para conferir abrindo a página.
+//
+// E NÃO HÁ CAMPO DE CONFIANÇA (0149). Ele existiu na 0148 e nunca recebeu um
+// valor — o schema da IA não o pedia. Foi removido em vez de preenchido: a
+// evidência deste canal é o trecho literal, e uma confiança auto-declarada pelo
+// modelo num alerta que vai ao comitê é o tipo de número sem lastro que esta
+// casa passa o tempo removendo.
 export type FatoSeveridade = "critico" | "relevante" | "informativo";
 
 export interface FatoDoCaso {
@@ -213,5 +219,4 @@ export interface FatoDoCaso {
   trecho: string;
   pagina: number | null;
   leitura: string | null;
-  confianca: number | null;
 }

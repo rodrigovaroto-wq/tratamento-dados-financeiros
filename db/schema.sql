@@ -2319,33 +2319,47 @@ COMMENT ON FUNCTION public.fn_fator_escala(p_unidade text) IS 'Fator multiplicat
 -- Name: fn_fatos_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) RETURNS TABLE(fato_id uuid, documento_id uuid, documento_versao_id uuid, nome_documento text, tipo_taxonomia text, tipo text, rotulo text, severidade text, porque text, trecho text, pagina integer, leitura text, confianca numeric)
+CREATE FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) RETURNS TABLE(fato_id uuid, documento_id uuid, documento_versao_id uuid, nome_documento text, tipo_taxonomia text, tipo text, rotulo text, severidade text, porque text, trecho text, pagina integer, leitura text)
     LANGUAGE sql STABLE
     AS $$
+  -- 0149 (4): a versão que VALE é a mais nova que foi AVALIADA — não a mais
+  -- nova, e não a que tem linha extraída.
+  --
+  -- Não a mais nova: um reenvio ainda não processado apagava da tela os fatos
+  -- da versão anterior (medido: zero fatos com um covenant gravado).
+  -- Não `fn_versao_com_extracao`: ela exige linha em `campo_extraido`, e os
+  -- documentos que mais têm fatos — notas explicativas, parecer de auditoria —
+  -- extraem ZERO linha por natureza.
   with corrente as (
-    select distinct on (dv.documento_id) dv.id, dv.documento_id, dv.arquivo_ref, dv.nome_original
+    select distinct on (dv.documento_id)
+           dv.id, dv.documento_id, dv.arquivo_ref, dv.nome_original
       from documento_versao dv
       join documento d on d.id = dv.documento_id
      where d.caso_id = p_caso_id
+       and dv.fatos_avaliados_em is not null
      order by dv.documento_id, dv.n_versao desc
   )
   select f.id, c.documento_id, f.documento_versao_id,
          coalesce(c.nome_original, c.arquivo_ref),
          d.tipo_taxonomia,
          f.tipo, cat.rotulo, cat.severidade, cat.porque,
-         f.trecho, f.pagina, f.leitura, f.confianca
+         f.trecho, f.pagina, f.leitura
     from documento_fato f
     join corrente c            on c.id = f.documento_versao_id
     join documento d           on d.id = c.documento_id
     join fato_tipo_catalogo cat on cat.tipo = f.tipo
-   order by cat.ordem, cat.rotulo, f.criado_em;
+   -- 0149 (5): `f.id` desempata. Fatos gravados no mesmo insert compartilham um
+   -- único `criado_em`, e sem o desempate a MESMA lista podia sair em ordens
+   -- diferentes entre duas leituras — numa tela em que a ordem significa
+   -- gravidade.
+   order by cat.ordem, cat.rotulo, f.criado_em, f.id;
 $$;
 
 --
 -- Name: FUNCTION fn_fatos_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) IS 'Os fatos materiais do mandato, da versão CORRENTE de cada documento, ordenados por gravidade. Versão anterior é trilha e não aparece: um alerta já substituído por releitura ao lado do novo seria duas verdades sobre a mesma frase.';
+COMMENT ON FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) IS 'Os fatos materiais do mandato, da versão mais nova que foi AVALIADA (0149), ordenados por gravidade com desempate estável. Versão não avaliada não apaga o que a anterior achou — era o que fazia os alertas sumirem durante um reenvio de arquivo.';
 
 --
 -- Name: fn_fechar_caso(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -7577,6 +7591,9 @@ declare
   v_gravados  int := 0;
   v_sem_prova int := 0;
   v_tipo_ruim int := 0;
+  v_pag_ruim  int := 0;
+  v_erro      text := null;
+  v_estado    text := null;
 begin
   if p_documento_versao_id is null then
     return jsonb_build_object('erro', 'documento_versao_id nulo');
@@ -7586,25 +7603,50 @@ begin
   -- é o mesmo que "este documento não tem fato nenhum". Apagar os fatos de uma
   -- versão porque a chave veio ausente destruiria trilha por causa de um
   -- workflow desatualizado — o mesmo modo de falha do `Gravar Campos` que
-  -- desligou a reconciliação por onze dias.
+  -- desligou a reconciliação por onze dias. E NÃO marca como avaliada: não foi.
   if p_fatos is null or jsonb_typeof(p_fatos) <> 'array' then
     return jsonb_build_object('gravados', 0, 'sem_prova', 0, 'tipo_desconhecido', 0,
                               'nota', 'sem lista de fatos na resposta — nada foi tocado');
   end if;
 
-  delete from documento_fato where documento_versao_id = p_documento_versao_id;
+  -- 0149 (2)(3): O BLOCO PROTEGIDO.
+  --
+  -- Esta função roda na MESMA query que `fn_registrar_diagnostico`. Qualquer
+  -- exceção aqui aborta a query e o documento perde o DIAGNÓSTICO — um número
+  -- de página alucinado custando o estágio inteiro. O `exception` transforma
+  -- isso em recusa DECLARADA no retorno, e o retorno é uma coluna da query, que
+  -- aparece na execução do n8n.
+  --
+  -- Declarada, e não engolida: a diferença é o campo `erro` abaixo. Recusa que
+  -- não se conta vira ausência, e ausência parece "este documento não disse
+  -- nada" — o estado exato que este canal existe para acabar.
+  --
+  -- O bloco cobre o DELETE junto com o INSERT de propósito: se o insert falhar,
+  -- o savepoint desfaz o delete também, e a versão fica com os fatos que já
+  -- tinha em vez de ficar sem nenhum.
+  begin
+    delete from documento_fato where documento_versao_id = p_documento_versao_id;
 
-  insert into documento_fato (documento_versao_id, tipo, trecho, pagina, leitura, confianca)
-  select p_documento_versao_id,
-         f->>'tipo',
-         btrim(f->>'trecho'),
-         case when jsonb_typeof(f->'pagina') = 'number' then (f->>'pagina')::int end,
-         nullif(btrim(coalesce(f->>'leitura', '')), ''),
-         case when jsonb_typeof(f->'confianca') = 'number' then (f->>'confianca')::numeric end
-    from jsonb_array_elements(p_fatos) f
-   where length(btrim(coalesce(f->>'trecho', ''))) >= 20
-     and exists (select 1 from fato_tipo_catalogo c where c.tipo = f->>'tipo');
-  get diagnostics v_gravados = row_count;
+    insert into documento_fato (documento_versao_id, tipo, trecho, pagina, leitura)
+    select p_documento_versao_id,
+           f->>'tipo',
+           btrim(f->>'trecho'),
+           -- 0149 (2): página fora do plausível vira NULL em vez de estourar.
+           -- O teste é feito em `numeric`, que aguenta o absurdo; só depois
+           -- vira `int`. Página zero ou negativa também não existe.
+           case when jsonb_typeof(f->'pagina') = 'number'
+                 and (f->>'pagina')::numeric between 1 and 100000
+                then (f->>'pagina')::int end,
+           nullif(btrim(coalesce(f->>'leitura', '')), '')
+      from jsonb_array_elements(p_fatos) f
+     where length(btrim(coalesce(f->>'trecho', ''))) >= 20
+       and exists (select 1 from fato_tipo_catalogo c where c.tipo = f->>'tipo');
+    get diagnostics v_gravados = row_count;
+  exception when others then
+    v_erro   := sqlerrm;
+    v_estado := sqlstate;
+    v_gravados := 0;
+  end;
 
   select count(*)::int into v_sem_prova
     from jsonb_array_elements(p_fatos) f
@@ -7615,9 +7657,28 @@ begin
    where length(btrim(coalesce(f->>'trecho', ''))) >= 20
      and not exists (select 1 from fato_tipo_catalogo c where c.tipo = f->>'tipo');
 
+  -- A página descartada é CONTADA à parte: o fato entra (o trecho é a
+  -- evidência, não a página), mas quem confere merece saber que o número não
+  -- era utilizável em vez de achar que o documento não tinha página.
+  select count(*)::int into v_pag_ruim
+    from jsonb_array_elements(p_fatos) f
+   where jsonb_typeof(f->'pagina') = 'number'
+     and (f->>'pagina')::numeric not between 1 and 100000;
+
+  -- 0149 (4): a versão foi LIDA. Vale mesmo com zero fatos gravados — é
+  -- exatamente esse caso que a coluna existe para registrar. Não vale quando
+  -- houve erro: aí a leitura não chegou ao fim.
+  if v_erro is null then
+    update documento_versao set fatos_avaliados_em = now()
+     where id = p_documento_versao_id;
+  end if;
+
   return jsonb_build_object('gravados', v_gravados,
                             'sem_prova', v_sem_prova,
-                            'tipo_desconhecido', v_tipo_ruim);
+                            'tipo_desconhecido', v_tipo_ruim,
+                            'pagina_descartada', v_pag_ruim,
+                            'erro', v_erro,
+                            'sqlstate', v_estado);
 end;
 $$;
 
@@ -7625,7 +7686,7 @@ $$;
 -- Name: FUNCTION fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb) IS 'Grava os fatos materiais de uma versão de documento, substituindo os anteriores dela. Recusa entrada sem trecho literal (evidência é obrigatória) e tipo fora do catálogo, e CONTA as recusas no retorno — recusa silenciosa vira ausência, e ausência parece "não há fato".';
+COMMENT ON FUNCTION public.fn_registrar_fatos(p_documento_versao_id uuid, p_fatos jsonb) IS 'Grava os fatos materiais de uma versão, substituindo os anteriores dela, e marca a versão como avaliada. Recusa entrada sem trecho literal e tipo fora do catálogo, e CONTA cada recusa no retorno. Desde a 0149 NÃO levanta exceção: ela roda na mesma query do diagnóstico, e uma página absurda derrubava o registro do diagnóstico junto — o erro passa a voltar declarado no retorno.';
 
 --
 -- Name: fn_registrar_indice_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
@@ -9594,7 +9655,6 @@ CREATE TABLE public.documento_fato (
     trecho text NOT NULL,
     pagina integer,
     leitura text,
-    confianca numeric,
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT documento_fato_trecho_check CHECK ((length(btrim(trecho)) >= 20))
 );
@@ -9603,7 +9663,7 @@ CREATE TABLE public.documento_fato (
 -- Name: TABLE documento_fato; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.documento_fato IS 'Fato material declarado por um documento EM TEXTO — covenant rompido, ressalva de auditoria, continuidade operacional. Não é pendência: pendência significa "há algo a corrigir", e um covenant rompido não é defeito do dado, é o dado. Nasceu da v48, onde as Notas Explicativas e o Parecer do Auditor entravam, eram classificados e ficavam mudos.';
+COMMENT ON TABLE public.documento_fato IS 'Fato material declarado por um documento EM TEXTO — covenant rompido, ressalva de auditoria, continuidade operacional. Não é pendência: pendência significa "há algo a corrigir", e um covenant rompido não é defeito do dado, é o dado. Nasceu da v48, onde as Notas Explicativas e o Parecer do Auditor entravam, eram classificados e ficavam mudos. A política de escrita é a mesma de campo_extraido (0149): a 0148 só dava SELECT, e a gravação funcionava por acidente da credencial em vez de por decisão.';
 
 --
 -- Name: COLUMN documento_fato.trecho; Type: COMMENT; Schema: public; Owner: -
@@ -9627,7 +9687,8 @@ CREATE TABLE public.documento_versao (
     legibilidade public.legibilidade,
     criada_em timestamp with time zone DEFAULT now() NOT NULL,
     nota_legibilidade text,
-    fingerprint_extracao text
+    fingerprint_extracao text,
+    fatos_avaliados_em timestamp with time zone
 );
 
 --
@@ -9641,6 +9702,12 @@ COMMENT ON COLUMN public.documento_versao.nota_legibilidade IS 'Motivo objetivo 
 --
 
 COMMENT ON COLUMN public.documento_versao.fingerprint_extracao IS 'Impressão do que determinou a extração desta versão: prompt de sistema + modelo + esquema de resposta, calculada no build do workflow. É o que autoriza NÃO pagar a extração de novo quando o mesmo arquivo volta — junto com a exigência de a versão ter linha extraída (0118).';
+
+--
+-- Name: COLUMN documento_versao.fatos_avaliados_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.documento_versao.fatos_avaliados_em IS 'Quando esta versão foi lida à procura de fatos materiais (0149). NULL = ainda não foi — e nesse caso os fatos da versão anterior continuam valendo na tela. Preenchida mesmo quando a leitura não achou nada: é o que distingue "sem fatos" de "não processada".';
 
 --
 -- Name: entidade; Type: TABLE; Schema: public; Owner: -
@@ -11384,10 +11451,10 @@ CREATE POLICY documento_authenticated_all ON public.documento TO authenticated U
 ALTER TABLE public.documento_fato ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: documento_fato documento_fato_read; Type: POLICY; Schema: public; Owner: -
+-- Name: documento_fato documento_fato_authenticated_all; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY documento_fato_read ON public.documento_fato FOR SELECT TO authenticated USING (true);
+CREATE POLICY documento_fato_authenticated_all ON public.documento_fato TO authenticated USING (true) WITH CHECK (true);
 
 --
 -- Name: documento_versao; Type: ROW SECURITY; Schema: public; Owner: -
