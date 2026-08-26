@@ -163,7 +163,7 @@ export function schemaDoProvedor(prov, jsonSchema) {
     return fora;
   };
   if (prov.dialeto === 'gemini') return traduzir(jsonSchema.schema || jsonSchema);
-  return jsonSchema;
+  return jsonSchema.schema || jsonSchema;
 }
 
 // ---------------------------------------------------------------------------
