@@ -6964,6 +6964,19 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 //   3. O PICO DE USO DO REVOLVER — o número que o piso antigo declarava fora
 //      do alcance — publica maior no Stress que no Base no último ano
 //      projetado, pela mesma razão do item 2.
+//
+// (51), logo abaixo, GIRA O DIAL de verdade — o teste (50) sozinho só
+// conferia com o dial no padrão (Base, `G2=1`), e isso escondeu um defeito
+// real na primeira versão deste bloco: o `CHECK_SOMBRA_WC` do Working
+// Capital comparava a sombra do BASE CASE fixa contra a NCG ativa, em vez
+// de escolher a sombra do cenário LIGADO — e como o arquivo sempre nasce
+// com o dial no Base, nenhuma suíte via a célula acusar uma divergência
+// falsa assim que alguém girasse para Cliente ou Stress, que é o estado
+// normal de um arquivo de reestruturação. Os dois testes montam o MESMO
+// workbook uma vez só — duplicar o carregamento da fixture e as abas só
+// para trocar o número do teste no rótulo é o tipo de duplicação que o
+// próprio CI deste repositório reprova (SonarCloud, "Duplication on New
+// Code").
 {
   const fixture = JSON.parse(
     readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
@@ -6975,25 +6988,34 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     modeloInstitucional: entradaModeloDaFixture(fixture, agora),
   });
   const out = wb.getWorksheet("Output")!;
-  esquecerMemoria(out);
-  const acharEm = (re: RegExp) => {
-    for (let r = 1; r <= out.rowCount; r++) {
-      if (re.test(String(out.getRow(r).getCell(3).value ?? ""))) return r;
+  const wc = wb.getWorksheet("Working Capital")!;
+  const rec = wb.getWorksheet("Revenues, COGS & SG&A")!;
+  const dre = wb.getWorksheet("Income Statement")!;
+  const bs = wb.getWorksheet("Balance Sheet")!;
+  const cf = wb.getWorksheet("Cash Flow")!;
+  const div = wb.getWorksheet("ST Inv. & Debt")!;
+  const fa = wb.getWorksheet("Fixed Assets & CAPEX")!;
+  const trib = wb.getWorksheet("Tributos a Recolher")!;
+  const todasAsAbas = [out, wc, rec, dre, bs, cf, div, fa, trib];
+  for (const ws of todasAsAbas) esquecerMemoria(ws);
+  const acharEm = (ws: ExcelJS.Worksheet, re: RegExp) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (re.test(String(ws.getRow(r).getCell(3).value ?? ""))) return r;
     }
     return 0;
   };
-  const acharTodos = (re: RegExp) => {
+  const acharTodos = (ws: ExcelJS.Worksheet, re: RegExp) => {
     const r: number[] = [];
-    for (let i = 1; i <= out.rowCount; i++) {
-      if (re.test(String(out.getRow(i).getCell(3).value ?? ""))) r.push(i);
+    for (let i = 1; i <= ws.rowCount; i++) {
+      if (re.test(String(ws.getRow(i).getCell(3).value ?? ""))) r.push(i);
     }
     return r;
   };
 
-  const rTitulo = acharEm(/^RÉPLICA COMPLETA POR CENÁRIO/);
+  const rTitulo = acharEm(out, /^RÉPLICA COMPLETA POR CENÁRIO/);
   checar(rTitulo > 0, "(50) o bloco da réplica completa existe na aba Output", String(rTitulo));
 
-  const rChk = acharEm(/CHECK: a réplica completa do cenário ATIVO/);
+  const rChk = acharEm(out, /CHECK: a réplica completa do cenário ATIVO/);
   checar(rChk > 0, "(50) …com um CHECK contra a dívida líquida ativa", String(rChk));
   for (const col of ["G", "H", "I", "J"]) {
     const v = avaliarCelula(out, col, rChk);
@@ -7003,8 +7025,8 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
   // As linhas de revolver de fechamento e de pico aparecem uma vez por
   // cenário, na ordem Base/Cliente/Stress (a ordem do `CHOOSE`).
-  const revRows = acharTodos(/revolver — saldo de fechamento/);
-  const picoRows = acharTodos(/pico de uso do revolver/);
+  const revRows = acharTodos(out, /revolver — saldo de fechamento/);
+  const picoRows = acharTodos(out, /pico de uso do revolver/);
   checar(revRows.length === 3 && picoRows.length === 3,
     "(50) o revolver de fechamento e o pico existem nos três cenários",
     `${revRows.length} / ${picoRows.length}`);
@@ -7031,52 +7053,11 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         `Stress ${stress.toFixed(0)} vs Base ${base.toFixed(0)}`);
     }
   }
-}
 
-// =============================================================================
-// (51) OS DOIS CHECKS DA RÉPLICA GIRANDO O DIAL — não só no Base Case.
-//
-// O TESTE (42)/(50) ANTERIOR SÓ CONFERIA COM O DIAL NO PADRÃO (Base, `G2=1`).
-// Isso escondeu um defeito real na primeira versão deste bloco: o
-// `CHECK_SOMBRA_WC` do Working Capital comparava a sombra do BASE CASE fixa
-// contra a NCG ativa, em vez de escolher a sombra do cenário LIGADO — e como
-// o arquivo sempre nasce com o dial no Base, nenhuma suíte via a célula
-// acusar uma divergência falsa assim que alguém girasse para Cliente ou
-// Stress, que é o estado normal de um arquivo de reestruturação. Este teste
-// gira o dial de verdade (`Output!G2`) e confere os dois CHECKS nas três
-// posições — é o que teria pego o defeito antes de chegar ao comitê.
-{
-  const fixture = JSON.parse(
-    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
-  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
-  const agora = new Date("2026-07-27T12:00:00Z");
-  const wb = buildExportWorkbook({
-    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
-    documentos: fixture.documentos, campos: fixture.campos, agora,
-    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
-  });
-  const out = wb.getWorksheet("Output")!;
-  const wc = wb.getWorksheet("Working Capital")!;
-  const rec = wb.getWorksheet("Revenues, COGS & SG&A")!;
-  const dre = wb.getWorksheet("Income Statement")!;
-  const bs = wb.getWorksheet("Balance Sheet")!;
-  const cf = wb.getWorksheet("Cash Flow")!;
-  const div = wb.getWorksheet("ST Inv. & Debt")!;
-  const fa = wb.getWorksheet("Fixed Assets & CAPEX")!;
-  const trib = wb.getWorksheet("Tributos a Recolher")!;
-  // Toda aba que a cascata atravessa — esquecer memória só na aba consultada
-  // deixaria o valor CRUZADO (lido por referência externa) preso no cache de
-  // ANTES de girar o dial, e o teste passaria mesmo com um defeito real.
-  const todasAsAbas = [out, wc, rec, dre, bs, cf, div, fa, trib];
-  const acharEm = (ws: ExcelJS.Worksheet, re: RegExp) => {
-    for (let r = 1; r <= ws.rowCount; r++) {
-      if (re.test(String(ws.getRow(r).getCell(3).value ?? ""))) return r;
-    }
-    return 0;
-  };
-  const rCheckReal = acharEm(out, /CHECK: a réplica completa do cenário ATIVO/);
+  // ---- (51) OS DOIS CHECKS GIRANDO O DIAL — não só no Base Case ------------
+  const rCheckReal = rChk;
   const rCheckWC = acharEm(wc, /CHECK: a sombra do cenário ATIVO bate/);
-  checar(rCheckReal > 0 && rCheckWC > 0, "(51) os dois CHECKS existem", `${rCheckReal} / ${rCheckWC}`);
+  checar(rCheckWC > 0, "(51) o CHECK do Working Capital existe", String(rCheckWC));
 
   for (const dial of [1, 2, 3] as const) {
     out.getRow(2).getCell(7).value = dial;
@@ -7089,6 +7070,119 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       checar(typeof vWC === "number" && Math.abs(vWC) < 0.01,
         `(51) dial=${dial} col ${col}: CHECK_SOMBRA_WC continua zero`, String(vWC));
     }
+  }
+  out.getRow(2).getCell(7).value = 1;
+  for (const ws of todasAsAbas) esquecerMemoria(ws);
+
+  // ---- (52) NEW MONEY — tranche extra, com e sem PIK ------------------------
+  const rNmValor = acharEm(div, /^Principal captado no fechamento/);
+  const rNmFim = acharEm(div, /^Saldo do new money/);
+  const rNmJuros = acharEm(div, /juros do período \(despesa/);
+  const rNmAmort = acharEm(div, /amortização do período \(sempre em caixa\)/);
+  const rCheckBal = acharEm(bs, /CHECK — Ativo/);
+  checar(
+    rNmValor > 0 && rNmFim > 0 && rNmJuros > 0 && rNmAmort > 0 && rCheckBal > 0,
+    "(52) as linhas do new money e o CHECK do balanço existem",
+    `${rNmValor}/${rNmFim}/${rNmJuros}/${rNmAmort}/${rCheckBal}`,
+  );
+
+  const colNota = div.getRow(rNmJuros).getCell(4).value === "N" ? 4 : 0;
+  checar(colNota > 0, "(52) a célula de PIK (S/N) do new money está onde o modelo espera", String(colNota));
+
+  for (const pik of ["N", "S"] as const) {
+    div.getRow(rNmValor).getCell(7).value = 20000;
+    if (colNota > 0) div.getRow(rNmJuros).getCell(colNota).value = pik;
+    for (const ws of todasAsAbas) esquecerMemoria(ws);
+
+    const fimAno1 = avaliarCelula(div, "G", rNmFim);
+    const jurosAno1 = avaliarCelula(div, "G", rNmJuros);
+    const amortAno1 = avaliarCelula(div, "G", rNmAmort);
+    checar(typeof amortAno1 === "number" && Math.abs(amortAno1 - 4000) < 0.01,
+      `(52) PIK=${pik}: amortização SAC do ano 1 é 1/prazo do principal (sempre em caixa)`, String(amortAno1));
+    if (pik === "N" && typeof fimAno1 === "number") {
+      checar(Math.abs(fimAno1 - 16000) < 0.01,
+        "(52) PIK=N: saldo de fechamento não capitaliza juros (20000 - 4000 de amort)", String(fimAno1));
+    }
+    if (pik === "S" && typeof fimAno1 === "number" && typeof jurosAno1 === "number") {
+      checar(Math.abs(fimAno1 - (20000 - 4000 - jurosAno1)) < 0.01,
+        "(52) PIK=S: saldo de fechamento capitaliza os juros do período (não saíram do caixa)",
+        `fim=${fimAno1} esperado=${20000 - 4000 - jurosAno1}`);
+    }
+
+    for (const col of ["G", "H", "I", "J"]) {
+      const mismatch = avaliarCelula(bs, col, rCheckBal);
+      checar(typeof mismatch === "number" && Math.abs(mismatch) < 0.01,
+        `(52) PIK=${pik} col ${col}: o balanço continua fechando com o new money ativo`, String(mismatch));
+    }
+  }
+  div.getRow(rNmValor).getCell(7).value = 0;
+  if (colNota > 0) div.getRow(rNmJuros).getCell(colNota).value = "N";
+  for (const ws of todasAsAbas) esquecerMemoria(ws);
+
+  // ---- (53) EQUITY × HAIRCUT — a classificação do que cai sem caixa ---------
+  //
+  // A chave "Efeito caixa? = N" de uma tranche já provava (teste 40) que o
+  // saldo cai sem pagamento. O que faltava: ESSE saldo pode virar capital
+  // (Equity, o comportamento antigo, sem passar pelo resultado) OU ganho no
+  // resultado (Haircut, fora do EBITDA, tributado). Os dois têm de fechar o
+  // balanço — cada um por um caminho diferente — e o EBITDA não pode se mexer
+  // em nenhum dos dois, porque nenhuma das duas alavancas é desempenho
+  // operacional.
+  const rEbitdaDre = acharEm(dre, /^EBITDA$/);
+  const rGanhoHaircut = acharEm(dre, /Ganho com redução negociada de dívida/);
+  const rClasse = acharEm(div, /classificação do saldo sem caixa/);
+  checar(rEbitdaDre > 0 && rGanhoHaircut > 0 && rClasse > 0,
+    "(53) as linhas de EBITDA, ganho com haircut e classificação existem",
+    `${rEbitdaDre}/${rGanhoHaircut}/${rClasse}`);
+
+  const ebitdaAntes = ["G", "H", "I", "J"].map((c) => avaliarCelula(dre, c, rEbitdaDre));
+
+  // Acha a primeira tranche com "Efeito caixa? = S" (a fixture nasce toda em
+  // caixa) e a linha "#classe" dela, que é a linha seguinte com o rótulo de
+  // classificação a partir dali.
+  let rCaixa = 0;
+  for (let r = 1; r <= div.rowCount; r++) {
+    if (String(div.getRow(r).getCell(4).value ?? "") === "S") { rCaixa = r; break; }
+  }
+  let rClasseTranche = 0;
+  for (let r = rCaixa; r <= div.rowCount && rCaixa > 0; r++) {
+    if (/classificação do saldo sem caixa/.test(String(div.getRow(r).getCell(3).value ?? ""))) {
+      rClasseTranche = r; break;
+    }
+  }
+  checar(rCaixa > 0 && rClasseTranche > 0,
+    "(53) a fixture tem uma tranche com efeito caixa e a linha de classificação dela",
+    `${rCaixa}/${rClasseTranche}`);
+
+  if (rCaixa > 0 && rClasseTranche > 0) {
+    div.getRow(rCaixa).getCell(4).value = "N";
+    div.getRow(rClasseTranche).getCell(4).value = "Haircut";
+    for (const ws of todasAsAbas) esquecerMemoria(ws);
+
+    const ebitdaDepois = ["G", "H", "I", "J"].map((c) => avaliarCelula(dre, c, rEbitdaDre));
+    for (let i = 0; i < 4; i++) {
+      const a = ebitdaAntes[i]; const d = ebitdaDepois[i];
+      if (typeof a === "number" && typeof d === "number") {
+        checar(Math.abs(a - d) < 0.5,
+          `(53) col ${["G", "H", "I", "J"][i]}: classificar Haircut não move o EBITDA — não é desempenho operacional`,
+          `antes=${a} depois=${d}`);
+      }
+    }
+
+    let algumGanho = false;
+    for (const col of ["G", "H", "I", "J"]) {
+      const ganho = avaliarCelula(dre, col, rGanhoHaircut);
+      if (typeof ganho === "number" && ganho > 0.5) algumGanho = true;
+      const mismatch = avaliarCelula(bs, col, rCheckBal);
+      checar(typeof mismatch === "number" && Math.abs(mismatch) < 0.01,
+        `(53) col ${col}: o balanço fecha com a tranche classificada Haircut (via LUCROS_ACUM, não REPERFILAMENTO)`,
+        String(mismatch));
+    }
+    checar(algumGanho, "(53) …e o ganho com haircut de fato aparece na Income Statement em algum ano");
+
+    div.getRow(rCaixa).getCell(4).value = "S";
+    div.getRow(rClasseTranche).getCell(4).value = "Equity";
+    for (const ws of todasAsAbas) esquecerMemoria(ws);
   }
 }
 

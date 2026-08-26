@@ -1447,6 +1447,32 @@ function botoesDoModelo(ctx: Ctx): BotaoDoModelo[] {
     { chave: "cock:prazo_tranche", rotulo: "Prazo de amortização das tranches existentes (anos)",
       aba: "ST Inv. & Debt", alvo: "#prazo", fmt: NUM2,
       efeito: "SAC até o vencimento; nasce do prazo implícito no balanço, uma célula por tranche" },
+    { chave: "cock:efeito_caixa", rotulo: "Efeito caixa da amortização (S/N), por tranche existente",
+      aba: "ST Inv. & Debt", alvo: "#amort", fmt: NUM, naNota: true,
+      efeito: "S = a amortização sai do caixa. N = o saldo cai SEM pagamento (reperfilamento) — a "
+        + "alavanca de haircut/conversão em equity" },
+    { chave: "cock:classe_reperfil", rotulo: "    …e o destino do que cai sem caixa (Equity/Haircut)",
+      aba: "ST Inv. & Debt", alvo: "#classe", fmt: NUM, naNota: true,
+      efeito: "só importa com Efeito caixa = N. Equity = vira capital, direto. Haircut = vira ganho no "
+        + "resultado, fora do EBITDA" },
+    { chave: "cock:nm_valor", rotulo: "New money — principal captado no fechamento",
+      aba: "ST Inv. & Debt", alvo: "NM_VALOR", fmt: NUM,
+      efeito: "captação do 1º ano projetado, com termo e prioridade próprios (não é refinanciamento)" },
+    { chave: "cock:nm_prazo", rotulo: "New money — prazo de amortização (anos)",
+      aba: "ST Inv. & Debt", alvo: "NM_PRAZO", fmt: NUM2, efeito: "SAC a partir do fim da carência" },
+    { chave: "cock:nm_carencia", rotulo: "New money — carência (anos sem amortizar)",
+      aba: "ST Inv. & Debt", alvo: "NM_CARENCIA", fmt: NUM2,
+      efeito: "anos sem amortização antes do SAC do new money começar" },
+    { chave: "cock:nm_spread", rotulo: "New money — spread negociado",
+      aba: "ST Inv. & Debt", alvo: "NM_SPREAD", fmt: PCT2,
+      efeito: "compõe com o CDI da aba Anual e vira o custo efetivo do new money" },
+    { chave: "cock:nm_pik", rotulo: "New money — PIK (S/N)",
+      aba: "ST Inv. & Debt", alvo: "NM_JUROS", fmt: NUM, naNota: true,
+      efeito: "S = o juro capitaliza no saldo em vez de sair do caixa (mas ainda reduz o lucro "
+        + "tributável). N = juro pago normalmente" },
+    { chave: "cock:nm_prioridade", rotulo: "New money — prioridade frente à dívida existente",
+      aba: "ST Inv. & Debt", alvo: "NM_VALOR", fmt: NUM, naNota: true,
+      efeito: "informativo: Super sênior, Sênior, Pari passu ou Júnior" },
     { chave: "cock:vida_util", rotulo: "Vida útil média do imobilizado (anos)",
       aba: "Fixed Assets & CAPEX", alvo: "VIDA_UTIL", fmt: NUM2,
       efeito: "define a depreciação das safras de capex" },
@@ -2371,6 +2397,17 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
   g.linha("FIN_INC", { rotulo: "    Financial Income (rendimento do caixa)", fmt: NUM });
   g.linha("FIN_OUTROS", { rotulo: "    Outros resultados financeiros (histórico)", fmt: NUM });
   g.pular();
+  // GANHO COM HAIRCUT — a chave "#classe = Haircut" de uma tranche da aba de
+  // dívida (junto com "Efeito caixa? = N") faz o saldo cair sem contrapartida
+  // em equity. Contabilmente é o que um perdão/redução negociada de dívida é:
+  // ganho no resultado, abaixo do EBITDA porque não é desempenho operacional
+  // — é reestruturação financeira. Fica em linha própria, não escondida dentro
+  // do "Financial Result", porque um ganho não-recorrente de renegociação e um
+  // resultado financeiro recorrente são leituras diferentes para o comitê.
+  g.linha("GANHO_HAIRCUT", {
+    rotulo: "Ganho com redução negociada de dívida (haircut, não-caixa, fora do EBITDA)", fmt: NUM,
+  });
+  g.pular();
   g.linha("EBT", { sinal: "=", rotulo: "EBT", negrito: true, topo: true, fmt: NUM });
   g.linha("TAX", { sinal: "(-)", rotulo: "Income tax", fmt: NUM });
   g.linha("TAX_RATE", { rotulo: "    Alíquota efetiva aplicada", fmt: PCT });
@@ -2452,7 +2489,16 @@ function abaDRE(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade, gPrem: Grade, gDiv:
            ...(rEbit ? [g.ref(rEbit.chave, ano)] : [])].join("+")}`,
       { fmt: NUM, negrito: true });
     g.set("FIN_RESULT", ano, `=${g.ref("FIN_EXP", ano)}+${g.ref("FIN_INC", ano)}+${g.ref("FIN_OUTROS", ano)}`, { fmt: NUM });
-    g.set("EBT", ano, `=${g.ref("EBIT", ano)}+${g.ref("FIN_RESULT", ano)}`, { fmt: NUM, negrito: true });
+    g.set("GANHO_HAIRCUT", ano, hist ? 0 : `=${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT_HAIRCUT", ano)}`, {
+      fmt: NUM,
+      nota: hist
+        ? "Zero no realizado: haircut é alavanca de negociação, não fato do balanço histórico."
+        : "Soma da amortização SEM caixa das tranches marcadas \"Efeito caixa? = N\" e "
+          + "\"classificação = Haircut\" na aba de dívida. Fora do EBITDA porque não é operação — é "
+          + "renegociação financeira —, mas sujeito a imposto como qualquer outro resultado.",
+    });
+    g.set("EBT", ano, `=${g.ref("EBIT", ano)}+${g.ref("FIN_RESULT", ano)}+${g.ref("GANHO_HAIRCUT", ano)}`,
+      { fmt: NUM, negrito: true });
     // TRIBUTO SÓ SOBRE LUCRO POSITIVO. Aplicar a alíquota sobre prejuízo geraria
     // "crédito" de imposto entrando como caixa — num mandato de reestruturação,
     // que é o caso de uso deste modelo, isso é o erro mais provável e o mais
@@ -3239,6 +3285,7 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     { chave: "ESP_CAPTACAO", rotulo: "Captação de dívida no período" },
     { chave: "ESP_AMORT", rotulo: "Amortização de dívida no período" },
     { chave: "ESP_REVOLVER_MOV", rotulo: "Saque/(amortização) do revolver" },
+    { chave: "ESP_JUROS_PIK", rotulo: "Juros do new money capitalizados (PIK, não-caixa)" },
   ]);
 
   // ---- premissas do instrumento, todas em coluna própria (como no Modelo Base,
@@ -3283,6 +3330,17 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     g.linha(`${ch}#ini0`, { rotulo: "    (antes) saldo de abertura", fmt: NUM });
     g.linha(`${ch}#amort0`, { rotulo: "    (antes) amortização do período", fmt: NUM });
     g.linha(`${ch}#juros0`, { rotulo: "    (antes) juros do período", fmt: NUM });
+    // A CLASSIFICAÇÃO DO QUE CAI SEM CAIXA — só importa quando "Efeito caixa?"
+    // desta tranche = N. Equity = conversão em participação: o saldo cai e o
+    // patrimônio líquido sobe na mesma medida, sem passar pelo resultado
+    // (dilui o acionista). Haircut = perdão/redução negociada: o saldo cai e
+    // vira GANHO no resultado, abaixo do EBITDA — é reestruturação financeira,
+    // não desempenho operacional. Sem esta chave as duas alavancas ficavam
+    // misturadas na mesma linha de PL, e o comitê não conseguia separar
+    // "converteu em capital" de "perdoou dívida".
+    g.linha(`${ch}#classe`, {
+      rotulo: "    classificação do saldo sem caixa (Equity ou Haircut)",
+    });
   }
   // `P29 CHAVE-DE-EFEITO-CAIXA` — o Modelo Base tem uma célula por tranche com
   // validação de lista "S,N" (`ST Inv. & Debt!D128`) que decide se a amortização
@@ -3313,6 +3371,31 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   if (dividas.length > 0) {
     g.celula(g.n(chaveLinha("dv", dividas[0]) + "#amort") - 1, COL_NOTA).value = "Efeito caixa?";
   }
+  // `P30 CHAVE-DE-CLASSIFICAÇÃO` — o dropdown "Equity,Haircut" por tranche, que
+  // decide o destino do saldo marcado "Efeito caixa? = N" acima. Nasce em
+  // "Equity" para preservar exatamente o comportamento anterior (que sempre
+  // tratou a queda de saldo sem caixa como conversão em participação).
+  for (const l of dividas) {
+    const ch = chaveLinha("dv", l);
+    const cel = g.celula(g.n(`${ch}#classe`), COL_NOTA);
+    cel.value = "Equity";
+    cel.fill = FILL_INPUT;
+    cel.font = FONTE_ENTRADA;
+    cel.alignment = { horizontal: "center" };
+    cel.dataValidation = {
+      type: "list", allowBlank: false, formulae: ['"Equity,Haircut"'],
+      showErrorMessage: true, errorTitle: "Classificação do reperfilamento",
+      error: "Equity = a queda de saldo vira capital (diluição, sem efeito no resultado). Haircut = a "
+        + "queda vira ganho no resultado, fora do EBITDA. Só importa quando \"Efeito caixa?\" = N.",
+    };
+    cel.note = comoNota(
+      "Só importa quando \"Efeito caixa?\" desta tranche = N. Equity = conversão em participação — o "
+      + "saldo cai e o patrimônio líquido sobe na mesma medida, direto, sem passar pelo resultado "
+      + "(dilui o acionista). Haircut = perdão/redução negociada — o saldo cai e o modelo reconhece "
+      + "um GANHO no resultado, abaixo do EBITDA (bloco 'Ganho com redução negociada de dívida' na "
+      + "Income Statement), sujeito a imposto como qualquer outro resultado.",
+    );
+  }
   if (anosSemMapa.length > 0) {
     g.linha("DIV_BALANCO", {
       rotulo: "Dívida bancária do balanço (exercício que o mapa não cobre)", fmt: NUM,
@@ -3321,6 +3404,8 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   }
   g.linha("TOTAL_DIVIDA", { rotulo: "DÍVIDA EXISTENTE (fechamento)", negrito: true, topo: true, fmt: NUM });
   g.linha("TOTAL_AMORT_CAIXA", { rotulo: "    da qual COM efeito caixa", fmt: NUM });
+  g.linha("TOTAL_AMORT_EQUITY", { rotulo: "    da qual SEM caixa, classificada como Equity", fmt: NUM });
+  g.linha("TOTAL_AMORT_HAIRCUT", { rotulo: "    da qual SEM caixa, classificada como Haircut", fmt: NUM });
   g.linha("TOTAL_AMORT", { rotulo: "Amortização total do período", fmt: NUM });
   g.linha("TOTAL_JUROS", { rotulo: "Juros totais do período", fmt: NUM });
   g.linha("SERVICO_ORIG", {
@@ -3354,6 +3439,31 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   g.linha("EMISSAO_JUROS", { rotulo: "Juros das captações novas", fmt: NUM });
   g.pular();
 
+  // ---- NEW MONEY — o dinheiro novo DA REESTRUTURAÇÃO, rotulado à parte -----
+  //
+  // Mecanicamente é uma tranche só (SAC com carência, a mesma matemática das
+  // "TRANCHES DA DÍVIDA EXISTENTE" acima) — o que muda é o propósito: uma
+  // única captação, no fechamento do plano, com termo e prioridade
+  // NEGOCIADOS para ESTE mandato. Reaproveitar o motor de "DEBT ISSUANCE"
+  // (captação por safra) misturaria refinanciamento de operação normal com
+  // dinheiro novo de reestruturação na MESMA linha — e são leituras
+  // diferentes para o comitê, mesmo quando o número é parecido.
+  g.linha(null, { rotulo: "NEW MONEY — dinheiro novo da reestruturação (termo e prioridade próprios)", bloco: true });
+  g.linha("NM_VALOR", { rotulo: "Principal captado no fechamento (1º ano projetado)", nota: "premissa de negociação", fmt: NUM });
+  g.linha("NM_PRAZO", { rotulo: "    prazo de amortização (anos)", fmt: NUM2 });
+  g.linha("NM_CARENCIA", { rotulo: "    carência (anos sem amortizar)", fmt: NUM2 });
+  g.linha("NM_SPREAD", { rotulo: "    spread negociado", fmt: PCT2 });
+  g.linha("NM_TAXA", { rotulo: "    custo efetivo", fmt: PCT2 });
+  g.linha("NM_INI", { rotulo: "    saldo de abertura", fmt: NUM });
+  g.linha("NM_PCT", { rotulo: "    % amortizado no período (SAC)", fmt: PCT });
+  g.linha("NM_AMORT", { rotulo: "    amortização do período (sempre em caixa)", fmt: NUM });
+  g.linha("NM_FIM", { rotulo: "Saldo do new money (fechamento)", negrito: true, fmt: NUM });
+  g.linha("NM_JUROS", { rotulo: "    juros do período (despesa — entra no resultado mesmo em PIK)", fmt: NUM });
+  g.linha("NM_JUROS_PIK", {
+    rotulo: "    dos quais capitalizados (PIK — somam ao saldo, não saem do caixa)", fmt: NUM,
+  });
+  g.pular();
+
   g.linha(null, { rotulo: "ADDITIONAL LEVERAGE — REVOLVER", bloco: true });
   g.linha("REVOLVER_INI", { rotulo: "Revolver — saldo de abertura", fmt: NUM });
   g.linha("REVOLVER_SAQUE", { rotulo: "Saque/(amortização) do revolver", fmt: NUM });
@@ -3362,6 +3472,49 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
   g.pular();
   g.linha("DIVIDA_BRUTA", { rotulo: "DÍVIDA BRUTA TOTAL", negrito: true, topo: true, fmt: NUM });
   g.linha("DIVIDA_LIQUIDA", { rotulo: "DÍVIDA LÍQUIDA (bruta − caixa − aplicações)", negrito: true, fmt: NUM });
+
+  // Os dois dropdowns do new money — PIK e prioridade — são cabeçalho, não
+  // dado por ano: uma célula só, no mesmo desenho da "Efeito caixa?" acima.
+  {
+    const celPik = g.celula(g.n("NM_JUROS"), COL_NOTA);
+    celPik.value = "N";
+    celPik.fill = FILL_INPUT;
+    celPik.font = FONTE_ENTRADA;
+    celPik.alignment = { horizontal: "center" };
+    celPik.dataValidation = {
+      type: "list", allowBlank: false, formulae: ['"S,N"'],
+      showErrorMessage: true, errorTitle: "PIK",
+      error: "S = o juro do new money SOMA ao saldo em vez de sair do caixa (PIK — payment in "
+        + "kind). N = o juro sai do caixa normalmente.",
+    };
+    celPik.note = comoNota(
+      "PIK (payment in kind) do new money. S = o juro NÃO sai do caixa — capitaliza, aumentando "
+      + "o saldo (linha `NM_JUROS_PIK`, e o Cash Flow soma de volta como não-caixa, igual à "
+      + "depreciação). N = juro pago normalmente. O juro sempre entra no RESULTADO (reduz o lucro "
+      + "tributável) nos dois casos — PIK muda só o CAIXA, não o lucro.",
+    );
+    g.celula(g.n("NM_JUROS") - 1, COL_NOTA).value = "PIK?";
+
+    const celPrioridade = g.celula(g.n("NM_VALOR"), COL_NOTA);
+    celPrioridade.value = "Sênior";
+    celPrioridade.fill = FILL_INPUT;
+    celPrioridade.font = FONTE_ENTRADA;
+    celPrioridade.alignment = { horizontal: "center" };
+    celPrioridade.dataValidation = {
+      type: "list", allowBlank: false,
+      formulae: ['"Super sênior,Sênior,Pari passu,Júnior"'],
+      showErrorMessage: true, errorTitle: "Prioridade",
+      error: "A posição do new money na fila de recebimento, em relação à dívida existente. "
+        + "Informativo — a planilha não simula uma cascata de prioridade legal.",
+    };
+    celPrioridade.note = comoNota(
+      "Prioridade do new money frente à dívida existente — informativo, para o comitê ver a "
+      + "hierarquia à primeira vista. \"Super sênior\" é o padrão de dinheiro novo em "
+      + "reestruturação (à frente até dos credores garantidos antigos); a planilha não simula "
+      + "uma cascata de prioridade legal, só rotula.",
+    );
+    g.celula(g.n("NM_VALOR") - 1, COL_NOTA).value = "Prioridade";
+  }
 
   for (const ano of ctx.anos) {
     const hist = !g.ehProjetado(ano);
@@ -3607,6 +3760,22 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       const chave = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
       return `IF(${chave}="S",${g.ref(chAmort, ano)},0)`;
     }));
+    // A REPARTIÇÃO DO QUE CAI SEM CAIXA: Equity de um lado, Haircut do outro,
+    // pela chave `#classe` de cada tranche. Por construção,
+    // TOTAL_AMORT_EQUITY + TOTAL_AMORT_HAIRCUT = TOTAL_AMORT − TOTAL_AMORT_CAIXA
+    // sempre — nenhuma tranche marcada "Efeito caixa? = N" fica de fora das duas.
+    somaOuZero(g, "TOTAL_AMORT_EQUITY", ano, dividas.map((l) => {
+      const chAmort = chaveLinha("dv", l) + "#amort";
+      const chaveCaixa = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
+      const chaveClasse = `$${colLetra(COL_NOTA)}$${g.n(chaveLinha("dv", l) + "#classe")}`;
+      return `IF(AND(${chaveCaixa}="N",${chaveClasse}="Equity"),${g.ref(chAmort, ano)},0)`;
+    }));
+    somaOuZero(g, "TOTAL_AMORT_HAIRCUT", ano, dividas.map((l) => {
+      const chAmort = chaveLinha("dv", l) + "#amort";
+      const chaveCaixa = `$${colLetra(COL_NOTA)}$${g.n(chAmort)}`;
+      const chaveClasse = `$${colLetra(COL_NOTA)}$${g.n(chaveLinha("dv", l) + "#classe")}`;
+      return `IF(AND(${chaveCaixa}="N",${chaveClasse}="Haircut"),${g.ref(chAmort, ano)},0)`;
+    }));
 
     // ---- `P14` captação nova, uma safra por ano -----------------------------
     g.set("EMISSAO_PRAZO", ano, PRAZO_EMISSAO_PADRAO, {
@@ -3661,6 +3830,61 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
         : `=-(${g.ref("EMISSAO_SALDO", ant)}+${g.ref("EMISSAO_TOTAL", ano)}/2)*${g.ref("EMISSAO_TAXA", ano)}`,
       { fmt: NUM, nota: "Juros sobre o saldo de abertura mais meia safra da captação do ano." });
 
+    // ---- NEW MONEY — mesma matemática SAC das tranches existentes, uma
+    // tranche só, drenada no primeiro ano projetado (`iProjNM === 0`). ------
+    if (hist) {
+      for (const ch of ["NM_VALOR", "NM_PRAZO", "NM_CARENCIA", "NM_SPREAD", "NM_TAXA", "NM_INI",
+                        "NM_PCT", "NM_AMORT", "NM_FIM", "NM_JUROS", "NM_JUROS_PIK"]) {
+        g.set(ch, ano, 0, { fmt: NUM, tipo: "calc" });
+      }
+    } else {
+      const iProjNM = g.anos.indexOf(ano) - g.nHist;
+      g.set("NM_VALOR", ano, 0, {
+        fmt: NUM, fill: iProjNM === 0 ? FILL_INPUT : undefined,
+        nota: iProjNM === 0
+          ? "Principal do new money, ZERO por padrão: dinheiro novo é decisão do plano, não default "
+            + "de planilha. Uma tranche só, drenada neste ano — o fechamento do plano."
+          : "O new money entra só no primeiro ano projetado; esta célula fica em zero.",
+      });
+      g.set("NM_PRAZO", ano, PRAZO_EMISSAO_PADRAO, {
+        fmt: NUM2, fill: FILL_INPUT,
+        nota: "Prazo de amortização do new money, em anos. Termo NEGOCIADO — não precisa ser o "
+          + "mesmo da captação comum (linha EMISSAO acima).",
+      });
+      g.set("NM_CARENCIA", ano, 0, {
+        fmt: NUM2, fill: FILL_INPUT,
+        nota: "Carência do new money, em anos sem amortizar.",
+      });
+      g.set("NM_SPREAD", ano, `=${g.ref("SPREAD_DIVIDA", ano)}`, {
+        fmt: PCT2, fill: FILL_INPUT,
+        nota: "Spread do new money, inicializado igual ao da dívida existente — troque pelo termo "
+          + "negociado.",
+      });
+      g.set("NM_TAXA", ano, `=((1+${g.ref("CURVA_CDI", ano)})*(1+${g.ref("NM_SPREAD", ano)}))-1`, { fmt: PCT2 });
+      g.set("NM_INI", ano, iProjNM === 0 ? `=${g.ref("NM_VALOR", ano)}` : `=${g.ref("NM_FIM", ant!)}`, { fmt: NUM });
+      g.set("NM_PCT", ano,
+        `=IF(${iProjNM}<${g.ref("NM_CARENCIA", ano)},0,`
+        + `IF(${g.ref("NM_PRAZO", ano)}-${iProjNM}<=0,0,MIN(1,1/(${g.ref("NM_PRAZO", ano)}-${iProjNM}))))`, {
+        fmt: PCT,
+        nota: "Amortização linear (SAC) até o vencimento — a mesma fórmula das tranches existentes.",
+      });
+      g.set("NM_AMORT", ano, `=${g.ref("NM_INI", ano)}*${g.ref("NM_PCT", ano)}`, {
+        fmt: NUM,
+        nota: "Amortização de PRINCIPAL, sempre em caixa — PIK só muda o tratamento do JURO, nunca "
+          + "do principal. Para bullet (sem amortização), use carência = prazo.",
+      });
+      g.set("NM_JUROS", ano, `=-${g.ref("NM_INI", ano)}*${g.ref("NM_TAXA", ano)}`,
+        { fmt: NUM, nota: NOTA_CIRCULARIDADE });
+      const celPikRef = `$${colLetra(COL_NOTA)}$${g.n("NM_JUROS")}`;
+      g.set("NM_JUROS_PIK", ano, `=IF(${celPikRef}="S",-${g.ref("NM_JUROS", ano)},0)`, {
+        fmt: NUM,
+        nota: "Positivo = quanto do juro deste ano virou principal em vez de sair do caixa.",
+      });
+      g.set("NM_FIM", ano,
+        `=${g.ref("NM_INI", ano)}-${g.ref("NM_AMORT", ano)}+${g.ref("NM_JUROS_PIK", ano)}`,
+        { fmt: NUM, negrito: true });
+    }
+
     if (hist) {
       for (const ch of ["REVOLVER_INI", "REVOLVER_SAQUE", "REVOLVER_FIM", "REVOLVER_JUROS"]) {
         g.set(ch, ano, 0, { fmt: NUM, tipo: "calc" });
@@ -3673,10 +3897,10 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
       g.set("REVOLVER_JUROS", ano, `=-${g.ref("REVOLVER_INI", ano)}*${g.ref("TAXA_REVOLVER", ano)}`, { fmt: NUM, nota: NOTA_CIRCULARIDADE });
     }
     g.set("DIVIDA_BRUTA", ano,
-      `=${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)}+${g.ref("REVOLVER_FIM", ano)}`,
+      `=${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)}+${g.ref("NM_FIM", ano)}+${g.ref("REVOLVER_FIM", ano)}`,
       { fmt: NUM, negrito: true });
     g.set("DESP_FIN", ano,
-      `=${g.ref("TOTAL_JUROS", ano)}+${g.ref("EMISSAO_JUROS", ano)}+${g.ref("REVOLVER_JUROS", ano)}`,
+      `=${g.ref("TOTAL_JUROS", ano)}+${g.ref("EMISSAO_JUROS", ano)}+${g.ref("NM_JUROS", ano)}+${g.ref("REVOLVER_JUROS", ano)}`,
       { fmt: NUM, negrito: true });
     g.set("REC_FIN", ano, `=${g.ref("ST_REND", ano)}`, { fmt: NUM });
 
@@ -3686,8 +3910,9 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
     // a projeção usa a fração medida no último exercício. Aplicar a fração de 2025
     // ao saldo de 2024 inventaria uma repartição que o documento já informa.
     const frac = hist ? fracCPdoAno(ano) : fracCP;
+    const dividaComEmissaoENM = `${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)}+${g.ref("NM_FIM", ano)}`;
     g.set("ESP_DIVIDA_CP", ano,
-      `=(${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)})*${frac}+${g.ref("REVOLVER_FIM", ano)}`, {
+      `=(${dividaComEmissaoENM})*${frac}+${g.ref("REVOLVER_FIM", ano)}`, {
       fmt: NUM,
       nota: hist
         ? `Repartição curto/longo prazo do PRÓPRIO exercício ${ano} (${(frac * 100).toFixed(1)}% no `
@@ -3696,15 +3921,22 @@ function abaDivida(wb: ExcelJS.Workbook, ctx: Ctx, gAnual: Grade, gRec: Grade): 
           + "realizado deste caso (dívida no circulante ÷ dívida total). O revolver é integralmente "
           + "curto prazo por natureza. A repartição vive nesta aba, não no balanço: o balanço só lê.",
     });
-    g.set("ESP_DIVIDA_LP", ano,
-      `=(${g.ref("TOTAL_DIVIDA", ano)}+${g.ref("EMISSAO_SALDO", ano)})*${1 - frac}`, { fmt: NUM });
-    g.set("ESP_CAPTACAO", ano, `=${g.ref("EMISSAO_TOTAL", ano)}`, { fmt: NUM });
-    g.set("ESP_AMORT", ano, `=${g.ref("TOTAL_AMORT_CAIXA", ano)}+${g.ref("EMISSAO_AMORT", ano)}`, {
+    g.set("ESP_DIVIDA_LP", ano, `=(${dividaComEmissaoENM})*${1 - frac}`, { fmt: NUM });
+    g.set("ESP_CAPTACAO", ano, `=${g.ref("EMISSAO_TOTAL", ano)}+${g.ref("NM_VALOR", ano)}`, {
       fmt: NUM,
-      nota: "Só a amortização COM efeito caixa (chave S/N por tranche) mais as safras novas. "
+      nota: "Captação de dívida nova comum mais o principal do new money (que só é diferente de "
+        + "zero no ano do fechamento) — as duas entram como caixa de financiamento no mesmo ano.",
+    });
+    g.set("ESP_AMORT", ano,
+      `=${g.ref("TOTAL_AMORT_CAIXA", ano)}+${g.ref("EMISSAO_AMORT", ano)}+${g.ref("NM_AMORT", ano)}`, {
+      fmt: NUM,
+      nota: "Só a amortização COM efeito caixa (chave S/N por tranche) mais as safras novas e o "
+        + "new money — o juro dele em PIK não entra aqui (não é amortização, e não sai do caixa; "
+        + "ver `ESP_JUROS_PIK`). "
         + "Dívida reperfilada reduz saldo sem sair do caixa — e o fluxo tem de refletir isso.",
     });
     g.set("ESP_REVOLVER_MOV", ano, `=${g.ref("REVOLVER_SAQUE", ano)}`, { fmt: NUM });
+    g.set("ESP_JUROS_PIK", ano, `=${g.ref("NM_JUROS_PIK", ano)}`, { fmt: NUM });
   }
   g.finalizar("__unidade");
   return g;
@@ -3724,6 +3956,19 @@ function abaFluxo(
   g.linha(null, { rotulo: "FLUXO DE CAIXA DAS OPERAÇÕES", bloco: true });
   g.linha("NET_INCOME", { sinal: "+", rotulo: "Lucro (prejuízo) líquido", fmt: NUM });
   g.linha("DEPREC", { sinal: "+", rotulo: "Depreciação e amortização", fmt: NUM });
+  g.linha("PIK_ADD", {
+    sinal: "+", rotulo: "Juros do new money capitalizados (PIK — já reduziram o lucro, não saíram do caixa)", fmt: NUM,
+  });
+  // O GANHO COM HAIRCUT é o espelho do PIK acima: em vez de uma DESPESA que
+  // reduziu o lucro sem sair do caixa, é um GANHO que aumentou o lucro sem
+  // ENTRAR caixa nenhum (a dívida some do balanço por perdão negociado, não
+  // por pagamento). Sem subtraí-lo aqui, o `NET_INCOME` — que já carrega o
+  // ganho não-caixa da DRE — infla o `FCO` no mesmo valor, e o balanço abre
+  // exatamente na parcela classificada Haircut.
+  g.linha("HAIRCUT_SUB", {
+    sinal: "(-)",
+    rotulo: "Ganho com haircut (já aumentou o lucro, não entrou caixa nenhum)", fmt: NUM,
+  });
   // A VARIAÇÃO DO GIRO, CONTA A CONTA (§5.4 do CONFORMIDADE.md).
   //
   // Era uma linha agregada, e agregado esconde o que o analista precisa: quando o
@@ -3794,7 +4039,7 @@ function abaFluxo(
     const hist = !g.ehProjetado(ano);
     const ant = g.anoAnterior(ano);
     if (hist) {
-      for (const ch of ["NET_INCOME", "DEPREC", "VAR_NCG", "FCO", "CAPEX", "FCI", "FCL",
+      for (const ch of ["NET_INCOME", "DEPREC", "PIK_ADD", "HAIRCUT_SUB", "VAR_NCG", "FCO", "CAPEX", "FCI", "FCL",
                         "CAPTACAO", "AMORT", "REVOLVER", "DIVIDENDOS", "FCF", "VAR_CAIXA", "FURO"]) {
         g.set(ch, ano, 0, { fmt: NUM });
       }
@@ -3812,6 +4057,17 @@ function abaFluxo(
     }
     g.set("NET_INCOME", ano, `=${g.externa("Income Statement", gDRE, "NET_PROFIT", ano)}`, { fmt: NUM });
     g.set("DEPREC", ano, `=${g.externa("Fixed Assets & CAPEX", gFA, "ESP_DEPREC_CF", ano)}`, { fmt: NUM });
+    g.set("PIK_ADD", ano, `=${g.externa("ST Inv. & Debt", gDiv, "ESP_JUROS_PIK", ano)}`, {
+      fmt: NUM,
+      nota: "O juro do new money em PIK já reduziu o lucro líquido (linha acima) — mas não saiu do "
+        + "caixa, então soma de volta aqui, igual à depreciação.",
+    });
+    g.set("HAIRCUT_SUB", ano, `=-${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT_HAIRCUT", ano)}`, {
+      fmt: NUM,
+      nota: "O ganho com haircut já aumentou o lucro líquido (linha acima, via a DRE) — mas não "
+        + "entrou caixa nenhum: a dívida some do balanço por perdão negociado, não por pagamento. "
+        + "Subtrai de volta aqui, o espelho do PIK_ADD acima.",
+    });
     g.set("VAR_NCG", ano, `=${g.externa("Working Capital", gWC, "ESP_VAR_NCG", ano)}`, { fmt: NUM });
     // A abertura conta a conta: variação NEGATIVA do saldo de cada conta de giro,
     // lida da aba onde ela é projetada. `ant` existe sempre aqui (o primeiro ano é
@@ -3843,7 +4099,8 @@ function abaFluxo(
         + "exercício passado já está no saldo extraído.",
     });
     g.set("FCO", ano,
-      `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("VAR_NCG", ano)}+${g.ref("PAGO_TRIB", ano)}`,
+      `=${g.ref("NET_INCOME", ano)}+${g.ref("DEPREC", ano)}+${g.ref("PIK_ADD", ano)}+${g.ref("HAIRCUT_SUB", ano)}`
+      + `+${g.ref("VAR_NCG", ano)}+${g.ref("PAGO_TRIB", ano)}`,
       { fmt: NUM, negrito: true });
     g.set("CAPEX", ano, `=-${g.externa("Fixed Assets & CAPEX", gFA, "ESP_CAPEX", ano)}`, { fmt: NUM });
     g.set("FCI", ano, `=${g.ref("CAPEX", ano)}`, { fmt: NUM, negrito: true });
@@ -4130,23 +4387,27 @@ function abaBalanco(
         });
     }
 
-    // A CONTRAPARTIDA DO REPERFILAMENTO. A chave "Efeito caixa? = N" de uma
+    // A CONTRAPARTIDA DA CONVERSÃO EM EQUITY. A chave "Efeito caixa? = N" de uma
     // tranche faz o saldo dela cair SEM pagamento — e uma redução de passivo sem
     // saída de caixa precisa de contrapartida, senão o balanço abre exatamente no
-    // valor dela. Contabilmente é o que uma conversão em participação, um perdão
-    // ou uma capitalização de dívida é: aumento de patrimônio líquido.
+    // valor dela. Só a parcela classificada "Equity" (chave `#classe`) entra
+    // AQUI, direto: é a conversão em participação, sem passar pelo resultado. A
+    // parcela "Haircut" ganha contrapartida por OUTRO caminho — vira ganho na
+    // Income Statement (`GANHO_HAIRCUT`) e chega ao patrimônio via
+    // `LUCROS_ACUM`, líquida do imposto que ela mesma gera. Somar as duas aqui
+    // contaria a mesma redução de passivo em capital duas vezes.
     g.set("REPERFILAMENTO", ano,
       hist
         ? 0
-        : `=${g.ref("REPERFILAMENTO", ant!)}+${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT", ano)}`
-          + `-${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT_CAIXA", ano)}`, {
+        : `=${g.ref("REPERFILAMENTO", ant!)}+${g.externa("ST Inv. & Debt", gDiv, "TOTAL_AMORT_EQUITY", ano)}`, {
       fmt: NUM,
       nota: hist
         ? "Zero no realizado: o PL realizado já vem das contas extraídas."
-        : "Acumula a parcela da amortização marcada como SEM efeito caixa na aba de dívida "
-          + "(chave S/N por tranche). Dívida reperfilada, capitalizada ou convertida em "
-          + "participação reduz passivo e aumenta patrimônio — sem esta linha, o balanço abriria "
-          + "exatamente no valor reperfilado.",
+        : "Acumula a parcela da amortização SEM efeito caixa classificada como Equity (chave "
+          + "`#classe` por tranche, na aba de dívida). Conversão em participação reduz passivo e "
+          + "aumenta patrimônio direto, sem passar pelo resultado — sem esta linha, o balanço abriria "
+          + "exatamente no valor convertido. A parcela Haircut chega ao patrimônio por outra linha "
+          + "(GANHO_HAIRCUT → LUCROS_ACUM), porque ela passa pelo resultado e pelo imposto.",
     });
     // O PL É O GRUPO ONDE A CONTA DUPLICADA MAIS APARECE (o v35 traz "Prejuízos
     // acumulados" e "Resultados Acumulados" com o mesmo −39.150). A reconciliação
@@ -4938,6 +5199,7 @@ function abaOutput(
   g.linha(null, { rotulo: "DEBT & RATIOS", bloco: true });
   g.linha("DV_EXISTENTE", { rotulo: "Dívida existente (fechamento)", fmt: NUM });
   g.linha("DV_NOVA", { rotulo: "Captações novas (saldo)", fmt: NUM });
+  g.linha("DV_NOVOMONEY", { rotulo: "New money da reestruturação (saldo)", fmt: NUM });
   g.linha("DV_REVOLVER", { rotulo: "Revolver (saldo)", fmt: NUM });
   g.linha("DV_TOTAL", { rotulo: "Total Financial Debt", negrito: true, topo: true, fmt: NUM });
   g.linha("DV_CAIXA", { rotulo: "(−) Caixa e equivalentes", fmt: NUM });
@@ -5241,26 +5503,38 @@ function abaOutput(
         g.set(kFinExp, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_JUROS", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_JUROS", ano).slice(1)}`
+          + `+${ext("ST Inv. & Debt", gDiv, "NM_JUROS", ano).slice(1)}`
           + `+${g.ref(kRevJuros, ano)}`, {
           fmt: NUM,
-          nota: "Juros das tranches existentes e da captação nova são os MESMOS do cenário ativo "
-            + "(cronograma contratual, não depende de receita) — só o juro do revolver é deste "
-            + "cenário.",
+          nota: "Juros das tranches existentes, da captação nova e do new money são os MESMOS do "
+            + "cenário ativo (cronograma contratual, não depende de receita) — só o juro do "
+            + "revolver é deste cenário.",
         });
         g.set(kFinInc, ano,
           `=${stFimAnterior}*${ext("ST Inv. & Debt", gDiv, "TAXA_APLIC", ano).slice(1)}`, { fmt: NUM });
+        // O GANHO COM HAIRCUT é invariante ao cenário — vem da alavanca de
+        // negociação (aba de dívida), não da receita —, igual à depreciação
+        // logo abaixo. Sem ele aqui, `kTax` subtributaria e `kFco` subestimaria
+        // o lucro líquido da sombra sempre que alguma tranche estivesse
+        // classificada Haircut, e o CEN_CHECK_REAL deixaria de bater com o
+        // modelo ativo justo quando essa alavanca estivesse em uso.
+        const kGanhoHaircut = ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT_HAIRCUT", ano).slice(1);
         g.set(kTax, ano,
-          `=-MAX(0,${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)})`
+          `=-MAX(0,${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)}+${kGanhoHaircut})`
           + `*${ext("Income Statement", gDRE, "TAX_RATE", ano).slice(1)}`, { fmt: NUM });
         g.set(kFco, ano,
-          `=${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)}`
+          `=${g.ref(kEbit, ano)}+${g.ref(kFinExp, ano)}+${g.ref(kFinInc, ano)}+${kGanhoHaircut}`
           + `+${g.ref(kTax, ano)}+${ext("Income Statement", gDRE, "DA", ano).slice(1)}`
+          + `+${ext("ST Inv. & Debt", gDiv, "ESP_JUROS_PIK", ano).slice(1)}-${kGanhoHaircut}`
           + `+${ext("Working Capital", gWC, kNcgWC, ano).slice(1)}`
           + `+${ext("Cash Flow", gCF, "PAGO_TRIB", ano).slice(1)}`, {
           fmt: NUM,
-          nota: "Lucro líquido deste cenário (EBIT + resultado financeiro deste cenário + tributo "
-            + "deste cenário) mais depreciação, mais a variação de NCG deste cenário (Working "
-            + "Capital), mais o tributo parcelado pago (o mesmo cronograma do cenário ativo).",
+          nota: "Lucro líquido deste cenário (EBIT + resultado financeiro deste cenário + ganho com "
+            + "haircut, invariante ao cenário + tributo deste cenário) mais depreciação, mais o juro "
+            + "do new money capitalizado em PIK (não-cash, igual à depreciação — invariante ao "
+            + "cenário), MENOS o próprio ganho com haircut de volta (ele aumentou o lucro mas não "
+            + "entrou caixa nenhum, o espelho do PIK acima), mais a variação de NCG deste cenário "
+            + "(Working Capital), mais o tributo parcelado pago (o mesmo cronograma do cenário ativo).",
         });
         g.set(kCaixaAntes, ano,
           `=${caixaAnterior}+${g.ref(kFco, ano)}+${ext("Cash Flow", gCF, "CAPEX", ano).slice(1)}`
@@ -5286,10 +5560,12 @@ function abaOutput(
         g.set(kDivLiq, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_SALDO", ano).slice(1)}`
+          + `+${ext("ST Inv. & Debt", gDiv, "NM_FIM", ano).slice(1)}`
           + `+${g.ref(kRevFim, ano)}-${g.ref(kCaixaFim, ano)}`, { fmt: NUM, negrito: true });
         g.set(kServico, ano,
           `=${ext("ST Inv. & Debt", gDiv, "TOTAL_AMORT_CAIXA", ano).slice(1)}`
           + `+${ext("ST Inv. & Debt", gDiv, "EMISSAO_AMORT", ano).slice(1)}`
+          + `+${ext("ST Inv. & Debt", gDiv, "NM_AMORT", ano).slice(1)}`
           + `+ABS(${g.ref(kFinExp, ano)})`, { fmt: NUM });
         g.set(kNdReal, ano,
           `=IF(${g.ref(kEbitda, ano)}<=0,"EBITDA<=0",${g.ref(kDivLiq, ano)}/${g.ref(kEbitda, ano)})`,
@@ -5407,8 +5683,14 @@ function abaOutput(
     // DEBT & RATIOS
     g.set("DV_EXISTENTE", ano, ext("ST Inv. & Debt", gDiv, "TOTAL_DIVIDA", ano), { fmt: NUM });
     g.set("DV_NOVA", ano, ext("ST Inv. & Debt", gDiv, "EMISSAO_SALDO", ano), { fmt: NUM });
+    g.set("DV_NOVOMONEY", ano, ext("ST Inv. & Debt", gDiv, "NM_FIM", ano), {
+      fmt: NUM,
+      nota: "Rotulada à parte de `DV_NOVA` de propósito: dinheiro novo da reestruturação (prioridade "
+        + "e termo próprios) não é refinanciamento comum, mesmo quando o número é parecido.",
+    });
     g.set("DV_REVOLVER", ano, ext("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ano), { fmt: NUM });
-    g.set("DV_TOTAL", ano, `=${g.ref("DV_EXISTENTE", ano)}+${g.ref("DV_NOVA", ano)}+${g.ref("DV_REVOLVER", ano)}`,
+    g.set("DV_TOTAL", ano,
+      `=${g.ref("DV_EXISTENTE", ano)}+${g.ref("DV_NOVA", ano)}+${g.ref("DV_NOVOMONEY", ano)}+${g.ref("DV_REVOLVER", ano)}`,
       { fmt: NUM, negrito: true });
     g.set("DV_CAIXA", ano, `=${g.ref("BS_CAIXA", ano)}`, { fmt: NUM });
     g.set("DV_LIQ", ano, `=${g.ref("DV_TOTAL", ano)}-${g.ref("DV_CAIXA", ano)}`, { fmt: NUM, negrito: true });
@@ -6319,13 +6601,17 @@ export function construirModeloInstitucional(
     for (const b of botoesDoModelo(ctx)) {
       if (!gPrem.tem(b.chave)) continue;
       const origem = grades.get(b.aba);
-      // `#prazo` é por TRANCHE: o cockpit aponta para a primeira e diz quantas são,
-      // porque uma linha por tranche transformaria o painel na própria aba de dívida.
-      const alvo = b.alvo === "#prazo"
-        ? origem?.chaves().find((k) => k.endsWith("#prazo"))
+      // SUFIXOS `#…` SÃO POR TRANCHE: o cockpit aponta para a primeira e diz
+      // quantas são, porque uma linha por tranche transformaria o painel na
+      // própria aba de dívida. `#prazo` (prazo), `#amort` (a chave "Efeito
+      // caixa?", que mora na mesma linha da amortização) e `#classe`
+      // (Equity/Haircut) são os três hoje.
+      const ehPorTranche = b.alvo.startsWith("#");
+      const alvo = ehPorTranche
+        ? origem?.chaves().find((k) => k.endsWith(b.alvo))
         : b.alvo;
-      const nTranches = b.alvo === "#prazo"
-        ? (origem?.chaves().filter((k) => k.endsWith("#prazo")).length ?? 0)
+      const nTranches = ehPorTranche
+        ? (origem?.chaves().filter((k) => k.endsWith(b.alvo)).length ?? 0)
         : 0;
       const rotuloCel = gPrem.ws.getRow(gPrem.n(b.chave)).getCell(COL_ROTULO);
       if (!origem || !alvo || !origem.tem(alvo)) {
