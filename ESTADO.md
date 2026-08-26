@@ -123,11 +123,23 @@ repositório inteiro estavam TODOS no `Parse Extracao`** — o nó que faltava p
 2. **APLICAR a `0147` e a `0148`** no Supabase (dono, `db/README.md`);
 3. **RODAR o book** (dono). É o que mede se o modelo obedece ao prompt novo — o bloco 7 prova a
    aritmética da conferência, não a leitura do documento. Vale para as duas frentes;
-4. **O dialeto OpenAI tem 2 testes vermelhos** (`Ramo E2: Registrar → Montar Req Extracao → Parse` e
-   `a estimativa que o PORTAL mostra é coerente com a cadência REAL`), e eles **já estavam vermelhos
-   no início desta sessão** — conferido rodando o commit `886b7f3` do mesmo jeito. Não bloqueiam: o
-   provedor ativo é o Google e o CI roda o dialeto padrão. Mas a linha da tabela acima diz "a OpenAI
-   continua testada", e hoje isso é verdade com duas exceções;
+4. **O dialeto OpenAI tinha 2 testes vermelhos; agora tem 1.** O `Ramo E2: Registrar → Montar Req
+   Extracao → Parse` comparava `schemaDaReq` (que desembrulha `.schema` do `response_format` da
+   OpenAI) contra `schemaDoProvedor(PROV, extractionSchema())`, que para o dialeto não-Gemini
+   devolvia o objeto INTEIRO (`{name, strict, schema}`) em vez do `.schema` — os dois lados nunca
+   descreviam a mesma coisa. `schemaDoProvedor` só é chamado em produção no ramo Gemini (o ramo
+   OpenAI de `montarCorpoIA` nunca o invoca), então a correção (`return jsonSchema.schema ||
+   jsonSchema`) não muda nenhum payload que sai para a IA — só o comparador do teste, que era o que
+   estava errado. Religado: `node --test test/workflow-sim.test.mjs` sobe de 90/92 para 91/92 sob
+   `IA_PROVEDOR=openai`, e os 353 testes de `n8n/test/` continuam verdes sob o Google (padrão),
+   confirmando que nada mudou na cadeia ativa. As 6 cópias-espelho de `schemaDoProvedor` embutidas em
+   `n8n/workflow.e1-ingestao.json` foram regeradas por `build-workflow.mjs` para acompanhar a lib.
+   **O que ainda fica vermelho** — `a estimativa que o PORTAL mostra é coerente com a cadência REAL`
+   — não é bug de teste: o `SEGUNDOS_POR_DOCUMENTO` do portal é calibrado para a cadência do provedor
+   ATIVO (Google, 8s), e a OpenAI tem cadência própria (~33s/chamada) que o portal não representa. Já
+   estava vermelho no início da sessão 67 (conferido rodando o `886b7f3`) e não bloqueia nada — o CI
+   roda o dialeto padrão —, mas decidir se o portal passa a ser provider-aware é decisão de produto,
+   não conserto de teste;
 5. **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), o capítulo
    10 no repositório (B4.1) e os `[A CONFIRMAR]` do `docs/10`.
 
