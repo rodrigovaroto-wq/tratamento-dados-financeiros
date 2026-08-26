@@ -18,7 +18,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
 | **Aplicadas no Supabase** | **as 91** até a `0146`, conferidas função a função em 24-25/08. **A `0147` e a `0148` NÃO estão aplicadas** — são desta sessão e esperam o dono (`db/README.md`). A sonda `fn_instalacao_conferir()` passou a cobrir **23 marcadores** e a enxergar o CORPO da função; e desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados) · n8n **353** · export **663** (+13 na sessão 68, o teste (42) da réplica de cenários) · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — export/banco/e2e reconferidas em 26/08 depois da sessão 68; o resto foi medido em 25/08 e não foi tocado |
+| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados, reconferida em 26/08 girando os 3 cenários) · n8n **353** · export **688** (+38 na sessão 68: o teste (50) da réplica de cenários e o (51), nascido de uma revisão adversarial, que gira o dial nas 3 posições contra os dois CHECKS) · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — export/banco/e2e/variações reconferidas em 26/08 depois da sessão 68; o resto foi medido em 25/08 e não foi tocado |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
 
@@ -74,10 +74,40 @@ bater exatamente entre a réplica e o bloco de RATIOS (`CEN_CHECK_REAL`).
 ativo) — prova a mecânica. E o revolver do Stress publica maior ou igual ao
 do Base em TODO ano projetado no `book-vertentes` (859k vs 640k no primeiro
 ano, abrindo para 4,77M vs 3,82M no último) — prova a direção. Os dois viram
-o teste (42) de `verificar-export.mts`, que soma 13 asserts novos (650→663).
+o teste (50) de `verificar-export.mts`, que soma 13 asserts novos (650→663).
 Suíte de banco (93 migrations, os dois books) e e2e (46) reconferidas
 localmente depois da mudança — verdes, e nenhuma delas deveria ter se
 movido, porque nada nesta sessão tocou `db/` ou `n8n/`.
+
+**Uma rodada de revisão adversarial (8 ângulos independentes) achou 4
+defeitos reais, e o mais grave era exatamente do tipo que este projeto mais
+teme: um CHECK que mente.** `CHECK_SOMBRA_WC` (Working Capital) foi escrito
+comparando a NCG ativa contra a sombra do Base Case **fixa**, em vez de
+escolher a sombra do cenário LIGADO por `CHOOSE` — como o `CHECK_SOMBRA` de
+verdade, que a linha alegava imitar. Como o arquivo sempre nasce com o dial
+no Base, nenhuma suíte via a célula acusar uma divergência falsa assim que
+alguém girasse para Cliente ou Stress — o estado NORMAL de um arquivo de
+reestruturação. Religado e medido: com o dial em Stress, a célula acusava
+~22 a ~27 mil de "divergência" que não existia. Os outros três: um crash
+(`ant!` sem guarda) quando o caso não tem nenhum ano histórico — estado que
+o próprio código já detecta em outro lugar e continua, mas esta cascata
+derrubava; o rótulo `CEN_FORA`, escrito no arquivo entregue, afirmando "um
+CHECK garante que a réplica nunca fica mais otimista que o piso" — um CHECK
+que a própria sessão tinha decidido não construir, por medir que a
+desigualdade não é invariante (parágrafo acima); e uma colisão de
+numeração entre o teste novo e dois testes pré-existentes (tentou "(42)",
+colidiu; tentou "(43)", colidiu de novo; ficou em "(50)"). Os quatro foram
+corrigidos, e um quinto achado (`NCG#v_${suf}` produzindo a fórmula
+inválida "-()" com ativo e passivo vazios) foi investigado e descartado —
+a guarda `|| "0"` já cobre os dois lados. **O teste (51) nasceu direto
+desse achado**: gira o dial de verdade nas três posições e confere os dois
+CHECKS (`CEN_CHECK_REAL` e `CHECK_SOMBRA_WC`) em cada uma — é o que teria
+pego o defeito antes de qualquer suíte existente (663→688). Depois das
+correções: suíte de export 688/688, banco (93 migrations) 100%, e2e 46/46,
+e o loop de variações (`test/e2e/variacoes.mts`, 25 rodadas, cadeia real)
+com **0 achados** — incluindo os cenários que tocam a dívida direto
+(`patrimonio_a_descoberto`, `caixa_negativo`, `divida_maior_que_o_ativo`,
+`sem_mapa_de_divida`).
 
 **O que NÃO entrou nesta sessão, e é a continuação natural** (o resto do
 plano de 5 fases apresentado ao dono no chat): **new money** com prioridade

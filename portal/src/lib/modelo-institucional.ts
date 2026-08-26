@@ -2672,7 +2672,7 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
     g.linha(`VAR_NCG#v_${suf}`, { rotulo: `        variação`, fmt: NUM });
   }
   g.linha("CHECK_SOMBRA_WC", {
-    rotulo: "    CHECK: a sombra do Base Case bate com a NCG ativa (0 = bate)", fmt: NUM2,
+    rotulo: "    CHECK: a sombra do cenário ATIVO bate com a NCG ativa (0 = bate)", fmt: NUM2,
   });
 
   // ---- A GUARDA DO GIRO AGREGADO ------------------------------------------
@@ -2824,12 +2824,18 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
         g.set(`VAR_NCG#v_${suf}`, ano, ncgAnterior === null ? 0
           : `=-(${g.ref(`NCG#v_${suf}`, ano)}-${ncgAnterior})`, { fmt: NUM });
       }
-      g.set("CHECK_SOMBRA_WC", ano, `=ABS(${g.ref("NCG#v_base", ano)}-${g.ref("NCG", ano)})`, {
+      // CHOOSE, não `#v_base` fixo — a NCG ativa segue o CENÁRIO LIGADO, e um
+      // Working Capital cujo CHECK só bate com Base mentiria "divergiu" toda
+      // vez que o dial estivesse em Cliente ou Stress, que é o estado normal
+      // de um arquivo de reestruturação. É o mesmo desenho do `CHECK_SOMBRA`
+      // da aba de receita (linha ~2090), que já usa `CHOOSE(cen, ...)`.
+      const escolheNcg = `CHOOSE(${cen},${CENARIOS_SUF.map(([su]) => g.ref(`NCG#v_${su}`, ano)).join(",")})`;
+      g.set("CHECK_SOMBRA_WC", ano, `=ABS(${escolheNcg}-${g.ref("NCG", ano)})`, {
         fmt: NUM2,
-        nota: "Distância entre a sombra do Base Case e a NCG ativa. Zero por construção: os dois "
-          + "leem os mesmos dias e a mesma base (a sombra RECEITA_LIQUIDA#v_base/CUSTOS#v_base da "
-          + "aba de receita é, por sua vez, igual à linha ativa). Diferente de zero é a NCG por "
-          + "cenário tendo se separado do que o modelo realmente cobra.",
+        nota: "Distância entre a sombra do cenário ATIVO e a NCG ativa. Zero por construção: os "
+          + "dois leem os mesmos dias e a mesma base (a sombra RECEITA_LIQUIDA#v/CUSTOS#v da aba "
+          + "de receita é, por sua vez, igual à linha ativa NO CENÁRIO ATIVO). Diferente de zero é "
+          + "a NCG por cenário tendo se separado do que o modelo realmente cobra.",
       });
     } else {
       g.set("CHECK_SOMBRA_WC", ano, "", { fmt: NUM2 });
@@ -4721,9 +4727,10 @@ function abaOutput(
   });
   const rCenFora = g.linha("CEN_FORA", {
     rotulo: "    Este bloco é um PISO deliberado, mantido como CONTRAPROVA do bloco abaixo: aqui só "
-      + "o EBITDA muda, a dívida é a do cenário ATIVO. Um CHECK garante que a réplica completa "
-      + "logo abaixo nunca fica mais otimista que este piso — se algum dia ficasse, o defeito "
-      + "estaria aqui ou lá, e o CHECK é quem primeiro acusa.",
+      + "o EBITDA muda, a dívida é a do cenário ATIVO. Não há CHECK que compare os dois — medido "
+      + "antes de escrever, a desigualdade \"a réplica nunca é mais otimista que o piso\" não é "
+      + "invariante (depende de qual cenário está ativo). O que o bloco abaixo tem é a coluna do "
+      + "cenário ATIVO batendo exatamente com este, e essa é a garantia que existe.",
   });
   g.celula(rCenFora, COL_ROTULO).font = fonte({ italic: true, size: 9 });
   g.celula(rCenFora, COL_ROTULO).alignment = { wrapText: true };
@@ -5177,17 +5184,20 @@ function abaOutput(
         g.set(`CEN_EBIT#${suf}`, ano,
           `=${g.ref(`CEN_EBITDA#${suf}`, ano)}-${ext("Income Statement", gDRE, "DA", ano).slice(1)}`, { fmt: NUM });
 
-        // O ANO ANTERIOR da MESMA sombra — caixa, revolver e aplicação. No
-        // primeiro ano projetado ele ainda não existe: a base é a linha ATIVA
-        // do ano anterior (histórico, comum aos três cenários), o mesmo desenho
-        // do `baseAnterior` do resumo de receita logo acima.
-        const primeiroProjetado = !g.ehProjetado(ant!);
-        const caixaAnterior = primeiroProjetado
-          ? ext("Cash Flow", gCF, "CAIXA_FIM", ant!).slice(1) : g.ref(`CEN_CAIXA_FIM#${suf}`, ant!);
-        const revolverAnterior = primeiroProjetado
-          ? ext("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ant!).slice(1) : g.ref(`CEN_REV_FIM#${suf}`, ant!);
-        const stFimAnterior = primeiroProjetado
-          ? ext("ST Inv. & Debt", gDiv, "ST_FIM", ant!).slice(1) : g.ref(`CEN_ST_FIM#${suf}`, ant!);
+        // O ANO ANTERIOR da MESMA sombra — caixa, revolver e aplicação. Três
+        // casos, não dois: sem `ant` nenhum (zero anos históricos — o caso que
+        // `impedimentos` já detecta e avisa, mas continua gerando a aba), com
+        // `ant` histórico (a base é a linha ATIVA, comum aos três cenários), ou
+        // com `ant` já projetado (a sombra do próprio ano anterior). O mesmo
+        // desenho do `baseAnterior` do resumo de receita logo acima — e do
+        // `ncgAnterior` da sombra de NCG no Working Capital, que já tratava os
+        // três casos.
+        const caixaAnterior = ant === null ? "0"
+          : g.ehProjetado(ant) ? g.ref(`CEN_CAIXA_FIM#${suf}`, ant) : ext("Cash Flow", gCF, "CAIXA_FIM", ant).slice(1);
+        const revolverAnterior = ant === null ? "0"
+          : g.ehProjetado(ant) ? g.ref(`CEN_REV_FIM#${suf}`, ant) : ext("ST Inv. & Debt", gDiv, "REVOLVER_FIM", ant).slice(1);
+        const stFimAnterior = ant === null ? "0"
+          : g.ehProjetado(ant) ? g.ref(`CEN_ST_FIM#${suf}`, ant) : ext("ST Inv. & Debt", gDiv, "ST_FIM", ant).slice(1);
 
         g.set(`CEN_REV_INI#${suf}`, ano, `=${revolverAnterior}`, { fmt: NUM });
         g.set(`CEN_REV_JUROS#${suf}`, ano,
@@ -5234,10 +5244,11 @@ function abaOutput(
           { fmt: NUM });
         g.set(`CEN_REV_FIM#${suf}`, ano,
           `=${g.ref(`CEN_REV_INI#${suf}`, ano)}+${g.ref(`CEN_REV_SAQUE#${suf}`, ano)}`, { fmt: NUM, negrito: true });
+        // Caixa antes do revolver, mais o saque — não repete os cinco termos
+        // que já compõem `CEN_CAIXA_ANTES`, senão as duas fórmulas têm de ser
+        // editadas em par para sempre, e nada aqui garante isso.
         g.set(`CEN_CAIXA_FIM#${suf}`, ano,
-          `=${caixaAnterior}+${g.ref(`CEN_FCO#${suf}`, ano)}+${ext("Cash Flow", gCF, "CAPEX", ano).slice(1)}`
-          + `+${ext("Cash Flow", gCF, "CAPTACAO", ano).slice(1)}+${ext("Cash Flow", gCF, "AMORT", ano).slice(1)}`
-          + `+${ext("Cash Flow", gCF, "DIVIDENDOS", ano).slice(1)}+${g.ref(`CEN_REV_SAQUE#${suf}`, ano)}`,
+          `=${g.ref(`CEN_CAIXA_ANTES#${suf}`, ano)}+${g.ref(`CEN_REV_SAQUE#${suf}`, ano)}`,
           { fmt: NUM, negrito: true });
         g.set(`CEN_ST_FIM#${suf}`, ano,
           `=MAX(0,${g.ref(`CEN_CAIXA_FIM#${suf}`, ano)}-${ext("ST Inv. & Debt", gDiv, "CAIXA_MIN", ano).slice(1)})`,

@@ -6941,7 +6941,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 }
 
 // =============================================================================
-// (42) A RÉPLICA COMPLETA POR CENÁRIO — dívida e caixa correm nos três, não só
+// (50) A RÉPLICA COMPLETA POR CENÁRIO — dívida e caixa correm nos três, não só
 // no cenário ativo.
 //
 // O bloco de sensibilidade (36) já provava que a leitura ANTERIOR era um PISO
@@ -6991,14 +6991,14 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   };
 
   const rTitulo = acharEm(/^RÉPLICA COMPLETA POR CENÁRIO/);
-  checar(rTitulo > 0, "(42) o bloco da réplica completa existe na aba Output", String(rTitulo));
+  checar(rTitulo > 0, "(50) o bloco da réplica completa existe na aba Output", String(rTitulo));
 
   const rChk = acharEm(/CHECK: a réplica completa do cenário ATIVO/);
-  checar(rChk > 0, "(42) …com um CHECK contra a dívida líquida ativa", String(rChk));
+  checar(rChk > 0, "(50) …com um CHECK contra a dívida líquida ativa", String(rChk));
   for (const col of ["G", "H", "I", "J"]) {
     const v = avaliarCelula(out, col, rChk);
     checar(typeof v === "number" && Math.abs(v) < 0.01,
-      `(42) CHECK zero em ${col}: a réplica do cenário ATIVO é o próprio modelo`, String(v));
+      `(50) CHECK zero em ${col}: a réplica do cenário ATIVO é o próprio modelo`, String(v));
   }
 
   // As linhas de revolver de fechamento e de pico aparecem uma vez por
@@ -7006,7 +7006,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   const revRows = acharTodos(/revolver — saldo de fechamento/);
   const picoRows = acharTodos(/pico de uso do revolver/);
   checar(revRows.length === 3 && picoRows.length === 3,
-    "(42) o revolver de fechamento e o pico existem nos três cenários",
+    "(50) o revolver de fechamento e o pico existem nos três cenários",
     `${revRows.length} / ${picoRows.length}`);
 
   if (revRows.length === 3) {
@@ -7016,7 +7016,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       const stress = avaliarCelula(out, col, rRevStress);
       if (typeof base === "number" && typeof stress === "number") {
         checar(stress >= base - 0.01,
-          `(42) o revolver do Stress em ${col} não é menor que o do Base — a réplica não inverteu a direção`,
+          `(50) o revolver do Stress em ${col} não é menor que o do Base — a réplica não inverteu a direção`,
           `Stress ${stress.toFixed(0)} vs Base ${base.toFixed(0)}`);
       }
     }
@@ -7027,8 +7027,67 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     const stress = avaliarCelula(out, "J", rPicoStress);
     if (typeof base === "number" && typeof stress === "number") {
       checar(stress >= base - 0.01,
-        "(42) …e o pico do horizonte inteiro (último ano) segue a mesma direção",
+        "(50) …e o pico do horizonte inteiro (último ano) segue a mesma direção",
         `Stress ${stress.toFixed(0)} vs Base ${base.toFixed(0)}`);
+    }
+  }
+}
+
+// =============================================================================
+// (51) OS DOIS CHECKS DA RÉPLICA GIRANDO O DIAL — não só no Base Case.
+//
+// O TESTE (42)/(50) ANTERIOR SÓ CONFERIA COM O DIAL NO PADRÃO (Base, `G2=1`).
+// Isso escondeu um defeito real na primeira versão deste bloco: o
+// `CHECK_SOMBRA_WC` do Working Capital comparava a sombra do BASE CASE fixa
+// contra a NCG ativa, em vez de escolher a sombra do cenário LIGADO — e como
+// o arquivo sempre nasce com o dial no Base, nenhuma suíte via a célula
+// acusar uma divergência falsa assim que alguém girasse para Cliente ou
+// Stress, que é o estado normal de um arquivo de reestruturação. Este teste
+// gira o dial de verdade (`Output!G2`) e confere os dois CHECKS nas três
+// posições — é o que teria pego o defeito antes de chegar ao comitê.
+{
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
+  ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
+  const agora = new Date("2026-07-27T12:00:00Z");
+  const wb = buildExportWorkbook({
+    caso: { nome: "Book Vertentes", produto: "reestruturacao" },
+    documentos: fixture.documentos, campos: fixture.campos, agora,
+    modeloInstitucional: entradaModeloDaFixture(fixture, agora),
+  });
+  const out = wb.getWorksheet("Output")!;
+  const wc = wb.getWorksheet("Working Capital")!;
+  const rec = wb.getWorksheet("Revenues, COGS & SG&A")!;
+  const dre = wb.getWorksheet("Income Statement")!;
+  const bs = wb.getWorksheet("Balance Sheet")!;
+  const cf = wb.getWorksheet("Cash Flow")!;
+  const div = wb.getWorksheet("ST Inv. & Debt")!;
+  const fa = wb.getWorksheet("Fixed Assets & CAPEX")!;
+  const trib = wb.getWorksheet("Tributos a Recolher")!;
+  // Toda aba que a cascata atravessa — esquecer memória só na aba consultada
+  // deixaria o valor CRUZADO (lido por referência externa) preso no cache de
+  // ANTES de girar o dial, e o teste passaria mesmo com um defeito real.
+  const todasAsAbas = [out, wc, rec, dre, bs, cf, div, fa, trib];
+  const acharEm = (ws: ExcelJS.Worksheet, re: RegExp) => {
+    for (let r = 1; r <= ws.rowCount; r++) {
+      if (re.test(String(ws.getRow(r).getCell(3).value ?? ""))) return r;
+    }
+    return 0;
+  };
+  const rCheckReal = acharEm(out, /CHECK: a réplica completa do cenário ATIVO/);
+  const rCheckWC = acharEm(wc, /CHECK: a sombra do cenário ATIVO bate/);
+  checar(rCheckReal > 0 && rCheckWC > 0, "(51) os dois CHECKS existem", `${rCheckReal} / ${rCheckWC}`);
+
+  for (const dial of [1, 2, 3] as const) {
+    out.getRow(2).getCell(7).value = dial;
+    for (const ws of todasAsAbas) esquecerMemoria(ws);
+    for (const col of ["G", "H", "I", "J"]) {
+      const vReal = avaliarCelula(out, col, rCheckReal);
+      checar(typeof vReal === "number" && Math.abs(vReal) < 0.01,
+        `(51) dial=${dial} col ${col}: CEN_CHECK_REAL continua zero`, String(vReal));
+      const vWC = avaliarCelula(wc, col, rCheckWC);
+      checar(typeof vWC === "number" && Math.abs(vWC) < 0.01,
+        `(51) dial=${dial} col ${col}: CHECK_SOMBRA_WC continua zero`, String(vWC));
     }
   }
 }
