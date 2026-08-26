@@ -4,17 +4,17 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-26 (sessões 62 a **69**). **Estado do `main`:** mergeado até o **PR
-#179**. **A INFRA QUE ESPERAVA FOI FEITA:** a `0147`, a `0148` e a `0149` estão aplicadas em
-produção e conferidas por md5 contra o banco construído a partir dos arquivos, e o workflow do n8n
-foi republicado pela API REST — 33 de 33 nós byte a byte iguais ao repositório, 12 credenciais
-preservadas, ativo. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68
+**Última atualização:** 2026-08-26 (sessões 62 a **70**). **Estado do `main`:** mergeado até o **PR
+#179**. **A INFRA QUE ESPERAVA FOI FEITA (sessão 70):** a `0147`, a `0148` e a `0149` estão
+aplicadas em produção e conferidas por md5 contra o banco construído a partir dos arquivos, e o
+workflow do n8n foi republicado pela API REST — 33 de 33 nós byte a byte iguais ao repositório, 12
+credenciais preservadas, ativo. **O PRÓXIMO PASSO É A PREPARAÇÃO PARA O TESTE REAL, e ele começa
+por um smoke test de DOIS documentos** — ver "POR ONDE COMEÇAR" abaixo, que traz a lista inteira em
+ordem de execução. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68
 e 69 (réplica completa por cenário, new money, equity×haircut e o cockpit das quatro alavancas)
 vivem na branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do
 `ESTADO.md` antes de continuar por ali; não é sessão de handoff de infra, é resposta a um pedido de
-produto do dono, e continua aberta até o item de diluição. **O que ainda espera é o DONO: rodar o
-book.** As suítes provam a aritmética; só a rodada real prova a leitura — e é ela que mede as duas
-frentes de extração da 67 (a hierarquia e o fato material) contra documentos de verdade.
+produto do dono, e continua aberta até o item de diluição.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
@@ -63,24 +63,78 @@ localizador tem de existir também na checagem que o consome. Sem esse quarto pa
 ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
 trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
-**POR ONDE COMEÇAR NA SESSÃO SEGUINTE, em ordem** — e os três primeiros são do DONO, não de
-engenharia. A sessão 67 fechou as quatro frentes de código que estavam nesta lista; o que sobrou é
-justamente o que nenhuma suíte alcança:
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: A PREPARAÇÃO PARA O TESTE REAL.** A sessão 67 fechou as
+quatro frentes de código e a 70 aplicou a infra em produção. O que resta antes do teste real está
+listado abaixo, em ordem de execução, com o que já foi medido em cada um.
 
-1. ~~REIMPORTAR o workflow~~ e ~~APLICAR a `0147` e a `0148`~~ — **feitos em 26/08**, com a `0149`
-   junto. Conferidos, não declarados: a sonda devolve 38 de 38 requisitos presentes e cobertura
-   `0149`, e os 33 nós do workflow vivo batem por hash com o repositório. **Antes de escrever que
-   continua assim, rode a sonda de novo** — é a regra que o `ESTADO.md` aplica a si mesmo;
-2. **RODAR o book de novo.** É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
-   acha os fatos materiais nas Notas Explicativas e no Parecer. O teste prova a aritmética da
-   conferência; só a rodada real prova a leitura. **Espere a hierarquia derrubar as 12 pendências
-   falsas de seção/duplicidade — e confira se derrubou, porque essa é a medida da frente inteira;**
-3. **Os testes vermelhos no dialeto OpenAI**, que já estavam vermelhos antes da 67 (conferido
-   rodando o `886b7f3`). Não bloqueiam nada — o provedor ativo é o Google —, mas o `ESTADO.md` diz
-   "a OpenAI continua testada" e isso hoje tem duas exceções;
-4. **Os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
-   capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao cliente, B4.1) e preencher
-   os `[A CONFIRMAR]` do `docs/10`.
+> **O NÚMERO QUE DEFINE ESTA FRENTE, medido em produção em 26/08:** o banco tem **551 documentos,
+> 52 casos e ZERO fatos gravados** — `documento_fato` está vazia e nenhuma versão tem
+> `fatos_avaliados_em`. O canal de fato material (`0148`/`0149`) está instalado, conferido por md5 e
+> **nunca rodou contra um documento real**. As suítes provam a aritmética de `fn_registrar_fatos`;
+> nenhuma prova que o modelo, lendo um PDF de verdade com o prompt novo, devolve `fatos` no formato
+> que a função aceita.
+
+### 1. O SMOKE TEST DE DOIS DOCUMENTOS — antes de qualquer lote
+
+**Rodar 2 documentos antes de rodar 38 ou 190.** Os dois são as **Notas Explicativas (33)** e o
+**Parecer do Auditor (34)** do `test-data/book-canastra`: são exatamente os que carregam covenant
+rompido, ressalva e incerteza sobre continuidade operacional, e são os dois que a `0148` existe para
+deixar de emudecer.
+
+- **custo**: 2 chamadas de IA, ~20 segundos;
+- **o que ele prova, e nenhuma suíte prova**: que o caminho inteiro fecha ponta a ponta — prompt →
+  `Parse Extracao` → `Juntar Blocos` → `fn_registrar_fatos` → tela do mandato;
+- **como conferir**: `select count(*) from documento_fato` tem de deixar de ser zero;
+  `fatos_avaliados_em` tem de estar preenchida nas duas versões; e o `trecho` gravado tem de ser
+  **frase literal do PDF**, conferida à mão contra o documento — é ele que vai ao comitê;
+- **por que antes e não depois**: se o prompt ou o parse estiverem errados, um lote grande gasta
+  ~25 minutos e dinheiro real para descobrir o mesmo zero.
+
+**Este passo depende do DONO** — o upload é pelo formulário do n8n, e nenhuma sessão consegue enviar
+arquivo por lá.
+
+### 2. O FINGERPRINT MUDOU — o lote vai ser preço cheio, e isso está certo
+
+Medido em 26/08: produção tem **76 versões com `f45e9dded4352886`**; o workflow vivo agora manda
+**`f17efcbc53780818`**. O prompt mudou (hierarquia + fatos materiais), então a mudança está correta
+— mas significa que **não há reaproveitamento nenhum**: nenhum documento pula a chamada de IA na
+próxima rodada. Não é problema a corrigir; é número a saber antes da fatura, não depois.
+
+### 3. RODAR O BOOK, e o que medir nele
+
+É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele acha os fatos materiais.
+**Espere a hierarquia derrubar as 12 pendências falsas de seção/duplicidade — e confira se derrubou,
+porque essa é a medida da frente inteira.**
+
+**Há um terceiro book, e ele NÃO está no repositório.** O `book-araucaria` — 190 documentos, 14
+empresas, 5 exercícios (2021 a 2025), 247 páginas, 16.081 linhas com número — foi construído na
+sessão 70 e entregue ao dono **por arquivo**, fora do git, por decisão dele. Quem for procurá-lo em
+`test-data/` não vai achar. Ele não mede se a extração acerta os números (os dois books versionados
+já medem); mede **se o sistema percebe que dois documentos do mesmo período discordam e escolhe o
+certo dizendo por quê** — a armadilha central é um combinado preliminar que infla o ativo do grupo
+em até 32.800 (R$ mil) **e fecha**, porque ativo e passivo caem na mesma medida quando um par
+intragrupo deixa de ser eliminado. São 15 armadilhas, cada uma catalogada com resposta certa no
+`GUIA_DE_TESTE.md` que o gerador escreve.
+
+**A ordem recomendada:** smoke test (2 docs) → `book-canastra` (38 docs, é o insumo das análises v47
+e v48 e o que permite comparar contra elas) → `book-araucaria` (190 docs), que é o teste de estresse
+e cuja pergunta o sistema hoje **em parte ainda não decide sozinho** — não há mecanismo de desempate
+entre duas versões do mesmo período. Isso é o resultado que a rodada vai revelar, e é o valor dela.
+
+### 4. O que NÃO bloqueia o teste real
+
+- **O teste vermelho no dialeto OpenAI**, que já estava vermelho antes da 67 (conferido rodando o
+  `886b7f3`). O provedor ativo é o Google, e o CI roda o dialeto padrão. Fica registrado porque o
+  `ESTADO.md` diz "a OpenAI continua testada" e isso hoje tem uma exceção;
+- **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1, trivial e o
+  de maior risco), levar o capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao
+  cliente, B4.1) e preencher os `[A CONFIRMAR]` do `docs/10`.
+
+> **ANTES DE ESCREVER QUE A INFRA CONTINUA APLICADA, RODE A SONDA.** `select * from
+> fn_instalacao_conferir()` contra o banco em que você está conectado. Em 26/08 ela devolvia 38 de
+> 38 requisitos presentes e cobertura `0149` — mas essa frase envelhece, e é exatamente assim que a
+> `0133` passou três documentos dada por aplicada sem estar. É a regra que o `ESTADO.md` aplica a si
+> mesmo.
 
 **O QUE MUDOU DA 52 PARA A 67, em uma linha cada** — a narrativa completa de cada uma está no
 `ESTADO.md`, que é onde ela deve ser lida:
@@ -99,6 +153,7 @@ justamente o que nenhuma suíte alcança:
 | 64 | **A v47, a primeira rodada real.** A reconciliação parada havia onze dias em silêncio; a coluna de dimensão que virava valor (`0140`); o limiar que nunca excluiu nada (`0141`) |
 | 65-66 | **A v48 e as quatro causas de pendência falsa** (`0142` a `0146`); a conferência linha a linha que provou a extração certa; a estimativa de tempo antes do envio; a modelagem da v48 com as premissas derivadas do próprio realizado |
 | **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
+| **70** | **A auditoria adversarial do fato material e a infra aplicada.** A `0148` foi relida com a pergunta invertida — "o que eu faria para quebrar isto sem que ninguém percebesse?" — e devolveu SETE defeitos, cinco silenciosos: a página alucinada que derrubava o DIAGNÓSTICO inteiro junto (mesma query), o reenvio de arquivo que fazia os fatos sumirem da tela, a ordem indeterminada numa tela em que a ordem significa gravidade, a `confianca` que nunca recebeu valor, e o `Juntar Blocos` que descartava os fatos dos blocos 2..N (`0149`). Os sete religamentos conferidos um a um — e DOIS deles só reprovaram depois de a própria suíte ser corrigida, porque testavam a lib e não o nó de produção. A `0147`, a `0148` e a `0149` aplicadas em produção e conferidas por md5; o workflow republicado pela API REST e conferido por hash, 33 de 33 nós. E um terceiro book, o `book-araucaria` (190 documentos, 14 empresas, 5 exercícios), construído e entregue ao dono FORA do repositório |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
