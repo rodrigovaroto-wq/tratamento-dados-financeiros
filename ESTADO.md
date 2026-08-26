@@ -16,7 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `db/migrations/0149_o_fato_material_endurecido.sql` — a auditoria adversarial da `0148` achou SETE defeitos no canal de fato material, cinco deles silenciosos, e esta migration os fecha. A `0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
-| **Aplicadas no Supabase** | **as 91** até a `0146`, conferidas função a função em 24-25/08. **A `0147` e a `0148` NÃO estão aplicadas** — são desta sessão e esperam o dono (`db/README.md`). A sonda `fn_instalacao_conferir()` passou a cobrir **23 marcadores** e a enxergar o CORPO da função; e desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
+| **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados) · n8n **353** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — todas medidas em 25/08, e o pipeline inteiro do CI rodado **três vezes seguidas, três vezes verde** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -115,12 +115,55 @@ função, já usava a forma escapada. Medido: dos quatro workflows gerados, **os
 repositório inteiro estavam TODOS no `Parse Extracao`** — o nó que faltava publicar. O
 `caracteres.test.mjs` passa a varrer os quatro JSONs commitados.
 
+### 5. A auditoria adversarial da `0148` — sete defeitos, cinco silenciosos (`0149`)
+
+A `0148` saiu verde em 16 asserts e foi lida de novo, no dia seguinte, com a pergunta invertida:
+**não "isto funciona?", e sim "o que eu faria para quebrar isto sem que ninguém percebesse?"**.
+Sete defeitos, e o que os torna caros é a segunda coluna:
+
+| # | O defeito | Como ele apareceria |
+|---|---|---|
+| 1 | A tabela só dava `select` ao papel `authenticated` | A gravação funcionava por acidente da credencial do n8n, não por decisão; trocar a credencial a desligaria |
+| 2 | Página alucinada (`99999999999`) estourava `22003` | **Silencioso e caro:** `fn_registrar_fatos` roda na MESMA query do diagnóstico, então a exceção abortava a query e o documento perdia o DIAGNÓSTICO inteiro |
+| 3 | Versão inexistente estourava `23503` | Idem — mesma query, mesmo estrago |
+| 4 | Reenviar um arquivo fazia os fatos SUMIREM da tela | **Silencioso:** a tela pegava a versão mais nova sem perguntar se ela chegou a ser lida |
+| 5 | Ordem indeterminada | **Silencioso:** os fatos de um mesmo insert compartilham um só `criado_em`, e a lista podia sair em ordens diferentes — numa tela em que a ordem significa gravidade |
+| 6 | `confianca` prometia medição e nunca recebeu valor | **Silencioso:** número que ninguém escreve é opinião com cara de medida |
+| 7 | `Juntar Blocos` descartava os fatos dos blocos 2..N | **Silencioso:** documento fatiado só entregava os fatos do primeiro pedaço |
+
+**A correção do (4) que estava errada, e por que medir salvou.** O reparo óbvio era usar
+`fn_versao_com_extracao` — a função que o resto do sistema já usa para escolher a versão. Ela exige
+linha em `campo_extraido`, e **os documentos que mais têm fatos extraem ZERO linha por natureza**:
+notas explicativas e parecer de auditoria são justamente os dois. A correção certa é uma coluna
+própria, `fatos_avaliados_em`, porque só ela separa "versão nova ainda não processada" (onde os fatos
+da anterior VALEM) de "versão processada e sem fato nenhum" (onde a anterior NÃO volta).
+
+**A brecha que o religamento achou na PRÓPRIA suíte, e é a lição da rodada.** Desfazer o defeito 7 no
+`build-workflow.mjs` deixava os 92 testes de `workflow-sim` VERDES: a suíte testava a função da lib,
+e o nó de produção — que é código duplicado à mão dentro do `jsCode` — nunca era exercido. Um teste
+que não reprova quando o defeito volta não é teste. O mesmo aconteceu com o defeito 5: o assert de
+ordem passava com e sem a correção, porque nada perturbava o heap entre as duas leituras; hoje ele
+reescreve uma linha no meio, que é o que faz o Postgres devolver a ordem física diferente. **Os sete
+religamentos foram conferidos um a um, e os sete reprovam o teste correspondente.**
+
+E um oitavo achado, de tipo diferente: o requisito `fato_escrita_permitida` **conferia outra coisa**
+— o corpo de `fn_fatos_do_caso`, nada a ver com escrita. O nome teria feito o painel de instalação
+afirmar uma cobertura que ele não tem. Passa a se chamar `fato_leitura_estavel`, e o comentário ao
+lado diz em voz alta o que NÃO está coberto: a sonda não sabe ler `pg_policy`, então a política de
+escrita é coberta pelo `fato_material.test.sql` e, em produção, pelo campo `erro` do retorno.
+
+O `fato_material.test.sql` foi de 16 para 34 asserts.
+
 ### O que ficou aberto, e de quem é
 
-1. **REIMPORTAR o `n8n/workflow.e1-ingestao.json`** (dono). Três nós mudaram com a hierarquia
-   (`Montar Req Extracao`, `Orcamento do Lote`, `Registrar Documento`) e um quarto com os fatos
-   (`Registrar Diagnostico`). Sem isso, nada das frentes 1 e 4 chega à produção;
-2. **APLICAR a `0147` e a `0148`** no Supabase (dono, `db/README.md`);
+1. ~~REIMPORTAR o workflow~~ **FEITO em 26/08, e conferido por hash.** Publicado pela API REST do
+   n8n (`PUT /api/v1/workflows/:id`), não pelo transporte do MCP — que **decodifica os `\uXXXX`** e
+   transformaria a chave de dedup do `Juntar Blocos` num byte NUL cru. Conferido depois de publicar:
+   **33 de 33 nós com os parâmetros byte a byte iguais ao repositório**, 12 credenciais preservadas,
+   workflow ativo, o `path` do `Intake (Form)` intacto (`bea41a5a…` — ele é atribuído pelo n8n, e
+   sobrescrevê-lo troca a URL pública do intake; já se perdeu uma vez assim) e zero caractere
+   invisível. Os quatro nós que divergiam divergiam por UMA causa só: a `juntarBlocos` do espelho;
+2. ~~APLICAR a `0147` e a `0148`~~ **FEITO**, e a `0149` junto — ver a linha "Aplicadas no Supabase";
 3. **RODAR o book** (dono). É o que mede se o modelo obedece ao prompt novo — o bloco 7 prova a
    aritmética da conferência, não a leitura do documento. Vale para as duas frentes;
 4. **O dialeto OpenAI tinha 2 testes vermelhos; agora tem 1.** O `Ramo E2: Registrar → Montar Req

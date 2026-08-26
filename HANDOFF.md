@@ -4,21 +4,22 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-25 (sessões 62 a **67**). **Estado do `main`:** mergeado até o **PR
-#175**; a sessão 67 está na branch `claude/handoff-leitura-xlct1q`, verde e pronta. **HÁ INFRA
-ESPERANDO, e é a primeira coisa a fazer:** a `0147` e a `0148` não estão aplicadas, e o workflow do
-n8n precisa ser REIMPORTADO — quatro nós mudaram. Enquanto isso não acontecer, as duas frentes de
-extração da sessão 67 existem só no repositório. As migrations `0140` a `0146` continuam aplicadas e
-conferidas contra o banco.
+**Última atualização:** 2026-08-26 (sessões 62 a **67**). **Estado do `main`:** mergeado até o **PR
+#177**; a sessão 67 está na branch `claude/handoff-leitura-xlct1q`. **A INFRA QUE ESPERAVA FOI
+FEITA:** a `0147`, a `0148` e a `0149` estão aplicadas em produção e conferidas por md5 contra o
+banco construído a partir dos arquivos, e o workflow do n8n foi republicado pela API REST — 33 de 33
+nós byte a byte iguais ao repositório, 12 credenciais preservadas, ativo. **O que ainda espera é o
+DONO: rodar o book.** As suítes provam a aritmética; só a rodada real prova a leitura — e é ela que
+mede as duas frentes de extração da 67 (a hierarquia e o fato material) contra documentos de verdade.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
 > foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **Desde a `0147` (sessão 67) a sonda
-> cobre 23 marcadores e enxerga o CORPO da função** — que é o que distingue uma correção aplicada de
+> cobre 38 requisitos e enxerga o CORPO da função** — que é o que distingue uma correção aplicada de
 > uma função homônima com o corpo velho, e é a maior parte das migrations recentes. E o
 > `db/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova, então ele não
 > volta a envelhecer calado. **Mas a própria `0147` só responde depois de aplicada:** num banco sem
-> ela, a sonda continua sendo a de 13 marcadores.
+> ela, a sonda continua sendo a de 13 marcadores. Em produção ela está aplicada desde 26/08.
 
 **O BLOQUEIO QUE ATRAVESSOU DEZ SESSÕES CAIU: O DONO RODOU O BOOK.** Duas vezes — a **v47** (23/08,
 38 documentos, 9min01) e a **v48** (24/08, os mesmos 38, 10min08). É o **B1** do
@@ -62,19 +63,18 @@ trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome n�
 engenharia. A sessão 67 fechou as quatro frentes de código que estavam nesta lista; o que sobrou é
 justamente o que nenhuma suíte alcança:
 
-1. **REIMPORTAR o `n8n/workflow.e1-ingestao.json`.** Quatro nós mudaram: `Montar Req Extracao`,
-   `Orcamento do Lote` e `Registrar Documento` (a hierarquia) e `Registrar Diagnostico` (os fatos
-   materiais). Sem isso, as duas maiores entregas da 67 não existem em produção — e a tela não
-   quebra, que é o modo de falha que este projeto passa o tempo corrigindo;
-2. **APLICAR a `0147` e a `0148`** (`db/README.md` tem os comandos, em ordem);
-3. **RODAR o book de novo.** É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
+1. ~~REIMPORTAR o workflow~~ e ~~APLICAR a `0147` e a `0148`~~ — **feitos em 26/08**, com a `0149`
+   junto. Conferidos, não declarados: a sonda devolve 38 de 38 requisitos presentes e cobertura
+   `0149`, e os 33 nós do workflow vivo batem por hash com o repositório. **Antes de escrever que
+   continua assim, rode a sonda de novo** — é a regra que o `ESTADO.md` aplica a si mesmo;
+2. **RODAR o book de novo.** É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
    acha os fatos materiais nas Notas Explicativas e no Parecer. O teste prova a aritmética da
    conferência; só a rodada real prova a leitura. **Espere a hierarquia derrubar as 12 pendências
    falsas de seção/duplicidade — e confira se derrubou, porque essa é a medida da frente inteira;**
-4. **Os 2 testes vermelhos no dialeto OpenAI**, que já estavam vermelhos antes da 67 (conferido
+3. **Os testes vermelhos no dialeto OpenAI**, que já estavam vermelhos antes da 67 (conferido
    rodando o `886b7f3`). Não bloqueiam nada — o provedor ativo é o Google —, mas o `ESTADO.md` diz
    "a OpenAI continua testada" e isso hoje tem duas exceções;
-5. **Os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
+4. **Os itens que só o dono destrava:** proteger o `main` (B6.1, trivial e o de maior risco), levar o
    capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao cliente, B4.1) e preencher
    os `[A CONFIRMAR]` do `docs/10`.
 
