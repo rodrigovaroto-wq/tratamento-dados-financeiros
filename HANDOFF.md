@@ -4,13 +4,17 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-26 (sessões 62 a **67**). **Estado do `main`:** mergeado até o **PR
-#177**; a sessão 67 está na branch `claude/handoff-leitura-xlct1q`. **A INFRA QUE ESPERAVA FOI
-FEITA:** a `0147`, a `0148` e a `0149` estão aplicadas em produção e conferidas por md5 contra o
-banco construído a partir dos arquivos, e o workflow do n8n foi republicado pela API REST — 33 de 33
-nós byte a byte iguais ao repositório, 12 credenciais preservadas, ativo. **O que ainda espera é o
-DONO: rodar o book.** As suítes provam a aritmética; só a rodada real prova a leitura — e é ela que
-mede as duas frentes de extração da 67 (a hierarquia e o fato material) contra documentos de verdade.
+**Última atualização:** 2026-08-26 (sessões 62 a **69**). **Estado do `main`:** mergeado até o **PR
+#179**. **A INFRA QUE ESPERAVA FOI FEITA:** a `0147`, a `0148` e a `0149` estão aplicadas em
+produção e conferidas por md5 contra o banco construído a partir dos arquivos, e o workflow do n8n
+foi republicado pela API REST — 33 de 33 nós byte a byte iguais ao repositório, 12 credenciais
+preservadas, ativo. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68
+e 69 (réplica completa por cenário, new money, equity×haircut e o cockpit das quatro alavancas)
+vivem na branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do
+`ESTADO.md` antes de continuar por ali; não é sessão de handoff de infra, é resposta a um pedido de
+produto do dono, e continua aberta até o item de diluição. **O que ainda espera é o DONO: rodar o
+book.** As suítes provam a aritmética; só a rodada real prova a leitura — e é ela que mede as duas
+frentes de extração da 67 (a hierarquia e o fato material) contra documentos de verdade.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`

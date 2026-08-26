@@ -19,3 +19,16 @@ node_modules/
 
 # Saída do arnês de variações — .xlsx e relatório são gerados a cada rodada.
 test/e2e/saida/
+
+# CHAVE NENHUMA ENTRA AQUI. O `portal/.gitignore` já cobria `.env*`, mas os
+# scripts de diagnóstico do n8n moram FORA do portal e leem a chave do
+# ambiente (`IA_API_KEY`/`OPENAI_API_KEY` em `n8n/diagnosticar-ia.mjs`, e o
+# `n8n/README.md` ensina a passá-la inline). Quem se cansar de redigitar a
+# chave cria um `.env` na raiz ou em `n8n/` — e sem esta regra ele entraria
+# num `git add -A` sem uma linha de aviso. O histórico deste repositório está
+# limpo (conferido: nenhuma chave em nenhum commit); esta regra é o que
+# mantém assim.
+.env
+.env.*
+!.env.example
+!**/.env.example
