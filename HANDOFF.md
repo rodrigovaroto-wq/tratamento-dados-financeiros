@@ -67,7 +67,12 @@ justamente o que nenhuma suíte alcança:
    junto. Conferidos, não declarados: a sonda devolve 38 de 38 requisitos presentes e cobertura
    `0149`, e os 33 nós do workflow vivo batem por hash com o repositório. **Antes de escrever que
    continua assim, rode a sonda de novo** — é a regra que o `ESTADO.md` aplica a si mesmo;
-2. **RODAR o book de novo.** É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
+2. **RODAR o book.** E agora há TRÊS: o `book-canastra` (38 documentos) continua sendo o insumo
+   das análises v47/v48, e o **`book-araucaria` é novo — 190 documentos, 14 empresas, 5 exercícios
+   (2021 a 2025), 16.081 linhas com número**. Ele não mede se a extração acerta os números (os dois
+   anteriores já medem); mede se o sistema percebe que **dois documentos do mesmo período discordam
+   e escolhe o certo dizendo por quê**. As 15 armadilhas estão catalogadas com resposta certa no
+   `pdf/GUIA_DE_TESTE.md` gerado. É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele
    acha os fatos materiais nas Notas Explicativas e no Parecer. O teste prova a aritmética da
    conferência; só a rodada real prova a leitura. **Espere a hierarquia derrubar as 12 pendências
    falsas de seção/duplicidade — e confira se derrubou, porque essa é a medida da frente inteira;**

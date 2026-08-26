@@ -154,6 +154,62 @@ escrita é coberta pelo `fato_material.test.sql` e, em produção, pelo campo `e
 
 O `fato_material.test.sql` foi de 16 para 34 asserts.
 
+### 6. O terceiro book: 190 documentos que se contradizem sem estar errados
+
+Os dois books do repositório medem se a **extração acerta os números**. Nenhum dos dois mede o que
+a v48 mostrou ser o custo real: um kit que **contradiz a si mesmo sem que nenhum documento esteja
+errado**. O `test-data/book-araucaria` existe para isso.
+
+| | `book-vertentes` | `book-canastra` | `book-araucaria` |
+|---|---|---|---|
+| Documentos | 14 | 38 | **190** |
+| Empresas | 5 | 6 | **14** |
+| Exercícios | 2 | 3 | **5** (2021 a 2025) |
+| Contas-folha | ~60 | ~100 | **~330** |
+| Páginas | 18 | 49 | **247** |
+| Linhas com número | ~900 | 3.034 | **16.081** |
+
+**A regra que separa o book de um gerador de lixo, e que está escrita no `bagunca.py`:**
+
+> BAGUNÇADO NÃO É INCOMPLETO, E NÃO É INCONSISTENTE.
+
+Cada balanço fecha. O combinado fecha nos cinco exercícios. Nenhum anexo digita o próprio total. O
+que é bagunçado é a LEITURA — nomes, versões, escalas, recortes e vigências. E cada conflito tem
+**resposta certa** catalogada: conflito sem resposta certa não é teste, é ruído, e ruído não mede
+nada porque qualquer saída passa. São 15 armadilhas, cada uma com o que se vê, por que acontece e o
+que o sistema tem de fazer.
+
+**A armadilha central, e por que ela é diferente de tudo que os books anteriores tinham.** O
+controller fechou o balanço combinado reconhecendo só os pares intragrupo óbvios; o auditor achou os
+outros seis depois. As duas versões circularam e estão no kit. A preliminar infla o ativo do grupo
+em até **32.800** (R$ mil) — **e fecha**, porque ativo e passivo caem na mesma medida quando um par
+deixa de ser eliminado. Um sistema que confere `Ativo = Passivo + PL` dá as duas por boas. É o modo
+de falha preferido deste repositório: aquele que não deixa rastro.
+
+**Três capacidades novas no motor**, todas exigidas pela história: vigência por empresa (três
+empresas não existem nos cinco exercícios — uma incorporada em 2024, duas constituídas no meio);
+eliminações declarativas em tabela (com 11 pares, esquecer um não quebra nada visível); e dois
+sócios minoritários em vez de um (com uma origem só, errar a base ainda podia acertar o total por
+acidente).
+
+**Duas coisas que eu declarei e não escondi**, porque a diferença muda como o book deve ser lido:
+
+- **2021 é DERIVADO.** Nos exercícios de 2022 a 2025 cada saldo é uma escolha curada, conta a
+  conta; 2021 é construído para trás a partir de 2022 por regra declarada (`RETRO`, em `dados.py`).
+  Ele fecha como os outros, mas o que prova é que a SÉRIE tem cinco pontos e direção coerente. O que
+  ele acrescenta é decisivo assim mesmo: com quatro exercícios o kit já começava na descida; com
+  cinco, o PICO fica dentro da janela — o PL combinado vai de 436.847 para 29.637;
+- **o determinismo é de CONTEÚDO, não byte a byte.** Duas rodadas dão o mesmo texto nos 190 PDFs e o
+  mesmo `GABARITO.json` (medido pelo hash do `TEXTO_EXTRAIDO.json`), mas os arquivos diferem porque
+  o reportlab carimba data e ID. O `README.md` do `book-canastra` dizia "determinístico" sem essa
+  distinção, e **ele também nunca foi byte a byte** — conferido.
+
+**E um defeito que o próprio gerador me entregou.** Quando o histórico passou de quatro para cinco
+exercícios, o `pdf/` ficou com os 190 novos E os 190 antigos: nomes parecidos, períodos diferentes,
+380 arquivos contando duas histórias. O `assert` de 190 documentos não pegava — ele conta o que foi
+GERADO, não o que está no diretório. Hoje o gerador apaga a saída antes de escrever e confere o
+diretório, não só a lista.
+
 ### O que ficou aberto, e de quem é
 
 1. ~~REIMPORTAR o workflow~~ **FEITO em 26/08, e conferido por hash.** Publicado pela API REST do
