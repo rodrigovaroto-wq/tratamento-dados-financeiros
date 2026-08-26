@@ -4,12 +4,16 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-25 (sessões 62 a **67**). **Estado do `main`:** mergeado até o **PR
-#175**; a sessão 67 está na branch `claude/handoff-leitura-xlct1q`, verde e pronta. **HÁ INFRA
-ESPERANDO, e é a primeira coisa a fazer:** a `0147` e a `0148` não estão aplicadas, e o workflow do
-n8n precisa ser REIMPORTADO — quatro nós mudaram. Enquanto isso não acontecer, as duas frentes de
-extração da sessão 67 existem só no repositório. As migrations `0140` a `0146` continuam aplicadas e
-conferidas contra o banco.
+**Última atualização:** 2026-08-26 (sessões 62 a **69**). **Estado do `main`:** mergeado até o **PR
+#177**. **A `main` de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68 e 69
+(réplica completa por cenário, new money, equity×haircut e o cockpit das quatro alavancas) vivem na
+branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do `ESTADO.md`
+para o estado completo dessa frente antes de continuar; não é sessão de handoff de infra, é a
+resposta a um pedido de produto do dono, e continua aberta até o item de diluição (fim da sessão 69).
+**HÁ INFRA ESPERANDO, e é a primeira coisa a fazer no `main`:** a `0147` e a `0148` não estão
+aplicadas, e o workflow do n8n precisa ser REIMPORTADO — quatro nós mudaram. Enquanto isso não
+acontecer, as duas frentes de extração da sessão 67 existem só no repositório. As migrations `0140`
+a `0146` continuam aplicadas e conferidas contra o banco.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`

@@ -18,9 +18,195 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
 | **Aplicadas no Supabase** | **as 91** até a `0146`, conferidas função a função em 24-25/08. **A `0147` e a `0148` NÃO estão aplicadas** — são desta sessão e esperam o dono (`db/README.md`). A sonda `fn_instalacao_conferir()` passou a cobrir **23 marcadores** e a enxergar o CORPO da função; e desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados) · n8n **353** · export **650** · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — todas medidas em 25/08, e o pipeline inteiro do CI rodado **três vezes seguidas, três vezes verde** |
+| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados, reconferida em 26/08 depois da sessão 69) · n8n **353** · export **713** (688 da sessão 68 + o (52) new money e o (53) equity×haircut da sessão 69) · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — export/banco/e2e/variações reconferidas em 26/08 depois da sessão 69; o resto foi medido em 25/08 e não foi tocado |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 69 (26/08) — new money, equity × haircut, e o cockpit das quatro alavancas
+
+Continuação direta da 68: as **duas frentes que ficaram declaradas como
+pendentes** no parágrafo final daquela sessão — **new money** (com prioridade
+e PIK) e a separação **equity × haircut** — mais o item que as junta, trazer
+tudo para o cockpit da aba `Premissas`. As três foram pedidas juntas, numa só
+instrução ("execute as fases 2, 3 e 4 antes de commitar qualquer coisa"), e
+só viram commit depois de fechado o ciclo de teste completo nas três — é por
+isso que aparecem numa sessão só. Sem tocar `n8n/` nem `db/`, mesma fronteira
+E4 da 68.
+
+**FASE 2 — NEW MONEY.** Uma tranche NOVA na `ST Inv. & Debt`
+(`NM_VALOR`/`NM_PRAZO`/`NM_CARENCIA`/`NM_SPREAD`/`NM_INI`/`NM_PCT`/`NM_AMORT`/
+`NM_FIM`/`NM_JUROS`/`NM_JUROS_PIK`), deliberadamente **fora** do motor de
+"DEBT ISSUANCE" (captação por safra) que já existia: reaproveitar aquele
+motor misturaria refinanciamento de operação normal com dinheiro novo de
+reestruturação na mesma linha, e são leituras diferentes para o comitê. SAC
+com carência, a mesma técnica das tranches existentes; principal só no 1º ano
+projetado; dois dropdowns de cabeçalho (célula única, não por ano) — **PIK
+(S/N)** e **prioridade** (Super sênior/Sênior/Pari passu/Júnior, informativo).
+O juro do new money **sempre** entra no resultado (reduz o lucro tributável);
+PIK só decide se ele SAI DO CAIXA ou CAPITALIZA no saldo (`NM_JUROS_PIK`,
+somado de volta no Cash Flow como não-caixa — `PIK_ADD`, o mesmo desenho da
+depreciação). New money entra em `DIVIDA_BRUTA`, `DESP_FIN`,
+`ESP_DIVIDA_CP/LP`, `ESP_CAPTACAO`, `ESP_AMORT` e ganha linha própria no
+`Output` (`DV_NOVOMONEY`) e na réplica de cenários da sessão 68
+(`CEN_FIN_EXP`/`CEN_FCO`/`CEN_DIV_LIQ`/`CEN_SERVICO`, todos por new money ser
+invariante ao cenário — cronograma contratual, não depende de receita).
+Validado numericamente (script descartável, não ficou no repo): draw de
+20.000, PIK=N e PIK=S, o balanço fecha nos dois (`Mismatch` ~1e-10, ruído de
+ponto flutuante) e o saldo de fechamento bate a mão (SAC de 4.000/ano; com
+PIK o saldo capitaliza o juro do período em vez de cair só pela amortização).
+
+**FASE 3 — EQUITY × HAIRCUT.** A sessão 68 já deixava escrito: "hoje as duas
+ainda caem no mesmo balde `REPERFILAMENTO`, sem diferenciar contrapartida no
+PL de ganho no resultado". Ganhou uma segunda chave por tranche,
+`#classe` (dropdown "Equity,Haircut", nasce em **Equity** — o comportamento
+antigo, para não mudar nenhum arquivo que já existe), que só importa quando
+"Efeito caixa? = N". Equity continua exatamente como antes: contrapartida
+DIRETA no PL (`REPERFILAMENTO`, renomeado por dentro para somar só
+`TOTAL_AMORT_EQUITY`), sem passar pelo resultado. Haircut é NOVO: vira ganho
+na Income Statement (`GANHO_HAIRCUT`, linha própria entre o resultado
+financeiro e o EBT — **fora do EBITDA**, porque perdão de dívida não é
+desempenho operacional), tributado como qualquer outro resultado, e chega ao
+PL pelo caminho normal de lucro (`LUCROS_ACUM`).
+
+**O bug que a primeira versão tinha, e como foi pego:** um ganho não-caixa
+que aumenta o lucro tem de ser SUBTRAÍDO no Cash Flow, não somado — o oposto
+do PIK (que é uma DESPESA não-caixa, somada de volta). A primeira versão
+esqueceu a subtração: `NET_INCOME` carregava o ganho, o `FCO` inflava no
+mesmo valor, e o balanço abria exatamente na parcela classificada Haircut
+(medido: `Mismatch` = o `GANHO_HAIRCUT` acumulado, no centavo). Corrigido com
+`HAIRCUT_SUB` no Cash Flow, o espelho negativo do `PIK_ADD` — e o mesmo termo
+faltava na cascata de réplica por cenário da sessão 68 (`kFco`/`kTax`), que
+tem sua PRÓPRIA reconstrução de lucro líquido e teria o MESMO bug sem
+aparecer no `CEN_CHECK_REAL` (o defeito é idêntico nos dois lados da
+comparação, então o CHECK que só compara sombra×real fica cego para ele —
+outro caso do "CHECK que mente" que a 68 já tinha nomeado, desta vez pego
+antes de virar commit). Religado nos dois lugares, validado: EBITDA não se
+move ao classificar Haircut (não é operação), o balanço fecha
+(`Mismatch` ~1e-10) com a tranche em Haircut, e `CEN_CHECK_REAL` continua
+zero nas três posições do dial com o haircut ativo.
+
+**FASE 4 — O COCKPIT.** Oito alavancas novas na `Premissas`: a chave "Efeito
+caixa?" (que já existia na aba de dívida desde a sessão 68 mas nunca tinha
+entrado no cockpit), a classificação Equity/Haircut, e as seis do new money
+(principal, prazo, carência, spread, PIK, prioridade). O mecanismo de
+endereço-por-sufixo (`#prazo`, que já existia para "prazo das tranches
+existentes") foi generalizado de um `if` único para qualquer sufixo `#…` —
+`#amort` (onde mora a chave de efeito caixa) e `#classe` reaproveitam o MESMO
+código, não um copiar-colar.
+
+**Teste permanente.** Três blocos novos em `verificar-export.mts`: (52) new
+money — PIK=N/S, SAC do ano 1, saldo de fechamento, balanço fecha nos dois;
+(53) equity × haircut — EBITDA invariante, balanço fecha via `LUCROS_ACUM`
+em vez de `REPERFILAMENTO` quando classificado Haircut, o ganho de fato
+aparece na Income Statement. 663→**713** (688 da sessão 68 + 25 novos: os 13
+do (50)/(51) já contavam; 702 depois de reunir os dois blocos numa fixture só
+por Sonar, +11 de fase 2/3). `tsc`/`eslint` limpos, banco (93 migrations)
+100%, e2e 46/46, variações (25 rodadas, cadeia real) 0 achados — as quatro
+suítes reconferidas depois de TODAS as três fases, porque a instrução do
+dono foi não commitar nada até fechar o ciclo completo nas três juntas.
+
+**O que NÃO entrou:** a "diluição" que o `#classe = Equity` promete (% do
+capital que o credor passa a ter, contra um "valor da empresa" pré-money)
+ficou de fora — é o item que sobra do plano original de 5 fases e precisa de
+uma premissa nova (valor da empresa) que nenhuma aba hoje pede. O `Output`
+publica o saldo convertido (`REPERFILAMENTO`) mas não a % de diluição; é a
+continuação natural desta frente.
+
+## A SESSÃO 68 (26/08) — a réplica completa de ND/EBITDA, DSCR e pico de caixa por cenário
+
+O dono pediu a primeira das duas frentes do plano de reestruturação (o `docs/`
+ainda não tem o arquivo do plano completo — ele foi apresentado no chat, não
+commitado): **fechar a lacuna que a sessão 54 tinha deixado declarada** — o
+`Output` só replicava RECEITA e EBITDA nos três cenários; ND/EBITDA e DSCR
+continuavam lendo a dívida do cenário ATIVO, um PISO conservador, não a
+réplica de verdade. **Essa lacuna está fechada.**
+
+**O que passou a existir**, sem tocar `n8n/` nem `db/` — é fronteira E4
+(export), o `.xlsx` é gerado do zero a cada exportação e não tem ida e volta
+com o Postgres:
+
+- **`Working Capital` ganha uma sombra de NCG por cenário** (`NCG#v_${suf}` /
+  `VAR_NCG#v_${suf}`), no mesmo desenho do `CHECK_SOMBRA` que a DRE já tinha
+  desde a sessão 54: mesmos dias de giro (a régua `#dias`/`#diasStr` já
+  distinguia Base de Stress; Cliente sempre usava a de Base), a base que muda
+  é a receita/custo daquele cenário, lida da sombra que a aba de receita já
+  publicava (`RECEITA_LIQUIDA#v_${suf}` / `CUSTOS#v_${suf}`) e que não tinha
+  consumidor nenhum fora da própria DRE.
+- **O `Output` ganha uma segunda cascata de revolver, uma por cenário**
+  (bloco "RÉPLICA COMPLETA POR CENÁRIO"): EBIT → tributo → caixa de operação
+  → caixa antes do revolver → furo → saque, com a MESMA técnica sem
+  circularidade do revolver ativo (juros sobre o saldo de ABERTURA, nunca
+  sobre o saque do próprio ano). CAPEX, depreciação e o serviço das tranches
+  existentes/captação nova **não são replicados** — são cronograma
+  contratual ou já tratados como invariantes ao cenário pela própria sombra
+  da DRE (medido, não suposto: é assim que `EBITDA#v_${suf}` já usa a
+  depreciação ATIVA desde a sessão 54) —, e replicá-los criaria uma
+  divergência que o resto do arquivo não tem.
+- **ND/EBITDA, DSCR e o pico de uso do revolver saem REAIS, não mais piso**,
+  em `CEN_ND_REAL#${suf}` / `CEN_DSCR_REAL#${suf}` / `CEN_PICO_REVOLVER#${suf}`.
+  O bloco de sensibilidade antigo (`CEN_ND`/`CEN_DSCR`) fica como
+  **contraprova declarada**, não como lacuna — o texto da aba mudou para
+  dizer isso.
+
+**Uma tentativa de CHECK caiu ao medir, e ficou de fora — é o método de
+sempre, e vale registrar.** A primeira versão tentava travar "a réplica
+nunca é mais otimista que o piso" como invariante universal. Medido: com o
+dial no Stress, a coluna do Cliente no piso carrega a dívida ALTA do Stress
+sobre um EBITDA melhor, e a réplica de verdade (que puxa menos revolver)
+fica MAIS otimista que esse piso — o contrário do que o CHECK afirmava. A
+desigualdade depende de qual cenário está ativo, não é invariante, e um
+CHECK que reprova de forma imprevisível é pior que nenhum CHECK. Ficou só o
+que é igualdade PROVÁVEL por construção: a coluna do cenário ATIVO tem de
+bater exatamente entre a réplica e o bloco de RATIOS (`CEN_CHECK_REAL`).
+
+**Religado, os dois lados:** `CEN_CHECK_REAL = 0` em toda coluna projetada
+(a réplica do Base Case, via `CHOOSE`, bate exatamente com `DV_LIQ`
+ativo) — prova a mecânica. E o revolver do Stress publica maior ou igual ao
+do Base em TODO ano projetado no `book-vertentes` (859k vs 640k no primeiro
+ano, abrindo para 4,77M vs 3,82M no último) — prova a direção. Os dois viram
+o teste (50) de `verificar-export.mts`, que soma 13 asserts novos (650→663).
+Suíte de banco (93 migrations, os dois books) e e2e (46) reconferidas
+localmente depois da mudança — verdes, e nenhuma delas deveria ter se
+movido, porque nada nesta sessão tocou `db/` ou `n8n/`.
+
+**Uma rodada de revisão adversarial (8 ângulos independentes) achou 4
+defeitos reais, e o mais grave era exatamente do tipo que este projeto mais
+teme: um CHECK que mente.** `CHECK_SOMBRA_WC` (Working Capital) foi escrito
+comparando a NCG ativa contra a sombra do Base Case **fixa**, em vez de
+escolher a sombra do cenário LIGADO por `CHOOSE` — como o `CHECK_SOMBRA` de
+verdade, que a linha alegava imitar. Como o arquivo sempre nasce com o dial
+no Base, nenhuma suíte via a célula acusar uma divergência falsa assim que
+alguém girasse para Cliente ou Stress — o estado NORMAL de um arquivo de
+reestruturação. Religado e medido: com o dial em Stress, a célula acusava
+~22 a ~27 mil de "divergência" que não existia. Os outros três: um crash
+(`ant!` sem guarda) quando o caso não tem nenhum ano histórico — estado que
+o próprio código já detecta em outro lugar e continua, mas esta cascata
+derrubava; o rótulo `CEN_FORA`, escrito no arquivo entregue, afirmando "um
+CHECK garante que a réplica nunca fica mais otimista que o piso" — um CHECK
+que a própria sessão tinha decidido não construir, por medir que a
+desigualdade não é invariante (parágrafo acima); e uma colisão de
+numeração entre o teste novo e dois testes pré-existentes (tentou "(42)",
+colidiu; tentou "(43)", colidiu de novo; ficou em "(50)"). Os quatro foram
+corrigidos, e um quinto achado (`NCG#v_${suf}` produzindo a fórmula
+inválida "-()" com ativo e passivo vazios) foi investigado e descartado —
+a guarda `|| "0"` já cobre os dois lados. **O teste (51) nasceu direto
+desse achado**: gira o dial de verdade nas três posições e confere os dois
+CHECKS (`CEN_CHECK_REAL` e `CHECK_SOMBRA_WC`) em cada uma — é o que teria
+pego o defeito antes de qualquer suíte existente (663→688). Depois das
+correções: suíte de export 688/688, banco (93 migrations) 100%, e2e 46/46,
+e o loop de variações (`test/e2e/variacoes.mts`, 25 rodadas, cadeia real)
+com **0 achados** — incluindo os cenários que tocam a dívida direto
+(`patrimonio_a_descoberto`, `caixa_negativo`, `divida_maior_que_o_ativo`,
+`sem_mapa_de_divida`).
+
+**O que NÃO entrou nesta sessão, e é a continuação natural** (o resto do
+plano de 5 fases apresentado ao dono no chat): **new money** com prioridade
+e PIK, **conversão em equity com diluição** separada de **haircut** (hoje
+as duas ainda caem no mesmo balde `REPERFILAMENTO`, sem diferenciar
+contrapartida no PL de ganho no resultado), e trazer as quatro alavancas
+para o mesmo bloco do Output lado a lado com o de carência. O `Working
+Capital` ganhou a peça que faltava (NCG por cenário) e pode ser reaproveitado
+sem mudança para essas frentes seguintes.
 
 ## A SESSÃO 67 (25/08) — as quatro frentes que o handoff deixou em ordem
 
