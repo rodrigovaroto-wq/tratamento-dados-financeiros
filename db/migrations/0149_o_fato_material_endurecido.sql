@@ -313,7 +313,15 @@ insert into instalacao_requisito
    'query do diagnóstico, o documento perde o DIAGNÓSTICO inteiro junto. O sintoma é um documento '
    'sem entidade, sem tipo confirmado e sem resumo, sem explicação nenhuma na tela.',
    'bloqueante', 430),
-  ('fato_escrita_permitida', '0149', 'corpo', 'fn_fatos_do_caso', '0149 (4)', null,
+  -- O nome diz o que o marcador CONFERE. `fato_escrita_permitida` seria mentira:
+  -- este requisito não olha para política nenhuma, olha para o corpo de
+  -- `fn_fatos_do_caso` — a escolha da versão e o desempate da ordem. A política
+  -- de escrita da (1) não tem requisito porque a sonda não sabe ler `pg_policy`,
+  -- e inventar um nome que sugerisse o contrário faria o painel afirmar uma
+  -- cobertura que ele não tem. Ela é coberta pelo `fato_material.test.sql` e,
+  -- em produção, pelo campo `erro` do retorno — uma recusa de RLS volta
+  -- declarada desde a (2), em vez de sumir.
+  ('fato_leitura_estavel', '0149', 'corpo', 'fn_fatos_do_caso', '0149 (4)', null,
    'A tela volta a escolher a versão errada e a ordem da lista volta a ser indeterminada — numa '
    'tela em que a ordem significa gravidade.',
    'importante', 440)
