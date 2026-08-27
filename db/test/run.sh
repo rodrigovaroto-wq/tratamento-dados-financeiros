@@ -252,6 +252,14 @@ echo "== ingestão sobre o book CANASTRA (o difícil: 15 armadilhas, 3 exercíci
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/canastra.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
+# DEPOIS do canastra.test.sql de propósito: o bloco 8 é uma GUARDA DE FIXTURE —
+# ele exige que o book real continue devolvendo ZERO conflito, e para isso o
+# book precisa estar carregado e reconciliado.
+echo
+echo "== desempate entre documentos do mesmo período (0151: quem vence, por quê, e o empate)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/desempate.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
 echo
 echo "== proveniência POR CÉLULA (0125: arquivo, página, confiança e aceite, por ano)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/proveniencia.test.sql 2>&1 \

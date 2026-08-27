@@ -96,10 +96,15 @@ begin
   -- UMA divergência só. Saldo intragrupo é fixado pela contraparte e não é livre
   -- para calibração; as contas de `INTRAGRUPO_FIXO` ficaram fora do fator, e o
   -- PL-alvo continua sendo atingido pelo resto do passivo.
+  --
+  -- E ELE CUMPRIU O PAPEL DE NOVO, subindo de 7 para 8: a 0151 acrescentou o
+  -- conflito entre documentos do mesmo período. Que ele chegue a `ok` neste book
+  -- é fato medido, não formalidade — extração fiel de 14 documentos, e nenhuma
+  -- conta em que dois deles discordem.
   select count(distinct tipo) into v_n from reconciliacao
   where caso_id = v_caso and resultado = 'ok';
-  perform teste_assert(v_n = 7,
-    'as 7 checagens (4 A/B + duplicidade + espelho intragrupo + árvore da seção) chegam a "ok" com número',
+  perform teste_assert(v_n = 8,
+    'as 8 checagens (4 A/B + duplicidade + espelho intragrupo + árvore da seção + conflito entre documentos) chegam a "ok" com número',
     format('%s tipo(s) com ok: %s', v_n,
       (select string_agg(distinct tipo, ', ') from reconciliacao
        where caso_id = v_caso and resultado = 'ok')));
