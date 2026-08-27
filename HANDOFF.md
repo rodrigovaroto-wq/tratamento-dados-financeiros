@@ -5,7 +5,7 @@ novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seçã
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
 **Última atualização:** 2026-08-27 (sessões 62 a **72**). **Estado do `main`:** mergeado até o **PR
-#182**; o **#183** está aberto com a frente desta sessão. **A INFRA ESTÁ APLICADA E CONFERIDA PELA
+#183**; o **#184** está aberto com a frente desta sessão. **A INFRA ESTÁ APLICADA E CONFERIDA PELA
 SONDA:** `fn_instalacao_conferir()` devolve **41 de 41 requisitos presentes, cobertura `0150`** —
 conferido em 27/08, depois de eu mesmo aplicar a `0150`.
 
