@@ -15,12 +15,107 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0150_a_premissa_sai_do_realizado_certo.sql` — a soma das premissas do realizado somava o que não se soma, e a rodada comparativa do Canastra gravou `PMR = 348,6 dias` e `CUSTO_VARIAVEL = 287,7% da receita` como premissa. Três causas: o total da DRE somando com as próprias componentes (177.077 + 177.133 + 56.539 = os 410.749 que a bolsa usou), a abertura analítica somando por cima da conta que ela abre (aging, estoque, extrato, balancete — e o COMBINADO, que é a soma das empresas), e o caso de oito empresas medido para um modelo que projeta uma. Mais `fn_exercicio_da_coluna` e `fn_linhas_do_realizado`, que dão o valor POR EXERCÍCIO — a base da média histórica. A `0149`, a `0148` e a `0147` seguem aplicadas em produção |
-| **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
+| **Última migration** | `db/migrations/0151_o_desempate_entre_documentos.sql` — o desempate entre dois documentos do mesmo período JÁ EXISTIA, era silencioso, e escolhia o MAIOR: a `0150` resolve a mesma conta vinda de duas fontes por `order by abs(valor) desc`, o que num caso de reestruturação é ficar sempre com o número que infla o ativo. A autoridade documental passa a ser dado do catálogo (`taxonomia_tipo_documento.autoridade`), o conflito passa a ser declarado com vencedor, perdedor, diferença e critério por extenso (`fn_conflitos_do_caso`, `fn_reconciliar_versoes_do_periodo`), e no EMPATE nada muda de valor — a decisão volta para o humano. **NÃO está aplicada em produção.** A `0150_a_premissa_sai_do_realizado_certo.sql` — a soma das premissas do realizado somava o que não se soma, e a rodada comparativa do Canastra gravou `PMR = 348,6 dias` e `CUSTO_VARIAVEL = 287,7% da receita` como premissa. Três causas: o total da DRE somando com as próprias componentes (177.077 + 177.133 + 56.539 = os 410.749 que a bolsa usou), a abertura analítica somando por cima da conta que ela abre (aging, estoque, extrato, balancete — e o COMBINADO, que é a soma das empresas), e o caso de oito empresas medido para um modelo que projeta uma. Mais `fn_exercicio_da_coluna` e `fn_linhas_do_realizado`, que dão o valor POR EXERCÍCIO — a base da média histórica. A `0149`, a `0148` e a `0147` seguem aplicadas em produção |
+| **Aplicadas no Supabase** | **até a `0150`**, conferida pela sonda em 27/08 na sessão 72: `fn_instalacao_conferir()` devolveu **41 de 41 requisitos presentes** e `instalacao_cobertura` disse `0150`. **A `0151` desta sessão NÃO está aplicada** — a sessão não tem conexão com o banco de produção, e escrever aqui que está seria o defeito que a `0133` cobrou em 21/08. Antes de afirmar qualquer coisa sobre o banco, rode a sonda. Histórico: as `0147`/`0148`/`0149` foram aplicadas em 26/08 e conferidas por md5, não declaradas. |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 73 (27/08) — o desempate entre dois documentos já existia, e ele escolhia o maior
+
+O handoff da 72 manda o araucária para a próxima rodada e diz, sobre ele: *"o que
+continua sem resposta é o desempate — não há mecanismo que escolha entre duas
+versões do mesmo período"*. **A frase está meio certa, e a metade errada é a
+cara.** Não há mecanismo DECLARADO; há um mecanismo, e ele mora numa linha da
+`0150`:
+
+```
+(array_agg(c.valor_num order by abs(c.valor_num) desc nulls last))[1]
+```
+
+Quando os dois documentos dizem a mesma coisa, escolher qualquer um é
+indiferente. **Quando eles discordam — que é a pergunta inteira do araucária — a
+regra vira "fica com o maior".** Num caso de reestruturação esse é o pior padrão
+possível: dos dois números, ele escolhe sempre o que infla o ativo.
+
+E é exatamente a armadilha central do book de 190: um **combinado preliminar**
+que infla o ativo do grupo em até 32.800 (R$ mil) **e fecha**, porque ativo e
+passivo caem na mesma medida quando um par intragrupo deixa de ser eliminado.
+Contra um número que fecha, nenhuma reconciliação existente dispara —
+`fn_reconciliar_ativo_passivo_pl` confere se bate, e bate.
+
+### O que medi antes de escrever, e foi o que desenhou os filtros
+
+Na fixture do Canastra (28 documentos, extração real): **117 conceitos aparecem
+em dois ou mais documentos, e só CINCO discordam.**
+
+| Conceito | As duas fontes | Veredito |
+|---|---|---|
+| `total` | EXTRATO 825.000 × HEADCOUNT 20.510.900 | falso — um está em milhares de reais, o outro em **pessoas** |
+| `total geral` | AGING_AP 25.734.000 × AGING_AR 28.706.000 | falso — é o total de cada documento, papel `subtotal` |
+| `total vencido` | AGING_AP 13.383.000 × AGING_AR 16.936.000 | falso — idem |
+| `direito de uso — arrendamentos` | BALANCO 7.822 = BALANCETE 7.822 × NOTAS_EXPL 7.825 | **verdadeiro**, e é arredondamento: 0,04% |
+| `veículos e empilhadeiras` | BALANCO 3.914 = BALANCETE 3.914 × NOTAS_EXPL 3.916 | **verdadeiro**, idem |
+
+Os três falsos viraram os três filtros (seção canônica declarada, papel `conta`,
+unidade conversível); os dois verdadeiros ficam abaixo da tolerância de sempre (o
+maior entre R$ 100 e 0,5%), que é o que ela existe para fazer. **Resultado
+medido depois dos filtros: zero conflitos no Canastra e zero no Vertentes** — a
+resposta certa para dois books construídos para ser internamente consistentes, e
+o motivo de o teste desta sessão construir o próprio caso. Função que só devolve
+vazio passa em qualquer teste que conte linhas.
+
+### O que mudou (`0151`)
+
+- **a autoridade documental vira DADO**, em `taxonomia_tipo_documento.autoridade`
+  — pela mesma razão que a `0150` fez com `abertura_analitica`: regra contábil
+  dentro de função é regra que ninguém acha para mudar. DF auditada 60 ·
+  demonstrações 50 · notas explicativas 40 · combinado 30 · balancete 20 · razão
+  10 · o resto **0 = não decide** (dois zeros empatam);
+- **o sinal do documento pode derrubar o tipo**: `−25` quando o nome do arquivo
+  diz preliminar/rascunho/prévia, `+5` quando a versão está assinada. Assimétrico
+  de propósito — falso positivo custa um degrau e meio e fica **escrito na
+  pendência**, onde alguém pode discordar;
+- **o conflito passa a ser declarado** (`fn_conflitos_do_caso`,
+  `fn_reconciliar_versoes_do_periodo`) com vencedor, perdedor, diferença e
+  critério por extenso. **Nada é apagado** — o número perdedor é a evidência de
+  que houve escolha;
+- **`fn_linhas_do_realizado` para de escolher o maior**: desempata por
+  autoridade, e o maior módulo da `0042` fica como último recurso;
+- **no EMPATE o valor não muda.** Continua o de antes desta migration, e a
+  pendência diz que a escolha é humana. Em particular **não** desempatei por
+  "mais recente": `criado_em` é a hora do UPLOAD, não a data do documento, e
+  desempatar por ordem de upload seria trocar uma regra silenciosa por outra.
+
+### Os religamentos, um a um
+
+Cada um foi religado contra a função de verdade, e não contra um espelho:
+
+- ordem antiga do `array_agg` de volta → o realizado usa **42.800** (o rascunho)
+  em vez dos **10.000** da DF auditada: o teste reprova nomeando os dois;
+- os três filtros removidos → o Canastra devolve **3 conflitos**, que são
+  exatamente os três falsos positivos da tabela acima, e o teste reprova;
+- e o `fn_documento_preliminar` nasceu **devolvendo texto**: `~` tem precedência
+  maior que `||`, então sem parênteses o Postgres lia
+  `(nome ~ 'primeira metade') || 'segunda metade'` e a função casava com meia
+  expressão. Virou assert.
+
+### O que esta sessão NÃO fez
+
+- **não aplicou nada em produção** — a sessão não tem conexão com o banco nem
+  chave da API do n8n. A `0151` está no repositório e não no Supabase;
+- **não mudou de onde a `0150` tira o exercício.** `fn_conflitos_do_caso` usa a
+  coluna e, na falta dela, o período do documento — porque um documento de
+  período único sem cabeçalho de ano é justamente o formato em que a segunda
+  versão de um balanço chega. `fn_linhas_do_realizado` continua usando só a
+  coluna, que é o conservador para SOMAR. A diferença é deliberada e está
+  comentada nas duas.
+
+### Contadores
+
+`db/test/run.sh` = **94 migrations**, mais o `desempate.test.sql` novo com **22
+asserts**. As demais suítes inalteradas.
 
 ## A SESSÃO 72 (27/08) — a rodada comparativa, e a premissa que somava o que não se soma
 

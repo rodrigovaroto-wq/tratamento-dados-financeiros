@@ -4,8 +4,8 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-27 (sessões 62 a **72**). **Estado do `main`:** mergeado até o **PR
-#183**; o **#184** está aberto com a frente desta sessão. **A INFRA ESTÁ APLICADA E CONFERIDA PELA
+**Última atualização:** 2026-08-27 (sessões 62 a **73**). **Estado do `main`:** mergeado até o **PR
+#184**; há PR aberto com a frente da sessão 73 (a `0151`). **A INFRA ESTÁ APLICADA E CONFERIDA PELA
 SONDA:** `fn_instalacao_conferir()` devolve **41 de 41 requisitos presentes, cobertura `0150`** —
 conferido em 27/08, depois de eu mesmo aplicar a `0150`.
 
@@ -143,8 +143,14 @@ medida quando um par intragrupo deixa de ser eliminado.
 
 **O que esta sessão mudou no que ele vai encontrar:** a `0150` já tira o COMBINADO da soma do
 realizado (ele é a soma das empresas), e a cobertura por documento volta a ser avaliada depois da
-republicação. **O que continua sem resposta é o desempate**: não há mecanismo que escolha entre duas
-versões do mesmo período. Isso é o resultado que a rodada vai revelar, e é o valor dela.
+republicação. **E o desempate deixou de estar sem resposta — a sessão 73 achou que ele já existia.** A frase
+que estava aqui ("não há mecanismo que escolha entre duas versões do mesmo período") estava meio
+certa: não havia mecanismo DECLARADO, mas havia um, numa linha da `0150` (`order by abs(valor)
+desc`), e ele **ficava com o maior** — que num caso de reestruturação é escolher sempre o número que
+infla o ativo, exatamente a armadilha do araucária. A `0151` põe critério nisso: a autoridade
+documental vira dado do catálogo, o conflito passa a ser declarado com vencedor, perdedor e motivo
+por extenso, e o EMPATE não troca valor nenhum — volta para o humano. **A `0151` não está aplicada
+em produção**, e é o primeiro item da lista acima quando houver conexão com o banco.
 
 ### 4. O que NÃO bloqueia o teste real
 
@@ -180,6 +186,7 @@ versões do mesmo período. Isso é o resultado que a rodada vai revelar, e é o
 | **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
 | **70** | **A auditoria adversarial do fato material e a infra aplicada.** A `0148` foi relida com a pergunta invertida — "o que eu faria para quebrar isto sem que ninguém percebesse?" — e devolveu SETE defeitos, cinco silenciosos: a página alucinada que derrubava o DIAGNÓSTICO inteiro junto (mesma query), o reenvio de arquivo que fazia os fatos sumirem da tela, a ordem indeterminada numa tela em que a ordem significa gravidade, a `confianca` que nunca recebeu valor, e o `Juntar Blocos` que descartava os fatos dos blocos 2..N (`0149`). Os sete religamentos conferidos um a um — e DOIS deles só reprovaram depois de a própria suíte ser corrigida, porque testavam a lib e não o nó de produção. A `0147`, a `0148` e a `0149` aplicadas em produção e conferidas por md5; o workflow republicado pela API REST e conferido por hash, 33 de 33 nós. E um terceiro book, o `book-araucaria` (190 documentos, 14 empresas, 5 exercícios), construído e entregue ao dono FORA do repositório |
 | **71** | **A preparação do lote de 190, e o que ela achou.** A tela desistia de um lote vivo: o merge `Juntar Ramos` (`mode: append`) é uma BARREIRA — nenhum documento é registrado antes da última classificação, uma a cada 8s — e o limite de silêncio da tela era 8 minutos FIXOS, calibrado no lote de 38; em 190 documentos o silêncio legítimo vai a 13 min (proporção medida) ou 25 (pior caso), e o analista reenviaria um lote em execução, pagando a IA duas vezes. Mais o teto da janela, que truncava em 1,77× a margem de 3× que ela promete. As quatro contas saíram de dentro do componente para uma lib e a suíte passa a CHAMÁ-LAS: o espelho anterior refazia a fórmula e passava com o defeito religado. E o orçamento do lote de 190 foi simulado contra o guarda real — cabe por conteúdo (US$ 0,93 a 2,30), e um único PDF sem camada de texto derruba o lote inteiro para a conta por tamanho (US$ 2,47 a 3,21), que recusa no pior caso |
+| **73** | **O desempate entre dois documentos do mesmo período já existia, era silencioso, e escolhia o MAIOR** (`0151`). Medido antes de escrever, na fixture do Canastra: 117 conceitos aparecem em dois ou mais documentos e só CINCO discordam — três falsos (rótulo genérico sem seção canônica, papel subtotal, e um "total" em milhares de reais contra outro em PESSOAS) e dois verdadeiros que são arredondamento (0,04%). Os três falsos viraram os três filtros; os dois verdadeiros ficam sob a tolerância de sempre. A autoridade documental vira DADO do catálogo (`taxonomia_tipo_documento.autoridade`), o conflito passa a ser declarado com vencedor, perdedor, diferença e critério por extenso, `fn_linhas_do_realizado` para de escolher o maior — e no EMPATE nada muda de valor, porque desempatar por `criado_em` seria trocar uma regra silenciosa por outra (ali está a hora do UPLOAD, não a data do documento). Religado um a um: com a ordem antiga o realizado usa o rascunho de 42.800 em vez da DF auditada de 10.000, e sem os três filtros o Canastra devolve exatamente os três falsos positivos medidos |
 | **72** | **A rodada comparativa do Canastra, e os três defeitos que não davam erro.** 38 documentos, **2.565 linhas** e **17 fatos materiais** (contra 2.460/0 e 2.485/0 das v47/v48), US$ 0,4257, zero falha, o lote FECHANDO. E três achados silenciosos: as premissas do realizado somando o total da DRE com as próprias componentes, a abertura analítica por cima da conta que ela abre e as oito empresas num modelo de uma (`0150` — PMR de 348,6 para 70 dias, custo variável de 287,7% para 87,9%); o `Montar Req Extracao` descartando a medição do documento, o que mantinha **o fatiamento desligado e a guarda de cobertura muda**; e a tela dizendo "Tudo pronto" sobre execução morta, porque o registro de falha depende de um passo manual do n8n. Mais a projeção das premissas deixando de ser digitada: Focus para as macro, média dos exercícios para as razões, indexação para o crescimento — a regra saindo do catálogo, não de uma lista em código |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir

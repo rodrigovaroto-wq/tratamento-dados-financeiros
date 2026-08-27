@@ -118,9 +118,9 @@ export function rotuloDaPendencia(tipo: string): string {
 /**
  * QUAL checagem de reconciliação abriu a pendência.
  *
- * O TIPO da pendência responde "que espécie de problema é este" e seis
+ * O TIPO da pendência responde "que espécie de problema é este" e várias
  * checagens diferentes respondem a mesma coisa: `divergencia_reconciliacao`.
- * Na fila do painel, seis linhas iguais dizendo "os documentos não batem" não
+ * Na fila do painel, várias linhas iguais dizendo "os documentos não batem" não
  * dão para triar — e triagem é a única coisa que aquela fila faz. O `motivo`
  * (`reconciliacao:<tipo>`) é quem sabe qual foi, e este mapa o põe em português.
  *
@@ -134,6 +134,7 @@ const CHECAGENS = new Map<string, string>([
   ["receita_dre_vs_faturamento", "receita: DRE × faturamento"],
   ["despfin_dre_vs_divida", "despesa financeira × dívida"],
   ["mutuos_planilha_vs_balanco", "mútuos: planilha × balanço"],
+  ["conflito_entre_documentos", "dois documentos, dois números"],
 ]);
 
 export function nomeDaChecagem(motivo: string | null): string | null {

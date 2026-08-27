@@ -656,6 +656,35 @@ end;
 $$;
 
 --
+-- Name: fn_autoridade_do_documento(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS TABLE(autoridade integer, motivo text)
+    LANGUAGE sql STABLE
+    AS $$
+  select
+    (coalesce(t.autoridade, 0)
+     + case when dv.assinado is true then 5 else 0 end
+     - case when fn_documento_preliminar(dv.nome_original) then 25 else 0 end)::integer,
+    coalesce(t.codigo, 'sem tipo')
+      || case when coalesce(t.autoridade, 0) = 0
+              then ' (o catálogo não declara autoridade para este tipo)' else '' end
+      || case when dv.assinado is true then ', assinado' else '' end
+      || case when fn_documento_preliminar(dv.nome_original)
+              then ', e o nome do arquivo diz que é preliminar' else '' end
+  from documento d
+  left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
+  left join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
+  where d.id = p_documento_id;
+$$;
+
+--
+-- Name: FUNCTION fn_autoridade_do_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) IS 'A autoridade documental de UM documento e o motivo por extenso (0151): a do tipo no catálogo, mais 5 se a versão está assinada, menos 25 se o nome do arquivo declara preliminar. É o que decide quando dois documentos do mesmo período discordam sobre a mesma conta.';
+
+--
 -- Name: fn_avaliar_guardas_extracao(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1495,6 +1524,121 @@ $$;
 COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstico da Modelagem de um caso. Desde a 0134, premissa de `curva_mensal` (SAZONALIDADE, CRONOGRAMA_FISICO, PARADA_MANUTENCAO) NÃO conta como "sem valor": a curva dela é derivada do documento mensal por fn_sazonalidade_do_caso, não digitada, e cobrá-la travava o "pronto" com uma pendência sem ação possível. O caso ruim de verdade — curva ativa e caso sem documento mensal — ganhou nome próprio em `sazonalidade_sem_curva`, que informa e não bloqueia, porque os números ANUAIS continuam certos e só o rateio mensal fica liso.';
 
 --
+-- Name: fn_conflitos_do_caso(uuid, text, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text DEFAULT NULL::text, p_tolerancia_abs numeric DEFAULT 100, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS TABLE(secao_canonica text, chave text, entidade text, exercicio integer, documento_vencedor uuid, tipo_vencedor text, valor_vencedor numeric, documento_perdedor uuid, tipo_perdedor text, valor_perdedor numeric, diferenca numeric, decidido boolean, criterio text)
+    LANGUAGE sql STABLE
+    AS $$
+  with bruto as (
+    select
+      ce.secao_canonica,
+      fn_normalizar_texto(ce.chave) as rotulo,
+      ce.chave,
+      -- 0146: a capa só responde quando o documento é de UMA empresa. Num
+      -- documento de várias, a linha sem coluna não tem dono e fica de fora —
+      -- atribuí-la à capa criaria conflito entre uma empresa e um fantasma.
+      coalesce(ce.entidade_coluna,
+               case when (select count(distinct ce2.entidade_coluna)
+                            from campo_extraido ce2
+                           where ce2.documento_versao_id = ce.documento_versao_id
+                             and ce2.entidade_coluna is not null) > 1
+                    then null else e.razao_social end) as entidade,
+      coalesce(fn_exercicio_da_coluna(ce.periodo_coluna),
+               fn_exercicio_da_coluna(p.referencia)) as exercicio,
+      fn_valor_em_base(ce.valor_num, ce.unidade) as valor,
+      d.id as documento_id,
+      d.tipo_taxonomia
+    from campo_extraido ce
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d         on d.id = dv.documento_id
+    left join entidade e     on e.id = d.entidade_id
+    left join periodo p      on p.id = d.periodo_id
+    where d.caso_id = p_caso_id
+      and ce.valor_num is not null
+      and dv.id = fn_versao_com_extracao(d.id)
+      and ce.secao_canonica is not null
+      and ce.secao_canonica <> 'NAO_CLASSIFICAVEL'
+      and fn_fator_escala(ce.unidade) is not null
+      and fn_papel_linha(ce.chave, d.tipo_taxonomia, ce.unidade) = 'conta'
+      and coalesce(fn_exercicio_da_coluna(ce.periodo_coluna),
+                   fn_exercicio_da_coluna(p.referencia)) is not null
+  ),
+  filtrado as (
+    select * from bruto b
+    where b.entidade is not null
+      and (p_entidade is null or fn_mesma_entidade(b.entidade, p_entidade))
+  ),
+  -- Um valor por (conceito, exercício, entidade, DOCUMENTO). Dentro do mesmo
+  -- documento a mesma conta pode aparecer em mais de uma linha (a coluna de
+  -- outro exercício, uma repetição de página); o de maior módulo representa o
+  -- documento, e é a regra da 0042 usada onde ela é inofensiva — aqui ela
+  -- escolhe entre linhas de UMA fonte, não entre fontes que discordam.
+  por_documento as (
+    select f.secao_canonica, f.rotulo, f.entidade, f.exercicio, f.documento_id,
+           max(f.tipo_taxonomia) as tipo,
+           (array_agg(f.chave order by length(f.chave)))[1] as chave,
+           (array_agg(f.valor order by abs(f.valor) desc nulls last))[1] as valor
+    from filtrado f
+    group by f.secao_canonica, f.rotulo, f.entidade, f.exercicio, f.documento_id
+  ),
+  com_autoridade as (
+    select pd.*, a.autoridade, a.motivo
+    from por_documento pd
+    cross join lateral fn_autoridade_do_documento(pd.documento_id) a
+  ),
+  pares as (
+    select
+      a.secao_canonica, a.chave, a.entidade, a.exercicio,
+      a.documento_id as doc_a, a.tipo as tipo_a, a.valor as valor_a,
+      a.autoridade as aut_a, a.motivo as motivo_a,
+      b.documento_id as doc_b, b.tipo as tipo_b, b.valor as valor_b,
+      b.autoridade as aut_b, b.motivo as motivo_b
+    from com_autoridade a
+    join com_autoridade b
+      on b.secao_canonica = a.secao_canonica
+     and b.rotulo         = a.rotulo
+     and b.entidade       is not distinct from a.entidade
+     and b.exercicio      = a.exercicio
+     and b.documento_id   > a.documento_id          -- par sem repetir a ordem
+    where abs(a.valor - b.valor)
+            > greatest(p_tolerancia_abs, abs(a.valor) * p_tolerancia_pct)
+  )
+  select
+    p.secao_canonica,
+    p.chave,
+    p.entidade,
+    p.exercicio,
+    case when p.aut_a >= p.aut_b then p.doc_a   else p.doc_b   end,
+    case when p.aut_a >= p.aut_b then p.tipo_a  else p.tipo_b  end,
+    case when p.aut_a >= p.aut_b then p.valor_a else p.valor_b end,
+    case when p.aut_a >= p.aut_b then p.doc_b   else p.doc_a   end,
+    case when p.aut_a >= p.aut_b then p.tipo_b  else p.tipo_a  end,
+    case when p.aut_a >= p.aut_b then p.valor_b else p.valor_a end,
+    abs(p.valor_a - p.valor_b),
+    p.aut_a <> p.aut_b,
+    case when p.aut_a <> p.aut_b then
+      format('%s vence: %s (autoridade %s) contra %s (autoridade %s)',
+             case when p.aut_a > p.aut_b then p.tipo_a else p.tipo_b end,
+             case when p.aut_a > p.aut_b then p.motivo_a else p.motivo_b end,
+             greatest(p.aut_a, p.aut_b),
+             case when p.aut_a > p.aut_b then p.motivo_b else p.motivo_a end,
+             least(p.aut_a, p.aut_b))
+    else
+      format('EMPATE em autoridade %s (%s × %s): a escolha é humana — o valor '
+             || 'não foi trocado, continua o de maior módulo',
+             p.aut_a, p.motivo_a, p.motivo_b)
+    end
+  from pares p;
+$$;
+
+--
+-- Name: FUNCTION fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Dois documentos do mesmo período discordando sobre a MESMA conta, com o vencedor por autoridade documental e o critério por extenso (0151). Compara na base, só entre linhas com seção canônica, papel conta e unidade conversível — os três filtros vieram dos falsos positivos medidos na fixture do Canastra. `decidido = false` é empate: ninguém vence e a decisão é humana.';
+
+--
 -- Name: fn_contas_repetindo_valor(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2012,6 +2156,27 @@ CREATE FUNCTION public.fn_documento_por_tipo(p_caso_id uuid, p_entidade_id uuid,
   order by d.criado_em desc
   limit 1;
 $$;
+
+--
+-- Name: fn_documento_preliminar(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_documento_preliminar(p_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  -- Os parênteses NÃO são estilo: `~` tem precedência MAIOR que `||`, então sem
+  -- eles o Postgres lê `(texto ~ 'primeira metade') || 'segunda metade'` e a
+  -- função devolve TEXTO em vez de booleano — casando com meia expressão.
+  select fn_normalizar_texto(coalesce(p_nome, '')) ~
+    ('(^|[^a-z])(preliminar|preliminary|rascunho|draft|provisori[ao]|minuta|prev[ei]a|wip|'
+     || 'nao auditad[ao]|sem auditoria|nao revisad[ao]|para discussao)([^a-z]|$)');
+$_$;
+
+--
+-- Name: FUNCTION fn_documento_preliminar(p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_documento_preliminar(p_nome text) IS 'O nome do arquivo declara que o documento é preliminar/rascunho? Só REBAIXA autoridade (0151), nunca levanta: falso positivo custa um degrau e meio e fica escrito na pendência; falso negativo não muda nada.';
 
 --
 -- Name: fn_documentos_nao_extraidos(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -4003,6 +4168,7 @@ CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DE
     LANGUAGE sql STABLE
     AS $$
   -- marca-0150
+  -- marca-0151
   --
   -- A MARCA FICA, e o motivo é o mesmo da 0102: a sonda de instalação confere se
   -- a correção está APLICADA NO BANCO procurando `0150` no corpo desta função —
@@ -4024,12 +4190,14 @@ CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DE
       ce.valor_num,
       ce.unidade,
       d.tipo_taxonomia,
-      dv.documento_id
+      dv.documento_id,
+      aut.autoridade
     from campo_extraido ce
     join documento_versao dv on dv.id = ce.documento_versao_id
     join documento d on d.id = dv.documento_id
     left join entidade e on e.id = d.entidade_id
     left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
+    cross join lateral fn_autoridade_do_documento(d.id) aut
     where d.caso_id = p_caso_id
       and ce.valor_num is not null
       and dv.id = fn_versao_com_extracao(d.id)
@@ -4064,11 +4232,21 @@ CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DE
       (array_agg(c.chave order by length(c.chave)))[1] as chave,
       max(c.entidade) as entidade,
       c.exercicio,
-      -- Dentro do MESMO exercício, a mesma conta pode vir de dois documentos
-      -- (o balanço e a DF auditada dizem a mesma coisa). O de maior módulo é o
-      -- desempate da 0042, e continua valendo — aqui ele escolhe entre cópias
-      -- do mesmo fato, não entre anos diferentes.
-      (array_agg(c.valor_num order by abs(c.valor_num) desc nulls last))[1] as valor,
+      -- 0151: O DESEMPATE ENTRE DOCUMENTOS, QUE ERA SILENCIOSO.
+      --
+      -- Dentro do MESMO exercício, a mesma conta pode vir de dois documentos (o
+      -- balanço e a DF auditada dizem a mesma coisa). Quando eles CONCORDAM, a
+      -- escolha é indiferente. Quando discordam, a regra da 0042 — o de maior
+      -- módulo — vira "fica com o maior", que num caso de reestruturação
+      -- escolhe sempre o número que infla o ativo.
+      --
+      -- A AUTORIDADE DOCUMENTAL DECIDE PRIMEIRO, e o maior módulo fica como
+      -- último recurso: no EMPATE de autoridade o valor não muda, é o mesmo de
+      -- antes desta migration. Trocar o número no empate seria substituir uma
+      -- regra silenciosa por outra — e quem avisa que houve empate é
+      -- `fn_reconciliar_versoes_do_periodo`, com o número perdedor à vista.
+      (array_agg(c.valor_num
+                 order by c.autoridade desc, abs(c.valor_num) desc nulls last))[1] as valor,
       (array_agg(c.papel order by fn_papel_prioridade(c.papel)))[1] as papel,
       array_agg(distinct c.tipo_taxonomia) as documentos,
       -- Quantos documentos DISTINTOS trouxeram esta linha neste exercício: é o
@@ -4137,7 +4315,7 @@ $$;
 -- Name: FUNCTION fn_linhas_do_realizado(p_caso_id uuid, p_entidade text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text) IS 'As linhas do caso POR EXERCÍCIO, de uma entidade, sem o que não se soma (0150): fora a abertura analítica (balancete, aging, estoque, extrato — elas reabrem contas que a demonstração já declara), fora o combinado (soma das empresas), fora a coluna que não nomeia exercício, e com o total que veio acompanhado das próprias componentes marcado `subtotal`. É a base das premissas do realizado e da média histórica; a LISTA da tela continua saindo de fn_linhas_para_modelagem, que agrupa por rótulo e não por exercício.';
+COMMENT ON FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text) IS 'As linhas do caso POR EXERCÍCIO, de uma entidade, sem o que não se soma (0150): fora a abertura analítica (balancete, aging, estoque, extrato — elas reabrem contas que a demonstração já declara), fora o combinado (soma das empresas), fora a coluna que não nomeia exercício, e com o total que veio acompanhado das próprias componentes marcado `subtotal`. Desde a 0151, quando dois documentos do mesmo exercício discordam sobre a mesma conta, quem decide é a AUTORIDADE DOCUMENTAL — o maior módulo da 0042 fica como último recurso, para o empate. É a base das premissas do realizado e da média histórica; a LISTA da tela continua saindo de fn_linhas_para_modelagem, que agrupa por rótulo e não por exercício.';
 
 --
 -- Name: fn_linhas_do_tipo(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6829,6 +7007,14 @@ begin
       fn_reconciliar_duplicidade(v_caso_id, v_entidade_id));
   end if;
 
+  -- Conflito entre documentos do mesmo período (0151). Sem loop de período: a
+  -- checagem descobre sozinha quais exercícios existem.
+  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA', 'DRE',
+                'FLUXO_CAIXA', 'DMPL', 'DVA', 'NOTAS_EXPL') then
+    v_checagens := v_checagens || jsonb_build_array(
+      fn_reconciliar_versoes_do_periodo(v_caso_id, v_entidade_id));
+  end if;
+
   return jsonb_build_object('executado', true, 'documento_id', p_documento_id, 'checagens', v_checagens);
 end;
 $$;
@@ -6837,7 +7023,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Roda as reconciliações que o tipo do documento autoriza. Desde a 0133 começa pela conferência INTRA-documento (fn_reconciliar_arvore): com totais impressos dos dois lados, Ativo = Passivo+PL fecha mesmo quando faltam contas no meio, então a árvore tem de falar primeiro.';
+COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Roda as reconciliações que o tipo do documento autoriza. Desde a 0133 começa pela conferência INTRA-documento (fn_reconciliar_arvore): com totais impressos dos dois lados, Ativo = Passivo+PL fecha mesmo quando faltam contas no meio, então a árvore tem de falar primeiro. Desde a 0151 termina pelo conflito entre documentos do mesmo período, que é o único achado que sobrevive a um número que FECHA.';
 
 --
 -- Name: fn_reconciliar_receita_dre_vs_faturamento(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -6965,6 +7151,101 @@ begin
            v_n, array_to_string(v_partes, '; ')));
 end;
 $$;
+
+--
+-- Name: fn_reconciliar_versoes_do_periodo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_entidade  text;
+  v_c         record;
+  v_n         int := 0;
+  v_empates   int := 0;
+  v_maior     numeric := 0;
+  v_detalhe   jsonb := '[]'::jsonb;
+  v_descricao text;
+  v_resultado text;
+  v_documento uuid;
+begin
+  select razao_social into v_entidade from entidade where id = p_entidade_id;
+
+  for v_c in
+    select * from fn_conflitos_do_caso(p_caso_id, v_entidade)
+    order by diferenca desc
+  loop
+    v_n := v_n + 1;
+    if not v_c.decidido then v_empates := v_empates + 1; end if;
+    v_maior := greatest(v_maior, v_c.diferenca);
+    v_detalhe := v_detalhe || jsonb_build_array(jsonb_build_object(
+      'secao_canonica', v_c.secao_canonica, 'conta', v_c.chave,
+      'entidade', v_c.entidade, 'exercicio', v_c.exercicio,
+      'vencedor', jsonb_build_object('documento_id', v_c.documento_vencedor,
+                                     'tipo', v_c.tipo_vencedor, 'valor', v_c.valor_vencedor),
+      'perdedor', jsonb_build_object('documento_id', v_c.documento_perdedor,
+                                     'tipo', v_c.tipo_perdedor, 'valor', v_c.valor_perdedor),
+      'diferenca', v_c.diferenca, 'decidido', v_c.decidido, 'criterio', v_c.criterio));
+  end loop;
+
+  -- O documento de MAIOR diferença ancora o link da tela. O conflito é entre
+  -- dois, então não há "o" documento — mas mandar quem lê para o mais material
+  -- é melhor que mandar para o mais antigo.
+  v_documento := (v_detalhe->0->'perdedor'->>'documento_id')::uuid;
+  if v_documento is null then
+    select d.id into v_documento
+    from documento d
+    where d.caso_id = p_caso_id
+      and (p_entidade_id is null or d.entidade_id = p_entidade_id)
+    order by d.criado_em
+    limit 1;
+  end if;
+
+  if v_n = 0 then
+    v_resultado := 'ok';
+    v_descricao := 'Nenhuma conta em que dois documentos do mesmo exercício discordem.';
+  else
+    v_resultado := 'divergencia';
+    v_descricao := format(
+      '%s conta(s) em que dois documentos do mesmo exercício discordam (maior diferença: %s). '
+      || '%s'
+      || 'NADA foi apagado: o número do perdedor continua gravado, e é ele a evidência de que '
+      || 'houve escolha. Conflitos: %s',
+      v_n, to_char(v_maior, 'FM999G999G999D00'),
+      case when v_empates > 0
+           then format('%s deles EMPATAM em autoridade documental e ninguém decidiu por você — '
+                       || 'o valor em uso continua o de maior módulo, que é o padrão antigo. ',
+                       v_empates)
+           else '' end,
+      (select string_agg(format('%s (%s): %s diz %s, %s diz %s — %s',
+                                x->>'conta', x->>'exercicio',
+                                x->'vencedor'->>'tipo',
+                                to_char((x->'vencedor'->>'valor')::numeric, 'FM999G999G999D00'),
+                                x->'perdedor'->>'tipo',
+                                to_char((x->'perdedor'->>'valor')::numeric, 'FM999G999G999D00'),
+                                x->>'criterio'), '; ')
+         from jsonb_array_elements(v_detalhe) x));
+  end if;
+
+  return fn_registrar_reconciliacao(
+    p_caso_id, p_entidade_id, null, 'conflito_entre_documentos', 'A', v_documento,
+    jsonb_build_object('conflitos', v_detalhe), null,
+    v_resultado, v_maior, null,
+    jsonb_build_object('tolerancia_abs', 100, 'tolerancia_pct', 0.005,
+                       'criterio', 'mesma seção canônica, mesmo rótulo, mesmo exercício, mesma '
+                                || 'entidade, papel conta, unidade conversível; vencedor por '
+                                || 'autoridade documental (taxonomia_tipo_documento.autoridade)',
+                       'empates', v_empates),
+    v_descricao);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação (0151): duas versões do mesmo período discordando sobre a mesma conta. Declara o vencedor por autoridade documental e o critério; empate volta para o humano sem trocar valor nenhum. Por caso/entidade — quais exercícios existem é o que ela descobre.';
 
 --
 -- Name: fn_reconferir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -10526,7 +10807,8 @@ CREATE TABLE public.taxonomia_tipo_documento (
     versao integer DEFAULT 1 NOT NULL,
     ativo boolean DEFAULT true NOT NULL,
     nao_sobrepujavel boolean DEFAULT false NOT NULL,
-    abertura_analitica boolean DEFAULT false NOT NULL
+    abertura_analitica boolean DEFAULT false NOT NULL,
+    autoridade smallint DEFAULT 0 NOT NULL
 );
 
 --
@@ -10540,6 +10822,12 @@ COMMENT ON TABLE public.taxonomia_tipo_documento IS 'Taxonomia documental v1 (f0
 --
 
 COMMENT ON COLUMN public.taxonomia_tipo_documento.abertura_analitica IS 'Este tipo REAFIRMA aberta uma conta que uma demonstração já declara (o balancete abre o balanço; o aging abre clientes; o extrato abre bancos). Linha que só aparece em documento assim NÃO entra na soma do realizado: somá-la conta a mesma conta duas vezes. `false` é o padrão seguro — o tipo novo entra somando, e quem o cadastra decide.';
+
+--
+-- Name: COLUMN taxonomia_tipo_documento.autoridade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_documento.autoridade IS 'Peso da EVIDÊNCIA deste tipo de documento quando dois documentos do mesmo período discordam sobre a mesma conta (0151). Maior vence, e o motivo vai por extenso na pendência. 0 = o catálogo não declarou autoridade para este tipo: ele não decide (dois zeros empatam e a decisão volta para o humano). Nada é apagado em nenhum caso — o perdedor é a evidência de que houve escolha.';
 
 --
 -- Name: campo_classe_override campo_classe_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -12006,6 +12294,12 @@ GRANT ALL ON FUNCTION public.fn_aprovar_caso(p_caso_id uuid, p_autor text, p_mot
 GRANT ALL ON FUNCTION public.fn_ativar_premissa(p_caso_id uuid, p_codigo text, p_valores jsonb, p_origem text, p_autor text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_autoridade_do_documento(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_avaliar_guardas_extracao(p_documento_versao_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12058,6 +12352,12 @@ GRANT ALL ON FUNCTION public.fn_conferir_lote(p_caso_id uuid) TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
 
 --
 -- Name: FUNCTION fn_contas_repetindo_valor(p_documento_versao_id uuid); Type: ACL; Schema: public; Owner: -
@@ -12118,6 +12418,12 @@ GRANT ALL ON FUNCTION public.fn_dial_influencia(p_estagio text) TO authenticated
 --
 
 GRANT ALL ON FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca numeric) TO authenticated;
+
+--
+-- Name: FUNCTION fn_documento_preliminar(p_nome text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_documento_preliminar(p_nome text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_documentos_nao_extraidos(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
@@ -12450,6 +12756,12 @@ GRANT ALL ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id 
 --
 
 GRANT ALL ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reconferir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
