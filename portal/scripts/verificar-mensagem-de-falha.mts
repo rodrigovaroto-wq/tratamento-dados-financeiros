@@ -17,6 +17,11 @@ import {
   explicarFalha, explicarParada, explicarLoteVazio, FRACAO_MINIMA_COM_LINHAS,
   type FalhaExplicada,
 } from "../src/lib/falha-em-portugues.ts";
+import {
+  semPrimeiroSinalMs, janelaPara, SEM_PROGRESSO_MS, SEGUNDOS_POR_DOCUMENTO,
+  vereditoDoLote, CARENCIA_DO_FECHAMENTO_MS,
+} from "../src/lib/espera-do-lote.ts";
+import { readFileSync } from "node:fs";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -155,6 +160,165 @@ checar(
   "a parada avisa para não reenviar antes de saber a causa — reenviar pode duplicar",
 );
 
+// ---------------------------------------------------------------------------
+// 5. A ESPERA DO LOTE — a outra forma de a tela mentir no dia ruim
+// ---------------------------------------------------------------------------
+//
+// A mensagem de falha responde "o que aconteceu". Estas contas respondem, antes
+// dela, "aconteceu alguma coisa?" — e erram para os dois lados: curtas demais,
+// declaram parada sobre um lote vivo (e o analista reenvia, pagando a IA duas
+// vezes); longas demais, devolvem a espera eterna que a 0108 existe para acabar.
+//
+// A CADÊNCIA VEM DO WORKFLOW, não de um número repetido aqui: é o mesmo
+// `batchInterval` que o nó de classificação tem em produção. O JSON do workflow
+// é dado, não código — lê-lo daqui não cruza a fronteira de build que impede o
+// portal de importar `n8n/lib/*.mjs`.
+const workflow = JSON.parse(
+  readFileSync(new URL("../../n8n/workflow.e1-ingestao.json", import.meta.url), "utf8"),
+) as { nodes: Array<{ name: string; parameters: Record<string, unknown> }> };
+const noClassificar = workflow.nodes.find((n) => n.name === "IA Classificar")!;
+const cadenciaS =
+  (noClassificar.parameters as { options: { batching: { batch: { batchInterval: number } } } })
+    .options.batching.batch.batchInterval / 1000;
+
+// O SILÊNCIO INICIAL É UMA BARREIRA, não uma fila: `Juntar Ramos` (mode append)
+// só emite quando a ÚLTIMA classificação volta, então o pior caso de um lote de
+// N arquivos é N chamadas espaçadas pela cadência — nenhum documento é
+// registrado antes disso, e é isso que a tela mede.
+for (const n of [2, 38, 190]) {
+  const piorSilencioMs = n * cadenciaS * 1000;
+  checar(
+    semPrimeiroSinalMs(n) > piorSilencioMs,
+    `lote de ${n}: a tela desiste em ${(semPrimeiroSinalMs(n) / 60000).toFixed(1)} min e o silêncio `
+      + `legítimo da barreira vai a ${(piorSilencioMs / 60000).toFixed(1)} min`,
+  );
+}
+
+// E O LOTE DE 38 NÃO PODE GANHAR FOLGA: ele é onde o limite antigo (8 minutos
+// fixos) foi calibrado, contra duas rodadas reais. Uma conta nova que afrouxe
+// justamente o caso medido deixou de descrever o mesmo fenômeno.
+checar(
+  semPrimeiroSinalMs(38) <= 8 * 60 * 1000 * 1.1,
+  `o lote de 38 ganhou folga demais: ${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min contra os 8 calibrados`,
+);
+
+// A JANELA TOTAL tem de entregar a margem que ela promete no lote de 190 — o
+// teto de 90 minutos truncava 152 em 90, e a margem de 3x virava 1,77x sem que
+// nada dissesse. Um lote que andasse a 28s por documento (contra os 16 medidos)
+// veria a tela desistir viva.
+for (const n of [38, 190]) {
+  const previstoMs = n * SEGUNDOS_POR_DOCUMENTO * 1000;
+  checar(
+    janelaPara(n) >= previstoMs * 3,
+    `lote de ${n}: a janela entrega ${(janelaPara(n) / previstoMs).toFixed(2)}x do previsto, e a tela promete 3x`,
+  );
+}
+
+// E a parada por falta de AVANÇO continua curta: depois do primeiro documento o
+// progresso anda a cada extração, e 5 minutos são ~20 documentos que deveriam
+// ter aparecido. Ela não pode crescer com o lote — é isso que a distingue do
+// silêncio inicial.
+checar(
+  SEM_PROGRESSO_MS === 5 * 60 * 1000,
+  "o limite de 'parou de andar' deixou de ser 5 minutos — ele mede outra coisa que o silêncio inicial",
+);
+
+// ---------------------------------------------------------------------------
+// 6. O LOTE QUE NÃO FECHOU, E O LOTE QUE TROUXE FATO EM VEZ DE LINHA
+// ---------------------------------------------------------------------------
+//
+// Os dois nasceram da mesma tela, em 27/08/2026, e apontam para lados opostos:
+// um é a tela dizendo SUCESSO sobre uma execução morta, o outro seria a tela
+// dizendo FRACASSO sobre o lote que funcionou pela primeira vez.
+
+// (a) A execução morreu no `Upload Storage` e o portal disse "Tudo pronto".
+// O registro de falha depende do Error Workflow do n8n, que é passo manual e
+// não está ligado — então a rota passou a exigir o FECHAMENTO do lote, e a
+// falta dele chega aqui como uma falha de etapa `lote_nao_fechou`.
+checar(
+  explicarFalha({ etapa: "lote_nao_fechou", mensagem: "O lote não fechou: os 2 documento(s) foram lidos, mas o processamento não chegou ao fim (nenhum registro de encerramento do lote foi gravado)." })
+    .titulo.toLowerCase().includes("parou antes de terminar"),
+  "o lote que não fechou tem explicação própria, e não cai na genérica",
+);
+checar(
+  explicarFalha({ etapa: "lote_nao_fechou", mensagem: "" }).oQueFazer.includes("Varoto"),
+  "o lote que não fechou diz com quem falar",
+);
+
+// (b) A CAUSA DESCONHECIDA agora nomeia quem resolve. "Contate o suporte" é um
+// beco quando a equipe é uma pessoa; o dono pediu o nome, literalmente.
+const desconhecida = explicarFalha({ etapa: "algo novo", mensagem: "erro que ninguém previu" });
+checar(
+  desconhecida.oQueFazer.includes("Varoto"),
+  `a falha sem causa conhecida diz com quem falar — hoje diz: "${desconhecida.oQueFazer}"`,
+);
+checar(
+  !desconhecida.titulo.toLowerCase().includes("tudo pronto"),
+  "a falha sem causa conhecida jamais se parece com sucesso",
+);
+
+// (c) ZERO LINHA COM FATO NÃO É LOTE VAZIO. Medido no smoke test: Notas
+// Explicativas e Parecer do Auditor renderam 0 linhas e 9 fatos materiais, que
+// é o resultado CERTO — esses documentos dizem as coisas em texto. Uma checagem
+// que só conta linha acusaria justamente o lote que funcionou.
+checar(
+  explicarLoteVazio({ comLinhas: 0, comFatos: 2, documentos: 2 }) === null,
+  "o lote que rendeu só FATOS (Notas Explicativas + Parecer) foi acusado de vazio",
+);
+// e sem fato nenhum ele continua sendo acusado, que é o ponto.
+const vazioDeVerdade = explicarLoteVazio({ comLinhas: 0, comFatos: 0, documentos: 2 });
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.titulo.toLowerCase().includes("nada pôde ser lido"),
+  "o lote sem linha E sem fato deixou de ser acusado",
+);
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.oQueFazer.includes("Varoto"),
+  "o lote sem nada dentro diz com quem falar",
+);
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.oQueFazer.toLowerCase().includes("descartado"),
+  "o lote sem nada dentro diz que pode ser descartado — é o mandato vazio que o dono não quer na lista",
+);
+// A omissão de `comFatos` não pode mudar o veredito de quem já chamava a função
+// só com linhas: ausente é zero, não "não sei".
+checar(
+  explicarLoteVazio({ comLinhas: 0, documentos: 2 }) !== null,
+  "sem `comFatos`, o lote sem linha nenhuma deixou de ser acusado",
+);
+
+// ---------------------------------------------------------------------------
+// 7. O VEREDITO DO LOTE — a decisão que dizia "Tudo pronto" sobre uma execução morta
+// ---------------------------------------------------------------------------
+const AGORA = Date.parse("2026-08-27T12:00:00Z");
+const HA_DEZ_MINUTOS = AGORA - 10 * 60 * 1000;
+const AGORINHA = AGORA - 5 * 1000;
+const lote = (over: Partial<Parameters<typeof vereditoDoLote>[0]>) => vereditoDoLote({
+  classificados: 2, processados: 2, esperados: 2,
+  loteFechou: true, desdeMs: HA_DEZ_MINUTOS, agoraMs: AGORA, ...over,
+});
+
+checar(lote({}).estado === "pronto", "o lote que fechou com tudo lido tem de ficar pronto");
+checar(lote({ processados: 1 }).estado === "andando", "lote com documento faltando não é pronto nem falha");
+
+// O CASO DO DONO: contadores completos, lote NUNCA fechado. Antes isto era
+// "pronto"; agora é falha nomeada.
+checar(lote({ loteFechou: false }).estado === "nao_fechou",
+  "a execução que morreu sem fechar o lote voltou a ser reportada como sucesso");
+
+// A CARÊNCIA: um lote saudável passa alguns segundos com os contadores
+// completos e o fechamento ainda não gravado. Acusar aí seria alarme falso em
+// QUALQUER lote — o alarme que ensina a ignorar o alarme.
+checar(lote({ loteFechou: false, desdeMs: AGORINHA }).estado === "andando",
+  "a carência sumiu: todo lote saudável passaria a acusar falha no instante entre o último documento e o fechamento");
+checar(CARENCIA_DO_FECHAMENTO_MS >= 60 * 1000,
+  "a carência do fechamento ficou curta demais para a cauda do workflow (3 nós)");
+
+// "NÃO SEI" NUNCA ACUSA. Se a consulta do fechamento falhar, o lote não pode
+// virar falha por causa da conferência — é a mesma regra que o `comLinhas` já
+// aplicava.
+checar(lote({ loteFechou: null }).estado === "pronto",
+  "uma consulta que falhou passou a derrubar um lote que terminou de verdade");
+
 if (falhas.length > 0) {
   console.error(`\n${falhas.length} falha(s):`);
   for (const f of falhas) console.error(`  ✗ ${f}`);
@@ -163,3 +327,6 @@ if (falhas.length > 0) {
 }
 console.log(`${ok} verificações OK / 0 falhas`);
 console.log("MENSAGEM DE FALHA OK — toda causa real tem explicação própria, e nenhuma cita ferramenta");
+console.log("ESPERA DO LOTE OK — o silêncio da barreira e a janela cobrem o lote de 190");
+console.log("FIM DO LOTE OK — execução morta não vira sucesso, e fato conta como conteúdo");
+console.log("VEREDITO DO LOTE OK — pronto exige o lote FECHADO, com carência e sem acusar por \"não sei\"");

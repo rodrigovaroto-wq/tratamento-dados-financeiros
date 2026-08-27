@@ -2,126 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { explicarFalha, explicarParada, explicarLoteVazio, type FalhaExplicada } from "@/lib/falha-em-portugues";
+import { ExcluirMandato } from "@/components/excluir-mandato";
 import { useRouter } from "next/navigation";
+import {
+  estimativaEmMinutos, janelaPara, semPrimeiroSinalMs, proximoIntervalo,
+  SEM_PROGRESSO_MS, INTERVALO_ACOMPANHAMENTO_MS,
+} from "@/lib/espera-do-lote";
+
 
 const MB = 1024 * 1024;
-// Intervalo e teto do acompanhamento silencioso pós-envio — nem todo mandato
-// termina rápido (documentos grandes/em lote levam minutos); depois do teto,
-// para de perguntar sozinho sem assustar ninguém (o mandato sempre pode ser
-// conferido manualmente).
-const INTERVALO_ACOMPANHAMENTO_MS = 8000;
-
-// QUANTO ESPERAR — calculado a partir do LOTE, não fixo.
-//
-// O teto era fixo em 90 tentativas (~12 minutos), e isso funcionou enquanto o
-// orçamento recusava lote grande: 14 documentos terminam em minutos e cabiam.
-// Com a estimativa por tamanho, 38 documentos passam a rodar de uma vez. Com o
-// teto fixo, a tela desistiria no meio de um trabalho que ainda está vivo e
-// voltaria a mostrar "assim que estiver pronto, avisamos" para sempre —
-// exatamente o defeito que a 0108 corrigiu, agora com o processo VIVO em vez de
-// morto.
-//
-// ---------------------------------------------------------------------------
-// O NÚMERO ERA 45s, E ELE MENTIU NA TROCA DE PROVEDOR (24/08/2026)
-// ---------------------------------------------------------------------------
-//
-// 45s vinha dos ~33s da cadência do gpt-4o no Tier 1, onde `max_tokens` é
-// RESERVA de TPM e cada extração reservava 16.384 tokens do minuto. Com o
-// Gemini o gargalo deixou de ser o balde de tokens e passou a ser o de
-// CHAMADAS: o intervalo caiu para 8s nos dois nós.
-//
-// O efeito na tela foi dizer **29 minutos** para um lote de 38 documentos que
-// leva ~8. Não quebrou nada — e é justamente por isso que era o tipo de defeito
-// que sobrevive: a estimativa não tem quem a desminta, e o analista fica
-// esperando um trabalho que já acabou, ou desiste de acompanhar.
-//
-// A conta agora é declarada: ~44 extrações (38 documentos, 4 deles fatiados) +
-// ~19 classificações por conteúdo, a 8s cada, dá 63 × 8 ÷ 38 ≈ 13s por
-// documento. 14 cobre o upload e o banco. `n8n/test/workflow-sim.test.mjs`
-// confere este número contra o `batchInterval` REAL do workflow gerado — se a
-// cadência mudar de novo e este espelho não, a suíte reprova.
-// RECALIBRADO CONTRA DUAS RODADAS REAIS de 38 documentos, e não contra a conta
-// teórica: a v47 levou 9min01 (14,2s/doc) e a v48 levou 10min08 (16,0s/doc). O
-// 14 vinha da aritmética das chamadas e ficava ABAIXO do observado — e errar
-// para baixo é o defeito que a nota acima descreve, só que invertido: promete
-// cedo e o analista lê o atraso como travamento. 16 é o pior caso medido.
-const SEGUNDOS_POR_DOCUMENTO = 16;
-
-// A ESTIMATIVA É UMA FUNÇÃO SÓ, e isso não é preciosismo. Ela aparece em DOIS
-// lugares — antes de enviar (para decidir se espera) e depois (para acompanhar)
-// — e duas contas iguais escritas em dois lugares é exatamente como este
-// repositório descreve seus piores defeitos: uma muda, a outra não, e a tela
-// passa a se contradizer sem ninguém notar.
-export function estimativaEmMinutos(arquivos: number): number {
-  return Math.max(1, Math.round((arquivos * SEGUNDOS_POR_DOCUMENTO) / 60));
-}
-
-// A MARGEM DA JANELA É SEPARADA DA ESTIMATIVA, e a separação é a lição.
-//
-// Os dois números vinham do mesmo lugar, com 50% de folga — então encurtar a
-// estimativa encurtaria a janela junto, e uma janela curta é o defeito da 0108
-// de volta: a tela desiste de um lote que ainda está rodando. Errar para o lado
-// de mostrar "quase pronto" por mais tempo não custa nada; errar para o lado de
-// parar de perguntar custa o acompanhamento inteiro.
-const MARGEM_DA_JANELA = 3;
-
-// QUANTO TEMPO SEM ANDAR É "PAROU".
-//
-// A 0108 deu ao erro um lugar para morar, e cobre duas fontes: a recusa do
-// orçamento e o Error Workflow do n8n. Sobra um caso, e ele é o mais teimoso: o
-// Error Workflow é um passo MANUAL de configuração, e um nó que morre com esse
-// registro desligado não escreve linha nenhuma. A tela volta a deduzir "está
-// processando" de uma ausência que na verdade é morte.
-//
-// A saída é não depender de ninguém registrar nada. Se o número de arquivos
-// organizados PAROU DE SUBIR por tempo demais, o trabalho não está andando —
-// isso é medível daqui, sem banco e sem n8n.
-//
-// O NÚMERO SAI DA CADÊNCIA, não do gosto: um documento leva ~14s, então 5
-// minutos são ~20 documentos que deveriam ter aparecido e não apareceram. Curto
-// demais acusa parada no meio de um documento grande (que faz várias leituras
-// antes de registrar qualquer coisa); longo demais devolve a espera eterna que
-// isto existe para acabar.
-const SEM_PROGRESSO_MS = 5 * 60 * 1000;
-
-// ANTES DO PRIMEIRO SINAL A FOLGA É MAIOR, e a assimetria é medida, não
-// cautela genérica: entre o envio e o primeiro documento registrado o sistema lê
-// o texto de TODOS os arquivos e decide o orçamento do lote — nada disso produz
-// contagem. Num lote de 38 esse silêncio inicial é legítimo e dura minutos.
-const SEM_PRIMEIRO_SINAL_MS = 8 * 60 * 1000;
-const ESPERA_MINIMA_MS = 12 * 60 * 1000;
-const ESPERA_MAXIMA_MS = 90 * 60 * 1000;
-function janelaPara(arquivos: number): number {
-  const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * MARGEM_DA_JANELA;
-  return Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));
-}
-
-// A CADÊNCIA DESACELERA, A JANELA NÃO MUDA.
-//
-// Perguntar de 8 em 8 segundos durante até 90 minutos são ~675 consultas por
-// lote, cada uma custando um RPC mais duas leituras no Supabase. O egresso é da
-// ORGANIZAÇÃO, dividido com o clipping, e no plano Free estourar derruba os dois
-// projetos juntos — então cadência de tela é custo, não detalhe.
-//
-// Mas desacelerar tudo pioraria a tela onde ela mais importa: lote de 1 ou 2
-// documentos termina em menos de dois minutos, com o analista olhando. Por isso
-// a cadência só afrouxa DEPOIS desses dois minutos — quando o lote é grande, a
-// espera é de dezenas de minutos e ninguém está mais na frente da tela. Lote
-// pequeno não percebe diferença nenhuma; lote grande custa ~3x menos.
-//
-// A JANELA TOTAL é preservada de propósito: ela foi dimensionada no lote real de
-// 38 documentos (~23 min de extração), e encurtá-la traria de volta o defeito que
-// a 0108 corrigiu — a tela desistindo no minuto 12 de um trabalho vivo. Por isso
-// o laço passa a ser guiado por PRAZO decorrido, e não por contagem de
-// tentativas: com intervalo variável, contar tentativas deixa de descrever tempo.
-const CADENCIA_RAPIDA_ATE_MS = 2 * 60 * 1000;
-const INTERVALO_MAXIMO_MS = 30000;
-const FATOR_DESACELERACAO = 1.5;
-function proximoIntervalo(intervaloAtual: number, decorridoMs: number): number {
-  if (decorridoMs < CADENCIA_RAPIDA_ATE_MS) return INTERVALO_ACOMPANHAMENTO_MS;
-  return Math.min(INTERVALO_MAXIMO_MS, Math.round(intervaloAtual * FATOR_DESACELERACAO));
-}
-
 function formatarTamanho(bytes: number): string {
   if (bytes < MB) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / MB).toFixed(1)} MB`;
@@ -157,7 +46,11 @@ export default function UploadForm({
   // A PARADA SEM REGISTRO — o caso que a 0108 não alcança (ver SEM_PROGRESSO_MS).
   const [parada, setParada] = useState<{ processados: number; esperados: number } | null>(null);
   // O LOTE QUE TERMINOU VAZIO. Vem do status, e só existe depois de `pronto`.
-  const [loteVazio, setLoteVazio] = useState<{ comLinhas: number; documentos: number } | null>(null);
+  const [loteVazio, setLoteVazio] = useState<{ comLinhas: number; comFatos: number; documentos: number } | null>(null);
+  // O ID DO MANDATO, que a rota já conhecia e não devolvia. Ele existe aqui por
+  // UM motivo: um mandato que terminou sem nada dentro tem de poder ser
+  // descartado da própria tela que o acusa — ver o bloco de explicação.
+  const [casoIdDoLote, setCasoIdDoLote] = useState<string | null>(null);
 
   // Acompanha silenciosamente, em segundo plano, até os arquivos enviados
   // estarem organizados — sem nomear nenhuma ferramenta ou etapa técnica.
@@ -188,6 +81,7 @@ export default function UploadForm({
         // A falha ENCERRA o acompanhamento. Continuar perguntando depois dela
         // seria manter a espera de pé sobre um processo que não vai voltar.
         if (!cancelado && resp.ok && json.falha) {
+          if (typeof json.casoId === "string") setCasoIdDoLote(json.casoId);
           setFalha({ etapa: json.falha.etapa, mensagem: json.falha.mensagem });
           return;
         }
@@ -208,8 +102,15 @@ export default function UploadForm({
           // — que NÃO é zero. Tratar os dois igual acusaria lote vazio por causa
           // de uma consulta que falhou, e um alarme falso desses ensina a
           // ignorar o alarme.
+          if (typeof json.casoId === "string") setCasoIdDoLote(json.casoId);
           if (typeof json.comLinhas === "number") {
-            setLoteVazio({ comLinhas: json.comLinhas, documentos: json.esperados });
+            setLoteVazio({
+              comLinhas: json.comLinhas,
+              // FATO CONTA COMO CONTEÚDO: um Parecer do Auditor rende zero
+              // linhas e o alerta que vai ao comitê. Ver `explicarLoteVazio`.
+              comFatos: typeof json.comFatos === "number" ? json.comFatos : 0,
+              documentos: json.esperados,
+            });
           }
           if (casoId) router.refresh();
           return;
@@ -219,7 +120,7 @@ export default function UploadForm({
         // silêncio é legítimo.
         if (!cancelado && resp.ok) {
           const parado = Date.now() - ultimoAvanco;
-          const limite = ultimoVisto > 0 ? SEM_PROGRESSO_MS : SEM_PRIMEIRO_SINAL_MS;
+          const limite = ultimoVisto > 0 ? SEM_PROGRESSO_MS : semPrimeiroSinalMs(sucesso.arquivos);
           if (parado > limite) {
             setParada({ processados: json.processados ?? 0, esperados: json.esperados ?? sucesso.arquivos });
             return;
@@ -372,6 +273,20 @@ export default function UploadForm({
           >
             {casoId ? "Voltar ao mandato →" : "Ver mandatos →"}
           </button>
+
+          {/* DESCARTAR O MANDATO QUE NÃO TROUXE NADA — na tela que o acusa.
+              O mandato é criado no PRIMEIRO nó do fluxo, antes de qualquer
+              leitura: ele é o recipiente em que todo o resto é gravado, e não
+              existe "criar depois" sem inverter o pipeline inteiro. O que dá
+              para garantir é o efeito prático — que ninguém fique com um
+              mandato vazio na lista sem saber o que fazer com ele.
+              Só aparece quando o lote terminou SEM CONTEÚDO NENHUM (nem linha
+              nem fato); um lote incompleto tem dado dentro, e apagá-lo perderia
+              o que deu certo. A confirmação é a mesma do resto do portal. */}
+          {loteVazio && !falha && !parada && loteVazio.comLinhas === 0 && loteVazio.comFatos === 0
+            && casoIdDoLote && (
+            <ExcluirMandato casoId={casoIdDoLote} nome={sucesso.mandato} />
+          )}
         </div>
       </div>
     );
@@ -445,7 +360,14 @@ export default function UploadForm({
           </div>
         </div>
 
-        {pronto && (
+        {/* O MODAL DE SUCESSO SÓ APARECE QUANDO HOUVE SUCESSO.
+            Ele era condicionado só a `pronto`, e `pronto` mede que o pipeline
+            TENTOU ler cada arquivo — não que ele conseguiu, e não que a
+            execução chegou ao fim. Foi assim que uma execução morta virou "Tudo
+            pronto" na tela do dono em 27/08/2026. Agora, se há o que explicar
+            (falha, parada ou lote sem conteúdo), a explicação é a tela — e ela
+            já é renderizada acima, antes de chegar aqui. */}
+        {pronto && !explicacao && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/40 px-4">
             <div className="w-full max-w-sm rounded-lg bg-folha p-6 text-center shadow-xl">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-ok-100 text-2xl">

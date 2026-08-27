@@ -4,17 +4,20 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-26 (sessões 62 a **70**). **Estado do `main`:** mergeado até o **PR
-#179**. **A INFRA QUE ESPERAVA FOI FEITA (sessão 70):** a `0147`, a `0148` e a `0149` estão
-aplicadas em produção e conferidas por md5 contra o banco construído a partir dos arquivos, e o
-workflow do n8n foi republicado pela API REST — 33 de 33 nós byte a byte iguais ao repositório, 12
-credenciais preservadas, ativo. **O PRÓXIMO PASSO É A PREPARAÇÃO PARA O TESTE REAL, e ele começa
-por um smoke test de DOIS documentos** — ver "POR ONDE COMEÇAR" abaixo, que traz a lista inteira em
-ordem de execução. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68
-e 69 (réplica completa por cenário, new money, equity×haircut e o cockpit das quatro alavancas)
-vivem na branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do
-`ESTADO.md` antes de continuar por ali; não é sessão de handoff de infra, é resposta a um pedido de
-produto do dono, e continua aberta até o item de diluição.
+**Última atualização:** 2026-08-26 (sessões 62 a **71**). **Estado do `main`:** mergeado até o **PR
+#181**. **A INFRA ESTÁ APLICADA E CONFERIDA PELA SONDA NESTA SESSÃO:** `fn_instalacao_conferir()`
+devolve 38 de 38 requisitos presentes, cobertura `0149`, e o workflow do n8n foi republicado na
+sessão 70 (33 de 33 nós byte a byte). **A SESSÃO 71 PREPAROU O LOTE DE 190 E ACHOU UM BLOQUEIO
+REAL:** num lote desse tamanho a tela declarava *"o processamento parou"* sobre um lote que estava
+andando — o merge `Juntar Ramos` é uma barreira e nenhum documento é registrado antes da última
+classificação, o que em 190 documentos são 13 a 25 minutos de silêncio legítimo contra um limite de
+8 minutos fixos. Corrigido, com a conta saindo da cadência do próprio nó e com as funções agora
+CHAMÁVEIS por teste (elas moravam dentro do componente, e o espelho que as "cobria" passava com o
+defeito religado). **O QUE FALTA PARA A RODADA É DO DONO**, e começa pelo smoke test de DOIS
+documentos — ver "POR ONDE COMEÇAR" abaixo. **A frente de reestruturação está EM ANDAMENTO, fora do
+`main`:** as sessões 68 e 69 (réplica completa por cenário, new money, equity×haircut e o cockpit
+das quatro alavancas) vivem na branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A
+SESSÃO 68" no topo do `ESTADO.md` antes de continuar por ali.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
@@ -154,6 +157,7 @@ entre duas versões do mesmo período. Isso é o resultado que a rodada vai reve
 | 65-66 | **A v48 e as quatro causas de pendência falsa** (`0142` a `0146`); a conferência linha a linha que provou a extração certa; a estimativa de tempo antes do envio; a modelagem da v48 com as premissas derivadas do próprio realizado |
 | **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
 | **70** | **A auditoria adversarial do fato material e a infra aplicada.** A `0148` foi relida com a pergunta invertida — "o que eu faria para quebrar isto sem que ninguém percebesse?" — e devolveu SETE defeitos, cinco silenciosos: a página alucinada que derrubava o DIAGNÓSTICO inteiro junto (mesma query), o reenvio de arquivo que fazia os fatos sumirem da tela, a ordem indeterminada numa tela em que a ordem significa gravidade, a `confianca` que nunca recebeu valor, e o `Juntar Blocos` que descartava os fatos dos blocos 2..N (`0149`). Os sete religamentos conferidos um a um — e DOIS deles só reprovaram depois de a própria suíte ser corrigida, porque testavam a lib e não o nó de produção. A `0147`, a `0148` e a `0149` aplicadas em produção e conferidas por md5; o workflow republicado pela API REST e conferido por hash, 33 de 33 nós. E um terceiro book, o `book-araucaria` (190 documentos, 14 empresas, 5 exercícios), construído e entregue ao dono FORA do repositório |
+| **71** | **A preparação do lote de 190, e o que ela achou.** A tela desistia de um lote vivo: o merge `Juntar Ramos` (`mode: append`) é uma BARREIRA — nenhum documento é registrado antes da última classificação, uma a cada 8s — e o limite de silêncio da tela era 8 minutos FIXOS, calibrado no lote de 38; em 190 documentos o silêncio legítimo vai a 13 min (proporção medida) ou 25 (pior caso), e o analista reenviaria um lote em execução, pagando a IA duas vezes. Mais o teto da janela, que truncava em 1,77× a margem de 3× que ela promete. As quatro contas saíram de dentro do componente para uma lib e a suíte passa a CHAMÁ-LAS: o espelho anterior refazia a fórmula e passava com o defeito religado. E o orçamento do lote de 190 foi simulado contra o guarda real — cabe por conteúdo (US$ 0,93 a 2,30), e um único PDF sem camada de texto derruba o lote inteiro para a conta por tamanho (US$ 2,47 a 3,21), que recusa no pior caso |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair

@@ -59,11 +59,20 @@ function Indicador({
 
 // O QUE O DOCUMENTO DIZ EM TEXTO (db/migrations/0148).
 //
-// POR QUE ESTE BLOCO ABRE A TELA, acima do Kit Básico e das pendências: ele é o
-// único que não fala de conferência. Ressalva de auditoria e covenant rompido
-// não são "algo a corrigir" — são o motivo por trás dos números, e um comitê de
-// crédito os lê ANTES da planilha. Pô-los no meio da fila de trabalho seria
-// pedir que alguém "resolvesse" um fato do mundo.
+// ONDE ESTE BLOCO FICA, e por que ele MUDOU DE LUGAR em 27/08/2026. Ele abria a
+// tela, acima do Kit Básico, pelo argumento de que um comitê de crédito lê a
+// ressalva antes da planilha. O dono decidiu o contrário depois de ver a tela
+// com fato de verdade dentro (o smoke test da `0148`), e a razão vence a minha:
+// quem abre o mandato está conferindo o RECEBIMENTO — o que chegou e o que
+// falta —, e um alerta de covenant no topo empurra a conferência para baixo da
+// dobra logo no dia em que ela é o trabalho. O bloco passa a vir depois do Kit
+// Básico e de Documentos, fechando a leitura "o que chegou → o que os papéis
+// dizem" e ainda ANTES da fila de pendências.
+//
+// O que NÃO mudou, e é o que a posição não podia custar: ele continua fora da
+// fila de trabalho. Ressalva de auditoria e covenant rompido não são "algo a
+// corrigir" — são o motivo por trás dos números —, e pô-los entre as pendências
+// seria pedir que alguém "resolvesse" um fato do mundo.
 //
 // E O TRECHO VEM PRIMEIRO, EM CORPO MAIOR QUE A LEITURA. A frase é do documento
 // e dá para conferir abrindo a página; a leitura é do modelo. Inverter a ordem
@@ -525,26 +534,6 @@ export default async function CasoDashboardPage({
         </div>
       )}
 
-      {fatos.length > 0 && (
-        <section>
-          <div className="mb-2 flex items-baseline justify-between gap-3">
-            <h2 className="titulo-secao">O que os documentos dizem</h2>
-            <p className="text-xs text-tinta-500">
-              {fatosCriticos > 0
-                ? `${fatos.length} fato(s), ${fatosCriticos} crítico(s)`
-                : `${fatos.length} fato(s) declarado(s) em texto`}
-            </p>
-          </div>
-          <p className="mb-2.5 text-xs text-tinta-500">
-            Lido do texto dos documentos, não das tabelas — é o que costuma explicar os números.
-            Cada item traz a frase do próprio documento, para conferir na página indicada.
-          </p>
-          <ul className="space-y-2">
-            {fatos.map((f) => <FatoMaterial key={f.fato_id} f={f} />)}
-          </ul>
-        </section>
-      )}
-
       <section>
         <div className="mb-2 flex items-baseline justify-between gap-3">
           <h2 className="titulo-secao">Kit Básico</h2>
@@ -705,6 +694,26 @@ export default async function CasoDashboardPage({
           </div>
         )}
       </section>
+
+      {fatos.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="titulo-secao">O que os documentos dizem</h2>
+            <p className="text-xs text-tinta-500">
+              {fatosCriticos > 0
+                ? `${fatos.length} fato(s), ${fatosCriticos} crítico(s)`
+                : `${fatos.length} fato(s) declarado(s) em texto`}
+            </p>
+          </div>
+          <p className="mb-2.5 text-xs text-tinta-500">
+            Lido do texto dos documentos, não das tabelas — é o que costuma explicar os números.
+            Cada item traz a frase do próprio documento, para conferir na página indicada.
+          </p>
+          <ul className="space-y-2">
+            {fatos.map((f) => <FatoMaterial key={f.fato_id} f={f} />)}
+          </ul>
+        </section>
+      )}
 
       {pendenciasOutras.length > 0 && (
         <section>

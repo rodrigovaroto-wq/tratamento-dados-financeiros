@@ -2247,7 +2247,7 @@ test('a estimativa que o PORTAL mostra é coerente com a cadência REAL do workf
   // não permite. Então o espelho é por TESTE, como as 26 funções do
   // `espelho-inline.test.mjs` — lê a constante do fonte do portal e confronta
   // com o `batchInterval` que o gerador REALMENTE escreveu no nó.
-  const fonte = readFileSync(new URL('../../portal/src/components/upload-form.tsx', import.meta.url), 'utf8');
+  const fonte = readFileSync(new URL('../../portal/src/lib/espera-do-lote.ts', import.meta.url), 'utf8');
   const m = /const SEGUNDOS_POR_DOCUMENTO = (\d+);/.exec(fonte);
   assert.ok(m, 'SEGUNDOS_POR_DOCUMENTO sumiu do portal — o espelho perdeu o outro lado');
   const segundosPorDocumento = Number(m[1]);
@@ -2267,6 +2267,43 @@ test('a estimativa que o PORTAL mostra é coerente com a cadência REAL do workf
   assert.ok(segundosPorDocumento <= cadenciaS * 4,
     `a tela promete ${segundosPorDocumento}s por documento contra uma cadência de ${cadenciaS}s `
     + '— a estimativa ficou para trás de uma mudança de cadência');
+});
+
+// O LOTE DE 190 DOCUMENTOS — a espera da tela contra a BARREIRA do merge.
+//
+// Achado ao preparar o teste do `book-araucaria` (190 documentos), medindo em
+// vez de supor: até o primeiro `Registrar Documento` o workflow passa por
+// `Upload Storage` -> `Extrair Texto` -> `Medir Documento` -> `Orcamento do
+// Lote` -> `IA Classificar` -> `Juntar Ramos`, e o merge (`mode: append`) é uma
+// BARREIRA — nenhum documento é registrado enquanto a ÚLTIMA classificação não
+// voltar, uma a cada `batchInterval`. A tela media esse silêncio contra um
+// limite de 8 minutos FIXOS, calibrado no lote de 38.
+//
+// No pior caso (nenhum nome de arquivo resolvendo tipo+período) 190 documentos
+// silenciam 190 x 8s = 25 min, e mesmo na proporção medida do `book-canastra`
+// (19 de 38) são ~13 min. Os dois passam de 8, e o efeito não é cosmético: a
+// tela declara "o processamento parou" sobre um lote vivo e o analista reenvia
+// um lote que está rodando — pagando a IA duas vezes.
+//
+// ESTE TESTE GUARDA O LADO DO WORKFLOW: a cadência que a tela supõe é a que o
+// nó realmente tem, e o merge continua sendo barreira. O lado da CONTA —
+// `semPrimeiroSinalMs` e `janelaPara` cobrindo o lote de 190 — é chamado de
+// verdade, como função, em `portal/scripts/verificar-mensagem-de-falha.mts`;
+// refazer a fórmula aqui seria o espelho sem guarda que esta sessão desfez.
+test('a tela supõe a cadência REAL da classificação, e o merge continua sendo barreira', () => {
+  const fonte = readFileSync(new URL('../../portal/src/lib/espera-do-lote.ts', import.meta.url), 'utf8');
+  const m = /const CADENCIA_IA_S = (\d+);/.exec(fonte);
+  assert.ok(m, 'CADENCIA_IA_S sumiu do portal — o espelho perdeu o outro lado');
+
+  const cadenciaNoS = byName['IA Classificar'].parameters.options.batching.batch.batchInterval / 1000;
+  assert.equal(Number(m[1]), cadenciaNoS,
+    `a tela conta ${m[1]}s por classificação e o nó espaça ${cadenciaNoS}s`);
+
+  // Se o merge deixar de ser barreira, o silêncio inicial passa a ser outro
+  // fenômeno e a conta da tela fica conservadora demais — melhor saber por
+  // reprovação do que por uma espera de 40 minutos sem motivo.
+  assert.equal(byName['Juntar Ramos'].parameters.mode, 'append',
+    'Juntar Ramos deixou de ser append — reveja o silêncio inicial da tela');
 });
 
 test('O nó Postgres devolve o contexto que o próximo nó lê (a reconciliação que ficou 11 dias desligada)', () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { paginar } from "@/lib/supabase/paginar";
+import { vereditoDoLote } from "@/lib/espera-do-lote";
 
 // Consultado pelo portal (polling) depois de um upload, pra saber quando os
 // arquivos enviados já passaram pela classificação E pela extração — não tem
@@ -12,6 +13,47 @@ import { paginar } from "@/lib/supabase/paginar";
 // "Pronto" aqui significa "o pipeline terminou de tentar", não "sem erros" —
 // pendências (se houver) continuam visíveis no dashboard do caso como sempre.
 export const runtime = "nodejs";
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/** Quantas versões distintas aparecem numa tabela que aponta para elas. */
+async function quantosRenderam(
+  supabase: Supabase, tabela: "campo_extraido" | "documento_fato", versaoIds: string[],
+): Promise<number | null> {
+  const { data, error } = await paginar<{ documento_versao_id: string }>((de, ate) =>
+    supabase
+      .from(tabela)
+      .select("documento_versao_id")
+      .in("documento_versao_id", versaoIds)
+      .order("id", { ascending: true })
+      .range(de, ate),
+  );
+  // ERRO AQUI NÃO DERRUBA O `pronto`. O lote terminou de verdade, e trocar essa
+  // notícia por uma tela de erro porque a CONFERÊNCIA falhou seria pior que não
+  // conferir. `null` diz "não sei", e quem lê trata diferente de zero.
+  if (error) return null;
+  return new Set(data.map((d) => d.documento_versao_id)).size;
+}
+
+/**
+ * O que o lote de fato PRODUZIU — a diferença entre "tentou" e "conseguiu".
+ *
+ * Um lote em que TODA leitura falhou emite exatamente os mesmos eventos de
+ * `extracao_sombra` de um lote perfeito, e a tela dizia "pronto" para os dois.
+ *
+ * OS FATOS CONTAM COMO CONTEÚDO, e ignorá-los acusaria o lote que funcionou:
+ * medido no smoke test de 27/08, as Notas Explicativas e o Parecer do Auditor
+ * renderam ZERO linhas e NOVE fatos materiais — que é o resultado certo, porque
+ * esses documentos dizem as coisas em texto, não em tabela.
+ */
+async function conteudoDoLote(supabase: Supabase, versaoIds: string[]) {
+  if (versaoIds.length === 0) return { comLinhas: null, comFatos: null };
+  const [comLinhas, comFatos] = await Promise.all([
+    quantosRenderam(supabase, "campo_extraido", versaoIds),
+    quantosRenderam(supabase, "documento_fato", versaoIds),
+  ]);
+  return { comLinhas, comFatos };
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -39,7 +81,7 @@ export async function GET(request: Request) {
   const falha = (falhas as Array<{ id: string; etapa: string; mensagem: string }> | null)?.[0];
   if (falha) {
     return NextResponse.json({
-      classificados: 0, processados: 0, esperados, pronto: false,
+      classificados: 0, processados: 0, esperados, pronto: false, comLinhas: null, comFatos: null,
       falha: { id: falha.id, etapa: falha.etapa, mensagem: falha.mensagem },
     });
   }
@@ -100,39 +142,70 @@ export async function GET(request: Request) {
     processados = new Set(eventos.map((e) => e.entidade_ref)).size;
   }
 
-  const pronto = classificados >= esperados && processados >= esperados;
+  // O LOTE FECHOU? — a pergunta que faltava, e sem ela a tela dizia "Tudo pronto"
+  // sobre uma execução MORTA.
+  //
+  // ACHADO COM O DONO NA TELA, 27/08/2026. A execução morreu no primeiro nó
+  // (`Upload Storage`, habilitado por engano com a credencial `REPLACE`) e o
+  // portal reportou sucesso. Nenhuma peça mentiu sozinha:
+  //
+  //   • o registro de falha depende do **Error Workflow** do n8n, que é passo
+  //     MANUAL de configuração e não está ligado (conferido: `settings` do
+  //     workflow vivo não tem `errorWorkflow`) — então `fn_falhas_abertas` não
+  //     tinha o que devolver;
+  //   • e os contadores foram satisfeitos assim mesmo, porque `Upload Storage` é
+  //     ramo LATERAL: o irmão (`Extrair Texto` → … → `Registrar Documento`)
+  //     rodou inteiro e gravou os documentos e os eventos de extração.
+  //
+  // Deduzir "terminou bem" de contadores é deduzir de um sintoma que a morte
+  // também produz. O sinal que não depende de configuração nenhuma é o FIM do
+  // workflow: ele termina em `Gravar Uso do Lote` → `Conferir Lote`, e um lote
+  // que fecha deixa linha em `lote_execucao`. Medido: a v47 e a v48 deixaram
+  // (38 documentos, 2.460 e 2.485 linhas); as duas execuções que morreram no
+  // smoke test não deixaram nenhuma.
+  const { data: lotes, error: loteErr } = await supabase
+    .from("lote_execucao")
+    .select("id")
+    .eq("caso_id", caso.id)
+    .gte("criado_em", desde)
+    .limit(1);
+
+  // ERRO NA CONSULTA NÃO VIRA FALHA DO LOTE. `null` é "não sei", e "não sei" não
+  // pode acusar uma execução que está viva — é a mesma regra que o `comLinhas`
+  // já aplica logo abaixo.
+  const loteFechou = loteErr ? null : (lotes?.length ?? 0) > 0;
+
+  const veredito = vereditoDoLote({
+    classificados, processados, esperados, loteFechou,
+    desdeMs: Date.parse(desde), agoraMs: Date.now(),
+  });
+  const pronto = veredito.estado === "pronto";
+
+  if (veredito.estado === "nao_fechou") {
+    return NextResponse.json({
+      classificados, processados, esperados, pronto: false, comLinhas: null, comFatos: null,
+      casoId: caso.id,
+      falha: {
+        id: null,
+        etapa: "lote_nao_fechou",
+        mensagem:
+          `O lote não fechou: os ${processados} documento(s) foram lidos, mas o processamento não `
+          + "chegou ao fim (nenhum registro de encerramento do lote foi gravado). "
+          + "Causa mais comum: um nó do fluxo morreu depois da extração. "
+          + `Mandato: "${casoNome}". Envio: ${desde}.`,
+      },
+    });
+  }
 
   // TERMINOU E NÃO TROUXE NADA — o estado que passava por SUCESSO.
   //
-  // `pronto` mede que o pipeline TENTOU ler cada arquivo: um evento
-  // `extracao_sombra` por documento, gravado por `fn_registrar_campos_extraidos`
-  // tanto no acerto quanto na falha (0016). É a medida certa para saber que o
-  // trabalho acabou — e é cega para o que ele produziu. Um lote em que TODA
-  // leitura falhou emite exatamente os mesmos eventos de um lote perfeito, e a
-  // tela dizia "pronto" para os dois.
-  //
-  // `comLinhas` conta quantos documentos deixaram ao menos uma linha no banco.
-  // É a diferença entre "tentou" e "conseguiu".
-  //
-  // SÓ QUANDO `pronto`, e a condição é o que torna isto barato: é uma consulta a
-  // mais no ÚLTIMO polling, não a cada 8 segundos durante 20 minutos. Perguntar
-  // antes também não responderia nada — um documento sem linhas no meio do lote
-  // é um documento que ainda não foi lido.
-  let comLinhas: number | null = null;
-  if (pronto && versaoIds.length > 0) {
-    const { data: campos, error: campoErr } = await paginar<{ documento_versao_id: string }>((de, ate) =>
-      supabase
-        .from("campo_extraido")
-        .select("documento_versao_id")
-        .in("documento_versao_id", versaoIds)
-        .order("id", { ascending: true })
-        .range(de, ate),
-    );
-    // ERRO AQUI NÃO DERRUBA O `pronto`. O lote terminou de verdade, e trocar
-    // essa notícia por uma tela de erro porque a CONFERÊNCIA falhou seria pior
-    // que não conferir. `null` diz "não sei", e quem lê trata diferente de zero.
-    if (!campoErr) comLinhas = new Set(campos.map((c) => c.documento_versao_id)).size;
-  }
+  // `pronto` mede que o pipeline TENTOU ler cada arquivo, e é cego para o que
+  // ele produziu (ver `quantosRenderam`). SÓ QUANDO `pronto`, e a condição é o
+  // que torna isto barato: são duas consultas a mais no ÚLTIMO polling, não a
+  // cada 8 segundos durante 20 minutos.
+  const { comLinhas, comFatos } = pronto
+    ? await conteudoDoLote(supabase, versaoIds)
+    : { comLinhas: null, comFatos: null };
 
-  return NextResponse.json({ classificados, processados, esperados, pronto, comLinhas });
+  return NextResponse.json({ classificados, processados, esperados, pronto, comLinhas, comFatos, casoId: caso.id });
 }

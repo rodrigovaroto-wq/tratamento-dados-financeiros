@@ -368,6 +368,38 @@ enviados no Form).
 o node `Upload Storage` e trocar/remover `disabled: true` (ou substituir o node inteiro pelo
 community node, se for esse o caminho).
 
+## Depois de publicar, CONFIRA o que ficou publicado
+
+```bash
+# no editor do n8n: … → Download, salva o JSON; depois:
+node n8n/conferir-publicado.mjs < ~/Downloads/workflow.json
+
+# ou, com acesso à API REST, sem passar por arquivo nenhum:
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
+  | node n8n/conferir-publicado.mjs
+```
+
+O JSON entra pela **entrada padrão**, não como caminho de arquivo: assim quem
+abre o arquivo é o shell, com as permissões de quem digitou, e o conferidor não
+toca em caminho nenhum além do arquivo do próprio repositório.
+
+**Isto existe porque uma conferência já passou verde estando errada.** Em 26/08/2026 a
+republicação foi declarada *"33 de 33 nós byte a byte iguais ao repositório"* — e era verdade, e era
+insuficiente: ela comparava `parameters`, e **toda a configuração de falha de um nó do n8n mora fora
+de `parameters`**. O que tinha se perdido, medido dois dias depois contra o workflow vivo:
+
+| O que sumiu | Em quantos nós | O que isso custa |
+|---|---:|---|
+| `onError: continueRegularOutput` | 23 | qualquer falha passa a **matar o lote inteiro** em vez de seguir |
+| `retryOnFail` / `maxTries` / `waitBetweenTries` | 11 | uma oscilação do provedor no `IA Extrair` (6 tentativas) mata o lote na primeira |
+| `disabled: true` do `Upload Storage` | 1 | o ramo lateral desabilitado desde 17/07 **voltou a executar**, com credencial `REPLACE`, e derrubou o primeiro lote no primeiro nó |
+
+O conferidor compara o nó inteiro — o que ele faz, **como ele falha**, e **se ele está ligado** — e
+ignora de propósito o que pertence à instalação e não ao repositório: o `id` e o `name` da
+credencial, o `path` do formulário (sobrescrevê-lo troca a URL pública do intake) e a `position`.
+O que ele cobra no lugar é o contrapositivo, que é o útil: **um nó HABILITADO com o `REPLACE` do
+repositório ainda na credencial não vai rodar.**
+
 ## Credenciais (configurar no N8N — o workflow NÃO usa variáveis de ambiente)
 
 > O N8N **bloqueia `$env` por padrão** em nós Code e expressões (erro *"access to env vars
@@ -443,7 +475,9 @@ provedor funciona**; não prova que o sistema lê documento de verdade.
 nós, derivado de 15 chamadas/minuto contando que um documento mal nomeado faz duas. Se a sua cota
 for outra, o número a mexer é `tpm`/`rpm` em `n8n/lib/provedor.mjs` — não o `batchInterval` do nó.
 - **Upload Storage** — duas configurações no node:
-  1. **URL:** trocar `SEU-PROJETO` pela ref real do projeto Supabase — **atenção:** é a URL da
+  1. **URL:** já vem com a ref real do projeto (`mrcabcaotblleojxnsxc`), gravada no
+     `build-workflow.mjs` — ela é a URL pública da API, a mesma do
+     `NEXT_PUBLIC_SUPABASE_URL` do portal, e não é segredo. **Atenção** ao trocar de projeto: é a URL da
      **API** (`https://<ref>.supabase.co/storage/v1/object/documentos/...`), **não** a URL do
      painel (`https://supabase.com/dashboard/project/<ref>/...`, que é só para humanos no
      navegador). A ref aparece em ambas as URLs; confirme também em Settings → API → Project URL.

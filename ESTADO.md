@@ -18,9 +18,261 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0149_o_fato_material_endurecido.sql` — a auditoria adversarial da `0148` achou SETE defeitos no canal de fato material, cinco deles silenciosos, e esta migration os fecha. A `0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
 | **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | variações **25 rodadas** (a cadeia real sobre documento sujo, 0 achados, reconferida em 26/08 depois da sessão 69) · n8n **353** · export **713** (688 da sessão 68 + o (52) new money e o (53) equity×haircut da sessão 69) · transcrição 35 · premissas do realizado **32** · e2e 46 · banco (**93 migrations** do zero, os DOIS books) — export/banco/e2e/variações reconferidas em 26/08 depois da sessão 69; o resto foi medido em 25/08 e não foi tocado |
+| **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 71c (27/08) — o smoke test PASSOU, e a tela chamou de sucesso uma execução morta
+
+**A NOTÍCIA PRIMEIRO: `documento_fato` DEIXOU DE SER ZERO.** O dono rodou o smoke
+test e, no mandato `smoke test - 2 documentos`, as **Notas Explicativas** e o
+**Parecer do Auditor** renderam **9 fatos materiais** (6 + 3), com
+`fatos_avaliados_em` preenchida nas duas versões. É o item 1 do handoff — o canal
+da `0148`/`0149` **rodou contra documento real pela primeira vez**, e o caminho
+inteiro fechou ponta a ponta. Os dois renderam **zero linhas**, e isso é o
+resultado CERTO: esses documentos não têm tabela numérica, eles dizem as coisas
+em texto. (Um envio anterior, no mesmo mandato, trouxe dois PDFs do araucária com
+**201 linhas** — 34 + 167.)
+
+**E a tela disse "Tudo pronto" sobre uma execução que MORREU.** Nenhuma peça
+mentiu sozinha, e é a combinação que engana:
+
+1. a execução morreu no `Upload Storage` (habilitado por engano — ver a 71b);
+2. o registro de falha depende do **Error Workflow** do n8n, que é passo MANUAL
+   e **não está ligado** — conferido no workflow vivo: `settings` sem
+   `errorWorkflow`. Então `fn_falhas_abertas` não tinha o que devolver;
+3. e os contadores foram satisfeitos assim mesmo, porque o nó que morreu é ramo
+   **lateral**: o irmão (`Extrair Texto` → … → `Registrar Documento`) rodou
+   inteiro e gravou os documentos e os eventos de extração.
+
+**Deduzir "terminou bem" de contadores é deduzir de um sintoma que a MORTE também
+produz.** O sinal que não depende de ninguém configurar nada é o FIM do workflow:
+ele termina em `Gravar Uso do Lote` → `Conferir Lote`, e um lote que fecha deixa
+linha em `lote_execucao`. **Medido:** a v47 e a v48 deixaram (38 documentos, 2.460
+e 2.485 linhas); as **duas** execuções do smoke test não deixaram **nenhuma**.
+
+### O que mudou
+
+- **`pronto` passa a exigir o lote FECHADO** (`vereditoDoLote`, função pura em
+  `portal/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
+  passada a carência de 2 min (a cauda do workflow são 3 nós, segundos), vira
+  **falha nomeada** `lote_nao_fechou`. E "não sei" (a consulta falhou) **nunca**
+  acusa um lote vivo — a mesma regra que o `comLinhas` já aplicava;
+- **a falha sem causa conhecida passa a dizer com quem falar**, a pedido do dono:
+  *"Entre em contato com o Varoto para ele resolver essa questão para você"*.
+  "Contate o suporte" é um beco quando a equipe é uma pessoa;
+- **o lote vazio deixa de ser cego para os FATOS.** Esta era a armadilha: a
+  checagem contava só linha, e teria acusado *"nada pôde ser lido"* exatamente no
+  lote que funcionou pela primeira vez. Agora conta documento que rendeu **linha
+  ou fato**;
+- **o modal "Tudo pronto" não aparece quando há o que explicar.** Ele era
+  condicionado só a `pronto`, e a explicação (falha/parada/lote sem conteúdo) já
+  era renderizada antes — as duas coisas coexistiam;
+- **o mandato que terminou sem NADA dentro pode ser descartado da própria tela
+  que o acusa**, pelo `fn_excluir_caso` que já existia.
+
+### O que NÃO foi feito, e por que — o mandato "não criado"
+
+O pedido foi *"garanta que o mandato vazio não será criado se nenhuma linha for
+extraída"*. **"Nenhuma linha" é o critério errado, e o smoke test é a prova:** os
+dois documentos que o handoff mandava testar rendem zero linhas e nove fatos, e
+um portão por linha teria descartado justamente eles.
+
+E o mandato é criado no **primeiro nó** do fluxo (`Upsert Caso`), antes de
+qualquer leitura: ele é o recipiente em que todo o resto é gravado, e não existe
+"criar depois" sem inverter o pipeline inteiro. O que dá para garantir é o
+**efeito prático**, e é o que está feito: um lote sem linha E sem fato é
+**reportado como falha** (nunca como sucesso), a tela diz para não usar o
+mandato, e oferece o descarte com a confirmação de sempre. Apagar sozinho seria
+contra a doutrina do repositório — declarar, não apagar.
+
+### O Sonar, e a seção que mudou de lugar
+
+**A seção "O que os documentos dizem" desceu**, por decisão do dono depois de
+ver a tela com fato de verdade dentro: ela abria o mandato e passa a vir **depois
+do Kit Básico e de Documentos**, fechando a leitura "o que chegou → o que os
+papéis dizem" — e ainda antes da fila de pendências, que é o que a posição não
+podia custar. O comentário que justificava o lugar antigo foi reescrito, não
+apagado: ele agora conta a troca e o motivo dela.
+
+**Os nove achados do Sonar no PR #182, todos fechados** — e dois deles não eram
+código:
+
+| Achado | O que era |
+|---|---|
+| `S1135` "Complete the task associated to this TODO" (×2) | **português**: "TODO lote" é *every lot*, não um marcador de tarefa. Reescrito para "QUALQUER lote" |
+| `S3776` complexidade 34 em `conferir()` | quebrada em `conferirPresenca`/`conferirComportamento`/`conferirCredenciais` — a divisão é a do que se confere, não um fatiamento para agradar a métrica |
+| `S3776` complexidade 16 na rota de status | o par `comLinhas`/`comFatos` saiu para `conteudoDoLote`, e as duas consultas passaram a rodar em paralelo |
+| `S7744` objeto vazio inútil | `{ ...(p ?? {}) }` → `{ ...p }`: espalhar `null` já é vazio |
+| `S6582` optional chain (×2) | `(x.credentials ?? {})[t]` → `x.credentials?.[t]` |
+| `S8707` caminho vindo do argv (×2) | **três tentativas, e a terceira é a que valeu.** Validar o caminho (exigir `.json`, existir, ser arquivo comum) não bastou; validar o caminho **canonizado** contra bases declaradas também não; trocar o `process.exit` por `throw`, para o ramo terminar à vista, também não. O caminho passou a **não existir**: o JSON entra pela **entrada padrão** (`< arquivo` ou `curl \| node`), então quem abre o arquivo é o shell, com as permissões de quem digitou, e o script só toca no arquivo do próprio repositório — que é constante. O risco não foi validado nem silenciado: ele deixou de existir. (A leitura é por **stream**, não `readFileSync(0)`: com `<` o descritor 0 é arquivo comum e a síncrona funciona, com `\|` é cano não bloqueante e ela estoura `EAGAIN` — medido.) **E a exclusão em `.sonarcloud.properties` não era saída:** aquele arquivo só passa a valer na branch PADRÃO, então não afetaria este PR |
+| `S7778` `Array#push()` várias vezes | os dois `push(...)` do laço viraram um |
+
+### Contadores
+
+`verificar-mensagem-de-falha.mts` 44 → **59**. As demais inalteradas e
+reconferidas: n8n **373**, export **713**, transcrição **35**, premissas **32**,
+e2e **46**, banco **93 migrations**. `tsc`, `eslint` e `next build` limpos.
+
+## A SESSÃO 71b (27/08) — a republicação perdeu TODA a rede de proteção, e a conferência não viu
+
+O dono rodou o smoke test e recebeu **"Problem in node 'Upload Storage': Credential
+with ID REPLACE does not exist for type httpHeaderAuth"**. O nó é ramo lateral e
+está **desabilitado no repositório desde 17/07** (bug de plataforma do HTTP
+Request com binário) — em produção ele estava **habilitado**. Isso é sintoma, não
+causa.
+
+**A causa, medida contra o workflow vivo:** a republicação de 26/08 gravou os nós
+com `parameters` e perdeu **todos os campos de nó que vivem fora deles**:
+
+| O que sumiu | Nós | O que custa |
+|---|---:|---|
+| `onError: continueRegularOutput` | 23 | qualquer falha passa a **matar o lote inteiro** em vez de seguir |
+| `retryOnFail`/`maxTries`/`waitBetweenTries` | 11 | uma oscilação do provedor no `IA Extrair` (6 tentativas) mata o lote na primeira |
+| `disabled` do `Upload Storage` | 1 | o ramo lateral voltou a executar, com credencial `REPLACE` |
+
+**A conferência daquela sessão declarou "33 de 33 nós byte a byte iguais" e estava
+certa** — ela comparava `parameters`, e nada do que se perdeu mora ali. É o
+defeito de sempre com roupa nova: **espelho que compara só uma parte declara uma
+igualdade que não tem.** E o repositório já tinha o teste certo do lado dele
+(`Upload Storage: desabilitado`, no `workflow-sim.test.mjs`) — o que faltava era
+alguém conferir o PUBLICADO.
+
+**Como sei que não é o transporte escondendo campo:** o workflow do macro, que
+não foi republicado (última alteração 22/08), devolve `retryOnFail`,
+`maxTries`, `waitBetweenTries` e `onError` normalmente pela mesma leitura. A
+ausência no da ingestão é real.
+
+**O que entrou:** `n8n/conferir-publicado.mjs` — compara o nó INTEIRO (o que faz,
+**como falha**, e **se está ligado**), mais as conexões, contra o JSON baixado do
+editor. Ignora de propósito o que é da instalação e não do repositório: o `id` e
+o `name` da credencial, o `path` do formulário (sobrescrevê-lo troca a URL
+pública do intake) e a `position`; e cobra o contrapositivo, que é o útil — **um
+nó HABILITADO com o `REPLACE` do repositório na credencial não vai rodar**.
+Rodado contra o vivo: **59 divergências**. Nove testes próprios
+(`n8n/test/conferir-publicado.test.mjs`), um por coisa que ele tem de ver e um
+por coisa que ele tem de ignorar — um conferidor com ponto cego é pior que
+nenhum, porque produz a frase "está igual" com autoridade.
+
+**E a URL do Storage deixou de ser placeholder**, a pedido do dono: o
+`SEU-PROJETO` virou a ref real do projeto no `build-workflow.mjs`. Ela é a URL
+**pública** da API — a mesma do `NEXT_PUBLIC_SUPABASE_URL` do portal — e não é
+segredo; a `service_role` continua como placeholder no header `apikey`, para ser
+colada no editor. Nenhuma chave entra no repositório.
+
+**O que o dono precisa fazer, e por que é ele:** republicar o workflow com os
+campos de nó (esta sessão não tem chave da API do n8n, e o transporte do MCP
+decodifica os `\uXXXX` — corromperia a chave de dedup do `Juntar Blocos`, que é
+por isso que a 70 usou REST). Para destravar o smoke test **agora**, basta
+desabilitar o `Upload Storage` no editor: é ramo lateral, nada depende da saída
+dele, e foi assim que a v47 e a v48 rodaram.
+
+## A SESSÃO 71 (26/08) — a preparação do teste de 190 documentos: a tela desistia de um lote vivo
+
+Sessão de PREPARAÇÃO para a rodada do `book-araucaria` (190 documentos), na
+ordem que o handoff deixou. Nenhuma migration, nenhuma mudança de motor: o que
+mudou foi a espera da tela, e a mudança saiu de uma medição do workflow, não de
+uma suspeita.
+
+**A infra foi conferida antes de qualquer coisa, pela sonda e não por leitura:**
+`fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero
+ausentes**, `instalacao_cobertura` diz `0149`. E o número que define a frente
+segue igual ao de 26/08: **551 documentos, 52 casos, `documento_fato` VAZIA** e
+nenhuma versão com `fatos_avaliados_em` — o canal de fato material continua sem
+nunca ter rodado contra um documento real.
+
+### O defeito: num lote de 190, a tela declara "parou" sobre um lote que está andando
+
+Medido no workflow, não estimado. Até o primeiro `Registrar Documento` — o
+primeiro sinal que a tela consegue ver — a cadeia é `Upload Storage` →
+`Extrair Texto` → `Medir Documento` → `Orcamento do Lote` → `IA Classificar` →
+**`Juntar Ramos`**. O merge está em `mode: append`, e isso o torna uma
+**barreira**: nenhum documento é registrado enquanto a ÚLTIMA classificação não
+voltar, e elas saem **uma a cada 8 segundos** (o `batchInterval` do nó).
+
+O limite que a tela usava para esse silêncio era **8 minutos FIXOS**, calibrado
+no lote de 38 — onde 19 dos 38 nomes não resolvem tipo+período, ou seja
+19 × 8s ≈ 2,5 min de silêncio legítimo contra 8 de tolerância. Em 190
+documentos o mesmo silêncio vai a **13 min** na proporção medida e a **25 min**
+no pior caso. A tela declararia "o processamento parou" com o lote vivo — e a
+consequência não é cosmética: o analista reenvia um lote que está rodando e
+**paga a IA duas vezes**.
+
+O limite passa a sair da mesma conta que o silêncio: `CADENCIA_IA_S` (espelhada
+do nó) mais `PREPARO_POR_ARQUIVO_S`, vezes o número de arquivos, com o piso de 8
+minutos. A conta **reproduz o 8 antigo no lote em que ele foi calibrado**
+(38 × 13s = 8,2 min), que é o sinal de que ela descreve o mesmo fenômeno em vez
+de só ser maior.
+
+**E um segundo, no mesmo lugar:** o teto da janela de acompanhamento era 90
+minutos, e ele truncava a margem de 3× que o próprio comentário promete — num
+lote de 190 (previsão de 51 min) a margem real era **1,77×**. O teto existia
+para limitar consulta ao Supabase e foi escrito quando a cadência era fixa em
+8s (90 min = ~675 consultas); a desaceleração que entrou depois mudou a conta e
+ninguém remediu o teto. Hoje 90 min custam **193** consultas e 160 min custam
+**333** — ainda metade do que o teto antigo custava quando foi escrito. Subiu
+para 160, e a margem prometida volta a ser verdade até 200 arquivos.
+
+### O espelho sem guarda que a correção desfez
+
+A conta da espera morava dentro de `upload-form.tsx`, e por isso **nenhum teste
+conseguia chamá-la**: o que o `workflow-sim.test.mjs` fazia era ler as
+constantes do fonte e **refazer a fórmula do lado dele**. Isso é espelho sem
+guarda — a fórmula muda aqui, o espelho não muda, e o teste segue verde provando
+a conta errada. Foi exatamente o que aconteceu quando eu religuei o defeito para
+conferir: com o limite fixo de volta, o teste **passava**.
+
+As quatro contas foram para `portal/src/lib/espera-do-lote.ts` e a suíte
+`verificar-mensagem-de-falha.mts` passa a **chamar as funções de verdade** —
+com a cadência lida do próprio `workflow.e1-ingestao.json`. Religados um a um
+contra a função real: o limite fixo reprova com *"a tela desiste em 8.0 min e o
+silêncio legítimo da barreira vai a 25.3 min"*, e o teto de 90 reprova com *"a
+janela entrega 1.78x do previsto, e a tela promete 3x"*. No `n8n/test` ficou só
+o que é do workflow: a cadência espelhada e o merge continuar sendo barreira.
+
+### O orçamento do lote de 190 — cabe, e o penhasco está a um PDF de distância
+
+Simulado contra o guarda REAL, com a forma que o gerador mediu no book (190
+documentos, 247 páginas, 16.081 linhas com número):
+
+| Caminho | Estimativa | Teto de US$ 3 |
+|---|---:|---|
+| por CONTEÚDO (o que roda desde 18/08) | US$ 0,93 a 2,30 | **cabe** |
+| por TAMANHO (a queda) | US$ 2,47 a 3,21 | **recusa no pior caso** |
+
+A queda para a conta por tamanho vale para o lote **inteiro** assim que **UM**
+documento não trouxer medida de conteúdo — um PDF escaneado, sem camada de
+texto, no meio dos 190. No lote de 38 essa diferença era inofensiva (US$ 0,29
+medido contra US$ 0,56 estimado, longe do teto); em 190 ela decide se a rodada
+acontece, e o lote é um **não-inteiro**: recusado, ele não roda em parte
+nenhuma. Os dois fatos viraram teste em `n8n/test/custo.test.mjs`.
+
+**Isto NÃO foi corrigido, e é decisão do dono, não conserto de engenharia.** A
+queda é doutrina declarada ("medir só os documentos que dá subestimaria o lote
+na proporção do que não se sabe"), e mexer no guarda de dinheiro na véspera de
+uma rodada real é o tipo de mudança que se faz com o dono sabendo. A saída
+barata, se o penhasco for atingido, está na própria mensagem de recusa: ela diz
+quantos documentos cabem por vez.
+
+### Contadores, todos remedidos nesta sessão
+
+`n8n/test` **364** (eram 361 medidos aqui no início — o `ESTADO.md` dizia 353,
+estava atrás) · export **713** · transcrição **35** · premissas do realizado
+**32** · mensagem de falha + espera do lote **44** (eram 37) · e2e **46** ·
+banco **93 migrations do zero, os dois books** · variações **25 rodadas, 0
+achados**. `tsc`, `eslint` e `next build` limpos, `build-workflow.mjs` não
+reescreve o JSON.
+
+### O que continua sendo do dono, e é o que falta para a rodada
+
+1. **O smoke test de DOIS documentos** (Notas Explicativas 33 e Parecer do
+   Auditor 34 do `book-canastra`) — o upload é pelo formulário do n8n e nenhuma
+   sessão consegue enviar arquivo por lá. É ele que prova que
+   `documento_fato` deixa de ser zero;
+2. **O `book-canastra` (38)** e depois o **`book-araucaria` (190)**, nessa
+   ordem;
+3. Os itens de sempre: proteger o `main` (B6.1), o capítulo 10 no repositório
+   (B4.1) e os `[A CONFIRMAR]` do `docs/10`.
 
 ## A SESSÃO 69 (26/08) — new money, equity × haircut, e o cockpit das quatro alavancas
 
