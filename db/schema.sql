@@ -2118,6 +2118,24 @@ $$;
 COMMENT ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) IS 'Exclui o mandato e tudo que depende dele (cascade da 0001), devolvendo a contagem do que se perdeu. Grava a exclusão em evento_auditoria ANTES do delete — a trilha não tem FK para caso, então o rastro sobrevive ao caso.';
 
 --
+-- Name: fn_exercicio_da_coluna(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_exercicio_da_coluna(p_coluna text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select (m[1])::int
+  from regexp_match(coalesce(p_coluna, ''), '(19[5-9][0-9]|20[0-9]{2}|21[0-9]{2})') m
+  where m[1] is not null
+$$;
+
+--
+-- Name: FUNCTION fn_exercicio_da_coluna(p_coluna text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_exercicio_da_coluna(p_coluna text) IS 'O exercício que o cabeçalho da coluna nomeia, ou NULL quando ele não nomeia exercício nenhum ("Saldo", "Crédito", "Ticket médio"). Ausência é ausência: coluna sem ano fica FORA da série histórica em vez de virar um ano inventado.';
+
+--
 -- Name: fn_exigencias_do_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3976,6 +3994,140 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_lado_intragrupo(p_chave text, p_secao_canonica text) IS '0124: crédito (ativo) ou obrigação (passivo) de uma linha intragrupo. Seção canônica primeiro; rótulo só como desempate, porque "Fornecedores intragrupo - X" não diz "a pagar".';
+
+--
+-- Name: fn_linhas_do_realizado(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DEFAULT NULL::text) RETURNS TABLE(secao_canonica text, rotulo_norm text, chave text, entidade text, exercicio integer, valor numeric, papel text, documentos text[])
+    LANGUAGE sql STABLE
+    AS $$
+  -- marca-0150
+  --
+  -- A MARCA FICA, e o motivo é o mesmo da 0102: a sonda de instalação confere se
+  -- a correção está APLICADA NO BANCO procurando `0150` no corpo desta função —
+  -- é o que separa "mergeado" de "aplicado". Uma reemissão futura mantém a
+  -- marca; trocá-la apagaria a resposta da pergunta que ela faz.
+  with bruto as (
+    select
+      ce.secao_canonica,
+      ce.chave,
+      fn_normalizar_texto(ce.chave) as rotulo_norm,
+      -- 0146: a capa só responde quando o documento é de UMA empresa.
+      coalesce(ce.entidade_coluna,
+               case when (select count(distinct ce2.entidade_coluna)
+                            from campo_extraido ce2
+                           where ce2.documento_versao_id = ce.documento_versao_id
+                             and ce2.entidade_coluna is not null) > 1
+                    then null else e.razao_social end) as entidade,
+      fn_exercicio_da_coluna(ce.periodo_coluna) as exercicio,
+      ce.valor_num,
+      ce.unidade,
+      d.tipo_taxonomia,
+      dv.documento_id
+    from campo_extraido ce
+    join documento_versao dv on dv.id = ce.documento_versao_id
+    join documento d on d.id = dv.documento_id
+    left join entidade e on e.id = d.entidade_id
+    left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
+    where d.caso_id = p_caso_id
+      and ce.valor_num is not null
+      and dv.id = fn_versao_com_extracao(d.id)
+      -- A ABERTURA ANALÍTICA NÃO SOMA. Tipo desconhecido (fora do catálogo)
+      -- entra somando: o padrão seguro é o de sempre, e o catálogo é quem
+      -- declara a exceção.
+      and coalesce(t.abertura_analitica, false) = false
+      and fn_exercicio_da_coluna(ce.periodo_coluna) is not null
+  ),
+  filtrado as (
+    select * from bruto
+    where p_entidade is null
+       or fn_normalizar_texto(entidade) = fn_normalizar_texto(p_entidade)
+  ),
+  papel_do_rotulo as (
+    select distinct chave, tipo_taxonomia, unidade,
+           fn_papel_linha(chave, tipo_taxonomia, unidade) as papel
+    from (select distinct chave, tipo_taxonomia, unidade from filtrado) d
+  ),
+  com_papel as (
+    select f.*, p.papel
+    from filtrado f
+    join papel_do_rotulo p
+      on p.chave = f.chave
+     and p.tipo_taxonomia is not distinct from f.tipo_taxonomia
+     and p.unidade is not distinct from f.unidade
+  ),
+  agrupado as (
+    select
+      c.secao_canonica,
+      c.rotulo_norm,
+      (array_agg(c.chave order by length(c.chave)))[1] as chave,
+      max(c.entidade) as entidade,
+      c.exercicio,
+      -- Dentro do MESMO exercício, a mesma conta pode vir de dois documentos
+      -- (o balanço e a DF auditada dizem a mesma coisa). O de maior módulo é o
+      -- desempate da 0042, e continua valendo — aqui ele escolhe entre cópias
+      -- do mesmo fato, não entre anos diferentes.
+      (array_agg(c.valor_num order by abs(c.valor_num) desc nulls last))[1] as valor,
+      (array_agg(c.papel order by fn_papel_prioridade(c.papel)))[1] as papel,
+      array_agg(distinct c.tipo_taxonomia) as documentos,
+      -- Quantos documentos DISTINTOS trouxeram esta linha neste exercício: é o
+      -- que o item 4 usa para saber se o total veio acompanhado das componentes.
+      array_agg(distinct c.documento_id) as docs_ids
+    from com_papel c
+    group by c.secao_canonica, c.rotulo_norm, c.exercicio
+  ),
+  -- ---------------------------------------------------------------------------
+  -- 4. O TOTAL QUE VEIO COM AS COMPONENTES É SUBTOTAL, MESMO SEM ESTAR NA LISTA
+  -- ---------------------------------------------------------------------------
+  --
+  -- A `0116` deixou o topo da DRE fora da lista fechada de subtotais porque num
+  -- documento RESUMIDO ele é a conta. O discriminador que faltava é estrutural e
+  -- só existe olhando o documento inteiro: se o módulo desta linha bate com a
+  -- SOMA das outras contas da mesma seção, mesmo exercício e mesma entidade, ela
+  -- é o total delas — e somar os dois conta duas vezes.
+  --
+  -- A tolerância é de 1% e existe porque a soma de valores arredondados ao
+  -- milhar não fecha ao centavo: medido no Canastra, 177.077 contra 177.133
+  -- (0,03%). Sem folga, o discriminador não dispararia exatamente no caso que o
+  -- motivou.
+  soma_das_contas as (
+    select a.secao_canonica, a.exercicio, a.entidade,
+           sum(abs(a.valor)) filter (where a.papel = 'conta') as total_contas
+    from agrupado a
+    group by a.secao_canonica, a.exercicio, a.entidade
+  )
+  select
+    a.secao_canonica,
+    a.rotulo_norm,
+    a.chave,
+    a.entidade,
+    a.exercicio,
+    a.valor,
+    case
+      when a.papel = 'conta'
+       and s.total_contas is not null
+       and abs(a.valor) > 0
+       -- `2 × |valor|` porque o próprio valor está DENTRO de `total_contas`:
+       -- o total mais as componentes dá duas vezes o total. É a mesma
+       -- aritmética que a 0143 usa para declarar hierarquia achatada.
+       and abs(s.total_contas - 2 * abs(a.valor)) <= 0.01 * abs(a.valor)
+      then 'subtotal'
+      else a.papel
+    end as papel,
+    a.documentos
+  from agrupado a
+  left join soma_das_contas s
+    on s.secao_canonica is not distinct from a.secao_canonica
+   and s.exercicio = a.exercicio
+   and s.entidade is not distinct from a.entidade
+$$;
+
+--
+-- Name: FUNCTION fn_linhas_do_realizado(p_caso_id uuid, p_entidade text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text) IS 'As linhas do caso POR EXERCÍCIO, de uma entidade, sem o que não se soma (0150): fora a abertura analítica (balancete, aging, estoque, extrato — elas reabrem contas que a demonstração já declara), fora o combinado (soma das empresas), fora a coluna que não nomeia exercício, e com o total que veio acompanhado das próprias componentes marcado `subtotal`. É a base das premissas do realizado e da média histórica; a LISTA da tela continua saindo de fn_linhas_para_modelagem, que agrupa por rótulo e não por exercício.';
 
 --
 -- Name: fn_linhas_do_tipo(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -10363,7 +10515,8 @@ CREATE TABLE public.taxonomia_tipo_documento (
     sensibilidade public.sensibilidade_lgpd DEFAULT 'nenhuma'::public.sensibilidade_lgpd NOT NULL,
     versao integer DEFAULT 1 NOT NULL,
     ativo boolean DEFAULT true NOT NULL,
-    nao_sobrepujavel boolean DEFAULT false NOT NULL
+    nao_sobrepujavel boolean DEFAULT false NOT NULL,
+    abertura_analitica boolean DEFAULT false NOT NULL
 );
 
 --
@@ -10371,6 +10524,12 @@ CREATE TABLE public.taxonomia_tipo_documento (
 --
 
 COMMENT ON TABLE public.taxonomia_tipo_documento IS 'Taxonomia documental v1 (f0/03). Kit Básico = obrigatorio; Variáveis = complementar.';
+
+--
+-- Name: COLUMN taxonomia_tipo_documento.abertura_analitica; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_tipo_documento.abertura_analitica IS 'Este tipo REAFIRMA aberta uma conta que uma demonstração já declara (o balancete abre o balanço; o aging abre clientes; o extrato abre bancos). Linha que só aparece em documento assim NÃO entra na soma do realizado: somá-la conta a mesma conta duas vezes. `false` é o padrão seguro — o tipo novo entra somando, e quem o cadastra decide.';
 
 --
 -- Name: campo_classe_override campo_classe_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -11963,6 +12122,12 @@ GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO auth
 GRANT ALL ON FUNCTION public.fn_excluir_caso(p_caso_id uuid, p_autor text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_exercicio_da_coluna(p_coluna text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_exercicio_da_coluna(p_coluna text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12117,6 +12282,12 @@ GRANT ALL ON FUNCTION public.fn_lado_do_mutuo(p_chave text, p_secao_canonica tex
 --
 
 GRANT ALL ON FUNCTION public.fn_lado_intragrupo(p_chave text, p_secao_canonica text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_linhas_do_realizado(p_caso_id uuid, p_entidade text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_linhas_do_tipo(p_caso_id uuid, p_codigo text); Type: ACL; Schema: public; Owner: -

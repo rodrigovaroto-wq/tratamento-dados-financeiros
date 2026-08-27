@@ -316,7 +316,22 @@ export default async function ModelagemPage({
   // 3 lista, com os mesmos classificadores que o modelo usa para projetar — a
   // ponta que mede e a ponta que aplica precisam concordar sobre o que é cliente,
   // estoque e fornecedor, senão o dia sugerido não reproduz o saldo de onde saiu.
-  const sugestoes = sugerirDoRealizado(camposRes.data);
+  // AS OITO SAEM DE `fn_linhas_do_realizado` (0150), NÃO DA LISTA DA TELA.
+  //
+  // A lista (`camposRes`) agrupa por rótulo, traz UM número por linha e não
+  // filtra entidade — ela existe para o analista escolher premissa, e serve bem
+  // para isso. Somar as razões a partir dela foi o que gravou, no Canastra,
+  // `PMR = 348,6 dias` e `CUSTO_VARIAVEL = 287,7% da receita`: entrava a abertura
+  // analítica por cima da conta que ela abre, o total da DRE junto das próprias
+  // componentes, e as oito empresas do grupo num modelo que projeta uma.
+  //
+  // A função nova responde a outra pergunta — "quanto esta empresa, neste
+  // exercício, teve de cada coisa" — e é ela que a média histórica precisa.
+  const realizadoRes = await medir(supabase.rpc("fn_linhas_do_realizado", {
+    p_caso_id: id,
+    p_entidade: parametros?.entidade ?? null,
+  }));
+  const sugestoes = sugerirDoRealizado((realizadoRes[0].data ?? []) as Parameters<typeof sugerirDoRealizado>[0]);
 
   // Linhas do caso agrupadas por seção canônica — é a unidade do aplicar-em-lote.
   // A função já devolve UMA linha por (seção, rótulo normalizado): o agrupamento

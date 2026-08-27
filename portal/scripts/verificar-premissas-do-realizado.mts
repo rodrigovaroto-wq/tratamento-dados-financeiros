@@ -29,6 +29,7 @@
  */
 
 import { sugerirDoRealizado, type LinhaRealizada } from "../src/lib/premissas-do-realizado.ts";
+import { projetarPremissa } from "../src/lib/projetar-premissa.ts";
 
 let falhas = 0;
 let passou = 0;
@@ -168,7 +169,7 @@ console.log("6. magnitude, não sinal");
 {
   const despesaNegativa = casoCompleto.map((l) =>
     l.secao_canonica === "custos" || l.secao_canonica === "despesas_operacionais"
-      ? { ...l, valor_ultimo: -Math.abs(l.valor_ultimo) } : l);
+      ? { ...l, valor_ultimo: -Math.abs(l.valor_ultimo ?? 0) } : l);
   const s = sugerirDoRealizado(despesaNegativa);
   ok(perto(achar(s, "CUSTO_VARIAVEL").valor, 0.6),
      "custo publicado negativo dá a mesma razão", String(achar(s, "CUSTO_VARIAVEL").valor));
@@ -250,6 +251,113 @@ console.log("10. RECEITA financeira não infla a taxa da dívida");
      String(achar(semDespesa, "TAXA_DIVIDA").valor));
 }
 
+
+// ---------------------------------------------------------------------------
+// 9. A MÉDIA DOS EXERCÍCIOS — a correção que a rodada do Canastra motivou
+// ---------------------------------------------------------------------------
+//
+// O último exercício de uma empresa em reestruturação é o pior dela. Projetar
+// cinco anos a partir dele transforma a crise em regime: a margem deprimida vira
+// margem estrutural e o prazo esticado pela inadimplência vira política de
+// crédito.
+console.log("9. a média dos exercícios");
+{
+  // O mesmo caso em três anos, com o custo piorando: 50%, 60% e 70% da receita.
+  const tresAnos = [2023, 2024, 2025].flatMap((exercicio, i) => {
+    const custo = [50, 60, 70][i];
+    return [
+      { secao_canonica: "receita_bruta", chave: "Receita", rotulo_norm: "receita",
+        papel: "conta" as const, exercicio, valor: 100, documentos: null },
+      { secao_canonica: "custos", chave: "Matérias-primas", rotulo_norm: "materias-primas",
+        papel: "conta" as const, exercicio, valor: -custo, documentos: null },
+    ];
+  });
+  const s9 = sugerirDoRealizado(tresAnos);
+  const cv = achar(s9, "CUSTO_VARIAVEL");
+  ok(perto(cv.valor, 0.6), "a razão é a MÉDIA dos três exercícios, não a do último", String(cv.valor));
+  ok(cv.serie?.length === 3, "a série traz um ponto por exercício, para a média ser conferível",
+     String(cv.serie?.length));
+  ok(cv.conta.includes("2023, 2024, 2025"),
+     "e a conta publicada NOMEIA os exercícios que entraram", cv.conta);
+
+  // UM EXERCÍCIO SÓ NÃO É MÉDIA, e a frase tem de dizer isso — senão o número
+  // parece ter uma robustez que ele não tem.
+  const umAno = tresAnos.filter((l) => l.exercicio === 2025);
+  const cv1 = achar(sugerirDoRealizado(umAno), "CUSTO_VARIAVEL");
+  ok(perto(cv1.valor, 0.7), "com um exercício só, o valor é o dele", String(cv1.valor));
+  ok(cv1.conta.includes("2025"), "e a conta diz qual exercício foi", cv1.conta);
+
+  // EXERCÍCIO SEM RESPOSTA FICA FORA DA MÉDIA, não entra como zero: 2024 sem
+  // receita não pode puxar a razão para baixo com um zero que ninguém afirmou.
+  const comBuraco = tresAnos.filter((l) => !(l.exercicio === 2024 && l.secao_canonica === "receita_bruta"));
+  const cv2 = achar(sugerirDoRealizado(comBuraco), "CUSTO_VARIAVEL");
+  ok(perto(cv2.valor, 0.6), "o exercício sem base fica FORA da média (0,50 e 0,70 = 0,60)",
+     String(cv2.valor));
+  ok(cv2.serie?.length === 2, "e a série mostra os dois que responderam", String(cv2.serie?.length));
+}
+
+// ---------------------------------------------------------------------------
+// 10. A PROJEÇÃO AUTOMÁTICA — cada premissa pela forma que cabe a ela
+// ---------------------------------------------------------------------------
+console.log("10. a projeção automática");
+{
+  const anos = [2026, 2027, 2028];
+
+  // MACRO → FOCUS. Ano sem expectativa publicada fica FORA, não recebe o valor
+  // do vizinho: um ano interpolado seria uma previsão que ninguém fez.
+  const ipca = projetarPremissa(
+    { codigo: "IPCA", natureza: "macro", formula: "indice_macro", unidade: "%" },
+    { anos, focus: { "2026": 4.2, "2027": 3.8 } },
+  );
+  ok(ipca.origem === "focus", "premissa macro sai do Focus", String(ipca.origem));
+  ok(Object.keys(ipca.valores).length === 2, "e o ano sem expectativa fica de fora",
+     JSON.stringify(ipca.valores));
+  ok(ipca.conta.includes("2028"), "a conta NOMEIA o ano que ficou sem", ipca.conta);
+  const semFocus = projetarPremissa(
+    { codigo: "IPCA", natureza: "macro", formula: "indice_macro", unidade: "%" }, { anos, focus: {} });
+  ok(semFocus.valores && Object.keys(semFocus.valores).length === 0 && !!semFocus.porQueNao,
+     "sem Focus nenhum, ela não projeta e diz por quê", String(semFocus.porQueNao));
+
+  // RAZÃO ESTRUTURAL → CONSTANTE NA MÉDIA. Uma empresa não muda de estrutura de
+  // custo por decreto; a hipótese honesta é que ela continua operando assim.
+  const pmr = projetarPremissa(
+    { codigo: "PMR", natureza: "giro", formula: "dias_de_giro", unidade: "dias" },
+    { anos, mediaHistorica: { valor: 81, exercicios: [2023, 2024, 2025], conta: "clientes ÷ receita × 360" } },
+  );
+  ok(pmr.origem === "media_historica", "razão estrutural sai da média histórica", String(pmr.origem));
+  ok(anos.every((a) => pmr.valores[String(a)] === 81), "constante em todos os anos projetados",
+     JSON.stringify(pmr.valores));
+  ok(pmr.conta.includes("3 exercícios"), "e a conta diz quantos exercícios entraram", pmr.conta);
+
+  const umSo = projetarPremissa(
+    { codigo: "PMR", natureza: "giro", formula: "dias_de_giro", unidade: "dias" },
+    { anos, mediaHistorica: { valor: 81, exercicios: [2025], conta: "clientes ÷ receita × 360" } },
+  );
+  ok(umSo.conta.includes("não uma média"),
+     "com um exercício só, ela se recusa a chamar o número de média", umSo.conta);
+
+  // CRESCIMENTO → INDEXADO, e a hipótese vai declarada. Indexar ao IPCA é
+  // afirmar que nada muda em termos reais, e isso é tese, não medição.
+  const cresc = projetarPremissa(
+    { codigo: "CRESC_NOMINAL", natureza: "receita", formula: "crescimento_composto", unidade: "%" },
+    { anos, indiceDoCaso: { codigo: "IPCA", valores: { "2026": 4.2, "2027": 3.8, "2028": 3.5 } } },
+  );
+  ok(cresc.origem === "indexado", "crescimento é indexado ao índice do mandato", String(cresc.origem));
+  ok(cresc.conta.includes("hipótese"), "e a conta DECLARA que é hipótese, não medição", cresc.conta);
+
+  // O QUE NÃO PROJETA SOZINHA. Capex e movimento de dívida são decisão do caso —
+  // zero seria uma afirmação sobre o negócio que ninguém fez.
+  const capex = projetarPremissa(
+    { codigo: "CAPEX_ANO", natureza: "investimento", formula: "valor_por_ano", unidade: "R$/ano" },
+    { anos, mediaHistorica: { valor: 4000, exercicios: [2025], conta: "x" } },
+  );
+  ok(Object.keys(capex.valores).length === 0 && !!capex.porQueNao,
+     "valor de decisão do caso NÃO é projetado por conta própria", String(capex.porQueNao));
+  ok(capex.porQueNao!.includes("inventar a tese"),
+     "e o motivo diz o que estaria sendo inventado", capex.porQueNao!);
+}
+
 console.log(`\n${passou} asserts passaram, ${falhas} falharam`);
 if (falhas > 0) process.exit(1);
 console.log("PREMISSAS DO REALIZADO OK — zero não é resposta, a base é a do modelo, subtotal não soma");
+console.log("MÉDIA E PROJEÇÃO OK — a razão sai de todos os exercícios, e cada premissa projeta pela forma que cabe a ela");
