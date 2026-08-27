@@ -1363,7 +1363,11 @@ const nodes = [
   // depois de adotar uma das alternativas.
   node('Upload Storage', 'n8n-nodes-base.httpRequest', 4.2, {
     method: 'POST',
-    url: '=https://SEU-PROJETO.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
+    // A REF DO PROJETO É DADO DE CONFIGURAÇÃO, NÃO SEGREDO: é a URL pública da
+    // API do Supabase, a mesma que o portal usa em `NEXT_PUBLIC_SUPABASE_URL`.
+    // O que NUNCA entra aqui é a `service_role`, que segue como placeholder no
+    // header `apikey` e é colada no editor do n8n (ver n8n/README.md).
+    url: '=https://mrcabcaotblleojxnsxc.supabase.co/storage/v1/object/documentos/{{ $json.caso_id }}/{{ encodeURIComponent($json.nome_original) }}',
     authentication: 'genericCredentialType',
     genericAuthType: 'httpHeaderAuth',
     sendHeaders: true, headerParameters: { parameters: [

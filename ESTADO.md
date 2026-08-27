@@ -18,9 +18,62 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0149_o_fato_material_endurecido.sql` — a auditoria adversarial da `0148` achou SETE defeitos no canal de fato material, cinco deles silenciosos, e esta migration os fecha. A `0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
 | **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | remedidas em 26/08 (sessão 71), todas verdes: n8n **364** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera do lote **44** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados**. O número do n8n dizia 353 aqui e valia 361 antes desta sessão — contador de suíte também envelhece |
+| **Suítes** | remedidas em 26-27/08 (sessões 71/71b), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera do lote **44** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 71b (27/08) — a republicação perdeu TODA a rede de proteção, e a conferência não viu
+
+O dono rodou o smoke test e recebeu **"Problem in node 'Upload Storage': Credential
+with ID REPLACE does not exist for type httpHeaderAuth"**. O nó é ramo lateral e
+está **desabilitado no repositório desde 17/07** (bug de plataforma do HTTP
+Request com binário) — em produção ele estava **habilitado**. Isso é sintoma, não
+causa.
+
+**A causa, medida contra o workflow vivo:** a republicação de 26/08 gravou os nós
+com `parameters` e perdeu **todos os campos de nó que vivem fora deles**:
+
+| O que sumiu | Nós | O que custa |
+|---|---:|---|
+| `onError: continueRegularOutput` | 23 | qualquer falha passa a **matar o lote inteiro** em vez de seguir |
+| `retryOnFail`/`maxTries`/`waitBetweenTries` | 11 | uma oscilação do provedor no `IA Extrair` (6 tentativas) mata o lote na primeira |
+| `disabled` do `Upload Storage` | 1 | o ramo lateral voltou a executar, com credencial `REPLACE` |
+
+**A conferência daquela sessão declarou "33 de 33 nós byte a byte iguais" e estava
+certa** — ela comparava `parameters`, e nada do que se perdeu mora ali. É o
+defeito de sempre com roupa nova: **espelho que compara só uma parte declara uma
+igualdade que não tem.** E o repositório já tinha o teste certo do lado dele
+(`Upload Storage: desabilitado`, no `workflow-sim.test.mjs`) — o que faltava era
+alguém conferir o PUBLICADO.
+
+**Como sei que não é o transporte escondendo campo:** o workflow do macro, que
+não foi republicado (última alteração 22/08), devolve `retryOnFail`,
+`maxTries`, `waitBetweenTries` e `onError` normalmente pela mesma leitura. A
+ausência no da ingestão é real.
+
+**O que entrou:** `n8n/conferir-publicado.mjs` — compara o nó INTEIRO (o que faz,
+**como falha**, e **se está ligado**), mais as conexões, contra o JSON baixado do
+editor. Ignora de propósito o que é da instalação e não do repositório: o `id` e
+o `name` da credencial, o `path` do formulário (sobrescrevê-lo troca a URL
+pública do intake) e a `position`; e cobra o contrapositivo, que é o útil — **um
+nó HABILITADO com o `REPLACE` do repositório na credencial não vai rodar**.
+Rodado contra o vivo: **59 divergências**. Nove testes próprios
+(`n8n/test/conferir-publicado.test.mjs`), um por coisa que ele tem de ver e um
+por coisa que ele tem de ignorar — um conferidor com ponto cego é pior que
+nenhum, porque produz a frase "está igual" com autoridade.
+
+**E a URL do Storage deixou de ser placeholder**, a pedido do dono: o
+`SEU-PROJETO` virou a ref real do projeto no `build-workflow.mjs`. Ela é a URL
+**pública** da API — a mesma do `NEXT_PUBLIC_SUPABASE_URL` do portal — e não é
+segredo; a `service_role` continua como placeholder no header `apikey`, para ser
+colada no editor. Nenhuma chave entra no repositório.
+
+**O que o dono precisa fazer, e por que é ele:** republicar o workflow com os
+campos de nó (esta sessão não tem chave da API do n8n, e o transporte do MCP
+decodifica os `\uXXXX` — corromperia a chave de dedup do `Juntar Blocos`, que é
+por isso que a 70 usou REST). Para destravar o smoke test **agora**, basta
+desabilitar o `Upload Storage` no editor: é ramo lateral, nada depende da saída
+dele, e foi assim que a v47 e a v48 rodaram.
 
 ## A SESSÃO 71 (26/08) — a preparação do teste de 190 documentos: a tela desistia de um lote vivo
 
