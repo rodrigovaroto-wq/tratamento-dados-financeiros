@@ -34,6 +34,7 @@
 // transformar a chave de dedup do `Juntar Blocos` num byte NUL cru. Por `curl`
 // com `--data-binary`, o byte que sai é o que este script escreveu.
 import { readFileSync } from 'node:fs';
+import { lerWorkflowDaEntradaPadrao, ehExecucaoDireta } from './entrada-workflow.mjs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,7 +85,7 @@ export function prepararRepublicacao(vivo, repo) {
     // As `settings` são da INSTALAÇÃO: é onde o dono ligou o `errorWorkflow`, e
     // sobrescrever com as do repositório o desligaria em silêncio — o defeito
     // desta família, cometido de novo em outro campo.
-    settings: { ...(repo.settings ?? {}), ...(vivo.settings ?? {}) },
+    settings: { ...repo.settings, ...vivo.settings },
   };
 }
 
@@ -101,26 +102,12 @@ export function credenciaisPendentes(pronto) {
 
 // ---------------------------------------------------------------------------
 
-const ehExecucaoDireta = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
-if (ehExecucaoDireta) {
-  if (process.stdin.isTTY) {
-    console.error('uso: curl -s -H "X-N8N-API-KEY: $K" "$URL/api/v1/workflows/$ID" \\');
-    console.error('       | node n8n/preparar-republicacao.mjs > publicar.json');
-    console.error('     o JSON do workflow PUBLICADO entra pela entrada padrão; o pronto sai pela saída padrão.');
-    process.exit(2);
-  }
-
-  const pedacos = [];
-  for await (const p of process.stdin) pedacos.push(p);
-
-  let bruto;
-  try {
-    bruto = JSON.parse(Buffer.concat(pedacos).toString('utf8'));
-  } catch (e) {
-    console.error(`recusado: a entrada padrão não trouxe um JSON válido (${e.message}).`);
-    process.exit(2);
-  }
-  const vivo = bruto.workflow ?? bruto.data ?? bruto;
+if (ehExecucaoDireta(import.meta.url)) {
+  const vivo = await lerWorkflowDaEntradaPadrao([
+    'uso: curl -s -H "X-N8N-API-KEY: $K" "$URL/api/v1/workflows/$ID" \\',
+    '       | node n8n/preparar-republicacao.mjs > publicar.json',
+    '     o JSON do workflow PUBLICADO entra pela entrada padrão; o pronto sai pela saída padrão.',
+  ]);
   const repo = JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
 
   const pronto = prepararRepublicacao(vivo, repo);
@@ -128,8 +115,11 @@ if (ehExecucaoDireta) {
   // O relatório vai para o ERRO, não para a saída: a saída é o JSON, e ela
   // costuma estar redirecionada para um arquivo.
   const pendentes = credenciaisPendentes(pronto);
+  const sobreOErro = pronto.settings.errorWorkflow
+    ? ` (errorWorkflow ${pronto.settings.errorWorkflow})`
+    : ' — SEM errorWorkflow';
   console.error(`pronto: ${pronto.nodes.length} nós, ${Object.keys(pronto.connections).length} com conexão, `
-    + `settings da instalação preservadas${pronto.settings.errorWorkflow ? ` (errorWorkflow ${pronto.settings.errorWorkflow})` : ' — SEM errorWorkflow'}.`);
+    + `settings da instalação preservadas${sobreOErro}.`);
   if (pendentes.length) {
     console.error(`\n${pendentes.length} credencial(is) ainda em REPLACE — o passo que só o editor resolve:`);
     for (const p of pendentes) {
