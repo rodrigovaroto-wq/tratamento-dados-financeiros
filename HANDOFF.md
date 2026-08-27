@@ -4,25 +4,52 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-26 (sessões 62 a **71**). **Estado do `main`:** mergeado até o **PR
-#181**. **A INFRA ESTÁ APLICADA E CONFERIDA PELA SONDA NESTA SESSÃO:** `fn_instalacao_conferir()`
-devolve 38 de 38 requisitos presentes, cobertura `0149`, e o workflow do n8n foi republicado na
-sessão 70 (33 de 33 nós byte a byte). **A SESSÃO 71 PREPAROU O LOTE DE 190 E ACHOU UM BLOQUEIO
-REAL:** num lote desse tamanho a tela declarava *"o processamento parou"* sobre um lote que estava
-andando — o merge `Juntar Ramos` é uma barreira e nenhum documento é registrado antes da última
-classificação, o que em 190 documentos são 13 a 25 minutos de silêncio legítimo contra um limite de
-8 minutos fixos. Corrigido, com a conta saindo da cadência do próprio nó e com as funções agora
-CHAMÁVEIS por teste (elas moravam dentro do componente, e o espelho que as "cobria" passava com o
-defeito religado). **O QUE FALTA PARA A RODADA É DO DONO**, e começa pelo smoke test de DOIS
-documentos — ver "POR ONDE COMEÇAR" abaixo. **A frente de reestruturação está EM ANDAMENTO, fora do
-`main`:** as sessões 68 e 69 (réplica completa por cenário, new money, equity×haircut e o cockpit
-das quatro alavancas) vivem na branch `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A
-SESSÃO 68" no topo do `ESTADO.md` antes de continuar por ali.
+**Última atualização:** 2026-08-27 (sessões 62 a **72**). **Estado do `main`:** mergeado até o **PR
+#182**; o **#183** está aberto com a frente desta sessão. **A INFRA ESTÁ APLICADA E CONFERIDA PELA
+SONDA:** `fn_instalacao_conferir()` devolve **41 de 41 requisitos presentes, cobertura `0150`** —
+conferido em 27/08, depois de eu mesmo aplicar a `0150`.
+
+**O TESTE COMPARATIVO SAIU, E É A MELHOR RODADA ATÉ AQUI.** Mandato `Teste comparativo - Grupo
+Canastra`, execução 7156: **38 documentos, 2.565 linhas, 17 fatos materiais, US$ 0,4257, ZERO
+documento com falha, ~9min38** — contra 2.460/0 fatos da v47 e 2.485/0 da v48. O canal de fato
+material rodou no book inteiro pela primeira vez, o lote FECHOU (`lote_execucao` gravada) e o
+`auditar-xlsx.mts` sobre o arquivo exportado passou nos 3 itens aplicáveis, com 3.149 fórmulas e
+nenhum erro.
+
+**E ELA ACHOU TRÊS DEFEITOS QUE NENHUMA SUÍTE PEGAVA — os três SEM PRODUZIR ERRO NENHUM.** É a
+lição desta sessão, e vale mais que os defeitos: *um estágio desligado tem exatamente a mesma
+aparência de um estágio que rodou e não achou nada.*
+
+1. **As premissas do realizado somavam o que não se soma** (`0150`): PMR de **348,6 dias** e custo
+   variável de **287,7% da receita**, gravados como premissa. Três causas — o total da DRE somando
+   com as próprias componentes, a abertura analítica (aging, estoque, extrato, balancete) somando
+   por cima da conta que ela abre, e as oito empresas do grupo medidas para um modelo que projeta
+   uma. Depois da correção, medido: custo variável **87,9%**, PMR **70 dias**;
+2. **O fatiamento nunca ligou e a cobertura estava desligada.** `Montar Req Extracao` montava um
+   item novo com cinco campos e descartava o que o `Medir Documento` tinha medido: sem
+   `linhas_do_texto` o `Fatiar Extracao` cai no fallback de UM bloco, e sem `contas_no_documento` a
+   guarda de extração incompleta — **a régua que mede alucinação por omissão** — nunca dispara. O
+   sintoma foi uma coluna nula no painel do lote, com o `Conferir Lote` verde;
+3. **A tela dizia "Tudo pronto" sobre uma execução morta** (sessão 71c), porque o registro de falha
+   depende do Error Workflow do n8n, que é passo manual. Hoje `pronto` exige o lote FECHADO.
+
+**A PROJEÇÃO DAS PREMISSAS DEIXOU DE SER DIGITADA.** Cada uma projeta pela forma que cabe a ela, e a
+regra sai do CATÁLOGO (`natureza`/`formula`), não de uma lista em código: macro pela mediana do
+**Focus**; razão estrutural constante na **média dos exercícios** (não no último — o último ano de
+uma empresa em reestruturação é o pior dela); crescimento **indexado** ao índice do mandato, com a
+hipótese declarada; e valor de decisão do caso **não projeta**, porque zero seria uma afirmação que
+ninguém fez.
+
+**O QUE FALTA É O `book-araucaria` (190 documentos)** — ver "POR ONDE COMEÇAR" abaixo. **A frente de
+reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68 e 69 (réplica completa por
+cenário, new money, equity×haircut e o cockpit das quatro alavancas) vivem na branch
+`claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do `ESTADO.md` antes de
+continuar por ali.
 
 > Este parágrafo NÃO é a autoridade sobre o estado do banco. Quem responde é a sonda
 > (`fn_instalacao_conferir`), contra o banco em que você está conectado — foi assim que a `0133`
 > foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **Desde a `0147` (sessão 67) a sonda
-> cobre 38 requisitos e enxerga o CORPO da função** — que é o que distingue uma correção aplicada de
+> enxerga o CORPO da função, e desde a `0150` (sessão 72) ela cobre 41 requisitos** — que é o que distingue uma correção aplicada de
 > uma função homônima com o corpo velho, e é a maior parte das migrations recentes. E o
 > `db/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova, então ele não
 > volta a envelhecer calado. **Mas a própria `0147` só responde depois de aplicada:** num banco sem
@@ -66,63 +93,58 @@ localizador tem de existir também na checagem que o consome. Sem esse quarto pa
 ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
 trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
-**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: A PREPARAÇÃO PARA O TESTE REAL.** A sessão 67 fechou as
-quatro frentes de código e a 70 aplicou a infra em produção. O que resta antes do teste real está
-listado abaixo, em ordem de execução, com o que já foi medido em cada um.
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: O `book-araucaria`, 190 DOCUMENTOS.** O smoke test e o
+`book-canastra` já rodaram (27/08) e estão medidos acima. O que resta está listado abaixo, em ordem,
+com o que já foi conferido em cada um.
 
-> **O NÚMERO QUE DEFINE ESTA FRENTE, medido em produção em 26/08:** o banco tem **551 documentos,
-> 52 casos e ZERO fatos gravados** — `documento_fato` está vazia e nenhuma versão tem
-> `fatos_avaliados_em`. O canal de fato material (`0148`/`0149`) está instalado, conferido por md5 e
-> **nunca rodou contra um documento real**. As suítes provam a aritmética de `fn_registrar_fatos`;
-> nenhuma prova que o modelo, lendo um PDF de verdade com o prompt novo, devolve `fatos` no formato
-> que a função aceita.
+> **O NÚMERO QUE DEFINIA ESTA FRENTE MUDOU DE SINAL.** Em 26/08 o banco tinha **zero fatos
+> gravados** e o canal de fato material nunca tinha rodado. Hoje o mandato do comparativo tem **17
+> fatos**, com `fatos_avaliados_em` preenchida — o caminho fecha ponta a ponta, do prompt à tela do
+> mandato.
 
-### 1. O SMOKE TEST DE DOIS DOCUMENTOS — antes de qualquer lote
+### 1. REPUBLICAR O WORKFLOW — e é o que destrava as duas correções de nó
 
-**Rodar 2 documentos antes de rodar 38 ou 190.** Os dois são as **Notas Explicativas (33)** e o
-**Parecer do Auditor (34)** do `test-data/book-canastra`: são exatamente os que carregam covenant
-rompido, ressalva e incerteza sobre continuidade operacional, e são os dois que a `0148` existe para
-deixar de emudecer.
+A correção do fatiamento e da cobertura é **código de nó Code**: ela está no repositório e **não
+está em produção** até o workflow ser republicado. Em um comando:
 
-- **custo**: 2 chamadas de IA, ~20 segundos;
-- **o que ele prova, e nenhuma suíte prova**: que o caminho inteiro fecha ponta a ponta — prompt →
-  `Parse Extracao` → `Juntar Blocos` → `fn_registrar_fatos` → tela do mandato;
-- **como conferir**: `select count(*) from documento_fato` tem de deixar de ser zero;
-  `fatos_avaliados_em` tem de estar preenchida nas duas versões; e o `trecho` gravado tem de ser
-  **frase literal do PDF**, conferida à mão contra o documento — é ele que vai ao comitê;
-- **por que antes e não depois**: se o prompt ou o parse estiverem errados, um lote grande gasta
-  ~25 minutos e dinheiro real para descobrir o mesmo zero.
+```bash
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
+  | node n8n/preparar-republicacao.mjs > publicar.json
+curl -X PUT -H "X-N8N-API-KEY: $N8N_API_KEY" -H 'Content-Type: application/json' \
+  "$N8N_URL/api/v1/workflows/$ID" --data-binary @publicar.json
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
+  | node n8n/conferir-publicado.mjs
+```
 
-**Este passo depende do DONO** — o upload é pelo formulário do n8n, e nenhuma sessão consegue enviar
-arquivo por lá.
+O preparador existe porque **duas republicações seguidas perderam a mesma família de coisas**:
+`onError` em 23 nós, `retryOnFail`/`maxTries` em 11, e — a pior — o **`multipleFiles: true`** do
+campo de arquivo do formulário, sem o qual o intake aceita **um documento por vez**. Confira esse
+toggle no editor antes de subir 190 arquivos; é o único item que impede a rodada de acontecer.
 
-### 2. O FINGERPRINT MUDOU — o lote vai ser preço cheio, e isso está certo
+### 2. A COTA DO DIA É O LIMITE QUE APERTA, não a cadência
 
-Medido em 26/08: produção tem **76 versões com `f45e9dded4352886`**; o workflow vivo agora manda
-**`f17efcbc53780818`**. O prompt mudou (hierarquia + fatos materiais), então a mudança está correta
-— mas significa que **não há reaproveitamento nenhum**: nenhum documento pula a chamada de IA na
-próxima rodada. Não é problema a corrigir; é número a saber antes da fatura, não depois.
+No nível gratuito da linha Flash-Lite: **RPM 15** (usamos 7,5), **TPM 250K** (usamos ~54K) e
+**RPD 500** — este último é o que decide. Medido: o `book-canastra` pede **63 chamadas** (13% do
+dia) e o `book-araucaria`, ~**285** (57%). Os dois no mesmo dia passam de 70% **antes de qualquer
+retentativa**, e o nó de extração tem até 6. `node n8n/medir-custo-book.mjs` responde "quanto do dia
+este lote pede" ao lado de "quanto ele custa".
 
-### 3. RODAR O BOOK, e o que medir nele
+**Um book por dia.** E o painel do Google mostra o **pico dos últimos 28 dias**, não o consumo de
+hoje — foi assim que eu li errado uma vez.
 
-É o que mede se o modelo obedece ao prompt novo da hierarquia e se ele acha os fatos materiais.
-**Espere a hierarquia derrubar as 12 pendências falsas de seção/duplicidade — e confira se derrubou,
-porque essa é a medida da frente inteira.**
+### 3. RODAR O `book-araucaria`, e o que medir nele
 
-**Há um terceiro book, e ele NÃO está no repositório.** O `book-araucaria` — 190 documentos, 14
-empresas, 5 exercícios (2021 a 2025), 247 páginas, 16.081 linhas com número — foi construído na
-sessão 70 e entregue ao dono **por arquivo**, fora do git, por decisão dele. Quem for procurá-lo em
-`test-data/` não vai achar. Ele não mede se a extração acerta os números (os dois books versionados
-já medem); mede **se o sistema percebe que dois documentos do mesmo período discordam e escolhe o
-certo dizendo por quê** — a armadilha central é um combinado preliminar que infla o ativo do grupo
-em até 32.800 (R$ mil) **e fecha**, porque ativo e passivo caem na mesma medida quando um par
-intragrupo deixa de ser eliminado. São 15 armadilhas, cada uma catalogada com resposta certa no
-`GUIA_DE_TESTE.md` que o gerador escreve.
+**Ele NÃO está no repositório** — 190 documentos, 14 empresas, 5 exercícios, construído na sessão 70
+e entregue ao dono por arquivo, por decisão dele. Ele não mede se a extração acerta os números (os
+dois books versionados já medem); mede **se o sistema percebe que dois documentos do mesmo período
+discordam e escolhe o certo dizendo por quê** — a armadilha central é um combinado preliminar que
+infla o ativo do grupo em até 32.800 (R$ mil) **e fecha**, porque ativo e passivo caem na mesma
+medida quando um par intragrupo deixa de ser eliminado.
 
-**A ordem recomendada:** smoke test (2 docs) → `book-canastra` (38 docs, é o insumo das análises v47
-e v48 e o que permite comparar contra elas) → `book-araucaria` (190 docs), que é o teste de estresse
-e cuja pergunta o sistema hoje **em parte ainda não decide sozinho** — não há mecanismo de desempate
-entre duas versões do mesmo período. Isso é o resultado que a rodada vai revelar, e é o valor dela.
+**O que esta sessão mudou no que ele vai encontrar:** a `0150` já tira o COMBINADO da soma do
+realizado (ele é a soma das empresas), e a cobertura por documento volta a ser avaliada depois da
+republicação. **O que continua sem resposta é o desempate**: não há mecanismo que escolha entre duas
+versões do mesmo período. Isso é o resultado que a rodada vai revelar, e é o valor dela.
 
 ### 4. O que NÃO bloqueia o teste real
 
@@ -134,8 +156,8 @@ entre duas versões do mesmo período. Isso é o resultado que a rodada vai reve
   cliente, B4.1) e preencher os `[A CONFIRMAR]` do `docs/10`.
 
 > **ANTES DE ESCREVER QUE A INFRA CONTINUA APLICADA, RODE A SONDA.** `select * from
-> fn_instalacao_conferir()` contra o banco em que você está conectado. Em 26/08 ela devolvia 38 de
-> 38 requisitos presentes e cobertura `0149` — mas essa frase envelhece, e é exatamente assim que a
+> fn_instalacao_conferir()` contra o banco em que você está conectado. Em 27/08 ela devolvia 41 de
+> 41 requisitos presentes e cobertura `0150` — mas essa frase envelhece, e é exatamente assim que a
 > `0133` passou três documentos dada por aplicada sem estar. É a regra que o `ESTADO.md` aplica a si
 > mesmo.
 
@@ -158,6 +180,7 @@ entre duas versões do mesmo período. Isso é o resultado que a rodada vai reve
 | **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
 | **70** | **A auditoria adversarial do fato material e a infra aplicada.** A `0148` foi relida com a pergunta invertida — "o que eu faria para quebrar isto sem que ninguém percebesse?" — e devolveu SETE defeitos, cinco silenciosos: a página alucinada que derrubava o DIAGNÓSTICO inteiro junto (mesma query), o reenvio de arquivo que fazia os fatos sumirem da tela, a ordem indeterminada numa tela em que a ordem significa gravidade, a `confianca` que nunca recebeu valor, e o `Juntar Blocos` que descartava os fatos dos blocos 2..N (`0149`). Os sete religamentos conferidos um a um — e DOIS deles só reprovaram depois de a própria suíte ser corrigida, porque testavam a lib e não o nó de produção. A `0147`, a `0148` e a `0149` aplicadas em produção e conferidas por md5; o workflow republicado pela API REST e conferido por hash, 33 de 33 nós. E um terceiro book, o `book-araucaria` (190 documentos, 14 empresas, 5 exercícios), construído e entregue ao dono FORA do repositório |
 | **71** | **A preparação do lote de 190, e o que ela achou.** A tela desistia de um lote vivo: o merge `Juntar Ramos` (`mode: append`) é uma BARREIRA — nenhum documento é registrado antes da última classificação, uma a cada 8s — e o limite de silêncio da tela era 8 minutos FIXOS, calibrado no lote de 38; em 190 documentos o silêncio legítimo vai a 13 min (proporção medida) ou 25 (pior caso), e o analista reenviaria um lote em execução, pagando a IA duas vezes. Mais o teto da janela, que truncava em 1,77× a margem de 3× que ela promete. As quatro contas saíram de dentro do componente para uma lib e a suíte passa a CHAMÁ-LAS: o espelho anterior refazia a fórmula e passava com o defeito religado. E o orçamento do lote de 190 foi simulado contra o guarda real — cabe por conteúdo (US$ 0,93 a 2,30), e um único PDF sem camada de texto derruba o lote inteiro para a conta por tamanho (US$ 2,47 a 3,21), que recusa no pior caso |
+| **72** | **A rodada comparativa do Canastra, e os três defeitos que não davam erro.** 38 documentos, **2.565 linhas** e **17 fatos materiais** (contra 2.460/0 e 2.485/0 das v47/v48), US$ 0,4257, zero falha, o lote FECHANDO. E três achados silenciosos: as premissas do realizado somando o total da DRE com as próprias componentes, a abertura analítica por cima da conta que ela abre e as oito empresas num modelo de uma (`0150` — PMR de 348,6 para 70 dias, custo variável de 287,7% para 87,9%); o `Montar Req Extracao` descartando a medição do documento, o que mantinha **o fatiamento desligado e a guarda de cobertura muda**; e a tela dizendo "Tudo pronto" sobre execução morta, porque o registro de falha depende de um passo manual do n8n. Mais a projeção das premissas deixando de ser digitada: Focus para as macro, média dos exercícios para as razões, indexação para o crescimento — a regra saindo do catálogo, não de uma lista em código |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
@@ -363,11 +386,16 @@ cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 cd test-data/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 38 docs, 3 exercícios
 node n8n/medir-custo-book.mjs                                          # o custo do lote, sem gastar
 
-node --test 'n8n/test/*.test.mjs'                                     # 180
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 529
-PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 55 migrations, do zero
+node --test 'n8n/test/*.test.mjs'                                     # 382
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 713
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 94 migrations, do zero
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
   ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
+
+# e as três que nasceram depois deste bloco:
+./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts  # 51
+./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts      # 59
+./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts            # 35
 ```
 
 > Pegadinha 1: **`E2E_PSQL` é o COMANDO do psql, não um flag.** Com `E2E_PSQL=1` — como o antigo
