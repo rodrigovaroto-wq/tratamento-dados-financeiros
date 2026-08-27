@@ -731,7 +731,34 @@ const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_EXTRACAO}',sistema:promptSist
 // string of comma-separated values" no Registrar Diagnostico e no Reconciliar.
 // Dado que o item CARREGA nao depende de pareamento nenhum.
 const docId=reg.documento_id||null;
-return {json:{documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, ia_body:body}};
+// O CONTEXTO DA MEDICAO VIAJA JUNTO, e nao viajava.
+//
+// ACHADO NA RODADA COMPARATIVA DO CANASTRA (27/08/2026), com o Conferir Lote
+// VERDE e sem erro nenhum no n8n. Este no' montava um item NOVO com cinco
+// campos e descartava tudo o que o \`Medir Documento\` tinha medido. Um defeito
+// de omissao, com tres sintomas silenciosos:
+//
+//   1. \`linhas_do_texto\` nao chegava ao \`Fatiar Extracao\`, que sem ele cai no
+//      fallback de UM bloco -- o FATIAMENTO NUNCA LIGOU. O medidor previa 4
+//      documentos fatiados no book; a rodada gravou \`documentos_fatiados: 0\`,
+//      e o 17_Livro_Razao foi a UMA chamada em vez de quatro;
+//   2. \`contas_no_documento\` nao chegava ao \`Juntar Blocos\`, e sem o esperado
+//      \`avaliarCobertura\` nunca dispara: A GUARDA DE EXTRACAO INCOMPLETA ESTAVA
+//      DESLIGADA. E' a regua que mede alucinacao por omissao -- a que mais
+//      importa num lote de 190;
+//   3. e o painel do lote gravava \`contas_nos_documentos: 0\` e
+//      \`cobertura_do_lote: null\`, que foi o sintoma pelo qual isto apareceu.
+//
+// Nenhum dos tres da erro: um documento nao fatiado roda, uma cobertura nao
+// avaliada nao acusa, e um campo nulo no painel parece "ainda nao medido". E'
+// a mesma familia do defeito da v47 -- um no' lendo o que o anterior nao
+// entrega --, e a guarda daquela vez so' cobria no' Postgres.
+//
+// \`content_part\` e \`ia_body\` ficam de fora do espalhamento de proposito: o
+// primeiro e' o PDF inteiro em base64 e ja' esta' dentro do corpo montado; o
+// segundo e' substituido logo abaixo.
+const {content_part:_cpDescartado, ia_body:_obDescartado, ...contextoDaMedicao}=prep;
+return {json:{...contextoDaMedicao, documento_id:docId, documento_versao_id:versaoId, tipo:prep.tipo_taxonomia||null, aviso_conteudo:prep.aviso_conteudo??null, ia_body:body}};
 `.trim();
 
 // --- Code (ALL ITEMS): recompõe contexto + resultado do Postgres, POR ÍNDICE --
@@ -1111,9 +1138,10 @@ const custo_usd=custoDaChamada(uso, '${MODEL_EXTRACAO}');
 // planilha cortada E resposta truncada cabem no mesmo documento, e esconder um
 // dos dois e' a falha que esta mudanca fecha.
 const falhaFinal=[avisoConteudo,falhaMotivo].filter(Boolean).join(' | ')||null;
-// \`bloco\`/\`blocos\`/\`celulas_no_documento\` viajam para o \`Juntar Blocos\`: sem
+// \`bloco\`/\`blocos\`/\`celulas_no_documento\`/\`contas_no_documento\` viajam para o
+// \`Juntar Blocos\`: sem
 // eles a juncao nao sabe a ordem dos pedacos nem tem regua para a cobertura.
-return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:uso?{entrada:uso.prompt_tokens??null, saida:uso.completion_tokens??null, cache:uso.prompt_tokens_details?.cached_tokens??0}:null}};
+return {json:{documento_id:ctx.documento_id??null, documento_versao_id:ctx.documento_versao_id??null, bloco:ctx.bloco??1, blocos:ctx.blocos??1, celulas_no_documento:ctx.celulas_no_documento??null, contas_no_documento:ctx.contas_no_documento??null, campos, diagnostico, falha_motivo:falhaFinal, custo_usd, tokens:uso?{entrada:uso.prompt_tokens??null, saida:uso.completion_tokens??null, cache:uso.prompt_tokens_details?.cached_tokens??0}:null}};
 `.trim();
 
 const PG_CRED = { postgres: { id: 'REPLACE', name: 'Supabase Postgres (Session Pooler)' } };

@@ -92,20 +92,67 @@ O caso tinha modelagem definida e 10 premissas ativas, e **zero vínculos**. For
 aplicados pelas mesmas funções da tela: 4 lotes por seção e 5 vínculos de linha,
 **35 vínculos, zero órfãos, `pronto: true`** — o que destravou o export.
 
+### A COBERTURA ESTAVA DESLIGADA, e o sintoma era uma coluna nula
+
+`lote_execucao.cobertura` veio **null** e `contas_nos_documentos` veio **0**, com
+o `Conferir Lote` VERDE e nenhum erro no n8n. A causa é um defeito de OMISSÃO em
+`Montar Req Extracao`: ele montava um item NOVO com cinco campos e jogava fora
+tudo o que o `Medir Documento` tinha medido. Três consequências, e **nenhuma delas
+dá erro**:
+
+1. sem `linhas_do_texto`, o `Fatiar Extracao` cai no fallback de UM bloco e **o
+   fatiamento nunca ligou** — o medidor previa 4 documentos fatiados no book, e a
+   rodada gravou `documentos_fatiados: 0`. O `17_Livro_Razao` foi a uma chamada
+   em vez de quatro;
+2. sem `contas_no_documento`, `avaliarCobertura` no `Juntar Blocos` nunca dispara:
+   **a guarda de extração incompleta estava desligada** — e ela é a régua que mede
+   alucinação por omissão, a que mais importa num lote de 190;
+3. e o painel do lote grava cobertura nula, que foi o fio pelo qual isto apareceu.
+
+É a mesma família do defeito da v47 — um nó lendo o que o anterior não entrega —
+e a guarda daquela vez só cobria nó **Postgres**. A nova cobre o caminho de
+Code: os campos que os nós de baixo leem do contexto têm de chegar. Religada, ela
+reprova com *"Montar Req Extracao descartou `linhas_do_texto`"*.
+
+### A `0150` APLICADA, e o efeito medido no caso real
+
+Aplicada em produção nesta sessão: `fn_instalacao_conferir()` devolve **41 de 41
+requisitos presentes**, cobertura `0150`. O discriminador de subtotal marcou
+`(-) Custo dos produtos vendidos` (135.838 = a soma exata das cinco componentes)
+e `Receita operacional bruta` (188.000 = a soma exata das quatro linhas de venda)
+— **e o refinamento por SINAL**, feito depois de ver o resultado, pegou também
+`(-) Deduções da receita bruta` (48.128 = ICMS + PIS/COFINS + devoluções). Sem
+ele, receita e dedução moram na mesma seção, nenhum dos dois bate com o dobro de
+si mesmo, e a dedução contaria duas vezes.
+
+As premissas, antes e depois, na entidade que o modelo projeta:
+
+| | antes | 2023 | 2024 | 2025 | **média (nova)** |
+|---|---:|---:|---:|---:|---:|
+| Custo variável | 287,7% | 74,8% | 91,7% | 97,1% | **87,9%** |
+| SG&A | 83,2% | 13,3% | 23,2% | 45,9% | **27,5%** |
+| PMR | 348,6 d | 63 | 72 | 74 | **70** |
+| PME | 177,5 d | 42 | 48 | 48 | **46** |
+| PMP | 76,7 d | 80 | 97 | 152 | **110** |
+
+**A série é a prova de que a média importa:** o custo variável sobe de 74,8% para
+97,1% em três anos. Projetar do último ano fixaria 97,1% como estrutura de custo
+— a crise virando regime, que é exatamente o que a média evita.
+
 ### O que fica aberto, e é do dono
 
-- **`ultimo_exercicio_real` está 2026** no mandato, e o caso tem dados até
-  **2025** — por isso as premissas cobrem 2027–2031. É decisão dele;
-- **`cobertura` e `contas_nos_documentos` vieram vazias** em `lote_execucao`,
-  com o `Conferir Lote` verde e sem erro no n8n. A cobertura é a régua que mede
-  alucinação por omissão, e é a que mais importa no araucária;
-- **reprocessar as premissas do caso** com a `0150` aplicada, para os números
-  descerem do absurdo.
+- ~~`ultimo_exercicio_real` em 2026~~ **corrigido pelo dono para 2025**;
+- ~~`cobertura` e `contas_nos_documentos` vazias~~ **causa achada e corrigida** —
+  ver acima. Falta **republicar o workflow** para a correção valer em produção;
+- **reprocessar as premissas do caso** pela tela, agora que a `0150` está
+  aplicada — os números medidos estão na tabela acima;
+- **republicar o workflow** (`preparar-republicacao.mjs`), para o fatiamento e a
+  cobertura voltarem a funcionar antes do araucária.
 
 ### Contadores
 
-premissas do realizado **32 → 51** · banco **94 migrations** (a `0150`) · n8n
-**381** · export **713** · transcrição **35** · falha/espera/veredito **59** ·
+premissas do realizado **32 → 51** · banco **94 migrations** (a `0150`, aplicada em
+produção) · n8n **382** · export **713** · transcrição **35** · falha/espera/veredito **59** ·
 e2e **46** · variações 25 rodadas / 0 achados. `tsc`, `eslint` e `next build`
 limpos.
 

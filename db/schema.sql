@@ -4091,11 +4091,20 @@ CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DE
   -- milhar não fecha ao centavo: medido no Canastra, 177.077 contra 177.133
   -- (0,03%). Sem folga, o discriminador não dispararia exatamente no caso que o
   -- motivou.
+  -- O SINAL SEPARA AS DUAS FAMÍLIAS QUE MORAM NA MESMA SEÇÃO. Medido no Canastra
+  -- 2025: `receita_bruta` guarda as receitas (positivas) E as deduções
+  -- (negativas), e cada família tem o próprio total impresso —
+  -- "Receita operacional bruta" 188.000 e "(-) Deduções da receita bruta"
+  -- 48.128. Somando a seção inteira, nenhum dos dois bate com o dobro de si
+  -- mesmo, e o discriminador não dispara para nenhum: a receita ficaria certa e
+  -- a dedução contaria duas vezes. Agrupando por sinal, os dois batem — 188.000
+  -- contra as quatro linhas de venda, 48.128 contra ICMS, PIS/COFINS e
+  -- devoluções.
   soma_das_contas as (
-    select a.secao_canonica, a.exercicio, a.entidade,
+    select a.secao_canonica, a.exercicio, a.entidade, sign(a.valor) as sinal,
            sum(abs(a.valor)) filter (where a.papel = 'conta') as total_contas
     from agrupado a
-    group by a.secao_canonica, a.exercicio, a.entidade
+    group by a.secao_canonica, a.exercicio, a.entidade, sign(a.valor)
   )
   select
     a.secao_canonica,
@@ -4121,6 +4130,7 @@ CREATE FUNCTION public.fn_linhas_do_realizado(p_caso_id uuid, p_entidade text DE
     on s.secao_canonica is not distinct from a.secao_canonica
    and s.exercicio = a.exercicio
    and s.entidade is not distinct from a.entidade
+   and s.sinal = sign(a.valor)
 $$;
 
 --
