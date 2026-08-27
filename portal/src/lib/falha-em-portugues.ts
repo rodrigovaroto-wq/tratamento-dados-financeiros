@@ -165,6 +165,34 @@ const ASSINATURAS: Array<{
     },
   },
   {
+    // O LOTE QUE NÃO FECHOU — a falha que ninguém registrava.
+    //
+    // Achado com o dono na tela, em 27/08/2026: a execução morreu no primeiro nó
+    // (`Upload Storage`, com credencial `REPLACE`) e o portal disse **"Tudo
+    // pronto"**. Não foi descuido da tela: o registro de falha depende do Error
+    // Workflow do n8n, que é um passo MANUAL de configuração e **não está
+    // ligado** — então nada foi escrito, e a tela deduziu sucesso de contadores
+    // que o ramo sobrevivente satisfez sozinho.
+    //
+    // O sinal que substitui isso não depende de ninguém configurar nada: o
+    // workflow termina em `Gravar Uso do Lote` → `Conferir Lote`, e um lote que
+    // fecha DEIXA LINHA em `lote_execucao`. Medido nas duas rodadas: a v47 e a
+    // v48 deixaram; as duas execuções que morreram não deixaram nenhuma. "O
+    // lote fechou?" é a diferença entre terminar e morrer no meio.
+    quando: ["lote_nao_fechou", "o lote nao fechou"],
+    explicada: {
+      titulo: "O processamento parou antes de terminar.",
+      explicacao:
+        "Parte dos arquivos chegou a ser lida, mas o processamento foi interrompido antes de fechar "
+        + "o mandato — então o que está aí dentro pode estar pela metade, e não dá para saber quanto "
+        + "falta só olhando a tela.",
+      oQueFazer:
+        "Não use este mandato como base para nada ainda. Fale com o Varoto com o nome do mandato e a "
+        + "hora do envio — é por aí que se acha onde parou.",
+      quemResolve: "suporte",
+    },
+  },
+  {
     // O caso que o Error Workflow produz quando o n8n não deixou mensagem.
     quando: ["parou sem mensagem de erro"],
     explicada: {
@@ -187,10 +215,13 @@ const ASSINATURAS: Array<{
 const GENERICA: FalhaExplicada = {
   titulo: "O sistema parou por um problema técnico.",
   explicacao:
-    "O processamento foi interrompido antes de terminar. Não foi nada que você fez, e os arquivos "
-    + "que você enviou não se perderam.",
+    "O processamento foi interrompido antes de terminar e o sistema não soube dizer por quê. Não foi "
+    + "nada que você fez, e os arquivos que você enviou não se perderam.",
+  // O DONO PEDIU O NOME, e o nome faz diferença: "contate o suporte" é um beco
+  // quando a equipe é uma pessoa. Quem lê isto sabe exatamente para quem virar.
   oQueFazer:
-    "Envie a mensagem técnica abaixo para quem cuida do sistema — é ela que diz o que aconteceu.",
+    "Entre em contato com o Varoto para ele resolver essa questão para você — leve a mensagem "
+    + "técnica abaixo, o nome do mandato e a hora do envio.",
   quemResolve: "suporte",
 };
 
@@ -252,28 +283,48 @@ export function explicarParada(progresso: { processados: number; esperados: numb
  */
 export const FRACAO_MINIMA_COM_LINHAS = 0.5;
 
-export function explicarLoteVazio(resultado: { comLinhas: number; documentos: number }): FalhaExplicada | null {
+// DOCUMENTO SEM LINHA NÃO É DOCUMENTO SEM CONTEÚDO, e ignorar isso quebraria
+// justamente o que a `0148` existe para fazer.
+//
+// Medido no smoke test de 27/08/2026: as Notas Explicativas e o Parecer do
+// Auditor renderam **zero linhas** e **nove fatos materiais** — covenant
+// rompido, ressalva, continuidade operacional. É o resultado CERTO: esses
+// documentos não têm tabela numérica, eles dizem as coisas em texto. Uma
+// checagem que só conta linha chamaria de "nada pôde ser lido" exatamente o
+// lote que funcionou pela primeira vez — e um alarme falso desses ensina a
+// ignorar o alarme.
+//
+// Então o que se conta é DOCUMENTO QUE RENDEU ALGUMA COISA: linha ou fato.
+export function explicarLoteVazio(
+  resultado: { comLinhas: number; documentos: number; comFatos?: number },
+): FalhaExplicada | null {
   const { comLinhas, documentos } = resultado;
+  const comFatos = Math.max(0, Number(resultado.comFatos) || 0);
+  // Um documento pode ter linha E fato; somar contaria em dobro. O piso é o
+  // maior dos dois, que é o menor número que com certeza rendeu alguma coisa.
+  const renderam = Math.max(comLinhas, comFatos);
   if (documentos <= 0) return null;
-  if (comLinhas / documentos >= FRACAO_MINIMA_COM_LINHAS) return null;
+  if (renderam / documentos >= FRACAO_MINIMA_COM_LINHAS) return null;
 
-  if (comLinhas === 0) {
+  if (renderam === 0) {
     return {
       titulo: "Os arquivos chegaram, mas nada pôde ser lido deles.",
       explicacao:
-        `Nenhum dos ${documentos} arquivos rendeu uma única linha de dado. Isso não é um mandato `
-        + "vazio: é sinal de que a leitura falhou em todos, e o motivo costuma ser o mesmo para o lote inteiro.",
+        `Nenhum dos ${documentos} arquivos rendeu uma única linha de dado nem um único alerta de `
+        + "texto. Isso não é um mandato vazio: é sinal de que a leitura falhou em todos, e o motivo "
+        + "costuma ser o mesmo para o lote inteiro.",
       oQueFazer:
-        "Não use este mandato como base para nada. Avise quem cuida do sistema — e guarde o nome do "
-        + "mandato, que é por onde se acha a causa.",
+        "Não use este mandato como base para nada — e ele pode ser descartado sem perda, porque não "
+        + "há nada dentro dele. Entre em contato com o Varoto para ele resolver essa questão para "
+        + "você, com o nome do mandato e a hora do envio.",
       quemResolve: "suporte",
     };
   }
   return {
     titulo: "A maior parte dos arquivos não pôde ser lida.",
     explicacao:
-      `Só ${comLinhas} de ${documentos} arquivos renderam alguma linha de dado. O mandato existe, mas `
-      + "está incompleto o bastante para enganar quem olhar os números.",
+      `Só ${renderam} de ${documentos} arquivos renderam alguma coisa — linha de dado ou alerta de `
+      + "texto. O mandato existe, mas está incompleto o bastante para enganar quem olhar os números.",
     oQueFazer:
       "Abra o mandato e confira a fila de pendências antes de usar qualquer número daqui. Se a maioria "
       + "falhou pelo mesmo motivo, avise quem cuida do sistema.",

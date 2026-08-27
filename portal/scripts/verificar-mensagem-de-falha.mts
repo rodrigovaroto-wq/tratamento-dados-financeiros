@@ -19,6 +19,7 @@ import {
 } from "../src/lib/falha-em-portugues.ts";
 import {
   semPrimeiroSinalMs, janelaPara, SEM_PROGRESSO_MS, SEGUNDOS_POR_DOCUMENTO,
+  vereditoDoLote, CARENCIA_DO_FECHAMENTO_MS,
 } from "../src/lib/espera-do-lote.ts";
 import { readFileSync } from "node:fs";
 
@@ -222,6 +223,102 @@ checar(
   "o limite de 'parou de andar' deixou de ser 5 minutos — ele mede outra coisa que o silêncio inicial",
 );
 
+// ---------------------------------------------------------------------------
+// 6. O LOTE QUE NÃO FECHOU, E O LOTE QUE TROUXE FATO EM VEZ DE LINHA
+// ---------------------------------------------------------------------------
+//
+// Os dois nasceram da mesma tela, em 27/08/2026, e apontam para lados opostos:
+// um é a tela dizendo SUCESSO sobre uma execução morta, o outro seria a tela
+// dizendo FRACASSO sobre o lote que funcionou pela primeira vez.
+
+// (a) A execução morreu no `Upload Storage` e o portal disse "Tudo pronto".
+// O registro de falha depende do Error Workflow do n8n, que é passo manual e
+// não está ligado — então a rota passou a exigir o FECHAMENTO do lote, e a
+// falta dele chega aqui como uma falha de etapa `lote_nao_fechou`.
+checar(
+  explicarFalha({ etapa: "lote_nao_fechou", mensagem: "O lote não fechou: os 2 documento(s) foram lidos, mas o processamento não chegou ao fim (nenhum registro de encerramento do lote foi gravado)." })
+    .titulo.toLowerCase().includes("parou antes de terminar"),
+  "o lote que não fechou tem explicação própria, e não cai na genérica",
+);
+checar(
+  explicarFalha({ etapa: "lote_nao_fechou", mensagem: "" }).oQueFazer.includes("Varoto"),
+  "o lote que não fechou diz com quem falar",
+);
+
+// (b) A CAUSA DESCONHECIDA agora nomeia quem resolve. "Contate o suporte" é um
+// beco quando a equipe é uma pessoa; o dono pediu o nome, literalmente.
+const desconhecida = explicarFalha({ etapa: "algo novo", mensagem: "erro que ninguém previu" });
+checar(
+  desconhecida.oQueFazer.includes("Varoto"),
+  `a falha sem causa conhecida diz com quem falar — hoje diz: "${desconhecida.oQueFazer}"`,
+);
+checar(
+  !desconhecida.titulo.toLowerCase().includes("tudo pronto"),
+  "a falha sem causa conhecida jamais se parece com sucesso",
+);
+
+// (c) ZERO LINHA COM FATO NÃO É LOTE VAZIO. Medido no smoke test: Notas
+// Explicativas e Parecer do Auditor renderam 0 linhas e 9 fatos materiais, que
+// é o resultado CERTO — esses documentos dizem as coisas em texto. Uma checagem
+// que só conta linha acusaria justamente o lote que funcionou.
+checar(
+  explicarLoteVazio({ comLinhas: 0, comFatos: 2, documentos: 2 }) === null,
+  "o lote que rendeu só FATOS (Notas Explicativas + Parecer) foi acusado de vazio",
+);
+// e sem fato nenhum ele continua sendo acusado, que é o ponto.
+const vazioDeVerdade = explicarLoteVazio({ comLinhas: 0, comFatos: 0, documentos: 2 });
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.titulo.toLowerCase().includes("nada pôde ser lido"),
+  "o lote sem linha E sem fato deixou de ser acusado",
+);
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.oQueFazer.includes("Varoto"),
+  "o lote sem nada dentro diz com quem falar",
+);
+checar(
+  vazioDeVerdade !== null && vazioDeVerdade.oQueFazer.toLowerCase().includes("descartado"),
+  "o lote sem nada dentro diz que pode ser descartado — é o mandato vazio que o dono não quer na lista",
+);
+// A omissão de `comFatos` não pode mudar o veredito de quem já chamava a função
+// só com linhas: ausente é zero, não "não sei".
+checar(
+  explicarLoteVazio({ comLinhas: 0, documentos: 2 }) !== null,
+  "sem `comFatos`, o lote sem linha nenhuma deixou de ser acusado",
+);
+
+// ---------------------------------------------------------------------------
+// 7. O VEREDITO DO LOTE — a decisão que dizia "Tudo pronto" sobre uma execução morta
+// ---------------------------------------------------------------------------
+const AGORA = Date.parse("2026-08-27T12:00:00Z");
+const HA_DEZ_MINUTOS = AGORA - 10 * 60 * 1000;
+const AGORINHA = AGORA - 5 * 1000;
+const lote = (over: Partial<Parameters<typeof vereditoDoLote>[0]>) => vereditoDoLote({
+  classificados: 2, processados: 2, esperados: 2,
+  loteFechou: true, desdeMs: HA_DEZ_MINUTOS, agoraMs: AGORA, ...over,
+});
+
+checar(lote({}).estado === "pronto", "o lote que fechou com tudo lido tem de ficar pronto");
+checar(lote({ processados: 1 }).estado === "andando", "lote com documento faltando não é pronto nem falha");
+
+// O CASO DO DONO: contadores completos, lote NUNCA fechado. Antes isto era
+// "pronto"; agora é falha nomeada.
+checar(lote({ loteFechou: false }).estado === "nao_fechou",
+  "a execução que morreu sem fechar o lote voltou a ser reportada como sucesso");
+
+// A CARÊNCIA: um lote saudável passa alguns segundos com os contadores
+// completos e o fechamento ainda não gravado. Acusar aí seria alarme falso em
+// TODO lote — o alarme que ensina a ignorar o alarme.
+checar(lote({ loteFechou: false, desdeMs: AGORINHA }).estado === "andando",
+  "a carência sumiu: todo lote saudável passaria a acusar falha no instante entre o último documento e o fechamento");
+checar(CARENCIA_DO_FECHAMENTO_MS >= 60 * 1000,
+  "a carência do fechamento ficou curta demais para a cauda do workflow (3 nós)");
+
+// "NÃO SEI" NUNCA ACUSA. Se a consulta do fechamento falhar, o lote não pode
+// virar falha por causa da conferência — é a mesma regra que o `comLinhas` já
+// aplicava.
+checar(lote({ loteFechou: null }).estado === "pronto",
+  "uma consulta que falhou passou a derrubar um lote que terminou de verdade");
+
 if (falhas.length > 0) {
   console.error(`\n${falhas.length} falha(s):`);
   for (const f of falhas) console.error(`  ✗ ${f}`);
@@ -231,3 +328,5 @@ if (falhas.length > 0) {
 console.log(`${ok} verificações OK / 0 falhas`);
 console.log("MENSAGEM DE FALHA OK — toda causa real tem explicação própria, e nenhuma cita ferramenta");
 console.log("ESPERA DO LOTE OK — o silêncio da barreira e a janela cobrem o lote de 190");
+console.log("FIM DO LOTE OK — execução morta não vira sucesso, e fato conta como conteúdo");
+console.log("VEREDITO DO LOTE OK — pronto exige o lote FECHADO, com carência e sem acusar por \"não sei\"");

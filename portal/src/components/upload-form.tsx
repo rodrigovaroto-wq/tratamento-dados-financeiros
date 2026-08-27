@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { explicarFalha, explicarParada, explicarLoteVazio, type FalhaExplicada } from "@/lib/falha-em-portugues";
+import { ExcluirMandato } from "@/components/excluir-mandato";
 import { useRouter } from "next/navigation";
 import {
   estimativaEmMinutos, janelaPara, semPrimeiroSinalMs, proximoIntervalo,
@@ -45,7 +46,11 @@ export default function UploadForm({
   // A PARADA SEM REGISTRO — o caso que a 0108 não alcança (ver SEM_PROGRESSO_MS).
   const [parada, setParada] = useState<{ processados: number; esperados: number } | null>(null);
   // O LOTE QUE TERMINOU VAZIO. Vem do status, e só existe depois de `pronto`.
-  const [loteVazio, setLoteVazio] = useState<{ comLinhas: number; documentos: number } | null>(null);
+  const [loteVazio, setLoteVazio] = useState<{ comLinhas: number; comFatos: number; documentos: number } | null>(null);
+  // O ID DO MANDATO, que a rota já conhecia e não devolvia. Ele existe aqui por
+  // UM motivo: um mandato que terminou sem nada dentro tem de poder ser
+  // descartado da própria tela que o acusa — ver o bloco de explicação.
+  const [casoIdDoLote, setCasoIdDoLote] = useState<string | null>(null);
 
   // Acompanha silenciosamente, em segundo plano, até os arquivos enviados
   // estarem organizados — sem nomear nenhuma ferramenta ou etapa técnica.
@@ -76,6 +81,7 @@ export default function UploadForm({
         // A falha ENCERRA o acompanhamento. Continuar perguntando depois dela
         // seria manter a espera de pé sobre um processo que não vai voltar.
         if (!cancelado && resp.ok && json.falha) {
+          if (typeof json.casoId === "string") setCasoIdDoLote(json.casoId);
           setFalha({ etapa: json.falha.etapa, mensagem: json.falha.mensagem });
           return;
         }
@@ -96,8 +102,15 @@ export default function UploadForm({
           // — que NÃO é zero. Tratar os dois igual acusaria lote vazio por causa
           // de uma consulta que falhou, e um alarme falso desses ensina a
           // ignorar o alarme.
+          if (typeof json.casoId === "string") setCasoIdDoLote(json.casoId);
           if (typeof json.comLinhas === "number") {
-            setLoteVazio({ comLinhas: json.comLinhas, documentos: json.esperados });
+            setLoteVazio({
+              comLinhas: json.comLinhas,
+              // FATO CONTA COMO CONTEÚDO: um Parecer do Auditor rende zero
+              // linhas e o alerta que vai ao comitê. Ver `explicarLoteVazio`.
+              comFatos: typeof json.comFatos === "number" ? json.comFatos : 0,
+              documentos: json.esperados,
+            });
           }
           if (casoId) router.refresh();
           return;
@@ -260,6 +273,20 @@ export default function UploadForm({
           >
             {casoId ? "Voltar ao mandato →" : "Ver mandatos →"}
           </button>
+
+          {/* DESCARTAR O MANDATO QUE NÃO TROUXE NADA — na tela que o acusa.
+              O mandato é criado no PRIMEIRO nó do fluxo, antes de qualquer
+              leitura: ele é o recipiente em que todo o resto é gravado, e não
+              existe "criar depois" sem inverter o pipeline inteiro. O que dá
+              para garantir é o efeito prático — que ninguém fique com um
+              mandato vazio na lista sem saber o que fazer com ele.
+              Só aparece quando o lote terminou SEM CONTEÚDO NENHUM (nem linha
+              nem fato); um lote incompleto tem dado dentro, e apagá-lo perderia
+              o que deu certo. A confirmação é a mesma do resto do portal. */}
+          {loteVazio && !falha && !parada && loteVazio.comLinhas === 0 && loteVazio.comFatos === 0
+            && casoIdDoLote && (
+            <ExcluirMandato casoId={casoIdDoLote} nome={sucesso.mandato} />
+          )}
         </div>
       </div>
     );
@@ -333,7 +360,14 @@ export default function UploadForm({
           </div>
         </div>
 
-        {pronto && (
+        {/* O MODAL DE SUCESSO SÓ APARECE QUANDO HOUVE SUCESSO.
+            Ele era condicionado só a `pronto`, e `pronto` mede que o pipeline
+            TENTOU ler cada arquivo — não que ele conseguiu, e não que a
+            execução chegou ao fim. Foi assim que uma execução morta virou "Tudo
+            pronto" na tela do dono em 27/08/2026. Agora, se há o que explicar
+            (falha, parada ou lote sem conteúdo), a explicação é a tela — e ela
+            já é renderizada acima, antes de chegar aqui. */}
+        {pronto && !explicacao && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-tinta-900/40 px-4">
             <div className="w-full max-w-sm rounded-lg bg-folha p-6 text-center shadow-xl">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-ok-100 text-2xl">

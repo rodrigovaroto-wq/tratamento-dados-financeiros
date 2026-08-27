@@ -166,3 +166,58 @@ export function proximoIntervalo(intervaloAtual: number, decorridoMs: number): n
   if (decorridoMs < CADENCIA_RAPIDA_ATE_MS) return INTERVALO_ACOMPANHAMENTO_MS;
   return Math.min(INTERVALO_MAXIMO_MS, Math.round(intervaloAtual * FATOR_DESACELERACAO));
 }
+
+// ---------------------------------------------------------------------------
+// O VEREDITO DO LOTE — "terminou" não é "terminou bem"
+// ---------------------------------------------------------------------------
+//
+// ACHADO COM O DONO NA TELA, 27/08/2026: a execução morreu no primeiro nó
+// (`Upload Storage`, habilitado por engano com credencial `REPLACE`) e o portal
+// mostrou **"Tudo pronto"**. Nenhuma peça mentiu sozinha:
+//
+//   • o registro de falha depende do **Error Workflow** do n8n, que é passo
+//     MANUAL de configuração e não está ligado (conferido no workflow vivo:
+//     `settings` sem `errorWorkflow`) — nada foi escrito em `execucao_falha`;
+//   • e os contadores foram satisfeitos assim mesmo, porque o nó que morreu é
+//     ramo LATERAL: o irmão rodou inteiro e gravou documentos e eventos.
+//
+// Deduzir "terminou bem" de contadores é deduzir de um sintoma que a MORTE
+// também produz. O sinal que não depende de configuração nenhuma é o fim do
+// workflow: ele termina em `Gravar Uso do Lote` → `Conferir Lote`, e um lote que
+// fecha deixa linha em `lote_execucao`. Medido: v47 e v48 deixaram; as duas
+// execuções mortas do smoke test não deixaram nenhuma.
+//
+// A função é pura para poder ser CHAMADA por teste. A regra anterior morava
+// dentro da rota, e uma decisão que ninguém consegue chamar é uma decisão que
+// ninguém confere.
+export type VereditoDoLote =
+  | { estado: 'andando' }
+  | { estado: 'pronto' }
+  | { estado: 'nao_fechou' };
+
+// Entre o último documento extraído e a linha de `lote_execucao` correm três nós
+// (`Reconciliar` → `Resumo de Custo` → `Gravar Uso do Lote`), que levam
+// segundos. Dois minutos é folga larga para isso — e sem carência TODO lote
+// saudável acusaria falha na janela entre o último documento e o fechamento,
+// que é o alarme falso que ensina a ignorar o alarme.
+export const CARENCIA_DO_FECHAMENTO_MS = 2 * 60 * 1000;
+
+export function vereditoDoLote({
+  classificados, processados, esperados, loteFechou, desdeMs, agoraMs,
+}: {
+  classificados: number;
+  processados: number;
+  esperados: number;
+  /** `null` = não deu para conferir. "Não sei" NUNCA acusa um lote vivo. */
+  loteFechou: boolean | null;
+  desdeMs: number;
+  agoraMs: number;
+}): VereditoDoLote {
+  const contadoresCompletos = classificados >= esperados && processados >= esperados;
+  if (!contadoresCompletos) return { estado: 'andando' };
+  if (loteFechou !== false) return { estado: 'pronto' };
+
+  const esperandoHa = Number.isFinite(desdeMs) ? agoraMs - desdeMs : 0;
+  if (esperandoHa > CARENCIA_DO_FECHAMENTO_MS) return { estado: 'nao_fechou' };
+  return { estado: 'andando' };
+}

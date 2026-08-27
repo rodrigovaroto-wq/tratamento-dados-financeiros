@@ -18,9 +18,79 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0149_o_fato_material_endurecido.sql` — a auditoria adversarial da `0148` achou SETE defeitos no canal de fato material, cinco deles silenciosos, e esta migration os fecha. A `0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
 | **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | remedidas em 26-27/08 (sessões 71/71b), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera do lote **44** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
+| **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 71c (27/08) — o smoke test PASSOU, e a tela chamou de sucesso uma execução morta
+
+**A NOTÍCIA PRIMEIRO: `documento_fato` DEIXOU DE SER ZERO.** O dono rodou o smoke
+test e, no mandato `smoke test - 2 documentos`, as **Notas Explicativas** e o
+**Parecer do Auditor** renderam **9 fatos materiais** (6 + 3), com
+`fatos_avaliados_em` preenchida nas duas versões. É o item 1 do handoff — o canal
+da `0148`/`0149` **rodou contra documento real pela primeira vez**, e o caminho
+inteiro fechou ponta a ponta. Os dois renderam **zero linhas**, e isso é o
+resultado CERTO: esses documentos não têm tabela numérica, eles dizem as coisas
+em texto. (Um envio anterior, no mesmo mandato, trouxe dois PDFs do araucária com
+**201 linhas** — 34 + 167.)
+
+**E a tela disse "Tudo pronto" sobre uma execução que MORREU.** Nenhuma peça
+mentiu sozinha, e é a combinação que engana:
+
+1. a execução morreu no `Upload Storage` (habilitado por engano — ver a 71b);
+2. o registro de falha depende do **Error Workflow** do n8n, que é passo MANUAL
+   e **não está ligado** — conferido no workflow vivo: `settings` sem
+   `errorWorkflow`. Então `fn_falhas_abertas` não tinha o que devolver;
+3. e os contadores foram satisfeitos assim mesmo, porque o nó que morreu é ramo
+   **lateral**: o irmão (`Extrair Texto` → … → `Registrar Documento`) rodou
+   inteiro e gravou os documentos e os eventos de extração.
+
+**Deduzir "terminou bem" de contadores é deduzir de um sintoma que a MORTE também
+produz.** O sinal que não depende de ninguém configurar nada é o FIM do workflow:
+ele termina em `Gravar Uso do Lote` → `Conferir Lote`, e um lote que fecha deixa
+linha em `lote_execucao`. **Medido:** a v47 e a v48 deixaram (38 documentos, 2.460
+e 2.485 linhas); as **duas** execuções do smoke test não deixaram **nenhuma**.
+
+### O que mudou
+
+- **`pronto` passa a exigir o lote FECHADO** (`vereditoDoLote`, função pura em
+  `portal/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
+  passada a carência de 2 min (a cauda do workflow são 3 nós, segundos), vira
+  **falha nomeada** `lote_nao_fechou`. E "não sei" (a consulta falhou) **nunca**
+  acusa um lote vivo — a mesma regra que o `comLinhas` já aplicava;
+- **a falha sem causa conhecida passa a dizer com quem falar**, a pedido do dono:
+  *"Entre em contato com o Varoto para ele resolver essa questão para você"*.
+  "Contate o suporte" é um beco quando a equipe é uma pessoa;
+- **o lote vazio deixa de ser cego para os FATOS.** Esta era a armadilha: a
+  checagem contava só linha, e teria acusado *"nada pôde ser lido"* exatamente no
+  lote que funcionou pela primeira vez. Agora conta documento que rendeu **linha
+  ou fato**;
+- **o modal "Tudo pronto" não aparece quando há o que explicar.** Ele era
+  condicionado só a `pronto`, e a explicação (falha/parada/lote sem conteúdo) já
+  era renderizada antes — as duas coisas coexistiam;
+- **o mandato que terminou sem NADA dentro pode ser descartado da própria tela
+  que o acusa**, pelo `fn_excluir_caso` que já existia.
+
+### O que NÃO foi feito, e por que — o mandato "não criado"
+
+O pedido foi *"garanta que o mandato vazio não será criado se nenhuma linha for
+extraída"*. **"Nenhuma linha" é o critério errado, e o smoke test é a prova:** os
+dois documentos que o handoff mandava testar rendem zero linhas e nove fatos, e
+um portão por linha teria descartado justamente eles.
+
+E o mandato é criado no **primeiro nó** do fluxo (`Upsert Caso`), antes de
+qualquer leitura: ele é o recipiente em que todo o resto é gravado, e não existe
+"criar depois" sem inverter o pipeline inteiro. O que dá para garantir é o
+**efeito prático**, e é o que está feito: um lote sem linha E sem fato é
+**reportado como falha** (nunca como sucesso), a tela diz para não usar o
+mandato, e oferece o descarte com a confirmação de sempre. Apagar sozinho seria
+contra a doutrina do repositório — declarar, não apagar.
+
+### Contadores
+
+`verificar-mensagem-de-falha.mts` 44 → **59**. As demais inalteradas e
+reconferidas: n8n **373**, export **713**, transcrição **35**, premissas **32**,
+e2e **46**, banco **93 migrations**. `tsc`, `eslint` e `next build` limpos.
 
 ## A SESSÃO 71b (27/08) — a republicação perdeu TODA a rede de proteção, e a conferência não viu
 
