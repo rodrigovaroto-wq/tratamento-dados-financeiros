@@ -197,8 +197,8 @@ export type VereditoDoLote =
 
 // Entre o último documento extraído e a linha de `lote_execucao` correm três nós
 // (`Reconciliar` → `Resumo de Custo` → `Gravar Uso do Lote`), que levam
-// segundos. Dois minutos é folga larga para isso — e sem carência TODO lote
-// saudável acusaria falha na janela entre o último documento e o fechamento,
+// segundos. Dois minutos é folga larga para isso — e sem carência QUALQUER
+// lote saudável acusaria falha na janela entre o último documento e o fechamento,
 // que é o alarme falso que ensina a ignorar o alarme.
 export const CARENCIA_DO_FECHAMENTO_MS = 2 * 60 * 1000;
 

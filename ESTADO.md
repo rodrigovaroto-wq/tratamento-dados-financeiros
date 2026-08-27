@@ -86,6 +86,27 @@ qualquer leitura: ele é o recipiente em que todo o resto é gravado, e não exi
 mandato, e oferece o descarte com a confirmação de sempre. Apagar sozinho seria
 contra a doutrina do repositório — declarar, não apagar.
 
+### O Sonar, e a seção que mudou de lugar
+
+**A seção "O que os documentos dizem" desceu**, por decisão do dono depois de
+ver a tela com fato de verdade dentro: ela abria o mandato e passa a vir **depois
+do Kit Básico e de Documentos**, fechando a leitura "o que chegou → o que os
+papéis dizem" — e ainda antes da fila de pendências, que é o que a posição não
+podia custar. O comentário que justificava o lugar antigo foi reescrito, não
+apagado: ele agora conta a troca e o motivo dela.
+
+**Os nove achados do Sonar no PR #182, todos fechados** — e dois deles não eram
+código:
+
+| Achado | O que era |
+|---|---|
+| `S1135` "Complete the task associated to this TODO" (×2) | **português**: "TODO lote" é *every lot*, não um marcador de tarefa. Reescrito para "QUALQUER lote" |
+| `S3776` complexidade 34 em `conferir()` | quebrada em `conferirPresenca`/`conferirComportamento`/`conferirCredenciais` — a divisão é a do que se confere, não um fatiamento para agradar a métrica |
+| `S3776` complexidade 16 na rota de status | o par `comLinhas`/`comFatos` saiu para `conteudoDoLote`, e as duas consultas passaram a rodar em paralelo |
+| `S7744` objeto vazio inútil | `{ ...(p ?? {}) }` → `{ ...p }`: espalhar `null` já é vazio |
+| `S6582` optional chain (×2) | `(x.credentials ?? {})[t]` → `x.credentials?.[t]` |
+| `S8707` caminho vindo do argv (×2) | `lerWorkflow` valida sobre o caminho **resolvido** (é o que distingue `a/../../b` do que ele vira depois de normalizado): exige `.json`, exige existir e exige ser arquivo comum. Não prende a um diretório de propósito — ler o JSON que a pessoa baixou é o propósito do script |
+
 ### Contadores
 
 `verificar-mensagem-de-falha.mts` 44 → **59**. As demais inalteradas e

@@ -307,7 +307,7 @@ checar(lote({ loteFechou: false }).estado === "nao_fechou",
 
 // A CARÊNCIA: um lote saudável passa alguns segundos com os contadores
 // completos e o fechamento ainda não gravado. Acusar aí seria alarme falso em
-// TODO lote — o alarme que ensina a ignorar o alarme.
+// QUALQUER lote — o alarme que ensina a ignorar o alarme.
 checar(lote({ loteFechou: false, desdeMs: AGORINHA }).estado === "andando",
   "a carência sumiu: todo lote saudável passaria a acusar falha no instante entre o último documento e o fechamento");
 checar(CARENCIA_DO_FECHAMENTO_MS >= 60 * 1000,

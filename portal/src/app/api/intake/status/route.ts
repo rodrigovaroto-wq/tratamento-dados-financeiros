@@ -14,6 +14,47 @@ import { vereditoDoLote } from "@/lib/espera-do-lote";
 // pendências (se houver) continuam visíveis no dashboard do caso como sempre.
 export const runtime = "nodejs";
 
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/** Quantas versões distintas aparecem numa tabela que aponta para elas. */
+async function quantosRenderam(
+  supabase: Supabase, tabela: "campo_extraido" | "documento_fato", versaoIds: string[],
+): Promise<number | null> {
+  const { data, error } = await paginar<{ documento_versao_id: string }>((de, ate) =>
+    supabase
+      .from(tabela)
+      .select("documento_versao_id")
+      .in("documento_versao_id", versaoIds)
+      .order("id", { ascending: true })
+      .range(de, ate),
+  );
+  // ERRO AQUI NÃO DERRUBA O `pronto`. O lote terminou de verdade, e trocar essa
+  // notícia por uma tela de erro porque a CONFERÊNCIA falhou seria pior que não
+  // conferir. `null` diz "não sei", e quem lê trata diferente de zero.
+  if (error) return null;
+  return new Set(data.map((d) => d.documento_versao_id)).size;
+}
+
+/**
+ * O que o lote de fato PRODUZIU — a diferença entre "tentou" e "conseguiu".
+ *
+ * Um lote em que TODA leitura falhou emite exatamente os mesmos eventos de
+ * `extracao_sombra` de um lote perfeito, e a tela dizia "pronto" para os dois.
+ *
+ * OS FATOS CONTAM COMO CONTEÚDO, e ignorá-los acusaria o lote que funcionou:
+ * medido no smoke test de 27/08, as Notas Explicativas e o Parecer do Auditor
+ * renderam ZERO linhas e NOVE fatos materiais — que é o resultado certo, porque
+ * esses documentos dizem as coisas em texto, não em tabela.
+ */
+async function conteudoDoLote(supabase: Supabase, versaoIds: string[]) {
+  if (versaoIds.length === 0) return { comLinhas: null, comFatos: null };
+  const [comLinhas, comFatos] = await Promise.all([
+    quantosRenderam(supabase, "campo_extraido", versaoIds),
+    quantosRenderam(supabase, "documento_fato", versaoIds),
+  ]);
+  return { comLinhas, comFatos };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const casoNome = searchParams.get("caso")?.trim();
@@ -158,51 +199,13 @@ export async function GET(request: Request) {
 
   // TERMINOU E NÃO TROUXE NADA — o estado que passava por SUCESSO.
   //
-  // `pronto` mede que o pipeline TENTOU ler cada arquivo: um evento
-  // `extracao_sombra` por documento, gravado por `fn_registrar_campos_extraidos`
-  // tanto no acerto quanto na falha (0016). É a medida certa para saber que o
-  // trabalho acabou — e é cega para o que ele produziu. Um lote em que TODA
-  // leitura falhou emite exatamente os mesmos eventos de um lote perfeito, e a
-  // tela dizia "pronto" para os dois.
-  //
-  // `comLinhas` conta quantos documentos deixaram ao menos uma linha no banco.
-  // É a diferença entre "tentou" e "conseguiu".
-  //
-  // SÓ QUANDO `pronto`, e a condição é o que torna isto barato: é uma consulta a
-  // mais no ÚLTIMO polling, não a cada 8 segundos durante 20 minutos. Perguntar
-  // antes também não responderia nada — um documento sem linhas no meio do lote
-  // é um documento que ainda não foi lido.
-  let comLinhas: number | null = null;
-  let comFatos: number | null = null;
-  if (pronto && versaoIds.length > 0) {
-    const { data: campos, error: campoErr } = await paginar<{ documento_versao_id: string }>((de, ate) =>
-      supabase
-        .from("campo_extraido")
-        .select("documento_versao_id")
-        .in("documento_versao_id", versaoIds)
-        .order("id", { ascending: true })
-        .range(de, ate),
-    );
-    // ERRO AQUI NÃO DERRUBA O `pronto`. O lote terminou de verdade, e trocar
-    // essa notícia por uma tela de erro porque a CONFERÊNCIA falhou seria pior
-    // que não conferir. `null` diz "não sei", e quem lê trata diferente de zero.
-    if (!campoErr) comLinhas = new Set(campos.map((c) => c.documento_versao_id)).size;
-
-    // OS FATOS CONTAM COMO CONTEÚDO, e ignorá-los acusaria o lote que funcionou.
-    // Medido no smoke test de 27/08: as Notas Explicativas e o Parecer do
-    // Auditor renderam ZERO linhas e NOVE fatos materiais — que é o resultado
-    // certo, porque esses documentos dizem as coisas em texto, não em tabela.
-    // Contar só linha chamaria isso de "nada pôde ser lido".
-    const { data: fatos, error: fatoErr } = await paginar<{ documento_versao_id: string }>((de, ate) =>
-      supabase
-        .from("documento_fato")
-        .select("documento_versao_id")
-        .in("documento_versao_id", versaoIds)
-        .order("id", { ascending: true })
-        .range(de, ate),
-    );
-    if (!fatoErr) comFatos = new Set(fatos.map((f) => f.documento_versao_id)).size;
-  }
+  // `pronto` mede que o pipeline TENTOU ler cada arquivo, e é cego para o que
+  // ele produziu (ver `quantosRenderam`). SÓ QUANDO `pronto`, e a condição é o
+  // que torna isto barato: são duas consultas a mais no ÚLTIMO polling, não a
+  // cada 8 segundos durante 20 minutos.
+  const { comLinhas, comFatos } = pronto
+    ? await conteudoDoLote(supabase, versaoIds)
+    : { comLinhas: null, comFatos: null };
 
   return NextResponse.json({ classificados, processados, esperados, pronto, comLinhas, comFatos, casoId: caso.id });
 }

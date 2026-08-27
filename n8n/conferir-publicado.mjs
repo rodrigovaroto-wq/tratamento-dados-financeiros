@@ -48,7 +48,7 @@
 //     pelo n8n e sobrescrevê-los TROCA A URL PÚBLICA do intake — já se perdeu
 //     uma vez assim;
 //   • a `position` dos nós, que é do editor.
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,70 +66,88 @@ export const CAMPOS_DE_COMPORTAMENTO = [
 // existe no publicado e não no repositório, e é assim que tem de ser.
 const CAMPOS_DA_INSTALACAO = ['path'];
 function semCamposDaInstalacao(parametros) {
-  const copia = { ...(parametros ?? {}) };
+  const copia = { ...parametros };
   for (const c of CAMPOS_DA_INSTALACAO) delete copia[c];
   return copia;
 }
 
-export function conferir(vivo, repo) {
-  const achados = [];
-  const nosVivos = new Map((vivo.nodes ?? []).map((n) => [n.name, n]));
-  const nosRepo = new Map((repo.nodes ?? []).map((n) => [n.name, n]));
+const iguais = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+/** Os nós que só existem de um lado — cada um vira um achado. */
+function conferirPresenca(nosVivos, nosRepo) {
+  const achados = [];
   for (const nome of nosRepo.keys()) {
     if (!nosVivos.has(nome)) achados.push({ no: nome, campo: '(o nó)', vivo: 'ausente', repo: 'presente' });
   }
   for (const nome of nosVivos.keys()) {
     if (!nosRepo.has(nome)) achados.push({ no: nome, campo: '(o nó)', vivo: 'presente', repo: 'ausente' });
   }
+  return achados;
+}
 
-  for (const [nome, doRepo] of nosRepo) {
-    const oVivo = nosVivos.get(nome);
-    if (!oVivo) continue;
-
-    for (const campo of CAMPOS_DE_COMPORTAMENTO) {
-      // `undefined` e ausência são a mesma coisa nos dois lados; o que não pode
-      // é um lado declarar e o outro não.
-      const a = oVivo[campo];
-      const b = doRepo[campo];
-      if (JSON.stringify(a ?? null) !== JSON.stringify(b ?? null)) {
-        achados.push({ no: nome, campo, vivo: a ?? '(ausente)', repo: b ?? '(ausente)' });
-      }
+/** O que o nó FAZ e COMO ele falha — os campos que a republicação perdeu. */
+function conferirComportamento(nome, oVivo, doRepo) {
+  const achados = [];
+  for (const campo of CAMPOS_DE_COMPORTAMENTO) {
+    // `undefined` e ausência são a mesma coisa nos dois lados; o que não pode
+    // é um lado declarar e o outro não.
+    if (!iguais(oVivo[campo], doRepo[campo])) {
+      achados.push({ no: nome, campo, vivo: oVivo[campo] ?? '(ausente)', repo: doRepo[campo] ?? '(ausente)' });
     }
+  }
+  // Os PARÂMETROS, que é o que a conferência de 26/08 já cobria — mantida
+  // aqui para o conferidor ser um só.
+  if (!iguais(semCamposDaInstalacao(oVivo.parameters), semCamposDaInstalacao(doRepo.parameters))) {
+    achados.push({ no: nome, campo: 'parameters', vivo: '(diferente)', repo: '(diferente)' });
+  }
+  return achados;
+}
 
-    // Os PARÂMETROS, que é o que a conferência de 26/08 já cobria — mantida
-    // aqui para o conferidor ser um só.
-    if (JSON.stringify(semCamposDaInstalacao(oVivo.parameters)) !== JSON.stringify(semCamposDaInstalacao(doRepo.parameters))) {
-      achados.push({ no: nome, campo: 'parameters', vivo: '(diferente)', repo: '(diferente)' });
-    }
-
-    // As CREDENCIAIS, pelo tipo e pelo nome — nunca pelo id.
-    const tiposRepo = Object.keys(doRepo.credentials ?? {});
-    const tiposVivo = Object.keys(oVivo.credentials ?? {});
-    for (const tipo of new Set([...tiposRepo, ...tiposVivo])) {
-      const noRepo = (doRepo.credentials ?? {})[tipo];
-      const noVivo = (oVivo.credentials ?? {})[tipo];
-      if (!noRepo || !noVivo) {
-        achados.push({ no: nome, campo: `credentials.${tipo}`, vivo: noVivo ? 'presente' : '(ausente)', repo: noRepo ? 'presente' : '(ausente)' });
-        continue;
-      }
+/** As credenciais, pelo TIPO — nunca pelo id nem pelo nome (ver o topo). */
+function conferirCredenciais(nome, oVivo, doRepo) {
+  const achados = [];
+  const tipos = new Set([
+    ...Object.keys(doRepo.credentials ?? {}),
+    ...Object.keys(oVivo.credentials ?? {}),
+  ]);
+  for (const tipo of tipos) {
+    const noRepo = doRepo.credentials?.[tipo];
+    const noVivo = oVivo.credentials?.[tipo];
+    if (!noRepo || !noVivo) {
+      achados.push({
+        no: nome, campo: `credentials.${tipo}`,
+        vivo: noVivo ? 'presente' : '(ausente)', repo: noRepo ? 'presente' : '(ausente)',
+      });
+    } else if (noVivo.id === 'REPLACE' && !oVivo.disabled) {
       // O `REPLACE` publicado: a publicação não passou pela substituição, e o
       // nó vai falhar na primeira execução com "Credential with ID REPLACE
       // does not exist" — a menos que esteja desabilitado, que é o único caso
       // em que o repositório publica um placeholder de propósito.
-      if (noVivo.id === 'REPLACE' && !oVivo.disabled) {
-        achados.push({
-          no: nome, campo: `credentials.${tipo}.id`,
-          vivo: 'REPLACE (o placeholder do repositório) num nó HABILITADO',
-          repo: '(um id da instalação)',
-        });
-      }
+      achados.push({
+        no: nome, campo: `credentials.${tipo}.id`,
+        vivo: 'REPLACE (o placeholder do repositório) num nó HABILITADO',
+        repo: '(um id da instalação)',
+      });
     }
+  }
+  return achados;
+}
+
+export function conferir(vivo, repo) {
+  const nosVivos = new Map((vivo.nodes ?? []).map((n) => [n.name, n]));
+  const nosRepo = new Map((repo.nodes ?? []).map((n) => [n.name, n]));
+  const achados = conferirPresenca(nosVivos, nosRepo);
+
+  for (const [nome, doRepo] of nosRepo) {
+    const oVivo = nosVivos.get(nome);
+    if (!oVivo) continue;
+    achados.push(...conferirComportamento(nome, oVivo, doRepo));
+    achados.push(...conferirCredenciais(nome, oVivo, doRepo));
   }
 
   // As CONEXÕES: um nó certo ligado errado não aparece em nenhuma comparação
   // de nó.
-  if (JSON.stringify(vivo.connections ?? {}) !== JSON.stringify(repo.connections ?? {})) {
+  if (!iguais(vivo.connections ?? {}, repo.connections ?? {})) {
     achados.push({ no: '(o workflow)', campo: 'connections', vivo: '(diferente)', repo: '(diferente)' });
   }
 
@@ -137,6 +155,37 @@ export function conferir(vivo, repo) {
 }
 
 // ---------------------------------------------------------------------------
+
+// O CAMINHO VEM DA LINHA DE COMANDO, ENTÃO ELE É VALIDADO ANTES DE ABRIR.
+//
+// Ler um arquivo cujo caminho quem chama escolheu é o PROPÓSITO deste script —
+// o JSON sai do editor do n8n e cai onde a pessoa salvou, normalmente
+// `~/Downloads`. Então não cabe prender a leitura a um diretório: o que cabe é
+// exigir que o argumento descreva de fato um arquivo JSON, e não um diretório,
+// um dispositivo ou um caminho montado a partir de pedaços.
+//
+// A validação é feita sobre o caminho já RESOLVIDO (`resolve` normaliza `..` e
+// links relativos), e é isso que a torna útil: validar a string crua deixaria
+// passar `a/../../b`, que é outra coisa depois de normalizada.
+function lerWorkflow(argumento) {
+  const absoluto = resolve(String(argumento));
+  if (!absoluto.toLowerCase().endsWith('.json')) {
+    console.error(`recusado: "${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
+    process.exit(2);
+  }
+  let info;
+  try {
+    info = statSync(absoluto);
+  } catch {
+    console.error(`recusado: não encontrei "${absoluto}".`);
+    process.exit(2);
+  }
+  if (!info.isFile()) {
+    console.error(`recusado: "${absoluto}" não é um arquivo comum.`);
+    process.exit(2);
+  }
+  return JSON.parse(readFileSync(absoluto, 'utf8'));
+}
 
 const caminho = process.argv[2];
 const ehExecucaoDireta = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
@@ -146,11 +195,12 @@ if (ehExecucaoDireta) {
     console.error('     o primeiro é o JSON BAIXADO do n8n; o segundo, por padrão, é n8n/workflow.e1-ingestao.json');
     process.exit(2);
   }
-  const bruto = JSON.parse(readFileSync(caminho, 'utf8'));
+  const bruto = lerWorkflow(caminho);
   // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
   const vivo = bruto.workflow ?? bruto.data ?? bruto;
-  const doRepo = JSON.parse(readFileSync(
-    process.argv[3] ?? resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
+  const doRepo = process.argv[3]
+    ? lerWorkflow(process.argv[3])
+    : JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
 
   const achados = conferir(vivo, doRepo);
   const nNos = (doRepo.nodes ?? []).length;
