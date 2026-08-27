@@ -174,31 +174,43 @@ export function conferir(vivo, repo) {
 // de normalizada.
 const BASES_PERMITIDAS = [homedir(), RAIZ, tmpdir()].map((b) => resolve(b));
 
+// A MESMA comparação que `lerWorkflow` faz, exportada para o teste poder
+// exercitá-la — a trava de travessia é o tipo de código que ninguém testa à mão.
+// Ela é repetida lá dentro, e não chamada, de propósito: uma guarda escondida
+// atrás de uma chamada é invisível para quem lê o `lerWorkflow` e para a
+// análise estática que precisa ver o ramo terminar.
 export function dentroDeUmaBase(absoluto) {
   return BASES_PERMITIDAS.some((base) => absoluto === base || absoluto.startsWith(base + sep));
 }
 
-function recusar(motivo) {
-  console.error(`recusado: ${motivo}`);
-  process.exit(2);
-}
+// A RECUSA É UM `throw`, NÃO UM `process.exit` DENTRO DE OUTRA FUNÇÃO — e a
+// diferença não é estilo. Com o `exit` escondido num auxiliar, nem o leitor nem
+// a análise estática enxergam que o fluxo PARA ali: o `readFileSync` lá embaixo
+// parece alcançável com o caminho ainda não validado. Foi exatamente isso que o
+// Sonar apontou ("a path canonicalized from CLI-controlled data must be
+// validated before use") depois da primeira correção. Um `throw` diz, no
+// próprio código, que aquele ramo não continua.
+class ErroDeUso extends Error {}
 
 function lerWorkflow(argumento) {
   const absoluto = resolve(String(argumento));
-  if (!dentroDeUmaBase(absoluto)) {
-    recusar(`"${absoluto}" está fora dos lugares que este conferidor lê `
+
+  if (!BASES_PERMITIDAS.some((base) => absoluto === base || absoluto.startsWith(base + sep))) {
+    throw new ErroDeUso(`"${absoluto}" está fora dos lugares que este conferidor lê `
       + `(${BASES_PERMITIDAS.join(', ')}). Copie o JSON para um deles.`);
   }
   if (!absoluto.toLowerCase().endsWith('.json')) {
-    recusar(`"${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
+    throw new ErroDeUso(`"${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
   }
+
   let info;
   try {
     info = statSync(absoluto);
   } catch {
-    recusar(`não encontrei "${absoluto}".`);
+    throw new ErroDeUso(`não encontrei "${absoluto}".`);
   }
-  if (!info.isFile()) recusar(`"${absoluto}" não é um arquivo comum.`);
+  if (!info.isFile()) throw new ErroDeUso(`"${absoluto}" não é um arquivo comum.`);
+
   return JSON.parse(readFileSync(absoluto, 'utf8'));
 }
 
@@ -210,12 +222,19 @@ if (ehExecucaoDireta) {
     console.error('     o primeiro é o JSON BAIXADO do n8n; o segundo, por padrão, é n8n/workflow.e1-ingestao.json');
     process.exit(2);
   }
-  const bruto = lerWorkflow(caminho);
-  // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
-  const vivo = bruto.workflow ?? bruto.data ?? bruto;
-  const doRepo = process.argv[3]
-    ? lerWorkflow(process.argv[3])
-    : JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
+  let vivo; let doRepo;
+  try {
+    const bruto = lerWorkflow(caminho);
+    // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
+    vivo = bruto.workflow ?? bruto.data ?? bruto;
+    doRepo = process.argv[3]
+      ? lerWorkflow(process.argv[3])
+      : JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
+  } catch (e) {
+    if (!(e instanceof ErroDeUso)) throw e;
+    console.error(`recusado: ${e.message}`);
+    process.exit(2);
+  }
 
   const achados = conferir(vivo, doRepo);
   const nNos = (doRepo.nodes ?? []).length;
