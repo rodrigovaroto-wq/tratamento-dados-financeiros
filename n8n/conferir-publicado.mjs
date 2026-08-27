@@ -56,6 +56,7 @@
 //     uma vez assim;
 //   • a `position` dos nós, que é do editor.
 import { readFileSync } from 'node:fs';
+import { lerWorkflowDaEntradaPadrao, ehExecucaoDireta } from './entrada-workflow.mjs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -79,6 +80,32 @@ function semCamposDaInstalacao(parametros) {
 }
 
 const iguais = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * O PUBLICADO CONTÉM O QUE O REPOSITÓRIO DECLARA? — e não "é idêntico a".
+ *
+ * A distinção nasceu de uma acusação em massa: depois de uma republicação, este
+ * conferidor apontou 20 nós com `parameters` diferentes, e quase todos eram o
+ * n8n preenchendo o PRÓPRIO default ao salvar — `leftValue: ""`, `version: 1`,
+ * um `options: {}` vazio. Nenhum deles muda comportamento, e um conferidor que
+ * grita vinte vezes por nada deixa de ser lido, que é o pior estado possível
+ * para uma ferramenta cuja única serventia é ser levada a sério.
+ *
+ * A regra certa é assimétrica, e é a que descreve o que se quer garantir: TUDO
+ * o que o repositório declara tem de estar no publicado, com o mesmo valor. O
+ * que o publicado acrescenta por conta própria é do n8n. Assim continua pegando
+ * o caso real — `Juntar Ramos` publicado com `parameters: {}` enquanto o
+ * repositório declara `mode: append` — sem inventar divergência.
+ */
+function contem(vivo, repo) {
+  if (repo === null || typeof repo !== 'object') return iguais(vivo, repo);
+  if (Array.isArray(repo)) {
+    if (!Array.isArray(vivo) || vivo.length !== repo.length) return false;
+    return repo.every((item, i) => contem(vivo[i], item));
+  }
+  if (vivo === null || typeof vivo !== 'object' || Array.isArray(vivo)) return false;
+  return Object.keys(repo).every((k) => contem(vivo[k], repo[k]));
+}
 
 /** Os nós que só existem de um lado — cada um vira um achado. */
 function conferirPresenca(nosVivos, nosRepo) {
@@ -104,8 +131,8 @@ function conferirComportamento(nome, oVivo, doRepo) {
   }
   // Os PARÂMETROS, que é o que a conferência de 26/08 já cobria — mantida
   // aqui para o conferidor ser um só.
-  if (!iguais(semCamposDaInstalacao(oVivo.parameters), semCamposDaInstalacao(doRepo.parameters))) {
-    achados.push({ no: nome, campo: 'parameters', vivo: '(diferente)', repo: '(diferente)' });
+  if (!contem(semCamposDaInstalacao(oVivo.parameters), semCamposDaInstalacao(doRepo.parameters))) {
+    achados.push({ no: nome, campo: 'parameters', vivo: '(falta ou diverge)', repo: '(o que o repositório declara)' });
   }
   return achados;
 }
@@ -165,37 +192,12 @@ export function conferir(vivo, repo) {
 
 // ---------------------------------------------------------------------------
 
-const ehExecucaoDireta = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
-if (ehExecucaoDireta) {
-  // `isTTY` é a diferença entre "esqueceu de redirecionar" e "o JSON está
-  // vindo": sem redirecionamento a leitura ficaria pendurada esperando alguém
-  // digitar um workflow inteiro à mão.
-  if (process.stdin.isTTY) {
-    console.error('uso: node n8n/conferir-publicado.mjs < workflow-publicado.json');
-    console.error('     o JSON é o BAIXADO do editor do n8n (… → Download), ou a resposta da API REST.');
-    console.error('     ele entra pela ENTRADA PADRÃO — com `<` ou por `|`.');
-    process.exit(2);
-  }
-
-  // LER POR STREAM, e não `readFileSync(0)`: com `<` o descritor 0 é um arquivo
-  // comum e a leitura síncrona funciona, mas com `|` ele é um cano em modo não
-  // bloqueante e a mesma chamada estoura `EAGAIN` — medido, e o `curl | node` do
-  // cabeçalho é justamente o caso 2.
-  const pedacos = [];
-  for await (const p of process.stdin) pedacos.push(p);
-  const texto = Buffer.concat(pedacos).toString('utf8');
-
-  let bruto;
-  try {
-    bruto = JSON.parse(texto);
-  } catch (e) {
-    console.error(`recusado: a entrada padrão não trouxe um JSON válido (${e.message}).`);
-    process.exit(2);
-  }
-  // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
-  const vivo = bruto.workflow ?? bruto.data ?? bruto;
-  // O outro lado da comparação é SEMPRE o do repositório, e o caminho é
-  // constante — é o que este conferidor existe para defender.
+if (ehExecucaoDireta(import.meta.url)) {
+  const vivo = await lerWorkflowDaEntradaPadrao([
+    'uso: node n8n/conferir-publicado.mjs < workflow-publicado.json',
+    '     o JSON é o BAIXADO do editor do n8n (… → Download), ou a resposta da API REST.',
+    '     ele entra pela ENTRADA PADRÃO — com `<` ou por `|`.',
+  ]);
   const doRepo = JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
 
   const achados = conferir(vivo, doRepo);

@@ -58,6 +58,10 @@ import {
   MAX_CELULAS_POR_BLOCO,
 } from './lib/cobertura.mjs';
 import { SYSTEM_PROMPT, MAX_OUTPUT_TOKENS } from './lib/extract.mjs';
+import { provedor } from './lib/provedor.mjs';
+
+// O provedor ATIVO — é dele que saem os três limites da conta (TPM, RPM, RPD).
+const PROV = provedor();
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -364,6 +368,36 @@ if (comoJson) {
   if (veredito.mensagem) {
     console.log(`\n  ${veredito.mensagem.replace(/\. /g, '.\n  ')}`);
   }
+  // A COTA DO DIA, que é outro limite e não estava em relatório nenhum.
+  //
+  // O teto de US$ 3 responde "quanto custa"; o RPD responde "cabe hoje". São
+  // perguntas diferentes e a segunda tinha ficado sem dono: um lote pode caber
+  // com folga no dinheiro e mesmo assim MORRER pela metade porque a conta
+  // esgotou a cota de chamadas do dia — e aí o que se perde não é tempo, são os
+  // documentos que faltavam.
+  const chamadasReais = medidos.reduce((a, d) => a + d.blocos, 0)
+    + medidos.filter((d) => d.chamadas > 1).length;
+  if (PROV.rpd) {
+    const fatia = chamadasReais / PROV.rpd * 100;
+    console.log(`\n== a cota do DIA (${PROV.rotulo}: ${PROV.rpd} chamadas/dia, ${PROV.rpm} RPM, ` +
+      `${PROV.tpm.toLocaleString('pt-BR')} TPM)`);
+    console.log(`  este lote pede ${chamadasReais} chamada(s) = ${fatia.toFixed(0)}% da cota diária` +
+      `${chamadasReais > PROV.rpd ? ' — NÃO CABE NEM SOZINHO num dia' : ''}`);
+    console.log(`  sobram ${Math.max(0, PROV.rpd - chamadasReais)} chamada(s) para todo o resto do dia ` +
+      `— e cada RETENTATIVA conta (o nó de extração tem até 6).`);
+    // A cadência não é o gargalo, e dizer isso evita a conclusão errada de que
+    // espaçar mais as chamadas ajudaria: espaçar resolve 429 por MINUTO, não a
+    // cota do DIA, que só reabre na virada da janela.
+    // A CADÊNCIA VEM DO WORKFLOW GERADO, não de uma conta refeita aqui: é o
+    // `batchInterval` que o nó de extração tem de verdade.
+    const cadenciaMs = JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'))
+      .nodes.find((n) => n.name === 'IA Extrair').parameters.options.batching.batch.batchInterval;
+    const porMinuto = 60 / (cadenciaMs / 1000);
+    console.log(`  cadência: ${porMinuto.toFixed(1)} chamadas/min de ${PROV.rpm} RPM, ` +
+      `~${Math.round(porMinuto * (TOKENS_PROMPT_SISTEMA + 2 * TOKENS_POR_PAGINA_IMAGEM)).toLocaleString('pt-BR')} ` +
+      `de ${PROV.tpm.toLocaleString('pt-BR')} TPM — nenhum dos dois é o gargalo; o RPD é.`);
+  }
+
   console.log(`\n  Depois de renomear tudo para a notação de f0/03 (12M25, 25x24, L36M): ` +
     `${chamadas} → ${medidos.length} chamadas, ` +
     `US$ ${vereditoRenomeado.estimadoUSD.toFixed(2)} → ` +

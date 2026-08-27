@@ -368,6 +368,29 @@ enviados no Form).
 o node `Upload Storage` e trocar/remover `disabled: true` (ou substituir o node inteiro pelo
 community node, se for esse o caminho).
 
+## Republicar sem perder o comportamento — e conferir depois
+
+**Duas republicações seguidas (26 e 27/08) perderam a mesma família de coisas**, e a
+segunda perdeu a pior: o `multipleFiles: true` do campo de arquivo do formulário — sem
+ele o intake aceita **um documento por vez**, e os books têm 38 e 190. Junto foram-se
+`onError` em 23 nós e `retryOnFail`/`maxTries`/`waitBetweenTries` em 11.
+
+Corrigir à mão é abrir 23 nós e mexer na aba *Settings* de cada um. Em um comando:
+
+```bash
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
+  | node n8n/preparar-republicacao.mjs > publicar.json
+
+curl -X PUT -H "X-N8N-API-KEY: $N8N_API_KEY" -H 'Content-Type: application/json' \
+  "$N8N_URL/api/v1/workflows/$ID" --data-binary @publicar.json
+```
+
+Ele parte do JSON do **repositório** (a autoridade sobre o que o workflow faz e como
+falha) e traz do **publicado** só o que é da instalação: o `id` de cada credencial, o
+`path` do formulário (sobrescrevê-lo troca a URL pública do intake), o `id` de cada nó
+e as `settings` — onde mora o `errorWorkflow`. O relatório sai pelo *erro*, listando as
+credenciais que continuam em `REPLACE` e se o nó delas está ligado.
+
 ## Depois de publicar, CONFIRA o que ficou publicado
 
 ```bash
