@@ -36,21 +36,44 @@ import {
 // dele conta tudo duas vezes. Só `papel = 'conta'` soma; o subtotal impresso serve
 // para conferir, e quem confere é a reconciliação.
 
-/** O que a tela de Modelagem já carrega por linha, e é tudo de que isto precisa. */
+/**
+ * Uma linha do caso NUM EXERCÍCIO — o que `fn_linhas_do_realizado` (0150) devolve.
+ *
+ * O `exercicio` é a mudança que permite a média: antes isto recebia um número
+ * por rótulo, "a ocorrência de maior módulo" (0042), que numa empresa que encolhe
+ * é o ano mais ANTIGO — e a razão calculada dele descrevia um regime que já
+ * passou. A `0150` também é quem tira daqui a abertura analítica, o combinado e
+ * as outras entidades; este arquivo confia nisso e não refaz o filtro.
+ */
 export interface LinhaRealizada {
   secao_canonica: string | null;
   chave: string;
   rotulo_norm: string;
   papel: "conta" | "subtotal" | "derivado" | "serie_mensal";
-  valor_ultimo: number;
+  exercicio?: number;
+  valor?: number;
   documentos: string[] | null;
+  /**
+   * COMPATIBILIDADE COM A CHAMADA ANTIGA. A tela passava `valor_ultimo` sem
+   * exercício; enquanto ela não migrar, uma linha sem `exercicio` é tratada como
+   * um exercício único e anônimo — o comportamento de antes, declarado em vez de
+   * suposto.
+   */
+  valor_ultimo?: number;
 }
 
 export interface PremissaSugerida {
   codigo: string;
   nome: string;
-  /** já na escala que o catálogo espera: fração para `pct_de_linha`, dias para `dias_de_giro` */
+  /**
+   * A MÉDIA DOS EXERCÍCIOS, na escala que o catálogo espera (fração para
+   * `pct_de_linha`, dias para `dias_de_giro`). Era o valor de UM exercício; virou
+   * média porque projetar cinco anos a partir do pior ano de uma empresa em
+   * reestruturação é projetar a crise como se fosse o regime.
+   */
   valor: number | null;
+  /** a razão em cada exercício, que é o que torna a média conferível */
+  serie?: Array<{ exercicio: number; valor: number }>;
   unidade: "%" | "dias";
   /** como o número foi feito, em uma linha, para quem for discordar dele */
   conta: string;
@@ -62,12 +85,16 @@ export interface PremissaSugerida {
 
 type Bolsa = { rotulo: string; valor: number; n: number };
 
+/** O valor da linha, aceitando a forma antiga (`valor_ultimo`) enquanto ela existir. */
+const valorDa = (l: LinhaRealizada): number =>
+  Number.isFinite(l.valor) ? Number(l.valor) : Number(l.valor_ultimo ?? 0);
+
 /** Soma as contas (nunca subtotais) que casam com o filtro, em magnitude. */
 function somar(linhas: LinhaRealizada[], rotulo: string, filtro: (l: LinhaRealizada) => boolean): Bolsa {
   const escolhidas = linhas.filter((l) => l.papel === "conta" && filtro(l));
   return {
     rotulo,
-    valor: escolhidas.reduce((s, l) => s + Math.abs(l.valor_ultimo), 0),
+    valor: escolhidas.reduce((s, l) => s + Math.abs(valorDa(l)), 0),
     n: escolhidas.length,
   };
 }
@@ -116,13 +143,10 @@ function razao(
 }
 
 /**
- * As oito premissas que o próprio realizado responde.
- *
- * Recebe as linhas do caso como a tela de Modelagem as tem (`fn_linhas_para_modelagem`,
- * uma por seção × rótulo, com o valor do ÚLTIMO exercício) e devolve as oito na
- * ordem em que a tela as mostra: primeiro as que quase todo caso responde.
+ * As oito razões de UM exercício. É o miolo; quem faz a média é
+ * `sugerirDoRealizado`, abaixo.
  */
-export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[] {
+function razoesDeUmExercicio(linhas: LinhaRealizada[]): PremissaSugerida[] {
   const bloco = new Map<string, LinhaRealizada[]>();
   for (const l of linhas) {
     const b = blocoDaLinha(comoModelo(l));
@@ -159,7 +183,7 @@ export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[]
   // magnitude.
   const financeiroComSinal = de("resultado_financeiro")
     .filter((l) => l.papel === "conta")
-    .reduce((s, l) => s + l.valor_ultimo, 0);
+    .reduce((s, l) => s + valorDa(l), 0);
   const lair: Bolsa = {
     rotulo: "resultado antes dos tributos",
     valor: receitaLiquida.valor - custos.valor - sga.valor + financeiroComSinal,
@@ -210,4 +234,68 @@ export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[]
     razao("TAXA_DIVIDA", "Taxa média da dívida", "%",
       "despesa financeira ÷ dívida financeira", despesaFinanceira, divida),
   ];
+}
+
+/**
+ * As oito premissas que o próprio realizado responde, na MÉDIA dos exercícios.
+ *
+ * POR QUE MÉDIA E NÃO O ÚLTIMO ANO. Este produto atende mandato de
+ * reestruturação, então o último exercício é, por construção, o pior da série —
+ * é o ano que trouxe a empresa até aqui. Projetar cinco anos a partir dele é
+ * projetar a crise como se fosse o regime: a margem deprimida vira margem
+ * estrutural, o prazo de recebimento esticado pela inadimplência vira política de
+ * crédito, e o modelo devolve, com cara de conta, a hipótese de que nada
+ * melhora.
+ *
+ * A MÉDIA É DAS RAZÕES, NÃO A RAZÃO DAS MÉDIAS, e a diferença não é acadêmica:
+ * somar três anos de custo e dividir pela soma de três anos de receita deixa o
+ * ano de maior faturamento mandar na média — é uma média ponderada pelo tamanho
+ * do ano, e ninguém pediu essa ponderação. Média simples das razões dá o mesmo
+ * peso a cada exercício, que é o que "como esta empresa costuma operar"
+ * significa.
+ *
+ * E EXERCÍCIO SEM RESPOSTA NÃO ENTRA COMO ZERO. Um ano em que a conta não existe
+ * (ou a base é zero) fica FORA da média, com o motivo preservado — a mesma regra
+ * que governa cada razão isolada. Se nenhum exercício responder, a premissa sai
+ * sem valor e com o porquê do primeiro que falhou, que é o mais informativo.
+ */
+export function sugerirDoRealizado(linhas: LinhaRealizada[]): PremissaSugerida[] {
+  const porExercicio = new Map<number, LinhaRealizada[]>();
+  for (const l of linhas) {
+    // Linha sem exercício (a forma antiga) cai num balde só, e aí a "média" é o
+    // valor único — o comportamento de antes, sem fingir uma série que não há.
+    const ano = Number.isFinite(l.exercicio) ? Number(l.exercicio) : 0;
+    const lista = porExercicio.get(ano) ?? [];
+    lista.push(l);
+    porExercicio.set(ano, lista);
+  }
+
+  const anos = [...porExercicio.keys()].sort((a, b) => a - b);
+  if (anos.length === 0) return razoesDeUmExercicio([]);
+
+  const porAno = anos.map((ano) => ({ ano, razoes: razoesDeUmExercicio(porExercicio.get(ano)!) }));
+  const modelo = porAno[porAno.length - 1].razoes;
+
+  return modelo.map((ref, i) => {
+    const serie = porAno
+      .map(({ ano, razoes }) => ({ exercicio: ano, valor: razoes[i]?.valor }))
+      .filter((x): x is { exercicio: number; valor: number } => typeof x.valor === "number");
+
+    if (serie.length === 0) {
+      // Nenhum exercício respondeu: devolve a resposta do mais recente, que já
+      // traz o `porQueNao` com o nome da conta que faltou.
+      return { ...ref, serie: [] };
+    }
+    const media = serie.reduce((s, x) => s + x.valor, 0) / serie.length;
+    return {
+      ...ref,
+      valor: Number(media.toFixed(4)),
+      serie,
+      conta: serie.length === 1
+        ? `${ref.conta} (exercício ${serie[0].exercicio})`
+        : `${ref.conta} — média simples de ${serie.length} exercícios `
+          + `(${serie.map((x) => x.exercicio).join(", ")})`,
+      porQueNao: null,
+    };
+  });
 }

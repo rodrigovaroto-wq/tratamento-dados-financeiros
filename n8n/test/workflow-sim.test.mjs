@@ -2510,3 +2510,67 @@ test('Juntar Blocos (nó real): nenhum bloco com a chave "fatos" devolve null', 
   ] });
   assert.equal(r[0].json.diagnostico.fatos, null);
 });
+
+// O CONTEXTO DA MEDIÇÃO ATRAVESSA A CADEIA DE EXTRAÇÃO — e não atravessava.
+//
+// ACHADO NA RODADA COMPARATIVA DO CANASTRA (27/08/2026), pelo sintoma mais
+// discreto possível: `lote_execucao.cobertura` nula e `contas_nos_documentos`
+// zero, com o `Conferir Lote` VERDE e nenhum erro no n8n.
+//
+// A causa era `Montar Req Extracao` montar um item NOVO com cinco campos,
+// jogando fora tudo o que o `Medir Documento` tinha medido. Três consequências,
+// e nenhuma delas dá erro:
+//
+//   1. sem `linhas_do_texto`, o `Fatiar Extracao` cai no fallback de UM bloco e
+//      o fatiamento NUNCA LIGA — o medidor previa 4 documentos fatiados no
+//      book e a rodada gravou zero;
+//   2. sem `contas_no_documento`, `avaliarCobertura` no `Juntar Blocos` nunca
+//      dispara: a guarda de extração incompleta fica DESLIGADA, e ela é a régua
+//      que mede alucinação por omissão;
+//   3. e o painel do lote grava cobertura nula.
+//
+// A GUARDA É SOBRE O CAMINHO, não sobre um campo. Ela pega os campos que os nós
+// de baixo LEEM do contexto e exige que o nó que os produz os entregue — que é
+// a lição da v47 (um nó lendo o que o anterior não entrega) aplicada a nó Code,
+// e não só a nó Postgres.
+test('a medição do documento sobrevive até o Juntar Blocos (fatiamento e cobertura)', async () => {
+  // Os campos que o `Medir Documento` produz e que alguém adiante consome. Cada
+  // um está aqui porque um nó de baixo o lê pelo nome.
+  const MEDIDOS = ['linhas_do_texto', 'celulas_no_documento', 'contas_no_documento'];
+
+  const medido = {
+    json: {
+      documento_id: 'doc-1',
+      documento_versao_id: 'ver-1',
+      nome_original: 'balanco.pdf',
+      tipo_taxonomia: 'BALANCO',
+      content_part: { type: 'text', text: 'x' },
+      linhas_do_texto: ['Caixa 1.000', 'Clientes 2.000', 'Estoques 3.000'],
+      celulas_no_documento: 3,
+      contas_no_documento: 3,
+    },
+  };
+
+  // 1. O `Montar Req Extracao` tem de ENTREGAR o que recebeu. Antes desta
+  //    correção ele devolvia cinco campos e o resto morria aqui.
+  const req = await run('Montar Req Extracao', { item: medido, refs: {} });
+  const doReq = Array.isArray(req) ? req[0].json : req.json;
+  for (const campo of MEDIDOS) {
+    assert.ok(doReq[campo] !== undefined,
+      `Montar Req Extracao descartou "${campo}" — e é ele que faz o fatiamento e a cobertura `
+      + 'funcionarem. Sem ele nada dá erro: o documento roda inteiro e a guarda cala');
+  }
+  // E o PDF em base64 NÃO viaja de novo: ele já está dentro do corpo montado.
+  assert.equal(doReq.content_part, undefined,
+    'o content_part voltou a viajar junto do ia_body — é o PDF inteiro, duas vezes na memória');
+
+  // 2. O `Fatiar Extracao` só fatia se receber as linhas. Com elas, um documento
+  //    grande vira mais de um bloco; sem elas, ele silenciosamente vira um.
+  const muitasLinhas = { json: { ...doReq, linhas_do_texto: Array.from({ length: 400 }, (_, i) => `Conta ${i} 1.000,00`) } };
+  const fatias = await run('Fatiar Extracao', { items: [muitasLinhas], refs: {} });
+  assert.ok(fatias.length > 1,
+    `um documento de 400 linhas saiu em ${fatias.length} bloco(s) — o fatiamento não ligou, e é `
+    + 'assim que o 17_Livro_Razao foi a uma chamada só em vez de quatro');
+  assert.ok(fatias.every((f) => f.json.contas_no_documento !== undefined),
+    'o Fatiar perdeu a medição no caminho — o Juntar Blocos não terá com o que comparar');
+});

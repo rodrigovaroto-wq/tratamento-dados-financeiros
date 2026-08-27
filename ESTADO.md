@@ -15,12 +15,146 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0149_o_fato_material_endurecido.sql` — a auditoria adversarial da `0148` achou SETE defeitos no canal de fato material, cinco deles silenciosos, e esta migration os fecha. A `0148_o_fato_que_o_documento_diz_em_texto.sql` — o que o documento diz em TEXTO (covenant rompido, ressalva de auditoria, continuidade operacional) passa a ter canal próprio, com o trecho literal como evidência obrigatória. A `0147_a_sonda_enxerga_o_corpo_da_funcao.sql` — a sonda de instalação passa a enxergar o CORPO da função (tipo `corpo`), o catálogo cobre as `0131` a `0146` (eram 13 marcadores parando na `0130`) e `instalacao_cobertura` declara até onde foi revisado, com o `db/test/run.sh` reprovando quando fica para trás. A `0146_a_entidade_que_o_documento_nunca_declarou.sql` — num documento de várias empresas a linha sem coluna deixa de ser atribuída à capa, que era o que criava a entidade fantasma cobrando balanço. A `0145` (o conceito que mora na coluna), a `0144` (duplicidade só entre documentos), a `0143`, a `0142`, a `0141` e a `0140` estão aplicadas em produção |
+| **Última migration** | `db/migrations/0150_a_premissa_sai_do_realizado_certo.sql` — a soma das premissas do realizado somava o que não se soma, e a rodada comparativa do Canastra gravou `PMR = 348,6 dias` e `CUSTO_VARIAVEL = 287,7% da receita` como premissa. Três causas: o total da DRE somando com as próprias componentes (177.077 + 177.133 + 56.539 = os 410.749 que a bolsa usou), a abertura analítica somando por cima da conta que ela abre (aging, estoque, extrato, balancete — e o COMBINADO, que é a soma das empresas), e o caso de oito empresas medido para um modelo que projeta uma. Mais `fn_exercicio_da_coluna` e `fn_linhas_do_realizado`, que dão o valor POR EXERCÍCIO — a base da média histórica. A `0149`, a `0148` e a `0147` seguem aplicadas em produção |
 | **Aplicadas no Supabase** | **as 94**, até a `0149`, conferidas em 26/08. A `0147`, a `0148` e a `0149` foram aplicadas nesta sessão e CONFERIDAS contra o banco, não declaradas: `fn_instalacao_conferir()` devolve **38 requisitos, 38 presentes, zero ausentes**, `instalacao_cobertura` diz `0149`, e o corpo das duas funções reemitidas tem o MESMO md5 em produção e no banco de teste construído a partir do arquivo da migration (`48ed0646…` para `fn_registrar_fatos`, `1becef90…` para `fn_fatos_do_caso`) — assim como o catálogo inteiro de requisitos (`f7306ad2…`). Desde a `0147` o `db/test/run.sh` REPROVA quando o catálogo fica para trás da migration mais nova, então esta linha não volta a envelhecer sozinha |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 72 (27/08) — a rodada comparativa, e a premissa que somava o que não se soma
+
+**A rodada saiu, e é a melhor até aqui.** Mandato `Teste comparativo - Grupo
+Canastra`, execução 7156:
+
+| | v47 | v48 | **esta** |
+|---|---:|---:|---:|
+| Documentos | 38 | 38 | **38** |
+| Linhas extraídas | 2.460 | 2.485 | **2.565** |
+| Fatos materiais | 0 | 0 | **17** |
+| Custo real | US$ 0,368 | US$ 0,373 | **US$ 0,426** |
+| Documentos com falha | — | — | **0** |
+| O lote FECHOU | sim | sim | **sim** |
+
+Duração ~9min38. O canal de fato material rodou no book inteiro pela primeira
+vez, e o veredito do lote (71c) funcionou: `lote_execucao` gravada, tela sem
+falso "pronto". O `auditar-xlsx.mts` sobre o arquivo exportado: **3 de 3 itens
+aplicáveis OK**, 3.149 fórmulas e nenhuma com erro.
+
+### O defeito que a rodada revelou, e é dos grandes
+
+As oito premissas que o próprio caso responde vieram gravadas assim, com
+`origem = 'historico'`: **PMR 348,6 dias**, **PME 177,5**, **CUSTO_VARIAVEL
+287,7% da receita**, **SGA_PCT 83,2%**. Não é imprecisão — é soma do que não se
+soma, e a `0150` fecha as três causas:
+
+1. **O total soma com as próprias componentes.** A bolsa de custos deu 410.749,
+   que é exatamente 177.077 (o total do CPV) + 177.133 (as cinco componentes
+   dele) + 56.539 (o CPV de outra empresa). `fn_papel_linha` é `immutable` e vê
+   um rótulo por vez — o discriminador estrutural (o total bate com a soma das
+   outras contas da mesma seção e exercício, dentro de 1%) passa a viver em
+   `fn_linhas_do_realizado`, que vê o documento inteiro. **A doutrina da `0116`
+   continua certa:** num documento resumido o total É a conta; o que faltava era
+   como distinguir os dois casos.
+2. **A abertura analítica soma por cima da conta que ela abre.** A bolsa
+   "clientes" deu 174.142 num grupo cuja maior conta de clientes é 35.044:
+   entravam os 312 sacados do aging, os itens da posição de estoque, os bancos do
+   extrato e o balancete inteiro. `taxonomia_tipo_documento.abertura_analitica`
+   passa a DECLARAR quais tipos são abertura — dado, não código. **O COMBINADO
+   entra na lista**, e é o mais importante para o araucária: ele é a soma das
+   empresas, e somá-lo junto das parcelas conta o grupo duas vezes.
+3. **O caso tem oito empresas e o modelo projeta uma.** A tela pergunta qual
+   entidade (`caso_modelagem.entidade`) e a soma ignorava a resposta.
+
+### E a projeção das premissas deixou de ser digitada
+
+A pedido do dono, cada premissa passa a se projetar pela forma que cabe a ela —
+e a regra sai do CATÁLOGO (`natureza`/`formula`), não de uma lista em código:
+
+| Família | Como projeta | Por quê |
+|---|---|---|
+| **macro** (IPCA, SELIC, câmbio, IGP-M, PIB) | mediana do **Focus** por ano | já está no banco desde a `0025`; repetir o ano passado é ignorar uma previsão que o sistema coletou. Ano sem expectativa fica FORA, não recebe o valor do vizinho |
+| **razões estruturais** (`pct_de_linha`, `dias_de_giro`) | constante na **média dos exercícios** | uma empresa não muda de estrutura de custo por decreto — e o último ano de uma empresa em reestruturação é o pior dela. Projetar dele é projetar a crise como se fosse o regime |
+| **crescimento** (`crescimento_composto`) | **indexado** ao índice macro do mandato | é a hipótese de "nada muda em termos reais", e ela vai DECLARADA na conta publicada: é tese, não medição |
+| **valor de decisão** (capex, movimento de dívida, VGV, preço) | **não projeta** | não sai do balanço nem do Focus. Zero seria uma afirmação sobre o negócio que ninguém fez |
+
+**A média é das RAZÕES, não a razão das médias**, e a diferença não é acadêmica:
+somar três anos de custo e dividir pela soma de três anos de receita deixa o ano
+de maior faturamento mandar na média — uma ponderação que ninguém pediu.
+
+Para isso a `0150` traz `fn_exercicio_da_coluna`, que separa a coluna que nomeia
+exercício (`31/12/2024`) da que não nomeia (`Saldo`, `Crédito`, `Ticket médio`) —
+sem ela a série misturaria "crédito" com "2024" no mesmo eixo.
+
+### Os vínculos de linha do mandato, aplicados
+
+O caso tinha modelagem definida e 10 premissas ativas, e **zero vínculos**. Foram
+aplicados pelas mesmas funções da tela: 4 lotes por seção e 5 vínculos de linha,
+**35 vínculos, zero órfãos, `pronto: true`** — o que destravou o export.
+
+### A COBERTURA ESTAVA DESLIGADA, e o sintoma era uma coluna nula
+
+`lote_execucao.cobertura` veio **null** e `contas_nos_documentos` veio **0**, com
+o `Conferir Lote` VERDE e nenhum erro no n8n. A causa é um defeito de OMISSÃO em
+`Montar Req Extracao`: ele montava um item NOVO com cinco campos e jogava fora
+tudo o que o `Medir Documento` tinha medido. Três consequências, e **nenhuma delas
+dá erro**:
+
+1. sem `linhas_do_texto`, o `Fatiar Extracao` cai no fallback de UM bloco e **o
+   fatiamento nunca ligou** — o medidor previa 4 documentos fatiados no book, e a
+   rodada gravou `documentos_fatiados: 0`. O `17_Livro_Razao` foi a uma chamada
+   em vez de quatro;
+2. sem `contas_no_documento`, `avaliarCobertura` no `Juntar Blocos` nunca dispara:
+   **a guarda de extração incompleta estava desligada** — e ela é a régua que mede
+   alucinação por omissão, a que mais importa num lote de 190;
+3. e o painel do lote grava cobertura nula, que foi o fio pelo qual isto apareceu.
+
+É a mesma família do defeito da v47 — um nó lendo o que o anterior não entrega —
+e a guarda daquela vez só cobria nó **Postgres**. A nova cobre o caminho de
+Code: os campos que os nós de baixo leem do contexto têm de chegar. Religada, ela
+reprova com *"Montar Req Extracao descartou `linhas_do_texto`"*.
+
+### A `0150` APLICADA, e o efeito medido no caso real
+
+Aplicada em produção nesta sessão: `fn_instalacao_conferir()` devolve **41 de 41
+requisitos presentes**, cobertura `0150`. O discriminador de subtotal marcou
+`(-) Custo dos produtos vendidos` (135.838 = a soma exata das cinco componentes)
+e `Receita operacional bruta` (188.000 = a soma exata das quatro linhas de venda)
+— **e o refinamento por SINAL**, feito depois de ver o resultado, pegou também
+`(-) Deduções da receita bruta` (48.128 = ICMS + PIS/COFINS + devoluções). Sem
+ele, receita e dedução moram na mesma seção, nenhum dos dois bate com o dobro de
+si mesmo, e a dedução contaria duas vezes.
+
+As premissas, antes e depois, na entidade que o modelo projeta:
+
+| | antes | 2023 | 2024 | 2025 | **média (nova)** |
+|---|---:|---:|---:|---:|---:|
+| Custo variável | 287,7% | 74,8% | 91,7% | 97,1% | **87,9%** |
+| SG&A | 83,2% | 13,3% | 23,2% | 45,9% | **27,5%** |
+| PMR | 348,6 d | 63 | 72 | 74 | **70** |
+| PME | 177,5 d | 42 | 48 | 48 | **46** |
+| PMP | 76,7 d | 80 | 97 | 152 | **110** |
+
+**A série é a prova de que a média importa:** o custo variável sobe de 74,8% para
+97,1% em três anos. Projetar do último ano fixaria 97,1% como estrutura de custo
+— a crise virando regime, que é exatamente o que a média evita.
+
+### O que fica aberto, e é do dono
+
+- ~~`ultimo_exercicio_real` em 2026~~ **corrigido pelo dono para 2025**;
+- ~~`cobertura` e `contas_nos_documentos` vazias~~ **causa achada e corrigida** —
+  ver acima. Falta **republicar o workflow** para a correção valer em produção;
+- **reprocessar as premissas do caso** pela tela, agora que a `0150` está
+  aplicada — os números medidos estão na tabela acima;
+- **republicar o workflow** (`preparar-republicacao.mjs`), para o fatiamento e a
+  cobertura voltarem a funcionar antes do araucária.
+
+### Contadores
+
+premissas do realizado **32 → 51** · banco **94 migrations** (a `0150`, aplicada em
+produção) · n8n **382** · export **713** · transcrição **35** · falha/espera/veredito **59** ·
+e2e **46** · variações 25 rodadas / 0 achados. `tsc`, `eslint` e `next build`
+limpos.
 
 ## A SESSÃO 71c (27/08) — o smoke test PASSOU, e a tela chamou de sucesso uma execução morta
 
