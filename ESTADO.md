@@ -105,7 +105,8 @@ código:
 | `S3776` complexidade 16 na rota de status | o par `comLinhas`/`comFatos` saiu para `conteudoDoLote`, e as duas consultas passaram a rodar em paralelo |
 | `S7744` objeto vazio inútil | `{ ...(p ?? {}) }` → `{ ...p }`: espalhar `null` já é vazio |
 | `S6582` optional chain (×2) | `(x.credentials ?? {})[t]` → `x.credentials?.[t]` |
-| `S8707` caminho vindo do argv (×2) | `lerWorkflow` valida sobre o caminho **resolvido** (é o que distingue `a/../../b` do que ele vira depois de normalizado): exige `.json`, exige existir e exige ser arquivo comum. Não prende a um diretório de propósito — ler o JSON que a pessoa baixou é o propósito do script |
+| `S8707` caminho vindo do argv (×2) | a primeira correção (exigir `.json`, existir, ser arquivo comum) **não bastou** — a mensagem mudou para "a path canonicalized from CLI-controlled data must be validated": o Sonar reconhece o `resolve` como canonização e quer o resultado dele conferido contra um limite. `dentroDeUmaBase` compara o caminho **já resolvido** com as três bases reais (pasta pessoal, repositório, temporário — os três lugares que o cabeçalho documenta), casando no **separador**, senão `/tmpfoo` passaria por estar dentro de `/tmp`. A ordem é a trava: `/tmp/../etc/senha.json` vira `/etc/senha.json` antes de ser comparado, e é recusado |
+| `S7778` `Array#push()` várias vezes | os dois `push(...)` do laço viraram um |
 
 ### Contadores
 

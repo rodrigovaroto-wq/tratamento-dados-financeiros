@@ -49,7 +49,8 @@
 //     uma vez assim;
 //   • a `position` dos nós, que é do editor.
 import { readFileSync, statSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -141,8 +142,10 @@ export function conferir(vivo, repo) {
   for (const [nome, doRepo] of nosRepo) {
     const oVivo = nosVivos.get(nome);
     if (!oVivo) continue;
-    achados.push(...conferirComportamento(nome, oVivo, doRepo));
-    achados.push(...conferirCredenciais(nome, oVivo, doRepo));
+    achados.push(
+      ...conferirComportamento(nome, oVivo, doRepo),
+      ...conferirCredenciais(nome, oVivo, doRepo),
+    );
   }
 
   // As CONEXÕES: um nó certo ligado errado não aparece em nenhuma comparação
@@ -156,34 +159,46 @@ export function conferir(vivo, repo) {
 
 // ---------------------------------------------------------------------------
 
-// O CAMINHO VEM DA LINHA DE COMANDO, ENTÃO ELE É VALIDADO ANTES DE ABRIR.
+// O CAMINHO VEM DA LINHA DE COMANDO, ENTÃO ELE É CANONIZADO E VALIDADO.
 //
 // Ler um arquivo cujo caminho quem chama escolheu é o PROPÓSITO deste script —
-// o JSON sai do editor do n8n e cai onde a pessoa salvou, normalmente
-// `~/Downloads`. Então não cabe prender a leitura a um diretório: o que cabe é
-// exigir que o argumento descreva de fato um arquivo JSON, e não um diretório,
-// um dispositivo ou um caminho montado a partir de pedaços.
+// o JSON sai do editor do n8n e cai onde a pessoa salvou. Mas "onde a pessoa
+// salvou" não é "qualquer lugar do disco": os três lugares reais são a pasta
+// pessoal (`~/Downloads`), o próprio repositório e o temporário (o `curl >
+// /tmp/vivo.json` do cabeçalho). Fora deles, um argumento montado errado — por
+// pessoa ou por agente — leria arquivo do sistema, e recusar não custa nada.
 //
-// A validação é feita sobre o caminho já RESOLVIDO (`resolve` normaliza `..` e
-// links relativos), e é isso que a torna útil: validar a string crua deixaria
-// passar `a/../../b`, que é outra coisa depois de normalizada.
+// A ORDEM IMPORTA e é o que torna a validação real: primeiro `resolve`, que
+// normaliza `..` e caminho relativo, e só DEPOIS a comparação. Validar a string
+// crua deixaria passar `Downloads/../../../etc/senha`, que é outra coisa depois
+// de normalizada.
+const BASES_PERMITIDAS = [homedir(), RAIZ, tmpdir()].map((b) => resolve(b));
+
+export function dentroDeUmaBase(absoluto) {
+  return BASES_PERMITIDAS.some((base) => absoluto === base || absoluto.startsWith(base + sep));
+}
+
+function recusar(motivo) {
+  console.error(`recusado: ${motivo}`);
+  process.exit(2);
+}
+
 function lerWorkflow(argumento) {
   const absoluto = resolve(String(argumento));
+  if (!dentroDeUmaBase(absoluto)) {
+    recusar(`"${absoluto}" está fora dos lugares que este conferidor lê `
+      + `(${BASES_PERMITIDAS.join(', ')}). Copie o JSON para um deles.`);
+  }
   if (!absoluto.toLowerCase().endsWith('.json')) {
-    console.error(`recusado: "${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
-    process.exit(2);
+    recusar(`"${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
   }
   let info;
   try {
     info = statSync(absoluto);
   } catch {
-    console.error(`recusado: não encontrei "${absoluto}".`);
-    process.exit(2);
+    recusar(`não encontrei "${absoluto}".`);
   }
-  if (!info.isFile()) {
-    console.error(`recusado: "${absoluto}" não é um arquivo comum.`);
-    process.exit(2);
-  }
+  if (!info.isFile()) recusar(`"${absoluto}" não é um arquivo comum.`);
   return JSON.parse(readFileSync(absoluto, 'utf8'));
 }
 
