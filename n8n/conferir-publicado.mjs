@@ -80,6 +80,32 @@ function semCamposDaInstalacao(parametros) {
 
 const iguais = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+/**
+ * O PUBLICADO CONTÉM O QUE O REPOSITÓRIO DECLARA? — e não "é idêntico a".
+ *
+ * A distinção nasceu de uma acusação em massa: depois de uma republicação, este
+ * conferidor apontou 20 nós com `parameters` diferentes, e quase todos eram o
+ * n8n preenchendo o PRÓPRIO default ao salvar — `leftValue: ""`, `version: 1`,
+ * um `options: {}` vazio. Nenhum deles muda comportamento, e um conferidor que
+ * grita vinte vezes por nada deixa de ser lido, que é o pior estado possível
+ * para uma ferramenta cuja única serventia é ser levada a sério.
+ *
+ * A regra certa é assimétrica, e é a que descreve o que se quer garantir: TUDO
+ * o que o repositório declara tem de estar no publicado, com o mesmo valor. O
+ * que o publicado acrescenta por conta própria é do n8n. Assim continua pegando
+ * o caso real — `Juntar Ramos` publicado com `parameters: {}` enquanto o
+ * repositório declara `mode: append` — sem inventar divergência.
+ */
+function contem(vivo, repo) {
+  if (repo === null || typeof repo !== 'object') return iguais(vivo, repo);
+  if (Array.isArray(repo)) {
+    if (!Array.isArray(vivo) || vivo.length !== repo.length) return false;
+    return repo.every((item, i) => contem(vivo[i], item));
+  }
+  if (vivo === null || typeof vivo !== 'object' || Array.isArray(vivo)) return false;
+  return Object.keys(repo).every((k) => contem(vivo[k], repo[k]));
+}
+
 /** Os nós que só existem de um lado — cada um vira um achado. */
 function conferirPresenca(nosVivos, nosRepo) {
   const achados = [];
@@ -104,8 +130,8 @@ function conferirComportamento(nome, oVivo, doRepo) {
   }
   // Os PARÂMETROS, que é o que a conferência de 26/08 já cobria — mantida
   // aqui para o conferidor ser um só.
-  if (!iguais(semCamposDaInstalacao(oVivo.parameters), semCamposDaInstalacao(doRepo.parameters))) {
-    achados.push({ no: nome, campo: 'parameters', vivo: '(diferente)', repo: '(diferente)' });
+  if (!contem(semCamposDaInstalacao(oVivo.parameters), semCamposDaInstalacao(doRepo.parameters))) {
+    achados.push({ no: nome, campo: 'parameters', vivo: '(falta ou diverge)', repo: '(o que o repositório declara)' });
   }
   return achados;
 }

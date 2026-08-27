@@ -1093,3 +1093,30 @@ test('a cadência sai do limite MAIS restritivo do provedor, e o Google limita p
   assert.equal(PROVEDORES.google.rpm, 15);
   assert.equal(PROVEDORES.openai.rpm, null, 'na OpenAI o gargalo é o balde de tokens, não a contagem de chamadas');
 });
+
+// O TERCEIRO LIMITE, e é o único que decide se o book de 190 CABE.
+//
+// TPM e RPM decidem a CADÊNCIA — de quanto em quanto tempo sai a próxima
+// chamada. O RPD decide quantos documentos cabem no DIA, somando todos os
+// lotes, e ele não estava declarado em lugar nenhum: `diagnosticarErroApi` sabia
+// NOMEAR a cota diária estourada depois do estrago, e nada sabia PREVER.
+//
+// Medido em 27/08/2026 contra o nível gratuito da linha Flash-Lite: o
+// `book-canastra` pede 63 chamadas (13% do dia) e o `book-araucaria`, 190
+// documentos com metade dos nomes sem tipo+período resolvido, pede ~285 (57%).
+// Os dois no mesmo dia passam de 70% da cota antes de qualquer retentativa — e
+// o nó de extração tem até 6.
+test('o RPD está declarado, porque é ele que decide se o lote cabe no DIA', () => {
+  assert.equal(PROVEDORES.google.rpd, 500);
+  assert.equal(PROVEDORES.openai.rpd, null,
+    'a OpenAI não publica um RPD único para o Tier 1 — `null` diz "não sei", que não é "não tem"');
+
+  // A cadência não protege do RPD, e confundir os dois leva à conclusão errada
+  // de que espaçar mais as chamadas resolveria: espaçar resolve 429 por MINUTO;
+  // a cota do dia só reabre na virada da janela.
+  const porMinuto = 60 / 8; // o batchInterval dos dois nós de IA
+  const minutosParaEsgotarODia = PROVEDORES.google.rpd / porMinuto;
+  assert.ok(minutosParaEsgotarODia < 8 * 60,
+    `a ${porMinuto}/min a cota do dia acaba em ${Math.round(minutosParaEsgotarODia)} min — `
+    + 'se este número passar de um dia de trabalho, o RPD deixou de ser o gargalo e este teste envelheceu');
+});

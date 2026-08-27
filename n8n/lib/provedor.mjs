@@ -65,6 +65,10 @@ export const PROVEDORES = {
     // RPM importa porque um provedor pode limitar por CHAMADA e não por token.
     tpm: 30000,
     rpm: null,
+    // RPD é do TIER e a OpenAI não publica um número único para o Tier 1 —
+    // `null` diz "não sei", que é diferente de "não tem". Ver o comentário do
+    // Google abaixo para o que este número decide.
+    rpd: null,
   },
   google: {
     id: 'google',
@@ -86,6 +90,25 @@ export const PROVEDORES = {
     // (o gerador, o teste que a trava e o diagnóstico) leem este mesmo número.
     tpm: 250000,
     rpm: 15,
+    // O LIMITE QUE NINGUÉM TINHA MODELADO, E É O QUE DE FATO APERTA.
+    //
+    // TPM e RPM decidem a CADÊNCIA — de quanto em quanto tempo a próxima
+    // chamada sai. O RPD decide outra coisa: quantos documentos cabem no DIA,
+    // somando todos os lotes. E com a linha Flash-Lite no nível gratuito ele é
+    // 500, que é pouco perto de um book de 190 documentos: são ~190 extrações
+    // mais ~95 classificações por conteúdo (metade dos nomes não resolve
+    // tipo+período, medido nos dois books), ou seja ~285 chamadas — 57% da
+    // cota do dia num lote só.
+    //
+    // Por que isso importa mais do que parece: estourar o RPD no meio do lote
+    // não deixa o trabalho mais lento, ele MATA os documentos que faltavam, e
+    // `diagnosticarErroApi` só consegue nomear a causa DEPOIS. Espaçar as
+    // chamadas não ajuda — a cota só reabre na virada da janela diária.
+    //
+    // Fica declarado aqui, junto dos outros dois, para que a conta "este lote
+    // cabe no que sobrou do dia?" tenha uma fonte só. Quem estiver num plano
+    // pago ajusta AQUI.
+    rpd: 500,
   },
 };
 
