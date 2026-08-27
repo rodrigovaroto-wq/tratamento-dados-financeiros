@@ -1,8 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
-import { tmpdir } from 'node:os';
-import { conferir, dentroDeUmaBase } from '../conferir-publicado.mjs';
+import { conferir } from '../conferir-publicado.mjs';
 
 // O CONFERIDOR DO QUE ESTÁ PUBLICADO — e por que ele precisa de teste próprio.
 //
@@ -122,27 +120,4 @@ test('parâmetro diferente continua sendo divergência — o conferidor de 26/08
   const vivo = publicadoSaudavel();
   vivo.nodes[1].parameters.method = 'GET';
   assert.deepEqual(campos(conferir(vivo, REPO)), ['IA Extrair.parameters']);
-});
-
-// ---------------------------------------------------------------------------
-// O CAMINHO QUE VEM DA LINHA DE COMANDO
-// ---------------------------------------------------------------------------
-//
-// O script lê um JSON que a pessoa baixou, então o caminho é escolhido por quem
-// chama — mas "onde a pessoa salvou" não é "qualquer lugar do disco". A trava é
-// sobre o caminho CANONIZADO, e é isso que a torna real: validar a string crua
-// deixaria passar `/tmp/../etc/senha`, que é outra coisa depois de normalizada.
-test('o caminho é validado DEPOIS de canonizado, não antes', () => {
-  assert.equal(dentroDeUmaBase(resolve(tmpdir(), 'vivo.json')), true, 'o temporário é um dos lugares documentados');
-  assert.equal(dentroDeUmaBase(resolve(process.cwd(), 'n8n/workflow.e1-ingestao.json')), true, 'o próprio repositório também');
-
-  // A travessia, que é o motivo desta função existir: o caminho parece começar
-  // numa base permitida e termina em outro lugar.
-  assert.equal(dentroDeUmaBase(resolve(tmpdir(), '../etc/senha.json')), false,
-    'um `..` levou a leitura para fora das bases e a trava deixou passar');
-  assert.equal(dentroDeUmaBase('/etc/passwd'), false);
-
-  // E o prefixo tem de casar no SEPARADOR: `/tmpfoo` não está dentro de `/tmp`.
-  assert.equal(dentroDeUmaBase(`${resolve(tmpdir())}foo/x.json`), false,
-    'a comparação está casando prefixo de texto em vez de fronteira de diretório');
 });

@@ -24,12 +24,19 @@
 // ele falha, e se ele está ligado.
 //
 //   # 1. no editor do n8n: … → Download, salva o JSON
-//   node n8n/conferir-publicado.mjs ~/Downloads/workflow.json
+//   node n8n/conferir-publicado.mjs < ~/Downloads/workflow.json
 //
-//   # 2. ou, com acesso à API REST:
+//   # 2. ou, com acesso à API REST, sem passar por arquivo nenhum:
 //   curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
-//     "$N8N_URL/api/v1/workflows/$ID" > /tmp/vivo.json
-//   node n8n/conferir-publicado.mjs /tmp/vivo.json
+//     "$N8N_URL/api/v1/workflows/$ID" | node n8n/conferir-publicado.mjs
+//
+// O JSON ENTRA PELA ENTRADA PADRÃO, e não como caminho de arquivo. Não é
+// preferência de estilo: um caminho vindo da linha de comando é um caminho que
+// alguém — pessoa distraída ou agente automatizado — pode montar errado, e a
+// primeira versão deste script abria o que recebesse. Com `<` e `|`, quem abre
+// o arquivo é o shell, com as permissões de quem digitou, e este código não
+// toca em caminho nenhum além do arquivo do próprio repositório, que é
+// constante. O risco não foi validado: ele deixou de existir.
 //
 // Sai com código 1 quando algo diverge, listando cada divergência com o nome do
 // nó e o campo.
@@ -48,9 +55,8 @@
 //     pelo n8n e sobrescrevê-los TROCA A URL PÚBLICA do intake — já se perdeu
 //     uma vez assim;
 //   • a `position` dos nós, que é do editor.
-import { readFileSync, statSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { resolve, dirname, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -159,82 +165,38 @@ export function conferir(vivo, repo) {
 
 // ---------------------------------------------------------------------------
 
-// O CAMINHO VEM DA LINHA DE COMANDO, ENTÃO ELE É CANONIZADO E VALIDADO.
-//
-// Ler um arquivo cujo caminho quem chama escolheu é o PROPÓSITO deste script —
-// o JSON sai do editor do n8n e cai onde a pessoa salvou. Mas "onde a pessoa
-// salvou" não é "qualquer lugar do disco": os três lugares reais são a pasta
-// pessoal (`~/Downloads`), o próprio repositório e o temporário (o `curl >
-// /tmp/vivo.json` do cabeçalho). Fora deles, um argumento montado errado — por
-// pessoa ou por agente — leria arquivo do sistema, e recusar não custa nada.
-//
-// A ORDEM IMPORTA e é o que torna a validação real: primeiro `resolve`, que
-// normaliza `..` e caminho relativo, e só DEPOIS a comparação. Validar a string
-// crua deixaria passar `Downloads/../../../etc/senha`, que é outra coisa depois
-// de normalizada.
-const BASES_PERMITIDAS = [homedir(), RAIZ, tmpdir()].map((b) => resolve(b));
-
-// A MESMA comparação que `lerWorkflow` faz, exportada para o teste poder
-// exercitá-la — a trava de travessia é o tipo de código que ninguém testa à mão.
-// Ela é repetida lá dentro, e não chamada, de propósito: uma guarda escondida
-// atrás de uma chamada é invisível para quem lê o `lerWorkflow` e para a
-// análise estática que precisa ver o ramo terminar.
-export function dentroDeUmaBase(absoluto) {
-  return BASES_PERMITIDAS.some((base) => absoluto === base || absoluto.startsWith(base + sep));
-}
-
-// A RECUSA É UM `throw`, NÃO UM `process.exit` DENTRO DE OUTRA FUNÇÃO — e a
-// diferença não é estilo. Com o `exit` escondido num auxiliar, nem o leitor nem
-// a análise estática enxergam que o fluxo PARA ali: o `readFileSync` lá embaixo
-// parece alcançável com o caminho ainda não validado. Foi exatamente isso que o
-// Sonar apontou ("a path canonicalized from CLI-controlled data must be
-// validated before use") depois da primeira correção. Um `throw` diz, no
-// próprio código, que aquele ramo não continua.
-class ErroDeUso extends Error {}
-
-function lerWorkflow(argumento) {
-  const absoluto = resolve(String(argumento));
-
-  if (!BASES_PERMITIDAS.some((base) => absoluto === base || absoluto.startsWith(base + sep))) {
-    throw new ErroDeUso(`"${absoluto}" está fora dos lugares que este conferidor lê `
-      + `(${BASES_PERMITIDAS.join(', ')}). Copie o JSON para um deles.`);
-  }
-  if (!absoluto.toLowerCase().endsWith('.json')) {
-    throw new ErroDeUso(`"${argumento}" não é um arquivo .json — este conferidor lê o JSON do workflow.`);
-  }
-
-  let info;
-  try {
-    info = statSync(absoluto);
-  } catch {
-    throw new ErroDeUso(`não encontrei "${absoluto}".`);
-  }
-  if (!info.isFile()) throw new ErroDeUso(`"${absoluto}" não é um arquivo comum.`);
-
-  return JSON.parse(readFileSync(absoluto, 'utf8'));
-}
-
-const caminho = process.argv[2];
 const ehExecucaoDireta = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
 if (ehExecucaoDireta) {
-  if (!caminho) {
-    console.error('uso: node n8n/conferir-publicado.mjs <workflow-publicado.json> [workflow-do-repo.json]');
-    console.error('     o primeiro é o JSON BAIXADO do n8n; o segundo, por padrão, é n8n/workflow.e1-ingestao.json');
+  // `isTTY` é a diferença entre "esqueceu de redirecionar" e "o JSON está
+  // vindo": sem redirecionamento a leitura ficaria pendurada esperando alguém
+  // digitar um workflow inteiro à mão.
+  if (process.stdin.isTTY) {
+    console.error('uso: node n8n/conferir-publicado.mjs < workflow-publicado.json');
+    console.error('     o JSON é o BAIXADO do editor do n8n (… → Download), ou a resposta da API REST.');
+    console.error('     ele entra pela ENTRADA PADRÃO — com `<` ou por `|`.');
     process.exit(2);
   }
-  let vivo; let doRepo;
+
+  // LER POR STREAM, e não `readFileSync(0)`: com `<` o descritor 0 é um arquivo
+  // comum e a leitura síncrona funciona, mas com `|` ele é um cano em modo não
+  // bloqueante e a mesma chamada estoura `EAGAIN` — medido, e o `curl | node` do
+  // cabeçalho é justamente o caso 2.
+  const pedacos = [];
+  for await (const p of process.stdin) pedacos.push(p);
+  const texto = Buffer.concat(pedacos).toString('utf8');
+
+  let bruto;
   try {
-    const bruto = lerWorkflow(caminho);
-    // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
-    vivo = bruto.workflow ?? bruto.data ?? bruto;
-    doRepo = process.argv[3]
-      ? lerWorkflow(process.argv[3])
-      : JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
+    bruto = JSON.parse(texto);
   } catch (e) {
-    if (!(e instanceof ErroDeUso)) throw e;
-    console.error(`recusado: ${e.message}`);
+    console.error(`recusado: a entrada padrão não trouxe um JSON válido (${e.message}).`);
     process.exit(2);
   }
+  // Aceita tanto o JSON do editor quanto o envelope da API/MCP (`{workflow:…}`).
+  const vivo = bruto.workflow ?? bruto.data ?? bruto;
+  // O outro lado da comparação é SEMPRE o do repositório, e o caminho é
+  // constante — é o que este conferidor existe para defender.
+  const doRepo = JSON.parse(readFileSync(resolve(RAIZ, 'n8n/workflow.e1-ingestao.json'), 'utf8'));
 
   const achados = conferir(vivo, doRepo);
   const nNos = (doRepo.nodes ?? []).length;

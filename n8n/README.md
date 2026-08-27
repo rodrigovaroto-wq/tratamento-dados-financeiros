@@ -372,8 +372,16 @@ community node, se for esse o caminho).
 
 ```bash
 # no editor do n8n: … → Download, salva o JSON; depois:
-node n8n/conferir-publicado.mjs ~/Downloads/workflow.json
+node n8n/conferir-publicado.mjs < ~/Downloads/workflow.json
+
+# ou, com acesso à API REST, sem passar por arquivo nenhum:
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
+  | node n8n/conferir-publicado.mjs
 ```
+
+O JSON entra pela **entrada padrão**, não como caminho de arquivo: assim quem
+abre o arquivo é o shell, com as permissões de quem digitou, e o conferidor não
+toca em caminho nenhum além do arquivo do próprio repositório.
 
 **Isto existe porque uma conferência já passou verde estando errada.** Em 26/08/2026 a
 republicação foi declarada *"33 de 33 nós byte a byte iguais ao repositório"* — e era verdade, e era
