@@ -86,7 +86,54 @@ const MARGEM_DA_JANELA = 3;
 // demais acusa parada no meio de um documento grande (que faz várias leituras
 // antes de registrar qualquer coisa); longo demais devolve a espera eterna que
 // isto existe para acabar.
-export const SEM_PROGRESSO_MS = 5 * 60 * 1000;
+//
+// ---------------------------------------------------------------------------
+// O 5 FIXO DECLAROU MORTO UM LOTE VIVO — MEDIDO EM 27/08/2026, NOS 190
+// ---------------------------------------------------------------------------
+//
+// A correção do silêncio INICIAL (`semPrimeiroSinalMs`, logo abaixo) foi feita
+// pela metade: o limite da primeira fase passou a sair do tamanho do lote, e o
+// do MEIO ficou com o número calibrado em 38 documentos. A rodada do
+// `book-araucaria` mostrou que o silêncio do meio tem exatamente a mesma forma
+// — e a mesma causa.
+//
+// Cronometrado no banco:
+//   20:55:12  os 190 documentos registrados, TODOS no mesmo instante
+//   21:24     as 13.942 linhas gravadas, TODAS no mesmo minuto
+//   → 28min48 sem UMA escrita, contra um limite de 5 minutos.
+//
+// A causa é estrutural e não é lentidão: nó do n8n NÃO É STREAMING. Ele
+// processa todos os itens antes de passar adiante. Entre a barreira do
+// `Juntar Ramos` (que registra os documentos) e a do `Juntar Extraidos` (que
+// grava as linhas) corre o `IA Extrair` inteiro — `batchSize: 1`,
+// `batchInterval: 8000ms`, 190 itens = **25min20s** em que, por construção,
+// nada é escrito no banco.
+//
+// Aos 21:00 o portal declarou "o sistema parou por um problema técnico" sobre
+// um lote que estava rodando, e o analista quase reenviou 190 arquivos —
+// pagando a IA duas vezes.
+//
+// A CONTA É A MESMA DA PRIMEIRA FASE, e isso não é economia de código: as duas
+// esperas são o MESMO fenômeno (uma barreira segurando todos os itens até a
+// última chamada de IA voltar), então dar-lhes contas diferentes seria afirmar
+// uma diferença que não existe. `SEM_PROGRESSO_MINIMO_MS` preserva o 5 antigo
+// como piso, para o lote pequeno não perder nada.
+// A CADÊNCIA DA IA E O PREPARO POR ARQUIVO — as duas contas de espera saem
+// daqui, e é por isso que eles moram acima das duas.
+//   CADENCIA_IA_S ......... o `batchInterval` real dos nós `IA Classificar` e
+//                           `IA Extrair` (8s). `workflow-sim.test.mjs` confere
+//                           este espelho contra o workflow gerado.
+//   PREPARO_POR_ARQUIVO_S . upload ao Storage, leitura do texto e medição. Saiu
+//                           da diferença entre a duração real das rodadas
+//                           v47/v48 e o que a cadência sozinha explica.
+const CADENCIA_IA_S = 8;
+const PREPARO_POR_ARQUIVO_S = 5;
+
+const SEM_PROGRESSO_MINIMO_MS = 5 * 60 * 1000;
+export function semProgressoMs(arquivos: number): number {
+  const n = Math.max(0, Number(arquivos) || 0);
+  return Math.max(SEM_PROGRESSO_MINIMO_MS, n * (CADENCIA_IA_S + PREPARO_POR_ARQUIVO_S) * 1000);
+}
 
 // ANTES DO PRIMEIRO SINAL A FOLGA É MAIOR, e a assimetria é medida, não
 // cautela genérica: entre o envio e o primeiro documento registrado o sistema lê
@@ -114,8 +161,6 @@ export const SEM_PROGRESSO_MS = 5 * 60 * 1000;
 // classificações a 8s ≈ 8,4 min): sobram ~1,5 min para 38 arquivos, ~2,4s cada,
 // e 5 é a margem. A conta reproduz o 8 antigo no lote em que ele foi calibrado
 // (38 × 13s = 8,2 min), que é o sinal de que ela descreve o mesmo fenômeno.
-const CADENCIA_IA_S = 8;
-const PREPARO_POR_ARQUIVO_S = 5;
 const SEM_PRIMEIRO_SINAL_MINIMO_MS = 8 * 60 * 1000;
 export function semPrimeiroSinalMs(arquivos: number): number {
   const n = Math.max(0, Number(arquivos) || 0);
@@ -195,12 +240,31 @@ export type VereditoDoLote =
   | { estado: 'pronto' }
   | { estado: 'nao_fechou' };
 
-// Entre o último documento extraído e a linha de `lote_execucao` correm três nós
-// (`Reconciliar` → `Resumo de Custo` → `Gravar Uso do Lote`), que levam
-// segundos. Dois minutos é folga larga para isso — e sem carência QUALQUER
-// lote saudável acusaria falha na janela entre o último documento e o fechamento,
-// que é o alarme falso que ensina a ignorar o alarme.
-export const CARENCIA_DO_FECHAMENTO_MS = 2 * 60 * 1000;
+// Entre o último documento extraído e a linha de `lote_execucao` correm quatro
+// nós (`Reconciliar (Classe A)` → `Reconciliar Lote` → `Resumo de Custo` →
+// `Gravar Uso do Lote`). Sem carência, QUALQUER lote saudável acusaria falha na
+// janela entre o último documento e o fechamento — o alarme falso que ensina a
+// ignorar o alarme.
+//
+// O COMENTÁRIO ANTERIOR DIZIA "que levam segundos", E ISSO ERA VERDADE EM 38
+// DOCUMENTOS. Na rodada de 190 o `Reconciliar` sozinho passou de UMA HORA sem
+// terminar: as checagens do despachante leem (caso, entidade, período) e
+// rodavam uma vez por DOCUMENTO — 190 execuções para 82 chaves. A `0152`
+// corrigiu a causa, mas o número aqui continuava descrevendo o lote em que foi
+// calibrado, que é o defeito que este arquivo inteiro documenta.
+//
+// Agora ele escala: a reconciliação por documento é O(documentos) e a do lote é
+// O(chaves), e `chaves <= documentos`. Um segundo por documento é folga larga
+// sobre o que a 0152 mede (a árvore por documento é uma consulta indexada), e o
+// piso de 2 minutos preserva o comportamento em lote pequeno.
+const CARENCIA_MINIMA_MS = 2 * 60 * 1000;
+export function carenciaDoFechamentoMs(arquivos: number): number {
+  const n = Math.max(0, Number(arquivos) || 0);
+  return Math.max(CARENCIA_MINIMA_MS, n * 1000);
+}
+
+/** @deprecated use `carenciaDoFechamentoMs(arquivos)` — o fixo não sobrevive a 190. */
+export const CARENCIA_DO_FECHAMENTO_MS = CARENCIA_MINIMA_MS;
 
 export function vereditoDoLote({
   classificados, processados, esperados, loteFechou, desdeMs, agoraMs,
@@ -218,6 +282,6 @@ export function vereditoDoLote({
   if (loteFechou !== false) return { estado: 'pronto' };
 
   const esperandoHa = Number.isFinite(desdeMs) ? agoraMs - desdeMs : 0;
-  if (esperandoHa > CARENCIA_DO_FECHAMENTO_MS) return { estado: 'nao_fechou' };
+  if (esperandoHa > carenciaDoFechamentoMs(esperados)) return { estado: 'nao_fechou' };
   return { estado: 'andando' };
 }

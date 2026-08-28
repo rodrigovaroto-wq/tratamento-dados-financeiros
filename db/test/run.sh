@@ -260,6 +260,25 @@ echo "== desempate entre documentos do mesmo período (0151: quem vence, por qu�
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/desempate.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
+# DEPOIS do desempate, pela mesma razão: o bloco 7 exige que o book real
+# continue devolvendo ZERO conflito, agora contra a implementação da 0152 — e a
+# equivalência com a 0151 é medida sobre a extração real dos 28 documentos, que
+# é diferente de medir sobre um caso montado à mão.
+echo
+echo "== a reconciliação do LOTE (0152: equivalência com a 0151 e dedução por chave sem perda)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao_do_lote.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== a autoridade do COMBINADO (0155: quinze empresas nas colunas, qualquer que seja o rótulo)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/autoridade_combinado.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
+echo "== a entidade AMBÍGUA (0153: o nome que casa com duas empresas não identifica nenhuma)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/entidade_ambigua.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
 echo
 echo "== proveniência POR CÉLULA (0125: arquivo, página, confiança e aceite, por ano)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/proveniencia.test.sql 2>&1 \

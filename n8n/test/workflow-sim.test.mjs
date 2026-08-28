@@ -869,9 +869,50 @@ test('Dedup (0118): o curto-circuito existe, e junta por Merge — nunca converg
   assert.equal(viaExtracao[0].index ?? 0, 0, 'quem extraiu entra no input 0');
   assert.deepEqual(wf.connections['Juntar Extraidos'].main[0].map((c) => c.node), ['Reconciliar (Classe A)']);
 
-  // E a cauda do lote continua rodando para os dois: reconciliação, custo,
-  // gravação do uso e a conferência de integridade do lote.
-  assert.deepEqual(wf.connections['Reconciliar (Classe A)'].main[0].map((c) => c.node), ['Resumo de Custo']);
+  // E a cauda do lote continua rodando para os dois: reconciliação por documento,
+  // reconciliação do CASO, custo, gravação do uso e a conferência do lote.
+  //
+  // A ORDEM É O CONTEÚDO DA 0152, e por isso está travada aqui. `Reconciliar
+  // (Classe A)` roda por documento e faz só a árvore (que é intra-documento);
+  // `Reconciliar Lote` roda UMA vez e faz as oito checagens que leem (caso,
+  // entidade, período). Medido no book-araucaria: 82 chaves para 190 documentos,
+  // e a Araucária Serraria sozinha tem 80 documentos disparando as mesmas
+  // checagens 80 vezes — foi isso que deixou a execução 1h52 de pé sem gravar
+  // uma reconciliação.
+  assert.deepEqual(wf.connections['Reconciliar (Classe A)'].main[0].map((c) => c.node), ['Reconciliar Lote']);
+  assert.deepEqual(wf.connections['Reconciliar Lote'].main[0].map((c) => c.node), ['Resumo de Custo']);
+
+  const porDoc = wf.nodes.find((n) => n.name === 'Reconciliar (Classe A)');
+  assert.match(porDoc.parameters.query, /fn_reconciliar_por_documento\(\$1::uuid, 'documento'\)/,
+    'o nó por documento declara o escopo `documento` — sem isso ele volta a rodar as oito');
+
+  const doLote = wf.nodes.find((n) => n.name === 'Reconciliar Lote');
+  assert.ok(doLote, 'existe o nó que reconcilia o CASO');
+  assert.match(doLote.parameters.query, /fn_reconciliar_caso\(\$1::uuid\)/);
+  assert.equal(doLote.executeOnce, true,
+    '`executeOnce`: sem ele o nó do LOTE roda uma vez por item e a 0152 não serve para nada');
+});
+
+// A TRANSAÇÃO QUE APAGAVA O LOTE INTEIRO (medida na execução 7172, 27/08/2026).
+//
+// O modo `single` do nó Postgres — que é o DEFAULT — junta as queries de todos
+// os itens numa transação implícita só. Observado em `pg_stat_activity`: um
+// backend com 11 `fn_reconciliar_por_documento` num statement, `xact_start` =
+// `query_start`, ativo há 13min25 segurando RowExclusiveLock em `reconciliacao`
+// — e sete minutos depois o backend tinha sumido com ZERO linhas commitadas.
+//
+// Em 38 documentos isso nunca apareceu, porque a transação durava segundos.
+test('os nós Postgres POR ITEM commitam item a item (`independently`), não num bloco só', () => {
+  const porItem = ['Registrar Documento', 'Gravar Campos (Sombra)', 'Registrar Diagnostico',
+                   'Reconciliar (Classe A)'];
+  for (const nome of porItem) {
+    const n = wf.nodes.find((x) => x.name === nome);
+    assert.ok(n, `existe o nó ${nome}`);
+    assert.equal(n.parameters.options?.queryBatching, 'independently',
+      `${nome} tem de commitar por item: no modo padrão (\`single\`) as queries de todos os `
+      + 'itens entram numa transação só, e a morte de uma apaga o lote inteiro — foi o que '
+      + 'aconteceu com os 190 documentos do araucária');
+  }
 });
 
 test('Dedup (0118): o fingerprint sai do prompt+modelo+esquema, e viaja no registro', () => {

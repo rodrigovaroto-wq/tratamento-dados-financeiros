@@ -1000,7 +1000,24 @@ for(const [chave, blocos] of porDocumento){
   // ao de antes desta correcao, em vez de cobertura zero.
   const linhasDevolvidas=r.linhasRetornadas>0?r.linhasRetornadas:contasDistintas;
   const cobertura=avaliarCobertura({extraidas:linhasDevolvidas, esperadas:base.contas_no_documento});
-  if(cobertura) motivos.push(cobertura.motivo);
+  // EM QUANTOS BLOCOS O DOCUMENTO FOI LIDO — e este numero so' entrou aqui
+  // porque eu mesmo precisei dele e nao tinha.
+  //
+  // Investigando as 23 pendencias de cobertura do araucaria, a pergunta que
+  // decidia tudo era: o modelo leu pela metade, ou o FATIAMENTO nao rodou? Cinco
+  // livros razao de 258 linhas devolveram 102, 101, 104, 102 e 102 — constancia
+  // e' assinatura de TETO, nao de leitura. Mas um documento lido em UM bloco e
+  // outro lido em QUATRO tinham exatamente a mesma aparencia na pendencia, e a
+  // execucao ja' tinha sido cancelada (o n8n descarta os dados) e o lote nunca
+  // fechou (a linha de \`lote_execucao\`, que carrega \`documentos_fatiados\`, nao
+  // foi escrita). A investigacao parou por falta de instrumento.
+  //
+  // O numero existe, viaja no item, e custa uma frase.
+  if(cobertura) motivos.push(cobertura.motivo
+    + ' O documento foi lido em ' + r.blocos + ' bloco(s)'
+    + (r.blocos===1
+       ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
+       : ' (fatiado), entao o que falta nao e teto de uma chamada so.'));
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
     documento_versao_id,
@@ -1156,6 +1173,10 @@ const node = (name, type, typeVersion, parameters, opts = {}) => ({
   ...(opts.credentials ? { credentials: opts.credentials } : {}),
   ...(opts.onError ? { onError: opts.onError } : {}),
   ...(opts.disabled ? { disabled: true } : {}),
+  // `executeOnce`: o nó roda UMA vez para o lote inteiro, com o primeiro item.
+  // É o que a 0152 precisa no `Reconciliar Lote` — a pergunta é do caso, e
+  // rodá-la por documento é o defeito que ela corrige.
+  ...(opts.executeOnce ? { executeOnce: true } : {}),
   // Retry no nível do node (N8N): reexecuta o item que falhou antes de cair no
   // onError. waitBetweenTries tem teto de 5000ms no N8N. maxTries 6 (era 4,
   // cont.⁸): o "teste v18" mostrou que 4 tentativas não bastavam pros documentos
@@ -1300,6 +1321,35 @@ const IA_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval:
 // (nunca vira fato — segue N0/pendente, doutrina docs/01), mas os itens
 // SEGUINTES no lote continuam sendo processados normalmente.
 const PG_RETRY = { onError: 'continueRegularOutput', retryOnFail: true, maxTries: 3, waitBetweenTries: 3000 };
+
+// CADA ITEM COMMITA SOZINHO — e este é o defeito que custou a rodada de 190.
+//
+// MEDIDO AO VIVO em 27/08/2026, na execução 7172, com `pg_stat_activity`:
+//
+//   backend 81532, ativo há 13min25, RowExclusiveLock em reconciliacao
+//   query: select fn_reconciliar_por_documento('661f…'); select … (11 statements)
+//   xact_start = query_start   → batch multi-statement = UMA transação implícita
+//
+// e sete minutos depois o backend tinha sumido e `reconciliacao` do caso estava
+// em ZERO. Nada commitou. **1h52 de execução, 13.942 linhas extraídas e pagas,
+// e nenhuma reconciliação.**
+//
+// (Um backend novo apareceu logo depois, com 2 statements em vez de 11. Se é
+// retentativa ou o lote seguinte, não sei — e por isso não está afirmado aqui.
+// O que foi medido é a transação implícita, os locks de escrita e o zero
+// commitado.)
+//
+// O modo `single` do nó Postgres — que é o DEFAULT, e por isso ninguém escolheu
+// — junta as queries de todos os itens numa transação só. Num lote de 38
+// documentos isso nunca apareceu: a transação durava segundos. Em 190 ela dura
+// dezenas de minutos, e qualquer coisa que a interrompa apaga o lote inteiro.
+//
+// `independently` commita item a item. A troca é explícita: perde-se a
+// atomicidade do lote, ganha-se que um documento ruim não descarte os 189 bons.
+// Num pipeline em que refazer o lote custa uma cota diária de IA e dois dólares,
+// e em que a falha por documento JÁ é registrada e mostrada na tela, não há
+// dúvida sobre qual dos dois lados vale mais.
+const PG_POR_ITEM = { queryBatching: 'independently' };
 
 // Todo nó Code POR ITEM continua o lote quando um item falha.
 //
@@ -1456,7 +1506,7 @@ const nodes = [
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text) as r',
-    options: { queryReplacement: `={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null, '${FINGERPRINT_EXTRACAO}'] }}` },
+    options: { ...PG_POR_ITEM, queryReplacement: `={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null, '${FINGERPRINT_EXTRACAO}'] }}` },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
@@ -1529,7 +1579,7 @@ const nodes = [
       'select fn_registrar_campos_extraidos($1::uuid, $2::jsonb, p_falha_motivo=>$3::text, p_tem_dado_financeiro=>$4::boolean) as n_campos,',
       '       $5::uuid as documento_id, $1::uuid as documento_versao_id, $6::jsonb as diagnostico',
     ].join('\n'),
-    options: { queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null, $json.documento_id, JSON.stringify($json.diagnostico ?? null)] }}" },
+    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_versao_id, JSON.stringify($json.campos), $json.falha_motivo || null, $json.diagnostico?.tem_dado_financeiro ?? null, $json.documento_id, JSON.stringify($json.diagnostico ?? null)] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // Diagnóstico (E1/E2, N1): entidade preenche a lacuna quando ainda vazia;
@@ -1554,7 +1604,7 @@ const nodes = [
       '       fn_registrar_fatos($2::uuid,$12::jsonb) as fatos,',
       '       $1::uuid as documento_id',
     ].join('\n'),
-    options: { queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null] }}" },
+    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do
@@ -1562,11 +1612,34 @@ const nodes = [
   // resolve caso/entidade/período sozinha (N8N continua stateless). Gera
   // pendência tipada quando diverge ou quando falta pré-condição; nunca
   // escreve "fato" numa base viva (anti-ancoragem, docs/01).
+  // O ESCOPO PASSA A SER DECLARADO (0152). As outras oito checagens leem
+  // (caso, entidade, período) e NÃO o documento — o documento só entrega a
+  // chave —, então rodá-las por documento é repetir trabalho idêntico: no
+  // araucária, 190 execuções para 82 chaves, e a Araucária Serraria sozinha tem
+  // 80 documentos. Aqui fica só a árvore, que é de fato intra-documento; as
+  // outras rodam UMA vez, no `Reconciliar Lote`.
   node('Reconciliar (Classe A)', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_reconciliar_por_documento($1::uuid) as resultado',
-    options: { queryReplacement: '={{ [$json.documento_id] }}' },
+    query: "select fn_reconciliar_por_documento($1::uuid, 'documento') as resultado",
+    options: { queryReplacement: '={{ [$json.documento_id] }}', ...PG_POR_ITEM },
   }, { credentials: PG_CRED, ...PG_RETRY }),
+
+  // AS CHECAGENS DO CASO, UMA VEZ (0152).
+  //
+  // `executeOnce` porque a pergunta é do LOTE: `fn_reconciliar_caso` descobre
+  // sozinha quais (entidade, período, tipo) existem e roda cada checagem uma vez
+  // por chave. É o nó que substitui as ~8.500 invocações que o araucária pedia.
+  //
+  // Ele vem DEPOIS do `Reconciliar (Classe A)` e não em paralelo: a árvore
+  // intra-documento tem de falar primeiro (0133) — com totais impressos dos dois
+  // lados, Ativo = Passivo + PL fecha mesmo faltando contas no meio.
+  node('Reconciliar Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery',
+    query: 'select fn_reconciliar_caso($1::uuid) as resultado',
+    options: {
+      queryReplacement: "={{ [$('Upsert Caso (Postgres)').first().json.caso_id] }}",
+    },
+  }, { credentials: PG_CRED, ...PG_RETRY, executeOnce: true }),
 
   // O custo do lote em UM painel, no fim da cadeia. `runOnceForAllItems` porque
   // a pergunta é do LOTE, não do documento — e `onError` porque um resumo que
@@ -1668,7 +1741,8 @@ const connections = {
   'Gravar Campos (Sombra)': { main: [[{ node: 'Registrar Diagnostico', type: 'main', index: 0 }]] },
   'Registrar Diagnostico': { main: [[{ node: 'Juntar Extraidos', type: 'main', index: 0 }]] },
   'Juntar Extraidos': { main: [[{ node: 'Reconciliar (Classe A)', type: 'main', index: 0 }]] },
-  'Reconciliar (Classe A)': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
+  'Reconciliar (Classe A)': { main: [[{ node: 'Reconciliar Lote', type: 'main', index: 0 }]] },
+  'Reconciliar Lote': { main: [[{ node: 'Resumo de Custo', type: 'main', index: 0 }]] },
   'Resumo de Custo': { main: [[{ node: 'Gravar Uso do Lote', type: 'main', index: 0 }]] },
   'Gravar Uso do Lote': { main: [[{ node: 'Conferir Lote', type: 'main', index: 0 }]] },
 };
