@@ -33,6 +33,10 @@
 --       motivo de `fn_mesma_entidade` ser frouxa: "Vertentes Metalurgica" (nome
 --       de arquivo, sem acento) continua sendo a mesma empresa que
 --       "VERTENTES METALÚRGICA LTDA." (diagnóstico);
+--   #8  o LIMITE CONHECIDO fica medido: com UM candidato, a absorção continua
+--       silenciosa. A 0153 resolve o empate entre dois ou mais, não a absorção
+--       de "Alfa Comércio Exportação" por "Alfa Comércio". Está aqui com assert
+--       para ser um limite CONHECIDO e não uma surpresa de rodada real;
 --   #7  `fn_fundir_entidade` leva TUDO junto (documento, checklist, pendência,
 --       reconciliação), resolve a pendência de ambiguidade e deixa rastro; e
 --       recusa fundir uma entidade nela mesma ou de outro mandato.
@@ -237,6 +241,66 @@ begin
     perform teste_assert_ent(SQLERRM like '%não encontrada neste mandato%',
       'fundir com entidade de OUTRO mandato é recusado', SQLERRM);
   end;
+
+  -- ===========================================================================
+  raise notice '--- 8. AS BORDAS QUE FALTAVAM ---';
+  -- ===========================================================================
+  --
+  -- (a) TRÊS CANDIDATOS, não dois. O grupo do araucária tem quatorze empresas
+  -- "Araucária ⟨coisa⟩", e um nome curto casa com várias — o teste acima só
+  -- exercitava o par.
+  --
+  -- AS TRÊS ENTRAM POR INSERT DIRETO, E O MOTIVO É UM ACHADO DESTE TESTE: pelo
+  -- `fn_upsert_entidade` elas NÃO viram três. "ALFA COMERCIO" é subsequência de
+  -- "ALFA COMERCIO EXTERIOR", então a segunda casa a primeira (UM candidato) e
+  -- é ABSORVIDA por ela, em silêncio.
+  --
+  -- **Isso continua acontecendo depois da 0153, e é limite conhecido dela.** A
+  -- 0153 resolve o empate entre DOIS ou mais candidatos; ela não resolve o caso
+  -- de UM candidato que é absorção indevida — duas empresas reais cujos nomes
+  -- sejam prefixo-subsequência uma da outra viram uma entidade só, sem
+  -- pendência. No `book-araucaria` isso não acontece (Bioenergia e Imobiliária
+  -- não são subsequência uma da outra), mas num grupo com "Alfa Comércio Ltda."
+  -- e "Alfa Comércio e Exportação Ltda." aconteceria. Fica MEDIDO aqui, com
+  -- assert, para não virar surpresa de rodada real.
+  insert into entidade (caso_id, razao_social) values
+    (v_caso2, 'ALFA COMERCIO LTDA.'),
+    (v_caso2, 'ALFA COMERCIO EXTERIOR LTDA.'),
+    (v_caso2, 'ALFA COMERCIO INTERIOR LTDA.');
+  select count(*) into v_n from fn_entidades_candidatas(v_caso2, 'Alfa Comercio');
+  perform teste_assert_ent(v_n >= 3,
+    'PRÉ-CONDIÇÃO: "Alfa Comercio" casa com TRÊS ou mais', format('%s', v_n));
+  -- "Alfa Comercio" é EXATA contra "ALFA COMERCIO LTDA." (o sufixo societário
+  -- sai na forma canônica), então ela decide — e é o comportamento certo.
+  v_ent := fn_upsert_entidade(v_caso2, 'Alfa Comercio');
+  perform teste_assert_ent(
+    (select razao_social from entidade where id = v_ent) = 'ALFA COMERCIO LTDA.',
+    'com três candidatos, o EXATO ainda decide (o sufixo societário sai na forma canônica)',
+    (select razao_social from entidade where id = v_ent));
+  -- Já um nome que casa com os três e não é exato de nenhum não decide.
+  v_ent := fn_upsert_entidade(v_caso2, 'Alfa Com');
+  perform teste_assert_ent(
+    (select razao_social from entidade where id = v_ent) = 'Alfa Com',
+    'e um nome que casa com os três sem ser exato de nenhum fica em entidade própria',
+    (select razao_social from entidade where id = v_ent));
+
+  -- (c) O LIMITE CONHECIDO DA 0153, medido em vez de suposto: com UM candidato,
+  -- a absorção continua silenciosa. Se um dia isso for corrigido, este assert
+  -- reprova — e é o lugar certo para a decisão ser revista.
+  v_caso2 := (fn_upsert_caso('Caso 0153 — o limite da absorção'))::uuid;
+  perform fn_upsert_entidade(v_caso2, 'ALFA COMERCIO LTDA.');
+  v_ent := fn_upsert_entidade(v_caso2, 'ALFA COMERCIO EXTERIOR LTDA.');
+  perform teste_assert_ent(
+    (select razao_social from entidade where id = v_ent) = 'ALFA COMERCIO LTDA.',
+    'LIMITE CONHECIDO: com UM candidato, a absorção continua silenciosa (a 0153 só cobre o empate)',
+    format('"ALFA COMERCIO EXTERIOR LTDA." foi para "%s". Se este assert reprovar, alguém '
+           || 'corrigiu a absorção — atualize o comentário e o ESTADO.md.',
+           (select razao_social from entidade where id = v_ent)));
+
+  -- (b) NOME VAZIO E NULO não criam entidade nenhuma.
+  perform teste_assert_ent(fn_upsert_entidade(v_caso2, null) is null
+                       and fn_upsert_entidade(v_caso2, '   ') is null,
+    'nome nulo ou em branco não cria entidade');
 
   raise notice 'entidade_ambigua OK — o nome que casa com duas não entra em nenhuma, a pendência '
                'nasce do gatilho nomeando os candidatos, o exato ganha do alfabeto, o aproximado '

@@ -464,6 +464,22 @@ begin
   perform teste_assert_lote(v_dif is null,
     'e concorda com a 0151 no book inteiro (28 documentos, extração real)', v_dif);
 
+  -- ===========================================================================
+  raise notice '--- 8. AS BORDAS: caso vazio e documento inexistente ---';
+  -- ===========================================================================
+  --
+  -- `fn_reconciliar_caso` roda no FIM do lote, e o lote pode ter sido recusado
+  -- pelo orçamento antes de registrar documento nenhum. Um erro aqui derrubaria
+  -- a cauda do workflow num caso em que não há nada a reconciliar.
+  v_chk := fn_reconciliar_caso((fn_upsert_caso('Caso 0152 — vazio'))::uuid);
+  perform teste_assert_lote((v_chk->>'executado')::boolean
+                        and (v_chk->>'chamadas')::int = 0,
+    'caso sem documento nenhum devolve executado com zero chamadas, sem erro', v_chk::text);
+
+  v_chk := fn_reconciliar_por_documento('00000000-0000-0000-0000-000000000000'::uuid);
+  perform teste_assert_lote((v_chk->>'executado')::boolean = false,
+    'documento inexistente devolve executado=false, sem erro', v_chk::text);
+
   raise notice 'reconciliacao_do_lote OK — equivalência com a 0151 nas duas pontas da borda, '
                'dedução por chave sem perda e com menos linhas, escopo declarado, 1-argumento vivo';
 end $$;

@@ -207,6 +207,72 @@ begin
     'e ele fica bem abaixo do balanço individual, que é o ponto inteiro da 0151',
     format('preliminar = %s, individual = %s', v_a_prelim, v_a_indiv));
 
+  -- ===========================================================================
+  raise notice '--- 6. AS BORDAS QUE FALTAVAM ---';
+  -- ===========================================================================
+  --
+  -- (a) A DF AUDITADA CONSOLIDADA. Ela vale 60 — é a peça que o comitê aceita
+  -- sem perguntar — e cai para 30 quando as colunas nomeiam várias empresas.
+  -- Está escrito no cabeçalho da 0155 como deliberado, e um "deliberado" sem
+  -- teste é uma intenção: se alguém discordar, é aqui que a discordância
+  -- aparece, com o número ao lado.
+  v_r := fn_registrar_documento(
+    v_caso, 'Grupo Araucária', 'anual', '2023', 'DF_AUDITADA', 1.0, 'openai_conteudo',
+    'supabase_storage', 'b/df-grupo.pdf', 'Demonstracoes_Financeiras_Auditadas_Grupo_2023.pdf',
+    false, 'HASH-155-DFGRUPO', 'ok');
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_campos_extraidos(v_ver, '[
+    {"chave": "Clientes", "valor_num": "1000", "unidade": "milhar", "confianca": "0.9",
+     "secao_canonica": "ativo_circulante", "periodo_coluna": "2023",
+     "entidade_coluna": "Araucaria Serraria Ltda"},
+    {"chave": "Clientes", "valor_num": "2000", "unidade": "milhar", "confianca": "0.9",
+     "secao_canonica": "ativo_circulante", "periodo_coluna": "2023",
+     "entidade_coluna": "Araucaria Paineis S.A."}
+  ]'::jsonb, 'N0');
+  select autoridade into v_a_multi from fn_autoridade_do_documento((v_r->>'documento_id')::uuid);
+  perform teste_assert_comb(
+    v_a_multi = (select autoridade from taxonomia_tipo_documento where codigo='COMBINADO'),
+    'a DF AUDITADA consolidada cai de 60 para a autoridade de combinado — deliberado, e medido',
+    format('veio %s; a escala não mede a qualidade da auditoria, mede a distância até a peça '
+           || 'original, e uma consolidada continua sendo a soma das empresas', v_a_multi));
+
+  -- (b) LINHA SEM COLUNA DE EMPRESA NO MEIO. Um combinado real tem linhas de
+  -- cabeçalho e de total que não pertencem a empresa nenhuma. Elas não podem
+  -- fazer o documento deixar de ser reconhecido como derivado.
+  v_r := fn_registrar_documento(
+    v_caso, 'Grupo Araucária', 'anual', '2022', 'BALANCO', 1.0, 'openai_conteudo',
+    'supabase_storage', 'b/comb-misto.pdf', 'Balanco_Combinado_com_totais_2022.pdf',
+    false, 'HASH-155-MISTO', 'ok');
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_campos_extraidos(v_ver, '[
+    {"chave": "Clientes", "valor_num": "1000", "unidade": "milhar", "confianca": "0.9",
+     "secao_canonica": "ativo_circulante", "periodo_coluna": "2022",
+     "entidade_coluna": "Araucaria Serraria Ltda"},
+    {"chave": "Clientes", "valor_num": "2000", "unidade": "milhar", "confianca": "0.9",
+     "secao_canonica": "ativo_circulante", "periodo_coluna": "2022",
+     "entidade_coluna": "Araucaria Paineis S.A."},
+    {"chave": "Ativo Circulante", "valor_num": "3000", "unidade": "milhar", "confianca": "0.9",
+     "secao_canonica": "ativo_circulante", "periodo_coluna": "2022"}
+  ]'::jsonb, 'N0');
+  perform teste_assert_comb(
+    fn_documento_de_varias_empresas((v_r->>'documento_id')::uuid),
+    'linha de TOTAL sem coluna de empresa não desfaz o reconhecimento — as outras duas bastam');
+
+  -- (c) DOCUMENTO SEM EXTRAÇÃO NENHUMA. `fn_versao_com_extracao` devolve null e
+  -- a contagem vem vazia: a função tem de responder FALSO, não nulo — nulo
+  -- propagaria para o `case` e a autoridade sairia nula.
+  v_r := fn_registrar_documento(
+    v_caso, 'Araucaria Trading Ltda', 'anual', '2025', 'BALANCO', 1.0, 'nome_arquivo',
+    'supabase_storage', 'b/vazio.pdf', 'Balanco_sem_extracao_2025.pdf',
+    false, 'HASH-155-VAZIO', 'ok');
+  perform teste_assert_comb(
+    fn_documento_de_varias_empresas((v_r->>'documento_id')::uuid) = false,
+    'documento sem extração responde FALSO, não nulo');
+  select autoridade into v_a_multi from fn_autoridade_do_documento((v_r->>'documento_id')::uuid);
+  perform teste_assert_comb(v_a_multi is not null,
+    'e a autoridade dele continua sendo um número — nulo se propagaria para o desempate',
+    coalesce(v_a_multi::text, 'NULO'));
+
   raise notice 'autoridade_combinado OK — o combinado se reconhece pela estrutura, perde do '
                'individual, o comparativo multi-ano não é afetado, e least só abaixa';
 end $$;
