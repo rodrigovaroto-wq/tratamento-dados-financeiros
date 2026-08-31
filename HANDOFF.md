@@ -4,10 +4,21 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-27 (sessões 62 a **73**). **Estado do `main`:** mergeado até o **PR
-#184**; o **#185** está aberto com a frente da sessão 73 (a `0151`). **A INFRA ESTÁ APLICADA E CONFERIDA PELA
-SONDA:** `fn_instalacao_conferir()` devolve **41 de 41 requisitos presentes, cobertura `0150`** —
-conferido em 27/08, depois de eu mesmo aplicar a `0150`.
+**Última atualização:** 2026-08-31 (sessões 62 a **74**). **Estado do `main`:** mergeado até o **PR
+#185**; o **#186** está aberto com a frente da sessão 74 (as `0152` a `0155`). **A INFRA ESTÁ APLICADA E
+CONFERIDA PELA SONDA:** `fn_instalacao_conferir()` devolve **54 de 54 requisitos presentes, cobertura
+`0155`** — conferido em 28/08, depois de eu mesmo aplicar as quatro migrations da sessão 74.
+
+**O `book-araucaria` RODOU, E FOI A RODADA QUE MAIS ENSINOU.** 190 documentos, 27/08 às 17:34 BRT
+(execução 7172). Ela ficou **1h52 de pé sem gravar uma única reconciliação** e foi cancelada à mão —
+**sem um único erro em lugar nenhum**: zero linhas de `ERROR` no log do Postgres, nada no n8n, nada
+na tela. As 13.942 linhas e os 42 fatos materiais foram extraídos e gravados; o que não aconteceu
+foi tudo o que vem depois.
+
+**E AS TRÊS PERGUNTAS ÓBVIAS TINHAM RESPOSTA CERTA, o que é a primeira lição:** a `0151` estava
+aplicada (sonda 46/46), o workflow estava publicado corretamente (33 nós; as únicas diferenças são
+parâmetros default que o n8n omite, e os nós Code são byte a byte iguais) e a cota nem chegou perto
+(440 de 500 RPD). Quando as três respostas fáceis estão certas, a causa é estrutural.
 
 **O TESTE COMPARATIVO SAIU, E É A MELHOR RODADA ATÉ AQUI.** Mandato `Teste comparativo - Grupo
 Canastra`, execução 7156: **38 documentos, 2.565 linhas, 17 fatos materiais, US$ 0,4257, ZERO
@@ -40,8 +51,9 @@ uma empresa em reestruturação é o pior dela); crescimento **indexado** ao ín
 hipótese declarada; e valor de decisão do caso **não projeta**, porque zero seria uma afirmação que
 ninguém fez.
 
-**O QUE FALTA É O `book-araucaria` (190 documentos)** — ver "POR ONDE COMEÇAR" abaixo. **A frente de
-reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68 e 69 (réplica completa por
+**O QUE FALTA AGORA É REPUBLICAR E RODAR DE NOVO** — ver "POR ONDE COMEÇAR" abaixo; o araucária já
+rodou e as cinco correções que ele gerou estão no `main`… **menos as duas que não passam por
+migration**. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68 e 69 (réplica completa por
 cenário, new money, equity×haircut e o cockpit das quatro alavancas) vivem na branch
 `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do `ESTADO.md` antes de
 continuar por ali.
@@ -93,19 +105,14 @@ localizador tem de existir também na checagem que o consome. Sem esse quarto pa
 ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
 trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
-**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: O `book-araucaria`, 190 DOCUMENTOS.** O smoke test e o
-`book-canastra` já rodaram (27/08) e estão medidos acima. O que resta está listado abaixo, em ordem,
-com o que já foi conferido em cada um.
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: REPUBLICAR, E RODAR O ARAUCÁRIA DE NOVO.** As cinco
+correções da sessão 74 estão no `main`, e as quatro migrations estão aplicadas em produção — mas
+**duas delas não chegam ao ar por migration nenhuma**, e é isso que trava a próxima rodada.
 
-> **O NÚMERO QUE DEFINIA ESTA FRENTE MUDOU DE SINAL.** Em 26/08 o banco tinha **zero fatos
-> gravados** e o canal de fato material nunca tinha rodado. Hoje o mandato do comparativo tem **17
-> fatos**, com `fatos_avaliados_em` preenchida — o caminho fecha ponta a ponta, do prompt à tela do
-> mandato.
+### 1. REPUBLICAR O WORKFLOW — e agora ele mudou de TOPOLOGIA, não só de código
 
-### 1. REPUBLICAR O WORKFLOW — e é o que destrava as duas correções de nó
-
-A correção do fatiamento e da cobertura é **código de nó Code**: ela está no repositório e **não
-está em produção** até o workflow ser republicado. Em um comando:
+A `0152` acrescentou um nó (`Reconciliar Lote`, `executeOnce`) e mudou quatro nós Postgres para
+`queryBatching: independently`. **Nada disso existe em produção até a republicação.** Em um comando:
 
 ```bash
 curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
@@ -119,53 +126,77 @@ curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
 O preparador existe porque **duas republicações seguidas perderam a mesma família de coisas**:
 `onError` em 23 nós, `retryOnFail`/`maxTries` em 11, e — a pior — o **`multipleFiles: true`** do
 campo de arquivo do formulário, sem o qual o intake aceita **um documento por vez**. Confira esse
-toggle no editor antes de subir 190 arquivos; é o único item que impede a rodada de acontecer.
+toggle no editor antes de subir 190 arquivos.
 
-### 2. A COTA DO DIA É O LIMITE QUE APERTA, não a cadência
+**E CONFIRA O NÓ NOVO E O BATCHING**, que são a correção inteira da 0152 do lado do n8n:
+`Reconciliar Lote` entre `Reconciliar (Classe A)` e `Resumo de Custo`, com `executeOnce`; e
+`queryBatching: independently` em `Registrar Documento`, `Gravar Campos (Sombra)`,
+`Registrar Diagnostico` e `Reconciliar (Classe A)`. A suíte `workflow-sim.test.mjs` trava os dois,
+mas ela mede o JSON do repositório — não o que está no n8n.
 
-No nível gratuito da linha Flash-Lite: **RPM 15** (usamos 7,5), **TPM 250K** (usamos ~54K) e
-**RPD 500** — este último é o que decide. Medido: o `book-canastra` pede **63 chamadas** (13% do
-dia) e o `book-araucaria`, ~**285** (57%). Os dois no mesmo dia passam de 70% **antes de qualquer
-retentativa**, e o nó de extração tem até 6. `node n8n/medir-custo-book.mjs` responde "quanto do dia
-este lote pede" ao lado de "quanto ele custa".
+### 2. FAZER DEPLOY DO PORTAL
 
-**Um book por dia.** E o painel do Google mostra o **pico dos últimos 28 dias**, não o consumo de
-hoje — foi assim que eu li errado uma vez.
+A espera corrigida (`semProgressoMs`, `carenciaDoFechamentoMs`) está no repositório. Sem deploy, a
+tela **volta a declarar "o sistema parou" aos 5 minutos** sobre os 25 de silêncio legítimo da
+extração — que é o que fez o dono achar que a rodada tinha morrido quando ela estava viva.
 
-### 3. RODAR O `book-araucaria`, e o que medir nele
+### 3. A COTA DO DIA CONTINUA SENDO O LIMITE QUE APERTA
 
-**Ele NÃO está no repositório** — 190 documentos, 14 empresas, 5 exercícios, construído na sessão 70
-e entregue ao dono por arquivo, por decisão dele. Ele não mede se a extração acerta os números (os
-dois books versionados já medem); mede **se o sistema percebe que dois documentos do mesmo período
-discordam e escolhe o certo dizendo por quê** — a armadilha central é um combinado preliminar que
-infla o ativo do grupo em até 32.800 (R$ mil) **e fecha**, porque ativo e passivo caem na mesma
-medida quando um par intragrupo deixa de ser eliminado.
+No nível gratuito da linha Flash-Lite: **RPM 15**, **TPM 250K** e **RPD 500** — este último decide.
+Medido na rodada real do araucária: **440 de 500 (88%)** para os 190 documentos, contra os ~285
+estimados. **Um book por dia, e o araucária sozinho já ocupa quase o dia inteiro.** O painel do
+Google mostra o **pico dos últimos 28 dias**, não o consumo de hoje.
 
-**O que esta sessão mudou no que ele vai encontrar:** a `0150` já tira o COMBINADO da soma do
-realizado (ele é a soma das empresas), e a cobertura por documento volta a ser avaliada depois da
-republicação. **E o desempate deixou de estar sem resposta — a sessão 73 achou que ele já existia.** A frase
-que estava aqui ("não há mecanismo que escolha entre duas versões do mesmo período") estava meio
-certa: não havia mecanismo DECLARADO, mas havia um, numa linha da `0150` (`order by abs(valor)
-desc`), e ele **ficava com o maior** — que num caso de reestruturação é escolher sempre o número que
-infla o ativo, exatamente a armadilha do araucária. A `0151` põe critério nisso: a autoridade
-documental vira dado do catálogo, o conflito passa a ser declarado com vencedor, perdedor e motivo
-por extenso, e o EMPATE não troca valor nenhum — volta para o humano. **A `0151` não está aplicada
-em produção**, e é o primeiro item da lista acima quando houver conexão com o banco.
+### 4. RODAR O ARAUCÁRIA DE NOVO, E O QUE MEDIR NELE
 
-### 4. O que NÃO bloqueia o teste real
+Ele NÃO está no repositório — 190 documentos, 14 empresas, 5 exercícios, entregue ao dono por
+arquivo. O que a rodada de 27/08 deixou para a próxima:
 
-- **O teste vermelho no dialeto OpenAI**, que já estava vermelho antes da 67 (conferido rodando o
-  `886b7f3`). O provedor ativo é o Google, e o CI roda o dialeto padrão. Fica registrado porque o
-  `ESTADO.md` diz "a OpenAI continua testada" e isso hoje tem uma exceção;
-- **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1, trivial e o
-  de maior risco), levar o capítulo 10 da entrega para o repositório (destrava as 25 perguntas ao
-  cliente, B4.1) e preencher os `[A CONFIRMAR]` do `docs/10`.
+**a) O LOTE TEM DE FECHAR.** É o critério único, e ele nunca aconteceu: `lote_execucao` do araucária
+está vazia até hoje. Com a 0152 a reconciliação sai de ~8.500 invocações para **247**, e a checagem
+cara de 12,4 s para 1,79 s — medido em produção, não estimado.
+
+**b) A PERGUNTA QUE FICOU SEM RESPOSTA: sub-extração é teto do modelo ou fatiamento que não rodou?**
+23 documentos vieram com cobertura entre **40% e 78%**, e a régua está calibrada (erro mediano de
+**+3%** contra os 38 do Canastra, pior extração perfeita em 96%). A constância é o que intriga:
+cinco livros razão de 258 linhas devolveram **102, 101, 104, 102 e 102**; cinco mapas de dívida de
+25 linhas devolveram **12, 12, 12, 12 e 12**. Número que não varia com o documento é assinatura de
+TETO, não de leitura. A `0154` fez a pendência dizer **em quantos blocos** o documento foi lido —
+é o instrumento que faltava, e a resposta vem na primeira pendência de cobertura da próxima rodada.
+
+**c) O QUE A 0155 MUDA NO QUE ELE VAI ENCONTRAR.** Os cinco combinados do grupo têm 14–15 empresas
+nas colunas e a IA chamou quatro de `BALANCO` e um de `COMBINADO`, com confiança 1,0 nos cinco —
+e chamado de BALANCO o combinado EMPATAVA com o balanço individual da empresa, o que devolvia o
+"fica com o maior" que a `0151` existe para eliminar. Agora a autoridade sai da estrutura: medido
+depois, `053` e `056` valem **35** (iguais, apesar dos rótulos diferentes), o individual vale **50**
+e o combinado preliminar vale **10**.
+
+**d) A CLASSIFICAÇÃO POR NOME MELHOROU MUITO, e dá para conferir de graça.** `parseEntidade` saía com
+**47 nomes de entidade distintos** para 14 empresas nos 190 nomes de arquivo; agora sai com **16** —
+as 14 reais, o `Grupo Araucaria` e o `null` dos 24 arquivos que de fato não nomeiam empresa. Rode
+antes de enviar: um script de três linhas importando `classifyByFilename` responde isso sem gastar
+uma chamada de IA.
+
+### 5. O que NÃO bloqueia a próxima rodada
+
+- **O teste vermelho no dialeto OpenAI**, que já estava vermelho antes da 67. O provedor ativo é o
+  Google e o CI roda o dialeto padrão;
+- **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), levar o
+  capítulo 10 da entrega para o repositório (B4.1) e preencher os `[A CONFIRMAR]` do `docs/10`;
+- **Dois achados da rodada que são do dono, não defeitos:** o **cancelamento manual não dispara o
+  Error Workflow** (a execução 7172 foi cancelada e `execucao_falha` ficou vazia — o Error Workflow
+  está configurado desde 27/08, mas cancelamento não é falha para o n8n), e o **Relatório do Auditor
+  nomeia uma décima quinta empresa**, "Araucária Indústria de Embalagens Ltda.", que não tem nenhuma
+  demonstração no book;
+- **Um limite conhecido da `0153`, medido e travado com assert:** com UM candidato a absorção de
+  entidade continua silenciosa ("ALFA COMERCIO EXTERIOR LTDA." é absorvida por "ALFA COMERCIO LTDA."
+  porque uma é subsequência da outra). No araucária não acontece; num grupo com "Alfa Comércio
+  Ltda." e "Alfa Comércio e Exportação Ltda." aconteceria.
 
 > **ANTES DE ESCREVER QUE A INFRA CONTINUA APLICADA, RODE A SONDA.** `select * from
-> fn_instalacao_conferir()` contra o banco em que você está conectado. Em 27/08 ela devolvia 41 de
-> 41 requisitos presentes e cobertura `0150` — mas essa frase envelhece, e é exatamente assim que a
-> `0133` passou três documentos dada por aplicada sem estar. É a regra que o `ESTADO.md` aplica a si
-> mesmo.
+> fn_instalacao_conferir()` contra o banco em que você está conectado. Em 28/08 ela devolvia 54 de
+> 54 requisitos presentes e cobertura `0155` — mas essa frase envelhece, e é exatamente assim que a
+> `0133` passou três documentos dada por aplicada sem estar.
 
 **O QUE MUDOU DA 52 PARA A 67, em uma linha cada** — a narrativa completa de cada uma está no
 `ESTADO.md`, que é onde ela deve ser lida:
@@ -188,6 +219,7 @@ em produção**, e é o primeiro item da lista acima quando houver conexão com 
 | **71** | **A preparação do lote de 190, e o que ela achou.** A tela desistia de um lote vivo: o merge `Juntar Ramos` (`mode: append`) é uma BARREIRA — nenhum documento é registrado antes da última classificação, uma a cada 8s — e o limite de silêncio da tela era 8 minutos FIXOS, calibrado no lote de 38; em 190 documentos o silêncio legítimo vai a 13 min (proporção medida) ou 25 (pior caso), e o analista reenviaria um lote em execução, pagando a IA duas vezes. Mais o teto da janela, que truncava em 1,77× a margem de 3× que ela promete. As quatro contas saíram de dentro do componente para uma lib e a suíte passa a CHAMÁ-LAS: o espelho anterior refazia a fórmula e passava com o defeito religado. E o orçamento do lote de 190 foi simulado contra o guarda real — cabe por conteúdo (US$ 0,93 a 2,30), e um único PDF sem camada de texto derruba o lote inteiro para a conta por tamanho (US$ 2,47 a 3,21), que recusa no pior caso |
 | **73** | **O desempate entre dois documentos do mesmo período já existia, era silencioso, e escolhia o MAIOR** (`0151`). Medido antes de escrever, na fixture do Canastra: 117 conceitos aparecem em dois ou mais documentos e só CINCO discordam — três falsos (rótulo genérico sem seção canônica, papel subtotal, e um "total" em milhares de reais contra outro em PESSOAS) e dois verdadeiros que são arredondamento (0,04%). Os três falsos viraram os três filtros; os dois verdadeiros ficam sob a tolerância de sempre. A autoridade documental vira DADO do catálogo (`taxonomia_tipo_documento.autoridade`), o conflito passa a ser declarado com vencedor, perdedor, diferença e critério por extenso, `fn_linhas_do_realizado` para de escolher o maior — e no EMPATE nada muda de valor, porque desempatar por `criado_em` seria trocar uma regra silenciosa por outra (ali está a hora do UPLOAD, não a data do documento). Religado um a um: com a ordem antiga o realizado usa o rascunho de 42.800 em vez da DF auditada de 10.000, e sem os três filtros o Canastra devolve exatamente os três falsos positivos medidos |
 | **72** | **A rodada comparativa do Canastra, e os três defeitos que não davam erro.** 38 documentos, **2.565 linhas** e **17 fatos materiais** (contra 2.460/0 e 2.485/0 das v47/v48), US$ 0,4257, zero falha, o lote FECHANDO. E três achados silenciosos: as premissas do realizado somando o total da DRE com as próprias componentes, a abertura analítica por cima da conta que ela abre e as oito empresas num modelo de uma (`0150` — PMR de 348,6 para 70 dias, custo variável de 287,7% para 87,9%); o `Montar Req Extracao` descartando a medição do documento, o que mantinha **o fatiamento desligado e a guarda de cobertura muda**; e a tela dizendo "Tudo pronto" sobre execução morta, porque o registro de falha depende de um passo manual do n8n. Mais a projeção das premissas deixando de ser digitada: Focus para as macro, média dos exercícios para as razões, indexação para o crescimento — a regra saindo do catálogo, não de uma lista em código |
+| **74** | **A rodada de 190, e os cinco defeitos que ela achou — nenhum produzindo erro.** 1h52 de execução sem gravar uma reconciliação. (1) A reconciliação era quadrática DUAS vezes: as oito checagens do despachante leem `(caso, entidade, período)` e **não o documento** — ele só entrega a chave —, e `fn_conflitos_do_caso` pedia o produto cartesiano (**6.859.127 pares para achar 34**, 12,4 s por chamada, vezes as 123 que a `0151` dispara). Medido em produção depois: **12.357 ms → 1.790 ms**, ~8.500 → **247** invocações (`0152`). **Duas lições ficaram no caminho e valem mais que o número:** sem `MATERIALIZED` o Postgres inlina a CTE e o agrupamento que existia para MATAR o cartesiano VIRA o cartesiano — medido, 12.068 ms, a correção não acontecia, *agrupar antes não é uma instrução, é uma intenção*; e a primeira `fn_reconciliar_caso` usava UMA chave para as oito checagens, o que dá 162 chaves para 190 documentos e não corrigiria nada — **e a suíte teria passado**, porque ela prova equivalência e não custo. (2) O batch de 190 numa transação implícita só: o modo `single` do nó Postgres é o **default**, e foi observado ao vivo em `pg_stat_activity` (RowExclusiveLock em `reconciliacao`, e sete minutos depois zero linhas commitadas). (3) O portal declarou parada em 5 min sobre 29 de silêncio legítimo — `IA Extrair` a 8 s × 190 = 25min20s em que nada é escrito por construção, contra um limite FIXO cujo comentário dizia que ele *não podia* crescer com o lote. (4) Balanço e DRE de cinco exercícios da Araucária Imobiliária SPE gravados dentro da Bioenergia SPE: `fn_mesma_entidade` casa com as duas e o desempate era `order by razao_social limit 1` — **o mesmo defeito da `0151` num segundo lugar**, lá "fica com o maior", aqui "fica com a primeira do alfabeto" (`0153`, com `fn_fundir_entidade` dando saída à pendência). (5) O combinado do grupo voltando a EMPATAR com o balanço individual porque a IA o chama de `BALANCO` em quatro de cada cinco, com confiança 1,0 — e empate mantém o de maior módulo, que é a armadilha central do araucária de volta pela porta da classificação; o critério passa a ser estrutural, quantas empresas as colunas nomeiam (`0155`). Mais a `0154`, que separa as duas unidades que a pendência de cobertura juntava na mesma frase (pares conta×coluna contra linhas do documento) e faz a pendência dizer em quantos BLOCOS o documento foi lido. **E o que NÃO era defeito ficou registrado como não sendo:** a aba Outros com 3.448 linhas, os 5 documentos de Folha de Pagamento sem tipo, e as 23 pendências de extração incompleta — a régua erra +3% na mediana contra o Canastra e as razões do araucária vão de 40% a 78%, sub-extração real. O caso foi corrigido em cima sem reextrair: **25 → 16 entidades**, e a reconciliação que nunca tinha rodado gravou 295 linhas com 6 divergências |
 
 **O método que se repetiu e vale mais que qualquer item da tabela:** em quase toda rodada, **medir
 antes de escrever código desmentiu a correção anotada**. Aconteceu com o fatiamento na 52 ("extrair
