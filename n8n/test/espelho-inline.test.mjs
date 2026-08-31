@@ -37,6 +37,7 @@ import {
 import {
   custoDaChamada, tokensDeSaida, bytesDoBinario, orcamentoDoLote,
   pesoDaChamadaDeClassificacao, custoEstimadoPorConteudo, orcamentoDoLotePorConteudo,
+  vereditoDaCotaDiaria,
 } from '../lib/custo.mjs';
 import {
   normalizarUnidade, normalizarMoeda, diagnosticarErroApi, achatarGrupos,
@@ -336,6 +337,15 @@ const TABELA = [
   { nome: 'orcamentoDoLotePorConteudo', lib: orcamentoDoLotePorConteudo, casos: [
     [{ documentos: [] }],
     [{ documentos: [{ paginas: 2, celulas: 100, colunas: 1 }, { paginas: 5, celulas: 400, colunas: 3 }] }],
+  ] },
+  // Os três vereditos, e o quarto que é "não sei": abaixo do aviso (silencioso),
+  // acima do aviso mas cabendo, estourando o dia, e `rpd` nulo — a OpenAI não
+  // publica um número único para o Tier 1, e nulo NÃO pode virar "cabe".
+  { nome: 'vereditoDaCotaDiaria', lib: vereditoDaCotaDiaria, casos: [
+    [{ chamadas: 63, rpd: 500 }],
+    [{ chamadas: 440, rpd: 500 }],
+    [{ chamadas: 501, rpd: 500 }],
+    [{ chamadas: 900, rpd: null }],
   ] },
 
   { nome: 'normalizarUnidade', lib: normalizarUnidade,

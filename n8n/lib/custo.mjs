@@ -615,3 +615,87 @@ export function orcamentoDoLotePorConteudo({
     versao: VERSAO_ORCAMENTO,
   };
 }
+
+// ---------------------------------------------------------------------------
+// A COTA DO DIA — o limite que de fato aperta, e que ninguém lia
+// ---------------------------------------------------------------------------
+//
+// POR QUE ESTA FUNÇÃO EXISTE. `lib/provedor.mjs` declara `rpd: 500` para a linha
+// Flash-Lite no nível gratuito, com um comentário que o chama de "O LIMITE QUE
+// NINGUÉM TINHA MODELADO, E É O QUE DE FATO APERTA". Medido em 31/08: `rpd` era
+// lido por DOIS lugares — o `medir-custo-book.mjs`, que é relatório de CI, e a
+// suíte. Nada em execução o lia. `tpm` e `rpm` alimentam a cadência do workflow
+// (lib/extract.mjs); o RPD não alimentava nada.
+//
+// E O PORTÃO QUE EXISTIA MEDE A GRANDEZA ERRADA. `Orcamento do Lote` confere o
+// teto de US$ 3, e o dólar não é a restrição que morde — medido:
+//
+//   Canastra   38 documentos  US$ 0,285 (passa folgado)   63 chamadas =  13% do RPD
+//   Araucária 190 documentos  ~US$ 2,1  (passa folgado)  440 chamadas =  88% do RPD
+//
+// O lote que o guarda aprova por preço é o mesmo que a cota mata na metade. E o
+// modo de falha não é lentidão: estourar o RPD no meio do lote MATA os
+// documentos que faltavam, e a cota só reabre na virada da janela diária.
+//
+// O QUE ELA RECUSA, E O QUE ELA APENAS DECLARA. Recusa só o impossível — lote
+// que não cabe num dia inteiro nem sozinho. Acima do limiar de aviso ela DEIXA
+// PASSAR e declara, porque um portão que barrasse a 80% barraria o book de 190
+// que é o caso de uso do dono, e portão que impede o trabalho legítimo é portão
+// que alguém desliga.
+//
+// O QUE ELA NÃO SABE, E DIZ QUE NÃO SABE. O RPD é do DIA, somando todos os
+// lotes; este nó vê um lote só. Quanto o dia já consumiu não está em lugar
+// nenhum que ele alcance — e o painel do Google mostra o PICO DOS ÚLTIMOS 28
+// DIAS, não o consumo de hoje. Declarar essa ignorância é o ponto: um "cabe"
+// que escondesse a premissa "supondo que hoje ainda não rodou nada" seria
+// exatamente apresentar ausência como dado.
+
+/** Fração da cota diária acima da qual o lote passa, mas declarando. */
+export const FRACAO_AVISO_RPD = 0.8;
+
+/**
+ * O veredito da cota diária para um lote de `chamadas` chamadas de IA.
+ *
+ * AUTO-CONTIDA: é embutida num nó Code por `toString()` e não pode referenciar
+ * constante do módulo — `fracaoAviso` entra por argumento com o padrão no lugar.
+ *
+ * `rpd` ausente (a OpenAI não publica um número único para o Tier 1) devolve
+ * `conhecido: false`. Não é "cabe": é "não sei", e quem lê trata diferente.
+ */
+export function vereditoDaCotaDiaria(entrada) {
+  // PARÂMETRO SIMPLES, DESESTRUTURAÇÃO NO CORPO — e não é estilo. O espelho
+  // inline (`espelho-inline.test.mjs`) extrai a função do JSON do workflow
+  // procurando a primeira `{` DEPOIS do nome para achar o início do corpo. Com
+  // `function f({ a, b } = {})`, a primeira `{` é a da desestruturação, e o
+  // texto extraído sai cortado no meio da assinatura — `SyntaxError` no espelho,
+  // que é a guarda reprovando por uma limitação do extrator e não por
+  // divergência. Portão que reprova por ruído é pior que portão nenhum, e o
+  // custo de evitá-lo aqui é uma linha.
+  const e = entrada || {};
+  const c = Number(e.chamadas);
+  const limite = Number(e.rpd);
+  const fracaoAviso = Number.isFinite(Number(e.fracaoAviso)) ? Number(e.fracaoAviso) : 0.8;
+  if (!Number.isFinite(limite) || limite <= 0 || !Number.isFinite(c) || c < 0) {
+    return { conhecido: false, cabe: true, fracao: null, chamadas: Number.isFinite(c) ? c : null, rpd: null, mensagem: null };
+  }
+  const fracao = Number((c / limite).toFixed(3));
+  const cabe = c <= limite;
+  const naoSeiDeHoje = 'O RPD é do DIA e soma TODOS os lotes: o que hoje já consumiu não é'
+    + ' visível daqui, e o painel do provedor mostra o pico dos últimos 28 dias, não o de hoje.'
+    + ' Cada RETENTATIVA também conta (o nó de extração tem até 6).';
+  let mensagem = null;
+  if (!cabe) {
+    mensagem = `[cota diária] Lote recusado ANTES de gastar: ${c} chamada(s) de IA contra um limite`
+      + ` de ${limite} por DIA — ele não cabe num dia inteiro nem sozinho.`
+      + ` Estourar a cota no meio do lote não deixa o trabalho lento: MATA os documentos que`
+      + ` faltavam, e ela só reabre na virada da janela diária.`
+      + ` Divida o envio em ${Math.ceil(c / limite)} leva(s), em dias diferentes.`
+      + ` Nada foi enviado ao provedor e nenhum documento foi registrado, então reenviar não`
+      + ` duplica nem custa. ${naoSeiDeHoje}`;
+  } else if (fracao >= Number(fracaoAviso)) {
+    mensagem = `[cota diária] Este lote pede ${c} de ${limite} chamada(s) do dia`
+      + ` (${Math.round(fracao * 100)}%) — ele PASSA, e praticamente ocupa a cota inteira:`
+      + ` conte com um book por dia. ${naoSeiDeHoje}`;
+  }
+  return { conhecido: true, cabe, fracao, chamadas: c, rpd: limite, mensagem };
+}

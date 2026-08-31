@@ -410,6 +410,50 @@ export function juntarBlocos(blocos) {
   const campos = [];
   const motivos = [];
   let emendasLimpas = 0;
+
+  // O BLOCO QUE NÃO CHEGOU, e por que ele precisava de um assert próprio.
+  //
+  // Até 31/08 esta função devolvia `blocos: lista.length` — quantos blocos
+  // CHEGARAM — e nada mais. O número que o `Fatiar Extracao` PLANEJOU viaja em
+  // cada bloco (`b.blocos`) e não era lido por ninguém. Consequência medida: um
+  // documento fatiado em 4 que perde o bloco 2 devolve `blocos: 3`, `motivos:
+  // []`, e cobertura 0,75 — a pendência de `extracao_falhou` diz "lido em 3
+  // bloco(s)", indistinguível de um documento cujo plano era 3.
+  //
+  // Isso importa mais do que um motivo a mais na fila: a `0154` existe para
+  // responder a pergunta que a rodada de 190 deixou aberta — sub-extração é
+  // TETO do modelo ou fatiamento? —, e o instrumento dela é justamente esta
+  // contagem. Reportando o recebido, ela não separa "o plano era 1" de "o plano
+  // era 4 e chegou 1", que são as duas hipóteses que ela deveria distinguir.
+  //
+  // O PLANO É O MÁXIMO DECLARADO, e não o do primeiro bloco: se o bloco 1 for
+  // justamente o que se perdeu, o primeiro que chega continua carregando o
+  // total. Bloco no formato antigo (sem `blocos`) não declara plano nenhum, e aí
+  // não há o que afirmar — cai no recebido, sem inventar divergência.
+  // Sem `b &&`: `lista` já saiu do filtro de objeto no topo da função, então a
+  // guarda era morta — e a linha do `chegaram`, cinco abaixo, já lia `b.bloco`
+  // direto. Duas formas para a mesma garantia na mesma função ensinam a
+  // desconfiar da que não tem guarda, que é justamente a correta.
+  const planoDeclarado = lista
+    .map((b) => Number(b.blocos))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const blocosPlanejados = planoDeclarado.length > 0
+    ? Math.max(lista.length, ...planoDeclarado)
+    : lista.length;
+  if (blocosPlanejados > lista.length) {
+    const chegaram = new Set(lista.map((b) => Number(b.bloco)).filter((n) => Number.isFinite(n)));
+    const faltando = [];
+    for (let n = 1; n <= blocosPlanejados; n += 1) if (!chegaram.has(n)) faltando.push(n);
+    // A frase nomeia o bloco porque é o que se pergunta primeiro ao investigar, e
+    // diz o EFEITO — sem isso, "faltou bloco" parece um aviso de infraestrutura
+    // em vez do que é: um pedaço do documento que não está no banco.
+    motivos.push(
+      `FALTOU BLOCO: o fatiamento planejou ${blocosPlanejados} bloco(s) e chegaram ${lista.length}`
+      + (faltando.length > 0 ? ` — ausente(s): ${faltando.join(', ')}` : '')
+      + '. As linhas desse trecho do documento NÃO foram gravadas, e a cobertura abaixo mede o'
+      + ' documento SEM elas: a sub-extração aqui é perda de bloco, não leitura parcial do modelo.',
+    );
+  }
   // OS FATOS MATERIAIS SÃO ADITIVOS ENTRE BLOCOS, e o resto do diagnóstico não.
   //
   // Entidade, tipo e período são propriedades do DOCUMENTO: todo bloco responde
@@ -523,6 +567,9 @@ export function juntarBlocos(blocos) {
     motivos,
     emendasLimpas,
     blocos: lista.length,
+    // O PLANO, ao lado do recebido. Os dois viajam juntos de propósito: quem lê
+    // um número de blocos precisa saber se ele é o que se queria ou o que sobrou.
+    blocosPlanejados,
     // Zero significa "não dá para saber" (bloco no formato plano antigo, sem
     // `linha_origem`), e quem chama trata isso caindo para as contas distintas —
     // o comportamento de antes desta correção.

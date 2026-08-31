@@ -32,7 +32,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
@@ -158,6 +158,12 @@ const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};
 // quatro é o que mantém o espelho fiel; o teste que compara o nó com a fonte
 // continua valendo sobre a função.
 const FONTE_ORCAMENTO_LOTE = [
+  `const FRACAO_AVISO_RPD = ${FRACAO_AVISO_RPD};`,
+  // `provedor()` e nao `PROV`: esta lista e montada ANTES da linha que define
+  // PROV, e a ordem de avaliacao de um template literal nao perdoa. O valor e o
+  // mesmo — `provedor()` sem argumento devolve o provedor ativo.
+  `const RPD_DO_PROVEDOR = ${provedor().rpd === null ? 'null' : provedor().rpd};`,
+  vereditoDaCotaDiaria.toString(),
   `const TETO_EXECUCAO_USD = ${TETO_EXECUCAO_USD};`,
   `const CUSTO_ESTIMADO_DOC_USD = ${CUSTO_ESTIMADO_DOC_USD};`,
   `const CUSTO_POR_MB_USD = ${CUSTO_POR_MB_USD};`,
@@ -325,6 +331,18 @@ const docs = itens.map((i) => {
   };
 });
 const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, tokensPromptSistema: TOKENS_PROMPT_SISTEMA });
+// A COTA DO DIA, ao lado do teto de gasto. Os dois medem grandezas diferentes e
+// o lote so passa nos DOIS: o dolar diz quanto custa, o RPD diz se cabe no dia.
+// Medido em 31/08: o araucaria (190 documentos) passava no teto de US$ 3 com
+// folga e consumia 88% da cota -- o guarda aprovava o lote que a cota mataria.
+const cota = vereditoDaCotaDiaria({ chamadas: r.chamadas, rpd: RPD_DO_PROVEDOR, fracaoAviso: FRACAO_AVISO_RPD });
+// A recusa da cota entra pelo MESMO caminho da recusa de gasto (o IF manda para
+// o \`Registrar Recusa\`), porque o efeito para quem enviou e' o mesmo e ter dois
+// caminhos de recusa e' ter um deles sem tela. As duas mensagens somam quando as
+// duas reprovam -- saber so metade do motivo faz reenviar errado.
+const cabeTudo = r.cabe && cota.cabe;
+const motivos = [r.mensagem, cota.cabe ? null : cota.mensagem].filter(Boolean);
+const mensagemFinal = motivos.length > 0 ? motivos.join(' ') : null;
 // Recusa o lote INTEIRO. Não existe "roda os que cabem" de propósito: metade
 // registrada sem extração e metade sem registro nenhum é estado que dá mais
 // trabalho para desfazer do que o reenvio que esta mensagem pede.
@@ -338,7 +356,7 @@ const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_U
 // \`orcamento_versao\` viaja com o item mesmo quando o lote PASSA. É o que
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
-return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo }, binary: i.binary }));
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: cabeTudo, orcamento_mensagem: mensagemFinal, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo, cota_cabe: cota.cabe, cota_conhecida: cota.conhecido, cota_fracao: cota.fracao, cota_rpd: cota.rpd, cota_aviso: cota.cabe ? cota.mensagem : null }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------
@@ -1013,11 +1031,20 @@ for(const [chave, blocos] of porDocumento){
   // foi escrita). A investigacao parou por falta de instrumento.
   //
   // O numero existe, viaja no item, e custa uma frase.
+  //
+  // E ELE ERA O NUMERO ERRADO ate 31/08: \`r.blocos\` e quantos blocos CHEGARAM. O
+  // que o \`Fatiar Extracao\` PLANEJOU viaja no mesmo item (\`blocos\`) e ninguem
+  // lia. Com o recebido, "plano era 1" e "plano era 4 e chegou 1" escrevem a
+  // MESMA frase -- e sao as duas hipoteses que esta frase existe para separar.
+  // Agora os dois aparecem, e a divergencia entre eles ja saiu como motivo
+  // proprio em \`juntarBlocos\` (FALTOU BLOCO).
   if(cobertura) motivos.push(cobertura.motivo
-    + ' O documento foi lido em ' + r.blocos + ' bloco(s)'
-    + (r.blocos===1
-       ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
-       : ' (fatiado), entao o que falta nao e teto de uma chamada so.'));
+    + ' O documento foi lido em ' + r.blocos + ' de ' + r.blocosPlanejados + ' bloco(s) planejado(s)'
+    + (r.blocosPlanejados>r.blocos
+       ? '. Falta bloco: a cobertura acima mede o documento SEM esse trecho, entao ela NAO diz nada sobre a leitura do modelo.'
+       : (r.blocosPlanejados===1
+          ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
+          : ' (fatiado, e todos chegaram), entao o que falta nao e teto de uma chamada so nem bloco perdido -- e leitura parcial do modelo.')));
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
     documento_versao_id,
@@ -1039,6 +1066,10 @@ for(const [chave, blocos] of porDocumento){
     diagnostico:base.diagnostico?{...base.diagnostico, fatos:r.fatos}:null,
     falha_motivo:motivos.length>0?motivos.join(' | '):null,
     blocos:r.blocos,
+    // O plano viaja junto do recebido ate o banco. Sem ele, \`documentos_fatiados\`
+    // do painel do lote conta o que chegou e chama isso de fatiamento -- que e o
+    // mesmo defeito da pendencia, um nivel acima.
+    blocos_planejados:r.blocosPlanejados,
     celulas_no_documento:base.celulas_no_documento??null,
     contas_no_documento:base.contas_no_documento??null,
     contas_distintas:contasDistintas,
@@ -1672,6 +1703,32 @@ const nodes = [
     },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
+  // A EXECUÇÃO PASSA A EXISTIR NO BANCO ANTES DE TERMINAR (0156).
+  //
+  // POR QUE ELE FICA AQUI, logo depois de `Lote cabe?` aprovar. `lote_execucao`
+  // só era escrita pelo `Gravar Uso do Lote`, que é o penúltimo nó da cadeia:
+  // a rodada só deixava rastro se a rodada desse certo. Quando o araucária (190
+  // documentos) foi cancelado à mão depois de 1h52, a tabela ficou VAZIA — e com
+  // ela foi embora `documentos_fatiados`, que era o número de que a investigação
+  // da sub-extração precisava. O n8n descarta os dados de uma execução cancelada,
+  // então não havia segunda via.
+  //
+  // `executeOnce` porque a pergunta é do LOTE. E ele grava o PLANO, não medição:
+  // quantos documentos entraram, quantas chamadas o orçamento previu (contando os
+  // blocos do fatiamento) e que fração da cota do dia isso reserva. O fechamento
+  // continua sendo do `Gravar Uso do Lote`, que agora carimba `fechado_em`.
+  //
+  // PG_RETRY, e ele NÃO pode derrubar o lote: instrumentação que vira ponto de
+  // falha é o oposto do que ela existe para fazer. A função também é tolerante
+  // por dentro (devolve motivo em vez de lançar).
+  node('Abrir Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery', query: 'select fn_abrir_lote_execucao($1::uuid, $2::text, $3::jsonb) as resultado',
+    options: {
+      queryReplacement:
+        "={{ [$('Upsert Caso (Postgres)').first().json.caso_id, String($execution.id), JSON.stringify({ documentos_planejados: $items().length, chamadas_planejadas: $json.orcamento_chamadas ?? null, cota_fracao_planejada: $json.cota_fracao ?? null, custo_estimado_usd: $json.orcamento_estimado_usd ?? null, orcamento_versao: $json.orcamento_versao ?? null })] }}",
+    },
+  }, { executeOnce: true, credentials: PG_CRED, ...PG_RETRY }),
+
   // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
   // se TODO documento registrado passou pela extração. As três camadas de
   // cobertura medem o que voltou de uma chamada FEITA; nenhuma delas vê a chamada
@@ -1710,8 +1767,10 @@ const connections = {
   // Documento`, muito mais adiante.
   'Medir Documento': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
   'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
+  // O lote existe no banco a partir daqui — ver o comentario do no.
+  'Abrir Lote': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
   'Lote cabe?': { main: [
-    [{ node: 'Precisa Fallback?', type: 'main', index: 0 }],   // true — segue
+    [{ node: 'Abrir Lote', type: 'main', index: 0 }],          // true — abre o lote e segue
     [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
   ] },
   // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas
