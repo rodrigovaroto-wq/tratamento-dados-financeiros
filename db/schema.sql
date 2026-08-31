@@ -9050,7 +9050,7 @@ begin
     custo_total_usd, custo_extracao_usd, custo_classificacao_usd, custo_estimado_usd,
     tokens_entrada, tokens_saida, tokens_cache,
     linhas_extraidas, contas_nos_documentos, contas_extraidas, cobertura,
-    orcamento_versao
+    orcamento_versao, fechado_em
   ) values (
     p_caso_id, btrim(p_execucao_ref),
     (p_resumo->>'documentos')::int,
@@ -9070,10 +9070,11 @@ begin
     (p_resumo->>'contas_extraidas')::int,
     case when v_num is null then null
          else round((p_resumo->>'contas_extraidas')::numeric / v_num, 4) end,
-    p_resumo->>'orcamento_versao'
+    p_resumo->>'orcamento_versao', now()
   )
   on conflict (caso_id, execucao_ref) do update set
     atualizado_em                = now(),
+    fechado_em                   = now(),
     documentos                   = excluded.documentos,
     documentos_com_classificacao = excluded.documentos_com_classificacao,
     documentos_fatiados          = excluded.documentos_fatiados,
