@@ -18,9 +18,144 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Última migration** | `db/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `db/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
 | **Aplicadas no Supabase** | **até a `0150`**, conferida pela sonda em 27/08 na sessão 72: `fn_instalacao_conferir()` devolveu **41 de 41 requisitos presentes** e `instalacao_cobertura` disse `0150`. **A `0151` desta sessão NÃO está aplicada** — a sessão não tem conexão com o banco de produção, e escrever aqui que está seria o defeito que a `0133` cobrou em 21/08. Antes de afirmar qualquer coisa sobre o banco, rode a sonda. Histórico: as `0147`/`0148`/`0149` foram aplicadas em 26/08 e conferidas por md5, não declaradas. |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
-| **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
+| **Suítes** | remedidas em 31/08 (sessão 77), todas verdes: n8n **399** · export **713** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**101 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** · régua da cobertura sobre TEXTO DE PRODUÇÃO (**exata nos 20 documentos capturados**) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 77 (31/08, madrugada) — a régua contava 258 onde o documento tem 99, e o portão não podia ver
+
+**A pergunta que a sessão 76 deixou aberta está FECHADA, e a resposta é a que ela suspeitava: o
+DENOMINADOR.** As duas pendências de cobertura da rodada do Canastra eram FALSAS, e a correção
+está no repositório, medida sobre o texto que produção realmente produz.
+
+### O que foi medido, e de onde veio o dado
+
+A sessão 76 pedia capturar o texto do nó `Extrair Texto` no navegador. **Não precisou:** o MCP do
+n8n serve o dado da execução já salva (`get_workflow_execution`, `includeData: true`,
+`nodeNames: ["Extrair Texto"]`). Vieram **20 dos 38** documentos da execução **7276** — a rodada
+do Canastra de 31/08 20:25 —, agora versionados com procedência em
+`test-data/capturas/2026-08-31-texto-extraido-n8n/`. Nada de cota consumida.
+
+| De onde vem o texto do `17_Livro_Razao` | régua (`linhasDeConta`) |
+|---|---|
+| verdade do gerador (`METRICAS.json`) | **99** |
+| `TEXTO_EXTRAIDO.json` (agrupamento do gerador) | 100 |
+| `pdf-parse` instalado localmente | 104 |
+| **nó `Extrair Texto`, em PRODUÇÃO** | **258** |
+
+**A hipótese da sessão 76 estava certa no fato e errada na causa.** Não é que produção "quebre a
+linha de um jeito qualquer": ela quebra a cada mudança de linha de base do PDF, e numa tabela
+larga UMA linha visual chega em dois ou três fragmentos —
+
+```
+"01/12/2025 LC-2025-4000 "                                <- fragmento (termina em espaço)
+"NF 010000 - Papéis e Celulose Aracati S.A. - bobina... "  <- fragmento (termina em espaço)
+"- 150 16.839 C"                                          <- fecha a linha visual
+```
+
+O primeiro e o segundo eram contados como duas contas onde há uma. **O balanço patrimonial não
+sofre nada disso: lá a régua acerta a verdade no dígito, 114 de 114.** Só documento de tabela
+larga fragmenta — no Canastra, quatro: `15`, `16`, `17` e `20`.
+
+### A correção, e o número que ela moveu
+
+`juntarFragmentosDeLinha` (`n8n/lib/cobertura.mjs`) emenda os fragmentos antes de contar. O sinal
+é o **espaço no fim** do fragmento que não fecha a linha visual — medido nos 20 documentos
+capturados, **0% de linhas com essa marca nos treze que a régua já acertava, 44% a 63% nos quatro
+que ela errava**. Presença contra ausência, não limiar. Um teto de 4 fragmentos existe para a
+falha cair no lado barato: sem ele, um documento em que toda linha terminasse em espaço
+colapsaria numa linha só e a guarda ficaria MUDA.
+
+| | antes | depois | verdade |
+|---|---|---|---|
+| `17_Livro_Razao` | 258 | **101** | 99 |
+| `20_Mapa_de_Divida` | 25 | **13** | 12 |
+| erro absoluto médio (20 docs de produção) | 15,7% | **2,5%** | — |
+
+**As duas pendências somem:** 102 de 101 no razão, e o mapa de dívida cai abaixo do mínimo em que
+a guarda opina. Nenhum documento sadio mudou de número.
+
+### E o portão de calibração passou a medir a entrada certa
+
+Era o pedido do passo 2 da sessão 76, e é o achado mais caro desta rodada:
+**`medir-regua-cobertura.mjs` media o `TEXTO_EXTRAIDO.json`**, o agrupamento do gerador. Ele
+devolvia "+3%" e passava, honestamente, sobre a entrada errada — enquanto produção errava 161%.
+Portão que mede a entrada errada tem exatamente a mesma aparência de um portão que mede a certa e
+não acha nada; desta vez o defeito central do projeto estava dentro do próprio instrumento.
+
+Agora a entrada é a captura de produção. **Medido não-vazio:** com a emenda desligada o portão
+sai com 1, nomeando `17_Livro_Razao (99→258)` e `20_Mapa_de_Divida (12→25)`. Com ela ligada: erro
+mediano **+0%**, pior razão com extração perfeita **95%** contra o limiar de 85%, zero falso
+positivo. Os 18 documentos fora da captura são declarados **"NÃO MEDIDO CONTRA PRODUÇÃO"** — não
+"passa".
+
+### E A RÉGUA FOI ATÉ 0,0%, porque o resíduo também tinha nome
+
+Depois da emenda sobrava +1 a +2 linhas em 8 dos 20 documentos (erro médio 2,5%). O resíduo era
+de uma família só: **cabeçalho que tem número sem medir número** — período (`"Posição em 31 de
+dezembro de 2025"`), duração (`"ÚLTIMOS 36 MESES"`) e código de conta (`"LIVRO RAZÃO — CONTA
+2.1.01.001"`) — mais a nota de rodapé que quebra em duas linhas e só a primeira dizia "Nota —".
+
+`ehLinhaSemValor` não casa frase: ela **retira da linha os números que não medem — data, duração,
+código — e pergunta se sobra dígito**. A conta sobrevive porque o valor dela nunca é nenhum dos
+três (`"Total de 2023 7.120"` sobra 7.120; `"1.1.01.002 181 D"` sobra 181). Casar `"Posição em"` e
+`"LIVRO RAZÃO"` seria ajustar a régua às frases DESTE book — 0% aqui e pior no do cliente,
+parecendo calibrada.
+
+| | antes da emenda | depois da emenda | **hoje** | verdade |
+|---|---|---|---|---|
+| documentos exatos (de 20) | — | 12 | **20** | — |
+| erro absoluto médio | 15,7% | 2,5% | **0,0%** | — |
+| pior razão com extração perfeita | — | 95% | **100%** | limiar 85% |
+| documentos contando A MENOS | 0 | 0 | **0** | — |
+
+**E o portão segura o 0%.** A faixa de +15%/−5% responde *"a régua atrapalha a guarda?"* e só olha
+os documentos que a guarda avalia — deixava de fora os pequenos, onde +1 linha em 12 é +8% sem
+ninguém reclamar. A trava nova, `ERRO_MAXIMO_EM_PRODUCAO = 0,5%`, responde *"a régua ainda está
+exata?"* sobre TODO documento capturado com conta. Sem ela o 0% de hoje envelheceria calado: 3%
+cabe em 15% e o CI continuaria verde.
+
+> **O que este 0% É e o que ele NÃO é.** A régua é o DENOMINADOR de uma guarda de cobertura — ela
+> conta quantas linhas de conta o PDF aparenta ter, para decidir se abre a pendência "este
+> documento pode ter vindo pela metade". **Ela nunca toca um valor**: não entra no export, não
+> entra no banco, não arredonda nada. Os centavos têm as guardas deles (o balanço que fecha, os
+> 713 invariantes do export, os subtotais da `0116`). E o erro dela, quando existe, é sempre para
+> MAIS — contar linha demais deixa a guarda mais sensível, nunca menos. A direção que esconderia
+> extração pela metade é contar a MENOS, e essa está em zero, medida.
+
+### A CONTRADIÇÃO DA SESSÃO 74 ESTÁ RESOLVIDA: as 23 pendências do araucária são FALSAS
+
+O `ESTADO.md` afirmava, sobre o araucária, que *"as 23 pendências de `extracao_falhou` são
+VERDADEIRAS"*. A base era o `medir-regua-cobertura.mjs` — e era ele que não podia ver o defeito.
+Os números do araucária reproduzem os do Canastra ao dígito (cinco livros razão de "258" linhas
+devolvendo 102, 101, 104, 102, 102; cinco mapas de dívida de "25" devolvendo 12 cada), e o
+diagnóstico é o mesmo: **denominador inflado pela fragmentação, extração completa**. A confirmação
+final é a próxima rodada do araucária, que agora tem uma régua honesta esperando por ela.
+
+### O que esta rodada NÃO mexeu, de propósito
+
+- **A régua do FATIAMENTO (`linhasComNumero`) fica como está.** Nada aqui mediu defeito lá: o
+  `17_Livro_Razao` foi fatiado em 4 blocos e os 4 chegaram. `celulas_estimadas` e
+  `colunas_estimadas` também são calculados sobre texto fragmentado — o efeito é SUPERESTIMAR o
+  custo, que é o lado conservador, e o `medir-custo-book.mjs` continua verde. Fica anotado como
+  observação, não como pendência.
+- **Nenhuma migration, nenhuma tela.** A correção é de biblioteca e de portão.
+
+### Por onde começar na PRÓXIMA sessão
+
+1. **Rodar o araucária com o dia inteiro de cota** (~440–509 chamadas de 500). A régua corrigida
+   deve zerar as 23 pendências. **Se alguma sobrar, aí sim é sub-extração real** — e o instrumento
+   de blocos da `0156`, que já funciona, dirá se é teto, bloco perdido ou leitura parcial.
+2. **Capturar os 38 documentos** do `Extrair Texto` da próxima rodada e substituir
+   `test-data/capturas/2026-08-31-texto-extraido-n8n/textos.json`. Enquanto forem 20, o portão diz
+   em voz alta que 18 não estão medidos. **Dois deles merecem atenção quando a captura chegar:**
+   sobre o texto do gerador, o `21_Mutuos` (3 → 2) e o `25_Situacao_Fiscal` (10 → 7) são os únicos
+   documentos em que a régua conta A MENOS — a direção perigosa. Pode ser artefato da entrada
+   errada, como foi com o razão; só a captura decide.
+3. Continua pendente e não é engenharia: **deploy do portal** e o **`multipleFiles`** do campo
+   "Arquivos" do nó `Intake (Form)`.
+
+---
 
 ## A SESSÃO 76 (31/08, noite) — a rodada do Canastra respondeu a pergunta de 190 documentos, e a resposta é que a CHECAGEM erra
 

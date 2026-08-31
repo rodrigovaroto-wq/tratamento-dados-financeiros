@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
+  linhasComNumero, linhasDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
+  celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
@@ -574,4 +575,153 @@ test('juntarBlocos: o plano é o MÁXIMO declarado, e some quando ninguém decla
   ]);
   assert.equal(antigo.blocosPlanejados, 2, 'sem plano declarado, o plano é o que chegou');
   assert.deepEqual(antigo.motivos, [], 'e não acusa nada');
+});
+
+
+// -----------------------------------------------------------------------------
+// A LINHA VISUAL QUEBRADA EM FRAGMENTOS — o defeito que abria pendência falsa.
+//
+// Os trechos abaixo são LITERAIS do texto que o nó `Extrair Texto` produziu na
+// execução 7276 do n8n (Canastra, 31/08/2026), versionado em
+// `test-data/capturas/2026-08-31-texto-extraido-n8n/textos.json`. Não são
+// fixture inventada: o espaço no fim de cada fragmento está no dado real, e é
+// ele que este arquivo afirma que a régua precisa respeitar.
+// -----------------------------------------------------------------------------
+
+// Uma linha do `17_Livro_Razao`, exatamente como produção a emitiu.
+const RAZAO_DE_PRODUCAO = [
+  '01/12/2025 SALDO ANTERIOR 16.689 C',
+  '01/12/2025 LC-2025-4000 ',
+  'NF 010000 - Papéis e Celulose Aracati S.A. - bobina kraft 180g ',
+  '- 150 16.839 C',
+  '30/12/2025 LC-2025-4001 ',
+  'NF 010037 - Tintas e Adesivos Ipiranga Ltda. - adesivo industrial ',
+  '- 221 17.060 C',
+].join('\n');
+
+// Uma linha do `20_Mapa_de_Divida`: três fragmentos, e a célula que ainda quebra
+// em parágrafo ("Vencido - cláusula restritiva" / "descumprida").
+const DIVIDA_DE_PRODUCAO = [
+  'Banco Meridional S.A. Capital de giro CG-2021-884.117 ',
+  '15/03/2026 CDI + 4,80% a.a. 10.412.600,00 - 2.960.400,00 ',
+  'Vencido - cláusula restritiva',
+  'descumprida',
+].join('\n');
+
+test('livro razão de produção: TRÊS lançamentos, não sete linhas de conta', () => {
+  // COM O DEFEITO LIGADO a régua devolvia 6 (o par data+lançamento e o histórico
+  // contados como contas separadas, em cada um dos três lançamentos). Era esse
+  // 2x que virava "102 de 258 = 40%" e abria pendência sobre extração COMPLETA.
+  assert.equal(linhasDeConta(RAZAO_DE_PRODUCAO).length, 3);
+});
+
+test('mapa de dívida de produção: UM contrato, não dois', () => {
+  // 'Vencido - cláusula restritiva' e 'descumprida' não têm valor: já saíam da
+  // conta. O que inflava era o fragmento de data/taxa/valores contado à parte.
+  assert.equal(linhasDeConta(DIVIDA_DE_PRODUCAO).length, 1);
+});
+
+test('a emenda respeita a linha em branco e o teto de fragmentos', () => {
+  // Linha em branco separa bloco: emendar através dela colaria o rodapé de uma
+  // página no cabeçalho da seguinte.
+  assert.equal(juntarFragmentosDeLinha('a 1 \n\nb 2').split('\n').length, 3);
+  // TETO: cinco fragmentos seguidos não viram uma linha só. Sem o teto, um
+  // documento em que TODA linha termina em espaço colapsaria em uma linha, o
+  // denominador iria a 1 e a guarda ficaria MUDA — o lado caro do erro.
+  const cinco = ['a 1 ', 'b 2 ', 'c 3 ', 'd 4 ', 'e 5 ', 'f 6'].join('\n');
+  assert.equal(juntarFragmentosDeLinha(cinco).split('\n').length, 2);
+});
+
+test('documento SEM fragmentação passa intacto pela emenda', () => {
+  // O balanço patrimonial não tem uma linha sequer com a marca — a régua já
+  // acertava a verdade no dígito nele (114 de 114, medido na captura). Emenda
+  // que mexesse aqui seria regressão silenciosa nos treze documentos sadios.
+  const balanco = 'ATIVO 137.624 163.941 182.500\nAtivo Circulante 44.022 68.103 91.594';
+  assert.equal(juntarFragmentosDeLinha(balanco), balanco);
+  assert.equal(linhasDeConta(balanco).length, 2);
+});
+
+test('a régua da COBERTURA normaliza; a do FATIAMENTO fica como está', () => {
+  // Distinção deliberada: nada nesta rodada mediu defeito no fatiamento — o
+  // `17_Livro_Razao` foi fatiado em 4 blocos e os 4 chegaram. Mexer nas duas de
+  // uma vez trocaria uma correção medida por duas, uma delas sem medição.
+  assert.equal(linhasComNumero(RAZAO_DE_PRODUCAO).length, 7);
+  assert.equal(linhasDeConta(RAZAO_DE_PRODUCAO).length, 3);
+});
+
+
+// -----------------------------------------------------------------------------
+// A LINHA QUE TEM NÚMERO SEM MEDIR NÚMERO — o resíduo que sobrava da emenda.
+// As frases abaixo são LITERAIS da captura de produção; as contas logo depois
+// são as que PRECISAM sobreviver à regra (excluir de mais é a direção que deixa
+// passar extração pela metade).
+// -----------------------------------------------------------------------------
+
+test('período, duração e código de conta não medem nada', () => {
+  for (const frase of [
+    'Posição em 31 de dezembro de 2025',              // 20_Mapa_de_Divida
+    'Movimento de dezembro de 2025',                  // 17_Livro_Razao
+    'Encerramento do exercício de 2025',              // 15_Balancete
+    'Exercícios de 2023, 2024 e 2025',                // 19_Faturamento_Intragrupo
+    'Janeiro de 2023 a dezembro de 2025',             // 18_Faturamento_36_meses
+    'RELATÓRIO DE FATURAMENTO — ÚLTIMOS 36 MESES',    // 18, a DURAÇÃO
+    'LIVRO RAZÃO — CONTA 2.1.01.001 FORNECEDORES NACIONAIS',  // 17, o CÓDIGO
+  ]) {
+    assert.equal(ehLinhaSemValor(frase), true, frase);
+    assert.deepEqual(linhasDeConta(frase), [], frase);
+  }
+});
+
+test('conta cujo rótulo tem ano, duração ou código continua sendo conta', () => {
+  // A direção perigosa da regra. O valor de uma conta nunca é data, duração nem
+  // código — é por isso que ela sobrevive, e é isso que este teste tranca.
+  for (const conta of [
+    'Total de 2023 7.120',                          // 19_Faturamento_Intragrupo
+    '01/12/2025 SALDO ANTERIOR 16.689 C',           // 17_Livro_Razao
+    '1.1.01.002 181 D',                             // 15_Balancete: código E valor
+    'Reserva de lucros a realizar 6.834',
+    'Janeiro/2023 22.578.000,00 1.526 14.795,54',   // 18: mês/ano E três valores
+  ]) {
+    assert.equal(ehLinhaSemValor(conta), false, conta);
+    assert.ok(linhasDeConta(conta).length >= 1, conta);
+  }
+});
+
+test('a nota de rodapé que quebra em duas linhas não vira conta', () => {
+  // Medido no 13_Balanco_COMBINADO: o `ruido` cortava a linha que diz "Nota —" e
+  // contava a continuação. Ela se reconhece por DUAS coisas juntas: a anterior
+  // foi cortada como prosa, e esta começa em minúscula.
+  const rodape = [
+    'Nota — A coluna Eliminações não representa entidade jurídica: registra a exclusão',
+    'aos 35% do capital da CN Transportes e Logística Ltda. detidos por terceiros.',
+  ].join('\n');
+  assert.deepEqual(linhasDeConta(rodape), []);
+});
+
+test('linha de tabela em minúscula NÃO é confundida com continuação de prosa', () => {
+  // O contra-exemplo que impede a regra de ser só "começa em minúscula": no
+  // 20_Mapa_de_Divida, "conversão FIN-2019-336.070 …" começa em minúscula e É um
+  // contrato. O que a salva é que a linha antes dela é linha de tabela, não prosa.
+  const trecho = [
+    'Banco de Fomento Nacional FINAME - linha de',
+    'conversão FIN-2019-336.070 28/09/2029 TLP + 3,10% a.a. 4.685.670,00 - 1.332.180,00',
+  ].join('\n');
+  assert.equal(linhasDeConta(trecho).length, 1);
+});
+
+test('a data em dd/mm/aaaa também não mede nada', () => {
+  // ESTE TESTE NASCEU DE UMA FIXTURE VAZIA. A primeira versão afirmava as formas
+  // "Janeiro/2023" e "Janeiro 2023" — e passava mesmo com a regra sabotada, porque
+  // o corte do ano solto já resolvia as duas. A regra de mês+ano era guarda morta
+  // e saiu; o corte de dd/mm/aaaa, esse, estava VIVO e sem teste nenhum.
+  //
+  // O book escreve o subtítulo por extenso ("Posição em 31 de dezembro de 2025"),
+  // então a forma numérica não aparece nos 20 documentos capturados — mas ela é o
+  // mesmo subtítulo, e sem o corte o "31/12/" sobrevive ao corte do ano e a linha
+  // volta a ser contada como conta. Não é bug de produção reproduzido: é a
+  // variante que o corte existe para cobrir, dita como variante.
+  assert.equal(ehLinhaSemValor('Posição em 31/12/2025'), true);
+  assert.deepEqual(linhasDeConta('Posição em 31/12/2025'), []);
+  // E a conta com data na frente continua conta: o valor não é data.
+  assert.equal(ehLinhaSemValor('01/12/2025 SALDO ANTERIOR 16.689 C'), false);
 });

@@ -104,6 +104,162 @@ export const LIMIAR_COBERTURA = 0.85;
 export const MINIMO_PARA_AVALIAR = 20;
 
 /**
+ * Reúne os FRAGMENTOS de uma mesma linha visual que o extrator de PDF quebrou.
+ *
+ * O DEFEITO QUE ISTO CORRIGE, medido no texto REAL DE PRODUÇÃO (execução 7276 do
+ * n8n, rodada do Canastra de 31/08, nó `Extrair Texto`, capturado em
+ * `test-data/capturas/2026-08-31-texto-extraido-n8n/`). O denominador da guarda
+ * de cobertura vinha inflado em documentos de TABELA LARGA, e o efeito era
+ * pendência FALSA sobre extração completa:
+ *
+ *     17_Livro_Razao ....... 99 linhas de conta (verdade do gerador)
+ *                            258 pela régua  → "102 de 258 = 40%", pendência ABERTA
+ *     20_Mapa_de_Divida .... 12 linhas de conta
+ *                             25 pela régua  → "12 de 25 = 48%", pendência ABERTA
+ *
+ * Nos dois a extração estava COMPLETA (102 de 99 e 12 de 12, com os lançamentos
+ * `LC-2025-4000` a `4095` contíguos no export). O que estava errado era a régua.
+ *
+ * A CAUSA, visível no texto capturado. O extrator emite uma quebra de linha a
+ * cada mudança de linha de base do PDF, e numa tabela larga UMA linha visual cai
+ * em duas ou três:
+ *
+ *     "01/12/2025 LC-2025-4000 "                                   <- fragmento
+ *     "NF 010000 - Papéis e Celulose Aracati S.A. - bobina 180g "  <- fragmento
+ *     "- 150 16.839 C"                                             <- fecha a linha
+ *
+ * `linhasDeConta` conta o primeiro e o segundo como duas contas onde há uma —
+ * daí os ~2,6x do livro razão. O balanço patrimonial não sofre nada disso: lá a
+ * régua acerta a verdade no dígito (114 de 114).
+ *
+ * O SINAL, e por que ele é este. Todo fragmento que NÃO fecha a linha visual
+ * termina em espaço — é o separador que o extrator emitiu antes de trocar de
+ * linha. Medido nos 20 documentos capturados: 0% de linhas com essa marca nos
+ * treze documentos que a régua já acertava, e 44% a 63% nos quatro que ela
+ * errava. Não é um sinal fraco que precisa de limiar: é presença contra
+ * ausência.
+ *
+ * O TETO DE FRAGMENTOS existe porque a falha sem ele seria a perigosa. Se um dia
+ * um documento vier com TODA linha terminando em espaço, a emenda sem limite o
+ * colapsaria em uma linha só, o denominador iria a 1 e a guarda ficaria MUDA —
+ * exatamente o modo de falha que ela existe para eliminar. Com o teto, o excesso
+ * de fragmentos vira linha a mais, que é o lado barato do erro (a guarda tem 15%
+ * de folga para contar a mais, e zero para contar a menos — ver
+ * `medir-regua-cobertura.mjs`). O valor 4 é a maior sequência medida (3, no
+ * `20_Mapa_de_Divida`) mais uma.
+ *
+ * Ela normaliza a régua da COBERTURA, e só ela. A régua do FATIAMENTO
+ * (`linhasComNumero`) fica como está: nada nesta rodada mediu defeito lá — o
+ * `17_Livro_Razao` foi fatiado em 4 blocos e os 4 chegaram.
+ */
+export function juntarFragmentosDeLinha(texto) {
+  if (typeof texto !== 'string' || texto.length === 0) return '';
+  const MAX_FRAGMENTOS = 4;
+  const saida = [];
+  let emenda = '';
+  let quantos = 0;
+  for (const bruta of texto.split('\n')) {
+    // Linha em branco NÃO emenda e não some: ela separa bloco. Emendar através
+    // dela colaria o rodapé de uma página no cabeçalho da seguinte; engoli-la
+    // mudaria o texto para quem só passa por aqui.
+    if (bruta.trim().length === 0) {
+      if (emenda.length > 0) saida.push(emenda);
+      saida.push(bruta);
+      emenda = '';
+      quantos = 0;
+      continue;
+    }
+    // O espaço no fim é a marca do fragmento que NÃO fecha a linha visual.
+    if (/[ \t]$/.test(bruta) && quantos < MAX_FRAGMENTOS) {
+      emenda += bruta;
+      quantos += 1;
+      continue;
+    }
+    saida.push(emenda + bruta);
+    emenda = '';
+    quantos = 0;
+  }
+  if (emenda.length > 0) saida.push(emenda);
+  return saida.join('\n');
+}
+
+/**
+ * A linha NÃO MEDE NADA — todo número dela é data, período ou código.
+ *
+ * O RESÍDUO QUE ISTO TIRA, medido sobre os 20 documentos capturados de produção
+ * depois que `juntarFragmentosDeLinha` entrou. Sobrava +1 a +2 linhas por
+ * documento, e o resíduo era de uma família só: **linha de cabeçalho que tem
+ * número sem medir número.** Três formas, todas literais da captura:
+ *
+ *   PERÍODO   "Posição em 31 de dezembro de 2025"        (20_Mapa_de_Divida)
+ *             "Movimento de dezembro de 2025"            (17_Livro_Razao)
+ *             "Encerramento do exercício de 2025"        (15_Balancete)
+ *             "Exercícios de 2023, 2024 e 2025"          (19_Faturamento_Intragrupo)
+ *             "Janeiro de 2023 a dezembro de 2025"       (18_Faturamento_36_meses)
+ *   DURAÇÃO   "RELATÓRIO DE FATURAMENTO — ÚLTIMOS 36 MESES"   (18)
+ *   CÓDIGO    "LIVRO RAZÃO — CONTA 2.1.01.001 FORNECEDORES"   (17)
+ *
+ * Todas têm dígito e têm letra, então passavam pelos dois testes de
+ * `linhasDeConta`. Nenhuma é conta.
+ *
+ * O CRITÉRIO NÃO É LEXICAL, E ISSO É O PONTO. Casar "Posição em" e "LIVRO RAZÃO"
+ * seria ajustar a régua às frases DESTE book — o cliente escreve outras, e a
+ * régua voltaria a errar parecendo calibrada. O critério é uma pergunta só:
+ * **retire da linha os números que NÃO MEDEM — a data, a duração e o código de
+ * conta. Se não sobrar dígito, a linha não tem valor.** Cada um dos três é
+ * identificação ou recorte de tempo; nenhum é quantia.
+ *
+ * A DIREÇÃO PERIGOSA É EXCLUIR DE MAIS, e é por isso que a conta sobrevive: o
+ * valor dela nunca é data, duração nem código.
+ *
+ *     "Total de 2023 7.120"                -> sobra 7.120   -> É CONTA
+ *     "01/12/2025 SALDO ANTERIOR 16.689 C" -> sobra 16.689  -> É CONTA
+ *     "1.1.01.002 181 D"                   -> sobra 181     -> É CONTA
+ *     "Posição em 31 de dezembro de 2025"  -> não sobra nada -> não mede
+ *
+ * MEDIDO nos 20 documentos de produção, junto com a nota de rodapé que quebra em
+ * duas linhas (tratada em `linhasDeConta`): documentos EXATOS **12 -> 20 de 20**,
+ * erro absoluto médio **2,5% -> 0,0%**, e **nenhum documento passou a contar A
+ * MENOS** — a única direção que faria mal, porque é ela que deixa passar extração
+ * pela metade. O portão segura essa exatidão: erro acima de 0,5% em qualquer
+ * documento capturado reprova.
+ */
+export function ehLinhaSemValor(linha) {
+  if (typeof linha !== 'string' || linha.length === 0) return false;
+  // As alternativas vêm de LITERAIS de regex, lidas por `.source`. Escritas como
+  // string comum elas exigiriam '\\b\\d{1,2}' — barra dobrada em toda a expressão,
+  // que é onde erro de escape se esconde e onde o Sonar (S7780) acusou quatro
+  // vezes. Literal não tem essa camada.
+  const meses = /janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro/
+    .source;
+  const duracao = /meses|m[êe]s|anos|ano|exerc[íi]cios|exerc[íi]cio|dias|dia|semanas|trimestres|trimestre|bimestres|semestres/
+    .source;
+  // NÃO EXISTE AQUI UM CORTE DE "MÊS + ANO" ("Janeiro/2023"), e a ausência é
+  // deliberada — ele existiu e foi MEDIDO MORTO. O corte do ano solto, na última
+  // linha do encadeamento, já apaga o "2023" de "Janeiro/2023" e deixa "Janeiro/",
+  // que não tem dígito: a regra de mês+ano nunca decidiu nada. Removida a régua
+  // continua exata nos 20 documentos e nenhum assert reprova — foi assim que se
+  // descobriu, e o teste que a "protegia" passava com ela sabotada.
+  //
+  // Ela cobrava caro pelo nada: era `(mês)\s*[\/ ]\s*\d{4}`, com o espaço nos
+  // TRÊS pedaços, então uma corrida de N espaços podia ser dividida de N jeitos e
+  // o motor tentava todos (Sonar S8786). Medido: 2.000 espaços custavam 1,62 ms e
+  // 4.000 custavam 6,16 ms — quadrático, num texto de PDF que vem cheio de corrida
+  // de espaço.
+  const diaDeMes = new RegExp(/\b\d{1,2}\s+de\s+/.source + '(' + meses + ')', 'gi');
+  const quantosDeDuracao = new RegExp(/\b\d{1,3}\s*/.source + '(' + duracao + ')' + /\b/.source, 'gi');
+  const resto = linha
+    // CÓDIGO DE CONTA ("2.1.01.001") — identifica, não mede. Sai primeiro, senão
+    // o regex de ano acha "2025" dentro de um código que o contenha.
+    .replace(/\b\d+(?:\.\d+){2,}\b/g, ' ')
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')   // 31/12/2025
+    .replace(diaDeMes, ' ')                             // 31 de dezembro
+    .replace(quantosDeDuracao, ' ')                     // 36 MESES
+    .replace(/\b(19|20)\d{2}\b/g, ' ');                // 2025
+  return !/\d/.test(resto);
+}
+
+/**
  * As linhas do texto que são LINHA DE CONTA — rótulo seguido de valor.
  *
  * A RÉGUA ESTAVA NA UNIDADE ERRADA, e isso importa mais que a precisão dela.
@@ -154,8 +310,17 @@ export const MINIMO_PARA_AVALIAR = 20;
  * │ mais). Erro absoluto médio: 29% → 9%, sem piorar um único documento.
  * └───────────────────────────────────────────────────────────────────────────
  */
-export function linhasDeConta(texto) {
-  if (typeof texto !== 'string' || texto.length === 0) return [];
+/**
+ * A linha, sozinha, é uma LINHA DE CONTA? — rótulo (ou código) mais valor.
+ *
+ * Separada de `linhasDeConta` porque são duas perguntas diferentes: esta olha UMA
+ * linha; aquela percorre o documento e carrega o único estado que existe (a nota
+ * de rodapé que continua na linha seguinte). Misturadas, a função passava de 15
+ * pontos de complexidade cognitiva (Sonar S3776) — e o custo real não é a métrica,
+ * é que o leitor tinha de segurar as duas na cabeça ao mesmo tempo.
+ */
+export function ehLinhaDeConta(linha) {
+  if (typeof linha !== 'string' || linha.length === 0) return false;
   // Um valor: número solto, com separador de milhar, decimal, percentual, ou
   // negativo entre parênteses — as quatro formas que o book usa.
   const valores = /\(?-?\d[\d.]*(?:,\d+)?\)?%?/g;
@@ -174,22 +339,47 @@ export function linhasDeConta(texto) {
     // Cabeçalho de coluna: só anos/datas, sem rótulo de conta antes.
     /^[\s|]*((19|20)\d{2}|\d{2}\/\d{2}\/\d{4})([\s|]+((19|20)\d{2}|\d{2}\/\d{2}\/\d{4}))*[\s|]*$/,
   ];
+  if (ruido.some((r) => r.test(linha))) return false;
+  const quantos = (linha.match(valores) ?? []).filter((t) => /\d/.test(t)).length;
+  // Sem valor não é conta: é título, é seção, é prosa. O modelo também não gera
+  // linha para ela.
+  if (quantos === 0) return false;
+  // Identidade da conta, em qualquer uma das três formas. A terceira — "linha de
+  // tabela numérica" — é a que recupera o razão e o aging, onde o leitor de PDF
+  // põe o rótulo numa linha e os valores na seguinte: contar a linha dos valores
+  // é contar a conta UMA vez, que é a unidade certa.
+  const temRotulo = /[a-zà-ú]{3}/i.test(linha);
+  if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) return false;
+  // Cabeçalho que tem número sem medir número — período, duração, código de
+  // conta. Tem dígito e tem letra, então passava pelos dois testes acima.
+  return !ehLinhaSemValor(linha);
+}
+
+export function linhasDeConta(texto) {
+  if (typeof texto !== 'string' || texto.length === 0) return [];
+  // O texto chega FRAGMENTADO em documento de tabela larga — ver
+  // `juntarFragmentosDeLinha`, que tem os 258 contra 99 que motivaram isto.
+  const normalizado = juntarFragmentosDeLinha(texto);
+  // A NOTA DE RODAPÉ QUEBRA EM DUAS LINHAS, e só a primeira dizia "Nota —".
+  // Medido no `13_Balanco_COMBINADO`: o ruído cortava a primeira e contava
+  // "aos 35% do capital da CN Transportes ... detidos por terceiros." como conta.
+  // A continuação se reconhece por DUAS coisas juntas, nunca por uma: a linha
+  // anterior foi cortada como PROSA, e esta começa em minúscula. Só a minúscula
+  // não serve — no `20_Mapa_de_Divida`, "conversão FIN-2019-336.070 28/09/2029…"
+  // começa em minúscula E É uma linha de contrato de verdade; o que a salva é
+  // que a linha antes dela é uma linha da tabela, não prosa cortada.
+  //
+  // É O ÚNICO ESTADO desta função, e é por isso que a decisão por linha mora em
+  // `ehLinhaDeConta`: aqui fica o que depende da linha ANTERIOR, e só isso.
+  const prosa = /^(nota|obs)\b|^\(?valores expressos|^exerc[íi]cios? encerrados?/i;
+  let anteriorEraProsa = false;
   const out = [];
-  for (const bruta of texto.split('\n')) {
+  for (const bruta of normalizado.split('\n')) {
     const linha = bruta.trim();
-    if (linha.length === 0) continue;
-    if (ruido.some((r) => r.test(linha))) continue;
-    const quantos = (linha.match(valores) ?? []).filter((t) => /\d/.test(t)).length;
-    // Sem valor não é conta: é título, é seção, é prosa. O modelo também não
-    // gera linha para ela.
-    if (quantos === 0) continue;
-    // Identidade da conta, em qualquer uma das três formas. A terceira —
-    // "linha de tabela numérica" — é a que recupera o razão e o aging, onde o
-    // leitor de PDF põe o rótulo numa linha e os valores na seguinte: contar a
-    // linha dos valores é contar a conta UMA vez, que é a unidade certa.
-    const temRotulo = /[a-zà-ú]{3}/i.test(linha);
-    if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) continue;
-    out.push(linha);
+    if (linha.length === 0) { anteriorEraProsa = false; continue; }
+    if (anteriorEraProsa && /^[a-zà-ú]/.test(linha)) continue;
+    anteriorEraProsa = prosa.test(linha);
+    if (ehLinhaDeConta(linha)) out.push(linha);
   }
   return out;
 }

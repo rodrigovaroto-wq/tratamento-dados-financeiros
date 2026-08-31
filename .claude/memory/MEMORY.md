@@ -31,6 +31,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   protege o arquivo alterado, não o `db/schema.sql` que o `run.sh` regrava por baixo
 - [Um portão pode reprovar por ruído](portao-pode-reprovar-por-ruido.md) — `FOR ROLE root` contra
   `FOR ROLE postgres`: schema idêntico, CI vermelho
+- [Portão calibra sobre a entrada de PRODUÇÃO](portao-mede-a-entrada-de-producao.md) — o texto
+  que o n8n extrai não é o de nenhum extrator local: +3% no portão, 161% de erro em produção
 
 ## Armadilhas de ferramenta (custaram tempo real)
 

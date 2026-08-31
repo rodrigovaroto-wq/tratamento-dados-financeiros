@@ -35,7 +35,8 @@ import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
-  linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
+  linhasComNumero, linhasDeConta, ehLinhaDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
+  celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
 } from './lib/cobertura.mjs';
@@ -220,6 +221,11 @@ const FONTE_COBERTURA = [
   `const LIMIAR_COBERTURA = ${LIMIAR_COBERTURA};`,
   `const MINIMO_PARA_AVALIAR = ${MINIMO_PARA_AVALIAR};`,
   `const linhasComNumero = ${linhasComNumero.toString()};`,
+  // ANTES de `linhasDeConta`, que a chama: no Code do n8n não há hoisting de
+  // `const`, e a ordem aqui é a ordem do arquivo que roda.
+  `const juntarFragmentosDeLinha = ${juntarFragmentosDeLinha.toString()};`,
+  `const ehLinhaSemValor = ${ehLinhaSemValor.toString()};`,
+  `const ehLinhaDeConta = ${ehLinhaDeConta.toString()};`,
   `const linhasDeConta = ${linhasDeConta.toString()};`,
   `const celulasDaLinha = ${celulasDaLinha.toString()};`,
   `const celulasEstimadas = ${celulasEstimadas.toString()};`,
