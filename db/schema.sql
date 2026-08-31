@@ -9074,6 +9074,9 @@ begin
   )
   on conflict (caso_id, execucao_ref) do update set
     atualizado_em                = now(),
+    -- O CARIMBO, e é a linha inteira da 0156 deste lado. `fechado_em` nulo
+    -- significa "começou e não terminou"; sem esta linha, TODA execução ficaria
+    -- com ele nulo e o sinal diria o contrário do que é.
     fechado_em                   = now(),
     documentos                   = excluded.documentos,
     documentos_com_classificacao = excluded.documentos_com_classificacao,
@@ -9106,7 +9109,7 @@ $$;
 -- Name: FUNCTION fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) IS 'Grava (ou reescreve) o resumo de custo/cobertura de UMA execução de ingestão. Idempotente por (caso_id, execucao_ref): o Resumo de Custo roda uma vez por ramo do lote e as duas passadas trazem o total inteiro — sem isto, todo custo sairia dobrado.';
+COMMENT ON FUNCTION public.fn_registrar_uso_lote(p_caso_id uuid, p_execucao_ref text, p_resumo jsonb) IS 'Grava (ou reescreve) o resumo de custo/cobertura de UMA execução de ingestão, e CARIMBA fechado_em (0156). Idempotente por (caso_id, execucao_ref): o Resumo de Custo roda uma vez por ramo do lote e as duas passadas trazem o total inteiro — sem isto, todo custo sairia dobrado.';
 
 --
 -- Name: fn_revisar_documento(uuid, text, text, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -

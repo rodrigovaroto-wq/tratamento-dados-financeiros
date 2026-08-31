@@ -128,56 +128,131 @@ comment on function fn_abrir_lote_execucao(uuid, text, jsonb) is
 -- -----------------------------------------------------------------------------
 -- O FECHAMENTO CARIMBA A HORA
 -- -----------------------------------------------------------------------------
--- Uma correção CIRÚRGICA em `fn_registrar_uso_lote`: acrescenta `fechado_em` ao
--- insert e ao update, e nada mais. O corpo dela continua sendo o da 0115 — o
--- caminho de gravação do custo não é assunto desta migration, e mexer nele de
--- passagem seria alargar a fatia.
+-- A FUNÇÃO É REEMITIDA INTEIRA, e a primeira versão desta migration não fazia
+-- isso — o defeito custou uma tentativa de aplicação em produção, em 31/08.
 --
--- As colunas do PLANO não entram na lista de update: o fechamento não as conhece
--- e escrevê-las com nulo apagaria o que a abertura gravou.
-do $$
+-- O QUE ELA FAZIA: lia `pg_get_functiondef`, aplicava três `replace` de texto
+-- para enfiar `fechado_em` no insert e no update, e executava o resultado. Com
+-- guardas: conferia a âncora antes, e recusava se a substituição não mudasse
+-- nada. As guardas funcionaram — em produção o `raise` disparou e a migration
+-- inteira reverteu, sem deixar estado pela metade.
+--
+-- MAS A ABORDAGEM ERA ERRADA, e as guardas só tornaram a falha honesta em vez
+-- de silenciosa. Corrigir corpo de função por substituição de texto faz a
+-- migration depender dos BYTES EXATOS do que está no banco — indentação,
+-- quebra de linha, a ordem das colunas. Ela passou em toda suíte local, onde o
+-- banco é montado do zero a partir destes mesmos arquivos e o corpo é, por
+-- construção, idêntico ao do repositório. Produção não tem essa garantia: é a
+-- doutrina da casa que o banco é a autoridade e o repositório não, e uma
+-- migration que exige o contrário está apostando contra ela.
+--
+-- `create or replace function` com o corpo inteiro não pergunta nada sobre o
+-- que estava lá. É o que a `0103` já mandava fazer — "uma só definição, para
+-- que a função e a explicação dela não divirjam" — e é a razão pela qual o
+-- `db/README.md` registra que a duplicação de linhas em migration de função é
+-- INEVITÁVEL e deliberada, não desleixo.
+--
+-- O QUE MUDA EM RELAÇÃO À 0115, e é só isto: `fechado_em` entra na lista de
+-- colunas do insert com `now()`, e no `do update set`. As colunas do PLANO
+-- (documentos_planejados, chamadas_planejadas, cota_fracao_planejada) NÃO
+-- entram no update de propósito: o fechamento não as conhece, e escrevê-las com
+-- nulo apagaria o que a abertura gravou.
+create or replace function fn_registrar_uso_lote(
+  p_caso_id      uuid,
+  p_execucao_ref text,
+  p_resumo       jsonb
+)
+returns jsonb
+language plpgsql
+as $$
 declare
-  v_src text;
-  v_novo text;
+  v_id uuid;
+  v_num numeric;
 begin
-  select pg_get_functiondef(p.oid) into v_src
-    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public' and p.proname = 'fn_registrar_uso_lote';
-
-  if v_src is null then
-    raise exception 'fn_registrar_uso_lote não existe — aplique a 0115 antes desta migration';
+  if p_caso_id is null then
+    return jsonb_build_object('gravado', false, 'motivo', 'caso_id ausente');
+  end if;
+  if nullif(btrim(coalesce(p_execucao_ref, '')), '') is null then
+    -- SEM REFERÊNCIA DE EXECUÇÃO NÃO SE GRAVA. É a chave que impede a
+    -- duplicidade; sem ela, a segunda passada viraria uma segunda linha e o
+    -- custo do mandato sairia dobrado — exatamente o que esta tabela existe
+    -- para não deixar acontecer.
+    return jsonb_build_object('gravado', false, 'motivo', 'execucao_ref ausente');
   end if;
 
-  if position('fechado_em' in v_src) > 0 then
-    return;  -- já aplicada; a migration é idempotente
-  end if;
+  -- Cobertura recalculada aqui, e não lida do resumo: é uma divisão, e divisão
+  -- feita em dois lugares é divisão que diverge. O resumo continua trazendo a
+  -- dele — se um dia os dois discordarem, a diferença é o sintoma.
+  v_num := nullif((p_resumo->>'contas_nos_documentos')::numeric, 0);
 
-  -- A SUBSTITUIÇÃO É ANCORADA EM TEXTO QUE SÓ EXISTE UMA VEZ, e ela CONFERE
-  -- antes de trocar. Um replace cego sobre corpo de função é como uma correção
-  -- vira uma função homônima com o corpo errado — o defeito que a sonda de corpo
-  -- (0147) existe para pegar depois, e que é mais barato não cometer.
-  if position('    orcamento_versao' in v_src) = 0 then
-    raise exception 'fn_registrar_uso_lote não tem a forma esperada da 0115 — '
-                    'o corpo mudou e a substituição precisa ser revista';
-  end if;
+  insert into lote_execucao (
+    caso_id, execucao_ref,
+    documentos, documentos_com_classificacao, documentos_fatiados,
+    documentos_com_falha, documentos_sem_medicao,
+    custo_total_usd, custo_extracao_usd, custo_classificacao_usd, custo_estimado_usd,
+    tokens_entrada, tokens_saida, tokens_cache,
+    linhas_extraidas, contas_nos_documentos, contas_extraidas, cobertura,
+    orcamento_versao, fechado_em
+  ) values (
+    p_caso_id, btrim(p_execucao_ref),
+    (p_resumo->>'documentos')::int,
+    (p_resumo->>'documentos_com_classificacao')::int,
+    (p_resumo->>'documentos_fatiados')::int,
+    (p_resumo->>'documentos_com_falha')::int,
+    (p_resumo->>'documentos_sem_medicao')::int,
+    (p_resumo->>'custo_total_usd')::numeric,
+    (p_resumo->>'custo_extracao_usd')::numeric,
+    (p_resumo->>'custo_classificacao_usd')::numeric,
+    (p_resumo->>'custo_estimado_usd')::numeric,
+    (p_resumo#>>'{tokens,entrada}')::bigint,
+    (p_resumo#>>'{tokens,saida}')::bigint,
+    (p_resumo#>>'{tokens,cache}')::bigint,
+    (p_resumo->>'linhas_extraidas')::int,
+    (p_resumo->>'contas_nos_documentos')::int,
+    (p_resumo->>'contas_extraidas')::int,
+    case when v_num is null then null
+         else round((p_resumo->>'contas_extraidas')::numeric / v_num, 4) end,
+    p_resumo->>'orcamento_versao', now()
+  )
+  on conflict (caso_id, execucao_ref) do update set
+    atualizado_em                = now(),
+    -- O CARIMBO, e é a linha inteira da 0156 deste lado. `fechado_em` nulo
+    -- significa "começou e não terminou"; sem esta linha, TODA execução ficaria
+    -- com ele nulo e o sinal diria o contrário do que é.
+    fechado_em                   = now(),
+    documentos                   = excluded.documentos,
+    documentos_com_classificacao = excluded.documentos_com_classificacao,
+    documentos_fatiados          = excluded.documentos_fatiados,
+    documentos_com_falha         = excluded.documentos_com_falha,
+    documentos_sem_medicao       = excluded.documentos_sem_medicao,
+    custo_total_usd              = excluded.custo_total_usd,
+    custo_extracao_usd           = excluded.custo_extracao_usd,
+    custo_classificacao_usd      = excluded.custo_classificacao_usd,
+    custo_estimado_usd           = excluded.custo_estimado_usd,
+    tokens_entrada               = excluded.tokens_entrada,
+    tokens_saida                 = excluded.tokens_saida,
+    tokens_cache                 = excluded.tokens_cache,
+    linhas_extraidas             = excluded.linhas_extraidas,
+    contas_nos_documentos        = excluded.contas_nos_documentos,
+    contas_extraidas             = excluded.contas_extraidas,
+    cobertura                    = excluded.cobertura,
+    orcamento_versao             = excluded.orcamento_versao
+  returning id into v_id;
 
-  v_novo := replace(v_src,
-    E'    orcamento_versao\n  ) values (',
-    E'    orcamento_versao, fechado_em\n  ) values (');
-  v_novo := replace(v_novo,
-    E'    p_resumo->>\'orcamento_versao\'\n  )',
-    E'    p_resumo->>\'orcamento_versao\', now()\n  )');
-  v_novo := replace(v_novo,
-    E'  on conflict (caso_id, execucao_ref) do update set\n    atualizado_em                = now(),',
-    E'  on conflict (caso_id, execucao_ref) do update set\n    atualizado_em                = now(),\n    fechado_em                   = now(),');
+  return jsonb_build_object(
+    'gravado', true,
+    'lote_execucao_id', v_id,
+    'custo_total_usd', (p_resumo->>'custo_total_usd')::numeric
+  );
+end;
+$$;
 
-  if v_novo = v_src then
-    raise exception 'a substituição de fn_registrar_uso_lote não mudou nada — '
-                    'as âncoras não casaram e o carimbo de fechamento ficaria de fora';
-  end if;
+comment on function fn_registrar_uso_lote(uuid, text, jsonb) is
+  'Grava (ou reescreve) o resumo de custo/cobertura de UMA execução de ingestão, e CARIMBA '
+  'fechado_em (0156). Idempotente por (caso_id, execucao_ref): o Resumo de Custo roda uma vez por '
+  'ramo do lote e as duas passadas trazem o total inteiro — sem isto, todo custo sairia dobrado.';
 
-  execute v_novo;
-end $$;
+grant execute on function fn_registrar_uso_lote(uuid, text, jsonb) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- A SONDA
