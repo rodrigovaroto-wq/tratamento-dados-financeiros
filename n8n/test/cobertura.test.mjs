@@ -519,3 +519,59 @@ test('lixo dentro de "fatos" não derruba a junção', () => {
   ]);
   assert.equal(r.fatos.length, 1);
 });
+
+test('juntarBlocos ACUSA o bloco que não chegou, e nomeia qual', () => {
+  // O DEFEITO QUE ISTO FECHA, medido em 31/08 sobre o código do `main`.
+  //
+  // `juntarBlocos` devolvia `blocos: lista.length` — quantos CHEGARAM. O número
+  // que o `Fatiar Extracao` planejou viaja em cada bloco (`blocos`) e não era
+  // lido por ninguém. Medição, com um documento planejado em 4 blocos:
+  //
+  //   4 de 4 chegaram   → blocos: 4, motivos: [],  cobertura sem pendência
+  //   o bloco 2 sumiu   → blocos: 3, motivos: [],  cobertura 0,75
+  //
+  // Ou seja: a pendência de `extracao_falhou` dizia "lido em 3 bloco(s)",
+  // indistinguível de um documento cujo plano ERA 3 — e a `0154` existe
+  // justamente para separar "o modelo leu pela metade" de "o fatiamento não
+  // rodou". Com o recebido, ela não separava nada.
+  const campo = (i) => ({ chave: `c${i}`, entidade_coluna: null, periodo_coluna: '2025', valor_texto: String(i), valor_num: i, linha_origem: i });
+  const bloco = (n, total, qtd) => ({ bloco: n, blocos: total, campos: Array.from({ length: qtd }, (_, i) => campo(n * 1000 + i)) });
+
+  const perdeu2 = juntarBlocos([bloco(1, 4, 60), bloco(3, 4, 60), bloco(4, 4, 60)]);
+  assert.equal(perdeu2.blocos, 3, 'chegaram 3');
+  assert.equal(perdeu2.blocosPlanejados, 4, 'o plano de 4 está no dado e passa a ser lido');
+  const texto = perdeu2.motivos.join(' | ');
+  assert.match(texto, /FALTOU BLOCO/);
+  assert.match(texto, /ausente\(s\): 2/, 'nomeia QUAL bloco faltou — é o que se pergunta primeiro');
+  assert.match(texto, /NÃO foram gravadas/, 'diz o efeito, não só o fato');
+
+  // E o caso saudável continua silencioso: guarda que acusa o normal é guarda
+  // que ninguém lê.
+  const completo = juntarBlocos([bloco(1, 4, 60), bloco(2, 4, 60), bloco(3, 4, 60), bloco(4, 4, 60)]);
+  assert.equal(completo.blocos, 4);
+  assert.equal(completo.blocosPlanejados, 4);
+  assert.deepEqual(completo.motivos, [], 'nada a declarar quando todos chegaram');
+});
+
+test('juntarBlocos: o plano é o MÁXIMO declarado, e some quando ninguém declara', () => {
+  // Se o bloco 1 é justamente o que se perde, ler o plano do primeiro item que
+  // chegou continua funcionando — todo bloco carrega o total.
+  const perdeu1 = juntarBlocos([
+    { bloco: 2, blocos: 3, campos: [{ chave: 'b', valor_num: 2 }] },
+    { bloco: 3, blocos: 3, campos: [{ chave: 'c', valor_num: 3 }] },
+  ]);
+  assert.equal(perdeu1.blocosPlanejados, 3);
+  assert.match(perdeu1.motivos.join(' '), /ausente\(s\): 1/);
+
+  // FORMATO ANTIGO: bloco sem `blocos` não declara plano nenhum, e aí não há o
+  // que afirmar. Cai no recebido e NÃO inventa divergência — inventar aqui
+  // encheria a fila de revisão com pendência falsa em todo documento antigo,
+  // que é o modo de falha oposto e igualmente caro (a v48: 20 das 27 pendências
+  // eram falsas, e quem errava eram as checagens).
+  const antigo = juntarBlocos([
+    { bloco: 1, campos: [{ chave: 'a', valor_num: 1 }] },
+    { bloco: 2, campos: [{ chave: 'b', valor_num: 2 }] },
+  ]);
+  assert.equal(antigo.blocosPlanejados, 2, 'sem plano declarado, o plano é o que chegou');
+  assert.deepEqual(antigo.motivos, [], 'e não acusa nada');
+});

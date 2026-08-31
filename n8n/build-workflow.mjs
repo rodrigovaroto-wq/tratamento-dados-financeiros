@@ -1013,11 +1013,20 @@ for(const [chave, blocos] of porDocumento){
   // foi escrita). A investigacao parou por falta de instrumento.
   //
   // O numero existe, viaja no item, e custa uma frase.
+  //
+  // E ELE ERA O NUMERO ERRADO ate 31/08: \`r.blocos\` e quantos blocos CHEGARAM. O
+  // que o \`Fatiar Extracao\` PLANEJOU viaja no mesmo item (\`blocos\`) e ninguem
+  // lia. Com o recebido, "plano era 1" e "plano era 4 e chegou 1" escrevem a
+  // MESMA frase -- e sao as duas hipoteses que esta frase existe para separar.
+  // Agora os dois aparecem, e a divergencia entre eles ja saiu como motivo
+  // proprio em \`juntarBlocos\` (FALTOU BLOCO).
   if(cobertura) motivos.push(cobertura.motivo
-    + ' O documento foi lido em ' + r.blocos + ' bloco(s)'
-    + (r.blocos===1
-       ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
-       : ' (fatiado), entao o que falta nao e teto de uma chamada so.'));
+    + ' O documento foi lido em ' + r.blocos + ' de ' + r.blocosPlanejados + ' bloco(s) planejado(s)'
+    + (r.blocosPlanejados>r.blocos
+       ? '. Falta bloco: a cobertura acima mede o documento SEM esse trecho, entao ela NAO diz nada sobre a leitura do modelo.'
+       : (r.blocosPlanejados===1
+          ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
+          : ' (fatiado, e todos chegaram), entao o que falta nao e teto de uma chamada so nem bloco perdido -- e leitura parcial do modelo.')));
   if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
     documento_versao_id,
@@ -1039,6 +1048,10 @@ for(const [chave, blocos] of porDocumento){
     diagnostico:base.diagnostico?{...base.diagnostico, fatos:r.fatos}:null,
     falha_motivo:motivos.length>0?motivos.join(' | '):null,
     blocos:r.blocos,
+    // O plano viaja junto do recebido ate o banco. Sem ele, \`documentos_fatiados\`
+    // do painel do lote conta o que chegou e chama isso de fatiamento -- que e o
+    // mesmo defeito da pendencia, um nivel acima.
+    blocos_planejados:r.blocosPlanejados,
     celulas_no_documento:base.celulas_no_documento??null,
     contas_no_documento:base.contas_no_documento??null,
     contas_distintas:contasDistintas,
