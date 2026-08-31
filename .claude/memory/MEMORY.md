@@ -16,6 +16,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   de veredito sobe Classe B/C ou classificação contábil acima de N1
 - [A sonda responde pelo banco, o documento não](sonda-responde-pelo-banco.md) — a `0133` ficou
   para trás enquanto a `0134` entrou, e o repositório dizia que estava tudo aplicado
+- [Nunca corrigir função por `replace` de texto](nunca-corrigir-funcao-por-replace.md) —
+  passa em toda suíte local e reprova em produção; reemita a função inteira
 
 ## Armadilhas de teste e de portão
 
