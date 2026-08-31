@@ -22,6 +22,180 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
 
+## A SESSÃO 76 (31/08, noite) — a rodada do Canastra respondeu a pergunta de 190 documentos, e a resposta é que a CHECAGEM erra
+
+**A rodada rodou, e rodou bem.** Canastra, 38 documentos: **2.637 linhas** (contra 2.565 da rodada
+comparativa de 27/08), 4 documentos sem linha nenhuma (os mesmos 30/32/33/34, corretos), Kit Básico
+**8/8**, `fullCalcOnLoad` presente, **3.108 fórmulas e nenhum `#REF!`/`#VALUE!`**, e o
+`auditar-xlsx.mts` passando nos 3 itens aplicáveis. A tela chegou a **"Pronto para aprovação"**.
+
+### Os três instrumentos da 0156 responderam — e é a primeira vez que eles falam
+
+| Instrumento | O que disse |
+|---|---|
+| Blocos planejado × recebido | *"O documento foi lido em **4 de 4 blocos planejados** (fatiado, e todos chegaram)"* |
+| `FALTOU BLOCO` | **zero ocorrências no arquivo inteiro** — nenhum bloco se perdeu |
+| Abertura do lote | `lote_execucao_id` gravado no `Abrir Lote`, com `aberto: true` |
+
+### E A RESPOSTA À PERGUNTA QUE ESTAVA ABERTA DESDE A SESSÃO 74 É: **NENHUMA DAS DUAS**
+
+A pergunta era *"sub-extração é teto do modelo ou fatiamento que não rodou?"*. Medido nesta rodada,
+nos dois documentos que abriram pendência de cobertura:
+
+| Documento | Pendência diz | **Verdade do gerador** | Extraído | Blocos |
+|---|---|---|---|---|
+| `17_Livro_Razao` | 102 de **258** linhas = 40% | **99 linhas de conta** | **102** | 4 de 4, todos chegaram |
+| `20_Mapa_de_Divida` | 12 de **25** linhas = 48% | **12 linhas de conta** | **12** | 1 de 1 |
+
+**A extração está COMPLETA nos dois.** 102 de 99 e 12 de 12. O que está errado é o **denominador**.
+
+E a evidência é mais forte que a contagem: os lançamentos do livro razão são sequenciais
+(`LC-2025-4000`…), e o export traz **`4000` a `4095` contíguos** mais a linha de total — ou seja,
+**todos os lançamentos que o gerador escreveu**. Não falta trecho nenhum no meio.
+
+**Os números REPRODUZEM o araucária ao dígito:** lá, cinco livros razão de 258 linhas devolveram
+*102, 101, 104, 102, 102*, e cinco mapas de dívida de 25 devolveram *12, 12, 12, 12, 12*. São os
+mesmos documentos, o mesmo comportamento, e agora com a verdade do gerador ao lado.
+
+> **ISTO CONTRADIZ O QUE A SESSÃO 74 REGISTROU.** O `ESTADO.md` afirma, sobre o araucária: *"as 23
+> pendências de `extracao_falhou` são VERDADEIRAS"*. A base daquela afirmação foi o
+> `medir-regua-cobertura.mjs` — e é justamente essa ferramenta que não enxerga o defeito (abaixo).
+> **A leitura de hoje é que as 23 são muito provavelmente FALSAS**, pela mesma razão que estas duas.
+> A contradição fica escrita, e quem a fecha é a medição do passo 1 do roteiro.
+
+### Onde o denominador se perde, e por que nenhum portão viu
+
+A régua (`linhasDeConta`) foi medida sobre o MESMO PDF por três caminhos:
+
+| De onde vem o texto | `17_Livro_Razao` | `20_Mapa_de_Divida` |
+|---|---|---|
+| `TEXTO_EXTRAIDO.json` (o agrupamento do **gerador**) | 100 | 11 |
+| PDF renderizado, via `pdf-parse` (extrator real) | 104 | 14 |
+| **n8n `extractFromFile`, em PRODUÇÃO** | **258** | **25** |
+
+Os dois caminhos locais concordam entre si e com a verdade (99 e 12). **Produção é o ponto fora da
+curva**, ~2,6× e ~2×. O texto que o `Extrair Texto` produz quebra a linha de um jeito que a régua
+conta como várias — e é esse número inflado que vira o denominador da cobertura.
+
+**E O PORTÃO QUE DEVIA CALIBRAR A RÉGUA NÃO PODE VER ISSO.** O `medir-regua-cobertura.mjs` roda no
+CI e mede a régua contra o `TEXTO_EXTRAIDO.json`, que é **o agrupamento do gerador** — um texto que
+produção nunca vê. Ele devolve "erro mediano +3%" e passa, honestamente, sobre a entrada errada.
+**Portão que mede a entrada errada tem exatamente a mesma aparência de um portão que mede a certa e
+não acha nada** — é o defeito central deste projeto, desta vez dentro do próprio instrumento de
+calibração.
+
+### O que NÃO é defeito nesta rodada
+
+- as 4 pendências de documento sem linha (30/32/33/34) — corretas, esses documentos não têm conta;
+- o `Abrir Lote` como ramo terminal — a correção do PR #190 funcionou: 38 documentos registrados
+  contra 0 na tentativa anterior;
+- a tela declarando parada na tentativa que falhou, em vez de "aguarde" sobre processo morto.
+
+---
+
+## POR ONDE COMEÇAR NA PRÓXIMA SESSÃO — em ordem, e o passo 1 decide os outros
+
+**NÃO RODE O ARAUCÁRIA AINDA.** Ele repetiria as 23 pendências falsas e gastaria 88% da cota do dia
+para reconfirmar o que já se sabe. O que falta é barato e não consome cota nenhuma.
+
+### 1. Capturar o texto que o n8n REALMENTE produz, e rodar a régua sobre ele
+
+É a medição que fecha o diagnóstico. **Não consome cota, não precisa de rodada nova**, e o dado já
+existe: a execução do Canastra de 31/08 está salva no n8n.
+
+**1.1 — Capture o texto (2 minutos, no navegador).** Abra o n8n → workflow `Oria — E1 Ingestão…` →
+aba **Executions** → a execução de **31/08 do Canastra** (a que registrou 38 documentos; NÃO a de
+16:49, que é a que falhou com 0 de 38). Clique no nó **`Extrair Texto`** → **Output** → localize o
+item do `17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf` → copie o valor do campo `text`
+inteiro. Grave em `/tmp/texto-n8n-17.txt`.
+
+Repita para o `20_Mapa_de_Divida_Canastra_Industria_2025.pdf` → `/tmp/texto-n8n-20.txt`.
+
+**1.2 — Rode a régua sobre ele e compare com o extrator local.** Este script faz os dois lados de
+uma vez (crie como `portal/scripts/_diag.mts`, e APAGUE depois — é descartável):
+
+```ts
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { linhasDeConta, linhasComNumero } from "../../n8n/lib/cobertura.mjs";
+const require = createRequire(import.meta.url);
+const { PDFParse } = require("pdf-parse");   // cd portal && npm i --no-save pdf-parse
+
+for (const [n, pdf] of [["17", "17_Livro_Razao_Fornecedores_Canastra_Industria_12M25"],
+                        ["20", "20_Mapa_de_Divida_Canastra_Industria_2025"]]) {
+  const doN8n = readFileSync(`/tmp/texto-n8n-${n}.txt`, "utf8");
+  const p = new PDFParse({ data: readFileSync(`test-data/book-canastra/pdf/${pdf}.pdf`) });
+  const doLocal = String((await p.getText()).text ?? "");
+  console.log(`=== ${pdf}`);
+  for (const [rot, t] of [["n8n (PRODUÇÃO)", doN8n], ["pdf-parse (local)", doLocal]]) {
+    console.log(`  ${rot.padEnd(20)} linhas=${t.split("\n").length}`
+      + ` comNumero=${linhasComNumero(t).length} DE_CONTA=${linhasDeConta(t).length}`);
+  }
+  console.log("  --- primeiras 12 linhas do n8n ---");
+  doN8n.split("\n").slice(0, 12).forEach((l, i) => console.log(`   n8n[${i}] ${JSON.stringify(l.slice(0, 90))}`));
+  console.log("  --- primeiras 12 linhas do pdf-parse ---");
+  doLocal.split("\n").slice(0, 12).forEach((l, i) => console.log(`   loc[${i}] ${JSON.stringify(l.slice(0, 90))}`));
+}
+```
+
+**O que esperar, e o que cada resultado significa:**
+
+| `DE_CONTA` do n8n | Leitura |
+|---|---|
+| **~258** (e `pdf-parse` ~104) | Confirmado: produção quebra a linha diferente. Siga para 1.3 |
+| **~104**, igual ao local | A hipótese cai. O denominador de 258 veio de outro lugar — investigue `contas_no_documento` no `Medir Documento`, e NÃO mexa na régua |
+
+**1.3 — Nomeie o padrão.** Com as 12 primeiras linhas dos dois lado a lado, a diferença fica visível
+em uma olhada. O padrão esperado é o n8n emitir a data, o histórico e cada valor como linhas
+separadas onde o `pdf-parse` emite uma linha só. **Escreva o padrão observado no commit** — é ele
+que decide a correção, e sem ele a correção vira chute.
+
+**1.4 — Corrija, e prefira (a):**
+
+- **(a) a régua normaliza antes de contar.** Uma função nova em `n8n/lib/cobertura.mjs` que junta os
+  fragmentos de uma mesma linha visual antes de `linhasDeConta` contar. Corrige todo documento,
+  inclusive os que já rodaram, e é testável sem n8n. **Ela é embutida por `toString()` nos nós Code
+  → precisa ser AUTO-CONTIDA (sem referência a constante do módulo) e entrar na tabela do
+  `espelho-inline.test.mjs`**, com assinatura de parâmetro simples (nada de desestruturação — o
+  extrator do espelho corta o corpo e dá `SyntaxError`; está na memória).
+- **(b)** trocar a opção do nó `Extrair Texto`, ou normalizar logo depois dele. Depende de opção de
+  nó de terceiro e não é testável localmente — só se (a) não der.
+
+**1.5 — Meça não-vazio, como sempre:** desligue a normalização, rode, confirme que a suíte reprova,
+religue com `cp` (nunca `git checkout <arquivo>`), e **confira o `git status` depois** — o
+`db/test/run.sh` reescreve o `db/schema.sql` e a medição deixa ele sujo (custou um CI vermelho em
+31/08).
+
+### 2. Fazer o portão de calibração medir a entrada CERTA
+
+`medir-regua-cobertura.mjs` tem de deixar de medir o `TEXTO_EXTRAIDO.json`. As duas saídas:
+
+- o gerador passa a gravar TAMBÉM o texto extraído do PDF **renderizado** (o `pdf-parse` já está
+  disponível e concorda com a verdade), e o portão mede sobre ele; **ou**
+- o portão passa a exigir a amostra real capturada no passo 1, versionada como fixture.
+
+Sem isso, a correção do passo 1 fica sem guarda e volta a envelhecer calada.
+
+### 3. Só então reavaliar as pendências
+
+Com a régua corrigida, as 2 pendências desta rodada e as 23 do araucária devem sumir. **Se alguma
+sobrar, aí sim é sub-extração real** — e o instrumento de blocos, que já funciona, dirá se é teto,
+bloco perdido, ou leitura parcial.
+
+### 4. E aí sim o araucária, com o dia inteiro de cota
+
+Lembrando a aritmética: o Canastra pede 63 chamadas (13% do RPD) e o araucária ~440–509. **Os dois
+no mesmo dia não cabem em 500**, e o portão da cota da 0156 não sabe o que o dia já consumiu — ele
+vê um lote só e declara isso na própria mensagem.
+
+### O que continua pendente e não é engenharia
+
+- **deploy do portal** — a espera corrigida está no repositório desde a sessão 74;
+- o **`multipleFiles`** do campo "Arquivos" do nó `Intake (Form)` (não é um nó, é um toggle do
+  campo) precisa ser conferido a cada republicação: já se perdeu duas vezes.
+
+---
+
 ## A SESSÃO 75 (31/08) — o processo do agente vira parte do repositório
 
 **Esta rodada não tocou no produto.** Nenhuma migration, nenhum nó do n8n, nenhuma linha do

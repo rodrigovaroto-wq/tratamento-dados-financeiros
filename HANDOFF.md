@@ -4,13 +4,28 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-31 (sessões 62 a **75**). **Estado do `main`:** mergeado até o **PR
-#186** (a frente da sessão 74, as `0152` a `0155`); o **#187** está aberto com a sessão 75, que **não
-toca no produto** — ela versiona o processo do agente (`CLAUDE.md`, `.claude/memory`, `.claude/agents`,
-`.claude/hooks`, `docs/prompts`) e aposenta o `docs/PROMPT_CONTINUACAO.md`, que ainda mandava trabalhar
-no PR #69 e montar o CI. Ver "A SESSÃO 75" no topo do `ESTADO.md`. **A INFRA ESTÁ APLICADA E
-CONFERIDA PELA SONDA:** `fn_instalacao_conferir()` devolve **54 de 54 requisitos presentes, cobertura
-`0155`** — conferido em 28/08, depois de eu mesmo aplicar as quatro migrations da sessão 74.
+**Última atualização:** 2026-08-31 (sessões 62 a **76**). **Estado do `main`:** mergeado até o **PR
+#190**. As sessões 75 e 76 entregaram, nesta ordem: o processo do agente versionado (#187), os três
+instrumentos que faltavam antes da rodada (#188, com a `0156`), a `0156` reescrita sem `replace` de
+corpo de função (#189) e o `Abrir Lote` fora do caminho principal (#190).
+
+> **LEIA "A SESSÃO 76" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** A rodada real do Canastra
+> de 31/08 respondeu a pergunta que estava aberta desde a sessão 74, e a resposta é o contrário do
+> que se supunha: **a extração está COMPLETA (102 de 99 linhas, e 12 de 12) — quem erra é a régua de
+> cobertura, cujo denominador infla ~2,6× em produção.** As 23 pendências de sub-extração do
+> araucária são muito provavelmente FALSAS, o que contradiz o que a sessão 74 registrou. O roteiro
+> para fechar isso, em quatro passos e sem gastar cota, está lá. **Não rode o araucária antes do
+> passo 1.**
+
+**A `0156` ESTÁ APLICADA EM PRODUÇÃO, e a evidência não é declaração:** na rodada do Canastra de
+31/08 o nó `Abrir Lote` devolveu `{aberto: true, lote_execucao_id: 1a65082b-cfd3-4a21-82ac-719150d37b1c}`
+— `fn_abrir_lote_execucao` só existe pela `0156`. Antes dela a sonda dizia **54 de 54 requisitos,
+cobertura `0155`** (28/08). **Confirme com a sonda mesmo assim** — é o que este projeto manda:
+
+```sql
+select chave, presente from fn_instalacao_conferir() where migration = '0156';
+select ate_migration from instalacao_cobertura;
+```
 
 **O `book-araucaria` RODOU, E FOI A RODADA QUE MAIS ENSINOU.** 190 documentos, 27/08 às 17:34 BRT
 (execução 7172). Ela ficou **1h52 de pé sem gravar uma única reconciliação** e foi cancelada à mão —
