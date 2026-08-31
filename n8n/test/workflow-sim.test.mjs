@@ -769,13 +769,22 @@ test('Topologia: o teto de gasto fica entre a medição do documento e a primeir
   // portal — lançando ali mesmo, a mensagem ficava só no log do n8n e a tela
   // seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  // O RAMO DO "CABE" ABRE O LOTE ANTES DE SEGUIR (0156). A ordem é o ponto, e ela
-  // é o espelho da ordem do ramo do "não cabe" logo abaixo: grava primeiro, age
-  // depois. Aqui, o lote existe no banco antes de a primeira chamada de IA sair —
-  // é isso que faz uma execução cancelada no meio deixar rastro, em vez de ficar
-  // indistinguível de uma execução que nunca começou (araucária, 27/08).
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Abrir Lote']);
-  assert.deepEqual(wf.connections['Abrir Lote'].main[0].map((c) => c.node), ['Precisa Fallback?']);
+  // O RAMO DO "CABE" ABRE O LOTE **AO LADO**, e segue inteiro (0156).
+  //
+  // A PRIMEIRA VERSÃO DESTE ASSERT CODIFICAVA O BUG: ela exigia
+  // `Lote cabe? -> Abrir Lote -> Precisa Fallback?`, que põe um nó Postgres
+  // INLINE no fluxo por documento. Nó Postgres substitui o item; o `caso_id`
+  // sumiu e o `Registrar Documento` gravou ZERO de 38 com a execução verde.
+  // Invariante que descreve o mecanismo protege o mecanismo, inclusive quando ele
+  // está errado — a regra da casa, cobrada aqui contra o próprio teste.
+  //
+  // O que se afirma agora é o COMPORTAMENTO: o lote é aberto antes de a extração
+  // começar, E o item chega inteiro na cadeia. As duas coisas, juntas.
+  const doCabe = wf.connections['Lote cabe?'].main[0].map((c) => c.node);
+  assert.deepEqual(doCabe, ['Abrir Lote', 'Precisa Fallback?'],
+    'o "cabe" abre o lote (ramo terminal, primeiro) e segue com o item inteiro');
+  assert.equal(wf.connections['Abrir Lote'], undefined,
+    'o Abrir Lote é ramo TERMINAL — inline ele substituiria o item de todo documento');
   assert.equal(wf.nodes.find((n) => n.name === 'Abrir Lote').executeOnce, true,
     'a pergunta é do LOTE, não do documento — sem executeOnce ele abriria uma vez por item');
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
@@ -2364,35 +2373,115 @@ test('O nó Postgres devolve o contexto que o próximo nó lê (a reconciliaçã
   //
   // Custou onze dias de silêncio: as rodadas v42, v4x, v45 e v47 gravaram ZERO
   // reconciliações (a v41, antes da quebra, gravou 73) e a v45 chegou a
-  // `aprovado` assim. Nenhuma tela mostrava a ausência, e o motor estava intacto
-  // o tempo todo — chamada à mão sobre o mesmo dado roda as seis checagens e
-  // ainda acha dois defeitos reais.
+  // `aprovado` assim.
   //
-  // A trava é genérica de propósito: qualquer nó que leia `$json.X` do item de
-  // um nó Postgres anterior exige que aquele nó devolva `X` como COLUNA.
-  const anterior = {
-    'Registrar Diagnostico': 'Gravar Campos (Sombra)',
-    'Reconciliar (Classe A)': 'Registrar Diagnostico',
-  };
+  // E ACONTECEU DE NOVO EM 31/08, PELA MESMA CAUSA E NUM NÓ NOVO — porque esta
+  // trava dizia no comentário "é genérica de propósito" e era, no código, um
+  // MAPA FIXO DE DOIS PARES. O `Abrir Lote` (0156) entrou inline entre
+  // `Lote cabe?` e `Precisa Fallback?`, substituiu o item que carregava
+  // `caso_id`, e o `Registrar Documento` morreu com `Failing row contains (uuid,
+  // null, null, ...)`: ZERO de 38 documentos, execução VERDE em 37s. Uma guarda
+  // que se declara genérica e é uma lista de dois é pior que uma honesta — ela
+  // compra a confiança sem dar a cobertura.
+  //
+  // AGORA ELA É GENÉRICA DE VERDADE: varre TODO nó que lê `$json.X`, caminha para
+  // trás pelos nós que apenas REPASSAM o item (IF, Merge, NoOp) e para no
+  // primeiro que o SUBSTITUI. Se esse for um nó Postgres, ele tem de devolver X
+  // como coluna.
+  const REPASSA = new Set(['n8n-nodes-base.if', 'n8n-nodes-base.merge', 'n8n-nodes-base.noOp']);
 
-  for (const [nome, fonte] of Object.entries(anterior)) {
-    const no = byName[nome];
-    const upstream = byName[fonte];
-    assert.ok(no && upstream, `${nome} ou ${fonte} sumiu do workflow`);
-    assert.equal(upstream.type, 'n8n-nodes-base.postgres', `${fonte} deixou de ser nó Postgres — reveja esta trava`);
-
-    const lidos = [...no.parameters.options.queryReplacement.matchAll(/\$json\.(\w+)/g)].map((m) => m[1]);
-    assert.ok(lidos.length > 0, `${nome}: nenhum \$json lido — o teste perdeu o alvo`);
-
-    // As colunas que o nó anterior REALMENTE devolve: `... as nome`.
-    const devolvidas = [...upstream.parameters.query.matchAll(/\bas\s+(\w+)/g)].map((m) => m[1]);
-
-    for (const campo of new Set(lidos)) {
-      assert.ok(devolvidas.includes(campo),
-        `${nome} lê $json.${campo}, mas ${fonte} devolve apenas [${devolvidas.join(', ')}] — `
-        + 'o item chega sem esse campo e a função é chamada com NULL, em silêncio');
+  // Quem entrega item a quem (aresta invertida).
+  const origensDe = new Map();
+  for (const [origem, conf] of Object.entries(wf.connections)) {
+    for (const ramo of conf.main || []) {
+      for (const c of ramo || []) {
+        if (!origensDe.has(c.node)) origensDe.set(c.node, []);
+        origensDe.get(c.node).push(origem);
+      }
     }
   }
+
+  /** As fontes EFETIVAS do item de um nó: sobe por quem só repassa. */
+  const fontesEfetivas = (nome) => {
+    const out = new Set();
+    const vistos = new Set([nome]);
+    const fila = [...(origensDe.get(nome) || [])];
+    while (fila.length > 0) {
+      const atual = fila.pop();
+      if (vistos.has(atual)) continue;
+      vistos.add(atual);
+      const no = byName[atual];
+      if (no && REPASSA.has(no.type)) {
+        for (const a of origensDe.get(atual) || []) fila.push(a);
+      } else {
+        out.add(atual);
+      }
+    }
+    return [...out];
+  };
+
+  let paresConferidos = 0;
+  for (const no of wf.nodes) {
+    const qr = no.parameters?.options?.queryReplacement;
+    if (typeof qr !== 'string') continue;
+    const lidos = [...new Set([...qr.matchAll(/\$json\.(\w+)/g)].map((m) => m[1]))];
+    if (lidos.length === 0) continue;
+
+    for (const fonte of fontesEfetivas(no.name)) {
+      const upstream = byName[fonte];
+      if (!upstream || upstream.type !== 'n8n-nodes-base.postgres') continue;
+      // As colunas que o nó anterior REALMENTE devolve: `... as nome`.
+      const devolvidas = [...upstream.parameters.query.matchAll(/\bas\s+(\w+)/g)].map((m) => m[1]);
+      for (const campo of lidos) {
+        paresConferidos += 1;
+        assert.ok(devolvidas.includes(campo),
+          `${no.name} lê $json.${campo}, e o item dele vem de ${fonte} (nó Postgres, que SUBSTITUI `
+          + `o item) — que devolve apenas [${devolvidas.join(', ')}]. O campo chega undefined e a `
+          + 'função é chamada com NULL, em silêncio. Foi assim na v47 (11 dias) e na 0156 (0 de 38).');
+      }
+    }
+  }
+
+  // NÃO-VACUIDADE DA PRÓPRIA TRAVA. Sem isto ela viraria verde no dia em que o
+  // seletor deixasse de casar — e uma trava que não olha nada tem exatamente a
+  // aparência de uma trava que olhou e não achou nada, que é o defeito central
+  // deste projeto aplicado ao próprio teste.
+  assert.ok(paresConferidos > 0,
+    'a trava não conferiu par nenhum — o seletor perdeu o alvo e ela virou decoração');
+});
+
+test('Nenhum nó Postgres fica INLINE no caminho por documento (0156: 0 de 38)', () => {
+  // A trava acima pega o campo que some. Esta pega a CAUSA um nível acima: um nó
+  // Postgres colocado no meio do fluxo por documento. Ele substitui o item de
+  // TODO mundo rio abaixo, e quando ainda tem `executeOnce` colapsa 38 itens em 1
+  // antes disso.
+  //
+  // O jeito certo de gravar algo do LOTE no meio do fluxo é um RAMO TERMINAL, ao
+  // lado do caminho — como o `Upload Storage` sempre foi, e como o `Abrir Lote`
+  // passou a ser depois de 31/08.
+  const terminal = (nome) => !wf.connections[nome] || (wf.connections[nome].main || [])
+    .every((ramo) => (ramo || []).length === 0);
+
+  const executeOnceInline = wf.nodes
+    .filter((n) => n.executeOnce === true && n.type === 'n8n-nodes-base.postgres')
+    .filter((n) => !terminal(n.name))
+    // A cauda do lote é legítima: de `Reconciliar Lote` em diante não há mais
+    // fluxo por documento, e o próprio Merge já reduziu a um item.
+    .filter((n) => !['Reconciliar Lote'].includes(n.name))
+    .map((n) => n.name);
+
+  assert.deepEqual(executeOnceInline, [],
+    'nó Postgres com executeOnce no meio do fluxo por documento: ele substitui o item de todos os '
+    + 'documentos seguintes e colapsa o lote em 1. Ponha-o como ramo terminal, ao lado do caminho.');
+
+  // E o `Abrir Lote` especificamente: terminal, e o item segue INTEIRO.
+  assert.ok(terminal('Abrir Lote'), 'o Abrir Lote tem de ser ramo terminal');
+  const doCabe = wf.connections['Lote cabe?'].main[0].map((c) => c.node);
+  assert.ok(doCabe.includes('Abrir Lote'), 'o ramo do "cabe" abre o lote');
+  assert.ok(doCabe.includes('Precisa Fallback?'),
+    'e o item SEGUE inteiro para a cadeia — sem passar pelo nó Postgres');
+  assert.equal(doCabe.indexOf('Abrir Lote'), 0,
+    'o Abrir Lote vem primeiro: a linha do lote tem de existir antes de a extração começar');
 });
 
 // =============================================================================

@@ -1767,11 +1767,34 @@ const connections = {
   // Documento`, muito mais adiante.
   'Medir Documento': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
   'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
-  // O lote existe no banco a partir daqui — ver o comentario do no.
-  'Abrir Lote': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
+  // O `Abrir Lote` é um RAMO TERMINAL, e isso não é estilo — é a correção de um
+  // defeito que chegou à produção em 31/08, na primeira rodada com ele.
+  //
+  // Ele nasceu INLINE (`Lote cabe?` -> `Abrir Lote` -> `Precisa Fallback?`), e nó
+  // Postgres SUBSTITUI o item pelo resultado da query. O item que carregava
+  // `caso_id`, `nome_original` e o binário virou `{resultado:{aberto,
+  // lote_execucao_id}}`; o `Registrar Documento`, rio abaixo, leu `$json.caso_id`
+  // como `undefined` e o insert morreu com `Failing row contains (uuid, null,
+  // null, ...)`. ZERO de 38 documentos registrados, com a execução VERDE em 37s.
+  // E `executeOnce` piorava: 38 itens viravam 1 antes mesmo disso.
+  //
+  // É a MESMA falha da v47 (`Gravar Campos` substituindo o item e a reconciliação
+  // parando onze dias em silêncio) — a lição estava escrita na memória do
+  // repositório e foi reintroduzida por um nó novo no lugar errado.
+  //
+  // Como ramo terminal ele não toca o fluxo: o `Lote cabe?` continua entregando
+  // o item INTEIRO ao `Precisa Fallback?`, e a abertura do lote acontece ao lado.
+  // É o mesmo arranjo do `Upload Storage`, e pela mesma razão.
+  //
+  // A ORDEM DAS DUAS CONEXÕES IMPORTA: o `Abrir Lote` vem primeiro para a linha
+  // do lote existir antes de a extração começar — que é a única coisa que a 0156
+  // promete.
   'Lote cabe?': { main: [
-    [{ node: 'Abrir Lote', type: 'main', index: 0 }],          // true — abre o lote e segue
-    [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
+    [
+      { node: 'Abrir Lote', type: 'main', index: 0 },           // true — abre o lote (ramo terminal)
+      { node: 'Precisa Fallback?', type: 'main', index: 0 },    // ...e o item SEGUE inteiro
+    ],
+    [{ node: 'Registrar Recusa', type: 'main', index: 0 }],     // false — grava e aborta
   ] },
   // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas
   // conexões cruas no mesmo input, que é o que comeu 19 documentos no V45.
