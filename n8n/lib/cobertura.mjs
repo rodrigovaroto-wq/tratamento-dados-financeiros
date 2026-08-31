@@ -430,8 +430,12 @@ export function juntarBlocos(blocos) {
   // justamente o que se perdeu, o primeiro que chega continua carregando o
   // total. Bloco no formato antigo (sem `blocos`) não declara plano nenhum, e aí
   // não há o que afirmar — cai no recebido, sem inventar divergência.
+  // Sem `b &&`: `lista` já saiu do filtro de objeto no topo da função, então a
+  // guarda era morta — e a linha do `chegaram`, cinco abaixo, já lia `b.bloco`
+  // direto. Duas formas para a mesma garantia na mesma função ensinam a
+  // desconfiar da que não tem guarda, que é justamente a correta.
   const planoDeclarado = lista
-    .map((b) => Number(b && b.blocos))
+    .map((b) => Number(b.blocos))
     .filter((n) => Number.isFinite(n) && n > 0);
   const blocosPlanejados = planoDeclarado.length > 0
     ? Math.max(lista.length, ...planoDeclarado)
