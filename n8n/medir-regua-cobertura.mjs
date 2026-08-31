@@ -255,7 +255,7 @@ if (JSON_SAIDA) {
   }
 }
 
-// A EXATIDÃO, medida em TODO documento capturado de produção que tem conta —
+// A EXATIDÃO, medida em CADA documento capturado de produção que tem conta —
 // inclusive os pequenos, que a faixa acima não alcança.
 const foraDaExatidao = linhas.filter((l) => l.producao && l.verdade > 0
   && Math.abs(l.erro) > ERRO_MAXIMO_EM_PRODUCAO);

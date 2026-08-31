@@ -708,3 +708,20 @@ test('linha de tabela em minúscula NÃO é confundida com continuação de pros
   ].join('\n');
   assert.equal(linhasDeConta(trecho).length, 1);
 });
+
+test('a data em dd/mm/aaaa também não mede nada', () => {
+  // ESTE TESTE NASCEU DE UMA FIXTURE VAZIA. A primeira versão afirmava as formas
+  // "Janeiro/2023" e "Janeiro 2023" — e passava mesmo com a regra sabotada, porque
+  // o corte do ano solto já resolvia as duas. A regra de mês+ano era guarda morta
+  // e saiu; o corte de dd/mm/aaaa, esse, estava VIVO e sem teste nenhum.
+  //
+  // O book escreve o subtítulo por extenso ("Posição em 31 de dezembro de 2025"),
+  // então a forma numérica não aparece nos 20 documentos capturados — mas ela é o
+  // mesmo subtítulo, e sem o corte o "31/12/" sobrevive ao corte do ano e a linha
+  // volta a ser contada como conta. Não é bug de produção reproduzido: é a
+  // variante que o corte existe para cobrir, dita como variante.
+  assert.equal(ehLinhaSemValor('Posição em 31/12/2025'), true);
+  assert.deepEqual(linhasDeConta('Posição em 31/12/2025'), []);
+  // E a conta com data na frente continua conta: o valor não é data.
+  assert.equal(ehLinhaSemValor('01/12/2025 SALDO ANTERIOR 16.689 C'), false);
+});
