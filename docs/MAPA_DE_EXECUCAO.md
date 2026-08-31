@@ -158,9 +158,13 @@ arquivo **exportado da rodada real** — não sobre fixture.
 Nenhum destes pode começar antes de B1. Estão aqui para que a sessão seguinte não precise
 redescobri-los.
 
-1. **Recalibrar o limiar de cobertura (0,85)** com pontos REAIS. Hoje está calibrado contra os 38
-   documentos sintéticos (erro mediano da régua +3%, pior caso 96% com extração perfeita). A folga de
-   11 pontos existe para o documento sujo — e ninguém mediu se ela basta.
+1. **Recalibrar o limiar de cobertura (0,85)** com pontos REAIS. Desde 31/08 a régua é medida
+   sobre o TEXTO DE PRODUÇÃO capturado (execução 7276, 20 dos 38 documentos): erro mediano **+0%**,
+   pior caso **95%** com extração perfeita, zero falso positivo. Os números anteriores (+3%, 96%)
+   vinham do texto do GERADOR e não valiam — ver
+   `.claude/memory/portao-mede-a-entrada-de-producao.md`. **O que falta:** capturar os 18
+   documentos restantes (o portão os declara "NÃO MEDIDO CONTRA PRODUÇÃO") e um documento sujo de
+   verdade — a folga de 11 pontos continua sem medição contra scan real.
 2. **Conferir se o fatiamento cortou onde devia**, e se a emenda entre blocos não duplicou linha. A
    `juntarBlocos` limpa emenda repetida e **nunca viu bloco de verdade**.
 3. **Conferir os subtotais impressos** (`0116`) — a única mudança daquela rodada que só a extração
