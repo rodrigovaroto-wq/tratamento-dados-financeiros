@@ -201,14 +201,22 @@ jobs:
         # custava US$ 0,1725 contra os US$ 0,15 então declarados.
         run: node n8n/medir-custo-book.mjs
 
-      - name: Régua da cobertura (confrontada com a verdade do gerador)
+      - name: Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)
         # A guarda que decide se um documento veio pela metade depende de uma
-        # HEURÍSTICA sobre o texto do PDF, e ela tinha UM ponto de medição. Aqui
-        # ela é confrontada com a contagem que o gerador declara — quantas linhas
-        # de conta ele escreveu — nos 38 documentos. Reprova quando a régua sai da
-        # faixa (conta demais e come a folga do limiar, ou conta de menos e deixa
-        # passar extração incompleta), e quando um documento novo entra na classe
-        # do rótulo repetido, onde a guarda acusaria extração perfeita.
+        # HEURÍSTICA sobre o texto do PDF, e ela é confrontada aqui com a contagem
+        # que o gerador declara — quantas linhas de conta ele escreveu.
+        #
+        # A ENTRADA É O TEXTO DE PRODUÇÃO, e isto é a correção de 31/08: até
+        # então este passo media o `TEXTO_EXTRAIDO.json`, o agrupamento do
+        # GERADOR, que produção nunca vê. Ele passava com "+3%" enquanto o
+        # `17_Livro_Razao` dava 258 no n8n contra as 99 linhas reais e abria
+        # pendência falsa. Agora a entrada é a captura versionada da execução
+        # 7276 (`test-data/capturas/`), e o que não está nela é declarado NÃO
+        # MEDIDO em vez de parecer aprovado.
+        #
+        # Reprova quando a régua sai da faixa (conta demais e come a folga do
+        # limiar, ou conta de menos e deixa passar extração incompleta), e quando
+        # um documento novo entra na classe do rótulo repetido.
         run: node n8n/medir-regua-cobertura.mjs
 
       - name: Suíte de export (invariantes do arquivo entregue)
