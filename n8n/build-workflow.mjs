@@ -32,7 +32,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
@@ -158,6 +158,12 @@ const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};
 // quatro é o que mantém o espelho fiel; o teste que compara o nó com a fonte
 // continua valendo sobre a função.
 const FONTE_ORCAMENTO_LOTE = [
+  `const FRACAO_AVISO_RPD = ${FRACAO_AVISO_RPD};`,
+  // `provedor()` e nao `PROV`: esta lista e montada ANTES da linha que define
+  // PROV, e a ordem de avaliacao de um template literal nao perdoa. O valor e o
+  // mesmo — `provedor()` sem argumento devolve o provedor ativo.
+  `const RPD_DO_PROVEDOR = ${provedor().rpd === null ? 'null' : provedor().rpd};`,
+  vereditoDaCotaDiaria.toString(),
   `const TETO_EXECUCAO_USD = ${TETO_EXECUCAO_USD};`,
   `const CUSTO_ESTIMADO_DOC_USD = ${CUSTO_ESTIMADO_DOC_USD};`,
   `const CUSTO_POR_MB_USD = ${CUSTO_POR_MB_USD};`,
@@ -325,6 +331,18 @@ const docs = itens.map((i) => {
   };
 });
 const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, tokensPromptSistema: TOKENS_PROMPT_SISTEMA });
+// A COTA DO DIA, ao lado do teto de gasto. Os dois medem grandezas diferentes e
+// o lote so passa nos DOIS: o dolar diz quanto custa, o RPD diz se cabe no dia.
+// Medido em 31/08: o araucaria (190 documentos) passava no teto de US$ 3 com
+// folga e consumia 88% da cota -- o guarda aprovava o lote que a cota mataria.
+const cota = vereditoDaCotaDiaria({ chamadas: r.chamadas, rpd: RPD_DO_PROVEDOR, fracaoAviso: FRACAO_AVISO_RPD });
+// A recusa da cota entra pelo MESMO caminho da recusa de gasto (o IF manda para
+// o \`Registrar Recusa\`), porque o efeito para quem enviou e' o mesmo e ter dois
+// caminhos de recusa e' ter um deles sem tela. As duas mensagens somam quando as
+// duas reprovam -- saber so metade do motivo faz reenviar errado.
+const cabeTudo = r.cabe && cota.cabe;
+const motivos = [r.mensagem, cota.cabe ? null : cota.mensagem].filter(Boolean);
+const mensagemFinal = motivos.length > 0 ? motivos.join(' ') : null;
 // Recusa o lote INTEIRO. Não existe "roda os que cabem" de propósito: metade
 // registrada sem extração e metade sem registro nenhum é estado que dá mais
 // trabalho para desfazer do que o reenvio que esta mensagem pede.
@@ -338,7 +356,7 @@ const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_U
 // \`orcamento_versao\` viaja com o item mesmo quando o lote PASSA. É o que
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
-return itens.map(i => ({ json: { ...i.json, orcamento_cabe: r.cabe, orcamento_mensagem: r.mensagem, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo }, binary: i.binary }));
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: cabeTudo, orcamento_mensagem: mensagemFinal, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo, cota_cabe: cota.cabe, cota_conhecida: cota.conhecido, cota_fracao: cota.fracao, cota_rpd: cota.rpd, cota_aviso: cota.cabe ? cota.mensagem : null }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------

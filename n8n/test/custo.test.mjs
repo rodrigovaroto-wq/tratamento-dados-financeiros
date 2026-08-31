@@ -16,6 +16,7 @@ import {
   pesoDaChamadaDeClassificacao,
   PRECO_USD_POR_MILHAO,
   PRECOS_POR_PROVEDOR,
+  vereditoDaCotaDiaria,
 } from '../lib/custo.mjs';
 import { PROVEDORES, provedorAtivo } from '../lib/provedor.mjs';
 
@@ -426,4 +427,49 @@ test('UM documento sem medida de conteúdo derruba o lote de 190 para a conta po
     + 'tamanho mudou e o comentário acima envelheceu');
   assert.match(r.mensagem, /Envie no máximo \d+ documento\(s\) por vez/,
     'a recusa tem de dizer quantos cabem, senão o dono só sabe que não pode');
+});
+
+test('a cota do DIA é um portão, e ela recusa o que o teto de dólar aprovava', () => {
+  // O DEFEITO QUE ISTO FECHA, medido em 31/08 sobre o `main`.
+  //
+  // `lib/provedor.mjs` declara `rpd: 500` com um comentário que o chama de "O
+  // LIMITE QUE NINGUÉM TINHA MODELADO, E É O QUE DE FATO APERTA". Quem lia esse
+  // número: o `medir-custo-book.mjs` (relatório de CI) e a suíte. NADA em
+  // execução. `tpm` e `rpm` alimentam a cadência (lib/extract.mjs); o RPD não
+  // alimentava nada, e o único portão pré-voo conferia dólar.
+  //
+  // E o dólar não é a restrição que morde. Medido:
+  //   Canastra   38 doc  US$ 0,285  passa    63 chamadas =  13% do RPD
+  //   Araucária 190 doc  ~US$ 2,1   passa   440 chamadas =  88% do RPD
+  // O lote que o guarda aprova por preço é o mesmo que a cota mata na metade.
+  const canastra = vereditoDaCotaDiaria({ chamadas: 63, rpd: 500 });
+  assert.equal(canastra.cabe, true);
+  assert.equal(canastra.mensagem, null, 'lote pequeno não gera ruído — portão que fala sempre não é lido');
+
+  // O araucária PASSA e DECLARA. Recusar a 88% barraria o caso de uso do dono, e
+  // portão que impede o trabalho legítimo é portão que alguém desliga.
+  const araucaria = vereditoDaCotaDiaria({ chamadas: 440, rpd: 500 });
+  assert.equal(araucaria.cabe, true, 'o book de 190 continua podendo rodar');
+  assert.equal(araucaria.fracao, 0.88);
+  assert.match(araucaria.mensagem, /88%/);
+  assert.match(araucaria.mensagem, /um book por dia/);
+  // As duas ignorâncias declaradas, e é o ponto: um "cabe" que escondesse a
+  // premissa "supondo que hoje ainda não rodou nada" seria ausência apresentada
+  // como dado.
+  assert.match(araucaria.mensagem, /não é visível daqui/);
+  assert.match(araucaria.mensagem, /RETENTATIVA também conta/);
+
+  // Só o impossível é recusado.
+  const naoCabe = vereditoDaCotaDiaria({ chamadas: 501, rpd: 500 });
+  assert.equal(naoCabe.cabe, false);
+  assert.match(naoCabe.mensagem, /não cabe num dia inteiro nem sozinho/);
+  assert.match(naoCabe.mensagem, /MATA os documentos que faltavam/, 'diz o efeito, não só o fato');
+  assert.match(naoCabe.mensagem, /reenviar não\s+duplica nem custa/);
+
+  // RPD ausente é "não sei", NUNCA "cabe". A OpenAI não publica um número único
+  // para o Tier 1, e transformar isso num veredito verde seria inventar folga.
+  const semRpd = vereditoDaCotaDiaria({ chamadas: 9000, rpd: null });
+  assert.equal(semRpd.conhecido, false);
+  assert.equal(semRpd.fracao, null);
+  assert.equal(semRpd.mensagem, null);
 });
