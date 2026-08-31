@@ -237,6 +237,60 @@ CREATE TYPE public.sensibilidade_lgpd AS ENUM (
 );
 
 --
+-- Name: fn_abrir_lote_execucao(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_abrir_lote_execucao(p_caso_id uuid, p_execucao_ref text, p_plano jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_id uuid;
+begin
+  if p_caso_id is null then
+    return jsonb_build_object('aberto', false, 'motivo', 'caso_id ausente');
+  end if;
+  -- SEM REFERÊNCIA DE EXECUÇÃO NÃO SE ABRE, pelo mesmo motivo da 0115: é a chave
+  -- que impede a duplicidade. Sem ela, cada ramo abriria a sua linha.
+  if nullif(btrim(coalesce(p_execucao_ref, '')), '') is null then
+    return jsonb_build_object('aberto', false, 'motivo', 'execucao_ref ausente');
+  end if;
+
+  insert into lote_execucao (
+    caso_id, execucao_ref,
+    documentos_planejados, chamadas_planejadas, cota_fracao_planejada,
+    custo_estimado_usd, orcamento_versao
+  ) values (
+    p_caso_id, btrim(p_execucao_ref),
+    (p_plano->>'documentos_planejados')::int,
+    (p_plano->>'chamadas_planejadas')::int,
+    (p_plano->>'cota_fracao_planejada')::numeric,
+    (p_plano->>'custo_estimado_usd')::numeric,
+    p_plano->>'orcamento_versao'
+  )
+  on conflict (caso_id, execucao_ref) do update set
+    atualizado_em = now(),
+    -- SÓ O PLANO É REESCRITO AQUI. As colunas do realizado ficam intocadas: se
+    -- os dois ramos abrirem o lote e um deles chegar depois do fechamento (o n8n
+    -- não garante ordem entre ramos), reescrever o realizado com nulo apagaria a
+    -- medição da execução que terminou. `coalesce` mantém o que já havia quando
+    -- a segunda abertura vier sem o campo.
+    documentos_planejados = coalesce(excluded.documentos_planejados, lote_execucao.documentos_planejados),
+    chamadas_planejadas   = coalesce(excluded.chamadas_planejadas, lote_execucao.chamadas_planejadas),
+    cota_fracao_planejada = coalesce(excluded.cota_fracao_planejada, lote_execucao.cota_fracao_planejada),
+    custo_estimado_usd    = coalesce(excluded.custo_estimado_usd, lote_execucao.custo_estimado_usd),
+    orcamento_versao      = coalesce(excluded.orcamento_versao, lote_execucao.orcamento_versao)
+  returning id into v_id;
+
+  return jsonb_build_object('aberto', true, 'lote_execucao_id', v_id);
+end $$;
+
+--
+-- Name: FUNCTION fn_abrir_lote_execucao(p_caso_id uuid, p_execucao_ref text, p_plano jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_abrir_lote_execucao(p_caso_id uuid, p_execucao_ref text, p_plano jsonb) IS 'Abre a linha de lote_execucao no instante em que o orçamento aceita o lote, com o PLANO. Existe porque a linha só era escrita no fim da cadeia: a rodada de 190 documentos de 27/08 foi cancelada e não deixou rastro nenhum, levando junto documentos_fatiados — o número de que a investigação precisava. Observabilidade que depende de a rodada dar certo não é observabilidade.';
+
+--
 -- Name: fn_aceitar_extracao(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11032,7 +11086,11 @@ CREATE TABLE public.lote_execucao (
     contas_nos_documentos integer,
     contas_extraidas integer,
     cobertura numeric(6,4),
-    orcamento_versao text
+    orcamento_versao text,
+    fechado_em timestamp with time zone,
+    documentos_planejados integer,
+    chamadas_planejadas integer,
+    cota_fracao_planejada numeric(6,4)
 );
 
 --
@@ -11046,6 +11104,18 @@ COMMENT ON TABLE public.lote_execucao IS 'Uma linha por execução de ingestão:
 --
 
 COMMENT ON COLUMN public.lote_execucao.cobertura IS 'contas_extraidas / contas_nos_documentos, 0..1. NULL quando a camada 1 não conseguiu medir o texto do PDF — e NULL aqui é honesto: sem medição não há cobertura, e 0 diria o contrário.';
+
+--
+-- Name: COLUMN lote_execucao.fechado_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.lote_execucao.fechado_em IS 'Quando a cadeia chegou ao fim. NULO significa que a execução começou e não terminou — cancelada, morta por cota, ou parada num nó. Antes desta coluna, "começou e morreu" e "nunca rodou" tinham a mesma aparência: nenhuma linha na tabela.';
+
+--
+-- Name: COLUMN lote_execucao.chamadas_planejadas; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.lote_execucao.chamadas_planejadas IS 'Chamadas de IA que o Orcamento do Lote previu, contando os blocos do fatiamento. Comparada com o consumo real, é o que diz se o estimador acerta; sozinha, é o que diz quanto da cota do dia esta execução reservou antes de começar.';
 
 --
 -- Name: pendencia; Type: TABLE; Schema: public; Owner: -

@@ -168,7 +168,7 @@
       "typeVersion": 2,
       "position": [
         2600,
-        360
+        180
       ]
     },
     {
@@ -284,7 +284,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2340,
+        2600,
         0
       ]
     },
@@ -298,7 +298,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
+        2860,
         180
       ],
       "onError": "continueRegularOutput"
@@ -331,7 +331,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2860,
+        3120,
         180
       ],
       "credentials": {
@@ -355,7 +355,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3120,
+        3380,
         180
       ],
       "onError": "continueRegularOutput"
@@ -370,7 +370,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        3380,
+        3640,
         0
       ]
     },
@@ -388,7 +388,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3640,
+        3900,
         0
       ],
       "credentials": {
@@ -415,7 +415,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3900,
+        4160,
         180
       ],
       "credentials": {
@@ -439,7 +439,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3900,
+        4160,
         0
       ],
       "onError": "continueRegularOutput"
@@ -470,7 +470,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        4160,
+        4420,
         0
       ]
     },
@@ -484,7 +484,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        6240,
+        6500,
         0
       ]
     },
@@ -498,7 +498,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4420,
+        4680,
         180
       ],
       "onError": "continueRegularOutput"
@@ -513,7 +513,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4680,
+        4940,
         180
       ],
       "onError": "continueRegularOutput"
@@ -546,7 +546,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4940,
+        5200,
         180
       ],
       "credentials": {
@@ -570,7 +570,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5200,
+        5460,
         180
       ],
       "onError": "continueRegularOutput"
@@ -585,7 +585,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5460,
+        5720,
         180
       ],
       "onError": "continueRegularOutput"
@@ -604,7 +604,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5720,
+        5980,
         180
       ],
       "credentials": {
@@ -632,7 +632,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5980,
+        6240,
         180
       ],
       "credentials": {
@@ -660,7 +660,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6500,
+        6760,
         0
       ],
       "credentials": {
@@ -687,7 +687,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6760,
+        7020,
         0
       ],
       "credentials": {
@@ -712,7 +712,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        7020,
+        7280,
         0
       ],
       "onError": "continueRegularOutput"
@@ -730,7 +730,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7280,
+        7540,
         0
       ],
       "credentials": {
@@ -740,6 +740,34 @@
         }
       },
       "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select fn_abrir_lote_execucao($1::uuid, $2::text, $3::jsonb) as resultado",
+        "options": {
+          "queryReplacement": "={{ [$('Upsert Caso (Postgres)').first().json.caso_id, String($execution.id), JSON.stringify({ documentos_planejados: $items().length, chamadas_planejadas: $json.orcamento_chamadas ?? null, cota_fracao_planejada: $json.cota_fracao ?? null, custo_estimado_usd: $json.orcamento_estimado_usd ?? null, orcamento_versao: $json.orcamento_versao ?? null })] }}"
+        }
+      },
+      "id": "abrir-lote",
+      "name": "Abrir Lote",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2340,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE",
+          "name": "Supabase Postgres (Session Pooler)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true,
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000
@@ -757,7 +785,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7540,
+        7800,
         0
       ],
       "credentials": {
@@ -877,11 +905,22 @@
         ]
       ]
     },
-    "Lote cabe?": {
+    "Abrir Lote": {
       "main": [
         [
           {
             "node": "Precisa Fallback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lote cabe?": {
+      "main": [
+        [
+          {
+            "node": "Abrir Lote",
             "type": "main",
             "index": 0
           }

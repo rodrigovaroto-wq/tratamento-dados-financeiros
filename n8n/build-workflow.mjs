@@ -1703,6 +1703,32 @@ const nodes = [
     },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
+  // A EXECUÇÃO PASSA A EXISTIR NO BANCO ANTES DE TERMINAR (0156).
+  //
+  // POR QUE ELE FICA AQUI, logo depois de `Lote cabe?` aprovar. `lote_execucao`
+  // só era escrita pelo `Gravar Uso do Lote`, que é o penúltimo nó da cadeia:
+  // a rodada só deixava rastro se a rodada desse certo. Quando o araucária (190
+  // documentos) foi cancelado à mão depois de 1h52, a tabela ficou VAZIA — e com
+  // ela foi embora `documentos_fatiados`, que era o número de que a investigação
+  // da sub-extração precisava. O n8n descarta os dados de uma execução cancelada,
+  // então não havia segunda via.
+  //
+  // `executeOnce` porque a pergunta é do LOTE. E ele grava o PLANO, não medição:
+  // quantos documentos entraram, quantas chamadas o orçamento previu (contando os
+  // blocos do fatiamento) e que fração da cota do dia isso reserva. O fechamento
+  // continua sendo do `Gravar Uso do Lote`, que agora carimba `fechado_em`.
+  //
+  // PG_RETRY, e ele NÃO pode derrubar o lote: instrumentação que vira ponto de
+  // falha é o oposto do que ela existe para fazer. A função também é tolerante
+  // por dentro (devolve motivo em vez de lançar).
+  node('Abrir Lote', 'n8n-nodes-base.postgres', 2.5, {
+    operation: 'executeQuery', query: 'select fn_abrir_lote_execucao($1::uuid, $2::text, $3::jsonb) as resultado',
+    options: {
+      queryReplacement:
+        "={{ [$('Upsert Caso (Postgres)').first().json.caso_id, String($execution.id), JSON.stringify({ documentos_planejados: $items().length, chamadas_planejadas: $json.orcamento_chamadas ?? null, cota_fracao_planejada: $json.cota_fracao ?? null, custo_estimado_usd: $json.orcamento_estimado_usd ?? null, orcamento_versao: $json.orcamento_versao ?? null })] }}",
+    },
+  }, { executeOnce: true, credentials: PG_CRED, ...PG_RETRY }),
+
   // A CONFERÊNCIA DE FORA (0112), o último nó do canvas de propósito: ela pergunta
   // se TODO documento registrado passou pela extração. As três camadas de
   // cobertura medem o que voltou de uma chamada FEITA; nenhuma delas vê a chamada
@@ -1741,8 +1767,10 @@ const connections = {
   // Documento`, muito mais adiante.
   'Medir Documento': { main: [[{ node: 'Orcamento do Lote', type: 'main', index: 0 }]] },
   'Orcamento do Lote': { main: [[{ node: 'Lote cabe?', type: 'main', index: 0 }]] },
+  // O lote existe no banco a partir daqui — ver o comentario do no.
+  'Abrir Lote': { main: [[{ node: 'Precisa Fallback?', type: 'main', index: 0 }]] },
   'Lote cabe?': { main: [
-    [{ node: 'Precisa Fallback?', type: 'main', index: 0 }],   // true — segue
+    [{ node: 'Abrir Lote', type: 'main', index: 0 }],          // true — abre o lote e segue
     [{ node: 'Registrar Recusa', type: 'main', index: 0 }],    // false — grava e aborta
   ] },
   // Os dois ramos entram em INPUTS DIFERENTES do Merge (0 e 1) — nunca mais duas

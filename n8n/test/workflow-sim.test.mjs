@@ -769,7 +769,15 @@ test('Topologia: o teto de gasto fica entre a medição do documento e a primeir
   // portal — lançando ali mesmo, a mensagem ficava só no log do n8n e a tela
   // seguia dizendo "estamos organizando tudo com cuidado" para sempre.
   assert.deepEqual(wf.connections['Orcamento do Lote'].main[0].map((c) => c.node), ['Lote cabe?']);
-  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Precisa Fallback?']);
+  // O RAMO DO "CABE" ABRE O LOTE ANTES DE SEGUIR (0156). A ordem é o ponto, e ela
+  // é o espelho da ordem do ramo do "não cabe" logo abaixo: grava primeiro, age
+  // depois. Aqui, o lote existe no banco antes de a primeira chamada de IA sair —
+  // é isso que faz uma execução cancelada no meio deixar rastro, em vez de ficar
+  // indistinguível de uma execução que nunca começou (araucária, 27/08).
+  assert.deepEqual(wf.connections['Lote cabe?'].main[0].map((c) => c.node), ['Abrir Lote']);
+  assert.deepEqual(wf.connections['Abrir Lote'].main[0].map((c) => c.node), ['Precisa Fallback?']);
+  assert.equal(wf.nodes.find((n) => n.name === 'Abrir Lote').executeOnce, true,
+    'a pergunta é do LOTE, não do documento — sem executeOnce ele abriria uma vez por item');
   assert.deepEqual(wf.connections['Lote cabe?'].main[1].map((c) => c.node), ['Registrar Recusa']);
   // GRAVA e só então ABORTA: a ordem é o ponto. Abortar antes de gravar deixaria
   // o portal sem a causa, que é exatamente o defeito que este ramo corrige.

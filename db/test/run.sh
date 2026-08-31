@@ -270,6 +270,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/reconciliacao_do_lote.test.sql 2>&1 
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o lote EXISTE antes de terminar (0156: fechado_em nulo distingue morta de nunca rodada)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/lote_abre_antes_de_fechar.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== a autoridade do COMBINADO (0155: quinze empresas nas colunas, qualquer que seja o rótulo)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f db/test/autoridade_combinado.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
