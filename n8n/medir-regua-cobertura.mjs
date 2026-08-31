@@ -63,6 +63,28 @@ const JSON_SAIDA = process.argv.includes('--json');
 const ERRO_MAXIMO_PARA_MAIS = 0.15;
 const ERRO_MAXIMO_PARA_MENOS = 0.05;
 
+// O ERRO MÁXIMO EM QUALQUER DOCUMENTO CAPTURADO DE PRODUÇÃO, e por que ele é
+// meio ponto percentual.
+//
+// A faixa acima (+15%/-5%) responde "a régua atrapalha a GUARDA?" — e por isso
+// só olha os documentos que a guarda chega a avaliar (régua >= MINIMO_PARA_AVALIAR).
+// Ela deixava de fora justamente os pequenos, e um erro de +1 linha num documento
+// de 12 é +8% sem ninguém reclamar.
+//
+// Esta segunda trava responde outra pergunta: **a régua ainda está exata?** Em
+// 31/08, depois de `juntarFragmentosDeLinha` e `ehLinhaSemValor`, ela acerta a
+// verdade do gerador em TODOS os 20 documentos capturados — 20 de 20, erro 0,0%.
+// Sem uma trava, esse 0% envelhece calado: alguém mexe na régua, o erro volta
+// para 3% e o portão continua verde porque 3% cabe em 15%.
+//
+// Meio ponto é "zero com folga para arredondamento", não uma tolerância de
+// projeto: num documento de 200 linhas ele nem chega a permitir UMA linha de
+// diferença. Quando um documento novo legitimamente não couber aqui, o número
+// sobe DE PROPÓSITO, com a medição na mensagem do commit — e a doutrina da
+// assimetria continua valendo: relaxe o lado de contar A MAIS, nunca o de contar
+// a menos, porque é o de menos que deixa passar extração pela metade.
+const ERRO_MAXIMO_EM_PRODUCAO = 0.005;
+
 // Documento em que a régua sozinha já reprovaria uma extração PERFEITA. Zero é
 // o alvo: qualquer um aqui é falso positivo garantido na fila de revisão, e é o
 // número que o comentário do `LIMIAR_COBERTURA` pede para vigiar.
@@ -119,6 +141,9 @@ if (!existsSync(CAPTURA)) {
 const capturado = JSON.parse(readFileSync(CAPTURA, 'utf8'));
 
 const pct = (v) => `${(v * 100).toFixed(0)}%`;
+// Teto sub-percentual precisa de casa decimal: `pct(0,005)` imprimiria "1%", que
+// é o dobro do que o portão exige e ensinaria o número errado a quem lê.
+const pctFino = (v) => `${Number((v * 100).toFixed(1))}%`;
 
 const linhas = metricas.map((m) => {
   const daProducao = capturado.documentos[m.arquivo];
@@ -185,6 +210,9 @@ if (JSON_SAIDA) {
       para_menos: paraMenos.map((l) => l.arquivo),
       falsos_positivos: falsos.map((l) => l.arquivo),
       pior_razao_com_extracao_perfeita: Number(piorRazao.toFixed(3)),
+      exatos_em_producao: linhas.filter((l) => l.producao && l.verdade > 0 && l.regua === l.verdade).length,
+      com_conta_em_producao: linhas.filter((l) => l.producao && l.verdade > 0).length,
+      erro_maximo_em_producao: ERRO_MAXIMO_EM_PRODUCAO,
       limiar: LIMIAR_COBERTURA,
     },
   }, null, 2));
@@ -227,7 +255,24 @@ if (JSON_SAIDA) {
   }
 }
 
+// A EXATIDÃO, medida em TODO documento capturado de produção que tem conta —
+// inclusive os pequenos, que a faixa acima não alcança.
+const foraDaExatidao = linhas.filter((l) => l.producao && l.verdade > 0
+  && Math.abs(l.erro) > ERRO_MAXIMO_EM_PRODUCAO);
+const exatos = linhas.filter((l) => l.producao && l.verdade > 0 && l.regua === l.verdade);
+const comContaEmProducao = linhas.filter((l) => l.producao && l.verdade > 0);
+
+if (!JSON_SAIDA) {
+  console.log(`régua EXATA em ${exatos.length} de ${comContaEmProducao.length} documentos de produção`
+    + ` (teto de erro por documento: ${pctFino(ERRO_MAXIMO_EM_PRODUCAO)})`);
+}
+
 const problemas = [];
+if (foraDaExatidao.length) {
+  problemas.push(`${foraDaExatidao.length} documento(s) de produção com erro acima de `
+    + `${pctFino(ERRO_MAXIMO_EM_PRODUCAO)}: `
+    + foraDaExatidao.map((l) => `${l.arquivo} (${l.verdade}→${l.regua})`).join(', '));
+}
 if (paraMais.length) {
   problemas.push(`${paraMais.length} documento(s) com a régua contando mais de ${pct(ERRO_MAXIMO_PARA_MAIS)} A MAIS: `
     + paraMais.map((l) => `${l.arquivo} (${l.verdade}→${l.regua})`).join(', '));

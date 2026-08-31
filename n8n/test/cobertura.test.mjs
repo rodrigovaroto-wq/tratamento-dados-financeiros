@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, linhasDeConta, juntarFragmentosDeLinha, celulasDaLinha, celulasEstimadas,
+  linhasComNumero, linhasDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
+  celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
@@ -646,4 +647,64 @@ test('a régua da COBERTURA normaliza; a do FATIAMENTO fica como está', () => {
   // uma vez trocaria uma correção medida por duas, uma delas sem medição.
   assert.equal(linhasComNumero(RAZAO_DE_PRODUCAO).length, 7);
   assert.equal(linhasDeConta(RAZAO_DE_PRODUCAO).length, 3);
+});
+
+
+// -----------------------------------------------------------------------------
+// A LINHA QUE TEM NÚMERO SEM MEDIR NÚMERO — o resíduo que sobrava da emenda.
+// As frases abaixo são LITERAIS da captura de produção; as contas logo depois
+// são as que PRECISAM sobreviver à regra (excluir de mais é a direção que deixa
+// passar extração pela metade).
+// -----------------------------------------------------------------------------
+
+test('período, duração e código de conta não medem nada', () => {
+  for (const frase of [
+    'Posição em 31 de dezembro de 2025',              // 20_Mapa_de_Divida
+    'Movimento de dezembro de 2025',                  // 17_Livro_Razao
+    'Encerramento do exercício de 2025',              // 15_Balancete
+    'Exercícios de 2023, 2024 e 2025',                // 19_Faturamento_Intragrupo
+    'Janeiro de 2023 a dezembro de 2025',             // 18_Faturamento_36_meses
+    'RELATÓRIO DE FATURAMENTO — ÚLTIMOS 36 MESES',    // 18, a DURAÇÃO
+    'LIVRO RAZÃO — CONTA 2.1.01.001 FORNECEDORES NACIONAIS',  // 17, o CÓDIGO
+  ]) {
+    assert.equal(ehLinhaSemValor(frase), true, frase);
+    assert.deepEqual(linhasDeConta(frase), [], frase);
+  }
+});
+
+test('conta cujo rótulo tem ano, duração ou código continua sendo conta', () => {
+  // A direção perigosa da regra. O valor de uma conta nunca é data, duração nem
+  // código — é por isso que ela sobrevive, e é isso que este teste tranca.
+  for (const conta of [
+    'Total de 2023 7.120',                          // 19_Faturamento_Intragrupo
+    '01/12/2025 SALDO ANTERIOR 16.689 C',           // 17_Livro_Razao
+    '1.1.01.002 181 D',                             // 15_Balancete: código E valor
+    'Reserva de lucros a realizar 6.834',
+    'Janeiro/2023 22.578.000,00 1.526 14.795,54',   // 18: mês/ano E três valores
+  ]) {
+    assert.equal(ehLinhaSemValor(conta), false, conta);
+    assert.ok(linhasDeConta(conta).length >= 1, conta);
+  }
+});
+
+test('a nota de rodapé que quebra em duas linhas não vira conta', () => {
+  // Medido no 13_Balanco_COMBINADO: o `ruido` cortava a linha que diz "Nota —" e
+  // contava a continuação. Ela se reconhece por DUAS coisas juntas: a anterior
+  // foi cortada como prosa, e esta começa em minúscula.
+  const rodape = [
+    'Nota — A coluna Eliminações não representa entidade jurídica: registra a exclusão',
+    'aos 35% do capital da CN Transportes e Logística Ltda. detidos por terceiros.',
+  ].join('\n');
+  assert.deepEqual(linhasDeConta(rodape), []);
+});
+
+test('linha de tabela em minúscula NÃO é confundida com continuação de prosa', () => {
+  // O contra-exemplo que impede a regra de ser só "começa em minúscula": no
+  // 20_Mapa_de_Divida, "conversão FIN-2019-336.070 …" começa em minúscula e É um
+  // contrato. O que a salva é que a linha antes dela é linha de tabela, não prosa.
+  const trecho = [
+    'Banco de Fomento Nacional FINAME - linha de',
+    'conversão FIN-2019-336.070 28/09/2029 TLP + 3,10% a.a. 4.685.670,00 - 1.332.180,00',
+  ].join('\n');
+  assert.equal(linhasDeConta(trecho).length, 1);
 });

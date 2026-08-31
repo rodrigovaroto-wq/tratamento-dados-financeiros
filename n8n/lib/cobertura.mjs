@@ -184,6 +184,65 @@ export function juntarFragmentosDeLinha(texto) {
 }
 
 /**
+ * A linha NÃO MEDE NADA — todo número dela é data, período ou código.
+ *
+ * O RESÍDUO QUE ISTO TIRA, medido sobre os 20 documentos capturados de produção
+ * depois que `juntarFragmentosDeLinha` entrou. Sobrava +1 a +2 linhas por
+ * documento, e o resíduo era de uma família só: **linha de cabeçalho que tem
+ * número sem medir número.** Três formas, todas literais da captura:
+ *
+ *   PERÍODO   "Posição em 31 de dezembro de 2025"        (20_Mapa_de_Divida)
+ *             "Movimento de dezembro de 2025"            (17_Livro_Razao)
+ *             "Encerramento do exercício de 2025"        (15_Balancete)
+ *             "Exercícios de 2023, 2024 e 2025"          (19_Faturamento_Intragrupo)
+ *             "Janeiro de 2023 a dezembro de 2025"       (18_Faturamento_36_meses)
+ *   DURAÇÃO   "RELATÓRIO DE FATURAMENTO — ÚLTIMOS 36 MESES"   (18)
+ *   CÓDIGO    "LIVRO RAZÃO — CONTA 2.1.01.001 FORNECEDORES"   (17)
+ *
+ * Todas têm dígito e têm letra, então passavam pelos dois testes de
+ * `linhasDeConta`. Nenhuma é conta.
+ *
+ * O CRITÉRIO NÃO É LEXICAL, E ISSO É O PONTO. Casar "Posição em" e "LIVRO RAZÃO"
+ * seria ajustar a régua às frases DESTE book — o cliente escreve outras, e a
+ * régua voltaria a errar parecendo calibrada. O critério é uma pergunta só:
+ * **retire da linha os números que NÃO MEDEM — a data, a duração e o código de
+ * conta. Se não sobrar dígito, a linha não tem valor.** Cada um dos três é
+ * identificação ou recorte de tempo; nenhum é quantia.
+ *
+ * A DIREÇÃO PERIGOSA É EXCLUIR DE MAIS, e é por isso que a conta sobrevive: o
+ * valor dela nunca é data, duração nem código.
+ *
+ *     "Total de 2023 7.120"                -> sobra 7.120   -> É CONTA
+ *     "01/12/2025 SALDO ANTERIOR 16.689 C" -> sobra 16.689  -> É CONTA
+ *     "1.1.01.002 181 D"                   -> sobra 181     -> É CONTA
+ *     "Posição em 31 de dezembro de 2025"  -> não sobra nada -> não mede
+ *
+ * MEDIDO nos 20 documentos de produção, junto com a nota de rodapé que quebra em
+ * duas linhas (tratada em `linhasDeConta`): documentos EXATOS **12 -> 20 de 20**,
+ * erro absoluto médio **2,5% -> 0,0%**, e **nenhum documento passou a contar A
+ * MENOS** — a única direção que faria mal, porque é ela que deixa passar extração
+ * pela metade. O portão segura essa exatidão: erro acima de 0,5% em qualquer
+ * documento capturado reprova.
+ */
+export function ehLinhaSemValor(linha) {
+  if (typeof linha !== 'string' || linha.length === 0) return false;
+  const meses = 'janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro'
+    + '|outubro|novembro|dezembro';
+  const duracao = 'meses|m[êe]s|anos|ano|exerc[íi]cios|exerc[íi]cio|dias|dia'
+    + '|semanas|trimestres|trimestre|bimestres|semestres';
+  const resto = linha
+    // CÓDIGO DE CONTA ("2.1.01.001") — identifica, não mede. Sai primeiro, senão
+    // o regex de ano acha "2025" dentro de um código que o contenha.
+    .replace(/\b\d+(?:\.\d+){2,}\b/g, ' ')
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')                          // 31/12/2025
+    .replace(new RegExp('\\b\\d{1,2}\\s+de\\s+(' + meses + ')', 'gi'), ' ')       // 31 de dezembro
+    .replace(new RegExp('(' + meses + ')\\s*[\\/ ]\\s*\\d{4}', 'gi'), ' ')         // Janeiro/2023
+    .replace(new RegExp('\\b\\d{1,3}\\s*(' + duracao + ')\\b', 'gi'), ' ')        // 36 MESES
+    .replace(/\b(19|20)\d{2}\b/g, ' ');                                       // 2025
+  return !/\d/.test(resto);
+}
+
+/**
  * As linhas do texto que são LINHA DE CONTA — rótulo seguido de valor.
  *
  * A RÉGUA ESTAVA NA UNIDADE ERRADA, e isso importa mais que a precisão dela.
@@ -257,10 +316,22 @@ export function linhasDeConta(texto) {
     // Cabeçalho de coluna: só anos/datas, sem rótulo de conta antes.
     /^[\s|]*((19|20)\d{2}|\d{2}\/\d{2}\/\d{4})([\s|]+((19|20)\d{2}|\d{2}\/\d{2}\/\d{4}))*[\s|]*$/,
   ];
+  // A NOTA DE RODAPÉ QUEBRA EM DUAS LINHAS, e só a primeira dizia "Nota —".
+  // Medido no `13_Balanco_COMBINADO`: o `ruido` cortava a primeira e contava
+  // "aos 35% do capital da CN Transportes ... detidos por terceiros." como conta.
+  // A continuação se reconhece por DUAS coisas juntas, nunca por uma: a linha
+  // anterior foi cortada como PROSA, e esta começa em minúscula. Só a minúscula
+  // não serve — no `20_Mapa_de_Divida`, "conversão FIN-2019-336.070 28/09/2029…"
+  // começa em minúscula E É uma linha de contrato de verdade; o que a salva é
+  // que a linha antes dela é uma linha da tabela, não prosa cortada.
+  const prosa = /^(nota|obs)\b|^\(?valores expressos|^exerc[íi]cios? encerrados?/i;
+  let anteriorEraProsa = false;
   const out = [];
   for (const bruta of normalizado.split('\n')) {
     const linha = bruta.trim();
-    if (linha.length === 0) continue;
+    if (linha.length === 0) { anteriorEraProsa = false; continue; }
+    if (anteriorEraProsa && /^[a-zà-ú]/.test(linha)) continue;
+    anteriorEraProsa = prosa.test(linha);
     if (ruido.some((r) => r.test(linha))) continue;
     const quantos = (linha.match(valores) ?? []).filter((t) => /\d/.test(t)).length;
     // Sem valor não é conta: é título, é seção, é prosa. O modelo também não
@@ -272,6 +343,9 @@ export function linhasDeConta(texto) {
     // linha dos valores é contar a conta UMA vez, que é a unidade certa.
     const temRotulo = /[a-zà-ú]{3}/i.test(linha);
     if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) continue;
+    // Cabeçalho que tem número sem medir número — período, duração, código de
+    // conta. Tem dígito e tem letra, então passava pelos dois testes acima.
+    if (ehLinhaSemValor(linha)) continue;
     out.push(linha);
   }
   return out;

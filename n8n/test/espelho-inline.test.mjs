@@ -32,7 +32,7 @@ import { sha256Hex } from '../lib/hash.mjs';
 import { parseTipo, parsePeriodo, parseEntidade } from '../lib/classifier.mjs';
 import {
   avaliarCobertura, celulasDaLinha, celulasEstimadas, linhasComNumero, linhasDeConta,
-  juntarFragmentosDeLinha,
+  juntarFragmentosDeLinha, ehLinhaSemValor,
   planejarFatias, instrucaoDaFatia, juntarBlocos,
 } from '../lib/cobertura.mjs';
 import {
@@ -310,6 +310,14 @@ const TABELA = [
     ['Banco Meridional S.A. Capital de giro CG-2021-884.117 \n15/03/2026 CDI + 4,80% a.a. 10.412.600,00 '],
     ['ATIVO 137.624 163.941\nAtivo Circulante 44.022'],
     ['a 1 \n\nb 2'], ['a 1 \nb 2 \nc 3 \nd 4 \ne 5 \nf 6'], [''], [null],
+  ] },
+  { nome: 'ehLinhaSemValor', lib: ehLinhaSemValor, casos: [
+    // As cinco frases reais da captura, e as três contas que precisam sobreviver.
+    ['Posição em 31 de dezembro de 2025'], ['Movimento de dezembro de 2025'],
+    ['Encerramento do exercício de 2025'], ['Exercícios de 2023, 2024 e 2025'],
+    ['Janeiro de 2023 a dezembro de 2025'],
+    ['Total de 2023 7.120'], ['01/12/2025 SALDO ANTERIOR 16.689 C'], ['Ativo Circulante 44.022'],
+    [''], [null],
   ] },
   { nome: 'linhasComNumero', lib: linhasComNumero,
     casos: [['a 1\nb\nc 3'], [''], [null]] },
