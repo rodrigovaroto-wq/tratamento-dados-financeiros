@@ -22,6 +22,58 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
 
+## A SESSÃO 75 (31/08) — o processo do agente vira parte do repositório
+
+**Esta rodada não tocou no produto.** Nenhuma migration, nenhum nó do n8n, nenhuma linha do
+export. Ela mexeu na única camada que faltava ter estado versionado: **como uma sessão de IA
+trabalha neste repositório.** A base foi o `soumatheusgomes/vibe-coding-toolkit`, adaptado — não
+copiado — ao que este projeto já aprendeu na marra.
+
+**O DIAGNÓSTICO, E ELE É O MESMO DEFEITO QUE O PROJETO INTEIRO PERSEGUE.** O repositório tinha 700
+KB de documento de estado (`HANDOFF.md` 460 KB, `ESTADO.md` 258 KB) e **nenhum arquivo carregado
+automaticamente**. Toda sessão começava com uma de duas escolhas ruins: ler tudo, ou não ler nada
+e redescobrir as regras do jeito difícil. E o `docs/PROMPT_CONTINUACAO.md`, que era o remédio,
+tinha virado o veneno: **em 31/08 ele ainda mandava trabalhar no PR #69** (117 PRs atrás), rodar
+suítes de 160/198/32/18, e **MONTAR O CI** — afirmando "Não existe CI" como fato, quando ele existe
+desde a sessão 20.
+
+Nada acusou porque nada podia. É a mesma causa do cabeçalho do `HANDOFF` travado 17 PRs em
+"PR #70, migrations até `0034`": **a parte que muda toda rodada morava no arquivo que quase nunca
+se edita.**
+
+### O que entrou
+
+| Peça | O que ela resolve |
+|---|---|
+| **`CLAUDE.md`** (108 linhas) | O arquivo que toda sessão lê e que **não guarda número nenhum** — onde um número importa, ele aponta para quem o mede. As sete regras, a ordem de leitura dos quatro documentos de estado, os comandos canônicos, a tabela de especialistas |
+| **`.claude/memory/`** | Índice de 35 linhas + 15 arquivos de tópico com as lições já pagas: o estágio desligado que parece limpo, o `git checkout` da sessão 19, o backtick que quebrou o `jsCode` duas vezes, as fixtures da 18 que nasceram vazias, o `MATERIALIZED` de 12.068 ms contra 1.790, o `multipleFiles` que a republicação perde, o RPD 500 |
+| **`.claude/agents/`** | Sete especialistas com o checklist do domínio DENTRO do arquivo, não espalhado por documentos que ninguém abre no meio de uma tarefa. Nível de modelo declarado, escolhido por despacho |
+| **`.claude/hooks/`** | Um `SessionStart` que responde em ~50 ms as quatro perguntas de abertura; um lembrete de derivado desatualizado; e **a única trava DURA do projeto** — o descarte de arquivo |
+| **`docs/prompts/`** | Cinco prompts, **nenhum guardando estado**. O `PROMPT_CONTINUACAO.md` vira a explicação de por que foi aposentado |
+
+### A trava errou primeiro, e do jeito que este repositório já conhece
+
+A primeira versão do `proteger-descarte.mjs` casava sobre o comando inteiro, e **bloqueou uma
+mensagem de commit que descrevia o próprio hook**: o verbo caía numa linha e a flag que o
+inocentava, na seguinte — fora do alcance do lookahead, porque `.` não casa quebra de linha.
+
+**Portão que reprova por RUÍDO é pior que portão nenhum**, e é a mesma família do `FOR ROLE root`
+de 21/08. A análise passou a ser por linha, e o caminho passou a ser exigido.
+
+**Medido, e é por isso que a suíte entrou no CI:** 17 casos — os 4 destrutivos saindo 2 e os 13
+restantes saindo 0 (troca de branch, unstage, o `--` do `git log`, as duas formas de prosa que
+pegaram a primeira versão, e cinco payloads degenerados). **Com a trava desligada a suíte reprova
+em 1 de 5 testes; religada, 5 de 5** — restaurada com `cp` e conferida idêntica por `diff`, que é
+o protocolo que o próprio hook existe para proteger.
+
+### O que esta rodada NÃO fez, e continua valendo
+
+Ela não republicou o workflow, não fez deploy do portal e não rodou o araucária de novo — os três
+continuam sendo o que destrava a próxima rodada, e estão no topo do `HANDOFF.md`. Nenhuma
+migration foi escrita, então **nada aqui muda o que a sonda responde**.
+
+---
+
 ## A SESSÃO 74 (27–28/08) — a rodada de 190, e os cinco defeitos que ela achou
 
 O dono rodou o `book-araucaria`: **190 documentos, 17:34 BRT**. A execução ficou

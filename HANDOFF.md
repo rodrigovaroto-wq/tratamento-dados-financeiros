@@ -4,8 +4,11 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-31 (sessões 62 a **74**). **Estado do `main`:** mergeado até o **PR
-#185**; o **#186** está aberto com a frente da sessão 74 (as `0152` a `0155`). **A INFRA ESTÁ APLICADA E
+**Última atualização:** 2026-08-31 (sessões 62 a **75**). **Estado do `main`:** mergeado até o **PR
+#186** (a frente da sessão 74, as `0152` a `0155`); o **#187** está aberto com a sessão 75, que **não
+toca no produto** — ela versiona o processo do agente (`CLAUDE.md`, `.claude/memory`, `.claude/agents`,
+`.claude/hooks`, `docs/prompts`) e aposenta o `docs/PROMPT_CONTINUACAO.md`, que ainda mandava trabalhar
+no PR #69 e montar o CI. Ver "A SESSÃO 75" no topo do `ESTADO.md`. **A INFRA ESTÁ APLICADA E
 CONFERIDA PELA SONDA:** `fn_instalacao_conferir()` devolve **54 de 54 requisitos presentes, cobertura
 `0155`** — conferido em 28/08, depois de eu mesmo aplicar as quatro migrations da sessão 74.
 

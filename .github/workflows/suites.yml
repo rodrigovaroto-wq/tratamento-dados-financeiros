@@ -113,6 +113,19 @@ jobs:
       - name: Suíte n8n
         run: node --test 'n8n/test/*.test.mjs'
 
+      - name: Suíte dos hooks do agente
+        # A trava que impede o descarte de arquivo é a única trava DURA do repositório, e ela erra
+        # de duas formas opostas: deixando passar o comando destrutivo (trabalho não commitado
+        # some, sem desfazer — foi a sessão 19) ou bloqueando o comando legítimo. A segunda já
+        # aconteceu: a primeira versão casava sobre o comando inteiro e bloqueou uma MENSAGEM DE
+        # COMMIT que descrevia o próprio hook. Portão que reprova por ruído é pior que portão
+        # nenhum, então os casos que têm de PASSAR são a maioria da suíte.
+        #
+        # Ela também trava o fail-open: `JSON.parse("null")` devolve null SEM lançar, e um hook
+        # que morre com stack trace vira um bloqueio acidental — no SessionStart, um que pode
+        # impedir a sessão de começar.
+        run: node --test '.claude/hooks/test/*.test.mjs'
+
       - name: Geradores de workflow — e o gerado tem de ser igual ao commitado
         run: |
           node n8n/build-workflow.mjs

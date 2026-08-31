@@ -28,6 +28,13 @@ concordância humano-máquina medida contra o golden set provar que pode. O sist
 no dia 1, mas **não confia em si mesmo até medir que pode**. Ver
 [`01_DOUTRINA_DE_AUTONOMIA.md`](01_DOUTRINA_DE_AUTONOMIA.md).
 
+## Prompts e memória do agente
+
+O fluxo de trabalho assistido por IA deste repositório está em
+[`prompts/README.md`](prompts/README.md) (os prompts coláveis, nenhum deles guardando estado),
+no `CLAUDE.md` da raiz (carregado em toda sessão) e em `.claude/` (memória, especialistas e
+hooks). O `PROMPT_CONTINUACAO.md` foi aposentado — ele explica por quê.
+
 ## Índice
 
 | Documento | Conteúdo |
