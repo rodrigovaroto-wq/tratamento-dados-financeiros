@@ -5,8 +5,8 @@ import { explicarFalha, explicarParada, explicarLoteVazio, type FalhaExplicada }
 import { ExcluirMandato } from "@/components/excluir-mandato";
 import { useRouter } from "next/navigation";
 import {
-  estimativaEmMinutos, janelaPara, semPrimeiroSinalMs, proximoIntervalo,
-  SEM_PROGRESSO_MS, INTERVALO_ACOMPANHAMENTO_MS,
+  estimativaEmMinutos, janelaPara, semPrimeiroSinalMs, semProgressoMs, proximoIntervalo,
+  INTERVALO_ACOMPANHAMENTO_MS,
 } from "@/lib/espera-do-lote";
 
 
@@ -120,7 +120,14 @@ export default function UploadForm({
         // silêncio é legítimo.
         if (!cancelado && resp.ok) {
           const parado = Date.now() - ultimoAvanco;
-          const limite = ultimoVisto > 0 ? SEM_PROGRESSO_MS : semPrimeiroSinalMs(sucesso.arquivos);
+          // OS DOIS LIMITES SAEM DO TAMANHO DO LOTE (ver espera-do-lote.ts).
+          // O do meio era FIXO em 5 minutos e declarou morto um lote de 190 que
+          // estava vivo: entre a barreira que registra os documentos e a que
+          // grava as linhas correm 25 minutos de chamadas de IA em que, por
+          // construção, nada é escrito no banco.
+          const limite = ultimoVisto > 0
+            ? semProgressoMs(sucesso.arquivos)
+            : semPrimeiroSinalMs(sucesso.arquivos);
           if (parado > limite) {
             setParada({ processados: json.processados ?? 0, esperados: json.esperados ?? sucesso.arquivos });
             return;
@@ -224,7 +231,7 @@ export default function UploadForm({
     const tecnico = falha
       ? `${falha.etapa ? `Etapa: ${falha.etapa}\n` : ""}${falha.mensagem}`
       : parada
-        ? `Sem progresso por mais de ${Math.round(SEM_PROGRESSO_MS / 60000)} minutos. `
+        ? `Sem progresso por mais de ${Math.round(semProgressoMs(sucesso?.arquivos ?? 0) / 60000)} minutos. `
           + `Organizados: ${parada.processados} de ${parada.esperados}. Mandato: "${sucesso.mandato}". `
           + `Envio: ${new Date(sucesso.desde).toLocaleString("pt-BR")}.`
         : `Lote concluído com ${loteVazio?.comLinhas ?? 0} de ${loteVazio?.documentos ?? 0} documentos `

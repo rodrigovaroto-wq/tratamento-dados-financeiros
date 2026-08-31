@@ -15,12 +15,128 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0151_o_desempate_entre_documentos.sql` — o desempate entre dois documentos do mesmo período JÁ EXISTIA, era silencioso, e escolhia o MAIOR: a `0150` resolve a mesma conta vinda de duas fontes por `order by abs(valor) desc`, o que num caso de reestruturação é ficar sempre com o número que infla o ativo. A autoridade documental passa a ser dado do catálogo (`taxonomia_tipo_documento.autoridade`), o conflito passa a ser declarado com vencedor, perdedor, diferença e critério por extenso (`fn_conflitos_do_caso`, `fn_reconciliar_versoes_do_periodo`), e no EMPATE nada muda de valor — a decisão volta para o humano. **NÃO está aplicada em produção.** A `0150_a_premissa_sai_do_realizado_certo.sql` — a soma das premissas do realizado somava o que não se soma, e a rodada comparativa do Canastra gravou `PMR = 348,6 dias` e `CUSTO_VARIAVEL = 287,7% da receita` como premissa. Três causas: o total da DRE somando com as próprias componentes (177.077 + 177.133 + 56.539 = os 410.749 que a bolsa usou), a abertura analítica somando por cima da conta que ela abre (aging, estoque, extrato, balancete — e o COMBINADO, que é a soma das empresas), e o caso de oito empresas medido para um modelo que projeta uma. Mais `fn_exercicio_da_coluna` e `fn_linhas_do_realizado`, que dão o valor POR EXERCÍCIO — a base da média histórica. A `0149`, a `0148` e a `0147` seguem aplicadas em produção |
+| **Última migration** | `db/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
 | **Aplicadas no Supabase** | **até a `0150`**, conferida pela sonda em 27/08 na sessão 72: `fn_instalacao_conferir()` devolveu **41 de 41 requisitos presentes** e `instalacao_cobertura` disse `0150`. **A `0151` desta sessão NÃO está aplicada** — a sessão não tem conexão com o banco de produção, e escrever aqui que está seria o defeito que a `0133` cobrou em 21/08. Antes de afirmar qualquer coisa sobre o banco, rode a sonda. Histórico: as `0147`/`0148`/`0149` foram aplicadas em 26/08 e conferidas por md5, não declaradas. |
 | **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 27/08 (sessões 71/71b/71c), todas verdes: n8n **373** · export **713** · transcrição **35** · premissas do realizado **32** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**93 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+
+## A SESSÃO 74 (27–28/08) — a rodada de 190, e os cinco defeitos que ela achou
+
+O dono rodou o `book-araucaria`: **190 documentos, 17:34 BRT**. A execução ficou
+**1h52 de pé sem gravar uma única reconciliação** e foi cancelada à mão. Nenhum
+erro em lugar nenhum — nem no Postgres (zero linhas de ERROR no log), nem no
+n8n, nem na tela.
+
+**O QUE FOI CONFERIDO ANTES DE INVESTIGAR, porque o dono já tinha respondido as
+três perguntas óbvias e as três estavam certas:** a `0151` estava aplicada
+(sonda: 46 de 46), o workflow estava publicado corretamente (os 33 nós conferem;
+as únicas diferenças são parâmetros default que o n8n omite, e os nós Code são
+byte a byte iguais), e a cota não apertou (440 de 500 RPD).
+
+### O que aconteceu, com o relógio
+
+| hora (UTC) | o que o banco mostra |
+|---|---|
+| 20:34:32 | execução 7172 começa |
+| 20:55:12 | os **190 documentos registrados, todos no mesmo instante** — a barreira do `Juntar Ramos` |
+| 21:24 | as **13.942 linhas gravadas, todas no mesmo minuto** — a barreira do `Juntar Extraidos` |
+| 22:16 | `pg_stat_activity`: backend ativo há 13min25, `RowExclusiveLock` em `reconciliacao`, 11 `fn_reconciliar_por_documento` num statement, `xact_start = query_start` |
+| 22:23 | o backend sumiu e `reconciliacao` do caso está em **ZERO** — nada commitou |
+| 22:26 | cancelada; `lote_execucao` vazia, `execucao_falha` vazia |
+
+### Os cinco defeitos
+
+**1. A reconciliação era quadrática duas vezes (`0152`).** As oito checagens do
+despachante leem `(caso, entidade, período)` e **não o documento** — ele só
+entrega a chave. E `fn_conflitos_do_caso` pedia o produto cartesiano: o planner
+estima `rows=1` numa CTE onde há 2.619, escolhe Nested Loop e compara
+**6.859.127 pares para achar 34**, a **12,4 s por chamada**, vezes as 123 que a
+`0151` dispara. Medido em produção depois: **1.790 ms**, as mesmas 34 linhas.
+
+> **O `MATERIALIZED` não é enfeite.** Escrevi a versão agrupada sem ele e medi:
+> **12.068 ms** — a correção não acontecia. O Postgres inlina CTE usada uma vez,
+> e o agrupamento que existia para MATAR o cartesiano virou o cartesiano,
+> recalculado 2.619 vezes. **Agrupar antes não é uma instrução, é uma
+> intenção**, e o planner tem todo o direito de desfazê-la.
+
+> **E a primeira `fn_reconciliar_caso` estava errada de granularidade.** Ela
+> iterava `(entidade, período, tipo)` — uma chave só para as oito checagens —, e
+> isso dá **162 chaves para 190 documentos**: 15% de redução, com a checagem
+> cara saindo de 123 chamadas para ~130. Eu teria trocado o código sem corrigir
+> nada, **e a suíte teria passado**, porque ela prova equivalência e não custo.
+> Cada checagem tem a SUA chave: a de conflito e a de duplicidade por entidade
+> (16 e 15), mútuos e intragrupo por período (15 e 14), as quatro de Classe A/B
+> por (entidade, período). **247 invocações contra ~8.500.**
+
+**2. O batch de 190 numa transação só (`n8n`).** O modo `single` do nó Postgres
+— que é o **default**, e por isso ninguém escolheu — junta as queries de todos
+os itens numa transação implícita. Em 38 documentos ela durava segundos; em 190
+dura dezenas de minutos, e qualquer coisa que a interrompa apaga o lote inteiro.
+Os quatro nós por item passam a `independently`.
+
+**3. O portal declarou parada em 5 minutos sobre um silêncio de 29 (`portal`).**
+`IA Extrair` roda a `batchSize 1 / batchInterval 8000ms`: 190 × 8 s = **25min20s**
+em que, por construção, nada é escrito no banco. `SEM_PROGRESSO_MS` era **fixo em
+5 minutos**, com um comentário dizendo que ele *"não pode crescer com o lote — é
+isso que o distingue do silêncio inicial"*. A premissa é falsa: nó do n8n não é
+streaming, e os dois merges são barreiras. As duas esperas passam a sair da mesma
+conta.
+
+**4. O balanço de uma empresa dentro de outra (`0153`).** O
+`009_Balanco_Patrimonial_Araucaria_SPE` é da **Araucária Imobiliária SPE** — o
+resumo que o próprio sistema extraiu diz isso — e estava gravado sob **Araucária
+Bioenergia SPE**, junto com a DRE. `fn_mesma_entidade('Araucaria SPE', …)`
+devolve **true para as duas**, e `fn_upsert_entidade` desempatava com
+`order by razao_social limit 1`. **É o mesmo defeito da `0151` num segundo
+lugar** — lá "fica com o maior", aqui "fica com a primeira do alfabeto". E vai
+FECHAR: os dois são demonstrações completas.
+
+**5. O combinado voltava a empatar pela porta da classificação (`0155`).** Os
+cinco combinados do grupo, todos com 14–15 empresas nas colunas, foram
+classificados pela IA com confiança 1,0 — e ela chamou **quatro de BALANCO e um
+de COMBINADO**. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata**
+com o balanço individual; empate, pela `0151`, mantém o de maior módulo. A
+correção não ensina o classificador: usa o fato que está no dado.
+
+### O que a rodada mostrou e NÃO é defeito
+
+- **A aba `Outros` com 3.448 linhas** é o destino correto dos tipos sem aba
+  própria, e o book tem cinco Livros Razão (1.789 linhas só deles);
+- **os 5 documentos de Folha de Pagamento sem tipo** abrem
+  `classificacao_pendente` — o sistema diz "não conheço este tipo, confirme";
+- **as 23 pendências de `extracao_falhou` são VERDADEIRAS.** Medido com
+  `medir-regua-cobertura.mjs` contra os 38 documentos do Canastra: erro mediano
+  da régua **+3%**, pior extração perfeita em **96%**. As razões do araucária vão
+  de **40% a 78%** — sub-extração real, e a guarda acertou. A `0154` corrige só a
+  descrição, que juntava pares conta×coluna e linhas do documento na mesma frase.
+
+### O que ficou ABERTO, e por quê
+
+**Não sei dizer se a sub-extração é o modelo lendo pela metade ou o fatiamento
+não rodando.** A constância chama atenção — cinco livros razão de 258 linhas
+devolveram 102, 101, 104, 102 e 102; cinco mapas de dívida de 25 linhas
+devolveram 12, 12, 12, 12 e 12, e número que não varia com o documento é
+assinatura de TETO. Para separar as duas hipóteses eu precisava saber em quantos
+BLOCOS cada documento foi lido, e esse número não chegava a lugar nenhum: a
+execução foi cancelada (o n8n descarta os dados) e o lote nunca fechou, então
+`lote_execucao.documentos_fatiados` não foi escrita. **A pendência passa a dizer
+em quantos blocos o documento foi lido** — é o instrumento que faltou nesta
+própria investigação. A resposta vem na próxima rodada.
+
+Mais dois achados que são para o dono, não defeitos: o **cancelamento manual não
+dispara o Error Workflow** (nada foi registrado em `execucao_falha`), e o
+**Relatório do Auditor nomeia uma décima quinta empresa** — "Araucária Indústria
+de Embalagens Ltda." — que não tem nenhuma demonstração no book.
+
+### O caso araucária, corrigido em cima e sem reextrair
+
+**25 → 16 entidades** (as nove sobras do nome do arquivo fundidas com
+`fn_fundir_entidade`, e os dois documentos da SPE devolvidos à Imobiliária), e a
+reconciliação que nunca tinha rodado: **295 reconciliações, 6 divergências**,
+entre elas 38 contas em que dois documentos da Araucária Serraria discordam, com
+vencedor e critério por extenso.
 
 ## A SESSÃO 73 (27/08) — o desempate entre dois documentos já existia, e ele escolhia o maior
 

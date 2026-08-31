@@ -18,8 +18,8 @@ import {
   type FalhaExplicada,
 } from "../src/lib/falha-em-portugues.ts";
 import {
-  semPrimeiroSinalMs, janelaPara, SEM_PROGRESSO_MS, SEGUNDOS_POR_DOCUMENTO,
-  vereditoDoLote, CARENCIA_DO_FECHAMENTO_MS,
+  semPrimeiroSinalMs, janelaPara, semProgressoMs, SEGUNDOS_POR_DOCUMENTO,
+  vereditoDoLote, carenciaDoFechamentoMs,
 } from "../src/lib/espera-do-lote.ts";
 import { readFileSync } from "node:fs";
 
@@ -214,13 +214,41 @@ for (const n of [38, 190]) {
   );
 }
 
-// E a parada por falta de AVANÇO continua curta: depois do primeiro documento o
-// progresso anda a cada extração, e 5 minutos são ~20 documentos que deveriam
-// ter aparecido. Ela não pode crescer com o lote — é isso que a distingue do
-// silêncio inicial.
+// A PARADA POR FALTA DE AVANÇO TAMBÉM CRESCE COM O LOTE — e este bloco existia
+// dizendo exatamente o contrário.
+//
+// A versão anterior travava `SEM_PROGRESSO_MS === 5 minutos` com a justificativa
+// "depois do primeiro documento o progresso anda a cada extração". **A premissa
+// é falsa, e a rodada de 190 de 27/08/2026 a desmentiu com relógio:**
+//
+//   20:55:12  os 190 documentos registrados, TODOS no mesmo instante
+//   21:24     as 13.942 linhas gravadas, TODAS no mesmo minuto
+//
+// O progresso NÃO anda a cada extração. Ele anda em DOIS SALTOS, porque nó do
+// n8n não é streaming e os dois merges (`Juntar Ramos`, `Juntar Extraidos`) são
+// barreiras. Entre um salto e outro corre o `IA Extrair` inteiro — N chamadas à
+// cadência do nó — e nada é escrito no banco por construção.
+//
+// Ou seja: o silêncio do MEIO tem a mesma forma do silêncio INICIAL, e a
+// distinção que este assert protegia não existe. Aos 21:00 a tela declarou "o
+// sistema parou por um problema técnico" sobre um lote vivo.
+//
+// O que se trava agora é a propriedade, não o número: o limite tem de ser MAIOR
+// que o silêncio legítimo da segunda barreira, em cada tamanho de lote.
+for (const n of [2, 38, 190]) {
+  const silencioDaExtracaoMs = n * cadenciaS * 1000;
+  checar(
+    semProgressoMs(n) > silencioDaExtracaoMs,
+    `lote de ${n}: a tela declara parada em ${(semProgressoMs(n) / 60000).toFixed(1)} min e a `
+      + `barreira da extração cala por ${(silencioDaExtracaoMs / 60000).toFixed(1)} min`,
+  );
+}
+
+// E O PISO CONTINUA SENDO O 5 ANTIGO: o lote pequeno não pode PERDER vigilância
+// por causa de uma correção feita para o lote grande.
 checar(
-  SEM_PROGRESSO_MS === 5 * 60 * 1000,
-  "o limite de 'parou de andar' deixou de ser 5 minutos — ele mede outra coisa que o silêncio inicial",
+  semProgressoMs(1) === 5 * 60 * 1000 && semProgressoMs(0) === 5 * 60 * 1000,
+  "o piso de 5 minutos sumiu: lote pequeno passou a esperar mais do que esperava antes",
 );
 
 // ---------------------------------------------------------------------------
@@ -310,8 +338,16 @@ checar(lote({ loteFechou: false }).estado === "nao_fechou",
 // QUALQUER lote — o alarme que ensina a ignorar o alarme.
 checar(lote({ loteFechou: false, desdeMs: AGORINHA }).estado === "andando",
   "a carência sumiu: todo lote saudável passaria a acusar falha no instante entre o último documento e o fechamento");
-checar(CARENCIA_DO_FECHAMENTO_MS >= 60 * 1000,
-  "a carência do fechamento ficou curta demais para a cauda do workflow (3 nós)");
+// A CARÊNCIA TAMBÉM CRESCE, pela mesma razão. O comentário dela dizia que a
+// cauda do workflow "leva segundos" — verdade em 38 documentos, e na rodada de
+// 190 o `Reconciliar` sozinho passou de uma hora. A 0152 corrigiu a causa; o
+// número aqui continuava descrevendo o lote em que foi calibrado.
+checar(carenciaDoFechamentoMs(2) >= 60 * 1000,
+  "a carência do fechamento ficou curta demais para a cauda do workflow");
+checar(carenciaDoFechamentoMs(190) > carenciaDoFechamentoMs(38),
+  "a carência do fechamento não cresce com o lote — a cauda é O(documentos) e ela não pode ser fixa");
+checar(carenciaDoFechamentoMs(2) === 2 * 60 * 1000,
+  "o piso de 2 minutos da carência sumiu: lote pequeno passou a acusar antes do que acusava");
 
 // "NÃO SEI" NUNCA ACUSA. Se a consulta do fechamento falhar, o lote não pode
 // virar falha por causa da conferência — é a mesma regra que o `comLinhas` já

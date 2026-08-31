@@ -41,11 +41,17 @@ export const ALIASES = [
   // primeiro"; era a ORDEM que não a seguia.
   { codigo: 'RAZAO', termos: ['livro razao', 'razao contabil', 'razao analitico'] },
   { codigo: 'FAT_INTRAGRUPO', termos: ['faturamento intragrupo', 'fat intragrupo', 'faturamento intra grupo'] },
-  { codigo: 'FATURAMENTO_24M', termos: ['faturamento 24m', 'faturamento 36', 'faturamento', 'receita bruta', 'receita'] },
+  { codigo: 'FATURAMENTO_24M', termos: ['relatorio de faturamento', 'faturamento 24m',
+    'faturamento 36', 'faturamento', 'receita bruta', 'receita'] },
   { codigo: 'CONTRATO_SOCIAL', termos: ['contrato social', 'estatuto social', 'alteracao contratual', 'estatuto'] },
   { codigo: 'MUTUOS', termos: ['mutuos', 'mutuo', 'relacao de mutuos', 'contas intragrupo'] },
   { codigo: 'COMBINADO', termos: ['combinado', 'combinada', 'demonstracoes combinadas', 'df combinada'] },
-  { codigo: 'FLUXO_CAIXA', termos: ['fluxo de caixa', 'fluxo caixa', 'dfc', 'cash flow', 'fluxo'] },
+  { codigo: 'FLUXO_CAIXA', termos: [
+    // 'fluxos de caixa' (PLURAL) é como o book real escreve, e a frase no
+    // singular não casa — medido nos 190 nomes do araucária: quatro arquivos
+    // saíam com a empresa "Fluxos Araucaria Serraria".
+    'demonstracao dos fluxos de caixa', 'fluxos de caixa', 'fluxo de caixa',
+    'fluxo caixa', 'dfc', 'cash flow', 'fluxos', 'fluxo'] },
   { codigo: 'DRE', termos: ['dre', 'demonstracao de resultado', 'demonstracao do resultado', 'resultado do exercicio'] },
   { codigo: 'BALANCO', termos: ['balanco patrimonial', 'balanco', 'bp'] },
   // DMPL/DVA vêm DEPOIS das demonstrações principais de propósito (db/migrations/0024).
@@ -54,7 +60,8 @@ export const ALIASES = [
   // taxonomia (f0/03) é a demonstração PRINCIPAL, não a DMPL. Testando antes de
   // BALANCO/DRE, esse arquivo viraria DMPL — regressão. Aqui, só o documento
   // que é SÓ a DMPL/DVA ("09_DMPL_Metalurgica_2025.pdf") cai nestes códigos.
-  { codigo: 'DMPL', termos: ['dmpl', 'mutacoes do patrimonio', 'mutacoes patrimonio', 'demonstracao das mutacoes'] },
+  { codigo: 'DMPL', termos: ['dmpl', 'mutacoes do patrimonio liquido',
+    'mutacoes do patrimonio', 'mutacoes patrimonio', 'demonstracao das mutacoes'] },
   { codigo: 'DVA', termos: ['dva', 'valor adicionado'] },
   // --- variáveis (complementares) mais comuns, para não cair em "não classificado" à toa ---
   { codigo: 'BALANCETE', termos: ['balancete'] },
@@ -70,10 +77,19 @@ export const ALIASES = [
     'demonstracoes financeiras auditadas', 'df auditada', 'demonstracoes auditadas',
     'demonstracoes contabeis', 'demonstracoes financeiras', 'demonstracao contabil',
     'demonstracoes contabeis completas', 'dfs',
+    // O PARECER É A PEÇA AUDITADA, e sem estes termos ele fica SEM TIPO:
+    // medido nos 190 nomes do araucária, `157_Relatorio_do_Auditor_Independente`
+    // e o `158_..._reemitido` não casavam alias nenhum. É o documento de
+    // autoridade 60 da 0151 — o que decide um conflito —, e ele chegava mudo.
+    'relatorio do auditor independente', 'relatorio do auditor',
+    'parecer do auditor independente', 'parecer do auditor', 'parecer de auditoria',
   ] },
-  { codigo: 'MAPA_DIVIDA', termos: ['mapa de divida', 'mapa divida', 'posicao de divida'] },
+  { codigo: 'MAPA_DIVIDA', termos: ['mapa de divida bancaria', 'mapa de divida',
+    'mapa divida', 'divida bancaria', 'posicao de divida'] },
   { codigo: 'EXTRATO_BANCARIO', termos: ['extrato bancario', 'extrato'] },
-  { codigo: 'AGING_AR', termos: ['aging de recebiveis', 'aging ar', 'contas a receber', 'aging de contas a receber'] },
+  { codigo: 'AGING_AR', termos: ['aging de contas a receber', 'aging de recebiveis',
+    'posicao de recebiveis por sacado', 'posicao de recebiveis', 'aging ar',
+    'contas a receber'] },
   { codigo: 'AGING_AP', termos: ['aging de pagaveis', 'aging ap', 'contas a pagar', 'fornecedores'] },
   { codigo: 'ESTOQUE', termos: ['estoque', 'estoques'] },
   // 'negativas', 'societario' e 'parcelamentos' entram AQUI, no vocabulário de

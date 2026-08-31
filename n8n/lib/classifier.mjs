@@ -144,6 +144,25 @@ export function parseEntidade(textoNormalizado, aliases) {
     // arquivos com nome de vida real do book, e nenhum deles nomeia empresa.
     'anexo', 'anexos', 'doc', 'doc1', 'documento', 'documentos', 'arquivo', 'planilha',
     'planilhas', 'pasta', 'meses', 'mes', 'periodo', 'atualizado', 'atualizada', 'novo', 'nova',
+    // O ESTADO EM QUE O DOCUMENTO CHEGOU — medido nos 190 nomes do book-araucaria,
+    // onde estas palavras produziram 30 empresas que não existem: "Comparativo
+    // Araucaria Serraria", "Encerramento Araucaria Part", "Grupo Araucaria
+    // Preliminar", "Reemitido Araucaria Serraria Reemissao", "Segunda Via
+    // Araucaria Serraria".
+    //
+    // POR QUE AQUI E NÃO NA TAXONOMIA: nenhuma delas é TIPO de documento. Um
+    // balanço comparativo é um balanço; um encerramento é um balanço; uma
+    // reemissão é o mesmo documento outra vez. Elas dizem em que ESTADO a peça
+    // chegou — que é exatamente o que esta lista existe para descrever. As que
+    // ERAM tipo (fluxos de caixa, mapa de dívida bancária, relatório do auditor)
+    // foram para `taxonomia.mjs`, junto com o resto do vocabulário.
+    //
+    // 'preliminar' NÃO some do sistema por sair daqui: `fn_documento_preliminar`
+    // (0151) continua lendo o nome ORIGINAL do arquivo e rebaixando a autoridade
+    // do documento em 25. O que muda é só que ela para de virar nome de empresa.
+    'comparativo', 'comparativa', 'encerramento', 'preliminar', 'preliminares',
+    'reemitido', 'reemitida', 'reemissao', 'revisada', 'revisao', 'segunda', 'via',
+    'lote', 'escritorio', 'alteracao', 'alteracoes', 'parte', 'partes',
     // AQUI NÃO MORA MAIS PALAVRA DE TIPO. 'negativas', 'societario' e
     // 'parcelamentos' ficaram nesta lista por um tempo com um comentário
     // dizendo que o lugar certo era a taxonomia — e era mesmo: agora eles são
@@ -205,7 +224,20 @@ export function parseEntidade(textoNormalizado, aliases) {
   // é melhor que ter a errada, porque a errada vira pendência de divergência
   // para um humano resolver.
   const palavrasDeTipo = new Set();
-  for (const termo of termos) for (const p of termo.split(' ')) if (p.length > 1) palavrasDeTipo.add(p);
+  // TRÊS LETRAS, NÃO DUAS — e a diferença é uma empresa inteira.
+  //
+  // Com `> 1`, o token 'ar' do alias `aging ar` entra no vocabulário de tipo, e
+  // `parseEntidade` passa a apagar o "AR" de QUALQUER nome. Medido no
+  // book-araucaria: `007_Balanco_Patrimonial_AR_Log_...` saía como a empresa
+  // "Log", e `011_..._AR_Servicos_...` como "Servicos" — duas empresas do grupo
+  // decapitadas pela sigla, e a "Log" chegou a virar linha em `entidade`.
+  //
+  // Nada se perde com o corte em 3: as siglas de tipo de DUAS letras ('ar',
+  // 'ap', 'bp', 'df') existem no vocabulário apenas dentro de FRASES
+  // ('aging ar', 'df auditada'), e a remoção por frase inteira — que roda antes
+  // desta — já dá conta delas. O que sobra em 2 letras é prefixo de razão
+  // social, que é o caso desta correção.
+  for (const termo of termos) for (const p of termo.split(' ')) if (p.length > 2) palavrasDeTipo.add(p);
   // "grupo" NÃO sai, e é a exceção que prova a regra: ele existe no vocabulário
   // de tipo (`faturamento intra grupo`) e ao mesmo tempo é parte do nome de
   // empresa que os documentos combinados usam — "GRUPO CANASTRA" está impresso no
@@ -214,8 +246,13 @@ export function parseEntidade(textoNormalizado, aliases) {
   // pendência que esta correção existe para evitar.
   palavrasDeTipo.delete('grupo');
 
+  // PONTUAÇÃO QUE SOBRA NÃO É NOME DE EMPRESA. `normalize` troca `_ - .` por
+  // espaço e não mexe em parêntese, então `balanço 2024 (1).pdf` chegava aqui
+  // com o token `(1)` — que não é período (não é só dígito), não é ruído, e
+  // virava a empresa "(1)". Medido nos 190 nomes.
   const tokens = s
     .split(' ')
+    .map((tok) => tok.replace(/[^0-9a-z]+/g, ''))
     .filter((tok) => tok && tok.length > 1 && !ehPeriodo(tok)
       && !RUIDO.has(tok) && !palavrasDeTipo.has(tok));
   if (tokens.length === 0) return null;

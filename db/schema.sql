@@ -662,27 +662,46 @@ $$;
 CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS TABLE(autoridade integer, motivo text)
     LANGUAGE sql STABLE
     AS $$
+  -- 0155: um documento cujas linhas nomeiam VÁRIAS empresas é derivado, e a
+  -- autoridade dele não pode passar da de COMBINADO — senão o combinado empata
+  -- com o balanço individual e o empate volta a "fica com o maior".
+  with base as (
+    select
+      coalesce(t.autoridade, 0) as do_tipo,
+      coalesce(t.codigo, 'sem tipo') as codigo,
+      coalesce(t.autoridade, 0) = 0 as sem_declaracao,
+      dv.assinado is true as assinado,
+      fn_documento_preliminar(dv.nome_original) as preliminar,
+      fn_documento_de_varias_empresas(d.id) as varias_empresas,
+      (select coalesce(tc.autoridade, 30) from taxonomia_tipo_documento tc
+        where tc.codigo = 'COMBINADO') as teto_derivado
+    from documento d
+    left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
+    left join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
+    where d.id = p_documento_id
+  )
   select
-    (coalesce(t.autoridade, 0)
-     + case when dv.assinado is true then 5 else 0 end
-     - case when fn_documento_preliminar(dv.nome_original) then 25 else 0 end)::integer,
-    coalesce(t.codigo, 'sem tipo')
-      || case when coalesce(t.autoridade, 0) = 0
+    (case when b.varias_empresas then least(b.do_tipo, b.teto_derivado) else b.do_tipo end
+     + case when b.assinado then 5 else 0 end
+     - case when b.preliminar then 25 else 0 end)::integer,
+    b.codigo
+      || case when b.sem_declaracao
               then ' (o catálogo não declara autoridade para este tipo)' else '' end
-      || case when dv.assinado is true then ', assinado' else '' end
-      || case when fn_documento_preliminar(dv.nome_original)
+      || case when b.varias_empresas
+              then format(', mas as colunas nomeiam VÁRIAS empresas — é peça derivada, e a '
+                       || 'autoridade não passa da de combinado (%s)', b.teto_derivado)
+              else '' end
+      || case when b.assinado then ', assinado' else '' end
+      || case when b.preliminar
               then ', e o nome do arquivo diz que é preliminar' else '' end
-  from documento d
-  left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
-  left join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
-  where d.id = p_documento_id;
+  from base b;
 $$;
 
 --
 -- Name: FUNCTION fn_autoridade_do_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) IS 'A autoridade documental de UM documento e o motivo por extenso (0151): a do tipo no catálogo, mais 5 se a versão está assinada, menos 25 se o nome do arquivo declara preliminar. É o que decide quando dois documentos do mesmo período discordam sobre a mesma conta.';
+COMMENT ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) IS 'A autoridade documental de UM documento e o motivo por extenso (0151): a do tipo no catálogo, mais 5 se assinada, menos 25 se o nome do arquivo declara preliminar. Desde a 0155, um documento cujas colunas nomeiam VÁRIAS empresas tem a autoridade limitada à de COMBINADO — ele é a soma delas, e o classificador chama a mesma peça de BALANCO ou de COMBINADO conforme o dia.';
 
 --
 -- Name: fn_avaliar_guardas_extracao(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -1530,51 +1549,95 @@ COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstic
 CREATE FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text DEFAULT NULL::text, p_tolerancia_abs numeric DEFAULT 100, p_tolerancia_pct numeric DEFAULT 0.005) RETURNS TABLE(secao_canonica text, chave text, entidade text, exercicio integer, documento_vencedor uuid, tipo_vencedor text, valor_vencedor numeric, documento_perdedor uuid, tipo_perdedor text, valor_perdedor numeric, diferenca numeric, decidido boolean, criterio text)
     LANGUAGE sql STABLE
     AS $$
-  with bruto as (
-    select
-      ce.secao_canonica,
-      fn_normalizar_texto(ce.chave) as rotulo,
-      ce.chave,
-      -- 0146: a capa só responde quando o documento é de UMA empresa. Num
-      -- documento de várias, a linha sem coluna não tem dono e fica de fora —
-      -- atribuí-la à capa criaria conflito entre uma empresa e um fantasma.
-      coalesce(ce.entidade_coluna,
-               case when (select count(distinct ce2.entidade_coluna)
-                            from campo_extraido ce2
-                           where ce2.documento_versao_id = ce.documento_versao_id
-                             and ce2.entidade_coluna is not null) > 1
-                    then null else e.razao_social end) as entidade,
-      coalesce(fn_exercicio_da_coluna(ce.periodo_coluna),
-               fn_exercicio_da_coluna(p.referencia)) as exercicio,
-      fn_valor_em_base(ce.valor_num, ce.unidade) as valor,
-      d.id as documento_id,
-      d.tipo_taxonomia
-    from campo_extraido ce
-    join documento_versao dv on dv.id = ce.documento_versao_id
-    join documento d         on d.id = dv.documento_id
-    left join entidade e     on e.id = d.entidade_id
-    left join periodo p      on p.id = d.periodo_id
+  -- 0152: o par nasce DEPOIS do agrupamento. A versão anterior pedia o produto
+  -- cartesiano (6.859.127 pares comparados para achar 34, 12,4 s por chamada).
+  --
+  -- A versão vigente de cada documento do caso, UMA VEZ (era chamada no join e
+  -- de novo dentro de fn_autoridade_do_documento).
+  with versao as materialized (
+    select d.id as documento_id, d.tipo_taxonomia, d.entidade_id, d.periodo_id,
+           fn_versao_com_extracao(d.id) as documento_versao_id
+    from documento d
     where d.caso_id = p_caso_id
-      and ce.valor_num is not null
-      and dv.id = fn_versao_com_extracao(d.id)
+  ),
+  -- (b) 0146: a capa só responde quando o documento é de UMA empresa. Num
+  -- documento de várias, a linha sem coluna não tem dono e fica de fora —
+  -- atribuí-la à capa criaria conflito entre uma empresa e um fantasma. UMA
+  -- linha por versão, em vez de uma avaliação por linha extraída.
+  multi_entidade as materialized (
+    select v.documento_versao_id,
+           count(distinct ce.entidade_coluna) > 1 as varias
+    from versao v
+    left join campo_extraido ce
+      on ce.documento_versao_id = v.documento_versao_id
+     and ce.entidade_coluna is not null
+    group by v.documento_versao_id
+  ),
+  -- As linhas candidatas, com os filtros baratos (índice + coluna) primeiro.
+  -- `fn_papel_linha` NÃO entra aqui — ela é a cara, e entra depois de já ter
+  -- sido calculada uma vez por tripla distinta.
+  cru as materialized (
+    select ce.id, ce.chave, ce.unidade, ce.valor_num, ce.secao_canonica,
+           ce.entidade_coluna, ce.periodo_coluna,
+           v.documento_id, v.tipo_taxonomia, v.documento_versao_id,
+           e.razao_social, p.referencia as periodo_referencia,
+           m.varias
+    from versao v
+    join campo_extraido ce on ce.documento_versao_id = v.documento_versao_id
+    join multi_entidade m  on m.documento_versao_id = v.documento_versao_id
+    left join entidade e   on e.id = v.entidade_id
+    left join periodo p    on p.id = v.periodo_id
+    where ce.valor_num is not null
       and ce.secao_canonica is not null
       and ce.secao_canonica <> 'NAO_CLASSIFICAVEL'
       and fn_fator_escala(ce.unidade) is not null
-      and fn_papel_linha(ce.chave, d.tipo_taxonomia, ce.unidade) = 'conta'
-      and coalesce(fn_exercicio_da_coluna(ce.periodo_coluna),
-                   fn_exercicio_da_coluna(p.referencia)) is not null
   ),
-  filtrado as (
-    select * from bruto b
-    where b.entidade is not null
-      and (p_entidade is null or fn_mesma_entidade(b.entidade, p_entidade))
+  -- (d) `fn_papel_linha` uma vez por tripla distinta, não uma por linha.
+  papeis as materialized (
+    select t.chave, t.tipo_taxonomia, t.unidade,
+           fn_papel_linha(t.chave, t.tipo_taxonomia, t.unidade) as papel
+    from (select distinct chave, tipo_taxonomia, unidade from cru) t
+  ),
+  bruto as materialized (
+    select
+      c.secao_canonica,
+      fn_normalizar_texto(c.chave) as rotulo,
+      c.chave,
+      coalesce(c.entidade_coluna, case when c.varias then null else c.razao_social end) as entidade,
+      coalesce(fn_exercicio_da_coluna(c.periodo_coluna),
+               fn_exercicio_da_coluna(c.periodo_referencia)) as exercicio,
+      fn_valor_em_base(c.valor_num, c.unidade) as valor,
+      c.documento_id,
+      c.tipo_taxonomia
+    from cru c
+    join papeis pp
+      on pp.chave = c.chave
+     and pp.tipo_taxonomia is not distinct from c.tipo_taxonomia
+     and pp.unidade is not distinct from c.unidade
+    where pp.papel = 'conta'
+  ),
+  -- (e) `fn_mesma_entidade` É PLPGSQL E ESTAVA SENDO CHAMADA POR LINHA. Medido
+  -- no araucária: 10.570 linhas extraídas para **40 strings de entidade
+  -- distintas**. É a mesma correção do `papeis` logo acima, e o mesmo defeito:
+  -- função pura avaliada sobre LINHAS quando o argumento tem poucos valores.
+  entidades_do_caso as materialized (
+    select distinct b.entidade from bruto b where b.entidade is not null
+  ),
+  entidades_alvo as materialized (
+    select e.entidade from entidades_do_caso e
+    where p_entidade is null or fn_mesma_entidade(e.entidade, p_entidade)
+  ),
+  filtrado as materialized (
+    select b.* from bruto b
+    join entidades_alvo ea on ea.entidade = b.entidade
+    where b.exercicio is not null
   ),
   -- Um valor por (conceito, exercício, entidade, DOCUMENTO). Dentro do mesmo
   -- documento a mesma conta pode aparecer em mais de uma linha (a coluna de
   -- outro exercício, uma repetição de página); o de maior módulo representa o
   -- documento, e é a regra da 0042 usada onde ela é inofensiva — aqui ela
   -- escolhe entre linhas de UMA fonte, não entre fontes que discordam.
-  por_documento as (
+  por_documento as materialized (
     select f.secao_canonica, f.rotulo, f.entidade, f.exercicio, f.documento_id,
            max(f.tipo_taxonomia) as tipo,
            (array_agg(f.chave order by length(f.chave)))[1] as chave,
@@ -1582,10 +1645,34 @@ CREATE FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text DEFA
     from filtrado f
     group by f.secao_canonica, f.rotulo, f.entidade, f.exercicio, f.documento_id
   ),
-  com_autoridade as (
-    select pd.*, a.autoridade, a.motivo
+  -- (a) O AGRUPAMENTO QUE MATA O CARTESIANO. Só grupo com mais de um documento
+  -- e com dispersão acima do piso da tolerância pode conter par. Ver a prova de
+  -- que o pré-filtro é conservador no cabeçalho.
+  grupos as materialized (
+    select secao_canonica, rotulo, entidade, exercicio
+    from por_documento
+    group by secao_canonica, rotulo, entidade, exercicio
+    having count(*) > 1
+       and (max(valor) - min(valor)) > p_tolerancia_abs
+  ),
+  candidatos as materialized (
+    select pd.*
     from por_documento pd
-    cross join lateral fn_autoridade_do_documento(pd.documento_id) a
+    join grupos g
+      on g.secao_canonica = pd.secao_canonica
+     and g.rotulo         = pd.rotulo
+     and g.entidade       is not distinct from pd.entidade
+     and g.exercicio      = pd.exercicio
+  ),
+  -- (c) A autoridade uma vez por DOCUMENTO — e só dos documentos que sobraram.
+  autoridade as materialized (
+    select dd.documento_id, a.autoridade, a.motivo
+    from (select distinct documento_id from candidatos) dd
+    cross join lateral fn_autoridade_do_documento(dd.documento_id) a
+  ),
+  com_autoridade as materialized (
+    select c.*, au.autoridade, au.motivo
+    from candidatos c join autoridade au on au.documento_id = c.documento_id
   ),
   pares as (
     select
@@ -1636,7 +1723,7 @@ $$;
 -- Name: FUNCTION fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Dois documentos do mesmo período discordando sobre a MESMA conta, com o vencedor por autoridade documental e o critério por extenso (0151). Compara na base, só entre linhas com seção canônica, papel conta e unidade conversível — os três filtros vieram dos falsos positivos medidos na fixture do Canastra. `decidido = false` é empate: ninguém vence e a decisão é humana.';
+COMMENT ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Dois documentos do mesmo período discordando sobre a MESMA conta, com o vencedor por autoridade documental e o critério por extenso (0151). Compara na base, só entre linhas com seção canônica, papel conta e unidade conversível. `decidido = false` é empate: ninguém vence e a decisão é humana. O par nasce DEPOIS do agrupamento (0152) — a versão anterior pedia o produto cartesiano e levava 12,4 s por chamada no lote de 190 documentos.';
 
 --
 -- Name: fn_contas_repetindo_valor(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -1918,6 +2005,33 @@ $$;
 COMMENT ON FUNCTION public.fn_desativar_premissa(p_caso_id uuid, p_codigo text, p_autor text) IS 'Desativa a premissa no caso e LIMPA os vínculos que ela dirigia (premissa e sazonalidade), devolvendo quantos foram desfeitos. Vínculo órfão faria tela, conferência e export lerem o mesmo caso de três formas diferentes. `valores` é preservado para a reativação.';
 
 --
+-- Name: fn_descricao_extracao_falhou(text, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_descricao_extracao_falhou(p_nome_original text, p_pares integer, p_motivo text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  -- 0154: a unidade vai escrita. `p_pares` conta linhas de `campo_extraido`,
+  -- que são PARES conta × coluna — uma conta com cinco exercícios são cinco.
+  -- O motivo, quando vem da guarda de cobertura, fala em LINHAS do documento.
+  -- Sem os dois nomes por extenso a frase parece se contradizer.
+  select format(
+    'Extração de "%s" falhou ou veio incompleta (%s par(es) conta×coluna gravado(s)). Motivo: %s',
+    coalesce(p_nome_original, '?'),
+    coalesce(p_pares, 0),
+    coalesce(p_motivo,
+             'a chamada respondeu sem erro, mas não trouxe NENHUMA linha. '
+             'Causa mais comum: formato que o pipeline ainda não converte em texto '
+             '(.xlsx/.docx) — nesses casos a IA recebe um aviso em vez do arquivo.'));
+$$;
+
+--
+-- Name: FUNCTION fn_descricao_extracao_falhou(p_nome_original text, p_pares integer, p_motivo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_descricao_extracao_falhou(p_nome_original text, p_pares integer, p_motivo text) IS 'A descrição da pendência de extração incompleta, com a UNIDADE escrita (0154): o número do banco são PARES conta×coluna e o da guarda de cobertura são LINHAS do documento. Juntos e sem nome, "276 gravadas / 68 devolvidas" parece contradição — e uma pendência que parece se contradizer ensina a ignorar a fila.';
+
+--
 -- Name: fn_diagnostico_modelagem(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2140,6 +2254,30 @@ CREATE FUNCTION public.fn_documento_balanco(p_caso_id uuid, p_entidade_id uuid, 
 $$;
 
 --
+-- Name: fn_documento_de_varias_empresas(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  -- 0155: o critério é ESTRUTURAL — quantas empresas as colunas nomeiam.
+  --
+  -- DUAS OU MAIS, e não "mais que zero": um comparativo de exercícios de UMA
+  -- empresa também declara `entidade_coluna` (a mesma, repetida), e rebaixá-lo
+  -- transformaria todo balanço multi-ano em derivado.
+  select count(distinct ce.entidade_coluna) > 1
+  from campo_extraido ce
+  where ce.documento_versao_id = fn_versao_com_extracao(p_documento_id)
+    and ce.entidade_coluna is not null;
+$$;
+
+--
+-- Name: FUNCTION fn_documento_de_varias_empresas(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid) IS 'As linhas deste documento nomeiam mais de uma empresa? (0155) Critério ESTRUTURAL de que a peça é derivada — a soma de várias companhias —, independente do rótulo que o classificador lhe deu. Medido no book-araucaria: o mesmo padrão de nome saiu como BALANCO em quatro documentos e COMBINADO num quinto, todos com 14-15 empresas nas colunas.';
+
+--
 -- Name: fn_documento_por_tipo(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2233,6 +2371,30 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_canonica(p_nome text) IS 'Forma canônica de nome de entidade para CASAMENTO: sem acento, pontuação nem sufixo societário. Não substitui razao_social, que preserva a grafia da fonte.';
+
+--
+-- Name: fn_entidades_candidatas(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) RETURNS TABLE(entidade_id uuid, razao_social text, exata boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  select e.id, e.razao_social,
+         fn_entidade_canonica(e.razao_social) = fn_entidade_canonica(p_nome)
+  from entidade e
+  where e.caso_id = p_caso_id
+    and p_nome is not null
+    and length(trim(p_nome)) > 0
+    and fn_mesma_entidade(e.razao_social, p_nome)
+  order by (fn_entidade_canonica(e.razao_social) = fn_entidade_canonica(p_nome)) desc,
+           e.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas(p_caso_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) IS 'As entidades do caso com que um nome casa, a exata primeiro (0153). Mais de uma linha sem nenhuma exata é AMBIGUIDADE: o nome não identifica empresa nenhuma, e quem decide é o humano.';
 
 --
 -- Name: fn_excluir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -2583,6 +2745,64 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) IS 'Tira o mandato da mesa sem apagar nada. Idempotente: fechar de novo devolve o fechamento original em vez de reescrever autoria. Reversível por fn_reabrir_caso.';
+
+--
+-- Name: fn_fundir_entidade(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text DEFAULT 'sistema:fusao'::text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_de    text;
+  v_para  text;
+  v_docs  int;
+begin
+  if p_de_id = p_para_id then
+    raise exception 'fundir uma entidade nela mesma não faz sentido (%)', p_de_id;
+  end if;
+
+  select razao_social into v_de   from entidade where id = p_de_id   and caso_id = p_caso_id;
+  select razao_social into v_para from entidade where id = p_para_id and caso_id = p_caso_id;
+  if v_de is null or v_para is null then
+    raise exception 'entidade não encontrada neste mandato (de=%, para=%)', p_de_id, p_para_id;
+  end if;
+
+  update documento set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  get diagnostics v_docs = row_count;
+
+  -- Tudo o que aponta para a entidade acompanha o documento. `checklist_item_status`
+  -- e `pendencia` guardam entidade_id por conta própria, e deixá-los para trás
+  -- faria o Portão 1 continuar cobrando de uma empresa que não existe mais.
+  update checklist_item_status set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  update pendencia set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+  update reconciliacao set entidade_id = p_para_id
+   where caso_id = p_caso_id and entidade_id = p_de_id;
+
+  -- A pendência de ambiguidade da entidade fundida está respondida.
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_por
+   where caso_id = p_caso_id and motivo = 'entidade_ambigua:' || p_de_id and estado <> 'resolvida';
+
+  delete from entidade where id = p_de_id and caso_id = p_caso_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+  values (p_por, 'entidade_fundida', 'entidade:' || p_para_id,
+          jsonb_build_object('entidade_id', p_de_id, 'razao_social', v_de),
+          jsonb_build_object('entidade_id', p_para_id, 'razao_social', v_para,
+                             'documentos_movidos', v_docs));
+
+  return jsonb_build_object('fundida', v_de, 'em', v_para, 'documentos', v_docs);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text) IS 'Funde duas entidades que são a mesma empresa, levando junto documentos, checklist, pendências e reconciliações (0153). Nada some sem rastro: evento_auditoria guarda o nome que existia e quantos documentos mudaram de dono.';
 
 --
 -- Name: fn_golden_abrir_rodada(text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
@@ -5203,6 +5423,63 @@ $$;
 COMMENT ON FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade text) IS 'Pares de rótulos DIFERENTES, em DOCUMENTOS DIFERENTES, na mesma seção canônica, com valor idêntico nas mesmas colunas — candidatos a ser a MESMA conta transposta duas vezes (achado do v35: "Prejuízos acumulados" e "Resultados Acumulados", ambos -39.150). Dois rótulos no MESMO documento são a hierarquia DELE (0144), não duplicidade. Não decide nada: alimenta a checagem de reconciliação, que abre pendência para decisão humana. Critério estreito de propósito — falso positivo aqui gasta o tempo do analista.';
 
 --
+-- Name: fn_pendencia_entidade_ambigua(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_ev   jsonb;
+  v_pend uuid;
+  v_nome text;
+begin
+  select ev.depois into v_ev
+  from evento_auditoria ev
+  where ev.acao = 'entidade_ambigua'
+    and ev.entidade_ref = 'entidade:' || p_entidade_id
+  order by ev.criado_em desc
+  limit 1;
+
+  if v_ev is null then return null; end if;
+
+  select razao_social into v_nome from entidade where id = p_entidade_id;
+
+  -- Uma pendência por ENTIDADE ambígua, não por documento: cinco balanços da
+  -- mesma empresa fazem UMA pergunta, e cinco pendências idênticas são a
+  -- enxurrada que ensina o analista a ignorar a fila.
+  select id into v_pend from pendencia
+  where caso_id = p_caso_id and motivo = 'entidade_ambigua:' || p_entidade_id
+    and estado <> 'resolvida'
+  limit 1;
+  if v_pend is not null then return v_pend; end if;
+
+  insert into pendencia
+    (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao,
+     documento_id, entidade_id, motivo)
+  values (
+    p_caso_id, 'classificacao', 'entidade_incorreta', 'bloqueante', false,
+    format('O nome "%s" casa com MAIS DE UMA empresa deste mandato (%s) e não identifica '
+           || 'nenhuma. O documento foi registrado numa entidade própria com esse nome, para '
+           || 'não somar os números dele em nenhuma das candidatas — que é o dano que uma '
+           || 'escolha errada aqui causa, e ele não produz erro nenhum: o balanço da empresa '
+           || 'errada FECHA. Decida de quem é e funda com fn_fundir_entidade; se for uma '
+           || 'empresa nova de verdade, basta renomear.',
+           v_nome, v_ev->>'candidatos'),
+    p_documento_id, p_entidade_id, 'entidade_ambigua:' || p_entidade_id)
+  returning id into v_pend;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) IS 'Transforma a ambiguidade registrada por fn_upsert_entidade em pendência bloqueante, nomeando os candidatos (0153). Uma por entidade, não por documento.';
+
+--
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5335,6 +5612,30 @@ begin
   return aa && ab; -- intersecção de arrays
 end;
 $$;
+
+--
+-- Name: fn_periodos_compativeis_array(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_periodos_compativeis_array(p_caso_id uuid, p_periodo_id uuid) RETURNS uuid[]
+    LANGUAGE sql STABLE
+    AS $$
+  -- O array de períodos do laço, fatorado: ele é idêntico nas seis checagens
+  -- que têm laço, e escrevê-lo seis vezes é como as duas contas de espera do
+  -- portal divergiram.
+  select coalesce(
+    (select array_agg(p.id order by (p.id = p_periodo_id) desc, p.referencia)
+     from periodo p
+     where p.caso_id = p_caso_id
+       and (p.id = p_periodo_id or fn_periodos_compativeis(p.id, p_periodo_id))),
+    array[p_periodo_id]);
+$$;
+
+--
+-- Name: FUNCTION fn_periodos_compativeis_array(p_caso_id uuid, p_periodo_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_periodos_compativeis_array(p_caso_id uuid, p_periodo_id uuid) IS 'Os períodos compatíveis do caso, o do documento primeiro (0152). Fatorado das seis checagens que têm laço de período — seis cópias da mesma conta é como as duas esperas do portal divergiram.';
 
 --
 -- Name: fn_periodos_equivalentes(text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6247,6 +6548,216 @@ end;
 $$;
 
 --
+-- Name: fn_reconciliar_caso(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+-- 0152: cada checagem sobre a SUA chave.
+declare
+  v_k          record;
+  v_per        uuid;
+  v_res        jsonb;
+  v_checagens  jsonb := '[]'::jsonb;
+  v_chamadas   int := 0;
+  v_documentos int := 0;
+  c_arvore     constant text[] := array['BALANCO','BALANCETE','COMBINADO'];
+  c_fluxo      constant text[] := array['BALANCO','BALANCETE','COMBINADO','FLUXO_CAIXA'];
+  c_receita    constant text[] := array['DRE','FATURAMENTO_24M'];
+  c_despfin    constant text[] := array['DRE','MAPA_DIVIDA'];
+  c_mutuos     constant text[] := array['MUTUOS','BALANCO','COMBINADO','DF_AUDITADA'];
+  c_intra      constant text[] := array['BALANCO','BALANCETE','DF_AUDITADA'];
+  c_conflito   constant text[] := array['BALANCO','BALANCETE','COMBINADO','DF_AUDITADA','DRE',
+                                        'FLUXO_CAIXA','DMPL','DVA','NOTAS_EXPL'];
+begin
+  select count(*) into v_documentos from documento where caso_id = p_caso_id;
+
+  -- ---- (entidade, período), com laço de período -----------------------------
+  for v_k in select distinct d.entidade_id, d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_ativo_passivo_pl(p_caso_id, v_k.entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  for v_k in select distinct d.entidade_id, d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_fluxo) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_caixa_bp_fluxo(p_caso_id, v_k.entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  for v_k in select distinct d.entidade_id, d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_receita) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_receita_dre_vs_faturamento(p_caso_id, v_k.entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  for v_k in select distinct d.entidade_id, d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_despfin) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_despfin_dre_vs_divida(p_caso_id, v_k.entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  -- ---- só (período) — mútuos e intragrupo são do GRUPO, não da empresa ------
+  for v_k in select distinct d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_mutuos) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_mutuos(p_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  for v_k in select distinct d.periodo_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_intra) loop
+    foreach v_per in array fn_periodos_compativeis_array(p_caso_id, v_k.periodo_id) loop
+      v_res := fn_reconciliar_intragrupo(p_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res); v_chamadas := v_chamadas + 1;
+  end loop;
+
+  -- ---- só (entidade) — sem período nenhum ----------------------------------
+  for v_k in select distinct d.entidade_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_arvore) loop
+    v_checagens := v_checagens
+      || jsonb_build_array(fn_reconciliar_duplicidade(p_caso_id, v_k.entidade_id));
+    v_chamadas := v_chamadas + 1;
+  end loop;
+
+  for v_k in select distinct d.entidade_id from documento d
+             where d.caso_id = p_caso_id and d.tipo_taxonomia = any(c_conflito) loop
+    v_checagens := v_checagens
+      || jsonb_build_array(fn_reconciliar_versoes_do_periodo(p_caso_id, v_k.entidade_id));
+    v_chamadas := v_chamadas + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'executado', true, 'caso_id', p_caso_id,
+    'documentos', v_documentos, 'chamadas', v_chamadas,
+    'checagens', v_checagens);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) IS 'As checagens do caso, cada uma UMA VEZ por chave PRÓPRIA (0152): a de conflito e a de duplicidade por entidade, mútuos e intragrupo por período, as quatro de Classe A/B por (entidade, período). Medido no book-araucaria: 247 invocações contra as ~8.500 da versão por documento, e a checagem cara (1,8 s) roda 16 vezes em vez de 123. Uma chave só para as oito daria 162 — 15% de redução, que é não corrigir nada.';
+
+--
+-- Name: fn_reconciliar_chaves_do_documento(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+-- 0152: extraída de fn_reconciliar_por_documento sem mudança de lógica.
+-- 0151: o conflito entre documentos do mesmo período mora aqui, no fim.
+declare
+  v_checagens jsonb := '[]'::jsonb;
+  v_periodos  uuid[];
+  v_per       uuid;
+  v_res       jsonb;
+begin
+  select array_agg(p.id order by (p.id = p_periodo_id) desc, p.referencia)
+    into v_periodos
+  from periodo p
+  where p.caso_id = p_caso_id
+    and (p.id = p_periodo_id or fn_periodos_compativeis(p.id, p_periodo_id));
+  if v_periodos is null or cardinality(v_periodos) = 0 then
+    v_periodos := array[p_periodo_id];
+  end if;
+
+  -- Classe A (0009)
+  if p_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_ativo_passivo_pl(p_caso_id, p_entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+  if p_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO', 'FLUXO_CAIXA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_caixa_bp_fluxo(p_caso_id, p_entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
+  -- Classe B (0015/0021)
+  if p_tipo in ('DRE', 'FATURAMENTO_24M') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_receita_dre_vs_faturamento(p_caso_id, p_entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+  if p_tipo in ('DRE', 'MAPA_DIVIDA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_despfin_dre_vs_divida(p_caso_id, p_entidade_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
+  -- Mútuos (0117/0123). Pelos dois lados: quem chega por último fecha o par.
+  if p_tipo in ('MUTUOS', 'BALANCO', 'COMBINADO', 'DF_AUDITADA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_mutuos(p_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
+  -- Intragrupo FORA mútuo (0124). Disparada por balanço individual, que é a
+  -- única peça de que ela precisa — não há documento par a esperar. `COMBINADO`
+  -- não dispara e não é lido: as linhas intragrupo dele são eliminações.
+  if p_tipo in ('BALANCO', 'BALANCETE', 'DF_AUDITADA') then
+    foreach v_per in array v_periodos loop
+      v_res := fn_reconciliar_intragrupo(p_caso_id, v_per);
+      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
+    end loop;
+    v_checagens := v_checagens || jsonb_build_array(v_res);
+  end if;
+
+  -- Duplicidade de rótulo (0105). Sem laço de período: é por caso/entidade.
+  if p_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
+    v_checagens := v_checagens || jsonb_build_array(
+      fn_reconciliar_duplicidade(p_caso_id, p_entidade_id));
+  end if;
+
+  -- Conflito entre documentos do mesmo período (0151). Sem laço de período: a
+  -- checagem descobre sozinha quais exercícios existem.
+  if p_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA', 'DRE',
+                'FLUXO_CAIXA', 'DMPL', 'DVA', 'NOTAS_EXPL') then
+    v_checagens := v_checagens || jsonb_build_array(
+      fn_reconciliar_versoes_do_periodo(p_caso_id, p_entidade_id));
+  end if;
+
+  return v_checagens;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text) IS 'As oito checagens que leem (caso, entidade, período) e não o documento (0152). Extraída de fn_reconciliar_por_documento sem mudança de lógica, para que o lote possa rodá-las uma vez por CHAVE em vez de uma vez por documento.';
+
+--
 -- Name: fn_reconciliar_despfin_dre_vs_divida(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6903,10 +7414,10 @@ $$;
 COMMENT ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS '0123: a natureza "mútuo" é lida na linha OU na seção, e um documento MUTUOS que não a nomeia em lugar nenhum conta inteiro. Confere os dois lados entre si antes de comparar a planilha; lados que discordam são o achado, e aí a planilha não é atribuída a um deles. Mútuo com sócio fica fora: não tem espelho no mandato.';
 
 --
--- Name: fn_reconciliar_por_documento(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_reconciliar_por_documento(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) RETURNS jsonb
+CREATE FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid, p_escopo text DEFAULT 'tudo'::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -6915,11 +7426,15 @@ declare
   v_periodo_id  uuid;
   v_tipo        text;
   v_checagens   jsonb := '[]'::jsonb;
-  v_periodos    uuid[];
-  v_per         uuid;
-  v_res         jsonb;
-
 begin
+  -- 0152: o escopo passa a ser declarado. As checagens de CHAVE saíram daqui
+  -- para fn_reconciliar_chaves_do_documento, porque elas leem (caso, entidade,
+  -- período) e não o documento — e por isso o lote as roda uma vez por chave.
+  if p_escopo not in ('tudo', 'documento') then
+    raise exception 'escopo inválido: % (use ''tudo'' ou ''documento''; o escopo de caso é '
+                    'fn_reconciliar_caso)', p_escopo;
+  end if;
+
   select caso_id, entidade_id, periodo_id, tipo_taxonomia
     into v_caso_id, v_entidade_id, v_periodo_id, v_tipo
   from documento where id = p_documento_id;
@@ -6928,102 +7443,34 @@ begin
     return jsonb_build_object('executado', false, 'motivo', 'documento não encontrado');
   end if;
 
-  -- 0133: a conferência INTRA-documento vem PRIMEIRO. Se as seções do próprio
-  -- documento não fecham, as comparações entre documentos abaixo estão sendo
-  -- feitas sobre números que já não se sustentam — e é melhor que a fila diga
-  -- isso antes de dizer que o Ativo bate com o Passivo (que, com totais
-  -- impressos dos dois lados, bate mesmo quando faltam contas no meio).
+  -- 0133: a conferência INTRA-documento. Se as seções do próprio documento não
+  -- fecham, as comparações ENTRE documentos estão sendo feitas sobre números
+  -- que já não se sustentam — e é melhor que a fila diga isso antes de dizer
+  -- que o Ativo bate com o Passivo (que, com totais impressos dos dois lados,
+  -- bate mesmo quando faltam contas no meio).
   --
-  -- Sem loop de período: a árvore é INTRA-documento, então o período do
-  -- documento é o único que existe aqui — não há documento par a procurar.
+  -- É A ÚNICA CHECAGEM QUE É DE FATO POR DOCUMENTO, e a 0133 já dizia isso em
+  -- comentário: "sem loop de período: a árvore é INTRA-documento". As outras
+  -- oito leem (caso, entidade, período) e o documento só entrega a chave.
   if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
     v_checagens := v_checagens || jsonb_build_array(fn_reconciliar_arvore(p_documento_id));
   end if;
 
-  select array_agg(p.id order by (p.id = v_periodo_id) desc, p.referencia)
-    into v_periodos
-  from periodo p
-  where p.caso_id = v_caso_id
-    and (p.id = v_periodo_id or fn_periodos_compativeis(p.id, v_periodo_id));
-  if v_periodos is null or cardinality(v_periodos) = 0 then
-    v_periodos := array[v_periodo_id];
+  if p_escopo = 'tudo' then
+    v_checagens := v_checagens
+      || fn_reconciliar_chaves_do_documento(v_caso_id, v_entidade_id, v_periodo_id, v_tipo);
   end if;
 
-  -- Classe A (0009)
-  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_ativo_passivo_pl(v_caso_id, v_entidade_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO', 'FLUXO_CAIXA') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_caixa_bp_fluxo(v_caso_id, v_entidade_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-
-  -- Classe B (0015/0021)
-  if v_tipo in ('DRE', 'FATURAMENTO_24M') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_receita_dre_vs_faturamento(v_caso_id, v_entidade_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-  if v_tipo in ('DRE', 'MAPA_DIVIDA') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_despfin_dre_vs_divida(v_caso_id, v_entidade_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-
-  -- Mútuos (0117/0123). Pelos dois lados: quem chega por último fecha o par.
-  if v_tipo in ('MUTUOS', 'BALANCO', 'COMBINADO', 'DF_AUDITADA') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_mutuos(v_caso_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-
-  -- Intragrupo FORA mútuo (0124). Disparada por balanço individual, que é a
-  -- única peça de que ela precisa — não há documento par a esperar. `COMBINADO`
-  -- não dispara e não é lido: as linhas intragrupo dele são eliminações.
-  if v_tipo in ('BALANCO', 'BALANCETE', 'DF_AUDITADA') then
-    foreach v_per in array v_periodos loop
-      v_res := fn_reconciliar_intragrupo(v_caso_id, v_per);
-      exit when coalesce(v_res->>'resultado', '') <> 'precondicao_nao_satisfeita';
-    end loop;
-    v_checagens := v_checagens || jsonb_build_array(v_res);
-  end if;
-
-  -- Duplicidade de rótulo (0105). Sem loop de período: é por caso/entidade.
-  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO') then
-    v_checagens := v_checagens || jsonb_build_array(
-      fn_reconciliar_duplicidade(v_caso_id, v_entidade_id));
-  end if;
-
-  -- Conflito entre documentos do mesmo período (0151). Sem loop de período: a
-  -- checagem descobre sozinha quais exercícios existem.
-  if v_tipo in ('BALANCO', 'BALANCETE', 'COMBINADO', 'DF_AUDITADA', 'DRE',
-                'FLUXO_CAIXA', 'DMPL', 'DVA', 'NOTAS_EXPL') then
-    v_checagens := v_checagens || jsonb_build_array(
-      fn_reconciliar_versoes_do_periodo(v_caso_id, v_entidade_id));
-  end if;
-
-  return jsonb_build_object('executado', true, 'documento_id', p_documento_id, 'checagens', v_checagens);
+  return jsonb_build_object('executado', true, 'documento_id', p_documento_id,
+                            'escopo', p_escopo, 'checagens', v_checagens);
 end;
 $$;
 
 --
--- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid, p_escopo text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) IS 'Roda as reconciliações que o tipo do documento autoriza. Desde a 0133 começa pela conferência INTRA-documento (fn_reconciliar_arvore): com totais impressos dos dois lados, Ativo = Passivo+PL fecha mesmo quando faltam contas no meio, então a árvore tem de falar primeiro. Desde a 0151 termina pelo conflito entre documentos do mesmo período, que é o único achado que sobrevive a um número que FECHA.';
+COMMENT ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid, p_escopo text) IS 'Despachante de reconciliação de UM documento (0133/0151/0152). `p_escopo = ''documento''` roda só o que é intra-documento (a árvore); ''tudo'' (padrão) mantém o comportamento anterior e roda também as checagens de chave. Num lote, use ''documento'' aqui e fn_reconciliar_caso uma vez no fim — as checagens de chave não leem o documento, leem (caso, entidade, período).';
 
 --
 -- Name: fn_reconciliar_receita_dre_vs_faturamento(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -7463,12 +7910,7 @@ begin
     if v_pendencia_id is null then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
         values (v_caso_id, 'extracao', 'extracao_falhou', 'importante', true,
-          format('Extração de "%s" falhou ou veio incompleta (%s linhas gravadas). Motivo: %s',
-                 coalesce(v_nome_original, '?'), v_count,
-                 coalesce(p_falha_motivo,
-                          'a chamada respondeu sem erro, mas não trouxe NENHUMA linha. '
-                          'Causa mais comum: formato que o pipeline ainda não converte em texto '
-                          '(.xlsx/.docx) — nesses casos a IA recebe um aviso em vez do arquivo.')),
+          fn_descricao_extracao_falhou(v_nome_original, v_count, p_falha_motivo),
           v_documento_id, 'extracao:falhou:' || v_documento_id);
     end if;
   elsif v_pendencia_id is not null then
@@ -9166,6 +9608,27 @@ $$;
 COMMENT ON FUNCTION public.fn_trg_auto_promover_dial() IS 'Gatilho da promoção automática (0137): toda decisão humana nova pode ter completado o critério do veredito de produção. NUNCA derruba a transação de quem o disparou — falha vira NOTICE, porque o analista não pode perder a rejeição de uma pendência por causa do dial.';
 
 --
+-- Name: fn_trg_entidade_ambigua(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_trg_entidade_ambigua() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if new.entidade_id is not null then
+    perform fn_pendencia_entidade_ambigua(new.caso_id, new.id, new.entidade_id);
+  end if;
+  return null;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_trg_entidade_ambigua(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_trg_entidade_ambigua() IS 'Chama fn_pendencia_entidade_ambigua quando um documento ganha entidade (0153). Existe porque checagem instalada e sem chamador é indistinguível de checagem que não achou nada.';
+
+--
 -- Name: fn_unidade_predominante(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9215,28 +9678,46 @@ $$;
 CREATE FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
-declare v_id uuid;
+declare
+  v_id        uuid;
+  v_n         int;
+  v_candidatos text;
 begin
+  -- 0153: no empate, não escolhe.
   if p_nome is null or length(trim(p_nome)) = 0 then return null; end if;
 
-  -- Casa pela forma CANÔNICA: é o que impede "Vertentes Metalurgica" (do nome do
-  -- arquivo, sem acento) e "Vertentes Metalúrgica Ltda." (do diagnóstico) de virarem
-  -- duas empresas. Ordena por criado_em para ser determinístico quando a base já
-  -- tem duplicata de antes desta migration.
-  select e.id into v_id
-  from entidade e
-  where e.caso_id = p_caso_id and fn_mesma_entidade(e.razao_social, p_nome)
-  -- `entidade` não tem coluna de data; ordenar pela razão social torna a escolha
-  -- DETERMINÍSTICA quando a base já carrega duplicata de antes desta migration.
-  -- Sem ordem explícita, dois documentos do mesmo lote poderiam se ligar a linhas
-  -- diferentes da mesma empresa — a duplicidade sobreviveria à própria correção.
-  order by e.razao_social
+  -- (1) exato pela forma canônica — não há o que desempatar.
+  select c.entidade_id into v_id
+  from fn_entidades_candidatas(p_caso_id, p_nome) c
+  where c.exata
+  order by c.razao_social
   limit 1;
+  if v_id is not null then return v_id; end if;
 
-  if v_id is null then
-    insert into entidade (caso_id, razao_social) values (p_caso_id, trim(p_nome))
-      returning id into v_id;
+  -- (2)/(3) quantos APROXIMADOS existem?
+  select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social)
+    into v_n, v_candidatos
+  from fn_entidades_candidatas(p_caso_id, p_nome) c;
+
+  if v_n = 1 then
+    select c.entidade_id into v_id from fn_entidades_candidatas(p_caso_id, p_nome) c limit 1;
+    return v_id;
   end if;
+
+  insert into entidade (caso_id, razao_social) values (p_caso_id, trim(p_nome))
+    returning id into v_id;
+
+  if v_n > 1 then
+    -- A AMBIGUIDADE É REGISTRADA AQUI e virada em pendência por quem tem o
+    -- documento na mão. Esta função não conhece documento — inventar um vínculo
+    -- para poder abrir a pendência aqui seria a entidade fantasma da 0146 ao
+    -- contrário.
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_ambigua', 'entidade:' || v_id,
+            jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                               'candidatos', v_candidatos, 'quantos', v_n));
+  end if;
+
   return v_id;
 end;
 $$;
@@ -9245,7 +9726,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade casando pela forma canônica (0030). Impede duplicata quando o nome vem do arquivo (sem acento) e do diagnóstico (com acento e sufixo).';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade do caso pelo nome (0030), sem ESCOLHER no empate (0153): casamento canônico exato primeiro, depois o único aproximado; com dois ou mais aproximados e nenhum exato, cria entidade própria e registra `entidade_ambigua` em evento_auditoria — porque "Araucaria SPE" casa com Bioenergia SPE E com Imobiliária SPE, e o `order by razao_social` da 0030 punha o balanço de uma dentro da outra sem dizer nada.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11359,6 +11840,12 @@ CREATE UNIQUE INDEX idx_rubrica_classe_unica ON public.rubrica_classe USING btre
 CREATE TRIGGER trg_auto_promover_dial AFTER INSERT ON public.decisao FOR EACH ROW EXECUTE FUNCTION public.fn_trg_auto_promover_dial();
 
 --
+-- Name: documento trg_entidade_ambigua; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_entidade_ambigua AFTER INSERT OR UPDATE OF entidade_id ON public.documento FOR EACH ROW EXECUTE FUNCTION public.fn_trg_entidade_ambigua();
+
+--
 -- Name: golden_campo trg_golden_campo_congelada; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12420,6 +12907,12 @@ GRANT ALL ON FUNCTION public.fn_dial_influencia(p_estagio text) TO authenticated
 GRANT ALL ON FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca numeric) TO authenticated;
 
 --
+-- Name: FUNCTION fn_documento_de_varias_empresas(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_documento_preliminar(p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12430,6 +12923,12 @@ GRANT ALL ON FUNCTION public.fn_documento_preliminar(p_nome text) TO authenticat
 --
 
 GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas(p_caso_id uuid, p_nome text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_excluir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
@@ -12466,6 +12965,12 @@ GRANT ALL ON FUNCTION public.fn_fatos_do_caso(p_caso_id uuid) TO authenticated;
 --
 
 GRANT ALL ON FUNCTION public.fn_fechar_caso(p_caso_id uuid, p_autor text, p_motivo text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_fundir_entidade(p_caso_id uuid, p_de_id uuid, p_para_id uuid, p_por text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_golden_abrir_rodada(p_nome text, p_autor text, p_nota text, p_taxonomia_versao integer); Type: ACL; Schema: public; Owner: -
@@ -12690,10 +13195,22 @@ GRANT ALL ON FUNCTION public.fn_papel_linha(p_chave text, p_tipo_taxonomia text,
 GRANT ALL ON FUNCTION public.fn_papel_prioridade(p_papel text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_periodo_por_extenso(p_tipo text, p_referencia text); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_periodo_por_extenso(p_tipo text, p_referencia text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_periodos_compativeis_array(p_caso_id uuid, p_periodo_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_periodos_compativeis_array(p_caso_id uuid, p_periodo_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_premissa_valores_sugeridos(p_codigo text, p_ano_inicial integer, p_anos integer); Type: ACL; Schema: public; Owner: -
@@ -12740,6 +13257,18 @@ GRANT ALL ON FUNCTION public.fn_reavaliar_guardas_extracao(p_documento_versao_id
 GRANT ALL ON FUNCTION public.fn_reconciliar_arvore(p_documento_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_reconciliar_caso(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_caso(p_caso_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_reconciliar_chaves_do_documento(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tipo text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12752,10 +13281,10 @@ GRANT ALL ON FUNCTION public.fn_reconciliar_intragrupo(p_caso_id uuid, p_periodo
 GRANT ALL ON FUNCTION public.fn_reconciliar_mutuos(p_caso_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) TO authenticated;
 
 --
--- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid); Type: ACL; Schema: public; Owner: -
+-- Name: FUNCTION fn_reconciliar_por_documento(p_documento_id uuid, p_escopo text); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.fn_reconciliar_por_documento(p_documento_id uuid, p_escopo text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
