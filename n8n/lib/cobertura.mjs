@@ -104,6 +104,86 @@ export const LIMIAR_COBERTURA = 0.85;
 export const MINIMO_PARA_AVALIAR = 20;
 
 /**
+ * Reúne os FRAGMENTOS de uma mesma linha visual que o extrator de PDF quebrou.
+ *
+ * O DEFEITO QUE ISTO CORRIGE, medido no texto REAL DE PRODUÇÃO (execução 7276 do
+ * n8n, rodada do Canastra de 31/08, nó `Extrair Texto`, capturado em
+ * `test-data/capturas/2026-08-31-texto-extraido-n8n/`). O denominador da guarda
+ * de cobertura vinha inflado em documentos de TABELA LARGA, e o efeito era
+ * pendência FALSA sobre extração completa:
+ *
+ *     17_Livro_Razao ....... 99 linhas de conta (verdade do gerador)
+ *                            258 pela régua  → "102 de 258 = 40%", pendência ABERTA
+ *     20_Mapa_de_Divida .... 12 linhas de conta
+ *                             25 pela régua  → "12 de 25 = 48%", pendência ABERTA
+ *
+ * Nos dois a extração estava COMPLETA (102 de 99 e 12 de 12, com os lançamentos
+ * `LC-2025-4000` a `4095` contíguos no export). O que estava errado era a régua.
+ *
+ * A CAUSA, visível no texto capturado. O extrator emite uma quebra de linha a
+ * cada mudança de linha de base do PDF, e numa tabela larga UMA linha visual cai
+ * em duas ou três:
+ *
+ *     "01/12/2025 LC-2025-4000 "                                   <- fragmento
+ *     "NF 010000 - Papéis e Celulose Aracati S.A. - bobina 180g "  <- fragmento
+ *     "- 150 16.839 C"                                             <- fecha a linha
+ *
+ * `linhasDeConta` conta o primeiro e o segundo como duas contas onde há uma —
+ * daí os ~2,6x do livro razão. O balanço patrimonial não sofre nada disso: lá a
+ * régua acerta a verdade no dígito (114 de 114).
+ *
+ * O SINAL, e por que ele é este. Todo fragmento que NÃO fecha a linha visual
+ * termina em espaço — é o separador que o extrator emitiu antes de trocar de
+ * linha. Medido nos 20 documentos capturados: 0% de linhas com essa marca nos
+ * treze documentos que a régua já acertava, e 44% a 63% nos quatro que ela
+ * errava. Não é um sinal fraco que precisa de limiar: é presença contra
+ * ausência.
+ *
+ * O TETO DE FRAGMENTOS existe porque a falha sem ele seria a perigosa. Se um dia
+ * um documento vier com TODA linha terminando em espaço, a emenda sem limite o
+ * colapsaria em uma linha só, o denominador iria a 1 e a guarda ficaria MUDA —
+ * exatamente o modo de falha que ela existe para eliminar. Com o teto, o excesso
+ * de fragmentos vira linha a mais, que é o lado barato do erro (a guarda tem 15%
+ * de folga para contar a mais, e zero para contar a menos — ver
+ * `medir-regua-cobertura.mjs`). O valor 4 é a maior sequência medida (3, no
+ * `20_Mapa_de_Divida`) mais uma.
+ *
+ * Ela normaliza a régua da COBERTURA, e só ela. A régua do FATIAMENTO
+ * (`linhasComNumero`) fica como está: nada nesta rodada mediu defeito lá — o
+ * `17_Livro_Razao` foi fatiado em 4 blocos e os 4 chegaram.
+ */
+export function juntarFragmentosDeLinha(texto) {
+  if (typeof texto !== 'string' || texto.length === 0) return '';
+  const MAX_FRAGMENTOS = 4;
+  const saida = [];
+  let emenda = '';
+  let quantos = 0;
+  for (const bruta of texto.split('\n')) {
+    // Linha em branco NÃO emenda e não some: ela separa bloco. Emendar através
+    // dela colaria o rodapé de uma página no cabeçalho da seguinte; engoli-la
+    // mudaria o texto para quem só passa por aqui.
+    if (bruta.trim().length === 0) {
+      if (emenda.length > 0) saida.push(emenda);
+      saida.push(bruta);
+      emenda = '';
+      quantos = 0;
+      continue;
+    }
+    // O espaço no fim é a marca do fragmento que NÃO fecha a linha visual.
+    if (/[ \t]$/.test(bruta) && quantos < MAX_FRAGMENTOS) {
+      emenda += bruta;
+      quantos += 1;
+      continue;
+    }
+    saida.push(emenda + bruta);
+    emenda = '';
+    quantos = 0;
+  }
+  if (emenda.length > 0) saida.push(emenda);
+  return saida.join('\n');
+}
+
+/**
  * As linhas do texto que são LINHA DE CONTA — rótulo seguido de valor.
  *
  * A RÉGUA ESTAVA NA UNIDADE ERRADA, e isso importa mais que a precisão dela.
@@ -156,6 +236,9 @@ export const MINIMO_PARA_AVALIAR = 20;
  */
 export function linhasDeConta(texto) {
   if (typeof texto !== 'string' || texto.length === 0) return [];
+  // O texto chega FRAGMENTADO em documento de tabela larga — ver
+  // `juntarFragmentosDeLinha`, que tem os 258 contra 99 que motivaram isto.
+  const normalizado = juntarFragmentosDeLinha(texto);
   // Um valor: número solto, com separador de milhar, decimal, percentual, ou
   // negativo entre parênteses — as quatro formas que o book usa.
   const valores = /\(?-?\d[\d.]*(?:,\d+)?\)?%?/g;
@@ -175,7 +258,7 @@ export function linhasDeConta(texto) {
     /^[\s|]*((19|20)\d{2}|\d{2}\/\d{2}\/\d{4})([\s|]+((19|20)\d{2}|\d{2}\/\d{2}\/\d{4}))*[\s|]*$/,
   ];
   const out = [];
-  for (const bruta of texto.split('\n')) {
+  for (const bruta of normalizado.split('\n')) {
     const linha = bruta.trim();
     if (linha.length === 0) continue;
     if (ruido.some((r) => r.test(linha))) continue;

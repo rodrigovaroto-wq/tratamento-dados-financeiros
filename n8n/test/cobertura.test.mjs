@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, linhasDeConta, celulasDaLinha, celulasEstimadas,
+  linhasComNumero, linhasDeConta, juntarFragmentosDeLinha, celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
 } from '../lib/cobertura.mjs';
@@ -574,4 +574,76 @@ test('juntarBlocos: o plano é o MÁXIMO declarado, e some quando ninguém decla
   ]);
   assert.equal(antigo.blocosPlanejados, 2, 'sem plano declarado, o plano é o que chegou');
   assert.deepEqual(antigo.motivos, [], 'e não acusa nada');
+});
+
+
+// -----------------------------------------------------------------------------
+// A LINHA VISUAL QUEBRADA EM FRAGMENTOS — o defeito que abria pendência falsa.
+//
+// Os trechos abaixo são LITERAIS do texto que o nó `Extrair Texto` produziu na
+// execução 7276 do n8n (Canastra, 31/08/2026), versionado em
+// `test-data/capturas/2026-08-31-texto-extraido-n8n/textos.json`. Não são
+// fixture inventada: o espaço no fim de cada fragmento está no dado real, e é
+// ele que este arquivo afirma que a régua precisa respeitar.
+// -----------------------------------------------------------------------------
+
+// Uma linha do `17_Livro_Razao`, exatamente como produção a emitiu.
+const RAZAO_DE_PRODUCAO = [
+  '01/12/2025 SALDO ANTERIOR 16.689 C',
+  '01/12/2025 LC-2025-4000 ',
+  'NF 010000 - Papéis e Celulose Aracati S.A. - bobina kraft 180g ',
+  '- 150 16.839 C',
+  '30/12/2025 LC-2025-4001 ',
+  'NF 010037 - Tintas e Adesivos Ipiranga Ltda. - adesivo industrial ',
+  '- 221 17.060 C',
+].join('\n');
+
+// Uma linha do `20_Mapa_de_Divida`: três fragmentos, e a célula que ainda quebra
+// em parágrafo ("Vencido - cláusula restritiva" / "descumprida").
+const DIVIDA_DE_PRODUCAO = [
+  'Banco Meridional S.A. Capital de giro CG-2021-884.117 ',
+  '15/03/2026 CDI + 4,80% a.a. 10.412.600,00 - 2.960.400,00 ',
+  'Vencido - cláusula restritiva',
+  'descumprida',
+].join('\n');
+
+test('livro razão de produção: TRÊS lançamentos, não sete linhas de conta', () => {
+  // COM O DEFEITO LIGADO a régua devolvia 6 (o par data+lançamento e o histórico
+  // contados como contas separadas, em cada um dos três lançamentos). Era esse
+  // 2x que virava "102 de 258 = 40%" e abria pendência sobre extração COMPLETA.
+  assert.equal(linhasDeConta(RAZAO_DE_PRODUCAO).length, 3);
+});
+
+test('mapa de dívida de produção: UM contrato, não dois', () => {
+  // 'Vencido - cláusula restritiva' e 'descumprida' não têm valor: já saíam da
+  // conta. O que inflava era o fragmento de data/taxa/valores contado à parte.
+  assert.equal(linhasDeConta(DIVIDA_DE_PRODUCAO).length, 1);
+});
+
+test('a emenda respeita a linha em branco e o teto de fragmentos', () => {
+  // Linha em branco separa bloco: emendar através dela colaria o rodapé de uma
+  // página no cabeçalho da seguinte.
+  assert.equal(juntarFragmentosDeLinha('a 1 \n\nb 2').split('\n').length, 3);
+  // TETO: cinco fragmentos seguidos não viram uma linha só. Sem o teto, um
+  // documento em que TODA linha termina em espaço colapsaria em uma linha, o
+  // denominador iria a 1 e a guarda ficaria MUDA — o lado caro do erro.
+  const cinco = ['a 1 ', 'b 2 ', 'c 3 ', 'd 4 ', 'e 5 ', 'f 6'].join('\n');
+  assert.equal(juntarFragmentosDeLinha(cinco).split('\n').length, 2);
+});
+
+test('documento SEM fragmentação passa intacto pela emenda', () => {
+  // O balanço patrimonial não tem uma linha sequer com a marca — a régua já
+  // acertava a verdade no dígito nele (114 de 114, medido na captura). Emenda
+  // que mexesse aqui seria regressão silenciosa nos treze documentos sadios.
+  const balanco = 'ATIVO 137.624 163.941 182.500\nAtivo Circulante 44.022 68.103 91.594';
+  assert.equal(juntarFragmentosDeLinha(balanco), balanco);
+  assert.equal(linhasDeConta(balanco).length, 2);
+});
+
+test('a régua da COBERTURA normaliza; a do FATIAMENTO fica como está', () => {
+  // Distinção deliberada: nada nesta rodada mediu defeito no fatiamento — o
+  // `17_Livro_Razao` foi fatiado em 4 blocos e os 4 chegaram. Mexer nas duas de
+  // uma vez trocaria uma correção medida por duas, uma delas sem medição.
+  assert.equal(linhasComNumero(RAZAO_DE_PRODUCAO).length, 7);
+  assert.equal(linhasDeConta(RAZAO_DE_PRODUCAO).length, 3);
 });
