@@ -144,7 +144,7 @@
       "typeVersion": 2.5,
       "position": [
         2340,
-        180
+        360
       ],
       "credentials": {
         "postgres": {
@@ -168,7 +168,7 @@
       "typeVersion": 2,
       "position": [
         2600,
-        180
+        360
       ]
     },
     {
@@ -284,7 +284,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2600,
+        2340,
         0
       ]
     },
@@ -298,7 +298,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2860,
+        2600,
         180
       ],
       "onError": "continueRegularOutput"
@@ -331,7 +331,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3120,
+        2860,
         180
       ],
       "credentials": {
@@ -355,7 +355,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3380,
+        3120,
         180
       ],
       "onError": "continueRegularOutput"
@@ -370,7 +370,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        3640,
+        3380,
         0
       ]
     },
@@ -388,7 +388,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3900,
+        3640,
         0
       ],
       "credentials": {
@@ -415,7 +415,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        4160,
+        3900,
         180
       ],
       "credentials": {
@@ -439,7 +439,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4160,
+        3900,
         0
       ],
       "onError": "continueRegularOutput"
@@ -470,7 +470,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        4420,
+        4160,
         0
       ]
     },
@@ -484,7 +484,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        6500,
+        6240,
         0
       ]
     },
@@ -498,7 +498,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4680,
+        4420,
         180
       ],
       "onError": "continueRegularOutput"
@@ -513,7 +513,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4940,
+        4680,
         180
       ],
       "onError": "continueRegularOutput"
@@ -546,7 +546,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5200,
+        4940,
         180
       ],
       "credentials": {
@@ -570,7 +570,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5460,
+        5200,
         180
       ],
       "onError": "continueRegularOutput"
@@ -585,7 +585,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5720,
+        5460,
         180
       ],
       "onError": "continueRegularOutput"
@@ -604,7 +604,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5980,
+        5720,
         180
       ],
       "credentials": {
@@ -632,7 +632,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6240,
+        5980,
         180
       ],
       "credentials": {
@@ -660,7 +660,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6760,
+        6500,
         0
       ],
       "credentials": {
@@ -687,7 +687,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7020,
+        6760,
         0
       ],
       "credentials": {
@@ -712,7 +712,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        7280,
+        7020,
         0
       ],
       "onError": "continueRegularOutput"
@@ -730,7 +730,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7540,
+        7280,
         0
       ],
       "credentials": {
@@ -758,7 +758,7 @@
       "typeVersion": 2.5,
       "position": [
         2340,
-        0
+        180
       ],
       "credentials": {
         "postgres": {
@@ -785,7 +785,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7800,
+        7540,
         0
       ],
       "credentials": {
@@ -905,22 +905,16 @@
         ]
       ]
     },
-    "Abrir Lote": {
-      "main": [
-        [
-          {
-            "node": "Precisa Fallback?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Lote cabe?": {
       "main": [
         [
           {
             "node": "Abrir Lote",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Precisa Fallback?",
             "type": "main",
             "index": 0
           }

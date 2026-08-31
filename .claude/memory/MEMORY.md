@@ -18,6 +18,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   para trás enquanto a `0134` entrou, e o repositório dizia que estava tudo aplicado
 - [Nunca corrigir função por `replace` de texto](nunca-corrigir-funcao-por-replace.md) —
   passa em toda suíte local e reprova em produção; reemita a função inteira
+- [Nó Postgres novo vai como ramo TERMINAL](no-postgres-novo-vai-como-ramo-terminal.md) —
+  inline no fluxo por documento ele apaga o contexto de todos os seguintes (v47: 11 dias; 0156: 0 de 38)
 
 ## Armadilhas de teste e de portão
 
