@@ -488,6 +488,10 @@ return [{ json: {
 const CODE_LISTAR = `
 ${FONTE_BYTES_BINARIO}
 const caso_id = $('Upsert Caso (Postgres)').first().json.caso_id;
+// O LIMIAR DO DIAL VIAJA COM O ITEM, como o caso_id. Nulo quando o banco não tem
+// a linha do dial — e null cai na queda do classificador, nunca em zero (limiar
+// zero faria todo documento passar sem a IA ler nenhum).
+const limiar_classificacao = $('Upsert Caso (Postgres)').first().json.limiar_classificacao;
 const form = $('Intake (Form)').first();
 const bin = form.binary || {};
 const out = [];
@@ -496,7 +500,7 @@ for (const key of Object.keys(bin)) {
   // estimado por um número plano que já recusou um lote de US$ 1,41 dizendo
   // US$ 7,65. \`null\` quando o metadado não permite medir — e null cai no
   // plano lá na frente, nunca em zero.
-  out.push({ json: { caso_id, nome_original: bin[key].fileName || key, binary_key: 'data', bytes: bytesDoBinario(bin[key]) }, binary: { data: bin[key] } });
+  out.push({ json: { caso_id, limiar_classificacao, nome_original: bin[key].fileName || key, binary_key: 'data', bytes: bytesDoBinario(bin[key]) }, binary: { data: bin[key] } });
 }
 if (out.length === 0) {
   throw new Error('Nenhum arquivo recebido do formulario (binario vazio). Confira o campo "Arquivos" do Form.');
@@ -509,15 +513,22 @@ return out;
 const CODE_CLASSIFICAR = `
 function normalize(s){return String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\.[a-z0-9]{2,4}$/i,'').replace(/[_\\-.]+/g,' ').replace(/\\s+/g,' ').trim();}
 const ALIASES=${ALIASES_JSON};
-function parsePeriodo(t0){const t=String(t0||'').replace(/^\\s*\\d{1,3}\\s*[-_. ]+/,'').replace(/(\\d)\\s*[x\\u00d7]\\s*(\\d)/g,'$1 $2');let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a4=t.match(/\\b(19|20)\\d{2}\\b/g);if(a4&&a4.length===1)return{tipo:'anual',referencia:a4[0],fraco:true};if(a4&&a4.length>=2)return{tipo:'multi',referencia:a4.map(x=>x.slice(-2)).sort().join(',')};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
+function parsePeriodo(t0){const t=String(t0||'').replace(/^\\s*\\d{1,3}\\s*[-_. ]+/,'').replace(/(\\d)\\s*[x\\u00d7]\\s*(\\d)/g,'$1 $2');let m=t.match(/\\b(\\d{1,2})m(\\d{2,4})\\b/);if(m&&Number(m[1])===12)return{tipo:'anual',referencia:'12M'+m[2].slice(-2)};m=t.match(/\\bl(\\d{1,2})m\\b/)||t.match(/\\b(\\d{2})\\s*meses\\b/);if(m)return{tipo:'multi',referencia:'L'+m[1]+'M'};m=t.match(/\\b([1-4])t(\\d{2,4})\\b/);if(m)return{tipo:'trimestre',referencia:m[1]+'T'+m[2].slice(-2)};m=t.match(/\\b(20\\d{2}|\\d{2})\\s*(?:-|–|a)\\s*(20\\d{2}|\\d{2})\\b/);if(m){const full=y=>y.length===2?'20'+y:y;const start=Number(full(m[1])),end=Number(full(m[2]));if(start<=end&&end-start<=50){const anos=[];for(let y=start;y<=end;y++)anos.push(String(y).slice(-2));return{tipo:'multi',referencia:anos.join(',')};}}const a4=t.match(/\\b(19|20)\\d{2}\\b/g);if(a4&&a4.length===1)return{tipo:'anual',referencia:a4[0],fraco:true};if(a4&&a4.length>=2)return{tipo:'multi',referencia:[...a4].sort((p,q)=>Number(p)-Number(q)).map(x=>x.slice(-2)).join(',')};const a=t.match(/\\b(20)?\\d{2}\\b/g);if(a&&a.length>=2)return{tipo:'multi',referencia:a.map(x=>x.slice(-2)).join(',')};if(a&&a.length===1&&/^(19|20)\\d{2}$/.test(a[0]))return{tipo:'anual',referencia:a[0],fraco:true};return null;}
 function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.includes(termo))return a.codigo;}}return null;}
 ${FONTE_PARSE_ENTIDADE}
 const item=$input.item.json;
+// MESMA queda da lib (lib/classifier.mjs): so numero finito em (0,1] manda; o
+// resto cai em 0.7 -- limiar zero faria TODO documento passar sem a IA ler
+// nenhum. Se as duas quedas divergirem, o espelho-inline reprova.
+// SEM CRASE NESTE BLOCO: ele mora dentro de um template literal, e crase aqui
+// quebra o jsCode -- ja aconteceu duas vezes (memoria backtick-quebra-jscode).
+const _l=Number(item.limiar_classificacao);
+const LIMIAR=(Number.isFinite(_l)&&_l>0&&_l<=1)?_l:0.7;
 const t=normalize(item.nome_original);
 const tipo=parseTipo(t), periodo=parsePeriodo(t);
 const assinado=/\\bassinad[oa]s?\\b/.test(t)?true:null;
 let conf=0; if(tipo)conf+=0.6; if(periodo)conf+=(periodo.fraco?0.05:0.3); if(assinado===true)conf+=0.1; conf=Math.min(1,Number(conf.toFixed(2)));
-return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_ia:(conf<0.7|| !tipo)}, binary: $input.item.binary};
+return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:null, periodo_ref:periodo?periodo.referencia:null, assinado, entidade:parseEntidade(t,ALIASES), confianca:conf, fonte:'nome_arquivo', precisa_fallback_ia:(conf<LIMIAR|| !tipo), limiar_aplicado:LIMIAR}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (EACH ITEM): prepara a parte de CONTEUDO (para todos os docs) ---
@@ -1417,7 +1428,16 @@ const nodes = [
   }),
 
   node('Upsert Caso (Postgres)', 'n8n-nodes-base.postgres', 2.5, {
-    operation: 'executeQuery', query: 'select fn_upsert_caso($1::text) as caso_id',
+    // O LIMIAR VEM JUNTO, e de propósito não num nó novo. É a MESMA ida ao
+    // banco que já acontece: um nó a mais custaria uma republicação com risco de
+    // toggle perdido (`.claude/memory/republicacao-do-n8n-perde-toggles.md`) e
+    // uma volta de rede por lote, para buscar um número. `left join lateral` não
+    // é preciosismo: sem ele, banco sem a linha do dial devolveria ZERO linha e o
+    // `caso_id` sumiria junto — a consulta que lê a configuração não pode
+    // derrubar a que cria o caso.
+    operation: 'executeQuery', query: "select fn_upsert_caso($1::text) as caso_id, "
+      + "(select limiar_auto_clear from estagio_autonomia "
+      + "where estagio = 'classificacao_doc_checklist') as limiar_classificacao",
     options: { queryReplacement: "={{ [$json['Mandato (nome do caso)']] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 

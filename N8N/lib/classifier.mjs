@@ -10,7 +10,25 @@
 import { normalize } from './normalize.mjs';
 import { ALIASES } from './taxonomia.mjs';
 
-const THRESHOLD_AUTO = 0.7; // abaixo disso → fallback por conteúdo / pendência de classificação
+// QUEDA, não regra. O limiar que MANDA é o do dial (`estagio_autonomia.
+// limiar_auto_clear` do estágio `classificacao_doc_checklist`), lido do banco e
+// passado em `classifyByFilename(nome, limiar)`. Este valor só vale quando o
+// limiar não chegou — banco sem a linha do dial, ou chamada de teste.
+//
+// POR QUE ISSO IMPORTA, e não é organização. A `0127` já tinha tirado o número
+// fixo do lado do Postgres: lá `fn_registrar_documento` chama
+// `fn_dial_permite_auto(...)` e o `p_threshold default 0.7` sobrou só como
+// queda. O lado do n8n ficou para trás, e com ele a metade da divergência que o
+// cabeçalho da própria 0127 denunciou: *"o 0,70 mora em DOIS lugares"*.
+//
+// O ESTRAGO CONCRETO de deixar assim: subir o dial para 0,85 faz o banco abrir
+// `classificacao_pendente` para todo documento entre 0,70 e 0,85 — e o n8n, com
+// 0,70 fixo, nunca mandou a IA LER esses documentos, porque para ele 0,72 já
+// era bom. O sistema pergunta ao humano exatamente o que ele poderia ter
+// resolvido sozinho por conteúdo, e o dial vira um botão que piora o serviço ao
+// ser apertado. Com o limiar vindo do dial, subir o dial faz as duas pontas se
+// moverem juntas.
+const THRESHOLD_AUTO = 0.7;
 
 // --- Período -----------------------------------------------------------------
 // Reconhece as convenções de Arquitetura do Sistema/2 Especificação/f0/03 (12M25, 1T25/1T26, L24M, listas multi-ano)
@@ -69,7 +87,17 @@ export function parsePeriodo(textoNormalizado) {
     return { tipo: 'anual', referencia: anos4[0], fraco: true };
   }
   if (anos4 && anos4.length >= 2) {
-    return { tipo: 'multi', referencia: anos4.map((a) => a.slice(-2)).sort().join(',') };
+    // ORDENAR ANTES DE TRUNCAR. O `.sort()` sem comparador ordena por texto, e
+    // truncar para dois dígitos ANTES disso perde o século: 1999 e 2001 viram
+    // "99" e "01", e a ordem de texto devolve "01,99" — o exercício mais novo
+    // primeiro, invertido. Ordenando o ano de QUATRO dígitos como número, 1999
+    // vem antes de 2001 e a truncagem só acontece depois, sobre a lista já
+    // cronológica. Nenhum documento dos dois books exercita o cruzamento de
+    // século (o `\b(19|20)\d{2}\b` aceita 19xx, mas todo período medido é 20xx),
+    // então isto é defeito LATENTE: some antes de aparecer, e o comparador
+    // explícito também é o que a regra S2871 do Sonar cobra.
+    const ordenados = [...anos4].sort((a, b) => Number(a) - Number(b));
+    return { tipo: 'multi', referencia: ordenados.map((a) => a.slice(-2)).join(',') };
   }
   const anos = t.match(/\b(20)?\d{2}\b/g);
   if (anos && anos.length >= 2) {
@@ -267,7 +295,13 @@ export function parseEntidade(textoNormalizado, aliases) {
 
 // --- Classificação completa por nome -----------------------------------------
 // Retorna sempre um objeto; confianca baixa sinaliza necessidade de fallback.
-export function classifyByFilename(nomeOriginal) {
+export function classifyByFilename(nomeOriginal, limiarDoDial) {
+  // O limiar chega do dial (ver THRESHOLD_AUTO). Só número finito em (0,1] é
+  // aceito: `null`, string vazia, NaN e 0 caem na queda, porque um limiar zero
+  // faria TODO documento passar sem a IA ler nenhum — o oposto silencioso do
+  // que quem mexeu no dial quis.
+  const n = Number(limiarDoDial);
+  const limiar = Number.isFinite(n) && n > 0 && n <= 1 ? n : THRESHOLD_AUTO;
   const t = normalize(nomeOriginal);
   const tipo = parseTipo(t);
   const periodo = parsePeriodo(t);
@@ -296,7 +330,7 @@ export function classifyByFilename(nomeOriginal) {
   if (assinado === true) confianca += 0.1;
   confianca = Math.min(1, Number(confianca.toFixed(2)));
 
-  const precisaFallback = confianca < THRESHOLD_AUTO || !tipo;
+  const precisaFallback = confianca < limiar || !tipo;
 
   return {
     tipo_taxonomia: tipo ? tipo.codigo : null,
@@ -305,6 +339,11 @@ export function classifyByFilename(nomeOriginal) {
     confianca,
     fonte: 'nome_arquivo',
     precisa_fallback_ia: precisaFallback,
+    // DECLARA contra o que a decisão foi tomada. Sem isto, "não precisou de
+    // fallback" é indistinguível de "o limiar estava frouxo", e a pendência que
+    // o banco abre do outro lado cita o limiar DELE — os dois números precisam
+    // poder ser comparados depois do fato.
+    limiar_aplicado: limiar,
     sinais,
     // Hipótese barata, NUNCA fato — e deliberadamente fora do cálculo de
     // `confianca` acima (ver o comentário de `parseEntidade`).

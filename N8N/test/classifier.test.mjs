@@ -40,6 +40,29 @@ test('parsePeriodo: intervalo invertido (fim < início) não expande, cai no fal
   assert.deepEqual(parsePeriodo('mutuos 2025-2021'), { tipo: 'multi', referencia: '21,25' });
 });
 
+test('parsePeriodo: a ordem multi-ano é CRONOLÓGICA, e não sobrevive à truncagem', () => {
+  // A forma canônica acima só vale se a ordenação for do ANO, não do texto de
+  // dois dígitos. O código truncava para 2 dígitos ANTES de ordenar e chamava
+  // `.sort()` sem comparador: 1999 e 2001 viravam "99" e "01", e a ordem de
+  // texto devolvia "01,99" — 2001 declarado antes de 1999.
+  //
+  // MEDIDO, com a correção desligada (truncar-depois-ordenar): este assert
+  // reprova com `'01,99' !== '99,01'`. Os outros 400 continuam passando, porque
+  // nenhum documento dos dois books cruza o século — é defeito LATENTE, e o
+  // custo dele é a forma canônica que a `fn_periodo_canonico` do Postgres
+  // espera do outro lado deixar de ser a mesma.
+  assert.deepEqual(parsePeriodo('balanco comparativo 1999 2001'),
+    { tipo: 'multi', referencia: '99,01' });
+
+  // E o caso que produção realmente vê não muda: século único, ordem idêntica
+  // pelos dois critérios. Este par existe para que a correção não passe a
+  // reprovar o comum ao consertar o raro.
+  assert.deepEqual(parsePeriodo('dre 2023 2024 2025'),
+    { tipo: 'multi', referencia: '23,24,25' });
+  assert.deepEqual(parsePeriodo('dre 2025 2023 2024'),
+    { tipo: 'multi', referencia: '23,24,25' });
+});
+
 test('parsePeriodo: prefixo de ORDENAÇÃO do arquivo não é ano (bug real do teste v24)', () => {
   // "13_Balancete_..._2025.pdf" saía como período "multi 13,25" — o "13" do
   // prefixo virava 2013. Além de exibir errado, fragmentava a tabela `periodo`
@@ -400,5 +423,43 @@ test('nome de scanner e de anexo de e-mail não produzem período inventado', ()
     const r = classifyByFilename(nome);
     assert.equal(r.periodo, null, `${nome} não pode ter período: ${JSON.stringify(r.periodo)}`);
     assert.equal(r.tipo_taxonomia, null, `${nome} não pode ter tipo`);
+  }
+});
+
+test('o limiar do fallback vem do DIAL, e mexer no dial move a decisão', () => {
+  // A `0127` tirou o número fixo do lado do Postgres (`fn_dial_permite_auto`),
+  // e o cabeçalho dela mesma denunciou a metade que sobrou: *"o 0,70 mora em
+  // DOIS lugares"* — o default do SQL e o `THRESHOLD_AUTO` daqui. Enquanto o
+  // n8n decidia com 0,70 fixo, subir o dial para 0,85 fazia o BANCO abrir
+  // `classificacao_pendente` para todo documento entre 0,70 e 0,85 que o n8n
+  // nunca mandou a IA ler — o dial virava um botão que piora o serviço.
+  //
+  // MEDIDO, com o limiar voltando a ser constante (`confianca < THRESHOLD_AUTO`):
+  // os três primeiros asserts abaixo reprovam, porque a decisão para de
+  // responder ao dial. Os demais testes do arquivo continuam passando, que é o
+  // que torna esta divergência invisível sem este bloco.
+
+  // conf = 0,75 (tipo 0,6 + período fraco 0,05 + assinado 0,1).
+  const nome = 'Balanco_Patrimonial_2025_assinado.pdf';
+  assert.equal(classifyByFilename(nome).confianca, 0.75);
+
+  // Dial FROUXO (a queda): 0,75 passa, a IA não é chamada.
+  assert.equal(classifyByFilename(nome, 0.70).precisa_fallback_ia, false);
+  // Dial APERTADO: a mesma confiança passa a exigir a leitura por conteúdo.
+  assert.equal(classifyByFilename(nome, 0.85).precisa_fallback_ia, true);
+  // E até a classificação forte (conf 0,9) cede a um dial de 0,95.
+  assert.equal(classifyByFilename('Balanco_12M25.pdf', 0.95).precisa_fallback_ia, true);
+
+  // A DECISÃO DECLARA CONTRA O QUE FOI TOMADA. Sem isto, "não precisou de
+  // fallback" é indistinguível de "o limiar estava frouxo" — e a pendência que
+  // o banco abre do outro lado cita o limiar DELE.
+  assert.equal(classifyByFilename(nome, 0.85).limiar_aplicado, 0.85);
+
+  // A QUEDA COBRE O BANCO SEM A LINHA DO DIAL, e nunca cai em zero: limiar zero
+  // faria TODO documento passar sem a IA ler nenhum, que é a falha silenciosa
+  // mais cara possível aqui. Todo valor inválido cai em 0,70.
+  for (const invalido of [undefined, null, 0, -1, 1.5, NaN, '', 'x']) {
+    assert.equal(classifyByFilename(nome, invalido).limiar_aplicado, 0.70,
+      `limiar inválido ${JSON.stringify(invalido)} tinha de cair na queda 0,70`);
   }
 });

@@ -275,6 +275,50 @@ test('Classificar Nome: objeto único, classifica o caso real e PRESERVA o biná
   assert.equal(dre.json.precisa_fallback_ia, false, 'nome completo → alta confiança → direto');
 });
 
+test('Classificar Nome: o limiar do fallback vem do DIAL, e o nó obedece', async () => {
+  // O `Upsert Caso` passou a devolver `limiar_auto_clear` do estágio
+  // `classificacao_doc_checklist` na MESMA consulta que cria o caso, e o
+  // `Listar Arquivos` carrega o número em cada item. Este teste roda os NÓS DE
+  // VERDADE — é o que separa "a lib obedece ao dial" de "o WORKFLOW obedece ao
+  // dial", e é a segunda metade que roda em produção.
+  //
+  // Sem ele, o espelho inline poderia voltar ao 0.7 fixo com a lib corrigida e a
+  // suíte continuaria verde: o `espelho-inline` não consegue extrair a
+  // classificação inline (são statements soltos, não uma função nomeada), então
+  // esta é a ÚNICA guarda que liga as duas pontas aqui.
+  //
+  // A DIREÇÃO DEMONSTRADA AQUI é a do dial FROUXO, porque os dois arquivos
+  // simulados caem em 0,65 e 1,0 e não há confiança intermediária para apertar
+  // contra. A direção apertada — a que importa, porque é a que manda a IA ler —
+  // está trancada no `classifier.test.mjs` (dial 0,85 e 0,95 sobre 0,75 e 0,9).
+  const comDial = (limiar) => ({ json: { caso_id: 'caso-uuid-1', limiar_classificacao: limiar } });
+  const classificarCom = async (upsert, idx) => {
+    const refs = { ...REFS_BASE, 'Upsert Caso (Postgres)': upsert };
+    const lote = await run('Listar Arquivos', { item: upsert, items: [upsert], refs });
+    return run('Classificar Nome', { item: lote[idx], refs, itemIndex: idx, binaryStore: lote });
+  };
+
+  // BALANÇO ACUMULADO 2025 → confiança 0,65 (tipo 0,6 + ano isolado, sinal fraco).
+  // Na queda de 0,70 ela NÃO basta, e a IA é chamada.
+  const semDial = await classificarCom(comDial(null), 0);
+  assert.equal(semDial.json.confianca, 0.65);
+  assert.equal(semDial.json.limiar_aplicado, 0.7, 'banco sem a linha do dial cai na queda 0,70');
+  assert.equal(semDial.json.precisa_fallback_ia, true);
+
+  // MESMO ARQUIVO, dial afrouxado para 0,60: a mesma confiança passa a bastar e
+  // a chamada de IA deixa de acontecer. É o dial mandando, medido no nó.
+  const frouxo = await classificarCom(comDial(0.60), 0);
+  assert.equal(frouxo.json.confianca, 0.65, 'a confiança não muda — quem muda é o limiar');
+  assert.equal(frouxo.json.limiar_aplicado, 0.6, 'o nó DECLARA contra o que decidiu');
+  assert.equal(frouxo.json.precisa_fallback_ia, false, 'dial 0,60 < confiança 0,65 → dispensa a IA');
+
+  // Limiar inválido nunca vira zero: zero faria TODO documento passar sem a IA
+  // ler nenhum, que é a falha silenciosa mais cara possível aqui.
+  const zerado = await classificarCom(comDial(0), 0);
+  assert.equal(zerado.json.limiar_aplicado, 0.7, 'limiar 0 é inválido e cai na queda');
+  assert.equal(zerado.json.precisa_fallback_ia, true);
+});
+
 test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não do campo .data direto)', async () => {
   // Bug real (2026-07-20): ler binary.data.data direto funciona só por acaso
   // no modo de binário em memória do N8N; no modo filesystem/S3 esse campo

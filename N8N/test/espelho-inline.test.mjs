@@ -276,7 +276,21 @@ const TABELA = [
     projLib: (r) => (r ? r.codigo : null),
     casos: [['balanco patrimonial 2025'], ['dre 2025'], ['mapa de divida'], ['arquivo qualquer']] },
   { nome: 'parsePeriodo', lib: parsePeriodo,
-    casos: [['balanco 12m25'], ['dre 1t25'], ['fat l24m'], ['x 2023x2024x2025'], ['sem periodo']] },
+    // O CRUZAMENTO DE SÉCULO ENTROU AQUI PORQUE A GUARDA JÁ DEIXOU PASSAR UMA
+    // DIVERGÊNCIA REAL. A lib foi corrigida para ordenar o ano de QUATRO dígitos
+    // antes de truncar (1999/2001 saíam como "01,99"), e o espelho inline em
+    // `build-workflow.mjs` ficou com o `.sort()` antigo. Este espelho CONFERE
+    // `parsePeriodo` desde sempre — e passou verde, porque nenhum dos cinco
+    // casos tinha dois anos de séculos diferentes. Guarda que roda e não acha
+    // tem a mesma aparência de guarda que não CONSEGUE achar
+    // (`.claude/memory/estagio-desligado-parece-limpo.md`), e o que separa as
+    // duas é a lista de casos exercitar o ramo que diverge.
+    //
+    // MEDIDO: com o espelho inline no `.sort()` antigo e a lib corrigida, este
+    // caso reprova nomeando `parsePeriodo`. Sem ele, os outros cinco passam e a
+    // divergência viaja para produção.
+    casos: [['balanco 12m25'], ['dre 1t25'], ['fat l24m'], ['x 2023x2024x2025'],
+      ['balanco comparativo 1999 2001'], ['dre 2025 2023 2024'], ['sem periodo']] },
   { nome: 'parseEntidade', lib: parseEntidade,
     casos: [['balanco vertentes metalurgica 2025', ALIASES], ['relatorio auditor independente', ALIASES]] },
 

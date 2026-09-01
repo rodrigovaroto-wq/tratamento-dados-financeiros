@@ -330,8 +330,17 @@ export function ehLinhaDeConta(linha) {
   // linha real do book, e o comentário evita que alguém "melhore" tirando um.
   const ruido = [
     /^p[áa]gina\b/i,                       // "Página 1"
-    /^cnpj\b|\bcnpj\s*[\d.]/i,             // "CNPJ 44.555.667/0001-59"
-    /^cpf\b|\bcpf\s*[\d.]/i,               // assinatura
+    // Os grupos NÃO são estilo: `|` tem a MENOR precedência de todo o regex, e
+    // `^` liga só na alternativa em que aparece. Sem o grupo, `^cnpj\b|\bcnpj…`
+    // se lê `(^cnpj\b)|(\bcnpj…)` — que por acaso É o que se quer aqui, mas
+    // ninguém consegue afirmar isso lendo, e a próxima pessoa que acrescentar
+    // uma terceira alternativa vai herdar a âncora sem perceber. Explicitar o
+    // agrupamento trava a leitura no que o código já faz. É a mesma correção que
+    // a `fn_documento_preliminar` da 0151 documenta do lado do Postgres, onde a
+    // precedência de `~` sobre `||` fazia a função devolver TEXTO em vez de
+    // booleano — lá o descuido custou uma função quebrada, aqui ainda não custou.
+    /(?:^cnpj\b)|(?:\bcnpj\s*[\d.])/i,     // "CNPJ 44.555.667/0001-59"
+    /(?:^cpf\b)|(?:\bcpf\s*[\d.])/i,       // assinatura
     /\bcrc\s*\d|\bcrc\s*[a-z]{2}/i,        // "CRC 1MG-198.442/O-7"
     /^\(?valores expressos/i,              // "(Valores expressos em milhares…)"
     /^exerc[íi]cios? encerrados?/i,        // "Exercícios encerrados em 31 de dezembro…"
