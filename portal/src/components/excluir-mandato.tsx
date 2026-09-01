@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { excluirCaso } from "@/app/casos/[id]/actions";
 
 // O BOTÃO DE EXCLUIR O MANDATO, com a confirmação que o dono pediu.
@@ -23,6 +23,25 @@ import { excluirCaso } from "@/app/casos/[id]/actions";
 export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string }) {
   const [aberto, setAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const cancelarRef = useRef<HTMLButtonElement>(null);
+
+  // ESC fecha o diálogo mesmo com o foco fora dele. O `onKeyDown` no overlay
+  // NUNCA disparava: ao abrir, o foco continuava no botão "Excluir" que abriu
+  // o diálogo (irmão do overlay, não ancestral dele), e keydown só propaga por
+  // ancestrais — o overlay nunca recebia o evento. Por isso o listener vai no
+  // `document`, dentro do efeito que só existe enquanto `aberto` é verdadeiro
+  // (cleanup remove ao fechar, senão cada abertura empilha mais um listener).
+  // Movemos também o foco para dentro do diálogo (autoFocus em "Cancelar"),
+  // que é o passo que faltava para navegação só por teclado: sem ele o Tab
+  // ainda começava fora do diálogo.
+  useEffect(() => {
+    if (!aberto) return;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !enviando) setAberto(false);
+    };
+    document.addEventListener("keydown", aoTeclar);
+    return () => document.removeEventListener("keydown", aoTeclar);
+  }, [aberto, enviando]);
 
   return (
     <>
@@ -45,10 +64,6 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
           // Clicar fora fecha — mas só no fundo, não no cartão (senão qualquer
           // clique dentro do diálogo o fecharia no meio da leitura).
           onClick={(e) => { if (e.target === e.currentTarget && !enviando) setAberto(false); }}
-          // Equivalente por teclado do clique no fundo: ESC fecha o diálogo.
-          // Sem isto quem navega só por teclado não tinha como cancelar sem
-          // tabular até o botão "Cancelar" (sonar typescript:S1082).
-          onKeyDown={(e) => { if (e.key === "Escape" && !enviando) setAberto(false); }}
         >
           <div className="w-full max-w-md rounded-lg border border-tinta-200 bg-folha p-5 shadow-xl">
             <h2 id="titulo-excluir" className="text-base font-semibold text-tinta-900">
@@ -68,6 +83,8 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
+                ref={cancelarRef}
+                autoFocus
                 disabled={enviando}
                 onClick={() => setAberto(false)}
                 className="rounded border border-tinta-200 bg-folha px-3 py-1.5 text-sm font-medium text-tinta-600 hover:bg-tinta-50 disabled:opacity-50"

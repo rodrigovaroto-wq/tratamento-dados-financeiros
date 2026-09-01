@@ -27,7 +27,7 @@
 // aqui faria o arquivo mudar sozinho e um diff de bytes acusar mudança onde não
 // houve.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildExportWorkbook, finalizarBufferDoExport, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
@@ -53,10 +53,35 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CASO
 // plantado ANTES no `PATH` (variável de ambiente, não arquivo — nada que a
 // validação do `caso_id` acima alcance) rodaria no lugar do binário real,
 // com o mesmo acesso ao banco que este script já tem.
-const DIRS_PSQL_SEGUROS = "/usr/bin:/bin:/usr/local/bin";
+//
+// A lista fixa NÃO cobre todo layout legítimo: falta o Homebrew
+// (`/opt/homebrew/bin`) e falta `/usr/lib/postgresql/16/bin`, que é o próprio
+// layout que o `CLAUDE.md` deste repositório manda usar para subir o Postgres
+// de teste. Isso por si só falharia alto (ENOENT) e seria inofensivo — o caso
+// ruim é o SILENCIOSO: numa máquina onde o dev tem os dois `psql` instalados
+// (o do sistema em `/usr/bin` e um mais novo só em `/usr/lib/postgresql/16/bin`),
+// a lista fixa acerta o mais VELHO sem avisar, e este script gera o artefato
+// de conformidade que o dono usa para decidir se um bug é de ambiente ou de
+// lógica de planilha. `PSQL_DIRS_SEGUROS` permite um override explícito
+// quando a lista padrão não serve, e o binário resolvido é sempre impresso —
+// nunca em silêncio.
+const DIRS_PSQL_SEGUROS = process.env.PSQL_DIRS_SEGUROS
+  ?? "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/lib/postgresql/16/bin";
+
+function psqlResolvido(): string {
+  for (const dir of DIRS_PSQL_SEGUROS.split(":")) {
+    const candidato = join(dir, "psql");
+    if (existsSync(candidato)) return candidato;
+  }
+  // Nenhum achado: deixa o `execFileSync` abaixo falhar com ENOENT, que já é o
+  // caso "falha alto" desejado — não há binário a anunciar.
+  return "psql";
+}
+const PSQL_BIN = psqlResolvido();
+console.error(`[gerar-export-do-banco] psql resolvido: ${PSQL_BIN}`);
 
 function q<T>(sql: string): T[] {
-  const out = execFileSync("psql", ["-d", DB, "-tAc",
+  const out = execFileSync(PSQL_BIN, ["-d", DB, "-tAc",
     `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`],
     { encoding: "utf8", env: { ...process.env, PATH: DIRS_PSQL_SEGUROS } });
   return JSON.parse(out.trim()) as T[];

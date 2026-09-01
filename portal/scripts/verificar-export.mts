@@ -3114,6 +3114,69 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   }
 }
 
+// ---- 38b: BASE DO MODELO — a coluna ordena pela ENTIDADE, não pela chave
+// composta inteira -----------------------------------------------------------
+// `colunasBase` (export-modelagem.ts) ordena `<entidade><CHAVE_SEP><período>`.
+// `CHAVE_SEP` é U+0000, que o Unicode Collation Algorithm trata como
+// "completely ignorable": `localeCompare` sobre a chave INTEIRA descarta o
+// separador da comparação, e "Alfa\0 2025" vs "Alfa S.A.\0 2024" comparam como
+// se fossem "Alfa 2025" vs "Alfa S.A. 2024" — a entidade mais longa (que tem a
+// mais curta como PREFIXO) pode vir antes dela, invertendo a ordem que
+// `.sort()` puro (ou um comparador por partes) produziria.
+//
+// O book-vertentes NÃO discrimina isto: as 14 entidades reais da fixture
+// ordenam igual pelos dois critérios, então os 713 verdes daquela suíte não
+// são evidência aqui — precisa de um par onde uma entidade é prefixo da
+// outra.
+{
+  const doc = (id: string, razaoSocial: string, ano: string): DocumentoParaExport => ({
+    id, tipo_taxonomia: "BALANCO", entidade: { razao_social: razaoSocial },
+    periodo: { tipo: "unico", referencia: ano },
+    documento_versao: [{ id: `${id}-v1`, nome_original: "BALANCO.pdf" }],
+  });
+  const campo = (id: string, docVersaoId: string): CampoExtraido => ({
+    id, documento_versao_id: docVersaoId, chave: "Ativo Circulante",
+    secao: "ATIVO", secao_canonica: "ativo_circulante", entidade_coluna: null,
+    periodo_coluna: null, valor_texto: null, valor_num: 100, unidade: "milhar",
+    confianca: 0.97, origem_pagina: 1, ordem: 1, status_aceite: "aceito",
+    aceito_por: "fixture", aceito_em: "2026-07-27T00:00:00Z",
+  } as CampoExtraido);
+
+  // "Alfa" é PREFIXO de "Alfa S.A." — é o par que discrimina os dois critérios
+  // (ver tabela medida na revisão: `.sort()` dá Alfa, Alfa S.A.; `localeCompare`
+  // sobre a chave inteira dá Alfa S.A., Alfa).
+  const documentos = [doc("d1", "Alfa", "2025"), doc("d2", "Alfa S.A.", "2024")];
+  const campos = [campo("c1", "d1-v1"), campo("c2", "d2-v1")];
+  const anuais = Array.from({ length: 11 }, (_, k) => ({ serie: "IPCA", ano: 2015 + k, meses: 12, retorno: 4 + k * 0.1 }));
+  const wb = buildExportWorkbook({
+    caso: { nome: "38b", produto: "reestruturacao" },
+    documentos, campos, macro: { anuais, expectativas: [] },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  let rBase = -1;
+  for (let r = 1; r <= mod.rowCount; r++) if (rotuloDe(r).startsWith("BASE DO MODELO")) { rBase = r; break; }
+  checar(rBase > 0, "(38b) a fixture mínima também gera o bloco BASE DO MODELO");
+  const cabecalhos: string[] = [];
+  if (rBase > 0) {
+    const cab = mod.getRow(rBase);
+    for (let c = 2; c <= cab.cellCount; c++) {
+      const v = cab.getCell(c).value;
+      if (v != null && String(v).trim() !== "") cabecalhos.push(String(v));
+    }
+  }
+  checar(cabecalhos.length === 2, "(38b) as duas colunas de entidade×período aparecem",
+    cabecalhos.join(" | "));
+  // A ordem CORRETA (por entidade, depois período) é "Alfa — 2025" antes de
+  // "Alfa S.A. — 2024" — é a ordem em que `.sort()` puro também colocaria,
+  // porque nenhuma das duas entidades tem acento.
+  checar(cabecalhos[0] === "Alfa — 2025" && cabecalhos[1] === "Alfa S.A. — 2024",
+    "(38b) a coluna ordena por ENTIDADE (Alfa antes de Alfa S.A.), não pela chave "
+    + "inteira comparada com o separador ignorado",
+    cabecalhos.join(" | "));
+}
+
 // ---- 39: ETAPA 5 — o seletor de inputs macro ------------------------------
 // "Permitir que o usuário escolha qual conjunto de inputs macroeconômicos será
 // utilizado… ao alterar a opção, toda a modelagem deve ser recalculada

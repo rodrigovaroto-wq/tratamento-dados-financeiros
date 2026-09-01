@@ -58,9 +58,16 @@ if (lista || regra) {
   const d = await buscar(filtro, 500);
   console.log(`${d.total} achado(s)${filtroParaLog ? ` [${filtroParaLog}]` : ""}\n`);
   for (const i of d.issues) {
-    const arq = i.component.split(":").slice(1).join(":");
-    console.log(`  [${i.rule}] ${arq}:${i.line ?? "?"}`);
-    console.log(`      ${i.message}`);
+    // `i.message`, `i.component` (via `arq`) e `i.rule` vêm da RESPOSTA HTTP do
+    // Sonar, não de argv — e mensagem de issue com quebra de linha é normal
+    // numa regra multi-linha (ex.: um bloco de código citado na descrição).
+    // Sem sanitizar, uma dessas quebras forja uma linha extra na saída
+    // indistinguível de um achado real — no único lugar que alguém lê para
+    // decidir o que corrigir (jssecurity:S5145, mesmo motivo do `filtro`
+    // acima, mas aqui a entrada é externa de verdade, não hipotética).
+    const arq = semQuebraDeLinha(i.component.split(":").slice(1).join(":"));
+    console.log(`  [${semQuebraDeLinha(i.rule)}] ${arq}:${i.line ?? "?"}`);
+    console.log(`      ${semQuebraDeLinha(i.message)}`);
   }
   if (d.total > d.issues.length) {
     console.log(`\n  … e mais ${d.total - d.issues.length} não listados (a página vai a 500).`);
@@ -73,7 +80,9 @@ if (lista || regra) {
     const vals = f.values.filter((v) => v.count > 0).slice(0, 15);
     if (!vals.length) continue;
     console.log(`== ${f.property}`);
-    for (const v of vals) console.log(`   ${String(v.count).padStart(5)}  ${v.val}`);
+    // `v.val` também vem da resposta do Sonar (nome de regra/severidade/linguagem
+    // no facet) — mesmo tratamento, mesmo motivo do bloco acima.
+    for (const v of vals) console.log(`   ${String(v.count).padStart(5)}  ${semQuebraDeLinha(v.val)}`);
     console.log();
   }
   console.log("Para ver os arquivos: --lista, --tipo=BUG, --regra=typescript:S2871");

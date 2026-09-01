@@ -758,10 +758,13 @@ export function normalizarEscala(
 
   return {
     campos: saida,
-    // localeCompare('pt-BR'): texto de leitura humana (nota de proveniência da
-    // célula, ver `escala.escalasEncontradas` em uso). `.sort()` puro ordena por
-    // unidade de código UTF-16 — sonar typescript:S2871.
-    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort((a, b) => a.localeCompare(b, "pt-BR")) },
+    // `c.unidade` é chave de enum validada contra `FATOR_ESCALA`
+    // (`unidade`|`milhar`|`milhao`), não texto humano — o rótulo lido por
+    // gente nasce depois, em `ROTULO_ESCALA[e]` (ver uso de
+    // `escala.escalasEncontradas`). Sem acento na chave, comparador de código
+    // basta e a ordem fica determinística sem depender de locale (sonar
+    // typescript:S2871).
+    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) },
   };
 }
 

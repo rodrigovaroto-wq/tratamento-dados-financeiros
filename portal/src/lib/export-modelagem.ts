@@ -227,10 +227,13 @@ function construirAbaMacroDados(
      anosExpDe: Map<string, number[]> } {
   const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-  // localeCompare('pt-BR'): `serie` é o nome da série macro escrito como rótulo
-  // de linha, lido por humano — `.sort()` puro ordena por código UTF-16 e erra
-  // acento (sonar typescript:S2871).
-  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  // `serie` é a CHAVE técnica do índice macro (IPCA, IGPM, SELIC, CDI... —
+  // domínio em `Supabase/migrations/0025_indices_macro.sql`), não o rótulo
+  // humano: o nome lido por gente vive em `nome` e chega à célula via
+  // `nomeDe.get(serie)`, depois desta ordenação. Nenhuma das chaves tem
+  // acento, então comparador de código é suficiente e a ordem fica
+  // determinística sem depender de locale (sonar typescript:S2871).
+  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   sheet.getColumn(1).width = 30;
   const cab = sheet.addRow(["Série (retorno anual %)", ...anos]);
@@ -296,9 +299,10 @@ function construirAbaMacroDados(
   const linhaExpDe = new Map<string, number>();
   const anosExpDe = new Map<string, number[]>();
   const expPorChave = new Map(macro.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
-  // localeCompare('pt-BR'): mesmo motivo de `series` acima — rótulo de linha
-  // lido por humano (sonar typescript:S2871).
-  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"))) {
+  // Mesmo motivo de `series` acima: `serie` é chave técnica sem acento, não
+  // rótulo humano — comparador de código, não `localeCompare` (sonar
+  // typescript:S2871).
+  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const row = sheet.addRow([serie]);
     linhaExpDe.set(serie, row.number);
     for (const ano of anosExp) {
@@ -870,14 +874,33 @@ export function construirAbaModelagem(
   // `escreverBaseLocal`) — nunca sobrescreve linha de modelo em silêncio.
   const LINHA_BASE_INICIO = 200;
   const colBaseRotulo = 1;
-  // localeCompare('pt-BR'): a chave é `<entidade><SEP><período>` e vira o
-  // cabeçalho de coluna escrito na aba ("<entidade> — <ano>", ver abaixo) — é
-  // texto para humano ler, não código técnico. `.sort()` puro ordena por
-  // código UTF-16 e erra acento no nome da entidade (sonar typescript:S2871).
+  // A chave é `<entidade><CHAVE_SEP><período>` e vira o cabeçalho de coluna
+  // escrito na aba ("<entidade> — <ano>", ver abaixo) — texto humano, então
+  // `localeCompare('pt-BR')` é certo para o CONTEÚDO (erra acento em `.sort()`
+  // puro, sonar typescript:S2871). Mas comparar a chave JUNTA é uma armadilha
+  // diferente: `CHAVE_SEP` é U+0000, que o Unicode Collation Algorithm marca
+  // "completely ignorable" — `localeCompare` o descarta da comparação, então
+  // "Acme\0 2023" e "Acme Brasil\0 2023" comparam como se fossem "Acme 2023" e
+  // "Acme Brasil 2023" (o espaço agora participa), e a entidade mais longa
+  // pode vir ANTES da mais curta que é seu prefixo — ordem diferente da que
+  // `.sort()` puro produziria com o mesmo NUL valendo 0. Por isso comparamos
+  // as PARTES, não a chave inteira: entidade primeiro, período depois — o
+  // separador nunca entra na comparação.
+  //
+  // Os endereços de coluna deste bloco NÃO são estáveis por contrato (mudar o
+  // nome de uma entidade pode deslocar toda coluna à direita dela). Isso é
+  // seguro porque nenhuma fórmula do modelo referencia coluna por posição
+  // aqui: todo consumo é `MATCH` contra a linha de cabeçalho (`buscaNaBase`,
+  // acima), e `colUltima` é sempre recalculado de `colunasBase.length`.
   const colunasBase = [...new Set(
     [...baseModelagem.values()].flatMap((porRotulo) =>
       [...porRotulo.values()].flatMap((porCol) => [...porCol.keys()])),
-  )].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  )].sort((a, b) => {
+    const [entidadeA, ...restoA] = a.split(CHAVE_SEP);
+    const [entidadeB, ...restoB] = b.split(CHAVE_SEP);
+    return entidadeA.localeCompare(entidadeB, "pt-BR")
+      || restoA.join(CHAVE_SEP).localeCompare(restoB.join(CHAVE_SEP), "pt-BR");
+  });
   const baseLocal: BaseLocal = {
     colRotulo: sheet.getColumn(colBaseRotulo).letter,
     colPrimeira: sheet.getColumn(colBaseRotulo + 1).letter,
@@ -912,11 +935,12 @@ export function construirAbaModelagem(
   let escreverSeletorMacro: () => void;
   if (macro && macroDados) {
     const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-    // localeCompare('pt-BR'): mesmo motivo de `series`/`colunasBase` acima —
-    // rótulo de linha no espelho local, lido por humano (sonar typescript:S2871).
-    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    // Mesmo motivo de `series` acima: `serie` é chave técnica do índice macro,
+    // sem acento — comparador de código, não `localeCompare` (sonar
+    // typescript:S2871).
+    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const anosFocus = [...new Set(macroDados.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
-    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const anualDe = new Map(macroDados.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
     const focusDe = new Map(macroDados.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
     const colHist = (i: number) => sheet.getColumn(2 + i).letter;

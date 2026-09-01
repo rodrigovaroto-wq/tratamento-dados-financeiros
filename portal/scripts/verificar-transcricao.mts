@@ -187,10 +187,15 @@ async function idaEVolta(wb: ExcelJS.Workbook, esperado = DOC) {
     // (é o que a convenção pt-BR desta planilha representa — nunca fração de
     // centavo), então qualquer diferença igual ou acima de 1 centavo já é a
     // extração errada, e nenhuma diferença menor pode existir por medição real.
-    // `===` entre float (sonar typescript:S1244) compararia bit a bit uma string
-    // convertida por `Number()` com um literal — hoje bate porque os dois lados
-    // resolvem para o mesmo double, mas é acidente de representação, não
-    // contrato: o assert não deve depender de que continue batendo por acaso.
+    // `===` entre float (sonar typescript:S1244) NÃO era acidente aqui:
+    // `Number("1234.56")` e o literal `1234.56` produzem o MESMO double por
+    // IEEE-754 — o `===` era determinístico e, nesse sentido, mais forte que a
+    // tolerância. A troca é por outro motivo: cala o S1244 sem perder poder de
+    // detecção (medido: o assert continua reprovando com o bug do `parseFloat`
+    // ligado, que erra por muito mais que meio centavo) e deixa de depender de
+    // que toda conversão futura passe pelo mesmo caminho de parsing — dois
+    // parsers de ponto flutuante diferentes, ambos corretos, podem arredondar
+    // o último bit de forma distinta sem que o valor extraído esteja errado.
     const p = porChave.get("Passivo Total");
     checar(Math.abs(Number(p?.valor_num) - 1234.56) < 0.005,
       "(2) \"1.234,56\" vale 1234,56 — não 1,234, que é o que parseFloat devolveria",

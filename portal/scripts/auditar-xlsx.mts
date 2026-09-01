@@ -389,11 +389,15 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
   // disco (Downloads, /tmp, uma exportação recém-gerada em outro lugar) — o
   // arquivo a auditar É QUALQUER exportação, de propósito, não um caminho
   // dentro do projeto. Não existe fronteira de privilégio sendo cruzada (quem
-  // roda o comando já poderia ler o arquivo por fora dele), então o que dá
-  // para validar de verdade é: o caminho resolve para um ARQUIVO regular que
-  // EXISTE e termina em `.xlsx` — o suficiente para recusar um `..`/symlink
-  // que aponte para algo que claramente não é a exportação a auditar, sem
-  // impedir o uso real da ferramenta.
+  // roda o comando já poderia ler o arquivo por fora dele).
+  //
+  // O QUE ISTO NÃO FAZ, para não prometer o que não cumpre: `resolve()`
+  // NORMALIZA `..`, não recusa; `statSync()` SEGUE symlink, não recusa. Não há
+  // checagem de travessia nem de link aqui. O que a checagem abaixo recusa de
+  // fato é só: extensão diferente de `.xlsx`, e caminho que não resolve para
+  // um arquivo regular existente — o bastante para pegar erro de digitação e
+  // arquivo inexistente, nada mais. Como não há fronteira de privilégio sendo
+  // cruzada (comentário acima), isso já é suficiente.
   const arqResolvido = resolve(arq);
   if (extname(arqResolvido).toLowerCase() !== ".xlsx") {
     console.error(`esperado um arquivo .xlsx: ${arq}`);
