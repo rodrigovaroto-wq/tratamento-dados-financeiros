@@ -430,20 +430,16 @@ export default function UploadForm({
 
       <div>
         <label className="mb-1 block text-sm font-medium text-tinta-600">Arquivos</label>
-        <div
+        <button
+          type="button"
+          // BOTÃO DE VERDADE, não `div` com `role="button"`. A versão anterior
+          // reimplementava na mão o que o elemento nativo já faz — foco, Enter,
+          // Espaço, anúncio do papel — e o Sonar cobra isso em `typescript:S6819`
+          // com razão: a reimplementação cobre os teclados que alguém lembrou, e
+          // o elemento nativo cobre os que ninguém lembrou (leitor de tela em
+          // modo de navegação, controle por voz, teclado de celular). Some junto
+          // o `onKeyDown` manual: Enter e Espaço passam a vir do navegador.
           onClick={() => inputRef.current?.click()}
-          // Equivalente por teclado do clique: Enter/Espaço abrem o seletor de
-          // arquivo, igual a um `<button>` de verdade. `role`+`tabIndex` fazem a
-          // div se anunciar e receber foco como um botão — sem isto quem navega
-          // por teclado não alcançava a ação (sonar typescript:S1082).
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
           onDragOver={(e) => {
             e.preventDefault();
             setArrastando(true);
@@ -454,20 +450,24 @@ export default function UploadForm({
             setArrastando(false);
             adicionarArquivos(e.dataTransfer.files);
           }}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed px-4 py-8 text-center text-sm transition ${
+          className={`flex w-full cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed px-4 py-8 text-center text-sm transition ${
             arrastando ? "border-tinta-500 bg-tinta-50" : "border-tinta-200"
           }`}
         >
           <span className="font-medium text-tinta-600">Arraste os arquivos aqui</span>
           <span className="text-tinta-500">ou clique para selecionar (PDF, imagens; vários de uma vez)</span>
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => adicionarArquivos(e.target.files)}
-          />
-        </div>
+        </button>
+        {/* O input fica FORA do botão: `<input>` dentro de `<button>` é HTML
+            inválido (conteúdo interativo aninhado), e o navegador pode reparar a
+            árvore movendo o input para fora do botão sozinho — o que quebraria o
+            `inputRef` de um jeito que só aparece em runtime. */}
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => adicionarArquivos(e.target.files)}
+        />
       </div>
 
       {arquivos.length > 0 && (

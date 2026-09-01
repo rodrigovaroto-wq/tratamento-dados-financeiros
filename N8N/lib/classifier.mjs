@@ -298,7 +298,7 @@ export function parseEntidade(textoNormalizado, aliases) {
 export function classifyByFilename(nomeOriginal, limiarDoDial) {
   // O limiar chega do dial (ver THRESHOLD_AUTO). Só número finito em (0,1] é
   // aceito: `null`, string vazia, NaN e 0 caem na queda, porque um limiar zero
-  // faria TODO documento passar sem a IA ler nenhum — o oposto silencioso do
+  // faria CADA documento passar sem a IA ler nenhum — o oposto silencioso do
   // que quem mexeu no dial quis.
   const n = Number(limiarDoDial);
   const limiar = Number.isFinite(n) && n > 0 && n <= 1 ? n : THRESHOLD_AUTO;

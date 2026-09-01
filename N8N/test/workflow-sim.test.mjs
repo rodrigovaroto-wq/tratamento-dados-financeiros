@@ -312,7 +312,7 @@ test('Classificar Nome: o limiar do fallback vem do DIAL, e o nó obedece', asyn
   assert.equal(frouxo.json.limiar_aplicado, 0.6, 'o nó DECLARA contra o que decidiu');
   assert.equal(frouxo.json.precisa_fallback_ia, false, 'dial 0,60 < confiança 0,65 → dispensa a IA');
 
-  // Limiar inválido nunca vira zero: zero faria TODO documento passar sem a IA
+  // Limiar inválido nunca vira zero: zero faria CADA documento passar sem a IA
   // ler nenhum, que é a falha silenciosa mais cara possível aqui.
   const zerado = await classificarCom(comDial(0), 0);
   assert.equal(zerado.json.limiar_aplicado, 0.7, 'limiar 0 é inválido e cai na queda');

@@ -518,7 +518,7 @@ function parseTipo(t){for(const a of ALIASES){for(const termo of a.termos){if(t.
 ${FONTE_PARSE_ENTIDADE}
 const item=$input.item.json;
 // MESMA queda da lib (lib/classifier.mjs): so numero finito em (0,1] manda; o
-// resto cai em 0.7 -- limiar zero faria TODO documento passar sem a IA ler
+// resto cai em 0.7 -- limiar zero faria CADA documento passar sem a IA ler
 // nenhum. Se as duas quedas divergirem, o espelho-inline reprova.
 // SEM CRASE NESTE BLOCO: ele mora dentro de um template literal, e crase aqui
 // quebra o jsCode -- ja aconteceu duas vezes (memoria backtick-quebra-jscode).

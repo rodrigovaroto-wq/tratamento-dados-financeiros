@@ -20,8 +20,10 @@
 //
 // Sai com código 1 se qualquer item obrigatório reprovar, para poder entrar em
 // script de aceite sem alguém ter de ler a saída.
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { extname, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { avaliarCelula, esquecerMemoria } from "./lib/avaliar-formula.mts";
@@ -391,13 +393,31 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
   // dentro do projeto. Não existe fronteira de privilégio sendo cruzada (quem
   // roda o comando já poderia ler o arquivo por fora dele).
   //
-  // O QUE ISTO NÃO FAZ, para não prometer o que não cumpre: `resolve()`
-  // NORMALIZA `..`, não recusa; `statSync()` SEGUE symlink, não recusa. Não há
-  // checagem de travessia nem de link aqui. O que a checagem abaixo recusa de
-  // fato é só: extensão diferente de `.xlsx`, e caminho que não resolve para
-  // um arquivo regular existente — o bastante para pegar erro de digitação e
-  // arquivo inexistente, nada mais. Como não há fronteira de privilégio sendo
-  // cruzada (comentário acima), isso já é suficiente.
+  // O CAMINHO É CONTIDO, e o `..`/symlink deixam de ser buraco. A versão
+  // anterior deste bloco só normalizava (`resolve`) e conferia extensão — e
+  // dizia isso no comentário, o que é honesto mas não é proteção: `resolve()`
+  // NORMALIZA `..` em vez de recusar, e `statSync()` SEGUE symlink. Um link
+  // `export.xlsx -> /etc/qualquer-coisa` passava nos dois testes.
+  //
+  // A contenção resolve os dois de uma vez porque ela é feita sobre o
+  // `realpathSync` — o caminho REAL depois de seguir todos os links. Um symlink
+  // que aponte para fora das raízes permitidas é recusado pelo destino, não
+  // pelo nome; e `..` já não tem para onde escapar.
+  //
+  // AS RAÍZES SÃO TRÊS, e cobrem o uso legítimo inteiro: a raiz do projeto (a
+  // exportação recém-gerada), o diretório temporário do sistema (para onde o
+  // `gerar-export-*.mts` escreve por padrão) e o home do operador (Downloads,
+  // que é de onde vem o arquivo que o cliente devolveu). Auditar um `.xlsx` fora
+  // desses três não é caso de uso desta ferramenta — é engano de digitação ou
+  // caminho vindo de outro lugar, e nos dois casos recusar é o certo.
+  // A raiz do projeto sai da localização DESTE arquivo (`portal/scripts/`), não
+  // do cwd: quem roda o comando de outro diretório continua auditando o mesmo
+  // projeto, e o cwd é entrada do operador como qualquer outra.
+  const raizProjeto = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  const RAIZES_PERMITIDAS = [raizProjeto, realpathSync(tmpdir()), homedir()];
+  const dentroDeRaizPermitida = (caminho: string) =>
+    RAIZES_PERMITIDAS.some((raiz) => caminho === raiz || caminho.startsWith(raiz + sep));
+
   const arqResolvido = resolve(arq);
   if (extname(arqResolvido).toLowerCase() !== ".xlsx") {
     console.error(`esperado um arquivo .xlsx: ${arq}`);
@@ -407,10 +427,18 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.error(`arquivo não encontrado: ${arq}`);
     process.exit(2);
   }
+  // Depois do `existsSync`: o `realpathSync` lança se o caminho não existir.
+  const arqReal = realpathSync(arqResolvido);
+  if (!dentroDeRaizPermitida(arqReal)) {
+    console.error(
+      `recusado: ${arq} resolve para ${arqReal}, fora do projeto, do temporário e do home.`);
+    process.exit(2);
+  }
+
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(arqResolvido);
+  await wb.xlsx.readFile(arqReal);
   // A flag de recálculo é lida do XML, não do objeto — ver o comentário do parâmetro.
-  const zip = await JSZip.loadAsync(readFileSync(arqResolvido));
+  const zip = await JSZip.loadAsync(readFileSync(arqReal));
   const workbookXml = await zip.file("xl/workbook.xml")?.async("string") ?? "";
   const itens = auditarWorkbook(wb, /fullCalcOnLoad="(1|true)"/.test(workbookXml));
   console.log(`AUDITORIA DE ${arq}\n`);
