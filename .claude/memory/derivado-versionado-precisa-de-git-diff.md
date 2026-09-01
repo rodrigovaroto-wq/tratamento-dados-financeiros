@@ -7,7 +7,7 @@ metadata:
 
 Vários artefatos versionados aqui são **gerados**: os 4 JSON de workflow do n8n, as 3 fixtures do
 book (`fixture_book_vertentes.sql`, `book-vertentes.json`, `GABARITO.json`), a do canastra, e o
-`db/schema.sql`. Sem um portão que regere e compare, o commitado diverge da fonte em silêncio —
+`Supabase/schema.sql`. Sem um portão que regere e compare, o commitado diverge da fonte em silêncio —
 e **é o commitado que roda**: o JSON que o dono importa no n8n, a fixture que as suítes leem, o
 schema que alguém abre para entender o banco.
 

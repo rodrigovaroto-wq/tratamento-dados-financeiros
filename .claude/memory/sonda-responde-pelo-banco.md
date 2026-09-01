@@ -25,5 +25,5 @@ Duas ressalvas que a própria sonda publica:
 - o que ela garante sem dúvida é o contrapositivo, e é a parte útil: **objeto ausente é migration
   ausente.**
 
-`db/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova — é o que impede
+`Supabase/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova — é o que impede
 a sonda de envelhecer calada.

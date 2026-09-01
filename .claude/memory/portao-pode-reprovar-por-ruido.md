@@ -5,7 +5,7 @@ metadata:
   type: feedback
 ---
 
-Em 21/08 o `db/schema.sql` reprovou no CI com o schema **idêntico**. Causa: `pg_dump --no-owner`
+Em 21/08 o `Supabase/schema.sql` reprovou no CI com o schema **idêntico**. Causa: `pg_dump --no-owner`
 não cobre o DEFAULT ACL. `ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega o nome do
 superusuário que aplicou as migrations, e num container que só tem `root` a linha saía com
 `FOR ROLE root`.

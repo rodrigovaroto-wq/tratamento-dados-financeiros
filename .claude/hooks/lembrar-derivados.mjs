@@ -2,7 +2,7 @@
 // PostToolUse(Edit|Write) — lembra o que a edição acabou de tornar desatualizado.
 //
 // POR QUE. Vários artefatos versionados aqui são GERADOS, e é o commitado que roda: o JSON que o
-// dono importa no n8n, a fixture que as suítes leem, o `db/schema.sql` que alguém abre para
+// dono importa no n8n, a fixture que as suítes leem, o `Supabase/schema.sql` que alguém abre para
 // entender o banco. Editar a fonte sem regerar o derivado deixa os dois divergirem em silêncio —
 // aconteceu em 19/08, e a suíte de export reprovou comparando um export novo com um gabarito
 // novo a partir de uma fixture velha.
@@ -21,15 +21,15 @@ const regras = [
   {
     quando: /n8n\/(build-workflow[^/]*\.mjs|lib\/)/,
     aviso:
-      "Você tocou a fonte dos workflows. Rode os QUATRO geradores e confira `git diff --exit-code -- n8n/`: " +
-      "é o JSON commitado que o dono importa. E `node --test 'n8n/test/*.test.mjs'` — um backtick num " +
+      "Você tocou a fonte dos workflows. Rode os QUATRO geradores e confira `git diff --exit-code -- N8N/`: " +
+      "é o JSON commitado que o dono importa. E `node --test 'N8N/test/*.test.mjs'` — um backtick num " +
       "comentário do `jsCode` quebra o nó, e o gerador não parseia.",
   },
   {
     quando: /db\/migrations\/\d{4}_/,
     aviso:
       "Migration nova: (a) acrescente o requisito ao catálogo da sonda — o `run.sh` reprova se ele ficar " +
-      "para trás; (b) rode `db/test/run.sh` e commite o `db/schema.sql` que ele reescreve; (c) o topo do " +
+      "para trás; (b) rode `Supabase/test/run.sh` e commite o `Supabase/schema.sql` que ele reescreve; (c) o topo do " +
       "`ESTADO.md` tem de citar esta migration; (d) escrita ≠ aplicada — só a sonda responde por produção.",
   },
   {

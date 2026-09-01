@@ -17,7 +17,7 @@ rodada, ou está marcado **NÃO CONFERIDO** — que é uma informação, não um
 | Arquivo | O que entra |
 |---|---|
 | `ESTADO.md` (topo) | Última migration (com o defeito que ela corrige), o que foi aplicado no Supabase **e conferido pela sonda**, contagens das suítes remedidas nesta rodada |
-| `docs/MAPA_DE_EXECUCAO.md` | O que fechou, o que continua aberto, quem destrava |
+| `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` | O que fechou, o que continua aberto, quem destrava |
 | `.claude/memory/` | Só lição que passa no teste do `INSTRUCTIONS.md`. Erre para o lado de não salvar |
 | Descrição do PR | O que entrou, e o que o dono precisa fazer à mão |
 | `HANDOFF.md` | Só o cabeçalho, apontando para o PR desta rodada. O histórico é arquivo morto |

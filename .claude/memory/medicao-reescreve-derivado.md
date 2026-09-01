@@ -1,17 +1,17 @@
 ---
 name: medicao-reescreve-derivado
-description: o protocolo `cp` protege o arquivo que você alterou, não os DERIVADOS que a suíte reescreve por baixo — medir invariante de banco deixa o db/schema.sql com o defeito ligado
+description: o protocolo `cp` protege o arquivo que você alterou, não os DERIVADOS que a suíte reescreve por baixo — medir invariante de banco deixa o Supabase/schema.sql com o defeito ligado
 metadata:
   type: feedback
 ---
 
 O protocolo de medir um invariante não-vazio (copiar para o scratchpad, desligar a
 correção, rodar a suíte, restaurar com `cp`) tem um buraco que só aparece no
-banco: **`db/test/run.sh` REESCREVE `db/schema.sql`** a partir do banco que ele
+banco: **`Supabase/test/run.sh` REESCREVE `Supabase/schema.sql`** a partir do banco que ele
 monta. Restaurar a migration não restaura o schema.
 
 Aconteceu em 31/08, na `0156`. A medição desligou o carimbo de `fechado_em`,
-rodou o `run.sh` — que regravou o `db/schema.sql` **sem** o carimbo —, e o `cp`
+rodou o `run.sh` — que regravou o `Supabase/schema.sql` **sem** o carimbo —, e o `cp`
 devolveu só a migration. O commit levou o schema da rodada com o defeito ligado,
 e o CI reprovou no passo "O schema materializado bate com as migrations",
 mostrando exatamente as três linhas que faltavam.
@@ -27,7 +27,7 @@ Os derivados que uma suíte reescreve neste repositório:
 
 | Suíte | Reescreve |
 |---|---|
-| `db/test/run.sh` | `db/schema.sql` |
+| `Supabase/test/run.sh` | `Supabase/schema.sql` |
 | os quatro `build-workflow*.mjs` | os 4 JSON de workflow |
 | `gerar_fixture.py` / `gerar.py` | as 3 fixtures do book e o `GABARITO.json` |
 

@@ -84,7 +84,7 @@
    "name": "Linha pendente de aceite",
    "kind": "custom",
    "refersTo": "chip",
-   "description": "O componente assinatura do produto. Linha extraída que ainda não foi aceita nunca some e nunca vira fato: âmbar + itálico + a palavra. Princípio inegociável de f0/07_output_spec.md.",
+   "description": "O componente assinatura do produto. Linha extraída que ainda não foi aceita nunca some e nunca vira fato: âmbar + itálico + a palavra. Princípio inegociável de Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md.",
    "html": "<table class=\"ds-tabela\"><tr><td>Duplicatas a Receber</td><td class=\"ds-valor\">19.774.031,00</td><td><span class=\"ds-chip ds-chip-ok\">aceita</span></td></tr><tr class=\"ds-pendente\"><td>Provisão para Férias</td><td class=\"ds-valor\">1.203.744,00</td><td><span class=\"ds-chip ds-chip-alerta\">pendente de aceite</span></td></tr></table>",
    "css": ".ds-tabela { width:100%; border-collapse:collapse; font-family:'Inter Tight',system-ui,sans-serif; font-size:14px; } .ds-tabela td { padding:8px 12px; border-top:1px solid var(--color-tinta-200,#d2cdc1); } .ds-valor { text-align:right; font-family:'JetBrains Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; } .ds-pendente { font-style:italic; color:var(--color-alerta-900,#573d14); } .ds-pendente .ds-chip { font-style:normal; } .ds-chip { display:inline-flex; border-radius:9999px; padding:2px 8px; font-size:12px; font-weight:500; } .ds-chip-ok { background:var(--color-ok-100,#dae7db); color:var(--color-ok-800,#315432); } .ds-chip-alerta { background:var(--color-alerta-100,#efe4d2); color:var(--color-alerta-800,#6b4c19); }"
   }

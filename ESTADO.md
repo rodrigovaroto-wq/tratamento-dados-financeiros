@@ -2,25 +2,25 @@
 
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
-lidas para retomar. E `docs/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `docs/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
+lidas para retomar. E `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
 critério de pronto de cada bloco — é o arquivo para abrir antes de escolher o que fazer na sessão.
 
 > **Por que os dois são arquivos separados.** O cabeçalho do `HANDOFF.md` já passou 17 PRs congelado
 > em "PR #70, migrations até `0034`", e mandava quem chegava começar errado. A causa não é descuido:
 > é que a parte que muda TODA rodada morava no mesmo arquivo das partes que nunca mudam, e um
 > arquivo que quase nunca se edita não convida a editar nada. Aqui só há o que muda — e o
-> `db/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
+> `Supabase/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
 
 ## Onde está
 
 | | |
 |---|---|
-| **Última migration** | `db/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `db/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
+| **Última migration** | `Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `Supabase/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
 | **Aplicadas no Supabase** | **até a `0150`**, conferida pela sonda em 27/08 na sessão 72: `fn_instalacao_conferir()` devolveu **41 de 41 requisitos presentes** e `instalacao_cobertura` disse `0150`. **A `0151` desta sessão NÃO está aplicada** — a sessão não tem conexão com o banco de produção, e escrever aqui que está seria o defeito que a `0133` cobrou em 21/08. Antes de afirmar qualquer coisa sobre o banco, rode a sonda. Histórico: as `0147`/`0148`/`0149` foram aplicadas em 26/08 e conferidas por md5, não declaradas. |
-| **Schema materializado** | `db/schema.sql` — gerado pelo `db/test/run.sh`, conferido pelo CI |
+| **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 31/08 (sessão 77), todas verdes: n8n **399** · export **713** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**101 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** · régua da cobertura sobre TEXTO DE PRODUÇÃO (**exata nos 20 documentos capturados**) |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
-| **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `n8n/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node n8n/build-workflow.mjs` |
+| **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `N8N/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node N8N/build-workflow.mjs` |
 
 ## A SESSÃO 77 (31/08, madrugada) — a régua contava 258 onde o documento tem 99, e o portão não podia ver
 
@@ -34,7 +34,7 @@ A sessão 76 pedia capturar o texto do nó `Extrair Texto` no navegador. **Não 
 n8n serve o dado da execução já salva (`get_workflow_execution`, `includeData: true`,
 `nodeNames: ["Extrair Texto"]`). Vieram **20 dos 38** documentos da execução **7276** — a rodada
 do Canastra de 31/08 20:25 —, agora versionados com procedência em
-`test-data/capturas/2026-08-31-texto-extraido-n8n/`. Nada de cota consumida.
+`Dados de Teste/capturas/2026-08-31-texto-extraido-n8n/`. Nada de cota consumida.
 
 | De onde vem o texto do `17_Livro_Razao` | régua (`linhasDeConta`) |
 |---|---|
@@ -59,7 +59,7 @@ larga fragmenta — no Canastra, quatro: `15`, `16`, `17` e `20`.
 
 ### A correção, e o número que ela moveu
 
-`juntarFragmentosDeLinha` (`n8n/lib/cobertura.mjs`) emenda os fragmentos antes de contar. O sinal
+`juntarFragmentosDeLinha` (`N8N/lib/cobertura.mjs`) emenda os fragmentos antes de contar. O sinal
 é o **espaço no fim** do fragmento que não fecha a linha visual — medido nos 20 documentos
 capturados, **0% de linhas com essa marca nos treze que a régua já acertava, 44% a 63% nos quatro
 que ela errava**. Presença contra ausência, não limiar. Um teto de 4 fragmentos existe para a
@@ -147,7 +147,7 @@ final é a próxima rodada do araucária, que agora tem uma régua honesta esper
    deve zerar as 23 pendências. **Se alguma sobrar, aí sim é sub-extração real** — e o instrumento
    de blocos da `0156`, que já funciona, dirá se é teto, bloco perdido ou leitura parcial.
 2. **Capturar os 38 documentos** do `Extrair Texto` da próxima rodada e substituir
-   `test-data/capturas/2026-08-31-texto-extraido-n8n/textos.json`. Enquanto forem 20, o portão diz
+   `Dados de Teste/capturas/2026-08-31-texto-extraido-n8n/textos.json`. Enquanto forem 20, o portão diz
    em voz alta que 18 não estão medidos. **Dois deles merecem atenção quando a captura chegar:**
    sobre o texto do gerador, o `21_Mutuos` (3 → 2) e o `25_Situacao_Fiscal` (10 → 7) são os únicos
    documentos em que a régua conta A MENOS — a direção perigosa. Pode ser artefato da entrada
@@ -247,19 +247,19 @@ inteiro. Grave em `/tmp/texto-n8n-17.txt`.
 Repita para o `20_Mapa_de_Divida_Canastra_Industria_2025.pdf` → `/tmp/texto-n8n-20.txt`.
 
 **1.2 — Rode a régua sobre ele e compare com o extrator local.** Este script faz os dois lados de
-uma vez (crie como `portal/scripts/_diag.mts`, e APAGUE depois — é descartável):
+uma vez (crie como `Vercel/scripts/_diag.mts`, e APAGUE depois — é descartável):
 
 ```ts
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { linhasDeConta, linhasComNumero } from "../../n8n/lib/cobertura.mjs";
+import { linhasDeConta, linhasComNumero } from "../../N8N/lib/cobertura.mjs";
 const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse");   // cd portal && npm i --no-save pdf-parse
+const { PDFParse } = require("pdf-parse");   // cd Vercel && npm i --no-save pdf-parse
 
 for (const [n, pdf] of [["17", "17_Livro_Razao_Fornecedores_Canastra_Industria_12M25"],
                         ["20", "20_Mapa_de_Divida_Canastra_Industria_2025"]]) {
   const doN8n = readFileSync(`/tmp/texto-n8n-${n}.txt`, "utf8");
-  const p = new PDFParse({ data: readFileSync(`test-data/book-canastra/pdf/${pdf}.pdf`) });
+  const p = new PDFParse({ data: readFileSync(`Dados de Teste/book-canastra/pdf/${pdf}.pdf`) });
   const doLocal = String((await p.getText()).text ?? "");
   console.log(`=== ${pdf}`);
   for (const [rot, t] of [["n8n (PRODUÇÃO)", doN8n], ["pdf-parse (local)", doLocal]]) {
@@ -287,7 +287,7 @@ que decide a correção, e sem ele a correção vira chute.
 
 **1.4 — Corrija, e prefira (a):**
 
-- **(a) a régua normaliza antes de contar.** Uma função nova em `n8n/lib/cobertura.mjs` que junta os
+- **(a) a régua normaliza antes de contar.** Uma função nova em `N8N/lib/cobertura.mjs` que junta os
   fragmentos de uma mesma linha visual antes de `linhasDeConta` contar. Corrige todo documento,
   inclusive os que já rodaram, e é testável sem n8n. **Ela é embutida por `toString()` nos nós Code
   → precisa ser AUTO-CONTIDA (sem referência a constante do módulo) e entrar na tabela do
@@ -298,7 +298,7 @@ que decide a correção, e sem ele a correção vira chute.
 
 **1.5 — Meça não-vazio, como sempre:** desligue a normalização, rode, confirme que a suíte reprova,
 religue com `cp` (nunca `git checkout <arquivo>`), e **confira o `git status` depois** — o
-`db/test/run.sh` reescreve o `db/schema.sql` e a medição deixa ele sujo (custou um CI vermelho em
+`Supabase/test/run.sh` reescreve o `Supabase/schema.sql` e a medição deixa ele sujo (custou um CI vermelho em
 31/08).
 
 ### 2. Fazer o portão de calibração medir a entrada CERTA
@@ -341,7 +341,7 @@ copiado — ao que este projeto já aprendeu na marra.
 **O DIAGNÓSTICO, E ELE É O MESMO DEFEITO QUE O PROJETO INTEIRO PERSEGUE.** O repositório tinha 700
 KB de documento de estado (`HANDOFF.md` 460 KB, `ESTADO.md` 258 KB) e **nenhum arquivo carregado
 automaticamente**. Toda sessão começava com uma de duas escolhas ruins: ler tudo, ou não ler nada
-e redescobrir as regras do jeito difícil. E o `docs/PROMPT_CONTINUACAO.md`, que era o remédio,
+e redescobrir as regras do jeito difícil. E o `Arquitetura do Sistema/5 Prompts/PROMPT_CONTINUACAO.md`, que era o remédio,
 tinha virado o veneno: **em 31/08 ele ainda mandava trabalhar no PR #69** (117 PRs atrás), rodar
 suítes de 160/198/32/18, e **MONTAR O CI** — afirmando "Não existe CI" como fato, quando ele existe
 desde a sessão 20.
@@ -358,7 +358,7 @@ se edita.**
 | **`.claude/memory/`** | Índice de 35 linhas + 15 arquivos de tópico com as lições já pagas: o estágio desligado que parece limpo, o `git checkout` da sessão 19, o backtick que quebrou o `jsCode` duas vezes, as fixtures da 18 que nasceram vazias, o `MATERIALIZED` de 12.068 ms contra 1.790, o `multipleFiles` que a republicação perde, o RPD 500 |
 | **`.claude/agents/`** | Sete especialistas com o checklist do domínio DENTRO do arquivo, não espalhado por documentos que ninguém abre no meio de uma tarefa. Nível de modelo declarado, escolhido por despacho |
 | **`.claude/hooks/`** | Um `SessionStart` que responde em ~50 ms as quatro perguntas de abertura; um lembrete de derivado desatualizado; e **a única trava DURA do projeto** — o descarte de arquivo |
-| **`docs/prompts/`** | Cinco prompts, **nenhum guardando estado**. O `PROMPT_CONTINUACAO.md` vira a explicação de por que foi aposentado |
+| **`Arquitetura do Sistema/5 Prompts/`** | Cinco prompts, **nenhum guardando estado**. O `PROMPT_CONTINUACAO.md` vira a explicação de por que foi aposentado |
 
 ### A trava errou primeiro, e do jeito que este repositório já conhece
 
@@ -591,7 +591,7 @@ Cada um foi religado contra a função de verdade, e não contra um espelho:
 
 ### Contadores
 
-`db/test/run.sh` = **94 migrations**, mais o `desempate.test.sql` novo com **22
+`Supabase/test/run.sh` = **94 migrations**, mais o `desempate.test.sql` novo com **22
 asserts**. As demais suítes inalteradas.
 
 ## A SESSÃO 72 (27/08) — a rodada comparativa, e a premissa que somava o que não se soma
@@ -760,7 +760,7 @@ e 2.485 linhas); as **duas** execuções do smoke test não deixaram **nenhuma**
 ### O que mudou
 
 - **`pronto` passa a exigir o lote FECHADO** (`vereditoDoLote`, função pura em
-  `portal/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
+  `Vercel/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
   passada a carência de 2 min (a cauda do workflow são 3 nós, segundos), vira
   **falha nomeada** `lote_nao_fechou`. E "não sei" (a consulta falhou) **nunca**
   acusa um lote vivo — a mesma regra que o `comLinhas` já aplicava;
@@ -849,14 +849,14 @@ não foi republicado (última alteração 22/08), devolve `retryOnFail`,
 `maxTries`, `waitBetweenTries` e `onError` normalmente pela mesma leitura. A
 ausência no da ingestão é real.
 
-**O que entrou:** `n8n/conferir-publicado.mjs` — compara o nó INTEIRO (o que faz,
+**O que entrou:** `N8N/conferir-publicado.mjs` — compara o nó INTEIRO (o que faz,
 **como falha**, e **se está ligado**), mais as conexões, contra o JSON baixado do
 editor. Ignora de propósito o que é da instalação e não do repositório: o `id` e
 o `name` da credencial, o `path` do formulário (sobrescrevê-lo troca a URL
 pública do intake) e a `position`; e cobra o contrapositivo, que é o útil — **um
 nó HABILITADO com o `REPLACE` do repositório na credencial não vai rodar**.
 Rodado contra o vivo: **59 divergências**. Nove testes próprios
-(`n8n/test/conferir-publicado.test.mjs`), um por coisa que ele tem de ver e um
+(`N8N/test/conferir-publicado.test.mjs`), um por coisa que ele tem de ver e um
 por coisa que ele tem de ignorar — um conferidor com ponto cego é pior que
 nenhum, porque produz a frase "está igual" com autoridade.
 
@@ -928,12 +928,12 @@ guarda — a fórmula muda aqui, o espelho não muda, e o teste segue verde prov
 a conta errada. Foi exatamente o que aconteceu quando eu religuei o defeito para
 conferir: com o limite fixo de volta, o teste **passava**.
 
-As quatro contas foram para `portal/src/lib/espera-do-lote.ts` e a suíte
+As quatro contas foram para `Vercel/src/lib/espera-do-lote.ts` e a suíte
 `verificar-mensagem-de-falha.mts` passa a **chamar as funções de verdade** —
 com a cadência lida do próprio `workflow.e1-ingestao.json`. Religados um a um
 contra a função real: o limite fixo reprova com *"a tela desiste em 8.0 min e o
 silêncio legítimo da barreira vai a 25.3 min"*, e o teto de 90 reprova com *"a
-janela entrega 1.78x do previsto, e a tela promete 3x"*. No `n8n/test` ficou só
+janela entrega 1.78x do previsto, e a tela promete 3x"*. No `N8N/test` ficou só
 o que é do workflow: a cadência espelhada e o merge continuar sendo barreira.
 
 ### O orçamento do lote de 190 — cabe, e o penhasco está a um PDF de distância
@@ -951,7 +951,7 @@ documento não trouxer medida de conteúdo — um PDF escaneado, sem camada de
 texto, no meio dos 190. No lote de 38 essa diferença era inofensiva (US$ 0,29
 medido contra US$ 0,56 estimado, longe do teto); em 190 ela decide se a rodada
 acontece, e o lote é um **não-inteiro**: recusado, ele não roda em parte
-nenhuma. Os dois fatos viraram teste em `n8n/test/custo.test.mjs`.
+nenhuma. Os dois fatos viraram teste em `N8N/test/custo.test.mjs`.
 
 **Isto NÃO foi corrigido, e é decisão do dono, não conserto de engenharia.** A
 queda é doutrina declarada ("medir só os documentos que dá subestimaria o lote
@@ -962,7 +962,7 @@ quantos documentos cabem por vez.
 
 ### Contadores, todos remedidos nesta sessão
 
-`n8n/test` **364** (eram 361 medidos aqui no início — o `ESTADO.md` dizia 353,
+`N8N/test` **364** (eram 361 medidos aqui no início — o `ESTADO.md` dizia 353,
 estava atrás) · export **713** · transcrição **35** · premissas do realizado
 **32** · mensagem de falha + espera do lote **44** (eram 37) · e2e **46** ·
 banco **93 migrations do zero, os dois books** · variações **25 rodadas, 0
@@ -978,7 +978,7 @@ reescreve o JSON.
 2. **O `book-canastra` (38)** e depois o **`book-araucaria` (190)**, nessa
    ordem;
 3. Os itens de sempre: proteger o `main` (B6.1), o capítulo 10 no repositório
-   (B4.1) e os `[A CONFIRMAR]` do `docs/10`.
+   (B4.1) e os `[A CONFIRMAR]` do `Arquitetura do Sistema/2 Especificação/10`.
 
 ## A SESSÃO 69 (26/08) — new money, equity × haircut, e o cockpit das quatro alavancas
 
@@ -988,7 +988,7 @@ e PIK) e a separação **equity × haircut** — mais o item que as junta, traze
 tudo para o cockpit da aba `Premissas`. As três foram pedidas juntas, numa só
 instrução ("execute as fases 2, 3 e 4 antes de commitar qualquer coisa"), e
 só viram commit depois de fechado o ciclo de teste completo nas três — é por
-isso que aparecem numa sessão só. Sem tocar `n8n/` nem `db/`, mesma fronteira
+isso que aparecem numa sessão só. Sem tocar `N8N/` nem `Supabase/`, mesma fronteira
 E4 da 68.
 
 **FASE 2 — NEW MONEY.** Uma tranche NOVA na `ST Inv. & Debt`
@@ -1079,7 +1079,7 @@ commitado): **fechar a lacuna que a sessão 54 tinha deixado declarada** — o
 continuavam lendo a dívida do cenário ATIVO, um PISO conservador, não a
 réplica de verdade. **Essa lacuna está fechada.**
 
-**O que passou a existir**, sem tocar `n8n/` nem `db/` — é fronteira E4
+**O que passou a existir**, sem tocar `N8N/` nem `Supabase/` — é fronteira E4
 (export), o `.xlsx` é gerado do zero a cada exportação e não tem ida e volta
 com o Postgres:
 
@@ -1125,7 +1125,7 @@ ano, abrindo para 4,77M vs 3,82M no último) — prova a direção. Os dois vira
 o teste (50) de `verificar-export.mts`, que soma 13 asserts novos (650→663).
 Suíte de banco (93 migrations, os dois books) e e2e (46) reconferidas
 localmente depois da mudança — verdes, e nenhuma delas deveria ter se
-movido, porque nada nesta sessão tocou `db/` ou `n8n/`.
+movido, porque nada nesta sessão tocou `Supabase/` ou `N8N/`.
 
 **Uma rodada de revisão adversarial (8 ângulos independentes) achou 4
 defeitos reais, e o mais grave era exatamente do tipo que este projeto mais
@@ -1152,7 +1152,7 @@ desse achado**: gira o dial de verdade nas três posições e confere os dois
 CHECKS (`CEN_CHECK_REAL` e `CHECK_SOMBRA_WC`) em cada uma — é o que teria
 pego o defeito antes de qualquer suíte existente (663→688). Depois das
 correções: suíte de export 688/688, banco (93 migrations) 100%, e2e 46/46,
-e o loop de variações (`test/e2e/variacoes.mts`, 25 rodadas, cadeia real)
+e o loop de variações (`Verificação/variacoes.mts`, 25 rodadas, cadeia real)
 com **0 achados** — incluindo os cenários que tocam a dívida direto
 (`patrimonio_a_descoberto`, `caixa_negativo`, `divida_maior_que_o_ativo`,
 `sem_mapa_de_divida`).
@@ -1212,7 +1212,7 @@ presente e aplicada nos dois formatos, moeda herdada por linha, contexto religad
 transporte MCP **decodifica `\uXXXX` antes de o texto chegar ao `jsCode`**, então o range grava o
 caractere combinante CRU em vez do escape. Quatro tentativas, quatro vezes o mesmo. A equivalência
 foi MEDIDA e não suposta: **160 comparações das duas formas, 0 divergências.** Para bater por hash
-basta o dono importar o `n8n/workflow.e1-ingestao.json` pela tela — o que ele vai precisar fazer de
+basta o dono importar o `N8N/workflow.e1-ingestao.json` pela tela — o que ele vai precisar fazer de
 qualquer jeito (ver "o que ficou aberto").
 
 ### 3. A sonda de instalação passa a enxergar o CORPO da função (`0147`)
@@ -1318,9 +1318,9 @@ O `fato_material.test.sql` foi de 16 para 34 asserts.
    OpenAI de `montarCorpoIA` nunca o invoca), então a correção (`return jsonSchema.schema ||
    jsonSchema`) não muda nenhum payload que sai para a IA — só o comparador do teste, que era o que
    estava errado. Religado: `node --test test/workflow-sim.test.mjs` sobe de 90/92 para 91/92 sob
-   `IA_PROVEDOR=openai`, e os 353 testes de `n8n/test/` continuam verdes sob o Google (padrão),
+   `IA_PROVEDOR=openai`, e os 353 testes de `N8N/test/` continuam verdes sob o Google (padrão),
    confirmando que nada mudou na cadeia ativa. As 6 cópias-espelho de `schemaDoProvedor` embutidas em
-   `n8n/workflow.e1-ingestao.json` foram regeradas por `build-workflow.mjs` para acompanhar a lib.
+   `N8N/workflow.e1-ingestao.json` foram regeradas por `build-workflow.mjs` para acompanhar a lib.
    **O que ainda fica vermelho** — `a estimativa que o PORTAL mostra é coerente com a cadência REAL`
    — não é bug de teste: o `SEGUNDOS_POR_DOCUMENTO` do portal é calibrado para a cadência do provedor
    ATIVO (Google, 8s), e a OpenAI tem cadência própria (~33s/chamada) que o portal não representa. Já
@@ -1328,7 +1328,7 @@ O `fato_material.test.sql` foi de 16 para 34 asserts.
    roda o dialeto padrão —, mas decidir se o portal passa a ser provider-aware é decisão de produto,
    não conserto de teste;
 5. **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), o capítulo
-   10 no repositório (B4.1) e os `[A CONFIRMAR]` do `docs/10`.
+   10 no repositório (B4.1) e os `[A CONFIRMAR]` do `Arquitetura do Sistema/2 Especificação/10`.
 
 ## O PROVEDOR DE IA VIROU ESCOLHA, E O PADRÃO PASSOU A SER O GOOGLE (24/08)
 
@@ -1339,7 +1339,7 @@ OpenAI espalhada: a URL em dois módulos, o formato do corpo em três lugares (d
 minificado dentro do gerador), a leitura de `choices[0].message.content` em quatro, e o `usage` dela
 lido direto pelo medidor de custo. Trocar era, literalmente, achar todos.
 
-**O que passou a existir:** `n8n/lib/provedor.mjs`, onde cada provedor é um objeto de DADOS (URL,
+**O que passou a existir:** `N8N/lib/provedor.mjs`, onde cada provedor é um objeto de DADOS (URL,
 header de auth, nome da credencial no n8n, tpm/rpm) e as diferenças de dialeto viram sete funções.
 Dado puro, e não objeto com métodos, porque nó Code do n8n não importa módulo — o gerador escreve o
 provedor no nó como literal e embute as funções por `toString()`, o mesmo mecanismo de espelho que
@@ -1351,7 +1351,7 @@ OpenAI comporta. O que esta troca busca é leitura de DOCUMENTO, e é a API nati
 como parte (`inlineData`) e aceita `responseSchema`. Pagar a migração para ficar com o subconjunto do
 provedor antigo seria não levar a mercadoria.
 
-**O número, medido e não estimado** — `n8n/medir-custo-book.mjs` sobre os MESMOS 38 PDFs do
+**O número, medido e não estimado** — `N8N/medir-custo-book.mjs` sobre os MESMOS 38 PDFs do
 `book-canastra`, trocando só a tabela de preço:
 
 | | gpt-4o + gpt-4o-mini | Gemini 3.5 Flash-Lite |
@@ -1371,7 +1371,7 @@ do lote (0,218×). Fazer isso fazia o **lote homogêneo denso** — o caso que o
 barrar — passar a ser ACEITO, porque existem DUAS razões e elas divergem: o lote caiu 0,218× e o
 documento mais denso caiu 0,266×, já que o preço da saída caiu menos que o da entrada. Trocar
 "recusa lote que caberia" por "aceita lote que não cabe" é o v31 de novo. Vale a razão do denso.
-Detalhe e o custo declarado dessa escolha em `docs/CUSTO_IA.md`.
+Detalhe e o custo declarado dessa escolha em `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md`.
 
 **As suítes passaram a rodar nos DOIS dialetos.** Os testes de fronteira liam
 `body.messages[1].content` e `resp.choices[0]` direto — ou seja, testavam o workflow E o dialeto da
@@ -1388,14 +1388,14 @@ injetam a resposta no ponto em que a IA responde.
 2. **A credencial no n8n** com o nome que o JSON gerado espera: `Google AI (Gemini)`, header
    `x-goog-api-key`, valor sem prefixo (a chave NUNCA na URL como `?key=`, que apareceria no log);
 3. **Zero-retention / DPA com o Google** antes de dado real de cliente — acordo com um provedor não
-   vale para o outro (`docs/10`, `f0/02`);
+   vale para o outro (`Arquitetura do Sistema/2 Especificação/10`, `Arquitetura do Sistema/2 Especificação/f0/02`);
 4. **Reimportar o workflow.** A versão do orçamento subiu para `v4 (2026-08-24)` e ela vai na
    mensagem de recusa justamente para isto: um n8n com o JSON velho recusa lotes que o código novo
    aceita, com uma mensagem que parece a mesma.
 
 **Renomes que acompanharam** (o nome era metade do problema): `lib/openai.mjs` → `lib/ia.mjs` (o que
 mora nele é a taxonomia e o prompt, que não mudam com o provedor), `diagnosticar-openai.mjs` →
-`diagnosticar-ia.mjs`, `docs/CUSTO_OPENAI.md` → `docs/CUSTO_IA.md`, os nós `OpenAI Classificar`/
+`diagnosticar-ia.mjs`, `docs/CUSTO_OPENAI.md` → `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md`, os nós `OpenAI Classificar`/
 `OpenAI Extrair` → `IA Classificar`/`IA Extrair`, e o campo `openai_body` → `ia_body`. O valor
 `fonte='openai_conteudo'` **não** foi renomeado: ele está em linha de produção e em CHECK de
 migration (`0033`), e trocá-lo seria reescrever histórico para arrumar um nome.
@@ -1406,7 +1406,7 @@ migration (`0033`), e trocá-lo seria reescrever histórico para arrumar um nome
   AÇÃO (fixa, sem filhos) e *Mandatos* é LUGAR (abre e lista os **ativos**). O estado — recolhida e
   seção aberta — mora no navegador via `useSyncExternalStore`, para a barra não "piscar" no lugar
   errado a cada carga. Ela some na tela de abrir mandato, que é de tela cheia.
-- **A marca entrou** (`portal/public/logo-oria*.svg`): o original do dono com o fundo creme trocado
+- **A marca entrou** (`Vercel/public/logo-oria*.svg`): o original do dono com o fundo creme trocado
   por transparência, **sem redesenhar nada**. O SVG EMBUTE a arte original — vetorizar exigiria
   traçar, e traçar é aproximar. Sextante no cabeçalho e no favicon; a lockup completa no login,
   onde há altura para ela.
@@ -1448,7 +1448,7 @@ migration (`0033`), e trocá-lo seria reescrever histórico para arrumar um nome
   as duas passadas trazem o total inteiro.
 
 > **PARA OS TRÊS INDICADORES NOVOS ACENDEREM, DUAS COISAS PRECISAM ACONTECER FORA DO GIT:** aplicar
-> a `0115` no Supabase e **reimportar o `n8n/workflow.e1-ingestao.json`** (o n8n executa o JSON
+> a `0115` no Supabase e **reimportar o `N8N/workflow.e1-ingestao.json`** (o n8n executa o JSON
 > importado, e merge não reimporta). Sem a migration, a tela mostra um traço com a causa escrita —
 > não zero. Sem a reimportação, a tabela existe e fica vazia. O **tempo médio** não depende de
 > nenhuma das duas: é uma janela derivada — de
@@ -1473,7 +1473,7 @@ passo".
 
 **O risco que a sessão 50 fechou, e que estava anotado aqui como "não se resolve sozinho":** as
 listas de `documento` e `pendencia` do painel continuavam sujeitas ao teto de 1000 do PostgREST.
-Agora elas paginam (`portal/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
+Agora elas paginam (`Vercel/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
 painel avisa se o teto de segurança for atingido. **A sessão 51 terminou o serviço** — ver "O teto
 de 1000 deixou de existir para o portal".
 
@@ -1553,7 +1553,7 @@ A `0131` põe isso onde se executa:
   (`/casos`) trazia um aviso no topo que só aparecia quando faltava algo. **As duas telas saíram
   em 21/08 por decisão do dono** — ver "O PORTAL ENCOLHE". O catálogo e as duas funções ficaram
   inteiros no banco: quem confere agora é `select * from fn_instalacao_conferir()`, e a suíte
-  `db/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade.
+  `Supabase/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade.
 
 **O que ela NÃO promete, e está escrito na própria tela:** "o objeto existe" não é "a migration foi
 aplicada corretamente" — `create or replace` sobre um corpo velho deixa a assinatura idêntica, e
@@ -1609,7 +1609,7 @@ extração **fiel** — PDF gerado por `reportlab`, texto limpo, layout conhecid
 Documento de mandato real não é fiel, e **tudo o que o sistema faz depois de ler o
 PDF nunca tinha sido exercitado sobre entrada suja.**
 
-`test/e2e/variacoes.mts` injeta a sujeira **no ponto em que a OpenAI responde** e
+`Verificação/variacoes.mts` injeta a sujeira **no ponto em que a OpenAI responde** e
 deixa o resto correr igual: o código do nó sai do JSON gerado (o mesmo que o dono
 importa no n8n), o banco é o das 84 migrations, o export é o do portal. Zero
 chamada de API, ~3 minutos, banco clonado de um molde já migrado (0,2 s por
@@ -1674,8 +1674,8 @@ Está no CI (`.github/workflows/suites.yml`), depois do e2e.
 
 Revisão dos PRs **#152 a #161** sem partir do pressuposto de que estavam certos. A base era verde
 antes e continua verde depois: n8n 321, export **650** (eram 638), premissas do realizado **32**
-(eram 25), e2e 46, banco completo, `tsc`/`eslint` limpos, `db/schema.sql` idêntico e `git diff` de
-`n8n/` vazio. **Nenhum dos 638 asserts existentes reprovava com qualquer um dos seis defeitos no
+(eram 25), e2e 46, banco completo, `tsc`/`eslint` limpos, `Supabase/schema.sql` idêntico e `git diff` de
+`N8N/` vazio. **Nenhum dos 638 asserts existentes reprovava com qualquer um dos seis defeitos no
 lugar** — e é isso que os torna dignos de nota, não a gravidade de cada um.
 
 | # | Onde | O que estava errado | Medido |
@@ -1725,7 +1725,7 @@ varredura). Latente é exatamente o que muda de sentido sozinho quando alguém s
 
 Não mudei o comportamento: **quantos níveis a máquina pode subir sozinha é decisão do dono**, não de
 engenharia, e o peso do texto está do lado de "até N2" (três das quatro declarações). O que fiz foi
-tirar a ambiguidade do escuro — o caso 7 de `db/test/auto_promocao_dial.test.sql` **pina** o salto
+tirar a ambiguidade do escuro — o caso 7 de `Supabase/test/auto_promocao_dial.test.sql` **pina** o salto
 N0→N2, então mudá-lo passa a ser um teste vermelho e não uma descoberta em produção.
 
 ## O ARQUIVO DE COMITÊ, EM QUATRO FRENTES (21/08, sessão 59)
@@ -1746,9 +1746,9 @@ Ficou o REGISTRO: qual premissa em cada linha, com que valor por exercício, e o
 distribuição mensal saiu junto, e é perda declarada — ela repartia o valor projetado. **A curva não
 se perdeu:** é fato derivado do faturamento do cliente e passa a ser publicada em linha própria.
 
-### 2. Os quatro índices que o `f0/08` fasejou
+### 2. Os quatro índices que o `Arquitetura do Sistema/2 Especificação/f0/08` fasejou
 
-Liquidez imediata, ROA, ROE e Altman Z''. O `f0/08` os deixou de fora "até a extração isolar as
+Liquidez imediata, ROA, ROE e Altman Z''. O `Arquitetura do Sistema/2 Especificação/f0/08` os deixou de fora "até a extração isolar as
 linhas-conceito", e ela isola desde as 14 abas. **PL negativo publica "PL<=0"** em vez de número:
 prejuízo sobre patrimônio a descoberto dá retorno positivo, que lido rápido afirma o contrário. **E
 o Altman se recusa sem o X2:** sem conta de lucro retido isolada, zero derrubaria o índice em até
@@ -1787,7 +1787,7 @@ humana para atravessá-la. **A `0137` tira a mão.** A partir daqui o sistema pr
 base numa medida que ele próprio declara enviesada para cima.
 
 **Por que isso é aceitável, e é uma razão só:** o que a promoção automática alcança é **N2**, que é
-auto-clear de linha de alta confiança, e não N3. Em N2 todos os fechamentos fail-safe do `docs/01`
+auto-clear de linha de alta confiança, e não N3. Em N2 todos os fechamentos fail-safe do `Arquitetura do Sistema/1 Visão e Doutrina/01`
 continuam valendo: pendência abre, guarda dispara, o Portão 2 pede aceite humano onde a doutrina
 pede. O que muda é o volume de linha que passa sem toque, num estágio onde a máquina demonstrou 95%
 de acerto em 30 casos.
@@ -1856,7 +1856,7 @@ arquivo entregue, e isso pede a rodada real antes.
 
 ## O VEREDITO DE PRODUÇÃO PASSA A CONTAR (21/08, sessão 58) — `0136`, a saída B do B3
 
-**A contradição que estava aberta era aritmética.** A `0126` pôs a regra de ouro do `docs/01` dentro
+**A contradição que estava aberta era aritmética.** A `0126` pôs a regra de ouro do `Arquitetura do Sistema/1 Visão e Doutrina/01` dentro
 de `fn_mudar_dial`: estágio interpretativo só sobe para N2/N3 com concordância medida contra rodada
 de golden set CONGELADA. A sessão 53 removeu o fluxo de rotulagem manual, por decisão do dono, porque
 o objetivo é o sistema operar sem triagem humana. Sem rotulagem nenhuma rodada congela; sem rodada
@@ -1876,7 +1876,7 @@ veredito — **"não medi" e "medi e deu ruim" são frases diferentes**, e a seg
 partir da primeira. É a mesma distinção que a `0131` faz entre tabela ausente e tabela vazia.
 
 **O que ela não finge ser, e isto é a parte que não pode sumir da tela.** Quem emite o veredito **vê
-o palpite da máquina** antes de decidir; o rotulador cego do `f0/06` decide sem ver. A diferença tem
+o palpite da máquina** antes de decidir; o rotulador cego do `Arquitetura do Sistema/2 Especificação/f0/06` decide sem ver. A diferença tem
 direção conhecida: o viés de confirmação empurra a concordância para cima. Então o número é um
 **PISO** — "a máquina acerta pelo menos isto" — e nunca um ground truth.
 
@@ -1889,7 +1889,7 @@ acaba sem sintoma nenhum, porque o número é o mesmo.
 não autorizam nada, e a falha nomeia o número que faltou); o **tipo mais fraco governa** quando tem
 massa, mas tipo raro não reprova o estágio inteiro sozinho; e a recusa vai para a trilha **com a
 medição junto**, que é o que responde "quanto faltava, e está subindo?" daqui a três meses. O
-`n_minimo_veredito` entra em 30 contra os 20 do `f0/06`, porque rótulo enviesado precisa de mais
+`n_minimo_veredito` entra em 30 contra os 20 do `Arquitetura do Sistema/2 Especificação/f0/06`, porque rótulo enviesado precisa de mais
 massa, e é dado: muda por update.
 
 **O que NÃO mudou:** o teto por natureza do estágio segue inegociável, e descer continua sem pedir
@@ -1926,7 +1926,7 @@ select 'fn_reconciliar_arvore abre a pendencia secao_fecha',
 
 Os dois falsos significam que ela nunca rodou; foi o que voltou em 21/08, junto com um terceiro
 (`fn_reconciliar_por_documento` não chamava a árvore), o que descartou aplicação pela metade. O
-conserto foi aplicar `db/migrations/0133_a_secao_que_nao_fecha.sql` e rodar a conferência de novo. **Ela é posterior à
+conserto foi aplicar `Supabase/migrations/0133_a_secao_que_nao_fecha.sql` e rodar a conferência de novo. **Ela é posterior à
 `0134`/`0135` na ordem de aplicação, e isso não é problema:** a `0133` só reescreve as três funções
 de reconciliação, que nenhuma das duas seguintes toca.
 
@@ -1934,7 +1934,7 @@ de reconciliação, que nenhuma das duas seguintes toca.
 escolhidos; esta pergunta era outra, "quais das 80 rodaram", e não tinha resposta. A sonda que a
 respondeu é uma consulta só de catálogo, montada com três cuidados que valem mais que ela:
 
-- **um objeto SOBREVIVENTE por migration**, conferido contra o `db/schema.sql`, senão objeto criado
+- **um objeto SOBREVIVENTE por migration**, conferido contra o `Supabase/schema.sql`, senão objeto criado
   numa migration e removido em outra acusaria falta falsa;
 - **17 migrations não criam nada**, só reescrevem função, e nessas a existência não prova coisa
   alguma: a conferência é por um trecho de código que só a versão nova tem (`attisdropped` na sonda,
@@ -1970,8 +1970,8 @@ dívida que é de quem opera o banco.
 
 **O motor ficou inteiro, e isto é o ponto:** `instalacao_requisito`, `fn_instalacao_conferir` e
 `fn_instalacao_resumo` (`0131`/`0132`) continuam no banco, os `grant`s continuam de pé, e
-`db/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade a cada execução do
-`db/test/run.sh`. O que mudou é o CANAL: a pergunta *"este banco tem tudo o que o portal precisa
+`Supabase/test/instalacao.test.sql` continua cobrando o catálogo contra a realidade a cada execução do
+`Supabase/test/run.sh`. O que mudou é o CANAL: a pergunta *"este banco tem tudo o que o portal precisa
 para não mentir?"* passa a ser feita por SQL, por quem aplica migration, e não por quem abre um
 mandato:
 
@@ -1985,7 +1985,7 @@ requisito ausente não quebra o portal — produz um traço no lugar de um núme
 todo mandato como ativo, uma aba de perguntas vazia. Isso continua verdadeiro; o que muda é que
 ninguém será avisado enquanto estiver olhando. A troca é deliberada.
 
-**2. "Consultar a base" saiu — o Modo A do `f0/07` é descontinuado.** O `§2.4` do diagnóstico de
+**2. "Consultar a base" saiu — o Modo A do `Arquitetura do Sistema/2 Especificação/f0/07` é descontinuado.** O `§2.4` do diagnóstico de
 11/08 dava duas saídas para o Modo A: construir, ou escrever que ele não vem. A sessão 53 tomou a
 primeira; o dono tomou a segunda em 21/08, com a razão em uma linha: **o que a tela consultava já
 está na planilha, e a planilha está entregue.** Um segundo caminho para o mesmo dado é um segundo
@@ -1996,7 +1996,7 @@ para o mesmo fato.
 troca das outras duas: lotes, custo por execução, tokens e alertas de pipeline são a saúde da
 MÁQUINA, não trabalho de mandato — e a barra lateral do analista não é lugar para isso. O motor
 outra vez ficou inteiro: `fn_operacao_lotes` e `fn_operacao_resumo` (`0135`), os quatro alertas
-decididos no banco e `db/test/operacao.test.sql` continuam de pé, com a mediana e a contraprova do
+decididos no banco e `Supabase/test/operacao.test.sql` continuam de pé, com a mediana e a contraprova do
 1,4× que não acende. A leitura passa a ser por SQL:
 
 ```sql
@@ -2012,11 +2012,11 @@ migration 0115 não está aplicada"*. Nada disso é pergunta de analista. O pain
 citar migration; e os travessões que emendavam as frases saíram. Os números e a lógica são os
 mesmos: mudou a língua.
 
-Saíram `portal/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
-`portal/src/app/instalacao/page.tsx`, `portal/src/components/instalacao-aviso.tsx`,
-`portal/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
+Saíram `Vercel/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
+`Vercel/src/app/instalacao/page.tsx`, `Vercel/src/components/instalacao-aviso.tsx`,
+`Vercel/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
 tocado, nenhuma migration nova, nenhum teste removido:** as suítes continuam com a mesma contagem, e
-o `f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
+o `Arquitetura do Sistema/2 Especificação/f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
 
 ## OS TRÊS ITENS DE OBSERVABILIDADE, ESPELHO E DADO (21/08, sessão 56)
 
@@ -2056,12 +2056,12 @@ próprio: alerta que dispara para variação de token vira ruído e ninguém olh
 ### 4. O espelho lib↔workflow passa a ser conferido nas 26 funções, não em duas
 
 **A causa comum dos dois bugs de triagem da sessão 55 era esta**, e ela continuava aberta. Toda
-função de `n8n/lib/*.mjs` mora em dois lugares: a lib, que as suítes exercitam, e uma cópia literal
+função de `N8N/lib/*.mjs` mora em dois lugares: a lib, que as suítes exercitam, e uma cópia literal
 dentro do `build-workflow.mjs` — **a única que o n8n executa**. Nó de Code não importa módulo; a
 duplicação é estrutural. O que dava para remover era o silêncio: corrigir a lib e esquecer a cópia
 deixava a suíte verde e a produção errada, e foi exatamente o que aconteceu duas vezes.
 
-`n8n/test/espelho-inline.test.mjs` extrai cada função embutida do JSON do workflow e roda **os mesmos
+`N8N/test/espelho-inline.test.mjs` extrai cada função embutida do JSON do workflow e roda **os mesmos
 casos** nela e na lib. **Compara comportamento, não texto** — as cópias são minificadas de propósito,
 com nomes próprios de variável; comparar fonte reprovaria por formatação e convidaria a "consertar"
 formatando, o pior desfecho possível para um teste.
@@ -2076,7 +2076,7 @@ casos, um por função.
 > apenas o código no workflow. Está anotado no `porque` da tabela e projetado no comparador — um
 > contrato diferente de propósito não é defeito, mas precisa estar escrito onde alguém tropece nele.
 
-### 5. Onde o dado do cliente mora, quanto tempo fica e quem vê (`docs/10`)
+### 5. Onde o dado do cliente mora, quanto tempo fica e quem vê (`Arquitetura do Sistema/2 Especificação/10`)
 
 O diagnóstico registrava *"sem backup/retenção declarados — dado de cliente em Supabase, sem
 procedimento de recuperação escrito"*, e a sessão 36 mostrou por que não é burocracia: houve um susto
@@ -2097,7 +2097,7 @@ anotado**, porque "temos backup" e "voltamos em 40 minutos" são afirmações di
 **binário** — qualquer autenticado vê todos os mandatos, aceitável com duas pessoas e não com a
 terceira.
 
-### E um portão que reprovava por RUÍDO — o `db/schema.sql` e o dono do DEFAULT ACL
+### E um portão que reprovava por RUÍDO — o `Supabase/schema.sql` e o dono do DEFAULT ACL
 
 Achado pelo CI da própria sessão, e vale mais como lição do que como conserto. O `run.sh` filtra do
 `pg_dump` a versão do servidor e o token aleatório do `\restrict` — ruído que mudaria a cada
@@ -2262,12 +2262,12 @@ elegia a vírgula e quebrava o arquivo inteiro.
 
 ### E a causa comum dos dois: ESPELHO SEM GUARDA
 
-As duas funções moram em DOIS lugares — a lib (`n8n/lib/*.mjs`), que os testes exercitam, e uma cópia
+As duas funções moram em DOIS lugares — a lib (`N8N/lib/*.mjs`), que os testes exercitam, e uma cópia
 LITERAL dentro do `build-workflow.mjs`, que é a que vai para o JSON e **a única que o n8n executa**.
 Nós de Code do n8n não importam módulo, então a duplicação é estrutural. O que dava para remover era
 o silêncio: corrigir a lib e esquecer a cópia deixava a suíte VERDE e a produção errada.
 
-`n8n/test/espelho-inline.test.mjs` **extrai a função do JSON commitado** e roda a mesma tabela de
+`N8N/test/espelho-inline.test.mjs` **extrai a função do JSON commitado** e roda a mesma tabela de
 casos nas duas, exigindo resultado idêntico. Não compara texto — comparar fonte reprovaria por espaço
 em branco e convidaria a "consertar" formatando. Compara COMPORTAMENTO. Religamento medido:
 estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
@@ -2277,7 +2277,7 @@ estragando só a cópia inline, **2 testes caem** nomeando o caso divergente.
 > **Esta seção dava um defeito por aberto depois de ele ter sido corrigido**, e ficou assim de 20/08
 > a 21/08. A causa não é descuido: a varredura escreveu o achado ANTES da passada que o consertou, na
 > mesma sessão 55, e ninguém voltou para reconciliar as duas seções do mesmo arquivo. É exatamente a
-> forma de erro contra a qual o `docs/MAPA_DE_EXECUCAO.md` avisa — *"a lista de pendências do
+> forma de erro contra a qual o `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` avisa — *"a lista de pendências do
 > `ESTADO.md` já disse uma vez que o Modo A não existia depois de ele existir"*. O texto original
 > fica abaixo, riscado, porque a hipótese que ele registra é a parte que ensina.
 
@@ -2336,12 +2336,12 @@ exigir **acordo entre colunas** (subtotal numa coluna só não basta), que é o 
 | Removido | Prova |
 |---|---|
 | `vincularLinha` (server action, 22 linhas) | superseded por `salvarSecao` — o comentário do próprio arquivo conta a troca ("236 idas ao servidor, uma por clique"); zero referências. A RPC `fn_vincular_linha_premissa` **continua viva**, chamada por `salvarSecao` |
-| `JANELAS_MEDIA` (`n8n/lib/macro.mjs`) | declarada uma vez, referenciada em lugar nenhum. O portal tem a sua própria (`JANELAS_MEDIA_EXPORT`), independente |
+| `JANELAS_MEDIA` (`N8N/lib/macro.mjs`) | declarada uma vez, referenciada em lugar nenhum. O portal tem a sua própria (`JANELAS_MEDIA_EXPORT`), independente |
 | `FILL_TOTAL` (`oria-marca.ts`) | idem |
 | `ChecklistItem` (`types.ts`) | idem |
 | `docs/pr-test.md` | o arquivo diz de si mesmo: *"Pode ser removido com segurança."* |
 
-**O que NÃO removi, e por quê:** `portal/scripts/_dump.mts` não é referenciado por nada, mas é
+**O que NÃO removi, e por quê:** `Vercel/scripts/_dump.mts` não é referenciado por nada, mas é
 ferramenta manual de depuração da mesma família das que o `PROMPT_ESPELHAR_MODELO_BASE` §6 documenta.
 "Sem referência" não é "nunca mais será usado", e a instrução era remover só o que é certo. Os outros
 ~45 `export` sem uso externo são tipos e constantes usados DENTRO do próprio arquivo: tirar o
@@ -2430,7 +2430,7 @@ construção**: o balanço do cliente bate consigo mesmo.
 
 **Medido no religamento, não afirmado:** apagar "Produtos acabados" (6.400) do Estoques do book e
 rodar a reconciliação inteira deixa `ativo_passivo_pl` **VERDE**. É o assert
-`CEGUEIRA MEDIDA` do `db/test/secao_fecha.test.sql`, e ele existe para que a `0133` perca o motivo
+`CEGUEIRA MEDIDA` do `Supabase/test/secao_fecha.test.sql`, e ele existe para que a `0133` perca o motivo
 de existir no dia em que deixar de ser verdade.
 
 **A correção é barata porque a árvore já estava no banco.** `campo_extraido.secao` guarda o PAI
@@ -2514,7 +2514,7 @@ o modelo de verdade lê de um PDF sujo.
 | 7 | O custo bate com o previsto | sessões 50-52 | o guarda prevê ~US$ 1,42 para o book sintético contra US$ 1,29 medido (+10%); num mandato real o desvio é o número a olhar |
 
 **Ordem sugerida:** rodar o book num mandato NOVO → exportar o completo → passar o
-`auditar-xlsx.mts` e o `docs/ACEITE.md` por cima. Os três juntos levam menos de uma hora e são a
+`auditar-xlsx.mts` e o `Arquitetura do Sistema/6 Referência/ACEITE.md` por cima. Os três juntos levam menos de uma hora e são a
 única evidência que nenhuma suíte substitui.
 
 **Com a rodada na mão, a próxima sessão tem duas tarefas que só existem depois dela:**
@@ -2587,14 +2587,14 @@ aqui daria duas respostas para "qual foi o EBITDA de 2025".
 ### O GOLDEN SET PASSA A SER ROTULÁVEL, e a rotulagem é CEGA (20/08, sessão 54) — `0130`
 
 **A `0126` construiu o golden set inteiro do lado da leitura e nada do lado da escrita.** Quatro
-tabelas, as cinco métricas do `f0/06`, o portão `fn_golden_suficiente`, a regra de ouro executada em
+tabelas, as cinco métricas do `Arquitetura do Sistema/2 Especificação/f0/06`, o portão `fn_golden_suficiente`, a regra de ouro executada em
 `fn_mudar_dial` — e nenhuma função para abrir rodada, incluir documento, gravar rótulo ou congelar.
 Rotular só era possível escrevendo `insert` à mão no psql. **O portão estava construído e não havia
 estrada até ele**, que é o mesmo defeito que a `0126`, a `0127` e a `0128` corrigiram uma camada
-acima — e o que travava a F4 do `docs/03` não era decisão nenhuma: era a falta de um formulário.
+acima — e o que travava a F4 do `Arquitetura do Sistema/1 Visão e Doutrina/03` não era decisão nenhuma: era a falta de um formulário.
 
 **A decisão que governa o desenho: a rotulagem é CEGA.** `fn_golden_linhas_para_rotular` devolve as
-rubricas que a extração achou **sem os valores**. É o fechamento #5 do `docs/01` (anti-ancoragem)
+rubricas que a extração achou **sem os valores**. É o fechamento #5 do `Arquitetura do Sistema/1 Visão e Doutrina/01` (anti-ancoragem)
 aplicado onde a aposta é maior que numa tela de aceite: o rótulo do golden set é a EVIDÊNCIA que
 autoriza subir autonomia. Quem vê a resposta da máquina enquanto rotula não produz ground truth,
 produz uma conferência — e conferência tem viés de confirmação conhecido: o número plausível passa. A
@@ -2629,7 +2629,7 @@ não distingue documento de cliente do book sintético, e chutar isso inflaria a
 cujo gabarito já se conhece.
 
 > **Um rotulador só é escolha legítima com consequência medível, e ela fica dita no ato de congelar.**
-> O `f0/06` pede dois rotuladores nos casos ambíguos para que a discordância entre humanos seja
+> O `Arquitetura do Sistema/2 Especificação/f0/06` pede dois rotuladores nos casos ambíguos para que a discordância entre humanos seja
 > EXCLUÍDA do placar da máquina. Com um só não há discordância a excluir: o documento genuinamente
 > ambíguo entra como erro dela, e a medição fica **conservadora — o número que sai é um PISO da
 > qualidade real, não uma estimativa dela**. Conservador é o lado certo para errar, e mesmo assim
@@ -2640,7 +2640,7 @@ cujo gabarito já se conhece.
 tipo, inclusão da amostra com estrato sugerido, congelamento) e **a tela cega de um documento**. A
 tela cega carrega o **nome do arquivo e nada mais** — não o tipo, não a empresa, não o período, não
 os valores, e não o `resumo`/`justificativa`, que é o vazamento mais fácil de não notar: um resumo
-dizendo *"balanço da Alfa em 31/12/2024"* entrega as três primeiras métricas do `f0/06` numa frase. A
+dizendo *"balanço da Alfa em 31/12/2024"* entrega as três primeiras métricas do `Arquitetura do Sistema/2 Especificação/f0/06` numa frase. A
 tela **explica por que é cega**, porque sem isso esconder a resposta parece falta de informação em vez
 de método, e a primeira reação de quem rotula é procurar onde está o palpite.
 
@@ -2651,7 +2651,7 @@ e nunca notaria as 3 que faltam. `n_ausente` só chega a ser medido por ali, ent
 com palavra e em destaque, não deixada implícita numa linha vazia no fim.
 
 > **E existe uma suíte só para o vazamento, porque ele não tem sintoma** —
-> `portal/scripts/verificar-tela-cega.mts`, 18 asserts. Se a tela passar a mostrar o que a extração
+> `Vercel/scripts/verificar-tela-cega.mts`, 18 asserts. Se a tela passar a mostrar o que a extração
 > leu, **tudo continua funcionando**: a página renderiza, os rótulos gravam, as cinco métricas saem,
 > o painel mostra números bonitos. Só que os números param de medir algo, porque quem rotula passou a
 > conferir em vez de julgar. Nenhum teste de comportamento pega isso — o comportamento fica correto.
@@ -2663,7 +2663,7 @@ com palavra e em destaque, não deixada implícita numa linha vazia no fim.
 
 ### A TRANSCRIÇÃO HUMANA ASSISTIDA, e a contaminação que ela criaria (20/08, sessão 53) — `0129`
 
-**O fechamento nº 2 do `docs/01` era o único dos oito sem código:** *"gate de captura com saída. Input
+**O fechamento nº 2 do `Arquitetura do Sistema/1 Visão e Doutrina/01` era o único dos oito sem código:** *"gate de captura com saída. Input
 ilegível/corrompido → transcrição humana assistida, nunca dead-end de pendência infinita."* O gate
 existia (a `0010`/`0020` abrem `arquivo_ilegivel`) e a saída existia em outra forma (reenviar ao
 cliente, rejeitar) — **a transcrição assistida em si nunca foi construída**, e ela é a saída que serve
@@ -2705,14 +2705,14 @@ a excluir o transcrito. **Medido no religamento:** sem o filtro, as duas linhas 
 **E a pendência de ilegibilidade fecha com o nome de quem transcreveu**, não por "sistema". É isso que
 faz o gate deixar de ser dead-end.
 
-### O MODO A DO `f0/07` PASSA A EXISTIR — a base viva (20/08, sessão 53)
+### O MODO A DO `Arquitetura do Sistema/2 Especificação/f0/07` PASSA A EXISTIR — a base viva (20/08, sessão 53)
 
 > **DESCONTINUADO EM 21/08 (sessão 57), por decisão do dono.** A tela `/casos/[id]/base` e o botão
 > *"Consultar a base"* saíram do portal: o que ela consultava já está na planilha, entregue. O texto
 > abaixo fica como registro de por que ela existiu e do que ela deliberadamente não fazia — a
 > decisão de NÃO SOMAR continua valendo para o export, que é a entrega. Ver "O PORTAL ENCOLHE".
 
-**O modo declarado PRINCIPAL da entrega não tinha tela.** O `f0/07` define dois modos: *"Modo A — base
+**O modo declarado PRINCIPAL da entrega não tinha tela.** O `Arquitetura do Sistema/2 Especificação/f0/07` define dois modos: *"Modo A — base
 viva no portal · **principal**"*, onde o analista *"consulta/filtra os dados curados na tela, por
 Entidade × Período × Conta/linha financeira"*, cada valor carregando *"sua proveniência e seu status de
 aceite"*; e o Modo B, o export. **Só o B existia.** O portal tinha a tela de UM documento e o `.xlsx`;
@@ -2735,7 +2735,7 @@ somaria a coluna no olho e a culpa pareceria dele.
 
 O que ela faz que o arquivo não faz: responder rápido, com proveniência à mão, e sobre a base **viva** —
 incluindo as linhas **pendentes** de aceite, que o export por doutrina não trata como fato. Pendente é
-visualmente distinto *e* escrito com palavra (exigência do `f0/07`; cor sozinha não carrega significado).
+visualmente distinto *e* escrito com palavra (exigência do `Arquitetura do Sistema/2 Especificação/f0/07`; cor sozinha não carrega significado).
 
 #### UMA REGRA QUE VIROU COMPARTILHADA, em vez de uma segunda implementação
 
@@ -2766,7 +2766,7 @@ que a base está vazia.
 **A `0129` ficou com a função no banco e nada a chamando** — foi dito no commit dela e aqui. Isto é a
 outra metade: a planilha existe, se baixa, se preenche e se reimporta.
 
-`portal/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
+`Vercel/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
 Não é conveniência: o formato é um contrato entre quem escreve e quem lê, e as duas pontas são este
 sistema. Separá-las é a receita para a coluna mudar de lugar num lado e não no outro, e o sintoma disso
 não é um erro — é uma transcrição importada com o valor na coluna da unidade.
@@ -2816,7 +2816,7 @@ recarrega dizendo *"nenhuma linha foi extraída deste documento"* e oferecendo o
 novo, como se o trabalho tivesse sido perdido. Agora a página chama `fn_versao_com_extracao` (`0102`) —
 a regra canônica, não uma reimplementação em TypeScript.
 
-**A suíte nova, `portal/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
+**A suíte nova, `Vercel/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
 — gera, escreve o `.xlsx`, lê de volta —, porque o defeito que interessa é a coluna que muda de lugar em
 uma das duas metades. Ela também trava que sobra em branco **não** vira linha: a planilha traz 60 linhas
 livres, e se elas entrassem, cada transcrição gravaria dezenas de linhas afirmando que o documento diz
@@ -2824,8 +2824,8 @@ zero.
 
 ### A CLASSIFICAÇÃO CONTÁBIL PASSA A EXISTIR, em sombra (20/08, sessão 53) — `0128`
 
-**O oitavo estágio do MVP, com zero linha de código até aqui.** O `docs/03` o lista entre os que
-"existem na v1 de produção", o `docs/05` o especifica por inteiro (taxonomia de cinco rótulos, as
+**O oitavo estágio do MVP, com zero linha de código até aqui.** O `Arquitetura do Sistema/1 Visão e Doutrina/03` o lista entre os que
+"existem na v1 de produção", o `Arquitetura do Sistema/2 Especificação/05` o especifica por inteiro (taxonomia de cinco rótulos, as
 três condições de auto-aceite, o registro de justificativa, o de override) e a `0002` o semeia no
 dial em N0. Medido antes de escrever: `grep` por `classe_contabil` devolvia UMA ocorrência — a coluna
 que a `0126` criou no golden set para guardar o rótulo humano de uma classificação que ninguém
@@ -2835,7 +2835,7 @@ produzia. O EBITDA saía do modelo como linha de cascata, sem nenhuma noção de
 afirmava a existência de um estágio.
 
 **Como ela decide (decisão do dono): regra determinística sobre rubrica.** Sem IA e sem custo por
-documento — é a condição 2 do próprio `docs/05` ("bate com um padrão conhecido pré-registrado"). O
+documento — é a condição 2 do próprio `Arquitetura do Sistema/2 Especificação/05` ("bate com um padrão conhecido pré-registrado"). O
 catálogo de rubricas é DADO versionado, com `justificativa` NOT NULL por linha, e rubrica que ele não
 conhece cai em `revisar_manual`.
 
@@ -2856,9 +2856,9 @@ sem risco de número errado chegar a comitê.
    em que a pergunta cabe, e analista que recebe 3.195 itens não revisa nenhum (é a lição do Sinal 1
    refinado na `0022`). **Ausência de sugestão é a forma de dizer "não se aplica"** — não entra um
    sexto rótulo para isso.
-2. **A taxonomia é TABELA, não enum.** Os cinco do `docs/05`, sem acréscimo. Mas como linhas de
+2. **A taxonomia é TABELA, não enum.** Os cinco do `Arquitetura do Sistema/2 Especificação/05`, sem acréscimo. Mas como linhas de
    catálogo, porque um sexto rótulo deve custar uma linha de seed e não uma migration que altera tipo.
-3. **O auto-aceite do `docs/05` NÃO foi implementado, e o motivo é uma contradição do documento.** Ele
+3. **O auto-aceite do `Arquitetura do Sistema/2 Especificação/05` NÃO foi implementado, e o motivo é uma contradição do documento.** Ele
    tem uma seção sobre "quando a sugestão pode ser aceita" e abre dizendo "teto N1 **para sempre**".
    Sob teto N1 auto-aceite não pode acontecer: as três condições descrevem o que a própria doutrina do
    documento proíbe. Implementá-las seria código morto que alguém liga por engano.
@@ -2886,7 +2886,7 @@ auditável que reclassificar linha a linha para sempre.
 
 #### O SINAL DE CALIBRAÇÃO, e é ele que faz isto valer a pena em sombra
 
-`fn_classe_contabil_concordancia` responde a frase do `docs/05` — *"o override vira sinal de
+`fn_classe_contabil_concordancia` responde a frase do `Arquitetura do Sistema/2 Especificação/05` — *"o override vira sinal de
 calibração"* — em número, e nomeia **as rubricas que mais erram**, que é o que permite ajustar a
 REGRA e não o modelo. É a mesma economia que a `0126` achou na Classe A: o rótulo vem do trabalho que
 o analista já faz, sem rotulagem dedicada. Denominador = linhas com os dois lados; quem ninguém olhou
@@ -2901,7 +2901,7 @@ eliminá-lo, e dizer o contrário seria prometer o que ele não cumpre.
 ### O DIAL PASSA A SER OBEDECIDO — e dois níveis declarados eram falsos (20/08, sessão 53) — `0127`
 
 **A `0126` cuidou de COMO O DIAL MUDA. Ela não cuidou de o dial ser LIDO.** E a `0041` já havia
-diagnosticado isso com um comando: *"`grep -rl estagio_autonomia portal/src n8n` não retornava NADA
+diagnosticado isso com um comando: *"`grep -rl estagio_autonomia Vercel/src n8n` não retornava NADA
 — a tabela não tinha um único leitor"*. Ela consertou para **um** estágio. Rodando a mesma busca
 hoje, estágio por estágio, os outros **sete** continuavam sem leitor: mudar o nível deles era
 validado contra o teto, cobrado contra golden set pela `0126`, gravado na trilha — e **inerte**.
@@ -2964,7 +2964,7 @@ a razão é de natureza: a garantia deles é aritmética, não concordância hum
 
 ### A REGRA DE OURO PASSA A SER EXECUTADA (19/08, sessão 53) — `0126`
 
-**O `docs/01` fecha com uma regra de ouro, em negrito e sem ressalva:** *"nada de subir o dial de
+**O `Arquitetura do Sistema/1 Visão e Doutrina/01` fecha com uma regra de ouro, em negrito e sem ressalva:** *"nada de subir o dial de
 autonomia de um estágio interpretativo sem golden set e concordância medida."* **E `fn_mudar_dial`
 (0041) conferia UMA coisa: o teto.** Pedir N2 num estágio de teto N2 era aceito com um `p_motivo` em
 texto livre, e nada olhava para medição alguma — não existia onde olhar. A regra estava escrita na
@@ -2976,7 +2976,7 @@ produto do dono, NÃO autonomia medida… o golden set físico ainda não existe
 defeitos que a `0123` achou — `v_lados_bp` atribuída e nunca lida, "a guarda que o comentário da
 `0117` prometia não existia" —, com a diferença de que aqui a promessa é do documento fundador.
 
-**E o protocolo estava pronto desde 14/07.** O `f0/06` foi fechado como v1: dimensionamento (~20–30
+**E o protocolo estava pronto desde 14/07.** O `Arquitetura do Sistema/2 Especificação/f0/06` foi fechado como v1: dimensionamento (~20–30
 por tipo core), o que se rotula, uma tabela de CINCO métricas, rotulagem com dois avaliadores e o
 laço de calibração desenhado. No banco não havia uma linha disso — `grep -ril golden` devolvia
 documentação, o comentário de um script e prosa de migration.
@@ -2984,8 +2984,8 @@ documentação, o comentário de um script e prosa de migration.
 | O que entrou | Onde |
 |---|---|
 | Ground truth: rodada que **congela**, documento com **estrato** e **origem**, rótulo **por rotulador**, e `golden_campo` com tolerância declarada no rótulo | `0126` |
-| As **cinco métricas** do `f0/06`: F1 da classificação por tipo, acurácia dos identificadores, erro de campo, concordância contábil e falso-positivo da Classe A | `fn_golden_*` |
-| `natureza` e `base_do_nivel` em `estagio_autonomia` — a tabela de teto do `docs/01` e a ressalva "declarada, não medida" saem da prosa | `0126` |
+| As **cinco métricas** do `Arquitetura do Sistema/2 Especificação/f0/06`: F1 da classificação por tipo, acurácia dos identificadores, erro de campo, concordância contábil e falso-positivo da Classe A | `fn_golden_*` |
+| `natureza` e `base_do_nivel` em `estagio_autonomia` — a tabela de teto do `Arquitetura do Sistema/1 Visão e Doutrina/01` e a ressalva "declarada, não medida" saem da prosa | `0126` |
 | O **portão**: subida que alcança N2/N3 em estágio interpretativo exige medição, ou motivo assumido | `fn_mudar_dial` |
 | O painel de autonomia mostrando a base, a cobertura por tipo e o que falta | `/autonomia` |
 
@@ -3010,7 +3010,7 @@ documentação, o comentário de um script e prosa de migration.
 
 #### A MÉTRICA QUE NUNCA PRECISOU DE GOLDEN SET, E NINGUÉM SOMOU
 
-A quinta linha da tabela do `f0/06` é *"taxa de falso-positivo da reconciliação Classe A → subir
+A quinta linha da tabela do `Arquitetura do Sistema/2 Especificação/f0/06` é *"taxa de falso-positivo da reconciliação Classe A → subir
 Classe A de N1 para N2"*. **O rótulo dela existe desde a `0106`**, cujo cabeçalho define `rejeitada`
 como *"a pendência não procede (falso positivo do motor)"*, com essas palavras. Ou seja: desde 11 de
 agosto o sistema coleta, a cada rejeição de analista, um ponto de dado sobre a qualidade da própria
@@ -3043,10 +3043,10 @@ outra coisa e dizendo que passou. A recusa passou a ser afirmada ali mesmo, porq
 se o resto do cenário significa algo.
 
 **O que NÃO foi feito, e é honesto dizer:** o golden set FÍSICO. Rotular documento real de cliente,
-com controle de acesso LGPD, é o que o `f0/06` já classificava como "tarefa de execução" que "não se
+com controle de acesso LGPD, é o que o `Arquitetura do Sistema/2 Especificação/f0/06` já classificava como "tarefa de execução" que "não se
 monta em documentação" — continua sendo do dono. O que mudou é que agora existe onde colocar, o que
 mede, e um portão que cobra. **E fica anotada a decisão de schema que falta:** o dial é por ESTÁGIO
-(`0001`/`0002`) e o `f0/06` raciocina por TIPO — ele chega a dizer que "tipo sem ~20 exemplos
+(`0001`/`0002`) e o `Arquitetura do Sistema/2 Especificação/f0/06` raciocina por TIPO — ele chega a dizer que "tipo sem ~20 exemplos
 permanece em N0/N1". Autonomia por (estágio × tipo) não existe no schema, e inventá-la de lado seria
 decidir uma mudança de modelo de dados por tabela. Enquanto não existir, vale a leitura conservadora:
 o tipo mais fraco governa.
@@ -3277,8 +3277,8 @@ coisas: que os números do gerador fecham no papel, e que o lote não cabe no te
 ingestão nunca havia sido exercitada sobre ele** — era a maior lacuna de cobertura viva, e estava
 anotada como tal neste arquivo.
 
-Agora existe `db/test/gerar_fixture_canastra.py` → `db/test/fixture_book_canastra.sql` (28
-documentos, 1.264 linhas) e `db/test/canastra.test.sql`, ligados ao `db/test/run.sh`. A regra que ele
+Agora existe `Supabase/test/gerar_fixture_canastra.py` → `Supabase/test/fixture_book_canastra.sql` (28
+documentos, 1.264 linhas) e `Supabase/test/canastra.test.sql`, ligados ao `Supabase/test/run.sh`. A regra que ele
 trava é a de Vertentes, sobre documento **difícil**: *extração fiel => a única pendência é a
 divergência que o book planta de propósito* (R$ 240 mil de mútuos). Cada uma das 15 armadilhas que
 virasse pendência seria falso positivo.
@@ -3325,7 +3325,7 @@ complementar que não se soma debaixo do total do balanço) mas não o nome cert
 ### O EXPORT DO EXCEL: cinco defeitos de número, achados rodando o arquivo (18/08, sessão 51)
 
 **De onde isto saiu:** gerar o export completo do caso de referência
-(`db/test/fixture_modelagem_v35.sql` — o caso REAL capturado da produção) e rodar o
+(`Supabase/test/fixture_modelagem_v35.sql` — o caso REAL capturado da produção) e rodar o
 `auditar-xlsx.mts` nele. **Três dos dez itens reprovavam:**
 
 | Item | Medida |
@@ -3396,7 +3396,7 @@ PostgREST"*. O teto mora em dois lugares, e os dois foram tratados:
 
 **1. No servidor — e lá ele é do DONO, não do repositório.** É o `db-max-rows` do PostgREST
 (*painel do Supabase → Project Settings → API → Max rows*, padrão 1000). Subi-lo para 100000 remove
-o teto na prática e deixa cada leitura mais barata. **Está documentado no `db/README.md`, com o
+o teto na prática e deixa cada leitura mais barata. **Está documentado no `Supabase/README.md`, com o
 caminho exato — e é opcional**, pelo motivo abaixo.
 
 **2. No portal — e aqui ele acabou de verdade.** Duas mudanças:
@@ -3439,7 +3439,7 @@ dado real na tela. As perguntas saíam assim, literal:
 | "A relação de mútuos informa **16060 milhar**" | "…informa **R$ 16.060 mil**" |
 
 Nenhuma delas está errada no DADO — `24,25` é a referência multi-ano do classificador, `L36M` é a
-notação de janela móvel de `f0/03`, `16060 milhar` é a soma com a escala declarada. Estão erradas no
+notação de janela móvel de `Arquitetura do Sistema/2 Especificação/f0/03`, `16060 milhar` é a soma com a escala declarada. Estão erradas no
 LEITOR, e o leitor aqui é o cliente do mandato: **este é o único texto do sistema que sai da casa**,
 e ele não pode falar em chave interna.
 
@@ -3465,7 +3465,7 @@ entidade) desde a `0119` e o período não acompanhava: num grupo em que a DRE d
 2023–2025 e a da Comercial só 2024–2025, a pergunta sobre a Comercial citava um exercício que o
 documento dela não tem — e quem recebe não reconhece o próprio documento na pergunta.
 
-Dezesseis asserts novos em `db/test/perguntas.test.sql` (`#12`), incluindo o que vale por todos:
+Dezesseis asserts novos em `Supabase/test/perguntas.test.sql` (`#12`), incluindo o que vale por todos:
 **nenhuma pergunta do caso publica referência crua nem nome de escala**.
 
 ### As perguntas ao cliente ganharam a ABA que faltava (18/08, sessão 51)
@@ -3517,7 +3517,7 @@ entre elas estava a mais cara de todas: **o export baixava `campo_extraido` sem 
 mandato com mais de mil linhas extraídas gerava um `.xlsx` faltando linhas, que abre normalmente e
 parece completo. O book de teste sozinho tem ~3.000 linhas com número.
 
-Passaram a paginar (`portal/src/lib/supabase/paginar.ts`, de mil em mil):
+Passaram a paginar (`Vercel/src/lib/supabase/paginar.ts`, de mil em mil):
 
 | Onde | O que era truncado |
 |---|---|
@@ -3580,7 +3580,7 @@ nomeadas família a família.
 
 | | O quê | Por quê |
 |---|---|---|
-| 1 | **Conflito com o `main` resolvido, e a `0120` entrou na lista de comandos** | O `#137` mergeou depois da base dele. E a migration não estava no `db/README.md` — o portão do `run.sh` reprovava. |
+| 1 | **Conflito com o `main` resolvido, e a `0120` entrou na lista de comandos** | O `#137` mergeou depois da base dele. E a migration não estava no `Supabase/README.md` — o portão do `run.sh` reprovava. |
 | 2 | **A migration voltou a ser reaplicável** | `create policy` sem `drop policy if exists`: rerodar morria em *"policy already exists"*. O resto do arquivo já era reaplicável (`create table if not exists`, `on conflict do nothing`) — só as políticas escapavam, e a casa já tem o padrão (`0009`, `0107`, `0108`, `0115`). |
 | 3 | **`caso_pergunta` virou append-only de verdade** | A tabela dizia "append-only por desenho" e publicava `for all to authenticated`. Medido: `set role authenticated; delete from caso_pergunta` **apagou a linha**. Agora são duas políticas, SELECT e INSERT — o desenho do `evento_auditoria` (0003), que é onde ele já estava certo. |
 | 4 | **`{data_base}`/`{ano}` deixaram de errar o exercício** | O período saía de `max(referencia)` — máximo de TEXTO. Num caso com `2025` e `L24M`, a pergunta ia ao cliente dizendo *"No balanço de **L24M**…"*: rótulo de janela móvel, não data de balanço, e nem o mais recente. Agora ordena por ano com `fn_anos_texto`. |
@@ -3607,11 +3607,11 @@ medição vi 7, mas era lixo de outro teste no mesmo caso; num banco limpo o nú
 | | O quê | Por quê |
 |---|---|---|
 | 1 | **Renumerada `0116` → `0119`** | A faixa 0116-0118 foi ocupada pelo PR #136, mergeado antes. O portão de prefixo duplicado do `run.sh` reprovava — e com razão. |
-| 2 | **A verificação embutida deixou de ser alçapão** | Ela abortava a migration se encontrasse qualquer `escopo_entidade` não nulo. No dia em que o dono ligasse o override do COMBINADO — que é o que o cabeçalho manda ele fazer — e reaplicasse a lista do `db/README.md`, a migration **morreria no meio por causa de uma decisão legítima dele**. Medido: a versão original aborta. Agora prova o que interessa (a coluna não tem DEFAULT) e o override vira NOTICE. |
-| 3 | **A varredura saiu da migration** para `db/varredura_linha_exigida.sql` | Era a única parte que tocava caso já gravado, e o efeito visível é uma leva de pendências novas na fila do painel sem ninguém ter enviado nada. Separada, o dono aplica a estrutura hoje e escolhe a hora da varredura — ou roda num mandato só. O script diz quantas pendências entraram. |
+| 2 | **A verificação embutida deixou de ser alçapão** | Ela abortava a migration se encontrasse qualquer `escopo_entidade` não nulo. No dia em que o dono ligasse o override do COMBINADO — que é o que o cabeçalho manda ele fazer — e reaplicasse a lista do `Supabase/README.md`, a migration **morreria no meio por causa de uma decisão legítima dele**. Medido: a versão original aborta. Agora prova o que interessa (a coluna não tem DEFAULT) e o override vira NOTICE. |
+| 3 | **A varredura saiu da migration** para `Supabase/varredura_linha_exigida.sql` | Era a única parte que tocava caso já gravado, e o efeito visível é uma leva de pendências novas na fila do painel sem ninguém ter enviado nada. Separada, o dono aplica a estrutura hoje e escolhe a hora da varredura — ou roda num mandato só. O script diz quantas pendências entraram. |
 | 4 | **`fn_exigencias_do_caso` ficou 5,9× mais rápida** | O `explain analyze` mostrou 662 ms dos 914 ms num único filtro: `fn_linhas_do_tipo` rodando uma vez por DOCUMENTO em vez de por tipo. Separar em duas CTEs não mudou nada — o Postgres achata CTE simples e empurrava o filtro de volta. Com `as materialized`: **693 ms → 116 ms** num caso de 400 documentos. |
 
-As duas propriedades novas estão travadas em teste (`db/test/linha_exigida_entidade.test.sql`,
+As duas propriedades novas estão travadas em teste (`Supabase/test/linha_exigida_entidade.test.sql`,
 blocos 8 e 9), e a do `materialized` é teste de TEXTO de propósito: medir por relógio daria um teste
 que falha em máquina lenta e passa com o defeito de volta em máquina rápida.
 
@@ -3622,13 +3622,13 @@ Os sete itens da lista "o que está aberto" foram atacados em ordem, a pedido do
 
 | | O quê | Onde |
 |---|---|---|
-| 1 | **Subtotais impressos viram LINHA.** O prompt passou a exigir o valor impresso na linha do agrupamento ("ATIVO CIRCULANTE ... 3.961"), que antes virava só o nome da `secao` e sumia. A `0116` ensina `fn_papel_linha` a reconhecer os totais novos (topo da DRE, DVA) para eles não receberem premissa e dobrarem a conta. | `n8n/lib/extract.mjs`, `0116` |
-| 2 | **A divergência de mútuos é acusada.** Checagem B nova, lado a lado (ativo × passivo), disparada pelos dois lados do par. No fixture ela acusa exatamente os R$ 180 mil que o book planta de propósito — e o teste que cobrava "zero pendências" era, ele mesmo, a prova de que a checagem faltava. No painel, a fila agora diz QUAL checagem acusou. | `0117`, `portal/src/lib/rotulos.ts` |
-| 3 | **A tela de Modelagem entrou na linguagem do portal:** `<main>` aninhado (que estreitava a página dentro do layout) foi embora, as três seções viraram `carta` com âncora, e uma trilha de passos no topo diz o que falta em cada uma. Na tabela, o cabeçalho gruda e o "salvar" aparece também no topo com o aviso de alteração não salva — os dois viviam no rodapé, fora da tela justamente enquanto se edita. | `portal/src/app/casos/[id]/modelagem/` |
-| 4 | **`negativas`/`societario`/`parcelamentos` saíram da lista à mão** e viraram termos da taxonomia. A remoção de palavra de tipo em `parseEntidade` varre o vocabulário palavra a palavra, então quem entra lá é removido de graça. | `n8n/lib/taxonomia.mjs` |
-| 5 | **O teto de gasto decide depois do `Extrair Texto`.** Com o documento medido, a estimativa deixa de ser por byte (margem de 1,8×, que recusava lote que cabia) e passa a contar linhas e BLOCOS — exatamente os que o `Fatiar Extracao` vai gastar. Medido no book: guarda por byte US$ 0,67 contra custo real US$ 0,49; por conteúdo, US$ 0,61. Continua barrando antes de qualquer gasto. | `n8n/lib/custo.mjs`, grafo |
+| 1 | **Subtotais impressos viram LINHA.** O prompt passou a exigir o valor impresso na linha do agrupamento ("ATIVO CIRCULANTE ... 3.961"), que antes virava só o nome da `secao` e sumia. A `0116` ensina `fn_papel_linha` a reconhecer os totais novos (topo da DRE, DVA) para eles não receberem premissa e dobrarem a conta. | `N8N/lib/extract.mjs`, `0116` |
+| 2 | **A divergência de mútuos é acusada.** Checagem B nova, lado a lado (ativo × passivo), disparada pelos dois lados do par. No fixture ela acusa exatamente os R$ 180 mil que o book planta de propósito — e o teste que cobrava "zero pendências" era, ele mesmo, a prova de que a checagem faltava. No painel, a fila agora diz QUAL checagem acusou. | `0117`, `Vercel/src/lib/rotulos.ts` |
+| 3 | **A tela de Modelagem entrou na linguagem do portal:** `<main>` aninhado (que estreitava a página dentro do layout) foi embora, as três seções viraram `carta` com âncora, e uma trilha de passos no topo diz o que falta em cada uma. Na tabela, o cabeçalho gruda e o "salvar" aparece também no topo com o aviso de alteração não salva — os dois viviam no rodapé, fora da tela justamente enquanto se edita. | `Vercel/src/app/casos/[id]/modelagem/` |
+| 4 | **`negativas`/`societario`/`parcelamentos` saíram da lista à mão** e viraram termos da taxonomia. A remoção de palavra de tipo em `parseEntidade` varre o vocabulário palavra a palavra, então quem entra lá é removido de graça. | `N8N/lib/taxonomia.mjs` |
+| 5 | **O teto de gasto decide depois do `Extrair Texto`.** Com o documento medido, a estimativa deixa de ser por byte (margem de 1,8×, que recusava lote que cabia) e passa a contar linhas e BLOCOS — exatamente os que o `Fatiar Extracao` vai gastar. Medido no book: guarda por byte US$ 0,67 contra custo real US$ 0,49; por conteúdo, US$ 0,61. Continua barrando antes de qualquer gasto. | `N8N/lib/custo.mjs`, grafo |
 | 6 | **Dedup por fingerprint (a segunda metade da 0026).** Prompt+modelo+esquema viram uma impressão gravada na versão; mesmo arquivo + mesma impressão + extração que TEM linha ⇒ o grafo pula a chamada. A exigência de "ter linha" é o que impede uma extração falha de valer como feita. | `0118`, grafo |
-| 7 | **As listas do painel saíram do teto de 1000** (documentos, pendências e mandatos), com paginação de mil em mil e um aviso que aparece se o teto de segurança de 50 mil for atingido. | `portal/src/lib/supabase/paginar.ts` |
+| 7 | **As listas do painel saíram do teto de 1000** (documentos, pendências e mandatos), com paginação de mil em mil e um aviso que aparece se o teto de segurança de 50 mil for atingido. | `Vercel/src/lib/supabase/paginar.ts` |
 
 O que **ficou de fora, e é honesto dizer**:
 
@@ -3651,14 +3651,14 @@ Os 38 documentos do `book-canastra` estão prontos para subir:
 | Timeout do n8n | **desativado** (conferido pelo dono em 11/08) |
 | Duração | **~23 minutos** (33s por extração no Tier 1) |
 
-> **ANTES DE RODAR, REIMPORTE O `n8n/workflow.e1-ingestao.json`.** A execução de 12/08 recusou o
+> **ANTES DE RODAR, REIMPORTE O `N8N/workflow.e1-ingestao.json`.** A execução de 12/08 recusou o
 > lote com *"51 chamadas ≈ US$ 7,65"* — um número que o código deste repositório não produz desde
 > 07/08 (US$ 0,15 por chamada saiu de lá). O n8n executa o JSON **importado**, e merge não
 > reimporta. A partir da v3 dá para conferir da tela: a mensagem de recusa começa com
 > `[orçamento v3 (2026-08-13)]` e o campo `orcamento_versao` aparece na saída do nó mesmo quando o
 > lote passa. Se a versão não aparecer, o workflow importado é velho.
 
-Gerar os PDFs: `cd test-data/book-canastra && PYTHONPATH=. python3 gerar.py`
+Gerar os PDFs: `cd "Dados de Teste"/book-canastra && PYTHONPATH=. python3 gerar.py`
 
 > **A rodada de 17/08 ("Teste V45") já aconteceu, e o que ela achou muda o que a próxima tem de
 > provar.** Foram **438 linhas**: 19 dos 35 documentos — os centrais (Balanço, DRE, DFC, DMPL, DVA,
@@ -3683,7 +3683,7 @@ famílias: 5 documentos TRUNCARAM (teto de 16.384 tokens de saída do gpt-4o; `0
 O `.xlsx` da modelagem exportado dessa rodada passa em **9 de 10** itens do auditor; o único reprovado
 é o balanço não fechar por 40.169 — que é o buraco da extração chegando ao arquivo entregue.
 
-Três camadas, no `n8n/lib/cobertura.mjs` e no grafo:
+Três camadas, no `N8N/lib/cobertura.mjs` e no grafo:
 
 | | O que faz | Onde |
 |---|---|---|
@@ -3743,7 +3743,7 @@ documentos que antes passavam, e é o objetivo.
 
 ### A régua calibrada contra a verdade — e a cegueira que ela escondia (17/08)
 
-`node n8n/medir-regua-cobertura.mjs` confronta a régua com a contagem que o **gerador** do book
+`node N8N/medir-regua-cobertura.mjs` confronta a régua com a contagem que o **gerador** do book
 declara (ele sabe quantas linhas escreveu; não é outra leitura do PDF). A primeira medição, nos 38
 documentos, achou o defeito que o limiar nunca resolveria:
 
@@ -3807,7 +3807,7 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 1. **RODAR O BOOK NUM MANDATO NOVO, e depois o aceite sobre o export de verdade.** Continua sendo o
    item que destrava mais, e o que ele prova está na tabela de "O próximo passo" — sete coisas, três
    delas checagens que nunca viram dado real. O aceite são duas peças: `auditar-xlsx.mts` (10 itens
-   automáticos) e `docs/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
+   automáticos) e `Arquitetura do Sistema/6 Referência/ACEITE.md` (10 itens humanos). Foi a falta desse par que deixou sair, em
    06/08, um arquivo com seis números errados e as suítes verdes.
 
 2. ~~**Aplicar a `0126`.**~~ — **FEITO em 20/08**, junto com todo o resto até a `0133`. Não sobrou
@@ -3817,11 +3817,11 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
    `/instalacao` saiu em 21/08; a função ficou.)
 
 3. **A ROTULAGEM DO GOLDEN SET — e este não é de infra, é de julgamento.** A máquina está pronta e
-   testada; o que falta é o `f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por
+   testada; o que falta é o `Arquitetura do Sistema/2 Especificação/f0/06` executado: ~20 documentos REAIS por tipo core, estratificados por
    qualidade de captura (digital, PDF nativo, escaneado, foto), dois rotuladores nos casos ambíguos, e
    a rodada **congelada** ao fim. Rotular o book não serve e o banco recusa (`origem = 'sintetico'`):
    o gabarito dele já é conhecido, então a concordância mediria o instrumento. É o item de maior
-   alcance que existe hoje — sem ele o dial não sobe por medição e a F4 do `docs/03` não começa.
+   alcance que existe hoje — sem ele o dial não sobe por medição e a F4 do `Arquitetura do Sistema/1 Visão e Doutrina/03` não começa.
 
 > **A conferência de 30 segundos, depois de qualquer rodada nova.** Merge não é apply, e da tela
 > "aplicada" e "não aplicada" têm a mesma aparência. Vale reconferir quando algo parecer não ter
@@ -3852,7 +3852,7 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 > `Juntar Ramos`, `Registrar Documento` → `Recompor Contexto` → `Extracao ja feita?` (o dedup) e
 > `Juntar Extraidos`, e na ponta direita `Resumo de Custo` → `Gravar Uso do Lote` → `Conferir Lote`.
 > E, para cobrir falha de qualquer origem, o `workflow.erros.json` ligado como **Error Workflow** nas
-> Settings do Intake (`n8n/README.md`).
+> Settings do Intake (`N8N/README.md`).
 
 ## O que está aberto no produto
 
@@ -3893,21 +3893,21 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 **NÃO DEPENDE DE NADA — pode começar já:**
 
 4. **Golden set e concordância medida** — **a MÁQUINA foi feita em 19/08 (sessão 53, `0126`); o que
-   falta é a ROTULAGEM.** O esquema, as cinco métricas do `f0/06` e o portão que cobra existem e
+   falta é a ROTULAGEM.** O esquema, as cinco métricas do `Arquitetura do Sistema/2 Especificação/f0/06` e o portão que cobra existem e
    estão travados por teste; rotular documento real de cliente continua sendo trabalho de execução
-   do dono, com LGPD, e o `f0/06` já dizia que não se monta em documentação. Ver "A REGRA DE OURO
+   do dono, com LGPD, e o `Arquitetura do Sistema/2 Especificação/f0/06` já dizia que não se monta em documentação. Ver "A REGRA DE OURO
    PASSA A SER EXECUTADA". Sem a rotulagem o dial continua não subindo por medição — a diferença é
    que agora ele também não sobe **em silêncio**.
 5. **Bloco numérico dos três cenários lado a lado** — dimensionado abaixo, e é decisão do dono se
    vale: exige PARAMETRIZAR a cascata da aba que produz os números do modelo.
-6. ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
+6. ~~**Modo A do `Arquitetura do Sistema/2 Especificação/f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
    vem~~ — **fechado DUAS vezes, e a segunda é a que vale.** Em 20/08 (sessão 53) ele veio; em
    21/08 (sessão 57) o dono o TIROU, que era a outra saída que o §2.4 do diagnóstico admitia — a
    decisão escrita de que ele não vem. O que segue descreve a tela enquanto ela existiu:
    `/casos/[id]/base` filtrava por empresa,
    período, conta e status de aceite atravessando os documentos, com proveniência e confiança de
    cada número. As duas saídas que o §2.4 do diagnóstico pedia eram "construir" ou "escrever que não
-   vem"; a primeira foi tomada. Ver "O MODO A DO `f0/07` PASSA A EXISTIR". **O que ela
+   vem"; a primeira foi tomada. Ver "O MODO A DO `Arquitetura do Sistema/2 Especificação/f0/07` PASSA A EXISTIR". **O que ela
    deliberadamente NÃO faz, e fica anotado:** não SOMA — consolidar demonstração é o que o export
    paga com 574 verificações atrás, e uma tela que somasse produziria um segundo total para a mesma
    pergunta, mais fraco que o do arquivo de comitê.
@@ -3937,7 +3937,7 @@ reimportado. A sessão 53 acrescentou uma migration e um item que não é de inf
 11. **"Sugerir do realizado"** (proposta, nunca feita): oito premissas saem do próprio balanço/DRE do
     caso, com `origem = 'historico'`, que o schema da `0038` já prevê.
 
-O diagnóstico completo, com evidência e prioridade, está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
+O diagnóstico completo, com evidência e prioridade, está em `Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md`.
 Os itens acima, com o histórico de cada um:
 
 - ~~**A entidade sai poluída com o período**~~ — **fechado em 17/08.** Eram quatro famílias de
@@ -3949,7 +3949,7 @@ Os itens acima, com o histórico de cada um:
   A remoção de palavra de tipo usa a própria taxonomia como fonte, palavra a palavra, então cresce
   sozinha. ~~Fica anotado: `negativas`, `societario` e `parcelamentos` numa lista à mão~~ — **já
   resolvido**: os três viraram termos de `CERTIDOES`, `ORGANOGRAMA` e `SITUACAO_FISCAL` em
-  `n8n/lib/taxonomia.mjs`, e a regra do vocabulário os remove sozinha. O que sobrou naquela lista é
+  `N8N/lib/taxonomia.mjs`, e a regra do vocabulário os remove sozinha. O que sobrou naquela lista é
   de outra natureza (ruído de nome de arquivo: `rev3`, `scan`, `anexo`) e não tem lugar na taxonomia.
 - ~~**Fixture de extração do `book-canastra`**~~ — **fechado em 19/08 (sessão 52)**: existe
   `fixture_book_canastra.sql` (28 documentos, 1.264 linhas) e `canastra.test.sql` no `run.sh`, e a
@@ -3968,23 +3968,23 @@ Os itens acima, com o histórico de cada um:
 - ~~**Proveniência completa na aba `Premissas`**~~ — **fechado em 19/08 (sessão 52)** e em todas as
   catorze abas, não só na `Premissas` (`0125`). Ver "A PROVENIÊNCIA VOLTA AO ARQUIVO DE COMITÊ".
 - **Golden set** e concordância medida — sem isso o dial de autonomia não sobe, e a F4 do
-  `docs/03` não começa.
-- ~~**Modo A do `f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
+  `Arquitetura do Sistema/1 Visão e Doutrina/03` não começa.
+- ~~**Modo A do `Arquitetura do Sistema/2 Especificação/f0/07`** (base viva consultável no portal) — ou a decisão escrita de que ele não
   vem~~ — **fechado em 21/08 (sessão 57) pela SEGUNDA saída**: o Modo A foi construído em 20/08 e
-  descontinuado pelo dono em 21/08, e o `f0/07` passou a dizer isso. A entrega é o Modo B, o
+  descontinuado pelo dono em 21/08, e o `Arquitetura do Sistema/2 Especificação/f0/07` passou a dizer isso. A entrega é o Modo B, o
   `.xlsx`. Ver "O PORTAL ENCOLHE".
 
 ## Os comandos que funcionam
 
 ```bash
 # insumo dos testes (gera pdf/ + GABARITO.json, não versionados)
-cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
+cd "Dados de Teste"/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
-node --test 'n8n/test/*.test.mjs'                                      # da RAIZ do repo
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
-PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh
+node --test 'N8N/test/*.test.mjs'                                      # da RAIZ do repo
+./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres Supabase/test/run.sh
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
-  ./portal/node_modules/.bin/tsx test/e2e/run.mts
+  ./Vercel/node_modules/.bin/tsx Verificação/run.mts
 ```
 
 > `E2E_PSQL` é o **comando** do psql, não um flag: com `E2E_PSQL=1` o arnês tenta executar um binário

@@ -28,7 +28,7 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [Derivado versionado precisa de `git diff --exit-code`](derivado-versionado-precisa-de-git-diff.md)
   — quem roda é o commitado, não a fonte que o gera
 - [A medição reescreve o derivado](medicao-reescreve-derivado.md) — o `cp` do protocolo
-  protege o arquivo alterado, não o `db/schema.sql` que o `run.sh` regrava por baixo
+  protege o arquivo alterado, não o `Supabase/schema.sql` que o `run.sh` regrava por baixo
 - [Um portão pode reprovar por ruído](portao-pode-reprovar-por-ruido.md) — `FOR ROLE root` contra
   `FOR ROLE postgres`: schema idêntico, CI vermelho
 - [Portão calibra sobre a entrada de PRODUÇÃO](portao-mede-a-entrada-de-producao.md) — o texto

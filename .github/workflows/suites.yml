@@ -87,10 +87,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: portal/package-lock.json
+          cache-dependency-path: Vercel/package-lock.json
 
       - name: Instalar dependências do portal
-        working-directory: portal
+        working-directory: Vercel
         run: npm ci
 
 
@@ -105,13 +105,13 @@ jobs:
 
       # ---- rápido e barato primeiro ---------------------------------------
       - name: Lint e tipos do portal
-        working-directory: portal
+        working-directory: Vercel
         run: |
           npx tsc --noEmit
           npx eslint .
 
       - name: Suíte n8n
-        run: node --test 'n8n/test/*.test.mjs'
+        run: node --test 'N8N/test/*.test.mjs'
 
       - name: Suíte dos hooks do agente
         # A trava que impede o descarte de arquivo é a única trava DURA do repositório, e ela erra
@@ -128,14 +128,14 @@ jobs:
 
       - name: Geradores de workflow — e o gerado tem de ser igual ao commitado
         run: |
-          node n8n/build-workflow.mjs
-          node n8n/build-workflow-macro.mjs
-          node n8n/build-workflow-diagnostico.mjs
-          node n8n/build-workflow-erros.mjs
+          node N8N/build-workflow.mjs
+          node N8N/build-workflow-macro.mjs
+          node N8N/build-workflow-diagnostico.mjs
+          node N8N/build-workflow-erros.mjs
           # É o `git diff` que impede o JSON commitado de divergir da fonte.
           # Sem ele, o gerador vira documentação: o dono importa o JSON velho e
           # a correção fica no repositório sem chegar à produção.
-          git diff --exit-code -- n8n/ \
+          git diff --exit-code -- N8N/ \
             || { echo "::error::os workflows gerados divergem dos commitados — rode os 4 geradores e commite o resultado"; exit 1; }
 
       # ---- fixtures do book (insumo do export e do e2e) --------------------
@@ -143,7 +143,7 @@ jobs:
         # PYTHONPATH=. é OBRIGATÓRIO (o gerar.py importa módulos irmãos), e o
         # GABARITO.json sai dentro de pdf/. Sem este passo o verificar-export
         # morre com ENOENT no GABARITO — não é bug, é insumo faltando.
-        working-directory: test-data/book-vertentes
+        working-directory: Dados de Teste/book-vertentes
         run: |
           # VERSÃO PRESA, e não é higiene genérica: o book sintético é o ORÁCULO das
           # suítes, e `pip install reportlab` sem versão faz o CI baixar o que for a
@@ -156,11 +156,11 @@ jobs:
       # ---- os DERIVADOS do gerador do book, conferidos como os workflows ----
       - name: Fixtures derivadas do gerador do book (SQL, JSON) e git diff
         # POR QUE ESTE PASSO EXISTE (achado em 19/08/2026). Do MESMO
-        # `db/test/gerar_fixture.py` saem TRÊS artefatos versionados:
+        # `Supabase/test/gerar_fixture.py` saem TRÊS artefatos versionados:
         #
-        #   • db/test/fixture_book_vertentes.sql        (suíte de banco)
-        #   • portal/scripts/fixtures/book-vertentes.json (suíte de export)
-        #   • test-data/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
+        #   • Supabase/test/fixture_book_vertentes.sql        (suíte de banco)
+        #   • Vercel/scripts/fixtures/book-vertentes.json (suíte de export)
+        #   • Dados de Teste/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
         #
         # Os workflows do n8n já têm este portão desde a sessão 20, com o motivo
         # escrito: "o JSON commitado pode divergir da fonte que o gera". As
@@ -175,15 +175,15 @@ jobs:
         # comparam entre si — desincronizar uma faz as outras duas mentirem sobre
         # a terceira.
         run: |
-          cd test-data/book-vertentes
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py > ../../db/test/fixture_book_vertentes.sql
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json
+          cd "Dados de Teste"/book-vertentes
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py > ../../Supabase/test/fixture_book_vertentes.sql
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../Vercel/scripts/fixtures/book-vertentes.json
           cd ../book-canastra
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture_canastra.py > ../../db/test/fixture_book_canastra.sql
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture_canastra.py > ../../Supabase/test/fixture_book_canastra.sql
           cd ../..
-          git diff --exit-code -- db/test/fixture_book_vertentes.sql \
-            portal/scripts/fixtures/book-vertentes.json \
-            db/test/fixture_book_canastra.sql \
+          git diff --exit-code -- Supabase/test/fixture_book_vertentes.sql \
+            Vercel/scripts/fixtures/book-vertentes.json \
+            Supabase/test/fixture_book_canastra.sql \
             || { echo "::error::as fixtures commitadas divergem do gerador — rode os geradores de fixture e commite o resultado"; exit 1; }
 
       # ---- o book difícil: 38 documentos, 3 exercícios, e o custo do lote ----
@@ -192,14 +192,14 @@ jobs:
         # nos 3 exercícios e confere cada anexo contra a conta do balanço que ele
         # detalha, por `assert`. Se um número deixar de bater, ele MORRE aqui —
         # antes de qualquer coisa rodar sobre um insumo mentiroso.
-        working-directory: test-data/book-canastra
+        working-directory: Dados de Teste/book-canastra
         run: PYTHONPATH=. python3 gerar.py
 
       - name: Custo do lote (medido no artefato, sem chamar a OpenAI)
         # Reprova quando um documento custa mais que a estimativa por chamada que
         # sustenta o teto de US$ 3 — que foi como se descobriu que o livro razão
         # custava US$ 0,1725 contra os US$ 0,15 então declarados.
-        run: node n8n/medir-custo-book.mjs
+        run: node N8N/medir-custo-book.mjs
 
       - name: Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)
         # A guarda que decide se um documento veio pela metade depende de uma
@@ -211,13 +211,13 @@ jobs:
         # GERADOR, que produção nunca vê. Ele passava com "+3%" enquanto o
         # `17_Livro_Razao` dava 258 no n8n contra as 99 linhas reais e abria
         # pendência falsa. Agora a entrada é a captura versionada da execução
-        # 7276 (`test-data/capturas/`), e o que não está nela é declarado NÃO
+        # 7276 (`Dados de Teste/capturas/`), e o que não está nela é declarado NÃO
         # MEDIDO em vez de parecer aprovado.
         #
         # Reprova quando a régua sai da faixa (conta demais e come a folga do
         # limiar, ou conta de menos e deixa passar extração incompleta), e quando
         # um documento novo entra na classe do rótulo repetido.
-        run: node n8n/medir-regua-cobertura.mjs
+        run: node N8N/medir-regua-cobertura.mjs
 
       - name: Suíte de export (invariantes do arquivo entregue)
         # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
@@ -225,7 +225,7 @@ jobs:
         # PATH, o npx respondeu "package was not found and will be installed" e
         # baixou o tsx do registro — sem versão fixada, com o CI passando a
         # depender do que estiver publicado no dia.
-        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
+        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
 
       - name: Suíte da planilha de transcrição (ida e volta do formato)
         # A planilha da 0129 grava linha ACEITA, com autor e sem guarda nenhuma —
@@ -233,7 +233,7 @@ jobs:
         # que tem dono, e ninguém volta a desconfiar de número com dono. A suíte é
         # round-trip (gerar → .xlsx → ler) porque o defeito que interessa é a coluna
         # que muda de lugar em UMA das duas metades do formato.
-        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
+        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-transcricao.mts
 
       - name: Suíte da mensagem de falha (o texto do dia ruim)
         # POR QUE ELA ESTÁ NO CI. Este é o único texto do sistema cujo defeito
@@ -241,7 +241,7 @@ jobs:
         # Uma assinatura que deixou de casar, ou uma frase que voltou a citar
         # ferramenta, não derruba tela nenhuma — e só se descobre no momento em
         # que alguém precisa de ajuda e recebe "deu erro".
-        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
+        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-mensagem-de-falha.mts
 
       - name: Suíte das premissas sugeridas do realizado
         # A tela de Modelagem sugere oito premissas lidas do próprio balanço e da
@@ -250,13 +250,13 @@ jobs:
         # produz um modelo que parece calibrado pelo histórico e não é. A suíte
         # trava as duas regras que sustentam isso: zero não é resposta, e a base de
         # cada razão é a MESMA que o modelo aplica ao projetar.
-        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
+        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-premissas-do-realizado.mts
 
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
-        run: db/test/run.sh
+        run: Supabase/test/run.sh
 
-      # O `db/test/run.sh` acabou de reescrever `db/schema.sql` a partir do banco
+      # O `Supabase/test/run.sh` acabou de reescrever `Supabase/schema.sql` a partir do banco
       # que ele montou do zero. Se o commitado divergir, o schema que o
       # repositório publica não é o que as migrations produzem — e é o publicado
       # que alguém vai ler para entender o banco.
@@ -265,13 +265,13 @@ jobs:
       # deixa a fonte e o resultado divergirem em silêncio.
       - name: O schema materializado bate com as migrations
         run: |
-          git diff --exit-code -- db/schema.sql || {
-            echo "::error::db/schema.sql está desatualizado — rode db/test/run.sh e commite o resultado."
+          git diff --exit-code -- Supabase/schema.sql || {
+            echo "::error::Supabase/schema.sql está desatualizado — rode Supabase/test/run.sh e commite o resultado."
             exit 1
           }
 
       - name: Suíte e2e (extração → banco → export)
-        run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
+        run: ./Vercel/node_modules/.bin/tsx Verificação/run.mts
 
       - name: Arnês de variações — a cadeia real sobre documento sujo
         # POR QUE ELE ESTÁ NO CI. Cinco rodadas de variantes trocadas por completo
@@ -288,8 +288,8 @@ jobs:
         # existe no runner: o passo morria em `connection to server on socket
         # "/tmp/.s.PGSQL.5432" failed`. Configuração de sandbox copiada para o CI é
         # o jeito mais bobo de deixar um portão vermelho.
-        run: ./portal/node_modules/.bin/tsx test/e2e/variacoes.mts
+        run: ./Vercel/node_modules/.bin/tsx Verificação/variacoes.mts
 
       - name: Build do portal
-        working-directory: portal
+        working-directory: Vercel
         run: npx next build

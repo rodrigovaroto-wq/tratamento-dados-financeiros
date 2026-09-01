@@ -13,8 +13,8 @@ com modelo de FP&A vivo em fórmula.
 | Arquivo | Pergunta que responde |
 |---|---|
 | `ESTADO.md` (topo) | **Onde estamos agora** — última migration, suítes, a rodada mais recente |
-| `docs/MAPA_DE_EXECUCAO.md` | **O que falta até fechar**, em ordem, com critério de pronto |
-| `docs/PRONTIDAO_POR_ESTAGIO.md` | O projeto medido contra o próprio objetivo, estágio por estágio |
+| `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` | **O que falta até fechar**, em ordem, com critério de pronto |
+| `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` | O projeto medido contra o próprio objetivo, estágio por estágio |
 | `.claude/memory/MEMORY.md` | As lições que já custaram caro — **leia sempre, é curto** |
 | `HANDOFF.md` | **Como chegou aqui** — arquivo morto, ~5.000 linhas. Não leia inteiro |
 
@@ -48,31 +48,31 @@ Use exatamente estes. O CI (`.github/workflows/suites.yml`) é a lista completa 
 
 ```bash
 # preparar o container (a sessão 14 perdeu tempo nos três)
-cd portal && npm ci && cd ..
-cd test-data/book-vertentes && python3 -m pip install --quiet 'reportlab==5.0.1' \
+cd Vercel && npm ci && cd ..
+cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab==5.0.1' \
   && PYTHONPATH=. python3 gerar.py && cd ../..   # PYTHONPATH=. é obrigatório
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
   -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
 
 # suítes
-node --test 'n8n/test/*.test.mjs'
-./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
-./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
-./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
-./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
-sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
-E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx test/e2e/run.mts
-./portal/node_modules/.bin/tsx test/e2e/variacoes.mts
+node --test 'N8N/test/*.test.mjs'
+./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
+./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-transcricao.mts
+./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-mensagem-de-falha.mts
+./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-premissas-do-realizado.mts
+sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
+E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./Vercel/node_modules/.bin/tsx Verificação/run.mts
+./Vercel/node_modules/.bin/tsx Verificação/variacoes.mts
 
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
-node n8n/build-workflow.mjs && node n8n/build-workflow-macro.mjs \
-  && node n8n/build-workflow-diagnostico.mjs && node n8n/build-workflow-erros.mjs
+node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
+  && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
 
 # portal
-cd portal && npx tsc --noEmit && npx eslint . && npx next build
+cd Vercel && npx tsc --noEmit && npx eslint . && npx next build
 ```
 
-`npx tsx` **não** serve no lugar de `./portal/node_modules/.bin/tsx`: sem o binário do lock, o
+`npx tsx` **não** serve no lugar de `./Vercel/node_modules/.bin/tsx`: sem o binário do lock, o
 npx baixa a última versão publicada no dia.
 
 ## Orquestrar, não implementar sozinho
@@ -82,9 +82,9 @@ cuja linha casa com a tarefa — os arquivos estão em `.claude/agents/`.
 
 | Agente | Quando usar | Nível |
 |---|---|---|
-| `migrations-postgres` | Migration, função SQL, sonda, `db/test/*.sql` | médio |
-| `n8n-workflow` | Geradores, `n8n/lib/*`, nós Code, republicação | médio |
-| `portal-export` | `portal/src/**`, `export.ts`, endereços de célula | médio |
+| `migrations-postgres` | Migration, função SQL, sonda, `Supabase/test/*.sql` | médio |
+| `n8n-workflow` | Geradores, `N8N/lib/*`, nós Code, republicação | médio |
+| `portal-export` | `Vercel/src/**`, `export.ts`, endereços de célula | médio |
 | `suites-invariantes` | Escrever um invariante novo e **medi-lo não-vazio** | médio |
 | `revisor-defeito-silencioso` | Revisar um diff sob a lente central do projeto | forte |
 | `estado-e-handoff` | Atualizar `ESTADO.md`, `MAPA`, memória, PR | barato |
@@ -93,11 +93,11 @@ cuja linha casa com a tarefa — os arquivos estão em `.claude/agents/`.
 **Nível de modelo é escolhido por despacho, nunca herdado por acidente.** Despacho paralelo
 (ondas) só quando **as duas** condições valem: sem dependência entre as tarefas **e** conjuntos
 de arquivos totalmente disjuntos. Quem comita é sempre a sessão principal, uma tarefa por vez,
-capturando o `HEAD` na hora. Ver `docs/prompts/03-onda-paralela.md`.
+capturando o `HEAD` na hora. Ver `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.
 
 ## Antes de codar
 
-Pedido aberto (mais de uma leitura razoável) → `docs/prompts/` primeiro, código depois.
+Pedido aberto (mais de uma leitura razoável) → `Arquitetura do Sistema/5 Prompts/` primeiro, código depois.
 Bug → causa raiz antes de qualquer correção; três correções falhas seguidas param a linha e
 questionam a arquitetura, não tentam a quarta.
 
