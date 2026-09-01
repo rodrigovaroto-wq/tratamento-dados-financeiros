@@ -43,11 +43,20 @@ const tipo = opt("tipo");
 const regra = opt("regra");
 const filtro = [tipo && `types=${tipo}`, regra && `rules=${encodeURIComponent(regra)}`]
   .filter(Boolean).join("&");
+// `filtro` vem de argv (--tipo=, --regra=) e é logado abaixo dentro de um
+// `[...]` no meio da linha de resumo — uma quebra de linha aí forjaria uma
+// segunda linha de saída como se fosse deste script (log injection,
+// jssecurity:S5145). Argv não tem CR/LF de verdade (o shell já separa por
+// espaço), mas a origem é entrada externa e o `console.log` não distingue —
+// tirar quebra de linha antes de logar fecha o caso mesmo que ela chegue por
+// outra via (variável de ambiente, wrapper que monta argv programaticamente).
+const semQuebraDeLinha = (s) => s.replace(/[\r\n]/g, " ");
+const filtroParaLog = semQuebraDeLinha(filtro);
 
 if (lista || regra) {
   // A API devolve no máximo 500 por página e não pagina além de 10.000.
   const d = await buscar(filtro, 500);
-  console.log(`${d.total} achado(s)${filtro ? ` [${filtro}]` : ""}\n`);
+  console.log(`${d.total} achado(s)${filtroParaLog ? ` [${filtroParaLog}]` : ""}\n`);
   for (const i of d.issues) {
     const arq = i.component.split(":").slice(1).join(":");
     console.log(`  [${i.rule}] ${arq}:${i.line ?? "?"}`);
@@ -59,7 +68,7 @@ if (lista || regra) {
 } else {
   const d = await buscar(`${filtro}&facets=types,severities,rules,languages`);
   console.log(`PROJETO ${PROJETO}`);
-  console.log(`${d.total} achado(s) em aberto${filtro ? ` [${filtro}]` : ""}\n`);
+  console.log(`${d.total} achado(s) em aberto${filtroParaLog ? ` [${filtroParaLog}]` : ""}\n`);
   for (const f of d.facets) {
     const vals = f.values.filter((v) => v.count > 0).slice(0, 15);
     if (!vals.length) continue;

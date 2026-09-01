@@ -182,8 +182,17 @@ async function idaEVolta(wb: ExcelJS.Workbook, esperado = DOC) {
       "(1) a seção canônica pré-preenchida volta em `secao_canonica`", String(a?.secao_canonica));
 
     // 2: O ASSERT QUE PEGA `parseFloat`. Com leitura ingênua isto vale 1.234.
+    //
+    // Tolerância de meio centavo (0.005): o valor é reais com DUAS casas decimais
+    // (é o que a convenção pt-BR desta planilha representa — nunca fração de
+    // centavo), então qualquer diferença igual ou acima de 1 centavo já é a
+    // extração errada, e nenhuma diferença menor pode existir por medição real.
+    // `===` entre float (sonar typescript:S1244) compararia bit a bit uma string
+    // convertida por `Number()` com um literal — hoje bate porque os dois lados
+    // resolvem para o mesmo double, mas é acidente de representação, não
+    // contrato: o assert não deve depender de que continue batendo por acaso.
     const p = porChave.get("Passivo Total");
-    checar(Number(p?.valor_num) === 1234.56,
+    checar(Math.abs(Number(p?.valor_num) - 1234.56) < 0.005,
       "(2) \"1.234,56\" vale 1234,56 — não 1,234, que é o que parseFloat devolveria",
       String(p?.valor_num));
 

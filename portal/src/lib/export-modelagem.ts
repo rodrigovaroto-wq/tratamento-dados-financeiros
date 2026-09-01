@@ -227,7 +227,10 @@ function construirAbaMacroDados(
      anosExpDe: Map<string, number[]> } {
   const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort();
+  // localeCompare('pt-BR'): `serie` é o nome da série macro escrito como rótulo
+  // de linha, lido por humano — `.sort()` puro ordena por código UTF-16 e erra
+  // acento (sonar typescript:S2871).
+  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
 
   sheet.getColumn(1).width = 30;
   const cab = sheet.addRow(["Série (retorno anual %)", ...anos]);
@@ -293,7 +296,9 @@ function construirAbaMacroDados(
   const linhaExpDe = new Map<string, number>();
   const anosExpDe = new Map<string, number[]>();
   const expPorChave = new Map(macro.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
-  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort()) {
+  // localeCompare('pt-BR'): mesmo motivo de `series` acima — rótulo de linha
+  // lido por humano (sonar typescript:S2871).
+  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"))) {
     const row = sheet.addRow([serie]);
     linhaExpDe.set(serie, row.number);
     for (const ano of anosExp) {
@@ -865,10 +870,14 @@ export function construirAbaModelagem(
   // `escreverBaseLocal`) — nunca sobrescreve linha de modelo em silêncio.
   const LINHA_BASE_INICIO = 200;
   const colBaseRotulo = 1;
+  // localeCompare('pt-BR'): a chave é `<entidade><SEP><período>` e vira o
+  // cabeçalho de coluna escrito na aba ("<entidade> — <ano>", ver abaixo) — é
+  // texto para humano ler, não código técnico. `.sort()` puro ordena por
+  // código UTF-16 e erra acento no nome da entidade (sonar typescript:S2871).
   const colunasBase = [...new Set(
     [...baseModelagem.values()].flatMap((porRotulo) =>
       [...porRotulo.values()].flatMap((porCol) => [...porCol.keys()])),
-  )].sort();
+  )].sort((a, b) => a.localeCompare(b, "pt-BR"));
   const baseLocal: BaseLocal = {
     colRotulo: sheet.getColumn(colBaseRotulo).letter,
     colPrimeira: sheet.getColumn(colBaseRotulo + 1).letter,
@@ -903,9 +912,11 @@ export function construirAbaModelagem(
   let escreverSeletorMacro: () => void;
   if (macro && macroDados) {
     const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort();
+    // localeCompare('pt-BR'): mesmo motivo de `series`/`colunasBase` acima —
+    // rótulo de linha no espelho local, lido por humano (sonar typescript:S2871).
+    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
     const anosFocus = [...new Set(macroDados.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
-    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort();
+    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort((a, b) => a.localeCompare(b, "pt-BR"));
     const anualDe = new Map(macroDados.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
     const focusDe = new Map(macroDados.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
     const colHist = (i: number) => sheet.getColumn(2 + i).letter;

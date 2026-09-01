@@ -45,6 +45,10 @@ export function ExcluirMandato({ casoId, nome }: { casoId: string; nome: string 
           // Clicar fora fecha — mas só no fundo, não no cartão (senão qualquer
           // clique dentro do diálogo o fecharia no meio da leitura).
           onClick={(e) => { if (e.target === e.currentTarget && !enviando) setAberto(false); }}
+          // Equivalente por teclado do clique no fundo: ESC fecha o diálogo.
+          // Sem isto quem navega só por teclado não tinha como cancelar sem
+          // tabular até o botão "Cancelar" (sonar typescript:S1082).
+          onKeyDown={(e) => { if (e.key === "Escape" && !enviando) setAberto(false); }}
         >
           <div className="w-full max-w-md rounded-lg border border-tinta-200 bg-folha p-5 shadow-xl">
             <h2 id="titulo-excluir" className="text-base font-semibold text-tinta-900">

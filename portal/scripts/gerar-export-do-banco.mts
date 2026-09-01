@@ -27,6 +27,9 @@
 // aqui faria o arquivo mudar sozinho e um diff de bytes acusar mudança onde não
 // houve.
 import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildExportWorkbook, finalizarBufferDoExport, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
 import type { EntradaModeloInstitucional, LinhaModelo } from "../src/lib/modelo-institucional.ts";
 import type { CampoExtraido } from "../src/lib/types.ts";
@@ -45,9 +48,17 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CASO
   throw new Error(`caso_id "${CASO}" não é um UUID — é assim que caso.id é gravado desde a 0001.`);
 }
 
+// `psql` é resolvido só nestes diretórios do sistema (sonar typescript:S4036):
+// sem isto, `execFileSync` busca no `PATH` herdado do processo, e um `psql`
+// plantado ANTES no `PATH` (variável de ambiente, não arquivo — nada que a
+// validação do `caso_id` acima alcance) rodaria no lugar do binário real,
+// com o mesmo acesso ao banco que este script já tem.
+const DIRS_PSQL_SEGUROS = "/usr/bin:/bin:/usr/local/bin";
+
 function q<T>(sql: string): T[] {
   const out = execFileSync("psql", ["-d", DB, "-tAc",
-    `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`], { encoding: "utf8" });
+    `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`],
+    { encoding: "utf8", env: { ...process.env, PATH: DIRS_PSQL_SEGUROS } });
   return JSON.parse(out.trim()) as T[];
 }
 
@@ -162,7 +173,15 @@ const modo = (process.env.MODO === "dados" ? "dados" : "completo") as "dados" | 
 const wb = buildExportWorkbook({
   caso, documentos, campos, modo, modelagemConfig, modeloInstitucional,
 });
-const saida = process.argv[3] ?? "/tmp/v35-completo.xlsx";
+// Sem caminho explícito no argv, o padrão NÃO é um nome fixo dentro de /tmp
+// (sonar typescript:S5443): `/tmp/v35-completo.xlsx` é previsível e o diretório
+// é gravável por qualquer processo da máquina — outro processo local podia
+// plantar um symlink nesse nome antes de rodar, ou ler o export (que carrega
+// dado financeiro do caso) assim que ele é escrito. `mkdtempSync` cria um
+// diretório com nome IMPREVISÍVEL e modo 0700 (só o dono lê/escreve) — mesma
+// pasta-base do sistema, mas sem nome adivinhável nem permissão aberta.
+const saida = process.argv[3]
+  ?? join(mkdtempSync(join(tmpdir(), "gerar-export-do-banco-")), "v35-completo.xlsx");
 // O MESMO caminho de saída da rota — sem isto, o arquivo que eu meço localmente
 // não tem gráfico nem nota ampliada, e a medição mente sobre o entregável.
 const { writeFile } = await import("node:fs/promises");

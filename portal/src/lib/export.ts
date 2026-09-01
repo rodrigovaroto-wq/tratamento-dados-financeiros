@@ -758,7 +758,10 @@ export function normalizarEscala(
 
   return {
     campos: saida,
-    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort() },
+    // localeCompare('pt-BR'): texto de leitura humana (nota de proveniência da
+    // célula, ver `escala.escalasEncontradas` em uso). `.sort()` puro ordena por
+    // unidade de código UTF-16 — sonar typescript:S2871.
+    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort((a, b) => a.localeCompare(b, "pt-BR")) },
   };
 }
 
@@ -1301,7 +1304,9 @@ function construirAbaClassificada(
     cell: ExcelJS.Cell, colKey: string, formula: string,
   ): boolean => {
     if (colunasMistas.has(colKey)) {
-      const moedas = [...moedasPorColuna.get(colKey)!].sort().join(" + ");
+      // localeCompare('pt-BR'): lista de moedas para nota lida por humano
+      // (sonar typescript:S2871 — `.sort()` puro é ordem de código UTF-16).
+      const moedas = [...moedasPorColuna.get(colKey)!].sort((a, b) => a.localeCompare(b, "pt-BR")).join(" + ");
       cell.value = "⚠ não somável";
       cell.note = comoNota(
         `Esta coluna traz linhas em MOEDAS DIFERENTES (${moedas}), então nenhuma soma daqui `
@@ -1324,7 +1329,9 @@ function construirAbaClassificada(
     const cell = headerRow.getCell(plano.valuePos[i]);
     const tipoCol = tipoColunaNaoEntidade(col.entidade);
     const sufixoMoeda = colunasMistas.has(col.key)
-      ? ` (⚠ MOEDAS MISTURADAS: ${[...moedasPorColuna.get(col.key)!].sort().join(" + ")} — não somável)`
+      // localeCompare('pt-BR'): mesmo motivo do sufixo de nota acima — texto
+      // para humano ler no cabeçalho da coluna (sonar typescript:S2871).
+      ? ` (⚠ MOEDAS MISTURADAS: ${[...moedasPorColuna.get(col.key)!].sort((a, b) => a.localeCompare(b, "pt-BR")).join(" + ")} — não somável)`
       : abaMultiMoeda && moedaDaColuna(col.key) ? ` (${moedaDaColuna(col.key)})` : "";
     const sufixo = (tipoCol === "ajuste" ? " (ajuste — não é entidade)"
       : tipoCol === "total" ? " (total do documento — não somar com as demais)" : "")

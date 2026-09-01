@@ -18,13 +18,20 @@
 // mudança onde não houve — a mesma armadilha que já deixou o CI vermelho por
 // não-motivo.
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildExportWorkbook, type DocumentoParaExport } from "../src/lib/export";
 import type { CampoExtraido } from "../src/lib/types";
 import { entradaModeloDaFixture } from "./lib/modelo-da-fixture.mts";
 
 const args = process.argv.slice(2);
-const saida = args.find((a) => !a.startsWith("--")) ?? "/tmp/book-vertentes.xlsx";
+// Sem caminho explícito no argv, o padrão NÃO é um nome fixo dentro de /tmp
+// (sonar typescript:S5443) — mesmo motivo do `gerar-export-do-banco.mts`:
+// nome previsível num diretório gravável por qualquer processo da máquina.
+// `mkdtempSync` cria um diretório de nome imprevisível e modo 0700 (só o dono).
+const saida = args.find((a) => !a.startsWith("--"))
+  ?? join(mkdtempSync(join(tmpdir(), "gerar-export-fixture-")), "book-vertentes.xlsx");
 // `--modo=dados` gera o export de conferência (sem Modelagem); sem a flag sai o
 // completo. Os dois saem do MESMO builder, de propósito: as abas de dado têm de
 // ser idênticas nos dois arquivos.

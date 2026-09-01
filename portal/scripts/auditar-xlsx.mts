@@ -20,7 +20,8 @@
 //
 // Sai com código 1 se qualquer item obrigatório reprovar, para poder entrar em
 // script de aceite sem alguém ter de ler a saída.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { extname, resolve } from "node:path";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { avaliarCelula, esquecerMemoria } from "./lib/avaliar-formula.mts";
@@ -382,10 +383,30 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.error("uso: auditar-xlsx.mts <arquivo.xlsx>");
     process.exit(2);
   }
+  // VALIDAÇÃO DO CAMINHO (sonar tssecurity:S8707). Este comando não tem um
+  // "diretório esperado" para confinar o argumento: é uma ferramenta de
+  // operador, chamada diretamente por quem já tem acesso ao arquivo no próprio
+  // disco (Downloads, /tmp, uma exportação recém-gerada em outro lugar) — o
+  // arquivo a auditar É QUALQUER exportação, de propósito, não um caminho
+  // dentro do projeto. Não existe fronteira de privilégio sendo cruzada (quem
+  // roda o comando já poderia ler o arquivo por fora dele), então o que dá
+  // para validar de verdade é: o caminho resolve para um ARQUIVO regular que
+  // EXISTE e termina em `.xlsx` — o suficiente para recusar um `..`/symlink
+  // que aponte para algo que claramente não é a exportação a auditar, sem
+  // impedir o uso real da ferramenta.
+  const arqResolvido = resolve(arq);
+  if (extname(arqResolvido).toLowerCase() !== ".xlsx") {
+    console.error(`esperado um arquivo .xlsx: ${arq}`);
+    process.exit(2);
+  }
+  if (!existsSync(arqResolvido) || !statSync(arqResolvido).isFile()) {
+    console.error(`arquivo não encontrado: ${arq}`);
+    process.exit(2);
+  }
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(arq);
+  await wb.xlsx.readFile(arqResolvido);
   // A flag de recálculo é lida do XML, não do objeto — ver o comentário do parâmetro.
-  const zip = await JSZip.loadAsync(readFileSync(arq));
+  const zip = await JSZip.loadAsync(readFileSync(arqResolvido));
   const workbookXml = await zip.file("xl/workbook.xml")?.async("string") ?? "";
   const itens = auditarWorkbook(wb, /fullCalcOnLoad="(1|true)"/.test(workbookXml));
   console.log(`AUDITORIA DE ${arq}\n`);

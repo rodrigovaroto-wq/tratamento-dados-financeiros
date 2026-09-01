@@ -432,6 +432,18 @@ export default function UploadForm({
         <label className="mb-1 block text-sm font-medium text-tinta-600">Arquivos</label>
         <div
           onClick={() => inputRef.current?.click()}
+          // Equivalente por teclado do clique: Enter/Espaço abrem o seletor de
+          // arquivo, igual a um `<button>` de verdade. `role`+`tabIndex` fazem a
+          // div se anunciar e receber foco como um botão — sem isto quem navega
+          // por teclado não alcançava a ação (sonar typescript:S1082).
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              inputRef.current?.click();
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             setArrastando(true);
