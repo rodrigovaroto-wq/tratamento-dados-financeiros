@@ -26,7 +26,7 @@
 // inspecionar à mão depois.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { buildExportWorkbook } from "../portal/src/lib/export.ts";
 import type { CampoExtraido, DocumentoParaExport } from "../portal/src/lib/types.ts";
@@ -145,8 +145,18 @@ function garantirMolde() {
         grant usage on schema public to anon, authenticated, service_role;
         alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
         alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;`, MOLDE);
-  const arquivos = execFileSync("bash", ["-c", "ls Supabase/migrations/*.sql"], { encoding: "utf8", cwd: RAIZ })
-    .trim().split("\n");
+  // A LISTA DAS MIGRATIONS SAI DO DISCO, E NÃO DE UM SHELL. Até aqui ela vinha de
+  // `bash -c "ls Supabase/migrations/*.sql"`: o `bash` era resolvido pelo PATH
+  // herdado do processo, então um executável com esse nome num diretório gravável
+  // que aparecesse antes na busca rodaria no lugar do shell — e é logo abaixo que
+  // o molde do banco é montado com essas migrations. `readdirSync` lê o mesmo
+  // diretório sem criar processo nenhum, e o `sort()` reproduz a ordem
+  // lexicográfica do `ls`, que é a ordem em que as migrations TÊM de ser
+  // aplicadas (é o prefixo numérico do nome que as ordena).
+  const arquivos = readdirSync(`${RAIZ}Supabase/migrations`)
+    .filter((nome) => nome.endsWith(".sql"))
+    .sort()
+    .map((nome) => `Supabase/migrations/${nome}`);
   for (const arq of arquivos) {
     execFileSync(PSQL[0], [...PSQL.slice(1), "-v", "ON_ERROR_STOP=1", "-q", "-d", MOLDE, "-f", arq],
       { cwd: RAIZ, stdio: "pipe" });

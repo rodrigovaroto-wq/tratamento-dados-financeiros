@@ -28,7 +28,7 @@
 // chamada de IA nenhuma — o insumo é o book determinístico de `Dados de Teste/book-vertentes`.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { buildExportWorkbook } from "../portal/src/lib/export.ts";
 import type { CampoExtraido, DocumentoParaExport } from "../portal/src/lib/types.ts";
 import { avaliarCelula } from "../portal/scripts/lib/avaliar-formula.mts";
@@ -260,9 +260,19 @@ psql(`
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
   alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 `);
-for (const arquivo of execFileSync("bash", ["-c", "ls Supabase/migrations/*.sql"], { encoding: "utf8", cwd: RAIZ })
-  .trim()
-  .split("\n")) {
+// A LISTA DAS MIGRATIONS SAI DO DISCO, E NÃO DE UM SHELL. Até aqui ela vinha de
+// `bash -c "ls Supabase/migrations/*.sql"`: o `bash` era resolvido pelo PATH
+// herdado do processo, então um executável com esse nome num diretório gravável
+// que aparecesse antes na busca rodaria no lugar do shell — e o que este trecho
+// faz em seguida é aplicar migrations com o psql. `readdirSync` lê o mesmo
+// diretório sem criar processo nenhum, e o `sort()` reproduz a ordem
+// lexicográfica do `ls`, que é a ordem em que as migrations TÊM de ser
+// aplicadas (é o prefixo numérico do nome que as ordena).
+const MIGRATIONS = readdirSync(`${RAIZ}Supabase/migrations`)
+  .filter((nome) => nome.endsWith(".sql"))
+  .sort()
+  .map((nome) => `Supabase/migrations/${nome}`);
+for (const arquivo of MIGRATIONS) {
   execFileSync(PSQL[0], [...PSQL.slice(1), "-v", "ON_ERROR_STOP=1", "-q", "-d", DB, "-f", arquivo], { cwd: RAIZ, stdio: "pipe" });
 }
 console.log("   migrations aplicadas");

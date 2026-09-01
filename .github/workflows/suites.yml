@@ -90,8 +90,19 @@ jobs:
           cache-dependency-path: portal/package-lock.json
 
       - name: Instalar dependências do portal
+        # `--ignore-scripts` porque `npm ci` sem ele executa o postinstall de
+        # QUALQUER dependência transitiva — código arbitrário de terceiro rodando
+        # no runner, com o checkout e o token do job à mão, antes de a primeira
+        # suíte começar.
+        #
+        # E ELE FOI MEDIDO, não presumido: as três dependências desta árvore com
+        # script de instalação são `esbuild`, `sharp` e `unrs-resolver`, e as três
+        # continuam funcionando sem ele — o binário nativo de cada uma vem do
+        # pacote por plataforma em `optionalDependencies`, e o script só o
+        # confirma. Com a árvore instalada assim, `tsc --noEmit`, `eslint .`,
+        # `next build` e o `tsx` das suítes rodaram verdes (conferido em 01/09).
         working-directory: portal
-        run: npm ci
+        run: npm ci --ignore-scripts
 
 
       - name: Cliente psql 16
@@ -105,10 +116,16 @@ jobs:
 
       # ---- rápido e barato primeiro ---------------------------------------
       - name: Lint e tipos do portal
+        # OS BINÁRIOS DO LOCK, CHAMADOS POR CAMINHO — a mesma razão já escrita no
+        # passo da suíte de export mais abaixo, e a regra que o CLAUDE.md manda.
+        # `npx tsc` não é o tsc deste `package-lock.json`: quando o npx não acha o
+        # pacote ele BAIXA o que estiver publicado no registro no dia, sem versão
+        # fixada e rodando os scripts de instalação desse pacote. Um portão que
+        # muda de versão sozinho é um portão que muda de opinião sozinho.
         working-directory: portal
         run: |
-          npx tsc --noEmit
-          npx eslint .
+          ./node_modules/.bin/tsc --noEmit
+          ./node_modules/.bin/eslint .
 
       - name: Suíte n8n
         run: node --test 'N8N/test/*.test.mjs'
@@ -291,5 +308,8 @@ jobs:
         run: ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
       - name: Build do portal
+        # O binário do lock, pelo mesmo motivo do passo de lint e tipos: `npx next`
+        # sem versão baixaria o Next publicado no dia, e não o `next` que o
+        # `package-lock.json` fixa e que o portal em produção usa.
         working-directory: portal
-        run: npx next build
+        run: ./node_modules/.bin/next build
