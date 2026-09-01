@@ -40,7 +40,7 @@ def _decodifica(pedaco):
     return linha.decode("cp1252", errors="replace")
 
 
-def texto(caminho):
+def texto(bruto):
     """Um pedaço de texto por operador de escrita — é uma CÉLULA, não uma linha.
 
     Uma tabela do reportlab escreve cada célula com o seu próprio `Tj`, então a
@@ -48,7 +48,7 @@ def texto(caminho):
     Serve para conferir se o número saiu na página; NÃO serve para contar linha
     de conta — para isso existe `linhas()` abaixo."""
     saida = []
-    for conteudo in _fluxos(caminho):
+    for conteudo in _fluxos(bruto):
         for t in re.finditer(rb"\((?:[^()\\]|\\.)*\)\s*Tj|\[(?:[^\[\]\\]|\\.)*\]\s*TJ", conteudo):
             pedaco = _decodifica(t.group(0))
             if pedaco.strip():
@@ -56,9 +56,21 @@ def texto(caminho):
     return "\n".join(saida)
 
 
-def _fluxos(caminho):
-    raw = open(caminho, "rb").read()
-    for m in re.finditer(rb"stream\r?\n(.*?)endstream", raw, re.S):
+def _fluxos(bruto):
+    """Os fluxos de conteúdo do PDF, a partir dos BYTES — não de um caminho.
+
+    ESTA FUNÇÃO NÃO ABRE ARQUIVO, e a mudança não é estilo. Ela abria
+    (`open(caminho, "rb")`), e os dois `gerar.py` já tinham lido o mesmo arquivo
+    linhas antes: o PDF era lido TRÊS vezes por documento (uma no `gerar.py`, uma
+    em `texto()` e uma em `linhas()`). Recebendo bytes, a leitura acontece uma vez
+    só, no chamador que já a fazia.
+
+    E o efeito de lado é o que o `pythonsecurity:S8707` cobrava: sem acesso a
+    disco aqui, não há caminho vindo de fora para validar — o sink deixa de
+    existir em vez de ganhar mais uma guarda. É a diferença entre validar a
+    entrada e não precisar dela.
+    """
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", bruto, re.S):
         conteudo = _descomprime(m.group(1))
         if conteudo:
             yield conteudo
@@ -80,7 +92,32 @@ _OPS = re.compile(
 TOLERANCIA_Y = 2.0
 
 
-def linhas(caminho):
+def _pedacos_com_coordenada(conteudo):
+    """Cada pedaço de texto do fluxo com a coordenada (y, x) onde ele foi escrito.
+
+    Saiu de dentro de `linhas()` porque as duas responsabilidades são distintas —
+    ler a posição de cada pedaço, e agrupar pedaços em linha — e juntas passavam
+    de 15 de complexidade cognitiva (`python:S3776`, medido em 20). A regra não
+    mudou uma vírgula: é o mesmo laço, com o mesmo estado de x/y.
+    """
+    pedacos = []  # (y, x, texto)
+    x = y = 0.0
+    for m in _OPS.finditer(conteudo):
+        if m.group("tm"):
+            x, y = float(m.group("tmx")), float(m.group("tmy"))
+        elif m.group("td"):
+            x += float(m.group("tdx"))
+            y += float(m.group("tdy"))
+        elif m.group("tstar"):
+            y -= 1.0
+        else:
+            texto_pedaco = _decodifica(m.group("txt"))
+            if texto_pedaco.strip():
+                pedacos.append((y, x, texto_pedaco))
+    return pedacos
+
+
+def linhas(bruto):
     """O texto agrupado em LINHAS, pela coordenada Y de cada pedaço.
 
     É esta a forma que a extração de PDF do n8n (nó `Extract From File`) entrega
@@ -89,21 +126,8 @@ def linhas(caminho):
     não CONTA — uma linha de balanço comparativo de três exercícios viraria
     quatro, e a régua ficaria 4× mais frouxa do que se pensa."""
     saida = []
-    for conteudo in _fluxos(caminho):
-        pedacos = []  # (y, x, texto)
-        x = y = 0.0
-        for m in _OPS.finditer(conteudo):
-            if m.group("tm"):
-                x, y = float(m.group("tmx")), float(m.group("tmy"))
-            elif m.group("td"):
-                x += float(m.group("tdx"))
-                y += float(m.group("tdy"))
-            elif m.group("tstar"):
-                y -= 1.0
-            else:
-                texto_pedaco = _decodifica(m.group("txt"))
-                if texto_pedaco.strip():
-                    pedacos.append((y, x, texto_pedaco))
+    for conteudo in _fluxos(bruto):
+        pedacos = _pedacos_com_coordenada(conteudo)
         # Y cresce para CIMA no PDF: a primeira linha da página é o maior Y.
         for y_linha in sorted({p[0] for p in pedacos}, reverse=True):
             if saida and any(abs(y_linha - ja) <= TOLERANCIA_Y for ja in saida[-1][0]):
@@ -121,4 +145,4 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
         raise SystemExit(1)
-    print(texto(sys.argv[1]))
+    print(texto(open(sys.argv[1], "rb").read()))

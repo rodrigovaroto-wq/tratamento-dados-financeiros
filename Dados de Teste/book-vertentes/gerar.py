@@ -208,7 +208,7 @@ for _arquivo in sorted(os.listdir(R.OUT)):
     # uma célula por coluna de período).
     _verdade = R.CONTAGEM.get(_arquivo, {"linhas_de_conta": 0, "celulas_de_valor": 0,
                                          "contas_distintas": 0})
-    _bruto_texto = _extrai.texto(_caminho)
+    _bruto_texto = _extrai.texto(_bruto)  # bytes: lido UMA vez, na linha 202
     # AS LINHAS DE VERDADE, agrupadas pela coordenada Y — a mesma escolha do
     # canastra, e pelo mesmo motivo escrito lá: é a forma que o nó
     # `Extract From File` do n8n entrega ao pipeline. `texto()` devolve uma
@@ -220,7 +220,7 @@ for _arquivo in sorted(os.listdir(R.OUT)):
     # documentos. Não era defeito da régua: era ela lendo célula em vez de linha,
     # exatamente o que o comentário do canastra avisa. O extrator curto (24
     # linhas, sem agrupamento por Y) saiu, e o do canastra entrou no lugar.
-    _texto_por_arquivo[_arquivo] = [l for l in _extrai.linhas(_caminho) if l.strip()]
+    _texto_por_arquivo[_arquivo] = [l for l in _extrai.linhas(_bruto) if l.strip()]
     _texto = "\n".join(_bruto_texto) if isinstance(_bruto_texto, list) else _bruto_texto
     _linhas = [linha for linha in _texto.split("\n") if linha.strip()]
     _metricas.append({

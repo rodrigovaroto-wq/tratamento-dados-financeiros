@@ -2,6 +2,9 @@
 """Renderiza o book em PDF com aparência de demonstração contábil de verdade."""
 
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import re
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
@@ -68,61 +71,10 @@ def cabecalho(entidade_nome, cnpj, titulo, periodo, escala):
 #
 # Contagem sobre os FLOWABLES, antes de virar PDF: não é outra leitura do
 # arquivo, é o dado antes de o PDF existir.
-CONTAGEM = {}
-SEM_VALOR_MONETARIO = set()
-
-_TRES_LETRAS = re.compile(r"[^\W\d_]{3}", re.UNICODE)
-
-
-def _texto_da_celula(c):
-    """Célula pode ser str, número, Paragraph ou uma lista de flowables."""
-    if c is None:
-        return ""
-    if isinstance(c, str):
-        return c
-    if isinstance(c, (int, float)):
-        return str(c)
-    texto = getattr(c, "text", None)
-    if isinstance(texto, str):
-        return texto
-    if isinstance(c, (list, tuple)):
-        return " ".join(_texto_da_celula(x) for x in c)
-    return ""
-
-
-def _tem_digito(s):
-    return any(ch.isdigit() for ch in s)
-
-
-def _conta_linhas(elementos, acc):
-    """Percorre os flowables procurando Table, inclusive dentro de KeepTogether."""
-    for el in elementos:
-        if isinstance(el, Table):
-            for linha in el._cellvalues:
-                celulas = [_texto_da_celula(c).strip() for c in linha]
-                i_rotulo = next((i for i, c in enumerate(celulas) if _TRES_LETRAS.search(c)), None)
-                if i_rotulo is None:
-                    continue
-                valores = [c for i, c in enumerate(celulas) if i != i_rotulo and _tem_digito(c)]
-                if not valores:
-                    continue
-                acc["linhas_de_conta"] += 1
-                acc["celulas_de_valor"] += len(valores)
-                acc["rotulos"].add(" ".join(celulas[i_rotulo].split()).lower())
-        elif isinstance(el, KeepTogether):
-            _conta_linhas(el._content, acc)
-
-
-def build(d, elementos, **kwargs):
-    """Conta e constrói. Substitui `d.build(...)` em todo `pdf_*` deste arquivo."""
-    arquivo = os.path.basename(d.filename)
-    acc = {"linhas_de_conta": 0, "celulas_de_valor": 0, "rotulos": set()}
-    if arquivo not in SEM_VALOR_MONETARIO:
-        _conta_linhas(elementos, acc)
-    CONTAGEM[arquivo] = {"linhas_de_conta": acc["linhas_de_conta"],
-                         "celulas_de_valor": acc["celulas_de_valor"],
-                         "contas_distintas": len(acc["rotulos"])}
-    d.build(elementos, **kwargs)
+# A contagem de verdade vive em `Dados de Teste/comum/contagem.py`, uma só para
+# os dois books — duas cópias divergem no dia em que alguém corrigir uma só, e a
+# divergência não produz erro: produz um denominador diferente, calado.
+from comum.contagem import CONTAGEM, SEM_VALOR_MONETARIO, build  # noqa: F401,E402
 
 
 def doc(nome_arquivo, paisagem=False):
