@@ -434,12 +434,12 @@ texto_por_arquivo = {}
 for arquivo in feitos:
     caminho = f"{R.OUT}/{arquivo}"
     bruto = open(caminho, "rb").read()
-    texto = extrai.texto(caminho)
+    texto = extrai.texto(bruto)  # bytes: o arquivo é lido UMA vez, na linha acima
     linhas_texto = [linha for linha in texto.split("\n") if linha.strip()]
     # As LINHAS de verdade (pedaços agrupados pela coordenada Y), que é a forma
     # que o nó `Extract From File` do n8n entrega ao pipeline. `texto()` devolve
     # uma CÉLULA por pedaço, e contar célula como linha afrouxaria a régua.
-    linhas_reais = [linha for linha in extrai.linhas(caminho) if linha.strip()]
+    linhas_reais = [linha for linha in extrai.linhas(bruto) if linha.strip()]
     texto_por_arquivo[arquivo] = linhas_reais
     verdade = R.CONTAGEM.get(arquivo, {"linhas_de_conta": 0, "celulas_de_valor": 0,
                                        "contas_distintas": 0})

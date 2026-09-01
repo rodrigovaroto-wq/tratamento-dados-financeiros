@@ -2,6 +2,10 @@
 """Renderiza o book em PDF com aparência de demonstração contábil de verdade."""
 
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import re
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -47,6 +51,30 @@ def cabecalho(entidade_nome, cnpj, titulo, periodo, escala):
     el.append(Paragraph(escala, ST_SUB))
     el.append(Spacer(1, 4 * mm))
     return el
+
+
+# ---------------------------------------------------------------------------
+# A VERDADE DA CONTAGEM, portada do `book-canastra/render.py` SEM reescrever a
+# regra — de propósito. Este número é o denominador contra o qual a régua da
+# cobertura (`N8N/lib/cobertura.mjs`) é calibrada, e ele só vale como segunda
+# opinião se os dois books contarem A MESMA COISA. Uma reimplementação "melhor"
+# aqui produziria duas verdades diferentes, que é o defeito que este arquivo
+# existe para ajudar a caçar.
+#
+# POR QUE ELE PASSOU A EXISTIR AQUI. A régua foi calibrada em 20 documentos de
+# produção, e os 20 são do canastra — um gerador, uma família de layout. Medido
+# em 01/09: `linhas_de_conta_verdade` existia em 38 de 38 documentos do canastra
+# e em 0 de 14 do vertentes. "Régua exata em 20 de 20" era verdade e era estreita:
+# ninguém sabia se ela valia num book que não fosse aquele. Com esta contagem, o
+# vertentes vira o segundo book independente, e a pergunta "a régua está viciada
+# no canastra?" passa a ter resposta medida em vez de opinião.
+#
+# Contagem sobre os FLOWABLES, antes de virar PDF: não é outra leitura do
+# arquivo, é o dado antes de o PDF existir.
+# A contagem de verdade vive em `Dados de Teste/comum/contagem.py`, uma só para
+# os dois books — duas cópias divergem no dia em que alguém corrigir uma só, e a
+# divergência não produz erro: produz um denominador diferente, calado.
+from comum.contagem import CONTAGEM, SEM_VALOR_MONETARIO, build  # noqa: F401,E402
 
 
 def doc(nome_arquivo, paisagem=False):
@@ -155,7 +183,7 @@ def pdf_balanco(chave, bp, tot, arquivo, nota_extra=None):
     el.append(Paragraph("Helena R. Vertentes — Diretora Administrativa — CPF 123.456.789-00", ST_NOTA))
     el.append(Spacer(1, 3 * mm))
     el.append(Paragraph(RODAPE_SINTETICO, ST_NOTA))
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -270,7 +298,7 @@ def pdf_combinado(bp, tot, ano, arquivo):
         "Componentes Automotivos Ltda.; e (iii) os saldos recíprocos de mútuos, conta corrente e aluguéis "
         "entre as entidades do grupo.", ST_NOTA))
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -297,7 +325,7 @@ def pdf_dre(tot, arquivo):
                    "(Valores expressos em milhares de reais — R$ mil)")
     el.append(_tab(linhas, [110 * mm, 30 * mm, 30 * mm], est))
     _assina(el, "As notas explicativas são parte integrante das demonstrações contábeis.")
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -344,7 +372,7 @@ def pdf_dfc(tot, prejuizo, arquivo):
                    "(Valores expressos em milhares de reais — R$ mil)")
     el.append(_tab(linhas, [130 * mm, 32 * mm], est))
     _assina(el, "O saldo final de caixa e equivalentes confere com a rubrica Disponível do balanço patrimonial.")
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -371,7 +399,7 @@ def pdf_dmpl(tot, prejuizo, arquivo):
                    "(Valores expressos em milhares de reais — R$ mil)")
     el.append(_tab(linhas, [62 * mm, 26 * mm, 30 * mm, 24 * mm, 34 * mm, 30 * mm, 26 * mm], est, fonte=7.0))
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -395,7 +423,7 @@ def pdf_faturamento(fat, t24, t25, arquivo):
                    "(Valores expressos em milhares de reais — R$ mil)")
     el.append(_tab(linhas, [78 * mm, 30 * mm, 30 * mm, 28 * mm], est, fonte=8))
     _assina(el, "O total do exercício de 2025 confere com a Receita Operacional Bruta da demonstração do resultado.")
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -426,7 +454,7 @@ def pdf_mapa_divida(contratos, arquivo):
         "estão em milhares de reais. Covenant de cobertura de juros descumprido em 31/12/2025 no contrato "
         "de capital de giro do Banco Meridional S.A., o que autoriza o vencimento antecipado da dívida.", ST_NOTA))
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -450,7 +478,7 @@ def pdf_mutuos(mut, total, tot, arquivo):
         "Controle mantido pela administração em planilha auxiliar. Os saldos podem apresentar pequenas "
         "diferenças em relação aos registros contábeis das entidades em razão de lançamentos em trânsito.", ST_NOTA))
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -485,7 +513,7 @@ def pdf_balancete(bp, arquivo):
                    "(Valores em R$ mil — saldos com indicação de natureza devedora (D) ou credora (C))")
     el.append(_tab(linhas, [26 * mm, 92 * mm, 26 * mm, 26 * mm, 26 * mm, 26 * mm, 12 * mm], est, fonte=6.4))
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
 
 
@@ -537,5 +565,5 @@ def pdf_notas(tot, arquivo):
       "exigindo o pagamento de valores em atraso, com ameaça de suspensão do fornecimento de insumo "
       "crítico. A administração está negociando um plano de pagamento.")
     _assina(el)
-    d.build(el)
+    build(d, el)
     return arquivo
