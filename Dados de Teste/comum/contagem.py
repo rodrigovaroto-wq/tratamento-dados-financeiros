@@ -43,27 +43,38 @@ def _tem_digito(s):
 _TRES_LETRAS = re.compile(r"[^\W\d_]{3}", re.UNICODE)
 
 
+def _conta_uma_linha(linha, acc):
+    """Uma linha de tabela: conta se ela tem rótulo E valor. A regra não mudou.
+
+    Saiu de dentro de `_conta_linhas` porque as duas responsabilidades são
+    distintas — andar pela árvore de flowables, e decidir se UMA linha é conta —
+    e juntas passavam de 15 de complexidade cognitiva (`python:S3776`, medido em
+    16). Separadas, cada uma cabe na cabeça de quem lê.
+    """
+    celulas = [_texto_da_celula(c).strip() for c in linha]
+    # O rótulo é a primeira célula com texto de verdade, em QUALQUER coluna;
+    # os valores são as demais células com dígito.
+    i_rotulo = next((i for i, c in enumerate(celulas) if _TRES_LETRAS.search(c)), None)
+    if i_rotulo is None:
+        return
+    valores = [c for i, c in enumerate(celulas) if i != i_rotulo and _tem_digito(c)]
+    if not valores:
+        return
+    acc["linhas_de_conta"] += 1
+    acc["celulas_de_valor"] += len(valores)
+    # O rótulo DISTINTO importa porque é essa a unidade do outro lado da guarda:
+    # a extração grava conta, e duas linhas com o mesmo histórico viram uma só.
+    # Num livro razão isso é a regra, não a exceção — e a guarda acusaria
+    # extração perfeita de incompleta.
+    acc["rotulos"].add(" ".join(celulas[i_rotulo].split()).lower())
+
+
 def _conta_linhas(elementos, acc):
     """Percorre os flowables procurando Table, inclusive dentro de KeepTogether."""
     for el in elementos:
         if isinstance(el, Table):
             for linha in el._cellvalues:
-                celulas = [_texto_da_celula(c).strip() for c in linha]
-                # O rótulo é a primeira célula com texto de verdade, em QUALQUER
-                # coluna; os valores são as demais células com dígito.
-                i_rotulo = next((i for i, c in enumerate(celulas) if _TRES_LETRAS.search(c)), None)
-                if i_rotulo is None:
-                    continue
-                valores = [c for i, c in enumerate(celulas) if i != i_rotulo and _tem_digito(c)]
-                if not valores:
-                    continue
-                acc["linhas_de_conta"] += 1
-                acc["celulas_de_valor"] += len(valores)
-                # O rótulo DISTINTO importa porque é essa a unidade do outro lado
-                # da guarda: a extração grava conta, e duas linhas com o mesmo
-                # histórico viram uma só. Num livro razão isso é a regra, não a
-                # exceção — e a guarda acusaria extração perfeita de incompleta.
-                acc["rotulos"].add(" ".join(celulas[i_rotulo].split()).lower())
+                _conta_uma_linha(linha, acc)
         elif isinstance(el, KeepTogether):
             _conta_linhas(el._content, acc)
 

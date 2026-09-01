@@ -74,7 +74,7 @@ que o balanço, para o sistema ter o que mostrar a um humano.
 | `demonstracoes.py` | DRE, DFC, DMPL, DVA, faturamento, dívida, mútuos, aging, estoques, fiscal, contingências, imobilizado, folha, extratos, razão, balancete — todos amarrados ao balanço |
 | `render.py` | Renderização em PDF (reportlab), e onde moram as bagunças de FORMATO (escala, sinal, locale, marca d'água) |
 | `gerar.py` | Ponto de entrada: 38 PDFs + `GABARITO.json` + `METRICAS.json` + `GUIA_DE_TESTE.md` |
-| `extrai.py` | Utilitário: extrai o texto de um PDF gerado (`python3 extrai.py pdf/01_....pdf`) |
+| `extrai.py` | Aponta para `Dados de Teste/comum/extrai.py`, a leitura de PDF compartilhada pelos dois books. **Não tem mais CLI**: o texto de todos os documentos sai versionado em `pdf/TEXTO_EXTRAIDO.json` a cada `gerar.py`, que é onde olhar. |
 
 ## O que ainda não está ligado
 

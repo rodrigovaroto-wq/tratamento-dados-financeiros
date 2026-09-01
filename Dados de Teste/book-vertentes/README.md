@@ -41,7 +41,7 @@ empresas) mexendo em pouca coisa:
 | `demonstracoes.py` | DRE, DFC, DMPL, faturamento, mapa de dívida, mútuos — amarrados ao balanço |
 | `render.py` | Renderização em PDF (reportlab) com aparência de demonstração real |
 | `gerar.py` | Ponto de entrada: gera os 14 PDFs + gabarito + guia |
-| `extrai.py` | Utilitário de verificação: extrai o texto de um PDF gerado (`python3 extrai.py pdf/01_....pdf`) |
+| `extrai.py` | Aponta para `Dados de Teste/comum/extrai.py`, a leitura de PDF compartilhada pelos dois books. **Não tem mais CLI**: o texto de todos os documentos sai versionado em `pdf/TEXTO_EXTRAIDO.json` a cada `gerar.py`, que é onde olhar. |
 
 ## Ressalvas
 

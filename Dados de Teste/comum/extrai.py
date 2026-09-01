@@ -141,8 +141,17 @@ def linhas(bruto):
             for _, pedacos_da_linha in saida]
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__)
-        raise SystemExit(1)
-    print(texto(open(sys.argv[1], "rb").read()))
+# NÃO HÁ BLOCO `__main__` AQUI, e a ausência é deliberada.
+#
+# Existia um: `python3 extrai.py <pdf>` imprimia o texto de um arquivo, e os
+# READMEs dos dois books o documentavam. Ele saiu por dois motivos que se somam.
+#
+# REDUNDÂNCIA: desde que os DOIS geradores passaram a escrever
+# `pdf/TEXTO_EXTRAIDO.json`, o texto de todos os documentos já está versionado —
+# o utilitário reimprimia, um de cada vez, o que o arquivo inteiro já traz.
+#
+# E ELE ERA O ÚLTIMO ACESSO A DISCO DESTA BIBLIOTECA. O `pythonsecurity:S8707`
+# apontava o `open(sys.argv[1])` dele: caminho vindo da linha de comando indo
+# direto para o sistema de arquivos. Com o bloco fora, este módulo não abre
+# arquivo nenhum — recebe bytes e devolve texto. Um sink que deixa de existir não
+# precisa de validação, e não volta na próxima refatoração.
