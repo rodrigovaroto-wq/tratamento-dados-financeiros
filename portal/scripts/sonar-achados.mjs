@@ -50,7 +50,7 @@ const filtro = [tipo && `types=${tipo}`, regra && `rules=${encodeURIComponent(re
 // espaço), mas a origem é entrada externa e o `console.log` não distingue —
 // tirar quebra de linha antes de logar fecha o caso mesmo que ela chegue por
 // outra via (variável de ambiente, wrapper que monta argv programaticamente).
-// SANITIZA TODO CARACTERE DE CONTROLE, não só `\r\n`. Trocar quebra de linha
+// SANITIZA CADA CARACTERE DE CONTROLE, não só `\r\n`. Trocar quebra de linha
 // resolvia a linha falsa, mas deixava passar o resto da classe: `\b` apaga o
 // caractere anterior no terminal, `\x1b[` abre sequência ANSI (que repinta,
 // move o cursor e pode esconder linhas inteiras da saída), e `\u2028` é quebra
@@ -65,8 +65,9 @@ if (lista || regra) {
   const d = await buscar(filtro, 500);
   // Sufixo fora do template (sonar javascript:S4624: template dentro de template
   // esconde qual crase fecha qual, e este arquivo já pagou por crase mal fechada).
+  const total = Number(d.total) || 0;
   const sufixo = filtroParaLog ? ` [${filtroParaLog}]` : "";
-  console.log(`${d.total} achado(s)${sufixo}\n`);
+  console.log(`${total} achado(s)${sufixo}\n`);
   for (const i of d.issues) {
     // `i.message`, `i.component` (via `arq`) e `i.rule` vêm da RESPOSTA HTTP do
     // Sonar, não de argv — e mensagem de issue com quebra de linha é normal
@@ -80,13 +81,14 @@ if (lista || regra) {
     console.log(`      ${semControle(i.message)}`);
   }
   if (d.total > d.issues.length) {
-    console.log(`\n  … e mais ${d.total - d.issues.length} não listados (a página vai a 500).`);
+    console.log(`\n  … e mais ${total - d.issues.length} não listados (a página vai a 500).`);
   }
 } else {
   const d = await buscar(`${filtro}&facets=types,severities,rules,languages`);
   console.log(`PROJETO ${PROJETO}`);
+  const totalResumo = Number(d.total) || 0;
   const sufixoResumo = filtroParaLog ? ` [${filtroParaLog}]` : "";
-  console.log(`${d.total} achado(s) em aberto${sufixoResumo}\n`);
+  console.log(`${totalResumo} achado(s) em aberto${sufixoResumo}\n`);
   for (const f of d.facets) {
     const vals = f.values.filter((v) => v.count > 0).slice(0, 15);
     if (!vals.length) continue;

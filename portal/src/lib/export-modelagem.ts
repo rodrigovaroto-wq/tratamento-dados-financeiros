@@ -15,7 +15,7 @@
 import ExcelJS from "exceljs";
 import {
   ANALISE_HEADER_FILL, CHAVE_SEP, DIVERGENCIA_FILL, HEADER_FILL, PCT_FMT,
-  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota,
+  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota, compararCodigo,
 } from "./export-estilo";
 
 
@@ -233,7 +233,7 @@ function construirAbaMacroDados(
   // `nomeDe.get(serie)`, depois desta ordenação. Nenhuma das chaves tem
   // acento, então comparador de código é suficiente e a ordem fica
   // determinística sem depender de locale (sonar typescript:S2871).
-  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort(compararCodigo);
 
   sheet.getColumn(1).width = 30;
   const cab = sheet.addRow(["Série (retorno anual %)", ...anos]);
@@ -302,7 +302,7 @@ function construirAbaMacroDados(
   // Mesmo motivo de `series` acima: `serie` é chave técnica sem acento, não
   // rótulo humano — comparador de código, não `localeCompare` (sonar
   // typescript:S2871).
-  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort(compararCodigo)) {
     const row = sheet.addRow([serie]);
     linhaExpDe.set(serie, row.number);
     for (const ano of anosExp) {
@@ -938,9 +938,9 @@ export function construirAbaModelagem(
     // Mesmo motivo de `series` acima: `serie` é chave técnica do índice macro,
     // sem acento — comparador de código, não `localeCompare` (sonar
     // typescript:S2871).
-    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort(compararCodigo);
     const anosFocus = [...new Set(macroDados.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
-    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort(compararCodigo);
     const anualDe = new Map(macroDados.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
     const focusDe = new Map(macroDados.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
     const colHist = (i: number) => sheet.getColumn(2 + i).letter;

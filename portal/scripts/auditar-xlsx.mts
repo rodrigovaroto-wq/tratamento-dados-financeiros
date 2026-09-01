@@ -21,7 +21,7 @@
 // Sai com código 1 se qualquer item obrigatório reprovar, para poder entrar em
 // script de aceite sem alguém ter de ler a saída.
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { extname, resolve, sep } from "node:path";
+import { extname, isAbsolute, relative, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
@@ -393,32 +393,48 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
   // dentro do projeto. Não existe fronteira de privilégio sendo cruzada (quem
   // roda o comando já poderia ler o arquivo por fora dele).
   //
-  // O CAMINHO É CONTIDO, e o `..`/symlink deixam de ser buraco. A versão
-  // anterior deste bloco só normalizava (`resolve`) e conferia extensão — e
-  // dizia isso no comentário, o que é honesto mas não é proteção: `resolve()`
-  // NORMALIZA `..` em vez de recusar, e `statSync()` SEGUE symlink. Um link
-  // `export.xlsx -> /etc/qualquer-coisa` passava nos dois testes.
+  // O CAMINHO É CONTIDO ANTES DE O DISCO SER TOCADO, e a ORDEM é a correção.
+  // A tentativa anterior continha o caminho — mas só DEPOIS de `existsSync` e
+  // `statSync`, e o `tssecurity:S8707` apontou exatamente as duas linhas: uma
+  // checagem que roda depois do acesso não é guarda, é legenda. É o mesmo
+  // formato de defeito que a `0029` corrigiu no banco (auto-aceite gravado antes
+  // das guardas, e nenhuma guarda revertia), agora no sistema de arquivos.
   //
-  // A contenção resolve os dois de uma vez porque ela é feita sobre o
-  // `realpathSync` — o caminho REAL depois de seguir todos os links. Um symlink
-  // que aponte para fora das raízes permitidas é recusado pelo destino, não
-  // pelo nome; e `..` já não tem para onde escapar.
+  // A ordem passa a ser: normaliza -> CONTÉM -> confere extensão -> toca o disco
+  // -> resolve links -> CONTÉM DE NOVO. A segunda contenção existe porque a
+  // primeira julga o nome e o symlink só se revela no `realpathSync`: sem ela,
+  // `~/exp.xlsx -> /etc/shadow` passaria na primeira (o nome está no home) e
+  // seria lido. Cada `if` sai por `process.exit`, então nada a jusante recebe
+  // caminho não contido.
   //
   // AS RAÍZES SÃO TRÊS, e cobrem o uso legítimo inteiro: a raiz do projeto (a
-  // exportação recém-gerada), o diretório temporário do sistema (para onde o
-  // `gerar-export-*.mts` escreve por padrão) e o home do operador (Downloads,
-  // que é de onde vem o arquivo que o cliente devolveu). Auditar um `.xlsx` fora
-  // desses três não é caso de uso desta ferramenta — é engano de digitação ou
-  // caminho vindo de outro lugar, e nos dois casos recusar é o certo.
-  // A raiz do projeto sai da localização DESTE arquivo (`portal/scripts/`), não
-  // do cwd: quem roda o comando de outro diretório continua auditando o mesmo
-  // projeto, e o cwd é entrada do operador como qualquer outra.
+  // exportação recém-gerada), o temporário do sistema (para onde o
+  // `gerar-export-*.mts` escreve por padrão) e o home do operador (Downloads, de
+  // onde vem o arquivo que o cliente devolveu). Fora desses três não é caso de
+  // uso desta ferramenta — é engano de digitação ou caminho vindo de outro
+  // lugar, e recusar é o certo nos dois. A raiz do projeto sai da localização
+  // DESTE arquivo, não do cwd, que é entrada do operador como qualquer outra.
+  //
+  // A contenção usa `relative()` e não `startsWith()`: comparar prefixo de texto
+  // deixa `/home/user-malicioso` passar por estar sob `/home/user`, porque um é
+  // prefixo do outro sem ser diretório-pai. `relative(raiz, alvo)` devolve o
+  // caminho de dentro; se ele começa com `..` ou é absoluto, o alvo está FORA.
   const raizProjeto = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-  const RAIZES_PERMITIDAS = [raizProjeto, realpathSync(tmpdir()), homedir()];
-  const dentroDeRaizPermitida = (caminho: string) =>
-    RAIZES_PERMITIDAS.some((raiz) => caminho === raiz || caminho.startsWith(raiz + sep));
+  const RAIZES_PERMITIDAS = [raizProjeto, realpathSync(tmpdir()), homedir()]
+    .map((r) => resolve(r));
+  function dentroDeRaizPermitida(caminho: string): boolean {
+    return RAIZES_PERMITIDAS.some((raiz) => {
+      const dentro = relative(raiz, caminho);
+      return dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro));
+    });
+  }
 
   const arqResolvido = resolve(arq);
+  if (!dentroDeRaizPermitida(arqResolvido)) {
+    console.error(
+      `recusado: ${arqResolvido} está fora do projeto, do temporário e do home.`);
+    process.exit(2);
+  }
   if (extname(arqResolvido).toLowerCase() !== ".xlsx") {
     console.error(`esperado um arquivo .xlsx: ${arq}`);
     process.exit(2);
@@ -427,11 +443,11 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.error(`arquivo não encontrado: ${arq}`);
     process.exit(2);
   }
-  // Depois do `existsSync`: o `realpathSync` lança se o caminho não existir.
+  // Segunda contenção, agora sobre o destino REAL do link.
   const arqReal = realpathSync(arqResolvido);
   if (!dentroDeRaizPermitida(arqReal)) {
     console.error(
-      `recusado: ${arq} resolve para ${arqReal}, fora do projeto, do temporário e do home.`);
+      `recusado: ${arq} aponta para ${arqReal}, fora do projeto, do temporário e do home.`);
     process.exit(2);
   }
 

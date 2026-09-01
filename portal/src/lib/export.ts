@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import type { CampoExtraido } from "./types";
 import {
   ANALISE_HEADER_FILL, CHAVE_SEP, DIVERGENCIA_FILL, HEADER_FILL, PCT_FMT,
-  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota,
+  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota, compararCodigo,
 } from "./export-estilo";
 import {
   classificarConta,
@@ -764,7 +764,7 @@ export function normalizarEscala(
     // `escala.escalasEncontradas`). Sem acento na chave, comparador de código
     // basta e a ordem fica determinística sem depender de locale (sonar
     // typescript:S2871).
-    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) },
+    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort(compararCodigo) },
   };
 }
 
