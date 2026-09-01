@@ -35,7 +35,7 @@ function checar(condicao: boolean, o_que: string) {
 // ---------------------------------------------------------------------------
 //
 // Não são exemplos inventados: cada uma é a forma que `diagnosticarErroApi`
-// (n8n/lib/extract.mjs), a recusa do orçamento (n8n/lib/custo.mjs) ou o Error
+// (N8N/lib/extract.mjs), a recusa do orçamento (N8N/lib/custo.mjs) ou o Error
 // Workflow escrevem no banco hoje.
 // Tuplas e não objetos: são 9 linhas de DADO, e a forma repetida
 // `{ etapa: …, mensagem: …, esperado: … }` nove vezes é ruído que esconde o que
@@ -172,9 +172,9 @@ checar(
 // A CADÊNCIA VEM DO WORKFLOW, não de um número repetido aqui: é o mesmo
 // `batchInterval` que o nó de classificação tem em produção. O JSON do workflow
 // é dado, não código — lê-lo daqui não cruza a fronteira de build que impede o
-// portal de importar `n8n/lib/*.mjs`.
+// portal de importar `N8N/lib/*.mjs`.
 const workflow = JSON.parse(
-  readFileSync(new URL("../../n8n/workflow.e1-ingestao.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../../N8N/workflow.e1-ingestao.json", import.meta.url), "utf8"),
 ) as { nodes: Array<{ name: string; parameters: Record<string, unknown> }> };
 const noClassificar = workflow.nodes.find((n) => n.name === "IA Classificar")!;
 const cadenciaS =

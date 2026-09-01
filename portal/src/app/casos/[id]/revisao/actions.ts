@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-// Chama a RPC fn_revisar_documento (db/migrations/0008_portal_revisao.sql) — o
+// Chama a RPC fn_revisar_documento (Supabase/migrations/0008_portal_revisao.sql) — o
 // humano confirma ou corrige a classificação sugerida (N1: anti-ancoragem,
-// docs/01). Toda a lógica (resolver pendência, decisao+evento_auditoria,
+// Arquitetura do Sistema/1 Visão e Doutrina/01). Toda a lógica (resolver pendência, decisao+evento_auditoria,
 // checklist, recomputar completude) fica no Postgres, não aqui.
 export async function revisarDocumento(casoId: string, formData: FormData) {
   const supabase = await createClient();

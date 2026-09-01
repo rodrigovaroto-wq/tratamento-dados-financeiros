@@ -28,7 +28,7 @@ import { CartaoPergunta } from "./CartaoPergunta";
 
 /**
  * O banco pode estar sem a 0120 aplicada — merge não é apply, e o dono aplica as
- * migrations à mão (db/README.md). Nesse caso o PostgREST responde "não achei a
+ * migrations à mão (Supabase/README.md). Nesse caso o PostgREST responde "não achei a
  * função", que é uma frase de banco, não de produto. A tela precisa dizer o que
  * fazer, e não pode quebrar: o resto do mandato continua funcionando sem esta
  * aba.
@@ -188,7 +188,7 @@ export default async function PerguntasAoClientePage({
           <p className="mt-1">
             Esta aba lê a migration <code className="font-mono">0120_banco_de_perguntas.sql</code>,
             que cria o catálogo e a função de sugestão. Merge não é apply: rode as migrations
-            pendentes conforme <code className="font-mono">db/README.md</code> e recarregue esta
+            pendentes conforme <code className="font-mono">Supabase/README.md</code> e recarregue esta
             tela. O restante do mandato não depende disso.
           </p>
           <p className="mt-2 text-xs text-alerta-800">
@@ -304,7 +304,7 @@ export default async function PerguntasAoClientePage({
         <p className="text-xs text-tinta-400">
           O catálogo tem {catalogoAtivo} pergunta(s) ativa(s). Aparecem acima apenas as que este
           mandato dispara; as perguntas da entrega cujo gatilho ainda não existe no sistema estão
-          declaradas em <code className="font-mono">db/migrations/0120_banco_de_perguntas.sql</code>.
+          declaradas em <code className="font-mono">Supabase/migrations/0120_banco_de_perguntas.sql</code>.
         </p>
       )}
     </div>

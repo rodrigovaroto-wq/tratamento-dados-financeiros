@@ -3,7 +3,7 @@
  * (roda com `./node_modules/.bin/tsx scripts/verificar-transcricao.mts`).
  *
  * O QUE ESTA SUÍTE PROTEGE. A planilha da 0129 é a saída do gate de captura
- * (fechamento #2 do `docs/01`): quando o arquivo não se lê e o cliente não tem
+ * (fechamento #2 do `Arquitetura do Sistema/1 Visão e Doutrina/01`): quando o arquivo não se lê e o cliente não tem
  * outra via, uma pessoa digita o que está no papel. As linhas digitadas entram no
  * banco JÁ ACEITAS, com o nome de quem digitou, e SEM passar por guarda nenhuma —
  * as guardas de extração existem para pegar alucinação de modelo e não têm o que
@@ -182,8 +182,22 @@ async function idaEVolta(wb: ExcelJS.Workbook, esperado = DOC) {
       "(1) a seção canônica pré-preenchida volta em `secao_canonica`", String(a?.secao_canonica));
 
     // 2: O ASSERT QUE PEGA `parseFloat`. Com leitura ingênua isto vale 1.234.
+    //
+    // Tolerância de meio centavo (0.005): o valor é reais com DUAS casas decimais
+    // (é o que a convenção pt-BR desta planilha representa — nunca fração de
+    // centavo), então qualquer diferença igual ou acima de 1 centavo já é a
+    // extração errada, e nenhuma diferença menor pode existir por medição real.
+    // `===` entre float (sonar typescript:S1244) NÃO era acidente aqui:
+    // `Number("1234.56")` e o literal `1234.56` produzem o MESMO double por
+    // IEEE-754 — o `===` era determinístico e, nesse sentido, mais forte que a
+    // tolerância. A troca é por outro motivo: cala o S1244 sem perder poder de
+    // detecção (medido: o assert continua reprovando com o bug do `parseFloat`
+    // ligado, que erra por muito mais que meio centavo) e deixa de depender de
+    // que toda conversão futura passe pelo mesmo caminho de parsing — dois
+    // parsers de ponto flutuante diferentes, ambos corretos, podem arredondar
+    // o último bit de forma distinta sem que o valor extraído esteja errado.
     const p = porChave.get("Passivo Total");
-    checar(Number(p?.valor_num) === 1234.56,
+    checar(Math.abs(Number(p?.valor_num) - 1234.56) < 0.005,
       "(2) \"1.234,56\" vale 1234,56 — não 1,234, que é o que parseFloat devolveria",
       String(p?.valor_num));
 

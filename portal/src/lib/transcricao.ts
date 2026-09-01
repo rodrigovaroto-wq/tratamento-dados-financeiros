@@ -9,7 +9,7 @@ import { ORIA, fonte, preencher } from "./oria-marca";
 // sintoma disso não é um erro, é uma transcrição importada com o valor na coluna
 // da unidade. As constantes de layout abaixo são a única fonte da verdade.
 //
-// O QUE ESTA PLANILHA É. A saída do gate de captura (fechamento #2 do `docs/01`):
+// O QUE ESTA PLANILHA É. A saída do gate de captura (fechamento #2 do `Arquitetura do Sistema/1 Visão e Doutrina/01`):
 // quando o arquivo não se lê e o cliente não tem outra via, o analista digita o que
 // está no papel. Ela é ferramenta de MESA e não sai da casa — decisão do dono —,
 // então usa o vocabulário interno (conceito da taxonomia, seção canônica) sem o

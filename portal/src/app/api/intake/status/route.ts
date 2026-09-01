@@ -9,7 +9,7 @@ import { vereditoDoLote } from "@/lib/espera-do-lote";
 //   1. `documento` criado para o caso (classificação terminou) desde o envio.
 //   2. `evento_auditoria` do tipo `extracao_sombra` referenciando aquele
 //      documento_versao (extração TENTOU rodar — sucesso ou falha; sempre
-//      gravado por fn_registrar_campos_extraidos, ver db/migrations/0016).
+//      gravado por fn_registrar_campos_extraidos, ver Supabase/migrations/0016).
 // "Pronto" aqui significa "o pipeline terminou de tentar", não "sem erros" —
 // pendências (se houver) continuam visíveis no dashboard do caso como sempre.
 export const runtime = "nodejs";

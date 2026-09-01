@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-// As ações da seção Modelagem (db/migrations/0038).
+// As ações da seção Modelagem (Supabase/migrations/0038).
 //
 // TODA a regra vive no Postgres — este arquivo só encaminha e mostra o resultado.
 // Não é preferência de estilo: `fn_aplicar_premissa_em_lote` precisa das linhas de

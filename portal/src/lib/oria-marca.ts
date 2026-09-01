@@ -26,7 +26,7 @@
 //
 // A GRAMÁTICA DE COR DE FONTE É COPIADA DO MODELO BASE, de propósito: é
 // convenção de mercado, um analista de crédito a lê sem legenda, e o Modelo Base
-// a usa com rigor (medido em `docs/referencia/MAPA_MODELO_BASE.md` §2.8 — a
+// a usa com rigor (medido em `Arquitetura do Sistema/6 Referência/MAPA_MODELO_BASE.md` §2.8 — a
 // paleta indexada está declarada no arquivo):
 //
 //   • AZUL   = número DIGITADO (entrada manual, premissa que se pode mexer)

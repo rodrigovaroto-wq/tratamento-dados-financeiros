@@ -90,8 +90,36 @@ jobs:
           cache-dependency-path: portal/package-lock.json
 
       - name: Instalar dependências do portal
+        # `--ignore-scripts` porque `npm ci` sem ele executa o postinstall de
+        # QUALQUER dependência transitiva — código arbitrário de terceiro rodando
+        # no runner, com o checkout e o token do job à mão, antes de a primeira
+        # suíte começar.
+        #
+        # E ELE FOI MEDIDO, não presumido. O número vem do LOCK, não de memória:
+        # `hasInstallScript` é verdadeiro em QUATRO pacotes — `esbuild`
+        # (postinstall), `sharp` (install), `unrs-resolver` (postinstall) e
+        # `fsevents` (install). No runner rodariam TRÊS: o `fsevents` é
+        # `os: ["darwin"]` e opcional, e nunca chega a instalar no Linux. (Os
+        # ~20 `prepare` da árvore não contam: `prepare` não roda para tarball do
+        # registro, só para dependência de git ou link local.)
+        #
+        # Os três continuam funcionando sem o script porque o binário nativo de
+        # cada um vem do pacote por plataforma em `optionalDependencies` — o
+        # script só o confirma. Conferido na árvore REAL, não numa cópia:
+        # `rm -rf node_modules` + `npm ci --ignore-scripts`, e em cima disso
+        # `./node_modules/.bin/tsc --noEmit` limpo, `eslint .` limpo,
+        # `next build` compilado, mais a suíte inteira (01/09).
+        #
+        # O QUE ESTA FLAG CUSTA, e fica registrado porque a memória
+        # `portao-mede-a-entrada-de-producao` é exatamente sobre isso: a Vercel
+        # roda o install DELA, COM scripts, e não lê este arquivo. A partir daqui
+        # o portão mede uma instalação que não é a de produção. A troca é
+        # deliberada — o risco de código de terceiro no runner é concreto e o
+        # `next build` daqui nunca provou nada sobre o build da Vercel de qualquer
+        # forma —, mas quem for investigar uma quebra que só aparece lá deve
+        # começar por esta linha.
         working-directory: portal
-        run: npm ci
+        run: npm ci --ignore-scripts
 
 
       - name: Cliente psql 16
@@ -105,13 +133,19 @@ jobs:
 
       # ---- rápido e barato primeiro ---------------------------------------
       - name: Lint e tipos do portal
+        # OS BINÁRIOS DO LOCK, CHAMADOS POR CAMINHO — a mesma razão já escrita no
+        # passo da suíte de export mais abaixo, e a regra que o CLAUDE.md manda.
+        # `npx tsc` não é o tsc deste `package-lock.json`: quando o npx não acha o
+        # pacote ele BAIXA o que estiver publicado no registro no dia, sem versão
+        # fixada e rodando os scripts de instalação desse pacote. Um portão que
+        # muda de versão sozinho é um portão que muda de opinião sozinho.
         working-directory: portal
         run: |
-          npx tsc --noEmit
-          npx eslint .
+          ./node_modules/.bin/tsc --noEmit
+          ./node_modules/.bin/eslint .
 
       - name: Suíte n8n
-        run: node --test 'n8n/test/*.test.mjs'
+        run: node --test 'N8N/test/*.test.mjs'
 
       - name: Suíte dos hooks do agente
         # A trava que impede o descarte de arquivo é a única trava DURA do repositório, e ela erra
@@ -128,14 +162,14 @@ jobs:
 
       - name: Geradores de workflow — e o gerado tem de ser igual ao commitado
         run: |
-          node n8n/build-workflow.mjs
-          node n8n/build-workflow-macro.mjs
-          node n8n/build-workflow-diagnostico.mjs
-          node n8n/build-workflow-erros.mjs
+          node N8N/build-workflow.mjs
+          node N8N/build-workflow-macro.mjs
+          node N8N/build-workflow-diagnostico.mjs
+          node N8N/build-workflow-erros.mjs
           # É o `git diff` que impede o JSON commitado de divergir da fonte.
           # Sem ele, o gerador vira documentação: o dono importa o JSON velho e
           # a correção fica no repositório sem chegar à produção.
-          git diff --exit-code -- n8n/ \
+          git diff --exit-code -- N8N/ \
             || { echo "::error::os workflows gerados divergem dos commitados — rode os 4 geradores e commite o resultado"; exit 1; }
 
       # ---- fixtures do book (insumo do export e do e2e) --------------------
@@ -143,7 +177,7 @@ jobs:
         # PYTHONPATH=. é OBRIGATÓRIO (o gerar.py importa módulos irmãos), e o
         # GABARITO.json sai dentro de pdf/. Sem este passo o verificar-export
         # morre com ENOENT no GABARITO — não é bug, é insumo faltando.
-        working-directory: test-data/book-vertentes
+        working-directory: Dados de Teste/book-vertentes
         run: |
           # VERSÃO PRESA, e não é higiene genérica: o book sintético é o ORÁCULO das
           # suítes, e `pip install reportlab` sem versão faz o CI baixar o que for a
@@ -156,11 +190,11 @@ jobs:
       # ---- os DERIVADOS do gerador do book, conferidos como os workflows ----
       - name: Fixtures derivadas do gerador do book (SQL, JSON) e git diff
         # POR QUE ESTE PASSO EXISTE (achado em 19/08/2026). Do MESMO
-        # `db/test/gerar_fixture.py` saem TRÊS artefatos versionados:
+        # `Supabase/test/gerar_fixture.py` saem TRÊS artefatos versionados:
         #
-        #   • db/test/fixture_book_vertentes.sql        (suíte de banco)
+        #   • Supabase/test/fixture_book_vertentes.sql        (suíte de banco)
         #   • portal/scripts/fixtures/book-vertentes.json (suíte de export)
-        #   • test-data/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
+        #   • Dados de Teste/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
         #
         # Os workflows do n8n já têm este portão desde a sessão 20, com o motivo
         # escrito: "o JSON commitado pode divergir da fonte que o gera". As
@@ -175,15 +209,15 @@ jobs:
         # comparam entre si — desincronizar uma faz as outras duas mentirem sobre
         # a terceira.
         run: |
-          cd test-data/book-vertentes
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py > ../../db/test/fixture_book_vertentes.sql
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json
+          cd "Dados de Teste"/book-vertentes
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py > ../../Supabase/test/fixture_book_vertentes.sql
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json
           cd ../book-canastra
-          PYTHONPATH=. python3 ../../db/test/gerar_fixture_canastra.py > ../../db/test/fixture_book_canastra.sql
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture_canastra.py > ../../Supabase/test/fixture_book_canastra.sql
           cd ../..
-          git diff --exit-code -- db/test/fixture_book_vertentes.sql \
+          git diff --exit-code -- Supabase/test/fixture_book_vertentes.sql \
             portal/scripts/fixtures/book-vertentes.json \
-            db/test/fixture_book_canastra.sql \
+            Supabase/test/fixture_book_canastra.sql \
             || { echo "::error::as fixtures commitadas divergem do gerador — rode os geradores de fixture e commite o resultado"; exit 1; }
 
       # ---- o book difícil: 38 documentos, 3 exercícios, e o custo do lote ----
@@ -192,14 +226,14 @@ jobs:
         # nos 3 exercícios e confere cada anexo contra a conta do balanço que ele
         # detalha, por `assert`. Se um número deixar de bater, ele MORRE aqui —
         # antes de qualquer coisa rodar sobre um insumo mentiroso.
-        working-directory: test-data/book-canastra
+        working-directory: Dados de Teste/book-canastra
         run: PYTHONPATH=. python3 gerar.py
 
       - name: Custo do lote (medido no artefato, sem chamar a OpenAI)
         # Reprova quando um documento custa mais que a estimativa por chamada que
         # sustenta o teto de US$ 3 — que foi como se descobriu que o livro razão
         # custava US$ 0,1725 contra os US$ 0,15 então declarados.
-        run: node n8n/medir-custo-book.mjs
+        run: node N8N/medir-custo-book.mjs
 
       - name: Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)
         # A guarda que decide se um documento veio pela metade depende de uma
@@ -211,13 +245,13 @@ jobs:
         # GERADOR, que produção nunca vê. Ele passava com "+3%" enquanto o
         # `17_Livro_Razao` dava 258 no n8n contra as 99 linhas reais e abria
         # pendência falsa. Agora a entrada é a captura versionada da execução
-        # 7276 (`test-data/capturas/`), e o que não está nela é declarado NÃO
+        # 7276 (`Dados de Teste/capturas/`), e o que não está nela é declarado NÃO
         # MEDIDO em vez de parecer aprovado.
         #
         # Reprova quando a régua sai da faixa (conta demais e come a folga do
         # limiar, ou conta de menos e deixa passar extração incompleta), e quando
         # um documento novo entra na classe do rótulo repetido.
-        run: node n8n/medir-regua-cobertura.mjs
+        run: node N8N/medir-regua-cobertura.mjs
 
       - name: Suíte de export (invariantes do arquivo entregue)
         # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
@@ -254,9 +288,9 @@ jobs:
 
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
-        run: db/test/run.sh
+        run: Supabase/test/run.sh
 
-      # O `db/test/run.sh` acabou de reescrever `db/schema.sql` a partir do banco
+      # O `Supabase/test/run.sh` acabou de reescrever `Supabase/schema.sql` a partir do banco
       # que ele montou do zero. Se o commitado divergir, o schema que o
       # repositório publica não é o que as migrations produzem — e é o publicado
       # que alguém vai ler para entender o banco.
@@ -265,13 +299,13 @@ jobs:
       # deixa a fonte e o resultado divergirem em silêncio.
       - name: O schema materializado bate com as migrations
         run: |
-          git diff --exit-code -- db/schema.sql || {
-            echo "::error::db/schema.sql está desatualizado — rode db/test/run.sh e commite o resultado."
+          git diff --exit-code -- Supabase/schema.sql || {
+            echo "::error::Supabase/schema.sql está desatualizado — rode Supabase/test/run.sh e commite o resultado."
             exit 1
           }
 
       - name: Suíte e2e (extração → banco → export)
-        run: ./portal/node_modules/.bin/tsx test/e2e/run.mts
+        run: ./portal/node_modules/.bin/tsx Verificação/run.mts
 
       - name: Arnês de variações — a cadeia real sobre documento sujo
         # POR QUE ELE ESTÁ NO CI. Cinco rodadas de variantes trocadas por completo
@@ -288,8 +322,11 @@ jobs:
         # existe no runner: o passo morria em `connection to server on socket
         # "/tmp/.s.PGSQL.5432" failed`. Configuração de sandbox copiada para o CI é
         # o jeito mais bobo de deixar um portão vermelho.
-        run: ./portal/node_modules/.bin/tsx test/e2e/variacoes.mts
+        run: ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
       - name: Build do portal
+        # O binário do lock, pelo mesmo motivo do passo de lint e tipos: `npx next`
+        # sem versão baixaria o Next publicado no dia, e não o `next` que o
+        # `package-lock.json` fixa e que o portal em produção usa.
         working-directory: portal
-        run: npx next build
+        run: ./node_modules/.bin/next build

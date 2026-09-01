@@ -6,7 +6,7 @@ metadata:
 ---
 
 Cada estágio tem um dial de autonomia (N0 sombra → N3 autônomo), e um **teto por natureza** que
-não se negocia (`docs/01_DOUTRINA_DE_AUTONOMIA.md`):
+não se negocia (`Arquitetura do Sistema/1 Visão e Doutrina/01_DOUTRINA_DE_AUTONOMIA.md`):
 
 - determinístico objetivo: nasce N2, teto N3;
 - extração de linhas/tabelas: nasce N0, teto N2;

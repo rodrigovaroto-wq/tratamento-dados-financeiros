@@ -29,7 +29,7 @@ try {
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
   if (branch) linhas.push(`Branch: \`${branch}\``);
 
-  const migrations = readdirSync("db/migrations").filter((f) => f.endsWith(".sql")).sort();
+  const migrations = readdirSync("Supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
   const ultima = migrations.at(-1);
   if (ultima) {
     const numero = ultima.slice(0, 4);
@@ -46,9 +46,9 @@ try {
   }
 
   // Derivado versionado sujo: o que roda é o commitado, não a fonte que o gera.
-  const sujos = git("status", "--porcelain", "--", "n8n/workflow.e1-ingestao.json",
-    "n8n/workflow.macro.json", "n8n/workflow.erros.json", "db/schema.sql",
-    "db/test/fixture_book_vertentes.sql", "db/test/fixture_book_canastra.sql",
+  const sujos = git("status", "--porcelain", "--", "N8N/workflow.e1-ingestao.json",
+    "N8N/workflow.macro.json", "N8N/workflow.erros.json", "Supabase/schema.sql",
+    "Supabase/test/fixture_book_vertentes.sql", "Supabase/test/fixture_book_canastra.sql",
     "portal/scripts/fixtures/book-vertentes.json");
   if (sujos) {
     linhas.push(`⚠️  Derivado versionado modificado e não commitado:\n${sujos}`);

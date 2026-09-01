@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 // A AÇÃO HUMANA SOBRE UMA PERGUNTA SUGERIDA — `fn_registrar_pergunta_acao`
-// (db/migrations/0120). O portal não decide nada aqui: ele encaminha o que o
+// (Supabase/migrations/0120). O portal não decide nada aqui: ele encaminha o que o
 // analista clicou e devolve a recusa do banco quando há uma.
 //
 // O TEXTO VAI JUNTO, E ISSO NÃO É DETALHE. A função EXIGE o texto renderizado

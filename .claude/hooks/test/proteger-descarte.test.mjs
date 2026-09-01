@@ -45,7 +45,7 @@ const LIBERA = 0;
 test("bloqueia o descarte de arquivo — as quatro formas que aparecem de verdade", () => {
   const destrutivos = [
     [`${G}${CO} -- portal/src/lib/export.ts`, "checkout com separador e caminho"],
-    [`${G}${RE} db/schema.sql`, "restore com caminho"],
+    [`${G}${RE} Supabase/schema.sql`, "restore com caminho"],
     [`cd portal && ${G}${RE} src/lib/export.ts`, "restore depois de um encadeamento"],
     [`git -C portal ${RE} src/app/page.tsx`, "restore com -C"],
   ];
@@ -60,7 +60,7 @@ test("não bloqueia o que é legítimo — troca de branch, unstage, e o `--` de
     [`${G}${CO} main`, "trocar de branch"],
     [`${G}${RE} --staged arquivo.txt`, "tirar do índice não descarta a árvore"],
     [`${G}${RE} --worktree --staged x`, "a forma composta também não"],
-    ["git log --oneline -- db/schema.sql", "o `--` do log não é descarte"],
+    ["git log --oneline -- Supabase/schema.sql", "o `--` do log não é descarte"],
     ["npm test", "comando comum"],
   ];
   for (const [cmd, rotulo] of legitimos) {

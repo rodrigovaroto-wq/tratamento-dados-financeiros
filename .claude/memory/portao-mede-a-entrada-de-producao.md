@@ -31,7 +31,7 @@ fragmento com valor e letra vira uma "conta".
 **A regra: portão que calibra heurística sobre texto extraído tem de rodar sobre
 a saída CAPTURADA do nó de produção, versionada com procedência (workflow,
 execução, nó).** Há uma em
-`test-data/capturas/2026-08-31-texto-extraido-n8n/` — 20 dos 38 do Canastra,
+`Dados de Teste/capturas/2026-08-31-texto-extraido-n8n/` — 20 dos 38 do Canastra,
 execução 7276. Os 18 que faltam são declarados "NÃO MEDIDO CONTRA PRODUÇÃO", não
 "passa".
 

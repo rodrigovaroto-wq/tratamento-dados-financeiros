@@ -18,7 +18,7 @@ function formatValor(valorNum: number | null, valorTexto: string | null, unidade
 
 // Agrupa as linhas extraídas por `secao` (agrupador livre da IA — espelha a
 // estrutura do próprio documento), preservando a ordem de primeira aparição —
-// é o que dá a leitura de "planilha organizada" (docs/04, pedido do dono).
+// é o que dá a leitura de "planilha organizada" (Arquitetura do Sistema/2 Especificação/04, pedido do dono).
 function agruparPorSecao(campos: CampoExtraido[]) {
   const grupos = new Map<string, CampoExtraido[]>();
   for (const campo of campos) {
@@ -176,7 +176,7 @@ export default async function PlanilhaDocumentoPage({
         </div>
       )}
 
-      {/* A SAÍDA DO GATE DE CAPTURA (fechamento #2 do docs/01), oferecida exatamente
+      {/* A SAÍDA DO GATE DE CAPTURA (fechamento #2 do Arquitetura do Sistema/1 Visão e Doutrina/01), oferecida exatamente
           nos dois estados em que o documento está parado: arquivo que não se lê, ou
           extração que não trouxe linha nenhuma. Nos outros estados o bloco não
           aparece — transcrição grava linha aceita sem guarda de extração, e
@@ -247,7 +247,7 @@ export default async function PlanilhaDocumentoPage({
         )}
 
         {campos.length === 0 ? (
-          // db/migrations/0036 — item 3 do §7.4. A mensagem antiga era "Nenhuma
+          // Supabase/migrations/0036 — item 3 do §7.4. A mensagem antiga era "Nenhuma
           // linha extraída para este documento ainda", e o "ainda" fazia parecer
           // fila: quem lia esperava. Na prática, se a extração já rodou, este
           // documento NÃO tem nada no banco e sai vazio do book — e, sendo

@@ -20,7 +20,7 @@
 // única ação do Portão 2 era *aprovar*, que é exatamente o que a regra proíbe
 // enquanto houver pendência bloqueante viva. Quem olhava um caso travado por uma
 // pendência que NÃO PROCEDE — o motor errou, a conta está no outro documento —
-// não tinha o que fazer na tela. `f0/04` prevê esse caminho desde a F0
+// não tinha o que fazer na tela. `Arquitetura do Sistema/2 Especificação/f0/04` prevê esse caminho desde a F0
 // (`rejeitada`); faltava código e faltava botão.
 import Link from "next/link";
 import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
@@ -34,7 +34,7 @@ export interface PendenciaNaTela {
   descricao: string | null;
   documento_id: string | null;
   severidade?: string;
-  /** estado de f0/04: `aberta`, um dos dois de tratamento, ou um dos decididos */
+  /** estado de Arquitetura do Sistema/2 Especificação/f0/04: `aberta`, um dos dois de tratamento, ou um dos decididos */
   estado?: string;
 }
 

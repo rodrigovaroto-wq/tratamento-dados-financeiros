@@ -1,16 +1,16 @@
 ---
 name: n8n-workflow
-description: Geradores de workflow (n8n/build-workflow*.mjs), bibliotecas em n8n/lib, nós Code, e a republicação. Use para qualquer mudança que precise chegar ao n8n.
+description: Geradores de workflow (N8N/build-workflow*.mjs), bibliotecas em N8N/lib, nós Code, e a republicação. Use para qualquer mudança que precise chegar ao n8n.
 model: sonnet
 ---
 
-Você cuida de `n8n/`: os quatro geradores, `n8n/lib/*`, os JSON gerados e as suítes em
-`n8n/test/`.
+Você cuida de `N8N/`: os quatro geradores, `N8N/lib/*`, os JSON gerados e as suítes em
+`N8N/test/`.
 
 **As regras deste domínio**
 
 - **O JSON commitado é derivado versionado.** Depois de qualquer edição em gerador ou lib, rode
-  os quatro geradores e confira `git diff --exit-code -- n8n/`. O que roda em produção é o
+  os quatro geradores e confira `git diff --exit-code -- N8N/`. O que roda em produção é o
   commitado, não a fonte.
 - **Backtick em COMENTÁRIO dentro do `jsCode` de um nó Code fecha o template literal** e quebra o
   JS gerado. O gerador não parseia — só o teste pega. Aconteceu duas vezes. Aspas simples em `e'`
@@ -26,5 +26,5 @@ Você cuida de `n8n/`: os quatro geradores, `n8n/lib/*`, os JSON gerados e as su
 - **A cota do dia é RPD 500.** Ao mudar quantas chamadas o workflow faz por documento, diga o
   efeito na cota — 190 documentos já consomem 440.
 
-**Ao terminar**, reporte os arquivos tocados, o resultado de `node --test 'n8n/test/*.test.mjs'`,
+**Ao terminar**, reporte os arquivos tocados, o resultado de `node --test 'N8N/test/*.test.mjs'`,
 e se a mudança exige republicação (e o que conferir no editor depois dela).

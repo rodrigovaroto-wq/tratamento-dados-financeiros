@@ -19,8 +19,8 @@
 // que copiar e colar.
 //
 // AS ASSINATURAS SÃO DE TEXTO, e isso é deliberado. As mensagens nascem em
-// quatro lugares diferentes — `diagnosticarErroApi` (n8n/lib/extract.mjs), a
-// recusa do orçamento (n8n/lib/custo.mjs), o Error Workflow (que repassa o que
+// quatro lugares diferentes — `diagnosticarErroApi` (N8N/lib/extract.mjs), a
+// recusa do orçamento (N8N/lib/custo.mjs), o Error Workflow (que repassa o que
 // o n8n disser) e o Postgres. Um código de erro estruturado exigiria que os
 // quatro concordassem com um vocabulário, e três deles são de terceiros. Casar
 // por assinatura de texto é frágil no detalhe e robusto no que importa: quando

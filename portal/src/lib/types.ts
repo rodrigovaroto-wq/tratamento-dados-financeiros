@@ -1,5 +1,5 @@
 // Tipos das linhas lidas do Postgres (subconjunto usado pelo portal).
-// Fonte da verdade do schema: db/migrations/*.sql — manter em sincronia.
+// Fonte da verdade do schema: Supabase/migrations/*.sql — manter em sincronia.
 
 export type CasoStatus =
   | "intake"
@@ -20,7 +20,7 @@ export interface Caso {
   status: CasoStatus;
   criado_em: string;
   /**
-   * db/migrations/0114 — quando o mandato saiu da mesa. `null` = ATIVO.
+   * Supabase/migrations/0114 — quando o mandato saiu da mesa. `null` = ATIVO.
    * Não confundir com `status`, que é onde ele está no trabalho: um mandato
    * aprovado em março e outro aprovado ontem têm o mesmo `status` e situações
    * opostas. Opcional porque um banco sem a 0114 aplicada não devolve a coluna,
@@ -79,16 +79,16 @@ export interface Documento {
 
 export type StatusAceite = "pendente" | "aceito" | "com_ressalva";
 
-// Uma linha extraída pelo diagnóstico/extração (E2, N0/sombra) — db/migrations/0005, 0010, 0011.
-// status_aceite/aceito_por/aceito_em = Portão 2 mínimo (f0/07): sem aceite,
+// Uma linha extraída pelo diagnóstico/extração (E2, N0/sombra) — Supabase/migrations/0005, 0010, 0011.
+// status_aceite/aceito_por/aceito_em = Portão 2 mínimo (Arquitetura do Sistema/2 Especificação/f0/07): sem aceite,
 // nunca é "fato" — só sugestão pendente de revisão.
 export interface CampoExtraido {
   id: string;
   documento_versao_id: string;
   secao: string | null;
-  secao_canonica: string | null; // sugestão da IA (db/migrations/0012) — chaves de statement-templates.ts; fallback advisory do classificador
-  entidade_coluna: string | null; // db/migrations/0014 — nome da coluna/entidade quando o documento tem várias entidades lado a lado (null = documento de 1 entidade só)
-  periodo_coluna: string | null; // db/migrations/0017 — rótulo da coluna de período quando o documento é comparativo (ex.: "2023"/"2024" lado a lado); null = período único (vem de documento.periodo_id)
+  secao_canonica: string | null; // sugestão da IA (Supabase/migrations/0012) — chaves de statement-templates.ts; fallback advisory do classificador
+  entidade_coluna: string | null; // Supabase/migrations/0014 — nome da coluna/entidade quando o documento tem várias entidades lado a lado (null = documento de 1 entidade só)
+  periodo_coluna: string | null; // Supabase/migrations/0017 — rótulo da coluna de período quando o documento é comparativo (ex.: "2023"/"2024" lado a lado); null = período único (vem de documento.periodo_id)
   chave: string;
   valor_texto: string | null;
   valor_num: number | null;
@@ -97,7 +97,7 @@ export interface CampoExtraido {
   // uma escala só. Serve para a nota de proveniência dizer de onde o número veio
   // — "convertido de R$ para R$ mil" é informação de auditoria, não detalhe.
   unidade_original?: string | null;
-  // db/migrations/0035 — MOEDA da linha (ISO: BRL/USD/EUR…), herdada do documento
+  // Supabase/migrations/0035 — MOEDA da linha (ISO: BRL/USD/EUR…), herdada do documento
   // pela extração. `null` = desconhecida, e desconhecida NUNCA vira BRL presumido:
   // presumir é o erro que a coluna existe para impedir. É coisa SEPARADA de
   // `unidade` (a escala): "milhares de dólares" são duas informações, e as duas
@@ -106,7 +106,7 @@ export interface CampoExtraido {
   moeda?: string | null;
   confianca: number | null;
   origem_pagina: number | null;
-  // db/migrations/0027 — posição da linha NO DOCUMENTO (0-based). É o sinal que
+  // Supabase/migrations/0027 — posição da linha NO DOCUMENTO (0-based). É o sinal que
   // permite reconhecer um subtotal impresso ACIMA dos seus componentes, que é
   // como toda demonstração publicada imprime. Sem ele, o subtotal entrava na
   // soma da seção junto com os componentes (teste v28: Ativo Circulante da VT
@@ -145,14 +145,14 @@ export interface Pendencia {
   // mesmo defeito que a 0037 corrigiu do outro lado — dado gravado sem leitor.
 }
 
-// Tipos de pendencia_tipo (db/migrations/0001, 0009) gerados pela reconciliação
+// Tipos de pendencia_tipo (Supabase/migrations/0001, 0009) gerados pela reconciliação
 // Classe A (E3) — divergência aritmética detectada ou pré-condição não satisfeita.
 export const PENDENCIA_TIPOS_RECONCILIACAO = [
   "divergencia_reconciliacao",
   "precondicao_nao_satisfeita",
 ] as const;
 
-// Tipos de pendencia_tipo (db/migrations/0001, 0010) gerados pelo diagnóstico de
+// Tipos de pendencia_tipo (Supabase/migrations/0001, 0010) gerados pelo diagnóstico de
 // conteúdo (E1/E2) — o conteúdo diverge do que já está registrado no documento.
 // Corrigíveis pela MESMA fila de revisão da classificação (fn_revisar_documento
 // já aceita tipo/entidade/período juntos).
@@ -167,7 +167,7 @@ export const PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS = [
 // sinaliza problema no ARQUIVO em si, listada à parte (só leitura).
 export const PENDENCIA_TIPO_ARQUIVO_ILEGIVEL = "arquivo_ilegivel";
 
-// Tipos de pendencia_tipo (db/migrations/0013, 0016) gerados pela GUARDA de
+// Tipos de pendencia_tipo (Supabase/migrations/0013, 0016) gerados pela GUARDA de
 // qualidade da extração (E2) — não são erro de classificação nem divergência
 // de reconciliação, são sinais de que a extração em si pode não ser confiável
 // (padrão fabricado, confiança baixa, ou a chamada falhou/veio truncada e
@@ -186,7 +186,7 @@ export interface TaxonomiaTipoDocumento {
   obrigatoriedade: Obrigatoriedade;
 }
 
-// O FATO MATERIAL (db/migrations/0148) — o que o documento diz em TEXTO.
+// O FATO MATERIAL (Supabase/migrations/0148) — o que o documento diz em TEXTO.
 //
 // É o único dado do produto cuja saída não é um número: é uma frase lida de
 // texto corrido. Nasceu da v48, onde as Notas Explicativas e o Parecer do

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 // COPIAR O TEXTO PRONTO — o gesto que a aba de perguntas existe para servir.
 //
-// O sistema não envia nada ao cliente (docs/01: o sistema sugere, o humano
+// O sistema não envia nada ao cliente (Arquitetura do Sistema/1 Visão e Doutrina/01: o sistema sugere, o humano
 // decide), então o caminho real da pergunta é: ler, copiar, colar no e-mail que
 // o analista já ia escrever. Selecionar quatro linhas com o mouse dentro de um
 // cartão funciona, mas leva junto o que estiver em volta — e o que sai daqui é

@@ -19,6 +19,25 @@ import ExcelJS from "exceljs";
 // caractere invisível no fonte.
 export const CHAVE_SEP = "\u0000";
 
+// COMPARADOR DE CÓDIGO TÉCNICO, e o nome existe para não voltar a ser ternário.
+// Ordena identificador — `IPCA`, `SELIC`, `CAMBIO_USD`, `milhar` — em ordem de
+// ponto de código, estável e sem locale. É a escolha certa onde o valor NÃO é
+// texto que um humano lê: locale ali seria uma promessa falsa (não há acento em
+// código) e mudaria a ordem por regra de collation que ninguém pediu — para
+// rótulo humano use `localeCompare(a, b, "pt-BR")`, que é o que o resto do
+// export faz.
+//
+// Nasceu como `(a, b) => (a < b ? -1 : a > b ? 1 : 0)` repetido em cinco
+// chamadas, e as cinco viraram `typescript:S3358` (ternário aninhado): consertar
+// um achado do Sonar copiando a mesma expressão cinco vezes criou cinco achados
+// novos. Uma função nomeada resolve os dois lados — o `.sort()` sem comparador
+// que a S2871 cobra, e o aninhamento que a S3358 cobra.
+export function compararCodigo(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export const VALOR_NUM_FMT = "#,##0.00;(#,##0.00)";
 export const RATIO_FMT = "0.00"; // índices "x vezes" (liquidez, participação)
 export const PCT_FMT = "0.0%"; // índices em % (endividamento, composição, imobilização)

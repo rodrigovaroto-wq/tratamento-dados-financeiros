@@ -1,15 +1,15 @@
 # Portal (Vercel) — Fatia 1
 
 Next.js (App Router) + Supabase Auth. Telas cobrem a F1 do plano (`f0` /
-`docs/03`): **dashboard do caso** (checklist do Kit Básico, lista de
+`Arquitetura do Sistema/1 Visão e Doutrina/03`): **dashboard do caso** (checklist do Kit Básico, lista de
 documentos, pendências de reconciliação/qualidade), **fila de revisão**
 (humano confirma/corrige classificação/entidade/tipo/período — o N1 da
-Doutrina de Autonomia, `docs/01`), **planilha por documento** (linhas
-extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
+Doutrina de Autonomia, `Arquitetura do Sistema/1 Visão e Doutrina/01`), **planilha por documento** (linhas
+extraídas + aceite humano — Portão 2 mínimo, `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`) e
 **export Excel** do caso inteiro.
 
 > **Upload em lote continua fora do portal por decisão explícita** (ver
-> `n8n/README.md`): a ingestão roda pelo Form Trigger do N8N. O portal aqui é
+> `N8N/README.md`): a ingestão roda pelo Form Trigger do N8N. O portal aqui é
 > só o lado de **leitura + revisão humana**.
 
 ## O que tem
@@ -31,16 +31,16 @@ extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
 - `src/app/casos/[id]/revisao` — fila de revisão: uma pendência de
   classificação/entidade/tipo/período por card (`classificacao_pendente`,
   `tipo_incorreto`, `entidade_incorreta`, `periodo_incorreto` — as três
-  últimas vêm do diagnóstico de conteúdo do N8N, `db/migrations/0010`),
+  últimas vêm do diagnóstico de conteúdo do N8N, `Supabase/migrations/0010`),
   formulário pré-preenchido com a sugestão atual. Confirmar (sem editar) ou
   corrigir e salvar chama a RPC `fn_revisar_documento`
-  (`db/migrations/0008_portal_revisao.sql`) — toda a lógica (resolver
+  (`Supabase/migrations/0008_portal_revisao.sql`) — toda a lógica (resolver
   pendência, `decisao`+`evento_auditoria`, checklist, recomputar completude)
   roda no Postgres, não no Next.js.
 - `src/app/casos/[id]/documentos/[docId]` — a "planilha" de um documento:
   linhas extraídas agrupadas por `secao`, resumo, aviso de legibilidade, e o
   botão **"Aceitar estes dados para a base"** — chama `fn_aceitar_extracao`
-  (`db/migrations/0011_aceite_export_e4.sql`), o Portão 2 mínimo: sem esse
+  (`Supabase/migrations/0011_aceite_export_e4.sql`), o Portão 2 mínimo: sem esse
   aceite, a linha nunca entra no export como fato (fica "pendente").
 - `src/app/casos/[id]/export` — **route handler** (não página) que gera o
   Excel do caso (`src/lib/export.ts` + `src/lib/statement-templates.ts`,
@@ -62,7 +62,7 @@ extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
     de cada empresa dentro da seção — não força um nome canônico. Nenhum
     subtotal/total é calculado por soma — só aparece se o próprio documento
     já trouxer aquela linha extraída (mesmo princípio de `fn_valor_conceito`,
-    `db/migrations/0009`: casamento determinístico, nunca um cálculo novo).
+    `Supabase/migrations/0009`: casamento determinístico, nunca um cálculo novo).
     Contas que não são classificáveis com segurança vão para um bloco
     explícito "Contas Não Classificadas (revisar manualmente)" ao final da
     aba — nada desaparece nem é forçado pro lugar errado. Proveniência
@@ -75,7 +75,7 @@ extraídas + aceite humano — Portão 2 mínimo, `f0/07_output_spec.md`) e
     pendentes, versões de taxonomia). Linhas pendentes de aceite aparecem
     junto (nunca somem), mas com preenchimento âmbar + itálico — "sugestão
     pendente de revisão", nunca fato silencioso (princípio inegociável de
-    `f0/07_output_spec.md`).
+    `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`).
 
 ## Configuração
 
@@ -87,7 +87,7 @@ Preencher com os valores do projeto Supabase (Settings → API):
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — a chave **anon/publishable** (pública por
   design, é o que o browser usa). **Nunca** a `service_role` aqui — ela
-  ignora RLS (ver `db/README.md` "Notas de segurança (LGPD)"). O acesso do
+  ignora RLS (ver `Supabase/README.md` "Notas de segurança (LGPD)"). O acesso do
   portal respeita RLS porque o usuário chega autenticado (`authenticated`
   role) via Supabase Auth.
 
@@ -118,7 +118,7 @@ O **mandato é o caso** (`caso`): reenviar arquivos com o MESMO nome de mandato
 os acumula no mesmo caso — mesmo checklist, mesma exportação para Excel e mesma
 checagem de dados (reconciliação). Isso vale tanto para o upload pelo portal
 quanto para o Form do N8N: `fn_upsert_caso(nome)` reusa por nome
-(`db/migrations/0006`). Fluxo no portal: **"+ Novo mandato"** (lista de
+(`Supabase/migrations/0006`). Fluxo no portal: **"+ Novo mandato"** (lista de
 mandatos) para começar um; **"+ Adicionar arquivos"** (dentro de um mandato)
 para enviar mais em outro momento.
 
@@ -141,7 +141,7 @@ página. "Pronto" aqui significa "terminou de tentar" (`documento` criado +
 evento de extração gravado para cada arquivo), não "sem pendências" —
 divergências/revisões continuam visíveis no dashboard do mandato como sempre.
 
-Depois de rodar as migrations do `db/` (até a `0011` inclusive):
+Depois de rodar as migrations do `Supabase/` (até a `0011` inclusive):
 
 ```bash
 npm install
@@ -154,7 +154,7 @@ para logar.
 ## Deploy (Vercel)
 
 1. Importar este diretório (`portal/`) como o **Root Directory** do projeto
-   Vercel (o repo tem outras pastas — `n8n/`, `db/`, `docs/` — que não fazem
+   Vercel (o repo tem outras pastas — `N8N/`, `Supabase/`, `Arquitetura do Sistema/` — que não fazem
    parte do app Next.js).
 2. Configurar as env vars acima em Project Settings → Environment Variables
    (`NEXT_PUBLIC_SUPABASE_*` obrigatórias; `N8N_INTAKE_FORM_URL` para habilitar
@@ -275,11 +275,11 @@ src/
 
 - Upload em lote pelo portal (hoje é N8N Form) — se algum dia migrar, via SDK
   oficial do Supabase JS (evita o bug de plataforma do HTTP Request do N8N,
-  ver `n8n/README.md`).
+  ver `N8N/README.md`).
 - Aceite por linha/célula (hoje é por documento_versao inteiro, v0 —
-  `f0/07_output_spec.md` permite refinar o "layout fino" depois).
+  `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md` permite refinar o "layout fino" depois).
 - Portão 2 formal do caso inteiro (bloqueantes não-sobrepujáveis, teto de
-  ressalva, `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite
+  ressalva, `Arquitetura do Sistema/3 Estado e Execução/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite
   mínimo por linha extraída (`fn_aceitar_extracao`).
 - RLS por caso (membership) — hoje é "qualquer autenticado vê tudo" (decisão
-  explícita da F1, `db/migrations/0003_rls_e_storage.sql`).
+  explícita da F1, `Supabase/migrations/0003_rls_e_storage.sql`).

@@ -1,17 +1,17 @@
 // Classificação por SEÇÃO (não por nome de conta fixo) para o export Excel
-// (f0/07_output_spec.md, Modo B). Um template com ~15 nomes de conta exatos
+// (Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md, Modo B). Um template com ~15 nomes de conta exatos
 // quebra na primeira empresa que nomeia as contas diferente — cada empresa
 // tem seu próprio plano de contas. A abordagem certa (a mesma de um
 // balancete/razão de verdade) é: classificar cada conta extraída na SEÇÃO
 // correta (Ativo Circulante, Passivo Não Circulante, etc.) por sinais amplos
-// — a `secao` que a IA já anotou (docs/01, `db/migrations/0010`) + palavras-
+// — a `secao` que a IA já anotou (Arquitetura do Sistema/1 Visão e Doutrina/01, `Supabase/migrations/0010`) + palavras-
 // chave no rótulo — e then LISTAR a conta com o nome ORIGINAL que a empresa
 // usa, dentro da seção certa. Nenhuma conta fica de fora só por causa da
 // redação; o que não é classificável com segurança cai num bloco explícito
 // "Contas Não Classificadas" (nunca desaparece, nunca é forçada pro lugar
 // errado).
 //
-// IMPORTANTE (doutrina, docs/01): nenhum subtotal/total aqui é CALCULADO por
+// IMPORTANTE (doutrina, Arquitetura do Sistema/1 Visão e Doutrina/01): nenhum subtotal/total aqui é CALCULADO por
 // soma de itens — só aparece se o próprio documento extraído trouxer aquela
 // linha explicitamente (ex.: "Total do Ativo Circulante" como linha do PDF).
 // Não inventamos números novos — só classificamos e reorganizamos o que já
@@ -461,7 +461,7 @@ export function classificarBalanco(secao: string | null, chave: string): Classif
   const anc = ancoraBalanco(tokensChave, tokensSecao);
   if (anc) return { secaoKey: null, ancoraKey: anc };
 
-  // 2) Seção anotada pela IA no diagnóstico/extração (db/migrations/0010) —
+  // 2) Seção anotada pela IA no diagnóstico/extração (Supabase/migrations/0010) —
   // mais confiável que adivinhar só pelo rótulo da conta.
   if (tokensSecao.size > 0) {
     // 2a) A seção declarada é o nome de uma SUBSEÇÃO da própria estrutura?
@@ -811,7 +811,7 @@ export function classificarFluxoCaixa(secao: string | null, chave: string): Clas
 // classificador do Balanço (um balancete é, por natureza, o mesmo agrupamento
 // por seção do plano de contas — só mais granular). COMBINADO idem (uso mais
 // comum de "demonstrações combinadas" nos mandatos da Oria é o balanço
-// consolidado do grupo, f0/03).
+// consolidado do grupo, Arquitetura do Sistema/2 Especificação/f0/03).
 export type EstruturaDemonstracao = "balanco" | "dre" | "fluxo_caixa";
 
 // DMPL e DVA são demonstrações inteiras, mas NÃO entram em EstruturaDemonstracao:
@@ -831,7 +831,7 @@ export const ESTRUTURA_POR_TIPO: Record<string, EstruturaDemonstracao> = {
   FLUXO_CAIXA: "fluxo_caixa",
 };
 
-// secao_canonica (sugestão da IA por linha, db/migrations/0012) → a QUAL
+// secao_canonica (sugestão da IA por linha, Supabase/migrations/0012) → a QUAL
 // demonstração aquela conta pertence. É o que permite separar por aba um PDF
 // que traz várias demonstrações juntas ("Demonstrações Contábeis completas":
 // Balanço + DRE + Fluxo de Caixa no mesmo arquivo) — cada linha vai para a aba
@@ -850,7 +850,7 @@ const FAMILIA_POR_SECAO_CANONICA: Record<string, FamiliaDemonstracao> = {
   atividades_operacionais: "fluxo_caixa",
   atividades_investimento: "fluxo_caixa",
   atividades_financiamento: "fluxo_caixa",
-  // db/migrations/0024 — a IA passou a poder dizer "esta linha é da DMPL/DVA".
+  // Supabase/migrations/0024 — a IA passou a poder dizer "esta linha é da DMPL/DVA".
   // Antes não havia como: uma DMPL embutida num PDF de Balanço só tinha
   // "patrimonio_liquido" (que INFLA o PL, porque o saldo de fechamento repete o
   // total) ou "NAO_CLASSIFICAVEL" como destino.
@@ -995,14 +995,14 @@ export function classificarConta(
         : classificarFluxoCaixa(secao, chave);
 
   // A regra determinística tem prioridade: se ela achou uma âncora (total) ou
-  // uma seção, mantém — é confiável e não depende de golden set (docs/01).
+  // uma seção, mantém — é confiável e não depende de golden set (Arquitetura do Sistema/1 Visão e Doutrina/01).
   if (base.ancoraKey || base.secaoKey) return base;
 
   // Só quando o determinístico ABSTÉM (a conta cairia em "Não Classificadas"),
-  // usa a sugestão canônica da IA (N1/advisory, db/migrations/0012) — desde que
+  // usa a sugestão canônica da IA (N1/advisory, Supabase/migrations/0012) — desde que
   // seja uma seção válida para ESTA estrutura. Preenche a lacuna sem sobrepor a
   // regra; a linha continua pendente/âmbar até o aceite humano. Subir a IA para
-  // prioridade/auto-clear exigiria golden set + concordância medida (f0/06).
+  // prioridade/auto-clear exigiria golden set + concordância medida (Arquitetura do Sistema/2 Especificação/f0/06).
   if (secaoCanonica && secaoKeysDe(estrutura).has(secaoCanonica)) {
     // A IA sugere a seção no nível achatado (enum de 0012). Se for Ativo Não
     // Circulante, refina no subgrupo CPC (Realizável LP / Investimentos /

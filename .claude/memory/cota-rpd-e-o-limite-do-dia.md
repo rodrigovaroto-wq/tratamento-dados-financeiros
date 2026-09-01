@@ -6,7 +6,7 @@ metadata:
 ---
 
 Nível gratuito da linha Flash-Lite (`gemini-3.5-flash-lite`, provedor declarado em
-`n8n/lib/provedor.mjs`): **RPM 15**, **TPM 250K**, **RPD 500**. É o RPD que decide.
+`N8N/lib/provedor.mjs`): **RPM 15**, **TPM 250K**, **RPD 500**. É o RPD que decide.
 
 Medido na rodada real do `book-araucaria`: **440 de 500 (88%)** para 190 documentos — contra os
 ~285 estimados por aritmética. **Um book por dia**, e o araucária sozinho ocupa quase o dia

@@ -5,13 +5,13 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { DecisaoPendencia } from "@/lib/pendencia";
 
-// Chama fn_aprovar_caso (db/migrations/0037) — o Portão 2 POR CASO, que até a
+// Chama fn_aprovar_caso (Supabase/migrations/0037) — o Portão 2 POR CASO, que até a
 // 0037 não existia em código: `caso_status` tinha 'aprovado' e nada transicionava
 // para lá, e `pendencia.sobrepujavel` era gravado sem nenhum leitor.
 //
 // A regra vive no Postgres e não é reimplementada aqui — este arquivo só
 // encaminha e mostra o resultado. Desde a 0109 ela é UMA: não há bloqueante sem
-// decisão. O teto de ressalvas e a lista fechada de `f0/04` saíram por decisão
+// decisão. O teto de ressalvas e a lista fechada de `Arquitetura do Sistema/2 Especificação/f0/04` saíram por decisão
 // do dono e viraram contagem informativa.
 export async function aprovarCaso(casoId: string, formData: FormData) {
   const supabase = await createClient();
@@ -47,7 +47,7 @@ export async function aprovarCaso(casoId: string, formData: FormData) {
   revalidatePath(`/casos/${casoId}`);
 }
 
-// Chama fn_decidir_pendencia (db/migrations/0109) — os três botões da tela.
+// Chama fn_decidir_pendencia (Supabase/migrations/0109) — os três botões da tela.
 //
 // Três server actions viraram uma, porque os três cliques são a mesma operação
 // com destinos diferentes. A decisão vai no `bind`, não no formulário: não há
@@ -87,7 +87,7 @@ export async function decidirPendencia(
   revalidatePath(`/casos/${casoId}`);
 }
 
-// Chama fn_excluir_caso (db/migrations/0108) — o botão de excluir o mandato.
+// Chama fn_excluir_caso (Supabase/migrations/0108) — o botão de excluir o mandato.
 //
 // A confirmação acontece NO NAVEGADOR, antes de chegar aqui (é o `onSubmit` do
 // componente): o servidor não tem como perguntar "tem certeza?" no meio de uma

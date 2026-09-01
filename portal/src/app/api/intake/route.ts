@@ -6,7 +6,7 @@ import { parseFormFieldNames } from "@/lib/n8n-form";
 // reconciliação) continua 100% no N8N: o portal é só um front-end de intake
 // mais amigável, submetendo ao MESMO endpoint que o formulário público do N8N.
 // Assim, reenviar no mesmo "mandato" (nome do caso) acumula no mesmo caso —
-// fn_upsert_caso reusa por nome (db/migrations/0006).
+// fn_upsert_caso reusa por nome (Supabase/migrations/0006).
 //
 // Precisa do runtime Node (streams/FormData de arquivo), não Edge.
 export const runtime = "nodejs";

@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import type { CampoExtraido } from "./types";
 import {
   ANALISE_HEADER_FILL, CHAVE_SEP, DIVERGENCIA_FILL, HEADER_FILL, PCT_FMT,
-  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota,
+  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota, compararCodigo,
 } from "./export-estilo";
 import {
   classificarConta,
@@ -35,7 +35,7 @@ import {
 // corte da sessão 20 é interno ao lib, e não é motivo para mexer no chamador.
 export type { MacroAnual, MacroExpectativa, MacroParaExport, RefsMacro } from "./export-modelagem";
 
-// Modo B do output (f0/07_output_spec.md): export sob demanda. Princípio
+// Modo B do output (Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md): export sob demanda. Princípio
 // inegociável da spec: "Dado sem aceite não é entregue como fato — no
 // máximo aparece como sugestão pendente de revisão, visualmente distinta."
 // Por isso TODAS as linhas aparecem (aceitas e pendentes), mas com
@@ -137,7 +137,7 @@ export function formatarPeriodo(tipo: string | null, referencia: string | null):
     //       tokens ("2012,2024" ou "12,24"), não misturada.
     // Sobra ambíguo só "NN,NN" sem zero à esquerda ("11,12"), que continua
     // tratado como exercícios (2011–2012) — a convenção do sistema para lista
-    // de anos é justamente 2 dígitos (ver notação canônica em n8n/lib/extract).
+    // de anos é justamente 2 dígitos (ver notação canônica em N8N/lib/extract).
     if (toks.length === 2) {
       const mes = Number(toks[0]);
       const mesComZero = /^0[1-9]$/.test(toks[0]);
@@ -328,7 +328,7 @@ export function periodoConsolidado(periodoFormatado: string): string {
  *
  * POR QUE É UMA FUNÇÃO EXPORTADA, e não a linha solta que era. Esta regra vivia
  * dentro do laço do `buildExportWorkbook`, e enquanto o arquivo era o único a
- * precisar dela isso era suficiente. A tela do Modo A (`f0/07`) responde à mesma
+ * precisar dela isso era suficiente. A tela do Modo A (`Arquitetura do Sistema/2 Especificação/f0/07`) responde à mesma
  * pergunta — "de qual empresa e de qual período é este número" —, e uma segunda
  * implementação dela seria duas respostas para a mesma pergunta em duas telas: o
  * defeito que este código já pagou caro para nomear em outros lugares. Uma regra,
@@ -368,11 +368,11 @@ function compararColunas(
   );
 }
 
-// tipo_taxonomia → nome da aba (ordem de prioridade travada em f0/07;
+// tipo_taxonomia → nome da aba (ordem de prioridade travada em Arquitetura do Sistema/2 Especificação/f0/07;
 // Balancete/Combinado entram na mesma família estrutural do Balanço).
 //
 // MUTUOS e FAT_INTRAGRUPO são categoria "Intragrupo" na própria taxonomia
-// (db/migrations/0002) — mútuo entre empresas do grupo não é DÍVIDA externa
+// (Supabase/migrations/0002) — mútuo entre empresas do grupo não é DÍVIDA externa
 // (banco/financiamento, como MAPA_DIVIDA/CONTRATO_DIVIDA); misturar as duas
 // na mesma aba "Dívida" era uma classificação sem sentido contábil (achado em
 // produção, sessão 7 cont.¹⁴). CONTRATO_SOCIAL (Societário/Legal) também
@@ -519,7 +519,7 @@ const ABA_PADRAO_POR_ESTRUTURA: Record<FamiliaDemonstracao, string> = {
 
 // Tipo cujo documento é, por definição, o CONJUNTO das demonstrações num arquivo
 // só: "Demonstrações financeiras auditadas completas (+ notas)"
-// (`db/migrations/0002`). É a forma mais comum de entrega num mandato real — o
+// (`Supabase/migrations/0002`). É a forma mais comum de entrega num mandato real — o
 // cliente manda o PDF auditado do exercício, não um arquivo por demonstração.
 //
 // Ele não pode ter aba própria em `ABA_POR_TIPO` (que aba seria? o arquivo é
@@ -549,7 +549,7 @@ const ABAS_SEMPRE_PRESENTES = new Set(["Balanço", "DRE", "Fluxo de Caixa"]);
  *   • nenhum documento daquela demonstração → é cobrança de documento, e quem
  *     cobra é o checklist do Kit Básico. Não há nada a reprocessar.
  *
- * Nada é inventado aqui (f0/07): sem linha extraída não há o que o template
+ * Nada é inventado aqui (Arquitetura do Sistema/2 Especificação/f0/07): sem linha extraída não há o que o template
  * ordene. O que a aba entrega é a informação de que falta — que antes o arquivo
  * não dava de jeito nenhum.
  */
@@ -583,7 +583,7 @@ function construirAbaSemDado(
   ws.getRow(2).height = 42;
   ws.addRow([]);
   const nota = ws.addRow(["", "Nada é preenchido por conta própria: o template ordena o que o documento "
-    + "trouxe (f0/07_output_spec.md). Sem linha extraída, não há o que ordenar."]);
+    + "trouxe (Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md). Sem linha extraída, não há o que ordenar."]);
   nota.alignment = { wrapText: true, vertical: "top" };
   nota.font = { italic: true, size: 9 };
 }
@@ -611,7 +611,7 @@ export interface DocumentoParaExport {
  *
  * **A mais recente COM DADO manda.** Não é "a mais recente", e a diferença é uma
  * proteção real: uma reextração pode falhar (truncamento/rate limit gravam
- * `extracao_falhou` com ZERO linhas, `db/migrations/0016`). Se a vigência fosse
+ * `extracao_falhou` com ZERO linhas, `Supabase/migrations/0016`). Se a vigência fosse
  * cega ao dado, essa falha APAGARIA do book tudo o que a versão anterior tinha
  * extraído com sucesso — trocar dupla contagem por perda silenciosa de dado não
  * é conserto.
@@ -670,7 +670,7 @@ function formatarStatus(status: string) {
 
 // Em empate (mais de um campo casando no mesmo lugar), prefere maior
 // confiança e rótulo mais curto (mais específico) — mesmo critério de
-// `fn_valor_conceito` (db/migrations/0009).
+// `fn_valor_conceito` (Supabase/migrations/0009).
 // ---------------------------------------------------------------------------
 // ESCALA (milhar/milhão/unidade) — o defeito mais caro que este arquivo tinha.
 //
@@ -758,7 +758,13 @@ export function normalizarEscala(
 
   return {
     campos: saida,
-    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort() },
+    // `c.unidade` é chave de enum validada contra `FATOR_ESCALA`
+    // (`unidade`|`milhar`|`milhao`), não texto humano — o rótulo lido por
+    // gente nasce depois, em `ROTULO_ESCALA[e]` (ver uso de
+    // `escala.escalasEncontradas`). Sem acento na chave, comparador de código
+    // basta e a ordem fica determinística sem depender de locale (sonar
+    // typescript:S2871).
+    escala: { alvo, converteu, semDeclaracao, escalasEncontradas: [...encontradas].sort(compararCodigo) },
   };
 }
 
@@ -856,7 +862,7 @@ const MARGEM_LABEL: Record<string, string> = {
   lucro_liquido: "Margem Líquida %",
 };
 
-// ----- Camada analítica (f0/08): análise vertical / horizontal / indicadores.
+// ----- Camada analítica (Arquitetura do Sistema/2 Especificação/f0/08): análise vertical / horizontal / indicadores.
 // Colunas AV% (análise vertical, common-size) e Δ% (análise horizontal, entre
 // períodos comparáveis da mesma entidade) são FÓRMULAS transparentes sobre o
 // dado já extraído — não projetam nem inventam número. Estilo discreto
@@ -1211,7 +1217,7 @@ export function rotulosDeSubtotalInformado(
 // ----- Aba classificada por seção (Balanço/Balancete/DRE/Fluxo/Combinado) --
 // Totais/subtotais NÃO são valores estáticos: são FÓRMULAS Excel (=SUM(...)),
 // transparentes e recalculáveis, colocadas NO cabeçalho de cada seção/grupo
-// (f0/07 evoluído nesta sessão — pedido do dono). O total que o PRÓPRIO
+// (Arquitetura do Sistema/2 Especificação/f0/07 evoluído nesta sessão — pedido do dono). O total que o PRÓPRIO
 // documento trouxe (quando existe) aparece numa linha de conferência logo
 // abaixo; se a soma calculada divergir do informado, ambos são sinalizados
 // (anti-ancoragem: nada que o documento disse é perdido, e divergência vira
@@ -1254,7 +1260,7 @@ function construirAbaClassificada(
     sheet.getColumn(d.pos).width = 12;
   });
 
-  // ----- MOEDA POR COLUNA (db/migrations/0035) -------------------------------
+  // ----- MOEDA POR COLUNA (Supabase/migrations/0035) -------------------------------
   // Até a 0035 a moeda era extraída e DESCARTADA, e uma linha em USD entrava na
   // mesma soma que uma em BRL sem nenhuma marca: erro pelo câmbio inteiro (~5x),
   // num arquivo que fecha. Agora a moeda chega por linha, e a aba precisa fazer
@@ -1285,7 +1291,7 @@ function construirAbaClassificada(
 
   // A RECUSA DE SOMAR, num lugar só.
   //
-  // Doutrina do projeto (docs/04, e o comentário da dupla contagem acima): o
+  // Doutrina do projeto (Arquitetura do Sistema/2 Especificação/04, e o comentário da dupla contagem acima): o
   // export NÃO conserta sozinho — ele mostra as leituras e nomeia o problema. Mas
   // "não consertar" nunca quis dizer "emitir um número errado": uma coluna que
   // mistura BRL e USD não tem soma correta possível, e um `SUM` ali produziria um
@@ -1301,7 +1307,9 @@ function construirAbaClassificada(
     cell: ExcelJS.Cell, colKey: string, formula: string,
   ): boolean => {
     if (colunasMistas.has(colKey)) {
-      const moedas = [...moedasPorColuna.get(colKey)!].sort().join(" + ");
+      // localeCompare('pt-BR'): lista de moedas para nota lida por humano
+      // (sonar typescript:S2871 — `.sort()` puro é ordem de código UTF-16).
+      const moedas = [...moedasPorColuna.get(colKey)!].sort((a, b) => a.localeCompare(b, "pt-BR")).join(" + ");
       cell.value = "⚠ não somável";
       cell.note = comoNota(
         `Esta coluna traz linhas em MOEDAS DIFERENTES (${moedas}), então nenhuma soma daqui `
@@ -1324,7 +1332,9 @@ function construirAbaClassificada(
     const cell = headerRow.getCell(plano.valuePos[i]);
     const tipoCol = tipoColunaNaoEntidade(col.entidade);
     const sufixoMoeda = colunasMistas.has(col.key)
-      ? ` (⚠ MOEDAS MISTURADAS: ${[...moedasPorColuna.get(col.key)!].sort().join(" + ")} — não somável)`
+      // localeCompare('pt-BR'): mesmo motivo do sufixo de nota acima — texto
+      // para humano ler no cabeçalho da coluna (sonar typescript:S2871).
+      ? ` (⚠ MOEDAS MISTURADAS: ${[...moedasPorColuna.get(col.key)!].sort((a, b) => a.localeCompare(b, "pt-BR")).join(" + ")} — não somável)`
       : abaMultiMoeda && moedaDaColuna(col.key) ? ` (${moedaDaColuna(col.key)})` : "";
     const sufixo = (tipoCol === "ajuste" ? " (ajuste — não é entidade)"
       : tipoCol === "total" ? " (total do documento — não somar com as demais)" : "")
@@ -1362,7 +1372,7 @@ function construirAbaClassificada(
   // da seção saía menor que o documento, o que é a pior versão do problema porque
   // o total parece consistente com o que está visível.
   //
-  // A ocorrência é o rank por `ordem` (db/migrations/0027) DENTRO de cada versão
+  // A ocorrência é o rank por `ordem` (Supabase/migrations/0027) DENTRO de cada versão
   // e rótulo. Por que dentro da VERSÃO e não do lote: num documento comparativo
   // (2025 | 2024) o mesmo rótulo repetido aparece uma vez por bloco de leitura, e
   // o rank calculado por versão faz a 1ª ocorrência de uma coluna alinhar com a
@@ -1664,7 +1674,7 @@ function construirAbaClassificada(
     // seção IRMÃ que tem uma conta valendo exatamente D. É a assinatura de uma
     // conta que ficou do lado de fora da seção que a soma por dentro.
     //
-    // NÃO CORRIGE SOZINHO — e isso é doutrina (docs/04), não cautela. As duas
+    // NÃO CORRIGE SOZINHO — e isso é doutrina (Arquitetura do Sistema/2 Especificação/04), não cautela. As duas
     // leituras vão para a planilha nomeadas, e quem decide é quem audita:
     // reclassificar automaticamente uma conta com base numa coincidência de
     // valor moveria dinheiro de seção sem que ninguém tivesse visto.
@@ -2158,12 +2168,12 @@ function construirAbaClassificada(
   // divergência no cabeçalho da seção era escrita e imediatamente perdida.
   for (const [r, c] of pintarNoFim) sheet.getRow(r).getCell(c).fill = DIVERGENCIA_FILL;
 
-  // ----- Camada analítica (f0/08): AV% (common-size) e Δ% (tendência). -----
+  // ----- Camada analítica (Arquitetura do Sistema/2 Especificação/f0/08): AV% (common-size) e Δ% (tendência). -----
   // Fórmulas transparentes sobre as MESMAS células de valor já escritas — não
   // inventam nada; a linha subjacente segue pendente/âmbar até o aceite.
   preencherAnaliseVerticalHorizontal(sheet, plano, [...linhasValor], baseTotalRow);
 
-  // ----- Indicadores de liquidez/estrutura (Balanço) — f0/08. -----
+  // ----- Indicadores de liquidez/estrutura (Balanço) — Arquitetura do Sistema/2 Especificação/f0/08. -----
   if (estrutura === "balanco") {
     escreverIndicadoresBalanco(sheet, plano, colunas, noRow, noValor, () => rowIndex++);
   }
@@ -2212,12 +2222,12 @@ function preencherAnaliseVerticalHorizontal(
 }
 
 // Bloco de indicadores de liquidez e estrutura de capital ao pé do Balanço
-// (Matarazzo/Assaf Neto; CFI credit analysis — f0/08). Cada indicador é uma
+// (Matarazzo/Assaf Neto; CFI credit analysis — Arquitetura do Sistema/2 Especificação/f0/08). Cada indicador é uma
 // FÓRMULA por coluna referenciando as linhas de subtotal do próprio Balanço
 // (via `noRow`), com IFERROR: se o insumo não existe, a célula fica vazia —
 // nunca estimamos. Índices que exigem detalhamento de conta ainda não isolado
 // (liquidez seca/imediata, cobertura de juros, dívida líquida, ciclo de caixa,
-// ROA/ROE, Altman Z'') ficam de fora por ora — ver f0/08.
+// ROA/ROE, Altman Z'') ficam de fora por ora — ver Arquitetura do Sistema/2 Especificação/f0/08.
 function escreverIndicadoresBalanco(
   sheet: ExcelJS.Worksheet,
   plano: PlanoColunas,
@@ -2322,10 +2332,10 @@ function escreverIndicadoresBalanco(
   // já explicitam a fórmula de cada um, então nada se perde.
   const NOTA_BLOCO = comoNota(
     "Início do bloco de INDICADORES DE LIQUIDEZ E ESTRUTURA: índices calculados por fórmula sobre os "
-    + "subtotais extraídos deste Balanço (Matarazzo/Assaf Neto; f0/08). Não são linhas do documento. "
+    + "subtotais extraídos deste Balanço (Matarazzo/Assaf Neto; Arquitetura do Sistema/2 Especificação/f0/08). Não são linhas do documento. "
     + "Célula vazia = insumo não disponível na extração (nunca estimado). Índices que exigem "
     + "detalhamento de conta ainda não isolado (liquidez seca/imediata, cobertura de juros, dívida "
-    + "líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') ficam de fora desta versão — ver f0/08. "
+    + "líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') ficam de fora desta versão — ver Arquitetura do Sistema/2 Especificação/f0/08. "
     + "Valores derivados de linhas ainda PENDENTES seguem pendentes até o aceite humano.",
   );
 
@@ -2429,12 +2439,12 @@ function construirAbaSimples(workbook: ExcelJS.Workbook, nomeAba: string, linhas
 }
 
 // ---------------------------------------------------------------------------
-// DMPL e DVA (db/migrations/0024). As duas são demonstrações inteiras, mas
+// DMPL e DVA (Supabase/migrations/0024). As duas são demonstrações inteiras, mas
 // nenhuma passa pelo `construirAbaClassificada`: aquele caminho existe para
 // template de seções + subtotal em FÓRMULA (Balanço/DRE/Fluxo), e nem a DMPL
 // nem a DVA têm um template nosso. Aqui vale o princípio travado na sessão 10:
 // o que sai é o que o documento trouxe, na ordem em que ele trouxe — nenhuma
-// linha imposta, nenhum subtotal calculado por nós (anti-ancoragem, f0/07).
+// linha imposta, nenhum subtotal calculado por nós (anti-ancoragem, Arquitetura do Sistema/2 Especificação/f0/07).
 // Por construção, então, toda linha destas abas nasce de uma linha extraída:
 // não existe aqui a classe de defeito que o invariante 8 persegue nas abas com
 // template (linha em branco emitida às cegas).
@@ -2473,7 +2483,7 @@ function ordemPorPrimeiraAparicao() {
 // demonstração existe para dar (como cada componente do PL se moveu), então a
 // aba reconstrói a matriz: um bloco por entidade×período, cabeçalho com os
 // componentes, uma linha por movimento. `secao` = movimento e `chave` =
-// componente é o contrato que o prompt de extração pede (n8n/lib/extract.mjs).
+// componente é o contrato que o prompt de extração pede (N8N/lib/extract.mjs).
 function construirAbaDMPL(workbook: ExcelJS.Workbook, nomeAba: string, registros: RegistroDemonstracao[]) {
   const blocos = new Map<string, { entidade: string; periodo: string; registros: RegistroDemonstracao[] }>();
   for (const reg of registros) {
@@ -2651,7 +2661,7 @@ export function buildExportWorkbook({
   caso: { nome: string; produto: string };
   documentos: DocumentoParaExport[];
   campos: CampoExtraido[];
-  // Índices macro (db/migrations/0025). Opcional: sem eles o export sai como
+  // Índices macro (Supabase/migrations/0025). Opcional: sem eles o export sai como
   // sempre saiu, só sem a aba Macro e com as premissas macro zeradas.
   macro?: MacroParaExport;
   // Mensagem da consulta/RPC que FALHOU ao buscar macro (permissão, RLS, rede) —
@@ -2844,7 +2854,7 @@ export function buildExportWorkbook({
         ?? classificarDemonstracao(campo.secao, campo.chave, campo.secao_canonica, null);
       if (familiaLinha) aba = ABA_PADRAO_POR_ESTRUTURA[familiaLinha];
     }
-    // Documento multi-entidade (db/migrations/0014): quando a linha traz
+    // Documento multi-entidade (Supabase/migrations/0014): quando a linha traz
     // `entidade_coluna` (ex.: "Certsys Tecn" num balanço combinado com várias
     // colunas de empresa), a coluna do export é a ENTIDADE DA LINHA, não a
     // entidade principal do documento — é o que separa "Certsys Tecn"/"Part"/
@@ -2854,7 +2864,7 @@ export function buildExportWorkbook({
     // fica em duas colunas, uma por grafia (teste v27).
     const { entidade: entidadeColuna, periodo: periodoColuna } =
       entidadePeriodoDaLinha(campo, ctx, nomeCanonico);
-    // Documento comparativo (db/migrations/0017): quando a linha traz
+    // Documento comparativo (Supabase/migrations/0017): quando a linha traz
     // `periodo_coluna` (ex.: "2023"/"2024" num balanço 2023×2024), o período da
     // COLUNA do export é o da linha, não o período único do documento — é o que
     // separa os anos em colunas próprias em vez de colapsá-los num só (perda de
@@ -3007,7 +3017,7 @@ export function buildExportWorkbook({
     [
       "Aviso",
       "Este export NÃO é modelagem financeira e não projeta nada — é dado curado e rastreável " +
-        "para o time de análise trabalhar em cima (f0/07_output_spec.md). Linhas marcadas " +
+        "para o time de análise trabalhar em cima (Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md). Linhas marcadas " +
         "PENDENTE ainda não passaram por aceite humano — não são fato, são sugestão a revisar " +
         "antes de entrar no modelo. Quando um mesmo arquivo traz várias demonstrações juntas " +
         "(ex.: Balanço + DRE + Fluxo de Caixa no mesmo PDF), cada linha é encaminhada para a aba " +
@@ -3070,7 +3080,7 @@ export function buildExportWorkbook({
     ws.getRow(1).alignment = { wrapText: true, vertical: "middle" };
 
     // ORDEM: por arquivo, e dentro do arquivo pela `ordem` da linha no documento
-    // (db/migrations/0027). É a ordem de leitura do original — é o que permite
+    // (Supabase/migrations/0027). É a ordem de leitura do original — é o que permite
     // conferir de cima para baixo com o PDF ao lado.
     const ordenados = [...campos].sort((a, b) => {
       const ca = contextoPorVersao.get(a.documento_versao_id);
@@ -3182,7 +3192,7 @@ export function buildExportWorkbook({
   //
   // OCULTAR, nunca remover: as abas continuam no arquivo e as fórmulas do
   // modelo seguem apontando para elas. É o que mantém a proveniência (e o
-  // princípio de f0/07: o dado curado e rastreável não some da entrega).
+  // princípio de Arquitetura do Sistema/2 Especificação/f0/07: o dado curado e rastreável não some da entrega).
   const entidadesConhecidas = new Map<string, number>();
   const anos = new Set<number>();
   for (const [aba, colunas] of colunasPorAba) {

@@ -16,7 +16,7 @@ import {
 // serve de numerador, ou sem a base que serve de denominador, a sugestão não sai —
 // sai o motivo. Zero dias de recebimento não é "não sei": é a afirmação de que a
 // empresa vende à vista, e é uma afirmação sobre o negócio que ninguém fez. É a
-// mesma doutrina do `f0/08` e a que o `Output` já aplica ao ciclo de caixa.
+// mesma doutrina do `Arquitetura do Sistema/2 Especificação/f0/08` e a que o `Output` já aplica ao ciclo de caixa.
 //
 // A BASE DE CADA RAZÃO É A MESMA QUE O MODELO APLICA, e isso não é detalhe. O
 // `modelo-institucional` projeta saldo de giro como `dias ÷ 360 × base`, com base

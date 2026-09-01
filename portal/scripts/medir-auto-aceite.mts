@@ -19,12 +19,12 @@
 // E mesmo assim o número é PISO, não equivalente de golden set: o book é o melhor
 // caso possível — PDF gerado por reportlab, texto limpo, layout conhecido, sem
 // scan, sem carimbo, sem coluna torta. Documento real de cliente é o outro extremo,
-// e `docs/01` exige concordância medida no estrato que vai para produção antes de
+// e `Arquitetura do Sistema/1 Visão e Doutrina/01` exige concordância medida no estrato que vai para produção antes de
 // tratar N2 como autonomia medida.
 //
 // ONDE ISSO MORA AGORA (0126). A ressalva dos dois parágrafos acima deixou de ser
 // só um comentário: o golden set existe como DADO (`golden_rodada`,
-// `golden_documento`, `golden_rotulo`, `golden_campo`), as métricas do `f0/06` são
+// `golden_documento`, `golden_rotulo`, `golden_campo`), as métricas do `Arquitetura do Sistema/2 Especificação/f0/06` são
 // funções, e `fn_mudar_dial` RECUSA subir dial de estágio interpretativo para
 // N2/N3 sem concordância medida. Duas consequências para quem usa este script:
 //
@@ -79,7 +79,7 @@ const extracao = JSON.parse(readFileSync(caminhoExtracao, "utf8")) as {
   campos: Campo[];
 };
 const gab = JSON.parse(
-  readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../../Dados de Teste/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
 ) as Gabarito;
 
 // -----------------------------------------------------------------------------
@@ -218,7 +218,7 @@ if (eDoFixture) {
   console.log(
     "ATENÇÃO: a extração medida é o FIXTURE (transcrição fiel do book, feita à mão), não a saída\n"
     + "da IA. A concordância aqui é ~100% por construção e mede o INSTRUMENTO, não a autonomia.\n"
-    + "Para medir autonomia: rodar a extração ao vivo sobre test-data/book-vertentes/pdf/ e passar\n"
+    + "Para medir autonomia: rodar a extração ao vivo sobre Dados de Teste/book-vertentes/pdf/ e passar\n"
     + "o resultado em --extracao (ação do dono — chamada de IA custa orçamento).",
   );
 }
@@ -229,7 +229,7 @@ console.log(
   + "não limiar mais alto.",
 );
 console.log(
-  "E o book é MELHOR CASO: PDF gerado, texto limpo, layout conhecido. docs/01 exige concordância\n"
+  "E o book é MELHOR CASO: PDF gerado, texto limpo, layout conhecido. Arquitetura do Sistema/1 Visão e Doutrina/01 exige concordância\n"
   + "medida no estrato que vai para produção (documento real, escaneado, carimbado) antes de tratar\n"
   + "este N2 como autonomia MEDIDA em vez de declarada.",
 );

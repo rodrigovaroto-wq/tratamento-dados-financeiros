@@ -15,7 +15,7 @@
 import ExcelJS from "exceljs";
 import {
   ANALISE_HEADER_FILL, CHAVE_SEP, DIVERGENCIA_FILL, HEADER_FILL, PCT_FMT,
-  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota,
+  RATIO_FMT, THIN_TOP_BORDER, VALOR_NUM_FMT, comoNota, compararCodigo,
 } from "./export-estilo";
 
 
@@ -37,7 +37,7 @@ import {
 // linha histórica é `INDEX/MATCH` contra as abas de dados deste mesmo arquivo
 // (a planilha continua viva: corrigiu a aba de origem, o modelo acompanha), e
 // toda linha projetada é fórmula sobre as premissas. Por isso o modelo é
-// honesto com a doutrina (f0/07): ele não GRAVA número nenhum — ele referencia
+// honesto com a doutrina (Arquitetura do Sistema/2 Especificação/f0/07): ele não GRAVA número nenhum — ele referencia
 // o que foi extraído e aplica a premissa que o humano digitou.
 //
 // A chave de busca reaproveita o cabeçalho que as abas de dados já emitem
@@ -74,7 +74,7 @@ export const ABA_MACRO = "Macro";
 export const ABA_MACRO_DADOS = "Macro (dados)";
 
 // ---------------------------------------------------------------------------
-// ÍNDICES MACROECONÔMICOS (db/migrations/0025)
+// ÍNDICES MACROECONÔMICOS (Supabase/migrations/0025)
 //
 // Dois fatos diferentes, e o modelo usa os dois para coisas diferentes:
 //   • `anuais`       — o que ACONTECEU (série publicada, acumulada por ano).
@@ -227,7 +227,13 @@ function construirAbaMacroDados(
      anosExpDe: Map<string, number[]> } {
   const sheet = workbook.addWorksheet(ABA_MACRO_DADOS, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   const anos = [...new Set(macro.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort();
+  // `serie` é a CHAVE técnica do índice macro (IPCA, IGPM, SELIC, CDI... —
+  // domínio em `Supabase/migrations/0025_indices_macro.sql`), não o rótulo
+  // humano: o nome lido por gente vive em `nome` e chega à célula via
+  // `nomeDe.get(serie)`, depois desta ordenação. Nenhuma das chaves tem
+  // acento, então comparador de código é suficiente e a ordem fica
+  // determinística sem depender de locale (sonar typescript:S2871).
+  const series = [...new Set(macro.anuais.map((a) => a.serie))].sort(compararCodigo);
 
   sheet.getColumn(1).width = 30;
   const cab = sheet.addRow(["Série (retorno anual %)", ...anos]);
@@ -277,7 +283,7 @@ function construirAbaMacroDados(
           : dado.retorno == null
             ? " SEM RETORNO CALCULÁVEL: é o primeiro exercício desta série e não há fechamento "
               + "do ano anterior para servir de base (série de NÍVEL, como o câmbio, varia entre "
-              + "fechamentos — db/migrations/0032). O ano tem os 12 meses observados, mas fica "
+              + "fechamentos — Supabase/migrations/0032). O ano tem os 12 meses observados, mas fica "
               + "fora das médias de 3/5/10 anos: não existe variação, e 0% seria invenção."
             : ""));
       cell.numFmt = "0.00";
@@ -293,7 +299,10 @@ function construirAbaMacroDados(
   const linhaExpDe = new Map<string, number>();
   const anosExpDe = new Map<string, number[]>();
   const expPorChave = new Map(macro.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
-  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort()) {
+  // Mesmo motivo de `series` acima: `serie` é chave técnica sem acento, não
+  // rótulo humano — comparador de código, não `localeCompare` (sonar
+  // typescript:S2871).
+  for (const serie of [...new Set(macro.expectativas.map((e) => e.serie))].sort(compararCodigo)) {
     const row = sheet.addRow([serie]);
     linhaExpDe.set(serie, row.number);
     for (const ano of anosExp) {
@@ -367,7 +376,7 @@ export function construirAbaMacroSemDado(workbook: ExcelJS.Workbook, erro?: stri
       "O que aconteceu",
       `A busca dos índices retornou erro: "${erro}". Isto é diferente de "sem dado coletado" — pode `
       + "haver observação/expectativa gravada e a consulta não ter permissão para lê-la (RLS sem "
-      + "policy, ou função sem grant para o papel authenticated — db/migrations/0028). Confira "
+      + "policy, ou função sem grant para o papel authenticated — Supabase/migrations/0028). Confira "
       + "rodando `select count(*) from indice_macro_obs;` no SQL Editor do Supabase: se vier > 0, é "
       + "autorização, não ausência de coleta.",
     ]);
@@ -376,10 +385,10 @@ export function construirAbaMacroSemDado(workbook: ExcelJS.Workbook, erro?: stri
     linhas.push([
       "O que falta",
       "Nenhuma observação (BCB/IBGE) nem expectativa (Focus) na base. A coleta é o workflow "
-      + "n8n/workflow.macro.json, que roda no relógio (dia 12, depois da divulgação do IPCA) e depende "
-      + "da migration db/migrations/0025 aplicada NO PROJETO em uso. Importar o workflow não coleta "
+      + "N8N/workflow.macro.json, que roda no relógio (dia 12, depois da divulgação do IPCA) e depende "
+      + "da migration Supabase/migrations/0025 aplicada NO PROJETO em uso. Importar o workflow não coleta "
       + "nada sozinho: ele precisa estar ATIVO, e a primeira carga histórica pede uma execução manual "
-      + "(ou o seed `db/seed/macro_carga_inicial.sql`).",
+      + "(ou o seed `Supabase/seed/macro_carga_inicial.sql`).",
     ]);
   }
   linhas.push([
@@ -560,7 +569,7 @@ export function construirAbaMacro(
 // quando o ano projetado não estava no Focus. Os dois zeros chegavam à célula
 // de premissa PINTADA DE INPUT e com a nota afirmando "Mediana das
 // expectativas de mercado (Boletim Focus/BCB)" — isto é, ausência de dado
-// apresentada como dado publicado, que é a coisa que a doutrina (docs/01)
+// apresentada como dado publicado, que é a coisa que a doutrina (Arquitetura do Sistema/1 Visão e Doutrina/01)
 // proíbe explicitamente.
 //
 // O gatilho é banal, não exótico: os anos que o modelo projeta derivam do
@@ -736,7 +745,7 @@ interface CtxAno {
 
 const MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
-// A configuração que a seção Modelagem do portal produz (db/migrations/0038).
+// A configuração que a seção Modelagem do portal produz (Supabase/migrations/0038).
 //
 // Chega PRONTA: o export não decide premissa nem vínculo, só desenha o que foi
 // decidido. É a mesma disciplina do resto do arquivo — quem decide é o humano no
@@ -865,10 +874,33 @@ export function construirAbaModelagem(
   // `escreverBaseLocal`) — nunca sobrescreve linha de modelo em silêncio.
   const LINHA_BASE_INICIO = 200;
   const colBaseRotulo = 1;
+  // A chave é `<entidade><CHAVE_SEP><período>` e vira o cabeçalho de coluna
+  // escrito na aba ("<entidade> — <ano>", ver abaixo) — texto humano, então
+  // `localeCompare('pt-BR')` é certo para o CONTEÚDO (erra acento em `.sort()`
+  // puro, sonar typescript:S2871). Mas comparar a chave JUNTA é uma armadilha
+  // diferente: `CHAVE_SEP` é U+0000, que o Unicode Collation Algorithm marca
+  // "completely ignorable" — `localeCompare` o descarta da comparação, então
+  // "Acme\0 2023" e "Acme Brasil\0 2023" comparam como se fossem "Acme 2023" e
+  // "Acme Brasil 2023" (o espaço agora participa), e a entidade mais longa
+  // pode vir ANTES da mais curta que é seu prefixo — ordem diferente da que
+  // `.sort()` puro produziria com o mesmo NUL valendo 0. Por isso comparamos
+  // as PARTES, não a chave inteira: entidade primeiro, período depois — o
+  // separador nunca entra na comparação.
+  //
+  // Os endereços de coluna deste bloco NÃO são estáveis por contrato (mudar o
+  // nome de uma entidade pode deslocar toda coluna à direita dela). Isso é
+  // seguro porque nenhuma fórmula do modelo referencia coluna por posição
+  // aqui: todo consumo é `MATCH` contra a linha de cabeçalho (`buscaNaBase`,
+  // acima), e `colUltima` é sempre recalculado de `colunasBase.length`.
   const colunasBase = [...new Set(
     [...baseModelagem.values()].flatMap((porRotulo) =>
       [...porRotulo.values()].flatMap((porCol) => [...porCol.keys()])),
-  )].sort();
+  )].sort((a, b) => {
+    const [entidadeA, ...restoA] = a.split(CHAVE_SEP);
+    const [entidadeB, ...restoB] = b.split(CHAVE_SEP);
+    return entidadeA.localeCompare(entidadeB, "pt-BR")
+      || restoA.join(CHAVE_SEP).localeCompare(restoB.join(CHAVE_SEP), "pt-BR");
+  });
   const baseLocal: BaseLocal = {
     colRotulo: sheet.getColumn(colBaseRotulo).letter,
     colPrimeira: sheet.getColumn(colBaseRotulo + 1).letter,
@@ -903,9 +935,12 @@ export function construirAbaModelagem(
   let escreverSeletorMacro: () => void;
   if (macro && macroDados) {
     const anosHist = [...new Set(macroDados.anuais.map((a) => a.ano))].sort((a, b) => a - b);
-    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort();
+    // Mesmo motivo de `series` acima: `serie` é chave técnica do índice macro,
+    // sem acento — comparador de código, não `localeCompare` (sonar
+    // typescript:S2871).
+    const seriesHist = [...new Set(macroDados.anuais.map((a) => a.serie))].sort(compararCodigo);
     const anosFocus = [...new Set(macroDados.expectativas.map((e) => e.ano_ref))].sort((a, b) => a - b);
-    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort();
+    const seriesFocus = [...new Set(macroDados.expectativas.map((e) => e.serie))].sort(compararCodigo);
     const anualDe = new Map(macroDados.anuais.map((a) => [`${a.serie}${CHAVE_SEP}${a.ano}`, a]));
     const focusDe = new Map(macroDados.expectativas.map((e) => [`${e.serie}${CHAVE_SEP}${e.ano_ref}`, e]));
     const colHist = (i: number) => sheet.getColumn(2 + i).letter;
@@ -1839,7 +1874,7 @@ export function construirAbaModelagem(
         percentual: false, oQue: "taxa de câmbio",
         deveriaDirigir:
           "Receita, custo e dívida denominados em dólar. A moeda JÁ é gravada por linha "
-          + "(db/migrations/0035): as abas declaram a moeda de cada coluna quando há mais de uma, e "
+          + "(Supabase/migrations/0035): as abas declaram a moeda de cada coluna quando há mais de uma, e "
           + "coluna que mistura moedas NÃO recebe total — a soma é recusada em vez de entregar um "
           + "número errado pelo câmbio. O que ainda NÃO existe é conversão: o modelo não traduz USD "
           + "em BRL nem projeta receita dolarizada por esta expectativa de câmbio. Converter exige "

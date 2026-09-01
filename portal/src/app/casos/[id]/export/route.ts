@@ -33,7 +33,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         .from("documento")
         .select(
           // `n_versao` é o que permite ao export saber qual extração é a VIGENTE
-          // quando o mesmo arquivo foi reextraído (db/migrations/0026 registra a
+          // quando o mesmo arquivo foi reextraído (Supabase/migrations/0026 registra a
           // reextração como versão nova do mesmo documento) — sem ela, as duas
           // extrações entrariam juntas e a soma da seção contaria as duas.
           `id, tipo_taxonomia,
@@ -68,7 +68,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       {
         error: "Não foi possível ler os documentos deste caso — o export foi ABORTADO em vez de gerar uma planilha vazia.",
         detalhe: documentosRes.error.message,
-        dica: "Causa mais comum: RLS/GRANT (ver db/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
+        dica: "Causa mais comum: RLS/GRANT (ver Supabase/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
       },
       { status: 500 },
     );
@@ -94,7 +94,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
             "id, documento_versao_id, secao, secao_canonica, entidade_coluna, periodo_coluna, chave, valor_texto, valor_num, unidade, confianca, origem_pagina, ordem, status_aceite, aceito_por, aceito_em",
           )
           .in("documento_versao_id", versaoIds)
-          // ORDEM DO DOCUMENTO (db/migrations/0027). Sem isto o PostgREST devolve
+          // ORDEM DO DOCUMENTO (Supabase/migrations/0027). Sem isto o PostgREST devolve
           // as linhas em ordem arbitrária, e a detecção de "subtotal impresso
           // acima dos seus componentes" — que é o que conserta o Ativo Circulante
           // da VT Logística (7.254 onde o documento diz 3.961) — não tem sinal
@@ -118,7 +118,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       {
         error: "Não foi possível ler as linhas extraídas — o export foi ABORTADO em vez de gerar uma planilha sem números.",
         detalhe: camposRes.error.message,
-        dica: "Causa mais comum: RLS/GRANT (ver db/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
+        dica: "Causa mais comum: RLS/GRANT (ver Supabase/migrations/0028). O dado pode estar na base; a consulta é que não chegou nele.",
       },
       { status: 500 },
     );
@@ -160,7 +160,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     ),
   ];
 
-  // Índices macro (db/migrations/0025). São do CASO nenhum — a série é a mesma
+  // Índices macro (Supabase/migrations/0025). São do CASO nenhum — a série é a mesma
   // para todos os mandatos —, por isso vêm à parte e não filtram por caso.
   // Falha aqui NÃO derruba o export: sem macro o arquivo sai como sempre saiu,
   // só sem a aba Macro e com as premissas de inflação/juro zeradas. Um índice
@@ -211,7 +211,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   // Erro de CONSULTA (RLS sem policy volta 0 linhas sem erro; função sem
   // `grant execute` para `authenticated` volta erro de permissão — os dois
-  // aconteceram de fato na `0025`, ver db/migrations/0028) é DIFERENTE de "sem
+  // aconteceram de fato na `0025`, ver Supabase/migrations/0028) é DIFERENTE de "sem
   // dado coletado", e as duas coisas não podem cair na mesma mensagem — foi
   // exatamente essa confusão que fez o export dizer "sem dado coletado" com a
   // base já povoada. `console.error` fica nos logs da função (Vercel/servidor):
@@ -275,7 +275,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   //
   // O modo COMPLETO carrega um modelo projetado. Entregar isso sobre base que não
   // passou o Portão 2 seria dar aparência de resultado aprovado a número que
-  // ninguém aprovou — e a regra do portão é determinística (f0/04, 0037), então
+  // ninguém aprovou — e a regra do portão é determinística (Arquitetura do Sistema/2 Especificação/f0/04, 0037), então
   // não há julgamento a fazer aqui: pergunta-se e obedece-se.
   //
   // O modo DADOS não passa por aqui de propósito: ele é insumo de CONFERÊNCIA, e

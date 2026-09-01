@@ -81,13 +81,13 @@ continuar por ali.
 > foi pega em 21/08. Ver "A `0133` QUE FALTOU" no `ESTADO.md`. **Desde a `0147` (sessão 67) a sonda
 > enxerga o CORPO da função, e desde a `0150` (sessão 72) ela cobre 41 requisitos** — que é o que distingue uma correção aplicada de
 > uma função homônima com o corpo velho, e é a maior parte das migrations recentes. E o
-> `db/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova, então ele não
+> `Supabase/test/run.sh` reprova quando o catálogo fica para trás da migration mais nova, então ele não
 > volta a envelhecer calado. **Mas a própria `0147` só responde depois de aplicada:** num banco sem
 > ela, a sonda continua sendo a de 13 marcadores. Em produção ela está aplicada desde 26/08.
 
 **O BLOQUEIO QUE ATRAVESSOU DEZ SESSÕES CAIU: O DONO RODOU O BOOK.** Duas vezes — a **v47** (23/08,
 38 documentos, 9min01) e a **v48** (24/08, os mesmos 38, 10min08). É o **B1** do
-`docs/MAPA_DE_EXECUCAO.md`, e ele destravou tudo o que estava atrás dele. O que as rodadas reais
+`Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md`, e ele destravou tudo o que estava atrás dele. O que as rodadas reais
 acharam não estava em nenhuma suíte, e a lição vale mais que os defeitos:
 
 **AS SUÍTES PROVAM A INGESTÃO; ELAS NÃO PROVAM QUE O ESTÁGIO RODOU.** A v47 revelou uma
@@ -110,7 +110,7 @@ Quem errava eram as checagens. Quatro causas, cada uma medida antes de virar có
 | `tipo_incorreto` acusava sem ter divergência | 2 | `0142` — exige divergência acionável |
 
 **Pendências abertas no caso: 27 → 8, e as 8 restantes são verdadeiras.** Detalhe completo, causa por
-causa e com o número medido depois de cada correção, em `docs/ANALISE_RODADA_V48.md` (ANEXO III).
+causa e com o número medido depois de cada correção, em `Arquitetura do Sistema/4 Análises e Auditorias/ANALISE_RODADA_V48.md` (ANEXO III).
 
 **UM GANHO QUE NÃO ERA O OBJETIVO E VALE REGISTRAR:** ao ensinar a checagem de juros a olhar para a
 coluna, **uma reconciliação que nunca tinha rodado ficou verde e bate ao centavo** — DRE
@@ -134,11 +134,11 @@ A `0152` acrescentou um nó (`Reconciliar Lote`, `executeOnce`) e mudou quatro n
 
 ```bash
 curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
-  | node n8n/preparar-republicacao.mjs > publicar.json
+  | node N8N/preparar-republicacao.mjs > publicar.json
 curl -X PUT -H "X-N8N-API-KEY: $N8N_API_KEY" -H 'Content-Type: application/json' \
   "$N8N_URL/api/v1/workflows/$ID" --data-binary @publicar.json
 curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
-  | node n8n/conferir-publicado.mjs
+  | node N8N/conferir-publicado.mjs
 ```
 
 O preparador existe porque **duas republicações seguidas perderam a mesma família de coisas**:
@@ -200,7 +200,7 @@ uma chamada de IA.
 - **O teste vermelho no dialeto OpenAI**, que já estava vermelho antes da 67. O provedor ativo é o
   Google e o CI roda o dialeto padrão;
 - **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), levar o
-  capítulo 10 da entrega para o repositório (B4.1) e preencher os `[A CONFIRMAR]` do `docs/10`;
+  capítulo 10 da entrega para o repositório (B4.1) e preencher os `[A CONFIRMAR]` do `Arquitetura do Sistema/2 Especificação/10`;
 - **Dois achados da rodada que são do dono, não defeitos:** o **cancelamento manual não dispara o
   Error Workflow** (a execução 7172 foi cancelada e `execucao_falha` ficou vazia — o Error Workflow
   está configurado desde 27/08, mas cancelamento não é falha para o n8n), e o **Relatório do Auditor
@@ -224,12 +224,12 @@ uma chamada de IA.
 | 53 | O dial passa a ser **obedecido** (`0127`) e dois níveis declarados eram falsos; a classificação contábil em sombra (`0128`); a transcrição humana assistida (`0129`) e a contaminação que ela criaria |
 | 54 | O golden set passa a ser rotulável, e a rotulagem é **cega** (`0130`); os três cenários viram comparáveis; a passada de eficiência — cujo valor está no que **não** mudou |
 | 55 | A instalação passa a se **declarar** (`0131`/`0132`); a **seção do balanço tem de fechar** (`0133`); a dívida que era projetada como giro; os **dois defeitos que se mascaravam** e o ativo circulante fechando em ZERO; a guarda do giro agregado; a sazonalidade que travava o `pronto` (`0134`) |
-| 56 | A **operação passa a ser vista** (`0135`); o espelho lib↔workflow cobrindo **26** funções e não duas; `docs/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
+| 56 | A **operação passa a ser vista** (`0135`); o espelho lib↔workflow cobrindo **26** funções e não duas; `Arquitetura do Sistema/2 Especificação/10` — onde o dado do cliente mora, quanto tempo fica e quem vê o quê |
 | 57 | **O portal encolhe:** saem a página de instalação, o aviso dela no painel, a consulta à base e a tela de operação; o painel inteiro passa a falar com o **analista**, não com o desenvolvedor. Nenhum motor foi removido junto: o que as telas mostravam vive nas funções do banco |
 | 58 | A sonda das 80 migrations, que achou a **`0133` nunca aplicada** enquanto três documentos a davam por aplicada; a abertura do painel passa a aparecer **em todo login**; o **veredito de produção passa a contar** para o dial (`0136`), como piso declaradamente enviesado; as **premissas passam a sair do realizado** — oito delas, com a conta à vista |
 | 59 | O **dial sobe sozinho** ao critério (`0137`), com quatro travas — e o freio de quem baixou o nível não é desfeito pela máquina; e as **quatro frentes do arquivo de comitê** (Modelagem para de projetar, quatro índices novos, covenants por cenário, reperfilamento por carência) |
-| 61 | O **loop de variações** (`test/e2e/variacoes.mts`): 101 variantes em cinco rodadas, cinco defeitos que nenhuma suíte pegava — a exceção do veredito (`0138`), a medição apagada ao reafirmar o nível (`0139`), **a dívida que evaporava** na virada para o projetado, o código contábil quebrando a âncora, e o caractere invisível partindo a conta em duas. Mais o export que **morria** sem valor numérico e agora recusa nomeando a falta |
-| 62-63 | **O provedor de IA vira escolha** e o padrão passa a ser o Google (`gemini-3.5-flash-lite`): não havia "um provedor" para trocar — havia a OpenAI espalhada por quatro módulos. Agora cada provedor é um objeto de DADOS em `n8n/lib/provedor.mjs` |
+| 61 | O **loop de variações** (`Verificação/variacoes.mts`): 101 variantes em cinco rodadas, cinco defeitos que nenhuma suíte pegava — a exceção do veredito (`0138`), a medição apagada ao reafirmar o nível (`0139`), **a dívida que evaporava** na virada para o projetado, o código contábil quebrando a âncora, e o caractere invisível partindo a conta em duas. Mais o export que **morria** sem valor numérico e agora recusa nomeando a falta |
+| 62-63 | **O provedor de IA vira escolha** e o padrão passa a ser o Google (`gemini-3.5-flash-lite`): não havia "um provedor" para trocar — havia a OpenAI espalhada por quatro módulos. Agora cada provedor é um objeto de DADOS em `N8N/lib/provedor.mjs` |
 | 64 | **A v47, a primeira rodada real.** A reconciliação parada havia onze dias em silêncio; a coluna de dimensão que virava valor (`0140`); o limiar que nunca excluiu nada (`0141`) |
 | 65-66 | **A v48 e as quatro causas de pendência falsa** (`0142` a `0146`); a conferência linha a linha que provou a extração certa; a estimativa de tempo antes do envio; a modelagem da v48 com as premissas derivadas do próprio realizado |
 | **67** | **As quatro frentes do handoff da 66, feitas.** A hierarquia volta na extração (`secao` = agrupador IMEDIATO) e `fn_conferir_arvore` não precisou mudar — já era recursiva; o `Parse Extracao` foi publicado no n8n (575 de 579 linhas byte a byte, as 4 restantes medidas equivalentes em 160 comparações); a sonda passa a enxergar o CORPO da função (`0147`) e o catálogo passa a declarar até onde foi revisado, com portão no `run.sh`; e o que o documento diz em TEXTO — covenant rompido, ressalva, continuidade — ganha canal próprio com o trecho literal como evidência obrigatória (`0148`) |
@@ -263,7 +263,7 @@ verde" sobre o banco de produção, rode a sonda; o `ESTADO.md` hoje diz isso de
 > **LEIA O `ESTADO.md` PRIMEIRO.** Desde a sessão 41 o estado atual mora em arquivo próprio, na
 > raiz — última migration, contadores das suítes, o que só o dono pode fazer, o que está aberto. Ele
 > existe porque este cabeçalho já passou 17 PRs congelado, e a causa não era descuido: a parte que
-> muda toda rodada morava no mesmo arquivo das partes que nunca mudam. O `db/test/run.sh` REPROVA
+> muda toda rodada morava no mesmo arquivo das partes que nunca mudam. O `Supabase/test/run.sh` REPROVA
 > quando a migration mais nova não está citada lá, então o `ESTADO.md` não envelhece em silêncio.
 > Este `HANDOFF.md` continua sendo o histórico — como se chegou aqui —, e é o que não precisa ser
 > lido para retomar.
@@ -271,7 +271,7 @@ verde" sobre o banco de produção, rode a sonda; o `ESTADO.md` hoje diz isso de
 **O PRODUTO, EM UMA LINHA:** o portal entrega **dois arquivos** — *dados financeiros* (a conferência
 da ingestão, linha a linha) e *modelagem* (as 14 abas do modelo institucional, projetadas e editáveis
 dentro do Excel). O aceite de um `.xlsx` é `auditar-xlsx.mts` (10 itens automáticos) +
-`docs/ACEITE.md` (10 itens humanos).
+`Arquitetura do Sistema/6 Referência/ACEITE.md` (10 itens humanos).
 
 ### O invariante que organiza o modelo: UMA CONTA, UM LUGAR
 
@@ -331,7 +331,7 @@ próprio: `31128960940` no `792409e`, verde.
 | **A** | o portão que faltava: o e2e compara os números do MODELO com o gabarito, na cadeia real | ✅ no `main` (#104) — 27 → **46** asserts |
 | **B** | a conta duplicada vira ACHADO da reconciliação, sem apagar nada (`0105`) | ✅ no `main` (#105) — falta **aplicar** a migration |
 | **C** | três dos seis itens da fila do §5 do `CONFORMIDADE.md`, com assert cada | ✅ no `main` (#105) |
-| **D** | a auditoria do arquivo entregue vira comando + aceite humano curto | ✅ no `main` (#105) — `auditar-xlsx.mts` e `docs/ACEITE.md` |
+| **D** | a auditoria do arquivo entregue vira comando + aceite humano curto | ✅ no `main` (#105) — `auditar-xlsx.mts` e `Arquitetura do Sistema/6 Referência/ACEITE.md` |
 
 O que sobra do plano **não é código**: é aplicar duas migrations, rodar o aceite sobre um export de
 verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
@@ -369,7 +369,7 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 >
 > Fidelidade da execução local, medida: Node **v22.22.2** (o CI pede 22), psql **16.13** (o CI instala
 > o cliente 16), Postgres 16 local descartável. O `package-lock.json` **não foi tocado** nas Fases B–D,
-> então o `npm ci` do CI é o mesmo do `main` que já passou, e **nenhum arquivo de `n8n/`** entrou no
+> então o `npm ci` do CI é o mesmo do `main` que já passou, e **nenhum arquivo de `N8N/`** entrou no
 > diff — o risco clássico de mergear sem CI (espelho dos nós Code divergindo da `lib/`) não existia
 > nessa rodada. O único passo que a execução local não reproduz é o `npm ci` em ambiente limpo.
 
@@ -386,8 +386,8 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 ### Migrations — a lista NÃO mora mais aqui
 
 > **A tabela abaixo parou de ser mantida na sessão 52, e o número no título estava errado desde
-> antes.** A **fonte** é `db/README.md`: ele tem a tabela completa e a lista de comandos de
-> aplicação, e o `db/test/run.sh` **reprova** quando uma migration existe e não está nas duas. Uma
+> antes.** A **fonte** é `Supabase/README.md`: ele tem a tabela completa e a lista de comandos de
+> aplicação, e o `Supabase/test/run.sh` **reprova** quando uma migration existe e não está nas duas. Uma
 > lista paralela sem portão é exatamente a forma como o cabeçalho deste arquivo passou 17 PRs
 > mentindo — fica o trecho abaixo como referência histórica até a `0118`, não como ordem de
 > aplicação.
@@ -408,18 +408,18 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 | `0109_pendencia_tres_botoes` | os três botões, sem formulário e **sem teto de ressalvas** | ✅ aplicada (11/08/2026) |
 | `0110_remove_papel_de_usuario` | o papel sai do schema: sem leitor desde a `0109` | ✅ aplicada (11/08/2026) |
 
-> **O `db/schema.sql` responde "como está o banco hoje"** sem ler as 55 em ordem. Ele é GERADO pelo
-> `db/test/run.sh` (`pg_dump` do banco montado do zero) e o CI confere com `git diff --exit-code`.
+> **O `Supabase/schema.sql` responde "como está o banco hoje"** sem ler as 55 em ordem. Ele é GERADO pelo
+> `Supabase/test/run.sh` (`pg_dump` do banco montado do zero) e o CI confere com `git diff --exit-code`.
 > Existe porque `fn_recomputar_completude` mora na `0004`, na `0006` e na `0036`, e só a última vale
 > — numa revisão de PR ninguém reconstrói isso de cabeça.
 
-`db/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
+`Supabase/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
 **Para conferir um `.xlsx` que já saiu:** `./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts
 <arquivo>` responde 10 itens sobre o arquivo pronto (balanço fecha, DRE reproduz o documento, câmbio é
 nível, recalcula ao abrir…) e sai com código 1 se algum reprovar. O que exige o Excel de verdade está
-em **`docs/ACEITE.md`**, 10 itens de gente. As quatro suítes provam o GERADOR; essas duas peças provam
+em **`Arquitetura do Sistema/6 Referência/ACEITE.md`**, 10 itens de gente. As quatro suítes provam o GERADOR; essas duas peças provam
 o ARQUIVO — a lacuna por onde o v35 errado passou com o CI verde.
 
 > **O ARQUIVO ENTREGUE NO PR #102 FOI AUDITADO E ESTAVA COM NÚMERO ERRADO (sessão 40).** O dono
@@ -439,15 +439,15 @@ estes):
 
 ```bash
 # insumo: os DOIS books sintéticos (geram pdf/ + GABARITO.json, não versionados)
-cd test-data/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
-cd test-data/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 38 docs, 3 exercícios
-node n8n/medir-custo-book.mjs                                          # o custo do lote, sem gastar
+cd "Dados de Teste"/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
+cd "Dados de Teste"/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 38 docs, 3 exercícios
+node N8N/medir-custo-book.mjs                                          # o custo do lote, sem gastar
 
-node --test 'n8n/test/*.test.mjs'                                     # 382
+node --test 'N8N/test/*.test.mjs'                                     # 382
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 713
-PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres db/test/run.sh         # 94 migrations, do zero
+PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres Supabase/test/run.sh         # 94 migrations, do zero
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
-  ./portal/node_modules/.bin/tsx test/e2e/run.mts                      # 46
+  ./portal/node_modules/.bin/tsx Verificação/run.mts                      # 46
 
 # e as três que nasceram depois deste bloco:
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts  # 51
@@ -465,7 +465,7 @@ PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
 > nada e a suíte diz "0 testes" em vez de falhar.
 
 Os números ao lado de cada comando são **contadores, não enfeite**: se um deles **cair**, alguém
-apagou cobertura. O CI roda os quatro mais os três geradores (com `git diff --exit-code -- n8n/`),
+apagou cobertura. O CI roda os quatro mais os três geradores (com `git diff --exit-code -- N8N/`),
 os **dois books** (o gerador de cada um é o teste dele — morre por `assert` se um número deixar de
 fechar), a **medição de custo do lote** (`medir-custo-book.mjs`, que reprova quando um documento passa
 da estimativa que sustenta o teto), `tsc`, `eslint` e `next build`.
@@ -475,7 +475,7 @@ da estimativa que sustenta o teto), `tsc`, `eslint` e `next build`.
 ms** e `fn_conferir_modelagem` = **485 ms** contra o teto de 8.000 ms — 16× de folga, nenhum
 cancelamento. Eram 6.381 ms de média, raspando o teto, que é o que fazia a falha parecer
 intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` versão superada,
-`0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `db/README.md` e
+`0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `Supabase/README.md` e
 fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
 
 ## O QUE ESTÁ ABERTO AGORA
@@ -484,8 +484,8 @@ fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é a
 > chegou à 56 com dois itens **já entregues** listados como abertos — que é a única forma de erro
 > que um documento de estado pode cometer sozinho. Hoje a pergunta "o que falta?" tem três respostas
 > com dono e com portão: **`ESTADO.md`** (onde estamos, e o `run.sh` reprova se envelhecer),
-> **`docs/MAPA_DE_EXECUCAO.md`** (o que falta até fechar, em ordem, com critério de pronto) e
-> **`docs/PRONTIDAO_POR_ESTAGIO.md`** (o projeto medido contra o próprio objetivo, estágio por
+> **`Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md`** (o que falta até fechar, em ordem, com critério de pronto) e
+> **`Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md`** (o projeto medido contra o próprio objetivo, estágio por
 > estágio). O que sobra abaixo é o **porquê** de cada item, que continua valendo.
 
 **1. ~~O teste de ponta a ponta com o `book-canastra`~~ — CONTINUA SENDO O ÚNICO BLOQUEIO REAL, e é
@@ -497,14 +497,14 @@ da OpenAI**, porque todo número de custo deste repositório saiu de aritmética
 **nunca de uma fatura**.
 
 **2. ~~Fixture de extração do `book-canastra`~~ — FEITA na sessão 52, e foi ela que achou o resto.**
-`db/test/fixture_book_canastra.sql` está no `main` e roda em toda execução do `run.sh`, ao lado da de
+`Supabase/test/fixture_book_canastra.sql` está no `main` e roda em toda execução do `run.sh`, ao lado da de
 Vertentes. O contrato é o que a seção original já antecipava e vale reler: **Vertentes afirma
 extração fiel (zero pendência) e Canastra afirma o contrário** — escala mista, locale anglo e
 prognóstico de contingência **devem** abrir pendência, e cada uma tem assert próprio. Ela achou os
 três defeitos da primeira rodada, o intragrupo que não é mútuo e a cegueira da `0133`.
 
 **3. Do output — os TRÊS itens desta lista foram fechados entre a 52 e a 54** (o diagnóstico de
-origem continua em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
+origem continua em `Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
 
 - ~~**resumo dos três cenários lado a lado**~~ — **feito na 54.** O receio registrado aqui estava
   certo e foi ele que guiou a solução: a implementação ingênua replica a cascata e cria um SEGUNDO
@@ -512,36 +512,36 @@ origem continua em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`):
   segundo lugar de cálculo;
 - ~~**proveniência completa na `Premissas`**~~ — **feita na 52** (`0125`): arquivo, página,
   confiança e aceite voltaram às catorze abas do arquivo de comitê;
-- ~~**Modo A do `f0/07`**~~ — **feito na 53**: a base viva é consultável no portal.
+- ~~**Modo A do `Arquitetura do Sistema/2 Especificação/f0/07`**~~ — **feito na 53**: a base viva é consultável no portal.
 
 **4. ~~Golden set e concordância medida~~ — FECHADO nas sessões 58 e 59, pela saída B.** A `0130`
 tinha feito a metade de engenharia (o golden set rotulável, a rotulagem cega) e o que faltava era
-uma decisão escrita: A, B ou C no `docs/01`. Ficou **B — medir por veredito de produção**, porque
+uma decisão escrita: A, B ou C no `Arquitetura do Sistema/1 Visão e Doutrina/01`. Ficou **B — medir por veredito de produção**, porque
 cada aceite ou rejeição na tela de revisão já é um rótulo produzido pelo trabalho normal e não custa
 hora humana, **desde que o sistema publique que é um piso enviesado**. `medir-auto-aceite.mts`
 continua dizendo no próprio cabeçalho que, rodado contra fixture, mede o instrumento e não o modelo.
 
-> **O que a 58 e a 59 fizeram com isso.** A saída B foi escrita no `docs/01` e virou motor: a `0136`
+> **O que a 58 e a 59 fizeram com isso.** A saída B foi escrita no `Arquitetura do Sistema/1 Visão e Doutrina/01` e virou motor: a `0136`
 > mede a concordância do veredito de produção (30 vereditos, 95%) e grava `base_do_nivel =
 > 'medida_por_veredito'`, que é o rótulo dizendo em toda tela que o piso é enviesado; a `0137` faz a
 > promoção acontecer sozinha, até **N2 e nunca N3**, com quatro travas. A trava que importa: **humano
 > que baixa o nível desliga a automação daquele estágio**, e o veredito seguinte não desfaz o freio —
-> religar é decisão explícita. `db/test/auto_promocao_dial.test.sql` existe só para isso.
+> religar é decisão explícita. `Supabase/test/auto_promocao_dial.test.sql` existe só para isso.
 
 **5. Decisões do dono já tomadas, para ninguém reabrir:**
 
 - **proteções do `main`**: ele decidiu NÃO recolocá-las (11/08) — **e isto hoje se contradiz com o
-  `docs/MAPA_DE_EXECUCAO.md`, que lista "proteger o `main`" como B6.1 aberta.** A contradição fica
+  `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md`, que lista "proteger o `main`" como B6.1 aberta.** A contradição fica
   escrita em vez de resolvida por conta própria, porque a decisão é do dono e não de engenharia. O
   fato, medido: hoje nada impede mergear vermelho nem empurrar direto, e o
-  `docs/PRONTIDAO_POR_ESTAGIO.md` marca o item como **não conferido** — nenhuma sessão lê
+  `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` marca o item como **não conferido** — nenhuma sessão lê
   configuração de branch;
 - **papel de usuário**: removido (`0110`). Não há sênior a cadastrar;
 - **teto de ressalvas, motivo obrigatório, expiração**: removidos (`0109`). O Portão 2 informa, não
   impede.
 
 **Existe CI** (`.github/workflows/suites.yml`): as **seis suítes** (n8n, export, transcrição,
-premissas do realizado, banco, e2e) + os quatro geradores de workflow e os três de fixture + tsc/eslint/build + o `db/schema.sql`
+premissas do realizado, banco, e2e) + os quatro geradores de workflow e os três de fixture + tsc/eslint/build + o `Supabase/schema.sql`
 conferido, em todo push e PR, mais `workflow_dispatch`. **PR vermelho é regressão sua — mas confira
 antes se algum passo rodou** (contagem de passos do job): em 06/08/2026 o serviço ficou sem runner e
 produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
@@ -549,7 +549,7 @@ produziu vermelho sem executar nada. Ver o bloco do incidente no topo.
 > **E um portão pode reprovar por RUÍDO, o que é pior que não reprovar — aconteceu em 21/08.** O
 > `pg_dump --no-owner` não cobre o DEFAULT ACL: `ALTER DEFAULT PRIVILEGES FOR ROLE <alguem>` carrega
 > o nome do superusuário que aplicou as migrations, e num container que só tem `root` o
-> `db/schema.sql` saía com `FOR ROLE root` contra o `FOR ROLE postgres` do CI. Schema idêntico,
+> `Supabase/schema.sql` saía com `FOR ROLE root` contra o `FOR ROLE postgres` do CI. Schema idêntico,
 > portão vermelho. O `run.sh` passa a normalizar essa linha para `postgres` — que é o nome verdadeiro
 > no Supabase —, pela mesma razão que já filtra a versão do `pg_dump` e o token aleatório do
 > `\restrict`: **o portão tem de medir o schema, não quem digitou o comando.**
@@ -604,7 +604,7 @@ reprocessando os 281 campos reais do balanço pelo código novo).
 
 ### A régua da cobertura, calibrada contra a verdade
 
-`n8n/medir-regua-cobertura.mjs` (novo) confronta a régua com a contagem que o **gerador do book
+`N8N/medir-regua-cobertura.mjs` (novo) confronta a régua com a contagem que o **gerador do book
 declara** — não outra leitura do PDF. Conferir heurística contra heurística não prova nada. A v1
 acertava as demonstrações (+2% a +4%) e DESABAVA nos analíticos, que são os que perdem dado: livro
 razão 99 linhas → ela via 3; balancete 78 → 3; aging 14 → 2. A v2 troca "termina em valor" por "tem
@@ -655,8 +655,8 @@ caminho. Resolvido em `claude/linha-exigida-0113-integrada` (PR #130), com os co
 preservados: a migration virou **`0113`**, e a minha (fechar mandato) cedeu o lugar e virou **`0114`**
 — **o critério é ordem de CHEGADA, não de merge**. Quem esperou não deve ser empurrado para trás.
 
-O `db/schema.sql` NÃO foi resolvido à mão nas duas vezes que conflitou: ele é gerado, então saiu do
-`db/test/run.sh`. E o contador de migrations do `ESTADO.md` não foi somado de cabeça — o próprio
+O `Supabase/schema.sql` NÃO foi resolvido à mão nas duas vezes que conflitou: ele é gerado, então saiu do
+`Supabase/test/run.sh`. E o contador de migrations do `ESTADO.md` não foi somado de cabeça — o próprio
 `run.sh` diz quantas aplica ("as 59 migrations estão na lista de aplicação").
 
 **As três guardas de extração são famílias DIFERENTES**, e vale ler juntas: `0111` (o documento não
@@ -676,7 +676,7 @@ mas a linha exigida não veio). A `0113` é a única que olha o conteúdo do que
   **Decisão do dono (17/08): quando for escrita, a divergência aparece no PAINEL, não na planilha.**
 - **A tela de Modelagem (713 linhas) recebeu só a paleta nova** — o fluxo dela não foi revisado.
 - **`negativas`, `societario`, `parcelamentos`** estão numa lista à mão em `parseEntidade` porque o
-  apelido da taxonomia não os carrega; o lugar certo é o seed `db/migrations/0002`, e isso é
+  apelido da taxonomia não os carrega; o lugar certo é o seed `Supabase/migrations/0002`, e isso é
   migration.
 - Seguem abertos de antes: o teto de gasto que decide ANTES da medição (estima por bytes, ~+50%),
   dedup por hash, e o golden set.
@@ -745,7 +745,7 @@ a olho entregaram um canvas ilegível: `Fatiar Extracao` desenhado por cima do `
 `Juntar Blocos` por cima do `Gravar Campos`, o tronco pulando entre y=140 e y=560, e a linha do
 `false` do fallback atravessando por dentro dos três nós da classificação por conteúdo.
 
-`n8n/layout.mjs` deriva a posição do próprio grafo — uma coluna por camada, o filho de maior alcance
+`N8N/layout.mjs` deriva a posição do próprio grafo — uma coluna por camada, o filho de maior alcance
 herda a faixa do pai (tronco reto), ramo curto desce, e aresta que pula colunas ganha **corredor
 reservado**. Os quatro geradores usam; `position` sumiu das chamadas de `node(...)`. Quatro
 invariantes conferem o JSON commitado dos quatro workflows, e as quatro **reprovam o canvas
@@ -775,7 +775,7 @@ pelo book inteiro, com a saída caindo de 64 para **29,2 tokens por linha** (o f
 O `.xlsx` da modelagem continua em **9 de 10** no `auditar-xlsx.mts`, e o único reprovado continua
 sendo o balanço não fechar (−40.169). O buraco restante não é mais truncamento: é célula que o
 modelo lê e não devolve. Por isso a próxima etapa proposta é a **comparação contra o
-`test-data/book-canastra/pdf/GABARITO.json`** — é o que transforma "58%" de proporção contra
+`Dados de Teste/book-canastra/pdf/GABARITO.json`** — é o que transforma "58%" de proporção contra
 heurística em **lista nominal do que faltou**, com prova, e vira teste de regressão permanente.
 
 ### Quatro defeitos nesta rodada, três deles a mesma classe: mecânica de item do n8n
@@ -786,11 +786,11 @@ que está abaixo, e quase sempre em silêncio**:
 | Sintoma | Causa | Fechado em |
 |---|---|---|
 | `invalid input syntax for type uuid: "sem-versao-0"` | o fan-out da fatia não declarava `pairedItem`, e eu ainda fabriquei uma chave falsa para tapar o buraco | PR #121 |
-| `null value in column "caso_id"` | `Extrair Texto` na cadeia principal SUBSTITUI o item (perde json+binário) — regra que já estava escrita no `n8n/README.md` | PR #122 |
+| `null value in column "caso_id"` | `Extrair Texto` na cadeia principal SUBSTITUI o item (perde json+binário) — regra que já estava escrita no `N8N/README.md` | PR #122 |
 | `celulas_nos_documentos: 0`, sem erro nenhum | `$('Nó').item` só resolve para **ancestral**; ramo irmão devolve undefined | PR #123 |
 | painel de custo mostrando metade do lote | um IF faz o n8n executar a cadeia inteira **uma vez por ramo**; `.all()` sem índice de run vê só uma parte | PR #123 |
 
-As três primeiras viraram **regras numeradas no `n8n/README.md`** (nó que substitui o item; `$().item`
+As três primeiras viraram **regras numeradas no `N8N/README.md`** (nó que substitui o item; `$().item`
 só de ancestral; nó que muda a contagem declara `pairedItem`) e a terceira virou **teste que caminha
 o grafo** e reprova qualquer `$('X').item` apontando para não-ancestral. A regra não fica só no texto.
 
@@ -846,7 +846,7 @@ os dois balanços grandes. O razão fez pior — devolveu um quinto e disse que 
 
 ### As três camadas
 
-`n8n/lib/cobertura.mjs`, três nós novos, e o desenho importa mais que cada peça:
+`N8N/lib/cobertura.mjs`, três nós novos, e o desenho importa mais que cada peça:
 
 | | O que faz | Nó |
 |---|---|---|
@@ -899,7 +899,7 @@ De `Gravar Campos (Sombra)` em diante **nada muda**: um item por documento, com 
   reconciliação não tinha o que comparar. Só a próxima rodada, com cobertura, responde se a
   reconciliação funciona.
 
-`n8n/test`: 207 → **225**.
+`N8N/test`: 207 → **225**.
 
 ## Sessão 44b (2026-08-13) — a linha exigida por tipo vira dado, e o Portão 1 cobra pelo nome (0113)
 
@@ -915,7 +915,7 @@ faltava, o sintoma era `precondicao_nao_satisfeita` — pendência mole (importa
 publicada por período pelo despachante, e só para as ~10 linhas que as cinco checagens cruzam. Na
 prática ninguém via, e o caso seguia como se tivesse conferido.
 
-**O QUE ENTROU** (`db/migrations/0113_linha_exigida_por_tipo.sql` + `db/test/linha_exigida.test.sql`,
+**O QUE ENTROU** (`Supabase/migrations/0113_linha_exigida_por_tipo.sql` + `Supabase/test/linha_exigida.test.sql`,
 branch `ian/0108-linha-exigida`): `taxonomia_linha_exigida` (o QUE cada tipo precisa ter, filha da
 taxonomia, com `origem` codigo/proposta e `depende_de` como fato — qual checagem para sem a linha) +
 `taxonomia_linha_localizador` (o COMO: cascata no formato inclui/exclui de `fn_valor_conceito`, com
@@ -929,7 +929,7 @@ que NOMEIA a linha (doutrina da 0033) e resolve sozinha quando ela aparece. Pol�
 
 **O QUE QUEBROU NO CAMINHO:** a migration ia ser a **0108** — é por isso que a branch se chama
 `ian/0108-linha-exigida`. Entre o desenho e a escrita, os PRs #115–117 ocuparam 0108–0110 na main;
-número não se reaproveita (faixas do `db/README.md`, e o `run.sh` reprova prefixo duplicado), então
+número não se reaproveita (faixas do `Supabase/README.md`, e o `run.sh` reprova prefixo duplicado), então
 saiu **0113**. Fora isso nada quebrou: a suíte inteira passa com o passo (2b) ligado, sem alterar
 teste existente.
 
@@ -1051,7 +1051,7 @@ atinge o alvo. Os outros dois **não** entraram, e não é esquecimento:
   prompt+modelo na versão (migration) e um curto-circuito no grafo. A migration diz, com estas
   palavras, "não às cegas". É a próxima fatia, e agora é a maior.
 
-`n8n/test`: 194 → **207**.
+`N8N/test`: 194 → **207**.
 
 ## Sessão 43 (2026-08-13) — a recusa vinha de um workflow de julho, e a 2ª chamada era cobrada como se fosse a 1ª
 
@@ -1135,11 +1135,11 @@ lote homogêneo denso (35× o livro razão)         US$ 3,80   → continua RECU
 Margem contra o teto: de 18% para **37%**, com o caso caro ainda barrado — que é a única forma de o
 teto significar alguma coisa.
 
-`n8n/test`: 185 → **194**. Migrations, export e e2e inalterados: o diff não toca banco nem portal.
+`N8N/test`: 185 → **194**. Migrations, export e e2e inalterados: o diff não toca banco nem portal.
 
 ### O que o dono precisa fazer
 
-1. **Reimportar `n8n/workflow.e1-ingestao.json`** — e conferir na tela que a versão apareceu
+1. **Reimportar `N8N/workflow.e1-ingestao.json`** — e conferir na tela que a versão apareceu
    (`orcamento_versao: "v3 (2026-08-13)"`). Sem isso, nada desta rodada existe em produção.
 2. **Rodar o kit sintético** para ver se `gpt-4o-mini` acerta tipo/entidade/período. Custa centavos,
    e é a única conferência de qualidade que a troca de modelo pede.
@@ -1185,7 +1185,7 @@ antes de abortar**; e a tela mostra o que houve, a causa técnica **sem traduç�
 desenvolvedor precisa ler, e o que some quando a interface "simplifica" demais) e pede para acionar
 o desenvolvedor. Para *qualquer* razão — que não se cobre nó a nó, porque cada `try/catch` cobre o
 erro que alguém imaginou — nasceu o `workflow.erros.json`, um **Error Workflow** do n8n. Ligá-lo é
-passo do dono, documentado no `n8n/README.md`.
+passo do dono, documentado no `N8N/README.md`.
 
 ### E a mesma mentira, com a causa invertida
 
@@ -1212,7 +1212,7 @@ o teto de 3 ressalvas, removido.
 
 A `0109` registra cada guarda que saiu, porque ausência tem de ser escolha e não esquecimento:
 motivo obrigatório (a trilha passa a responder QUEM e QUANDO, deixa de responder POR QUÊ), data de
-expiração, teto, papel sênior. E a **lista fechada de `f0/04` deixou de bloquear** — não foi pedido,
+expiração, teto, papel sênior. E a **lista fechada de `Arquitetura do Sistema/2 Especificação/f0/04` deixou de bloquear** — não foi pedido,
 decorre do pedido: com um botão só, "Prosseguir sem resolução" que não faz prosseguir é um botão que
 mente.
 
@@ -1254,7 +1254,7 @@ fato — 877 asserts verdes sobre um arquivo entregue errado (sessão 40); a fix
 mais fácil que a produção (documentado três vezes); e nenhum número de produção governando nada (sem
 golden set, sem concordância medida, sem custo por caso — o dial está onde nasceu na F1).
 
-O documento está em `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`, com evidência medida, backlog de 14
+O documento está em `Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md`, com evidência medida, backlog de 14
 itens por impacto ÷ esforço, e uma seção **"o que eu NÃO mudaria"** — um diagnóstico que só lista
 defeitos convida a estragar o que está certo.
 
@@ -1274,10 +1274,10 @@ existia no `Output` e no `Cash Flow`.
 > no CIRCULANTE, que é como um caso estressado chega, financiada por prejuízo acumulado para o
 > balanço continuar fechando.
 
-**`db/schema.sql`** — o estado do banco deixa de ser uma leitura de 51 migrations em ordem. Gerado
+**`Supabase/schema.sql`** — o estado do banco deixa de ser uma leitura de 51 migrations em ordem. Gerado
 pelo `run.sh`, conferido pelo CI com `git diff --exit-code`.
 
-**Ciclo de caixa** (PMR/PME/PMP + operacional/financeiro), que a `f0/08` fasejou "até a extração
+**Ciclo de caixa** (PMR/PME/PMP + operacional/financeiro), que a `Arquitetura do Sistema/2 Especificação/f0/08` fasejou "até a extração
 isolar as linhas-conceito" — o giro já as isolava. Cada prazo gira contra a linha de DRE correta;
 fornecedor contra CUSTO, não receita. E caso sem conta de clientes publica `"n.a."`, não "0 dias":
 zero dias de recebimento afirma que a empresa vende à vista.
@@ -1291,7 +1291,7 @@ tratamento. *(Boa parte disso foi desfeita na sessão 42, a pedido do dono — v
 
 O #112 recalibrou `CUSTO_ESTIMADO_DOC_USD` de 0,15 para 0,20 e **não regerou o JSON dos workflows**.
 O nó `Orcamento do Lote` commitado seguia com o literal 0,15: importado no n8n, orçaria pelo número
-antigo, e a recalibração existiria no repositório e não em produção. O `git diff --exit-code -- n8n/`
+antigo, e a recalibração existiria no repositório e não em produção. O `git diff --exit-code -- N8N/`
 do CI existe exatamente para isso, e pegou.
 
 O defeito tinha um segundo lado: o teste que lê o nó esperava `2.1` (14 × 0,15) e passava, porque
@@ -1360,7 +1360,7 @@ Três pedidos do dono, todos sobre a MESMA coisa: o portal publicava vocabulári
 financeiros*; o *Exportar modelagem* vive na tela de Modelagem, junto das premissas que ele usa.
 Oferecer o modelo na tela de ingestão convidava a exportá-lo antes de dizer como cada conta projeta.
 
-**2. O card do Portão 2, em português.** Dizia *"Ressalvas ativas: 0 de 3 (teto por caso, f0/04). A
+**2. O card do Portão 2, em português.** Dizia *"Ressalvas ativas: 0 de 3 (teto por caso, Arquitetura do Sistema/2 Especificação/f0/04). A
 regra é determinística e não tem exceção por autor."* — três defeitos numa linha: citava documento
 interno por código, mostrava contagem sem dizer o que é uma ressalva, e não dava a consequência. Agora
 o texto muda com o estado: sem ressalva diz quantas cabem e o que uma ressalva é ("ponto documentado
@@ -1519,7 +1519,7 @@ seja o item CORRESPONDENTE a acusar — "reprovou alguma coisa" não prova nada,
 item sensível e oito decorativos passaria nesse teste. Conferido afrouxando dois itens de propósito
 (limite do balanço em `1e12`, câmbio negativo aceito): o assert reprova e nomeia os dois.
 
-**`docs/ACEITE.md`** é a metade humana, curta de propósito: 10 itens, ~15 minutos, só o que o auditor
+**`Arquitetura do Sistema/6 Referência/ACEITE.md`** é a metade humana, curta de propósito: 10 itens, ~15 minutos, só o que o auditor
 não consegue ver — o arquivo abre sem oferecer reparo, os gráficos DESENHAM, o dropdown de índice macro
 REPROJETA ao clicar, o spread compõe (7,1% e não 7,0%), o `CHECK` continua zero DEPOIS de editar, o PDF
 sai com o gráfico dentro da página. Itens 1, 6 e 9 são bloqueantes. O item 6 é o mais grave dos
@@ -1532,7 +1532,7 @@ número que não fecha.
 
 1. ~~Mergear o PR das Fases B–D~~ — **feito (PR #105, `main` em `052817a`)**.
 2. **Aplicar a `0104` e a `0105`** no Supabase, nesta ordem.
-3. **Exportar o v35 de novo e rodar o aceite**: o auditor (comando) + os 10 itens do `docs/ACEITE.md`.
+3. **Exportar o v35 de novo e rodar o aceite**: o auditor (comando) + os 10 itens do `Arquitetura do Sistema/6 Referência/ACEITE.md`.
    É a primeira vez que o arquivo entregue passa por conferência antes de ir a comitê.
 4. **Decidir o que a Fase C deixou pendente por falta de premissa, não por falta de código:** os cortes
    de covenant (3,0× / 1,2× / 1,0×) e o cronograma de amortização por tranche; se o `CAPEX FINANCING`
@@ -1578,7 +1578,7 @@ produção); o e2e cobria a cadeia real só até as abas ANALÍTICAS. As 14 abas
 como único juiz o dono abrindo o arquivo — foi assim que receita líquida de 170.220 contra 106.580
 informados chegou a ele depois de 100+ PRs verdes.
 
-**O pré-requisito, que era um defeito de fixture.** `db/test/gerar_fixture.py` gravava
+**O pré-requisito, que era um defeito de fixture.** `Supabase/test/gerar_fixture.py` gravava
 `secao_canonica = NULL` nas 767 linhas do book, enquanto a extração real PREENCHE esse campo (é
 instrução do `SYSTEM_PROMPT`, enum em `SECAO_CANONICA_ENUM`). Consequência medida: `blocoDaLinha`
 devolvia `fora` para as 132 contas de balanço e DRE e o modelo saía com a **DRE inteira em zero** na
@@ -1601,7 +1601,7 @@ idêntico ao informado; `CHECK` em zero em todos os exercícios. E religando o d
 6 devolve **exatamente** os números do arquivo que chegou ao dono (170.220 · 271.520 · 281.371 ·
 268.041) — ou seja, o portão pega o defeito que passou.
 
-`test/e2e/run.mts`: 27 → **46** verificações.
+`Verificação/run.mts`: 27 → **46** verificações.
 
 ## Sessão 40 (2026-08-06) — o arquivo entregue mentia; seis defeitos e a conferência que os pega
 
@@ -1675,7 +1675,7 @@ asserts verdes conviviam com prejuízo virando lucro. Foi refeita com a forma do
 asserts novos (`0106a`–`0106g`) foram **verificados um a um religando o defeito**.
 
 **Insumo, para quem for medir localmente:** nenhuma das duas bases locais reproduz a produção
-inteira. `db/test/fixture_modelagem_v35.sql` tem `secao_canonica` mas `secao` nula e `ordem`
+inteira. `Supabase/test/fixture_modelagem_v35.sql` tem `secao_canonica` mas `secao` nula e `ordem`
 ALFABÉTICA (a detecção estrutural quase não dispara, e a coluna histórica mistura 2024 e 2025); a
 cadeia do book (`test/e2e`) tem `secao`/`ordem` reais mas **`secao_canonica` nula nos 767 campos**, e
 por isso o modelo institucional sai com a DRE inteira em zero. Isso levou ao sétimo assert e a uma
@@ -1720,7 +1720,7 @@ conferência, em vez de escondê-lo.
 ## Sessão 30 (2026-08-03) — Fase 6: calibração — o dial volta a mandar
 
 **A contradição que esta sessão fecha.** `estagio_autonomia` nasce na `0001` com o comentário
-"Nível é estado do sistema, não constante de código (docs/01)", é semeada na `0002` — e até aqui
+"Nível é estado do sistema, não constante de código (Arquitetura do Sistema/1 Visão e Doutrina/01)", é semeada na `0002` — e até aqui
 **não tinha um único leitor**: `grep -rl estagio_autonomia portal/src n8n` não retornava nada. O
 dial de `extracao_linhas_financeiras` dizia **N0** ("roda, registra, **não influencia decisão**")
 enquanto `fn_registrar_campos_extraidos` auto-aceitava toda linha com confiança **>= 0.95
@@ -1755,13 +1755,13 @@ Três decisões de projeto que valem registro:
 **Baixar o dial passou a ser UMA CHAMADA** — sem migration, sem deploy. Era o que faltava para
 "desligar a autonomia" ser uma ação e não um comentário.
 
-### `db/test/dial.test.sql` — e os quatro defeitos religados
+### `Supabase/test/dial.test.sql` — e os quatro defeitos religados
 
 Dez cenários. Os que importam: **N0 e N1 não auto-aceitam nada**; **mudar `limiar_auto_clear` muda o
 resultado sem tocar em uma linha de código** (0.98 aceita com limiar 0.95, pendente com 0.99, aceita
 outra vez ao voltar); **guarda disparada continua suprimindo o auto-aceite** (o que a `0029` fechou —
 a `0041` mexeu nesse bloco, e regressão ali reabre o furo de anti-ancoragem); **teto recusa e a
-tentativa fica registrada**, inclusive nos dois estágios que `docs/01` nunca solta de N1.
+tentativa fica registrada**, inclusive nos dois estágios que `Arquitetura do Sistema/1 Visão e Doutrina/01` nunca solta de N1.
 
 Cada defeito foi **religado** e o teste reprovou (regra do `CLAUDE.md`, "teste que não pode falhar
 não prova nada"):
@@ -1782,7 +1782,7 @@ Os 8 estágios com nível de hoje, teto, limiar, quem mudou e quando, mais a tri
 mudanças (aplicadas **e recusadas**). Duas escolhas deliberadas:
 
 - **Só leitura.** Subir dial é decisão de doutrina, é global (afeta todo mandato, não o que está
-  aberto) e `docs/01` exige concordância medida. Um botão aqui convidaria a mexer no meio de um
+  aberto) e `Arquitetura do Sistema/1 Visão e Doutrina/01` exige concordância medida. Um botão aqui convidaria a mexer no meio de um
   caso. A mudança se faz por `fn_mudar_dial` — ação do dono, como migration e teste ao vivo.
 - **A ressalva viaja com o número.** Estágio de extração acima de N1 mostra um aviso: está nesse
   nível por **decisão de produto, não por concordância medida**. Sem isso, alguém lê "N2" daqui a
@@ -1815,20 +1815,20 @@ real da aposta que o N2 faz. Reduzir isso exige **gabarito mais fino** (golden s
 não limiar mais alto.
 
 **Ainda com a ressalva de estrato:** o book é **melhor caso** — PDF gerado por reportlab, texto
-limpo, layout conhecido, sem scan, sem carimbo, sem coluna torta. `docs/01` exige concordância
+limpo, layout conhecido, sem scan, sem carimbo, sem coluna torta. `Arquitetura do Sistema/1 Visão e Doutrina/01` exige concordância
 medida no estrato que **vai para produção** antes de tratar este N2 como autonomia **medida** em vez
 de declarada. O golden set físico continua aberto.
 
 ### Contadores após esta sessão
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **41 migrations / 197
-asserts**; `test/e2e/run.mts` = **27**.
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **41 migrations / 197
+asserts**; `Verificação/run.mts` = **27**.
 
 ### O que o dono precisa fazer
 
 Aplicar `0038`, `0039`, `0040` e **`0041`** no Supabase (a `0041` já declara o dial em N2 no fim do
 próprio arquivo, e falha se a mudança for recusada); publicar o portal; e, quando quiser o número
-que vale, rodar a extração ao vivo sobre `test-data/book-vertentes/pdf/` e passar o resultado em
+que vale, rodar a extração ao vivo sobre `Dados de Teste/book-vertentes/pdf/` e passar o resultado em
 `--extracao`.
 
 ## Sessão 29 (2026-08-03) — Fase 7.5: as primitivas de projeção que faltavam
@@ -1857,7 +1857,7 @@ no meio.
 carrega: depreciação e capex como % do imobilizado têm base errada com receita, e o único jeito de o
 analista perceber é o arquivo dizer sobre o que aplicou.
 
-### Sazonalidade: `db/migrations/0040`
+### Sazonalidade: `Supabase/migrations/0040`
 
 `fn_sazonalidade_do_caso(caso_id)` deriva as 12 frações do `FATURAMENTO_24M` do mandato — o mês vem
 do rótulo da linha ("jan/2024"), e a curva sai só **completa**: 12 meses ou nada. Curva parcial
@@ -1893,10 +1893,10 @@ no catálogo.
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** |
 | `verificar-export.mts` | 417 | **426** |
-| `db/test/run.sh` | 39 migrations | **40** + asserts de sazonalidade (37 em premissas) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 39 migrations | **40** + asserts de sazonalidade (37 em premissas) |
+| `Verificação/run.mts` | 27 | **27** |
 
 ### Defeito religado
 
@@ -1985,10 +1985,10 @@ começou, porque linha sem valor-base não é emitida.
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** |
 | `verificar-export.mts` | 397 | **417** |
-| `db/test/run.sh` | 39 migrations | **39** (nenhuma migration nesta fase) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 39 migrations | **39** (nenhuma migration nesta fase) |
+| `Verificação/run.mts` | 27 | **27** |
 
 ### Defeito religado
 
@@ -2008,7 +2008,7 @@ E então a **Fase 6 (calibração)**, que era o que estava em curso quando esta 
 
 ## Sessão 27 (2026-08-03) — Fase 7.3: a tela onde linha e premissa se cruzam
 
-`/casos/[id]/modelagem` (rota nova) + `db/migrations/0039`. É onde "cada caso é um caso" vira
+`/casos/[id]/modelagem` (rota nova) + `Supabase/migrations/0039`. É onde "cada caso é um caso" vira
 operação: o analista escolhe as premissas do mandato e diz **onde cada uma entra na projeção**.
 
 ### Quatro passos, na ordem em que se pensa
@@ -2061,10 +2061,10 @@ inexistente numa tela de modelagem é convite a erro.
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** |
 | `verificar-export.mts` | 397 | **397** |
-| `db/test/run.sh` | 38 migrations | **39** + 3 asserts novos em `premissas.test.sql` (31) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 38 migrations | **39** + 3 asserts novos em `premissas.test.sql` (31) |
+| `Verificação/run.mts` | 27 | **27** |
 
 ### Defeito religado
 
@@ -2079,7 +2079,7 @@ inexistente numa tela de modelagem é convite a erro.
 
 ## Sessão 26 (2026-08-03) — Fase 7.2: a premissa deixa de ser código e passa a ser dado
 
-`db/migrations/0038`. O modelo tinha **15 premissas hardcoded** (`PR` em `export-modelagem.ts`)
+`Supabase/migrations/0038`. O modelo tinha **15 premissas hardcoded** (`PR` em `export-modelagem.ts`)
 sobre um esqueleto fixo de linhas (`LINHAS_BASE`). Não sobrevive ao que o dono descreveu: "cada caso
 vai ser um caso, vai vir com linhas diferentes, contas diferentes, vai precisar de inputs e
 premissas diferentes".
@@ -2146,10 +2146,10 @@ atípico é a regra — há teste de que um caso de indústria pode usar RevPAR 
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** |
 | `verificar-export.mts` | 397 | **397** |
-| `db/test/run.sh` | 37 migrations | **38** + `premissas.test.sql` (28 asserts) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 37 migrations | **38** + `premissas.test.sql` (28 asserts) |
+| `Verificação/run.mts` | 27 | **27** |
 
 ### Defeito religado
 
@@ -2188,7 +2188,7 @@ que está visível, porque a linha que falta não está lá para contradizer. N�
 de itens abertos.
 
 **A correção:** a chave do grupo passa a incluir a **ocorrência** — o rank por `ordem`
-(`db/migrations/0027`) dentro de cada versão e rótulo. Rótulo que aparece uma vez (a maioria) tem
+(`Supabase/migrations/0027`) dentro de cada versão e rótulo. Rótulo que aparece uma vez (a maioria) tem
 rank 1 e se comporta como antes; repetido vira duas linhas, cada uma com sua proveniência. O rank é
 por VERSÃO de propósito: num comparativo (2025 | 2024) a 1ª ocorrência de uma coluna alinha com a 1ª
 da outra, que é o alinhamento entidade×período que o agrupamento por rótulo existe para garantir.
@@ -2223,7 +2223,7 @@ aba macro ausente que custou meia hora de investigação no v28.
 
 Faltavam **DMPL, MUTUOS e NOTAS EXPLICATIVAS**. As abas `DMPL`/`Intragrupo`/`Outros` existiam no
 código e **nenhum teste passava por elas com dado** — cobertura que parecia existir porque a fixture
-afirmava os dois lados. Os três entraram em `db/test/gerar_fixture.py` com extração fiel ao que cada
+afirmava os dois lados. Os três entraram em `Supabase/test/gerar_fixture.py` com extração fiel ao que cada
 PDF imprime:
 
 - **DMPL** como matriz (`chave` = componente do PL, `secao` = movimento), sem inventar zero nas
@@ -2242,10 +2242,10 @@ sinal de que depende.
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
 | `verificar-export.mts` | 362 | **397** |
-| `db/test/run.sh` | 37 migrations | **37** (nenhuma migration nesta fase) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 37 migrations | **37** (nenhuma migration nesta fase) |
+| `Verificação/run.mts` | 27 | **27** |
 
 Fixture: 11 → **14 documentos**, 744 → **767 linhas**.
 
@@ -2284,8 +2284,8 @@ Fui conferir os "limites duros do Portão 2" (item da Fase 4) e encontrei o segu
   **por caso** — o que decide se o mandato pode ser aprovado — não existia.
 
 **Isso não estava em nenhuma lista de itens abertos** (nem no §7.4 do Onboarding), e a regra está
-**especificada e aprovada em `f0/04` desde a F0**: três condições, teto de ressalvas **confirmado
-em 3** pelo dono, lista fechada de não-sobrepujáveis. `docs/03` põe "Portão 2 com limites duros"
+**especificada e aprovada em `Arquitetura do Sistema/2 Especificação/f0/04` desde a F0**: três condições, teto de ressalvas **confirmado
+em 3** pelo dono, lista fechada de não-sobrepujáveis. `Arquitetura do Sistema/1 Visão e Doutrina/03` põe "Portão 2 com limites duros"
 dentro do MVP. Então a `0037` implementa **a regra como ela está escrita**, sem inventar política.
 
 `fn_avaliar_portao2` (só lê, `stable`) + `fn_aprovar_caso` (recusa retornada, mesmo padrão da
@@ -2294,7 +2294,7 @@ os motivos e só oferece o botão quando a regra permite.
 
 **Duas decisões de implementação que valem registro:**
 
-1. **Ressalva expirada é avaliada NA LEITURA.** `f0/04` diz "ao expirar, a pendência reabre
+1. **Ressalva expirada é avaliada NA LEITURA.** `Arquitetura do Sistema/2 Especificação/f0/04` diz "ao expirar, a pendência reabre
    automaticamente". Reabrir por job seria a próxima falha silenciosa (job que ninguém observa);
    aqui uma `aceita_com_ressalva` com `expira_em` no passado **já conta como pendência de novo**,
    sem depender de cron nenhum estar vivo.
@@ -2357,10 +2357,10 @@ esta rodada barata** — e o item 4 do roteiro (XLSX) só passa a ler o arquivo 
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
+| `node --test N8N/test/*.test.mjs` | 176 | **176** (nada de lib mudou) |
 | `verificar-export.mts` | 361 | **362** |
-| `db/test/run.sh` | 36 migrations | **37** + `portao2.test.sql` (24 asserts) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 36 migrations | **37** + `portao2.test.sql` (24 asserts) |
+| `Verificação/run.mts` | 27 | **27** |
 
 Nota honesta sobre o 362: os asserts de visibilidade das abas **mudaram de assunto**, não só de
 número — três do comportamento antigo saíram, e entraram três do novo (nada oculto; Modelagem
@@ -2390,7 +2390,7 @@ repositório, não supostas:**
    para `Montar Req Extracao`. Quando a completude é calculada, a extração **ainda não rodou** —
    o número de linhas é zero para todo documento, sempre. A condição literal reprovaria o caso
    inteiro por um motivo que é só de sequência.
-2. **Doutrina.** `docs/07` separa os dois status de propósito: *"Completude ≠ validade … para
+2. **Doutrina.** `Arquitetura do Sistema/3 Estado e Execução/07` separa os dois status de propósito: *"Completude ≠ validade … para
    evitar falsa sensação de completude."* Colapsar as duas condições apagaria a distinção que
    existe justamente para impedir o que o item descreve.
 
@@ -2400,7 +2400,7 @@ repositório, não supostas:**
 - o item vira **`recebido_nao_valido`** no `checklist_item_status` quando NENHUMA versão dele
   rendeu uma linha — a coluna já previa `invalido` desde a 0001;
 - e abre pendência **`item_sem_conteudo`, BLOQUEANTE e NÃO-SOBREPUJÁVEL**, que é o que de fato
-  trava o Portão 2 (`docs/07`: *"elegível ao Portão 2 se e somente se não há pendência bloqueante
+  trava o Portão 2 (`Arquitetura do Sistema/3 Estado e Execução/07`: *"elegível ao Portão 2 se e somente se não há pendência bloqueante
   aberta"*, e a lista fechada inclui "arquivo ilegível de item essencial");
 - **`fn_registrar_campos_extraidos` passa a recomputar a completude no fim** — é o único ponto do
   pipeline que roda com o resultado da extração na mão. Sem isso, o estado novo só apareceria
@@ -2436,10 +2436,10 @@ e trocaríamos "aceite de nada" por "sucesso de nada".
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 171 | **176** |
+| `node --test N8N/test/*.test.mjs` | 171 | **176** |
 | `verificar-export.mts` | 361 | **361** (nada no export mudou) |
-| `db/test/run.sh` | 35 migrations | **36** + `completude_conteudo.test.sql` (14 asserts) |
-| `test/e2e/run.mts` | 27 | **27** |
+| `Supabase/test/run.sh` | 35 migrations | **36** + `completude_conteudo.test.sql` (14 asserts) |
+| `Verificação/run.mts` | 27 | **27** |
 
 ### Defeito religado, um por um
 
@@ -2496,7 +2496,7 @@ recebia a extração como completa e **nenhuma pendência existia**.
 - O aviso **soma-se** ao motivo da chamada em vez de competir: planilha cortada **e** resposta
   truncada cabem no mesmo documento.
 
-### Item 2 — moeda capturada e descartada (`db/migrations/0035`)
+### Item 2 — moeda capturada e descartada (`Supabase/migrations/0035`)
 
 O caminho existia inteiro **menos o último metro**: o schema já pedia `moeda` à IA,
 `normalizarMoeda` já convertia "US$"/"dolar" no ISO desde sempre, e o valor **morria no nó** —
@@ -2523,10 +2523,10 @@ corrigido na Etapa 1, era o **último fator multiplicativo invisível**: dólar 
 
 | Suíte | Antes | Agora |
 |---|---|---|
-| `node --test n8n/test/*.test.mjs` | 162 | **171** |
+| `node --test N8N/test/*.test.mjs` | 162 | **171** |
 | `verificar-export.mts` | 352 | **361** |
-| `db/test/run.sh` | 34 migrations | **35** + `moeda.test.sql` (7 asserts) |
-| `test/e2e/run.mts` | 24 | **27** |
+| `Supabase/test/run.sh` | 34 migrations | **35** + `moeda.test.sql` (7 asserts) |
+| `Verificação/run.mts` | 24 | **27** |
 
 ### Cada correção teve o defeito RELIGADO para ver o teste reprovar
 
@@ -2572,7 +2572,7 @@ o classificador em TypeScript já sabia (`soEstrutural`); quem não sabia era o 
 
 **Segunda causa, no fallback:** `fn_soma_secao(['passivo','patrimonio'])` exige a SEÇÃO conter os
 DOIS termos, e as seções reais são "Passivo Circulante" e "Patrimônio Líquido". O fallback era
-**inalcançável desde que foi escrito**. → **`db/migrations/0034`**, com `fn_rotulo_estrutural`
+**inalcançável desde que foi escrito**. → **`Supabase/migrations/0034`**, com `fn_rotulo_estrutural`
 (comparação por CONJUNTO, não substring) e duas somas que se juntam.
 
 **E a guarda anti-alucinação acusava o balanço mais CORRETO possível:** "4 contas com o mesmo valor
@@ -2635,8 +2635,8 @@ célula vazia porque **INDEX de vazio vale 0 no Excel**. O idioma correto é `CO
 
 ### ⚠️ PENDÊNCIAS DO DONO (sessão 21)
 
-1. **Aplicar `db/migrations/0034`.**
-2. **Reimportar `n8n/workflow.macro.json`** (a janela do SGS mudou de forma, não de valor).
+1. **Aplicar `Supabase/migrations/0034`.**
+2. **Reimportar `N8N/workflow.macro.json`** (a janela do SGS mudou de forma, não de valor).
 3. **Validar as Etapas 1 a 6** — é o que o plano dele pede antes de qualquer coisa nova.
 
 ### O QUE FICOU ABERTO
@@ -2663,7 +2663,7 @@ Os cinco itens de "se sobrar fôlego" continuam **não tocados**: truncamento de
 
 ## Sessão 20 (2026-07-31, noite) — Etapa 2 FECHADA, dupla contagem sinalizada, e CI
 
-Rodou sozinha, sem supervisão, a partir de `docs/PROMPT_CONTINUACAO.md`. Cinco frentes, todas
+Rodou sozinha, sem supervisão, a partir de `Arquitetura do Sistema/5 Prompts/PROMPT_CONTINUACAO.md`. Cinco frentes, todas
 commitadas na branch acima.
 
 ### 1. Etapa 2 FECHADA — bloco "REFERÊNCIAS MACRO" na Modelagem (`a545c28`)
@@ -2693,7 +2693,7 @@ com o 5.590 impresso): conta anotada com a seção de TOPO em vez da subseção 
 Não Circulantes", irmã do Imobilizado, e o grupo a conta duas vezes.
 
 O export agora escreve uma linha visível **nomeando a conta suspeita**, as duas seções e a diferença
-medida, com nota trazendo **as duas leituras** — e **não corrige sozinho** (docs/04). Reportado UMA
+medida, com nota trazendo **as duas leituras** — e **não corrige sozinho** (Arquitetura do Sistema/2 Especificação/04). Reportado UMA
 vez, no grupo onde as duas seções são irmãs; repetir no ATIVO ensinaria o leitor a ignorar avisos.
 
 **SOBRE A FIXTURE — leia antes de mexer.** A conta do v33 era "Ferramental e moldes" e ela NÃO serve
@@ -2715,7 +2715,7 @@ cabeçalho de seção, use `pintarNoFim` — escrever direto não sobrevive.**
 
 Invariante 36, 12 asserts, com contraprova. Não-vacuidade medida em 3 mutações.
 
-### 3. Pré-condições de Ativo × Passivo+PL — `db/migrations/0033` (`1f95d62`)
+### 3. Pré-condições de Ativo × Passivo+PL — `Supabase/migrations/0033` (`1f95d62`)
 
 **O que eu MEDI: a pré-condição NÃO é reproduzível pelo book.** Rodei a A.1 contra o book sintético
 inteiro pelo arnês e2e (migrations reais, gravação pelas funções reais): as **7** entidades/períodos
@@ -2735,7 +2735,7 @@ reprovou com "nenhum rótulo … foi extraído" apesar de o rótulo existir — 
 
 **Nenhum critério de casamento foi afrouxado.** Alargar o `like` fabricaria um casamento.
 
-Testes 6 (reescrito) e 7 (novo) em `db/test/reconciliacao.test.sql` — as duas condutas opostas que a
+Testes 6 (reescrito) e 7 (novo) em `Supabase/test/reconciliacao.test.sql` — as duas condutas opostas que a
 mensagem antiga não distinguia: "reextrair" × "mexer no padrão". Não-vacuidade medida trocando a
 `0033` por `select 1;` e reconstruindo o banco.
 
@@ -2755,7 +2755,7 @@ contra serviço Postgres 16, e2e, tsc, eslint e `next build`. Em todo push e PR.
    pinado no lock. `tsx` entrou nas devDependencies do portal.
 
 **CI VERIFICADO VERDE EM RUNNER REAL** (run `30668647822`, commit `a7bfee5`): os **14 passos**
-passaram em 82 s, incluindo os que a primeira execução tinha pulado — `db/test/run.sh` contra o
+passaram em 82 s, incluindo os que a primeira execução tinha pulado — `Supabase/test/run.sh` contra o
 serviço Postgres 16, o `e2e`, e o `next build`. Não é "o YAML é válido": é a coisa rodando.
 
 ### 5. Análise crítica da sessão 19 (`495ca68`) — pedido explícito do dono
@@ -2770,7 +2770,7 @@ saía **EM BRANCO com a nota afirmando "Média geométrica dos exercícios compl
 (`meses === 12 && retorno != null`) + a nota do ano passa a dizer a causa. Invariante 37.
 
 **AUDITADO E CORRETO, com a medição:**
-- **`n8n/lib/hash.mjs`** — diferencial contra `node:crypto` em **619 casos**, todos idênticos: todos
+- **`N8N/lib/hash.mjs`** — diferencial contra `node:crypto` em **619 casos**, todos idênticos: todos
   os comprimentos de 0 a 600, multi-bloco até 1.000.003 bytes, `Uint8Array` com **byteOffset
   não-zero** vindo de `subarray`, ArrayBuffer cru, Array comum, vetor da FIPS para entrada vazia.
   **Custo medido: 5 MB em 209 ms (23,9 MB/s)**; lote de 14 documentos de 5 MB = 2,9 s, contra dezenas
@@ -2792,7 +2792,7 @@ e preenchimento) gerado antes e depois — `diff` sem uma linha de diferença.
 ### ⚠️ PENDÊNCIAS DO DONO (sessão 20)
 
 1. **Aplicar as migrations em ordem: `0032` (se ainda não aplicou) e `0033`.**
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** (hash em JS puro) **e `n8n/workflow.macro.json`**
+2. **Reimportar `N8N/workflow.e1-ingestao.json`** (hash em JS puro) **e `N8N/workflow.macro.json`**
    (`baseCalculo` do Focus) — continua pendente da sessão 19.
 3. **Conferir o campo `hash` na saída de `Preparar Conteudo`** — tem de vir preenchido em qualquer
    sandbox. Se vier null de novo, o problema não é mais `crypto`.
@@ -2840,7 +2840,7 @@ O dono voltou com as cinco pendências dele **resolvidas**, e uma das respostas 
 
 ### O que entrou no PR #69 (aberto, 4 commits)
 
-- **`n8n/lib/hash.mjs` — SHA-256 em JS puro.** A abstenção anterior (`hash = null` quando não havia
+- **`N8N/lib/hash.mjs` — SHA-256 em JS puro.** A abstenção anterior (`hash = null` quando não havia
   `crypto.subtle`) funcionou como projetada, mas o efeito era a idempotência da `0026` seguir
   **adormecida**: `p_hash is not null` nunca era verdade e todo reenvio duplicava o documento. Mesmo
   algoritmo (FIPS 180-4), zero dependência de ambiente; o caminho nativo ficou como atalho de
@@ -2858,10 +2858,10 @@ O dono voltou com as cinco pendências dele **resolvidas**, e uma das respostas 
   falhou; (c) sem entidade reconhecida, a aba Modelagem **existe** dizendo a causa e para onde ir;
   (d) **Focus com `baseCalculo` fixado em 0** (a mediana dependia da ordem da resposta HTTP);
   (e) resíduos: `{ultimos:}`→`{mesesAtras:}` no seed, `$top` unificado em `FOCUS_TOP`.
-- **Fatia 6a — `db/migrations/0032`: o câmbio perdia JANEIRO todo ano.** A base era `min(data_ref)`
+- **Fatia 6a — `Supabase/migrations/0032`: o câmbio perdia JANEIRO todo ano.** A base era `min(data_ref)`
   DENTRO do ano; agora é o último fechamento **anterior** ao ano (dez/n−1 → dez/n). Primeiro ano da
   série sai **NULL** (sem base não existe variação — e era aí que a versão antiga inventava uma).
-  **A suíte protegia o bug**: `db/test/macro.test.sql` afirmava a convenção errada, corrigido junto.
+  **A suíte protegia o bug**: `Supabase/test/macro.test.sql` afirmava a convenção errada, corrigido junto.
   A migration tem verificação embutida e ela é **não-vazia**: com a base antiga religada, a própria
   migration se recusa a aplicar ("deveria ser 21%, veio 10").
 
@@ -2889,10 +2889,10 @@ bloco de premissas — `P(i)` endereça premissa por deslocamento a partir de `r
 inserida no meio desloca todas as fórmulas do modelo em silêncio. A linha em branco depois das
 premissas é o que ENCERRA o bloco para quem conta as 15 (invariante 15).
 
-### ➡️ PRÓXIMA SESSÃO: `docs/PROMPT_CONTINUACAO.md`
+### ➡️ PRÓXIMA SESSÃO: `Arquitetura do Sistema/5 Prompts/PROMPT_CONTINUACAO.md`
 
 O dono pediu um prompt único e auto-contido para a sessão seguinte rodar **de forma autônoma, sem
-supervisão e sem fazer perguntas**. Ele está em **`docs/PROMPT_CONTINUACAO.md`** e cobre, em ordem:
+supervisão e sem fazer perguntas**. Ele está em **`Arquitetura do Sistema/5 Prompts/PROMPT_CONTINUACAO.md`** e cobre, em ordem:
 fechar a Etapa 2 (bloco de REFERÊNCIAS MACRO), a dupla contagem no parente, as 5 pré-condições do
 v33, montar CI, e uma **análise crítica do que a sessão 19 fez** (pedido explícito dele). Se este
 handoff e aquele prompt divergirem, **este arquivo é a fonte da verdade** — o prompt é o roteiro.
@@ -2911,7 +2911,7 @@ handoff e aquele prompt divergirem, **este arquivo é a fonte da verdade** — o
 - **`spliceRows` na aba Macro quebra o modelo em silêncio**: `linhaCabFocus`/`linhaFocusDe` são
   números capturados na geração, e o INDEX/MATCH passa a apontar uma linha acima. Escreva avisos
   ANTES do resto da aba, nunca insira depois.
-- **`test-data/book-vertentes/gerar.py` precisa de `PYTHONPATH=.`** e grava o `GABARITO.json` dentro
+- **`Dados de Teste/book-vertentes/gerar.py` precisa de `PYTHONPATH=.`** e grava o `GABARITO.json` dentro
   de `pdf/`, não na raiz do diretório (a linha de uso do docstring está errada; o handoff anterior
   também dizia o lugar errado).
 - **Não existe CI** — as quatro suítes só rodam quando alguém lembra. Continua sendo a alavanca mais
@@ -2947,8 +2947,8 @@ importam, todos com invariante e vacuidade medida:
 - **`0030`:** entidade e período canônicos na ESCRITA. A duplicidade de entidade era **regressão do
   PR #65** (nome do arquivo sem acento × diagnóstico com acento).
 - **`0031`** (no #68): o caixa estava na SEÇÃO e a reconciliação só olhava a chave.
-- **Teto de gasto de US$ 3 por execução** em `n8n/lib/custo.mjs` + nó `Orcamento do Lote`.
-- **`test/e2e/run.mts`:** a validação encadeada que não existia.
+- **Teto de gasto de US$ 3 por execução** em `N8N/lib/custo.mjs` + nó `Orcamento do Lote`.
+- **`Verificação/run.mts`:** a validação encadeada que não existia.
 
 ### Etapa 2 — EM ANDAMENTO (PR #68, 3 fatias de 6)
 
@@ -3003,8 +3003,8 @@ As seis pendências anteriores (mergear o #68, aplicar `0029`-`0031`, reimportar
 confirmar a coleta macro, conferir o `hash`, decidir a lista de severidade) foram **respondidas pelo
 dono em 2026-07-31**. O que ficou pendente dele agora:
 
-1. **Aplicar `db/migrations/0032`** (câmbio) quando o PR #69 entrar.
-2. **Reimportar `n8n/workflow.e1-ingestao.json`** (hash em JS puro) **e `n8n/workflow.macro.json`**
+1. **Aplicar `Supabase/migrations/0032`** (câmbio) quando o PR #69 entrar.
+2. **Reimportar `N8N/workflow.e1-ingestao.json`** (hash em JS puro) **e `N8N/workflow.macro.json`**
    (`baseCalculo` do Focus).
 3. **Conferir de novo o campo `hash` na saída de `Preparar Conteudo`** — agora ele TEM de vir
    preenchido em qualquer sandbox. Se vier null outra vez, o problema não é mais `crypto`.
@@ -3046,7 +3046,7 @@ registro do que era o defeito, porque a descrição do defeito é o que explica 
   Macro, com a parte que falhou NOMEADA pelo `route.ts`. Invariante 33.
 - ~~**Sem entidade reconhecida, nem a aba de aviso é criada**~~ → **FEITO** (fatia 5). Invariante 34.
 - ~~**O câmbio perde JANEIRO todo ano**~~ e ~~**a fixture do teste CONSAGRA o erro**~~ → **FEITO**
-  (fatia 6a, `db/migrations/0032`), os dois lados corrigidos na mesma fatia.
+  (fatia 6a, `Supabase/migrations/0032`), os dois lados corrigidos na mesma fatia.
 - ~~**Focus sem filtro de `baseCalculo`**~~ → **FEITO** (fatia 5): fixado em 0 (base de 30 dias, a da
   tabela principal do Boletim), na URL e no parse.
 - ~~**Resíduos** (`{ultimos:}` × `{mesesAtras:}`, `top=40` × `top=80`)~~ → **FEITO** (fatia 5).
@@ -3114,11 +3114,11 @@ Isso importa porque as causas de 429 pedem ações **OPOSTAS**: crédito esgotad
 gasto** configurado → subir o teto (e ele **não aparece** nas telas de Billing nem de Limits); cota
 diária → só reabre amanhã; **cadência** → o único caso em que espaçar resolve.
 
-Backlog largo restante: **`docs/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
+Backlog largo restante: **`Arquitetura do Sistema/4 Análises e Auditorias/AUDITORIA_HARDENING_2026-07-24.md`** (45 findings priorizados, com
 marcação do que já foi feito). Candidatos mais fortes agora, todos locais e testáveis aqui:
 
 - ~~**Idempotência por hash + overload morto de 14 args**~~ e ~~**`reset-0006-regride-funcoes`**~~:
-  **FEITOS na sessão 15** (`db/migrations/0026`, abaixo). O que sobrou dessa frente: **não PAGAR** a
+  **FEITOS na sessão 15** (`Supabase/migrations/0026`, abaixo). O que sobrou dessa frente: **não PAGAR** a
   extração quando o arquivo é idêntico E a extração anterior usou o MESMO prompt/modelo. Exige (i)
   fingerprint de prompt+modelo gravado na versão e (ii) curto-circuito no grafo do N8N —
   `Montar Req Extracao` é `runOnceForEachItem` e não pode devolver zero itens; mudar o modo troca a
@@ -3212,7 +3212,7 @@ casamento no banco era `lower(razao_social)` ⇒ **duas entidades para a mesma e
 Duas frentes. A primeira está **resolvida e mergeada**. A segunda está **instrumentada, não resolvida** —
 e a distinção é o ponto mais importante desta seção.
 
-### Frente 1 (RESOLVIDA, PR #61, `db/migrations/0028`) — "não veio os dados macro"
+### Frente 1 (RESOLVIDA, PR #61, `Supabase/migrations/0028`) — "não veio os dados macro"
 
 O dono aplicou a `0025`, ativou o workflow macro, rodou de novo, e as abas macro continuaram vazias.
 A causa não era coleta: era **autorização**. A `0025` criou as tabelas `indice_macro_serie/obs/expectativa`
@@ -3228,7 +3228,7 @@ explica o sintoma confuso: a coleta gravava, o portal não lia. A `0028` liga RL
 e faz o grant, **com verificação embutida** que insere uma linha real e confere `COUNT(*)` já como
 `authenticated`.
 
-**O achado de método, que vale mais que a migration:** `db/test/run.sh` era **estruturalmente incapaz**
+**O achado de método, que vale mais que a migration:** `Supabase/test/run.sh` era **estruturalmente incapaz**
 de pegar isso. Ele não replicava os privilégios default que o Supabase configura na criação do projeto,
 então `set role authenticated` falharia para **qualquer** tabela — o teste acusaria falso positivo em
 geral, e por isso ninguém testava como `authenticated`. O `run.sh` agora replica esse passo
@@ -3255,12 +3255,12 @@ Cronologia, porque ela é o que impede repetir o erro:
    bloco em "COMECE AQUI"). Confirmei rodando: aquele payload exato classifica como
    `limite_indeterminado`, status 429, tipo `null`, código `null`.
 
-**Conclusão que fica registrada como pendência, não como fato** (doutrina `docs/01`): a causa do v30 é
+**Conclusão que fica registrada como pendência, não como fato** (doutrina `Arquitetura do Sistema/1 Visão e Doutrina/01`): a causa do v30 é
 **desconhecida**. `limite_indeterminado` é a classificação honesta.
 
 O que foi construído em cima disso:
 
-- **`diagnosticarErroApi` (`n8n/lib/extract.mjs`)** — auto-contida de propósito, porque o gerador embute
+- **`diagnosticarErroApi` (`N8N/lib/extract.mjs`)** — auto-contida de propósito, porque o gerador embute
   o `toString()` dela nos nós (Code node não importa arquivo). Emite causas com **ações diferentes**:
   `limite_de_gasto` (testado **primeiro**, porque tetos de projeto/org são invisíveis em Billing e
   Limits), `sem_credito`, `limite_diario`, `limite_cadencia`, `chave_invalida`, `modelo_indisponivel`,
@@ -3287,7 +3287,7 @@ O que foi construído em cima disso:
   tinha como passar**, nem a 6s nem a 12s. `TPM_CONTA` vive em `lib/extract.mjs` (junto de
   `MAX_OUTPUT_TOKENS`) porque **três** lugares dependem do mesmo número — o gerador, o teste de cadência
   e o `diagnosticar-openai.mjs`; duplicado, o dono ajustaria um e os outros dois passariam a mentir.
-- **`n8n/diagnosticar-openai.mjs`** — o experimento discriminante descrito em "COMECE AQUI". Já validado
+- **`N8N/diagnosticar-openai.mjs`** — o experimento discriminante descrito em "COMECE AQUI". Já validado
   contra a API real (chave inválida → `chave_invalida`).
 
 **Suspeita NÃO verificada, registrada como suspeita:** `retryOnFail` pode nunca disparar quando o nó tem
@@ -3364,13 +3364,13 @@ correta; zero "Contas Não Classificadas"; notas explicativas fora das demonstra
 Passivo+PL 150.232" no combinado; e o alerta de fabricação com **4 contas repetindo 14.529**, que é o
 total do ativo da Componentes — vale conferir junto.
 
-**Validação:** `verificar-export.mts` 105 → **113**; n8n **106**; `db/test/run.sh` 21+13+12;
+**Validação:** `verificar-export.mts` 105 → **113**; n8n **106**; `Supabase/test/run.sh` 21+13+12;
 `tsc`/`eslint`/`next build` limpos. Provados não-vazios (18a-18e, 19b-19c). **Três invariantes antigos
 foram REESCRITOS em vez de deletados** — o 11 travava a ocultação, o 15 travava a aba oculta de dado
 cru, e o 16h/16i usavam "a aba Balanço não existe" como proxy; cada um agora trava a intenção original
 de outra forma. Teste que vira verde por deleção não protege nada.
 
-## Sessão 15 — Reextração é versão nova, e substitui em vez de acumular (`db/migrations/0026`)
+## Sessão 15 — Reextração é versão nova, e substitui em vez de acumular (`Supabase/migrations/0026`)
 
 Veio de uma pergunta do dono: ele aplicou as migrations e reimportou os workflows, mas não entendeu a
 pendência **"reextrair os documentos de DMPL/DVA já processados"**. Explicando, achei a armadilha —
@@ -3408,12 +3408,12 @@ O que a fatia trava:
 - **Overload morto de 14 args** (`fn-registrar-documento-overload-duplicado`) removido: ele ainda
   carregava o corpo da época da `0006` — sem `confianca`/`fonte`/`justificativa` e sem idempotência —
   e qualquer chamada posicional podia cair nele.
-- **`reset-0006-regride-funcoes`** (armadilha de produção): o `db/README.md` mandava rodar a `0006`
+- **`reset-0006-regride-funcoes`** (armadilha de produção): o `Supabase/README.md` mandava rodar a `0006`
   quando o N8N diz "function does not exist" — mas a `0006` recria os corpos DELA e regride tudo o que
   veio depois (sumiria a idempotência, as guardas `0013`/`0016`, o auto-aceite `0019`, e voltaria o
   overload morto). O aviso agora diz para continuar aplicando **0007 → 0026 em ordem** depois do reset.
 
-**Validação:** `db/test/reextracao.test.sql` novo com **12 asserts**, incluindo os NEGATIVOS que
+**Validação:** `Supabase/test/reextracao.test.sql` novo com **12 asserts**, incluindo os NEGATIVOS que
 seguram a fronteira (hash diferente = documento próprio; hash nulo não casa; tipo revisado por humano
 sobrevive). `verificar-export.mts` **79 → 85**. Provados não-vazios: sem a busca por hash, "mesmo hash
 => MESMO documento" falha; sem a vigência, 17a/17b/17c falham com `seção=2500 documento=1500` —
@@ -3429,7 +3429,7 @@ antigas foram extraídas sem o contrato `secao`=movimento / `chave`=componente.
 ## Sessão 14 — DF auditada: o conjunto num arquivo só é separado por demonstração
 
 O `.xlsx` do próximo teste ainda não chegou. Rodei a suíte inteira primeiro (passo 1 do protocolo) —
-verde de ponta a ponta: n8n 103/103, `verificar-export.mts` 69/69, `db/test/run.sh` 21 + 13 asserts
+verde de ponta a ponta: n8n 103/103, `verificar-export.mts` 69/69, `Supabase/test/run.sh` 21 + 13 asserts
 de macro, migrations 0001–0025 limpas, `tsc`/`eslint`/`next build` limpos — e ataquei o **único
 `CRÍTICO` local que ainda restava** na auditoria (`df-auditada-bypassa-roteamento-linha`).
 
@@ -3475,7 +3475,7 @@ extração certa, o defeito está no nosso roteamento.
   já aberto** — decisão de produto do dono, não efeito colateral de uma fatia de export. E o
   roteamento por linha já separa esse arquivo aba por aba de qualquer jeito.
 
-**Validação:** `verificar-export.mts` **69 → 79**; n8n **103 → 105**; `db/test/run.sh` 21 + 13;
+**Validação:** `verificar-export.mts` **69 → 79**; n8n **103 → 105**; `Supabase/test/run.sh` 21 + 13;
 migrations 0001–0025 limpas; `tsc`/`eslint`/`next build` limpos. Invariantes provados **não-vazios**:
 desligando o roteamento composto a DF auditada volta a sair como `"Resumo, Outros"` (16a/16j falham e
 8 checagens desaparecem); desligando a guarda de nota, as notas vazam para o Fluxo (16d/16e/16f);
@@ -3487,7 +3487,7 @@ mexendo em `ALIASES` sem regenerar, o anti-drift falha.
 ## Sessão 13 — Índices macro: histórico (BCB/IBGE) + Focus, e o modelo consumindo os dois
 
 Pedido do dono: automatizar índices macro **validados e revisados**, com retorno médio de 3/5/10 anos,
-e ligar isso à modelagem. `db/migrations/0025` + `n8n/workflow.macro.json` (workflow **separado**, roda
+e ligar isso à modelagem. `Supabase/migrations/0025` + `N8N/workflow.macro.json` (workflow **separado**, roda
 no relógio — falha dele não derruba a ingestão) + aba **Macro** no export.
 
 **São duas coisas diferentes, e o modelo usa cada uma para o que ela serve:** `indice_macro_obs` é o
@@ -3517,14 +3517,14 @@ dirigir pelo retrovisor, e era o caminho mais fácil de tomar ali.
   oneroso).
 
 **Validação:** n8n 86 → **103** (17 testes novos, com respostas REAIS das três APIs);
-`verificar-export.mts` 57 → **69**; `db/test/macro.test.sql` com 13 asserts e **caso negativo em cada
+`verificar-export.mts` 57 → **69**; `Supabase/test/macro.test.sql` com 13 asserts e **caso negativo em cada
 checagem**. **Precisa do dono:** aplicar a `0025` e **importar `workflow.macro.json`** no N8N.
 
 ## Sessão 12 — Aba Modelagem: modelo pronto em fórmula + consolidação de entidade (v27)
 
 Pedido do dono sobre o export do v27: uma aba de modelagem pronta para receber inputs, espelhando um
 modelo de FP&A real, com a regra de que **tudo que não for input externo tem de ser FÓRMULA** puxando
-das abas de dados — e as abas cruas ocultas ao final. Emenda registrada em `f0/07` (reabre o "output
+das abas de dados — e as abas cruas ocultas ao final. Emenda registrada em `Arquitetura do Sistema/2 Especificação/f0/07` (reabre o "output
 não projeta"; é decisão do dono, e o que a emenda não afrouxa está escrito lá).
 
 **Pré-requisito medido antes de construir: a base não estava consolidada.** O Balanço do v27 saiu com
@@ -3562,27 +3562,27 @@ alcance as premissas **do seu exercício**, e que nenhuma premissa fique morta. 
 defeito 1. Recálculo de ponta a ponta com motor de fórmulas Excel: histórico bate com o gabarito
 (Ativo 121.198 / 95.780) e a necessidade de financiamento dá **0,00** nas colunas reais.
 
-## Sessão 11 — DMPL e DVA: código próprio na taxonomia e aba própria (`db/migrations/0024`)
+## Sessão 11 — DMPL e DVA: código próprio na taxonomia e aba própria (`Supabase/migrations/0024`)
 
 O `.xlsx` do teste v26 ainda não chegou. Rodei a suíte inteira primeiro (passo 1 do protocolo) —
-**verde de ponta a ponta**: n8n 83/83, `verificar-export.mts` 21/21, `db/test/run.sh` 21/21,
+**verde de ponta a ponta**: n8n 83/83, `verificar-export.mts` 21/21, `Supabase/test/run.sh` 21/21,
 `tsc`/`eslint`/`next build` limpos — e ataquei a primeira fatia da lista de "diagnosticadas e não
 feitas", que era a única inteiramente auto-contida (as outras duas exigem o N8N vivo ou são do
 intake).
 
 **O diagnóstico que importa: não era erro da IA nem do prompt.** A DMPL do book saía como `MUTUOS`
 porque `tipo_sugerido` é um enum **fechado** nos códigos que EXISTEM na taxonomia
-(`n8n/lib/openai.mjs` → `codigosConhecidos`) — sem código para DMPL, o modelo escolhe o vizinho mais
+(`N8N/lib/openai.mjs` → `codigosConhecidos`) — sem código para DMPL, o modelo escolhe o vizinho mais
 próximo. Mesmo padrão do achado central de v24/v25: **quando a extração está certa, o defeito está
 no nosso vocabulário/agregação, não no modelo.**
 
-- **`db/migrations/0024`** — DMPL e DVA como **complementares** (Nível 2). Não entram no Kit Básico:
+- **`Supabase/migrations/0024`** — DMPL e DVA como **complementares** (Nível 2). Não entram no Kit Básico:
   mexer na lista de 8 obrigatórios mudaria a completude de **todo caso já aberto**, e isso é decisão
   de produto do dono, não efeito colateral de uma migration de vocabulário.
 - **Ordem dos aliases de nome importa e tem teste travando.** O caso comum de "DMPL" num nome de
   arquivo NÃO é a DMPL — é o PDF **composto** ("Balanço Patrimonial DRE, DFC, DMPL 2024.pdf", nome
   real do dono), em que o tipo é o da demonstração principal. Por isso DMPL/DVA vêm **depois** das
-  principais em `n8n/lib/taxonomia.mjs`. (Nota honesta: esse arquivo hoje casa `FLUXO_CAIXA` pelo
+  principais em `N8N/lib/taxonomia.mjs`. (Nota honesta: esse arquivo hoje casa `FLUXO_CAIXA` pelo
   "dfc", comportamento anterior a esta fatia; o que o teste trava é que ele não vire DMPL — quem
   decide de fato é o diagnóstico por conteúdo.)
 - **Roteamento por LINHA:** `SECAO_CANONICA_ENUM` ganhou `dmpl`/`dva`. Sem isso, a linha de uma DMPL
@@ -3599,7 +3599,7 @@ no nosso vocabulário/agregação, não no modelo.**
   para validar um template** — e template errado ordena o dado errado em silêncio. Sai o que o
   documento trouxe, na ordem dele, com a seção declarada em coluna própria. Quando aparecer uma DVA
   real, aí sim vale escrever a cascata.
-- **Nada de subtotal calculado** em nenhuma das duas (anti-ancoragem, `f0/07`): a coluna "Total" da
+- **Nada de subtotal calculado** em nenhuma das duas (anti-ancoragem, `Arquitetura do Sistema/2 Especificação/f0/07`): a coluna "Total" da
   DMPL é a do documento, ou não existe.
 - **Limpeza junto:** o separador de chave composta era um **byte NUL literal** no fonte de
   `export.ts` (caractere invisível). Virou a constante `CHAVE_SEP` — e o motivo não é cosmético: as
@@ -3609,7 +3609,7 @@ no nosso vocabulário/agregação, não no modelo.**
 **Validação:** n8n **86/86** (3 testes novos); `verificar-export.mts` **34/34** (11 verificações
 novas). Os invariantes novos foram **provados não-vazios**, como o protocolo exige: desligando o
 roteamento por linha cai 1; desligando o mapa de abas caem 3 e somem 11. Migrations 0001–0024 limpas
-em Postgres 16 local; `db/test/run.sh` 21/21; `tsc`/`eslint`/`next build` limpos.
+em Postgres 16 local; `Supabase/test/run.sh` 21/21; `tsc`/`eslint`/`next build` limpos.
 
 **Precisa do dono:** aplicar a `0024`, **reimportar o workflow** (o enum de tipos e o prompt vivem no
 JSON gerado) e **reextrair** os documentos de DMPL/DVA já processados — a regra de sempre: migration
@@ -3621,9 +3621,9 @@ Três rodadas encadeadas a partir do `.xlsx` do **teste v25** e do print da fila
 de reconciliação**. A lição transversal: **medir e reproduzir antes de mexer** — em duas das três
 rodadas o que eu "sabia" estava errado.
 
-### PR #50 — reconciliação: 36 pendências → 0 (`db/migrations/0023`)
+### PR #50 — reconciliação: 36 pendências → 0 (`Supabase/migrations/0023`)
 
-Reproduzi as 36 num fixture de **extração fiel** dos 14 documentos (`db/test/gerar_fixture.py`, gerado
+Reproduzi as 36 num fixture de **extração fiel** dos 14 documentos (`Supabase/test/gerar_fixture.py`, gerado
 do próprio gerador do book) ANTES de mexer em qualquer linha. Deu exatamente 36 — o fixture é fiel.
 A invariante que ele trava: **extração fiel não abre pendência nenhuma.** Cinco causas:
 
@@ -3697,8 +3697,8 @@ exige force-push no `main`, oferecido e não executado.
 
 ### Ferramentas novas que ficam
 
-- **`db/test/run.sh`** — recria banco, aplica as 23 migrations, carrega o fixture do book e roda
-  `db/test/reconciliacao.test.sql` (**21 asserts**). Cada checagem tem um caso **negativo** provando
+- **`Supabase/test/run.sh`** — recria banco, aplica as 23 migrations, carrega o fixture do book e roda
+  `Supabase/test/reconciliacao.test.sql` (**21 asserts**). Cada checagem tem um caso **negativo** provando
   que ainda pega o erro real, e todos auto-resolvem quando o número é corrigido.
 - **`portal/scripts/lib/avaliar-formula.mts`** — avaliador de `SUM`/refs/aritmética/`IFERROR`. Sem ele
   os invariantes mediam a coisa errada.
@@ -3730,10 +3730,10 @@ Ativo 121.198). O que estava quebrado eram **classificação e agregação**. Se
   diferida, tributo a recolher/pagar.
 - **Prefixo do nome do arquivo virando ano.** `13_Balancete_..._2025.pdf` saía como `multi 13,25`
   (o `13` virou 2013) em **4 dos 14 documentos** — fragmentava a tabela `periodo` e **impedia a
-  reconciliação de casar documentos do mesmo exercício**. `parsePeriodo` (`n8n/lib/classifier.mjs` +
+  reconciliação de casar documentos do mesmo exercício**. `parsePeriodo` (`N8N/lib/classifier.mjs` +
   espelho no `build-workflow.mjs`) descarta prefixo de ordenação, prioriza ano de 4 dígitos,
   entende `2025x2024`, ordena lista multi-ano.
-- **`db/migrations/0022`** — três coisas: (a) **pendência de período falsa pela 3ª vez** — a
+- **`Supabase/migrations/0022`** — três coisas: (a) **pendência de período falsa pela 3ª vez** — a
   comparação canônica da `0020` ainda acusava divergência entre o mesmo período em granularidades
   diferentes; agora compara **conjunto de anos** (`fn_anos_periodo`, `fn_periodos_equivalentes`,
   `fn_periodos_compativeis`) e só diverge quando os dois lados declaram anos e eles diferem; (b) **11
@@ -3755,27 +3755,27 @@ cenários do v24 exercitados (período equivalente → 0 pendências; divergênc
 reconciliação cross-granularidade → `ok`; guarda sem falso positivo mas ainda pegando fabricação
 real); `verificar-export.mts` 8/8; `tsc`/`eslint`/`next build` limpos.
 
-**PR #47** trouxe o gerador do book (`test-data/book-vertentes/`) e o handoff; **PR #48** as seis
+**PR #47** trouxe o gerador do book (`Dados de Teste/book-vertentes/`) e o handoff; **PR #48** as seis
 correções acima. Ambos mergeados.
 
 ## Sessão 8 — Camada analítica + rodada de endurecimento (PRs #43-#46)
 
 Partiu de dois pedidos do dono: (a) entregar a leitura analítica que um modelador espera pronta,
-fundamentada na bibliografia que ele adicionou (`docs/Embasamento sobre Contabilidade`); (b) achar e
+fundamentada na bibliografia que ele adicionou (`Arquitetura do Sistema/6 Referência/Embasamento sobre Contabilidade`); (b) achar e
 resolver TUDO que estava em aberto ou que quebra pela variação entre contratos. Uma **auditoria
 multi-agente** produziu 45 findings priorizados, versionados em
-**`docs/AUDITORIA_HARDENING_2026-07-24.md`** — é a fonte única do backlog restante, leia esse arquivo
+**`Arquitetura do Sistema/4 Análises e Auditorias/AUDITORIA_HARDENING_2026-07-24.md`** — é a fonte única do backlog restante, leia esse arquivo
 antes de escolher o próximo passo.
 
-- **PR #43 — camada analítica do export** (`f0/08_padrao_entrega_analitica.md` novo + emenda no
-  `f0/07`): **AV%** (common-size: % do Ativo Total no Balanço, % da Receita Líquida na DRE), **Δ%**
+- **PR #43 — camada analítica do export** (`Arquitetura do Sistema/2 Especificação/f0/08_padrao_entrega_analitica.md` novo + emenda no
+  `Arquitetura do Sistema/2 Especificação/f0/07`): **AV%** (common-size: % do Ativo Total no Balanço, % da Receita Líquida na DRE), **Δ%**
   entre períodos comparáveis da mesma entidade, e bloco de **indicadores de liquidez/estrutura** no
   Balanço (Liquidez Corrente/Geral, Endividamento Geral, Composição do Endividamento, Participação de
   Capital de Terceiros, Imobilização do PL). Tudo em fórmula Excel com `IFERROR`; **nenhum índice é
   emitido sem o insumo real** (célula vazia, nunca estimada). Fundamentação: Fridson & Alvarez,
   Matarazzo/Assaf Neto, Penman, Schilit, Altman. O faseamento honesto do que ainda falta (liquidez
-  seca, cobertura de juros, dívida líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') está no `f0/08`.
-- **PR #44 — período canônico + robustez de classificação**: `db/migrations/0020` (`fn_ano4`,
+  seca, cobertura de juros, dívida líquida/EBITDA, ciclo de caixa, ROA/ROE, Altman Z'') está no `Arquitetura do Sistema/2 Especificação/f0/08`.
+- **PR #44 — período canônico + robustez de classificação**: `Supabase/migrations/0020` (`fn_ano4`,
   `fn_periodo_canonico`) faz `fn_registrar_diagnostico` comparar período por **forma canônica** — o
   falso "PERÍODO PODE ESTAR INCORRETO" que o dono viu na fila (`2025-01-15` × `15/01/2025`, `2025` ×
   `12M25`) desapareceu, e as pendências falsas auto-resolvem. `formatarPeriodo` ficou robusto
@@ -3790,7 +3790,7 @@ antes de escolher o próximo passo.
   literalmente; **dois testes travam isso** (nunca voltar a parafrasear).
 - **PR #46 — escala por linha, Classe B com escala, ordem cronológica**: linha não-monetária (%,
   por ação, quantidade) **não herda** a escala do documento (`ehLinhaNaoMonetaria`) — evita
-  mis-escala de 1000x, a custo zero de API; `db/migrations/0021` dá à **Classe B** a pré-condição de
+  mis-escala de 1000x, a custo zero de API; `Supabase/migrations/0021` dá à **Classe B** a pré-condição de
   escala que a Classe A já tinha (comparava R$ mil contra R$ unidade); e o export passou a ordenar
   períodos **cronologicamente** (era alfabético: "Dez/2024" antes de "Jan/2024", o que fazia o **Δ%
   casar o par errado**) + colunas do mesmo período colapsadas.
@@ -3803,7 +3803,7 @@ As duas maiores alavancas — **PDF como texto em vez de imagem (60-80% do input
 resolve junto com o gap crítico de `.docx`/`.xlsx`, e **não enviar o PDF duas vezes** — exigem o N8N
 vivo do dono e por isso NÃO foram implementadas às cegas.
 
-**Book de teste novo (`test-data/book-vertentes/`):** gerador de um grupo fictício com 5 empresas em
+**Book de teste novo (`Dados de Teste/book-vertentes/`):** gerador de um grupo fictício com 5 empresas em
 distress severo (14 PDFs: balanços detalhados de 4 níveis, combinado com eliminações/MEP/participação
 de não controladores, DRE/DFC/DMPL, faturamento 24M, mapa de dívida **em reais**, balancete D/C,
 notas com going concern). Os números são **calculados e validados por assert** (balanço fecha em toda
@@ -3816,9 +3816,9 @@ resultado — **se ele trouxer o resultado, é daí que a próxima rodada começ
 O sistema é um pipeline de due diligence financeira: **N8N** (self-hosted) recebe upload →
 classifica o tipo de documento → chama a **OpenAI** (multimodal) pra diagnosticar + extrair linha a
 linha → grava no **Postgres/Supabase** → o **portal Next.js** (Vercel) mostra dashboard, fila de
-revisão e exporta pra Excel. Princípio inegociável (`docs/01`): nada vira FATO sem aceite humano
+revisão e exporta pra Excel. Princípio inegociável (`Arquitetura do Sistema/1 Visão e Doutrina/01`): nada vira FATO sem aceite humano
 explícito (anti-ancoragem) — a única exceção documentada é auto-aceite de linhas com confiança
-extraída ≥95% (decisão explícita do dono, `db/migrations/0019`).
+extraída ≥95% (decisão explícita do dono, `Supabase/migrations/0019`).
 
 **O que está funcionando e testado** (kit de PDFs sintéticos + arquivos reais do dono):
 classificação por tipo de documento, extração linha a linha com proveniência, classificação por
@@ -3847,11 +3847,11 @@ Excel com FÓRMULAS (não valores estáticos), reconciliação Classe A/B, fila 
 `0023`, a `0024` e a `0025` no Supabase, **reimporta** `workflow.e1-ingestao.json`, **importa**
 `workflow.macro.json`, reextrai os DMPL/DVA já processados e manda o export novo. As fatias não feitas
 são PDF-como-texto + `.docx`/`.xlsx` (exige o N8N vivo) e dois itens de resolução de entidade no
-intake. Backlog largo em `docs/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
+intake. Backlog largo em `Arquitetura do Sistema/4 Análises e Auditorias/AUDITORIA_HARDENING_2026-07-24.md`; custo em `docs/CUSTO_OPENAI.md`.
 
 **Além do export, já existem:** aba **Modelagem** (modelo de FP&A em fórmula, premissa por exercício —
 sessão 12) e aba **Macro** (IPCA/Selic/câmbio: histórico do BCB/IBGE calibra, Focus projeta — sessão
-13, `db/migrations/0025` + `n8n/workflow.macro.json`).
+13, `Supabase/migrations/0025` + `N8N/workflow.macro.json`).
 
 **Regra que vale pra qualquer reimportação/migration:** só afeta extrações **NOVAS** — documento já
 extraído não muda retroativamente, precisa reextração explícita.
@@ -3861,7 +3861,7 @@ extraído não muda retroativamente, precisa reextração explícita.
 ## 1. Estado atual
 
 ### Fundação (F0) — completa, mergeada
-Todas as decisões estruturais estão travadas e documentadas em `f0/` (build vs. buy,
+Todas as decisões estruturais estão travadas e documentadas em `Arquitetura do Sistema/2 Especificação/f0/` (build vs. buy,
 taxonomia v1, schema conceitual, spec de output, protocolo de golden set). Gate aberto
 para a F1.
 
@@ -3892,7 +3892,7 @@ para a F1.
   real; legibilidade real do arquivo — antes hardcoded `'ok'`; resumo objetivo) + linhas
   extraídas com `secao` (agrupador que espelha a estrutura do documento — Ativo Circulante,
   Passivo Não Circulante, PL, etc. — a "planilha organizada" pedida pelo dono).
-- `db/migrations/0010_diagnostico_e1e2.sql`: colunas novas (`campo_extraido.secao`,
+- `Supabase/migrations/0010_diagnostico_e1e2.sql`: colunas novas (`campo_extraido.secao`,
   `documento.resumo`, `documento_versao.nota_legibilidade`) + `fn_registrar_diagnostico` —
   preenche `entidade` só quando ainda vazia (nunca sobrescreve), gera `pendencia` tipada
   (`tipo_incorreto`/`periodo_incorreto`/`entidade_incorreta`/`arquivo_ilegivel`) quando o
@@ -3917,10 +3917,10 @@ para a F1.
 **Fatia 3 (E3 — Reconciliação): Classe A construída e testada (ainda não em produção real).**
 - Dono escolheu começar direto pela Classe A (checagens aritméticas determinísticas), sem
   plano detalhado prévio.
-- `db/migrations/0009_reconciliacao_e3.sql`: tabela `reconciliacao` (log append-only de cada
+- `Supabase/migrations/0009_reconciliacao_e3.sql`: tabela `reconciliacao` (log append-only de cada
   checagem) + `fn_valor_conceito` (casa `campo_extraido.chave` — texto livre da IA — com um
   conceito canônico via termos obrigatórios/excludentes normalizados, sem LLM) + as duas
-  checagens canônicas de `docs/04`: `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no
+  checagens canônicas de `Arquitetura do Sistema/2 Especificação/04`: `fn_reconciliar_ativo_passivo_pl` (Ativo = Passivo + PL no
   Balanço; tenta a linha combinada "Total do Passivo e do PL" primeiro, senão soma Passivo +
   PL separados) e `fn_reconciliar_caixa_bp_fluxo` (Caixa do Balanço vs. saldo final do Fluxo de
   Caixa; **aborta se as unidades divergirem** — ex. "R$" vs "R$ mil" — em vez de comparar
@@ -3944,9 +3944,9 @@ para a F1.
 
 **Fatia 4 (E4 — Output + Portão 2): primeira fatia construída e testada nesta sessão (pedido
 direto do dono: "quero que seja extraído para o Excel em um modelo pronto para análise").**
-- `db/migrations/0011_aceite_export_e4.sql`: Portão 2 **mínimo** — até aqui `campo_extraido`
+- `Supabase/migrations/0011_aceite_export_e4.sql`: Portão 2 **mínimo** — até aqui `campo_extraido`
   não tinha NENHUM mecanismo de aceite humano, o que violaria o princípio inegociável de
-  `f0/07_output_spec.md` ("nenhum número entra no export sem uma `decisao` de aceite humano
+  `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md` ("nenhum número entra no export sem uma `decisao` de aceite humano
   ligada") se o export saísse direto da sombra. `fn_aceitar_extracao(documento_versao_id,
   autor, motivo)` aceita **todas as linhas de uma versão de documento de uma vez** (granularidade
   v0 — a spec permite refinar o "layout fino" depois; não é aceite célula-a-célula ainda).
@@ -3954,7 +3954,7 @@ direto do dono: "quero que seja extraído para o Excel em um modelo pronto para 
 - Portal: a tela de planilha (`/casos/[id]/documentos/[docId]`) ganhou o botão "Aceitar estes
   dados para a base" + badge de status (aceito/pendente) por linha.
 - **Export Excel** (`src/lib/export.ts` + rota `/casos/[id]/export`, biblioteca `exceljs`):
-  segue o schema-alvo travado em `f0/07` — uma aba por demonstração (`Balanço`, `DRE`, `Fluxo
+  segue o schema-alvo travado em `Arquitetura do Sistema/2 Especificação/f0/07` — uma aba por demonstração (`Balanço`, `DRE`, `Fluxo
   de Caixa`, `Combinado`, `Faturamento`, `Dívida`, `Fluxo Projetado`), aba `Resumo` com
   metadados do snapshot (data-base, contagem aceitas/pendentes, versões de taxonomia
   envolvidas). **Linhas pendentes aparecem junto com as aceitas** (nunca somem do export), mas
@@ -3975,7 +3975,7 @@ direto do dono: "quero que seja extraído para o Excel em um modelo pronto para 
      "classificador por SEÇÃO"** — cada conta extraída é classificada em Ativo Circulante /
      Ativo Não Circulante / Passivo Circulante / Passivo Não Circulante / Patrimônio Líquido
      (Balanço/Balancete/Combinado) ou nas seções da DRE/Fluxo de Caixa por **sinais amplos**
-     (a `secao` que a IA já anota, `db/migrations/0010` + palavras-chave no rótulo), **mantendo
+     (a `secao` que a IA já anota, `Supabase/migrations/0010` + palavras-chave no rótulo), **mantendo
      o rótulo ORIGINAL de cada empresa** — nunca força um nome canônico. `Balancete` virou aba
      própria (reaproveita o classificador do Balanço — um balancete é, por natureza, o mesmo
      agrupamento por seção do plano de contas). O casamento por palavra-chave é tolerante a
@@ -4061,7 +4061,7 @@ O que foi feito e achado:
   óbvio)**: chamar `fn_aceitar_extracao` de novo na mesma versão (idempotência) não re-aceita
   linhas já aceitas (`n_campos_aceitos: 0` na segunda chamada, confirmado) — mas AINDA ASSIM
   grava uma nova linha em `decisao` e `evento_auditoria` a cada chamada, mesmo quando nada mudou.
-  Ou seja: "idempotente" (`db/migrations/0011`) vale pro estado de `campo_extraido`, não pro
+  Ou seja: "idempotente" (`Supabase/migrations/0011`) vale pro estado de `campo_extraido`, não pro
   trilha de auditoria — um duplo-clique acidental no botão "Aceitar" do portal geraria uma
   segunda `decisao` com `n_campos_aceitos: 0` no log. Pode ser intencional (toda ação explícita
   de aceite fica registrada, mesmo sem efeito), mas vale confirmar com o dono se isso é desejado
@@ -4073,17 +4073,17 @@ Pedido do dono: "podemos colocar uma IA para criar a planilha? Ela interpretaria
 caso... preciso que 90% dos campos extraídos estejam dentro de tabelas e categorias condizentes."
 
 **Decisão de desenho (importante — alinhada à doutrina, não a substitui):** NÃO se trocou o
-classificador determinístico por uma "IA que monta a planilha". A doutrina (`docs/01`, assinada
+classificador determinístico por uma "IA que monta a planilha". A doutrina (`Arquitetura do Sistema/1 Visão e Doutrina/01`, assinada
 pelo dono) trava: classificação contábil nasce N0, teto **N1** ("nunca vira número sem aceite
 humano"), e a regra de ouro exige golden set + concordância medida antes de subir o dial — e o
-golden set físico ainda não existe (só o protocolo `f0/06`). Então a IA entrou como **camada de
+golden set físico ainda não existe (só o protocolo `Arquitetura do Sistema/2 Especificação/f0/06`). Então a IA entrou como **camada de
 sugestão N1**, exatamente no padrão que o time já usou pro diagnóstico (0010):
-- A MESMA chamada de extração (`n8n/lib/extract.mjs`) — que já roda pra todo documento — passou
+- A MESMA chamada de extração (`N8N/lib/extract.mjs`) — que já roda pra todo documento — passou
   a devolver, por linha, uma **`secao_canonica`**: a IA classifica a conta pelo **significado
   contábil** (não só o nome literal) num enum fixo (`ativo_circulante`, `dre custos`,
   `atividades_investimento`, etc.; `NAO_CLASSIFICAVEL` como escape). **Não aumenta o nº de
   chamadas à OpenAI.**
-- `db/migrations/0012_secao_canonica_e4.sql`: coluna `campo_extraido.secao_canonica` +
+- `Supabase/migrations/0012_secao_canonica_e4.sql`: coluna `campo_extraido.secao_canonica` +
   `fn_registrar_campos_extraidos` (mesma assinatura) gravando-a.
 - O classificador do export (`portal/src/lib/statement-templates.ts` → `classificarConta`) usa a
   sugestão **só como fallback**: se a regra determinística (âncora/seção-livre/palavra-chave) já
@@ -4092,7 +4092,7 @@ sugestão N1**, exatamente no padrão que o time já usou pro diagnóstico (0010
   o alvo de 90% sem regredir o que a regra já acerta e **sem depender de golden set**.
 - **Continua N1/anti-ancoragem:** a seção afeta só ONDE a linha aparece no Excel; a linha
   continua PENDENTE/âmbar até o aceite humano (`fn_aceitar_extracao`). Nenhum número vira fato.
-- **"Otimizar a cada output"** (pedido do dono): isso é o laço de golden set (`f0/06`) — medir
+- **"Otimizar a cada output"** (pedido do dono): isso é o laço de golden set (`Arquitetura do Sistema/2 Especificação/f0/06`) — medir
   concordância IA×humano e, quando alta, subir o dial (fazer a IA ter prioridade sobre a regra,
   ou auto-clear). O mecanismo está desenhado; é medição + ajuste de prompt, não código novo. O
   degrau para promover a IA acima da regra determinística é justamente ter esse golden set.
@@ -4164,7 +4164,7 @@ do dono):** não era só alucinação da IA. O `documento` do arquivo "Global On
 Part', 'Certsys Com'...") — prova de que o CONTEÚDO enviado à IA pra esse item não era o do próprio
 arquivo.
 
-**Causa raiz** — `n8n/build-workflow.mjs`, node `Preparar Conteudo` (each-item mode, monta a parte
+**Causa raiz** — `N8N/build-workflow.mjs`, node `Preparar Conteudo` (each-item mode, monta a parte
 multimodal da chamada de extração): `this.helpers.getBinaryDataBuffer(0, 'data')` com o **índice
 fixo em `0`**, comentário do código dizendo (errado) que "cada item roda isolado em each-item mode,
 então o índice é sempre 0". Na prática, mesmo em each-item mode, `getBinaryDataBuffer(itemIndex,
@@ -4178,7 +4178,7 @@ verificações "confirmado rodando ao vivo" de sessões passadas (que sempre tes
 cada vez).
 - **Fix:** troca do literal `0` por `$itemIndex` (global do N8N que dá o índice do item corrente
   em each-item mode).
-- **O teste (`n8n/test/workflow-sim.test.mjs`) tinha o MESMO ponto cego** — o mock de
+- **O teste (`N8N/test/workflow-sim.test.mjs`) tinha o MESMO ponto cego** — o mock de
   `getBinaryDataBuffer` ignorava o `itemIndex` recebido e sempre lia do `item` passado
   explicitamente pela própria chamada de teste (por isso o parâmetro se chamava `_itemIndex`, com
   underscore de "não uso"), então nunca exercitava o cenário real de 2 itens competindo pelo mesmo
@@ -4186,7 +4186,7 @@ cada vez).
   `binaryStore` (o lote inteiro, como o N8N faz de verdade); `chainFile(idx)` passa a fornecer esse
   lote completo. **Novo teste de regressão** reproduziu o bug (confirmado FALHANDO com o código
   antigo antes do fix — item 1 lia o binário `QUJD` do item 0 em vez do próprio `REVG` — e
-  passando depois). 54/54 testes (`npm test` em `n8n/`).
+  passando depois). 54/54 testes (`npm test` em `N8N/`).
 - **Ação pendente do dono (fora do código, só ele consegue):** documentos processados em uploads
   em lote (2+ arquivos no mesmo Form) **antes** deste fix podem ter conteúdo trocado — qualquer
   `documento` cujo diagnóstico/entidade/valores pareçam não bater com o próprio arquivo é suspeito.
@@ -4198,13 +4198,13 @@ cada vez).
      Certsys Tecn/Part/Com + Total, sem uma única razão social na página) teve a entidade
      preenchida com o **nome do contador que assinou** o documento — a IA não tem hoje uma
      instrução explícita pra não confundir signatário/contador com razão social quando não há uma
-     entidade única óbvia. Vale reforçar o prompt (`n8n/lib/extract.mjs`).
+     entidade única óbvia. Vale reforçar o prompt (`N8N/lib/extract.mjs`).
   2. Um documento com Balanço+DRE+DFC+DMPL do mesmo exercício teve o período extraído como o ano
      ANTERIOR (2023 em vez de 2024) — provavelmente confundido pela linha "SALDOS EM 31 DE
      DEZEMBRO DE 2023" (saldo de ABERTURA da DMPL) no mesmo PDF. Também vale reforçar o prompt pra
      diferenciar saldo de abertura vs. o período de referência do documento.
   3. O mesmo tipo de documento (Balanço+DRE+DFC+DMPL de UMA entidade só) foi classificado ora como
-     `BALANCO`, ora como `COMBINADO` em re-extrações diferentes — `COMBINADO` na taxonomia (f0/03)
+     `BALANCO`, ora como `COMBINADO` em re-extrações diferentes — `COMBINADO` na taxonomia (Arquitetura do Sistema/2 Especificação/f0/03)
      significa demonstrações **combinadas de um grupo de empresas**, não "múltiplas demonstrações
      no mesmo arquivo para uma entidade só". Vale clarificar essa distinção no prompt.
   4. **Achado à parte, não é bug:** o caso de teste do dono ("teste v7") acumulou **11 registros de
@@ -4226,7 +4226,7 @@ entidade/coluna — ao tentar espremer 4 colunas num valor só, o modelo fabrica
 
 O dono pediu as duas ações em paralelo (não são excludentes):
 
-**1. Guarda de segurança (`db/migrations/0013_guarda_extracao_suspeita.sql`)** — não resolve a
+**1. Guarda de segurança (`Supabase/migrations/0013_guarda_extracao_suspeita.sql`)** — não resolve a
 causa raiz, torna o sintoma visível pra QUALQUER documento, já em produção assim que a migration
 for aplicada (não depende de reextrair nada):
 - `fn_registrar_campos_extraidos` (mesma assinatura de 0005/0006/0010/0012) passa a analisar o
@@ -4236,24 +4236,24 @@ for aplicada (não depende de reextrair nada):
     EXATO mesmo valor não-zero — praticamente impossível em dado real, típico de fabricação. Exclui
     zero de propósito (repetir "0,00" em várias linhas vazias é normal, não é sinal de nada).
   - **`extracao_baixa_confianca`** (o enum já existia desde a `0001`, nunca tinha sido usado — só
-    estava no catálogo do `f0/04`): ≥3 linhas E ≥30% do lote com confiança abaixo de 0.7.
+    estava no catálogo do `Arquitetura do Sistema/2 Especificação/f0/04`): ≥3 linhas E ≥30% do lote com confiança abaixo de 0.7.
   - Idempotente (reaproveita pendência aberta da mesma versão) e auto-resolve numa reextração que
     não repete o padrão — mesmo molde de `fn_registrar_diagnostico`/reconciliação.
 - Testado contra Postgres 16 local: extração suspeita gera a pendência certa; reextração limpa
   auto-resolve; baixa confiança gera a pendência certa; chamar duas vezes com o mesmo padrão não
   duplica.
 
-**2. Suporte a documentos multi-entidade (`db/migrations/0014_entidade_coluna_multi_entidade.sql`)**
+**2. Suporte a documentos multi-entidade (`Supabase/migrations/0014_entidade_coluna_multi_entidade.sql`)**
 — ataca a causa raiz, dando à IA uma forma estruturalmente correta de representar o dado em vez de
 forçá-la a resumir/adivinhar:
 - Coluna nova `campo_extraido.entidade_coluna` — nome da coluna/entidade da linha, quando o
   documento traz várias entidades lado a lado (null no caso comum, 1 entidade só).
-- `n8n/lib/extract.mjs` (fonte da verdade) — schema (`entidade_coluna` novo, obrigatório-mas-
+- `N8N/lib/extract.mjs` (fonte da verdade) — schema (`entidade_coluna` novo, obrigatório-mas-
   nullable, mesmo padrão de `secao_canonica`) + prompt: quando o documento tem colunas de
   entidade lado a lado, gerar **uma linha por (conta × coluna)**, mesmo "chave", nunca somar/
-  estimar um valor único. Mirror manual em `n8n/build-workflow.mjs` (schema JSON + prompt
+  estimar um valor único. Mirror manual em `N8N/build-workflow.mjs` (schema JSON + prompt
   comprimido + parse) atualizado junto — mesmo padrão de manutenção de `secao_canonica` (0012).
-  `n8n/test/extract.test.mjs` ganhou teste dedicado reproduzindo o Certsys (mesma chave, 4
+  `N8N/test/extract.test.mjs` ganhou teste dedicado reproduzindo o Certsys (mesma chave, 4
   `entidade_coluna` diferentes → 4 linhas, não 1).
 - Portal: `CampoExtraido`/rota `/export` passam a trazer `entidade_coluna`; `export.ts` usa
   `campo.entidade_coluna || ctx.entidade` para montar a coluna (entidade×período) — cada
@@ -4284,12 +4284,12 @@ secundário #3: a classificação **`BALANCO` vs `COMBINADO` saiu INVERTIDA** en
   classificado como `BALANCO`.
 - `Balanço Patrimonial DRE, DFC, DMPL Global One 2024assinado.pdf` (Global One — 1 empresa, várias
   demonstrações → **deveria ser BALANCO**) foi classificado como `COMBINADO`.
-- Distinção oficial (taxonomia `f0/03` / seed `0002`): `BALANCO` = balanço de UMA entidade × período
+- Distinção oficial (taxonomia `Arquitetura do Sistema/2 Especificação/f0/03` / seed `0002`): `BALANCO` = balanço de UMA entidade × período
   (vinculação `entidade_periodo`); `COMBINADO` = "Demonstrações combinadas (grupo consolidado)",
   vinculação por `periodo` (o grupo inteiro, não uma entidade).
 
-Reforço aplicado no prompt de extração (`n8n/lib/extract.mjs`, fonte da verdade; mirror comprimido
-em `n8n/build-workflow.mjs` regenerado) nos 3 achados secundários de uma vez:
+Reforço aplicado no prompt de extração (`N8N/lib/extract.mjs`, fonte da verdade; mirror comprimido
+em `N8N/build-workflow.mjs` regenerado) nos 3 achados secundários de uma vez:
 1. **Entidade ≠ signatário:** não usar o nome de quem assinou (contador/administrador/sócio; bloco
    com CRC/CPF) como razão social — foi o que fez "ED ALVES DE AQUINO" (contador) virar a entidade
    do Certsys numa sessão anterior. Em documento de várias empresas, usar o nome do GRUPO ou null.
@@ -4299,7 +4299,7 @@ em `n8n/build-workflow.mjs` regenerado) nos 3 achados secundários de uma vez:
 3. **Período ≠ saldo de abertura:** o período é o exercício ATUAL do documento; uma DMPL que mostra
    "Saldos em 31/12/2023" e "31/12/2024" é documento de 2024 (2023 é só o saldo inicial) — foi o que
    fez o Global One sair como "2023" numa sessão anterior.
-- **Sem teste unitário determinístico** (é comportamento do LLM — o alvo do golden set `f0/06`, ainda
+- **Sem teste unitário determinístico** (é comportamento do LLM — o alvo do golden set `Arquitetura do Sistema/2 Especificação/f0/06`, ainda
   não montado). 55/55 testes do N8N seguem passando (schema/parse cobertos); o novo texto foi
   confirmado presente no `workflow.e1-ingestao.json` gerado. **Validação real = o dono reprocessar**
   e conferir se o Certsys vira COMBINADO e o Global One vira BALANCO.
@@ -4310,10 +4310,10 @@ informações" — sem totais, com a linha de total do documento ("NÃO CIRCULAN
 das contas, e nomes iguais para valores diferentes ("CIRCULANTE" do Ativo vs. do Passivo). Pediu:
 fórmulas calculando os totais por categoria (Ativo/Ativo Circulante/Não Circulante/Passivo/PL/…)
 **no cabeçalho da seção**, balanço completo, e "buscar nas melhores fontes contábeis" como montar
-Balanço/DRE/Fluxo. **Tensão de doutrina:** isso contradiz a anti-ancoragem de `f0/07` ("nenhum
+Balanço/DRE/Fluxo. **Tensão de doutrina:** isso contradiz a anti-ancoragem de `Arquitetura do Sistema/2 Especificação/f0/07` ("nenhum
 subtotal calculado por soma"). Reconciliação escolhida pelo dono (via AskUserQuestion): usar
 **fórmulas Excel transparentes** (`=SUM`), manter o total que o documento trouxe numa linha de
-conferência, e **sinalizar divergência** formula×extraído. Emenda registrada em `f0/07`.
+conferência, e **sinalizar divergência** formula×extraído. Emenda registrada em `Arquitetura do Sistema/2 Especificação/f0/07`.
 - **Fundamentação (WebSearch):** Lei 6.404/76 art. 178 + CPC 26 — Ativo em ordem de liquidez
   (Circulante; Não Circulante = Realizável a LP / Investimentos / Imobilizado / Intangível);
   Passivo (Circulante, Não Circulante) + PL. DRE em cascata; DFC método indireto (CPC 03).
@@ -4352,7 +4352,7 @@ O dono mandou arquivos de referência (3 zips: balanços consolidados 2022–202
 balancetes do grupo Embrepar/Fort Lub/SKY; + `ProjecoesDelendSummary.csv`) e pediu que o export
 "entregue algo parecido". O `DelendSummary` é um **modelo de FP&A completo** (colunas mensais
 Actual→projeções, KPIs de SaaS — ARR/MRR/BaaS —, Fluxo de Caixa indireto, P&L em cascata com
-margens/crescimento %, Pro-forma). **Isso é modelagem/projeção — contradiz `f0/07` ("output NÃO
+margens/crescimento %, Pro-forma). **Isso é modelagem/projeção — contradiz `Arquitetura do Sistema/2 Especificação/f0/07` ("output NÃO
 projeta, NÃO é modelagem")**. Perguntei o rumo (AskUserQuestion); o dono escolheu **"layout
 analítico sobre o dado REAL, sem projetar"** (não o motor de projeção). Registrado.
 - **Entregue nesta fatia:** linhas de **MARGEM** (% da Receita Líquida) na DRE, como FÓRMULA por
@@ -4371,7 +4371,7 @@ analítico sobre o dado REAL, sem projetar"** (não o motor de projeção). Regi
   endividamento/capital de giro); (2) coluna de **Crescimento %** período-a-período (exige lógica
   de comparabilidade entre colunas da MESMA entidade). Ambos são presentation/fórmula sobre dado
   real. (3) O **motor de projeção/modelagem** (o que o DelendSummary realmente é) segue FORA do
-  escopo pela decisão do dono + `f0/07` — só entraria com revisão explícita da doutrina.
+  escopo pela decisão do dono + `Arquitetura do Sistema/2 Especificação/f0/07` — só entraria com revisão explícita da doutrina.
 
 ### Sessão 7 (cont.⁵) — Ajustes no export após o teste v12 do dono
 O dono reprocessou ("teste v12") e apontou "faltou algumas fórmulas". Ao inspecionar o `.xlsx`:
@@ -4395,16 +4395,16 @@ O dono reprocessou ("teste v12") e apontou "faltou algumas fórmulas". Ao inspec
 - **Ainda deferido:** DMPL em aba própria (exige estender o enum da IA + reextração); é o passo
   que traria essas linhas de volta como uma demonstração de verdade, em vez de "Não Classificadas".
 
-### Sessão 7 (cont.⁶) — Reconciliação Classe B (`db/migrations/0015`)
+### Sessão 7 (cont.⁶) — Reconciliação Classe B (`Supabase/migrations/0015`)
 Próximo passo combinado com o dono desde a sessão 6, adiado 3x por bugs críticos de dados —
-retomado agora que a extração está estável. Segue o desenho de `docs/04_RECONCILIACAO.md` e o
+retomado agora que a extração está estável. Segue o desenho de `Arquitetura do Sistema/2 Especificação/04_RECONCILIACAO.md` e o
 molde da Classe A (`0009`): mesma tabela `reconciliacao` (log append-only, `classe='B'`), mesma
 função `fn_valor_conceito`/`fn_normalizar_texto`, mesma pendência idempotente com auto-resolução —
 mas **travada em N1** (nunca sobe pra N2 como a A pode): Classe B é agregação/período, não
 identidade aritmética pura, então **banda de materialidade** (mais folgada que a A: piso R$ 50k
 **e** 5%, vs. R$ 100/0,5% da A) e qualquer divergência na zona cinzenta vira **revisão humana**,
 nunca auto-clear.
-- **Duas checagens canônicas** (os exemplos de `docs/04`): (1) `fn_reconciliar_receita_dre_vs_faturamento`
+- **Duas checagens canônicas** (os exemplos de `Arquitetura do Sistema/2 Especificação/04`): (1) `fn_reconciliar_receita_dre_vs_faturamento`
   — Receita Operacional Bruta da DRE vs. soma das linhas MENSAIS de `FATURAMENTO_24M` do MESMO
   ano (recorte pelo ano no rótulo — aceita "2024", "24", "12M24" — excluindo linhas de total/média/
   acumulado, que somariam duplicado); (2) `fn_reconciliar_despfin_dre_vs_divida` — Despesa
@@ -4431,13 +4431,13 @@ nunca auto-clear.
   zona cinzenta (divergência de 32%, acima da banda); casamento de ano com 2 e 4 dígitos.
   Migrations 0001-0015 aplicadas limpo (mesma ressalva de sempre: `storage.buckets` não existe em
   Postgres vanilla). `tsc`/`eslint` do portal limpos.
-- **Achado de documentação:** a `0014` nunca tinha entrado na tabela do `db/README.md` (esquecida
+- **Achado de documentação:** a `0014` nunca tinha entrado na tabela do `Supabase/README.md` (esquecida
   numa sessão anterior) — corrigido junto com a `0015`.
 - **Próximo passo natural (não feito aqui):** ação de "confirmar/ressalva" dedicada na fila do
   portal pras pendências de reconciliação (hoje só listam, read-only — item já listado em
   "Próximos passos" há várias sessões).
 
-### Sessão 7 (cont.⁷) — BUG CRÍTICO: extração silenciosamente vazia (`db/migrations/0016`)
+### Sessão 7 (cont.⁷) — BUG CRÍTICO: extração silenciosamente vazia (`Supabase/migrations/0016`)
 Achado testando com um caso real do dono ("teste v14", 16 documentos): todos os documentos foram
 **classificados com sucesso** (tipo/entidade/período gravados, confiança 90-95%, fonte
 `openai_conteudo`) mas **0 linhas foram extraídas** para qualquer um deles — export saiu com
@@ -4449,20 +4449,20 @@ nada** — sinal de causa determinística, não transitória (rate limit teria v
   grandes — grupo com várias entidades/demonstrações no mesmo PDF, ex. "Balanço Patrimonial DRE
   DFC DMPL 2025assinado.pdf" — podem exigir uma saída JSON enorme). Sem `max_tokens` explícito e
   sem checagem de `finish_reason`, uma resposta truncada (finish_reason=length) virava um JSON
-  incompleto que falhava o `JSON.parse` — e `parseExtractionResponse` (`n8n/lib/extract.mjs`,
-  mirror em `n8n/build-workflow.mjs`) devolvia `campos: []` **silenciosamente**, sem lançar exceção
+  incompleto que falhava o `JSON.parse` — e `parseExtractionResponse` (`N8N/lib/extract.mjs`,
+  mirror em `N8N/build-workflow.mjs`) devolvia `campos: []` **silenciosamente**, sem lançar exceção
   (por isso o node aparece verde no N8N: é um 200 OK truncado, não um erro HTTP). Como o node
   `OpenAI Extrair` também tem `onError: continueRegularOutput` (fail-safe pra um documento ruim
   não derrubar o lote inteiro), mesmo um erro de fato da API (429/500) passaria despercebido do
   mesmo jeito. `fn_registrar_campos_extraidos` (0013) tratava array vazio como "0 campos, sucesso"
   e retornava cedo — nada no pipeline detectava isso.
 - **Fix (dois lados, precisam andar juntos):**
-  1. `n8n/lib/extract.mjs` (+ mirror `n8n/build-workflow.mjs`): `buildExtractionRequest` agora
+  1. `N8N/lib/extract.mjs` (+ mirror `N8N/build-workflow.mjs`): `buildExtractionRequest` agora
      manda `max_tokens: 16384` explícito (teto de saída do gpt-4o) — elimina a possibilidade de um
      default menor específico de conta/API. `parseExtractionResponse` agora captura
      `finish_reason` e `apiJson.error`, e devolve um novo campo `falhaMotivo` (null quando ok;
      motivo textual quando a API errou, veio truncada, ou o JSON é inválido) — nunca mais silêncio.
-  2. `db/migrations/0016_guarda_extracao_falhou.sql`: novo tipo `extracao_falhou` no enum
+  2. `Supabase/migrations/0016_guarda_extracao_falhou.sql`: novo tipo `extracao_falhou` no enum
      `pendencia_tipo`. `fn_registrar_campos_extraidos` (mesma assinatura de 0005/.../0013 +
      `p_falha_motivo text default null`) passa a resolver documento/caso **mesmo com 0 campos**
      (antes só rodava se `v_count > 0`) e gera pendência idempotente/auto-resolvível quando o N8N
@@ -4503,14 +4503,14 @@ uma chamada mais leve e nem todo documento aciona o fallback — só quem tem co
   do N8N) pro 429 residual. É exatamente o que a própria mensagem de erro do N8N recomenda
   ("use the batching settings under 'Options'"). Helper `OPENAI_BATCHING` + extensão do helper
   `node()` pra aceitar as opções de retry.
-- **Só workflow** (nenhuma migration): `n8n/build-workflow.mjs` + `workflow.e1-ingestao.json`
+- **Só workflow** (nenhuma migration): `N8N/build-workflow.mjs` + `workflow.e1-ingestao.json`
   regenerado. `npm test` 64/64 (1 teste novo trava batching+retry nos dois nós). **Precisa
   reimportar o workflow no N8N** e reprocessar o "teste v15".
 - **Trade-off consciente:** com `batchSize 1` + 3s, 16 documentos levam ~1min só de espaçamento
   (+ o tempo de cada chamada). É lento mas confiável; se o volume crescer muito, dá pra afrouxar o
   intervalo conforme o tier da conta OpenAI (limites maiores) — deixado conservador de propósito.
 
-### Sessão 7 (cont.⁹) — Documentos COMPARATIVOS: coluna de período (`db/migrations/0017`)
+### Sessão 7 (cont.⁹) — Documentos COMPARATIVOS: coluna de período (`Supabase/migrations/0017`)
 Pedido do dono: deixar o sistema "profissional a ponto de um modelador de 20 anos usar ativamente".
 A maior lacuna de export mapeada (e um bug de PERDA DE DADO): demonstração comparativa — o padrão em
 contabilidade, ex. o "Balanço consolidado 2023 x 2024.pdf" do teste v15 — tinha as duas colunas de
@@ -4523,7 +4523,7 @@ modelagem.
   (rótulo da coluna de período da linha; null no caso comum de período único → cai no período do
   documento, sem regressão). É **ortogonal** a `entidade_coluna`: um documento pode ter várias
   empresas E vários anos → linha por (conta × empresa × período). Schema+prompt de extração
-  (`n8n/lib/extract.mjs` + mirror `build-workflow.mjs`) pedem uma linha por (conta × período); o
+  (`N8N/lib/extract.mjs` + mirror `build-workflow.mjs`) pedem uma linha por (conta × período); o
   export (`portal/src/lib/export.ts`) usa `periodo_coluna` na chave de coluna; a tela de linhas do
   documento mostra `[período]` ao lado do `(entidade)`.
 - **Limpeza de schema junto:** a `0016` tinha deixado DUAS sobrecargas de `fn_registrar_campos_extraidos`
@@ -4547,7 +4547,7 @@ Pedido do dono (OODA): input mais amigável dentro do HTML da Vercel (enviar/rec
 próprio portal) + um "campo de mandato" pra enviar arquivos em momentos diferentes e caírem no
 mesmo checklist/export/reconciliação.
 - **Observação-chave:** o "mandato" JÁ é o `caso` — `fn_upsert_caso(nome)` reusa por nome
-  (`db/migrations/0006`), então reenviar no mesmo mandato já acumula. O que faltava era (a) tornar
+  (`Supabase/migrations/0006`), então reenviar no mesmo mandato já acumula. O que faltava era (a) tornar
   isso explícito/amigável e (b) permitir upload pelo portal. E o ponto crítico de arquitetura: o
   pipeline lê o binário do **Form do N8N** — reescrever isso pra ler do Storage seria uma fatia
   grande e não-testável.
@@ -4586,7 +4586,7 @@ documentos ainda falharam** — 3 com o MESMO 429 de rate limit da cont.⁸, 3 c
   vira 2-3 linhas via `periodo_coluna`, cont.⁹). Os 9 documentos "Sky/Fort Lub/Embrepar" (multi-
   demonstração — Balanço+DRE+DFC+DMPL — mas de UM ano só) funcionaram bem, o que descarta a
   hipótese de "documento com várias demonstrações = sempre denso demais".
-- **Fix 1 — chaves de fio curtas (`n8n/lib/extract.mjs` + mirror):** o array `linhas[]` é o único
+- **Fix 1 — chaves de fio curtas (`N8N/lib/extract.mjs` + mirror):** o array `linhas[]` é o único
   bloco repetido centenas de vezes por documento — cada caractere de nome de propriedade é gasto
   DE NOVO a cada linha na saída JSON. Renomeado `secao→s, secao_canonica→sc, entidade_coluna→ec,
   periodo_coluna→pc, chave→k, valor_texto→vt, valor_num→vn, origem_pagina→op, confianca→cf` SÓ na
@@ -4615,11 +4615,11 @@ documentos ainda falharam** — 3 com o MESMO 429 de rate limit da cont.⁸, 3 c
   real de fechar limpo num teste de poucos centavos, não só "a extração rodou". Entregues ao dono
   fora do repo (são dado de teste, não código).
 - **Testado:** `npm test` do n8n 68/68 (2 testes novos travando o batching endurecido e a redução
-  de bytes por linha). Migrations não mudaram nesta fatia (só `n8n/lib/extract.mjs` +
+  de bytes por linha). Migrations não mudaram nesta fatia (só `N8N/lib/extract.mjs` +
   `build-workflow.mjs` + testes). `tsc`/`eslint` do portal inalterados (fatia é só n8n).
 - **Observação à parte (não corrigida aqui):** os 9 documentos "Sky/Fort Lub/Embrepar" (1 entidade,
   4 demonstrações no mesmo PDF) vieram classificados como `COMBINADO` com a entidade preenchida —
-  pela doutrina (`f0/03`, reforçada na cont.²) isso deveria ser a demonstração PRINCIPAL (ex.
+  pela doutrina (`Arquitetura do Sistema/2 Especificação/f0/03`, reforçada na cont.²) isso deveria ser a demonstração PRINCIPAL (ex.
   `BALANCO`), já que `COMBINADO` é reservado pra grupo de VÁRIAS empresas com colunas por empresa.
   Não corrigiu os dados (o `entidade_coluna` ficou null corretamente, o export separou por arquivo
   do jeito certo) — é só um rótulo de classificação errado, cosmético por ora. Vale reforçar o
@@ -4693,7 +4693,7 @@ no dashboard.
   rastro — exatamente o sintoma "3 de 9 arquivos somem". Corrigido: todos os 6 nós Postgres agora
   têm `onError:continueRegularOutput` + `retryOnFail` (3 tentativas, 3s entre elas) — o pior caso
   agora é "esse item específico fica incompleto" (nunca vira fato, segue N0/pendente, doutrina
-  anti-ancoragem docs/01), não "o lote inteiro desaparece em silêncio".
+  anti-ancoragem Arquitetura do Sistema/1 Visão e Doutrina/01), não "o lote inteiro desaparece em silêncio".
 - **Testado:** `npm test` do n8n 69/69 (1 teste novo travando onError+retryOnFail+maxTries nos 6
   nós Postgres). `tsc`/`eslint` do portal inalterados (fatia é só n8n).
 - **Ainda por confirmar pelo dono:** reimportar o workflow (pega o retry dos nós Postgres) e
@@ -4713,7 +4713,7 @@ problemas reais, todos corrigidos nesta fatia.
   `fn_revisar_documento` (0008): ela só resolve pendências do tipo `classificacao_pendente` — as
   outras três (`tipo_incorreto`/`entidade_incorreta`/`periodo_incorreto`, introduzidas pela 0010
   MUITO depois e nunca conectadas de volta a esta função) nunca fecham, mesmo depois da revisão
-  humana confirmar/corrigir. **`db/migrations/0018`**: mesma função, mesma assinatura, resolve os
+  humana confirmar/corrigir. **`Supabase/migrations/0018`**: mesma função, mesma assinatura, resolve os
   quatro tipos agora.
 - **BUG 2 — vazamento entre abas do export:** a aba "Fluxo de Caixa" tinha uma coluna FANTASMA
   ("Teste Indústria Ltda — multi 02,25") com só a linha "Lucro Líquido do Exercício" (600.000) —
@@ -4726,7 +4726,7 @@ problemas reais, todos corrigidos nesta fatia.
   prioriza mantê-la ali quando ela também reconhece a linha — só reroteia pra outra família quando a
   estrutura do documento não reconhece a linha (o caso genuíno de PDF combinado).
 - **BUG/ACHADO 3 — "taxonomia estranha":** `MUTUOS` (categoria "Intragrupo" na própria taxonomia,
-  `db/migrations/0002`) estava mapeado pra aba "Dívida" — um mútuo intragrupo não é dívida bancária
+  `Supabase/migrations/0002`) estava mapeado pra aba "Dívida" — um mútuo intragrupo não é dívida bancária
   externa (`MAPA_DIVIDA`/`CONTRATO_DIVIDA`), misturar os dois numa aba só não fazia sentido
   contábil. `FAT_INTRAGRUPO` e `CONTRATO_SOCIAL` nem tinham aba própria, caindo no genérico
   "Outros" junto com dado sem relação nenhuma. Fix (`portal/src/lib/export.ts`): `MUTUOS`/
@@ -4736,12 +4736,12 @@ problemas reais, todos corrigidos nesta fatia.
   unidade, confiança, aceito por/em, arquivo de origem, versão da taxonomia) — poluindo quem só
   quer ver conta × valor. Reduzido pra 5 (Entidade, Período, Rótulo, Valor, Status); as removidas
   NÃO somem — viram um comentário (`cell.note`) no rótulo, visível ao passar o mouse (mantém
-  rastreabilidade sem poluir a grade, princípio de `f0/07_output_spec.md`).
+  rastreabilidade sem poluir a grade, princípio de `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`).
 - **Pedido 5 — auto-aceite >=95% de confiança:** decisão de produto explícita do dono, registrada
   com a ressalva honesta de que isto sobe a autonomia da extração além do que a doutrina padrão
-  (`docs/01`) exigiria sem golden-set validado — a `confianca` é a autoavaliação do PRÓPRIO modelo,
+  (`Arquitetura do Sistema/1 Visão e Doutrina/01`) exigiria sem golden-set validado — a `confianca` é a autoavaliação do PRÓPRIO modelo,
   não verificada contra gabarito humano. Implementado mesmo assim (é uma escolha do dono, não da
-  IA), com registro completo: `db/migrations/0019` grava `status_aceite='aceito'` já na extração
+  IA), com registro completo: `Supabase/migrations/0019` grava `status_aceite='aceito'` já na extração
   quando `confianca >= 0.95`, com UM `decisao`(autor='sistema:auto_aceite')+`evento_auditoria` por
   chamada (resumo, não por linha) — auditável/reversível. Inclui backfill pras linhas já gravadas
   antes desta migration. Recomendação registrada: acompanhar a taxa de erro real nas linhas
@@ -4757,7 +4757,7 @@ problemas reais, todos corrigidos nesta fatia.
 
 ### Verificação de qualidade (rodada real, 2026-07-20)
 Um ciclo completo de teste ao vivo no N8N/Supabase real do dono revelou e corrigiu 3
-bugs reais em sequência (todos documentados em `n8n/README.md` → Troubleshooting):
+bugs reais em sequência (todos documentados em `N8N/README.md` → Troubleshooting):
 1. Schema da OpenAI sem `enum` em `tipo_taxonomia`/`periodo_tipo` → IA inventava
    código inválido (`"BAL"` em vez de `"BALANCO"`).
 2. Leitura de binário no Code node via `binary.data.data` direto → quebra em modo
@@ -4838,7 +4838,7 @@ Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru 
   `casos/[id]/revisao/page.tsx` ("Sugestão atual").
 - **Período nas mesmas telas:** `formatarPeriodo` (já existia, só usada no export em Excel) agora
   também roda nessas três telas — mesmo tratamento, um lugar só.
-- **Resumo repetindo entidade/período/tipo:** o prompt da IA (`n8n/workflow.e1-ingestao.json`, nó
+- **Resumo repetindo entidade/período/tipo:** o prompt da IA (`N8N/workflow.e1-ingestao.json`, nó
   "Montar Req Extração") só dizia `resumo = 2-3 frases objetivas do conteudo`, sem instruir a NÃO
   repetir o que já sai em campos próprios — daí frases como "...da Teste Indústria Ltda para os
   últimos 24 meses, de janeiro de 2024 a dezembro de 2025..." reafirmando entidade/período que já
@@ -4858,18 +4858,18 @@ Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru 
 
 | Decisão | Onde está documentada |
 |---|---|
-| Build vs. buy: híbrido, reaproveitando infra do `clipping-news` (Supabase + N8N + Vercel) | `f0/02_build_vs_buy.md` |
-| Ingestão: upload em lote via **N8N Form Trigger** (não pelo portal) | decisão explícita do dono na conversa; `n8n/README.md` |
-| Motor de IA: **OpenAI API direta** (multimodal + Structured Outputs), classificação por nome primeiro (barato), fallback pra IA só quando confiança baixa | `f0/02_build_vs_buy.md` |
-| Taxonomia v1: Kit Básico (8 obrigatórios) + 26 Variáveis (complementares) | `f0/03_taxonomia_reestruturacao.md` |
-| Output final: **base viva + export Excel** — dado curado e rastreável, **NÃO modelagem com fórmulas prontas** (decisão reafirmada nesta sessão após dúvida do dono) | `f0/07_output_spec.md`, seção "Fora do escopo" |
-| Doutrina de Autonomia: classificação nasce N1 (sugestão+revisão humana), extração nasce N0 (sombra), anti-ancoragem (nenhum número vira fato sem aceite humano explícito) | `docs/01_DOUTRINA_DE_AUTONOMIA.md` |
-| RLS do Fatia 1: qualquer usuário `authenticated` vê tudo (ferramenta interna, um time) — restrição por caso é fatia futura | `db/migrations/0003_rls_e_storage.sql` |
-| Upload Storage (N8N→Supabase Storage) desabilitado — bug de plataforma confirmado do node HTTP Request do N8N com binário | `n8n/README.md` § "Upload Storage — pendência conhecida" |
-| E3 Classe A: casamento `chave` extraída → conceito canônico por **normalização + termos obrigatórios/excludentes** (determinístico, sem LLM); log append-only (`reconciliacao`) separado do estado acionável deduplicado (`pendencia`, chave `motivo='reconciliacao:<tipo>'`) | `db/migrations/0009_reconciliacao_e3.sql` |
-| Diagnóstico de conteúdo (entidade/tipo/período/legibilidade) fundido na MESMA chamada de extração E2 (não uma chamada nova) para não aumentar custo; só preenche lacunas (entidade vazia) ou confere contra o já registrado — divergência sempre vira pendência revisável, nunca sobrescreve sozinho | `db/migrations/0010_diagnostico_e1e2.sql` |
-| E4 aceite: granularidade v0 é por **documento_versao inteiro** (não célula-a-célula) — degrau mínimo que já satisfaz `status_aceite`/`aceito_por`/`aceito_em` por linha exigidos pela spec, sem construir UI de seleção linha-a-linha ainda | `db/migrations/0011_aceite_export_e4.sql` |
-| Export Excel: linhas pendentes de aceite aparecem no export (visualmente distintas — âmbar+itálico), nunca são omitidas — "sugestão pendente de revisão" nunca é fato silencioso | `f0/07_output_spec.md`, `portal/src/lib/export.ts` |
+| Build vs. buy: híbrido, reaproveitando infra do `clipping-news` (Supabase + N8N + Vercel) | `Arquitetura do Sistema/2 Especificação/f0/02_build_vs_buy.md` |
+| Ingestão: upload em lote via **N8N Form Trigger** (não pelo portal) | decisão explícita do dono na conversa; `N8N/README.md` |
+| Motor de IA: **OpenAI API direta** (multimodal + Structured Outputs), classificação por nome primeiro (barato), fallback pra IA só quando confiança baixa | `Arquitetura do Sistema/2 Especificação/f0/02_build_vs_buy.md` |
+| Taxonomia v1: Kit Básico (8 obrigatórios) + 26 Variáveis (complementares) | `Arquitetura do Sistema/2 Especificação/f0/03_taxonomia_reestruturacao.md` |
+| Output final: **base viva + export Excel** — dado curado e rastreável, **NÃO modelagem com fórmulas prontas** (decisão reafirmada nesta sessão após dúvida do dono) | `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`, seção "Fora do escopo" |
+| Doutrina de Autonomia: classificação nasce N1 (sugestão+revisão humana), extração nasce N0 (sombra), anti-ancoragem (nenhum número vira fato sem aceite humano explícito) | `Arquitetura do Sistema/1 Visão e Doutrina/01_DOUTRINA_DE_AUTONOMIA.md` |
+| RLS do Fatia 1: qualquer usuário `authenticated` vê tudo (ferramenta interna, um time) — restrição por caso é fatia futura | `Supabase/migrations/0003_rls_e_storage.sql` |
+| Upload Storage (N8N→Supabase Storage) desabilitado — bug de plataforma confirmado do node HTTP Request do N8N com binário | `N8N/README.md` § "Upload Storage — pendência conhecida" |
+| E3 Classe A: casamento `chave` extraída → conceito canônico por **normalização + termos obrigatórios/excludentes** (determinístico, sem LLM); log append-only (`reconciliacao`) separado do estado acionável deduplicado (`pendencia`, chave `motivo='reconciliacao:<tipo>'`) | `Supabase/migrations/0009_reconciliacao_e3.sql` |
+| Diagnóstico de conteúdo (entidade/tipo/período/legibilidade) fundido na MESMA chamada de extração E2 (não uma chamada nova) para não aumentar custo; só preenche lacunas (entidade vazia) ou confere contra o já registrado — divergência sempre vira pendência revisável, nunca sobrescreve sozinho | `Supabase/migrations/0010_diagnostico_e1e2.sql` |
+| E4 aceite: granularidade v0 é por **documento_versao inteiro** (não célula-a-célula) — degrau mínimo que já satisfaz `status_aceite`/`aceito_por`/`aceito_em` por linha exigidos pela spec, sem construir UI de seleção linha-a-linha ainda | `Supabase/migrations/0011_aceite_export_e4.sql` |
+| Export Excel: linhas pendentes de aceite aparecem no export (visualmente distintas — âmbar+itálico), nunca são omitidas — "sugestão pendente de revisão" nunca é fato silencioso | `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`, `portal/src/lib/export.ts` |
 | Export Excel — Balanço/Balancete/DRE/Fluxo de Caixa/Combinado: layout PADRÃO DE MERCADO com colunas entidade×período, mas classificação por SEÇÃO (não por template de nomes fixos) — cada conta mantém o rótulo original da empresa; casamento tolerante a plural/conectivo; nunca soma/calcula subtotal novo. Faturamento/Dívida/Fluxo Projetado continuam em listagem simples (já são série/tabela por natureza) | `portal/src/lib/statement-templates.ts` |
 
 ---
@@ -4909,10 +4909,10 @@ de feature é uma destas (perguntar ao dono qual prioriza):
    individual — o bug da sessão 7 tornou isso mais urgente: um aceite em lote é especialmente
    perigoso quando a extração pode vir contaminada/alucinada em volume.
 7. **Reconciliação Classe C** (interpretativa — mapa de dívida vs. balanço, mútuos/intragrupo,
-   `docs/04`) — "não reconcilia, aproxima para humano": mostra as duas fontes, humano decide.
+   `Arquitetura do Sistema/2 Especificação/04`) — "não reconcilia, aproxima para humano": mostra as duas fontes, humano decide.
    LLM só como hipótese explicativa de uma divergência já detectada, nunca decide.
 8. **Portão 2 formal do caso inteiro** (bloqueantes não-sobrepujáveis, teto de ressalva,
-   `docs/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
+   `Arquitetura do Sistema/3 Estado e Execução/07_STATUS_E_PENDENCIAS.md`) — hoje só existe o aceite mínimo por linha extraída.
 
 **Validar com o time de análise** (ainda pendente): se as palavras-chave de seção
 (`statement-templates.ts`) cobrem o vocabulário real dos clientes da Oria — a sessão 7 usou 2
@@ -4933,7 +4933,7 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
   (duas assinaturas da mesma função) e qualquer chamada só-posicional (ex.: um teste manual)
   fica ambígua. Limpar numa migration futura (`drop function` da assinatura de 14 params).
 - **Upload Storage** ainda desabilitado — alternativas documentadas em
-  `n8n/README.md`: community node `n8n-nodes-supabase`, ou mover upload pro portal via
+  `N8N/README.md`: community node `n8n-nodes-supabase`, ou mover upload pro portal via
   SDK JS do Supabase.
 - **XLSX no fallback de conteúdo**: hoje só manda uma nota de texto avisando; falta
   ligar um nó *Extract From File* antes do `Preparar Conteudo`.
@@ -4951,14 +4951,14 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 ## 4. Padrões relevantes (como este projeto é construído)
 
 ### Disciplina de teste
-- Toda lógica de negócio do N8N vive em `n8n/lib/*.mjs` (testável, fonte da verdade) e
+- Toda lógica de negócio do N8N vive em `N8N/lib/*.mjs` (testável, fonte da verdade) e
   é **espelhada manualmente** dentro das strings de código dos nós Code em
-  `n8n/build-workflow.mjs` (porque nós Code do N8N não importam arquivos). Ao mudar
+  `N8N/build-workflow.mjs` (porque nós Code do N8N não importam arquivos). Ao mudar
   lógica: mude `lib/`, rode `npm test`, regenere com `node build-workflow.mjs`.
   **Já causou um bug real** (schema sem enum) por o mirror manual ter ficado
   desatualizado — hoje o gerador importa constantes direto de `lib/` quando possível,
   em vez de copiar à mão.
-- `n8n/test/workflow-sim.test.mjs` executa os códigos **reais** do JSON gerado com
+- `N8N/test/workflow-sim.test.mjs` executa os códigos **reais** do JSON gerado com
   dados mock reproduzindo a semântica exata do N8N (`$input`, `$()`, `$json`,
   `this.helpers`) — pega bugs de fluxo de dados entre nós antes do dono testar ao vivo.
 - Migrations SQL são sempre testadas contra um **Postgres 16 local efêmero** antes de
@@ -4984,7 +4984,7 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
    arquivo por vez) e **quebra silenciosamente** com 2+ itens — cada item != 0 lê o binário do
    item 0 (nome/mimeType corretos, mas o CONTEÚDO enviado pra IA é de outro arquivo). Achado
    testando com upload de 2 arquivos reais no mesmo Form (sessão 7) — node `Preparar Conteudo` em
-   `n8n/build-workflow.mjs` (plumbing do N8N, sem `lib/` próprio — não é lógica de negócio
+   `N8N/build-workflow.mjs` (plumbing do N8N, sem `lib/` próprio — não é lógica de negócio
    testável isoladamente, por isso o teste é contra o JSON gerado, `workflow-sim.test.mjs`).
 
 ### Git / PR workflow desta sessão
@@ -5036,9 +5036,9 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 
 ### Onde tudo mora
 ```
-db/         — migrations SQL (0001-0028) + README com ordem de aplicação
+Supabase/         — migrations SQL (0001-0028) + README com ordem de aplicação
               test/  — fixture do book + reconciliacao/macro/reextracao.test.sql + run.sh
-n8n/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
+N8N/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
               build-workflow-macro.mjs + lib/macro.mjs + workflow.macro.json — coleta de índices macro (0025),
               workflow SEPARADO que roda no relógio (dia 12); falha dele não derruba a ingestão
 portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
@@ -5048,21 +5048,21 @@ portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revi
               scripts/verificar-export.mts   — 126 invariantes de regressão do export
               scripts/lib/avaliar-formula.mts — avaliador de SUM/refs/aritmética/IFERROR
               scripts/fixtures/             — fixture do book em JSON (gerado, versionado)
-f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
+Arquitetura do Sistema/2 Especificação/f0/         — decisões estruturais da fundação (taxonomia, schema, output spec, padrão analítico)
 docs/       — doutrina de autonomia, arquitetura, roadmap, reconciliação, auditoria, custo OpenAI
-test-data/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não são versionados)
+Dados de Teste/  — book-vertentes/ (gerador do book complexo + gabarito; PDFs não são versionados)
 ```
 
 ### Como validar (rodar SEMPRE antes de commitar)
 ```bash
-node --test 'n8n/test/*.test.mjs'           # 160 testes: libs + nós REAIS do JSON gerado
-node n8n/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
-node n8n/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
-node n8n/build-workflow-diagnostico.mjs     # regenera workflow.diagnostico-openai.json (idem)
+node --test 'N8N/test/*.test.mjs'           # 160 testes: libs + nós REAIS do JSON gerado
+node N8N/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
+node N8N/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
+node N8N/build-workflow-diagnostico.mjs     # regenera workflow.diagnostico-openai.json (idem)
 npx tsx portal/scripts/verificar-export.mts # 198 invariantes do export
-sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
+sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 #   ^ reconciliação + macro + reextração + canonicalização (16) + seed macro
-E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx test/e2e/run.mts
+E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx Verificação/run.mts
 #   ^ 18 asserts ENCADEANDO extração (nó real) -> banco (funções reais) -> export -> gabarito.
 #     É a única suíte que cobre a COSTURA entre as três; as outras validam seu pedaço
 #     contra fixture escrita à mão nas duas pontas, e as duas pontas podem errar juntas.
@@ -5073,14 +5073,14 @@ cd portal && npx tsc --noEmit && npx eslint . && npx next build
 
 ```bash
 cd portal && npm install && cd ..                    # node_modules NÃO vem no clone
-cd test-data/book-vertentes && pip install reportlab && python3 gerar.py && cd ../..
+cd "Dados de Teste"/book-vertentes && pip install reportlab && python3 gerar.py && cd ../..
 # ↑ gera pdf/ + GABARITO.json, que NÃO são versionados. Sem isso o verificar-export.mts
 #   morre com ENOENT no GABARITO.json — não é bug, é insumo faltando.
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
   -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
 # ↑ o cluster já vem provisionado; sem o config_file explícito o pg_ctl falha
 #   ("could not access postgresql.conf" — o Debian separa config de dados).
-sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres db/test/run.sh
+sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 # ↑ como postgres, senão dá "Peer authentication failed" (o socket usa peer auth).
 ```
 
@@ -5091,16 +5091,16 @@ Migrations: aplicar `0001`→`0032` em ordem num Postgres 16 local antes de prop
 funções são redefinidas por migrations posteriores e só a ordem completa revela o comportamento real.
 O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver as fórmulas).
 
-> **Nota para quem for continuar a E3:** `docs/04_RECONCILIACAO.md` tem o desenho conceitual
+> **Nota para quem for continuar a E3:** `Arquitetura do Sistema/2 Especificação/04_RECONCILIACAO.md` tem o desenho conceitual
 > das classes A/B/C. A Classe A (checagens 1 e 2 dos exemplos canônicos) já está construída em
-> `db/migrations/0009_reconciliacao_e3.sql` — ler essa migration (e os testes ad hoc descritos
+> `Supabase/migrations/0009_reconciliacao_e3.sql` — ler essa migration (e os testes ad hoc descritos
 > em §1 desta sessão) antes de adicionar novas checagens ou atacar B/C do zero. **A Classe B é o
 > próximo passo combinado com o dono** (sessão 6): determinística, banda de materialidade (piso
-> R$ **E** % relativo, `docs/04`), teto N1; duas checagens canônicas (Receita DRE vs. soma do
+> R$ **E** % relativo, `Arquitetura do Sistema/2 Especificação/04`), teto N1; duas checagens canônicas (Receita DRE vs. soma do
 > faturamento; despesa financeira vs. juros do mapa de dívida). Reaproveitar `fn_valor_conceito`
 > e o padrão de pendência idempotente (`motivo='reconciliacao:<tipo>'`) da 0009.
 
-> **Nota para quem for continuar a E4:** `f0/07_output_spec.md` é a spec travada (v0) do output
+> **Nota para quem for continuar a E4:** `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md` é a spec travada (v0) do output
 > — dois modos de entrega (base viva no portal + export Excel), schema-alvo com ordem de
 > prioridade, proveniência por célula, e o princípio inegociável de anti-ancoragem. O aceite
 > (`fn_aceitar_extracao`, `0011`), o export (`portal/src/lib/export.ts`) e o classificador por
@@ -5113,12 +5113,12 @@ O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver a
 > sinal mais direto de onde o vocabulário ainda precisa de mais cobertura.
 >
 > **Atualização sessão 6:** além das palavras-chave, o classificador agora tem um **fallback de
-> IA** — a `secao_canonica` que a IA sugere na extração (`db/migrations/0012`, `n8n/lib/extract.mjs`)
+> IA** — a `secao_canonica` que a IA sugere na extração (`Supabase/migrations/0012`, `N8N/lib/extract.mjs`)
 > entra em `classificarConta` só quando a regra determinística abstém. Ao mexer, lembrar: o enum
 > de `secao_canonica` (em `extract.mjs` → `SECAO_CANONICA_ENUM`) e as chaves de seção do
 > classificador (`BALANCO_SECOES`/`DRE_SECOES`/`FLUXO_CAIXA_SECOES`) têm que permanecer IDÊNTICOS
 > (não há import cruzado .mjs↔portal TS). Promover a IA a ter PRIORIDADE sobre a regra (ou
-> auto-clear) é uma subida de dial que exige golden set + concordância medida (`docs/01`, `f0/06`)
+> auto-clear) é uma subida de dial que exige golden set + concordância medida (`Arquitetura do Sistema/1 Visão e Doutrina/01`, `Arquitetura do Sistema/2 Especificação/f0/06`)
 > — não fazer sem isso.
 
 ## Sessão 31 (2026-08-04) — Fase 8 (papel da linha) + Fase 9 (modelo institucional)
@@ -5176,8 +5176,8 @@ PROJETÁVEL"** no topo do Output, nomeando o que falta.
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **44 migrations / 233
-asserts**; `test/e2e/run.mts` = **27**.
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **44 migrations / 233
+asserts**; `Verificação/run.mts` = **27**.
 
 ### O que falta (declarado, não escondido)
 
@@ -5191,11 +5191,11 @@ asserts**; `test/e2e/run.mts` = **27**.
 ## Sessão 32 (2026-08-04) — o lote da Modelagem destravado, e a captura de produção
 
 Sessão curta e reativa: o dono foi executar o roteiro de teste da Fase 8/9 e **travou no passo 3**.
-Três PRs mergeados (#86, #87 e o do `db/README.md`), nenhuma fase nova.
+Três PRs mergeados (#86, #87 e o do `Supabase/README.md`), nenhuma fase nova.
 
 ### O que o dono subiu: a tela de Modelagem de produção, salva pelo navegador
 
-`test-data/capturas/2026-08-04-v35-modelagem/` — o HTML renderizado de
+`Dados de Teste/capturas/2026-08-04-v35-modelagem/` — o HTML renderizado de
 `/casos/c4581e51-…/modelagem`, com a `0042`/`0043`/`0044` **já aplicadas**. Chegou achatado na raiz
 do repositório (o HTML mais os onze *bundles* do Next); os assets voltaram para a pasta `_files/`
 que o próprio HTML referencia, senão a página abre sem estilo. Conferido: **nenhum segredo** nos
@@ -5246,7 +5246,7 @@ cobertura. Ficou porque é a diferença entre uma linha declarada e o lote intei
 divergência volta no instante em que alguém mexer num lado só, que é o que aconteceu entre a `0039`
 e a `0042`.
 
-### `db/README.md` tinha parado na `0031`
+### `Supabase/README.md` tinha parado na `0031`
 
 O `CLAUDE.md` chama esse arquivo de **ordem oficial de aplicação**, e treze migrations (`0032` a
 `0044`) nunca entraram nem na tabela nem na lista de comandos. Quem aplicasse do zero seguindo a
@@ -5263,13 +5263,13 @@ erro, projeta diferente. Agora é rótulo fixo acima da coluna, com o horizonte 
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **45 migrations**
-(13 asserts novos, em `db/test/papel_por_secao.test.sql`); `test/e2e/run.mts` = **27**.
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **45 migrations**
+(13 asserts novos, em `Supabase/test/papel_por_secao.test.sql`); `Verificação/run.mts` = **27**.
 
 ### O que o dono precisa fazer
 
 1. **Aplicar a `0100` no Supabase** — sem ela o "aplicar em lote" continua caindo, porque a correção
-   principal é no banco. A faixa `0100`+ é a de quem colabora (`CLAUDE.md`/`db/README.md`, PR #73);
+   principal é no banco. A faixa `0100`+ é a de quem colabora (`CLAUDE.md`/`Supabase/README.md`, PR #73);
    o buraco `0044` → `0100` é o estado esperado. São 45 migrations no repositório.
 2. Conferir se `0042`, `0043` e `0044` já foram aplicadas — a captura indica que sim.
 3. Executar o roteiro de modelagem e mandar o `.xlsx`.
@@ -5316,9 +5316,9 @@ determinística (3 medições, 3 cancelamentos) e `fn_linhas_para_modelagem` lev
 caberia, mas a página dispara **as duas no mesmo `Promise.all`**, concorrentes, e as duas voltam
 canceladas. Com a `0101`+`0102` aplicadas, as mesmas duas funções, no mesmo caso: **~640 ms cada**.
 
-### A causa de a correção não ter chegado ao banco: `db/README.md`
+### A causa de a correção não ter chegado ao banco: `Supabase/README.md`
 
-A `0101` entrou na **tabela** do `db/README.md` e **não** na lista de comandos
+A `0101` entrou na **tabela** do `Supabase/README.md` e **não** na lista de comandos
 `supabase db execute` que o dono copia para aplicar. A lista terminava na `0100`.
 
 É a mesma falha que a sessão 32 já havia consertado uma vez (treze migrations, `0032`→`0044`, fora
@@ -5330,7 +5330,7 @@ funcionou.
 Três coisas mudaram por causa disso:
 
 - a `0101` e a `0102` entraram na lista de comandos;
-- **`db/test/run.sh` passou a reprovar migration que exista em `db/migrations/` e não esteja na
+- **`Supabase/test/run.sh` passou a reprovar migration que exista em `Supabase/migrations/` e não esteja na
   lista** — o esquecimento de uma linha deixa de ser silencioso e morre no PR. Conferido religando o
   defeito: apagar a linha da `0102` do README reprova a suíte com o arquivo nomeado;
 - `fn_diagnostico_modelagem(caso)` responde `correcoes_instaladas` direto do banco, para "merge não
@@ -5370,7 +5370,7 @@ caso cheio, que é literalmente o sintoma que esta rodada existe para matar. Tem
 
 ### A fixture que faltava: o caso real, não o inventado
 
-`db/test/fixture_modelagem_v35.sql` reconstrói o caso "Teste v35" a partir da captura de produção
+`Supabase/test/fixture_modelagem_v35.sql` reconstrói o caso "Teste v35" a partir da captura de produção
 que a sessão 32 versionou — **249 linhas lógicas, 760 ocorrências, 14 documentos, com os rótulos que
 o extrator realmente escreveu**. Ela reproduz a produção exatamente, papel por papel:
 
@@ -5397,7 +5397,7 @@ passando na fixture com "jan/2024" e voltando vazia com "Faturamento Janeiro"). 
 | `fn_versao_com_extracao` volta a `max(n_versao)` puro | "a linha continua igual com a versão vazia registrada por cima" — *antes 6, depois 5* |
 | `fn_papel_linha` perde o total de grupo sem a palavra "total" | "a classificação bate com a produção" — *conta 204, subtotal 27* |
 | par PRÉ-`0101` inteiro, na forma real | `canceling statement due to statement timeout`, 3 de 3 |
-| a `0102` fora da lista do `db/README.md` | `run.sh` reprova nomeando o arquivo |
+| a `0102` fora da lista do `Supabase/README.md` | `run.sh` reprova nomeando o arquivo |
 
 **Declarado, com a medição que sustenta:** o filtro de versão em `fn_papel_do_rotulo_no_caso`
 **não muda nenhum resultado hoje e não está coberto**. Escrevi o teste e ele **passou com o filtro
@@ -5419,15 +5419,15 @@ PR não funcionou. Agora a orientação segue o erro, e no caso de timeout apont
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **47 migrations** e
-**306 asserts** (283 antes: 23 novos, em `db/test/modelagem_v35.test.sql`); `test/e2e/run.mts` =
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **47 migrations** e
+**306 asserts** (283 antes: 23 novos, em `Supabase/test/modelagem_v35.test.sql`); `Verificação/run.mts` =
 **27**.
 
 Nota de insumo, que custou uma tentativa: o `CLAUDE.md` documenta o e2e como
-`E2E_PSQL=1 ./portal/node_modules/.bin/tsx test/e2e/run.mts`, mas `E2E_PSQL` é o **comando** do psql
+`E2E_PSQL=1 ./portal/node_modules/.bin/tsx Verificação/run.mts`, mas `E2E_PSQL` é o **comando** do psql
 e não um interruptor — com `1` o Node tenta executar um binário chamado `1` e morre com
 `spawnSync 1 ENOENT`. O que funciona é `E2E_PSQL=psql` (ou `E2E_PSQL="sudo -u postgres psql"`, que é
-o exemplo no próprio `test/e2e/run.mts`).
+o exemplo no próprio `Verificação/run.mts`).
 
 ### O que o dono precisa fazer
 
@@ -5460,7 +5460,7 @@ devolveu `correcoes_instaladas` tudo `true`, `conferir_modelagem_e_0101` `true`,
 ### O que essa combinação já prova, antes de qualquer hipótese nova
 
 O retorno do diagnóstico em produção veio **idêntico**, número por número, ao que a fixture
-`db/test/fixture_modelagem_v35.sql` produz — `249 · conta 203 · subtotal 28 · serie_mensal 12 ·
+`Supabase/test/fixture_modelagem_v35.sql` produz — `249 · conta 203 · subtotal 28 · serie_mensal 12 ·
 derivado 6`, 760 ocorrências, 14 documentos. A reconstrução do caso é fiel, então medição local
 vale como medição do caso real. E `fn_diagnostico_modelagem` chama
 `fn_linhas_para_modelagem` por dentro: ela **terminou** no SQL Editor.
@@ -5488,7 +5488,7 @@ ambiente — e ambiente não se resolve com migration.
 
 ### As quatro causas que sobram, e o instrumento que as separa
 
-`db/diagnostico_modelagem.sql` (novo) responde as quatro numa consulta só:
+`Supabase/diagnostico_modelagem.sql` (novo) responde as quatro numa consulta só:
 
 - **A. o portal aponta para outro projeto Supabase** do que o SQL Editor onde as migrations
   foram aplicadas. Explica *tudo* sem sobra: `correcoes_instaladas` `true` de um lado, funções
@@ -5537,13 +5537,13 @@ pasta `_files/`.
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **47 migrations** e
-**306 asserts**; `test/e2e/run.mts` = **27**. Nenhuma migration nova nesta sessão — o achado é
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **47 migrations** e
+**306 asserts**; `Verificação/run.mts` = **27**. Nenhuma migration nova nesta sessão — o achado é
 que não cabia migration nenhuma.
 
 ### O que o dono precisa fazer
 
-1. **Rodar `db/diagnostico_modelagem.sql`** (bloco 1) e mandar a saída inteira.
+1. **Rodar `Supabase/diagnostico_modelagem.sql`** (bloco 1) e mandar a saída inteira.
 2. **Comparar o `NEXT_PUBLIC_SUPABASE_URL` da Vercel** com o projeto onde as migrations foram
    aplicadas. Se forem diferentes, acabou aqui.
 3. Recarregar a tela com **Ctrl+Shift+R** — o print novo passa a trazer os tempos, e só isso já
@@ -5615,7 +5615,7 @@ perdeu — só não foi gravado. Para virar arquivo, o prompt precisa mandar **e
 
 Um risco a declarar sobre esse agente: ele pede leitura de cabeçalhos de migrations "mais
 estruturais" por número fixo (`0001`…`0102`). Essa lista envelhece a cada rodada — hoje já ignora a
-`0103`. Melhor pedir *"as N migrations mais recentes + as que `db/README.md` marca como
+`0103`. Melhor pedir *"as N migrations mais recentes + as que `Supabase/README.md` marca como
 estruturais"*, que é uma pergunta que continua verdadeira sozinha.
 
 ### O que continua ABERTO, e é o único bloqueio real
@@ -5623,7 +5623,7 @@ estruturais"*, que é uma pergunta que continua verdadeira sozinha.
 **A tela ainda dá `statement_timeout` em produção com `0101` e `0102` aplicadas e confirmadas.** A
 sessão 34 mediu e descartou três hipóteses de SQL (RLS: 492 ms como `authenticated` contra 498 ms
 como superusuário; concorrência das sete chamadas; crescimento de `campo_extraido`). Sobraram quatro
-de **ambiente**, e `db/diagnostico_modelagem.sql` separa as quatro numa consulta só:
+de **ambiente**, e `Supabase/diagnostico_modelagem.sql` separa as quatro numa consulta só:
 
 1. portal apontando para **outro projeto** Supabase;
 2. `statement_timeout` de `authenticated` **abaixo dos 8 s** contra os quais a `0101` foi dimensionada;
@@ -5645,7 +5645,7 @@ banco, nenhuma otimização resolve.
   coluna. O banner "não projetável" dispara e acerta a causa — e é hoje a única coisa que a fase
   comprova. Os asserts do modelo institucional precisam de uma fixture **com** seção canônica.
 - **Duas capturas de página** do dono estão achatadas na raiz do repositório (commit `9cdadc4`). A
-  primeira foi organizada em `test-data/capturas/2026-08-04-v35-modelagem/`; a segunda ainda não.
+  primeira foi organizada em `Dados de Teste/capturas/2026-08-04-v35-modelagem/`; a segunda ainda não.
 
 ## Sessão 36 (2026-08-05) — RESOLVIDO: as três fatias do timeout, medidas na produção
 
@@ -5678,9 +5678,9 @@ exatamente dali que vinham os 9,3 s.
 | `0103` | trabalho **de dentro de cada rótulo** — `fn_papel_linha` refazia a mesma tokenização nove vezes |
 
 E uma quarta causa, **de processo**, que atrasou tudo mais que as três juntas: a `0101` estava na
-tabela do `db/README.md` e **não** na lista de comandos que o dono copia para aplicar. Por uma
+tabela do `Supabase/README.md` e **não** na lista de comandos que o dono copia para aplicar. Por uma
 rodada inteira a correção existia no GitHub e não no banco — e da tela isso é indistinguível de
-"o PR não funcionou". Hoje `db/test/run.sh` reprova migration que exista e não esteja na lista.
+"o PR não funcionou". Hoje `Supabase/test/run.sh` reprova migration que exista e não esteja na lista.
 
 ### A `0103` está mesmo NO BANCO — conferido pelo plano, não pela lista de migrations
 
@@ -5709,7 +5709,7 @@ função que eu havia examinado e deixado passar.
 O instrumento que resolvia isso era o `pg_stat_statements` — **o relógio da produção, não o
 meu** — e eu o empacotei na quarta rodada, não na primeira. Fica como regra: **em qualquer
 "está lento" deste sistema, o primeiro dado é o `pg_stat_statements` da produção**, antes de
-qualquer medição local. `db/diagnostico_modelagem.sql` existe para isso e é o primeiro lugar a
+qualquer medição local. `Supabase/diagnostico_modelagem.sql` existe para isso e é o primeiro lugar a
 olhar.
 
 Duas armadilhas de leitura que custaram uma volta cada, e ficam registradas:
@@ -5746,8 +5746,8 @@ está falando comigo?" sem depender de navegador.
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **426**; `db/test/run.sh` = **48 migrations** e
-**306 asserts**; `test/e2e/run.mts` = **27**. Conferido nesta sessão que a `0103` convive com a
+`N8N/test` = **176**; `verificar-export.mts` = **426**; `Supabase/test/run.sh` = **48 migrations** e
+**306 asserts**; `Verificação/run.mts` = **27**. Conferido nesta sessão que a `0103` convive com a
 trava da `modelagem_v35.test.sql`: a classificação **203/28/12/6** contra rótulo real continua
 passando, o que era o risco de a `0103` ter mexido em `fn_papel_linha`.
 
@@ -5797,7 +5797,7 @@ teste sintético** — aparecem quando alguém clica.
 | #96 | organização da raiz (as capturas do dono viraram pasta com procedência) |
 | #97 | **`0104`**: `fn_desativar_premissa` + botão **"Remover"** no passo 2 da tela |
 | #98 | a identidade da linha é **(seção, rótulo)** — a linha que "completava sozinha" |
-| #99 | **`db/roteiro_modelagem_v35.sql`**: 70 cliques viram uma colada de SQL |
+| #99 | **`Supabase/roteiro_modelagem_v35.sql`**: 70 cliques viram uma colada de SQL |
 | #100 | o **HTTP 500** do export: âncora duplicada no modelo institucional |
 
 ### Os três defeitos, e o que eles têm em comum
@@ -5866,8 +5866,8 @@ os dois estados (26 viraram 98, medido). Agora uma colada devolve sempre o mesmo
 
 ### O espelhamento do Modelo Base — medido, e é o próximo grande trabalho
 
-O dono pediu que o modelo gerado seja **idêntico** ao `docs/referencia/modelo-base.xlsx`. Primeira
-medição honesta da distância, com `docs/referencia/mapear-xlsx.py` (novo):
+O dono pediu que o modelo gerado seja **idêntico** ao `Arquitetura do Sistema/6 Referência/modelo-base.xlsx`. Primeira
+medição honesta da distância, com `Arquitetura do Sistema/6 Referência/mapear-xlsx.py` (novo):
 
 | | Modelo Base | Nosso export |
 |---|---|---|
@@ -5884,21 +5884,21 @@ conhecidos ou avisados"). Isso obriga a separar o que se replica: o **motor** (a
 gramática de fórmula, formatação, recursos) e não o **vocabulário** de outra indústria. É a
 primeira pergunta que a próxima sessão tem de fazer ao dono.
 
-O trabalho está descrito em **`docs/PROMPT_ESPELHAR_MODELO_BASE.md`**, escrito para ser colado como
+O trabalho está descrito em **`Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md`**, escrito para ser colado como
 primeira mensagem de uma sessão nova: função, objetivo, estado medido, ferramentas, método em cinco
 fases (mapear → comparar → planejar → replicar → provar), requisitos e formato de entrega.
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **435**; `db/test/run.sh` = **49 migrations / 324
-asserts**; `test/e2e/run.mts` = **27**.
+`N8N/test` = **176**; `verificar-export.mts` = **435**; `Supabase/test/run.sh` = **49 migrations / 324
+asserts**; `Verificação/run.mts` = **27**.
 
 ### O que o dono precisa fazer
 
-1. **Aplicar a `0104`** no Supabase (`supabase db execute --file db/migrations/0104_desativar_premissa.sql`
+1. **Aplicar a `0104`** no Supabase (`supabase db execute --file Supabase/migrations/0104_desativar_premissa.sql`
    + `notify pgrst, 'reload schema';`) — sem ela o botão "Remover" devolve erro de função inexistente.
 2. Decidir a leitura de "idêntico" (§4 do prompt): **motor** ou **arquivo**.
-3. Quando quiser retomar: abrir sessão nova e colar `docs/PROMPT_ESPELHAR_MODELO_BASE.md`.
+3. Quando quiser retomar: abrir sessão nova e colar `Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md`.
 
 ### Aberto
 
@@ -5916,14 +5916,14 @@ asserts**; `test/e2e/run.mts` = **27**.
 
 ## Sessão 38 (2026-08-05) — Fase 1 do espelhamento: o Modelo Base mapeado inteiro, e três números que mudam o placar
 
-Rodada de **leitura**, como o `docs/PROMPT_ESPELHAR_MODELO_BASE.md` manda: *mapear primeiro,
+Rodada de **leitura**, como o `Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md` manda: *mapear primeiro,
 replicar depois*. **Nenhuma linha de código de produção foi alterada.** A entrega é
-`docs/referencia/MAPA_MODELO_BASE.md`, com as **14 abas** cobertas nos seis eixos que o §7 do
+`Arquitetura do Sistema/6 Referência/MAPA_MODELO_BASE.md`, com as **14 abas** cobertas nos seis eixos que o §7 do
 prompt exige (identidade, anatomia, gramática das fórmulas, formatação, recursos, classificação).
 
 ### A medição, refeita nesta sessão
 
-`python3 docs/referencia/mapear-xlsx.py docs/referencia/modelo-base.xlsx` confere com o §3 do
+`python3 "Arquitetura do Sistema/6 Referência/mapear-xlsx.py" Arquitetura do Sistema/6 Referência/modelo-base.xlsx` confere com o §3 do
 prompt nas duas colunas que ele mede: **14 abas**, **14.504 fórmulas**, 1.044 nomes definidos,
 8 gráficos, 1 imagem, 3 validações, 0 formatação condicional. O mapa acrescenta três colunas que
 o §3 não tinha — e são elas que mudam o plano.
@@ -6026,7 +6026,7 @@ como (B), é o mesmo trabalho **mais** a cópia destes 18 itens, todos com ender
 
 ### Sobre as ferramentas
 
-Foi usado o `docs/referencia/mapear-xlsx.py` do §6, e ele resolve a aba pelo `rels` — a armadilha
+Foi usado o `Arquitetura do Sistema/6 Referência/mapear-xlsx.py` do §6, e ele resolve a aba pelo `rels` — a armadilha
 da ordem dos `sheetN.xml` não voltou. Ele tem três limites de escopo que a fase 1 precisou cobrir
 por leitura direta das partes do ZIP: não decodifica `xl/styles.xml` (o `s=123` fica opaco), não
 expande fórmula **compartilhada** (8.373 células, 58% do total, saem como
@@ -6050,11 +6050,11 @@ fórmula dele é referência a outra aba.**
 
 ### Contadores
 
-Inalterados, e é o esperado: o diff desta rodada é **só documentação** (`docs/referencia/
+Inalterados, e é o esperado: o diff desta rodada é **só documentação** (`Arquitetura do Sistema/6 Referência/
 MAPA_MODELO_BASE.md` + esta seção), sem uma linha de código. Conferido nesta sessão:
-`node --test 'n8n/test/*.test.mjs'` = **176 pass / 0 fail**. Os outros três contadores seguem em
-`verificar-export.mts` = **435**, `db/test/run.sh` = **49 migrations / 324 asserts**,
-`test/e2e/run.mts` = **27** — e o CI os roda no PR.
+`node --test 'N8N/test/*.test.mjs'` = **176 pass / 0 fail**. Os outros três contadores seguem em
+`verificar-export.mts` = **435**, `Supabase/test/run.sh` = **49 migrations / 324 asserts**,
+`Verificação/run.mts` = **27** — e o CI os roda no PR.
 
 ### O que o dono precisa decidir
 
@@ -6068,7 +6068,7 @@ MAPA_MODELO_BASE.md` + esta seção), sem uma linha de código. Conferido nesta 
 
 ## Sessão 39 (2026-08-05) — o espelhamento executado: 11 defeitos corrigidos, o balanço fechando, e os 8 gráficos
 
-Rodada de EXECUÇÃO das fases 2 a 5 do `docs/PROMPT_ESPELHAR_MODELO_BASE.md`, com o objetivo que o
+Rodada de EXECUÇÃO das fases 2 a 5 do `Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md`, com o objetivo que o
 dono declarou: *idêntico ao modelo de referência em motor, com a cara da Oria, e MELHOR que ele —
 corrigindo os defeitos dele.*
 
@@ -6199,8 +6199,8 @@ cobre o furo, e o diagnóstico responde.
 
 ### Contadores
 
-`n8n/test` = **176**; `verificar-export.mts` = **450** (era 435); `db/test/run.sh` = **49 migrations
-/ 324 asserts**; `test/e2e/run.mts` = **27**. `tsc` e `eslint` limpos.
+`N8N/test` = **176**; `verificar-export.mts` = **450** (era 435); `Supabase/test/run.sh` = **49 migrations
+/ 324 asserts**; `Verificação/run.mts` = **27**. `tsc` e `eslint` limpos.
 
 ### O que o dono precisa fazer
 

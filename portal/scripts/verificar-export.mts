@@ -254,7 +254,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
 // ---- 7: END-TO-END contra o book Vertentes ---------------------------------
 // Monta o export a partir do MESMO fixture que os testes de banco usam
-// (db/test/gerar_fixture.py, extração fiel dos 14 documentos) e confere TODA
+// (Supabase/test/gerar_fixture.py, extração fiel dos 14 documentos) e confere TODA
 // seção do Balanço contra o gabarito do book. Este é o teste que faltava: os
 // invariantes sintéticos passavam verde enquanto o export real do v25 tinha 36
 // de 44 somas divergentes.
@@ -263,7 +263,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
   ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
   const gab = JSON.parse(
-    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../../Dados de Teste/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
 
   const wb = buildExportWorkbook({
@@ -389,7 +389,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
   ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
   const gab = JSON.parse(
-    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../../Dados de Teste/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as { dre_metalurgica_2025: Record<string, number>; receita_bruta_2025: number };
   const wb = buildExportWorkbook({
     caso: { nome: "Book Vertentes", produto: "reestruturacao" },
@@ -455,7 +455,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(errosGab.length === 0, "(9b) DRE 2025 bate com o gabarito linha a linha", errosGab.join(" / "));
 }
 
-// ---- 10: DMPL e DVA ganham aba própria (db/migrations/0024) -----------------
+// ---- 10: DMPL e DVA ganham aba própria (Supabase/migrations/0024) -----------------
 // Antes desta fatia a DMPL não tinha para onde ir: o documento inteiro era
 // classificado como MUTUOS (não havia código DMPL na taxonomia, e o enum que a
 // IA recebe é fechado nos códigos que existem) e, quando vinha embutida num PDF
@@ -464,7 +464,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // total do PL e somá-lo INFLA o balanço (bug real do export do dono).
 {
   const V = "vDMPL";
-  // Números do book Vertentes (test-data/book-vertentes/render.py → pdf_dmpl):
+  // Números do book Vertentes (Dados de Teste/book-vertentes/render.py → pdf_dmpl):
   // matriz de 3 movimentos × 6 componentes do PL, R$ mil.
   const PL24 = 24801, PL25 = 6900, PREJ = PL25 - PL24;
   const componentes: Array<[string, number | null, number | null, number | null]> = [
@@ -897,7 +897,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     // (`/home/user/tratamento-dados-financeiros/...`) e funcionava por acidente: quem
     // clonasse o repositório em qualquer outro lugar recebia ENOENT. Foi o PRIMEIRO
     // achado do CI — na primeira execução dele, antes de qualquer suíte reprovar.
-    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../../Dados de Teste/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as { balanco_por_entidade: Record<string, Record<string, Record<string, number>>> };
   const errosModelo: string[] = [];
   for (const ano of [2024, 2025]) {
@@ -1271,7 +1271,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // ---- 16: DF auditada — o conjunto num arquivo só é separado por demonstração --
 // A forma mais comum de entrega num mandato real é o PDF auditado do exercício:
 // Balanço + DRE + DFC + DMPL + notas juntos, um documento só. Esse tipo
-// (DF_AUDITADA, db/migrations/0002) não pode ter aba própria — que aba seria? — e
+// (DF_AUDITADA, Supabase/migrations/0002) não pode ter aba própria — que aba seria? — e
 // por isso caía em "Outros", onde o roteamento por linha nem rodava: a DF inteira
 // saía como listagem crua, sem template, sem total de seção, sem AV%/Δ%, sem
 // indicadores, e a aba Modelagem (que lê das abas de demonstração) saía ZERADA.
@@ -1282,7 +1282,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     readFileSync(new URL("./fixtures/book-vertentes.json", import.meta.url), "utf8"),
   ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
   const gab = JSON.parse(
-    readFileSync(new URL("../../test-data/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../../Dados de Teste/book-vertentes/pdf/GABARITO.json", import.meta.url), "utf8"),
   ) as {
     balanco_por_entidade: Record<string, Record<string, Record<string, number>>>;
     dre_metalurgica_2025: Record<string, number>;
@@ -1485,7 +1485,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     wb.worksheets.map((s) => s.name).join(", "));
 }
 
-// ---- 17: reextração SUBSTITUI, não acumula (db/migrations/0026) --------------
+// ---- 17: reextração SUBSTITUI, não acumula (Supabase/migrations/0026) --------------
 // Reextrair é a única forma de um documento já processado pegar prompt/taxonomia
 // novos — o dono precisa disso para a DMPL da `0024`. Só que o export lia TODAS
 // as versões do documento, e duas extrações do mesmo arquivo não produzem as
@@ -1537,7 +1537,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
   checar(avisa, "(17c) o Resumo declara a versão substituída (substituir em silêncio seria pior)");
 
   // PROTEÇÃO: reextração que FALHA volta com ZERO linhas (`extracao_falhou`,
-  // db/migrations/0016). Se a vigência fosse cega ao dado, essa falha APAGARIA do
+  // Supabase/migrations/0016). Se a vigência fosse cega ao dado, essa falha APAGARIA do
   // book tudo o que a versão anterior extraiu — trocar dupla contagem por perda
   // silenciosa de dado não é conserto.
   const wbFalha = buildExportWorkbook({
@@ -2776,7 +2776,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
 // ---- 36: dupla contagem no total do GRUPO, com a conta suspeita NOMEADA ----
 // O bug aberto mais caro do repositório, e o arranjo abaixo é o do teste v33,
-// não um inventado: Balanço da Componentes (test-data/book-vertentes/dados.py),
+// não um inventado: Balanço da Componentes (Dados de Teste/book-vertentes/dados.py),
 // Imobilizado = 14.200 + 3.600 + 890 − 13.100 = 5.590, com o 5.590 IMPRESSO no
 // documento. Uma conta do Imobilizado foi anotada com a seção de TOPO ("Ativo
 // Não Circulante") em vez da subseção, caiu em "Outros Ativos Não Circulantes"
@@ -2853,7 +2853,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         "(36) …e as DUAS seções envolvidas (onde ela está × quem já a soma)", txt.slice(0, 160));
       const nota = notaDaLinha(ws, rs[0]);
       checar(/LEITURA A/.test(nota) && /LEITURA B/.test(nota),
-        "(36) …e a nota traz as DUAS leituras, porque o export não escolhe (docs/04)",
+        "(36) …e a nota traz as DUAS leituras, porque o export não escolhe (Arquitetura do Sistema/2 Especificação/04)",
         nota.slice(0, 120));
       checar(/3\.600,00/.test(nota),
         "(36) …com a diferença medida, não só a afirmação", nota.slice(0, 300));
@@ -2948,7 +2948,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // cálculo que não aconteceu.
 //
 // É REACHABLE, não teórico: basta a coleta do SGS começar em janeiro. A janela
-// da coleta é por DATA (n8n/lib/macro.mjs), então é o caso normal, não o raro.
+// da coleta é por DATA (N8N/lib/macro.mjs), então é o caso normal, não o raro.
 // O seed atual escapa por acidente — ele começa em agosto de 2015.
 {
   const V = "v-nulo-12m";
@@ -3112,6 +3112,69 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(lancou,
       "(38) o export inteiro rodou sem lançar — logo LINHAS_BASE cobre todo rótulo que o modelo pede");
   }
+}
+
+// ---- 38b: BASE DO MODELO — a coluna ordena pela ENTIDADE, não pela chave
+// composta inteira -----------------------------------------------------------
+// `colunasBase` (export-modelagem.ts) ordena `<entidade><CHAVE_SEP><período>`.
+// `CHAVE_SEP` é U+0000, que o Unicode Collation Algorithm trata como
+// "completely ignorable": `localeCompare` sobre a chave INTEIRA descarta o
+// separador da comparação, e "Alfa\0 2025" vs "Alfa S.A.\0 2024" comparam como
+// se fossem "Alfa 2025" vs "Alfa S.A. 2024" — a entidade mais longa (que tem a
+// mais curta como PREFIXO) pode vir antes dela, invertendo a ordem que
+// `.sort()` puro (ou um comparador por partes) produziria.
+//
+// O book-vertentes NÃO discrimina isto: as 14 entidades reais da fixture
+// ordenam igual pelos dois critérios, então os 713 verdes daquela suíte não
+// são evidência aqui — precisa de um par onde uma entidade é prefixo da
+// outra.
+{
+  const doc = (id: string, razaoSocial: string, ano: string): DocumentoParaExport => ({
+    id, tipo_taxonomia: "BALANCO", entidade: { razao_social: razaoSocial },
+    periodo: { tipo: "unico", referencia: ano },
+    documento_versao: [{ id: `${id}-v1`, nome_original: "BALANCO.pdf" }],
+  });
+  const campo = (id: string, docVersaoId: string): CampoExtraido => ({
+    id, documento_versao_id: docVersaoId, chave: "Ativo Circulante",
+    secao: "ATIVO", secao_canonica: "ativo_circulante", entidade_coluna: null,
+    periodo_coluna: null, valor_texto: null, valor_num: 100, unidade: "milhar",
+    confianca: 0.97, origem_pagina: 1, ordem: 1, status_aceite: "aceito",
+    aceito_por: "fixture", aceito_em: "2026-07-27T00:00:00Z",
+  } as CampoExtraido);
+
+  // "Alfa" é PREFIXO de "Alfa S.A." — é o par que discrimina os dois critérios
+  // (ver tabela medida na revisão: `.sort()` dá Alfa, Alfa S.A.; `localeCompare`
+  // sobre a chave inteira dá Alfa S.A., Alfa).
+  const documentos = [doc("d1", "Alfa", "2025"), doc("d2", "Alfa S.A.", "2024")];
+  const campos = [campo("c1", "d1-v1"), campo("c2", "d2-v1")];
+  const anuais = Array.from({ length: 11 }, (_, k) => ({ serie: "IPCA", ano: 2015 + k, meses: 12, retorno: 4 + k * 0.1 }));
+  const wb = buildExportWorkbook({
+    caso: { nome: "38b", produto: "reestruturacao" },
+    documentos, campos, macro: { anuais, expectativas: [] },
+    agora: new Date("2026-07-31T12:00:00Z"),
+  });
+  const mod = wb.getWorksheet("Modelagem")!;
+  const rotuloDe = (r: number) => String(mod.getRow(r).getCell(1).value ?? "");
+  let rBase = -1;
+  for (let r = 1; r <= mod.rowCount; r++) if (rotuloDe(r).startsWith("BASE DO MODELO")) { rBase = r; break; }
+  checar(rBase > 0, "(38b) a fixture mínima também gera o bloco BASE DO MODELO");
+  const cabecalhos: string[] = [];
+  if (rBase > 0) {
+    const cab = mod.getRow(rBase);
+    for (let c = 2; c <= cab.cellCount; c++) {
+      const v = cab.getCell(c).value;
+      if (v != null && String(v).trim() !== "") cabecalhos.push(String(v));
+    }
+  }
+  checar(cabecalhos.length === 2, "(38b) as duas colunas de entidade×período aparecem",
+    cabecalhos.join(" | "));
+  // A ordem CORRETA (por entidade, depois período) é "Alfa — 2025" antes de
+  // "Alfa S.A. — 2024" — é a ordem em que `.sort()` puro também colocaria,
+  // porque nenhuma das duas entidades tem acento.
+  checar(cabecalhos[0] === "Alfa — 2025" && cabecalhos[1] === "Alfa S.A. — 2024",
+    "(38b) a coluna ordena por ENTIDADE (Alfa antes de Alfa S.A.), não pela chave "
+    + "inteira comparada com o separador ignorado",
+    cabecalhos.join(" | "));
 }
 
 // ---- 39: ETAPA 5 — o seletor de inputs macro ------------------------------
@@ -3342,7 +3405,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     "(40) com a média histórica, o modelo segue resolvendo (nada de #VALUE!)", String(comMedia));
 }
 
-// ---- 41: MOEDA (db/migrations/0035) — item 2 do §7.4 do Onboarding ---------
+// ---- 41: MOEDA (Supabase/migrations/0035) — item 2 do §7.4 do Onboarding ---------
 // Até a 0035 a moeda era extraída e descartada: uma linha em USD entrava na mesma
 // soma que uma em BRL, sem marca nenhuma. Erro pelo câmbio inteiro (~5x) num
 // arquivo que fecha — a assinatura exata da família de falha que este projeto
@@ -4628,9 +4691,9 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       JSON.stringify(nd));
   }
 
-  // ---- (0138) RETORNO E SOLVÊNCIA: os quatro índices que o f0/08 fasejou ----
+  // ---- (0138) RETORNO E SOLVÊNCIA: os quatro índices que o Arquitetura do Sistema/2 Especificação/f0/08 fasejou ----
   //
-  // O `f0/08` deixou ROA, ROE, liquidez imediata e Altman de fora "até a extração
+  // O `Arquitetura do Sistema/2 Especificação/f0/08` deixou ROA, ROE, liquidez imediata e Altman de fora "até a extração
   // isolar as linhas-conceito". Ela isola desde as 14 abas, e ninguém tinha
   // revisitado. O que estes asserts protegem não é a existência das linhas: é o
   // comportamento delas diante do caso ruim, que é o caso destes mandatos.
@@ -5585,7 +5648,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 
   // ---- (0116) CICLO DE CAIXA: DIAS DE VERDADE, OU "n.a." ------------------
   //
-  // `f0/08` fasejou PMR/PME/PMP até "a extração isolar as linhas-conceito". O
+  // `Arquitetura do Sistema/2 Especificação/f0/08` fasejou PMR/PME/PMP até "a extração isolar as linhas-conceito". O
   // giro já as isolava para aplicar dias de giro conta a conta; faltava publicar.
   //
   // Os dois defeitos que estes asserts pegam são os clássicos do indicador:
@@ -6292,7 +6355,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // ---- 36: A REGRA DE ENTIDADE E PERÍODO DA LINHA, agora compartilhada -------
 //
 // Esta regra era uma linha solta dentro do laço do `buildExportWorkbook`, e virou
-// função exportada quando a tela do Modo A (`f0/07`) passou a precisar da mesma
+// função exportada quando a tela do Modo A (`Arquitetura do Sistema/2 Especificação/f0/07`) passou a precisar da mesma
 // resposta. A extração é comportamento-preservador — os 568 asserts anteriores
 // continuam verdes —, mas ela agora tem DOIS leitores, e é isso que a torna digna
 // de assert próprio: um defeito aqui erra o arquivo entregue E a tela, do mesmo
@@ -6348,7 +6411,7 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
 // (36) O RESUMO DOS TRÊS CENÁRIOS — a comparação que o arquivo não fazia
 // ============================================================================
 //
-// O `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2: o arquivo tem UM interruptor de
+// O `Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2: o arquivo tem UM interruptor de
 // cenário e todas as abas leem dele, então ele mostra um cenário por vez e "a
 // comparação base × cliente × stress — que é o motivo de existirem três — não está
 // em lugar nenhum". O teste (35) acima já cobre o indicador QUALITATIVO ("os três

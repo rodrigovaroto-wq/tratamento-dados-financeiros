@@ -1,6 +1,6 @@
 import type { CasoStatus } from "./types";
 
-// Rótulo + cor por status do caso (f0/04 — máquina de estado do caso).
+// Rótulo + cor por status do caso (Arquitetura do Sistema/2 Especificação/f0/04 — máquina de estado do caso).
 export const CASO_STATUS_LABEL: Record<CasoStatus, string> = {
   intake: "Intake",
   em_triagem: "Em triagem",

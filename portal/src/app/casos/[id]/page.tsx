@@ -57,7 +57,7 @@ function Indicador({
   );
 }
 
-// O QUE O DOCUMENTO DIZ EM TEXTO (db/migrations/0148).
+// O QUE O DOCUMENTO DIZ EM TEXTO (Supabase/migrations/0148).
 //
 // ONDE ESTE BLOCO FICA, e por que ele MUDOU DE LUGAR em 27/08/2026. Ele abria a
 // tela, acima do Kit Básico, pelo argumento de que um comitê de crédito lê a
@@ -159,7 +159,7 @@ export default async function CasoDashboardPage({
         .order("id", { ascending: true })
         .range(de, ate),
     ),
-    // db/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
+    // Supabase/migrations/0036 — o checklist é a fonte do TERCEIRO estado: um item pode
     // ter documento e ainda assim não ter uma linha extraída
     // (`recebido_nao_valido`). Antes o dashboard derivava "presente" só da
     // existência do documento, e por isso ficava verde sobre um book vazio.
@@ -167,7 +167,7 @@ export default async function CasoDashboardPage({
       .from("checklist_item_status")
       .select("tipo_taxonomia, status")
       .eq("caso_id", id),
-    // db/migrations/0037 — a avaliação do Portão 2. Determinística e sem efeito
+    // Supabase/migrations/0037 — a avaliação do Portão 2. Determinística e sem efeito
     // colateral (a função é `stable`), então dá para chamar a cada render: é a
     // MESMA função que `fn_aprovar_caso` usa para decidir, e não uma segunda
     // implementação da regra aqui no portal.
@@ -177,7 +177,7 @@ export default async function CasoDashboardPage({
     // do mandato não paga o preço de montar uma lista que mora em outra aba.
     //
     // A CHAMADA É TOLERANTE A ERRO de propósito. O dono aplica as migrations à
-    // mão (db/README.md), então um banco sem a 0120 é estado normal, não
+    // mão (Supabase/README.md), então um banco sem a 0120 é estado normal, não
     // defeito — e nesse banco esta linha responde "não achei a função". O botão
     // continua na tela sem o número; o que não pode é a tela inteira do mandato
     // cair por causa de um contador de outra aba.
@@ -224,7 +224,7 @@ export default async function CasoDashboardPage({
 
   const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
   // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o
-  // `recebido_nao_valido` de `docs/07`, e é bloqueante para o Portão 2.
+  // `recebido_nao_valido` de `Arquitetura do Sistema/3 Estado e Execução/07`, e é bloqueante para o Portão 2.
   // Os fatos materiais. `?? []` e não `!`: banco sem a 0148 devolve erro e
   // `data` nulo, e a tela tem de sair sem o bloco em vez de quebrar.
   const fatos = (fatosRes.data as FatoDoCaso[] | null) ?? [];
@@ -237,7 +237,7 @@ export default async function CasoDashboardPage({
   const portao2 = portao2Res.data as {
     elegivel: boolean; motivos: string[]; ressalvas_ativas: number; teto_ressalvas: number;
     status_atual: string;
-    // db/migrations/0106 — quantas pendências foram declaradas IMPROCEDENTES.
+    // Supabase/migrations/0106 — quantas pendências foram declaradas IMPROCEDENTES.
     // Não entra na regra (rejeitada é estado terminal); entra na tela porque é a
     // única informação que separa um caso que nunca teve pendência de um que
     // teve e as rejeitou. Opcionais: um banco onde a 0106 ainda não foi aplicada
@@ -442,7 +442,7 @@ export default async function CasoDashboardPage({
         </div>
       )}
 
-      {/* PORTÃO 2 (db/migrations/0037) — a regra de f0/04, visível.
+      {/* PORTÃO 2 (Supabase/migrations/0037) — a regra de Arquitetura do Sistema/2 Especificação/f0/04, visível.
           Antes desta tela não havia como saber se um caso podia ser aprovado:
           a regra não existia em código, e "não implementado" tem a mesma
           aparência de "sem pendência bloqueante" para quem olha o dashboard. */}
@@ -454,7 +454,7 @@ export default async function CasoDashboardPage({
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              {/* "PORTÃO 2" É NOME INTERNO (f0/04). Quem confere um mandato não
+              {/* "PORTÃO 2" É NOME INTERNO (Arquitetura do Sistema/2 Especificação/f0/04). Quem confere um mandato não
                   precisa do número da etapa — precisa saber se pode aprovar e o
                   que falta. O nome fica como legenda, não como manchete. */}
               <p className={`font-semibold ${portao2.elegivel ? "text-ok-900" : "text-tinta-900"}`}>
@@ -474,7 +474,7 @@ export default async function CasoDashboardPage({
                 </ul>
               )}
               {/* A MESMA REGRA, EM PORTUGUÊS (pedido do dono, 07/08/2026). Antes esta
-                  linha dizia "Ressalvas ativas: 0 de 3 (teto por caso, f0/04)" — três
+                  linha dizia "Ressalvas ativas: 0 de 3 (teto por caso, Arquitetura do Sistema/2 Especificação/f0/04)" — três
                   coisas erradas de uma vez: citava um documento interno pelo código,
                   mostrava contagem sem dizer o que é uma ressalva, e não explicava a
                   consequência. Quem lê a tela precisa saber o que pode fazer, não o
@@ -738,7 +738,7 @@ export default async function CasoDashboardPage({
 
       <section>
         <div className="mb-2 flex items-baseline justify-between gap-3">
-          {/* "Classe A/B" é vocabulário interno (f0/04): A é o que se confere
+          {/* "Classe A/B" é vocabulário interno (Arquitetura do Sistema/2 Especificação/f0/04): A é o que se confere
               dentro do próprio documento, B é entre documentos. Para quem lê a
               tela o que importa é que são números que não fecham. */}
           <h2 className="titulo-secao">Números que não fecham</h2>

@@ -492,7 +492,7 @@ export default async function ModelagemPage({
               no Supabase. Para confirmar sem adivinhar, rode no SQL Editor{" "}
               <code className="font-mono">select jsonb_pretty(fn_diagnostico_modelagem(&apos;{id}&apos;));</code>{" "}
               e olhe <code className="font-mono">correcoes_instaladas</code>. O diagnóstico completo
-              de ambiente está em <code className="font-mono">db/diagnostico_modelagem.sql</code>.
+              de ambiente está em <code className="font-mono">Supabase/diagnostico_modelagem.sql</code>.
             </p>
           ) : (
             <p className="mt-2 text-xs">

@@ -6,7 +6,7 @@
 # que ninguém consegue distinguir de conteúdo ao olhar a listagem.
 #
 # Os padrões são ANCORADOS NA RAIZ (`/`) de propósito: captura legítima **versiona**
-# esses mesmos arquivos dentro de `test-data/capturas/<data>/…_files/`, e um ignore
+# esses mesmos arquivos dentro de `Dados de Teste/capturas/<data>/…_files/`, e um ignore
 # solto (`*.js.download`) excluiria a captura de 04/08 que é evidência de produção.
 /*.js.download
 /*.css
@@ -18,13 +18,13 @@ node_modules/
 .next/
 
 # Saída do arnês de variações — .xlsx e relatório são gerados a cada rodada.
-test/e2e/saida/
+Verificação/saida/
 
 # CHAVE NENHUMA ENTRA AQUI. O `portal/.gitignore` já cobria `.env*`, mas os
 # scripts de diagnóstico do n8n moram FORA do portal e leem a chave do
-# ambiente (`IA_API_KEY`/`OPENAI_API_KEY` em `n8n/diagnosticar-ia.mjs`, e o
-# `n8n/README.md` ensina a passá-la inline). Quem se cansar de redigitar a
-# chave cria um `.env` na raiz ou em `n8n/` — e sem esta regra ele entraria
+# ambiente (`IA_API_KEY`/`OPENAI_API_KEY` em `N8N/diagnosticar-ia.mjs`, e o
+# `N8N/README.md` ensina a passá-la inline). Quem se cansar de redigitar a
+# chave cria um `.env` na raiz ou em `N8N/` — e sem esta regra ele entraria
 # num `git add -A` sem uma linha de aviso. O histórico deste repositório está
 # limpo (conferido: nenhuma chave em nenhum commit); esta regra é o que
 # mantém assim.

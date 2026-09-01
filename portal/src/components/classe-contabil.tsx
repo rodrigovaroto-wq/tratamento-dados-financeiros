@@ -6,7 +6,7 @@ import { registrarClasseContabil } from "@/app/casos/[id]/documentos/[docId]/act
 // A CLASSE CONTÁBIL DE UMA LINHA, com a sugestão à vista e o override a um clique.
 //
 // POR QUE A SUGESTÃO E A DECISÃO FICAM VISÍVEIS AO MESMO TEMPO, e não uma no lugar
-// da outra. O `docs/05` chama a discordância entre humano e máquina de "sinal de
+// da outra. O `Arquitetura do Sistema/2 Especificação/05` chama a discordância entre humano e máquina de "sinal de
 // calibração" — o dado que permite ajustar a REGRA. Se a tela substituísse a
 // sugestão pela decisão, o analista perderia de vista do que ele está discordando,
 // e a próxima pessoa a abrir a linha não saberia que houve discordância. Aqui a
@@ -14,7 +14,7 @@ import { registrarClasseContabil } from "@/app/casos/[id]/documentos/[docId]/act
 // `title`, e quando as duas divergem isso é dito com palavra, não só com cor.
 //
 // E A SUGESTÃO NÃO VEM PRÉ-SELECIONADA NO SELETOR. É deliberado, e é
-// anti-ancoragem (fechamento #5 do `docs/01`): um seletor que abre já preenchido
+// anti-ancoragem (fechamento #5 do `Arquitetura do Sistema/1 Visão e Doutrina/01`): um seletor que abre já preenchido
 // com o palpite da máquina transforma "confirmar" no caminho de menor esforço, e o
 // aceite deixa de ser uma decisão para virar um clique de inércia. O analista
 // escolhe a classe — inclusive quando ela é a mesma que a máquina sugeriu, e nesse

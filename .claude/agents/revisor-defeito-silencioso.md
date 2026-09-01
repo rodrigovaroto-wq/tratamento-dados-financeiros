@@ -21,7 +21,7 @@ nem pendência, nem tela vermelha.
 4. **O invariante afirma comportamento ou mecanismo?** Um teste que trava *como* o código faz
    protege o bug e reprova a correção seguinte.
 5. **Algum derivado versionado ficou para trás?** JSON de workflow, as três fixtures do book,
-   `db/schema.sql`. E: esta mudança chega à produção sozinha, ou depende de uma republicação /
+   `Supabase/schema.sql`. E: esta mudança chega à produção sozinha, ou depende de uma republicação /
    apply de migration que ninguém vai lembrar de fazer?
 6. **A checagem que acusou está certa?** Na v48, **20 das 27 pendências eram falsas** — a extração
    estava certa e quem errava eram as checagens. E pendência falsa que muda de nome não é

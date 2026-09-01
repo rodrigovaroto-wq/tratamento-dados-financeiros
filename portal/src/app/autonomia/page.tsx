@@ -3,14 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 // Painel de autonomia — SOMENTE LEITURA.
 //
 // POR QUE ESTA TELA EXISTE. `estagio_autonomia` nasce na 0001 com o comentário
-// "Nível é estado do sistema, não constante de código (docs/01)" e, até a 0041,
+// "Nível é estado do sistema, não constante de código (Arquitetura do Sistema/1 Visão e Doutrina/01)" e, até a 0041,
 // não tinha um único leitor: `grep -rl estagio_autonomia portal/src n8n` não
 // retornava nada. O dial da extração dizia N0 ("roda, registra, NÃO influencia
 // decisão") enquanto o código auto-aceitava toda linha com confiança >= 0.95. O
 // estado declarado do sistema era invisível, então a divergência podia durar
 // meses sem ninguém tropeçar nela. Esta tela é onde ela para de ser invisível.
 //
-// POR QUE SÓ LEITURA. Subir dial é decisão de doutrina, não de sessão: docs/01
+// POR QUE SÓ LEITURA. Subir dial é decisão de doutrina, não de sessão: Arquitetura do Sistema/1 Visão e Doutrina/01
 // exige concordância MEDIDA contra golden set, e a mudança é global (afeta todo
 // mandato, não o que está aberto). Um botão aqui convidaria a mexer no meio de um
 // caso. A mudança se faz por `fn_mudar_dial`, que registra autor e motivo — e é
@@ -21,7 +21,7 @@ type Dial = {
   nivel_atual: "N0" | "N1" | "N2" | "N3";
   teto: "N0" | "N1" | "N2" | "N3";
   limiar_auto_clear: number | null;
-  // 0126: a natureza do estágio (docs/01, "regra de teto por natureza") e em que
+  // 0126: a natureza do estágio (Arquitetura do Sistema/1 Visão e Doutrina/01, "regra de teto por natureza") e em que
   // o nível de hoje se apoia. Antes desta migration a tela DEDUZIA a segunda por
   // `estagio.startsWith("extracao")` — heurística de nome, que errava nos dois
   // sentidos: estágio de extração que ganhasse medição continuava recebendo o
@@ -75,7 +75,7 @@ type Cobertura = {
   atinge_minimo: boolean;
 };
 
-// docs/01, tabela de níveis. O texto é o da doutrina, palavra por palavra, porque
+// Arquitetura do Sistema/1 Visão e Doutrina/01, tabela de níveis. O texto é o da doutrina, palavra por palavra, porque
 // é ele que define o que o número significa — reescrever "com minhas palavras"
 // aqui abriria espaço para a tela dizer uma coisa e a doutrina outra.
 const NIVEL: Record<string, { titulo: string; o_que_faz: string }> = {
@@ -150,7 +150,7 @@ export default async function AutonomiaPage() {
   // na página do documento — o mesmo desenho que a 0126 achou na Classe A, onde o
   // rótulo é o veredito da 0106.
   //
-  // Fica ao lado do dial porque é ele que este número governa: o docs/05 diz que
+  // Fica ao lado do dial porque é ele que este número governa: o Arquitetura do Sistema/2 Especificação/05 diz que
   // "onde humanos discordam sistematicamente da máquina, ajusta-se regra/threshold
   // (ou não se sobe o dial daquele estágio)".
   const { data: ccBruto } = await supabase.rpc("fn_classe_contabil_concordancia", {
@@ -193,7 +193,7 @@ export default async function AutonomiaPage() {
           <tbody className="divide-y divide-tinta-200">
             {linhas.map((d) => {
               const noTeto = d.nivel_atual === d.teto;
-              // Teto N1 é o caso que docs/01 marca com "nunca autônomo": não é um
+              // Teto N1 é o caso que Arquitetura do Sistema/1 Visão e Doutrina/01 marca com "nunca autônomo": não é um
               // limite provisório à espera de medição, é decisão de doutrina.
               const nuncaAutonomo = d.teto === "N1";
               return (
@@ -216,7 +216,7 @@ export default async function AutonomiaPage() {
                     {noTeto && <span className="ml-1 text-tinta-400">(no teto)</span>}
                     {nuncaAutonomo && (
                       <p className="mt-1 text-tinta-500">
-                        docs/01: nunca autônomo — o teto é por natureza do estágio e nenhuma
+                        Arquitetura do Sistema/1 Visão e Doutrina/01: nunca autônomo — o teto é por natureza do estágio e nenhuma
                         chamada o sobrepõe.
                       </p>
                     )}
@@ -320,7 +320,7 @@ export default async function AutonomiaPage() {
           </ul>
           <p className="mt-1">
             Estão nesse nível por decisão de produto, não por concordância medida:{" "}
-            <code>docs/01</code> exige comparação contra um golden set para subir dial de estágio
+            <code>Arquitetura do Sistema/1 Visão e Doutrina/01</code> exige comparação contra um golden set para subir dial de estágio
             interpretativo. Desde a <code>0126</code> subir sem isso continua possível, mas exige
             um motivo assumido por escrito — e é ele que aparece na trilha abaixo como{" "}
             <em>sem medição</em>. Quando houver golden set, a medição confirma ou derruba estes
@@ -359,7 +359,7 @@ export default async function AutonomiaPage() {
       <div>
         <h2 className="text-sm font-semibold">Golden set</h2>
         <p className="mt-1 text-xs text-tinta-500">
-          <code>f0/06</code>: ~{cobertura[0]?.n_minimo ?? 20} documentos rotulados por tipo core,
+          <code>Arquitetura do Sistema/2 Especificação/f0/06</code>: ~{cobertura[0]?.n_minimo ?? 20} documentos rotulados por tipo core,
           estratificados por qualidade de captura. Só rodada <strong>congelada</strong> e de{" "}
           <strong>origem real</strong> autoriza subir dial — rotular um book cujo gabarito já se
           conhece mede o instrumento, não o modelo.
@@ -418,7 +418,7 @@ export default async function AutonomiaPage() {
             <table className="w-full text-sm">
               <caption className="px-4 pt-2 text-left text-xs text-tinta-500">
                 Cobertura de <strong>{rodadaVigente.nome}</strong>, por tipo do Kit Básico. O tipo
-                mais fraco governa: o dial é por estágio e o <code>f0/06</code> raciocina por
+                mais fraco governa: o dial é por estágio e o <code>Arquitetura do Sistema/2 Especificação/f0/06</code> raciocina por
                 tipo, então um tipo fraco sobe autonomia sobre ele também.
               </caption>
               <thead className="bg-tinta-50 text-left text-xs uppercase text-tinta-500">
@@ -436,7 +436,7 @@ export default async function AutonomiaPage() {
                       <p className="font-mono text-xs">{c.tipo}</p>
                       {/* A granularidade explica a demora em vez de deixá-la
                           parecer negligência: tipo por CASO rende ~1 por mandato,
-                          e o f0/06 diz que ficar mais tempo em N0/N1 é esperado. */}
+                          e o Arquitetura do Sistema/2 Especificação/f0/06 diz que ficar mais tempo em N0/N1 é esperado. */}
                       {(c.granularidade === "caso" || c.granularidade === "periodo") && (
                         <p className="text-xs text-tinta-500">
                           ~1 por mandato: juntar {c.n_minimo} demora, e é esperado
@@ -473,7 +473,7 @@ export default async function AutonomiaPage() {
           <p className="mt-1 text-xs text-tinta-500">
             O único estágio cuja concordância humano-máquina já dá para medir sem golden set: o
             rótulo é o <strong>override</strong> que o analista registra na linha, e cada
-            discordância é um ponto de calibração. <code>docs/05</code>: onde humanos discordam
+            discordância é um ponto de calibração. <code>Arquitetura do Sistema/2 Especificação/05</code>: onde humanos discordam
             sistematicamente, ajusta-se a <strong>regra</strong> — não se sobe o dial.
           </p>
 
@@ -554,7 +554,7 @@ export default async function AutonomiaPage() {
       <div>
         <h2 className="text-sm font-semibold">Mudanças de dial</h2>
         <p className="mt-1 text-xs text-tinta-500">
-          docs/01: toda mudança de nível é decisão versionada e reversível. Tentativa recusada
+          Arquitetura do Sistema/1 Visão e Doutrina/01: toda mudança de nível é decisão versionada e reversível. Tentativa recusada
           também fica — passar do teto é justamente o que a trilha precisa guardar.
         </p>
         {trilha.length === 0 ? (

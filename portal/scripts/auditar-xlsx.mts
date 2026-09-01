@@ -12,7 +12,7 @@
 // auditor prova o ARQUIVO — inclusive um arquivo gerado meses atrás, ou gerado em
 // produção com dado que nenhuma fixture tem. E o que ele NÃO consegue provar (se o
 // Excel abre sem reparo, se o gráfico desenha, se o dropdown reprojeta ao clicar)
-// está no `docs/ACEITE.md`, que é a parte humana do aceite — curta de propósito.
+// está no `Arquitetura do Sistema/6 Referência/ACEITE.md`, que é a parte humana do aceite — curta de propósito.
 //
 // USO:
 //
@@ -20,7 +20,10 @@
 //
 // Sai com código 1 se qualquer item obrigatório reprovar, para poder entrar em
 // script de aceite sem alguém ter de ler a saída.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { extname, isAbsolute, relative, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { avaliarCelula, esquecerMemoria } from "./lib/avaliar-formula.mts";
@@ -382,10 +385,102 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.error("uso: auditar-xlsx.mts <arquivo.xlsx>");
     process.exit(2);
   }
+  // VALIDAÇÃO DO CAMINHO (sonar tssecurity:S8707). Este comando não tem um
+  // "diretório esperado" para confinar o argumento: é uma ferramenta de
+  // operador, chamada diretamente por quem já tem acesso ao arquivo no próprio
+  // disco (Downloads, /tmp, uma exportação recém-gerada em outro lugar) — o
+  // arquivo a auditar É QUALQUER exportação, de propósito, não um caminho
+  // dentro do projeto. Não existe fronteira de privilégio sendo cruzada (quem
+  // roda o comando já poderia ler o arquivo por fora dele).
+  //
+  // O CAMINHO É CONTIDO ANTES DE O DISCO SER TOCADO, e a ORDEM é a correção.
+  // A tentativa anterior continha o caminho — mas só DEPOIS de `existsSync` e
+  // `statSync`, e o `tssecurity:S8707` apontou exatamente as duas linhas: uma
+  // checagem que roda depois do acesso não é guarda, é legenda. É o mesmo
+  // formato de defeito que a `0029` corrigiu no banco (auto-aceite gravado antes
+  // das guardas, e nenhuma guarda revertia), agora no sistema de arquivos.
+  //
+  // A ordem passa a ser: normaliza -> CONTÉM -> confere extensão -> toca o disco
+  // -> resolve links -> CONTÉM DE NOVO. A segunda contenção existe porque a
+  // primeira julga o nome e o symlink só se revela no `realpathSync`: sem ela,
+  // `~/exp.xlsx -> /etc/shadow` passaria na primeira (o nome está no home) e
+  // seria lido. Cada `if` sai por `process.exit`, então nada a jusante recebe
+  // caminho não contido.
+  //
+  // AS RAÍZES SÃO TRÊS, e cobrem o uso legítimo inteiro: a raiz do projeto (a
+  // exportação recém-gerada), o temporário do sistema (para onde o
+  // `gerar-export-*.mts` escreve por padrão) e o home do operador (Downloads, de
+  // onde vem o arquivo que o cliente devolveu). Fora desses três não é caso de
+  // uso desta ferramenta — é engano de digitação ou caminho vindo de outro
+  // lugar, e recusar é o certo nos dois. A raiz do projeto sai da localização
+  // DESTE arquivo, não do cwd, que é entrada do operador como qualquer outra.
+  //
+  // A contenção usa `relative()` e não `startsWith()`: comparar prefixo de texto
+  // deixa `/home/user-malicioso` passar por estar sob `/home/user`, porque um é
+  // prefixo do outro sem ser diretório-pai. `relative(raiz, alvo)` devolve o
+  // caminho de dentro; se ele começa com `..` ou é absoluto, o alvo está FORA.
+  const raizProjeto = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  const RAIZES_PERMITIDAS = [raizProjeto, realpathSync(tmpdir()), homedir()]
+    .map((r) => resolve(r));
+
+  // A CONTENÇÃO É INLINE, e isso não é estilo. A passada anterior chamava um
+  // `dentroDeRaizPermitida(caminho)` — mesma lógica, mesma ordem, mesmo
+  // `process.exit` — e o `tssecurity:S8707` continuou apontando as duas linhas.
+  // O motivo está no fluxo que o Sonar publica: ele segue `arq -> arqResolvido
+  // -> arqReal` e NÃO reconhece o validador em outro escopo como sanitizador,
+  // porque a saída por `process.exit` dentro de uma função não corta a cadeia de
+  // tainting para ele. Guarda que o analisador não enxerga tem, para o
+  // analisador, a mesma aparência de guarda nenhuma — que é exatamente a forma
+  // de defeito que esta casa persegue, só que do lado do instrumento.
+  //
+  // Repetir o laço duas vezes é o preço, e ele é pequeno perto de um portão que
+  // não fecha. O `for` explícito em vez de `.some()` existe pela mesma razão: um
+  // callback é outro escopo.
+  const arqResolvido = resolve(arq);
+  let contido = false;
+  for (const raiz of RAIZES_PERMITIDAS) {
+    const dentro = relative(raiz, arqResolvido);
+    if (dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro))) {
+      contido = true;
+      break;
+    }
+  }
+  if (!contido) {
+    console.error(
+      `recusado: ${arqResolvido} está fora do projeto, do temporário e do home.`);
+    process.exit(2);
+  }
+  if (extname(arqResolvido).toLowerCase() !== ".xlsx") {
+    console.error(`esperado um arquivo .xlsx: ${arq}`);
+    process.exit(2);
+  }
+  if (!existsSync(arqResolvido) || !statSync(arqResolvido).isFile()) {
+    console.error(`arquivo não encontrado: ${arq}`);
+    process.exit(2);
+  }
+
+  // SEGUNDA CONTENÇÃO, sobre o destino REAL do link. A primeira julga o NOME, e
+  // o symlink só se revela aqui: sem esta, `~/exp.xlsx -> /etc/shadow` passaria
+  // na primeira (o nome está no home) e seria lido.
+  const arqReal = realpathSync(arqResolvido);
+  let contidoReal = false;
+  for (const raiz of RAIZES_PERMITIDAS) {
+    const dentro = relative(raiz, arqReal);
+    if (dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro))) {
+      contidoReal = true;
+      break;
+    }
+  }
+  if (!contidoReal) {
+    console.error(
+      `recusado: ${arq} aponta para ${arqReal}, fora do projeto, do temporário e do home.`);
+    process.exit(2);
+  }
+
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(arq);
+  await wb.xlsx.readFile(arqReal);
   // A flag de recálculo é lida do XML, não do objeto — ver o comentário do parâmetro.
-  const zip = await JSZip.loadAsync(readFileSync(arq));
+  const zip = await JSZip.loadAsync(readFileSync(arqReal));
   const workbookXml = await zip.file("xl/workbook.xml")?.async("string") ?? "";
   const itens = auditarWorkbook(wb, /fullCalcOnLoad="(1|true)"/.test(workbookXml));
   console.log(`AUDITORIA DE ${arq}\n`);
@@ -398,7 +493,7 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
   console.log(`\n${itens.length - reprovados}/${itens.length} itens OK · ${reprovados} reprovado(s)`);
   if (reprovados > 0) {
     console.log("\nItem reprovado NÃO é opinião: cada um é um número lido do arquivo. Veja a medida");
-    console.log("ao lado e o docs/ACEITE.md para o que fazer com ela.");
+    console.log("ao lado e o Arquitetura do Sistema/6 Referência/ACEITE.md para o que fazer com ela.");
   }
   process.exit(reprovados > 0 ? 1 : 0);
 }

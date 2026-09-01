@@ -3,7 +3,7 @@
 // POR QUE ISTO É UM ARQUIVO, E NÃO O TOPO DO `upload-form.tsx`. As quatro contas
 // abaixo decidem, sozinhas, se o analista vê "está andando" ou "parou" — e
 // enquanto viviam dentro do componente ninguém conseguia CHAMÁ-LAS num teste. O
-// que o `n8n/test/workflow-sim.test.mjs` fazia era ler as constantes do fonte e
+// que o `N8N/test/workflow-sim.test.mjs` fazia era ler as constantes do fonte e
 // refazer a conta do lado dele: espelho sem guarda, o defeito que este
 // repositório já nomeou três vezes — a fórmula muda aqui, o espelho não muda, e
 // o teste continua verde provando a conta ERRADA. Agora a suíte chama a mesma
@@ -41,7 +41,7 @@ export const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 //
 // A conta agora é declarada: ~44 extrações (38 documentos, 4 deles fatiados) +
 // ~19 classificações por conteúdo, a 8s cada, dá 63 × 8 ÷ 38 ≈ 13s por
-// documento. 14 cobre o upload e o banco. `n8n/test/workflow-sim.test.mjs`
+// documento. 14 cobre o upload e o banco. `N8N/test/workflow-sim.test.mjs`
 // confere este número contra o `batchInterval` REAL do workflow gerado — se a
 // cadência mudar de novo e este espelho não, a suíte reprova.
 // RECALIBRADO CONTRA DUAS RODADAS REAIS de 38 documentos, e não contra a conta

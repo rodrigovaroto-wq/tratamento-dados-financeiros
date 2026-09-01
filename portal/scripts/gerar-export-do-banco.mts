@@ -16,10 +16,10 @@
 // COMO USAR:
 //
 //   # 1. banco local com as migrations e a fixture do caso real
-//   TEST_DB=tdf_v35 PGDATABASE=postgres db/test/run.sh
-//   psql -d tdf_v35 -f db/test/fixture_modelagem_v35.sql        # devolve o caso_id
+//   TEST_DB=tdf_v35 PGDATABASE=postgres Supabase/test/run.sh
+//   psql -d tdf_v35 -f Supabase/test/fixture_modelagem_v35.sql        # devolve o caso_id
 //   # 2. configurar a modelagem (troque o v_caso no topo do arquivo)
-//   psql -d tdf_v35 -f db/roteiro_modelagem_v35.sql
+//   psql -d tdf_v35 -f Supabase/roteiro_modelagem_v35.sql
 //   # 3. gerar o arquivo
 //   DB=tdf_v35 ./portal/node_modules/.bin/tsx portal/scripts/gerar-export-do-banco.mts <caso_id> /tmp/saida.xlsx
 //
@@ -27,6 +27,9 @@
 // aqui faria o arquivo mudar sozinho e um diff de bytes acusar mudança onde não
 // houve.
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildExportWorkbook, finalizarBufferDoExport, type DocumentoParaExport, type ConfigModelagem } from "../src/lib/export.ts";
 import type { EntradaModeloInstitucional, LinhaModelo } from "../src/lib/modelo-institucional.ts";
 import type { CampoExtraido } from "../src/lib/types.ts";
@@ -45,9 +48,42 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CASO
   throw new Error(`caso_id "${CASO}" não é um UUID — é assim que caso.id é gravado desde a 0001.`);
 }
 
+// `psql` é resolvido só nestes diretórios do sistema (sonar typescript:S4036):
+// sem isto, `execFileSync` busca no `PATH` herdado do processo, e um `psql`
+// plantado ANTES no `PATH` (variável de ambiente, não arquivo — nada que a
+// validação do `caso_id` acima alcance) rodaria no lugar do binário real,
+// com o mesmo acesso ao banco que este script já tem.
+//
+// A lista fixa NÃO cobre todo layout legítimo: falta o Homebrew
+// (`/opt/homebrew/bin`) e falta `/usr/lib/postgresql/16/bin`, que é o próprio
+// layout que o `CLAUDE.md` deste repositório manda usar para subir o Postgres
+// de teste. Isso por si só falharia alto (ENOENT) e seria inofensivo — o caso
+// ruim é o SILENCIOSO: numa máquina onde o dev tem os dois `psql` instalados
+// (o do sistema em `/usr/bin` e um mais novo só em `/usr/lib/postgresql/16/bin`),
+// a lista fixa acerta o mais VELHO sem avisar, e este script gera o artefato
+// de conformidade que o dono usa para decidir se um bug é de ambiente ou de
+// lógica de planilha. `PSQL_DIRS_SEGUROS` permite um override explícito
+// quando a lista padrão não serve, e o binário resolvido é sempre impresso —
+// nunca em silêncio.
+const DIRS_PSQL_SEGUROS = process.env.PSQL_DIRS_SEGUROS
+  ?? "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/usr/lib/postgresql/16/bin";
+
+function psqlResolvido(): string {
+  for (const dir of DIRS_PSQL_SEGUROS.split(":")) {
+    const candidato = join(dir, "psql");
+    if (existsSync(candidato)) return candidato;
+  }
+  // Nenhum achado: deixa o `execFileSync` abaixo falhar com ENOENT, que já é o
+  // caso "falha alto" desejado — não há binário a anunciar.
+  return "psql";
+}
+const PSQL_BIN = psqlResolvido();
+console.error(`[gerar-export-do-banco] psql resolvido: ${PSQL_BIN}`);
+
 function q<T>(sql: string): T[] {
-  const out = execFileSync("psql", ["-d", DB, "-tAc",
-    `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`], { encoding: "utf8" });
+  const out = execFileSync(PSQL_BIN, ["-d", DB, "-tAc",
+    `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`],
+    { encoding: "utf8", env: { ...process.env, PATH: DIRS_PSQL_SEGUROS } });
   return JSON.parse(out.trim()) as T[];
 }
 
@@ -162,7 +198,15 @@ const modo = (process.env.MODO === "dados" ? "dados" : "completo") as "dados" | 
 const wb = buildExportWorkbook({
   caso, documentos, campos, modo, modelagemConfig, modeloInstitucional,
 });
-const saida = process.argv[3] ?? "/tmp/v35-completo.xlsx";
+// Sem caminho explícito no argv, o padrão NÃO é um nome fixo dentro de /tmp
+// (sonar typescript:S5443): `/tmp/v35-completo.xlsx` é previsível e o diretório
+// é gravável por qualquer processo da máquina — outro processo local podia
+// plantar um symlink nesse nome antes de rodar, ou ler o export (que carrega
+// dado financeiro do caso) assim que ele é escrito. `mkdtempSync` cria um
+// diretório com nome IMPREVISÍVEL e modo 0700 (só o dono lê/escreve) — mesma
+// pasta-base do sistema, mas sem nome adivinhável nem permissão aberta.
+const saida = process.argv[3]
+  ?? join(mkdtempSync(join(tmpdir(), "gerar-export-do-banco-")), "v35-completo.xlsx");
 // O MESMO caminho de saída da rota — sem isto, o arquivo que eu meço localmente
 // não tem gráfico nem nota ampliada, e a medição mente sobre o entregável.
 const { writeFile } = await import("node:fs/promises");

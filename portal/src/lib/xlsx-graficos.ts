@@ -1,9 +1,9 @@
 // GRÁFICOS NO .XLSX ENTREGUE — o que o ExcelJS não sabe fazer.
 //
 // POR QUE ESTE ARQUIVO EXISTE. O Modelo Base do dono
-// (`docs/referencia/modelo-base.xlsx`) tem **8 gráficos**, todos de linha, todos
+// (`Arquitetura do Sistema/6 Referência/modelo-base.xlsx`) tem **8 gráficos**, todos de linha, todos
 // na aba `Output`, alimentados por tabelas laterais da própria aba. Medido em
-// `docs/referencia/MAPA_MODELO_BASE.md` §17.2. O nosso export tinha **zero**, e
+// `Arquitetura do Sistema/6 Referência/MAPA_MODELO_BASE.md` §17.2. O nosso export tinha **zero**, e
 // não por esquecimento: o **ExcelJS não tem API de gráfico** — nem
 // `workbook.addChart` nem `worksheet.addChart` existem (conferido no runtime da
 // versão 4.4.0 que está no lock, não só no `.d.ts`).
@@ -31,7 +31,7 @@
 //      comentadas — que são as nossas. Aqui a inserção é ANTES de
 //      `<legacyDrawing`, quando ele existe.
 //   2. **A ordem das abas não é a ordem dos `sheetN.xml`.** É a mesma armadilha
-//      que fez o `docs/referencia/mapear-xlsx.py` existir. A resolução aqui é
+//      que fez o `Arquitetura do Sistema/6 Referência/mapear-xlsx.py` existir. A resolução aqui é
 //      `xl/workbook.xml` → `r:id` → `xl/_rels/workbook.xml.rels` → `Target`.
 //   3. **Os `rId` da aba já estão ocupados.** ExcelJS cria
 //      `xl/worksheets/_rels/sheetN.xml.rels` para a nota (vmlDrawing + comments).

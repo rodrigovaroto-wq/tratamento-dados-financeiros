@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { lerPlanilhaTranscricao } from "@/lib/transcricao";
 
-// Chama fn_aceitar_extracao (db/migrations/0011_aceite_export_e4.sql) — o
-// Portão 2 mínimo do E4 (f0/07_output_spec.md): humano aceita TODAS as linhas
+// Chama fn_aceitar_extracao (Supabase/migrations/0011_aceite_export_e4.sql) — o
+// Portão 2 mínimo do E4 (Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md): humano aceita TODAS as linhas
 // extraídas desta versão de documento de uma vez. Sem isso, nenhuma linha
 // entra no export como fato (fica "pendente" — anti-ancoragem). A lógica
 // (decisao + evento_auditoria) roda no Postgres, não aqui.
@@ -29,7 +29,7 @@ export async function aceitarExtracao(casoId: string, docId: string, formData: F
     throw new Error(`Falha ao aceitar extração: ${error.message}`);
   }
 
-  // RECUSA (db/migrations/0036): a função devolve `recusado: true` quando a versão
+  // RECUSA (Supabase/migrations/0036): a função devolve `recusado: true` quando a versão
   // não tem NENHUMA linha extraída — aceitar ali gravaria uma aprovação formal de
   // nada numa tabela append-only. A recusa vem no payload, e não como erro de
   // Postgres, porque exceção em plpgsql desfaria o registro da própria tentativa
@@ -48,13 +48,13 @@ export async function aceitarExtracao(casoId: string, docId: string, formData: F
   revalidatePath(`/casos/${casoId}`);
 }
 
-// Chama fn_registrar_classe_override (db/migrations/0128) — a decisão HUMANA sobre
+// Chama fn_registrar_classe_override (Supabase/migrations/0128) — a decisão HUMANA sobre
 // a classe contábil de uma linha.
 //
 // POR QUE ESTA AÇÃO EXISTE, E POR QUE ELA É O PRODUTO DA 0128. A classificação
 // contábil roda em N0: ela sugere e não decide nada. Sem um lugar onde o humano
 // discorde, a sugestão fica sendo um número que ninguém confirmou nem derrubou — e
-// é justamente a DISCORDÂNCIA que o docs/05 chama de "sinal de calibração", o dado
+// é justamente a DISCORDÂNCIA que o Arquitetura do Sistema/2 Especificação/05 chama de "sinal de calibração", o dado
 // que a F4 consome. Uma classificação em sombra sem tela de override não gera
 // sinal nenhum; ela só ocupa espaço no banco.
 //
@@ -88,7 +88,7 @@ export async function registrarClasseContabil(
 
   // RECUSA RETORNADA, não exceção — mesmo padrão do aceite acima, e ler este campo
   // é igualmente obrigatório. A 0128 recusa rótulo fora do catálogo (a taxonomia do
-  // docs/05 é FECHADA) e override sem autor; nos dois casos `error` vem nulo, e sem
+  // Arquitetura do Sistema/2 Especificação/05 é FECHADA) e override sem autor; nos dois casos `error` vem nulo, e sem
   // esta leitura a tela recarregaria como se a classificação tivesse sido gravada.
   const resultado = data as { recusado?: boolean; motivo_recusa?: string } | null;
   if (resultado?.recusado) {
@@ -98,12 +98,12 @@ export async function registrarClasseContabil(
   revalidatePath(`/casos/${casoId}/documentos/${docId}`);
 }
 
-// Chama fn_registrar_transcricao_humana (db/migrations/0129) — a SAÍDA do gate de
-// captura (fechamento #2 do docs/01), a partir da planilha preenchida.
+// Chama fn_registrar_transcricao_humana (Supabase/migrations/0129) — a SAÍDA do gate de
+// captura (fechamento #2 do Arquitetura do Sistema/1 Visão e Doutrina/01), a partir da planilha preenchida.
 //
 // POR QUE ESTA AÇÃO É O QUE FECHA A 0129. A função no banco existia e nada a
 // chamava: sem planilha e sem importação, o gate continuava sendo o dead-end de
-// pendência infinita que o docs/01 nomeia — "arquivo ilegível" abria pendência e
+// pendência infinita que o Arquitetura do Sistema/1 Visão e Doutrina/01 nomeia — "arquivo ilegível" abria pendência e
 // não havia caminho nenhum para sair dela a não ser o cliente reenviar um arquivo
 // melhor, que às vezes não existe.
 //

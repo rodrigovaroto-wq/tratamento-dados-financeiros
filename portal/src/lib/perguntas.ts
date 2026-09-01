@@ -20,7 +20,7 @@
 import { humanizar } from "./rotulos";
 import { formatarTipoTaxonomia } from "./export";
 
-/** Uma linha de `fn_sugerir_perguntas(caso)` — db/migrations/0120. */
+/** Uma linha de `fn_sugerir_perguntas(caso)` — Supabase/migrations/0120. */
 export interface PerguntaSugerida {
   codigo: string;
   titulo: string;

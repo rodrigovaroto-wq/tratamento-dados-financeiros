@@ -910,7 +910,7 @@ const BLOCOS_DE_DESPESA: readonly BlocoModelo[] = ["deducao", "custo", "sga"];
 // fecha: medido no arnês de variações, resíduo de −36.116 com os mesmos números.
 //
 // Dois dígitos-grupo no mínimo (`\d+(\.\d+){2,}`), que é a mesma definição de
-// código de conta que `n8n/lib/cobertura.mjs` já usa — "identidade sem uma letra
+// código de conta que `N8N/lib/cobertura.mjs` já usa — "identidade sem uma letra
 // sequer". Exigir três grupos evita comer um "2.500" que seja parte do nome.
 // O código não se perde: ele continua no rótulo que o arquivo imprime; o que muda
 // é só o que a âncora COMPARA.
@@ -1366,7 +1366,7 @@ function abaAnual(wb: ExcelJS.Workbook, ctx: Ctx): Grade {
   }
 
   const rNota = g.linha(null, {
-    rotulo: "Realizado: BCB/IBGE (db/seed/macro_carga_inicial.sql). Projetado: mediana do Focus, "
+    rotulo: "Realizado: BCB/IBGE (Supabase/seed/macro_carga_inicial.sql). Projetado: mediana do Focus, "
       + "coleta mais recente. Célula vazia = sem publicação para o ano — NUNCA texto como 'nd', "
       + "que é o que quebrou 11 exercícios do modelo de referência.",
   });
@@ -1800,7 +1800,7 @@ function abaReceita(wb: ExcelJS.Workbook, ctx: Ctx, gPrem: Grade, gAnual: Grade)
   // ===========================================================================
   // AS TRÊS CASCATAS EM PARALELO — o bloco que faz os cenários serem comparáveis.
   //
-  // O DEFEITO QUE ISTO FECHA (`docs/DIAGNOSTICO_SISTEMA_2026-08-11.md`, §2.2): o
+  // O DEFEITO QUE ISTO FECHA (`Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md`, §2.2): o
   // arquivo tem UM interruptor de cenário (`Output!$G$2`) e todas as abas leem
   // dele por `CHOOSE`. Ter um interruptor só é a decisão certa — dois produziriam
   // um arquivo em dois cenários ao mesmo tempo, sem nada denunciar. A consequência
@@ -2633,7 +2633,7 @@ function abaCapitalGiro(wb: ExcelJS.Workbook, ctx: Ctx, gRec: Grade): Grade {
   // ativo circulante que menos vira caixa.
   const estoques = ativos.filter((l) => ehEstoque(l.chave));
   // CLIENTES, pela mesma razão e para o mesmo destino: o CICLO DE CAIXA do
-  // `Output` precisa do recebível isolado. `f0/08` lista PMR/PME/PMP como
+  // `Output` precisa do recebível isolado. `Arquitetura do Sistema/2 Especificação/f0/08` lista PMR/PME/PMP como
   // faseados "até a extração isolar as linhas-conceito" — e o giro já as isola
   // aqui para aplicar dias, então o que faltava era publicar o espelho.
   const clientes = ativos.filter((l) => ehCliente(l.chave));
@@ -4929,7 +4929,7 @@ function abaOutput(
 
   // ---- RESUMO DOS TRÊS CENÁRIOS --------------------------------------------
   //
-  // O bloco que o `docs/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2 pediu: "um bloco
+  // O bloco que o `Arquitetura do Sistema/4 Análises e Auditorias/DIAGNOSTICO_SISTEMA_2026-08-11.md` §2.2 pediu: "um bloco
   // 'Resumo dos três cenários' calculado INDEPENDENTEMENTE do seletor — as três
   // cascatas em paralelo para essas poucas linhas, não para o modelo inteiro".
   //
@@ -5235,7 +5235,7 @@ function abaOutput(
 
   // ---- RETORNO E SOLVÊNCIA -------------------------------------------------
   //
-  // O `f0/08` fasejou ROA, ROE e Altman "até a extração isolar as linhas-conceito
+  // O `Arquitetura do Sistema/2 Especificação/f0/08` fasejou ROA, ROE e Altman "até a extração isolar as linhas-conceito
   // necessárias". Ela isola desde as 14 abas: o balanço tem ativo total e
   // patrimônio líquido, a DRE tem lucro líquido e EBIT. O bloqueio documentado lá
   // deixou de valer para o arquivo de modelagem, e ninguém tinha revisitado.
@@ -5280,7 +5280,7 @@ function abaOutput(
 
   // ---- CICLO DE CAIXA ------------------------------------------------------
   //
-  // `f0/08` fasejou PMR/PME/PMP "até a extração isolar as linhas-conceito
+  // `Arquitetura do Sistema/2 Especificação/f0/08` fasejou PMR/PME/PMP "até a extração isolar as linhas-conceito
   // necessárias como âncoras endereçáveis". Ela ISOLA: o `Working Capital`
   // separa clientes, estoques e fornecedores para aplicar dias de giro a cada um
   // — o que faltava era publicar os espelhos e fazer a divisão aqui.
@@ -5292,7 +5292,7 @@ function abaOutput(
   //
   // ZERO NÃO É RESPOSTA. Caso sem conta de clientes publica "n.a.", não "0 dias":
   // zero dias de recebimento afirma que a empresa vende à vista, que é uma
-  // afirmação sobre o negócio. É a mesma regra do `f0/08` — sem o insumo, a
+  // afirmação sobre o negócio. É a mesma regra do `Arquitetura do Sistema/2 Especificação/f0/08` — sem o insumo, a
   // célula não estima.
   g.linha(null, { rotulo: "CICLO DE CAIXA (dias)", bloco: true });
   g.linha("CC_PMR", { rotulo: "PMR — prazo médio de recebimento", fmt: NUM2 });

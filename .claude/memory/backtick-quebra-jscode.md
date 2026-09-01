@@ -11,5 +11,5 @@ parseia** o resultado — ele só concatena — então nada acusa ali: só o tes
 
 Aspas simples em contração (`e'`) têm o mesmo efeito no lado SQL.
 
-Aconteceu duas vezes. Rode `node --test 'n8n/test/*.test.mjs'` depois de qualquer edição em
-`n8n/build-workflow*.mjs`, mesmo que a mudança tenha sido "só um comentário".
+Aconteceu duas vezes. Rode `node --test 'N8N/test/*.test.mjs'` depois de qualquer edição em
+`N8N/build-workflow*.mjs`, mesmo que a mudança tenha sido "só um comentário".
