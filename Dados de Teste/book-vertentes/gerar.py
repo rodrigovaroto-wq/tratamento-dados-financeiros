@@ -194,6 +194,7 @@ import re as _re
 import extrai as _extrai
 
 _metricas = []
+_texto_por_arquivo = {}
 for _arquivo in sorted(os.listdir(R.OUT)):
     if not _arquivo.lower().endswith(".pdf"):
         continue
@@ -205,7 +206,21 @@ for _arquivo in sorted(os.listdir(R.OUT)):
     # unidade importa: cada fragmento com dígito é uma CÉLULA de valor, que é o
     # que vira token de saída, não uma linha de conta (uma conta comparativa tem
     # uma célula por coluna de período).
+    _verdade = R.CONTAGEM.get(_arquivo, {"linhas_de_conta": 0, "celulas_de_valor": 0,
+                                         "contas_distintas": 0})
     _bruto_texto = _extrai.texto(_caminho)
+    # AS LINHAS DE VERDADE, agrupadas pela coordenada Y — a mesma escolha do
+    # canastra, e pelo mesmo motivo escrito lá: é a forma que o nó
+    # `Extract From File` do n8n entrega ao pipeline. `texto()` devolve uma
+    # CÉLULA por pedaço, e contar célula como linha afrouxaria a régua.
+    #
+    # ESTE ARQUIVO USAVA `texto()` E O EXTRATOR CURTO. Medido em 01/09, antes da
+    # troca: sobre a saída não agrupada a régua contava 3 onde a verdade é 99, e
+    # 0 onde a verdade é 28 — erro médio de 93%, contando A MENOS em 13 de 13
+    # documentos. Não era defeito da régua: era ela lendo célula em vez de linha,
+    # exatamente o que o comentário do canastra avisa. O extrator curto (24
+    # linhas, sem agrupamento por Y) saiu, e o do canastra entrou no lugar.
+    _texto_por_arquivo[_arquivo] = [l for l in _extrai.linhas(_caminho) if l.strip()]
     _texto = "\n".join(_bruto_texto) if isinstance(_bruto_texto, list) else _bruto_texto
     _linhas = [linha for linha in _texto.split("\n") if linha.strip()]
     _metricas.append({
@@ -217,7 +232,20 @@ for _arquivo in sorted(os.listdir(R.OUT)):
         # Linha com dígito é candidata a virar linha financeira extraída — é ela
         # que vira token de SAÍDA, o item mais caro da conta.
         "linhas_com_numero": sum(1 for linha in _linhas if any(ch.isdigit() for ch in linha)),
+        # A VERDADE DA COBERTURA, e ela NÃO é uma leitura do PDF: sai do
+        # `R.CONTAGEM`, preenchido enquanto os flowables eram montados, ANTES de
+        # o arquivo existir. É contra ela que a régua `linhasDeConta` é
+        # calibrada, e ela só passou a existir aqui em 01/09 — até então o
+        # `book-canastra` era o ÚNICO book com verdade de cobertura, e a
+        # afirmação "régua exata em 20 de 20" descrevia 20 documentos de um
+        # gerador só.
+        **{k + "_verdade": _verdade[k] for k in ("linhas_de_conta", "contas_distintas")},
+        "celulas_de_valor_verdade": _verdade["celulas_de_valor"],
     })
+
+with open(f"{R.OUT}/TEXTO_EXTRAIDO.json", "w", encoding="utf-8") as fh:
+    json.dump({"livro": "book-vertentes", "documentos": _texto_por_arquivo}, fh,
+              indent=1, ensure_ascii=False)
 
 with open(f"{R.OUT}/METRICAS.json", "w", encoding="utf-8") as fh:
     json.dump({"livro": "book-vertentes", "documentos": _metricas}, fh, indent=2, ensure_ascii=False)
