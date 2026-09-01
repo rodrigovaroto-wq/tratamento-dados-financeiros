@@ -157,6 +157,13 @@ function garantirMolde() {
     .filter((nome) => nome.endsWith(".sql"))
     .sort()
     .map((nome) => `Supabase/migrations/${nome}`);
+  // Ver a nota longa em `Verificação/run.mts`: lista vazia tem de ESTOURAR. Aqui
+  // o molde viraria um `datistemplate` sem uma tabela dentro, e cada variação
+  // clonaria o vazio — 25 rodadas "sem achado" sobre nada.
+  if (arquivos.length === 0) {
+    throw new Error(
+      `Nenhuma migration .sql em ${RAIZ}Supabase/migrations — o molde nasceria VAZIO.`);
+  }
   for (const arq of arquivos) {
     execFileSync(PSQL[0], [...PSQL.slice(1), "-v", "ON_ERROR_STOP=1", "-q", "-d", MOLDE, "-f", arq],
       { cwd: RAIZ, stdio: "pipe" });

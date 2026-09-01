@@ -268,14 +268,30 @@ psql(`
 // diretório sem criar processo nenhum, e o `sort()` reproduz a ordem
 // lexicográfica do `ls`, que é a ordem em que as migrations TÊM de ser
 // aplicadas (é o prefixo numérico do nome que as ordena).
+// LISTA VAZIA É FALHA, NÃO SILÊNCIO. O `bash -c "ls .../*.sql"` que estava aqui
+// antes ESTOURAVA quando o glob não casava nada (o ls sai 2 e o execFileSync
+// lança) — barulhento, e essa era a única coisa boa dele. O `readdirSync` que o
+// substituiu devolve `[]` sem reclamar: o `for` não roda, nenhuma migration é
+// aplicada, e a linha seguinte anuncia sucesso do mesmo jeito. Basta a próxima
+// reorganização mover as migrations para um subdiretório (`migrations/2026/`)
+// para o diretório continuar existindo, o filtro devolver zero, e a suíte seguir
+// contra um banco VAZIO até morrer adiante com um erro de tabela inexistente que
+// ninguém liga a esta linha. É o `estagio-desligado-parece-limpo` da memória,
+// trocado de lugar. A contagem exata não é fixada de propósito: ela mudaria a
+// cada migration nova e reprovaria pelo motivo errado; quem confere o número é o
+// `Supabase/test/run.sh`, contra o README.
 const MIGRATIONS = readdirSync(`${RAIZ}Supabase/migrations`)
   .filter((nome) => nome.endsWith(".sql"))
   .sort()
   .map((nome) => `Supabase/migrations/${nome}`);
+if (MIGRATIONS.length === 0) {
+  throw new Error(
+    `Nenhuma migration .sql em ${RAIZ}Supabase/migrations — a suíte estaria rodando contra um banco VAZIO.`);
+}
 for (const arquivo of MIGRATIONS) {
   execFileSync(PSQL[0], [...PSQL.slice(1), "-v", "ON_ERROR_STOP=1", "-q", "-d", DB, "-f", arquivo], { cwd: RAIZ, stdio: "pipe" });
 }
-console.log("   migrations aplicadas");
+console.log(`   ${MIGRATIONS.length} migrations aplicadas`);
 
 const casoId = psql(`insert into caso (nome) values ('e2e book vertentes') returning id`).trim();
 

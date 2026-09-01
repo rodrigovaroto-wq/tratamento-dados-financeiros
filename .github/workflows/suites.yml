@@ -95,12 +95,29 @@ jobs:
         # no runner, com o checkout e o token do job à mão, antes de a primeira
         # suíte começar.
         #
-        # E ELE FOI MEDIDO, não presumido: as três dependências desta árvore com
-        # script de instalação são `esbuild`, `sharp` e `unrs-resolver`, e as três
-        # continuam funcionando sem ele — o binário nativo de cada uma vem do
-        # pacote por plataforma em `optionalDependencies`, e o script só o
-        # confirma. Com a árvore instalada assim, `tsc --noEmit`, `eslint .`,
-        # `next build` e o `tsx` das suítes rodaram verdes (conferido em 01/09).
+        # E ELE FOI MEDIDO, não presumido. O número vem do LOCK, não de memória:
+        # `hasInstallScript` é verdadeiro em QUATRO pacotes — `esbuild`
+        # (postinstall), `sharp` (install), `unrs-resolver` (postinstall) e
+        # `fsevents` (install). No runner rodariam TRÊS: o `fsevents` é
+        # `os: ["darwin"]` e opcional, e nunca chega a instalar no Linux. (Os
+        # ~20 `prepare` da árvore não contam: `prepare` não roda para tarball do
+        # registro, só para dependência de git ou link local.)
+        #
+        # Os três continuam funcionando sem o script porque o binário nativo de
+        # cada um vem do pacote por plataforma em `optionalDependencies` — o
+        # script só o confirma. Conferido na árvore REAL, não numa cópia:
+        # `rm -rf node_modules` + `npm ci --ignore-scripts`, e em cima disso
+        # `./node_modules/.bin/tsc --noEmit` limpo, `eslint .` limpo,
+        # `next build` compilado, mais a suíte inteira (01/09).
+        #
+        # O QUE ESTA FLAG CUSTA, e fica registrado porque a memória
+        # `portao-mede-a-entrada-de-producao` é exatamente sobre isso: a Vercel
+        # roda o install DELA, COM scripts, e não lê este arquivo. A partir daqui
+        # o portão mede uma instalação que não é a de produção. A troca é
+        # deliberada — o risco de código de terceiro no runner é concreto e o
+        # `next build` daqui nunca provou nada sobre o build da Vercel de qualquer
+        # forma —, mas quem for investigar uma quebra que só aparece lá deve
+        # começar por esta linha.
         working-directory: portal
         run: npm ci --ignore-scripts
 

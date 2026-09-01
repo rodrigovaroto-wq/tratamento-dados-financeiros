@@ -48,7 +48,7 @@ Use exatamente estes. O CI (`.github/workflows/suites.yml`) é a lista completa 
 
 ```bash
 # preparar o container (a sessão 14 perdeu tempo nos três)
-cd portal && npm ci && cd ..
+cd portal && npm ci --ignore-scripts && cd ..   # --ignore-scripts: igual ao CI
 cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab==5.0.1' \
   && PYTHONPATH=. python3 gerar.py && cd ../..   # PYTHONPATH=. é obrigatório
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
@@ -69,11 +69,16 @@ node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
 
 # portal
-cd portal && npx tsc --noEmit && npx eslint . && npx next build
+cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \
+  && ./node_modules/.bin/next build
 ```
 
-`npx tsx` **não** serve no lugar de `./portal/node_modules/.bin/tsx`: sem o binário do lock, o
-npx baixa a última versão publicada no dia.
+`npx` **não** serve no lugar de `./portal/node_modules/.bin/<bin>` — para o `tsx`, o `tsc`, o
+`eslint` ou o `next`: sem o binário do lock, o npx baixa a última versão publicada no dia. Esta
+regra existia aqui desde sempre e o CI a desobedecia em três linhas até 01/09 (era o que o Sonar
+cobrava em `githubactions:S6505`/`S8543`). Agora os dois concordam — e é por isso que os comandos
+acima têm de continuar concordando: **este bloco é espelho do CI, e espelho que fica para trás é
+pior que espelho nenhum**, porque manda a próxima sessão instalar diferente do portão.
 
 ## Orquestrar, não implementar sozinho
 
