@@ -61,7 +61,28 @@ mora.
 
 ## 3. A correção: uma coordenada, depois uma bijeção
 
-### Fase 0 — Provar o denominador (bloqueia todo o resto)
+### Fase 0 — Provar o denominador (bloqueia todo o resto) · **PARCIALMENTE FECHADA em 01/09**
+
+> **O que já foi medido.** A régua era calibrada contra UM gerador: `linhas_de_conta_verdade`
+> existia em 38 de 38 documentos do canastra e em **0 de 14** do vertentes. A contagem foi
+> portada (sem reescrever a regra), e com a entrada certa a régua acerta **11 de 13 no
+> vertentes, erro médio 1,3%** — ela **não** está viciada no canastra.
+>
+> **Mas ela conta A MENOS num conjunto identificável**, que é a direção que ESCONDE extração
+> pela metade: `13`/`14_Balanco_COMBINADO` (−33% cada), `21_Mutuos` (−33%), `25_Situacao_Fiscal`
+> (−30%), `10_Faturamento_24M` (−6%) e `11_Mapa_Divida` (−10%) do vertentes.
+>
+> **E o `055` do araucária, o pior dos três, É UM COMBINADO.** Se a régua o subconta como
+> subconta os dois do canastra, o denominador dele não é 20 e sim da ordem de 30 — a cobertura
+> não é 65% e sim perto de 43%. **A sub-extração seria pior do que a medida.** Hipótese
+> transferida, não fato: só o texto de produção dos três documentos fecha esta fase.
+>
+> No caminho, um erro meu que vale como aviso: a primeira medição deu "93% de erro, contando a
+> menos em 13 de 13" — e era eu medindo a entrada errada. Os dois books tinham extratores
+> diferentes, e o do vertentes não agrupava os pedaços pela coordenada Y. Comportamento correto
+> da régua sobre texto de outra forma, quase reportado como defeito.
+
+O que ainda falta desta fase:
 
 Sem isto, tudo abaixo é fé. Capturar o texto que o nó `Extrair Texto` produziu para os TRÊS
 documentos e contar as linhas de conta **por um segundo método independente** da
@@ -77,9 +98,21 @@ Três saídas possíveis, e as três são informação:
 **Critério de pronto:** os três números conferidos e o resultado escrito no `ESTADO.md`, com o
 método usado.
 
-### Fase 1 — A coordenada: numerar o bloco e exigir a origem
+### Fase 1 — A coordenada: um texto numerado AO LADO do PDF
 
-O bloco enviado ao modelo passa a ir **numerado**:
+> **CORREÇÃO DE PREMISSA, 01/09.** A primeira versão desta fase dizia "numerar as linhas do
+> bloco enviado ao modelo". **Não existe bloco de texto sendo enviado.** O `Preparar Conteudo`
+> monta o `content_part` com `parteDeArquivo`, e o modelo recebe o **PDF em si** — é o que o
+> teste *"o PDF vai como ARQUIVO, não como texto"* trava, e por bom motivo: mandar só texto
+> perderia layout, coluna e documento digitalizado. O fatiamento também não usa número de
+> linha: usa **âncoras** (o texto da primeira e da última linha do bloco).
+
+A coordenada continua sendo necessária, e o caminho que respeita o que já existe é **acrescentar
+uma parte de TEXTO NUMERADO ao lado do arquivo**, não substituir o arquivo:
+
+```
+partes: [ parteDeTexto(prov, textoNumerado), item.content_part ]
+```
 
 ```
 L001: ATIVO CIRCULANTE                    44.022    41.310
@@ -87,10 +120,20 @@ L002:   Disponível                            825       790
 L003:     Caixa                                800       770
 ```
 
+O modelo lê o **PDF** para valor, coluna e layout — nada se perde — e usa o **texto numerado**
+como sistema de coordenadas para declarar de onde cada linha veio. O texto já existe no
+pipeline: é o mesmo que alimenta as âncoras do fatiamento e a régua da cobertura, produzido pelo
+nó `Extrair Texto`.
+
 E o schema da linha ganha **um campo obrigatório**: `ln` = o número da linha de origem.
 
-Custo medido antes de ligar: ~6 caracteres por linha na entrada, ~8 na saída. Para o maior
-bloco do book precisa caber no `TETO_SAIDA_TOKENS = 16384` e passar no `medir-custo-book.mjs`.
+**Duas coisas a medir antes de ligar**, e nenhuma é opinião:
+- **Custo de entrada.** O texto numerado é token novo em toda chamada de extração. O
+  `medir-custo-book.mjs` tem de continuar verde, e o número entra na mensagem do commit.
+- **Divergência PDF × texto.** Se o `Extrair Texto` fragmentar (foi o que a sessão 77 achou), a
+  numeração numera fragmentos, e o `ln` aponta para meia linha. A emenda
+  (`juntarFragmentosDeLinha`) tem de rodar ANTES da numeração — e o número de linhas numeradas
+  tem de bater com o denominador da régua, senão são duas coordenadas diferentes outra vez.
 
 ### Fase 2 — A bijeção: cada linha do texto tem de ter DESTINO
 
