@@ -15,9 +15,9 @@ naquele arquivo vai junto, sem aviso e sem desfazer.
 O jeito certo:
 
 ```bash
-cp Vercel/src/lib/export.ts "$SCRATCH/export.ts.bak"
+cp portal/src/lib/export.ts "$SCRATCH/export.ts.bak"
 #   ... aplica o patch de medição, roda a suíte, confirma que reprova ...
-cp "$SCRATCH/export.ts.bak" Vercel/src/lib/export.ts
+cp "$SCRATCH/export.ts.bak" portal/src/lib/export.ts
 ```
 
 Existe um hook em `.claude/hooks/proteger-descarte.mjs` que bloqueia essa forma de

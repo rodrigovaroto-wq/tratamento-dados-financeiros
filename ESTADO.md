@@ -247,14 +247,14 @@ inteiro. Grave em `/tmp/texto-n8n-17.txt`.
 Repita para o `20_Mapa_de_Divida_Canastra_Industria_2025.pdf` → `/tmp/texto-n8n-20.txt`.
 
 **1.2 — Rode a régua sobre ele e compare com o extrator local.** Este script faz os dois lados de
-uma vez (crie como `Vercel/scripts/_diag.mts`, e APAGUE depois — é descartável):
+uma vez (crie como `portal/scripts/_diag.mts`, e APAGUE depois — é descartável):
 
 ```ts
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { linhasDeConta, linhasComNumero } from "../../N8N/lib/cobertura.mjs";
 const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse");   // cd Vercel && npm i --no-save pdf-parse
+const { PDFParse } = require("pdf-parse");   // cd portal && npm i --no-save pdf-parse
 
 for (const [n, pdf] of [["17", "17_Livro_Razao_Fornecedores_Canastra_Industria_12M25"],
                         ["20", "20_Mapa_de_Divida_Canastra_Industria_2025"]]) {
@@ -760,7 +760,7 @@ e 2.485 linhas); as **duas** execuções do smoke test não deixaram **nenhuma**
 ### O que mudou
 
 - **`pronto` passa a exigir o lote FECHADO** (`vereditoDoLote`, função pura em
-  `Vercel/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
+  `portal/src/lib/espera-do-lote.ts`). Contadores completos + lote não fechado,
   passada a carência de 2 min (a cauda do workflow são 3 nós, segundos), vira
   **falha nomeada** `lote_nao_fechou`. E "não sei" (a consulta falhou) **nunca**
   acusa um lote vivo — a mesma regra que o `comLinhas` já aplicava;
@@ -928,7 +928,7 @@ guarda — a fórmula muda aqui, o espelho não muda, e o teste segue verde prov
 a conta errada. Foi exatamente o que aconteceu quando eu religuei o defeito para
 conferir: com o limite fixo de volta, o teste **passava**.
 
-As quatro contas foram para `Vercel/src/lib/espera-do-lote.ts` e a suíte
+As quatro contas foram para `portal/src/lib/espera-do-lote.ts` e a suíte
 `verificar-mensagem-de-falha.mts` passa a **chamar as funções de verdade** —
 com a cadência lida do próprio `workflow.e1-ingestao.json`. Religados um a um
 contra a função real: o limite fixo reprova com *"a tela desiste em 8.0 min e o
@@ -1406,7 +1406,7 @@ migration (`0033`), e trocá-lo seria reescrever histórico para arrumar um nome
   AÇÃO (fixa, sem filhos) e *Mandatos* é LUGAR (abre e lista os **ativos**). O estado — recolhida e
   seção aberta — mora no navegador via `useSyncExternalStore`, para a barra não "piscar" no lugar
   errado a cada carga. Ela some na tela de abrir mandato, que é de tela cheia.
-- **A marca entrou** (`Vercel/public/logo-oria*.svg`): o original do dono com o fundo creme trocado
+- **A marca entrou** (`portal/public/logo-oria*.svg`): o original do dono com o fundo creme trocado
   por transparência, **sem redesenhar nada**. O SVG EMBUTE a arte original — vetorizar exigiria
   traçar, e traçar é aproximar. Sextante no cabeçalho e no favicon; a lockup completa no login,
   onde há altura para ela.
@@ -1473,7 +1473,7 @@ passo".
 
 **O risco que a sessão 50 fechou, e que estava anotado aqui como "não se resolve sozinho":** as
 listas de `documento` e `pendencia` do painel continuavam sujeitas ao teto de 1000 do PostgREST.
-Agora elas paginam (`Vercel/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
+Agora elas paginam (`portal/src/lib/supabase/paginar.ts`), junto com a lista de mandatos, e o
 painel avisa se o teto de segurança for atingido. **A sessão 51 terminou o serviço** — ver "O teto
 de 1000 deixou de existir para o portal".
 
@@ -2012,9 +2012,9 @@ migration 0115 não está aplicada"*. Nada disso é pergunta de analista. O pain
 citar migration; e os travessões que emendavam as frases saíram. Os números e a lógica são os
 mesmos: mudou a língua.
 
-Saíram `Vercel/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
-`Vercel/src/app/instalacao/page.tsx`, `Vercel/src/components/instalacao-aviso.tsx`,
-`Vercel/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
+Saíram `portal/src/app/casos/[id]/base/page.tsx` (399 linhas), o botão na tela do mandato,
+`portal/src/app/instalacao/page.tsx`, `portal/src/components/instalacao-aviso.tsx`,
+`portal/src/app/operacao/page.tsx` e a entrada de Operação na barra lateral. **Nada de banco foi
 tocado, nenhuma migration nova, nenhum teste removido:** as suítes continuam com a mesma contagem, e
 o `Arquitetura do Sistema/2 Especificação/f0/07` passou a declarar o Modo B — o `.xlsx` — como a entrega.
 
@@ -2341,7 +2341,7 @@ exigir **acordo entre colunas** (subtotal numa coluna só não basta), que é o 
 | `ChecklistItem` (`types.ts`) | idem |
 | `docs/pr-test.md` | o arquivo diz de si mesmo: *"Pode ser removido com segurança."* |
 
-**O que NÃO removi, e por quê:** `Vercel/scripts/_dump.mts` não é referenciado por nada, mas é
+**O que NÃO removi, e por quê:** `portal/scripts/_dump.mts` não é referenciado por nada, mas é
 ferramenta manual de depuração da mesma família das que o `PROMPT_ESPELHAR_MODELO_BASE` §6 documenta.
 "Sem referência" não é "nunca mais será usado", e a instrução era remover só o que é certo. Os outros
 ~45 `export` sem uso externo são tipos e constantes usados DENTRO do próprio arquivo: tirar o
@@ -2651,7 +2651,7 @@ e nunca notaria as 3 que faltam. `n_ausente` só chega a ser medido por ali, ent
 com palavra e em destaque, não deixada implícita numa linha vazia no fim.
 
 > **E existe uma suíte só para o vazamento, porque ele não tem sintoma** —
-> `Vercel/scripts/verificar-tela-cega.mts`, 18 asserts. Se a tela passar a mostrar o que a extração
+> `portal/scripts/verificar-tela-cega.mts`, 18 asserts. Se a tela passar a mostrar o que a extração
 > leu, **tudo continua funcionando**: a página renderiza, os rótulos gravam, as cinco métricas saem,
 > o painel mostra números bonitos. Só que os números param de medir algo, porque quem rotula passou a
 > conferir em vez de julgar. Nenhum teste de comportamento pega isso — o comportamento fica correto.
@@ -2766,7 +2766,7 @@ que a base está vazia.
 **A `0129` ficou com a função no banco e nada a chamando** — foi dito no commit dela e aqui. Isto é a
 outra metade: a planilha existe, se baixa, se preenche e se reimporta.
 
-`Vercel/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
+`portal/src/lib/transcricao.ts` guarda **as duas metades do formato no mesmo arquivo** — gerar e ler.
 Não é conveniência: o formato é um contrato entre quem escreve e quem lê, e as duas pontas são este
 sistema. Separá-las é a receita para a coluna mudar de lugar num lado e não no outro, e o sintoma disso
 não é um erro — é uma transcrição importada com o valor na coluna da unidade.
@@ -2816,7 +2816,7 @@ recarrega dizendo *"nenhuma linha foi extraída deste documento"* e oferecendo o
 novo, como se o trabalho tivesse sido perdido. Agora a página chama `fn_versao_com_extracao` (`0102`) —
 a regra canônica, não uma reimplementação em TypeScript.
 
-**A suíte nova, `Vercel/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
+**A suíte nova, `portal/scripts/verificar-transcricao.mts` (35 verificações), é round-trip de verdade**
 — gera, escreve o `.xlsx`, lê de volta —, porque o defeito que interessa é a coluna que muda de lugar em
 uma das duas metades. Ela também trava que sobra em branco **não** vira linha: a planilha traz 60 linhas
 livres, e se elas entrassem, cada transcrição gravaria dezenas de linhas afirmando que o documento diz
@@ -2901,7 +2901,7 @@ eliminá-lo, e dizer o contrário seria prometer o que ele não cumpre.
 ### O DIAL PASSA A SER OBEDECIDO — e dois níveis declarados eram falsos (20/08, sessão 53) — `0127`
 
 **A `0126` cuidou de COMO O DIAL MUDA. Ela não cuidou de o dial ser LIDO.** E a `0041` já havia
-diagnosticado isso com um comando: *"`grep -rl estagio_autonomia Vercel/src n8n` não retornava NADA
+diagnosticado isso com um comando: *"`grep -rl estagio_autonomia portal/src n8n` não retornava NADA
 — a tabela não tinha um único leitor"*. Ela consertou para **um** estágio. Rodando a mesma busca
 hoje, estágio por estágio, os outros **sete** continuavam sem leitor: mudar o nível deles era
 validado contra o teto, cobrado contra golden set pela `0126`, gravado na trilha — e **inerte**.
@@ -3517,7 +3517,7 @@ entre elas estava a mais cara de todas: **o export baixava `campo_extraido` sem 
 mandato com mais de mil linhas extraídas gerava um `.xlsx` faltando linhas, que abre normalmente e
 parece completo. O book de teste sozinho tem ~3.000 linhas com número.
 
-Passaram a paginar (`Vercel/src/lib/supabase/paginar.ts`, de mil em mil):
+Passaram a paginar (`portal/src/lib/supabase/paginar.ts`, de mil em mil):
 
 | Onde | O que era truncado |
 |---|---|
@@ -3623,12 +3623,12 @@ Os sete itens da lista "o que está aberto" foram atacados em ordem, a pedido do
 | | O quê | Onde |
 |---|---|---|
 | 1 | **Subtotais impressos viram LINHA.** O prompt passou a exigir o valor impresso na linha do agrupamento ("ATIVO CIRCULANTE ... 3.961"), que antes virava só o nome da `secao` e sumia. A `0116` ensina `fn_papel_linha` a reconhecer os totais novos (topo da DRE, DVA) para eles não receberem premissa e dobrarem a conta. | `N8N/lib/extract.mjs`, `0116` |
-| 2 | **A divergência de mútuos é acusada.** Checagem B nova, lado a lado (ativo × passivo), disparada pelos dois lados do par. No fixture ela acusa exatamente os R$ 180 mil que o book planta de propósito — e o teste que cobrava "zero pendências" era, ele mesmo, a prova de que a checagem faltava. No painel, a fila agora diz QUAL checagem acusou. | `0117`, `Vercel/src/lib/rotulos.ts` |
-| 3 | **A tela de Modelagem entrou na linguagem do portal:** `<main>` aninhado (que estreitava a página dentro do layout) foi embora, as três seções viraram `carta` com âncora, e uma trilha de passos no topo diz o que falta em cada uma. Na tabela, o cabeçalho gruda e o "salvar" aparece também no topo com o aviso de alteração não salva — os dois viviam no rodapé, fora da tela justamente enquanto se edita. | `Vercel/src/app/casos/[id]/modelagem/` |
+| 2 | **A divergência de mútuos é acusada.** Checagem B nova, lado a lado (ativo × passivo), disparada pelos dois lados do par. No fixture ela acusa exatamente os R$ 180 mil que o book planta de propósito — e o teste que cobrava "zero pendências" era, ele mesmo, a prova de que a checagem faltava. No painel, a fila agora diz QUAL checagem acusou. | `0117`, `portal/src/lib/rotulos.ts` |
+| 3 | **A tela de Modelagem entrou na linguagem do portal:** `<main>` aninhado (que estreitava a página dentro do layout) foi embora, as três seções viraram `carta` com âncora, e uma trilha de passos no topo diz o que falta em cada uma. Na tabela, o cabeçalho gruda e o "salvar" aparece também no topo com o aviso de alteração não salva — os dois viviam no rodapé, fora da tela justamente enquanto se edita. | `portal/src/app/casos/[id]/modelagem/` |
 | 4 | **`negativas`/`societario`/`parcelamentos` saíram da lista à mão** e viraram termos da taxonomia. A remoção de palavra de tipo em `parseEntidade` varre o vocabulário palavra a palavra, então quem entra lá é removido de graça. | `N8N/lib/taxonomia.mjs` |
 | 5 | **O teto de gasto decide depois do `Extrair Texto`.** Com o documento medido, a estimativa deixa de ser por byte (margem de 1,8×, que recusava lote que cabia) e passa a contar linhas e BLOCOS — exatamente os que o `Fatiar Extracao` vai gastar. Medido no book: guarda por byte US$ 0,67 contra custo real US$ 0,49; por conteúdo, US$ 0,61. Continua barrando antes de qualquer gasto. | `N8N/lib/custo.mjs`, grafo |
 | 6 | **Dedup por fingerprint (a segunda metade da 0026).** Prompt+modelo+esquema viram uma impressão gravada na versão; mesmo arquivo + mesma impressão + extração que TEM linha ⇒ o grafo pula a chamada. A exigência de "ter linha" é o que impede uma extração falha de valer como feita. | `0118`, grafo |
-| 7 | **As listas do painel saíram do teto de 1000** (documentos, pendências e mandatos), com paginação de mil em mil e um aviso que aparece se o teto de segurança de 50 mil for atingido. | `Vercel/src/lib/supabase/paginar.ts` |
+| 7 | **As listas do painel saíram do teto de 1000** (documentos, pendências e mandatos), com paginação de mil em mil e um aviso que aparece se o teto de segurança de 50 mil for atingido. | `portal/src/lib/supabase/paginar.ts` |
 
 O que **ficou de fora, e é honesto dizer**:
 
@@ -3981,10 +3981,10 @@ Os itens acima, com o histórico de cada um:
 cd "Dados de Teste"/book-vertentes && PYTHONPATH=. python3 gerar.py && cd -
 
 node --test 'N8N/test/*.test.mjs'                                      # da RAIZ do repo
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres Supabase/test/run.sh
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
-  ./Vercel/node_modules/.bin/tsx Verificação/run.mts
+  ./portal/node_modules/.bin/tsx Verificação/run.mts
 ```
 
 > `E2E_PSQL` é o **comando** do psql, não um flag: com `E2E_PSQL=1` o arnês tenta executar um binário

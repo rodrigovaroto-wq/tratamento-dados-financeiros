@@ -49,7 +49,7 @@ try {
   const sujos = git("status", "--porcelain", "--", "N8N/workflow.e1-ingestao.json",
     "N8N/workflow.macro.json", "N8N/workflow.erros.json", "Supabase/schema.sql",
     "Supabase/test/fixture_book_vertentes.sql", "Supabase/test/fixture_book_canastra.sql",
-    "Vercel/scripts/fixtures/book-vertentes.json");
+    "portal/scripts/fixtures/book-vertentes.json");
   if (sujos) {
     linhas.push(`⚠️  Derivado versionado modificado e não commitado:\n${sujos}`);
   }

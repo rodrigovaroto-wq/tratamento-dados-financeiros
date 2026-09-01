@@ -69,7 +69,7 @@ que houve transcrição; as **guardas de extração não rodam** (elas pegam alu
 confiança fica **nula**, porque não existe autoavaliação de pessoa; a pendência de ilegibilidade
 fecha com o **nome de quem transcreveu**; e `campo_extraido.origem_valor` mantém a linha transcrita
 **fora da medição da extração** — acerto de máquina medido contra número que uma pessoa digitou não
-mediria nada. A forma é planilha modelo (`Vercel/src/lib/transcricao.ts`), não formulário web:
+mediria nada. A forma é planilha modelo (`portal/src/lib/transcricao.ts`), não formulário web:
 ninguém digita balanço em campo de tela se puder usar Excel.
 
 ## Regra de ouro

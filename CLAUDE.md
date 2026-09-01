@@ -48,7 +48,7 @@ Use exatamente estes. O CI (`.github/workflows/suites.yml`) é a lista completa 
 
 ```bash
 # preparar o container (a sessão 14 perdeu tempo nos três)
-cd Vercel && npm ci && cd ..
+cd portal && npm ci && cd ..
 cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab==5.0.1' \
   && PYTHONPATH=. python3 gerar.py && cd ../..   # PYTHONPATH=. é obrigatório
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
@@ -56,23 +56,23 @@ sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/mai
 
 # suítes
 node --test 'N8N/test/*.test.mjs'
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-transcricao.mts
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-mensagem-de-falha.mts
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-premissas-do-realizado.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
-E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./Vercel/node_modules/.bin/tsx Verificação/run.mts
-./Vercel/node_modules/.bin/tsx Verificação/variacoes.mts
+E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx Verificação/run.mts
+./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
 node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
 
 # portal
-cd Vercel && npx tsc --noEmit && npx eslint . && npx next build
+cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
 
-`npx tsx` **não** serve no lugar de `./Vercel/node_modules/.bin/tsx`: sem o binário do lock, o
+`npx tsx` **não** serve no lugar de `./portal/node_modules/.bin/tsx`: sem o binário do lock, o
 npx baixa a última versão publicada no dia.
 
 ## Orquestrar, não implementar sozinho
@@ -84,7 +84,7 @@ cuja linha casa com a tarefa — os arquivos estão em `.claude/agents/`.
 |---|---|---|
 | `migrations-postgres` | Migration, função SQL, sonda, `Supabase/test/*.sql` | médio |
 | `n8n-workflow` | Geradores, `N8N/lib/*`, nós Code, republicação | médio |
-| `portal-export` | `Vercel/src/**`, `export.ts`, endereços de célula | médio |
+| `portal-export` | `portal/src/**`, `export.ts`, endereços de célula | médio |
 | `suites-invariantes` | Escrever um invariante novo e **medi-lo não-vazio** | médio |
 | `revisor-defeito-silencioso` | Revisar um diff sob a lente central do projeto | forte |
 | `estado-e-handoff` | Atualizar `ESTADO.md`, `MAPA`, memória, PR | barato |

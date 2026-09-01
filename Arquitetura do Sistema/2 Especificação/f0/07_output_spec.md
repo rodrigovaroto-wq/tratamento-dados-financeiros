@@ -102,7 +102,7 @@ confiável e rastreável — não o substitui.
 > conferência ao lado da fórmula; se a soma calculada divergir do informado, ambos são
 > sinalizados (vira uma checagem de reconciliação embutida). A anti-ancoragem segue valendo para
 > os DADOS extraídos: nenhum valor de conta vira fato sem aceite humano. Detalhe da implementação:
-> `Vercel/src/lib/statement-templates.ts` (estrutura CPC/Lei 6.404) + `Vercel/src/lib/export.ts`.
+> `portal/src/lib/statement-templates.ts` (estrutura CPC/Lei 6.404) + `portal/src/lib/export.ts`.
 
 > **Emenda 2026-07-24 (dono):** o export passa a entregar também a camada de **leitura analítica**
 > que um analista de RX/M&A espera pronta — **análise vertical (AV%, common-size)**, **análise

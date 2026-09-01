@@ -132,7 +132,7 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
 ## Capabilities and Constraints
 
 - **Next.js 16 (App Router) + React 19 + Tailwind 4 + Supabase**, deploy na
-  Vercel com `Vercel/` como Root Directory. `middleware.ts` virou `proxy.ts` no
+  Vercel com `portal/` como Root Directory. `middleware.ts` virou `proxy.ts` no
   Next 16.
 - **Teto de ~4,5 MB por requisição** na Serverless Function da Vercel: lotes
   grandes de PDF escaneado precisam ir em levas, ou direto pelo Form do n8n.
@@ -157,7 +157,7 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
 - **Oria Partners** — boutique independente de reestruturação financeira,
   turnaround e situações especiais, em São Paulo. Middle e large corporate e
   instituições financeiras.
-- **O sextante é a marca.** `Vercel/public/logo-oria*.svg` é o original do dono
+- **O sextante é a marca.** `portal/public/logo-oria*.svg` é o original do dono
   com o fundo creme trocado por transparência, **sem redesenhar nada** — o SVG
   embute a arte original, porque vetorizar exigiria traçar e traçar é aproximar.
   Sextante no cabeçalho e no favicon; a lockup completa no login. A ilustração
@@ -188,7 +188,7 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
   ausência de exclamação e de superlativo.
 - **Voz: português do Brasil, técnica e sóbria.** Precisão acima de entusiasmo.
   O produto é dado, não cartão de rede social — regra já escrita em
-  `Vercel/src/app/globals.css`.
+  `portal/src/app/globals.css`.
 - **Discrição e confidencialidade** são compromisso público da firma ("todas as
   conversas e materiais compartilhados são tratados com absoluta
   confidencialidade") e, por causa da cena de uso 2, também um requisito de
@@ -201,8 +201,8 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
 - `Arquitetura do Sistema/1 Visão e Doutrina/00_VISAO_E_ESCOPO.md`, `Arquitetura do Sistema/1 Visão e Doutrina/01_DOUTRINA_DE_AUTONOMIA.md`,
   `Arquitetura do Sistema/2 Especificação/06_HUMAN_IN_THE_LOOP.md`, `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md` — a doutrina do
   produto.
-- `Vercel/README.md` — o registro mais completo do que cada tela faz e por quê.
-- `Vercel/public/logo-oria*.svg`, `Logo Oria.jpg`,
+- `portal/README.md` — o registro mais completo do que cada tela faz e por quê.
+- `portal/public/logo-oria*.svg`, `Logo Oria.jpg`,
   `Logo Oria - sextante apenas.jpg` — a marca.
 - `oriapartners.com` — copy, paleta e tipografia de produção, medidos nesta
   sessão a partir de `assets/index-*.css` e `assets/index-*.js`.
@@ -230,7 +230,7 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
 ## Accessibility & Inclusion
 
 Compromisso já implementado e que deve ser preservado, herdado do entregável em
-Excel e escrito em `Vercel/src/app/globals.css`:
+Excel e escrito em `portal/src/app/globals.css`:
 
 - **Cor nunca carrega significado sozinha.** Todo estado é cor **mais** texto —
   o chip diz "faltante", não é apenas âmbar. A razão está no comentário do

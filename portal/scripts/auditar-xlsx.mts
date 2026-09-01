@@ -16,7 +16,7 @@
 //
 // USO:
 //
-//   ./Vercel/node_modules/.bin/tsx Vercel/scripts/auditar-xlsx.mts <arquivo.xlsx>
+//   ./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <arquivo.xlsx>
 //
 // Sai com código 1 se qualquer item obrigatório reprovar, para poder entrar em
 // script de aceite sem alguém ter de ler a saída.

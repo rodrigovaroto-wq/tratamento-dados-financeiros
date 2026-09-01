@@ -8,7 +8,7 @@ documentos); ele não passa por este aceite porque não projeta nada.
 Este documento é a **metade humana** do aceite. A outra metade é automática:
 
 ```bash
-./Vercel/node_modules/.bin/tsx Vercel/scripts/auditar-xlsx.mts <arquivo.xlsx>
+./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <arquivo.xlsx>
 ```
 
 O auditor responde, sobre o arquivo pronto, tudo o que dá para responder **sem abrir o

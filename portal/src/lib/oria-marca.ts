@@ -4,7 +4,7 @@
 // Procurado no repositório inteiro antes de escrever uma linha: **não existe
 // paleta de marca versionada aqui**. O `globals.css` do portal tem três regras e
 // nenhuma cor; não há `tailwind.config` com tokens; não há logotipo em
-// `Vercel/public` (só os SVGs que vêm no template do Next); e a skill de marca
+// `portal/public` (só os SVGs que vêm no template do Next); e a skill de marca
 // (`identidade-marca-oria`) é identidade VERBAL — tom de voz, público, o que não
 // escrever —, sem uma cor. A única marca visual que já existia no produto são as
 // cores do próprio export (`export-estilo.ts`) e as do modelo institucional.

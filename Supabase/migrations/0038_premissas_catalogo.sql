@@ -2,7 +2,7 @@
 -- Migration 0038 — Catálogo de premissas, e a escolha de modelagem por caso
 --
 -- O PROBLEMA QUE ISTO RESOLVE. O modelo de hoje tem 15 premissas HARDCODED
--- (`PR`, em Vercel/src/lib/export-modelagem.ts) aplicadas a um esqueleto fixo de
+-- (`PR`, em portal/src/lib/export-modelagem.ts) aplicadas a um esqueleto fixo de
 -- linhas (`LINHAS_BASE`). Isso funciona para um caso genérico e não sobrevive ao
 -- que o dono descreveu: "cada caso vai ser um caso, vai vir com linhas
 -- diferentes, contas diferentes, vai precisar de inputs e premissas diferentes".

@@ -351,7 +351,7 @@ grant execute on function fn_sazonalidade_do_caso(uuid) to authenticated;
 -- fn_valores_por_ano — é ela que escreve os números do Excel.
 --
 -- `fn_linhas_para_modelagem` alimenta a TELA; esta alimenta o ARQUIVO ENTREGUE
--- (`Vercel/src/lib/export.ts`, abas do modelo institucional). O valor de cada
+-- (`portal/src/lib/export.ts`, abas do modelo institucional). O valor de cada
 -- linha por exercício sai daqui, também por maior módulo com sinal — então uma
 -- ocorrência de versão superada com módulo maior GANHA da versão corrigida, e o
 -- número errado sai no entregável. Das cinco funções desta migration, é a de

@@ -2,7 +2,7 @@
 
 Fase 2 de `Arquitetura do Sistema/5 Prompts/PROMPT_ESPELHAR_MODELO_BASE.md`: comparar aba a aba, com veredito.
 A referência é `Arquitetura do Sistema/6 Referência/modelo-base.xlsx`, mapeada em `MAPA_MODELO_BASE.md`.
-O nosso artefato é o `.xlsx` gerado por `Vercel/scripts/gerar-export-do-banco.mts` contra a fixture
+O nosso artefato é o `.xlsx` gerado por `portal/scripts/gerar-export-do-banco.mts` contra a fixture
 do caso real v35 (`Supabase/test/fixture_modelagem_v35.sql` + `Supabase/roteiro_modelagem_v35.sql`).
 
 **O objetivo declarado pelo dono nesta rodada:** *idêntico ao modelo de referência em motor, com a
@@ -265,7 +265,7 @@ Legenda: **C** conforme · **D** divergente (temos de mudar) · **X** deliberada
 
 ## 3. As correções desta rodada, e a prova de cada uma
 
-Todas com teste em `Vercel/scripts/verificar-export.mts` que **reprova com o defeito religado** —
+Todas com teste em `portal/scripts/verificar-export.mts` que **reprova com o defeito religado** —
 o requisito §8.2 do prompt. As mensagens abaixo são as reprovações reais, coladas da execução.
 
 | # | Defeito | Onde estava | Prova |

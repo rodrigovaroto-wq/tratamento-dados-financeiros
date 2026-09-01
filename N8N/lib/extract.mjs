@@ -42,7 +42,7 @@ const PERIODO_TIPO_ENUM = ['anual', 'trimestre', 'multi', 'data-base', 'outro', 
 
 // Seção CANÔNICA sugerida pela IA por linha (N1 — sugestão, não fato). É o
 // mesmo conjunto de chaves internas do classificador do export
-// (Vercel/src/lib/statement-templates.ts) — mantê-los IDÊNTICOS: se um lado
+// (portal/src/lib/statement-templates.ts) — mantê-los IDÊNTICOS: se um lado
 // mudar, o outro precisa acompanhar (não há import cruzado entre .mjs e o
 // portal TS). Serve para o classificador determinístico do export ter um
 // sinal interpretativo forte QUANDO ele mesmo não consegue classificar por

@@ -16,7 +16,7 @@ Uso (de dentro de Dados de Teste/book-vertentes, que é onde os módulos do book
 O `.sql` gerado é versionado para que `Supabase/test/run.sh` rode sem Python.
 
 Com `--json` emite os mesmos dados em JSON, para o verificador do export
-(`Vercel/scripts/verificar-export.mts`) montar a planilha a partir do MESMO
+(`portal/scripts/verificar-export.mts`) montar a planilha a partir do MESMO
 fixture e conferir cada seção contra o gabarito do book.
 """
 import json

@@ -1,11 +1,11 @@
 ---
 name: portal-export
-description: Código do portal (Vercel/src/**), o export para Excel, endereços de célula e as telas. Use para qualquer mudança no Next.js ou no arquivo entregue ao cliente.
+description: Código do portal (portal/src/**), o export para Excel, endereços de célula e as telas. Use para qualquer mudança no Next.js ou no arquivo entregue ao cliente.
 model: sonnet
 ---
 
-Você cuida de `Vercel/`: as telas, `src/lib/export.ts`, o modelo institucional, os scripts de
-verificação em `Vercel/scripts/`.
+Você cuida de `portal/`: as telas, `src/lib/export.ts`, o modelo institucional, os scripts de
+verificação em `portal/scripts/`.
 
 **As regras deste domínio**
 
@@ -20,7 +20,7 @@ verificação em `Vercel/scripts/`.
 - **A planilha tem de continuar viva**: fórmula lendo a aba Macro, nunca valor escrito.
 - **Limitações do harness que parecem bug do código**: `avaliarCelula` não segue referência entre
   abas (use asserção estrutural e comente o motivo); `notaDaLinha` precisa de `includeEmpty: true`.
-- Use `./Vercel/node_modules/.bin/tsx`, nunca `npx tsx` — sem o binário do lock o npx baixa a
+- Use `./portal/node_modules/.bin/tsx`, nunca `npx tsx` — sem o binário do lock o npx baixa a
   última versão publicada no dia.
 
 **Ao terminar**, rode `npx tsc --noEmit`, `npx eslint .` e os scripts `verificar-*.mts` afetados,

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 //
 // POR QUE ESTA TELA EXISTE. `estagio_autonomia` nasce na 0001 com o comentário
 // "Nível é estado do sistema, não constante de código (Arquitetura do Sistema/1 Visão e Doutrina/01)" e, até a 0041,
-// não tinha um único leitor: `grep -rl estagio_autonomia Vercel/src n8n` não
+// não tinha um único leitor: `grep -rl estagio_autonomia portal/src n8n` não
 // retornava nada. O dial da extração dizia N0 ("roda, registra, NÃO influencia
 // decisão") enquanto o código auto-aceitava toda linha com confiança >= 0.95. O
 // estado declarado do sistema era invisível, então a divergência podia durar
@@ -346,7 +346,7 @@ export default async function AutonomiaPage() {
           </p>
           <p className="mt-1">
             A medição que já é possível hoje roda contra o book sintético (
-            <code>Vercel/scripts/medir-auto-aceite.mts</code>) e vale como piso, não como
+            <code>portal/scripts/medir-auto-aceite.mts</code>) e vale como piso, não como
             equivalente: o book é o melhor caso — PDF gerado, texto limpo, layout conhecido. Por
             isso rodada de golden set com <code>origem = sintetico</code> não autoriza subida.
           </p>

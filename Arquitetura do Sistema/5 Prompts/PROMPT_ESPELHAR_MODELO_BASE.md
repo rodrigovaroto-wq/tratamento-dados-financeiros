@@ -124,11 +124,11 @@ vocabulário de outra indústria.
 |---|---|
 | **Modelo Base (referência)** | `Arquitetura do Sistema/6 Referência/modelo-base.xlsx` — 14 abas, 0,5 MB |
 | Onboarding do dono (67 pág.) | `Arquitetura do Sistema/6 Referência/onboarding.pdf` |
-| **Gerador do modelo institucional** | `Vercel/src/lib/modelo-institucional.ts` (~1.850 linhas) — é o arquivo que você vai mudar |
-| Gerador do resto do export | `Vercel/src/lib/export.ts` (~3.100 linhas), `Vercel/src/lib/export-modelagem.ts` (~2.400) |
-| Estilo do export | `Vercel/src/lib/export-estilo.ts` |
-| Rota que monta os insumos | `Vercel/src/app/casos/[id]/export/route.ts` |
-| **Suíte do export** | `Vercel/scripts/verificar-export.mts` (435 asserts) — é onde os seus testes entram |
+| **Gerador do modelo institucional** | `portal/src/lib/modelo-institucional.ts` (~1.850 linhas) — é o arquivo que você vai mudar |
+| Gerador do resto do export | `portal/src/lib/export.ts` (~3.100 linhas), `portal/src/lib/export-modelagem.ts` (~2.400) |
+| Estilo do export | `portal/src/lib/export-estilo.ts` |
+| Rota que monta os insumos | `portal/src/app/casos/[id]/export/route.ts` |
+| **Suíte do export** | `portal/scripts/verificar-export.mts` (435 asserts) — é onde os seus testes entram |
 | Fixture do caso real | `Supabase/test/fixture_modelagem_v35.sql` (249 linhas, 760 ocorrências, reconstrução fiel da produção) |
 | Roteiro que configura a modelagem | `Supabase/roteiro_modelagem_v35.sql` |
 | Memória do projeto | `HANDOFF.md` (leia o cabeçalho e as duas últimas seções) |
@@ -156,7 +156,7 @@ Duas razões para ele existir, e as duas são economia de crédito para você:
   fórmulas de uma aba a outra. O script resolve pelo `rels`, que é o vínculo correto. Essa
   armadilha já produziu número errado nesta investigação.
 
-**`Vercel/scripts/gerar-export-do-banco.mts`** — gera o `.xlsx` do export a partir de um Postgres
+**`portal/scripts/gerar-export-do-banco.mts`** — gera o `.xlsx` do export a partir de um Postgres
 local, **sem Supabase, sem Vercel e sem gastar um token**. É o seu laço de iteração:
 
 ```bash
@@ -164,15 +164,15 @@ TEST_DB=tdf_v35 PGDATABASE=postgres Supabase/test/run.sh          # migrations +
 psql -d tdf_v35 -f Supabase/test/fixture_modelagem_v35.sql        # imprime o caso_id
 # edite o v_caso no topo de Supabase/roteiro_modelagem_v35.sql e rode:
 psql -d tdf_v35 -f Supabase/roteiro_modelagem_v35.sql             # configura a modelagem
-DB=tdf_v35 ./Vercel/node_modules/.bin/tsx \
-  Vercel/scripts/gerar-export-do-banco.mts <caso_id> /tmp/nosso.xlsx
+DB=tdf_v35 ./portal/node_modules/.bin/tsx \
+  portal/scripts/gerar-export-do-banco.mts <caso_id> /tmp/nosso.xlsx
 python3 "Arquitetura do Sistema/6 Referência/mapear-xlsx.py" /tmp/nosso.xlsx      # e compare
 ```
 
 **Preparação do ambiente**, uma vez por sessão:
 
 ```bash
-cd Vercel && npm ci && cd ..                    # instala tsx e exceljs
+cd portal && npm ci && cd ..                    # instala tsx e exceljs
 pg_ctlcluster 16 main start                     # Postgres 16 local (descartável)
 su postgres -c "createdb root" 2>/dev/null      # o papel do checkout precisa de banco próprio
 pip install reportlab                           # só se for mexer no book sintético
@@ -227,7 +227,7 @@ PR** — um PR que muda cinco abas é impossível de revisar e de reverter.
 
 ### Fase 5 — PROVAR
 
-Cada PR precisa de teste em `Vercel/scripts/verificar-export.mts` que **reprova com o defeito
+Cada PR precisa de teste em `portal/scripts/verificar-export.mts` que **reprova com o defeito
 religado**. Ver §8.
 
 ---

@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Migration 0012 — Seção canônica sugerida pela IA (E4, classificação do export)
 --
--- Problema: o classificador de seção do export (Vercel/src/lib/statement-
+-- Problema: o classificador de seção do export (portal/src/lib/statement-
 -- templates.ts) é determinístico (palavras-chave + casamento tolerante). Ele
 -- cobre bem o vocabulário contábil comum, mas cada mandato tem um plano de
 -- contas diferente — contas com nome incomum caem em "Contas Não Classificadas"

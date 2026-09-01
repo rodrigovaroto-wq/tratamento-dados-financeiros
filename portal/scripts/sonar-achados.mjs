@@ -2,10 +2,10 @@
 // Puxa os achados do SonarQube Cloud deste projeto, agrupados, sem precisar abrir
 // o site — e sem token: o projeto é público e a API de leitura responde anônima.
 //
-//   node Vercel/scripts/sonar-achados.mjs                  # o resumo
-//   node Vercel/scripts/sonar-achados.mjs --tipo=BUG       # só bugs
-//   node Vercel/scripts/sonar-achados.mjs --regra=typescript:S2871
-//   node Vercel/scripts/sonar-achados.mjs --lista          # imprime arquivo:linha
+//   node portal/scripts/sonar-achados.mjs                  # o resumo
+//   node portal/scripts/sonar-achados.mjs --tipo=BUG       # só bugs
+//   node portal/scripts/sonar-achados.mjs --regra=typescript:S2871
+//   node portal/scripts/sonar-achados.mjs --lista          # imprime arquivo:linha
 //
 // POR QUE ISTO EXISTE. O relatório do Sonar é grande e a maior parte dele, neste
 // repositório, não é sobre o código (ver `.sonarcloud.properties`). Ler pela API

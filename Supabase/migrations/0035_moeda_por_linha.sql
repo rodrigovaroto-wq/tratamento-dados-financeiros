@@ -2,7 +2,7 @@
 -- Migration 0035 — A moeda que a extração sempre soube e nunca gravou
 --
 -- Item 2 do §7.4 do material de Onboarding ("moeda capturada e descartada"), e
--- o que o próprio book já confessava em `Vercel/src/lib/export-modelagem.ts`:
+-- o que o próprio book já confessava em `portal/src/lib/export-modelagem.ts`:
 --
 --     "Hoje o modelo não separa moeda: o campo `moeda` é capturado na extração
 --      e DESCARTADO (não há coluna), então uma linha em USD [soma com BRL]"

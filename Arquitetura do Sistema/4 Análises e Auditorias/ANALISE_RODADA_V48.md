@@ -456,7 +456,7 @@ exportar os dois `.xlsx` pelo portal ("Exportar dados" e "Ir para a modelagem").
 arquivos em mão, a auditoria é automática:
 
 ```bash
-./Vercel/node_modules/.bin/tsx Vercel/scripts/auditar-xlsx.mts <arquivo.xlsx>
+./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <arquivo.xlsx>
 ```
 
 São 10 itens automáticos, mais os 10 humanos do `Arquitetura do Sistema/6 Referência/ACEITE.md`. Só então dá para afirmar

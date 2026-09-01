@@ -11,7 +11,7 @@
 -- `classificacao_contabil` no dial, em N0 com teto N1.
 --
 -- Nada disso existia. Medido antes de escrever: `grep -rn 'classe_contabil\|
--- nao_recorrente\|candidato_ajuste_ebitda' db n8n Vercel/src` devolvia UMA
+-- nao_recorrente\|candidato_ajuste_ebitda' db n8n portal/src` devolvia UMA
 -- ocorrência — a coluna que a 0126 criou no golden set para guardar o rótulo
 -- humano de uma classificação que ninguém produzia. Não havia enum, tabela,
 -- sugestão nem captura de override. O EBITDA sai do modelo como linha de cascata,

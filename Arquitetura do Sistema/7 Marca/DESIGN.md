@@ -86,8 +86,8 @@ components:
 
 # Design System: Portal Oria — Tratamento de Dados Financeiros
 
-Este arquivo governa `Vercel/`. Ele **não** governa o entregável em Excel
-(`Vercel/src/lib/oria-marca.ts` + `export-estilo.ts`), que segue grafite/ciano
+Este arquivo governa `portal/`. Ele **não** governa o entregável em Excel
+(`portal/src/lib/oria-marca.ts` + `export-estilo.ts`), que segue grafite/ciano
 por decisão registrada — ver *Do's and Don'ts*.
 
 ## Overview

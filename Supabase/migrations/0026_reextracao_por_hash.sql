@@ -24,7 +24,7 @@
 --    Agora: mesmo `(caso_id, hash)` → nova `documento_versao` sob o MESMO
 --    `documento`, com `n_versao` incrementado. O documento mantém identidade,
 --    fila, checklist e histórico; o export usa a versão vigente
---    (`versoesVigentes` em Vercel/src/lib/export.ts, que escolhe a mais recente
+--    (`versoesVigentes` em portal/src/lib/export.ts, que escolhe a mais recente
 --    COM DADO — reextração que falha e volta com zero linhas não pode apagar do
 --    book o que a versão anterior extraiu com sucesso, `0016`).
 --

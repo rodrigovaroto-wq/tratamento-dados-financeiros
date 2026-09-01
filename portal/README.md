@@ -153,7 +153,7 @@ para logar.
 
 ## Deploy (Vercel)
 
-1. Importar este diretório (`Vercel/`) como o **Root Directory** do projeto
+1. Importar este diretório (`portal/`) como o **Root Directory** do projeto
    Vercel (o repo tem outras pastas — `N8N/`, `Supabase/`, `Arquitetura do Sistema/` — que não fazem
    parte do app Next.js).
 2. Configurar as env vars acima em Project Settings → Environment Variables

@@ -21,7 +21,7 @@
 //   # 2. configurar a modelagem (troque o v_caso no topo do arquivo)
 //   psql -d tdf_v35 -f Supabase/roteiro_modelagem_v35.sql
 //   # 3. gerar o arquivo
-//   DB=tdf_v35 ./Vercel/node_modules/.bin/tsx Vercel/scripts/gerar-export-do-banco.mts <caso_id> /tmp/saida.xlsx
+//   DB=tdf_v35 ./portal/node_modules/.bin/tsx portal/scripts/gerar-export-do-banco.mts <caso_id> /tmp/saida.xlsx
 //
 // A data é FIXA (2026-08-05), como em todo gerador deste repositório: `new Date()`
 // aqui faria o arquivo mudar sozinho e um diff de bytes acusar mudança onde não

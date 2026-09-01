@@ -25,7 +25,7 @@ export default async function LoginPage({
 
         {!hasEnvVars && (
           <p className="rounded-lg border border-alerta-200 bg-alerta-50 p-3 text-sm text-alerta-800">
-            Variáveis de ambiente do Supabase não configuradas — ver <code>Vercel/README.md</code>.
+            Variáveis de ambiente do Supabase não configuradas — ver <code>portal/README.md</code>.
           </p>
         )}
 

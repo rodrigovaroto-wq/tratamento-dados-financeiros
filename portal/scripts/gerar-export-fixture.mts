@@ -8,10 +8,10 @@
 // `verificar-export.mts` monta o workbook em memória e não escreve nada.
 //
 // Custo zero e sem IA: usa a MESMA fixture das suítes
-// (`Vercel/scripts/fixtures/book-vertentes.json`, extração fiel dos 14 PDFs
+// (`portal/scripts/fixtures/book-vertentes.json`, extração fiel dos 14 PDFs
 // sintéticos) e o MESMO `buildExportWorkbook` que o portal chama em produção.
 //
-//   ./Vercel/node_modules/.bin/tsx Vercel/scripts/gerar-export-fixture.mts [saida.xlsx]
+//   ./portal/node_modules/.bin/tsx portal/scripts/gerar-export-fixture.mts [saida.xlsx]
 //
 // A data é FIXA (2026-07-27), como em todo gerador deste repositório: `new Date()`
 // aqui faria o arquivo mudar sozinho na virada do dia e um diff de bytes acusar

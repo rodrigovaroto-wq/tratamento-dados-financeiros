@@ -416,7 +416,7 @@ verdade, e decidir três premissas. Está no bloco "O QUE ESTÁ ABERTO AGORA".
 `Supabase/README.md` é a ordem oficial e o `run.sh` agora **reprova** migration que não esteja na lista de
 comandos dele — foi assim que a `0101` foi mergeada sem chegar ao banco.
 
-**Para conferir um `.xlsx` que já saiu:** `./Vercel/node_modules/.bin/tsx Vercel/scripts/auditar-xlsx.mts
+**Para conferir um `.xlsx` que já saiu:** `./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts
 <arquivo>` responde 10 itens sobre o arquivo pronto (balanço fecha, DRE reproduz o documento, câmbio é
 nível, recalcula ao abrir…) e sai com código 1 se algum reprovar. O que exige o Excel de verdade está
 em **`Arquitetura do Sistema/6 Referência/ACEITE.md`**, 10 itens de gente. As quatro suítes provam o GERADOR; essas duas peças provam
@@ -444,15 +444,15 @@ cd "Dados de Teste"/book-canastra  && PYTHONPATH=. python3 gerar.py && cd -   # 
 node N8N/medir-custo-book.mjs                                          # o custo do lote, sem gastar
 
 node --test 'N8N/test/*.test.mjs'                                     # 382
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts     # 713
+./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts     # 713
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres Supabase/test/run.sh         # 94 migrations, do zero
 PGHOST=/tmp PGUSER=postgres PGDATABASE=postgres E2E_PSQL="psql" \
-  ./Vercel/node_modules/.bin/tsx Verificação/run.mts                      # 46
+  ./portal/node_modules/.bin/tsx Verificação/run.mts                      # 46
 
 # e as três que nasceram depois deste bloco:
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-premissas-do-realizado.mts  # 51
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-mensagem-de-falha.mts      # 59
-./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-transcricao.mts            # 35
+./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts  # 51
+./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts      # 59
+./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts            # 35
 ```
 
 > Pegadinha 1: **`E2E_PSQL` é o COMANDO do psql, não um flag.** Com `E2E_PSQL=1` — como o antigo
@@ -625,7 +625,7 @@ protegida: ele está no vocabulário de tipo E no cabeçalho dos combinados.
 
 ### O portal ganhou navegação, marca e fim de vida do mandato
 
-- **Marca** (`Vercel/public/logo-oria*.svg`): os arquivos que o dono subiu com UMA operação — o creme
+- **Marca** (`portal/public/logo-oria*.svg`): os arquivos que o dono subiu com UMA operação — o creme
   do fundo virou transparência. A arte não foi redesenhada nem traçada; o SVG **embute o original**,
   porque vetorizar exigiria aproximar as curvas, e a instrução foi não mexer na arte. Sextante no
   cabeçalho e no favicon; a lockup completa no login. **Não existe versão clara para fundo escuro** —
@@ -1384,7 +1384,7 @@ item (`[entidade: —; período: 31/12/2024]`) e não separa nada — quebrar al
 ("período: 31/12/2024]"). E o ponto separa fato, mas **só seguido de espaço**: sem essa guarda,
 `14529.00` viraria duas linhas.
 
-**4. `Vercel/src/lib/rotulos.ts`** é o único lugar que traduz vocabulário interno para tela:
+**4. `portal/src/lib/rotulos.ts`** é o único lugar que traduz vocabulário interno para tela:
 `passivo_nao_circulante` → "Passivo Não Circulante", com mapa explícito para o que tem nome próprio e
 um humanizador genérico como rede — chave nova aparece legível antes de alguém mapeá-la, em vez de
 vazar `snake_case` para o cliente. Sigla fica maiúscula (`total_dre_por_cnpj` → "Total DRE por CNPJ"),
@@ -1492,7 +1492,7 @@ lacuna que o v35 chegou ao dono com a DRE dizendo o contrário do documento enqu
 A auditoria da sessão 40 achou os seis defeitos, mas foi feita com um script descartável, rodado uma
 vez: auditoria que existe uma vez não é controle, é sorte.
 
-**`Vercel/scripts/auditar-xlsx.mts`** é essa auditoria versionada, e roda sobre um `.xlsx` pronto —
+**`portal/scripts/auditar-xlsx.mts`** é essa auditoria versionada, e roda sobre um `.xlsx` pronto —
 inclusive um gerado meses atrás, ou gerado em produção com dado que nenhuma fixture tem. Onze itens
 (dez ao ler de disco), cada um um número LIDO do arquivo: as 14 abas existem · o balanço fecha em todo
 exercício · a DRE do realizado reproduz o documento (as linhas de diferença, célula a célula) · o
@@ -1721,7 +1721,7 @@ conferência, em vez de escondê-lo.
 
 **A contradição que esta sessão fecha.** `estagio_autonomia` nasce na `0001` com o comentário
 "Nível é estado do sistema, não constante de código (Arquitetura do Sistema/1 Visão e Doutrina/01)", é semeada na `0002` — e até aqui
-**não tinha um único leitor**: `grep -rl estagio_autonomia Vercel/src n8n` não retornava nada. O
+**não tinha um único leitor**: `grep -rl estagio_autonomia portal/src n8n` não retornava nada. O
 dial de `extracao_linhas_financeiras` dizia **N0** ("roda, registra, **não influencia decisão**")
 enquanto `fn_registrar_campos_extraidos` auto-aceitava toda linha com confiança **>= 0.95
 hardcoded** — que é o que a faz virar fato no export. O cabeçalho da `0019` registra a subida com
@@ -1790,7 +1790,7 @@ mudanças (aplicadas **e recusadas**). Duas escolhas deliberadas:
 
 A rota é `/autonomia`, fora de `/casos/`, porque o dial **não é estado de um mandato**.
 
-### `Vercel/scripts/medir-auto-aceite.mts` — e o número que ele deu
+### `portal/scripts/medir-auto-aceite.mts` — e o número que ele deu
 
 Mede, para um dial dado, quantas linhas seriam auto-aceitas, quantas dessas o gabarito consegue
 conferir, e quantas concordam. Rodado no default:
@@ -2324,12 +2324,12 @@ mecanismo real é `orderNo`, e `orderNo = 0` põe a aba à frente sem tocar no `
 
 ### Fase 4 — o artefato para o dono olhar
 
-Script novo: **`Vercel/scripts/gerar-export-fixture.mts`**. Grava em disco o `.xlsx` que o export
+Script novo: **`portal/scripts/gerar-export-fixture.mts`**. Grava em disco o `.xlsx` que o export
 produz a partir da fixture do book sintético, usando o **mesmo** `buildExportWorkbook` que o portal
 chama em produção. Custo zero, sem IA, sem banco. Data fixa (2026-07-27), como todo gerador daqui.
 
 ```bash
-./Vercel/node_modules/.bin/tsx Vercel/scripts/gerar-export-fixture.mts /tmp/book.xlsx
+./portal/node_modules/.bin/tsx portal/scripts/gerar-export-fixture.mts /tmp/book.xlsx
 ```
 
 ### Fase 5 — o roteiro do teste ao vivo MÍNIMO (para quando o dono rodar)
@@ -2544,7 +2544,7 @@ Não é formalidade — duas fixtures deste projeto nasceram vazias e passavam c
 O PDF foi gerado de um retrato **anterior ao merge dos PRs #70/#71**: o §7.2 e o §7.5 dizem que as
 **Etapas 3 a 6 estão "Não iniciada"** e contam **33 migrations** com suítes de **160/273/18**. O
 repositório diz outra coisa — as seis executadas na sessão 21, a Etapa 4 em
-`Vercel/src/lib/export.ts`, e os contadores da tabela acima. **Não toquei no PDF**; corrigir esses
+`portal/src/lib/export.ts`, e os contadores da tabela acima. **Não toquei no PDF**; corrigir esses
 dois trechos e os contadores é decisão dele.
 
 ### O que fica para as próximas fases (do §7.4, na ordem que o Onboarding propõe)
@@ -2751,7 +2751,7 @@ contra serviço Postgres 16, e2e, tsc, eslint e `next build`. Em todo push e PR.
    recebia ENOENT. **Nenhuma das quatro suítes pegaria isso**, porque todas rodavam no único
    diretório onde não dá erro.
 2. **`npx tsx` baixa o tsx do registro mesmo com o `.bin` no PATH** ("package was not found and will
-   be installed"). As suítes agora chamam `./Vercel/node_modules/.bin/tsx` por caminho, o binário
+   be installed"). As suítes agora chamam `./portal/node_modules/.bin/tsx` por caminho, o binário
    pinado no lock. `tsx` entrou nas devDependencies do portal.
 
 **CI VERIFICADO VERDE EM RUNNER REAL** (run `30668647822`, commit `a7bfee5`): os **14 passos**
@@ -2820,7 +2820,7 @@ garante que a PRÓXIMA ocorrência se explique, mas não explica a passada.
   pelo `row.fill = fill` que preenche a linha reservada depois. Use a lista adiada.
 - **A aba Macro é o único lugar do export onde "vazio" é `""` e não célula vazia** — porque a célula
   visível é fórmula (`IF(dados!X="","",dados!X)`). Aritmética sobre isso é #VALUE!, não 0.
-- **`npx tsx` baixa o tsx mesmo com o `.bin` no PATH.** Chame `./Vercel/node_modules/.bin/tsx`.
+- **`npx tsx` baixa o tsx mesmo com o `.bin` no PATH.** Chame `./portal/node_modules/.bin/tsx`.
 - **Caminho absoluto em teste passa despercebido para sempre** enquanto só existir um checkout. O CI
   é o que pega — e pegou na primeira execução.
 - **Para medir não-vacuidade em SQL**: o `.test.sql` tem `ON_ERROR_STOP`, então a primeira falha
@@ -3700,7 +3700,7 @@ exige force-push no `main`, oferecido e não executado.
 - **`Supabase/test/run.sh`** — recria banco, aplica as 23 migrations, carrega o fixture do book e roda
   `Supabase/test/reconciliacao.test.sql` (**21 asserts**). Cada checagem tem um caso **negativo** provando
   que ainda pega o erro real, e todos auto-resolvem quando o número é corrigido.
-- **`Vercel/scripts/lib/avaliar-formula.mts`** — avaliador de `SUM`/refs/aritmética/`IFERROR`. Sem ele
+- **`portal/scripts/lib/avaliar-formula.mts`** — avaliador de `SUM`/refs/aritmética/`IFERROR`. Sem ele
   os invariantes mediam a coisa errada.
 - **`verificar-export.mts` foi de 8 → 21 verificações**, incluindo dois end-to-end contra o
   `GABARITO.json`: as 60 seções do Balanço e a DRE 2025 linha a linha.
@@ -3716,7 +3716,7 @@ Ativo 121.198). O que estava quebrado eram **classificação e agregação**. Se
   Circulante" vêm "Disponível", "Contas a Receber", "Estoques"…, **cada um com subtotal impresso**.
   Esses subtotais entravam no bucket como conta e o `SUM` da seção somava subtotal **+** componentes
   (`SUM(L4:L38) = 137.865` vs. informado `67.878`). Contaminava todo total, o AV% e todos os
-  indicadores. **`detectarSubtotaisInformados`** (`Vercel/src/lib/export.ts`) reconhece o subtotal por
+  indicadores. **`detectarSubtotaisInformados`** (`portal/src/lib/export.ts`) reconhece o subtotal por
   dois sinais **estruturais do próprio documento** — (A) rótulo igual a uma `secao` que outras linhas
   declaram; (B) valor igual à soma dos irmãos da mesma seção **em todas as colunas com dado** — e o
   mantém **visível** (`↳ subtotal informado: X`), fora do range da soma. Não depende de vocabulário.
@@ -3748,7 +3748,7 @@ Ativo 121.198). O que estava quebrado eram **classificação e agregação**. Se
   calculado sobre coluna de ajuste. Agora são reconhecidas, **rotuladas** ("ajuste — não é entidade" /
   "total do documento — não somar com as demais"), vão pro fim e não recebem AV%/Δ%.
 
-**Ferramenta nova que fica:** `Vercel/scripts/verificar-export.mts` (8 invariantes nesta sessão; 21
+**Ferramenta nova que fica:** `portal/scripts/verificar-export.mts` (8 invariantes nesta sessão; 21
 depois da sessão 10).
 Validação da rodada: n8n **83/83**; migrations **0001–0022** limpas em Postgres 16 local com os
 cenários do v24 exercitados (período equivalente → 0 pendências; divergência real 2025×2023 → 1;
@@ -3934,7 +3934,7 @@ para a F1.
 - N8N: novo node `Reconciliar (Classe A)` no fim do fluxo (depois de `Gravar Campos (Sombra)`),
   chama `fn_reconciliar_por_documento` com o `documento_id` de `Registrar Documento`. 51/51
   testes do `workflow-sim` continuam passando.
-- Portal: dashboard do caso (`Vercel/src/app/casos/[id]/page.tsx`) ganhou seção "Reconciliação
+- Portal: dashboard do caso (`portal/src/app/casos/[id]/page.tsx`) ganhou seção "Reconciliação
   (Classe A)" listando as pendências abertas de divergência/precondição — **só leitura**, ainda
   não tem uma ação de "confirmar/resolver" dedicada (usa o motor de pendências genérico).
 - Opera em **N1** (doutrina): toda checagem gera `pendencia` tipada (`divergencia_reconciliacao`
@@ -4023,7 +4023,7 @@ O que foi feito e achado:
   realista (não mais só o punhado mínimo de contas fictícias da sessão 4). `buildExportWorkbook`
   é função pura (sem Supabase), então isso testa a lógica de classificação/montagem do Excel
   isoladamente, sem precisar de infraestrutura real.
-- **Bug real encontrado e corrigido** em `Vercel/src/lib/statement-templates.ts`: quando a
+- **Bug real encontrado e corrigido** em `portal/src/lib/statement-templates.ts`: quando a
   `secao` anotada pela IA não vem preenchida (fallback só por palavra-chave do rótulo), qualquer
   conta com "empréstimo"/"financiamento"/"mútuo" no nome caía sempre no **Passivo** — mesmo
   quando o rótulo dizia explicitamente "a receber" (ex.: "Mútuo a Receber de Coligada", comum em
@@ -4085,7 +4085,7 @@ sugestão N1**, exatamente no padrão que o time já usou pro diagnóstico (0010
   chamadas à OpenAI.**
 - `Supabase/migrations/0012_secao_canonica_e4.sql`: coluna `campo_extraido.secao_canonica` +
   `fn_registrar_campos_extraidos` (mesma assinatura) gravando-a.
-- O classificador do export (`Vercel/src/lib/statement-templates.ts` → `classificarConta`) usa a
+- O classificador do export (`portal/src/lib/statement-templates.ts` → `classificarConta`) usa a
   sugestão **só como fallback**: se a regra determinística (âncora/seção-livre/palavra-chave) já
   classificou, ela prevalece; a sugestão da IA só entra quando a conta cairia em "Contas Não
   Classificadas", e só se a seção sugerida pertencer à estrutura do documento. Isso ataca direto
@@ -4317,14 +4317,14 @@ conferência, e **sinalizar divergência** formula×extraído. Emenda registrada
 - **Fundamentação (WebSearch):** Lei 6.404/76 art. 178 + CPC 26 — Ativo em ordem de liquidez
   (Circulante; Não Circulante = Realizável a LP / Investimentos / Imobilizado / Intangível);
   Passivo (Circulante, Não Circulante) + PL. DRE em cascata; DFC método indireto (CPC 03).
-- **`Vercel/src/lib/statement-templates.ts` reescrito:** `classificarBalanco` agora (1) reconhece
+- **`portal/src/lib/statement-templates.ts` reescrito:** `classificarBalanco` agora (1) reconhece
   linhas que são TOTAIS/cabeçalhos que o doc trouxe (rótulo "nu" — só palavras estruturais — ou com
   "total"/"soma") e as manda para o NÓ certo em vez de virarem "conta no meio" (resolve o "NÃO
   CIRCULANTE no meio" e o "nomes iguais": "CIRCULANTE" sob Ativo vs. Passivo viram os totais de cada
   seção, desambiguados pelo contexto `secao`); (2) sub-classifica o Ativo Não Circulante nos
   subgrupos CPC (Realizável LP/Investimentos/Imobilizado/Intangível), com bucket "Outros" pro que
   não casar. Nova árvore `BALANCO_OUTLINE` (grupo→seção→subseção).
-- **`Vercel/src/lib/export.ts` — builder reescrito:** Balanço montado pela árvore; cada
+- **`portal/src/lib/export.ts` — builder reescrito:** Balanço montado pela árvore; cada
   seção/grupo tem o subtotal como **FÓRMULA** por coluna (folha = `SUM` das contas; pai = soma dos
   cabeçalhos dos filhos; grupo ATIVO/PASSIVO+PL = soma das seções). DRE em **cascata** (cada
   subtotal = subtotal anterior + soma das contas da seção; referencia a célula anterior, nunca
@@ -4524,7 +4524,7 @@ modelagem.
   documento, sem regressão). É **ortogonal** a `entidade_coluna`: um documento pode ter várias
   empresas E vários anos → linha por (conta × empresa × período). Schema+prompt de extração
   (`N8N/lib/extract.mjs` + mirror `build-workflow.mjs`) pedem uma linha por (conta × período); o
-  export (`Vercel/src/lib/export.ts`) usa `periodo_coluna` na chave de coluna; a tela de linhas do
+  export (`portal/src/lib/export.ts`) usa `periodo_coluna` na chave de coluna; a tela de linhas do
   documento mostra `[período]` ao lado do `(entidade)`.
 - **Limpeza de schema junto:** a `0016` tinha deixado DUAS sobrecargas de `fn_registrar_campos_extraidos`
   (3 e 4 params — `create or replace` com nº de params diferente cria overload novo, não substitui);
@@ -4554,10 +4554,10 @@ mesmo checklist/export/reconciliação.
 - **Desenho de menor risco (pipeline intacto):** o portal ENCAMINHA os arquivos pra MESMA URL do
   Form do N8N, servidor-a-servidor. A OpenAI/extração/reconciliação continuam 100% no N8N; o portal
   é só um front-end de intake.
-  - `Vercel/src/app/api/intake/route.ts` (runtime Node): recebe multipart, valida, e faz `fetch`
+  - `portal/src/app/api/intake/route.ts` (runtime Node): recebe multipart, valida, e faz `fetch`
     POST multipart pra `N8N_INTAKE_FORM_URL` com os campos `Mandato (nome do caso)`/`Arquivos`
     (nomes overridáveis por env `N8N_INTAKE_FIELD_*`). Sem a env → 503 com aviso claro.
-  - `Vercel/src/components/upload-form.tsx` (client): dropzone (drag-drop + clique), lista de
+  - `portal/src/components/upload-form.tsx` (client): dropzone (drag-drop + clique), lista de
     arquivos com remover, campo de mandato, estados de envio/erro/sucesso. `travarMandato` quando
     é "adicionar a um mandato existente".
   - Páginas: `/casos/novo` (novo mandato) e `/casos/[id]/adicionar` (mandato travado, volta ao
@@ -4642,7 +4642,7 @@ nunca chegou a rodar de verdade, apesar do portal reportar "enviado com sucesso"
   do campo não bate, o node `Listar Arquivos` lança seu erro explícito ("Nenhum arquivo recebido do
   formulario") e a execução morre ANTES de qualquer chamada à OpenAI — exatamente "sucesso na tela,
   0 tokens gastos, nada no mandato".
-- **Fix — descoberta automática de nomes de campo** (`Vercel/src/lib/n8n-form.ts`): em vez de
+- **Fix — descoberta automática de nomes de campo** (`portal/src/lib/n8n-form.ts`): em vez de
   fixar/adivinhar os nomes, `/api/intake` agora faz um GET no próprio Form antes de enviar, faz o
   parsing (por regex, tolerante) dos `<input>` do HTML retornado, e usa os `name` REAIS
   encontrados (arquivo = primeiro `<input type="file">`; mandato = primeiro `<input>` de texto
@@ -4653,7 +4653,7 @@ nunca chegou a rodar de verdade, apesar do portal reportar "enviado com sucesso"
 - **Pedido do dono (mesma sessão): pop-up elegante ao terminar + copy sem termos técnicos.** A
   mensagem "O N8N está processando (classificação + extração)" foi trocada por algo sem nomear
   nenhuma ferramenta/plataforma ("Estamos organizando tudo com cuidado — isso costuma levar alguns
-  minutos"). Novo endpoint `GET /api/intake/status` (`Vercel/src/app/api/intake/status/route.ts`)
+  minutos"). Novo endpoint `GET /api/intake/status` (`portal/src/app/api/intake/status/route.ts`)
   combina dois sinais pra saber quando o pipeline "terminou de tentar" (não "terminou sem
   pendências" — isso continua no dashboard como sempre): `documento` criado para o caso desde o
   envio (classificação concluída) + `evento_auditoria` tipo `extracao_sombra` referenciando aquele
@@ -4729,7 +4729,7 @@ problemas reais, todos corrigidos nesta fatia.
   `Supabase/migrations/0002`) estava mapeado pra aba "Dívida" — um mútuo intragrupo não é dívida bancária
   externa (`MAPA_DIVIDA`/`CONTRATO_DIVIDA`), misturar os dois numa aba só não fazia sentido
   contábil. `FAT_INTRAGRUPO` e `CONTRATO_SOCIAL` nem tinham aba própria, caindo no genérico
-  "Outros" junto com dado sem relação nenhuma. Fix (`Vercel/src/lib/export.ts`): `MUTUOS`/
+  "Outros" junto com dado sem relação nenhuma. Fix (`portal/src/lib/export.ts`): `MUTUOS`/
   `FAT_INTRAGRUPO` → aba nova "Intragrupo"; `CONTRATO_SOCIAL` → aba nova "Societário".
 - **Pedido 4 — colunas mais simples na listagem simples** (Faturamento/Dívida/Intragrupo/
   Societário/Fluxo Projetado): tinha 13 colunas, a maioria técnica/rastreabilidade (seção, página,
@@ -4826,7 +4826,7 @@ Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru 
 "FLUXO_CAIXA") e período sem tradução ("outro Jan/2024 a Dez/2025", "anual 12M25") — a
 `formatarPeriodo` de cont.¹⁵ só tinha sido ligada no export em Excel, não nas telas do portal.
 
-- **Rótulo natural do tipo:** nova `formatarTipoTaxonomia` (`Vercel/src/lib/export.ts`) — mapa
+- **Rótulo natural do tipo:** nova `formatarTipoTaxonomia` (`portal/src/lib/export.ts`) — mapa
   explícito pros 12 tipos do Kit Básico + Variáveis já usados no export (`TIPO_TAXONOMIA_LABEL`,
   igual ao pedido do dono: "Faturamento em 24 meses", "Fluxo de Caixa", "DRE", "Balanço",
   "Faturamento Intragrupo", "Contrato Social", "Mútuos", "Mapa da Dívida", "Demonstrações
@@ -4869,8 +4869,8 @@ Print do dono da tabela de documentos do dashboard mostrou `tipo_taxonomia` cru 
 | E3 Classe A: casamento `chave` extraída → conceito canônico por **normalização + termos obrigatórios/excludentes** (determinístico, sem LLM); log append-only (`reconciliacao`) separado do estado acionável deduplicado (`pendencia`, chave `motivo='reconciliacao:<tipo>'`) | `Supabase/migrations/0009_reconciliacao_e3.sql` |
 | Diagnóstico de conteúdo (entidade/tipo/período/legibilidade) fundido na MESMA chamada de extração E2 (não uma chamada nova) para não aumentar custo; só preenche lacunas (entidade vazia) ou confere contra o já registrado — divergência sempre vira pendência revisável, nunca sobrescreve sozinho | `Supabase/migrations/0010_diagnostico_e1e2.sql` |
 | E4 aceite: granularidade v0 é por **documento_versao inteiro** (não célula-a-célula) — degrau mínimo que já satisfaz `status_aceite`/`aceito_por`/`aceito_em` por linha exigidos pela spec, sem construir UI de seleção linha-a-linha ainda | `Supabase/migrations/0011_aceite_export_e4.sql` |
-| Export Excel: linhas pendentes de aceite aparecem no export (visualmente distintas — âmbar+itálico), nunca são omitidas — "sugestão pendente de revisão" nunca é fato silencioso | `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`, `Vercel/src/lib/export.ts` |
-| Export Excel — Balanço/Balancete/DRE/Fluxo de Caixa/Combinado: layout PADRÃO DE MERCADO com colunas entidade×período, mas classificação por SEÇÃO (não por template de nomes fixos) — cada conta mantém o rótulo original da empresa; casamento tolerante a plural/conectivo; nunca soma/calcula subtotal novo. Faturamento/Dívida/Fluxo Projetado continuam em listagem simples (já são série/tabela por natureza) | `Vercel/src/lib/statement-templates.ts` |
+| Export Excel: linhas pendentes de aceite aparecem no export (visualmente distintas — âmbar+itálico), nunca são omitidas — "sugestão pendente de revisão" nunca é fato silencioso | `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md`, `portal/src/lib/export.ts` |
+| Export Excel — Balanço/Balancete/DRE/Fluxo de Caixa/Combinado: layout PADRÃO DE MERCADO com colunas entidade×período, mas classificação por SEÇÃO (não por template de nomes fixos) — cada conta mantém o rótulo original da empresa; casamento tolerante a plural/conectivo; nunca soma/calcula subtotal novo. Faturamento/Dívida/Fluxo Projetado continuam em listagem simples (já são série/tabela por natureza) | `portal/src/lib/statement-templates.ts` |
 
 ---
 
@@ -4923,7 +4923,7 @@ problema achado foi de PIPELINE (item errado), não de vocabulário de classific
 - **Teto de ~4,5 MB no upload pelo portal (Vercel):** o `/api/intake` encaminha via Serverless
   Function, que limita o corpo da requisição. Lotes grandes precisam ir em levas ou pelo Form do
   N8N. Melhoria futura: upload direto do browser pro N8N/Storage (signed URL), contornando a
-  Function — tira o limite e o processamento pesado da Vercel. Ver `Vercel/README.md`.
+  Function — tira o limite e o processamento pesado da Vercel. Ver `portal/README.md`.
 - **Overload morto de `fn_registrar_documento`:** achado ao testar 0009 contra Postgres local —
   a migration `0007` adicionou `p_justificativa` via `create or replace` com um parâmetro a
   mais, o que em Postgres **cria uma segunda função** (14 params) em vez de substituir a de
@@ -5041,7 +5041,7 @@ Supabase/         — migrations SQL (0001-0028) + README com ordem de aplicaç�
 N8N/        — build-workflow.mjs (gerador) + lib/ (lógica testável) + test/ + workflow.e1-ingestao.json (gerado)
               build-workflow-macro.mjs + lib/macro.mjs + workflow.macro.json — coleta de índices macro (0025),
               workflow SEPARADO que roda no relógio (dia 12); falha dele não derruba a ingestão
-Vercel/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
+portal/     — Next.js (App Router) + Supabase Auth — dashboard, fila de revisão, planilha+aceite, export Excel
               src/lib/export.ts             — o motor do export (função pura buildExportWorkbook):
                                               abas de demonstração, DMPL/DVA, Macro, Modelagem, roteamento por linha
               src/lib/statement-templates.ts — classificador por seção contábil
@@ -5059,20 +5059,20 @@ node --test 'N8N/test/*.test.mjs'           # 160 testes: libs + nós REAIS do J
 node N8N/build-workflow.mjs                 # regenera workflow.e1-ingestao.json (commitar o gerado)
 node N8N/build-workflow-macro.mjs           # regenera workflow.macro.json (idem)
 node N8N/build-workflow-diagnostico.mjs     # regenera workflow.diagnostico-openai.json (idem)
-npx tsx Vercel/scripts/verificar-export.mts # 198 invariantes do export
+npx tsx portal/scripts/verificar-export.mts # 198 invariantes do export
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 #   ^ reconciliação + macro + reextração + canonicalização (16) + seed macro
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" npx tsx Verificação/run.mts
 #   ^ 18 asserts ENCADEANDO extração (nó real) -> banco (funções reais) -> export -> gabarito.
 #     É a única suíte que cobre a COSTURA entre as três; as outras validam seu pedaço
 #     contra fixture escrita à mão nas duas pontas, e as duas pontas podem errar juntas.
-cd Vercel && npx tsc --noEmit && npx eslint . && npx next build
+cd portal && npx tsc --noEmit && npx eslint . && npx next build
 ```
 
 **Preparo de container novo** (a sessão 14 perdeu tempo nos três — rode antes de qualquer coisa):
 
 ```bash
-cd Vercel && npm install && cd ..                    # node_modules NÃO vem no clone
+cd portal && npm install && cd ..                    # node_modules NÃO vem no clone
 cd "Dados de Teste"/book-vertentes && pip install reportlab && python3 gerar.py && cd ../..
 # ↑ gera pdf/ + GABARITO.json, que NÃO são versionados. Sem isso o verificar-export.mts
 #   morre com ENOENT no GABARITO.json — não é bug, é insumo faltando.
@@ -5103,8 +5103,8 @@ O `.xlsx` do dono se lê com `python3` + `openpyxl` (`data_only=False` pra ver a
 > **Nota para quem for continuar a E4:** `Arquitetura do Sistema/2 Especificação/f0/07_output_spec.md` é a spec travada (v0) do output
 > — dois modos de entrega (base viva no portal + export Excel), schema-alvo com ordem de
 > prioridade, proveniência por célula, e o princípio inegociável de anti-ancoragem. O aceite
-> (`fn_aceitar_extracao`, `0011`), o export (`Vercel/src/lib/export.ts`) e o classificador por
-> seção do Balanço/Balancete/DRE/Fluxo de Caixa (`Vercel/src/lib/statement-templates.ts`) já
+> (`fn_aceitar_extracao`, `0011`), o export (`portal/src/lib/export.ts`) e o classificador por
+> seção do Balanço/Balancete/DRE/Fluxo de Caixa (`portal/src/lib/statement-templates.ts`) já
 > existem nessa primeira fatia — ler os três antes de mexer. **Importante:** não é mais um
 > template de nomes de conta fixos — é um classificador por seção com palavras-chave +
 > casamento tolerante a plural/conectivo (`contemFrase`/`tokensDe`). Para ampliar cobertura,
@@ -5153,7 +5153,7 @@ ao lado de `Passivo Circulante 92.539` (milhares).
 
 ### Fase 9 — o modelo institucional (14 abas)
 
-`Vercel/src/lib/modelo-institucional.ts` reconstrói o Modelo Base com os MESMOS nomes de aba e a
+`portal/src/lib/modelo-institucional.ts` reconstrói o Modelo Base com os MESMOS nomes de aba e a
 MESMA semântica: `Considerações · Capa · Output · Revenues, COGS & SG&A · Premissas · Income
 Statement · Balance Sheet · Working Capital · ST Inv. & Debt · Fixed Assets & CAPEX · Cash Flow ·
 Goodwill, Taxes & Div. · Anual · Tributos a Recolher`. Switch de cenário `CHOOSE(Output!$G$2,…)`,
@@ -5424,7 +5424,7 @@ PR não funcionou. Agora a orientação segue o erro, e no caso de timeout apont
 **27**.
 
 Nota de insumo, que custou uma tentativa: o `CLAUDE.md` documenta o e2e como
-`E2E_PSQL=1 ./Vercel/node_modules/.bin/tsx Verificação/run.mts`, mas `E2E_PSQL` é o **comando** do psql
+`E2E_PSQL=1 ./portal/node_modules/.bin/tsx Verificação/run.mts`, mas `E2E_PSQL` é o **comando** do psql
 e não um interruptor — com `1` o Node tenta executar um binário chamado `1` e morre com
 `spawnSync 1 ENOENT`. O que funciona é `E2E_PSQL=psql` (ou `E2E_PSQL="sudo -u postgres psql"`, que é
 o exemplo no próprio `Verificação/run.mts`).
@@ -5819,10 +5819,10 @@ seções** (`Empréstimos e Financiamentos`, `Arrendamentos`, `Capital social`, 
    passivo (7.895 e 13.549). A guarda da `Grade` fez o que devia — preferiu explodir a somar a
    conta errada em silêncio.
 
-A correção é a mesma nos três: a chave inclui a seção. Ficou em `Vercel/src/lib/modelagem-linha.ts`
+A correção é a mesma nos três: a chave inclui a seção. Ficou em `portal/src/lib/modelagem-linha.ts`
 (um módulo, não duas cópias) e em `chaveLinha` do modelo institucional.
 
-### `Vercel/scripts/gerar-export-do-banco.mts` — o 500 deixou de ser invisível
+### `portal/scripts/gerar-export-do-banco.mts` — o 500 deixou de ser invisível
 
 O export completo só podia ser exercitado em produção, e um defeito nele chegava ao dono como
 página em branco, com o stack trace preso no log da Vercel. O script novo refaz **as consultas da
@@ -6158,7 +6158,7 @@ As mensagens abaixo são as reprovações reais.
   `SUMMARY`, espelho de balanço/DRE/fluxo, `DEBT & RATIOS`, e **13 índices com corte de covenant
   editável e teste de rompimento ao lado**, mais uma linha de diagnóstico por exercício.
 - **Os 8 gráficos.** O ExcelJS **não tem API de gráfico** (conferido no runtime, não só no `.d.ts`),
-  então eles entram por `Vercel/src/lib/xlsx-graficos.ts`, que injeta as partes OOXML no `.xlsx` já
+  então eles entram por `portal/src/lib/xlsx-graficos.ts`, que injeta as partes OOXML no `.xlsx` já
   gerado — o mesmo caminho que o repositório já usava para ampliar a caixa das notas, com JSZip, sem
   dependência nova. Três armadilhas estão documentadas no arquivo, e as três produzem "conteúdo
   ilegível" no Excel: a ordem dos elementos é normativa (`<drawing>` vai ANTES de `<legacyDrawing>`,
@@ -6167,9 +6167,9 @@ As mensagens abaixo são as reprovações reais.
 
 ### A cara da Oria
 
-`Vercel/src/lib/oria-marca.ts`, novo. **Não existia paleta de marca versionada neste repositório** —
+`portal/src/lib/oria-marca.ts`, novo. **Não existia paleta de marca versionada neste repositório** —
 procurado antes de escrever: o `globals.css` tem três regras e nenhuma cor, não há
-`tailwind.config` com tokens, não há logotipo em `Vercel/public`, e a skill de marca é identidade
+`tailwind.config` com tokens, não há logotipo em `portal/public`, e a skill de marca é identidade
 VERBAL. Então a paleta é **derivada do que já existia** no próprio export (o grafite `1E293B` das
 faixas, o cinza `E5E7EB` do cabeçalho, o vermelho da divergência) mais hierarquia e um acento.
 
@@ -6186,7 +6186,7 @@ conhecido escrito e o "(justificar aqui)".
 
 ### O avaliador de fórmula ficou mais forte, e era isso que faltava para PROVAR
 
-`Vercel/scripts/lib/avaliar-formula.mts` ganhou `NOT`, `AND`, `OR`, `ABS`, `YEAR`, `EOMONTH` e
+`portal/scripts/lib/avaliar-formula.mts` ganhou `NOT`, `AND`, `OR`, `ABS`, `YEAR`, `EOMONTH` e
 leitura de célula de **data** (o eixo do tempo é data; antes toda célula de cabeçalho voltava como
 `null`, "não sei avaliar" — e um assert que não avalia passa sem provar nada, que é a forma mais
 silenciosa de teste inútil). O comentário do topo dizia que ele não segue referência entre abas;

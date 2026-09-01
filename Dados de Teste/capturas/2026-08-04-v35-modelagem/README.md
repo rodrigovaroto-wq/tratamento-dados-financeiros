@@ -14,7 +14,7 @@ se comporta contra o dado real, e não contra a fixture.
 | Arquivo | Serve para |
 |---|---|
 | `Oria · Tratamento de Dados Financeiros.html` | **é o artefato.** O HTML renderizado pelo servidor traz o estado inteiro da tela: parâmetros salvos, premissas ativas, as 203 contas com papel, unidade e marca de sobreposição |
-| `Oria · … _files/*.js.download`, `*.css` | *bundles* minificados do Next.js que o navegador baixou junto. **Não são fonte** — a fonte é `Vercel/src/`. Estão aqui só para a página abrir offline com o mesmo layout |
+| `Oria · … _files/*.js.download`, `*.css` | *bundles* minificados do Next.js que o navegador baixou junto. **Não são fonte** — a fonte é `portal/src/`. Estão aqui só para a página abrir offline com o mesmo layout |
 
 O upload original chegou com tudo achatado na raiz do repositório; os assets voltaram para a pasta
 `_files/` porque é o caminho que o próprio HTML referencia (`./Oria · … _files/…`) — achatado, a

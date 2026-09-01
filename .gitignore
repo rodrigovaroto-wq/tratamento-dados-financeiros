@@ -20,7 +20,7 @@ node_modules/
 # Saída do arnês de variações — .xlsx e relatório são gerados a cada rodada.
 Verificação/saida/
 
-# CHAVE NENHUMA ENTRA AQUI. O `Vercel/.gitignore` já cobria `.env*`, mas os
+# CHAVE NENHUMA ENTRA AQUI. O `portal/.gitignore` já cobria `.env*`, mas os
 # scripts de diagnóstico do n8n moram FORA do portal e leem a chave do
 # ambiente (`IA_API_KEY`/`OPENAI_API_KEY` em `N8N/diagnosticar-ia.mjs`, e o
 # `N8N/README.md` ensina a passá-la inline). Quem se cansar de redigitar a

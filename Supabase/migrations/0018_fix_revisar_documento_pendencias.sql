@@ -14,7 +14,7 @@
 --   where documento_id = p_documento_id and tipo = 'classificacao_pendente' ...
 -- Mas a migration 0010 (Diagnóstico de conteúdo, E1/E2) introduziu TRÊS outros
 -- tipos de pendência gerados pela MESMA fila de revisão do portal
--- (`PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS` em Vercel/src/lib/types.ts):
+-- (`PENDENCIA_TIPOS_DIAGNOSTICO_REVISAVEIS` em portal/src/lib/types.ts):
 -- `tipo_incorreto`, `entidade_incorreta`, `periodo_incorreto` — nenhum deles
 -- nunca foi adicionado ao WHERE acima. Toda vez que o diagnóstico de conteúdo
 -- (não o nome do arquivo) gerava a pendência — o caso mais comum, já que o

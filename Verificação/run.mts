@@ -4,7 +4,7 @@
 //
 //   N8N/test/*.test.mjs            libs + nós simulados. Não toca banco nem export.
 //   Supabase/test/run.sh                 funções SQL contra uma fixture escrita em Python.
-//   Vercel/scripts/verificar-*.mts export a partir de uma fixture JSON.
+//   portal/scripts/verificar-*.mts export a partir de uma fixture JSON.
 //
 // As duas fixtures vêm da MESMA origem (`Supabase/test/gerar_fixture.py`, com `--json`),
 // então elas concordam entre si. O que ninguém cobria é a COSTURA: nada roda o
@@ -29,9 +29,9 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { buildExportWorkbook } from "../Vercel/src/lib/export.ts";
-import type { CampoExtraido, DocumentoParaExport } from "../Vercel/src/lib/types.ts";
-import { avaliarCelula } from "../Vercel/scripts/lib/avaliar-formula.mts";
+import { buildExportWorkbook } from "../portal/src/lib/export.ts";
+import type { CampoExtraido, DocumentoParaExport } from "../portal/src/lib/types.ts";
+import { avaliarCelula } from "../portal/scripts/lib/avaliar-formula.mts";
 import { provedor } from "../N8N/lib/provedor.mjs";
 
 // O ARNÊS FALA O DIALETO DO PROVEDOR ATIVO. Ele injeta a resposta no ponto em
@@ -124,7 +124,7 @@ async function rodarNo(nome: string, item: unknown, refs: Record<string, unknown
 }
 
 const fixture = JSON.parse(
-  readFileSync(`${RAIZ}Vercel/scripts/fixtures/book-vertentes.json`, "utf8"),
+  readFileSync(`${RAIZ}portal/scripts/fixtures/book-vertentes.json`, "utf8"),
 ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
 
 const gabarito = JSON.parse(

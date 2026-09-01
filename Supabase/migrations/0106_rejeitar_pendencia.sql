@@ -67,7 +67,7 @@
 
 -- -----------------------------------------------------------------------------
 -- O piso do motivo, num lugar só (mesmo padrão de `fn_teto_ressalvas`): o portal
--- espelha este número em `Vercel/src/lib/pendencia.ts` para poder desabilitar o
+-- espelha este número em `portal/src/lib/pendencia.ts` para poder desabilitar o
 -- botão antes do round-trip, e o assert (0114) compara os dois.
 -- -----------------------------------------------------------------------------
 create or replace function fn_min_motivo_rejeicao()

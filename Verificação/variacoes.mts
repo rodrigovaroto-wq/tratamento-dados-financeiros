@@ -20,7 +20,7 @@
 // Roda em segundos porque o banco é clonado de um MOLDE já migrado:
 //
 //   PGHOST=/tmp/pgo/sock PGPORT=5433 PGUSER=postgres E2E_PSQL=psql \
-//     ./Vercel/node_modules/.bin/tsx Verificação/variacoes.mts
+//     ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 //
 // `--so=nome` roda uma variação só. `--manter` não derruba os bancos, para
 // inspecionar à mão depois.
@@ -28,11 +28,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import ExcelJS from "exceljs";
-import { buildExportWorkbook } from "../Vercel/src/lib/export.ts";
-import type { CampoExtraido, DocumentoParaExport } from "../Vercel/src/lib/types.ts";
-import { avaliarCelula, esquecerMemoria } from "../Vercel/scripts/lib/avaliar-formula.mts";
-import type { EntradaModeloInstitucional, LinhaModelo } from "../Vercel/src/lib/modelo-institucional.ts";
-import { seriesPorLinha, serieDaLinha } from "../Vercel/src/lib/modelagem-linha.ts";
+import { buildExportWorkbook } from "../portal/src/lib/export.ts";
+import type { CampoExtraido, DocumentoParaExport } from "../portal/src/lib/types.ts";
+import { avaliarCelula, esquecerMemoria } from "../portal/scripts/lib/avaliar-formula.mts";
+import type { EntradaModeloInstitucional, LinhaModelo } from "../portal/src/lib/modelo-institucional.ts";
+import { seriesPorLinha, serieDaLinha } from "../portal/src/lib/modelagem-linha.ts";
 import { provedor } from "../N8N/lib/provedor.mjs";
 
 // O arnês injeta a sujeira NO PONTO EM QUE A IA RESPONDE — então o envelope tem
@@ -98,7 +98,7 @@ async function rodarNo(nome: string, item: unknown, refs: Record<string, unknown
 }
 
 const fixture = JSON.parse(
-  readFileSync(`${RAIZ}Vercel/scripts/fixtures/book-vertentes.json`, "utf8"),
+  readFileSync(`${RAIZ}portal/scripts/fixtures/book-vertentes.json`, "utf8"),
 ) as { documentos: DocumentoParaExport[]; campos: CampoExtraido[] };
 
 function respostaDaIA(campos: CampoExtraido[], moeda = "BRL") {

@@ -44,9 +44,9 @@ const LIBERA = 0;
 
 test("bloqueia o descarte de arquivo — as quatro formas que aparecem de verdade", () => {
   const destrutivos = [
-    [`${G}${CO} -- Vercel/src/lib/export.ts`, "checkout com separador e caminho"],
+    [`${G}${CO} -- portal/src/lib/export.ts`, "checkout com separador e caminho"],
     [`${G}${RE} Supabase/schema.sql`, "restore com caminho"],
-    [`cd Vercel && ${G}${RE} src/lib/export.ts`, "restore depois de um encadeamento"],
+    [`cd portal && ${G}${RE} src/lib/export.ts`, "restore depois de um encadeamento"],
     [`git -C portal ${RE} src/app/page.tsx`, "restore com -C"],
   ];
   for (const [cmd, rotulo] of destrutivos) {
@@ -103,7 +103,7 @@ test("a trava é não-vazia: sem a análise, o caso destrutivo passaria", () => 
   // Guarda contra o próprio teste envelhecer para verde. Se um dia as duas expressões deixarem de
   // casar o comando destrutivo canônico, o primeiro teste desta suíte reprova — mas este aqui diz
   // POR QUE, apontando a expressão, em vez de só acusar um código de saída errado.
-  const destrutivoCanonico = `${G}${CO} -- Vercel/src/lib/export.ts`;
+  const destrutivoCanonico = `${G}${CO} -- portal/src/lib/export.ts`;
   const porCheckout = /\bgit\s+(?:-C\s+\S+\s+)?checkout\b[^|;&]*\s--\s+\S/;
   const porRestore = /\bgit\s+(?:-C\s+\S+\s+)?restore\s+(?!-)\S/;
   assert.ok(

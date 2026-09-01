@@ -1201,7 +1201,7 @@ begin
 
   if coalesce(v_dono, false) then
     -- Total do próprio documento. Mesmo vocabulário de `tipoColunaNaoEntidade`
-    -- em Vercel/src/lib/export.ts, para o portal e o banco concordarem.
+    -- em portal/src/lib/export.ts, para o portal e o banco concordarem.
     select ce.entidade_coluna into v_col
     from campo_extraido ce
     where ce.documento_versao_id = p_documento_versao_id

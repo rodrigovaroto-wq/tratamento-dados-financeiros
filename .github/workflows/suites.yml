@@ -87,10 +87,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: Vercel/package-lock.json
+          cache-dependency-path: portal/package-lock.json
 
       - name: Instalar dependências do portal
-        working-directory: Vercel
+        working-directory: portal
         run: npm ci
 
 
@@ -105,7 +105,7 @@ jobs:
 
       # ---- rápido e barato primeiro ---------------------------------------
       - name: Lint e tipos do portal
-        working-directory: Vercel
+        working-directory: portal
         run: |
           npx tsc --noEmit
           npx eslint .
@@ -159,7 +159,7 @@ jobs:
         # `Supabase/test/gerar_fixture.py` saem TRÊS artefatos versionados:
         #
         #   • Supabase/test/fixture_book_vertentes.sql        (suíte de banco)
-        #   • Vercel/scripts/fixtures/book-vertentes.json (suíte de export)
+        #   • portal/scripts/fixtures/book-vertentes.json (suíte de export)
         #   • Dados de Teste/book-vertentes/pdf/GABARITO.json  (gerado no passo acima)
         #
         # Os workflows do n8n já têm este portão desde a sessão 20, com o motivo
@@ -177,12 +177,12 @@ jobs:
         run: |
           cd "Dados de Teste"/book-vertentes
           PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py > ../../Supabase/test/fixture_book_vertentes.sql
-          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../Vercel/scripts/fixtures/book-vertentes.json
+          PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json
           cd ../book-canastra
           PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture_canastra.py > ../../Supabase/test/fixture_book_canastra.sql
           cd ../..
           git diff --exit-code -- Supabase/test/fixture_book_vertentes.sql \
-            Vercel/scripts/fixtures/book-vertentes.json \
+            portal/scripts/fixtures/book-vertentes.json \
             Supabase/test/fixture_book_canastra.sql \
             || { echo "::error::as fixtures commitadas divergem do gerador — rode os geradores de fixture e commite o resultado"; exit 1; }
 
@@ -225,7 +225,7 @@ jobs:
         # PATH, o npx respondeu "package was not found and will be installed" e
         # baixou o tsx do registro — sem versão fixada, com o CI passando a
         # depender do que estiver publicado no dia.
-        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-export.mts
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 
       - name: Suíte da planilha de transcrição (ida e volta do formato)
         # A planilha da 0129 grava linha ACEITA, com autor e sem guarda nenhuma —
@@ -233,7 +233,7 @@ jobs:
         # que tem dono, e ninguém volta a desconfiar de número com dono. A suíte é
         # round-trip (gerar → .xlsx → ler) porque o defeito que interessa é a coluna
         # que muda de lugar em UMA das duas metades do formato.
-        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-transcricao.mts
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 
       - name: Suíte da mensagem de falha (o texto do dia ruim)
         # POR QUE ELA ESTÁ NO CI. Este é o único texto do sistema cujo defeito
@@ -241,7 +241,7 @@ jobs:
         # Uma assinatura que deixou de casar, ou uma frase que voltou a citar
         # ferramenta, não derruba tela nenhuma — e só se descobre no momento em
         # que alguém precisa de ajuda e recebe "deu erro".
-        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-mensagem-de-falha.mts
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
 
       - name: Suíte das premissas sugeridas do realizado
         # A tela de Modelagem sugere oito premissas lidas do próprio balanço e da
@@ -250,7 +250,7 @@ jobs:
         # produz um modelo que parece calibrado pelo histórico e não é. A suíte
         # trava as duas regras que sustentam isso: zero não é resposta, e a base de
         # cada razão é a MESMA que o modelo aplica ao projetar.
-        run: ./Vercel/node_modules/.bin/tsx Vercel/scripts/verificar-premissas-do-realizado.mts
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
 
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
@@ -271,7 +271,7 @@ jobs:
           }
 
       - name: Suíte e2e (extração → banco → export)
-        run: ./Vercel/node_modules/.bin/tsx Verificação/run.mts
+        run: ./portal/node_modules/.bin/tsx Verificação/run.mts
 
       - name: Arnês de variações — a cadeia real sobre documento sujo
         # POR QUE ELE ESTÁ NO CI. Cinco rodadas de variantes trocadas por completo
@@ -288,8 +288,8 @@ jobs:
         # existe no runner: o passo morria em `connection to server on socket
         # "/tmp/.s.PGSQL.5432" failed`. Configuração de sandbox copiada para o CI é
         # o jeito mais bobo de deixar um portão vermelho.
-        run: ./Vercel/node_modules/.bin/tsx Verificação/variacoes.mts
+        run: ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
       - name: Build do portal
-        working-directory: Vercel
+        working-directory: portal
         run: npx next build

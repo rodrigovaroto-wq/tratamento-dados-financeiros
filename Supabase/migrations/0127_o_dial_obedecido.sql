@@ -8,7 +8,7 @@
 -- cuidou de o dial ser LIDO.
 --
 -- E a 0041 já havia diagnosticado exatamente isso, com um comando: «`grep -rl
--- estagio_autonomia Vercel/src n8n` não retornava NADA — a tabela não tinha um
+-- estagio_autonomia portal/src n8n` não retornava NADA — a tabela não tinha um
 -- único leitor». Ela consertou para UM estágio, a extração de linhas financeiras.
 -- Rodando a mesma busca hoje, estágio por estágio, os outros SETE continuam sem
 -- leitor. O efeito é preciso: **mudar o nível de sete dos oito estágios não muda

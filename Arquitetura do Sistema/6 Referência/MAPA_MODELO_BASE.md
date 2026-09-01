@@ -1127,4 +1127,4 @@ escreve:
 ---
 
 *Fase 1 concluída para as 14 abas. Próximo passo: `Arquitetura do Sistema/6 Referência/CONFORMIDADE.md` (fase 2),*
-*que compara aba a aba contra um export real gerado por `Vercel/scripts/gerar-export-do-banco.mts`.*
+*que compara aba a aba contra um export real gerado por `portal/scripts/gerar-export-do-banco.mts`.*

@@ -6,7 +6,7 @@
 -- "Nível é estado do sistema, não constante de código (Arquitetura do Sistema/1 Visão e Doutrina/01)".
 --
 -- Na prática, até aqui:
---   • `grep -rl estagio_autonomia Vercel/src n8n` não retornava NADA — a tabela
+--   • `grep -rl estagio_autonomia portal/src n8n` não retornava NADA — a tabela
 --     não tinha um único leitor;
 --   • o dial de `extracao_linhas_financeiras` dizia **N0** — sombra, "roda,
 --     registra, NÃO influencia decisão" (Arquitetura do Sistema/1 Visão e Doutrina/01);

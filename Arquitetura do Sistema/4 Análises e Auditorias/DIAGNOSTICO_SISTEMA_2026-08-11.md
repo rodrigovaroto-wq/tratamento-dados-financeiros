@@ -190,8 +190,8 @@ verdade pode divergir em silêncio:
 | Espelho | Protegido por |
 |---|---|
 | JSON dos nós do n8n ↔ `N8N/lib/` | `git diff --exit-code -- N8N/` no CI ✅ |
-| piso do motivo de rejeição (`0106` ↔ `Vercel/src/lib/pendencia.ts`) | assert `(0114)`, que lê o SQL ✅ |
-| tipos de pendência (`pendencia_tipo` no enum ↔ as listas de `Vercel/src/lib/types.ts`) | **nada** ❌ |
+| piso do motivo de rejeição (`0106` ↔ `portal/src/lib/pendencia.ts`) | assert `(0114)`, que lê o SQL ✅ |
+| tipos de pendência (`pendencia_tipo` no enum ↔ as listas de `portal/src/lib/types.ts`) | **nada** ❌ |
 
 O terceiro é o que produziu o buraco corrigido nesta rodada: as listas do portal são enumerações
 manuais dos tipos, e os tipos que ninguém listou não apareciam na tela. A correção foi listar por
@@ -335,7 +335,7 @@ Ordem por (impacto no output) ÷ (esforço). Os quatro primeiros cabem em uma ro
 | 7 | **Papel de usuário** (analista/sênior) → destrava a ressalva de `Arquitetura do Sistema/2 Especificação/f0/04` e limita quem rejeita | `Supabase/`, portal | 🟠 médio | médio |
 | 8 | **`reenviada_ao_cliente` e `em_correcao_interna`** com ação de tela | portal, `Supabase/` | 🟠 médio | médio |
 | 9 | **Proveniência completa na `Premissas`** (página, confiança, aceite) | `modelo-institucional.ts` | 🟠 médio | baixo |
-| 10 | **Extrair as funções puras de cálculo** para módulo com teste direto | `Vercel/src/lib/` | 🟡 médio (velocidade futura) | médio |
+| 10 | **Extrair as funções puras de cálculo** para módulo com teste direto | `portal/src/lib/` | 🟡 médio (velocidade futura) | médio |
 | 11 | **`ESTADO.md` + assert de frescor no CI** | raiz, CI | 🟡 médio | baixo |
 | 12 | **Golden set físico** (20-30 docs reais por tipo) e concordância medida | processo | 🔴 alto (destrava a F4 inteira) | alto |
 | 13 | **Modo A de `Arquitetura do Sistema/2 Especificação/f0/07`** — base viva consultável — ou a decisão escrita de que ele não vem | portal | 🟠 médio | alto |

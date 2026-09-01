@@ -14,7 +14,7 @@ Você mapeia, não conserta. Devolve caminhos e trechos curtos, nunca arquivos i
   `HANDOFF.md` é arquivo morto de ~5.000 linhas — **procure nele com `grep -n`, nunca leia
   inteiro.**
 - A lógica de extração e classificação vive em `N8N/lib/`; o arquivo entregue ao cliente sai de
-  `Vercel/src/lib/export.ts`; as regras de negócio duras estão em funções SQL, não no TypeScript.
+  `portal/src/lib/export.ts`; as regras de negócio duras estão em funções SQL, não no TypeScript.
 - `.github/workflows/suites.yml` é a lista canônica de como se roda cada coisa, com o motivo de
   cada passo escrito em comentário.
 

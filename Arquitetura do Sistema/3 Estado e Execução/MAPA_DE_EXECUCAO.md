@@ -55,7 +55,7 @@ de infra entre o repositório e o sistema.
   `modelo-institucional.ts:4489`), os índices que a `Arquitetura do Sistema/2 Especificação/f0/08` faseou (liquidez seca `R_LIQ_SECA:4438`,
   ciclo de caixa `:4458`), o **papel de usuário** (`0107`: `fn_papel`, `fn_ressalvar_pendencia`,
   `fn_tratar_pendencia`) e os **estados de tratamento da pendência** com ação de tela
-  (`Vercel/src/lib/pendencia.ts:56-77`, `Pendencia.tsx:162`).
+  (`portal/src/lib/pendencia.ts:56-77`, `Pendencia.tsx:162`).
 
 **O que não está, e é o assunto deste mapa:**
 
@@ -305,7 +305,7 @@ que o primeiro comitê vai fazer.
 | b | **Linha que sozinha passa do teto de saída** — sem corte mais fino possível | anotado; nenhum documento do book cai nesse caso |
 | c | **Rateio de despesa intragrupo que não deixa saldo no balanço** — não há espelho para conferir | limite conhecido da `0124`, sem solução barata |
 | d | **Mútuo com sócio** — o par é o contrato com o quotista, que ninguém cruza hoje | limite conhecido da `0123` |
-| e | ~~**"Sugerir do realizado"**~~ | **FEITO em 21/08.** As oito saem do próprio balanço e DRE do caso, gravadas com `origem = 'historico'`. `Vercel/src/lib/premissas-do-realizado.ts`, 25 asserts em `verificar-premissas-do-realizado.mts`, no CI. Duas regras sustentam: **zero não é resposta** (sem a conta, sai o motivo e não um número) e **a base de cada razão é a que o modelo aplica ao projetar** — fornecedor contra custos, o resto contra receita líquida —, senão o dia sugerido não reproduz o saldo de onde saiu |
+| e | ~~**"Sugerir do realizado"**~~ | **FEITO em 21/08.** As oito saem do próprio balanço e DRE do caso, gravadas com `origem = 'historico'`. `portal/src/lib/premissas-do-realizado.ts`, 25 asserts em `verificar-premissas-do-realizado.mts`, no CI. Duas regras sustentam: **zero não é resposta** (sem a conta, sai o motivo e não um número) e **a base de cada razão é a que o modelo aplica ao projetar** — fornecedor contra custos, o resto contra receita líquida —, senão o dia sugerido não reproduz o saldo de onde saiu |
 
 ---
 

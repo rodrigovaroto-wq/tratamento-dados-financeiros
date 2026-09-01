@@ -1,6 +1,6 @@
 // Mede o auto-aceite do dial contra um gabarito.
 //
-//   ./Vercel/node_modules/.bin/tsx Vercel/scripts/medir-auto-aceite.mts
+//   ./portal/node_modules/.bin/tsx portal/scripts/medir-auto-aceite.mts
 //   … --extracao=/caminho/extracao.json --limiar=0.9 --nivel=N2
 //
 // O QUE ESTE SCRIPT RESPONDE. O dial de `extracao_linhas_financeiras` está em N2:

@@ -13,13 +13,13 @@
 | **Visibilidade** | pública: a API de leitura responde **sem token** |
 | **Análises até hoje** | **uma** |
 
-**Não é preciso token para LER.** É por isso que `Vercel/scripts/sonar-achados.mjs`
+**Não é preciso token para LER.** É por isso que `portal/scripts/sonar-achados.mjs`
 funciona de qualquer sessão, sem segredo nenhum:
 
 ```bash
-node Vercel/scripts/sonar-achados.mjs                    # resumo por regra/tipo/linguagem
-node Vercel/scripts/sonar-achados.mjs --tipo=BUG         # só bugs
-node Vercel/scripts/sonar-achados.mjs --regra=typescript:S2871
+node portal/scripts/sonar-achados.mjs                    # resumo por regra/tipo/linguagem
+node portal/scripts/sonar-achados.mjs --tipo=BUG         # só bugs
+node portal/scripts/sonar-achados.mjs --regra=typescript:S2871
 ```
 
 Token só é necessário para **escrever** (marcar achado como falso positivo) ou no
@@ -35,7 +35,7 @@ erros no código" seria errado, e a conta mostra por quê:
 | `Supabase/` lido como **Oracle PL/SQL** | 1.726 | dialeto errado; e é código imutável ou gerado |
 | `Dados de Teste/capturas` — **um** arquivo | 591 | HTML salvo do navegador, evidência de rodada |
 | **subtotal fora de escopo** | **2.317 (75%)** | |
-| `Vercel/`, `N8N/`, `test/`, geradores | ~770 | **aqui há sinal** |
+| `portal/`, `N8N/`, `test/`, geradores | ~770 | **aqui há sinal** |
 
 ### O dialeto errado é o achado mais importante da conexão inteira
 
@@ -87,11 +87,11 @@ ferramenta sem olhar:
 
 | Regra | Onde | O que era |
 |---|---|---|
-| `typescript:S3923` | `Vercel/scripts/lib/avaliar-formula.mts:252` | `typeof v === "number" ? String(v) : String(v)` — o ternário não decidia nada |
-| `typescript:S3923` | `Vercel/src/components/ceu-oria.tsx:253` | `intro ? 0.5 : 0.5` — idem, no canvas da abertura |
-| `typescript:S2871` | `Vercel/src/app/casos/[id]/modelagem/page.tsx:804` | `sort()` sobre entradas de `Map`: o critério era `[secao, linhas]` estringado, com `[object Object]` dentro |
+| `typescript:S3923` | `portal/scripts/lib/avaliar-formula.mts:252` | `typeof v === "number" ? String(v) : String(v)` — o ternário não decidia nada |
+| `typescript:S3923` | `portal/src/components/ceu-oria.tsx:253` | `intro ? 0.5 : 0.5` — idem, no canvas da abertura |
+| `typescript:S2871` | `portal/src/app/casos/[id]/modelagem/page.tsx:804` | `sort()` sobre entradas de `Map`: o critério era `[secao, linhas]` estringado, com `[object Object]` dentro |
 | `githubactions:S8544` | `.github/workflows/suites.yml` | `pip install reportlab` **sem versão** — o CI baixava a última do dia para gerar o **oráculo** das suítes |
-| `tssecurity:S8705` | `Vercel/scripts/gerar-export-do-banco.mts` | `caso_id` do `argv` entrava cru em SQL por interpolação; passa a exigir UUID |
+| `tssecurity:S8705` | `portal/scripts/gerar-export-do-banco.mts` | `caso_id` do `argv` entrava cru em SQL por interpolação; passa a exigir UUID |
 
 O `S8544` é o que mais importava e não parece: o book sintético é o gabarito
 contra o qual as suítes medem, e ele era gerado por uma dependência sem versão
