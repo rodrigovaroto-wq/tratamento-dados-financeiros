@@ -422,15 +422,30 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
   const raizProjeto = resolve(fileURLToPath(new URL("../..", import.meta.url)));
   const RAIZES_PERMITIDAS = [raizProjeto, realpathSync(tmpdir()), homedir()]
     .map((r) => resolve(r));
-  function dentroDeRaizPermitida(caminho: string): boolean {
-    return RAIZES_PERMITIDAS.some((raiz) => {
-      const dentro = relative(raiz, caminho);
-      return dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro));
-    });
-  }
 
+  // A CONTENÇÃO É INLINE, e isso não é estilo. A passada anterior chamava um
+  // `dentroDeRaizPermitida(caminho)` — mesma lógica, mesma ordem, mesmo
+  // `process.exit` — e o `tssecurity:S8707` continuou apontando as duas linhas.
+  // O motivo está no fluxo que o Sonar publica: ele segue `arq -> arqResolvido
+  // -> arqReal` e NÃO reconhece o validador em outro escopo como sanitizador,
+  // porque a saída por `process.exit` dentro de uma função não corta a cadeia de
+  // tainting para ele. Guarda que o analisador não enxerga tem, para o
+  // analisador, a mesma aparência de guarda nenhuma — que é exatamente a forma
+  // de defeito que esta casa persegue, só que do lado do instrumento.
+  //
+  // Repetir o laço duas vezes é o preço, e ele é pequeno perto de um portão que
+  // não fecha. O `for` explícito em vez de `.some()` existe pela mesma razão: um
+  // callback é outro escopo.
   const arqResolvido = resolve(arq);
-  if (!dentroDeRaizPermitida(arqResolvido)) {
+  let contido = false;
+  for (const raiz of RAIZES_PERMITIDAS) {
+    const dentro = relative(raiz, arqResolvido);
+    if (dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro))) {
+      contido = true;
+      break;
+    }
+  }
+  if (!contido) {
     console.error(
       `recusado: ${arqResolvido} está fora do projeto, do temporário e do home.`);
     process.exit(2);
@@ -443,9 +458,20 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.error(`arquivo não encontrado: ${arq}`);
     process.exit(2);
   }
-  // Segunda contenção, agora sobre o destino REAL do link.
+
+  // SEGUNDA CONTENÇÃO, sobre o destino REAL do link. A primeira julga o NOME, e
+  // o symlink só se revela aqui: sem esta, `~/exp.xlsx -> /etc/shadow` passaria
+  // na primeira (o nome está no home) e seria lido.
   const arqReal = realpathSync(arqResolvido);
-  if (!dentroDeRaizPermitida(arqReal)) {
+  let contidoReal = false;
+  for (const raiz of RAIZES_PERMITIDAS) {
+    const dentro = relative(raiz, arqReal);
+    if (dentro === "" || (!dentro.startsWith("..") && !isAbsolute(dentro))) {
+      contidoReal = true;
+      break;
+    }
+  }
+  if (!contidoReal) {
     console.error(
       `recusado: ${arq} aponta para ${arqReal}, fora do projeto, do temporário e do home.`);
     process.exit(2);
