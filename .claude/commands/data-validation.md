@@ -1,5 +1,6 @@
 ---
-model: claude-sonnet-5
+model: sonnet
+description: "Data Validation Pipeline"
 ---
 
 # Data Validation Pipeline

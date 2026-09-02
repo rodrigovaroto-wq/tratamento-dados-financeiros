@@ -1,5 +1,6 @@
 ---
-model: claude-sonnet-5
+model: sonnet
+description: "Deployment Checklist and Configuration"
 ---
 
 # Deployment Checklist and Configuration

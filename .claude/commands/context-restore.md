@@ -1,80 +1,174 @@
 ---
-model: claude-sonnet-5
+description: "Context Restoration: Advanced Semantic Memory Rehydration"
 ---
+# Context Restoration: Advanced Semantic Memory Rehydration
 
-> **AJUSTE DESTE REPOSITÓRIO — leia antes de seguir o texto abaixo.**
-> Este comando veio de `wshobson/commands` e manda chamar agentes que **não existem aqui**
-> (`code-reviewer`, `test-automator`, `backend-architect`, `tdd-orchestrator`…): eles são do
-> repositório de agentes companheiro daquele autor. Os agentes DESTE projeto estão em
-> `.claude/agents/` e listados no `CLAUDE.md`: `migrations-postgres`, `n8n-workflow`,
-> `portal-export`, `suites-invariantes`, `revisor-defeito-silencioso`, `explorador`,
-> `estado-e-handoff`. Onde o texto pedir um agente fora dessa lista, use o equivalente daqui
-> — ou faça direto. Não invente `subagent_type`: despacho para agente inexistente falha.
+## Role Statement
 
+Expert Context Restoration Specialist focused on intelligent, semantic-aware context retrieval and reconstruction across complex multi-agent AI workflows. Specializes in preserving and reconstructing project knowledge with high fidelity and minimal information loss.
 
-Restore saved project context for agent coordination:
+## Context Overview
 
-[Extended thinking: This tool uses the context-manager agent to restore previously saved project context, enabling continuity across sessions and providing agents with comprehensive project knowledge.]
+The Context Restoration tool is a sophisticated memory management system designed to:
 
-## Context Restoration Process
+- Recover and reconstruct project context across distributed AI workflows
+- Enable seamless continuity in complex, long-running projects
+- Provide intelligent, semantically-aware context rehydration
+- Maintain historical knowledge integrity and decision traceability
 
-Use Task tool with subagent_type="context-manager" to restore and apply saved context.
+## Core Requirements and Arguments
 
-Prompt: "Restore project context for: $ARGUMENTS. Perform the following:
+### Input Parameters
 
-1. **Locate Saved Context**
-   - Find the most recent or specified context version
-   - Validate context integrity
-   - Check compatibility with current codebase
+- `context_source`: Primary context storage location (vector database, file system)
+- `project_identifier`: Unique project namespace
+- `restoration_mode`:
+  - `full`: Complete context restoration
+  - `incremental`: Partial context update
+  - `diff`: Compare and merge context versions
+- `token_budget`: Maximum context tokens to restore (default: 8192)
+- `relevance_threshold`: Semantic similarity cutoff for context components (default: 0.75)
 
-2. **Load Context Components**
-   - Project overview and goals
-   - Architectural decisions and rationale
-   - Technology stack and patterns
-   - Previous agent work and findings
-   - Known issues and roadmap
+## Advanced Context Retrieval Strategies
 
-3. **Apply Context**
-   - Set up working environment based on context
-   - Restore project-specific configurations
-   - Load coding conventions and patterns
-   - Prepare agent coordination history
+### 1. Semantic Vector Search
 
-4. **Validate Restoration**
-   - Verify context applies to current code state
-   - Identify any conflicts or outdated information
-   - Flag areas that may need updates
+- Utilize multi-dimensional embedding models for context retrieval
+- Employ cosine similarity and vector clustering techniques
+- Support multi-modal embedding (text, code, architectural diagrams)
 
-5. **Prepare Summary**
-   - Key points from restored context
-   - Important decisions and patterns
-   - Recent work and current focus
-   - Suggested next steps
+```python
+def semantic_context_retrieve(project_id, query_vector, top_k=5):
+    """Semantically retrieve most relevant context vectors"""
+    vector_db = VectorDatabase(project_id)
+    matching_contexts = vector_db.search(
+        query_vector,
+        similarity_threshold=0.75,
+        max_results=top_k
+    )
+    return rank_and_filter_contexts(matching_contexts)
+```
 
-Return a comprehensive summary of the restored context and any issues encountered."
+### 2. Relevance Filtering and Ranking
 
-## Context Integration
+- Implement multi-stage relevance scoring
+- Consider temporal decay, semantic similarity, and historical impact
+- Dynamic weighting of context components
 
-The restored context will:
-- Inform all subsequent agent invocations
-- Maintain consistency with past decisions
-- Provide historical knowledge to agents
-- Enable seamless work continuation
+```python
+def rank_context_components(contexts, current_state):
+    """Rank context components based on multiple relevance signals"""
+    ranked_contexts = []
+    for context in contexts:
+        relevance_score = calculate_composite_score(
+            semantic_similarity=context.semantic_score,
+            temporal_relevance=context.age_factor,
+            historical_impact=context.decision_weight
+        )
+        ranked_contexts.append((context, relevance_score))
 
-## Usage Scenarios
+    return sorted(ranked_contexts, key=lambda x: x[1], reverse=True)
+```
 
-Use context restoration when:
-- Starting work after a break
-- Switching between projects
-- Onboarding to an existing project
-- Needing historical project knowledge
-- Coordinating complex multi-agent workflows
+### 3. Context Rehydration Patterns
 
-## Additional Options
+- Implement incremental context loading
+- Support partial and full context reconstruction
+- Manage token budgets dynamically
 
-- Restore specific context version: Include version timestamp
-- Partial restoration: Restore only specific components
-- Merge contexts: Combine multiple context versions
-- Diff contexts: Compare current state with saved context
+```python
+def rehydrate_context(project_context, token_budget=8192):
+    """Intelligent context rehydration with token budget management"""
+    context_components = [
+        'project_overview',
+        'architectural_decisions',
+        'technology_stack',
+        'recent_agent_work',
+        'known_issues'
+    ]
 
-Context to restore: $ARGUMENTS
+    prioritized_components = prioritize_components(context_components)
+    restored_context = {}
+
+    current_tokens = 0
+    for component in prioritized_components:
+        component_tokens = estimate_tokens(component)
+        if current_tokens + component_tokens <= token_budget:
+            restored_context[component] = load_component(component)
+            current_tokens += component_tokens
+
+    return restored_context
+```
+
+### 4. Session State Reconstruction
+
+- Reconstruct agent workflow state
+- Preserve decision trails and reasoning contexts
+- Support multi-agent collaboration history
+
+### 5. Context Merging and Conflict Resolution
+
+- Implement three-way merge strategies
+- Detect and resolve semantic conflicts
+- Maintain provenance and decision traceability
+
+### 6. Incremental Context Loading
+
+- Support lazy loading of context components
+- Implement context streaming for large projects
+- Enable dynamic context expansion
+
+### 7. Context Validation and Integrity Checks
+
+- Cryptographic context signatures
+- Semantic consistency verification
+- Version compatibility checks
+
+### 8. Performance Optimization
+
+- Implement efficient caching mechanisms
+- Use probabilistic data structures for context indexing
+- Optimize vector search algorithms
+
+## Reference Workflows
+
+### Workflow 1: Project Resumption
+
+1. Retrieve most recent project context
+2. Validate context against current codebase
+3. Selectively restore relevant components
+4. Generate resumption summary
+
+### Workflow 2: Cross-Project Knowledge Transfer
+
+1. Extract semantic vectors from source project
+2. Map and transfer relevant knowledge
+3. Adapt context to target project's domain
+4. Validate knowledge transferability
+
+## Usage Examples
+
+```bash
+# Full context restoration
+context-restore project:ai-assistant --mode full
+
+# Incremental context update
+context-restore project:web-platform --mode incremental
+
+# Semantic context query
+context-restore project:ml-pipeline --query "model training strategy"
+```
+
+## Integration Patterns
+
+- RAG (Retrieval Augmented Generation) pipelines
+- Multi-agent workflow coordination
+- Continuous learning systems
+- Enterprise knowledge management
+
+## Future Roadmap
+
+- Enhanced multi-modal embedding support
+- Quantum-inspired vector search algorithms
+- Self-healing context reconstruction
+- Adaptive learning context strategies

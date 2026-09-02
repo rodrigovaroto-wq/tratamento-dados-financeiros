@@ -1,126 +1,97 @@
 ---
-model: claude-sonnet-5
+description: "Write comprehensive failing tests following TDD red phase principles"
+argument-hint: "<feature or component to write tests for>"
 ---
 
-> **AJUSTE DESTE REPOSITÓRIO — leia antes de seguir o texto abaixo.**
-> Este comando veio de `wshobson/commands` e manda chamar agentes que **não existem aqui**
-> (`code-reviewer`, `test-automator`, `backend-architect`, `tdd-orchestrator`…): eles são do
-> repositório de agentes companheiro daquele autor. Os agentes DESTE projeto estão em
-> `.claude/agents/` e listados no `CLAUDE.md`: `migrations-postgres`, `n8n-workflow`,
-> `portal-export`, `suites-invariantes`, `revisor-defeito-silencioso`, `explorador`,
-> `estado-e-handoff`. Onde o texto pedir um agente fora dessa lista, use o equivalente daqui
-> — ou faça direto. Não invente `subagent_type`: despacho para agente inexistente falha.
+# TDD Red Phase
 
+## CRITICAL BEHAVIORAL RULES
 
-Write comprehensive failing tests following TDD red phase principles:
+You MUST follow these rules exactly. Violating any of them is a failure.
 
-[Extended thinking: This tool uses the test-automator agent to generate comprehensive failing tests that properly define expected behavior. It ensures tests fail for the right reasons and establishes a solid foundation for implementation.]
+1. **Write tests only — no production code.** Do NOT implement any production code during this phase.
+2. **Verify tests fail.** All generated tests MUST fail when run. If any test passes, investigate and fix.
+3. **Halt on error.** If test generation fails (syntax errors, import issues), STOP and present the error to the user.
+4. **Use only local agents.** All `subagent_type` references use agents bundled with this plugin or `general-purpose`. No cross-plugin dependencies.
+5. **Never enter plan mode autonomously.** Do NOT use EnterPlanMode. Execute directly.
 
 ## Test Generation Process
 
-Use Task tool with subagent_type="test-automator" to generate failing tests.
+Use the Task tool to generate failing tests:
 
-Prompt: "Generate comprehensive FAILING tests for: $ARGUMENTS. Follow TDD red phase principles:
+```
+Task:
+  subagent_type: "general-purpose"
+  description: "Generate comprehensive failing tests for TDD red phase"
+  prompt: |
+    You are a test automation expert specializing in TDD red phase test generation.
 
-1. **Test Structure Setup**
-   - Choose appropriate testing framework for the language/stack
-   - Set up test fixtures and necessary imports
-   - Configure test runners and assertion libraries
-   - Establish test naming conventions (should_X_when_Y format)
+    Generate comprehensive FAILING tests for: $ARGUMENTS
 
-2. **Behavior Definition**
-   - Define clear expected behaviors from requirements
-   - Cover happy path scenarios thoroughly
-   - Include edge cases and boundary conditions
-   - Add error handling and exception scenarios
-   - Consider null/undefined/empty input cases
+    ## Core Requirements
 
-3. **Test Implementation**
-   - Write descriptive test names that document intent
-   - Keep tests focused on single behaviors (one assertion per test when possible)
-   - Use Arrange-Act-Assert (AAA) pattern consistently
-   - Implement test data builders for complex objects
-   - Avoid test interdependencies - each test must be isolated
+    1. **Test Structure**
+       - Framework-appropriate setup (Jest/pytest/JUnit/Go/RSpec — match project conventions)
+       - Arrange-Act-Assert pattern
+       - should_X_when_Y naming convention
+       - Isolated fixtures with no interdependencies
 
-4. **Failure Verification**
-   - Ensure tests actually fail when run
-   - Verify failure messages are meaningful and diagnostic
-   - Confirm tests fail for the RIGHT reasons (not syntax/import errors)
-   - Check that error messages guide implementation
-   - Validate test isolation - no cascading failures
+    2. **Behavior Coverage**
+       - Happy path scenarios
+       - Edge cases (empty, null, boundary values)
+       - Error handling and exceptions
+       - Concurrent access (if applicable)
 
-5. **Test Categories**
-   - **Unit Tests**: Isolated component behavior
-   - **Integration Tests**: Component interaction scenarios
-   - **Contract Tests**: API and interface contracts
-   - **Property Tests**: Invariants and mathematical properties
-   - **Acceptance Tests**: User story validation
+    3. **Failure Verification**
+       - Tests MUST fail when run
+       - Failures for RIGHT reasons (not syntax/import errors)
+       - Meaningful diagnostic error messages
+       - No cascading failures
 
-6. **Framework-Specific Patterns**
-   - **JavaScript/TypeScript**: Jest, Mocha, Vitest patterns
-   - **Python**: pytest fixtures and parameterization
-   - **Java**: JUnit5 annotations and assertions
-   - **C#**: NUnit/xUnit attributes and theory data
-   - **Go**: Table-driven tests and subtests
-   - **Ruby**: RSpec expectations and contexts
+    4. **Test Categories**
+       - Unit: Isolated component behavior
+       - Integration: Component interaction
+       - Contract: API/interface contracts
+       - Property: Mathematical invariants (if applicable)
 
-7. **Test Quality Checklist**
-   ✓ Tests are readable and self-documenting
-   ✓ Failure messages clearly indicate what went wrong
-   ✓ Tests follow DRY principle with appropriate abstractions
-   ✓ Coverage includes positive, negative, and edge cases
-   ✓ Tests can serve as living documentation
-   ✓ No implementation details leaked into tests
-   ✓ Tests use meaningful test data, not 'foo' and 'bar'
+    ## Quality Checklist
 
-8. **Common Anti-Patterns to Avoid**
-   - Writing tests that pass immediately
-   - Testing implementation instead of behavior
-   - Overly complex test setup
-   - Brittle tests tied to specific implementations
-   - Tests with multiple responsibilities
-   - Ignored or commented-out tests
-   - Tests without clear assertions
+    - Readable test names documenting intent
+    - One behavior per test
+    - No implementation leakage
+    - Meaningful test data (not 'foo'/'bar')
+    - Tests serve as living documentation
 
-Output should include:
-- Complete test file(s) with all necessary imports
-- Clear documentation of what each test validates
-- Verification commands to run tests and see failures
-- Metrics: number of tests, coverage areas, test categories
-- Next steps for moving to green phase"
+    ## Anti-Patterns to Avoid
 
-## Validation Steps
+    - Tests passing immediately
+    - Testing implementation vs behavior
+    - Complex setup code
+    - Multiple responsibilities per test
+    - Brittle tests tied to specifics
 
-After test generation:
-1. Run tests to confirm they fail
-2. Verify failure messages are helpful
-3. Check test independence and isolation
+    ## Output Requirements
+
+    - Complete test files with imports
+    - Documentation of test purpose
+    - Commands to run and verify failures
+    - Metrics: test count, coverage areas
+    - Next steps for green phase
+```
+
+## Validation
+
+After generation:
+
+1. Run tests — confirm they fail
+2. Verify helpful failure messages
+3. Check test independence
 4. Ensure comprehensive coverage
-5. Document any assumptions made
 
-## Recovery Process
+## Edge Case Categories
 
-If tests don't fail properly:
-- Debug import/syntax issues first
-- Ensure test framework is properly configured
-- Verify assertions are actually checking behavior
-- Add more specific assertions if needed
-- Consider missing test categories
-
-## Integration Points
-
-- Links to tdd-green.md for implementation phase
-- Coordinates with tdd-refactor.md for improvement phase
-- Integrates with CI/CD for automated verification
-- Connects to test coverage reporting tools
-
-## Best Practices
-
-- Start with the simplest failing test
-- One behavior change at a time
-- Tests should tell a story of the feature
-- Prefer many small tests over few large ones
-- Use test naming as documentation
-- Keep test code as clean as production code
-
-Test requirements: $ARGUMENTS
+- **Null/Empty**: undefined, null, empty string/array/object
+- **Boundaries**: min/max values, single element, capacity limits
+- **Special Cases**: Unicode, whitespace, special characters
+- **State**: Invalid transitions, concurrent modifications
+- **Errors**: Network failures, timeouts, permissions
