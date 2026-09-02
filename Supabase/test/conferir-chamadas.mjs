@@ -131,23 +131,40 @@ function perguntar(sql) {
         encoding: "utf8",
         input: `start transaction read only;\n${sql}`,
         stdio: ["pipe", "pipe", "pipe"],
-        // `lc_messages=C` PORQUE A DETECÇÃO É POR TEXTO. O que separa "o servidor
-        // respondeu, e a resposta é 'não resolve'" de "não cheguei a falar com o
-        // servidor" é a presença de `ERROR:` no stderr — e o Postgres TRADUZ isso
-        // (`ERRO:` num servidor pt_BR, que é uma configuração perfeitamente comum
-        // no Supabase). Sem esta linha, um "function does not exist" de verdade
-        // cairia no ramo de falha de conexão e sairia como "PERDI A CONEXÃO",
-        // exit 2 — o recibo errado para o defeito que este arquivo existe para
-        // achar. Concatenado ao PGOPTIONS de quem chamou, não no lugar dele.
-        env: { ...process.env, PGOPTIONS: `${process.env.PGOPTIONS ?? ""} -c lc_messages=C`.trim() },
       }),
     };
   } catch (erro) {
     const stderr = String(erro.stderr ?? "");
-    const erroDoServidor = stderr
-      .split("\n")
-      .find((l) => l.includes("ERROR:"))
-      ?.replace(/^.*ERROR:\s*/, "");
+    // O DISCRIMINADOR É O CÓDIGO DE SAÍDA DO PSQL, NÃO O TEXTO DA MENSAGEM.
+    //
+    // Ele é documentado e estável: 3 = erro no script com `ON_ERROR_STOP` (o
+    // servidor RESPONDEU, e a resposta é "não resolve"), 2 = a sessão não subiu
+    // ou caiu (socket, senha, banco inexistente, pooler cheio), 0 = tudo certo.
+    // Medido aqui nos quatro casos antes de escrever esta linha.
+    //
+    // A primeira versão procurava o literal `ERROR:` no stderr, e a revisão
+    // acertou o defeito: o Postgres TRADUZ isso (`ERRO:` num servidor pt_BR),
+    // e um "function does not exist" de verdade sairia como "PERDI A CONEXÃO".
+    // A correção que eu tinha escrito — forçar `lc_messages=C` via `PGOPTIONS`
+    // — estava ERRADA por duas medições feitas na verificação:
+    //
+    //   1. o `sudo` DESCARTA o ambiente, e `CONFERIR_PSQL` começa com
+    //      `sudo -u postgres` no comando canônico do CLAUDE.md — `printenv
+    //      PGOPTIONS` através dele volta vazio, então a correção era inerte
+    //      justamente onde eu a estava exercitando;
+    //   2. `lc_messages` é GUC de contexto `superuser` (conferido em
+    //      `pg_settings`). Numa conexão de produção cujo papel não seja
+    //      superusuário, pedi-lo faz a CONEXÃO falhar — a "correção"
+    //      transformaria uma conferência que funciona num exit 2.
+    //
+    // O código de saída não depende de locale, atravessa o `sudo` e não pede
+    // privilégio nenhum. O texto continua sendo usado, mas só para MOSTRAR o
+    // motivo ao humano — nunca para decidir.
+    const linhaDoErro =
+      stderr.split("\n").find((l) => /\b(ERROR|ERRO|FEHLER|ERREUR):/.test(l)) ??
+      stderr.split("\n").find((l) => l.trim());
+    const erroDoServidor =
+      erro.status === 3 ? (linhaDoErro?.replace(/^.*?(?:ERROR|ERRO|FEHLER|ERREUR):\s*/, "").trim() || "erro no servidor") : undefined;
     return { ok: false, stderr: stderr.trim(), erroDoServidor };
   }
 }
