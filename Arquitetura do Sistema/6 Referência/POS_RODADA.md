@@ -1,52 +1,76 @@
-# Depois da rodada — o que rodar, e como entregar
+# Depois da rodada — passo a passo, sem terminal
 
 Este arquivo existe por uma limitação que não vai mudar: **a sessão de agente não alcança o n8n
-nem o Supabase de produção.** A rodada acontece onde eu não vejo. O que decide se o problema é
+nem o Supabase de produção.** A rodada acontece onde o Claude não vê. O que decide se o problema é
 resolvido na primeira resposta ou na quarta é **a evidência que chega junto com o pedido**.
 
-"Deu erro no documento 17" custa três rodadas de perguntas. A saída das quatro consultas abaixo
-custa zero.
+"Deu erro no documento 17" custa três rodadas de perguntas. A saída das consultas abaixo custa zero.
 
-> **Todas as consultas são somente leitura** e se acham sozinhas o mandato mais recente — não há
-> nada para editar, é copiar e colar no **SQL Editor do Supabase**. Se quiser mirar outro mandato,
-> troque a linha `with alvo as (...)` por `with alvo as (select id from caso where nome = 'NOME')`.
->
-> **As quatro foram executadas contra um Postgres 16 com as 101 migrations antes de entrarem aqui**
-> — exatamente como estão escritas, copiadas deste arquivo. Duas delas eu tinha escrito à mão e
-> reprovaram (`ce.escala` e `p.decisao` não existem: são `ce.unidade` e `p.estado`); as versões
-> abaixo vêm **verbatim** de `Supabase/diagnostico_rodada.sql` e `Supabase/pendencias_do_mandato.sql`,
-> com só a linha do `alvo` trocada. Consulta que não roda no editor custa a sua rodada, não a minha.
+> **Você não precisa de terminal.** Tudo aqui é: abrir uma aba, colar um bloco, copiar o resultado.
+> A primeira versão deste arquivo mandava rodar comandos numa linha de comando — que pressupõe o
+> repositório clonado, Node instalado e dependências baixadas. **Isso foi substituído por SQL** que
+> roda no painel do Supabase. O que sobrou de terminal virou "anexe o arquivo na conversa".
 
 ---
 
-## ANTES de subir documento (30 segundos, e evita a rodada morta)
+## Os três lugares, e só três
 
-**A.** No terminal, com a URL de produção:
+| # | Lugar | Como chegar |
+|---|---|---|
+| **A** | **SQL Editor do Supabase** | [supabase.com/dashboard](https://supabase.com/dashboard) → seu projeto → menu da esquerda, **SQL Editor** → **New query** |
+| **B** | **n8n** | sua instância → **Executions** (só quando um nó morrer) |
+| **C** | **A conversa com o Claude** | onde você cola os resultados e anexa o `.xlsx` |
 
-```bash
-CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
-  node Supabase/test/conferir-chamadas.mjs
-```
+Em **A**, o ciclo é sempre o mesmo: cole o bloco na caixa de texto → botão **Run** (ou `Ctrl+Enter`)
+→ o resultado aparece embaixo → passe o mouse sobre a tabela e use **Copy** (ou selecione tudo e
+`Ctrl+C`) → cole em **C**.
 
-`0` = tudo o que o n8n e o portal chamam existe · `1` = achei chamada quebrada (ele nomeia o nó) ·
-`2` = não consegui perguntar, **que não é "passou"**.
+---
 
-**B.** No SQL Editor:
+## PASSO 1 — Antes de subir documento (1 minuto, e evita a rodada morta)
+
+### 1.1 — O que o n8n chama existe no banco?
+
+**Onde:** SQL Editor (lugar **A**). **O que colar:** o conteúdo do arquivo
+[`Supabase/conferir/conferir_chamadas.sql`](../../Supabase/conferir/conferir_chamadas.sql) — abra
+no GitHub, clique em **Raw**, copie tudo, cole e rode.
+
+O resultado é uma linha só:
+
+- `PODE RODAR — as 15 chamadas do n8n resolvem neste banco` → **siga**.
+- `*** NAO RODE ***` → **pare.** A segunda tabela diz qual nó e qual função. Cole as duas tabelas
+  na conversa: quase sempre é migration que falta aplicar, e o Claude responde em segundos.
+
+### 1.2 — A sonda de instalação
+
+**Onde:** SQL Editor.
 
 ```sql
 select chave, migration, tipo, objeto, presente, detalhe, porque
   from fn_instalacao_conferir() where not presente order by 1;
 ```
 
-Zero linha = instalação completa. As duas juntas cobrem os dois lados: a **A** pergunta "o que o
-código chama existe aqui?", a **B** pergunta "o que este banco sabe que deveria ter está aqui?".
-Nenhuma das duas sozinha basta — foi o que a sessão 78 mediu.
+**Zero linhas = instalação completa.** Se vier alguma, cole na conversa.
+
+> **As duas juntas cobrem lados diferentes, e nenhuma basta sozinha.** A 1.1 pergunta *"o que o
+> código chama existe aqui?"*; a 1.2 pergunta *"o que este banco sabe que deveria ter está aqui?"*.
+> Em 02/09 foi medido um banco em que a **1.2 não acusava nada** e **três chamadas do workflow não
+> resolviam** — a rodada morreria no primeiro nó.
 
 ---
 
-## DEPOIS da rodada — as quatro, nesta ordem
+## PASSO 2 — Rode o book no portal
 
-### 1. O lote: começou? terminou? quanto custou?
+Mandato **novo** (não reaproveite: documento repetido não chama a IA de novo, e a rodada não prova
+nada). Suba os documentos e espere terminar.
+
+---
+
+## PASSO 3 — As três consultas, nesta ordem
+
+Todas são **só leitura** e acham sozinhas o mandato mais recente. Nada para editar.
+
+### 3.1 — O lote: começou? terminou? quanto custou?
 
 ```sql
 select
@@ -73,18 +97,18 @@ order by l.criado_em desc
 limit 5;
 ```
 
-**É a consulta mais importante das quatro, e o primeiro campo a olhar é `estado`.**
-`*** COMECOU E NAO TERMINOU ***` significa `fechado_em` nulo — a rodada morreu no meio. Foi para
-distinguir isso de "nunca rodou" que a `0156` existe: a rodada de 190 de 27/08 foi cancelada e não
-deixou rastro nenhum.
+**É a mais importante, e o primeiro campo a olhar é `estado`:**
+
+| O que aparece | O que significa |
+|---|---|
+| `fechou` | a rodada foi até o fim |
+| `*** COMECOU E NAO TERMINOU ***` | morreu no meio — vá ao **PASSO 5** |
+| **nenhuma linha** | o workflow do n8n **não foi reimportado** — o nó `Abrir Lote` não está no canvas |
 
 **`sem_medicao` é o alerta mais sério e o menos óbvio:** não é cobertura *baixa*, é a guarda **não
 ter opinado** sobre o documento. Silêncio não é aprovação.
 
-Se a consulta devolver **zero linhas** depois de uma rodada, o `workflow.e1-ingestao.json` não foi
-reimportado no n8n — o nó `Abrir Lote` não está no canvas em execução.
-
-### 2. Documento a documento: o que saiu de cada um
+### 3.2 — Documento a documento
 
 ```sql
 with alvo as (select id from caso order by criado_em desc limit 1)
@@ -119,11 +143,11 @@ group by d.id, dv.id, dv.nome_original, d.tipo_taxonomia, d.confianca, d.fonte,
 order by dv.nome_original;
 ```
 
-É a versão auto-alvo de `Supabase/diagnostico_rodada.sql`. Um documento com
-`pares_conta_coluna = 0` não entregou linha nenhuma; `linhas_sem_secao` alto é extração sem forma;
-`escala` ou `moeda` nulos são a origem do erro de ~496× que o `HANDOFF` registra.
+`pares_conta_coluna = 0` → o documento não entregou linha nenhuma. `linhas_sem_secao` alto →
+extração sem forma. `escala` ou `moeda` vazios → é a origem do erro de ~496× que o `HANDOFF`
+registra.
 
-### 3. O que o sistema declarou que precisa de humano
+### 3.3 — O que precisa de humano
 
 ```sql
 with alvo as (select id from caso order by criado_em desc limit 1)
@@ -143,88 +167,80 @@ order by
   p.tipo, dv.nome_original;
 ```
 
-Versão auto-alvo de `Supabase/pendencias_do_mandato.sql`. `bloqueante` impede o aceite do mandato;
-`sobrepujavel` é a diferença entre "alguém decide e segue" e "não tem como seguir".
-
-### 4. O arquivo entregue
-
-Exporte o completo pelo portal e rode no terminal:
-
-```bash
-./portal/node_modules/.bin/tsx portal/scripts/auditar-xlsx.mts <caminho/do/arquivo.xlsx>
-```
-
-Sai com código 1 se qualquer item obrigatório reprovar. **É sobre o arquivo da rodada REAL que ele
-vale** — sobre fixture ele já roda no CI todo dia.
+`bloqueante` impede o aceite do mandato. `sobrepujavel` é a diferença entre "alguém decide e segue"
+e "não tem como seguir".
 
 ---
 
-## Como me entregar — o formato que dispensa pergunta
+## PASSO 4 — Exporte e ANEXE (aqui morava o terminal)
 
-Cole numa mensagem só, nesta ordem, cada bloco com o título:
+Exporte o completo pelo portal. **Anexe o `.xlsx` na conversa** — o Claude roda o auditor
+(`portal/scripts/auditar-xlsx.mts`, 10 itens obrigatórios) e devolve o resultado. Você não roda nada.
+
+---
+
+## PASSO 5 — Se um nó do n8n morreu
+
+**Onde:** n8n → **Executions** → a execução da rodada → clique no **nó vermelho** → aba **Output**
+(ou o balão de erro). Copie a mensagem inteira e cole na conversa.
+
+Se um documento extraiu errado e não dá para saber por quê, o mesmo caminho serve para o texto:
+nó **`Extrair Texto`** → **Output** → o item daquele documento → copie o campo **`text`**. Esse
+texto vale mais que qualquer descrição — foi com ele que a régua de cobertura foi corrigida.
+
+---
+
+## PASSO 6 — Como mandar, para não haver pergunta de volta
+
+Numa mensagem só, com os títulos:
 
 ```
 ## 1. LOTE
-<cole a tabela inteira da consulta 1>
+<cole a tabela da 3.1>
 
 ## 2. DOCUMENTOS
-<cole a tabela inteira da consulta 2>
+<cole a tabela da 3.2>
 
 ## 3. PENDÊNCIAS
-<cole a tabela inteira da consulta 3>
+<cole a tabela da 3.3>
 
-## 4. AUDITAR-XLSX
-<cole a saída inteira, inclusive o código de saída>
-
-## 5. O QUE EU VI
-<uma linha por coisa que te pareceu errada, dizendo o ARQUIVO e o que o documento
- REALMENTE diz — o número certo, não só "está errado">
+## 4. O QUE EU VI
+<uma linha por coisa errada, com o ARQUIVO e o número CERTO>
 ```
+
+E anexe o `.xlsx`.
 
 **As três coisas que mais economizam ida e volta:**
 
-1. **A tabela inteira, não um resumo.** "Cobertura baixa" me faz perguntar quanto, em qual
-   documento, contra qual denominador. A tabela responde as três de uma vez. No SQL Editor do
-   Supabase há um botão de copiar o resultado — use ele, não digite.
-2. **O `execucao_ref`** (vem na consulta 1). É o que liga o que está no banco à execução no n8n, e
-   sem ele eu não sei de qual rodada estamos falando quando houver mais de uma.
-3. **Quando um número saiu errado, o número CERTO.** "O ativo circulante do doc 09 saiu 7.254 e o
-   documento diz 3.961" me dá a causa em minutos. "O balanço está errado" não.
-
-**Se um nó do n8n morreu:** cole também a mensagem de erro do nó (n8n → Executions → a execução →
-clique no nó vermelho). Antes disso, rode a conferência **A** lá de cima: se for objeto ausente no
-banco, a resposta sai em dois segundos e não precisa de mais nada.
-
-**Se um documento extraiu errado e não dá para saber por quê:** o texto que o nó `Extrair Texto`
-produziu para aquele documento vale mais que qualquer descrição. É o campo `text` do item no
-Output daquele nó.
+1. **A tabela inteira, não um resumo.** "Cobertura baixa" faz o Claude perguntar quanto, em qual
+   documento, contra qual denominador. A tabela responde as três de uma vez.
+2. **O `execucao_ref`** (vem na 3.1). É o que liga o que está no banco à execução no n8n.
+3. **O número CERTO quando um número sai errado.** "O ativo circulante do doc 09 saiu 7.254 e o
+   documento diz 3.961" dá a causa em minutos. "O balanço está errado" não dá.
 
 ---
 
-## O que eu vou fazer com isso, e o que você deve cobrar de mim
+## O que cobrar do Claude, para o defeito não voltar
 
-A parte que impede o problema de **voltar** não é comando nenhum — é a doutrina do `CLAUDE.md`. Se
-eu pular algum destes, me pare:
+Esta é a parte que impede o problema de **reaparecer**, e não é comando nenhum:
 
 1. **Causa raiz antes de correção.** Três correções falhas seguidas param a linha e questionam a
    arquitetura; não existe quarta tentativa.
-2. **Invariante MEDIDO não-vazio.** Toda correção fecha com um assert que **reprova com o bug
-   ligado**. Se eu disser "acrescentei teste" sem dizer **quantos asserts reprovaram**, o teste
+2. **Invariante MEDIDO não-vazio.** Toda correção fecha com um teste que **reprova com o bug
+   ligado**. Se ele disser "acrescentei teste" sem dizer **quantos asserts reprovaram**, o teste
    pode ter nascido vazio — cobre o número.
 3. **Portão, não só conserto.** Se o defeito só apareceu porque nada acusava, o entregável é o que
-   passa a acusar. O caso de 02/09 é o exemplo: o problema não era a migration faltando, era
-   **nada dizer que faltava**.
+   passa a acusar.
 4. **Memória**, quando uma sessão futura ficaria surpresa e grata de saber antes de começar.
 
-E uma advertência sobre os comandos importados (`.claude/commands/`): **não comece por
-`/smart-fix` nem `/full-review`.** Eles pulam para a correção e não conhecem a lente central deste
-projeto — o defeito que não produz erro. Servem como segunda opinião depois que a causa está
-estabelecida, nunca como primeira parada.
+E sobre os comandos importados em `.claude/commands/`: **não comece por `/smart-fix` nem
+`/full-review`.** Eles pulam para a correção e não conhecem a lente central deste projeto — o
+defeito que não produz erro. Servem como segunda opinião depois que a causa está estabelecida.
 
 ---
 
 ## Antes de fechar o mandato
 
-O critério de pronto do B1 (`MAPA_DE_EXECUCAO.md`) é o `ACEITE.md` preenchido, com os itens do
-`auditar-xlsx.mts` verdes **sobre o arquivo exportado da rodada real** — não sobre fixture. As
-onze coisas que só a rodada prova estão listadas lá.
+O critério de pronto do B1 (`MAPA_DE_EXECUCAO.md`) é o `ACEITE.md` preenchido, com os 10 itens do
+auditor verdes **sobre o arquivo exportado da rodada real** — não sobre fixture. As onze coisas que
+só a rodada prova estão listadas lá.
