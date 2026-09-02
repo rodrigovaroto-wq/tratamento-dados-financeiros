@@ -84,8 +84,28 @@ const PSQL = process.env.CONFERIR_PSQL ?? "psql";
 const DB = process.env.CONFERIR_DB ?? "";
 const ALVO = `${PSQL}${DB ? ` -d ${DB}` : ""}`;
 
-/** "não consegui conferir" tem código próprio, e nunca se confunde com "passou". */
+// Declarados ANTES de `desistir`, que os lê: com `const` depois, a primeira
+// desistência (a da prova de conexão) morreria em ReferenceError pela zona morta
+// temporal — um portão que estoura em vez de dizer o que houve.
+const achados = [];
+const naoConferidos = [];
+
+/**
+ * "não consegui conferir" tem código próprio, e nunca se confunde com "passou".
+ *
+ * E ELA PUBLICA O QUE JÁ SE SABIA. Desistir no meio descartava, calado, os achados
+ * que as etapas anteriores já tinham colhido — a revisão mediu o caso exato: contra
+ * um banco de produção atrasado a que faltasse UMA tabela do portal, o arquivo saía
+ * com "não consegui conferir os objetos do portal" e engolia as TRÊS chamadas de nó
+ * quebradas que ele existe para denunciar. Achado colhido é resposta dada; só o que
+ * falta é que ficou sem medir.
+ */
 function desistir(...linhas) {
+  if (achados.length) {
+    console.error(`O QUE JÁ TINHA SIDO ACHADO ANTES DE PARAR (${achados.length}):\n`);
+    for (const { origem, detalhe } of achados) console.error(`  ${origem}\n      ${detalhe}`);
+    console.error("");
+  }
   for (const l of linhas) console.error(l);
   process.exit(2);
 }
@@ -111,6 +131,15 @@ function perguntar(sql) {
         encoding: "utf8",
         input: `start transaction read only;\n${sql}`,
         stdio: ["pipe", "pipe", "pipe"],
+        // `lc_messages=C` PORQUE A DETECÇÃO É POR TEXTO. O que separa "o servidor
+        // respondeu, e a resposta é 'não resolve'" de "não cheguei a falar com o
+        // servidor" é a presença de `ERROR:` no stderr — e o Postgres TRADUZ isso
+        // (`ERRO:` num servidor pt_BR, que é uma configuração perfeitamente comum
+        // no Supabase). Sem esta linha, um "function does not exist" de verdade
+        // cairia no ramo de falha de conexão e sairia como "PERDI A CONEXÃO",
+        // exit 2 — o recibo errado para o defeito que este arquivo existe para
+        // achar. Concatenado ao PGOPTIONS de quem chamou, não no lugar dele.
+        env: { ...process.env, PGOPTIONS: `${process.env.PGOPTIONS ?? ""} -c lc_messages=C`.trim() },
       }),
     };
   } catch (erro) {
@@ -146,8 +175,6 @@ if (!prova.ok) {
 const [BANCO, SERVIDOR, TEM_AUTHENTICATED] = prova.saida.trim().split("|");
 const confereGrant = TEM_AUTHENTICATED === "t";
 
-const achados = [];
-const naoConferidos = [];
 
 // ---------------------------------------------------------------------------
 // PARTE A — OS NÓS POSTGRES DOS WORKFLOWS, conferidos como CHAMADA.
@@ -337,7 +364,10 @@ function varrer(dir) {
       varrer(caminho);
       continue;
     }
-    if (!/\.(ts|tsx|mts)$/.test(entrada)) continue;
+    // `.js`/`.jsx`/`.mjs` entram junto com o TypeScript: uma rota escrita em JS
+    // sairia da varredura sem ruído nenhum, encolhendo o conjunto conferido com o
+    // portão continuando verde. É a mesma armadilha da Parte A, um andar abaixo.
+    if (!/\.(ts|tsx|mts|js|jsx|mjs)$/.test(entrada)) continue;
     const fonte = readFileSync(caminho, "utf8");
     const onde = relative(RAIZ, caminho);
     for (const m of fonte.matchAll(/\.rpc\(\s*["'`]([a-z0-9_]+)["'`]/g)) exigir("funcao", m[1], onde);
@@ -381,9 +411,19 @@ const sql = lista
           (confereGrant
             ? `exists(select 1 ${acha} and has_function_privilege('authenticated', p.oid, 'EXECUTE')) as pode`
             : `true as pode`)
-      : `select ${lit(chave)} as k, to_regclass('public.' || ${lit(nome)}) is not null as existe, ` +
+      : // O PRIVILÉGIO PERGUNTA PELO OID, NÃO PELO NOME, e a diferença não é estilo:
+        // `has_table_privilege('authenticated', 'public.x', 'SELECT')` LEVANTA
+        // `relation "public.x" does not exist` quando a tabela falta, e o `coalesce`
+        // não pega exceção. Como as ~50 linhas vão num `union all` só, UMA tabela
+        // ausente derrubava a Parte B inteira: o arquivo saía com "não consegui
+        // conferir os objetos do portal", exit 2, engolindo as outras ausências E as
+        // chamadas de nó já achadas. Contra um banco de produção atrasado — o caso
+        // que este arquivo existe para cobrir — a resposta virava "não sei".
+        // Na forma de OID, `to_regclass` devolve NULL e a função devolve NULL sem
+        // levantar; a coluna `existe` já responde por esse caso.
+        `select ${lit(chave)} as k, to_regclass('public.' || ${lit(nome)}) is not null as existe, ` +
           (confereGrant
-            ? `coalesce(has_table_privilege('authenticated', 'public.' || ${lit(nome)}, 'SELECT'), false) as pode`
+            ? `coalesce(has_table_privilege('authenticated', to_regclass('public.' || ${lit(nome)}), 'SELECT'), false) as pode`
             : `true as pode`);
   })
   .join("\nunion all\n");
