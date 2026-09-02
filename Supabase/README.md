@@ -259,6 +259,24 @@ supabase db execute --file Supabase/migrations/0154_a_pendencia_de_cobertura_diz
 supabase db execute --file Supabase/migrations/0155_combinado_se_reconhece_pela_estrutura.sql
 supabase db execute --file Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql
 
+# ---------------------------------------------------------------------------
+# DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
+#
+# Em 02/09/2026 um banco parado na 0150 foi medido: `fn_instalacao_conferir()`
+# NÃO acusava nada, e três chamadas de nó do workflow de ingestão não resolviam
+# nele (`fn_abrir_lote_execucao`, `fn_reconciliar_caso` e o
+# `fn_reconciliar_por_documento` que existe com a assinatura ANTIGA). O `Abrir
+# Lote` é o primeiro nó depois de o orçamento aprovar o lote: a rodada morreria
+# no começo. A sonda não podia ver — o catálogo dela mora dentro do banco, e um
+# banco na 0150 tem o catálogo da 0150.
+#
+# Este comando faz a outra pergunta, a que só o repositório sabe fazer: o que o
+# código que vai rodar chama existe AQUI? Ele nomeia o nó de cada chamada
+# quebrada. 0 = tudo resolve · 1 = achei · 2 = não consegui perguntar.
+CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
+  node Supabase/test/conferir-chamadas.mjs
+# ---------------------------------------------------------------------------
+
 # OPCIONAL, e só depois da 0119: migra as pendências dos casos JÁ GRAVADOS para
 # o formato por entidade agora, em vez de esperar o próximo recomputo natural
 # de cada um. Faz aparecer uma leva de pendências novas na fila do painel — é

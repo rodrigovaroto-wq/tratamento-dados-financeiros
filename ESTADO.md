@@ -16,11 +16,86 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `Supabase/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
-| **Aplicadas no Supabase** | **até a `0150`**, conferida pela sonda em 27/08 na sessão 72: `fn_instalacao_conferir()` devolveu **41 de 41 requisitos presentes** e `instalacao_cobertura` disse `0150`. **A `0151` desta sessão NÃO está aplicada** — a sessão não tem conexão com o banco de produção, e escrever aqui que está seria o defeito que a `0133` cobrou em 21/08. Antes de afirmar qualquer coisa sobre o banco, rode a sonda. Histórico: as `0147`/`0148`/`0149` foram aplicadas em 26/08 e conferidas por md5, não declaradas. |
+| **Aplicadas no Supabase** | **até a `0150`** (última conferência pela sonda: 27/08, sessão 72). **As seis migrations `0151`–`0156` NÃO estão aplicadas**, e em 02/09 isso deixou de ser um recado em prosa: o ensaio da sessão 78 montou um banco parado na `0150` e mediu que **três chamadas de nó Postgres do `workflow.e1-ingestao.json` não resolvem nele** — `fn_abrir_lote_execucao` (0156), `fn_reconciliar_caso` (0152) e `fn_reconciliar_por_documento(uuid, unknown)` (0152, que EXISTE na 0150 com a assinatura antiga). `Abrir Lote` é o primeiro nó depois de o orçamento aprovar o lote: **a próxima rodada morre no começo.** E `fn_instalacao_conferir()` NÃO acusa nada disso — o catálogo dela mora dentro do banco e um banco na `0150` tem o catálogo da `0150`. Quem responde agora é `Supabase/test/conferir-chamadas.mjs`, apontado ao banco da rodada. O ensaio também provou que as seis aplicam **limpas e em ordem** sobre um banco na `0150` (0 falhas). |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
-| **Suítes** | remedidas em 31/08 (sessão 77), todas verdes: n8n **399** · export **713** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **59** · e2e **46** · banco (**101 migrations** do zero, os DOIS books) · variações **25 rodadas, 0 achados** · régua da cobertura sobre TEXTO DE PRODUÇÃO (**exata nos 20 documentos capturados**) |
+| **Suítes** | remedidas em 02/09 (sessão 78) **num container limpo**, todas verdes: n8n **404** · hooks do agente **5** · export **716** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **4 blocos** · e2e **46** · banco (**101 migrations** do zero, os DOIS books, `TODOS OS TESTES PASSARAM`) · variações **25 rodadas, 0 achados** · régua da cobertura **exata nos 20 documentos de produção capturados** · custo do lote OK · os 4 geradores e as 3 fixtures sem diff · `tsc`/`eslint`/`next build` limpos |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `N8N/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node N8N/build-workflow.mjs` |
+
+## A SESSÃO 78 (02/09) — o sistema estava verde, e a próxima rodada morreria no primeiro nó
+
+**O pedido era "varra tudo e garanta que a próxima rodada não dá erro de execução".** A varredura
+achou o defeito exatamente onde o projeto foi construído para não tê-lo: **num lugar em que tudo
+parece certo.**
+
+### O que passou, e num container limpo
+
+Todas as suítes e portões do CI foram rodados do zero (números na tabela do topo). **Nenhum
+achado, nenhum arquivo gerado divergindo do commitado.** O repositório está são.
+
+### O defeito: o banco de produção não tem o que o workflow chama
+
+O `ESTADO.md` declara produção na **`0150`**. Montei um banco parado exatamente aí — as migrations
+`0001`…`0150` e nada além — e perguntei o que a rodada perguntaria:
+
+| pergunta | resposta nesse banco |
+|---|---|
+| `fn_instalacao_conferir()` acusa requisito ausente? | **não** (só um `comportamento` de tabela vazia, esperado) |
+| os nós Postgres do `workflow.e1-ingestao.json` resolvem? | **três NÃO** |
+
+```
+N8N/workflow.e1-ingestao.json · nó "Abrir Lote"
+    function fn_abrir_lote_execucao(uuid, text, jsonb) does not exist     (0156)
+N8N/workflow.e1-ingestao.json · nó "Reconciliar Lote"
+    function fn_reconciliar_caso(uuid) does not exist                     (0152)
+N8N/workflow.e1-ingestao.json · nó "Reconciliar (Classe A)"
+    function fn_reconciliar_por_documento(uuid, unknown) does not exist   (0152)
+```
+
+**`Abrir Lote` é o primeiro nó depois de o orçamento aprovar o lote.** A rodada não degrada: ela
+morre no começo, depois do upload, com `does not exist`.
+
+**A terceira é a que ensina o desenho.** `fn_reconciliar_por_documento` **existe** na `0150` — a
+`0152` lhe acrescentou `p_escopo`. Um conferidor que perguntasse "existe função com este nome?" a
+daria por presente e a rodada morreria nela do mesmo jeito. Por isso o que se confere é a
+**CHAMADA**, com `PREPARE`: o Postgres resolve nome e tipos e recusa o que não casa. `PREPARE` não
+executa nem escreve — é seguro apontar para produção, que é para onde ele existe para apontar.
+
+### Por que a sonda não viu, e por que ela não está errada
+
+`fn_instalacao_conferir()` responde *"o que ESTE banco sabe que deveria ter, está aqui?"*. O
+catálogo dela (`instalacao_requisito`) mora **dentro do banco** e é preenchido pelas migrations —
+um banco na `0150` tem o catálogo da `0150`, e não pode conhecer um requisito que só a `0156`
+escreveu. Ela é **cega por construção**, e quem tentar "consertá-la" vai consertar o lugar errado.
+
+A pergunta que faltava é a outra ponta, e **só o repositório pode fazê-la**, porque só ele conhece
+o código que vai rodar: *"o que o REPOSITÓRIO chama, está aqui?"* — `Supabase/test/conferir-chamadas.mjs`.
+
+### O conferidor, e as quatro medições que provam que ele não nasceu vazio
+
+| arranjo | esperado | medido |
+|---|---|---|
+| banco completo (101 migrations) | passa | **exit 0** — 15 chamadas de nó por `PREPARE`, 51 objetos do portal |
+| banco na `0150` (produção declarada) | reprova | **exit 1**, os 3 achados acima, cada um nomeando o nó |
+| banco inalcançável | não é "passou" | **exit 2** |
+| extração sabotada (tipo do nó trocado) | não é "passou" | **exit 2** — regra 7 aplicada a ele mesmo |
+
+O quarto arranjo existe porque a varredura depende do tipo do nó e do nome do parâmetro: o dia em
+que uma exportação nova do n8n trocar qualquer um dos dois, a lista vem vazia e o portão fica
+verde sem medir nada. **Zero chamada não é "nada quebrado": é o conferidor quebrado.**
+
+### O ensaio de aplicação, que também nunca tinha sido feito
+
+As seis migrations pendentes foram aplicadas **incrementalmente** sobre o banco na `0150`, uma a
+uma, como o dono faria pelo painel: **0 falhas**. Isso não é o que a suíte prova — ela monta do
+zero, e aplicação incremental tem uma classe de erro que a de zero nunca vê (`create or replace`
+sobre função cuja assinatura mudou). Agora está medido.
+
+### O que isto NÃO resolve, e é do dono
+
+O conferidor prova o lado do banco. O outro passo manual continua existindo e **nada aqui o
+detecta**: o `N8N/workflow.e1-ingestao.json` mudou em **01/09** (o nó `Abrir Lote` é novo) e o n8n
+executa o JSON **importado**, não o do repositório. **Merge não reimporta.**
 
 ## A SESSÃO 77 (31/08, madrugada) — a régua contava 258 onde o documento tem 99, e o portão não podia ver
 
@@ -228,108 +303,52 @@ calibração.
 
 ---
 
-## POR ONDE COMEÇAR NA PRÓXIMA SESSÃO — em ordem, e o passo 1 decide os outros
+## POR ONDE COMEÇAR NA PRÓXIMA SESSÃO — dois passos manuais, e os dois são do dono
 
-**NÃO RODE O ARAUCÁRIA AINDA.** Ele repetiria as 23 pendências falsas e gastaria 88% da cota do dia
-para reconfirmar o que já se sabe. O que falta é barato e não consome cota nenhuma.
+> O plano que estava aqui era o da sessão 77 (capturar o texto do n8n e recalibrar a régua). **Ele
+> foi executado** — a captura está versionada em `Dados de Teste/capturas/` e a régua ficou exata
+> nos 20 documentos de produção. O que sobrou não é engenharia.
 
-### 1. Capturar o texto que o n8n REALMENTE produz, e rodar a régua sobre ele
+**O repositório está pronto e medido. Entre ele e uma rodada que não morre há dois passos manuais,
+nenhum dos dois executável de dentro de uma sessão de agente.**
 
-É a medição que fecha o diagnóstico. **Não consome cota, não precisa de rodada nova**, e o dado já
-existe: a execução do Canastra de 31/08 está salva no n8n.
+### 1. Aplicar as seis migrations pendentes (`0151`–`0156`) no Supabase
 
-**1.1 — Capture o texto (2 minutos, no navegador).** Abra o n8n → workflow `Oria — E1 Ingestão…` →
-aba **Executions** → a execução de **31/08 do Canastra** (a que registrou 38 documentos; NÃO a de
-16:49, que é a que falhou com 0 de 38). Clique no nó **`Extrair Texto`** → **Output** → localize o
-item do `17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf` → copie o valor do campo `text`
-inteiro. Grave em `/tmp/texto-n8n-17.txt`.
+A lista de comandos está em `Supabase/README.md`. O ensaio de 02/09 provou que elas aplicam
+**limpas e em ordem** sobre um banco na `0150` (0 falhas), então o passo é mecânico.
 
-Repita para o `20_Mapa_de_Divida_Canastra_Industria_2025.pdf` → `/tmp/texto-n8n-20.txt`.
+**Confira DEPOIS de aplicar, e a conferência não é ler este arquivo:**
 
-**1.2 — Rode a régua sobre ele e compare com o extrator local.** Este script faz os dois lados de
-uma vez (crie como `portal/scripts/_diag.mts`, e APAGUE depois — é descartável):
-
-```ts
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { linhasDeConta, linhasComNumero } from "../../N8N/lib/cobertura.mjs";
-const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse");   // cd portal && npm i --no-save pdf-parse
-
-for (const [n, pdf] of [["17", "17_Livro_Razao_Fornecedores_Canastra_Industria_12M25"],
-                        ["20", "20_Mapa_de_Divida_Canastra_Industria_2025"]]) {
-  const doN8n = readFileSync(`/tmp/texto-n8n-${n}.txt`, "utf8");
-  const p = new PDFParse({ data: readFileSync(`Dados de Teste/book-canastra/pdf/${pdf}.pdf`) });
-  const doLocal = String((await p.getText()).text ?? "");
-  console.log(`=== ${pdf}`);
-  for (const [rot, t] of [["n8n (PRODUÇÃO)", doN8n], ["pdf-parse (local)", doLocal]]) {
-    console.log(`  ${rot.padEnd(20)} linhas=${t.split("\n").length}`
-      + ` comNumero=${linhasComNumero(t).length} DE_CONTA=${linhasDeConta(t).length}`);
-  }
-  console.log("  --- primeiras 12 linhas do n8n ---");
-  doN8n.split("\n").slice(0, 12).forEach((l, i) => console.log(`   n8n[${i}] ${JSON.stringify(l.slice(0, 90))}`));
-  console.log("  --- primeiras 12 linhas do pdf-parse ---");
-  doLocal.split("\n").slice(0, 12).forEach((l, i) => console.log(`   loc[${i}] ${JSON.stringify(l.slice(0, 90))}`));
-}
+```bash
+CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
+  node Supabase/test/conferir-chamadas.mjs
 ```
 
-**O que esperar, e o que cada resultado significa:**
+Ele responde sobre o banco em que você está de fato conectado, nomeia o nó de cada chamada que não
+resolve, e distingue três estados: **0** = tudo resolve · **1** = achei chamada quebrada · **2** =
+não consegui perguntar (que não é "passou"). Rode também a sonda, que responde a outra metade:
 
-| `DE_CONTA` do n8n | Leitura |
-|---|---|
-| **~258** (e `pdf-parse` ~104) | Confirmado: produção quebra a linha diferente. Siga para 1.3 |
-| **~104**, igual ao local | A hipótese cai. O denominador de 258 veio de outro lugar — investigue `contas_no_documento` no `Medir Documento`, e NÃO mexa na régua |
+```sql
+select chave, migration, tipo, objeto, presente, detalhe, porque
+  from fn_instalacao_conferir() where not presente order by 1;
+```
 
-**1.3 — Nomeie o padrão.** Com as 12 primeiras linhas dos dois lado a lado, a diferença fica visível
-em uma olhada. O padrão esperado é o n8n emitir a data, o histórico e cada valor como linhas
-separadas onde o `pdf-parse` emite uma linha só. **Escreva o padrão observado no commit** — é ele
-que decide a correção, e sem ele a correção vira chute.
+### 2. Reimportar o `N8N/workflow.e1-ingestao.json` no n8n
 
-**1.4 — Corrija, e prefira (a):**
+**O n8n executa o JSON importado, não o do repositório — e merge não reimporta.** O arquivo mudou
+em 01/09 e o nó **`Abrir Lote`** é novo: sem a reimportação, `lote_execucao` volta a só receber
+linha quando a cadeia termina, que é exatamente o defeito que a `0156` existe para corrigir (a
+rodada de 190 morreu e não deixou rastro).
 
-- **(a) a régua normaliza antes de contar.** Uma função nova em `N8N/lib/cobertura.mjs` que junta os
-  fragmentos de uma mesma linha visual antes de `linhasDeConta` contar. Corrige todo documento,
-  inclusive os que já rodaram, e é testável sem n8n. **Ela é embutida por `toString()` nos nós Code
-  → precisa ser AUTO-CONTIDA (sem referência a constante do módulo) e entrar na tabela do
-  `espelho-inline.test.mjs`**, com assinatura de parâmetro simples (nada de desestruturação — o
-  extrator do espelho corta o corpo e dá `SyntaxError`; está na memória).
-- **(b)** trocar a opção do nó `Extrair Texto`, ou normalizar logo depois dele. Depende de opção de
-  nó de terceiro e não é testável localmente — só se (a) não der.
+**Como saber que pegou:** rode e confira que `lote_execucao` ganhou linha com `fechado_em` **nulo**
+já no começo da rodada — é o sinal que a `0156` inventou para separar "começou e não terminou" de
+"nunca rodou". A sonda também cobra isso, pelo `comportamento` da `0115`.
 
-**1.5 — Meça não-vazio, como sempre:** desligue a normalização, rode, confirme que a suíte reprova,
-religue com `cp` (nunca `git checkout <arquivo>`), e **confira o `git status` depois** — o
-`Supabase/test/run.sh` reescreve o `Supabase/schema.sql` e a medição deixa ele sujo (custou um CI vermelho em
-31/08).
+### 3. Só então: a rodada real (B1)
 
-### 2. Fazer o portão de calibração medir a entrada CERTA
-
-`medir-regua-cobertura.mjs` tem de deixar de medir o `TEXTO_EXTRAIDO.json`. As duas saídas:
-
-- o gerador passa a gravar TAMBÉM o texto extraído do PDF **renderizado** (o `pdf-parse` já está
-  disponível e concorda com a verdade), e o portão mede sobre ele; **ou**
-- o portão passa a exigir a amostra real capturada no passo 1, versionada como fixture.
-
-Sem isso, a correção do passo 1 fica sem guarda e volta a envelhecer calada.
-
-### 3. Só então reavaliar as pendências
-
-Com a régua corrigida, as 2 pendências desta rodada e as 23 do araucária devem sumir. **Se alguma
-sobrar, aí sim é sub-extração real** — e o instrumento de blocos, que já funciona, dirá se é teto,
-bloco perdido, ou leitura parcial.
-
-### 4. E aí sim o araucária, com o dia inteiro de cota
-
-Lembrando a aritmética: o Canastra pede 63 chamadas (13% do RPD) e o araucária ~440–509. **Os dois
-no mesmo dia não cabem em 500**, e o portão da cota da 0156 não sabe o que o dia já consumiu — ele
-vê um lote só e declara isso na própria mensagem.
-
-### O que continua pendente e não é engenharia
-
-- **deploy do portal** — a espera corrigida está no repositório desde a sessão 74;
-- o **`multipleFiles`** do campo "Arquivos" do nó `Intake (Form)` (não é um nó, é um toggle do
-  campo) precisa ser conferido a cada republicação: já se perdeu duas vezes.
-
----
+Com 1 e 2 feitos, o bloqueio do projeto volta a ser o que o `MAPA_DE_EXECUCAO.md` diz que é — uma
+hora de execução do dono num mandato **novo**, seguida do `auditar-xlsx.mts` e do `ACEITE.md`
+sobre o arquivo exportado da rodada. As onze coisas que só a rodada prova estão listadas lá.
 
 ## A SESSÃO 75 (31/08) — o processo do agente vira parte do repositório
 

@@ -114,6 +114,30 @@ todas as suítes provam a ingestão sobre extração **fiel** — PDF gerado por
 layout conhecido. Todo defeito de leitura de documento *real* (scan torto, carimbo, coluna deslocada,
 escala mista) está fora do alcance de todas elas, por construção.
 
+### ANTES DE QUALQUER COISA: os dois passos manuais (medidos em 02/09, sessão 78)
+
+**A rodada não começa sem estes dois, e nenhum é executável de dentro de uma sessão de agente.**
+
+1. **Aplicar as `0151`–`0156` no Supabase.** Medido: num banco parado na `0150` — o estado que o
+   `ESTADO.md` declara para produção — **três chamadas de nó do `workflow.e1-ingestao.json` não
+   resolvem** (`fn_abrir_lote_execucao` da 0156, `fn_reconciliar_caso` da 0152 e
+   `fn_reconciliar_por_documento(uuid, unknown)` da 0152). `Abrir Lote` é o primeiro nó depois de
+   o orçamento aprovar o lote: **a rodada morre no começo.** E `fn_instalacao_conferir()` **não
+   acusa nenhuma das três** — o catálogo dela mora dentro do banco. Confira com o conferidor, que
+   nomeia o nó de cada chamada quebrada:
+
+   ```bash
+   CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
+     node Supabase/test/conferir-chamadas.mjs
+   ```
+
+   As seis foram ensaiadas aplicando **incrementalmente** sobre um banco na `0150`: **0 falhas**.
+
+2. **Reimportar o `N8N/workflow.e1-ingestao.json` no n8n.** Ele mudou em 01/09 e o nó `Abrir Lote`
+   é novo. **O n8n executa o JSON importado; merge não reimporta, e nada no CI acusa isso.** O
+   sinal de que pegou é por efeito: `lote_execucao` ganha linha com `fechado_em` **nulo** já no
+   começo da rodada.
+
 ### A ordem, e ela importa
 
 1. **Rodar o book num mandato NOVO** (não reaproveitar mandato existente — a `0118` deduplica por
