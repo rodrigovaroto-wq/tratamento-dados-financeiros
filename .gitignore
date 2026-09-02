@@ -32,3 +32,10 @@ Verificação/saida/
 .env.*
 !.env.example
 !**/.env.example
+
+# Bytecode do Python. Os três `Dados de Teste/comum/__pycache__/*.pyc` entraram sem
+# querer no commit `c1f8979` (01/09) e reescrevem-se a CADA execução dos geradores do
+# book: toda sessão passava a abrir com a árvore suja em arquivo que ninguém editou,
+# e diff de ruído é o que ensina a ignorar diff.
+__pycache__/
+*.py[cod]

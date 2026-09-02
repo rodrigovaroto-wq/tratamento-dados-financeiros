@@ -304,6 +304,24 @@ jobs:
             exit 1
           }
 
+      - name: O que o código chama existe no banco
+        # A OUTRA PONTA DA SONDA DE INSTALAÇÃO, e ela faltava.
+        #
+        # `fn_instalacao_conferir()` responde "o que ESTE banco sabe que deveria
+        # ter, está aqui?" — e o catálogo dela mora dentro do banco, preenchido
+        # pelas migrations. Medido em 02/09: um banco parado na 0150 (o estado
+        # que o ESTADO.md declara para produção) não acusa requisito nenhum E
+        # não tem `fn_abrir_lote_execucao` nem `fn_reconciliar_caso`, que dois
+        # nós do workflow de ingestão chamam em TODA rodada. A sonda não pode
+        # conhecer um requisito que só a 0156 escreveu.
+        #
+        # A pergunta que faltava é a que só o repositório pode fazer: **o que o
+        # código que vai rodar chama, está aqui?** Aqui, contra o banco recém
+        # montado, ela é verde por construção — o valor no CI é o outro: uma
+        # chamada a função que migration nenhuma cria (nome trocado num rename,
+        # `.rpc()` com typo) para de esperar produção para aparecer.
+        run: CONFERIR_DB=tdf_test node Supabase/test/conferir-chamadas.mjs
+
       - name: Suíte e2e (extração → banco → export)
         run: ./portal/node_modules/.bin/tsx Verificação/run.mts
 

@@ -53,6 +53,10 @@ cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab=
   && PYTHONPATH=. python3 gerar.py && cd ../..   # PYTHONPATH=. é obrigatório
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
   -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
+# O `run.sh` roda COMO postgres e REESCREVE `Supabase/schema.sql`. Num container em que
+# o repositório é do root, ele morre em "Permission denied" DEPOIS de aplicar as 101
+# migrations — e nenhum `*.test.sql` chega a rodar. Custou uma passada na sessão 78.
+chmod a+w Supabase Supabase/schema.sql
 
 # suítes
 node --test 'N8N/test/*.test.mjs'
@@ -61,6 +65,8 @@ node --test 'N8N/test/*.test.mjs'
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
+CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
+  node Supabase/test/conferir-chamadas.mjs
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx Verificação/run.mts
 ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
