@@ -26,7 +26,7 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 | # | Frente | Estado | Quem destrava | Bloqueia |
 |---|---|---|---|---|
 | **B0** | ~~Instalação do banco~~ — `0126`–`0133` **aplicadas em 20/08** | 🟢 **fechado** | — | — |
-| **B1** | **A rodada real do book** num mandato novo + aceite | 🔴 nunca aconteceu | **dono** (~1 h) | 11 provas, B2 inteiro |
+| **B1** | **A rodada real do book** num mandato novo + aceite | 🟠 **a rodada ACONTECEU em 02/09** (lote `7377`, 38/38, cobertura 0,987, nenhum nó morto); falta o **aceite** | **dono** (~20 min) | B2 inteiro |
 | **B2** | Recalibrar cobertura, conferir fatiamento e subtotais | ⚪ não começou | engenharia, **depois** de B1 | a confiança nos números |
 | **B3** | **A autonomia sem rotulagem manual** — decisão em aberto | 🟠 contradição viva | **dono decide** | a F4 do `Arquitetura do Sistema/1 Visão e Doutrina/03` |
 | **B4** | Dívidas do output (alavancas, três cenários completos, 25 perguntas) | 🟠 dimensionadas | dono prioriza | o valor no comitê |
@@ -35,8 +35,10 @@ de pendências do `ESTADO.md` já disse uma vez que o Modo A não existia depois
 | **B7** | Bloqueados por dado que não temos | ⚫ espera | terceiros | nada — são espera |
 
 **O caminho crítico encurtou: `B0` fechou em 20/08.** Sobra `B1 → B2` e, em paralelo, `B3` (decisão)
-e `B6` (higiene). E `B1` — a rodada real — é agora **o único bloqueio do projeto**: não há mais nada
-de infra entre o repositório e o sistema.
+e `B6` (higiene). **A rodada real aconteceu em 02/09** (sessão 79 do `ESTADO.md`) e não deixou erro
+de execução — o que sobra do `B1` é o **aceite**: `auditar-xlsx.mts` sobre o arquivo exportado e o
+`ACEITE.md` preenchido. Enquanto ele não existir, nada de `B2` começa, porque `B2` é recalibração
+sobre números que ninguém conferiu.
 
 ---
 
@@ -160,6 +162,19 @@ verdes.
 | 9 | A **transcrição assistida** não contamina: linha transcrita entra como `origem_valor` humana e não vira insumo de medição da máquina | `0129` |
 | 10 | O **dial obedecido** recusa auto-aceite em estágio interpretativo sem concordância medida — na prática, não só no teste | `0127` |
 | 11 | A **árvore da seção** fecha sobre PDF sujo — e quantas seções ela não consegue conferir por unidade mista ou rótulo duplicado, que é o número que diz se a extração real tem forma | `0133` |
+
+### O que a rodada de 02/09 já respondeu, das onze
+
+Medido no lote `7377` pelo dono (detalhe e números na sessão 79 do `ESTADO.md`):
+
+| prova | resultado |
+|---|---|
+| 1 — fatiamento LIGADO em produção | ✅ **4 documentos fatiados**, e o `17_Livro_Razao` em blocos com emenda (a costura descartou 3 linhas repetidas — funcionou) |
+| 6 — `cobertura_do_lote` não vem `null` | ✅ **0,987** |
+| 7 — o custo bate com o previsto | ❌ **US$ 0,4674 contra 0,3200 previstos: +46%**, e o mesmo desvio na rodada de 31/08 (0,4779 contra 0,3200). Desvio estável não é ruído — a previsão está calibrada baixo. Entra no `B2` |
+
+As demais (2, 3, 4, 5, 8, 9, 10, 11) exigem olhar o `.xlsx` e as pendências item a item, e é
+exatamente isso que o aceite é. **Elas continuam abertas.**
 
 ### Critério de pronto
 

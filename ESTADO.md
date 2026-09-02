@@ -17,10 +17,135 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 |---|---|
 | **Última migration** | `Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `Supabase/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
 | **Aplicadas no Supabase** | **até a `0156` — as seis pendentes foram APLICADAS em 02/09**, e o `workflow.e1-ingestao.json` foi **reimportado** no n8n. Conferido pelo DONO, contra o banco de produção, com a consulta por objeto da sessão 78: as `0151`–`0156` voltaram `APLICADA` com a coluna de faltantes vazia, e o veredito das três chamadas do workflow voltou **`PODE RODAR`** — inclusive a assinatura nova de `fn_reconciliar_por_documento` (`p_escopo`, da 0152), que é a que um teste por nome daria como presente estando ausente. **Os dois passos manuais que bloqueavam a rodada caíram.** Esta linha registra medição do dono, não minha: a sessão não tem conexão com produção, e a conferência que vale é sempre a que se roda contra o banco em que se está conectado — `Supabase/test/conferir-chamadas.mjs` ou a consulta de catálogo. |
+| **Última rodada real** | **lote `7377`, mandato "teste Canastra", 02/09 20:24:21→20:24:48 UTC — 38 de 38 documentos, cobertura `0,987`, 2.599 linhas, US$ 0,4674, `estado = fechou` com `fechado_em` preenchido, e `execucao_falha` VAZIA.** É a primeira rodada depois das seis migrations, e **nenhum nó morreu** — o critério de pronto do B1. Uma falha (benigna, ver sessão 79) e uma pendência bloqueante que é defeito de checklist, não do mandato. Medição do DONO, em produção. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 02/09 (sessão 78) **num container limpo**, todas verdes: n8n **404** · hooks do agente **5** · export **716** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **4 blocos** · e2e **46** · banco (**101 migrations** do zero, os DOIS books, `TODOS OS TESTES PASSARAM`) · variações **25 rodadas, 0 achados** · régua da cobertura **exata nos 20 documentos de produção capturados** · custo do lote OK · os 4 geradores e as 3 fixtures sem diff · `tsc`/`eslint`/`next build` limpos |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `N8N/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node N8N/build-workflow.mjs` |
+
+## A SESSÃO 79 (02/09) — A PRIMEIRA RODADA REAL DEPOIS DAS SEIS MIGRATIONS, e ela rodou inteira
+
+**Todos os números desta seção são medição do DONO, contra produção**, colhidos com o runbook
+`Arquitetura do Sistema/6 Referência/POS_RODADA.md` e com o `.xlsx` entregue. A sessão não tem
+conexão com o banco de produção e não conferiu nenhum deles por conta própria — a única coisa que
+esta sessão fez com eles foi ler.
+
+### O lote 7377, e a comparação que só existe porque a 0156 passou a gravar o lote
+
+| | `7276` — 31/08, banco na `0150` | **`7377` — 02/09, banco na `0156`** |
+|---|---|---|
+| planejados / processados | 38 / 38 | 38 / 38 |
+| fatiados | 4 | 4 |
+| **com falha** | 2 | **1** |
+| sem medição | 0 | 0 |
+| linhas extraídas | 2.637 | 2.599 |
+| **cobertura** | 0,838 | **0,987** |
+| custo real / previsto (US$) | 0,4779 / 0,3200 | 0,4674 / 0,3200 |
+| duração | 28 s | 26 s |
+
+`estado = fechou` com `fechado_em` preenchido, e o passo 3.4a do runbook (`execucao_falha`)
+**voltou VAZIO: nenhum nó morreu.** Era o critério de pronto do B1 do mapa, e ele fechou.
+
+**A cobertura subiu de 0,838 para 0,987 e eu NÃO medi a causa.** A única diferença de arranjo que
+conheço entre as duas rodadas é o banco (`0150` → `0156`), mas nenhuma das seis migrations mexe na
+régua da cobertura, e a rodada com 0,838 também tinha um documento a mais falhando — o
+`17_Livro_Razao` sozinho vale 302 pares. Atribuir o salto a qualquer uma delas sem medir seria
+exatamente o que a regra 5 proíbe. Fica registrado como número, não como explicação.
+
+**O custo real ficou 46% acima do previsto** nas duas rodadas (0,4674 contra 0,3200; e 0,4779 contra
+os mesmos 0,3200). É estável, então não é ruído — é a previsão que está calibrada baixo. Não é
+urgente num lote de US$ 0,47; passa a ser num de 190 documentos, onde o previsto é 1,7200.
+
+### A única falha da rodada, e ela é a costura FUNCIONANDO
+
+```
+importante, extracao_falhou, 17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf
+  "falhou ou veio incompleta (302 par(es) conta×coluna gravado(s)).
+   Motivo: 3 linha(s) repetida(s) na emenda entre blocos foram descartadas
+   (o modelo repetiu a âncora)."
+```
+
+Descartar a linha repetida na emenda é **o que a costura existe para fazer** — o documento tem 4
+colunas, 95 contas distintas e 302 pares gravados, e a leitura chegou inteira. Mas o pipeline conta
+isso como documento com falha: é o que põe `com_falha = 1` no lote e o alerta
+`documento_com_falha` na rodada.
+
+**Isto é um defeito, e é do tipo que este projeto persegue: chamar de falha um sucesso.** Ele não
+perde dado nenhum e não é urgente — mas enquanto existir, `com_falha` não serve como sinal, porque
+não distingue "o modelo não leu o documento" de "a emenda funcionou". Fatia própria, ainda não
+aberta.
+
+### A pendência bloqueante é defeito de CHECKLIST, e o combinado está lá
+
+```
+bloqueante, item_faltante, "Item obrigatório do Kit Básico ausente: COMBINADO", sobrepujavel = false
+```
+
+E na mesma rodada, nos mesmos 38 documentos:
+
+```
+13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf   BALANCO   conf 1,00   openai_conteudo   8 empresas nas colunas
+14_Balanco_COMBINADO_Grupo_Canastra_2024.pdf   BALANCO   conf 1,00   openai_conteudo   8 empresas nas colunas
+```
+
+Os dois abriram, sozinhos, pendência `tipo_incorreto` dizendo *"o diagnóstico sugere COMBINADO,
+está registrado como BALANCO"*. **O sistema sabe que eles são combinados e mesmo assim trava o
+mandato por ausência de combinado.** É a mesma ambiguidade que a `0155` mediu no araucária (o mesmo
+padrão de nome saiu BALANCO em quatro documentos e COMBINADO num quinto), chegando agora pelo outro
+lado: a `0155` corrigiu a AUTORIDADE, e o CHECKLIST continuou perguntando ao rótulo.
+
+O passo (1) de `fn_recomputar_completude` (`0113`) só aceita `documento.tipo_taxonomia = 'COMBINADO'`.
+A correção é usar o critério estrutural que a `0155` já criou e já está aplicado —
+`fn_documento_de_varias_empresas`.
+
+### As outras 12 pendências, todas `importante` e todas sobrepujáveis
+
+| tipo | quantas | leitura |
+|---|---|---|
+| `tipo_incorreto` | 4 | dois são os combinados acima; os outros dois (`27_Composicao_do_Imobilizado` NOTAS_EXPL→BALANCO, `35_Demonstracoes_Contabeis` DF_AUDITADA→BALANCO) são o diagnóstico discordando do nome do arquivo, que é o trabalho dele |
+| `periodo_incorreto` | 2 | comparativos multi-ano cujo diagnóstico propõe a data-base em vez do intervalo |
+| `linha_exigida_ausente` | 2 | "Despesa Financeira" na DRE da CN Transportes e da Canastra Comercial — **isto é dado que falta no documento**, não defeito |
+| `entidade_incorreta` | 1 | `33_Notas_Explicativas` registrado como GRUPO CANASTRA, conteúdo diz Canastra Indústria |
+| `classificacao_pendente` | 1 | `28_Folha_de_Pagamento` não cabe na taxonomia (conf 0,9 contra limiar 0,70, e ainda assim aberta) |
+| `divergencia_reconciliacao` | 1 | 2 contas em que BALANCO (autoridade 50) vence NOTAS_EXPL assinado (45), maior diferença 15.647.000,00 — **e o número do perdedor continua gravado** |
+| `extracao_falhou` | 1 | a costura do `17_Livro_Razao`, acima |
+
+Nenhuma delas é erro de execução. **A rodada entregou o book.**
+
+### A rodada do araucária de 01h46 (`7327`) não mediu nada, e a causa é uma só
+
+```
+190 planejados, 190 processados, 190 COM FALHA, 0 linhas, US$ 0,0000, 38 segundos
+```
+
+Os 190 documentos falharam com a **mesma** mensagem, e o pipeline diagnosticou sozinho:
+
+```
+http=401 code=401
+provedor="Request had invalid authentication credentials. Expected OAuth 2 access token,
+          login cookie or other valid authentication credential."
+```
+
+A credencial do Google no nó HTTP do n8n estava inválida. Os três números estranhos se explicam
+sem sobra: 0 linhas porque nenhuma resposta voltou, US$ 0,00 porque o provedor não processou, 38
+segundos porque são 190 × um 401 imediato. **Não há bug**: o `N8N/lib/extract.mjs:960` distingue
+401/403 de cadência e de crédito e nomeia o header certo. A rodada `7377` prova que a credencial já
+está válida. O araucária pode ser reprocessado como está.
+
+### Um achado menor, medido e não urgente: mojibake em nome de arquivo
+
+Nomes do araucária chegaram como `C├│pia de balan├ºo final.pdf` e `balan├ºo 2024 (1).pdf`. Não vem
+do nosso código — `nome_original` é cópia direta do `fileName` que o n8n entrega
+(`N8N/build-workflow.mjs:503`), sem decodificação nossa. Rodando o classificador nos dois pares:
+
+```
+"balanço 2024 (1).pdf"   → tipo_taxonomia BALANCO, confiança 0,65
+"balan├ºo 2024 (1).pdf"  → tipo_taxonomia NULL,    confiança 0,05
+```
+
+A pré-classificação por nome **perde o tipo**; não produz tipo errado. Os dois casos já caem abaixo
+do limiar 0,75 e vão para a classificação por conteúdo de qualquer jeito, então o custo é uma
+chamada de IA que poderia ter sido evitada. Registrado, não urgente.
 
 ## A SESSÃO 78 (02/09) — o sistema estava verde, e a próxima rodada morreria no primeiro nó
 
