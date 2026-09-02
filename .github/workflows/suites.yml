@@ -253,6 +253,15 @@ jobs:
         # um documento novo entra na classe do rótulo repetido.
         run: node N8N/medir-regua-cobertura.mjs
 
+      - name: Portão dos comandos de barra (todo subagent_type existe)
+        # Despacho para `subagent_type` inexistente falha em tempo de execução, e
+        # o comando só descobre isso no meio de uma tarefa de alguém. Os 52
+        # comandos vieram de um MARKETPLACE, onde o nome do agente é qualificado
+        # pelo plugin — e fora dele nenhum desses nomes resolve. Medido na
+        # primeira execução: 57 citações quebradas, 30 nomes distintos, 13
+        # comandos. Não precisa de banco nem de build; roda em segundos.
+        run: node .claude/verificar-comandos.mjs
+
       - name: Suíte de export (invariantes do arquivo entregue)
         # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto
         # foi medido na primeira execução do CI: mesmo com o .bin do portal no

@@ -101,6 +101,11 @@ cuja linha casa com a tarefa — os arquivos estão em `.claude/agents/`.
 | `estado-e-handoff` | Atualizar `ESTADO.md`, `MAPA`, memória, PR | barato |
 | `explorador` | Mapear onde uma coisa mora, antes de planejar | barato |
 
+Existem também **30 agentes `importado.*`** em `.claude/agents/`, e eles NÃO são desta lista: só
+existem para que os 13 comandos de barra que os citam não morram em `Agent type not found`
+(`.claude/commands/README.md`). **Trabalho do projeto vai para os sete acima**, sempre — nenhum
+importado conhece as sete regras. O portão que mantém isso honesto é `node .claude/verificar-comandos.mjs`.
+
 **Nível de modelo é escolhido por despacho, nunca herdado por acidente.** Despacho paralelo
 (ondas) só quando **as duas** condições valem: sem dependência entre as tarefas **e** conjuntos
 de arquivos totalmente disjuntos. Quem comita é sempre a sessão principal, uma tarefa por vez,

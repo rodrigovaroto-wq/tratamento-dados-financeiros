@@ -34,7 +34,7 @@ All documentation is written to a new `C4-Documentation/` directory in the repos
 
 For each directory, starting from the deepest:
 
-- Use Task tool with subagent_type="c4-architecture::c4-code"
+- Use Task tool with subagent_type="c4-code"
 - Prompt: |
   Analyze the code in directory: [directory_path]
 
@@ -90,7 +90,7 @@ For each directory, starting from the deepest:
 
 For each identified component:
 
-- Use Task tool with subagent_type="c4-architecture::c4-component"
+- Use Task tool with subagent_type="c4-component"
 - Prompt: |
   Synthesize the following C4 Code-level documentation files into a logical component:
 
@@ -133,7 +133,7 @@ For each identified component:
 
 ### 2.3 Create Master Component Index
 
-- Use Task tool with subagent_type="c4-architecture::c4-component"
+- Use Task tool with subagent_type="c4-component"
 - Prompt: |
   Create a master component index that lists all components in the system.
 
@@ -168,7 +168,7 @@ For each identified component:
 
 ### 3.2 Map Components to Containers
 
-- Use Task tool with subagent_type="c4-architecture::c4-container"
+- Use Task tool with subagent_type="c4-container"
 - Prompt: |
   Synthesize components into containers based on deployment definitions.
 
@@ -241,7 +241,7 @@ For each identified component:
 
 ### 4.2 Create Context Documentation
 
-- Use Task tool with subagent_type="c4-architecture::c4-context"
+- Use Task tool with subagent_type="c4-context"
 - Prompt: |
   Create comprehensive C4 Context-level documentation for the system.
 
