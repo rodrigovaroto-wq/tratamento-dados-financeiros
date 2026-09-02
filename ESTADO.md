@@ -16,7 +16,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | | |
 |---|---|
 | **Última migration** | `Supabase/migrations/0156_o_lote_existe_antes_de_terminar.sql` — **a linha de `lote_execucao` nasce quando o orçamento aceita o lote, não quando a cadeia termina.** A rodada de 190 de 27/08 foi cancelada e a tabela ficou vazia, levando junto `documentos_fatiados` — o número de que a investigação da sub-extração precisava. `fechado_em` nulo passa a ser a informação: começou e não terminou, que antes era indistinguível de nunca ter rodado. Antes dela: `Supabase/migrations/0155_combinado_se_reconhece_pela_estrutura.sql` — **um documento com quinze empresas nas colunas é um combinado**, e o catálogo não precisa acreditar no nome dele. Medido no araucária: `053`/`054`/`055`/`057` saíram **BALANCO** e o `056`, com o mesmo padrão de nome, **COMBINADO** — todos pela IA com confiança 1,0, todos com 14–15 empresas nas colunas. Chamado de BALANCO, o combinado sobe de 30 para 50 e **empata** com o balanço individual — e empate, pela `0151`, mantém o de maior módulo: a armadilha central do araucária voltando pela porta da classificação. O critério passa a ser estrutural, como a `0146` faz do outro lado. Antes dela: **`0154`** (a pendência de cobertura diz a unidade — pares conta×coluna contra linhas do documento), **`0153`** (o nome que casa com duas empresas não identifica nenhuma) e **`0152`** (a reconciliação do lote, cada checagem sobre a chave dela: 247 invocações contra ~8.500, e `fn_conflitos_do_caso` de **12.357 ms para 1.790 ms**, medido em produção). |
-| **Aplicadas no Supabase** | **até a `0150`** (última conferência pela sonda: 27/08, sessão 72). **As seis migrations `0151`–`0156` NÃO estão aplicadas**, e em 02/09 isso deixou de ser um recado em prosa: o ensaio da sessão 78 montou um banco parado na `0150` e mediu que **três chamadas de nó Postgres do `workflow.e1-ingestao.json` não resolvem nele** — `fn_abrir_lote_execucao` (0156), `fn_reconciliar_caso` (0152) e `fn_reconciliar_por_documento(uuid, unknown)` (0152, que EXISTE na 0150 com a assinatura antiga). `Abrir Lote` é o primeiro nó depois de o orçamento aprovar o lote: **a próxima rodada morre no começo.** E `fn_instalacao_conferir()` NÃO acusa nada disso — o catálogo dela mora dentro do banco e um banco na `0150` tem o catálogo da `0150`. Quem responde agora é `Supabase/test/conferir-chamadas.mjs`, apontado ao banco da rodada. O ensaio também provou que as seis aplicam **limpas e em ordem** sobre um banco na `0150` (0 falhas). |
+| **Aplicadas no Supabase** | **até a `0156` — as seis pendentes foram APLICADAS em 02/09**, e o `workflow.e1-ingestao.json` foi **reimportado** no n8n. Conferido pelo DONO, contra o banco de produção, com a consulta por objeto da sessão 78: as `0151`–`0156` voltaram `APLICADA` com a coluna de faltantes vazia, e o veredito das três chamadas do workflow voltou **`PODE RODAR`** — inclusive a assinatura nova de `fn_reconciliar_por_documento` (`p_escopo`, da 0152), que é a que um teste por nome daria como presente estando ausente. **Os dois passos manuais que bloqueavam a rodada caíram.** Esta linha registra medição do dono, não minha: a sessão não tem conexão com produção, e a conferência que vale é sempre a que se roda contra o banco em que se está conectado — `Supabase/test/conferir-chamadas.mjs` ou a consulta de catálogo. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
 | **Suítes** | remedidas em 02/09 (sessão 78) **num container limpo**, todas verdes: n8n **404** · hooks do agente **5** · export **716** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **4 blocos** · e2e **46** · banco (**101 migrations** do zero, os DOIS books, `TODOS OS TESTES PASSARAM`) · variações **25 rodadas, 0 achados** · régua da cobertura **exata nos 20 documentos de produção capturados** · custo do lote OK · os 4 geradores e as 3 fixtures sem diff · `tsc`/`eslint`/`next build` limpos |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
@@ -303,52 +303,48 @@ calibração.
 
 ---
 
-## POR ONDE COMEÇAR NA PRÓXIMA SESSÃO — dois passos manuais, e os dois são do dono
+## POR ONDE COMEÇAR NA PRÓXIMA SESSÃO — a rodada real, e não há mais nada antes dela
 
-> O plano que estava aqui era o da sessão 77 (capturar o texto do n8n e recalibrar a régua). **Ele
-> foi executado** — a captura está versionada em `Dados de Teste/capturas/` e a régua ficou exata
-> nos 20 documentos de produção. O que sobrou não é engenharia.
+> **Os dois passos manuais que estavam aqui foram FEITOS em 02/09** (dono): as `0151`–`0156`
+> aplicadas no Supabase e o `workflow.e1-ingestao.json` reimportado no n8n. A conferência contra
+> produção voltou `APLICADA` nas seis e **`PODE RODAR`** nas três chamadas do workflow.
 
-**O repositório está pronto e medido. Entre ele e uma rodada que não morre há dois passos manuais,
-nenhum dos dois executável de dentro de uma sessão de agente.**
+**Não há mais nada de infraestrutura entre o repositório e o sistema.** O bloqueio do projeto
+voltou a ser o que o `MAPA_DE_EXECUCAO.md` sempre disse que era, e agora sem asterisco: **a
+rodada real (B1)** — uma hora de execução do dono, que nenhuma suíte substitui.
 
-### 1. Aplicar as seis migrations pendentes (`0151`–`0156`) no Supabase
+### O que fazer, na ordem (é o B1 do mapa)
 
-A lista de comandos está em `Supabase/README.md`. O ensaio de 02/09 provou que elas aplicam
-**limpas e em ordem** sobre um banco na `0150` (0 falhas), então o passo é mecânico.
+1. **Rodar o book num mandato NOVO** — não reaproveitar mandato existente: a `0118` deduplica por
+   fingerprint e o reenvio do mesmo PDF não chama mais a IA.
+2. **Exportar o completo.**
+3. **Passar o `auditar-xlsx.mts`** (10 itens automáticos) **e o `Arquitetura do Sistema/6 Referência/ACEITE.md`**
+   (10 itens humanos) por cima do arquivo **exportado da rodada**, não sobre fixture.
 
-**Confira DEPOIS de aplicar, e a conferência não é ler este arquivo:**
+As **onze coisas que só a rodada prova** estão listadas no `MAPA_DE_EXECUCAO.md` (B1). Três delas
+nunca viram dado real: o fatiamento ligado em produção, os subtotais impressos da `0116` e a árvore
+da seção da `0133` sobre PDF sujo.
+
+### Conferências que valem 30 segundos ANTES de subir documento
+
+Nenhuma é ler este arquivo — as duas respondem sobre o banco em que você está conectado:
 
 ```bash
 CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
-  node Supabase/test/conferir-chamadas.mjs
+  node Supabase/test/conferir-chamadas.mjs      # 0 resolve · 1 achei · 2 não consegui perguntar
 ```
-
-Ele responde sobre o banco em que você está de fato conectado, nomeia o nó de cada chamada que não
-resolve, e distingue três estados: **0** = tudo resolve · **1** = achei chamada quebrada · **2** =
-não consegui perguntar (que não é "passou"). Rode também a sonda, que responde a outra metade:
 
 ```sql
 select chave, migration, tipo, objeto, presente, detalhe, porque
   from fn_instalacao_conferir() where not presente order by 1;
 ```
 
-### 2. Reimportar o `N8N/workflow.e1-ingestao.json` no n8n
+### E o primeiro sinal a olhar QUANDO a rodada começar
 
-**O n8n executa o JSON importado, não o do repositório — e merge não reimporta.** O arquivo mudou
-em 01/09 e o nó **`Abrir Lote`** é novo: sem a reimportação, `lote_execucao` volta a só receber
-linha quando a cadeia termina, que é exatamente o defeito que a `0156` existe para corrigir (a
-rodada de 190 morreu e não deixou rastro).
-
-**Como saber que pegou:** rode e confira que `lote_execucao` ganhou linha com `fechado_em` **nulo**
-já no começo da rodada — é o sinal que a `0156` inventou para separar "começou e não terminou" de
-"nunca rodou". A sonda também cobra isso, pelo `comportamento` da `0115`.
-
-### 3. Só então: a rodada real (B1)
-
-Com 1 e 2 feitos, o bloqueio do projeto volta a ser o que o `MAPA_DE_EXECUCAO.md` diz que é — uma
-hora de execução do dono num mandato **novo**, seguida do `auditar-xlsx.mts` e do `ACEITE.md`
-sobre o arquivo exportado da rodada. As onze coisas que só a rodada prova estão listadas lá.
+`lote_execucao` tem de ganhar linha com **`fechado_em` nulo** logo no começo — é o que a `0156`
+inventou para separar "começou e não terminou" de "nunca rodou", e é também a prova de que a
+reimportação do workflow pegou. A rodada de 190 de 27/08 morreu sem deixar rastro justamente por
+não existir isso.
 
 ## A SESSÃO 75 (31/08) — o processo do agente vira parte do repositório
 

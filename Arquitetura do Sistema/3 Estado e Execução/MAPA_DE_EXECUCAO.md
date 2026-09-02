@@ -114,29 +114,20 @@ todas as suítes provam a ingestão sobre extração **fiel** — PDF gerado por
 layout conhecido. Todo defeito de leitura de documento *real* (scan torto, carimbo, coluna deslocada,
 escala mista) está fora do alcance de todas elas, por construção.
 
-### ANTES DE QUALQUER COISA: os dois passos manuais (medidos em 02/09, sessão 78)
+### Os dois passos manuais · **FEITOS em 02/09** (dono)
 
-**A rodada não começa sem estes dois, e nenhum é executável de dentro de uma sessão de agente.**
+Eles bloquearam o B1 e caíram no mesmo dia em que foram medidos:
 
-1. **Aplicar as `0151`–`0156` no Supabase.** Medido: num banco parado na `0150` — o estado que o
-   `ESTADO.md` declara para produção — **três chamadas de nó do `workflow.e1-ingestao.json` não
-   resolvem** (`fn_abrir_lote_execucao` da 0156, `fn_reconciliar_caso` da 0152 e
-   `fn_reconciliar_por_documento(uuid, unknown)` da 0152). `Abrir Lote` é o primeiro nó depois de
-   o orçamento aprovar o lote: **a rodada morre no começo.** E `fn_instalacao_conferir()` **não
-   acusa nenhuma das três** — o catálogo dela mora dentro do banco. Confira com o conferidor, que
-   nomeia o nó de cada chamada quebrada:
+1. **As `0151`–`0156` aplicadas no Supabase.** Conferido contra produção: as seis voltaram
+   `APLICADA`, e o veredito das três chamadas do workflow voltou **`PODE RODAR`** — inclusive a
+   assinatura nova de `fn_reconciliar_por_documento` (`p_escopo`), que é a que um teste por nome
+   daria como presente estando ausente.
+2. **O `workflow.e1-ingestao.json` reimportado no n8n.** O nó `Abrir Lote` é novo; sem a
+   reimportação, `lote_execucao` só receberia linha ao fim da cadeia.
 
-   ```bash
-   CONFERIR_PSQL="psql 'postgresql://…@…supabase.co:5432/postgres'" \
-     node Supabase/test/conferir-chamadas.mjs
-   ```
-
-   As seis foram ensaiadas aplicando **incrementalmente** sobre um banco na `0150`: **0 falhas**.
-
-2. **Reimportar o `N8N/workflow.e1-ingestao.json` no n8n.** Ele mudou em 01/09 e o nó `Abrir Lote`
-   é novo. **O n8n executa o JSON importado; merge não reimporta, e nada no CI acusa isso.** O
-   sinal de que pegou é por efeito: `lote_execucao` ganha linha com `fechado_em` **nulo** já no
-   começo da rodada.
+**Não há mais nada de infraestrutura entre o repositório e o sistema.** Confira em 30 segundos,
+antes de subir documento, com `Supabase/test/conferir-chamadas.mjs` apontado ao banco da rodada —
+a conferência que vale é a que se roda contra o banco em que se está conectado, nunca este arquivo.
 
 ### A ordem, e ela importa
 
