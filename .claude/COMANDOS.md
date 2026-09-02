@@ -4,6 +4,11 @@
 (MIT). **A primeira metade deste arquivo é o catálogo** — o que você provavelmente veio procurar.
 A segunda registra a procedência e as decisões, que se leem uma vez.
 
+> **Por que este arquivo mora em `.claude/` e não em `.claude/commands/`.** Todo `.md` dentro de
+> `commands/` vira um comando de barra, e o `README.md` virava um `/README` fantasma no menu — um
+> comando que, se alguém invocasse, carregaria este catálogo inteiro como prompt. Não quebrava
+> nada; poluía a lista e mentia sobre o que existe.
+
 > **O portão que importa** — todo `subagent_type` citado por um comando existe como agente
 > instalado. É o que roda no CI, e é o que impede que um comando quebre no meio da tarefa de
 > alguém:
@@ -15,8 +20,8 @@ A segunda registra a procedência e as decisões, que se leem uma vez.
 >
 > **Conferir se o catálogo abaixo ainda bate com o diretório** (índice à mão, dano só cosmético):
 > ```bash
-> diff <(grep -oE '^\| `/[a-z0-9-]+`' .claude/commands/README.md | tr -d '|` /' | sort -u) \
->      <(ls .claude/commands/*.md | xargs -n1 basename | grep -v README | sed 's/\.md//' | sort)
+> diff <(grep -oE '^\| `/[a-z0-9-]+`' .claude/COMANDOS.md | tr -d '|` /' | sort -u) \
+>      <(ls .claude/commands/*.md | xargs -n1 basename | sed 's/\.md//' | sort)
 > ```
 
 ---
