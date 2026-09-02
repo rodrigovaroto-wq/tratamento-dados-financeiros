@@ -170,10 +170,22 @@ order by
 `bloqueante` impede o aceite do mandato. `sobrepujavel` é a diferença entre "alguém decide e segue"
 e "não tem como seguir".
 
-### 3.4 — POR QUE cada documento falhou
+### 3.4 — POR QUE falhou: são DUAS perguntas diferentes, não uma
 
-**Rode sempre que `com_falha` da 3.1 for maior que zero.** As três consultas acima dizem *que*
-falhou; esta diz **por quê** — e é a única que traz o erro cru que o n8n capturou.
+**Não confunda as duas, e o `documentos_com_falha` da 3.1 responde só à segunda.** Medido em
+02/09, na primeira rodada real: `com_falha = 1` e a tabela de execução **vazia** — as duas coisas
+certas ao mesmo tempo.
+
+| Pergunta | Onde está | O que significa vir vazio |
+|---|---|---|
+| **(a)** Um nó do n8n morreu? | `execucao_falha` (3.4a) | **nenhum nó morreu** — é resposta, não ausência de dado |
+| **(b)** Um documento falhou na extração? | pendência `extracao_falhou` (3.4b) | nenhum documento falhou |
+
+`documentos_com_falha` é contado **pelo próprio n8n** (`if (e.falha_motivo) comFalha += 1`), a
+partir da extração de cada documento. Ele não olha `execucao_falha`, e a tabela pode estar vazia
+com `com_falha` alto: foi exatamente o que aconteceu.
+
+#### 3.4a — algum nó morreu?
 
 ```sql
 select
@@ -188,15 +200,33 @@ order by f.criado_em desc
 limit 50;
 ```
 
-**Este passo faltava na primeira versão deste arquivo, e a falta apareceu na primeira rodada
-real:** ela terminou com `com_falha = 1` e o runbook não dava caminho nenhum para descobrir qual
-documento nem por quê. A tabela existe desde a `0108`, é preenchida pelo nó `Registrar Recusa` da
-ingestão **e** pelo *Error Workflow* do n8n (`workflow.erros.json`) — ou seja, o dado sempre esteve
-lá; o que faltava era alguém perguntar.
+Vazio aqui é **boa notícia e resposta completa**: nenhum nó do n8n quebrou. Não filtra por
+mandato de propósito — falha de rodada anterior é contexto.
 
-Ela não filtra por mandato de propósito: **falha de rodada anterior é contexto**, e a rodada de
-190 documentos de 02/09 que terminou com 190 de 190 falhados é o exemplo de por quê — o motivo
-dela está nesta tabela e nunca foi lido.
+#### 3.4b — qual documento falhou na extração, e por quê
+
+```sql
+select
+  c.nome                                as mandato,
+  dv.nome_original                      as arquivo,
+  p.criada_em,
+  p.descricao,
+  left(coalesce(p.motivo, ''), 200)     as motivo
+from pendencia p
+join caso c on c.id = p.caso_id
+left join documento d on d.id = p.documento_id
+left join documento_versao dv on dv.documento_id = d.id
+where p.tipo = 'extracao_falhou'
+order by p.criada_em desc
+limit 60;
+```
+
+**É esta que responde ao `documentos_com_falha`.** A `descricao` traz o motivo por extenso, que o
+extrator escreveu: "não trouxe NENHUMA linha", "truncada por limite de tokens de saída
+(`finish_reason=length`)", "3 linhas repetidas na emenda entre blocos foram descartadas".
+
+Ela também não filtra por mandato, e é aqui — não na 3.4a — que se procura o motivo de uma rodada
+antiga que falhou em massa.
 
 ---
 
@@ -233,7 +263,8 @@ Numa mensagem só, com os títulos:
 <cole a tabela da 3.3>
 
 ## 3b. FALHAS   (só se com_falha > 0)
-<cole a tabela da 3.4>
+<cole a 3.4a e a 3.4b — as duas, mesmo que uma venha vazia:
+ vazio na 3.4a significa "nenhum nó morreu", e isso é informação>
 
 ## 4. O QUE EU VI
 <uma linha por coisa errada, com o ARQUIVO e o número CERTO>
