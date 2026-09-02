@@ -66,7 +66,7 @@ nada). Suba os documentos e espere terminar.
 
 ---
 
-## PASSO 3 — As três consultas, nesta ordem
+## PASSO 3 — As consultas, nesta ordem
 
 Todas são **só leitura** e acham sozinhas o mandato mais recente. Nada para editar.
 
@@ -170,6 +170,34 @@ order by
 `bloqueante` impede o aceite do mandato. `sobrepujavel` é a diferença entre "alguém decide e segue"
 e "não tem como seguir".
 
+### 3.4 — POR QUE cada documento falhou
+
+**Rode sempre que `com_falha` da 3.1 for maior que zero.** As três consultas acima dizem *que*
+falhou; esta diz **por quê** — e é a única que traz o erro cru que o n8n capturou.
+
+```sql
+select
+  f.caso_nome                              as mandato,
+  f.criado_em,
+  f.etapa,
+  left(f.mensagem, 300)                    as mensagem,
+  jsonb_pretty(f.detalhe)                  as detalhe,
+  case when f.visto_em is null then 'NAO VISTA' else 'vista' end as estado
+from execucao_falha f
+order by f.criado_em desc
+limit 50;
+```
+
+**Este passo faltava na primeira versão deste arquivo, e a falta apareceu na primeira rodada
+real:** ela terminou com `com_falha = 1` e o runbook não dava caminho nenhum para descobrir qual
+documento nem por quê. A tabela existe desde a `0108`, é preenchida pelo nó `Registrar Recusa` da
+ingestão **e** pelo *Error Workflow* do n8n (`workflow.erros.json`) — ou seja, o dado sempre esteve
+lá; o que faltava era alguém perguntar.
+
+Ela não filtra por mandato de propósito: **falha de rodada anterior é contexto**, e a rodada de
+190 documentos de 02/09 que terminou com 190 de 190 falhados é o exemplo de por quê — o motivo
+dela está nesta tabela e nunca foi lido.
+
 ---
 
 ## PASSO 4 — Exporte e ANEXE (aqui morava o terminal)
@@ -203,6 +231,9 @@ Numa mensagem só, com os títulos:
 
 ## 3. PENDÊNCIAS
 <cole a tabela da 3.3>
+
+## 3b. FALHAS   (só se com_falha > 0)
+<cole a tabela da 3.4>
 
 ## 4. O QUE EU VI
 <uma linha por coisa errada, com o ARQUIVO e o número CERTO>
