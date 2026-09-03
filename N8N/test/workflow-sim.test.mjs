@@ -1994,7 +1994,12 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   // workflow importado meses atrás): a guarda cai para contas distintas e se
   // comporta exatamente como antes da correção de unidade, em vez de medir zero.
   assert.match(doc1.falha_motivo, /Extração INCOMPLETA: 3 linha\(s\) devolvida\(s\).*154 linha\(s\)/);
-  assert.match(doc1.falha_motivo, /repetida\(s\) na emenda/);
+  // A emenda NÃO entra em `falha_motivo` mesmo aqui, onde há um motivo real
+  // (extração incompleta) ao lado dela — ela vira nota própria nos dois casos,
+  // com ou sem motivo real (ver o teste do lote 7377 abaixo).
+  assert.doesNotMatch(doc1.falha_motivo, /emenda/);
+  assert.equal(doc1.emendas_limpas, 1);
+  assert.match(doc1.nota_emenda, /repetida\(s\) na emenda/);
   assert.equal(doc1.cobertura, 0.019, '3 de 154, na unidade de CONTAS');
   assert.equal(doc1.contas_distintas, 3);
   // O custo dos blocos SOMA: um documento fatiado custou o que os pedaços dele
@@ -2008,6 +2013,73 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   assert.equal(doc2.falha_motivo, null);
   assert.equal(doc2.campos.length, 39);
   assert.equal(doc2.cobertura, 1);
+  // Nenhuma emenda agiu neste documento — a contagem e a nota dizem isso, em
+  // vez de simplesmente não aparecerem (regra 1: ausência não é dado).
+  assert.equal(doc2.emendas_limpas, 0);
+  assert.equal(doc2.nota_emenda, null);
+});
+
+test('Camada 3: emenda limpa SOZINHA não é falha — lote 7377, "teste Canastra" (02/09)', async () => {
+  // A rodada real: 17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf foi
+  // lido INTEIRO em 2 blocos (302 pares conta×coluna, 95 contas distintas,
+  // cobertura do lote 0,987). A ÚNICA coisa que aconteceu na costura foi 3
+  // linhas repetidas na âncora entre os blocos, descartadas — exatamente o que
+  // a emenda existe para fazer. Antes desta correção isso sozinho virava
+  // `falha_motivo` não-nulo, contava em `documentos_com_falha` do lote e abria
+  // `extracao_falhou` — a ÚNICA "falha" do lote era, na verdade, sucesso.
+  {
+    const linha = (k, v) => ({
+      ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null,
+    });
+    // 2 blocos de 50 linhas cada, com 3 linhas de emenda repetidas no início
+    // do bloco 2 (a cauda do bloco 1): 100 linhas no documento, 97 pares únicos.
+    const bloco1 = Array.from({ length: 50 }, (_, i) => ({ ...linha(`CONTA ${i}`, i), linha_origem: i }));
+    const cauda = bloco1.slice(-3).map((c, i) => ({ ...linha(c.chave, c.valor_num), linha_origem: i }));
+    const restoBloco2 = Array.from({ length: 47 }, (_, i) => ({ ...linha(`CONTA ${50 + i}`, 50 + i), linha_origem: 3 + i }));
+    const out = await run('Juntar Blocos', { items: [
+      { json: {
+        documento_versao_id: 'ver-7377', bloco: 1, blocos: 2, celulas_no_documento: 300, contas_no_documento: 97,
+        campos: bloco1, diagnostico: { entidade: 'Canastra Industria' }, falha_motivo: null,
+        custo_usd: 0.05, tokens: { entrada: 10, saida: 20, cache: 0 },
+      } },
+      { json: {
+        documento_versao_id: 'ver-7377', bloco: 2, blocos: 2, celulas_no_documento: 300, contas_no_documento: 97,
+        campos: [...cauda, ...restoBloco2], diagnostico: { entidade: 'Canastra Industria' }, falha_motivo: null,
+        custo_usd: 0.04, tokens: { entrada: 8, saida: 15, cache: 0 },
+      } },
+    ] });
+    const doc = out.find((i) => i.json.documento_versao_id === 'ver-7377').json;
+    assert.equal(doc.campos.length, 97, 'as 3 repetidas da emenda saem; as 97 reais ficam');
+    // O COMPORTAMENTO QUE ESTE TESTE PROTEGE: emenda limpa sozinha, sem nenhum
+    // outro problema, NÃO produz `falha_motivo` — nem `documentos_com_falha`
+    // nem `extracao_falhou` devem nascer de uma costura que funcionou.
+    assert.equal(doc.falha_motivo, null, 'com_falha=1 sobre zero problema real era o próprio defeito');
+    // E a informação não desaparece: ela muda de endereço, não de existência.
+    assert.equal(doc.emendas_limpas, 3);
+    assert.match(doc.nota_emenda, /3 linha\(s\) repetida\(s\) na emenda entre blocos foram descartadas/);
+
+    // O MESMO documento, mas agora com um motivo REAL ao lado (cobertura abaixo
+    // do limiar): `falha_motivo` tem de existir e trazer o motivo real — a
+    // emenda continua virando nota, nunca falha_motivo, mas o problema
+    // verdadeiro não pode ficar mudo por causa dela.
+    const outIncompleto = await run('Juntar Blocos', { items: [
+      { json: {
+        documento_versao_id: 'ver-7377b', bloco: 1, blocos: 2, celulas_no_documento: 300, contas_no_documento: 970,
+        campos: bloco1, diagnostico: { entidade: 'Canastra Industria' }, falha_motivo: null,
+        custo_usd: 0.05, tokens: { entrada: 10, saida: 20, cache: 0 },
+      } },
+      { json: {
+        documento_versao_id: 'ver-7377b', bloco: 2, blocos: 2, celulas_no_documento: 300, contas_no_documento: 970,
+        campos: [...cauda, ...restoBloco2], diagnostico: { entidade: 'Canastra Industria' }, falha_motivo: null,
+        custo_usd: 0.04, tokens: { entrada: 8, saida: 15, cache: 0 },
+      } },
+    ] });
+    const docIncompleto = outIncompleto.find((i) => i.json.documento_versao_id === 'ver-7377b').json;
+    assert.match(docIncompleto.falha_motivo, /Extração INCOMPLETA/, 'o motivo real continua produzindo falha_motivo');
+    assert.doesNotMatch(docIncompleto.falha_motivo, /emenda/, 'a emenda nunca entra em falha_motivo, mesmo ao lado de um motivo real');
+    assert.equal(docIncompleto.emendas_limpas, 3);
+    assert.match(docIncompleto.nota_emenda, /3 linha\(s\) repetida\(s\) na emenda entre blocos foram descartadas/);
+  }
 });
 
 test('Camada 3: o livro razão PERFEITO não vira pendência — a unidade é linha, não conta distinta', async () => {

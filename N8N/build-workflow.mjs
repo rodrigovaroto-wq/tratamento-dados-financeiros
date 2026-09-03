@@ -1062,7 +1062,30 @@ for(const [chave, blocos] of porDocumento){
        : (r.blocosPlanejados===1
           ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
           : ' (fatiado, e todos chegaram), entao o que falta nao e teto de uma chamada so nem bloco perdido -- e leitura parcial do modelo.')));
-  if(r.emendasLimpas>0) motivos.push(r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).');
+  // A EMENDA LIMPA NAO E' FALHA -- e' a costura fazendo exatamente o que ela
+  // existe para fazer. Ate a rodada do lote 7377 (02/09, "teste Canastra"),
+  // \`r.emendasLimpas>0\` sozinho virava \`motivos.push(...)\`, e qualquer motivo
+  // em \`motivos\` produz \`falha_motivo\` nao-nulo (abaixo) -- que por sua vez conta
+  // em \`documentos_com_falha\` do resumo do lote. O documento em questao foi lido
+  // INTEIRO em 2 blocos (302 pares conta x coluna, cobertura 0,987): a unica
+  // "falha" era a costura ter descartado 3 linhas repetidas na ancora, que e' o
+  // comportamento CORRETO. \`com_falha=1\` sobre zero problema real -- e
+  // \`documentos_com_falha\` deixa de ser sinal no momento em que passa a incluir
+  // sucesso.
+  //
+  // A informacao nao pode sumir (regra 1 do CLAUDE.md: ausencia nao e' dado) --
+  // so' muda de endereco. \`diagnostico\` foi descartado como destino: cada campo
+  // dele e' lido por NOME em \`Registrar Diagnostico\`
+  // (\`$json.diagnostico?.entidade\`, \`?.tipo_confirma\`, ... \`?.fatos\`) e nenhuma
+  // query repassa o objeto inteiro para o banco -- e' contrato fechado, campo
+  // por campo, e esticar significaria um campo que ninguem le OU mexer na
+  // query (proibido: SQL e' do outro agente). O lugar e' aqui no item, ao lado
+  // de \`blocos\`/\`blocos_planejados\`/\`contas_distintas\` -- os outros numeros que
+  // tambem so' viajam para instrumentar a proxima investigacao e nunca tocam o
+  // Postgres.
+  const notaEmenda=r.emendasLimpas>0
+    ? r.emendasLimpas+' linha(s) repetida(s) na emenda entre blocos foram descartadas (o modelo repetiu a ancora).'
+    : null;
   saida.push({pairedItem:{item:primeiroIndice.get(chave)??0}, json:{
     documento_versao_id,
     // Levado adiante pelo mesmo motivo do documento_versao_id: o Registrar
@@ -1087,6 +1110,11 @@ for(const [chave, blocos] of porDocumento){
     // do painel do lote conta o que chegou e chama isso de fatiamento -- que e o
     // mesmo defeito da pendencia, um nivel acima.
     blocos_planejados:r.blocosPlanejados,
+    // Contagem e nota da emenda, sempre presentes quando ela agiu -- mesmo
+    // junto de um motivo real (restricao: so' a emenda limpa sai de
+    // \`motivos\`; os outros continuam produzindo \`falha_motivo\`).
+    emendas_limpas:r.emendasLimpas,
+    nota_emenda:notaEmenda,
     celulas_no_documento:base.celulas_no_documento??null,
     contas_no_documento:base.contas_no_documento??null,
     contas_distintas:contasDistintas,
