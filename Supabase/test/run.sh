@@ -388,6 +388,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_v35.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o pronto da Modelagem exige cobertura, não só parâmetro (0158)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_pronto_exige_cobertura.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes de reconferir (0043: reaplicar as regras de hoje sobre o dado gravado)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/reconferir.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

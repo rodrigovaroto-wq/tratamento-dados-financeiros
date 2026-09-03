@@ -1609,9 +1609,23 @@ CREATE FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) RETURNS jsonb
     'linhas_sem_premissa', greatest((select count(*) from contas) - (select count(*) from vinculadas), 0),
     'vinculos_orfaos', to_jsonb(coalesce(
       (select array_agg(rotulo_norm order by rotulo_norm) from orfaos), array[]::text[])),
-    'pronto', (select j from param) is not null
-              and (select ativas from premissas) > 0
-              and coalesce(array_length((select sem_valor from premissas), 1), 0) = 0
+    -- 0158: a fração de linhas PROJETÁVEIS (papel='conta') que têm premissa —
+    -- mesmo denominador de `linhas_do_caso` (já exclui subtotal/serie_mensal/
+    -- derivado, contados à parte em `linhas_nao_projetaveis`). NULL, não
+    -- zero, quando o caso não tem linha projetável nenhuma: zero coberto de
+    -- zero possível não é a mesma coisa que zero coberto de 480 possíveis, e
+    -- fabricar um dos dois números pela ausência do outro é a regra 1.
+    'fracao_linhas_com_premissa',
+      case when (select count(*) from contas) > 0
+        then round((select count(*) from vinculadas)::numeric
+                    / (select count(*) from contas), 4)
+        else null
+      end,
+    'pronto', fn_modelagem_esta_pronta(
+      (select j from param) is not null,
+      (select ativas from premissas),
+      coalesce(array_length((select sem_valor from premissas), 1), 0),
+      (select count(*) from vinculadas))
   );
 $$;
 
@@ -1619,7 +1633,7 @@ $$;
 -- Name: FUNCTION fn_conferir_modelagem(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstico da Modelagem de um caso. Desde a 0134, premissa de `curva_mensal` (SAZONALIDADE, CRONOGRAMA_FISICO, PARADA_MANUTENCAO) NÃO conta como "sem valor": a curva dela é derivada do documento mensal por fn_sazonalidade_do_caso, não digitada, e cobrá-la travava o "pronto" com uma pendência sem ação possível. O caso ruim de verdade — curva ativa e caso sem documento mensal — ganhou nome próprio em `sazonalidade_sem_curva`, que informa e não bloqueia, porque os números ANUAIS continuam certos e só o rateio mensal fica liso.';
+COMMENT ON FUNCTION public.fn_conferir_modelagem(p_caso_id uuid) IS 'Diagnóstico da Modelagem de um caso. Desde a 0134, premissa de `curva_mensal` (SAZONALIDADE, CRONOGRAMA_FISICO, PARADA_MANUTENCAO) NÃO conta como "sem valor": a curva dela é derivada do documento mensal por fn_sazonalidade_do_caso, não digitada, e cobrá-la travava o "pronto" com uma pendência sem ação possível. O caso ruim de verdade — curva ativa e caso sem documento mensal — ganhou nome próprio em `sazonalidade_sem_curva`, que informa e não bloqueia, porque os números ANUAIS continuam certos e só o rateio mensal fica liso. Desde a 0158, `pronto` (fn_modelagem_esta_pronta) também exige que ALGUMA linha real esteja vinculada — parâmetros definidos e premissas com valor não bastam quando zero linha do caso foi de fato coberta, ou quando a cobertura é uma fração ínfima do total (medido: 23 de 480, Grupo Vertentes) — e o retorno ganha `fracao_linhas_com_premissa` para o portal poder mostrar QUANTO, não só "pronto"/"não pronto". `vinculos_orfaos` e `sazonalidade_sem_curva` continuam informando e não bloqueando: nenhum dos dois deixa um número do book errado.';
 
 --
 -- Name: fn_conflitos_do_caso(uuid, text, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -4978,6 +4992,33 @@ CREATE FUNCTION public.fn_min_motivo_rejeicao() RETURNS integer
 --
 
 COMMENT ON FUNCTION public.fn_min_motivo_rejeicao() IS 'Mínimo de caracteres do motivo de uma rejeição de pendência. Não é estética: rejeitar libera o Portão 2 sem teto, e motivo de duas letras é o que se escreve para tirar o vermelho da tela.';
+
+--
+-- Name: fn_modelagem_esta_pronta(boolean, bigint, integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_modelagem_esta_pronta(p_parametros_definidos boolean, p_premissas_ativas bigint, p_premissas_sem_valor integer, p_linhas_com_premissa bigint) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select
+    -- (a) 0134: sem parâmetro de modelagem não há o que exportar.
+    coalesce(p_parametros_definidos, false)
+    -- (b) 0134: nenhuma premissa ativa é caso ainda não começado.
+    and coalesce(p_premissas_ativas, 0) > 0
+    -- (c) 0134: premissa ativa sem valor projetaria com zero, calado.
+    and coalesce(p_premissas_sem_valor, 0) = 0
+    -- (d) 0158: e pelo menos UMA linha real do caso precisa estar, de fato,
+    -- vinculada a alguma dessas premissas — sem isso, (a)+(b)+(c) valem com
+    -- zero linha projetando e o "pronto" afirmava só que os parâmetros
+    -- existem, não que algo foi coberto.
+    and coalesce(p_linhas_com_premissa, 0) > 0;
+$$;
+
+--
+-- Name: FUNCTION fn_modelagem_esta_pronta(p_parametros_definidos boolean, p_premissas_ativas bigint, p_premissas_sem_valor integer, p_linhas_com_premissa bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_modelagem_esta_pronta(p_parametros_definidos boolean, p_premissas_ativas bigint, p_premissas_sem_valor integer, p_linhas_com_premissa bigint) IS '(0158) A decisão de "pronto" da Modelagem, isolada em função PURA para poder ser exercitada por literais (instalacao_sonda_modelagem_pronta), sem fixture de documento nem de caso. As três primeiras condições são da 0134 (parâmetros definidos, premissa ativa, nenhuma sem valor); a quarta (linhas_com_premissa > 0) é da 0158 — sem ela um caso com premissas configuradas e ZERO linha de fato vinculada (ou uma fração ínfima, como 23 de 480 medido no Grupo Vertentes) respondia "pronto" só porque os parâmetros existiam. Ela NÃO cobra fração mínima de cobertura: isso é limiar de negócio que ninguém mediu, e o número vai em fracao_linhas_com_premissa para o portal decidir como exibir. Também NÃO cobra vinculos_orfaos nem sazonalidade_sem_curva vazios — os dois continuam INFORMANDO no retorno de fn_conferir_modelagem, por desenho: nenhum dos dois torna um número do book ERRADO (o órfão não projeta nada porque não há linha do lado de cá; a curva sem documento mensal deixa o valor ANUAL certo, só lisa o rateio mensal — ver o cabeçalho da 0134).';
 
 --
 -- Name: fn_motivo_escala_incomparavel(text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11202,6 +11243,20 @@ CREATE VIEW public.instalacao_sonda_combinado_estrutural AS
 COMMENT ON VIEW public.instalacao_sonda_combinado_estrutural IS '(0157, achado D da revisão) Autoteste da decisão de fn_combinado_estrutural_apto, EXECUTADA por literais (função pura, sem fixture de documento): 1 linha só se o positivo, o achado A (conteúdo exigido) e o achado B (fonte permitida) valem TODOS ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos — esta view pega, porque o predicado É executado.';
 
 --
+-- Name: instalacao_sonda_modelagem_pronta; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_modelagem_pronta AS
+ SELECT 1 AS ok
+  WHERE ((public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (23)::bigint) = true) AND (public.fn_modelagem_esta_pronta(false, (6)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (0)::bigint, 0, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 1, (23)::bigint) = false) AND (public.fn_modelagem_esta_pronta(true, (6)::bigint, 0, (0)::bigint) = false));
+
+--
+-- Name: VIEW instalacao_sonda_modelagem_pronta; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_modelagem_pronta IS '(0158) Autoteste da decisão de fn_modelagem_esta_pronta, EXECUTADA por literais (função pura, sem fixture de caso nem documento): 1 linha só se o positivo e as quatro negações — sem parâmetro, sem premissa ativa, premissa sem valor, e ZERO linha vinculada — valem todas ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos; esta view pega, porque o predicado É executado (achado D da revisão da 0157).';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13370,6 +13425,12 @@ GRANT ALL ON FUNCTION public.fn_mes_do_rotulo(p_chave text) TO authenticated;
 GRANT ALL ON FUNCTION public.fn_min_motivo_rejeicao() TO authenticated;
 
 --
+-- Name: FUNCTION fn_modelagem_esta_pronta(p_parametros_definidos boolean, p_premissas_ativas bigint, p_premissas_sem_valor integer, p_linhas_com_premissa bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_modelagem_esta_pronta(p_parametros_definidos boolean, p_premissas_ativas bigint, p_premissas_sem_valor integer, p_linhas_com_premissa bigint) TO authenticated;
+
+--
 -- Name: FUNCTION fn_mudar_dial(p_estagio text, p_nivel public.nivel_autonomia, p_autor text, p_motivo text, p_limiar numeric, p_rodada_golden uuid, p_sem_medicao_porque text, p_por_veredito boolean); Type: ACL; Schema: public; Owner: -
 --
 
@@ -13911,6 +13972,14 @@ GRANT ALL ON TABLE public.instalacao_requisito TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_modelagem_pronta; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -

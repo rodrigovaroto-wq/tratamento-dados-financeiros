@@ -1,0 +1,60 @@
+// O veredito de "pronto para exportar" da Modelagem, com a FRAÇÃO de cobertura
+// ao lado — nunca escondida atrás do booleano.
+//
+// O DEFEITO (Supabase/migrations/0158_o_pronto_que_nao_provava_cobertura.sql):
+// `fn_conferir_modelagem` respondia `pronto: true` com 23 de 480 linhas
+// projetáveis de fato vinculadas a alguma premissa (medido no Grupo
+// Vertentes). A 0158 endureceu o BOOLEANO (`pronto` passou a exigir
+// `linhas_com_premissa > 0`) e publicou o NÚMERO que faltava,
+// `fracao_linhas_com_premissa` — mas um booleano mais duro continua sem
+// conseguir dizer "62% das contas projetam" versus "100%": as duas respostas
+// pintam o MESMO chip verde. Este arquivo é a metade que faltava: a
+// apresentação da fração junto do veredito, em `casos/[id]/modelagem/page.tsx`.
+//
+// `fracao_linhas_com_premissa` é OPCIONAL de duas formas diferentes, e as duas
+// caem no mesmo `null` aqui — nunca em `0` fabricado (regra 1 do CLAUDE.md):
+//   • a CHAVE pode não existir — banco sem a 0158 aplicada (o dono aplica
+//     migrations à mão; um banco atrasado é estado normal, não defeito);
+//   • a 0158 publica o valor `null` quando `linhas_do_caso` é zero — zero
+//     coberto de zero possível não é a mesma coisa que zero coberto de 480, e
+//     tratar os dois como "0%" seria o mesmo defeito da regra 1 uma casa
+//     adiante.
+// A mesma convenção de `perguntasSugeridas` em `casos/[id]/page.tsx:277`:
+// campo ausente ou de origem incerta vira `null`, e quem lê o `null` mostra o
+// que sabe sem inventar o que não sabe.
+
+export interface ConferenciaModelagemCobertura {
+  pronto: boolean;
+  fracao_linhas_com_premissa?: number | null;
+}
+
+/** A fração (0 a 1) medida pelo banco, como percentual inteiro — ou `null`
+ * quando o banco não a mediu (chave ausente) ou não pôde medi-la
+ * (`linhas_do_caso` zero). Nunca `0` por omissão. */
+export function fracaoPctDe(conf: ConferenciaModelagemCobertura | null | undefined): number | null {
+  return typeof conf?.fracao_linhas_com_premissa === "number"
+    ? Math.round(conf.fracao_linhas_com_premissa * 100)
+    : null;
+}
+
+/** O texto do chip da barra de título. Só o veredito `pronto` ganha a fração:
+ * é o caso que o defeito original pintava de verde plano, 23 de 480 incluído. */
+export function textoChipModelagem(conf: ConferenciaModelagemCobertura): string {
+  if (!conf.pronto) return "falta algo";
+  const pct = fracaoPctDe(conf);
+  return pct !== null ? `pronto — ${pct}% das contas projetam` : "pronto para exportar";
+}
+
+/** O título do bloco de conferência (seção 4). O par absoluto
+ * (`linhas_com_premissa` de `linhas_do_caso`) continua no item de lista logo
+ * abaixo — ele já existia antes da 0158 e não sai daqui, porque porcentagem
+ * sozinha esconde a ordem de grandeza (2 de 3 e 400 de 600 são os mesmos
+ * 67%). Este título é o mesmo texto de sempre, com a fração ao lado quando o
+ * banco a mede. */
+export function textoTituloConferenciaModelagem(conf: ConferenciaModelagemCobertura): string {
+  if (!conf.pronto) return "Ainda falta algo para o export de modelagem";
+  const pct = fracaoPctDe(conf);
+  return pct !== null
+    ? `Pronto para o export de modelagem — ${pct}% das contas projetam`
+    : "Pronto para o export de modelagem";
+}
