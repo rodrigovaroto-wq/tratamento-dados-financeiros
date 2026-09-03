@@ -1245,6 +1245,31 @@ end;
 $$;
 
 --
+-- Name: fn_combinado_estrutural_apto(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select
+    -- Achado B: só demonstração contábil PRIMÁRIA pode se apresentar em forma
+    -- combinada. DF_AUDITADA fica de fora de propósito — pergunta aberta do
+    -- dono, ver o cabeçalho da 0157.
+    p_tipo_fonte = any (array['DRE', 'BALANCO', 'FLUXO_CAIXA'])
+    -- Achado A: cabeçalho de várias empresas sem NENHUM número não é
+    -- combinado — é a sub-extração que a 0154 já mediu (40%-78% no
+    -- araucária). ">1", não ">0", pela mesma razão da 0155: duas colunas
+    -- iguais (comparativo de anos da mesma empresa) não é grupo.
+    and coalesce(p_empresas_com_valor, 0) > 1;
+$$;
+
+--
+-- Name: FUNCTION fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer) IS '(Revisão da 0157, achados A e B) Este par — tipo do documento-FONTE, quantas empresas têm VALOR extraído nas colunas (não só cabeçalho) — o torna apto a servir como o item COMBINADO do Kit Básico? Fonte precisa ser demonstração contábil PRIMÁRIA (DRE/BALANCO/FLUXO_CAIXA — DF_AUDITADA fica fora, decisão aberta do dono) E precisa haver mais de uma empresa com número de verdade. Função pura de propósito: a sonda de instalação a exercita por literais, sem fixture de documento (instalacao_sonda_combinado_estrutural) — um marcador textual não sobrevive a um "false and" que mate o predicado e deixe os comentários intactos; uma função executada, sim.';
+
+--
 -- Name: fn_conferir_arvore(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2371,6 +2396,43 @@ $_$;
 COMMENT ON FUNCTION public.fn_documento_preliminar(p_nome text) IS 'O nome do arquivo declara que o documento é preliminar/rascunho? Só REBAIXA autoridade (0151), nunca levanta: falso positivo custa um degrau e meio e fica escrito na pendência; falso negativo não muda nada.';
 
 --
+-- Name: fn_documento_serve_como(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo_taxonomia text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  select exists (
+    select 1 from documento d
+    where d.id = p_documento_id
+      and (
+        d.tipo_taxonomia = p_tipo_taxonomia
+        -- Revisão da 0157: aqui só se calcula o DADO que a decisão pede —
+        -- quantas empresas distintas têm valor_num extraído (não só
+        -- cabeçalho) na versão vigente. A decisão em si (fonte permitida +
+        -- limiar) mora em fn_combinado_estrutural_apto.
+        or (
+          p_tipo_taxonomia = 'COMBINADO'
+          and fn_combinado_estrutural_apto(
+                d.tipo_taxonomia,
+                (select count(distinct ce.entidade_coluna)::int
+                   from campo_extraido ce
+                  where ce.documento_versao_id = fn_versao_com_extracao(d.id)
+                    and ce.valor_num is not null
+                    and ce.entidade_coluna is not null)
+              )
+        )
+      )
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_documento_serve_como(p_documento_id uuid, p_tipo_taxonomia text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo_taxonomia text) IS 'Este documento satisfaz o item <tipo_taxonomia> do Kit Básico, mesmo que rotulado diferente? Regra do rótulo (tipo_taxonomia = codigo) OU, só para o código COMBINADO, a decisão de fn_combinado_estrutural_apto (revisão da 0157, achados A e B): fonte é demonstração contábil primária (DRE/BALANCO/FLUXO_CAIXA) E mais de uma empresa tem VALOR extraído nas colunas — não só cabeçalho. Não é fn_documento_de_varias_empresas (0155): aquela serve AUTORIDADE e não exige conteúdo; esta serve o checklist e exige. Medido no lote 7377 (mandato "teste Canastra"): dois documentos com 8 empresas na planilha, confiança 1,0, classificados de BALANCO, travavam o item COMBINADO como ausente e não-sobrepujável. A exceção NÃO generaliza para outros tipos-ALVO — de propósito, para o Kit Básico continuar exigindo o balanço individual mesmo com um combinado no caso.';
+
+--
 -- Name: fn_documentos_nao_extraidos(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2532,10 +2594,38 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
   -- descrevendo uma otimização que não acontece.
   with tipos_do_caso as materialized (
     select distinct d.tipo_taxonomia from documento d where d.caso_id = p_caso_id
+    union
+    -- Revisão da 0157 (achado C): quando NENHUM documento está rotulado
+    -- COMBINADO mas algum SERVE como COMBINADO por estrutura
+    -- (fn_documento_serve_como), o tipo precisa entrar aqui do mesmo jeito —
+    -- senão as exigências de linha do COMBINADO nunca aparecem no resultado
+    -- desta função: nem satisfeitas, nem ausentes, silêncio puro.
+    select 'COMBINADO'
+     where exists (
+       select 1 from documento d
+       where d.caso_id = p_caso_id and fn_documento_serve_como(d.id, 'COMBINADO')
+     )
   ),
+  -- Revisão da 0157 (achado C): "tem conteúdo" pergunta pelo tipo SERVIDO
+  -- (fn_documento_serve_como), com fn_linhas_do_tipo mantida como a resposta
+  -- para todo tipo que não seja COMBINADO — é a única exceção que
+  -- fn_documento_serve_como conhece, então nenhum outro tipo muda de
+  -- comportamento aqui. Para COMBINADO, soma-se um segundo caminho: qualquer
+  -- documento que SIRVA como COMBINADO e tenha rendido alguma linha.
   tipos_com_conteudo as (
     select t.tipo_taxonomia from tipos_do_caso t
     where fn_linhas_do_tipo(p_caso_id, t.tipo_taxonomia) > 0
+       or (
+         t.tipo_taxonomia = 'COMBINADO'
+         and exists (
+           select 1
+           from documento d
+           join documento_versao dv on dv.documento_id = d.id and dv.id = fn_versao_com_extracao(d.id)
+           join campo_extraido ce on ce.documento_versao_id = dv.id
+           where d.caso_id = p_caso_id
+             and fn_documento_serve_como(d.id, 'COMBINADO')
+         )
+       )
   ),
   -- A VERSÃO VIGENTE DE CADA DOCUMENTO, resolvida UMA vez (lição de custo da
   -- 0101), e — 0146 — QUANTAS COLUNAS DE ENTIDADE o documento declara.
@@ -2549,7 +2639,12 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
            v.versao,
            (select count(distinct ce.entidade_coluna) from campo_extraido ce
              where ce.documento_versao_id = v.versao and ce.valor_num is not null) > 1
-             as multi_entidade
+             as multi_entidade,
+           -- Revisão da 0157 (achado C): este documento SERVE como COMBINADO —
+           -- pelo rótulo ou pela estrutura (fn_documento_serve_como, que já
+           -- filtra fonte permitida e exige conteúdo — achados B e A).
+           -- Calculado uma vez por documento, não por linha extraída.
+           fn_documento_serve_como(d.id, 'COMBINADO') as serve_combinado
     from documento d
     left join entidade ent on ent.id = d.entidade_id
     cross join lateral (select fn_versao_com_extracao(d.id) as versao) v
@@ -2568,6 +2663,27 @@ CREATE FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) RETURNS TABLE(exige
     from docs dc
     join campo_extraido ce on ce.documento_versao_id = dc.versao
     where ce.valor_num is not null
+
+    union all
+
+    -- Revisão da 0157 (achado C): um documento rotulado diferente (ex.:
+    -- BALANCO) que SERVE como COMBINADO por estrutura entra AQUI TAMBÉM, sob
+    -- o tipo COMBINADO — ADITIVO, não substitui: ele continua contando para
+    -- o seu próprio tipo rotulado no ramo acima. Sem este ramo, as linhas
+    -- dele nunca casam contra `taxonomia_linha_exigida` de COMBINADO, e as
+    -- 3 exigências (ativo_total, caixa_e_equivalentes, passivo_mais_pl) ficam
+    -- mudas em vez de avaliadas — medido lado a lado contra o mesmo dado
+    -- rotulado COMBINADO, que abre a pendência normalmente.
+    select 'COMBINADO' as tipo_taxonomia,
+           ce.chave, ce.secao, ce.secao_canonica,
+           ce.periodo_coluna as coluna,
+           case when dc.multi_entidade then ce.entidade_coluna
+                else coalesce(ce.entidade_coluna, dc.ent_doc) end as ent_txt
+    from docs dc
+    join campo_extraido ce on ce.documento_versao_id = dc.versao
+    where ce.valor_num is not null
+      and dc.tipo_taxonomia <> 'COMBINADO'
+      and dc.serve_combinado
   ),
   -- O NOME vira ENTIDADE REGISTRADA uma vez por nome DISTINTO (lição da 0101:
   -- fn_mesma_entidade custa; pagar por ocorrência seria pagar 770 vezes por
@@ -2674,7 +2790,7 @@ $$;
 -- Name: FUNCTION fn_exigencias_do_caso(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), pela chave, pela seção, pela COLUNA (0145) ou pelo rótulo estrutural. Num documento que declara VÁRIAS colunas de entidade, a linha sem coluna não é atribuída à capa (0146) — é o que criava a entidade fantasma "GRUPO CANASTRA" devendo balanço. Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
+COMMENT ON FUNCTION public.fn_exigencias_do_caso(p_caso_id uuid) IS 'Exigências de linha aplicáveis ao caso (tipos presentes COM conteúdo), com satisfeita s/n. Casa contra a versão VIGENTE (0102), pela chave, pela seção, pela COLUNA (0145) ou pelo rótulo estrutural. Num documento que declara VÁRIAS colunas de entidade, a linha sem coluna não é atribuída à capa (0146). Desde a revisão da 0157 (achado C), um documento que SERVE como COMBINADO por estrutura (rotulado BALANCO/DRE/FLUXO_CAIXA, fn_documento_serve_como) tem suas linhas avaliadas TAMBÉM sob COMBINADO, além do seu próprio tipo rotulado — sem isso as 3 exigências do item (ativo_total, caixa_e_equivalentes, passivo_mais_pl) ficavam mudas assim que o passo 1 de fn_recomputar_completude parou de exigir o rótulo exato. Alimenta o passo 2b de fn_recomputar_completude e a tela do caso.';
 
 --
 -- Name: fn_falhas_abertas(text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
@@ -5942,13 +6058,20 @@ declare
   v_motivos_ausentes text[] := '{}';
   v_linhas_ausentes jsonb := '[]'::jsonb;
 begin
-  -- ----- (1) obrigatório sem NENHUM documento: igual à 0006 ------------------
+  -- ----- (1) obrigatório sem NENHUM documento QUE SIRVA (0006/0157) ----------
+  -- 0157: "sem documento" deixava de contar um documento que ESTÁ no caso só
+  -- porque o classificador o rotulou diferente do que ele estruturalmente é —
+  -- medido no lote 7377, dois COMBINADOs (8 empresas na planilha) chamados de
+  -- BALANCO travavam o item COMBINADO como ausente e bloqueante. Agora a
+  -- pergunta é fn_documento_serve_como(documento, tipo): a regra do rótulo,
+  -- mais — só para COMBINADO — a decisão de fn_combinado_estrutural_apto
+  -- (revisão da 0157, achados A e B: fonte permitida e conteúdo exigido).
   select array_agg(t.codigo order by t.codigo) into v_faltantes
   from taxonomia_tipo_documento t
   where t.obrigatoriedade = 'obrigatorio'
     and not exists (
       select 1 from documento d
-      where d.caso_id = p_caso_id and d.tipo_taxonomia = t.codigo
+      where d.caso_id = p_caso_id and fn_documento_serve_como(d.id, t.codigo)
     );
   v_faltantes := coalesce(v_faltantes, array[]::text[]);
 
@@ -6119,7 +6242,7 @@ $$;
 -- Name: FUNCTION fn_recomputar_completude(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0119 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede — motivo com sufixo canônico da entidade, entidade_id na pendência, descrição nomeando a empresa). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
+COMMENT ON FUNCTION public.fn_recomputar_completude(p_caso_id uuid) IS 'Portão 1 (chegada) + 0036 (recebido sem conteúdo) + 0113/0119 (passo 2b: linha exigida ausente, cobrada POR ENTIDADE quando o escopo pede) + 0157 (passo 1: "sem documento do tipo" vira "sem documento que SIRVA como o tipo" — fn_documento_serve_como aceita, só para COMBINADO, um documento estruturalmente combinado e com conteúdo (fn_combinado_estrutural_apto, achados A e B da revisão) classificado como BALANCO/DRE/FLUXO_CAIXA). Política por linha é do dono; default = importante/sobrepujável. `portao1_ok` segue "chegou tudo"; `pronto_para_revisao` segue "chegou tudo E tem conteúdo".';
 
 --
 -- Name: fn_reconciliar_arvore(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -11065,6 +11188,20 @@ COMMENT ON COLUMN public.instalacao_requisito.porque IS 'O SINTOMA VISÍVEL da a
 COMMENT ON COLUMN public.instalacao_requisito.marcador IS 'Para tipo=''corpo'': o TRECHO que precisa aparecer em pg_get_functiondef(objeto). É a única forma de a sonda distinguir uma função corrigida de uma função homônima com o corpo velho — e essa distinção é a maior parte do catálogo, porque a maioria das migrations recentes só republica corpo.';
 
 --
+-- Name: instalacao_sonda_combinado_estrutural; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_combinado_estrutural AS
+ SELECT 1 AS ok
+  WHERE ((public.fn_combinado_estrutural_apto('BALANCO'::text, 2) = true) AND (public.fn_combinado_estrutural_apto('DRE'::text, 3) = true) AND (public.fn_combinado_estrutural_apto('FLUXO_CAIXA'::text, 3) = true) AND (public.fn_combinado_estrutural_apto('BALANCO'::text, 0) = false) AND (public.fn_combinado_estrutural_apto('BALANCO'::text, 1) = false) AND (public.fn_combinado_estrutural_apto('MUTUOS'::text, 5) = false) AND (public.fn_combinado_estrutural_apto('DF_AUDITADA'::text, 5) = false));
+
+--
+-- Name: VIEW instalacao_sonda_combinado_estrutural; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_combinado_estrutural IS '(0157, achado D da revisão) Autoteste da decisão de fn_combinado_estrutural_apto, EXECUTADA por literais (função pura, sem fixture de documento): 1 linha só se o positivo, o achado A (conteúdo exigido) e o achado B (fonte permitida) valem TODOS ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos — esta view pega, porque o predicado É executado.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12897,6 +13034,12 @@ GRANT ALL ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_ca
 GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer) TO authenticated;
+
+--
 -- Name: FUNCTION fn_conferir_arvore(p_documento_versao_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -12991,6 +13134,12 @@ GRANT ALL ON FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid
 --
 
 GRANT ALL ON FUNCTION public.fn_documento_preliminar(p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_documento_serve_como(p_documento_id uuid, p_tipo_taxonomia text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo_taxonomia text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_documentos_nao_extraidos(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
@@ -13754,6 +13903,14 @@ GRANT ALL ON TABLE public.instalacao_cobertura TO service_role;
 GRANT ALL ON TABLE public.instalacao_requisito TO anon;
 GRANT ALL ON TABLE public.instalacao_requisito TO authenticated;
 GRANT ALL ON TABLE public.instalacao_requisito TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_combinado_estrutural; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -

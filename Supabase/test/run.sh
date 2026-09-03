@@ -280,6 +280,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/autoridade_combinado.test.sql 
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== o Kit Básico aceita o COMBINADO por estrutura (0157: o rótulo BALANCO não trava mais o item)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/kit_basico_combinado_estrutural.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== a entidade AMBÍGUA (0153: o nome que casa com duas empresas não identifica nenhuma)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_ambigua.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

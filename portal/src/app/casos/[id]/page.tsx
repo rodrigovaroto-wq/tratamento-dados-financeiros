@@ -19,6 +19,7 @@ import { ItemPendencia } from "./Pendencia";
 import { ExcluirMandato } from "@/components/excluir-mandato";
 import { humanizar, suavizarMensagem } from "@/lib/rotulos";
 import { formatarPeriodo, formatarTipoTaxonomia } from "@/lib/export";
+import { itensDoKitBasicoAtendidos, type ServicoDocumentoServeComo } from "@/lib/kit-basico";
 
 const LEGIBILIDADE_LABEL: Record<string, string> = {
   degradado: "qualidade degradada",
@@ -222,7 +223,32 @@ export default async function CasoDashboardPage({
   const documentos = documentosRes.data;
   const pendencias = pendenciasRes.data;
 
-  const tiposPresentes = new Set(documentos.map((d) => d.tipo_taxonomia).filter(Boolean));
+  // 0157 (Supabase/migrations/0157_o_combinado_que_travava_o_kit_basico.sql):
+  // esta tela perguntava sozinha, comparando `tipo_taxonomia === codigo`, se
+  // um item do Kit Básico estava presente — a MESMA regra que
+  // `fn_recomputar_completude` passo (1) usava até a 0157 trocá-la, no banco,
+  // por `fn_documento_serve_como` (rótulo OU, só para COMBINADO, estrutura —
+  // `fn_documento_de_varias_empresas`, 0155). Com a implementação antiga
+  // ainda aqui, o lote 7377 media o Portão 1 aberto (a pendência
+  // `item_faltante: COMBINADO` resolvida) e, na mesma tela, a grade do Kit
+  // Básico desenhando COMBINADO em cinza — a MESMA verdade discordando de si
+  // mesma. `itensDoKitBasicoAtendidos` pergunta ao banco pelos itens que o
+  // rótulo não resolveu (`servicoDocumentoServeComo` abaixo); não reimplementa
+  // `fn_documento_de_varias_empresas` em TypeScript — isso seria trocar uma
+  // segunda regra por outra mais nova.
+  const servicoDocumentoServeComo: ServicoDocumentoServeComo = async (documentoId, tipoTaxonomia) => {
+    const { data, error } = await supabase.rpc("fn_documento_serve_como", {
+      p_documento_id: documentoId,
+      p_tipo_taxonomia: tipoTaxonomia,
+    });
+    // TOLERANTE A ERRO pela mesma razão de `fn_sugerir_perguntas`/`fn_fatos_do_caso`
+    // acima: o dono aplica migrations à mão, e um banco sem a 0157 é estado
+    // normal, não defeito. Sem a função, a resposta é a mesma de ANTES da
+    // 0157 — só o rótulo conta — e nunca "satisfeito" por invenção do portal.
+    if (error) return false;
+    return data === true;
+  };
+  const kitAtendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, servicoDocumentoServeComo);
   // Chegou, mas não rendeu uma linha: nem verde nem faltante — é o
   // `recebido_nao_valido` de `Arquitetura do Sistema/3 Estado e Execução/07`, e é bloqueante para o Portão 2.
   // Os fatos materiais. `?? []` e não `!`: banco sem a 0148 devolve erro e
@@ -320,7 +346,7 @@ export default async function CasoDashboardPage({
   ).length;
   const abertas = pendencias.filter(emAberto).length;
   const kitPresentes = kitBasico.filter(
-    (i) => tiposPresentes.has(i.codigo) && !tiposSemConteudo.has(i.codigo),
+    (i) => kitAtendidos.has(i.codigo) && !tiposSemConteudo.has(i.codigo),
   ).length;
   // Documento que chegou, foi classificado e não rendeu UMA linha. É o que o
   // `fn_conferir_lote` mede do lado do banco; aqui ele vira número de topo,
@@ -548,7 +574,7 @@ export default async function CasoDashboardPage({
             // linha. O documento que chegou vazio fica âmbar — não verde, porque
             // o book sai vazio nessa parte, e não "faltante", porque o arquivo
             // está lá e pedi-lo de novo ao cliente seria pedir o que ele mandou.
-            const presente = tiposPresentes.has(item.codigo) && !semConteudo;
+            const presente = kitAtendidos.has(item.codigo) && !semConteudo;
             const cor = presente
               ? "border-ok-200 bg-ok-50/60"
               : semConteudo

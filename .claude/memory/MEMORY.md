@@ -37,6 +37,10 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [Portão calibra sobre a entrada de PRODUÇÃO](portao-mede-a-entrada-de-producao.md) — o texto
   que o n8n extrai não é o de nenhum extrator local: +3% no portão, 161% de erro em produção
 
+- [Agente interrompido deixa a correção DESLIGADA](agente-morto-deixa-a-correcao-desligada.md) —
+  um `false and` no meio da expressão, o arquivo com cara de pronto; e não rode a suíte enquanto
+  um agente tem a árvore (medi um arquivo e li outro, 43 segundos de diferença)
+
 ## Armadilhas de ferramenta (custaram tempo real)
 
 - [`git checkout <arquivo>` apaga trabalho não commitado](git-checkout-apaga-trabalho.md) — copie

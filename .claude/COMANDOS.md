@@ -4,14 +4,25 @@
 (MIT). **A primeira metade deste arquivo é o catálogo** — o que você provavelmente veio procurar.
 A segunda registra a procedência e as decisões, que se leem uma vez.
 
-> **Conferir se este catálogo ainda bate com o diretório** (list de baixo contra os arquivos):
+> **Por que este arquivo mora em `.claude/` e não em `.claude/commands/`.** Todo `.md` dentro de
+> `commands/` vira um comando de barra, e o `README.md` virava um `/README` fantasma no menu — um
+> comando que, se alguém invocasse, carregaria este catálogo inteiro como prompt. Não quebrava
+> nada; poluía a lista e mentia sobre o que existe.
+
+> **O portão que importa** — todo `subagent_type` citado por um comando existe como agente
+> instalado. É o que roda no CI, e é o que impede que um comando quebre no meio da tarefa de
+> alguém:
 > ```bash
-> diff <(grep -oE '^\| `/[a-z0-9-]+`' .claude/commands/README.md | tr -d '|` /' | sort -u) \
->      <(ls .claude/commands/*.md | xargs -n1 basename | grep -v README | sed 's/\.md//' | sort)
+> node .claude/verificar-comandos.mjs
 > ```
-> Saída vazia = em dia. Este arquivo é escrito à mão, então ele **pode** envelhecer — a diferença
-> para o resto do repositório é que aqui envelhecer não causa dano silencioso, só uma linha a
-> menos no índice.
+> **Medido na primeira execução dele: 57 citações não resolviam, 30 nomes distintos, em 13
+> comandos.** Hoje: `comandos OK`.
+>
+> **Conferir se o catálogo abaixo ainda bate com o diretório** (índice à mão, dano só cosmético):
+> ```bash
+> diff <(grep -oE '^\| `/[a-z0-9-]+`' .claude/COMANDOS.md | tr -d '|` /' | sort -u) \
+>      <(ls .claude/commands/*.md | xargs -n1 basename | sed 's/\.md//' | sort)
+> ```
 
 ---
 
@@ -43,8 +54,8 @@ A segunda registra a procedência e as decisões, que se leem uma vez.
 |---|---|
 | `/smart-debug` | Depurar com análise de causa raiz ⚠️ |
 | `/smart-fix` | Diagnosticar e corrigir, com verificação da correção ⚠️ |
-| `/debug-trace` | Instrumentar: breakpoints, tracing, logs ⚠️ |
-| `/error-analysis` | Analisar um erro e propor resolução ⚠️ |
+| `/debug-trace` | Instrumentar: breakpoints, tracing, logs |
+| `/error-analysis` | Analisar um erro e propor resolução |
 | `/error-trace` | Montar rastreamento e monitoramento de erro |
 | `/incident-response` | Conduzir incidente com práticas de SRE ⚠️ |
 
@@ -106,7 +117,7 @@ A segunda registra a procedência e as decisões, que se leem uma vez.
 | Comando | Para quê |
 |---|---|
 | `/doc-generate` | Gerar documentação a partir do código |
-| `/c4-architecture` | Documentar arquitetura no modelo C4 |
+| `/c4-architecture` | Documentar arquitetura no modelo C4 ⚠️ |
 | `/context-save` | Salvar o contexto da sessão |
 | `/context-restore` | Retomar contexto salvo |
 
@@ -121,10 +132,12 @@ A segunda registra a procedência e as decisões, que se leem uma vez.
 
 ### As duas marcas do catálogo
 
-**⚠️ — os 14 que orquestram.** Eles mandam despachar para agentes que **não existem aqui**
-(`code-reviewer`, `backend-architect`, `debugger`…) e por isso abrem com um aviso. Use os sete
-agentes deste projeto (`.claude/agents/`, listados no `CLAUDE.md`). Despacho para `subagent_type`
-inexistente falha.
+**⚠️ — os 13 que ORQUESTRAM.** Eles não fazem o trabalho: despacham para subagentes. Até 02/09
+esses subagentes **não existiam aqui** e o comando morria em `Agent type not found` no meio da
+tarefa de alguém — 57 citações quebradas, medidas pelo portão acima. **Os 30 agentes citados foram
+instalados** (ver "Os agentes importados", abaixo), então hoje eles rodam. Continue preferindo os
+sete agentes do projeto quando a tarefa for do projeto: o importado não conhece nenhuma das sete
+regras do `CLAUDE.md`.
 
 **Dois merecem cautela extra, e não é sobre agente ausente:** `/full-review` e `/refactor-clean`
 funcionam, mas não conhecem a lente central deste projeto. A revisão daqui é a do
@@ -168,19 +181,63 @@ item 2, inserido no topo, virou a descrição de 17 comandos, e o menu passou a 
 mesmo parágrafo em vez do nome de cada um. Com `description:` no frontmatter, o aviso pode ficar
 onde for mais legível sem sequestrar nada.
 
-**2. O aviso nos 14 marcados com ⚠️ no catálogo.**
+**2. O aviso nos comandos que orquestram.** O catálogo marcava 14, e estava errado em três: `/debug-trace` e `/error-analysis` não despacham para agente nenhum, e `/c4-architecture` despacha para quatro e não estava marcado. Corrigido em 02/09, quando o portão leu os arquivos em vez de acreditar no índice.
 
-### Por que os agentes NÃO vieram junto, e é decisão revisável
+### Os agentes importados — 30, e por que a decisão de 02/09 foi revertida
 
-Este projeto tem sete agentes próprios, em português, com regras que o `CLAUDE.md` define —
-inclusive a de que **quem escreveu a mudança não a revisa** e a de que **nível de modelo é
-escolhido por despacho, nunca herdado por acidente**. Instalar um `code-reviewer` genérico ao lado
-do `revisor-defeito-silencioso` não acrescenta cobertura: cria dois candidatos para a mesma
-pergunta, e o despacho passa a depender de qual descrição casa melhor com a frase do dia.
+**Esta seção substitui a que dizia "os agentes NÃO vieram junto".** Aquela decisão estava certa
+sobre o risco e errada sobre o custo: ela deixou 13 comandos que **falham em execução**, e um
+comando que falha só quando alguém o usa é pior do que comando nenhum. O dono pediu que todos
+funcionem. Funcionam.
 
-O que os agentes genéricos cobririam de verdade são lacunas (`database-optimizer`,
-`performance-engineer`, `security-auditor`). **Se um dia isso fizer falta, instale o agente
-específico** de `plugins/<nome>/agents/`, um a um e com o motivo escrito — não o pacote.
+| Comando | Agentes que ele despacha |
+|---|---|
+| `/c4-architecture` | `c4-code`, `c4-component`, `c4-container`, `c4-context` |
+| `/data-driven-feature` | `data-engineer`, `data-engineering-backend-architect` |
+| `/feature-development` | `backend-development-backend-architect`, `-performance-engineer`, `-security-auditor`, `-test-automator` |
+| `/full-review` | `comprehensive-review-architect-review`, `-code-reviewer`, `-security-auditor` |
+| `/git-workflow` | `git-pr-workflows-code-reviewer` |
+| `/incident-response` | `incident-responder`, `incident-response-debugger`, `-devops-troubleshooter` |
+| `/legacy-modernize` | `framework-migration-architect-review`, `-legacy-modernizer` |
+| `/performance-optimization` | `application-performance-frontend-developer`, `-observability-engineer`, `-performance-engineer` |
+| `/security-hardening` | `security-scanning-security-auditor`, `threat-modeling-expert` |
+| `/smart-debug` | `debugging-toolkit-debugger` |
+| `/smart-fix` | `incident-response-code-reviewer`, `-debugger`, `-error-detective`, `-test-automator` |
+| `/tdd-cycle` | `tdd-workflows-code-reviewer` |
+| `/tdd-refactor` | `tdd-workflows-tdd-orchestrator` |
+
+Os arquivos são `.claude/agents/importado.*.md` — o prefixo é só do NOME DO ARQUIVO, para que os
+sete agentes do projeto continuem visíveis num `ls`. **Quem decide o despacho é o `name:` do
+frontmatter**, que é o nome que o comando cita.
+
+#### As quatro coisas alteradas na cópia, e por quê
+
+1. **O nome ficou o do marketplace** (`security-scanning-security-auditor`, e não
+   `security-auditor`). Feio de propósito: ele diz de qual plugin veio, e evita a escolha
+   silenciosa. Os mesmos "papéis" têm CORPOS DIFERENTES conforme o plugin — o `security-auditor`
+   do `backend-development` tem 41 linhas e o do `security-scanning` tem 156. Instalar um só sob o
+   nome curto trocaria o agente de dois comandos sem ninguém ver.
+2. **`model: inherit` virou `model: sonnet`** em 5 deles. O `CLAUDE.md` diz que nível de modelo é
+   escolhido por despacho e **nunca herdado por acidente**, e `inherit` é literalmente o acidente.
+   Os outros 25 já vinham com apelido explícito (`opus` 10, `sonnet` 13, `haiku` 1, `fable` 1) —
+   apelido, nunca ID fixado, pelo mesmo motivo da tabela acima.
+3. **A `description:` perdeu o "Use PROACTIVELY"** e ganhou, na frente, a marca dizendo que o
+   agente é importado e que a revisão que vale aqui é a do `revisor-defeito-silencioso`. Sem isso
+   eles competiriam com os sete agentes do projeto no despacho automático — que era exatamente o
+   risco que a decisão antiga apontou, e que continua real. A marca não elimina o risco; **reduz**.
+4. **Os quatro `c4-*` perderam o prefixo `c4-architecture::`** nas cinco citações do
+   `/c4-architecture`. Aquela grafia é do marketplace e não resolve fora dele; o `name:` desses
+   arquivos sempre foi `c4-code`, `c4-component`, `c4-container`, `c4-context`.
+
+#### O que continua valendo da decisão antiga
+
+O risco que ela nomeou **não sumiu**: um `code-reviewer` genérico ao lado do
+`revisor-defeito-silencioso` cria dois candidatos para a mesma pergunta. A regra fica escrita, e
+está também no `CLAUDE.md`:
+
+> **Trabalho deste projeto vai para os sete agentes de `.claude/agents/`.** Os `importado.*` só
+> entram por despacho explícito de um comando de barra. Nenhum deles conhece as sete regras, nem
+> a régua da cobertura, nem a doutrina de nunca apresentar ausência como dado.
 
 ### O que ficou de fora, e por quê
 
