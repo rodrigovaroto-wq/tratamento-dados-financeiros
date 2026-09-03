@@ -44,6 +44,12 @@ import {
 let falhas = 0;
 let passou = 0;
 
+// O Sonar cobra `typescript:S2301` aqui ("não decida ação por parâmetro
+// booleano"). Fica como está DE PROPÓSITO, pela mesma razão já escrita em
+// `verificar-kit-basico.mts`: é a assinatura de `verificar-premissas-do-realizado.mts:37`,
+// caractere por caractere, e é a convenção dos seis `verificar-*.mts`. Partir um
+// helper de assert em dois métodos deixaria cada teste menos legível para
+// satisfazer uma regra escrita para código de produção.
 function ok(cond: boolean, nome: string, detalhe?: string) {
   if (cond) {
     passou += 1;
