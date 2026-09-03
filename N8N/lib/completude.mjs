@@ -30,6 +30,16 @@ import { KIT_BASICO, NAO_SOBREPUJAVEIS } from './taxonomia.mjs';
 // presentes:   códigos de taxonomia já classificados/confirmados no caso.
 // semConteudo: subconjunto de `presentes` cujos documentos não renderam NENHUMA
 //              linha extraída (em nenhuma versão).
+// ATENÇÃO (Supabase/migrations/0157): esta função decide presença por
+// `setPresentes.has(codigo)` — a regra do RÓTULO EXATO que a 0157 aboliu no
+// banco (fn_documento_serve_como aceita, só para COMBINADO, um documento
+// estruturalmente combinado e com conteúdo classificado de BALANCO/DRE/
+// FLUXO_CAIXA). Ela NÃO foi reescrita para acompanhar isso de propósito: o
+// único chamador desta função é o teste dela mesma — quem grava de verdade é
+// o n8n chamando `fn_recomputar_completude` no banco, que já tem a regra
+// nova. Reescrever aqui sem religar o caller criaria uma segunda fonte de
+// verdade que nunca é exercitada em produção. Se um dia este arquivo passar
+// a alimentar decisão real, é isto que precisa mudar primeiro.
 export function computeCompletude(presentes, opts = {}) {
   const kit = opts.kitBasico || KIT_BASICO;
   const naoSobrepujaveis = opts.naoSobrepujaveis || NAO_SOBREPUJAVEIS;
