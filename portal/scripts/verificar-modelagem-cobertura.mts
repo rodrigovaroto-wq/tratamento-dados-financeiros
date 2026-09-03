@@ -1,0 +1,115 @@
+/**
+ * Verificação de que o veredito "pronto" da Modelagem mostra a FRAÇÃO de
+ * cobertura, não só o booleano (Supabase/migrations/0158, metade do portal)
+ * (roda com `./node_modules/.bin/tsx scripts/verificar-modelagem-cobertura.mts`).
+ *
+ * O DEFEITO, medido no fixture Vertentes ANTES da 0158: `fn_conferir_modelagem`
+ * respondia `pronto: true` com `linhas_com_premissa: 23` de
+ * `linhas_do_caso: 480` — 23 de 480 linhas projetáveis de fato vinculadas a
+ * alguma premissa. O portal pintava um chip VERDE "pronto para exportar"
+ * (`casos/[id]/modelagem/page.tsx`, então linha 401-402) sobre esse booleano.
+ * A 0158 endureceu o booleano (`pronto` passa a exigir `linhas_com_premissa >
+ * 0`) e publicou `fracao_linhas_com_premissa` — mas um booleano mais duro
+ * ainda pinta o MESMO verde para 62% e para 100% de cobertura: só o NÚMERO
+ * ao lado do veredito resolve isso, e essa metade é do portal, não do banco.
+ *
+ * O invariante que este arquivo prova, em COMPORTAMENTO — contra
+ * `lib/modelagem-cobertura.ts`, a mesma função que `modelagem/page.tsx`
+ * chama para desenhar o chip e o título do bloco de conferência, nunca uma
+ * reimplementação do texto aqui:
+ *
+ *  1. Veredito `pronto` com fração BAIXA mostra a fração no chip e no título
+ *     — não some atrás do "pronto".
+ *  2. Veredito `pronto` com fração ALTA (100%) produz um texto DIFERENTE do
+ *     de fração baixa — os dois casos que o defeito original pintava
+ *     idênticos deixam de parecer o mesmo caso.
+ *  3. Fração AUSENTE (chave nem existe — banco sem a 0158 aplicada) faz a
+ *     tela voltar ao texto de ANTES da 0158: só o veredito, nunca um "0%"
+ *     fabricado pela ausência.
+ *  4. Fração `null` (0158 aplicada, mas `linhas_do_caso` é zero — zero
+ *     coberto de zero possível) cai no MESMO texto do item 3, pela mesma
+ *     razão: não é medição de zero, é ausência de medição.
+ *  5. Veredito `falta algo` (não pronto) nunca mostra fração — o caso que o
+ *     defeito original não afetava (o chip já era vermelho) continua sem
+ *     ganhar um número que ninguém pediu.
+ */
+
+import {
+  fracaoPctDe,
+  textoChipModelagem,
+  textoTituloConferenciaModelagem,
+  type ConferenciaModelagemCobertura,
+} from "../src/lib/modelagem-cobertura.ts";
+
+let falhas = 0;
+let passou = 0;
+
+function ok(cond: boolean, nome: string, detalhe?: string) {
+  if (cond) {
+    passou += 1;
+    console.log(`  ok    ${nome}`);
+  } else {
+    falhas += 1;
+    const sufixo = detalhe ? " — " + detalhe : "";
+    console.error(`  FALHOU: ${nome}${sufixo}`);
+  }
+}
+
+console.log("--- 1. pronto com fração baixa: a fração aparece, não some atrás do 'pronto' ---");
+{
+  // 0,048 = 23 / 480, o número medido no Grupo Vertentes (cabeçalho da 0158).
+  const conf: ConferenciaModelagemCobertura = { pronto: true, fracao_linhas_com_premissa: 0.048 };
+  const chip = textoChipModelagem(conf);
+  const titulo = textoTituloConferenciaModelagem(conf);
+  ok(chip.includes("5%"), "o chip carrega o percentual (23 de 480 arredonda a 5%)", chip);
+  ok(chip !== "pronto para exportar", "o chip NÃO é mais o texto plano — o defeito original", chip);
+  ok(titulo.includes("5%"), "o título do bloco de conferência também carrega o percentual", titulo);
+}
+
+console.log("--- 2. pronto com fração alta (100%) produz texto DIFERENTE do de fração baixa ---");
+{
+  const baixa: ConferenciaModelagemCobertura = { pronto: true, fracao_linhas_com_premissa: 0.048 };
+  const alta: ConferenciaModelagemCobertura = { pronto: true, fracao_linhas_com_premissa: 1 };
+  ok(textoChipModelagem(baixa) !== textoChipModelagem(alta),
+    "23 de 480 e 480 de 480 pintavam o MESMO chip antes desta correção — agora o texto diverge",
+    `baixa=${textoChipModelagem(baixa)} alta=${textoChipModelagem(alta)}`);
+  ok(textoTituloConferenciaModelagem(baixa) !== textoTituloConferenciaModelagem(alta),
+    "o título do bloco também diverge entre 5% e 100%");
+  ok(textoChipModelagem(alta).includes("100%"), "a fração alta aparece por extenso, não só 'pronto'");
+}
+
+console.log("--- 3. fração AUSENTE (banco sem a 0158): volta ao texto de antes, sem 0% fabricado ---");
+{
+  // A chave nem existe no objeto — é exatamente o que um banco sem a 0158
+  // devolve (RPC mais antiga), e é diferente de `fracao_linhas_com_premissa:
+  // 0` (que SERIA uma medição real de zero).
+  const conf = { pronto: true } as ConferenciaModelagemCobertura;
+  ok(fracaoPctDe(conf) === null, "fração ausente vira `null`, nunca `0`");
+  ok(textoChipModelagem(conf) === "pronto para exportar",
+    "sem a 0158, o chip é o texto de sempre — nenhum percentual inventado");
+  ok(textoTituloConferenciaModelagem(conf) === "Pronto para o export de modelagem",
+    "sem a 0158, o título do bloco também é o texto de sempre");
+}
+
+console.log("--- 4. fração `null` (0158 aplicada, linhas_do_caso = 0): mesmo texto do item 3 ---");
+{
+  const conf: ConferenciaModelagemCobertura = { pronto: true, fracao_linhas_com_premissa: null };
+  ok(fracaoPctDe(conf) === null,
+    "zero coberto de zero possível não é medição — cai em `null`, igual à chave ausente");
+  ok(textoChipModelagem(conf) === "pronto para exportar",
+    "`null` explícito do banco produz o MESMO texto que a chave ausente — a tela não distingue "
+    + "'não sei medir' de 'meço uma ausência', porque as duas são a mesma ausência de dado");
+}
+
+console.log("--- 5. não pronto: nunca mostra fração, mesmo que o banco a tenha medido ---");
+{
+  const conf: ConferenciaModelagemCobertura = { pronto: false, fracao_linhas_com_premissa: 0.62 };
+  ok(textoChipModelagem(conf) === "falta algo",
+    "o chip de 'falta algo' não ganha percentual — o defeito original nunca o pintou de verde");
+  ok(textoTituloConferenciaModelagem(conf) === "Ainda falta algo para o export de modelagem",
+    "o título do bloco de 'falta algo' também fica como sempre foi");
+}
+
+console.log(`\n${passou} asserts passaram, ${falhas} falharam`);
+if (falhas > 0) process.exit(1);
+console.log("MODELAGEM COBERTURA OK — o veredito 'pronto' não pinta 5% e 100% do mesmo verde");

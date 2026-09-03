@@ -7,6 +7,7 @@ import { FormParametros, FormPremissa } from "./FormsTopo";
 import { SugestoesDoRealizado } from "./SugestoesDoRealizado";
 import { sugerirDoRealizado } from "@/lib/premissas-do-realizado";
 import { chaveDaLinha, vinculoPorLinha } from "@/lib/modelagem-linha";
+import { textoChipModelagem, textoTituloConferenciaModelagem } from "@/lib/modelagem-cobertura";
 import { humanizar, rotuloDaSecao } from "@/lib/rotulos";
 
 // A seção MODELAGEM do mandato (pedido do dono, Fase 7.3; revisada na Fase 8
@@ -273,6 +274,14 @@ export default async function ModelagemPage({
     linhas_do_caso: number; linhas_com_premissa: number; linhas_sem_premissa: number;
     linhas_nao_projetaveis: Record<string, number>;
     vinculos_orfaos: string[]; pronto: boolean;
+    // 0158: fração de linhas projetáveis com premissa (0 a 1). Opcional: um
+    // banco sem a 0158 aplicada devolve o objeto SEM esta chave (então
+    // `conf.fracao_linhas_com_premissa` chega `undefined`), e a própria 0158
+    // publica `null` quando `linhas_do_caso` é zero (zero coberto de zero
+    // possível não é a mesma coisa que zero coberto de 480 — regra 1 do
+    // CLAUDE.md). Nos dois casos a tela NÃO pode inventar 0% — mesma
+    // convenção de `perguntasSugeridas` em `casos/[id]/page.tsx:277`.
+    fracao_linhas_com_premissa?: number | null;
   } | null;
   const curva = (sazRes.data as { mes: number; fracao: number; n_observacoes: number }[] | null) ?? [];
 
@@ -399,7 +408,12 @@ export default async function ModelagemPage({
             <h1 className="text-xl font-semibold text-tinta-900">Modelagem</h1>
             {conf && (
               <span className={`chip ${conf.pronto ? "bg-ok-100 text-ok-800" : "bg-alerta-100 text-alerta-900"}`}>
-                {conf.pronto ? "pronto para exportar" : "falta algo"}
+                {/* 0158: "pronto" sozinho pintava o mesmo verde para 23 de 480
+                    linhas cobertas e para 480 de 480 — a fração vem junto
+                    sempre que o banco a mede, para os dois deixarem de parecer
+                    o mesmo caso. Lógica em `lib/modelagem-cobertura.ts`, para
+                    o invariante medir COMPORTAMENTO sem reimplementar JSX. */}
+                {textoChipModelagem(conf)}
               </span>
             )}
           </div>
@@ -520,9 +534,11 @@ export default async function ModelagemPage({
           }`}
         >
           <p className={`font-medium ${conf.pronto ? "text-ok-900" : "text-alerta-900"}`}>
-            {conf.pronto
-              ? "Pronto para o export de modelagem"
-              : "Ainda falta algo para o export de modelagem"}
+            {/* Mesma fração do chip, aqui por extenso — o par absoluto
+                (`linhas_com_premissa` de `linhas_do_caso`) já vem no item
+                logo abaixo, porque porcentagem sozinha esconde a ordem de
+                grandeza: 2 de 3 e 400 de 600 são os mesmos 67%. */}
+            {textoTituloConferenciaModelagem(conf)}
           </p>
           <ul className="mt-1 space-y-0.5 text-tinta-600">
             <li>

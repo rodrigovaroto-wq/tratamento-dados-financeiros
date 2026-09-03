@@ -295,6 +295,23 @@ jobs:
         # cada razão é a MESMA que o modelo aplica ao projetar.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
 
+      - name: Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)
+        # Escrita junto da 0157 e esquecida FORA do portão até 03/09 — achada por
+        # um `comm` entre os verificar-*.mts que existem e os que o CI roda.
+        # Invariante que não roda é invariante que apodrece: ela trava a tela
+        # contra rederivar em TypeScript a regra do COMBINADO estrutural que a
+        # 0157 pôs no banco, e sem ela as duas fontes voltam a divergir em
+        # silêncio.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
+
+      - name: Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)
+        # A 0158 endureceu o `pronto` e publicou a FRAÇÃO de contas com premissa,
+        # mas um número no banco que a tela não mostra não corrige nada: o chip
+        # dizia "pronto para exportar" em verde sobre 23 de 480 linhas. Este
+        # portão trava o comportamento da tela — inclusive o de NÃO inventar 0%
+        # quando o banco não tem a 0158, que é estado normal aqui.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
+
       # ---- o que precisa de banco -----------------------------------------
       - name: Suíte de banco (migrations do zero + testes SQL)
         run: Supabase/test/run.sh
