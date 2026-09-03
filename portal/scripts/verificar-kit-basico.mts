@@ -42,13 +42,19 @@ import type { Documento, TaxonomiaTipoDocumento } from "../src/lib/types.ts";
 let falhas = 0;
 let passou = 0;
 
+// O Sonar cobra `typescript:S2301` nesta assinatura ("não decida ação por
+// parâmetro booleano"). Fica como está DE PROPÓSITO: é a mesma assinatura,
+// caractere por caractere, de `verificar-premissas-do-realizado.mts:37`, e
+// partir um helper de assert em dois métodos deixaria cada teste daqui menos
+// legível para satisfazer uma regra escrita para código de produção.
 function ok(cond: boolean, nome: string, detalhe?: string) {
   if (cond) {
     passou += 1;
     console.log(`  ok    ${nome}`);
   } else {
     falhas += 1;
-    console.error(`  FALHOU: ${nome}${detalhe ? ` — ${detalhe}` : ""}`);
+    const sufixo = detalhe ? " — " + detalhe : "";
+    console.error(`  FALHOU: ${nome}${sufixo}`);
   }
 }
 
@@ -84,57 +90,56 @@ const bancoSem0157: ServicoDocumentoServeComo = async () => {
   return false;
 };
 
-async function principal() {
-  console.log("--- 1. documento estruturalmente COMBINADO, rotulado BALANCO: item aparece atendido ---");
-  {
-    const documentos = [
-      documento("doc-13", "BALANCO"), // 13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf, 8 empresas, medido no 7377
-      documento("doc-14", "BALANCO"), // 14_Balanco_COMBINADO_Grupo_Canastra_2024.pdf, 8 empresas
-    ];
-    const banco = bancoComEstrutura(new Set(["doc-13", "doc-14"]));
-    const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, banco);
-    ok(atendidos.has("COMBINADO"),
-      "COMBINADO aparece atendido quando um documento é estruturalmente combinado");
-    ok(!atendidos.has("DRE"), "DRE continua faltante — nada nesta rodada satisfaz DRE");
-  }
-
-  console.log("--- 2. o MESMO rótulo, mas UMA empresa só nas colunas: item continua faltante ---");
-  {
-    const documentos = [documento("doc-alfa", "BALANCO")]; // uma empresa: fn_documento_de_varias_empresas = false
-    const banco = bancoComEstrutura(new Set()); // nenhum documento é estrutural
-    const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, banco);
-    ok(!atendidos.has("COMBINADO"),
-      "documento de uma empresa só NÃO satisfaz COMBINADO — a exceção é de estrutura, não de chegada");
-  }
-
-  console.log("--- 3. rótulo bate: zero chamada ao banco (o caminho comum não fica mais lento) ---");
-  {
-    // SÓ os dois itens que o rótulo já resolve — DRE ficaria de fora do kit
-    // real e chamaria o dublê que lança, o que provaria outra coisa.
-    const kitResolvidoPeloRotulo: Pick<TaxonomiaTipoDocumento, "codigo">[] = [
-      { codigo: "BALANCO" },
-      { codigo: "COMBINADO" },
-    ];
-    const documentos = [documento("doc-c1", "COMBINADO"), documento("doc-b1", "BALANCO")];
-    const atendidos = await itensDoKitBasicoAtendidos(
-      kitResolvidoPeloRotulo, documentos, bancoSemChamadaEsperada,
-    );
-    ok(atendidos.has("COMBINADO") && atendidos.has("BALANCO"),
-      "os dois itens já resolvidos pelo rótulo aparecem atendidos sem perguntar ao banco");
-  }
-
-  console.log("--- 4. banco sem a 0157 (RPC devolve erro, tratado como `false` por page.tsx) ---");
-  {
-    const documentos = [documento("doc-13", "BALANCO")];
-    const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, bancoSem0157);
-    ok(!atendidos.has("COMBINADO"),
-      "sem a 0157 aplicada, COMBINADO continua faltante — o mesmo comportamento de ANTES da migration, "
-      + "nunca 'atendido' inventado pelo portal");
-  }
-
-  console.log(`\n${passou} asserts passaram, ${falhas} falharam`);
-  if (falhas > 0) process.exit(1);
-  console.log("KIT BÁSICO OK — a tela pergunta ao banco, nunca rederiva a regra do COMBINADO estrutural");
+// SEM `async function principal()` embrulhando: `.mts` é módulo ESM e aceita
+// top-level await. Os irmãos (verificar-export, verificar-transcricao) também
+// rodam no topo — e o Sonar cobra isto em typescript:S7785.
+console.log("--- 1. documento estruturalmente COMBINADO, rotulado BALANCO: item aparece atendido ---");
+{
+  const documentos = [
+    documento("doc-13", "BALANCO"), // 13_Balanco_COMBINADO_Grupo_Canastra_2025.pdf, 8 empresas, medido no 7377
+    documento("doc-14", "BALANCO"), // 14_Balanco_COMBINADO_Grupo_Canastra_2024.pdf, 8 empresas
+  ];
+  const banco = bancoComEstrutura(new Set(["doc-13", "doc-14"]));
+  const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, banco);
+  ok(atendidos.has("COMBINADO"),
+    "COMBINADO aparece atendido quando um documento é estruturalmente combinado");
+  ok(!atendidos.has("DRE"), "DRE continua faltante — nada nesta rodada satisfaz DRE");
 }
 
-void principal();
+console.log("--- 2. o MESMO rótulo, mas UMA empresa só nas colunas: item continua faltante ---");
+{
+  const documentos = [documento("doc-alfa", "BALANCO")]; // uma empresa: fn_documento_de_varias_empresas = false
+  const banco = bancoComEstrutura(new Set()); // nenhum documento é estrutural
+  const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, banco);
+  ok(!atendidos.has("COMBINADO"),
+    "documento de uma empresa só NÃO satisfaz COMBINADO — a exceção é de estrutura, não de chegada");
+}
+
+console.log("--- 3. rótulo bate: zero chamada ao banco (o caminho comum não fica mais lento) ---");
+{
+  // SÓ os dois itens que o rótulo já resolve — DRE ficaria de fora do kit
+  // real e chamaria o dublê que lança, o que provaria outra coisa.
+  const kitResolvidoPeloRotulo: Pick<TaxonomiaTipoDocumento, "codigo">[] = [
+    { codigo: "BALANCO" },
+    { codigo: "COMBINADO" },
+  ];
+  const documentos = [documento("doc-c1", "COMBINADO"), documento("doc-b1", "BALANCO")];
+  const atendidos = await itensDoKitBasicoAtendidos(
+    kitResolvidoPeloRotulo, documentos, bancoSemChamadaEsperada,
+  );
+  ok(atendidos.has("COMBINADO") && atendidos.has("BALANCO"),
+    "os dois itens já resolvidos pelo rótulo aparecem atendidos sem perguntar ao banco");
+}
+
+console.log("--- 4. banco sem a 0157 (RPC devolve erro, tratado como `false` por page.tsx) ---");
+{
+  const documentos = [documento("doc-13", "BALANCO")];
+  const atendidos = await itensDoKitBasicoAtendidos(kitBasico, documentos, bancoSem0157);
+  ok(!atendidos.has("COMBINADO"),
+    "sem a 0157 aplicada, COMBINADO continua faltante — o mesmo comportamento de ANTES da migration, "
+    + "nunca 'atendido' inventado pelo portal");
+}
+
+console.log(`\n${passou} asserts passaram, ${falhas} falharam`);
+if (falhas > 0) process.exit(1);
+console.log("KIT BÁSICO OK — a tela pergunta ao banco, nunca rederiva a regra do COMBINADO estrutural");
