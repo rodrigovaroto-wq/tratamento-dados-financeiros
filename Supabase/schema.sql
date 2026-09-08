@@ -713,7 +713,7 @@ $$;
 -- Name: fn_autoridade_do_documento(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS TABLE(autoridade integer, motivo text)
+CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS TABLE(autoridade integer, motivo text, decide_sozinho boolean)
     LANGUAGE sql STABLE
     AS $$
   -- 0155: um documento cujas linhas nomeiam VÁRIAS empresas é derivado, e a
@@ -728,11 +728,24 @@ CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS T
       fn_documento_preliminar(dv.nome_original) as preliminar,
       fn_documento_de_varias_empresas(d.id) as varias_empresas,
       (select coalesce(tc.autoridade, 30) from taxonomia_tipo_documento tc
-        where tc.codigo = 'COMBINADO') as teto_derivado
+        where tc.codigo = 'COMBINADO') as teto_derivado,
+      -- 0159: o mesmo sinal que já aparece na tela de pendências do caso —
+      -- ver o cabeçalho desta migration para por que NÃO é um critério
+      -- estrutural sobre `campo_extraido`.
+      exists (
+        select 1 from pendencia pd
+        where pd.documento_id = d.id
+          and pd.tipo = 'tipo_incorreto'
+          and pd.estado <> 'resolvida'
+      ) as tipo_incorreto_aberto
     from documento d
     left join taxonomia_tipo_documento t on t.codigo = d.tipo_taxonomia
     left join documento_versao dv on dv.id = fn_versao_com_extracao(d.id)
     where d.id = p_documento_id
+  ),
+  com_confianca as (
+    select b.*, fn_documento_decide_sozinho(b.codigo, b.tipo_incorreto_aberto) as decide_sozinho
+    from base b
   )
   select
     (case when b.varias_empresas then least(b.do_tipo, b.teto_derivado) else b.do_tipo end
@@ -745,17 +758,22 @@ CREATE FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) RETURNS T
               then format(', mas as colunas nomeiam VÁRIAS empresas — é peça derivada, e a '
                        || 'autoridade não passa da de combinado (%s)', b.teto_derivado)
               else '' end
+      || case when not b.decide_sozinho
+              then ' — o diagnóstico de conteúdo já contesta este rótulo (pendência '
+                   || 'tipo_incorreto aberta): o documento não decide sozinho contra outro (0159)'
+              else '' end
       || case when b.assinado then ', assinado' else '' end
       || case when b.preliminar
-              then ', e o nome do arquivo diz que é preliminar' else '' end
-  from base b;
+              then ', e o nome do arquivo diz que é preliminar' else '' end,
+    b.decide_sozinho
+  from com_confianca b;
 $$;
 
 --
 -- Name: FUNCTION fn_autoridade_do_documento(p_documento_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) IS 'A autoridade documental de UM documento e o motivo por extenso (0151): a do tipo no catálogo, mais 5 se assinada, menos 25 se o nome do arquivo declara preliminar. Desde a 0155, um documento cujas colunas nomeiam VÁRIAS empresas tem a autoridade limitada à de COMBINADO — ele é a soma delas, e o classificador chama a mesma peça de BALANCO ou de COMBINADO conforme o dia.';
+COMMENT ON FUNCTION public.fn_autoridade_do_documento(p_documento_id uuid) IS 'A autoridade documental de UM documento, o motivo por extenso, e se ele decide sozinho contra outro (0151): a do tipo no catálogo, mais 5 se assinada, menos 25 se o nome do arquivo declara preliminar. Desde a 0155, colunas nomeando VÁRIAS empresas limitam a autoridade à de COMBINADO — o rótulo diz "fechada" e a estrutura diz "derivada". Desde a 0159, `decide_sozinho` vira falso quando o documento é COMBINADO e tem uma pendência `tipo_incorreto` ABERTA — o próprio diagnóstico de conteúdo já contesta o rótulo. Medido no araucária (03/09): seis documentos assim, com a autoridade baixa (35) perdendo em silêncio contra um BALANCO mal extraído (55) da mesma empresa. A autoridade NUMÉRICA não muda nesse caso — não há piso honesto para promovê-la a (ver o cabeçalho da 0159) — só a confiança de que o documento pode decidir um conflito sozinho.';
 
 --
 -- Name: fn_avaliar_guardas_extracao(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -1758,22 +1776,23 @@ CREATE FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text DEFA
      and g.exercicio      = pd.exercicio
   ),
   -- (c) A autoridade uma vez por DOCUMENTO — e só dos documentos que sobraram.
+  -- 0159: `decide_sozinho` vem junto — é a mesma chamada, sem custo extra.
   autoridade as materialized (
-    select dd.documento_id, a.autoridade, a.motivo
+    select dd.documento_id, a.autoridade, a.motivo, a.decide_sozinho
     from (select distinct documento_id from candidatos) dd
     cross join lateral fn_autoridade_do_documento(dd.documento_id) a
   ),
   com_autoridade as materialized (
-    select c.*, au.autoridade, au.motivo
+    select c.*, au.autoridade, au.motivo, au.decide_sozinho
     from candidatos c join autoridade au on au.documento_id = c.documento_id
   ),
   pares as (
     select
       a.secao_canonica, a.chave, a.entidade, a.exercicio,
       a.documento_id as doc_a, a.tipo as tipo_a, a.valor as valor_a,
-      a.autoridade as aut_a, a.motivo as motivo_a,
+      a.autoridade as aut_a, a.motivo as motivo_a, a.decide_sozinho as decide_sozinho_a,
       b.documento_id as doc_b, b.tipo as tipo_b, b.valor as valor_b,
-      b.autoridade as aut_b, b.motivo as motivo_b
+      b.autoridade as aut_b, b.motivo as motivo_b, b.decide_sozinho as decide_sozinho_b
     from com_autoridade a
     join com_autoridade b
       on b.secao_canonica = a.secao_canonica
@@ -1796,18 +1815,30 @@ CREATE FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text DEFA
     case when p.aut_a >= p.aut_b then p.tipo_b  else p.tipo_a  end,
     case when p.aut_a >= p.aut_b then p.valor_b else p.valor_a end,
     abs(p.valor_a - p.valor_b),
-    p.aut_a <> p.aut_b,
-    case when p.aut_a <> p.aut_b then
-      format('%s vence: %s (autoridade %s) contra %s (autoridade %s)',
-             case when p.aut_a > p.aut_b then p.tipo_a else p.tipo_b end,
-             case when p.aut_a > p.aut_b then p.motivo_a else p.motivo_b end,
-             greatest(p.aut_a, p.aut_b),
-             case when p.aut_a > p.aut_b then p.motivo_b else p.motivo_a end,
-             least(p.aut_a, p.aut_b))
-    else
-      format('EMPATE em autoridade %s (%s × %s): a escolha é humana — o valor '
-             || 'não foi trocado, continua o de maior módulo',
-             p.aut_a, p.motivo_a, p.motivo_b)
+    -- 0159: um lado com o rótulo contestado pelo próprio diagnóstico não
+    -- decide sozinho — nem para vencer, nem para perder em silêncio.
+    -- `decidido` passa a exigir os dois lados confiáveis, além da
+    -- autoridade diferir.
+    (p.aut_a <> p.aut_b) and p.decide_sozinho_a and p.decide_sozinho_b,
+    case
+      when not (p.decide_sozinho_a and p.decide_sozinho_b) then
+        format('SEM DECISÃO AUTOMÁTICA: %s (autoridade %s) tem o rótulo contestado pelo próprio '
+               || 'diagnóstico de conteúdo — %s. O valor em uso não foi trocado; a escolha é '
+               || 'humana.',
+               case when not p.decide_sozinho_a then p.tipo_a else p.tipo_b end,
+               case when not p.decide_sozinho_a then p.aut_a else p.aut_b end,
+               case when not p.decide_sozinho_a then p.motivo_a else p.motivo_b end)
+      when p.aut_a <> p.aut_b then
+        format('%s vence: %s (autoridade %s) contra %s (autoridade %s)',
+               case when p.aut_a > p.aut_b then p.tipo_a else p.tipo_b end,
+               case when p.aut_a > p.aut_b then p.motivo_a else p.motivo_b end,
+               greatest(p.aut_a, p.aut_b),
+               case when p.aut_a > p.aut_b then p.motivo_b else p.motivo_a end,
+               least(p.aut_a, p.aut_b))
+      else
+        format('EMPATE em autoridade %s (%s × %s): a escolha é humana — o valor '
+               || 'não foi trocado, continua o de maior módulo',
+               p.aut_a, p.motivo_a, p.motivo_b)
     end
   from pares p;
 $$;
@@ -1816,7 +1847,7 @@ $$;
 -- Name: FUNCTION fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Dois documentos do mesmo período discordando sobre a MESMA conta, com o vencedor por autoridade documental e o critério por extenso (0151). Compara na base, só entre linhas com seção canônica, papel conta e unidade conversível. `decidido = false` é empate: ninguém vence e a decisão é humana. O par nasce DEPOIS do agrupamento (0152) — a versão anterior pedia o produto cartesiano e levava 12,4 s por chamada no lote de 190 documentos.';
+COMMENT ON FUNCTION public.fn_conflitos_do_caso(p_caso_id uuid, p_entidade text, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'Dois documentos do mesmo período discordando sobre a MESMA conta, com o vencedor por autoridade documental e o critério por extenso (0151). Compara na base, só entre linhas com seção canônica, papel conta e unidade conversível. `decidido = false` é empate OU rótulo contestado pelo diagnóstico (0159, um lado com `decide_sozinho = false`) — nos dois casos ninguém vence e a decisão é humana. O par nasce DEPOIS do agrupamento (0152) — a versão anterior pedia o produto cartesiano e levava 12,4 s por chamada no lote de 190 documentos.';
 
 --
 -- Name: fn_contas_repetindo_valor(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -2369,6 +2400,29 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid) IS 'As linhas deste documento nomeiam mais de uma empresa? (0155) Critério ESTRUTURAL de que a peça é derivada — a soma de várias companhias —, independente do rótulo que o classificador lhe deu. Medido no book-araucaria: o mesmo padrão de nome saiu como BALANCO em quatro documentos e COMBINADO num quinto, todos com 14-15 empresas nas colunas.';
+
+--
+-- Name: fn_documento_decide_sozinho(text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_documento_decide_sozinho(p_codigo text, p_tipo_incorreto_aberto boolean) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  -- 0159: falso SÓ quando o rótulo é COMBINADO (o único tipo que se
+  -- autodeclara "peça derivada" no catálogo) E o próprio diagnóstico de
+  -- conteúdo do caso já abriu (e ninguém resolveu) uma pendência dizendo que
+  -- o tipo está errado. Não olha estrutura nenhuma — ver o cabeçalho desta
+  -- migration para o porquê: um critério estrutural "menos de duas empresas
+  -- ⇒ suspeito" derrubou um fixture legítimo (desempate.test.sql) que nunca
+  -- teve motivo para marcar `entidade_coluna`.
+  select not (p_codigo = 'COMBINADO' and coalesce(p_tipo_incorreto_aberto, false));
+$$;
+
+--
+-- Name: FUNCTION fn_documento_decide_sozinho(p_codigo text, p_tipo_incorreto_aberto boolean); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_documento_decide_sozinho(p_codigo text, p_tipo_incorreto_aberto boolean) IS '(0159) Um documento rotulado COMBINADO cujo próprio diagnóstico de conteúdo já abriu (e ninguém resolveu) uma pendência tipo_incorreto tem o rótulo contestado pelo sistema que o classificou — medido no araucária de 03/09: seis documentos COMBINADO, ZERO empresas na planilha, com `tipo_incorreto` aberta dizendo "trata-se de balanço... não combinado". Esta função isola a decisão para ser exercitada por literais (instalacao_sonda_rotulo_contraditorio) sem fixture de documento nem de pendência. Não é o espelho estrutural de fn_documento_de_varias_empresas (0155) — esse espelho foi tentado e MEDIDO como falso: menos de duas empresas nas colunas não prova que a peça não é derivada, só que o documento não marcou `entidade_coluna` (ver o cabeçalho da 0159). O sinal usado aqui é o que o próprio sistema já publica na tela de pendências, não uma inferência nova sobre dados que podem simplesmente estar ausentes por outro motivo.';
 
 --
 -- Name: fn_documento_por_tipo(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -7879,8 +7933,13 @@ begin
       || 'houve escolha. Conflitos: %s',
       v_n, to_char(v_maior, 'FM999G999G999D00'),
       case when v_empates > 0
-           then format('%s deles EMPATAM em autoridade documental e ninguém decidiu por você — '
-                       || 'o valor em uso continua o de maior módulo, que é o padrão antigo. ',
+           -- 0159: "empatam" deixou de ser a única causa de `decidido = false`
+           -- — um rótulo contestado pelo diagnóstico (0159) também zera a
+           -- decisão automática sem que a autoridade numérica empate.
+           then format('%s deles NÃO TÊM decisão automática (empate de autoridade, ou o rótulo '
+                       || 'de um dos dois contestado pelo próprio diagnóstico de conteúdo) e '
+                       || 'ninguém decidiu por você — o valor em uso continua o de maior módulo, '
+                       || 'que é o padrão antigo. ',
                        v_empates)
            else '' end,
       (select string_agg(format('%s (%s): %s diz %s, %s diz %s — %s',
@@ -7910,7 +7969,7 @@ $$;
 -- Name: FUNCTION fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação (0151): duas versões do mesmo período discordando sobre a mesma conta. Declara o vencedor por autoridade documental e o critério; empate volta para o humano sem trocar valor nenhum. Por caso/entidade — quais exercícios existem é o que ela descobre.';
+COMMENT ON FUNCTION public.fn_reconciliar_versoes_do_periodo(p_caso_id uuid, p_entidade_id uuid) IS 'Checagem de reconciliação (0151): duas versões do mesmo período discordando sobre a mesma conta. Declara o vencedor por autoridade documental e o critério; sem decisão automática (empate de autoridade, ou desde a 0159, rótulo contestado pelo diagnóstico) volta para o humano sem trocar valor nenhum.';
 
 --
 -- Name: fn_reconferir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11257,6 +11316,20 @@ CREATE VIEW public.instalacao_sonda_modelagem_pronta AS
 COMMENT ON VIEW public.instalacao_sonda_modelagem_pronta IS '(0158) Autoteste da decisão de fn_modelagem_esta_pronta, EXECUTADA por literais (função pura, sem fixture de caso nem documento): 1 linha só se o positivo e as quatro negações — sem parâmetro, sem premissa ativa, premissa sem valor, e ZERO linha vinculada — valem todas ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos; esta view pega, porque o predicado É executado (achado D da revisão da 0157).';
 
 --
+-- Name: instalacao_sonda_rotulo_contraditorio; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_rotulo_contraditorio AS
+ SELECT 1 AS ok
+  WHERE ((public.fn_documento_decide_sozinho('COMBINADO'::text, true) = false) AND (public.fn_documento_decide_sozinho('COMBINADO'::text, false) = true) AND (public.fn_documento_decide_sozinho('COMBINADO'::text, NULL::boolean) = true) AND (public.fn_documento_decide_sozinho('BALANCO'::text, true) = true) AND (public.fn_documento_decide_sozinho('RAZAO'::text, true) = true));
+
+--
+-- Name: VIEW instalacao_sonda_rotulo_contraditorio; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_rotulo_contraditorio IS '(0159) Autoteste de fn_documento_decide_sozinho, EXECUTADA por literais (função pura, sem fixture de documento nem de pendência): 1 linha só se o caso medido (COMBINADO com tipo_incorreto aberta), o caso comum (COMBINADO sem pendência, decide sozinho), o NULL (coalesce trata como ausente), o espelho da 0155 (BALANCO com tipo_incorreto continua decidindo sozinho — é a autoridade que cai, não a confiança) e o irrelevante (RAZAO, nunca se autodeclarou derivado) valem todos ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13185,6 +13258,12 @@ GRANT ALL ON FUNCTION public.fn_dial_permite_auto(p_estagio text, p_confianca nu
 GRANT ALL ON FUNCTION public.fn_documento_de_varias_empresas(p_documento_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_documento_decide_sozinho(p_codigo text, p_tipo_incorreto_aberto boolean); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_documento_decide_sozinho(p_codigo text, p_tipo_incorreto_aberto boolean) TO authenticated;
+
+--
 -- Name: FUNCTION fn_documento_preliminar(p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -13980,6 +14059,14 @@ GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_rotulo_contraditorio; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -
