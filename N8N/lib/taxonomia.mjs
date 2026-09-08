@@ -92,6 +92,18 @@ export const ALIASES = [
     'contas a receber'] },
   { codigo: 'AGING_AP', termos: ['aging de pagaveis', 'aging ap', 'contas a pagar', 'fornecedores'] },
   { codigo: 'ESTOQUE', termos: ['estoque', 'estoques'] },
+  // HEADCOUNT já existia na taxonomia (seed 0002: "Headcount / folha de
+  // pagamento") mas sem alias nenhum aqui — achado na rodada do lote 7377
+  // (02/09, book "teste Canastra"): `28_Folha_de_Pagamento` saiu com
+  // confiança da IA 0,9 (acima do limiar 0,70) mas MESMO ASSIM abriu
+  // `classificacao_pendente`, porque `codigosConhecidos()` (ia.mjs) deriva o
+  // enum do schema estrito de `KIT_BASICO` + `ALIASES.map(codigo)` — sem
+  // entrada aqui, HEADCOUNT não existia no enum que a IA podia devolver, e
+  // `fn_registrar_documento` (0127) nunca via um `tipo_taxonomia` do catálogo
+  // para aceitar automaticamente. Não é caso de tipo novo: a taxonomia já
+  // nomeia a família: só faltava o alias, dos dois lados (nome de arquivo e
+  // enum da IA) — mesma família de checklist incompleto que 0157/0159.
+  { codigo: 'HEADCOUNT', termos: ['folha de pagamento', 'folha pagamento', 'headcount'] },
   // 'negativas', 'societario' e 'parcelamentos' entram AQUI, no vocabulário de
   // tipo, e não numa lista à parte. Eles são a segunda palavra do nome que o
   // cliente escreve ("30_Certidoes_Negativas_...", "organograma SOCIETARIO",

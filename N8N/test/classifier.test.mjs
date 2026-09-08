@@ -262,10 +262,26 @@ test('preposição e sobra de tipo saem do nome — a fonte é a própria taxono
   assert.equal(classifyByFilename('21_Mutuos_Intragrupo_Grupo_Canastra_2025.pdf').entidade, 'Grupo Canastra');
 });
 
+// Lote 7377 (02/09, book "teste Canastra"): `28_Folha_de_Pagamento` abriu
+// `classificacao_pendente` com confiança da IA 0,9 porque HEADCOUNT (já
+// existente na taxonomia — seed 0002, "Headcount / folha de pagamento") não
+// tinha alias nenhum: nem para o classificador por nome, nem — mais grave —
+// no enum que `codigosConhecidos()` (ia.mjs) monta a partir de `ALIASES`
+// para a saída presa da IA (ver ia.test.mjs). Antes do alias, este arquivo
+// caía na lista "nome que não diz o tipo" abaixo (entidade null, sinais.tipo
+// false); depois, sinais.tipo é true e a entidade sai limpa — sem "Folha" e
+// "Pagamento" grudados, porque `parseEntidade` varre o vocabulário da
+// própria taxonomia.
+test('HEADCOUNT: "folha de pagamento" classifica e não vaza no nome da empresa', () => {
+  const r = classifyByFilename('28_Folha_de_Pagamento_Canastra_Industria_2025.pdf');
+  assert.equal(r.tipo_taxonomia, 'HEADCOUNT');
+  assert.equal(r.sinais.tipo, true);
+  assert.equal(r.entidade, 'Canastra Industria');
+});
+
 test('nome que não diz o TIPO não arrisca dizer a empresa', () => {
   // Sem tipo, o que sobra é o próprio nome do documento — e ele não é empresa.
   assert.equal(classifyByFilename('34_Relatorio_do_Auditor_Independente_2025.pdf').entidade, null);
-  assert.equal(classifyByFilename('28_Folha_de_Pagamento_Canastra_Industria_2025.pdf').entidade, null);
   assert.equal(classifyByFilename('ANEXO IV - planilha final REV3.pdf').entidade, null);
   assert.equal(classifyByFilename('Doc1.pdf').entidade, null);
   // Sequência de scanner: token só de dígitos nunca é nome de empresa.

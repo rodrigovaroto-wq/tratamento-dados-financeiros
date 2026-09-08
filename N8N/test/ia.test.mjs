@@ -30,6 +30,13 @@ test('schema é estrito e cobre o Kit Básico + escape', () => {
   const enumTipos = s.schema.properties.tipo_taxonomia.enum;
   assert.ok(enumTipos.includes('DRE'));
   assert.ok(enumTipos.includes('DESCONHECIDO'));
+  // Lote 7377 (02/09): HEADCOUNT já existia na taxonomia (seed 0002) mas
+  // faltava em `ALIASES`, e `codigosConhecidos()` monta o enum SÓ a partir de
+  // KIT_BASICO + ALIASES — não da tabela inteira. Um código ausente aqui é um
+  // código que a IA está PROIBIDA de devolver (schema estrito), qualquer que
+  // seja a confiança: por isso `28_Folha_de_Pagamento` nunca virava HEADCOUNT
+  // mesmo com 0,9 de confiança. Sem este alias o assert abaixo reprova.
+  assert.ok(enumTipos.includes('HEADCOUNT'));
 });
 
 test('codigosConhecidos não tem duplicatas', () => {
