@@ -4,39 +4,45 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-08-31 (sessões 62 a **76**). **Estado do `main`:** mergeado até o **PR
-#190**. As sessões 75 e 76 entregaram, nesta ordem: o processo do agente versionado (#187), os três
-instrumentos que faltavam antes da rodada (#188, com a `0156`), a `0156` reescrita sem `replace` de
-corpo de função (#189) e o `Abrir Lote` fora do caminho principal (#190).
+**Última atualização:** 2026-09-08 (sessões 77 a **79**, mais o trabalho desta sessão sobre a
+primeira rodada real, que ainda não ganhou número próprio no `ESTADO.md`). **Estado do `main`:**
+mergeado até o **PR #201**. O **#202** está aberto e verde (a `0159`), e uma quinta migration
+(`0160`, o timeout da modelagem na escala real) está sendo escrita.
 
-> **LEIA "A SESSÃO 76" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** A rodada real do Canastra
-> de 31/08 respondeu a pergunta que estava aberta desde a sessão 74, e a resposta é o contrário do
-> que se supunha: **a extração está COMPLETA (102 de 99 linhas, e 12 de 12) — quem erra é a régua de
-> cobertura, cujo denominador infla ~2,6× em produção.** As 23 pendências de sub-extração do
-> araucária são muito provavelmente FALSAS, o que contradiz o que a sessão 74 registrou. O roteiro
-> para fechar isso, em quatro passos e sem gastar cota, está lá. **Não rode o araucária antes do
-> passo 1.**
+> **LEIA "A SESSÃO 79" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA — e depois os PRs #200, #201
+> e #202.** As sessões 77/78 fecharam o buraco entre repositório e produção: as `0151`–`0156`
+> **não estavam aplicadas em produção** enquanto o `ESTADO.md` as dava por aplicadas — é para isso
+> que `Supabase/test/conferir-chamadas.mjs` existe agora. A sessão 79 é **a primeira rodada real do
+> projeto**: lote `7377` (Canastra, 38 documentos, cobertura 0,987, zero nó morto, `execucao_falha`
+> vazia). Ela e a rodada seguinte do araucária (`7417`, 190 documentos) acharam quatro defeitos da
+> MESMA família — um sinal que continua respondendo depois de deixar de significar o que promete:
+> o Kit Básico travando um mandato por um documento que **estava lá**, só mal rotulado (`0157`,
+> #200); `com_falha` contando de sucesso a costura que funcionou (#201); o `"pronto"` da modelagem
+> sem exigir cobertura nenhuma (`0158`, #201); e o rótulo COMBINADO decidindo sozinho um conflito
+> mesmo quando o próprio diagnóstico do sistema já o contestava (`0159`, #202). As três primeiras
+> estão em `main`; a quarta está aberta, verde, aguardando merge.
 
-**A `0156` ESTÁ APLICADA EM PRODUÇÃO, e a evidência não é declaração:** na rodada do Canastra de
-31/08 o nó `Abrir Lote` devolveu `{aberto: true, lote_execucao_id: 1a65082b-cfd3-4a21-82ac-719150d37b1c}`
-— `fn_abrir_lote_execucao` só existe pela `0156`. Antes dela a sonda dizia **54 de 54 requisitos,
-cobertura `0155`** (28/08). **Confirme com a sonda mesmo assim** — é o que este projeto manda:
+**AS `0151`–`0159` ESTÃO APLICADAS EM PRODUÇÃO — mas esta frase envelhece, não confie nela.**
+Confirme sempre com a sonda, contra o banco em que você está conectado:
 
 ```sql
-select chave, presente from fn_instalacao_conferir() where migration = '0156';
+select chave, migration, presente from fn_instalacao_conferir() where not presente order by 1;
 select ate_migration from instalacao_cobertura;
 ```
 
-**O `book-araucaria` RODOU, E FOI A RODADA QUE MAIS ENSINOU.** 190 documentos, 27/08 às 17:34 BRT
-(execução 7172). Ela ficou **1h52 de pé sem gravar uma única reconciliação** e foi cancelada à mão —
-**sem um único erro em lugar nenhum**: zero linhas de `ERROR` no log do Postgres, nada no n8n, nada
-na tela. As 13.942 linhas e os 42 fatos materiais foram extraídos e gravados; o que não aconteceu
-foi tudo o que vem depois.
+**Zero linhas na primeira consulta é o único veredito que vale.**
 
-**E AS TRÊS PERGUNTAS ÓBVIAS TINHAM RESPOSTA CERTA, o que é a primeira lição:** a `0151` estava
-aplicada (sonda 46/46), o workflow estava publicado corretamente (33 nós; as únicas diferenças são
-parâmetros default que o n8n omite, e os nós Code são byte a byte iguais) e a cota nem chegou perto
-(440 de 500 RPD). Quando as três respostas fáceis estão certas, a causa é estrutural.
+**O `book-araucaria` (190 documentos) RODOU DUAS VEZES DEPOIS DA `0156`, e a segunda ensina uma
+coisa nova: a extração NÃO É DETERMINÍSTICA.** A primeira (`7327`, madrugada de 02/09) morreu
+inteira — 0 linhas, 190 de 190 com falha — por uma credencial de IA inválida no nó HTTP do n8n,
+diagnosticada pelo próprio `N8N/lib/extract.mjs`. A segunda (`7417`, 03/09) rodou de verdade: 190 de
+190, cobertura **0,939**, 6min47, US$ 2,3633. E os MESMOS 190 documentos, sem mudança de código,
+tinham dado **13.703** linhas e cobertura **0,959** numa rodada anterior (`7316`, 01/09) — uma
+variação de ~2 pontos que passa a contar como ruído de calibração para o B2, não como regressão.
+
+**AS TRÊS PERGUNTAS ÓBVIAS QUE JÁ SALVARAM UMA SESSÃO (74) CONTINUAM VALENDO ANTES DE INVESTIGAR
+QUALQUER COISA:** migration aplicada? workflow republicado? cota disponível? Quando as três
+respostas fáceis estão certas, a causa é estrutural.
 
 **O TESTE COMPARATIVO SAIU, E É A MELHOR RODADA ATÉ AQUI.** Mandato `Teste comparativo - Grupo
 Canastra`, execução 7156: **38 documentos, 2.565 linhas, 17 fatos materiais, US$ 0,4257, ZERO
@@ -69,10 +75,12 @@ uma empresa em reestruturação é o pior dela); crescimento **indexado** ao ín
 hipótese declarada; e valor de decisão do caso **não projeta**, porque zero seria uma afirmação que
 ninguém fez.
 
-**O QUE FALTA AGORA É REPUBLICAR E RODAR DE NOVO** — ver "POR ONDE COMEÇAR" abaixo; o araucária já
-rodou e as cinco correções que ele gerou estão no `main`… **menos as duas que não passam por
-migration**. **A frente de reestruturação está EM ANDAMENTO, fora do `main`:** as sessões 68 e 69 (réplica completa por
-cenário, new money, equity×haircut e o cockpit das quatro alavancas) vivem na branch
+**O QUE FALTA AGORA** — ver "POR ONDE COMEÇAR" abaixo: mergear o #202, aplicar a `0159` (e a `0160`
+quando sair) em produção, fechar a ambiguidade estrutural de entidade que ficou aberta, e completar
+o **aceite do B1** (`auditar-xlsx.mts` + `Arquitetura do Sistema/6 Referência/ACEITE.md`) sobre um
+`.xlsx` exportado com **modelo institucional**, não o de dados. **A frente de reestruturação
+continua EM ANDAMENTO, fora do `main`:** as sessões 68 e 69 (réplica completa por cenário, new
+money, equity×haircut e o cockpit das quatro alavancas) vivem na branch
 `claude/reestruturacao-cenarios` — ver "A SESSÃO 69" e "A SESSÃO 68" no topo do `ESTADO.md` antes de
 continuar por ali.
 
@@ -123,93 +131,59 @@ localizador tem de existir também na checagem que o consome. Sem esse quarto pa
 ficaria satisfeita e `fn_reconciliar_despfin_dre_vs_divida` continuaria cega — `linha_exigida_ausente`
 trocada por `precondicao_nao_satisfeita`. **Pendência falsa que muda de nome não é correção.**
 
-**POR ONDE COMEÇAR NA SESSÃO SEGUINTE: REPUBLICAR, E RODAR O ARAUCÁRIA DE NOVO.** As cinco
-correções da sessão 74 estão no `main`, e as quatro migrations estão aplicadas em produção — mas
-**duas delas não chegam ao ar por migration nenhuma**, e é isso que trava a próxima rodada.
+**POR ONDE COMEÇAR NA SESSÃO SEGUINTE.** O republish e o rerun que este handoff pedia há muito já
+aconteceram — o que segue é o que a rodada real de 03/09 (`7417`) deixou aberto.
 
-### 1. REPUBLICAR O WORKFLOW — e agora ele mudou de TOPOLOGIA, não só de código
+### 1. A AMBIGUIDADE DE ENTIDADE TEM UM BURACO ESTRUTURAL, E É A PRÓXIMA FATIA
 
-A `0152` acrescentou um nó (`Reconciliar Lote`, `executeOnce`) e mudou quatro nós Postgres para
-`queryBatching: independently`. **Nada disso existe em produção até a republicação.** Em um comando:
+A `0153` acerta em recusar um nome que casa com duas empresas ("Araucaria SPE" → Bioenergia SPE ×
+Imobiliária SPE) — mas **ela não olha se o mesmo mandato já resolveu aquele nome por outro
+caminho**. Medido na rodada `7417`: o documento `029` (classificado por CONTEÚDO, 100%) já tinha
+identificado "Araucaria SPE" como a Araucária Imobiliária SPE Ltda.; o `009` (classificado por NOME
+DE ARQUIVO, 90%) abriu a mesma ambiguidade do zero e travou o Portão 2 até o dono chamar
+`fn_revisar_documento` à mão. O sinal que resolveria isso sozinho já existe no banco — falta ensinar
+a `0153` a consultá-lo antes de abrir a pendência.
 
-```bash
-curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
-  | node N8N/preparar-republicacao.mjs > publicar.json
-curl -X PUT -H "X-N8N-API-KEY: $N8N_API_KEY" -H 'Content-Type: application/json' \
-  "$N8N_URL/api/v1/workflows/$ID" --data-binary @publicar.json
-curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_URL/api/v1/workflows/$ID" \
-  | node N8N/conferir-publicado.mjs
-```
+### 2. O MOJIBAKE DE NOME DE ARQUIVO ESTÁ ENTRANDO NO DADO, NÃO SÓ NO NOME
 
-O preparador existe porque **duas republicações seguidas perderam a mesma família de coisas**:
-`onError` em 23 nós, `retryOnFail`/`maxTries` em 11, e — a pior — o **`multipleFiles: true`** do
-campo de arquivo do formulário, sem o qual o intake aceita **um documento por vez**. Confira esse
-toggle no editor antes de subir 190 arquivos.
+Achado secundário da mesma rodada, mais sério do que parecia à primeira vista: `110_Mutuos_...pdf`
+foi registrado com a entidade `"GRUPO ARAUC` + bytes corrompidos (double-encoding) enquanto o
+diagnóstico de conteúdo do MESMO documento sugere a grafia correta — **duas entidades diferentes no
+banco para o mesmo grupo**, e o `porque_classificou_assim` do documento chegou com o texto do
+próprio modelo corrompido, não só o nome do arquivo. `nome_original` é cópia direta do `fileName`
+que o n8n entrega (`N8N/build-workflow.mjs:503`) — se a decodificação estiver errada, é no
+upload/n8n, não neste repositório. Ainda não investigado a fundo.
 
-**E CONFIRA O NÓ NOVO E O BATCHING**, que são a correção inteira da 0152 do lado do n8n:
-`Reconciliar Lote` entre `Reconciliar (Classe A)` e `Resumo de Custo`, com `executeOnce`; e
-`queryBatching: independently` em `Registrar Documento`, `Gravar Campos (Sombra)`,
-`Registrar Diagnostico` e `Reconciliar (Classe A)`. A suíte `workflow-sim.test.mjs` trava os dois,
-mas ela mede o JSON do repositório — não o que está no n8n.
+### 3. A ESCALA DA MODELAGEM ESTOUROU O TETO QUE A `0101` CALIBROU
 
-### 2. FAZER DEPLOY DO PORTAL
+`fn_linhas_para_modelagem` e `fn_conferir_modelagem` foram calibradas (sessão 35/36, migration
+`0101`) contra o caso do v35: **14 documentos, 770 ocorrências**. O araucária tem **190 documentos,
+13.328 linhas** — dezessete vezes a escala testada — e a tela de modelagem voltou a estourar o
+`statement_timeout` de 8 s do Supabase (medido em produção em 03/09: 8449 ms e 8496 ms,
+`canceling statement due to statement timeout`). **O teste de escala que existia
+(`modelagem_escala.test.sql`) passava porque nunca testou este tamanho** — o padrão de erro central
+deste projeto (estágio desligado parece limpo) aplicado a uma guarda de tempo. A migration `0160`
+está sendo escrita para isso; se mesmo depois da correção não couber em 8 s, o caminho é paginar a
+chamada na TELA como o EXPORT já faz (`portal/src/app/casos/[id]/export/route.ts:331`,
+`.range(de, ate)` — a tela hoje chama de uma vez só).
 
-A espera corrigida (`semProgressoMs`, `carenciaDoFechamentoMs`) está no repositório. Sem deploy, a
-tela **volta a declarar "o sistema parou" aos 5 minutos** sobre os 25 de silêncio legítimo da
-extração — que é o que fez o dono achar que a rodada tinha morrido quando ela estava viva.
+### 4. UMA DECISÃO DO DONO, ESCRITA NO CABEÇALHO DA `0157`
 
-### 3. A COTA DO DIA CONTINUA SENDO O LIMITE QUE APERTA
+O COMBINADO invertido (documentos rotulados COMBINADO com 0 empresas nas colunas, perdendo de um
+BALANCO mal extraído da mesma peça) foi resolvido pela `0159` sem promover o tipo — a autoridade
+numérica não muda, só o conflito para de ser decidido calado. Mas uma pergunta ficou aberta desde a
+`0157`: se `DF_AUDITADA` deveria entrar na lista de fontes que podem satisfazer o item COMBINADO por
+estrutura. Continua sem decisão.
 
-No nível gratuito da linha Flash-Lite: **RPM 15**, **TPM 250K** e **RPD 500** — este último decide.
-Medido na rodada real do araucária: **440 de 500 (88%)** para os 190 documentos, contra os ~285
-estimados. **Um book por dia, e o araucária sozinho já ocupa quase o dia inteiro.** O painel do
-Google mostra o **pico dos últimos 28 dias**, não o consumo de hoje.
+### O que NÃO bloqueia a próxima rodada
 
-### 4. RODAR O ARAUCÁRIA DE NOVO, E O QUE MEDIR NELE
-
-Ele NÃO está no repositório — 190 documentos, 14 empresas, 5 exercícios, entregue ao dono por
-arquivo. O que a rodada de 27/08 deixou para a próxima:
-
-**a) O LOTE TEM DE FECHAR.** É o critério único, e ele nunca aconteceu: `lote_execucao` do araucária
-está vazia até hoje. Com a 0152 a reconciliação sai de ~8.500 invocações para **247**, e a checagem
-cara de 12,4 s para 1,79 s — medido em produção, não estimado.
-
-**b) A PERGUNTA QUE FICOU SEM RESPOSTA: sub-extração é teto do modelo ou fatiamento que não rodou?**
-23 documentos vieram com cobertura entre **40% e 78%**, e a régua está calibrada (erro mediano de
-**+3%** contra os 38 do Canastra, pior extração perfeita em 96%). A constância é o que intriga:
-cinco livros razão de 258 linhas devolveram **102, 101, 104, 102 e 102**; cinco mapas de dívida de
-25 linhas devolveram **12, 12, 12, 12 e 12**. Número que não varia com o documento é assinatura de
-TETO, não de leitura. A `0154` fez a pendência dizer **em quantos blocos** o documento foi lido —
-é o instrumento que faltava, e a resposta vem na primeira pendência de cobertura da próxima rodada.
-
-**c) O QUE A 0155 MUDA NO QUE ELE VAI ENCONTRAR.** Os cinco combinados do grupo têm 14–15 empresas
-nas colunas e a IA chamou quatro de `BALANCO` e um de `COMBINADO`, com confiança 1,0 nos cinco —
-e chamado de BALANCO o combinado EMPATAVA com o balanço individual da empresa, o que devolvia o
-"fica com o maior" que a `0151` existe para eliminar. Agora a autoridade sai da estrutura: medido
-depois, `053` e `056` valem **35** (iguais, apesar dos rótulos diferentes), o individual vale **50**
-e o combinado preliminar vale **10**.
-
-**d) A CLASSIFICAÇÃO POR NOME MELHOROU MUITO, e dá para conferir de graça.** `parseEntidade` saía com
-**47 nomes de entidade distintos** para 14 empresas nos 190 nomes de arquivo; agora sai com **16** —
-as 14 reais, o `Grupo Araucaria` e o `null` dos 24 arquivos que de fato não nomeiam empresa. Rode
-antes de enviar: um script de três linhas importando `classifyByFilename` responde isso sem gastar
-uma chamada de IA.
-
-### 5. O que NÃO bloqueia a próxima rodada
-
-- **O teste vermelho no dialeto OpenAI**, que já estava vermelho antes da 67. O provedor ativo é o
-  Google e o CI roda o dialeto padrão;
-- **Os itens que só o dono destrava**, inalterados desde a 66: proteger o `main` (B6.1), levar o
-  capítulo 10 da entrega para o repositório (B4.1) e preencher os `[A CONFIRMAR]` do `Arquitetura do Sistema/2 Especificação/10`;
-- **Dois achados da rodada que são do dono, não defeitos:** o **cancelamento manual não dispara o
-  Error Workflow** (a execução 7172 foi cancelada e `execucao_falha` ficou vazia — o Error Workflow
-  está configurado desde 27/08, mas cancelamento não é falha para o n8n), e o **Relatório do Auditor
-  nomeia uma décima quinta empresa**, "Araucária Indústria de Embalagens Ltda.", que não tem nenhuma
-  demonstração no book;
-- **Um limite conhecido da `0153`, medido e travado com assert:** com UM candidato a absorção de
-  entidade continua silenciosa ("ALFA COMERCIO EXTERIOR LTDA." é absorvida por "ALFA COMERCIO LTDA."
-  porque uma é subsequência da outra). No araucária não acontece; num grupo com "Alfa Comércio
-  Ltda." e "Alfa Comércio e Exportação Ltda." aconteceria.
+- **A cota RPD (500/dia) continua sendo o teto que aperta:** o araucária sozinho consome
+  ~440–450, um book por dia;
+- **As sub-extrações reais da rodada `7417`** (`002_Balanco_Serraria` 49%, `175_...escritorio` 51%,
+  `170_...2022` 57%, `171_...2021` 69%, `099_Livro_Razao_2024` 77%) são leitura PARCIAL do modelo de
+  IA, não fatiamento quebrado — todas dizem "fatiado, e todos chegaram". É calibração de
+  prompt/modelo, não defeito de código;
+- **O que só o dono destrava, inalterado:** proteger o `main` (B6.1).
 
 > **ANTES DE ESCREVER QUE A INFRA CONTINUA APLICADA, RODE A SONDA.** `select * from
 > fn_instalacao_conferir()` contra o banco em que você está conectado. Em 28/08 ela devolvia 54 de
@@ -470,13 +444,20 @@ os **dois books** (o gerador de cada um é o teste dele — morre por `assert` s
 fechar), a **medição de custo do lote** (`medir-custo-book.mjs`, que reprova quando um documento passa
 da estimativa que sustenta o teto), `tsc`, `eslint` e `next build`.
 
-**O TIMEOUT DA MODELAGEM ESTÁ RESOLVIDO** (detalhe na sessão 36): medido pelo
+**O TIMEOUT DA MODELAGEM ESTAVA RESOLVIDO NA ESCALA DO V35** (detalhe na sessão 36): medido pelo
 `pg_stat_statements` da própria produção, com o contador zerado, `fn_linhas_para_modelagem` = **501
 ms** e `fn_conferir_modelagem` = **485 ms** contra o teto de 8.000 ms — 16× de folga, nenhum
 cancelamento. Eram 6.381 ms de média, raspando o teto, que é o que fazia a falha parecer
 intermitente. Eram **três causas empilhadas** (`0101` trabalho de fora, `0102` versão superada,
 `0103` trabalho dentro do rótulo) e uma quarta de processo (migration na tabela do `Supabase/README.md` e
 fora da lista de comandos). A sessão 35 ainda dá isso como aberto — ela é anterior a esta medição.
+
+> **E A MEDIÇÃO ERA CONTRA 770 OCORRÊNCIAS — NÃO CONTRA 13.000.** O araucária (03/09, 190
+> documentos) estourou o mesmo teto de novo: `fn_linhas_para_modelagem` em 8.496 ms,
+> `fn_conferir_modelagem` em 8.449 ms, os dois cancelados. As três causas de 2026-08-05 continuam
+> corrigidas; o que mudou é a escala, dezessete vezes maior do que o caso que provou o "resolvido"
+> acima. Ver "A ESCALA DA MODELAGEM ESTOUROU O TETO" em "POR ONDE COMEÇAR", acima, e a migration
+> `0160`.
 
 ## O QUE ESTÁ ABERTO AGORA
 
