@@ -8348,8 +8348,8 @@ declare
   v_pendencia_id        uuid;
   v_entidade_criada     boolean := false;
   v_pendencia_grupo_id  uuid;
-  v_outra_entidade_id   uuid;
-  v_outra_entidade_nome text;
+  v_outros_n            int;
+  v_outros_nomes        text;
 begin
   select caso_id, entidade_id, tipo_taxonomia, periodo_id
     into v_caso_id, v_entidade_id, v_tipo_atual, v_periodo_id
@@ -8399,23 +8399,34 @@ begin
             where id = v_pendencia_grupo_id;
         end if;
       else
-        -- 0160: o nome que não casou com o registrado pode ser OUTRA empresa
-        -- já cadastrada NESTE caso — hierarquia legítima (holding × subsidiária,
-        -- ou duas empresas do mesmo grupo), não erro de registro. Excluída a
-        -- própria entidade do documento, para não contar "casou consigo mesma"
-        -- como candidata a outra empresa. Reaproveita `fn_entidades_candidatas`
-        -- da 0153 em vez de duplicar a busca.
-        select c.entidade_id, c.razao_social into v_outra_entidade_id, v_outra_entidade_nome
+        -- 0160: o nome que não casou com o registrado pode casar com OUTRA(S)
+        -- empresa(s) já cadastrada(s) NESTE caso — nesse caso a função não sabe
+        -- afirmar que o registro está errado. Excluída a própria entidade do
+        -- documento, para não contar "casou consigo mesma" como candidata a
+        -- outra empresa. Reaproveita `fn_entidades_candidatas` da 0153 em vez de
+        -- duplicar a busca — e, ao contrário da 0153 (que ali resolve escolhendo
+        -- SEM decidir, criando entidade nova), aqui `order by ... limit 1`
+        -- escolheria no empate quando há mais de um candidato, que é exatamente
+        -- o que a 0153 existe para não fazer: conta TODOS os candidatos, para a
+        -- mensagem nomear todos, não só o primeiro por ordem alfabética.
+        select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social)
+          into v_outros_n, v_outros_nomes
         from fn_entidades_candidatas(v_caso_id, p_entidade_nome) c
-        where c.entidade_id <> v_entidade_id
-        order by c.exata desc, c.razao_social
-        limit 1;
+        where c.entidade_id <> v_entidade_id;
 
-        if v_outra_entidade_id is not null then
-          -- HIERARQUIA: não decide quem está certo — só para de chamar de
-          -- "incorreto" um registro que aponta para uma empresa real do
-          -- mandato. A pendência de erro clássica, se estava aberta de uma
-          -- rodada anterior, fecha — a resposta mudou de categoria.
+        if v_outros_n >= 1 then
+          -- NÃO É AFIRMAÇÃO DE HIERARQUIA: `entidade.papel_no_grupo` é o único
+          -- campo que registraria holding × subsidiária, e esta função não o
+          -- consulta — não há como saber, só a partir do nome, qual é a relação
+          -- entre as duas empresas, ou se há relação alguma. O que dá para
+          -- afirmar sem inventar é só isto: as duas (ou mais) já são empresas
+          -- cadastradas neste mandato, e o sistema não sabe qual delas é a
+          -- certa para este documento — não decide quem está certo, só para de
+          -- chamar de "incorreto" um registro que pode estar certo. A pendência
+          -- de erro clássica, se estava aberta de uma rodada anterior, fecha —
+          -- a resposta mudou de categoria (mas isso só acontece na PRÓXIMA
+          -- passada de `fn_registrar_diagnostico` sobre o documento, não ao
+          -- aplicar esta migration — ver `Supabase/README.md`).
           if v_pendencia_id is not null then
             update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
               where id = v_pendencia_id;
@@ -8423,14 +8434,21 @@ begin
           if v_pendencia_grupo_id is null then
             insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, entidade_id, motivo)
               values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
-                format('O documento está registrado em "%s", mas o diagnóstico de conteúdo aponta "%s" — que já é '
-                       || 'uma empresa CADASTRADA neste mandato ("%s"). Isto não é erro de registro: são duas '
-                       || 'empresas distintas do mesmo grupo (holding × subsidiária, ou duas do grupo), e nenhuma '
-                       || 'das duas é presumida a certa aqui. Confira pela revisão do documento se ele pertence '
-                       || 'mesmo a "%s" ou deveria estar em "%s" — sem fundir: as duas continuam sendo empresas '
-                       || 'diferentes.',
-                       coalesce(v_entidade_atual_nome, '(nenhuma)'), p_entidade_nome, v_outra_entidade_nome,
-                       coalesce(v_entidade_atual_nome, '(nenhuma)'), v_outra_entidade_nome),
+                case when v_outros_n = 1 then
+                  format('O documento está registrado em "%s", mas o diagnóstico de conteúdo aponta "%s" — nome '
+                         || 'que também já é uma empresa CADASTRADA neste mandato ("%s"). As duas são empresas '
+                         || 'cadastradas neste caso, e o sistema não sabe qual das duas é a certa para este '
+                         || 'documento — não presume nenhuma. Confira pela revisão se ele pertence mesmo a "%s" '
+                         || 'ou deveria estar em "%s", sem fundir: as duas continuam sendo empresas diferentes.',
+                         coalesce(v_entidade_atual_nome, '(nenhuma)'), p_entidade_nome, v_outros_nomes,
+                         coalesce(v_entidade_atual_nome, '(nenhuma)'), v_outros_nomes)
+                else
+                  format('O documento está registrado em "%s", mas o diagnóstico de conteúdo aponta "%s" — nome '
+                         || 'que casa com MAIS DE UMA empresa já cadastrada neste mandato (%s). O sistema não '
+                         || 'sabe qual delas é a certa para este documento — não presume nenhuma. Confira pela '
+                         || 'revisão qual é a empresa certa, sem fundir: continuam sendo empresas diferentes.',
+                         coalesce(v_entidade_atual_nome, '(nenhuma)'), p_entidade_nome, v_outros_nomes)
+                end,
                 p_documento_id, v_entidade_id, 'diagnostico:entidade_grupo:' || p_documento_id);
           end if;
         else
@@ -8541,7 +8559,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é OUTRA empresa já cadastrada no mesmo caso, a divergência é hierarquia (holding × subsidiária) e não erro — a pendência para de chamar de "incorreto" um registro correto, sem decidir de quem é o documento nem fundir as duas entidades.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
