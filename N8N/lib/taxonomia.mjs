@@ -106,4 +106,50 @@ export const ALIASES = [
   { codigo: 'SITUACAO_FISCAL', termos: ['situacao fiscal', 'parcelamento', 'parcelamentos', 'refis'] },
   { codigo: 'ORGANOGRAMA', termos: ['organograma', 'organograma societario', 'societario', 'societaria'] },
   { codigo: 'NOTAS_EXPL', termos: ['notas explicativas'] },
+  // HEADCOUNT já existia na taxonomia (seed 0002: "Headcount / folha de
+  // pagamento") mas sem alias nenhum aqui — achado na rodada do lote 7377
+  // (02/09, book "teste Canastra"): `28_Folha_de_Pagamento` saiu com
+  // confiança da IA 0,9 (acima do limiar 0,70) mas MESMO ASSIM abriu
+  // `classificacao_pendente`, porque `codigosConhecidos()` (ia.mjs) deriva o
+  // enum do schema estrito de `KIT_BASICO` + `ALIASES.map(codigo)` — sem
+  // entrada aqui, HEADCOUNT não existia no enum que a IA podia devolver, e
+  // `fn_registrar_documento` (0127) nunca via um `tipo_taxonomia` do catálogo
+  // para aceitar automaticamente. Não é caso de tipo novo: a taxonomia já
+  // nomeia a família: só faltava o alias, dos dois lados (nome de arquivo e
+  // enum da IA) — mesma família de checklist incompleto que 0157/0159.
+  //
+  // POSIÇÃO NA LISTA — achado do revisor (66ee751, 08/09): "folha de
+  // pagamento" é palavra de ASSUNTO, não de TIPO. Inserido acima das famílias
+  // de tipo (SITUACAO_FISCAL, NOTAS_EXPL, CERTIDOES, CONTINGENCIAS,
+  // ORGANOGRAMA), o alias roubava seis nomes reais que citam "folha de
+  // pagamento" como assunto de um documento de outro tipo — medido:
+  // `30_Parcelamento_INSS_sobre_Folha_de_Pagamento_...` (SITUACAO_FISCAL),
+  // `Situacao_Fiscal_e_Parcelamentos_de_Folha_de_Pagamento` (SITUACAO_FISCAL),
+  // `33_Notas_Explicativas_Despesa_com_Folha_de_Pagamento_...` (NOTAS_EXPL),
+  // `Certidao_Negativa_Debitos_Trabalhistas_folha_de_pagamento` (CERTIDOES),
+  // `Contingencias_Trabalhistas_Folha_de_Pagamento` (CONTINGENCIAS),
+  // `Organograma_Societario_com_Headcount_2025` (ORGANOGRAMA) — todos saíam
+  // HEADCOUNT em vez do tipo correto. `parseTipo` para no primeiro alias que
+  // casa, então a regra da linha 29-30 ("o mais específico primeiro") exige
+  // HEADCOUNT por ÚLTIMO: fica testado só depois de toda família de tipo
+  // específico já ter tido a chance de casar. Isso importa mesmo com a IA no
+  // caminho, porque o degradado (build-workflow.mjs, quando a IA não
+  // responde — foi o arranjo do v30/v31, 8 de 14 documentos) faz o nome
+  // valer sozinho.
+  //
+  // REPUBLICAÇÃO — este alias muda `codigosConhecidos()` (ia.mjs) →
+  // `extractionSchema().diagnostico.tipo_sugerido.enum` (extract.mjs) →
+  // `FINGERPRINT_EXTRACAO` (build-workflow.mjs), porque o enum carrega a
+  // ORDEM de `ALIASES` e o fingerprint é hash do schema inteiro — mover
+  // HEADCOUNT na lista muda o fingerprint de novo, mesmo com o mesmo
+  // conjunto de códigos. Medido no workflow.e1-ingestao.json ao longo desta
+  // correção: sem alias nenhum, f17efcbc53780818; com o alias no lugar
+  // errado (66ee751), 78ee549e1ee50e1d; com o alias reordenado para o fim
+  // (esta correção), d1a77ddf7937b595. Dedup da 0118/0127 é por (hash, fingerprint_extracao):
+  // republicar faz CADA UM dos documentos já extraídos perder o curto-circuito
+  // "Extração já feita?" e ser re-extraído do zero — 38 no lote de teste
+  // Canastra, 190 no araucária. Custo de LLM novo, versões novas de
+  // documento, números que podem divergir do .xlsx do lote 7377 já
+  // entregue. Decisão de republicar é do dono do workflow, não automática.
+  { codigo: 'HEADCOUNT', termos: ['folha de pagamento', 'folha pagamento', 'headcount'] },
 ];

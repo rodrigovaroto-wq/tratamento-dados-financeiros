@@ -51,6 +51,9 @@ declare
   v_txt text;
   v_desc text;
   v_json jsonb;
+  v_reg jsonb;
+  v_doc uuid;
+  v_ver uuid;
 begin
   raise notice '--- 1. o book difícil chegou inteiro ao banco ---';
 
@@ -475,6 +478,138 @@ begin
   where caso_id = v_caso and estado <> 'resolvida'
     and motivo = 'reconciliacao:mutuos_planilha_vs_balanco';
   perform teste_assert(v_n = 1, 'e volta a abrir quando a divergência volta');
+
+  raise notice '--- 16. HOLDING registrada, subsidiária no conteúdo: não é entidade_incorreta (0160) ---';
+  -- Reproduz o achado real do lote 7377 (ESTADO.md, SESSÃO 79): o
+  -- `33_Notas_Explicativas` registrado em GRUPO CANASTRA, com o diagnóstico de
+  -- conteúdo apontando Canastra Indústria. As DUAS já são entidades do fixture
+  -- (nenhum dado inventado) — são a holding e uma subsidiária real do book.
+  select fn_registrar_documento(
+    v_caso, 'GRUPO CANASTRA', 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/33.pdf', '33_Notas_Explicativas_Canastra.pdf', true, 'H-0160-A', 'ok'
+  ) into v_reg;
+  v_doc := (v_reg->>'documento_id')::uuid;
+  v_ver := (v_reg->>'documento_versao_id')::uuid;
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.',
+            true, 'BALANCO', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'GRUPO CANASTRA × Canastra Indústria NÃO abre a pendência clássica de "entidade incorreta"',
+    format('%s pendência(s) diagnostico:entidade', v_n));
+
+  select count(*), max(descricao) into v_n, v_desc from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'e abre UMA pendência distinta pelo motivo, para a candidata só ambígua', format('%s pendência(s)', v_n));
+  perform teste_assert(v_desc like '%GRUPO CANASTRA%' and v_desc like '%CANASTRA INDÚSTRIA DE EMBALAGENS%',
+    'a descrição nomeia as DUAS empresas', v_desc);
+
+  -- COMPORTAMENTO, não texto (achado 7 da revisão): o que importa não é que a
+  -- descrição evite certas palavras — é que a pendência continua REVISÁVEL pela
+  -- MESMA fila e o MESMO mecanismo da clássica (tipo/severidade/sobrepujável —
+  -- são esses três campos, não o `motivo`, que fazem a pendência aparecer na
+  -- fila do portal e ser fechada por `fn_revisar_documento`, achado 8), e que
+  -- nem a fusão nem a movimentação automática do documento acontecem.
+  perform teste_assert(
+    (select tipo::text from pendencia
+       where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida') = 'entidade_incorreta',
+    'a pendência é do MESMO tipo que a clássica — aparece na mesma fila de revisão do portal');
+  perform teste_assert(
+    (select severidade::text from pendencia
+       where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida') = 'importante',
+    'com a MESMA severidade da clássica');
+  perform teste_assert(
+    (select sobrepujavel from pendencia
+       where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida') = true,
+    'e sobrepujável pela revisão — continua sendo o humano quem decide, não o sistema');
+
+  select count(*) into v_n from entidade
+   where caso_id = v_caso and razao_social in ('GRUPO CANASTRA', 'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.');
+  perform teste_assert(v_n = 2,
+    'as duas entidades continuam linhas DISTINTAS — nenhuma fusão aconteceu', format('%s entidade(s)', v_n));
+
+  perform teste_assert(
+    (select entidade_id from documento where id = v_doc)
+      = (select id from entidade where caso_id = v_caso and razao_social = 'GRUPO CANASTRA'),
+    'e o documento continua registrado onde estava — nada foi movido sozinho');
+
+  raise notice '--- 17. NEGATIVO: divergência de VERDADE continua abrindo entidade_incorreta (0160) ---';
+  -- Um nome que não bate com NENHUMA empresa do caso não é hierarquia — é o
+  -- erro que a 0121 já sabia acusar, e a 0160 não pode ter destravado isso.
+  select fn_registrar_documento(
+    v_caso, 'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.', 'anual', '2025', 'DRE', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/34.pdf', '34_DRE_Canastra_Industria.pdf', true, 'H-0160-B', 'ok'
+  ) into v_reg;
+  v_doc := (v_reg->>'documento_id')::uuid;
+  v_ver := (v_reg->>'documento_versao_id')::uuid;
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'Empresa Fantasma Que Não Existe No Caso Ltda.',
+            true, 'DRE', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'nome que não casa com NINGUÉM do caso continua abrindo entidade_incorreta',
+    format('%s pendência(s)', v_n));
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'e NÃO abre pendência de hierarquia — não há outra empresa candidata',
+    format('%s pendência(s)', v_n));
+
+  raise notice '--- 18. AMBÍGUO: o nome casa com MAIS DE UMA candidata, e a TRANSIÇÃO fecha a clássica (0160) ---';
+  -- O exemplo literal do cabeçalho da 0153, com o fixture real do Canastra: um
+  -- nome curto ("Canastra") casa, por `fn_mesma_entidade`, com VÁRIAS empresas
+  -- já cadastradas no caso (Participações, Indústria, Comercial, Agroflorestal,
+  -- Imobiliária SPE, Grupo Canastra) — nenhuma delas é a entidade do documento
+  -- (CN TRANSPORTES), então nenhuma é excluída por "casou consigo mesma". Um
+  -- `limit 1` pegaria a primeira por ordem alfabética e a escreveria na
+  -- pendência como se fosse A resposta — exatamente o que a 0153 existe para
+  -- não fazer (achado 4 da revisão).
+  select fn_registrar_documento(
+    v_caso, 'CN TRANSPORTES E LOGÍSTICA LTDA.', 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/35.pdf', '35_Balanco_CN_Transportes.pdf', true, 'H-0160-C', 'ok'
+  ) into v_reg;
+  v_doc := (v_reg->>'documento_id')::uuid;
+  v_ver := (v_reg->>'documento_versao_id')::uuid;
+
+  -- PRIMEIRA passada: nome que não casa com NINGUÉM do caso — é o estado real do
+  -- lote 7377 (a pendência clássica `diagnostico:entidade:<doc>` já ABERTA,
+  -- achado 5 da revisão), não um documento que nasce já em hierarquia.
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'Empresa Fantasma Que Não Existe No Caso Ltda.',
+            true, 'BALANCO', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'PRÉ-CONDIÇÃO: a pendência clássica está aberta antes da segunda passada',
+    format('%s pendência(s)', v_n));
+
+  -- SEGUNDA passada, mesma versão: o diagnóstico agora aponta um nome que casa
+  -- com várias empresas do caso. É o CAMINHO DE TRANSIÇÃO que a 0160 promete e
+  -- que nenhum assert anterior exercitava — a pendência clássica muda de
+  -- categoria, ela não nasce resolvida.
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'Canastra',
+            true, 'BALANCO', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'a TRANSIÇÃO: a pendência clássica FECHA quando a resposta muda de categoria numa rodada seguinte',
+    format('%s pendência(s) clássica(s) ainda abertas', v_n));
+
+  select count(*), max(descricao) into v_n, v_desc from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'e abre a pendência distinta no lugar dela', format('%s pendência(s)', v_n));
+  perform teste_assert(v_desc ilike '%mais de uma%',
+    'com MAIS de uma candidata, a mensagem diz que é ambíguo — não escolhe uma sozinha', v_desc);
+  perform teste_assert(v_desc like '%CANASTRA PARTICIPAÇÕES%' and v_desc like '%CANASTRA INDÚSTRIA DE EMBALAGENS%',
+    'e nomeia mais de uma candidata (não só a primeira por ordem alfabética)', v_desc);
 
   raise notice 'TODOS OS TESTES DO BOOK CANASTRA PASSARAM';
 end $$;
