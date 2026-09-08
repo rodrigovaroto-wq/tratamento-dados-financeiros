@@ -146,7 +146,7 @@ export const ALIASES = [
   // correção: sem alias nenhum, f17efcbc53780818; com o alias no lugar
   // errado (66ee751), 78ee549e1ee50e1d; com o alias reordenado para o fim
   // (esta correção), d1a77ddf7937b595. Dedup da 0118/0127 é por (hash, fingerprint_extracao):
-  // republicar faz TODO documento já extraído perder o curto-circuito
+  // republicar faz CADA UM dos documentos já extraídos perder o curto-circuito
   // "Extração já feita?" e ser re-extraído do zero — 38 no lote de teste
   // Canastra, 190 no araucária. Custo de LLM novo, versões novas de
   // documento, números que podem divergir do .xlsx do lote 7377 já
