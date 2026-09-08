@@ -8347,6 +8347,9 @@ declare
   v_entidade_atual_nome text;
   v_pendencia_id        uuid;
   v_entidade_criada     boolean := false;
+  v_pendencia_grupo_id  uuid;
+  v_outra_entidade_id   uuid;
+  v_outra_entidade_nome text;
 begin
   select caso_id, entidade_id, tipo_taxonomia, periodo_id
     into v_caso_id, v_entidade_id, v_tipo_atual, v_periodo_id
@@ -8374,25 +8377,78 @@ begin
       v_entidade_criada := true;
     else
       select razao_social into v_entidade_atual_nome from entidade where id = v_entidade_id;
+
       select id into v_pendencia_id from pendencia
         where caso_id = v_caso_id and motivo = 'diagnostico:entidade:' || p_documento_id and estado <> 'resolvida'
         limit 1;
-      -- 0121: divergência de ENTIDADE passa a ser medida pela forma canônica,
-      -- como o período já é desde a 0022. "Canastra Industria" e "CANASTRA
-      -- INDÚSTRIA DE EMBALAGENS LTDA." são a mesma empresa, e `fn_mesma_entidade`
-      -- já sabia disso — só esta comparação não perguntava, e por isso abria
-      -- pendência de divergência entre dois nomes da mesma companhia.
-      if not fn_mesma_entidade(v_entidade_atual_nome, p_entidade_nome) then
-        if v_pendencia_id is null then
-          insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
-            values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
-              format('Diagnóstico de conteúdo sugere entidade "%s", mas o documento está registrado com "%s".',
-                     p_entidade_nome, coalesce(v_entidade_atual_nome, '(nenhuma)')),
-              p_documento_id, 'diagnostico:entidade:' || p_documento_id);
+      select id into v_pendencia_grupo_id from pendencia
+        where caso_id = v_caso_id and motivo = 'diagnostico:entidade_grupo:' || p_documento_id and estado <> 'resolvida'
+        limit 1;
+
+      -- 0121: divergência de ENTIDADE medida pela forma canônica, como o
+      -- período já é desde a 0022. "Canastra Industria" e "CANASTRA INDÚSTRIA
+      -- DE EMBALAGENS LTDA." são a mesma empresa, e `fn_mesma_entidade` já
+      -- sabia disso.
+      if fn_mesma_entidade(v_entidade_atual_nome, p_entidade_nome) then
+        if v_pendencia_id is not null then
+          update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
+            where id = v_pendencia_id;
         end if;
-      elsif v_pendencia_id is not null then
-        update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
-          where id = v_pendencia_id;
+        if v_pendencia_grupo_id is not null then
+          update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
+            where id = v_pendencia_grupo_id;
+        end if;
+      else
+        -- 0160: o nome que não casou com o registrado pode ser OUTRA empresa
+        -- já cadastrada NESTE caso — hierarquia legítima (holding × subsidiária,
+        -- ou duas empresas do mesmo grupo), não erro de registro. Excluída a
+        -- própria entidade do documento, para não contar "casou consigo mesma"
+        -- como candidata a outra empresa. Reaproveita `fn_entidades_candidatas`
+        -- da 0153 em vez de duplicar a busca.
+        select c.entidade_id, c.razao_social into v_outra_entidade_id, v_outra_entidade_nome
+        from fn_entidades_candidatas(v_caso_id, p_entidade_nome) c
+        where c.entidade_id <> v_entidade_id
+        order by c.exata desc, c.razao_social
+        limit 1;
+
+        if v_outra_entidade_id is not null then
+          -- HIERARQUIA: não decide quem está certo — só para de chamar de
+          -- "incorreto" um registro que aponta para uma empresa real do
+          -- mandato. A pendência de erro clássica, se estava aberta de uma
+          -- rodada anterior, fecha — a resposta mudou de categoria.
+          if v_pendencia_id is not null then
+            update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
+              where id = v_pendencia_id;
+          end if;
+          if v_pendencia_grupo_id is null then
+            insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, entidade_id, motivo)
+              values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+                format('O documento está registrado em "%s", mas o diagnóstico de conteúdo aponta "%s" — que já é '
+                       || 'uma empresa CADASTRADA neste mandato ("%s"). Isto não é erro de registro: são duas '
+                       || 'empresas distintas do mesmo grupo (holding × subsidiária, ou duas do grupo), e nenhuma '
+                       || 'das duas é presumida a certa aqui. Confira pela revisão do documento se ele pertence '
+                       || 'mesmo a "%s" ou deveria estar em "%s" — sem fundir: as duas continuam sendo empresas '
+                       || 'diferentes.',
+                       coalesce(v_entidade_atual_nome, '(nenhuma)'), p_entidade_nome, v_outra_entidade_nome,
+                       coalesce(v_entidade_atual_nome, '(nenhuma)'), v_outra_entidade_nome),
+                p_documento_id, v_entidade_id, 'diagnostico:entidade_grupo:' || p_documento_id);
+          end if;
+        else
+          -- DIVERGÊNCIA DE VERDADE: o nome diagnosticado não bate com NENHUMA
+          -- empresa já cadastrada no caso — não há hierarquia a reconhecer, e a
+          -- pendência clássica continua acusando exatamente como na 0121.
+          if v_pendencia_grupo_id is not null then
+            update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
+              where id = v_pendencia_grupo_id;
+          end if;
+          if v_pendencia_id is null then
+            insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
+              values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+                format('Diagnóstico de conteúdo sugere entidade "%s", mas o documento está registrado com "%s".',
+                       p_entidade_nome, coalesce(v_entidade_atual_nome, '(nenhuma)')),
+                p_documento_id, 'diagnostico:entidade:' || p_documento_id);
+          end if;
+        end if;
       end if;
     end if;
   end if;
@@ -8485,7 +8541,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade passa a casar e a divergir pela forma CANÔNICA (fn_upsert_entidade/fn_mesma_entidade, 0030) — antes, igualdade exata de texto criava uma segunda linha para a mesma empresa e abria pendência de divergência entre duas grafias dela.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é OUTRA empresa já cadastrada no mesmo caso, a divergência é hierarquia (holding × subsidiária) e não erro — a pendência para de chamar de "incorreto" um registro correto, sem decidir de quem é o documento nem fundir as duas entidades.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -

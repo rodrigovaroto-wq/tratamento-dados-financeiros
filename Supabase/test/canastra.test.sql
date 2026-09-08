@@ -51,6 +51,9 @@ declare
   v_txt text;
   v_desc text;
   v_json jsonb;
+  v_reg jsonb;
+  v_doc uuid;
+  v_ver uuid;
 begin
   raise notice '--- 1. o book difícil chegou inteiro ao banco ---';
 
@@ -475,6 +478,63 @@ begin
   where caso_id = v_caso and estado <> 'resolvida'
     and motivo = 'reconciliacao:mutuos_planilha_vs_balanco';
   perform teste_assert(v_n = 1, 'e volta a abrir quando a divergência volta');
+
+  raise notice '--- 16. HOLDING registrada, subsidiária no conteúdo: não é entidade_incorreta (0160) ---';
+  -- Reproduz o achado real do lote 7377 (ESTADO.md, SESSÃO 79): o
+  -- `33_Notas_Explicativas` registrado em GRUPO CANASTRA, com o diagnóstico de
+  -- conteúdo apontando Canastra Indústria. As DUAS já são entidades do fixture
+  -- (nenhum dado inventado) — são a holding e uma subsidiária real do book.
+  select fn_registrar_documento(
+    v_caso, 'GRUPO CANASTRA', 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/33.pdf', '33_Notas_Explicativas_Canastra.pdf', true, 'H-0160-A', 'ok'
+  ) into v_reg;
+  v_doc := (v_reg->>'documento_id')::uuid;
+  v_ver := (v_reg->>'documento_versao_id')::uuid;
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.',
+            true, 'BALANCO', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'GRUPO CANASTRA × Canastra Indústria NÃO abre a pendência clássica de "entidade incorreta"',
+    format('%s pendência(s) diagnostico:entidade', v_n));
+
+  select count(*), max(descricao) into v_n, v_desc from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'e abre UMA pendência de hierarquia, distinta pelo motivo', format('%s pendência(s)', v_n));
+  perform teste_assert(v_desc like '%GRUPO CANASTRA%' and v_desc like '%CANASTRA INDÚSTRIA DE EMBALAGENS%',
+    'a descrição nomeia as DUAS empresas', v_desc);
+  perform teste_assert(v_desc not ilike '%incorreto%' and v_desc not ilike '%errad%',
+    'e não chama nenhuma das duas de errada — é hierarquia, não erro', v_desc);
+  perform teste_assert(v_desc ilike '%sem fundir%' or v_desc ilike '%diferentes%',
+    'e não sugere fundir as duas: continuam sendo empresas distintas', v_desc);
+
+  raise notice '--- 17. NEGATIVO: divergência de VERDADE continua abrindo entidade_incorreta (0160) ---';
+  -- Um nome que não bate com NENHUMA empresa do caso não é hierarquia — é o
+  -- erro que a 0121 já sabia acusar, e a 0160 não pode ter destravado isso.
+  select fn_registrar_documento(
+    v_caso, 'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.', 'anual', '2025', 'DRE', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/34.pdf', '34_DRE_Canastra_Industria.pdf', true, 'H-0160-B', 'ok'
+  ) into v_reg;
+  v_doc := (v_reg->>'documento_id')::uuid;
+  v_ver := (v_reg->>'documento_versao_id')::uuid;
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'Empresa Fantasma Que Não Existe No Caso Ltda.',
+            true, 'DRE', 'anual', '2025', 'ok', null, 'r', 'j');
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 1,
+    'nome que não casa com NINGUÉM do caso continua abrindo entidade_incorreta',
+    format('%s pendência(s)', v_n));
+
+  select count(*) into v_n from pendencia
+   where caso_id = v_caso and motivo = 'diagnostico:entidade_grupo:' || v_doc and estado <> 'resolvida';
+  perform teste_assert(v_n = 0,
+    'e NÃO abre pendência de hierarquia — não há outra empresa candidata',
+    format('%s pendência(s)', v_n));
 
   raise notice 'TODOS OS TESTES DO BOOK CANASTRA PASSARAM';
 end $$;
