@@ -55,7 +55,7 @@
 // escrito com separador de milhar em três grupos, apagava os dois números da
 // linha e a deixava sem dígito — "sem valor". Medido: verdade 10, régua 9
 // (-10%). A CORREÇÃO separa as duas formas pelo GRUPO, não por lista: um
-// separador de milhar tem TODO grupo depois do primeiro com exatamente 3
+// separador de milhar tem CADA grupo depois do primeiro com exatamente 3
 // dígitos ("51.300.000" -> 300, 000); código de conta, não ("1.1.01.002" ->
 // 1, 01, 002 — o segundo grupo nunca chega a 3). `ehLinhaSemValor` só apaga o
 // número como código quando ele NÃO tem essa forma de separador de milhar.

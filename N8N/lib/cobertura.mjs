@@ -237,7 +237,7 @@ export function ehLinhaSemValor(linha) {
   // metade parecer sadia.
   //
   // O CRITÉRIO NÃO É LISTA, É FORMA — a mesma disciplina do resto deste
-  // arquivo. Separador de milhar brasileiro tem uma regra fixa: TODO grupo
+  // arquivo. Separador de milhar brasileiro tem uma regra fixa: CADA grupo
   // depois do primeiro tem EXATAMENTE 3 dígitos ("51.300.000" -> 300, 000;
   // "9.420.000" -> 420, 000; "10.412.600" -> 412, 600). Código de conta não
   // segue essa regra — a hierarquia classe.grupo.subgrupo.sequência escreve
