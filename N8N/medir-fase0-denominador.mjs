@@ -31,6 +31,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { linhasDeConta, juntarFragmentosDeLinha } from './lib/cobertura.mjs';
 import { linhasDeContaPorForma } from './lib/segunda-contagem.mjs';
+import { ehExecucaoDireta } from './entrada-workflow.mjs';
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const JSON_SAIDA = process.argv.includes('--json');
@@ -41,15 +42,27 @@ const JSON_SAIDA = process.argv.includes('--json');
  * inteiro.
  */
 export function compararMetodos(texto) {
-  const m1 = new Set(linhasDeConta(texto));
-  const m2 = new Set(linhasDeContaPorForma(texto, { juntarFragmentos: juntarFragmentosDeLinha }));
-  const soM1 = [...m1].filter((l) => !m2.has(l));
-  const soM2 = [...m2].filter((l) => !m1.has(l));
+  // AS CONTAGENS TÊM DE SER POR .length, NÃO POR TAMANHO DE Set — achado na
+  // revisão do PR #204. `medirBook`, abaixo, e o portão de produção
+  // (`medir-regua-cobertura.mjs`) contam `linhasDeConta(texto).length`, sem
+  // deduplicar. Um arquivo com 3 linhas de conta em que duas são IDÊNTICAS
+  // ("Caixa 1.000" repetida) tinha aqui `m1.size === 2` contra `.length ===
+  // 3` no modo `--book` — subcontagem, o lado perigoso, e os dois métodos
+  // pareciam CONCORDAR quando o número de um dos dois estava simplesmente
+  // errado. Os `Set` continuam existindo, mas só para achar a DIFERENÇA
+  // (quais linhas aparecem num método e não no outro) — aí a duplicata não
+  // muda a resposta, porque é teste de pertencimento, não de contagem.
+  const l1 = linhasDeConta(texto);
+  const l2 = linhasDeContaPorForma(texto, { juntarFragmentos: juntarFragmentosDeLinha });
+  const s1 = new Set(l1);
+  const s2 = new Set(l2);
+  const soM1 = [...s1].filter((l) => !s2.has(l));
+  const soM2 = [...s2].filter((l) => !s1.has(l));
   return {
-    linhasDeConta: m1.size,
-    linhasDeContaPorForma: m2.size,
-    diferenca: m2.size - m1.size,
-    concordam: m1.size > 0 || m2.size > 0 ? [...m1].filter((l) => m2.has(l)).length : 0,
+    linhasDeConta: l1.length,
+    linhasDeContaPorForma: l2.length,
+    diferenca: l2.length - l1.length,
+    concordam: l1.length > 0 || l2.length > 0 ? l1.filter((l) => s2.has(l)).length : 0,
     soNaRegua: soM1,
     soNaForma: soM2,
   };
@@ -132,19 +145,29 @@ function medirBook(nome) {
     + `, linhasDeContaPorForma em ${menosM2}/${linhas.length}`);
 }
 
-const argBook = process.argv.includes('--book') ? process.argv[process.argv.indexOf('--book') + 1] : null;
-const argArquivo = process.argv.slice(2).find((a) => !a.startsWith('--') && a !== argBook);
+// O DESPACHO SÓ RODA EM EXECUÇÃO DIRETA — achado na revisão do PR #204. Ele
+// morava no topo do módulo, incondicional, e chamava `process.exit(2)` sem
+// argumento nenhum (o caso de uso indevido); importar `compararMetodos` num
+// teste bastava para derrubar o processo do test runner. Era por isso que a
+// única função exportada deste instrumento não tinha teste nenhum — e este é
+// exatamente o instrumento que vai medir os três textos do araucária na Fase
+// 0. `ehExecucaoDireta` é o padrão que a casa já tem (`entrada-workflow.mjs`,
+// usado por `conferir-publicado.mjs` e `preparar-republicacao.mjs`).
+if (ehExecucaoDireta(import.meta.url)) {
+  const argBook = process.argv.includes('--book') ? process.argv[process.argv.indexOf('--book') + 1] : null;
+  const argArquivo = process.argv.slice(2).find((a) => !a.startsWith('--') && a !== argBook);
 
-if (argBook) {
-  medirBook(argBook);
-} else if (argArquivo) {
-  if (!existsSync(argArquivo)) {
-    console.error(`Não encontrei ${argArquivo}.`);
+  if (argBook) {
+    medirBook(argBook);
+  } else if (argArquivo) {
+    if (!existsSync(argArquivo)) {
+      console.error(`Não encontrei ${argArquivo}.`);
+      process.exit(2);
+    }
+    medirUmArquivo(argArquivo);
+  } else {
+    console.error('Uso: node N8N/medir-fase0-denominador.mjs <arquivo-de-texto.txt> [--json]');
+    console.error('  ou: node N8N/medir-fase0-denominador.mjs --book <canastra|vertentes> [--json]');
     process.exit(2);
   }
-  medirUmArquivo(argArquivo);
-} else {
-  console.error('Uso: node N8N/medir-fase0-denominador.mjs <arquivo-de-texto.txt> [--json]');
-  console.error('  ou: node N8N/medir-fase0-denominador.mjs --book <canastra|vertentes> [--json]');
-  process.exit(2);
 }

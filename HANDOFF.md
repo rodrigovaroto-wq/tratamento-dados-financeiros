@@ -4,10 +4,16 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-08 (sessões 77 a **79**, mais o trabalho desta sessão sobre a
-primeira rodada real, que ainda não ganhou número próprio no `ESTADO.md`). **Estado do `main`:**
-mergeado até o **PR #201**. O **#202** está aberto e verde (a `0159`), e uma quinta migration
-(`0160`, o timeout da modelagem na escala real) está sendo escrita.
+**Última atualização:** 2026-09-09 (sessão **81**). **Estado do `main`:** mergeado até o **PR
+#204**; migrations no repositório até a **`0161`**. O **#205** está aberto — as correções da
+revisão de código do próprio #204.
+
+> **ESTE CABEÇALHO JÁ CONGELOU DUAS VEZES, e a segunda foi em 24 horas.** Em 08/09 ele dizia
+> "mergeado até o #201, o #202 aberto, a `0160` sendo escrita" — e nesse meio-tempo #202, #203 e
+> #204 entraram. Antes disso passou 17 PRs parado. **Quem mergeia um PR atualiza estas quatro
+> linhas na mesma passada**, ou a próxima sessão planeja contra um estado que não existe. O
+> `ESTADO.md` tem portão automático (`run.sh` reprova se a migration mais nova não estiver citada);
+> este arquivo **não tem**, e é por isso que depende de disciplina.
 
 > **LEIA "A SESSÃO 79" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA — e depois os PRs #200, #201
 > e #202.** As sessões 77/78 fecharam o buraco entre repositório e produção: as `0151`–`0156`
@@ -22,7 +28,28 @@ mergeado até o **PR #201**. O **#202** está aberto e verde (a `0159`), e uma q
 > mesmo quando o próprio diagnóstico do sistema já o contestava (`0159`, #202). As três primeiras
 > estão em `main`; a quarta está aberta, verde, aguardando merge.
 
+> **A SESSÃO 81 (09/09) — o que ela ensinou vale mais que o que ela entregou.** Dezoito fatias em
+> dois PRs (#203, #204) e um terceiro aberto, mas o padrão é o assunto: **três afirmações minhas
+> caíram na medição, e cada queda foi registrada no lugar onde alguém as leria.**
+> (a) O `−33%` do COMBINADO que o `PLANO_LINHA_A_LINHA` usava para dimensionar a Fase 0 era
+> artefato do REPLICADOR local, não da régua — contra texto de produção ela acerta 15 de 15. É a
+> **terceira vez** que este projeto quase reporta defeito medindo a entrada errada.
+> (b) Escrevi no código que um regex "travaria a renderização"; fui medir e deu **0,1 ms**. O
+> comentário passou a dizer que a troca é defensiva. No mesmo dia, um regex que eu **não**
+> suspeitava se mostrou quadrático de verdade — **9,9 s** — e virou 0,1 ms.
+> (c) Afirmei que a correção da régua não regredia nada, medindo **contagens agregadas por
+> documento**. A revisão de código mediu um nível abaixo e achou `"Protocolo 1.234.567"` mudando
+> de `false` para `true`. **Medição agregada não prova ausência de regressão pontual** — e eu
+> apresentei uma como se provasse.
+> Some-se um teste que **defendia um bug** (afirmava a contagem errada como esperada, e teria
+> bloqueado a correção) e uma instrução minha a um agente que a medição derrubou (exigir "forma de
+> valor monetário" custava 19 de 46 documentos contando A MENOS — valor em real é escrito como
+> inteiro puro, e isso não é decidível por forma).
+>
+> **O aceite (B1) continua sendo o bloqueio, e continua sendo do dono.** Nada disso o substitui.
+
 **AS `0151`–`0159` ESTÃO APLICADAS EM PRODUÇÃO — mas esta frase envelhece, não confie nela.**
+**As `0158`, `0159`, `0160` e `0161` estão NO REPOSITÓRIO; a aplicação é do dono e é manual.**
 Confirme sempre com a sonda, contra o banco em que você está conectado:
 
 ```sql

@@ -241,15 +241,46 @@ export function suavizarMensagem(texto: string): string {
 const MARCADOR_LISTA_DE_ROTULOS = /Rótulos que a extração TROUXE[^.]*?:\s*/i;
 
 /**
+ * A LISTA propriamente dita — marcador + a sequência de itens entre aspas que
+ * ele introduz, capturada no grupo 1 (só os itens, sem o marcador). Uma única
+ * fonte, usada tanto por `rotulosCitados` (que lê o grupo 1) quanto por
+ * `semALista` (que apaga o casamento inteiro, grupo 0). As DUAS PRECISAM
+ * CONCORDAR sobre onde a lista começa e termina; tê-las como dois regexes
+ * separados foi o defeito real (achado da revisão do PR #204, sobre o PR
+ * #204): `rotulosCitados` limitava cada item a `{2,80}` caracteres —
+ * plausivelmente uma guarda contra casar frase inteira — enquanto `semALista`
+ * usava `[^"]+`, sem limite. `campo_extraido.chave` (`Supabase/schema.sql`) é
+ * `text`, sem tamanho máximo — um rótulo de linha extraído de um documento
+ * real passa de 80 caracteres com facilidade (descrição de conta longa,
+ * "Provisão para créditos de liquidação duvidosa de longo prazo sobre
+ * duplicatas..."). Não existe coluna nem contrato que justifique 80: é um
+ * número solto. Diante disso, a saída correta não é subir o número dos dois
+ * lados — isso só move o buraco para 81+ caracteres, e a próxima sessão
+ * herdaria a mesma pergunta sem resposta. É fazer os dois lados lerem a
+ * MESMA definição de "onde a lista acaba", sem limite de tamanho — que é o
+ * que `semALista` já fazia de correto.
+ *
+ * Capturar o SPAN da lista (e não varrer o resto do texto inteiro, como a
+ * versão anterior de `rotulosCitados` fazia) também fecha uma segunda
+ * assimetria: aspas que apareçam DEPOIS da lista, na mesma frase, não podem
+ * virar "rótulo citado" por acidente — só o que está dentro do span que o
+ * marcador introduz.
+ */
+const LISTA_DE_ROTULOS = new RegExp(
+  String.raw`${MARCADOR_LISTA_DE_ROTULOS.source}((?:"[^"]+"(?:\s*\[[^\]]*\])?[\s,]*)+)`,
+  "i",
+);
+
+/**
  * Rótulos entre aspas que a mensagem cita como contas a conferir no
- * original — só os que vêm depois do marcador acima. Sem ele, devolve vazio:
- * ver o comentário de `MARCADOR_LISTA_DE_ROTULOS`.
+ * original — só os que vêm depois do marcador acima, e só dentro do span da
+ * lista (ver `LISTA_DE_ROTULOS`). Sem marcador, devolve vazio: ver o
+ * comentário de `MARCADOR_LISTA_DE_ROTULOS`.
  */
 export function rotulosCitados(texto: string): string[] {
-  const marca = MARCADOR_LISTA_DE_ROTULOS.exec(texto);
+  const marca = LISTA_DE_ROTULOS.exec(texto);
   if (!marca) return [];
-  const resto = texto.slice(marca.index + marca[0].length);
-  return [...new Set([...resto.matchAll(/"([^"]{2,80})"/g)].map((m) => m[1]))];
+  return [...new Set([...marca[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]))];
 }
 
 /**
@@ -275,11 +306,15 @@ export function semALista(texto: string): string {
   // entrada vem do banco alimentada por documento extraído — mas quem ler isto
   // depois não deve acreditar que havia um travamento observado, porque não
   // havia. Se algum dia houver, o número entra aqui.
-  const comLista = new RegExp(
-    String.raw`${MARCADOR_LISTA_DE_ROTULOS.source}(?:"[^"]+"(?:\s*\[[^\]]*\])?[\s,]*)+`,
-    "i",
-  );
-  if (!comLista.test(texto)) return texto;
+  // `LISTA_DE_ROTULOS` — a MESMA definição que `rotulosCitados` usa — decide
+  // onde a lista começa e termina. As duas concordarem é o ponto: antes desta
+  // correção, `semALista` cortava por `[^"]+` (sem limite) enquanto
+  // `rotulosCitados` extraía por `{2,80}`, e um rótulo de mais de 80
+  // caracteres saía cortado do texto (aqui, corretamente) mas não aparecia
+  // na lista "onde conferir" (por causa do limite, lá) — a informação sumia
+  // dos dois lugares. Ver o comentário de `LISTA_DE_ROTULOS`.
+  const marca = LISTA_DE_ROTULOS.exec(texto);
+  if (!marca) return texto;
   // A ORDEM aqui é a correção, não enfeite. Antes vinha `/\s*\.\s*\./g` ANTES
   // do colapso de espaços, e esse é quadrático MEDIDO (Sonar S8786, PR #204):
   // numa corrida de espaços sem o par de pontos, cada posição inicial consome
@@ -291,7 +326,7 @@ export function semALista(texto: string): string {
   // Colapsando os espaços PRIMEIRO, o padrão seguinte só precisa de espaço
   // simples opcional (`/ ?\. ?\./`) — quantificadores limitados, sem corrida
   // para reconsumir, sem backtracking. Mesmo resultado visível.
-  const cortado = texto.replace(comLista, "")
+  const cortado = texto.replace(marca[0], "")
     .replace(/\s+/g, " ")
     .replace(/ ?\. ?\./g, ".")
     .trim();

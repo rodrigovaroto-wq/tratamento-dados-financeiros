@@ -81,19 +81,26 @@ achado que este teste existe para pegar.
 ### 3.3 — Um mandato inteiro atravessou?
 
 ```sql
+-- Subconsultas escalares, e NÃO uma cadeia de left join com count(). A primeira
+-- versão deste runbook usava join e `count(ce.id)` sem `distinct`: o join com
+-- `pendencia` multiplica cada campo extraído pelo número de pendências do caso,
+-- e no lote 7377 (2.599 campos, 13 pendências) ele reportaria **33.787**. Como
+-- o passo seguinte manda comparar com a produção, o número inflado
+-- transformaria um restore correto em alarme — ou, pior, esconderia perda real
+-- atrás de um total grande. Achado na revisão do PR #204.
 with alvo as (select id, nome from caso order by criado_em desc limit 1)
 select
   alvo.nome,
-  count(distinct d.id)              as documentos,
-  count(distinct dv.id)             as versoes,
-  count(ce.id)                      as campos,
-  count(distinct p.id)              as pendencias
-from alvo
-left join documento d        on d.caso_id = alvo.id
-left join documento_versao dv on dv.documento_id = d.id
-left join campo_extraido ce   on ce.documento_versao_id = dv.id
-left join pendencia p         on p.caso_id = alvo.id
-group by alvo.nome;
+  (select count(*) from documento d where d.caso_id = alvo.id)         as documentos,
+  (select count(*) from documento_versao dv
+     join documento d on d.id = dv.documento_id
+    where d.caso_id = alvo.id)                                          as versoes,
+  (select count(*) from campo_extraido ce
+     join documento_versao dv on dv.id = ce.documento_versao_id
+     join documento d on d.id = dv.documento_id
+    where d.caso_id = alvo.id)                                          as campos,
+  (select count(*) from pendencia p where p.caso_id = alvo.id)          as pendencias
+from alvo;
 ```
 
 Documento **e** extração **e** trilha juntos — é isso que a especificação §3 pede no passo 3. Um

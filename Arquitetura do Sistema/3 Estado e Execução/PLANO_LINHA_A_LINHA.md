@@ -142,19 +142,37 @@ documentos e contar as linhas de conta **por um segundo método independente** d
 > node N8N/medir-fase0-denominador.mjs --book canastra          # tabela contra o gabarito
 > ```
 >
-> **Ele é independente, e não é melhor — as duas coisas medidas nos 46 documentos com conta dos
-> dois books:**
+> **REMEDIDO EM 09/09**, depois de dois defeitos achados na revisão do PR #204 (um em cada régua:
+> `ehLinhaDeConta` contava número de protocolo/processo como conta, e `temFormaMonetaria`
+> aceitava qualquer dígito solto, não só a FORMA de valor que o nome promete). Os dois números
+> abaixo SUBSTITUEM os publicados antes — eram medidos sobre código com defeito, e o defeito de
+> `temFormaMonetaria` inflava justamente a estatística que fazia o método parecer seguro:
 >
 > | | erro absoluto médio | conta A MENOS (o lado perigoso) |
 > |---|---|---|
-> | `linhasDeConta` | canastra 4,6% · vertentes 1,3% | 4 de 46 |
-> | `linhasDeContaPorForma` | canastra 24,8% · vertentes 7,9% | **1 de 46** |
+> | `linhasDeConta` | canastra 4,6% · vertentes 0,5% | 3 de 46 |
+> | `linhasDeContaPorForma` | canastra 24,7% · vertentes 7,9% | **1 de 46** |
 >
-> Discorda de `linhasDeConta` em documentos diferentes (nos 4 em que a primeira subconta, a
-> segunda concorda em 0) — é o que a torna útil como conferência. Mas sobreconta a maioria,
-> porque não filtra CNPJ, CRC, "Página", "Nota" nem bloco de assinatura. **Serve para cercar o
-> número, não para substituir a régua.** Quando as duas concordam, a confiança é alta; quando
-> discordam, o comando lista as linhas em desacordo para conferência a olho — que é o trabalho
+> Ele **erra mais** que a régua e **erra em documentos diferentes** — é isso que o torna útil
+> como conferência, não um segundo nome para a mesma regra. Sobreconta porque não filtra CNPJ,
+> CRC, "Página", "Nota" nem assinatura.
+>
+> **UMA VERSÃO MAIS ESTRITA FOI TENTADA E DERRUBADA POR MEDIÇÃO, no mesmo dia.** O cabeçalho do
+> arquivo prometia "forma de valor monetário brasileiro" (separador de milhar em grupos de três,
+> ou decimal com vírgula) e a função não fazia isso — aceitava qualquer dígito que sobrasse.
+> Corrigir a FUNÇÃO para casar com a promessa melhorou o erro médio (canastra 24,7% → 11,0%) e
+> **inverteu a métrica que decide**: contar A MENOS saltou de **1 para 19 de 46**.
+>
+> A causa não tem conserto por forma: valor em real é escrito como inteiro puro o tempo todo
+> ("Caixa 150", "Duplicatas 1000"), e inteiro puro é indistinguível de número de página. **"Forma
+> de valor monetário" não é decidível por forma** — a promessa estava no cabeçalho, e era o
+> cabeçalho que estava errado. Revertido, e o cabeçalho reescrito para dizer o que a função faz.
+>
+> A escolha por trás disso, para a próxima sessão não a desfazer: num instrumento de CONFERÊNCIA,
+> sobrecontar é o lado seguro — faz as duas pernas divergirem e chamar o olho humano, que é o
+> serviço. Subcontar as faz concordar em silêncio sobre um denominador pequeno demais, que é o
+> defeito central deste projeto. **Serve para cercar o número: quando as duas concordam, a
+> confiança é alta; quando discordam, o comando lista as linhas em desacordo** — que é o trabalho
 > que a Fase 0 pede, agora em minutos em vez de contagem manual.
 
 Três saídas possíveis, e as três são informação:

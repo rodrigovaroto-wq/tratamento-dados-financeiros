@@ -39,3 +39,8 @@ Verificação/saida/
 # e diff de ruído é o que ensina a ignorar diff.
 __pycache__/
 *.py[cod]
+
+# Saída do N8N/republicar.sh em versões anteriores: carrega os ids REAIS das
+# 14 credenciais e o path público do intake. Hoje o script escreve em mktemp,
+# mas quem rodou a versão de 09/09 pode ter o arquivo na raiz.
+publicar.json

@@ -5698,6 +5698,36 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
         && textoNaTela.includes('("CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.")'),
       "(PR#203-6) …e a descrição da divergência de entidade chega à tela INTEIRA, sem buraco",
       textoNaTela.slice(0, 140));
+
+    // (PR#204) `rotulosCitados` e `semALista` têm de concordar sobre onde a
+    // lista acaba — achado da revisão do PR #204: `rotulosCitados` recortava
+    // cada item com `{2,80}` caracteres (nenhuma coluna do banco impõe esse
+    // tamanho — `campo_extraido.chave` é `text`, sem limite) enquanto
+    // `semALista` usava `[^"]+`, sem limite. Um rótulo real de linha de
+    // documento passa de 80 caracteres com facilidade — descrição de conta
+    // longa é o normal, não a excecão. O COMPORTAMENTO que importa: o
+    // analista lê a frase inteira SEM BURACO e os dois chips certos, sem
+    // lixo — não a forma da regex (regra 3).
+    const rotuloLongo = "Provisão para créditos de liquidação duvidosa de longo "
+      + "prazo sobre duplicatas a receber de clientes do exterior"; // 111 caracteres
+    const comRotuloLongo = "O documento está registrado em BALANCO mas o diagnóstico de "
+      + "conteúdo aponta outra coisa. Rótulos que a extração TROUXE e que a "
+      + `classificação atual não cobre: "${rotuloLongo}" [entidade: —; período: `
+      + '31/12/2024], "ATIVO" [entidade: —; período: 31/12/2024]. Confira o original.';
+    const citadosLongo = rotulosCitados(comRotuloLongo);
+    const semListaLongo = semALista(comRotuloLongo);
+    checar(
+      citadosLongo.length === 2
+        && citadosLongo.includes(rotuloLongo)
+        && citadosLongo.includes("ATIVO")
+        && !semListaLongo.includes(rotuloLongo)
+        && !semListaLongo.includes('"ATIVO"')
+        && !/\[entidade:/.test(semListaLongo)
+        && semListaLongo.includes("registrado em BALANCO mas")
+        && semListaLongo.includes("Confira o original"),
+      "(PR#204) rótulo com mais de 80 caracteres aparece no chip INTEIRO, "
+        + "e a frase visível não fica com buraco nem com lixo entre aspas",
+      `citados=${JSON.stringify(citadosLongo)} · semLista="${semListaLongo}"`);
   }
 
   // ---- (0116) CICLO DE CAIXA: DIAS DE VERDADE, OU "n.a." ------------------

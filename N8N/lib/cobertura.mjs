@@ -348,7 +348,18 @@ export function ehLinhaDeConta(linha) {
   // negativo entre parênteses — as quatro formas que o book usa.
   const valores = /\(?-?\d[\d.]*(?:,\d+)?\)?%?/g;
   // Código de conta contábil ("1.1.01.002"): identidade sem uma letra sequer.
-  const codigoDeConta = /\b\d+(?:\.\d+){2,}\b/;
+  //
+  // ESTA PROVA DE IDENTIDADE não aceita mais a forma de separador de milhar
+  // como código de conta — achado na revisão do PR #204. Antes, o regex puro
+  // `\b\d+(?:\.\d+){2,}\b` também casava "51.300.000"; quando uma linha SEM
+  // rótulo e SEM segundo valor (`quantos < 2`, abaixo) trazia só um número
+  // desses, ele virava "prova de identidade" de código de conta — quando é
+  // valor. `separadorDeMilhar` (a mesma régua que `ehLinhaSemValor` já usa)
+  // resolve isso: só conta como código quem NÃO tiver essa forma.
+  const separadorDeMilhar = /^\d{1,3}(?:\.\d{3})+$/;
+  const codigoDeConta = {
+    test: (l) => (l.match(/\b\d+(?:\.\d+){2,}\b/g) ?? []).some((m) => !separadorDeMilhar.test(m)),
+  };
   // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma
   // linha real do book, e o comentário evita que alguém "melhore" tirando um.
   const ruido = [
@@ -382,6 +393,46 @@ export function ehLinhaDeConta(linha) {
   // é contar a conta UMA vez, que é a unidade certa.
   const temRotulo = /[a-zà-ú]{3}/i.test(linha);
   if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) return false;
+
+  // A REGRESSÃO DE VERDADE DO PR #204, achada na revisão e medida comparando
+  // `main` antes (668b6fe) e depois (b86d6cf):
+  //
+  //                                 ANTES    DEPOIS
+  //   "Protocolo 1.234.567"          false  →  true
+  //   "Processo 0.001.234"           false  →  true
+  //   "Caixa 1.000 2.000"            true      true   (inalterado, correto)
+  //   "1.1.01.002 Numerário 2.880"   true      true   (inalterado, correto)
+  //
+  // NÃO É o `codigoDeConta` acima — ele só decide quando NÃO HÁ rótulo, e as
+  // duas linhas que regrediram TÊM rótulo ("Protocolo", "Processo"): o `!
+  // temRotulo` do `if` acima já é `false` e o `codigoDeConta` nunca chega a
+  // ser avaliado. A causa é o `ehLinhaSemValor` chamado no final desta
+  // função: ele passou a PRESERVAR forma de separador de milhar (correto —
+  // é o que resolve o `11_Mapa_Divida`), e "1.234.567"/"0.001.234" TÊM
+  // EXATAMENTE A MESMA FORMA que "51.300.000" — três grupos de exatamente
+  // três dígitos. Nenhuma regra de FORMA PURA separa "número de protocolo"
+  // de "valor monetário" quando os dois são o ÚNICO número da linha — a
+  // forma é idêntica por definição.
+  //
+  // O QUE SOBRA, E AINDA É FORMA (não léxico, não lista de palavra): QUANTOS
+  // números com essa forma ambígua a linha tem. `TOTAL 51.300.000
+  // 12.400.000` tem DOIS — é assim que toda linha de valor comparativo do
+  // book aparece, com duas colunas/exercícios; `Protocolo 1.234.567` e
+  // `Processo 0.001.234` têm só UM. Uma linha cujo ÚNICO valor tem forma
+  // ambígua (poderia ser identidade, poderia ser dinheiro) precisa de uma
+  // SEGUNDA ocorrência para ser aceita — o mesmo raciocínio do `quantos < 2`
+  // linhas acima, aplicado à forma que sozinha não decide.
+  //
+  // MEDIDO nos dois books (46 documentos, `node N8N/medir-fase0-
+  // denominador.mjs --book canastra|vertentes`, antes e depois desta linha):
+  // nenhum documento piorou — `linhasDeConta` continua com erro absoluto
+  // médio 4,6% (canastra) / 0,5% (vertentes) e conta A MENOS em 3 de 46, e o
+  // `11_Mapa_Divida` (verdade 10) continua em 10/10.
+  const formaIdentidadeOuMilhar = /\b\d+(?:\.\d+){2,}\b/g;
+  const unicoValorAmbiguo = quantos < 2
+    && (linha.match(formaIdentidadeOuMilhar) ?? []).some((m) => separadorDeMilhar.test(m));
+  if (unicoValorAmbiguo) return false;
+
   // Cabeçalho que tem número sem medir número — período, duração, código de
   // conta. Tem dígito e tem letra, então passava pelos dois testes acima.
   return !ehLinhaSemValor(linha);

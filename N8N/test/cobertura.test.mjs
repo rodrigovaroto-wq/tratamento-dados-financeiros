@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  linhasComNumero, linhasDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
+  linhasComNumero, linhasDeConta, ehLinhaDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
   celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, TETO_SAIDA_TOKENS, TOKENS_POR_CELULA, LIMIAR_COBERTURA,
@@ -381,6 +381,35 @@ test('a régua v2 não afrouxou: valor solto, cabeçalho e prosa continuam fora'
   assert.deepEqual(linhasDeConta('Nota — A margem bruta foi de 2,9% (contra 25,2% em 2023)'), []);
   // Linha sem valor nenhum: título de seção. O modelo também não gera linha nela.
   assert.deepEqual(linhasDeConta('ATIVO CIRCULANTE'), []);
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSÃO DO PR #204, achada na revisão (duas passadas do dono) do que foi
+// mergeado. `ehLinhaSemValor` passou a PRESERVAR forma de separador de milhar
+// ("51.300.000") em vez de apagá-la como código de conta — correto, é o que
+// resolve o `11_Mapa_Divida` (teste abaixo). Mas um número de PROTOCOLO ou
+// PROCESSO escrito com a mesma pontuação ("1.234.567") tem a MESMA FORMA, e
+// quando é o ÚNICO número da linha, `ehLinhaDeConta` não tinha como saber a
+// diferença — passou a contar a linha como conta, INFLANDO o denominador de
+// `linhasDeConta` (cobertura parece PIOR, pendência falsa — a mesma família
+// de falso positivo que a sessão 77 eliminou). Medido comparando `main` antes
+// (668b6fe) e depois (b86d6cf) do PR #204:
+//
+//                                 ANTES    DEPOIS (com o defeito)
+//   "Protocolo 1.234.567"          false  →  true
+//   "Processo 0.001.234"           false  →  true
+//   "Caixa 1.000 2.000"            true      true   (inalterado, correto)
+//   "1.1.01.002 Numerário 2.880"   true      true   (inalterado, correto)
+// ---------------------------------------------------------------------------
+test('número de protocolo/processo com pontuação de milhar NÃO é linha de conta — regressão do PR #204', () => {
+  // Se isto voltar a `true`, a regressão voltou: um número de identificação
+  // sem rótulo financeiro nenhum está sendo contado como valor.
+  assert.equal(ehLinhaDeConta('Protocolo 1.234.567'), false);
+  assert.equal(ehLinhaDeConta('Processo 0.001.234'), false);
+  // E os dois casos que NUNCA mudaram continuam como estavam — a correção não
+  // pode "resolver" isto apagando de novo o total em reais do Mapa de Dívida.
+  assert.equal(ehLinhaDeConta('Caixa 1.000 2.000'), true);
+  assert.equal(ehLinhaDeConta('1.1.01.002 Numerário 2.880'), true);
 });
 
 test('avaliarCobertura compara CONTA com CONTA — a razão antiga passava de 100%', () => {
