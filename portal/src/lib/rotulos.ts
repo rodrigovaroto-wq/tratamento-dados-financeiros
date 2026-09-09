@@ -215,3 +215,60 @@ export function suavizarMensagem(texto: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
 }
+
+/**
+ * O ÚNICO trecho em que "separar as aspas numa lista" é LEITURA da descrição,
+ * não adivinhação sobre ela: a lista que `fn_rotulos_candidatos` (0033/0034,
+ * `Supabase/migrations/0033_precondicao_que_nomeia_o_rotulo.sql`) escreve
+ * depois do marcador "Rótulos que a extração TROUXE ... :". Cada item dali é,
+ * por construção da função no banco, `campo_extraido.chave` — o rótulo de UMA
+ * LINHA do documento, exatamente o que se quer destacar como "onde conferir
+ * no arquivo". Foi o caso real que pediu esta separação (teste "(0112) a
+ * mensagem real vira 4 fatos", acima).
+ *
+ * FORA desse marcador, aspas na descrição não têm essa garantia — o achado 6
+ * da revisão do PR #203: a pendência de hierarquia de entidade (0160,
+ * `Supabase/migrations/0160_a_hierarquia_que_o_diagnostico_chama_de_erro.sql`)
+ * cita NOME DE EMPRESA entre aspas na mesma frase, e nada no texto da
+ * descrição diz "isto é conta do documento, aquilo é nome próprio" — são as
+ * duas formas de citar algo entre aspas em português. Adivinhar essa
+ * distinção pela pontuação seria inventar um dado que a descrição não afirma,
+ * e a regra 1 do projeto proíbe isso: célula (aqui, a lista "onde conferir")
+ * sem dado por trás é ausência apresentada como medição. A saída honesta é
+ * não separar nada fora do marcador — a descrição aparece inteira, e quem lê
+ * decide sozinho, pelo CONTEÚDO da frase, o que é conta e o que é empresa.
+ */
+const MARCADOR_LISTA_DE_ROTULOS = /Rótulos que a extração TROUXE[^.]*?:\s*/i;
+
+/**
+ * Rótulos entre aspas que a mensagem cita como contas a conferir no
+ * original — só os que vêm depois do marcador acima. Sem ele, devolve vazio:
+ * ver o comentário de `MARCADOR_LISTA_DE_ROTULOS`.
+ */
+export function rotulosCitados(texto: string): string[] {
+  const marca = MARCADOR_LISTA_DE_ROTULOS.exec(texto);
+  if (!marca) return [];
+  const resto = texto.slice(marca.index + marca[0].length);
+  return [...new Set([...resto.matchAll(/"([^"]{2,80})"/g)].map((m) => m[1]))];
+}
+
+/**
+ * Tira do texto o marcador e a lista que ele introduz, para a tela não
+ * repetir o que já vai aparecer destacado como "onde conferir". Só corta
+ * quando o marcador de fato introduz uma lista entre aspas — sem ele, o
+ * texto volta INTOCADO: qualquer aspas fora dali é conteúdo da frase (nome de
+ * empresa, de arquivo…), e cortar por aspas sozinho furaria a frase sem dizer
+ * o motivo, que é exatamente o que a regra 1 do projeto proíbe.
+ */
+export function semALista(texto: string): string {
+  const comLista = new RegExp(
+    `${MARCADOR_LISTA_DE_ROTULOS.source}(?:"[^"]+"\\s*(?:\\[[^\\]]*\\])?\\s*,?\\s*)+`,
+    "i",
+  );
+  if (!comLista.test(texto)) return texto;
+  const cortado = texto.replace(comLista, "")
+    .replace(/\s*\.\s*\./g, ".")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return cortado.length > 20 ? cortado : texto;
+}

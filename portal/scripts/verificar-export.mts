@@ -55,7 +55,9 @@ import {
 } from "../src/lib/modelagem-linha.ts";
 import { ABAS_MODELO as ABAS_DO_MODELO, ehDividaFinanceira } from "../src/lib/modelo-institucional.ts";
 import { auditarWorkbook } from "./auditar-xlsx.mts";
-import { humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, suavizarMensagem } from "../src/lib/rotulos.ts";
+import {
+  humanizar, partesDaDescricao, rotuloDaPendencia, rotuloDaSecao, rotulosCitados, semALista, suavizarMensagem,
+} from "../src/lib/rotulos.ts";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "../src/lib/pendencia.ts";
 
 let ok = 0;
@@ -5644,6 +5646,58 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
     checar(!/f0\/\d/.test(suave) && !/secao_canonica|rotulo_norm/.test(suave),
       "(0112) …e o jargão de campo (código de documento interno, nome de coluna) sai do texto",
       suave.slice(0, 80));
+
+    // A LISTA SÓ SEPARA O QUE O MARCADOR INTRODUZ (achado 6 do PR #203). `real`
+    // (acima) é o caso que motivou `semALista`/`rotulosCitados`: o marcador
+    // "Rótulos que a extração TROUXE ... :" que `fn_rotulos_candidatos` (0033/
+    // 0034) escreve garante, POR CONSTRUÇÃO, que cada item entre aspas depois
+    // dele é `campo_extraido.chave` — uma linha do documento, não um nome
+    // qualquer. Confirma que esse caso continua funcionando.
+    checar(
+      new Set(rotulosCitados(real)).size === 2
+        && rotulosCitados(real).includes("ATIVO")
+        && rotulosCitados(real).includes("Passivo Circulante"),
+      "(PR#203-6) com o marcador, a lista de rótulos continua separando as duas contas",
+      rotulosCitados(real).join(" | "));
+    const semLista = semALista(real);
+    checar(!semLista.includes('"ATIVO"') && !semLista.includes('"Passivo Circulante"')
+        && !/Rótulos que a extração TROUXE/i.test(semLista),
+      "(PR#203-6) …e a frase visível não repete o que já foi para a lista",
+      semLista.slice(0, 160));
+
+    // SEM MARCADOR, ASPAS SÃO SÓ ASPAS — a mensagem real da 0160 (medida no
+    // lote 7377, `Supabase/migrations/0160_a_hierarquia_que_o_diagnostico_
+    // chama_de_erro.sql`: documento em GRUPO CANASTRA, diagnóstico apontando
+    // Canastra Indústria, as duas já cadastradas no mesmo mandato). O texto
+    // abaixo é literalmente o `format()` daquela migration com os nomes reais
+    // do fixture do book Canastra — não uma frase inventada para o teste
+    // passar. As aspas aqui são nome de EMPRESA, não rótulo de linha de
+    // documento, e nada no texto diferencia as duas coisas — tentar separar
+    // seria adivinhar. `rotulosCitados` tem de devolver lista vazia (nada para
+    // "conferir no arquivo": divergência de ENTIDADE não é isso), e
+    // `semALista` tem de devolver o texto INTEIRO, sem buraco.
+    const entidade = 'O documento está registrado em "GRUPO CANASTRA", mas o diagnóstico de conteúdo '
+      + 'aponta "Canastra Indústria" — nome que também já é uma empresa CADASTRADA neste mandato '
+      + '("CANASTRA INDÚSTRIA DE EMBALAGENS LTDA."). As duas são empresas cadastradas neste caso, e '
+      + 'o sistema não sabe qual das duas é a certa para este documento — não presume nenhuma. '
+      + 'Confira pela revisão se ele pertence mesmo a "GRUPO CANASTRA" ou deveria estar em "CANASTRA '
+      + 'INDÚSTRIA DE EMBALAGENS LTDA.", sem fundir: as duas continuam sendo empresas diferentes.';
+    checar(rotulosCitados(entidade).length === 0,
+      "(PR#203-6) sem o marcador, nome de empresa entre aspas NÃO vira \"onde conferir no arquivo\"",
+      rotulosCitados(entidade).join(" | ") || "(vazio, como esperado)");
+    // O COMPORTAMENTO que importa: o analista lê a frase INTEIRA, com os dois
+    // nomes dentro dela — não um "em , mas o diagnóstico aponta —" com buraco
+    // onde os nomes estavam. Falha aqui é o defeito do achado 6: a versão
+    // antiga de `semALista` enxugava toda sequência entre aspas em QUALQUER
+    // lugar do texto, não só depois do marcador.
+    const textoNaTela = semALista(entidade);
+    checar(
+      textoNaTela === entidade
+        && textoNaTela.includes('em "GRUPO CANASTRA", mas')
+        && textoNaTela.includes('aponta "Canastra Indústria" —')
+        && textoNaTela.includes('("CANASTRA INDÚSTRIA DE EMBALAGENS LTDA.")'),
+      "(PR#203-6) …e a descrição da divergência de entidade chega à tela INTEIRA, sem buraco",
+      textoNaTela.slice(0, 140));
   }
 
   // ---- (0116) CICLO DE CAIXA: DIAS DE VERDADE, OU "n.a." ------------------
