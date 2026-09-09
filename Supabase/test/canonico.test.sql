@@ -213,6 +213,24 @@ begin
     'empresa DIFERENTE continua abrindo pendência — o conserto não virou peneira',
     format('pendências: %s', v_n));
 
+  -- ---- 5. A JUSTIFICATIVA QUE O PERÍODO PERDIA (0161) ------------------------
+  -- `tipo_incorreto` já cita `p_justificativa` na própria mensagem desde antes
+  -- desta migration. `periodo_incorreto` nunca citou — mesma função, mesma
+  -- chamada, mesmo parâmetro pronto, só faltando no format(). Medido no lote
+  -- 7377 (02/09): as duas pendências de período abertas naquela rodada não
+  -- diziam POR QUE o diagnóstico propôs aquele período.
+  v_r := fn_registrar_documento(v_caso, 'Vertentes Metalurgica Ltda.', 'anual', '2024', 'BALANCO', 0.9,
+    'nome_arquivo', 'supabase_storage', 'b/diag-periodo.pdf', 'BP-periodo.pdf', true, 'H-DIAG-PERIODO', 'ok');
+  perform fn_registrar_diagnostico((v_r->>'documento_id')::uuid, (v_r->>'documento_versao_id')::uuid,
+            'Vertentes Metalurgica Ltda.', true, 'BALANCO', 'multi', '22,23,24', 'ok', null, 'r',
+            'MOTIVO-TESTE-0161: colunas comparativas de 2022 a 2024, não uma data-base isolada.');
+  select descricao into v_col from pendencia
+   where caso_id = v_caso and tipo = 'periodo_incorreto' and estado <> 'resolvida'
+   order by criada_em desc limit 1;
+  perform teste_assert_rx(v_col ilike '%MOTIVO-TESTE-0161%',
+    'a pendência de PERÍODO agora cita a justificativa do diagnóstico, como o tipo já fazia (0161)',
+    coalesce(v_col, '(nenhuma pendência periodo_incorreto aberta)'));
+
   delete from caso where id = v_caso;
   raise notice 'TODOS OS TESTES DE CANONICALIZAÇÃO PASSARAM';
 end

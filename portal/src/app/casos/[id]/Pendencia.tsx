@@ -23,7 +23,7 @@
 // não tinha o que fazer na tela. `Arquitetura do Sistema/2 Especificação/f0/04` prevê esse caminho desde a F0
 // (`rejeitada`); faltava código e faltava botão.
 import Link from "next/link";
-import { partesDaDescricao, rotuloDaPendencia, suavizarMensagem } from "@/lib/rotulos";
+import { partesDaDescricao, rotuloDaPendencia, rotulosCitados, semALista, suavizarMensagem } from "@/lib/rotulos";
 import { rotuloDeTipoConhecido } from "@/lib/export";
 import { BOTOES_DECISAO, ROTULO_POR_ESTADO, rotuloDoEstado } from "@/lib/pendencia";
 import { decidirPendencia } from "./actions";
@@ -36,22 +36,6 @@ export interface PendenciaNaTela {
   severidade?: string;
   /** estado de Arquitetura do Sistema/2 Especificação/f0/04: `aberta`, um dos dois de tratamento, ou um dos decididos */
   estado?: string;
-}
-
-/** Rótulos entre aspas que a mensagem cita — as contas a conferir no original. */
-function rotulosCitados(texto: string): string[] {
-  return [...new Set([...texto.matchAll(/"([^"]{2,80})"/g)].map((m) => m[1]))];
-}
-
-/** Tira do texto os rótulos que já vão aparecer na lista, para não repetir. */
-function semALista(texto: string): string {
-  const cortado = texto.replace(/Rótulos que a extração TROUXE[^.]*?:\s*/i, "")
-    .replace(/(?:"[^"]+"\s*(?:\[[^\]]*\])?\s*,?\s*)+/g, "")
-    .replace(/Contas:\s*$/i, "")
-    .replace(/\s*\.\s*\./g, ".")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return cortado.length > 20 ? cortado : texto;
 }
 
 export function ItemPendencia({

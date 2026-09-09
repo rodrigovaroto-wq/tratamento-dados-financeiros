@@ -50,6 +50,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [`spliceRows` na aba Macro desloca endereços em silêncio](splicerows-desloca-enderecos.md)
 - [`avaliarCelula` não segue referência entre abas](avaliarcelula-nao-cruza-abas.md)
 - [A ordem dos parâmetros dos dois classificadores é diferente](ordem-dos-classificadores.md)
+- ["TODO" em português vira achado do Sonar](todo-em-portugues-vira-achado-do-sonar.md) — a `S1135`
+  casa o texto, não o idioma; quatro vezes numa sessão. Use `CADA`/`TODOS OS`
 
 ## Produção (não está em nenhum arquivo do repositório)
 

@@ -725,3 +725,44 @@ test('a data em dd/mm/aaaa também não mede nada', () => {
   // E a conta com data na frente continua conta: o valor não é data.
   assert.equal(ehLinhaSemValor('01/12/2025 SALDO ANTERIOR 16.689 C'), false);
 });
+
+// -----------------------------------------------------------------------------
+// O CASO PERIGOSO — achado de lado na Fase 0 (09/09), no `11_Mapa_Divida_
+// Vertentes_Metalurgica_2025` (book-vertentes): documento em REAIS, não em
+// milhares. A linha é literal da captura (`TEXTO_EXTRAIDO.json` do book).
+// -----------------------------------------------------------------------------
+
+// 'TOTAL 51.300.000 12.400.000' — literal do documento. "51.300.000" tem a
+// MESMA forma que `\b\d+(?:\.\d+){2,}\b` usa para reconhecer código de conta
+// (dígitos separados por ponto, dois ou mais pontos): o corte de código de
+// conta em `ehLinhaSemValor` apagava os dois valores da linha de TOTAL como
+// se fossem "2.1.01.001", e sem dígito sobrando a linha virava "sem valor".
+const TOTAL_DO_MAPA_DE_DIVIDA = 'TOTAL 51.300.000 12.400.000';
+
+test('TOTAL em reais não é confundido com código de conta — o caso perigoso: contava a menos', () => {
+  // MEDIDO: `node N8N/medir-fase0-denominador.mjs --book vertentes` no
+  // `11_Mapa_Divida_Vertentes_Metalurgica_2025` — verdade 10 linhas de conta,
+  // régua devolvia 9 (a linha de TOTAL sumia, -10%). Com a correção, 10/10.
+  // Desligando o filtro de separador de milhar (voltando o `.replace` para
+  // apagar todo `\b\d+(?:\.\d+){2,}\b` sem distinção), este assert e o de
+  // `linhasDeConta` abaixo reprovam — 2 asserts, medido nesta sessão.
+  assert.equal(ehLinhaSemValor(TOTAL_DO_MAPA_DE_DIVIDA), false, TOTAL_DO_MAPA_DE_DIVIDA);
+  assert.equal(linhasDeConta(TOTAL_DO_MAPA_DE_DIVIDA).length, 1);
+});
+
+test('a forma que separa dinheiro de código: todo grupo depois do primeiro tem 3 dígitos, ou não é', () => {
+  // A DIREÇÃO PERIGOSA é excluir de mais — código de conta real (chart of
+  // accounts do book: classe.grupo.subgrupo.sequência) precisa CONTINUAR
+  // apagado, senão a correção do TOTAL vaza e código passa a contar como
+  // valor. "2.1.01.001" e "1.1.02.003" têm grupo de 1 ou 2 dígitos depois do
+  // primeiro ponto — nunca 3 — e é isso que os mantém do lado do código.
+  for (const codigo of ['LIVRO RAZÃO — CONTA 2.1.01.001 FORNECEDORES NACIONAIS', '1.1.02.003']) {
+    assert.equal(ehLinhaSemValor(codigo), true, codigo);
+  }
+  // E o valor com separador de milhar de qualquer tamanho sobrevive — não só
+  // o caso de duas casas do TOTAL, também três ("9.420.000", uma casa do
+  // Mapa de Dívida real).
+  for (const valor of ['Saldo 9.420.000', 'Saldo 51.300.000']) {
+    assert.equal(ehLinhaSemValor(valor), false, valor);
+  }
+});

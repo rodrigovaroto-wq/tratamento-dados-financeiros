@@ -215,3 +215,85 @@ export function suavizarMensagem(texto: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
 }
+
+/**
+ * O ÚNICO trecho em que "separar as aspas numa lista" é LEITURA da descrição,
+ * não adivinhação sobre ela: a lista que `fn_rotulos_candidatos` (0033/0034,
+ * `Supabase/migrations/0033_precondicao_que_nomeia_o_rotulo.sql`) escreve
+ * depois do marcador "Rótulos que a extração TROUXE ... :". Cada item dali é,
+ * por construção da função no banco, `campo_extraido.chave` — o rótulo de UMA
+ * LINHA do documento, exatamente o que se quer destacar como "onde conferir
+ * no arquivo". Foi o caso real que pediu esta separação (teste "(0112) a
+ * mensagem real vira 4 fatos", acima).
+ *
+ * FORA desse marcador, aspas na descrição não têm essa garantia — o achado 6
+ * da revisão do PR #203: a pendência de hierarquia de entidade (0160,
+ * `Supabase/migrations/0160_a_hierarquia_que_o_diagnostico_chama_de_erro.sql`)
+ * cita NOME DE EMPRESA entre aspas na mesma frase, e nada no texto da
+ * descrição diz "isto é conta do documento, aquilo é nome próprio" — são as
+ * duas formas de citar algo entre aspas em português. Adivinhar essa
+ * distinção pela pontuação seria inventar um dado que a descrição não afirma,
+ * e a regra 1 do projeto proíbe isso: célula (aqui, a lista "onde conferir")
+ * sem dado por trás é ausência apresentada como medição. A saída honesta é
+ * não separar nada fora do marcador — a descrição aparece inteira, e quem lê
+ * decide sozinho, pelo CONTEÚDO da frase, o que é conta e o que é empresa.
+ */
+const MARCADOR_LISTA_DE_ROTULOS = /Rótulos que a extração TROUXE[^.]*?:\s*/i;
+
+/**
+ * Rótulos entre aspas que a mensagem cita como contas a conferir no
+ * original — só os que vêm depois do marcador acima. Sem ele, devolve vazio:
+ * ver o comentário de `MARCADOR_LISTA_DE_ROTULOS`.
+ */
+export function rotulosCitados(texto: string): string[] {
+  const marca = MARCADOR_LISTA_DE_ROTULOS.exec(texto);
+  if (!marca) return [];
+  const resto = texto.slice(marca.index + marca[0].length);
+  return [...new Set([...resto.matchAll(/"([^"]{2,80})"/g)].map((m) => m[1]))];
+}
+
+/**
+ * Tira do texto o marcador e a lista que ele introduz, para a tela não
+ * repetir o que já vai aparecer destacado como "onde conferir". Só corta
+ * quando o marcador de fato introduz uma lista entre aspas — sem ele, o
+ * texto volta INTOCADO: qualquer aspas fora dali é conteúdo da frase (nome de
+ * empresa, de arquivo…), e cortar por aspas sozinho furaria a frase sem dizer
+ * o motivo, que é exatamente o que a regra 1 do projeto proíbe.
+ */
+export function semALista(texto: string): string {
+  // O `\s*` do separador vive DENTRO do grupo opcional do colchete, e o que
+  // vem depois é UMA classe (`[\s,]*`) em vez de `\s*,?\s*`. A forma anterior
+  // punha dois quantificadores de espaço adjacentes, que é a ambiguidade que o
+  // Sonar aponta como backtracking super-linear (`typescript:S8786`, PR #204):
+  // uma corrida de espaços pode ser dividida entre eles de muitas maneiras.
+  //
+  // HONESTIDADE SOBRE A MEDIÇÃO: eu TENTEI reproduzir o custo e NÃO CONSEGUI —
+  // marcador casado, lista aberta e corridas de 2.000 a 16.000 espaços seguidas
+  // de um caractere que não fecha a lista rodam em 0,0-0,1 ms nas duas formas
+  // (V8 não backtrackeia aqui). Então esta troca é DEFENSIVA, não a correção de
+  // uma lentidão medida: a forma nova não tem a ambiguidade, custa nada, e a
+  // entrada vem do banco alimentada por documento extraído — mas quem ler isto
+  // depois não deve acreditar que havia um travamento observado, porque não
+  // havia. Se algum dia houver, o número entra aqui.
+  const comLista = new RegExp(
+    String.raw`${MARCADOR_LISTA_DE_ROTULOS.source}(?:"[^"]+"(?:\s*\[[^\]]*\])?[\s,]*)+`,
+    "i",
+  );
+  if (!comLista.test(texto)) return texto;
+  // A ORDEM aqui é a correção, não enfeite. Antes vinha `/\s*\.\s*\./g` ANTES
+  // do colapso de espaços, e esse é quadrático MEDIDO (Sonar S8786, PR #204):
+  // numa corrida de espaços sem o par de pontos, cada posição inicial consome
+  // a corrida inteira e volta atrás procurando o `.`. Medido neste repositório
+  // — 20k espaços: 168 ms · 40k: 609 ms · 80k: 2,5 s · 160k: 9,9 s. Dobrar a
+  // entrada quadruplica o tempo, e isso roda na renderização da página do caso
+  // sobre texto que vem do banco.
+  //
+  // Colapsando os espaços PRIMEIRO, o padrão seguinte só precisa de espaço
+  // simples opcional (`/ ?\. ?\./`) — quantificadores limitados, sem corrida
+  // para reconsumir, sem backtracking. Mesmo resultado visível.
+  const cortado = texto.replace(comLista, "")
+    .replace(/\s+/g, " ")
+    .replace(/ ?\. ?\./g, ".")
+    .trim();
+  return cortado.length > 20 ? cortado : texto;
+}

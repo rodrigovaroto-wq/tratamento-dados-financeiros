@@ -103,6 +103,11 @@ repositório.** Isso é uma propriedade forte e ela foi construída de propósit
 
 ### O teste que falta, e é o que transforma isto em controle
 
+> **O procedimento operacional está escrito:** `Arquitetura do Sistema/6 Referência/RESTAURACAO.md`
+> — com as consultas prontas (conferidas contra o `schema.sql`), o registro para preencher, e as
+> três perguntas `[A CONFIRMAR]` desta seção respondidas no mesmo movimento. O que segue abaixo é o
+> **critério**; aquele arquivo é a **execução**.
+
 Um procedimento de restauração que nunca foi executado **não é um procedimento**. O que fecha esta
 seção:
 
