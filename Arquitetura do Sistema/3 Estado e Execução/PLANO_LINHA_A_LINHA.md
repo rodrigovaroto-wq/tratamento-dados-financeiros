@@ -77,6 +77,49 @@ mora.
 > não é 65% e sim perto de 43%. **A sub-extração seria pior do que a medida.** Hipótese
 > transferida, não fato: só o texto de produção dos três documentos fecha esta fase.
 >
+> ---
+>
+> ### CORREÇÃO DE 09/09: o −33% do COMBINADO era do REPLICADOR, não da régua
+>
+> **O parágrafo acima está mantido como escrito, e a medição abaixo o desmente na parte que mais
+> pesava.** Medido contra o TEXTO DE PRODUÇÃO capturado
+> (`Dados de Teste/capturas/2026-08-31-texto-extraido-n8n/`), e reconferido pela sessão principal:
+>
+> | documento | verdade | régua sobre PRODUÇÃO | erro |
+> |---|---|---|---|
+> | `13_Balanco_COMBINADO_Grupo_Canastra_2025` | 15 | **15** | **0%** |
+> | `14_Balanco_COMBINADO_Grupo_Canastra_2024` | 15 | **15** | **0%** |
+>
+> O −33% só aparece quando o texto vem do replicador local do book
+> (`Dados de Teste/comum/extrai.py`, função `linhas()`): ela agrupa por coordenada Y com
+> tolerância de 2pt, e em página com duas tabelas (o balanço mais o painel "Eliminações do
+> combinado") duas linhas de tabelas diferentes caem na tolerância e saem **mescladas** numa
+> linha ilegível. `linhasDeConta` corretamente não reconhece a mistura como conta — **nenhum
+> método recupera dado que já não existe como linha de texto.**
+>
+> **É a terceira vez que este projeto mede a entrada errada e quase reporta defeito**, e as três
+> estão registradas: a sessão 77 (`+3%` no portão contra `161%` em produção), o "93% de erro" do
+> parágrafo acima, e agora esta. O padrão é sempre o mesmo — o texto do gerador não é o texto que
+> produção vê.
+>
+> **O que isso muda na Fase 0:** a hipótese sobre o `055` perde o apoio principal. Não se pode
+> mais dizer "se a régua subconta COMBINADO como no canastra", porque contra produção ela não
+> subconta. **A fase continua aberta** — os três textos do araucária continuam sendo o que a
+> fecha, e a régua pode errar lá por outras razões —, mas o número de 43% deixa de ser a
+> expectativa fundamentada que era, e não deve mais orientar prioridade.
+>
+> `21_Mutuos` e `25_Situacao_Fiscal` não têm captura de produção; a mesma assinatura de mescla
+> aparece no texto que os gera, então provavelmente é o mesmo artefato — **hipótese, não fato**.
+>
+> **Dois achados laterais, e um deles é defeito real da régua:**
+> - `11_Mapa_Divida_Vertentes_Metalurgica_2025` (valores em REAIS, não em milhares):
+>   `ehLinhaSemValor` confunde `"51.300.000"` com código de conta — o mesmo regex
+>   `\d+(\.\d+){2,}` que existe para pegar `1.1.01.002` — e apaga a linha TOTAL. Verdade 10,
+>   régua 9. **É defeito, e é do lado perigoso (conta a menos). Fatia própria, ainda não aberta.**
+> - `10_Faturamento_24M_Vertentes_Metalurgica`: aqui o **gabarito** é que está errado —
+>   `contagem.py` conta o cabeçalho `["Mês","2024","2025","Variação %"]` como linha de conta,
+>   inflando a verdade para 16 quando há 15. A régua estava certa.
+>
 > No caminho, um erro meu que vale como aviso: a primeira medição deu "93% de erro, contando a
 > menos em 13 de 13" — e era eu medindo a entrada errada. Os dois books tinham extratores
 > diferentes, e o do vertentes não agrupava os pedaços pela coordenada Y. Comportamento correto
@@ -87,6 +130,32 @@ O que ainda falta desta fase:
 Sem isto, tudo abaixo é fé. Capturar o texto que o nó `Extrair Texto` produziu para os TRÊS
 documentos e contar as linhas de conta **por um segundo método independente** da
 `linhasDeConta` — no limite, à mão, que para 20/97/150 linhas é viável.
+
+> **O segundo método existe desde 09/09, e a contagem à mão deixou de ser necessária.**
+> `N8N/lib/segunda-contagem.mjs` (`linhasDeContaPorForma`) parte de um princípio diferente: não
+> pergunta "tem rótulo e valor, menos o ruído conhecido" (o de `linhasDeConta`), pergunta só se
+> **algum número da linha tem a forma de um valor monetário brasileiro** — sem dicionário de
+> palavras, sem olhar identidade. Exclui por FORMA apenas ano solto e data DD/MM/AAAA.
+>
+> ```
+> node N8N/medir-fase0-denominador.mjs <arquivo-de-texto.txt>   # os dois métodos + onde discordam
+> node N8N/medir-fase0-denominador.mjs --book canastra          # tabela contra o gabarito
+> ```
+>
+> **Ele é independente, e não é melhor — as duas coisas medidas nos 46 documentos com conta dos
+> dois books:**
+>
+> | | erro absoluto médio | conta A MENOS (o lado perigoso) |
+> |---|---|---|
+> | `linhasDeConta` | canastra 4,6% · vertentes 1,3% | 4 de 46 |
+> | `linhasDeContaPorForma` | canastra 24,8% · vertentes 7,9% | **1 de 46** |
+>
+> Discorda de `linhasDeConta` em documentos diferentes (nos 4 em que a primeira subconta, a
+> segunda concorda em 0) — é o que a torna útil como conferência. Mas sobreconta a maioria,
+> porque não filtra CNPJ, CRC, "Página", "Nota" nem bloco de assinatura. **Serve para cercar o
+> número, não para substituir a régua.** Quando as duas concordam, a confiança é alta; quando
+> discordam, o comando lista as linhas em desacordo para conferência a olho — que é o trabalho
+> que a Fase 0 pede, agora em minutos em vez de contagem manual.
 
 Três saídas possíveis, e as três são informação:
 
