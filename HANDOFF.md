@@ -4,9 +4,17 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-09 (sessão **81**). **Estado do `main`:** mergeado até o **PR
-#204**; migrations no repositório até a **`0161`**. O **#205** está aberto — as correções da
-revisão de código do próprio #204.
+**Última atualização:** 2026-09-09 (sessão **82**). **Estado do `main`:** mergeado até o **PR
+#205**; migrations no repositório até a **`0162`**. O **#206** está aberto — a `0162`, o balcão
+de perguntas da `0153` que respondia por ele mesmo.
+
+> **E ele congelou DE NOVO, pela terceira vez, dentro da mesma sessão em que o aviso abaixo foi
+> escrito.** A sessão 82 chegou e encontrou aqui "mergeado até o #204, o #205 aberto" — o #205 já
+> estava mergeado havia horas. O aviso não bastou: **ele pede disciplina de quem mergeia, e quem
+> mergeia é o dono, não a sessão que escreve o aviso.** Enquanto não houver portão automático
+> (o `ESTADO.md` tem um, o `run.sh` reprova se a migration mais nova não estiver citada), a regra
+> prática para quem chega é: **não acredite nestas três linhas — rode `git log --oneline -1` e
+> `ls Supabase/migrations | tail -1`.** As duas respondem em um segundo e não envelhecem.
 
 > **ESTE CABEÇALHO JÁ CONGELOU DUAS VEZES, e a segunda foi em 24 horas.** Em 08/09 ele dizia
 > "mergeado até o #201, o #202 aberto, a `0160` sendo escrita" — e nesse meio-tempo #202, #203 e
