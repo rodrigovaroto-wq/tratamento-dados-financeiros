@@ -1,7 +1,14 @@
 # Mapa de execução — daqui até o projeto fechado
 
-**Data:** 20/08/2026, sessão 55 · **Base conferida:** `main` em `75abcee`, CI verde (execução 352).
-**Última migration:** `0133` — acrescentada nesta sessão, ver `ESTADO.md`.
+**Data:** 09/09/2026, sessão 81 · **Base conferida:** `main` em `668b6fe`, CI verde (PR #203).
+**Última migration:** `0160` — ver `ESTADO.md`.
+
+> **O corpo deste arquivo é mais novo que este cabeçalho era.** Até 09/09 ele dizia "20/08, sessão
+> 55, migration `0133`" enquanto as seções abaixo já registravam coisas de 02/09 — uma revisão
+> pegou. É o mesmo defeito que separou o `ESTADO.md` do `HANDOFF.md`: a parte que muda toda rodada
+> convivendo com a que quase nunca muda, e a que quase nunca muda não convidando a editar nada.
+> **Quem tocar o corpo atualiza esta data na mesma passada** — cabeçalho que fica para trás manda a
+> próxima sessão planejar contra um estado que não existe mais.
 
 ## Como ler este arquivo
 
@@ -462,8 +469,12 @@ Uma definição de pronto para o conjunto, para que "fechar o projeto" não seja
 - [ ] **Uma rodada real completa**, exportada, com o `ACEITE.md` preenchido e os 10 asserts do
       `auditar-xlsx.mts` verdes sobre o arquivo de verdade (B1)
 - [ ] **O limiar de cobertura recalibrado** com pontos reais, e o fatiamento conferido em produção (B2)
-- [ ] **A saída da autonomia escrita em `Arquitetura do Sistema/1 Visão e Doutrina/01`** — A, B ou C — e, se B ou C, o portão
-      implementado e travado por suíte (B3)
+- [x] ~~**A saída da autonomia escrita em `Arquitetura do Sistema/1 Visão e Doutrina/01`** — A, B ou C — e, se B ou C, o portão
+      implementado e travado por suíte~~ (B3) — **21/08**: saída **B**, escrita na seção "Como se
+      mede a concordância quando não há rotulagem" de `01_DOUTRINA_DE_AUTONOMIA.md`, implementada
+      na `0136` e travada por `Supabase/test/veredito_producao.test.sql`. (A caixa ficou desmarcada
+      até 09/09 embora a §6 deste mesmo arquivo já registrasse o critério como atendido — a régua
+      dizia que faltava o que o corpo dizia estar feito.)
 - [ ] **O `main` protegido** com o check `suítes` obrigatório (B6.1)
 - [x] ~~**Backup, retenção e LGPD** escritos em `docs/`~~ (B6.3) — **21/08**; sobram os [A CONFIRMAR] do dono e o teste de restauração
 - [x] ~~**Um painel de operação** lendo `lote_execucao`~~ (B6.2) — **21/08**, `0135` (a tela saiu do portal no mesmo dia, por decisão do dono; a leitura é por SQL)
