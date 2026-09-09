@@ -20,8 +20,8 @@
 #   • ABORTA se o `path` do gatilho de formulário vier vazio. Ele é atribuído
 #     pelo n8n e sobrescrevê-lo TROCA A URL PÚBLICA do intake. Já se perdeu uma.
 #   • ABORTA antes de publicar se a cópia local não for a do `main` atualizado
-#     — republicar uma árvore velha é publicar a versão SEM as correções, com
-#     todo mundo achando que publicou as novas.
+#     — republicar uma árvore velha é publicar a versão SEM as correções,
+#     enquanto a equipe inteira acredita que publicou as novas.
 #   • Publica só depois que as três passam, e roda o conferidor no fim. O
 #     `conferir-publicado.mjs` já sai com código 1 em divergência; aqui esse
 #     código vira o código de saída do script, para que "deu certo" seja uma
@@ -47,8 +47,8 @@ DRY_RUN=0
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RAIZ"
 
-erro() { printf '\n  ABORTADO — %s\n\n' "$1" >&2; exit 1; }
-passo() { printf '\n=== %s\n' "$1"; }
+erro() { local msg="$1"; printf '\n  ABORTADO — %s\n\n' "$msg" >&2; exit 1; }
+passo() { local titulo="$1"; printf '\n=== %s\n' "$titulo"; }
 
 # --- as três variáveis -------------------------------------------------------
 for v in N8N_URL N8N_API_KEY N8N_WORKFLOW_ID; do

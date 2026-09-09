@@ -261,8 +261,22 @@ export function rotulosCitados(texto: string): string[] {
  * o motivo, que é exatamente o que a regra 1 do projeto proíbe.
  */
 export function semALista(texto: string): string {
+  // O `\s*` do separador vive DENTRO do grupo opcional do colchete, e o que
+  // vem depois é UMA classe (`[\s,]*`) em vez de `\s*,?\s*`. A forma anterior
+  // punha dois quantificadores de espaço adjacentes, que é a ambiguidade que o
+  // Sonar aponta como backtracking super-linear (`typescript:S8786`, PR #204):
+  // uma corrida de espaços pode ser dividida entre eles de muitas maneiras.
+  //
+  // HONESTIDADE SOBRE A MEDIÇÃO: eu TENTEI reproduzir o custo e NÃO CONSEGUI —
+  // marcador casado, lista aberta e corridas de 2.000 a 16.000 espaços seguidas
+  // de um caractere que não fecha a lista rodam em 0,0-0,1 ms nas duas formas
+  // (V8 não backtrackeia aqui). Então esta troca é DEFENSIVA, não a correção de
+  // uma lentidão medida: a forma nova não tem a ambiguidade, custa nada, e a
+  // entrada vem do banco alimentada por documento extraído — mas quem ler isto
+  // depois não deve acreditar que havia um travamento observado, porque não
+  // havia. Se algum dia houver, o número entra aqui.
   const comLista = new RegExp(
-    `${MARCADOR_LISTA_DE_ROTULOS.source}(?:"[^"]+"\\s*(?:\\[[^\\]]*\\])?\\s*,?\\s*)+`,
+    String.raw`${MARCADOR_LISTA_DE_ROTULOS.source}(?:"[^"]+"(?:\s*\[[^\]]*\])?[\s,]*)+`,
     "i",
   );
   if (!comLista.test(texto)) return texto;
