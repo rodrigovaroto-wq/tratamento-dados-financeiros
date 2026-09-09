@@ -22,8 +22,8 @@
 // POR QUE NÃO "FORMA DE VALOR MONETÁRIO", que é o que este cabeçalho dizia até
 // 09/09: porque isso NÃO É DECIDÍVEL POR FORMA. A versão estrita foi escrita,
 // medida e revertida no mesmo dia — o veredito ao final deste arquivo traz os
-// números. Em uma linha: valor em real é escrito como inteiro puro o tempo
-// todo ("Caixa 150"), e um inteiro puro é indistinguível de "Página 3".
+// números. Em uma linha: valor em real é escrito como inteiro puro na maior
+// parte das vezes ("Caixa 150"), e inteiro puro é indistinguível de "Página 3".
 // Exigir separador de milhar ou vírgula decimal derrubava valor genuíno, e o
 // lado perigoso — contar A MENOS — saltou de 1 para 19 de 46 documentos.
 //
@@ -119,7 +119,7 @@
 //     conta A MENOS: 1 de 46  ->  19 de 46
 //
 // A CAUSA é banal e não tem conserto por forma: valor monetário brasileiro é
-// escrito como inteiro puro o tempo todo ("Caixa 150", "Duplicatas 1000"), e
+// escrito como inteiro puro na maior parte das vezes ("Caixa 150", "Duplicatas 1000"), e
 // um inteiro puro é indistinguível de um número de página. Ou seja, "forma de
 // valor monetário" NÃO É DECIDÍVEL POR FORMA — a promessa estava no cabeçalho,
 // não na função, e é o cabeçalho que estava errado.
@@ -153,7 +153,7 @@ const DATA_DMA = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
 // nos 46 documentos com conta dos dois books, e a restrição foi DERRUBADA:
 // contar A MENOS — o lado que esconde extração pela metade — saltou de
 // **1 para 19 de 46**. A causa é banal e decisiva: valor monetário brasileiro
-// é escrito como inteiro puro o tempo todo ("Caixa 150", "Duplicatas 1000",
+// é escrito como inteiro puro na maior parte das vezes ("Caixa 150", "Duplicatas 1000",
 // "Estoques 2880"), e nenhuma forma separa esse inteiro de um número de
 // página. Medido: `"Caixa 150"` e `"Duplicatas 1000"` davam `false`.
 //
