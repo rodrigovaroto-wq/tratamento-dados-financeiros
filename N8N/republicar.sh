@@ -73,7 +73,17 @@ echo "    ok — árvore limpa e não atrasada em relação a origin/main"
 
 # --- baixar o vivo -----------------------------------------------------------
 passo "2/5  baixando o workflow publicado"
-VIVO="$(mktemp)"; trap 'rm -f "$VIVO" ' EXIT
+# Os DOIS ficam fora do repositório. `publicar.json` carrega os ids REAIS das
+# 14 credenciais e o `path` público do intake — ele nasceu na raiz e sem
+# .gitignore, e uma revisão pegou (PR #204): um `git add -A` distraído
+# versionaria segredo de instalação. O `--dry-run` preserva o arquivo de
+# propósito, e imprime o caminho, porque inspecioná-lo é o objetivo do modo.
+VIVO="$(mktemp)"; PUB="$(mktemp -t publicar.XXXXXX)"
+LIMPAR_PUB=1
+# `if` e não `&&`: sob `set -e`, um teste falso como ÚLTIMO comando de um trap
+# de EXIT pode alterar o código de saída do script — e este script existe para
+# que o código de saída signifique alguma coisa.
+trap 'rm -f "$VIVO"; if [[ "$LIMPAR_PUB" == "1" ]]; then rm -f "$PUB"; fi' EXIT
 curl -sS -f -H "X-N8N-API-KEY: $N8N_API_KEY" \
   "$N8N_URL/api/v1/workflows/$N8N_WORKFLOW_ID" -o "$VIVO" \
   || erro "não consegui ler o workflow. Confira \$N8N_URL, a chave e o id."
@@ -83,40 +93,54 @@ echo "    ok — $(node -p "JSON.parse(require('fs').readFileSync('$VIVO','utf8'
 
 # --- fundir ------------------------------------------------------------------
 passo "3/5  fundindo comportamento do repositório com a identidade da instalação"
-node N8N/preparar-republicacao.mjs < "$VIVO" > publicar.json \
+node N8N/preparar-republicacao.mjs < "$VIVO" > "$PUB" \
   || erro "preparar-republicacao.mjs falhou — nada foi publicado"
 
 # --- TRAVA 2 e 3: o arquivo a publicar está são? -----------------------------
 passo "4/5  conferindo o arquivo ANTES de publicar"
-N_REPLACE="$(grep -c 'REPLACE' publicar.json || true)"
-[[ "$N_REPLACE" == "0" ]] || erro "sobraram $N_REPLACE ocorrência(s) de REPLACE em publicar.json.
+# `grep -c` conta LINHAS que casam, não OCORRÊNCIAS: com o JSON numa linha só,
+# ele diria "1" para 14 credenciais quebradas. A trava abortaria de qualquer
+# forma, mas o número na mensagem estaria errado — e é por ele que se decide o
+# que fazer em seguida. Medido na revisão do PR #204.
+N_REPLACE="$(grep -o 'REPLACE' "$PUB" | wc -l | tr -d ' ')"
+[[ "$N_REPLACE" == "0" ]] || erro "sobraram $N_REPLACE ocorrência(s) de REPLACE no arquivo a publicar.
            Isso quebraria as credenciais. O arquivo NÃO foi publicado; me mande
            esta mensagem."
 node -e '
-  const w = JSON.parse(require("fs").readFileSync("publicar.json","utf8"));
+  const w = JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
   const form = (w.nodes||[]).find(n => (n.type||"").includes("formTrigger"));
   if (!form) { console.error("não achei o gatilho de formulário"); process.exit(1); }
   const p = form.parameters && form.parameters.path;
   if (!p) { console.error("o path do formulário veio VAZIO — publicar trocaria a URL pública do intake"); process.exit(1); }
   console.log("    ok — path do formulário preservado, credenciais reais, " + w.nodes.length + " nós");
-' || erro "a conferência do arquivo reprovou — nada foi publicado"
+' "$PUB" || erro "a conferência do arquivo reprovou — nada foi publicado"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  printf '\n  --dry-run: publicar.json está pronto e conferido. NADA foi publicado.\n\n'
+  LIMPAR_PUB=0   # o objetivo do modo é inspecionar o arquivo; ele sobrevive à saída
+  printf '\n  --dry-run: arquivo pronto e conferido. NADA foi publicado.\n'
+  printf '  Ele está em %s — contém ids REAIS de credencial, não commite.\n\n' "$PUB"
   exit 0
 fi
 
 # --- publicar ----------------------------------------------------------------
 passo "5/5  publicando e conferindo o que ficou de pé"
 curl -sS -f -X PUT -H "X-N8N-API-KEY: $N8N_API_KEY" -H 'Content-Type: application/json' \
-  "$N8N_URL/api/v1/workflows/$N8N_WORKFLOW_ID" --data-binary @publicar.json -o /dev/null \
+  "$N8N_URL/api/v1/workflows/$N8N_WORKFLOW_ID" --data-binary "@$PUB" -o /dev/null \
   || erro "o PUT falhou. O workflow pode ter ficado no estado anterior — confira no editor."
 
 curl -sS -f -H "X-N8N-API-KEY: $N8N_API_KEY" \
   "$N8N_URL/api/v1/workflows/$N8N_WORKFLOW_ID" | node N8N/conferir-publicado.mjs
 
-printf '\n  PUBLICADO E CONFERIDO.\n'
-printf '  Lembre: a primeira rodada depois desta republicação RE-EXTRAI todo\n'
-printf '  documento de um caso já processado, porque o FINGERPRINT_EXTRACAO mudou\n'
-printf '  e o dedup da 0118/0127 é por (hash, fingerprint). Ver ESTADO.md,\n'
-printf '  "O que só o dono pode fazer".\n\n'
+printf '\n  PUBLICADO E CONFERIDO.\n\n'
+# Este aviso já afirmou "o FINGERPRINT_EXTRACAO mudou" como se fosse sempre
+# verdade. NÃO é: a correção da régua do PR #204 mexeu no jsCode de 4 nós e
+# deixou o fingerprint intacto (d1a77ddf7937b595), enquanto o alias HEADCOUNT
+# do PR #203 mudou. Só quem mexe em SYSTEM_PROMPT, MODELO_EXTRACAO ou no schema
+# muda o fingerprint — e só nesse caso o dedup da 0118/0127, que é por
+# (hash, fingerprint), deixa de casar. Aviso que mente por excesso ensina a
+# ignorar aviso.
+printf '  Se o FINGERPRINT_EXTRACAO tiver mudado nesta publicação, a primeira\n'
+printf '  rodada RE-EXTRAI cada documento de um caso já processado (dedup da\n'
+printf '  0118/0127 é por hash+fingerprint). Confira contra a publicação\n'
+printf '  anterior antes de rodar um lote grande — ver ESTADO.md, "O que só o\n'
+printf '  dono pode fazer". Se não mudou, nada é re-extraído.\n\n'
