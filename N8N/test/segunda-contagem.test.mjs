@@ -67,10 +67,10 @@ test('linhasDeContaPorForma: linha em branco não conta, e a emenda de fragmento
 });
 
 // ---------------------------------------------------------------------------
-// O DEFEITO REAL: `ehLinhaSemValor` confunde total em REAIS com código de
-// conta e apaga a linha. Medido no texto REAL de `11_Mapa_Divida_Vertentes_
-// Metalurgica_2025` (`Dados de Teste/book-vertentes/pdf/TEXTO_EXTRAIDO.json`,
-// gerado por `PYTHONPATH=. python3 gerar.py`).
+// O DEFEITO REAL, CORRIGIDO EM 09/09: `ehLinhaSemValor` confundia total em
+// REAIS com código de conta e apagava a linha. Medido no texto REAL de
+// `11_Mapa_Divida_Vertentes_Metalurgica_2025` (`Dados de Teste/book-vertentes/
+// pdf/TEXTO_EXTRAIDO.json`, gerado por `PYTHONPATH=. python3 gerar.py`).
 // ---------------------------------------------------------------------------
 const TEXTO_MAPA_DIVIDA = [
   'Credor Modalidade Saldo devedor (R$) Taxa Vencimento Garantia Juros do exercício (R$)',
@@ -89,20 +89,27 @@ const TEXTO_MAPA_DIVIDA = [
 ].join('\n');
 const VERDADE_MAPA_DIVIDA = 10; // pdf/METRICAS.json, 11_Mapa_Divida_Vertentes_Metalurgica_2025
 
-test('a régua atual (linhasDeConta) conta a MENOS no Mapa de Dívida — o defeito que motivou o segundo método', () => {
-  // ehLinhaSemValor apaga "51.300.000" e "12.400.000" como se fossem código de
-  // conta (\d+(\.\d+){2,}) e a linha TOTAL fica sem dígito.
+test('a régua (linhasDeConta) já NÃO conta a menos no Mapa de Dívida — defeito corrigido em 09/09', () => {
+  // ANTES da correção, `ehLinhaSemValor` apagava "51.300.000" e "12.400.000"
+  // como se fossem código de conta (`\d+(\.\d+){2,}` casa as duas formas) e a
+  // linha TOTAL ficava sem dígito — 9 de 10, o caso perigoso (contar a menos).
+  // A correção distingue as duas formas pelo GRUPO: separador de milhar tem
+  // todo grupo depois do primeiro com exatamente 3 dígitos ("300", "000");
+  // código de conta, não ("1.1.01.002" tem grupo de 1 dígito). Regressão: se
+  // isto voltar a 9 e a linha TOTAL voltar a faltar, o defeito voltou.
   const linhas = linhasDeConta(TEXTO_MAPA_DIVIDA);
-  assert.equal(linhas.length, VERDADE_MAPA_DIVIDA - 1, 'se isto passar de 9, o defeito medido aqui já não existe — atualize o comentário de lib/segunda-contagem.mjs');
-  assert.ok(!linhas.some((l) => l.startsWith('TOTAL')), 'a linha TOTAL tem de estar AUSENTE — é o defeito');
+  assert.equal(linhas.length, VERDADE_MAPA_DIVIDA, 'se isto cair para 9, o defeito de ehLinhaSemValor voltou — ver N8N/lib/cobertura.mjs');
+  assert.ok(linhas.some((l) => l.startsWith('TOTAL')), 'a linha TOTAL tem de estar presente');
 });
 
 test('linhasDeContaPorForma RECUPERA a linha TOTAL (sem o strip de código de conta)', () => {
   const linhas = linhasDeContaPorForma(TEXTO_MAPA_DIVIDA, { juntarFragmentos: juntarFragmentosDeLinha });
   assert.ok(linhas.some((l) => l.startsWith('TOTAL 51.300.000')), 'a linha TOTAL tem de estar presente');
   // E erra do lado SEGURO: soma um falso positivo (rodapé/CNPJ, mesma forma de
-  // valor), então fica em 11 — mais longe do zero em módulo que a régua (9),
-  // mas contando A MAIS, não a menos. Ver o comentário de lib/segunda-contagem.mjs.
+  // valor) que a correção da régua NÃO toca — o strip de código de conta não
+  // tem nada a ver com este CNPJ —, então fica em 11 (+10%), contando A MAIS,
+  // não a menos. A régua, corrigida, acerta 10/10; este método continua com o
+  // mesmo erro de antes. Ver o comentário de lib/segunda-contagem.mjs.
   assert.equal(linhas.length, VERDADE_MAPA_DIVIDA + 1);
 });
 

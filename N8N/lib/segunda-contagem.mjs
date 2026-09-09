@@ -46,21 +46,31 @@
 // MESMO artefato do replicador — não um fato medido contra produção. Regra 4:
 // dito como hipótese, não como fato.
 //
-// O DEFEITO REAL QUE A INVESTIGAÇÃO ACHOU — esse SIM é da régua. Em
+// O DEFEITO REAL QUE A INVESTIGAÇÃO ACHOU, E QUE JÁ FOI CORRIGIDO (09/09) —
+// esse SIM era da régua, não deste método. Em
 // `11_Mapa_Divida_Vertentes_Metalurgica_2025` (valores em REAIS, não em
-// milhares), a linha `"TOTAL 51.300.000 12.400.000"` é descartada por
+// milhares), a linha `"TOTAL 51.300.000 12.400.000"` era descartada por
 // `ehLinhaSemValor`: o strip de CÓDIGO DE CONTA (`\b\d+(?:\.\d+){2,}\b`,
-// pensado para `1.1.01.002`) também casa com um valor de R$ 51,3 milhões
-// escrito com separador de milhar em três grupos, apaga os dois números da
-// linha e a deixa sem dígito — "sem valor". Medido: verdade 10, régua 9 (-10%).
-// Este método NÃO tem esse strip — ele recupera a linha do TOTAL — mas soma,
-// no MESMO documento, um falso positivo que a régua não tinha: o rodapé de
-// assinatura funde num só parágrafo (mesma causa de coordenada Y de acima) e
-// carrega um CNPJ ("11.222.334/0001-08", forma \d{1,3}(\.\d{3})+) que TEM a
-// forma de valor e não é. Medido: este método dá 11 (+10%) — mais longe do
-// zero que a régua em módulo igual, mas do lado SEGURO (conta a mais, não a
-// menos). Reconhecer o CNPJ sem lista de ruído voltaria a exigir léxico — e
-// deixaria de ser um segundo princípio.
+// pensado para `1.1.01.002`) também casava com um valor de R$ 51,3 milhões
+// escrito com separador de milhar em três grupos, apagava os dois números da
+// linha e a deixava sem dígito — "sem valor". Medido: verdade 10, régua 9
+// (-10%). A CORREÇÃO separa as duas formas pelo GRUPO, não por lista: um
+// separador de milhar tem TODO grupo depois do primeiro com exatamente 3
+// dígitos ("51.300.000" -> 300, 000); código de conta, não ("1.1.01.002" ->
+// 1, 01, 002 — o segundo grupo nunca chega a 3). `ehLinhaSemValor` só apaga o
+// número como código quando ele NÃO tem essa forma de separador de milhar.
+// Medido depois da correção: régua 10/10, erro 0%, e nenhum dos outros 45
+// documentos dos dois books piorou (`N8N/medir-fase0-denominador.mjs --book
+// canastra|vertentes`, antes e depois). Este método NÃO tinha esse strip —
+// já recuperava a linha do TOTAL antes da correção — mas soma, no MESMO
+// documento, um falso positivo que a correção NÃO toca (o strip de código de
+// conta não tem nada a ver com ele): o rodapé de assinatura funde num só
+// parágrafo (mesma causa de coordenada Y de acima) e carrega um CNPJ
+// ("11.222.334/0001-08", forma \d{1,3}(\.\d{3})+) que TEM a forma de valor e
+// não é. Medido: este método continua em 11 (+10%) antes e depois da
+// correção — mais longe do zero que a régua (agora exata), mas do lado SEGURO
+// (conta a mais, não a menos). Reconhecer o CNPJ sem lista de ruído voltaria
+// a exigir léxico — e deixaria de ser um segundo princípio.
 //
 // E UM CASO EM QUE O GABARITO, NÃO A RÉGUA, ESTÁ ERRADO — só que os dois
 // métodos fecham o número por motivos DIFERENTES, e um deles é sorte. Em
@@ -83,22 +93,29 @@
 // entende; entendeu por acaso.
 //
 // O VEREDITO HONESTO, medido nos dois books versionados (canastra + vertentes,
-// 46 documentos com conta, `N8N/medir-fase0-denominador.mjs --book <nome>`):
-// este método SOBRECONTA em relação a `linhasDeConta` na maioria dos
-// documentos (erro absoluto médio ~8-25% contra ~1-5% da régua atual) — ele
-// não filtra CNPJ, CRC, Página, Nota nem assinatura, então cada um desses
-// vira uma linha a mais. Mas ele SUBCONTA em só 1 dos 46 (o
-// `25_Situacao_Fiscal`, cujo texto já vem mesclado antes de qualquer contagem
-// — ver acima), contra 4 dos 46 para `linhasDeConta`. NÃO é um wrapper da
-// régua atual: erra em documentos DIFERENTES (concorda exatamente em 0 dos 4
-// documentos onde a régua atual erra) e erra para o lado QUE O PROJETO
-// considera seguro — contar a mais nunca esconde extração pela metade; contar
-// a menos, sim. Dos 4 documentos em que a régua atual conta a menos, este
-// método vira para o lado seguro (conta a mais) em 3 (`25_Situacao_Fiscal`,
-// `10_Faturamento_24M`, `11_Mapa_Divida`) e SOBRECONTA AINDA MAIS no quarto
-// (`21_Mutuos`: verdade 3, régua 2, este método 6) — nenhum dos 4 fica pior
-// do lado perigoso, e nenhum vira demonstração de que o método é bom: é a
-// assimetria do projeto na prática, não uma vitória sem preço.
+// 46 documentos com conta, `N8N/medir-fase0-denominador.mjs --book <nome>`,
+// já com a correção de 09/09 acima): este método SOBRECONTA em relação a
+// `linhasDeConta` na maioria dos documentos (erro absoluto médio ~8-25%
+// contra ~1-5% da régua atual) — ele não filtra CNPJ, CRC, Página, Nota nem
+// assinatura, então cada um desses vira uma linha a mais. Mas ele SUBCONTA em
+// só 1 dos 46 (o `25_Situacao_Fiscal`, cujo texto já vem mesclado antes de
+// qualquer contagem — ver acima), contra 3 dos 46 para `linhasDeConta`
+// (`21_Mutuos`, `25_Situacao_Fiscal`, `10_Faturamento_24M` — `11_Mapa_Divida`
+// SAIU desta lista com a correção de 09/09, era o quarto antes dela). NÃO é
+// um wrapper da régua atual: erra em documentos DIFERENTES (concorda
+// exatamente em 0 dos 3 documentos onde a régua atual erra) e, na maioria
+// deles, erra para o lado QUE O PROJETO considera seguro — contar a mais
+// nunca esconde extração pela metade; contar a menos, sim. Dos 3 documentos
+// em que a régua atual conta a menos, este método vira para o lado seguro
+// (conta a mais) em 1 (`21_Mutuos`: verdade 3, régua 2, este método 6);
+// fecha EXATO no gabarito por SORTE no segundo (`10_Faturamento_24M`, 16 —
+// o mesmo falso positivo de rodapé/CNPJ do parágrafo acima cancelando o
+// defeito do gabarito, não o método "entendendo" cabeçalho, como já dito);
+// e continua do lado perigoso — só que MENOS — no terceiro
+// (`25_Situacao_Fiscal`: verdade 10, régua 7, este método 8, ainda -20%) —
+// o único documento em que os DOIS métodos contam a menos. Nenhum dos 3 fica
+// pior do lado perigoso, e nenhum vira demonstração de que o método é bom: é
+// a assimetria do projeto na prática, não uma vitória sem preço.
 
 // Ano solto (1900-2099) e data DD/MM/AAAA — a única forma que este método
 // sabe que não mede número, e sabe pela FORMA do dígito, não por lista de

@@ -226,6 +226,27 @@ export function juntarFragmentosDeLinha(texto) {
  */
 export function ehLinhaSemValor(linha) {
   if (typeof linha !== 'string' || linha.length === 0) return false;
+  // O CASO PERIGOSO, achado de lado na Fase 0 (09/09) no `11_Mapa_Divida_
+  // Vertentes_Metalurgica_2025` — documento em REAIS, não em milhares. A linha
+  // "TOTAL 51.300.000 12.400.000" sumia do denominador: `\b\d+(?:\.\d+){2,}\b`
+  // via em "51.300.000" a MESMA forma de "1.1.01.002" (dígitos separados por
+  // ponto, dois ou mais pontos) e apagava os dois valores como se fossem
+  // código de conta — sobrava "TOTAL", sem dígito, e a linha de TOTAL virava
+  // invisível. Verdade 10, régua 9 (-10%): contar A MENOS é o lado que a Fase 0
+  // existe para vigiar, porque encolhe o denominador e deixa a extração pela
+  // metade parecer sadia.
+  //
+  // O CRITÉRIO NÃO É LISTA, É FORMA — a mesma disciplina do resto deste
+  // arquivo. Separador de milhar brasileiro tem uma regra fixa: TODO grupo
+  // depois do primeiro tem EXATAMENTE 3 dígitos ("51.300.000" -> 300, 000;
+  // "9.420.000" -> 420, 000; "10.412.600" -> 412, 600). Código de conta não
+  // segue essa regra — a hierarquia classe.grupo.subgrupo.sequência escreve
+  // grupos de tamanho variável ("1.1.01.002" -> 1, 01, 002; "2.1.01.001" ->
+  // 1, 01, 001; o segundo grupo nunca chega a 3 dígitos). A pergunta que
+  // decide, então, não é "quantos pontos tem" — é "todo grupo depois do
+  // primeiro tem 3 dígitos?": se sim, é dinheiro; se não, é identidade.
+  // `separadorDeMilhar`, abaixo, é essa pergunta.
+  const separadorDeMilhar = /^\d{1,3}(?:\.\d{3})+$/;
   // As alternativas vêm de LITERAIS de regex, lidas por `.source`. Escritas como
   // string comum elas exigiriam '\\b\\d{1,2}' — barra dobrada em toda a expressão,
   // que é onde erro de escape se esconde e onde o Sonar (S7780) acusou quatro
@@ -250,8 +271,10 @@ export function ehLinhaSemValor(linha) {
   const quantosDeDuracao = new RegExp(/\b\d{1,3}\s*/.source + '(' + duracao + ')' + /\b/.source, 'gi');
   const resto = linha
     // CÓDIGO DE CONTA ("2.1.01.001") — identifica, não mede. Sai primeiro, senão
-    // o regex de ano acha "2025" dentro de um código que o contenha.
-    .replace(/\b\d+(?:\.\d+){2,}\b/g, ' ')
+    // o regex de ano acha "2025" dentro de um código que o contenha. O que TEM
+    // a forma de separador de milhar (`separadorDeMilhar`, acima) fica: é
+    // valor, não identidade, e apagá-lo é o defeito do `11_Mapa_Divida`.
+    .replace(/\b\d+(?:\.\d+){2,}\b/g, (m) => (separadorDeMilhar.test(m) ? m : ' '))
     .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')   // 31/12/2025
     .replace(diaDeMes, ' ')                             // 31 de dezembro
     .replace(quantosDeDuracao, ' ')                     // 36 MESES
