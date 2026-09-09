@@ -8512,8 +8512,9 @@ begin
     if v_pendencia_id is null then
       insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, motivo)
         values (v_caso_id, 'diagnostico', 'periodo_incorreto', 'importante', true,
-          format('Diagnóstico de conteúdo sugere período "%s %s" (documento está registrado com "%s %s").',
-                 p_periodo_tipo, p_periodo_referencia, coalesce(v_periodo_tipo_atual, '?'), coalesce(v_periodo_ref_atual, '(nenhum)')),
+          format('Diagnóstico de conteúdo sugere período "%s %s" (documento está registrado com "%s %s"). %s',
+                 p_periodo_tipo, p_periodo_referencia, coalesce(v_periodo_tipo_atual, '?'), coalesce(v_periodo_ref_atual, '(nenhum)'),
+                 coalesce(p_justificativa, '')),
           p_documento_id, 'diagnostico:periodo:' || p_documento_id);
     end if;
   elsif v_pendencia_id is not null then
@@ -8559,7 +8560,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia — mesmo parâmetro, mesma chamada, sem decidir nada novo.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
