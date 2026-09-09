@@ -306,3 +306,239 @@ begin
                'nasce do gatilho nomeando os candidatos, o exato ganha do alfabeto, o aproximado '
                'único não regrediu, e a fusão leva tudo junto com rastro';
 end $$;
+
+-- =============================================================================
+-- SEÇÃO NOVA (0162) — O BALCÃO NÃO ESCUTA A RESPOSTA QUE O PRÓPRIO DOCUMENTO
+-- TRAZ, E ESTA SEÇÃO PROVA QUE ELE PASSOU A ESCUTAR.
+--
+-- Bloco separado do `do $$` acima de propósito: as seções 1–8 fundem a
+-- entidade ambígua daquele caso em `v_imob` (seção 7) e não podem mudar de
+-- significado — este bloco monta o SEU PRÓPRIO caso, do zero, para não
+-- depender de nenhum estado deixado por elas.
+--
+-- O arranjo reproduz o PADRÃO medido no lote `7417` (araucária, 03/09): nome
+-- de arquivo ambíguo ("Araucaria SPE", que casa com as duas empresas do
+-- grupo) seguido de diagnóstico de conteúdo que nomeia a empresa por extenso
+-- — as duas razões sociais são as que a própria 0153 já mede como reais. O
+-- QUE NÃO SE TEM é a string exata que o diagnóstico do documento `009`
+-- devolveu; isso não é fingido aqui.
+-- =============================================================================
+do $$
+declare
+  v_caso        uuid;
+  v_bio         uuid;
+  v_imob        uuid;
+  v_ambigua     uuid;
+  v_dummy1      uuid;
+  v_dummy2      uuid;
+  v_doc         uuid;
+  v_doc2        uuid;
+  v_doc3        uuid;
+  v_ver         uuid;
+  v_ver2        uuid;
+  v_ver3        uuid;
+  v_r           jsonb;
+  v_pend_bloq   uuid;
+  v_pend_resp   uuid;
+  v_n           int;
+  v_txt         text;
+  v_tipo        text;
+  v_sev         text;
+  v_sobrep      boolean;
+  v_estado      text;
+  v_ent_atual   uuid;
+begin
+  v_caso := (fn_upsert_caso('Caso 0162 — o balcão não escuta a resposta'))::uuid;
+
+  -- As duas empresas reais do grupo, como o diagnóstico as traria (razão
+  -- social por extenso) — mesmos nomes que a 0153 já mede em produção.
+  v_bio  := fn_upsert_entidade(v_caso, 'ARAUCÁRIA BIOENERGIA SPE LTDA.');
+  v_imob := fn_upsert_entidade(v_caso, 'ARAUCÁRIA IMOBILIÁRIA SPE LTDA.');
+
+  -- O documento chega classificado por NOME DE ARQUIVO, com o nome curto que
+  -- casa com as duas — exatamente o `009` do lote 7417. Nasce o balcão, e o
+  -- GATILHO da 0153 abre a pendência bloqueante pelo caminho normal.
+  v_r := fn_registrar_documento(
+    v_caso, 'Araucaria SPE', 'multi', '21,22,23,24,25', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/009.pdf',
+    '009_Balanco_Patrimonial_Araucaria_SPE_2025x2024x2023x2022x2021.pdf',
+    false, 'HASH-162-009', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  select id into v_ver from documento_versao where documento_id = v_doc order by n_versao desc limit 1;
+  select entidade_id into v_ambigua from documento where id = v_doc;
+
+  select id into v_pend_bloq from pendencia
+  where caso_id = v_caso and motivo = 'entidade_ambigua:' || v_ambigua and estado <> 'resolvida';
+  perform teste_assert_ent(v_pend_bloq is not null and v_ambigua <> v_bio and v_ambigua <> v_imob,
+    'PRÉ-CONDIÇÃO: o documento caiu no balcão (nenhuma das duas empresas) e a bloqueante da 0153 abriu');
+
+  -- ===========================================================================
+  raise notice '--- 9.1 O CONTEÚDO RESPONDE À PRÓPRIA PERGUNTA ---';
+  -- ===========================================================================
+  --
+  -- O diagnóstico de conteúdo lê o PRÓPRIO documento e nomeia a Imobiliária
+  -- por extenso — o mesmo nome que já está cadastrado no caso. Tipo e período
+  -- batem com o registrado de propósito, para isolar o comportamento de
+  -- ENTIDADE do resto da função.
+  v_r := fn_registrar_diagnostico(
+    v_doc, v_ver, 'ARAUCÁRIA IMOBILIÁRIA SPE LTDA.', true, 'BALANCO', 'multi',
+    '21,22,23,24,25', 'ok', null, 'Balanço patrimonial da Araucária Imobiliária.',
+    'O balanço traz o CNPJ e a razão social completa da Imobiliária nas primeiras páginas.');
+  perform teste_assert_ent((v_r->>'executado')::boolean, 'o diagnóstico executou', v_r::text);
+
+  select id, descricao into v_pend_resp, v_txt from pendencia
+  where caso_id = v_caso and motivo = 'diagnostico:entidade_ambigua_respondida:' || v_doc
+    and estado <> 'resolvida';
+  perform teste_assert_ent(v_pend_resp is not null,
+    'a resposta do documento vira pendência (comportamento, não mecanismo): o conteúdo nomeou uma '
+    'das candidatas e isso ficou visível em vez de ser jogado fora');
+  perform teste_assert_ent(v_txt like '%ARAUCÁRIA IMOBILIÁRIA SPE LTDA.%',
+    'a pendência NOMEIA a empresa que o conteúdo apontou', left(coalesce(v_txt, ''), 200));
+  perform teste_assert_ent(v_txt like '%Confirme%' or v_txt like '%confira%' or v_txt like '%revisão%',
+    'a pendência diz o que fazer (confirmar pela revisão), não só o achado',
+    left(coalesce(v_txt, ''), 300));
+  perform teste_assert_ent(v_txt like '%Justificativa do diagnóstico%CNPJ%',
+    'a justificativa do diagnóstico (0161) chega junto, quando existe', left(coalesce(v_txt, ''), 400));
+
+  -- ---------------------------------------------------------------------------
+  -- O ASSERT MAIS IMPORTANTE DESTE ARQUIVO: a correção NÃO afrouxou a
+  -- salvaguarda da 0153. A pendência bloqueante continua bloqueante, não
+  -- sobrepujável e aberta, e o documento NÃO foi movido.
+  -- ---------------------------------------------------------------------------
+  select tipo::text, severidade::text, sobrepujavel, estado::text
+    into v_tipo, v_sev, v_sobrep, v_estado
+  from pendencia where id = v_pend_bloq;
+  perform teste_assert_ent(
+    v_tipo = 'entidade_incorreta' and v_sev = 'bloqueante' and v_sobrep = false and v_estado = 'aberta',
+    'A PENDÊNCIA BLOQUEANTE DA 0153 CONTINUA INTACTA: bloqueante, não sobrepujável, aberta',
+    format('tipo=%s severidade=%s sobrepujavel=%s estado=%s', v_tipo, v_sev, v_sobrep, v_estado));
+
+  v_r := fn_avaliar_portao2(v_caso);
+  perform teste_assert_ent((v_r->>'elegivel')::boolean = false,
+    'e o PORTÃO 2 CONTINUA FECHADO — a resposta ajuda o revisor, não decide por ele',
+    v_r::text);
+
+  select entidade_id into v_ent_atual from documento where id = v_doc;
+  perform teste_assert_ent(v_ent_atual = v_ambigua,
+    'e o DOCUMENTO NÃO FOI MOVIDO — continua na entidade-balcão, como antes do diagnóstico');
+
+  -- ===========================================================================
+  raise notice '--- 9.2 CAMINHO NEGATIVO: nome que não bate com NENHUMA candidata ---';
+  -- ===========================================================================
+  --
+  -- Segundo documento no MESMO balcão (o gatilho não abre pendência nova —
+  -- seção 3/4 já prova isso). O diagnóstico aqui aponta uma empresa que não
+  -- existe no caso: o conteúdo NÃO respondeu, e silêncio é a resposta certa.
+  v_r := fn_registrar_documento(
+    v_caso, 'Araucaria SPE', 'multi', '21,22,23,24,25', 'DRE', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/042.pdf',
+    '042_Demonstracao_do_Resultado_Araucaria_SPE_2025x2024x2023x2022x2021.pdf',
+    false, 'HASH-162-042', 'ok');
+  v_doc2 := (v_r->>'documento_id')::uuid;
+  select id into v_ver2 from documento_versao where documento_id = v_doc2 order by n_versao desc limit 1;
+
+  v_r := fn_registrar_diagnostico(
+    v_doc2, v_ver2, 'Empresa Fantasma Que Não Existe No Mandato LTDA.', true, 'DRE', 'multi',
+    '21,22,23,24,25', 'ok', null, null, null);
+  perform teste_assert_ent((v_r->>'executado')::boolean, 'o diagnóstico executou', v_r::text);
+
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and motivo = 'diagnostico:entidade_ambigua_respondida:' || v_doc2
+    and estado <> 'resolvida';
+  perform teste_assert_ent(v_n = 0,
+    'nome que não bate com NENHUMA empresa cadastrada: nenhuma pendência nova (ausência não vira dado)',
+    format('abriu %s', v_n));
+
+  -- ===========================================================================
+  raise notice '--- 9.3 CAMINHO NEGATIVO: nome que casa com DUAS exatas ---';
+  -- ===========================================================================
+  --
+  -- Montado por INSERT direto (fn_upsert_entidade nunca produziria isto — ela
+  -- dedupe por casamento aproximado): duas entidades cuja forma CANÔNICA é
+  -- IDÊNTICA. Quando o conteúdo aponta um nome que é EXATO contra as DUAS, a
+  -- resposta é ambígua de novo — não decide, não abre nada.
+  insert into entidade (caso_id, razao_social) values
+    (v_caso, 'Teste Empate Estrutural LTDA'), (v_caso, 'TESTE EMPATE ESTRUTURAL LTDA.');
+  select id into v_dummy1 from entidade
+    where caso_id = v_caso and razao_social = 'Teste Empate Estrutural LTDA';
+  select id into v_dummy2 from entidade
+    where caso_id = v_caso and razao_social = 'TESTE EMPATE ESTRUTURAL LTDA.';
+  select count(*) into v_n from fn_entidades_candidatas(v_caso, 'Teste Empate Estrutural Ltda')
+    where exata;
+  perform teste_assert_ent(v_n >= 2,
+    'PRÉ-CONDIÇÃO: o nome de teste é EXATO contra as duas linhas gêmeas', format('%s', v_n));
+
+  v_r := fn_registrar_documento(
+    v_caso, 'Araucaria SPE', 'multi', '21,22,23,24,25', 'NOTAS_EXPL', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/033.pdf',
+    '033_Notas_Explicativas_Araucaria_SPE_2025x2024x2023x2022x2021.pdf',
+    false, 'HASH-162-033', 'ok');
+  v_doc3 := (v_r->>'documento_id')::uuid;
+  select id into v_ver3 from documento_versao where documento_id = v_doc3 order by n_versao desc limit 1;
+
+  v_r := fn_registrar_diagnostico(
+    v_doc3, v_ver3, 'Teste Empate Estrutural Ltda', true, 'NOTAS_EXPL', 'multi',
+    '21,22,23,24,25', 'ok', null, null, null);
+  perform teste_assert_ent((v_r->>'executado')::boolean, 'o diagnóstico executou', v_r::text);
+
+  select count(*) into v_n from pendencia
+  where caso_id = v_caso and motivo = 'diagnostico:entidade_ambigua_respondida:' || v_doc3
+    and estado <> 'resolvida';
+  perform teste_assert_ent(v_n = 0,
+    'nome que casa EXATO com DUAS candidatas: continua sem decidir, nenhuma pendência nova',
+    format('abriu %s', v_n));
+
+  raise notice 'entidade_ambigua (0162) OK — o conteúdo que responde à própria pergunta do balcão '
+               'vira pendência que nomeia a empresa, sem mover o documento nem afrouxar a bloqueante '
+               'da 0153, e o silêncio nos dois caminhos negativos é honesto';
+end $$;
+
+-- =============================================================================
+-- SEÇÃO NOVA (0162) — REGRESSÃO: SEM BALCÃO, O RAMO CLÁSSICO (0121) CONTINUA
+-- ABRINDO `diagnostico:entidade` EXATAMENTE COMO ANTES.
+-- =============================================================================
+do $$
+declare
+  v_caso  uuid;
+  v_r     jsonb;
+  v_doc   uuid;
+  v_ver   uuid;
+  v_n     int;
+  v_txt   text;
+begin
+  v_caso := (fn_upsert_caso('Caso 0162 — regressão sem balcão'))::uuid;
+
+  -- Documento registrado com uma entidade normal (não-ambígua) — o gatilho da
+  -- 0153 não tem nada a abrir aqui, porque `fn_upsert_entidade` resolveu sem
+  -- empate.
+  v_r := fn_registrar_documento(
+    v_caso, 'Metalúrgica Regressão LTDA.', 'anual', '2025', 'BALANCO', 0.9, 'nome_arquivo',
+    'supabase_storage', 'b/001.pdf', '001_Balanco.pdf', false, 'HASH-162-REG', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  select id into v_ver from documento_versao where documento_id = v_doc order by n_versao desc limit 1;
+
+  perform teste_assert_ent(
+    not exists (select 1 from pendencia where caso_id = v_caso and tipo = 'entidade_incorreta'
+                and severidade = 'bloqueante'),
+    'PRÉ-CONDIÇÃO: sem balcão, nenhuma pendência bloqueante de entidade nasceu do registro');
+
+  -- Diagnóstico diverge de verdade: nome que não bate com NENHUMA empresa do
+  -- caso (nem a registrada, nem outra qualquer) — é o caminho clássico da
+  -- 0121, que a 0162 não pode ter mudado.
+  v_r := fn_registrar_diagnostico(
+    v_doc, v_ver, 'Empresa Totalmente Diferente E Nao Cadastrada LTDA.', true, 'BALANCO', 'anual',
+    '2025', 'ok', null, null, 'O documento não menciona a Metalúrgica em lugar nenhum.');
+  perform teste_assert_ent((v_r->>'executado')::boolean, 'o diagnóstico executou', v_r::text);
+
+  select count(*), max(descricao) into v_n, v_txt from pendencia
+  where caso_id = v_caso and motivo = 'diagnostico:entidade:' || v_doc and estado <> 'resolvida';
+  perform teste_assert_ent(v_n = 1,
+    'SEM REGRESSÃO: divergência real, sem balcão envolvido, continua abrindo `diagnostico:entidade` '
+    'como antes da 0162', format('abriu %s', v_n));
+  perform teste_assert_ent(v_txt like '%Empresa Totalmente Diferente%' and v_txt like '%Metalúrgica Regressão%',
+    'e a descrição continua no formato clássico da 0121 (sugerido × registrado)',
+    left(coalesce(v_txt, ''), 300));
+
+  raise notice 'entidade_ambigua (0162, regressão) OK — sem balcão envolvido, o ramo clássico da '
+               '0121 continua abrindo diagnostico:entidade exatamente como antes';
+end $$;

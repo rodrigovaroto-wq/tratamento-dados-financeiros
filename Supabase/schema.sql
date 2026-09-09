@@ -2557,6 +2557,28 @@ $_$;
 COMMENT ON FUNCTION public.fn_entidade_canonica(p_nome text) IS 'Forma canônica de nome de entidade para CASAMENTO: sem acento, pontuação nem sufixo societário. Não substitui razao_social, que preserva a grafia da fonte.';
 
 --
+-- Name: fn_entidade_e_balcao_ambiguo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  select exists (
+    select 1 from pendencia
+    where caso_id = p_caso_id
+      and entidade_id = p_entidade_id
+      and motivo = 'entidade_ambigua:' || p_entidade_id
+      and estado <> 'resolvida'
+  );
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid) IS 'Verdadeiro quando a entidade é o balcão de perguntas que a 0153 cria para um nome que casa com DUAS ou mais empresas do caso — reconhecido pela pendência `entidade_ambigua:<id>` ainda aberta. (0162) Existe porque o balcão casa com TODO MUNDO por construção (foi criado exatamente porque o nome dele casava com mais de uma empresa), e `fn_registrar_diagnostico` estava tratando esse casamento como confirmação.';
+
+--
 -- Name: fn_entidades_candidatas(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8350,6 +8372,10 @@ declare
   v_pendencia_grupo_id  uuid;
   v_outros_n            int;
   v_outros_nomes        text;
+  v_exatas_ambiguidade_n    int;
+  v_exata_ambiguidade_nome  text;
+  v_pendencia_ambigua_resp_id uuid;
+  v_ambigua_resp_desc       text;
 begin
   select caso_id, entidade_id, tipo_taxonomia, periodo_id
     into v_caso_id, v_entidade_id, v_tipo_atual, v_periodo_id
@@ -8385,6 +8411,68 @@ begin
         where caso_id = v_caso_id and motivo = 'diagnostico:entidade_grupo:' || p_documento_id and estado <> 'resolvida'
         limit 1;
 
+      -- 0162: O CASAMENTO CONTRA O BALCÃO AMBÍGUO NÃO CONFIRMA NADA — ele foi
+      -- criado (0153) exatamente porque o nome dele já casava com MAIS DE UMA
+      -- empresa do caso, então casa por construção com qualquer nome de
+      -- conteúdo que aponte para as candidatas que o originaram. Medido no
+      -- araucária (lote 7417, 03/09): o documento 009 ficou no balcão
+      -- "Araucaria SPE" (pendência entidade_ambigua bloqueante contra
+      -- BIOENERGIA × IMOBILIÁRIA), e o diagnóstico de conteúdo, lendo o
+      -- PRÓPRIO documento, nomeou "ARAUCÁRIA IMOBILIÁRIA SPE LTDA." por
+      -- extenso — que `fn_mesma_entidade` confirma contra o balcão (ele casa
+      -- com as DUAS empresas do grupo, por definição), e o ramo abaixo (0121)
+      -- tomava isso como CONFIRMAÇÃO, sem a pendência bloqueante da 0153 nunca
+      -- ter sido tocada e sem a resposta deixar rastro em lugar nenhum.
+      if fn_entidade_e_balcao_ambiguo(v_caso_id, v_entidade_id) then
+        -- O conteúdo pode ter respondido à própria pergunta: se o nome
+        -- diagnosticado casa EXATO com exatamente UMA empresa já cadastrada
+        -- neste caso (excluído o próprio balcão), é essa a resposta. NÃO
+        -- decide sozinho — não move o documento, não funde — só a NOMEIA,
+        -- para o humano confirmar em segundos em vez de abrir o PDF.
+        select count(*) into v_exatas_ambiguidade_n
+        from fn_entidades_candidatas(v_caso_id, p_entidade_nome) c
+        where c.exata and c.entidade_id <> v_entidade_id;
+
+        if v_exatas_ambiguidade_n = 1 then
+          select c.razao_social into v_exata_ambiguidade_nome
+          from fn_entidades_candidatas(v_caso_id, p_entidade_nome) c
+          where c.exata and c.entidade_id <> v_entidade_id
+          limit 1;
+
+          select id into v_pendencia_ambigua_resp_id from pendencia
+            where caso_id = v_caso_id
+              and motivo = 'diagnostico:entidade_ambigua_respondida:' || p_documento_id
+              and estado <> 'resolvida'
+            limit 1;
+
+          v_ambigua_resp_desc := format(
+            'O nome do arquivo casou com MAIS DE UMA empresa deste mandato e não identificou '
+            || 'nenhuma — por isso o documento foi registrado numa entidade própria ("%s"). O '
+            || 'CONTEÚDO deste documento nomeia "%s", que é uma das empresas JÁ CADASTRADAS '
+            || 'neste mandato — e nomeia só ela. Confirme pela revisão (fn_revisar_documento) se '
+            || 'o documento é mesmo dela; se as duas linhas forem a mesma empresa, funda com '
+            || 'fn_fundir_entidade.%s',
+            coalesce(v_entidade_atual_nome, '(nenhuma)'), v_exata_ambiguidade_nome,
+            case when p_justificativa is not null and length(trim(p_justificativa)) > 0
+                 then ' Justificativa do diagnóstico: ' || p_justificativa else '' end);
+
+          if v_pendencia_ambigua_resp_id is null then
+            insert into pendencia (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, documento_id, entidade_id, motivo)
+              values (v_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+                v_ambigua_resp_desc, p_documento_id, v_entidade_id,
+                'diagnostico:entidade_ambigua_respondida:' || p_documento_id);
+          else
+            update pendencia set descricao = v_ambigua_resp_desc where id = v_pendencia_ambigua_resp_id;
+          end if;
+        end if;
+        -- Zero, duas ou mais exatas: o conteúdo NÃO respondeu — silêncio aqui
+        -- é honesto (regra 1 do CLAUDE.md: não fabricar ausência como dado).
+        -- E, em QUALQUER dos casos acima, o casamento contra o balcão NUNCA
+        -- resolve `diagnostico:entidade`/`diagnostico:entidade_grupo` — não
+        -- tocar `v_pendencia_id`/`v_pendencia_grupo_id` aqui é o que deixa
+        -- isso explícito: só o ramo `else` abaixo (comparação contra uma
+        -- entidade de VERDADE) resolve essas duas pendências.
+      else
       -- 0121: divergência de ENTIDADE medida pela forma canônica, como o
       -- período já é desde a 0022. "Canastra Industria" e "CANASTRA INDÚSTRIA
       -- DE EMBALAGENS LTDA." são a mesma empresa, e `fn_mesma_entidade` já
@@ -8467,6 +8555,7 @@ begin
                 p_documento_id, 'diagnostico:entidade:' || p_documento_id);
           end if;
         end if;
+      end if;
       end if;
     end if;
   end if;
@@ -8560,7 +8649,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia — mesmo parâmetro, mesma chamada, sem decidir nada novo.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia. 0162: quando a entidade REGISTRADA é o balcão de perguntas da 0153 (nome que casou com DUAS ou mais empresas e não decidiu), o casamento de fn_mesma_entidade contra ele NÃO confirma nada — o balcão casa com todo mundo por construção. Se o nome diagnosticado casa EXATO com exatamente UMA empresa já cadastrada (excluído o balcão), abre pendência nomeando a resposta, sem mover o documento nem fundir.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11377,6 +11466,20 @@ CREATE VIEW public.instalacao_sonda_combinado_estrutural AS
 COMMENT ON VIEW public.instalacao_sonda_combinado_estrutural IS '(0157, achado D da revisão) Autoteste da decisão de fn_combinado_estrutural_apto, EXECUTADA por literais (função pura, sem fixture de documento): 1 linha só se o positivo, o achado A (conteúdo exigido) e o achado B (fonte permitida) valem TODOS ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos — esta view pega, porque o predicado É executado.';
 
 --
+-- Name: instalacao_sonda_entidade_balcao_ambiguo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_entidade_balcao_ambiguo AS
+ SELECT 1 AS ok
+  WHERE ((public.fn_entidade_e_balcao_ambiguo('01620000-0000-0000-0000-000000000001'::uuid, '01620000-0000-0000-0000-000000000002'::uuid) = true) AND (public.fn_entidade_e_balcao_ambiguo('01620000-0000-0000-0000-000000000001'::uuid, '01620000-0000-0000-0000-000000000003'::uuid) = false) AND (public.fn_entidade_e_balcao_ambiguo('01620000-0000-0000-0000-000000000001'::uuid, '01620000-0000-0000-0000-000000000004'::uuid) = false) AND (public.fn_entidade_e_balcao_ambiguo('01620000-0000-0000-0000-000000000001'::uuid, '01620000-0000-0000-0000-000000000009'::uuid) = false) AND (public.fn_entidade_e_balcao_ambiguo('01620000-0000-0000-0000-000000000099'::uuid, '01620000-0000-0000-0000-000000000002'::uuid) = false));
+
+--
+-- Name: VIEW instalacao_sonda_entidade_balcao_ambiguo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_entidade_balcao_ambiguo IS '(0162) Autoteste de fn_entidade_e_balcao_ambiguo, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0162", que não é mandato real): 1 linha só se a entidade com pendência entidade_ambigua ABERTA responde true, a entidade sem pendência e a com a MESMA pendência RESOLVIDA respondem false, e o predicado não quebra para entidade inexistente nem confunde caso. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
+
+--
 -- Name: instalacao_sonda_modelagem_pronta; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -13357,6 +13460,12 @@ GRANT ALL ON FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo
 GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidades_candidatas(p_caso_id uuid, p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -14126,6 +14235,14 @@ GRANT ALL ON TABLE public.instalacao_requisito TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_combinado_estrutural TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_entidade_balcao_ambiguo; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO service_role;
 
 --
 -- Name: TABLE instalacao_sonda_modelagem_pronta; Type: ACL; Schema: public; Owner: -

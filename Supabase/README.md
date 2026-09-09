@@ -267,6 +267,7 @@ supabase db execute --file Supabase/migrations/0158_o_pronto_que_nao_provava_cob
 supabase db execute --file Supabase/migrations/0159_o_rotulo_que_a_propria_estrutura_desmente.sql
 supabase db execute --file Supabase/migrations/0160_a_hierarquia_que_o_diagnostico_chama_de_erro.sql
 supabase db execute --file Supabase/migrations/0161_a_justificativa_que_o_periodo_perdia.sql
+supabase db execute --file Supabase/migrations/0162_o_balcao_que_nao_escuta_a_resposta.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
