@@ -280,9 +280,20 @@ export function semALista(texto: string): string {
     "i",
   );
   if (!comLista.test(texto)) return texto;
+  // A ORDEM aqui é a correção, não enfeite. Antes vinha `/\s*\.\s*\./g` ANTES
+  // do colapso de espaços, e esse é quadrático MEDIDO (Sonar S8786, PR #204):
+  // numa corrida de espaços sem o par de pontos, cada posição inicial consome
+  // a corrida inteira e volta atrás procurando o `.`. Medido neste repositório
+  // — 20k espaços: 168 ms · 40k: 609 ms · 80k: 2,5 s · 160k: 9,9 s. Dobrar a
+  // entrada quadruplica o tempo, e isso roda na renderização da página do caso
+  // sobre texto que vem do banco.
+  //
+  // Colapsando os espaços PRIMEIRO, o padrão seguinte só precisa de espaço
+  // simples opcional (`/ ?\. ?\./`) — quantificadores limitados, sem corrida
+  // para reconsumir, sem backtracking. Mesmo resultado visível.
   const cortado = texto.replace(comLista, "")
-    .replace(/\s*\.\s*\./g, ".")
-    .replace(/\s{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/ ?\. ?\./g, ".")
     .trim();
   return cortado.length > 20 ? cortado : texto;
 }
