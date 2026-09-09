@@ -13,14 +13,25 @@
 // CNPJ, CRC, mês por extenso, duração, Página, Nota, assinatura." É uma lista
 // de exclusões que cresce a cada documento novo que a engana.
 //
-// Este método não pergunta o que a linha DIZ. Pergunta só se algum número dela
-// TEM A FORMA de um valor monetário brasileiro — sem olhar identidade, sem
-// lista de palavras. A forma: separador de milhar em grupos de EXATAMENTE três
-// dígitos ("51.300.000"), ou parte decimal com vírgula ("38,2" / "6,80%"). A
-// única coisa que ele sabe subtrair — não por lista de palavra, mas por FORMA
-// do próprio número — é ano solto (1900-2099) e data DD/MM/AAAA, porque um ano
-// ou uma data são a única forma numérica que aparece em toda linha de cabeçalho
-// de tabela sem nunca ser valor.
+// Este método não pergunta o que a linha DIZ. Pergunta só se ela tem ALGUM
+// NÚMERO que não seja ano solto (1900-2099) nem data DD/MM/AAAA — sem olhar
+// identidade, sem lista de palavras. Ano e data são a única forma numérica que
+// aparece em toda linha de cabeçalho de tabela sem nunca ser valor, e são
+// reconhecíveis pela FORMA do próprio dígito, não por dicionário.
+//
+// POR QUE NÃO "FORMA DE VALOR MONETÁRIO", que é o que este cabeçalho dizia até
+// 09/09: porque isso NÃO É DECIDÍVEL POR FORMA. A versão estrita foi escrita,
+// medida e revertida no mesmo dia — o veredito ao final deste arquivo traz os
+// números. Em uma linha: valor em real é escrito como inteiro puro o tempo
+// todo ("Caixa 150"), e um inteiro puro é indistinguível de "Página 3".
+// Exigir separador de milhar ou vírgula decimal derrubava valor genuíno, e o
+// lado perigoso — contar A MENOS — saltou de 1 para 19 de 46 documentos.
+//
+// O preço do princípio que ficou é sobrecontar: CNPJ, CRC, "Página", "Nota" e
+// assinatura viram linha. É o lado CERTO para um instrumento de conferência —
+// sobrecontar faz as duas pernas divergirem e chamar o olho humano, que é o
+// serviço; subcontar as faz concordar em silêncio sobre um denominador pequeno
+// demais, que é o defeito central deste projeto.
 //
 // A CAUSA MEDIDA DO SUBCOUNT NO COMBINADO — e por que ela NÃO está aqui.
 // O pedido citava `13`/`14_Balanco_COMBINADO`, `21_Mutuos` e
@@ -92,30 +103,40 @@
 // "bateu 16" como "este método entende cabeçalho de tabela" — ele não
 // entende; entendeu por acaso.
 //
-// O VEREDITO HONESTO, medido nos dois books versionados (canastra + vertentes,
-// 46 documentos com conta, `N8N/medir-fase0-denominador.mjs --book <nome>`,
-// já com a correção de 09/09 acima): este método SOBRECONTA em relação a
-// `linhasDeConta` na maioria dos documentos (erro absoluto médio ~8-25%
-// contra ~1-5% da régua atual) — ele não filtra CNPJ, CRC, Página, Nota nem
-// assinatura, então cada um desses vira uma linha a mais. Mas ele SUBCONTA em
-// só 1 dos 46 (o `25_Situacao_Fiscal`, cujo texto já vem mesclado antes de
-// qualquer contagem — ver acima), contra 3 dos 46 para `linhasDeConta`
-// (`21_Mutuos`, `25_Situacao_Fiscal`, `10_Faturamento_24M` — `11_Mapa_Divida`
-// SAIU desta lista com a correção de 09/09, era o quarto antes dela). NÃO é
-// um wrapper da régua atual: erra em documentos DIFERENTES (concorda
-// exatamente em 0 dos 3 documentos onde a régua atual erra) e, na maioria
-// deles, erra para o lado QUE O PROJETO considera seguro — contar a mais
-// nunca esconde extração pela metade; contar a menos, sim. Dos 3 documentos
-// em que a régua atual conta a menos, este método vira para o lado seguro
-// (conta a mais) em 1 (`21_Mutuos`: verdade 3, régua 2, este método 6);
-// fecha EXATO no gabarito por SORTE no segundo (`10_Faturamento_24M`, 16 —
-// o mesmo falso positivo de rodapé/CNPJ do parágrafo acima cancelando o
-// defeito do gabarito, não o método "entendendo" cabeçalho, como já dito);
-// e continua do lado perigoso — só que MENOS — no terceiro
-// (`25_Situacao_Fiscal`: verdade 10, régua 7, este método 8, ainda -20%) —
-// o único documento em que os DOIS métodos contam a menos. Nenhum dos 3 fica
-// pior do lado perigoso, e nenhum vira demonstração de que o método é bom: é
-// a assimetria do projeto na prática, não uma vitória sem preço.
+// O VEREDITO HONESTO, e a TENTATIVA QUE FOI DERRUBADA POR MEDIÇÃO no mesmo
+// dia. Medido nos dois books versionados (canastra + vertentes, 46 documentos
+// com conta, `N8N/medir-fase0-denominador.mjs --book <nome>`):
+//
+//     erro absoluto médio ...... canastra 24,7% · vertentes 7,9%
+//     conta A MENOS ............ 1 de 46          (linhasDeConta: 3 de 46)
+//
+// A TENTATIVA. Uma versão de 09/09 restringiu `temFormaMonetaria` à forma
+// estrita — separador de milhar em grupos de três, ou decimal com vírgula —
+// para que a função casasse com o que ESTE cabeçalho prometia. O erro médio
+// melhorou (canastra 24,7% -> 11,0%), e mesmo assim a versão foi REVERTIDA,
+// porque a métrica que este projeto trata como decisiva inverteu:
+//
+//     conta A MENOS: 1 de 46  ->  19 de 46
+//
+// A CAUSA é banal e não tem conserto por forma: valor monetário brasileiro é
+// escrito como inteiro puro o tempo todo ("Caixa 150", "Duplicatas 1000"), e
+// um inteiro puro é indistinguível de um número de página. Ou seja, "forma de
+// valor monetário" NÃO É DECIDÍVEL POR FORMA — a promessa estava no cabeçalho,
+// não na função, e é o cabeçalho que estava errado.
+//
+// O princípio honesto deste método é o que ele sempre executou: QUALQUER
+// número que não seja ano solto nem data. Ele sobreconta — não filtra CNPJ,
+// CRC, "Página", "Nota" nem assinatura, e cada um vira uma linha a mais. Esse
+// é o lado CERTO para um instrumento de conferência: sobrecontar faz as duas
+// pernas divergirem e chamar o olho humano, que é o serviço; subcontar as faz
+// concordar em silêncio sobre um denominador pequeno demais, que é o defeito
+// central deste projeto.
+//
+// NÃO é um wrapper da régua: erra em documentos diferentes, e nos 3 em que
+// `linhasDeConta` conta a menos (`21_Mutuos`, `25_Situacao_Fiscal`,
+// `10_Faturamento_24M`) ele não a acompanha. **Serve para CERCAR o número:
+// quando as duas concordam, a confiança é alta; quando discordam, o comando
+// lista as linhas em desacordo — e é a conferência a olho que decide.**
 
 // Ano solto (1900-2099) e data DD/MM/AAAA — a única forma que este método
 // sabe que não mede número, e sabe pela FORMA do dígito, não por lista de
@@ -123,13 +144,52 @@
 const ANO_SOLTO = /\b(19|20)\d{2}\b/g;
 const DATA_DMA = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
 
+// QUALQUER número que não seja ano solto nem data. E o comentário que estava
+// aqui antes prometia mais do que a forma pode entregar — a correção é dele,
+// não da função.
+//
+// A versão de 09/09 restringiu isto a "separador de milhar em grupos de três
+// OU decimal com vírgula", para casar com o que o cabeçalho prometia. MEDIDO
+// nos 46 documentos com conta dos dois books, e a restrição foi DERRUBADA:
+// contar A MENOS — o lado que esconde extração pela metade — saltou de
+// **1 para 19 de 46**. A causa é banal e decisiva: valor monetário brasileiro
+// é escrito como inteiro puro o tempo todo ("Caixa 150", "Duplicatas 1000",
+// "Estoques 2880"), e nenhuma forma separa esse inteiro de um número de
+// página. Medido: `"Caixa 150"` e `"Duplicatas 1000"` davam `false`.
+//
+// Ou seja: **"forma de valor monetário" não é decidível por forma** quando o
+// valor vem sem pontuação. O princípio honesto deste método é o que ele
+// sempre executou — *qualquer número que não seja ano nem data* — e é isso
+// que o cabeçalho passa a dizer. Um instrumento de CONFERÊNCIA deve errar
+// para cima: contar a mais faz as duas contagens divergirem e chamar o olho
+// humano, que é o serviço; contar a menos faz as duas concordarem em silêncio
+// sobre um denominador pequeno demais, que é o defeito central do projeto.
+const FORMA_MONETARIA = /\d/;
+
 /**
- * Esta linha, isolada, tem algum número que NÃO é ano solto nem data?
+ * Esta linha, isolada, tem algum número com FORMA de valor monetário
+ * brasileiro — depois de descontar ano solto e data?
+ *
+ * CORRIGIDO EM 09/09, achado na revisão do PR #204: a função aceitava
+ * QUALQUER dígito que sobrasse depois de tirar ano e data — `temFormaMonetaria
+ * ('Página 3')` devolvia `true`, e "3" não tem forma nenhuma de valor, é
+ * resíduo de "Página 3". O cabeçalho deste arquivo sempre descreveu a forma
+ * como separador de milhar OU decimal com vírgula; a implementação não
+ * checava isso — checava só "sobrou dígito?". A primeira vez que essa
+ * diferença importou foi séria: foi com base no princípio DECLARADO (a forma,
+ * não qualquer dígito) que o PR chamou o método de "independente por forma".
+ *
+ * MEDIDO DE NOVO NOS DOIS BOOKS (46 documentos, `N8N/medir-fase0-
+ * denominador.mjs --book canastra|vertentes`) depois da correção — os números
+ * no cabeçalho do arquivo, no veredito abaixo e em
+ * `Arquitetura do Sistema/3 Estado e Execução/PLANO_LINHA_A_LINHA.md` foram
+ * REMEDIDOS e atualizados; ver o resultado no veredito ao final deste
+ * arquivo.
  */
 export function temFormaMonetaria(linha) {
   if (typeof linha !== 'string' || linha.length === 0) return false;
   const resto = linha.replace(DATA_DMA, ' ').replace(ANO_SOLTO, ' ');
-  return /\d/.test(resto);
+  return FORMA_MONETARIA.test(resto);
 }
 
 /**

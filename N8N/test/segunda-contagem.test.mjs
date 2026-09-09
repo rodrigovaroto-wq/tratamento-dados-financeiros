@@ -40,12 +40,56 @@ test('temFormaMonetaria: separador de milhar e decimal com vírgula contam; ano 
   assert.equal(temFormaMonetaria(undefined), false);
 });
 
-test('temFormaMonetaria: dia solto de "31 de dezembro" sobrevive — limite conhecido, não escondido', () => {
-  // O método só sabe subtrair ANO (4 dígitos, 19xx/20xx) e data DD/MM/AAAA.
-  // "31" isolado (dia do mês por extenso) não é nenhum dos dois pela forma, e
-  // fica — ao contrário de `ehLinhaSemValor`, que tem uma regra própria para
-  // "dia de mês" com lista de nomes de mês. É a troca deliberada: sem lista de
-  // palavra, este caso vaza. Documentado aqui para não ser "achado" de novo.
+// ---------------------------------------------------------------------------
+// DEFEITO ACHADO NA REVISÃO DO PR #204: o cabeçalho deste arquivo sempre
+// definiu a FORMA de valor monetário como separador de milhar (grupos de
+// EXATAMENTE três dígitos) ou decimal com vírgula — mas a função aceitava
+// QUALQUER dígito que sobrasse depois de tirar ano e data.
+// `temFormaMonetaria('Página 3')` devolvia `true`: "3" não tem forma nenhuma
+// de valor, é resíduo de "Página 3". A primeira vez que isso importou de
+// verdade: o PR chamou o método de "independente por FORMA" com base no
+// princípio declarado, não no que a função de fato fazia.
+// ---------------------------------------------------------------------------
+test('temFormaMonetaria: inteiro puro CONTA, porque valor em real é escrito assim', () => {
+  // A FORMA ESTRITA FOI TENTADA E DERRUBADA POR MEDIÇÃO (09/09). Uma versão
+  // deste arquivo exigia separador de milhar ou decimal com vírgula, para
+  // casar com o que o cabeçalho prometia. Medido nos 46 documentos com conta
+  // dos dois books: contar A MENOS — o lado que ESCONDE extração pela metade
+  // — saltou de **1 para 19 de 46**, porque valor monetário brasileiro é
+  // escrito como inteiro puro o tempo todo.
+  assert.equal(temFormaMonetaria('Caixa 150'), true);
+  assert.equal(temFormaMonetaria('Duplicatas 1000'), true);
+  assert.equal(temFormaMonetaria('Estoques 2.880'), true);
+  assert.equal(temFormaMonetaria('Margem 38,2%'), true);
+
+  // E O PREÇO, ASSUMIDO DE PROPÓSITO: "Página 3" também conta. Nenhuma regra
+  // de FORMA separa o "3" de uma página do "150" de um saldo — e este método
+  // não tem lista de palavras, que é o que o torna um segundo princípio.
+  // Falso positivo aqui é o lado SEGURO: contar a mais faz as duas contagens
+  // divergirem e chamar o olho humano, que é o serviço do instrumento; contar
+  // a menos as faz concordar em silêncio sobre um denominador pequeno demais.
+  assert.equal(temFormaMonetaria('Página 3'), true);
+});
+
+test('temFormaMonetaria: ANO e DATA continuam fora — é a única exclusão por forma', () => {
+  // O que sobrevive à correção acima: ano solto e data são a única forma
+  // numérica que aparece em cabeçalho de tabela sem nunca ser valor, e são
+  // reconhecíveis SEM lista de palavras. Tudo o mais conta.
+  assert.equal(temFormaMonetaria('Exercício 2024'), false);
+  assert.equal(temFormaMonetaria('Saldo em 31/12/2024'), false);
+  assert.equal(temFormaMonetaria('ATIVO CIRCULANTE'), false);
+});
+
+test('LIMITE CONHECIDO: dia solto de "31 de dezembro" ainda vaza', () => {
+  // "31" isolado (dia do mês por extenso) sobrevive: o ANO "2025" sai por
+  // forma, mas o "31" não é distinguível de um saldo de 31 mil escrito sem
+  // pontuação. Fechar isto exigiria lista de nomes de mês — que é o que
+  // `ehLinhaSemValor` tem e este método deliberadamente NÃO tem, porque é a
+  // lista que o tornaria a mesma régua com outro nome.
+  //
+  // Fica como limite conhecido, do lado seguro (conta a mais). A tentativa de
+  // fechá-lo por forma estrita foi medida e derrubada — ver o teste do
+  // inteiro puro acima: custava 19 de 46 documentos contando a MENOS.
   assert.equal(temFormaMonetaria('Posição em 31 de dezembro de 2025'), true);
 });
 
@@ -171,8 +215,10 @@ test('13_Balanco_COMBINADO (texto de produção real): a régua bate a verdade; 
   const m1 = linhasDeConta(doc.texto);
   const m2 = linhasDeContaPorForma(doc.texto, { juntarFragmentos: juntarFragmentosDeLinha });
   assert.equal(m1.length, VERDADE, 'linhasDeConta bate a verdade no texto REAL de produção — o -33% do plano não reproduz aqui');
-  // A forma não tem lista de ruído: Página, "Posição em", a continuação da
-  // Nota ("aos 35% do capital..."), CRC e CPF de assinatura todos sobrevivem.
+  // A forma não tem lista de ruído: "Página", "Posição em", a continuação da
+  // Nota ("aos 35% do capital...") e o rodapé de assinatura sobrevivem. É o
+  // preço de não ter dicionário, e é o lado seguro — sobrecontar faz as duas
+  // pernas divergirem e chamar conferência, que é o serviço deste instrumento.
   assert.ok(m2.length > m1.length, 'a forma tem de sobrecontar ESTE documento limpo — é o preço documentado de não ter lista de ruído');
   assert.equal(m2.length, 20);
 });
