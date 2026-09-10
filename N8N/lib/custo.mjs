@@ -257,7 +257,14 @@ export const CUSTO_ESTIMADO_DOC_USD = 0.055;
 // O CUSTO DA ESCOLHA, declarado: o guarda por byte fica ~2× acima do custo real
 // de um lote típico (era ~1,45×). Continua muito longe de barrar trabalho — o
 // book inteiro estima US$ 0,58 contra um teto de US$ 3 —, e quem decide o lote
-// típico hoje é a estimativa por CONTEÚDO, que erra 3%.
+// típico hoje é a estimativa por CONTEÚDO.
+//
+// A FRASE "QUE ERRA 3%" SAIU DAQUI EM 10/09/2026, E ELA ERA FALSA PARA O
+// PROVEDOR ATUAL. Os 3% vinham de UMA rodada do book-vertentes na era OpenAI
+// (fatura US$ 0,90 contra US$ 0,87 estimados). Contra o Google, medido em
+// `lote_execucao`, a estimativa por conteúdo ficava ABAIXO do real em todas as
+// quatro rodadas que gastaram: 1,49× · 1,46× · 1,42× · 1,37×. A causa era o
+// cache assumido e não entregue, corrigida em `custoEstimadoPorConteudo`.
 export const CUSTO_POR_MB_USD = 2.80;
 export const CUSTO_MINIMO_CHAMADA_USD = 0.0032;
 
@@ -321,8 +328,16 @@ export function custoDaChamada(usage, modelo, tabela = PRECO_USD_POR_MILHAO) {
   const entradaTotal = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
   const saida = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
   if (!Number.isFinite(entradaTotal) || !Number.isFinite(saida)) return null;
-  // Tokens em cache custam metade (o prompt de sistema é o mesmo em toda
-  // chamada, então o cache pega — ignorar isso superestimaria em ~40%).
+  // Tokens em cache custam menos, e esta função está CERTA: ela só aplica o
+  // desconto quando a resposta DIZ quantos vieram do cache. É por isso que o
+  // custo gravado bate com a tabela de preços até a sexta casa nas quatro
+  // rodadas reais que gastaram.
+  //
+  // O comentário aqui dizia "o cache pega". MEDIDO: não pega. `tokens_cache = 0`
+  // nas cinco rodadas de `lote_execucao` com o provedor Google. A frase ficava
+  // ao lado de um código correto e induzia a acreditar num desconto que nunca
+  // aconteceu — foi o que deixou o ESTIMADOR assumi-lo (ver
+  // `custoEstimadoPorConteudo`).
   const cache = Number(usage.prompt_tokens_details?.cached_tokens ?? 0);
   const entradaCheia = Math.max(0, entradaTotal - cache);
   const usd =
@@ -487,9 +502,33 @@ export const TOKENS_SAIDA_CLASSIFICACAO = 120;
 // O QUE A MARGEM COBRE, e é honesto listar: duas suposições não medidas —
 // `CONTAS_POR_GRUPO` (afeta ~5% da saída) e os ~4 caracteres por token — mais o
 // documento escaneado que entra no lote sem camada de texto (esse cai no
-// caminho por byte inteiro, mas um lote misto ainda passa por aqui). Um quarto
-// de folga cobre isso com sobra e continua muito abaixo do erro que se está
-// corrigindo.
+// caminho por byte inteiro, mas um lote misto ainda passa por aqui).
+//
+// A MARGEM CONTINUA 1,25, E A TENTATIVA DE SUBI-LA FOI DERRUBADA POR TESTE.
+//
+// O 1,25 foi calibrado contra UMA fatura da era OpenAI. Contra o Google, as
+// quatro rodadas de `lote_execucao` que gastaram mostraram a estimativa ABAIXO
+// do real — a direção errada para um guarda de teto:
+//
+//     7276 1,49×  ·  7377 1,46×  ·  7316 1,42×  ·  7417 1,37×
+//
+// Tirar o cache assumido e não entregue (ver `custoEstimadoPorConteudo`) fecha
+// METADE do buraco: a estimativa do book sobe 1,24× (US$ 0,29 → US$ 0,36), e o
+// erro da 7377 cai de 1,46× para ~1,11×.
+//
+// SUBIR A MARGEM PARA 1,50 FOI TENTADO E MEDIDO COMO ERRADO: o
+// `custo.test.mjs` reprovou com "190 documentos com a forma do book-araucaria
+// foram RECUSADOS: US$ 3,09 contra o teto de US$ 3". Recusar um lote que custa
+// US$ 2,36 de verdade é o v31 pelo outro lado, e o lote é um NÃO INTEIRO —
+// recusado, ele não roda em parte nenhuma. Folga em cima de um modelo errado não
+// é segurança, é o guarda cego que o cabeçalho deste arquivo já descreve.
+//
+// O QUE SOBRA, MEDIDO E ATRIBUÍDO: ~1,11× de subestimação, e a causa NÃO é a
+// margem — é `tokensDeSaida`, medida em 1,50× (96.762 tokens previstos contra
+// 145.579 gravados na 7377). Recalibrá-la é fatia própria, porque mexe numa
+// suposição sobre a FORMA da resposta do modelo, não num fator de folga. Até lá
+// a defesa dura continua sendo o teto de US$ 5 no provedor — e ela é a que
+// nunca dependeu deste arquivo.
 export const MARGEM_ORCAMENTO_CONTEUDO = 1.25;
 
 /**
@@ -532,9 +571,29 @@ export function custoEstimadoPorConteudo({
     usd += custoDaChamada({
       prompt_tokens: sistema + entradaPdf,
       completion_tokens: Math.ceil(saidaTotal / nBlocos),
-      // O prompt de sistema é idêntico em toda chamada e vem primeiro — é a
-      // condição do cache de prefixo da OpenAI, e ignorá-lo superestimaria ~40%.
-      prompt_tokens_details: { cached_tokens: sistema },
+      // O PROMPT DE SISTEMA NÃO É COBRADO COMO CACHE AQUI, e esta linha foi
+      // removida em 10/09/2026 — ela dizia `cached_tokens: sistema`, com o
+      // comentário "é a condição do cache de prefixo da OpenAI, e ignorá-lo
+      // superestimaria ~40%".
+      //
+      // O PROVEDOR É GOOGLE DESDE 24/08 e a troca não revisitou isto. MEDIDO em
+      // produção, `lote_execucao` de CINCO rodadas consecutivas (7276, 7316,
+      // 7327, 7377, 7417): `tokens_cache = 0` em TODAS. O mapeamento não é o
+      // culpado — `provedor.mjs` traduz `usageMetadata.cachedContentTokenCount`
+      // corretamente para este campo; o Gemini simplesmente reporta zero, porque
+      // `cachedContentTokenCount` conta cache EXPLÍCITO (CachedContent API) e
+      // este pipeline não usa nenhum.
+      //
+      // O EFEITO ERA SUBESTIMAR, que é a direção errada para um guarda de teto.
+      // Medido, estimativa contra real: 7276 1,49× · 7377 1,46× · 7316 1,42× ·
+      // 7417 1,37×. Um lote estimado em US$ 2,9 (abaixo do teto de 3) custaria
+      // ~US$ 4,2 — e "aceita lote que não cabe" é exatamente o v31 que o
+      // cabeçalho deste arquivo existe para não repetir.
+      //
+      // Não assumir cache nenhum é a escolha certa mesmo se um provedor futuro
+      // cachear: aí a estimativa erra para CIMA, que é o lado seguro por
+      // projeto. Quem quiser o desconto de volta tem de MEDIR `tokens_cache`
+      // não-zero em produção primeiro.
     }, MODELO_EXTRACAO) ?? 0;
   }
 
