@@ -133,6 +133,23 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
+-- TUDO ABAIXO É UMA TRANSAÇÃO SÓ (begin ... commit no fim do arquivo). Ao
+-- contrário da 0160/0161/0162 — que concentravam o risco num `do $mig$` único
+-- e deixavam comment/grant/insert como statements separados DEPOIS dele —
+-- esta migration reemite função ANTES de conferir o resultado (item 4), e sem
+-- transação explícita um `raise exception` na guarda deixaria as duas
+-- `CREATE OR REPLACE FUNCTION` já efetivadas (autocommit do psql), que é
+-- exatamente o "estado pela metade" que `.claude/memory/nunca-corrigir-
+-- funcao-por-replace.md` registra como o pior resultado possível: pior que
+-- reprovar limpo. Com `begin`/`commit`, uma reprovação da guarda desfaz TUDO
+-- — as duas funções, os inserts, a view, o fixture — e o banco fica
+-- exatamente como estava antes de rodar este arquivo. MEDIDO: aplicando uma
+-- cópia desta migration com um marcador removido de propósito contra um
+-- banco de teste, a guarda (item 4) reprova com a mensagem esperada.
+-- -----------------------------------------------------------------------------
+begin;
+
+-- -----------------------------------------------------------------------------
 -- (1) fn_registrar_diagnostico — REEMITIDA INTEIRA, ESTADO 0162, VERBATIM.
 --
 -- Fonte: `select pg_get_functiondef('fn_registrar_diagnostico'::regproc)` no
@@ -660,3 +677,5 @@ update instalacao_cobertura
                     'Nenhum requisito NOVO de produto: o invariante já é o da 0161/0162, só o '
                     'caminho até o banco que muda. Nenhuma pendência já aberta foi tocada.'
  where id;
+
+commit;
