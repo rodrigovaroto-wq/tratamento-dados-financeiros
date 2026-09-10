@@ -64,6 +64,8 @@ node --test 'N8N/test/*.test.mjs'
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs
@@ -78,6 +80,14 @@ node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
 cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \
   && ./node_modules/.bin/next build
 ```
+
+> **E o espelho JÁ ficou para trás — medido na sessão 82.** O CI rodava **seis** suítes de
+> verificação e este bloco listava **quatro**: faltavam `verificar-kit-basico.mts` (que entrou no
+> portão em 03/09, depois de ficar FORA dele) e `verificar-modelagem-cobertura.mts`. As duas
+> existiam, as duas rodavam no CI, e nenhuma sessão que seguisse este arquivo as executava — foi
+> exatamente assim que a sessão 82 rodou a "baseline completa" sem 18 asserts. **Quem acrescenta
+> suíte ao CI acrescenta a linha aqui na mesma passada**, e o jeito de conferir em dez segundos é
+> `grep -oE 'portal/scripts/verificar-[a-z-]+\.mts' .github/workflows/suites.yml CLAUDE.md | sort -u`.
 
 `npx` **não** serve no lugar de `./portal/node_modules/.bin/<bin>` — para o `tsx`, o `tsc`, o
 `eslint` ou o `next`: sem o binário do lock, o npx baixa a última versão publicada no dia. Esta

@@ -43,6 +43,9 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 ## Armadilhas de ferramenta (custaram tempo real)
 
+- [Âncora de texto quebra com CRLF](ancora-de-texto-quebra-com-crlf.md) — o corpo que
+  `pg_get_functiondef` devolve em produção pode estar em CRLF, e âncora multi-linha sem `\r?`
+  acha ZERO — passa em toda suíte local, onde o corpo nasce LF
 - [`git checkout <arquivo>` apaga trabalho não commitado](git-checkout-apaga-trabalho.md) — copie
   para o scratchpad e restaure com `cp`
 - [Backtick em comentário de nó Code quebra o `jsCode`](backtick-quebra-jscode.md) — aconteceu

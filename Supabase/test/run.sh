@@ -127,6 +127,17 @@ if ! grep -qF "$ultima" ESTADO.md; then
 fi
 echo "   $ultima"
 
+# A 0163 nasceu porque a 0161/0162 patchavam fn_registrar_diagnostico por
+# ÂNCORA sobre pg_get_functiondef() sem tolerância a CRLF (a 0160, mesma
+# técnica, já sabia — usava `\r?\n`), e produção guarda o corpo com `\r\n`
+# desde que passou por um editor/colagem do Windows uma vez. Este portão
+# varre TODA migration nova em busca da mesma forma frágil, ANTES de aplicar
+# migration nenhuma — estático, não precisa do banco de pé.
+echo "== nenhuma migration patcheia corpo de função com âncora multi-linha sem \\r?"
+if ! python3 Supabase/test/guarda_ancora_crlf.py; then
+  exit 1
+fi
+
 echo "== migrations"
 for f in Supabase/migrations/*.sql; do
   if ! out=$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$f" 2>&1); then
