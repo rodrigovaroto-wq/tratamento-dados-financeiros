@@ -491,6 +491,38 @@ if (process.argv[1] && /auditar-xlsx\.mts$/.test(process.argv[1])) {
     console.log(`[${marca}] ${it.pergunta}\n         ${it.medida}`);
   }
   console.log(`\n${itens.length - reprovados}/${itens.length} itens OK · ${reprovados} reprovado(s)`);
+
+  // O AVISO QUE FALTAVA, e ele é o achado da sessão 82.
+  //
+  // Calar os itens do modelo num export de DADOS é a decisão certa (ver o
+  // comentário do item "abas": auditar arquivo de dados item a item do modelo
+  // produzia cinco vermelhos falsos, e alarme falso custa o mesmo que alarme
+  // ausente). O defeito não era calar — era o RESUMO.
+  //
+  // MEDIDO nesta árvore, com dois arquivos gerados pelo mesmo `buildExportWorkbook`:
+  //   export de DADOS    ->  3 itens, e o resumo dizia "3/3 itens OK · 0 reprovado(s)"
+  //   export COMPLETO    -> 11 itens, "10/11 itens OK · 1 reprovado(s)"
+  //
+  // Ou seja: o aceite do B1 podia fechar VERDE tendo conferido 3 dos 11 itens,
+  // e nada no relatório dizia isso. É o padrão central deste projeto — estágio
+  // desligado com a mesma aparência de estágio que rodou e não achou nada —
+  // dentro da própria ferramenta de aceite. Ver `.claude/memory/
+  // estagio-desligado-parece-limpo.md`.
+  //
+  // Deliberadamente NÃO muda o código de saída: o arquivo de dados não está
+  // errado, e reprovar por isso reintroduziria o alarme falso. O que muda é que
+  // o relatório para de deixar a conclusão por conta de quem lê.
+  const semModelo = itens.some((i) => i.chave === "abas" && i.naoAplicavel);
+  if (semModelo) {
+    console.log("\n⚠  ESTE É O EXPORT DE DADOS — os itens do MODELO INSTITUCIONAL não foram");
+    console.log("   conferidos. O que está acima vale para qualquer .xlsx que saia daqui, e é");
+    console.log("   MENOS DE UM TERÇO do aceite.");
+    console.log("\n   O ACEITE DO B1 NÃO PODE SER FECHADO COM ESTE ARQUIVO. Exporte o COMPLETO");
+    console.log("   (modo completo, com modelo institucional) e rode este comando de novo —");
+    console.log("   lá o balanço fechar, a DRE reproduzir o documento e o resíduo de");
+    console.log("   reconciliação ser imaterial são conferidos de verdade.");
+  }
+
   if (reprovados > 0) {
     console.log("\nItem reprovado NÃO é opinião: cada um é um número lido do arquivo. Veja a medida");
     console.log("ao lado e o Arquitetura do Sistema/6 Referência/ACEITE.md para o que fazer com ela.");
