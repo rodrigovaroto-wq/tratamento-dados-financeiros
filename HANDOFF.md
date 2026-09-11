@@ -4,9 +4,20 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-09 (sessão **82**). **Estado do `main`:** mergeado até o **PR
-#205**; migrations no repositório até a **`0162`**. O **#206** está aberto — a `0162`, o balcão
-de perguntas da `0153` que respondia por ele mesmo.
+**Última atualização:** 2026-09-11 (sessão **83**). **Estado do `main`:** mergeado até o **PR
+#209**; migrations no repositório até a **`0163`** (`e83cf0e`, 108 migrations). **Nenhum PR aberto**
+no fim da sessão 83 — #206/#207/#208/#209 todos mergeados. A `0163` já está aplicada em produção
+(o dono confirmou: sonda `fn_instalacao_conferir()` zero linhas) — é a primeira vez desde 03/09 que
+repositório e produção batem no código.
+
+> **LEIA "A SESSÃO 83" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** O dono rodou um book de
+> 190 documentos ("Teste 00") e 75 vieram sem nenhuma linha extraída — mas a causa **NÃO é código**:
+> 72 de 73 `extracao_falhou` têm o MESMO motivo, textual, gravado pela própria pendência: a conta do
+> provedor Google está sem billing/crédito ativo (HTTP 429), e o sistema já diz que esperar não
+> resolve. É item operacional do dono (religar o billing), não uma fatia de engenharia. A "SESSÃO
+> 83" registra a medição completa, a hipótese errada que foi descartada no caminho (multi-ano vs
+> ano único — parecia a causa, era coincidência de ordem de processamento), e os passos exatos para
+> quando o book for reprocessado.
 
 > **E ele congelou DE NOVO, pela terceira vez, dentro da mesma sessão em que o aviso abaixo foi
 > escrito.** A sessão 82 chegou e encontrou aqui "mergeado até o #204, o #205 aberto" — o #205 já
