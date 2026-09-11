@@ -202,7 +202,7 @@ export function mensagemRepetibilidade(resultado) {
   }
   const divergencias = Array.isArray(r.divergencias) ? r.divergencias : [];
   const exemplos = divergencias.slice(0, 5).map((d) => {
-    const chaveLegivel = (d.a && d.a.chave) || (d.b && d.b.chave) || '(sem rótulo)';
+    const chaveLegivel = d.a?.chave || d.b?.chave || '(sem rótulo)';
     const doLado = (lado) => {
       if (!lado) return '(ausente)';
       if (lado.valor_num !== null) return String(lado.valor_num);
