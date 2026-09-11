@@ -33,7 +33,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, esforcosDoProvedor } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   spreadsheetToText, colunasDaPlanilha, avisoTruncamentoPlanilha,
@@ -158,6 +158,15 @@ const FINGERPRINT_EXTRACAO = createHash('sha256')
 
 const FONTE_NORMALIZAR_MOEDA = `const normMoeda = ${normalizarMoeda.toString()};`;
 
+// O TAMANHO DO PROMPT DE SISTEMA, calculado UMA VEZ aqui no BUILD (não dentro
+// do nó — ele não importa `extract.mjs`) para dois consumidores: a linha
+// `TOKENS_PROMPT_SISTEMA` embutida no nó Code (abaixo) e a CADÊNCIA
+// entre chamadas (`INTERVALO_EXTRACAO_MS`), que precisa do MESMO número no
+// lado do gerador. Duas contas separadas da mesma expressão já divergiram
+// nesta casa (é a doença que este arquivo existe para não repetir) — uma só,
+// usada nos dois lugares.
+const TOKENS_PROMPT_SISTEMA_BUILD = Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TOKEN);
+
 // Idem para o orçamento e para o custo real — embutidos do fonte, nunca copiados.
 // O corpo de `orcamentoDoLote` referencia constantes do módulo, e `toString()`
 // NÃO as leva junto — dentro do nó elas seriam `ReferenceError`. Embutir as
@@ -199,7 +208,7 @@ const FONTE_ORCAMENTO_LOTE = [
   `const CONTAS_POR_GRUPO = ${CONTAS_POR_GRUPO};`,
   `const TOKENS_SAIDA_CLASSIFICACAO = ${TOKENS_SAIDA_CLASSIFICACAO};`,
   `const MARGEM_ORCAMENTO_CONTEUDO = ${MARGEM_ORCAMENTO_CONTEUDO};`,
-  `const TOKENS_PROMPT_SISTEMA = ${Math.ceil(SYSTEM_PROMPT.length / CARACTERES_POR_TOKEN)};`,
+  `const TOKENS_PROMPT_SISTEMA = ${TOKENS_PROMPT_SISTEMA_BUILD};`,
   // `custoDaChamada` é o que converte tokens em dólares, e ela também não vem
   // de graça: sem esta linha o nó estoura `ReferenceError` na primeira
   // execução REAL — que é o modo de falha mais caro possível, porque a suíte
@@ -786,6 +795,16 @@ for(let i=0;i<entradas.length;i+=1){
     const texto=[raw.data,raw.text,raw.content].find((v)=>typeof v==='string'&&v.trim()!=='');
     completos.push({json:{...ctx,
       content_part: texto?parteDeTexto(PROVEDOR,texto):ctx.content_part,
+      // \`text\`: SEM ISTO, \`Medir Documento\` (que so' le \`doExtrator.text\`/
+      // \`texto_pdf\`) nunca via o XML -- \`temTexto\` saia falso, a regua de
+      // cobertura (\`avaliarCobertura\`) recebia \`esperadas=null\` e se calava
+      // (\`Number(null)=0 < minimo\`) para TODO documento XML, sempre, desde que
+      // a regua existe. Achado numa revisao adversarial (11/09): a mesma classe
+      // de defeito que a 0154 fechou para PDF ficava aberta aqui, sem pendencia
+      // nenhuma acusando. \`text\` e' o MESMO \`texto\` que vira \`content_part\` --
+      // a regua passa a medir exatamente o que foi mandado a' IA, nao um
+      // documento diferente.
+      text: texto||null,
       aviso_conteudo: texto?null:ctx.aviso_conteudo,
     }, pairedItem:{item:i}});
     continue;
@@ -809,13 +828,27 @@ for(let i=0;i<entradas.length;i+=1){
   if(Array.isArray(raw.data)) grupo.linhas.push(...raw.data);
   else grupo.linhas.push(raw);
 }
-const reconstruidos=[...porDocumento.values()].map(({ctx,linhas,primeiro})=>({pairedItem:{item:primeiro},json:{...ctx,
-  content_part: parteDeTexto(PROVEDOR, spreadsheetToText(linhas)),
-  // Planilha extraida com sucesso NAO abre mais a pendencia de 'nao lida' --
-  // so' abre a de TRUNCAMENTO, se a planilha estourar o teto (regra 1: so'
-  // declara ausencia onde ela e' real).
-  aviso_conteudo: avisoTruncamentoPlanilha(linhas),
-}}));
+const reconstruidos=[...porDocumento.values()].map(({ctx,linhas,primeiro})=>{
+  const textoPlanilha=spreadsheetToText(linhas);
+  return {pairedItem:{item:primeiro},json:{...ctx,
+    content_part: parteDeTexto(PROVEDOR, textoPlanilha),
+    // \`text\`: A MESMA CORRECAO DO CASO XML, e o mesmo achado (revisao
+    // adversarial, 11/09) -- so' que aqui o efeito e' PIOR, porque planilha e'
+    // exatamente o formato com mais linha por documento. Sem isto, um
+    // \`balancete.xlsx\` de 800 linhas nunca fatiava (\`Fatiar Extracao\` cai no
+    // bloco unico por falta de \`linhas_do_texto\`) E nunca acusava cobertura
+    // baixa (\`avaliarCobertura\` calada por \`esperadas=null\`) -- 500 linhas
+    // podiam sumir com o \`Conferir Lote\` inteiro VERDE. \`textoPlanilha\` e' o
+    // MESMO texto que \`spreadsheetToText\` ja' produzia para \`content_part\`
+    // (calculado uma unica vez aqui, nao duas): a regua passa a medir
+    // exatamente o que foi mandado a' IA.
+    text: textoPlanilha||null,
+    // Planilha extraida com sucesso NAO abre mais a pendencia de 'nao lida' --
+    // so' abre a de TRUNCAMENTO, se a planilha estourar o teto (regra 1: so'
+    // declara ausencia onde ela e' real).
+    aviso_conteudo: avisoTruncamentoPlanilha(linhas),
+  }};
+});
 // O QUE ESTE NO' NAO FECHA, e fica DITO em vez de escondido: um extrator que
 // devolve ZERO item (planilha vazia, CSV so' com cabecalho) faz o documento
 // sumir do lote sem pendencia. A correcao obvia -- sintetizar aqui o item que
@@ -1550,8 +1583,44 @@ const INTERVALO_POR_RPM_MS = RPM_CONTA
   ? Math.ceil((60000 / RPM_CONTA) * CHAMADAS_MAX_POR_DOCUMENTO)
   : 0;
 
+// O PIOR CASO DE ENTRADA, em tokens de imagem — ver o comentário de
+// `PAGINAS_MAX_MEDIDO` em `lib/custo.mjs`. Compartilhado pelas DUAS cadências
+// abaixo (extração e classificação): as duas chamadas mandam o MESMO PDF.
+const ENTRADA_MAX_MEDIDA_TOKENS = PAGINAS_MAX_MEDIDO * TOKENS_POR_PAGINA_IMAGEM;
+
+// A RESERVA DE TPM DA CLASSIFICAÇÃO — ACHADO NUMA REVISÃO ADVERSARIAL (11/09),
+// no MESMO defeito que `INTERVALO_EXTRACAO_MS` tinha antes da correção abaixo,
+// só que aqui não havia sequer uma PRIMEIRA tentativa: `IA_BATCHING` espaçava
+// só pelo piso de 6s e pelo RPM, sem nenhum termo de TPM. Uma classificação
+// manda o MESMO PDF de imagem que a extração (~20.000 tokens no pior caso) e
+// devolve uma saída pequena (`TOKENS_SAIDA_CLASSIFICACAO`) — mas a reserva de
+// TPM da OpenAI conta a ENTRADA inteira, não só a saída. A 6s de intervalo,
+// 10 chamadas/min × ~20.000 tokens = 200.000 tokens/min: 6,7× o teto de 30.000
+// do Tier 1, e nenhum espaçamento por CONTAGEM de chamada evita isso — só o
+// TPM evita. `+400` é o mesmo placeholder que `custoEstimadoPorConteudo`
+// (`lib/custo.mjs`) já usa para o prompt de sistema da classificação (ele não
+// tem nome próprio como `SYSTEM_PROMPT` da extração).
+// ARREDONDA PARA CIMA, EM SEGUNDO CHEIO. Duas razões, as duas reais: (a) o
+// campo do n8n é preenchido em segundos por um humano, e um `batchInterval` de
+// "41.04s" não é algo que o editor mostra nem que alguém digitaria; (b) o
+// espelho do portal (`espera-do-lote.ts`, `CADENCIA_IA_S`) é comparado por
+// IGUALDADE EXATA contra este número em `workflow-sim.test.mjs` — sem
+// arredondar aqui, a divisão de TPM por uma reserva que não é múltipla de 500
+// produziria uma fração, e a igualdade exata nunca bateria. Arredondar para
+// CIMA (nunca para baixo) é o lado seguro: o intervalo real fica IGUAL ou
+// MAIOR que o mínimo aritmético, nunca menor.
+const arredondarParaSegundoCheio = (ms) => Math.ceil(ms / 1000) * 1000;
+
+const RESERVA_CLASSIFICACAO_TOKENS = ENTRADA_MAX_MEDIDA_TOKENS + 400 + TOKENS_SAIDA_CLASSIFICACAO;
+const CHAMADAS_POR_MINUTO_CLASSIFICACAO = TPM_CONTA / RESERVA_CLASSIFICACAO_TOKENS;
+const INTERVALO_CLASSIFICACAO_MS = arredondarParaSegundoCheio(Math.max(
+  Math.ceil(60000 / CHAMADAS_POR_MINUTO_CLASSIFICACAO),
+  INTERVALO_POR_RPM_MS,
+  PISO_BATCHING_MS,
+));
+
 const IA_BATCHING = {
-  batching: { batch: { batchSize: 1, batchInterval: Math.max(PISO_BATCHING_MS, INTERVALO_POR_RPM_MS) } },
+  batching: { batch: { batchSize: 1, batchInterval: INTERVALO_CLASSIFICACAO_MS } },
   ...RESPOSTA_COM_CORPO_NO_ERRO,
 };
 
@@ -1567,36 +1636,47 @@ const IA_BATCHING = {
 //
 // Com isso, a cadência deixa de ser opinião:
 //
-//     chamadas por minuto suportadas = TPM_DA_CONTA / max_tokens
+//     chamadas por minuto suportadas = TPM_DA_CONTA / (entrada + max_tokens)
 //     intervalo mínimo entre chamadas = 60.000ms / chamadas por minuto
 //
-// Nos números de hoje (Tier 1 = 30.000 TPM, max_tokens = 16.384):
-// 1,8 chamada/min → intervalo de ~33s. Os 12s que eu havia posto suportam 5
-// chamadas/min = 81.920 TPM — quase 3x o teto do Tier 1. Ou seja: no Tier 1 o
-// lote de 14 documentos NÃO tinha como passar, nem a 6s nem a 12s, e o problema
-// não era "espaçar um pouco mais".
+// Nos números de hoje (Tier 1 = 30.000 TPM, max_tokens = 16.384): ~2,7
+// chamada/min → intervalo de ~22s.
 //
-// TPM_CONTA/RPM_CONTA são os ÚNICOS números a ajustar, e eles moram no provedor
-// (`lib/provedor.mjs`), lidos por `lib/extract.mjs` junto de MAX_OUTPUT_TOKENS,
-// porque o teste de cadência e o `diagnosticar-ia.mjs` leem os MESMOS valores —
-// duplicar aqui faria os três discordarem no primeiro ajuste. Subir de tier é
-// mexer numa linha lá: no Tier 2 da OpenAI (450.000 TPM) o intervalo cai para
-// ~2,2s, a diferença entre 8 minutos e 30 segundos para o mesmo lote.
-// E AGORA O RPM ENTRA NA CONTA, porque nem todo provedor tem o mesmo gargalo.
-// Na OpenAI o balde de TOKENS sempre chega primeiro (a reserva de `max_tokens`
-// garante isso), e o intervalo é o de sempre: ~33s no Tier 1. Na linha
-// Flash-Lite do Google o balde de tokens é folgado e o limite é de CHAMADAS: só
-// pelo TPM o intervalo daria ~1 segundo, e o lote tomaria 429 na terceira.
+// A LINHA `TPM_DA_CONTA / max_tokens`, SEM A ENTRADA, FICOU AQUI DE 27/08 A
+// 11/09 — ACHADO NUMA REVISÃO ADVERSARIAL, NÃO POR ESTE COMENTÁRIO. O parágrafo
+// acima ("`max_tokens` é RESERVA de TPM... os dois pagam igual") estava CERTO
+// sobre o FATO e ERRADO na CONCLUSÃO: a reserva de `max_tokens` cobre a SAÍDA,
+// não "a chamada inteira" como este comentário chegou a afirmar. Um PDF de 20
+// páginas (o maior já medido, `PAGINAS_MAX_MEDIDO`) manda ~20.000 tokens de
+// ENTRADA — MAIS os 16.384 reservados de saída, 36.384 numa chamada só, 21%
+// ACIMA do teto de 30.000 do Tier 1. Nenhum espaçamento entre chamadas evita
+// isso: é UMA chamada estourando o balde sozinha, o mesmo desfecho das 72
+// falhas do "Teste 00" (`HANDOFF.md`) por um caminho que ninguém tinha somado.
+// Documento típico (`PERFIL_MEDIDO.entradaPorDocumento`, 3.500 tokens) nunca
+// bateu nisso — e foi por isso que o defeito passou disfarçado de correção.
+//
+// TPM_CONTA/RPM_CONTA são os ÚNICOS números de conta a ajustar, e eles moram no
+// provedor (`lib/provedor.mjs`), lidos por `lib/extract.mjs` junto de
+// MAX_OUTPUT_TOKENS, porque o teste de cadência e o `diagnosticar-ia.mjs` leem
+// os MESMOS valores — duplicar aqui faria os três discordarem no primeiro
+// ajuste. `PAGINAS_MAX_MEDIDO` mora em `lib/custo.mjs` pela mesma razão: é o
+// número que muda quando um documento maior aparecer medido. Subir de tier é
+// mexer numa linha lá: no Tier 2 da OpenAI (450.000 TPM) o intervalo cai bem
+// abaixo do piso histórico de 6s.
+// E O RPM ENTRA NA CONTA, porque nem todo provedor tem o mesmo gargalo. Na
+// OpenAI o balde de TOKENS aperta mais que o de chamadas; na linha Flash-Lite
+// do Google o balde de tokens é folgado e o limite é de CHAMADAS — só pelo TPM
+// o intervalo daria menos de 1 segundo, e o lote tomaria 429 na terceira.
 //
 // O intervalo é o MAIOR dos três — o do balde de tokens, o do limite de
 // chamadas, e o piso histórico de 6s. É o mesmo princípio de sempre: errar para
 // o lento atrasa; errar para o rápido FALHA, e falha custa a rodada inteira.
-const CHAMADAS_POR_MINUTO = TPM_CONTA / MAX_OUTPUT_TOKENS;
-const INTERVALO_EXTRACAO_MS = Math.max(
+const CHAMADAS_POR_MINUTO = TPM_CONTA / (ENTRADA_MAX_MEDIDA_TOKENS + MAX_OUTPUT_TOKENS);
+const INTERVALO_EXTRACAO_MS = arredondarParaSegundoCheio(Math.max(
   Math.ceil(60000 / CHAMADAS_POR_MINUTO),
   INTERVALO_POR_RPM_MS,
   PISO_BATCHING_MS,
-);
+));
 
 const IA_BATCHING_EXTRACAO = { batching: { batch: { batchSize: 1, batchInterval: INTERVALO_EXTRACAO_MS } }, ...RESPOSTA_COM_CORPO_NO_ERRO };
 

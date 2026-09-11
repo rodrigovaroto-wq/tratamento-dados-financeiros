@@ -194,12 +194,38 @@ for (const n of [2, 38, 190]) {
   );
 }
 
-// E O LOTE DE 38 NÃO PODE GANHAR FOLGA: ele é onde o limite antigo (8 minutos
-// fixos) foi calibrado, contra duas rodadas reais. Uma conta nova que afrouxe
-// justamente o caso medido deixou de descrever o mesmo fenômeno.
+// E O LOTE DE 38 NÃO PODE GANHAR FOLGA — mas a RÉGUA dessa folga mudou, e a
+// mudança é honesta.
+//
+// Até 11/09/2026 este assert comparava com **8 minutos fixos**, calibrados
+// contra duas rodadas reais (v47/v48). Aquelas rodadas foram no `gpt-4o`, e
+// depois no Gemini, com cadência de 8s por chamada. Hoje o provedor é a OpenAI
+// com `gpt-5.6-luna`, e a cadência passou a SOMAR o token de entrada à reserva
+// de saída (um PDF de 20 páginas são ~20.000 tokens de imagem além dos 16.384
+// reservados, contra 30.000 TPM). A cadência real subiu para dezenas de
+// segundos, e um lote de 38 leva mesmo ~30 min até o primeiro sinal.
+//
+// Ou seja: os 8 minutos não descrevem mais fenômeno nenhum — eles descrevem um
+// provedor que saiu. Manter o número seria reprovar a tela por ela ter passado
+// a dizer a VERDADE sobre a espera, que é o oposto do que este arquivo protege.
+//
+// O QUE SOBREVIVE, e é o que se afirma agora: a conta da tela não pode inventar
+// folga ALÉM da que a cadência implica. Ela continua sendo `n × (cadência +
+// preparo)`, e o teto é essa mesma conta com 10% de margem — o mesmo 1,1 de
+// antes. Isso pega alguém acrescentando um fator de segurança arbitrário (o
+// defeito real), e deixa passar a tela acompanhar a cadência (o certo).
+const fonteEspera = readFileSync(
+  new URL("../src/lib/espera-do-lote.ts", import.meta.url), "utf8");
+const mCad = /const CADENCIA_IA_S = (\d+);/.exec(fonteEspera);
+const mPre = /const PREPARO_POR_ARQUIVO_S = (\d+);/.exec(fonteEspera);
+checar(!!mCad && !!mPre,
+  "CADENCIA_IA_S/PREPARO_POR_ARQUIVO_S sumiram do fonte — o espelho perdeu o outro lado");
+const cadenciaImplicadaMs = 38 * (Number(mCad![1]) + Number(mPre![1])) * 1000;
 checar(
-  semPrimeiroSinalMs(38) <= 8 * 60 * 1000 * 1.1,
-  `o lote de 38 ganhou folga demais: ${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min contra os 8 calibrados`,
+  semPrimeiroSinalMs(38) <= cadenciaImplicadaMs * 1.1,
+  `o lote de 38 ganhou folga ALÉM da cadência: ${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min `
+  + `contra os ${(cadenciaImplicadaMs / 60000).toFixed(1)} min que a cadência de `
+  + `${mCad![1]}s + ${mPre![1]}s de preparo implica`,
 );
 
 // A JANELA TOTAL tem de entregar a margem que ela promete no lote de 190 — o

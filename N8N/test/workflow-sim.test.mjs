@@ -14,7 +14,19 @@ import { codigosConhecidos } from '../lib/ia.mjs';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
-import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD } from '../lib/custo.mjs';
+import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD, PAGINAS_MAX_MEDIDO, TOKENS_POR_PAGINA_IMAGEM } from '../lib/custo.mjs';
+
+// O PIOR CASO DE ENTRADA (tokens de imagem), a MESMA conta que
+// `build-workflow.mjs` usa para dimensionar a cadência (`ENTRADA_MAX_MEDIDA_TOKENS`).
+// Os dois testes de cadência abaixo mediam a reserva de TPM só pela SAÍDA
+// (`MAX_OUTPUT_TOKENS`) — o MESMO defeito que uma revisão adversarial achou no
+// gerador em 11/09/2026 ("a reserva cobre a chamada inteira" era falso: a
+// OpenAI reserva o MAIOR entre `max_tokens` e o tamanho REAL do request, e a
+// entrada nunca entrava na conta). Sem esta correção, os dois testes ficavam
+// VERDES sobre uma cadência que deixava um PDF de 20 páginas estourar o balde
+// sozinho — o mesmo "estágio desligado parece limpo" que a suíte existe para
+// não deixar passar.
+const RESERVA_ENTRADA_TOKENS_TESTE = PAGINAS_MAX_MEDIDO * TOKENS_POR_PAGINA_IMAGEM;
 import { provedor, schemaDoProvedor, capacidadesDoModelo } from '../lib/provedor.mjs';
 
 // ---------------------------------------------------------------------------
@@ -689,17 +701,21 @@ test('Os dois nós OpenAI pedem o CORPO da resposta de erro (`neverError`)', () 
 test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () => {
   // A rodada anterior subiu o intervalo de 6s para 12s por chute e o 429
   // continuou — erro meu, registrado aqui para não repetir. A OpenAI cobra do
-  // balde de TPM o MÁXIMO entre `max_tokens` e os tokens estimados do request,
-  // então cada extração RESERVA MAX_OUTPUT_TOKENS por chamada, independente do
-  // tamanho do PDF. Isso torna o intervalo mínimo uma conta, não uma opinião:
-  // TPM / max_tokens = chamadas por minuto.
+  // balde de TPM o MÁXIMO entre `max_tokens` e os tokens ESTIMADOS DO REQUEST
+  // (entrada + saída) — não só `max_tokens`. Este teste chegou a assumir só a
+  // saída (achado numa revisão adversarial, 11/09/2026: "a reserva cobre a
+  // chamada inteira" era falso, e um PDF de 20 páginas somado aos 16.384 de
+  // saída passa do teto do Tier 1 sozinho). Isso torna o intervalo mínimo uma
+  // conta, não uma opinião: TPM / (entrada + max_tokens) = chamadas por minuto.
   // E DESDE 24/08/2026 SÃO DOIS BALDES, não um. A reserva de tokens é o gargalo
   // da OpenAI; provedor que limita por CHAMADA (o Google, 15/min no patamar de
   // entrada) tem o balde de tokens folgado e o de chamadas apertado. A cadência
   // tem de caber nos DOIS, e é isso que este teste passou a exigir.
   const intervalo = byName['IA Extrair'].parameters.options.batching.batch.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
-  const tpmReservado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  // A RESERVA É ENTRADA + SAÍDA, não só `MAX_OUTPUT_TOKENS` — ver
+  // `RESERVA_ENTRADA_TOKENS_TESTE` no topo do arquivo.
+  const tpmReservado = chamadasPorMinuto * (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS);
   assert.ok(tpmReservado <= TPM_CONTA + 1,
     `a cadência reserva ${Math.round(tpmReservado)} TPM, acima do teto da conta (${TPM_CONTA}) — o 429 é matemático`);
   if (RPM_CONTA) {
@@ -715,7 +731,8 @@ test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () =
   // E não pode ser lenta a ponto de não usar a conta: pelo menos metade do balde
   // QUE MANDA. Qual dos dois manda depende do provedor, e travar o de tokens
   // quando o gargalo é o de chamadas exigiria uma cadência que toma 429.
-  const mandaOTpm = !RPM_CONTA || (TPM_CONTA / MAX_OUTPUT_TOKENS) <= RPM_CONTA / 2;
+  const mandaOTpm = !RPM_CONTA
+    || (TPM_CONTA / (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS)) <= RPM_CONTA / 2;
   if (mandaOTpm) {
     assert.ok(tpmReservado >= TPM_CONTA / 2,
       `${Math.round(tpmReservado)} TPM desperdiça mais da metade do limite disponível (${TPM_CONTA})`);
@@ -1056,6 +1073,57 @@ test('Recompor Conteudo Extraido: XML vira texto corrido, não linhas de planilh
   assert.equal(out[0].json.aviso_conteudo, null);
 });
 
+// MEDIDO NÃO-VAZIO (regra 2 do CLAUDE.md), achado numa revisão adversarial
+// (11/09/2026): `Recompor Conteudo Extraido` sempre escreveu `content_part` (o
+// que vai para a IA) mas NUNCA `text` — e `Medir Documento`, o nó seguinte na
+// cadeia real, só lê `doExtrator.text`/`texto_pdf`. Para TODO documento
+// CSV/XLSX/XLS/XML, `temTexto` saía falso, `celulas_no_documento` e
+// `contas_no_documento` saíam `null`, e `avaliarCobertura` (lib/cobertura.mjs)
+// se cala quando `esperadas` é `null` — a régua de cobertura estava DESLIGADA
+// para estes DOIS formatos desde que ela existe (a 0154 só a acendeu para
+// PDF), sem NENHUMA pendência acusando. Um `balancete.xlsx` de centenas de
+// linhas podia nunca fatiar (`Fatiar Extracao` cai no bloco único por falta de
+// `linhas_do_texto`) e nunca acusar cobertura baixa, com `Conferir Lote` VERDE.
+//
+// DESLIGAR A CORREÇÃO (reverter as duas linhas `text:` em
+// `CODE_RECOMPOR_EXTRACAO`, `build-workflow.mjs`) FAZ ESTE TESTE REPROVAR — 4
+// asserts (as duas asserções de "não é null" e as duas de tamanho mínimo),
+// medido antes de escrever a correção.
+test('MEDIDO: XLSX e XML alimentam a régua de cobertura depois de Recompor Conteudo Extraido — sem `text`, ela ficava calada', async () => {
+  const reconstruidoXlsx = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { Conta: 'Caixa', Valor: '380' } }, { json: { Conta: 'Duplicatas', Valor: '22310' } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxXlsx }, { json: ctxXlsx }] },
+  });
+  assert.equal(reconstruidoXlsx.length, 1);
+  assert.equal(typeof reconstruidoXlsx[0].json.text, 'string',
+    'a planilha reconstruída tem de carregar `text` — é o que Medir Documento lê');
+  assert.match(reconstruidoXlsx[0].json.text, /Caixa/);
+
+  const medidoXlsx = await run('Medir Documento', {
+    item: reconstruidoXlsx[0], refs: { 'Preparar Conteudo': reconstruidoXlsx[0] },
+  });
+  assert.notEqual(medidoXlsx.json.celulas_no_documento, null,
+    'régua de cobertura calada para XLSX — a mesma falha que a 0154 fechou só para PDF');
+  assert.ok(medidoXlsx.json.celulas_no_documento >= 2, 'as duas linhas da planilha têm de contar como células');
+  assert.ok(Array.isArray(medidoXlsx.json.linhas_do_texto) && medidoXlsx.json.linhas_do_texto.length >= 2);
+
+  const ctxXml2 = {
+    caso_id: 'caso-uuid-1', hash: 'hash-g-xml', nome_original: 'extrato2.xml', content_mime: 'application/xml',
+    content_part: { type: 'text', text: '(pendente)' }, aviso_conteudo: 'pendente',
+  };
+  const reconstruidoXml = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { data: '<extrato><lancamento valor="380"/></extrato>' } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxXml2 }] },
+  });
+  assert.equal(typeof reconstruidoXml[0].json.text, 'string',
+    'o XML reconstruído tem de carregar `text` — é o que Medir Documento lê');
+
+  const medidoXml = await run('Medir Documento', {
+    item: reconstruidoXml[0], refs: { 'Preparar Conteudo': reconstruidoXml[0] },
+  });
+  assert.notEqual(medidoXml.json.celulas_no_documento, null, 'régua de cobertura calada para XML');
+});
+
 test('Recompor Conteudo Extraido: sem rastro (itemMatching falha) isola a linha, nunca funde com outro documento', async () => {
   // $('Preparar Conteudo') SEM a referência: itemMatching lança para todo
   // índice. O nó NÃO PODE tratar isso como "documento sem chave" e juntar tudo
@@ -1369,15 +1437,22 @@ test('os ALIASES do workflow gerado são IDÊNTICOS aos de lib/taxonomia.mjs (or
 // de TPM que acabou de recusar).
 test('a cadência da extração É a aritmética do TPM, não um número escolhido', () => {
   // A correção do v30. A OpenAI calcula o consumo de rate limit como o MÁXIMO
-  // entre `max_tokens` e os tokens estimados do request — então `max_tokens` é
-  // RESERVA de TPM, e toda extração reserva o mesmo, seja o PDF de 2 KB ou de 40
-  // páginas (foi por isso que as notas explicativas minúsculas também tomaram
-  // 429). Logo o intervalo entre chamadas não é gosto: é 60s ÷ (TPM ÷ max_tokens).
+  // entre `max_tokens` e os tokens ESTIMADOS DO REQUEST (entrada + saída) —
+  // não só `max_tokens`. Logo o intervalo entre chamadas não é gosto: é
+  // 60s ÷ (TPM ÷ (entrada + max_tokens)).
   //
-  // Este teste trava a RELAÇÃO, não o valor: se alguém mexer em max_tokens ou no
-  // TPM da conta sem recalcular a cadência, ele reprova. Era exatamente esse
-  // acoplamento que faltava — eu subi 6s→12s sem olhar o max_tokens, e 12s
-  // suportava 5 chamadas/min = 81.920 TPM, quase 3x o teto do Tier 1.
+  // A ENTRADA ENTROU NA CONTA EM 11/09/2026, achado numa revisão adversarial:
+  // até então este teste (e o gerador) tratavam `max_tokens` como se cobrisse
+  // "a chamada inteira" — falso. Um PDF de 20 páginas (`PAGINAS_MAX_MEDIDO`)
+  // manda ~20.000 tokens de ENTRADA que a conta anterior ignorava por
+  // completo, e MAIS os 16.384 de saída passa do teto de 30.000 do Tier 1
+  // numa chamada SÓ — nenhum espaçamento entre chamadas evita isso.
+  //
+  // Este teste trava a RELAÇÃO, não o valor: se alguém mexer em max_tokens, no
+  // pior caso de páginas ou no TPM da conta sem recalcular a cadência, ele
+  // reprova. Era exatamente esse acoplamento que faltava — eu subi 6s→12s sem
+  // olhar o max_tokens, e 12s suportava 5 chamadas/min = 81.920 TPM, quase 3x
+  // o teto do Tier 1.
   //
   // O NÚMERO DO TIER SAI DO PROVEDOR, e não mais de uma constante escrita aqui.
   // `TPM_TIER1_GPT4O = 30000` era a mesma verdade dita num segundo lugar, e no
@@ -1385,7 +1460,7 @@ test('a cadência da extração É a aritmética do TPM, não um número escolhi
   // sistema não usa mais.
   const intervalo = byName['IA Extrair'].parameters.options?.batching?.batch?.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
-  const tpmDemandado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  const tpmDemandado = chamadasPorMinuto * (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS);
   assert.ok(tpmDemandado <= TPM_CONTA,
     `a cadência demanda ${Math.round(tpmDemandado)} TPM, acima do limite da conta (${TPM_CONTA}) — `
     + `com intervalo de ${intervalo}ms e max_tokens de ${MAX_OUTPUT_TOKENS}`);

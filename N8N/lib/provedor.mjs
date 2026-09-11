@@ -291,8 +291,13 @@ export function montarCorpoIA(
   // `temperature: 0` só entra em modelo que o ACEITA. Na família GPT-5 ele é
   // recusado (400) e o modelo roda no default — então o determinismo que este
   // sistema tinha na extração numérica deixa de existir por construção, não por
-  // descuido. É o motivo pelo qual a conferência determinística de divergência
-  // (fora do LLM) passou a ser obrigatória antes de entregar a rodada.
+  // descuido. `N8N/lib/repetibilidade.mjs` (`compararExtracoes`) é a função
+  // determinística, fora do LLM, que compara duas extrações do MESMO documento
+  // e acusa divergência — pedida pelo dono para fechar exatamente esta lacuna.
+  // ELA AINDA NÃO ESTÁ LIGADA AO WORKFLOW (11/09/2026): existe testada e
+  // auto-contida, mas nenhum nó do grafo a chama ainda — a segunda extração
+  // amostral e a comparação dentro do fluxo ficaram para uma sessão seguinte.
+  // Até lá, a perda de determinismo NÃO está coberta, só nomeada.
   if (cap.temperatura) corpo.temperature = 0;
   if (schema) corpo.response_format = { type: 'json_schema', json_schema: schema };
   if (sistema) corpo.messages.push({ role: 'system', content: sistema });

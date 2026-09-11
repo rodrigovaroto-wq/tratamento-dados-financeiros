@@ -643,6 +643,25 @@ export const CARACTERES_POR_TOKEN = 4;
 /** O PDF vira imagem: ~1.000 tokens por página (docs/CUSTO_OPENAI.md). */
 export const TOKENS_POR_PAGINA_IMAGEM = 1000;
 
+// O PIOR CASO REAL DE ENTRADA, não um teto do sistema. É o mesmo número que o
+// comentário de `PRECOS_POR_PROVEDOR.openai` já cita (20 páginas, ~20 mil
+// tokens de imagem, `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md`)
+// — documento maior pode aparecer amanhã, mas este é o maior JÁ MEDIDO, e é o
+// número certo para dimensionar CADÊNCIA (abaixo, em `build-workflow.mjs`):
+// dimensionar pela MÉDIA (`PERFIL_MEDIDO.entradaPorDocumento`, 3.500 tokens)
+// deixaria o intervalo folgado no documento típico e apertado exatamente no
+// maior — que é o único em que o TPM de fato aperta.
+//
+// ACHADO NUMA REVISÃO ADVERSARIAL (11/09/2026): até esta correção, o intervalo
+// entre chamadas (`INTERVALO_EXTRACAO_MS`) considerava só os tokens de SAÍDA
+// (`MAX_OUTPUT_TOKENS`), com um comentário afirmando que a reserva "cobre a
+// chamada inteira" — falso. Um PDF de 20 páginas manda ~20.000 tokens de
+// ENTRADA MAIS os 16.384 reservados de saída: 36.384 numa única chamada,
+// acima do TPM de 30.000 do Tier 1. Nenhum espaçamento entre chamadas evita um
+// 429 de UMA chamada sozinha estourando o balde — é o mesmo desfecho das 72
+// falhas do "Teste 00" (`HANDOFF.md`), por um caminho que ninguém tinha somado.
+export const PAGINAS_MAX_MEDIDO = 20;
+
 // A saída, no formato AGRUPADO que roda hoje (uma seção por grupo, as colunas
 // declaradas uma vez, a conta escrita uma vez com um valor por coluna). Os três
 // números saem da medição de caracteres do formato real (JSON.stringify / 4).

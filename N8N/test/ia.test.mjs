@@ -60,8 +60,12 @@ test('buildClassificationRequest prende a saída ao schema, e a temperatura segu
   // a temperatura 0 é mandada para todo modelo que a ACEITA, e a ausência dela
   // só é tolerada onde a capacidade DECLARA que o modelo não a aceita. Assim
   // ninguém perde determinismo por descuido — só por declaração explícita, que
-  // é revisável. O custo dessa perda (extração não reprodutível) é coberto pela
-  // conferência determinística de divergência, fora do LLM.
+  // é revisável. `N8N/lib/repetibilidade.mjs` (`compararExtracoes`,
+  // `documentoAmostradoParaRepetibilidade`) é a comparação determinística, fora
+  // do LLM, que existe para nomear essa perda — testada e auto-contida, mas
+  // AINDA NÃO LIGADA ao workflow real (11/09/2026): nenhum nó do grafo a chama.
+  // Até lá, "coberto" seria afirmação maior que o código sustenta — a extração
+  // não reprodutível segue sem conferência EM PRODUÇÃO.
   for (const prov of Object.values(PROVEDORES)) {
     const modelo = 'modelo-de-teste';
     const req = buildClassificationRequest({
