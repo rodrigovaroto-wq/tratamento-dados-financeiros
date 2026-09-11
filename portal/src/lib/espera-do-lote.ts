@@ -48,8 +48,26 @@ export const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 // teórica: a v47 levou 9min01 (14,2s/doc) e a v48 levou 10min08 (16,0s/doc). O
 // 14 vinha da aritmética das chamadas e ficava ABAIXO do observado — e errar
 // para baixo é o defeito que a nota acima descreve, só que invertido: promete
-// cedo e o analista lê o atraso como travamento. 16 é o pior caso medido.
-export const SEGUNDOS_POR_DOCUMENTO = 16;
+// cedo e o analista lê o atraso como travamento. 16 era o pior caso medido.
+//
+// 11/09/2026 — A TROCA DE PROVEDOR MULTIPLICOU ISTO POR QUATRO, e o número
+// antigo virou mentira no mesmo instante. A cadência da extração não é escolha:
+// é `60s ÷ (TPM ÷ teto de saída)`, porque o teto de saída RESERVA balde de TPM
+// (ver o adendo do v30 em CUSTO_IA.md). Com o Gemini eram 250.000 TPM e a
+// extração saía a cada 8s; com a OpenAI no PISO de tier declarado (30.000 TPM)
+// e o mesmo teto de 16.384, ela sai a cada **32,768s**.
+//
+// 33 é o teto arredondado para cima dessa cadência, e NÃO é uma estimativa de
+// quanto um documento demora em média — é o piso do que UMA chamada custa. O
+// teste `workflow-sim.test.mjs` exige exatamente isto: que a tela nunca prometa
+// menos do que uma única chamada já leva.
+//
+// O QUE MUDA ESTE NÚMERO DE VOLTA: o TPM da conta. Ele está declarado no PISO
+// (`PROVEDORES.openai.tpm` em `N8N/lib/provedor.mjs`) pela mesma doutrina de
+// sempre — errar para o lento atrasa, errar para o rápido FAZ FALHAR. Numa conta
+// de tier mais alto, sobe-se aquele número, regera-se o workflow e este cai
+// junto; a suíte reprova se um subir sem o outro.
+export const SEGUNDOS_POR_DOCUMENTO = 33;
 
 // A ESTIMATIVA É UMA FUNÇÃO SÓ, e isso não é preciosismo. Ela aparece em DOIS
 // lugares — antes de enviar (para decidir se espera) e depois (para acompanhar)
@@ -120,13 +138,24 @@ const MARGEM_DA_JANELA = 3;
 // como piso, para o lote pequeno não perder nada.
 // A CADÊNCIA DA IA E O PREPARO POR ARQUIVO — as duas contas de espera saem
 // daqui, e é por isso que eles moram acima das duas.
-//   CADENCIA_IA_S ......... o `batchInterval` real dos nós `IA Classificar` e
-//                           `IA Extrair` (8s). `workflow-sim.test.mjs` confere
-//                           este espelho contra o workflow gerado.
+//   CADENCIA_IA_S ......... o `batchInterval` real do nó `IA Classificar` (6s).
+//                           `workflow-sim.test.mjs` confere este espelho contra
+//                           o workflow gerado.
+//                           ATENÇÃO: é a cadência da CLASSIFICAÇÃO, não a da
+//                           extração. As duas eram 8s enquanto o provedor era o
+//                           mesmo para os dois papéis e o teto de saída não
+//                           entrava na classificação; desde 11/09/2026 elas
+//                           DIVERGIRAM (classificação 6s, extração 32,768s),
+//                           porque só a extração reserva os 16.384 tokens do
+//                           balde de TPM. Quem usa esta constante está medindo o
+//                           silêncio até o primeiro sinal, que é governado pela
+//                           barreira do merge das CLASSIFICAÇÕES — por isso é a
+//                           dela que vale aqui, e é por isso que ela não pode
+//                           ser reaproveitada para estimar a rodada inteira.
 //   PREPARO_POR_ARQUIVO_S . upload ao Storage, leitura do texto e medição. Saiu
 //                           da diferença entre a duração real das rodadas
 //                           v47/v48 e o que a cadência sozinha explica.
-const CADENCIA_IA_S = 8;
+const CADENCIA_IA_S = 6;
 const PREPARO_POR_ARQUIVO_S = 5;
 
 const SEM_PROGRESSO_MINIMO_MS = 5 * 60 * 1000;
@@ -179,8 +208,20 @@ const ESPERA_MINIMA_MS = 12 * 60 * 1000;
 // promete só valia até 112 arquivos. Num lote de 190 (previsão de 51 min) o
 // teto truncava a janela em 90 min — margem real de 1,77× —, e uma rodada que
 // andasse a 28s por documento em vez dos 16 medidos veria a tela desistir viva.
-// Com 160 min a margem prometida volta a ser verdade até 200 arquivos.
-const ESPERA_MAXIMA_MS = 160 * 60 * 1000;
+// Com 160 min a margem prometida valia até 200 arquivos.
+//
+// 11/09/2026 — O MESMO TETO QUEBROU DE NOVO, pela mesma razão e com o mesmo
+// sintoma, porque `SEGUNDOS_POR_DOCUMENTO` dobrou de 16 para 33 com a troca de
+// provedor. Num lote de 190 a previsão passou de 51 para 104 min, e 160 min de
+// teto entregavam 1,53× da margem de 3× prometida — medido pelo
+// `verificar-mensagem-de-falha.mts`, que reprovou. 320 min repõe a promessa nos
+// 190 documentos (190 × 33s × 3 = 313,5 min).
+//
+// E VALE DIZER O QUE ESTE NÚMERO É: ele não é uma escolha de produto, é uma
+// CONSEQUÊNCIA de a cadência da extração ser 32,768s. Ele encolhe sozinho no dia
+// em que o TPM declarado do provedor subir para o valor real da conta — e a
+// única razão de ele estar tão alto é o TPM estar no piso conservador do tier 1.
+const ESPERA_MAXIMA_MS = 320 * 60 * 1000;
 export function janelaPara(arquivos: number): number {
   const previsto = arquivos * SEGUNDOS_POR_DOCUMENTO * 1000 * MARGEM_DA_JANELA;
   return Math.min(ESPERA_MAXIMA_MS, Math.max(ESPERA_MINIMA_MS, previsto));

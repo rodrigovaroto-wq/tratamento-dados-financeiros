@@ -24,12 +24,17 @@ import { ALIASES, KIT_BASICO } from './taxonomia.mjs';
 import {
   provedor, urlDaChamada, montarCorpoIA, parteDeArquivo, parteDeTexto, conteudoDaResposta,
 } from './provedor.mjs';
-import { MODELO_CLASSIFICACAO } from './custo.mjs';
+import { MODELO_CLASSIFICACAO, esforcosDoProvedor } from './custo.mjs';
 
 // O modelo padrão é o do PROVEDOR ATIVO, e sai de `lib/custo.mjs` — que é onde
 // ele mora desde 13/08/2026, porque o orçamento depende do preço dele. Um
 // `DEFAULT_MODEL` próprio aqui seria a terceira cópia do mesmo fato.
 const DEFAULT_MODEL = MODELO_CLASSIFICACAO;
+
+// O esforço de raciocínio da CLASSIFICAÇÃO, pela regra do dono. A entrada aqui é
+// o PDF inteiro e a saída são ~120 tokens, então quase não há saída sobre a qual
+// a folga de 25% incida — ver `limiarDeRaciocinio` em `custo.mjs`.
+const DEFAULT_ESFORCO = esforcosDoProvedor().classificacao?.esforco ?? null;
 
 // Enum de códigos possíveis para a classificação (taxonomia conhecida + escape).
 export function codigosConhecidos() {
@@ -90,6 +95,7 @@ export function classificationSchema() {
 // `contentPartFromFile`, e por isso já está no dialeto certo.
 export function buildClassificationRequest({
   nomeOriginal, conteudo, model = DEFAULT_MODEL, prov = provedor(),
+  esforco = DEFAULT_ESFORCO,
 }) {
   return {
     url: urlDaChamada(prov, model),
@@ -97,6 +103,7 @@ export function buildClassificationRequest({
     body: montarCorpoIA(prov, {
       modelo: model,
       sistema: SYSTEM_PROMPT,
+      esforco,
       partes: [
         parteDeTexto(prov, `Nome do arquivo (pista fraca): ${nomeOriginal || '(sem nome)'}`),
         ...(Array.isArray(conteudo) ? conteudo : [conteudo]),

@@ -8,12 +8,20 @@ import { readFileSync } from 'node:fs';
 import { diagnosticarErroApi } from '../lib/extract.mjs';
 import { provedor } from '../lib/provedor.mjs';
 import { PRECO_USD_POR_MILHAO, MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from '../lib/custo.mjs';
+import { capacidadesDoModelo } from '../lib/provedor.mjs';
 
 const PROV = provedor();
 const GEMINI = PROV.dialeto === 'gemini';
 
 /** O teto de saída do corpo montado, no dialeto do provedor ativo. */
-const tetoDoCorpo = (corpo) => (GEMINI ? corpo.generationConfig.maxOutputTokens : corpo.max_tokens);
+// O NOME DO CAMPO DE TETO É DO MODELO, não do dialeto. A família GPT-5 recusa
+// `max_tokens` e exige `max_completion_tokens`; o 4o aceita o antigo. Ler pelo
+// nome fixo travava o MECANISMO (regra 3 do CLAUDE.md) e reprovaria numa troca
+// de modelo que está correta. Lê-se pela capacidade DECLARADA, que é a mesma
+// fonte que `montarCorpoIA` usa para escrever.
+const tetoDoCorpo = (corpo) => (GEMINI
+  ? corpo.generationConfig.maxOutputTokens
+  : corpo[capacidadesDoModelo(corpo.model).tetoDeSaida]);
 
 /** Uma resposta de sucesso com uso declarado, no dialeto do provedor ativo. */
 const respostaComUso = (texto, uso) => (GEMINI

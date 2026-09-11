@@ -15,7 +15,7 @@ import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_C
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD } from '../lib/custo.mjs';
-import { provedor, schemaDoProvedor } from '../lib/provedor.mjs';
+import { provedor, schemaDoProvedor, capacidadesDoModelo } from '../lib/provedor.mjs';
 
 // ---------------------------------------------------------------------------
 // O DIALETO DO PROVEDOR ATIVO — os acessos que este arquivo fazia à mão
@@ -48,7 +48,13 @@ const schemaDaReq = (body) => (GEMINI
   : body.response_format.json_schema.schema);
 
 /** O teto de tokens de saída. */
-const tetoDaReq = (body) => (GEMINI ? body.generationConfig.maxOutputTokens : body.max_tokens);
+// O nome do campo de teto é do MODELO (a família GPT-5 recusa `max_tokens` e
+// exige `max_completion_tokens`), então lê-se pela capacidade declarada — a
+// mesma fonte que `montarCorpoIA` usa para escrever. Travar o nome fixo aqui
+// seria travar o mecanismo, e mecanismo travado protege o bug (regra 3).
+const tetoDaReq = (body) => (GEMINI
+  ? body.generationConfig.maxOutputTokens
+  : body[capacidadesDoModelo(body.model).tetoDeSaida]);
 
 /** Esta parte carrega o ARQUIVO (e não texto)? */
 const ehParteDeArquivo = (parte) => (GEMINI

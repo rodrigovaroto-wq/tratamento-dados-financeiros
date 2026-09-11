@@ -12,6 +12,7 @@ import {
 import { contentPartFromFile } from '../lib/ia.mjs';
 import {
   PROVEDORES, provedor, conteudoDaResposta, cortadoPorLimite, usoDaChamada,
+  capacidadesDoModelo,
 } from '../lib/provedor.mjs';
 
 // AS FIXTURAS DESTE ARQUIVO SÃO ESCRITAS NA FORMA DA OPENAI, E ISSO É ESCOLHA.
@@ -271,9 +272,13 @@ test('buildExtractionRequest define max_tokens explícito (sem isso, documentos 
   for (const prov of Object.values(PROVEDORES)) {
     const parte = contentPartFromFile({ mimeType: 'application/pdf', base64: 'QUJD', filename: 'balanco.pdf' }, prov);
     const req = buildExtractionRequest({ tipo: 'COMBINADO', nomeOriginal: 'balanco.pdf', conteudo: parte, prov });
+    // O NOME DO CAMPO É DO MODELO, não do dialeto: a família GPT-5 recusa
+    // `max_tokens` e exige `max_completion_tokens`. O INVARIANTE é o teto
+    // existir e valer 16.384 — o campo em que ele mora é mecanismo, e travar
+    // mecanismo protege o bug (regra 3 do CLAUDE.md).
     const teto = prov.dialeto === 'gemini'
       ? req.body.generationConfig.maxOutputTokens
-      : req.body.max_tokens;
+      : req.body[capacidadesDoModelo(req.body.model).tetoDeSaida];
     assert.equal(teto, 16384, prov.id);
   }
 });

@@ -27,12 +27,13 @@ import { codigosConhecidos } from './lib/ia.mjs';
 import {
   provedor, urlDaChamada, montarCorpoIA, schemaDoProvedor, parteDeArquivo, parteDeTexto,
   conteudoDaResposta, cortadoPorLimite, usoDaChamada, acrescentarInstrucao,
+  capacidadesDoModelo, CAPACIDADES_POR_MODELO, CAPACIDADES_PADRAO,
 } from './lib/provedor.mjs';
 import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, esforcosDoProvedor } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   linhasComNumero, linhasDeConta, ehLinhaDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
@@ -259,8 +260,27 @@ const custoDaChamada = ${custoDaChamada.toString()};`;
 // MESMAS que a lib usa e que as suítes exercitam — não há uma segunda
 // implementação minificada do dialeto vivendo aqui dentro.
 const PROV = provedor();
+// O ESFORÇO DE RACIOCÍNIO É RESOLVIDO NO BUILD e vai como LITERAL para o nó.
+// Mesma razão de `PROVEDOR` ser JSON: o nó Code não importa módulo, então a
+// decisão tem de chegar como dado. `null` (provedor que não raciocina) faz
+// `montarCorpoIA` não escrever o campo — e campo desconhecido é 400.
+const ESFORCOS_ATIVOS = esforcosDoProvedor();
+const ESFORCO_EXTRACAO = ESFORCOS_ATIVOS.extracao ? ESFORCOS_ATIVOS.extracao.esforco : null;
+const ESFORCO_CLASSIFICACAO = ESFORCOS_ATIVOS.classificacao
+  ? ESFORCOS_ATIVOS.classificacao.esforco : null;
 const FONTE_PROVEDOR = [
   `const PROVEDOR = ${JSON.stringify(PROV)};`,
+  // AS CAPACIDADES TÊM DE ATRAVESSAR JUNTO, e este é o motivo exato pelo qual
+  // elas são um MAPA de dados e não um `if` sobre o id do modelo dentro de
+  // `montarCorpoIA`: `toString()` não leva o escopo do módulo, então tudo o que
+  // a função referencia precisa existir aqui como literal. Sem estas duas
+  // linhas, `montarCorpoIA` chama `capacidadesDoModelo` dentro do nó Code e
+  // morre com `ReferenceError` — a chamada de IA nunca sai. Foi o
+  // `workflow-sim.test.mjs` que pegou isso, e é literalmente o que ele existe
+  // para pegar.
+  `const CAPACIDADES_POR_MODELO = ${JSON.stringify(CAPACIDADES_POR_MODELO)};`,
+  `const CAPACIDADES_PADRAO = ${JSON.stringify(CAPACIDADES_PADRAO)};`,
+  `const capacidadesDoModelo = ${capacidadesDoModelo.toString()};`,
   `const parteDeTexto = ${parteDeTexto.toString()};`,
   `const parteDeArquivo = ${parteDeArquivo.toString()};`,
   `const schemaDoProvedor = ${schemaDoProvedor.toString()};`,
@@ -634,7 +654,7 @@ const CODE_REQ_CLASSIF = `
 ${FONTE_PROVEDOR}
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
-const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_CLASSIFICACAO}',schema,partes:[parteDeTexto(PROVEDOR,'Nome (pista fraca): '+(item.nome_original||'')), item.content_part],sistema:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'});
+const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_CLASSIFICACAO}',schema,esforco:${JSON.stringify(ESFORCO_CLASSIFICACAO)},partes:[parteDeTexto(PROVEDOR,'Nome (pista fraca): '+(item.nome_original||'')), item.content_part],sistema:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'});
 return {json:{...item, ia_body: body}};
 `.trim();
 
@@ -752,7 +772,7 @@ if(!prep.content_part){
 }
 const schema=${SCHEMA_EXTRACAO};
 const promptSistema=${JSON.stringify(SYSTEM_PROMPT)};
-const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_EXTRACAO}',sistema:promptSistema,schema,maxTokens:${MAX_OUTPUT_TOKENS},partes:[
+const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_EXTRACAO}',sistema:promptSistema,schema,maxTokens:${MAX_OUTPUT_TOKENS},esforco:${JSON.stringify(ESFORCO_EXTRACAO)},partes:[
   parteDeTexto(PROVEDOR,'Nome do arquivo: '+(prep.nome_original||'(sem nome)')+'. Dica de tipo (do nome, pode estar errada): '+(prep.tipo_taxonomia||'desconhecido')+'. Diagnostique e extraia as linhas financeiras.'),
   prep.content_part]});
 // aviso_conteudo viaja junto: o que o preparo ja sabia estar faltando ANTES da
