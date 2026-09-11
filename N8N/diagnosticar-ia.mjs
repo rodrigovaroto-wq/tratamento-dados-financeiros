@@ -190,6 +190,15 @@ try {
       sistema: null,
       partes: [parteDeTexto(PROV, 'ok')],
       maxTokens: 1,
+      // `none` pela MESMA razão do corpo mínimo do workflow de diagnóstico (ver
+      // `build-workflow-diagnostico.mjs`): num modelo que raciocina, o default é
+      // `medium`, e token de raciocínio é gasto ANTES da primeira letra da
+      // resposta. Um teto de 1 token com esforço médio cobra centenas ou
+      // milhares de tokens e devolve vazio — esta ferramenta passaria a medir
+      // truncamento em vez de medir se a conta responde, que é a única pergunta
+      // que ela existe para fazer. Em provedor que não raciocina o campo é
+      // ignorado por `montarCorpoIA` (mandá-lo seria 400).
+      esforco: 'none',
     })),
   });
   corpo = await resposta.json().catch(() => ({}));
