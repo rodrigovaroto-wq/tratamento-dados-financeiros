@@ -399,6 +399,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_escala.test.sql 2>&1
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo
+echo "== o marcador da sonda tem de ser CÓDIGO, não comentário (a lista histórica não cresce)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/sonda_marcador_e_codigo.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
 echo "== testes de ESCALA da versão vigente (0164: >250 rótulos, o filtro opaco não vira Nested Loop)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_versao_vigente_escala.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
