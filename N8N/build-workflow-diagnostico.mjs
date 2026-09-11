@@ -70,11 +70,25 @@ const node = (name, type, typeVersion, parameters, extra = {}) => ({
 // O corpo é montado AQUI, no build, e entra no nó como literal: ele não depende
 // de nada do item. Vem de `montarCorpoIA` como todos os outros — sem schema, que
 // é o que o torna mínimo de verdade.
+// `esforco: 'none'` NÃO É DETALHE — sem ele esta chamada deixa de ser mínima.
+//
+// O Luna é modelo de RACIOCÍNIO, e o default dele é `medium`. Token de
+// raciocínio é cobrado como SAÍDA e é gasto ANTES da primeira letra da resposta,
+// então um teto de 1 token contra um esforço médio produz o pior dos mundos:
+// centenas ou milhares de tokens cobrados, resposta VAZIA (cortada pelo teto
+// antes de escrever qualquer coisa), e um veredito que passa a medir o
+// truncamento em vez de medir se a conta responde. A chamada que existe para ser
+// a mais barata do sistema viraria uma das mais caras — e mentiria.
+//
+// `none` é o único valor que torna "1 token de saída" alcançável de verdade num
+// modelo que raciocina. Em provedor que não raciocina, `montarCorpoIA` ignora o
+// campo (mandá-lo seria 400), então a linha é segura nos dois lados.
 const CORPO_MINIMO = montarCorpoIA(PROV, {
   modelo: MODELO,
   sistema: null,
   partes: [parteDeTexto(PROV, 'ok')],
   maxTokens: 1,
+  esforco: 'none',
 });
 
 const CODE_REQ = `
