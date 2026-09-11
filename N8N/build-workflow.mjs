@@ -774,7 +774,7 @@ for(let i=0;i<entradas.length;i+=1){
     // SEM RASTRO -- nunca agrupa as cegas. Isola como item proprio (degrada,
     // nao corrompe) e declara o motivo, no espirito do 'recompor_motivo' que
     // 'Recompor Contexto' ja usa para o mesmo tipo de falha declarada.
-    completos.push({json:{...raw, aviso_conteudo:'Recompor Conteudo Extraido: nao foi possivel religar esta linha ao documento de origem (itemMatching falhou). Conteudo NAO chegou a extracao.'}});
+    completos.push({json:{...raw, aviso_conteudo:'Recompor Conteudo Extraido: nao foi possivel religar esta linha ao documento de origem (itemMatching falhou). Conteudo NAO chegou a extracao.'}, pairedItem:{item:i}});
     continue;
   }
   const mt=ctx.content_mime;
@@ -787,28 +787,45 @@ for(let i=0;i<entradas.length;i+=1){
     completos.push({json:{...ctx,
       content_part: texto?parteDeTexto(PROVEDOR,texto):ctx.content_part,
       aviso_conteudo: texto?null:ctx.aviso_conteudo,
-    }});
+    }, pairedItem:{item:i}});
     continue;
   }
   // Caso 3b: CSV/XLSX/XLS -- uma ou mais linhas de planilha deste documento.
   // \`hash\` (SHA-256 do arquivo, calculado em Preparar Conteudo) e' a chave:
   // unica por conteudo, e e' a MESMA que a 0026 usa para dedup -- reaproveitar
   // em vez de inventar uma chave nova.
+  // A CHAVE E' O HASH, e isso foi CONFERIDO contra a doutrina do banco em vez de
+  // trocado por intuicao. Uma revisao apontou que dois arquivos byte a byte
+  // iguais no mesmo lote colidiriam num grupo so'. Colidem -- e e' o certo: pela
+  // migration 0026 (reextracao por hash), o mesmo par caso_id+hash E' O MESMO
+  // DOCUMENTO, e o reenvio vira nova versao sob o MESMO documento. Agrupar por
+  // posicao criaria dois documentos que o banco depois fundiria, e a identidade
+  // do sistema passaria a ter duas definicoes diferentes.
   const chave=ctx.hash||ctx.nome_original||('__sem_chave_'+i);
-  if(!porDocumento.has(chave)) porDocumento.set(chave,{ctx,linhas:[]});
+  if(!porDocumento.has(chave)) porDocumento.set(chave,{ctx,linhas:[],primeiro:i});
   const grupo=porDocumento.get(chave);
   // Defensivo aos DOIS formatos possiveis do extrator: um item com o array
   // inteiro sob '.data', ou uma linha por item (o comportamento documentado).
   if(Array.isArray(raw.data)) grupo.linhas.push(...raw.data);
   else grupo.linhas.push(raw);
 }
-const reconstruidos=[...porDocumento.values()].map(({ctx,linhas})=>({json:{...ctx,
+const reconstruidos=[...porDocumento.values()].map(({ctx,linhas,primeiro})=>({pairedItem:{item:primeiro},json:{...ctx,
   content_part: parteDeTexto(PROVEDOR, spreadsheetToText(linhas)),
   // Planilha extraida com sucesso NAO abre mais a pendencia de 'nao lida' --
   // so' abre a de TRUNCAMENTO, se a planilha estourar o teto (regra 1: so'
   // declara ausencia onde ela e' real).
   aviso_conteudo: avisoTruncamentoPlanilha(linhas),
 }}));
+// O QUE ESTE NO' NAO FECHA, e fica DITO em vez de escondido: um extrator que
+// devolve ZERO item (planilha vazia, CSV so' com cabecalho) faz o documento
+// sumir do lote sem pendencia. A correcao obvia -- sintetizar aqui o item que
+// faltou -- foi ESCRITA E DESCARTADA: o no' Medir Documento resolve o contexto
+// por referencia ao Preparar Conteudo, que depende de pairedItem, e um item
+// sintetico nao tem input a que se parear; pareado a qualquer indice ele
+// receberia o contexto do documento ERRADO. Trocar um documento que some por um
+// documento com o caso_id de outro e' piorar. Fica como lacuna declarada, a
+// fechar com uma medicao na instancia real (o extrator devolve zero item ou um
+// item vazio? a doc do n8n nao responde) -- ver ESTADO.md.
 return [...completos, ...reconstruidos];
 `.trim();
 

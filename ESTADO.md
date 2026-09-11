@@ -23,6 +23,51 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `N8N/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node N8N/build-workflow.mjs` |
 
+## A SESSÃO 84 (11/09) — LUNA, ROTEAMENTO POR FORMATO, O TIMEOUT DA MODELAGEM, E O QUE FICOU ABERTO
+
+Rodada de correção pedida pelo dono em sete itens. O que importa para a próxima sessão:
+
+| | |
+|---|---|
+| **Provedor** | **OpenAI `gpt-5.6-luna`** (era Google/Gemini). A família GPT-5 RECUSA `temperature` e `max_tokens` — o dialeto mandava os dois e TODA chamada daria 400. Capacidade por modelo em `CAPACIDADES_POR_MODELO` (`N8N/lib/provedor.mjs`), mapa declarado e não regex sobre o id |
+| **Determinismo** | **acabou, por construção.** O Luna só aceita o default de temperatura. Extração numérica deixou de ser reproduzível entre rodadas; o schema segura a forma, não o valor |
+| **Cadência** | extração a cada **32,768s** (era 8s) — o teto de saída reserva TPM e o da OpenAI está no PISO de tier (30.000). Lote de 190 ≈ **104 min**. Subir `PROVEDORES.openai.tpm` para o valor real da conta encolhe isso e os três espelhos do portal juntos |
+| **Esforço de raciocínio** | extração `low`, classificação `none`. A regra do dono virou `escolherEsforco` (`custo.mjs`): ela NÃO chuta tokens de raciocínio, calcula o LIMIAR a partir do qual o nível caro viola a regra (classificação ~176, extração ~4.077) |
+
+### As TRÊS lacunas abertas, em ordem de risco
+
+1. **O estimador do teto de US$ 3 não conta token de raciocínio.** `custoEstimadoPorConteudo`
+   projeta só o JSON; num modelo de raciocínio o `completion_tokens` real é JSON + raciocínio,
+   então ele SUBESTIMA — a direção errada para um guarda de teto, e a mesma classe de erro que
+   este arquivo já corrigiu uma vez (a suposição de cache, 10/09). Números: saída medida 7.571
+   tokens/documento, a margem de 1,25× absorve ~**1.893** tokens de raciocínio, e a regra do dono
+   toleraria 4.077 — manda o menor. Acima de ~1.893 o guarda aceita lote que não cabe.
+   **Não corrigido de propósito:** sem medir `reasoning_tokens` desta conta, pôr uma constante
+   seria ausência virando dado num arquivo que decide dinheiro. A primeira rodada real mede
+   (`usoDaChamada` já publica como `thoughts_tokens`). **Mitigação: o teto DURO de US$ 5 na conta
+   OpenAI — que é configuração de conta e começa AUSENTE numa conta nova.**
+
+2. **Extrator que devolve ZERO item some com o documento.** Planilha vazia ou CSV só com
+   cabeçalho: o documento sai do lote sem linha, sem pendência e sem aviso. A correção óbvia
+   (sintetizar o item no `Recompor Conteudo Extraido`) foi **escrita e descartada**: `Medir
+   Documento` resolve contexto por `pairedItem`, e item sintético pareado a qualquer índice
+   receberia o `caso_id` de OUTRO documento — trocar um documento que some por um documento
+   trocado é piorar. Fecha com uma medição na instância real (o `Extract From File` devolve zero
+   item ou um item vazio? a doc do n8n não responde).
+
+3. **`MAX_OUTPUT_TOKENS` e `FRACAO_DO_TETO` não foram reajustados para o raciocínio.** Na OpenAI
+   os tokens de raciocínio contam DENTRO do `max_completion_tokens`, então um bloco dimensionado
+   no limite pode truncar por gasto de pensamento. Só a primeira medição de `thoughts_tokens` diz
+   se a folga de 2× ainda existe.
+
+### O que NÃO precisa ser reinvestigado (medido nesta sessão)
+
+- A análise da sessão 83 do "Teste 00" está **correta em todos os números conferíveis**
+  (7.151 linhas, 75 sem linha, 294 pendentes, zero fórmula quebrada). Nenhum gatilho novo.
+- Trocar de provedor **remove a causa** das 72 falhas por billing do Google.
+- A `0026` define que mesmo `(caso_id, hash)` é o MESMO documento — agrupar planilha por hash no
+  `Recompor` está certo, não é colisão.
+
 ## A SESSÃO 83 (10–11/09) — O TESTE DE 190 DOCUMENTOS BATEU NA COTA DO PROVEDOR, NÃO NO CÓDIGO
 
 **Base desta seção: NÃO é consulta ao banco.** É leitura de dois arquivos que o dono enviou —

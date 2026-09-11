@@ -25,7 +25,7 @@ import {
   PRECOS_POR_PROVEDOR,
   vereditoDaCotaDiaria,
 } from '../lib/custo.mjs';
-import { PROVEDORES, provedorAtivo } from '../lib/provedor.mjs';
+import { PROVEDORES, provedorAtivo, montarCorpoIA } from '../lib/provedor.mjs';
 
 // O teto que o dono pediu, travado por teste. Se alguém mexer no número sem
 // mexer também no teto do projeto no provedor (US$ 5), o lote volta a ser barrado
@@ -567,6 +567,33 @@ test('provedor que não raciocina não recebe esforço nenhum (campo desconhecid
   const so = esforcosDoProvedor('gemini-2.5-flash-lite', 'gemini-2.5-flash-lite', PRECOS_POR_PROVEDOR.google);
   assert.equal(so.extracao, null);
   assert.equal(so.classificacao, null);
+});
+
+test('o corpo do Gemini NUNCA leva reasoning_effort — inclusive com o modelo CONFIGURADO, que raciocina', () => {
+  // A VERSÃO ANTERIOR DESTE PORTÃO ERA UMA FIXTURE NASCIDA PARA PASSAR, e uma
+  // revisão pegou: ela chamava `esforcosDoProvedor` com `gemini-2.5-flash-lite`,
+  // que NÃO é o modelo configurado para o Google. O configurado é o
+  // `gemini-3.5-flash-lite`, e ele É modelo de raciocínio (`raciocina: true`,
+  // porque gasta `thoughtsTokenCount` de verdade) — então para ELE a função
+  // devolve esforço, e o `null` que o teste afirmava nunca descrevia a rodada
+  // real. O teste passava sem medir o caminho que a produção percorre.
+  //
+  // O INVARIANTE QUE DE FATO PROTEGE contra o 400 não é "a função devolve
+  // null": é o CORPO não carregar o campo. Quem garante isso é o dialeto em
+  // `montarCorpoIA` — o ramo gemini não escreve `reasoning_effort` nem quando
+  // recebe um esforço. É isso que se afirma aqui, com o modelo de verdade.
+  const modeloReal = MODELOS_POR_PROVEDOR.google.extracao;
+  const corpo = montarCorpoIA(PROVEDORES.google, {
+    modelo: modeloReal,
+    sistema: 'S',
+    partes: [{ text: 'x' }],
+    maxTokens: 16384,
+    esforco: 'medium',
+  });
+  assert.equal(corpo.reasoning_effort, undefined,
+    'o corpo do Gemini levou reasoning_effort — isso é 400 na chamada inteira');
+  assert.equal(corpo.generationConfig.maxOutputTokens, 16384,
+    'e o teto continua no campo que o Gemini entende');
 });
 
 test('o espelho de TOKENS_SAIDA_CLASSIFICACAO não pode divergir do PERFIL_MEDIDO', () => {

@@ -980,6 +980,41 @@ test('Recompor Conteudo Extraido: linhas de DOIS documentos (CSV e XLSX) NUNCA s
   assert.equal(doXlsx.json.aviso_conteudo, null);
 });
 
+test('6164 de novo: Recompor Conteudo Extraido declara pairedItem em TODO item que devolve', async () => {
+  // POR QUE ESTE TESTE EXISTE, e por que ele não estava aqui quando precisou:
+  // o nó de fan-out original (`Fatiar Extracao`/`Juntar Blocos`) tem guarda de
+  // `pairedItem` desde o 6164, mas a guarda foi escrita como uma LISTA DE NOMES
+  // de nó. `Recompor Conteudo Extraido` muda a quantidade de itens exatamente
+  // como eles (N linhas de planilha → 1 documento) e não estava na lista, então
+  // nasceu SEM `pairedItem` e nenhuma suíte reprovou.
+  //
+  // O EFEITO, se tivesse ido para produção: `Medir Documento` resolve o
+  // contexto por `$('Preparar Conteudo').item`, que depende do pareamento. Sem
+  // ele a expressão devolve vazio, o `catch` cai para `{}` e TODO documento
+  // CSV/XLSX/XLS/XML chega ao `Registrar Documento` sem `caso_id`,
+  // `nome_original`, `hash` nem `tipo_taxonomia` — ou seja, o roteamento por
+  // formato quebraria justamente os formatos que ele existe para consertar.
+  //
+  // Este teste afirma COMPORTAMENTO (todo item devolvido é rastreável até a
+  // entrada que o gerou), não a lista de nós que alguém lembrou de escrever.
+  const entradas = [
+    { json: { Conta: 'Caixa', Valor: '100' } },
+    { json: { Produto: 'X', Qtd: '10' } },
+    { json: { Conta: 'Bancos', Valor: '50' } },
+  ];
+  const ctxPorIndice = [ctxCsv, ctxXlsx, ctxCsv].map((j) => ({ json: j }));
+  const out = await run('Recompor Conteudo Extraido', {
+    items: entradas, refs: { 'Preparar Conteudo': ctxPorIndice },
+  });
+  assert.ok(out.length > 0, 'o nó devolveu itens (senão o teste não mede nada)');
+  for (const it of out) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      `item sem pairedItem: ${JSON.stringify(it.json).slice(0, 120)}`);
+    assert.ok(it.pairedItem.item >= 0 && it.pairedItem.item < entradas.length,
+      'o pairedItem aponta para um índice que existe na entrada');
+  }
+});
+
 test('Recompor Conteudo Extraido: PDF, imagem e falha de extrator atravessam sem reconstrução', async () => {
   // Caso 1: PDF — o item É a saída do `Extrair Texto` ({text,numpages}), sem
   // `caso_id` nenhum. Não pode ser tratado como linha de planilha. O
