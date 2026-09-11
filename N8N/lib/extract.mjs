@@ -34,9 +34,14 @@ import { codigosConhecidos } from './ia.mjs';
 import {
   provedor, urlDaChamada, montarCorpoIA, parteDeTexto, conteudoDaResposta, cortadoPorLimite,
 } from './provedor.mjs';
-import { MODELO_EXTRACAO } from './custo.mjs';
+import { MODELO_EXTRACAO, esforcosDoProvedor } from './custo.mjs';
 
 const DEFAULT_MODEL = MODELO_EXTRACAO;
+
+// O esforço de raciocínio da EXTRAÇÃO, pela regra do dono (ver `escolherEsforco`
+// em `custo.mjs`). É `null` em provedor que não raciocina, e `montarCorpoIA` só
+// escreve o campo quando o modelo o aceita.
+const DEFAULT_ESFORCO = esforcosDoProvedor().extracao?.esforco ?? null;
 
 const PERIODO_TIPO_ENUM = ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido'];
 
@@ -626,6 +631,7 @@ export const RPM_CONTA = provedor().rpm;
 // conteudo: parte multimodal (arquivo/imagem/texto) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({
   tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL, prov = provedor(),
+  esforco = DEFAULT_ESFORCO,
 }) {
   return {
     url: urlDaChamada(prov, model),
@@ -634,6 +640,7 @@ export function buildExtractionRequest({
       modelo: model,
       sistema: SYSTEM_PROMPT,
       maxTokens: MAX_OUTPUT_TOKENS,
+      esforco,
       schema: extractionSchema(),
       partes: [
         parteDeTexto(

@@ -31,7 +31,7 @@
 // tipo de trabalho que a doutrina (Arquitetura do Sistema/1 Visão e Doutrina/01) manda não criar. Recusar antes de
 // gastar não custa nada e diz o que fazer.
 
-import { provedorAtivo, provedor } from './provedor.mjs';
+import { provedorAtivo, provedor, modeloRaciocina } from './provedor.mjs';
 
 // Preço, US$ por MILHÃO de tokens, POR PROVEDOR.
 // ⚠️ Preço de terceiro muda sem avisar e este arquivo não tem como saber. Se a
@@ -45,6 +45,25 @@ import { provedorAtivo, provedor } from './provedor.mjs';
 // do cache, em vez de supor que vieram.
 export const PRECOS_POR_PROVEDOR = {
   openai: {
+    // O MODELO ATIVO desde 11/09/2026 (decisão do dono: "troque todos os
+    // modelos do sistema para o GPT-5.6 Luna").
+    //
+    // Preço do CONTEXTO CURTO, conferido na página oficial da OpenAI em
+    // 11/09/2026. A mesma página devolveu `gpt-4o-mini` a 0,15/0,075/0,6 —
+    // idêntico ao que este arquivo já declarava — e é esse cruzamento que prova
+    // que a unidade lida é a mesma (US$ por MILHÃO), não uma tabela de outro
+    // formato.
+    //
+    // O QUE ESTA LINHA NÃO COBRE, e é deliberado: acima de 272 mil tokens de
+    // ENTRADA a OpenAI cobra 2× a entrada e 1,5× a saída, na requisição
+    // inteira. Uma linha só de preço não sabe expressar isso, e inventar uma
+    // média entre as duas faixas seria declarar um preço que não existe em
+    // faixa nenhuma. Fica o número da faixa em que este sistema roda: a maior
+    // entrada medida aqui é um PDF de 20 páginas (~20 mil tokens de imagem,
+    // `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md`), 13× abaixo
+    // do degrau. Documento que passe de 272 mil tokens sai mais caro do que
+    // esta tabela diz — e o lugar de tratar isso é aqui, quando existir um.
+    'gpt-5.6-luna': { entrada: 0.20, entrada_cache: 0.02, saida: 1.20 },
     'gpt-4o': { entrada: 2.5, entrada_cache: 1.25, saida: 10.0 },
     'gpt-4o-mini': { entrada: 0.15, entrada_cache: 0.075, saida: 0.6 },
   },
@@ -88,13 +107,164 @@ export const TETO_EXECUCAO_USD = 3;
 // A ESTRUTURA CONTINUA DE DOIS, e é de propósito. `pesoDaChamadaDeClassificacao`,
 // o orçamento e os nós do workflow seguem lendo duas constantes distintas — se
 // um dia valer separar de novo, é uma linha aqui, e não um refatoramento.
+// NA OPENAI, DESDE 11/09/2026, ELES VOLTARAM A SER UM SÓ — e pelo mesmo motivo
+// que os unificou no Google: o Luna entra no preço em que o modelo "barato"
+// entrava (US$ 0,20 de entrada contra os US$ 0,15 do `gpt-4o-mini`), então a
+// diferença de 17× que justificava dois modelos deixou de existir. O que separa
+// as duas chamadas agora é o ESFORÇO DE RACIOCÍNIO, não o modelo — ver
+// `ESFORCO_POR_PAPEL` abaixo.
 export const MODELOS_POR_PROVEDOR = {
-  openai: { classificacao: 'gpt-4o-mini', extracao: 'gpt-4o' },
+  openai: { classificacao: 'gpt-5.6-luna', extracao: 'gpt-5.6-luna' },
   google: { classificacao: 'gemini-3.5-flash-lite', extracao: 'gemini-3.5-flash-lite' },
 };
 
 export const MODELO_CLASSIFICACAO = MODELOS_POR_PROVEDOR[provedorAtivo()].classificacao;
 export const MODELO_EXTRACAO = MODELOS_POR_PROVEDOR[provedorAtivo()].extracao;
+
+// ---------------------------------------------------------------------------
+// O ESFORÇO DE RACIOCÍNIO — a regra do dono, em código, e o que ela NÃO decide
+// ---------------------------------------------------------------------------
+//
+// O Luna é modelo de RACIOCÍNIO. Isso acrescenta uma grandeza que nenhum modelo
+// anterior deste sistema tinha: tokens que o modelo gasta PENSANDO, cobrados
+// como SAÍDA e gastos ANTES da primeira chave do JSON. É o mesmo fato que o
+// lado Google já tinha aprendido com `thoughtsTokenCount` (ver `usoDaChamada`
+// em `provedor.mjs`) — aqui ele vem em `completion_tokens_details.reasoning_tokens`.
+//
+// REGRA DO DONO (11/09/2026), literal:
+//   • extração:     se `medium` gastar MAIS DE 50% a mais que `low`  → `low`; senão `medium`.
+//   • classificação: usar `low` se gastar MENOS DE 25% a mais que `none`; senão `none`.
+//
+// `escolherEsforco` é a regra, e só a regra. Ela NÃO adivinha quantos tokens de
+// raciocínio cada nível gasta — esse número é do modelo, não nosso, e só a
+// primeira rodada real o mede. O que ela faz é responder à pergunta que DÁ para
+// responder sem medir: **a partir de quantos tokens de raciocínio o nível mais
+// caro viola a regra?** Esse limiar é aritmética pura sobre o perfil de token
+// MEDIDO deste repositório, e é ele que torna a decisão auditável em vez de
+// opinião.
+// Os valores que a OpenAI aceita em `reasoning_effort` (Chat Completions),
+// conferidos na referência da API em 11/09/2026. Declarados para o teste poder
+// reprovar um esforço que não existe — um valor inventado aqui é 400 na chamada.
+export const ESFORCOS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// O perfil de token MEDIDO neste repositório, por documento.
+// Fonte: `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md` — o book de
+// 14 documentos/20 páginas somou ~49.000 tokens de entrada e ~106.000 de saída
+// na extração, e a classificação devolve ~120 tokens com a MESMA entrada.
+// São medições, não estimativas: quem mudar o formato de saída mexe aqui.
+// (`saidaClassificacao` repete de propósito o valor de
+// `TOKENS_SAIDA_CLASSIFICACAO`, declarado mais abaixo neste arquivo; um teste
+// trava os dois iguais, para o espelho não poder divergir em silêncio.)
+export const PERFIL_MEDIDO = {
+  entradaPorDocumento: 3500, // 49.000 ÷ 14
+  saidaExtracao: 7571, // 106.000 ÷ 14
+  saidaClassificacao: 120,
+};
+
+// A folga que cada papel tolera, pela regra do dono.
+export const FOLGA_EXTRACAO = 0.5; // medium só vale se não passar de +50% do low
+export const FOLGA_CLASSIFICACAO = 0.25; // low só vale se não passar de +25% do none
+
+/**
+ * Quantos tokens de raciocínio o nível CARO pode gastar antes de violar a regra.
+ *
+ * Sai de `custo(caro) <= (1 + folga) * custo(barato)`, com
+ * `custo = entrada*pe + (saida + raciocinio)*ps`. Tomando o pior caso do barato
+ * (raciocínio zero — supor que ele também pensa só AFROUXARIA o limiar, e
+ * limiar afrouxado por suposição é o que este projeto não faz):
+ *
+ *     (S + r)*ps  <=  (1+folga)*(E*pe + S*ps) - E*pe
+ *              r  <=  folga * (E*pe/ps + S)
+ *
+ * O termo `E*pe/ps` é a entrada convertida para "tokens de saída equivalentes":
+ * é por isso que uma chamada com entrada grande e saída minúscula (a
+ * classificação) quase não tem folga — não há saída sobre a qual a folga incida.
+ *
+ * Devolve `null` quando o preço do modelo é desconhecido: sem preço não há
+ * limiar, e um limiar inventado num arquivo de orçamento é pior que nenhum.
+ */
+export function limiarDeRaciocinio({ entrada, saida, folga, preco }) {
+  // `!Number.isFinite(...)` e NAO `<= 0`: o Sonar sugere a "operação oposta"
+  // (`preco.saida <= 0`), e ela seria ERRADA aqui. Preço ausente vira `NaN`, e
+  // `NaN <= 0` é FALSO — o modelo sem preço passaria pela guarda e a divisão
+  // devolveria `NaN` como se fosse um limiar. `!(x > 0)` já rejeitava NaN por
+  // acidente da semântica; isto rejeita por INTENÇÃO declarada.
+  if (!preco || !Number.isFinite(preco.saida) || preco.saida <= 0) return null;
+  return folga * ((entrada * preco.entrada) / preco.saida + saida);
+}
+
+/**
+ * O esforço de raciocínio de um papel, pela regra do dono.
+ *
+ * `raciocinioMedido` é quantos tokens de raciocínio o nível CARO gasta de fato,
+ * e só a rodada real o sabe. Ausente (`null`), a função NÃO chuta: devolve o
+ * nível barato e diz, no `porque`, que a condição do nível caro não foi provada.
+ * É a regra 1 deste projeto aplicada a uma decisão de configuração — "não medi"
+ * não pode sair vestido de "medi e deu isto".
+ */
+export function escolherEsforco({
+  barato, caro, entrada, saida, folga, preco, raciocinioMedido = null,
+}) {
+  const limiar = limiarDeRaciocinio({ entrada, saida, folga, preco });
+  if (limiar == null) {
+    return { esforco: barato, limiar: null, porque: 'preço do modelo desconhecido — sem limiar' };
+  }
+  const arredondado = Math.round(limiar);
+  if (raciocinioMedido == null) {
+    return {
+      esforco: barato,
+      limiar: arredondado,
+      porque: `"${caro}" só cabe na regra se gastar até ${arredondado} token(s) de `
+        + `raciocínio por chamada, e isso ainda NÃO foi medido nesta conta`,
+    };
+  }
+  const cabe = raciocinioMedido <= limiar;
+  return {
+    esforco: cabe ? caro : barato,
+    limiar: arredondado,
+    porque: cabe
+      ? `"${caro}" medido em ${raciocinioMedido} token(s) de raciocínio, dentro do limiar ${arredondado}`
+      : `"${caro}" medido em ${raciocinioMedido} token(s) de raciocínio, acima do limiar ${arredondado}`,
+  };
+}
+
+/**
+ * O esforço de cada papel, resolvido para o provedor ativo.
+ *
+ * Provedor sem raciocínio (o Google, aqui) devolve `null` nos dois — mandar
+ * `reasoning` para quem não tem é campo desconhecido, e campo desconhecido é
+ * 400 na chamada inteira, não um aviso.
+ */
+export function esforcosDoProvedor(
+  modeloExtracao = MODELO_EXTRACAO,
+  modeloClassificacao = MODELO_CLASSIFICACAO,
+  tabela = PRECO_USD_POR_MILHAO,
+  medido = {},
+) {
+  if (!modeloRaciocina(modeloExtracao) && !modeloRaciocina(modeloClassificacao)) {
+    return { extracao: null, classificacao: null };
+  }
+  return {
+    extracao: escolherEsforco({
+      barato: 'low',
+      caro: 'medium',
+      entrada: PERFIL_MEDIDO.entradaPorDocumento,
+      saida: PERFIL_MEDIDO.saidaExtracao,
+      folga: FOLGA_EXTRACAO,
+      preco: tabela[modeloExtracao],
+      raciocinioMedido: medido.extracao ?? null,
+    }),
+    classificacao: escolherEsforco({
+      barato: 'none',
+      caro: 'low',
+      entrada: PERFIL_MEDIDO.entradaPorDocumento,
+      saida: PERFIL_MEDIDO.saidaClassificacao,
+      folga: FOLGA_CLASSIFICACAO,
+      preco: tabela[modeloClassificacao],
+      raciocinioMedido: medido.classificacao ?? null,
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // O PESO DA SEGUNDA CHAMADA — o defeito de estimativa que restava
@@ -472,6 +642,25 @@ export const CARACTERES_POR_TOKEN = 4;
 
 /** O PDF vira imagem: ~1.000 tokens por página (docs/CUSTO_OPENAI.md). */
 export const TOKENS_POR_PAGINA_IMAGEM = 1000;
+
+// O PIOR CASO REAL DE ENTRADA, não um teto do sistema. É o mesmo número que o
+// comentário de `PRECOS_POR_PROVEDOR.openai` já cita (20 páginas, ~20 mil
+// tokens de imagem, `Arquitetura do Sistema/4 Análises e Auditorias/CUSTO_IA.md`)
+// — documento maior pode aparecer amanhã, mas este é o maior JÁ MEDIDO, e é o
+// número certo para dimensionar CADÊNCIA (abaixo, em `build-workflow.mjs`):
+// dimensionar pela MÉDIA (`PERFIL_MEDIDO.entradaPorDocumento`, 3.500 tokens)
+// deixaria o intervalo folgado no documento típico e apertado exatamente no
+// maior — que é o único em que o TPM de fato aperta.
+//
+// ACHADO NUMA REVISÃO ADVERSARIAL (11/09/2026): até esta correção, o intervalo
+// entre chamadas (`INTERVALO_EXTRACAO_MS`) considerava só os tokens de SAÍDA
+// (`MAX_OUTPUT_TOKENS`), com um comentário afirmando que a reserva "cobre a
+// chamada inteira" — falso. Um PDF de 20 páginas manda ~20.000 tokens de
+// ENTRADA MAIS os 16.384 reservados de saída: 36.384 numa única chamada,
+// acima do TPM de 30.000 do Tier 1. Nenhum espaçamento entre chamadas evita um
+// 429 de UMA chamada sozinha estourando o balde — é o mesmo desfecho das 72
+// falhas do "Teste 00" (`HANDOFF.md`), por um caminho que ninguém tinha somado.
+export const PAGINAS_MAX_MEDIDO = 20;
 
 // A saída, no formato AGRUPADO que roda hoje (uma seção por grupo, as colunas
 // declaradas uma vez, a conta escrita uma vez com um valor por coluna). Os três

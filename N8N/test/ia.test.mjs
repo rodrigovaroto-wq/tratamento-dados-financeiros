@@ -13,7 +13,9 @@ import {
 } from '../lib/ia.mjs';
 import {
   PROVEDORES, schemaDoProvedor, modelosDoCatalogo, modelosParecidos,
+  capacidadesDoModelo, CAPACIDADES_POR_MODELO,
 } from '../lib/provedor.mjs';
+import { MODELOS_POR_PROVEDOR } from '../lib/custo.mjs';
 
 /** A mesma resposta, escrita como cada provedor a escreveria. */
 function respostaDe(prov, objeto) {
@@ -44,16 +46,32 @@ test('codigosConhecidos não tem duplicatas', () => {
   assert.equal(new Set(c).size, c.length);
 });
 
-test('buildClassificationRequest prende a saída ao schema e zera a temperatura', () => {
-  // Os dois pedidos são o mesmo fato em dois dialetos, e nenhum dos dois é
-  // opcional: sem o schema a saída é texto livre (parsing frágil, que este
-  // sistema não tem), e sem temperatura 0 o mesmo documento classifica diferente
-  // a cada rodada — o que arruinaria a rotulagem cega do golden set (0130).
+test('buildClassificationRequest prende a saída ao schema, e a temperatura segue a capacidade DECLARADA do modelo', () => {
+  // O schema não é opcional em nenhum dialeto: sem ele a saída é texto livre
+  // (parsing frágil, que este sistema não tem).
+  //
+  // A TEMPERATURA MUDOU DE NATUREZA EM 11/09/2026, e esconder isso seria o
+  // defeito. Até aqui o invariante era "temperatura 0 SEMPRE", porque sem ela o
+  // mesmo documento classifica diferente a cada rodada e a rotulagem cega do
+  // golden set (0130) perde o chão. A família GPT-5 RECUSA o parâmetro — mandá-lo
+  // é 400 na chamada inteira —, então "sempre" deixou de ser alcançável.
+  //
+  // O invariante que sobra, e que este teste trava, é mais fraco mas é VERDADE:
+  // a temperatura 0 é mandada para todo modelo que a ACEITA, e a ausência dela
+  // só é tolerada onde a capacidade DECLARA que o modelo não a aceita. Assim
+  // ninguém perde determinismo por descuido — só por declaração explícita, que
+  // é revisável. `N8N/lib/repetibilidade.mjs` (`compararExtracoes`,
+  // `documentoAmostradoParaRepetibilidade`) é a comparação determinística, fora
+  // do LLM, que existe para nomear essa perda — testada e auto-contida, mas
+  // AINDA NÃO LIGADA ao workflow real (11/09/2026): nenhum nó do grafo a chama.
+  // Até lá, "coberto" seria afirmação maior que o código sustenta — a extração
+  // não reprodutível segue sem conferência EM PRODUÇÃO.
   for (const prov of Object.values(PROVEDORES)) {
+    const modelo = 'modelo-de-teste';
     const req = buildClassificationRequest({
       nomeOriginal: 'doc.pdf',
       conteudo: { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
-      model: 'modelo-de-teste',
+      model: modelo,
       prov,
     });
     assert.equal(req.method, 'POST');
@@ -63,9 +81,27 @@ test('buildClassificationRequest prende a saída ao schema e zera a temperatura'
       assert.equal(req.body.generationConfig.responseSchema.type, 'OBJECT', prov.id);
       assert.equal(req.body.contents.length, 1, prov.id);
     } else {
-      assert.equal(req.body.temperature, 0, prov.id);
+      const cap = capacidadesDoModelo(modelo);
+      assert.equal(req.body.temperature, cap.temperatura ? 0 : undefined, prov.id);
       assert.equal(req.body.response_format.type, 'json_schema', prov.id);
       assert.equal(req.body.messages.length, 2, prov.id);
+    }
+  }
+});
+
+test('todo modelo que este sistema roda de verdade tem capacidade DECLARADA (o default silencioso não vale para eles)', () => {
+  // O default de modelo desconhecido é conservador (sem temperatura, teto
+  // novo), e existe para uma API nova não quebrar. Ele NÃO pode virar o caminho
+  // por onde o modelo de produção passa: um `gpt-4o` que caísse no default
+  // perderia `temperature: 0` sem ninguém notar — determinismo some em silêncio,
+  // que é exatamente o defeito central deste projeto.
+  for (const [id, modelos] of Object.entries(MODELOS_POR_PROVEDOR)) {
+    for (const papel of ['classificacao', 'extracao']) {
+      const modelo = modelos[papel];
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(CAPACIDADES_POR_MODELO, modelo),
+        `${id}/${papel}: "${modelo}" não tem capacidade declarada em CAPACIDADES_POR_MODELO`,
+      );
     }
   }
 });

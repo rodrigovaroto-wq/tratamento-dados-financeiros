@@ -44,6 +44,21 @@ que patcheie corpo de função (`pg_get_functiondef`) com `regexp_matches`/
 `regexp_replace` e um padrão MULTI-LINHA sem `\r?` — antes de aplicar
 migration nenhuma, sem precisar do banco de pé.
 
-**Regra:** âncora que cruza linha de um corpo de função tem de tolerar
-`\r?` antes de cada `\n` — ou, melhor ainda, não usar âncora nenhuma e
-reemitir a função inteira.
+**Regra:** a regra é a de `nunca-corrigir-funcao-por-replace.md`, sem
+exceção — **migration que muda função reemite a função**. Esta memória NÃO
+abre uma segunda via.
+
+A primeira versão desta linha dizia "tolere `\r?` — ou, melhor ainda,
+reemita", e isso foi um erro medido: ela fazia da âncora o conselho
+principal e da reemissão um opcional. Depois de `nunca-corrigir-funcao-por-replace.md`
+existir (31/08), **quatro migrations patchearam corpo por texto assim mesmo**
+(`0160`, `0161`, `0162`, `0163`) e **duas abortaram em produção** (10/09). A
+`0163` existe só para desfazer a técnica. Custo de passar um argumento a
+mais para um `format()`: três migrations, uma guarda, duas memórias e dois
+abortos em produção.
+
+O `\r?` continua valendo para **UM** caso, e só ele: código que precisa
+CONFERIR um corpo já gravado (um `position()` de verificação depois da
+reemissão, por exemplo). Aí normalize com `replace(corpo, chr(13), '')`
+antes de comparar, em vez de tentar acertar a âncora. Ele **não** é licença
+para escrever patch por âncora novo.

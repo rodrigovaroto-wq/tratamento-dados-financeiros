@@ -112,10 +112,17 @@ export const PROVEDORES = {
   },
 };
 
-// O PADRÃO É O GOOGLE desde 24/08/2026 (decisão do dono). A OpenAI continua
-// inteira e testada aqui — trocar de volta é `IA_PROVEDOR=openai` e regerar o
-// workflow, não é reescrever nada.
-export const PROVEDOR_PADRAO = 'google';
+// O PADRÃO VOLTOU A SER A OPENAI em 11/09/2026 (decisão do dono: "troque todos
+// os modelos do sistema para o GPT-5.6 Luna"). O Google continua inteiro e
+// testado aqui — voltar é `IA_PROVEDOR=google` e regerar o workflow.
+//
+// A TROCA RESOLVE, DE QUEBRA, A CAUSA MEDIDA DA ÚLTIMA RODADA. No "Teste 00"
+// (190 documentos, 10–11/09) 75 documentos saíram sem nenhuma linha, e 72 deles
+// pelo MESMO motivo: conta do Google sem billing ativo, HTTP 429. Não era
+// defeito de código — era a conta — e sair dessa conta remove a causa. Isto não
+// é razão para trocar de provedor; é consequência, e fica registrado para a
+// próxima sessão não procurar no código um defeito que nunca esteve lá.
+export const PROVEDOR_PADRAO = 'openai';
 
 /**
  * O provedor ativo, lido do ambiente. Nome desconhecido cai no padrão em vez de
@@ -135,6 +142,61 @@ export function provedor(id = provedorAtivo()) {
 /** A URL da chamada, já com o modelo no lugar quando o dialeto pede. */
 export function urlDaChamada(prov, modelo) {
   return String(prov.url).replace('{modelo}', encodeURIComponent(String(modelo || '')));
+}
+
+// ---------------------------------------------------------------------------
+// AS CAPACIDADES DO MODELO — o que é do MODELO e não do provedor
+// ---------------------------------------------------------------------------
+//
+// Até 11/09/2026 este arquivo supunha que "dialeto openai" bastava para montar o
+// corpo: `temperature: 0` e `max_tokens`, sempre. A família GPT-5 quebrou a
+// suposição, e não em silêncio — ela RECUSA os dois:
+//
+//   • `temperature` não é aceito (só o default) → HTTP 400 na chamada inteira.
+//   • `max_tokens` foi substituído por `max_completion_tokens` → HTTP 400.
+//
+// Ou seja: trocar só o nome do modelo faria TODA chamada do lote falhar. Não é
+// defeito silencioso — é barulhento — mas mata a rodada inteira, e o custo de
+// descobrir isso em produção é um book perdido.
+//
+// POR QUE UM MAPA DECLARADO E NÃO UM `if (/^gpt-5/)`. Um regex sobre o id acerta
+// hoje e erra no próximo modelo que a OpenAI lançar com outro prefixo — e erra
+// em SILÊNCIO, mandando `temperature` para quem não aceita. Um mapa erra ALTO:
+// modelo que ninguém declarou cai no default conservador abaixo e o teste
+// `custo.test.mjs` cobra a declaração. É a mesma razão pela qual `PROVEDORES` é
+// dado puro e não código.
+//
+// O DEFAULT DE MODELO DESCONHECIDO é o moderno (sem `temperature`,
+// `max_completion_tokens`, sem raciocínio): é o que não quebra numa API nova.
+// Ele NÃO é uma opinião sobre qualidade — é a escolha que falha para o lado de
+// uma chamada que funciona com o default do provedor, em vez de uma que é
+// recusada. Modelo que precise de `temperature: 0` (determinismo) tem de estar
+// DECLARADO aqui, senão perde o determinismo sem ninguém notar.
+export const CAPACIDADES_POR_MODELO = {
+  // OpenAI, família GPT-5 — raciocina, recusa temperature, teto novo.
+  'gpt-5.6-luna': { temperatura: false, tetoDeSaida: 'max_completion_tokens', raciocina: true },
+  // OpenAI, geração 4o — aceita temperature, teto antigo, não raciocina.
+  'gpt-4o': { temperatura: true, tetoDeSaida: 'max_tokens', raciocina: false },
+  'gpt-4o-mini': { temperatura: true, tetoDeSaida: 'max_tokens', raciocina: false },
+  // Google — o teto e a temperatura moram no `generationConfig`, e o campo do
+  // raciocínio (`thinkingConfig`) não é o `reasoning` da OpenAI. `raciocina`
+  // aqui diz só "gasta token de pensamento", que é o que o ORÇAMENTO precisa
+  // saber; quem monta o corpo ramifica pelo dialeto, como sempre.
+  'gemini-3.5-flash-lite': { temperatura: true, tetoDeSaida: 'maxOutputTokens', raciocina: true },
+  'gemini-2.5-flash-lite': { temperatura: true, tetoDeSaida: 'maxOutputTokens', raciocina: false },
+};
+
+export const CAPACIDADES_PADRAO = {
+  temperatura: false, tetoDeSaida: 'max_completion_tokens', raciocina: false,
+};
+
+export function capacidadesDoModelo(modelo) {
+  return CAPACIDADES_POR_MODELO[String(modelo || '')] || CAPACIDADES_PADRAO;
+}
+
+/** O modelo gasta token de raciocínio? É o que o orçamento precisa saber. */
+export function modeloRaciocina(modelo) {
+  return capacidadesDoModelo(modelo).raciocina === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +268,10 @@ export function schemaDoProvedor(prov, jsonSchema) {
 // responde. Ali não há saída para prender — prendê-la a um schema faria a
 // chamada mínima deixar de ser mínima. Todo o resto do sistema sempre manda
 // schema, e é o schema que torna o parsing não-frágil.
-export function montarCorpoIA(prov, { modelo, sistema, partes, schema = null, maxTokens = null }) {
+export function montarCorpoIA(
+  prov,
+  { modelo, sistema, partes, schema = null, maxTokens = null, esforco = null },
+) {
   const lista = Array.isArray(partes) ? partes : [partes];
   if (prov.dialeto === 'gemini') {
     const corpo = {
@@ -221,11 +286,27 @@ export function montarCorpoIA(prov, { modelo, sistema, partes, schema = null, ma
     if (maxTokens) corpo.generationConfig.maxOutputTokens = maxTokens;
     return corpo;
   }
-  const corpo = { model: modelo, temperature: 0, messages: [] };
+  const cap = capacidadesDoModelo(modelo);
+  const corpo = { model: modelo, messages: [] };
+  // `temperature: 0` só entra em modelo que o ACEITA. Na família GPT-5 ele é
+  // recusado (400) e o modelo roda no default — então o determinismo que este
+  // sistema tinha na extração numérica deixa de existir por construção, não por
+  // descuido. `N8N/lib/repetibilidade.mjs` (`compararExtracoes`) é a função
+  // determinística, fora do LLM, que compara duas extrações do MESMO documento
+  // e acusa divergência — pedida pelo dono para fechar exatamente esta lacuna.
+  // ELA AINDA NÃO ESTÁ LIGADA AO WORKFLOW (11/09/2026): existe testada e
+  // auto-contida, mas nenhum nó do grafo a chama ainda — a segunda extração
+  // amostral e a comparação dentro do fluxo ficaram para uma sessão seguinte.
+  // Até lá, a perda de determinismo NÃO está coberta, só nomeada.
+  if (cap.temperatura) corpo.temperature = 0;
   if (schema) corpo.response_format = { type: 'json_schema', json_schema: schema };
   if (sistema) corpo.messages.push({ role: 'system', content: sistema });
   corpo.messages.push({ role: 'user', content: lista });
-  if (maxTokens) corpo.max_tokens = maxTokens;
+  // O NOME DO TETO MUDA COM O MODELO, e mandar o errado é 400.
+  if (maxTokens) corpo[cap.tetoDeSaida] = maxTokens;
+  // O esforço só vai para quem raciocina — campo desconhecido é 400 na chamada
+  // inteira, não um aviso. `esforco` nulo deixa o modelo no default dele.
+  if (cap.raciocina && esforco) corpo.reasoning_effort = esforco;
   return corpo;
 }
 
@@ -323,9 +404,24 @@ export function cortadoPorLimite(prov, resp) {
  * e devolve null, que é o certo. Zero seria um custo INVENTADO num relatório de
  * custo, que é pior que um campo vazio.
  */
-export function usoDaChamada(prov, resp) {
-  if (prov.dialeto === 'gemini') {
-    const u = resp && resp.usageMetadata;
+/**
+ * O uso na forma do Gemini, traduzido para a da OpenAI.
+ *
+ * SEPARADA DE `usoDaChamada` em 11/09/2026, e não é cosmético: a função única
+ * ramificava por dialeto E fazia a normalização numérica dos dois lados, e o
+ * ramo novo do raciocínio da OpenAI a empurrou para complexidade cognitiva 16
+ * (o Sonar reprova acima de 15). Empilhar mais um `if` numa função que já
+ * ramificava é exatamente o sedimento que a auditoria desta sessão mediu — a
+ * saída é separar os ramos, não achatá-los.
+ *
+ * ATENÇÃO À FRONTEIRA DO `toString()`: esta função roda DENTRO de nó Code do
+ * n8n, e o gerador tem de embuti-la junto com `usoDaChamada` (ver
+ * `FONTE_PROVEDOR` em `build-workflow.mjs`). Sem isso é `ReferenceError` no nó
+ * e a medição de custo do lote some — já aconteceu nesta sessão com
+ * `capacidadesDoModelo`.
+ */
+export function usoGemini(resp) {
+    const u = resp?.usageMetadata;
     if (!u) return null;
     const cache = Number(u.cachedContentTokenCount || 0);
     // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.
@@ -352,8 +448,27 @@ export function usoDaChamada(prov, resp) {
       // desligar o pensamento no prompt de extração.
       thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,
     };
-  }
-  return (resp && resp.usage) || null;
+}
+
+export function usoDaChamada(prov, resp) {
+  if (prov.dialeto === 'gemini') return usoGemini(resp);
+  const u = resp?.usage;
+  if (!u) return null;
+  // O TOKEN DE RACIOCÍNIO TAMBÉM EXISTE AQUI, desde a família GPT-5.
+  //
+  // Diferença que importa para a conta: na OpenAI o `completion_tokens` JÁ
+  // INCLUI os tokens de raciocínio (ao contrário do Gemini, onde
+  // `candidatesTokenCount` e `thoughtsTokenCount` são disjuntos e precisam ser
+  // somados). Então `custoDaChamada` não muda e NÃO se soma nada aqui — somar
+  // cobraria o raciocínio duas vezes.
+  //
+  // O que se acrescenta é a PARCELA declarada, no mesmo campo que o lado Gemini
+  // já publica, porque é ela que responde à pergunta que a regra do dono faz:
+  // quantos tokens o modelo gastou pensando, para decidir o `reasoning_effort`
+  // pela medição em vez de pelo limiar teórico (ver `escolherEsforco`).
+  const det = u.completion_tokens_details;
+  const raciocinio = Number(det?.reasoning_tokens || 0);
+  return { ...u, thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0 };
 }
 
 /**

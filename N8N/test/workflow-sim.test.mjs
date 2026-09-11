@@ -14,8 +14,20 @@ import { codigosConhecidos } from '../lib/ia.mjs';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
-import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD } from '../lib/custo.mjs';
-import { provedor, schemaDoProvedor } from '../lib/provedor.mjs';
+import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD, PAGINAS_MAX_MEDIDO, TOKENS_POR_PAGINA_IMAGEM } from '../lib/custo.mjs';
+
+// O PIOR CASO DE ENTRADA (tokens de imagem), a MESMA conta que
+// `build-workflow.mjs` usa para dimensionar a cadência (`ENTRADA_MAX_MEDIDA_TOKENS`).
+// Os dois testes de cadência abaixo mediam a reserva de TPM só pela SAÍDA
+// (`MAX_OUTPUT_TOKENS`) — o MESMO defeito que uma revisão adversarial achou no
+// gerador em 11/09/2026 ("a reserva cobre a chamada inteira" era falso: a
+// OpenAI reserva o MAIOR entre `max_tokens` e o tamanho REAL do request, e a
+// entrada nunca entrava na conta). Sem esta correção, os dois testes ficavam
+// VERDES sobre uma cadência que deixava um PDF de 20 páginas estourar o balde
+// sozinho — o mesmo "estágio desligado parece limpo" que a suíte existe para
+// não deixar passar.
+const RESERVA_ENTRADA_TOKENS_TESTE = PAGINAS_MAX_MEDIDO * TOKENS_POR_PAGINA_IMAGEM;
+import { provedor, schemaDoProvedor, capacidadesDoModelo } from '../lib/provedor.mjs';
 
 // ---------------------------------------------------------------------------
 // O DIALETO DO PROVEDOR ATIVO — os acessos que este arquivo fazia à mão
@@ -48,7 +60,13 @@ const schemaDaReq = (body) => (GEMINI
   : body.response_format.json_schema.schema);
 
 /** O teto de tokens de saída. */
-const tetoDaReq = (body) => (GEMINI ? body.generationConfig.maxOutputTokens : body.max_tokens);
+// O nome do campo de teto é do MODELO (a família GPT-5 recusa `max_tokens` e
+// exige `max_completion_tokens`), então lê-se pela capacidade declarada — a
+// mesma fonte que `montarCorpoIA` usa para escrever. Travar o nome fixo aqui
+// seria travar o mecanismo, e mecanismo travado protege o bug (regra 3).
+const tetoDaReq = (body) => (GEMINI
+  ? body.generationConfig.maxOutputTokens
+  : body[capacidadesDoModelo(body.model).tetoDeSaida]);
 
 /** Esta parte carrega o ARQUIVO (e não texto)? */
 const ehParteDeArquivo = (parte) => (GEMINI
@@ -176,6 +194,12 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
       first: () => lista[0],
       item: Array.isArray(v) ? lista[itemIndex] : v,
       all: (_b, run = 0) => { if (run > 0) throw new Error(`execução ${run} não existe`); return lista; },
+      // `itemMatching(i)`: o item de ENTRADA no nó referenciado que produziu o
+      // item de índice `i` na entrada do nó ATUAL — a API do n8n para reatar
+      // contexto depois de um nó que muda a quantidade de itens (1 documento
+      // → N linhas de planilha). Aqui, mockado por índice direto na lista: o
+      // teste decide o mapeamento passando a lista já na ORDEM esperada.
+      itemMatching: (i) => (Array.isArray(v) ? lista[i] : v),
     };
   };
   const $json = item ? item.json : undefined;
@@ -677,17 +701,21 @@ test('Os dois nós OpenAI pedem o CORPO da resposta de erro (`neverError`)', () 
 test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () => {
   // A rodada anterior subiu o intervalo de 6s para 12s por chute e o 429
   // continuou — erro meu, registrado aqui para não repetir. A OpenAI cobra do
-  // balde de TPM o MÁXIMO entre `max_tokens` e os tokens estimados do request,
-  // então cada extração RESERVA MAX_OUTPUT_TOKENS por chamada, independente do
-  // tamanho do PDF. Isso torna o intervalo mínimo uma conta, não uma opinião:
-  // TPM / max_tokens = chamadas por minuto.
+  // balde de TPM o MÁXIMO entre `max_tokens` e os tokens ESTIMADOS DO REQUEST
+  // (entrada + saída) — não só `max_tokens`. Este teste chegou a assumir só a
+  // saída (achado numa revisão adversarial, 11/09/2026: "a reserva cobre a
+  // chamada inteira" era falso, e um PDF de 20 páginas somado aos 16.384 de
+  // saída passa do teto do Tier 1 sozinho). Isso torna o intervalo mínimo uma
+  // conta, não uma opinião: TPM / (entrada + max_tokens) = chamadas por minuto.
   // E DESDE 24/08/2026 SÃO DOIS BALDES, não um. A reserva de tokens é o gargalo
   // da OpenAI; provedor que limita por CHAMADA (o Google, 15/min no patamar de
   // entrada) tem o balde de tokens folgado e o de chamadas apertado. A cadência
   // tem de caber nos DOIS, e é isso que este teste passou a exigir.
   const intervalo = byName['IA Extrair'].parameters.options.batching.batch.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
-  const tpmReservado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  // A RESERVA É ENTRADA + SAÍDA, não só `MAX_OUTPUT_TOKENS` — ver
+  // `RESERVA_ENTRADA_TOKENS_TESTE` no topo do arquivo.
+  const tpmReservado = chamadasPorMinuto * (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS);
   assert.ok(tpmReservado <= TPM_CONTA + 1,
     `a cadência reserva ${Math.round(tpmReservado)} TPM, acima do teto da conta (${TPM_CONTA}) — o 429 é matemático`);
   if (RPM_CONTA) {
@@ -703,7 +731,8 @@ test('A cadência da extração é DERIVADA do TPM, não escolhida a olho', () =
   // E não pode ser lenta a ponto de não usar a conta: pelo menos metade do balde
   // QUE MANDA. Qual dos dois manda depende do provedor, e travar o de tokens
   // quando o gargalo é o de chamadas exigiria uma cadência que toma 429.
-  const mandaOTpm = !RPM_CONTA || (TPM_CONTA / MAX_OUTPUT_TOKENS) <= RPM_CONTA / 2;
+  const mandaOTpm = !RPM_CONTA
+    || (TPM_CONTA / (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS)) <= RPM_CONTA / 2;
   if (mandaOTpm) {
     assert.ok(tpmReservado >= TPM_CONTA / 2,
       `${Math.round(tpmReservado)} TPM desperdiça mais da metade do limite disponível (${TPM_CONTA})`);
@@ -859,20 +888,276 @@ test('Topologia: o teto de gasto fica entre a medição do documento e a primeir
   }
 });
 
-test('Topologia: Upload é ramo lateral; nada consome a saída dele', () => {
+// A TOPOLOGIA ANTIGA (até esta rodada) mandava TODO item, de qualquer
+// mimetype, para um `Extrair Texto` único (operação PDF) — CSV era parseado à
+// mão dentro de `Preparar Conteudo`, e XLSX/XLS/XML nunca eram extraídos. O
+// dono editou o n8n VIVO pendurando 5 nós "Extract from..." (CSV/XML/PDF/
+// XLSX/XLS) em PARALELO depois de `Preparar Conteudo`, todos para o mesmo
+// destino — fan-out CEGO: cada documento virava 5 itens (1 certo, 4 lixo), e
+// a mudança nunca existiu no repositório (some na próxima republicação). Este
+// teste trava o oposto: um `Roteador de Formato` que manda CADA documento a
+// EXATAMENTE UM extrator, e um Merge que reconverge tudo antes de `Medir
+// Documento` — nunca dois nós crus na mesma saída, nunca um extrator recebendo
+// o formato errado.
+test('Topologia: Upload é ramo lateral; o Roteador manda cada formato a UM extrator só', () => {
   const destinosDePreparar = wf.connections['Preparar Conteudo'].main[0].map((c) => c.node);
-  // O `Extrair Texto` entra AQUI (e não antes do preparo): neste ponto o binário
-  // ainda existe e o `content_part` já carrega o arquivo em base64 dentro do
-  // json, então o fato de ele descartar o binário deixa de ter consequência.
-  assert.ok(destinosDePreparar.includes('Extrair Texto'));
-  assert.deepEqual(destinosDePreparar.sort(), ['Extrair Texto', 'Upload Storage'].sort());
+  assert.deepEqual(destinosDePreparar.sort(), ['Roteador de Formato', 'Upload Storage'].sort());
   assert.equal(wf.connections['Upload Storage'], undefined, 'Upload não alimenta nenhum node');
-  // A corrente segue pelo `Extrair Texto` → `Medir Documento` → o guarda de
-  // orçamento → `Precisa Fallback?`.
-  assert.deepEqual(wf.connections['Extrair Texto'].main[0].map((c) => c.node), ['Medir Documento']);
+
+  const roteador = wf.nodes.find((n) => n.name === 'Roteador de Formato');
+  assert.ok(roteador, 'existe o nó que decide o formato ANTES de qualquer extrator');
+  assert.equal(roteador.type, 'n8n-nodes-base.switch', 'decisão por Switch nativo, não por Code');
+  // CADA FORMATO CONHECIDO TEM A SUA PRÓPRIA SAÍDA — é o comportamento que
+  // falta descrever para não virar "5 nós soltos": o roteador DECIDE, não
+  // apenas existe.
+  const chaves = roteador.parameters.rules.values.map((r) => r.outputKey);
+  assert.deepEqual(new Set(chaves), new Set(['pdf', 'imagem', 'csv', 'xlsx', 'xls', 'xml']),
+    'cada formato conhecido tem uma saída própria no roteador');
+  assert.ok(roteador.parameters.options?.fallbackOutput,
+    'formato desconhecido cai num fallback explícito (mantém a pendência), nunca é descartado');
+  // NENHUMA SAÍDA MANDA PARA MAIS DE UM DESTINO — o oposto exato do fan-out
+  // cego que a auditoria descreveu (5 nós recebendo o MESMO item).
+  const saidasDoRoteador = wf.connections['Roteador de Formato'].main;
+  for (const [i, ramo] of saidasDoRoteador.entries()) {
+    assert.equal(ramo.length, 1, `saída ${i} do Roteador de Formato manda para mais de um destino`);
+  }
+  // TODOS OS RAMOS CONVERGEM NUM MERGE SÓ, e dali para `Recompor Conteudo
+  // Extraido` → `Medir Documento`. Nenhum caminho pula direto para `Medir
+  // Documento` — é isso que garante 1 item por documento chegando lá, mesmo
+  // quando um extrator de planilha devolveu várias linhas (ver os testes do
+  // `Recompor Conteudo Extraido` mais abaixo).
+  const alcancaMedirDireto = Object.entries(wf.connections)
+    .filter(([, conf]) => (conf.main || []).flat().some((c) => c.node === 'Medir Documento'))
+    .map(([origem]) => origem);
+  assert.deepEqual(alcancaMedirDireto, ['Recompor Conteudo Extraido'],
+    'só o nó que reagrupa por documento pode alimentar Medir Documento — nenhum atalho de formato');
+  assert.deepEqual(wf.connections['Juntar Extracao de Conteudo'].main[0].map((c) => c.node),
+    ['Recompor Conteudo Extraido']);
   assert.deepEqual(wf.connections['Medir Documento'].main[0].map((c) => c.node), ['Orcamento do Lote']);
   const destinosDeRegistrar = wf.connections['Registrar Documento'].main[0].map((c) => c.node);
   assert.deepEqual(destinosDeRegistrar.sort(), ['Recompor Contexto', 'Recomputar Completude'].sort());
+});
+
+// ---------------------------------------------------------------------------
+// O `Recompor Conteudo Extraido` — o nó que faz o roteamento por formato
+// TERMINAR em UM item por documento, nunca em fan-out (regra 6 do CLAUDE.md:
+// invariante novo tem de ser MEDIDO não-vazio). Os testes abaixo rodam o
+// CÓDIGO REAL do nó, não uma descrição dele.
+// ---------------------------------------------------------------------------
+const ctxCsv = {
+  caso_id: 'caso-uuid-1', hash: 'hash-a-csv', nome_original: 'faturamento.csv',
+  content_mime: 'text/csv',
+  content_part: { type: 'text', text: '(extracao de CSV pendente do no nativo Extrair CSV)' },
+  aviso_conteudo: 'Arquivo CSV ainda nao foi extraido pelo no nativo (Extrair CSV).',
+};
+const ctxXlsx = {
+  caso_id: 'caso-uuid-1', hash: 'hash-b-xlsx', nome_original: 'balancete.xlsx',
+  content_mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  content_part: { type: 'text', text: '(extracao de XLSX pendente do no nativo Extrair XLSX)' },
+  aviso_conteudo: 'Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX).',
+};
+const textoDaParte = (parte) => parte.text;
+
+test('Recompor Conteudo Extraido: linhas de DOIS documentos (CSV e XLSX) NUNCA se misturam', async () => {
+  // O extrator nativo devolve UMA LINHA POR ITEM (o comportamento documentado
+  // do `Extract From File` para planilha) — 2 linhas do CSV, 3 do XLSX,
+  // intercaladas de propósito para provar que o agrupamento é por
+  // ORIGEM, não por posição na lista.
+  const entradas = [
+    { json: { Conta: 'Caixa', Valor: '100' } }, // csv, linha 1
+    { json: { Produto: 'X', Qtd: '10' } }, // xlsx, linha 1
+    { json: { Conta: 'Bancos', Valor: '50' } }, // csv, linha 2
+    { json: { Produto: 'Y', Qtd: '20' } }, // xlsx, linha 2
+    { json: { Produto: 'Z', Qtd: '30' } }, // xlsx, linha 3
+  ];
+  const ctxPorIndice = [ctxCsv, ctxXlsx, ctxCsv, ctxXlsx, ctxXlsx].map((j) => ({ json: j }));
+  const out = await run('Recompor Conteudo Extraido', {
+    items: entradas, refs: { 'Preparar Conteudo': ctxPorIndice },
+  });
+
+  // A MEDIDA CENTRAL: 5 linhas de planilha viram 2 documentos, nunca 5 e nunca 1.
+  assert.equal(out.length, 2, '2 linhas de um documento + 3 de outro têm de virar DOIS itens');
+  const doCsv = out.find((i) => i.json.hash === 'hash-a-csv');
+  const doXlsx = out.find((i) => i.json.hash === 'hash-b-xlsx');
+  assert.ok(doCsv && doXlsx, 'cada documento de origem aparece exatamente uma vez na saída');
+
+  const textoCsv = textoDaParte(doCsv.json.content_part);
+  assert.match(textoCsv, /Caixa/);
+  assert.match(textoCsv, /Bancos/);
+  assert.doesNotMatch(textoCsv, /Produto/, 'linha do XLSX vazou para dentro do CSV');
+
+  const textoXlsx = textoDaParte(doXlsx.json.content_part);
+  assert.match(textoXlsx, /Produto/);
+  assert.doesNotMatch(textoXlsx, /Caixa|Bancos/, 'linha do CSV vazou para dentro do XLSX');
+
+  // A PENDÊNCIA SE FECHA: extração bem-sucedida não pode continuar dizendo
+  // "não foi extraído" (regra 1 — mas ao contrário: sucesso real também não
+  // pode ficar disfarçado de ausência).
+  assert.equal(doCsv.json.aviso_conteudo, null);
+  assert.equal(doXlsx.json.aviso_conteudo, null);
+});
+
+test('6164 de novo: Recompor Conteudo Extraido declara pairedItem em TODO item que devolve', async () => {
+  // POR QUE ESTE TESTE EXISTE, e por que ele não estava aqui quando precisou:
+  // o nó de fan-out original (`Fatiar Extracao`/`Juntar Blocos`) tem guarda de
+  // `pairedItem` desde o 6164, mas a guarda foi escrita como uma LISTA DE NOMES
+  // de nó. `Recompor Conteudo Extraido` muda a quantidade de itens exatamente
+  // como eles (N linhas de planilha → 1 documento) e não estava na lista, então
+  // nasceu SEM `pairedItem` e nenhuma suíte reprovou.
+  //
+  // O EFEITO, se tivesse ido para produção: `Medir Documento` resolve o
+  // contexto por `$('Preparar Conteudo').item`, que depende do pareamento. Sem
+  // ele a expressão devolve vazio, o `catch` cai para `{}` e TODO documento
+  // CSV/XLSX/XLS/XML chega ao `Registrar Documento` sem `caso_id`,
+  // `nome_original`, `hash` nem `tipo_taxonomia` — ou seja, o roteamento por
+  // formato quebraria justamente os formatos que ele existe para consertar.
+  //
+  // Este teste afirma COMPORTAMENTO (todo item devolvido é rastreável até a
+  // entrada que o gerou), não a lista de nós que alguém lembrou de escrever.
+  const entradas = [
+    { json: { Conta: 'Caixa', Valor: '100' } },
+    { json: { Produto: 'X', Qtd: '10' } },
+    { json: { Conta: 'Bancos', Valor: '50' } },
+  ];
+  const ctxPorIndice = [ctxCsv, ctxXlsx, ctxCsv].map((j) => ({ json: j }));
+  const out = await run('Recompor Conteudo Extraido', {
+    items: entradas, refs: { 'Preparar Conteudo': ctxPorIndice },
+  });
+  assert.ok(out.length > 0, 'o nó devolveu itens (senão o teste não mede nada)');
+  for (const it of out) {
+    assert.ok(it.pairedItem && Number.isInteger(it.pairedItem.item),
+      `item sem pairedItem: ${JSON.stringify(it.json).slice(0, 120)}`);
+    assert.ok(it.pairedItem.item >= 0 && it.pairedItem.item < entradas.length,
+      'o pairedItem aponta para um índice que existe na entrada');
+  }
+});
+
+test('Recompor Conteudo Extraido: PDF, imagem e falha de extrator atravessam sem reconstrução', async () => {
+  // Caso 1: PDF — o item É a saída do `Extrair Texto` ({text,numpages}), sem
+  // `caso_id` nenhum. Não pode ser tratado como linha de planilha. O
+  // ANCESTRAL (`Preparar Conteudo`) é quem tem `content_mime='application/
+  // pdf'` — nunca o próprio item, que o extrator já substituiu.
+  const ctxPdf = { caso_id: 'caso-uuid-1', content_mime: 'application/pdf', content_part: { type: 'text', text: '(arquivo pdf)' } };
+  const doPdf = { json: { text: 'Caixa 100', numpages: 1 } };
+  // Caso 2: imagem — passou direto pelo Switch, chega como o próprio item de
+  // `Preparar Conteudo` (com `caso_id`).
+  const doImagem = { json: { caso_id: 'caso-uuid-1', content_mime: 'image/png', content_part: { type: 'image_url', image_url: { url: 'data:...' } } } };
+  // Caso 3: CSV cujo extrator FALHOU — `onError: continueRegularOutput` devolve
+  // o item de ENTRADA do extrator sem tocar, que é o próprio item de
+  // `Preparar Conteudo` (também com `caso_id`).
+  const doFalha = { json: { ...ctxCsv, hash: 'hash-c-falhou' } };
+
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [doPdf, doImagem, doFalha], refs: { 'Preparar Conteudo': [{ json: ctxPdf }, doImagem, doFalha] },
+  });
+  assert.equal(out.length, 3, 'nenhum dos três precisa de reconstrução — 1 item entra, 1 sai');
+  assert.equal(out[0].json.text, 'Caixa 100', 'PDF: Medir Documento lê text/numpages direto, sem mexer');
+  assert.equal(out[1].json.content_mime, 'image/png');
+  assert.deepEqual(out[1].json.content_part, doImagem.json.content_part, 'imagem não é reconstruída');
+  assert.equal(out[2].json.aviso_conteudo, ctxCsv.aviso_conteudo,
+    'extrator que falhou preserva o aviso de "não extraído" — nunca vira sucesso fingido');
+});
+
+test('Recompor Conteudo Extraido: XML vira texto corrido, não linhas de planilha', async () => {
+  const ctxXml = {
+    caso_id: 'caso-uuid-1', hash: 'hash-d-xml', nome_original: 'extrato.xml', content_mime: 'application/xml',
+    content_part: { type: 'text', text: '(extracao de XML pendente do no nativo Extrair XML)' },
+    aviso_conteudo: 'Arquivo XML ainda nao foi extraido pelo no nativo (Extrair XML).',
+  };
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { data: '<extrato><lancamento valor="100"/></extrato>' } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxXml }] },
+  });
+  assert.equal(out.length, 1);
+  assert.match(textoDaParte(out[0].json.content_part), /<lancamento/);
+  assert.equal(out[0].json.aviso_conteudo, null);
+});
+
+// MEDIDO NÃO-VAZIO (regra 2 do CLAUDE.md), achado numa revisão adversarial
+// (11/09/2026): `Recompor Conteudo Extraido` sempre escreveu `content_part` (o
+// que vai para a IA) mas NUNCA `text` — e `Medir Documento`, o nó seguinte na
+// cadeia real, só lê `doExtrator.text`/`texto_pdf`. Para TODO documento
+// CSV/XLSX/XLS/XML, `temTexto` saía falso, `celulas_no_documento` e
+// `contas_no_documento` saíam `null`, e `avaliarCobertura` (lib/cobertura.mjs)
+// se cala quando `esperadas` é `null` — a régua de cobertura estava DESLIGADA
+// para estes DOIS formatos desde que ela existe (a 0154 só a acendeu para
+// PDF), sem NENHUMA pendência acusando. Um `balancete.xlsx` de centenas de
+// linhas podia nunca fatiar (`Fatiar Extracao` cai no bloco único por falta de
+// `linhas_do_texto`) e nunca acusar cobertura baixa, com `Conferir Lote` VERDE.
+//
+// DESLIGAR A CORREÇÃO (reverter as duas linhas `text:` em
+// `CODE_RECOMPOR_EXTRACAO`, `build-workflow.mjs`) FAZ ESTE TESTE REPROVAR — 4
+// asserts (as duas asserções de "não é null" e as duas de tamanho mínimo),
+// medido antes de escrever a correção.
+test('MEDIDO: XLSX e XML alimentam a régua de cobertura depois de Recompor Conteudo Extraido — sem `text`, ela ficava calada', async () => {
+  const reconstruidoXlsx = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { Conta: 'Caixa', Valor: '380' } }, { json: { Conta: 'Duplicatas', Valor: '22310' } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxXlsx }, { json: ctxXlsx }] },
+  });
+  assert.equal(reconstruidoXlsx.length, 1);
+  assert.equal(typeof reconstruidoXlsx[0].json.text, 'string',
+    'a planilha reconstruída tem de carregar `text` — é o que Medir Documento lê');
+  assert.match(reconstruidoXlsx[0].json.text, /Caixa/);
+
+  const medidoXlsx = await run('Medir Documento', {
+    item: reconstruidoXlsx[0], refs: { 'Preparar Conteudo': reconstruidoXlsx[0] },
+  });
+  assert.notEqual(medidoXlsx.json.celulas_no_documento, null,
+    'régua de cobertura calada para XLSX — a mesma falha que a 0154 fechou só para PDF');
+  assert.ok(medidoXlsx.json.celulas_no_documento >= 2, 'as duas linhas da planilha têm de contar como células');
+  assert.ok(Array.isArray(medidoXlsx.json.linhas_do_texto) && medidoXlsx.json.linhas_do_texto.length >= 2);
+
+  const ctxXml2 = {
+    caso_id: 'caso-uuid-1', hash: 'hash-g-xml', nome_original: 'extrato2.xml', content_mime: 'application/xml',
+    content_part: { type: 'text', text: '(pendente)' }, aviso_conteudo: 'pendente',
+  };
+  const reconstruidoXml = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { data: '<extrato><lancamento valor="380"/></extrato>' } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxXml2 }] },
+  });
+  assert.equal(typeof reconstruidoXml[0].json.text, 'string',
+    'o XML reconstruído tem de carregar `text` — é o que Medir Documento lê');
+
+  const medidoXml = await run('Medir Documento', {
+    item: reconstruidoXml[0], refs: { 'Preparar Conteudo': reconstruidoXml[0] },
+  });
+  assert.notEqual(medidoXml.json.celulas_no_documento, null, 'régua de cobertura calada para XML');
+});
+
+test('Recompor Conteudo Extraido: sem rastro (itemMatching falha) isola a linha, nunca funde com outro documento', async () => {
+  // $('Preparar Conteudo') SEM a referência: itemMatching lança para todo
+  // índice. O nó NÃO PODE tratar isso como "documento sem chave" e juntar tudo
+  // numa única pilha — seria misturar documentos genuinamente diferentes, "o
+  // erro mais caro possível" nas palavras da 0026.
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { Conta: 'Caixa', Valor: '1' } }, { json: { Conta: 'Bancos', Valor: '2' } }],
+    refs: {},
+  });
+  assert.equal(out.length, 2, 'sem rastro, cada linha fica isolada — nunca agrupada às cegas');
+  for (const it of out) {
+    assert.match(it.json.aviso_conteudo, /nao foi possivel religar/);
+  }
+});
+
+test('Recompor Conteudo Extraido: MEDIDO — desligar o roteamento (voltar à topologia antiga) faz este teste reprovar', () => {
+  // Este teste não roda o nó — ele registra a MEDIÇÃO da regra 2 do CLAUDE.md
+  // (todo invariante novo tem de ser medido NÃO-VAZIO), feita à mão nesta
+  // rodada: gerado o JSON com o roteamento por formato REVERTIDO para a
+  // topologia antiga (o único `Extrair Texto` fixo em PDF, sem `Roteador de
+  // Formato`, sem `Extrair CSV`/`XLSX`/`XLS`/`XML`, sem `Juntar Extracao de
+  // Conteudo` nem `Recompor Conteudo Extraido`), a MESMA suíte (com estes
+  // testes novos já escritos) foi rodada contra ele.
+  //
+  // MEDIDO nesta sessão: 436 testes, 10 reprovando — as 5 asserções deste
+  // arquivo sobre `Recompor Conteudo Extraido` (inclusive esta), a nova
+  // topologia (`Topologia: Upload é ramo lateral...`), e as 4 do
+  // `espelho-inline.test.mjs` (`colunasDaPlanilha`/`spreadsheetToText`/
+  // `avisoTruncamentoPlanilha`/cobertura) — porque o nó e as três funções que
+  // ele embute deixam de existir no JSON. Religado o roteamento (o estado
+  // deste commit), os 436 voltam a passar. O número fica aqui, não numa
+  // mensagem de commit que ninguém relê: é o que prova que estes testes
+  // pegam a ausência da correção, não só descrevem a presença dela.
+  assert.ok(code('Recompor Conteudo Extraido'), 'o nó que reagrupa por documento tem de existir no workflow');
 });
 
 // O teste que o "Teste V45 - Canastra" pagou para existir: 19 dos 35 documentos
@@ -1069,8 +1354,13 @@ test('Modos e referências: cada node Code no modo certo; toda $(ref) existe no 
       // listas completas para saber se elas têm o mesmo tamanho, e essa é
       // justamente a conferência que impede associar o PDF de um documento ao id
       // de outro. Em `runOnceForEachItem` não haveria lista para conferir.
+      // `Recompor Conteudo Extraido` é outra fan-in: os extratores de planilha
+      // devolvem uma LINHA por item (não um documento), e só vendo o lote
+      // inteiro (`.all()`) dá para reagrupar as linhas de cada documento antes
+      // de `Medir Documento` — o mesmo motivo de `Juntar Blocos`, um nível acima.
       if (['Listar Arquivos', 'Orcamento do Lote', 'Abortar Lote', 'Resumo de Custo',
-        'Fatiar Extracao', 'Juntar Blocos', 'Recompor Contexto'].includes(n.name)) {
+        'Fatiar Extracao', 'Juntar Blocos', 'Recompor Contexto',
+        'Recompor Conteudo Extraido'].includes(n.name)) {
         assert.equal(n.parameters.mode, 'runOnceForAllItems', `${n.name} enxerga o lote inteiro`);
       } else {
         assert.equal(n.parameters.mode, 'runOnceForEachItem', `${n.name} é transformação 1:1`);
@@ -1147,15 +1437,22 @@ test('os ALIASES do workflow gerado são IDÊNTICOS aos de lib/taxonomia.mjs (or
 // de TPM que acabou de recusar).
 test('a cadência da extração É a aritmética do TPM, não um número escolhido', () => {
   // A correção do v30. A OpenAI calcula o consumo de rate limit como o MÁXIMO
-  // entre `max_tokens` e os tokens estimados do request — então `max_tokens` é
-  // RESERVA de TPM, e toda extração reserva o mesmo, seja o PDF de 2 KB ou de 40
-  // páginas (foi por isso que as notas explicativas minúsculas também tomaram
-  // 429). Logo o intervalo entre chamadas não é gosto: é 60s ÷ (TPM ÷ max_tokens).
+  // entre `max_tokens` e os tokens ESTIMADOS DO REQUEST (entrada + saída) —
+  // não só `max_tokens`. Logo o intervalo entre chamadas não é gosto: é
+  // 60s ÷ (TPM ÷ (entrada + max_tokens)).
   //
-  // Este teste trava a RELAÇÃO, não o valor: se alguém mexer em max_tokens ou no
-  // TPM da conta sem recalcular a cadência, ele reprova. Era exatamente esse
-  // acoplamento que faltava — eu subi 6s→12s sem olhar o max_tokens, e 12s
-  // suportava 5 chamadas/min = 81.920 TPM, quase 3x o teto do Tier 1.
+  // A ENTRADA ENTROU NA CONTA EM 11/09/2026, achado numa revisão adversarial:
+  // até então este teste (e o gerador) tratavam `max_tokens` como se cobrisse
+  // "a chamada inteira" — falso. Um PDF de 20 páginas (`PAGINAS_MAX_MEDIDO`)
+  // manda ~20.000 tokens de ENTRADA que a conta anterior ignorava por
+  // completo, e MAIS os 16.384 de saída passa do teto de 30.000 do Tier 1
+  // numa chamada SÓ — nenhum espaçamento entre chamadas evita isso.
+  //
+  // Este teste trava a RELAÇÃO, não o valor: se alguém mexer em max_tokens, no
+  // pior caso de páginas ou no TPM da conta sem recalcular a cadência, ele
+  // reprova. Era exatamente esse acoplamento que faltava — eu subi 6s→12s sem
+  // olhar o max_tokens, e 12s suportava 5 chamadas/min = 81.920 TPM, quase 3x
+  // o teto do Tier 1.
   //
   // O NÚMERO DO TIER SAI DO PROVEDOR, e não mais de uma constante escrita aqui.
   // `TPM_TIER1_GPT4O = 30000` era a mesma verdade dita num segundo lugar, e no
@@ -1163,7 +1460,7 @@ test('a cadência da extração É a aritmética do TPM, não um número escolhi
   // sistema não usa mais.
   const intervalo = byName['IA Extrair'].parameters.options?.batching?.batch?.batchInterval;
   const chamadasPorMinuto = 60000 / intervalo;
-  const tpmDemandado = chamadasPorMinuto * MAX_OUTPUT_TOKENS;
+  const tpmDemandado = chamadasPorMinuto * (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS);
   assert.ok(tpmDemandado <= TPM_CONTA,
     `a cadência demanda ${Math.round(tpmDemandado)} TPM, acima do limite da conta (${TPM_CONTA}) — `
     + `com intervalo de ${intervalo}ms e max_tokens de ${MAX_OUTPUT_TOKENS}`);
@@ -1816,13 +2113,39 @@ test('quem consome nó que SUBSTITUI o item tem de recompor o contexto por refer
   // simplesmente ler `$json`, porque o item que chega nele não tem mais o
   // contexto da corrente. `Upload Storage` resolve sendo lateral (ninguém lê);
   // `Extrair Texto` e os HTTP da OpenAI resolvem com um consumidor que recompõe.
+  //
+  // DESDE O ROTEAMENTO POR FORMATO, o consumidor DIRETO de um extrator pode
+  // ser um Merge (`Juntar Extracao de Conteudo`) — um nó ESTRUTURAL, que só
+  // combina ramos e não sabe nada de contexto. Exigir dele um `$('Nó').item`
+  // seria travar MECANISMO (regra 3 do CLAUDE.md): o que importa é que, no
+  // fim da cadeia de nós estruturais (Merge/Switch/IF, que só roteiam ou
+  // combinam), exista um Code que recompõe — por isso a busca anda PARA
+  // FRENTE atravessando esses nós até achar o consumidor de verdade.
+  const ESTRUTURAIS = ['n8n-nodes-base.merge', 'n8n-nodes-base.switch', 'n8n-nodes-base.if'];
+  const consumidoresReais = (nomeDoNo) => {
+    const vistos = new Set();
+    const reais = new Set();
+    const fila = [nomeDoNo];
+    while (fila.length) {
+      const atual = fila.pop();
+      for (const c of (wf.connections[atual]?.main || []).flat()) {
+        if (vistos.has(c.node)) continue;
+        vistos.add(c.node);
+        const alvo = wf.nodes.find((x) => x.name === c.node);
+        if (alvo && ESTRUTURAIS.includes(alvo.type)) fila.push(c.node);
+        else reais.add(c.node);
+      }
+    }
+    return [...reais];
+  };
+
   const SUBSTITUEM_O_ITEM = ['n8n-nodes-base.extractFromFile', 'n8n-nodes-base.httpRequest'];
   for (const n of wf.nodes.filter((x) => SUBSTITUEM_O_ITEM.includes(x.type))) {
-    const consumidores = (wf.connections[n.name]?.main || []).flat().map((c) => c.node);
+    const consumidores = consumidoresReais(n.name);
     if (consumidores.length === 0) continue;   // ramo lateral: ninguém lê, nada a conferir
     for (const nome of consumidores) {
       const c = code(nome);
-      assert.ok(c, `${nome} consome "${n.name}" mas não é um nó Code — não tem como recompor`);
+      assert.ok(c, `${nome} consome "${n.name}" (por trás de Merge/Switch/IF) mas não é um nó Code — não tem como recompor`);
       assert.match(c, /\$\('[^']+'\)\.item/,
         `"${nome}" consome a saída de "${n.name}", que substitui o item: ele TEM de recompor o `
         + 'contexto por referência a um nó ANCESTRAL, nunca ler $json direto');
@@ -2219,6 +2542,12 @@ const CODE_QUE_DEVE_ABORTAR = {
   'Orcamento do Lote': 'falha aqui = lote sem decisão de orçamento',
   // E o aborto do lote recusado, que é onde a exceção passou a morar.
   'Abortar Lote': 'orçamento excedido',
+  // Roteamento por formato: se ele falhar, `continueRegularOutput` devolveria
+  // o LOTE INTEIRO sem reagrupar as linhas de planilha que ele existe para
+  // juntar — o MESMO fan-out (N itens por documento) que o roteamento inteiro
+  // existe para evitar, só que via falha silenciosa em vez de fio solto no
+  // editor.
+  'Recompor Conteudo Extraido': 'falha aqui = linhas de planilha voltam soltas, sem reagrupar',
 };
 
 test('todo nó Code continua o lote quando um item falha (exceto os que devem abortar)', () => {

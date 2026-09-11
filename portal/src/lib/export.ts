@@ -1746,7 +1746,7 @@ function construirAbaClassificada(
       // colunas/exercícios; o aviso é sobre a CONTA, não sobre a célula).
       const porConta = new Map<string, Suspeita[]>();
       for (const s of achados) {
-        const k = `${s.contaSecaoLabel} ${s.contaLabel} ${s.folhaLabel}`;
+        const k = `${s.contaSecaoLabel}\u0000${s.contaLabel}\u0000${s.folhaLabel}`;
         if (!porConta.has(k)) porConta.set(k, []);
         porConta.get(k)!.push(s);
       }

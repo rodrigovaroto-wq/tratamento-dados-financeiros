@@ -8,12 +8,20 @@ import { readFileSync } from 'node:fs';
 import { diagnosticarErroApi } from '../lib/extract.mjs';
 import { provedor } from '../lib/provedor.mjs';
 import { PRECO_USD_POR_MILHAO, MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from '../lib/custo.mjs';
+import { capacidadesDoModelo, modeloRaciocina } from '../lib/provedor.mjs';
 
 const PROV = provedor();
 const GEMINI = PROV.dialeto === 'gemini';
 
 /** O teto de saída do corpo montado, no dialeto do provedor ativo. */
-const tetoDoCorpo = (corpo) => (GEMINI ? corpo.generationConfig.maxOutputTokens : corpo.max_tokens);
+// O NOME DO CAMPO DE TETO É DO MODELO, não do dialeto. A família GPT-5 recusa
+// `max_tokens` e exige `max_completion_tokens`; o 4o aceita o antigo. Ler pelo
+// nome fixo travava o MECANISMO (regra 3 do CLAUDE.md) e reprovaria numa troca
+// de modelo que está correta. Lê-se pela capacidade DECLARADA, que é a mesma
+// fonte que `montarCorpoIA` usa para escrever.
+const tetoDoCorpo = (corpo) => (GEMINI
+  ? corpo.generationConfig.maxOutputTokens
+  : corpo[capacidadesDoModelo(corpo.model).tetoDeSaida]);
 
 /** Uma resposta de sucesso com uso declarado, no dialeto do provedor ativo. */
 const respostaComUso = (texto, uso) => (GEMINI
@@ -55,6 +63,36 @@ test('a chamada é mínima de verdade: teto de saída 1, e sem schema', async ()
     ? !!out.json.ia_body.generationConfig.responseSchema
     : !!out.json.ia_body.response_format;
   assert.equal(temSchema, false);
+});
+
+test('a chamada mínima NÃO pode raciocinar — senão o teto de 1 token vira a conta mais cara do sistema', async () => {
+  // O DEFEITO QUE ISTO FECHA, achado ao revisar a própria troca de provedor em
+  // 11/09/2026 (nenhuma suíte pegava; este teste é a suíte passando a pegar).
+  //
+  // O Luna raciocina e o default dele é `medium`. Token de raciocínio é cobrado
+  // como SAÍDA e é gasto ANTES da primeira letra da resposta. Um teto de 1 token
+  // com esforço médio devolve resposta VAZIA (cortada antes de escrever
+  // qualquer coisa) e cobra centenas ou milhares de tokens — a chamada feita
+  // para ser a mais barata do sistema viraria uma das mais caras, e o veredito
+  // passaria a medir truncamento em vez de medir se a conta responde.
+  //
+  // A PRIMEIRA VERSÃO DESTE TESTE NASCEU VAZIA, e o protocolo de medição pegou:
+  // ela aceitava `undefined` como se fosse seguro. Não é — ausência do campo é
+  // exatamente o defeito, porque a API aplica o DEFAULT DO MODELO (`medium`)
+  // quando ninguém manda nada. Num modelo que raciocina, o campo tem de estar
+  // lá, escrito, valendo `none`; só em modelo que não raciocina a ausência é a
+  // resposta certa (mandá-lo ali seria 400).
+  const out = await run('Montar Chamada Minima', { json: {} });
+  const esforco = out.json.ia_body.reasoning_effort;
+  if (modeloRaciocina(MODELO_EXTRACAO)) {
+    assert.equal(esforco, 'none',
+      `o modelo "${MODELO_EXTRACAO}" raciocina, então a chamada mínima PRECISA de `
+      + `reasoning_effort:"none" explícito — veio ${JSON.stringify(esforco)}, e o `
+      + 'default do modelo (medium) devolve vazio e cobra caro contra um teto de 1 token');
+  } else {
+    assert.equal(esforco, undefined,
+      `o modelo "${MODELO_EXTRACAO}" não raciocina — mandar reasoning_effort é 400`);
+  }
 });
 
 test('o nó de IA tem neverError: sem isso o corpo da causa nunca chega', () => {

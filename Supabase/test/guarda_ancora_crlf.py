@@ -187,6 +187,32 @@ def tem_r_opcional(padrao_bruto):
     return "\\r?" in padrao_bruto
 
 
+# AS QUE JA ACONTECERAM. A checagem 2 (abaixo) proibe patchar corpo de funcao
+# por `replace()` LITERAL, e estas QUATRO ja fizeram isso antes da proibicao
+# existir -- duas delas (0161/0162) abortando em producao em 10/09, que e'
+# justamente o que motivou a regra. Nao se reescreve migration aplicada, entao
+# elas ficam nomeadas aqui: a lista e' o registro de quem entrou antes do
+# portao, e o portao existe para ela nunca crescer.
+#
+# A 0160 NAO ESTA AQUI, e a ausencia dela e' informacao: ela patcheia por ancora
+# REGEXP e ja escreve `\r?` corretamente -- e o caso que a checagem 1 aprova, nao
+# uma excecao. Confundir as duas listas foi o que produziu tres numeros
+# diferentes para a mesma coisa (o comentario dizia TRES, o conjunto tinha
+# QUATRO e a mensagem de commit dizia CINCO), dentro do proprio portao escrito
+# para impedir que numero vire decoracao. Corrigido em 11/09.
+JA_APLICADAS_COM_REPLACE_LITERAL = {
+    # ACHADA PELO PROPRIO PORTAO ao ser alargado, em 11/09: a auditoria tinha
+    # olhado so' a faixa 0160-0163 e nao viu esta. O comentario da 0154 ainda DEFENDE
+    # a tecnica ("recriar o corpo inteiro por copia e' o que a 0006 fez e
+    # regrediu funcoes em silencio") -- uma terceira posicao na mesma doutrina,
+    # que e' exatamente o acumulo que esta rodada foi mandada medir.
+    "0154_a_pendencia_de_cobertura_diz_a_unidade.sql",
+    "0161_a_justificativa_que_o_periodo_perdia.sql",
+    "0162_o_balcao_que_nao_escuta_a_resposta.sql",
+    "0163_a_ancora_que_o_crlf_desalinhou.sql",
+}
+
+
 def checar_arquivo(caminho):
     texto = caminho.read_text(encoding="utf-8")
     if "pg_get_functiondef" not in texto:
@@ -215,6 +241,46 @@ def checar_arquivo(caminho):
                 f"`{arg_padrao.strip()}`) sem `\\r?` — casa em LF, acha ZERO num corpo "
                 f"gravado com CRLF (o defeito da 0161/0162, ver 0163)."
             )
+
+    # CHECAGEM 2 (11/09/2026) — PATCH POR `replace()` LITERAL.
+    #
+    # O escopo antigo era so' regexp, e estava DOCUMENTADO como estreito. Uma
+    # auditoria mediu o custo desse recorte: a 0161 abortou em producao usando
+    # `replace()` LITERAL sobre o corpo, e o guarda que leva o nome do defeito
+    # nao a acusava. Pior, a regra que o guarda serve mudou: desde 11/09
+    # `nunca-corrigir-funcao-por-replace.md` nao abre excecao -- migration que
+    # muda funcao REEMITE a funcao. Um portao que so' cobre um dos dois jeitos
+    # de desobedecer deixa o outro com cara de aprovado.
+    #
+    # `\r?` nao salva aqui: `replace()` nao interpreta regex, entao nao ha
+    # anotacao que torne o patch literal seguro. A unica saida e' nao patchar.
+    if caminho.name not in JA_APLICADAS_COM_REPLACE_LITERAL:
+        for m in re.finditer(r"\breplace\s*\(", texto):
+            pos_args = m.end()
+            try:
+                args, _ = dividir_argumentos_top_level(texto, pos_args)
+            except ValueError:
+                continue
+            if len(args) < 3:
+                continue
+            alvo = args[0].strip()
+            # So' acusa quando o ALVO do replace e' o corpo da funcao -- um
+            # `replace(x, chr(13), '')` de NORMALIZACAO (o que a 0163 faz antes
+            # de conferir) tem 2 args de interesse e alvo diferente, e e'
+            # legitimo: ele nao patcheia, ele compara.
+            if "functiondef" not in alvo and "v_src" not in alvo and "v_corpo" not in alvo:
+                continue
+            # Normalizacao contra CRLF nao e' patch: e' preparacao para comparar.
+            if "chr(13)" in args[1] or "\\r" in args[1]:
+                continue
+            linha = texto.count("\n", 0, m.start()) + 1
+            violacoes.append(
+                f"{caminho}:{linha}: replace(...) LITERAL sobre o corpo da funcao "
+                f"(alvo = `{alvo}`). Patch por texto nao e' permitido -- migration "
+                f"que muda funcao REEMITE a funcao inteira (create or replace com o "
+                f"corpo todo). Ver .claude/memory/nunca-corrigir-funcao-por-replace.md; "
+                f"a 0161/0162 abortaram em producao exatamente assim."
+            )
     return violacoes
 
 
@@ -235,10 +301,11 @@ def main():
         todas_violacoes.extend(checar_arquivo(f))
 
     if todas_violacoes:
-        print("FALHOU: âncora multi-linha sem tolerância a CRLF (\\r?) — casa em LF, acha ZERO em produção:")
+        print("FALHOU: patch de corpo de função por TEXTO (âncora sem \\r?, ou replace literal):")
         for v in todas_violacoes:
             print(f"   {v}")
-        print("   Acrescente `\\r?` antes de cada `\\n` do padrão (é o que a 0160 já faz).")
+        print("   Âncora regexp: acrescente `\\r?` antes de cada `\\n` (é o que a 0160 faz).")
+        print("   Replace literal: não há anotação que o salve — reemita a função inteira.")
         return 1
 
     print(f"   {len(arquivos)} migrations sem âncora multi-linha frágil a CRLF")

@@ -15,10 +15,17 @@ import {
   MODELOS_POR_PROVEDOR,
   pesoDaChamadaDeClassificacao,
   PRECO_USD_POR_MILHAO,
+  TOKENS_SAIDA_CLASSIFICACAO,
+  PERFIL_MEDIDO,
+  FOLGA_EXTRACAO,
+  FOLGA_CLASSIFICACAO,
+  limiarDeRaciocinio,
+  escolherEsforco,
+  esforcosDoProvedor,
   PRECOS_POR_PROVEDOR,
   vereditoDaCotaDiaria,
 } from '../lib/custo.mjs';
-import { PROVEDORES, provedorAtivo } from '../lib/provedor.mjs';
+import { PROVEDORES, provedorAtivo, montarCorpoIA } from '../lib/provedor.mjs';
 
 // O teto que o dono pediu, travado por teste. Se alguém mexer no número sem
 // mexer também no teto do projeto no provedor (US$ 5), o lote volta a ser barrado
@@ -472,4 +479,125 @@ test('a cota do DIA é um portão, e ela recusa o que o teto de dólar aprovava'
   assert.equal(semRpd.conhecido, false);
   assert.equal(semRpd.fracao, null);
   assert.equal(semRpd.mensagem, null);
+});
+
+// ---------------------------------------------------------------------------
+// O ESFORÇO DE RACIOCÍNIO — a regra do dono (11/09/2026), e o limiar que a torna
+// auditável em vez de opinião.
+// ---------------------------------------------------------------------------
+
+test('o limiar de raciocínio é a aritmética da regra, não um número escolhido', () => {
+  // A conta que o limiar resolve, escrita de novo aqui de propósito: se o teste
+  // repetisse a fórmula da lib, ele não provaria nada (seria o espelho sem
+  // guarda). Prova-se pela DEFINIÇÃO — monta-se o custo dos dois lados e
+  // confere-se que, exatamente no limiar, o caro custa (1+folga) vezes o barato.
+  const preco = { entrada: 0.20, entrada_cache: 0.02, saida: 1.20 };
+  const entrada = 3500;
+  const saida = 7571;
+  const folga = 0.5;
+
+  const limiar = limiarDeRaciocinio({ entrada, saida, folga, preco });
+  const custo = (raciocinio) => (entrada * preco.entrada + (saida + raciocinio) * preco.saida) / 1e6;
+
+  // No limiar, a razão é exatamente 1 + folga.
+  assert.ok(Math.abs(custo(limiar) / custo(0) - (1 + folga)) < 1e-9,
+    `no limiar a razão deveria ser ${1 + folga} e é ${custo(limiar) / custo(0)}`);
+  // Um token acima, a regra é violada.
+  assert.ok(custo(limiar + 1) > custo(0) * (1 + folga));
+});
+
+test('a classificação quase não tem folga, e é por isso que ela cai em "none"', () => {
+  // O FATO QUE ESTE TESTE TRAVA, e que não é óbvio: a classificação manda o PDF
+  // INTEIRO de entrada e devolve ~120 tokens. A folga de 25% incide sobre um
+  // custo dominado pela ENTRADA, então ela vale pouquíssimos tokens de saída —
+  // e qualquer raciocínio real estoura. Se um dia alguém baratear a entrada (só
+  // mandar texto, por exemplo), este limiar sobe e a decisão pode mudar
+  // legitimamente — mas aí é por medição, não por descuido.
+  const preco = PRECOS_POR_PROVEDOR.openai['gpt-5.6-luna'];
+  const limiar = limiarDeRaciocinio({
+    entrada: PERFIL_MEDIDO.entradaPorDocumento,
+    saida: PERFIL_MEDIDO.saidaClassificacao,
+    folga: FOLGA_CLASSIFICACAO,
+    preco,
+  });
+  assert.ok(limiar < 200,
+    `o limiar da classificação é ${limiar} tokens — se passou de 200, a premissa da decisão mudou`);
+
+  // Sem medição, a função NÃO promove o nível caro: devolve o barato e DIZ que
+  // não mediu. É a regra 1 aplicada a configuração — "não medi" não pode sair
+  // vestido de "medi e deu isto".
+  const semMedir = escolherEsforco({
+    barato: 'none',
+    caro: 'low',
+    entrada: PERFIL_MEDIDO.entradaPorDocumento,
+    saida: PERFIL_MEDIDO.saidaClassificacao,
+    folga: FOLGA_CLASSIFICACAO,
+    preco,
+  });
+  assert.equal(semMedir.esforco, 'none');
+  assert.match(semMedir.porque, /não foi medid/i);
+});
+
+test('medido acima do limiar, a regra REBAIXA o esforço — e medido abaixo, promove', () => {
+  const preco = PRECOS_POR_PROVEDOR.openai['gpt-5.6-luna'];
+  const base = {
+    barato: 'low',
+    caro: 'medium',
+    entrada: PERFIL_MEDIDO.entradaPorDocumento,
+    saida: PERFIL_MEDIDO.saidaExtracao,
+    folga: FOLGA_EXTRACAO,
+    preco,
+  };
+  const limiar = limiarDeRaciocinio(base);
+  assert.equal(escolherEsforco({ ...base, raciocinioMedido: Math.floor(limiar) - 1 }).esforco, 'medium');
+  assert.equal(escolherEsforco({ ...base, raciocinioMedido: Math.ceil(limiar) + 1 }).esforco, 'low');
+});
+
+test('modelo sem preço não inventa limiar — devolve o barato e declara por quê', () => {
+  const r = escolherEsforco({
+    barato: 'none', caro: 'low', entrada: 3500, saida: 120,
+    folga: 0.25, preco: undefined, raciocinioMedido: 10,
+  });
+  assert.equal(r.esforco, 'none');
+  assert.equal(r.limiar, null);
+  assert.match(r.porque, /desconhecid/i);
+});
+
+test('provedor que não raciocina não recebe esforço nenhum (campo desconhecido é 400)', () => {
+  const so = esforcosDoProvedor('gemini-2.5-flash-lite', 'gemini-2.5-flash-lite', PRECOS_POR_PROVEDOR.google);
+  assert.equal(so.extracao, null);
+  assert.equal(so.classificacao, null);
+});
+
+test('o corpo do Gemini NUNCA leva reasoning_effort — inclusive com o modelo CONFIGURADO, que raciocina', () => {
+  // A VERSÃO ANTERIOR DESTE PORTÃO ERA UMA FIXTURE NASCIDA PARA PASSAR, e uma
+  // revisão pegou: ela chamava `esforcosDoProvedor` com `gemini-2.5-flash-lite`,
+  // que NÃO é o modelo configurado para o Google. O configurado é o
+  // `gemini-3.5-flash-lite`, e ele É modelo de raciocínio (`raciocina: true`,
+  // porque gasta `thoughtsTokenCount` de verdade) — então para ELE a função
+  // devolve esforço, e o `null` que o teste afirmava nunca descrevia a rodada
+  // real. O teste passava sem medir o caminho que a produção percorre.
+  //
+  // O INVARIANTE QUE DE FATO PROTEGE contra o 400 não é "a função devolve
+  // null": é o CORPO não carregar o campo. Quem garante isso é o dialeto em
+  // `montarCorpoIA` — o ramo gemini não escreve `reasoning_effort` nem quando
+  // recebe um esforço. É isso que se afirma aqui, com o modelo de verdade.
+  const modeloReal = MODELOS_POR_PROVEDOR.google.extracao;
+  const corpo = montarCorpoIA(PROVEDORES.google, {
+    modelo: modeloReal,
+    sistema: 'S',
+    partes: [{ text: 'x' }],
+    maxTokens: 16384,
+    esforco: 'medium',
+  });
+  assert.equal(corpo.reasoning_effort, undefined,
+    'o corpo do Gemini levou reasoning_effort — isso é 400 na chamada inteira');
+  assert.equal(corpo.generationConfig.maxOutputTokens, 16384,
+    'e o teto continua no campo que o Gemini entende');
+});
+
+test('o espelho de TOKENS_SAIDA_CLASSIFICACAO não pode divergir do PERFIL_MEDIDO', () => {
+  // Os dois números são o MESMO fato escrito em dois lugares, e este repositório
+  // já viu um espelho assim divergir. Aqui ele reprova.
+  assert.equal(PERFIL_MEDIDO.saidaClassificacao, TOKENS_SAIDA_CLASSIFICACAO);
 });
