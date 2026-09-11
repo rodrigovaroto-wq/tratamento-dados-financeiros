@@ -1,0 +1,46 @@
+name: Republicar workflow no n8n
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: republicar-n8n-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  republicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validar secrets antes de publicar
+        env:
+          N8N_URL: ${{ secrets.N8N_URL }}
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          N8N_WORKFLOW_ID: ${{ secrets.N8N_WORKFLOW_ID }}
+        run: |
+          for v in N8N_URL N8N_API_KEY N8N_WORKFLOW_ID; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Secret $v não cadastrado. Vá em Settings → Secrets and variables → Actions e crie $v."
+              exit 1
+            fi
+          done
+          case "$N8N_URL" in */) echo "::error::N8N_URL termina em barra — remova a barra final."; exit 1;; esac
+          echo "Secrets ok."
+
+      - name: Republicar via N8N/republicar.sh
+        env:
+          N8N_URL: ${{ secrets.N8N_URL }}
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          N8N_WORKFLOW_ID: ${{ secrets.N8N_WORKFLOW_ID }}
+        run: bash N8N/republicar.sh
