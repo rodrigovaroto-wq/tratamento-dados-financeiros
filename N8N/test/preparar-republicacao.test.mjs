@@ -73,13 +73,13 @@ test('o `path` do formulário é DA INSTALAÇÃO e não pode ser sobrescrito', (
   assert.equal(n.id, 'no-1', 'o id do nó vem do vivo, senão o n8n trata o nó como novo');
 });
 
-test('o id da credencial vem do VIVO; o REPLACE do repositório só fica quando não há outro', () => {
+test('o id da credencial vem do VIVO; o REPLACE do repositório só fica no nó LIGADO sem outro id', () => {
   const nos = porNome(prepararRepublicacao(VIVO, REPO));
   assert.deepEqual(nos['IA Extrair'].credentials.httpHeaderAuth,
     { id: 'FVVausmZHGZNICDP', name: 'Gemini da conta' },
     'publicar o REPLACE derruba o nó com "Credential with ID REPLACE does not exist"');
-  assert.equal(nos['Upload Storage'].credentials.httpHeaderAuth.id, 'REPLACE',
-    'sem id na instalação, o placeholder é o que sobra — e o relatório avisa');
+  assert.equal(nos['Upload Storage'].credentials, undefined,
+    'nó DESABILITADO sem id na instalação sai SEM credencial — o REPLACE barraria o arquivo inteiro sem impedir falha nenhuma');
 });
 
 test('as `settings` da instalação sobrevivem — é onde mora o errorWorkflow ligado à mão', () => {
@@ -94,15 +94,17 @@ test('as CONEXÕES vêm do repositório — um nó certo ligado errado não apar
   assert.deepEqual(p.connections, REPO.connections);
 });
 
-test('o relatório aponta a credencial que ainda vai falhar, e distingue nó ligado de desligado', () => {
+test('o relatório só aponta credencial REPLACE em nó LIGADO — o desligado nem pendente fica', () => {
   const pend = credenciaisPendentes(prepararRepublicacao(VIVO, REPO));
-  assert.equal(pend.length, 1);
-  assert.equal(pend[0].no, 'Upload Storage');
-  assert.equal(pend[0].desabilitado, true, 'nó desabilitado com REPLACE não impede a rodada');
+  assert.equal(pend.length, 0,
+    'a única credencial sem id é de um nó desabilitado — ela some do JSON em vez de travar a rodada');
 
-  // E com o mesmo nó HABILITADO, ele passa a ser o que derruba o lote.
+  // Com o mesmo nó HABILITADO, o REPLACE volta a existir — e é o portão que
+  // derruba a publicação, não este relatório.
   const ligado = JSON.parse(JSON.stringify(REPO));
   delete ligado.nodes[2].disabled;
   const pend2 = credenciaisPendentes(prepararRepublicacao(VIVO, ligado));
-  assert.equal(pend2[0].desabilitado, false);
+  assert.equal(pend2.length, 1);
+  assert.equal(pend2[0].no, 'Upload Storage');
+  assert.equal(pend2[0].desabilitado, false, 'nó ligado com REPLACE é o que a trava do republicar.sh segura');
 });

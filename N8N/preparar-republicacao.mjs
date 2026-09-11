@@ -65,15 +65,25 @@ export function prepararRepublicacao(vivo, repo) {
     // Sem isto, o `REPLACE` do repositório iria para produção e o nó falharia
     // com "Credential with ID REPLACE does not exist" — que foi exatamente o
     // erro do smoke test de 27/08.
+    //
+    // A EXCEÇÃO medida em 11/09/2026, no `Upload Storage`: nó DESABILITADO
+    // sem id na instalação. Ele não executa — então a credencial some em vez
+    // de ir REPLACE: nó desligado sem credencial não falha; nó desligado COM
+    // REPLACE é o que o portão do republicar.sh barra o arquivo inteiro. Um
+    // nó LIGADO sem id continua recebendo o REPLACE, e o portão continua
+    // abortando — a trava fica intacta onde ela é defesa.
     if (doRepo.credentials) {
       saida.credentials = {};
       for (const [tipo, cred] of Object.entries(doRepo.credentials)) {
         const idVivo = oVivo?.credentials?.[tipo]?.id;
         const nomeVivo = oVivo?.credentials?.[tipo]?.name;
-        saida.credentials[tipo] = idVivo && idVivo !== 'REPLACE'
-          ? { id: idVivo, name: nomeVivo ?? cred.name }
-          : { ...cred };
+        if (idVivo && idVivo !== 'REPLACE') {
+          saida.credentials[tipo] = { id: idVivo, name: nomeVivo ?? cred.name };
+        } else if (!doRepo.disabled) {
+          saida.credentials[tipo] = { ...cred };
+        }
       }
+      if (Object.keys(saida.credentials).length === 0) delete saida.credentials;
     }
     return saida;
   });
