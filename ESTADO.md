@@ -56,6 +56,17 @@ Rodada de correção pedida pelo dono em sete itens. O que importa para a próxi
    trocado é piorar. Fecha com uma medição na instância real (o `Extract From File` devolve zero
    item ou um item vazio? a doc do n8n não responde).
 
+4. **Nenhum portão automático guarda a 0164 contra regressão.** O teste de escala existe
+   (`Supabase/test/modelagem_versao_vigente_escala.test.sql`) mas **não roda no CI**, e a razão é
+   aritmética: com a 0164 a função leva 2,6 s neste container e sem ela 10,9 s — razão de 4,2×.
+   O runner compartilhado do GitHub é mais de 3× mais lento, e lá a versão CORRIGIDA já estoura os
+   8 s. Para o teto pegar o defeito aqui ele tem de ser ≤10 s; para a correção passar no CI, ≥15 s.
+   **Não existe número que satisfaça os dois**, porque a razão defeito/correção é menor que a razão
+   de velocidade entre as máquinas. Duas saídas foram tentadas e MEDIDAS COMO FALSAS: afrouxar para
+   30 s (passa com e sem a 0164 — portão que não mede nada) e afirmar o PLANO (o plano correto
+   também tem `Nested Loop`, e o contador de 9 milhões aparece nos dois). Roda-se à mão com
+   `ESCALA_0164=1 Supabase/test/run.sh`.
+
 3. **`MAX_OUTPUT_TOKENS` e `FRACAO_DO_TETO` não foram reajustados para o raciocínio.** Na OpenAI
    os tokens de raciocínio contam DENTRO do `max_completion_tokens`, então um bloco dimensionado
    no limite pode truncar por gasto de pensamento. Só a primeira medição de `thoughts_tokens` diz

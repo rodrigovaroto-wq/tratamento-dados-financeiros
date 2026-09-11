@@ -404,9 +404,39 @@ echo "== o marcador da sonda tem de ser CÓDIGO, não comentário (a lista hist�
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/sonda_marcador_e_codigo.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
-echo "== testes de ESCALA da versão vigente (0164: >250 rótulos, o filtro opaco não vira Nested Loop)"
+# O TESTE DE ESCALA DA 0164 NAO RODA NO CI, e a razao e medida, nao preguica.
+#
+# Ele afere o `statement_timeout` de 8s -- o teto REAL do Supabase -- sobre uma
+# fixture de 190 documentos e 1.000 rotulos. Medido em 11/09/2026:
+#   . com a 0164:  2,6 s neste container
+#   . sem a 0164: 10,9 s neste container   (razao de 4,2x)
+# No runner compartilhado do GitHub a versao CORRIGIDA passou de 8 s e reprovou.
+#
+# Ou seja: para o teto de 8s pegar o defeito AQUI ele tem de ser <= 10 s; para a
+# correcao passar NO CI ele tem de ser >= 15 s. Nao existe numero que satisfaca
+# os dois, porque a razao entre defeito e correcao (4,2x) e MENOR que a razao de
+# velocidade entre as duas maquinas. Num runner compartilhado este teste mede o
+# RUNNER, nao o codigo -- e portao que reprova por ruido e pior que portao
+# nenhum (.claude/memory/portao-pode-reprovar-por-ruido.md).
+#
+# TENTEI DUAS SAIDAS E AS DUAS ESTAVAM ERRADAS, e ficam registradas para ninguem
+# repetir: (a) afrouxar o teto para 30 s -- MEDIDO: passa COM E SEM a 0164, ou
+# seja vira portao que nao mede nada; (b) afirmar o PLANO em vez do tempo -- o
+# plano correto tambem tem `Nested Loop` (varios, baratos), e o contador
+# `Rows Removed by Join Filter: 9000000` aparece nas DUAS versoes.
+#
+# O QUE FICA DESCOBERTO, dito em vez de escondido: nenhum portao automatico
+# impede a 0164 de regredir. A prova dela e a medicao no cabecalho da migration,
+# mais este teste rodado A MAO:  ESCALA_0164=1 Supabase/test/run.sh
+if [ "${ESCALA_0164:-0}" = "1" ]; then
+echo
+echo "== testes de ESCALA da versao vigente (0164: >250 rotulos, teto real de 8s)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_versao_vigente_escala.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+else
+echo
+echo "== escala da 0164: PULADO (mede o relogio da maquina; rode com ESCALA_0164=1)"
+fi
 
 echo
 echo "== testes da Modelagem contra o caso REAL de produção (0102: versão vigente; rótulo real)"

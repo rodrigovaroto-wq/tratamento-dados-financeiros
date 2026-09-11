@@ -117,10 +117,23 @@ begin
   raise notice 'fixture montada — % documentos, % rótulos distintos, caso %', v_n_docs, v_n_rotulos, v_caso;
 end $$;
 
--- O TETO, no nível do psql — o mesmo statement_timeout real do Supabase, não
--- um número de milissegundos comparado com o relógio da máquina de CI (ver
--- o cabeçalho de modelagem_escala.test.sql para o porquê): ou cabe no teto
--- que a produção impõe, ou não cabe.
+-- O TETO É O DA PRODUÇÃO: 8s, o mesmo `statement_timeout` que o Supabase impõe.
+--
+-- TENTEI AFROUXAR PARA 30s em 11/09, supondo que a reprovação no CI fosse o
+-- runner ser mais lento — e o protocolo de medição derrubou a suposição na
+-- hora: com 30s, o teste passa COM E SEM a 0164. Ou seja, o afrouxamento não
+-- trocou um portão rígido por um tolerante; trocou por um portão que não mede
+-- nada. Fica registrado porque é a `fixture-nasce-vazia.md` cometida ao
+-- CORRIGIR, que é o jeito mais fácil de cometê-la.
+--
+-- Também tentei afirmar o PLANO em vez do tempo, e também estava errado: o
+-- plano CORRETO contém vários `Nested Loop` baratos. O defeito era um Nested
+-- Loop ESPECÍFICO (estimativa de 1 linha contra 7.220 reais); procurar a string
+-- reprovava a versão certa junto com a errada.
+--
+-- MEDIDO, aqui: com a 0164 no diretório o `run.sh` sai EXIT=0; sem ela, EXIT=3
+-- com `canceling statement due to statement timeout` — o erro literal da
+-- produção.
 set statement_timeout = '8s';
 
 do $$
