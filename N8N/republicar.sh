@@ -102,7 +102,16 @@ passo "4/5  conferindo o arquivo ANTES de publicar"
 # ele diria "1" para 14 credenciais quebradas. A trava abortaria de qualquer
 # forma, mas o número na mensagem estaria errado — e é por ele que se decide o
 # que fazer em seguida. Medido na revisão do PR #204.
-N_REPLACE="$(grep -o 'REPLACE' "$PUB" | wc -l | tr -d ' ')"
+# `grep` sai 1 quando NÃO acha nada — e não achar REPLACE é o caso BOM desta
+# trava. Com `set -euo pipefail`, a contagem direta matava o script EM
+# SILÊNCIO exatamente no caminho feliz — medido em 11/09/2026, na primeira
+# execução sem REPLACE sobrando: o passo 4 morreu com código 1 e sem a
+# mensagem ABORTADO. A contagem só roda quando já se sabe que há ocorrência.
+if grep -q 'REPLACE' "$PUB"; then
+  N_REPLACE="$(grep -o 'REPLACE' "$PUB" | wc -l | tr -d ' ')"
+else
+  N_REPLACE=0
+fi
 [[ "$N_REPLACE" == "0" ]] || erro "sobraram $N_REPLACE ocorrência(s) de REPLACE no arquivo a publicar.
            Isso quebraria as credenciais. O arquivo NÃO foi publicado; me mande
            esta mensagem."
