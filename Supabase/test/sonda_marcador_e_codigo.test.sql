@@ -49,7 +49,21 @@ begin
     and (marcador like '--%'
          -- SÓ O NÚMERO DA MIGRATION: quatro dígitos, com ou sem sufixo curto
          -- de desambiguação (`0149 (4)`), mas sem nenhum token de código.
-         or marcador ~ '^[0-9]{4}([^A-Za-z_]|$)');
+         or marcador ~ '^[0-9]{4}([^A-Za-z_]|$)'
+         -- PROSA DO CABEÇALHO. Acrescentado em 11/09 depois de uma revisão
+         -- apontar que as duas regras acima deixavam passar um marcador que é
+         -- só uma frase do comentário (sem `--` na frente e sem começar por
+         -- número) — e frase de cabeçalho sobrevive a uma reemissão que perdeu
+         -- a lógica exatamente como o comentário sobrevive.
+         --
+         -- O SINAL DE CÓDIGO é a presença de um destes: `_` (nome de função,
+         -- variável ou coluna), `(`/`)` (chamada), `.` (qualificação),
+         -- `%` (fragmento de `format()`), `=` (comparação). MEDIDO contra os 31
+         -- requisitos de hoje: os 13 que NÃO são históricos têm todos pelo menos
+         -- um; os que não têm já estão nomeados na lista histórica. Zero falso
+         -- positivo, e é por isso que a regra pôde entrar sem anistiar ninguém
+         -- novo.
+         or marcador !~ '[_().%=]');
 
   if v_n > 0 then
     raise exception E'% requisito(s) de corpo com marcador que NÃO é código:\n      %\n'

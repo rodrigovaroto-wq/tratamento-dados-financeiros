@@ -188,14 +188,21 @@ def tem_r_opcional(padrao_bruto):
 
 
 # AS QUE JA ACONTECERAM. A checagem 2 (abaixo) proibe patchar corpo de funcao
-# por `replace()` literal, e estas TRES ja fizeram isso antes da proibicao
-# existir -- duas delas abortando em producao em 10/09, que e' justamente o que
-# motivou a regra. Nao se reescreve migration aplicada, entao elas ficam
-# nomeadas aqui: a lista e' o registro de quem entrou antes do portao, e o
-# portao existe para ela nunca crescer.
+# por `replace()` LITERAL, e estas QUATRO ja fizeram isso antes da proibicao
+# existir -- duas delas (0161/0162) abortando em producao em 10/09, que e'
+# justamente o que motivou a regra. Nao se reescreve migration aplicada, entao
+# elas ficam nomeadas aqui: a lista e' o registro de quem entrou antes do
+# portao, e o portao existe para ela nunca crescer.
+#
+# A 0160 NAO ESTA AQUI, e a ausencia dela e' informacao: ela patcheia por ancora
+# REGEXP e ja escreve `\r?` corretamente -- e o caso que a checagem 1 aprova, nao
+# uma excecao. Confundir as duas listas foi o que produziu tres numeros
+# diferentes para a mesma coisa (o comentario dizia TRES, o conjunto tinha
+# QUATRO e a mensagem de commit dizia CINCO), dentro do proprio portao escrito
+# para impedir que numero vire decoracao. Corrigido em 11/09.
 JA_APLICADAS_COM_REPLACE_LITERAL = {
     # ACHADA PELO PROPRIO PORTAO ao ser alargado, em 11/09: a auditoria tinha
-    # contado quatro (0160-0163) e sao CINCO. O comentario da 0154 ainda DEFENDE
+    # olhado so' a faixa 0160-0163 e nao viu esta. O comentario da 0154 ainda DEFENDE
     # a tecnica ("recriar o corpo inteiro por copia e' o que a 0006 fez e
     # regrediu funcoes em silencio") -- uma terceira posicao na mesma doutrina,
     # que e' exatamente o acumulo que esta rodada foi mandada medir.
