@@ -399,6 +399,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_escala.test.sql 2>&1
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== testes de ESCALA da versão vigente (0164: >250 rótulos, o filtro opaco não vira Nested Loop)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_versao_vigente_escala.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== testes da Modelagem contra o caso REAL de produção (0102: versão vigente; rótulo real)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/modelagem_v35.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'

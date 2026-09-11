@@ -4829,14 +4829,37 @@ CREATE FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) RETURNS TABLE(se
     AS $$
   -- marca-0102
   -- marca-0103
+  -- marca-0164
   --
-  -- AS DUAS MARCAS FICAM. `fn_diagnostico_modelagem` (0102) confere se a correção
-  -- daquela migration está INSTALADA NO BANCO procurando `marca-0102` no corpo da
-  -- função — é o teste que separa "mergeado" de "aplicado", e foi ele que pegou
-  -- esta reemissão. Trocar a marca por uma nova apagaria a resposta da pergunta
-  -- que ela faz; a 0103 reemite o corpo e MANTÉM o filtro de versão vigente, então
-  -- a marca da 0102 continua verdadeira.
-  with bruto as (
+  -- AS TRÊS MARCAS FICAM. `fn_diagnostico_modelagem` (0102) confere se a
+  -- correção daquela migration está instalada procurando `marca-0102` no
+  -- corpo — é o teste que separa "mergeado" de "aplicado". Trocar a marca
+  -- apagaria a resposta; a 0164 reemite o corpo e MANTÉM a regra da 0102
+  -- ("só a versão vigente"), só muda COMO ela é expressa (join, não filtro
+  -- opaco) — então as três marcas continuam verdadeiras.
+  with docs_do_caso as (
+    select d.id as documento_id, d.tipo_taxonomia, d.entidade_id
+    from documento d
+    where d.caso_id = p_caso_id
+  ),
+  -- 0164: A VERSÃO VIGENTE COMO JOIN, NÃO COMO FILTRO OPACO.
+  --
+  -- Mesma regra da 0102 ("a de maior n_versao que TEM campo_extraido"), mas
+  -- como uma CTE nomeada que o planner enxerga e estima — em vez de um
+  -- filtro `dv.id = fn_versao_com_extracao(d.id)` por linha, cuja
+  -- seletividade o Postgres não sabe estimar (função opaca) e por isso
+  -- chutava rows=1 para toda CTE construída em cima de `bruto`, mesmo a
+  -- 7.220 linhas reais — a causa medida do Nested Loop que estourava os 8s
+  -- do Supabase no caso "Teste 00" (190 documentos). Ver o cabeçalho.
+  versao_vigente as (
+    select distinct on (dv.documento_id)
+           dv.documento_id, dv.id as documento_versao_id
+    from documento_versao dv
+    join docs_do_caso dc on dc.documento_id = dv.documento_id
+    where exists (select 1 from campo_extraido ce where ce.documento_versao_id = dv.id)
+    order by dv.documento_id, dv.n_versao desc
+  ),
+  bruto as (
     select
       ce.secao_canonica,
       ce.chave,
@@ -4845,18 +4868,12 @@ CREATE FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) RETURNS TABLE(se
       ce.valor_num,
       ce.unidade,
       ce.moeda,
-      d.tipo_taxonomia
-    from campo_extraido ce
-    join documento_versao dv on dv.id = ce.documento_versao_id
-    join documento d on d.id = dv.documento_id
-    left join entidade e on e.id = d.entidade_id
-    where d.caso_id = p_caso_id
-      and ce.valor_num is not null
-      -- 0102: só a versão VIGENTE de cada documento. Sem isto, cada reextração
-      -- soma um jogo inteiro de ocorrências ao caso — inflando n_ocorrencias,
-      -- deixando valor_ultimo vir de versão superada, e devolvendo o caso ao
-      -- statement_timeout que a 0101 tinha acabado de destravar.
-      and dv.id = fn_versao_com_extracao(d.id)
+      dc.tipo_taxonomia
+    from versao_vigente vv
+    join docs_do_caso dc on dc.documento_id = vv.documento_id
+    join campo_extraido ce on ce.documento_versao_id = vv.documento_versao_id
+    left join entidade e on e.id = dc.entidade_id
+    where ce.valor_num is not null
   ),
   -- O PAPEL É PROPRIEDADE DO RÓTULO, NÃO DA OCORRÊNCIA (0101).
   --
@@ -4884,8 +4901,12 @@ CREATE FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) RETURNS TABLE(se
       (array_agg(o.chave order by length(o.chave)))[1] as chave,
       o.rotulo_norm,
       max(o.entidade) as entidade,
-      -- valor da ocorrência de MAIOR MÓDULO, COM O SINAL (0042).
-      (array_agg(o.valor_num order by abs(o.valor_num) desc nulls last))[1] as valor_ultimo,
+      -- valor da ocorrência de MAIOR MÓDULO, COM O SINAL (0042). 0164: em
+      -- empate de módulo (duas ocorrências, sinais opostos), o desempate
+      -- passa a ser DECLARADO (prefere o positivo) em vez de depender da
+      -- ordem física em que o plano entrega as linhas — ver o cabeçalho
+      -- desta migration para a divergência que expôs a ambiguidade latente.
+      (array_agg(o.valor_num order by abs(o.valor_num) desc nulls last, o.valor_num desc))[1] as valor_ultimo,
       count(*) as n_ocorrencias,
       max(o.unidade) as unidade,
       max(o.moeda) as moeda,
@@ -4941,7 +4962,7 @@ $$;
 -- Name: FUNCTION fn_linhas_para_modelagem(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) IS 'Linhas lógicas do caso para a tela de Modelagem, com PAPEL (conta/subtotal/derivado/serie_mensal), valor COM SINAL, unidade/moeda, documentos de origem e marca de sobreposição. Existe como função porque campo_extraido não tem caso_id — o escopo por caso mora aqui. 0101: papel calculado uma vez por rótulo e sobreposição por join, para caber no statement_timeout. 0102: só a versão VIGENTE de cada documento (reextração deixava a versão superada somando ocorrência e podendo ditar o valor_ultimo).';
+COMMENT ON FUNCTION public.fn_linhas_para_modelagem(p_caso_id uuid) IS 'Linhas lógicas do caso para a tela de Modelagem, com PAPEL (conta/subtotal/derivado/serie_mensal), valor COM SINAL, unidade/moeda, documentos de origem e marca de sobreposição. Existe como função porque campo_extraido não tem caso_id — o escopo por caso mora aqui. 0101: papel calculado uma vez por rótulo e sobreposição por join, para caber no statement_timeout. 0102: só a versão VIGENTE de cada documento (reextração deixava a versão superada somando ocorrência e podendo ditar o valor_ultimo). 0164: a versão vigente passa a ser um JOIN nomeado (CTE versao_vigente), não um filtro por função opaca — o filtro antigo (dv.id = fn_versao_com_extracao(d.id)) fazia o planner estimar rows=1 para dezenas de milhares de linhas reais, escolhendo Nested Loop onde deveria escolher Hash Join (medido: 15,0s → 2,6s num fixture de 190 documentos/800 rótulos). Resultado idêntico ao anterior — comparado linha a linha, com except nos dois sentidos, contra 78 casos.';
 
 --
 -- Name: fn_linhas_para_transcrever(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -11494,6 +11515,26 @@ CREATE VIEW public.instalacao_sonda_modelagem_pronta AS
 COMMENT ON VIEW public.instalacao_sonda_modelagem_pronta IS '(0158) Autoteste da decisão de fn_modelagem_esta_pronta, EXECUTADA por literais (função pura, sem fixture de caso nem documento): 1 linha só se o positivo e as quatro negações — sem parâmetro, sem premissa ativa, premissa sem valor, e ZERO linha vinculada — valem todas ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos; esta view pega, porque o predicado É executado (achado D da revisão da 0157).';
 
 --
+-- Name: instalacao_sonda_modelagem_versao_vigente; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_modelagem_versao_vigente AS
+ SELECT 1 AS ok
+  WHERE ((( SELECT l.valor_ultimo
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = (250)::numeric) AND (( SELECT l.n_ocorrencias
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 caixa e equivalentes'::text))) = 1) AND (( SELECT l.valor_ultimo
+           FROM public.fn_linhas_para_modelagem('01640000-0000-0000-0000-000000000001'::uuid) l(secao_canonica, chave, rotulo_norm, entidade, valor_ultimo, n_ocorrencias, papel, unidade, moeda, documentos, sobreposicao_suspeita)
+          WHERE (l.rotulo_norm = public.fn_normalizar_texto('Sonda 0164 fornecedores a pagar'::text))) = (777)::numeric));
+
+--
+-- Name: VIEW instalacao_sonda_modelagem_versao_vigente; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_modelagem_versao_vigente IS '(0164) Autoteste de fn_linhas_para_modelagem, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0164", que não é mandato real) com dois documentos multi-versão: 1 linha só se a reextração que CORRIGE o valor (v2 substitui v1, sem somar nem duplicar) e a reextração AINDA EM ANDAMENTO (v2 sem campo_extraido, a vigente continua v1) resolvem certo ao mesmo tempo. Prova que a CTE versao_vigente (0164, join que substituiu o filtro opaco fn_versao_com_extracao) preserva a regra da 0102 — não prova que o PLANO é bom (isso é papel de Supabase/test/modelagem_versao_vigente_escala.test.sql, que só roda em CI/dev): prova que a reescrita não regrediu a semântica.';
+
+--
 -- Name: instalacao_sonda_rotulo_contraditorio; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -14251,6 +14292,14 @@ GRANT ALL ON TABLE public.instalacao_sonda_entidade_balcao_ambiguo TO service_ro
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_pronta TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_modelagem_versao_vigente; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO service_role;
 
 --
 -- Name: TABLE instalacao_sonda_rotulo_contraditorio; Type: ACL; Schema: public; Owner: -
