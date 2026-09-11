@@ -36,6 +36,10 @@ import { parseEntidade } from './lib/classifier.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, esforcosDoProvedor } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
+  spreadsheetToText, colunasDaPlanilha, avisoTruncamentoPlanilha,
+  MAX_LINHAS_PLANILHA, MAX_COLUNAS_PLANILHA,
+} from './lib/spreadsheet.mjs';
+import {
   linhasComNumero, linhasDeConta, ehLinhaDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
   celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
@@ -243,6 +247,55 @@ const FONTE_COBERTURA = [
 const FONTE_SHA256 = `const sha256Hex = ${sha256Hex.toString()};`;
 const FONTE_CUSTO_CHAMADA = `const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
 const custoDaChamada = ${custoDaChamada.toString()};`;
+
+// `spreadsheetToText`/`colunasDaPlanilha`/`avisoTruncamentoPlanilha` — embutidas
+// do fonte (lib/spreadsheet.mjs), como todo o resto. ANTES desta rodada elas não
+// entravam aqui: CSV era parseado por um `parseCsv` copiado à mão dentro do
+// `Preparar Conteudo`, com nome IGUAL ao da lib mas NUNCA verificado contra ela
+// pelo `espelho-inline.test.mjs` até essa suíte existir — coincidência de nome,
+// não garantia. Ele sai de cena porque quem parseia CSV agora é o nó nativo
+// `Extrair CSV`; o que sobra para o Code node é só formatar as linhas já
+// parseadas (por CSV, XLSX ou XLS) em texto — a MESMA função para os três
+// formatos, porque a partir daqui todos são "linhas de planilha".
+// AS CONSTANTES PRECISAM VIR JUNTO, na mesma ordem do arquivo-fonte: são o
+// `maxRows`/`maxCols` PADRÃO dos dois parâmetros de `spreadsheetToText` e
+// `avisoTruncamentoPlanilha`, e `toString()` não leva o escopo do módulo —
+// sem elas o nó morre com `ReferenceError` na primeira planilha grande.
+const FONTE_SPREADSHEET = [
+  `const MAX_LINHAS_PLANILHA = ${MAX_LINHAS_PLANILHA};`,
+  `const MAX_COLUNAS_PLANILHA = ${MAX_COLUNAS_PLANILHA};`,
+  `const colunasDaPlanilha = ${colunasDaPlanilha.toString()};`,
+  `const spreadsheetToText = ${spreadsheetToText.toString()};`,
+  `const avisoTruncamentoPlanilha = ${avisoTruncamentoPlanilha.toString()};`,
+].join('\n');
+
+// ---------------------------------------------------------------------------
+// PADRÕES DE MIMETYPE — FONTE ÚNICA para os TRÊS lugares que decidem por
+// formato: o `Roteador de Formato` (Switch nativo, condições declarativas), o
+// `Preparar Conteudo` (JS, decide o que mandar à IA por padrão/enquanto a
+// extração nativa não chega) e o `Recompor Conteudo Extraido` (JS, decide como
+// interpretar o que cada extrator devolveu). As STRINGS de regex são as MESMAS
+// nos três: divergirem aqui é o defeito que a auditoria dos 5 nós "Extract
+// from..." descreveu (`Extract From XML` recebendo um `.pdf`) só que por
+// descuido de gerador em vez de fan-out cego — o roteador manda o item para UM
+// extrator e o Code node classifica o mesmo mimetype como outro.
+// MUTUAMENTE EXCLUSIVOS DE PROPÓSITO — não por ordem de avaliação. O Switch
+// nativo pode rodar em modo "primeira regra que bate" ou "todas as que
+// baterem" (não confirmado contra a instância do dono), e um documento que
+// batesse em DOIS padrões reintroduziria fan-out — o mesmo defeito da
+// auditoria, por um mecanismo diferente. ACONTECEU AQUI, medido nesta
+// rodada: `xml: 'xml'` casava com "vnd.openxml**formats**-officedocument.
+// spreadsheetml.sheet" (o mimetype do XLSX contém "xml" como substring), então
+// todo .xlsx seria tratado como XML também. Corrigido ancorando no FIM da
+// string (`/xml$`), que só bate no mimetype que É xml.
+const PADRAO_MIME = {
+  pdf: 'pdf',
+  imagem: '^image/',
+  csv: 'csv|^text/plain$',
+  xlsx: 'spreadsheetml',
+  xls: 'ms-excel|excel',
+  xml: '/xml$',
+};
 
 // ---------------------------------------------------------------------------
 // O PROVEDOR DENTRO DOS NÓS
@@ -552,11 +605,14 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 `.trim();
 
 // --- Code (EACH ITEM): prepara a parte de CONTEUDO (para todos os docs) ---
-// pdf→file; imagem→image_url; csv→texto (parse inline); xlsx→nota (ver README).
+// pdf/imagem→conteúdo real (parteDeArquivo); csv/xlsx/xls/xml→PLACEHOLDER que
+// o roteador por formato substitui adiante (ver `Roteador de Formato` e
+// `Recompor Conteudo Extraido`, logo depois de `Preparar Conteudo` no grafo).
 // Preserva o binário (o Upload Storage roda como ramo a partir deste node).
 const CODE_PREPARAR_CONTEUDO = `
 ${FONTE_SHA256}
 ${FONTE_PROVEDOR}
+const PADRAO_MIME=${JSON.stringify(PADRAO_MIME)};
 const item=$input.item.json;
 const binMeta=($input.item.binary||{})['data']||{};
 const mt=(binMeta.mimeType||'').toLowerCase();
@@ -580,32 +636,28 @@ const mt=(binMeta.mimeType||'').toLowerCase();
 // lote) em vez do literal 0.
 const buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');
 const b64=buf.toString('base64');
-function csvConta(t,alvo){let n=0,d=false;for(let i=0;i<t.length;i++){const c=t[i];if(c==='"'){if(d&&t[i+1]==='"'){i++;continue;}d=!d;}else if(c===alvo&&!d)n++;else if(c==='\\n'&&!d)break;}return n;}\nfunction csvRegs(t,sep){const R=[];let f='',r=[],d=false;for(let i=0;i<t.length;i++){const c=t[i];if(d){if(c==='"'){if(t[i+1]==='"'){f+='"';i++;}else d=false;}else f+=c;continue;}if(c==='"'){d=true;continue;}if(c===sep){r.push(f);f='';continue;}if(c==='\\r')continue;if(c==='\\n'){r.push(f);R.push(r);r=[];f='';continue;}f+=c;}r.push(f);R.push(r);return R.filter(x=>x.some(y=>y.trim()!==''));}\nfunction parseCsv(t){const s=String(t||'');if(s.trim()==='')return [];const sep=csvConta(s,';')>csvConta(s,',')?';':',';const R=csvRegs(s,sep);if(!R.length)return [];const h=R[0].map(c=>c.trim());return R.slice(1).map(c=>{const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]??'').trim());return o;});}
-// TETOS: 2000x60, nao 50x25 -- espelha lib/spreadsheet.mjs (MAX_LINHAS_PLANILHA).
-// 50 linhas e' menos do que um documento real tem (24 meses x 5 entidades = 120;
-// balancete analitico passa de 500) e o resto ia embora com uma nota no prompt
-// que so' a IA lia. Item 1 do 7.4 do Onboarding.
-// Colunas pela UNIAO das chaves, nao pelas da primeira linha: o Extract From File
-// devolve objeto esparso, e celula vazia na linha 0 apagava a coluna do documento
-// inteiro.
-function colsPlan(rows){const s=new Set();for(const r of rows){if(r&&typeof r==='object')for(const k of Object.keys(r))s.add(k);}return [...s];}
-function sheetTxt(rows,mr=2000,mc=60){if(!rows.length)return '(planilha vazia)';const cols=colsPlan(rows).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}
-// O que ficou de fora vira PENDENCIA (falha_motivo -> 0016), nao nota no prompt.
-function avisoSheet(rows,mr=2000,mc=60){if(!Array.isArray(rows)||!rows.length)return null;const nc=colsPlan(rows).length;const p=[];if(rows.length>mr)p.push((rows.length-mr)+' de '+rows.length+' linhas nao foram enviadas a extracao (teto de '+mr+')');if(nc>mc)p.push((nc-mc)+' de '+nc+' colunas nao foram enviadas a extracao (teto de '+mc+')');if(!p.length)return null;return 'Planilha maior que o teto de envio: '+p.join('; ')+'. A extracao deste documento esta INCOMPLETA -- o que falta nao esta no banco nem no book. Reenvie o arquivo fatiado ou peca ao dono para elevar o teto.';}
 // A FORMA DA PARTE E' DO PROVEDOR, e por isso ela sai de \`parteDeArquivo\`, a
 // mesma funcao que a lib usa -- nao de tres literais escritos aqui. Eram eles
 // que faziam a troca de provedor ser "achar cada lugar": um PDF montado na forma
 // da OpenAI e' 400 no Google, e o 400 chega como falha da chamada, sem dizer que
 // o defeito estava no PREPARO.
+//
+// CSV/XLSX/XLS/XML: o que entra aqui e' so' PLACEHOLDER, por desenho -- quem
+// decide o conteudo de verdade e' o extrator NATIVO do formato certo (\`Extrair
+// CSV\`/\`Extrair XLSX\`/\`Extrair XLS\`/\`Extrair XML\`), que o \`Roteador de
+// Formato\` alcanca logo depois deste no', e o \`Recompor Conteudo Extraido\`
+// escreve por cima (ver o comentario daquele no' para o mecanismo). O aviso
+// aqui e' a REGRA 1 do CLAUDE.md (nunca apresentar ausencia como dado): por
+// PADRAO este documento NAO tem conteudo extraido, e so' deixa de ser pendencia
+// se o extrator confirmar sucesso mais adiante. Se o extrator falhar (arquivo
+// corrompido, por exemplo), o \`onError\` dele devolve ESTE MESMO item sem
+// tocar -- e o aviso abaixo e' exatamente o que sobrevive.
 let part; let aviso=null;
-if(/pdf/.test(mt)||mt.indexOf('image/')===0) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});
-else if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');const rows=parseCsv(txt);part=parteDeTexto(PROVEDOR,sheetTxt(rows));aviso=avisoSheet(rows);}
-// XLSX: o conteudo NAO e' extraido. A versao anterior mandava esta frase como se
-// fosse o documento -- a IA recebia um recado de configuracao no lugar do balanco,
-// devolvia "nao ha linhas", e a pendencia dizia que a EXTRACAO falhou, nao que o
-// arquivo nunca foi lido. A chamada continua sendo feita (pular exige no' IF, e'
-// mudanca de topologia da fase 3); o que muda e' que o motivo real vira pendencia.
-else if(/spreadsheetml|ms-excel|excel/.test(mt)){part=parteDeTexto(PROVEDOR,'(XLSX nao extraido: habilitar Extract From File no N8N -- ver README. Nome: '+(item.nome_original||'')+')');aviso='Arquivo .xlsx/.xls NAO foi lido: o no "Extract From File" nao esta habilitado nesta instancia do n8n, entao NENHUM dado deste documento chegou a extracao. O que este documento contem nao esta no banco nem no book.';}
+if(new RegExp(PADRAO_MIME.pdf,'i').test(mt)||new RegExp(PADRAO_MIME.imagem,'i').test(mt)) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});
+else if(new RegExp(PADRAO_MIME.csv,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de CSV pendente do no nativo Extrair CSV)');aviso='Arquivo CSV ainda nao foi extraido pelo no nativo (Extrair CSV). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
+else if(new RegExp(PADRAO_MIME.xlsx,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLSX pendente do no nativo Extrair XLSX)');aviso='Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
+else if(new RegExp(PADRAO_MIME.xls,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLS pendente do no nativo Extrair XLS)');aviso='Arquivo .xls ainda nao foi extraido pelo no nativo (Extrair XLS). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
+else if(new RegExp(PADRAO_MIME.xml,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XML pendente do no nativo Extrair XML)');aviso='Arquivo XML ainda nao foi extraido pelo no nativo (Extrair XML). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
 else {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+mt+')');aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}
 // HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.
 // A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob
@@ -647,6 +699,114 @@ try{
 // frente ninguem mais precisa -- o \`content_part\` ja' carrega o arquivo em
 // base64 DENTRO do json, e e' ele que vai para a OpenAI.
 return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};
+`.trim();
+
+// --- Code (ALL ITEMS): RECOMPÕE o que os 5 extratores por formato devolveram --
+//
+// POR QUE ESTE NÓ EXISTE. `Preparar Conteudo` classifica o mimetype e manda o
+// item para o `Roteador de Formato` (Switch nativo), que entrega CADA
+// documento a EXATAMENTE UM extrator — nunca aos cinco (essa era a auditoria
+// do print do dono: 5 nós "Extract from..." pendurados em PARALELO no MESMO
+// `Preparar Conteudo`, todos recebendo o MESMO item, sem roteamento nenhum —
+// fan-out cego, `Medir Documento` processando 5 itens por documento, 1 certo e
+// 4 lixo). Com o Switch, cada documento chega aqui vindo de UM ramo só; este
+// nó decide o que fazer com o que aquele ramo devolveu e converge tudo em UM
+// item por documento outra vez, antes de `Medir Documento`.
+//
+// TRÊS FORMAS DE CHEGAR AQUI, e as três são tratadas:
+//   1. imagem / formato sem extrator ('outros', ainda "conteudo nao
+//      suportado") / QUALQUER extrator que FALHOU: o item chega EXATAMENTE
+//      como saiu de \`Preparar Conteudo\` — \`onError: continueRegularOutput\`
+//      no extrator devolve o item de ENTRADA sem tocar quando ele lança, e
+//      \`caso_id\` só sobrevive nesse caso (o \`Extract From File\` SUBSTITUI o
+//      item quando funciona — nunca devolve \`caso_id\`). Nada a reconstruir:
+//      o \`content_part\`/\`aviso_conteudo\` que sobrevivem já são os corretos
+//      (o real, para imagem; o placeholder com o aviso, para o resto).
+//   2. PDF: \`Extrair Texto\` (Camada 1, já existia) devolve \`{text,numpages}\`
+//      — sem \`content_part\`. Não se reconstrói nada aqui: \`Medir Documento\`
+//      já lê \`text\`/\`numpages\` DIRETO do nó anterior, mecanismo que este nó
+//      não pode atrapalhar.
+//   3. CSV/XLSX/XLS/XML: o extrator SUBSTITUIU o item pelo que extraiu. Para
+//      texto (XML), é um item só; para planilha, o comportamento documentado
+//      do \`Extract From File\` é UMA LINHA POR ITEM — o MESMO tipo de fan-out
+//      do print do dono, só que nativo do n8n em vez de um engano de quem
+//      pendurou o nó. Sem reagrupar, \`Medir Documento\` voltaria a processar
+//      N itens por documento.
+//
+// COMO SE SABE DE QUAL DOCUMENTO CADA LINHA VEIO, já que o \`Extract From
+// File\` não repassa \`caso_id\`: por \`itemMatching\`, a API do n8n para
+// exatamente isto — reatar um item pós-fan-out ao item de entrada que o
+// gerou. \`$('Nó').item\` (usado no resto deste workflow) NÃO serve aqui: ele
+// resolve por um pareamento AMBÍGUO depois de convergência (foi o que perdeu
+// 19 de 35 documentos no "Teste V45", com \`Juntar Ramos\`, e por isso
+// \`Recompor Contexto\` reconcilia por ÍNDICE contra \`.all()\` em vez de
+// \`.item\`); \`itemMatching(i)\` NOMEIA o índice de entrada, sem essa
+// ambiguidade, e é o que a documentação do n8n recomenda para 1-para-N.
+//
+// ⚠️ NÃO CONFIRMADO CONTRA O N8N DO DONO — mesma categoria do comentário de
+// \`retryOnFail\` mais abaixo neste arquivo: o comportamento em 1-linha-por-item
+// do \`Extract From File\` e a propagação de \`itemMatching\` através do Merge de
+// 7 ramos são o que a documentação do n8n descreve, não o que foi visto rodar
+// aqui. NUNCA agrupa às cegas quando o pareamento falha (juntaria documentos
+// DIFERENTES numa linha só — o erro mais caro possível nesta base): uma linha
+// sem rastro vira um item isolado, com aviso próprio, nunca lixo dentro do
+// grupo de outro documento. O que conferir depois de republicar: subir 2+
+// planilhas no MESMO lote e checar no banco que cada uma virou o SEU PRÓPRIO
+// documento, com as próprias linhas — não uma mistura.
+const CODE_RECOMPOR_EXTRACAO = `
+${FONTE_PROVEDOR}
+${FONTE_SPREADSHEET}
+const PADRAO_MIME=${JSON.stringify(PADRAO_MIME)};
+const combinaCom=(chave,mt)=>new RegExp(PADRAO_MIME[chave],'i').test(String(mt||''));
+const entradas=$input.all();
+const completos=[];
+const porDocumento=new Map();
+for(let i=0;i<entradas.length;i+=1){
+  const raw=entradas[i].json||{};
+  // Caso 1: ja chegou pronto (imagem/outros/qualquer extrator que falhou).
+  if('caso_id' in raw){ completos.push(entradas[i]); continue; }
+  let ctx=null;
+  try{ ctx=$('Preparar Conteudo').itemMatching(i).json||null; }catch(e){ ctx=null; }
+  if(!ctx){
+    // SEM RASTRO -- nunca agrupa as cegas. Isola como item proprio (degrada,
+    // nao corrompe) e declara o motivo, no espirito do 'recompor_motivo' que
+    // 'Recompor Contexto' ja usa para o mesmo tipo de falha declarada.
+    completos.push({json:{...raw, aviso_conteudo:'Recompor Conteudo Extraido: nao foi possivel religar esta linha ao documento de origem (itemMatching falhou). Conteudo NAO chegou a extracao.'}});
+    continue;
+  }
+  const mt=ctx.content_mime;
+  // Caso 2: PDF -- Extrair Texto e' Camada 1 (texto/paginas), Medir Documento
+  // le direto do no' anterior. Nao mexe.
+  if(combinaCom('pdf',mt)){ completos.push(entradas[i]); continue; }
+  // Caso 3a: XML -- item de texto unico, nao planilha.
+  if(combinaCom('xml',mt)){
+    const texto=[raw.data,raw.text,raw.content].find((v)=>typeof v==='string'&&v.trim()!=='');
+    completos.push({json:{...ctx,
+      content_part: texto?parteDeTexto(PROVEDOR,texto):ctx.content_part,
+      aviso_conteudo: texto?null:ctx.aviso_conteudo,
+    }});
+    continue;
+  }
+  // Caso 3b: CSV/XLSX/XLS -- uma ou mais linhas de planilha deste documento.
+  // \`hash\` (SHA-256 do arquivo, calculado em Preparar Conteudo) e' a chave:
+  // unica por conteudo, e e' a MESMA que a 0026 usa para dedup -- reaproveitar
+  // em vez de inventar uma chave nova.
+  const chave=ctx.hash||ctx.nome_original||('__sem_chave_'+i);
+  if(!porDocumento.has(chave)) porDocumento.set(chave,{ctx,linhas:[]});
+  const grupo=porDocumento.get(chave);
+  // Defensivo aos DOIS formatos possiveis do extrator: um item com o array
+  // inteiro sob '.data', ou uma linha por item (o comportamento documentado).
+  if(Array.isArray(raw.data)) grupo.linhas.push(...raw.data);
+  else grupo.linhas.push(raw);
+}
+const reconstruidos=[...porDocumento.values()].map(({ctx,linhas})=>({json:{...ctx,
+  content_part: parteDeTexto(PROVEDOR, spreadsheetToText(linhas)),
+  // Planilha extraida com sucesso NAO abre mais a pendencia de 'nao lida' --
+  // so' abre a de TRUNCAMENTO, se a planilha estourar o teto (regra 1: so'
+  // declara ausencia onde ela e' real).
+  aviso_conteudo: avisoTruncamentoPlanilha(linhas),
+}}));
+return [...completos, ...reconstruidos];
 `.trim();
 
 // --- Code (EACH ITEM): monta corpo da chamada de CLASSIFICAÇÃO (fallback) ---
@@ -869,8 +1029,9 @@ return saida;
 
 // --- Code (EACH ITEM): CAMADA 1 — a régua do documento ----------------------
 //
-// Roda logo depois do `Extrair Texto` e existe por um motivo de MECÂNICA do n8n
-// que custou duas execuções para ser entendido:
+// Roda logo depois do `Recompor Conteudo Extraido` (que converge os 5
+// extratores por formato de volta a um item por documento) e existe por um
+// motivo de MECÂNICA do n8n que custou duas execuções para ser entendido:
 //
 //   • `Extract From File` SUBSTITUI o item (escreve o resultado do PDF no `json`
 //     e não repassa o binário). Posto entre `Lote cabe?` e `Preparar Conteudo`,
@@ -889,12 +1050,24 @@ return saida;
 // `Preparar Conteudo`, que agora É ancestral.
 const CODE_MEDIR_DOCUMENTO = `
 ${FONTE_COBERTURA}
-// O texto vem do PROPRIO input (o \`Extrair Texto\` e' o no' anterior): nao depende
-// de pareamento nenhum. O contexto vem do \`Preparar Conteudo\`, ancestral.
+// O texto vem do PROPRIO input (o \`Recompor Conteudo Extraido\` e' o no'
+// anterior): nao depende de pareamento nenhum. O contexto vem do
+// \`Preparar Conteudo\`, ancestral.
 const doExtrator=$input.item.json||{};
 const textoPdf=(typeof doExtrator.text==='string'&&doExtrator.text)||(typeof doExtrator.texto_pdf==='string'&&doExtrator.texto_pdf)||'';
 let item={};
 try{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }
+// O CONTEUDO EXTRAIDO POR FORMATO CHEGA AQUI, NAO SE INVENTA UM CAMINHO NOVO.
+// \`Recompor Conteudo Extraido\` SEMPRE escreve \`content_part\`/\`aviso_conteudo\`
+// explicitamente no item que devolve -- inclusive quando o valor e' identico
+// ao placeholder de \`Preparar Conteudo\` (extrator falhou, ou formato sem
+// extrator). Por isso a chave so' precisa EXISTIR em \`doExtrator\` para valer:
+// quando ela nao existe (o \`Extrair Texto\` do PDF, que devolve \`{text,
+// numpages}\` e nao sabe nada do nosso \`content_part\`), \`item\` (o placeholder
+// de \`Preparar Conteudo\`, que para PDF/imagem JA e' o conteudo real) segue
+// valendo sem mudanca nenhuma.
+const contentPart='content_part' in doExtrator ? doExtrator.content_part : item.content_part;
+const avisoConteudo='content_part' in doExtrator ? (doExtrator.aviso_conteudo??null) : item.aviso_conteudo;
 const linhasDoTexto=linhasComNumero(textoPdf);
 const temTexto=linhasDoTexto.length>0;
 // AS CELULAS, contadas linha a linha. O \`Extract From File\` entrega o texto
@@ -909,6 +1082,8 @@ const celulasEstim=pesosDaLinha.reduce((a,b)=>a+b,0);
 // calam para ele. \`null\` e' "nao sei", nunca "zero": zero ligaria a guarda de
 // cobertura com regua inventada justamente no documento onde o modelo mais erra.
 return {json:{...item,
+  content_part: contentPart,
+  aviso_conteudo: avisoConteudo,
   // DUAS reguas, e a distincao e' o que fez a guarda voltar a enxergar:
   //   celulas -> toda linha com digito. E' o tamanho da RESPOSTA, e e' o que o
   //     fatiamento precisa saber (cabecalho tambem gasta token).
@@ -1458,12 +1633,28 @@ const PG_POR_ITEM = { queryBatching: 'independently' };
 // sessão 7 cont.¹³ — os Code ficaram de fora e ninguém notou porque o invariante
 // que confere isso tem lista de nomes hardcoded.
 //
-// DOIS nós Code NÃO entram aqui, e a exclusão é o ponto:
+// TRÊS nós Code NÃO entram aqui, e a exclusão é o ponto:
 //   • `Listar Arquivos` lança quando o formulário vem sem arquivo — abortar é a
 //     resposta certa, não há lote para continuar.
 //   • `Orcamento do Lote` lança para RECUSAR o lote acima de US$ 3. Pôr `onError`
 //     nele desativaria o teto de gasto, que é o oposto do que ele existe para fazer.
+//   • `Recompor Conteudo Extraido` (roteamento por formato, ver o nó): se ele
+//     lançar, `continueRegularOutput` devolveria o LOTE INTEIRO sem reagrupar
+//     — as linhas de planilha que ele existe para juntar voltariam soltas, uma
+//     por item, e `Medir Documento` processaria N itens por documento outra
+//     vez. É o MESMO fan-out que o roteamento inteiro existe para evitar, só
+//     que via falha silenciosa em vez de fio solto no editor. Lote inteiro
+//     caindo aqui e aparecendo VERMELHO é o comportamento certo.
 const CODE_CONTINUA = { onError: 'continueRegularOutput' };
+
+// Condição do `Roteador de Formato` (Switch) para uma chave de `PADRAO_MIME` —
+// MESMA sintaxe de `conditions` que os IF deste arquivo já usam (`Lote cabe?`,
+// `Precisa Fallback?`), só que o operador é `regex` em vez de `boolean`: o
+// Switch decide por STRING (mimetype), não por flag.
+const condMime = (padrao) => ({
+  options: { caseSensitive: false, typeValidation: 'strict' }, combinator: 'and',
+  conditions: [{ leftValue: '={{ $json.content_mime }}', rightValue: padrao, operator: { type: 'string', operation: 'regex' } }],
+});
 
 const nodes = [
   node('Intake (Form)', 'n8n-nodes-base.formTrigger', 2, {
@@ -1530,6 +1721,82 @@ const nodes = [
     operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true },
   }, { onError: 'continueRegularOutput' }),
   node('Preparar Conteudo', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_PREPARAR_CONTEUDO }, CODE_CONTINUA),
+
+  // O ROTEADOR DE FORMATO — a correção do fan-out cego que o dono pendurou no
+  // editor (5 nós "Extract from..." em paralelo, todos recebendo o MESMO
+  // item). Aqui cada documento vai para EXATAMENTE UM extrator, por
+  // `content_mime` (decidido em `Preparar Conteudo`, logo atrás). As MESMAS
+  // strings de `PADRAO_MIME` que `Preparar Conteudo` usa — nunca uma segunda
+  // cópia dos padrões, que é como um item passaria a ser roteado para um
+  // extrator e classificado como outro sem nenhum teste notar.
+  //
+  // FALLBACK ('outros'): mimetype que não bate com PDF/imagem/CSV/XLSX/XLS/XML
+  // — hoje isso é o "conteudo nao suportado" que `Preparar Conteudo` já
+  // declarava. Sem extrator, vai direto para o Merge (regra 1: continua
+  // abrindo a pendência, nunca inventa suporte que não existe).
+  node('Roteador de Formato', 'n8n-nodes-base.switch', 3, {
+    mode: 'rules',
+    rules: { values: [
+      { outputKey: 'pdf', conditions: condMime(PADRAO_MIME.pdf) },
+      { outputKey: 'imagem', conditions: condMime(PADRAO_MIME.imagem) },
+      { outputKey: 'csv', conditions: condMime(PADRAO_MIME.csv) },
+      { outputKey: 'xlsx', conditions: condMime(PADRAO_MIME.xlsx) },
+      { outputKey: 'xls', conditions: condMime(PADRAO_MIME.xls) },
+      { outputKey: 'xml', conditions: condMime(PADRAO_MIME.xml) },
+    ] },
+    options: { fallbackOutput: 'extra' },
+  }),
+
+  // OS QUATRO EXTRATORES NOVOS — o pedido literal do dono ("garanta que os nós
+  // 'Extract from...' saiam todos"), com o rótulo XLS/XLSX CORRIGIDO: XLS é o
+  // formato ANTIGO (OLE binário, pré-2007), XLSX é o MODERNO (Office Open XML,
+  // pós-2007) — o dono tinha os dois trocados no editor. Aqui o NOME do nó é
+  // literalmente a extensão que ele trata, e o `operation` bate com ela: não
+  // sobra rótulo "moderno/antigo" para inverter de novo.
+  //
+  // `onError: continueRegularOutput` nos QUATRO, e a JUSTIFICATIVA não é a
+  // mesma do fan-out cego que a auditoria reprovou. Lá, tolerância mascarava
+  // ROTEAMENTO ERRADO (XML chegando a um extrator de CSV). Aqui o roteamento
+  // já garante que só o mimetype certo chega a cada nó — o que pode falhar
+  // ainda é o ARQUIVO (CSV mal formado, XLSX corrompido), e isso é uma falha
+  // de CONTEÚDO legítima, do mesmo jeito que "PDF escaneado sem camada de
+  // texto" já é para `Extrair Texto`: um documento ruim não pode derrubar os
+  // outros 189 de um lote. `Recompor Conteudo Extraido` detecta a falha (o
+  // item passa sem `content_part` novo) e a pendência de `Preparar Conteudo`
+  // sobrevive — nunca vira sucesso fingido.
+  node('Extrair CSV', 'n8n-nodes-base.extractFromFile', 1, {
+    operation: 'csv', binaryPropertyName: 'data',
+  }, { onError: 'continueRegularOutput' }),
+  node('Extrair XLSX', 'n8n-nodes-base.extractFromFile', 1, {
+    operation: 'xlsx', binaryPropertyName: 'data',
+  }, { onError: 'continueRegularOutput' }),
+  node('Extrair XLS', 'n8n-nodes-base.extractFromFile', 1, {
+    operation: 'xls', binaryPropertyName: 'data',
+  }, { onError: 'continueRegularOutput' }),
+  // XML: `Extract From File` não tem operação dedicada de XML→JSON (isso é o
+  // nó `XML`, que opera sobre string, não sobre binário) — a operação `text`
+  // lê o binário como texto puro, e é isso que `Recompor Conteudo Extraido`
+  // manda para a IA (o XML cru é conteúdo legível pelo modelo, ainda que não
+  // estruturado em linhas). CONFERIR NO EDITOR: se a instância do dono expõe
+  // uma operação de XML mais específica, trocar aqui é local único.
+  node('Extrair XML', 'n8n-nodes-base.extractFromFile', 1, {
+    operation: 'text', binaryPropertyName: 'data',
+  }, { onError: 'continueRegularOutput' }),
+
+  // O MERGE QUE CONVERGE OS 7 RAMOS DO ROTEADOR — a resposta canônica do n8n
+  // para "vários caminhos, um documento por vez", a MESMA que `Juntar Ramos` e
+  // `Juntar Extraidos` já usam nesta cadeia (nunca convergência crua: foi ela
+  // que perdeu 19 de 35 documentos no "Teste V45"). 7 entradas: pdf (via
+  // `Extrair Texto`), imagem (direto), csv/xlsx/xls/xml (via cada extrator) e
+  // o fallback 'outros' (direto).
+  node('Juntar Extracao de Conteudo', 'n8n-nodes-base.merge', 3, {
+    mode: 'append', numberInputs: 7,
+  }),
+  // SEM `onError`, de propósito — ver o comentário de `CODE_CONTINUA` acima.
+  node('Recompor Conteudo Extraido', 'n8n-nodes-base.code', 2, {
+    mode: 'runOnceForAllItems', jsCode: CODE_RECOMPOR_EXTRACAO,
+  }),
+
   node('Medir Documento', 'n8n-nodes-base.code', 2, { mode: 'runOnceForEachItem', jsCode: CODE_MEDIR_DOCUMENTO }, CODE_CONTINUA),
 
   // RAMO LATERAL: nada depende da saída deste node (HTTP substitui o item).
@@ -1821,17 +2088,39 @@ const connections = {
   'Listar Arquivos': { main: [[{ node: 'Classificar Nome', type: 'main', index: 0 }]] },
   'Classificar Nome': { main: [[{ node: 'Preparar Conteudo', type: 'main', index: 0 }]] },
   'Registrar Recusa': { main: [[{ node: 'Abortar Lote', type: 'main', index: 0 }]] },
-  // fan-out: upload (lateral) + decisão de fallback (cadeia principal)
-  // O `Extrair Texto` entra AQUI, e não antes do preparo: neste ponto o binário
-  // ainda existe (o preparo o repassa) e o `content_part` já carrega o arquivo em
-  // base64 dentro do json — então o fato de ele descartar o binário deixa de ter
-  // consequência. O `Medir Documento` logo depois recompõe o contexto lendo o
-  // `Preparar Conteudo`, que É ancestral dele (um ramo irmão não seria).
+  // fan-out: upload (lateral) + roteador por formato (cadeia principal)
+  // O `Roteador de Formato` entra AQUI, e não antes do preparo: neste ponto o
+  // binário ainda existe (o preparo o repassa) e o `content_part` já carrega
+  // ALGO (real, para pdf/imagem; placeholder, para o resto) dentro do json —
+  // então o fato de os extratores descartarem o binário deixa de ter
+  // consequência. `Recompor Conteudo Extraido`, depois do Merge, recompõe o
+  // contexto lendo o `Preparar Conteudo`, que É ancestral dele (um ramo irmão
+  // não seria — ver o teste "aponta para um ANCESTRAL, nunca para um irmão").
   'Preparar Conteudo': { main: [[
     { node: 'Upload Storage', type: 'main', index: 0 },
-    { node: 'Extrair Texto', type: 'main', index: 0 },
+    { node: 'Roteador de Formato', type: 'main', index: 0 },
   ]] },
-  'Extrair Texto': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
+  // CADA SAÍDA VAI PARA EXATAMENTE UM DESTINO — nunca fan-out cego (a auditoria
+  // dos 5 nós "Extract from..." do dono era exatamente o oposto disto: os 5
+  // recebiam o MESMO item, sem Switch nenhum decidindo). A ORDEM das saídas
+  // aqui é a ORDEM de `rules.values` no nó (pdf/imagem/csv/xlsx/xls/xml), com o
+  // fallback ('outros') por último.
+  'Roteador de Formato': { main: [
+    [{ node: 'Extrair Texto', type: 'main', index: 0 }],
+    [{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 1 }],
+    [{ node: 'Extrair CSV', type: 'main', index: 0 }],
+    [{ node: 'Extrair XLSX', type: 'main', index: 0 }],
+    [{ node: 'Extrair XLS', type: 'main', index: 0 }],
+    [{ node: 'Extrair XML', type: 'main', index: 0 }],
+    [{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 6 }],
+  ] },
+  'Extrair Texto': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 0 }]] },
+  'Extrair CSV': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 2 }]] },
+  'Extrair XLSX': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 3 }]] },
+  'Extrair XLS': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 4 }]] },
+  'Extrair XML': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 5 }]] },
+  'Juntar Extracao de Conteudo': { main: [[{ node: 'Recompor Conteudo Extraido', type: 'main', index: 0 }]] },
+  'Recompor Conteudo Extraido': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
   // O ORÇAMENTO ENTRA AQUI, e não antes do preparo do conteúdo (onde ficava até
   // a rodada de 18/08). Este é o primeiro ponto em que o lote inteiro está
   // visível de uma vez COM o documento já medido — linhas com número e número de

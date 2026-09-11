@@ -29,10 +29,21 @@ Intake (Form: nome do mandato + upload de N arquivos)
   → Upsert Caso ............. fn_upsert_caso(nome) → caso_id   [Postgres: NÃO repassa binário]
   → Listar Arquivos ......... fan-out: 1 item por arquivo (binário lido do FORM, chave 'data')
   → Classificar Nome ........ nome + regras → {tipo, período, assinado, confiança} [preserva binário]
-  → Preparar Conteudo ....... parte multimodal p/ TODOS: pdf→file, imagem→image_url,
-       │                      csv→texto, xlsx→nota [preserva binário]
+  → Preparar Conteudo ....... parte multimodal p/ pdf/imagem (real); placeholder p/
+       │                      csv/xlsx/xls/xml, até o extrator nativo confirmar [preserva binário]
        ├─→ Upload Storage ... POST no bucket privado (RAMO LATERAL — nada depende da saída)
-       └─→ Extrair Texto .... camada de texto do PDF, na instância, sem IA e sem custo
+       └─→ Roteador de Formato (Switch) ... 1 documento → EXATAMENTE 1 extrator, por content_mime
+             ├─ pdf   → Extrair Texto ........ camada de texto do PDF, na instância, sem IA/custo
+             ├─ imagem → (direto — já vai como image_url)
+             ├─ csv   → Extrair CSV .......... n8n-nodes-base.extractFromFile, operation csv
+             ├─ xlsx  → Extrair XLSX ......... idem, operation xlsx (Office Open XML, MODERNO)
+             ├─ xls   → Extrair XLS .......... idem, operation xls (OLE binário, ANTIGO)
+             ├─ xml   → Extrair XML .......... idem, operation text (lê o binário como texto cru)
+             └─ outros → (direto — mantém "conteudo nao suportado" + pendência)
+                   ↓ (Merge, 7 ramos)
+             → Recompor Conteudo Extraido .. reagrupa linhas de planilha por documento
+             │                    (itemMatching), monta o content_part real, e converge
+             │                    tudo em 1 item por documento antes de:
              → Medir Documento .. conta as linhas com número e as PÁGINAS (a régua do
              │                    fatiamento, da cobertura e do teto de gasto) e RECOMPÕE o
              │                    contexto lendo o `Preparar Conteudo`
@@ -523,15 +534,33 @@ for outra, o número a mexer é `tpm`/`rpm` em `N8N/lib/provedor.mjs` — não o
 ## Fallback de classificação por conteúdo — como funciona
 
 Quando o classificador por nome não tem confiança, a chamada leva o **conteúdo real do
-arquivo** (montado no `Preparar Conteudo`, que roda para todos):
+arquivo** (montado no `Preparar Conteudo` + roteado por `Roteador de Formato`, que rodam
+para todos):
 - **PDF** → parte `file` (base64) — o modelo lê texto + páginas.
 - **Imagem** (scan/foto PNG/JPG) → parte `image_url` (base64).
-- **CSV** → decodificado e parseado inline (vira texto tabular).
-- **XLSX** → hoje envia uma nota de texto. Para habilitar: inserir um nó *Extract From File*
-  (spreadsheet) antes de `Preparar Conteudo` e usar `spreadsheetToText(rows)`
-  (`N8N/lib/spreadsheet.mjs`). Ponto explícito de adaptação no N8N.
+- **CSV / XLSX / XLS** → roteados (por `content_mime`, no `Roteador de Formato`, um Switch
+  nativo) para o extrator certo — `Extrair CSV`/`Extrair XLSX`/`Extrair XLS`, todos
+  `n8n-nodes-base.extractFromFile` com a `operation` que bate com o formato (XLS é o
+  formato ANTIGO — OLE binário, pré-2007 —, XLSX é o MODERNO — Office Open XML,
+  pós-2007). `Recompor Conteudo Extraido` reagrupa as linhas devolvidas (o extrator nativo
+  entrega uma por item) em um item por documento e monta o texto com `spreadsheetToText`
+  (`N8N/lib/spreadsheet.mjs`) — a mesma função que a lib usa, embutida por `toString()`
+  como todo o resto.
+- **XML** → `Extrair XML` (`extractFromFile`, operação `text`) lê o binário como texto
+  cru, mandado como está — não estruturado em linhas, mas legível pelo modelo.
+- Qualquer outro mimetype → sem extrator; `Preparar Conteudo` mantém a nota
+  "conteudo nao suportado" e a pendência (regra 1: nunca inventa suporte que não existe).
 - Saída sempre via **Structured Outputs** (JSON Schema estrito). Continua **N1**: sugestão
   para revisão humana.
+
+**⚠️ NÃO CONFIRMADO CONTRA O N8N DO DONO** (mesma categoria da nota sobre `retryOnFail`
+mais abaixo): o comportamento "uma linha por item" do `Extract From File` em planilha, e a
+propagação de `itemMatching` através do Merge que junta os 7 ramos do roteador, são o que a
+documentação do n8n descreve — não o que foi visto rodar na instância real. `Recompor
+Conteudo Extraido` nunca agrupa às cegas quando o rastro falha (isola a linha, não funde
+documentos), mas o que falta confirmar ao vivo: subir **2 ou mais planilhas no mesmo
+lote** e checar no banco que cada uma virou o SEU PRÓPRIO documento, com as próprias
+linhas — não uma mistura.
 
 ## Diagnóstico de conteúdo (E1/E2) — como funciona
 
@@ -603,12 +632,23 @@ Os quatro itens do feedback original estão validados de ponta a ponta com docum
 - **Fluxo entre nós: simulado por teste** — `N8N/test/workflow-sim.test.mjs` executa os códigos
   **reais** do JSON gerado com a semântica de passagem de dados do N8N (Postgres sem binário,
   HTTP substituindo o item, referências `$('Node')`), nos dois ramos.
-- **Fallback por conteúdo (PDF/imagem/CSV) e Extração E2 em N0/sombra: completos**, cobertos por
+- **Fallback por conteúdo (PDF/imagem) e Extração E2 em N0/sombra: completos**, cobertos por
   testes de corpo/schema/parse e confirmados no N8N real.
+- **Roteamento por formato (CSV/XLSX/XLS/XML) — construído e testado, NUNCA confirmado no
+  N8N do dono.** `Roteador de Formato` (Switch) manda cada documento a UM extrator nativo
+  (`Extrair CSV`/`Extrair XLSX`/`Extrair XLS`/`Extrair XML`), e `Recompor Conteudo Extraido`
+  reagrupa por documento antes de `Medir Documento` — corrige a lacuna real que existia
+  (XLSX/XLS/XML nunca eram extraídos; CSV era parseado à mão) e o fan-out cego que uma edição
+  direta no editor introduziu (5 nós "Extract from..." em paralelo, todos recebendo o mesmo
+  item, sem Switch nenhum decidindo). Testado por simulação (`workflow-sim.test.mjs`), com o
+  invariante MEDIDO não-vazio: gerar o JSON com a topologia antiga faz 10 desses testes
+  reprovar. **O que falta**: subir 2+ planilhas no MESMO lote no n8n real e confirmar no banco
+  que cada uma virou o seu próprio documento — a propagação de `itemMatching` através do
+  Merge de 7 ramos, e o comportamento "uma linha por item" do `Extract From File`, são o que a
+  documentação do n8n descreve, não o que foi visto rodar aqui.
 - **Diagnóstico de conteúdo (entidade/tipo/período/legibilidade/resumo/planilha) e Reconciliação
   Classe A (E3): construídos e testados** (testes unitários + simulação de fluxo + Postgres 16
   local efêmero) — **ainda não exercitados com documentos reais no N8N/Supabase do dono.**
-- **Pendência: XLSX** — falta o *Extract From File* (ver acima).
 
 ## Fonte da verdade da lógica
 
@@ -641,7 +681,9 @@ N8N/
 ## Próximas fatias
 
 - **Resolver o Upload Storage** (community node `n8n-nodes-supabase` ou mover para o portal Vercel).
-- **XLSX** no fallback (nó *Extract From File* → `spreadsheetToText`).
+- **Confirmar o roteamento por formato ao vivo** (ver "Estado honesto" acima): subir 2+
+  planilhas no mesmo lote no n8n do dono e checar no banco que cada uma virou o seu próprio
+  documento.
 - **Testar o diagnóstico + Classe A com documentos reais** do dono (maior risco de calibração:
   o vocabulário real do `secao`/`chave` pode variar mais do que os padrões cobertos hoje).
 - **Reconciliação B/C** (aproximam para humano, não automatizam).

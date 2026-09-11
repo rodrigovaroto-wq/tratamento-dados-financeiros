@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs';
 
 import { normalize } from '../lib/normalize.mjs';
 import { mergeClassification } from '../lib/merge.mjs';
-import { parseCsv } from '../lib/spreadsheet.mjs';
+import { spreadsheetToText, colunasDaPlanilha, avisoTruncamentoPlanilha } from '../lib/spreadsheet.mjs';
 import { sha256Hex } from '../lib/hash.mjs';
 import { parseTipo, parsePeriodo, parseEntidade } from '../lib/classifier.mjs';
 import {
@@ -301,9 +301,25 @@ const TABELA = [
     [{ tipo_taxonomia: null, confianca: 0.2 }, { tipo_taxonomia: null, confianca: 0.1, justificativa: '' }],
   ] },
 
-  { nome: 'parseCsv', lib: parseCsv, casos: [
-    ['a,b\n1,2'], ['a;b\n1;2'], ['nome,obs,v\nEmpresa,"Silva, João & Cia",1000'],
-    ['a,b\n"x""y",2'], ['a,b\n"li\nnha",2'], ['n;o\nX;"a,b,c"'], [''],
+  // `parseCsv` SAIU DESTA TABELA (e do workflow): CSV deixou de ser parseado à
+  // mão dentro de `Preparar Conteudo` — quem parseia agora é o nó nativo
+  // `Extrair CSV` (roteamento por formato), e o que sobra para o Code node é
+  // só formatar linhas já parseadas em texto, o mesmo para CSV/XLSX/XLS. Essas
+  // três funções são as que ficaram, e são NOVAS no workflow — por isso
+  // entram aqui pela primeira vez.
+  { nome: 'colunasDaPlanilha', lib: colunasDaPlanilha, casos: [
+    [[{ a: '1', b: '2' }, { a: '3', c: '4' }]], [[]], [[null, { a: '1' }]],
+  ] },
+  { nome: 'spreadsheetToText', lib: spreadsheetToText, casos: [
+    [[{ Conta: 'Caixa', Valor: '100' }, { Conta: 'Estoques', Valor: '200' }]],
+    [[]],
+    // O TETO em ação: 5 linhas, teto 2 — o texto tem de vir truncado igual
+    // nos dois lados, senão a IA de um lado lê mais planilha que a do outro.
+    [Array.from({ length: 5 }, (_, i) => ({ v: String(i) })), { maxRows: 2 }],
+  ] },
+  { nome: 'avisoTruncamentoPlanilha', lib: avisoTruncamentoPlanilha, casos: [
+    [[]], [[{ a: '1' }]],
+    [Array.from({ length: 5 }, (_, i) => ({ v: String(i) })), { maxRows: 2 }],
   ] },
   { nome: 'sha256Hex', lib: sha256Hex,
     casos: [[Buffer.from('abc')], [Buffer.from('')], [Buffer.from('Ação — çãé')]] },

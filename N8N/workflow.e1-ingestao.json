@@ -27,7 +27,7 @@
       "typeVersion": 2,
       "position": [
         0,
-        0
+        180
       ]
     },
     {
@@ -44,7 +44,7 @@
       "typeVersion": 2.5,
       "position": [
         260,
-        0
+        180
       ],
       "credentials": {
         "postgres": {
@@ -68,7 +68,7 @@
       "typeVersion": 2,
       "position": [
         520,
-        0
+        180
       ]
     },
     {
@@ -82,7 +82,7 @@
       "typeVersion": 2,
       "position": [
         780,
-        0
+        180
       ],
       "onError": "continueRegularOutput"
     },
@@ -96,8 +96,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1820,
-        0
+        2600,
+        180
       ]
     },
     {
@@ -126,8 +126,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2080,
-        0
+        2860,
+        180
       ]
     },
     {
@@ -143,8 +143,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2340,
-        360
+        3120,
+        540
       ],
       "credentials": {
         "postgres": {
@@ -167,8 +167,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
-        360
+        3380,
+        540
       ]
     },
     {
@@ -184,15 +184,15 @@
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        1300,
-        0
+        1560,
+        360
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const sha256Hex = function sha256Hex(bytes) {\n  const K = [\n    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,\n    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,\n    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,\n    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,\n    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,\n    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,\n    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,\n    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,\n  ];\n  const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;\n\n  const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);\n  const len = src.length;\n  // Padding da FIPS 180-4: byte 0x80, zeros, e o COMPRIMENTO EM BITS em 64 bits\n  // big-endian. O total precisa ser múltiplo de 64 e caber os 9 bytes mínimos —\n  // por isso `+8` e não `+9` na divisão (o `+1` do bloco extra já cobre o 0x80).\n  const total = (Math.floor((len + 8) / 64) + 1) * 64;\n  const m = new Uint8Array(total);\n  m.set(src);\n  m[len] = 0x80;\n  const dv = new DataView(m.buffer);\n  // Alto e baixo separados porque `len * 8` estoura 32 bits a partir de 512 MB e\n  // `<<` em JS opera em 32 bits: 2^32 / 8 = 536870912.\n  dv.setUint32(total - 8, Math.floor(len / 536870912));\n  dv.setUint32(total - 4, (len << 3) >>> 0);\n\n  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];\n  const w = new Uint32Array(64);\n  for (let off = 0; off < total; off += 64) {\n    for (let t = 0; t < 16; t++) w[t] = dv.getUint32(off + t * 4);\n    for (let t = 16; t < 64; t++) {\n      const a = w[t - 15];\n      const b = w[t - 2];\n      const s0 = (rotr(a, 7) ^ rotr(a, 18) ^ (a >>> 3)) >>> 0;\n      const s1 = (rotr(b, 17) ^ rotr(b, 19) ^ (b >>> 10)) >>> 0;\n      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;\n    }\n    let [a, b, c, d, e, f, g, hh] = h;\n    for (let t = 0; t < 64; t++) {\n      const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;\n      const ch = ((e & f) ^ (~e & g)) >>> 0;\n      const t1 = (hh + S1 + ch + K[t] + w[t]) >>> 0;\n      const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;\n      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;\n      const t2 = (S0 + maj) >>> 0;\n      hh = g;\n      g = f;\n      f = e;\n      e = (d + t1) >>> 0;\n      d = c;\n      c = b;\n      b = a;\n      a = (t1 + t2) >>> 0;\n    }\n    const add = [a, b, c, d, e, f, g, hh];\n    for (let i = 0; i < 8; i++) h[i] = (h[i] + add[i]) >>> 0;\n  }\n  let hex = '';\n  for (let i = 0; i < 8; i++) hex += h[i].toString(16).padStart(8, '0');\n  return hex;\n};\nconst PROVEDOR = {\"id\":\"openai\",\"rotulo\":\"OpenAI\",\"dialeto\":\"openai\",\"url\":\"https://api.openai.com/v1/chat/completions\",\"credencial\":\"OpenAI API\",\"auth\":{\"nome\":\"Authorization\",\"prefixo\":\"Bearer \"},\"console\":\"platform.openai.com\",\"catalogo\":\"https://api.openai.com/v1/models\",\"tpm\":30000,\"rpm\":null,\"rpd\":null};\nconst CAPACIDADES_POR_MODELO = {\"gpt-5.6-luna\":{\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":true},\"gpt-4o\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gpt-4o-mini\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gemini-3.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":true},\"gemini-2.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":false}};\nconst CAPACIDADES_PADRAO = {\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":false};\nconst capacidadesDoModelo = function capacidadesDoModelo(modelo) {\n  return CAPACIDADES_POR_MODELO[String(modelo || '')] || CAPACIDADES_PADRAO;\n};\nconst parteDeTexto = function parteDeTexto(prov, texto) {\n  const t = String(texto == null ? '' : texto);\n  return prov.dialeto === 'gemini' ? { text: t } : { type: 'text', text: t };\n};\nconst parteDeArquivo = function parteDeArquivo(prov, { mimeType, base64, filename, text } = {}) {\n  const mt = (mimeType || '').toLowerCase();\n  if (text != null && text !== '') {\n    return parteDeTexto(prov, String(text).slice(0, 20000));\n  }\n  const ehPdf = /pdf/.test(mt);\n  const ehImagem = mt.startsWith('image/');\n  if (!ehPdf && !ehImagem) {\n    return parteDeTexto(\n      prov,\n      `(conteúdo não enviado: tipo \"${mt || 'desconhecido'}\" requer extração prévia; `\n      + `classificar só pelo nome \"${filename || ''}\")`,\n    );\n  }\n  if (prov.dialeto === 'gemini') {\n    // O Gemini recebe PDF e imagem pela MESMA porta (`inlineData`), e é isso que\n    // faz o documento escaneado e o documento com camada de texto seguirem o\n    // mesmo caminho — na OpenAI eles são duas formas diferentes de parte.\n    return { inlineData: { mimeType: ehPdf ? 'application/pdf' : mt, data: base64 } };\n  }\n  if (ehPdf) {\n    return {\n      type: 'file',\n      file: { filename: filename || 'documento.pdf', file_data: `data:application/pdf;base64,${base64}` },\n    };\n  }\n  return { type: 'image_url', image_url: { url: `data:${mt};base64,${base64}` } };\n};\nconst schemaDoProvedor = function schemaDoProvedor(prov, jsonSchema) {\n  const traduzir = (no) => {\n    if (!no || typeof no !== 'object') return no;\n    const tipos = Array.isArray(no.type) ? no.type : [no.type];\n    const nulo = tipos.includes('null');\n    const base = tipos.find((t) => t && t !== 'null') || 'string';\n    const MAPA = {\n      string: 'STRING', number: 'NUMBER', integer: 'INTEGER',\n      boolean: 'BOOLEAN', array: 'ARRAY', object: 'OBJECT',\n    };\n    const fora = { type: MAPA[base] || 'STRING' };\n    if (nulo) fora.nullable = true;\n    if (no.description) fora.description = no.description;\n    if (Array.isArray(no.enum)) fora.enum = no.enum.slice();\n    if (no.items) fora.items = traduzir(no.items);\n    if (no.properties && typeof no.properties === 'object') {\n      const chaves = Object.keys(no.properties);\n      fora.properties = {};\n      for (const k of chaves) fora.properties[k] = traduzir(no.properties[k]);\n      fora.propertyOrdering = chaves;\n      // `required` do Gemini é lista de chaves, igual ao JSON Schema — mas só\n      // faz sentido num objeto, e mandá-lo solto num escalar é 400.\n      if (Array.isArray(no.required)) fora.required = no.required.slice();\n    }\n    return fora;\n  };\n  if (prov.dialeto === 'gemini') return traduzir(jsonSchema.schema || jsonSchema);\n  return jsonSchema.schema || jsonSchema;\n};\nconst montarCorpoIA = function montarCorpoIA(\n  prov,\n  { modelo, sistema, partes, schema = null, maxTokens = null, esforco = null },\n) {\n  const lista = Array.isArray(partes) ? partes : [partes];\n  if (prov.dialeto === 'gemini') {\n    const corpo = {\n      contents: [{ role: 'user', parts: lista }],\n      generationConfig: { temperature: 0 },\n    };\n    if (sistema) corpo.systemInstruction = { parts: [{ text: sistema }] };\n    if (schema) {\n      corpo.generationConfig.responseMimeType = 'application/json';\n      corpo.generationConfig.responseSchema = schemaDoProvedor(prov, schema);\n    }\n    if (maxTokens) corpo.generationConfig.maxOutputTokens = maxTokens;\n    return corpo;\n  }\n  const cap = capacidadesDoModelo(modelo);\n  const corpo = { model: modelo, messages: [] };\n  // `temperature: 0` só entra em modelo que o ACEITA. Na família GPT-5 ele é\n  // recusado (400) e o modelo roda no default — então o determinismo que este\n  // sistema tinha na extração numérica deixa de existir por construção, não por\n  // descuido. É o motivo pelo qual a conferência determinística de divergência\n  // (fora do LLM) passou a ser obrigatória antes de entregar a rodada.\n  if (cap.temperatura) corpo.temperature = 0;\n  if (schema) corpo.response_format = { type: 'json_schema', json_schema: schema };\n  if (sistema) corpo.messages.push({ role: 'system', content: sistema });\n  corpo.messages.push({ role: 'user', content: lista });\n  // O NOME DO TETO MUDA COM O MODELO, e mandar o errado é 400.\n  if (maxTokens) corpo[cap.tetoDeSaida] = maxTokens;\n  // O esforço só vai para quem raciocina — campo desconhecido é 400 na chamada\n  // inteira, não um aviso. `esforco` nulo deixa o modelo no default dele.\n  if (cap.raciocina && esforco) corpo.reasoning_effort = esforco;\n  return corpo;\n};\nconst conteudoDaResposta = function conteudoDaResposta(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const partes = resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].content && resp.candidates[0].content.parts;\n    if (!Array.isArray(partes)) return null;\n    const texto = partes.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('');\n    return texto === '' ? null : texto;\n  }\n  const c = resp && resp.choices && resp.choices[0]\n    && resp.choices[0].message && resp.choices[0].message.content;\n  return c == null || c === '' ? null : c;\n};\nconst cortadoPorLimite = function cortadoPorLimite(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    return (resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].finishReason) === 'MAX_TOKENS';\n  }\n  return (resp && resp.choices && resp.choices[0] && resp.choices[0].finish_reason) === 'length';\n};\nconst usoDaChamada = function usoDaChamada(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const u = resp && resp.usageMetadata;\n    if (!u) return null;\n    const cache = Number(u.cachedContentTokenCount || 0);\n    // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.\n    //\n    // Achado na PRIMEIRA chamada real, em 24/08: o catálogo declara\n    // `thinking: true` para toda a linha 3.x, e um modelo que pensa gasta\n    // orçamento de saída ANTES de escrever a primeira chave do JSON. Esses\n    // tokens vêm em `thoughtsTokenCount`, separados de `candidatesTokenCount`.\n    //\n    // Contar só o `candidates` era subdeclarar a conta pela parte que não se vê\n    // — e subdeclarar POR CIMA de um teto de gasto é o pior lado para errar: o\n    // guarda dos US$ 3 deixaria passar um lote que o provedor cobra mais caro.\n    // A medição do book (US$ 0,28) foi feita sem esta parcela e é, portanto, um\n    // PISO; o número real sai da primeira rodada de verdade.\n    const raciocinio = Number(u.thoughtsTokenCount || 0);\n    const saida = Number(u.candidatesTokenCount || 0);\n    return {\n      prompt_tokens: Number(u.promptTokenCount || 0),\n      completion_tokens: (Number.isFinite(saida) ? saida : 0)\n        + (Number.isFinite(raciocinio) ? raciocinio : 0),\n      prompt_tokens_details: { cached_tokens: Number.isFinite(cache) ? cache : 0 },\n      // Declarado à parte para quem lê a execução: sem isto, \"a saída custou X\"\n      // não distingue JSON de raciocínio, e é essa distinção que decide se vale\n      // desligar o pensamento no prompt de extração.\n      thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,\n    };\n  }\n  const u = resp && resp.usage;\n  if (!u) return null;\n  // O TOKEN DE RACIOCÍNIO TAMBÉM EXISTE AQUI, desde a família GPT-5.\n  //\n  // Diferença que importa para a conta: na OpenAI o `completion_tokens` JÁ\n  // INCLUI os tokens de raciocínio (ao contrário do Gemini, onde\n  // `candidatesTokenCount` e `thoughtsTokenCount` são disjuntos e precisam ser\n  // somados). Então `custoDaChamada` não muda e NÃO se soma nada aqui — somar\n  // cobraria o raciocínio duas vezes.\n  //\n  // O que se acrescenta é a PARCELA declarada, no mesmo campo que o lado Gemini\n  // já publica, porque é ela que responde à pergunta que a regra do dono faz:\n  // quantos tokens o modelo gastou pensando, para decidir o `reasoning_effort`\n  // pela medição em vez de pelo limiar teórico (ver `escolherEsforco`).\n  const det = u.completion_tokens_details;\n  const raciocinio = Number((det && det.reasoning_tokens) || 0);\n  return { ...u, thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0 };\n};\nconst acrescentarInstrucao = function acrescentarInstrucao(prov, corpo, instrucao) {\n  if (!instrucao || !corpo) return corpo;\n  if (prov.dialeto === 'gemini') {\n    const c = Array.isArray(corpo.contents) ? corpo.contents[corpo.contents.length - 1] : null;\n    const p = c && Array.isArray(c.parts) ? c.parts[0] : null;\n    if (p && typeof p.text === 'string') p.text += instrucao;\n    return corpo;\n  }\n  const m = Array.isArray(corpo.messages) ? corpo.messages[corpo.messages.length - 1] : null;\n  const parte = m && Array.isArray(m.content) ? m.content[0] : null;\n  if (parte && typeof parte.text === 'string') parte.text += instrucao;\n  return corpo;\n};\nconst item=$input.item.json;\nconst binMeta=($input.item.binary||{})['data']||{};\nconst mt=(binMeta.mimeType||'').toLowerCase();\n// NUNCA ler binMeta.data direto: se o N8N estiver em modo de binario \"filesystem\"\n// (ou S3), esse campo NAO e' a base64 -- e' so' uma referencia interna (ex.:\n// \"filesystem-v2\"), e a IA acaba recebendo um PDF invalido sem avisar (achado\n// testando com documento real: a OpenAI so' \"leu\" o nome do arquivo, porque o\n// file_data enviado era lixo). O helper resolve os dois modos corretamente.\n// No runtime de Task Runner (padrao a partir do N8N 1.x/2.x self-hosted) o\n// global $helpers NAO existe -- e' this.helpers (doc oficial n8n, cookbook\n// \"Get the binary data buffer\").\n// BUG REAL (achado testando com 2 arquivos no mesmo lote, 2026-07-22): o\n// indice NAO e' sempre 0. Mesmo em each-item mode, getBinaryDataBuffer\n// resolve o buffer pelo indice do item DENTRO DO LOTE inteiro do node (e' a\n// forma como a referencia interna de binario vira bytes de verdade) -- nao\n// pelo item que o closure do JS acha que esta processando. Com 0 fixo, todo\n// item != 0 lia o BINARIO DO ITEM 0 (mimeType/nome do proprio item batiam,\n// mas o CONTEUDO enviado pra IA era de outro arquivo) -- so' nao aparecia\n// com upload de 1 arquivo por vez, onde o unico item e' sempre indice 0. Usa\n// $itemIndex (global do N8N em each-item mode: indice do item corrente no\n// lote) em vez do literal 0.\nconst buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');\nconst b64=buf.toString('base64');\nfunction csvConta(t,alvo){let n=0,d=false;for(let i=0;i<t.length;i++){const c=t[i];if(c==='\"'){if(d&&t[i+1]==='\"'){i++;continue;}d=!d;}else if(c===alvo&&!d)n++;else if(c==='\\n'&&!d)break;}return n;}\nfunction csvRegs(t,sep){const R=[];let f='',r=[],d=false;for(let i=0;i<t.length;i++){const c=t[i];if(d){if(c==='\"'){if(t[i+1]==='\"'){f+='\"';i++;}else d=false;}else f+=c;continue;}if(c==='\"'){d=true;continue;}if(c===sep){r.push(f);f='';continue;}if(c==='\\r')continue;if(c==='\\n'){r.push(f);R.push(r);r=[];f='';continue;}f+=c;}r.push(f);R.push(r);return R.filter(x=>x.some(y=>y.trim()!==''));}\nfunction parseCsv(t){const s=String(t||'');if(s.trim()==='')return [];const sep=csvConta(s,';')>csvConta(s,',')?';':',';const R=csvRegs(s,sep);if(!R.length)return [];const h=R[0].map(c=>c.trim());return R.slice(1).map(c=>{const o={};h.forEach((k,i)=>o[k||('col'+i)]=(c[i]??'').trim());return o;});}\n// TETOS: 2000x60, nao 50x25 -- espelha lib/spreadsheet.mjs (MAX_LINHAS_PLANILHA).\n// 50 linhas e' menos do que um documento real tem (24 meses x 5 entidades = 120;\n// balancete analitico passa de 500) e o resto ia embora com uma nota no prompt\n// que so' a IA lia. Item 1 do 7.4 do Onboarding.\n// Colunas pela UNIAO das chaves, nao pelas da primeira linha: o Extract From File\n// devolve objeto esparso, e celula vazia na linha 0 apagava a coluna do documento\n// inteiro.\nfunction colsPlan(rows){const s=new Set();for(const r of rows){if(r&&typeof r==='object')for(const k of Object.keys(r))s.add(k);}return [...s];}\nfunction sheetTxt(rows,mr=2000,mc=60){if(!rows.length)return '(planilha vazia)';const cols=colsPlan(rows).slice(0,mc);const head=cols.join(' | ');const body=rows.slice(0,mr).map(r=>cols.map(c=>String(r[c]??'')).join(' | ')).join('\\n');const ex=rows.length>mr?('\\n... (+'+(rows.length-mr)+' linhas omitidas)'):'';return head+'\\n'+body+ex;}\n// O que ficou de fora vira PENDENCIA (falha_motivo -> 0016), nao nota no prompt.\nfunction avisoSheet(rows,mr=2000,mc=60){if(!Array.isArray(rows)||!rows.length)return null;const nc=colsPlan(rows).length;const p=[];if(rows.length>mr)p.push((rows.length-mr)+' de '+rows.length+' linhas nao foram enviadas a extracao (teto de '+mr+')');if(nc>mc)p.push((nc-mc)+' de '+nc+' colunas nao foram enviadas a extracao (teto de '+mc+')');if(!p.length)return null;return 'Planilha maior que o teto de envio: '+p.join('; ')+'. A extracao deste documento esta INCOMPLETA -- o que falta nao esta no banco nem no book. Reenvie o arquivo fatiado ou peca ao dono para elevar o teto.';}\n// A FORMA DA PARTE E' DO PROVEDOR, e por isso ela sai de `parteDeArquivo`, a\n// mesma funcao que a lib usa -- nao de tres literais escritos aqui. Eram eles\n// que faziam a troca de provedor ser \"achar cada lugar\": um PDF montado na forma\n// da OpenAI e' 400 no Google, e o 400 chega como falha da chamada, sem dizer que\n// o defeito estava no PREPARO.\nlet part; let aviso=null;\nif(/pdf/.test(mt)||mt.indexOf('image/')===0) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});\nelse if(/csv/.test(mt)||mt==='text/plain'){const txt=buf.toString('utf-8');const rows=parseCsv(txt);part=parteDeTexto(PROVEDOR,sheetTxt(rows));aviso=avisoSheet(rows);}\n// XLSX: o conteudo NAO e' extraido. A versao anterior mandava esta frase como se\n// fosse o documento -- a IA recebia um recado de configuracao no lugar do balanco,\n// devolvia \"nao ha linhas\", e a pendencia dizia que a EXTRACAO falhou, nao que o\n// arquivo nunca foi lido. A chamada continua sendo feita (pular exige no' IF, e'\n// mudanca de topologia da fase 3); o que muda e' que o motivo real vira pendencia.\nelse if(/spreadsheetml|ms-excel|excel/.test(mt)){part=parteDeTexto(PROVEDOR,'(XLSX nao extraido: habilitar Extract From File no N8N -- ver README. Nome: '+(item.nome_original||'')+')');aviso='Arquivo .xlsx/.xls NAO foi lido: o no \"Extract From File\" nao esta habilitado nesta instancia do n8n, entao NENHUM dado deste documento chegou a extracao. O que este documento contem nao esta no banco nem no book.';}\nelse {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+mt+')');aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}\n// HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.\n// A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob\n// o MESMO documento, em vez de documento novo. Como o pipeline mandava null no\n// 12o elemento do queryReplacement de Registrar Documento, a condicao\n// \"p_hash is not null\" nunca era verdade: todo reenvio duplicava o documento,\n// inflava a completude e duplicava colunas no export -- o \"15 colunas para 5\n// empresas\" do teste v27. O reextracao.test.sql provava a FUNCAO passando o hash\n// a mao, e e' por isso que o gap ficou invisivel para a suite.\n//\n// Calculado AQUI porque este e' o unico no' que tem os bytes de verdade (o buffer\n// acima, resolvido pelo helper).\n//\n// A primeira versao usava crypto.subtle e se ABSTINHA (hash null) se ele nao\n// existisse. O dono conferiu a saida deste no' no n8n dele e o campo veio NULL:\n// o Code node nao expoe crypto. A abstencao funcionou como projetada -- nao\n// inventou hash fraco -- mas deixava a idempotencia da 0026 adormecida na\n// pratica. Agora o SHA-256 vem de sha256Hex (JS puro, lib/hash.mjs), que nao\n// depende de nada do ambiente; o caminho nativo fica so' como atalho de\n// velocidade quando existe. MESMO algoritmo nos dois: nada de hash mais fraco,\n// porque colisao aqui FUNDIRIA documentos diferentes -- \"o erro mais caro\n// possivel\", nas palavras do cabecalho da 0026.\nlet hash=null;\ntry{\n  if(typeof crypto!=='undefined'&&crypto&&crypto.subtle){\n    const d=await crypto.subtle.digest('SHA-256',buf);\n    hash=Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join('');\n  }else{\n    hash=sha256Hex(buf);\n  }\n}catch(e){\n  // Ultimo recurso: se ate' o caminho nativo falhar (por qualquer motivo do\n  // sandbox), tenta o JS puro antes de desistir. So' devolve null se os DOIS\n  // falharem -- ai' sim nao saber e' melhor que errar.\n  try{hash=sha256Hex(buf);}catch(e2){hash=null;}\n}\n// O binario segue: quem precisa dele depois daqui e' o `Upload Storage` (ramo\n// lateral) e o `Extrair Texto`, que le a camada de texto do PDF. Daí para a\n// frente ninguem mais precisa -- o `content_part` ja' carrega o arquivo em\n// base64 DENTRO do json, e e' ele que vai para a OpenAI.\nreturn {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};"
+        "jsCode": "const sha256Hex = function sha256Hex(bytes) {\n  const K = [\n    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,\n    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,\n    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,\n    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,\n    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,\n    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,\n    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,\n    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,\n  ];\n  const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;\n\n  const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);\n  const len = src.length;\n  // Padding da FIPS 180-4: byte 0x80, zeros, e o COMPRIMENTO EM BITS em 64 bits\n  // big-endian. O total precisa ser múltiplo de 64 e caber os 9 bytes mínimos —\n  // por isso `+8` e não `+9` na divisão (o `+1` do bloco extra já cobre o 0x80).\n  const total = (Math.floor((len + 8) / 64) + 1) * 64;\n  const m = new Uint8Array(total);\n  m.set(src);\n  m[len] = 0x80;\n  const dv = new DataView(m.buffer);\n  // Alto e baixo separados porque `len * 8` estoura 32 bits a partir de 512 MB e\n  // `<<` em JS opera em 32 bits: 2^32 / 8 = 536870912.\n  dv.setUint32(total - 8, Math.floor(len / 536870912));\n  dv.setUint32(total - 4, (len << 3) >>> 0);\n\n  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];\n  const w = new Uint32Array(64);\n  for (let off = 0; off < total; off += 64) {\n    for (let t = 0; t < 16; t++) w[t] = dv.getUint32(off + t * 4);\n    for (let t = 16; t < 64; t++) {\n      const a = w[t - 15];\n      const b = w[t - 2];\n      const s0 = (rotr(a, 7) ^ rotr(a, 18) ^ (a >>> 3)) >>> 0;\n      const s1 = (rotr(b, 17) ^ rotr(b, 19) ^ (b >>> 10)) >>> 0;\n      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;\n    }\n    let [a, b, c, d, e, f, g, hh] = h;\n    for (let t = 0; t < 64; t++) {\n      const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;\n      const ch = ((e & f) ^ (~e & g)) >>> 0;\n      const t1 = (hh + S1 + ch + K[t] + w[t]) >>> 0;\n      const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;\n      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;\n      const t2 = (S0 + maj) >>> 0;\n      hh = g;\n      g = f;\n      f = e;\n      e = (d + t1) >>> 0;\n      d = c;\n      c = b;\n      b = a;\n      a = (t1 + t2) >>> 0;\n    }\n    const add = [a, b, c, d, e, f, g, hh];\n    for (let i = 0; i < 8; i++) h[i] = (h[i] + add[i]) >>> 0;\n  }\n  let hex = '';\n  for (let i = 0; i < 8; i++) hex += h[i].toString(16).padStart(8, '0');\n  return hex;\n};\nconst PROVEDOR = {\"id\":\"openai\",\"rotulo\":\"OpenAI\",\"dialeto\":\"openai\",\"url\":\"https://api.openai.com/v1/chat/completions\",\"credencial\":\"OpenAI API\",\"auth\":{\"nome\":\"Authorization\",\"prefixo\":\"Bearer \"},\"console\":\"platform.openai.com\",\"catalogo\":\"https://api.openai.com/v1/models\",\"tpm\":30000,\"rpm\":null,\"rpd\":null};\nconst CAPACIDADES_POR_MODELO = {\"gpt-5.6-luna\":{\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":true},\"gpt-4o\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gpt-4o-mini\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gemini-3.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":true},\"gemini-2.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":false}};\nconst CAPACIDADES_PADRAO = {\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":false};\nconst capacidadesDoModelo = function capacidadesDoModelo(modelo) {\n  return CAPACIDADES_POR_MODELO[String(modelo || '')] || CAPACIDADES_PADRAO;\n};\nconst parteDeTexto = function parteDeTexto(prov, texto) {\n  const t = String(texto == null ? '' : texto);\n  return prov.dialeto === 'gemini' ? { text: t } : { type: 'text', text: t };\n};\nconst parteDeArquivo = function parteDeArquivo(prov, { mimeType, base64, filename, text } = {}) {\n  const mt = (mimeType || '').toLowerCase();\n  if (text != null && text !== '') {\n    return parteDeTexto(prov, String(text).slice(0, 20000));\n  }\n  const ehPdf = /pdf/.test(mt);\n  const ehImagem = mt.startsWith('image/');\n  if (!ehPdf && !ehImagem) {\n    return parteDeTexto(\n      prov,\n      `(conteúdo não enviado: tipo \"${mt || 'desconhecido'}\" requer extração prévia; `\n      + `classificar só pelo nome \"${filename || ''}\")`,\n    );\n  }\n  if (prov.dialeto === 'gemini') {\n    // O Gemini recebe PDF e imagem pela MESMA porta (`inlineData`), e é isso que\n    // faz o documento escaneado e o documento com camada de texto seguirem o\n    // mesmo caminho — na OpenAI eles são duas formas diferentes de parte.\n    return { inlineData: { mimeType: ehPdf ? 'application/pdf' : mt, data: base64 } };\n  }\n  if (ehPdf) {\n    return {\n      type: 'file',\n      file: { filename: filename || 'documento.pdf', file_data: `data:application/pdf;base64,${base64}` },\n    };\n  }\n  return { type: 'image_url', image_url: { url: `data:${mt};base64,${base64}` } };\n};\nconst schemaDoProvedor = function schemaDoProvedor(prov, jsonSchema) {\n  const traduzir = (no) => {\n    if (!no || typeof no !== 'object') return no;\n    const tipos = Array.isArray(no.type) ? no.type : [no.type];\n    const nulo = tipos.includes('null');\n    const base = tipos.find((t) => t && t !== 'null') || 'string';\n    const MAPA = {\n      string: 'STRING', number: 'NUMBER', integer: 'INTEGER',\n      boolean: 'BOOLEAN', array: 'ARRAY', object: 'OBJECT',\n    };\n    const fora = { type: MAPA[base] || 'STRING' };\n    if (nulo) fora.nullable = true;\n    if (no.description) fora.description = no.description;\n    if (Array.isArray(no.enum)) fora.enum = no.enum.slice();\n    if (no.items) fora.items = traduzir(no.items);\n    if (no.properties && typeof no.properties === 'object') {\n      const chaves = Object.keys(no.properties);\n      fora.properties = {};\n      for (const k of chaves) fora.properties[k] = traduzir(no.properties[k]);\n      fora.propertyOrdering = chaves;\n      // `required` do Gemini é lista de chaves, igual ao JSON Schema — mas só\n      // faz sentido num objeto, e mandá-lo solto num escalar é 400.\n      if (Array.isArray(no.required)) fora.required = no.required.slice();\n    }\n    return fora;\n  };\n  if (prov.dialeto === 'gemini') return traduzir(jsonSchema.schema || jsonSchema);\n  return jsonSchema.schema || jsonSchema;\n};\nconst montarCorpoIA = function montarCorpoIA(\n  prov,\n  { modelo, sistema, partes, schema = null, maxTokens = null, esforco = null },\n) {\n  const lista = Array.isArray(partes) ? partes : [partes];\n  if (prov.dialeto === 'gemini') {\n    const corpo = {\n      contents: [{ role: 'user', parts: lista }],\n      generationConfig: { temperature: 0 },\n    };\n    if (sistema) corpo.systemInstruction = { parts: [{ text: sistema }] };\n    if (schema) {\n      corpo.generationConfig.responseMimeType = 'application/json';\n      corpo.generationConfig.responseSchema = schemaDoProvedor(prov, schema);\n    }\n    if (maxTokens) corpo.generationConfig.maxOutputTokens = maxTokens;\n    return corpo;\n  }\n  const cap = capacidadesDoModelo(modelo);\n  const corpo = { model: modelo, messages: [] };\n  // `temperature: 0` só entra em modelo que o ACEITA. Na família GPT-5 ele é\n  // recusado (400) e o modelo roda no default — então o determinismo que este\n  // sistema tinha na extração numérica deixa de existir por construção, não por\n  // descuido. É o motivo pelo qual a conferência determinística de divergência\n  // (fora do LLM) passou a ser obrigatória antes de entregar a rodada.\n  if (cap.temperatura) corpo.temperature = 0;\n  if (schema) corpo.response_format = { type: 'json_schema', json_schema: schema };\n  if (sistema) corpo.messages.push({ role: 'system', content: sistema });\n  corpo.messages.push({ role: 'user', content: lista });\n  // O NOME DO TETO MUDA COM O MODELO, e mandar o errado é 400.\n  if (maxTokens) corpo[cap.tetoDeSaida] = maxTokens;\n  // O esforço só vai para quem raciocina — campo desconhecido é 400 na chamada\n  // inteira, não um aviso. `esforco` nulo deixa o modelo no default dele.\n  if (cap.raciocina && esforco) corpo.reasoning_effort = esforco;\n  return corpo;\n};\nconst conteudoDaResposta = function conteudoDaResposta(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const partes = resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].content && resp.candidates[0].content.parts;\n    if (!Array.isArray(partes)) return null;\n    const texto = partes.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('');\n    return texto === '' ? null : texto;\n  }\n  const c = resp && resp.choices && resp.choices[0]\n    && resp.choices[0].message && resp.choices[0].message.content;\n  return c == null || c === '' ? null : c;\n};\nconst cortadoPorLimite = function cortadoPorLimite(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    return (resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].finishReason) === 'MAX_TOKENS';\n  }\n  return (resp && resp.choices && resp.choices[0] && resp.choices[0].finish_reason) === 'length';\n};\nconst usoDaChamada = function usoDaChamada(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const u = resp && resp.usageMetadata;\n    if (!u) return null;\n    const cache = Number(u.cachedContentTokenCount || 0);\n    // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.\n    //\n    // Achado na PRIMEIRA chamada real, em 24/08: o catálogo declara\n    // `thinking: true` para toda a linha 3.x, e um modelo que pensa gasta\n    // orçamento de saída ANTES de escrever a primeira chave do JSON. Esses\n    // tokens vêm em `thoughtsTokenCount`, separados de `candidatesTokenCount`.\n    //\n    // Contar só o `candidates` era subdeclarar a conta pela parte que não se vê\n    // — e subdeclarar POR CIMA de um teto de gasto é o pior lado para errar: o\n    // guarda dos US$ 3 deixaria passar um lote que o provedor cobra mais caro.\n    // A medição do book (US$ 0,28) foi feita sem esta parcela e é, portanto, um\n    // PISO; o número real sai da primeira rodada de verdade.\n    const raciocinio = Number(u.thoughtsTokenCount || 0);\n    const saida = Number(u.candidatesTokenCount || 0);\n    return {\n      prompt_tokens: Number(u.promptTokenCount || 0),\n      completion_tokens: (Number.isFinite(saida) ? saida : 0)\n        + (Number.isFinite(raciocinio) ? raciocinio : 0),\n      prompt_tokens_details: { cached_tokens: Number.isFinite(cache) ? cache : 0 },\n      // Declarado à parte para quem lê a execução: sem isto, \"a saída custou X\"\n      // não distingue JSON de raciocínio, e é essa distinção que decide se vale\n      // desligar o pensamento no prompt de extração.\n      thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,\n    };\n  }\n  const u = resp && resp.usage;\n  if (!u) return null;\n  // O TOKEN DE RACIOCÍNIO TAMBÉM EXISTE AQUI, desde a família GPT-5.\n  //\n  // Diferença que importa para a conta: na OpenAI o `completion_tokens` JÁ\n  // INCLUI os tokens de raciocínio (ao contrário do Gemini, onde\n  // `candidatesTokenCount` e `thoughtsTokenCount` são disjuntos e precisam ser\n  // somados). Então `custoDaChamada` não muda e NÃO se soma nada aqui — somar\n  // cobraria o raciocínio duas vezes.\n  //\n  // O que se acrescenta é a PARCELA declarada, no mesmo campo que o lado Gemini\n  // já publica, porque é ela que responde à pergunta que a regra do dono faz:\n  // quantos tokens o modelo gastou pensando, para decidir o `reasoning_effort`\n  // pela medição em vez de pelo limiar teórico (ver `escolherEsforco`).\n  const det = u.completion_tokens_details;\n  const raciocinio = Number((det && det.reasoning_tokens) || 0);\n  return { ...u, thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0 };\n};\nconst acrescentarInstrucao = function acrescentarInstrucao(prov, corpo, instrucao) {\n  if (!instrucao || !corpo) return corpo;\n  if (prov.dialeto === 'gemini') {\n    const c = Array.isArray(corpo.contents) ? corpo.contents[corpo.contents.length - 1] : null;\n    const p = c && Array.isArray(c.parts) ? c.parts[0] : null;\n    if (p && typeof p.text === 'string') p.text += instrucao;\n    return corpo;\n  }\n  const m = Array.isArray(corpo.messages) ? corpo.messages[corpo.messages.length - 1] : null;\n  const parte = m && Array.isArray(m.content) ? m.content[0] : null;\n  if (parte && typeof parte.text === 'string') parte.text += instrucao;\n  return corpo;\n};\nconst PADRAO_MIME={\"pdf\":\"pdf\",\"imagem\":\"^image/\",\"csv\":\"csv|^text/plain$\",\"xlsx\":\"spreadsheetml\",\"xls\":\"ms-excel|excel\",\"xml\":\"/xml$\"};\nconst item=$input.item.json;\nconst binMeta=($input.item.binary||{})['data']||{};\nconst mt=(binMeta.mimeType||'').toLowerCase();\n// NUNCA ler binMeta.data direto: se o N8N estiver em modo de binario \"filesystem\"\n// (ou S3), esse campo NAO e' a base64 -- e' so' uma referencia interna (ex.:\n// \"filesystem-v2\"), e a IA acaba recebendo um PDF invalido sem avisar (achado\n// testando com documento real: a OpenAI so' \"leu\" o nome do arquivo, porque o\n// file_data enviado era lixo). O helper resolve os dois modos corretamente.\n// No runtime de Task Runner (padrao a partir do N8N 1.x/2.x self-hosted) o\n// global $helpers NAO existe -- e' this.helpers (doc oficial n8n, cookbook\n// \"Get the binary data buffer\").\n// BUG REAL (achado testando com 2 arquivos no mesmo lote, 2026-07-22): o\n// indice NAO e' sempre 0. Mesmo em each-item mode, getBinaryDataBuffer\n// resolve o buffer pelo indice do item DENTRO DO LOTE inteiro do node (e' a\n// forma como a referencia interna de binario vira bytes de verdade) -- nao\n// pelo item que o closure do JS acha que esta processando. Com 0 fixo, todo\n// item != 0 lia o BINARIO DO ITEM 0 (mimeType/nome do proprio item batiam,\n// mas o CONTEUDO enviado pra IA era de outro arquivo) -- so' nao aparecia\n// com upload de 1 arquivo por vez, onde o unico item e' sempre indice 0. Usa\n// $itemIndex (global do N8N em each-item mode: indice do item corrente no\n// lote) em vez do literal 0.\nconst buf=await this.helpers.getBinaryDataBuffer($itemIndex,'data');\nconst b64=buf.toString('base64');\n// A FORMA DA PARTE E' DO PROVEDOR, e por isso ela sai de `parteDeArquivo`, a\n// mesma funcao que a lib usa -- nao de tres literais escritos aqui. Eram eles\n// que faziam a troca de provedor ser \"achar cada lugar\": um PDF montado na forma\n// da OpenAI e' 400 no Google, e o 400 chega como falha da chamada, sem dizer que\n// o defeito estava no PREPARO.\n//\n// CSV/XLSX/XLS/XML: o que entra aqui e' so' PLACEHOLDER, por desenho -- quem\n// decide o conteudo de verdade e' o extrator NATIVO do formato certo (`Extrair\n// CSV`/`Extrair XLSX`/`Extrair XLS`/`Extrair XML`), que o `Roteador de\n// Formato` alcanca logo depois deste no', e o `Recompor Conteudo Extraido`\n// escreve por cima (ver o comentario daquele no' para o mecanismo). O aviso\n// aqui e' a REGRA 1 do CLAUDE.md (nunca apresentar ausencia como dado): por\n// PADRAO este documento NAO tem conteudo extraido, e so' deixa de ser pendencia\n// se o extrator confirmar sucesso mais adiante. Se o extrator falhar (arquivo\n// corrompido, por exemplo), o `onError` dele devolve ESTE MESMO item sem\n// tocar -- e o aviso abaixo e' exatamente o que sobrevive.\nlet part; let aviso=null;\nif(new RegExp(PADRAO_MIME.pdf,'i').test(mt)||new RegExp(PADRAO_MIME.imagem,'i').test(mt)) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});\nelse if(new RegExp(PADRAO_MIME.csv,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de CSV pendente do no nativo Extrair CSV)');aviso='Arquivo CSV ainda nao foi extraido pelo no nativo (Extrair CSV). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}\nelse if(new RegExp(PADRAO_MIME.xlsx,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLSX pendente do no nativo Extrair XLSX)');aviso='Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}\nelse if(new RegExp(PADRAO_MIME.xls,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLS pendente do no nativo Extrair XLS)');aviso='Arquivo .xls ainda nao foi extraido pelo no nativo (Extrair XLS). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}\nelse if(new RegExp(PADRAO_MIME.xml,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XML pendente do no nativo Extrair XML)');aviso='Arquivo XML ainda nao foi extraido pelo no nativo (Extrair XML). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}\nelse {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+mt+')');aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}\n// HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.\n// A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob\n// o MESMO documento, em vez de documento novo. Como o pipeline mandava null no\n// 12o elemento do queryReplacement de Registrar Documento, a condicao\n// \"p_hash is not null\" nunca era verdade: todo reenvio duplicava o documento,\n// inflava a completude e duplicava colunas no export -- o \"15 colunas para 5\n// empresas\" do teste v27. O reextracao.test.sql provava a FUNCAO passando o hash\n// a mao, e e' por isso que o gap ficou invisivel para a suite.\n//\n// Calculado AQUI porque este e' o unico no' que tem os bytes de verdade (o buffer\n// acima, resolvido pelo helper).\n//\n// A primeira versao usava crypto.subtle e se ABSTINHA (hash null) se ele nao\n// existisse. O dono conferiu a saida deste no' no n8n dele e o campo veio NULL:\n// o Code node nao expoe crypto. A abstencao funcionou como projetada -- nao\n// inventou hash fraco -- mas deixava a idempotencia da 0026 adormecida na\n// pratica. Agora o SHA-256 vem de sha256Hex (JS puro, lib/hash.mjs), que nao\n// depende de nada do ambiente; o caminho nativo fica so' como atalho de\n// velocidade quando existe. MESMO algoritmo nos dois: nada de hash mais fraco,\n// porque colisao aqui FUNDIRIA documentos diferentes -- \"o erro mais caro\n// possivel\", nas palavras do cabecalho da 0026.\nlet hash=null;\ntry{\n  if(typeof crypto!=='undefined'&&crypto&&crypto.subtle){\n    const d=await crypto.subtle.digest('SHA-256',buf);\n    hash=Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join('');\n  }else{\n    hash=sha256Hex(buf);\n  }\n}catch(e){\n  // Ultimo recurso: se ate' o caminho nativo falhar (por qualquer motivo do\n  // sandbox), tenta o JS puro antes de desistir. So' devolve null se os DOIS\n  // falharem -- ai' sim nao saber e' melhor que errar.\n  try{hash=sha256Hex(buf);}catch(e2){hash=null;}\n}\n// O binario segue: quem precisa dele depois daqui e' o `Upload Storage` (ramo\n// lateral) e o `Extrair Texto`, que le a camada de texto do PDF. Daí para a\n// frente ninguem mais precisa -- o `content_part` ja' carrega o arquivo em\n// base64 DENTRO do json, e e' ele que vai para a OpenAI.\nreturn {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};"
       },
       "id": "preparar-conteudo",
       "name": "Preparar Conteudo",
@@ -200,22 +200,250 @@
       "typeVersion": 2,
       "position": [
         1040,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "pdf",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "imagem",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "^image/",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "csv",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "csv|^text/plain$",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "xlsx",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "spreadsheetml",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "xls",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "ms-excel|excel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "xml",
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content_mime }}",
+                    "rightValue": "/xml$",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "roteador-de-formato",
+      "name": "Roteador de Formato",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "data"
+      },
+      "id": "extrair-csv",
+      "name": "Extrair CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        540
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "data"
+      },
+      "id": "extrair-xlsx",
+      "name": "Extrair XLSX",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        720
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "xls",
+        "binaryPropertyName": "data"
+      },
+      "id": "extrair-xls",
+      "name": "Extrair XLS",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1560,
         0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data"
+      },
+      "id": "extrair-xml",
+      "name": "Extrair XML",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        900
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 7
+      },
+      "id": "juntar-extracao-de-conteudo",
+      "name": "Juntar Extracao de Conteudo",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1820,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const PROVEDOR = {\"id\":\"openai\",\"rotulo\":\"OpenAI\",\"dialeto\":\"openai\",\"url\":\"https://api.openai.com/v1/chat/completions\",\"credencial\":\"OpenAI API\",\"auth\":{\"nome\":\"Authorization\",\"prefixo\":\"Bearer \"},\"console\":\"platform.openai.com\",\"catalogo\":\"https://api.openai.com/v1/models\",\"tpm\":30000,\"rpm\":null,\"rpd\":null};\nconst CAPACIDADES_POR_MODELO = {\"gpt-5.6-luna\":{\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":true},\"gpt-4o\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gpt-4o-mini\":{\"temperatura\":true,\"tetoDeSaida\":\"max_tokens\",\"raciocina\":false},\"gemini-3.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":true},\"gemini-2.5-flash-lite\":{\"temperatura\":true,\"tetoDeSaida\":\"maxOutputTokens\",\"raciocina\":false}};\nconst CAPACIDADES_PADRAO = {\"temperatura\":false,\"tetoDeSaida\":\"max_completion_tokens\",\"raciocina\":false};\nconst capacidadesDoModelo = function capacidadesDoModelo(modelo) {\n  return CAPACIDADES_POR_MODELO[String(modelo || '')] || CAPACIDADES_PADRAO;\n};\nconst parteDeTexto = function parteDeTexto(prov, texto) {\n  const t = String(texto == null ? '' : texto);\n  return prov.dialeto === 'gemini' ? { text: t } : { type: 'text', text: t };\n};\nconst parteDeArquivo = function parteDeArquivo(prov, { mimeType, base64, filename, text } = {}) {\n  const mt = (mimeType || '').toLowerCase();\n  if (text != null && text !== '') {\n    return parteDeTexto(prov, String(text).slice(0, 20000));\n  }\n  const ehPdf = /pdf/.test(mt);\n  const ehImagem = mt.startsWith('image/');\n  if (!ehPdf && !ehImagem) {\n    return parteDeTexto(\n      prov,\n      `(conteúdo não enviado: tipo \"${mt || 'desconhecido'}\" requer extração prévia; `\n      + `classificar só pelo nome \"${filename || ''}\")`,\n    );\n  }\n  if (prov.dialeto === 'gemini') {\n    // O Gemini recebe PDF e imagem pela MESMA porta (`inlineData`), e é isso que\n    // faz o documento escaneado e o documento com camada de texto seguirem o\n    // mesmo caminho — na OpenAI eles são duas formas diferentes de parte.\n    return { inlineData: { mimeType: ehPdf ? 'application/pdf' : mt, data: base64 } };\n  }\n  if (ehPdf) {\n    return {\n      type: 'file',\n      file: { filename: filename || 'documento.pdf', file_data: `data:application/pdf;base64,${base64}` },\n    };\n  }\n  return { type: 'image_url', image_url: { url: `data:${mt};base64,${base64}` } };\n};\nconst schemaDoProvedor = function schemaDoProvedor(prov, jsonSchema) {\n  const traduzir = (no) => {\n    if (!no || typeof no !== 'object') return no;\n    const tipos = Array.isArray(no.type) ? no.type : [no.type];\n    const nulo = tipos.includes('null');\n    const base = tipos.find((t) => t && t !== 'null') || 'string';\n    const MAPA = {\n      string: 'STRING', number: 'NUMBER', integer: 'INTEGER',\n      boolean: 'BOOLEAN', array: 'ARRAY', object: 'OBJECT',\n    };\n    const fora = { type: MAPA[base] || 'STRING' };\n    if (nulo) fora.nullable = true;\n    if (no.description) fora.description = no.description;\n    if (Array.isArray(no.enum)) fora.enum = no.enum.slice();\n    if (no.items) fora.items = traduzir(no.items);\n    if (no.properties && typeof no.properties === 'object') {\n      const chaves = Object.keys(no.properties);\n      fora.properties = {};\n      for (const k of chaves) fora.properties[k] = traduzir(no.properties[k]);\n      fora.propertyOrdering = chaves;\n      // `required` do Gemini é lista de chaves, igual ao JSON Schema — mas só\n      // faz sentido num objeto, e mandá-lo solto num escalar é 400.\n      if (Array.isArray(no.required)) fora.required = no.required.slice();\n    }\n    return fora;\n  };\n  if (prov.dialeto === 'gemini') return traduzir(jsonSchema.schema || jsonSchema);\n  return jsonSchema.schema || jsonSchema;\n};\nconst montarCorpoIA = function montarCorpoIA(\n  prov,\n  { modelo, sistema, partes, schema = null, maxTokens = null, esforco = null },\n) {\n  const lista = Array.isArray(partes) ? partes : [partes];\n  if (prov.dialeto === 'gemini') {\n    const corpo = {\n      contents: [{ role: 'user', parts: lista }],\n      generationConfig: { temperature: 0 },\n    };\n    if (sistema) corpo.systemInstruction = { parts: [{ text: sistema }] };\n    if (schema) {\n      corpo.generationConfig.responseMimeType = 'application/json';\n      corpo.generationConfig.responseSchema = schemaDoProvedor(prov, schema);\n    }\n    if (maxTokens) corpo.generationConfig.maxOutputTokens = maxTokens;\n    return corpo;\n  }\n  const cap = capacidadesDoModelo(modelo);\n  const corpo = { model: modelo, messages: [] };\n  // `temperature: 0` só entra em modelo que o ACEITA. Na família GPT-5 ele é\n  // recusado (400) e o modelo roda no default — então o determinismo que este\n  // sistema tinha na extração numérica deixa de existir por construção, não por\n  // descuido. É o motivo pelo qual a conferência determinística de divergência\n  // (fora do LLM) passou a ser obrigatória antes de entregar a rodada.\n  if (cap.temperatura) corpo.temperature = 0;\n  if (schema) corpo.response_format = { type: 'json_schema', json_schema: schema };\n  if (sistema) corpo.messages.push({ role: 'system', content: sistema });\n  corpo.messages.push({ role: 'user', content: lista });\n  // O NOME DO TETO MUDA COM O MODELO, e mandar o errado é 400.\n  if (maxTokens) corpo[cap.tetoDeSaida] = maxTokens;\n  // O esforço só vai para quem raciocina — campo desconhecido é 400 na chamada\n  // inteira, não um aviso. `esforco` nulo deixa o modelo no default dele.\n  if (cap.raciocina && esforco) corpo.reasoning_effort = esforco;\n  return corpo;\n};\nconst conteudoDaResposta = function conteudoDaResposta(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const partes = resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].content && resp.candidates[0].content.parts;\n    if (!Array.isArray(partes)) return null;\n    const texto = partes.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('');\n    return texto === '' ? null : texto;\n  }\n  const c = resp && resp.choices && resp.choices[0]\n    && resp.choices[0].message && resp.choices[0].message.content;\n  return c == null || c === '' ? null : c;\n};\nconst cortadoPorLimite = function cortadoPorLimite(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    return (resp && resp.candidates && resp.candidates[0]\n      && resp.candidates[0].finishReason) === 'MAX_TOKENS';\n  }\n  return (resp && resp.choices && resp.choices[0] && resp.choices[0].finish_reason) === 'length';\n};\nconst usoDaChamada = function usoDaChamada(prov, resp) {\n  if (prov.dialeto === 'gemini') {\n    const u = resp && resp.usageMetadata;\n    if (!u) return null;\n    const cache = Number(u.cachedContentTokenCount || 0);\n    // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.\n    //\n    // Achado na PRIMEIRA chamada real, em 24/08: o catálogo declara\n    // `thinking: true` para toda a linha 3.x, e um modelo que pensa gasta\n    // orçamento de saída ANTES de escrever a primeira chave do JSON. Esses\n    // tokens vêm em `thoughtsTokenCount`, separados de `candidatesTokenCount`.\n    //\n    // Contar só o `candidates` era subdeclarar a conta pela parte que não se vê\n    // — e subdeclarar POR CIMA de um teto de gasto é o pior lado para errar: o\n    // guarda dos US$ 3 deixaria passar um lote que o provedor cobra mais caro.\n    // A medição do book (US$ 0,28) foi feita sem esta parcela e é, portanto, um\n    // PISO; o número real sai da primeira rodada de verdade.\n    const raciocinio = Number(u.thoughtsTokenCount || 0);\n    const saida = Number(u.candidatesTokenCount || 0);\n    return {\n      prompt_tokens: Number(u.promptTokenCount || 0),\n      completion_tokens: (Number.isFinite(saida) ? saida : 0)\n        + (Number.isFinite(raciocinio) ? raciocinio : 0),\n      prompt_tokens_details: { cached_tokens: Number.isFinite(cache) ? cache : 0 },\n      // Declarado à parte para quem lê a execução: sem isto, \"a saída custou X\"\n      // não distingue JSON de raciocínio, e é essa distinção que decide se vale\n      // desligar o pensamento no prompt de extração.\n      thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,\n    };\n  }\n  const u = resp && resp.usage;\n  if (!u) return null;\n  // O TOKEN DE RACIOCÍNIO TAMBÉM EXISTE AQUI, desde a família GPT-5.\n  //\n  // Diferença que importa para a conta: na OpenAI o `completion_tokens` JÁ\n  // INCLUI os tokens de raciocínio (ao contrário do Gemini, onde\n  // `candidatesTokenCount` e `thoughtsTokenCount` são disjuntos e precisam ser\n  // somados). Então `custoDaChamada` não muda e NÃO se soma nada aqui — somar\n  // cobraria o raciocínio duas vezes.\n  //\n  // O que se acrescenta é a PARCELA declarada, no mesmo campo que o lado Gemini\n  // já publica, porque é ela que responde à pergunta que a regra do dono faz:\n  // quantos tokens o modelo gastou pensando, para decidir o `reasoning_effort`\n  // pela medição em vez de pelo limiar teórico (ver `escolherEsforco`).\n  const det = u.completion_tokens_details;\n  const raciocinio = Number((det && det.reasoning_tokens) || 0);\n  return { ...u, thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0 };\n};\nconst acrescentarInstrucao = function acrescentarInstrucao(prov, corpo, instrucao) {\n  if (!instrucao || !corpo) return corpo;\n  if (prov.dialeto === 'gemini') {\n    const c = Array.isArray(corpo.contents) ? corpo.contents[corpo.contents.length - 1] : null;\n    const p = c && Array.isArray(c.parts) ? c.parts[0] : null;\n    if (p && typeof p.text === 'string') p.text += instrucao;\n    return corpo;\n  }\n  const m = Array.isArray(corpo.messages) ? corpo.messages[corpo.messages.length - 1] : null;\n  const parte = m && Array.isArray(m.content) ? m.content[0] : null;\n  if (parte && typeof parte.text === 'string') parte.text += instrucao;\n  return corpo;\n};\nconst MAX_LINHAS_PLANILHA = 2000;\nconst MAX_COLUNAS_PLANILHA = 60;\nconst colunasDaPlanilha = function colunasDaPlanilha(rows) {\n  const vistas = new Set();\n  for (const r of rows) {\n    if (r && typeof r === 'object') for (const k of Object.keys(r)) vistas.add(k);\n  }\n  return [...vistas];\n};\nconst spreadsheetToText = function spreadsheetToText(\n  rows,\n  { maxRows = MAX_LINHAS_PLANILHA, maxCols = MAX_COLUNAS_PLANILHA } = {},\n) {\n  if (!Array.isArray(rows) || rows.length === 0) return '(planilha vazia)';\n  const cols = colunasDaPlanilha(rows).slice(0, maxCols);\n  const header = cols.join(' | ');\n  const corpo = rows\n    .slice(0, maxRows)\n    .map((r) => cols.map((c) => String(r[c] ?? '')).join(' | '))\n    .join('\\n');\n  const extra = rows.length > maxRows ? `\\n… (+${rows.length - maxRows} linhas omitidas)` : '';\n  return `${header}\\n${corpo}${extra}`;\n};\nconst avisoTruncamentoPlanilha = function avisoTruncamentoPlanilha(\n  rows,\n  { maxRows = MAX_LINHAS_PLANILHA, maxCols = MAX_COLUNAS_PLANILHA } = {},\n) {\n  if (!Array.isArray(rows) || rows.length === 0) return null;\n  const nLinhas = rows.length;\n  const nColunas = colunasDaPlanilha(rows).length;\n  const partes = [];\n  if (nLinhas > maxRows) {\n    partes.push(\n      `${nLinhas - maxRows} de ${nLinhas} linhas não foram enviadas à extração `\n      + `(teto de ${maxRows})`,\n    );\n  }\n  if (nColunas > maxCols) {\n    partes.push(\n      `${nColunas - maxCols} de ${nColunas} colunas não foram enviadas à extração `\n      + `(teto de ${maxCols})`,\n    );\n  }\n  if (partes.length === 0) return null;\n  return `Planilha maior que o teto de envio: ${partes.join('; ')}. `\n    + 'A extração deste documento está INCOMPLETA — o que falta não está no banco '\n    + 'nem no book. Reenvie o arquivo fatiado ou peça ao dono para elevar o teto.';\n};\nconst PADRAO_MIME={\"pdf\":\"pdf\",\"imagem\":\"^image/\",\"csv\":\"csv|^text/plain$\",\"xlsx\":\"spreadsheetml\",\"xls\":\"ms-excel|excel\",\"xml\":\"/xml$\"};\nconst combinaCom=(chave,mt)=>new RegExp(PADRAO_MIME[chave],'i').test(String(mt||''));\nconst entradas=$input.all();\nconst completos=[];\nconst porDocumento=new Map();\nfor(let i=0;i<entradas.length;i+=1){\n  const raw=entradas[i].json||{};\n  // Caso 1: ja chegou pronto (imagem/outros/qualquer extrator que falhou).\n  if('caso_id' in raw){ completos.push(entradas[i]); continue; }\n  let ctx=null;\n  try{ ctx=$('Preparar Conteudo').itemMatching(i).json||null; }catch(e){ ctx=null; }\n  if(!ctx){\n    // SEM RASTRO -- nunca agrupa as cegas. Isola como item proprio (degrada,\n    // nao corrompe) e declara o motivo, no espirito do 'recompor_motivo' que\n    // 'Recompor Contexto' ja usa para o mesmo tipo de falha declarada.\n    completos.push({json:{...raw, aviso_conteudo:'Recompor Conteudo Extraido: nao foi possivel religar esta linha ao documento de origem (itemMatching falhou). Conteudo NAO chegou a extracao.'}});\n    continue;\n  }\n  const mt=ctx.content_mime;\n  // Caso 2: PDF -- Extrair Texto e' Camada 1 (texto/paginas), Medir Documento\n  // le direto do no' anterior. Nao mexe.\n  if(combinaCom('pdf',mt)){ completos.push(entradas[i]); continue; }\n  // Caso 3a: XML -- item de texto unico, nao planilha.\n  if(combinaCom('xml',mt)){\n    const texto=[raw.data,raw.text,raw.content].find((v)=>typeof v==='string'&&v.trim()!=='');\n    completos.push({json:{...ctx,\n      content_part: texto?parteDeTexto(PROVEDOR,texto):ctx.content_part,\n      aviso_conteudo: texto?null:ctx.aviso_conteudo,\n    }});\n    continue;\n  }\n  // Caso 3b: CSV/XLSX/XLS -- uma ou mais linhas de planilha deste documento.\n  // `hash` (SHA-256 do arquivo, calculado em Preparar Conteudo) e' a chave:\n  // unica por conteudo, e e' a MESMA que a 0026 usa para dedup -- reaproveitar\n  // em vez de inventar uma chave nova.\n  const chave=ctx.hash||ctx.nome_original||('__sem_chave_'+i);\n  if(!porDocumento.has(chave)) porDocumento.set(chave,{ctx,linhas:[]});\n  const grupo=porDocumento.get(chave);\n  // Defensivo aos DOIS formatos possiveis do extrator: um item com o array\n  // inteiro sob '.data', ou uma linha por item (o comportamento documentado).\n  if(Array.isArray(raw.data)) grupo.linhas.push(...raw.data);\n  else grupo.linhas.push(raw);\n}\nconst reconstruidos=[...porDocumento.values()].map(({ctx,linhas})=>({json:{...ctx,\n  content_part: parteDeTexto(PROVEDOR, spreadsheetToText(linhas)),\n  // Planilha extraida com sucesso NAO abre mais a pendencia de 'nao lida' --\n  // so' abre a de TRUNCAMENTO, se a planilha estourar o teto (regra 1: so'\n  // declara ausencia onde ela e' real).\n  aviso_conteudo: avisoTruncamentoPlanilha(linhas),\n}}));\nreturn [...completos, ...reconstruidos];"
+      },
+      "id": "recompor-conteudo-extraido",
+      "name": "Recompor Conteudo Extraido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        180
+      ]
+    },
+    {
+      "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const MAX_CELULAS_POR_BLOCO = 234;\nconst LIMIAR_COBERTURA = 0.85;\nconst MINIMO_PARA_AVALIAR = 20;\nconst linhasComNumero = function linhasComNumero(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return [];\n  const out = [];\n  for (const bruta of texto.split('\\n')) {\n    const linha = bruta.trim();\n    if (linha.length === 0) continue;\n    if (!/\\d/.test(linha)) continue;\n    out.push(linha);\n  }\n  return out;\n};\nconst juntarFragmentosDeLinha = function juntarFragmentosDeLinha(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return '';\n  const MAX_FRAGMENTOS = 4;\n  const saida = [];\n  let emenda = '';\n  let quantos = 0;\n  for (const bruta of texto.split('\\n')) {\n    // Linha em branco NÃO emenda e não some: ela separa bloco. Emendar através\n    // dela colaria o rodapé de uma página no cabeçalho da seguinte; engoli-la\n    // mudaria o texto para quem só passa por aqui.\n    if (bruta.trim().length === 0) {\n      if (emenda.length > 0) saida.push(emenda);\n      saida.push(bruta);\n      emenda = '';\n      quantos = 0;\n      continue;\n    }\n    // O espaço no fim é a marca do fragmento que NÃO fecha a linha visual.\n    if (/[ \\t]$/.test(bruta) && quantos < MAX_FRAGMENTOS) {\n      emenda += bruta;\n      quantos += 1;\n      continue;\n    }\n    saida.push(emenda + bruta);\n    emenda = '';\n    quantos = 0;\n  }\n  if (emenda.length > 0) saida.push(emenda);\n  return saida.join('\\n');\n};\nconst ehLinhaSemValor = function ehLinhaSemValor(linha) {\n  if (typeof linha !== 'string' || linha.length === 0) return false;\n  // O CASO PERIGOSO, achado de lado na Fase 0 (09/09) no `11_Mapa_Divida_\n  // Vertentes_Metalurgica_2025` — documento em REAIS, não em milhares. A linha\n  // \"TOTAL 51.300.000 12.400.000\" sumia do denominador: `\\b\\d+(?:\\.\\d+){2,}\\b`\n  // via em \"51.300.000\" a MESMA forma de \"1.1.01.002\" (dígitos separados por\n  // ponto, dois ou mais pontos) e apagava os dois valores como se fossem\n  // código de conta — sobrava \"TOTAL\", sem dígito, e a linha de TOTAL virava\n  // invisível. Verdade 10, régua 9 (-10%): contar A MENOS é o lado que a Fase 0\n  // existe para vigiar, porque encolhe o denominador e deixa a extração pela\n  // metade parecer sadia.\n  //\n  // O CRITÉRIO NÃO É LISTA, É FORMA — a mesma disciplina do resto deste\n  // arquivo. Separador de milhar brasileiro tem uma regra fixa: CADA grupo\n  // depois do primeiro tem EXATAMENTE 3 dígitos (\"51.300.000\" -> 300, 000;\n  // \"9.420.000\" -> 420, 000; \"10.412.600\" -> 412, 600). Código de conta não\n  // segue essa regra — a hierarquia classe.grupo.subgrupo.sequência escreve\n  // grupos de tamanho variável (\"1.1.01.002\" -> 1, 01, 002; \"2.1.01.001\" ->\n  // 1, 01, 001; o segundo grupo nunca chega a 3 dígitos). A pergunta que\n  // decide, então, não é \"quantos pontos tem\" — é \"todo grupo depois do\n  // primeiro tem 3 dígitos?\": se sim, é dinheiro; se não, é identidade.\n  // `separadorDeMilhar`, abaixo, é essa pergunta.\n  const separadorDeMilhar = /^\\d{1,3}(?:\\.\\d{3})+$/;\n  // As alternativas vêm de LITERAIS de regex, lidas por `.source`. Escritas como\n  // string comum elas exigiriam '\\\\b\\\\d{1,2}' — barra dobrada em toda a expressão,\n  // que é onde erro de escape se esconde e onde o Sonar (S7780) acusou quatro\n  // vezes. Literal não tem essa camada.\n  const meses = /janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro/\n    .source;\n  const duracao = /meses|m[êe]s|anos|ano|exerc[íi]cios|exerc[íi]cio|dias|dia|semanas|trimestres|trimestre|bimestres|semestres/\n    .source;\n  // NÃO EXISTE AQUI UM CORTE DE \"MÊS + ANO\" (\"Janeiro/2023\"), e a ausência é\n  // deliberada — ele existiu e foi MEDIDO MORTO. O corte do ano solto, na última\n  // linha do encadeamento, já apaga o \"2023\" de \"Janeiro/2023\" e deixa \"Janeiro/\",\n  // que não tem dígito: a regra de mês+ano nunca decidiu nada. Removida a régua\n  // continua exata nos 20 documentos e nenhum assert reprova — foi assim que se\n  // descobriu, e o teste que a \"protegia\" passava com ela sabotada.\n  //\n  // Ela cobrava caro pelo nada: era `(mês)\\s*[\\/ ]\\s*\\d{4}`, com o espaço nos\n  // TRÊS pedaços, então uma corrida de N espaços podia ser dividida de N jeitos e\n  // o motor tentava todos (Sonar S8786). Medido: 2.000 espaços custavam 1,62 ms e\n  // 4.000 custavam 6,16 ms — quadrático, num texto de PDF que vem cheio de corrida\n  // de espaço.\n  const diaDeMes = new RegExp(/\\b\\d{1,2}\\s+de\\s+/.source + '(' + meses + ')', 'gi');\n  const quantosDeDuracao = new RegExp(/\\b\\d{1,3}\\s*/.source + '(' + duracao + ')' + /\\b/.source, 'gi');\n  const resto = linha\n    // CÓDIGO DE CONTA (\"2.1.01.001\") — identifica, não mede. Sai primeiro, senão\n    // o regex de ano acha \"2025\" dentro de um código que o contenha. O que TEM\n    // a forma de separador de milhar (`separadorDeMilhar`, acima) fica: é\n    // valor, não identidade, e apagá-lo é o defeito do `11_Mapa_Divida`.\n    .replace(/\\b\\d+(?:\\.\\d+){2,}\\b/g, (m) => (separadorDeMilhar.test(m) ? m : ' '))\n    .replace(/\\b\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}\\b/g, ' ')   // 31/12/2025\n    .replace(diaDeMes, ' ')                             // 31 de dezembro\n    .replace(quantosDeDuracao, ' ')                     // 36 MESES\n    .replace(/\\b(19|20)\\d{2}\\b/g, ' ');                // 2025\n  return !/\\d/.test(resto);\n};\nconst ehLinhaDeConta = function ehLinhaDeConta(linha) {\n  if (typeof linha !== 'string' || linha.length === 0) return false;\n  // Um valor: número solto, com separador de milhar, decimal, percentual, ou\n  // negativo entre parênteses — as quatro formas que o book usa.\n  const valores = /\\(?-?\\d[\\d.]*(?:,\\d+)?\\)?%?/g;\n  // Código de conta contábil (\"1.1.01.002\"): identidade sem uma letra sequer.\n  //\n  // ESTA PROVA DE IDENTIDADE não aceita mais a forma de separador de milhar\n  // como código de conta — achado na revisão do PR #204. Antes, o regex puro\n  // `\\b\\d+(?:\\.\\d+){2,}\\b` também casava \"51.300.000\"; quando uma linha SEM\n  // rótulo e SEM segundo valor (`quantos < 2`, abaixo) trazia só um número\n  // desses, ele virava \"prova de identidade\" de código de conta — quando é\n  // valor. `separadorDeMilhar` (a mesma régua que `ehLinhaSemValor` já usa)\n  // resolve isso: só conta como código quem NÃO tiver essa forma.\n  const separadorDeMilhar = /^\\d{1,3}(?:\\.\\d{3})+$/;\n  const codigoDeConta = {\n    test: (l) => (l.match(/\\b\\d+(?:\\.\\d+){2,}\\b/g) ?? []).some((m) => !separadorDeMilhar.test(m)),\n  };\n  // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma\n  // linha real do book, e o comentário evita que alguém \"melhore\" tirando um.\n  const ruido = [\n    /^p[áa]gina\\b/i,                       // \"Página 1\"\n    // Os grupos NÃO são estilo: `|` tem a MENOR precedência de todo o regex, e\n    // `^` liga só na alternativa em que aparece. Sem o grupo, `^cnpj\\b|\\bcnpj…`\n    // se lê `(^cnpj\\b)|(\\bcnpj…)` — que por acaso É o que se quer aqui, mas\n    // ninguém consegue afirmar isso lendo, e a próxima pessoa que acrescentar\n    // uma terceira alternativa vai herdar a âncora sem perceber. Explicitar o\n    // agrupamento trava a leitura no que o código já faz. É a mesma correção que\n    // a `fn_documento_preliminar` da 0151 documenta do lado do Postgres, onde a\n    // precedência de `~` sobre `||` fazia a função devolver TEXTO em vez de\n    // booleano — lá o descuido custou uma função quebrada, aqui ainda não custou.\n    /(?:^cnpj\\b)|(?:\\bcnpj\\s*[\\d.])/i,     // \"CNPJ 44.555.667/0001-59\"\n    /(?:^cpf\\b)|(?:\\bcpf\\s*[\\d.])/i,       // assinatura\n    /\\bcrc\\s*\\d|\\bcrc\\s*[a-z]{2}/i,        // \"CRC 1MG-198.442/O-7\"\n    /^\\(?valores expressos/i,              // \"(Valores expressos em milhares…)\"\n    /^exerc[íi]cios? encerrados?/i,        // \"Exercícios encerrados em 31 de dezembro…\"\n    /^(nota|obs)\\b|^_{3,}/i,               // nota de rodapé, linha de assinatura\n    // Cabeçalho de coluna: só anos/datas, sem rótulo de conta antes.\n    /^[\\s|]*((19|20)\\d{2}|\\d{2}\\/\\d{2}\\/\\d{4})([\\s|]+((19|20)\\d{2}|\\d{2}\\/\\d{2}\\/\\d{4}))*[\\s|]*$/,\n  ];\n  if (ruido.some((r) => r.test(linha))) return false;\n  const quantos = (linha.match(valores) ?? []).filter((t) => /\\d/.test(t)).length;\n  // Sem valor não é conta: é título, é seção, é prosa. O modelo também não gera\n  // linha para ela.\n  if (quantos === 0) return false;\n  // Identidade da conta, em qualquer uma das três formas. A terceira — \"linha de\n  // tabela numérica\" — é a que recupera o razão e o aging, onde o leitor de PDF\n  // põe o rótulo numa linha e os valores na seguinte: contar a linha dos valores\n  // é contar a conta UMA vez, que é a unidade certa.\n  const temRotulo = /[a-zà-ú]{3}/i.test(linha);\n  if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) return false;\n\n  // A REGRESSÃO DE VERDADE DO PR #204, achada na revisão e medida comparando\n  // `main` antes (668b6fe) e depois (b86d6cf):\n  //\n  //                                 ANTES    DEPOIS\n  //   \"Protocolo 1.234.567\"          false  →  true\n  //   \"Processo 0.001.234\"           false  →  true\n  //   \"Caixa 1.000 2.000\"            true      true   (inalterado, correto)\n  //   \"1.1.01.002 Numerário 2.880\"   true      true   (inalterado, correto)\n  //\n  // NÃO É o `codigoDeConta` acima — ele só decide quando NÃO HÁ rótulo, e as\n  // duas linhas que regrediram TÊM rótulo (\"Protocolo\", \"Processo\"): o `!\n  // temRotulo` do `if` acima já é `false` e o `codigoDeConta` nunca chega a\n  // ser avaliado. A causa é o `ehLinhaSemValor` chamado no final desta\n  // função: ele passou a PRESERVAR forma de separador de milhar (correto —\n  // é o que resolve o `11_Mapa_Divida`), e \"1.234.567\"/\"0.001.234\" TÊM\n  // EXATAMENTE A MESMA FORMA que \"51.300.000\" — três grupos de exatamente\n  // três dígitos. Nenhuma regra de FORMA PURA separa \"número de protocolo\"\n  // de \"valor monetário\" quando os dois são o ÚNICO número da linha — a\n  // forma é idêntica por definição.\n  //\n  // O QUE SOBRA, E AINDA É FORMA (não léxico, não lista de palavra): QUANTOS\n  // números com essa forma ambígua a linha tem. `TOTAL 51.300.000\n  // 12.400.000` tem DOIS — é assim que toda linha de valor comparativo do\n  // book aparece, com duas colunas/exercícios; `Protocolo 1.234.567` e\n  // `Processo 0.001.234` têm só UM. Uma linha cujo ÚNICO valor tem forma\n  // ambígua (poderia ser identidade, poderia ser dinheiro) precisa de uma\n  // SEGUNDA ocorrência para ser aceita — o mesmo raciocínio do `quantos < 2`\n  // linhas acima, aplicado à forma que sozinha não decide.\n  //\n  // MEDIDO nos dois books (46 documentos, `node N8N/medir-fase0-\n  // denominador.mjs --book canastra|vertentes`, antes e depois desta linha):\n  // nenhum documento piorou — `linhasDeConta` continua com erro absoluto\n  // médio 4,6% (canastra) / 0,5% (vertentes) e conta A MENOS em 3 de 46, e o\n  // `11_Mapa_Divida` (verdade 10) continua em 10/10.\n  const formaIdentidadeOuMilhar = /\\b\\d+(?:\\.\\d+){2,}\\b/g;\n  const unicoValorAmbiguo = quantos < 2\n    && (linha.match(formaIdentidadeOuMilhar) ?? []).some((m) => separadorDeMilhar.test(m));\n  if (unicoValorAmbiguo) return false;\n\n  // Cabeçalho que tem número sem medir número — período, duração, código de\n  // conta. Tem dígito e tem letra, então passava pelos dois testes acima.\n  return !ehLinhaSemValor(linha);\n};\nconst linhasDeConta = function linhasDeConta(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return [];\n  // O texto chega FRAGMENTADO em documento de tabela larga — ver\n  // `juntarFragmentosDeLinha`, que tem os 258 contra 99 que motivaram isto.\n  const normalizado = juntarFragmentosDeLinha(texto);\n  // A NOTA DE RODAPÉ QUEBRA EM DUAS LINHAS, e só a primeira dizia \"Nota —\".\n  // Medido no `13_Balanco_COMBINADO`: o ruído cortava a primeira e contava\n  // \"aos 35% do capital da CN Transportes ... detidos por terceiros.\" como conta.\n  // A continuação se reconhece por DUAS coisas juntas, nunca por uma: a linha\n  // anterior foi cortada como PROSA, e esta começa em minúscula. Só a minúscula\n  // não serve — no `20_Mapa_de_Divida`, \"conversão FIN-2019-336.070 28/09/2029…\"\n  // começa em minúscula E É uma linha de contrato de verdade; o que a salva é\n  // que a linha antes dela é uma linha da tabela, não prosa cortada.\n  //\n  // É O ÚNICO ESTADO desta função, e é por isso que a decisão por linha mora em\n  // `ehLinhaDeConta`: aqui fica o que depende da linha ANTERIOR, e só isso.\n  const prosa = /^(nota|obs)\\b|^\\(?valores expressos|^exerc[íi]cios? encerrados?/i;\n  let anteriorEraProsa = false;\n  const out = [];\n  for (const bruta of normalizado.split('\\n')) {\n    const linha = bruta.trim();\n    if (linha.length === 0) { anteriorEraProsa = false; continue; }\n    if (anteriorEraProsa && /^[a-zà-ú]/.test(linha)) continue;\n    anteriorEraProsa = prosa.test(linha);\n    if (ehLinhaDeConta(linha)) out.push(linha);\n  }\n  return out;\n};\nconst celulasDaLinha = function celulasDaLinha(linha) {\n  const texto = typeof linha === 'string' ? linha : String(linha ?? '');\n  // Número com separador de milhar/decimal OU número simples, com o parêntese\n  // contábil de negativo tolerado nas duas pontas.\n  const achados = texto.match(/-?\\d{1,3}(?:\\.\\d{3})+(?:,\\d+)?|-?\\d+(?:[.,]\\d+)?/g);\n  // MÍNIMO 1: a linha veio de `linhasComNumero`, então ela TEM dígito. Devolver\n  // zero faria o acumulador do fatiamento não avançar e um bloco crescer sem fim.\n  return achados && achados.length > 0 ? achados.length : 1;\n};\nconst celulasEstimadas = function celulasEstimadas(linhas) {\n  return (Array.isArray(linhas) ? linhas : []).map((l) => celulasDaLinha(l));\n};\nconst planejarFatias = function planejarFatias(linhas, maxPorBloco, pesos) {\n  const lista = Array.isArray(linhas) ? linhas : [];\n  const max = Number.isFinite(Number(maxPorBloco)) && Number(maxPorBloco) > 0\n    ? Math.floor(Number(maxPorBloco))\n    : 234;\n  const total = lista.length;\n  // O PESO É EM CÉLULAS, e sem ele cada linha vale 1 — que é o comportamento\n  // antigo e continua correto para documento de uma coluna. Quem tem o texto\n  // calcula os pesos com `celulasEstimadas` e passa; esta função não pode\n  // chamá-la (tem de ficar auto-contida para os nós Code).\n  const peso = (i) => {\n    const p = Array.isArray(pesos) ? Number(pesos[i]) : 1;\n    return Number.isFinite(p) && p > 0 ? p : 1;\n  };\n  let soma = 0;\n  for (let i = 0; i < total; i += 1) soma += peso(i);\n  if (soma <= max) {\n    return [{\n      bloco: 1, blocos: 1, de: 0, ate: Math.max(0, total - 1),\n      ancoraInicio: null, ancoraFim: null, celulas: soma, linhas: total, acimaDoTeto: false,\n    }];\n  }\n\n  // DUAS PASSADAS, e a primeira existe porque `ceil(soma / max)` MENTE. Ela\n  // supõe que o corte cai onde se quiser; ele cai entre LINHAS, e a linha nunca\n  // é partida (ela é a âncora, e meia âncora não localiza nada no PDF). Com\n  // linhas de peso 4 e teto 10, `ceil` prevê 4 blocos e o alvo de 10 produz\n  // blocos de 12 — acima do teto que a função existe para respeitar. Medido\n  // assim, escrevendo esta função: [12, 12, 12, 4].\n  //\n  // Passada 1: guloso com o TETO como restrição dura, para saber de quantos\n  // blocos o documento precisa DE FATO.\n  const cortarCom = (alvo) => {\n    const out = [];\n    let de = 0;\n    let acumulado = 0;\n    for (let i = 0; i < total; i += 1) {\n      const p = peso(i);\n      // Estourou o teto ao incluir esta linha? Fecha ANTES dela — a menos que o\n      // bloco esteja vazio, e aí a linha sozinha já passa do teto e não há o que\n      // fazer além de declarar (`acimaDoTeto`).\n      if (acumulado > 0 && acumulado + p > max) {\n        out.push({ de, ate: i - 1, celulas: acumulado });\n        de = i;\n        acumulado = 0;\n      }\n      acumulado += p;\n      const ultima = i === total - 1;\n      // Cumpriu o alvo de equilíbrio? Fecha, desde que sobre linha para os\n      // blocos que faltam.\n      const podeFechar = alvo > 0 && acumulado >= alvo && !ultima;\n      if (ultima || podeFechar) {\n        out.push({ de, ate: i, celulas: acumulado });\n        de = i + 1;\n        acumulado = 0;\n      }\n    }\n    return out;\n  };\n\n  const semAlvo = cortarCom(0);\n  // Passada 2: agora que o número REAL de blocos é conhecido, reparte parejo.\n  // Sem isto o último bloco vira um toco de uma linha, curto demais para ancorar.\n  const alvo = soma / semAlvo.length;\n  const cortes = cortarCom(alvo);\n  const reais = cortes.length;\n  return cortes.map((c, k) => ({\n    bloco: k + 1,\n    // O DECLARADO TEM DE SER O REAL: se a instrução diz \"bloco 2 de 3\" num plano\n    // de 2, o modelo procura um terço que não existe.\n    blocos: reais,\n    de: c.de,\n    ate: c.ate,\n    ancoraInicio: lista[c.de],\n    ancoraFim: lista[c.ate],\n    celulas: c.celulas,\n    linhas: c.ate - c.de + 1,\n    // UMA LINHA SÓ QUE JÁ PASSA DO TETO. Não há corte mais fino que a linha, e o\n    // caso não pode ficar em silêncio: é o único resíduo de truncamento que\n    // sobra depois desta correção, e ele tem de aparecer para quem lê a execução.\n    acimaDoTeto: c.celulas > max,\n  }));\n};\nconst instrucaoDaFatia = function instrucaoDaFatia(fatia) {\n  if (!fatia || !(fatia.blocos > 1)) return '';\n  return ' ATENCAO -- EXTRACAO EM BLOCOS: este documento e' + ' grande demais para uma resposta so, '\n    + 'entao voce esta extraindo o BLOCO ' + fatia.bloco + ' DE ' + fatia.blocos + '. '\n    + 'Extraia SOMENTE as linhas de valor a partir da linha que aparece no documento como \"'\n    + String(fatia.ancoraInicio || '').slice(0, 160) + '\" ate a linha \"'\n    + String(fatia.ancoraFim || '').slice(0, 160) + '\", ambas INCLUSIVE, na ordem de leitura. '\n    + 'Nao extraia nada antes da primeira nem depois da ultima: os outros blocos cobrem o resto, '\n    + 'e linha repetida entre blocos vira dado duplicado. O diagnostico do documento (entidade, '\n    + 'tipo, periodo, moeda, escala) deve descrever o DOCUMENTO INTEIRO, nao so este bloco.';\n};\nconst juntarBlocos = function juntarBlocos(blocos) {\n  const lista = (Array.isArray(blocos) ? blocos : [])\n    .filter((b) => b && typeof b === 'object')\n    .slice()\n    .sort((a, b) => (Number(a.bloco) || 0) - (Number(b.bloco) || 0));\n\n  const campos = [];\n  const motivos = [];\n  let emendasLimpas = 0;\n\n  // O BLOCO QUE NÃO CHEGOU, e por que ele precisava de um assert próprio.\n  //\n  // Até 31/08 esta função devolvia `blocos: lista.length` — quantos blocos\n  // CHEGARAM — e nada mais. O número que o `Fatiar Extracao` PLANEJOU viaja em\n  // cada bloco (`b.blocos`) e não era lido por ninguém. Consequência medida: um\n  // documento fatiado em 4 que perde o bloco 2 devolve `blocos: 3`, `motivos:\n  // []`, e cobertura 0,75 — a pendência de `extracao_falhou` diz \"lido em 3\n  // bloco(s)\", indistinguível de um documento cujo plano era 3.\n  //\n  // Isso importa mais do que um motivo a mais na fila: a `0154` existe para\n  // responder a pergunta que a rodada de 190 deixou aberta — sub-extração é\n  // TETO do modelo ou fatiamento? —, e o instrumento dela é justamente esta\n  // contagem. Reportando o recebido, ela não separa \"o plano era 1\" de \"o plano\n  // era 4 e chegou 1\", que são as duas hipóteses que ela deveria distinguir.\n  //\n  // O PLANO É O MÁXIMO DECLARADO, e não o do primeiro bloco: se o bloco 1 for\n  // justamente o que se perdeu, o primeiro que chega continua carregando o\n  // total. Bloco no formato antigo (sem `blocos`) não declara plano nenhum, e aí\n  // não há o que afirmar — cai no recebido, sem inventar divergência.\n  // Sem `b &&`: `lista` já saiu do filtro de objeto no topo da função, então a\n  // guarda era morta — e a linha do `chegaram`, cinco abaixo, já lia `b.bloco`\n  // direto. Duas formas para a mesma garantia na mesma função ensinam a\n  // desconfiar da que não tem guarda, que é justamente a correta.\n  const planoDeclarado = lista\n    .map((b) => Number(b.blocos))\n    .filter((n) => Number.isFinite(n) && n > 0);\n  const blocosPlanejados = planoDeclarado.length > 0\n    ? Math.max(lista.length, ...planoDeclarado)\n    : lista.length;\n  if (blocosPlanejados > lista.length) {\n    const chegaram = new Set(lista.map((b) => Number(b.bloco)).filter((n) => Number.isFinite(n)));\n    const faltando = [];\n    for (let n = 1; n <= blocosPlanejados; n += 1) if (!chegaram.has(n)) faltando.push(n);\n    // A frase nomeia o bloco porque é o que se pergunta primeiro ao investigar, e\n    // diz o EFEITO — sem isso, \"faltou bloco\" parece um aviso de infraestrutura\n    // em vez do que é: um pedaço do documento que não está no banco.\n    motivos.push(\n      `FALTOU BLOCO: o fatiamento planejou ${blocosPlanejados} bloco(s) e chegaram ${lista.length}`\n      + (faltando.length > 0 ? ` — ausente(s): ${faltando.join(', ')}` : '')\n      + '. As linhas desse trecho do documento NÃO foram gravadas, e a cobertura abaixo mede o'\n      + ' documento SEM elas: a sub-extração aqui é perda de bloco, não leitura parcial do modelo.',\n    );\n  }\n  // OS FATOS MATERIAIS SÃO ADITIVOS ENTRE BLOCOS, e o resto do diagnóstico não.\n  //\n  // Entidade, tipo e período são propriedades do DOCUMENTO: todo bloco responde\n  // a mesma coisa, e quem chama pega a do primeiro — está certo. Os fatos não:\n  // cada bloco vê um PEDAÇO diferente do texto, então o covenant declarado na\n  // página 40 chega no bloco 2 e some se só o bloco 1 for lido.\n  //\n  // Era o defeito: `diagnostico: blocos[0].diagnostico` descartava em silêncio\n  // os fatos de todos os blocos seguintes — e os documentos fatiados são\n  // justamente os grandes, que são onde nota explicativa mora (no book, o\n  // `35_Demonstracoes_Contabeis` e o `01_Balanco` saem em 2 blocos cada).\n  const fatos = [];\n  const vistos = new Set();\n  let algumBlocoLeuFatos = false;\n  const linhas = new Set();\n  const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par\n  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('\u0001');\n\n  for (const b of lista) {\n    const doBloco = Array.isArray(b.campos) ? b.campos.slice() : [];\n    if (campos.length > 0 && doBloco.length > 0) {\n      // Janela de 3: a repetição de emenda é de uma ou duas linhas na prática, e\n      // uma janela grande começaria a comer dado legítimo.\n      const cauda = campos.slice(-3).map(assinatura);\n      while (doBloco.length > 0 && cauda.includes(assinatura(doBloco[0]))) {\n        doBloco.shift();\n        emendasLimpas += 1;\n      }\n    }\n    for (const c of doBloco) {\n      campos.push(c);\n      // LINHAS do documento devolvidas, contadas DEPOIS da limpeza da emenda.\n      // Cada bloco numera as suas a partir de zero, então a chave leva o bloco.\n      const chave = Number.isInteger(c.linha_origem) ? `${b.bloco}:${c.linha_origem}` : null;\n      chaveDaLinha.push(chave);\n      if (chave !== null) linhas.add(chave);\n    }\n    // A DEDUPLICAÇÃO É NECESSÁRIA porque os blocos se SOBREPÕEM de propósito (a\n    // emenda repete a âncora, ver a limpeza acima): um fato que caia na região\n    // de emenda é declarado duas vezes, e dois alertas idênticos numa lista\n    // curta ensinam a desconfiar dela.\n    //\n    // A chave é (tipo + trecho normalizado), não o objeto inteiro: o mesmo\n    // trecho pode voltar com a página do bloco 1 e a do bloco 2, e continua\n    // sendo o mesmo fato. `null` (bloco que não leu fatos) é diferente de `[]`,\n    // e a distinção sobe até o banco.\n    if (Array.isArray(b.diagnostico?.fatos)) {\n      algumBlocoLeuFatos = true;\n      for (const f of b.diagnostico.fatos) {\n        if (!f || typeof f !== 'object') continue;\n        const chave = `${f.tipo}\\u0000${String(f.trecho ?? '').toLowerCase().replace(/\\s+/g, ' ').trim()}`;\n        if (vistos.has(chave)) continue;\n        vistos.add(chave);\n        fatos.push(f);\n      }\n    }\n    if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);\n    // O RESÍDUO DE TRUNCAMENTO QUE O FATIAMENTO NÃO RESOLVE. Uma linha que\n    // sozinha já passa do teto de saída não tem corte mais fino — ela é a\n    // âncora, e meia âncora não localiza nada no PDF. Isso tem de chegar à fila\n    // de revisão: é a diferença entre \"não deu\" e a perda silenciosa que as três\n    // camadas existem para acabar.\n    if (b.bloco_acima_do_teto) {\n      motivos.push(`bloco ${b.bloco}: uma linha sozinha já passa do teto de saída do modelo — `\n        + 'não há corte mais fino que a linha, e a resposta deste bloco pode ter vindo cortada');\n    }\n  }\n\n  // `ordem` é renumerada no conjunto: ela significa \"posição na leitura do\n  // documento\" e é o que permite ao export reconhecer subtotal impresso acima\n  // dos componentes. Cada bloco numera a partir de zero, então manter a\n  // numeração do bloco faria o documento ter três linhas de `ordem` 0.\n  //\n  // `linha_origem` SAI aqui: ele serviu para contar as linhas e não tem lugar em\n  // `campo_extraido`. O que vai ao banco continua sendo exatamente o que sempre\n  // foi — acrescentar coluna a uma tabela de dado por causa de uma contagem\n  // interna seria pagar migration por uma variável de laço.\n  // …e `ordem` é a ordem da LINHA, não do par (conta × coluna).\n  //\n  // O DEFEITO QUE ISTO CORRIGE, medido no export da rodada v46 (17/08): a mesma\n  // conta de um balanço comparativo saía em TRÊS linhas do Excel, uma por\n  // exercício, com as outras colunas vazias — \"Caixa e bancos conta movimento\"\n  // aparecia em 2023, de novo em 2024 e de novo em 2025. O comparativo não\n  // comparava.\n  //\n  // A causa é de unidade, outra vez. A `0027` define `ordem` como \"posição na\n  // leitura do DOCUMENTO\", e o export conta com isso: ele desempata rótulo\n  // repetido (dois \"Outros\" num balancete) pelo rank de `ordem` dentro da versão,\n  // supondo que o mesmo rótulo só se repete quando são linhas diferentes. Quando\n  // a saída passou a ser AGRUPADA (uma conta com um valor por coluna), o\n  // achatamento numerou PARES, então uma conta com três colunas virou três\n  // `ordem` distintas — e o export, corretamente segundo a regra dele, entendeu\n  // três linhas diferentes.\n  //\n  // Agora os três pares de uma conta compartilham a `ordem` da linha que os\n  // originou. Rótulo genuinamente repetido continua com `ordem` diferente e\n  // continua em linhas separadas — que é o que a `0027` sempre quis dizer.\n  const ordemDaLinha = new Map();\n  let proxima = 0;\n  const renumerados = campos.map((c, i) => {\n    const { linha_origem, ...resto } = c;\n    const chave = chaveDaLinha[i];\n    // Bloco no formato plano antigo (sem `linha_origem`): cada campo é uma linha,\n    // que é exatamente o que ele era antes desta correção.\n    if (chave === null) return { ...resto, ordem: proxima++ };\n    if (!ordemDaLinha.has(chave)) ordemDaLinha.set(chave, proxima++);\n    return { ...resto, ordem: ordemDaLinha.get(chave) };\n  });\n  return {\n    campos: renumerados,\n    motivos,\n    emendasLimpas,\n    blocos: lista.length,\n    // O PLANO, ao lado do recebido. Os dois viajam juntos de propósito: quem lê\n    // um número de blocos precisa saber se ele é o que se queria ou o que sobrou.\n    blocosPlanejados,\n    // Zero significa \"não dá para saber\" (bloco no formato plano antigo, sem\n    // `linha_origem`), e quem chama trata isso caindo para as contas distintas —\n    // o comportamento de antes desta correção.\n    linhasRetornadas: linhas.size,\n    // `null` quando NENHUM bloco trouxe a chave `fatos` (workflow antigo), `[]`\n    // quando algum leu e não achou nada. A distinção não é estética: no banco,\n    // `null` manda NÃO TOCAR nos fatos já gravados e `[]` manda apagá-los.\n    fatos: algumBlocoLeuFatos ? fatos : null,\n  };\n};\nconst avaliarCobertura = function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTURA, minimo = MINIMO_PARA_AVALIAR }) {\n  // `extraidas` = LINHAS que a extração devolveu; `esperadas` = LINHAS DE CONTA\n  // do texto. As duas na mesma unidade, e foi preciso errar isso DUAS vezes para\n  // chegar aqui:\n  //   • pares (conta × coluna) contra linhas → 198% num documento incompleto, a\n  //     guarda cega justamente no comparativo;\n  //   • contas DISTINTAS contra linhas → 66% num livro razão PERFEITO, porque o\n  //     mesmo histórico se repete em lançamentos diferentes e some na contagem.\n  // Linha contra linha não tem nenhum dos dois vieses: uma conta com três colunas\n  // conta uma vez, e dois lançamentos do mesmo fornecedor contam dois.\n  const e = Number(extraidas);\n  const t = Number(esperadas);\n  if (!Number.isFinite(e) || !Number.isFinite(t) || t < minimo) return null;\n  const razao = t > 0 ? e / t : 1;\n  if (razao >= limiar) return null;\n  return {\n    razao: Number(razao.toFixed(3)),\n    extraidas: e,\n    esperadas: t,\n    motivo:\n      `Extração INCOMPLETA: ${e} linha(s) devolvida(s) para um documento com ${t} linha(s) `\n      + `de conta no texto (${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de `\n      + `${(limiar * 100).toFixed(0)}%). A contagem do documento é feita sobre o texto do PDF, sem IA: `\n      + `linha que tem valor e tem identidade — rótulo, código de conta, ou linha de tabela numérica —, `\n      + `descontados cabeçalho de ano, CNPJ, data, número de página e bloco de assinatura. As duas `\n      + `medidas estão na MESMA unidade (LINHAS do documento: uma conta com três colunas conta uma vez, `\n      + `e dois lançamentos com o mesmo histórico contam dois), então a diferença é dado que o modelo `\n      + `deixou de ler — conferir o documento na fila de revisão antes de usar o book. A régua erra para `\n      + `cima em cerca de 3% (costuma contar o cabeçalho de colunas como linha), o que já está `\n      + `descontado na folga do limiar.`,\n  };\n};\n// O texto vem do PROPRIO input (o `Extrair Texto` e' o no' anterior): nao depende\n// de pareamento nenhum. O contexto vem do `Preparar Conteudo`, ancestral.\nconst doExtrator=$input.item.json||{};\nconst textoPdf=(typeof doExtrator.text==='string'&&doExtrator.text)||(typeof doExtrator.texto_pdf==='string'&&doExtrator.texto_pdf)||'';\nlet item={};\ntry{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }\nconst linhasDoTexto=linhasComNumero(textoPdf);\nconst temTexto=linhasDoTexto.length>0;\n// AS CELULAS, contadas linha a linha. O `Extract From File` entrega o texto\n// AGRUPADO POR LINHA, e uma linha de comparativo de tres exercicios produz TRES\n// celulas -- contar linha como celula deixava o fatiamento de 1,7x a 6,8x mais\n// frouxo do que o nome dele diz, e na pratica DESLIGADO: medido, nenhum dos 38\n// documentos do book-canastra era fatiado. Ver o comentario de `celulasDaLinha`.\nconst pesosDaLinha=temTexto?celulasEstimadas(linhasDoTexto):[];\nconst celulasEstim=pesosDaLinha.reduce((a,b)=>a+b,0);\n// AUSENCIA DE TEXTO NAO E' ERRO: PDF escaneado nao tem camada de texto, e o\n// documento segue como imagem exatamente como antes -- so' as camadas 2 e 3 se\n// calam para ele. `null` e' \"nao sei\", nunca \"zero\": zero ligaria a guarda de\n// cobertura com regua inventada justamente no documento onde o modelo mais erra.\nreturn {json:{...item,\n  // DUAS reguas, e a distincao e' o que fez a guarda voltar a enxergar:\n  //   celulas -> toda linha com digito. E' o tamanho da RESPOSTA, e e' o que o\n  //     fatiamento precisa saber (cabecalho tambem gasta token).\n  //   contas  -> so' linha de conta (rotulo + valor), sem cabecalho de ano, CNPJ,\n  //     data nem assinatura. E' a unidade da COBERTURA, comparavel com as contas\n  //     distintas que a extracao grava. Medido no 02_DRE: 46 contra 39.\n  celulas_no_documento: temTexto?linhasDoTexto.length:null,\n  contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,\n  linhas_do_texto: temTexto?linhasDoTexto:null,\n  // A TERCEIRA regua, e e' ela que decide o FATIAMENTO e o custo de SAIDA:\n  // celulas de valor estimadas do proprio texto. `colunas_estimadas` sai da\n  // razao celulas/linhas -- e substitui a leitura do NOME do arquivo, que so'\n  // via coluna de PERIODO (\"2025x2024x2023\") e era cega a coluna de EMPRESA\n  // (um combinado de seis empresas contava como uma coluna).\n  celulas_estimadas: temTexto?celulasEstim:null,\n  colunas_estimadas: temTexto?Math.max(1,Math.round(celulasEstim/linhasDoTexto.length)):null,\n  // PAGINAS: quem paga a entrada da chamada e' a IMAGEM do PDF (~1.000 tokens\n  // por pagina), entao o teto de gasto precisa deste numero -- e ele so' existe\n  // aqui, na saida do `Extrair Texto` (o `pdf-parse` publica `numpages`).\n  // `null` quando o extrator nao disse: o orcamento entao cai para a conta por\n  // BYTE, que e' a saida conservadora, em vez de supor uma pagina.\n  paginas_do_documento: Number.isFinite(Number(doExtrator.numpages))?Number(doExtrator.numpages)\n    :(Number.isFinite(Number(doExtrator.numPages))?Number(doExtrator.numPages):null),\n}};"
+        "jsCode": "const MAX_CELULAS_POR_BLOCO = 234;\nconst LIMIAR_COBERTURA = 0.85;\nconst MINIMO_PARA_AVALIAR = 20;\nconst linhasComNumero = function linhasComNumero(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return [];\n  const out = [];\n  for (const bruta of texto.split('\\n')) {\n    const linha = bruta.trim();\n    if (linha.length === 0) continue;\n    if (!/\\d/.test(linha)) continue;\n    out.push(linha);\n  }\n  return out;\n};\nconst juntarFragmentosDeLinha = function juntarFragmentosDeLinha(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return '';\n  const MAX_FRAGMENTOS = 4;\n  const saida = [];\n  let emenda = '';\n  let quantos = 0;\n  for (const bruta of texto.split('\\n')) {\n    // Linha em branco NÃO emenda e não some: ela separa bloco. Emendar através\n    // dela colaria o rodapé de uma página no cabeçalho da seguinte; engoli-la\n    // mudaria o texto para quem só passa por aqui.\n    if (bruta.trim().length === 0) {\n      if (emenda.length > 0) saida.push(emenda);\n      saida.push(bruta);\n      emenda = '';\n      quantos = 0;\n      continue;\n    }\n    // O espaço no fim é a marca do fragmento que NÃO fecha a linha visual.\n    if (/[ \\t]$/.test(bruta) && quantos < MAX_FRAGMENTOS) {\n      emenda += bruta;\n      quantos += 1;\n      continue;\n    }\n    saida.push(emenda + bruta);\n    emenda = '';\n    quantos = 0;\n  }\n  if (emenda.length > 0) saida.push(emenda);\n  return saida.join('\\n');\n};\nconst ehLinhaSemValor = function ehLinhaSemValor(linha) {\n  if (typeof linha !== 'string' || linha.length === 0) return false;\n  // O CASO PERIGOSO, achado de lado na Fase 0 (09/09) no `11_Mapa_Divida_\n  // Vertentes_Metalurgica_2025` — documento em REAIS, não em milhares. A linha\n  // \"TOTAL 51.300.000 12.400.000\" sumia do denominador: `\\b\\d+(?:\\.\\d+){2,}\\b`\n  // via em \"51.300.000\" a MESMA forma de \"1.1.01.002\" (dígitos separados por\n  // ponto, dois ou mais pontos) e apagava os dois valores como se fossem\n  // código de conta — sobrava \"TOTAL\", sem dígito, e a linha de TOTAL virava\n  // invisível. Verdade 10, régua 9 (-10%): contar A MENOS é o lado que a Fase 0\n  // existe para vigiar, porque encolhe o denominador e deixa a extração pela\n  // metade parecer sadia.\n  //\n  // O CRITÉRIO NÃO É LISTA, É FORMA — a mesma disciplina do resto deste\n  // arquivo. Separador de milhar brasileiro tem uma regra fixa: CADA grupo\n  // depois do primeiro tem EXATAMENTE 3 dígitos (\"51.300.000\" -> 300, 000;\n  // \"9.420.000\" -> 420, 000; \"10.412.600\" -> 412, 600). Código de conta não\n  // segue essa regra — a hierarquia classe.grupo.subgrupo.sequência escreve\n  // grupos de tamanho variável (\"1.1.01.002\" -> 1, 01, 002; \"2.1.01.001\" ->\n  // 1, 01, 001; o segundo grupo nunca chega a 3 dígitos). A pergunta que\n  // decide, então, não é \"quantos pontos tem\" — é \"todo grupo depois do\n  // primeiro tem 3 dígitos?\": se sim, é dinheiro; se não, é identidade.\n  // `separadorDeMilhar`, abaixo, é essa pergunta.\n  const separadorDeMilhar = /^\\d{1,3}(?:\\.\\d{3})+$/;\n  // As alternativas vêm de LITERAIS de regex, lidas por `.source`. Escritas como\n  // string comum elas exigiriam '\\\\b\\\\d{1,2}' — barra dobrada em toda a expressão,\n  // que é onde erro de escape se esconde e onde o Sonar (S7780) acusou quatro\n  // vezes. Literal não tem essa camada.\n  const meses = /janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro/\n    .source;\n  const duracao = /meses|m[êe]s|anos|ano|exerc[íi]cios|exerc[íi]cio|dias|dia|semanas|trimestres|trimestre|bimestres|semestres/\n    .source;\n  // NÃO EXISTE AQUI UM CORTE DE \"MÊS + ANO\" (\"Janeiro/2023\"), e a ausência é\n  // deliberada — ele existiu e foi MEDIDO MORTO. O corte do ano solto, na última\n  // linha do encadeamento, já apaga o \"2023\" de \"Janeiro/2023\" e deixa \"Janeiro/\",\n  // que não tem dígito: a regra de mês+ano nunca decidiu nada. Removida a régua\n  // continua exata nos 20 documentos e nenhum assert reprova — foi assim que se\n  // descobriu, e o teste que a \"protegia\" passava com ela sabotada.\n  //\n  // Ela cobrava caro pelo nada: era `(mês)\\s*[\\/ ]\\s*\\d{4}`, com o espaço nos\n  // TRÊS pedaços, então uma corrida de N espaços podia ser dividida de N jeitos e\n  // o motor tentava todos (Sonar S8786). Medido: 2.000 espaços custavam 1,62 ms e\n  // 4.000 custavam 6,16 ms — quadrático, num texto de PDF que vem cheio de corrida\n  // de espaço.\n  const diaDeMes = new RegExp(/\\b\\d{1,2}\\s+de\\s+/.source + '(' + meses + ')', 'gi');\n  const quantosDeDuracao = new RegExp(/\\b\\d{1,3}\\s*/.source + '(' + duracao + ')' + /\\b/.source, 'gi');\n  const resto = linha\n    // CÓDIGO DE CONTA (\"2.1.01.001\") — identifica, não mede. Sai primeiro, senão\n    // o regex de ano acha \"2025\" dentro de um código que o contenha. O que TEM\n    // a forma de separador de milhar (`separadorDeMilhar`, acima) fica: é\n    // valor, não identidade, e apagá-lo é o defeito do `11_Mapa_Divida`.\n    .replace(/\\b\\d+(?:\\.\\d+){2,}\\b/g, (m) => (separadorDeMilhar.test(m) ? m : ' '))\n    .replace(/\\b\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}\\b/g, ' ')   // 31/12/2025\n    .replace(diaDeMes, ' ')                             // 31 de dezembro\n    .replace(quantosDeDuracao, ' ')                     // 36 MESES\n    .replace(/\\b(19|20)\\d{2}\\b/g, ' ');                // 2025\n  return !/\\d/.test(resto);\n};\nconst ehLinhaDeConta = function ehLinhaDeConta(linha) {\n  if (typeof linha !== 'string' || linha.length === 0) return false;\n  // Um valor: número solto, com separador de milhar, decimal, percentual, ou\n  // negativo entre parênteses — as quatro formas que o book usa.\n  const valores = /\\(?-?\\d[\\d.]*(?:,\\d+)?\\)?%?/g;\n  // Código de conta contábil (\"1.1.01.002\"): identidade sem uma letra sequer.\n  //\n  // ESTA PROVA DE IDENTIDADE não aceita mais a forma de separador de milhar\n  // como código de conta — achado na revisão do PR #204. Antes, o regex puro\n  // `\\b\\d+(?:\\.\\d+){2,}\\b` também casava \"51.300.000\"; quando uma linha SEM\n  // rótulo e SEM segundo valor (`quantos < 2`, abaixo) trazia só um número\n  // desses, ele virava \"prova de identidade\" de código de conta — quando é\n  // valor. `separadorDeMilhar` (a mesma régua que `ehLinhaSemValor` já usa)\n  // resolve isso: só conta como código quem NÃO tiver essa forma.\n  const separadorDeMilhar = /^\\d{1,3}(?:\\.\\d{3})+$/;\n  const codigoDeConta = {\n    test: (l) => (l.match(/\\b\\d+(?:\\.\\d+){2,}\\b/g) ?? []).some((m) => !separadorDeMilhar.test(m)),\n  };\n  // Ruído conhecido de documento contábil brasileiro. Cada padrão saiu de uma\n  // linha real do book, e o comentário evita que alguém \"melhore\" tirando um.\n  const ruido = [\n    /^p[áa]gina\\b/i,                       // \"Página 1\"\n    // Os grupos NÃO são estilo: `|` tem a MENOR precedência de todo o regex, e\n    // `^` liga só na alternativa em que aparece. Sem o grupo, `^cnpj\\b|\\bcnpj…`\n    // se lê `(^cnpj\\b)|(\\bcnpj…)` — que por acaso É o que se quer aqui, mas\n    // ninguém consegue afirmar isso lendo, e a próxima pessoa que acrescentar\n    // uma terceira alternativa vai herdar a âncora sem perceber. Explicitar o\n    // agrupamento trava a leitura no que o código já faz. É a mesma correção que\n    // a `fn_documento_preliminar` da 0151 documenta do lado do Postgres, onde a\n    // precedência de `~` sobre `||` fazia a função devolver TEXTO em vez de\n    // booleano — lá o descuido custou uma função quebrada, aqui ainda não custou.\n    /(?:^cnpj\\b)|(?:\\bcnpj\\s*[\\d.])/i,     // \"CNPJ 44.555.667/0001-59\"\n    /(?:^cpf\\b)|(?:\\bcpf\\s*[\\d.])/i,       // assinatura\n    /\\bcrc\\s*\\d|\\bcrc\\s*[a-z]{2}/i,        // \"CRC 1MG-198.442/O-7\"\n    /^\\(?valores expressos/i,              // \"(Valores expressos em milhares…)\"\n    /^exerc[íi]cios? encerrados?/i,        // \"Exercícios encerrados em 31 de dezembro…\"\n    /^(nota|obs)\\b|^_{3,}/i,               // nota de rodapé, linha de assinatura\n    // Cabeçalho de coluna: só anos/datas, sem rótulo de conta antes.\n    /^[\\s|]*((19|20)\\d{2}|\\d{2}\\/\\d{2}\\/\\d{4})([\\s|]+((19|20)\\d{2}|\\d{2}\\/\\d{2}\\/\\d{4}))*[\\s|]*$/,\n  ];\n  if (ruido.some((r) => r.test(linha))) return false;\n  const quantos = (linha.match(valores) ?? []).filter((t) => /\\d/.test(t)).length;\n  // Sem valor não é conta: é título, é seção, é prosa. O modelo também não gera\n  // linha para ela.\n  if (quantos === 0) return false;\n  // Identidade da conta, em qualquer uma das três formas. A terceira — \"linha de\n  // tabela numérica\" — é a que recupera o razão e o aging, onde o leitor de PDF\n  // põe o rótulo numa linha e os valores na seguinte: contar a linha dos valores\n  // é contar a conta UMA vez, que é a unidade certa.\n  const temRotulo = /[a-zà-ú]{3}/i.test(linha);\n  if (!temRotulo && !codigoDeConta.test(linha) && quantos < 2) return false;\n\n  // A REGRESSÃO DE VERDADE DO PR #204, achada na revisão e medida comparando\n  // `main` antes (668b6fe) e depois (b86d6cf):\n  //\n  //                                 ANTES    DEPOIS\n  //   \"Protocolo 1.234.567\"          false  →  true\n  //   \"Processo 0.001.234\"           false  →  true\n  //   \"Caixa 1.000 2.000\"            true      true   (inalterado, correto)\n  //   \"1.1.01.002 Numerário 2.880\"   true      true   (inalterado, correto)\n  //\n  // NÃO É o `codigoDeConta` acima — ele só decide quando NÃO HÁ rótulo, e as\n  // duas linhas que regrediram TÊM rótulo (\"Protocolo\", \"Processo\"): o `!\n  // temRotulo` do `if` acima já é `false` e o `codigoDeConta` nunca chega a\n  // ser avaliado. A causa é o `ehLinhaSemValor` chamado no final desta\n  // função: ele passou a PRESERVAR forma de separador de milhar (correto —\n  // é o que resolve o `11_Mapa_Divida`), e \"1.234.567\"/\"0.001.234\" TÊM\n  // EXATAMENTE A MESMA FORMA que \"51.300.000\" — três grupos de exatamente\n  // três dígitos. Nenhuma regra de FORMA PURA separa \"número de protocolo\"\n  // de \"valor monetário\" quando os dois são o ÚNICO número da linha — a\n  // forma é idêntica por definição.\n  //\n  // O QUE SOBRA, E AINDA É FORMA (não léxico, não lista de palavra): QUANTOS\n  // números com essa forma ambígua a linha tem. `TOTAL 51.300.000\n  // 12.400.000` tem DOIS — é assim que toda linha de valor comparativo do\n  // book aparece, com duas colunas/exercícios; `Protocolo 1.234.567` e\n  // `Processo 0.001.234` têm só UM. Uma linha cujo ÚNICO valor tem forma\n  // ambígua (poderia ser identidade, poderia ser dinheiro) precisa de uma\n  // SEGUNDA ocorrência para ser aceita — o mesmo raciocínio do `quantos < 2`\n  // linhas acima, aplicado à forma que sozinha não decide.\n  //\n  // MEDIDO nos dois books (46 documentos, `node N8N/medir-fase0-\n  // denominador.mjs --book canastra|vertentes`, antes e depois desta linha):\n  // nenhum documento piorou — `linhasDeConta` continua com erro absoluto\n  // médio 4,6% (canastra) / 0,5% (vertentes) e conta A MENOS em 3 de 46, e o\n  // `11_Mapa_Divida` (verdade 10) continua em 10/10.\n  const formaIdentidadeOuMilhar = /\\b\\d+(?:\\.\\d+){2,}\\b/g;\n  const unicoValorAmbiguo = quantos < 2\n    && (linha.match(formaIdentidadeOuMilhar) ?? []).some((m) => separadorDeMilhar.test(m));\n  if (unicoValorAmbiguo) return false;\n\n  // Cabeçalho que tem número sem medir número — período, duração, código de\n  // conta. Tem dígito e tem letra, então passava pelos dois testes acima.\n  return !ehLinhaSemValor(linha);\n};\nconst linhasDeConta = function linhasDeConta(texto) {\n  if (typeof texto !== 'string' || texto.length === 0) return [];\n  // O texto chega FRAGMENTADO em documento de tabela larga — ver\n  // `juntarFragmentosDeLinha`, que tem os 258 contra 99 que motivaram isto.\n  const normalizado = juntarFragmentosDeLinha(texto);\n  // A NOTA DE RODAPÉ QUEBRA EM DUAS LINHAS, e só a primeira dizia \"Nota —\".\n  // Medido no `13_Balanco_COMBINADO`: o ruído cortava a primeira e contava\n  // \"aos 35% do capital da CN Transportes ... detidos por terceiros.\" como conta.\n  // A continuação se reconhece por DUAS coisas juntas, nunca por uma: a linha\n  // anterior foi cortada como PROSA, e esta começa em minúscula. Só a minúscula\n  // não serve — no `20_Mapa_de_Divida`, \"conversão FIN-2019-336.070 28/09/2029…\"\n  // começa em minúscula E É uma linha de contrato de verdade; o que a salva é\n  // que a linha antes dela é uma linha da tabela, não prosa cortada.\n  //\n  // É O ÚNICO ESTADO desta função, e é por isso que a decisão por linha mora em\n  // `ehLinhaDeConta`: aqui fica o que depende da linha ANTERIOR, e só isso.\n  const prosa = /^(nota|obs)\\b|^\\(?valores expressos|^exerc[íi]cios? encerrados?/i;\n  let anteriorEraProsa = false;\n  const out = [];\n  for (const bruta of normalizado.split('\\n')) {\n    const linha = bruta.trim();\n    if (linha.length === 0) { anteriorEraProsa = false; continue; }\n    if (anteriorEraProsa && /^[a-zà-ú]/.test(linha)) continue;\n    anteriorEraProsa = prosa.test(linha);\n    if (ehLinhaDeConta(linha)) out.push(linha);\n  }\n  return out;\n};\nconst celulasDaLinha = function celulasDaLinha(linha) {\n  const texto = typeof linha === 'string' ? linha : String(linha ?? '');\n  // Número com separador de milhar/decimal OU número simples, com o parêntese\n  // contábil de negativo tolerado nas duas pontas.\n  const achados = texto.match(/-?\\d{1,3}(?:\\.\\d{3})+(?:,\\d+)?|-?\\d+(?:[.,]\\d+)?/g);\n  // MÍNIMO 1: a linha veio de `linhasComNumero`, então ela TEM dígito. Devolver\n  // zero faria o acumulador do fatiamento não avançar e um bloco crescer sem fim.\n  return achados && achados.length > 0 ? achados.length : 1;\n};\nconst celulasEstimadas = function celulasEstimadas(linhas) {\n  return (Array.isArray(linhas) ? linhas : []).map((l) => celulasDaLinha(l));\n};\nconst planejarFatias = function planejarFatias(linhas, maxPorBloco, pesos) {\n  const lista = Array.isArray(linhas) ? linhas : [];\n  const max = Number.isFinite(Number(maxPorBloco)) && Number(maxPorBloco) > 0\n    ? Math.floor(Number(maxPorBloco))\n    : 234;\n  const total = lista.length;\n  // O PESO É EM CÉLULAS, e sem ele cada linha vale 1 — que é o comportamento\n  // antigo e continua correto para documento de uma coluna. Quem tem o texto\n  // calcula os pesos com `celulasEstimadas` e passa; esta função não pode\n  // chamá-la (tem de ficar auto-contida para os nós Code).\n  const peso = (i) => {\n    const p = Array.isArray(pesos) ? Number(pesos[i]) : 1;\n    return Number.isFinite(p) && p > 0 ? p : 1;\n  };\n  let soma = 0;\n  for (let i = 0; i < total; i += 1) soma += peso(i);\n  if (soma <= max) {\n    return [{\n      bloco: 1, blocos: 1, de: 0, ate: Math.max(0, total - 1),\n      ancoraInicio: null, ancoraFim: null, celulas: soma, linhas: total, acimaDoTeto: false,\n    }];\n  }\n\n  // DUAS PASSADAS, e a primeira existe porque `ceil(soma / max)` MENTE. Ela\n  // supõe que o corte cai onde se quiser; ele cai entre LINHAS, e a linha nunca\n  // é partida (ela é a âncora, e meia âncora não localiza nada no PDF). Com\n  // linhas de peso 4 e teto 10, `ceil` prevê 4 blocos e o alvo de 10 produz\n  // blocos de 12 — acima do teto que a função existe para respeitar. Medido\n  // assim, escrevendo esta função: [12, 12, 12, 4].\n  //\n  // Passada 1: guloso com o TETO como restrição dura, para saber de quantos\n  // blocos o documento precisa DE FATO.\n  const cortarCom = (alvo) => {\n    const out = [];\n    let de = 0;\n    let acumulado = 0;\n    for (let i = 0; i < total; i += 1) {\n      const p = peso(i);\n      // Estourou o teto ao incluir esta linha? Fecha ANTES dela — a menos que o\n      // bloco esteja vazio, e aí a linha sozinha já passa do teto e não há o que\n      // fazer além de declarar (`acimaDoTeto`).\n      if (acumulado > 0 && acumulado + p > max) {\n        out.push({ de, ate: i - 1, celulas: acumulado });\n        de = i;\n        acumulado = 0;\n      }\n      acumulado += p;\n      const ultima = i === total - 1;\n      // Cumpriu o alvo de equilíbrio? Fecha, desde que sobre linha para os\n      // blocos que faltam.\n      const podeFechar = alvo > 0 && acumulado >= alvo && !ultima;\n      if (ultima || podeFechar) {\n        out.push({ de, ate: i, celulas: acumulado });\n        de = i + 1;\n        acumulado = 0;\n      }\n    }\n    return out;\n  };\n\n  const semAlvo = cortarCom(0);\n  // Passada 2: agora que o número REAL de blocos é conhecido, reparte parejo.\n  // Sem isto o último bloco vira um toco de uma linha, curto demais para ancorar.\n  const alvo = soma / semAlvo.length;\n  const cortes = cortarCom(alvo);\n  const reais = cortes.length;\n  return cortes.map((c, k) => ({\n    bloco: k + 1,\n    // O DECLARADO TEM DE SER O REAL: se a instrução diz \"bloco 2 de 3\" num plano\n    // de 2, o modelo procura um terço que não existe.\n    blocos: reais,\n    de: c.de,\n    ate: c.ate,\n    ancoraInicio: lista[c.de],\n    ancoraFim: lista[c.ate],\n    celulas: c.celulas,\n    linhas: c.ate - c.de + 1,\n    // UMA LINHA SÓ QUE JÁ PASSA DO TETO. Não há corte mais fino que a linha, e o\n    // caso não pode ficar em silêncio: é o único resíduo de truncamento que\n    // sobra depois desta correção, e ele tem de aparecer para quem lê a execução.\n    acimaDoTeto: c.celulas > max,\n  }));\n};\nconst instrucaoDaFatia = function instrucaoDaFatia(fatia) {\n  if (!fatia || !(fatia.blocos > 1)) return '';\n  return ' ATENCAO -- EXTRACAO EM BLOCOS: este documento e' + ' grande demais para uma resposta so, '\n    + 'entao voce esta extraindo o BLOCO ' + fatia.bloco + ' DE ' + fatia.blocos + '. '\n    + 'Extraia SOMENTE as linhas de valor a partir da linha que aparece no documento como \"'\n    + String(fatia.ancoraInicio || '').slice(0, 160) + '\" ate a linha \"'\n    + String(fatia.ancoraFim || '').slice(0, 160) + '\", ambas INCLUSIVE, na ordem de leitura. '\n    + 'Nao extraia nada antes da primeira nem depois da ultima: os outros blocos cobrem o resto, '\n    + 'e linha repetida entre blocos vira dado duplicado. O diagnostico do documento (entidade, '\n    + 'tipo, periodo, moeda, escala) deve descrever o DOCUMENTO INTEIRO, nao so este bloco.';\n};\nconst juntarBlocos = function juntarBlocos(blocos) {\n  const lista = (Array.isArray(blocos) ? blocos : [])\n    .filter((b) => b && typeof b === 'object')\n    .slice()\n    .sort((a, b) => (Number(a.bloco) || 0) - (Number(b.bloco) || 0));\n\n  const campos = [];\n  const motivos = [];\n  let emendasLimpas = 0;\n\n  // O BLOCO QUE NÃO CHEGOU, e por que ele precisava de um assert próprio.\n  //\n  // Até 31/08 esta função devolvia `blocos: lista.length` — quantos blocos\n  // CHEGARAM — e nada mais. O número que o `Fatiar Extracao` PLANEJOU viaja em\n  // cada bloco (`b.blocos`) e não era lido por ninguém. Consequência medida: um\n  // documento fatiado em 4 que perde o bloco 2 devolve `blocos: 3`, `motivos:\n  // []`, e cobertura 0,75 — a pendência de `extracao_falhou` diz \"lido em 3\n  // bloco(s)\", indistinguível de um documento cujo plano era 3.\n  //\n  // Isso importa mais do que um motivo a mais na fila: a `0154` existe para\n  // responder a pergunta que a rodada de 190 deixou aberta — sub-extração é\n  // TETO do modelo ou fatiamento? —, e o instrumento dela é justamente esta\n  // contagem. Reportando o recebido, ela não separa \"o plano era 1\" de \"o plano\n  // era 4 e chegou 1\", que são as duas hipóteses que ela deveria distinguir.\n  //\n  // O PLANO É O MÁXIMO DECLARADO, e não o do primeiro bloco: se o bloco 1 for\n  // justamente o que se perdeu, o primeiro que chega continua carregando o\n  // total. Bloco no formato antigo (sem `blocos`) não declara plano nenhum, e aí\n  // não há o que afirmar — cai no recebido, sem inventar divergência.\n  // Sem `b &&`: `lista` já saiu do filtro de objeto no topo da função, então a\n  // guarda era morta — e a linha do `chegaram`, cinco abaixo, já lia `b.bloco`\n  // direto. Duas formas para a mesma garantia na mesma função ensinam a\n  // desconfiar da que não tem guarda, que é justamente a correta.\n  const planoDeclarado = lista\n    .map((b) => Number(b.blocos))\n    .filter((n) => Number.isFinite(n) && n > 0);\n  const blocosPlanejados = planoDeclarado.length > 0\n    ? Math.max(lista.length, ...planoDeclarado)\n    : lista.length;\n  if (blocosPlanejados > lista.length) {\n    const chegaram = new Set(lista.map((b) => Number(b.bloco)).filter((n) => Number.isFinite(n)));\n    const faltando = [];\n    for (let n = 1; n <= blocosPlanejados; n += 1) if (!chegaram.has(n)) faltando.push(n);\n    // A frase nomeia o bloco porque é o que se pergunta primeiro ao investigar, e\n    // diz o EFEITO — sem isso, \"faltou bloco\" parece um aviso de infraestrutura\n    // em vez do que é: um pedaço do documento que não está no banco.\n    motivos.push(\n      `FALTOU BLOCO: o fatiamento planejou ${blocosPlanejados} bloco(s) e chegaram ${lista.length}`\n      + (faltando.length > 0 ? ` — ausente(s): ${faltando.join(', ')}` : '')\n      + '. As linhas desse trecho do documento NÃO foram gravadas, e a cobertura abaixo mede o'\n      + ' documento SEM elas: a sub-extração aqui é perda de bloco, não leitura parcial do modelo.',\n    );\n  }\n  // OS FATOS MATERIAIS SÃO ADITIVOS ENTRE BLOCOS, e o resto do diagnóstico não.\n  //\n  // Entidade, tipo e período são propriedades do DOCUMENTO: todo bloco responde\n  // a mesma coisa, e quem chama pega a do primeiro — está certo. Os fatos não:\n  // cada bloco vê um PEDAÇO diferente do texto, então o covenant declarado na\n  // página 40 chega no bloco 2 e some se só o bloco 1 for lido.\n  //\n  // Era o defeito: `diagnostico: blocos[0].diagnostico` descartava em silêncio\n  // os fatos de todos os blocos seguintes — e os documentos fatiados são\n  // justamente os grandes, que são onde nota explicativa mora (no book, o\n  // `35_Demonstracoes_Contabeis` e o `01_Balanco` saem em 2 blocos cada).\n  const fatos = [];\n  const vistos = new Set();\n  let algumBlocoLeuFatos = false;\n  const linhas = new Set();\n  const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par\n  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('\u0001');\n\n  for (const b of lista) {\n    const doBloco = Array.isArray(b.campos) ? b.campos.slice() : [];\n    if (campos.length > 0 && doBloco.length > 0) {\n      // Janela de 3: a repetição de emenda é de uma ou duas linhas na prática, e\n      // uma janela grande começaria a comer dado legítimo.\n      const cauda = campos.slice(-3).map(assinatura);\n      while (doBloco.length > 0 && cauda.includes(assinatura(doBloco[0]))) {\n        doBloco.shift();\n        emendasLimpas += 1;\n      }\n    }\n    for (const c of doBloco) {\n      campos.push(c);\n      // LINHAS do documento devolvidas, contadas DEPOIS da limpeza da emenda.\n      // Cada bloco numera as suas a partir de zero, então a chave leva o bloco.\n      const chave = Number.isInteger(c.linha_origem) ? `${b.bloco}:${c.linha_origem}` : null;\n      chaveDaLinha.push(chave);\n      if (chave !== null) linhas.add(chave);\n    }\n    // A DEDUPLICAÇÃO É NECESSÁRIA porque os blocos se SOBREPÕEM de propósito (a\n    // emenda repete a âncora, ver a limpeza acima): um fato que caia na região\n    // de emenda é declarado duas vezes, e dois alertas idênticos numa lista\n    // curta ensinam a desconfiar dela.\n    //\n    // A chave é (tipo + trecho normalizado), não o objeto inteiro: o mesmo\n    // trecho pode voltar com a página do bloco 1 e a do bloco 2, e continua\n    // sendo o mesmo fato. `null` (bloco que não leu fatos) é diferente de `[]`,\n    // e a distinção sobe até o banco.\n    if (Array.isArray(b.diagnostico?.fatos)) {\n      algumBlocoLeuFatos = true;\n      for (const f of b.diagnostico.fatos) {\n        if (!f || typeof f !== 'object') continue;\n        const chave = `${f.tipo}\\u0000${String(f.trecho ?? '').toLowerCase().replace(/\\s+/g, ' ').trim()}`;\n        if (vistos.has(chave)) continue;\n        vistos.add(chave);\n        fatos.push(f);\n      }\n    }\n    if (b.falha_motivo) motivos.push(`bloco ${b.bloco}: ${b.falha_motivo}`);\n    // O RESÍDUO DE TRUNCAMENTO QUE O FATIAMENTO NÃO RESOLVE. Uma linha que\n    // sozinha já passa do teto de saída não tem corte mais fino — ela é a\n    // âncora, e meia âncora não localiza nada no PDF. Isso tem de chegar à fila\n    // de revisão: é a diferença entre \"não deu\" e a perda silenciosa que as três\n    // camadas existem para acabar.\n    if (b.bloco_acima_do_teto) {\n      motivos.push(`bloco ${b.bloco}: uma linha sozinha já passa do teto de saída do modelo — `\n        + 'não há corte mais fino que a linha, e a resposta deste bloco pode ter vindo cortada');\n    }\n  }\n\n  // `ordem` é renumerada no conjunto: ela significa \"posição na leitura do\n  // documento\" e é o que permite ao export reconhecer subtotal impresso acima\n  // dos componentes. Cada bloco numera a partir de zero, então manter a\n  // numeração do bloco faria o documento ter três linhas de `ordem` 0.\n  //\n  // `linha_origem` SAI aqui: ele serviu para contar as linhas e não tem lugar em\n  // `campo_extraido`. O que vai ao banco continua sendo exatamente o que sempre\n  // foi — acrescentar coluna a uma tabela de dado por causa de uma contagem\n  // interna seria pagar migration por uma variável de laço.\n  // …e `ordem` é a ordem da LINHA, não do par (conta × coluna).\n  //\n  // O DEFEITO QUE ISTO CORRIGE, medido no export da rodada v46 (17/08): a mesma\n  // conta de um balanço comparativo saía em TRÊS linhas do Excel, uma por\n  // exercício, com as outras colunas vazias — \"Caixa e bancos conta movimento\"\n  // aparecia em 2023, de novo em 2024 e de novo em 2025. O comparativo não\n  // comparava.\n  //\n  // A causa é de unidade, outra vez. A `0027` define `ordem` como \"posição na\n  // leitura do DOCUMENTO\", e o export conta com isso: ele desempata rótulo\n  // repetido (dois \"Outros\" num balancete) pelo rank de `ordem` dentro da versão,\n  // supondo que o mesmo rótulo só se repete quando são linhas diferentes. Quando\n  // a saída passou a ser AGRUPADA (uma conta com um valor por coluna), o\n  // achatamento numerou PARES, então uma conta com três colunas virou três\n  // `ordem` distintas — e o export, corretamente segundo a regra dele, entendeu\n  // três linhas diferentes.\n  //\n  // Agora os três pares de uma conta compartilham a `ordem` da linha que os\n  // originou. Rótulo genuinamente repetido continua com `ordem` diferente e\n  // continua em linhas separadas — que é o que a `0027` sempre quis dizer.\n  const ordemDaLinha = new Map();\n  let proxima = 0;\n  const renumerados = campos.map((c, i) => {\n    const { linha_origem, ...resto } = c;\n    const chave = chaveDaLinha[i];\n    // Bloco no formato plano antigo (sem `linha_origem`): cada campo é uma linha,\n    // que é exatamente o que ele era antes desta correção.\n    if (chave === null) return { ...resto, ordem: proxima++ };\n    if (!ordemDaLinha.has(chave)) ordemDaLinha.set(chave, proxima++);\n    return { ...resto, ordem: ordemDaLinha.get(chave) };\n  });\n  return {\n    campos: renumerados,\n    motivos,\n    emendasLimpas,\n    blocos: lista.length,\n    // O PLANO, ao lado do recebido. Os dois viajam juntos de propósito: quem lê\n    // um número de blocos precisa saber se ele é o que se queria ou o que sobrou.\n    blocosPlanejados,\n    // Zero significa \"não dá para saber\" (bloco no formato plano antigo, sem\n    // `linha_origem`), e quem chama trata isso caindo para as contas distintas —\n    // o comportamento de antes desta correção.\n    linhasRetornadas: linhas.size,\n    // `null` quando NENHUM bloco trouxe a chave `fatos` (workflow antigo), `[]`\n    // quando algum leu e não achou nada. A distinção não é estética: no banco,\n    // `null` manda NÃO TOCAR nos fatos já gravados e `[]` manda apagá-los.\n    fatos: algumBlocoLeuFatos ? fatos : null,\n  };\n};\nconst avaliarCobertura = function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTURA, minimo = MINIMO_PARA_AVALIAR }) {\n  // `extraidas` = LINHAS que a extração devolveu; `esperadas` = LINHAS DE CONTA\n  // do texto. As duas na mesma unidade, e foi preciso errar isso DUAS vezes para\n  // chegar aqui:\n  //   • pares (conta × coluna) contra linhas → 198% num documento incompleto, a\n  //     guarda cega justamente no comparativo;\n  //   • contas DISTINTAS contra linhas → 66% num livro razão PERFEITO, porque o\n  //     mesmo histórico se repete em lançamentos diferentes e some na contagem.\n  // Linha contra linha não tem nenhum dos dois vieses: uma conta com três colunas\n  // conta uma vez, e dois lançamentos do mesmo fornecedor contam dois.\n  const e = Number(extraidas);\n  const t = Number(esperadas);\n  if (!Number.isFinite(e) || !Number.isFinite(t) || t < minimo) return null;\n  const razao = t > 0 ? e / t : 1;\n  if (razao >= limiar) return null;\n  return {\n    razao: Number(razao.toFixed(3)),\n    extraidas: e,\n    esperadas: t,\n    motivo:\n      `Extração INCOMPLETA: ${e} linha(s) devolvida(s) para um documento com ${t} linha(s) `\n      + `de conta no texto (${(razao * 100).toFixed(0)}% de cobertura, abaixo do mínimo de `\n      + `${(limiar * 100).toFixed(0)}%). A contagem do documento é feita sobre o texto do PDF, sem IA: `\n      + `linha que tem valor e tem identidade — rótulo, código de conta, ou linha de tabela numérica —, `\n      + `descontados cabeçalho de ano, CNPJ, data, número de página e bloco de assinatura. As duas `\n      + `medidas estão na MESMA unidade (LINHAS do documento: uma conta com três colunas conta uma vez, `\n      + `e dois lançamentos com o mesmo histórico contam dois), então a diferença é dado que o modelo `\n      + `deixou de ler — conferir o documento na fila de revisão antes de usar o book. A régua erra para `\n      + `cima em cerca de 3% (costuma contar o cabeçalho de colunas como linha), o que já está `\n      + `descontado na folga do limiar.`,\n  };\n};\n// O texto vem do PROPRIO input (o `Recompor Conteudo Extraido` e' o no'\n// anterior): nao depende de pareamento nenhum. O contexto vem do\n// `Preparar Conteudo`, ancestral.\nconst doExtrator=$input.item.json||{};\nconst textoPdf=(typeof doExtrator.text==='string'&&doExtrator.text)||(typeof doExtrator.texto_pdf==='string'&&doExtrator.texto_pdf)||'';\nlet item={};\ntry{ item=$('Preparar Conteudo').item.json||{}; }catch(e){ item={}; }\n// O CONTEUDO EXTRAIDO POR FORMATO CHEGA AQUI, NAO SE INVENTA UM CAMINHO NOVO.\n// `Recompor Conteudo Extraido` SEMPRE escreve `content_part`/`aviso_conteudo`\n// explicitamente no item que devolve -- inclusive quando o valor e' identico\n// ao placeholder de `Preparar Conteudo` (extrator falhou, ou formato sem\n// extrator). Por isso a chave so' precisa EXISTIR em `doExtrator` para valer:\n// quando ela nao existe (o `Extrair Texto` do PDF, que devolve `{text,\n// numpages}` e nao sabe nada do nosso `content_part`), `item` (o placeholder\n// de `Preparar Conteudo`, que para PDF/imagem JA e' o conteudo real) segue\n// valendo sem mudanca nenhuma.\nconst contentPart='content_part' in doExtrator ? doExtrator.content_part : item.content_part;\nconst avisoConteudo='content_part' in doExtrator ? (doExtrator.aviso_conteudo??null) : item.aviso_conteudo;\nconst linhasDoTexto=linhasComNumero(textoPdf);\nconst temTexto=linhasDoTexto.length>0;\n// AS CELULAS, contadas linha a linha. O `Extract From File` entrega o texto\n// AGRUPADO POR LINHA, e uma linha de comparativo de tres exercicios produz TRES\n// celulas -- contar linha como celula deixava o fatiamento de 1,7x a 6,8x mais\n// frouxo do que o nome dele diz, e na pratica DESLIGADO: medido, nenhum dos 38\n// documentos do book-canastra era fatiado. Ver o comentario de `celulasDaLinha`.\nconst pesosDaLinha=temTexto?celulasEstimadas(linhasDoTexto):[];\nconst celulasEstim=pesosDaLinha.reduce((a,b)=>a+b,0);\n// AUSENCIA DE TEXTO NAO E' ERRO: PDF escaneado nao tem camada de texto, e o\n// documento segue como imagem exatamente como antes -- so' as camadas 2 e 3 se\n// calam para ele. `null` e' \"nao sei\", nunca \"zero\": zero ligaria a guarda de\n// cobertura com regua inventada justamente no documento onde o modelo mais erra.\nreturn {json:{...item,\n  content_part: contentPart,\n  aviso_conteudo: avisoConteudo,\n  // DUAS reguas, e a distincao e' o que fez a guarda voltar a enxergar:\n  //   celulas -> toda linha com digito. E' o tamanho da RESPOSTA, e e' o que o\n  //     fatiamento precisa saber (cabecalho tambem gasta token).\n  //   contas  -> so' linha de conta (rotulo + valor), sem cabecalho de ano, CNPJ,\n  //     data nem assinatura. E' a unidade da COBERTURA, comparavel com as contas\n  //     distintas que a extracao grava. Medido no 02_DRE: 46 contra 39.\n  celulas_no_documento: temTexto?linhasDoTexto.length:null,\n  contas_no_documento: temTexto?linhasDeConta(textoPdf).length:null,\n  linhas_do_texto: temTexto?linhasDoTexto:null,\n  // A TERCEIRA regua, e e' ela que decide o FATIAMENTO e o custo de SAIDA:\n  // celulas de valor estimadas do proprio texto. `colunas_estimadas` sai da\n  // razao celulas/linhas -- e substitui a leitura do NOME do arquivo, que so'\n  // via coluna de PERIODO (\"2025x2024x2023\") e era cega a coluna de EMPRESA\n  // (um combinado de seis empresas contava como uma coluna).\n  celulas_estimadas: temTexto?celulasEstim:null,\n  colunas_estimadas: temTexto?Math.max(1,Math.round(celulasEstim/linhasDoTexto.length)):null,\n  // PAGINAS: quem paga a entrada da chamada e' a IMAGEM do PDF (~1.000 tokens\n  // por pagina), entao o teto de gasto precisa deste numero -- e ele so' existe\n  // aqui, na saida do `Extrair Texto` (o `pdf-parse` publica `numpages`).\n  // `null` quando o extrator nao disse: o orcamento entao cai para a conta por\n  // BYTE, que e' a saida conservadora, em vez de supor uma pagina.\n  paginas_do_documento: Number.isFinite(Number(doExtrator.numpages))?Number(doExtrator.numpages)\n    :(Number.isFinite(Number(doExtrator.numPages))?Number(doExtrator.numPages):null),\n}};"
       },
       "id": "medir-documento",
       "name": "Medir Documento",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1560,
-        0
+        2340,
+        180
       ],
       "onError": "continueRegularOutput"
     },
@@ -248,7 +476,7 @@
       "typeVersion": 4.2,
       "position": [
         1300,
-        180
+        360
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -284,8 +512,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2340,
-        0
+        3120,
+        180
       ]
     },
     {
@@ -298,8 +526,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
-        180
+        3380,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -331,8 +559,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2860,
-        180
+        3640,
+        360
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -355,8 +583,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3120,
-        180
+        3900,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -370,8 +598,8 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        3380,
-        0
+        4160,
+        180
       ]
     },
     {
@@ -388,8 +616,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3640,
-        0
+        4420,
+        180
       ],
       "credentials": {
         "postgres": {
@@ -415,8 +643,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        3900,
-        180
+        4680,
+        360
       ],
       "credentials": {
         "postgres": {
@@ -439,8 +667,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3900,
-        0
+        4680,
+        180
       ],
       "onError": "continueRegularOutput"
     },
@@ -470,8 +698,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        4160,
-        0
+        4940,
+        180
       ]
     },
     {
@@ -484,8 +712,8 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        6240,
-        0
+        7020,
+        180
       ]
     },
     {
@@ -498,8 +726,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4420,
-        180
+        5200,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -513,8 +741,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4680,
-        180
+        5460,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -546,8 +774,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4940,
-        180
+        5720,
+        360
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -570,8 +798,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5200,
-        180
+        5980,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -585,8 +813,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5460,
-        180
+        6240,
+        360
       ],
       "onError": "continueRegularOutput"
     },
@@ -604,8 +832,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5720,
-        180
+        6500,
+        360
       ],
       "credentials": {
         "postgres": {
@@ -632,8 +860,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5980,
-        180
+        6760,
+        360
       ],
       "credentials": {
         "postgres": {
@@ -660,8 +888,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6500,
-        0
+        7280,
+        180
       ],
       "credentials": {
         "postgres": {
@@ -687,8 +915,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        6760,
-        0
+        7540,
+        180
       ],
       "credentials": {
         "postgres": {
@@ -712,8 +940,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        7020,
-        0
+        7800,
+        180
       ],
       "onError": "continueRegularOutput"
     },
@@ -730,8 +958,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7280,
-        0
+        8060,
+        180
       ],
       "credentials": {
         "postgres": {
@@ -757,8 +985,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2340,
-        180
+        3120,
+        360
       ],
       "credentials": {
         "postgres": {
@@ -785,8 +1013,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        7540,
-        0
+        8320,
+        180
       ],
       "credentials": {
         "postgres": {
@@ -865,14 +1093,133 @@
             "index": 0
           },
           {
-            "node": "Extrair Texto",
+            "node": "Roteador de Formato",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
+    "Roteador de Formato": {
+      "main": [
+        [
+          {
+            "node": "Extrair Texto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Extrair CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extrair XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extrair XLS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extrair XML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 6
+          }
+        ]
+      ]
+    },
     "Extrair Texto": {
+      "main": [
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair CSV": {
+      "main": [
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Extrair XLSX": {
+      "main": [
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Extrair XLS": {
+      "main": [
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Extrair XML": {
+      "main": [
+        [
+          {
+            "node": "Juntar Extracao de Conteudo",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Juntar Extracao de Conteudo": {
+      "main": [
+        [
+          {
+            "node": "Recompor Conteudo Extraido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recompor Conteudo Extraido": {
       "main": [
         [
           {
