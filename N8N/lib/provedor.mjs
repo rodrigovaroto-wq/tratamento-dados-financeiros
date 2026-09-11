@@ -399,9 +399,24 @@ export function cortadoPorLimite(prov, resp) {
  * e devolve null, que é o certo. Zero seria um custo INVENTADO num relatório de
  * custo, que é pior que um campo vazio.
  */
-export function usoDaChamada(prov, resp) {
-  if (prov.dialeto === 'gemini') {
-    const u = resp && resp.usageMetadata;
+/**
+ * O uso na forma do Gemini, traduzido para a da OpenAI.
+ *
+ * SEPARADA DE `usoDaChamada` em 11/09/2026, e não é cosmético: a função única
+ * ramificava por dialeto E fazia a normalização numérica dos dois lados, e o
+ * ramo novo do raciocínio da OpenAI a empurrou para complexidade cognitiva 16
+ * (o Sonar reprova acima de 15). Empilhar mais um `if` numa função que já
+ * ramificava é exatamente o sedimento que a auditoria desta sessão mediu — a
+ * saída é separar os ramos, não achatá-los.
+ *
+ * ATENÇÃO À FRONTEIRA DO `toString()`: esta função roda DENTRO de nó Code do
+ * n8n, e o gerador tem de embuti-la junto com `usoDaChamada` (ver
+ * `FONTE_PROVEDOR` em `build-workflow.mjs`). Sem isso é `ReferenceError` no nó
+ * e a medição de custo do lote some — já aconteceu nesta sessão com
+ * `capacidadesDoModelo`.
+ */
+export function usoGemini(resp) {
+    const u = resp?.usageMetadata;
     if (!u) return null;
     const cache = Number(u.cachedContentTokenCount || 0);
     // O TOKEN DE RACIOCÍNIO É TOKEN DE SAÍDA, E É COBRADO COMO TAL.
@@ -428,8 +443,11 @@ export function usoDaChamada(prov, resp) {
       // desligar o pensamento no prompt de extração.
       thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0,
     };
-  }
-  const u = resp && resp.usage;
+}
+
+export function usoDaChamada(prov, resp) {
+  if (prov.dialeto === 'gemini') return usoGemini(resp);
+  const u = resp?.usage;
   if (!u) return null;
   // O TOKEN DE RACIOCÍNIO TAMBÉM EXISTE AQUI, desde a família GPT-5.
   //
@@ -444,7 +462,7 @@ export function usoDaChamada(prov, resp) {
   // quantos tokens o modelo gastou pensando, para decidir o `reasoning_effort`
   // pela medição em vez de pelo limiar teórico (ver `escolherEsforco`).
   const det = u.completion_tokens_details;
-  const raciocinio = Number((det && det.reasoning_tokens) || 0);
+  const raciocinio = Number(det?.reasoning_tokens || 0);
   return { ...u, thoughts_tokens: Number.isFinite(raciocinio) ? raciocinio : 0 };
 }
 

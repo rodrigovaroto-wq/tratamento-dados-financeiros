@@ -39,7 +39,7 @@ import { dirname, join } from 'node:path';
 import { diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA } from './lib/extract.mjs';
 import { custoDaChamada, PRECO_USD_POR_MILHAO, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, MODELO_EXTRACAO, MODELO_CLASSIFICACAO } from './lib/custo.mjs';
 import {
-  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, usoDaChamada,
+  provedor, urlDaChamada, montarCorpoIA, parteDeTexto, usoDaChamada, usoGemini,
   modelosDoCatalogo, modelosParecidos,
 } from './lib/provedor.mjs';
 
@@ -100,6 +100,7 @@ const diagnosticarErroApi = ${diagnosticarErroApi.toString()};
 const PRECO_USD_POR_MILHAO = ${JSON.stringify(PRECO_USD_POR_MILHAO)};
 const custoDaChamada = ${custoDaChamada.toString()};
 const PROVEDOR = ${JSON.stringify(PROV)};
+const usoGemini = ${usoGemini.toString()};
 const usoDaChamada = ${usoDaChamada.toString()};
 const modelosDoCatalogo = ${modelosDoCatalogo.toString()};
 const modelosParecidos = ${modelosParecidos.toString()};

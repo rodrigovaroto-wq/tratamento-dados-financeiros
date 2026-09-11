@@ -184,7 +184,12 @@ export const FOLGA_CLASSIFICACAO = 0.25; // low só vale se não passar de +25% 
  * limiar, e um limiar inventado num arquivo de orçamento é pior que nenhum.
  */
 export function limiarDeRaciocinio({ entrada, saida, folga, preco }) {
-  if (!preco || !(preco.saida > 0)) return null;
+  // `!Number.isFinite(...)` e NAO `<= 0`: o Sonar sugere a "operação oposta"
+  // (`preco.saida <= 0`), e ela seria ERRADA aqui. Preço ausente vira `NaN`, e
+  // `NaN <= 0` é FALSO — o modelo sem preço passaria pela guarda e a divisão
+  // devolveria `NaN` como se fosse um limiar. `!(x > 0)` já rejeitava NaN por
+  // acidente da semântica; isto rejeita por INTENÇÃO declarada.
+  if (!preco || !Number.isFinite(preco.saida) || preco.saida <= 0) return null;
   return folga * ((entrada * preco.entrada) / preco.saida + saida);
 }
 

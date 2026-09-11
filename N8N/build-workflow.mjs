@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
 import { codigosConhecidos } from './lib/ia.mjs';
 import {
   provedor, urlDaChamada, montarCorpoIA, schemaDoProvedor, parteDeArquivo, parteDeTexto,
-  conteudoDaResposta, cortadoPorLimite, usoDaChamada, acrescentarInstrucao,
+  conteudoDaResposta, cortadoPorLimite, usoDaChamada, usoGemini, acrescentarInstrucao,
   capacidadesDoModelo, CAPACIDADES_POR_MODELO, CAPACIDADES_PADRAO,
 } from './lib/provedor.mjs';
 import { createHash } from 'node:crypto';
@@ -286,7 +286,7 @@ const FONTE_SPREADSHEET = [
 // auditoria, por um mecanismo diferente. ACONTECEU AQUI, medido nesta
 // rodada: `xml: 'xml'` casava com "vnd.openxml**formats**-officedocument.
 // spreadsheetml.sheet" (o mimetype do XLSX contém "xml" como substring), então
-// todo .xlsx seria tratado como XML também. Corrigido ancorando no FIM da
+// CADA .xlsx seria tratado como XML também. Corrigido ancorando no FIM da
 // string (`/xml$`), que só bate no mimetype que É xml.
 const PADRAO_MIME = {
   pdf: 'pdf',
@@ -340,6 +340,9 @@ const FONTE_PROVEDOR = [
   `const montarCorpoIA = ${montarCorpoIA.toString()};`,
   `const conteudoDaResposta = ${conteudoDaResposta.toString()};`,
   `const cortadoPorLimite = ${cortadoPorLimite.toString()};`,
+  // `usoDaChamada` chama `usoGemini`, então ela atravessa junto — `toString()`
+  // não leva o escopo do módulo (o mesmo motivo de `capacidadesDoModelo`).
+  `const usoGemini = ${usoGemini.toString()};`,
   `const usoDaChamada = ${usoDaChamada.toString()};`,
   `const acrescentarInstrucao = ${acrescentarInstrucao.toString()};`,
 ].join('\n');
