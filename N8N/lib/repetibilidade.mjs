@@ -64,6 +64,24 @@
  * fica ilegível com centenas) — as contagens (`linhasDivergentes`,
  * `linhasIguais`) são sempre completas, só a lista `divergencias` é truncada.
  */
+// POR QUE ESTA FUNÇÃO É LONGA DE PROPÓSITO, e a decisão foi MEDIDA, não
+// preguiça. O Sonar acusa complexidade cognitiva acima do teto de 15, e a saída
+// óbvia — extrair `chaveDaLinha`/`descreverLinha`/`compararPar` para o escopo do
+// módulo — foi ESCRITA E REVERTIDA em 11/09/2026, porque o teste
+// "compararExtracoes é AUTO-CONTIDA" reprovou na hora.
+//
+// A auto-contenção não é preferência de estilo: é a fronteira do `toString()`.
+// Os nós Code do n8n não importam módulo, e o gerador embute funções pelo
+// `toString()`, que NÃO leva o escopo junto. Nesta mesma sessão isso quebrou
+// DUAS vezes em produção potencial (`capacidadesDoModelo` e `usoGemini`, as duas
+// com `ReferenceError` DENTRO do nó, ou seja: a chamada de IA simplesmente não
+// sairia). Uma função auto-contida atravessa com um `toString()` e zero fiação
+// extra; uma partida em quatro exige que quem for ligá-la ao grafo lembre de
+// embutir as quatro — e "lembrar" é exatamente o que falhou duas vezes hoje.
+//
+// Entre uma restrição ARQUITETURAL que um teste comprova e uma heurística de
+// linter que não conhece essa restrição, manda a primeira. O que a legibilidade
+// ganha em troca são as auxiliares nomeadas aqui dentro e este comentário.
 export function compararExtracoes(camposA, camposB, { maxDivergencias = 20 } = {}) {
   const listaA = Array.isArray(camposA) ? camposA : [];
   const listaB = Array.isArray(camposB) ? camposB : [];
@@ -71,23 +89,23 @@ export function compararExtracoes(camposA, camposB, { maxDivergencias = 20 } = {
   // A CHAVE, como string — JSON.stringify de um array preserva a posição de
   // cada campo (não colide "seção nula, rótulo X" com "seção X, rótulo nula").
   const chaveDe = (l) => JSON.stringify([
-    (l && l.secao) ?? null,
-    (l && l.chave) ?? null,
-    (l && l.entidade_coluna) ?? null,
-    (l && l.periodo_coluna) ?? null,
+    l?.secao ?? null,
+    l?.chave ?? null,
+    l?.entidade_coluna ?? null,
+    l?.periodo_coluna ?? null,
   ]);
 
   // A DESCRIÇÃO de uma linha para a MENSAGEM — os dois lados (a passada 1 e a
   // passada 2) precisam do bastante para um humano decidir sem reabrir o PDF.
   const descreverLinha = (l) => ({
-    chave: (l && l.chave) ?? null,
-    secao: (l && l.secao) ?? null,
-    entidade_coluna: (l && l.entidade_coluna) ?? null,
-    periodo_coluna: (l && l.periodo_coluna) ?? null,
-    valor_num: l && typeof l.valor_num === 'number' ? l.valor_num : null,
-    valor_texto: (l && l.valor_texto) ?? null,
-    unidade: (l && l.unidade) ?? null,
-    moeda: (l && l.moeda) ?? null,
+    chave: l?.chave ?? null,
+    secao: l?.secao ?? null,
+    entidade_coluna: l?.entidade_coluna ?? null,
+    periodo_coluna: l?.periodo_coluna ?? null,
+    valor_num: typeof l?.valor_num === 'number' ? l.valor_num : null,
+    valor_texto: l?.valor_texto ?? null,
+    unidade: l?.unidade ?? null,
+    moeda: l?.moeda ?? null,
   });
 
   const porChaveA = new Map();
@@ -227,7 +245,7 @@ export function documentoAmostradoParaRepetibilidade({ hash, blocos, fracaoAmost
   if (typeof hash !== 'string' || hash.length < 8) return false;
   const fracao = Math.max(0, Math.min(1, Number(fracaoAmostra) || 0));
   if (fracao <= 0) return false;
-  const n = parseInt(hash.slice(0, 8), 16);
+  const n = Number.parseInt(hash.slice(0, 8), 16);
   if (!Number.isFinite(n)) return false;
   // Escala em 2**32 (não 0xffffffff): com `fracaoAmostra: 1` o maior `n`
   // possível (0xffffffff) tem de CABER como "amostrado" — contra 0xffffffff a
@@ -249,7 +267,7 @@ export function documentoAmostradoParaRepetibilidade({ hash, blocos, fracaoAmost
 // o lote), dá o mesmo veredito nos dois nós sem coordenação nenhuma.
 //
 // 2% (1 em 50) FOI ESCOLHIDO PELO EFEITO NA COTA DO DIA (RPD 500,
-// `lib/custo.mjs`), não por instinto. Extrair TODO documento duas vezes
+// `lib/custo.mjs`), não por instinto. Extrair CADA documento duas vezes
 // dobraria o custo e a cota; extrair zero não mede nada. Nos dois lotes já
 // medidos neste repositório (`Arquitetura do Sistema`/ESTADO.md):
 //
