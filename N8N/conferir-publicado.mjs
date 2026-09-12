@@ -147,6 +147,31 @@ function conferirCredenciais(nome, oVivo, doRepo) {
   for (const tipo of tipos) {
     const noRepo = doRepo.credentials?.[tipo];
     const noVivo = oVivo.credentials?.[tipo];
+    // CREDENCIAL AUSENTE NUM NÓ DESABILITADO NÃO É DIVERGÊNCIA, e esta é a
+    // outra metade de uma regra que nasceu pela metade.
+    //
+    // Em 11/09/2026 (`7b84086`) `preparar-republicacao.mjs` passou a REMOVER a
+    // credencial de um nó DESABILITADO sem id na instalação — o `Upload
+    // Storage`, desligado desde 17/07 e que nunca teve credencial anexada. Sem
+    // isso o placeholder `REPLACE` sobrevivia e o portão do `republicar.sh`
+    // barrava o arquivo inteiro por UMA ocorrência.
+    //
+    // A mensagem daquele commit afirmava "O conferidor não muda: ele ignora id
+    // e nome de credencial por design e só pune REPLACE em nó ligado". A
+    // afirmação estava ERRADA, e o preço apareceu em 12/09: o conferidor também
+    // pune AUSÊNCIA, que é exatamente o que a regra nova produz. A republicação
+    // FUNCIONOU — o `PUT` subiu, os 40 nós bateram, o `path` do formulário
+    // sobreviveu — e mesmo assim a action saiu com código 1, dizendo ao dono
+    // para "republicar a partir do repositório" sobre uma publicação que já
+    // estava correta. Um conferidor que reprova o resultado certo ensina a
+    // ignorar conferidor.
+    //
+    // O CRITÉRIO É COMPORTAMENTO, não simetria: nó desabilitado não executa,
+    // então credencial ausente nele não pode falhar. Nó LIGADO sem credencial
+    // continua sendo divergência — é o caso que quebra a rodada, e ele é o
+    // motivo de esta função existir.
+    const ausenteEmNoDesligado = noRepo && !noVivo && oVivo.disabled;
+    if (ausenteEmNoDesligado) continue;
     if (!noRepo || !noVivo) {
       achados.push({
         no: nome, campo: `credentials.${tipo}`,

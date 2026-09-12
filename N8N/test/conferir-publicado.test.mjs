@@ -121,3 +121,57 @@ test('parâmetro diferente continua sendo divergência — o conferidor de 26/08
   vivo.nodes[1].parameters.method = 'GET';
   assert.deepEqual(campos(conferir(vivo, REPO)), ['IA Extrair.parameters']);
 });
+
+// ---------------------------------------------------------------------------
+// A OUTRA METADE DA REGRA DO NÓ DESABILITADO — MEDIDO EM PRODUÇÃO (12/09/2026).
+// ---------------------------------------------------------------------------
+//
+// Em 11/09 (`7b84086`) `preparar-republicacao.mjs` passou a REMOVER a credencial
+// de um nó DESABILITADO sem id na instalação. A mensagem daquele commit
+// afirmava: "O conferidor não muda: ele ignora id e nome de credencial por
+// design e só pune REPLACE em nó ligado."
+//
+// A afirmação estava ERRADA, e o preço apareceu na primeira republicação que
+// chegou ao passo 5. O conferidor também pune AUSÊNCIA — e ausência é
+// exatamente o que a regra nova produz. A publicação FUNCIONOU (o PUT subiu, os
+// 40 nós bateram, o `path` do formulário sobreviveu) e mesmo assim a action
+// saiu com código 1 mandando "republicar a partir do repositório" sobre uma
+// publicação já correta.
+//
+// Duas cópias da mesma regra, e só uma foi escrita. É o defeito que este
+// projeto persegue, dentro do par de ferramentas que existe para persegui-lo.
+test('MEDIDO: credencial removida de nó DESABILITADO não é divergência — o preparador a remove de propósito', () => {
+  const publicado = publicadoSaudavel();
+  const upload = publicado.nodes.find((n) => n.name === 'Upload Storage');
+  delete upload.credentials; // exatamente o que `prepararRepublicacao` publica
+
+  assert.deepEqual(conferir(publicado, REPO), [],
+    'nó desabilitado NÃO executa, então credencial ausente nele não pode falhar');
+});
+
+test('a metade que NÃO se perdoa: credencial ausente em nó LIGADO continua sendo divergência', () => {
+  // O critério é COMPORTAMENTO, não simetria. Este é o caso que quebra a
+  // rodada — e perdoá-lo junto seria trocar um falso alarme por um silêncio
+  // caro, que é a troca que este projeto não faz.
+  const publicado = publicadoSaudavel();
+  const ia = publicado.nodes.find((n) => n.name === 'IA Extrair');
+  delete ia.credentials;
+
+  assert.deepEqual(campos(conferir(publicado, REPO)), ['IA Extrair.credentials.httpHeaderAuth'],
+    'nó LIGADO sem credencial falha na primeira execução — tem de acusar');
+});
+
+test('e o nó desabilitado volta a acusar se alguém o LIGAR no editor sem credencial', () => {
+  // O perdão vale pelo estado PUBLICADO, não pelo do repositório: quem decide
+  // se o nó executa em produção é o publicado.
+  const publicado = publicadoSaudavel();
+  const upload = publicado.nodes.find((n) => n.name === 'Upload Storage');
+  delete upload.credentials;
+  upload.disabled = false; // alguém ligou o nó à mão
+
+  const achados = campos(conferir(publicado, REPO));
+  assert.ok(achados.includes('Upload Storage.credentials.httpHeaderAuth'),
+    'ligado e sem credencial: o perdão não vale mais');
+  assert.ok(achados.includes('Upload Storage.disabled'),
+    'e o próprio `disabled` divergente continua sendo acusado');
+});
