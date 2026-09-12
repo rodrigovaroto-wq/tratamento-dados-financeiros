@@ -51,6 +51,7 @@ import {
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
 } from './lib/cobertura.mjs';
+import { conferirIdentidadeDeLinha, conferirTotalDaSerie } from './lib/aritmetica.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -279,6 +280,18 @@ const FONTE_COBERTURA = [
   // nesta sessão.
   `const fracaoDePalavrasDobradas = ${fracaoDePalavrasDobradas.toString()};`,
   `const camadaDeTextoDoPdf = ${camadaDeTextoDoPdf.toString()};`,
+].join('\n');
+
+// AS DUAS IDENTIDADES ARITMÉTICAS (lib/aritmetica.mjs), embutidas do fonte
+// como todo o resto — cada uma é AUTO-CONTIDA (declara seu próprio
+// normalizador de rótulo por dentro), então não há ordem de dependência entre
+// elas. Rodam em `Juntar Blocos`, sobre os `campos` já juntados do
+// documento — antes do `Gravar Campos (Sombra)`, no mesmo canal de
+// `falha_motivo` que já converte em pendência tipada (ver o comentário de
+// `CODE_JUNTAR_BLOCOS` abaixo para o porquê de não ser um nó novo).
+const FONTE_ARITMETICA = [
+  `const conferirIdentidadeDeLinha = ${conferirIdentidadeDeLinha.toString()};`,
+  `const conferirTotalDaSerie = ${conferirTotalDaSerie.toString()};`,
 ].join('\n');
 
 // `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
@@ -1456,6 +1469,7 @@ return saida;
 // fila de revisão com os dois números na descrição.
 const CODE_JUNTAR_BLOCOS = `
 ${FONTE_COBERTURA}
+${FONTE_ARITMETICA}
 const porDocumento=new Map();
 const primeiroIndice=new Map();
 const entradas=$input.all();
@@ -1523,6 +1537,18 @@ for(const [chave, blocos] of porDocumento){
        : (r.blocosPlanejados===1
           ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
           : ' (fatiado, e todos chegaram), entao o que falta nao e teto de uma chamada so nem bloco perdido -- e leitura parcial do modelo.')));
+  // AS DUAS IDENTIDADES ARITMETICAS (Arquitetura do Sistema/2 Especificacao/04, identidade (c)): o texto ja chegou
+  // (cobertura acima) e agora o NUMERO e conferido contra ele mesmo -- soma das
+  // colunas de uma linha contra a coluna "Total" da mesma linha, e soma das
+  // linhas de uma serie contra o "Totais" que a declara. Nao cobre (a)/(b)
+  // (Ativo=Passivo+PL, subtotal=soma dos filhos): essas ja rodam no Postgres
+  // (fn_reconciliar_ativo_passivo_pl, fn_reconciliar_arvore) via "Reconciliar
+  // (Classe A)", mais adiante no grafo -- reimplementar aqui com um dicionario
+  // de rotulo mais pobre arriscaria divergir da checagem que ja e a autoridade.
+  const problemasLinha=conferirIdentidadeDeLinha(r.campos);
+  if(problemasLinha.length>0) motivos.push(problemasLinha.slice(0,5).join(' | ')+(problemasLinha.length>5?' | ...':''));
+  const problemasSerie=conferirTotalDaSerie(r.campos);
+  if(problemasSerie.length>0) motivos.push(problemasSerie.slice(0,5).join(' | ')+(problemasSerie.length>5?' | ...':''));
   // A EMENDA LIMPA NAO E' FALHA -- e' a costura fazendo exatamente o que ela
   // existe para fazer. Ate a rodada do lote 7377 (02/09, "teste Canastra"),
   // \`r.emendasLimpas>0\` sozinho virava \`motivos.push(...)\`, e qualquer motivo
