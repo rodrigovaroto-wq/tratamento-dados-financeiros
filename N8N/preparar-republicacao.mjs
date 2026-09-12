@@ -138,18 +138,32 @@ export function idsDeCredencialDoPublicado(vivo) {
   const vistos = new Map();
   for (const n of vivo?.nodes ?? []) {
     for (const [tipo, cred] of Object.entries(n.credentials ?? {})) {
-      const id = cred?.id;
-      const nome = cred?.name;
-      if (typeof id !== 'string' || !id.trim() || id === 'REPLACE') continue;
-      if (typeof nome !== 'string' || !nome.trim()) continue;
-      let porNome = vistos.get(tipo);
-      if (!porNome) vistos.set(tipo, (porNome = new Map()));
-      const jaVisto = porNome.get(nome);
-      if (jaVisto === undefined) porNome.set(nome, id);
-      else if (jaVisto !== id) porNome.set(nome, AMBIGUO);
+      if (!ehIdUtilizavel(cred?.id) || !ehNomePreenchido(cred?.name)) continue;
+      anotarNoIndice(vistos, tipo, cred.name, cred.id);
     }
   }
   return vistos;
+}
+
+/** `REPLACE` e vazio são ausência, não resposta — ver `idsDeCredencialDoPublicado`. */
+function ehIdUtilizavel(id) {
+  return typeof id === 'string' && !!id.trim() && id !== 'REPLACE';
+}
+
+function ehNomePreenchido(nome) {
+  return typeof nome === 'string' && !!nome.trim();
+}
+
+/** Primeiro id vence; um SEGUNDO id diferente marca o par como ambíguo para sempre. */
+function anotarNoIndice(vistos, tipo, nome, id) {
+  let porNome = vistos.get(tipo);
+  if (!porNome) {
+    porNome = new Map();
+    vistos.set(tipo, porNome);
+  }
+  const jaVisto = porNome.get(nome);
+  if (jaVisto === undefined) porNome.set(nome, id);
+  else if (jaVisto !== id) porNome.set(nome, AMBIGUO);
 }
 
 export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
