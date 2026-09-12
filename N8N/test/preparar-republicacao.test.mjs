@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepararRepublicacao, credenciaisPendentes, idsDeCredencialDoAmbiente } from '../preparar-republicacao.mjs';
+import { prepararRepublicacao, credenciaisPendentes, idsDeCredencialDoAmbiente,
+  idsDeCredencialDoPublicado } from '../preparar-republicacao.mjs';
 
 // A FUSÃO QUE DEVOLVE O COMPORTAMENTO SEM PISAR NA INSTALAÇÃO.
 //
@@ -186,4 +187,109 @@ test('idsDeCredencialDoAmbiente: ausente é {}, JSON quebrado FALA o que fazer',
   // o formato esperado em vez de estourar um SyntaxError cru do JSON.
   assert.throws(() => idsDeCredencialDoAmbiente({ N8N_CRED_IDS: 'OpenAI API=x1' }), /não é JSON válido/);
   assert.throws(() => idsDeCredencialDoAmbiente({ N8N_CRED_IDS: '["x1"]' }), /precisa ser um OBJETO/);
+});
+
+// ---------------------------------------------------------------------------
+// O NÓ NOVO QUE USA UMA CREDENCIAL VELHA — a action de 12/09/2026.
+//
+// O arranjo é o real, reduzido: três nós `postgres` dividindo UMA credencial,
+// dois já publicados e UM que a instalação ainda não conhece. No workflow de
+// verdade são onze nós na mesma credencial, nove resolvendo pelo publicado e
+// dois — `Gravar Uso do Lote` e `Conferir Lote` — abortando o arquivo inteiro.
+// O id que faltava estava na resposta o tempo todo, em nó irmão.
+//
+// MEDIDO com o ramo do irmão desligado: 3 asserts reprovam, em 2 testes. Os
+// outros 5 testes daqui PASSAM desligados de propósito — eles não medem a
+// correção, medem o que ela não pode quebrar: a precedência do id do próprio
+// nó, a ambiguidade que se cala, o casamento por tipo, e a queda para o
+// N8N_CRED_IDS que destravou a action de 11/09.
+
+const PG = 'Supabase Postgres (Session Pooler)';
+
+const REPO_LOTE = {
+  name: 'Oria — E1',
+  nodes: [
+    { name: 'Abrir Lote', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'REPLACE', name: PG } } },
+    { name: 'Registrar Documento', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'REPLACE', name: PG } } },
+    { name: 'Conferir Lote', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'REPLACE', name: PG } } },
+  ],
+  connections: {},
+  settings: {},
+};
+
+// `Conferir Lote` não está aqui: é o nó novo, o que o publicado não tem.
+const VIVO_LOTE = {
+  name: 'Oria — E1',
+  nodes: [
+    { id: 'no-1', name: 'Abrir Lote', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'pg-da-instalacao', name: PG } } },
+    { id: 'no-2', name: 'Registrar Documento', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'pg-da-instalacao', name: PG } } },
+  ],
+  connections: {},
+  settings: {},
+};
+
+test('MEDIDO: o nó NOVO herda o id do nó IRMÃO já publicado — era o que travava a action', () => {
+  const nos = porNome(prepararRepublicacao(VIVO_LOTE, REPO_LOTE));
+  assert.deepEqual(nos['Conferir Lote'].credentials.postgres, { id: 'pg-da-instalacao', name: PG },
+    'o id estava na resposta, a dois nós de distância — publicar REPLACE aqui derruba o nó');
+  assert.equal(credenciaisPendentes(prepararRepublicacao(VIVO_LOTE, REPO_LOTE)).length, 0,
+    'sobrando REPLACE, o portão do republicar.sh aborta o arquivo INTEIRO e a correção não chega à produção');
+});
+
+test('o nó irmão NÃO atropela o nó que tem id próprio — o mesmo nome pode ter id diferente', () => {
+  const vivo = { ...VIVO_LOTE, nodes: [
+    ...VIVO_LOTE.nodes,
+    { id: 'no-3', name: 'Conferir Lote', type: 'n8n-nodes-base.postgres',
+      credentials: { postgres: { id: 'id-proprio-do-no', name: PG } } },
+  ] };
+  const nos = porNome(prepararRepublicacao(vivo, REPO_LOTE));
+  assert.equal(nos['Conferir Lote'].credentials.postgres.id, 'id-proprio-do-no',
+    'a credencial do PRÓPRIO nó é mais específica que a do irmão e continua ganhando');
+});
+
+test('AMBIGUIDADE não responde: mesmo (tipo, nome) com ids diferentes deixa o REPLACE de pé', () => {
+  const vivo = { ...VIVO_LOTE, nodes: [
+    VIVO_LOTE.nodes[0],
+    { ...VIVO_LOTE.nodes[1], credentials: { postgres: { id: 'OUTRO-id', name: PG } } },
+  ] };
+  const nos = porNome(prepararRepublicacao(vivo, REPO_LOTE));
+  assert.equal(nos['Conferir Lote'].credentials.postgres.id, 'REPLACE',
+    'escolher um dos dois apontaria metade dos nós para a credencial errada — falha silenciosa');
+});
+
+test('o índice casa por TIPO também — nome igual em tipos diferentes não se cruza', () => {
+  const indice = idsDeCredencialDoPublicado({ nodes: [
+    { credentials: { postgres: { id: 'pg-1', name: 'Mesma Coisa' } } },
+    { credentials: { httpHeaderAuth: { id: 'http-1', name: 'Mesma Coisa' } } },
+  ] });
+  assert.equal(indice.get('postgres').get('Mesma Coisa'), 'pg-1');
+  assert.equal(indice.get('httpHeaderAuth').get('Mesma Coisa'), 'http-1',
+    'o nome de credencial é único POR TIPO no n8n, não globalmente');
+});
+
+test('REPLACE e vazio no publicado são ausência, não resposta — senão a trava se desarma', () => {
+  const indice = idsDeCredencialDoPublicado({ nodes: [
+    { credentials: { postgres: { id: 'REPLACE', name: PG } } },
+    { credentials: { httpHeaderAuth: { id: '   ', name: 'OpenAI API' } } },
+  ] });
+  assert.equal(indice.get('postgres'), undefined);
+  assert.equal(indice.get('httpHeaderAuth'), undefined);
+});
+
+test('o irmão ganha do mapa do ambiente — o publicado é a verdade, o secret é a queda', () => {
+  const nos = porNome(prepararRepublicacao(VIVO_LOTE, REPO_LOTE,
+    { idsPorNome: { [PG]: 'id-velho-do-secret' } }));
+  assert.equal(nos['Conferir Lote'].credentials.postgres.id, 'pg-da-instalacao',
+    'um secret desatualizado sobrescreveria a credencial certa por uma que não existe mais');
+});
+
+test('sem irmão, o mapa do ambiente continua resolvendo — a queda de 11/09 segue de pé', () => {
+  const nos = porNome(prepararRepublicacao({ nodes: [], connections: {}, settings: {} }, REPO_LOTE,
+    { idsPorNome: { [PG]: 'id-do-secret' } }));
+  assert.equal(nos['Conferir Lote'].credentials.postgres.id, 'id-do-secret');
 });
