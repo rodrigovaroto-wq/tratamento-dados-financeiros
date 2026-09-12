@@ -895,7 +895,7 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
 // PDF COM CAMADA DE TEXTO x PDF ESCANEADO — qual dos dois vai à IA.
 // ===========================================================================
 //
-// O DESPERDÍCIO QUE ISTO FECHA. Até 12/09/2026 TODO PDF ia à IA como ARQUIVO
+// O DESPERDÍCIO QUE ISTO FECHA. Até 12/09/2026 CADA PDF ia à IA como ARQUIVO
 // (base64), que o provedor cobra como IMAGEM: ~1.000 tokens por página, contra
 // ~250 tokens por mil caracteres do mesmo conteúdo em texto. Um balanço de 2
 // páginas com camada de texto de 7 KB custava 2.000 tokens de entrada onde
@@ -903,7 +903,7 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
 // na própria instância, só para MEDIR cobertura. O conteúdo estava na mão e era
 // jogado fora.
 //
-// MAS NEM TODO PDF PODE SER LIDO ASSIM, e é isso que esta função decide. PDF
+// MAS NEM SEMPRE DÁ PARA LER ASSIM, e é isso que esta função decide. PDF
 // escaneado não tem camada de texto: o `Extrair Texto` devolve vazio ou um
 // punhado de lixo, e mandar ISSO à IA no lugar do documento é o defeito da AMO
 // de novo — ausência apresentada como dado (regra 1). Esse precisa ir como

@@ -898,7 +898,7 @@ for(let i=0;i<entradas.length;i+=1){
   // Caso 2: PDF -- TEXTO quando ele existe, IMAGEM (OCR) quando nao existe.
   // ==========================================================================
   //
-  // O QUE MUDOU EM 12/09/2026, e e' dinheiro. Ate' aqui TODO PDF ia a' IA como
+  // O QUE MUDOU EM 12/09/2026, e e' dinheiro. Ate' aqui CADA PDF ia a' IA como
   // ARQUIVO em base64, que o provedor cobra como IMAGEM (~1.000 tokens por
   // pagina). E o \`Extrair Texto\` -- que roda na propria instancia, de graca --
   // ja' vinha lendo a camada de texto do mesmo PDF, so' que o texto era usado
