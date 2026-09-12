@@ -1,10 +1,34 @@
+# REPUBLICAR O WORKFLOW NO N8N — o botão que leva a correção do repositório à
+# produção. Actions → "Republicar workflow no n8n" → Run workflow.
+#
+# POR QUE ELE EXISTE E POR QUE ELE FALHOU TRÊS VEZES. Republicar é o passo sem o
+# qual a correção fica no repositório e não na produção — já custou duas rodadas
+# a este projeto. A action nasceu em 11/09/2026 e as TRÊS execuções abortaram no
+# mesmo ponto: `preparar-republicacao.mjs` resolve o id de cada credencial lendo
+# o workflow PUBLICADO, e a API pública do n8n não devolve a credencial
+# `httpHeaderAuth` dos nós de HTTP Request. A divisão foi por TIPO, não por nó:
+# as ONZE credenciais `postgres` resolveram todas; as `httpHeaderAuth`, nenhuma.
+# `IA Classificar` e `IA Extrair` sobravam em REPLACE e o portão barrava o
+# arquivo inteiro — corretamente, porque publicar REPLACE num nó ligado quebra a
+# credencial dele em produção.
+#
+# O DESTRAVE é o secret OPCIONAL `N8N_CRED_IDS`, um mapa {"<nome>":"<id>"} que
+# entra onde o publicado se cala. O vivo continua ganhando do mapa: quem está
+# publicado é a verdade sobre a instalação.
+
 name: Republicar workflow no n8n
 
 on:
   workflow_dispatch:
+    inputs:
+      modo:
+        description: 'publicar = sobe de verdade | ensaio = prepara, confere e NÃO sobe'
+        type: choice
+        options: [publicar, ensaio]
+        default: publicar
 
 concurrency:
-  group: republicar-n8n-${{ github.ref }}
+  group: republicar-n8n
   cancel-in-progress: false
 
 permissions:
@@ -17,30 +41,76 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # `fetch-depth: 0` porque o `republicar.sh` compara a árvore contra
+          # `origin/main` (TRAVA 1: republicar árvore atrasada publica a versão
+          # SEM as correções). Num clone raso `git merge-base --is-ancestor` não
+          # tem história para responder, e a trava viraria um falso "ok" ou um
+          # falso aborto — os dois piores desfechos para uma trava.
+          fetch-depth: 0
 
       - name: Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Validar secrets antes de publicar
+      - name: Conferir os secrets
         env:
           N8N_URL: ${{ secrets.N8N_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
           N8N_WORKFLOW_ID: ${{ secrets.N8N_WORKFLOW_ID }}
+          N8N_CRED_IDS: ${{ secrets.N8N_CRED_IDS }}
         run: |
+          set -euo pipefail
           for v in N8N_URL N8N_API_KEY N8N_WORKFLOW_ID; do
             if [ -z "${!v:-}" ]; then
-              echo "::error::Secret $v não cadastrado. Vá em Settings → Secrets and variables → Actions e crie $v."
+              echo "::error::Secret $v não cadastrado. Settings → Secrets and variables → Actions → New repository secret."
               exit 1
             fi
           done
           case "$N8N_URL" in */) echo "::error::N8N_URL termina em barra — remova a barra final."; exit 1;; esac
+          # O opcional é RELATADO, nunca exigido: sem ele a republicação
+          # funciona em toda credencial que o publicado expõe. Dizer se ele está
+          # lá (sem dizer o conteúdo) é o que permite ler o log depois e saber
+          # por que uma credencial resolveu ou não.
+          if [ -n "${N8N_CRED_IDS:-}" ]; then
+            node -e 'JSON.parse(process.env.N8N_CRED_IDS)' 2>/dev/null \
+              || { echo "::error::N8N_CRED_IDS existe mas não é JSON válido. Esperado {\"<nome da credencial>\":\"<id>\"}."; exit 1; }
+            echo "N8N_CRED_IDS presente e é JSON válido ($(node -e 'console.log(Object.keys(JSON.parse(process.env.N8N_CRED_IDS)).length)') credencial(is) mapeada(s))."
+          else
+            echo "N8N_CRED_IDS não cadastrado (opcional) — todo id virá do workflow publicado."
+          fi
           echo "Secrets ok."
 
-      - name: Republicar via N8N/republicar.sh
+      - name: O JSON commitado é o que o gerador produz?
+        # A ÚLTIMA LINHA ANTES DA PRODUÇÃO. O `suites.yml` já confere isto a cada
+        # PR, mas este botão publica a partir do que está COMMITADO — e um
+        # `build-workflow.mjs` alterado sem regerar publicaria o comportamento
+        # ANTIGO enquanto todo mundo acredita ter publicado o novo. É a mesma
+        # família do defeito que a TRAVA 1 cobre, um passo antes.
+        run: |
+          set -euo pipefail
+          node N8N/build-workflow.mjs
+          node N8N/build-workflow-macro.mjs
+          node N8N/build-workflow-diagnostico.mjs
+          node N8N/build-workflow-erros.mjs
+          if ! git diff --exit-code --stat -- N8N/*.json; then
+            echo "::error::O JSON commitado NÃO é o que o gerador produz. Rode os quatro geradores, commite o resultado e dispare de novo — publicar agora subiria a versão errada."
+            exit 1
+          fi
+          echo "ok — o commitado bate com o gerado."
+
+      - name: Republicar
         env:
           N8N_URL: ${{ secrets.N8N_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
           N8N_WORKFLOW_ID: ${{ secrets.N8N_WORKFLOW_ID }}
-        run: bash N8N/republicar.sh
+          N8N_CRED_IDS: ${{ secrets.N8N_CRED_IDS }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.modo }}" = "ensaio" ]; then
+            echo "MODO ENSAIO — prepara, confere e NÃO publica."
+            bash N8N/republicar.sh --dry-run
+          else
+            bash N8N/republicar.sh
+          fi

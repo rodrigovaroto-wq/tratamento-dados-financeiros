@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepararRepublicacao, credenciaisPendentes } from '../preparar-republicacao.mjs';
+import { prepararRepublicacao, credenciaisPendentes, idsDeCredencialDoAmbiente } from '../preparar-republicacao.mjs';
 
 // A FUSÃO QUE DEVOLVE O COMPORTAMENTO SEM PISAR NA INSTALAÇÃO.
 //
@@ -107,4 +107,83 @@ test('o relatório só aponta credencial REPLACE em nó LIGADO — o desligado n
   assert.equal(pend2.length, 1);
   assert.equal(pend2[0].no, 'Upload Storage');
   assert.equal(pend2[0].desabilitado, false, 'nó ligado com REPLACE é o que a trava do republicar.sh segura');
+});
+
+// ---------------------------------------------------------------------------
+// IDs DE CREDENCIAL VINDOS DE FORA — o desbloqueio da action do GitHub.
+// ---------------------------------------------------------------------------
+//
+// MEDIDO EM PRODUÇÃO, três execuções seguidas (11/09/2026, runs 1-3 de
+// `.github/workflows/republicar.yml`): a action abortou no passo 4 com
+// "sobraram 2 ocorrência(s) de REPLACE" — `IA Classificar` e `IA Extrair`.
+//
+// A divisão é por TIPO de credencial, não por nó, e é o que aponta a causa:
+// as ONZE credenciais `postgres` do workflow resolveram TODAS pelo vivo; as
+// TRÊS `httpHeaderAuth` não resolveram NENHUMA. A API pública do n8n não
+// devolve a `httpHeaderAuth` desses nós, então não existe id a ler.
+//
+// A trava que abortou estava certa (publicar REPLACE em nó ligado quebra a
+// credencial em produção). O que faltava era o id chegar sem passar pelo vivo.
+
+const REPO_OPENAI = {
+  ...REPO,
+  nodes: [
+    { name: 'IA Classificar', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2,
+      parameters: { method: 'POST' },
+      credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } },
+    { name: 'IA Extrair', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2,
+      parameters: { method: 'POST' },
+      credentials: { httpHeaderAuth: { id: 'REPLACE', name: 'OpenAI API' } } },
+  ],
+};
+// O vivo como a API o devolve: os nós existem, mas SEM a httpHeaderAuth.
+const VIVO_SEM_HEADER_AUTH = {
+  ...VIVO,
+  nodes: [
+    { id: 'no-c', name: 'IA Classificar', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, parameters: {} },
+    { id: 'no-e', name: 'IA Extrair', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, parameters: {} },
+  ],
+};
+
+test('MEDIDO: o cenário das 3 falhas da action — id de fora resolve o que o vivo não conta', () => {
+  const semMapa = prepararRepublicacao(VIVO_SEM_HEADER_AUTH, REPO_OPENAI);
+  assert.equal(credenciaisPendentes(semMapa).length, 2,
+    'sem o mapa, os DOIS nós ficam em REPLACE — é exatamente o que abortou a action 3 vezes');
+
+  const comMapa = prepararRepublicacao(VIVO_SEM_HEADER_AUTH, REPO_OPENAI,
+    { idsPorNome: { 'OpenAI API': 'aBc123' } });
+  assert.deepEqual(credenciaisPendentes(comMapa), [], 'com o mapa, nada fica pendente');
+  const n = porNome(comMapa);
+  assert.equal(n['IA Classificar'].credentials.httpHeaderAuth.id, 'aBc123');
+  assert.equal(n['IA Extrair'].credentials.httpHeaderAuth.id, 'aBc123',
+    'UMA entrada no mapa serve os dois nós — a chave é o nome da credencial, não o nó');
+  assert.equal(n['IA Extrair'].credentials.httpHeaderAuth.name, 'OpenAI API');
+});
+
+test('o VIVO ganha do mapa — um mapa velho não pode sobrescrever a credencial publicada', () => {
+  // A precedência importa: ao contrário, um id desatualizado no secret trocaria
+  // em silêncio a credencial certa por uma que não existe mais, e o sintoma
+  // apareceria só na próxima rodada.
+  const pronto = prepararRepublicacao(VIVO, REPO, { idsPorNome: { 'Google AI (Gemini)': 'id-velho-do-secret' } });
+  assert.equal(porNome(pronto)['IA Extrair'].credentials.httpHeaderAuth.id, 'FVVausmZHGZNICDP',
+    'quem está publicado é a verdade sobre a instalação; o mapa é só a queda');
+});
+
+test('o mapa NÃO desarma a trava: REPLACE ou vazio no mapa é ausência, não resposta', () => {
+  for (const idRuim of ['REPLACE', '', '   ']) {
+    const pronto = prepararRepublicacao(VIVO_SEM_HEADER_AUTH, REPO_OPENAI,
+      { idsPorNome: idsDeCredencialDoAmbiente({ N8N_CRED_IDS: JSON.stringify({ 'OpenAI API': idRuim }) }) });
+    assert.equal(credenciaisPendentes(pronto).length, 2,
+      `id "${idRuim}" no mapa não pode passar por resolvido — desarmaria o portão do republicar.sh`);
+  }
+});
+
+test('idsDeCredencialDoAmbiente: ausente é {}, JSON quebrado FALA o que fazer', () => {
+  assert.deepEqual(idsDeCredencialDoAmbiente({}), {}, 'sem o secret, segue o comportamento de sempre');
+  assert.deepEqual(idsDeCredencialDoAmbiente({ N8N_CRED_IDS: '   ' }), {});
+  assert.deepEqual(idsDeCredencialDoAmbiente({ N8N_CRED_IDS: '{"OpenAI API":"x1"}' }), { 'OpenAI API': 'x1' });
+  // Secret mal colado é o erro mais provável deste caminho, e ele tem de dizer
+  // o formato esperado em vez de estourar um SyntaxError cru do JSON.
+  assert.throws(() => idsDeCredencialDoAmbiente({ N8N_CRED_IDS: 'OpenAI API=x1' }), /não é JSON válido/);
+  assert.throws(() => idsDeCredencialDoAmbiente({ N8N_CRED_IDS: '["x1"]' }), /precisa ser um OBJETO/);
 });
