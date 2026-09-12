@@ -300,7 +300,13 @@ export function detectarFormato(buf, { mimeDeclarado = '', nome = '' } = {}) {
       }
     }
   }
-  return { formato: 'desconhecido', evidencia: temBytes ? 'nenhuma' : 'nenhuma', confiavel: false,
+  // OS DOIS CASOS SÃO DIFERENTES e a `evidencia` tem de dizer qual é. "Havia
+  // bytes e eles não casaram com nada que este detector conhece" é uma MEDIÇÃO
+  // (o arquivo é de um formato que o pipeline não trata); "o arquivo chegou sem
+  // bytes" é uma falha de TRANSPORTE, e quem lê precisa reenviar em vez de
+  // converter. Até aqui os dois devolviam `'nenhuma'` — o `detalhe` distinguia e
+  // a `evidencia` não, dois campos sobre o mesmo fato discordando.
+  return { formato: 'desconhecido', evidencia: temBytes ? 'conteudo-binario' : 'sem-bytes', confiavel: false,
     detalhe: temBytes
       ? `conteúdo binário sem assinatura conhecida (mimetype declarado: "${mt || 'ausente'}"${nome ? `, nome: "${nome}"` : ''})`
       : 'o arquivo chegou sem bytes' };

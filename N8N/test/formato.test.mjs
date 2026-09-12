@@ -129,6 +129,24 @@ test('quando os bytes nao decidem, confiavel é false e evidencia é mime-declar
   assert.equal(r.formato, 'pdf');
 });
 
+test('desconhecido distingue "havia bytes" de "chegou sem bytes" — dois casos, duas evidencias', () => {
+  // ACHADO PELO SONAR (S3923, PR #213): os dois ramos devolviam `'nenhuma'`,
+  // enquanto o `detalhe` logo abaixo já distinguia — dois campos sobre o mesmo
+  // fato discordando. E a distinção MUDA O QUE FAZER: bytes que não casam com
+  // nada é um formato que este pipeline não trata (converter e reenviar); zero
+  // bytes é falha de TRANSPORTE (reenviar o mesmo arquivo). Sem este teste, a
+  // correção do Sonar teria sido só calar o analisador.
+  const binarioDesconhecido = Buffer.from([0x00, 0x01, 0xab, 0xcd, 0x00, 0xef]);
+  const r1 = detectarFormato(binarioDesconhecido, { mimeDeclarado: 'application/octet-stream' });
+  assert.equal(r1.formato, 'desconhecido');
+  assert.equal(r1.evidencia, 'conteudo-binario', 'havia bytes, e eles não casaram com nada conhecido');
+
+  const r2 = detectarFormato(Buffer.alloc(0), { mimeDeclarado: '' });
+  assert.equal(r2.formato, 'desconhecido');
+  assert.equal(r2.evidencia, 'sem-bytes', 'o arquivo chegou sem bytes — é falha de transporte');
+  assert.notEqual(r1.evidencia, r2.evidencia, 'os dois casos NUNCA podem colapsar num rótulo só');
+});
+
 // --------------------------------------------------------------------------
 // formaDoTexto COM TEXTO VAZIO NÃO ESTOURA.
 // --------------------------------------------------------------------------
