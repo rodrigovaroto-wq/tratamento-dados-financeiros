@@ -39,6 +39,7 @@ import {
   custoDaChamada, tokensDeSaida, bytesDoBinario, orcamentoDoLote,
   pesoDaChamadaDeClassificacao, custoEstimadoPorConteudo, orcamentoDoLotePorConteudo,
   vereditoDaCotaDiaria,
+  ehFormatoDeTexto,
 } from '../lib/custo.mjs';
 import {
   normalizarUnidade, normalizarMoeda, diagnosticarErroApi, achatarGrupos,
@@ -382,6 +383,15 @@ const TABELA = [
     [null, 'gpt-4o'], [{}, 'modelo-desconhecido'],
   ] },
   { nome: 'tokensDeSaida', lib: tokensDeSaida, casos: [[100, 1], [100, 3], [0, 0]] },
+  // `ehFormatoDeTexto` decide se a entrada de um documento é contada como TEXTO
+  // (bytes/CARACTERES_POR_TOKEN) ou como PÁGINA DE IMAGEM (páginas×1000). A lib
+  // e a cópia inline divergirem aqui é um lote inteiro estimado 53× para cima
+  // (texto lido como PDF) ou 167× para baixo (PDF lido como texto) — os dois
+  // lados do mesmo defeito, e nenhum deles estoura.
+  { nome: 'ehFormatoDeTexto', lib: ehFormatoDeTexto, casos: [
+    ['texto'], ['csv'], ['xml'], ['text/plain'], ['application/xml'],
+    ['pdf'], ['imagem'], ['xlsx'], ['xls'], [null], [undefined], [''],
+  ] },
   { nome: 'bytesDoBinario', lib: bytesDoBinario,
     casos: [[{ fileSize: '1.2 MB' }], [{ data: 'YWJj' }], [null], [{}]] },
   { nome: 'pesoDaChamadaDeClassificacao', lib: pesoDaChamadaDeClassificacao,

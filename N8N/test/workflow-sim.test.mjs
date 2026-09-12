@@ -1919,6 +1919,40 @@ test('Orcamento do Lote declara tudo o que o corpo do orçamento referencia', ()
   const r = new Function(`${preambulo}\nreturn orcamentoDoLote({documentos: 2, chamadasPorDocumento: 2, bytes: 2048});`)();
   assert.equal(r.versao, VERSAO_ORCAMENTO, 'o nó decide com a MESMA versão da fonte');
   assert.ok(r.fatorCusto < 2, 'a 2ª chamada pesa menos que a 1ª dentro do nó, não só na lib');
+
+  // ==========================================================================
+  // E AS OUTRAS DUAS FUNÇÕES TAMBÉM TÊM DE RODAR — a lacuna que este teste
+  // tinha, com o nome dele afirmando o contrário.
+  // ==========================================================================
+  //
+  // O nome diz "declara tudo o que o corpo do orçamento referencia", mas até
+  // 12/09/2026 o teste EXECUTAVA só `orcamentoDoLote`. Quem o nó de verdade
+  // chama é `orcamentoDoLotePorConteudo` (que chama `custoEstimadoPorConteudo`),
+  // e essas duas nunca eram executadas aqui — a conferência delas era só
+  // TEXTUAL, pela lista de nomes acima, que ninguém atualizava junto.
+  //
+  // MEDIDO nesta rodada: quando `custoEstimadoPorConteudo` passou a chamar
+  // `ehFormatoDeTexto`, o `jsCode` gerado estourava `ReferenceError:
+  // ehFormatoDeTexto is not defined` em QUALQUER chamada (inclusive PDF), e
+  // ESTE teste continuava verde. É o defeito central do projeto dentro do
+  // próprio portão que existe para pegá-lo: um portão que mede um terço do que
+  // o nome dele promete tem a mesma aparência de um portão que mede tudo.
+  //
+  // Os DOIS formatos, porque o ramo de texto e o de PDF são caminhos
+  // diferentes dentro da função e um verde no outro não prova nada.
+  const porConteudo = new Function(`${preambulo}
+    return orcamentoDoLotePorConteudo({ documentos: [
+      { celulas: 80, paginas: 2, colunas: 3, blocos: 1, bytes: 90000, formato: 'pdf' },
+      { celulas: 900, paginas: null, colunas: 2, blocos: 1, bytes: 670_000, formato: 'texto' },
+    ], tokensPromptSistema: 100 });`)();
+  assert.equal(porConteudo.porConteudo, true,
+    'um lote com PDF e TEXTO medidos decide POR CONTEÚDO dentro do nó — se `paginas` voltar a ser '
+    + 'exigida de todo documento, o de texto reprova e o lote inteiro cai no proxy por byte');
+  // 670 KB é o tamanho REAL de um `.txt` do lote da AMO, e não é escolha
+  // estética: com documentos minúsculos o `.toFixed(2)` de `estimadoUSD`
+  // arredonda para 0,00 e o assert passaria a não medir nada.
+  assert.ok(porConteudo.estimadoUSD > 0, 'a conta roda de verdade dentro do nó, não só na lib');
+  assert.equal(porConteudo.versao, VERSAO_ORCAMENTO);
 });
 
 // A VERSÃO NA MENSAGEM. Em 12/08/2026 o dono reexecutou o lote depois da

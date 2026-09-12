@@ -440,15 +440,111 @@ export const CUSTO_MINIMO_CHAMADA_USD = 0.0032;
 
 const BYTES_POR_MB = 1024 * 1024;
 
+// ---------------------------------------------------------------------------
+// O DEFEITO DO PROXY ÚNICO — `CUSTO_POR_MB_USD` aplicado a QUALQUER arquivo
+// ---------------------------------------------------------------------------
+//
+// `CUSTO_POR_MB_USD` é um proxy por BYTE calibrado sobre PDF (a calibração
+// está no comentário acima, 10,5 × 0,266): ele existe porque um PDF vai ao
+// modelo como IMAGEM (`TOKENS_POR_PAGINA_IMAGEM`), e bytes de PDF não dizem
+// quase nada sobre tokens. Até 12/09/2026 esse mesmo proxy era aplicado a
+// QUALQUER arquivo, inclusive TEXTO PURO — onde a razão byte→token não é um
+// proxy nenhum, é ARITMÉTICA (`CARACTERES_POR_TOKEN`).
+//
+// MEDIDO, com o modelo ativo (`gpt-5.6-luna`, entrada US$0,20/M) e
+// `CARACTERES_POR_TOKEN = 4`:
+//
+//   2 MB de texto  -> proxy de PDF = US$  5,60 | entrada real = US$ 0,105 | 53×
+//   40 MB de texto -> proxy de PDF = US$112,00 | entrada real = US$ 2,097 | 53×
+//
+// O EFEITO EM PRODUÇÃO: um dono tentou subir 2 arquivos de texto e o
+// `Orcamento do Lote` recusou dizendo "US$ 5,60 contra o teto de US$ 3" — um
+// número 53× o real. Um guarda de teto que recusa lote que cabe é o defeito
+// v31 pelo outro lado, e é exatamente o que o cabeçalho de `orcamentoDoLote`
+// já descreve.
+//
+// A CORREÇÃO: a razão byte→token é propriedade do FORMATO, não do arquivo.
+// `custoEstimadoPorTamanho` passa a receber `formato` (opcional, string —
+// aceita as mesmas categorias que `PADRAO_MIME` em `build-workflow.mjs` usa:
+// 'csv', 'xml', um mimetype `text/...`, ou 'texto' direto) e escolhe a conta:
+//
+//   • PDF/imagem (ou formato ausente): continua `CUSTO_POR_MB_USD` — a
+//     calibração É SOBRE ISTO, e não muda.
+//   • texto (`ehFormatoDeTexto`): sem proxy — `bytes / CARACTERES_POR_TOKEN`
+//     tokens de entrada × preço de entrada do modelo de extração ativo
+//     (`custoPorMbDeTextoUSD`), com a MESMA margem que a estimativa por
+//     CONTEÚDO usa (`MARGEM_ORCAMENTO_CONTEUDO = 1,25`), não o 1,8× do PDF —
+//     aqui não há calibração por incerteza de formato para justificar 1,8×,
+//     só a folga que o resto do arquivo já aplica a uma conta por token.
+//   • xlsx/xls: NÃO é texto (o byte comprimido de um ZIP não é caractere —
+//     `CARACTERES_POR_TOKEN` não vale) nem é imagem, e este repositório não
+//     tem medição própria dele. Suposição declarada: fica no MESMO proxy do
+//     PDF, por ser mais perto de "densidade de informação por byte de um
+//     binário comprimido" do que de "texto solto". Quem quiser um número
+//     melhor tem de MEDIR um book de planilhas primeiro.
+//
+// O QUE NÃO MUDA: sem `formato` (ou com um valor desconhecido), o
+// comportamento é o de sempre — o caminho conservador. Compatibilidade com
+// quem já chama `custoEstimadoPorTamanho(bytes)` continua total.
+export const FORMATOS_DE_TEXTO = ['csv', 'xml', 'texto', 'txt', 'text'];
+
+/** `formato` é texto puro (não PDF, não imagem, não planilha)? */
+export function ehFormatoDeTexto(formato) {
+  const f = typeof formato === 'string' ? formato.trim().toLowerCase() : '';
+  if (!f) return false;
+  if (FORMATOS_DE_TEXTO.includes(f)) return true;
+  // Aceita também as strings que `PADRAO_MIME` (build-workflow.mjs) usa para
+  // reconhecer texto: um mimetype `text/...` inteiro, ou `.../xml` no fim.
+  return f.startsWith('text/') || f.endsWith('/xml') || f.endsWith('+xml');
+}
+
+/**
+ * Custo por MB de ENTRADA de texto puro, no preço do modelo de extração do
+ * provedor ativo (ou informado). Diferente de `CUSTO_POR_MB_USD`, não há
+ * calibração aqui: a razão byte→token de texto puro É `CARACTERES_POR_TOKEN`,
+ * então o custo por MB sai direto do preço do modelo.
+ *
+ * NÃO cobra a SAÍDA por byte — de propósito. A saída de um documento de texto
+ * depende de quantos NÚMEROS ele tem, não de quantos BYTES, e não existe uma
+ * razão byte→saída para texto do jeito que existe para entrada (o mesmo
+ * motivo pelo qual `CUSTO_POR_MB_USD`, para PDF, também é dominado pela
+ * entrada de imagem). Quem cobre a saída mínima de uma chamada é o piso
+ * `CUSTO_MINIMO_CHAMADA_USD`, aplicado por `custoEstimadoPorTamanho`.
+ *
+ * Devolve `null` quando o preço do modelo é desconhecido — mesma regra do
+ * resto do arquivo: sem preço não há conta, e uma conta inventada é pior que
+ * nenhuma (quem chama decide o que fazer com `null`).
+ */
+export function custoPorMbDeTextoUSD(tabela = PRECO_USD_POR_MILHAO, modelo = MODELO_EXTRACAO) {
+  const preco = tabela[modelo];
+  if (!preco || !Number.isFinite(preco.entrada) || preco.entrada <= 0) return null;
+  const tokensPorMb = BYTES_POR_MB / CARACTERES_POR_TOKEN;
+  return (tokensPorMb * preco.entrada) / 1_000_000;
+}
+
 /**
  * Custo estimado de UMA chamada sobre um arquivo de `bytes`.
  * Devolve `null` quando o tamanho não é conhecido — quem chama decide o que
  * fazer com isso, e o que NÃO se pode fazer é tratar desconhecido como zero.
+ *
+ * `formato` é OPCIONAL, e a ausência preserva o comportamento de sempre (o
+ * proxy conservador de PDF) — ver o comentário acima desta função para a
+ * conta por formato.
  */
-export function custoEstimadoPorTamanho(bytes) {
+export function custoEstimadoPorTamanho(bytes, formato = null) {
   const b = Number(bytes);
   if (!Number.isFinite(b) || b <= 0) return null;
-  return Math.max(CUSTO_MINIMO_CHAMADA_USD, (b / BYTES_POR_MB) * CUSTO_POR_MB_USD);
+  const mb = b / BYTES_POR_MB;
+
+  if (ehFormatoDeTexto(formato)) {
+    const porMb = custoPorMbDeTextoUSD();
+    // Preço do modelo de extração desconhecido: sem base própria para a conta
+    // de texto, cai no proxy conservador — nunca em zero.
+    if (porMb == null) return Math.max(CUSTO_MINIMO_CHAMADA_USD, mb * CUSTO_POR_MB_USD);
+    return Math.max(CUSTO_MINIMO_CHAMADA_USD, mb * porMb * MARGEM_ORCAMENTO_CONTEUDO);
+  }
+
+  return Math.max(CUSTO_MINIMO_CHAMADA_USD, mb * CUSTO_POR_MB_USD);
 }
 
 /**
@@ -738,27 +834,47 @@ export function tokensDeSaida(celulas, colunas = 1) {
 /**
  * Custo estimado de UM documento, a partir do que já foi MEDIDO nele.
  *
- * `blocos` é o número de chamadas de extração: cada fatia reenvia o PDF inteiro
- * (a entrada se repete) e devolve a sua parte da saída (a saída se divide).
- * Ignorar isso é o erro que a estimativa por byte comete no documento grande.
+ * `blocos` é o número de chamadas de extração: cada fatia reenvia o documento
+ * inteiro (a entrada se repete) e devolve a sua parte da saída (a saída se
+ * divide). Ignorar isso é o erro que a estimativa por byte comete no
+ * documento grande.
+ *
+ * A ENTRADA NÃO É SEMPRE "PÁGINAS × TOKENS_POR_PAGINA_IMAGEM" — só era até
+ * 12/09/2026, quando este arquivo só sabia extrair PDF (que vai ao modelo como
+ * IMAGEM). Documento de TEXTO (`formato` reconhecido por `ehFormatoDeTexto`,
+ * o mesmo detector de `custoEstimadoPorTamanho`) não tem página nenhuma — o
+ * que ele tem é `bytes`, e a entrada dele é `bytes / CARACTERES_POR_TOKEN`,
+ * a MESMA conta direta que já vale na estimativa por TAMANHO. Contar página
+ * (`pag = 1` por padrão, `Math.max(1, ...)`) num `.txt` de 670 KB subestimava
+ * a entrada em 167× — 1.000 tokens fixos contra ~167.000 reais — e teria
+ * TROCADO uma recusa de lote que cabe (o defeito do proxy de PDF) por um
+ * aceite de lote que não cabe, que é o v31 de novo.
+ *
+ * Documento de texto SEM `bytes` conhecido não inventa entrada nenhuma: quem
+ * decide isso é `orcamentoDoLotePorConteudo.medido`, que joga esse documento
+ * (e o lote inteiro, pela mesma doutrina que já vale para PDF sem página) de
+ * volta para o caminho por TAMANHO — nunca para um chute de página.
  */
 export function custoEstimadoPorConteudo({
   celulas, paginas, colunas = 1, blocos = 1, precisaFallback = false, tokensPromptSistema = 0,
+  formato = null, bytes = null,
 }) {
   const cel = Math.max(0, Number(celulas) || 0);
-  const pag = Math.max(1, Number(paginas) || 1);
   const nBlocos = Math.max(1, Number(blocos) || 1);
   const sistema = Math.max(0, Number(tokensPromptSistema) || 0);
-  const entradaPdf = pag * TOKENS_POR_PAGINA_IMAGEM;
+  const entradaDocumento = ehFormatoDeTexto(formato)
+    ? Math.max(0, Number(bytes) || 0) / CARACTERES_POR_TOKEN
+    : Math.max(1, Number(paginas) || 1) * TOKENS_POR_PAGINA_IMAGEM;
   const saidaTotal = tokensDeSaida(cel, colunas);
 
   let usd = 0;
   for (let b = 0; b < nBlocos; b += 1) {
     // A saída se reparte entre os blocos; a entrada, não — cada bloco reenvia o
-    // PDF. Repartir por igual é a aproximação certa aqui: `planejarFatias` corta
-    // por número de células, então os blocos saem do mesmo tamanho.
+    // documento inteiro. Repartir por igual é a aproximação certa aqui:
+    // `planejarFatias` corta por número de células, então os blocos saem do
+    // mesmo tamanho.
     usd += custoDaChamada({
-      prompt_tokens: sistema + entradaPdf,
+      prompt_tokens: sistema + entradaDocumento,
       completion_tokens: Math.ceil(saidaTotal / nBlocos),
       // O PROMPT DE SISTEMA NÃO É COBRADO COMO CACHE AQUI, e esta linha foi
       // removida em 10/09/2026 — ela dizia `cached_tokens: sistema`, com o
@@ -788,7 +904,7 @@ export function custoEstimadoPorConteudo({
 
   if (precisaFallback) {
     usd += custoDaChamada({
-      prompt_tokens: entradaPdf + 400,
+      prompt_tokens: entradaDocumento + 400,
       completion_tokens: TOKENS_SAIDA_CLASSIFICACAO,
     }, MODELO_CLASSIFICACAO) ?? 0;
   }
@@ -803,6 +919,17 @@ export function custoEstimadoPorConteudo({
  * traz medida de conteúdo — PDF escaneado não tem camada de texto, e medir só
  * os que dá subestimaria o lote na exata proporção do que não se sabe. É a
  * mesma doutrina que a estimativa por byte já aplica ao tamanho ausente.
+ *
+ * O QUE CONTA COMO "MEDIDO" DEPENDE DO FORMATO, e é a correção de 12/09/2026:
+ * até aqui `medido` exigia `paginas > 0` de QUALQUER documento, e só PDF tem
+ * página (`Medir Documento` tira `paginas_do_documento` do `numpages` do
+ * `pdf-parse`). Um ÚNICO `.txt`/`.csv`/`.xlsx` no lote, com `paginas` ausente,
+ * derrubava a medição de TODOS os outros — o lote inteiro caía no caminho por
+ * TAMANHO, exatamente no proxy de PDF que superestima texto em dezenas de
+ * vezes (`custoEstimadoPorTamanho`, comentário acima). Documento de texto é
+ * `medido` por `celulas` (a mesma régua de sempre) e `bytes` — nunca por
+ * `paginas`, que ele não tem e não precisa: a entrada dele sai do tamanho do
+ * texto, não de página nenhuma (ver `custoEstimadoPorConteudo`).
  */
 export function orcamentoDoLotePorConteudo({
   documentos = [],
@@ -812,9 +939,16 @@ export function orcamentoDoLotePorConteudo({
 }) {
   const docs = Array.isArray(documentos) ? documentos : [];
   const n = docs.length;
-  const medido = (d) =>
-    Number.isFinite(Number(d?.celulas)) && Number(d.celulas) > 0 &&
-    Number.isFinite(Number(d?.paginas)) && Number(d.paginas) > 0;
+  const medido = (d) => {
+    if (!Number.isFinite(Number(d?.celulas)) || Number(d.celulas) <= 0) return false;
+    if (ehFormatoDeTexto(d?.formato)) {
+      // Texto: a entrada vem do TAMANHO do documento, não de página nenhuma —
+      // exigir `paginas` aqui derrubaria a medição por um campo que este
+      // formato nunca tem.
+      return Number.isFinite(Number(d?.bytes)) && Number(d.bytes) > 0;
+    }
+    return Number.isFinite(Number(d?.paginas)) && Number(d.paginas) > 0;
+  };
 
   if (n === 0 || !docs.every(medido)) {
     const semTamanho = docs.some((d) => !Number.isFinite(Number(d?.bytes)) || Number(d.bytes) <= 0);
@@ -850,7 +984,7 @@ export function orcamentoDoLotePorConteudo({
     : `[orçamento ${VERSAO_ORCAMENTO}] ` +
       `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) de IA ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
-      `A conta saiu de ${celulas} linha(s) com número lidas dos próprios PDFs (mais ${MARGEM_ORCAMENTO_CONTEUDO}× ` +
+      `A conta saiu de ${celulas} linha(s) com número lidas dos próprios documentos (mais ${MARGEM_ORCAMENTO_CONTEUDO}× ` +
       `de margem), e não de uma estimativa por tamanho de arquivo. ` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
       `Nada foi enviado ao provedor de IA e nenhum documento foi registrado, então reenviar não duplica nem custa. ` +

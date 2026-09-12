@@ -33,7 +33,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   ASSINATURAS, SEPARADORES, byteEm, casaAssinatura, saborDoZip, trechoLatin1,
@@ -219,6 +219,21 @@ const FONTE_ORCAMENTO_LOTE = [
   // fica verde e o lote morre no cliente.
   `const custoDaChamada = ${custoDaChamada.toString()};`,
   `const tokensDeSaida = ${tokensDeSaida.toString()};`,
+  // O FORMATO ENTROU NA CONTA, então `ehFormatoDeTexto` e a lista dela têm de
+  // atravessar junto — e esta linha é literalmente o `ReferenceError` que o
+  // comentário de `custoDaChamada` oito linhas acima já descreve como "o modo de
+  // falha mais caro possível, porque a suíte fica verde e o lote morre no
+  // cliente". Foi medido nesta rodada, não suposto: executar o `jsCode` gerado
+  // sem estas linhas estoura `ehFormatoDeTexto is not defined` em QUALQUER
+  // chamada — inclusive a de PDF, porque a checagem de formato roda antes de
+  // qualquer ramo.
+  //
+  // `CARACTERES_POR_TOKEN` entra pelo mesmo motivo e é novo aqui:
+  // `custoEstimadoPorConteudo` passou a dividir bytes por ele para o documento
+  // de TEXTO, e até agora esse nome só existia em tempo de build.
+  `const FORMATOS_DE_TEXTO = ${JSON.stringify(FORMATOS_DE_TEXTO)};`,
+  `const ehFormatoDeTexto = ${ehFormatoDeTexto.toString()};`,
+  `const CARACTERES_POR_TOKEN = ${CARACTERES_POR_TOKEN};`,
   `const custoEstimadoPorConteudo = ${custoEstimadoPorConteudo.toString()};`,
   `const orcamentoDoLotePorConteudo = ${orcamentoDoLotePorConteudo.toString()};`,
 ].join('\n');
