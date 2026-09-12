@@ -106,9 +106,17 @@ jobs:
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
           N8N_WORKFLOW_ID: ${{ secrets.N8N_WORKFLOW_ID }}
           N8N_CRED_IDS: ${{ secrets.N8N_CRED_IDS }}
+          # O modo entra por AMBIENTE, não interpolado no corpo do `run`.
+          # `${{ ... }}` dentro do script é substituído ANTES de o bash existir:
+          # o valor vira texto do programa, não dado dele. Aqui o `type: choice`
+          # restringe a duas opções e não há como abusar — mas a forma segura
+          # custa uma linha, e é a que não depende de o próximo campo continuar
+          # sendo `choice`. É a recomendação do próprio GitHub para script
+          # injection em workflows.
+          MODO: ${{ inputs.modo }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.modo }}" = "ensaio" ]; then
+          if [ "$MODO" = "ensaio" ]; then
             echo "MODO ENSAIO — prepara, confere e NÃO publica."
             bash N8N/republicar.sh --dry-run
           else
