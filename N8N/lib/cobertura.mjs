@@ -743,7 +743,7 @@ export function juntarBlocos(blocos) {
   let algumBlocoLeuFatos = false;
   const linhas = new Set();
   const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par
-  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
+  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('\u0001');
 
   for (const b of lista) {
     const doBloco = Array.isArray(b.campos) ? b.campos.slice() : [];
