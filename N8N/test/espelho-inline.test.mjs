@@ -33,7 +33,7 @@ import { parseTipo, parsePeriodo, parseEntidade } from '../lib/classifier.mjs';
 import {
   avaliarCobertura, celulasDaLinha, celulasEstimadas, linhasComNumero, linhasDeConta,
   juntarFragmentosDeLinha, ehLinhaSemValor, ehLinhaDeConta,
-  planejarFatias, instrucaoDaFatia, juntarBlocos,
+  planejarFatias, instrucaoDaFatia, juntarBlocos, camadaDeTextoDoPdf, fracaoDePalavrasDobradas,
 } from '../lib/cobertura.mjs';
 import {
   custoDaChamada, tokensDeSaida, bytesDoBinario, orcamentoDoLote,
@@ -361,6 +361,29 @@ const TABELA = [
     casos: [['Caixa 1.000 2.000 3.000'], ['Só rótulo'], ['']] },
   { nome: 'celulasEstimadas', lib: celulasEstimadas,
     casos: [[['a 1 2', 'b 3']], [[]]] },
+  // O detector de glifo dobrado, que `camadaDeTextoDoPdf` chama. Divergir aqui
+  // é o limiar de 20% medindo coisa diferente na lib e no nó — e o efeito é
+  // silencioso nos dois sentidos.
+  { nome: 'fracaoDePalavrasDobradas', lib: fracaoDePalavrasDobradas, casos: [
+    ['Empprreessaa:: AMOBBELEZA COMEERRCCIIO DIGITAL'], ['Empresa: AMOBELEZA COMERCIO DIGITAL'],
+    ['Exercicios encerrados em dezembro'], [''], [null], ['123 456'],
+  ] },
+  // `camadaDeTextoDoPdf` decide se o PDF vai à IA como TEXTO (barato) ou como
+  // IMAGEM/OCR (caro, e necessário quando é escaneado). Lib e cópia inline
+  // divergirem aqui é dinheiro nos DOIS sentidos: um escaneado tratado como
+  // texto manda um documento VAZIO à IA (a AMO de novo), e um PDF com camada de
+  // texto tratado como imagem paga ~4x a entrada por página que não precisava.
+  { nome: 'camadaDeTextoDoPdf', lib: camadaDeTextoDoPdf, casos: [
+    // o caso bom: balanço com camada de texto e números
+    ['CANASTRA LTDA\nATIVO 137.624 163.941\nCaixa 825 3.621\nClientes 22.310 31.884\nEstoque 20.887 32.598\n', { paginas: 1 }],
+    ['', { paginas: 3 }],                                   // escaneado puro
+    ['BALANCO PATRIMONIAL 2025', { paginas: 20 }],           // capa OCRzada num escaneado
+    ['EMPRESA LTDA\nNotas explicativas em anexo\n'.repeat(12), { paginas: 1 }], // texto sem número
+    // camada corrompida por glifo dobrado — a forma REAL, medida nos documentos
+    // do dono (AMOBELEZA 73%, GENERAL TABACO 37,9% de palavras dobradas)
+    ['Empprreessaa:: AMOBBELEZA COMEERRCCIIO\nDISSPONIIBILLIIDDAADDES 2.2272.055,77\nEsttooqquueess 26.893.325,14\nCllieentes 22.414.091,17\n', { paginas: 1 }],
+    [null, {}], [undefined, { paginas: 0 }],                 // entradas degeneradas
+  ] },
   { nome: 'avaliarCobertura', lib: avaliarCobertura, casos: [
     [{ extraidas: 90, esperadas: 100 }], [{ extraidas: 30, esperadas: 100 }],
     [{ extraidas: 5, esperadas: 6 }], [{ extraidas: 0, esperadas: 0 }],

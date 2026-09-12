@@ -3305,3 +3305,142 @@ test('a medição do documento sobrevive até o Juntar Blocos (fatiamento e cobe
   assert.ok(fatias.every((f) => f.json.contas_no_documento !== undefined),
     'o Fatiar perdeu a medição no caminho — o Juntar Blocos não terá com o que comparar');
 });
+
+// ===========================================================================
+// PDF: TEXTO quando ele existe, IMAGEM (OCR) quando não existe.
+// ===========================================================================
+//
+// O DESPERDÍCIO QUE ISTO FECHA. Até 12/09/2026 todo PDF ia à IA como arquivo em
+// base64, cobrado como IMAGEM (~1.000 tokens/página) — enquanto o `Extrair
+// Texto`, que roda de graça na própria instância, já lia a camada de texto do
+// mesmo documento e a usava só para MEDIR cobertura. O conteúdo estava na mão e
+// a chamada pagava imagem por ele.
+//
+// E A METADE QUE NÃO SE PODE PERDER: PDF escaneado não tem camada de texto.
+// Mandar o vazio no lugar do documento seria a AMO de novo — ausência
+// apresentada como dado. Esse continua indo como imagem, para o modelo ler com
+// a visão.
+//
+// DESLIGAR A CORREÇÃO (fazer o ramo `formato==='pdf'` de `CODE_RECOMPOR_EXTRACAO`
+// voltar a `completos.push(entradas[i])`) FAZ ESTES TESTES REPROVAREM EM 4
+// ASSERTS DE 6 — medido, um a um, contra o `jsCode` gerado.
+//
+// OS OUTROS DOIS PASSAM VAZIOS com a correção desligada, e dizer isso vale mais
+// que o número: são "não é mais parte de arquivo" e "o escaneado não escreve
+// `content_part`". O código antigo os satisfaz sem fazer nada — ele nunca
+// escrevia `content_part` para PDF nenhum. Eles não medem a correção; medem que
+// o caminho do ESCANEADO não regrediu, que é a metade que não se pode perder.
+
+const ctxPdfBase = {
+  caso_id: 'caso-uuid-1', hash: 'hash-pdf', nome_original: 'BALANÇO 2025.pdf',
+  formato_detectado: 'pdf', bytes: 2_000_000,
+  content_part: { type: 'file', file: { filename: 'BALANÇO 2025.pdf', file_data: 'data:application/pdf;base64,JVBERi0x' } },
+};
+const TEXTO_DE_BALANCO = [
+  'CANASTRA INDÚSTRIA DE EMBALAGENS LTDA', 'CNPJ 44.555.667/0001-59',
+  'BALANÇO PATRIMONIAL', '31/12/2025 31/12/2024',
+  'ATIVO 137.624 163.941', 'Ativo Circulante 44.022 68.103',
+  'Caixa e bancos 825 3.621', 'Contas a receber 22.310 31.884',
+].join('\n');
+
+test('MEDIDO: PDF COM camada de texto vai à IA como TEXTO — para de pagar imagem', async () => {
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { text: TEXTO_DE_BALANCO, numpages: 1 } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxPdfBase }] },
+  });
+  assert.equal(out.length, 1);
+  const j = out[0].json;
+  assert.equal(j.leitura_pdf, 'texto', 'o veredito é DECLARADO, não suposto');
+  assert.ok(j.content_part, 'o nó tem de ESCREVER content_part — é isso que faz Medir Documento trocar o base64');
+  assert.match(textoDaParte(j.content_part), /ATIVO 137\.624/,
+    'o que vai à IA é o texto do PDF, não o PDF em base64');
+  assert.ok(!ehParteDeArquivo(j.content_part), 'e NÃO pode continuar sendo parte de arquivo');
+});
+
+test('MEDIDO: PDF escaneado continua indo como IMAGEM — o vazio NUNCA substitui o documento', async () => {
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { text: '', numpages: 4 } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxPdfBase }] },
+  });
+  const j = out[0].json;
+  assert.equal(j.leitura_pdf, 'ocr');
+  assert.equal(j.leitura_pdf_motivo, 'sem-camada-de-texto');
+  assert.ok(!('content_part' in j),
+    'sem a chave `content_part`, Medir Documento mantém o base64 de Preparar Conteudo — é assim que o PDF chega à visão do modelo');
+});
+
+test('camada de texto SEM NÚMERO vai para OCR — numa demonstração o número é a carga', async () => {
+  // O caso que passa nos critérios de tamanho e ainda assim é inútil: cabeçalho,
+  // CNPJ e rodapé do contador na camada de texto, valores só na imagem.
+  const soMobilia = 'CANASTRA INDÚSTRIA LTDA\nBALANÇO PATRIMONIAL\nNotas explicativas em anexo\n'.repeat(8);
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { text: soMobilia, numpages: 1 } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxPdfBase }] },
+  });
+  assert.equal(out[0].json.leitura_pdf, 'ocr');
+  assert.equal(out[0].json.leitura_pdf_motivo, 'texto-sem-numeros');
+});
+
+test('o veredito do PDF sobrevive a Medir Documento e chega ao orçamento', async () => {
+  // `Medir Documento` reconstrói o item a partir de `Preparar Conteudo`
+  // (`{...item}`), não do item do extrator — sem carregar por nome, o veredito
+  // morria ali e o orçamento voltaria a cobrar imagem de um PDF lido como texto.
+  const recomposto = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { text: TEXTO_DE_BALANCO, numpages: 1 } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxPdfBase }] },
+  });
+  const medido = await run('Medir Documento', {
+    item: recomposto[0], refs: { 'Preparar Conteudo': recomposto[0] },
+  });
+  assert.equal(medido.json.leitura_pdf, 'texto', 'o veredito atravessa Medir Documento');
+  assert.ok(medido.json.caracteres_do_texto > 100, 'e o TAMANHO do texto atravessa junto — é o que o orçamento cobra');
+  assert.match(textoDaParte(medido.json.content_part), /ATIVO 137\.624/,
+    'Medir Documento entrega o TEXTO adiante, não o base64');
+});
+
+test('o orçamento cobra o PDF lido como texto por CARACTERE, não por página de imagem', () => {
+  const c = code('Orcamento do Lote');
+  const preambulo = c.slice(0, c.indexOf('const itens = $input'));
+  // O MESMO documento, lido dos dois jeitos. A diferença é toda a economia.
+  const comoTexto = new Function(`${preambulo}
+    return orcamentoDoLotePorConteudo({ documentos: [
+      { celulas: 80, paginas: 2, colunas: 3, blocos: 1, bytes: 1700, formato: 'texto' },
+    ], tokensPromptSistema: 100 });`)();
+  const comoImagem = new Function(`${preambulo}
+    return orcamentoDoLotePorConteudo({ documentos: [
+      { celulas: 80, paginas: 2, colunas: 3, blocos: 1, bytes: 2000000, formato: 'pdf' },
+    ], tokensPromptSistema: 100 });`)();
+  assert.ok(comoTexto.estimadoUSD <= comoImagem.estimadoUSD,
+    'ler como texto nunca pode custar MAIS que ler como imagem — se custar, a conta está invertida');
+});
+
+test('MEDIDO: camada de texto CORROMPIDA por glifo dobrado vai para OCR — senão a otimização piora o dado', async () => {
+  // A FORMA REAL, não inventada (regra 4): este é o texto que a conversão dos
+  // PDFs do dono produziu, medido em 12/09/2026. Dois dos quatro documentos
+  // dele têm a camada de texto corrompida por negrito falso (o glifo é desenhado
+  // duas vezes e o extrator lê as duas cópias) — AMOBELEZA a 73% e GENERAL
+  // TABACO a 37,9% de palavras com letra repetida, contra 3,6% de um texto
+  // limpo.
+  //
+  // O ESTRAGO CHEGA AOS NÚMEROS: `2.2272.055,77` onde o documento diz
+  // `2.272.055,77`. A visão do modelo lê a PÁGINA e enxerga o número certo; a
+  // camada de texto entrega o errado, com a mesma aparência de um número certo.
+  // Sem este ramo, a economia de entrada que este commit traz seria paga com
+  // dado corrompido no banco — e isso é pior que o custo que ela poupa.
+  const corrompido = [
+    'Empprreessaa:: AMOBBELEZA COMEERRCCIIO DIGITAL E OFFLLINE LTDA',
+    'CNPPJJ:: 30.893.4496/00001-30',
+    'DISSPONIIBILLIIDDAADDES 2.2272.055,77',
+    'Bancos Conntta Moovviimeenntto 1.5532.9901,35',
+    'Cllieentes 22.414.091,17',
+    'Esttooqquueess IInniicciiaall 26.893.325,14',
+  ].join('\n');
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [{ json: { text: corrompido, numpages: 1 } }],
+    refs: { 'Preparar Conteudo': [{ json: ctxPdfBase }] },
+  });
+  assert.equal(out[0].json.leitura_pdf, 'ocr',
+    'camada corrompida NÃO pode virar o conteúdo — a imagem é a versão correta do documento');
+  assert.equal(out[0].json.leitura_pdf_motivo, 'camada-de-texto-corrompida');
+  assert.ok(!('content_part' in out[0].json), 'e o base64 de Preparar Conteudo tem de sobreviver');
+});
