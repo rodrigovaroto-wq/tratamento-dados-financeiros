@@ -270,7 +270,12 @@ export function detectarFormato(buf, { mimeDeclarado = '', nome = '' } = {}) {
       // PDF, e mandá-lo como anexo binário ao modelo entrega lixo —, mas a
       // discordância vira `confiavel: false` em vez de sumir. É a regra 1 do
       // CLAUDE.md: um palpite silencioso tem a mesma aparência de uma medição.
-      const declaradoBinario = /pdf|^image\/|spreadsheetml|ms-excel|excel/.test(mt);
+      // MESMA regra de agrupamento da tabela de queda mais abaixo (S5850): o `^`
+      // vale só para a alternativa em que está, e aqui isso É o que se quer —
+      // `image/` ancorado (para não casar com um mimetype que só CONTENHA
+      // "image/"), os outros livres. Agrupado, ninguém precisa deduzir isso.
+      // `ms-excel` saiu por ser redundante: `excel` já casa com ele.
+      const declaradoBinario = /pdf|(?:^image\/)|spreadsheetml|excel/.test(mt);
       if (declaradoBinario) {
         return { formato: 'texto', evidencia: 'conteudo-texto', confiavel: false,
           detalhe: `o upload declarou "${mt}", mas os bytes são TEXTO (${forma.forma}) `
