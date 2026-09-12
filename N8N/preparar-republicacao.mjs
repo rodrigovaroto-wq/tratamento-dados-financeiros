@@ -43,7 +43,61 @@ const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** O que o PUT aceita — mandar campo a mais faz o n8n recusar a requisição. */
 const CAMPOS_DO_PUT = ['name', 'nodes', 'connections', 'settings'];
 
-export function prepararRepublicacao(vivo, repo) {
+/**
+ * IDs DE CREDENCIAL VINDOS DE FORA, por NOME — a saída para o que o vivo não conta.
+ *
+ * POR QUE ISTO EXISTE, e o número é medido. `prepararRepublicacao` resolve o id
+ * lendo o workflow PUBLICADO, e isso funciona para a maioria: na republicação de
+ * 11/09/2026 as ONZE credenciais `postgres` resolveram todas. As TRÊS
+ * `httpHeaderAuth` não resolveram NENHUMA — e a divisão é por TIPO, não por nó.
+ * A API pública do n8n (`GET /api/v1/workflows/:id`) não devolve a credencial
+ * `httpHeaderAuth` desses nós, então não há o que ler. O resultado foi a action
+ * do GitHub abortar em TRÊS execuções seguidas, no passo 4, com "sobraram 2
+ * ocorrência(s) de REPLACE" — `IA Classificar` e `IA Extrair`.
+ *
+ * A trava que abortou estava CERTA: publicar `REPLACE` num nó ligado quebra a
+ * credencial dele em produção. O que faltava era um jeito de o id chegar aqui
+ * sem passar pelo vivo — e sem ser versionado, que é a razão de o repositório
+ * gravar `REPLACE` desde sempre.
+ *
+ * A CHAVE É O NOME DA CREDENCIAL, não o nó: uma mesma credencial ("OpenAI API")
+ * serve vários nós, e mapear por nó obrigaria a repetir o mesmo id N vezes —
+ * cada repetição uma chance de divergir.
+ *
+ * Formato (JSON no ambiente, tipicamente um secret do GitHub):
+ *     N8N_CRED_IDS='{"OpenAI API":"aBc123","Supabase Service (Header Auth)":"dEf456"}'
+ *
+ * PRECEDÊNCIA, e ela é deliberada: o VIVO ganha. Quem está publicado é a verdade
+ * sobre a instalação; o mapa é a queda para quando ele se cala. Ao contrário, um
+ * mapa desatualizado sobrescreveria silenciosamente a credencial certa por uma
+ * que não existe mais — e o sintoma apareceria só na próxima rodada.
+ *
+ * ID INVÁLIDO NÃO ENTRA: `REPLACE` ou vazio no mapa é tratado como ausência, não
+ * como resposta. Aceitar `REPLACE` aqui desarmaria a trava do `republicar.sh`
+ * fazendo exatamente o que ela existe para impedir.
+ */
+export function idsDeCredencialDoAmbiente(env = process.env) {
+  const cru = env.N8N_CRED_IDS;
+  if (!cru || !String(cru).trim()) return {};
+  let mapa;
+  try {
+    mapa = JSON.parse(cru);
+  } catch {
+    throw new Error('N8N_CRED_IDS não é JSON válido. Esperado um objeto '
+      + '{"<nome da credencial>": "<id>"} — por exemplo {"OpenAI API":"aBc123"}.');
+  }
+  if (!mapa || typeof mapa !== 'object' || Array.isArray(mapa)) {
+    throw new Error('N8N_CRED_IDS precisa ser um OBJETO {"<nome>": "<id>"}, não '
+      + `${Array.isArray(mapa) ? 'uma lista' : typeof mapa}.`);
+  }
+  const limpo = {};
+  for (const [nome, id] of Object.entries(mapa)) {
+    if (typeof id === 'string' && id.trim() && id !== 'REPLACE') limpo[nome] = id.trim();
+  }
+  return limpo;
+}
+
+export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
   const doVivo = new Map((vivo.nodes ?? []).map((n) => [n.name, n]));
 
   const nodes = (repo.nodes ?? []).map((doRepo) => {
@@ -77,8 +131,13 @@ export function prepararRepublicacao(vivo, repo) {
       for (const [tipo, cred] of Object.entries(doRepo.credentials)) {
         const idVivo = oVivo?.credentials?.[tipo]?.id;
         const nomeVivo = oVivo?.credentials?.[tipo]?.name;
+        // O mapa do ambiente é a QUEDA, nunca a primeira escolha — ver o
+        // cabeçalho de `idsDeCredencialDoAmbiente`.
+        const idDeFora = idsPorNome[cred.name];
         if (idVivo && idVivo !== 'REPLACE') {
           saida.credentials[tipo] = { id: idVivo, name: nomeVivo ?? cred.name };
+        } else if (idDeFora) {
+          saida.credentials[tipo] = { id: idDeFora, name: cred.name };
         } else if (!doRepo.disabled) {
           saida.credentials[tipo] = { ...cred };
         }
@@ -120,7 +179,7 @@ if (ehExecucaoDireta(import.meta.url)) {
   ]);
   const repo = JSON.parse(readFileSync(resolve(RAIZ, 'N8N/workflow.e1-ingestao.json'), 'utf8'));
 
-  const pronto = prepararRepublicacao(vivo, repo);
+  const pronto = prepararRepublicacao(vivo, repo, { idsPorNome: idsDeCredencialDoAmbiente() });
 
   // O relatório vai para o ERRO, não para a saída: a saída é o JSON, e ela
   // costuma estar redirecionada para um arquivo.
@@ -134,6 +193,25 @@ if (ehExecucaoDireta(import.meta.url)) {
     console.error(`\n${pendentes.length} credencial(is) ainda em REPLACE — o passo que só o editor resolve:`);
     for (const p of pendentes) {
       console.error(`  • ${p.no} (${p.tipo}: "${p.nome}")${p.desabilitado ? ' — nó DESABILITADO, então não impede a rodada' : ' — nó HABILITADO, VAI FALHAR'}`);
+    }
+    // A MENSAGEM DIZ O QUE FAZER, e isso é o que faltava: nas três execuções
+    // da action de 11/09 ela listava os nós pendentes e parava aí. Saber QUAIS
+    // nós não diz a ninguém como destravar — e o efeito prático foi a
+    // republicação ficar parada, que é o passo sem o qual a correção fica no
+    // repositório e não na produção.
+    const nomesUnicos = [...new Set(pendentes.filter((p) => !p.desabilitado).map((p) => p.nome))];
+    if (nomesUnicos.length) {
+      const exemplo = JSON.stringify(Object.fromEntries(nomesUnicos.map((n) => [n, '<id>'])));
+      console.error('\nCOMO DESTRAVAR — dois caminhos, e o segundo é o que serve para automação:');
+      console.error('  1. No editor do n8n, abra cada nó acima e escolha a credencial na lista.');
+      console.error('     O id passa a vir do publicado e nunca mais precisa ser informado.');
+      console.error('  2. Informe o id por ambiente, em N8N_CRED_IDS (um secret do GitHub):');
+      console.error(`         N8N_CRED_IDS='${exemplo}'`);
+      console.error('     O id aparece na URL ao abrir a credencial no n8n:');
+      console.error('         .../home/credentials/<id>');
+      console.error('     Vale para a API pública do n8n NÃO devolver a credencial `httpHeaderAuth`');
+      console.error('     destes nós — foi o que travou a action em 11/09/2026 (as 11 credenciais');
+      console.error('     `postgres` resolveram pelo publicado; as `httpHeaderAuth`, nenhuma).');
     }
   }
   console.error(`\nDepois de publicar, confira: … | node N8N/conferir-publicado.mjs`);
