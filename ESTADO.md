@@ -22,7 +22,8 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Suítes** | **Remedidas em 11/09 (sessão 84), nesta árvore:** n8n **458** · export **721** · banco **109 migrations** do zero (**1.193 asserts** `ok`), os DOIS books, `TODOS OS TESTES PASSARAM`, `schema.sql` idêntico em rodadas consecutivas · régua da cobertura **exata em 20 de 20** documentos de produção · os 4 geradores sem drift. **ESTES NÚMEROS ENVELHECEM DENTRO DA PRÓPRIA SESSÃO:** esta linha já disse `407`/`716` — medição verdadeira quando foi escrita, e falsa três commits depois, porque cada fatia acrescentou teste. Uma revisão pegou. Quem acrescenta teste atualiza aqui na mesma passada, ou o número vira decoração. **As demais continuam sendo a medição de 02/09 (sessão 78), num container limpo — esta sessão NÃO as rodou:** hooks do agente **5** · transcrição **35** · premissas do realizado **51** · mensagem de falha + espera + veredito do lote **4 blocos** · e2e **46** · variações **25 rodadas, 0 achados** · régua da cobertura **exata nos 20 documentos de produção capturados** · custo do lote OK · os 4 geradores e as 3 fixtures sem diff · `tsc`/`eslint`/`next build` limpos. (Os 4 geradores rodaram nesta sessão também, sem drift — o que não medi aqui foram as 3 fixtures e o trio do portal.) |
 | **Workflow PUBLICADO no n8n** | **DEFASADO — e esta linha existe porque a falta dela custou um diagnóstico.** A última reimportação registrada é de **02/09**. Entre ela e a rodada de 190 documentos de 10–11/09, `N8N/workflow.e1-ingestao.json` mudou em **7 commits** (3 deles em extração/classificação) — ou seja, aquela rodada exercitou código de 02/09, e o veredito "não é bug de código" foi tirado de um workflow que não era o do repositório. O `ESTADO.md` rastreava a defasagem das MIGRATIONS e não a do WORKFLOW, e migration aplicada não diz nada sobre nó publicado. **Quem reimportar atualiza esta linha na mesma passada.** Hoje a defasagem é maior ainda: a topologia mudou (roteamento por formato, 7 nós novos) e o provedor virou OpenAI — **rodar sem reimportar roda o Gemini com a conta sem billing.** |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
-| **Provedor de IA** | **Google — `gemini-3.5-flash-lite`** (desde 24/08). Declarado em `N8N/lib/provedor.mjs`; a OpenAI continua no catálogo e testada. Trocar é `IA_PROVEDOR=openai node N8N/build-workflow.mjs` |
+| **Provedor de IA** | **NO REPOSITÓRIO: OpenAI `gpt-5.6-luna`** nos dois papéis, desde 11/09 (sessão 84) — `PROVEDOR_PADRAO = 'openai'` em `N8N/lib/provedor.mjs`. **NO n8n PUBLICADO era Google `gemini-3.5-flash-lite` até 02/09 — e a reimportação estava EM CURSO quando esta linha foi escrita** (o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde). **Não datar por este arquivo: `N8N/conferir-publicado.mjs` contra a instância é quem responde.** As duas linhas discordam DE PROPÓSITO, e é essa discordância que impede rodar um caso real hoje |
+| **PR desta rodada** | **#211, ABERTO e pronto para mergear** (`claude/financial-processing-review-hwtqyq`, HEAD `55c8e41`). CI **verde nos 28 passos**, `mergeable_state: clean`, base já no topo do `main` (`7b84086`). Sonar: Quality Gate passed, **1 new issue** — a `S3776` de `compararExtracoes`, RECUSADA com prova (a auto-contenção é exigida por um teste que reprova na hora se ela for quebrada) |
 
 ## A SESSÃO 84 (11/09) — LUNA, ROTEAMENTO POR FORMATO, O TIMEOUT DA MODELAGEM, E O QUE FICOU ABERTO
 
@@ -92,6 +93,33 @@ canal atual (`falha_motivo` → `extracao_falhou`) é sobrepujável, e endurecer
 - Trocar de provedor **remove a causa** das 72 falhas por billing do Google.
 - A `0026` define que mesmo `(caso_id, hash)` é o MESMO documento — agrupar planilha por hash no
   `Recompor` está certo, não é colisão.
+
+### Como a sessão 84 FECHOU, e o que a próxima herda
+
+O PR **#211 está aberto, fora do rascunho e pronto para mergear**: CI verde nos 28 passos em
+`55c8e41`, `mergeable_state: clean`, e o `main` já trazido para dentro (o merge não é enfeite —
+os dois commits novos do `main` mexem em `preparar-republicacao.mjs`, que conversa direto com os
+7 nós de formato que esta rodada criou; depois do merge: n8n 458/458 e 4 geradores sem drift).
+
+**O VEREDITO SOBRE RODAR UM CASO REAL (a AMO) É: NÃO — e ele não muda com mais código nesta
+árvore.** Quatro motivos, cada um bastando sozinho, e TRÊS deles só o dono fecha:
+
+1. **O workflow publicado no n8n é de 02/09.** Rodar hoje usaria o Gemini contra a conta sem
+   billing — as mesmas 72 falhas do Teste 00, de novo. Fecha com `N8N/REIMPORTAR.md`.
+2. **Nenhuma chamada real ao Luna foi feita.** Todo o código novo é provado por suíte, não por
+   resposta da OpenAI. Fecha com um lote de 5 documentos.
+3. **O teto de US$ 3 subestima** (não conta raciocínio) e **o teto DURO de US$ 5 na conta OpenAI
+   começa AUSENTE numa conta nova**. Fecha na configuração da conta.
+4. **A extração não é reproduzível e a conferência que acusaria isso não está ligada** — é a
+   lacuna 0 acima, e essa é de engenharia, não do dono.
+
+**Para a próxima sessão, em ordem:** (a) se o dono já reimportou e mediu `thoughts_tokens`, os
+itens 1, 2 e 3 da lista de lacunas fecham com número em vez de suposição; (b) a fiação da
+`repetibilidade.mjs` ao grafo é a fatia de maior valor que NÃO depende do dono, e ela vem com uma
+decisão de migration junto (divergência tem de ser pendência `sobrepujavel=false`); (c) subir
+`PROVEDORES.openai.tpm` para o TPM real encolhe a cadência, o lote de 3,9 h e os três espelhos do
+portal de uma vez — é o maior retorno por linha alterada da lista inteira.
+
 
 ## A SESSÃO 83 (10–11/09) — O TESTE DE 190 DOCUMENTOS BATEU NA COTA DO PROVEDOR, NÃO NO CÓDIGO
 

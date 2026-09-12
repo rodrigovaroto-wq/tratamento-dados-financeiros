@@ -4,11 +4,33 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-11 (sessão **83**). **Estado do `main`:** mergeado até o **PR
-#209**; migrations no repositório até a **`0163`** (`e83cf0e`, 108 migrations). **Nenhum PR aberto**
-no fim da sessão 83 — #206/#207/#208/#209 todos mergeados. A `0163` já está aplicada em produção
-(o dono confirmou: sonda `fn_instalacao_conferir()` zero linhas) — é a primeira vez desde 03/09 que
-repositório e produção batem no código.
+**Última atualização:** 2026-09-11 (sessão **84**). **O PR #211 FOI MERGEADO** pelo dono
+(`2874e33`), e o `main` andou depois dele. Migrations no repositório até a **`0164`**
+(109 migrations). **Não confie neste commit: rode `git log --oneline -1` e
+`ls Supabase/migrations | tail -1`** — as duas respondem em um segundo e não envelhecem, e este
+cabeçalho já congelou três vezes.
+
+**Quantas estão aplicadas em produção, este arquivo NÃO SABE — e as duas fontes daqui se
+contradizem.** O cabeçalho da sessão 83 (logo abaixo, preservado) dava a `0163` por aplicada; o
+`ESTADO.md` lista **seis pendentes: `0158`, `0159`, `0161`, `0162`, `0163` e `0164`**. Não escolha
+entre os dois: **rode a sonda contra o banco em que você está conectado**, que é a única
+autoridade — `select chave, migration, tipo, objeto, presente, detalhe, porque from
+fn_instalacao_conferir() where not presente order by 1;`. Esta contradição é registro, não
+descuido: ela é exatamente o modo de falha que o resto deste cabeçalho descreve.
+
+> **LEIA "A SESSÃO 84" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** O sistema trocou de
+> provedor: **OpenAI `gpt-5.6-luna`** nos dois papéis, no repositório. **Mas o n8n publicado
+> continua com o Gemini, de 02/09** — as duas coisas discordam de propósito, e é essa discordância
+> que faz o veredito sobre rodar um mandato real ser **NÃO**. Três dos quatro bloqueios são do
+> dono e estão listados no fim da seção: reimportar o n8n (`N8N/REIMPORTAR.md`), pôr o teto duro
+> de US$ 5 na conta OpenAI, e rodar um lote de 5 documentos para medir `thoughts_tokens`. O
+> quarto é de engenharia: a extração não é reproduzível (o Luna recusa `temperature`) e
+> `N8N/lib/repetibilidade.mjs` — que acusaria isso, e está testado — **não está ligado ao grafo**.
+>
+> **A REIMPORTAÇÃO ESTAVA EM CURSO QUANDO ESTE ARQUIVO FOI ESCRITO**, então não acredite na data
+> "02/09": o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde, o que só
+> acontece quando ela está sendo rodada de verdade. **Quem responde qual workflow está no ar é
+> `N8N/conferir-publicado.mjs` contra a instância**, não esta linha.
 
 > **LEIA "A SESSÃO 83" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** O dono rodou um book de
 > 190 documentos ("Teste 00") e 75 vieram sem nenhuma linha extraída — mas a causa **NÃO é código**:
