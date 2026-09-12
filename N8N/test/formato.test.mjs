@@ -147,6 +147,34 @@ test('desconhecido distingue "havia bytes" de "chegou sem bytes" — dois casos,
   assert.notEqual(r1.evidencia, r2.evidencia, 'os dois casos NUNCA podem colapsar num rótulo só');
 });
 
+test('queda por mimetype declarado: a tabela mapeia cada familia ao formato certo', () => {
+  // O ramo de queda tem uma ALTERNÂNCIA ANCORADA que o Sonar apontou (S5850, PR
+  // #213): em `^text/|csv` a âncora vale só para a primeira alternativa, ou seja
+  // "começa com text/" OU "contém csv em qualquer lugar". As duas são
+  // intencionais — `application/csv` tem de casar —, e é isso que este teste
+  // trava: sem ele, "consertar" a regex para `^(?:text\/|csv)` passa despercebido
+  // e todo `application/csv` deixa de ser reconhecido.
+  //
+  // Bytes sem assinatura E com NUL (para não cair em `pareceTexto`), forçando a
+  // decisão para o mimetype declarado.
+  const opaco = Buffer.from([0x01, 0x00, 0x02, 0x00, 0x03]);
+  const porMime = (mt) => detectarFormato(opaco, { mimeDeclarado: mt }).formato;
+
+  assert.equal(porMime('application/pdf'), 'pdf');
+  assert.equal(porMime('image/png'), 'imagem');
+  assert.equal(porMime('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'), 'xlsx');
+  assert.equal(porMime('application/vnd.ms-excel'), 'xls');
+  assert.equal(porMime('application/xml'), 'xml');
+  assert.equal(porMime('text/plain'), 'texto');
+  assert.equal(porMime('application/csv'), 'texto',
+    'csv NÃO é ancorado no início de propósito — `application/csv` tem de casar');
+  assert.equal(porMime('text/csv'), 'texto');
+
+  // SVG é IMAGEM, não XML, porque `^image/` é avaliado antes. A ordem da tabela
+  // é comportamento, não detalhe: invertida, todo SVG iria para o ramo de XML.
+  assert.equal(porMime('image/svg+xml'), 'imagem');
+});
+
 // --------------------------------------------------------------------------
 // formaDoTexto COM TEXTO VAZIO NÃO ESTOURA.
 // --------------------------------------------------------------------------

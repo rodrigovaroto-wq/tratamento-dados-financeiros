@@ -289,9 +289,22 @@ export function detectarFormato(buf, { mimeDeclarado = '', nome = '' } = {}) {
   // legítimo é esconder que caiu. `confiavel: false` viaja com o item e é o que
   // permite a quem lê distinguir medição de suposição.
   if (mt) {
+    // AS ALTERNÂNCIAS VÃO AGRUPADAS, e não é preciosismo de analisador (S5850,
+    // achado pelo Sonar no PR #213): numa regex `^a|b`, a âncora vale SÓ para a
+    // primeira alternativa. `/^text\/|csv/` lê-se "começa com text/" OU "contém
+    // csv em qualquer lugar" — que é de fato o que se quer aqui (`application/
+    // csv` tem de casar), mas quem ler depois não tem como saber se foi escolha
+    // ou descuido. Agrupado, a intenção fica no código em vez de no comentário.
     const porMime = [
       [/pdf/, 'pdf'], [/^image\//, 'imagem'], [/spreadsheetml/, 'xlsx'],
-      [/ms-excel|excel/, 'xls'], [/\/xml$|\+xml$/, 'xml'], [/^text\/|csv/, 'texto'],
+      // `excel` sozinho já cobre `ms-excel` (a alternância era redundante).
+      [/excel/, 'xls'],
+      // `/xml` ou `+xml`, ambos NO FIM — `application/xml` e `image/svg+xml`.
+      // Ancorado no fim porque a substring "xml" solta casa com o mimetype do
+      // XLSX (`...openxmlformats...`), o defeito que `PADRAO_MIME` já corrigiu.
+      [/[/+]xml$/, 'xml'],
+      // "começa com text/" OU "contém csv" — as duas intencionais.
+      [/(?:^text\/)|csv/, 'texto'],
     ];
     for (const [re, formato] of porMime) {
       if (re.test(mt)) {
