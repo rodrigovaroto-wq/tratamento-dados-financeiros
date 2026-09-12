@@ -33,8 +33,12 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
+import {
+  ASSINATURAS, SEPARADORES, byteEm, casaAssinatura, saborDoZip, trechoLatin1,
+  pareceTexto, contarFora, formaDoTexto, detectarFormato,
+} from './lib/formato.mjs';
 import {
   spreadsheetToText, colunasDaPlanilha, avisoTruncamentoPlanilha,
   MAX_LINHAS_PLANILHA, MAX_COLUNAS_PLANILHA,
@@ -215,6 +219,21 @@ const FONTE_ORCAMENTO_LOTE = [
   // fica verde e o lote morre no cliente.
   `const custoDaChamada = ${custoDaChamada.toString()};`,
   `const tokensDeSaida = ${tokensDeSaida.toString()};`,
+  // O FORMATO ENTROU NA CONTA, então `ehFormatoDeTexto` e a lista dela têm de
+  // atravessar junto — e esta linha é literalmente o `ReferenceError` que o
+  // comentário de `custoDaChamada` oito linhas acima já descreve como "o modo de
+  // falha mais caro possível, porque a suíte fica verde e o lote morre no
+  // cliente". Foi medido nesta rodada, não suposto: executar o `jsCode` gerado
+  // sem estas linhas estoura `ehFormatoDeTexto is not defined` em QUALQUER
+  // chamada — inclusive a de PDF, porque a checagem de formato roda antes de
+  // qualquer ramo.
+  //
+  // `CARACTERES_POR_TOKEN` entra pelo mesmo motivo e é novo aqui:
+  // `custoEstimadoPorConteudo` passou a dividir bytes por ele para o documento
+  // de TEXTO, e até agora esse nome só existia em tempo de build.
+  `const FORMATOS_DE_TEXTO = ${JSON.stringify(FORMATOS_DE_TEXTO)};`,
+  `const ehFormatoDeTexto = ${ehFormatoDeTexto.toString()};`,
+  `const CARACTERES_POR_TOKEN = ${CARACTERES_POR_TOKEN};`,
   `const custoEstimadoPorConteudo = ${custoEstimadoPorConteudo.toString()};`,
   `const orcamentoDoLotePorConteudo = ${orcamentoDoLotePorConteudo.toString()};`,
 ].join('\n');
@@ -276,6 +295,24 @@ const FONTE_SPREADSHEET = [
   `const colunasDaPlanilha = ${colunasDaPlanilha.toString()};`,
   `const spreadsheetToText = ${spreadsheetToText.toString()};`,
   `const avisoTruncamentoPlanilha = ${avisoTruncamentoPlanilha.toString()};`,
+].join('\n');
+
+// O DETECTOR DE FORMATO dentro do nó — a MESMA `lib/formato.mjs` que a suíte
+// exercita, atravessando por `toString()` como todas as outras. Nenhuma segunda
+// implementação: um detector no nó e outro na lib divergindo é exatamente o
+// defeito que `PADRAO_MIME` já teve de consertar uma vez (três lugares decidindo
+// por formato com três cópias do padrão).
+const FONTE_FORMATO = [
+  `const ASSINATURAS = ${JSON.stringify(ASSINATURAS)};`,
+  `const SEPARADORES = ${JSON.stringify(SEPARADORES)};`,
+  `const byteEm = ${byteEm.toString()};`,
+  `const casaAssinatura = ${casaAssinatura.toString()};`,
+  `const trechoLatin1 = ${trechoLatin1.toString()};`,
+  `const saborDoZip = ${saborDoZip.toString()};`,
+  `const pareceTexto = ${pareceTexto.toString()};`,
+  `const contarFora = ${contarFora.toString()};`,
+  `const formaDoTexto = ${formaDoTexto.toString()};`,
+  `const detectarFormato = ${detectarFormato.toString()};`,
 ].join('\n');
 
 // ---------------------------------------------------------------------------
@@ -419,6 +456,16 @@ const docs = itens.map((i) => {
     blocos,
     precisaFallback: !!j.precisa_fallback_ia,
     bytes: Number(j.bytes),
+    // O FORMATO MEDIDO viaja ate' aqui porque a conta de custo depende dele, e
+    // depender dele nao e' refinamento: \`CUSTO_POR_MB_USD\` (2,80) foi calibrado
+    // sobre PDF, que vai ao modelo como IMAGEM (~1000 tokens/pagina). Aplicado a
+    // TEXTO ele erra 53x para CIMA -- medido: 2 MB de texto estimam US$ 5,60
+    // contra US$ 0,105 de entrada real. Foi esse numero que fez o dono concluir
+    // que os arquivos da AMO eram impossiveis de processar neste sistema, e
+    // mudar o proprio processo de trabalho por causa de um guarda errado.
+    // Recusar lote que cabe e' o v31 pelo outro lado (ver o cabecalho de
+    // lib/custo.mjs).
+    formato: j.formato_detectado || null,
   };
 });
 const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, tokensPromptSistema: TOKENS_PROMPT_SISTEMA });
@@ -624,7 +671,7 @@ return {json:{...item, tipo_taxonomia:tipo, periodo_tipo:periodo?periodo.tipo:nu
 const CODE_PREPARAR_CONTEUDO = `
 ${FONTE_SHA256}
 ${FONTE_PROVEDOR}
-const PADRAO_MIME=${JSON.stringify(PADRAO_MIME)};
+${FONTE_FORMATO}
 const item=$input.item.json;
 const binMeta=($input.item.binary||{})['data']||{};
 const mt=(binMeta.mimeType||'').toLowerCase();
@@ -664,13 +711,42 @@ const b64=buf.toString('base64');
 // se o extrator confirmar sucesso mais adiante. Se o extrator falhar (arquivo
 // corrompido, por exemplo), o \`onError\` dele devolve ESTE MESMO item sem
 // tocar -- e o aviso abaixo e' exatamente o que sobrevive.
+// O FORMATO SAI DOS BYTES, NUNCA DO MIMETYPE DECLARADO -- e esta linha e' a
+// correcao do defeito que custou os 60 documentos da AMO em 12/09/2026. Ate'
+// aqui a decisao saia de \`content_mime\`, que vem da EXTENSAO que o upload
+// declarou; o dono converteu planilhas de PDF para \`.txt\`, os 60 chegaram como
+// \`text/plain\`, o padrao \`csv\` casou, e os 60 foram para o \`Extract From File\`
+// em modo CSV -- que VALIDA o mimeType do binario e rejeita \`text/plain\`. 60 de
+// 60 falharam e a mensagem de erro foi mandada a' IA no lugar do balanco.
+// \`detectarFormato\` le a assinatura dos bytes (ver lib/formato.mjs).
+const det=detectarFormato(buf,{mimeDeclarado:mt,nome:item.nome_original||''});
+const formato=det.formato;
 let part; let aviso=null;
-if(new RegExp(PADRAO_MIME.pdf,'i').test(mt)||new RegExp(PADRAO_MIME.imagem,'i').test(mt)) part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});
-else if(new RegExp(PADRAO_MIME.csv,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de CSV pendente do no nativo Extrair CSV)');aviso='Arquivo CSV ainda nao foi extraido pelo no nativo (Extrair CSV). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
-else if(new RegExp(PADRAO_MIME.xlsx,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLSX pendente do no nativo Extrair XLSX)');aviso='Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
-else if(new RegExp(PADRAO_MIME.xls,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XLS pendente do no nativo Extrair XLS)');aviso='Arquivo .xls ainda nao foi extraido pelo no nativo (Extrair XLS). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
-else if(new RegExp(PADRAO_MIME.xml,'i').test(mt)){part=parteDeTexto(PROVEDOR,'(extracao de XML pendente do no nativo Extrair XML)');aviso='Arquivo XML ainda nao foi extraido pelo no nativo (Extrair XML). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
-else {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+mt+')');aviso='Formato nao suportado pelo preparo de conteudo ('+mt+'): NENHUM dado deste documento chegou a extracao.';}
+if(formato==='pdf'||formato==='imagem') part=parteDeArquivo(PROVEDOR,{mimeType:mt,base64:b64,filename:item.nome_original||'documento.pdf'});
+// TEXTO E XML SAO LIDOS AQUI, e nao por no' nativo. O buffer ja' esta na mao --
+// mandar o arquivo a um \`Extract From File\` para receber de volta o texto que
+// estes bytes JA SAO acrescenta um modo de falha (o no' nativo recusa mimetypes
+// que este pipeline aceita) sem acrescentar capacidade nenhuma. Era assim ate'
+// 11/09 e funcionava; o roteamento por formato trocou por um no' nativo e foi
+// exatamente essa troca que quebrou a AMO. \`parseCsv\` continua existindo para
+// quando o texto for DELIMITADO -- so' que agora quem decide isso e'
+// \`formaDoTexto\`, medindo consistencia de separador, em vez da extensao.
+else if(formato==='texto'||formato==='xml'){
+  const txt=buf.toString('utf-8');
+  if(txt.trim()===''){
+    part=parteDeTexto(PROVEDOR,'(arquivo de texto vazio)');
+    aviso='O arquivo chegou VAZIO (zero bytes de texto): NENHUM dado deste documento chegou a extracao.';
+  } else {
+    part=parteDeTexto(PROVEDOR,txt);
+  }
+}
+else if(formato==='xlsx'){part=parteDeTexto(PROVEDOR,'(extracao de XLSX pendente do no nativo Extrair XLSX)');aviso='Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
+else if(formato==='xls'){part=parteDeTexto(PROVEDOR,'(extracao de XLS pendente do no nativo Extrair XLS)');aviso='Arquivo .xls ainda nao foi extraido pelo no nativo (Extrair XLS). Se este aviso sobreviver ao Recompor Conteudo Extraido, a extracao FALHOU e nenhum dado deste documento chegou ao banco.';}
+// NAO SUPORTADO diz agora O QUE O ARQUIVO E' (medido), nao so' o mimetype que
+// ele alegou ser. \`det.detalhe\` e' a diferenca entre "formato nao suportado
+// (application/octet-stream)" -- que nao ajuda ninguem -- e "container ZIP do
+// tipo docx", que diz ao analista o que reenviar.
+else {part=parteDeTexto(PROVEDOR,'(conteudo nao suportado: '+det.detalhe+')');aviso='Formato nao suportado pelo preparo de conteudo: '+det.detalhe+'. NENHUM dado deste documento chegou a extracao.';}
 // HASH DO CONTEUDO -- a idempotencia da 0026 dependia disto e nunca recebeu nada.
 // A 0026 existe para reenvio do MESMO arquivo virar uma documento_versao nova sob
 // o MESMO documento, em vez de documento novo. Como o pipeline mandava null no
@@ -710,7 +786,16 @@ try{
 // lateral) e o \`Extrair Texto\`, que le a camada de texto do PDF. Da\u00ed para a
 // frente ninguem mais precisa -- o \`content_part\` ja' carrega o arquivo em
 // base64 DENTRO do json, e e' ele que vai para a OpenAI.
-return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso}, binary: $input.item.binary};
+return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteudo: aviso,
+  // O QUE FOI MEDIDO viaja com o item: o roteador decide por
+  // \`formato_detectado\`, e \`formato_confiavel\`/\`formato_evidencia\` deixam
+  // quem le' distinguir medicao de suposicao (regra 1 do CLAUDE.md aplicada
+  // ao proprio detector -- um palpite apresentado como medicao e' ausencia
+  // apresentada como dado).
+  formato_detectado: formato, formato_evidencia: det.evidencia,
+  formato_confiavel: det.confiavel, formato_detalhe: det.detalhe,
+  formato_forma_texto: det.texto ? det.texto.forma : null,
+}, binary: $input.item.binary};
 `.trim();
 
 // --- Code (ALL ITEMS): RECOMPÕE o que os 5 extratores por formato devolveram --
@@ -768,8 +853,6 @@ return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteud
 const CODE_RECOMPOR_EXTRACAO = `
 ${FONTE_PROVEDOR}
 ${FONTE_SPREADSHEET}
-const PADRAO_MIME=${JSON.stringify(PADRAO_MIME)};
-const combinaCom=(chave,mt)=>new RegExp(PADRAO_MIME[chave],'i').test(String(mt||''));
 const entradas=$input.all();
 const completos=[];
 const porDocumento=new Map();
@@ -786,24 +869,70 @@ for(let i=0;i<entradas.length;i+=1){
     completos.push({json:{...raw, aviso_conteudo:'Recompor Conteudo Extraido: nao foi possivel religar esta linha ao documento de origem (itemMatching falhou). Conteudo NAO chegou a extracao.'}, pairedItem:{item:i}});
     continue;
   }
-  const mt=ctx.content_mime;
+  const formato=ctx.formato_detectado;
   // Caso 2: PDF -- Extrair Texto e' Camada 1 (texto/paginas), Medir Documento
   // le direto do no' anterior. Nao mexe.
-  if(combinaCom('pdf',mt)){ completos.push(entradas[i]); continue; }
-  // Caso 3a: XML -- item de texto unico, nao planilha.
-  if(combinaCom('xml',mt)){
+  if(formato==='pdf'){ completos.push(entradas[i]); continue; }
+  // ==========================================================================
+  // Caso 3: O EXTRATOR FALHOU -- e este ramo e' a correcao do defeito que
+  // apagou 60 documentos da AMO em 12/09/2026.
+  // ==========================================================================
+  //
+  // O QUE ESTE NO' ACREDITAVA, e estava escrito num comentario logo acima:
+  // "\`onError: continueRegularOutput\` devolve o item de ENTRADA sem tocar, e
+  // \`caso_id\` so' sobrevive nesse caso". E FALSO. Quando o \`Extract From File\`
+  // lanca por item, o n8n NAO repassa o item de entrada: ele emite um item NOVO
+  // com a forma \`{error: "<mensagem>"}\` -- sem \`caso_id\`, sem \`content_part\`,
+  // sem \`aviso_conteudo\`. Medido na instancia do dono: 60 itens, todos
+  // \`{error: "The file selected in 'Input Binary Field' is not in csv format"}\`.
+  //
+  // O ESTRAGO, e ele e' de uma ordem acima de "o documento falhou". Sem este
+  // ramo, o item de erro escapava do teste \`'caso_id' in raw\` (falso), caia no
+  // Caso 3b, e a MENSAGEM DE ERRO era empurrada como LINHA DE PLANILHA:
+  // \`spreadsheetToText([{error:"..."}])\` devolve "error\\nThe file selected...",
+  // que virava \`content_part\` (mandado a' IA no lugar do balanco) E \`text\`
+  // (lido pela regua de cobertura como se fosse o documento). Pior: o
+  // \`aviso_conteudo\` que \`Preparar Conteudo\` tinha aberto -- "a extracao FALHOU
+  // e nenhum dado deste documento chegou ao banco" -- era SOBRESCRITO por
+  // \`avisoTruncamentoPlanilha([1 linha])\`, que devolve null. A falha virava
+  // sucesso fingido, e o modelo, recebendo a mensagem tecnica, respondia que o
+  // ARQUIVO estava ilegivel. O banco gravou 60 documentos como \`ilegivel\` com
+  // 84-98% de confianca, sobre arquivos integros. E a regra 1 do CLAUDE.md
+  // ("nunca apresentar ausencia como dado") violada pelo caminho mais caro que
+  // existe: a ausencia nao ficou em branco, ela ficou com a CARA de medicao.
+  //
+  // POR QUE O TESTE NAO PEGOU, e vale mais que a correcao: o invariante que
+  // cobria este caminho INVENTOU a fixture. Ele montava o item de falha como
+  // \`{...ctxCsv}\` -- COM \`caso_id\` -- e entao afirmava "extrator que falhou
+  // preserva o aviso". Passava, sobre uma forma que o n8n nunca produz. E a
+  // regra 4 do CLAUDE.md ("nunca inventar fixture para provar bug de producao")
+  // cobrada ao contrario: a fixture inventada nao provou um bug, ela BLINDOU um.
+  // O teste que substitui aquele usa a forma MEDIDA, \`{error: "..."}\`.
+  if(!('caso_id' in raw) && ('error' in raw)){
+    const motivo=typeof raw.error==='string'?raw.error
+      :(raw.error&&(raw.error.message||raw.error.description))||'sem mensagem';
+    completos.push({json:{...ctx,
+      // O \`content_part\` e o aviso de \`Preparar Conteudo\` SOBREVIVEM intactos:
+      // eles ja' dizem "pendente do no' nativo / a extracao FALHOU". Nada aqui
+      // escreve conteudo -- nao ha conteudo.
+      text: null,
+      aviso_conteudo: 'A extracao NATIVA deste arquivo FALHOU no n8n ('
+        + (ctx.formato_detectado||'formato nao identificado') + '): ' + motivo
+        + '. NENHUM dado deste documento chegou ao banco nem ao book -- o que o'
+        + ' arquivo contem NAO foi lido. Isto e uma falha do PIPELINE, nao do'
+        + ' arquivo: nao registre este documento como ilegivel sem conferir.',
+      extracao_falhou: true,
+      extracao_falha_motivo: motivo,
+    }, pairedItem:{item:i}});
+    continue;
+  }
+  // Caso 3a: XML -- item de texto unico, nao planilha. So' chega aqui por
+  // compatibilidade: desde 12/09 o XML e' lido em \`Preparar Conteudo\` e nem
+  // passa por extrator. Mantido porque custa duas linhas e some sozinho.
+  if(formato==='xml'){
     const texto=[raw.data,raw.text,raw.content].find((v)=>typeof v==='string'&&v.trim()!=='');
     completos.push({json:{...ctx,
       content_part: texto?parteDeTexto(PROVEDOR,texto):ctx.content_part,
-      // \`text\`: SEM ISTO, \`Medir Documento\` (que so' le \`doExtrator.text\`/
-      // \`texto_pdf\`) nunca via o XML -- \`temTexto\` saia falso, a regua de
-      // cobertura (\`avaliarCobertura\`) recebia \`esperadas=null\` e se calava
-      // (\`Number(null)=0 < minimo\`) para TODO documento XML, sempre, desde que
-      // a regua existe. Achado numa revisao adversarial (11/09): a mesma classe
-      // de defeito que a 0154 fechou para PDF ficava aberta aqui, sem pendencia
-      // nenhuma acusando. \`text\` e' o MESMO \`texto\` que vira \`content_part\` --
-      // a regua passa a medir exatamente o que foi mandado a' IA, nao um
-      // documento diferente.
       text: texto||null,
       aviso_conteudo: texto?null:ctx.aviso_conteudo,
     }, pairedItem:{item:i}});
@@ -1747,13 +1876,19 @@ const PG_POR_ITEM = { queryBatching: 'independently' };
 //     caindo aqui e aparecendo VERMELHO é o comportamento certo.
 const CODE_CONTINUA = { onError: 'continueRegularOutput' };
 
-// Condição do `Roteador de Formato` (Switch) para uma chave de `PADRAO_MIME` —
-// MESMA sintaxe de `conditions` que os IF deste arquivo já usam (`Lote cabe?`,
-// `Precisa Fallback?`), só que o operador é `regex` em vez de `boolean`: o
-// Switch decide por STRING (mimetype), não por flag.
-const condMime = (padrao) => ({
-  options: { caseSensitive: false, typeValidation: 'strict' }, combinator: 'and',
-  conditions: [{ leftValue: '={{ $json.content_mime }}', rightValue: padrao, operator: { type: 'string', operation: 'regex' } }],
+// Condição do `Roteador de Formato` (Switch) para um formato DETECTADO.
+//
+// MUDOU DE REGEX SOBRE MIMETYPE PARA IGUALDADE SOBRE FORMATO MEDIDO, e a troca
+// é a correção da AMO no roteador. Antes: `regex` contra `$json.content_mime` —
+// o mimetype DECLARADO no upload, com os padrões de `PADRAO_MIME`. Um `.txt`
+// casava com `csv|^text/plain$` e ia para um extrator que o rejeitava. Agora:
+// igualdade contra `$json.formato_detectado`, que `Preparar Conteudo` MEDIU nos
+// bytes. Some junto toda a classe de defeito "dois padrões de regex divergindo
+// entre o roteador e o nó" — não há mais padrão nenhum para divergir, só um
+// nome de formato decidido num lugar só.
+const condFormato = (formato) => ({
+  options: { caseSensitive: true, typeValidation: 'strict' }, combinator: 'and',
+  conditions: [{ leftValue: '={{ $json.formato_detectado }}', rightValue: formato, operator: { type: 'string', operation: 'equals' } }],
 });
 
 const nodes = [
@@ -1837,50 +1972,39 @@ const nodes = [
   node('Roteador de Formato', 'n8n-nodes-base.switch', 3, {
     mode: 'rules',
     rules: { values: [
-      { outputKey: 'pdf', conditions: condMime(PADRAO_MIME.pdf) },
-      { outputKey: 'imagem', conditions: condMime(PADRAO_MIME.imagem) },
-      { outputKey: 'csv', conditions: condMime(PADRAO_MIME.csv) },
-      { outputKey: 'xlsx', conditions: condMime(PADRAO_MIME.xlsx) },
-      { outputKey: 'xls', conditions: condMime(PADRAO_MIME.xls) },
-      { outputKey: 'xml', conditions: condMime(PADRAO_MIME.xml) },
+      { outputKey: 'pdf', conditions: condFormato('pdf') },
+      { outputKey: 'xlsx', conditions: condFormato('xlsx') },
+      { outputKey: 'xls', conditions: condFormato('xls') },
     ] },
     options: { fallbackOutput: 'extra' },
   }),
 
-  // OS QUATRO EXTRATORES NOVOS — o pedido literal do dono ("garanta que os nós
-  // 'Extract from...' saiam todos"), com o rótulo XLS/XLSX CORRIGIDO: XLS é o
-  // formato ANTIGO (OLE binário, pré-2007), XLSX é o MODERNO (Office Open XML,
-  // pós-2007) — o dono tinha os dois trocados no editor. Aqui o NOME do nó é
-  // literalmente a extensão que ele trata, e o `operation` bate com ela: não
-  // sobra rótulo "moderno/antigo" para inverter de novo.
+  // OS DOIS EXTRATORES BINÁRIOS — e "dois" é o número depois da correção da
+  // AMO. Eram quatro: `Extrair CSV` e `Extrair XML` foram REMOVIDOS, porque
+  // pediam ao n8n que devolvesse o texto que os bytes já são.
   //
-  // `onError: continueRegularOutput` nos QUATRO, e a JUSTIFICATIVA não é a
-  // mesma do fan-out cego que a auditoria reprovou. Lá, tolerância mascarava
-  // ROTEAMENTO ERRADO (XML chegando a um extrator de CSV). Aqui o roteamento
-  // já garante que só o mimetype certo chega a cada nó — o que pode falhar
-  // ainda é o ARQUIVO (CSV mal formado, XLSX corrompido), e isso é uma falha
-  // de CONTEÚDO legítima, do mesmo jeito que "PDF escaneado sem camada de
-  // texto" já é para `Extrair Texto`: um documento ruim não pode derrubar os
-  // outros 189 de um lote. `Recompor Conteudo Extraido` detecta a falha (o
-  // item passa sem `content_part` novo) e a pendência de `Preparar Conteudo`
-  // sobrevive — nunca vira sucesso fingido.
-  node('Extrair CSV', 'n8n-nodes-base.extractFromFile', 1, {
-    operation: 'csv', binaryPropertyName: 'data',
-  }, { onError: 'continueRegularOutput' }),
+  // POR QUE REMOVER EM VEZ DE CORRIGIR O ROTEAMENTO ATÉ ELES. O `Extract From
+  // File` valida o mimeType do binário e recusa o que não está na lista dele —
+  // é dele a mensagem `The file selected in 'Input Binary Field' is not in csv
+  // format` que apareceu 60 vezes no lote da AMO. Essa lista é do n8n, não
+  // deste projeto, e não há padrão de roteamento que a torne conhecida daqui:
+  // acertar hoje não impede que o próximo mimetype legítimo (`text/tab-separated
+  // -values`, um `.txt` de outra origem) caia na mesma recusa. Texto, este
+  // pipeline lê sozinho — `parseCsv`/`formaDoTexto` em `Preparar Conteudo`, que
+  // é o que ele fazia até 11/09 e funcionava. Sobram aqui só os formatos que
+  // REALMENTE precisam de um decodificador binário: XLSX (ZIP+XML) e XLS (OLE2).
+  //
+  // `onError: continueRegularOutput` nos dois: um XLSX corrompido é falha de
+  // CONTEÚDO legítima e não pode derrubar os outros documentos do lote. O que
+  // MUDOU é o que acontece depois — `Recompor Conteudo Extraido` agora
+  // RECONHECE o item de erro que o n8n emite (`{error: "..."}`, sem `caso_id`) e
+  // preserva a pendência. Até 12/09 ele tratava esse item como LINHA DE
+  // PLANILHA, e a mensagem de erro virava o conteúdo do documento.
   node('Extrair XLSX', 'n8n-nodes-base.extractFromFile', 1, {
     operation: 'xlsx', binaryPropertyName: 'data',
   }, { onError: 'continueRegularOutput' }),
   node('Extrair XLS', 'n8n-nodes-base.extractFromFile', 1, {
     operation: 'xls', binaryPropertyName: 'data',
-  }, { onError: 'continueRegularOutput' }),
-  // XML: `Extract From File` não tem operação dedicada de XML→JSON (isso é o
-  // nó `XML`, que opera sobre string, não sobre binário) — a operação `text`
-  // lê o binário como texto puro, e é isso que `Recompor Conteudo Extraido`
-  // manda para a IA (o XML cru é conteúdo legível pelo modelo, ainda que não
-  // estruturado em linhas). CONFERIR NO EDITOR: se a instância do dono expõe
-  // uma operação de XML mais específica, trocar aqui é local único.
-  node('Extrair XML', 'n8n-nodes-base.extractFromFile', 1, {
-    operation: 'text', binaryPropertyName: 'data',
   }, { onError: 'continueRegularOutput' }),
 
   // O MERGE QUE CONVERGE OS 7 RAMOS DO ROTEADOR — a resposta canônica do n8n
@@ -1890,7 +2014,7 @@ const nodes = [
   // `Extrair Texto`), imagem (direto), csv/xlsx/xls/xml (via cada extrator) e
   // o fallback 'outros' (direto).
   node('Juntar Extracao de Conteudo', 'n8n-nodes-base.merge', 3, {
-    mode: 'append', numberInputs: 7,
+    mode: 'append', numberInputs: 4,
   }),
   // SEM `onError`, de propósito — ver o comentário de `CODE_CONTINUA` acima.
   node('Recompor Conteudo Extraido', 'n8n-nodes-base.code', 2, {
@@ -2203,22 +2327,24 @@ const connections = {
   // CADA SAÍDA VAI PARA EXATAMENTE UM DESTINO — nunca fan-out cego (a auditoria
   // dos 5 nós "Extract from..." do dono era exatamente o oposto disto: os 5
   // recebiam o MESMO item, sem Switch nenhum decidindo). A ORDEM das saídas
-  // aqui é a ORDEM de `rules.values` no nó (pdf/imagem/csv/xlsx/xls/xml), com o
-  // fallback ('outros') por último.
+  // aqui é a ORDEM de `rules.values` no nó (pdf/xlsx/xls), com o fallback por
+  // último.
+  //
+  // O FALLBACK AGORA CARREGA TRÊS FORMATOS RESOLVIDOS, e isso é o desenho, não
+  // uma sobra: `imagem`, `texto` e `xml` já saem de `Preparar Conteudo` com o
+  // `content_part` DEFINITIVO (a imagem em base64, o texto lido do buffer).
+  // Eles não têm o que extrair — vão direto ao Merge. Junto vai `desconhecido`,
+  // que também já tem o seu (a pendência de formato não suportado, agora
+  // dizendo o que o arquivo É e não só o que ele alegava ser).
   'Roteador de Formato': { main: [
     [{ node: 'Extrair Texto', type: 'main', index: 0 }],
-    [{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 1 }],
-    [{ node: 'Extrair CSV', type: 'main', index: 0 }],
     [{ node: 'Extrair XLSX', type: 'main', index: 0 }],
     [{ node: 'Extrair XLS', type: 'main', index: 0 }],
-    [{ node: 'Extrair XML', type: 'main', index: 0 }],
-    [{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 6 }],
+    [{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 3 }],
   ] },
   'Extrair Texto': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 0 }]] },
-  'Extrair CSV': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 2 }]] },
-  'Extrair XLSX': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 3 }]] },
-  'Extrair XLS': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 4 }]] },
-  'Extrair XML': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 5 }]] },
+  'Extrair XLSX': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 1 }]] },
+  'Extrair XLS': { main: [[{ node: 'Juntar Extracao de Conteudo', type: 'main', index: 2 }]] },
   'Juntar Extracao de Conteudo': { main: [[{ node: 'Recompor Conteudo Extraido', type: 'main', index: 0 }]] },
   'Recompor Conteudo Extraido': { main: [[{ node: 'Medir Documento', type: 'main', index: 0 }]] },
   // O ORÇAMENTO ENTRA AQUI, e não antes do preparo do conteúdo (onde ficava até

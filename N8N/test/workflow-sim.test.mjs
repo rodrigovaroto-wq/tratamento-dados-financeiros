@@ -227,11 +227,27 @@ async function run(name, { item, items, refs = {}, env = {}, itemIndex = 0, bina
 // Dados mock: o Form entrega binários; o Postgres do Upsert só entrega caso_id.
 // Nome com espaço+acento de propósito (caso real: "BALANÇO ACUMULADO 2025.pdf").
 // ---------------------------------------------------------------------------
+// OS BYTES DESTAS FIXTURES SÃO DE UM PDF DE VERDADE, e a troca tem data e causa.
+// Até 12/09/2026 eram a base64 de "ABC" e "DEF" DECLARADAS como
+// `application/pdf`. Elas passaram a reprovar quando `Preparar Conteudo` começou
+// a decidir o formato pelos BYTES (`lib/formato.mjs`) em vez de acreditar no
+// mimetype do upload — e reprovaram CERTO: "ABC" não é um PDF, e o detector novo
+// diz exatamente isso. Quem descrevia um arquivo impossível era a fixture.
+//
+// É a regra 4 do CLAUDE.md no caso menos óbvio dela: a fixture inventada aqui não
+// estava provando um bug inexistente, estava ESCONDENDO que a decisão de formato
+// nunca tinha sido exercitada contra bytes reais. Um PDF começa com `%PDF-`
+// (ISO 32000 §7.5.2); o marcador ABC/DEF continua no corpo, que é o que os
+// asserts de "cada item lê o SEU PRÓPRIO binário" precisam distinguir.
+// As fixtures das linhas ~2616/2649 já usavam `%PDF-1.4` — estas ficaram para trás.
+const PDF_A = Buffer.from('%PDF-1.7\nABC').toString('base64');
+const PDF_B = Buffer.from('%PDF-1.7\nDEF').toString('base64');
+
 const FORM_ITEM = {
   json: { 'Mandato (nome do caso)': 'Mandato Teste' },
   binary: {
-    Arquivos_0: { fileName: 'BALANÇO ACUMULADO 2025.pdf', mimeType: 'application/pdf', data: 'QUJD' },
-    Arquivos_1: { fileName: '12M25 DRE (Assinado).pdf', mimeType: 'application/pdf', data: 'REVG' },
+    Arquivos_0: { fileName: 'BALANÇO ACUMULADO 2025.pdf', mimeType: 'application/pdf', data: PDF_A },
+    Arquivos_1: { fileName: '12M25 DRE (Assinado).pdf', mimeType: 'application/pdf', data: PDF_B },
   },
 };
 const UPSERT_ITEM = { json: { caso_id: 'caso-uuid-1' } }; // sem binário (Postgres não repassa)
@@ -352,7 +368,7 @@ test('Preparar Conteudo: lê o binário via $helpers.getBinaryDataBuffer (não d
   const { preparado } = await chainFile(0);
   assert.ok(!Array.isArray(preparado));
   assert.ok(ehParteDeArquivo(preparado.json.content_part), 'o PDF vai como ARQUIVO, não como texto');
-  assert.ok(JSON.stringify(preparado.json.content_part).includes('QUJD'), 'e os bytes do arquivo vão junto');
+  assert.ok(JSON.stringify(preparado.json.content_part).includes(PDF_A), 'e os bytes do arquivo vão junto');
   assert.equal(preparado.json.caso_id, 'caso-uuid-1', 'contexto (caso_id) atravessa a cadeia');
   assert.ok(preparado.binary?.data, 'binário preservado (Upload é ramo a partir daqui)');
 });
@@ -366,10 +382,10 @@ test('Preparar Conteudo: com 2+ arquivos no MESMO lote, cada item lê o SEU PRÓ
   // item É o item 0). Resultado real: um documento foi extraído com o
   // CONTEÚDO de outro (diagnóstico/entidade/valores de um arquivo diferente
   // do que o nome dizia). Fix: usar $itemIndex em vez do literal 0.
-  const { preparado: item0 } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf (base64 "QUJD")
-  const { preparado: item1 } = await chainFile(1); // 12M25 DRE (Assinado).pdf (base64 "REVG")
-  assert.equal(base64DaParte(item0.json.content_part), 'QUJD', 'item 0 deve ler o PRÓPRIO binário');
-  assert.equal(base64DaParte(item1.json.content_part), 'REVG', 'item 1 deve ler o PRÓPRIO binário, não o do item 0');
+  const { preparado: item0 } = await chainFile(0); // BALANÇO ACUMULADO 2025.pdf
+  const { preparado: item1 } = await chainFile(1); // 12M25 DRE (Assinado).pdf
+  assert.equal(base64DaParte(item0.json.content_part), PDF_A, 'item 0 deve ler o PRÓPRIO binário');
+  assert.equal(base64DaParte(item1.json.content_part), PDF_B, 'item 1 deve ler o PRÓPRIO binário, não o do item 0');
   assert.notEqual(base64DaParte(item0.json.content_part), base64DaParte(item1.json.content_part));
 });
 
@@ -911,8 +927,45 @@ test('Topologia: Upload é ramo lateral; o Roteador manda cada formato a UM extr
   // falta descrever para não virar "5 nós soltos": o roteador DECIDE, não
   // apenas existe.
   const chaves = roteador.parameters.rules.values.map((r) => r.outputKey);
-  assert.deepEqual(new Set(chaves), new Set(['pdf', 'imagem', 'csv', 'xlsx', 'xls', 'xml']),
-    'cada formato conhecido tem uma saída própria no roteador');
+  // SÓ OS FORMATOS QUE PRECISAM DE DECODIFICADOR BINÁRIO TÊM SAÍDA PRÓPRIA.
+  // Eram seis (pdf/imagem/csv/xlsx/xls/xml) até 12/09/2026; `imagem`, `texto` e
+  // `xml` saem de `Preparar Conteudo` já com o `content_part` definitivo e vão
+  // pelo fallback direto ao Merge. `csv` deixou de existir como ramo: era ele
+  // que mandava `text/plain` ao `Extract From File`, que o rejeita.
+  assert.deepEqual(new Set(chaves), new Set(['pdf', 'xlsx', 'xls']),
+    'só pdf/xlsx/xls precisam de extrator; o resto já chega resolvido');
+
+  // ==========================================================================
+  // O PORTÃO QUE A AMO PAGOU PARA EXISTIR.
+  // ==========================================================================
+  //
+  // O defeito de 12/09/2026 não foi um padrão de regex errado: foi uma regra de
+  // roteamento SOBREVIVER ao destino dela. `csv: 'csv|^text/plain$'` estava certo
+  // enquanto o destino era um `parseCsv` nosso (que aceita qualquer texto); ficou
+  // errado no instante em que o destino virou o `Extract From File` nativo, que
+  // valida o mimeType e recusa `text/plain`. A regex não mudou — a CAPACIDADE do
+  // destino mudou, e nada ligava as duas pontas. 60 documentos, zero linhas.
+  //
+  // Este invariante liga as pontas: nenhum formato que `Preparar Conteudo` já
+  // resolve sozinho pode ser roteado para um nó nativo. Um `outputKey` novo
+  // apontando para um `extractFromFile` que não sabe recebê-lo reprova AQUI, no
+  // gerador, antes de virar execução.
+  const RESOLVIDOS_NO_NO = new Set(['texto', 'xml', 'imagem', 'csv', 'desconhecido']);
+  const nomePorTipo = new Map(wf.nodes.map((n) => [n.name, n.type]));
+  for (const [i, chave] of chaves.entries()) {
+    const destino = (wf.connections['Roteador de Formato'].main[i] || [])[0];
+    assert.ok(destino, `a saída "${chave}" do roteador não vai a lugar nenhum`);
+    assert.ok(!RESOLVIDOS_NO_NO.has(chave),
+      `"${chave}" já é resolvido em Preparar Conteudo e NÃO pode ser roteado a um nó nativo `
+      + '— foi exatamente assim que os 60 documentos da AMO viraram mensagem de erro');
+  }
+  // E o recíproco: nenhum `extractFromFile` do workflow pode receber algo que
+  // não veio de uma saída de formato binário do roteador.
+  const extratores = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.extractFromFile').map((n) => n.name);
+  assert.deepEqual(extratores.sort(), ['Extrair Texto', 'Extrair XLS', 'Extrair XLSX'].sort(),
+    'os extratores nativos são só os de formato binário — `Extrair CSV`/`Extrair XML` pediam ao n8n '
+    + 'que devolvesse o texto que os bytes já são, e era o `Extrair CSV` que recusava `text/plain`');
+  assert.ok(!nomePorTipo.has('Extrair CSV'), 'o nó que quebrou a AMO não pode voltar');
   assert.ok(roteador.parameters.options?.fallbackOutput,
     'formato desconhecido cai num fallback explícito (mantém a pendência), nunca é descartado');
   // NENHUMA SAÍDA MANDA PARA MAIS DE UM DESTINO — o oposto exato do fan-out
@@ -1032,30 +1085,91 @@ test('6164 de novo: Recompor Conteudo Extraido declara pairedItem em TODO item q
   }
 });
 
-test('Recompor Conteudo Extraido: PDF, imagem e falha de extrator atravessam sem reconstrução', async () => {
+test('Recompor Conteudo Extraido: PDF e imagem atravessam sem reconstrução', async () => {
   // Caso 1: PDF — o item É a saída do `Extrair Texto` ({text,numpages}), sem
   // `caso_id` nenhum. Não pode ser tratado como linha de planilha. O
-  // ANCESTRAL (`Preparar Conteudo`) é quem tem `content_mime='application/
-  // pdf'` — nunca o próprio item, que o extrator já substituiu.
-  const ctxPdf = { caso_id: 'caso-uuid-1', content_mime: 'application/pdf', content_part: { type: 'text', text: '(arquivo pdf)' } };
+  // ANCESTRAL (`Preparar Conteudo`) é quem tem `formato_detectado='pdf'`.
+  const ctxPdf = { caso_id: 'caso-uuid-1', formato_detectado: 'pdf', content_part: { type: 'text', text: '(arquivo pdf)' } };
   const doPdf = { json: { text: 'Caixa 100', numpages: 1 } };
-  // Caso 2: imagem — passou direto pelo Switch, chega como o próprio item de
-  // `Preparar Conteudo` (com `caso_id`).
-  const doImagem = { json: { caso_id: 'caso-uuid-1', content_mime: 'image/png', content_part: { type: 'image_url', image_url: { url: 'data:...' } } } };
-  // Caso 3: CSV cujo extrator FALHOU — `onError: continueRegularOutput` devolve
-  // o item de ENTRADA do extrator sem tocar, que é o próprio item de
-  // `Preparar Conteudo` (também com `caso_id`).
-  const doFalha = { json: { ...ctxCsv, hash: 'hash-c-falhou' } };
+  // Caso 2: imagem — passou pelo fallback do Switch, chega como o próprio item
+  // de `Preparar Conteudo` (com `caso_id`).
+  const doImagem = { json: { caso_id: 'caso-uuid-1', formato_detectado: 'imagem', content_part: { type: 'image_url', image_url: { url: 'data:...' } } } };
 
   const out = await run('Recompor Conteudo Extraido', {
-    items: [doPdf, doImagem, doFalha], refs: { 'Preparar Conteudo': [{ json: ctxPdf }, doImagem, doFalha] },
+    items: [doPdf, doImagem], refs: { 'Preparar Conteudo': [{ json: ctxPdf }, doImagem] },
   });
-  assert.equal(out.length, 3, 'nenhum dos três precisa de reconstrução — 1 item entra, 1 sai');
+  assert.equal(out.length, 2, 'nenhum dos dois precisa de reconstrução — 1 item entra, 1 sai');
   assert.equal(out[0].json.text, 'Caixa 100', 'PDF: Medir Documento lê text/numpages direto, sem mexer');
-  assert.equal(out[1].json.content_mime, 'image/png');
   assert.deepEqual(out[1].json.content_part, doImagem.json.content_part, 'imagem não é reconstruída');
-  assert.equal(out[2].json.aviso_conteudo, ctxCsv.aviso_conteudo,
-    'extrator que falhou preserva o aviso de "não extraído" — nunca vira sucesso fingido');
+});
+
+// ===========================================================================
+// MEDIDO NÃO-VAZIO (regra 2) — O INVARIANTE QUE A AMO COMPROU, e o que ele
+// substitui é tão importante quanto o que ele afirma.
+// ===========================================================================
+//
+// O TESTE QUE ESTAVA AQUI INVENTAVA A FIXTURE, e com isso BLINDOU o defeito em
+// vez de pegá-lo. Ele montava o item de extrator-que-falhou assim:
+//
+//     // "`onError: continueRegularOutput` devolve o item de ENTRADA sem tocar"
+//     const doFalha = { json: { ...ctxCsv, hash: 'hash-c-falhou' } };   // COM caso_id
+//     assert.equal(out[2].json.aviso_conteudo, ctxCsv.aviso_conteudo,
+//       'extrator que falhou preserva o aviso — nunca vira sucesso fingido');
+//
+// A premissa é FALSA e nunca foi medida. Quando o `Extract From File` lança por
+// item, o n8n NÃO repassa o item de entrada: emite `{error: "<mensagem>"}`, SEM
+// `caso_id`. Medido na instância do dono em 12/09/2026, 60 itens idênticos:
+// `{error: "The file selected in 'Input Binary Field' is not in csv format"}`.
+//
+// Com `caso_id` na fixture, o item saía pelo Caso 1 (passa direto) e o assert
+// passava. Sem ele — a realidade — o item caía no ramo de PLANILHA e a mensagem
+// de erro virava LINHA: `content_part` e `text` passavam a ser "error\nThe file
+// selected...", e `aviso_conteudo` era SOBRESCRITO por null. A falha virava
+// sucesso fingido, a IA recebia a mensagem técnica no lugar do balanço, e o
+// banco gravou 60 documentos como `ilegivel` com 84–98% de confiança sobre
+// arquivos íntegros. É a regra 4 do CLAUDE.md cobrada ao contrário: a fixture
+// inventada não provou um bug que não existia — escondeu um que existia.
+//
+// DESLIGAR A CORREÇÃO (remover o ramo `if(!('caso_id' in raw) && ('error' in raw))`
+// de `CODE_RECOMPOR_EXTRACAO`, em `build-workflow.mjs`) FAZ ESTE TESTE REPROVAR
+// EM 5 ASSERTS — medido, e o número está na mensagem do commit.
+test('MEDIDO: extrator que FALHA não vira linha de planilha — a forma real do erro do n8n', async () => {
+  const ctxPlan = {
+    caso_id: 'caso-uuid-1', hash: 'hash-amo', nome_original: 'AMOBELEZA - BALANÇO 2025.xlsx',
+    formato_detectado: 'xlsx',
+    content_part: { type: 'text', text: '(extracao de XLSX pendente do no nativo Extrair XLSX)' },
+    aviso_conteudo: 'Arquivo .xlsx ainda nao foi extraido pelo no nativo (Extrair XLSX).',
+  };
+  // A FORMA MEDIDA, não a suposta: o que o n8n de verdade emite.
+  const doErro = { json: { error: "The file selected in 'Input Binary Field' is not in csv format" } };
+
+  const out = await run('Recompor Conteudo Extraido', {
+    items: [doErro], refs: { 'Preparar Conteudo': [{ json: ctxPlan }] },
+  });
+
+  assert.equal(out.length, 1, 'o documento não some nem se multiplica');
+  const j = out[0].json;
+  // 1. O CONTEÚDO NUNCA É A MENSAGEM DE ERRO. Este é o assert que a AMO comprou:
+  //    sem ele, "error | The file selected..." foi o que a IA recebeu 60 vezes.
+  const enviado = JSON.stringify(j.content_part);
+  assert.ok(!/not in csv format/.test(enviado),
+    'a mensagem de erro do n8n NUNCA pode virar o conteúdo mandado à IA');
+  assert.ok(!/^error\b/m.test(String(j.text || '')),
+    '`text` (o que a régua de cobertura mede) não pode ser a mensagem de erro');
+  // 2. `text` nulo, não string vazia nem lixo: ausência declarada, não fingida.
+  assert.equal(j.text, null, 'sem extração não há texto — e null é diferente de ""');
+  // 3. A PENDÊNCIA SOBREVIVE. Era ela que `avisoTruncamentoPlanilha([1 linha])`
+  //    apagava ao devolver null.
+  assert.ok(j.aviso_conteudo && /FALHOU/.test(j.aviso_conteudo),
+    'a falha de extração continua declarada como pendência');
+  // 4. E DIZ QUE A CULPA É DO PIPELINE, não do arquivo. O banco gravou 60
+  //    documentos como `ilegivel` porque o modelo, recebendo a mensagem
+  //    técnica, concluiu que o ARQUIVO estava ilegível. Os arquivos estavam
+  //    íntegros.
+  assert.ok(/nao registre este documento como ilegivel|falha do PIPELINE/i.test(j.aviso_conteudo),
+    'a pendência tem de dizer que a falha é do pipeline, não do arquivo');
+  // 5. O contexto do documento sobrevive — sem isto o documento perde o dono.
+  assert.equal(j.caso_id, 'caso-uuid-1', 'o documento continua ligado ao caso');
 });
 
 test('Recompor Conteudo Extraido: XML vira texto corrido, não linhas de planilha', async () => {
@@ -1805,6 +1919,40 @@ test('Orcamento do Lote declara tudo o que o corpo do orçamento referencia', ()
   const r = new Function(`${preambulo}\nreturn orcamentoDoLote({documentos: 2, chamadasPorDocumento: 2, bytes: 2048});`)();
   assert.equal(r.versao, VERSAO_ORCAMENTO, 'o nó decide com a MESMA versão da fonte');
   assert.ok(r.fatorCusto < 2, 'a 2ª chamada pesa menos que a 1ª dentro do nó, não só na lib');
+
+  // ==========================================================================
+  // E AS OUTRAS DUAS FUNÇÕES TAMBÉM TÊM DE RODAR — a lacuna que este teste
+  // tinha, com o nome dele afirmando o contrário.
+  // ==========================================================================
+  //
+  // O nome diz "declara tudo o que o corpo do orçamento referencia", mas até
+  // 12/09/2026 o teste EXECUTAVA só `orcamentoDoLote`. Quem o nó de verdade
+  // chama é `orcamentoDoLotePorConteudo` (que chama `custoEstimadoPorConteudo`),
+  // e essas duas nunca eram executadas aqui — a conferência delas era só
+  // TEXTUAL, pela lista de nomes acima, que ninguém atualizava junto.
+  //
+  // MEDIDO nesta rodada: quando `custoEstimadoPorConteudo` passou a chamar
+  // `ehFormatoDeTexto`, o `jsCode` gerado estourava `ReferenceError:
+  // ehFormatoDeTexto is not defined` em QUALQUER chamada (inclusive PDF), e
+  // ESTE teste continuava verde. É o defeito central do projeto dentro do
+  // próprio portão que existe para pegá-lo: um portão que mede um terço do que
+  // o nome dele promete tem a mesma aparência de um portão que mede tudo.
+  //
+  // Os DOIS formatos, porque o ramo de texto e o de PDF são caminhos
+  // diferentes dentro da função e um verde no outro não prova nada.
+  const porConteudo = new Function(`${preambulo}
+    return orcamentoDoLotePorConteudo({ documentos: [
+      { celulas: 80, paginas: 2, colunas: 3, blocos: 1, bytes: 90000, formato: 'pdf' },
+      { celulas: 900, paginas: null, colunas: 2, blocos: 1, bytes: 670_000, formato: 'texto' },
+    ], tokensPromptSistema: 100 });`)();
+  assert.equal(porConteudo.porConteudo, true,
+    'um lote com PDF e TEXTO medidos decide POR CONTEÚDO dentro do nó — se `paginas` voltar a ser '
+    + 'exigida de todo documento, o de texto reprova e o lote inteiro cai no proxy por byte');
+  // 670 KB é o tamanho REAL de um `.txt` do lote da AMO, e não é escolha
+  // estética: com documentos minúsculos o `.toFixed(2)` de `estimadoUSD`
+  // arredonda para 0,00 e o assert passaria a não medir nada.
+  assert.ok(porConteudo.estimadoUSD > 0, 'a conta roda de verdade dentro do nó, não só na lib');
+  assert.equal(porConteudo.versao, VERSAO_ORCAMENTO);
 });
 
 // A VERSÃO NA MENSAGEM. Em 12/08/2026 o dono reexecutou o lote depois da

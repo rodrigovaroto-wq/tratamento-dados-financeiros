@@ -4,6 +4,8 @@ import {
   orcamentoDoLote,
   custoDaChamada,
   custoEstimadoPorTamanho,
+  ehFormatoDeTexto,
+  custoPorMbDeTextoUSD,
   bytesDoBinario,
   TETO_EXECUCAO_USD,
   CUSTO_ESTIMADO_DOC_USD,
@@ -19,6 +21,8 @@ import {
   PERFIL_MEDIDO,
   FOLGA_EXTRACAO,
   FOLGA_CLASSIFICACAO,
+  CARACTERES_POR_TOKEN,
+  MARGEM_ORCAMENTO_CONTEUDO,
   limiarDeRaciocinio,
   escolherEsforco,
   esforcosDoProvedor,
@@ -341,6 +345,79 @@ test('custoEstimadoPorTamanho: piso por chamada, e null quando não dá para med
   }
 });
 
+// ---------------------------------------------------------------------------
+// O DEFEITO DO PROXY ÚNICO — `CUSTO_POR_MB_USD` aplicado a TEXTO puro
+// ---------------------------------------------------------------------------
+//
+// O caso real: o dono tentou subir 2 arquivos de TEXTO e `Orcamento do Lote`
+// recusou dizendo "≈ US$ 5,60, acima do teto de US$ 3" — 2 MB × o proxy de PDF
+// (`CUSTO_POR_MB_USD = 2,80`). A entrada REAL de 2 MB de texto, no modelo
+// ativo (`gpt-5.6-luna`, US$0,20/M de entrada) com `CARACTERES_POR_TOKEN = 4`,
+// é US$ 0,105 — o proxy errava por 53×. Sem `formato`, `custoEstimadoPorTamanho`
+// não tinha como saber que o arquivo não ia como imagem.
+test('um lote de TEXTO cabe no teto de US$ 3 (2 MB e 40 MB, o caso real que recusou)', () => {
+  const doisMB = 2 * 1024 * 1024;
+  const quarentaMB = 40 * 1024 * 1024;
+
+  const estimativaDois = custoEstimadoPorTamanho(doisMB, 'texto');
+  const estimativaQuarenta = custoEstimadoPorTamanho(quarentaMB, 'texto');
+
+  assert.ok(estimativaDois <= TETO_EXECUCAO_USD,
+    `2 MB de texto não pode ser recusado — estimou US$ ${estimativaDois} contra o teto de US$ ${TETO_EXECUCAO_USD}`);
+  assert.ok(estimativaQuarenta <= TETO_EXECUCAO_USD,
+    `40 MB de texto não pode ser recusado — estimou US$ ${estimativaQuarenta} contra o teto de US$ ${TETO_EXECUCAO_USD}`);
+
+  // E o proxy de PDF, aplicado ao MESMO tamanho, continua recusando os dois —
+  // é a prova de que a diferença é o FORMATO, não uma folga qualquer que
+  // passaria os dois de qualquer jeito.
+  assert.ok(custoEstimadoPorTamanho(doisMB) > TETO_EXECUCAO_USD,
+    'o proxy de PDF sobre 2 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+  assert.ok(custoEstimadoPorTamanho(quarentaMB) > TETO_EXECUCAO_USD,
+    'o proxy de PDF sobre 40 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+});
+
+test('a estimativa de um lote de TEXTO não passa de 2× o custo real de ENTRADA', () => {
+  const preco = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  for (const mb of [2, 40]) {
+    const bytes = mb * 1024 * 1024;
+    // A mesma conta que a IA de fato cobra por entrada: bytes/4 tokens × preço
+    // de entrada — não um proxy, uma medição.
+    const entradaReal = ((bytes / CARACTERES_POR_TOKEN) * preco.entrada) / 1_000_000;
+    const estimativa = custoEstimadoPorTamanho(bytes, 'texto');
+    const razao = estimativa / entradaReal;
+    assert.ok(razao <= 2,
+      `estimativa de texto não pode passar de 2× a entrada real (${mb} MB: US$ ${estimativa} vs US$ ${entradaReal}, ${razao}×)`);
+    // E ela é a MARGEM declarada, nem mais nem menos — provar que 1,25× é
+    // exatamente o fator aplicado, não uma coincidência de arredondamento.
+    assert.ok(Math.abs(razao - MARGEM_ORCAMENTO_CONTEUDO) < 1e-9,
+      `a margem sobre a entrada de texto tem de ser ${MARGEM_ORCAMENTO_CONTEUDO}×, saiu ${razao}×`);
+  }
+});
+
+test('ehFormatoDeTexto reconhece as categorias de PADRAO_MIME e ignora PDF/imagem/planilha', () => {
+  for (const f of ['csv', 'xml', 'texto', 'txt', 'text', 'text/plain', 'text/csv', 'application/xml']) {
+    assert.ok(ehFormatoDeTexto(f), `"${f}" tinha de contar como texto`);
+  }
+  for (const f of ['pdf', 'image/png', 'xlsx', 'xls', null, undefined, '', 123]) {
+    assert.equal(ehFormatoDeTexto(f), false, `"${String(f)}" não é texto`);
+  }
+});
+
+test('custoEstimadoPorTamanho: sem formato (ou xlsx/xls) continua no proxy de PDF, de propósito', () => {
+  // Compatibilidade total com quem já chama custoEstimadoPorTamanho(bytes) —
+  // e a decisão declarada de que planilha (binário comprimido, sem medição
+  // própria) fica no proxy conservador em vez de arriscar um número inventado.
+  const doisMB = 2 * 1024 * 1024;
+  const semFormato = custoEstimadoPorTamanho(doisMB);
+  assert.equal(semFormato, custoEstimadoPorTamanho(doisMB, 'xlsx'));
+  assert.equal(semFormato, custoEstimadoPorTamanho(doisMB, 'xls'));
+  assert.equal(semFormato, doisMB / (1024 * 1024) * CUSTO_POR_MB_USD);
+});
+
+test('custoPorMbDeTextoUSD: null quando o modelo não tem preço conhecido', () => {
+  assert.equal(custoPorMbDeTextoUSD({}, 'modelo-que-nao-existe'), null);
+});
+
 test('bytesDoBinario lê os DOIS formatos que o n8n usa', () => {
   // Modo memória: `data` é base64 e o tamanho sai dele.
   const base64 = Buffer.from('x'.repeat(300)).toString('base64');
@@ -380,7 +457,7 @@ test('bytesDoBinario lê os DOIS formatos que o n8n usa', () => {
 // mesmo lote. No lote de 38 essa diferença era inofensiva (US$ 0,29 medido
 // contra US$ 0,56 estimado, longe do teto); em 190 ela decide se a rodada
 // acontece. Um PDF escaneado no meio do lote é o gatilho.
-import { orcamentoDoLotePorConteudo } from '../lib/custo.mjs';
+import { orcamentoDoLotePorConteudo, custoEstimadoPorConteudo } from '../lib/custo.mjs';
 import { SYSTEM_PROMPT } from '../lib/extract.mjs';
 
 const ARAUCARIA = { documentos: 190, paginas: 247, celulas: 16081 };
@@ -600,4 +677,84 @@ test('o espelho de TOKENS_SAIDA_CLASSIFICACAO não pode divergir do PERFIL_MEDID
   // Os dois números são o MESMO fato escrito em dois lugares, e este repositório
   // já viu um espelho assim divergir. Aqui ele reprova.
   assert.equal(PERFIL_MEDIDO.saidaClassificacao, TOKENS_SAIDA_CLASSIFICACAO);
+});
+
+// ---------------------------------------------------------------------------
+// O SEGUNDO DEFEITO DE TEXTO: o caminho por CONTEÚDO exigia `paginas` de TODO
+// documento — e só PDF tem página. Um único `.txt`/`.csv`/`.xlsx` no lote
+// derrubava a medição de todos os outros e o lote inteiro caía no proxy de PDF
+// que a correção anterior (`custoEstimadoPorTamanho`) tinha acabado de fechar.
+// Caso real: os 60 arquivos `.txt` da AMO, 12/09/2026.
+// ---------------------------------------------------------------------------
+
+test('um lote de documentos de TEXTO (sem página) usa o caminho por CONTEÚDO, não o de tamanho', () => {
+  // Nenhum destes documentos tem `paginas` — nenhum formato de texto tem. Se
+  // `medido` ainda exigisse página, o lote inteiro cairia em `porTamanho` e a
+  // estimativa voltaria a ser bytes × CUSTO_POR_MB_USD (o proxy de PDF).
+  const docs = [
+    { celulas: 200, colunas: 3, blocos: 1, bytes: 200 * 1024, formato: 'texto' },
+    { celulas: 150, colunas: 2, blocos: 1, bytes: 150 * 1024, formato: 'csv' },
+    { celulas: 90, colunas: 1, blocos: 1, bytes: 90 * 1024, formato: 'text/plain' },
+  ];
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.porConteudo, true,
+    'documento de texto não tem página — exigi-la derrubava a medição do lote inteiro');
+  assert.equal(r.porTamanho, false,
+    'o lote não pode cair no caminho por tamanho só porque nenhum documento tem página');
+});
+
+test('um lote MISTO (um PDF sem página lida + textos) ainda cai no caminho por tamanho', () => {
+  // A guarda continua valendo para o caso que ela sempre existiu para pegar:
+  // PDF escaneado (sem camada de texto, `paginas` ausente) não pode ser medido
+  // por conteúdo, e o lote inteiro cai no caminho conservador — a correção é
+  // só dar ao TEXTO a régua que ele tem (bytes), não afrouxar o PDF.
+  const docs = [
+    { celulas: 200, colunas: 3, blocos: 1, bytes: 200 * 1024, formato: 'texto' },
+    { celulas: null, colunas: 1, blocos: 1, bytes: 500 * 1024, formato: 'pdf', paginas: null },
+  ];
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.porConteudo, false);
+  assert.equal(r.porTamanho, true);
+});
+
+test('a estimativa de um .txt de 670 KB (tamanho real dos arquivos da AMO) não fica abaixo do custo real de ENTRADA', () => {
+  const bytes = 670 * 1024;
+  const preco = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  // A entrada REAL: bytes/4 tokens × preço de entrada — a mesma conta que a IA
+  // de fato cobra, sem proxy nenhum.
+  const entradaReal = ((bytes / CARACTERES_POR_TOKEN) * preco.entrada) / 1_000_000;
+  // `celulas: 0` isola a ENTRADA: a saída mínima de 1 conta é desprezível perto
+  // do que está em jogo aqui (a entrada, que o defeito subestimava em 167×).
+  const estimativa = custoEstimadoPorConteudo({
+    celulas: 0, colunas: 1, blocos: 1, formato: 'texto', bytes, tokensPromptSistema: 0,
+  });
+  assert.ok(estimativa >= entradaReal,
+    `estimativa (US$ ${estimativa}) não pode ficar abaixo da entrada real (US$ ${entradaReal}) — ` +
+    'contar "paginas=1" para um .txt aceitaria um lote que não cabe, o v31 de novo');
+});
+
+test('orçamento por CONTEÚDO: 60 documentos de texto somando 40 MB (o lote real da AMO)', () => {
+  // Sem contas medidas nos 60 documentos reais, isola-se a ENTRADA (`celulas:
+  // 0` em cada um) — é a parcela que o defeito subestimava por 167×, e a única
+  // que dá para afirmar sem inventar uma contagem de linha que não foi medida
+  // (regra 4: não fabricar fixture para provar produção). O headroom que sobra
+  // até o teto de US$ 3 é o que resta para a SAÍDA real, que só a rodada real
+  // mede.
+  const n = 60;
+  const totalBytes = 40 * 1024 * 1024;
+  const bytesPorDoc = totalBytes / n;
+  // `celulas: 1` (não 0) só para satisfazer `medido` — o output de 1 célula é
+  // desprezível perto da entrada de ~683 KB por documento, então a conta segue
+  // isolando a ENTRADA.
+  const docs = Array.from({ length: n }, () => ({
+    celulas: 1, colunas: 1, blocos: 1, bytes: bytesPorDoc, formato: 'texto',
+  }));
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.porConteudo, true);
+  // Só a ENTRADA de 40 MB de texto, com a margem de conteúdo (1,25×): ~US$ 2,62
+  // — abaixo do teto de US$ 3, mas raspando: sobra pouco mais de US$ 0,30 para
+  // a saída real de todos os 60 documentos somados.
+  assert.ok(r.estimadoUSD < TETO_EXECUCAO_USD,
+    `40 MB de texto (só entrada) tem de caber — estimou US$ ${r.estimadoUSD}`);
+  assert.ok(r.estimadoUSD > 2, `a entrada de 40 MB de texto não é desprezível (US$ ${r.estimadoUSD})`);
 });
