@@ -97,8 +97,78 @@ export function idsDeCredencialDoAmbiente(env = process.env) {
   return limpo;
 }
 
+/** Marca de par (tipo, nome) com mais de um id no publicado — ver acima. */
+const AMBIGUO = Symbol('id ambiguo no publicado');
+
+/** O id do índice, ou `undefined` quando ausente OU ambíguo. */
+function idDoIndice(indice, tipo, nome) {
+  const achado = indice.get(tipo)?.get(nome);
+  return typeof achado === 'string' ? achado : undefined;
+}
+
+/**
+ * IDS DE CREDENCIAL LIDOS DO PUBLICADO, por TIPO e NOME — o que o nó irmão sabe.
+ *
+ * POR QUE ISTO EXISTE, com o número medido na action de 12/09/2026. A resolução
+ * do id era por NÓ: o preparador procurava o nó de mesmo nome no publicado e
+ * lia a credencial dele. Isso resolve todo nó que já foi publicado uma vez — e
+ * NENHUM nó novo, porque um nó que ainda não existe na instalação não tem o que
+ * ser lido. Dos ONZE nós `postgres` do workflow, todos os onze usam a MESMA
+ * credencial ("Supabase Postgres (Session Pooler)"); nove resolveram pelo
+ * publicado e DOIS não — `Gravar Uso do Lote` e `Conferir Lote`, os dois
+ * habilitados, os dois abortando o arquivo inteiro no portão do `republicar.sh`.
+ *
+ * O id que faltava estava na resposta, a dois nós de distância. O preparador
+ * tinha a informação e não olhava para ela.
+ *
+ * A CHAVE É (TIPO, NOME), e o tipo entra de propósito: o nome de credencial é
+ * único por tipo no n8n, não globalmente, e casar só por nome deixaria uma
+ * credencial `postgres` responder por uma `httpHeaderAuth` de mesmo nome.
+ *
+ * AMBIGUIDADE NÃO RESPONDE. Se o publicado traz o mesmo (tipo, nome) com ids
+ * DIFERENTES em nós diferentes, não há como saber qual é o certo, e escolher um
+ * seria apontar metade dos nós para a credencial errada — falha silenciosa, que
+ * é o defeito desta família. O par ambíguo simplesmente não entra no índice e o
+ * nó cai para o mapa do ambiente, ou para o `REPLACE` que trava o portão.
+ *
+ * `REPLACE` e vazio no publicado são ausência, não resposta — mesma regra do
+ * mapa do ambiente, pelo mesmo motivo: aceitá-los desarmaria a trava.
+ */
+export function idsDeCredencialDoPublicado(vivo) {
+  const vistos = new Map();
+  for (const n of vivo?.nodes ?? []) {
+    for (const [tipo, cred] of Object.entries(n.credentials ?? {})) {
+      if (!ehIdUtilizavel(cred?.id) || !ehNomePreenchido(cred?.name)) continue;
+      anotarNoIndice(vistos, tipo, cred.name, cred.id);
+    }
+  }
+  return vistos;
+}
+
+/** `REPLACE` e vazio são ausência, não resposta — ver `idsDeCredencialDoPublicado`. */
+function ehIdUtilizavel(id) {
+  return typeof id === 'string' && !!id.trim() && id !== 'REPLACE';
+}
+
+function ehNomePreenchido(nome) {
+  return typeof nome === 'string' && !!nome.trim();
+}
+
+/** Primeiro id vence; um SEGUNDO id diferente marca o par como ambíguo para sempre. */
+function anotarNoIndice(vistos, tipo, nome, id) {
+  let porNome = vistos.get(tipo);
+  if (!porNome) {
+    porNome = new Map();
+    vistos.set(tipo, porNome);
+  }
+  const jaVisto = porNome.get(nome);
+  if (jaVisto === undefined) porNome.set(nome, id);
+  else if (jaVisto !== id) porNome.set(nome, AMBIGUO);
+}
+
 export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
   const doVivo = new Map((vivo.nodes ?? []).map((n) => [n.name, n]));
+  const doPublicado = idsDeCredencialDoPublicado(vivo);
 
   const nodes = (repo.nodes ?? []).map((doRepo) => {
     const oVivo = doVivo.get(doRepo.name);
@@ -134,8 +204,15 @@ export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
         // O mapa do ambiente é a QUEDA, nunca a primeira escolha — ver o
         // cabeçalho de `idsDeCredencialDoAmbiente`.
         const idDeFora = idsPorNome[cred.name];
+        // O IRMÃO: a mesma credencial (tipo, nome) já publicada em OUTRO nó.
+        // Vem ANTES do mapa do ambiente pela mesma razão que o vivo vem antes
+        // dele — quem está publicado é a verdade sobre a instalação, e o mapa é
+        // a queda para quando ela se cala. Ver `idsDeCredencialDoPublicado`.
+        const idDoIrmao = idDoIndice(doPublicado, tipo, cred.name);
         if (idVivo && idVivo !== 'REPLACE') {
           saida.credentials[tipo] = { id: idVivo, name: nomeVivo ?? cred.name };
+        } else if (idDoIrmao) {
+          saida.credentials[tipo] = { id: idDoIrmao, name: cred.name };
         } else if (idDeFora) {
           saida.credentials[tipo] = { id: idDeFora, name: cred.name };
         } else if (!doRepo.disabled) {
@@ -205,6 +282,9 @@ if (ehExecucaoDireta(import.meta.url)) {
       console.error('\nCOMO DESTRAVAR — dois caminhos, e o segundo é o que serve para automação:');
       console.error('  1. No editor do n8n, abra cada nó acima e escolha a credencial na lista.');
       console.error('     O id passa a vir do publicado e nunca mais precisa ser informado.');
+      console.error('     Se a credencial JÁ está publicada em outro nó, o preparador a reaproveita');
+      console.error('     sozinho — chegar aqui significa que ela não está em nó nenhum, ou que o');
+      console.error('     mesmo nome aparece com ids DIFERENTES e não dá para escolher.');
       console.error('  2. Informe o id por ambiente, em N8N_CRED_IDS (um secret do GitHub):');
       console.error(`         N8N_CRED_IDS='${exemplo}'`);
       console.error('     O id aparece na URL ao abrir a credencial no n8n:');
