@@ -4,7 +4,12 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-11 (sessão **84**). **O PR #211 FOI MERGEADO** pelo dono
+**Última atualização:** 2026-09-12 (sessão **85**). **Quatro PRs mergeados nesta sessão** —
+#213, #214, #215 e o #216 em curso. Leia "A SESSÃO 85" logo abaixo: ela achou por que **60
+documentos da AMOBELEZA chegaram com ZERO linha**, e a causa raiz não era o `.txt`.
+
+<!-- o parágrafo abaixo é da sessão 84 e ficou como registro -->
+**Sessão 84:** **O PR #211 FOI MERGEADO** pelo dono
 (`2874e33`), e o `main` andou depois dele. Migrations no repositório até a **`0164`**
 (109 migrations). **Não confie neste commit: rode `git log --oneline -1` e
 `ls Supabase/migrations | tail -1`** — as duas respondem em um segundo e não envelhecem, e este
@@ -31,6 +36,89 @@ descuido: ela é exatamente o modo de falha que o resto deste cabeçalho descrev
 > "02/09": o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde, o que só
 > acontece quando ela está sendo rodada de verdade. **Quem responde qual workflow está no ar é
 > `N8N/conferir-publicado.mjs` contra a instância**, não esta linha.
+
+## A SESSÃO 85 (2026-09-12) — os 60 documentos vazios da AMO, e o preço que nunca existiu
+
+**O QUE O DONO TROUXE:** 60 documentos da AMOBELEZA/GENERAL TABACO subiram e o portal mostrou
+**0 linhas financeiras em 60 documentos**, com os 60 gravados como `legibilidade='ilegivel'` a
+84–98% de confiança — sobre arquivos **íntegros**. Ele também relatou que o orçamento recusou
+2 arquivos por **US$ 5,60** e concluiu que o sistema não servia para esses PDFs.
+
+### A causa raiz: a regra de roteamento sobreviveu ao destino dela
+
+Não foi o `.txt`. Ele **funcionava** até 11/09. O refactor de roteamento por formato (`e13ab69`)
+deletou o `parseCsv` que lia texto dentro do nó, apontou o roteamento para o `Extract From File`
+nativo, e **transcreveu a condição literal** — `csv: 'csv|^text/plain$'`. O nó nativo VALIDA o
+mimeType do binário e recusa `text/plain`: **60 de 60** falharam.
+
+E o item `{error: "..."}` que o n8n emite **virou linha de planilha**: a mensagem de erro foi para
+a IA no lugar do balanço, e `avisoTruncamentoPlanilha([1 linha])` devolveu `null`, **apagando a
+pendência**. O modelo, recebendo a mensagem técnica, concluiu que o ARQUIVO estava ilegível.
+
+O teste que cobria esse caminho **inventava a fixture** (`{...ctxCsv}`, COM `caso_id`) e afirmava
+"extrator que falhou preserva o aviso". Passava sobre uma forma que o n8n nunca produz — regra 4
+cobrada ao contrário: a fixture inventada **escondeu** o bug em vez de provar um.
+
+### O segundo defeito: US$ 5,60 era um bug de 53×
+
+`CUSTO_POR_MB_USD = 2,80` é proxy por byte **calibrado sobre PDF** (que vai ao modelo como
+IMAGEM). Aplicado a texto erra **53× para cima**. E `orcamentoDoLotePorConteudo` exigia
+`paginas > 0`, que **só PDF tem** — um `.txt` no lote derrubava a medição de todos. Relaxar só
+isso PIORAVA: `custoEstimadoPorConteudo` contava entrada como `páginas × 1000`, o que
+**subestimaria um `.txt` de 670 KB em 167×**.
+
+### O PDF passa a ser lido como TEXTO quando dá
+
+O `Extrair Texto` já lia a camada de texto de graça e o pipeline **jogava fora**, pagando imagem.
+Agora o texto vira o conteúdo, com TRÊS critérios — e o terceiro nasceu dos documentos reais:
+
+    texto limpo (referência).......  3,6% de palavras com letra dobrada
+    OMNIBEAUTY DRE / Faturamento...  3,8% e 5,3%
+    GENERAL TABACO Balanço......... 37,9%   <- camada CORROMPIDA
+    AMOBELEZA Balanço.............. 73,0%   <- camada CORROMPIDA
+
+**Dois dos quatro** documentos têm a camada de texto corrompida por glifo dobrado (negrito falso),
+e o estrago chega aos NÚMEROS (`2.2272.055,77` por `2.272.055,77`). Sem esse critério a
+otimização seria uma REGRESSÃO: a visão lê a página certa; a camada de texto entrega o número
+errado com cara de certo. Esses vão para OCR.
+
+### O número entrava errado e ninguém conferia
+
+`lib/aritmetica.mjs` (novo, no `Juntar Blocos`): o faturamento da OMNIBEAUTY traz
+`Saídas + Serviços + Outros = Total` e **falha em 6 dos 12 meses** (janeiro diverge em
+**R$ 60.000,00**; maio traz `Bed DedI 9` no lugar do valor). As identidades **ATIVO=PASSIVO** e
+**subtotal=filhos** NÃO foram reimplementadas: já existem no Postgres
+(`fn_reconciliar_ativo_passivo_pl`, `fn_reconciliar_arvore`) e duplicá-las criaria uma segunda
+autoridade sobre a mesma pergunta.
+
+### Cinco portões tinham o defeito que perseguem
+
+1. a fixture inventada que blindava o bug da AMO;
+2. `Orcamento do Lote declara tudo o que o corpo referencia` **executava só 1 das 3** funções;
+3. o roteamento não era ligado à capacidade do destino;
+4. `conferir-publicado.mjs` **reprovava a republicação CERTA** (punia a ausência de credencial num
+   nó DESABILITADO, que o preparador remove de propósito desde `7b84086`);
+5. `caracteres.test.mjs` varria só o JSON — **dois bytes NUL crus** em `lib/aritmetica.mjs` (e um
+   `0x01` pré-existente em `cobertura.mjs`) tornavam o arquivo invisível ao `grep`.
+
+### A action de republicar (3 falhas) e o que ela ensinou
+
+Abortava no passo 4 com "sobraram 2 ocorrências de REPLACE". A divisão é por **TIPO**: as 11
+credenciais `postgres` resolveram todas; as 3 `httpHeaderAuth`, **nenhuma** — a API pública do n8n
+não as devolve. Destravada pelo secret `N8N_CRED_IDS` (`{"<nome>":"<id>"}`), com o vivo ganhando
+do mapa. **O dono rodou e o workflow ESTÁ PUBLICADO.**
+
+### O que fica para a próxima sessão
+
+- ⚠️ **REPUBLICAR de novo** — o `jsCode` de quatro nós mudou depois da publicação do dono.
+- **Os 60 registros `legibilidade='ilegivel'` do caso AMOBELEZA são FALSOS** e continuam no banco.
+- **O teste que vale ainda não foi feito:** subir 2–3 PDFs ORIGINAIS (não os `.txt`) e conferir no
+  banco que cada um virou documento próprio COM LINHAS, e que os valores batem com o PDF.
+- **Mandar os PDFs, não os `.txt`.** A conversão foi feita para contornar um custo que não
+  existia, e injetou a corrupção de OCR. Medido: 60 `.txt` = US$ 0,14; 60 PDFs = US$ 0,16.
+- `detectarFormato` com complexidade cognitiva 42 (não-bloqueante no Sonar).
+- Supabase: o dono dispensou por ora. A lacuna real é a sonda contra o banco de PRODUÇÃO
+  (o CI já roda a suíte SQL inteira contra um banco montado do zero).
 
 > **LEIA "A SESSÃO 83" NO TOPO DO `ESTADO.md` ANTES DE QUALQUER COISA.** O dono rodou um book de
 > 190 documentos ("Teste 00") e 75 vieram sem nenhuma linha extraída — mas a causa **NÃO é código**:

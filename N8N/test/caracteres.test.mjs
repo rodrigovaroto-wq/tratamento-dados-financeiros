@@ -27,7 +27,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -132,4 +132,53 @@ test('texto em português com acento passa — a regra é sobre a marca órfã',
   const achados = [];
   varrer('A reconciliação não foi possível: precondição não satisfeita.', 'nó fabricado', achados);
   assert.deepEqual(achados, [], 'acento em NFC é UM caractere, e não uma marca combinante solta');
+});
+
+// ---------------------------------------------------------------------------
+// A FONTE TAMBEM, nao so o JSON gerado — e esta metade faltava.
+// ---------------------------------------------------------------------------
+//
+// MEDIDO EM 12/09/2026: `N8N/lib/aritmetica.mjs` nasceu com DOIS bytes NUL
+// CRUS, usados de proposito como separador de chave composta, mas escritos como
+// o BYTE e nao como o escape. O efeito e o de sempre: o `grep` passa a responder
+// "binary file matches" e o arquivo inteiro some de toda busca — foi assim que
+// dois bytes esconderam 3.484 linhas do gerador do book (commit `8d378b0`).
+//
+// E ESTA SUITE PASSOU VERDE sobre o arquivo, porque ela varria so o `jsCode`
+// dos nos do workflow JSON. O NUL estava na FONTE, que e onde alguem escreve —
+// e uma lib so chega ao JSON quando e serializada para dentro de um no, o que
+// pode demorar commits. Portao que mede um lado do espelho tem a mesma
+// aparencia de um portao que mede os dois (regra 7).
+//
+// A REGRA E A MESMA do cabecalho deste arquivo, um passo antes: quem precisa do
+// codepoint escreve `\u0000`, que e a forma que aparece no diff e que o grep
+// enxerga. O comportamento em execucao e identico.
+const CONTROLE_CRU = (b) => b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d;
+
+test('nenhuma fonte de N8N/lib tem byte de controle CRU — o grep tem de enxergar o arquivo', () => {
+  const libs = readdirSync(join(AQUI, '..', 'lib')).filter((f) => f.endsWith('.mjs'));
+  assert.ok(libs.length > 0, 'nao achei as libs — o portao estaria medindo o vazio');
+  const achados = [];
+  for (const f of libs) {
+    const bytes = readFileSync(join(AQUI, '..', 'lib', f));
+    for (let i = 0; i < bytes.length; i += 1) {
+      // TAB, LF e CR sao texto de verdade; o resto do C0 nao tem o que fazer
+      // numa fonte JS e so chega ali por colagem ou descuido.
+      if (CONTROLE_CRU(bytes[i])) {
+        achados.push(`lib/${f}: byte 0x${bytes[i].toString(16).padStart(2, '0')} no offset ${i}`);
+      }
+    }
+  }
+  assert.deepEqual(achados, [],
+    `byte de controle cru na fonte — escreva o escape ("\u0000") em vez do byte:\n  ${achados.join('\n  ')}`);
+});
+
+test('a varredura da fonte de fato acusa — um byte cru fabricado e encontrado', () => {
+  // REGRA 2 aplicada ao proprio portao: sem esta prova, o teste acima teria a
+  // mesma aparencia passando sobre libs limpas e passando por estar quebrado.
+  const comNul = Buffer.from(`const a = "x${String.fromCharCode(0)}y";`, 'utf8');
+  assert.equal([...comNul].filter(CONTROLE_CRU).length, 1,
+    'o criterio tem de achar o byte cru que ele existe para achar');
+  const semNul = Buffer.from('const a = "xy";\n', 'utf8');
+  assert.equal([...semNul].filter(CONTROLE_CRU).length, 0, 'e nao pode acusar fonte limpa');
 });

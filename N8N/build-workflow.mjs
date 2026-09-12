@@ -45,10 +45,13 @@ import {
 } from './lib/spreadsheet.mjs';
 import {
   linhasComNumero, linhasDeConta, ehLinhaDeConta, juntarFragmentosDeLinha, ehLinhaSemValor,
+  camadaDeTextoDoPdf, CARACTERES_MINIMOS_POR_PAGINA, MINIMO_LINHAS_COM_NUMERO_PDF,
+  fracaoDePalavrasDobradas, MAX_FRACAO_PALAVRAS_DOBRADAS,
   celulasDaLinha, celulasEstimadas,
   planejarFatias, instrucaoDaFatia, juntarBlocos, avaliarCobertura,
   MAX_CELULAS_POR_BLOCO, LIMIAR_COBERTURA, MINIMO_PARA_AVALIAR,
 } from './lib/cobertura.mjs';
+import { conferirIdentidadeDeLinha, conferirTotalDaSerie } from './lib/aritmetica.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -266,6 +269,29 @@ const FONTE_COBERTURA = [
   `const instrucaoDaFatia = ${instrucaoDaFatia.toString()};`,
   `const juntarBlocos = ${juntarBlocos.toString()};`,
   `const avaliarCobertura = ${avaliarCobertura.toString()};`,
+  // DEPOIS de `linhasComNumero`, que ela chama — mesma regra de ordem do
+  // comentário acima: o Code do n8n não hoista `const`.
+  `const CARACTERES_MINIMOS_POR_PAGINA = ${CARACTERES_MINIMOS_POR_PAGINA};`,
+  `const MINIMO_LINHAS_COM_NUMERO_PDF = ${MINIMO_LINHAS_COM_NUMERO_PDF};`,
+  `const MAX_FRACAO_PALAVRAS_DOBRADAS = ${MAX_FRACAO_PALAVRAS_DOBRADAS};`,
+  // ANTES de `camadaDeTextoDoPdf`, que a chama. O portão do espelho pegou a
+  // ausência dela nesta lista antes de virar `ReferenceError` em produção —
+  // `toString()` não leva o escopo do módulo, e é o terceiro caso desta família
+  // nesta sessão.
+  `const fracaoDePalavrasDobradas = ${fracaoDePalavrasDobradas.toString()};`,
+  `const camadaDeTextoDoPdf = ${camadaDeTextoDoPdf.toString()};`,
+].join('\n');
+
+// AS DUAS IDENTIDADES ARITMÉTICAS (lib/aritmetica.mjs), embutidas do fonte
+// como todo o resto — cada uma é AUTO-CONTIDA (declara seu próprio
+// normalizador de rótulo por dentro), então não há ordem de dependência entre
+// elas. Rodam em `Juntar Blocos`, sobre os `campos` já juntados do
+// documento — antes do `Gravar Campos (Sombra)`, no mesmo canal de
+// `falha_motivo` que já converte em pendência tipada (ver o comentário de
+// `CODE_JUNTAR_BLOCOS` abaixo para o porquê de não ser um nó novo).
+const FONTE_ARITMETICA = [
+  `const conferirIdentidadeDeLinha = ${conferirIdentidadeDeLinha.toString()};`,
+  `const conferirTotalDaSerie = ${conferirTotalDaSerie.toString()};`,
 ].join('\n');
 
 // `sha256Hex` idem — embutida do fonte. Ela substituiu a dependência de
@@ -455,7 +481,6 @@ const docs = itens.map((i) => {
     colunas,
     blocos,
     precisaFallback: !!j.precisa_fallback_ia,
-    bytes: Number(j.bytes),
     // O FORMATO MEDIDO viaja ate' aqui porque a conta de custo depende dele, e
     // depender dele nao e' refinamento: \`CUSTO_POR_MB_USD\` (2,80) foi calibrado
     // sobre PDF, que vai ao modelo como IMAGEM (~1000 tokens/pagina). Aplicado a
@@ -465,7 +490,18 @@ const docs = itens.map((i) => {
     // mudar o proprio processo de trabalho por causa de um guarda errado.
     // Recusar lote que cabe e' o v31 pelo outro lado (ver o cabecalho de
     // lib/custo.mjs).
-    formato: j.formato_detectado || null,
+    // O FORMATO QUE A CONTA USA E' O DA LEITURA, nao o do arquivo. Um PDF lido
+    // como TEXTO (\`leitura_pdf === 'texto'\`) manda caracteres, nao paginas de
+    // imagem -- cobrar imagem dele superestima a entrada em ~4x num balanco
+    // tipico e recusa lote que cabe.
+    formato: j.leitura_pdf==='texto' ? 'texto' : (j.formato_detectado || null),
+    // E O TAMANHO TAMBEM: para o PDF lido como texto, o que vai na chamada e' o
+    // TEXTO (\`caracteres_do_texto\`), nao os bytes do PDF. Sem esta linha a conta
+    // por texto dividiria os BYTES DO PDF por 4 -- um PDF de 2 MB viraria 500 mil
+    // tokens onde ha 1.700 caracteres. Trocar um exagero por outro maior nao e'
+    // correcao.
+    bytes: j.leitura_pdf==='texto' && Number.isFinite(Number(j.caracteres_do_texto))
+      ? Number(j.caracteres_do_texto) : Number(j.bytes),
   };
 });
 const r = orcamentoDoLotePorConteudo({ documentos: docs, teto: ${TETO_EXECUCAO_USD}, custoPorChamada: ${CUSTO_ESTIMADO_DOC_USD}, tokensPromptSistema: TOKENS_PROMPT_SISTEMA });
@@ -853,6 +889,7 @@ return {json:{...item, content_part: part, content_mime: mt, hash, aviso_conteud
 const CODE_RECOMPOR_EXTRACAO = `
 ${FONTE_PROVEDOR}
 ${FONTE_SPREADSHEET}
+${FONTE_COBERTURA}
 const entradas=$input.all();
 const completos=[];
 const porDocumento=new Map();
@@ -870,9 +907,56 @@ for(let i=0;i<entradas.length;i+=1){
     continue;
   }
   const formato=ctx.formato_detectado;
-  // Caso 2: PDF -- Extrair Texto e' Camada 1 (texto/paginas), Medir Documento
-  // le direto do no' anterior. Nao mexe.
-  if(formato==='pdf'){ completos.push(entradas[i]); continue; }
+  // ==========================================================================
+  // Caso 2: PDF -- TEXTO quando ele existe, IMAGEM (OCR) quando nao existe.
+  // ==========================================================================
+  //
+  // O QUE MUDOU EM 12/09/2026, e e' dinheiro. Ate' aqui CADA PDF ia a' IA como
+  // ARQUIVO em base64, que o provedor cobra como IMAGEM (~1.000 tokens por
+  // pagina). E o \`Extrair Texto\` -- que roda na propria instancia, de graca --
+  // ja' vinha lendo a camada de texto do mesmo PDF, so' que o texto era usado
+  // APENAS para MEDIR cobertura e depois jogado fora. O conteudo estava na mao
+  // e a chamada pagava imagem por ele.
+  //
+  // Agora o texto VIRA o conteudo quando ele existe de verdade. Um balanco de 2
+  // paginas com camada de texto deixa de custar ~2.000 tokens de entrada e passa
+  // a custar os caracteres que ele tem (~440 num documento de 1,7 KB).
+  //
+  // E O ESCANEADO CONTINUA INDO COMO IMAGEM, que e' a metade que nao se pode
+  // perder: PDF sem camada de texto devolve vazio (ou um punhado de lixo), e
+  // mandar ISSO no lugar do documento seria a AMO de novo -- ausencia
+  // apresentada como dado. \`camadaDeTextoDoPdf\` decide por DOIS criterios
+  // medidos (densidade por pagina e linhas COM NUMERO); ver lib/cobertura.mjs
+  // para por que o segundo e' o que importa numa demonstracao financeira.
+  //
+  // O VEREDITO VIAJA COM O ITEM (\`leitura_pdf\`/\`leitura_pdf_motivo\`), e nao e'
+  // enfeite: quem olhar um documento sem linhas precisa distinguir "foi lido por
+  // OCR e o modelo nao achou nada" de "foi lido como texto e o texto nao tinha
+  // numeros". Sem isso as duas falhas tem a mesma aparencia.
+  if(formato==='pdf'){
+    const textoPdf=typeof raw.text==='string'?raw.text:'';
+    const paginas=Number.isFinite(Number(raw.numpages))?Number(raw.numpages)
+      :(Number.isFinite(Number(raw.numPages))?Number(raw.numPages):null);
+    const v=camadaDeTextoDoPdf(textoPdf,{paginas});
+    if(v.usarTexto){
+      // \`content_part\` ESCRITO aqui e' o que faz \`Medir Documento\` usar o texto
+      // em vez do base64 de \`Preparar Conteudo\` -- ele so' troca quando a chave
+      // EXISTE no item do extrator (ver o comentario daquele no').
+      completos.push({json:{...raw,
+        content_part: parteDeTexto(PROVEDOR,textoPdf),
+        leitura_pdf:'texto', leitura_pdf_motivo:v.motivo, leitura_pdf_explicacao:v.explicacao,
+        caracteres_do_texto:v.caracteres,
+      }, pairedItem:{item:i}});
+    } else {
+      // SEM \`content_part\`: o item segue sem a chave e \`Medir Documento\` mantem
+      // o base64 que \`Preparar Conteudo\` montou -- o PDF vai a' visao do modelo.
+      completos.push({json:{...raw,
+        leitura_pdf:'ocr', leitura_pdf_motivo:v.motivo, leitura_pdf_explicacao:v.explicacao,
+        caracteres_do_texto:v.caracteres,
+      }, pairedItem:{item:i}});
+    }
+    continue;
+  }
   // ==========================================================================
   // Caso 3: O EXTRATOR FALHOU -- e este ramo e' a correcao do defeito que
   // apagou 60 documentos da AMO em 12/09/2026.
@@ -1289,6 +1373,19 @@ return {json:{...item,
   // BYTE, que e' a saida conservadora, em vez de supor uma pagina.
   paginas_do_documento: Number.isFinite(Number(doExtrator.numpages))?Number(doExtrator.numpages)
     :(Number.isFinite(Number(doExtrator.numPages))?Number(doExtrator.numPages):null),
+  // COMO O PDF FOI LIDO, decidido em \`Recompor Conteudo Extraido\`. Tem de
+  // atravessar por NOME porque este no' reconstroi o item a partir do
+  // \`Preparar Conteudo\` (\`{...item}\`), e nao do item do extrator -- sem estas
+  // tres linhas o veredito morria aqui.
+  //
+  // E ele nao e' so' rastro: \`Orcamento do Lote\`, o proximo no', cobra IMAGEM
+  // (paginas x 1.000 tokens) de todo \`formato: 'pdf'\`. Um PDF lido como TEXTO
+  // pagaria imagem na ESTIMATIVA por um custo que a chamada nao vai ter -- o
+  // guarda recusaria lote que cabe, que e' o v31 pelo outro lado.
+  leitura_pdf: doExtrator.leitura_pdf??null,
+  leitura_pdf_motivo: doExtrator.leitura_pdf_motivo??null,
+  caracteres_do_texto: Number.isFinite(Number(doExtrator.caracteres_do_texto))
+    ?Number(doExtrator.caracteres_do_texto):(temTexto?textoPdf.length:null),
 }};
 `.trim();
 
@@ -1372,6 +1469,7 @@ return saida;
 // fila de revisão com os dois números na descrição.
 const CODE_JUNTAR_BLOCOS = `
 ${FONTE_COBERTURA}
+${FONTE_ARITMETICA}
 const porDocumento=new Map();
 const primeiroIndice=new Map();
 const entradas=$input.all();
@@ -1439,6 +1537,18 @@ for(const [chave, blocos] of porDocumento){
        : (r.blocosPlanejados===1
           ? '. Num documento longo, UM bloco so e o formato de quem bateu no teto de saida do modelo: vale conferir se o fatiamento devia ter dividido.'
           : ' (fatiado, e todos chegaram), entao o que falta nao e teto de uma chamada so nem bloco perdido -- e leitura parcial do modelo.')));
+  // AS DUAS IDENTIDADES ARITMETICAS (Arquitetura do Sistema/2 Especificacao/04, identidade (c)): o texto ja chegou
+  // (cobertura acima) e agora o NUMERO e conferido contra ele mesmo -- soma das
+  // colunas de uma linha contra a coluna "Total" da mesma linha, e soma das
+  // linhas de uma serie contra o "Totais" que a declara. Nao cobre (a)/(b)
+  // (Ativo=Passivo+PL, subtotal=soma dos filhos): essas ja rodam no Postgres
+  // (fn_reconciliar_ativo_passivo_pl, fn_reconciliar_arvore) via "Reconciliar
+  // (Classe A)", mais adiante no grafo -- reimplementar aqui com um dicionario
+  // de rotulo mais pobre arriscaria divergir da checagem que ja e a autoridade.
+  const problemasLinha=conferirIdentidadeDeLinha(r.campos);
+  if(problemasLinha.length>0) motivos.push(problemasLinha.slice(0,5).join(' | ')+(problemasLinha.length>5?' | ...':''));
+  const problemasSerie=conferirTotalDaSerie(r.campos);
+  if(problemasSerie.length>0) motivos.push(problemasSerie.slice(0,5).join(' | ')+(problemasSerie.length>5?' | ...':''));
   // A EMENDA LIMPA NAO E' FALHA -- e' a costura fazendo exatamente o que ela
   // existe para fazer. Ate a rodada do lote 7377 (02/09, "teste Canastra"),
   // \`r.emendasLimpas>0\` sozinho virava \`motivos.push(...)\`, e qualquer motivo

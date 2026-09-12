@@ -51,6 +51,9 @@ Use exatamente estes. O CI (`.github/workflows/suites.yml`) é a lista completa 
 cd portal && npm ci --ignore-scripts && cd ..   # --ignore-scripts: igual ao CI
 cd "Dados de Teste"/book-vertentes && python3 -m pip install --quiet 'reportlab==5.0.1' \
   && PYTHONPATH=. python3 gerar.py && cd ../..   # PYTHONPATH=. é obrigatório
+# O CANASTRA TAMBÉM, e ele faltava aqui: `medir-regua-cobertura.mjs` morre em
+# "Falta .../book-canastra/pdf/METRICAS.json" sem este passo. O CI gera os DOIS.
+cd "Dados de Teste"/book-canastra && PYTHONPATH=. python3 gerar.py && cd ../..
 sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/16/main \
   -o "-c config_file=/etc/postgresql/16/main/postgresql.conf -k /tmp -p 5432" -l /tmp/pg.log start
 # O `run.sh` roda COMO postgres e REESCREVE `Supabase/schema.sql`. Num container em que
@@ -72,6 +75,11 @@ CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
 E2E_PSQL="sudo -u postgres psql -h /tmp -p 5432" ./portal/node_modules/.bin/tsx Verificação/run.mts
 ./portal/node_modules/.bin/tsx Verificação/variacoes.mts
 
+# medidores — rodam no CI e reprovam: a régua contra o texto que produção produz,
+# e o custo do book contra o modelo de estimativa. Precisam dos DOIS books gerados.
+node N8N/medir-regua-cobertura.mjs
+node N8N/medir-custo-book.mjs
+
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
 node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
@@ -88,6 +96,12 @@ cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \
 > exatamente assim que a sessão 82 rodou a "baseline completa" sem 18 asserts. **Quem acrescenta
 > suíte ao CI acrescenta a linha aqui na mesma passada**, e o jeito de conferir em dez segundos é
 > `grep -oE 'portal/scripts/verificar-[a-z-]+\.mts' .github/workflows/suites.yml CLAUDE.md | sort -u`.
+> **E a mesma conferência vale para os MEDIDORES**, que ficaram para trás pelo mesmo motivo
+> e foram achados na sessão 86: `medir-regua-cobertura.mjs` e `medir-custo-book.mjs` rodavam no
+> CI e não estavam aqui — e o primeiro nem roda sem o `book-canastra`, que também faltava no
+> preparo acima. O comando é
+> `grep -oE 'N8N/medir-[a-z0-9-]+\.mjs' .github/workflows/suites.yml CLAUDE.md | sort | uniq -c`
+> — cada script tem de aparecer DUAS vezes.
 
 `npx` **não** serve no lugar de `./portal/node_modules/.bin/<bin>` — para o `tsx`, o `tsc`, o
 `eslint` ou o `next`: sem o binário do lock, o npx baixa a última versão publicada no dia. Esta

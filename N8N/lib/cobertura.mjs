@@ -743,7 +743,7 @@ export function juntarBlocos(blocos) {
   let algumBlocoLeuFatos = false;
   const linhas = new Set();
   const chaveDaLinha = [];   // paralelo a `campos`: qual linha do documento originou cada par
-  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('');
+  const assinatura = (c) => [c.chave, c.entidade_coluna, c.periodo_coluna, c.valor_texto, c.valor_num].join('\u0001');
 
   for (const b of lista) {
     const doBloco = Array.isArray(b.campos) ? b.campos.slice() : [];
@@ -889,4 +889,122 @@ export function avaliarCobertura({ extraidas, esperadas, limiar = LIMIAR_COBERTU
       + `cima em cerca de 3% (costuma contar o cabeçalho de colunas como linha), o que já está `
       + `descontado na folga do limiar.`,
   };
+}
+
+// ===========================================================================
+// PDF COM CAMADA DE TEXTO x PDF ESCANEADO — qual dos dois vai à IA.
+// ===========================================================================
+//
+// O DESPERDÍCIO QUE ISTO FECHA. Até 12/09/2026 CADA PDF ia à IA como ARQUIVO
+// (base64), que o provedor cobra como IMAGEM: ~1.000 tokens por página, contra
+// ~250 tokens por mil caracteres do mesmo conteúdo em texto. Um balanço de 2
+// páginas com camada de texto de 7 KB custava 2.000 tokens de entrada onde
+// 1.750 CARACTERES bastariam — e o `Extrair Texto` já lia esse texto de graça,
+// na própria instância, só para MEDIR cobertura. O conteúdo estava na mão e era
+// jogado fora.
+//
+// MAS NEM SEMPRE DÁ PARA LER ASSIM, e é isso que esta função decide. PDF
+// escaneado não tem camada de texto: o `Extrair Texto` devolve vazio ou um
+// punhado de lixo, e mandar ISSO à IA no lugar do documento é o defeito da AMO
+// de novo — ausência apresentada como dado (regra 1). Esse precisa ir como
+// imagem, para o modelo ler com a visão. A escolha é por documento e é MEDIDA,
+// não suposta.
+//
+// OS DOIS CRITÉRIOS, e o segundo é o que importa nesta base:
+//
+//   1. DENSIDADE POR PÁGINA. Um PDF de 20 páginas escaneadas em que só a capa
+//      tem texto não é "um PDF com camada de texto" — é um escaneado com uma
+//      página a mais. Medir o total de caracteres esconderia isso; medir por
+//      página, não.
+//   2. LINHAS COM NÚMERO. Numa demonstração financeira o NÚMERO é a carga.
+//      Uma camada de texto que traz o cabeçalho, o CNPJ e o rodapé do contador
+//      mas nenhum valor é pior que inútil: passa nos critérios de tamanho e
+//      entrega à IA um documento sem os dados. Aqui isso reprova e o documento
+//      vai para a visão, que é onde os números estão.
+//
+// Devolve SEMPRE o motivo junto, porque `leitura_pdf`/`leitura_pdf_motivo`
+// viajam com o item até o banco: quem olhar um documento sem linhas precisa
+// conseguir distinguir "foi lido por OCR e o modelo não achou nada" de "foi
+// lido como texto e o texto não tinha números".
+
+/** Abaixo disto, o que veio é mobília de página (cabeçalho, rodapé), não conteúdo. */
+export const CARACTERES_MINIMOS_POR_PAGINA = 120;
+
+/** Demonstração financeira sem número na camada de texto tem os números na IMAGEM. */
+export const MINIMO_LINHAS_COM_NUMERO_PDF = 3;
+
+// CAMADA DE TEXTO CORROMPIDA POR GLIFO DOBRADO — o terceiro critério, e o que
+// impede esta otimização de PIORAR o dado.
+//
+// MEDIDO nos documentos reais do dono (12/09/2026). Quando o PDF simula negrito
+// desenhando o mesmo glifo duas vezes com deslocamento, o extrator de texto lê
+// as DUAS cópias e devolve `Empprreessaa::` no lugar de `Empresa:`. O estrago
+// não para no rótulo: chega aos NÚMEROS — `2.2272.055,77` por `2.272.055,77`,
+// `12.3330.33994,7799D` por `12.330.394,79`.
+//
+// A fração de palavras com letra repetida separa os dois mundos com folga:
+//
+//     texto limpo (referência)........  3,6%   (português tem "ss", "rr", "ll")
+//     OMNIBEAUTY DRE / Faturamento....  3,8% e 5,3%
+//     GENERAL TABACO Balanço.......... 37,9%   <- camada corrompida
+//     AMOBELEZA Balanço............... 73,0%   <- camada corrompida
+//
+// SEM ESTE CRITÉRIO a leitura por texto seria uma REGRESSÃO nesses dois
+// documentos: a visão do modelo lê a página renderizada e enxerga `2.272.055,77`;
+// a camada de texto entrega `2.2272.055,77`, e o número entra no banco errado,
+// com a mesma aparência de um número certo. Economizar entrada mandando dado
+// corrompido é a troca que este projeto não faz — e seria a regra 1 violada
+// pelo caminho mais caro: não a ausência apresentada como dado, mas o ERRO.
+//
+// O LIMIAR É 20% porque é o meio da terra de ninguém entre 5,3% e 37,9%. Não é
+// calibração fina: é uma linha no vazio entre duas populações que não se tocam.
+export const MAX_FRACAO_PALAVRAS_DOBRADAS = 0.20;
+
+/** Palavras (4+ letras) com alguma letra imediatamente repetida, sobre o total. */
+export function fracaoDePalavrasDobradas(texto) {
+  const palavras = String(texto || '').match(/[A-Za-zÀ-ÿ]{4,}/g);
+  if (!palavras || palavras.length === 0) return 0;
+  const dobradas = palavras.filter((p) => /(.)\1/i.test(p)).length;
+  return dobradas / palavras.length;
+}
+
+export function camadaDeTextoDoPdf(texto, {
+  paginas = 1,
+  minPorPagina = CARACTERES_MINIMOS_POR_PAGINA,
+  minLinhasComNumero = MINIMO_LINHAS_COM_NUMERO_PDF,
+  maxDobradas = MAX_FRACAO_PALAVRAS_DOBRADAS,
+} = {}) {
+  const t = typeof texto === 'string' ? texto.trim() : '';
+  // `paginas` ausente vira 1, e o efeito é o conservador: exige a densidade de
+  // UMA página inteira do texto que chegou. Nunca vira 0 — divisão por zero
+  // devolveria Infinity e aprovaria qualquer lixo.
+  const pags = Math.max(1, Number(paginas) || 1);
+  const porPagina = t.length / pags;
+  const comNumero = t === '' ? 0 : linhasComNumero(t).length;
+  const base = { caracteres: t.length, paginas: pags, porPagina: Math.round(porPagina), linhasComNumero: comNumero };
+
+  if (t === '') {
+    return { ...base, usarTexto: false, motivo: 'sem-camada-de-texto',
+      explicacao: 'o PDF não trouxe texto nenhum — é escaneado, e vai à IA como imagem' };
+  }
+  if (porPagina < minPorPagina) {
+    return { ...base, usarTexto: false, motivo: 'texto-ralo',
+      explicacao: `o texto extraído dá ${Math.round(porPagina)} caractere(s) por página `
+        + `(mínimo ${minPorPagina}): é mobília de página, não o documento — vai à IA como imagem` };
+  }
+  if (comNumero < minLinhasComNumero) {
+    return { ...base, usarTexto: false, motivo: 'texto-sem-numeros',
+      explicacao: `a camada de texto tem ${comNumero} linha(s) com número (mínimo ${minLinhasComNumero}): `
+        + 'os valores estão na imagem, não no texto — vai à IA como imagem' };
+  }
+  const dobradas = fracaoDePalavrasDobradas(t);
+  if (dobradas > maxDobradas) {
+    return { ...base, usarTexto: false, motivo: 'camada-de-texto-corrompida', fracaoDobradas: dobradas,
+      explicacao: `${Math.round(dobradas * 100)}% das palavras têm letra repetida (teto ${Math.round(maxDobradas * 100)}%): `
+        + 'a camada de texto deste PDF está corrompida por glifo dobrado e os NÚMEROS saem errados — '
+        + 'vai à IA como imagem, que é onde o documento está correto' };
+  }
+  return { ...base, usarTexto: true, motivo: 'camada-de-texto', fracaoDobradas: dobradas,
+    explicacao: `camada de texto com ${t.length} caractere(s) e ${comNumero} linha(s) com número — `
+      + 'vai à IA como TEXTO, sem custo de imagem' };
 }

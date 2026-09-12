@@ -1,0 +1,191 @@
+// Confere se o NÚMERO que a IA extraiu é aritmeticamente consistente consigo
+// mesmo — hoje o pipeline garante que o TEXTO chegou (cobertura.mjs: linha
+// perdida, bloco perdido, truncamento); não garante que o número está certo.
+//
+// ACHADO EM PRODUÇÃO (12/09/2026, documentos reais do dono):
+//   • `01_Relatorio_de_Faturamento_OMNIBEAUTY_2025`: colunas
+//     "Saídas | Serviços | Outros | Total" — a identidade Saídas+Serviços+
+//     Outros=Total FALHA em 6 dos 12 meses. Janeiro: Saídas 2.371.829,89,
+//     Total 2.311.829,89 — diferem em 60 mil. E o rodapé "Totais
+//     51.271.444,92" não fecha com NENHUMA leitura plausível dos 12 meses (a
+//     mais próxima erra em R$ 660,00).
+//   • Balanços fecham quando o texto está limpo: ATIVO=PASSIVO=64.126.203,52
+//     (AMOBELEZA) e CIRCULANTE 10.035.063,87 + NÃO-CIRCULANTE 2.295.330,92 =
+//     ATIVO 12.330.394,79 (GENERAL TABACO).
+//
+// ONDE ISTO NÃO DUPLICA O QUE JÁ EXISTE. `ATIVO = PASSIVO + PL` e `subtotal =
+// soma dos filhos diretos` (secao como ponteiro do pai, ver campo_extraido.
+// secao) já têm checagem própria e mais sofisticada no Postgres —
+// `fn_reconciliar_ativo_passivo_pl` (Supabase/migrations/0009→0034) e
+// `fn_reconciliar_arvore` (0133/0151), as duas rodando por documento no nó
+// `Reconciliar (Classe A)`, já wired no grafo. Reimplementá-las aqui, com um
+// dicionário de rótulos mais pobre que o de lá (`fn_valor_conceito` trata
+// sinônimo, termo excludente, desempate por confiança — nada disso existe
+// neste arquivo), arriscaria DIVERGIR da checagem que já é a autoridade — a
+// mesma doença que este repositório já pagou duas vezes com cópia à mão
+// (prompt de extração, lista de apelidos da taxonomia).
+//
+// O que NÃO tinha checagem nenhuma, em lugar nenhum, é a identidade (c):
+// "total declarado = soma das parcelas" DENTRO do próprio documento, em duas
+// formas — a de LINHA (colunas de categoria somando para uma coluna "Total"
+// na MESMA linha) e a de SÉRIE (uma linha "Totais" somando as outras linhas
+// da mesma coluna). Nenhuma reconciliação existente cobre isto: o mais perto
+// é `fn_reconciliar_receita_dre_vs_faturamento` (Classe B, 0015), que compara
+// a Receita da DRE com a soma do faturamento — ENTRE DOIS DOCUMENTOS, não
+// dentro do próprio relatório de faturamento. É essa lacuna que este arquivo
+// fecha, e só ela — sem tocar SQL nenhum (migration é fatia de outro agente).
+//
+// AS DUAS FUNÇÕES SÃO AUTO-CONTIDAS (nó Code do n8n não importa arquivo, e
+// `toString()` não leva escopo de módulo): cada uma declara seu próprio
+// normalizador de rótulo por dentro, para poder ser embutida sozinha sem
+// `ReferenceError`.
+//
+// AUSÊNCIA NÃO É ZERO (regra 1 do CLAUDE.md), em toda parte deste arquivo: uma
+// parcela ausente (valor_num null) ABORTA a conferência daquele grupo — nunca
+// vira zero na soma. "Não dá para conferir" e "não confere" são vereditos
+// diferentes, e só o segundo vira pendência.
+//
+// TOLERÂNCIA: a mesma fórmula da 0133 (`greatest(1, ceil(0.5*(n+1)))`, n =
+// número de parcelas), na unidade em que o documento já está — não é um
+// número novo inventado aqui, é o precedente já medido nesta casa: "0,5% de
+// um total grande deixaria passar a conta inteira que a checagem existe para
+// pegar" (comentário da 0133). Medido neste arquivo (aritmetica.test.mjs):
+// com esta fórmula, a divergência de R$ 60.000,00 da OMNIBEAUTY estoura a
+// tolerância por ~30.000×, e uma diferença de 1 centavo de arredondamento
+// fica dentro dela.
+
+/**
+ * Identidade (c), forma de LINHA: numa mesma linha do documento (mesma conta,
+ * várias COLUNAS — ex.: "Saídas | Serviços | Outros | Total" do relatório de
+ * faturamento), a soma das colunas que NÃO são a coluna "Total" tem de bater
+ * com a coluna "Total" daquela linha.
+ *
+ * Entrada: `campos` já JUNTADOS (saída de `juntarBlocos`) — usa o campo
+ * `ordem`, que `juntarBlocos` já garante ser o MESMO para todo par
+ * (conta×coluna) que veio da mesma linha original do documento, mesmo depois
+ * de juntar blocos de chamadas diferentes.
+ *
+ * Devolve uma lista de strings (uma por linha que NÃO fecha) — vazia quando
+ * tudo confere ou quando não há o que conferir (regra 1: célula ausente não
+ * vira zero, e sai da conta em vez de fabricar divergência).
+ */
+export function conferirIdentidadeDeLinha(campos) {
+  const problemas = [];
+  if (!Array.isArray(campos)) return problemas;
+  const normRotulo = (s) => String(s ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+  // Bem ESTREITA de propósito: só "total"/"totais", opcionalmente com "geral"
+  // ou "do período/exercício/ano/mês". "Total do Ativo" NÃO casa (sobra
+  // "ativo") — esse rótulo é conceito específico e já tem dono no Postgres
+  // (fn_reconciliar_ativo_passivo_pl via fn_valor_conceito); casar aqui
+  // também seria abrir DUAS pendências para o mesmo defeito.
+  const ehTotal = (s) => /^(total|totais)(\s+(geral|gerais|do\s+(periodo|exercicio|ano|mes)))?$/.test(normRotulo(s));
+
+  const grupos = new Map();
+  for (const c of campos) {
+    if (!c || typeof c !== 'object' || !Number.isFinite(Number(c.ordem))) continue;
+    const chave = Number(c.ordem);
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave).push(c);
+  }
+
+  for (const linha of grupos.values()) {
+    if (linha.length < 2) continue; // uma coluna só: não há "parte" para somar
+    const rotuladasTotal = linha.filter((c) => ehTotal(c.periodo_coluna) || ehTotal(c.entidade_coluna));
+    // Zero ou mais de uma coluna "Total": ambíguo, não dá para conferir.
+    if (rotuladasTotal.length !== 1) continue;
+    const total = rotuladasTotal[0];
+    const partes = linha.filter((c) => c !== total);
+    if (partes.length === 0) continue;
+    if (typeof total.valor_num !== 'number') continue; // total ausente: nada a conferir
+    if (partes.some((p) => typeof p.valor_num !== 'number')) continue; // parcela ausente: idem
+    // Unidade/moeda mista não se soma (mesma guarda da 0133): pré-condição não
+    // satisfeita, não se descarta a parcela em silêncio para forçar uma conta.
+    const unidades = new Set([total.unidade ?? null, ...partes.map((p) => p.unidade ?? null)]);
+    const moedas = new Set([total.moeda ?? null, ...partes.map((p) => p.moeda ?? null)]);
+    if (unidades.size > 1 || moedas.size > 1) continue;
+
+    const soma = partes.reduce((acc, p) => acc + p.valor_num, 0);
+    const tolerancia = Math.max(1, Math.ceil(0.5 * (partes.length + 1)));
+    const diff = Math.abs(soma - total.valor_num);
+    if (diff <= tolerancia) continue;
+
+    const rotuloLinha = linha[0]?.chave ?? '(sem rótulo)';
+    const nomeColTotal = total.periodo_coluna ?? total.entidade_coluna ?? 'Total';
+    const parcelasTexto = partes
+      .map((p) => `${p.periodo_coluna ?? p.entidade_coluna ?? '?'}=${p.valor_num}`)
+      .join(' + ');
+    problemas.push(
+      `identidade de linha não fecha em "${rotuloLinha}": ${parcelasTexto} = ${soma}, mas a coluna `
+      + `"${nomeColTotal}" declara ${total.valor_num} — diferença de ${diff.toFixed(2)} (tolerância de `
+      + `arredondamento: ${tolerancia}). Um dos dois valores está errado, e o book vai sair com essa `
+      + 'diferença nesta linha.',
+    );
+  }
+  return problemas;
+}
+
+/**
+ * Identidade (c), forma de SÉRIE: uma linha "Totais"/"Total geral" declara,
+ * numa coluna, o total da SÉRIE — e esse total tem de bater com a soma das
+ * outras linhas naquela MESMA coluna (ex.: o "Totais" do rodapé do
+ * faturamento contra os 12 meses; o total de uma coluna do mapa de dívida
+ * contra suas linhas).
+ *
+ * Agrupa por COLUNA (periodo_coluna + entidade_coluna), não por `ordem`: a
+ * série é entre LINHAS diferentes que compartilham a mesma coluna, o oposto
+ * da checagem de linha acima.
+ *
+ * Devolve lista de strings; vazia quando fecha ou quando falta dado para
+ * concluir (uma parcela da série ausente NÃO vira zero — a checagem se cala
+ * em vez de acusar uma divergência que pode ser só extração incompleta;
+ * `linhasComNumero`/`avaliarCobertura`, em cobertura.mjs, já é quem mede
+ * extração incompleta).
+ */
+export function conferirTotalDaSerie(campos) {
+  const problemas = [];
+  if (!Array.isArray(campos)) return problemas;
+  const normRotulo = (s) => String(s ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const ehTotal = (s) => /^(total|totais)(\s+(geral|gerais|do\s+(periodo|exercicio|ano|mes)))?$/.test(normRotulo(s));
+
+  const porColuna = new Map();
+  for (const c of campos) {
+    if (!c || typeof c !== 'object') continue;
+    const colKey = `${c.periodo_coluna ?? ''}\u0000${c.entidade_coluna ?? ''}`;
+    if (!porColuna.has(colKey)) porColuna.set(colKey, []);
+    porColuna.get(colKey).push(c);
+  }
+
+  for (const [colKey, linhas] of porColuna) {
+    const totais = linhas.filter((c) => ehTotal(c.chave));
+    // Zero ou mais de uma linha "Totais" na mesma coluna: ambíguo.
+    if (totais.length !== 1) continue;
+    const total = totais[0];
+    if (typeof total.valor_num !== 'number') continue;
+    const partes = linhas.filter((c) => c !== total && !ehTotal(c.chave));
+    // Precisa de pelo menos DUAS parcelas para ser série (uma parcela só não
+    // é série, é a mesma conta repetida) — abaixo disso não dá para concluir.
+    if (partes.length < 2) continue;
+    if (partes.some((p) => typeof p.valor_num !== 'number')) continue;
+    const unidades = new Set([total.unidade ?? null, ...partes.map((p) => p.unidade ?? null)]);
+    const moedas = new Set([total.moeda ?? null, ...partes.map((p) => p.moeda ?? null)]);
+    if (unidades.size > 1 || moedas.size > 1) continue;
+
+    const soma = partes.reduce((acc, p) => acc + p.valor_num, 0);
+    const tolerancia = Math.max(1, Math.ceil(0.5 * (partes.length + 1)));
+    const diff = Math.abs(soma - total.valor_num);
+    if (diff <= tolerancia) continue;
+
+    const [pc, ec] = colKey.split('\u0000');
+    const rotuloCol = pc || ec || '(coluna única)';
+    problemas.push(
+      `total da série não fecha em "${total.chave}" (coluna "${rotuloCol}"): total declarado `
+      + `${total.valor_num}, soma das ${partes.length} linha(s) da série ${soma} — diferença de `
+      + `${diff.toFixed(2)} (tolerância de arredondamento: ${tolerancia}). Um dos dois números está `
+      + 'errado, ou a extração perdeu uma linha da série — nos dois casos o book sai com essa '
+      + 'diferença.',
+    );
+  }
+  return problemas;
+}

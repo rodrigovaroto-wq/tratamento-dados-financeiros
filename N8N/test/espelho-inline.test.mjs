@@ -29,11 +29,15 @@ import { normalize } from '../lib/normalize.mjs';
 import { mergeClassification } from '../lib/merge.mjs';
 import { spreadsheetToText, colunasDaPlanilha, avisoTruncamentoPlanilha } from '../lib/spreadsheet.mjs';
 import { sha256Hex } from '../lib/hash.mjs';
+import {
+  byteEm, casaAssinatura, trechoLatin1, saborDoZip, pareceTexto, contarFora,
+  formaDoTexto, detectarFormato,
+} from '../lib/formato.mjs';
 import { parseTipo, parsePeriodo, parseEntidade } from '../lib/classifier.mjs';
 import {
   avaliarCobertura, celulasDaLinha, celulasEstimadas, linhasComNumero, linhasDeConta,
   juntarFragmentosDeLinha, ehLinhaSemValor, ehLinhaDeConta,
-  planejarFatias, instrucaoDaFatia, juntarBlocos,
+  planejarFatias, instrucaoDaFatia, juntarBlocos, camadaDeTextoDoPdf, fracaoDePalavrasDobradas,
 } from '../lib/cobertura.mjs';
 import {
   custoDaChamada, tokensDeSaida, bytesDoBinario, orcamentoDoLote,
@@ -168,14 +172,22 @@ function declaracoesDeTopo(src) {
         // é dado, não depende de nada, e é exatamente o que uma tabela é.
         const ehLiteral = /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:\[|\{|'|"|`|\d|\/|new (?:Set|Map)\(|Object\.freeze\()/
           .test(texto);
-        const ehFuncao = /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s*)?(?:function\b|\()/
+        // `= (` NÃO BASTA PARA SER FUNÇÃO, e a folga custou uma investigação.
+        // `const mt=(binMeta.mimeType||'').toLowerCase();` casava com o padrão
+        // antigo e entrava no inventário como se fosse arrow — aí qualquer
+        // função cujo corpo cite `mt` (e `detectarFormato` tem uma `mt` LOCAL)
+        // arrastava a variável de trabalho do nó e estourava em `binMeta`.
+        // Agora exige a seta de verdade, ou a palavra `function`.
+        const ehFuncao = /^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/
           .test(texto);
         // O filtro de runtime vale para o INICIALIZADOR de constante comum, não
         // para o corpo de função: `diagnosticarErroApi` cita "item" numa frase de
         // comentário, e checar o texto inteiro a excluía do inventário.
         const usaRuntime = /\$\(|\$input|\$json|\bitems?\b|\bthis\b/.test(texto);
         if ((ehFuncao && !/\$\(|\$input|\$json/.test(texto)) || (ehLiteral && !usaRuntime)) {
-          partes.push({ nome: mDecl[1], texto });
+          // `literal` marca TABELA (dado puro, sem dependência). A queda lá
+          // embaixo precisa distinguir tabela de variável de trabalho.
+          partes.push({ nome: mDecl[1], texto, literal: ehLiteral && !ehFuncao });
           // `const f = function f(){}` e `const f = (x) => …` são função para o
           // que este teste faz com elas: dá para chamar.
           if (ehFuncao) {
@@ -251,7 +263,47 @@ function doWorkflow(nome) {
     // dependência não havia.
     const soEla = alvo.partes.find((x) => x.nome === alvo.acessor);
     assert.ok(soEla, `não achei o texto de ${nome} no nó ${alvo.no}`);
-    return new Function(`${soEla.texto}\nreturn ${alvo.acessor};`)();
+    // MAS AS TABELAS VÃO JUNTO, e esta linha foi paga em 12/09/2026.
+    //
+    // A queda dizia "se sozinha ela monta, é porque dependência não havia". É
+    // FALSO para quem lê tabela: em JS o nome só é resolvido na CHAMADA, então
+    // `detectarFormato` monta sozinha e estoura `ASSINATURAS is not defined` ao
+    // ser chamada — e o teste acusava divergência onde o nó de produção está
+    // correto (lá `ASSINATURAS` é declarada, por `FONTE_FORMATO`).
+    //
+    // A causa de cair aqui é a colisão que o comentário acima já descreve: a
+    // `mt` local de `detectarFormato` tem o mesmo nome de uma variável de
+    // trabalho do `Preparar Conteudo`, o fecho a arrasta, e a avaliação morre.
+    // Tabela literal é dado puro — não depende de nada, não colide com nada, e
+    // sem ela a queda testa uma função que não roda.
+    // UM FECHO PRÓPRIO, sobre o que é SEGURO levar.
+    //
+    // `função sozinha` não basta: em JS o nome só é resolvido na CHAMADA, então
+    // `detectarFormato` MONTA sozinha e só estoura ao ser chamada — primeiro em
+    // `ASSINATURAS` (tabela), depois em `casaAssinatura` (função). O teste
+    // acusava divergência onde o nó de produção está correto: lá as duas são
+    // declaradas, por `FONTE_FORMATO`.
+    //
+    // SEGURO = função, ou tabela em CAIXA_ALTA. O que fica de fora é a variável
+    // de trabalho minúscula do corpo do nó (`const mt = binMeta.mimeType...`),
+    // que é justamente quem derruba o fecho principal: a `mt` LOCAL de
+    // `detectarFormato` colide com ela pelo nome. Injetar literal minúsculo
+    // também sombreia parâmetro — medido, quebrou `parseEntidade`,
+    // `mergeClassification` e `juntarBlocos` na primeira tentativa.
+    const seguro = (x) => (x.literal ? /^[A-Z][A-Z0-9_]*$/.test(x.nome) : true);
+    const porNomeSeguro = new Map(alvo.partes.filter(seguro).map((x) => [x.nome, x]));
+    const levar = new Set();
+    const pilha = [alvo.acessor];
+    while (pilha.length > 0) {
+      const atual = pilha.pop();
+      if (levar.has(atual) || !porNomeSeguro.has(atual)) continue;
+      levar.add(atual);
+      for (const m of porNomeSeguro.get(atual).texto.matchAll(/[A-Za-z_$][\w$]*/g)) {
+        if (porNomeSeguro.has(m[0]) && !levar.has(m[0])) pilha.push(m[0]);
+      }
+    }
+    const corpoSeguro = alvo.partes.filter((x) => levar.has(x.nome)).map((x) => x.texto).join('\n');
+    return new Function(`${corpoSeguro}\nreturn ${alvo.acessor};`)();
   }
 }
 
@@ -361,6 +413,88 @@ const TABELA = [
     casos: [['Caixa 1.000 2.000 3.000'], ['Só rótulo'], ['']] },
   { nome: 'celulasEstimadas', lib: celulasEstimadas,
     casos: [[['a 1 2', 'b 3']], [[]]] },
+  // ==========================================================================
+  // `lib/formato.mjs` — as OITO que decidem o destino de cada documento.
+  // ==========================================================================
+  //
+  // ELE ESTAVA FORA DESTE PORTÃO até 12/09/2026, e a lacuna era de auditoria,
+  // não de comportamento: as oito atravessam para o nó por `toString()` VERBATIM,
+  // então divergir era estruturalmente impossível — ao contrário de uma cópia
+  // retipada à mão, que é o que este portão nasceu para pegar.
+  //
+  // Entram assim mesmo, e a razão é o que aconteceu DUAS VEZES nesta sessão: o
+  // risco real não é o corpo divergir, é a função chamar uma vizinha que NÃO foi
+  // serializada junto (`toString()` não leva o escopo do módulo) e morrer com
+  // `ReferenceError` na primeira execução real. Estes casos EXECUTAM o código
+  // embutido, então uma dependência faltando reprova aqui, no gerador, e não no
+  // cliente. Foi exatamente assim que `fracaoDePalavrasDobradas` foi pega.
+  { nome: 'byteEm', lib: byteEm, casos: [
+    [Buffer.from([0x25, 0x50]), 0], [Buffer.from([0x25, 0x50]), 1],
+    [Buffer.from([0x25]), 9], [null, 0],
+  ] },
+  { nome: 'casaAssinatura', lib: casaAssinatura, casos: [
+    [Buffer.from([0x25, 0x50, 0x44, 0x46]), [0x25, 0x50, 0x44, 0x46]],
+    [Buffer.from([0x25, 0x50, 0x44, 0x46]), [0x50, 0x4b, 0x03, 0x04]],
+    [Buffer.alloc(0), [0x25]],
+  ] },
+  { nome: 'trechoLatin1', lib: trechoLatin1, casos: [
+    [Buffer.from('PK\u0003\u0004xl/workbook.xml', 'latin1'), 0, 64],
+    [Buffer.from('abc', 'latin1'), 0, 2], [Buffer.alloc(0), 0, 8],
+  ] },
+  { nome: 'saborDoZip', lib: saborDoZip, casos: [
+    [Buffer.from('PK\u0003\u0004...xl/workbook.xml...', 'latin1')],
+    [Buffer.from('PK\u0003\u0004...word/document.xml...', 'latin1')],
+    [Buffer.from('PK\u0003\u0004...ppt/presentation.xml...', 'latin1')],
+    [Buffer.from('PK\u0003\u0004...fotos/a.jpg...', 'latin1')],
+  ] },
+  { nome: 'pareceTexto', lib: pareceTexto, casos: [
+    [Buffer.from('CONTA 2025\nATIVO 137.624\n', 'utf-8')],
+    [Buffer.from([0x01, 0x00, 0x02, 0x00])], [Buffer.alloc(0)],
+    // form-feed: TODA conversão de PDF para texto usa, e não pode reprovar
+    [Buffer.from('pagina 1\u000Cpagina 2', 'utf-8')],
+  ] },
+  { nome: 'contarFora', lib: contarFora, casos: [
+    ['Nome;"a,b,c";1', ','], ['Nome;"a,b,c";1', ';'],
+    ['a,b,c', ','], ['"x""y",z', ','], ['', ','],
+  ] },
+  { nome: 'formaDoTexto', lib: formaDoTexto, casos: [
+    ['Conta;2025;2024\nCaixa;825;3621\nEstoque;20887;32598\n'],
+    ['CONTA                31/12/2025   31/12/2024\nATIVO                   137.624      163.941\nCaixa                       825        3.621\n'],
+    ['Pelo presente instrumento, as partes resolvem constituir uma sociedade.\n'],
+    [''], [null],
+  ] },
+  { nome: 'detectarFormato', lib: detectarFormato, casos: [
+    [Buffer.from('%PDF-1.7\nABC', 'latin1'), { mimeDeclarado: 'text/plain', nome: 'falso.txt' }],
+    [Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('xl/workbook.xml')]), { mimeDeclarado: 'text/plain' }],
+    [Buffer.from('CONTA   2025\nATIVO   137.624\nCaixa       825\n', 'utf-8'), { mimeDeclarado: 'text/plain' }],
+    [Buffer.from('<?xml version="1.0"?><a/>', 'utf-8'), { mimeDeclarado: 'text/plain' }],
+    [Buffer.from([0x01, 0x00, 0x02]), { mimeDeclarado: 'application/pdf' }],
+    [Buffer.alloc(0), { mimeDeclarado: '' }],
+  ] },
+
+  // O detector de glifo dobrado, que `camadaDeTextoDoPdf` chama. Divergir aqui
+  // é o limiar de 20% medindo coisa diferente na lib e no nó — e o efeito é
+  // silencioso nos dois sentidos.
+  { nome: 'fracaoDePalavrasDobradas', lib: fracaoDePalavrasDobradas, casos: [
+    ['Empprreessaa:: AMOBBELEZA COMEERRCCIIO DIGITAL'], ['Empresa: AMOBELEZA COMERCIO DIGITAL'],
+    ['Exercicios encerrados em dezembro'], [''], [null], ['123 456'],
+  ] },
+  // `camadaDeTextoDoPdf` decide se o PDF vai à IA como TEXTO (barato) ou como
+  // IMAGEM/OCR (caro, e necessário quando é escaneado). Lib e cópia inline
+  // divergirem aqui é dinheiro nos DOIS sentidos: um escaneado tratado como
+  // texto manda um documento VAZIO à IA (a AMO de novo), e um PDF com camada de
+  // texto tratado como imagem paga ~4x a entrada por página que não precisava.
+  { nome: 'camadaDeTextoDoPdf', lib: camadaDeTextoDoPdf, casos: [
+    // o caso bom: balanço com camada de texto e números
+    ['CANASTRA LTDA\nATIVO 137.624 163.941\nCaixa 825 3.621\nClientes 22.310 31.884\nEstoque 20.887 32.598\n', { paginas: 1 }],
+    ['', { paginas: 3 }],                                   // escaneado puro
+    ['BALANCO PATRIMONIAL 2025', { paginas: 20 }],           // capa OCRzada num escaneado
+    ['EMPRESA LTDA\nNotas explicativas em anexo\n'.repeat(12), { paginas: 1 }], // texto sem número
+    // camada corrompida por glifo dobrado — a forma REAL, medida nos documentos
+    // do dono (AMOBELEZA 73%, GENERAL TABACO 37,9% de palavras dobradas)
+    ['Empprreessaa:: AMOBBELEZA COMEERRCCIIO\nDISSPONIIBILLIIDDAADDES 2.2272.055,77\nEsttooqquueess 26.893.325,14\nCllieentes 22.414.091,17\n', { paginas: 1 }],
+    [null, {}], [undefined, { paginas: 0 }],                 // entradas degeneradas
+  ] },
   { nome: 'avaliarCobertura', lib: avaliarCobertura, casos: [
     [{ extraidas: 90, esperadas: 100 }], [{ extraidas: 30, esperadas: 100 }],
     [{ extraidas: 5, esperadas: 6 }], [{ extraidas: 0, esperadas: 0 }],
@@ -476,7 +610,7 @@ test('TODA função duplicada está coberta, ou declarada com motivo', () => {
   for (const [nome] of INVENTARIO) {
     // Só interessa o que EXISTE nos dois lados. Função que só vive inline (helper
     // de um nó, sem par na lib) não tem espelho a manter.
-    const temPar = ['normalize', 'merge', 'spreadsheet', 'hash', 'classifier', 'cobertura', 'custo', 'extract']
+    const temPar = ['normalize', 'merge', 'spreadsheet', 'hash', 'classifier', 'cobertura', 'custo', 'extract', 'formato']
       .some((m) => {
         try {
           return new RegExp(`(export )?(async )?function ${nome}\\b`)
