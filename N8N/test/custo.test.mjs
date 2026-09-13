@@ -205,10 +205,31 @@ test('custoDaChamada mede a partir do usage e cobra o cache mais barato', () => 
   // real — o livro razão do book-canastra, 3 páginas e 461 linhas. No provedor
   // novo ele mede US$ 0,0459 (era US$ 0,1725 no gpt-4o), medido pelo mesmo
   // `medir-custo-book.mjs` sobre os mesmos PDFs.
-  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.0459,
+  // O NÚMERO DE REFERÊNCIA ENVELHECEU DE NOVO, e desta vez a conclusão é o
+  // CONTRÁRIO: 0,0459 é preço de Google. MEDIDO em 13/09/2026 por
+  // `node N8N/medir-custo-book.mjs` contra o provedor ativo, o documento mais
+  // caro do book (17_Livro_Razao, 3 páginas, 461 linhas) custa US$ 0,0222 — e
+  // `CUSTO_ESTIMADO_DOC_USD = 0,055` é 2,5× isso, fora da faixa que este mesmo
+  // teste declarava.
+  //
+  // E A CONSTANTE FICA ONDE ESTÁ, DE PROPÓSITO. A faixa vale contra o documento
+  // mais caro MEDIDO, e tudo o que foi medido neste repositório é PDF sintético
+  // do `reportlab`, de 1 a 5 páginas. O caminho PLANO é o de "não sei NADA
+  // sobre estes arquivos" — inclusive quantas páginas têm —, e um documento de
+  // cliente de 20 páginas custa, pela conta por página desta mesma rodada,
+  // ~US$ 0,12: o dobro do plano, não a metade. Baixar 0,055 para 1,2× o
+  // documento sintético seria calibrar o caminho cego pelo material mais fácil
+  // que existe aqui, que é a MESMA causa raiz do proxy por byte cobrando 75×
+  // errado (regime sintético aplicado a regime real), só que com o sinal
+  // trocado: aceitaria lote que não cabe, o v31.
+  //
+  // O que trava a folga agora é o limite superior contra o documento REAL mais
+  // caro que a conta por página estima, e não contra o sintético.
+  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.0222,
     'a estimativa precisa cobrir o documento mais caro já medido, não o típico');
-  assert.ok(CUSTO_ESTIMADO_DOC_USD < 0.0459 * 2,
-    'e não pode ser tão folgada a ponto de recusar lote que cabe — foi o defeito de deixar 0,20 de pé');
+  assert.ok(CUSTO_ESTIMADO_DOC_USD < 0.12,
+    'e não pode passar do que um documento real de 20 páginas custa pela conta por página — '
+    + 'acima disso o caminho cego volta a recusar lote que cabe, que foi o defeito de deixar 0,20 de pé');
 });
 
 test('custoDaChamada devolve null em vez de chutar quando não pode medir', () => {
@@ -235,10 +256,42 @@ test('orçamento por tamanho: o lote real do book-canastra PASSA', () => {
   // A estimativa fica ACIMA do custo medido e ABAIXO do teto: é a faixa onde o
   // estimador é útil. Fora dela ele ou mente ou trava o trabalho.
   //
-  // O custo MEDIDO deste lote é US$ 0,2821 no provedor de hoje (era US$ 1,2932
-  // no gpt-4o), pelo `N8N/medir-custo-book.mjs` sobre os mesmos 38 PDFs.
-  assert.ok(r.estimadoUSD > 0.2821, `estima acima do medido — a margem existe (US$ ${r.estimadoUSD})`);
+  // O custo MEDIDO deste lote é US$ 0,1380 no provedor de hoje (era US$ 0,2821
+  // no `gemini-3.5-flash-lite` e US$ 1,2932 no `gpt-4o`), pelo
+  // `N8N/medir-custo-book.mjs` sobre os mesmos 38 PDFs, rodado em 13/09/2026.
+  //
+  // O NÚMERO DE REFERÊNCIA TAMBÉM ENVELHECE, e este estava dois dias atrasado:
+  // 0,2821 é preço de Google, e o provedor virou OpenAI em 11/09. Um piso velho
+  // num teste é pior que piso nenhum — ele passa a ser o mesmo "espelho que fica
+  // para trás" que deixou `CUSTO_POR_MB_USD` no preço errado.
+  assert.ok(r.estimadoUSD > 0.1380, `estima acima do medido — a margem existe (US$ ${r.estimadoUSD})`);
   assert.ok(r.estimadoUSD <= TETO_EXECUCAO_USD, 'e abaixo do teto');
+});
+
+// A CALIBRAÇÃO DO PROXY É UMA RAZÃO, NÃO UM NÚMERO — e é isso que este
+// invariante trava. `CUSTO_POR_MB_USD` declara, no comentário que o acompanha
+// desde 24/08/2026, uma margem de ~2× sobre o custo real de um lote típico. A
+// troca de provedor de 11/09 (Google → OpenAI `gpt-5.6-luna`) baixou o custo
+// real e NÃO baixou o proxy: a margem virou 4,06× sem ninguém escolher isso, e o
+// lote de 44 documentos da AMO foi recusado em US$ 52,39.
+//
+// Nenhum teste media a RAZÃO — só havia piso ("estima acima do medido") e teto
+// ("abaixo de US$ 3"), e entre os dois cabia um erro de 4×. Quem trocar de
+// provedor de novo e esquecer destes dois números reprova aqui.
+test('o proxy por byte mantém a margem de ~2× que a calibração declara, no provedor ATIVO', () => {
+  // MEDIDO em 13/09/2026 por `node N8N/medir-custo-book.mjs`: o book-canastra
+  // inteiro (38 documentos, 183.139 bytes, 57 chamadas) custa US$ 0,1380.
+  const CUSTO_MEDIDO_DO_BOOK = 0.1380;
+  const r = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38, bytes: 183_139 });
+  const margem = r.estimadoUSD / CUSTO_MEDIDO_DO_BOOK;
+
+  assert.ok(margem > 1.3,
+    `o proxy caiu para ${margem.toFixed(2)}× o custo medido — margem de menos aceita lote que não `
+    + 'cabe, e a defesa seguinte é a API cortando no meio do lote (o v31)');
+  assert.ok(margem < 2.5,
+    `o proxy cobra ${margem.toFixed(2)}× o custo medido do book (US$ ${r.estimadoUSD} contra `
+    + `US$ ${CUSTO_MEDIDO_DO_BOOK}) — a calibração declara ~2×. Margem de mais RECUSA LOTE QUE `
+    + 'CABE, que foi o que travou o mandato da AMO em 13/09/2026.');
 });
 
 test('orçamento por tamanho: lote homogêneo DENSO continua sendo recusado', () => {
@@ -367,13 +420,25 @@ test('um lote de TEXTO cabe no teto de US$ 3 (2 MB e 40 MB, o caso real que recu
   assert.ok(estimativaQuarenta <= TETO_EXECUCAO_USD,
     `40 MB de texto não pode ser recusado — estimou US$ ${estimativaQuarenta} contra o teto de US$ ${TETO_EXECUCAO_USD}`);
 
-  // E o proxy de PDF, aplicado ao MESMO tamanho, continua recusando os dois —
-  // é a prova de que a diferença é o FORMATO, não uma folga qualquer que
-  // passaria os dois de qualquer jeito.
-  assert.ok(custoEstimadoPorTamanho(doisMB) > TETO_EXECUCAO_USD,
-    'o proxy de PDF sobre 2 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+  // E o proxy de PDF, aplicado ao MESMO tamanho, continua muito mais caro — é a
+  // prova de que a diferença é o FORMATO, não uma folga qualquer que passaria os
+  // dois de qualquer jeito.
+  //
+  // O CONTROLE COMPARA OS DOIS CAMINHOS, NÃO O TETO, desde a reescala de
+  // 13/09/2026. Ele dizia "o proxy de PDF sobre 2 MB tem de continuar acima do
+  // teto de US$ 3", e com `CUSTO_POR_MB_USD` em 1,48 dois megabytes de PDF dão
+  // US$ 2,96 — passam raspando. O controle teria reprovado por um motivo que não
+  // é o que ele mede: a distância entre os caminhos continua inteira (22×), o
+  // que mudou foi onde o teto corta. Amarrar um controle de RAZÃO a um limiar
+  // absoluto é o mesmo defeito do número de referência velho, um pouco disfarçado.
+  for (const [rotulo, bytes] of [['2 MB', doisMB], ['40 MB', quarentaMB]]) {
+    const razao = custoEstimadoPorTamanho(bytes) / custoEstimadoPorTamanho(bytes, 'texto');
+    assert.ok(razao > 10,
+      `o proxy de PDF sobre ${rotulo} tem de continuar ordens de grandeza acima da conta de texto `
+      + `(saiu ${razao.toFixed(1)}×) — sem isso o teste não prova que a correção é sobre FORMATO`);
+  }
   assert.ok(custoEstimadoPorTamanho(quarentaMB) > TETO_EXECUCAO_USD,
-    'o proxy de PDF sobre 40 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+    'e 40 MB de PDF continua acima do teto — o proxy não virou permissivo');
 });
 
 test('a estimativa de um lote de TEXTO não passa de 2× o custo real de ENTRADA', () => {
@@ -503,14 +568,28 @@ test('UM documento sem medida de conteúdo derruba o lote de 190 para a conta po
 
   // A queda é DOUTRINA, não defeito: medir só os documentos que dá subestimaria
   // o lote na exata proporção do que não se sabe. O que este teste trava é a
-  // CONSEQUÊNCIA, para que ela nunca seja descoberta no dia do envio: com o
-  // lote inteiro caindo para a conta por tamanho, 190 documentos são recusados.
+  // CONSEQUÊNCIA — e ela MUDOU em 13/09/2026, com a reescala do proxy.
+  //
+  // O ASSERT DAQUI DIZIA `cabe === false`: com o proxy em preço de Google
+  // (US$ 2,80/MB) o lote de 190 estimava US$ 2,46 e era RECUSADO. No preço do
+  // provedor ativo ele estima US$ 1,30 e CABE — e caber é o certo, porque o
+  // mesmo lote medido por conteúdo custa cerca de US$ 1. O teste velho travava,
+  // como se fosse invariante, a recusa de um lote que sempre coube; era o
+  // "espelho que fica para trás" instalado DENTRO da suíte, onde ele vira
+  // argumento contra a correção.
+  //
+  // O que continua sendo invariante — e é o que sobra aqui — é a QUEDA de
+  // caminho e o sentido do erro: o caminho cego nunca estima abaixo do que a
+  // conta por conteúdo estimaria para a parte que deu para medir.
   assert.equal(r.porConteudo, false, 'a queda para a conta por tamanho deixou de acontecer');
-  assert.equal(r.cabe, false,
-    'um único PDF escaneado deixou de derrubar o lote de 190 — se isto passou a caber, a conta por '
-    + 'tamanho mudou e o comentário acima envelheceu');
-  assert.match(r.mensagem, /Envie no máximo \d+ documento\(s\) por vez/,
-    'a recusa tem de dizer quantos cabem, senão o dono só sabe que não pode');
+  const medivel = orcamentoDoLotePorConteudo({
+    documentos: docs.slice(1), tokensPromptSistema,
+  });
+  assert.equal(medivel.porConteudo, true, 'os outros 189 são medíveis — se não são, este controle não vale');
+  assert.ok(r.estimadoUSD > medivel.estimadoUSD,
+    `o caminho cego (US$ ${r.estimadoUSD}) não pode estimar abaixo da conta por conteúdo dos 189 `
+    + `medíveis (US$ ${medivel.estimadoUSD}) — subestimar é o v31, e é o único sentido de erro que `
+    + 'este caminho não pode ter');
 });
 
 test('a cota do DIA é um portão, e ela recusa o que o teto de dólar aprovava', () => {
@@ -757,4 +836,259 @@ test('orçamento por CONTEÚDO: 60 documentos de texto somando 40 MB (o lote rea
   assert.ok(r.estimadoUSD < TETO_EXECUCAO_USD,
     `40 MB de texto (só entrada) tem de caber — estimou US$ ${r.estimadoUSD}`);
   assert.ok(r.estimadoUSD > 2, `a entrada de 40 MB de texto não é desprezível (US$ ${r.estimadoUSD})`);
+});
+
+// ===========================================================================
+// A CONTA DEIXOU DE SER TUDO-OU-NADA (13/09/2026)
+// ===========================================================================
+//
+// A regra antiga: UM documento sem medida de conteúdo derrubava o LOTE INTEIRO
+// no proxy por byte. O argumento dela era honesto — "medir só os que dá
+// subestimaria o lote na exata proporção do que não se sabe" — e não fecha para
+// o híbrido: cobrar o caminho conservador de quem não foi medido NUNCA
+// subestima, porque o proxy é ≥ o real por construção (a margem de ~2× que o
+// invariante desta mesma rodada trava). Tudo-ou-nada trocava "não sei sobre 1"
+// por "erro de regime sobre 44", e essa troca não é conservadora, é só cara.
+//
+// O caso real: o lote de 44 documentos da AMO, recusado em US$ 52,39 contra um
+// teto de US$ 3.
+import { estimativaDoDocumento, CELULAS_POR_PAGINA_ESTIMADAS } from '../lib/custo.mjs';
+
+/** Um lote de `n` documentos medidos, com a forma do book-canastra (2 páginas, 80 células). */
+function loteMedido(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    nome: `${i + 1}_medido.pdf`, celulas: 80, paginas: 2, colunas: 3, blocos: 1,
+    bytes: 335 * 1024, formato: 'pdf',
+  }));
+}
+
+test('UM escaneado no meio de 43 medidos não derruba mais os outros 43', () => {
+  const docs = loteMedido(44);
+  // O escaneado: `pdf-parse` conta as páginas (não depende de texto), mas não há
+  // linha com número nenhuma para contar.
+  docs[7] = { ...docs[7], nome: 'digitalizado.pdf', celulas: 0, paginas: 20 };
+
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  const soMedidos = orcamentoDoLotePorConteudo({
+    documentos: docs.filter((_, i) => i !== 7), tokensPromptSistema: 0,
+  });
+
+  // A CONSEQUÊNCIA QUE IMPORTA: o lote inteiro NÃO é mais cobrado pelo tamanho
+  // dos arquivos. Com a regra antiga, estes mesmos 44 documentos (14,4 MB)
+  // estimavam US$ 27,69 — 9× o teto — por causa de um único deles.
+  assert.equal(r.porCaminho.conteudo, 43);
+  assert.equal(r.porCaminho.pagina, 1);
+  assert.ok(r.estimadoUSD < TETO_EXECUCAO_USD,
+    `44 documentos com 1 escaneado foram recusados (US$ ${r.estimadoUSD}) — é o lote da AMO de novo`);
+
+  // E O ESCANEADO CONTINUA SENDO COBRADO: a diferença entre os dois lotes é
+  // exatamente ele, e ela não é zero. "Não medi, então não cobro" seria
+  // apresentar ausência como zero, que é a regra 1 com sinal de dinheiro.
+  assert.ok(r.estimadoUSD > soMedidos.estimadoUSD,
+    `o escaneado tem de custar alguma coisa (${soMedidos.estimadoUSD} → ${r.estimadoUSD})`);
+});
+
+test('o escaneado é estimado por PÁGINA, e isso é 4× mais barato que o proxy por byte — sem ficar abaixo da entrada real', () => {
+  const escaneado = {
+    nome: 'digitalizado.pdf', celulas: 0, paginas: 20, colunas: 1, blocos: 1,
+    bytes: 335 * 1024, formato: 'pdf',
+  };
+  const p = estimativaDoDocumento(escaneado);
+  assert.equal(p.caminho, 'pagina');
+
+  // O PROXY POR BYTE, no mesmo documento: é o que ele custava até hoje.
+  const proxy = custoEstimadoPorTamanho(escaneado.bytes, 'pdf');
+  assert.ok(p.usd < proxy / 3,
+    `a conta por página (US$ ${p.usd.toFixed(4)}) tem de ser muito menor que o proxy por byte `
+    + `(US$ ${proxy.toFixed(4)}) — se não for, a correção não corrige nada`);
+
+  // E O PISO QUE NÃO PODE SER FURADO: a ENTRADA de 20 páginas de imagem é
+  // certa, a IA vai cobrá-la de qualquer jeito. Uma estimativa abaixo dela
+  // aceitaria lote que não cabe, que é o v31.
+  const preco = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  const entradaCerta = (20 * 1000 * preco.entrada) / 1_000_000;
+  assert.ok(p.usd > entradaCerta,
+    `a conta por página (US$ ${p.usd.toFixed(4)}) não pode ficar abaixo da entrada certa de 20 `
+    + `páginas de imagem (US$ ${entradaCerta.toFixed(4)})`);
+});
+
+test('desmedir um documento do regime calibrado NUNCA baixa a conta do lote', () => {
+  // A propriedade que substitui o tudo-ou-nada: tirar a medição de um documento
+  // não pode deixar o lote mais barato — senão "não medir" viraria a maneira de
+  // passar pelo teto, e o guarda estaria ensinando a burlá-lo.
+  //
+  // VALE NO REGIME CALIBRADO, e o limite está declarado em lib/custo.mjs: um
+  // escaneado MAIS denso que CELULAS_POR_PAGINA_ESTIMADAS é subestimado. Por
+  // isso o documento deste caso tem 2 páginas e 80 células (40 por página), que
+  // é a forma medida nos books (agregado 53,4 células/página).
+  // A COMPARAÇÃO É POR DOCUMENTO, E NÃO PELO TOTAL ARREDONDADO — medido nesta
+  // rodada: com `CELULAS_POR_PAGINA_ESTIMADAS` baixado de 100 para 5 (a conta
+  // por página passando a subestimar de propósito), a versão deste teste que
+  // comparava o total de 10 documentos com `toFixed(2)` continuava VERDE, porque
+  // a diferença inteira somava US$ 0,0014 e sumia no arredondamento. Um
+  // invariante que não reprova com o defeito ligado é cobertura verde sem
+  // execução — a regra 7 do CLAUDE.md, dentro da suíte.
+  const doc = loteMedido(1)[0];
+  const medido = estimativaDoDocumento(doc);
+  const desmedido = estimativaDoDocumento({ ...doc, celulas: 0 });
+  assert.equal(medido.caminho, 'conteudo');
+  assert.equal(desmedido.caminho, 'pagina');
+  assert.ok(desmedido.usd >= medido.usd,
+    `desmedir baixou a conta do documento (US$ ${medido.usd.toFixed(6)} → US$ ${desmedido.usd.toFixed(6)}): `
+    + 'no regime calibrado, quem não foi medido paga a incerteza, e a incerteza é para cima');
+
+  // E o lote inteiro segue a mesma direção, agora num tamanho em que a diferença
+  // não morre no arredondamento.
+  const docs = loteMedido(50);
+  const comMedida = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  const semMedida = orcamentoDoLotePorConteudo({
+    documentos: docs.map((d, i) => (i < 10 ? { ...d, celulas: 0 } : d)), tokensPromptSistema: 0,
+  });
+  assert.ok(semMedida.estimadoUSD > comMedida.estimadoUSD,
+    `desmedir 10 de 50 baixou a conta (US$ ${comMedida.estimadoUSD} → US$ ${semMedida.estimadoUSD})`);
+});
+
+test('a recusa NOMEIA os documentos que não foram medidos, e diz por quê', () => {
+  // A mensagem antiga dizia "A conta saiu de 14737 KB de arquivo" e mais nada:
+  // o dono não tinha como saber QUAL documento tinha derrubado a medição do
+  // lote, nem por quê — sobrava reenviar às cegas em 22 levas. É a regra 1
+  // (nunca apresentar ausência como dado) aplicada ao próprio diagnóstico.
+  const docs = loteMedido(40).map((d) => ({ ...d, celulas: 4000, paginas: 40 }));
+  docs[2] = { nome: 'digitalizado_0003.pdf', celulas: 0, paginas: 30, colunas: 1, blocos: 1, bytes: 900 * 1024, formato: 'pdf' };
+  docs[5] = { nome: 'ANEXO IV.bin', celulas: 0, paginas: 0, colunas: 1, blocos: 1, bytes: 700 * 1024 };
+
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.cabe, false, 'este lote tem de ser recusado, senão não há mensagem para conferir');
+  assert.match(r.mensagem, /digitalizado_0003\.pdf/, 'o escaneado é nomeado');
+  assert.match(r.mensagem, /ANEXO IV\.bin/, 'o arquivo sem medida nenhuma também');
+  assert.match(r.mensagem, /sem camada de texto em 30 página\(s\)/, 'e o MOTIVO de cada um vai junto');
+  assert.match(r.mensagem, /proxy por tamanho/);
+  // A mesma informação sai estruturada, para quem não lê prosa (o nó grava em
+  // `orcamento_aviso_medicao`).
+  assert.equal(r.naoMedidos.length, 2);
+  assert.deepEqual(r.naoMedidos.map((d) => d.caminho), ['pagina', 'tamanho']);
+});
+
+test('o lote que NÃO teve medida nenhuma continua declarando qual conta decidiu', () => {
+  // Sem esta linha a mensagem anunciaria "a conta saiu de 0 linha(s) com número
+  // lidas dos próprios documentos", que é uma medição de zero onde há AUSÊNCIA
+  // de medição — a regra 1 dentro do diagnóstico do próprio orçamento.
+  const docs = Array.from({ length: 60 }, (_, i) => ({ nome: `${i}.pdf`, celulas: 0, paginas: 0, bytes: 0 }));
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.cabe, false);
+  assert.match(r.mensagem, /estimativa plana/,
+    'quem decidiu foi o caminho cego, e a mensagem tem de dizer isso');
+  assert.doesNotMatch(r.mensagem, /0 linha\(s\) com número/,
+    'ausência de medição não pode ser anunciada como uma medição de zero');
+});
+
+test('a sensibilidade do lote escaneado, MEDIDA no estimador e não suposta', () => {
+  // O QUE ESTE TESTE É: a medição de onde o teto corta um lote inteiramente
+  // escaneado, para que o número não precise ser descoberto no dia do envio.
+  // O QUE ELE NÃO É: uma afirmação sobre o lote da AMO — quantos documentos
+  // dele são escaneados e de quantas páginas ninguém mediu ainda (regra 4), e é
+  // o passo 1 que continua aberto no HANDOFF.
+  const umEscaneado = (paginas) => ({ celulas: 0, paginas, colunas: 1, blocos: 1, bytes: 335 * 1024, formato: 'pdf' });
+  const cabeCom = (n, paginas) => orcamentoDoLotePorConteudo({
+    documentos: Array.from({ length: n }, () => umEscaneado(paginas)), tokensPromptSistema: 0,
+  }).cabe;
+
+  // 20 páginas por documento: o lote passa até um certo tamanho e é recusado
+  // depois dele. O ponto exato é informação para quem envia, não um valor mágico.
+  let limite = 0;
+  for (let n = 1; n <= 200; n += 1) { if (!cabeCom(n, 20)) break; limite = n; }
+  assert.ok(limite >= 20 && limite <= 40,
+    `o limite de escaneados de 20 páginas saiu em ${limite} documento(s) — se ele mudou de ordem `
+    + 'de grandeza, CELULAS_POR_PAGINA_ESTIMADAS mudou junto e o comentário dela envelheceu');
+
+  // E O PROXY POR BYTE, no mesmo lote, recusaria muito antes: é a medida do que
+  // esta fatia comprou.
+  const pelosBytes = orcamentoDoLote({ documentos: limite, chamadasPorDocumento: 1, bytes: limite * 335 * 1024 });
+  assert.equal(pelosBytes.cabe, false,
+    `${limite} escaneados passam pela conta por página e seriam recusados pelo proxy por byte — `
+    + 'se isso deixou de valer, os dois caminhos convergiram e um deles está errado');
+});
+
+// ---------------------------------------------------------------------------
+// O BURACO QUE A REVISÃO ADVERSARIAL ACHOU NA CONTA POR DOCUMENTO (13/09/2026)
+// ---------------------------------------------------------------------------
+//
+// A correção do tudo-ou-nada nasceu com o v31 DENTRO dela, e nenhum dos seis
+// invariantes da fatia o pegou: `custoEstimadoPorTamanho`, para TEXTO, cobra só
+// a ENTRADA de propósito (o comentário dela diz isso desde 12/09) — quem cobria
+// a saída era o piso por chamada. Isso bastava enquanto o caminho por tamanho
+// decidia o LOTE INTEIRO; como caminho POR DOCUMENTO, ele passou a cobrar 46×
+// menos que a conta por conteúdo do mesmo arquivo.
+//
+// MEDIDO, antes da correção: 20 CSVs de 1 MB sem nenhuma linha com número
+// contada estimavam US$ 1,31 e PASSAVAM no teto de US$ 3; os mesmos 20 com
+// 12.000 células medidas cada custam US$ 15,26. E a regra tudo-ou-nada, que esta
+// fatia substituiu, RECUSAVA esse lote — ou seja, a correção tinha trocado
+// "recusa lote que cabe" por "aceita lote que não cabe", que é o pior dos dois.
+
+test('texto sem linha contada NÃO fica mais barato que o mesmo texto medido', () => {
+  const texto = { nome: 'razao.csv', formato: 'csv', bytes: 1024 * 1024, colunas: 1, blocos: 1 };
+  const medido = estimativaDoDocumento({ ...texto, celulas: 12_000 });
+  const desmedido = estimativaDoDocumento({ ...texto, celulas: 0 });
+
+  assert.equal(medido.caminho, 'conteudo');
+  assert.equal(desmedido.caminho, 'tamanho');
+  assert.ok(desmedido.usd >= medido.usd,
+    `desmedir o texto baixou a conta (US$ ${medido.usd.toFixed(4)} → US$ ${desmedido.usd.toFixed(4)}): `
+    + 'é o v31 com a porta que a própria correção do tudo-ou-nada abriu — não medir viraria a '
+    + 'maneira de passar pelo teto');
+});
+
+test('o lote de 20 CSVs de 1 MB não medidos é RECUSADO, como o tudo-ou-nada recusava', () => {
+  const docs = Array.from({ length: 20 }, (_, i) => ({
+    nome: `${i}.csv`, formato: 'csv', bytes: 1024 * 1024, celulas: 0, paginas: 0, blocos: 1,
+  }));
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.cabe, false,
+    `20 MB de texto de que não se sabe nada passaram no teto (US$ ${r.estimadoUSD}) — a conta por `
+    + 'conteúdo dos mesmos arquivos com 12.000 células cada dá US$ 15,26');
+  assert.match(r.mensagem, /1 célula a cada \d+ caracteres/,
+    'e a mensagem diz de onde saiu a estimativa da saída, que não foi medida');
+});
+
+test('nenhum documento não medido custa menos que a estimativa plana do caminho cego', () => {
+  // O PISO, e a afirmação falsa que ele conserta. O comentário desta fatia dizia
+  // "o proxy por byte é ≥ o custo real por construção". MEDIDO: o documento mais
+  // denso do book (17_Livro_Razao, 10.849 bytes) custa US$ 0,0222 e o proxy dá
+  // US$ 0,0153 — 0,69× o real. A margem de ~2× do proxy é AGREGADA DE LOTE, e a
+  // conta por documento é justamente onde a média não vale.
+  const denso = { nome: '17_Livro_Razao.pdf', celulas: 0, paginas: 0, bytes: 10_849, formato: 'pdf' };
+  const p = estimativaDoDocumento(denso);
+  assert.equal(p.caminho, 'tamanho');
+  assert.ok(p.usd >= CUSTO_ESTIMADO_DOC_USD,
+    `documento não medido custou US$ ${p.usd.toFixed(4)}, abaixo do piso de US$ ${CUSTO_ESTIMADO_DOC_USD}`);
+  assert.ok(p.usd > 0.0222,
+    'e acima do custo MEDIDO do documento mais denso do book — abaixo dele o guarda aceita o que não cabe');
+});
+
+test('o PDF lido como TEXTO com páginas contadas não ouve "sem página lida"', () => {
+  // Regra 1 dentro do diagnóstico, e o caso que a revisão levantou: um PDF com
+  // camada de texto chega aqui com `formato: 'texto'` (é o que o nó carimba
+  // quando `leitura_pdf === 'texto'`) e 30 páginas contadas pelo `pdf-parse`.
+  // Dizer a ele "sem página lida" mandaria o dono procurar um defeito de
+  // contagem de páginas que não existe.
+  const pdfTexto = estimativaDoDocumento({ celulas: 0, paginas: 30, bytes: 600_000, formato: 'texto' });
+  assert.equal(pdfTexto.caminho, 'tamanho');
+  assert.doesNotMatch(pdfTexto.motivo, /sem página lida/);
+  assert.match(pdfTexto.motivo, /texto sem nenhuma linha com número contada/);
+  // E o binário de que não se sabe nada continua ouvindo a verdade dele.
+  const binario = estimativaDoDocumento({ celulas: 0, paginas: 0, bytes: 600_000, formato: 'xlsx' });
+  assert.match(binario.motivo, /sem página lida/);
+});
+
+test('as linhas anunciadas na mensagem são as dos documentos medidos POR CONTEÚDO', () => {
+  // Um documento que não foi por esse caminho não pode emprestar as células dele
+  // à frase que descreve os outros.
+  const docs = [
+    { nome: 'medido.pdf', celulas: 100, paginas: 2, colunas: 1, blocos: 1, bytes: 40_000, formato: 'pdf' },
+    { nome: 'sem_numpages.pdf', celulas: 5_000, paginas: 0, colunas: 1, blocos: 1, bytes: 900_000, formato: 'pdf' },
+  ];
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.celulas, 100,
+    `a mensagem anunciaria ${r.celulas} linhas lidas para 1 documento que tem 100`);
 });

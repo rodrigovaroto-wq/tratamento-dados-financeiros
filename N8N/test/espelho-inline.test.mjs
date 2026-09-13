@@ -42,6 +42,7 @@ import {
 import {
   custoDaChamada, tokensDeSaida, bytesDoBinario, orcamentoDoLote,
   pesoDaChamadaDeClassificacao, custoEstimadoPorConteudo, orcamentoDoLotePorConteudo,
+  custoEstimadoPorTamanho, custoPorMbDeTextoUSD, estimativaDoDocumento,
   vereditoDaCotaDiaria,
   ehFormatoDeTexto,
 } from '../lib/custo.mjs';
@@ -534,9 +535,40 @@ const TABELA = [
     casos: [[{ paginas: 3, celulas: 200, colunas: 2 }], [{ paginas: 0, celulas: 0, colunas: 1 }]] },
   { nome: 'orcamentoDoLote', lib: orcamentoDoLote,
     casos: [[{ documentos: [] }], [{ documentos: [{ bytes: 1_000_000 }, { bytes: 2_000_000 }] }]] },
+  // OS TRÊS NOMES NOVOS DE 13/09/2026, e eles entram aqui porque o orçamento
+  // deixou de ser tudo-ou-nada: `estimativaDoDocumento` escolhe um dos QUATRO
+  // caminhos por documento, e dois deles (`tamanho`, e o de texto dentro dele)
+  // passam por `custoEstimadoPorTamanho`/`custoPorMbDeTextoUSD`, que até agora
+  // nunca tinham atravessado para o nó. Os casos exercitam os quatro ramos —
+  // um espelho que só testasse o caminho medido deixaria passar exatamente a
+  // divergência que a correção introduz.
+  { nome: 'custoPorMbDeTextoUSD', lib: custoPorMbDeTextoUSD, casos: [[], [{}, 'modelo-que-nao-existe']] },
+  { nome: 'custoEstimadoPorTamanho', lib: custoEstimadoPorTamanho, casos: [
+    [1024 * 1024], [1024 * 1024, 'texto'], [10], [null],
+  ] },
+  { nome: 'estimativaDoDocumento', lib: estimativaDoDocumento, casos: [
+    [{ celulas: 100, paginas: 2, colunas: 1, blocos: 1, bytes: 50_000 }],
+    [{ celulas: 0, paginas: 20, colunas: 1, blocos: 1, bytes: 335_000, formato: 'pdf' }],
+    [{ celulas: 0, paginas: 0, bytes: 335_000, formato: 'pdf', precisaFallback: true }],
+    // O RAMO DE TEXTO SEM CONTAGEM, que faltava aqui e cujo buraco foi medido:
+    // sem este caso, `CARACTERES_POR_CELULA_ESTIMADA` podia não atravessar para
+    // o nó e a suíte INTEIRA ficava verde enquanto o `jsCode` gerado estourava
+    // `ReferenceError` em produção. Aconteceu nesta rodada, e o caso é a prova.
+    [{ celulas: 0, paginas: 0, bytes: 1024 * 1024, formato: 'csv' }],
+    [{ celulas: 0, paginas: 30, bytes: 600_000, formato: 'texto' }],
+    [{ celulas: 0, paginas: 0, bytes: 0 }],
+  ] },
   { nome: 'orcamentoDoLotePorConteudo', lib: orcamentoDoLotePorConteudo, casos: [
     [{ documentos: [] }],
     [{ documentos: [{ paginas: 2, celulas: 100, colunas: 1 }, { paginas: 5, celulas: 400, colunas: 3 }] }],
+    // O LOTE HÍBRIDO — um medido, um escaneado (só páginas), um só com bytes e
+    // um cego. É o caso que a regra antiga jogava inteiro no proxy por byte.
+    [{ documentos: [
+      { nome: 'a.pdf', paginas: 2, celulas: 100, colunas: 1, blocos: 1, bytes: 40_000 },
+      { nome: 'b.pdf', paginas: 20, celulas: 0, colunas: 1, blocos: 1, bytes: 335_000, formato: 'pdf' },
+      { nome: 'c.xlsx', paginas: 0, celulas: 0, bytes: 90_000, formato: 'xlsx', precisaFallback: true },
+      { nome: 'd.bin', paginas: 0, celulas: 0, bytes: 0 },
+    ] }],
   ] },
   // Os três vereditos, e o quarto que é "não sei": abaixo do aviso (silencioso),
   // acima do aviso mas cabendo, estourando o dia, e `rpd` nulo — a OpenAI não
