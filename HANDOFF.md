@@ -82,6 +82,26 @@ a conta" é montada caminho a caminho — sem isso um lote sem medição nenhuma
 saiu de 0 linha(s) com número", que é ausência apresentada como dado dentro do próprio
 diagnóstico do orçamento.
 
+### A revisão adversarial achou o v31 DENTRO da correção (e é a parte mais útil desta sessão)
+
+`custoEstimadoPorTamanho`, para documento de TEXTO, cobra **só a entrada** de propósito — a saída
+quem cobria era o piso por chamada. Isso bastava enquanto esse caminho decidia o **lote inteiro**;
+promovido a caminho **por documento**, ele passou a cobrar **46× menos** que a conta por conteúdo
+do mesmo arquivo. Medido: 20 CSVs de 1 MB sem linha contada estimavam **US$ 1,31 e PASSAVAM** no
+teto de US$ 3, contra US$ 15,26 da conta por conteúdo — e a regra tudo-ou-nada que a fatia
+substituiu **recusava** esse lote. A correção tinha trocado "recusa lote que cabe" por "aceita lote
+que não cabe". **Os seis invariantes da fatia ficaram verdes: todos usavam PDF.**
+
+Corrigido na mesma rodada: saída de texto estimada por `CARACTERES_POR_CELULA_ESTIMADA = 22` (p90
+dos 52 documentos dos books) e **piso da estimativa plana em todo documento não medido** — porque a
+frase "o proxy por byte é ≥ o real por construção", que eu tinha escrito no commit anterior, é
+**falsa**: o documento mais denso do book custa US$ 0,0222 e o proxy cobra US$ 0,0153 (0,69×). A
+margem de ~2× é agregada de LOTE.
+
+E o portão do espelho inline estava **cego para o ramo de texto**: o `jsCode` gerado estourava
+`ReferenceError: CARACTERES_POR_CELULA_ESTIMADA is not defined` com as 542 do n8n verdes. Dois casos
+novos entraram na TABELA. **Ficha:** `.claude/memory/conta-parcial-vira-v31-quando-promovida.md`.
+
 ### O número que a próxima sessão precisa ter na mão
 
 | | |

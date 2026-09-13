@@ -65,9 +65,28 @@ for (const e of arestas.filter((x) => x.rel === "TOCA")) {
   const alvo = e.pa.slice("arquivo:".length);
   checar(existe(alvo), `${e.f}: o campo "toca" aponta para "${alvo}", que não existe mais`);
 }
+// O CI RODA SUÍTE POR GLOB, e este portão não sabia disso — medido em
+// 13/09/2026: uma ficha nova sobre um invariante de `N8N/test/custo.test.mjs`
+// não tinha COMO passar. O caminho literal existe e o `suites.yml` não o cita
+// (ele roda `node --test 'N8N/test/*.test.mjs'`); o glob é citado e não existe
+// como arquivo. As duas checagens, cada uma correta sozinha, formavam uma
+// tenaz: a única saída era a ficha apontar para uma suíte que não é a dela.
+// Um glob passa a valer como caminho quando ALGUM arquivo casa com ele — o que
+// preserva as duas coisas que o portão quer: o alvo existe de verdade, e o CI
+// o executa.
+const casaAlgum = (padrao) => {
+  const barra = padrao.lastIndexOf("/");
+  const dir = barra >= 0 ? padrao.slice(0, barra) : ".";
+  const nome = barra >= 0 ? padrao.slice(barra + 1) : padrao;
+  if (!existe(dir)) return false;
+  const re = new RegExp(`^${nome.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`);
+  return readdirSync(join(RAIZ, dir)).some((f) => re.test(f));
+};
+
 for (const e of arestas.filter((x) => x.rel === "PROVADA_POR")) {
   const suite = e.pa.slice("suite:".length);
-  checar(existe(suite), `${e.f}: o campo "prova" aponta para "${suite}", que não existe`);
+  checar(suite.includes("*") ? casaAlgum(suite) : existe(suite),
+    `${e.f}: o campo "prova" aponta para "${suite}", que não existe`);
   checar(yml.includes(suite), `${e.f}: a suíte "${suite}" não é executada pelo ${CI} — invariante que não roda apodrece`);
 }
 for (const e of arestas.filter((x) => x.rel === "SUBSTITUI")) {
