@@ -3,6 +3,9 @@ name: ordem-dos-classificadores
 description: classificarConta e classificarDemonstracao recebem os mesmos quatro argumentos em ordens diferentes
 metadata:
   type: feedback
+tipo: armadilha
+toca:
+  - N8N/lib/classifier.mjs
 ---
 
 ```js

@@ -1,3 +1,10 @@
+---
+name: agente-morto-deixa-a-correcao-desligada
+description: agente interrompido deixa a correção DESLIGADA — um `false and` no meio da expressão e o arquivo com cara de pronto; e não rode a suíte enquanto um agente tem a árvore
+tipo: armadilha
+toca: []
+---
+
 # Agente interrompido deixa a correção DESLIGADA, e o arquivo parece pronto
 
 **Sessão 79, 02–03/09. Custou uma medição inteira e quase entrou um commit que não corrigia nada.**

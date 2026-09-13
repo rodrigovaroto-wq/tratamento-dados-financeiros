@@ -28,3 +28,10 @@ Você cuida de `N8N/`: os quatro geradores, `N8N/lib/*`, os JSON gerados e as su
 
 **Ao terminar**, reporte os arquivos tocados, o resultado de `node --test 'N8N/test/*.test.mjs'`,
 e se a mudança exige republicação (e o que conferir no editor depois dela).
+
+**Comece pelo briefing, não pelo `grep`.** `node .claude/conhecimento/buscar.mjs "<assunto>"`
+devolve num comando as fichas do assunto, os arquivos com linha, a migration que criou cada
+função, o portão que prova cada coisa e os commits que casam. Medido em 13/09/2026: as cinco
+perguntas de `.claude/conhecimento/BASELINE.md` custavam 50.245 bytes de `grep` e passaram a
+custar 9.201. Quando ele diz "NADA ENCONTRADO", isso é "procurei e não achei" — e aí vale o
+`grep`.

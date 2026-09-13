@@ -134,8 +134,13 @@ Portão 2, dial de autonomia, linha extraída, proveniência.
 - **Next.js 16 (App Router) + React 19 + Tailwind 4 + Supabase**, deploy na
   Vercel com `portal/` como Root Directory. `middleware.ts` virou `proxy.ts` no
   Next 16.
-- **Teto de ~4,5 MB por requisição** na Serverless Function da Vercel: lotes
-  grandes de PDF escaneado precisam ir em levas, ou direto pelo Form do n8n.
+- **Teto de ~4,5 MB por requisição** na Serverless Function da Vercel — recusado
+  na BORDA, antes de a rota rodar. Desde 13/09/2026 isto não é mais restrição de
+  produto: acima do teto a própria tela manda o lote direto ao Form do n8n, numa
+  execução só, e nada é pedido ao analista (ver `portal/src/lib/limite-de-envio.ts`).
+  O que continua valendo é a consequência de desenho: **lote grande não devolve
+  recibo de entrega** — a confirmação vem do acompanhamento pelo banco, nunca do
+  status do envio.
 - **Cota de egresso do Supabase é da organização, não do projeto** — 5 GB/mês
   divididos com outro projeto, e já houve incidente a 4,54 GB. Daí três regras
   de código que também são restrições de design: nomear colunas em vez de

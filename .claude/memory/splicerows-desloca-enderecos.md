@@ -3,6 +3,9 @@ name: splicerows-desloca-enderecos
 description: inserir linha na aba Macro ou no bloco de premissas desloca endereços de célula em silêncio e cada INDEX/MATCH passa a apontar uma linha acima
 metadata:
   type: feedback
+tipo: armadilha
+toca: []
+prova: portal/scripts/verificar-export.mts
 ---
 
 O export tem duas regiões onde uma linha nova é um defeito silencioso:

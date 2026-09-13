@@ -3,6 +3,9 @@ name: portao-pode-reprovar-por-ruido
 description: portão que reprova por ruído é pior que portão nenhum — o schema.sql saía com FOR ROLE root contra o FOR ROLE postgres do CI
 metadata:
   type: feedback
+tipo: armadilha
+toca:
+  - Supabase/schema.sql
 ---
 
 Em 21/08 o `Supabase/schema.sql` reprovou no CI com o schema **idêntico**. Causa: `pg_dump --no-owner`

@@ -49,3 +49,60 @@ export function parseFormFieldNames(html: string): CamposDetectados {
     textFieldName: textInput?.name ?? null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// A DESCOBERTA, que agora tem DOIS chamadores
+// ---------------------------------------------------------------------------
+//
+// Ela morava dentro de `app/api/intake/route.ts` enquanto só o encaminhamento
+// pela Serverless Function existia. Com o envio direto do navegador
+// (`app/api/intake/destino/route.ts`), o MESMO par de nomes precisa chegar a
+// dois lugares — e duas cópias desta função seriam a forma mais fácil de o
+// portal voltar a postar sob um nome que o workflow não lê, que é o defeito da
+// sessão 7 cont.¹² (200 OK na tela, zero token gasto, nenhum arquivo recebido).
+//
+// A descoberta continua acontecendo NO SERVIDOR nos dois caminhos: quem manda
+// os bytes pode ser o navegador, mas quem decide o nome do campo nunca é.
+
+const CAMPO_MANDATO_ENV = () => process.env.N8N_INTAKE_FIELD_MANDATO || null;
+const CAMPO_ARQUIVOS_ENV = () => process.env.N8N_INTAKE_FIELD_ARQUIVOS || null;
+
+// Fallback de último recurso, só usado se não houver env E a descoberta falhar
+// (instância fora do ar, HTML inesperado etc.) — mantém o comportamento
+// anterior em vez de travar o upload por completo.
+const CAMPO_MANDATO_FALLBACK = "Mandato (nome do caso)";
+const CAMPO_ARQUIVOS_FALLBACK = "Arquivos";
+
+export interface CamposDoForm {
+  mandato: string;
+  arquivos: string;
+  /** `true` quando os nomes vieram do HTML do próprio Form, não do fallback. */
+  descoberto: boolean;
+}
+
+export async function descobrirNomesDeCampo(url: string): Promise<CamposDoForm> {
+  const mandatoEnv = CAMPO_MANDATO_ENV();
+  const arquivosEnv = CAMPO_ARQUIVOS_ENV();
+  if (mandatoEnv && arquivosEnv) {
+    return { mandato: mandatoEnv, arquivos: arquivosEnv, descoberto: false };
+  }
+  try {
+    const resp = await fetch(url, { method: "GET" });
+    if (!resp.ok) throw new Error(`GET do form retornou HTTP ${resp.status}`);
+    const html = await resp.text();
+    const { fileFieldName, textFieldName } = parseFormFieldNames(html);
+    return {
+      mandato: mandatoEnv || textFieldName || CAMPO_MANDATO_FALLBACK,
+      arquivos: arquivosEnv || fileFieldName || CAMPO_ARQUIVOS_FALLBACK,
+      descoberto: Boolean(!mandatoEnv && textFieldName) || Boolean(!arquivosEnv && fileFieldName),
+    };
+  } catch {
+    // Sem acesso de leitura ao form (rede, URL errada) — cai no fallback;
+    // o erro "de verdade" (se houver) aparece no POST logo em seguida.
+    return {
+      mandato: mandatoEnv || CAMPO_MANDATO_FALLBACK,
+      arquivos: arquivosEnv || CAMPO_ARQUIVOS_FALLBACK,
+      descoberto: false,
+    };
+  }
+}

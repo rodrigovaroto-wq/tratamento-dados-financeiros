@@ -3,6 +3,10 @@ name: portao-mede-a-entrada-de-producao
 description: portão calibrado sobre a entrada do GERADOR passa com +3% enquanto produção erra 161% — o texto que o n8n extrai do PDF não é o que nenhum extrator local produz
 metadata:
   type: feedback
+tipo: armadilha
+toca:
+  - Dados de Teste/capturas/2026-08-31-texto-extraido-n8n
+prova: N8N/medir-regua-cobertura.mjs
 ---
 
 O `medir-regua-cobertura.mjs` existe para confrontar a régua da cobertura com a

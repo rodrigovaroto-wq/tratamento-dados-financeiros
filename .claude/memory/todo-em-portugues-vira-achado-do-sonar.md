@@ -3,6 +3,10 @@ name: todo-em-portugues-vira-achado-do-sonar
 description: a palavra portuguesa "todo" num comentário faz o Sonar abrir S1135 como se fosse marcador de tarefa — e a regra é INSENSÍVEL A MAIÚSCULAS, então "o tempo todo" basta
 metadata:
   type: reference
+tipo: armadilha
+toca:
+  - N8N/lib/cobertura.mjs
+  - N8N/lib/segunda-contagem.mjs
 ---
 
 A regra `S1135` ("Complete the task associated to this TODO comment") existe em todas as
@@ -35,3 +39,7 @@ projeto não tem `TODO` em inglês espalhado justamente porque ela reclama.
 arquivos antigos (`custo.test.mjs`, `workflow-sim.test.mjs`, `extract.mjs`, `classifier.mjs`) e
 **não** aparece como achado — não tente "limpar" esses, é alargar o PR sem ganho. Corrija só a
 linha que você escreveu.
+
+**Quinta ocorrência, 13/09/2026:** `verificar-limite-de-envio.mts` dizia "uma correção que
+jogasse TODO envio no caminho direto" — no comentário de cabeçalho de uma suíte NOVA, escrita
+por quem já conhecia esta ficha. A regra não perdoa contexto: virou "CADA envio".

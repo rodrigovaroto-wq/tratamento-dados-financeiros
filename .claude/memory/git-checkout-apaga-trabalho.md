@@ -3,6 +3,8 @@ name: git-checkout-apaga-trabalho
 description: git checkout <arquivo> para desfazer um patch de medição apaga TODO o trabalho não commitado do mesmo arquivo — copie para o scratchpad e restaure com cp
 metadata:
   type: feedback
+tipo: armadilha
+toca: []
 ---
 
 O fluxo obrigatório de medir um invariante não-vazio (desligar a correção, rodar, religar) leva

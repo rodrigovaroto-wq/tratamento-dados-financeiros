@@ -3,6 +3,10 @@ name: medicao-reescreve-derivado
 description: o protocolo `cp` protege o arquivo que você alterou, não os DERIVADOS que a suíte reescreve por baixo — medir invariante de banco deixa o Supabase/schema.sql com o defeito ligado
 metadata:
   type: feedback
+tipo: armadilha
+toca:
+  - Supabase/schema.sql
+  - Supabase/test/run.sh
 ---
 
 O protocolo de medir um invariante não-vazio (copiar para o scratchpad, desligar a

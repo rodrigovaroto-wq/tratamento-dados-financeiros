@@ -3,6 +3,8 @@ name: teto-de-autonomia-por-natureza
 description: nenhum volume de veredito sobe reconciliação Classe B/C ou classificação contábil acima de N1 — o teto é doutrina e só muda por migration
 metadata:
   type: business-rule
+tipo: doutrina
+toca: []
 ---
 
 Cada estágio tem um dial de autonomia (N0 sombra → N3 autônomo), e um **teto por natureza** que

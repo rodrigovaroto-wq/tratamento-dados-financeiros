@@ -5057,10 +5057,19 @@ documentos reais e a classificação por seção em si funcionou bem (ver diff P
 problema achado foi de PIPELINE (item errado), não de vocabulário de classificação.
 
 ### Itens adiados (documentados, não bloqueantes)
-- **Teto de ~4,5 MB no upload pelo portal (Vercel):** o `/api/intake` encaminha via Serverless
-  Function, que limita o corpo da requisição. Lotes grandes precisam ir em levas ou pelo Form do
-  N8N. Melhoria futura: upload direto do browser pro N8N/Storage (signed URL), contornando a
-  Function — tira o limite e o processamento pesado da Vercel. Ver `portal/README.md`.
+- ~~**Teto de ~4,5 MB no upload pelo portal (Vercel)**~~ — **RESOLVIDO em 13/09/2026**, depois de
+  o lote de 48 arquivos (~50 MB) da AMO morrer em HTTP 413 da BORDA (a rota nunca rodou). Acima do
+  teto o navegador manda o multipart direto ao Form do n8n, numa execução só; abaixo dele nada
+  mudou. Ver `portal/src/lib/limite-de-envio.ts` e a memória
+  `.claude/memory/teto-da-borda-recusa-antes-do-codigo.md`.
+- **O acompanhamento não distingue DOIS lotes no mesmo mandato** (achado na revisão adversarial da
+  mesma rodada, e ANTERIOR a ela). `/api/intake/status` filtra por `caso_nome` + `criado_em >=
+  desde` e por mais nada: um segundo envio feito enquanto o primeiro ainda roda conta os documentos
+  do primeiro como seus, e fecha com "Tudo pronto" sem que nenhum documento dele tenha chegado. A
+  correção de 13/09 ENCOLHEU a janela (o `desde` do envio direto passou a ser lido DEPOIS do upload,
+  não antes — num lote de 50 MB isso são minutos), mas não resolve o caso: a solução real é o
+  pipeline gravar o identificador do lote no `documento` e o status filtrar por ele. Até lá, não
+  mande um segundo lote no mesmo mandato enquanto o primeiro está rodando.
 - **Overload morto de `fn_registrar_documento`:** achado ao testar 0009 contra Postgres local —
   a migration `0007` adicionou `p_justificativa` via `create or replace` com um parâmetro a
   mais, o que em Postgres **cria uma segunda função** (14 params) em vez de substituir a de

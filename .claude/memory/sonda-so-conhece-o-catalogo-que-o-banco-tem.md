@@ -3,6 +3,8 @@ name: sonda-so-conhece-o-catalogo-que-o-banco-tem
 description: fn_instalacao_conferir() verde não significa que a rodada vai rodar — o catálogo dela mora DENTRO do banco, então um banco atrasado não sabe o que lhe falta; quem responde a outra ponta é Supabase/test/conferir-chamadas.mjs
 metadata:
   type: architecture
+tipo: doutrina
+toca: []
 ---
 
 A entrada [sonda-responde-pelo-banco](sonda-responde-pelo-banco.md) continua valendo inteira: a

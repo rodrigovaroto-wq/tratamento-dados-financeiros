@@ -3,6 +3,10 @@ name: republicacao-do-n8n-perde-toggles
 description: republicar o workflow pela API perde onError em 23 nós, retryOnFail em 11 e o multipleFiles do campo de arquivo — sem ele o intake aceita um documento por vez
 metadata:
   type: reference
+tipo: defeito
+toca:
+  - N8N/conferir-publicado.mjs
+  - N8N/preparar-republicacao.mjs
 ---
 
 Duas republicações seguidas perderam a mesma família de coisas, e é por isso que

@@ -3,6 +3,9 @@ name: nunca-corrigir-funcao-por-replace
 description: migration que corrige função por replace de texto sobre pg_get_functiondef passa em toda suíte local e reprova em produção — reemita a função inteira com create or replace
 metadata:
   type: architecture
+tipo: doutrina
+toca: []
+prova: Supabase/test/run.sh
 ---
 
 A `0156` tentou acrescentar uma coluna ao `insert` de `fn_registrar_uso_lote`

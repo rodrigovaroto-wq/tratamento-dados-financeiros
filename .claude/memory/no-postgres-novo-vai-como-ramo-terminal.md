@@ -3,6 +3,8 @@ name: no-postgres-novo-vai-como-ramo-terminal
 description: nó Postgres SUBSTITUI o item pelo resultado da query — inline no fluxo por documento ele apaga o contexto de todos os documentos seguintes; grave coisa do LOTE em ramo terminal, ao lado
 metadata:
   type: architecture
+tipo: doutrina
+toca: []
 ---
 
 **Nó Postgres do n8n substitui o item pelo resultado da query.** Não acrescenta,
