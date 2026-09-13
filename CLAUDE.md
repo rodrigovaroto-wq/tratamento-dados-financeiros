@@ -12,7 +12,7 @@ com modelo de FP&A vivo em fórmula.
 
 | Arquivo | Pergunta que responde |
 |---|---|
-| `node .claude/conhecimento/buscar.mjs "<assunto>"` | **Comece por aqui.** Devolve, em um comando, as fichas, os arquivos com linha, o portão que prova cada coisa e os commits do assunto — sem abrir nada. Medido: as cinco perguntas de `BASELINE.md` caíram de 50.245 para 9.201 bytes |
+| `node .claude/conhecimento/buscar.mjs "<assunto>"` | **Comece por aqui.** Devolve, em um comando, as fichas, os arquivos com linha, o portão que prova cada coisa e os commits do assunto — sem abrir nada. Medido: as cinco perguntas de `BASELINE.md` caíram de 50.245 para 10.667 bytes |
 | `ESTADO.md` (topo) | **Onde estamos agora** — última migration, suítes, a rodada mais recente |
 | `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` | **O que falta até fechar**, em ordem, com critério de pronto |
 | `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` | O projeto medido contra o próprio objetivo, estágio por estágio |
