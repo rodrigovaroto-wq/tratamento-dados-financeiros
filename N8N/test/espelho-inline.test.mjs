@@ -550,6 +550,12 @@ const TABELA = [
     [{ celulas: 100, paginas: 2, colunas: 1, blocos: 1, bytes: 50_000 }],
     [{ celulas: 0, paginas: 20, colunas: 1, blocos: 1, bytes: 335_000, formato: 'pdf' }],
     [{ celulas: 0, paginas: 0, bytes: 335_000, formato: 'pdf', precisaFallback: true }],
+    // O RAMO DE TEXTO SEM CONTAGEM, que faltava aqui e cujo buraco foi medido:
+    // sem este caso, `CARACTERES_POR_CELULA_ESTIMADA` podia não atravessar para
+    // o nó e a suíte INTEIRA ficava verde enquanto o `jsCode` gerado estourava
+    // `ReferenceError` em produção. Aconteceu nesta rodada, e o caso é a prova.
+    [{ celulas: 0, paginas: 0, bytes: 1024 * 1024, formato: 'csv' }],
+    [{ celulas: 0, paginas: 30, bytes: 600_000, formato: 'texto' }],
     [{ celulas: 0, paginas: 0, bytes: 0 }],
   ] },
   { nome: 'orcamentoDoLotePorConteudo', lib: orcamentoDoLotePorConteudo, casos: [

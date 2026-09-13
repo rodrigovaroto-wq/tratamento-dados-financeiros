@@ -1006,6 +1006,23 @@ export function custoEstimadoPorConteudo({
 /** Células por página de um PDF sem camada de texto — p90 dos 52 documentos medidos. */
 export const CELULAS_POR_PAGINA_ESTIMADAS = 100;
 
+// A MESMA IDEIA PARA TEXTO, e ela nasceu de um achado da revisão desta rodada
+// (o buraco está descrito em `estimativaDoDocumento`, ramo `tamanho`). MEDIDA
+// sobre os mesmos 52 documentos dos dois books (`celulas_de_valor_verdade` /
+// `caracteres`, que é o texto extraído do PDF — o analógo direto do conteúdo de
+// um `.txt`/`.csv`):
+//
+//   agregado 1 célula a cada 33,5 caracteres · mediana 38,2 · p90 22,3 · o mais
+//   denso medido 14,2
+//
+// Vale o p90 (22), pelo mesmo motivo do p90 da página: quem não foi medido paga
+// a incerteza, e a incerteza é para cima. O LIMITE DECLARADO: um texto mais denso
+// que 1 célula a cada 22 caracteres — uma planilha exportada em CSV cru, sem
+// rótulo comprido — é subestimado por esta conta, e a defesa dele continua sendo
+// o teto duro do provedor. O que ela impede é o buraco de 46× que existia aqui.
+/** Caracteres por célula num documento de texto sem contagem — p90 dos 52 medidos. */
+export const CARACTERES_POR_CELULA_ESTIMADA = 22;
+
 /**
  * A estimativa de UM documento, e o CAMINHO por onde ela saiu.
  *
@@ -1025,7 +1042,7 @@ export const CELULAS_POR_PAGINA_ESTIMADAS = 100;
  * carregam a margem própria da calibração deles — aplicar as duas seria cobrar
  * a mesma incerteza duas vezes e recusar lote que cabe.
  */
-export function estimativaDoDocumento(d, tokensPromptSistema = 0, peso = pesoDaChamadaDeClassificacao()) {
+export function estimativaDoDocumento(d, tokensPromptSistema = 0, peso = pesoDaChamadaDeClassificacao(), custoPorChamada = CUSTO_ESTIMADO_DOC_USD) {
   const doc = d || {};
   const celulas = Number(doc.celulas);
   const paginas = Number(doc.paginas);
@@ -1060,18 +1077,68 @@ export function estimativaDoDocumento(d, tokensPromptSistema = 0, peso = pesoDaC
   }
 
   if (temBytes) {
+    // O PISO DO CAMINHO CEGO VALE AQUI TAMBÉM, e ele é a correção de uma
+    // AFIRMAÇÃO FALSA que esta mesma rodada tinha escrito: "o proxy por byte é
+    // ≥ o custo real por construção". Ele não é. MEDIDO por
+    // `N8N/medir-custo-book.mjs`: o documento mais denso do book
+    // (`17_Livro_Razao`, 10.849 bytes, 461 linhas) custa US$ 0,0222 e o proxy
+    // sobre ele dá US$ 0,0153 — **0,69× o real**. A margem de ~2× do proxy é
+    // AGREGADA DE LOTE, e o próprio arquivo já declarava isso ("a margem cobre
+    // a média de um lote, não o pior documento"); o que mudou nesta rodada foi
+    // aplicá-lo documento a documento, que é exatamente onde a média não vale.
+    // O piso `custoPorChamada` é o número calibrado de "não sei nada sobre este
+    // arquivo" (2,5× o documento mais caro medido), e é ele que devolve à frase
+    // "quem não foi medido paga a incerteza" a verdade que ela afirma.
+    const proxy = custoEstimadoPorTamanho(bytes, doc.formato) * (1 + (doc.precisaFallback ? peso : 0));
+
+    if (texto) {
+      // TEXTO SEM LINHA CONTADA É O BURACO QUE A REVISÃO ACHOU, e ele era o v31
+      // pelo outro lado: `custoEstimadoPorTamanho`, para texto, cobra SÓ A
+      // ENTRADA de propósito (o comentário dela diz isso) — a saída quem cobria
+      // era o piso por chamada, que bastava enquanto este caminho decidia o
+      // lote INTEIRO junto com documentos medidos. Como caminho POR DOCUMENTO
+      // ele passou a cobrar 46× menos que a conta por conteúdo do mesmo
+      // arquivo: 20 CSVs de 1 MB não medidos estimavam US$ 1,31 e PASSAVAM,
+      // contra US$ 15,26 da conta por conteúdo — e a regra tudo-ou-nada, que
+      // esta fatia substituiu, recusava esse mesmo lote. Corrigir sem isto
+      // seria trocar "recusa lote que cabe" por "aceita lote que não cabe".
+      //
+      // A SAÍDA PASSA A SER ESTIMADA PELO TAMANHO DO TEXTO, com a mesma
+      // doutrina do caminho por página: bytes de texto SÃO caracteres (é o
+      // argumento que `custoEstimadoPorTamanho` já faz para a entrada), e a
+      // razão caractere→célula foi MEDIDA sobre os 52 documentos dos dois
+      // books — ver `CARACTERES_POR_CELULA_ESTIMADA`.
+      const estimadas = Math.ceil(bytes / CARACTERES_POR_CELULA_ESTIMADA);
+      const porDensidade = custoEstimadoPorConteudo({
+        ...doc, celulas: estimadas, colunas: 1, blocos, tokensPromptSistema,
+      }) * MARGEM_ORCAMENTO_CONTEUDO;
+      return {
+        caminho: 'tamanho',
+        motivo: `texto sem nenhuma linha com número contada (${(bytes / 1024).toFixed(0)} KB) — `
+          + `saída estimada por 1 célula a cada ${CARACTERES_POR_CELULA_ESTIMADA} caracteres, `
+          + `não medida no documento`,
+        usd: Math.max(proxy, porDensidade, custoPorChamada),
+      };
+    }
+
+    // E A FRASE DIZ O QUE É VERDADE DESTE RAMO, que é o único não-texto sem
+    // página nenhuma — quem tem página já saiu pelo caminho por página, acima.
+    // A revisão desta rodada levantou o caso do PDF com 30 páginas lidas que
+    // caísse aqui e ouvisse "sem página lida": ele existe, mas é o PDF com
+    // camada de TEXTO (`leitura_pdf === 'texto'`, que o nó carimba como formato
+    // 'texto'), e a frase dele é a do ramo acima, que não fala de página nenhuma.
     return {
       caminho: 'tamanho',
-      motivo: `sem linha com número e sem página lida — cobrado pelo proxy por `
-        + `tamanho (${(bytes / 1024).toFixed(0)} KB), que é o caminho conservador`,
-      usd: custoEstimadoPorTamanho(bytes, doc.formato) * (1 + (doc.precisaFallback ? peso : 0)),
+      motivo: `sem linha com número e sem página lida — cobrado pelo proxy por tamanho `
+        + `(${(bytes / 1024).toFixed(0)} KB), com piso da estimativa plana`,
+      usd: Math.max(proxy, custoPorChamada),
     };
   }
 
   return {
     caminho: 'cego',
     motivo: 'nem conteúdo, nem página, nem tamanho chegaram até o orçamento',
-    usd: CUSTO_ESTIMADO_DOC_USD * (doc.precisaFallback ? 2 : 1),
+    usd: custoPorChamada * (doc.precisaFallback ? 2 : 1),
   };
 }
 
@@ -1111,13 +1178,20 @@ export function orcamentoDoLotePorConteudo({
   }
 
   const peso = pesoDaChamadaDeClassificacao();
-  const partes = docs.map((d) => estimativaDoDocumento(d, tokensPromptSistema, peso));
+  const partes = docs.map((d) => estimativaDoDocumento(d, tokensPromptSistema, peso, custoPorChamada));
 
   const estimadoUSD = Number(partes.reduce((s, p) => s + p.usd, 0).toFixed(2));
   const chamadas = docs.reduce(
     (s, d) => s + Math.max(1, Number(d?.blocos) || 1) + (d?.precisaFallback ? 1 : 0), 0);
+  // AS CÉLULAS SÃO AS DOS DOCUMENTOS QUE FORAM MEDIDOS POR CONTEÚDO, e só delas.
+  // Somar sobre o lote inteiro atribuía à frase "N documentos medidos por
+  // conteúdo (X linhas lidas dos próprios documentos)" as linhas de um documento
+  // que NÃO foi por esse caminho — um PDF com 5.000 células medidas mas sem
+  // `numpages` engordava o número dos outros. É a mesma atribuição errada que
+  // esta fatia existe para tirar da mensagem.
   const celulas = docs.reduce(
-    (s, d) => s + (Number.isFinite(Number(d?.celulas)) ? Math.max(0, Number(d.celulas)) : 0), 0);
+    (s, d, i) => s + (partes[i].caminho === 'conteudo' && Number.isFinite(Number(d?.celulas))
+      ? Math.max(0, Number(d.celulas)) : 0), 0);
 
   const porCaminho = partes.reduce((acc, p) => ({ ...acc, [p.caminho]: (acc[p.caminho] || 0) + 1 }), {});
   const porConteudo = partes.every((p) => p.caminho === 'conteudo' || p.caminho === 'pagina');

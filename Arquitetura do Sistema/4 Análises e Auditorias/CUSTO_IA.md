@@ -634,6 +634,48 @@ sobre PDF do `reportlab` com média de 4,8 KB por documento e é aplicado a PDF 
 335 KB — 69× mais bytes para o mesmo conteúdo. Sozinha, a reescala leva o lote da AMO de US$ 52,39
 para US$ 27,69: −47%, ainda 9× o teto. A alavanca é a conta por CONTEÚDO documento a documento.
 
+### 13/09/2026 — a conta do lote passou a ser DOCUMENTO A DOCUMENTO
+
+A reescala acima é 47% do problema. A alavanca é esta: `orcamentoDoLotePorConteudo` deixou de ser
+**tudo-ou-nada** — até aqui, UM documento sem medida de conteúdo derrubava o lote INTEIRO no proxy
+por byte.
+
+`estimativaDoDocumento` escolhe **um de quatro caminhos por documento**:
+
+| Caminho | Quando | Como estima |
+|---|---|---|
+| `conteudo` | células e (páginas, ou bytes se for texto) medidos | a conta de sempre, × 1,25 de margem |
+| `pagina` | PDF/imagem com páginas e SEM camada de texto | `CELULAS_POR_PAGINA_ESTIMADAS = 100` × páginas |
+| `tamanho` | nem células nem páginas | proxy por byte, com **piso** da estimativa plana; para TEXTO, saída por `CARACTERES_POR_CELULA_ESTIMADA = 22` |
+| `cego` | nada chegou | estimativa plana por chamada |
+
+**As duas constantes novas foram MEDIDAS** sobre os 52 documentos dos dois books (`METRICAS.json`):
+células por página — agregado 53,4, mediana 43,0, p90 91,7, máximo 131,0; caracteres por célula —
+agregado 33,5, p90 22,3, o mais denso 14,2. As duas ficam no **p90**, pelo mesmo motivo: quem não
+foi medido paga a incerteza, e a incerteza é para cima. **Os dois limites ficam declarados**: um
+escaneado mais denso que 100 células por página, ou um texto mais denso que 1 célula a cada 22
+caracteres, é subestimado — a defesa deles é o teto duro de US$ 5 no provedor, exatamente como o
+proxy por byte já declarava para o documento isolado.
+
+**O efeito por documento:** um escaneado de 20 páginas e 335 KB sai por US$ 0,1212 contra US$ 0,4842
+do proxy por byte — 4× menos, e ainda ~2× acima do que um documento desse tamanho custa nos books.
+
+**A REVISÃO ADVERSARIAL ACHOU O v31 DENTRO DA CORREÇÃO, e ele está consertado na mesma rodada.**
+`custoEstimadoPorTamanho`, para texto, cobra **só a entrada** de propósito; quem cobria a saída era
+o piso por chamada. Isso bastava enquanto esse caminho decidia o lote inteiro junto com documentos
+medidos — como caminho POR DOCUMENTO ele cobrava **46× menos** que a conta por conteúdo do mesmo
+arquivo. Medido: 20 CSVs de 1 MB sem linha contada estimavam **US$ 1,31 e PASSAVAM**, contra US$
+15,26 da conta por conteúdo — e a regra tudo-ou-nada, que a fatia substituiu, **recusava** esse
+mesmo lote. A correção tinha trocado "recusa lote que cabe" por "aceita lote que não cabe", que é o
+pior dos dois. Hoje o mesmo lote estima US$ 56,72 e é recusado.
+
+**E a frase "o proxy por byte é ≥ o real por construção" era FALSA**, medida: o documento mais denso
+do book (`17_Livro_Razao`, 10.849 bytes) custa US$ 0,0222 e o proxy sobre ele dá US$ 0,0153 — 0,69×.
+A margem de ~2× é agregada de LOTE, e a conta por documento é justamente onde a média não vale. O
+piso da estimativa plana em todo documento não medido é o que devolve à frase a verdade que ela
+afirma.
+
+
 ### O que a troca comprou em COMPORTAMENTO, e não em preço
 
 - **O lote do v31 cabe.** Os 14 documentos que estouraram o teto de US$ 5 da OpenAI no meio da
