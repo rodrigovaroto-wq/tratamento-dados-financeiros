@@ -78,7 +78,45 @@ export interface CamposDoForm {
   arquivos: string;
   /** `true` quando os nomes vieram do HTML do próprio Form, não do fallback. */
   descoberto: boolean;
+  /**
+   * POR QUE caiu no fallback, quando caiu — e SÓ quando caiu.
+   *
+   * ACHADO EM PRODUÇÃO, 13/09/2026: a descoberta falhou (a tela recusou o
+   * envio direto), e não havia NENHUM jeito de saber por quê — o `catch`
+   * engolia a exceção de propósito ("o erro de verdade aparece no POST logo
+   * em seguida", o que deixou de ser verdade quando o envio direto passou a
+   * existir e o POST vai para OUTRO lugar). O dono confirmou a instância no
+   * ar e o formulário funcionando manualmente — então a falha é do GET desta
+   * função, de um jeito que só um motivo escrito revela: timeout, bloqueio
+   * por User-Agent de servidor (WAF/anti-bot na frente do n8n), redirecionamento
+   * que o fetch não segue, ou HTML sem os `<input>` esperados.
+   *
+   * Isto é a regra 1 aplicada ao PRÓPRIO diagnóstico: "não consegui descobrir"
+   * é uma ausência, e uma ausência sem o motivo é o mesmo defeito que este
+   * arquivo inteiro existe para não repetir — só que sobre si mesmo.
+   */
+  motivo?: string;
 }
+
+// UM USER-AGENT DE NAVEGADOR, NÃO O PADRÃO DO NODE. Fetch server-a-servidor
+// sem isso se anuncia como robô (`undici` manda algo como `node`), e é
+// exatamente o que uma proteção anti-bot na frente do n8n (Cloudflare e
+// equivalentes) filtra primeiro — devolvendo uma página de verificação
+// (200 OK, sem os `<input>` do formulário) em vez do form. O sintoma bate
+// ponto a ponto com o achado de 13/09: funciona no navegador do dono (UA real
+// + JS), falha só do servidor da Vercel para o servidor do n8n.
+const CABECALHOS_DE_NAVEGADOR = {
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    + "Chrome/128.0.0.0 Safari/537.36",
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
+
+// TETO DE TEMPO EXPLÍCITO. Sem ele, um GET pendurado (instância fria, rede
+// lenta) só termina quando a Function inteira estoura — e aí `destino` nunca
+// responde nada, nem o `motivo`. 8s é folgado para uma página de formulário
+// simples e ainda cabe com sobra no teto da Function.
+const TETO_DA_DESCOBERTA_MS = 8000;
 
 export async function descobrirNomesDeCampo(url: string): Promise<CamposDoForm> {
   const mandatoEnv = CAMPO_MANDATO_ENV();
@@ -87,22 +125,46 @@ export async function descobrirNomesDeCampo(url: string): Promise<CamposDoForm> 
     return { mandato: mandatoEnv, arquivos: arquivosEnv, descoberto: false };
   }
   try {
-    const resp = await fetch(url, { method: "GET" });
-    if (!resp.ok) throw new Error(`GET do form retornou HTTP ${resp.status}`);
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: CABECALHOS_DE_NAVEGADOR,
+      signal: AbortSignal.timeout(TETO_DA_DESCOBERTA_MS),
+      redirect: "follow",
+    });
+    if (!resp.ok) {
+      return {
+        mandato: mandatoEnv || CAMPO_MANDATO_FALLBACK,
+        arquivos: arquivosEnv || CAMPO_ARQUIVOS_FALLBACK,
+        descoberto: false,
+        motivo: `GET do form retornou HTTP ${resp.status} ${resp.statusText}`.trim(),
+      };
+    }
     const html = await resp.text();
     const { fileFieldName, textFieldName } = parseFormFieldNames(html);
+    const descoberto = Boolean(!mandatoEnv && textFieldName) || Boolean(!arquivosEnv && fileFieldName);
     return {
       mandato: mandatoEnv || textFieldName || CAMPO_MANDATO_FALLBACK,
       arquivos: arquivosEnv || fileFieldName || CAMPO_ARQUIVOS_FALLBACK,
-      descoberto: Boolean(!mandatoEnv && textFieldName) || Boolean(!arquivosEnv && fileFieldName),
+      descoberto,
+      ...(descoberto ? {} : {
+        // O HTML voltou (200), mas sem `<input>` que bata — o caso que mais
+        // importa registrar, porque é o que uma verificação anti-bot produz:
+        // uma página válida, só que não é a página certa.
+        motivo: `GET OK (${html.length} bytes) mas nenhum <input> reconhecido — `
+          + `arquivo:${fileFieldName ?? "não achado"} texto:${textFieldName ?? "não achado"}`,
+      }),
     };
-  } catch {
-    // Sem acesso de leitura ao form (rede, URL errada) — cai no fallback;
-    // o erro "de verdade" (se houver) aparece no POST logo em seguida.
+  } catch (e) {
+    // AQUI o erro de verdade não pode mais ser engolido: ele é o `motivo`.
+    const erro = e as Error;
+    const motivo = erro.name === "TimeoutError" || erro.name === "AbortError"
+      ? `GET não respondeu em ${TETO_DA_DESCOBERTA_MS / 1000}s`
+      : `${erro.name || "erro"}: ${erro.message || String(e)}`;
     return {
       mandato: mandatoEnv || CAMPO_MANDATO_FALLBACK,
       arquivos: arquivosEnv || CAMPO_ARQUIVOS_FALLBACK,
       descoberto: false,
+      motivo,
     };
   }
 }

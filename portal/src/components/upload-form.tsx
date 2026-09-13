@@ -334,6 +334,17 @@ export default function UploadForm({
         setErro("Sua sessão expirou ou o portal não respondeu. Atualize a página, entre de novo e reenvie — nada foi processado.");
         return;
       }
+      // O DIAGNÓSTICO VAI PARA O CONSOLE, não para a tela do analista.
+      //
+      // ACHADO EM 13/09/2026: a descoberta de campo falhou em produção e não
+      // havia NENHUM jeito de saber por quê — nem aqui, nem no servidor. Sem
+      // isto, a próxima falha seria de novo muda. Fica no console (F12 →
+      // Console), pela mesma razão de sempre: o texto que o analista lê não
+      // pode citar termo técnico, mas quem for investigar precisa do motivo,
+      // e "developer tools" é exatamente onde quem investiga já olha.
+      if (destino.motivo) {
+        console.warn(`[intake] descoberta de campo caiu no fallback: ${destino.motivo}`);
+      }
 
       const plano = planejarEnvio(
         aEnviar.map((a) => ({ nome: a.name, bytes: a.size })),

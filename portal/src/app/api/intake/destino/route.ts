@@ -48,15 +48,18 @@ export async function GET(request: Request) {
 
   const campos = await descobrirNomesDeCampo(url);
 
-  // DE ONDE VIERAM OS NOMES — e isto decide se o envio direto pode acontecer.
+  // DE ONDE VIERAM OS NOMES — e isto decide o TOM do envio, não mais se ele
+  // acontece.
   //
   // `fallback` significa que a descoberta FALHOU (instância reiniciando, 429,
-  // HTML inesperado) e os nomes são os padrões chutados. Pelo encaminhamento
-  // isso é recuperável: o n8n devolve o status e a rota diz quais nomes usou.
-  // Direto, não: a resposta é opaca, e 50 MB subiriam sob um nome que o
-  // workflow pode não ler — o defeito da sessão 7 cont.¹² (200 na tela, zero
-  // documento, zero token) entrando pela porta nova. A tela recusa o envio
-  // direto neste estado, e o sinal para isso precisa CHEGAR até ela.
+  // WAF bloqueando o GET, HTML inesperado) e os nomes são os padrões chutados.
+  // Uma versão anterior (13/09/2026) RECUSAVA o envio direto neste estado — e
+  // bloqueou o próprio lote grande que a correção existia para destravar, no
+  // mesmo dia, porque a descoberta tropeçou em produção sem alternativa
+  // nenhuma. O mesmo risco (nome errado — sessão 7 cont.¹²) já era aceito sem
+  // bloqueio no encaminhamento, coberto pela detecção de parada do
+  // acompanhamento — que cobre o direto do mesmo jeito. Ver
+  // `.claude/memory/teto-da-borda-recusa-antes-do-codigo.md`.
   const porEnv = Boolean(process.env.N8N_INTAKE_FIELD_MANDATO && process.env.N8N_INTAKE_FIELD_ARQUIVOS);
   let origem: "env" | "html" | "fallback" = "fallback";
   if (porEnv) origem = "env";
@@ -67,6 +70,11 @@ export async function GET(request: Request) {
     campos: { mandato: campos.mandato, arquivos: campos.arquivos },
     descoberto: campos.descoberto,
     origem,
+    // SÓ QUANDO NÃO DESCOBRIU. Ver o comentário de `motivo` em `n8n-form.ts`:
+    // é o diagnóstico que faltou em 13/09/2026, quando a descoberta falhou em
+    // produção sem deixar rastro nenhum — nem para o dono, nem para quem
+    // fosse investigar depois.
+    ...(campos.motivo ? { motivo: campos.motivo } : {}),
     // O RELÓGIO É O DO SERVIDOR, e não é preciosismo: `agora` vira o `desde` do
     // acompanhamento (`/api/intake/status`), que o compara com `criado_em` das
     // linhas gravadas pelo pipeline. Um navegador adiantado em cinco minutos
