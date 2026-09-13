@@ -4,9 +4,17 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-12 (sessão **85**). **Quatro PRs mergeados nesta sessão** —
-#213, #214, #215 e o #216 em curso. Leia "A SESSÃO 85" logo abaixo: ela achou por que **60
-documentos da AMOBELEZA chegaram com ZERO linha**, e a causa raiz não era o `.txt`.
+**Última atualização:** 2026-09-13 (sessão **86**). **PRs #218 e #219 mergeados.** Leia "A SESSÃO
+86" logo abaixo. O envio de 44 arquivos / 14,4 MB **passou** (o 413 era da borda da Vercel, não do
+código), e o que trava o mandato da AMO agora é **o orçamento do lote: US$ 52,39 contra um teto de
+US$ 3**. A causa está medida e o conserto está desenhado em ordem — **nada de `N8N/lib/custo.mjs`
+foi mudado ainda, de propósito.** Em uma linha: `CUSTO_POR_MB_USD` foi calibrado sobre PDFs de
+**4,8 KB** (gerados por `reportlab`) e cobra PDFs de cliente de **335 KB** — 69× mais bytes para o
+mesmo conteúdo.
+
+<!-- o parágrafo abaixo é da sessão 85 e ficou como registro -->
+**Sessão 85:** **Quatro PRs mergeados** — #213, #214, #215 e o #216 em curso. Ela achou por que
+**60 documentos da AMOBELEZA chegaram com ZERO linha**, e a causa raiz não era o `.txt`.
 
 <!-- o parágrafo abaixo é da sessão 84 e ficou como registro -->
 **Sessão 84:** **O PR #211 FOI MERGEADO** pelo dono
@@ -36,6 +44,177 @@ descuido: ela é exatamente o modo de falha que o resto deste cabeçalho descrev
 > "02/09": o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde, o que só
 > acontece quando ela está sendo rodada de verdade. **Quem responde qual workflow está no ar é
 > `N8N/conferir-publicado.mjs` contra a instância**, não esta linha.
+
+## A SESSÃO 86 (2026-09-13) — o 413 do portal, a camada de conhecimento, e o orçamento que cobra 75× o real
+
+**Três coisas nesta sessão. As duas primeiras estão MERGEADAS; a terceira é DIAGNÓSTICO e está
+aberta de propósito — nenhuma linha de `N8N/lib/custo.mjs` foi mudada.**
+
+### 1. O 413 de 48 arquivos (PR #218, mergeado)
+
+O dono selecionou 48 arquivos (~50 MB) e o envio morreu em `HTTP 413 /api/intake`. **A rota nunca
+rodou:** o teto é da BORDA da Vercel (~4,5 MB por requisição na Serverless Function), e nenhuma
+mensagem nossa tinha como aparecer. A correção tira os bytes do caminho da Vercel: acima do teto
+o NAVEGADOR posta direto no Form do n8n (uma execução só — "mandar em levas" era a correção
+errada, porque a cadência da IA é por execução). Ficha inteira em
+`.claude/memory/teto-da-borda-recusa-antes-do-codigo.md`. Prova:
+`portal/scripts/verificar-limite-de-envio.mts` (66 asserts, no CI e no `CLAUDE.md`).
+
+### 2. A camada de conhecimento (PR #218) e o bloqueio que criei (PR #219, mergeado)
+
+`.claude/conhecimento/` — `buscar.mjs` (briefing), `indexar.mjs`, `conferir.mjs` (portão),
+`grafo.jsonl` (derivado, versionado, sob `git diff --exit-code`). **Medido:** as cinco perguntas
+de `BASELINE.md` caíram de 50.245 para 10.667 bytes. Manual em
+`.claude/conhecimento/INSTRUCOES.md` — **rode `buscar.mjs` antes de abrir arquivo.**
+
+E o aviso que vale mais que a camada: **a revisão adversarial pediu "recusar por segurança" e o
+bloqueio que nasceu dela travou o lote da AMO no mesmo dia.** Virou aviso (`origemIncerta`). A
+lição está na ficha acima.
+
+### 3. O ORÇAMENTO — onde a próxima sessão pega (ABERTO)
+
+O envio passou. **O n8n recusou pelo orçamento:**
+
+```
+44 documento(s) = 88 chamada(s) ≈ US$ 52,39, acima do teto de US$ 3,00
+A conta saiu de 14737 KB de arquivo. Envie no máximo 2 documento(s) por vez (22 levas).
+```
+
+Reproduzido exatamente, com a função de verdade:
+
+```
+orcamentoDoLote({ documentos: 44, chamadasPorDocumento: 2, bytes: 14737*1024 })
+→ { estimadoUSD: 52.39, chamadas: 88, fatorCusto: 1.3, porTamanho: true, maxDocumentos: 2 }
+```
+
+Aritmética: `14,39 MB × CUSTO_POR_MB_USD (2,80) × 1,3 = 52,39`.
+
+**O alvo do dono: cair ≥85% E ficar abaixo de US$ 6,00.** O alvo mais apertado é o segundo —
+de 52,39 para menos de 6,00 são **≥88,5%**.
+
+#### A causa raiz, MEDIDA: o proxy por byte foi calibrado em PDF sintético e aplicado a PDF real
+
+`CUSTO_POR_MB_USD` foi calibrado sobre os 38 documentos do `book-canastra`. Eles são gerados por
+`reportlab`. **Medido nesta sessão** (`PYTHONPATH=. python3 gerar.py` e `stat` nos 38 arquivos):
+
+| | documentos | bytes totais | média por documento | mediana |
+|---|---|---|---|---|
+| `book-canastra` (a calibração) | 38 | 183.139 | **4.819 B** | 4.099 B |
+| lote da AMO (o que foi recusado) | 44 | 14.730.688 | **334.789 B** | — |
+
+**69× mais bytes por documento, para o mesmo tipo de conteúdo.** Um PDF de cliente carrega fonte
+embutida, logo e imagem; um PDF do reportlab carrega texto. O proxy diz "dólar por MB" e o MB
+mudou de significado entre a bancada e o campo — **é o "espelho que fica para trás" do
+`CLAUDE.md`, de novo, e desta vez sobre uma constante de dinheiro.**
+
+No regime em que foi calibrado ele acerta: o book inteiro estima ~US$ 0,58 contra US$ 0,28 reais
+(~2×, a margem projetada). No regime real ele erra **~75×**.
+
+#### O segundo erro, menor, empilhado por cima: a troca de provedor não reescalou o proxy
+
+`CUSTO_POR_MB_USD = 2,80` e `CUSTO_MINIMO_CHAMADA_USD = 0,0032` foram escalados em **24/08/2026**
+para o Google `gemini-3.5-flash-lite` (US$ 0,30 entrada / US$ 2,50 saída por milhão). Em
+**11/09/2026** o dono trocou tudo para `gpt-5.6-luna` (US$ 0,20 / US$ 1,20). A tabela de preço, as
+constantes de modelo e as de cadência foram atualizadas. **Estas duas não.**
+
+O fator, pelo método que o próprio arquivo documenta (razão do documento DENSO, nunca a agregada —
+o comentário explica que a agregada fazia o lote homogêneo denso passar), calculado sobre as duas
+tabelas:
+
+```
+perfil medido (3.500 entrada / 7.571 saída):  google 0,019977 → luna 0,009785   razão 0,4898
+20 páginas de imagem + saída densa:           google 0,024927 → luna 0,013085   razão 0,5249  ← a conservadora
+só entrada 0,6667 · só saída 0,4800
+```
+
+Vale a **maior** (0,53), pelo mesmo motivo que 24/08 escolheu a maior das duas: escalar de menos
+recusa lote que cabe, escalar de mais aceita lote que não cabe — e o segundo é o v31.
+
+```
+2,80 × 0,53 = 1,48        0,0032 × 0,53 = 0,0017
+```
+
+#### Por que o lote caiu no caminho por BYTE, que é o terceiro defeito
+
+O nó `Orcamento do Lote` chama `orcamentoDoLotePorConteudo` (`N8N/build-workflow.mjs:505`), que é
+a conta boa — ela usa linhas lidas do próprio documento. Mas ela é **tudo-ou-nada**: se UM
+documento do lote não tem `celulas > 0` (e, se não for texto, `paginas > 0`), **o lote INTEIRO**
+cai em `orcamentoDoLote`, o proxy por byte. Foi o que aconteceu: a mensagem diz "A conta saiu de
+14737 KB de arquivo", que é a frase do caminho por byte.
+
+**E a mensagem não diz QUAL documento derrubou a medição, nem por quê.** Isso é a regra 1 sobre o
+próprio diagnóstico — o mesmo defeito que `n8n-form.ts` acabou de corrigir com o campo `motivo`.
+
+A regra tudo-ou-nada tem razão de ser, e o comentário dela é honesto: "medir só os que dá
+subestimaria o lote na exata proporção do que não se sabe". **Mas o argumento não fecha para o
+HÍBRIDO:** medir por conteúdo os que dá e cobrar o proxy (conservador) dos que não dá **nunca
+subestima** — o proxy é ≥ o real por construção. Tudo-ou-nada troca "não sei sobre 1" por "erro
+75× sobre 44", e essa troca não é conservadora, é só cara.
+
+Os 88 = 44 + 44 também dizem que **todo** documento precisou de classificação por conteúdo
+(`precisa_fallback_ia`), ou seja, nenhum nome de arquivo resolveu tipo+período. Vale conferir, mas
+é a fatia barata da conta (peso 0,3).
+
+#### Os caminhos, MEDIDOS, na ordem em que devem ser testados
+
+Base: US$ 52,39. Alvos: queda ≥ 85% **e** < US$ 6,00 (o teto do sistema é US$ 3,00, então na
+prática o alvo é < US$ 3,00 para o lote rodar).
+
+| # | Caminho | Estimativa do lote | Queda | Passa? |
+|---|---|---|---|---|
+| A | Só reescalar o proxy para o Luna (2,80 → 1,48) | **US$ 27,69** | 47,1% | **NÃO** |
+| B | Estimar por CONTEÚDO os 44 (30k caracteres/doc) | US$ 0,34 | 99,4% | sim |
+| B | idem, 60k caracteres/doc | **US$ 0,67** | **98,7%** | sim |
+| B | idem, 120k caracteres/doc | US$ 1,31 | 97,5% | sim |
+| B+C | Híbrido: 40 por conteúdo + 4 escaneados no proxy reescalado | US$ 3,19 | 93,9% | **< 6, mas ACIMA do teto de 3** |
+| D | Escaneado estimado por PÁGINA em vez de por byte (20 pg / 600 células) | US$ 0,022 **por documento** contra US$ 0,63 do proxy | — | sim |
+
+**A leitura:** **A sozinho não chega nem perto** — é correção de causa raiz e tem de entrar, mas
+não é a alavanca. **A alavanca é B.** E a linha B+C mostra o risco que sobra: bastam quatro PDFs
+escaneados no proxy por byte para o lote voltar a bater no teto de US$ 3 — o que torna **D
+obrigatório junto com B**.
+
+**D é a descoberta que fecha a conta:** um PDF escaneado NÃO é imensurável. Falta só `celulas`;
+`paginas` existe (`pdf-parse`), e a entrada dele já é `paginas × TOKENS_POR_PAGINA_IMAGEM`. Estimar
+a saída a partir das páginas põe todo PDF no caminho por conteúdo e **aposenta o proxy por byte
+como caminho normal** — ele vira o que sempre deveria ter sido: o último recurso para o arquivo do
+qual não se sabe nada.
+
+#### O que NÃO é caminho
+
+**Subir `TETO_EXECUCAO_USD`.** Não reduz a estimativa em nada, e o teto duro da conta do provedor
+(US$ 5, pedido do dono) continua onde está — subir um sem o outro é o v31: a API corta no meio do
+lote e documentos morrem sem extração.
+
+**Mandar em levas.** É o que a mensagem de recusa manda fazer hoje ("22 levas"), e é o conselho
+errado pelo mesmo motivo do 413: cada submissão é uma execução, e a cadência da IA é por execução
+contra um rate limit que é da CONTA.
+
+#### A ordem de execução para a próxima sessão
+
+1. **Confirmar D contra o lote real**, sem inventar fixture (regra 4): rodar o lote da AMO só até
+   `Medir Documento` e ler `celulas_no_documento`, `paginas_do_documento`, `leitura_pdf` e
+   `caracteres_do_texto` de cada um dos 44. **É isso que diz quantos documentos derrubaram a
+   medição e por quê** — e sem esse número as linhas B e B+C acima continuam sendo aritmética sobre
+   suposição, não medição. Nenhuma delas custa token de IA: o teto barra antes da primeira chamada.
+2. **A (reescala)** — uma fatia, um commit. É causa raiz e é independente.
+3. **B + D (a conta por documento)** — a fatia grande. Cada documento medido vai por conteúdo;
+   PDF sem camada de texto vai por página; só o formato realmente desconhecido cai no proxy.
+4. **A mensagem de recusa passa a nomear** quais documentos não foram medidos e por quê (regra 1).
+5. **Invariante MEDIDO NÃO-VAZIO** (regra 2) para cada fatia: desligar a correção, rodar, confirmar
+   que reprova, religar, e pôr o número de asserts na mensagem do commit. O lote de 44 documentos
+   de 335 KB é o caso que a suíte precisa carregar — hoje nenhuma suíte tem um lote no regime real.
+
+#### O que continua aberto das outras frentes
+
+- **`/api/intake/status` confunde dois lotes no mesmo mandato** (distingue por `caso_nome` +
+  `criado_em >= desde`, e por mais nada). Correção de verdade: o pipeline gravar o id do lote no
+  `documento`. Descrito na ficha do 413.
+- **Confirmar por que a descoberta do campo caiu no fallback em produção**: abrir
+  `/api/intake/destino` autenticado e ler `origem` e `motivo` (o diagnóstico entrou no #219).
+  Hipótese principal: anti-bot/WAF na frente do n8n barrando o `fetch` servidor-a-servidor.
+- **Os bloqueios da sessão 84/85 continuam de pé** — em especial: **qual workflow está publicado no
+  n8n não é este arquivo que responde**, é `N8N/conferir-publicado.mjs` contra a instância.
 
 ## A SESSÃO 85 (2026-09-12) — os 60 documentos vazios da AMO, e o preço que nunca existiu
 
