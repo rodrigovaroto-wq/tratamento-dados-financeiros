@@ -33,7 +33,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
-import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
+import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, custoEstimadoPorTamanho, custoPorMbDeTextoUSD, CELULAS_POR_PAGINA_ESTIMADAS, estimativaDoDocumento, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
   ASSINATURAS, SEPARADORES, byteEm, casaAssinatura, saborDoZip, trechoLatin1,
@@ -238,6 +238,17 @@ const FONTE_ORCAMENTO_LOTE = [
   `const ehFormatoDeTexto = ${ehFormatoDeTexto.toString()};`,
   `const CARACTERES_POR_TOKEN = ${CARACTERES_POR_TOKEN};`,
   `const custoEstimadoPorConteudo = ${custoEstimadoPorConteudo.toString()};`,
+  // O ORÇAMENTO PASSOU A SER DOCUMENTO A DOCUMENTO (13/09/2026), e as quatro
+  // linhas abaixo são o que `estimativaDoDocumento` referencia. Sem elas o nó
+  // estoura `ReferenceError` na primeira execução REAL com a suíte verde — o
+  // modo de falha que o comentário de `custoDaChamada` acima já descreve como o
+  // mais caro possível. `custoEstimadoPorTamanho` nunca tinha atravessado:
+  // até aqui o caminho por byte era decidido DENTRO de `orcamentoDoLote`, e
+  // agora ele é um dos quatro caminhos por documento.
+  `const custoPorMbDeTextoUSD = ${custoPorMbDeTextoUSD.toString()};`,
+  `const custoEstimadoPorTamanho = ${custoEstimadoPorTamanho.toString()};`,
+  `const CELULAS_POR_PAGINA_ESTIMADAS = ${CELULAS_POR_PAGINA_ESTIMADAS};`,
+  `const estimativaDoDocumento = ${estimativaDoDocumento.toString()};`,
   `const orcamentoDoLotePorConteudo = ${orcamentoDoLotePorConteudo.toString()};`,
 ].join('\n');
 const FONTE_BYTES_BINARIO = `const bytesDoBinario = ${bytesDoBinario.toString()};`;
@@ -441,9 +452,13 @@ const FONTE_PROVEDOR = [
 // depois do `Juntar Ramos`. Barrar aqui continua custando zero.
 //
 // A ESTIMATIVA POR BYTE NÃO FOI EMBORA: ela é o caminho de quando o conteúdo não
-// pôde ser medido. PDF escaneado não tem camada de texto, e um lote com QUALQUER
-// documento assim cai inteiro no caminho antigo — medir só os que dá
-// subestimaria o lote na exata proporção do que não se sabe.
+// pôde ser medido. O QUE MUDOU EM 13/09/2026 É QUE ELA DEIXOU DE SER CONTAGIOSA —
+// a conta é documento a documento, e um PDF escaneado não derruba mais a medição
+// dos outros 43. PDF sem camada de texto tem `paginas` (o `pdf-parse` conta sem
+// depender de texto) e passa a ser estimado POR PÁGINA; só o arquivo do qual não
+// se sabe nada cai no proxy por byte. Ver o comentário grande de
+// `estimativaDoDocumento` em lib/custo.mjs — inclusive o porquê de o híbrido,
+// diferente do tudo-ou-nada, nunca subestimar.
 const CODE_ORCAMENTO = `
 ${FONTE_ORCAMENTO_LOTE}
 ${FONTE_COBERTURA}
@@ -476,6 +491,12 @@ const docs = itens.map((i) => {
   const colunas = Number.isFinite(Number(j.colunas_estimadas)) && Number(j.colunas_estimadas) > 0
     ? Number(j.colunas_estimadas) : 1;
   return {
+    // O NOME VIAJA PORQUE A RECUSA PASSOU A NOMEAR. Ate' 13/09/2026 a mensagem
+    // dizia so' "a conta saiu de 14737 KB de arquivo": o dono nao tinha como
+    // saber QUAL documento derrubou a medicao nem por que, e sobrava reenviar
+    // as cegas em 22 levas. E' a regra 1 (nunca apresentar ausencia como dado)
+    // aplicada ao proprio diagnostico do orcamento.
+    nome: j.nome_original || null,
     celulas,
     paginas: Number(j.paginas_do_documento),
     colunas,
@@ -530,7 +551,7 @@ const mensagemFinal = motivos.length > 0 ? motivos.join(' ') : null;
 // \`orcamento_versao\` viaja com o item mesmo quando o lote PASSA. É o que
 // responde, da tela do n8n, a pergunta que custou uma rodada em 12/08: "este
 // workflow é o que está no repositório ou é o que foi importado em julho?".
-return itens.map(i => ({ json: { ...i.json, orcamento_cabe: cabeTudo, orcamento_mensagem: mensagemFinal, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo, cota_cabe: cota.cabe, cota_conhecida: cota.conhecido, cota_fracao: cota.fracao, cota_rpd: cota.rpd, cota_aviso: cota.cabe ? cota.mensagem : null }, binary: i.binary }));
+return itens.map(i => ({ json: { ...i.json, orcamento_cabe: cabeTudo, orcamento_mensagem: mensagemFinal, orcamento_estimado_usd: r.estimadoUSD, orcamento_teto_usd: r.teto, orcamento_chamadas: r.chamadas, orcamento_versao: r.versao, orcamento_por_conteudo: !!r.porConteudo, orcamento_aviso_medicao: r.aviso || null, orcamento_por_caminho: r.porCaminho || null, cota_cabe: cota.cabe, cota_conhecida: cota.conhecido, cota_fracao: cota.fracao, cota_rpd: cota.rpd, cota_aviso: cota.cabe ? cota.mensagem : null }, binary: i.binary }));
 `.trim();
 
 // --- Code (ALL ITEMS): O CUSTO DO LOTE, NUM PAINEL SÓ -----------------------

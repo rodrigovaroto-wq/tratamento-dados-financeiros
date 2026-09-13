@@ -816,3 +816,174 @@ test('orçamento por CONTEÚDO: 60 documentos de texto somando 40 MB (o lote rea
     `40 MB de texto (só entrada) tem de caber — estimou US$ ${r.estimadoUSD}`);
   assert.ok(r.estimadoUSD > 2, `a entrada de 40 MB de texto não é desprezível (US$ ${r.estimadoUSD})`);
 });
+
+// ===========================================================================
+// A CONTA DEIXOU DE SER TUDO-OU-NADA (13/09/2026)
+// ===========================================================================
+//
+// A regra antiga: UM documento sem medida de conteúdo derrubava o LOTE INTEIRO
+// no proxy por byte. O argumento dela era honesto — "medir só os que dá
+// subestimaria o lote na exata proporção do que não se sabe" — e não fecha para
+// o híbrido: cobrar o caminho conservador de quem não foi medido NUNCA
+// subestima, porque o proxy é ≥ o real por construção (a margem de ~2× que o
+// invariante desta mesma rodada trava). Tudo-ou-nada trocava "não sei sobre 1"
+// por "erro de regime sobre 44", e essa troca não é conservadora, é só cara.
+//
+// O caso real: o lote de 44 documentos da AMO, recusado em US$ 52,39 contra um
+// teto de US$ 3.
+import { estimativaDoDocumento, CELULAS_POR_PAGINA_ESTIMADAS } from '../lib/custo.mjs';
+
+/** Um lote de `n` documentos medidos, com a forma do book-canastra (2 páginas, 80 células). */
+function loteMedido(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    nome: `${i + 1}_medido.pdf`, celulas: 80, paginas: 2, colunas: 3, blocos: 1,
+    bytes: 335 * 1024, formato: 'pdf',
+  }));
+}
+
+test('UM escaneado no meio de 43 medidos não derruba mais os outros 43', () => {
+  const docs = loteMedido(44);
+  // O escaneado: `pdf-parse` conta as páginas (não depende de texto), mas não há
+  // linha com número nenhuma para contar.
+  docs[7] = { ...docs[7], nome: 'digitalizado.pdf', celulas: 0, paginas: 20 };
+
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  const soMedidos = orcamentoDoLotePorConteudo({
+    documentos: docs.filter((_, i) => i !== 7), tokensPromptSistema: 0,
+  });
+
+  // A CONSEQUÊNCIA QUE IMPORTA: o lote inteiro NÃO é mais cobrado pelo tamanho
+  // dos arquivos. Com a regra antiga, estes mesmos 44 documentos (14,4 MB)
+  // estimavam US$ 27,69 — 9× o teto — por causa de um único deles.
+  assert.equal(r.porCaminho.conteudo, 43);
+  assert.equal(r.porCaminho.pagina, 1);
+  assert.ok(r.estimadoUSD < TETO_EXECUCAO_USD,
+    `44 documentos com 1 escaneado foram recusados (US$ ${r.estimadoUSD}) — é o lote da AMO de novo`);
+
+  // E O ESCANEADO CONTINUA SENDO COBRADO: a diferença entre os dois lotes é
+  // exatamente ele, e ela não é zero. "Não medi, então não cobro" seria
+  // apresentar ausência como zero, que é a regra 1 com sinal de dinheiro.
+  assert.ok(r.estimadoUSD > soMedidos.estimadoUSD,
+    `o escaneado tem de custar alguma coisa (${soMedidos.estimadoUSD} → ${r.estimadoUSD})`);
+});
+
+test('o escaneado é estimado por PÁGINA, e isso é 4× mais barato que o proxy por byte — sem ficar abaixo da entrada real', () => {
+  const escaneado = {
+    nome: 'digitalizado.pdf', celulas: 0, paginas: 20, colunas: 1, blocos: 1,
+    bytes: 335 * 1024, formato: 'pdf',
+  };
+  const p = estimativaDoDocumento(escaneado);
+  assert.equal(p.caminho, 'pagina');
+
+  // O PROXY POR BYTE, no mesmo documento: é o que ele custava até hoje.
+  const proxy = custoEstimadoPorTamanho(escaneado.bytes, 'pdf');
+  assert.ok(p.usd < proxy / 3,
+    `a conta por página (US$ ${p.usd.toFixed(4)}) tem de ser muito menor que o proxy por byte `
+    + `(US$ ${proxy.toFixed(4)}) — se não for, a correção não corrige nada`);
+
+  // E O PISO QUE NÃO PODE SER FURADO: a ENTRADA de 20 páginas de imagem é
+  // certa, a IA vai cobrá-la de qualquer jeito. Uma estimativa abaixo dela
+  // aceitaria lote que não cabe, que é o v31.
+  const preco = PRECO_USD_POR_MILHAO[MODELO_EXTRACAO];
+  const entradaCerta = (20 * 1000 * preco.entrada) / 1_000_000;
+  assert.ok(p.usd > entradaCerta,
+    `a conta por página (US$ ${p.usd.toFixed(4)}) não pode ficar abaixo da entrada certa de 20 `
+    + `páginas de imagem (US$ ${entradaCerta.toFixed(4)})`);
+});
+
+test('desmedir um documento do regime calibrado NUNCA baixa a conta do lote', () => {
+  // A propriedade que substitui o tudo-ou-nada: tirar a medição de um documento
+  // não pode deixar o lote mais barato — senão "não medir" viraria a maneira de
+  // passar pelo teto, e o guarda estaria ensinando a burlá-lo.
+  //
+  // VALE NO REGIME CALIBRADO, e o limite está declarado em lib/custo.mjs: um
+  // escaneado MAIS denso que CELULAS_POR_PAGINA_ESTIMADAS é subestimado. Por
+  // isso o documento deste caso tem 2 páginas e 80 células (40 por página), que
+  // é a forma medida nos books (agregado 53,4 células/página).
+  // A COMPARAÇÃO É POR DOCUMENTO, E NÃO PELO TOTAL ARREDONDADO — medido nesta
+  // rodada: com `CELULAS_POR_PAGINA_ESTIMADAS` baixado de 100 para 5 (a conta
+  // por página passando a subestimar de propósito), a versão deste teste que
+  // comparava o total de 10 documentos com `toFixed(2)` continuava VERDE, porque
+  // a diferença inteira somava US$ 0,0014 e sumia no arredondamento. Um
+  // invariante que não reprova com o defeito ligado é cobertura verde sem
+  // execução — a regra 7 do CLAUDE.md, dentro da suíte.
+  const doc = loteMedido(1)[0];
+  const medido = estimativaDoDocumento(doc);
+  const desmedido = estimativaDoDocumento({ ...doc, celulas: 0 });
+  assert.equal(medido.caminho, 'conteudo');
+  assert.equal(desmedido.caminho, 'pagina');
+  assert.ok(desmedido.usd >= medido.usd,
+    `desmedir baixou a conta do documento (US$ ${medido.usd.toFixed(6)} → US$ ${desmedido.usd.toFixed(6)}): `
+    + 'no regime calibrado, quem não foi medido paga a incerteza, e a incerteza é para cima');
+
+  // E o lote inteiro segue a mesma direção, agora num tamanho em que a diferença
+  // não morre no arredondamento.
+  const docs = loteMedido(50);
+  const comMedida = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  const semMedida = orcamentoDoLotePorConteudo({
+    documentos: docs.map((d, i) => (i < 10 ? { ...d, celulas: 0 } : d)), tokensPromptSistema: 0,
+  });
+  assert.ok(semMedida.estimadoUSD > comMedida.estimadoUSD,
+    `desmedir 10 de 50 baixou a conta (US$ ${comMedida.estimadoUSD} → US$ ${semMedida.estimadoUSD})`);
+});
+
+test('a recusa NOMEIA os documentos que não foram medidos, e diz por quê', () => {
+  // A mensagem antiga dizia "A conta saiu de 14737 KB de arquivo" e mais nada:
+  // o dono não tinha como saber QUAL documento tinha derrubado a medição do
+  // lote, nem por quê — sobrava reenviar às cegas em 22 levas. É a regra 1
+  // (nunca apresentar ausência como dado) aplicada ao próprio diagnóstico.
+  const docs = loteMedido(40).map((d) => ({ ...d, celulas: 4000, paginas: 40 }));
+  docs[2] = { nome: 'digitalizado_0003.pdf', celulas: 0, paginas: 30, colunas: 1, blocos: 1, bytes: 900 * 1024, formato: 'pdf' };
+  docs[5] = { nome: 'ANEXO IV.bin', celulas: 0, paginas: 0, colunas: 1, blocos: 1, bytes: 700 * 1024 };
+
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.cabe, false, 'este lote tem de ser recusado, senão não há mensagem para conferir');
+  assert.match(r.mensagem, /digitalizado_0003\.pdf/, 'o escaneado é nomeado');
+  assert.match(r.mensagem, /ANEXO IV\.bin/, 'o arquivo sem medida nenhuma também');
+  assert.match(r.mensagem, /sem camada de texto em 30 página\(s\)/, 'e o MOTIVO de cada um vai junto');
+  assert.match(r.mensagem, /proxy por tamanho/);
+  // A mesma informação sai estruturada, para quem não lê prosa (o nó grava em
+  // `orcamento_aviso_medicao`).
+  assert.equal(r.naoMedidos.length, 2);
+  assert.deepEqual(r.naoMedidos.map((d) => d.caminho), ['pagina', 'tamanho']);
+});
+
+test('o lote que NÃO teve medida nenhuma continua declarando qual conta decidiu', () => {
+  // Sem esta linha a mensagem anunciaria "a conta saiu de 0 linha(s) com número
+  // lidas dos próprios documentos", que é uma medição de zero onde há AUSÊNCIA
+  // de medição — a regra 1 dentro do diagnóstico do próprio orçamento.
+  const docs = Array.from({ length: 60 }, (_, i) => ({ nome: `${i}.pdf`, celulas: 0, paginas: 0, bytes: 0 }));
+  const r = orcamentoDoLotePorConteudo({ documentos: docs, tokensPromptSistema: 0 });
+  assert.equal(r.cabe, false);
+  assert.match(r.mensagem, /estimativa plana/,
+    'quem decidiu foi o caminho cego, e a mensagem tem de dizer isso');
+  assert.doesNotMatch(r.mensagem, /0 linha\(s\) com número/,
+    'ausência de medição não pode ser anunciada como uma medição de zero');
+});
+
+test('a sensibilidade do lote escaneado, MEDIDA no estimador e não suposta', () => {
+  // O QUE ESTE TESTE É: a medição de onde o teto corta um lote inteiramente
+  // escaneado, para que o número não precise ser descoberto no dia do envio.
+  // O QUE ELE NÃO É: uma afirmação sobre o lote da AMO — quantos documentos
+  // dele são escaneados e de quantas páginas ninguém mediu ainda (regra 4), e é
+  // o passo 1 que continua aberto no HANDOFF.
+  const umEscaneado = (paginas) => ({ celulas: 0, paginas, colunas: 1, blocos: 1, bytes: 335 * 1024, formato: 'pdf' });
+  const cabeCom = (n, paginas) => orcamentoDoLotePorConteudo({
+    documentos: Array.from({ length: n }, () => umEscaneado(paginas)), tokensPromptSistema: 0,
+  }).cabe;
+
+  // 20 páginas por documento: o lote passa até um certo tamanho e é recusado
+  // depois dele. O ponto exato é informação para quem envia, não um valor mágico.
+  let limite = 0;
+  for (let n = 1; n <= 200; n += 1) { if (!cabeCom(n, 20)) break; limite = n; }
+  assert.ok(limite >= 20 && limite <= 40,
+    `o limite de escaneados de 20 páginas saiu em ${limite} documento(s) — se ele mudou de ordem `
+    + 'de grandeza, CELULAS_POR_PAGINA_ESTIMADAS mudou junto e o comentário dela envelheceu');
+
+  // E O PROXY POR BYTE, no mesmo lote, recusaria muito antes: é a medida do que
+  // esta fatia comprou.
+  const pelosBytes = orcamentoDoLote({ documentos: limite, chamadasPorDocumento: 1, bytes: limite * 335 * 1024 });
+  assert.equal(pelosBytes.cabe, false,
+    `${limite} escaneados passam pela conta por página e seriam recusados pelo proxy por byte — `
+    + 'se isso deixou de valer, os dois caminhos convergiram e um deles está errado');
+});
