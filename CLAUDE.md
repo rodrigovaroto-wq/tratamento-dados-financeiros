@@ -69,6 +69,7 @@ node --test 'N8N/test/*.test.mjs'
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-premissas-do-realizado.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
+./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs

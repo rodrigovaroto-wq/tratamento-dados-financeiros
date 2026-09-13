@@ -41,6 +41,10 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
   um `false and` no meio da expressão, o arquivo com cara de pronto; e não rode a suíte enquanto
   um agente tem a árvore (medi um arquivo e li outro, 43 segundos de diferença)
 
+- [O teto da hospedagem recusa ANTES de o código rodar](teto-da-borda-recusa-antes-do-codigo.md) —
+  413 da borda da Vercel com 48 arquivos: a rota nunca rodou, e nenhuma mensagem nossa podia
+  aparecer. Erro com número HTTP e sem frase nossa: pergunte se a rota chegou a rodar
+
 ## Armadilhas de ferramenta (custaram tempo real)
 
 - [Âncora de texto quebra com CRLF](ancora-de-texto-quebra-com-crlf.md) — o corpo que

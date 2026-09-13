@@ -8,6 +8,9 @@ import {
   estimativaEmMinutos, janelaPara, semPrimeiroSinalMs, semProgressoMs, proximoIntervalo,
   INTERVALO_ACOMPANHAMENTO_MS,
 } from "@/lib/espera-do-lote";
+import {
+  planejarEnvio, recusaPorArquivoGrande, formatarBytes, type ViaDeEnvio,
+} from "@/lib/limite-de-envio";
 
 
 const MB = 1024 * 1024;
@@ -32,7 +35,14 @@ export default function UploadForm({
   const [arrastando, setArrastando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<{ mandato: string; arquivos: number; desde: string } | null>(null);
+  const [sucesso, setSucesso] = useState<
+    { mandato: string; arquivos: number; desde: string; via: ViaDeEnvio } | null
+  >(null);
+  // POR QUAL CAMINHO ESTE ENVIO FOI (ver `enviarPeloPortal`/`enviarDireto`). A
+  // tela precisa disto por uma razão só: sob envio direto a resposta é opaca, e
+  // prometer "enviado com sucesso" com a mesma cara dos dois lados seria afirmar
+  // uma confirmação que só um dos caminhos tem.
+  const [via, setVia] = useState<ViaDeEnvio>("proxy");
   const [pronto, setPronto] = useState(false);
   // A FALHA DO PROCESSAMENTO. Sem este estado, o "aguarde" era eterno: a tela
   // deduzia progresso da ausência de documentos, e falha produz exatamente a
@@ -172,6 +182,75 @@ export default function UploadForm({
     setArquivos((atuais) => atuais.filter((_, i) => i !== idx));
   }
 
+  // OS DOIS CAMINHOS DO ENVIO, e por que eles existem — o defeito inteiro está
+  // em `src/lib/limite-de-envio.ts`, e aqui fica só o que a tela faz com ele.
+  //
+  //   `proxy`  — o de sempre: `POST /api/intake`, a Serverless Function
+  //              encaminha e devolve o status REAL do n8n. É o caminho do lote
+  //              pequeno, que é quase todo envio.
+  //   `direto` — o navegador fala com o Form do n8n sem intermediário, porque
+  //              acima de ~4 MB a Vercel recusa o corpo na BORDA (413) e a
+  //              rota nunca chega a rodar.
+  //
+  // O QUE O CAMINHO DIRETO CUSTA, dito aqui porque é a parte que engana: a
+  // resposta do n8n vem OPACA (é outra origem, e o Form não manda cabeçalho de
+  // CORS). Sabemos que a requisição partiu e se ela falhou no TRANSPORTE — não
+  // sabemos o status HTTP que voltou.
+  //
+  // Isso é menos do que parece. O status do Form nunca foi prova de nada neste
+  // sistema, e está escrito no topo de `api/intake/route.ts` desde a sessão 7:
+  // o webhook responde 200 ANTES de saber se o workflow terá o que processar, e
+  // foi exatamente assim que um upload "com sucesso" rendeu zero documento e
+  // zero token. A prova de que o lote entrou sempre foi o BANCO — e é o
+  // acompanhamento logo acima que a colhe, documento a documento, e que declara
+  // parada quando nada aparece.
+  async function enviarPeloPortal(): Promise<{ mandato: string; arquivos: number; desde: string } | null> {
+    const fd = new FormData();
+    fd.append("mandato", mandato.trim());
+    for (const a of arquivos) fd.append("arquivos", a, a.name);
+    const resp = await fetch("/api/intake", { method: "POST", body: fd });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      setErro(json.error ?? `Falha no envio (HTTP ${resp.status}).`);
+      return null;
+    }
+    return {
+      mandato: json.mandato ?? mandato.trim(),
+      arquivos: json.arquivos ?? arquivos.length,
+      desde: json.desde ?? new Date().toISOString(),
+    };
+  }
+
+  async function enviarDireto(
+    destino: { url: string; campos: { mandato: string; arquivos: string }; agora: string },
+  ): Promise<{ mandato: string; arquivos: number; desde: string } | null> {
+    const fd = new FormData();
+    fd.append(destino.campos.mandato, mandato.trim());
+    for (const a of arquivos) fd.append(destino.campos.arquivos, a, a.name);
+    try {
+      // `no-cors` não é gambiarra nem afrouxamento: um POST `multipart/form-data`
+      // é requisição SIMPLES (sem preflight), então ela é entregue igual — o que
+      // o modo muda é só a leitura da resposta, que passa a ser opaca. Falha de
+      // transporte (DNS, conexão recusada, TLS) continua REJEITANDO a promessa,
+      // e é por isso que o `catch` abaixo ainda tem o que dizer.
+      await fetch(destino.url, { method: "POST", body: fd, mode: "no-cors" });
+    } catch (err) {
+      setErro(
+        `Não foi possível enviar os arquivos: ${(err as Error).message}. `
+        + "Confira a conexão e tente de novo — nada foi processado.",
+      );
+      return null;
+    }
+    return {
+      mandato: mandato.trim(),
+      arquivos: arquivos.length,
+      // O RELÓGIO DO SERVIDOR, lido antes do envio (ver `api/intake/destino`).
+      // O do navegador filtraria para fora os documentos do próprio lote se
+      // estivesse adiantado.
+      desde: destino.agora,
+    };
+  }
+
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErro(null);
@@ -185,21 +264,38 @@ export default function UploadForm({
     }
     setEnviando(true);
     try {
-      const fd = new FormData();
-      fd.append("mandato", mandato.trim());
-      for (const a of arquivos) fd.append("arquivos", a, a.name);
-      const resp = await fetch("/api/intake", { method: "POST", body: fd });
-      const json = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        setErro(json.error ?? `Falha no envio (HTTP ${resp.status}).`);
+      // O DESTINO VEM PRIMEIRO, e vem do servidor, nos DOIS caminhos. Ele
+      // responde três coisas que a tela não pode adivinhar: se o upload está
+      // configurado (503 com a frase de sempre), quais são os nomes REAIS dos
+      // campos do Form, e que horas são no servidor.
+      const respDestino = await fetch("/api/intake/destino");
+      const destino = await respDestino.json().catch(() => ({}));
+      if (!respDestino.ok) {
+        setErro(destino.error ?? `Não foi possível preparar o envio (HTTP ${respDestino.status}).`);
         return;
       }
+
+      const plano = planejarEnvio(
+        arquivos.map((a) => ({ nome: a.name, bytes: a.size })),
+        destino.campos,
+        mandato.trim(),
+      );
+      // O ARQUIVO QUE NENHUM CAMINHO ACEITA é recusado ANTES de subir. Sob envio
+      // direto ele seria recusado do outro lado, em silêncio, depois de o
+      // analista esperar o upload inteiro.
+      if (plano.acimaDoTetoPorArquivo.length > 0) {
+        setErro(recusaPorArquivoGrande(plano.acimaDoTetoPorArquivo));
+        return;
+      }
+      setVia(plano.via);
+
+      const enviado = plano.via === "proxy"
+        ? await enviarPeloPortal()
+        : await enviarDireto(destino);
+      if (!enviado) return;
+
       setPronto(false);
-      setSucesso({
-        mandato: json.mandato ?? mandato.trim(),
-        arquivos: json.arquivos ?? arquivos.length,
-        desde: json.desde ?? new Date().toISOString(),
-      });
+      setSucesso({ ...enviado, via: plano.via });
       setArquivos([]);
     } catch (err) {
       setErro((err as Error).message);
@@ -306,6 +402,21 @@ export default function UploadForm({
           <p className="font-medium">
             {sucesso.arquivos} arquivo(s) enviado(s) para o mandato “{sucesso.mandato}”.
           </p>
+          {/* O RECIBO QUE O LOTE GRANDE NÃO TEM. Acima do teto da hospedagem os
+              arquivos vão do navegador direto para o processamento, e essa
+              resposta não é legível por esta tela (outra origem). Então "enviado"
+              aqui é "a requisição partiu", e quem confirma que os documentos
+              chegaram é o acompanhamento logo abaixo — que já sabe declarar
+              parada se nada aparecer. Dizer isso custa uma linha; não dizer é
+              exatamente o "sucesso na tela, nada no mandato" que este arquivo
+              inteiro combate. */}
+          {sucesso.via === "direto" && (
+            <p className="mt-1 text-xs text-ok-800">
+              Lote grande: os arquivos foram enviados sem passar por esta página, e por isso o
+              recibo de entrega vem do acompanhamento abaixo — ele conta os documentos conforme
+              chegam e avisa se nada chegar.
+            </p>
+          )}
           {/* O TEMPO É PROPORCIONAL AO LOTE, e a tela diz isso antes de a pessoa
               se perguntar. Cada documento passa pela IA com espaçamento entre as
               chamadas (o limite de uso da conta obriga), então 38 arquivos são
@@ -495,6 +606,22 @@ export default function UploadForm({
           mandado, quando a decisão de esperar ou voltar mais tarde já não era
           dele. Com 38 arquivos selecionados isso é a diferença entre planejar e
           ser surpreendido. */}
+      {/* O TAMANHO DO LOTE, NA TELA, ANTES DE ENVIAR.
+          A lista mostrava o tamanho de cada arquivo e nunca o do conjunto — e o
+          conjunto é o que decide se o envio cabe no encaminhamento ou tem de ir
+          direto. Num lote de 48, somar 48 números à mão não é opção. */}
+      {arquivos.length > 0 && (
+        <p className="rounded border border-tinta-200 bg-tinta-50 px-3 py-2 text-sm text-tinta-600">
+          <strong className="text-tinta-800">{arquivos.length}</strong>{" "}
+          {arquivos.length === 1 ? "arquivo" : "arquivos"} selecionado
+          {arquivos.length === 1 ? "" : "s"}, somando{" "}
+          <strong className="text-tinta-800">
+            {formatarBytes(arquivos.reduce((s, a) => s + a.size, 0))}
+          </strong>
+          .
+        </p>
+      )}
+
       {arquivos.length > 0 && (
         <p className="rounded border border-tinta-200 bg-tinta-50 px-3 py-2 text-sm text-tinta-600">
           Tempo esperado de processamento:{" "}
@@ -510,6 +637,23 @@ export default function UploadForm({
 
       {erro && (
         <p className="rounded border border-risco-300 bg-risco-50 px-3 py-2 text-sm text-risco-700">{erro}</p>
+      )}
+
+      {/* O QUE ACONTECE DURANTE O UPLOAD — e ele pode durar minutos.
+          Subir 50 MB numa conexão doméstica não é instantâneo, e o botão
+          "Enviando…" sozinho não distingue "está subindo" de "travou". O
+          navegador não expõe progresso de upload num `fetch`, então a tela não
+          inventa uma barra: diz o tamanho, diz que demora, e diz a única coisa
+          que o analista pode fazer errado (fechar a aba ANTES de o envio
+          terminar — depois dele, pode fechar à vontade). */}
+      {enviando && arquivos.length > 0 && (
+        <p className="rounded border border-tinta-200 bg-tinta-50 px-3 py-2 text-sm text-tinta-600">
+          Enviando {arquivos.length} {arquivos.length === 1 ? "arquivo" : "arquivos"} (
+          {formatarBytes(arquivos.reduce((s, a) => s + a.size, 0))})
+          {via === "direto" ? " direto para o processamento" : ""}. Numa conexão doméstica isso
+          pode levar alguns minutos — mantenha esta aba aberta até o envio terminar. Depois disso
+          ela pode ser fechada: o processamento continua sozinho.
+        </p>
       )}
 
       <button

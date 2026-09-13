@@ -304,6 +304,21 @@ jobs:
         # silêncio.
         run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
 
+      - name: Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)
+        # 13/09/2026: 48 arquivos (~50 MB) para o mandato da AMO morreram em HTTP
+        # 413 — da BORDA da Vercel, antes de `/api/intake` ser invocado. Nenhuma
+        # mensagem em português do portal podia aparecer, e nenhuma correção
+        # DENTRO da rota resolveria: o teto de ~4,5 MB por requisição é da
+        # plataforma.
+        #
+        # Este portão trava as duas metades da correção: lote grande nunca é
+        # mandado para a Function (é o 413 em si), e lote pequeno CONTINUA indo
+        # por ela — que é o único caminho com status real e mensagem em
+        # português. Medido com a correção desligada: 42 asserts reprovam sem o
+        # caminho direto, 3 reprovam se a conta voltar a ser a soma dos arquivos
+        # em vez do corpo do multipart.
+        run: ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
+
       - name: Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)
         # A 0158 endureceu o `pronto` e publicou a FRAÇÃO de contas com premissa,
         # mas um número no banco que a tela não mostra não corrige nada: o chip

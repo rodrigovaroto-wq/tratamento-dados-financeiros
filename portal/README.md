@@ -122,13 +122,27 @@ quanto para o Form do N8N: `fn_upsert_caso(nome)` reusa por nome
 mandatos) para começar um; **"+ Adicionar arquivos"** (dentro de um mandato)
 para enviar mais em outro momento.
 
-> **Limite de tamanho (Vercel):** o upload pelo portal passa por uma Serverless
-> Function da Vercel, que tem teto de ~4,5 MB por requisição. Para lotes grandes
-> (muitos PDFs escaneados de uma vez), envie em levas menores no mesmo mandato,
-> ou use o Form do N8N diretamente (sem o intermediário da Vercel) — o resultado
-> cai no mesmo caso de qualquer forma. Subir esse teto (upload direto do browser
-> para o N8N/Storage, contornando a Function) é uma melhoria futura anotada no
-> HANDOFF.
+> **Tamanho do lote — resolvido em 13/09/2026, e o que mudou.** A Serverless
+> Function da Vercel recusa corpo acima de ~4,5 MB **na borda**, antes de
+> invocar `/api/intake`: um lote de 48 arquivos (~50 MB) morria em HTTP 413 sem
+> que nenhuma mensagem do portal pudesse aparecer. O conselho antigo era
+> "mande em levas" — e automatizá-lo seria pior, porque cada submissão abre UMA
+> execução no n8n e a cadência da IA é por execução (treze levas = treze
+> execuções concorrentes contra o mesmo rate limit da conta).
+>
+> Hoje a decisão é da própria tela e não pede nada do analista: até o teto, o
+> envio segue pelo encaminhamento de sempre (`POST /api/intake`), que devolve o
+> status real do n8n; acima dele, o navegador manda o `multipart` **direto para
+> o Form do n8n**, sem intermediário — uma execução só, sem limite de tamanho da
+> Vercel. A tela mostra o total do lote antes de enviar. A conta que decide o
+> caminho mora em `src/lib/limite-de-envio.ts` e é travada por
+> `scripts/verificar-limite-de-envio.mts` (no CI).
+>
+> O que o caminho direto custa, dito onde importa: a resposta do Form vem opaca
+> (outra origem, sem CORS), então "enviado" ali significa "a requisição partiu".
+> Quem confirma a chegada é o acompanhamento pelo banco — que sempre foi a única
+> prova real neste sistema, já que o webhook responde 200 antes de saber se o
+> workflow terá o que processar.
 
 ### Depois do envio: acompanhamento e aviso de conclusão
 
