@@ -188,10 +188,47 @@ export function planejarEnvio(
   };
 }
 
-/** "50,3 MB" / "839 KB" — o mesmo formato da lista de arquivos da tela. */
+/**
+ * "50,3 MB" / "839 KB" / "vazio" — o formato ÚNICO de tamanho da tela de envio.
+ *
+ * O ZERO NÃO É ARREDONDADO PARA 1 KB, e o detalhe não é cosmético: a tela
+ * arredondava `Math.max(1, …)` e mostrava "1 KB" para um arquivo de 0 byte —
+ * um placeholder de nuvem, um download interrompido. O arquivo vazio é
+ * DESCARTADO antes do envio (ver `arquivosVazios`), e um formato que o
+ * disfarça de arquivo pequeno é o que faria o descarte parecer sumiço.
+ */
 export function formatarBytes(bytes: number): string {
+  if (bytes <= 0) return "vazio";
   if (bytes < MiB) return `${Math.max(1, Math.round(bytes / KiB))} KB`;
   return `${(bytes / MiB).toFixed(1).replace(".", ",")} MB`;
+}
+
+/**
+ * Os arquivos de 0 byte do lote.
+ *
+ * O ENCAMINHAMENTO SEMPRE OS DESCARTOU — `api/intake/route.ts` filtra
+ * `f.size > 0` e devolve a contagem JÁ FILTRADA, que vira o `esperados` do
+ * acompanhamento. O envio direto não tem servidor no meio para fazer isso, e
+ * sem este filtro a tela declararia esperar 48 documentos de um lote que só
+ * pode produzir 47: os contadores nunca fechariam, e depois de
+ * `semProgressoMs(48)` — 37,6 minutos — a tela acusaria "o sistema parou"
+ * sobre um lote que terminou tudo o que dava. Nenhum erro em lugar nenhum.
+ *
+ * Descartar em silêncio também não serve: quem selecionou o arquivo precisa
+ * saber que ele ficou de fora, senão vai procurá-lo no mandato depois.
+ */
+export function arquivosVazios(arquivos: readonly ArquivoParaEnvio[]): readonly ArquivoParaEnvio[] {
+  return arquivos.filter((a) => a.bytes <= 0);
+}
+
+/** A frase do arquivo vazio — nomeia cada um, pela mesma razão da recusa acima. */
+export function avisoDeArquivoVazio(vazios: readonly ArquivoParaEnvio[]): string {
+  const lista = vazios.map((a) => `“${a.nome}”`).join(", ");
+  return (
+    `${vazios.length === 1 ? "Um arquivo está vazio" : `${vazios.length} arquivos estão vazios`} `
+    + `(0 byte) e ${vazios.length === 1 ? "ficou" : "ficaram"} de fora do envio: ${lista}. `
+    + "Isso costuma ser arquivo ainda não baixado da nuvem — baixe e envie de novo, no mesmo mandato."
+  );
 }
 
 /**

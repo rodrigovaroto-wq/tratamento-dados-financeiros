@@ -48,3 +48,12 @@ documento e zero token (sessão 7 cont.¹²). A prova sempre foi o banco, e é o
 (`/api/intake/status`) que a colhe. Por isso o caminho pela Function **continua existindo para o
 lote pequeno**: ele é o único que devolve status real e mensagem em português, e jogar todo envio
 no caminho direto trocaria um defeito raro por perda de diagnóstico todo dia.
+
+## O que ficou em aberto (achado na revisão da mesma rodada)
+
+`/api/intake/status` distingue lotes por `caso_nome` + `criado_em >= desde`, e por mais nada.
+**Dois lotes no mesmo mandato ao mesmo tempo se confundem:** o segundo conta os documentos do
+primeiro como seus e fecha com "Tudo pronto" sem que nenhum documento dele tenha chegado. A
+correção de 13/09 encolheu a janela (o `desde` do envio direto passou a ser lido DEPOIS do upload,
+não antes — num lote de 50 MB são minutos), mas o caso continua de pé. A solução é o pipeline
+gravar o identificador do lote no `documento` e o status filtrar por ele.

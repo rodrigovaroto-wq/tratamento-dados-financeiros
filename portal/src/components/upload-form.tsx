@@ -9,15 +9,15 @@ import {
   INTERVALO_ACOMPANHAMENTO_MS,
 } from "@/lib/espera-do-lote";
 import {
-  planejarEnvio, recusaPorArquivoGrande, formatarBytes, type ViaDeEnvio,
+  planejarEnvio, recusaPorArquivoGrande, avisoDeArquivoVazio, formatarBytes, type ViaDeEnvio,
 } from "@/lib/limite-de-envio";
 
-
-const MB = 1024 * 1024;
-function formatarTamanho(bytes: number): string {
-  if (bytes < MB) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / MB).toFixed(1)} MB`;
-}
+// O TAMANHO É FORMATADO POR `formatarBytes`, DA BIBLIOTECA, e por ela só.
+// Havia dois formatadores nesta tela: o local escrevia "1.2 MB" com ponto e
+// arredondava 0 byte para "1 KB"; o da biblioteca escreve "1,2 MB" e chama
+// vazio de vazio. Os dois apareciam um embaixo do outro — e o arredondamento
+// do zero era o que disfarçava de arquivo pequeno o arquivo que o envio
+// descarta.
 
 export default function UploadForm({
   mandatoInicial = "",
@@ -43,6 +43,10 @@ export default function UploadForm({
   // prometer "enviado com sucesso" com a mesma cara dos dois lados seria afirmar
   // uma confirmação que só um dos caminhos tem.
   const [via, setVia] = useState<ViaDeEnvio>("proxy");
+  // OS ARQUIVOS QUE FICARAM DE FORA (0 byte). Estado próprio porque o aviso tem
+  // de aparecer JUNTO do cartão de sucesso — `erro` não é renderizado ali, e um
+  // descarte anunciado numa tela que ninguém mais vê é um descarte silencioso.
+  const [descartados, setDescartados] = useState<string | null>(null);
   const [pronto, setPronto] = useState(false);
   // A FALHA DO PROCESSAMENTO. Sem este estado, o "aguarde" era eterno: a tela
   // deduzia progresso da ausência de documentos, e falha produz exatamente a
@@ -204,10 +208,12 @@ export default function UploadForm({
   // zero token. A prova de que o lote entrou sempre foi o BANCO — e é o
   // acompanhamento logo acima que a colhe, documento a documento, e que declara
   // parada quando nada aparece.
-  async function enviarPeloPortal(): Promise<{ mandato: string; arquivos: number; desde: string } | null> {
+  async function enviarPeloPortal(
+    aEnviar: File[],
+  ): Promise<{ mandato: string; arquivos: number; desde: string } | null> {
     const fd = new FormData();
     fd.append("mandato", mandato.trim());
-    for (const a of arquivos) fd.append("arquivos", a, a.name);
+    for (const a of aEnviar) fd.append("arquivos", a, a.name);
     const resp = await fetch("/api/intake", { method: "POST", body: fd });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -216,17 +222,18 @@ export default function UploadForm({
     }
     return {
       mandato: json.mandato ?? mandato.trim(),
-      arquivos: json.arquivos ?? arquivos.length,
+      arquivos: json.arquivos ?? aEnviar.length,
       desde: json.desde ?? new Date().toISOString(),
     };
   }
 
   async function enviarDireto(
     destino: { url: string; campos: { mandato: string; arquivos: string }; agora: string },
+    aEnviar: File[],
   ): Promise<{ mandato: string; arquivos: number; desde: string } | null> {
     const fd = new FormData();
     fd.append(destino.campos.mandato, mandato.trim());
-    for (const a of arquivos) fd.append(destino.campos.arquivos, a, a.name);
+    for (const a of aEnviar) fd.append(destino.campos.arquivos, a, a.name);
     try {
       // `no-cors` não é gambiarra nem afrouxamento: um POST `multipart/form-data`
       // é requisição SIMPLES (sem preflight), então ela é entregue igual — o que
@@ -241,14 +248,32 @@ export default function UploadForm({
       );
       return null;
     }
-    return {
-      mandato: mandato.trim(),
-      arquivos: arquivos.length,
-      // O RELÓGIO DO SERVIDOR, lido antes do envio (ver `api/intake/destino`).
-      // O do navegador filtraria para fora os documentos do próprio lote se
-      // estivesse adiantado.
-      desde: destino.agora,
-    };
+    // O RELÓGIO É LIDO DE NOVO DEPOIS DO UPLOAD, e a janela do acompanhamento
+    // encolhe do tamanho do upload.
+    //
+    // `destino.agora` é de ANTES — e num lote de 50 MB "antes" pode ser três
+    // minutos atrás. Três minutos em que um OUTRO lote, ainda rodando no mesmo
+    // mandato, grava documentos que este acompanhamento contaria como seus e
+    // fecharia com "Tudo pronto" sem nenhum documento deste envio ter chegado.
+    //
+    // Ler depois é SEGURO porque o gatilho do Form só dispara quando a
+    // requisição termina: nenhum documento deste lote pode ter sido gravado
+    // antes deste instante — entre o disparo e o primeiro `documento` correm
+    // ainda o upload ao Storage, a leitura do texto e a barreira da
+    // classificação, minutos em que nada é escrito (ver `espera-do-lote.ts`).
+    //
+    // Se a leitura falhar, cai no `destino.agora`: janela mais larga é pior que
+    // janela nenhuma, e "não sei que horas são" não pode cancelar um envio que
+    // já aconteceu.
+    let desde = destino.agora;
+    try {
+      const resp = await fetch("/api/intake/destino?apenas=agora");
+      const json = await resp.json();
+      if (resp.ok && typeof json.agora === "string") desde = json.agora;
+    } catch {
+      // segue com `destino.agora`
+    }
+    return { mandato: mandato.trim(), arquivos: aEnviar.length, desde };
   }
 
   async function enviar(e: React.FormEvent) {
@@ -262,21 +287,56 @@ export default function UploadForm({
       setErro("Selecione ao menos um arquivo.");
       return;
     }
+    // O ARQUIVO VAZIO SAI ANTES DA CONTA, e o analista fica sabendo.
+    //
+    // O encaminhamento sempre descartou `size === 0` no servidor e devolvia a
+    // contagem JÁ FILTRADA — que vira o `esperados` do acompanhamento. O envio
+    // direto não tem servidor no meio: sem isto, a tela esperaria 48 documentos
+    // de um lote capaz de produzir 47, os contadores nunca fechariam, e 37,6
+    // minutos depois a tela acusaria "o sistema parou" sobre um lote que
+    // terminou tudo o que dava (ver `arquivosVazios`).
+    const vazios = arquivos.filter((a) => a.size <= 0);
+    const aEnviar = arquivos.filter((a) => a.size > 0);
+    if (aEnviar.length === 0) {
+      setErro(avisoDeArquivoVazio(vazios.map((a) => ({ nome: a.name, bytes: a.size }))));
+      return;
+    }
+
+    // O ESTADO DO ENVIO ANTERIOR NÃO ATRAVESSA PARA ESTE. Sem isto, o cartão do
+    // lote novo abria exibindo "48 de 48 organizados" do lote passado até o
+    // primeiro polling, oito segundos depois — progresso afirmado sobre um lote
+    // que ainda não começou.
+    setProgresso(null);
+    setDemorou(false);
+    setDescartados(null);
+    // `via` volta ao padrão até o plano decidir: sem isto, o envio pequeno que
+    // segue um grande anunciava "direto para o processamento" durante o
+    // round-trip ao destino, sobre um envio que vai pelo encaminhamento.
+    setVia("proxy");
     setEnviando(true);
     try {
       // O DESTINO VEM PRIMEIRO, e vem do servidor, nos DOIS caminhos. Ele
-      // responde três coisas que a tela não pode adivinhar: se o upload está
+      // responde quatro coisas que a tela não pode adivinhar: se o upload está
       // configurado (503 com a frase de sempre), quais são os nomes REAIS dos
-      // campos do Form, e que horas são no servidor.
+      // campos do Form, DE ONDE eles vieram, e que horas são no servidor.
       const respDestino = await fetch("/api/intake/destino");
       const destino = await respDestino.json().catch(() => ({}));
       if (!respDestino.ok) {
         setErro(destino.error ?? `Não foi possível preparar o envio (HTTP ${respDestino.status}).`);
         return;
       }
+      // RESPOSTA 200 QUE NÃO É O DESTINO. Sessão expirada: o `proxy.ts` manda
+      // para /login, o `fetch` segue o redirecionamento e entrega **HTML com
+      // status 200** — `respDestino.ok` é verdadeiro e não há destino nenhum
+      // dentro. Sem este guarda, o erro aparecia como um `TypeError` em inglês
+      // vindo lá de dentro da conta do tamanho.
+      if (typeof destino.url !== "string" || !destino.campos?.arquivos || !destino.campos?.mandato) {
+        setErro("Sua sessão expirou ou o portal não respondeu. Atualize a página, entre de novo e reenvie — nada foi processado.");
+        return;
+      }
 
       const plano = planejarEnvio(
-        arquivos.map((a) => ({ nome: a.name, bytes: a.size })),
+        aEnviar.map((a) => ({ nome: a.name, bytes: a.size })),
         destino.campos,
         mandato.trim(),
       );
@@ -287,16 +347,40 @@ export default function UploadForm({
         setErro(recusaPorArquivoGrande(plano.acimaDoTetoPorArquivo));
         return;
       }
+      // NOME DE CAMPO CHUTADO NÃO RECEBE 50 MB.
+      //
+      // `origem: "fallback"` diz que a descoberta falhou e os nomes são os
+      // padrões. Pelo encaminhamento isso é recuperável — o n8n devolve o
+      // status e a rota diz quais nomes usou. Direto, não: a resposta é opaca,
+      // e um POST sob nome que o workflow não lê rende 200 na tela, zero
+      // documento e zero token (sessão 7 cont.¹²) — descoberto só 37 minutos
+      // depois, pela parada. Melhor recusar agora e mandar tentar de novo.
+      if (plano.via === "direto" && destino.origem === "fallback") {
+        setErro(
+          "Não consegui confirmar com o processamento como este lote deve ser enviado, e um lote "
+          + "deste tamanho não pode ser mandado no escuro. Tente de novo em um minuto; se continuar, "
+          + "acione quem cuida do sistema.",
+        );
+        return;
+      }
       setVia(plano.via);
 
       const enviado = plano.via === "proxy"
-        ? await enviarPeloPortal()
-        : await enviarDireto(destino);
+        ? await enviarPeloPortal(aEnviar)
+        : await enviarDireto(destino, aEnviar);
       if (!enviado) return;
 
       setPronto(false);
       setSucesso({ ...enviado, via: plano.via });
       setArquivos([]);
+      // O DESCARTE É NOTICIADO, e fica visível junto do cartão de sucesso: quem
+      // selecionou o arquivo vazio precisa saber que ele não está no mandato —
+      // senão vai procurá-lo lá depois.
+      setDescartados(
+        vazios.length > 0
+          ? avisoDeArquivoVazio(vazios.map((a) => ({ nome: a.name, bytes: a.size })))
+          : null,
+      );
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -364,7 +448,10 @@ export default function UploadForm({
         <div className="mt-3 flex gap-3">
           <button
             type="button"
-            onClick={() => { setFalha(null); setParada(null); setLoteVazio(null); setSucesso(null); }}
+            onClick={() => {
+              setFalha(null); setParada(null); setLoteVazio(null); setSucesso(null);
+              setProgresso(null); setDemorou(false); setDescartados(null);
+            }}
             className="rounded bg-risco-700 px-3 py-1.5 text-xs font-medium text-papel hover:bg-risco-800"
           >
             Enviar de novo
@@ -410,6 +497,11 @@ export default function UploadForm({
               parada se nada aparecer. Dizer isso custa uma linha; não dizer é
               exatamente o "sucesso na tela, nada no mandato" que este arquivo
               inteiro combate. */}
+          {descartados && (
+            <p className="mt-2 rounded border border-alerta-300 bg-alerta-50 p-2 text-xs text-alerta-900">
+              {descartados}
+            </p>
+          )}
           {sucesso.via === "direto" && (
             <p className="mt-1 text-xs text-ok-800">
               Lote grande: os arquivos foram enviados sem passar por esta página, e por isso o
@@ -470,6 +562,9 @@ export default function UploadForm({
               onClick={() => {
                 setSucesso(null);
                 setPronto(false);
+                setProgresso(null);
+                setDemorou(false);
+                setDescartados(null);
               }}
               className="rounded border border-ok-300 px-3 py-1.5 text-xs font-medium text-ok-800 hover:bg-ok-100"
             >
@@ -586,7 +681,7 @@ export default function UploadForm({
           {arquivos.map((a, i) => (
             <li key={`${a.name}:${a.size}`} className="flex items-center justify-between px-3 py-2">
               <span className="truncate">
-                {a.name} <span className="text-tinta-400">({formatarTamanho(a.size)})</span>
+                {a.name} <span className="text-tinta-400">({formatarBytes(a.size)})</span>
               </span>
               <button
                 type="button"
@@ -631,7 +726,8 @@ export default function UploadForm({
           </strong>{" "}
           para {arquivos.length} {arquivos.length === 1 ? "arquivo" : "arquivos"}. Cada arquivo é
           lido separadamente pela IA, e as chamadas são espaçadas por exigência do limite de uso
-          da conta. Você pode fechar esta aba: o processamento continua.
+          da conta. Depois que o envio terminar você pode fechar esta aba — o processamento continua
+          sozinho.
         </p>
       )}
 

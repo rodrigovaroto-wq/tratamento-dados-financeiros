@@ -25,9 +25,11 @@
 // esses 13 já bastam para o invariante, e isso é dito onde é usado.
 import {
   planejarEnvio, corpoMultipartBytes, recusaPorArquivoGrande, formatarBytes,
+  arquivosVazios, avisoDeArquivoVazio,
   TETO_DA_FUNCTION_BYTES, TETO_DO_PROXY_BYTES, TETO_POR_ARQUIVO_BYTES,
   type ArquivoParaEnvio,
 } from "../src/lib/limite-de-envio.ts";
+import { readFileSync } from "node:fs";
 
 let ok = 0;
 const falhas: string[] = [];
@@ -134,6 +136,31 @@ const semCedilha = corpoMultipartBytes([{ nome: "BALANCO.pdf", bytes: 0 }], CAMP
 checar(comCedilha > semCedilha,
   "o nome do arquivo passou a ser contado em caracteres, não em bytes UTF-8 — acentos deixaram de pesar");
 
+// O CASO QUE SÓ A SOBRECARGA DECIDE — e é ele que o 413 "por pouco" produz.
+//
+// Os três asserts acima medem a CONTA (mecanismo). Este mede o COMPORTAMENTO,
+// que é o que interessa: um lote cuja SOMA cabe no teto mas cujo CORPO não
+// cabe tem de ir pelo caminho direto. Sem a sobrecarga contada, ele seria
+// mandado para a Function e voltaria como 413 — exatamente o defeito, só que
+// numa forma que nenhum exemplo "obviamente grande" revela.
+const QUASE_NO_TETO = (() => {
+  const n = 900;
+  const nomes = Array.from({ length: n }, (_, i) => `demonstrativo-mensal-${i}.pdf`);
+  // Sobra de 60 KB abaixo do teto para a SOMA — e ~200 KB de sobrecarga por
+  // cima dela, que é o que faz o corpo atravessar.
+  const bytes = Math.floor((TETO_DO_PROXY_BYTES - 60 * KiB) / n);
+  return nomes.map((nome) => ({ nome, bytes }));
+})();
+const somaQuaseNoTeto = QUASE_NO_TETO.reduce((s, a) => s + a.bytes, 0);
+const planoQuaseNoTeto = planejarEnvio(QUASE_NO_TETO, CAMPOS, MANDATO);
+checar(somaQuaseNoTeto < TETO_DO_PROXY_BYTES,
+  "o caso de borda parou de ser um caso de borda: a soma dos arquivos ja' passa do teto sozinha");
+checar(planoQuaseNoTeto.corpoBytes > TETO_DO_PROXY_BYTES,
+  "o caso de borda parou de atravessar o teto pela sobrecarga — ele deixou de medir o que existe para medir");
+checar(planoQuaseNoTeto.via === "direto",
+  `um lote cuja soma cabe (${formatarBytes(somaQuaseNoTeto)}) mas cujo corpo nao cabe `
+  + `(${formatarBytes(planoQuaseNoTeto.corpoBytes)}) seria mandado para a Function — e volta 413`);
+
 // ---------------------------------------------------------------------------
 // 4. O LOTE PEQUENO NÃO MUDOU DE CAMINHO
 // ---------------------------------------------------------------------------
@@ -174,6 +201,53 @@ checar(!/\b(413|HTTP|multipart|Vercel|Serverless|n8n|CORS)\b/i.test(recusa),
 // cabe em lugar nenhum, recusado por um motivo que não é o verdadeiro.
 checar(TETO_POR_ARQUIVO_BYTES > TETO_DO_PROXY_BYTES,
   "o teto por arquivo ficou abaixo do teto do encaminhamento — arquivo legítimo passaria a ser recusado pelo motivo errado");
+
+// ---------------------------------------------------------------------------
+// 6. O ARQUIVO VAZIO SAI DO LOTE, E O `esperados` SAI COM ELE
+// ---------------------------------------------------------------------------
+//
+// O encaminhamento sempre descartou `size === 0` no servidor; o envio direto
+// não tem servidor no meio. Um lote de 48 com um arquivo vazio produz 47
+// documentos, e um `esperados` de 48 nunca fecha: 37,6 minutos depois a tela
+// acusa "o sistema parou" sobre um lote que terminou tudo o que dava.
+const COM_VAZIO: readonly ArquivoParaEnvio[] = [
+  { nome: "DRE 2025.pdf", bytes: 175 * KiB },
+  { nome: "BALANÇO 2025.pdf", bytes: 0 },
+  { nome: "DRE 2024.pdf", bytes: 2 * MiB },
+];
+const vazios = arquivosVazios(COM_VAZIO);
+checar(vazios.length === 1 && vazios[0].nome === "BALANÇO 2025.pdf",
+  "o arquivo de 0 byte deixou de ser detectado — ele entraria na contagem de esperados e o lote nunca fecharia");
+checar(arquivosVazios([{ nome: "DRE.pdf", bytes: 1 }]).length === 0,
+  "um arquivo de 1 byte passou a contar como vazio — descarte de arquivo legítimo é pior que o defeito");
+const aviso = avisoDeArquivoVazio(vazios);
+checar(aviso.includes("BALANÇO 2025.pdf"),
+  "o aviso de arquivo vazio não diz QUAL ficou de fora — o analista vai procurá-lo no mandato depois");
+checar(formatarBytes(0) === "vazio",
+  "0 byte voltou a ser formatado como \"1 KB\" — o formato disfarça de arquivo pequeno o arquivo que o envio descarta");
+
+// ---------------------------------------------------------------------------
+// 7. A TELA USA ESTA DECISÃO — e não uma cópia dela
+// ---------------------------------------------------------------------------
+//
+// ESTE BLOCO É ESTRUTURAL, e vale dizer o que isso significa: os 55 asserts
+// acima provam a BIBLIOTECA, e uma regressão que mandasse todo lote para
+// `/api/intake` os manteria todos verdes. É o defeito central deste
+// repositório — o portão que fica verde porque o estágio não roda.
+//
+// O que dá para afirmar sem um navegador: que o componente CHAMA `planejarEnvio`
+// e que o único `fetch("/api/intake"` dele mora dentro de `enviarPeloPortal`.
+// Não é prova de comportamento; é a guarda que impede a correção de ser
+// desligada por descuido, e ela está declarada como tal.
+const TELA = readFileSync(new URL("../src/components/upload-form.tsx", import.meta.url), "utf8");
+checar(TELA.includes("planejarEnvio("),
+  "a tela de envio parou de chamar planejarEnvio — a decisão do caminho voltou a ser implícita e o lote grande volta ao 413");
+checar(TELA.includes("mode: \"no-cors\""),
+  "o envio direto sumiu da tela — sem ele não existe caminho para o lote que não cabe na Function");
+checar((TELA.match(/fetch\("\/api\/intake",/g) ?? []).length === 1,
+  "existe mais de um POST para /api/intake na tela — o caminho do lote grande pode estar contornado");
+checar(TELA.includes("a.size > 0"),
+  "o filtro do arquivo vazio sumiu da tela — o esperados volta a contar documento que não pode existir");
 
 if (falhas.length > 0) {
   console.error(`\n${falhas.length} falha(s):`);
