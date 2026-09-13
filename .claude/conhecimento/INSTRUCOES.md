@@ -19,9 +19,9 @@ linha, qual portão prova aquilo, qual migration criou aquela função, qual ses
 conta a história, e os commits que casam (via `git log --grep`, na hora).
 
 Depois dele, abra **só** o que ele apontou. É esse o ganho: medido em 13/09/2026, as cinco
-perguntas de `BASELINE.md` custavam 50.245 bytes de `grep` mais os arquivos que ainda
-precisavam ser abertos; pelo briefing custam **9.201 bytes**, e nenhuma exige abrir arquivo
-para saber onde olhar.
+perguntas de `BASELINE.md` custavam 50.245 bytes de `grep` mais 60.178 bytes de arquivos que
+ainda precisavam ser abertos; pelo briefing custam **10.667 bytes**, e nenhuma exige abrir
+arquivo para saber onde olhar.
 
 **Vazio é declarado.** Quando não acha, o comando diz "NADA ENCONTRADO" e diz quantos nós
 existem. Isso é "procurei e não achei", não "não procurei" — a distinção é a regra 7.
@@ -31,6 +31,12 @@ existem. Isso é "procurei e não achei", não "não procurei" — a distinção
 Uma ficha nova quando, e **só** quando, a resposta for sim:
 
 > Uma sessão futura ficaria surpresa e grata de saber disto antes de começar?
+
+**E antes de escrever, rode `buscar.mjs` sobre o assunto dela.** Se o briefing já aponta para o
+lugar onde a lição está escrita, a ficha NÃO deve existir — o ponteiro já é a memória. Esta regra
+é o resultado medido da Etapa 5: das oito candidatas extraídas do HANDOFF, **as oito** já viviam
+num comentário de função, no corpo de uma migration ou no cabeçalho de uma suíte, e duas já
+nasceriam erradas. Ver `ETAPA-5.md`.
 
 É a mesma pergunta de `.claude/memory/INSTRUCTIONS.md`, e ela não mudou. O que mudou é que
 agora a ficha declara o que a desmente. Se dá para derivar lendo o código, **não é ficha**.
@@ -101,7 +107,8 @@ uma âncora frouxa só gera ruído.
 | `grafo.jsonl` | **derivado e versionado**. Nunca editar à mão |
 | `cobertura.json` | o piso por tipo de nó e aresta — impede o índice de encolher em silêncio |
 | `BASELINE.md` | o custo de recuperação medido ANTES de tudo isto existir |
-| `MEDICAO-ETAPA-1.md` | o mesmo custo, medido depois |
+| `MEDICAO-ETAPA-1.md` | o mesmo custo, medido depois — e os três defeitos que a medição achou no próprio índice |
+| `ETAPA-5.md` | a extração do HANDOFF, e por que ela produziu ZERO fichas |
 | `medir.sh` | roda as duas medições de novo, em 2 segundos |
 | `fichas/` | fichas novas. As antigas continuam em `.claude/memory/`, e as duas pastas são indexadas |
 
@@ -114,7 +121,7 @@ onde as novas nascem.
 
 ## O que este índice NÃO é
 
-- **Não é um banco de grafo.** É um arquivo de texto de ~230 KB lido em milissegundos. Se um dia
+- **Não é um banco de grafo.** É um arquivo de texto de ~260 KB lido em milissegundos. Se um dia
   passar de ~50 mil arestas, a troca é por SQLite — nunca por um servidor.
 - **Não é busca semântica.** Casa termo, e a pontuação está declarada no `buscar.mjs`. Duas
   execuções sobre o mesmo grafo devolvem o mesmo briefing, palavra por palavra.
