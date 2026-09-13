@@ -235,10 +235,42 @@ test('orçamento por tamanho: o lote real do book-canastra PASSA', () => {
   // A estimativa fica ACIMA do custo medido e ABAIXO do teto: é a faixa onde o
   // estimador é útil. Fora dela ele ou mente ou trava o trabalho.
   //
-  // O custo MEDIDO deste lote é US$ 0,2821 no provedor de hoje (era US$ 1,2932
-  // no gpt-4o), pelo `N8N/medir-custo-book.mjs` sobre os mesmos 38 PDFs.
-  assert.ok(r.estimadoUSD > 0.2821, `estima acima do medido — a margem existe (US$ ${r.estimadoUSD})`);
+  // O custo MEDIDO deste lote é US$ 0,1380 no provedor de hoje (era US$ 0,2821
+  // no `gemini-3.5-flash-lite` e US$ 1,2932 no `gpt-4o`), pelo
+  // `N8N/medir-custo-book.mjs` sobre os mesmos 38 PDFs, rodado em 13/09/2026.
+  //
+  // O NÚMERO DE REFERÊNCIA TAMBÉM ENVELHECE, e este estava dois dias atrasado:
+  // 0,2821 é preço de Google, e o provedor virou OpenAI em 11/09. Um piso velho
+  // num teste é pior que piso nenhum — ele passa a ser o mesmo "espelho que fica
+  // para trás" que deixou `CUSTO_POR_MB_USD` no preço errado.
+  assert.ok(r.estimadoUSD > 0.1380, `estima acima do medido — a margem existe (US$ ${r.estimadoUSD})`);
   assert.ok(r.estimadoUSD <= TETO_EXECUCAO_USD, 'e abaixo do teto');
+});
+
+// A CALIBRAÇÃO DO PROXY É UMA RAZÃO, NÃO UM NÚMERO — e é isso que este
+// invariante trava. `CUSTO_POR_MB_USD` declara, no comentário que o acompanha
+// desde 24/08/2026, uma margem de ~2× sobre o custo real de um lote típico. A
+// troca de provedor de 11/09 (Google → OpenAI `gpt-5.6-luna`) baixou o custo
+// real e NÃO baixou o proxy: a margem virou 4,06× sem ninguém escolher isso, e o
+// lote de 44 documentos da AMO foi recusado em US$ 52,39.
+//
+// Nenhum teste media a RAZÃO — só havia piso ("estima acima do medido") e teto
+// ("abaixo de US$ 3"), e entre os dois cabia um erro de 4×. Quem trocar de
+// provedor de novo e esquecer destes dois números reprova aqui.
+test('o proxy por byte mantém a margem de ~2× que a calibração declara, no provedor ATIVO', () => {
+  // MEDIDO em 13/09/2026 por `node N8N/medir-custo-book.mjs`: o book-canastra
+  // inteiro (38 documentos, 183.139 bytes, 57 chamadas) custa US$ 0,1380.
+  const CUSTO_MEDIDO_DO_BOOK = 0.1380;
+  const r = orcamentoDoLote({ documentos: 38, chamadasPorDocumento: 57 / 38, bytes: 183_139 });
+  const margem = r.estimadoUSD / CUSTO_MEDIDO_DO_BOOK;
+
+  assert.ok(margem > 1.3,
+    `o proxy caiu para ${margem.toFixed(2)}× o custo medido — margem de menos aceita lote que não `
+    + 'cabe, e a defesa seguinte é a API cortando no meio do lote (o v31)');
+  assert.ok(margem < 2.5,
+    `o proxy cobra ${margem.toFixed(2)}× o custo medido do book (US$ ${r.estimadoUSD} contra `
+    + `US$ ${CUSTO_MEDIDO_DO_BOOK}) — a calibração declara ~2×. Margem de mais RECUSA LOTE QUE `
+    + 'CABE, que foi o que travou o mandato da AMO em 13/09/2026.');
 });
 
 test('orçamento por tamanho: lote homogêneo DENSO continua sendo recusado', () => {
@@ -367,13 +399,25 @@ test('um lote de TEXTO cabe no teto de US$ 3 (2 MB e 40 MB, o caso real que recu
   assert.ok(estimativaQuarenta <= TETO_EXECUCAO_USD,
     `40 MB de texto não pode ser recusado — estimou US$ ${estimativaQuarenta} contra o teto de US$ ${TETO_EXECUCAO_USD}`);
 
-  // E o proxy de PDF, aplicado ao MESMO tamanho, continua recusando os dois —
-  // é a prova de que a diferença é o FORMATO, não uma folga qualquer que
-  // passaria os dois de qualquer jeito.
-  assert.ok(custoEstimadoPorTamanho(doisMB) > TETO_EXECUCAO_USD,
-    'o proxy de PDF sobre 2 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+  // E o proxy de PDF, aplicado ao MESMO tamanho, continua muito mais caro — é a
+  // prova de que a diferença é o FORMATO, não uma folga qualquer que passaria os
+  // dois de qualquer jeito.
+  //
+  // O CONTROLE COMPARA OS DOIS CAMINHOS, NÃO O TETO, desde a reescala de
+  // 13/09/2026. Ele dizia "o proxy de PDF sobre 2 MB tem de continuar acima do
+  // teto de US$ 3", e com `CUSTO_POR_MB_USD` em 1,48 dois megabytes de PDF dão
+  // US$ 2,96 — passam raspando. O controle teria reprovado por um motivo que não
+  // é o que ele mede: a distância entre os caminhos continua inteira (22×), o
+  // que mudou foi onde o teto corta. Amarrar um controle de RAZÃO a um limiar
+  // absoluto é o mesmo defeito do número de referência velho, um pouco disfarçado.
+  for (const [rotulo, bytes] of [['2 MB', doisMB], ['40 MB', quarentaMB]]) {
+    const razao = custoEstimadoPorTamanho(bytes) / custoEstimadoPorTamanho(bytes, 'texto');
+    assert.ok(razao > 10,
+      `o proxy de PDF sobre ${rotulo} tem de continuar ordens de grandeza acima da conta de texto `
+      + `(saiu ${razao.toFixed(1)}×) — sem isso o teste não prova que a correção é sobre FORMATO`);
+  }
   assert.ok(custoEstimadoPorTamanho(quarentaMB) > TETO_EXECUCAO_USD,
-    'o proxy de PDF sobre 40 MB tem de continuar acima do teto — sem isso o teste não prova nada');
+    'e 40 MB de PDF continua acima do teto — o proxy não virou permissivo');
 });
 
 test('a estimativa de um lote de TEXTO não passa de 2× o custo real de ENTRADA', () => {
@@ -503,14 +547,28 @@ test('UM documento sem medida de conteúdo derruba o lote de 190 para a conta po
 
   // A queda é DOUTRINA, não defeito: medir só os documentos que dá subestimaria
   // o lote na exata proporção do que não se sabe. O que este teste trava é a
-  // CONSEQUÊNCIA, para que ela nunca seja descoberta no dia do envio: com o
-  // lote inteiro caindo para a conta por tamanho, 190 documentos são recusados.
+  // CONSEQUÊNCIA — e ela MUDOU em 13/09/2026, com a reescala do proxy.
+  //
+  // O ASSERT DAQUI DIZIA `cabe === false`: com o proxy em preço de Google
+  // (US$ 2,80/MB) o lote de 190 estimava US$ 2,46 e era RECUSADO. No preço do
+  // provedor ativo ele estima US$ 1,30 e CABE — e caber é o certo, porque o
+  // mesmo lote medido por conteúdo custa cerca de US$ 1. O teste velho travava,
+  // como se fosse invariante, a recusa de um lote que sempre coube; era o
+  // "espelho que fica para trás" instalado DENTRO da suíte, onde ele vira
+  // argumento contra a correção.
+  //
+  // O que continua sendo invariante — e é o que sobra aqui — é a QUEDA de
+  // caminho e o sentido do erro: o caminho cego nunca estima abaixo do que a
+  // conta por conteúdo estimaria para a parte que deu para medir.
   assert.equal(r.porConteudo, false, 'a queda para a conta por tamanho deixou de acontecer');
-  assert.equal(r.cabe, false,
-    'um único PDF escaneado deixou de derrubar o lote de 190 — se isto passou a caber, a conta por '
-    + 'tamanho mudou e o comentário acima envelheceu');
-  assert.match(r.mensagem, /Envie no máximo \d+ documento\(s\) por vez/,
-    'a recusa tem de dizer quantos cabem, senão o dono só sabe que não pode');
+  const medivel = orcamentoDoLotePorConteudo({
+    documentos: docs.slice(1), tokensPromptSistema,
+  });
+  assert.equal(medivel.porConteudo, true, 'os outros 189 são medíveis — se não são, este controle não vale');
+  assert.ok(r.estimadoUSD > medivel.estimadoUSD,
+    `o caminho cego (US$ ${r.estimadoUSD}) não pode estimar abaixo da conta por conteúdo dos 189 `
+    + `medíveis (US$ ${medivel.estimadoUSD}) — subestimar é o v31, e é o único sentido de erro que `
+    + 'este caminho não pode ter');
 });
 
 test('a cota do DIA é um portão, e ela recusa o que o teto de dólar aprovava', () => {

@@ -605,6 +605,35 @@ contra um teto de US$ 3.
 `custoDaChamada` que mede a conta real, então seguiu sozinha: estima US$ 0,29 contra US$ 0,2821
 medidos — 3% acima, a mesma precisão de antes.
 
+### 13/09/2026 — a MESMA recalibração, com dois dias de atraso
+
+A troca de 11/09/2026 (Google `gemini-3.5-flash-lite` → OpenAI `gpt-5.6-luna`) refez a tabela de
+preço, os modelos e a cadência **e deixou o proxy por byte para trás**, exatamente como a seção
+acima descreve que não podia acontecer. O efeito chegou ao dono: o lote de 44 documentos da AMO
+(14,4 MB) foi recusado em **US$ 52,39** contra o teto de US$ 3.
+
+| Constante | Antes | Depois | Como saiu |
+|---|---|---|---|
+| `CUSTO_POR_MB_USD` | 2,80 | **1,48** | escalado por **0,5249** (a razão do documento DENSO), produto arredondado para cima |
+| `CUSTO_MINIMO_CHAMADA_USD` | 0,0032 | **0,0017** | mesma razão |
+
+**A razão, pelo método desta mesma seção** (a do denso, nunca a agregada, e entre as candidatas a
+maior): perfil denso de 20 páginas de imagem + 7.571 tokens de saída custa US$ 0,024927 no Google e
+US$ 0,013085 no Luna — **0,5249**. O perfil agregado do book daria 0,4898, e escalar por ele
+deixaria o guarda mais frouxo justamente no caso que o teto existe para barrar.
+
+**O que a margem tinha virado, medido.** `N8N/medir-custo-book.mjs` contra o provedor ativo: o
+book-canastra custa **US$ 0,1380** (era US$ 0,2821 no Google), e o proxy estimava US$ 0,56 — **4,06×
+o real**, contra os ~2× que a calibração declara. Com 1,48 ele estima US$ 0,2957, ou 2,14×. O número
+velho não estava só velho: ele tinha **dobrado a margem sem ninguém escolher isso**. O invariante que
+trava a RAZÃO (e não só o piso e o teto, entre os quais cabia um erro de 4×) está em
+`N8N/test/custo.test.mjs`, "o proxy por byte mantém a margem de ~2×".
+
+**O que esta reescala NÃO corrige, e está declarado:** o defeito de REGIME. O proxy foi calibrado
+sobre PDF do `reportlab` com média de 4,8 KB por documento e é aplicado a PDF de cliente com média de
+335 KB — 69× mais bytes para o mesmo conteúdo. Sozinha, a reescala leva o lote da AMO de US$ 52,39
+para US$ 27,69: −47%, ainda 9× o teto. A alavanca é a conta por CONTEÚDO documento a documento.
+
 ### O que a troca comprou em COMPORTAMENTO, e não em preço
 
 - **O lote do v31 cabe.** Os 14 documentos que estouraram o teto de US$ 5 da OpenAI no meio da

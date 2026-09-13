@@ -320,7 +320,11 @@ export function pesoDaChamadaDeClassificacao(
 // por chamada), então um n8n rodando o JSON velho recusa lotes que o código novo
 // aceita — e recusa com uma mensagem que parece a mesma. Com a versão na
 // mensagem, "o n8n está com o workflow velho" volta a ser leitura, não hipótese.
-export const VERSAO_ORCAMENTO = 'v4 (2026-08-24)';
+// v5: o proxy por byte e o piso por chamada foram reescalados para o provedor
+// ativo (13/09/2026) — a troca de 11/09 os tinha deixado no preço do Google. A
+// versão carimba a MENSAGEM DE RECUSA, e é o que responde, da tela do n8n, se o
+// workflow que está no ar é o que tem a conta corrigida.
+export const VERSAO_ORCAMENTO = 'v5 (2026-09-13)';
 
 // Custo estimado de UM documento, usado só para decidir se o lote cabe antes de
 // existir qualquer medição.
@@ -426,7 +430,8 @@ export const CUSTO_ESTIMADO_DOC_USD = 0.055;
 //
 // O CUSTO DA ESCOLHA, declarado: o guarda por byte fica ~2× acima do custo real
 // de um lote típico (era ~1,45×). Continua muito longe de barrar trabalho — o
-// book inteiro estima US$ 0,58 contra um teto de US$ 3 —, e quem decide o lote
+// book inteiro estima US$ 0,30 contra um teto de US$ 3 (era US$ 0,58 enquanto o
+// número de agosto ficou de pé — ver a reescala de 13/09 abaixo) —, e quem decide o lote
 // típico hoje é a estimativa por CONTEÚDO.
 //
 // A FRASE "QUE ERRA 3%" SAIU DAQUI EM 10/09/2026, E ELA ERA FALSA PARA O
@@ -435,8 +440,43 @@ export const CUSTO_ESTIMADO_DOC_USD = 0.055;
 // `lote_execucao`, a estimativa por conteúdo ficava ABAIXO do real em todas as
 // quatro rodadas que gastaram: 1,49× · 1,46× · 1,42× · 1,37×. A causa era o
 // cache assumido e não entregue, corrigida em `custoEstimadoPorConteudo`.
-export const CUSTO_POR_MB_USD = 2.80;
-export const CUSTO_MINIMO_CHAMADA_USD = 0.0032;
+//
+// E OS DOIS NÚMEROS FORAM ESCALADOS DE NOVO EM 13/09/2026, PELA MESMA RAZÃO E
+// COM ATRASO DE DOIS DIAS — a troca de provedor de 11/09/2026 (Google
+// `gemini-3.5-flash-lite` → OpenAI `gpt-5.6-luna`) atualizou a tabela de preço,
+// os modelos e a cadência, e DEIXOU ESTES DOIS PARA TRÁS. É o "espelho que fica
+// para trás" do `CLAUDE.md`, desta vez sobre uma constante de dinheiro: o proxy
+// continuou cobrando preço de Google num lote que a OpenAI cobra.
+//
+// O EFEITO MEDIDO, e ele chegou ao dono: o lote de 44 documentos da AMO (14,4 MB)
+// foi recusado em US$ 52,39 contra o teto de US$ 3. Parte disso é o defeito de
+// REGIME (o proxy foi calibrado sobre PDF de 4,8 KB do `reportlab` e aplicado a
+// PDF de cliente de 335 KB — 69× mais bytes para o mesmo conteúdo), que esta
+// fatia NÃO corrige; o que ela corrige é a parcela que é preço velho.
+//
+// A razão, pelo MESMO método que 24/08 documenta (a do documento DENSO, nunca a
+// agregada, e entre as candidatas a MAIOR — escalar de menos recusa lote que
+// cabe, escalar de mais aceita lote que não cabe, e o segundo é o v31):
+//
+//   perfil denso (20 páginas de imagem, 7.571 tokens de saída):
+//     google (0,30/2,50) US$ 0,024927 → luna (0,20/1,20) US$ 0,013085   razão 0,5249
+//   perfil medido do book (3.500 entrada / 7.571 saída):                razão 0,4898
+//   só entrada 0,6667 · só saída 0,4800
+//
+//   2,80 × 0,5249 = 1,4697 → 1,48      0,0032 × 0,5249 = 0,00168 → 0,0017
+//
+// (o produto é arredondado para CIMA, como 24/08 arredondou 2,79 → 2,80: o lado
+// seguro de um guarda de teto é o de cobrar de mais.)
+//
+// A MARGEM CALIBRADA SOBREVIVE À TROCA, e é o que o invariante novo trava, com
+// os dois números MEDIDOS por `N8N/medir-custo-book.mjs` nesta sessão contra o
+// provedor ATIVO: o book-canastra inteiro custa US$ 0,1380 (era US$ 0,2821 no
+// Google) e o proxy por byte estimava US$ 0,56 — **4,06× o real**, contra os
+// ~2× que a calibração declara. Com 1,48 ele estima US$ 0,2957, ou 2,14×. O
+// número velho não era só velho: ele tinha DOBRADO a margem sem que ninguém
+// escolhesse isso.
+export const CUSTO_POR_MB_USD = 1.48;
+export const CUSTO_MINIMO_CHAMADA_USD = 0.0017;
 
 const BYTES_POR_MB = 1024 * 1024;
 
