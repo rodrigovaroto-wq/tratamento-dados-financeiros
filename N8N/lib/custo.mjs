@@ -1205,14 +1205,17 @@ export function orcamentoDoLotePorConteudo({
     .map((p, i) => ({ nome: docs[i]?.nome ?? null, caminho: p.caminho, motivo: p.motivo, usd: Number(p.usd.toFixed(4)) }))
     .filter((p) => p.caminho !== 'conteudo');
   const MAX_NOMES = 5;
-  const listaNaoMedidos = naoMedidos.length === 0 ? null
-    : naoMedidos.slice(0, MAX_NOMES)
+  let aviso = null;
+  if (naoMedidos.length > 0) {
+    const nomeados = naoMedidos.slice(0, MAX_NOMES)
       .map((p) => `${p.nome || '(sem nome)'} (${p.motivo}, US$ ${p.usd.toFixed(4)})`)
-      .join('; ')
-      + (naoMedidos.length > MAX_NOMES ? ` e mais ${naoMedidos.length - MAX_NOMES} documento(s)` : '');
-  const aviso = listaNaoMedidos === null ? null
-    : `${naoMedidos.length} de ${n} documento(s) não tiveram o conteúdo medido e foram estimados pelo `
-      + `caminho conservador: ${listaNaoMedidos}.`;
+      .join('; ');
+    const resto = naoMedidos.length > MAX_NOMES
+      ? ` e mais ${naoMedidos.length - MAX_NOMES} documento(s)`
+      : '';
+    aviso = `${naoMedidos.length} de ${n} documento(s) não tiveram o conteúdo medido e foram `
+      + `estimados pelo caminho conservador: ${nomeados}${resto}.`;
+  }
 
   const cabe = estimadoUSD <= teto;
   const custoMedioPorDoc = n > 0 ? estimadoUSD / n : custoPorChamada;
@@ -1241,13 +1244,17 @@ export function orcamentoDoLotePorConteudo({
       : null,
   ].filter(Boolean).join(', ');
 
+  // `avisoNaMensagem` é variável em vez de ternário dentro da concatenação: o
+  // Sonar (`javascript:S3358`) reprova ternário aninhado, e aqui ele tinha
+  // razão — a frase da recusa já é longa, e um `? :` no meio dela é onde um
+  // erro de pontuação passa despercebido numa revisão.
+  const avisoNaMensagem = aviso === null ? '' : `${aviso} `;
   const mensagem = cabe
     ? null
     : `[orçamento ${VERSAO_ORCAMENTO}] ` +
       `Lote recusado ANTES de gastar: ${n} documento(s) = ${chamadas} chamada(s) de IA ` +
       `≈ US$ ${estimadoUSD.toFixed(2)}, acima do teto de US$ ${teto.toFixed(2)} por execução. ` +
-      `A conta saiu de ${base}. ` +
-      (aviso === null ? '' : `${aviso} `) +
+      `A conta saiu de ${base}. ${avisoNaMensagem}` +
       `Envie no máximo ${maxDocumentos} documento(s) por vez (${Math.ceil(n / Math.max(1, maxDocumentos))} levas). ` +
       `Nada foi enviado ao provedor de IA e nada foi gravado, então reenviar não duplica nem custa. ` +
       `Se o lote precisa rodar inteiro, o teto vive em TETO_EXECUCAO_USD (N8N/lib/custo.mjs) ` +
