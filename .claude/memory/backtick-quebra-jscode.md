@@ -3,6 +3,8 @@ name: backtick-quebra-jscode
 description: um backtick num COMENTÁRIO dentro do template de um nó Code do n8n fecha a string e quebra o JS gerado — aconteceu duas vezes
 metadata:
   type: feedback
+tipo: armadilha
+toca: []
 ---
 
 O gerador monta o `jsCode` de cada nó Code como template literal. Um backtick dentro de um

@@ -253,6 +253,24 @@ jobs:
         # um documento novo entra na classe do rótulo repetido.
         run: node N8N/medir-regua-cobertura.mjs
 
+      - name: Índice do conhecimento — o grafo derivado bate com o repositório
+        # A camada de memória deste repositório é DERIVADA: o `indexar.mjs` lê
+        # git, migrations, código, CI e fichas, e emite `grafo.jsonl`. O portão
+        # é o mesmo dos quatro workflows do n8n e do `schema.sql` — regera e
+        # compara —, e existe pela mesma razão: índice commitado que diverge da
+        # fonte manda a próxima sessão procurar no lugar errado.
+        #
+        # `conferir.mjs` é a outra metade: caminho de ficha que sumiu, suíte que
+        # o CI não roda, âncora cuja região de código mudou (a ficha vira
+        # SUSPEITA), e o PISO de cobertura — que é a regra 7 aplicada ao próprio
+        # índice, porque uma regex que parou de casar continua verde e devolve
+        # briefing curto, que se lê como "não há nada sobre isso".
+        run: |
+          node .claude/conhecimento/indexar.mjs
+          git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
+            || { echo "::error::o grafo commitado diverge do repositório — rode node .claude/conhecimento/indexar.mjs e commite o resultado"; exit 1; }
+          node .claude/conhecimento/conferir.mjs
+
       - name: Portão dos comandos de barra (todo subagent_type existe)
         # Despacho para `subagent_type` inexistente falha em tempo de execução, e
         # o comando só descobre isso no meio de uma tarefa de alguém. Os 52

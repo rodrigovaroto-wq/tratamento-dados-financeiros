@@ -8,6 +8,11 @@ Você mapeia, não conserta. Devolve caminhos e trechos curtos, nunca arquivos i
 
 **Atalhos deste repositório**
 
+- **O briefing vem antes de tudo:** `node .claude/conhecimento/buscar.mjs "<assunto>"`. Ele é o
+  índice derivado do repositório (migrations, funções, nós do n8n, portões, fichas, sessões do
+  HANDOFF) e responde "onde isso mora" com `arquivo:linha` em um comando — que é exatamente a sua
+  pergunta. `--arquivo <caminho>` mostra o que cerca um arquivo: quem o prova, que ficha o cita.
+  Ele NUNCA devolve conteúdo, só ponteiros; a leitura continua sendo sua.
 - O nome de uma migration conta o defeito que ela corrige — `ls Supabase/migrations/` é um índice
   legível, use antes de `grep`.
 - `ESTADO.md` (topo) tem a rodada mais recente; `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` tem o que falta;

@@ -1,0 +1,21 @@
+{
+  "_comentario": [
+    "O PISO DE COBERTURA — a regra 7 aplicada ao próprio índice.",
+    "Uma regex de extração que para de casar não quebra nada: o indexar.mjs continua rodando, o grafo continua sendo escrito, e o buscar.mjs passa a devolver briefing curto — que a sessão lê como 'não há nada sobre isso'. Estágio que não rodou tem a mesma aparência de estágio que rodou e não achou nada.",
+    "Estes números são a contagem MEDIDA em 13/09/2026 (commit 7e9066a), com 5% de folga para baixo — exceto migrations, que são conferidas contra o disco, uma a uma, e não admitem folga nenhuma.",
+    "QUANDO SUBIR ESTES NÚMEROS: quando o repositório crescer de verdade e a folga de 5% virar frouxidão. Rode `node .claude/conhecimento/indexar.mjs --contar` e recalibre na mesma passada em que o crescimento aconteceu — nunca para fazer um portão vermelho ficar verde."
+  ],
+  "medido_em": "2026-09-13",
+  "minimos": {
+    "migration": 109,
+    "fn": 164,
+    "suite": 34,
+    "portao": 23,
+    "no8n": 58,
+    "sessao": 65,
+    "CRIA": 281,
+    "CHAMA": 496,
+    "RODA": 19,
+    "CITA": 184
+  }
+}

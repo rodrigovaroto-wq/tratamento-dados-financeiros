@@ -3,6 +3,8 @@ name: nunca-apresentar-ausencia-como-dado
 description: zero fabricado numa célula de premissa é indistinguível de uma medição de zero — sempre branco + nota com o motivo E o efeito
 metadata:
   type: business-rule
+tipo: doutrina
+toca: []
 ---
 
 Este arquivo é lido por quem vai auditar um número numa entrega a cliente. Um zero escrito porque

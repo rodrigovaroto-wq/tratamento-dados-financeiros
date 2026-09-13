@@ -1,3 +1,13 @@
+---
+tipo: defeito
+toca:
+  - portal/src/lib/limite-de-envio.ts
+  - portal/src/components/upload-form.tsx
+prova: portal/scripts/verificar-limite-de-envio.mts
+ancora: portal/src/lib/limite-de-envio.ts#TETO_DA_FUNCTION_BYTES
+ancora_sha: de81135d61c3
+---
+
 # O teto da hospedagem recusa ANTES de o código rodar
 
 **Medido em 13/09/2026.** O dono selecionou 48 arquivos (~50 MB) para o mandato da AMO. A tela

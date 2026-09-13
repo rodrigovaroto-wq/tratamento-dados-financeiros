@@ -3,6 +3,9 @@ name: derivado-versionado-precisa-de-git-diff
 description: quem roda é o arquivo commitado, não a fonte que o gera — todo derivado versionado precisa de git diff --exit-code no CI
 metadata:
   type: architecture
+tipo: armadilha
+toca:
+  - Supabase/schema.sql
 ---
 
 Vários artefatos versionados aqui são **gerados**: os 4 JSON de workflow do n8n, as 3 fixtures do

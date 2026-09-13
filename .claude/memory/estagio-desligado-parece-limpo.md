@@ -3,6 +3,8 @@ name: estagio-desligado-parece-limpo
 description: um estágio que não rodou tem exatamente a mesma aparência de um que rodou e não achou nada — é o modo de falha que mais custou neste projeto
 metadata:
   type: architecture
+tipo: doutrina
+toca: []
 ---
 
 Ausência de achado não é evidência de execução. Este é o padrão por trás de quase todo defeito

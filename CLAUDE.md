@@ -12,6 +12,7 @@ com modelo de FP&A vivo em fórmula.
 
 | Arquivo | Pergunta que responde |
 |---|---|
+| `node .claude/conhecimento/buscar.mjs "<assunto>"` | **Comece por aqui.** Devolve, em um comando, as fichas, os arquivos com linha, o portão que prova cada coisa e os commits do assunto — sem abrir nada. Medido: as cinco perguntas de `BASELINE.md` caíram de 50.245 para 9.201 bytes |
 | `ESTADO.md` (topo) | **Onde estamos agora** — última migration, suítes, a rodada mais recente |
 | `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` | **O que falta até fechar**, em ordem, com critério de pronto |
 | `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` | O projeto medido contra o próprio objetivo, estágio por estágio |
@@ -70,6 +71,8 @@ node --test 'N8N/test/*.test.mjs'
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-kit-basico.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-modelagem-cobertura.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
+node .claude/conhecimento/indexar.mjs && git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
+  && node .claude/conhecimento/conferir.mjs   # o índice do conhecimento é derivado e tem portão
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs
@@ -147,3 +150,10 @@ questionam a arquitetura, não tentam a quarta.
 `.claude/memory/INSTRUCTIONS.md` diz o que vira memória e o que não vira. Regra em uma linha:
 **uma sessão futura ficaria surpresa e grata de saber disso antes de começar?** Se dá para
 derivar lendo o código, não é memória.
+
+**E ela agora tem índice e portão.** `.claude/conhecimento/INSTRUCOES.md` é o manual em uma
+página: `buscar.mjs` antes de abrir arquivo, ficha com `toca`/`prova`/`ancora` ao fechar a
+rodada, `indexar.mjs` + `conferir.mjs` antes do commit. O `grafo.jsonl` é **derivado e
+versionado** — quem o regera commita o resultado, senão o CI fica vermelho, exatamente como
+nos workflows do n8n. A âncora é o que faz uma ficha descobrir sozinha que envelheceu: quando
+a região de código que ela cita muda, o portão a marca SUSPEITA e manda relê-la.

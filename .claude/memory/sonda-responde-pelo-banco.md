@@ -3,6 +3,10 @@ name: sonda-responde-pelo-banco
 description: nenhum arquivo do repositório é autoridade sobre o estado do banco — só fn_instalacao_conferir(), contra o banco em que você está conectado
 metadata:
   type: architecture
+tipo: doutrina
+toca:
+  - Supabase/test/run.sh
+prova: Supabase/test/run.sh
 ---
 
 Em 21/08 o repositório dizia que a fila de migrations tinha zerado. A sonda mostrou que a

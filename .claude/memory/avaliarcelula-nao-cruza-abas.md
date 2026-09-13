@@ -3,6 +3,8 @@ name: avaliarcelula-nao-cruza-abas
 description: avaliarCelula não segue referência entre abas, e notaDaLinha precisa de includeEmpty — as duas quebram testes do export de formas que parecem bug do código
 metadata:
   type: feedback
+tipo: armadilha
+toca: []
 ---
 
 Duas limitações do harness de teste do export que parecem defeito do código sob teste:

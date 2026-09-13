@@ -3,6 +3,9 @@ name: ancora-de-texto-quebra-com-crlf
 description: âncora multi-linha sem `\r?` casa contra corpo LF (toda suíte local) e acha ZERO contra corpo gravado em CRLF (produção) — o corpo que pg_get_functiondef devolve pode ter \r\n
 metadata:
   type: architecture
+tipo: armadilha
+toca: []
+prova: Supabase/test/run.sh
 ---
 
 A `0161` e a `0162` patcheavam `fn_registrar_diagnostico` por âncora sobre

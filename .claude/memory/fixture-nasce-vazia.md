@@ -3,6 +3,8 @@ name: fixture-nasce-vazia
 description: fixture que passa com o bug LIGADO é o defeito mais comum de teste aqui — duas da sessão 18 nasceram assim
 metadata:
   type: feedback
+tipo: armadilha
+toca: []
 ---
 
 Um invariante novo só vale depois de **medido não-vazio**: desligue a correção, rode a suíte,

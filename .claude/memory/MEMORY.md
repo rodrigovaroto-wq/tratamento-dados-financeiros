@@ -3,6 +3,12 @@
 Índice sempre carregado. Regras de uso e política de crescimento em `INSTRUCTIONS.md`.
 Uma linha por entrada; teto mole de 130 linhas não vazias.
 
+> **Antes de procurar aqui, rode o briefing:** `node .claude/conhecimento/buscar.mjs "<assunto>"`.
+> Ele indexa ESTAS fichas e as de `.claude/conhecimento/fichas/`, mais migrations, funções, nós do
+> n8n, portões e sessões do HANDOFF — e devolve `arquivo:linha` em um comando. As fichas novas
+> nascem em `fichas/`; estas continuam aqui porque dezenas de comentários de código as citam por
+> este caminho. Ver `.claude/conhecimento/INSTRUCOES.md`.
+
 ## O padrão de erro central
 
 - [Estágio desligado parece estágio limpo](estagio-desligado-parece-limpo.md) — o modo de falha
@@ -58,7 +64,7 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 - [`avaliarCelula` não segue referência entre abas](avaliarcelula-nao-cruza-abas.md)
 - [A ordem dos parâmetros dos dois classificadores é diferente](ordem-dos-classificadores.md)
 - ["TODO" em português vira achado do Sonar](todo-em-portugues-vira-achado-do-sonar.md) — a `S1135`
-  casa o texto, não o idioma; quatro vezes numa sessão. Use `CADA`/`TODOS OS`
+  casa o texto, não o idioma; cinco ocorrências até 13/09. Use `CADA`/`TODOS OS`
 
 ## Produção (não está em nenhum arquivo do repositório)
 

@@ -3,6 +3,11 @@ name: cota-rpd-e-o-limite-do-dia
 description: no nível gratuito do Flash-Lite o RPD 500 é o limite que aperta — 440/500 para 190 documentos, ou seja um book por dia
 metadata:
   type: reference
+tipo: numero
+toca:
+  - N8N/lib/provedor.mjs
+ancora: N8N/lib/provedor.mjs#rpd: 500
+ancora_sha: 0084eab4b2f9
 ---
 
 Nível gratuito da linha Flash-Lite (`gemini-3.5-flash-lite`, provedor declarado em

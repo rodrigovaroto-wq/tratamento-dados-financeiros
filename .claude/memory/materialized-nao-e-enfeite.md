@@ -3,6 +3,8 @@ name: materialized-nao-e-enfeite
 description: sem MATERIALIZED o Postgres inlina a CTE usada uma vez, e o agrupamento escrito para MATAR o produto cartesiano vira o produto cartesiano
 metadata:
   type: architecture
+tipo: defeito
+toca: []
 ---
 
 `fn_conflitos_do_caso` levava **12,4 s por chamada**: o planner estima `rows=1` numa CTE onde há
