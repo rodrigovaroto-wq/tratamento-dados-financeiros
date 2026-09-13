@@ -712,8 +712,7 @@ export default function UploadForm({
           {arquivos.length === 1 ? "" : "s"}, somando{" "}
           <strong className="text-tinta-800">
             {formatarBytes(arquivos.reduce((s, a) => s + a.size, 0))}
-          </strong>
-          .
+          </strong>{"."}
         </p>
       )}
 

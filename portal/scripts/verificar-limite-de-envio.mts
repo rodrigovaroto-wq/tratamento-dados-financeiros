@@ -13,7 +13,7 @@
 //      lote de muitos arquivos pequenos estoura o teto só com a sobrecarga do
 //      `multipart`, e essa é a forma de o 413 voltar "por pouco";
 //   3. o lote pequeno continua indo pelo caminho de sempre — o que tem status
-//      real e mensagem em português. Uma correção que jogasse TODO envio no
+//      real e mensagem em português. Uma correção que jogasse CADA envio no
 //      caminho direto trocaria o 413 por perda de diagnóstico em 100% dos dias;
 //   4. o teto por arquivo do outro lado é recusado ANTES de subir, com o NOME
 //      do arquivo — sob envio direto ele seria recusado em silêncio.

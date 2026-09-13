@@ -57,10 +57,10 @@ export async function GET(request: Request) {
   // workflow pode não ler — o defeito da sessão 7 cont.¹² (200 na tela, zero
   // documento, zero token) entrando pela porta nova. A tela recusa o envio
   // direto neste estado, e o sinal para isso precisa CHEGAR até ela.
-  const origem: "env" | "html" | "fallback" =
-    process.env.N8N_INTAKE_FIELD_MANDATO && process.env.N8N_INTAKE_FIELD_ARQUIVOS
-      ? "env"
-      : campos.descoberto ? "html" : "fallback";
+  const porEnv = Boolean(process.env.N8N_INTAKE_FIELD_MANDATO && process.env.N8N_INTAKE_FIELD_ARQUIVOS);
+  let origem: "env" | "html" | "fallback" = "fallback";
+  if (porEnv) origem = "env";
+  else if (campos.descoberto) origem = "html";
 
   return NextResponse.json({
     url,

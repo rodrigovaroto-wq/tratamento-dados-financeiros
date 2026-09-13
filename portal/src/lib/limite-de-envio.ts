@@ -224,9 +224,10 @@ export function arquivosVazios(arquivos: readonly ArquivoParaEnvio[]): readonly 
 /** A frase do arquivo vazio — nomeia cada um, pela mesma razão da recusa acima. */
 export function avisoDeArquivoVazio(vazios: readonly ArquivoParaEnvio[]): string {
   const lista = vazios.map((a) => `“${a.nome}”`).join(", ");
+  const um = vazios.length === 1;
+  const quantos = um ? "Um arquivo está vazio" : `${vazios.length} arquivos estão vazios`;
   return (
-    `${vazios.length === 1 ? "Um arquivo está vazio" : `${vazios.length} arquivos estão vazios`} `
-    + `(0 byte) e ${vazios.length === 1 ? "ficou" : "ficaram"} de fora do envio: ${lista}. `
+    `${quantos} (0 byte) e ${um ? "ficou" : "ficaram"} de fora do envio: ${lista}. `
     + "Isso costuma ser arquivo ainda não baixado da nuvem — baixe e envie de novo, no mesmo mandato."
   );
 }
@@ -238,9 +239,11 @@ export function avisoDeArquivoVazio(vazios: readonly ArquivoParaEnvio[]): string
  */
 export function recusaPorArquivoGrande(acima: readonly ArquivoParaEnvio[]): string {
   const lista = acima.map((a) => `“${a.nome}” (${formatarBytes(a.bytes)})`).join(", ");
+  const um = acima.length === 1;
+  const quantos = um ? "Um arquivo é" : `${acima.length} arquivos são`;
   return (
-    `${acima.length === 1 ? "Um arquivo é" : `${acima.length} arquivos são`} maior${acima.length === 1 ? "" : "es"} ` +
-    `que o limite de ${formatarBytes(TETO_POR_ARQUIVO_BYTES)} por arquivo e ${acima.length === 1 ? "precisa" : "precisam"} ` +
-    `ficar de fora: ${lista}. O resto do lote pode ser enviado normalmente.`
+    `${quantos} ${um ? "maior" : "maiores"} que o limite de ${formatarBytes(TETO_POR_ARQUIVO_BYTES)} `
+    + `por arquivo e ${um ? "precisa" : "precisam"} ficar de fora: ${lista}. `
+    + "O resto do lote pode ser enviado normalmente."
   );
 }
