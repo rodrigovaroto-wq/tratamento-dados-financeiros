@@ -264,9 +264,30 @@ for (const p of FICHAS) {
   // precisa do corpo abre o arquivo, que tem ~30 linhas; carregar o corpo no
   // índice encheria o grafo com a prosa que ele existe para NÃO carregar.
   const subtitulos = [...texto.matchAll(/^#{2,3}\s+(.+)$/gm)].map((m) => m[1]).join(" ");
+  // AS PALAVRAS DO CORPO, e só para a ficha. Sem isto, a ficha do 413 não casava
+  // com "413": o índice lia título e subtítulo, e o número mora no corpo. Medido
+  // em 13/09/2026 — "upload lote grande 413" devolvia dez funções `fn_*lote*` e
+  // nenhuma ficha. A ficha é o nó de maior valor do grafo e não pode ser o mais
+  // difícil de achar.
+  //
+  // Só a ficha: o corpo de um arquivo de código no índice seria o repositório
+  // duplicado. Palavra de 4+ letras (ou número), sem repetição, teto de 150 —
+  // uma ficha de 30 linhas cabe inteira nisso, e o teto impede que uma ficha
+  // longa demais afogue as outras na pontuação.
+  const palavras = [...new Set(
+    (cab ? texto.slice(texto.indexOf("\n---\n") + 5) : texto)
+      .toLowerCase().match(/[\wÀ-ÿ]{4,}|\b\d{3,}\b/g) ?? [],
+  )].slice(0, 150).join(" ");
   const id = `ficha:${cab?.id ?? p.split("/").pop().replace(/\.md$/, "")}`;
   const sha = cab?.ancora ? hashDaAncora(cab.ancora) : null;
-  no(id, "ficha", p, `${titulo} ${subtitulos}`, {
+  // A LINHA QUE O BRIEFING MOSTRA é o `description` do cabeçalho — as 24 fichas
+  // de `.claude/memory/` já o tinham, e a primeira versão deste indexador o
+  // jogava fora e mostrava o nome do arquivo no lugar ("no-postgres-novo-vai-
+  // como-ramo-terminal"), que não diz nada a quem ainda não leu a ficha.
+  const desc = (cab?.description ?? "").trim();
+  no(id, "ficha", p, `${desc || titulo} ${subtitulos}`, {
+    ...(desc ? { d: desc } : {}),
+    kw: palavras,
     ...(cab?.tipo ? { tp: cab.tipo } : {}),
     ...(cab?.ancora ? { anc: cab.ancora } : {}),
     ...(sha ? { sha } : {}),

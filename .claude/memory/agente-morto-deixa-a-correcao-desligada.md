@@ -1,4 +1,6 @@
 ---
+name: agente-morto-deixa-a-correcao-desligada
+description: agente interrompido deixa a correção DESLIGADA — um `false and` no meio da expressão e o arquivo com cara de pronto; e não rode a suíte enquanto um agente tem a árvore
 tipo: armadilha
 toca: []
 ---

@@ -1,4 +1,6 @@
 ---
+name: teto-da-borda-recusa-antes-do-codigo
+description: o 413 de 48 arquivos (~50 MB) veio da BORDA da Vercel: /api/intake nunca rodou, e nenhuma mensagem nossa podia aparecer — teto de 4,5 MB por requisição na Serverless Function
 tipo: defeito
 toca:
   - portal/src/lib/limite-de-envio.ts

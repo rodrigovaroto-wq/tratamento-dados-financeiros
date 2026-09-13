@@ -55,3 +55,33 @@ nomeando a ficha e os dois hashes:
 
 Religado: 51 verificações, 0 falhas. **É este assert que torna o conhecimento auto-invalidante**
 — o que nenhum vault de Markdown e nenhum banco de grafo entregam sozinhos.
+
+---
+
+## A medição final, depois das correções que ela mesma provocou
+
+Medir não foi cerimônia: **achou três defeitos no próprio índice**, e os três eram mudos.
+
+1. **`BONUS_TIPO` declarado e nunca aplicado** no `buscar.mjs`. Fichas não subiam na pontuação;
+   "upload lote grande 413" devolvia dez funções `fn_*lote*` antes da ficha que responde, porque
+   "lote" casa em meio repositório. É o defeito central desta casa, dentro do próprio índice.
+2. **O corpo da ficha não era indexado.** A ficha do 413 não casava com "413" — o número mora no
+   corpo, e o índice lia só título e subtítulos. Agora as palavras do corpo entram (`kw`), e só
+   para fichas: indexar corpo de código seria o repositório duplicado.
+3. **O `description` do cabeçalho era jogado fora.** As 24 fichas de `.claude/memory/` já o
+   tinham — é a melhor linha de cada uma — e o briefing mostrava o nome do arquivo no lugar
+   ("no-postgres-novo-vai-como-ramo-terminal"), que não diz nada a quem ainda não leu a ficha.
+
+| # | Pergunta | `grep` hoje | Briefing | Redução |
+|---|---|---|---|---|
+| 1 | Por que a cadência da extração é 73 s? | 1.442 B | 2.383 B | (ver abaixo) |
+| 2 | Quem chama `fn_reconciliar_caso`? | 5.152 B | 957 B | −81% |
+| 3 | O que já se tentou no upload de lote grande? | 6.111 B | 3.353 B | −45% |
+| 4 | Qual portão prova o invariante do Kit Básico? | 7.820 B | 2.809 B | −64% |
+| 5 | Qual migration criou `fn_instalacao_conferir`? | 29.720 B | 1.165 B | −96% |
+| | **soma** | **50.245 B** | **10.667 B** | **−79%** |
+
+As cinco abaixo de 4.000 bytes, e nenhuma exige abrir arquivo para saber onde olhar. A pergunta 1
+continua custando mais que o `grep` em bytes e menos em leitura: a primeira linha do briefing é a
+ficha que RESPONDE (~3.000 bytes lidos), contra 21.372 bytes de `espera-do-lote.ts` para achar a
+mesma conta.

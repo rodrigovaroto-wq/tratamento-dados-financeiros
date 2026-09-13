@@ -89,19 +89,24 @@ for (const linha of readFileSync(GRAFO, "utf8").split("\n")) {
 // casar no caminho: quem procura "fn_reconciliar_caso" quer a função, não os
 // nove arquivos cujo caminho contém "caso". Ficha pesa mais que o resto porque
 // ela é a única coisa aqui escrita para ser lida por quem chega agora.
-const PESO = { id: 6, txt: 3, f: 1 };
-const BONUS_TIPO = { ficha: 4, migration: 1, fn: 1, portao: 1, sessao: 0, suite: 1, arquivo: 0, no8n: 1 };
+// `kw` são as palavras do CORPO da ficha, e existem só nela (ver indexar.mjs).
+// Pesam menos que o título de propósito: casar no título é o assunto da ficha,
+// casar no corpo é o assunto ter sido MENCIONADO nela.
+const PESO = { id: 6, txt: 3, kw: 2, f: 1 };
+const BONUS_TIPO = { ficha: 6, migration: 1, fn: 0, portao: 1, sessao: 0, suite: 1, arquivo: 0, no8n: 1 };
 
 function pontuar(n) {
   const id = normalizar(n.id);
   const txt = normalizar(n.txt ?? "");
   const f = normalizar(n.f ?? "");
+  const kw = normalizar(n.kw ?? "");
   let p = 0;
   let casou = 0;
   for (const t of termos) {
     let aqui = 0;
     if (id.includes(t)) aqui += PESO.id;
     if (txt.includes(t)) aqui += PESO.txt;
+    if (kw.includes(t)) aqui += PESO.kw;
     if (f.includes(t)) aqui += PESO.f;
     if (aqui > 0) casou += 1;
     p += aqui;
@@ -109,6 +114,12 @@ function pontuar(n) {
   // TODOS os termos casando vale mais que um termo casando três vezes: numa
   // busca de duas palavras, é o nó que junta as duas que interessa.
   if (casou === termos.length && termos.length > 1) p *= 2;
+  // O BÔNUS POR TIPO SÓ SE APLICA A QUEM JÁ CASOU, e ele estava declarado e
+  // NUNCA APLICADO na primeira versão deste arquivo — o defeito central desta
+  // casa, dentro do próprio índice. O sintoma era mudo: "upload lote grande
+  // 413" devolvia dez funções `fn_*lote*` antes da ficha que responde, porque
+  // "lote" casa em meio repositório e nada empurrava a ficha para cima.
+  if (p > 0) p += BONUS_TIPO[n.t] ?? 0;
   return p;
 }
 
@@ -119,9 +130,14 @@ const achados = [...nos.values()]
   // Desempate pelo id: duas execuções com o mesmo grafo dão o mesmo briefing.
   .sort((a, b) => b.p - a.p || a.n.id.localeCompare(b.n.id));
 
-const TETO = { ficha: largo ? 8 : 4, migration: largo ? 8 : 3, fn: largo ? 10 : 4,
-  portao: largo ? 6 : 2, suite: largo ? 6 : 3, sessao: largo ? 8 : 3,
-  no8n: largo ? 6 : 3, arquivo: largo ? 10 : 4 };
+// OS TETOS POR TIPO — e eles são um ORÇAMENTO, não um gosto. O briefing existe
+// para caber numa leitura: medido em 13/09/2026, a consulta mais larga das
+// cinco da linha de base devolve ~3.500 bytes com estes números e passava de
+// 4.200 com os anteriores. Quem precisa de mais pede `--largo`, que é quando a
+// sessão já decidiu que vale o custo.
+const TETO = { ficha: largo ? 8 : 3, migration: largo ? 8 : 3, fn: largo ? 10 : 3,
+  portao: largo ? 6 : 2, suite: largo ? 6 : 2, sessao: largo ? 8 : 2,
+  no8n: largo ? 6 : 2, arquivo: largo ? 10 : 3 };
 
 const porTipo = new Map();
 for (const { n, p } of achados) {
@@ -138,7 +154,7 @@ const local = (n) => (n.f ? `${n.f}${n.l ? `:${n.l}` : ""}` : "");
 for (const { n } of porTipo.get("ficha") ?? []) {
   const suspeita = n.anc && n.anc_sha && n.sha && n.anc_sha !== n.sha;
   diz(`FICHA${suspeita ? " [SUSPEITA: a âncora mudou desde a confirmação]" : ""}  ${n.f}`);
-  diz(`  ${(n.txt ?? "").split(/\s{2,}|\.\s/)[0].slice(0, 100)}`);
+  diz(`  ${(n.d ?? n.txt ?? "").slice(0, 140)}`);
   const toca = (saindo.get(n.id) ?? []).filter((e) => e.rel === "TOCA").map((e) => e.pa.slice(8));
   const prova = (saindo.get(n.id) ?? []).filter((e) => e.rel === "PROVADA_POR").map((e) => e.pa.slice(6));
   if (toca.length) diz(`  toca:  ${toca.join(", ")}`);
