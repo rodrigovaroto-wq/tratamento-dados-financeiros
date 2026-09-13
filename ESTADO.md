@@ -25,6 +25,21 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Provedor de IA** | **NO REPOSITÓRIO: OpenAI `gpt-5.6-luna`** nos dois papéis, desde 11/09 (sessão 84) — `PROVEDOR_PADRAO = 'openai'` em `N8N/lib/provedor.mjs`. **NO n8n PUBLICADO era Google `gemini-3.5-flash-lite` até 02/09 — e a reimportação estava EM CURSO quando esta linha foi escrita** (o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde). **Não datar por este arquivo: `N8N/conferir-publicado.mjs` contra a instância é quem responde.** As duas linhas discordam DE PROPÓSITO, e é essa discordância que impede rodar um caso real hoje |
 | **PR desta rodada** | **#211, ABERTO e pronto para mergear** (`claude/financial-processing-review-hwtqyq`, HEAD `55c8e41`). CI **verde nos 28 passos**, `mergeable_state: clean`, base já no topo do `main` (`7b84086`). Sonar: Quality Gate passed, **1 new issue** — a `S3776` de `compararExtracoes`, RECUSADA com prova (a auto-contenção é exigida por um teste que reprova na hora se ela for quebrada) |
 
+## A SESSÃO 87 (13/09) — O ORÇAMENTO QUE RECUSAVA O LOTE DA AMO: as duas fatias que a diagnose de 86 desenhou
+
+A sessão 86 mediu e NÃO corrigiu (de propósito). Esta corrigiu as duas fatias que não dependem do
+lote real, e deixou declarado o que continua dependendo dele.
+
+| | |
+|---|---|
+| **O defeito** | 44 documentos / 14,4 MB recusados em **US$ 52,39** contra um teto de US$ 3 |
+| **Fatia 1 — a reescala** | A troca de provedor de 11/09 (Google → OpenAI `gpt-5.6-luna`) não reescalou `CUSTO_POR_MB_USD` nem `CUSTO_MINIMO_CHAMADA_USD`. **2,80 → 1,48** e **0,0032 → 0,0017**, pela razão do documento DENSO (0,5249), que é o método que o próprio arquivo documenta. **MEDIDO**: o book-canastra custa US$ 0,1380 no provedor ativo e o proxy estimava US$ 0,56 — **4,06×**, contra os ~2× que a calibração declara. Com 1,48: 2,14×. O lote da AMO cai para **US$ 27,69** (−47%) — **não basta, e está dito** |
+| **Fatia 2 — a conta por documento** | `orcamentoDoLotePorConteudo` deixou de ser tudo-ou-nada. `estimativaDoDocumento` escolhe um de **quatro caminhos por documento** (conteudo · pagina · tamanho · cego) e **nenhum documento derruba a medição dos outros**. PDF escaneado passa a ser estimado **por PÁGINA** (`CELULAS_POR_PAGINA_ESTIMADAS = 100`, p90 dos 52 documentos dos dois books; agregado medido 53,4) — ~US$ 0,12 por documento de 20 páginas contra ~US$ 0,48 do proxy por byte |
+| **A regra 1 no diagnóstico** | A recusa **nomeia** quem não foi medido e **por quê**; a frase "de onde saiu a conta" é montada caminho a caminho, para um lote sem medição nenhuma nunca mais anunciar "a conta saiu de 0 linha(s) com número" |
+| **Medição (regra 2)** | 6 invariantes novos, medidos não-vazios por **quatro desligamentos** distintos (tudo-ou-nada de volta: 3 reprovam · caminho por página desligado: 4 · `CELULAS_POR_PAGINA_ESTIMADAS = 5`: 2 · frase única da mensagem: 1). **Um deles nasceu VAZIO** — comparava totais com `toFixed(2)` e a diferença sumia no arredondamento — e foi refeito na mesma passada |
+| **Suítes n8n** | **537** (eram 458 em 11/09) |
+| **O que NÃO foi feito, e por quê** | **O passo 1 do HANDOFF continua aberto**: rodar o lote real da AMO até `Medir Documento` e ler `celulas_no_documento`/`paginas_do_documento` dos 44. Esta sessão **não tem acesso ao lote nem à instância** — sem ele, dizer quanto o lote da AMO passa a custar seria aritmética sobre suposição (regra 4). O que existe é a **sensibilidade medida no estimador**, travada em teste. **E `CUSTO_ESTIMADO_DOC_USD` (0,055) NÃO foi reescalado**, contra a tentação: o caminho cego é o de "não sei nada sobre estes arquivos", e tudo o que este repositório mediu é PDF sintético de 1 a 5 páginas — baixá-lo para 1,2× o sintético calibraria o caminho cego pelo material mais fácil que existe aqui, que é a MESMA causa raiz do proxy errando 75×, com o sinal trocado (aceitaria lote que não cabe) |
+
 ## A SESSÃO 84 (11/09) — LUNA, ROTEAMENTO POR FORMATO, O TIMEOUT DA MODELAGEM, E O QUE FICOU ABERTO
 
 Rodada de correção pedida pelo dono em sete itens. O que importa para a próxima sessão:

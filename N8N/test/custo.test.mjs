@@ -205,10 +205,31 @@ test('custoDaChamada mede a partir do usage e cobra o cache mais barato', () => 
   // real — o livro razão do book-canastra, 3 páginas e 461 linhas. No provedor
   // novo ele mede US$ 0,0459 (era US$ 0,1725 no gpt-4o), medido pelo mesmo
   // `medir-custo-book.mjs` sobre os mesmos PDFs.
-  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.0459,
+  // O NÚMERO DE REFERÊNCIA ENVELHECEU DE NOVO, e desta vez a conclusão é o
+  // CONTRÁRIO: 0,0459 é preço de Google. MEDIDO em 13/09/2026 por
+  // `node N8N/medir-custo-book.mjs` contra o provedor ativo, o documento mais
+  // caro do book (17_Livro_Razao, 3 páginas, 461 linhas) custa US$ 0,0222 — e
+  // `CUSTO_ESTIMADO_DOC_USD = 0,055` é 2,5× isso, fora da faixa que este mesmo
+  // teste declarava.
+  //
+  // E A CONSTANTE FICA ONDE ESTÁ, DE PROPÓSITO. A faixa vale contra o documento
+  // mais caro MEDIDO, e tudo o que foi medido neste repositório é PDF sintético
+  // do `reportlab`, de 1 a 5 páginas. O caminho PLANO é o de "não sei NADA
+  // sobre estes arquivos" — inclusive quantas páginas têm —, e um documento de
+  // cliente de 20 páginas custa, pela conta por página desta mesma rodada,
+  // ~US$ 0,12: o dobro do plano, não a metade. Baixar 0,055 para 1,2× o
+  // documento sintético seria calibrar o caminho cego pelo material mais fácil
+  // que existe aqui, que é a MESMA causa raiz do proxy por byte cobrando 75×
+  // errado (regime sintético aplicado a regime real), só que com o sinal
+  // trocado: aceitaria lote que não cabe, o v31.
+  //
+  // O que trava a folga agora é o limite superior contra o documento REAL mais
+  // caro que a conta por página estima, e não contra o sintético.
+  assert.ok(CUSTO_ESTIMADO_DOC_USD > 0.0222,
     'a estimativa precisa cobrir o documento mais caro já medido, não o típico');
-  assert.ok(CUSTO_ESTIMADO_DOC_USD < 0.0459 * 2,
-    'e não pode ser tão folgada a ponto de recusar lote que cabe — foi o defeito de deixar 0,20 de pé');
+  assert.ok(CUSTO_ESTIMADO_DOC_USD < 0.12,
+    'e não pode passar do que um documento real de 20 páginas custa pela conta por página — '
+    + 'acima disso o caminho cego volta a recusar lote que cabe, que foi o defeito de deixar 0,20 de pé');
 });
 
 test('custoDaChamada devolve null em vez de chutar quando não pode medir', () => {

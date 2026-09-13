@@ -4,7 +4,13 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
-**Última atualização:** 2026-09-13 (sessão **86**). **PRs #218 e #219 mergeados.** Leia "A SESSÃO
+**Última atualização:** 2026-09-13 (sessão **87**). A sessão 87 EXECUTOU as fatias 2 e 3 da ordem
+que a 86 deixou escrita (a reescala do proxy e a conta por documento), e o **passo 1 — rodar o lote
+real da AMO até `Medir Documento` — CONTINUA ABERTO**: a sessão 87 não tem acesso ao lote nem à
+instância do n8n. Leia "A SESSÃO 87" logo abaixo.
+
+<!-- o parágrafo abaixo é da sessão 86 e ficou como registro -->
+**Sessão 86:** **PRs #218 e #219 mergeados.** Leia "A SESSÃO
 86" logo abaixo. O envio de 44 arquivos / 14,4 MB **passou** (o 413 era da borda da Vercel, não do
 código), e o que trava o mandato da AMO agora é **o orçamento do lote: US$ 52,39 contra um teto de
 US$ 3**. A causa está medida e o conserto está desenhado em ordem — **nada de `N8N/lib/custo.mjs`
@@ -44,6 +50,72 @@ descuido: ela é exatamente o modo de falha que o resto deste cabeçalho descrev
 > "02/09": o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde, o que só
 > acontece quando ela está sendo rodada de verdade. **Quem responde qual workflow está no ar é
 > `N8N/conferir-publicado.mjs` contra a instância**, não esta linha.
+
+## A SESSÃO 87 (2026-09-13) — as duas fatias do orçamento, e o que continua dependendo do lote real
+
+**A ordem de execução que a sessão 86 deixou tinha cinco passos. Esta sessão fez o 2, o 3, o 4 e o
+5. O PASSO 1 CONTINUA ABERTO, e não por esquecimento:** ele pede rodar o lote de 44 documentos da
+AMO até `Medir Documento` e ler `celulas_no_documento`, `paginas_do_documento`, `leitura_pdf` e
+`caracteres_do_texto` de cada um. Esta sessão **não tem o lote nem acesso à instância do n8n** —
+fabricar esses números para "fechar" a conta seria exatamente a regra 4.
+
+### O que ficou pronto
+
+**Fatia A — a reescala (commit `604e285`).** `CUSTO_POR_MB_USD` 2,80 → **1,48** e
+`CUSTO_MINIMO_CHAMADA_USD` 0,0032 → **0,0017**, pela razão do documento DENSO (0,5249), que é o
+método documentado no próprio arquivo desde 24/08. **O número que justifica**, medido nesta sessão
+com `node N8N/medir-custo-book.mjs` contra o provedor ATIVO: o book-canastra custa **US$ 0,1380**
+(era US$ 0,2821 no Google) e o proxy estimava US$ 0,56 — **4,06×** o real, contra os ~2× que a
+calibração declara. A margem tinha DOBRADO sem ninguém escolher isso. Invariante novo trava a
+RAZÃO (nenhum teste a media: havia piso e teto, e entre os dois cabia um erro de 4×).
+
+**Fatia B+D — a conta por documento (commit `d6a73db`).** `orcamentoDoLotePorConteudo` deixou de
+ser tudo-ou-nada. `estimativaDoDocumento` escolhe **um de quatro caminhos por documento**:
+`conteudo` (medido) · `pagina` (PDF com páginas e sem camada de texto) · `tamanho` (proxy por
+byte) · `cego` (estimativa plana). A margem de conteúdo (1,25×) vale só nos dois primeiros.
+`CELULAS_POR_PAGINA_ESTIMADAS = 100` foi MEDIDA sobre os 52 documentos dos dois books
+(`METRICAS.json`): agregado 53,4 células/página, mediana 43,0, p90 91,7, máximo 131,0 — a
+constante fica acima do p90 e é 1,87× o agregado.
+
+**A recusa passou a nomear** quais documentos não foram medidos e por quê, e a frase "de onde saiu
+a conta" é montada caminho a caminho — sem isso um lote sem medição nenhuma anunciaria "a conta
+saiu de 0 linha(s) com número", que é ausência apresentada como dado dentro do próprio
+diagnóstico do orçamento.
+
+### O número que a próxima sessão precisa ter na mão
+
+| | |
+|---|---|
+| Lote da AMO, regra antiga + proxy de agosto | US$ 52,39 (recusado) |
+| Só a reescala (fatia A) | **US$ 27,69** — −47%, ainda 9× o teto |
+| Com a conta por documento | **depende do passo 1** — a queda real é função de quantos dos 44 são escaneados e de quantas páginas cada um tem |
+
+**O que dá para afirmar sem o passo 1**, e está travado em teste: um documento escaneado de 20
+páginas custa ~US$ 0,12 pela conta por página contra ~US$ 0,48 pelo proxy por byte; um lote
+INTEIRAMENTE escaneado de 20 páginas por documento cabe no teto até algumas dezenas de documentos,
+e o ponto exato é medido pela suíte em vez de descoberto no dia do envio. Um documento medido por
+conteúdo custa uma fração disso.
+
+### O que a próxima sessão deve fazer, em ordem
+
+1. **O passo 1 da sessão 86**, inalterado. Ele é o que transforma a sensibilidade medida no
+   estimador em previsão sobre o lote da AMO — e é ele que diz se as quatro linhas do caminho
+   `pagina` são 4 documentos ou 40.
+2. **Reimportar o workflow no n8n antes de qualquer rodada.** `N8N/workflow.e1-ingestao.json`
+   mudou nestes dois commits (o nó `Orcamento do Lote` carrega a conta nova inline), e o que
+   responde qual workflow está no ar é `N8N/conferir-publicado.mjs` contra a instância.
+3. **Se o lote real trouxer escaneado mais denso que 100 células por página**, o limite está
+   DECLARADO no comentário de `CELULAS_POR_PAGINA_ESTIMADAS`: esse documento é subestimado, e a
+   defesa é o teto duro de US$ 5 no provedor. Recalibrar a constante exige medir, não supor.
+
+### O que NÃO foi mexido, e o porquê está registrado
+
+**`CUSTO_ESTIMADO_DOC_USD` continua em 0,055**, apesar de o documento mais caro medido ter caído de
+US$ 0,0459 (Google) para **US$ 0,0222** no provedor ativo — o que o deixa em 2,5× o sintético.
+Baixá-lo calibraria o caminho CEGO ("não sei nada sobre estes arquivos") pelo material mais fácil
+que existe neste repositório (PDF do `reportlab`, 1 a 5 páginas), que é a MESMA causa raiz do proxy
+por byte errando 75×, com o sinal trocado: aceitaria lote que não cabe, o v31. O comentário do
+teste foi corrigido para dizer isso, com o número novo.
 
 ## A SESSÃO 86 (2026-09-13) — o 413 do portal, a camada de conhecimento, e o orçamento que cobra 75× o real
 
