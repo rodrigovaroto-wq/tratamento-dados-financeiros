@@ -36,7 +36,7 @@ export default function UploadForm({
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<
-    { mandato: string; arquivos: number; desde: string; via: ViaDeEnvio } | null
+    { mandato: string; arquivos: number; desde: string; via: ViaDeEnvio; origemIncerta: boolean } | null
   >(null);
   // POR QUAL CAMINHO ESTE ENVIO FOI (ver `enviarPeloPortal`/`enviarDireto`). A
   // tela precisa disto por uma razão só: sob envio direto a resposta é opaca, e
@@ -347,22 +347,19 @@ export default function UploadForm({
         setErro(recusaPorArquivoGrande(plano.acimaDoTetoPorArquivo));
         return;
       }
-      // NOME DE CAMPO CHUTADO NÃO RECEBE 50 MB.
+      // NOME DE CAMPO CHUTADO NÃO BLOQUEIA MAIS O LOTE GRANDE.
       //
       // `origem: "fallback"` diz que a descoberta falhou e os nomes são os
-      // padrões. Pelo encaminhamento isso é recuperável — o n8n devolve o
-      // status e a rota diz quais nomes usou. Direto, não: a resposta é opaca,
-      // e um POST sob nome que o workflow não lê rende 200 na tela, zero
-      // documento e zero token (sessão 7 cont.¹²) — descoberto só 37 minutos
-      // depois, pela parada. Melhor recusar agora e mandar tentar de novo.
-      if (plano.via === "direto" && destino.origem === "fallback") {
-        setErro(
-          "Não consegui confirmar com o processamento como este lote deve ser enviado, e um lote "
-          + "deste tamanho não pode ser mandado no escuro. Tente de novo em um minuto; se continuar, "
-          + "acione quem cuida do sistema.",
-        );
-        return;
-      }
+      // padrões — bloquear aqui (versão anterior, 13/09/2026) travou o próprio
+      // lote da AMO: a descoberta tropeçou em produção e o ÚNICO caminho para
+      // um lote deste tamanho ficou impossível de usar, sem alternativa
+      // nenhuma. O mesmo risco (nome errado, 200 opaco, zero token — sessão 7
+      // cont.¹²) já era aceito sem bloqueio no encaminhamento, que nunca
+      // checou `origem`. A rede de segurança que já bastava lá — a detecção de
+      // parada do acompanhamento, que declara "não chegou nada" sem inventar
+      // sucesso — cobre este caminho também, sem depender de a descoberta ter
+      // confirmado o nome antes. Ver `.claude/memory/teto-da-borda-recusa-antes-do-codigo.md`.
+      const origemIncerta = plano.via === "direto" && destino.origem === "fallback";
       setVia(plano.via);
 
       const enviado = plano.via === "proxy"
@@ -371,7 +368,7 @@ export default function UploadForm({
       if (!enviado) return;
 
       setPronto(false);
-      setSucesso({ ...enviado, via: plano.via });
+      setSucesso({ ...enviado, via: plano.via, origemIncerta });
       setArquivos([]);
       // O DESCARTE É NOTICIADO, e fica visível junto do cartão de sucesso: quem
       // selecionou o arquivo vazio precisa saber que ele não está no mandato —
@@ -507,6 +504,18 @@ export default function UploadForm({
               Lote grande: os arquivos foram enviados sem passar por esta página, e por isso o
               recibo de entrega vem do acompanhamento abaixo — ele conta os documentos conforme
               chegam e avisa se nada chegar.
+            </p>
+          )}
+          {/* O AVISO DA DESCOBERTA INCERTA. Só aparece quando o servidor não
+              conseguiu confirmar os nomes dos campos com o processamento antes
+              do envio (a descoberta tropeçou), e é exatamente o caso em que o
+              acompanhamento abaixo é a ÚNICA prova de que o lote chegou —
+              reforça, sem alarmar, o que o parágrafo acima já diz. */}
+          {sucesso.origemIncerta && (
+            <p className="mt-1 text-xs text-alerta-800">
+              Não consegui confirmar com o processamento os nomes dos campos antes deste envio.
+              Se nada aparecer no acompanhamento em alguns minutos, é esse o motivo — avise quem
+              cuida do sistema.
             </p>
           )}
           {/* O TEMPO É PROPORCIONAL AO LOTE, e a tela diz isso antes de a pessoa

@@ -69,3 +69,31 @@ primeiro como seus e fecha com "Tudo pronto" sem que nenhum documento dele tenha
 correção de 13/09 encolheu a janela (o `desde` do envio direto passou a ser lido DEPOIS do upload,
 não antes — num lote de 50 MB são minutos), mas o caso continua de pé. A solução é o pipeline
 gravar o identificador do lote no `documento` e o status filtrar por ele.
+
+## O bloqueio que criei virou o próximo incidente (mesmo dia, 13/09/2026)
+
+A revisão adversarial da correção acima pediu para recusar o envio direto quando a descoberta do
+nome do campo falhasse (`origem: "fallback"`), para não repetir o defeito da sessão 7 cont.¹²
+(200 opaco, zero token, nome de campo errado). Isso foi implementado como um **bloqueio total**:
+se `origem !== "html"` e a via era `direto`, a tela recusava enviar.
+
+**Bloqueou o lote da AMO no mesmo dia.** Em produção, a descoberta (`fetch` do HTML do Form)
+falhou — causa externa (instância do n8n, rede, ou HTML mudado; não investigada até o fim) — e o
+único caminho que existe para um lote de 44 arquivos / 40,4 MB ficou **impossível de usar**, sem
+alternativa nenhuma: pequeno demais para reduzir a levas sem reintroduzir o problema das múltiplas
+execuções, grande demais para o encaminhamento.
+
+**A causa do erro de julgamento:** tratar "não confirmado" como "inseguro o bastante para
+bloquear", sem notar que o MESMO risco (nome de campo chutado) já era aceito sem bloqueio nenhum
+no encaminhamento (`enviarPeloPortal`), que nunca checou `origem` — e nunca travou por causa
+disso. A rede de segurança que já bastava ali — a detecção de parada do acompanhamento
+(`vereditoDoLote`, `semPrimeiroSinalMs`), que declara "não chegou nada" sem inventar sucesso —
+cobre o caminho direto do mesmo jeito, e não depende de a descoberta ter confirmado nada antes.
+
+**A correção:** o bloqueio virou aviso (`origemIncerta`, mostrado junto do cartão de sucesso).
+O envio prossegue; se o nome estiver errado, a parada denuncia em minutos — a mesma garantia que
+o encaminhamento sempre teve.
+
+**A lição, para a próxima vez que uma revisão sugerir "recusar por segurança":** perguntar sempre
+se o caminho que já existe (e que ninguém questiona) aceita o mesmo risco sem bloquear — se
+aceita, um bloqueio novo não está fechando um buraco, está criando um a mais.
