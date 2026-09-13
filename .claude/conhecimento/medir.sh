@@ -15,6 +15,10 @@ medir() {
   local nome="$1"; shift
   local saida; saida=$(eval "$@" 2>/dev/null)
   printf '%-34s %8d bytes %5d linhas\n' "$nome" "${#saida}" "$(printf '%s' "$saida" | grep -c '')"
+  # `return 0` explícito: sem ele a função devolve o status do último comando —
+  # aqui, um `printf` — e um dia isso vira um `set -e` derrubando a medição por
+  # causa de um pipe que não tinha nada a ver. É o que a `shelldre:S7682` cobra.
+  return 0
 }
 
 echo "CUSTO HOJE — o grep que responde cada pergunta"
