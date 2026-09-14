@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, PISO_BATCHING_MS, normalizarUnidade, normalizarMoeda, extractionSchema, achatarGrupos, ehLinhaNaoMonetaria, escalaDeclaradaNaColuna } from './lib/extract.mjs';
 import { ALIASES } from './lib/taxonomia.mjs';
 import { parseEntidade } from './lib/classifier.mjs';
+import { mergeClassification } from './lib/merge.mjs';
 import { orcamentoDoLote, orcamentoDoLotePorConteudo, vereditoDaCotaDiaria, FRACAO_AVISO_RPD, custoEstimadoPorConteudo, tokensDeSaida, TETO_EXECUCAO_USD, CUSTO_ESTIMADO_DOC_USD, CUSTO_POR_MB_USD, CUSTO_MINIMO_CHAMADA_USD, bytesDoBinario, custoDaChamada, PRECO_USD_POR_MILHAO, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, PARCELA_ENTRADA_NA_CHAMADA, PESO_MINIMO_CLASSIFICACAO, VERSAO_ORCAMENTO, pesoDaChamadaDeClassificacao, TOKENS_POR_PAGINA_IMAGEM, TOKENS_CABECALHO_GRUPO, TOKENS_CONTA_BASE, TOKENS_POR_VALOR, CONTAS_POR_GRUPO, TOKENS_SAIDA_CLASSIFICACAO, MARGEM_ORCAMENTO_CONTEUDO, CARACTERES_POR_TOKEN, PAGINAS_MAX_MEDIDO, custoEstimadoPorTamanho, custoPorMbDeTextoUSD, CELULAS_POR_PAGINA_ESTIMADAS, CARACTERES_POR_CELULA_ESTIMADA, estimativaDoDocumento, esforcosDoProvedor, FORMATOS_DE_TEXTO, ehFormatoDeTexto } from './lib/custo.mjs';
 import { sha256Hex } from './lib/hash.mjs';
 import {
@@ -86,7 +87,14 @@ const MODEL_CLASSIFICACAO = MODELO_CLASSIFICACAO;
 const MODEL_EXTRACAO = MODELO_EXTRACAO;
 
 // Schemas estritos (mesma forma dos módulos lib/ia.mjs e lib/extract.mjs).
-const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
+const SCHEMA_CLASSIF = `{name:'classificacao_documento',strict:true,schema:{type:'object',additionalProperties:false,required:['tipo_taxonomia','entidade','cnpj','periodo_tipo','periodo_referencia','assinado','confianca','justificativa'],properties:{tipo_taxonomia:{type:'string',enum:${TIPO_TAXONOMIA_ENUM}},entidade:{type:['string','null']},cnpj:{type:['string','null']},periodo_tipo:{type:'string',enum:${PERIODO_TIPO_ENUM}},periodo_referencia:{type:['string','null']},assinado:{type:['boolean','null']},confianca:{type:'number',minimum:0,maximum:1},justificativa:{type:'string'}}}}`;
+// 0170: `cnpj` no schema ESTRITO (strict:true → precisa estar em `required`,
+// mesmo aceitando null — é assim que os outros campos opcionais já fazem
+// aqui, `entidade` e `periodo_referencia` inclusive). É o CNPJ do EMITENTE,
+// não de quem assina nem do escritório de contabilidade — ver o aviso no
+// prompt de sistema logo abaixo, escrito depois de a revisão da 0169 achar
+// esse cenário concreto: o rodapé do relatório às vezes traz o CNPJ do
+// contador, e lê-lo como identidade da empresa fundiria clientes diferentes.
 // Diagnóstico (entidade/confere tipo+período/legibilidade/resumo) + linhas
 // com `secao` (agrupador de planilha) — mesma chamada que já rodava sempre
 // para extrair linhas (não aumenta o nº de chamadas à OpenAI); espelha
@@ -114,6 +122,11 @@ const FONTE_DIAGNOSTICO_ERRO = `const diagnosticarErroApi = ${diagnosticarErroAp
 // arquivo nunca era lido para isso); ver o comentário longo em lib/classifier.mjs
 // para por que ela NÃO mexe na confiança.
 const FONTE_PARSE_ENTIDADE = `const parseEntidade = ${parseEntidade.toString()};`;
+
+// `mergeClassification` idem — embutida do fonte para o CNPJ (0170/0171) não
+// nascer divergente entre a lib e o nó: era cópia à mão antes desta fatia, e o
+// achado do teste v31 (Math.max da confiança) veio exatamente desse padrão.
+const FONTE_MERGE_CLASSIF = `const mergeClassification = ${mergeClassification.toString()};`;
 
 // `normalizarUnidade` — o mirror manual que ficou de fora quando todos os outros
 // passaram a ser embutidos, e que JÁ DIVERGIU. A cópia à mão em `normUnid` perdeu
@@ -1107,7 +1120,7 @@ const CODE_REQ_CLASSIF = `
 ${FONTE_PROVEDOR}
 const item=$input.item.json;
 const schema=${SCHEMA_CLASSIF};
-const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_CLASSIFICACAO}',schema,esforco:${JSON.stringify(ESFORCO_CLASSIFICACAO)},partes:[parteDeTexto(PROVEDOR,'Nome (pista fraca): '+(item.nome_original||'')), item.content_part],sistema:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar.'});
+const body=montarCorpoIA(PROVEDOR,{modelo:'${MODEL_CLASSIFICACAO}',schema,esforco:${JSON.stringify(ESFORCO_CLASSIFICACAO)},partes:[parteDeTexto(PROVEDOR,'Nome (pista fraca): '+(item.nome_original||'')), item.content_part],sistema:'Classifique o documento financeiro na taxonomia da Oria (Reestruturacao, Brasil). Periodos: 12M25=ano 2025; 1T25=1o tri/2025; L24M=ultimos 24 meses; 23,24,25=multiplos exercicios; ano isolado como 2025 tambem e valido. IMPORTANTE: sempre tente identificar o tipo mais provavel dentre os codigos conhecidos, mesmo com confianca baixa -- analise cabecalhos, rotulos de linhas, estrutura de colunas e demais pistas visuais. DESCONHECIDO e reservado somente para documentos genuinamente ilegiveis/corrompidos ou que claramente nao sao documentos financeiros. Baixa confianca nao e motivo para deixar de dar um palpite -- e motivo para registrar o palpite com confianca baixa correspondente e uma justificativa objetiva. Nunca invente valores (numeros, entidade, periodo) que nao estao no documento, mas sempre ofereca sua melhor hipotese de tipo. O campo justificativa e obrigatorio: explicacao objetiva e especifica (1-2 frases) do que voce viu (ou nao viu) no documento que sustenta a classificacao e a confianca escolhida -- evite respostas genericas como nao foi possivel determinar. CNPJ: extraia o CNPJ (14 digitos, com ou sem pontuacao) da EMPRESA DONA do documento, se aparecer no conteudo -- null se nao visivel. ATENCAO: documentos brasileiros de contabilidade costumam trazer VARIOS CNPJs na mesma pagina -- o do ESCRITORIO DE CONTABILIDADE que emitiu o relatorio (procure perto de "CRC", "Contador", rodape com responsavel tecnico), o do AUDITOR, e o da EMPRESA em si (normalmente no cabecalho, perto do nome dela). Extraia SOMENTE o da empresa dona do documento -- o mesmo criterio que ja vale para o campo entidade. Na duvida entre dois CNPJs, prefira null a arriscar o errado: um CNPJ errado funde esta empresa com OUTRA no sistema, silenciosamente.'});
 return {json:{...item, ia_body: body}};
 `.trim();
 
@@ -1126,24 +1139,7 @@ const CODE_PARSE_CLASSIF = `
 ${FONTE_DIAGNOSTICO_ERRO}
 ${FONTE_CUSTO_CHAMADA}
 ${FONTE_PROVEDOR}
-function mergeClassification(fromName, fromAI){
-  const nameHasTipo=!!fromName.tipo_taxonomia, aiHasTipo=!!fromAI.tipo_taxonomia;
-  let winner;
-  if(aiHasTipo&&nameHasTipo) winner=(fromAI.confianca??0)>=(fromName.confianca??0)?fromAI:fromName;
-  else if(aiHasTipo) winner=fromAI;
-  else if(nameHasTipo) winner=fromName;
-  else winner=fromAI;
-  return {
-    tipo_taxonomia:winner.tipo_taxonomia??null,
-    periodo_tipo:fromAI.periodo_ref?fromAI.periodo_tipo:(fromName.periodo_ref?fromName.periodo_tipo:null),
-    periodo_ref:fromAI.periodo_ref??fromName.periodo_ref??null,
-    assinado:fromAI.assinado??fromName.assinado??null,
-    entidade:fromAI.entidade??fromName.entidade??null,
-    confianca:winner.confianca??0,
-    fonte:winner===fromAI?'openai_conteudo':'nome_arquivo',
-    justificativa:fromAI.justificativa||'',
-  };
-}
+${FONTE_MERGE_CLASSIF}
 const src=$('Montar Req Classif').item.json;
 // \`content_part\` FICA no item (antes era descartado aqui junto do ia_body).
 // Motivo: o \`Montar Req Extracao\` precisa do PDF, e ele o buscava em
@@ -1175,6 +1171,7 @@ let p; try{p=typeof content==='string'?JSON.parse(content):content;}catch(e){
 const fromAI={
   tipo_taxonomia:p.tipo_taxonomia==='DESCONHECIDO'?null:p.tipo_taxonomia,
   entidade:p.entidade??null,
+  cnpj:p.cnpj??null,
   periodo_tipo:p.periodo_referencia?p.periodo_tipo:null,
   periodo_ref:p.periodo_referencia??null,
   assinado:p.assinado??null,
@@ -1715,6 +1712,7 @@ if(ach.problemas.length>0){
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,
+  cnpj: d.cnpj??null,
   tipo_confirma: (typeof d.tipo_confirma==='boolean')?d.tipo_confirma:null,
   tipo_sugerido: d.tipo_sugerido==='DESCONHECIDO'?null:(d.tipo_sugerido??null),
   periodo_tipo: d.periodo_referencia?d.periodo_tipo:null,
@@ -2232,12 +2230,15 @@ const nodes = [
     mode: 'append', numberInputs: 2,
   }),
 
-  // $14 usa notação nomeada (p_justificativa=>) para pular o p_threshold (14º
-  // parâmetro, mantém o default 0.7) sem precisar repeti-lo explicitamente.
+  // $14/$15/$16 usam notação nomeada (p_justificativa=>, p_fingerprint_extracao=>,
+  // p_cnpj=>) para pular o p_threshold (14º parâmetro posicional, mantém o
+  // default 0.7) sem precisar repeti-lo explicitamente. `p_cnpj` é da 0170 —
+  // o parâmetro existe no banco desde então; esta é a fatia que finalmente o
+  // preenche, lendo `$json.cnpj` (0169/0170/0171 no banco, este nó no n8n).
   node('Registrar Documento', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
-    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text) as r',
-    options: { ...PG_POR_ITEM, queryReplacement: `={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null, '${FINGERPRINT_EXTRACAO}'] }}` },
+    query: 'select fn_registrar_documento($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::numeric,$7::text,$8::origem_arquivo,$9::text,$10::text,$11::boolean,$12::text,$13::legibilidade, p_justificativa=>$14::text, p_fingerprint_extracao=>$15::text, p_cnpj=>$16::text) as r',
+    options: { ...PG_POR_ITEM, queryReplacement: `={{ [$json.caso_id, $json.entidade || null, $json.periodo_tipo || null, $json.periodo_ref || null, $json.tipo_taxonomia || null, $json.confianca, $json.fonte, 'supabase_storage', $json.caso_id + '/' + $json.nome_original, $json.nome_original, $json.assinado, $json.hash || null, 'ok', $json.justificativa || null, '${FINGERPRINT_EXTRACAO}', $json.cnpj || null] }}` },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   node('Recomputar Completude', 'n8n-nodes-base.postgres', 2.5, {
@@ -2322,10 +2323,15 @@ const nodes = [
   // Mesma razão do nó anterior: o `documento_id` volta como coluna para que o
   // `Reconciliar (Classe A)` tenha o que passar. Sem isso ele recebe `{resultado}`
   // e a cadeia inteira de checagens morre calada.
+  // 0172: o `p_cnpj` entra por NOME (`p_cnpj=>$13`) e não posicionalmente, porque
+  // o $12 já é dos FATOS na segunda linha da mesma query — trocar a ordem dos
+  // binds para encaixar o CNPJ no 12º moveria os fatos e quebraria a chamada de
+  // `fn_registrar_fatos` em silêncio. É o mesmo motivo de o `Registrar Documento`
+  // usar notação nomeada para os três últimos.
   node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: [
-      'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado,',
+      'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text, p_cnpj=>$13::text) as resultado,',
       // OS FATOS ENTRAM NA MESMA QUERY, e não em nó novo. Dois motivos, os dois
       // medidos nesta casa: nó a mais é aresta a mais no canvas (o layout.test
       // existe porque o canvas ficou ilegível), e principalmente — o nó Postgres
@@ -2335,7 +2341,7 @@ const nodes = [
       '       fn_registrar_fatos($2::uuid,$12::jsonb) as fatos,',
       '       $1::uuid as documento_id',
     ].join('\n'),
-    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null] }}" },
+    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null, $json.diagnostico?.cnpj ?? null] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do

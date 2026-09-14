@@ -112,56 +112,137 @@ fechar o plano antes de continuar. **Comece pela Fatia 2.**
 > consultas corrigidas para inspecionar isso estão na Fatia 5 abaixo (`entidade` NÃO tem coluna de
 > timestamp — use `min(documento.criado_em)` como proxy).
 >
-> **A SESSÃO 89 CONTINUOU DEPOIS DISSO — leia este bloco antes de qualquer coisa.**
+> **A SESSÃO 89 CONTINUOU DEPOIS DISSO, E O PR #223 (0165-0171) JÁ FOI MERGEADO.** Este bloco
+> descreve o que aconteceu DEPOIS do merge, na mesma sessão — branch `claude/kind-edison-nbk6vy`
+> reiniciada a partir da `main` por fast-forward (a doutrina de branch mergeada: nunca empilhar
+> commit novo em cima de história já mergeada).
 >
-> O dono decidiu, em resposta direta: **atacar o CNPJ agora**, **preparar o script de fusão
-> retroativa para ele executar**, e **fazer a Fatia 6 junto com o CNPJ**. Duas das três estão
-> feitas ou começadas:
+> O dono decidiu, em resposta direta, as três perguntas que a sessão fez: **atacar o CNPJ agora**,
+> **preparar o script de fusão retroativa para ele executar**, **fazer a Fatia 6 junto** — e uma
+> quarta, levantada por esta sessão: **o CNPJ também deveria RENOMEAR**, não só fundir. As quatro
+> estão feitas:
 >
 > | O quê | Commit | Estado |
 > |---|---|---|
 > | Script de fusão retroativa | `085d2cd` | **PRONTO, rodado de verdade contra banco de teste.** Espera o dono rodar a Parte 1 e colar o resultado |
-> | `0169` — o CNPJ como identidade | `20e659b` + `4c1c3f8` | **FEITO**, revisado por agente independente, 7 defeitos corrigidos |
-> | `0170` — o CNPJ atravessa a porta | `4c1c3f8` | **FEITO** |
-> | A IA LER o CNPJ do documento | — | **NÃO COMEÇADO. É AQUI QUE A PRÓXIMA SESSÃO PEGA.** |
-> | Fatia 6 (dois defeitos de extração) | — | **NÃO COMEÇADA**, e é para ir na MESMA passada do item acima |
+> | `0169` — o CNPJ como identidade | `20e659b`+`4c1c3f8` | **FEITO e MERGEADO** (PR #223), revisado por agente independente, 7 defeitos corrigidos |
+> | `0170` — o CNPJ atravessa a porta | `4c1c3f8` | **FEITO e MERGEADO** |
+> | `0171` — o CNPJ também renomeia | `03799ad` | **FEITO**, decisão do dono, 3 sinais de desempate (endereço colado > sufixo societário > comprimento) |
+> | A IA LER o CNPJ do documento | ver abaixo | **FEITO** — schema, prompt, `mergeClassification`, nó `Registrar Documento` |
+> | Fatia 6 (dois defeitos de extração) | ver abaixo | **FEITO** — só prompt, sem invariante SQL possível |
 >
-> **O PRÓXIMO PASSO EXATO, com os arquivos e as linhas já mapeados:**
+> **A EXTRAÇÃO DO CNPJ, com os arquivos exatos que mudaram** (o mapa que a sessão anterior deixou
+> estava certo, conferido linha por linha antes de editar):
 >
-> O CNPJ hoje chega **nulo** em `fn_registrar_documento`, então a 0169 e a 0170 estão corretas e
-> **dormentes**. Falta a IA lê-lo. O mapa (conferido, não suposto):
+> 1. `SCHEMA_CLASSIF` (`N8N/build-workflow.mjs`) ganhou `cnpj:{type:['string','null']}`, em
+>    `properties` E em `required` (schema `strict:true`).
+> 2. O prompt de sistema da classificação (`CODE_REQ_CLASSIF`) ganhou a instrução do campo e o
+>    aviso explícito: documento contábil brasileiro tem VÁRIOS CNPJs na mesma página (escritório
+>    de contabilidade, auditor, empresa) — extrair só o da empresa dona, e **preferir null a
+>    arriscar o errado**, porque um CNPJ errado funde esta empresa com OUTRA no sistema.
+> 3. **`mergeClassification` deixou de ser cópia à mão e passou a ser embutida por `toString()`**
+>    (como `parseEntidade`/`diagnosticarErroApi` já eram) — decisão tomada nesta fatia, não só
+>    pedida: como eu já ia editar essa função para acrescentar `cnpj`, copiar a edição à mão para
+>    dentro do template literal reintroduziria exatamente o risco que este arquivo existe para
+>    matar (foi o `Math.max` da confiança de classificação, medido no HANDOFF). Fonte única agora:
+>    `N8N/lib/merge.mjs`.
+> 4. O nó `Registrar Documento` ganhou `p_cnpj=>$16::text` na query e `$json.cnpj || null` no
+>    `queryReplacement` — o parâmetro que a `0170` criou no banco.
 >
-> 1. **`N8N/build-workflow.mjs:89`, `SCHEMA_CLASSIF`** — é ESTE o schema que produz a entidade que
->    chega em `fn_registrar_documento` (NÃO o `SYSTEM_PROMPT` do `extract.mjs`, que alimenta o
->    diagnóstico e vai para `fn_registrar_diagnostico`). Acrescentar `cnpj:{type:['string','null']}`
->    em `properties` **e** em `required` (o schema é `strict:true`).
-> 2. **O prompt de sistema da classificação**, inline em `CODE_REQ_CLASSIF`
->    (`N8N/build-workflow.mjs:1106`, a string `sistema:'Classifique o documento…'`) — dizer o que é
->    o campo, e **dizer explicitamente que o CNPJ do rodapé costuma ser o do ESCRITÓRIO DE
->    CONTABILIDADE, não o do emitente**. Esse é o cenário que a revisão da 0169 levantou e é o que
->    funde três clientes num bloco só se a IA ler o rodapé.
-> 3. **`mergeClassification`** (`N8N/build-workflow.mjs:1138-1145`) — `cnpj: fromAI.cnpj ?? null`.
->    Só a IA lê conteúdo; o nome do arquivo nunca traz CNPJ.
-> 4. **O nó `Registrar Documento`** (`N8N/build-workflow.mjs:2239`) — a query ganha
->    `p_cnpj=>$16::text` e o `queryReplacement` ganha `$json.cnpj || null`. A 0170 já criou o
->    parâmetro.
-> 5. **Os espelhos que isso arrasta** (o CLAUDE.md avisa: o bloco de comandos é espelho do CI, e
->    `.github/workflows/suites.yml` é a fonte): `N8N/test/espelho-inline.test.mjs`,
->    `N8N/test/workflow-sim.test.mjs`, e os geradores têm de regerar **igual ao commitado**
->    (`git diff --exit-code`).
+> **ARMADILHA ENCONTRADA E CORRIGIDA ANTES DO COMMIT:** o texto do aviso sobre CNPJ usava aspas
+> simples (`'CRC'`, `'Contador'`) DENTRO de uma string JS já delimitada por aspas simples
+> (`sistema:'...'`) — quebrou a sintaxe do nó gerado (`SyntaxError: Unexpected identifier 'CRC'`),
+> pego pelos 542 testes do n8n (6 reprovaram). Trocado para aspas duplas.
 >
-> **A FATIA 6 VAI JUNTO PORQUE É O MESMO ARQUIVO E A MESMA RODADA DE MEDIÇÃO** — foi a razão que o
-> dono escolheu. Mexer no prompt três vezes gastaria três rodadas de IA para medir.
+> **OS PORTÕES ARRASTADOS, TODOS ATUALIZADOS E VERDES:**
+> - `espelho-inline.test.mjs`: dois casos novos em `mergeClassification` (com e sem `cnpj`).
+> - `workflow-sim.test.mjs`: o assert de aridade do `queryReplacement` (15→16 posições) e um
+>   assert novo confirmando `params[15] === null` (nunca `undefined`) quando não há CNPJ.
+> - `node --test 'N8N/test/*.test.mjs'`: **542/542 verde.**
+> - `node N8N/medir-regua-cobertura.mjs` e `node N8N/medir-custo-book.mjs`: **verdes**, sem
+>   nenhuma mudança de número — esperado, os dois rodam sobre TEXTO/fixture, não chamam a IA.
+> - `node N8N/build-workflow*.mjs` (os 4): regerados; só `workflow.e1-ingestao.json` mudou.
 >
-> **O QUE FICOU MEDIDO E NÃO RESOLVIDO (limite declarado, não esquecimento):** com o CNPJ, o NOME
-> que sobrevive ainda é o da primeira chegada — na ordem invertida, o contaminado pelo endereço
-> ("…DE SURUBIJU, 1930"), que é o que vai para o book. Há assert medindo isso em
-> `cnpj_identidade.test.sql`. O CNPJ funde, não renomeia; renomear entidade é decisão sobre dado do
-> cliente. **É a pergunta a levar ao dono na próxima sessão.**
+> **FATIA 6 — os dois defeitos de qualidade de extração — FEITA, só no prompt do `SYSTEM_PROMPT`
+> de `N8N/lib/extract.mjs`:**
+> - Defeito 1 (RESERVAS/OUTRAS CONTAS trocadas por indentação): acrescentado um parágrafo sobre
+>   FRONTEIRA ENTRE SEÇÕES IRMÃS — quando duas seções vizinhas ficam próximas no documento, uma
+>   linha de ajuste/dedução perto da transição pertence à que a ANTECEDE, salvo indentação clara
+>   em contrário; na dúvida, testar qual hipótese fecha o TOTAL IMPRESSO.
+> - Defeito 2 (GENERAL TABACO escaneada, PASSIVO CIRCULANTE = PASSIVO): acrescentado um parágrafo
+>   sobre TABELA DENSA EM IMAGEM ESCANEADA — o risco maior é o ALINHAMENTO linha↔valor, não o
+>   número; um total repetindo o mesmo valor de uma linha vizinha que deveria ser menor é o sinal
+>   mais forte de desalinhamento, e a saída certa na incerteza é confiança BAIXA na linha, não
+>   aceitar o valor calado.
 >
-> **Fatia 6 segue NÃO implementada, de propósito** — ver a seção dela.
-> **Suíte completa verde** (`Supabase/test/run.sh`, `TODOS OS TESTES PASSARAM`), índice do
-> conhecimento regerado e conferido (`55 verificações OK / 0 falhas`).
+> **O QUE NENHUMA SUÍTE DESTA SESSÃO PROVA, dito com todas as letras:** nada disto foi validado
+> contra um documento real passando pela OpenAI. Esta sessão **não tem credencial de OpenAI nem
+> acesso à instância do n8n** (confirmado por `env` — nenhuma variável `OPENAI`/`N8N` presente).
+> Os testes determinísticos provam que o CÓDIGO está certo (o JSON do nó é sintaticamente válido,
+> o schema pede o campo certo, o parâmetro chega na posição certa, o parse não quebra) — **não**
+> que a IA de fato lê o CNPJ certo do PDF, nem que o prompt da Fatia 6 melhora a leitura de
+> verdade. **A validação com um lote real é a primeira coisa que o dono faz na próxima rodada**, e
+> o sinal a olhar é simples: `select razao_social, cnpj from entidade where caso_id = ...` depois
+> de rodar um lote — `cnpj` deixando de ser NULO é a prova de que o fio funciona.
+>
+> **A DECISÃO SOBRE RENOMEAR (que a sessão anterior tinha deixado em aberto) FOI TOMADA:** o dono
+> respondeu SIM — o CNPJ também deve adotar o nome mais completo, não só fundir. A `0171` implementa
+> isso com três sinais de desempate (ver o cabeçalho da migration): cara de endereço colado NUNCA
+> vence mesmo sendo mais longo (é o que resolve "SURUBIJU, 1930" 55 chars vs "MARCAS LTDA" 52
+> chars, o caso que motivou a pergunta), depois sufixo societário, depois comprimento cru.
+>
+> **Fatia 5 (fusão retroativa) segue esperando o dono rodar a Parte 1 do script** — nenhuma
+> mudança de estado desde a nota anterior.
+>
+> **DUAS VOLTAS DE REVISÃO DEPOIS (14/09, fim da sessão 89).** O dono pediu um loop de revisão e
+> correção. Duas rodadas, com o `revisor-defeito-silencioso` sobre o diff de cada uma:
+>
+> **1ª volta — seis defeitos, todos reproduzidos rodando SQL antes de aceitar:** o CNPJ do
+> escritório de contabilidade reescrevia o nome de um cliente com o de outro; o renomeio criava
+> duas entidades homônimas (e o casamento exato escolhia uma no escuro, sem evento); a guarda
+> canônica escondia o caso em que o sufixo É a diferença; `S.A.` não era reconhecido como sufixo;
+> o CNPJ só chegava pela classificação (**19 de 38** documentos do book-canastra) e
+> `fn_registrar_diagnostico` ainda chamava `fn_upsert_entidade` com dois argumentos;
+> `classificationSchema()` da lib ficou sem o campo. Corrigidos em `2d73142` e `75d47eb`.
+>
+> **2ª volta — e ela achou que a minha própria correção era de sintoma.** Duas coisas graves:
+> (a) a 0172 commitada **não funcionava** — o `p_cnpj` chegava e morria, porque a chamada que o
+> recebia só roda quando o documento ainda não tem entidade, e `fn_registrar_documento` sempre
+> resolve uma antes (medido: `cnpj=(NULO)` depois do diagnóstico); (b) a guarda do renomeio media
+> **comprimento de prefixo** em vez de relação de truncamento, e errava nos dois sentidos —
+> autorizava `PADARIA DO JOAO` → `PADARIA DO JOSE COMERCIO` e `ARAUCARIA BIOENERGIA` →
+> `ARAUCARIA IMOBILIARIA` (o incidente real do araucária, sem o token "SPE"), e recusava
+> truncamento à esquerda e `S.A.`. Corrigidos em `f37c2a4`.
+>
+> **O QUE A 2ª VOLTA APONTOU E NÃO FOI CORRIGIDO — declarado, não esquecido:**
+>
+> 1. **Nenhuma tela lê os eventos de entidade.** `entidade_cnpj_casou`,
+>    `entidade_renomeada_por_cnpj`, `entidade_renomeio_recusado`, `entidade_cnpj_aprendido` vão
+>    para `evento_auditoria` e **zero ocorrências** em `portal/src` — a única página que lê a
+>    tabela (`autonomia/page.tsx`) filtra só os eventos de dial. Na prática: renomeio recusado é
+>    invisível, e CNPJ suspeito também. O rastro existe para auditoria, não para revisão. **É a
+>    próxima coisa a decidir com o dono** — uma tela, ou uma pendência (que `fn_upsert_entidade`
+>    não pode abrir, porque não conhece documento; teria de ser em `fn_registrar_diagnostico`).
+> 2. **A 0172 entrega identidade fiscal em 100% do lote, mas renomeio em ~50%.** O caminho do
+>    diagnóstico chama `fn_entidade_aprender_cnpj` (que só grava o CNPJ); quem renomeia é
+>    `fn_upsert_entidade`, que nesse ramo não roda. Para um documento único com nome contaminado,
+>    o nome fica no book até chegar um segundo documento pela classificação. O conserto seria
+>    extrair o renomeio para função própria e chamá-la dos dois lados.
+> 3. **O portão de topologia do n8n é mais fraco do que o commit dizia.** O defeito original era de
+>    fluxo de DADO (`$json.cnpj` só é populado no ramo de fallback), não de topologia — e
+>    `Registrar Documento` nunca esteve atrás do `Precisa Fallback?`. Os asserts que reprovam são
+>    os de mecanismo (`diagnostico?.cnpj`, `p_cnpj=>`), não o de comportamento. E a travessia usa
+>    os sucessores DIRETOS da saída falsa, não o fecho transitivo — funciona por acidente de
+>    topologia hoje.
+> 4. **O buraco do `S.A.` em `fn_entidade_canonica` (0030) continua lá**, de propósito: ela é a
+>    base do casamento EXATO de todo o produto. A 0171 resolveu localmente com
+>    `fn_entidade_canonica_forte`.
+> 5. **`fn_nome_tem_sufixo_societario` tem um falso positivo novo**: `LABORATORIOS B.SA` → true
+>    (o achatamento transforma `b.sa` em `b sa`). Impacto: um empate de sinal 2 resolvido a favor
+>    do nome errado. Medido, julgado não valer a correção.
+> 6. **Continua sem validação contra lote real** — sem credencial de OpenAI nem acesso ao n8n nesta
+>    sessão. Tudo acima é determinístico e medido contra SQL; nada prova que a IA lê o CNPJ certo
+>    do PDF.
 
 ### Fatia 1 — TPM real da conta — ✅ FEITA (commit `135280f`)
 `N8N/lib/provedor.mjs` (30000→500000) + os 4 espelhos que isso arrastou (`PISO_BATCHING_MS`
@@ -320,7 +401,7 @@ precisa RODAR, não só ler).
 
 **Efeito esperado:** resolve ~10 das 37 divergências "Receita Bruta vs Faturamento".
 
-### Fatia 5 — OMNIBEAUTY virou 4 entidades — ⚠️ PARCIAL (`eb0de33`, migration `0168`: 4 → 3; o resto precisa do CNPJ e do dono)
+### Fatia 5 — OMNIBEAUTY virou 4 entidades — ✅ CÓDIGO FEITO (`eb0de33`+`20e659b`+`4c1c3f8`+`03799ad`+extração desta sessão: 0168-0171, migrations 4→3→1 com CNPJ; falta VALIDAR com lote real e o dono rodar a fusão retroativa)
 
 **O que a sessão 88 provou sem banco:** rodando `fn_mesma_entidade` (migração 0030) à mão contra
 as 4 variantes do nome que aparecem no export —
@@ -389,7 +470,7 @@ order by criado_em;
    "teste 143" assim que houver acesso ao banco certo — NÃO faça isto sem confirmar antes com o
    dono, é uma mudança que apaga linhas de produção.
 
-### Fatia 6 — os dois defeitos de extração — documentados, propositalmente NÃO corrigidos
+### Fatia 6 — os dois defeitos de extração — ✅ PROMPT FEITO (esta sessão, `N8N/lib/extract.mjs`); NÃO validado contra lote real
 
 1. **`OMNIBEAUTY - BALANÇO 2023.pdf`, RESERVAS/OUTRAS CONTAS trocados em R$ 300.000.** Confirmado
    por aritmética exata contra o texto do PDF: `RESERVAS(8.090.863,63) = OUTRAS CONTAS(8.390.863,63)

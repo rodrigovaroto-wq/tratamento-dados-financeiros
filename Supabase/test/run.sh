@@ -539,6 +539,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/cnpj_identidade.test.sql 2>&1 
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0171 — o CNPJ também renomeia, não só funde (os 4 nomes reais, nas duas ordens)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/cnpj_renomeia.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

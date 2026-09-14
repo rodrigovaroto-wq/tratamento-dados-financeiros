@@ -31,6 +31,12 @@ export function mergeClassification(fromName, fromAI) {
     periodo_ref: fromAI.periodo_ref ?? fromName.periodo_ref ?? null,
     assinado: fromAI.assinado ?? fromName.assinado ?? null,
     entidade: fromAI.entidade ?? fromName.entidade ?? null,
+    // 0170/0171: o CNPJ só pode vir do CONTEÚDO (o nome do arquivo nunca carrega
+    // registro fiscal) — sem fallback para fromName por isso, ao contrário de
+    // `entidade`. Vira o parâmetro que `fn_upsert_entidade` usa como identidade
+    // (0169): CNPJ igual funde sem olhar nome, e agora também escolhe o nome
+    // mais completo entre as variantes (0171).
+    cnpj: fromAI.cnpj ?? null,
   // A CONFIANÇA É A DO VENCEDOR, NUNCA O MÁXIMO DAS DUAS.
   //
   // `Math.max` estava aqui e é um defeito de SEGURANÇA, não de estética: a

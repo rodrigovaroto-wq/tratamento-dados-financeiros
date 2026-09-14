@@ -47,6 +47,9 @@ declare
   v_b     uuid;
   v_n     int;
   v_nomes text;
+  v_r     jsonb;
+  v_doc   uuid;
+  v_ver   uuid;
 begin
   raise notice '--- 1. os quatro nomes reais COM o CNPJ real: UMA entidade ---';
   v_caso := (fn_upsert_caso('CNPJ — OMNIBEAUTY, ordem do lote'))::uuid;
@@ -80,22 +83,31 @@ begin
     'ordem invertida, mesma CONTAGEM — o CNPJ não pergunta quem chegou primeiro',
     format('%s entidade(s)', v_n));
 
-  -- MAS O NOME QUE SOBREVIVE AINDA DEPENDE DA ORDEM, e este assert existe para
-  -- que isso seja MEDIDO em vez de descoberto no book do cliente. Achado na
-  -- revisão desta fatia: sob a 0168 a fusão escolhia entre linhas que já
-  -- existiam e o `order by length desc` dava o nome mais completo; sob a regra 1
-  -- só UMA linha chega a existir, então o nome é congelado pela primeira
-  -- chegada — e aqui a primeira é a que tem o ENDEREÇO colado.
+  -- ESTE ERA O LIMITE DECLARADO até a 0171, e o comentário antigo já dizia:
+  -- "se um dia alguém ensinar isso à função, este assert reprova — e é o
+  -- lugar certo para a decisão ser revista". A 0171 é essa decisão (o dono
+  -- pediu, em resposta direta): agora o CNPJ TAMBÉM renomeia para o nome mais
+  -- completo, não só funde. A medição do DESEMPATE em si (por que "…DE MARCAS
+  -- LTDA" vence "…DE SURUBIJU, 1930" mesmo sendo mais curto) está em
+  -- `cnpj_renomeia.test.sql`, não aqui — este bloco só confere que o
+  -- resultado final, nesta ordem de chegada, é o nome CERTO.
+  -- O NOME QUE SOBREVIVE NESTA ORDEM É "…DE SURUBIJU", e o número é medido, não
+  -- desejado: a 0171 renomeia o contaminado ("…SURUBIJU, 1930") para o truncado
+  -- e depois para "…DE SURUBIJU", mas PARA ALI — "…DE SURUBIJU" e
+  -- "…DE MARCAS LTDA" não são truncamento um do outro e nenhum dos dois está
+  -- contaminado, então `fn_pode_renomear_por_cnpj` RECUSA, com rastro.
   --
-  -- É LIMITE DECLARADO, não conserto pendente disfarçado de teste: renomear
-  -- entidade é decisão sobre dado do cliente, e nenhuma regra de nome que eu
-  -- saiba escrever distingue "…DE SURUBIJU, 1930" de uma razão social legítima
-  -- que por acaso termine em número. Se um dia alguém ensinar isso à função,
-  -- este assert reprova — e é o lugar certo para a decisão ser revista.
+  -- É a guarda funcionando, não um defeito: a mesma recusa é o que impede
+  -- "ARAUCÁRIA BIOENERGIA" de virar "ARAUCÁRIA IMOBILIÁRIA" quando um CNPJ
+  -- errado as funde (medido em `cnpj_renomeia.test.sql`, bloco 12). O ganho da
+  -- fatia — tirar o ENDEREÇO do nome — está inteiro; escolher entre MARCAS e
+  -- SURUBIJU exigiria saber qual é a razão social de verdade, e nenhum dos dois
+  -- documentos diz isso.
   perform teste_assert_cnpj(
-    (select razao_social from entidade where caso_id = v_caso) = c_s1930,
-    'LIMITE DECLARADO: o NOME que sobrevive é o da primeira chegada, mesmo sendo o contaminado '
-      || 'pelo endereço — o CNPJ funde, não renomeia',
+    (select razao_social from entidade where caso_id = v_caso) = c_s,
+    'o endereço colado SAI do nome ("…SURUBIJU, 1930" → "…DE SURUBIJU"), e a troca entre dois '
+      || 'nomes que não são truncamento um do outro é RECUSADA — ver cnpj_renomeia.test.sql, '
+      || 'bloco 12',
     (select razao_social from entidade where caso_id = v_caso));
 
   raise notice '--- 3. CNPJ NULO NÃO MUDA NADA: os mesmos quatro nomes dão TRÊS ---';
@@ -247,6 +259,75 @@ begin
     (select count(*) from documento where caso_id = v_caso) = 2,
     'os dois documentos ficaram na mesma entidade (nenhum ficou orfao no caminho)',
     format('%s documento(s)', (select count(*) from documento where caso_id = v_caso)));
+
+  raise notice '--- 9. 0172: o CNPJ pelo DIAGNOSTICO, que roda para TODO documento ---';
+  -- A chamada de CLASSIFICAÇÃO por conteúdo só roda no ramo de fallback — 19 de
+  -- 38 documentos do book-canastra, medido por `medir-custo-book.mjs`. Os
+  -- outros 19 chegam SEM CNPJ ao `fn_registrar_documento`, e é o DIAGNÓSTICO
+  -- (a chamada de extração, a única leitura de conteúdo garantida) que tem de
+  -- cobri-los.
+  --
+  -- ESTE BLOCO EXISTE PORQUE A PRIMEIRA CORREÇÃO DESTE DEFEITO FOI DE SINTOMA:
+  -- acrescentei `p_cnpj` à assinatura de `fn_registrar_diagnostico` e o passei
+  -- para `fn_upsert_entidade` — mas aquela chamada SÓ roda quando o documento
+  -- ainda não tem entidade, e `fn_registrar_documento` sempre resolve uma
+  -- antes. Medido: o CNPJ entrava e morria, a entidade seguia com `cnpj` nulo.
+  -- O teste que faltava era este: o fio inteiro, do jeito que produção usa.
+  v_caso := (fn_upsert_caso('CNPJ — pelo diagnóstico'))::uuid;
+  v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/diag1.pdf', 'BAL 2024.pdf', true,
+    'HASH-CNPJ-DIAG-1', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+
+  perform teste_assert_cnpj((select cnpj from entidade where caso_id = v_caso) is null,
+    'PRÉ-CONDIÇÃO: o documento entrou SEM CNPJ (é o caso dos que não passam pela classificação)');
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, c_t, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  perform teste_assert_cnpj(
+    (select fn_cnpj_canonico(cnpj) from entidade where caso_id = v_caso) = '36193378000104',
+    'o DIAGNÓSTICO ensina o CNPJ à entidade — sem isto, metade do lote chega sem identidade '
+      || 'fiscal e sem sintoma nenhum',
+    coalesce((select cnpj from entidade where caso_id = v_caso), '(nulo)'));
+
+  perform teste_assert_cnpj(exists (
+      select 1 from evento_auditoria ev join entidade e on ev.entidade_ref = 'entidade:' || e.id
+      where e.caso_id = v_caso and ev.acao = 'entidade_cnpj_aprendido'),
+    'com o rastro da 0169 — o aprendizado pelo diagnóstico não é mais calado que o outro');
+
+  -- E o efeito que interessa: o próximo documento, com o nome contaminado e o
+  -- mesmo CNPJ, cai na MESMA entidade.
+  v_r := fn_registrar_documento(v_caso, c_s1930, 'ano', '2023', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/diag2.pdf', 'BAL 2023.pdf', true,
+    'HASH-CNPJ-DIAG-2', 'ok', p_cnpj => c_cnpj);
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_cnpj(v_n = 1,
+    'e o documento seguinte, com o nome contaminado e o mesmo CNPJ, cai na MESMA entidade',
+    format('%s entidade(s)', v_n));
+
+  raise notice '--- 10. CONTRAPOSITIVO: entidade DIVERGENTE nao aprende o CNPJ ---';
+  -- Se o diagnóstico NÃO confirma a entidade registrada, a função está em
+  -- dúvida sobre qual é a empresa certa — e gravar um CNPJ na entidade ERRADA
+  -- é pior que não gravar nenhum: pela regra 1 da 0169 ele passaria a ATRAIR
+  -- todo documento futuro da empresa de verdade para dentro da errada, sem
+  -- olhar nome. Divergência de entidade é pergunta para humano.
+  v_caso := (fn_upsert_caso('CNPJ — diagnóstico divergente'))::uuid;
+  v_r := fn_registrar_documento(v_caso, 'PADARIA DO JOAO LTDA', 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/diag3.pdf', 'BAL.pdf', true, 'HASH-CNPJ-DIAG-3', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+
+  perform fn_registrar_diagnostico(v_doc, v_ver, 'METALURGICA SAO PEDRO COMERCIO LTDA',
+    true, 'BALANCO', 'anual', '12M24', 'ok', null, 'resumo', 'justificativa',
+    p_cnpj => '11.222.333/0001-81');
+
+  perform teste_assert_cnpj(
+    (select cnpj from entidade where caso_id = v_caso and razao_social = 'PADARIA DO JOAO LTDA')
+      is null,
+    'entidade que o diagnóstico NÃO confirma não recebe o CNPJ do conteúdo — um CNPJ na entidade '
+      || 'errada atrai todo documento futuro da empresa certa para dentro dela');
 
   raise notice 'CNPJ IDENTIDADE OK — o CNPJ manda, o nome só decide quando não há CNPJ, e '
                'ausência não decide nada';

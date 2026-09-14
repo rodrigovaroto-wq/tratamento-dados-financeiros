@@ -110,6 +110,16 @@ export const SYSTEM_PROMPT = [
   '  sócio) — o bloco de assinatura (com CRC, CPF, "Contador", "Administrador") é o SIGNATÁRIO, não',
   '  a entidade. Se o documento combina VÁRIAS empresas (colunas por empresa — ver LINHAS abaixo),',
   '  use o nome do GRUPO se houver um; senão deixe null (não escolha uma das empresas ao acaso).',
+  'cnpj: o CNPJ da MESMA empresa que você indicou em "entidade" — 14 dígitos, com ou sem',
+  '  pontuação; null se não estiver visível (NUNCA invente, e NUNCA derive de outro documento).',
+  '  ATENÇÃO, e este é o erro mais caro deste campo: documento contábil brasileiro costuma trazer',
+  '  VÁRIOS CNPJs na mesma página — o do ESCRITÓRIO DE CONTABILIDADE que emitiu o relatório (perto',
+  '  de "CRC", "Contador", "responsável técnico", normalmente no RODAPÉ), o do AUDITOR, e o da',
+  '  EMPRESA (normalmente no cabeçalho, junto do nome dela). Só o da empresa dona serve. É o mesmo',
+  '  critério do campo "entidade": quem ASSINA não é quem o documento descreve.',
+  '  NA DÚVIDA ENTRE DOIS CNPJs, responda null. Um CNPJ errado não deixa o dado incompleto — ele',
+  '  FUNDE esta empresa com outra do mesmo mandato, em silêncio, porque o CNPJ tem prioridade',
+  '  sobre o nome na identificação. Null é a resposta segura; um palpite não é.',
   'tipo_confirma / tipo_sugerido: você recebe uma DICA de tipo (vinda do nome do arquivo).',
   '  Leia o conteúdo e diga se ele bate (tipo_confirma=true) com a dica. tipo_sugerido é o',
   '  código da taxonomia que o CONTEÚDO sugere (pode ser igual ou diferente da dica — use',
@@ -242,6 +252,21 @@ export const SYSTEM_PROMPT = [
   'imediato é o rótulo mais próximo ACIMA com recuo MENOR. Quando não há recuo e não dá para saber,',
   'aponte para o agrupador que você tem certeza: errar para CIMA (apontar para a seção maior) é o',
   'estado de hoje e é preferível a inventar um pai que o documento não tem.',
+  'FRONTEIRA ENTRE DUAS SEÇÕES IRMÃS (ex.: "Reservas" terminando e "Outras Contas do Patrimônio',
+  'Líquido" começando logo abaixo): é o ponto de MAIOR risco de anexar uma linha ao grupo errado,',
+  'porque as duas letras de rótulo ficam próximas e o recuo pode ser igual. Uma linha de',
+  'AJUSTE/DEDUÇÃO perto dessa fronteira (ex.: "Distribuição de Lucros" logo após o fim de um',
+  'subgrupo) pertence ao grupo que a ANTECEDE no documento, salvo indentação clara em contrário —',
+  'e, na dúvida, teste as duas hipóteses: o TOTAL IMPRESSO do grupo bate com a soma incluindo essa',
+  'linha, ou sem ela? Use o que fecha. Aconteceu com dado real: uma linha de dedução anexada ao',
+  'subgrupo vizinho deslocou R$300.000 entre duas contas que, cada uma sozinha, fecham exatamente.',
+  'TABELA DENSA EM IMAGEM ESCANEADA (sem camada de texto selecionável): o risco maior não é o',
+  'número em si, é o ALINHAMENTO linha↔valor — confirme visualmente que cada valor está na MESMA',
+  'LINHA HORIZONTAL do rótulo antes de emitir. Um total impresso (ex.: "PASSIVO") repetindo o',
+  'MESMO valor de uma linha vizinha (ex.: "PASSIVO CIRCULANTE") que deveria ser menor é o sinal',
+  'mais forte de desalinhamento — releia a região com atenção redobrada; se a incerteza persistir',
+  'mesmo assim, é preferível emitir a linha com confiança ("cf") BAIXA a aceitar um valor que você',
+  'não tem certeza de ter lido na linha certa.',
   'REGRA DAS COLUNAS (é o coração do formato): "cols" descreve, UMA VEZ por grupo, TODAS as colunas',
   'de valor daquela seção — não só período e empresa. Cada coluna tem entidade_coluna (nome da',
   'EMPRESA no cabeçalho, quando há várias empresas lado a lado) e periodo_coluna (o RÓTULO da',
@@ -465,12 +490,18 @@ export function extractionSchema() {
           type: 'object',
           additionalProperties: false,
           required: [
-            'entidade', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo', 'periodo_referencia',
-            'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro', 'resumo', 'justificativa',
-            'fatos',
+            'entidade', 'cnpj', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo',
+            'periodo_referencia', 'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro',
+            'resumo', 'justificativa', 'fatos',
           ],
           properties: {
             entidade: { type: ['string', 'null'] },
+            // 0172: o CNPJ do EMITENTE. Este é o caminho que roda para TODO
+            // documento — a classificação por conteúdo só roda no fallback (19
+            // de 38 no book-canastra), então é aqui que a identidade fiscal
+            // cobre o lote inteiro. Aceita null e MESMO ASSIM entra em
+            // `required`: o schema é `strict`, e é como `entidade` já faz.
+            cnpj: { type: ['string', 'null'] },
             tipo_confirma: { type: 'boolean' },
             tipo_sugerido: { type: 'string', enum: codigosConhecidos() },
             periodo_tipo: { type: 'string', enum: PERIODO_TIPO_ENUM },
@@ -1169,6 +1200,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = 
   const d = p.diagnostico || {};
   const diagnostico = {
     entidade: d.entidade ?? null,
+    cnpj: d.cnpj ?? null,
     tipo_confirma: typeof d.tipo_confirma === 'boolean' ? d.tipo_confirma : null,
     tipo_sugerido: d.tipo_sugerido === 'DESCONHECIDO' ? null : (d.tipo_sugerido ?? null),
     periodo_tipo: d.periodo_referencia ? d.periodo_tipo : null,

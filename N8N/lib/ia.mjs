@@ -76,10 +76,15 @@ export function classificationSchema() {
     schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['tipo_taxonomia', 'entidade', 'periodo_tipo', 'periodo_referencia', 'assinado', 'confianca', 'justificativa'],
+      required: ['tipo_taxonomia', 'entidade', 'cnpj', 'periodo_tipo', 'periodo_referencia', 'assinado', 'confianca', 'justificativa'],
       properties: {
         tipo_taxonomia: { type: 'string', enum: codigosConhecidos() },
         entidade: { type: ['string', 'null'] },
+        // 0170: MESMA forma do `SCHEMA_CLASSIF` do gerador, e o comentário de lá
+        // afirma que as duas são iguais. Esta ficou para trás quando o campo
+        // entrou — achado na revisão: latente hoje (só os testes usam esta lib),
+        // silencioso no dia em que deixar de ser.
+        cnpj: { type: ['string', 'null'] },
         periodo_tipo: { type: 'string', enum: ['anual', 'trimestre', 'multi', 'data-base', 'outro', 'desconhecido'] },
         periodo_referencia: { type: ['string', 'null'] },
         assinado: { type: ['boolean', 'null'] },

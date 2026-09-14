@@ -565,6 +565,60 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   }
 });
 
+test('o CNPJ chega ao banco pelo caminho que roda para TODO documento, não só no fallback', () => {
+  // O PORTÃO QUE FALTAVA, e ele nasceu de um defeito real: a primeira fiação do
+  // CNPJ leu o campo só na chamada de CLASSIFICAÇÃO, que roda apenas quando
+  // `precisa_fallback_ia` é verdadeiro (o nome do arquivo não resolveu
+  // tipo+período com confiança ≥ 0,70). MEDIDO no book que este repositório
+  // versiona, por `medir-custo-book.mjs`: 19 de 38 documentos do book-canastra
+  // passam por ela. Os outros 19 chegariam ao banco com `cnpj` NULO — e sem
+  // sintoma nenhum, porque a identidade simplesmente continuaria sendo o nome,
+  // na metade do lote, exatamente como antes da 0169.
+  //
+  // Este teste afirma o COMPORTAMENTO ("o CNPJ chega sempre"), não o mecanismo:
+  // ele não exige que seja o `Registrar Diagnostico` a fazê-lo — exige que ALGUM
+  // nó que grava CNPJ esteja fora do ramo condicional.
+  const porNome = new Map(wf.nodes.map((n) => [n.name, n]));
+
+  // Quem é alcançável APENAS atravessando a saída "true" do `Precisa Fallback?`.
+  const soNoFallback = new Set();
+  const fila = (wf.connections['Precisa Fallback?']?.main?.[0] ?? []).map((c) => c.node);
+  const paraForaDoRamo = new Set(
+    (wf.connections['Precisa Fallback?']?.main?.[1] ?? []).map((c) => c.node));
+  while (fila.length > 0) {
+    const atual = fila.pop();
+    if (soNoFallback.has(atual) || paraForaDoRamo.has(atual)) continue;
+    soNoFallback.add(atual);
+    for (const saida of wf.connections[atual]?.main ?? []) {
+      for (const c of saida) if (!paraForaDoRamo.has(c.node)) fila.push(c.node);
+    }
+  }
+
+  assert.ok(soNoFallback.has('Montar Req Classif'),
+    'PRÉ-CONDIÇÃO: a classificação por conteúdo é mesmo condicional — se ela virar incondicional '
+    + 'um dia, este teste vira decoração e precisa ser revisto, não apagado');
+
+  // Todo nó Postgres que passa um CNPJ para o banco.
+  const gravamCnpj = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.postgres'
+    && /cnpj/i.test(JSON.stringify(n.parameters ?? {})));
+  assert.ok(gravamCnpj.length > 0, 'nenhum nó Postgres passa CNPJ ao banco');
+
+  const semprerodam = gravamCnpj.filter((n) => !soNoFallback.has(n.name));
+  assert.ok(semprerodam.length > 0,
+    'TODO nó que grava CNPJ está atrás do ramo de fallback — metade do lote chegaria com cnpj '
+    + `null e sem sintoma. Nós que gravam: ${gravamCnpj.map((n) => n.name).join(', ')}`);
+
+  // E o nó do diagnóstico — o único que lê conteúdo de TODO documento — tem de
+  // ser um deles, senão o campo existe no schema da IA e morre no caminho.
+  const diag = porNome.get('Registrar Diagnostico');
+  assert.match(JSON.stringify(diag.parameters.options.queryReplacement), /diagnostico\?\.cnpj/,
+    'o Registrar Diagnostico não passa o CNPJ lido do conteúdo — é a única leitura garantida '
+    + 'para todo documento, e é por ela que os nomes contaminados nascem');
+  assert.match(diag.parameters.query, /p_cnpj=>/,
+    'o CNPJ tem de entrar por NOME na query do diagnóstico: o $12 já é dos FATOS, e reordenar os '
+    + 'binds para encaixá-lo posicionalmente quebraria fn_registrar_fatos em silêncio');
+});
+
 test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × coluna)', async () => {
   const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', ia_body: {} } };
   const resposta = { json: respostaIA(JSON.stringify({
@@ -2367,16 +2421,21 @@ test('a corrente inteira preserva caso_id e binário até o Registrar Documento'
 
   const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters.options.queryReplacement;
   const params = new Function('$json', 'return (' + q.replace(/^=\{\{/, '').replace(/\}\}$/, '') + ')')(preparado.json);
-  // 15 desde a 0118: o 15º é o fingerprint de prompt+modelo+esquema, calculado no
-  // BUILD e embutido como literal. Ele é o que autoriza não pagar a mesma
-  // extração duas vezes.
-  assert.equal(params.length, 15);
+  // 16 desde a 0170: o 15º é o fingerprint de prompt+modelo+esquema (0118),
+  // calculado no BUILD e embutido como literal — autoriza não pagar a mesma
+  // extração duas vezes. O 16º é o CNPJ lido do conteúdo (0170/0171 no banco,
+  // esta fatia no n8n) — chega null quando a IA não achou um, e o banco usa
+  // fn_upsert_entidade(..., p_cnpj) como identidade em vez do nome sozinho.
+  assert.equal(params.length, 16);
   assert.equal(params[0], 'caso-uuid-1', 'caso_id NÃO pode chegar null — é not-null no banco');
   assert.match(params[14], /^[0-9a-f]{16}$/,
     'o fingerprint tem de ser um valor fixo e não vazio — nulo aqui desliga o dedup em silêncio');
   assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
   assert.equal(params[4], 'DRE', 'a classificação sobrevive');
   assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');
+  assert.equal(params[15], null,
+    'sem chamada de conteúdo nesta corrente (só "Classificar Nome" rodou), o CNPJ chega null — '
+    + 'nunca undefined, que o driver do Postgres trataria diferente');
   assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à IA');
 });
 
