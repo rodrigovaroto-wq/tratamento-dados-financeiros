@@ -220,12 +220,26 @@ const mCad = /const CADENCIA_IA_S = (\d+);/.exec(fonteEspera);
 const mPre = /const PREPARO_POR_ARQUIVO_S = (\d+);/.exec(fonteEspera);
 checar(!!mCad && !!mPre,
   "CADENCIA_IA_S/PREPARO_POR_ARQUIVO_S sumiram do fonte — o espelho perdeu o outro lado");
-const cadenciaImplicadaMs = 38 * (Number(mCad![1]) + Number(mPre![1])) * 1000;
+// O ESPELHO ESQUECEU O PISO DA PRÓPRIA FUNÇÃO, e a troca de TPM de 14/09/2026
+// (30.000 → 500.000) expôs isso: `semPrimeiroSinalMs` é
+// `max(SEM_PRIMEIRO_SINAL_MINIMO_MS, n × cadência)` — um PISO de UX que existe
+// por conta própria (não panicar com jitter de rede num lote pequeno),
+// independente de quão rápida a IA está. Comparar só contra `n × cadência`,
+// sem o mesmo piso, faz este teste acusar "folga inventada" exatamente quando
+// a IA fica RÁPIDA o bastante para o piso passar a dominar — que é o piso
+// fazendo o trabalho dele, não um defeito. `SEM_PRIMEIRO_SINAL_MINIMO_MS` entra
+// aqui pelo MESMO regex-no-fonte que os outros dois, para o espelho não travar
+// um terceiro número por conta própria.
+const mPiso = /const SEM_PRIMEIRO_SINAL_MINIMO_MS = (\d+) \* 60 \* 1000;/.exec(fonteEspera);
+checar(!!mPiso, "SEM_PRIMEIRO_SINAL_MINIMO_MS sumiu do fonte, ou mudou de forma — o espelho perdeu o piso");
+const pisoMs = Number(mPiso![1]) * 60 * 1000;
+const cadenciaImplicadaMs = Math.max(pisoMs, 38 * (Number(mCad![1]) + Number(mPre![1])) * 1000);
 checar(
   semPrimeiroSinalMs(38) <= cadenciaImplicadaMs * 1.1,
-  `o lote de 38 ganhou folga ALÉM da cadência: ${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min `
-  + `contra os ${(cadenciaImplicadaMs / 60000).toFixed(1)} min que a cadência de `
-  + `${mCad![1]}s + ${mPre![1]}s de preparo implica`,
+  `o lote de 38 ganhou folga ALÉM do maior entre o piso e a cadência: `
+  + `${(semPrimeiroSinalMs(38) / 60000).toFixed(1)} min contra os `
+  + `${(cadenciaImplicadaMs / 60000).toFixed(1)} min que o piso de ${mPiso![1]} min ou a cadência de `
+  + `${mCad![1]}s + ${mPre![1]}s de preparo implicam`,
 );
 
 // A JANELA TOTAL tem de entregar a margem que ela promete no lote de 190 — o

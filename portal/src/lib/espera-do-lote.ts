@@ -82,7 +82,17 @@ export const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 // mesma doutrina de sempre — errar para o lento atrasa, errar para o rápido FAZ
 // FALHAR. Numa conta de tier mais alto, sobe-se o TPM, regera-se o workflow e
 // este cai junto; a suíte reprova se um subir sem o outro.
-export const SEGUNDOS_POR_DOCUMENTO = 73;
+//
+// 14/09/2026 — SUBIU, E É EXATAMENTE ISSO QUE ACONTECEU. O dono mediu o lote
+// real da AMO (44 documentos) em 1h28 com o TPM no piso do Tier 1 (30.000) e
+// confirmou a conta real: 500.000. `30.000 ÷ (20.000+16.384) ≈ 0,825
+// chamada/min` virou `500.000 ÷ 36.384 ≈ 13,74 chamada/min` — abaixo do
+// PISO HISTÓRICO de batching (`PISO_BATCHING_MS`, `N8N/lib/extract.mjs`, 6s,
+// medido no "teste v18"), que passou a ser quem decide o intervalo. **73 não
+// é mais o número: é 6.** Não é o balde de TPM que aperta agora — é a folga
+// mínima contra a rede, e é por isso que subir o TPM não fez este número ir a
+// zero.
+export const SEGUNDOS_POR_DOCUMENTO = 6;
 
 // A ESTIMATIVA É UMA FUNÇÃO SÓ, e isso não é preciosismo. Ela aparece em DOIS
 // lugares — antes de enviar (para decidir se espera) e depois (para acompanhar)
@@ -154,23 +164,22 @@ const MARGEM_DA_JANELA = 3;
 // A CADÊNCIA DA IA E O PREPARO POR ARQUIVO — as duas contas de espera saem
 // daqui, e é por isso que eles moram acima das duas.
 //   CADENCIA_IA_S ......... o `batchInterval` real do nó `IA Classificar`
-//                           (42s). `workflow-sim.test.mjs` confere este
+//                           (6s). `workflow-sim.test.mjs` confere este
 //                           espelho contra o workflow gerado.
 //                           ATENÇÃO: é a cadência da CLASSIFICAÇÃO, não a da
-//                           extração. As duas eram 8s enquanto o provedor era
-//                           o mesmo para os dois papéis; com a OpenAI elas
-//                           DIVERGEM, porque a extração reserva 16.384 tokens
-//                           de SAÍDA a mais que a classificação
-//                           (`TOKENS_SAIDA_CLASSIFICACAO`, 120). As DUAS
-//                           passaram por uma correção no mesmo dia (11/09/2026,
-//                           revisão adversarial): a classificação não tinha
-//                           NENHUM termo de TPM (só piso de 6s + RPM) — ela
-//                           manda o MESMO PDF de imagem que a extração
-//                           (~20.000 tokens no pior caso) e um documento grande
-//                           sozinho já passava do balde. Hoje as duas somam a
-//                           ENTRADA: classificação 42s, extração 73s — ver
-//                           `build-workflow.mjs`, `INTERVALO_CLASSIFICACAO_MS`
-//                           e `INTERVALO_EXTRACAO_MS`. Quem usa esta constante
+//                           extração — as duas podem DIVERGIR, e por um tempo
+//                           divergiram (classificação 42s, extração 73s, com o
+//                           TPM no piso de Tier 1). 14/09/2026: o dono
+//                           confirmou o TPM real da conta (500.000, era
+//                           30.000), e nesse regime as DUAS cadências caem
+//                           abaixo do PISO HISTÓRICO de batching
+//                           (`PISO_BATCHING_MS`, 6s) — que passa a decidir as
+//                           duas, e elas voltam a CONVERGIR (como na era
+//                           Gemini, quando as duas eram 8s). Isso pode
+//                           divergir de novo se o TPM mudar sem passar pelo
+//                           piso — ver `build-workflow.mjs`,
+//                           `INTERVALO_CLASSIFICACAO_MS` e
+//                           `INTERVALO_EXTRACAO_MS`. Quem usa esta constante
 //                           está medindo o silêncio até o primeiro sinal, que é
 //                           governado pela barreira do merge das
 //                           CLASSIFICAÇÕES — por isso é a dela que vale aqui, e
@@ -179,7 +188,7 @@ const MARGEM_DA_JANELA = 3;
 //   PREPARO_POR_ARQUIVO_S . upload ao Storage, leitura do texto e medição. Saiu
 //                           da diferença entre a duração real das rodadas
 //                           v47/v48 e o que a cadência sozinha explica.
-const CADENCIA_IA_S = 42;
+const CADENCIA_IA_S = 6;
 const PREPARO_POR_ARQUIVO_S = 5;
 
 const SEM_PROGRESSO_MINIMO_MS = 5 * 60 * 1000;

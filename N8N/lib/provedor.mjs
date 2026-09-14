@@ -63,7 +63,17 @@ export const PROVEDORES = {
     // Cadência: os dois limites da conta, e o intervalo sai do MAIS restritivo.
     // TPM importa porque `max_tokens` é RESERVA de balde (ver extract.mjs);
     // RPM importa porque um provedor pode limitar por CHAMADA e não por token.
-    tpm: 30000,
+    //
+    // 30.000 ERA O PISO DO TIER 1, e o dono confirmou em 14/09/2026 que a conta
+    // real tem 500.000 TPM para o `gpt-5.6-luna` — 16,7x mais. Era exatamente o
+    // item que a sessão 84 tinha deixado registrado como "o item de maior
+    // retorno da lista" (ESTADO.md): `CHAMADAS_POR_MINUTO = TPM_CONTA /
+    // (entrada+saída)` em `build-workflow.mjs` escala LINEAR com este número, e
+    // o lote de 44 documentos da AMO mediu 1h28 rodando com o piso — a mesma
+    // cadência com o TPM real cai para a ordem de 5-6 minutos. Errar para baixo
+    // custa tempo; errar para cima faz a API responder 429 no meio do lote — por
+    // isso o número aqui é o que o DONO mediu na própria conta, não um chute.
+    tpm: 500000,
     rpm: null,
     // RPD é do TIER e a OpenAI não publica um número único para o Tier 1 —
     // `null` diz "não sei", que é diferente de "não tem". Ver o comentário do
