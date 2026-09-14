@@ -275,6 +275,7 @@ supabase db execute --file Supabase/migrations/0166_a_exigencia_que_nao_conhecia
 supabase db execute --file Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql
 supabase db execute --file Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql
 supabase db execute --file Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql
+supabase db execute --file Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

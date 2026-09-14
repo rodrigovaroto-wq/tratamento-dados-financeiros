@@ -77,8 +77,26 @@ begin
   perform fn_upsert_entidade(v_caso, c_m,     c_cnpj);
   select count(*) into v_n from entidade where caso_id = v_caso;
   perform teste_assert_cnpj(v_n = 1,
-    'ordem invertida, mesmo resultado — o CNPJ não pergunta quem chegou primeiro',
+    'ordem invertida, mesma CONTAGEM — o CNPJ não pergunta quem chegou primeiro',
     format('%s entidade(s)', v_n));
+
+  -- MAS O NOME QUE SOBREVIVE AINDA DEPENDE DA ORDEM, e este assert existe para
+  -- que isso seja MEDIDO em vez de descoberto no book do cliente. Achado na
+  -- revisão desta fatia: sob a 0168 a fusão escolhia entre linhas que já
+  -- existiam e o `order by length desc` dava o nome mais completo; sob a regra 1
+  -- só UMA linha chega a existir, então o nome é congelado pela primeira
+  -- chegada — e aqui a primeira é a que tem o ENDEREÇO colado.
+  --
+  -- É LIMITE DECLARADO, não conserto pendente disfarçado de teste: renomear
+  -- entidade é decisão sobre dado do cliente, e nenhuma regra de nome que eu
+  -- saiba escrever distingue "…DE SURUBIJU, 1930" de uma razão social legítima
+  -- que por acaso termine em número. Se um dia alguém ensinar isso à função,
+  -- este assert reprova — e é o lugar certo para a decisão ser revista.
+  perform teste_assert_cnpj(
+    (select razao_social from entidade where caso_id = v_caso) = c_s1930,
+    'LIMITE DECLARADO: o NOME que sobrevive é o da primeira chegada, mesmo sendo o contaminado '
+      || 'pelo endereço — o CNPJ funde, não renomeia',
+    (select razao_social from entidade where caso_id = v_caso));
 
   raise notice '--- 3. CNPJ NULO NÃO MUDA NADA: os mesmos quatro nomes dão TRÊS ---';
   -- A propriedade de segurança desta migration. Enquanto a extração não mandar
@@ -93,6 +111,31 @@ begin
   perform teste_assert_cnpj(v_n = 3,
     'sem CNPJ, o resultado é IDÊNTICO ao da 0168 (três) — a 0169 não mexeu no caminho do nome',
     format('%s entidade(s)', v_n));
+
+  -- E A PROPRIEDADE, não só este caso. O assert acima passa numa 0169 que
+  -- mantivesse três entidades trocando QUAL sobrevive, ou que parasse de emitir
+  -- `entidade_alias_fundido`. O que a fatia realmente promete é ESTRUTURAL:
+  -- `fn_entidades_candidatas_cnpj(caso, nome, null)` devolve exatamente as
+  -- mesmas linhas que `fn_entidades_candidatas(caso, nome)`. Varrido com
+  -- `except` NOS DOIS SENTIDOS contra TODAS as entidades e nomes que a base de
+  -- teste já tem — não contra um exemplo escolhido por mim.
+  select count(*) into v_n from (
+    select e.caso_id, e.razao_social from entidade e
+  ) alvo, lateral (
+    select 1 from (
+      (select * from fn_entidades_candidatas(alvo.caso_id, alvo.razao_social)
+       except
+       select * from fn_entidades_candidatas_cnpj(alvo.caso_id, alvo.razao_social, null))
+      union all
+      (select * from fn_entidades_candidatas_cnpj(alvo.caso_id, alvo.razao_social, null)
+       except
+       select * from fn_entidades_candidatas(alvo.caso_id, alvo.razao_social))
+    ) d
+  ) div;
+  perform teste_assert_cnpj(v_n = 0,
+    'PROPRIEDADE: com CNPJ nulo, a lista de candidatas é a MESMA da 0153 — varrida com except '
+      || 'nos dois sentidos sobre toda entidade da base de teste',
+    format('%s divergência(s)', v_n));
 
   raise notice '--- 4. CNPJ DIFERENTE separa, mesmo com o nome casando ---';
   -- O LIMITE CONHECIDO da 0153, medido em `entidade_ambigua.test.sql`: com UM
@@ -175,6 +218,35 @@ begin
     (select cnpj from entidade where id = v_a));
   perform teste_assert_cnpj(v_id is distinct from v_a,
     'ele vira empresa própria — mesmo nome, registro fiscal diferente');
+
+  raise notice '--- 8. 0170: o CNPJ ATRAVESSA a porta de entrada (fn_registrar_documento) ---';
+  -- A 0169 sozinha e' codigo instalado e nunca executado: a porta chamava
+  -- `fn_upsert_entidade` com DOIS argumentos e o CNPJ morria ali. Este bloco
+  -- prova o FIO INTEIRO, do jeito que producao usa -- nao chamando
+  -- `fn_upsert_entidade` direto.
+  v_caso := (fn_upsert_caso('CNPJ — pela porta de entrada'))::uuid;
+  perform fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'openai_conteudo', 'supabase_storage', 's/p1.pdf', 'BAL 2024.pdf', true,
+    'HASH-CNPJ-PORTA-1', 'ok', p_cnpj => c_cnpj);
+  perform fn_registrar_documento(v_caso, c_s1930, 'ano', '2023', 'BALANCO', 0.99,
+    'openai_conteudo', 'supabase_storage', 's/p2.pdf', 'BAL 2023.pdf', true,
+    'HASH-CNPJ-PORTA-2', 'ok', p_cnpj => c_cnpj);
+
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_cnpj(v_n = 1,
+    'dois documentos com grafias diferentes e o MESMO CNPJ entram na MESMA empresa pela porta '
+      || 'de entrada — e o fio que faz a 0169 deixar de ser codigo dormente',
+    format('%s entidade(s): %s', v_n,
+      (select string_agg(razao_social, ' | ') from entidade where caso_id = v_caso)));
+
+  perform teste_assert_cnpj(
+    (select fn_cnpj_canonico(cnpj) from entidade where caso_id = v_caso) = '36193378000104',
+    'e o CNPJ chegou gravado na entidade, vindo da porta e nao de uma chamada direta');
+
+  perform teste_assert_cnpj(
+    (select count(*) from documento where caso_id = v_caso) = 2,
+    'os dois documentos ficaram na mesma entidade (nenhum ficou orfao no caminho)',
+    format('%s documento(s)', (select count(*) from documento where caso_id = v_caso)));
 
   raise notice 'CNPJ IDENTIDADE OK — o CNPJ manda, o nome só decide quando não há CNPJ, e '
                'ausência não decide nada';

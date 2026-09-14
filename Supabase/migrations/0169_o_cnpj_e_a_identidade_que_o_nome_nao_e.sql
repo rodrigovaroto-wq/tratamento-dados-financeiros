@@ -80,8 +80,9 @@ declare
   d     text;
   peso  int;
   soma  int;
-  dv    int;
-  i     int;
+  -- `dv` e `i` NÃO são declarados: os `for` abaixo declaram os próprios e
+  -- sombreariam estes. Declará-los é ruído que `plpgsql.extra_warnings =
+  -- shadowed_variables` acusa.
 begin
   if p_cnpj is null then return null; end if;
   d := regexp_replace(p_cnpj, '[^0-9]', '', 'g');
@@ -178,7 +179,33 @@ begin
     where e.caso_id = p_caso_id and fn_cnpj_canonico(e.cnpj) = v_cnpj
     order by length(e.razao_social) desc, e.razao_social
     limit 1;
-    if v_id is not null then return v_id; end if;
+
+    -- O RASTRO É OBRIGATÓRIO AQUI, e a revisão desta fatia o achou faltando.
+    -- Este é o ramo MAIS FORTE da função — funde sem olhar o nome — e era o
+    -- único caminho de fusão sem uma linha em `evento_auditoria` (o (3b) grava
+    -- `entidade_alias_fundido`, o de ambiguidade grava `entidade_ambigua`).
+    --
+    -- O cenário que torna isso perigoso é o MESMO template que já colou o
+    -- endereço no nome: o rodapé do relatório traz o CNPJ do ESCRITÓRIO DE
+    -- CONTABILIDADE, não o do emitente. Lido em documentos de três clientes do
+    -- mesmo mandato, o primeiro cria a entidade e os outros dois caem nela sem
+    -- comparar nome nenhum. É o dano da 0153 por uma porta nova — e sem o
+    -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
+    -- respondido com "OMNIBEAUTY".
+    if v_id is not null then
+      if fn_entidade_canonica(
+           (select e.razao_social from entidade e where e.id = v_id)
+         ) is distinct from fn_entidade_canonica(trim(p_nome)) then
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+        values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
+                jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                                   'nome_mantido',
+                                   (select e.razao_social from entidade e where e.id = v_id),
+                                   'cnpj', v_cnpj,
+                                   'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+      end if;
+      return v_id;
+    end if;
   end if;
 
   -- (1) exato pela forma canônica — não há o que desempatar.
@@ -198,10 +225,20 @@ begin
     into v_n, v_candidatos, v_nomes
   from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c;
 
+  -- APRENDER SÓ NO CASAMENTO EXATO, e este `return` SEM `aprender` é a
+  -- correção mais importante que a revisão desta fatia trouxe. Este ramo é o
+  -- casamento FROUXO (subsequência de prefixos) — é ele que faz "Metalúrgica"
+  -- ser absorvido por "VERTENTES METALÚRGICA LTDA.". Deixá-lo GRAVAR o CNPJ
+  -- transformaria um palpite de nome em identidade fiscal permanente:
+  -- "Canastra" com o CNPJ do GRUPO CANASTRA (a holding, impressa no
+  -- consolidado) seria absorvido pela subsidiária e escreveria nela o CNPJ da
+  -- holding — e daí em diante TODO documento da holding cairia na subsidiária
+  -- pelo ramo (0), sem olhar nome. A própria 0168 já diz que o nome que CHEGA é
+  -- o que pode estar contaminado; o CNPJ do mesmo documento não pode ser
+  -- promovido a identidade por um casamento que o nome só aproximou.
   if v_n = 1 then
     select c.entidade_id into v_id
     from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c limit 1;
-    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
@@ -218,12 +255,22 @@ begin
                                'candidatos', v_candidatos, 'quantos', v_n,
                                'porque', 'os candidatos casam todos entre si — é um nome só, '
                                       || 'truncado de jeitos diferentes pela fonte'));
-    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
+    -- Sem `aprender` pelo mesmo motivo do ramo acima, e aqui é PIOR: o nome que
+    -- chega é justamente o truncado, o que pode trazer o endereço colado.
     return v_id;
   end if;
 
   insert into entidade (caso_id, razao_social, cnpj) values (p_caso_id, trim(p_nome), v_cnpj)
     returning id into v_id;
+
+  -- NASCER COM CNPJ MERECE O MESMO RASTRO QUE APRENDER DEPOIS. É uma afirmação
+  -- de identidade tirada de UM documento, que nunca mais é revisitada e que
+  -- passa a mandar sobre todo nome — o mínimo honesto é ela aparecer no log.
+  if v_cnpj is not null then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || v_id,
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'nasceu com ele'));
+  end if;
 
   if v_n > 1 then
     -- A AMBIGUIDADE É REGISTRADA AQUI e virada em pendência por quem tem o
@@ -231,7 +278,13 @@ begin
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
     values ('sistema:entidade', 'entidade_ambigua', 'entidade:' || v_id,
             jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
-                               'candidatos', v_candidatos, 'quantos', v_n));
+                               'candidatos', v_candidatos, 'quantos', v_n,
+                               -- O CNPJ VAI JUNTO, e a revisão achou ele faltando:
+                               -- `fn_pendencia_entidade_ambigua` (0153) monta a descrição
+                               -- a partir deste payload, e o analista lia "casa com mais de
+                               -- uma empresa: A × B" sem o único número que decide — a
+                               -- regra 1 pelo avesso (a nota existe e cala o dado).
+                               'cnpj', v_cnpj));
   end if;
 
   return v_id;
@@ -257,17 +310,27 @@ returns void
 language plpgsql
 as $$
 declare
-  v_cnpj text := fn_cnpj_canonico(p_cnpj);
+  v_cnpj  text := fn_cnpj_canonico(p_cnpj);
+  v_antes text;
 begin
   if p_entidade_id is null or v_cnpj is null then return; end if;
 
+  -- `cnpj is null`, NÃO `fn_cnpj_canonico(cnpj) is null`, e a diferença foi
+  -- achada na revisão desta fatia: com o canônico, um CNPJ INVÁLIDO já gravado
+  -- (um '36.193.378/0001' truncado por planilha, digitado por uma pessoa) seria
+  -- SOBRESCRITO pelo número que a IA leu, e o comentário logo acima estaria
+  -- mentindo. Coluna vazia é ausência; coluna com número ruim é um registro
+  -- humano que só uma pessoa deve corrigir.
+  select e.cnpj into v_antes from entidade e where e.id = p_entidade_id;
+
   update entidade set cnpj = v_cnpj
-   where id = p_entidade_id and fn_cnpj_canonico(cnpj) is null;
+   where id = p_entidade_id and cnpj is null;
 
   if found then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
     values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
-            jsonb_build_object('cnpj', v_cnpj));
+            jsonb_build_object('cnpj', v_antes),
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'aprendido de um documento posterior'));
   end if;
 end;
 $$;
@@ -276,8 +339,34 @@ comment on function fn_entidade_aprender_cnpj(uuid, text) is
   'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: dois '
   'CNPJs diferentes na mesma entidade é divergência para humano, não algo para a função resolver.';
 
+-- AS TRÊS, e a revisão achou a terceira faltando: `fn_upsert_entidade` é
+-- SECURITY INVOKER, então um chamador rodando como `authenticated` estouraria
+-- `permission denied for function fn_entidade_aprender_cnpj` EXATAMENTE no ponto
+-- em que o CNPJ seria aprendido. A suíte local roda como `postgres` e nunca veria.
 grant execute on function fn_cnpj_canonico(text) to authenticated;
+grant execute on function fn_entidade_aprender_cnpj(uuid, text) to authenticated;
 grant execute on function fn_entidades_candidatas_cnpj(uuid, text, text) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- O BANCO PASSA A AFIRMAR A DOUTRINA, em vez de só a função obedecê-la.
+--
+-- "CNPJ igual é a mesma empresa DENTRO DO CASO" é a regra 1 desta migration, e
+-- sem este índice o banco não a garantia: duas chamadas concorrentes de
+-- `fn_upsert_entidade` para o mesmo caso e CNPJ passam ambas pelo `select` do
+-- ramo (0) sem achar nada e ambas inserem. O nó de ingestão processa itens em
+-- lote, então concorrência não é hipótese remota.
+--
+-- Seguro de aplicar: a coluna `entidade.cnpj` existe desde a 0001 e NUNCA foi
+-- populada por caminho nenhum do produto — não há duplicata possível para o
+-- índice recusar. `where cnpj is not null` porque ausência não colide com
+-- ausência: um caso pode ter muitas entidades sem CNPJ.
+-- -----------------------------------------------------------------------------
+create unique index if not exists entidade_caso_cnpj_unico
+  on entidade (caso_id, cnpj) where cnpj is not null;
+
+comment on index entidade_caso_cnpj_unico is
+  'A regra 1 da 0169 afirmada pelo BANCO: dentro de um caso, um CNPJ identifica UMA entidade. '
+  'Sem ela, duas chamadas concorrentes de fn_upsert_entidade inserem as duas.';
 
 -- -----------------------------------------------------------------------------
 -- O CATÁLOGO DA SONDA — requisito de CORPO sobre `fn_upsert_entidade`.

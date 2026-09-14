@@ -1158,8 +1158,9 @@ declare
   d     text;
   peso  int;
   soma  int;
-  dv    int;
-  i     int;
+  -- `dv` e `i` NÃO são declarados: os `for` abaixo declaram os próprios e
+  -- sombreariam estes. Declará-los é ruído que `plpgsql.extra_warnings =
+  -- shadowed_variables` acusa.
 begin
   if p_cnpj is null then return null; end if;
   d := regexp_replace(p_cnpj, '[^0-9]', '', 'g');
@@ -2581,17 +2582,27 @@ CREATE FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text
     LANGUAGE plpgsql
     AS $$
 declare
-  v_cnpj text := fn_cnpj_canonico(p_cnpj);
+  v_cnpj  text := fn_cnpj_canonico(p_cnpj);
+  v_antes text;
 begin
   if p_entidade_id is null or v_cnpj is null then return; end if;
 
+  -- `cnpj is null`, NÃO `fn_cnpj_canonico(cnpj) is null`, e a diferença foi
+  -- achada na revisão desta fatia: com o canônico, um CNPJ INVÁLIDO já gravado
+  -- (um '36.193.378/0001' truncado por planilha, digitado por uma pessoa) seria
+  -- SOBRESCRITO pelo número que a IA leu, e o comentário logo acima estaria
+  -- mentindo. Coluna vazia é ausência; coluna com número ruim é um registro
+  -- humano que só uma pessoa deve corrigir.
+  select e.cnpj into v_antes from entidade e where e.id = p_entidade_id;
+
   update entidade set cnpj = v_cnpj
-   where id = p_entidade_id and fn_cnpj_canonico(cnpj) is null;
+   where id = p_entidade_id and cnpj is null;
 
   if found then
-    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
     values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
-            jsonb_build_object('cnpj', v_cnpj));
+            jsonb_build_object('cnpj', v_antes),
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'aprendido de um documento posterior'));
   end if;
 end;
 $$;
@@ -8814,10 +8825,10 @@ $$;
 COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia. 0162: quando a entidade REGISTRADA é o balcão de perguntas da 0153 (nome que casou com DUAS ou mais empresas e não decidiu), o casamento de fn_mesma_entidade contra ele NÃO confirma nada — o balcão casa com todo mundo por construção. Se o nome diagnosticado casa EXATO com exatamente UMA empresa já cadastrada (excluído o balcão), abre pendência nomeando a resposta, sem mover o documento nem fundir. 0163: reemitida INTEIRA (não mais por patch de âncora) depois de produção ter abortado a aplicação da 0161/0162 por causa de um corpo gravado em CRLF — ver o cabeçalho da 0163.';
 
 --
--- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text, p_fingerprint_extracao text DEFAULT NULL::text) RETURNS jsonb
+CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text, p_fingerprint_extracao text DEFAULT NULL::text, p_cnpj text DEFAULT NULL::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -8877,7 +8888,7 @@ begin
   -- exatamente o defeito que a 0030 tinha corrigido. Republicar função neste
   -- banco significa partir do corpo mais recente, nunca do da migration que a
   -- gente está lendo.
-  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome);
+  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome, p_cnpj);
   v_periodo_id := fn_upsert_periodo(p_caso_id, p_periodo_tipo, p_periodo_ref);
 
   -- Já existe ESTE arquivo (mesmo hash) neste caso? Então é reextração/reenvio:
@@ -8994,10 +9005,10 @@ end;
 $$;
 
 --
--- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) IS 'Registra um arquivo classificado (E1). Idempotente por (caso_id, hash): o MESMO arquivo reenviado/reextraído vira nova documento_versao sob o mesmo documento (n_versao+1), sem duplicar documento, checklist nem pendência. 0118: quando o hash E o fingerprint de prompt+modelo+esquema batem com uma versão que JÁ TEM linha extraída, nem versão nova é criada — devolve a existente com reaproveitou_extracao=true, e o workflow pula a chamada à OpenAI. Hash nulo não casa. Classificação da máquina não sobrepõe revisão humana.';
+COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text, p_cnpj text) IS 'A porta de entrada do documento: acha ou cria caso/entidade/período, versiona e responde se já foi extraído (0118). 0170: recebe o CNPJ do emitente e o repassa a fn_upsert_entidade — sem este fio, as três regras de identidade da 0169 nunca disparam em produção e o sintoma é que nada melhora.';
 
 --
 -- Name: fn_registrar_expectativa_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
@@ -10330,7 +10341,33 @@ begin
     where e.caso_id = p_caso_id and fn_cnpj_canonico(e.cnpj) = v_cnpj
     order by length(e.razao_social) desc, e.razao_social
     limit 1;
-    if v_id is not null then return v_id; end if;
+
+    -- O RASTRO É OBRIGATÓRIO AQUI, e a revisão desta fatia o achou faltando.
+    -- Este é o ramo MAIS FORTE da função — funde sem olhar o nome — e era o
+    -- único caminho de fusão sem uma linha em `evento_auditoria` (o (3b) grava
+    -- `entidade_alias_fundido`, o de ambiguidade grava `entidade_ambigua`).
+    --
+    -- O cenário que torna isso perigoso é o MESMO template que já colou o
+    -- endereço no nome: o rodapé do relatório traz o CNPJ do ESCRITÓRIO DE
+    -- CONTABILIDADE, não o do emitente. Lido em documentos de três clientes do
+    -- mesmo mandato, o primeiro cria a entidade e os outros dois caem nela sem
+    -- comparar nome nenhum. É o dano da 0153 por uma porta nova — e sem o
+    -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
+    -- respondido com "OMNIBEAUTY".
+    if v_id is not null then
+      if fn_entidade_canonica(
+           (select e.razao_social from entidade e where e.id = v_id)
+         ) is distinct from fn_entidade_canonica(trim(p_nome)) then
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+        values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
+                jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                                   'nome_mantido',
+                                   (select e.razao_social from entidade e where e.id = v_id),
+                                   'cnpj', v_cnpj,
+                                   'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+      end if;
+      return v_id;
+    end if;
   end if;
 
   -- (1) exato pela forma canônica — não há o que desempatar.
@@ -10350,10 +10387,20 @@ begin
     into v_n, v_candidatos, v_nomes
   from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c;
 
+  -- APRENDER SÓ NO CASAMENTO EXATO, e este `return` SEM `aprender` é a
+  -- correção mais importante que a revisão desta fatia trouxe. Este ramo é o
+  -- casamento FROUXO (subsequência de prefixos) — é ele que faz "Metalúrgica"
+  -- ser absorvido por "VERTENTES METALÚRGICA LTDA.". Deixá-lo GRAVAR o CNPJ
+  -- transformaria um palpite de nome em identidade fiscal permanente:
+  -- "Canastra" com o CNPJ do GRUPO CANASTRA (a holding, impressa no
+  -- consolidado) seria absorvido pela subsidiária e escreveria nela o CNPJ da
+  -- holding — e daí em diante TODO documento da holding cairia na subsidiária
+  -- pelo ramo (0), sem olhar nome. A própria 0168 já diz que o nome que CHEGA é
+  -- o que pode estar contaminado; o CNPJ do mesmo documento não pode ser
+  -- promovido a identidade por um casamento que o nome só aproximou.
   if v_n = 1 then
     select c.entidade_id into v_id
     from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c limit 1;
-    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
@@ -10370,12 +10417,22 @@ begin
                                'candidatos', v_candidatos, 'quantos', v_n,
                                'porque', 'os candidatos casam todos entre si — é um nome só, '
                                       || 'truncado de jeitos diferentes pela fonte'));
-    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
+    -- Sem `aprender` pelo mesmo motivo do ramo acima, e aqui é PIOR: o nome que
+    -- chega é justamente o truncado, o que pode trazer o endereço colado.
     return v_id;
   end if;
 
   insert into entidade (caso_id, razao_social, cnpj) values (p_caso_id, trim(p_nome), v_cnpj)
     returning id into v_id;
+
+  -- NASCER COM CNPJ MERECE O MESMO RASTRO QUE APRENDER DEPOIS. É uma afirmação
+  -- de identidade tirada de UM documento, que nunca mais é revisitada e que
+  -- passa a mandar sobre todo nome — o mínimo honesto é ela aparecer no log.
+  if v_cnpj is not null then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || v_id,
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'nasceu com ele'));
+  end if;
 
   if v_n > 1 then
     -- A AMBIGUIDADE É REGISTRADA AQUI e virada em pendência por quem tem o
@@ -10383,7 +10440,13 @@ begin
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
     values ('sistema:entidade', 'entidade_ambigua', 'entidade:' || v_id,
             jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
-                               'candidatos', v_candidatos, 'quantos', v_n));
+                               'candidatos', v_candidatos, 'quantos', v_n,
+                               -- O CNPJ VAI JUNTO, e a revisão achou ele faltando:
+                               -- `fn_pendencia_entidade_ambigua` (0153) monta a descrição
+                               -- a partir deste payload, e o analista lia "casa com mais de
+                               -- uma empresa: A × B" sem o único número que decide — a
+                               -- regra 1 pelo avesso (a nota existe e cala o dado).
+                               'cnpj', v_cnpj));
   end if;
 
   return v_id;
@@ -12437,6 +12500,18 @@ ALTER TABLE ONLY public.taxonomia_tipo_documento
 CREATE INDEX documento_fato_versao_idx ON public.documento_fato USING btree (documento_versao_id);
 
 --
+-- Name: entidade_caso_cnpj_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX entidade_caso_cnpj_unico ON public.entidade USING btree (caso_id, cnpj) WHERE (cnpj IS NOT NULL);
+
+--
+-- Name: INDEX entidade_caso_cnpj_unico; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON INDEX public.entidade_caso_cnpj_unico IS 'A regra 1 da 0169 afirmada pelo BANCO: dentro de um caso, um CNPJ identifica UMA entidade. Sem ela, duas chamadas concorrentes de fn_upsert_entidade inserem as duas.';
+
+--
 -- Name: idx_campo_classe_override_campo; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13726,6 +13801,12 @@ GRANT ALL ON FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo
 GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -14134,12 +14215,6 @@ GRANT ALL ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uu
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) TO authenticated;
-
---
--- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -

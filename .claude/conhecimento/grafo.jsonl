@@ -288,7 +288,7 @@
 {"k":"n","id":"fn:fn_registrar_campos_extraidos","t":"fn","f":"Supabase/migrations/0128_classificacao_contabil_sombra.sql","txt":"registrar campos extraidos"}
 {"k":"n","id":"fn:fn_registrar_classe_override","t":"fn","f":"Supabase/migrations/0128_classificacao_contabil_sombra.sql","txt":"registrar classe override"}
 {"k":"n","id":"fn:fn_registrar_diagnostico","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"registrar diagnostico"}
-{"k":"n","id":"fn:fn_registrar_documento","t":"fn","f":"Supabase/migrations/0127_o_dial_obedecido.sql","txt":"registrar documento"}
+{"k":"n","id":"fn:fn_registrar_documento","t":"fn","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","txt":"registrar documento"}
 {"k":"n","id":"fn:fn_registrar_expectativa_macro","t":"fn","f":"Supabase/migrations/0025_indices_macro.sql","txt":"registrar expectativa macro"}
 {"k":"n","id":"fn:fn_registrar_falha_execucao","t":"fn","f":"Supabase/migrations/0108_falha_de_execucao.sql","txt":"registrar falha execucao"}
 {"k":"n","id":"fn:fn_registrar_fatos","t":"fn","f":"Supabase/migrations/0149_o_fato_material_endurecido.sql","txt":"registrar fatos"}
@@ -446,6 +446,7 @@
 {"k":"n","id":"migration:0167","t":"migration","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","txt":"o faturamento que somava a coluna total"}
 {"k":"n","id":"migration:0168","t":"migration","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"o apelido truncado nao e ambiguidade"}
 {"k":"n","id":"migration:0169","t":"migration","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"o cnpj e a identidade que o nome nao e"}
+{"k":"n","id":"migration:0170","t":"migration","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","txt":"o cnpj atravessa a porta de entrada"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -766,6 +767,9 @@
 {"k":"e","de":"arquivo:Supabase/test/classificacao_contabil.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_classe_override","f":"Supabase/test/classificacao_contabil.test.sql","l":196}
 {"k":"e","de":"arquivo:Supabase/test/classificacao_contabil.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/classificacao_contabil.test.sql","l":53}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_cnpj_canonico","f":"Supabase/test/cnpj_identidade.test.sql","l":69}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas","f":"Supabase/test/cnpj_identidade.test.sql","l":119}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/test/cnpj_identidade.test.sql","l":118}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/cnpj_identidade.test.sql","l":222}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_identidade.test.sql","l":52}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_identidade.test.sql","l":53}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_aceitar_extracao","f":"Supabase/test/completude_conteudo.test.sql","l":10}
@@ -1479,9 +1483,10 @@
 {"k":"e","de":"migration:0168","rel":"CRIA","pa":"fn:fn_entidades_sao_um_grupo","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","l":109}
 {"k":"e","de":"migration:0168","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","l":131}
 {"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_cnpj_canonico","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":74}
-{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidade_aprender_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":255}
-{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":126}
-{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":154}
+{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidade_aprender_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":308}
+{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":127}
+{"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":155}
+{"k":"e","de":"migration:0170","rel":"CRIA","pa":"fn:fn_registrar_documento","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","l":53}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
