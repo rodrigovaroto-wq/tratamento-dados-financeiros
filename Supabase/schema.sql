@@ -11559,6 +11559,116 @@ CREATE VIEW public.instalacao_sonda_modelagem_versao_vigente AS
 COMMENT ON VIEW public.instalacao_sonda_modelagem_versao_vigente IS '(0164) Autoteste de fn_linhas_para_modelagem, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0164", que não é mandato real) com dois documentos multi-versão: 1 linha só se a reextração que CORRIGE o valor (v2 substitui v1, sem somar nem duplicar) e a reextração AINDA EM ANDAMENTO (v2 sem campo_extraido, a vigente continua v1) resolvem certo ao mesmo tempo. Prova que a CTE versao_vigente (0164, join que substituiu o filtro opaco fn_versao_com_extracao) preserva a regra da 0102 — não prova que o PLANO é bom (isso é papel de Supabase/test/modelagem_versao_vigente_escala.test.sql, que só roda em CI/dev): prova que a reescrita não regrediu a semântica.';
 
 --
+-- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_exigida (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tipo_taxonomia text NOT NULL,
+    conceito text NOT NULL,
+    rotulo text NOT NULL,
+    checagem text NOT NULL,
+    secao_canonica text,
+    origem text NOT NULL,
+    depende_de text[] DEFAULT '{}'::text[] NOT NULL,
+    descricao text NOT NULL,
+    severidade text,
+    sobrepujavel boolean,
+    ativo boolean DEFAULT true NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    escopo_entidade boolean,
+    CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
+    CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_exigida; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_exigida IS 'Linhas/seções que um tipo de documento PRECISA ter para ser utilizável (entrega aprovada, sessão de 13/08/2026). Filha da taxonomia: a taxonomia diz QUAIS tipos são obrigatórios; esta diz O QUE cada tipo precisa conter. Lida pelo Portão 1 (fn_recomputar_completude, passo 2b).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.checagem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.checagem IS 'linha_por_termos = existe linha casando algum localizador; secao_presente = existe linha com a secao_canonica; serie_mensal = existe linha cujo rótulo tem mês (fn_mes_do_rotulo, 0042).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.origem IS '''codigo'' = a exigência JÁ está hardcoded numa reconciliação vigente (termos copiados literalmente de 0009/0023/0031/0034); ''proposta'' = saiu da análise do estagiário e NENHUMA checagem a lê hoje. Distinção para o revisor ver a diferença sem abrir o documento da entrega.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.depende_de; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.depende_de IS 'FATO, não política: qual reconciliação/indicador deixa de funcionar sem esta linha. Insumo para o dono definir severidade linha a linha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.severidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então ''importante'' — o mesmo peso que a ausência já tem hoje via precondicao_nao_satisfeita. A migration não endurece nada sozinha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.sobrepujavel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.escopo_entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.escopo_entidade IS 'DECISÃO DO DONO, por exigência. NULL (default do seed) = o escopo segue a granularidade do tipo na taxonomia: entidade/entidade_periodo cobram POR ENTIDADE, caso/periodo cobram por caso. true força por entidade (ex.: COMBINADO, granularidade periodo mas linhas com entidade_coluna); false força por caso. Mesmo padrão de severidade/sobrepujavel (0113): a migration não define política.';
+
+--
+-- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_localizador (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    exigencia_id uuid NOT NULL,
+    ordem integer NOT NULL,
+    contra text DEFAULT 'chave'::text NOT NULL,
+    termos_inclui text[] NOT NULL,
+    termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text, 'coluna'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localização de uma exigência, em cascata (a ordem espelha o código: o caixa do BP tem 7 tentativas na 0031). Formato de fn_valor_conceito (0009): inclui/exclui por substring do texto normalizado. A exigência satisfaz-se quando QUALQUER localizador casa.';
+
+--
+-- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
+
+--
+-- Name: instalacao_sonda_passivo_bare; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_passivo_bare AS
+ SELECT l.id,
+    e.tipo_taxonomia
+   FROM (public.taxonomia_linha_localizador l
+     JOIN public.taxonomia_linha_exigida e ON ((e.id = l.exigencia_id)))
+  WHERE ((e.conceito = 'passivo_mais_pl'::text) AND (l.contra = 'estrutural'::text) AND (l.termos_inclui = ARRAY['passivo'::text]));
+
+--
+-- Name: VIEW instalacao_sonda_passivo_bare; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_passivo_bare IS 'Sonda da 0166: os localizadores que casam o rótulo "PASSIVO" sozinho. Duas linhas (BALANCO e COMBINADO) — zero significa que o Kit Básico volta a cobrar do cliente uma linha que ele já entregou.';
+
+--
 -- Name: instalacao_sonda_rotulo_contraditorio; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -11761,99 +11871,6 @@ COMMENT ON COLUMN public.rubrica_classe.padrao IS 'Casado contra fn_normalizar_t
 --
 
 COMMENT ON COLUMN public.rubrica_classe.especificidade IS 'Desempate: mais ALTO ganha. Regra com seção e tipo declarados é mais específica que a genérica, e sem desempate declarado duas regras que casam a mesma linha dariam resultado dependente da ordem em que o banco devolveu — que é a forma de erro que a 0125 corrigiu na proveniência.';
-
---
--- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.taxonomia_linha_exigida (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tipo_taxonomia text NOT NULL,
-    conceito text NOT NULL,
-    rotulo text NOT NULL,
-    checagem text NOT NULL,
-    secao_canonica text,
-    origem text NOT NULL,
-    depende_de text[] DEFAULT '{}'::text[] NOT NULL,
-    descricao text NOT NULL,
-    severidade text,
-    sobrepujavel boolean,
-    ativo boolean DEFAULT true NOT NULL,
-    versao integer DEFAULT 1 NOT NULL,
-    escopo_entidade boolean,
-    CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
-    CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
-    CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
-    CONSTRAINT taxonomia_linha_exigida_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text])))
-);
-
---
--- Name: TABLE taxonomia_linha_exigida; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.taxonomia_linha_exigida IS 'Linhas/seções que um tipo de documento PRECISA ter para ser utilizável (entrega aprovada, sessão de 13/08/2026). Filha da taxonomia: a taxonomia diz QUAIS tipos são obrigatórios; esta diz O QUE cada tipo precisa conter. Lida pelo Portão 1 (fn_recomputar_completude, passo 2b).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.checagem; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.checagem IS 'linha_por_termos = existe linha casando algum localizador; secao_presente = existe linha com a secao_canonica; serie_mensal = existe linha cujo rótulo tem mês (fn_mes_do_rotulo, 0042).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.origem; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.origem IS '''codigo'' = a exigência JÁ está hardcoded numa reconciliação vigente (termos copiados literalmente de 0009/0023/0031/0034); ''proposta'' = saiu da análise do estagiário e NENHUMA checagem a lê hoje. Distinção para o revisor ver a diferença sem abrir o documento da entrega.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.depende_de; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.depende_de IS 'FATO, não política: qual reconciliação/indicador deixa de funcionar sem esta linha. Insumo para o dono definir severidade linha a linha.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.severidade; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então ''importante'' — o mesmo peso que a ausência já tem hoje via precondicao_nao_satisfeita. A migration não endurece nada sozinha.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.sobrepujavel; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.escopo_entidade; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.escopo_entidade IS 'DECISÃO DO DONO, por exigência. NULL (default do seed) = o escopo segue a granularidade do tipo na taxonomia: entidade/entidade_periodo cobram POR ENTIDADE, caso/periodo cobram por caso. true força por entidade (ex.: COMBINADO, granularidade periodo mas linhas com entidade_coluna); false força por caso. Mesmo padrão de severidade/sobrepujavel (0113): a migration não define política.';
-
---
--- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.taxonomia_linha_localizador (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    exigencia_id uuid NOT NULL,
-    ordem integer NOT NULL,
-    contra text DEFAULT 'chave'::text NOT NULL,
-    termos_inclui text[] NOT NULL,
-    termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
-    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text, 'coluna'::text])))
-);
-
---
--- Name: TABLE taxonomia_linha_localizador; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localização de uma exigência, em cascata (a ordem espelha o código: o caixa do BP tem 7 tentativas na 0031). Formato de fn_valor_conceito (0009): inclui/exclui por substring do texto normalizado. A exigência satisfaz-se quando QUALQUER localizador casa.';
-
---
--- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
 
 --
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
@@ -14326,6 +14343,30 @@ GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO authentic
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO service_role;
 
 --
+-- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO service_role;
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_passivo_bare; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
+
+--
 -- Name: TABLE instalacao_sonda_rotulo_contraditorio; Type: ACL; Schema: public; Owner: -
 --
 
@@ -14380,22 +14421,6 @@ GRANT ALL ON TABLE public.reconciliacao TO service_role;
 GRANT ALL ON TABLE public.rubrica_classe TO anon;
 GRANT ALL ON TABLE public.rubrica_classe TO authenticated;
 GRANT ALL ON TABLE public.rubrica_classe TO service_role;
-
---
--- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO anon;
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO authenticated;
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO service_role;
-
---
--- Name: TABLE taxonomia_linha_localizador; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO anon;
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
 
 --
 -- Name: TABLE taxonomia_tipo_documento; Type: ACL; Schema: public; Owner: -

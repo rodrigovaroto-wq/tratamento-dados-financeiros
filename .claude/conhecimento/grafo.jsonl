@@ -435,6 +435,7 @@
 {"k":"n","id":"migration:0163","t":"migration","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"a ancora que o crlf desalinhou"}
 {"k":"n","id":"migration:0164","t":"migration","f":"Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql","txt":"a estimativa que o filtro opaco escondia"}
 {"k":"n","id":"migration:0165","t":"migration","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","txt":"o passivo que ja inclui o patrimonio"}
+{"k":"n","id":"migration:0166","t":"migration","f":"Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql","txt":"a exigencia que nao conhecia o passivo bare"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -938,9 +939,11 @@
 {"k":"e","de":"arquivo:Supabase/test/papel_por_secao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/papel_por_secao.test.sql","l":45}
 {"k":"e","de":"arquivo:Supabase/test/papel_por_secao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/papel_por_secao.test.sql","l":41}
 {"k":"e","de":"arquivo:Supabase/test/papel_por_secao.test.sql","rel":"CHAMA","pa":"fn:fn_vincular_linha_premissa","f":"Supabase/test/papel_por_secao.test.sql","l":101}
+{"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_exigencias_do_caso","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":168}
 {"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_por_documento","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":73}
 {"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":56}
 {"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":49}
+{"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_rotulo_estrutural","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":181}
 {"k":"e","de":"arquivo:Supabase/test/passivo_bare_e_o_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/passivo_bare_e_o_grupo.test.sql","l":47}
 {"k":"e","de":"arquivo:Supabase/test/pendencia_decisao.test.sql","rel":"CHAMA","pa":"fn:fn_aprovar_caso","f":"Supabase/test/pendencia_decisao.test.sql","l":119}
 {"k":"e","de":"arquivo:Supabase/test/pendencia_decisao.test.sql","rel":"CHAMA","pa":"fn:fn_avaliar_portao2","f":"Supabase/test/pendencia_decisao.test.sql","l":87}

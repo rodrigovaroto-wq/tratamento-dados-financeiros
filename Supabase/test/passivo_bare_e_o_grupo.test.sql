@@ -155,5 +155,37 @@ begin
     format('resultado=%s, divergência=%s (esperado: divergente / 20000000)',
            coalesce(v_txt,'(sem registro)'), coalesce(v_num::text,'—')));
 
-  raise notice 'PASSIVO BARE OK — o rótulo é ambíguo, e quem desambigua é o valor';
+  raise notice '--- 4. o KIT BÁSICO também conhece o "PASSIVO" bare (0166) ---';
+  -- MESMA convenção, CÓDIGO DIFERENTE: a 0165 corrigiu a reconciliação (que
+  -- compara VALORES); a exigência `passivo_mais_pl` do checklist só pergunta se
+  -- a linha EXISTE, e tinha quatro localizadores — nenhum casava "PASSIVO"
+  -- sozinho. Eram cinco pendências `linha_exigida_ausente` no lote real,
+  -- cobrando do cliente uma linha que ele já tinha entregado.
+  --
+  -- O caso do bloco 1 é o fixture: o balanço da AMOBELEZA, cujo único rótulo de
+  -- passivo é "PASSIVO". Com o localizador 5 desligado, o assert abaixo reprova.
+  select count(*) into v_num
+  from fn_exigencias_do_caso(v_caso)
+  where tipo_taxonomia = 'BALANCO' and conceito = 'passivo_mais_pl' and satisfeita;
+  perform teste_assert_passivo(v_num > 0,
+    'a exigência "Passivo + Patrimônio Líquido (total)" é satisfeita por um balanço cujo rótulo '
+    || 'é só "PASSIVO"',
+    format('%s exigência(s) satisfeita(s) — zero significa que o Kit Básico voltou a cobrar a '
+           || 'linha que o documento já traz', v_num));
+
+  -- E O CONTRAPOSITIVO DO LOCALIZADOR: ele casa "PASSIVO" e mais nada. Se
+  -- casasse "PASSIVO CIRCULANTE", um balanço com só o circulante extraído
+  -- satisfaria a exigência do lado direito INTEIRO — e o Kit Básico passaria a
+  -- dizer "recebido" sobre meio balanço.
+  perform teste_assert_passivo(
+    fn_rotulo_estrutural('PASSIVO', array['passivo']) and
+    not fn_rotulo_estrutural('PASSIVO CIRCULANTE', array['passivo']) and
+    not fn_rotulo_estrutural('PASSIVO E PATRIMÔNIO LÍQUIDO', array['passivo']),
+    'o localizador novo casa "PASSIVO" e NÃO casa "PASSIVO CIRCULANTE" nem "PASSIVO E PL"',
+    format('PASSIVO=%s, PASSIVO CIRCULANTE=%s, PASSIVO E PL=%s',
+           fn_rotulo_estrutural('PASSIVO', array['passivo']),
+           fn_rotulo_estrutural('PASSIVO CIRCULANTE', array['passivo']),
+           fn_rotulo_estrutural('PASSIVO E PATRIMÔNIO LÍQUIDO', array['passivo'])));
+
+  raise notice 'PASSIVO BARE OK — o rótulo é ambíguo, quem desambigua é o valor, e o checklist aprendeu junto';
 end $$;
