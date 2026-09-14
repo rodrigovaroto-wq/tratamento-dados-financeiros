@@ -270,6 +270,12 @@ supabase db execute --file Supabase/migrations/0161_a_justificativa_que_o_period
 supabase db execute --file Supabase/migrations/0162_o_balcao_que_nao_escuta_a_resposta.sql
 supabase db execute --file Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql
 supabase db execute --file Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql
+supabase db execute --file Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql
+supabase db execute --file Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql
+supabase db execute --file Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql
+supabase db execute --file Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql
+supabase db execute --file Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql
+supabase db execute --file Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

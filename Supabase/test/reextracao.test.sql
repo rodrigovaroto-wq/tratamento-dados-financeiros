@@ -110,10 +110,13 @@ begin
   select count(*) into v_n from pg_proc where proname = 'fn_registrar_documento';
   perform teste_assert_rx(v_n = 1, 'existe exatamente UMA fn_registrar_documento',
     format('assinaturas vivas=%s', v_n));
+  -- 0170: passou a 17 com o `p_cnpj`. O número muda quando a assinatura muda —
+  -- é esse o trabalho deste assert. O que ele protege é a UNICIDADE acima: foi
+  -- um overload vivo que derrubou um lote real com "function is not unique".
   select count(*) into v_n from pg_proc
-    where proname = 'fn_registrar_documento' and pronargs = 16;
-  perform teste_assert_rx(v_n = 1, 'e ela é a de 16 args (com o fingerprint da 0118)',
-    format('assinaturas de 16 args=%s', v_n));
+    where proname = 'fn_registrar_documento' and pronargs = 17;
+  perform teste_assert_rx(v_n = 1, 'e ela é a de 17 args (o fingerprint da 0118 + o CNPJ da 0170)',
+    format('assinaturas de 17 args=%s', v_n));
 
   raise notice '--- 7. a reextração fica no rastro de auditoria ---';
   select count(*) into v_n from evento_auditoria

@@ -1148,6 +1148,51 @@ $$;
 COMMENT ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) IS 'Roda a classificação contábil sobre uma versão e REGISTRA a sugestão — a primeira metade de N0. A segunda ("não influencia decisão") é garantida por construção: só escreve em campo_classe_sugerida, não abre pendência e não entra em caminho de export. Append-only sem duplicar: grava só quando a regra muda de opinião, e aí a sequência é o histórico.';
 
 --
+-- Name: fn_cnpj_canonico(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_cnpj_canonico(p_cnpj text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  d     text;
+  peso  int;
+  soma  int;
+  -- `dv` e `i` NÃO são declarados: os `for` abaixo declaram os próprios e
+  -- sombreariam estes. Declará-los é ruído que `plpgsql.extra_warnings =
+  -- shadowed_variables` acusa.
+begin
+  if p_cnpj is null then return null; end if;
+  d := regexp_replace(p_cnpj, '[^0-9]', '', 'g');
+  if length(d) <> 14 then return null; end if;
+  if d ~ ('^' || substr(d, 1, 1) || '{14}$') then return null; end if;
+
+  -- DV1 sobre os 12 primeiros; DV2 sobre os 13 primeiros. Os pesos descem de 9
+  -- a 2 e reiniciam, que é o algoritmo do módulo 11 da Receita.
+  for dv in 1 .. 2 loop
+    soma := 0;
+    peso := 1;
+    for i in reverse (11 + dv) .. 1 loop
+      peso := peso + 1;
+      if peso > 9 then peso := 2; end if;
+      soma := soma + substr(d, i, 1)::int * peso;
+    end loop;
+    soma := soma % 11;
+    if soma < 2 then soma := 0; else soma := 11 - soma; end if;
+    if substr(d, 12 + dv, 1)::int <> soma then return null; end if;
+  end loop;
+
+  return d;
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_cnpj_canonico(p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) IS '14 dígitos de CNPJ com o DV conferido, ou NULO. 0169: o CNPJ vai chegar de uma IA lendo PDF escaneado — um número inventado que passe como identidade funde duas empresas de verdade em silêncio, que é pior que não ter CNPJ nenhum. DV que não fecha é AUSÊNCIA, não dado.';
+
+--
 -- Name: fn_coluna_de_dimensao(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2530,6 +2575,45 @@ $$;
 COMMENT ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) IS 'Documentos do caso para os quais a extração NUNCA foi chamada (sem evento extracao_sombra em nenhuma versão). Zero linha com extração feita NÃO entra aqui — isso é 0111/0036.';
 
 --
+-- Name: fn_entidade_aprender_cnpj(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_cnpj  text := fn_cnpj_canonico(p_cnpj);
+  v_antes text;
+begin
+  if p_entidade_id is null or v_cnpj is null then return; end if;
+
+  -- `cnpj is null`, NÃO `fn_cnpj_canonico(cnpj) is null`, e a diferença foi
+  -- achada na revisão desta fatia: com o canônico, um CNPJ INVÁLIDO já gravado
+  -- (um '36.193.378/0001' truncado por planilha, digitado por uma pessoa) seria
+  -- SOBRESCRITO pelo número que a IA leu, e o comentário logo acima estaria
+  -- mentindo. Coluna vazia é ausência; coluna com número ruim é um registro
+  -- humano que só uma pessoa deve corrigir.
+  select e.cnpj into v_antes from entidade e where e.id = p_entidade_id;
+
+  update entidade set cnpj = v_cnpj
+   where id = p_entidade_id and cnpj is null;
+
+  if found then
+    insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
+            jsonb_build_object('cnpj', v_antes),
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'aprendido de um documento posterior'));
+  end if;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: dois CNPJs diferentes na mesma entidade é divergência para humano, não algo para a função resolver.';
+
+--
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2601,6 +2685,50 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) IS 'As entidades do caso com que um nome casa, a exata primeiro (0153). Mais de uma linha sem nenhuma exata é AMBIGUIDADE: o nome não identifica empresa nenhuma, e quem decide é o humano.';
+
+--
+-- Name: fn_entidades_candidatas_cnpj(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) RETURNS TABLE(entidade_id uuid, razao_social text, exata boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  select c.entidade_id, c.razao_social, c.exata
+  from fn_entidades_candidatas(p_caso_id, p_nome) c
+  join entidade e on e.id = c.entidade_id
+  where fn_cnpj_canonico(p_cnpj) is null
+     or fn_cnpj_canonico(e.cnpj) is null
+     or fn_cnpj_canonico(e.cnpj) = fn_cnpj_canonico(p_cnpj)
+  order by c.exata desc, c.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) IS 'As candidatas da 0153 menos as que o CNPJ desmente (0169). CNPJ nulo devolve a lista inteira: ausência não desqualifica ninguém. CNPJ conhecido e diferente sai — o nome não tem autoridade para contradizer o registro fiscal.';
+
+--
+-- Name: fn_entidades_sao_um_grupo(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidades_sao_um_grupo(p_nomes text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select coalesce(array_length(p_nomes, 1), 0) > 0
+     and not exists (
+       select 1
+       from unnest(p_nomes) with ordinality as a(nome, i)
+       join unnest(p_nomes) with ordinality as b(nome, j) on j > i
+       where not fn_mesma_entidade(a.nome, b.nome)
+     );
+$$;
+
+--
+-- Name: FUNCTION fn_entidades_sao_um_grupo(p_nomes text[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidades_sao_um_grupo(p_nomes text[]) IS 'Os nomes são todos a MESMA empresa? Exige que cada PAR case por fn_mesma_entidade — não é fecho transitivo de propósito: A~B e B~C sem A~C é o apelido curto que casa com duas empresas distintas (o "Araucaria SPE" da 0153), e ali não se escolhe.';
 
 --
 -- Name: fn_excluir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -6524,6 +6652,10 @@ declare
   v_orig_esq   text;
   v_orig_dir   text;
   v_faltas     text[] := '{}';
+  -- 0165: o "PASSIVO" bare veio do casamento ESTRUTURAL (e não de um rótulo que
+  -- diz "Passivo Total")? É essa a única via ambígua — ver o comentário grande
+  -- da migration.
+  v_passivo_estrutural boolean := false;
 begin
   v_doc_id := fn_documento_balanco(p_caso_id, p_entidade_id, p_periodo_id);
 
@@ -6545,6 +6677,7 @@ begin
     v_orig_dir := null;
     v_esq := null;
     v_dir := null;
+    v_passivo_estrutural := false;
 
     -- ---- lado esquerdo: ATIVO ------------------------------------------------
     -- (a) a linha que diz "total" no rótulo.
@@ -6594,12 +6727,25 @@ begin
         if v_passivo.id is null then
           select * into v_passivo from fn_valor_estrutural_col(v_versao,
             array['passivo'], v_col_ent, v_col_per);
+          v_passivo_estrutural := v_passivo.id is not null;
         end if;
         if v_pl.id is null then
           select * into v_pl from fn_valor_estrutural_col(v_versao,
             array['patrimonio'], v_col_ent, v_col_per);
         end if;
-        if v_passivo.id is not null and v_pl.id is not null then
+        -- 0165: "PASSIVO" BARE QUE JÁ BATE COM O ATIVO É O TOTAL DO GRUPO.
+        -- Ver o cabeçalho desta migration para a medição. Só vale para o rótulo
+        -- ESTRUTURAL: um rótulo que DIZ "Passivo Total" (e exclui patrimônio)
+        -- está afirmando exigível, e nele a igualdade com o Ativo seria um
+        -- balanço que não fecha — que é divergência de verdade, e continua
+        -- sendo reportada pelo ramo de baixo.
+        if v_passivo_estrutural and v_esq is not null
+           and abs(v_passivo.valor_num - v_esq)
+               <= greatest(p_tolerancia_abs, abs(v_esq) * p_tolerancia_pct) then
+          v_dir := v_passivo.valor_num;
+          v_orig_dir := format('linha "%s" (total do grupo, já inclui o Patrimônio Líquido)',
+                               v_passivo.chave);
+        elsif v_passivo.id is not null and v_pl.id is not null then
           v_dir := v_passivo.valor_num + v_pl.valor_num;
           v_orig_dir := format('linhas "%s" + "%s"', v_passivo.chave, v_pl.chave);
         else
@@ -6689,6 +6835,12 @@ begin
     v_desc);
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'A.1 — Ativo Total = Passivo + PL. 0165: "PASSIVO" bare cujo valor já bate com o Ativo é o total do LADO DIREITO (já inclui o PL) e não é somado ao PL de novo — medido nos balanços reais do caso "teste 143", onde essa soma dupla abriu 11 divergências falsas.';
 
 --
 -- Name: fn_reconciliar_caixa_bp_fluxo(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
@@ -8673,10 +8825,10 @@ $$;
 COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia. 0162: quando a entidade REGISTRADA é o balcão de perguntas da 0153 (nome que casou com DUAS ou mais empresas e não decidiu), o casamento de fn_mesma_entidade contra ele NÃO confirma nada — o balcão casa com todo mundo por construção. Se o nome diagnosticado casa EXATO com exatamente UMA empresa já cadastrada (excluído o balcão), abre pendência nomeando a resposta, sem mover o documento nem fundir. 0163: reemitida INTEIRA (não mais por patch de âncora) depois de produção ter abortado a aplicação da 0161/0162 por causa de um corpo gravado em CRLF — ver o cabeçalho da 0163.';
 
 --
--- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text, p_fingerprint_extracao text DEFAULT NULL::text) RETURNS jsonb
+CREATE FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric DEFAULT 0.7, p_justificativa text DEFAULT NULL::text, p_fingerprint_extracao text DEFAULT NULL::text, p_cnpj text DEFAULT NULL::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -8736,7 +8888,7 @@ begin
   -- exatamente o defeito que a 0030 tinha corrigido. Republicar função neste
   -- banco significa partir do corpo mais recente, nunca do da migration que a
   -- gente está lendo.
-  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome);
+  v_entidade_id := fn_upsert_entidade(p_caso_id, p_entidade_nome, p_cnpj);
   v_periodo_id := fn_upsert_periodo(p_caso_id, p_periodo_tipo, p_periodo_ref);
 
   -- Já existe ESTE arquivo (mesmo hash) neste caso? Então é reextração/reenvio:
@@ -8853,10 +9005,10 @@ end;
 $$;
 
 --
--- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) IS 'Registra um arquivo classificado (E1). Idempotente por (caso_id, hash): o MESMO arquivo reenviado/reextraído vira nova documento_versao sob o mesmo documento (n_versao+1), sem duplicar documento, checklist nem pendência. 0118: quando o hash E o fingerprint de prompt+modelo+esquema batem com uma versão que JÁ TEM linha extraída, nem versão nova é criada — devolve a existente com reaproveitou_extracao=true, e o workflow pula a chamada à OpenAI. Hash nulo não casa. Classificação da máquina não sobrepõe revisão humana.';
+COMMENT ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text, p_cnpj text) IS 'A porta de entrada do documento: acha ou cria caso/entidade/período, versiona e responde se já foi extraído (0118). 0170: recebe o CNPJ do emitente e o repassa a fn_upsert_entidade — sem este fio, as três regras de identidade da 0169 nunca disparam em produção e o sintoma é que nada melhora.';
 
 --
 -- Name: fn_registrar_expectativa_macro(jsonb); Type: FUNCTION; Schema: public; Owner: -
@@ -9819,19 +9971,43 @@ $$;
 CREATE FUNCTION public.fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text) RETURNS TABLE(soma numeric, n_linhas integer)
     LANGUAGE sql STABLE
     AS $_$
-  select coalesce(sum(ce.valor_num), 0)::numeric, count(*)::int
-  from campo_extraido ce
-  where ce.documento_versao_id = p_documento_versao_id
-    and ce.valor_num is not null
-    and (
-      position(p_ano4 in fn_normalizar_texto(ce.chave)) > 0
-      or fn_normalizar_texto(ce.chave) ~ ('[/. -]' || p_ano2 || '($|[^0-9])')
-    )
-    and fn_normalizar_texto(ce.chave) not like '%total%'
-    and fn_normalizar_texto(ce.chave) not like '%acumulad%'
-    and fn_normalizar_texto(ce.chave) not like '%media%'
-    and fn_normalizar_texto(ce.chave) not like '%médi%';
+  with candidatos as (
+    select ce.chave, ce.periodo_coluna, ce.valor_num
+    from campo_extraido ce
+    where ce.documento_versao_id = p_documento_versao_id
+      and ce.valor_num is not null
+      and (
+        position(p_ano4 in fn_normalizar_texto(ce.chave)) > 0
+        or fn_normalizar_texto(ce.chave) ~ ('[/. -]' || p_ano2 || '($|[^0-9])')
+      )
+      and fn_normalizar_texto(ce.chave) not like '%total%'
+      and fn_normalizar_texto(ce.chave) not like '%acumulad%'
+      and fn_normalizar_texto(ce.chave) not like '%media%'
+      and fn_normalizar_texto(ce.chave) not like '%médi%'
+  ),
+  -- UM VALOR POR MÊS, e é aqui que mora a correção. A categoria
+  -- (Saídas/Serviços/Outros/Total) mora em `periodo_coluna`, não na `chave` —
+  -- a chave repete o MESMO mês nas quatro células. Se o mês tem uma célula de
+  -- TOTAL, ela é a resposta; as outras três são a decomposição dela, e somar as
+  -- quatro conta o mesmo dinheiro duas vezes.
+  por_rotulo as (
+    select
+      chave,
+      coalesce(
+        max(valor_num) filter (where fn_normalizar_texto(periodo_coluna) like '%total%'),
+        sum(valor_num)
+      ) as valor
+    from candidatos
+    group by chave
+  )
+  select coalesce(sum(valor), 0)::numeric, count(*)::int from por_rotulo;
 $_$;
+
+--
+-- Name: FUNCTION fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text) IS 'Soma o faturamento de um ano, UM VALOR POR MÊS. 0167: a categoria mora em periodo_coluna (Saídas/Serviços/Outros/Total) e a chave repete o mês nas quatro — somar tudo dava 48 "meses" num relatório de 12 e o dobro do faturamento. Com coluna de total, ela manda; sem ela, soma-se a quebra.';
 
 --
 -- Name: fn_sugerir_perguntas(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -10138,50 +10314,139 @@ end;
 $$;
 
 --
--- Name: fn_upsert_entidade(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_upsert_entidade(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) RETURNS uuid
+CREATE FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text DEFAULT NULL::text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
 declare
-  v_id        uuid;
-  v_n         int;
+  v_id         uuid;
+  v_n          int;
   v_candidatos text;
+  v_nomes      text[];
+  v_cnpj       text := fn_cnpj_canonico(p_cnpj);
 begin
-  -- 0153: no empate, não escolhe.
+  -- 0153: no empate, não escolhe. (E o requisito de sonda `entidade_ambigua_nao_decide`
+  -- tem o literal "0153" como MARCADOR DE CORPO — tirar esta linha derruba a sonda
+  -- sem mudar comportamento nenhum. Achado ao rodar a suíte desta fatia.)
   if p_nome is null or length(trim(p_nome)) = 0 then return null; end if;
+
+  -- (0) 0169: CNPJ IGUAL É A MESMA EMPRESA, e ele não pergunta o nome. É esta
+  -- regra que funde as variantes truncadas em QUALQUER ordem de chegada —
+  -- a 0168 só conseguia quando a ordem ajudava.
+  if v_cnpj is not null then
+    select e.id into v_id
+    from entidade e
+    where e.caso_id = p_caso_id and fn_cnpj_canonico(e.cnpj) = v_cnpj
+    order by length(e.razao_social) desc, e.razao_social
+    limit 1;
+
+    -- O RASTRO É OBRIGATÓRIO AQUI, e a revisão desta fatia o achou faltando.
+    -- Este é o ramo MAIS FORTE da função — funde sem olhar o nome — e era o
+    -- único caminho de fusão sem uma linha em `evento_auditoria` (o (3b) grava
+    -- `entidade_alias_fundido`, o de ambiguidade grava `entidade_ambigua`).
+    --
+    -- O cenário que torna isso perigoso é o MESMO template que já colou o
+    -- endereço no nome: o rodapé do relatório traz o CNPJ do ESCRITÓRIO DE
+    -- CONTABILIDADE, não o do emitente. Lido em documentos de três clientes do
+    -- mesmo mandato, o primeiro cria a entidade e os outros dois caem nela sem
+    -- comparar nome nenhum. É o dano da 0153 por uma porta nova — e sem o
+    -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
+    -- respondido com "OMNIBEAUTY".
+    if v_id is not null then
+      if fn_entidade_canonica(
+           (select e.razao_social from entidade e where e.id = v_id)
+         ) is distinct from fn_entidade_canonica(trim(p_nome)) then
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+        values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
+                jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                                   'nome_mantido',
+                                   (select e.razao_social from entidade e where e.id = v_id),
+                                   'cnpj', v_cnpj,
+                                   'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+      end if;
+      return v_id;
+    end if;
+  end if;
 
   -- (1) exato pela forma canônica — não há o que desempatar.
   select c.entidade_id into v_id
-  from fn_entidades_candidatas(p_caso_id, p_nome) c
+  from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c
   where c.exata
   order by c.razao_social
   limit 1;
-  if v_id is not null then return v_id; end if;
-
-  -- (2)/(3) quantos APROXIMADOS existem?
-  select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social)
-    into v_n, v_candidatos
-  from fn_entidades_candidatas(p_caso_id, p_nome) c;
-
-  if v_n = 1 then
-    select c.entidade_id into v_id from fn_entidades_candidatas(p_caso_id, p_nome) c limit 1;
+  if v_id is not null then
+    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
-  insert into entidade (caso_id, razao_social) values (p_caso_id, trim(p_nome))
+  -- (2)/(3) quantos APROXIMADOS existem?
+  select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social),
+         array_agg(c.razao_social)
+    into v_n, v_candidatos, v_nomes
+  from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c;
+
+  -- APRENDER SÓ NO CASAMENTO EXATO, e este `return` SEM `aprender` é a
+  -- correção mais importante que a revisão desta fatia trouxe. Este ramo é o
+  -- casamento FROUXO (subsequência de prefixos) — é ele que faz "Metalúrgica"
+  -- ser absorvido por "VERTENTES METALÚRGICA LTDA.". Deixá-lo GRAVAR o CNPJ
+  -- transformaria um palpite de nome em identidade fiscal permanente:
+  -- "Canastra" com o CNPJ do GRUPO CANASTRA (a holding, impressa no
+  -- consolidado) seria absorvido pela subsidiária e escreveria nela o CNPJ da
+  -- holding — e daí em diante TODO documento da holding cairia na subsidiária
+  -- pelo ramo (0), sem olhar nome. A própria 0168 já diz que o nome que CHEGA é
+  -- o que pode estar contaminado; o CNPJ do mesmo documento não pode ser
+  -- promovido a identidade por um casamento que o nome só aproximou.
+  if v_n = 1 then
+    select c.entidade_id into v_id
+    from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c limit 1;
+    return v_id;
+  end if;
+
+  -- (3b) 0168: dois ou mais candidatos que casam ENTRE SI não são ambiguidade.
+  if v_n > 1 and fn_entidades_sao_um_grupo(v_nomes || trim(p_nome)) then
+    select c.entidade_id into v_id
+    from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c
+    order by length(c.razao_social) desc, c.razao_social
+    limit 1;
+
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_alias_fundido', 'entidade:' || v_id,
+            jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                               'candidatos', v_candidatos, 'quantos', v_n,
+                               'porque', 'os candidatos casam todos entre si — é um nome só, '
+                                      || 'truncado de jeitos diferentes pela fonte'));
+    -- Sem `aprender` pelo mesmo motivo do ramo acima, e aqui é PIOR: o nome que
+    -- chega é justamente o truncado, o que pode trazer o endereço colado.
+    return v_id;
+  end if;
+
+  insert into entidade (caso_id, razao_social, cnpj) values (p_caso_id, trim(p_nome), v_cnpj)
     returning id into v_id;
+
+  -- NASCER COM CNPJ MERECE O MESMO RASTRO QUE APRENDER DEPOIS. É uma afirmação
+  -- de identidade tirada de UM documento, que nunca mais é revisitada e que
+  -- passa a mandar sobre todo nome — o mínimo honesto é ela aparecer no log.
+  if v_cnpj is not null then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || v_id,
+            jsonb_build_object('cnpj', v_cnpj, 'como', 'nasceu com ele'));
+  end if;
 
   if v_n > 1 then
     -- A AMBIGUIDADE É REGISTRADA AQUI e virada em pendência por quem tem o
-    -- documento na mão. Esta função não conhece documento — inventar um vínculo
-    -- para poder abrir a pendência aqui seria a entidade fantasma da 0146 ao
-    -- contrário.
+    -- documento na mão. Esta função não conhece documento.
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
     values ('sistema:entidade', 'entidade_ambigua', 'entidade:' || v_id,
             jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
-                               'candidatos', v_candidatos, 'quantos', v_n));
+                               'candidatos', v_candidatos, 'quantos', v_n,
+                               -- O CNPJ VAI JUNTO, e a revisão achou ele faltando:
+                               -- `fn_pendencia_entidade_ambigua` (0153) monta a descrição
+                               -- a partir deste payload, e o analista lia "casa com mais de
+                               -- uma empresa: A × B" sem o único número que decide — a
+                               -- regra 1 pelo avesso (a nota existe e cala o dado).
+                               'cnpj', v_cnpj));
   end if;
 
   return v_id;
@@ -10189,10 +10454,10 @@ end;
 $$;
 
 --
--- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade do caso pelo nome (0030), sem ESCOLHER no empate (0153): casamento canônico exato primeiro, depois o único aproximado; com dois ou mais aproximados e nenhum exato, cria entidade própria e registra `entidade_ambigua` em evento_auditoria — porque "Araucaria SPE" casa com Bioenergia SPE E com Imobiliária SPE, e o `order by razao_social` da 0030 punha o balanço de uma dentro da outra sem dizer nada.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado que casa com os outros fundido no mais completo (0168). 0169: o CNPJ manda — igual é a mesma empresa sem olhar o nome, diferente tira a candidata da lista, ausente não decide nada. O primeiro documento ensina a identidade, os demais a usam; nunca sobrescreve CNPJ já gravado.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11535,6 +11800,116 @@ CREATE VIEW public.instalacao_sonda_modelagem_versao_vigente AS
 COMMENT ON VIEW public.instalacao_sonda_modelagem_versao_vigente IS '(0164) Autoteste de fn_linhas_para_modelagem, EXECUTADO contra um fixture PERMANENTE e isolado (o caso "Sonda 0164", que não é mandato real) com dois documentos multi-versão: 1 linha só se a reextração que CORRIGE o valor (v2 substitui v1, sem somar nem duplicar) e a reextração AINDA EM ANDAMENTO (v2 sem campo_extraido, a vigente continua v1) resolvem certo ao mesmo tempo. Prova que a CTE versao_vigente (0164, join que substituiu o filtro opaco fn_versao_com_extracao) preserva a regra da 0102 — não prova que o PLANO é bom (isso é papel de Supabase/test/modelagem_versao_vigente_escala.test.sql, que só roda em CI/dev): prova que a reescrita não regrediu a semântica.';
 
 --
+-- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_exigida (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tipo_taxonomia text NOT NULL,
+    conceito text NOT NULL,
+    rotulo text NOT NULL,
+    checagem text NOT NULL,
+    secao_canonica text,
+    origem text NOT NULL,
+    depende_de text[] DEFAULT '{}'::text[] NOT NULL,
+    descricao text NOT NULL,
+    severidade text,
+    sobrepujavel boolean,
+    ativo boolean DEFAULT true NOT NULL,
+    versao integer DEFAULT 1 NOT NULL,
+    escopo_entidade boolean,
+    CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
+    CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
+    CONSTRAINT taxonomia_linha_exigida_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_exigida; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_exigida IS 'Linhas/seções que um tipo de documento PRECISA ter para ser utilizável (entrega aprovada, sessão de 13/08/2026). Filha da taxonomia: a taxonomia diz QUAIS tipos são obrigatórios; esta diz O QUE cada tipo precisa conter. Lida pelo Portão 1 (fn_recomputar_completude, passo 2b).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.checagem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.checagem IS 'linha_por_termos = existe linha casando algum localizador; secao_presente = existe linha com a secao_canonica; serie_mensal = existe linha cujo rótulo tem mês (fn_mes_do_rotulo, 0042).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.origem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.origem IS '''codigo'' = a exigência JÁ está hardcoded numa reconciliação vigente (termos copiados literalmente de 0009/0023/0031/0034); ''proposta'' = saiu da análise do estagiário e NENHUMA checagem a lê hoje. Distinção para o revisor ver a diferença sem abrir o documento da entrega.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.depende_de; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.depende_de IS 'FATO, não política: qual reconciliação/indicador deixa de funcionar sem esta linha. Insumo para o dono definir severidade linha a linha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.severidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então ''importante'' — o mesmo peso que a ausência já tem hoje via precondicao_nao_satisfeita. A migration não endurece nada sozinha.';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.sobrepujavel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
+
+--
+-- Name: COLUMN taxonomia_linha_exigida.escopo_entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_exigida.escopo_entidade IS 'DECISÃO DO DONO, por exigência. NULL (default do seed) = o escopo segue a granularidade do tipo na taxonomia: entidade/entidade_periodo cobram POR ENTIDADE, caso/periodo cobram por caso. true força por entidade (ex.: COMBINADO, granularidade periodo mas linhas com entidade_coluna); false força por caso. Mesmo padrão de severidade/sobrepujavel (0113): a migration não define política.';
+
+--
+-- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.taxonomia_linha_localizador (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    exigencia_id uuid NOT NULL,
+    ordem integer NOT NULL,
+    contra text DEFAULT 'chave'::text NOT NULL,
+    termos_inclui text[] NOT NULL,
+    termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text, 'coluna'::text])))
+);
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localização de uma exigência, em cascata (a ordem espelha o código: o caixa do BP tem 7 tentativas na 0031). Formato de fn_valor_conceito (0009): inclui/exclui por substring do texto normalizado. A exigência satisfaz-se quando QUALQUER localizador casa.';
+
+--
+-- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
+
+--
+-- Name: instalacao_sonda_passivo_bare; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_passivo_bare AS
+ SELECT l.id,
+    e.tipo_taxonomia
+   FROM (public.taxonomia_linha_localizador l
+     JOIN public.taxonomia_linha_exigida e ON ((e.id = l.exigencia_id)))
+  WHERE ((e.conceito = 'passivo_mais_pl'::text) AND (l.contra = 'estrutural'::text) AND (l.termos_inclui = ARRAY['passivo'::text]));
+
+--
+-- Name: VIEW instalacao_sonda_passivo_bare; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_passivo_bare IS 'Sonda da 0166: os localizadores que casam o rótulo "PASSIVO" sozinho. Duas linhas (BALANCO e COMBINADO) — zero significa que o Kit Básico volta a cobrar do cliente uma linha que ele já entregou.';
+
+--
 -- Name: instalacao_sonda_rotulo_contraditorio; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -11737,99 +12112,6 @@ COMMENT ON COLUMN public.rubrica_classe.padrao IS 'Casado contra fn_normalizar_t
 --
 
 COMMENT ON COLUMN public.rubrica_classe.especificidade IS 'Desempate: mais ALTO ganha. Regra com seção e tipo declarados é mais específica que a genérica, e sem desempate declarado duas regras que casam a mesma linha dariam resultado dependente da ordem em que o banco devolveu — que é a forma de erro que a 0125 corrigiu na proveniência.';
-
---
--- Name: taxonomia_linha_exigida; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.taxonomia_linha_exigida (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tipo_taxonomia text NOT NULL,
-    conceito text NOT NULL,
-    rotulo text NOT NULL,
-    checagem text NOT NULL,
-    secao_canonica text,
-    origem text NOT NULL,
-    depende_de text[] DEFAULT '{}'::text[] NOT NULL,
-    descricao text NOT NULL,
-    severidade text,
-    sobrepujavel boolean,
-    ativo boolean DEFAULT true NOT NULL,
-    versao integer DEFAULT 1 NOT NULL,
-    escopo_entidade boolean,
-    CONSTRAINT taxonomia_linha_exigida_checagem_check CHECK ((checagem = ANY (ARRAY['linha_por_termos'::text, 'secao_presente'::text, 'serie_mensal'::text]))),
-    CONSTRAINT taxonomia_linha_exigida_check CHECK (((checagem <> 'secao_presente'::text) OR (secao_canonica IS NOT NULL))),
-    CONSTRAINT taxonomia_linha_exigida_origem_check CHECK ((origem = ANY (ARRAY['codigo'::text, 'proposta'::text]))),
-    CONSTRAINT taxonomia_linha_exigida_severidade_check CHECK ((severidade = ANY (ARRAY['bloqueante'::text, 'importante'::text])))
-);
-
---
--- Name: TABLE taxonomia_linha_exigida; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.taxonomia_linha_exigida IS 'Linhas/seções que um tipo de documento PRECISA ter para ser utilizável (entrega aprovada, sessão de 13/08/2026). Filha da taxonomia: a taxonomia diz QUAIS tipos são obrigatórios; esta diz O QUE cada tipo precisa conter. Lida pelo Portão 1 (fn_recomputar_completude, passo 2b).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.checagem; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.checagem IS 'linha_por_termos = existe linha casando algum localizador; secao_presente = existe linha com a secao_canonica; serie_mensal = existe linha cujo rótulo tem mês (fn_mes_do_rotulo, 0042).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.origem; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.origem IS '''codigo'' = a exigência JÁ está hardcoded numa reconciliação vigente (termos copiados literalmente de 0009/0023/0031/0034); ''proposta'' = saiu da análise do estagiário e NENHUMA checagem a lê hoje. Distinção para o revisor ver a diferença sem abrir o documento da entrega.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.depende_de; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.depende_de IS 'FATO, não política: qual reconciliação/indicador deixa de funcionar sem esta linha. Insumo para o dono definir severidade linha a linha.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.severidade; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.severidade IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então ''importante'' — o mesmo peso que a ausência já tem hoje via precondicao_nao_satisfeita. A migration não endurece nada sozinha.';
-
---
--- Name: COLUMN taxonomia_linha_exigida.sobrepujavel; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.sobrepujavel IS 'DECISÃO DO DONO, por linha. NULL = ainda não decidida; o Portão 1 usa então TRUE (sobrepujável, como a precondicao_nao_satisfeita de hoje).';
-
---
--- Name: COLUMN taxonomia_linha_exigida.escopo_entidade; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_exigida.escopo_entidade IS 'DECISÃO DO DONO, por exigência. NULL (default do seed) = o escopo segue a granularidade do tipo na taxonomia: entidade/entidade_periodo cobram POR ENTIDADE, caso/periodo cobram por caso. true força por entidade (ex.: COMBINADO, granularidade periodo mas linhas com entidade_coluna); false força por caso. Mesmo padrão de severidade/sobrepujavel (0113): a migration não define política.';
-
---
--- Name: taxonomia_linha_localizador; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.taxonomia_linha_localizador (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    exigencia_id uuid NOT NULL,
-    ordem integer NOT NULL,
-    contra text DEFAULT 'chave'::text NOT NULL,
-    termos_inclui text[] NOT NULL,
-    termos_exclui text[] DEFAULT '{}'::text[] NOT NULL,
-    CONSTRAINT taxonomia_linha_localizador_contra_check CHECK ((contra = ANY (ARRAY['chave'::text, 'secao'::text, 'estrutural'::text, 'coluna'::text])))
-);
-
---
--- Name: TABLE taxonomia_linha_localizador; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.taxonomia_linha_localizador IS 'Tentativas de localização de uma exigência, em cascata (a ordem espelha o código: o caixa do BP tem 7 tentativas na 0031). Formato de fn_valor_conceito (0009): inclui/exclui por substring do texto normalizado. A exigência satisfaz-se quando QUALQUER localizador casa.';
-
---
--- Name: COLUMN taxonomia_linha_localizador.contra; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.taxonomia_linha_localizador.contra IS '''chave'' = casa contra ce.chave (fn_valor_conceito); ''secao'' = contra ce.secao; ''coluna'' = contra ce.periodo_coluna, o cabeçalho da coluna (0145 — em documento MATRICIAL o conceito é a coluna e a linha é a entidade concreta: no mapa de dívida a chave é o contrato e "Juros do exercício (R$)" é o cabeçalho); ''estrutural'' = fn_rotulo_estrutural.';
 
 --
 -- Name: taxonomia_tipo_documento; Type: TABLE; Schema: public; Owner: -
@@ -12216,6 +12498,18 @@ ALTER TABLE ONLY public.taxonomia_tipo_documento
 --
 
 CREATE INDEX documento_fato_versao_idx ON public.documento_fato USING btree (documento_versao_id);
+
+--
+-- Name: entidade_caso_cnpj_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX entidade_caso_cnpj_unico ON public.entidade USING btree (caso_id, cnpj) WHERE (cnpj IS NOT NULL);
+
+--
+-- Name: INDEX entidade_caso_cnpj_unico; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON INDEX public.entidade_caso_cnpj_unico IS 'A regra 1 da 0169 afirmada pelo BANCO: dentro de um caso, um CNPJ identifica UMA entidade. Sem ela, duas chamadas concorrentes de fn_upsert_entidade inserem as duas.';
 
 --
 -- Name: idx_campo_classe_override_campo; Type: INDEX; Schema: public; Owner: -
@@ -13381,6 +13675,12 @@ GRANT ALL ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_ca
 GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_cnpj_canonico(p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -13501,6 +13801,12 @@ GRANT ALL ON FUNCTION public.fn_documento_serve_como(p_documento_id uuid, p_tipo
 GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -13511,6 +13817,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_enti
 --
 
 GRANT ALL ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_excluir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
@@ -13905,12 +14217,6 @@ GRANT ALL ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uu
 GRANT ALL ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) TO authenticated;
 
 --
--- Name: FUNCTION fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_registrar_documento(p_caso_id uuid, p_entidade_nome text, p_periodo_tipo text, p_periodo_ref text, p_tipo_taxonomia text, p_confianca numeric, p_fonte text, p_origem_arquivo public.origem_arquivo, p_arquivo_ref text, p_nome_original text, p_assinado boolean, p_hash text, p_legibilidade public.legibilidade, p_threshold numeric, p_justificativa text, p_fingerprint_extracao text) TO authenticated;
-
---
 -- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -
 --
 
@@ -14302,6 +14608,30 @@ GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO authentic
 GRANT ALL ON TABLE public.instalacao_sonda_modelagem_versao_vigente TO service_role;
 
 --
+-- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_exigida TO service_role;
+
+--
+-- Name: TABLE taxonomia_linha_localizador; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO anon;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
+GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_passivo_bare; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
+
+--
 -- Name: TABLE instalacao_sonda_rotulo_contraditorio; Type: ACL; Schema: public; Owner: -
 --
 
@@ -14356,22 +14686,6 @@ GRANT ALL ON TABLE public.reconciliacao TO service_role;
 GRANT ALL ON TABLE public.rubrica_classe TO anon;
 GRANT ALL ON TABLE public.rubrica_classe TO authenticated;
 GRANT ALL ON TABLE public.rubrica_classe TO service_role;
-
---
--- Name: TABLE taxonomia_linha_exigida; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO anon;
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO authenticated;
-GRANT ALL ON TABLE public.taxonomia_linha_exigida TO service_role;
-
---
--- Name: TABLE taxonomia_linha_localizador; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO anon;
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO authenticated;
-GRANT ALL ON TABLE public.taxonomia_linha_localizador TO service_role;
 
 --
 -- Name: TABLE taxonomia_tipo_documento; Type: ACL; Schema: public; Owner: -

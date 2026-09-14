@@ -81,6 +81,88 @@ SQL envolvida, e tentou consultar o banco de produção (bloqueado — ver Fatia
 #221). Fatias 2-6 diagnosticadas com evidência mas **NÃO implementadas** — o dono pediu para
 fechar o plano antes de continuar. **Comece pela Fatia 2.**
 
+> **ESTADO NO FIM DA SESSÃO 89 — Fatias 2, 3, 4 e 5 FEITAS, medidas e empurradas.**
+> Quatro commits em `claude/kind-edison-nbk6vy`, um por fatia (regra 6), cada um com o número do
+> assert que reprovou com a correção desligada:
+>
+> | Fatia | Commit | Migration | Invariante | Medição com a correção DESLIGADA |
+> |---|---|---|---|---|
+> | 2 | `a7f0f02` | `0165` | `passivo_bare_e_o_grupo.test.sql` | `divergente / 9391222.13` — o PL contado duas vezes |
+> | 3 | `21a7fd4` | `0166` | bloco 4 do mesmo arquivo | requisito da sonda 3 → 0 linhas |
+> | 4 | `2088d6d` | `0167` | `faturamento_por_mes.test.sql` | `soma=28758300.92` (o dobro) e 12 "meses" |
+> | 5 | `eb0de33` | `0168` | `alias_truncado.test.sql` | **4 entidades** — literalmente as 4 linhas do export |
+>
+> **A Fatia 5 mudou de escopo quando foi MEDIDA, e isto é o mais importante deste bloco.** O plano
+> abaixo dizia que as quatro variantes da OMNIBEAUTY casam par a par por `fn_mesma_entidade` e
+> portanto podiam ser fundidas numa só. **Isso é falso**, e foi conferido no banco, par a par:
+> `MARCAS LTDA × SURUBIJU` é **FALSO** ("marcas" não é prefixo de "surubiju"), e o mesmo vale
+> contra `SURUBIJU, 1930`. Pelo NOME, "…DE MARCAS" e "…DE SURUBIJU" são tão indistinguíveis de
+> duas empresas irmãs quanto `Araucária Bioenergia` e `Araucária Imobiliária` são — fundi-las
+> seria ESCOLHER no empate, que é exatamente o que a 0153 existe para proibir. A 0168 entrega
+> então só a fatia que o nome sozinho prova (candidatos que casam TODOS entre si), e o ganho
+> medido contra os quatro nomes reais é **4 entidades → 3**, não → 1.
+>
+> **O QUE FALTA NA FATIA 5, com o número:** fechar de 3 para 1 exige o **CNPJ** chegar até
+> `fn_upsert_entidade` — ele está nos dois balanços (36.193.378/0001-04) e não é extraído como
+> identidade da entidade. É trabalho de EXTRAÇÃO, da mesma família dos dois defeitos da Fatia 6,
+> e nenhum algoritmo de nome resolve. **É a primeira coisa a decidir na próxima sessão.**
+>
+> **E a parte retroativa continua bloqueada e é decisão do dono:** a 0168 impede o PRÓXIMO lote de
+> nascer fragmentado, mas não funde as quatro linhas que já existem no caso "teste 143". As
+> consultas corrigidas para inspecionar isso estão na Fatia 5 abaixo (`entidade` NÃO tem coluna de
+> timestamp — use `min(documento.criado_em)` como proxy).
+>
+> **A SESSÃO 89 CONTINUOU DEPOIS DISSO — leia este bloco antes de qualquer coisa.**
+>
+> O dono decidiu, em resposta direta: **atacar o CNPJ agora**, **preparar o script de fusão
+> retroativa para ele executar**, e **fazer a Fatia 6 junto com o CNPJ**. Duas das três estão
+> feitas ou começadas:
+>
+> | O quê | Commit | Estado |
+> |---|---|---|
+> | Script de fusão retroativa | `085d2cd` | **PRONTO, rodado de verdade contra banco de teste.** Espera o dono rodar a Parte 1 e colar o resultado |
+> | `0169` — o CNPJ como identidade | `20e659b` + `4c1c3f8` | **FEITO**, revisado por agente independente, 7 defeitos corrigidos |
+> | `0170` — o CNPJ atravessa a porta | `4c1c3f8` | **FEITO** |
+> | A IA LER o CNPJ do documento | — | **NÃO COMEÇADO. É AQUI QUE A PRÓXIMA SESSÃO PEGA.** |
+> | Fatia 6 (dois defeitos de extração) | — | **NÃO COMEÇADA**, e é para ir na MESMA passada do item acima |
+>
+> **O PRÓXIMO PASSO EXATO, com os arquivos e as linhas já mapeados:**
+>
+> O CNPJ hoje chega **nulo** em `fn_registrar_documento`, então a 0169 e a 0170 estão corretas e
+> **dormentes**. Falta a IA lê-lo. O mapa (conferido, não suposto):
+>
+> 1. **`N8N/build-workflow.mjs:89`, `SCHEMA_CLASSIF`** — é ESTE o schema que produz a entidade que
+>    chega em `fn_registrar_documento` (NÃO o `SYSTEM_PROMPT` do `extract.mjs`, que alimenta o
+>    diagnóstico e vai para `fn_registrar_diagnostico`). Acrescentar `cnpj:{type:['string','null']}`
+>    em `properties` **e** em `required` (o schema é `strict:true`).
+> 2. **O prompt de sistema da classificação**, inline em `CODE_REQ_CLASSIF`
+>    (`N8N/build-workflow.mjs:1106`, a string `sistema:'Classifique o documento…'`) — dizer o que é
+>    o campo, e **dizer explicitamente que o CNPJ do rodapé costuma ser o do ESCRITÓRIO DE
+>    CONTABILIDADE, não o do emitente**. Esse é o cenário que a revisão da 0169 levantou e é o que
+>    funde três clientes num bloco só se a IA ler o rodapé.
+> 3. **`mergeClassification`** (`N8N/build-workflow.mjs:1138-1145`) — `cnpj: fromAI.cnpj ?? null`.
+>    Só a IA lê conteúdo; o nome do arquivo nunca traz CNPJ.
+> 4. **O nó `Registrar Documento`** (`N8N/build-workflow.mjs:2239`) — a query ganha
+>    `p_cnpj=>$16::text` e o `queryReplacement` ganha `$json.cnpj || null`. A 0170 já criou o
+>    parâmetro.
+> 5. **Os espelhos que isso arrasta** (o CLAUDE.md avisa: o bloco de comandos é espelho do CI, e
+>    `.github/workflows/suites.yml` é a fonte): `N8N/test/espelho-inline.test.mjs`,
+>    `N8N/test/workflow-sim.test.mjs`, e os geradores têm de regerar **igual ao commitado**
+>    (`git diff --exit-code`).
+>
+> **A FATIA 6 VAI JUNTO PORQUE É O MESMO ARQUIVO E A MESMA RODADA DE MEDIÇÃO** — foi a razão que o
+> dono escolheu. Mexer no prompt três vezes gastaria três rodadas de IA para medir.
+>
+> **O QUE FICOU MEDIDO E NÃO RESOLVIDO (limite declarado, não esquecimento):** com o CNPJ, o NOME
+> que sobrevive ainda é o da primeira chegada — na ordem invertida, o contaminado pelo endereço
+> ("…DE SURUBIJU, 1930"), que é o que vai para o book. Há assert medindo isso em
+> `cnpj_identidade.test.sql`. O CNPJ funde, não renomeia; renomear entidade é decisão sobre dado do
+> cliente. **É a pergunta a levar ao dono na próxima sessão.**
+>
+> **Fatia 6 segue NÃO implementada, de propósito** — ver a seção dela.
+> **Suíte completa verde** (`Supabase/test/run.sh`, `TODOS OS TESTES PASSARAM`), índice do
+> conhecimento regerado e conferido (`55 verificações OK / 0 falhas`).
+
 ### Fatia 1 — TPM real da conta — ✅ FEITA (commit `135280f`)
 `N8N/lib/provedor.mjs` (30000→500000) + os 4 espelhos que isso arrastou (`PISO_BATCHING_MS`
 movido para `lib/extract.mjs`, dois asserts de `workflow-sim.test.mjs` que travavam números sem
@@ -89,7 +171,7 @@ evidência, os dois hardcodes de `portal/src/lib/espera-do-lote.ts`, e um espelh
 testes do n8n + 7 portões do portal + 2 medidores, todos verdes. Ficha atualizada:
 `.claude/conhecimento/fichas/cadencia-da-extracao-73s.md`.
 
-### Fatia 2 — Ativo = Passivo + PL conta o Patrimônio Líquido duas vezes — PRÓXIMA
+### Fatia 2 — Ativo = Passivo + PL conta o Patrimônio Líquido duas vezes — ✅ FEITA (`a7f0f02`, migration `0165`)
 **Arquivo a mudar:** nova migration (`Supabase/migrations/0165_...sql`), reemitindo
 `fn_reconciliar_ativo_passivo_pl` INTEIRA (doutrina `nunca-corrigir-funcao-por-replace.md` — nunca
 por patch de âncora). Corpo atual em `Supabase/schema.sql:6497-6699`.
@@ -135,7 +217,7 @@ sem condição) e confirmar que o teste então FALHA antes de religar.
 **Efeito esperado:** resolve as ~11 das 37 divergências "Ativo vs Passivo+PL" do book, nas 4
 entidades (AMOBELEZA, GENERAL CORPORATE, GENERAL TABACO, OMNIBEAUTY).
 
-### Fatia 3 — a mesma convenção derruba o Kit Básico por um caminho DIFERENTE
+### Fatia 3 — a mesma convenção derruba o Kit Básico por um caminho DIFERENTE — ✅ FEITA (`21a7fd4`, migration `0166`)
 **Arquivo:** nova migration, `insert into taxonomia_linha_localizador` (seed adicional — não mexe
 em função nenhuma).
 
@@ -165,7 +247,7 @@ sem "PASSIVO E PATRIMÔNIO LÍQUIDO") — desligado (sem o seed), `fn_exigencias
 `passivo_mais_pl` como `satisfeita=false` e `linha_exigida_ausente` abre; ligado, `satisfeita=true`
 e a pendência não abre.
 
-### Fatia 4 — Faturamento × DRE: a hipótese de ontem (sobreposição de datas) estava ERRADA
+### Fatia 4 — Faturamento × DRE: a hipótese de ontem (sobreposição de datas) estava ERRADA — ✅ FEITA (`2088d6d`, migration `0167`)
 **Correção da própria sessão 87**, registrada aqui para não repetir o erro: eu tinha dito que o
 problema era dois arquivos de Faturamento com meses sobrepostos (`AMOBELEZA - FATURAMENTO
 2025.pdf` vs `FATURAMENTO AMOBELEZA 202606.pdf`). **Medi célula a célula no export e não é isso.**
@@ -238,7 +320,7 @@ precisa RODAR, não só ler).
 
 **Efeito esperado:** resolve ~10 das 37 divergências "Receita Bruta vs Faturamento".
 
-### Fatia 5 — OMNIBEAUTY virou 4 entidades — BLOQUEADA, precisa do dono
+### Fatia 5 — OMNIBEAUTY virou 4 entidades — ⚠️ PARCIAL (`eb0de33`, migration `0168`: 4 → 3; o resto precisa do CNPJ e do dono)
 
 **O que a sessão 88 provou sem banco:** rodando `fn_mesma_entidade` (migração 0030) à mão contra
 as 4 variantes do nome que aparecem no export —
