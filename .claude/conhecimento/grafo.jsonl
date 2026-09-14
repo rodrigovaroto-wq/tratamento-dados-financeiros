@@ -256,6 +256,7 @@
 {"k":"n","id":"fn:fn_natureza_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"natureza intragrupo"}
 {"k":"n","id":"fn:fn_nome_parece_ter_endereco_colado","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"nome parece ter endereco colado"}
 {"k":"n","id":"fn:fn_nome_tem_sufixo_societario","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"nome tem sufixo societario"}
+{"k":"n","id":"fn:fn_nomes_compartilham_raiz","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"nomes compartilham raiz"}
 {"k":"n","id":"fn:fn_normalizar_texto","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"normalizar texto"}
 {"k":"n","id":"fn:fn_operacao_lotes","t":"fn","f":"Supabase/migrations/0135_a_operacao_passa_a_ser_vista.sql","txt":"operacao lotes"}
 {"k":"n","id":"fn:fn_operacao_resumo","t":"fn","f":"Supabase/migrations/0135_a_operacao_passa_a_ser_vista.sql","txt":"operacao resumo"}
@@ -780,6 +781,8 @@
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/cnpj_identidade.test.sql","l":218}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_identidade.test.sql","l":52}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_identidade.test.sql","l":53}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_canonica","f":"Supabase/test/cnpj_renomeia.test.sql","l":160}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_nome_tem_sufixo_societario","f":"Supabase/test/cnpj_renomeia.test.sql","l":212}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_renomeia.test.sql","l":44}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_renomeia.test.sql","l":45}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_aceitar_extracao","f":"Supabase/test/completude_conteudo.test.sql","l":10}
@@ -1497,10 +1500,11 @@
 {"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":127}
 {"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":155}
 {"k":"e","de":"migration:0170","rel":"CRIA","pa":"fn:fn_registrar_documento","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","l":53}
-{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_entidade_nome_mais_completo","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":102}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_entidade_nome_mais_completo","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":182}
 {"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_nome_parece_ter_endereco_colado","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":65}
 {"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_nome_tem_sufixo_societario","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":85}
-{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":137}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_nomes_compartilham_raiz","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":143}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":217}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

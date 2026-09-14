@@ -5525,15 +5525,65 @@ COMMENT ON FUNCTION public.fn_nome_parece_ter_endereco_colado(p_nome text) IS '0
 CREATE FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) RETURNS boolean
     LANGUAGE sql IMMUTABLE
     AS $_$
-  select fn_normalizar_texto(p_nome) ~
-    '\s+(ltda|limitada|s\s*a|sa|s\s*/\s*a|eireli|me|epp|mei|em recuperacao judicial|em rj)\.?\s*$';
+  -- A PONTUAÇÃO É ACHATADA ANTES, e isso DIVERGE de `fn_entidade_canonica` de
+  -- propósito. A 0030 casa o sufixo ANTES de achatar a pontuação, com
+  -- `s\s*a` — e `\s*` não casa PONTO. Medido: `S/A` e `SA` eram reconhecidos,
+  -- **`S.A.` não**, que é a grafia mais comum das duas. A primeira versão
+  -- desta função copiou o padrão da 0030 e herdou o buraco, enquanto o
+  -- comentário afirmava cobrir S.A. — achado na revisão desta fatia.
+  --
+  -- O BURACO DA 0030 CONTINUA LÁ e NÃO é consertado aqui: `fn_entidade_canonica`
+  -- é a base do casamento EXATO de todo o produto, e mexer nela reclassifica
+  -- entidade em todo caso já aberto. O efeito medido é limitado — "ALFA S.A."
+  -- e "ALFA" deixam de casar como EXATAS mas continuam casando por
+  -- `fn_mesma_entidade` (aproximado), então o dano é degradar exato→aproximado,
+  -- não perder o casamento. Fica declarado aqui, não corrigido de lado.
+  select trim(regexp_replace(
+           regexp_replace(fn_normalizar_texto(p_nome), '[.,;:/\\()''"-]', ' ', 'g'),
+           '\s+', ' ', 'g'))
+         ~ '\s(ltda|limitada|s a|sa|eireli|me|epp|mei|em recuperacao judicial|em rj)$';
 $_$;
 
 --
 -- Name: FUNCTION fn_nome_tem_sufixo_societario(p_nome text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) IS '0171: o nome termina em sufixo societário (LTDA, S.A., EIRELI, …)? Mesmo padrão que fn_entidade_canonica (0030) usa para reconhecer e tirar o sufixo — um só conceito de sufixo no produto.';
+COMMENT ON FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) IS '0171: o nome termina em sufixo societário (LTDA, S.A., S/A, EIRELI, …)? MESMA lista da fn_entidade_canonica (0030), mas achatando a pontuação ANTES de casar — sem isso "S.A." não é reconhecido (o ponto não é espaço), e era o caso da primeira versão desta função.';
+
+--
+-- Name: fn_nomes_compartilham_raiz(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_nomes_compartilham_raiz(p_a text, p_b text) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+declare
+  a                 text[] := string_to_array(fn_entidade_canonica(p_a), ' ');
+  b                 text[] := string_to_array(fn_entidade_canonica(p_b), ' ');
+  n                 int := 0;
+  menor             int;
+  i                 int;
+  tem_significativo boolean := false;
+begin
+  if a is null or b is null then return false; end if;
+  menor := least(coalesce(array_length(a, 1), 0), coalesce(array_length(b, 1), 0));
+  if menor = 0 then return false; end if;
+
+  for i in 1 .. menor loop
+    exit when a[i] is distinct from b[i];
+    n := n + 1;
+    if length(a[i]) >= 4 then tem_significativo := true; end if;
+  end loop;
+
+  return tem_significativo and n * 2 >= menor;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_nomes_compartilham_raiz(p_a text, p_b text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_nomes_compartilham_raiz(p_a text, p_b text) IS '0171: os dois nomes são o MESMO nome escrito diferente? Prefixo comum de tokens cobrindo pelo menos metade do nome mais curto, com um token significativo (4+) dentro. NÃO é fn_mesma_entidade — aquela devolve FALSO para "…DE MARCAS" × "…DE SURUBIJU, 1930", que são o caso real desta fatia; esta devolve VERDADEIRO. E devolve FALSO para Araucária Bioenergia × Imobiliária, que compartilham só a primeira palavra.';
 
 --
 -- Name: fn_normalizar_texto(text); Type: FUNCTION; Schema: public; Owner: -
@@ -10423,32 +10473,83 @@ begin
     -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
     -- respondido com "OMNIBEAUTY".
     if v_id is not null then
+      -- O EVENTO DE CASAMENTO fica na forma CANÔNICA: ele existe para registrar
+      -- que o CNPJ respondeu um nome MATERIALMENTE diferente do gravado, e
+      -- diferença só de sufixo/pontuação não é isso.
       if fn_entidade_canonica(v_nome_atual) is distinct from fn_entidade_canonica(trim(p_nome)) then
         insert into evento_auditoria (ator, acao, entidade_ref, depois)
         values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
                 jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
                                    'nome_mantido_antes_do_renomeio', v_nome_atual,
                                    'cnpj', v_cnpj,
+                                   'compartilham_raiz', fn_nomes_compartilham_raiz(v_nome_atual, trim(p_nome)),
                                    'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
-
-        -- 0171: O CNPJ TAMBÉM PODE RENOMEAR, não só fundir. `v_nome_atual` e o
-        -- nome que chega são dois jeitos de escrever a MESMA empresa (o CNPJ já
-        -- provou isso) — entre eles, `fn_entidade_nome_mais_completo` escolhe o
-        -- mais completo pela MESMA doutrina anti-contaminação da 0168: um nome
-        -- com cara de ENDEREÇO colado (vírgula + número no fim, o padrão exato
-        -- de "SURUBIJU, 1930") nunca vence, mesmo sendo mais longo; entre dois
-        -- que não têm essa cara, o que TEM sufixo societário (LTDA, S.A., …)
-        -- vence um que não tem; só depois disso o comprimento desempata.
-        v_nome_novo := fn_entidade_nome_mais_completo(v_nome_atual, trim(p_nome));
-        if v_nome_novo is distinct from v_nome_atual then
-          update entidade set razao_social = v_nome_novo where id = v_id;
-          insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-          values ('sistema:entidade', 'entidade_renomeada_por_cnpj', 'entidade:' || v_id,
-                  jsonb_build_object('razao_social', v_nome_atual),
-                  jsonb_build_object('razao_social', v_nome_novo, 'cnpj', v_cnpj,
-                                     'porque', 'nome mais completo pela mesma empresa (CNPJ)'));
-        end if;
       end if;
+
+      -- 0171: O CNPJ TAMBÉM PODE RENOMEAR, não só fundir — com TRÊS guardas, e
+      -- as três nasceram da revisão desta fatia, cada uma de um defeito medido.
+      --
+      -- O RENOMEIO FICA FORA DA GUARDA CANÔNICA ACIMA (defeito 1 medido): a
+      -- canônica TIRA o sufixo societário, então "ALFA COMERCIO" e "ALFA
+      -- COMERCIO LTDA" são canonicamente IGUAIS — e o renomeio, aninhado
+      -- naquele `if`, nunca rodava justamente no caso em que o sinal 2 (sufixo)
+      -- existe para decidir. Medido: o nome final ficava "ALFA COMERCIO".
+      v_nome_novo := fn_entidade_nome_mais_completo(v_nome_atual, trim(p_nome));
+
+      if v_nome_novo is distinct from v_nome_atual
+         -- GUARDA 1 (defeito 2 medido): SÓ RENOMEIA ENTRE NOMES DA MESMA RAIZ.
+         -- O CNPJ basta para FUNDIR (é a regra 1 da 0169, e o dono a aprovou),
+         -- mas não basta para reescrever o nome: o cenário do rodapé com o CNPJ
+         -- do ESCRITÓRIO DE CONTABILIDADE — descrito no cabeçalho desta própria
+         -- função — fazia "PADARIA DO JOAO LTDA" virar "METALURGICA SAO PEDRO
+         -- COMERCIO LTDA", medido. Antes da 0171 a fusão errada pelo menos
+         -- PRESERVAVA o nome; o renomeio piorava o dano em vez de melhorá-lo.
+         -- Quando os nomes não compartilham raiz, o `entidade_cnpj_casou` acima
+         -- já registrou o casamento suspeito e é ELE que o humano lê.
+         --
+         -- `fn_nomes_compartilham_raiz` e NÃO `fn_mesma_entidade`: a primeira
+         -- versão desta guarda usou a segunda e BLOQUEOU O CASO MOTIVADOR —
+         -- medido, o nome final da OMNIBEAUTY voltou a ser "…SURUBIJU, 1930".
+         -- Ver o cabeçalho da função nova para as quatro medições.
+         and fn_nomes_compartilham_raiz(v_nome_atual, trim(p_nome))
+         -- GUARDA 2 (defeito 3 medido): NÃO CRIA HOMÔNIMA. Sem isto, o renomeio
+         -- deixava DUAS entidades do mesmo caso com a razão social idêntica, e
+         -- o ramo (1) — casamento exato — passava a escolher uma delas por
+         -- `order by razao_social limit 1`, empate puro entre strings iguais,
+         -- SEM registrar ambiguidade nenhuma. Medido: 2 entidades homônimas, 0
+         -- eventos. É o defeito silencioso clássico deste projeto — os
+         -- documentos se dividem entre duas linhas que a tela mostra como uma.
+         and not exists (
+           select 1 from entidade e2
+           where e2.caso_id = p_caso_id and e2.id <> v_id
+             and fn_entidade_canonica(e2.razao_social) = fn_entidade_canonica(v_nome_novo))
+      then
+        update entidade set razao_social = v_nome_novo where id = v_id;
+        insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+        values ('sistema:entidade', 'entidade_renomeada_por_cnpj', 'entidade:' || v_id,
+                jsonb_build_object('razao_social', v_nome_atual),
+                jsonb_build_object('razao_social', v_nome_novo, 'cnpj', v_cnpj,
+                                   'porque', 'nome mais completo pela mesma empresa (CNPJ)'));
+
+      elsif v_nome_novo is distinct from v_nome_atual then
+        -- RECUSA COM RASTRO, e não em silêncio. Chegar aqui significa que o
+        -- nome que veio ERA mais completo e mesmo assim não foi adotado — ou
+        -- porque não é variante do gravado (CNPJ suspeito), ou porque adotá-lo
+        -- criaria uma homônima (duas entidades que provavelmente deveriam ser
+        -- UMA). As duas coisas são informação para quem revisa; nenhuma delas
+        -- pode ser decidida por esta função, que não conhece documento.
+        insert into evento_auditoria (ator, acao, entidade_ref, depois)
+        values ('sistema:entidade', 'entidade_renomeio_recusado', 'entidade:' || v_id,
+                jsonb_build_object('caso_id', p_caso_id, 'razao_social_mantida', v_nome_atual,
+                                   'razao_social_recusada', v_nome_novo, 'cnpj', v_cnpj,
+                                   'compartilham_raiz', fn_nomes_compartilham_raiz(v_nome_atual, trim(p_nome)),
+                                   'homonima_existiria', exists (
+                                     select 1 from entidade e2
+                                     where e2.caso_id = p_caso_id and e2.id <> v_id
+                                       and fn_entidade_canonica(e2.razao_social)
+                                           = fn_entidade_canonica(v_nome_novo))));
+      end if;
+
       return v_id;
     end if;
   end if;
@@ -14164,6 +14265,12 @@ GRANT ALL ON FUNCTION public.fn_nome_parece_ter_endereco_colado(p_nome text) TO 
 --
 
 GRANT ALL ON FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_nomes_compartilham_raiz(p_a text, p_b text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_nomes_compartilham_raiz(p_a text, p_b text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: ACL; Schema: public; Owner: -

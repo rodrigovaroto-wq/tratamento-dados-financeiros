@@ -119,6 +119,106 @@ BEGIN
        where acao = 'entidade_renomeada_por_cnpj' and entidade_ref = 'entidade:' || v_id),
     'e nenhum evento de renomeio por CNPJ nasceu — não havia CNPJ nenhum envolvido');
 
+  raise notice '--- 7. O CNPJ DO CONTADOR NAO PODE REESCREVER O NOME (achado da revisao) ---';
+  -- O cenário está no cabeçalho da própria `fn_upsert_entidade`: o rodapé do
+  -- relatório traz o CNPJ do ESCRITÓRIO DE CONTABILIDADE, e documentos de
+  -- clientes diferentes chegam com ele. A fusão errada a 0169 já admitia (o
+  -- CNPJ manda, e o `entidade_cnpj_casou` registra); o que a 0171 NÃO pode
+  -- fazer é piorar o dano reescrevendo o nome de um cliente com o de outro.
+  -- MEDIDO antes da guarda: "PADARIA DO JOAO LTDA" virava "METALURGICA SAO
+  -- PEDRO COMERCIO LTDA".
+  v_caso := (fn_upsert_caso('CNPJ renomeia — CNPJ do contador'))::uuid;
+  v_id := fn_upsert_entidade(v_caso, 'PADARIA DO JOAO LTDA', '11.222.333/0001-81');
+  perform fn_upsert_entidade(v_caso, 'METALURGICA SAO PEDRO COMERCIO LTDA', '11.222.333/0001-81');
+  select razao_social into v_nome from entidade where id = v_id;
+  perform teste_assert_ren(v_nome = 'PADARIA DO JOAO LTDA',
+    'nomes SEM raiz comum não se renomeiam, mesmo com o CNPJ igual — o CNPJ funde, e fundir '
+      || 'errado já é ruim; reescrever o nome por cima seria pior',
+    v_nome);
+
+  perform teste_assert_ren(exists (
+      select 1 from evento_auditoria ev
+      where ev.acao = 'entidade_renomeio_recusado' and ev.entidade_ref = 'entidade:' || v_id),
+    'e a RECUSA tem rastro — recusar em silêncio esconderia o CNPJ suspeito de quem revisa');
+
+  raise notice '--- 8. RAIZ SO NA PRIMEIRA PALAVRA nao autoriza renomeio (Araucaria) ---';
+  -- O contrapositivo fino: "ARAUCARIA BIOENERGIA SPE" e "ARAUCARIA IMOBILIARIA
+  -- SPE" compartilham UMA palavra de três. São o incidente que a 0153 existe
+  -- para lembrar — duas empresas reais e distintas — e um CNPJ errado entre
+  -- elas não pode virar renomeio.
+  v_caso := (fn_upsert_caso('CNPJ renomeia — Araucária, raiz curta'))::uuid;
+  v_id := fn_upsert_entidade(v_caso, 'ARAUCÁRIA BIOENERGIA SPE LTDA.', '11.222.333/0001-81');
+  perform fn_upsert_entidade(v_caso, 'ARAUCÁRIA IMOBILIÁRIA SPE LTDA.', '11.222.333/0001-81');
+  select razao_social into v_nome from entidade where id = v_id;
+  perform teste_assert_ren(v_nome = 'ARAUCÁRIA BIOENERGIA SPE LTDA.',
+    'uma palavra comum de três NÃO é raiz compartilhada — o prefixo tem de cobrir metade do '
+      || 'nome mais curto',
+    v_nome);
+
+  raise notice '--- 9. quando so o SUFIXO difere, o mais completo vence ---';
+  -- ACHADO DA REVISÃO: o renomeio estava aninhado na guarda
+  -- `fn_entidade_canonica(...) is distinct from ...`, e a canônica TIRA o
+  -- sufixo — então "ALFA COMERCIO" e "ALFA COMERCIO LTDA" são canonicamente
+  -- iguais e o renomeio nunca rodava justamente no caso em que o sinal do
+  -- sufixo existe para decidir. MEDIDO: o nome ficava "ALFA COMERCIO".
+  v_caso := (fn_upsert_caso('CNPJ renomeia — só o sufixo difere'))::uuid;
+  v_id := fn_upsert_entidade(v_caso, 'ALFA COMERCIO', '11.222.333/0001-81');
+  perform fn_upsert_entidade(v_caso, 'ALFA COMERCIO LTDA', '11.222.333/0001-81');
+  select razao_social into v_nome from entidade where id = v_id;
+  perform teste_assert_ren(v_nome = 'ALFA COMERCIO LTDA',
+    'a razão social COM sufixo vence a sem — a guarda canônica não pode esconder o caso em que '
+      || 'o sufixo É a única diferença',
+    v_nome);
+
+  raise notice '--- 10. o renomeio NAO cria homonima no mesmo caso ---';
+  -- ACHADO DA REVISÃO, e é o defeito silencioso clássico deste projeto: sem a
+  -- guarda, o renomeio deixava DUAS entidades do caso com a razão social
+  -- idêntica, e o ramo do casamento EXATO passava a escolher uma delas por
+  -- `order by razao_social limit 1` — empate puro entre strings iguais, SEM
+  -- registrar ambiguidade. Os documentos se dividem entre duas linhas que a
+  -- tela mostra como uma. MEDIDO: 2 entidades homônimas, 0 eventos.
+  -- O ARRANJO PRECISA DAS DUAS GUARDAS EM ORDEM: os nomes TÊM de compartilhar
+  -- raiz (senão quem barra é a guarda 1 e este bloco mediria a outra coisa), e
+  -- mesmo assim a homônima tem de existir. Daí os três nomes com o mesmo
+  -- começo e finais distintos — e a primeira tentativa deste bloco usou
+  -- "ALFA COM", que é ABSORVIDA pelo casamento aproximado antes de virar
+  -- entidade própria, e por isso não reproduzia colisão nenhuma.
+  v_caso := (fn_upsert_caso('CNPJ renomeia — homônima'))::uuid;
+  perform fn_upsert_entidade(v_caso, 'ALFA COMERCIO MINEIRA IMPORTACAO LTDA');
+  v_id := fn_upsert_entidade(v_caso, 'ALFA COMERCIO PAULISTA LTDA', '11.222.333/0001-81');
+  perform fn_upsert_entidade(v_caso, 'ALFA COMERCIO MINEIRA IMPORTACAO LTDA', '11.222.333/0001-81');
+
+  select count(*) into v_n from entidade e1
+   where e1.caso_id = v_caso
+     and exists (select 1 from entidade e2
+                  where e2.caso_id = v_caso and e2.id <> e1.id
+                    and fn_entidade_canonica(e2.razao_social) = fn_entidade_canonica(e1.razao_social));
+  perform teste_assert_ren(v_n = 0,
+    'nenhuma entidade homônima nasce do renomeio — duas linhas com o mesmo nome são invisíveis '
+      || 'na tela e o casamento exato escolhe uma no escuro',
+    format('%s entidade(s) com nome repetido', v_n));
+
+  perform teste_assert_ren(exists (
+      select 1 from evento_auditoria ev
+      where ev.acao = 'entidade_renomeio_recusado' and ev.entidade_ref = 'entidade:' || v_id
+        and (ev.depois->>'homonima_existiria')::boolean),
+    'e a recusa diz QUAL das duas guardas barrou (homonima_existiria = true)');
+
+  raise notice '--- 11. S.A. reconhecido como sufixo societario ---';
+  -- ACHADO DA REVISÃO: a primeira versão copiou o padrão da 0030, onde `s\s*a`
+  -- não casa PONTO — `S/A` e `SA` eram reconhecidos e **`S.A.` não**, que é a
+  -- grafia mais comum. O comentário da função afirmava cobrir S.A.
+  perform teste_assert_ren(
+    fn_nome_tem_sufixo_societario('METALURGICA SAO PEDRO S.A.')
+    and fn_nome_tem_sufixo_societario('METALURGICA SAO PEDRO S/A')
+    and fn_nome_tem_sufixo_societario('METALURGICA SAO PEDRO SA'),
+    'as três grafias de sociedade anônima (S.A., S/A, SA) são reconhecidas');
+
+  perform teste_assert_ren(
+    not fn_nome_tem_sufixo_societario('CONSTRUTORA SAO PEDRO')
+    and not fn_nome_tem_sufixo_societario('TRANSPORTES SAO PAULO'),
+    'e "SAO" não vira falso positivo de "SA" — o casamento é de token inteiro no FIM');
+
   raise notice 'CNPJ RENOMEIA OK — a cara de endereço nunca vence, o sufixo desempata, o '
                'comprimento só decide por último, e a ordem de chegada parou de mandar';
 END $$;
