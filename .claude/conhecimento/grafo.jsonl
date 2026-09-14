@@ -38,6 +38,7 @@
 {"k":"n","id":"arquivo:Supabase/test/canonico.test.sql","t":"arquivo","f":"Supabase/test/canonico.test.sql","txt":"canonico.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/classificacao_contabil.test.sql","t":"arquivo","f":"Supabase/test/classificacao_contabil.test.sql","txt":"classificacao_contabil.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/cnpj_identidade.test.sql","t":"arquivo","f":"Supabase/test/cnpj_identidade.test.sql","txt":"cnpj_identidade.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/cnpj_renomeia.test.sql","t":"arquivo","f":"Supabase/test/cnpj_renomeia.test.sql","txt":"cnpj_renomeia.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/completude_conteudo.test.sql","t":"arquivo","f":"Supabase/test/completude_conteudo.test.sql","txt":"completude_conteudo.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/conferir-chamadas.mjs","t":"arquivo","f":"Supabase/test/conferir-chamadas.mjs","txt":"conferir-chamadas.mjs"}
 {"k":"n","id":"arquivo:Supabase/test/custo_do_lote.test.sql","t":"arquivo","f":"Supabase/test/custo_do_lote.test.sql","txt":"custo_do_lote.test.sql"}
@@ -204,6 +205,7 @@
 {"k":"n","id":"fn:fn_entidade_aprender_cnpj","t":"fn","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"entidade aprender cnpj"}
 {"k":"n","id":"fn:fn_entidade_canonica","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"entidade canonica"}
 {"k":"n","id":"fn:fn_entidade_e_balcao_ambiguo","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"entidade e balcao ambiguo"}
+{"k":"n","id":"fn:fn_entidade_nome_mais_completo","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade nome mais completo"}
 {"k":"n","id":"fn:fn_entidades_candidatas","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"entidades candidatas"}
 {"k":"n","id":"fn:fn_entidades_candidatas_cnpj","t":"fn","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"entidades candidatas cnpj"}
 {"k":"n","id":"fn:fn_entidades_sao_um_grupo","t":"fn","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"entidades sao um grupo"}
@@ -252,6 +254,8 @@
 {"k":"n","id":"fn:fn_mudar_dial","t":"fn","f":"Supabase/migrations/0139_reafirmar_nao_apaga_medicao.sql","txt":"mudar dial"}
 {"k":"n","id":"fn:fn_mutuo_com_socio","t":"fn","f":"Supabase/migrations/0123_mutuos_a_natureza_fora_da_linha.sql","txt":"mutuo com socio"}
 {"k":"n","id":"fn:fn_natureza_intragrupo","t":"fn","f":"Supabase/migrations/0124_intragrupo_que_nao_e_mutuo.sql","txt":"natureza intragrupo"}
+{"k":"n","id":"fn:fn_nome_parece_ter_endereco_colado","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"nome parece ter endereco colado"}
+{"k":"n","id":"fn:fn_nome_tem_sufixo_societario","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"nome tem sufixo societario"}
 {"k":"n","id":"fn:fn_normalizar_texto","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"normalizar texto"}
 {"k":"n","id":"fn:fn_operacao_lotes","t":"fn","f":"Supabase/migrations/0135_a_operacao_passa_a_ser_vista.sql","txt":"operacao lotes"}
 {"k":"n","id":"fn:fn_operacao_resumo","t":"fn","f":"Supabase/migrations/0135_a_operacao_passa_a_ser_vista.sql","txt":"operacao resumo"}
@@ -319,7 +323,7 @@
 {"k":"n","id":"fn:fn_trg_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"trg entidade ambigua"}
 {"k":"n","id":"fn:fn_unidade_predominante","t":"fn","f":"Supabase/migrations/0021_classe_b_checagem_unidade.sql","txt":"unidade predominante"}
 {"k":"n","id":"fn:fn_upsert_caso","t":"fn","f":"Supabase/migrations/0006_reset_funcoes.sql","txt":"upsert caso"}
-{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"upsert entidade"}
+{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"upsert entidade"}
 {"k":"n","id":"fn:fn_upsert_periodo","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"upsert periodo"}
 {"k":"n","id":"fn:fn_valor_conceito","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"valor conceito"}
 {"k":"n","id":"fn:fn_valor_conceito_col","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"valor conceito col"}
@@ -447,6 +451,7 @@
 {"k":"n","id":"migration:0168","t":"migration","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"o apelido truncado nao e ambiguidade"}
 {"k":"n","id":"migration:0169","t":"migration","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"o cnpj e a identidade que o nome nao e"}
 {"k":"n","id":"migration:0170","t":"migration","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","txt":"o cnpj atravessa a porta de entrada"}
+{"k":"n","id":"migration:0171","t":"migration","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"o cnpj tambem renomeia"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -767,11 +772,13 @@
 {"k":"e","de":"arquivo:Supabase/test/classificacao_contabil.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_classe_override","f":"Supabase/test/classificacao_contabil.test.sql","l":196}
 {"k":"e","de":"arquivo:Supabase/test/classificacao_contabil.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/classificacao_contabil.test.sql","l":53}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_cnpj_canonico","f":"Supabase/test/cnpj_identidade.test.sql","l":69}
-{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas","f":"Supabase/test/cnpj_identidade.test.sql","l":119}
-{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/test/cnpj_identidade.test.sql","l":118}
-{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/cnpj_identidade.test.sql","l":222}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas","f":"Supabase/test/cnpj_identidade.test.sql","l":115}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/test/cnpj_identidade.test.sql","l":114}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/cnpj_identidade.test.sql","l":218}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_identidade.test.sql","l":52}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_identidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_identidade.test.sql","l":53}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_renomeia.test.sql","l":44}
+{"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_renomeia.test.sql","l":45}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_aceitar_extracao","f":"Supabase/test/completude_conteudo.test.sql","l":10}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_recomputar_completude","f":"Supabase/test/completude_conteudo.test.sql","l":84}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/completude_conteudo.test.sql","l":50}
@@ -1487,6 +1494,10 @@
 {"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_entidades_candidatas_cnpj","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":127}
 {"k":"e","de":"migration:0169","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","l":155}
 {"k":"e","de":"migration:0170","rel":"CRIA","pa":"fn:fn_registrar_documento","f":"Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_entrada.sql","l":53}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_entidade_nome_mais_completo","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":102}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_nome_parece_ter_endereco_colado","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":65}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_nome_tem_sufixo_societario","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":85}
+{"k":"e","de":"migration:0171","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","l":137}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

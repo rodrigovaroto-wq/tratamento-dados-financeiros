@@ -80,22 +80,18 @@ begin
     'ordem invertida, mesma CONTAGEM — o CNPJ não pergunta quem chegou primeiro',
     format('%s entidade(s)', v_n));
 
-  -- MAS O NOME QUE SOBREVIVE AINDA DEPENDE DA ORDEM, e este assert existe para
-  -- que isso seja MEDIDO em vez de descoberto no book do cliente. Achado na
-  -- revisão desta fatia: sob a 0168 a fusão escolhia entre linhas que já
-  -- existiam e o `order by length desc` dava o nome mais completo; sob a regra 1
-  -- só UMA linha chega a existir, então o nome é congelado pela primeira
-  -- chegada — e aqui a primeira é a que tem o ENDEREÇO colado.
-  --
-  -- É LIMITE DECLARADO, não conserto pendente disfarçado de teste: renomear
-  -- entidade é decisão sobre dado do cliente, e nenhuma regra de nome que eu
-  -- saiba escrever distingue "…DE SURUBIJU, 1930" de uma razão social legítima
-  -- que por acaso termine em número. Se um dia alguém ensinar isso à função,
-  -- este assert reprova — e é o lugar certo para a decisão ser revista.
+  -- ESTE ERA O LIMITE DECLARADO até a 0171, e o comentário antigo já dizia:
+  -- "se um dia alguém ensinar isso à função, este assert reprova — e é o
+  -- lugar certo para a decisão ser revista". A 0171 é essa decisão (o dono
+  -- pediu, em resposta direta): agora o CNPJ TAMBÉM renomeia para o nome mais
+  -- completo, não só funde. A medição do DESEMPATE em si (por que "…DE MARCAS
+  -- LTDA" vence "…DE SURUBIJU, 1930" mesmo sendo mais curto) está em
+  -- `cnpj_renomeia.test.sql`, não aqui — este bloco só confere que o
+  -- resultado final, nesta ordem de chegada, é o nome CERTO.
   perform teste_assert_cnpj(
-    (select razao_social from entidade where caso_id = v_caso) = c_s1930,
-    'LIMITE DECLARADO: o NOME que sobrevive é o da primeira chegada, mesmo sendo o contaminado '
-      || 'pelo endereço — o CNPJ funde, não renomeia',
+    (select razao_social from entidade where caso_id = v_caso) = c_m,
+    'com a 0171, o nome que sobrevive é o MAIS COMPLETO ("…DE MARCAS LTDA"), não mais o da '
+      || 'primeira chegada — ver cnpj_renomeia.test.sql para o desempate',
     (select razao_social from entidade where caso_id = v_caso));
 
   raise notice '--- 3. CNPJ NULO NÃO MUDA NADA: os mesmos quatro nomes dão TRÊS ---';

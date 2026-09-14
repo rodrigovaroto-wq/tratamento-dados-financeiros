@@ -2663,6 +2663,36 @@ $$;
 COMMENT ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid) IS 'Verdadeiro quando a entidade é o balcão de perguntas que a 0153 cria para um nome que casa com DUAS ou mais empresas do caso — reconhecido pela pendência `entidade_ambigua:<id>` ainda aberta. (0162) Existe porque o balcão casa com TODO MUNDO por construção (foi criado exatamente porque o nome dele casava com mais de uma empresa), e `fn_registrar_diagnostico` estava tratando esse casamento como confirmação.';
 
 --
+-- Name: fn_entidade_nome_mais_completo(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    -- (1) cara de endereço colado nunca vence, mesmo mais longo.
+    when fn_nome_parece_ter_endereco_colado(p_novo)
+     and not fn_nome_parece_ter_endereco_colado(p_atual) then p_atual
+    when fn_nome_parece_ter_endereco_colado(p_atual)
+     and not fn_nome_parece_ter_endereco_colado(p_novo) then p_novo
+    -- (2) sufixo societário vence quem não tem.
+    when fn_nome_tem_sufixo_societario(p_novo)
+     and not fn_nome_tem_sufixo_societario(p_atual) then p_novo
+    when fn_nome_tem_sufixo_societario(p_atual)
+     and not fn_nome_tem_sufixo_societario(p_novo) then p_atual
+    -- (3) empatados nos dois sinais acima: comprimento cru desempata.
+    when length(trim(p_novo)) > length(trim(p_atual)) then p_novo
+    else p_atual
+  end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_nome_mais_completo(p_atual text, p_novo text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) IS '0171: entre dois nomes que o CNPJ já provou serem a MESMA empresa, qual fica. Três sinais em ordem: cara de endereço colado (nunca vence, mesmo mais longo) > sufixo societário > comprimento cru. Sem isso, "SURUBIJU, 1930" (55 chars) venceria "MARCAS LTDA" (52) só por ser mais longo — e é o nome ERRADO.';
+
+--
 -- Name: fn_entidades_candidatas(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5471,6 +5501,39 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) IS '0124: a natureza da linha intragrupo, para a MENSAGEM dizer onde procurar. Não é chave de pareamento — cada ponta da relação usa o vocabulário dela.';
+
+--
+-- Name: fn_nome_parece_ter_endereco_colado(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_nome_parece_ter_endereco_colado(p_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  select trim(p_nome) ~ ',\s*\d+\s*$';
+$_$;
+
+--
+-- Name: FUNCTION fn_nome_parece_ter_endereco_colado(p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_nome_parece_ter_endereco_colado(p_nome text) IS '0171: vírgula seguida de número no fim do nome — o padrão exato de "…SURUBIJU, 1930", onde o template do contador colou a linha de endereço na razão social truncada.';
+
+--
+-- Name: fn_nome_tem_sufixo_societario(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  select fn_normalizar_texto(p_nome) ~
+    '\s+(ltda|limitada|s\s*a|sa|s\s*/\s*a|eireli|me|epp|mei|em recuperacao judicial|em rj)\.?\s*$';
+$_$;
+
+--
+-- Name: FUNCTION fn_nome_tem_sufixo_societario(p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) IS '0171: o nome termina em sufixo societário (LTDA, S.A., EIRELI, …)? Mesmo padrão que fn_entidade_canonica (0030) usa para reconhecer e tirar o sufixo — um só conceito de sufixo no produto.';
 
 --
 -- Name: fn_normalizar_texto(text); Type: FUNCTION; Schema: public; Owner: -
@@ -10326,6 +10389,8 @@ declare
   v_candidatos text;
   v_nomes      text[];
   v_cnpj       text := fn_cnpj_canonico(p_cnpj);
+  v_nome_atual text;
+  v_nome_novo  text;
 begin
   -- 0153: no empate, não escolhe. (E o requisito de sonda `entidade_ambigua_nao_decide`
   -- tem o literal "0153" como MARCADOR DE CORPO — tirar esta linha derruba a sonda
@@ -10336,7 +10401,10 @@ begin
   -- regra que funde as variantes truncadas em QUALQUER ordem de chegada —
   -- a 0168 só conseguia quando a ordem ajudava.
   if v_cnpj is not null then
-    select e.id into v_id
+    -- `order by` sem efeito prático desde a 0169: o índice único
+    -- `entidade_caso_cnpj_unico (caso_id, cnpj)` garante NO MÁXIMO uma linha.
+    -- Fica como documentação da invariante, não como desempate de verdade.
+    select e.id, e.razao_social into v_id, v_nome_atual
     from entidade e
     where e.caso_id = p_caso_id and fn_cnpj_canonico(e.cnpj) = v_cnpj
     order by length(e.razao_social) desc, e.razao_social
@@ -10355,16 +10423,31 @@ begin
     -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
     -- respondido com "OMNIBEAUTY".
     if v_id is not null then
-      if fn_entidade_canonica(
-           (select e.razao_social from entidade e where e.id = v_id)
-         ) is distinct from fn_entidade_canonica(trim(p_nome)) then
+      if fn_entidade_canonica(v_nome_atual) is distinct from fn_entidade_canonica(trim(p_nome)) then
         insert into evento_auditoria (ator, acao, entidade_ref, depois)
         values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
                 jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
-                                   'nome_mantido',
-                                   (select e.razao_social from entidade e where e.id = v_id),
+                                   'nome_mantido_antes_do_renomeio', v_nome_atual,
                                    'cnpj', v_cnpj,
                                    'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+
+        -- 0171: O CNPJ TAMBÉM PODE RENOMEAR, não só fundir. `v_nome_atual` e o
+        -- nome que chega são dois jeitos de escrever a MESMA empresa (o CNPJ já
+        -- provou isso) — entre eles, `fn_entidade_nome_mais_completo` escolhe o
+        -- mais completo pela MESMA doutrina anti-contaminação da 0168: um nome
+        -- com cara de ENDEREÇO colado (vírgula + número no fim, o padrão exato
+        -- de "SURUBIJU, 1930") nunca vence, mesmo sendo mais longo; entre dois
+        -- que não têm essa cara, o que TEM sufixo societário (LTDA, S.A., …)
+        -- vence um que não tem; só depois disso o comprimento desempata.
+        v_nome_novo := fn_entidade_nome_mais_completo(v_nome_atual, trim(p_nome));
+        if v_nome_novo is distinct from v_nome_atual then
+          update entidade set razao_social = v_nome_novo where id = v_id;
+          insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+          values ('sistema:entidade', 'entidade_renomeada_por_cnpj', 'entidade:' || v_id,
+                  jsonb_build_object('razao_social', v_nome_atual),
+                  jsonb_build_object('razao_social', v_nome_novo, 'cnpj', v_cnpj,
+                                     'porque', 'nome mais completo pela mesma empresa (CNPJ)'));
+        end if;
       end if;
       return v_id;
     end if;
@@ -10457,7 +10540,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado que casa com os outros fundido no mais completo (0168). 0169: o CNPJ manda — igual é a mesma empresa sem olhar o nome, diferente tira a candidata da lista, ausente não decide nada. O primeiro documento ensina a identidade, os demais a usam; nunca sobrescreve CNPJ já gravado.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169). 0171: quando o CNPJ funde duas variantes de nome, adota a mais completa entre elas (fn_entidade_nome_mais_completo) — com rastro em entidade_renomeada_por_cnpj. Os ramos de casamento aproximado (sem CNPJ) continuam sem renomear ao decidir: ali o CNPJ não provou identidade nenhuma.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -13813,6 +13896,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnp
 GRANT ALL ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_nome_mais_completo(p_atual text, p_novo text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidades_candidatas(p_caso_id uuid, p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -14063,6 +14152,18 @@ GRANT ALL ON FUNCTION public.fn_mutuo_com_socio(p_chave text, p_secao text) TO a
 --
 
 GRANT ALL ON FUNCTION public.fn_natureza_intragrupo(p_chave text, p_secao text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_nome_parece_ter_endereco_colado(p_nome text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_nome_parece_ter_endereco_colado(p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_nome_tem_sufixo_societario(p_nome text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_nome_tem_sufixo_societario(p_nome text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_operacao_lotes(p_dias integer, p_limite integer); Type: ACL; Schema: public; Owner: -
