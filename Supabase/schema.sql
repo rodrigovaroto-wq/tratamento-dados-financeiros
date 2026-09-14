@@ -6524,6 +6524,10 @@ declare
   v_orig_esq   text;
   v_orig_dir   text;
   v_faltas     text[] := '{}';
+  -- 0165: o "PASSIVO" bare veio do casamento ESTRUTURAL (e não de um rótulo que
+  -- diz "Passivo Total")? É essa a única via ambígua — ver o comentário grande
+  -- da migration.
+  v_passivo_estrutural boolean := false;
 begin
   v_doc_id := fn_documento_balanco(p_caso_id, p_entidade_id, p_periodo_id);
 
@@ -6545,6 +6549,7 @@ begin
     v_orig_dir := null;
     v_esq := null;
     v_dir := null;
+    v_passivo_estrutural := false;
 
     -- ---- lado esquerdo: ATIVO ------------------------------------------------
     -- (a) a linha que diz "total" no rótulo.
@@ -6594,12 +6599,25 @@ begin
         if v_passivo.id is null then
           select * into v_passivo from fn_valor_estrutural_col(v_versao,
             array['passivo'], v_col_ent, v_col_per);
+          v_passivo_estrutural := v_passivo.id is not null;
         end if;
         if v_pl.id is null then
           select * into v_pl from fn_valor_estrutural_col(v_versao,
             array['patrimonio'], v_col_ent, v_col_per);
         end if;
-        if v_passivo.id is not null and v_pl.id is not null then
+        -- 0165: "PASSIVO" BARE QUE JÁ BATE COM O ATIVO É O TOTAL DO GRUPO.
+        -- Ver o cabeçalho desta migration para a medição. Só vale para o rótulo
+        -- ESTRUTURAL: um rótulo que DIZ "Passivo Total" (e exclui patrimônio)
+        -- está afirmando exigível, e nele a igualdade com o Ativo seria um
+        -- balanço que não fecha — que é divergência de verdade, e continua
+        -- sendo reportada pelo ramo de baixo.
+        if v_passivo_estrutural and v_esq is not null
+           and abs(v_passivo.valor_num - v_esq)
+               <= greatest(p_tolerancia_abs, abs(v_esq) * p_tolerancia_pct) then
+          v_dir := v_passivo.valor_num;
+          v_orig_dir := format('linha "%s" (total do grupo, já inclui o Patrimônio Líquido)',
+                               v_passivo.chave);
+        elsif v_passivo.id is not null and v_pl.id is not null then
           v_dir := v_passivo.valor_num + v_pl.valor_num;
           v_orig_dir := format('linhas "%s" + "%s"', v_passivo.chave, v_pl.chave);
         else
@@ -6689,6 +6707,12 @@ begin
     v_desc);
 end;
 $$;
+
+--
+-- Name: FUNCTION fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_reconciliar_ativo_passivo_pl(p_caso_id uuid, p_entidade_id uuid, p_periodo_id uuid, p_tolerancia_abs numeric, p_tolerancia_pct numeric) IS 'A.1 — Ativo Total = Passivo + PL. 0165: "PASSIVO" bare cujo valor já bate com o Ativo é o total do LADO DIREITO (já inclui o PL) e não é somado ao PL de novo — medido nos balanços reais do caso "teste 143", onde essa soma dupla abriu 11 divergências falsas.';
 
 --
 -- Name: fn_reconciliar_caixa_bp_fluxo(uuid, uuid, uuid, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -

@@ -519,6 +519,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/fato_material.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0165 — \"PASSIVO\" sozinho já inclui o PL (números do balanço real da AMOBELEZA)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/passivo_bare_e_o_grupo.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

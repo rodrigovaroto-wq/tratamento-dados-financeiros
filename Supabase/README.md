@@ -270,6 +270,7 @@ supabase db execute --file Supabase/migrations/0161_a_justificativa_que_o_period
 supabase db execute --file Supabase/migrations/0162_o_balcao_que_nao_escuta_a_resposta.sql
 supabase db execute --file Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql
 supabase db execute --file Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql
+supabase db execute --file Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
