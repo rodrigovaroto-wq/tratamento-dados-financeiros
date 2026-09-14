@@ -8639,10 +8639,10 @@ $$;
 COMMENT ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text) IS 'A decisão humana sobre a classe contábil (Arquitetura do Sistema/2 Especificação/05, "registro de override humano"). Append-only: reclassificar é linha nova. Recusa RETORNADA e não exceção, senão o registro da própria tentativa seria desfeito. Autor é obrigatório: sem ele o sinal de calibração não tem de quem discordar.';
 
 --
--- Name: fn_registrar_diagnostico(uuid, uuid, text, boolean, text, text, text, public.legibilidade, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_registrar_diagnostico(uuid, uuid, text, boolean, text, text, text, public.legibilidade, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) RETURNS jsonb
+CREATE FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text DEFAULT NULL::text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
 declare
@@ -8684,7 +8684,7 @@ begin
       -- book), o diagnóstico lia a razão social completa do conteúdo
       -- ("CANASTRA INDÚSTRIA DE EMBALAGENS LTDA."), não achava igualdade exata
       -- com a que já existia ("Canastra Industria") e INSERIA outra.
-      v_entidade_id := fn_upsert_entidade(v_caso_id, p_entidade_nome);
+      v_entidade_id := fn_upsert_entidade(v_caso_id, p_entidade_nome, p_cnpj);
       update documento set entidade_id = v_entidade_id where id = p_documento_id;
       v_entidade_criada := true;
     else
@@ -8932,10 +8932,10 @@ end;
 $$;
 
 --
--- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco. 0121: a entidade casa e diverge pela forma CANÔNICA. 0142: tipo só diverge com divergência ACIONÁVEL. 0160: quando a entidade não casa, mas o nome diagnosticado é ELE MESMO outra (ou mais de uma) empresa já cadastrada no mesmo caso, a função não sabe se o registro está certo ou errado — não presume nenhuma das duas, nomeia as candidatas na pendência e deixa a revisão decidir, sem fundir nem mover o documento sozinha. 0161: a pendência de periodo_incorreto passa a citar a justificativa do diagnóstico, como o tipo_incorreto já fazia. 0162: quando a entidade REGISTRADA é o balcão de perguntas da 0153 (nome que casou com DUAS ou mais empresas e não decidiu), o casamento de fn_mesma_entidade contra ele NÃO confirma nada — o balcão casa com todo mundo por construção. Se o nome diagnosticado casa EXATO com exatamente UMA empresa já cadastrada (excluído o balcão), abre pendência nomeando a resposta, sem mover o documento nem fundir. 0163: reemitida INTEIRA (não mais por patch de âncora) depois de produção ter abortado a aplicação da 0161/0162 por causa de um corpo gravado em CRLF — ver o cabeçalho da 0163.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o repassa a fn_upsert_entidade. É o caminho que roda para TODO documento: a classificação por conteúdo só roda no fallback (19 de 38 no book-canastra), então sem este fio metade do lote chegaria sem identidade fiscal e sem sintoma nenhum.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -14417,12 +14417,6 @@ GRANT ALL ON FUNCTION public.fn_registrar_campos_extraidos(p_documento_versao_id
 --
 
 GRANT ALL ON FUNCTION public.fn_registrar_classe_override(p_campo_extraido_id uuid, p_classe_final text, p_autor text, p_motivo text) TO authenticated;
-
---
--- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text); Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_registrar_falha_execucao(p_caso_id uuid, p_caso_nome text, p_etapa text, p_mensagem text, p_detalhe jsonb); Type: ACL; Schema: public; Owner: -

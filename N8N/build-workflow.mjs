@@ -1712,6 +1712,7 @@ if(ach.problemas.length>0){
 const d=p.diagnostico||{};
 const diagnostico={
   entidade: d.entidade??null,
+  cnpj: d.cnpj??null,
   tipo_confirma: (typeof d.tipo_confirma==='boolean')?d.tipo_confirma:null,
   tipo_sugerido: d.tipo_sugerido==='DESCONHECIDO'?null:(d.tipo_sugerido??null),
   periodo_tipo: d.periodo_referencia?d.periodo_tipo:null,
@@ -2322,10 +2323,15 @@ const nodes = [
   // Mesma razão do nó anterior: o `documento_id` volta como coluna para que o
   // `Reconciliar (Classe A)` tenha o que passar. Sem isso ele recebe `{resultado}`
   // e a cadeia inteira de checagens morre calada.
+  // 0172: o `p_cnpj` entra por NOME (`p_cnpj=>$13`) e não posicionalmente, porque
+  // o $12 já é dos FATOS na segunda linha da mesma query — trocar a ordem dos
+  // binds para encaixar o CNPJ no 12º moveria os fatos e quebraria a chamada de
+  // `fn_registrar_fatos` em silêncio. É o mesmo motivo de o `Registrar Documento`
+  // usar notação nomeada para os três últimos.
   node('Registrar Diagnostico', 'n8n-nodes-base.postgres', 2.5, {
     operation: 'executeQuery',
     query: [
-      'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text) as resultado,',
+      'select fn_registrar_diagnostico($1::uuid,$2::uuid,$3::text,$4::boolean,$5::text,$6::text,$7::text,$8::legibilidade,$9::text,$10::text,$11::text, p_cnpj=>$13::text) as resultado,',
       // OS FATOS ENTRAM NA MESMA QUERY, e não em nó novo. Dois motivos, os dois
       // medidos nesta casa: nó a mais é aresta a mais no canvas (o layout.test
       // existe porque o canvas ficou ilegível), e principalmente — o nó Postgres
@@ -2335,7 +2341,7 @@ const nodes = [
       '       fn_registrar_fatos($2::uuid,$12::jsonb) as fatos,',
       '       $1::uuid as documento_id',
     ].join('\n'),
-    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null] }}" },
+    options: { ...PG_POR_ITEM, queryReplacement: "={{ [$json.documento_id, $json.documento_versao_id, $json.diagnostico?.entidade ?? null, $json.diagnostico?.tipo_confirma ?? null, $json.diagnostico?.tipo_sugerido ?? null, $json.diagnostico?.periodo_tipo ?? null, $json.diagnostico?.periodo_referencia ?? null, $json.diagnostico?.legibilidade ?? null, $json.diagnostico?.nota_legibilidade ?? null, $json.diagnostico?.resumo ?? null, $json.diagnostico?.justificativa ?? null, $json.diagnostico?.fatos ? JSON.stringify($json.diagnostico.fatos) : null, $json.diagnostico?.cnpj ?? null] }}" },
   }, { credentials: PG_CRED, ...PG_RETRY }),
 
   // E3 (Classe A, N1): roda as checagens aritméticas relevantes ao tipo do

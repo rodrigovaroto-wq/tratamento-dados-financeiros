@@ -110,6 +110,16 @@ export const SYSTEM_PROMPT = [
   '  sócio) — o bloco de assinatura (com CRC, CPF, "Contador", "Administrador") é o SIGNATÁRIO, não',
   '  a entidade. Se o documento combina VÁRIAS empresas (colunas por empresa — ver LINHAS abaixo),',
   '  use o nome do GRUPO se houver um; senão deixe null (não escolha uma das empresas ao acaso).',
+  'cnpj: o CNPJ da MESMA empresa que você indicou em "entidade" — 14 dígitos, com ou sem',
+  '  pontuação; null se não estiver visível (NUNCA invente, e NUNCA derive de outro documento).',
+  '  ATENÇÃO, e este é o erro mais caro deste campo: documento contábil brasileiro costuma trazer',
+  '  VÁRIOS CNPJs na mesma página — o do ESCRITÓRIO DE CONTABILIDADE que emitiu o relatório (perto',
+  '  de "CRC", "Contador", "responsável técnico", normalmente no RODAPÉ), o do AUDITOR, e o da',
+  '  EMPRESA (normalmente no cabeçalho, junto do nome dela). Só o da empresa dona serve. É o mesmo',
+  '  critério do campo "entidade": quem ASSINA não é quem o documento descreve.',
+  '  NA DÚVIDA ENTRE DOIS CNPJs, responda null. Um CNPJ errado não deixa o dado incompleto — ele',
+  '  FUNDE esta empresa com outra do mesmo mandato, em silêncio, porque o CNPJ tem prioridade',
+  '  sobre o nome na identificação. Null é a resposta segura; um palpite não é.',
   'tipo_confirma / tipo_sugerido: você recebe uma DICA de tipo (vinda do nome do arquivo).',
   '  Leia o conteúdo e diga se ele bate (tipo_confirma=true) com a dica. tipo_sugerido é o',
   '  código da taxonomia que o CONTEÚDO sugere (pode ser igual ou diferente da dica — use',
@@ -480,12 +490,18 @@ export function extractionSchema() {
           type: 'object',
           additionalProperties: false,
           required: [
-            'entidade', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo', 'periodo_referencia',
-            'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro', 'resumo', 'justificativa',
-            'fatos',
+            'entidade', 'cnpj', 'tipo_confirma', 'tipo_sugerido', 'periodo_tipo',
+            'periodo_referencia', 'legibilidade', 'nota_legibilidade', 'tem_dado_financeiro',
+            'resumo', 'justificativa', 'fatos',
           ],
           properties: {
             entidade: { type: ['string', 'null'] },
+            // 0172: o CNPJ do EMITENTE. Este é o caminho que roda para TODO
+            // documento — a classificação por conteúdo só roda no fallback (19
+            // de 38 no book-canastra), então é aqui que a identidade fiscal
+            // cobre o lote inteiro. Aceita null e MESMO ASSIM entra em
+            // `required`: o schema é `strict`, e é como `entidade` já faz.
+            cnpj: { type: ['string', 'null'] },
             tipo_confirma: { type: 'boolean' },
             tipo_sugerido: { type: 'string', enum: codigosConhecidos() },
             periodo_tipo: { type: 'string', enum: PERIODO_TIPO_ENUM },
@@ -1184,6 +1200,7 @@ export function parseExtractionResponse(apiJson, { avisoConteudo = null, prov = 
   const d = p.diagnostico || {};
   const diagnostico = {
     entidade: d.entidade ?? null,
+    cnpj: d.cnpj ?? null,
     tipo_confirma: typeof d.tipo_confirma === 'boolean' ? d.tipo_confirma : null,
     tipo_sugerido: d.tipo_sugerido === 'DESCONHECIDO' ? null : (d.tipo_sugerido ?? null),
     periodo_tipo: d.periodo_referencia ? d.periodo_tipo : null,

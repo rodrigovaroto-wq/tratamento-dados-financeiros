@@ -565,6 +565,60 @@ test('Ramo E2: Registrar → Montar Req Extracao → Parse → payload de diagn�
   }
 });
 
+test('o CNPJ chega ao banco pelo caminho que roda para TODO documento, não só no fallback', () => {
+  // O PORTÃO QUE FALTAVA, e ele nasceu de um defeito real: a primeira fiação do
+  // CNPJ leu o campo só na chamada de CLASSIFICAÇÃO, que roda apenas quando
+  // `precisa_fallback_ia` é verdadeiro (o nome do arquivo não resolveu
+  // tipo+período com confiança ≥ 0,70). MEDIDO no book que este repositório
+  // versiona, por `medir-custo-book.mjs`: 19 de 38 documentos do book-canastra
+  // passam por ela. Os outros 19 chegariam ao banco com `cnpj` NULO — e sem
+  // sintoma nenhum, porque a identidade simplesmente continuaria sendo o nome,
+  // na metade do lote, exatamente como antes da 0169.
+  //
+  // Este teste afirma o COMPORTAMENTO ("o CNPJ chega sempre"), não o mecanismo:
+  // ele não exige que seja o `Registrar Diagnostico` a fazê-lo — exige que ALGUM
+  // nó que grava CNPJ esteja fora do ramo condicional.
+  const porNome = new Map(wf.nodes.map((n) => [n.name, n]));
+
+  // Quem é alcançável APENAS atravessando a saída "true" do `Precisa Fallback?`.
+  const soNoFallback = new Set();
+  const fila = (wf.connections['Precisa Fallback?']?.main?.[0] ?? []).map((c) => c.node);
+  const paraForaDoRamo = new Set(
+    (wf.connections['Precisa Fallback?']?.main?.[1] ?? []).map((c) => c.node));
+  while (fila.length > 0) {
+    const atual = fila.pop();
+    if (soNoFallback.has(atual) || paraForaDoRamo.has(atual)) continue;
+    soNoFallback.add(atual);
+    for (const saida of wf.connections[atual]?.main ?? []) {
+      for (const c of saida) if (!paraForaDoRamo.has(c.node)) fila.push(c.node);
+    }
+  }
+
+  assert.ok(soNoFallback.has('Montar Req Classif'),
+    'PRÉ-CONDIÇÃO: a classificação por conteúdo é mesmo condicional — se ela virar incondicional '
+    + 'um dia, este teste vira decoração e precisa ser revisto, não apagado');
+
+  // Todo nó Postgres que passa um CNPJ para o banco.
+  const gravamCnpj = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.postgres'
+    && /cnpj/i.test(JSON.stringify(n.parameters ?? {})));
+  assert.ok(gravamCnpj.length > 0, 'nenhum nó Postgres passa CNPJ ao banco');
+
+  const semprerodam = gravamCnpj.filter((n) => !soNoFallback.has(n.name));
+  assert.ok(semprerodam.length > 0,
+    'TODO nó que grava CNPJ está atrás do ramo de fallback — metade do lote chegaria com cnpj '
+    + `null e sem sintoma. Nós que gravam: ${gravamCnpj.map((n) => n.name).join(', ')}`);
+
+  // E o nó do diagnóstico — o único que lê conteúdo de TODO documento — tem de
+  // ser um deles, senão o campo existe no schema da IA e morre no caminho.
+  const diag = porNome.get('Registrar Diagnostico');
+  assert.match(JSON.stringify(diag.parameters.options.queryReplacement), /diagnostico\?\.cnpj/,
+    'o Registrar Diagnostico não passa o CNPJ lido do conteúdo — é a única leitura garantida '
+    + 'para todo documento, e é por ela que os nomes contaminados nascem');
+  assert.match(diag.parameters.query, /p_cnpj=>/,
+    'o CNPJ tem de entrar por NOME na query do diagnóstico: o $12 já é dos FATOS, e reordenar os '
+    + 'binds para encaixá-lo posicionalmente quebraria fn_registrar_fatos em silêncio');
+});
+
 test('Parse Extracao (nó real): resposta AGRUPADA vira uma linha por (conta × coluna)', async () => {
   const req = { json: { documento_versao_id: 'ver-9', tipo: 'BALANCO', ia_body: {} } };
   const resposta = { json: respostaIA(JSON.stringify({
