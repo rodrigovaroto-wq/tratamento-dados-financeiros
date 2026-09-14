@@ -279,6 +279,7 @@ supabase db execute --file Supabase/migrations/0170_o_cnpj_atravessa_a_porta_de_
 supabase db execute --file Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql
 supabase db execute --file Supabase/migrations/0172_o_cnpj_pelo_caminho_que_roda_sempre.sql
 supabase db execute --file Supabase/migrations/0173_o_renomeio_pelo_caminho_que_roda_sempre.sql
+supabase db execute --file Supabase/migrations/0174_aprender_cnpj_que_ja_tinha_dona_funde.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

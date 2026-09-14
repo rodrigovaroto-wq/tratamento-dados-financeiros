@@ -329,6 +329,118 @@ begin
     'entidade que o diagnóstico NÃO confirma não recebe o CNPJ do conteúdo — um CNPJ na entidade '
       || 'errada atrai todo documento futuro da empresa certa para dentro dela');
 
+  raise notice '--- 11. 0174: aprender um CNPJ que JÁ TEM outra dona funde, não crasha ---';
+  -- O GATILHO É REAL: o dono rodou o lote real da OMNIBEAUTY (caso
+  -- bf0246bb-c93b-4d08-a7df-5d356c9d6275, teste 143) depois de republicar o
+  -- workflow com as migrations até a 0173, e `evento_auditoria` mostrou DOIS
+  -- `entidade_ambigua` novos em vez de uma fusão — sinal de que o CNPJ ainda
+  -- não estava convergindo as quatro variantes.
+  --
+  -- ESTE BLOCO PROVA A CLASSE DE CRASH que a investigação encontrou ao
+  -- reconstruir o caminho, não a sequência EXATA dos dois eventos acima: as
+  -- duas entidades ali nasceram AMBÍGUAS (0153/0162), e o ramo "balcão
+  -- ambíguo" de `fn_registrar_diagnostico` nunca chama `fn_entidade_aprender_cnpj`
+  -- — isso é uma LACUNA DIFERENTE, declarada no fim deste arquivo, não o que
+  -- este bloco mede. O que ESTE bloco reproduz, com os MESMOS nomes reais e o
+  -- MESMO CNPJ, é o caminho SEM ambiguidade: duas entidades que casamento
+  -- exato de nome já resolveu como SEPARADAS (MARCAS LTDA × SURUBIJU — não
+  -- casam entre si, medido na 0168), uma já com o CNPJ aprendido por um
+  -- documento anterior, a outra aprendendo o MESMO CNPJ agora pelo
+  -- diagnóstico. É o caminho que QUALQUER par de nomes-separados-mas-mesma-
+  -- empresa percorre assim que o segundo documento chega — com ou sem
+  -- ambiguidade no meio.
+  --
+  -- ESTE É O ASSERT QUE REPROVA COM A CORREÇÃO DESLIGADA — não com uma
+  -- diferença de valor, mas com uma EXCEÇÃO: sem a fusão dentro de
+  -- `fn_entidade_aprender_cnpj`, o `fn_registrar_diagnostico` abaixo levanta
+  -- "duplicate key value violates unique constraint entidade_caso_cnpj_unico"
+  -- e o bloco inteiro nunca chega ao primeiro assert.
+  v_caso := (fn_upsert_caso('CNPJ — funde ao aprender, nao crasha (producao real)'))::uuid;
+  v_a := fn_upsert_entidade(v_caso, c_m);
+  v_b := fn_upsert_entidade(v_caso, c_s);
+  perform teste_assert_cnpj(
+    (select count(*) from entidade where caso_id = v_caso) = 2,
+    'PRÉ-CONDIÇÃO: MARCAS LTDA e SURUBIJU nasceram como DUAS entidades — não casam entre si '
+      || '(0168), então nenhuma foi absorvida pela outra');
+
+  -- SURUBIJU aprende o CNPJ primeiro, por um documento anterior qualquer
+  -- (não importa qual caminho — o teste isola só o que vem depois).
+  perform fn_entidade_aprender_cnpj(v_b, c_cnpj);
+
+  -- MARCAS LTDA recebe um documento próprio, SEM CNPJ na entrada (o caso dos
+  -- 19 de 38 que não passam pela classificação). O diagnóstico CONFIRMA
+  -- (mesmo nome) e tenta ensinar o MESMO CNPJ que SURUBIJU já tem — é aqui
+  -- que a versão sem a 0174 crashava.
+  v_r := fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/prod-crash-1.pdf', 'BAL.pdf', true,
+    'HASH-PROD-CRASH-1', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_diagnostico(v_doc, v_ver, c_m, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  perform teste_assert_cnpj(true, 'o diagnóstico rodou sem exceção nenhuma');
+
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_cnpj(v_n = 1,
+    'e as duas viraram UMA só — MARCAS LTDA foi fundida na que já tinha o CNPJ',
+    format('%s entidade(s) no caso', v_n));
+
+  perform teste_assert_cnpj(exists (
+      select 1 from evento_auditoria where acao = 'entidade_fundida'
+        and entidade_ref in (select 'entidade:' || id from entidade where caso_id = v_caso)),
+    'com o rastro de fn_fundir_entidade — a fusão pela porta do diagnóstico não é mais calada '
+      || 'que a fusão pela porta de registro (ramo 0 de fn_upsert_entidade)');
+
+  perform teste_assert_cnpj(exists (
+      select 1 from evento_auditoria
+        where acao = 'entidade_renomeio_recusado'
+          and (depois->>'razao_social_recusada') = c_m),
+    'e a recusa de renomeio fica com rastro — MARCAS LTDA e SURUBIJU não compartilham raiz '
+      || '(bloco 7 de cnpj_renomeia.test.sql), então a sobrevivente NÃO adota o nome às cegas');
+
+  raise notice '--- 12. 0174: a fusão ao aprender tambem adota o nome mais completo ---';
+  -- Mesmo mecanismo do bloco 11, mas com um par que a guarda de renomeio
+  -- AUTORIZA (truncamento comprovado — ver cnpj_renomeia.test.sql bloco 4):
+  -- prova que a direção da fusão (quem sobrevive por ID) não decide o nome
+  -- final — quem decide é sempre fn_entidade_talvez_renomear.
+  --
+  -- As duas entidades são inseridas DIRETO (não por fn_upsert_entidade): um
+  -- par que É truncamento um do outro sempre se ABSORVE na hora da criação
+  -- (é o comportamento CORRETO da 0168 — "…DE" e "…DE MARCAS LTDA" nunca
+  -- ficam separados se chegarem por fn_upsert_entidade sem CNPJ). Para medir
+  -- o QUE ACONTECE SE elas chegarem separadas mesmo assim — pela ambiguidade
+  -- real que gerou os dois `entidade_ambigua` de produção, por exemplo — o
+  -- setup planta o estado diretamente, e só o CÓDIGO SOB TESTE roda depois.
+  v_caso := (fn_upsert_caso('CNPJ — funde e adota o nome mais completo'))::uuid;
+  insert into entidade (caso_id, razao_social, cnpj)
+    values (v_caso, c_t, fn_cnpj_canonico(c_cnpj)) returning id into v_a;
+  insert into entidade (caso_id, razao_social) values (v_caso, c_m) returning id into v_b;
+
+  v_r := fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/prod-crash-3.pdf', 'BAL.pdf', true,
+    'HASH-PROD-CRASH-3', 'ok');
+  v_doc := (v_r->>'documento_id')::uuid;
+  v_ver := (v_r->>'documento_versao_id')::uuid;
+  perform fn_registrar_diagnostico(v_doc, v_ver, c_m, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_cnpj(v_n = 1, 'as duas viraram uma só', format('%s entidade(s)', v_n));
+
+  select razao_social into v_nomes from entidade
+    where caso_id = v_caso and fn_cnpj_canonico(cnpj) = fn_cnpj_canonico(c_cnpj);
+  perform teste_assert_cnpj(v_nomes = c_m,
+    'a sobrevivente (a que já tinha o CNPJ, nome TRUNCADO) adota o nome completo da entidade '
+      || 'que acabou de ser fundida nela — o id de quem sobrevive não decide o nome',
+    coalesce(v_nomes, '(nenhuma)'));
+
+  raise notice '--- LACUNA DECLARADA (regra 7, não corrigida nesta fatia): o ramo "balcão '
+               'ambíguo" de fn_registrar_diagnostico nunca chama fn_entidade_aprender_cnpj — uma '
+               'entidade nascida de entidade_ambigua (exatamente as duas dos eventos reais) só '
+               'sai do balcão por decisão humana, mesmo que o CONTEÚDO do documento traga o CNPJ '
+               'que resolveria a ambiguidade sozinho. Ver o cabeçalho da 0174.';
+
   raise notice 'CNPJ IDENTIDADE OK — o CNPJ manda, o nome só decide quando não há CNPJ, e '
                'ausência não decide nada';
 end $$;
