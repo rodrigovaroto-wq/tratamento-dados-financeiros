@@ -11,14 +11,18 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > arquivo que quase nunca se edita não convida a editar nada. Aqui só há o que muda — e o
 > `Supabase/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
 
-> **⚠️ HÁ UM PLANO DE 6 FATIAS EM ANDAMENTO, escrito em 14/09/2026** — sobre defeitos reais achados
-> no book do caso "teste 143" (Ativo=Passivo+PL contando o PL duas vezes, Faturamento×DRE contando
-> a coluna Total junto das categorias, uma entidade que virou 4, e dois defeitos de extração
-> documentados e não corrigidos). **Fatia 1 (TPM da conta) FEITA**, no PR #221. **Fatias 2-6 NÃO
-> implementadas** — leia "O PLANO DE 14/09" em `HANDOFF.md` (logo abaixo do cabeçalho) antes de
-> começar qualquer coisa nesta área, e comece pela Fatia 2. Regra permanente enquanto este plano
-> não fechar: perto de 90% do limite de uso da sessão, pare de avançar fatia, commite o que estiver
-> pronto e atualize esta nota dizendo exatamente onde parou (`.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`).
+> **O PLANO DE 14/09 (defeitos do book "teste 143") ESTÁ QUASE FECHADO.** Fatias 1-5 + a extensão
+> do CNPJ (renomear ao fundir) estão FEITAS, testadas e MERGEADAS na `main` (PR #221, PR #223 —
+> migrations `0165`-`0171`). O que falta, EM ANDAMENTO nesta sessão: fazer o CNPJ CHEGAR até o
+> banco (a IA lendo o conteúdo — schema, prompt e o nó `Registrar Documento` do n8n) e a Fatia 6
+> (dois defeitos de qualidade de extração, prompt-only). **Sem credencial de OpenAI nem acesso ao
+> n8n nesta sessão** — o código está testado deterministicamente (espelho-inline, workflow-sim,
+> régua de cobertura, custo do book — todos verdes) mas NÃO validado contra um lote real; isso é
+> tarefa do dono na próxima rodada. Leia "O PLANO DE 14/09" em `HANDOFF.md` (logo abaixo do
+> cabeçalho) para o detalhe de cada fatia. Regra permanente enquanto este plano não fechar: perto
+> de 90% do limite de uso da sessão, pare de avançar fatia, commite o que estiver pronto e atualize
+> esta nota dizendo exatamente onde parou
+> (`.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`).
 
 ## Onde está
 

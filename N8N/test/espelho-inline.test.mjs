@@ -353,6 +353,11 @@ const TABELA = [
     [{ tipo_taxonomia: 'BALANCO', confianca: 0.5 }, { tipo_taxonomia: null, confianca: 0.9, justificativa: 'ilegível' }],
     [{ tipo_taxonomia: null, confianca: 0.3 }, { tipo_taxonomia: 'DRE', confianca: 0.8, justificativa: 'x' }],
     [{ tipo_taxonomia: null, confianca: 0.2 }, { tipo_taxonomia: null, confianca: 0.1, justificativa: '' }],
+    // 0170/0171: o CNPJ só pode vir do CONTEÚDO — sem fallback para fromName,
+    // ao contrário de entidade. Este caso é o que pegaria a divergência se
+    // alguém reintroduzisse a cópia à mão sem a linha do cnpj.
+    [{ tipo_taxonomia: 'BALANCO', confianca: 0.5 }, { tipo_taxonomia: 'BALANCO', confianca: 0.7, cnpj: '11.222.333/0001-81', justificativa: 'x' }],
+    [{ tipo_taxonomia: 'BALANCO', confianca: 0.5 }, { tipo_taxonomia: 'BALANCO', confianca: 0.7, justificativa: 'sem cnpj' }],
   ] },
 
   // `parseCsv` SAIU DESTA TABELA (e do workflow): CSV deixou de ser parseado à

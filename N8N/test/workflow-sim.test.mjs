@@ -2367,16 +2367,21 @@ test('a corrente inteira preserva caso_id e binário até o Registrar Documento'
 
   const q = wf.nodes.find((n) => n.name === 'Registrar Documento').parameters.options.queryReplacement;
   const params = new Function('$json', 'return (' + q.replace(/^=\{\{/, '').replace(/\}\}$/, '') + ')')(preparado.json);
-  // 15 desde a 0118: o 15º é o fingerprint de prompt+modelo+esquema, calculado no
-  // BUILD e embutido como literal. Ele é o que autoriza não pagar a mesma
-  // extração duas vezes.
-  assert.equal(params.length, 15);
+  // 16 desde a 0170: o 15º é o fingerprint de prompt+modelo+esquema (0118),
+  // calculado no BUILD e embutido como literal — autoriza não pagar a mesma
+  // extração duas vezes. O 16º é o CNPJ lido do conteúdo (0170/0171 no banco,
+  // esta fatia no n8n) — chega null quando a IA não achou um, e o banco usa
+  // fn_upsert_entidade(..., p_cnpj) como identidade em vez do nome sozinho.
+  assert.equal(params.length, 16);
   assert.equal(params[0], 'caso-uuid-1', 'caso_id NÃO pode chegar null — é not-null no banco');
   assert.match(params[14], /^[0-9a-f]{16}$/,
     'o fingerprint tem de ser um valor fixo e não vazio — nulo aqui desliga o dedup em silêncio');
   assert.equal(params[9], '12M25 DRE (Assinado).pdf', 'nome_original sobrevive');
   assert.equal(params[4], 'DRE', 'a classificação sobrevive');
   assert.ok(typeof params[8] === 'string' && params[8].startsWith('caso-uuid-1/'), 'arquivo_ref montado');
+  assert.equal(params[15], null,
+    'sem chamada de conteúdo nesta corrente (só "Classificar Nome" rodou), o CNPJ chega null — '
+    + 'nunca undefined, que o driver do Postgres trataria diferente');
   assert.ok(preparado.binary?.data, 'o binário sobrevive — sem ele não há chamada à IA');
 });
 
