@@ -193,6 +193,56 @@ fechar o plano antes de continuar. **Comece pela Fatia 2.**
 >
 > **Fatia 5 (fusão retroativa) segue esperando o dono rodar a Parte 1 do script** — nenhuma
 > mudança de estado desde a nota anterior.
+>
+> **DUAS VOLTAS DE REVISÃO DEPOIS (14/09, fim da sessão 89).** O dono pediu um loop de revisão e
+> correção. Duas rodadas, com o `revisor-defeito-silencioso` sobre o diff de cada uma:
+>
+> **1ª volta — seis defeitos, todos reproduzidos rodando SQL antes de aceitar:** o CNPJ do
+> escritório de contabilidade reescrevia o nome de um cliente com o de outro; o renomeio criava
+> duas entidades homônimas (e o casamento exato escolhia uma no escuro, sem evento); a guarda
+> canônica escondia o caso em que o sufixo É a diferença; `S.A.` não era reconhecido como sufixo;
+> o CNPJ só chegava pela classificação (**19 de 38** documentos do book-canastra) e
+> `fn_registrar_diagnostico` ainda chamava `fn_upsert_entidade` com dois argumentos;
+> `classificationSchema()` da lib ficou sem o campo. Corrigidos em `2d73142` e `75d47eb`.
+>
+> **2ª volta — e ela achou que a minha própria correção era de sintoma.** Duas coisas graves:
+> (a) a 0172 commitada **não funcionava** — o `p_cnpj` chegava e morria, porque a chamada que o
+> recebia só roda quando o documento ainda não tem entidade, e `fn_registrar_documento` sempre
+> resolve uma antes (medido: `cnpj=(NULO)` depois do diagnóstico); (b) a guarda do renomeio media
+> **comprimento de prefixo** em vez de relação de truncamento, e errava nos dois sentidos —
+> autorizava `PADARIA DO JOAO` → `PADARIA DO JOSE COMERCIO` e `ARAUCARIA BIOENERGIA` →
+> `ARAUCARIA IMOBILIARIA` (o incidente real do araucária, sem o token "SPE"), e recusava
+> truncamento à esquerda e `S.A.`. Corrigidos em `f37c2a4`.
+>
+> **O QUE A 2ª VOLTA APONTOU E NÃO FOI CORRIGIDO — declarado, não esquecido:**
+>
+> 1. **Nenhuma tela lê os eventos de entidade.** `entidade_cnpj_casou`,
+>    `entidade_renomeada_por_cnpj`, `entidade_renomeio_recusado`, `entidade_cnpj_aprendido` vão
+>    para `evento_auditoria` e **zero ocorrências** em `portal/src` — a única página que lê a
+>    tabela (`autonomia/page.tsx`) filtra só os eventos de dial. Na prática: renomeio recusado é
+>    invisível, e CNPJ suspeito também. O rastro existe para auditoria, não para revisão. **É a
+>    próxima coisa a decidir com o dono** — uma tela, ou uma pendência (que `fn_upsert_entidade`
+>    não pode abrir, porque não conhece documento; teria de ser em `fn_registrar_diagnostico`).
+> 2. **A 0172 entrega identidade fiscal em 100% do lote, mas renomeio em ~50%.** O caminho do
+>    diagnóstico chama `fn_entidade_aprender_cnpj` (que só grava o CNPJ); quem renomeia é
+>    `fn_upsert_entidade`, que nesse ramo não roda. Para um documento único com nome contaminado,
+>    o nome fica no book até chegar um segundo documento pela classificação. O conserto seria
+>    extrair o renomeio para função própria e chamá-la dos dois lados.
+> 3. **O portão de topologia do n8n é mais fraco do que o commit dizia.** O defeito original era de
+>    fluxo de DADO (`$json.cnpj` só é populado no ramo de fallback), não de topologia — e
+>    `Registrar Documento` nunca esteve atrás do `Precisa Fallback?`. Os asserts que reprovam são
+>    os de mecanismo (`diagnostico?.cnpj`, `p_cnpj=>`), não o de comportamento. E a travessia usa
+>    os sucessores DIRETOS da saída falsa, não o fecho transitivo — funciona por acidente de
+>    topologia hoje.
+> 4. **O buraco do `S.A.` em `fn_entidade_canonica` (0030) continua lá**, de propósito: ela é a
+>    base do casamento EXATO de todo o produto. A 0171 resolveu localmente com
+>    `fn_entidade_canonica_forte`.
+> 5. **`fn_nome_tem_sufixo_societario` tem um falso positivo novo**: `LABORATORIOS B.SA` → true
+>    (o achatamento transforma `b.sa` em `b sa`). Impacto: um empate de sinal 2 resolvido a favor
+>    do nome errado. Medido, julgado não valer a correção.
+> 6. **Continua sem validação contra lote real** — sem credencial de OpenAI nem acesso ao n8n nesta
+>    sessão. Tudo acima é determinístico e medido contra SQL; nada prova que a IA lê o CNPJ certo
+>    do PDF.
 
 ### Fatia 1 — TPM real da conta — ✅ FEITA (commit `135280f`)
 `N8N/lib/provedor.mjs` (30000→500000) + os 4 espelhos que isso arrastou (`PISO_BATCHING_MS`
