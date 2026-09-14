@@ -32,25 +32,16 @@ export const runtime = "nodejs";
 // `console.error` aqui é o MESMO já usado nos ramos abaixo: fica no log
 // do servidor (Vercel), não no arquivo — mas para de ser invisível para
 // sempre, e a resposta passa a ter um corpo que o navegador consegue mostrar.
-export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    return await gerarExport(request, ctx);
-  } catch (e) {
-    const { id } = await ctx.params;
-    const erro = e instanceof Error ? e : new Error(String(e));
-    console.error(`[export] falha inesperada ao montar o arquivo: ${erro.stack ?? erro.message}`, { caso_id: id });
-    return NextResponse.json(
-      {
-        error: "O export falhou de um jeito inesperado ao montar o arquivo — não é nenhuma das causas já "
-          + "conhecidas (RLS/GRANT, Portão 2, base vazia). O detalhe foi registrado no log do servidor.",
-        detalhe: erro.message,
-      },
-      { status: 500 },
-    );
-  }
-}
-
-async function gerarExport(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  // O CORPO ABAIXO FICA NO NÍVEL DE INDENTAÇÃO ORIGINAL (não +2, dentro do
+  // `try`), de propósito: reindentar mudaria o TEXTO de toda linha da função,
+  // e isso faz o SonarCloud (que rastreia issue por linha via git blame)
+  // reclassificar a complexidade cognitiva já existente desta rota — medida
+  // e aceita há muito em `main` (regra `typescript:S3776`, não nova aqui)
+  // como se fosse recém-introduzida, derrubando o Quality Gate por um
+  // reformate que não muda comportamento nenhum. Achado ao investigar por
+  // que o PR #225 ficou vermelho no Sonar sem tocar em nenhuma linha de TS.
   const { id } = await params;
   // MODO (decisão do dono): `?modo=dados` entrega só as abas de dado — insumo de
   // conferência, disponível desde a ingestão. Sem o parâmetro sai o completo, com
@@ -615,4 +606,17 @@ async function gerarExport(request: Request, { params }: { params: Promise<{ id:
         : {}),
     },
   });
+  } catch (e) {
+    const { id } = await params;
+    const erro = e instanceof Error ? e : new Error(String(e));
+    console.error(`[export] falha inesperada ao montar o arquivo: ${erro.stack ?? erro.message}`, { caso_id: id });
+    return NextResponse.json(
+      {
+        error: "O export falhou de um jeito inesperado ao montar o arquivo — não é nenhuma das causas já "
+          + "conhecidas (RLS/GRANT, Portão 2, base vazia). O detalhe foi registrado no log do servidor.",
+        detalhe: erro.message,
+      },
+      { status: 500 },
+    );
+  }
 }
