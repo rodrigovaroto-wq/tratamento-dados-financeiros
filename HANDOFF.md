@@ -4,6 +4,23 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ⚠️ HÁ UM PLANO DE 6 FATIAS EM ANDAMENTO — leia "O PLANO DE 14/09" antes de decidir o que fazer
+
+A sessão 88 (14/09) diagnosticou 6 defeitos reais no book "teste 143" (documentos e números da
+AMOBELEZA/GENERAL CORPORATE/GENERAL TABACO/OMNIBEAUTY) e escreveu um plano de correção em 6
+fatias, cada uma com causa raiz medida em código e/ou PDF real — não suposição. **A Fatia 1 (TPM
+da conta) está FEITA e no PR #221.** As Fatias 2-6 estão escritas, com evidência, mas **NENHUMA
+foi implementada ainda** — o dono pediu para fechar o plano antes de continuar executando. Pule
+para a seção **"O PLANO DE 14/09 — as 6 fatias"**, mais abaixo, e comece pela Fatia 2.
+
+**Regra permanente para QUALQUER sessão que trabalhar neste plano** (pedido explícito do dono,
+14/09/2026, e agora também em `.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`):
+**perto de 90% do limite de uso da sessão, pare de avançar fatia e feche em segurança** — commite
+tudo que já está pronto e testado, nunca deixe uma fatia pela metade (working tree sujo sem
+commit), e atualize esta seção do HANDOFF dizendo exatamente qual fatia terminou, qual está em
+andamento e onde, e qual é o próximo passo exato. Uma sessão que estoura o limite no meio do
+código sem documentar isso custa a próxima sessão inteira só para descobrir onde parou.
+
 **Última atualização:** 2026-09-13 (sessão **87**). A sessão 87 EXECUTOU as fatias 2 e 3 da ordem
 que a 86 deixou escrita (a reescala do proxy e a conta por documento), e o **passo 1 — rodar o lote
 real da AMO até `Medir Documento` — CONTINUA ABERTO**: a sessão 87 não tem acesso ao lote nem à
@@ -50,6 +67,287 @@ descuido: ela é exatamente o modo de falha que o resto deste cabeçalho descrev
 > "02/09": o dono corrigiu a trava do script de republicação em `22d4594` na mesma tarde, o que só
 > acontece quando ela está sendo rodada de verdade. **Quem responde qual workflow está no ar é
 > `N8N/conferir-publicado.mjs` contra a instância**, não esta linha.
+
+## O PLANO DE 14/09 — as 6 fatias (sessão 88, diagnóstico do book "teste 143")
+
+**Contexto:** o dono rodou o lote real da AMO/GENERAL/OMNIBEAUTY (caso "teste 143", 44 documentos)
+depois das correções de orçamento das sessões 86/87 — **44/44 extraídos, US$ <0,20, ~1h28** (contra
+US$ 52,39 recusado e 88min com o TPM no piso). Ele enviou o export (HTML do portal + xlsx do book)
+e 4 dos PDFs de origem. Esta sessão leu os 4 PDFs de verdade (2 têm camada de texto, 2 são imagem
+escaneada — conferido pelos `/Resources` do PDF, não suposto), releu o código-fonte de cada função
+SQL envolvida, e tentou consultar o banco de produção (bloqueado — ver Fatia 5).
+
+**Estado no fim da sessão 88:** Fatia 1 feita, testada, commitada e empurrada (`135280f`, no PR
+#221). Fatias 2-6 diagnosticadas com evidência mas **NÃO implementadas** — o dono pediu para
+fechar o plano antes de continuar. **Comece pela Fatia 2.**
+
+### Fatia 1 — TPM real da conta — ✅ FEITA (commit `135280f`)
+`N8N/lib/provedor.mjs` (30000→500000) + os 4 espelhos que isso arrastou (`PISO_BATCHING_MS`
+movido para `lib/extract.mjs`, dois asserts de `workflow-sim.test.mjs` que travavam números sem
+evidência, os dois hardcodes de `portal/src/lib/espera-do-lote.ts`, e um espelho esquecido em
+`verificar-mensagem-de-falha.mts` que não conhecia o piso de UX da própria função que mede). 542
+testes do n8n + 7 portões do portal + 2 medidores, todos verdes. Ficha atualizada:
+`.claude/conhecimento/fichas/cadencia-da-extracao-73s.md`.
+
+### Fatia 2 — Ativo = Passivo + PL conta o Patrimônio Líquido duas vezes — PRÓXIMA
+**Arquivo a mudar:** nova migration (`Supabase/migrations/0165_...sql`), reemitindo
+`fn_reconciliar_ativo_passivo_pl` INTEIRA (doutrina `nunca-corrigir-funcao-por-replace.md` — nunca
+por patch de âncora). Corpo atual em `Supabase/schema.sql:6497-6699`.
+
+**Causa raiz, medida com aritmética exata no PDF real** (`AMOBELEZA - BALANÇO 2024.pdf`, anexado
+pelo dono):
+```
+PASSIVO 118.591.566,53C   ← bare, e já é PASSIVO_CIRC+NÃO_CIRC+PL somados
+PATRIMÔNIO LÍQUIDO 9.391.222,13D
+```
+119.620.673,17 (Passivo Circ) + 8.362.115,49 (Passivo Não Circ) − 9.391.222,13 (PL, débito) =
+**118.591.566,53** = ATIVO. Confirmado o MESMO padrão em `GENERAL TABACO - BALANÇO 202603.pdf` e
+`OMNIBEAUTY - BALANÇO 2023.pdf` (os outros dois PDFs que o dono anexou): "PASSIVO" bare, neste
+ERP, **já é o total combinado** — é convenção de chart-of-accounts brasileiro comum (PL como
+subgrupo do grupo "2-PASSIVO"), não peculiaridade de um documento.
+
+O código (`fn_reconciliar_ativo_passivo_pl`, corpo herdado da migração 0034) tem um fallback que
+busca "PASSIVO" bare via `fn_valor_estrutural_col(v_versao, array['passivo'], ...)`, acha
+118.591.566,53, e **soma com PL de novo** (`v_dir := v_passivo.valor_num + v_pl.valor_num`) →
+**109.200.344,40** — exatamente o "Passivo+PL" que o painel do dono mostrou, e exatamente a
+diferença de 9.391.222,13 reportada como divergência. Reproduzida linha por linha, não suposta.
+
+**A correção:** no ramo `if v_passivo.id is not null and v_pl.id is not null then`, antes de somar,
+checar se `abs(v_passivo.valor_num - v_esq) <= v_tol_local` (uma tolerância igual à usada no resto
+da função) — se bare "PASSIVO" **já bate** com o Ativo daquele mesmo ano/coluna, ele já é o total
+combinado; usar `v_dir := v_passivo.valor_num` direto, sem somar PL, e `v_orig_dir` deve dizer que
+foi por essa via (ex.: `format('linha "%s" (já inclui o Patrimônio Líquido — bare "PASSIVO" bate '
+'com o Ativo)', v_passivo.chave)`). Só entra nesse ramo quando os localizadores por rótulo com
+"total" já falharam (ordens 1-2 da função), então não muda nada para quem usa a convenção
+"Passivo Total" separado de PL com rótulo explícito.
+
+**Invariante novo (regra 2), fixture `Supabase/test/*.sql` — não fabricar dado, usar os números
+reais do PDF:**
+```sql
+-- fixture: documento BALANCO com as linhas exatas de AMOBELEZA - BALANÇO 2024.pdf
+-- (ATIVO=118591566.53, PASSIVO=118591566.53, PATRIMÔNIO LÍQUIDO=9391222.13 com sinal invertido)
+-- desligada a correção: fn_reconciliar_ativo_passivo_pl devolve 'divergente', divergencia_abs=9391222.13
+-- ligada: devolve 'ok'
+```
+Desligar = comentar a checagem nova (reverter para `v_dir := v_passivo.valor_num + v_pl.valor_num`
+sem condição) e confirmar que o teste então FALHA antes de religar.
+
+**Efeito esperado:** resolve as ~11 das 37 divergências "Ativo vs Passivo+PL" do book, nas 4
+entidades (AMOBELEZA, GENERAL CORPORATE, GENERAL TABACO, OMNIBEAUTY).
+
+### Fatia 3 — a mesma convenção derruba o Kit Básico por um caminho DIFERENTE
+**Arquivo:** nova migration, `insert into taxonomia_linha_localizador` (seed adicional — não mexe
+em função nenhuma).
+
+**Causa raiz:** a exigência `passivo_mais_pl` (`Supabase/migrations/0113_linha_exigida_por_tipo.sql`,
+linhas ~490-497) tem 4 localizadores, e NENHUM aceita "PASSIVO" bare sozinho — todos exigem a
+palavra "total" no rótulo, ou o par exato `['passivo','patrimonio']` estruturalmente no MESMO
+rótulo (que "PASSIVO" isolado não tem). É por isso que apareceram as 5 pendências "a linha exigida
+'Passivo + Patrimônio Líquido (total)' não foi localizada" no export — é o MESMO bug de convenção
+da Fatia 2, mas em código DIFERENTE (checklist do Kit Básico, não a reconciliação), e por isso a
+Fatia 2 sozinha NÃO resolve isto.
+
+**A correção:**
+```sql
+insert into taxonomia_linha_localizador (exigencia_id, ordem, contra, termos_inclui, termos_exclui)
+select e.id, 5, 'estrutural', array['passivo']::text[], '{}'::text[]
+from taxonomia_linha_exigida e
+where e.tipo_taxonomia in ('BALANCO','COMBINADO') and e.conceito = 'passivo_mais_pl'
+on conflict (exigencia_id, ordem) do nothing;
+```
+O próprio comentário do seed original já documenta a doutrina certa: *"aqui qualquer localizador
+satisfaz — a exigência acusa a ausência total, o par fino continua com a reconciliação."* — ou
+seja, esta exigência é deliberadamente FROUXA (só confere que "algo como Passivo+PL existe"), e a
+Fatia 2 é quem garante que o VALOR está certo.
+
+**Invariante:** fixture com documento cujo único rótulo de passivo é "PASSIVO" bare (sem "total",
+sem "PASSIVO E PATRIMÔNIO LÍQUIDO") — desligado (sem o seed), `fn_exigencias_do_caso` marca
+`passivo_mais_pl` como `satisfeita=false` e `linha_exigida_ausente` abre; ligado, `satisfeita=true`
+e a pendência não abre.
+
+### Fatia 4 — Faturamento × DRE: a hipótese de ontem (sobreposição de datas) estava ERRADA
+**Correção da própria sessão 87**, registrada aqui para não repetir o erro: eu tinha dito que o
+problema era dois arquivos de Faturamento com meses sobrepostos (`AMOBELEZA - FATURAMENTO
+2025.pdf` vs `FATURAMENTO AMOBELEZA 202606.pdf`). **Medi célula a célula no export e não é isso.**
+
+**Arquivo a mudar:** nova migration, reemitindo `fn_somar_faturamento_ano` inteira (corpo atual em
+`Supabase/schema.sql:9819-9833`).
+
+**Causa raiz, medida linha a linha no export** (`GENERAL TABACO - FATURAMENTO 2024.pdf`, um ÚNICO
+documento):
+```
+chave (rótulo) = 'Janeiro 2024' aparece 4 VEZES no MESMO documento:
+  periodo_coluna='Serviços R$' → 0
+  periodo_coluna='Saídas R$'   → 4.018.139,19
+  periodo_coluna='Outros R$'   → 0
+  periodo_coluna='Total R$'    → 4.018.139,19   (= Saídas, é a MESMA coisa)
+```
+`fn_somar_faturamento_ano` exclui "total" olhando `ce.chave` (`fn_normalizar_texto(ce.chave) not
+like '%total%'`) — mas a CATEGORIA mora em `ce.periodo_coluna`, não em `chave` (confirmado no
+export: coluna "Período da coluna" = `campo.periodo_coluna` diretamente, `portal/src/lib/export.ts:3106`).
+Nenhuma das 4 linhas tem "total" na CHAVE (todas dizem "Janeiro 2024") → as 4 somam, sempre.
+12 meses × 4 categorias = **48**, exatamente o "48 meses de faturamento" que o painel mostrou.
+`74.160.836,36 (Receita Bruta DRE) × 2 = 148.321.672,72` vs os `144.872.009,06` reportados — bate
+em 97,7%, e o resíduo de 2,3% é a diferença real de competência/recorte que a mensagem já
+reconhecia como "zona cinzenta".
+
+**A correção** (SQL-only, agrupando por rótulo em vez de somar tudo):
+```sql
+create or replace function public.fn_somar_faturamento_ano(
+  p_documento_versao_id uuid, p_ano4 text, p_ano2 text
+) returns table(soma numeric, n_linhas integer)
+language sql stable as $$
+  with candidatos as (
+    select ce.chave, ce.periodo_coluna, ce.valor_num
+    from campo_extraido ce
+    where ce.documento_versao_id = p_documento_versao_id
+      and ce.valor_num is not null
+      and (position(p_ano4 in fn_normalizar_texto(ce.chave)) > 0
+           or fn_normalizar_texto(ce.chave) ~ ('[/. -]' || p_ano2 || '($|[^0-9])'))
+      and fn_normalizar_texto(ce.chave) not like '%total%'
+      and fn_normalizar_texto(ce.chave) not like '%acumulad%'
+      and fn_normalizar_texto(ce.chave) not like '%media%'
+      and fn_normalizar_texto(ce.chave) not like '%médi%'
+  ),
+  -- POR RÓTULO (mês): se alguma linha daquele mês tem a coluna TOTAL (a
+  -- categoria mora em periodo_coluna neste formato — Saídas/Serviços/
+  -- Outros/Total —, não em chave, que repete o MESMO mês nas quatro), usa
+  -- só ela; senão soma o que houver (documentos sem quebra por categoria).
+  por_rotulo as (
+    select chave,
+      coalesce(
+        max(valor_num) filter (where fn_normalizar_texto(periodo_coluna) like '%total%'),
+        sum(valor_num)
+      ) as valor
+    from candidatos group by chave
+  )
+  select coalesce(sum(valor), 0)::numeric, count(*)::int from por_rotulo;
+$$;
+```
+Efeito colateral CORRETO: `n_linhas` passa a contar MESES de verdade (12), não células (48) — a
+mensagem "48 meses de faturamento" também estava mentindo sobre a UNIDADE, não só o valor.
+
+**Antes de escrever a migration, RODAR `Supabase/test/reconciliacao.test.sql` e confirmar que o
+teste do book-vertentes** ("Receita bruta obtida somando a seção") **continua batendo** — o
+fixture dele usa faturamento SEM quebra por categoria (`fixture_modelagem_v35.sql`, um valor por
+mês), e a correção tem que ser NO-OP nesse formato (verificado no raciocínio da sessão 88, mas
+precisa RODAR, não só ler).
+
+**Invariante novo:** fixture com a forma exata de 4 categorias/mês (a de GENERAL TABACO/AMOBELEZA)
+— desligado, soma 2× o real; ligado, soma o valor real e `n_linhas`=12.
+
+**Efeito esperado:** resolve ~10 das 37 divergências "Receita Bruta vs Faturamento".
+
+### Fatia 5 — OMNIBEAUTY virou 4 entidades — BLOQUEADA, precisa do dono
+
+**O que a sessão 88 provou sem banco:** rodando `fn_mesma_entidade` (migração 0030) à mão contra
+as 4 variantes do nome que aparecem no export —
+`OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE` (bare, 7 docs),
+`...DE MARCAS LTDA` (2 docs, PDF com camada de texto — nome completo),
+`...DE SURUBIJU` (1 doc) e `...DE SURUBIJU, 1930` (1 doc, confirmado visualmente no PDF
+`OMNIBEAUTY - FATURAMENTO 2024.pdf`: o campo "Empresa:" trunca em "GESTAO DE" e a linha seguinte,
+"Endereço: SURUBIJU, 1930", gruda por estar logo abaixo no layout do relatório do cliente) —
+**as 4 batem par a par** via o algoritmo de prefixo por token da 0030 (todos os tokens do nome
+curto são prefixo, na ordem, dos tokens do nome longo).
+
+`fn_upsert_entidade` (0153, `Supabase/schema.sql:10144`) tem a regra "no empate, não escolhe": se
+2+ candidatos aproximados já existem para um nome, ele cria uma entidade NOVA em vez de escolher
+— desenhada para não fundir empresas de verdade que só coincidem parcialmente (ex.: duas SPEs do
+mesmo grupo). O efeito colateral, quando a ambiguidade é a MESMA empresa com nome truncado de
+formas diferentes: cada variante nova que chega quando já existem 2+ candidatos cria MAIS uma
+linha em vez de se fundir a uma delas — 4 linhas para 1 empresa é uma consequência LÓGICA
+necessária do código (só existe caminho para 4 linhas distintas via pelo menos duas ativações do
+"ambíguo, não escolho"), mesmo sem saber a ordem exata de chegada dos 11 documentos.
+
+**O QUE FALTOU CONFIRMAR, E A TENTATIVA FALHOU — CORRIJA ANTES DE RODAR DE NOVO:**
+a sessão 88 tentou `select razao_social, criado_em from entidade where ...` e o dono rodou —
+**erro real: `column "criado_em" does not exist"`**. Conferido no schema
+(`Supabase/migrations/0001_schema_fatia1.sql:146-152`): **`entidade` não tem NENHUMA coluna de
+timestamp.** As queries corretas, usando `documento.criado_em` (existe,
+`Supabase/migrations/0001_schema_fatia1.sql:167-176`) como proxy de "quando esta entidade
+começou a ser referenciada", e `evento_auditoria.criado_em` (existe) para os eventos de
+ambiguidade:
+
+```sql
+-- ordem de chegada de cada variante do nome OMNIBEAUTY (proxy: 1º documento que a referencia)
+select e.id, e.razao_social, min(d.criado_em) as primeiro_documento
+from entidade e
+join documento d on d.entidade_id = e.id
+where e.caso_id = (select id from caso where nome = 'teste 143')
+  and e.razao_social ilike '%omnibeauty%'
+group by e.id, e.razao_social
+order by primeiro_documento;
+
+-- os eventos de ambiguidade que o fn_upsert_entidade registrou
+select criado_em, entidade_ref, depois
+from evento_auditoria
+where acao = 'entidade_ambigua'
+  and depois->>'caso_id' = (select id::text from caso where nome = 'teste 143')
+order by criado_em;
+```
+
+**Preciso de você, uma das duas:**
+- me dar acesso ao projeto Supabase certo do Oria Partners (o MCP desta sessão está ligado à
+  "Encorpa Database", um produto totalmente diferente — leads/pedidos, nada a ver com este
+  repositório; e o MCP acabou de desconectar da própria sessão também, então mesmo o projeto
+  errado não está mais acessível agora), ou
+- rodar as duas queries corrigidas acima você mesmo e colar o resultado.
+
+**O que fazer independente da resposta, quando chegar a vez desta fatia:**
+1. escrever a correção defensiva em `fn_upsert_entidade`: quando os candidatos "ambíguos" TAMBÉM
+   batem `fn_mesma_entidade` **entre si** (formam um cluster transitivo — é exatamente o caso das
+   4 variantes de OMNIBEAUTY), fundir no de `razao_social` mais longa/completa em vez de criar
+   mais uma linha; manter o comportamento atual (recusar e não escolher) quando os candidatos NÃO
+   batem entre si (o caso real que a 0153 existe para proteger — duas SPEs distintas);
+2. invariante sintético com as 4 variantes reais do dono, na tabela `entidade` de um caso de
+   teste (isso não fere a regra 4 — é o algoritmo determinístico rodando contra nome real, não
+   fixture inventada): desligada, 4 linhas; ligada, 1 linha com o nome mais completo;
+3. script de fusão retroativa (`update documento set entidade_id = ... where entidade_id in
+   (...)`, com `delete from entidade where id in (...)` das órfãs) para rodar contra o caso
+   "teste 143" assim que houver acesso ao banco certo — NÃO faça isto sem confirmar antes com o
+   dono, é uma mudança que apaga linhas de produção.
+
+### Fatia 6 — os dois defeitos de extração — documentados, propositalmente NÃO corrigidos
+
+1. **`OMNIBEAUTY - BALANÇO 2023.pdf`, RESERVAS/OUTRAS CONTAS trocados em R$ 300.000.** Confirmado
+   por aritmética exata contra o texto do PDF: `RESERVAS(8.090.863,63) = OUTRAS CONTAS(8.390.863,63)
+   + (-)Rendimentos Distribuição de Lucros(-300.000,00)` e `OUTRAS CONTAS(8.390.863,63) = Resultado
+   do Exercício(8.357.596,78) + Lucros Acumulados(33.266,85)` — as DUAS contas fecham perfeitamente
+   com a hierarquia CERTA (a linha de distribuição de lucros é filha de RESERVAS, não de OUTRAS
+   CONTAS). A extração anexou essa UMA linha um nível errado de indentação. É erro de leitura de
+   hierarquia pelo modelo de IA, não bug de checagem — **e o sistema já pegou certo** (abriu
+   "seção não fecha" nos dois lados, com a diferença de exatamente R$300.000 nos dois, que é a
+   assinatura de uma linha mal-anexada, não de dado perdido).
+
+2. **`GENERAL TABACO - BALANÇO 202603.pdf` (imagem escaneada, SEM camada de texto — confirmado
+   pelos `/Resources` do PDF), 7 seções quebradas.** `PASSIVO CIRCULANTE` foi reportado com o
+   MESMO valor que "PASSIVO" (o total do grupo inteiro) tem — forte indício de desalinhamento
+   linha↔valor na leitura por visão de uma tabela densa. Também não é bug de checagem — o aviso
+   que o próprio painel já mostra ("muitas seções quebrando de uma vez costuma ser escala ou
+   coluna, não linha perdida") é a leitura certa.
+
+**Por que NENHUM dos dois entra em código nesta rodada:** os dois exigem mudar a ESTRATÉGIA DE
+EXTRAÇÃO por IA (prompt, ou uma segunda passada estruturada), não uma função determinística — e
+nenhum dos dois pode ser medido "desligado→ligado" com um invariante SQL como as Fatias 2-5. São
+mais arriscados e menos previsíveis; ficam para depois das 4 fatias de cima, e a decisão de
+investir neles é do dono (o sistema já os detecta e os manda para revisão humana, que é o
+comportamento de segurança correto enquanto não há uma correção melhor).
+
+### Ordem de execução recomendada e por quê
+**2 → 3 → 4 → 5 → 6.** 2 e 3 são a MESMA causa raiz (convenção "PASSIVO bare") em dois códigos
+diferentes — fazer as duas seguidas evita reler o mesmo PDF duas vezes. 4 é independente e do
+mesmo tamanho. 5 está bloqueada em uma resposta do dono — pode ser adiada sem custo (nenhuma
+fatia depende dela) enquanto se espera a resposta. 6 é a mais arriscada e a menos urgente.
+
+**Para cada fatia:** ler o corpo ATUAL da função em `Supabase/schema.sql` (não confiar em migração
+antiga — pode ter sido patchada depois), escrever a migration com `create or replace function`
+reemitindo o corpo INTEIRO (nunca por patch de âncora — `.claude/memory/nunca-corrigir-funcao-por-replace.md`),
+escrever o invariante ANTES de aplicar a correção e confirmar que ele REPROVA, aplicar a correção,
+confirmar que o invariante PASSA, rodar a suíte completa (`sudo -u postgres env PGHOST=/tmp
+PGPORT=5432 PGUSER=postgres Supabase/test/run.sh`), e só então commitar — uma fatia por commit,
+mensagem contando o defeito, a causa e a medição, como as 5 fatias anteriores desta sessão já
+fizeram.
+
 
 ## A SESSÃO 87 (2026-09-13) — as duas fatias do orçamento, e o que continua dependendo do lote real
 

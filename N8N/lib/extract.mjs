@@ -628,6 +628,32 @@ export const MAX_OUTPUT_TOKENS = 16384;
 export const TPM_CONTA = provedor().tpm;
 export const RPM_CONTA = provedor().rpm;
 
+// O PISO HISTÓRICO DE BATCHING — movido para cá em 14/09/2026 pelo MESMO motivo
+// que TPM_CONTA/RPM_CONTA moram aqui: o gerador e o teste que trava a cadência
+// precisam do MESMO número, e duplicá-lo é o que já fez os "três espelhos do
+// portal" ficarem para trás uma vez (ver `espera-do-lote.ts`).
+//
+// O PISO DE 6s É HISTÓRICO E FICA: veio do "teste v18", em que 3 de 16
+// documentos ainda tomaram 429 com 3s. Ele não depende de provedor — é a folga
+// mínima que a experiência com o n8n do dono mostrou ser necessária.
+//
+// O NÚMERO É 6000, NÃO 12000, E A DIFERENÇA IMPORTA. O "v28" (comentário
+// grande, mais abaixo neste arquivo, sobre `diagnosticarErroApi`) já confessa
+// que subir de 6s para 12s foi um CHUTE sem evidência de que a causa daquela
+// falha fosse cadência — e nenhuma medição posterior justificou o 12s. O piso
+// que sobreviveu à correção do v30 (a cadência virar aritmética de TPM) é
+// este: 6s, medido no v18, por duas razões que CONTINUAM valendo em qualquer
+// tier — o campo do n8n é preenchido em segundos por um humano, e abaixo de 6s
+// o intervalo vira frágil a qualquer variação de latência da rede.
+//
+// SUBIR O TPM DA CONTA (14/09/2026: 30.000 → 500.000, a conta real do dono)
+// fez a aritmética do TPM cair para ~4,4s — abaixo deste piso, que agora é
+// quem decide o intervalo. É exatamente o caso que o comentário de
+// `INTERVALO_EXTRACAO_MS` em build-workflow.mjs já previa ("no Tier 2, 450.000
+// TPM, o intervalo cai bem abaixo do piso histórico de 6s"): o piso passou a
+// SER o intervalo, e não é regressão — é o desenho funcionando.
+export const PISO_BATCHING_MS = 6000;
+
 // conteudo: parte multimodal (arquivo/imagem/texto) — reaproveita contentPartFromFile.
 export function buildExtractionRequest({
   tipo, nomeOriginal, conteudo, model = DEFAULT_MODEL, prov = provedor(),

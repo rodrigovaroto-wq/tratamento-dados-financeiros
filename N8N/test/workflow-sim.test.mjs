@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { codigosConhecidos } from '../lib/ia.mjs';
-import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
+import { SYSTEM_PROMPT, diagnosticarErroApi, MAX_OUTPUT_TOKENS, TPM_CONTA, RPM_CONTA, PISO_BATCHING_MS, normalizarUnidade, extractionSchema, achatarGrupos } from '../lib/extract.mjs';
 import { ALIASES } from '../lib/taxonomia.mjs';
 import { parseEntidade, classifyByFilename } from '../lib/classifier.mjs';
 import { orcamentoDoLote, MODELO_CLASSIFICACAO, MODELO_EXTRACAO, VERSAO_ORCAMENTO, PRECO_USD_POR_MILHAO, CUSTO_ESTIMADO_DOC_USD, TETO_EXECUCAO_USD, PAGINAS_MAX_MEDIDO, TOKENS_POR_PAGINA_IMAGEM } from '../lib/custo.mjs';
@@ -1581,7 +1581,19 @@ test('a cadência da extração É a aritmética do TPM, não um número escolhi
   // …e não folgado ao ponto de ser lentidão gratuita — quando é o balde de
   // TOKENS que manda. Quando o gargalo é o de CHAMADAS, exigir 80% do balde de
   // tokens seria exigir uma cadência que toma 429 na terceira chamada.
-  if (!RPM_CONTA) {
+  //
+  // E QUANDO O GARGALO É O PISO HISTÓRICO (`PISO_BATCHING_MS`), A MESMA LÓGICA
+  // VALE PELO MESMO MOTIVO. Achado na troca de TPM de 14/09/2026 (30.000 →
+  // 500.000, a conta real do dono): a matemática pura do TPM passou a pedir um
+  // intervalo abaixo do piso medido no "teste v18" (3 de 16 documentos tomando
+  // 429 com 3s), e o piso venceu — por desenho, é o maior dos três
+  // (`INTERVALO_EXTRACAO_MS` em build-workflow.mjs). Uma conta com TPM alto o
+  // bastante SEMPRE vai usar menos de 80% do próprio balde quando o piso
+  // manda, e isso não é a "lentidão sem ganho" que este assert existe para
+  // pegar — é o piso de segurança fazendo o trabalho dele. Exigir 80% aqui
+  // seria pedir para o piso ser furado assim que a conta melhorar de tier.
+  const intervaloTeoricoMs = 60000 / (TPM_CONTA / (RESERVA_ENTRADA_TOKENS_TESTE + MAX_OUTPUT_TOKENS));
+  if (!RPM_CONTA && intervaloTeoricoMs >= PISO_BATCHING_MS) {
     assert.ok(tpmDemandado > TPM_CONTA * 0.8,
       `a cadência usa só ${Math.round(tpmDemandado)} de ${TPM_CONTA} TPM — lentidão sem ganho`);
   }
@@ -1603,8 +1615,19 @@ test('IA Extrair nunca espaça MENOS que IA Classificar, e as duas têm retry', 
     intervalo(extrair) >= intervalo(classificar),
     `extração (${intervalo(extrair)}ms) não pode espaçar menos que classificação (${intervalo(classificar)}ms)`,
   );
+  // ERA `>= 12000`, um número que a troca de TPM de 14/09/2026 (30.000 →
+  // 500.000, a conta real do dono) expôs como o que sempre foi: o "v28"
+  // (comentário em `lib/extract.mjs`, junto de `diagnosticarErroApi`) confessa
+  // que subir de 6s para 12s foi um CHUTE sem evidência de que a causa daquela
+  // falha fosse cadência. Com o TPM real, `INTERVALO_EXTRACAO_MS` passou a ser
+  // decidido pelo PISO — exatamente o caso que o comentário dele já previa
+  // ("no Tier 2, o intervalo cai bem abaixo do piso histórico de 6s") — e o
+  // piso que tem evidência por trás (o "teste v18", 3 de 16 documentos
+  // tomando 429 com 3s) é `PISO_BATCHING_MS`, não 12000. Travar em 12000 aqui
+  // seria travar o CHUTE do v28, não o piso medido do v18.
   if (!RPM_CONTA) {
-    assert.ok(intervalo(extrair) >= 12000, `intervalo da extração = ${intervalo(extrair)}ms (< 12s não bastou no v28)`);
+    assert.ok(intervalo(extrair) >= PISO_BATCHING_MS,
+      `intervalo da extração = ${intervalo(extrair)}ms (abaixo do piso medido de ${PISO_BATCHING_MS}ms)`);
   }
   for (const n of [extrair, classificar]) {
     assert.equal(n.retryOnFail, true, `${n.name}: retry no nível do node`);

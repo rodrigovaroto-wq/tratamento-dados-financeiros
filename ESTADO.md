@@ -11,6 +11,15 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > arquivo que quase nunca se edita não convida a editar nada. Aqui só há o que muda — e o
 > `Supabase/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
 
+> **⚠️ HÁ UM PLANO DE 6 FATIAS EM ANDAMENTO, escrito em 14/09/2026** — sobre defeitos reais achados
+> no book do caso "teste 143" (Ativo=Passivo+PL contando o PL duas vezes, Faturamento×DRE contando
+> a coluna Total junto das categorias, uma entidade que virou 4, e dois defeitos de extração
+> documentados e não corrigidos). **Fatia 1 (TPM da conta) FEITA**, no PR #221. **Fatias 2-6 NÃO
+> implementadas** — leia "O PLANO DE 14/09" em `HANDOFF.md` (logo abaixo do cabeçalho) antes de
+> começar qualquer coisa nesta área, e comece pela Fatia 2. Regra permanente enquanto este plano
+> não fechar: perto de 90% do limite de uso da sessão, pare de avançar fatia, commite o que estiver
+> pronto e atualize esta nota dizendo exatamente onde parou (`.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`).
+
 ## Onde está
 
 | | |
