@@ -524,6 +524,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/passivo_bare_e_o_grupo.test.sq
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0167 — o faturamento é UM valor por mês (a coluna Total não soma junto)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/faturamento_por_mes.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

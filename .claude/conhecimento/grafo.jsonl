@@ -47,6 +47,7 @@
 {"k":"n","id":"arquivo:Supabase/test/eixo_documento_e_coluna.test.sql","t":"arquivo","f":"Supabase/test/eixo_documento_e_coluna.test.sql","txt":"eixo_documento_e_coluna.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_ambigua.test.sql","t":"arquivo","f":"Supabase/test/entidade_ambigua.test.sql","txt":"entidade_ambigua.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fato_material.test.sql","t":"arquivo","f":"Supabase/test/fato_material.test.sql","txt":"fato_material.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/faturamento_por_mes.test.sql","t":"arquivo","f":"Supabase/test/faturamento_por_mes.test.sql","txt":"faturamento_por_mes.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fechar_mandato.test.sql","t":"arquivo","f":"Supabase/test/fechar_mandato.test.sql","txt":"fechar_mandato.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fixture_modelagem_v35.sql","t":"arquivo","f":"Supabase/test/fixture_modelagem_v35.sql","txt":"fixture_modelagem_v35.sql"}
 {"k":"n","id":"arquivo:Supabase/test/gerar_fixture.py","t":"arquivo","f":"Supabase/test/gerar_fixture.py","txt":"gerar_fixture.py"}
@@ -301,7 +302,7 @@
 {"k":"n","id":"fn:fn_secao_e_de_resultado","t":"fn","f":"Supabase/migrations/0128_classificacao_contabil_sombra.sql","txt":"secao e de resultado"}
 {"k":"n","id":"fn:fn_soma_secao","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"soma secao"}
 {"k":"n","id":"fn:fn_somar_conceito","t":"fn","f":"Supabase/migrations/0015_reconciliacao_classe_b.sql","txt":"somar conceito"}
-{"k":"n","id":"fn:fn_somar_faturamento_ano","t":"fn","f":"Supabase/migrations/0015_reconciliacao_classe_b.sql","txt":"somar faturamento ano"}
+{"k":"n","id":"fn:fn_somar_faturamento_ano","t":"fn","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","txt":"somar faturamento ano"}
 {"k":"n","id":"fn:fn_sugerir_perguntas","t":"fn","f":"Supabase/migrations/0122_pergunta_em_portugues.sql","txt":"sugerir perguntas"}
 {"k":"n","id":"fn:fn_tem_palavra_longa","t":"fn","f":"Supabase/migrations/0103_papel_linha_tokeniza_uma_vez.sql","txt":"tem palavra longa"}
 {"k":"n","id":"fn:fn_teto_ressalvas","t":"fn","f":"Supabase/migrations/0037_portao2.sql","txt":"teto ressalvas"}
@@ -436,6 +437,7 @@
 {"k":"n","id":"migration:0164","t":"migration","f":"Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql","txt":"a estimativa que o filtro opaco escondia"}
 {"k":"n","id":"migration:0165","t":"migration","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","txt":"o passivo que ja inclui o patrimonio"}
 {"k":"n","id":"migration:0166","t":"migration","f":"Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql","txt":"a exigencia que nao conhecia o passivo bare"}
+{"k":"n","id":"migration:0167","t":"migration","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","txt":"o faturamento que somava a coluna total"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -812,6 +814,10 @@
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_fatos_do_caso","f":"Supabase/test/fato_material.test.sql","l":194}
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_diagnostico","f":"Supabase/test/fato_material.test.sql","l":223}
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_fatos","f":"Supabase/test/fato_material.test.sql","l":38}
+{"k":"e","de":"arquivo:Supabase/test/faturamento_por_mes.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/faturamento_por_mes.test.sql","l":53}
+{"k":"e","de":"arquivo:Supabase/test/faturamento_por_mes.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/faturamento_por_mes.test.sql","l":48}
+{"k":"e","de":"arquivo:Supabase/test/faturamento_por_mes.test.sql","rel":"CHAMA","pa":"fn:fn_somar_faturamento_ano","f":"Supabase/test/faturamento_por_mes.test.sql","l":83}
+{"k":"e","de":"arquivo:Supabase/test/faturamento_por_mes.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/faturamento_por_mes.test.sql","l":46}
 {"k":"e","de":"arquivo:Supabase/test/fechar_mandato.test.sql","rel":"CHAMA","pa":"fn:fn_fechar_caso","f":"Supabase/test/fechar_mandato.test.sql","l":42}
 {"k":"e","de":"arquivo:Supabase/test/fechar_mandato.test.sql","rel":"CHAMA","pa":"fn:fn_reabrir_caso","f":"Supabase/test/fechar_mandato.test.sql","l":61}
 {"k":"e","de":"arquivo:Supabase/test/fixture_modelagem_v35.sql","rel":"CHAMA","pa":"fn:fn_conferir_modelagem","f":"Supabase/test/fixture_modelagem_v35.sql","l":328}
@@ -1454,6 +1460,7 @@
 {"k":"e","de":"migration:0163","rel":"CRIA","pa":"fn:fn_registrar_diagnostico","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","l":160}
 {"k":"e","de":"migration:0164","rel":"CRIA","pa":"fn:fn_linhas_para_modelagem","f":"Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql","l":161}
 {"k":"e","de":"migration:0165","rel":"CRIA","pa":"fn:fn_reconciliar_ativo_passivo_pl","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","l":72}
+{"k":"e","de":"migration:0167","rel":"CRIA","pa":"fn:fn_somar_faturamento_ano","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","l":67}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

@@ -272,6 +272,7 @@ supabase db execute --file Supabase/migrations/0163_a_ancora_que_o_crlf_desalinh
 supabase db execute --file Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql
 supabase db execute --file Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql
 supabase db execute --file Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql
+supabase db execute --file Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

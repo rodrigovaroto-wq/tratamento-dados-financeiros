@@ -9843,19 +9843,43 @@ $$;
 CREATE FUNCTION public.fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text) RETURNS TABLE(soma numeric, n_linhas integer)
     LANGUAGE sql STABLE
     AS $_$
-  select coalesce(sum(ce.valor_num), 0)::numeric, count(*)::int
-  from campo_extraido ce
-  where ce.documento_versao_id = p_documento_versao_id
-    and ce.valor_num is not null
-    and (
-      position(p_ano4 in fn_normalizar_texto(ce.chave)) > 0
-      or fn_normalizar_texto(ce.chave) ~ ('[/. -]' || p_ano2 || '($|[^0-9])')
-    )
-    and fn_normalizar_texto(ce.chave) not like '%total%'
-    and fn_normalizar_texto(ce.chave) not like '%acumulad%'
-    and fn_normalizar_texto(ce.chave) not like '%media%'
-    and fn_normalizar_texto(ce.chave) not like '%médi%';
+  with candidatos as (
+    select ce.chave, ce.periodo_coluna, ce.valor_num
+    from campo_extraido ce
+    where ce.documento_versao_id = p_documento_versao_id
+      and ce.valor_num is not null
+      and (
+        position(p_ano4 in fn_normalizar_texto(ce.chave)) > 0
+        or fn_normalizar_texto(ce.chave) ~ ('[/. -]' || p_ano2 || '($|[^0-9])')
+      )
+      and fn_normalizar_texto(ce.chave) not like '%total%'
+      and fn_normalizar_texto(ce.chave) not like '%acumulad%'
+      and fn_normalizar_texto(ce.chave) not like '%media%'
+      and fn_normalizar_texto(ce.chave) not like '%médi%'
+  ),
+  -- UM VALOR POR MÊS, e é aqui que mora a correção. A categoria
+  -- (Saídas/Serviços/Outros/Total) mora em `periodo_coluna`, não na `chave` —
+  -- a chave repete o MESMO mês nas quatro células. Se o mês tem uma célula de
+  -- TOTAL, ela é a resposta; as outras três são a decomposição dela, e somar as
+  -- quatro conta o mesmo dinheiro duas vezes.
+  por_rotulo as (
+    select
+      chave,
+      coalesce(
+        max(valor_num) filter (where fn_normalizar_texto(periodo_coluna) like '%total%'),
+        sum(valor_num)
+      ) as valor
+    from candidatos
+    group by chave
+  )
+  select coalesce(sum(valor), 0)::numeric, count(*)::int from por_rotulo;
 $_$;
+
+--
+-- Name: FUNCTION fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_somar_faturamento_ano(p_documento_versao_id uuid, p_ano4 text, p_ano2 text) IS 'Soma o faturamento de um ano, UM VALOR POR MÊS. 0167: a categoria mora em periodo_coluna (Saídas/Serviços/Outros/Total) e a chave repete o mês nas quatro — somar tudo dava 48 "meses" num relatório de 12 e o dobro do faturamento. Com coluna de total, ela manda; sem ela, soma-se a quebra.';
 
 --
 -- Name: fn_sugerir_perguntas(uuid); Type: FUNCTION; Schema: public; Owner: -
