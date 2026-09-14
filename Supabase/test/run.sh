@@ -529,6 +529,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/faturamento_por_mes.test.sql 2
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0168 — o nome truncado que casa com os outros não vira empresa nova (os 4 nomes reais)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/alias_truncado.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

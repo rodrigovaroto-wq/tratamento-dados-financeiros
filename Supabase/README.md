@@ -273,6 +273,7 @@ supabase db execute --file Supabase/migrations/0164_a_estimativa_que_o_filtro_op
 supabase db execute --file Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql
 supabase db execute --file Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql
 supabase db execute --file Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql
+supabase db execute --file Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

@@ -2603,6 +2603,28 @@ $$;
 COMMENT ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) IS 'As entidades do caso com que um nome casa, a exata primeiro (0153). Mais de uma linha sem nenhuma exata é AMBIGUIDADE: o nome não identifica empresa nenhuma, e quem decide é o humano.';
 
 --
+-- Name: fn_entidades_sao_um_grupo(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidades_sao_um_grupo(p_nomes text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select coalesce(array_length(p_nomes, 1), 0) > 0
+     and not exists (
+       select 1
+       from unnest(p_nomes) with ordinality as a(nome, i)
+       join unnest(p_nomes) with ordinality as b(nome, j) on j > i
+       where not fn_mesma_entidade(a.nome, b.nome)
+     );
+$$;
+
+--
+-- Name: FUNCTION fn_entidades_sao_um_grupo(p_nomes text[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidades_sao_um_grupo(p_nomes text[]) IS 'Os nomes são todos a MESMA empresa? Exige que cada PAR case por fn_mesma_entidade — não é fecho transitivo de propósito: A~B e B~C sem A~C é o apelido curto que casa com duas empresas distintas (o "Araucaria SPE" da 0153), e ali não se escolhe.';
+
+--
 -- Name: fn_excluir_caso(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10196,6 +10218,7 @@ declare
   v_id        uuid;
   v_n         int;
   v_candidatos text;
+  v_nomes     text[];
 begin
   -- 0153: no empate, não escolhe.
   if p_nome is null or length(trim(p_nome)) = 0 then return null; end if;
@@ -10209,12 +10232,33 @@ begin
   if v_id is not null then return v_id; end if;
 
   -- (2)/(3) quantos APROXIMADOS existem?
-  select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social)
-    into v_n, v_candidatos
+  select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social),
+         array_agg(c.razao_social)
+    into v_n, v_candidatos, v_nomes
   from fn_entidades_candidatas(p_caso_id, p_nome) c;
 
   if v_n = 1 then
     select c.entidade_id into v_id from fn_entidades_candidatas(p_caso_id, p_nome) c limit 1;
+    return v_id;
+  end if;
+
+  -- (3b) 0168: DOIS OU MAIS CANDIDATOS QUE CASAM ENTRE SI NÃO SÃO AMBIGUIDADE.
+  -- São o mesmo nome escrito de comprimentos diferentes (o template do contador
+  -- trunca a razão social num campo de largura fixa). Fica o mais COMPLETO — o
+  -- mais longo —, que é o que identifica a empresa na tela e na pendência.
+  -- O nome novo entra no grupo: se ele casa com todos, o grupo continua um só.
+  if v_n > 1 and fn_entidades_sao_um_grupo(v_nomes || trim(p_nome)) then
+    select c.entidade_id into v_id
+    from fn_entidades_candidatas(p_caso_id, p_nome) c
+    order by length(c.razao_social) desc, c.razao_social
+    limit 1;
+
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_alias_fundido', 'entidade:' || v_id,
+            jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                               'candidatos', v_candidatos, 'quantos', v_n,
+                               'porque', 'os candidatos casam todos entre si — é um nome só, '
+                                      || 'truncado de jeitos diferentes pela fonte'));
     return v_id;
   end if;
 
@@ -10240,7 +10284,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade do caso pelo nome (0030), sem ESCOLHER no empate (0153): casamento canônico exato primeiro, depois o único aproximado; com dois ou mais aproximados e nenhum exato, cria entidade própria e registra `entidade_ambigua` em evento_auditoria — porque "Araucaria SPE" casa com Bioenergia SPE E com Imobiliária SPE, e o `order by razao_social` da 0030 punha o balanço de uma dentro da outra sem dizer nada.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade do caso pelo nome (0030), sem ESCOLHER no empate (0153): canônico exato, depois o único aproximado. 0168: dois ou mais aproximados que casam TODOS ENTRE SI não são ambiguidade — são um nome truncado de jeitos diferentes, e fica o mais completo. Candidatos que NÃO casam entre si (Araucária Bioenergia × Araucária Imobiliária) continuam criando entidade própria com `entidade_ambigua` no log.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -

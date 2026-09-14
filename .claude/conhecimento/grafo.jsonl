@@ -31,6 +31,7 @@
 {"k":"n","id":"arquivo:N8N/workflow.erros.json","t":"arquivo","f":"N8N/workflow.erros.json","txt":"workflow.erros.json"}
 {"k":"n","id":"arquivo:N8N/workflow.macro.json","t":"arquivo","f":"N8N/workflow.macro.json","txt":"workflow.macro.json"}
 {"k":"n","id":"arquivo:Supabase/schema.sql","t":"arquivo","f":"Supabase/schema.sql","txt":"schema.sql"}
+{"k":"n","id":"arquivo:Supabase/test/alias_truncado.test.sql","t":"arquivo","f":"Supabase/test/alias_truncado.test.sql","txt":"alias_truncado.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/auto_promocao_dial.test.sql","t":"arquivo","f":"Supabase/test/auto_promocao_dial.test.sql","txt":"auto_promocao_dial.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/autoridade_combinado.test.sql","t":"arquivo","f":"Supabase/test/autoridade_combinado.test.sql","txt":"autoridade_combinado.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/canastra.test.sql","t":"arquivo","f":"Supabase/test/canastra.test.sql","txt":"canastra.test.sql"}
@@ -201,6 +202,7 @@
 {"k":"n","id":"fn:fn_entidade_canonica","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"entidade canonica"}
 {"k":"n","id":"fn:fn_entidade_e_balcao_ambiguo","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"entidade e balcao ambiguo"}
 {"k":"n","id":"fn:fn_entidades_candidatas","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"entidades candidatas"}
+{"k":"n","id":"fn:fn_entidades_sao_um_grupo","t":"fn","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"entidades sao um grupo"}
 {"k":"n","id":"fn:fn_excluir_caso","t":"fn","f":"Supabase/migrations/0108_falha_de_execucao.sql","txt":"excluir caso"}
 {"k":"n","id":"fn:fn_exercicio_da_coluna","t":"fn","f":"Supabase/migrations/0150_a_premissa_sai_do_realizado_certo.sql","txt":"exercicio da coluna"}
 {"k":"n","id":"fn:fn_exigencias_do_caso","t":"fn","f":"Supabase/migrations/0157_o_combinado_que_travava_o_kit_basico.sql","txt":"exigencias do caso"}
@@ -313,7 +315,7 @@
 {"k":"n","id":"fn:fn_trg_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"trg entidade ambigua"}
 {"k":"n","id":"fn:fn_unidade_predominante","t":"fn","f":"Supabase/migrations/0021_classe_b_checagem_unidade.sql","txt":"unidade predominante"}
 {"k":"n","id":"fn:fn_upsert_caso","t":"fn","f":"Supabase/migrations/0006_reset_funcoes.sql","txt":"upsert caso"}
-{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"upsert entidade"}
+{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"upsert entidade"}
 {"k":"n","id":"fn:fn_upsert_periodo","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"upsert periodo"}
 {"k":"n","id":"fn:fn_valor_conceito","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"valor conceito"}
 {"k":"n","id":"fn:fn_valor_conceito_col","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"valor conceito col"}
@@ -438,6 +440,7 @@
 {"k":"n","id":"migration:0165","t":"migration","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","txt":"o passivo que ja inclui o patrimonio"}
 {"k":"n","id":"migration:0166","t":"migration","f":"Supabase/migrations/0166_a_exigencia_que_nao_conhecia_o_passivo_bare.sql","txt":"a exigencia que nao conhecia o passivo bare"}
 {"k":"n","id":"migration:0167","t":"migration","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","txt":"o faturamento que somava a coluna total"}
+{"k":"n","id":"migration:0168","t":"migration","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","txt":"o apelido truncado nao e ambiguidade"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -712,6 +715,10 @@
 {"k":"e","de":"arquivo:N8N/workflow.macro.json","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json","l":156}
 {"k":"e","de":"arquivo:N8N/workflow.macro.json","rel":"CHAMA","pa":"fn:fn_registrar_expectativa_macro","f":"N8N/workflow.macro.json","l":244}
 {"k":"e","de":"arquivo:N8N/workflow.macro.json","rel":"CHAMA","pa":"fn:fn_registrar_indice_macro","f":"N8N/workflow.macro.json","l":129}
+{"k":"e","de":"arquivo:Supabase/test/alias_truncado.test.sql","rel":"CHAMA","pa":"fn:fn_entidades_sao_um_grupo","f":"Supabase/test/alias_truncado.test.sql","l":23}
+{"k":"e","de":"arquivo:Supabase/test/alias_truncado.test.sql","rel":"CHAMA","pa":"fn:fn_mesma_entidade","f":"Supabase/test/alias_truncado.test.sql","l":80}
+{"k":"e","de":"arquivo:Supabase/test/alias_truncado.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/alias_truncado.test.sql","l":45}
+{"k":"e","de":"arquivo:Supabase/test/alias_truncado.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/alias_truncado.test.sql","l":47}
 {"k":"e","de":"arquivo:Supabase/test/auto_promocao_dial.test.sql","rel":"CHAMA","pa":"fn:fn_dial_auto_promover","f":"Supabase/test/auto_promocao_dial.test.sql","l":153}
 {"k":"e","de":"arquivo:Supabase/test/auto_promocao_dial.test.sql","rel":"CHAMA","pa":"fn:fn_mudar_dial","f":"Supabase/test/auto_promocao_dial.test.sql","l":120}
 {"k":"e","de":"arquivo:Supabase/test/autoridade_combinado.test.sql","rel":"CHAMA","pa":"fn:fn_autoridade_do_documento","f":"Supabase/test/autoridade_combinado.test.sql","l":123}
@@ -1461,6 +1468,8 @@
 {"k":"e","de":"migration:0164","rel":"CRIA","pa":"fn:fn_linhas_para_modelagem","f":"Supabase/migrations/0164_a_estimativa_que_o_filtro_opaco_escondia.sql","l":161}
 {"k":"e","de":"migration:0165","rel":"CRIA","pa":"fn:fn_reconciliar_ativo_passivo_pl","f":"Supabase/migrations/0165_o_passivo_que_ja_inclui_o_patrimonio.sql","l":72}
 {"k":"e","de":"migration:0167","rel":"CRIA","pa":"fn:fn_somar_faturamento_ano","f":"Supabase/migrations/0167_o_faturamento_que_somava_a_coluna_total.sql","l":67}
+{"k":"e","de":"migration:0168","rel":"CRIA","pa":"fn:fn_entidades_sao_um_grupo","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","l":109}
+{"k":"e","de":"migration:0168","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0168_o_apelido_truncado_nao_e_ambiguidade.sql","l":131}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
