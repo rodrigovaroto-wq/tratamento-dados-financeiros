@@ -112,6 +112,53 @@ fechar o plano antes de continuar. **Comece pela Fatia 2.**
 > consultas corrigidas para inspecionar isso estão na Fatia 5 abaixo (`entidade` NÃO tem coluna de
 > timestamp — use `min(documento.criado_em)` como proxy).
 >
+> **A SESSÃO 89 CONTINUOU DEPOIS DISSO — leia este bloco antes de qualquer coisa.**
+>
+> O dono decidiu, em resposta direta: **atacar o CNPJ agora**, **preparar o script de fusão
+> retroativa para ele executar**, e **fazer a Fatia 6 junto com o CNPJ**. Duas das três estão
+> feitas ou começadas:
+>
+> | O quê | Commit | Estado |
+> |---|---|---|
+> | Script de fusão retroativa | `085d2cd` | **PRONTO, rodado de verdade contra banco de teste.** Espera o dono rodar a Parte 1 e colar o resultado |
+> | `0169` — o CNPJ como identidade | `20e659b` + `4c1c3f8` | **FEITO**, revisado por agente independente, 7 defeitos corrigidos |
+> | `0170` — o CNPJ atravessa a porta | `4c1c3f8` | **FEITO** |
+> | A IA LER o CNPJ do documento | — | **NÃO COMEÇADO. É AQUI QUE A PRÓXIMA SESSÃO PEGA.** |
+> | Fatia 6 (dois defeitos de extração) | — | **NÃO COMEÇADA**, e é para ir na MESMA passada do item acima |
+>
+> **O PRÓXIMO PASSO EXATO, com os arquivos e as linhas já mapeados:**
+>
+> O CNPJ hoje chega **nulo** em `fn_registrar_documento`, então a 0169 e a 0170 estão corretas e
+> **dormentes**. Falta a IA lê-lo. O mapa (conferido, não suposto):
+>
+> 1. **`N8N/build-workflow.mjs:89`, `SCHEMA_CLASSIF`** — é ESTE o schema que produz a entidade que
+>    chega em `fn_registrar_documento` (NÃO o `SYSTEM_PROMPT` do `extract.mjs`, que alimenta o
+>    diagnóstico e vai para `fn_registrar_diagnostico`). Acrescentar `cnpj:{type:['string','null']}`
+>    em `properties` **e** em `required` (o schema é `strict:true`).
+> 2. **O prompt de sistema da classificação**, inline em `CODE_REQ_CLASSIF`
+>    (`N8N/build-workflow.mjs:1106`, a string `sistema:'Classifique o documento…'`) — dizer o que é
+>    o campo, e **dizer explicitamente que o CNPJ do rodapé costuma ser o do ESCRITÓRIO DE
+>    CONTABILIDADE, não o do emitente**. Esse é o cenário que a revisão da 0169 levantou e é o que
+>    funde três clientes num bloco só se a IA ler o rodapé.
+> 3. **`mergeClassification`** (`N8N/build-workflow.mjs:1138-1145`) — `cnpj: fromAI.cnpj ?? null`.
+>    Só a IA lê conteúdo; o nome do arquivo nunca traz CNPJ.
+> 4. **O nó `Registrar Documento`** (`N8N/build-workflow.mjs:2239`) — a query ganha
+>    `p_cnpj=>$16::text` e o `queryReplacement` ganha `$json.cnpj || null`. A 0170 já criou o
+>    parâmetro.
+> 5. **Os espelhos que isso arrasta** (o CLAUDE.md avisa: o bloco de comandos é espelho do CI, e
+>    `.github/workflows/suites.yml` é a fonte): `N8N/test/espelho-inline.test.mjs`,
+>    `N8N/test/workflow-sim.test.mjs`, e os geradores têm de regerar **igual ao commitado**
+>    (`git diff --exit-code`).
+>
+> **A FATIA 6 VAI JUNTO PORQUE É O MESMO ARQUIVO E A MESMA RODADA DE MEDIÇÃO** — foi a razão que o
+> dono escolheu. Mexer no prompt três vezes gastaria três rodadas de IA para medir.
+>
+> **O QUE FICOU MEDIDO E NÃO RESOLVIDO (limite declarado, não esquecimento):** com o CNPJ, o NOME
+> que sobrevive ainda é o da primeira chegada — na ordem invertida, o contaminado pelo endereço
+> ("…DE SURUBIJU, 1930"), que é o que vai para o book. Há assert medindo isso em
+> `cnpj_identidade.test.sql`. O CNPJ funde, não renomeia; renomear entidade é decisão sobre dado do
+> cliente. **É a pergunta a levar ao dono na próxima sessão.**
+>
 > **Fatia 6 segue NÃO implementada, de propósito** — ver a seção dela.
 > **Suíte completa verde** (`Supabase/test/run.sh`, `TODOS OS TESTES PASSARAM`), índice do
 > conhecimento regerado e conferido (`55 verificações OK / 0 falhas`).
