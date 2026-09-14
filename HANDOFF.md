@@ -6,12 +6,20 @@ só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
 ## ⚠️ HÁ UM PLANO DE 6 FATIAS EM ANDAMENTO — leia "O PLANO DE 14/09" antes de decidir o que fazer
 
+**ATUALIZADO NA SESSÃO 90 (14/09) — leia o bloco `> **SESSÃO 90 (14/09)` dentro de "O PLANO DE
+14/09", logo antes de "### Fatia 1", ANTES de qualquer coisa abaixo deste parágrafo.** As Fatias
+1-6 originais estão TODAS feitas (a 5, de CNPJ, virou `0168`-`0174` ao longo do caminho — ver os
+blocos aninhados). O que está aberto agora: `0175` (o CNPJ resolver sozinho a ambiguidade que cria
+o balcão — é o que falta para os dois `entidade_ambigua` do lote real convergirem), a regra D/C
+determinística, o alinhamento em tabela densa escaneada, e o resto listado no fim do bloco da
+sessão 90.
+
 A sessão 88 (14/09) diagnosticou 6 defeitos reais no book "teste 143" (documentos e números da
 AMOBELEZA/GENERAL CORPORATE/GENERAL TABACO/OMNIBEAUTY) e escreveu um plano de correção em 6
-fatias, cada uma com causa raiz medida em código e/ou PDF real — não suposição. **A Fatia 1 (TPM
-da conta) está FEITA e no PR #221.** As Fatias 2-6 estão escritas, com evidência, mas **NENHUMA
-foi implementada ainda** — o dono pediu para fechar o plano antes de continuar executando. Pule
-para a seção **"O PLANO DE 14/09 — as 6 fatias"**, mais abaixo, e comece pela Fatia 2.
+fatias, cada uma com causa raiz medida em código e/ou PDF real — não suposição. As seis foram
+implementadas ao longo das sessões 89 e 90 (histórico completo nos blocos aninhados abaixo, do
+mais recente pro mais antigo). Pule para a seção **"O PLANO DE 14/09 — as 6 fatias"**, mais
+abaixo, e leia de cima pra baixo — o bloco mais no topo é o mais recente.
 
 **Regra permanente para QUALQUER sessão que trabalhar neste plano** (pedido explícito do dono,
 14/09/2026, e agora também em `.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`):
@@ -243,6 +251,81 @@ fechar o plano antes de continuar. **Comece pela Fatia 2.**
 > 6. **Continua sem validação contra lote real** — sem credencial de OpenAI nem acesso ao n8n nesta
 >    sessão. Tudo acima é determinístico e medido contra SQL; nada prova que a IA lê o CNPJ certo
 >    do PDF.
+
+> **SESSÃO 90 (14/09) — o item 2 acima fechado (`0173`), a validação contra lote real ACONTECEU e
+> achou um defeito NOVO e mais grave que o que estava sendo procurado (`0174`), e uma terceira
+> lacuna ficou declarada.**
+>
+> **Primeiro, a análise do book/portal que o dono subiu (AMOBELEZA 2024 + o HTML do portal, teste
+> 143).** Lida como um analista de crédito leria: comparado linha a linha contra o PDF original,
+> **93 das 94 linhas corretas, zero divergência de valor** — a leitura inicial desta sessão de "34
+> linhas perdidas" estava ERRADA (os agregadores existem, sob o rótulo `↳ subtotal informado:` que
+> o comparador não estava reconhecendo; corrigido e reconferido antes de reportar). Três defeitos
+> REAIS, ainda **não corrigidos, apenas evidenciados**:
+> 1. **O sinal D/C é inconsistente entre documentos.** AMOBELEZA `118.591.566,53C` → gravado **+**;
+>    GENERAL TABACO `16.867.770,58C` → gravado **−**. Mesmo sufixo, sinal oposto. A regra
+>    (`N8N/lib/extract.mjs:302-303`) existe só como instrução de PROMPT — não há pós-processamento
+>    determinístico que a force. É o maior alavancado dos três.
+> 2. **Deriva sistemática de uma linha no documento escaneado puro** (GENERAL TABACO 202603, 1
+>    página, 0 caracteres de texto — conferido no `/Resources`, renderizado e lido diretamente).
+>    Mapeado valor a valor contra a aritmética do próprio documento (`AC 13.411.418,80 + ANC
+>    3.456.351,78 = ATIVO 16.867.770,58`, `PL = 10.000 + 1.811.271,43 − 1.632.324,34 = 188.947,09`):
+>    `OUTROS CRÉDITOS`, `ATIVO NÃO-CIRCULANTE`, `PASSIVO CIRCULANTE`, `PATRIMÔNIO LÍQUIDO` pegaram o
+>    valor da linha VIZINHA; `IMPOSTOS E CONTRIBUIÇÕES A RECOLHER` ficou ausente;
+>    `OBRIGAÇÕES TRABALHISTA` foi inventada. A guarda funcionou — as 42 linhas do documento ficaram
+>    `pendente`, nenhuma virou fato aceito — mas a causa (alinhamento linha↔valor em tabela densa
+>    escaneada) continua aberta.
+> 3. **`PASSIVO` (a linha nua, o total do grupo) tem `secao_canonica` vazia nos 17 documentos** —
+>    coluna H em branco em todos. E rótulos não-canonicalizados viram linha-escada: `ADIANTAMENTOS
+>    A FORNECEDORES` / `ADIANTAMENTO A FORNECEDORES` / `Adiantamentos a Fornecedores` como TRÊS
+>    linhas, cada uma com uma célula.
+>
+> **E o achado que explica por que nada do CNPJ apareceu no export:** nenhuma string de CNPJ existe
+> no HTML do portal, e as duas entidades OMNIBEAUTY (`...NEGOCIOS LTDA` e `...SURUBIJU`) continuam
+> separadas mesmo com as migrations até a `0172` aplicadas — forte indício de que **o workflow do
+> n8n não tinha sido republicado** desde a fatia do CNPJ, então o schema/prompt novos nunca
+> chegaram a rodar nesta batelada.
+>
+> **O dono então (a) republicou o workflow e (b) rodou o lote real de novo**, e colou o resultado
+> de `evento_auditoria` para este caso (`bf0246bb-c93b-4d08-a7df-5d356c9d6275`): **DOIS
+> `entidade_ambigua` novos**, as mesmas quatro variantes de sempre, ainda sem fundir.
+>
+> **Investigando, primeiro fechou-se o item 2 já declarado acima: `0173`** — o renomeio saiu de
+> dentro de `fn_upsert_entidade` (só roda na classificação, 19/38 docs) e virou
+> `fn_entidade_talvez_renomear`, chamada TAMBÉM por `fn_registrar_diagnostico` (o caminho que roda
+> para todo documento). Medido: com a chamada nova removida, o nome ficava truncado mesmo com o
+> CNPJ certo gravado do lado.
+>
+> **Reconstruindo o caminho que o pipeline de fato executa com os nomes/CNPJ reais do evento
+> colado, apareceu um defeito MAIS GRAVE que a não-convergência: um CRASH real.** `0174` —
+> `fn_entidade_aprender_cnpj` levantava `duplicate key value violates unique constraint
+> entidade_caso_cnpj_unico` sempre que aprendia um CNPJ que já pertencia a OUTRA entidade do
+> mesmo caso (o destino de qualquer par de nomes que não casassem por igualdade exata ANTES do
+> CNPJ chegar). Ela agora FUNDE (`fn_fundir_entidade`) em vez de tentar gravar, e devolve o id de
+> quem sobreviveu — os dois chamadores tinham de trocar `perform` pelo retorno, senão a variável
+> local ficaria com um id deletado na mão (e em `fn_upsert_entidade` isso quebraria a FK de
+> `documento.entidade_id`, um crash NOVO). Medido com a fusão desligada: reproduz o crash exato,
+> antes do primeiro assert.
+>
+> **LACUNA DECLARADA, e é provavelmente a que EXPLICA os dois eventos reais que o dono colou:** as
+> duas entidades desses eventos nasceram pela AMBIGUIDADE (0153/0162) — e o ramo "balcão ambíguo"
+> de `fn_registrar_diagnostico` **nunca chama `fn_entidade_aprender_cnpj`**, mesmo quando o
+> CONTEÚDO do documento traz um CNPJ que resolveria a ambiguidade sozinho (a mesma confiança que o
+> CNPJ já tem em TODO o resto do sistema desde a 0169). Uma entidade que nasce balcão só sai de lá
+> por decisão humana hoje. **Não foi corrigido nesta sessão — é a próxima fatia (`0175`).**
+>
+> Migrations: `0173_o_renomeio_pelo_caminho_que_roda_sempre.sql`,
+> `0174_aprender_cnpj_que_ja_tinha_dona_funde.sql`. Suíte SQL inteira (119 migrations), 543 testes
+> do n8n, `conferir-chamadas` e o portão do conhecimento verdes nas duas. Commits
+> `3c5b70a` (0173) e `21146b5` (0174) em `claude/kind-edison-nbk6vy`, empurrados.
+>
+> **O QUE CONTINUA ABERTO, em ordem de valor:** (1) `0175` — o CNPJ resolver o balcão ambíguo
+> sozinho, que é o que faz os dois eventos reais convergirem sem intervenção humana; (2) a regra
+> D/C determinística (item 1 da análise do book acima), o defeito de maior alavanca fora do CNPJ;
+> (3) o alinhamento linha↔valor em tabela densa escaneada; (4) `PASSIVO` com `secao_canonica`
+> vazia e a canonicalização de rótulo que evita linha-escada; (5) fusão retroativa da OMNIBEAUTY
+> (`Supabase/fundir_omnibeauty_teste143.sql`) — ainda espera o dono rodar a Parte 1; (6) nenhuma
+> tela do portal lê os eventos de entidade (item 1 da 2ª volta, acima, continua aberto).
 
 ### Fatia 1 — TPM real da conta — ✅ FEITA (commit `135280f`)
 `N8N/lib/provedor.mjs` (30000→500000) + os 4 espelhos que isso arrastou (`PISO_BATCHING_MS`
