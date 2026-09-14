@@ -2578,32 +2578,65 @@ COMMENT ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) IS 'Docum
 -- Name: fn_entidade_aprender_cnpj(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) RETURNS void
+CREATE FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
 declare
-  v_cnpj  text := fn_cnpj_canonico(p_cnpj);
-  v_antes text;
+  v_cnpj       text := fn_cnpj_canonico(p_cnpj);
+  v_caso_id    uuid;
+  v_nome_atual text;
+  v_cnpj_atual text;
+  v_outra_id   uuid;
 begin
-  if p_entidade_id is null or v_cnpj is null then return; end if;
+  if p_entidade_id is null or v_cnpj is null then return p_entidade_id; end if;
 
-  -- `cnpj is null`, NÃO `fn_cnpj_canonico(cnpj) is null`, e a diferença foi
-  -- achada na revisão desta fatia: com o canônico, um CNPJ INVÁLIDO já gravado
-  -- (um '36.193.378/0001' truncado por planilha, digitado por uma pessoa) seria
-  -- SOBRESCRITO pelo número que a IA leu, e o comentário logo acima estaria
-  -- mentindo. Coluna vazia é ausência; coluna com número ruim é um registro
-  -- humano que só uma pessoa deve corrigir.
-  select e.cnpj into v_antes from entidade e where e.id = p_entidade_id;
+  select caso_id, razao_social, cnpj into v_caso_id, v_nome_atual, v_cnpj_atual
+    from entidade where id = p_entidade_id;
+  if v_caso_id is null then return p_entidade_id; end if;
 
-  update entidade set cnpj = v_cnpj
-   where id = p_entidade_id and cnpj is null;
-
-  if found then
-    insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
-            jsonb_build_object('cnpj', v_antes),
-            jsonb_build_object('cnpj', v_cnpj, 'como', 'aprendido de um documento posterior'));
+  -- `cnpj is not null`, NÃO `fn_cnpj_canonico(cnpj) is not null` — a diferença
+  -- é a mesma da versão original (0169): com o canônico, um CNPJ INVÁLIDO já
+  -- gravado por uma pessoa seria SOBRESCRITO pelo que a IA leu. Coluna vazia é
+  -- ausência; coluna com número ruim é registro humano que só humano corrige.
+  if v_cnpj_atual is not null then
+    return p_entidade_id;
   end if;
+
+  -- 0174: OUTRA entidade do MESMO CASO pode já ter este CNPJ — é o cenário
+  -- inteiro desta migration. Ver o cabeçalho para a medição em produção.
+  select id into v_outra_id
+    from entidade
+   where caso_id = v_caso_id and id <> p_entidade_id
+     and fn_cnpj_canonico(cnpj) = v_cnpj
+   limit 1;
+
+  if v_outra_id is not null then
+    -- FUNDE sem perguntar ao nome — é a MESMA regra 1 da 0169 ("CNPJ é a
+    -- identidade que o nome não é"), chegando pela porta do diagnóstico em
+    -- vez da porta de registro. `fn_fundir_entidade` já move documentos,
+    -- checklist, pendências e reconciliações, resolve a pendência de
+    -- ambiguidade da entidade fundida, e grava `entidade_fundida` com os
+    -- dois nomes e quantos documentos mudaram de dono — o mesmo rastro que a
+    -- fusão retroativa da OMNIBEAUTY usou.
+    perform fn_fundir_entidade(v_caso_id, p_entidade_id, v_outra_id, 'sistema:entidade');
+
+    -- E o nome sobrevivente pode não ser o mais completo dos dois — quem
+    -- decide são as MESMAS três guardas da 0171/0173 (só entre truncamentos,
+    -- nunca cria homônima, recusa com rastro), com o nome da entidade que
+    -- acabou de ser fundida (`v_nome_atual`, capturado ANTES da fusão —
+    -- depois dela a linha não existe mais para ler).
+    perform fn_entidade_talvez_renomear(v_caso_id, v_outra_id, v_nome_atual, v_cnpj);
+
+    return v_outra_id;
+  end if;
+
+  update entidade set cnpj = v_cnpj where id = p_entidade_id;
+  insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+  values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('cnpj', v_cnpj_atual),
+          jsonb_build_object('cnpj', v_cnpj, 'como', 'aprendido de um documento posterior'));
+
+  return p_entidade_id;
 end;
 $$;
 
@@ -2611,7 +2644,7 @@ $$;
 -- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: dois CNPJs diferentes na mesma entidade é divergência para humano, não algo para a função resolver.';
+COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: um CNPJ já gravado na MESMA entidade (mesmo que divergente) é decisão de humano. 0174: quando o CNPJ já pertence a OUTRA entidade do mesmo caso, funde as duas (fn_fundir_entidade) em vez de tentar gravar — sem isso o UPDATE violava entidade_caso_cnpj_unico e derrubava fn_registrar_diagnostico inteira. Devolve o id da entidade que sobrou: SEMPRE use o retorno, nunca o id que foi passado — depois de uma fusão ele pode apontar para uma linha deletada.';
 
 --
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
@@ -2711,6 +2744,104 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) IS '0171: entre dois nomes que o CNPJ já provou serem a MESMA empresa, qual fica. Três sinais em ordem: cara de endereço colado (nunca vence, mesmo mais longo) > sufixo societário > comprimento cru. Sem isso, "SURUBIJU, 1930" (55 chars) venceria "MARCAS LTDA" (52) só por ser mais longo — e é o nome ERRADO.';
+
+--
+-- Name: fn_entidade_talvez_renomear(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_talvez_renomear(p_caso_id uuid, p_entidade_id uuid, p_nome text, p_cnpj text) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_id         uuid := p_entidade_id;
+  v_cnpj       text := fn_cnpj_canonico(p_cnpj);
+  v_nome_atual text;
+  v_nome_novo  text;
+  v_homonima   boolean;
+begin
+  if p_entidade_id is null or p_nome is null or length(trim(p_nome)) = 0 then return null; end if;
+  select razao_social into v_nome_atual from entidade where id = p_entidade_id;
+  if v_nome_atual is null then return null; end if;
+
+  -- SEM CNPJ NÃO RENOMEIA. É o que mantém os caminhos de casamento APROXIMADO
+  -- (0153/0168) intactos: lá o CNPJ não provou identidade nenhuma, e quem
+  -- escolhe o nome continua sendo a 0168, entre os que JÁ EXISTIAM.
+  if v_cnpj is null then return v_nome_atual; end if;
+
+  -- 0171: O CNPJ TAMBÉM PODE RENOMEAR, não só fundir — com TRÊS guardas, e
+  -- as três nasceram da revisão desta fatia, cada uma de um defeito medido.
+  --
+  -- O RENOMEIO FICA FORA DA GUARDA CANÔNICA ACIMA (defeito 1 medido): a
+  -- canônica TIRA o sufixo societário, então "ALFA COMERCIO" e "ALFA
+  -- COMERCIO LTDA" são canonicamente IGUAIS — e o renomeio, aninhado
+  -- naquele `if`, nunca rodava justamente no caso em que o sinal 2 (sufixo)
+  -- existe para decidir. Medido: o nome final ficava "ALFA COMERCIO".
+  v_nome_novo := fn_entidade_nome_mais_completo(v_nome_atual, trim(p_nome));
+  v_homonima := exists (
+    select 1 from entidade e2
+    where e2.caso_id = p_caso_id and e2.id <> v_id
+      and fn_entidade_canonica_forte(e2.razao_social) = fn_entidade_canonica_forte(v_nome_novo));
+
+  if v_nome_novo is distinct from v_nome_atual
+     -- GUARDA 1 (defeito 2 medido): SÓ RENOMEIA ENTRE NOMES DA MESMA RAIZ.
+     -- O CNPJ basta para FUNDIR (é a regra 1 da 0169, e o dono a aprovou),
+     -- mas não basta para reescrever o nome: o cenário do rodapé com o CNPJ
+     -- do ESCRITÓRIO DE CONTABILIDADE — descrito no cabeçalho desta própria
+     -- função — fazia "PADARIA DO JOAO LTDA" virar "METALURGICA SAO PEDRO
+     -- COMERCIO LTDA", medido. Antes da 0171 a fusão errada pelo menos
+     -- PRESERVAVA o nome; o renomeio piorava o dano em vez de melhorá-lo.
+     -- Quando os nomes não compartilham raiz, o `entidade_cnpj_casou` acima
+     -- já registrou o casamento suspeito e é ELE que o humano lê.
+     --
+     -- `fn_pode_renomear_por_cnpj` e NÃO `fn_mesma_entidade` (que bloqueia o
+     -- caso motivador) nem "prefixo comum" (que autorizava trocar PADARIA
+     -- DO JOAO por PADARIA DO JOSE). Ver o cabeçalho da função para as
+     -- quatro medições que derrubaram as duas versões anteriores.
+     and fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome))
+     -- GUARDA 2 (defeito 3 medido): NÃO CRIA HOMÔNIMA. Sem isto, o renomeio
+     -- deixava DUAS entidades do mesmo caso com a razão social idêntica, e
+     -- o ramo (1) — casamento exato — passava a escolher uma delas por
+     -- `order by razao_social limit 1`, empate puro entre strings iguais,
+     -- SEM registrar ambiguidade nenhuma. Medido: 2 entidades homônimas, 0
+     -- eventos. É o defeito silencioso clássico deste projeto — os
+     -- documentos se dividem entre duas linhas que a tela mostra como uma.
+     and not v_homonima
+  then
+    update entidade set razao_social = v_nome_novo where id = v_id;
+    insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
+    values ('sistema:entidade', 'entidade_renomeada_por_cnpj', 'entidade:' || v_id,
+            jsonb_build_object('razao_social', v_nome_atual),
+            jsonb_build_object('razao_social', v_nome_novo, 'cnpj', v_cnpj,
+                               'porque', 'nome mais completo pela mesma empresa (CNPJ)'));
+
+  elsif v_nome_novo is distinct from v_nome_atual then
+    -- RECUSA COM RASTRO, e não em silêncio. Chegar aqui significa que o
+    -- nome que veio ERA mais completo e mesmo assim não foi adotado — ou
+    -- porque não é variante do gravado (CNPJ suspeito), ou porque adotá-lo
+    -- criaria uma homônima (duas entidades que provavelmente deveriam ser
+    -- UMA). As duas coisas são informação para quem revisa; nenhuma delas
+    -- pode ser decidida por esta função, que não conhece documento.
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_renomeio_recusado', 'entidade:' || v_id,
+            jsonb_build_object('caso_id', p_caso_id, 'razao_social_mantida', v_nome_atual,
+                               'razao_social_recusada', v_nome_novo, 'cnpj', v_cnpj,
+                               'pode_renomear', fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome)),
+                               -- UM snapshot só, calculado antes do `if`: com dois
+                               -- `exists` separados (READ COMMITTED, nó Postgres por
+                               -- item) uma entidade inserida entre eles fazia o evento
+                               -- culpar a guarda errada.
+                               'homonima_existiria', v_homonima));
+  end if;
+
+  return coalesce(v_nome_novo, v_nome_atual);
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_talvez_renomear(p_caso_id uuid, p_entidade_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_talvez_renomear(p_caso_id uuid, p_entidade_id uuid, p_nome text, p_cnpj text) IS '0173: o renomeio por CNPJ da 0171, extraído para ser chamado pelos DOIS caminhos — a classificação (fn_upsert_entidade) e o diagnóstico (fn_registrar_diagnostico, o único que roda para todo documento). As três guardas da 0171 vão inteiras: só entre truncamentos, nunca cria homônima, recusa com rastro. Sem CNPJ não renomeia — ali quem decide continua sendo a 0168.';
 
 --
 -- Name: fn_entidades_candidatas(uuid, text); Type: FUNCTION; Schema: public; Owner: -
@@ -8824,7 +8955,29 @@ begin
         -- `fn_entidade_aprender_cnpj` (0169) nunca sobrescreve CNPJ já gravado
         -- e deixa rastro (`entidade_cnpj_aprendido`) — é a mesma função que o
         -- ramo exato de `fn_upsert_entidade` usa, pelo mesmo motivo.
-        perform fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj);
+        -- 0174: usa o RETORNO, não `perform`. Quando a outra entidade do
+        -- mesmo caso já tinha este CNPJ, a função acima FUNDE esta entidade
+        -- nela e devolve o id da SOBREVIVENTE — sem capturá-lo aqui,
+        -- `v_entidade_id` ficaria apontando para uma linha deletada, e tanto o
+        -- `fn_entidade_talvez_renomear` logo abaixo quanto o `entidade_id` no
+        -- jsonb de retorno (fim da função) mentiriam.
+        v_entidade_id := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj);
+
+        -- 0173: E O RENOMEIO VEM JUNTO, pelo mesmo caminho e pela mesma razão.
+        -- A 0172 fez o CNPJ chegar aqui, mas só APRENDIDO — quem adota o nome
+        -- mais completo era o bloco dentro de `fn_upsert_entidade`, que neste
+        -- ramo não roda (o documento já tem entidade). O resultado medido era
+        -- desequilibrado: identidade fiscal em 100% do lote e renomeio em ~50%
+        -- — só nos documentos que passam pela classificação (19 de 38 no
+        -- book-canastra). Para uma empresa cujo ÚNICO documento chega com o
+        -- nome contaminado pelo endereço, o nome errado ficava no book até
+        -- aparecer um segundo documento pelo outro caminho.
+        --
+        -- As três guardas da 0171 vão inteiras dentro da função (só entre
+        -- truncamentos, nunca cria homônima, recusa com rastro), e sem CNPJ
+        -- ela não renomeia — então este fio não toca nenhum documento que
+        -- chegue sem identidade fiscal.
+        perform fn_entidade_talvez_renomear(v_caso_id, v_entidade_id, p_entidade_nome, p_cnpj);
 
         if v_pendencia_id is not null then
           update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
@@ -8997,7 +9150,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o repassa a fn_upsert_entidade. É o caminho que roda para TODO documento: a classificação por conteúdo só roda no fallback (19 de 38 no book-canastra), então sem este fio metade do lote chegaria sem identidade fiscal e sem sintoma nenhum.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o aprende no ramo em que o nome CONFIRMA a entidade. 0173: no mesmo ramo, também chama fn_entidade_talvez_renomear. 0174: usa o RETORNO de fn_entidade_aprender_cnpj — quando o CNPJ já pertencia a OUTRA entidade do mesmo caso, ela funde as duas, e a variável local passava a apontar para uma linha deletada se ninguém capturasse o retorno.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -10502,8 +10655,6 @@ declare
   v_nomes      text[];
   v_cnpj       text := fn_cnpj_canonico(p_cnpj);
   v_nome_atual text;
-  v_nome_novo  text;
-  v_homonima   boolean;
 begin
   -- 0153: no empate, não escolhe. (E o requisito de sonda `entidade_ambigua_nao_decide`
   -- tem o literal "0153" como MARCADOR DE CORPO — tirar esta linha derruba a sonda
@@ -10549,70 +10700,12 @@ begin
                                    'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
       end if;
 
-      -- 0171: O CNPJ TAMBÉM PODE RENOMEAR, não só fundir — com TRÊS guardas, e
-      -- as três nasceram da revisão desta fatia, cada uma de um defeito medido.
-      --
-      -- O RENOMEIO FICA FORA DA GUARDA CANÔNICA ACIMA (defeito 1 medido): a
-      -- canônica TIRA o sufixo societário, então "ALFA COMERCIO" e "ALFA
-      -- COMERCIO LTDA" são canonicamente IGUAIS — e o renomeio, aninhado
-      -- naquele `if`, nunca rodava justamente no caso em que o sinal 2 (sufixo)
-      -- existe para decidir. Medido: o nome final ficava "ALFA COMERCIO".
-      v_nome_novo := fn_entidade_nome_mais_completo(v_nome_atual, trim(p_nome));
-      v_homonima := exists (
-        select 1 from entidade e2
-        where e2.caso_id = p_caso_id and e2.id <> v_id
-          and fn_entidade_canonica_forte(e2.razao_social) = fn_entidade_canonica_forte(v_nome_novo));
-
-      if v_nome_novo is distinct from v_nome_atual
-         -- GUARDA 1 (defeito 2 medido): SÓ RENOMEIA ENTRE NOMES DA MESMA RAIZ.
-         -- O CNPJ basta para FUNDIR (é a regra 1 da 0169, e o dono a aprovou),
-         -- mas não basta para reescrever o nome: o cenário do rodapé com o CNPJ
-         -- do ESCRITÓRIO DE CONTABILIDADE — descrito no cabeçalho desta própria
-         -- função — fazia "PADARIA DO JOAO LTDA" virar "METALURGICA SAO PEDRO
-         -- COMERCIO LTDA", medido. Antes da 0171 a fusão errada pelo menos
-         -- PRESERVAVA o nome; o renomeio piorava o dano em vez de melhorá-lo.
-         -- Quando os nomes não compartilham raiz, o `entidade_cnpj_casou` acima
-         -- já registrou o casamento suspeito e é ELE que o humano lê.
-         --
-         -- `fn_pode_renomear_por_cnpj` e NÃO `fn_mesma_entidade` (que bloqueia o
-         -- caso motivador) nem "prefixo comum" (que autorizava trocar PADARIA
-         -- DO JOAO por PADARIA DO JOSE). Ver o cabeçalho da função para as
-         -- quatro medições que derrubaram as duas versões anteriores.
-         and fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome))
-         -- GUARDA 2 (defeito 3 medido): NÃO CRIA HOMÔNIMA. Sem isto, o renomeio
-         -- deixava DUAS entidades do mesmo caso com a razão social idêntica, e
-         -- o ramo (1) — casamento exato — passava a escolher uma delas por
-         -- `order by razao_social limit 1`, empate puro entre strings iguais,
-         -- SEM registrar ambiguidade nenhuma. Medido: 2 entidades homônimas, 0
-         -- eventos. É o defeito silencioso clássico deste projeto — os
-         -- documentos se dividem entre duas linhas que a tela mostra como uma.
-         and not v_homonima
-      then
-        update entidade set razao_social = v_nome_novo where id = v_id;
-        insert into evento_auditoria (ator, acao, entidade_ref, antes, depois)
-        values ('sistema:entidade', 'entidade_renomeada_por_cnpj', 'entidade:' || v_id,
-                jsonb_build_object('razao_social', v_nome_atual),
-                jsonb_build_object('razao_social', v_nome_novo, 'cnpj', v_cnpj,
-                                   'porque', 'nome mais completo pela mesma empresa (CNPJ)'));
-
-      elsif v_nome_novo is distinct from v_nome_atual then
-        -- RECUSA COM RASTRO, e não em silêncio. Chegar aqui significa que o
-        -- nome que veio ERA mais completo e mesmo assim não foi adotado — ou
-        -- porque não é variante do gravado (CNPJ suspeito), ou porque adotá-lo
-        -- criaria uma homônima (duas entidades que provavelmente deveriam ser
-        -- UMA). As duas coisas são informação para quem revisa; nenhuma delas
-        -- pode ser decidida por esta função, que não conhece documento.
-        insert into evento_auditoria (ator, acao, entidade_ref, depois)
-        values ('sistema:entidade', 'entidade_renomeio_recusado', 'entidade:' || v_id,
-                jsonb_build_object('caso_id', p_caso_id, 'razao_social_mantida', v_nome_atual,
-                                   'razao_social_recusada', v_nome_novo, 'cnpj', v_cnpj,
-                                   'pode_renomear', fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome)),
-                                   -- UM snapshot só, calculado antes do `if`: com dois
-                                   -- `exists` separados (READ COMMITTED, nó Postgres por
-                                   -- item) uma entidade inserida entre eles fazia o evento
-                                   -- culpar a guarda errada.
-                                   'homonima_existiria', v_homonima));
-      end if;
+      -- 0173: O RENOMEIO VIROU FUNÇÃO PRÓPRIA, e os DOIS caminhos a chamam.
+      -- Antes ele morava aqui dentro, e só este caminho (a classificação) o
+      -- executava — o diagnóstico, que é o único que roda para TODO documento,
+      -- gravava o CNPJ e ia embora sem renomear. Medido: identidade fiscal em
+      -- 100% do lote e renomeio em ~50%.
+      perform fn_entidade_talvez_renomear(p_caso_id, v_id, trim(p_nome), v_cnpj);
 
       return v_id;
     end if;
@@ -10625,7 +10718,13 @@ begin
   order by c.razao_social
   limit 1;
   if v_id is not null then
-    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
+    -- 0174: usa o RETORNO, não `perform`. Sem isto, quando `fn_entidade_aprender_cnpj`
+    -- funde esta entidade numa OUTRA que já tinha o mesmo CNPJ (a corrida entre
+    -- o ramo (0) acima e este ramo, ou a mesma situação chegando pela porta do
+    -- diagnóstico — ver o cabeçalho da função), `v_id` ficaria apontando para
+    -- uma linha DELETADA, e o `insert into documento` em `fn_registrar_documento`
+    -- quebraria a FK `documento.entidade_id → entidade.id`.
+    v_id := fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
@@ -10705,7 +10804,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169). 0171: quando o CNPJ funde duas variantes de nome, adota a mais completa entre elas (fn_entidade_nome_mais_completo) — com rastro em entidade_renomeada_por_cnpj. Os ramos de casamento aproximado (sem CNPJ) continuam sem renomear ao decidir: ali o CNPJ não provou identidade nenhuma.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj — ela pode fundir esta entidade numa outra do mesmo caso que já tinha o CNPJ, e devolver o id de quem sobrou não é mais opcional.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -14071,6 +14170,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_enti
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_talvez_renomear(p_caso_id uuid, p_entidade_id uuid, p_nome text, p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_talvez_renomear(p_caso_id uuid, p_entidade_id uuid, p_nome text, p_cnpj text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_entidades_candidatas(p_caso_id uuid, p_nome text); Type: ACL; Schema: public; Owner: -

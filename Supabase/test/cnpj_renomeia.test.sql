@@ -267,6 +267,110 @@ BEGIN
     'RECUSA: duas empresas que só compartilham o começo do nome — "JOAO" × "JOSE" e '
       || '"BIOENERGIA" × "IMOBILIARIA" são exatamente o token que decide');
 
+  raise notice '--- 13. 0173: o renomeio pelo caminho que roda para TODO documento ---';
+  -- OS DOZE BLOCOS ACIMA MEDEM O RENOMEIO PELA CLASSIFICAÇÃO (`fn_upsert_entidade`),
+  -- e essa chamada de IA **só roda no ramo de fallback**: 19 de 38 documentos do
+  -- book-canastra versionado, medido por `medir-custo-book.mjs`. A 0172 já tinha
+  -- feito o CNPJ chegar pelo DIAGNÓSTICO — o único caminho garantido para todo
+  -- documento — mas ali ele era só APRENDIDO. Resultado medido antes da 0173:
+  -- identidade fiscal em 100% do lote, renomeio em ~50%.
+  --
+  -- O CENÁRIO É O REAL, e é o que sobra sem este fio: uma empresa cujo ÚNICO
+  -- documento entra com o nome TRUNCADO (o que o nome do arquivo deu), e é o
+  -- CONTEÚDO — lido pela extração, que roda sempre — que traz a razão social
+  -- inteira e o CNPJ. Sem a 0173 a entidade aprende o CNPJ e fica com o nome
+  -- truncado no book, para sempre, sem uma linha dizendo que havia um melhor.
+  v_caso := (fn_upsert_caso('CNPJ renomeia — pelo diagnóstico'))::uuid;
+  declare
+    v_r   jsonb;
+    v_doc uuid;
+    v_ver uuid;
+  begin
+    v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2024', 'BALANCO', 0.99,
+      'nome_arquivo', 'supabase_storage', 's/ren-diag.pdf', 'BAL 2024.pdf', true,
+      'HASH-REN-DIAG-1', 'ok');
+    v_doc := (v_r->>'documento_id')::uuid;
+    v_ver := (v_r->>'documento_versao_id')::uuid;
+
+    select razao_social into v_nome from entidade where caso_id = v_caso;
+    perform teste_assert_ren(v_nome = c_t,
+      'PRÉ-CONDIÇÃO: a entidade nasceu com o nome TRUNCADO, e sem CNPJ nenhum', v_nome);
+
+    -- O diagnóstico CONFIRMA a entidade (o nome do conteúdo casa com o gravado)
+    -- e traz o nome inteiro mais o CNPJ. É exatamente o ramo em que a 0172
+    -- aprende o CNPJ — e agora o único em que a 0173 renomeia, pela mesma razão
+    -- de segurança: nos ramos de divergência a função não sabe qual é a empresa.
+    perform fn_registrar_diagnostico(v_doc, v_ver, c_m, true, 'BALANCO', 'anual', '12M24',
+      'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+    select razao_social into v_nome from entidade where caso_id = v_caso;
+    -- ESTE É O ASSERT QUE REPROVA COM A 0173 DESLIGADA. Medido com a chamada
+    -- `perform fn_entidade_talvez_renomear(...)` comentada dentro de
+    -- `fn_registrar_diagnostico`: o nome ficava "OMNIBEAUTY DESENVOLVIMENTO E
+    -- GESTAO DE" — truncado, com o CNPJ certo gravado do lado.
+    perform teste_assert_ren(v_nome = c_m,
+      'o DIAGNÓSTICO adota a razão social inteira — sem este fio o renomeio alcançaria só os '
+        || '19 de 38 documentos que passam pela classificação',
+      v_nome);
+
+    perform teste_assert_ren(exists (
+        select 1 from evento_auditoria ev join entidade e on ev.entidade_ref = 'entidade:' || e.id
+        where e.caso_id = v_caso and ev.acao = 'entidade_renomeada_por_cnpj'),
+      'com o MESMO rastro da 0171 — renomear pelo diagnóstico não é mais calado que pelo outro '
+        || 'caminho');
+
+    perform teste_assert_ren(
+      (select count(*) from entidade where caso_id = v_caso) = 1,
+      'e continua UMA entidade só — o renomeio não duplica quem já estava lá',
+      format('%s entidade(s)', (select count(*) from entidade where caso_id = v_caso)));
+  end;
+
+  raise notice '--- 14. CONTRAPOSITIVO: o diagnostico DIVERGENTE nao renomeia ---';
+  -- A guarda do renomeio é a MESMA do aprendizado do CNPJ (0172), e o motivo é
+  -- o mesmo: quando o nome do conteúdo NÃO confirma a entidade registrada, a
+  -- função está em dúvida sobre qual é a empresa certa. Renomear ali reescreve
+  -- a razão social de um cliente com a de outro — o cenário do rodapé com o
+  -- CNPJ do ESCRITÓRIO DE CONTABILIDADE, que o bloco 7 já mede pelo outro lado.
+  --
+  -- O PAR É ESCOLHIDO PARA O BLOCO NÃO NASCER VAZIO, e a escolha é medida: a
+  -- guarda de NOME da 0171 AUTORIZA este par (é um dos cinco do bloco 12), e
+  -- `fn_mesma_entidade` o RECUSA. Então quem barra aqui é o RAMO, não a guarda
+  -- — se o ramo sumisse, este bloco reprovaria. Com um par que as duas recusam
+  -- (PADARIA × METALÚRGICA) o assert passaria pelo motivo errado.
+  v_caso := (fn_upsert_caso('CNPJ renomeia — diagnóstico divergente'))::uuid;
+  declare
+    v_r   jsonb;
+    v_doc uuid;
+    v_ver uuid;
+  begin
+    perform teste_assert_ren(
+      fn_pode_renomear_por_cnpj(c_s1930, c_m) and not fn_mesma_entidade(c_s1930, c_m),
+      'PRÉ-CONDIÇÃO: a guarda de nome AUTORIZA este par e o ramo o RECUSA — é o ramo que está '
+        || 'sendo medido aqui, não a guarda');
+
+    v_r := fn_registrar_documento(v_caso, c_s1930, 'ano', '2024', 'BALANCO', 0.99,
+      'nome_arquivo', 'supabase_storage', 's/ren-diag2.pdf', 'BAL.pdf', true,
+      'HASH-REN-DIAG-2', 'ok');
+    v_doc := (v_r->>'documento_id')::uuid;
+    v_ver := (v_r->>'documento_versao_id')::uuid;
+
+    perform fn_registrar_diagnostico(v_doc, v_ver, c_m, true, 'BALANCO', 'anual', '12M24',
+      'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+    select razao_social into v_nome from entidade where caso_id = v_caso and id = (
+      select entidade_id from documento where id = v_doc);
+    perform teste_assert_ren(v_nome = c_s1930,
+      'entidade que o diagnóstico NÃO confirma mantém o nome — reescrevê-la com a razão social '
+        || 'que veio no conteúdo trocaria o nome de um cliente pelo de outro',
+      v_nome);
+
+    perform teste_assert_ren(not exists (
+        select 1 from evento_auditoria ev join entidade e on ev.entidade_ref = 'entidade:' || e.id
+        where e.caso_id = v_caso and ev.acao = 'entidade_renomeada_por_cnpj'),
+      'e nenhum renomeio foi registrado neste caso — a divergência vira pendência para humano, '
+        || 'não decisão da função');
+  end;
+
   raise notice 'CNPJ RENOMEIA OK — a cara de endereço nunca vence, o sufixo desempata, o '
                'comprimento só decide por último, e a ordem de chegada parou de mandar';
 END $$;

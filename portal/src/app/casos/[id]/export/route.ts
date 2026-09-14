@@ -17,7 +17,31 @@ import {
 // runtime Node, não Edge.
 export const runtime = "nodejs";
 
+// A ROTA INTEIRA TEM DE TERMINAR EM RESPOSTA, NUNCA EM EXCEÇÃO CRUA.
+//
+// Toda consulta abaixo já degrada com mensagem em português (RLS, portão 2,
+// base vazia — ver os comentários junto de cada uma). O que faltava era a
+// MONTAGEM do arquivo: `buildExportWorkbook`/`finalizarBufferDoExport` e a
+// modelagem que os alimenta rodam sobre razão social, CNPJ e valor que vieram
+// de PDF lido por IA — a mesma superfície que já produziu nome truncado
+// colado com endereço (0168) e byte de controle em rótulo (8d378b0). Uma
+// exceção nessa etapa nunca chegava a um `NextResponse`: a Vercel encerra a
+// função e devolve a página genérica "Esta página não está funcionando /
+// HTTP ERROR 500", sem corpo e sem stack — o analista fica sem saber SE o
+// caso tem um defeito de dado ou se é a mesma causa de sempre (RLS/portão).
+// `console.error` aqui é o MESMO já usado nos ramos abaixo: fica no log
+// do servidor (Vercel), não no arquivo — mas para de ser invisível para
+// sempre, e a resposta passa a ter um corpo que o navegador consegue mostrar.
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+  // O CORPO ABAIXO FICA NO NÍVEL DE INDENTAÇÃO ORIGINAL (não +2, dentro do
+  // `try`), de propósito: reindentar mudaria o TEXTO de toda linha da função,
+  // e isso faz o SonarCloud (que rastreia issue por linha via git blame)
+  // reclassificar a complexidade cognitiva já existente desta rota — medida
+  // e aceita há muito em `main` (regra `typescript:S3776`, não nova aqui)
+  // como se fosse recém-introduzida, derrubando o Quality Gate por um
+  // reformate que não muda comportamento nenhum. Achado ao investigar por
+  // que o PR #225 ficou vermelho no Sonar sem tocar em nenhuma linha de TS.
   const { id } = await params;
   // MODO (decisão do dono): `?modo=dados` entrega só as abas de dado — insumo de
   // conferência, disponível desde a ingestão. Sem o parâmetro sai o completo, com
@@ -434,6 +458,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
           .order("ano", { ascending: true })
           .order("secao_canonica", { ascending: true, nullsFirst: true })
           .range(de, ate));
+      // ERRO DE CONSULTA AQUI NÃO ERA LOGADO EM LUGAR NENHUM — ao contrário de
+      // TODA outra consulta desta rota. `paginar` engole o `.error` e devolve
+      // `data: []`, então uma falha em `fn_valores_por_ano` (RLS, função ausente
+      // por migration não aplicada) saía como Modelo Institucional com as 14
+      // abas presentes e TODA série histórica vazia — sem nota, sem log, sem
+      // diferença visível de um caso que legitimamente não tem valor nenhum.
+      if (valoresRes.error) {
+        console.error(`[export] consulta de valores por ano falhou: ${valoresRes.error.message}`, { caso_id: id });
+      }
       const valores = valoresRes.data;
       // Só exercícios ATÉ o último realizado entram como histórico: um balancete
       // do ano corrente não é exercício fechado, e tratá-lo como tal faria a
@@ -573,4 +606,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         : {}),
     },
   });
+  } catch (e) {
+    const { id } = await params;
+    const erro = e instanceof Error ? e : new Error(String(e));
+    console.error(`[export] falha inesperada ao montar o arquivo: ${erro.stack ?? erro.message}`, { caso_id: id });
+    return NextResponse.json(
+      {
+        error: "O export falhou de um jeito inesperado ao montar o arquivo — não é nenhuma das causas já "
+          + "conhecidas (RLS/GRANT, Portão 2, base vazia). O detalhe foi registrado no log do servidor.",
+        detalhe: erro.message,
+      },
+      { status: 500 },
+    );
+  }
 }
