@@ -1148,6 +1148,50 @@ $$;
 COMMENT ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) IS 'Roda a classificação contábil sobre uma versão e REGISTRA a sugestão — a primeira metade de N0. A segunda ("não influencia decisão") é garantida por construção: só escreve em campo_classe_sugerida, não abre pendência e não entra em caminho de export. Append-only sem duplicar: grava só quando a regra muda de opinião, e aí a sequência é o histórico.';
 
 --
+-- Name: fn_cnpj_canonico(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_cnpj_canonico(p_cnpj text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  d     text;
+  peso  int;
+  soma  int;
+  dv    int;
+  i     int;
+begin
+  if p_cnpj is null then return null; end if;
+  d := regexp_replace(p_cnpj, '[^0-9]', '', 'g');
+  if length(d) <> 14 then return null; end if;
+  if d ~ ('^' || substr(d, 1, 1) || '{14}$') then return null; end if;
+
+  -- DV1 sobre os 12 primeiros; DV2 sobre os 13 primeiros. Os pesos descem de 9
+  -- a 2 e reiniciam, que é o algoritmo do módulo 11 da Receita.
+  for dv in 1 .. 2 loop
+    soma := 0;
+    peso := 1;
+    for i in reverse (11 + dv) .. 1 loop
+      peso := peso + 1;
+      if peso > 9 then peso := 2; end if;
+      soma := soma + substr(d, i, 1)::int * peso;
+    end loop;
+    soma := soma % 11;
+    if soma < 2 then soma := 0; else soma := 11 - soma; end if;
+    if substr(d, 12 + dv, 1)::int <> soma then return null; end if;
+  end loop;
+
+  return d;
+end;
+$_$;
+
+--
+-- Name: FUNCTION fn_cnpj_canonico(p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) IS '14 dígitos de CNPJ com o DV conferido, ou NULO. 0169: o CNPJ vai chegar de uma IA lendo PDF escaneado — um número inventado que passe como identidade funde duas empresas de verdade em silêncio, que é pior que não ter CNPJ nenhum. DV que não fecha é AUSÊNCIA, não dado.';
+
+--
 -- Name: fn_coluna_de_dimensao(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2530,6 +2574,35 @@ $$;
 COMMENT ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) IS 'Documentos do caso para os quais a extração NUNCA foi chamada (sem evento extracao_sombra em nenhuma versão). Zero linha com extração feita NÃO entra aqui — isso é 0111/0036.';
 
 --
+-- Name: fn_entidade_aprender_cnpj(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_cnpj text := fn_cnpj_canonico(p_cnpj);
+begin
+  if p_entidade_id is null or v_cnpj is null then return; end if;
+
+  update entidade set cnpj = v_cnpj
+   where id = p_entidade_id and fn_cnpj_canonico(cnpj) is null;
+
+  if found then
+    insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_cnpj_aprendido', 'entidade:' || p_entidade_id,
+            jsonb_build_object('cnpj', v_cnpj));
+  end if;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: dois CNPJs diferentes na mesma entidade é divergência para humano, não algo para a função resolver.';
+
+--
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2601,6 +2674,28 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) IS 'As entidades do caso com que um nome casa, a exata primeiro (0153). Mais de uma linha sem nenhuma exata é AMBIGUIDADE: o nome não identifica empresa nenhuma, e quem decide é o humano.';
+
+--
+-- Name: fn_entidades_candidatas_cnpj(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) RETURNS TABLE(entidade_id uuid, razao_social text, exata boolean)
+    LANGUAGE sql STABLE
+    AS $$
+  select c.entidade_id, c.razao_social, c.exata
+  from fn_entidades_candidatas(p_caso_id, p_nome) c
+  join entidade e on e.id = c.entidade_id
+  where fn_cnpj_canonico(p_cnpj) is null
+     or fn_cnpj_canonico(e.cnpj) is null
+     or fn_cnpj_canonico(e.cnpj) = fn_cnpj_canonico(p_cnpj)
+  order by c.exata desc, c.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) IS 'As candidatas da 0153 menos as que o CNPJ desmente (0169). CNPJ nulo devolve a lista inteira: ausência não desqualifica ninguém. CNPJ conhecido e diferente sai — o nome não tem autoridade para contradizer o registro fiscal.';
 
 --
 -- Name: fn_entidades_sao_um_grupo(text[]); Type: FUNCTION; Schema: public; Owner: -
@@ -10208,48 +10303,64 @@ end;
 $$;
 
 --
--- Name: fn_upsert_entidade(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_upsert_entidade(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) RETURNS uuid
+CREATE FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text DEFAULT NULL::text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
 declare
-  v_id        uuid;
-  v_n         int;
+  v_id         uuid;
+  v_n          int;
   v_candidatos text;
-  v_nomes     text[];
+  v_nomes      text[];
+  v_cnpj       text := fn_cnpj_canonico(p_cnpj);
 begin
-  -- 0153: no empate, não escolhe.
+  -- 0153: no empate, não escolhe. (E o requisito de sonda `entidade_ambigua_nao_decide`
+  -- tem o literal "0153" como MARCADOR DE CORPO — tirar esta linha derruba a sonda
+  -- sem mudar comportamento nenhum. Achado ao rodar a suíte desta fatia.)
   if p_nome is null or length(trim(p_nome)) = 0 then return null; end if;
+
+  -- (0) 0169: CNPJ IGUAL É A MESMA EMPRESA, e ele não pergunta o nome. É esta
+  -- regra que funde as variantes truncadas em QUALQUER ordem de chegada —
+  -- a 0168 só conseguia quando a ordem ajudava.
+  if v_cnpj is not null then
+    select e.id into v_id
+    from entidade e
+    where e.caso_id = p_caso_id and fn_cnpj_canonico(e.cnpj) = v_cnpj
+    order by length(e.razao_social) desc, e.razao_social
+    limit 1;
+    if v_id is not null then return v_id; end if;
+  end if;
 
   -- (1) exato pela forma canônica — não há o que desempatar.
   select c.entidade_id into v_id
-  from fn_entidades_candidatas(p_caso_id, p_nome) c
+  from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c
   where c.exata
   order by c.razao_social
   limit 1;
-  if v_id is not null then return v_id; end if;
+  if v_id is not null then
+    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
+    return v_id;
+  end if;
 
   -- (2)/(3) quantos APROXIMADOS existem?
   select count(*), string_agg(c.razao_social, ' × ' order by c.razao_social),
          array_agg(c.razao_social)
     into v_n, v_candidatos, v_nomes
-  from fn_entidades_candidatas(p_caso_id, p_nome) c;
+  from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c;
 
   if v_n = 1 then
-    select c.entidade_id into v_id from fn_entidades_candidatas(p_caso_id, p_nome) c limit 1;
+    select c.entidade_id into v_id
+    from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c limit 1;
+    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
-  -- (3b) 0168: DOIS OU MAIS CANDIDATOS QUE CASAM ENTRE SI NÃO SÃO AMBIGUIDADE.
-  -- São o mesmo nome escrito de comprimentos diferentes (o template do contador
-  -- trunca a razão social num campo de largura fixa). Fica o mais COMPLETO — o
-  -- mais longo —, que é o que identifica a empresa na tela e na pendência.
-  -- O nome novo entra no grupo: se ele casa com todos, o grupo continua um só.
+  -- (3b) 0168: dois ou mais candidatos que casam ENTRE SI não são ambiguidade.
   if v_n > 1 and fn_entidades_sao_um_grupo(v_nomes || trim(p_nome)) then
     select c.entidade_id into v_id
-    from fn_entidades_candidatas(p_caso_id, p_nome) c
+    from fn_entidades_candidatas_cnpj(p_caso_id, p_nome, p_cnpj) c
     order by length(c.razao_social) desc, c.razao_social
     limit 1;
 
@@ -10259,17 +10370,16 @@ begin
                                'candidatos', v_candidatos, 'quantos', v_n,
                                'porque', 'os candidatos casam todos entre si — é um nome só, '
                                       || 'truncado de jeitos diferentes pela fonte'));
+    perform fn_entidade_aprender_cnpj(v_id, v_cnpj);
     return v_id;
   end if;
 
-  insert into entidade (caso_id, razao_social) values (p_caso_id, trim(p_nome))
+  insert into entidade (caso_id, razao_social, cnpj) values (p_caso_id, trim(p_nome), v_cnpj)
     returning id into v_id;
 
   if v_n > 1 then
     -- A AMBIGUIDADE É REGISTRADA AQUI e virada em pendência por quem tem o
-    -- documento na mão. Esta função não conhece documento — inventar um vínculo
-    -- para poder abrir a pendência aqui seria a entidade fantasma da 0146 ao
-    -- contrário.
+    -- documento na mão. Esta função não conhece documento.
     insert into evento_auditoria (ator, acao, entidade_ref, depois)
     values ('sistema:entidade', 'entidade_ambigua', 'entidade:' || v_id,
             jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
@@ -10281,10 +10391,10 @@ end;
 $$;
 
 --
--- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+-- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text) IS 'Acha ou cria a entidade do caso pelo nome (0030), sem ESCOLHER no empate (0153): canônico exato, depois o único aproximado. 0168: dois ou mais aproximados que casam TODOS ENTRE SI não são ambiguidade — são um nome truncado de jeitos diferentes, e fica o mais completo. Candidatos que NÃO casam entre si (Araucária Bioenergia × Araucária Imobiliária) continuam criando entidade própria com `entidade_ambigua` no log.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado que casa com os outros fundido no mais completo (0168). 0169: o CNPJ manda — igual é a mesma empresa sem olhar o nome, diferente tira a candidata da lista, ausente não decide nada. O primeiro documento ensina a identidade, os demais a usam; nunca sobrescreve CNPJ já gravado.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -13490,6 +13600,12 @@ GRANT ALL ON FUNCTION public.fn_classe_contabil_sugerir(p_chave text, p_secao_ca
 GRANT ALL ON FUNCTION public.fn_classificar_contabil(p_documento_versao_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_cnpj_canonico(p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_cnpj_canonico(p_cnpj text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_combinado_estrutural_apto(p_tipo_fonte text, p_empresas_com_valor integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -13620,6 +13736,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_enti
 --
 
 GRANT ALL ON FUNCTION public.fn_entidades_candidatas(p_caso_id uuid, p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidades_candidatas_cnpj(p_caso_id uuid, p_nome text, p_cnpj text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_excluir_caso(p_caso_id uuid, p_autor text); Type: ACL; Schema: public; Owner: -
