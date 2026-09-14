@@ -166,6 +166,28 @@ begin
       -- DE EMBALAGENS LTDA." são a mesma empresa, e `fn_mesma_entidade` já
       -- sabia disso.
       if fn_mesma_entidade(v_entidade_atual_nome, p_entidade_nome) then
+        -- 0172: É AQUI QUE O CNPJ DO CONTEÚDO ENCONTRA A ENTIDADE, e não na
+        -- chamada de `fn_upsert_entidade` acima — ela só roda quando o
+        -- documento AINDA NÃO TEM entidade, e `fn_registrar_documento` sempre
+        -- resolve uma antes. MEDIDO: com o parâmetro só chegando lá, o CNPJ
+        -- entrava e morria; a entidade continuava com `cnpj` nulo depois do
+        -- diagnóstico. Era conserto de sintoma, não de causa.
+        --
+        -- E É NESTE RAMO, não no de cima nem no `else`, por uma razão de
+        -- segurança: aqui o nome lido do CONTEÚDO **confirma** a entidade em
+        -- que o documento está registrado. Nos outros ramos a função está
+        -- justamente em dúvida sobre qual é a empresa certa — gravar ali um
+        -- CNPJ na entidade ERRADA seria pior que não gravar nenhum, porque
+        -- pela regra 1 da 0169 esse CNPJ passaria a ATRAIR todo documento
+        -- futuro da empresa de verdade para dentro da entidade errada, sem
+        -- olhar nome. Divergência de entidade é pergunta para humano, e as
+        -- pendências logo abaixo são a resposta certa para ela.
+        --
+        -- `fn_entidade_aprender_cnpj` (0169) nunca sobrescreve CNPJ já gravado
+        -- e deixa rastro (`entidade_cnpj_aprendido`) — é a mesma função que o
+        -- ramo exato de `fn_upsert_entidade` usa, pelo mesmo motivo.
+        perform fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj);
+
         if v_pendencia_id is not null then
           update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = 'sistema:diagnostico'
             where id = v_pendencia_id;
@@ -349,7 +371,7 @@ comment on function fn_registrar_diagnostico(uuid, uuid, text, boolean, text, te
 insert into instalacao_requisito
   (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
   ('cnpj_no_diagnostico', '0172', 'corpo', 'fn_registrar_diagnostico',
-   'p_entidade_nome, p_cnpj', null,
+   'fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)', null,
    'Sem esta migration o CNPJ só chega ao banco pelos documentos que passam pela classificação '
    'por conteúdo — o ramo de fallback, que roda quando o NOME DO ARQUIVO não resolve tipo+período '
    'com confiança suficiente. Medido no book-canastra versionado: 19 de 38 documentos. Os outros '

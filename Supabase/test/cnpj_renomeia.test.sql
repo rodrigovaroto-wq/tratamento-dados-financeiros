@@ -183,10 +183,21 @@ BEGIN
   -- começo e finais distintos — e a primeira tentativa deste bloco usou
   -- "ALFA COM", que é ABSORVIDA pelo casamento aproximado antes de virar
   -- entidade própria, e por isso não reproduzia colisão nenhuma.
+  -- A ENTIDADE VIZINHA ENTRA POR INSERT DIRETO, e o motivo é um achado deste
+  -- bloco: depois que a guarda passou a exigir relação de TRUNCAMENTO, o
+  -- arranjo deixou de ser alcançável por `fn_upsert_entidade` sozinha — todo
+  -- nome que é trecho contíguo de outro também casa por `fn_mesma_entidade`, e
+  -- por isso seria ABSORVIDO antes de virar entidade própria. Duas entidades
+  -- assim só existem por cadastro manual ou importação, que é exatamente o
+  -- estado que esta guarda protege. Mesmo padrão que o `entidade_ambigua.test.sql`
+  -- já usa para o trio ALFA.
   v_caso := (fn_upsert_caso('CNPJ renomeia — homônima'))::uuid;
-  perform fn_upsert_entidade(v_caso, 'ALFA COMERCIO MINEIRA IMPORTACAO LTDA');
-  v_id := fn_upsert_entidade(v_caso, 'ALFA COMERCIO PAULISTA LTDA', '11.222.333/0001-81');
-  perform fn_upsert_entidade(v_caso, 'ALFA COMERCIO MINEIRA IMPORTACAO LTDA', '11.222.333/0001-81');
+  insert into entidade (caso_id, razao_social)
+    values (v_caso, 'OMNIBEAUTY GESTAO DE MARCAS LTDA');
+  insert into entidade (caso_id, razao_social, cnpj)
+    values (v_caso, 'GESTAO DE MARCAS LTDA', '11222333000181')
+    returning id into v_id;
+  perform fn_upsert_entidade(v_caso, 'OMNIBEAUTY GESTAO DE MARCAS LTDA', '11.222.333/0001-81');
 
   select count(*) into v_n from entidade e1
    where e1.caso_id = v_caso
@@ -201,8 +212,11 @@ BEGIN
   perform teste_assert_ren(exists (
       select 1 from evento_auditoria ev
       where ev.acao = 'entidade_renomeio_recusado' and ev.entidade_ref = 'entidade:' || v_id
-        and (ev.depois->>'homonima_existiria')::boolean),
-    'e a recusa diz QUAL das duas guardas barrou (homonima_existiria = true)');
+        and (ev.depois->>'homonima_existiria')::boolean
+        and (ev.depois->>'pode_renomear')::boolean),
+    'e a recusa diz QUAL das duas guardas barrou: foi a da homônima (pode_renomear=true E '
+      || 'homonima_existiria=true) — sem os DOIS campos o bloco viraria vácuo se a outra guarda '
+      || 'passasse a barrar antes');
 
   raise notice '--- 11. S.A. reconhecido como sufixo societario ---';
   -- ACHADO DA REVISÃO: a primeira versão copiou o padrão da 0030, onde `s\s*a`
@@ -218,6 +232,40 @@ BEGIN
     not fn_nome_tem_sufixo_societario('CONSTRUTORA SAO PEDRO')
     and not fn_nome_tem_sufixo_societario('TRANSPORTES SAO PAULO'),
     'e "SAO" não vira falso positivo de "SA" — o casamento é de token inteiro no FIM');
+
+  raise notice '--- 12. A GUARDA DO RENOMEIO, caso a caso (2a revisao) ---';
+  -- A PRIMEIRA VERSÃO DESTA GUARDA MEDIA A COISA ERRADA — comprimento de
+  -- prefixo comum, e não relação de truncamento. O token que DECIDE fica
+  -- justamente fora dessa conta, e ela errava NOS DOIS SENTIDOS. Os quatro
+  -- casos que a derrubaram estão aqui, mais os cinco que ela já acertava:
+  -- se alguém trocar o critério de novo, é aqui que reprova.
+  perform teste_assert_ren(
+    -- AUTORIZA: truncamento (em qualquer ponta) ou contaminação provada
+    fn_pode_renomear_por_cnpj('OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE SURUBIJU, 1930',
+                              'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE MARCAS LTDA')
+    and fn_pode_renomear_por_cnpj('OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE',
+                                  'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE MARCAS LTDA')
+    and fn_pode_renomear_por_cnpj('ALFA COMERCIO', 'ALFA COMERCIO LTDA')
+    -- truncamento à ESQUERDA (o mais comum quando a IA lê cabeçalho): a versão
+    -- de prefixo comum RECUSAVA este, medido.
+    and fn_pode_renomear_por_cnpj('GESTAO DE MARCAS LTDA', 'OMNIBEAUTY GESTAO DE MARCAS LTDA')
+    -- "S.A.": a canônica da 0030 deixa dois tokens fantasma ("s", "a") e a
+    -- versão anterior RECUSAVA por causa deles, medido.
+    and fn_pode_renomear_por_cnpj('OMNIBEAUTY S.A.', 'OMNIBEAUTY GESTAO DE MARCAS LTDA'),
+    'AUTORIZA: truncamento à direita, à esquerda, só-o-sufixo, S.A., e o nome contaminado pelo '
+      || 'endereço perdendo para o limpo');
+
+  perform teste_assert_ren(
+    -- RECUSA: nomes que só COMEÇAM parecido não são truncamento um do outro
+    not fn_pode_renomear_por_cnpj('PADARIA DO JOAO LTDA', 'METALURGICA SAO PEDRO COMERCIO LTDA')
+    -- este e o próximo são os que a versão de prefixo comum AUTORIZAVA, medido:
+    and not fn_pode_renomear_por_cnpj('PADARIA DO JOAO LTDA', 'PADARIA DO JOSE COMERCIO LTDA')
+    -- o incidente REAL do araucária, sem o token "SPE" que a IA pode não ler —
+    -- e é o caso que a 0153 existe para lembrar
+    and not fn_pode_renomear_por_cnpj('ARAUCARIA BIOENERGIA LTDA', 'ARAUCARIA IMOBILIARIA LTDA')
+    and not fn_pode_renomear_por_cnpj('ARAUCARIA BIOENERGIA SPE LTDA', 'ARAUCARIA IMOBILIARIA SPE LTDA'),
+    'RECUSA: duas empresas que só compartilham o começo do nome — "JOAO" × "JOSE" e '
+      || '"BIOENERGIA" × "IMOBILIARIA" são exatamente o token que decide');
 
   raise notice 'CNPJ RENOMEIA OK — a cara de endereço nunca vence, o sufixo desempata, o '
                'comprimento só decide por último, e a ordem de chegada parou de mandar';
