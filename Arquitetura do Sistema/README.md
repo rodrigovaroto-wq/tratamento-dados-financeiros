@@ -61,6 +61,19 @@ que é decisão do dono e o que é espera por dado de terceiro. Os três documen
 perguntas diferentes: `ESTADO.md` diz onde estamos, `HANDOFF.md` diz como chegamos, e este diz para
 onde vamos.
 
+[`AUDITORIA_PROFUNDA_2026-09-15.md`](4%20An%C3%A1lises%20e%20Auditorias/AUDITORIA_PROFUNDA_2026-09-15.md)
+é a auditoria de estado com a bateria COMPLETA do CI executada antes de qualquer conclusão (n8n 543,
+banco 1.272 asserts, export 721, e2e 46, 25 variações — todos verdes). Ela achou o que portão verde
+não alcança: o repositório está na `0174` e produção na `0157`, o n8n publicado é de 02/09, e 27 dos
+36 tipos de documento são ingeridos sem que nada confira se o conteúdo chegou. Declara no fim o que
+NÃO cobriu.
+
+[`ARQUITETURA_ALVO_E_ROADMAP.md`](3%20Estado%20e%20Execu%C3%A7%C3%A3o/ARQUITETURA_ALVO_E_ROADMAP.md)
+é o desenho derivado dela: a decisão KEEP/REFACTOR/REBUILD/EXTEND/DEPRECATE/REMOVE de cada
+componente existente, as camadas, o grafo de dependências, os cinco portões (DATA, MODEL, STRATEGY,
+CREDITOR, PRESENTATION) com critério objetivo, as 17 fases, o MVP, o `DO NOT BUILD YET` e o plano de
+execução da F0. **Ele evolui o sistema; não propõe um projeto novo.**
+
 [`ACEITE.md`](ACEITE.md) é o aceite de um `.xlsx` exportado — 10 itens que
 exigem o Excel de verdade (o arquivo abre, o gráfico desenha, o dropdown reprojeta), com o resto
 respondido pelo comando `portal/scripts/auditar-xlsx.mts`.
