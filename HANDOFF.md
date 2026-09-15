@@ -4,6 +4,21 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 91 (15/09) — 0177 CORRIGE O CRÍTICO. PR #226 empurrado, aguardando CI/Sonar no head novo
+
+**Atualização:** a `0177` (commit `f982049`, empurrada) corrigiu os quatro achados abaixo — a
+guarda de `fn_entidade_aprender_cnpj` virou XOR bidirecional, medida contra o cenário exato que a
+segunda revisão citou (4 entidades/1 pendência bloqueante → 3/0/0 SEM a correção; com ela, o
+balcão continua existindo e a pendência de colisão nasce no lugar certo). Suíte inteira (122
+migrations) verde, os 18 asserts da 0175 e os da 0176 continuam passando, 19 asserts novos nos
+blocos 5-8 de `Supabase/test/balcao_nao_absorve_confirmada.test.sql`, schema/conhecimento
+reindexados. Verificação foi feita pela sessão principal lendo o diff inteiro e rodando a suíte
+do zero (não uma terceira rodada de `revisor-defeito-silencioso` — decisão de velocidade dado o
+tempo do dono; se quiser mais uma volta de revisão antes de mergear, é o próximo passo natural).
+**Não mergeei o PR #226 — isso é decisão do dono.** Falta só confirmar CI/Sonar verdes no commit
+`f982049` (devem passar, é o mesmo padrão dos commits anteriores) antes de considerar pronto.
+
+<!-- nota anterior, preservada como registro -->
 ## ⚠️ SESSÃO 91 (15/09) — PR #226 ABERTO, **NÃO MERGEAR AINDA**: 0176 tem defeito crítico não corrigido
 
 `0175` (balcão ambíguo converge por CNPJ) e `0176` (continha o CRÍTICO da revisão da 0175: balcão
