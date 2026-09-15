@@ -8881,6 +8881,37 @@ begin
       -- tomava isso como CONFIRMAÇÃO, sem a pendência bloqueante da 0153 nunca
       -- ter sido tocada e sem a resposta deixar rastro em lugar nenhum.
       if fn_entidade_e_balcao_ambiguo(v_caso_id, v_entidade_id) then
+        -- 0175: dentro do balcão ambíguo, o CNPJ decide ANTES do nome — a
+        -- MESMA regra 1 da 0169 ("CNPJ é a identidade que o nome não é"),
+        -- chegando pela porta que faltava. MEDIDO em produção (caso
+        -- bf0246bb-c93b-4d08-a7df-5d356c9d6275, OMNIBEAUTY, teste 143): sem
+        -- esta chamada, dois documentos da MESMA empresa em DOIS balcões
+        -- diferentes nunca convergem — cada um só sabe perguntar ao nome, e
+        -- o balcão nasce sem CNPJ. Ver o cabeçalho desta migration para os
+        -- dois casos que `fn_entidade_aprender_cnpj` já sabe tratar: grava
+        -- no próprio balcão quando é o primeiro a aprender este CNPJ no
+        -- caso, ou FUNDE nele quando outra entidade (outro balcão, ou uma
+        -- entidade de verdade) já tinha o mesmo CNPJ — usando o RETORNO,
+        -- nunca `perform` (0174).
+        if p_cnpj is not null then
+          v_entidade_id := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj);
+
+          -- E O RENOMEIO VEM JUNTO, pela MESMA função do ramo `else` (0173) —
+          -- não duplica lógica. Se a linha acima FUNDIU, `fn_entidade_aprender_cnpj`
+          -- já chamou fn_entidade_talvez_renomear por dentro com o nome do
+          -- balcão fundido; esta chamada cobre o caso SEM fusão, em que o
+          -- nome lido do CONTEÚDO deste documento pode ser a variante mais
+          -- completa para o balcão que acabou de aprender o CNPJ.
+          perform fn_entidade_talvez_renomear(v_caso_id, v_entidade_id, p_entidade_nome, p_cnpj);
+        end if;
+
+        -- SÓ TENTA RESOLVER PELO NOME SE O CNPJ NÃO RESOLVEU: se a entidade
+        -- (que pode ter mudado de id na linha acima) AINDA é um balcão
+        -- ambíguo — sem CNPJ para tentar, ou com CNPJ que só gravou no
+        -- próprio balcão sem achar outra dona — o nome continua sendo o
+        -- único sinal disponível, e a lógica abaixo é EXATAMENTE a de antes
+        -- desta migration.
+        if fn_entidade_e_balcao_ambiguo(v_caso_id, v_entidade_id) then
         -- O conteúdo pode ter respondido à própria pergunta: se o nome
         -- diagnosticado casa EXATO com exatamente UMA empresa já cadastrada
         -- neste caso (excluído o próprio balcão), é essa a resposta. NÃO
@@ -8929,6 +8960,7 @@ begin
         -- tocar `v_pendencia_id`/`v_pendencia_grupo_id` aqui é o que deixa
         -- isso explícito: só o ramo `else` abaixo (comparação contra uma
         -- entidade de VERDADE) resolve essas duas pendências.
+        end if;
       else
       -- 0121: divergência de ENTIDADE medida pela forma canônica, como o
       -- período já é desde a 0022. "Canastra Industria" e "CANASTRA INDÚSTRIA
@@ -9150,7 +9182,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o aprende no ramo em que o nome CONFIRMA a entidade. 0173: no mesmo ramo, também chama fn_entidade_talvez_renomear. 0174: usa o RETORNO de fn_entidade_aprender_cnpj — quando o CNPJ já pertencia a OUTRA entidade do mesmo caso, ela funde as duas, e a variável local passava a apontar para uma linha deletada se ninguém capturasse o retorno.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o aprende no ramo em que o nome CONFIRMA a entidade. 0173: no mesmo ramo, também chama fn_entidade_talvez_renomear. 0174: usa o RETORNO de fn_entidade_aprender_cnpj — quando o CNPJ já pertencia a OUTRA entidade do mesmo caso, ela funde as duas, e a variável local passava a apontar para uma linha deletada se ninguém capturasse o retorno. 0175: o ramo do balcão ambíguo (0162) agora tenta o CNPJ ANTES do nome — grava no próprio balcão, ou funde com quem já tinha o CNPJ (usando o retorno, com o mesmo cuidado da 0174), com o renomeio pela mesma fn_entidade_talvez_renomear da 0173 — e só cai na lógica de nome (inalterada) se o balcão ainda for ambíguo depois disso.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
