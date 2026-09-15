@@ -8,6 +8,12 @@ foram medidos nesta árvore.
 opere como plataforma profissional de inteligência financeira para M&A e reestruturação. Nada do
 que funciona é descartado.
 
+> **A base andou enquanto este arquivo era escrito.** Ele nasceu sobre `de556c2`; o `main` passou a
+> `f230cff` com `0175`–`0177` antes do merge. Os números da F0 abaixo já estão corrigidos para isso.
+> **A lição é do próprio roadmap:** a defasagem contra produção não é um número deste arquivo — é o
+> que a sonda responde, e ela cresce a cada rodada que fecha sem aplicar. É por isso que a F0 é
+> primeira e que a fatia 0.1 mede antes de corrigir.
+
 **Este arquivo não implementa nada.** Ele decide o desenho, a ordem e os critérios objetivos de
 passagem. A execução começa pela F0, cujo plano está na §9.
 
@@ -420,11 +426,11 @@ F14→F16 · F15→F17 (contínua).
 | | |
 |---|---|
 | **Objetivo** | Que o sistema testado e o sistema em operação sejam o mesmo, e que o escopo pare de se contradizer |
-| **Estado atual** | Repo `0174`, produção `0157`(+`0160`) · n8n de 02/09 · provedor divergente · `00_VISAO_E_ESCOPO` nega modelagem |
-| **Gap** | 17 migrations, 1 republicação, 1 decisão de produto, 3 portões novos |
+| **Estado atual** | Repo **`0177`** (a base andou de `de556c2` para `f230cff` enquanto este plano era escrito: `0175`–`0177`), produção `0157`(+`0160`) · n8n de 02/09 · provedor divergente · `00_VISAO_E_ESCOPO` nega modelagem |
+| **Gap** | **20 migrations** (era 17 em `de556c2`; o número é da sonda, não deste arquivo — ver a fatia 0.1), 1 republicação, 1 decisão de produto, 3 portões novos |
 | **Dependências** | nenhuma |
 | **Arquivos** | `.github/workflows/suites.yml` · `N8N/republicar.sh` · `preparar-republicacao.mjs` · `conferir-publicado.mjs` · `CLAUDE.md` · `00_VISAO_E_ESCOPO.md` · `PRONTIDAO_POR_ESTAGIO.md` |
-| **Banco** | aplicar `0158`–`0174`; tabela de versão aplicada |
+| **Banco** | aplicar `0158`–`0177`; tabela de versão aplicada |
 | **Workflows** | republicar os 4; portão de hash publicado × gerado |
 | **Agentes** | `explorador`, `migrations-postgres`, `n8n-workflow`, `suites-invariantes`, `estado-e-handoff` |
 | **Testes** | sonda contra PRODUÇÃO = 0 ausentes; `conferir-chamadas.mjs` contra produção; espelho `CLAUDE.md`×CI generalizado |
@@ -688,7 +694,7 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 - `fn_instalacao_conferir()` **contra produção**, registrando a saída literal.
 - `conferir-chamadas.mjs` contra produção.
 - Hash do workflow publicado no n8n × gerado por `build-workflow.mjs`.
-- Confirmar quais das `0158`–`0174` estão de fato aplicadas — o `ESTADO.md` diz `0157`+`0160` fora
+- Confirmar quais das `0158`–`0177` estão de fato aplicadas — o `ESTADO.md` diz `0157`+`0160` fora
   de ordem; **conferir, não confiar**.
 - **Entregável:** tabela com as três defasagens medidas, não lembradas.
 - *Agente: `explorador`. Risco: nenhum — é leitura.*
@@ -699,7 +705,7 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
   (comportamento correto).
 - Reexecutar `fn_recomputar_completude` nos casos abertos — a `0158` endurece o `pronto`.
 - **Entregável:** sonda com 0 ausentes, exceto `custo_gravado_pelo_n8n` (a 0.3 fecha).
-- *Agente: `migrations-postgres`. Risco: médio — 17 migrations sobre dado real. Backup conferido antes.*
+- *Agente: `migrations-postgres`. Risco: médio — 20 migrations sobre dado real, e o número CRESCE a cada rodada que fecha. Backup conferido antes.*
 
 ### Fatia 0.3 — Republicar os workflows e alinhar o provedor
 - Republicar os 4; conferir `Gravar Uso do Lote` presente no canvas.

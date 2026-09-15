@@ -11,6 +11,22 @@ publicado, lote real — está escrito que não foi, e a fonte é o `ESTADO.md`.
 **Quem escreve:** revisão de engenharia sênior com o viés declarado de procurar o que está errado.
 A §7 existe para equilibrar isso.
 
+> **A BASE ANDOU ENQUANTO ESTE DOCUMENTO ESTAVA ABERTO, e isto fica dito em vez de corrigido em
+> silêncio.** A medição inteira é de `de556c2`. Antes de o PR mergear, o `main` avançou para
+> `f230cff` com as migrations **`0175`, `0176` e `0177`** (o CNPJ resolvendo o balcão ambíguo) e
+> duas suítes SQL novas. **Elas NÃO foram auditadas** — nenhum número abaixo as inclui.
+>
+> O que isso muda, aritmeticamente e só: onde se lê **119 migrations**, são **122**; onde se lê
+> o repositório na **`0174`**, é a **`0177`**; e a defasagem contra a produção, se ela seguir na
+> `0157`, passa de **17 para 20**. As três novas foram exercitadas aqui pela suíte de banco na
+> árvore mesclada — **1.333 asserts `ok`** contra os 1.272 de `de556c2`, `schema.sql` idêntico —,
+> mas **exercitar não é auditar**,
+> e o veredito por componente da §5 continua sendo o de `de556c2`.
+>
+> Nenhuma conclusão desta auditoria depende de qual é a migration mais nova — as três causas-raiz
+> da §6 são estruturais. A `0175`–`0177` serem *mais três rodadas sobre identidade de entidade*
+> é, aliás, a §6.1 acontecendo outra vez enquanto o documento era escrito.
+
 ---
 
 ## 1. Veredito em uma página
