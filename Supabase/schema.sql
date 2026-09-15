@@ -2587,6 +2587,9 @@ declare
   v_nome_atual text;
   v_cnpj_atual text;
   v_outra_id   uuid;
+  v_outra_nome text;
+  v_outra_e_balcao boolean;
+  v_esta_e_balcao  boolean;
 begin
   if p_entidade_id is null or v_cnpj is null then return p_entidade_id; end if;
 
@@ -2604,20 +2607,54 @@ begin
 
   -- 0174: OUTRA entidade do MESMO CASO pode já ter este CNPJ — é o cenário
   -- inteiro desta migration. Ver o cabeçalho para a medição em produção.
-  select id into v_outra_id
+  select id, razao_social into v_outra_id, v_outra_nome
     from entidade
    where caso_id = v_caso_id and id <> p_entidade_id
      and fn_cnpj_canonico(cnpj) = v_cnpj
    limit 1;
 
   if v_outra_id is not null then
+    v_outra_e_balcao := fn_entidade_e_balcao_ambiguo(v_caso_id, v_outra_id);
+    v_esta_e_balcao  := fn_entidade_e_balcao_ambiguo(v_caso_id, p_entidade_id);
+
+    -- 0177 (CRÍTICO): a guarda da 0176 só olhava a direção
+    -- "`v_outra_id` é balcão e `p_entidade_id` não é". Mas desde a 0175, o
+    -- caminho PRINCIPAL de `fn_registrar_diagnostico` chama esta função com
+    -- `p_entidade_id` = o PRÓPRIO BALCÃO (é ele quem está "aprendendo") — e
+    -- nessa direção a condição da 0176 era FALSA (a confirmada não é
+    -- balcão) e a fusão passava: `fn_fundir_entidade` deletava o BALCÃO
+    -- (`p_de_id = p_entidade_id`) dentro da confirmada, e resolvia a
+    -- pendência `entidade_ambigua:<balcão>` — BLOQUEANTE — junto, sem
+    -- pendência de colisão nenhuma no lugar. MEDIDO nesta sessão (mesmos
+    -- dados do teste da 0176, ordem de chegada invertida): 4 entidades/1
+    -- pendência bloqueante → 3 entidades/0 bloqueantes/0 colisões, balcão
+    -- deletado, 2 documentos dentro da confirmada (era 1). O invariante
+    -- correto é XOR: EXATAMENTE um dos dois lados é balcão bloqueia a
+    -- fusão, nas DUAS direções — quando os DOIS são balcão (convergência
+    -- 0175) ou os DOIS são confirmados (0169/0174), funde normalmente como
+    -- sempre fundiu.
+    if v_outra_e_balcao <> v_esta_e_balcao then
+      if v_outra_e_balcao then
+        perform fn_pendencia_cnpj_colide_balcao(v_caso_id, v_outra_id, v_cnpj, v_nome_atual, p_entidade_id);
+      else
+        perform fn_pendencia_cnpj_colide_balcao(v_caso_id, p_entidade_id, v_cnpj, v_outra_nome, v_outra_id);
+      end if;
+      -- Em QUALQUER direção, devolve p_entidade_id inalterado — se ele é o
+      -- balcão recusado, continua existindo e continua ambíguo (o mesmo
+      -- contrato que a 0176 já tinha para o caso em que a recusa protegia a
+      -- entidade que chegou).
+      return p_entidade_id;
+    end if;
+
     -- FUNDE sem perguntar ao nome — é a MESMA regra 1 da 0169 ("CNPJ é a
     -- identidade que o nome não é"), chegando pela porta do diagnóstico em
-    -- vez da porta de registro. `fn_fundir_entidade` já move documentos,
-    -- checklist, pendências e reconciliações, resolve a pendência de
-    -- ambiguidade da entidade fundida, e grava `entidade_fundida` com os
-    -- dois nomes e quantos documentos mudaram de dono — o mesmo rastro que a
-    -- fusão retroativa da OMNIBEAUTY usou.
+    -- vez da porta de registro. Chega aqui porque os DOIS lados são balcão
+    -- (convergência balcão↔balcão, o PONTO da 0175) ou os DOIS são
+    -- confirmados (o caso normal desde a 0169/0174). `fn_fundir_entidade`
+    -- já move documentos, checklist, pendências e reconciliações, resolve a
+    -- pendência de ambiguidade da entidade fundida, e grava
+    -- `entidade_fundida` com os dois nomes e quantos documentos mudaram de
+    -- dono.
     perform fn_fundir_entidade(v_caso_id, p_entidade_id, v_outra_id, 'sistema:entidade');
 
     -- E o nome sobrevivente pode não ser o mais completo dos dois — quem
@@ -2644,7 +2681,7 @@ $$;
 -- Name: FUNCTION fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: um CNPJ já gravado na MESMA entidade (mesmo que divergente) é decisão de humano. 0174: quando o CNPJ já pertence a OUTRA entidade do mesmo caso, funde as duas (fn_fundir_entidade) em vez de tentar gravar — sem isso o UPDATE violava entidade_caso_cnpj_unico e derrubava fn_registrar_diagnostico inteira. Devolve o id da entidade que sobrou: SEMPRE use o retorno, nunca o id que foi passado — depois de uma fusão ele pode apontar para uma linha deletada.';
+COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: um CNPJ já gravado na MESMA entidade (mesmo que divergente) é decisão de humano. 0174: quando o CNPJ já pertence a OUTRA entidade do mesmo caso, funde as duas (fn_fundir_entidade) em vez de tentar gravar — sem isso o UPDATE violava entidade_caso_cnpj_unico e derrubava fn_registrar_diagnostico inteira. 0177: a fusão é recusada quando EXATAMENTE um dos dois lados é um balcão ambíguo (0162/0175) — em QUALQUER direção (a guarda da 0176 só olhava uma) — porque fundir apagaria uma entidade CONFIRMADA dentro de um balcão sem nome validado, ou apagaria o BALCÃO (com sua pendência de ambiguidade bloqueante) dentro de uma confirmada; a colisão vira pendência (fn_pendencia_cnpj_colide_balcao) e nada funde. Quando os DOIS são balcão (convergência 0175) ou os DOIS são confirmados, funde normalmente. Devolve o id da entidade que sobrou: SEMPRE use o retorno, nunca o id que foi passado — depois de uma fusão ele pode apontar para uma linha deletada.';
 
 --
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
@@ -6088,6 +6125,85 @@ $$;
 COMMENT ON FUNCTION public.fn_pares_duplicados_do_caso(p_caso_id uuid, p_entidade text) IS 'Pares de rótulos DIFERENTES, em DOCUMENTOS DIFERENTES, na mesma seção canônica, com valor idêntico nas mesmas colunas — candidatos a ser a MESMA conta transposta duas vezes (achado do v35: "Prejuízos acumulados" e "Resultados Acumulados", ambos -39.150). Dois rótulos no MESMO documento são a hierarquia DELE (0144), não duplicidade. Não decide nada: alimenta a checagem de reconciliação, que abre pendência para decisão humana. Critério estreito de propósito — falso positivo aqui gasta o tempo do analista.';
 
 --
+-- Name: fn_pendencia_cnpj_colide_balcao(uuid, uuid, text, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_cnpj_colide_balcao(p_caso_id uuid, p_balcao_id uuid, p_cnpj text, p_nome_outro text, p_entidade_outro_id uuid DEFAULT NULL::uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_cnpj        text := fn_cnpj_canonico(p_cnpj);
+  v_balcao_nome text;
+  v_motivo      text;
+  v_desc        text;
+  v_pend        uuid;
+  v_colisoes_acumuladas text[];
+begin
+  select razao_social into v_balcao_nome from entidade where id = p_balcao_id;
+  if v_balcao_nome is null then return null; end if;
+
+  -- Uma pendência por BALCÃO colidido, não por documento — o mesmo desenho
+  -- de `fn_pendencia_entidade_ambigua` (0153): vários documentos batendo na
+  -- mesma colisão fazem UMA pergunta, não uma enxurrada.
+  v_motivo := 'entidade_cnpj_colide_balcao:' || p_balcao_id;
+
+  -- 0177 (MÉDIO 1): grava o evento de auditoria ANTES de montar a descrição
+  -- — ele é a fonte de verdade que a lista abaixo acumula, e nunca some
+  -- (ao contrário da pendência, que a UPDATE sobrescrevia por inteiro).
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+    values ('sistema:entidade', 'entidade_cnpj_colisao_recusada', 'entidade:' || p_balcao_id,
+      jsonb_build_object('caso_id', p_caso_id, 'balcao_id', p_balcao_id, 'cnpj', v_cnpj,
+                         'nome_outro', p_nome_outro, 'entidade_outro_id', p_entidade_outro_id,
+                         'porque', 'balcão ambíguo só absorve via CNPJ quando o outro lado também é balcão'));
+
+  -- 0177 (MÉDIO 1): lista TODAS as colisões já registradas contra ESTE
+  -- balcão — sem isto, a segunda colisão contra um balcão diferente do
+  -- primeiro apagava o nome do primeiro colidente da descrição (só ficava
+  -- em evento_auditoria, que o analista não lê ao abrir a fila de
+  -- pendências). `distinct` evita repetir o mesmo nome se o mesmo documento
+  -- reemitir o diagnóstico mais de uma vez.
+  select array_agg(distinct (depois->>'nome_outro') order by (depois->>'nome_outro'))
+    into v_colisoes_acumuladas
+    from evento_auditoria
+   where acao = 'entidade_cnpj_colisao_recusada' and entidade_ref = 'entidade:' || p_balcao_id;
+
+  v_desc := format(
+    'O balcão ambíguo "%s" (nome ainda NÃO confirmado — foi criado porque casa com MAIS DE UMA '
+    || 'empresa deste mandato) já tinha aprendido o CNPJ %s. Colidiu com o MESMO CNPJ sem ser, '
+    || 'ela própria, um balcão ambíguo: %s — pela regra "balcão só absorve balcão", o sistema NÃO '
+    || 'fundiu nem atribuiu nenhum destes documentos/entidades a ele; o caminho normal (nome, '
+    || 'entidade própria) decidiu como decidiria se o balcão nunca tivesse este CNPJ. Confira de '
+    || 'quem é o CNPJ: se for mesmo de alguma das colidentes, funda manualmente com '
+    || 'fn_fundir_entidade; se for coincidência (ex.: CNPJ do escritório de contabilidade no '
+    || 'rodapé do relatório), o CNPJ pode estar gravado na entidade ERRADA (o balcão) e vale '
+    || 'reavaliar quem deveria tê-lo.',
+    v_balcao_nome, coalesce(v_cnpj, p_cnpj), array_to_string(v_colisoes_acumuladas, ' × '));
+
+  select id into v_pend from pendencia
+   where caso_id = p_caso_id and motivo = v_motivo and estado <> 'resolvida'
+   limit 1;
+
+  if v_pend is not null then
+    update pendencia set descricao = v_desc where id = v_pend;
+  else
+    insert into pendencia
+      (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, entidade_id, motivo)
+      values (p_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+              v_desc, p_balcao_id, v_motivo)
+      returning id into v_pend;
+  end if;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_cnpj_colide_balcao(p_caso_id uuid, p_balcao_id uuid, p_cnpj text, p_nome_outro text, p_entidade_outro_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_cnpj_colide_balcao(p_caso_id uuid, p_balcao_id uuid, p_cnpj text, p_nome_outro text, p_entidade_outro_id uuid) IS '0176: registra (idempotente por balcão) a colisão de CNPJ entre um balcão ambíguo e uma entidade CONFIRMADA (documento novo por registrar, ou entidade já existente) que trouxe o MESMO CNPJ — o caso em que o balcão NÃO PODE absorver (ver o CRÍTICO da 0176/0177). Não decide de quem é o CNPJ: só nomeia a colisão para revisão humana, com rastro em evento_auditoria (entidade_cnpj_colisao_recusada). 0177 (MÉDIO 1): a descrição ACUMULA todas as colisões já registradas contra este balcão (lidas de evento_auditoria, que nunca se perde) — uma segunda colisão, contra outra entidade, não apaga mais o nome da primeira colidente.';
+
+--
 -- Name: fn_pendencia_entidade_ambigua(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8833,6 +8949,8 @@ declare
   v_exata_ambiguidade_nome  text;
   v_pendencia_ambigua_resp_id uuid;
   v_ambigua_resp_desc       text;
+  v_entidade_cnpj_pos_aprender text;
+  v_entidade_id_balcao         uuid;
 begin
   select caso_id, entidade_id, tipo_taxonomia, periodo_id
     into v_caso_id, v_entidade_id, v_tipo_atual, v_periodo_id
@@ -8881,6 +8999,91 @@ begin
       -- tomava isso como CONFIRMAÇÃO, sem a pendência bloqueante da 0153 nunca
       -- ter sido tocada e sem a resposta deixar rastro em lugar nenhum.
       if fn_entidade_e_balcao_ambiguo(v_caso_id, v_entidade_id) then
+        -- 0175: dentro do balcão ambíguo, o CNPJ decide ANTES do nome — a
+        -- MESMA regra 1 da 0169 ("CNPJ é a identidade que o nome não é"),
+        -- chegando pela porta que faltava. MEDIDO em produção (caso
+        -- bf0246bb-c93b-4d08-a7df-5d356c9d6275, OMNIBEAUTY, teste 143): sem
+        -- esta chamada, dois documentos da MESMA empresa em DOIS balcões
+        -- diferentes nunca convergem — cada um só sabe perguntar ao nome, e
+        -- o balcão nasce sem CNPJ. Ver o cabeçalho desta migration para os
+        -- dois casos que `fn_entidade_aprender_cnpj` já sabe tratar: grava
+        -- no próprio balcão quando é o primeiro a aprender este CNPJ no
+        -- caso, ou FUNDE nele quando outra entidade (outro balcão, ou uma
+        -- entidade de verdade) já tinha o mesmo CNPJ — usando o RETORNO,
+        -- nunca `perform` (0174). 0176/0177: `fn_entidade_aprender_cnpj`
+        -- agora RECUSA a fusão quando EXATAMENTE um dos dois lados é um
+        -- balcão e o outro não — em QUALQUER direção (ver o CRÍTICO da
+        -- 0177) — nesse caso ela devolve o mesmo `v_entidade_id`, sem CNPJ
+        -- novo nenhum gravado.
+        if p_cnpj is not null then
+          -- 0177 (MÉDIO 2): a variável de atribuição é só desta chamada,
+          -- para que o texto da chamada dentro do ramo do balcão fique
+          -- ÚNICO no corpo — até aqui, a atribuição de v_entidade_id a
+          -- partir do resultado do aprender era IDÊNTICA, char por char, à
+          -- do ramo `else` (0172): MEDIDO por contagem (2 ocorrências)
+          -- contra o corpo do estado da 0176. O marcador da sonda para
+          -- `balcao_ambiguo_aprende_cnpj` provava a guarda do renomeio
+          -- (MÉDIO 1 da 0176), não esta chamada — se uma reemissão futura
+          -- removesse SÓ esta chamada, o requisito continuaria "presente"
+          -- via o texto genérico do ramo `else`. Nenhuma mudança de
+          -- COMPORTAMENTO: é troca de nome de variável. (Este comentário
+          -- evita, de propósito, escrever a chamada antiga por extenso —
+          -- fazer isso aqui inflaria a própria contagem que a correção
+          -- existe para corrigir.)
+          v_entidade_id_balcao := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj);
+          v_entidade_id := v_entidade_id_balcao;
+
+          -- E O RENOMEIO VEM JUNTO, pela MESMA função do ramo `else` (0173) —
+          -- não duplica lógica. Se a linha acima FUNDIU, `fn_entidade_aprender_cnpj`
+          -- já chamou fn_entidade_talvez_renomear por dentro com o nome do
+          -- balcão fundido; esta chamada cobre o caso SEM fusão, em que o
+          -- nome lido do CONTEÚDO deste documento pode ser a variante mais
+          -- completa para o balcão que acabou de aprender o CNPJ.
+          --
+          -- 0176 (MÉDIO 1 da revisão da 0175): só chama o renomeio quando o
+          -- `aprender` ACIMA realmente confirmou ESTE p_cnpj NESTA entidade —
+          -- nunca com o p_cnpj bruto. MEDIDO: uma entidade que já tinha OUTRO
+          -- CNPJ gravado (aprender_cnpj devolve sem tocar em nada) ainda era
+          -- renomeada com o evento citando um CNPJ ESTRANHO à entidade —
+          -- entidade com cnpj real 11222333000181 "renomeada por CNPJ" com o
+          -- evento dizendo {"cnpj": "36193378000104", ...}. O mesmo guarda
+          -- cobre o refúgio do CRÍTICO da 0176/0177: se
+          -- `fn_entidade_aprender_cnpj` recusou fundir (balcão não pode
+          -- absorver quem não é balcão, em nenhuma direção), esta entidade
+          -- não ficou com este CNPJ, e o `if` abaixo não deixa o renomeio
+          -- rodar mesmo assim.
+          select cnpj into v_entidade_cnpj_pos_aprender from entidade where id = v_entidade_id;
+          if v_entidade_cnpj_pos_aprender is not null
+             and fn_cnpj_canonico(v_entidade_cnpj_pos_aprender) = fn_cnpj_canonico(p_cnpj) then
+            perform fn_entidade_talvez_renomear(v_caso_id, v_entidade_id, p_entidade_nome, v_entidade_cnpj_pos_aprender);
+          end if;
+        end if;
+
+        -- 0176 (ALTO da revisão da 0175): o NOME pode ter mudado — o bloco
+        -- acima pode ter FUNDIDO (`v_entidade_id` agora aponta para OUTRA
+        -- linha, a sobrevivente) ou RENOMEADO a própria entidade.
+        -- `v_entidade_atual_nome`, lido ANTES deste ramo (no topo da
+        -- função), ficaria citando uma razão social que pode não existir
+        -- MAIS no banco — a entidade fundida foi DELETADA — e é ela que a
+        -- pendência `entidade_ambigua_respondida`, poucas linhas abaixo,
+        -- usa para montar a descrição que o analista lê. MEDIDO contra o
+        -- cenário de dois balcões convergindo
+        -- (Supabase/test/balcao_ambiguo_e_cnpj.test.sql): a pendência do
+        -- segundo balcão citava "OMNIBEAUTY DESENVOLVIMENTO E GESTAO" — o
+        -- nome do balcão FUNDIDO, já apagado — atribuída ao balcão
+        -- sobrevivente, que se chama "...GESTAO DE". Sintaxe `:=` (não
+        -- `select into`), de propósito: o marcador de corpo da sonda para
+        -- este requisito precisa de um trecho que só exista por causa DESTA
+        -- correção.
+        v_entidade_atual_nome := (select razao_social from entidade where id = v_entidade_id);
+
+        -- SÓ TENTA RESOLVER PELO NOME SE O CNPJ NÃO RESOLVEU: se a entidade
+        -- (que pode ter mudado de id na linha acima) AINDA é um balcão
+        -- ambíguo — sem CNPJ para tentar, ou com CNPJ que só gravou no
+        -- próprio balcão sem achar outra dona — o nome continua sendo o
+        -- único sinal disponível, e a lógica abaixo é EXATAMENTE a de antes
+        -- desta migration.
+        if fn_entidade_e_balcao_ambiguo(v_caso_id, v_entidade_id) then
         -- O conteúdo pode ter respondido à própria pergunta: se o nome
         -- diagnosticado casa EXATO com exatamente UMA empresa já cadastrada
         -- neste caso (excluído o próprio balcão), é essa a resposta. NÃO
@@ -8929,6 +9132,7 @@ begin
         -- tocar `v_pendencia_id`/`v_pendencia_grupo_id` aqui é o que deixa
         -- isso explícito: só o ramo `else` abaixo (comparação contra uma
         -- entidade de VERDADE) resolve essas duas pendências.
+        end if;
       else
       -- 0121: divergência de ENTIDADE medida pela forma canônica, como o
       -- período já é desde a 0022. "Canastra Industria" e "CANASTRA INDÚSTRIA
@@ -8950,7 +9154,11 @@ begin
         -- pela regra 1 da 0169 esse CNPJ passaria a ATRAIR todo documento
         -- futuro da empresa de verdade para dentro da entidade errada, sem
         -- olhar nome. Divergência de entidade é pergunta para humano, e as
-        -- pendências logo abaixo são a resposta certa para ela.
+        -- pendências logo abaixo são a resposta certa para ela. 0176/0177:
+        -- esta proteção agora vale também quando a "outra dona" do CNPJ é um
+        -- balcão ambíguo — `fn_entidade_aprender_cnpj` recusa fundir esta
+        -- entidade (confirmada) NELE, em qualquer direção (ver o CRÍTICO da
+        -- 0177).
         --
         -- `fn_entidade_aprender_cnpj` (0169) nunca sobrescreve CNPJ já gravado
         -- e deixa rastro (`entidade_cnpj_aprendido`) — é a mesma função que o
@@ -8972,6 +9180,11 @@ begin
         -- book-canastra). Para uma empresa cujo ÚNICO documento chega com o
         -- nome contaminado pelo endereço, o nome errado ficava no book até
         -- aparecer um segundo documento pelo outro caminho.
+        --
+        -- MESMO PADRÃO do MÉDIO 1 da 0176 (p_cnpj bruto, não o CNPJ real da
+        -- entidade) existe AQUI TAMBÉM, e fica FORA do escopo desta fatia —
+        -- ver o cabeçalho da 0176. Registrado para o
+        -- MAPA_DE_EXECUCAO.md.
         --
         -- As três guardas da 0171 vão inteiras dentro da função (só entre
         -- truncamentos, nunca cria homônima, recusa com rastro), e sem CNPJ
@@ -9150,7 +9363,7 @@ $$;
 -- Name: FUNCTION fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o aprende no ramo em que o nome CONFIRMA a entidade. 0173: no mesmo ramo, também chama fn_entidade_talvez_renomear. 0174: usa o RETORNO de fn_entidade_aprender_cnpj — quando o CNPJ já pertencia a OUTRA entidade do mesmo caso, ela funde as duas, e a variável local passava a apontar para uma linha deletada se ninguém capturasse o retorno.';
+COMMENT ON FUNCTION public.fn_registrar_diagnostico(p_documento_id uuid, p_documento_versao_id uuid, p_entidade_nome text, p_tipo_confirma boolean, p_tipo_sugerido text, p_periodo_tipo text, p_periodo_referencia text, p_legibilidade public.legibilidade, p_nota_legibilidade text, p_resumo text, p_justificativa text, p_cnpj text) IS 'Registra o diagnóstico de conteúdo (E1/E2) e confere contra o que já está no banco — ver o histórico de 0121/0142/0160/0161/0162/0163 no comentário da 0163. 0172: recebe o CNPJ lido do CONTEÚDO e o aprende no ramo em que o nome CONFIRMA a entidade. 0173: no mesmo ramo, também chama fn_entidade_talvez_renomear. 0174: usa o RETORNO de fn_entidade_aprender_cnpj. 0175: o ramo do balcão ambíguo (0162) agora tenta o CNPJ ANTES do nome. 0176: o renomeio dentro do ramo do balcão só roda com o CNPJ que o aprender de fato confirmou NESTA entidade, e o nome usado pela pendência entidade_ambigua_respondida é RECONFERIDO depois do bloco do balcão. 0177: a chamada a fn_entidade_aprender_cnpj dentro do ramo do balcão usa uma variável local própria (v_entidade_id_balcao) — texto único, para o marcador da sonda de balcao_ambiguo_aprende_cnpj parar de casar também com a chamada IDÊNTICA do ramo `else`. Nenhuma mudança de comportamento.';
 
 --
 -- Name: fn_registrar_documento(uuid, text, text, text, text, numeric, text, public.origem_arquivo, text, text, boolean, text, public.legibilidade, numeric, text, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -10655,6 +10868,8 @@ declare
   v_nomes      text[];
   v_cnpj       text := fn_cnpj_canonico(p_cnpj);
   v_nome_atual text;
+  v_e_balcao   boolean;
+  v_mesmo_nome_do_balcao boolean;
 begin
   -- 0153: no empate, não escolhe. (E o requisito de sonda `entidade_ambigua_nao_decide`
   -- tem o literal "0153" como MARCADOR DE CORPO — tirar esta linha derruba a sonda
@@ -10674,40 +10889,62 @@ begin
     order by length(e.razao_social) desc, e.razao_social
     limit 1;
 
-    -- O RASTRO É OBRIGATÓRIO AQUI, e a revisão desta fatia o achou faltando.
-    -- Este é o ramo MAIS FORTE da função — funde sem olhar o nome — e era o
-    -- único caminho de fusão sem uma linha em `evento_auditoria` (o (3b) grava
-    -- `entidade_alias_fundido`, o de ambiguidade grava `entidade_ambigua`).
-    --
-    -- O cenário que torna isso perigoso é o MESMO template que já colou o
-    -- endereço no nome: o rodapé do relatório traz o CNPJ do ESCRITÓRIO DE
-    -- CONTABILIDADE, não o do emitente. Lido em documentos de três clientes do
-    -- mesmo mandato, o primeiro cria a entidade e os outros dois caem nela sem
-    -- comparar nome nenhum. É o dano da 0153 por uma porta nova — e sem o
-    -- evento não haveria uma linha dizendo que "CONTABILIDADE X LTDA." foi
-    -- respondido com "OMNIBEAUTY".
     if v_id is not null then
-      -- O EVENTO DE CASAMENTO fica na forma CANÔNICA: ele existe para registrar
-      -- que o CNPJ respondeu um nome MATERIALMENTE diferente do gravado, e
-      -- diferença só de sufixo/pontuação não é isso.
-      if fn_entidade_canonica(v_nome_atual) is distinct from fn_entidade_canonica(trim(p_nome)) then
-        insert into evento_auditoria (ator, acao, entidade_ref, depois)
-        values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
-                jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
-                                   'nome_mantido_antes_do_renomeio', v_nome_atual,
-                                   'cnpj', v_cnpj,
-                                   'pode_renomear', fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome)),
-                                   'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+      v_e_balcao := fn_entidade_e_balcao_ambiguo(p_caso_id, v_id);
+
+      -- 0177 (ALTO): o nome que chega pode ser o PRÓPRIO nome do balcão —
+      -- um SEGUNDO documento do MESMO balcão, chegando pela classificação,
+      -- com o CNPJ que ele já aprendeu. A 0176 tratava QUALQUER chegada
+      -- contra um balcão como colisão externa, mesmo quando é o balcão
+      -- recebendo mais um documento seu: a pendência abria dizendo que o
+      -- nome "chegou... sem ser, ela própria, um balcão ambíguo" e que "o
+      -- sistema NÃO... atribuiu este documento/entidade a ele" — as DUAS
+      -- afirmações falsas, porque o nome que chegou É o do balcão e o
+      -- documento SIM termina atribuído a ele pelo ramo (1) de casamento
+      -- exato por nome, alguns passos abaixo. MEDIDO nesta sessão: uma
+      -- pendência de colisão nascia (0→1) mesmo quando o documento novo era
+      -- só mais um do MESMO balcão.
+      v_mesmo_nome_do_balcao := v_e_balcao
+        and fn_entidade_canonica(v_nome_atual) is not distinct from fn_entidade_canonica(trim(p_nome));
+
+      -- MEDIDO (0176): um documento novo de OUTRA empresa (mesmo CNPJ de
+      -- rodapé de contador) virava absorvido pelo balcão sem nunca ganhar
+      -- linha própria — entidades no caso ficavam em 3 em vez de virarem 4.
+      -- Trata o CNPJ como se nunca tivesse chegado (`v_cnpj := null`) para o
+      -- resto desta chamada: sem isso, o `insert` do fim desta função
+      -- tentaria gravar este MESMO CNPJ numa entidade nova e violaria
+      -- `entidade_caso_cnpj_unico` — e, pior, atribuiria à empresa nova um
+      -- CNPJ que pode não ser dela.
+      if v_e_balcao and not v_mesmo_nome_do_balcao then
+        perform fn_pendencia_cnpj_colide_balcao(p_caso_id, v_id, v_cnpj, trim(p_nome), null);
+        v_id := null;
+        v_cnpj := null;
+      else
+        -- O EVENTO DE CASAMENTO fica na forma CANÔNICA: ele existe para registrar
+        -- que o CNPJ respondeu um nome MATERIALMENTE diferente do gravado, e
+        -- diferença só de sufixo/pontuação não é isso. Quando é o PRÓPRIO
+        -- balcão (v_mesmo_nome_do_balcao), esta condição já é falsa por
+        -- construção — nenhum evento de "casamento" nasce, porque não houve
+        -- casamento: é o mesmo nome de sempre.
+        if fn_entidade_canonica(v_nome_atual) is distinct from fn_entidade_canonica(trim(p_nome)) then
+          insert into evento_auditoria (ator, acao, entidade_ref, depois)
+          values ('sistema:entidade', 'entidade_cnpj_casou', 'entidade:' || v_id,
+                  jsonb_build_object('caso_id', p_caso_id, 'nome_procurado', trim(p_nome),
+                                     'nome_mantido_antes_do_renomeio', v_nome_atual,
+                                     'cnpj', v_cnpj,
+                                     'pode_renomear', fn_pode_renomear_por_cnpj(v_nome_atual, trim(p_nome)),
+                                     'porque', 'o CNPJ é o mesmo — o nome não foi consultado'));
+        end if;
+
+        -- 0173: O RENOMEIO VIROU FUNÇÃO PRÓPRIA, e os DOIS caminhos a chamam.
+        -- Antes ele morava aqui dentro, e só este caminho (a classificação) o
+        -- executava — o diagnóstico, que é o único que roda para TODO documento,
+        -- gravava o CNPJ e ia embora sem renomear. Medido: identidade fiscal em
+        -- 100% do lote e renomeio em ~50%.
+        perform fn_entidade_talvez_renomear(p_caso_id, v_id, trim(p_nome), v_cnpj);
+
+        return v_id;
       end if;
-
-      -- 0173: O RENOMEIO VIROU FUNÇÃO PRÓPRIA, e os DOIS caminhos a chamam.
-      -- Antes ele morava aqui dentro, e só este caminho (a classificação) o
-      -- executava — o diagnóstico, que é o único que roda para TODO documento,
-      -- gravava o CNPJ e ia embora sem renomear. Medido: identidade fiscal em
-      -- 100% do lote e renomeio em ~50%.
-      perform fn_entidade_talvez_renomear(p_caso_id, v_id, trim(p_nome), v_cnpj);
-
-      return v_id;
     end if;
   end if;
 
@@ -10804,7 +11041,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj — ela pode fundir esta entidade numa outra do mesmo caso que já tinha o CNPJ, e devolver o id de quem sobrou não é mais opcional.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -

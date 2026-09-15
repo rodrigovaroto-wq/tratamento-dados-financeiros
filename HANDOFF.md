@@ -4,6 +4,62 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 91 (15/09) — 0177 CORRIGE O CRÍTICO. PR #226 empurrado, aguardando CI/Sonar no head novo
+
+**Atualização:** a `0177` (commit `f982049`, empurrada) corrigiu os quatro achados abaixo — a
+guarda de `fn_entidade_aprender_cnpj` virou XOR bidirecional, medida contra o cenário exato que a
+segunda revisão citou (4 entidades/1 pendência bloqueante → 3/0/0 SEM a correção; com ela, o
+balcão continua existindo e a pendência de colisão nasce no lugar certo). Suíte inteira (122
+migrations) verde, os 18 asserts da 0175 e os da 0176 continuam passando, 19 asserts novos nos
+blocos 5-8 de `Supabase/test/balcao_nao_absorve_confirmada.test.sql`, schema/conhecimento
+reindexados. Verificação foi feita pela sessão principal lendo o diff inteiro e rodando a suíte
+do zero (não uma terceira rodada de `revisor-defeito-silencioso` — decisão de velocidade dado o
+tempo do dono; se quiser mais uma volta de revisão antes de mergear, é o próximo passo natural).
+**Não mergeei o PR #226 — isso é decisão do dono.** Falta só confirmar CI/Sonar verdes no commit
+`f982049` (devem passar, é o mesmo padrão dos commits anteriores) antes de considerar pronto.
+
+<!-- nota anterior, preservada como registro -->
+## ⚠️ SESSÃO 91 (15/09) — PR #226 ABERTO, **NÃO MERGEAR AINDA**: 0176 tem defeito crítico não corrigido
+
+`0175` (balcão ambíguo converge por CNPJ) e `0176` (continha o CRÍTICO da revisão da 0175: balcão
+absorvendo entidade confirmada) estão commitadas e empurradas (`f549842`, `b8fc826`) em
+`claude/stoic-feynman-az55sn`, com o PR **#226** aberto contra `main`. CI/Sonar verdes no PR.
+
+**Mas uma SEGUNDA revisão independente (`revisor-defeito-silencioso`) sobre a 0176 achou que a
+guarda dela é UNIDIRECIONAL, e o buraco é PIOR que o que a 0176 corrigiu — e está no caminho
+PRINCIPAL que a 0175 criou.** Em `fn_entidade_aprender_cnpj`, a guarda só bloqueia quando
+`v_outra_id` (quem já tem o CNPJ) é o balcão. Mas desde a 0175, `fn_registrar_diagnostico` chama
+`fn_entidade_aprender_cnpj(v_entidade_id /* o BALCÃO */, p_cnpj)` — ou seja, na chamada mais comum,
+o balcão é `p_entidade_id`, o lado que a guarda NÃO protege. Nessa direção, `fn_fundir_entidade`
+funde o BALCÃO dentro da entidade confirmada, o balcão é DELETADO, e a pendência `entidade_ambigua`
+(BLOQUEANTE) dele é resolvida junto — sem pendência de colisão nenhuma no lugar. Medido pela
+revisão (mesmos dados do teste da 0176, ordem de chegada invertida): `4 entidades, 1 pendência
+bloqueante` → `3 entidades, 0 pendências bloqueantes, 0 de colisão`, balcão deletado.
+
+Invariante correto, proposto pela revisão: **"um balcão ambíguo não funde por CNPJ com quem NÃO é
+balcão, em NENHUMA direção — a colisão sempre vira pendência, e a ambiguidade do balcão continua
+aberta."** (hoje a condição é unidirecional; precisa ser XOR: exatamente um dos dois lados é
+balcão bloqueia a fusão, nas duas ordens.)
+
+A mesma revisão achou mais três, menores, na mesma migration: **ALTO** — o caso A
+(`fn_upsert_entidade` ramo 0) abre pendência de colisão FALSA quando quem chega é o PRÓPRIO balcão
+recebendo mais um documento (duas afirmações falsas na descrição, e a orientação manda fundir o
+balcão consigo mesmo, que lança exceção); **MÉDIO** — `fn_pendencia_cnpj_colide_balcao` sobrescreve
+a descrição a cada nova colisão e perde o nome do colidente anterior; **MÉDIO** — o marcador novo
+da sonda (`balcao_ambiguo_aprende_cnpj`) prova a guarda do renomeio, não a chamada real que ele
+deveria atestar, e a colisão de marcador entre a chamada do ramo do balcão e do ramo `else`
+(`fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)`, texto idêntico nos dois) continua sem
+resolver.
+
+**O QUE FAZER:** escrever `0177` corrigindo os quatro (o XOR bidirecional é o que importa; os
+outros três são baratos), medir cada um com a correção desligada, suíte inteira verde
+(`Supabase/test/balcao_ambiguo_e_cnpj.test.sql` 18 asserts e `balcao_nao_absorve_confirmada.test.sql`
+devem continuar passando), reindexar `.claude/conhecimento/`, commitar, empurrar para
+`claude/stoic-feynman-az55sn` (o PR #226 atualiza sozinho), e SÓ ENTÃO considerar o PR pronto para
+merge — nenhuma sessão deve aprovar ou pedir merge do #226 antes disso. Uma tentativa de escrever a
+0177 nesta sessão foi interrompida por rate limit da API ANTES de qualquer arquivo ser escrito —
+não há trabalho parcial para retomar, é recomeçar do zero.
+
 ## ⚠️ HÁ UM PLANO DE 6 FATIAS EM ANDAMENTO — leia "O PLANO DE 14/09" antes de decidir o que fazer
 
 **ATUALIZADO NA SESSÃO 90 (14/09) — leia o bloco `> **SESSÃO 90 (14/09)` dentro de "O PLANO DE

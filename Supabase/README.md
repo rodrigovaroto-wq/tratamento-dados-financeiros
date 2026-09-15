@@ -280,6 +280,9 @@ supabase db execute --file Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql
 supabase db execute --file Supabase/migrations/0172_o_cnpj_pelo_caminho_que_roda_sempre.sql
 supabase db execute --file Supabase/migrations/0173_o_renomeio_pelo_caminho_que_roda_sempre.sql
 supabase db execute --file Supabase/migrations/0174_aprender_cnpj_que_ja_tinha_dona_funde.sql
+supabase db execute --file Supabase/migrations/0175_o_cnpj_tambem_resolve_o_balcao.sql
+supabase db execute --file Supabase/migrations/0176_o_balcao_nao_absorve_quem_e_confirmado.sql
+supabase db execute --file Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
