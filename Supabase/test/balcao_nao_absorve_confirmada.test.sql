@@ -312,3 +312,270 @@ begin
                'corrigidos, e a convergência balcão↔balcão continua intacta '
                '(Supabase/test/balcao_ambiguo_e_cnpj.test.sql)';
 end $$;
+
+-- =============================================================================
+-- 0177 — a guarda acima (bloco 1) era UNIDIRECIONAL: só olhava "v_outra_id é
+-- balcão e p_entidade_id não é". Uma SEGUNDA revisão independente mediu que o
+-- caminho PRINCIPAL desde a 0175 chama fn_entidade_aprender_cnpj com o BALCÃO
+-- em p_entidade_id — o lado que a guarda não protegia — e mais três defeitos
+-- menores. Ver o cabeçalho de
+-- Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql para a
+-- medição completa (contra o estado da 0176, sem esta migration).
+-- =============================================================================
+do $$
+declare
+  v_caso      uuid;
+  v_r         jsonb;
+  v_marcas    uuid; v_surubiju uuid;
+  v_balcao1   uuid; v_doc_b1 uuid; v_ver_b1 uuid;
+  v_met       uuid; v_doc_met uuid; v_ver_met uuid;
+  v_n         int;
+  v_pend_bloq_n int;
+  v_pend_colisao_n int;
+  c_cnpj  constant text := '36.193.378/0001-04';
+  c_m     constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE MARCAS LTDA';
+  c_s     constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE SURUBIJU';
+  c_t     constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE';
+  c_met   constant text := 'VERTENTES METALURGICA LTDA';
+begin
+  raise notice '--- 5. CRÍTICO (0177): a guarda era UNIDIRECIONAL — ordem INVERSA do bloco 1 ---';
+  v_caso := (fn_upsert_caso('0177 — balcao cnpj colide bidirecional'))::uuid;
+
+  v_r := fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-marcas.pdf', 'BAL.pdf', true, 'HASH-0177-M', 'ok');
+  v_marcas := (select entidade_id from documento where id = (v_r->>'documento_id')::uuid);
+  v_r := fn_registrar_documento(v_caso, c_s, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-surubiju.pdf', 'BAL.pdf', true, 'HASH-0177-S', 'ok');
+  v_surubiju := (select entidade_id from documento where id = (v_r->>'documento_id')::uuid);
+
+  v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-balcao.pdf', 'BAL.pdf', true, 'HASH-0177-B', 'ok');
+  v_doc_b1 := (v_r->>'documento_id')::uuid;
+  v_ver_b1 := (v_r->>'documento_versao_id')::uuid;
+  v_balcao1 := (select entidade_id from documento where id = v_doc_b1);
+  perform teste_assert_0176(fn_entidade_e_balcao_ambiguo(v_caso, v_balcao1),
+    'PRÉ-CONDIÇÃO: o balcão nasce ambíguo');
+
+  -- A CONFIRMADA aprende o CNPJ PRIMEIRO — ordem INVERSA do bloco 1 (lá era
+  -- o balcão a aprender primeiro, e a confirmada a colidir depois).
+  v_r := fn_registrar_documento(v_caso, c_met, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-met.pdf', 'BAL.pdf', true, 'HASH-0177-MET', 'ok');
+  v_doc_met := (v_r->>'documento_id')::uuid;
+  v_ver_met := (v_r->>'documento_versao_id')::uuid;
+  v_met := (select entidade_id from documento where id = v_doc_met);
+
+  perform fn_registrar_diagnostico(v_doc_met, v_ver_met, c_met, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+  perform teste_assert_0176((select fn_cnpj_canonico(cnpj) from entidade where id = v_met) = fn_cnpj_canonico(c_cnpj),
+    'PRÉ-CONDIÇÃO: a metalúrgica confirmada aprendeu o CNPJ ANTES do balcão');
+
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  select count(*) into v_pend_bloq_n from pendencia where caso_id = v_caso and severidade = 'bloqueante' and estado <> 'resolvida';
+  perform teste_assert_0176(v_n = 4 and v_pend_bloq_n = 1,
+    'PRÉ-CONDIÇÃO: quatro entidades e uma pendência bloqueante antes do balcão colidir',
+    format('%s entidade(s), %s bloqueante(s)', v_n, v_pend_bloq_n));
+
+  -- O BALCÃO chega DEPOIS e traz o MESMO CNPJ pelo diagnóstico — é aqui que
+  -- a guarda unidirecional da 0176 deixava passar: `p_entidade_id` (o
+  -- balcão) é quem está "aprendendo"; `v_outra_id` (a metalúrgica) NÃO é
+  -- balcão, então a condição antiga (`fn_e_balcao(v_outra_id) and not
+  -- fn_e_balcao(p_entidade_id)`) era FALSA e a fusão passava.
+  perform fn_registrar_diagnostico(v_doc_b1, v_ver_b1, c_t, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  -- ESTE É O ASSERT QUE REPROVA COM A 0177 DESLIGADA (medido nesta sessão,
+  -- contra o estado da 0176): 4→3 entidades, 1→0 pendências bloqueantes, 0
+  -- pendências de colisão, balcão DELETADO, 2 documentos dentro da
+  -- metalúrgica em vez de 1.
+  perform teste_assert_0176(exists (select 1 from entidade where id = v_balcao1),
+    'o balcão continua existindo — NÃO foi fundido/deletado dentro da confirmada',
+    'SEM a 0177: balcão deletado, sua pendência entidade_ambigua bloqueante resolvida junto, sem colisão nenhuma');
+
+  select count(*) into v_n from entidade where caso_id = v_caso;
+  perform teste_assert_0176(v_n = 4, 'e o caso continua com QUATRO entidades',
+    format('%s entidade(s) (esperado 4)', v_n));
+
+  select count(*) into v_pend_bloq_n from pendencia where caso_id = v_caso and severidade = 'bloqueante' and estado <> 'resolvida';
+  perform teste_assert_0176(v_pend_bloq_n = 1,
+    'e a pendência entidade_ambigua do balcão continua BLOQUEANTE e aberta — a ambiguidade do '
+      || 'balcão não foi respondida por esta colisão',
+    format('%s pendencia(s) bloqueante(s) (esperado 1)', v_pend_bloq_n));
+
+  select count(*) into v_pend_colisao_n from pendencia
+   where caso_id = v_caso and motivo = 'entidade_cnpj_colide_balcao:' || v_balcao1 and estado <> 'resolvida';
+  perform teste_assert_0176(v_pend_colisao_n = 1,
+    'e uma pendência de colisão foi aberta no BALCÃO (não na confirmada)',
+    format('%s pendencia(s) de colisão', v_pend_colisao_n));
+
+  perform teste_assert_0176((select count(*) from documento where entidade_id = v_met) = 1,
+    'e a metalúrgica confirmada NÃO recebeu o documento do balcão — cada uma com seu próprio documento');
+
+  raise notice 'BIDIRECIONAL OK — a guarda bloqueia em QUALQUER direção agora';
+end $$;
+
+do $$
+declare
+  v_caso uuid; v_r jsonb;
+  v_balcao uuid; v_doc_b uuid; v_ver_b uuid;
+  v_doc2 uuid; v_pend_colisao_antes int; v_pend_colisao_depois int;
+  v_n_antes int; v_n_depois int;
+  c_cnpj constant text := '36.193.378/0001-04';
+  c_m constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE MARCAS LTDA';
+  c_s constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE SURUBIJU';
+  c_t constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE';
+begin
+  raise notice '--- 6. ALTO (0177): o balcão NÃO colide "consigo mesmo" ---';
+  v_caso := (fn_upsert_caso('0177 — balcao colide consigo mesmo'))::uuid;
+
+  perform fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-consigo-m.pdf', 'BAL.pdf', true, 'HASH-0177C-M', 'ok');
+  perform fn_registrar_documento(v_caso, c_s, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-consigo-s.pdf', 'BAL.pdf', true, 'HASH-0177C-S', 'ok');
+
+  v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-consigo-b1.pdf', 'BAL.pdf', true, 'HASH-0177C-B1', 'ok');
+  v_doc_b := (v_r->>'documento_id')::uuid;
+  v_ver_b := (v_r->>'documento_versao_id')::uuid;
+  v_balcao := (select entidade_id from documento where id = v_doc_b);
+  perform teste_assert_0176(fn_entidade_e_balcao_ambiguo(v_caso, v_balcao), 'PRÉ-CONDIÇÃO: balcão nasce ambíguo');
+
+  perform fn_registrar_diagnostico(v_doc_b, v_ver_b, c_t, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+  perform teste_assert_0176((select fn_cnpj_canonico(cnpj) from entidade where id = v_balcao) = fn_cnpj_canonico(c_cnpj),
+    'PRÉ-CONDIÇÃO: o balcão aprendeu o CNPJ');
+
+  select count(*) into v_n_antes from entidade where caso_id = v_caso;
+  select count(*) into v_pend_colisao_antes from pendencia
+   where caso_id = v_caso and motivo = 'entidade_cnpj_colide_balcao:' || v_balcao and estado <> 'resolvida';
+
+  -- Um SEGUNDO documento do MESMO balcão chega pela CLASSIFICAÇÃO
+  -- (fn_registrar_documento passa p_cnpj direto para fn_upsert_entidade,
+  -- ramo 0) com o NOME EXATO do balcão e o MESMO CNPJ que ele já aprendeu —
+  -- não é outra empresa.
+  v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2023', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-consigo-b2.pdf', 'BAL.pdf', true, 'HASH-0177C-B2', 'ok',
+    p_cnpj => c_cnpj);
+  v_doc2 := (v_r->>'documento_id')::uuid;
+
+  select count(*) into v_n_depois from entidade where caso_id = v_caso;
+  select count(*) into v_pend_colisao_depois from pendencia
+   where caso_id = v_caso and motivo = 'entidade_cnpj_colide_balcao:' || v_balcao and estado <> 'resolvida';
+
+  -- ESTE É O ASSERT QUE REPROVA COM A 0177 DESLIGADA (medido nesta sessão):
+  -- v_pend_colisao_depois virava 1 (pendência FALSA: o nome que chegou É o
+  -- do próprio balcão, e o documento SIM foi atribuído a ele, pelo ramo (1)
+  -- de casamento exato por nome — as duas afirmações da descrição são
+  -- falsas).
+  perform teste_assert_0176(v_pend_colisao_depois = v_pend_colisao_antes,
+    'nenhuma pendência de colisão nova — é o PRÓPRIO balcão recebendo mais um documento',
+    format('%s pendencia(s) de colisão (esperado %s, sem mudança)', v_pend_colisao_depois, v_pend_colisao_antes));
+
+  perform teste_assert_0176(v_n_depois = v_n_antes,
+    'e nenhuma entidade nova nasceu — o segundo documento caiu no MESMO balcão',
+    format('%s entidade(s) (esperado %s)', v_n_depois, v_n_antes));
+
+  perform teste_assert_0176(
+    (select entidade_id from documento where id = v_doc2) = v_balcao,
+    'e o documento novo está de fato registrado no balcão');
+
+  raise notice 'CONSIGO MESMO OK — o balcão recebendo o PRÓPRIO CNPJ/nome não abre pendência falsa';
+end $$;
+
+do $$
+declare
+  v_caso uuid; v_r jsonb;
+  v_balcao uuid; v_doc_b uuid; v_ver_b uuid;
+  v_ent_a uuid; v_doc_a uuid; v_ver_a uuid;
+  v_ent_b uuid; v_doc_bb uuid; v_ver_bb uuid;
+  v_desc text;
+  c_cnpj constant text := '36.193.378/0001-04';
+  c_m constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE MARCAS LTDA';
+  c_s constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE SURUBIJU';
+  c_t constant text := 'OMNIBEAUTY DESENVOLVIMENTO E GESTAO DE';
+  c_a constant text := 'VERTENTES METALURGICA LTDA';
+  c_b constant text := 'OUTRA METALURGICA NOVA SA';
+begin
+  raise notice '--- 7. MÉDIO 1 (0177): a pendência de colisão ACUMULA, não sobrescreve ---';
+  v_caso := (fn_upsert_caso('0177 — colisao acumula descricao'))::uuid;
+
+  perform fn_registrar_documento(v_caso, c_m, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-acc-m.pdf', 'BAL.pdf', true, 'HASH-0177A-M', 'ok');
+  perform fn_registrar_documento(v_caso, c_s, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-acc-s.pdf', 'BAL.pdf', true, 'HASH-0177A-S', 'ok');
+  v_r := fn_registrar_documento(v_caso, c_t, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-acc-b.pdf', 'BAL.pdf', true, 'HASH-0177A-B', 'ok');
+  v_doc_b := (v_r->>'documento_id')::uuid;
+  v_ver_b := (v_r->>'documento_versao_id')::uuid;
+  v_balcao := (select entidade_id from documento where id = v_doc_b);
+  perform fn_registrar_diagnostico(v_doc_b, v_ver_b, c_t, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  -- Primeira colisão: entidade CONFIRMADA A traz o mesmo CNPJ.
+  v_r := fn_registrar_documento(v_caso, c_a, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-acc-a.pdf', 'BAL.pdf', true, 'HASH-0177A-A', 'ok');
+  v_doc_a := (v_r->>'documento_id')::uuid;
+  v_ver_a := (v_r->>'documento_versao_id')::uuid;
+  v_ent_a := (select entidade_id from documento where id = v_doc_a);
+  perform fn_registrar_diagnostico(v_doc_a, v_ver_a, c_a, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  -- Segunda colisão, DEPOIS: entidade CONFIRMADA B, DIFERENTE de A.
+  v_r := fn_registrar_documento(v_caso, c_b, 'ano', '2024', 'BALANCO', 0.99,
+    'nome_arquivo', 'supabase_storage', 's/0177-acc-bb.pdf', 'BAL.pdf', true, 'HASH-0177A-BB', 'ok');
+  v_doc_bb := (v_r->>'documento_id')::uuid;
+  v_ver_bb := (v_r->>'documento_versao_id')::uuid;
+  v_ent_b := (select entidade_id from documento where id = v_doc_bb);
+  perform fn_registrar_diagnostico(v_doc_bb, v_ver_bb, c_b, true, 'BALANCO', 'anual', '12M24',
+    'ok', null, 'resumo', 'justificativa', p_cnpj => c_cnpj);
+
+  perform teste_assert_0176(v_ent_a is distinct from v_ent_b, 'PRÉ-CONDIÇÃO: as duas colidentes são entidades DIFERENTES');
+
+  select descricao into v_desc from pendencia
+   where caso_id = v_caso and motivo = 'entidade_cnpj_colide_balcao:' || v_balcao and estado <> 'resolvida';
+
+  -- ESTE É O ASSERT QUE REPROVA COM A 0177 DESLIGADA (medido nesta sessão): a
+  -- segunda colisão SOBRESCREVIA a descrição inteira — o nome de c_a
+  -- desaparecia da pendência (só sobrava em evento_auditoria).
+  perform teste_assert_0176(v_desc like '%' || c_a || '%',
+    'a descrição continua citando a PRIMEIRA colidente depois da segunda colisão',
+    coalesce(v_desc, '(nulo)'));
+
+  perform teste_assert_0176(v_desc like '%' || c_b || '%',
+    'e cita também a SEGUNDA colidente',
+    coalesce(v_desc, '(nulo)'));
+
+  perform teste_assert_0176(
+    (select count(*) from pendencia where caso_id = v_caso and motivo = 'entidade_cnpj_colide_balcao:' || v_balcao and estado <> 'resolvida') = 1,
+    'e continua sendo UMA pendência só — não uma por colisão');
+
+  raise notice 'ACUMULA OK — a segunda colisão não apaga o rastro da primeira';
+end $$;
+
+do $$
+declare
+  v_corpo text;
+  v_n_generico numeric;
+  v_n_novo numeric;
+begin
+  raise notice '--- 8. MÉDIO 2 (0177): o marcador de balcao_ambiguo_aprende_cnpj prova a CHAMADA real ---';
+  v_corpo := pg_get_functiondef((select oid from pg_proc where proname = 'fn_registrar_diagnostico'));
+
+  v_n_novo := (length(v_corpo) - length(replace(v_corpo, 'v_entidade_id_balcao := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)', '')))
+       / length('v_entidade_id_balcao := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)');
+
+  perform teste_assert_0176(v_n_novo = 1,
+    'o novo marcador (a chamada real dentro do ramo do balcão, com a variável renomeada) aparece EXATAMENTE uma vez',
+    format('%s ocorrência(s)', v_n_novo));
+
+  -- E o texto GENÉRICO antigo (sem a variável renomeada) continua existindo
+  -- só UMA vez — a chamada do ramo `else`, que nunca mudou.
+  v_n_generico := (length(v_corpo) - length(replace(v_corpo, 'v_entidade_id := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)', '')))
+       / length('v_entidade_id := fn_entidade_aprender_cnpj(v_entidade_id, p_cnpj)');
+
+  perform teste_assert_0176(v_n_generico = 1,
+    'e a chamada GENÉRICA (sem a variável renomeada) só existe mais no ramo `else` — deixou de '
+      || 'casar com DOIS lugares',
+    format('%s ocorrência(s) (esperado 1, era 2 antes da 0177)', v_n_generico));
+
+  raise notice 'MARCADOR OK — a chamada do ramo do balcão agora é textualmente única';
+end $$;
