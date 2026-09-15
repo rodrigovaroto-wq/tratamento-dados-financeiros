@@ -549,6 +549,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/balcao_ambiguo_e_cnpj.test.sql
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0176 — o balcão ambíguo parou de absorver quem é confirmado"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/balcao_nao_absorve_confirmada.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \
