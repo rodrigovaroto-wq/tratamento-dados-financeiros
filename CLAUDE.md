@@ -109,6 +109,7 @@ SONDA_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/
 # E a republicação do n8n, que é o passo sem o qual a correção fica no repositório e não no ar.
 # O caminho normal é Actions → "Republicar workflow no n8n"; o script que ela roda é:
 N8N_URL=... N8N_API_KEY=... N8N_WORKFLOW_ID=... bash N8N/republicar.sh
+# N8N_ARQUIVO_REPO escolhe QUAL dos quatro (padrão: a ingestão) — generalizado em 16/09/2026
 
 # portal
 cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \

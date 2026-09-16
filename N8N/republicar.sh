@@ -35,6 +35,11 @@
 #   export N8N_URL="https://seu-n8n"        # sem barra no fim
 #   export N8N_API_KEY="..."                # n8n → Settings → n8n API
 #   export N8N_WORKFLOW_ID="..."            # o id na URL do editor
+#   export N8N_ARQUIVO_REPO="N8N/workflow.macro.json"   # opcional — QUAL dos
+#                                            # quatro workflows publicar; o
+#                                            # padrão continua a ingestão, por
+#                                            # trás de quem já automatizou isso
+#                                            # sem esta variável (F0, fatia 0.3)
 #   ./N8N/republicar.sh
 #
 #   --dry-run   faz tudo menos o PUT (prepara, confere o arquivo, e para)
@@ -55,11 +60,13 @@ for v in N8N_URL N8N_API_KEY N8N_WORKFLOW_ID; do
   [[ -n "${!v:-}" ]] || erro "falta a variável \$$v — veja o cabeçalho deste arquivo"
 done
 N8N_URL="${N8N_URL%/}"
+ARQUIVO_REPO="${N8N_ARQUIVO_REPO:-N8N/workflow.e1-ingestao.json}"
+[[ -f "$ARQUIVO_REPO" ]] || erro "N8N_ARQUIVO_REPO aponta para \"$ARQUIVO_REPO\", que não existe no repositório."
 
 # --- TRAVA 1: a cópia local é a versão que se pretende publicar? -------------
 passo "1/5  a árvore local está atualizada?"
-if [[ -n "$(git status --porcelain -- N8N/workflow.e1-ingestao.json)" ]]; then
-  erro "N8N/workflow.e1-ingestao.json tem mudança não commitada.
+if [[ -n "$(git status --porcelain -- "$ARQUIVO_REPO")" ]]; then
+  erro "$ARQUIVO_REPO tem mudança não commitada.
            Publicar assim sobe algo que não está em nenhum commit — e ninguém
            consegue dizer depois o que foi publicado. Commite ou descarte antes."
 fi
@@ -93,7 +100,7 @@ echo "    ok — $(node -p "JSON.parse(require('fs').readFileSync('$VIVO','utf8'
 
 # --- fundir ------------------------------------------------------------------
 passo "3/5  fundindo comportamento do repositório com a identidade da instalação"
-node N8N/preparar-republicacao.mjs < "$VIVO" > "$PUB" \
+N8N_ARQUIVO_REPO="$ARQUIVO_REPO" node N8N/preparar-republicacao.mjs < "$VIVO" > "$PUB" \
   || erro "preparar-republicacao.mjs falhou — nada foi publicado"
 
 # --- TRAVA 2 e 3: o arquivo a publicar está são? -----------------------------

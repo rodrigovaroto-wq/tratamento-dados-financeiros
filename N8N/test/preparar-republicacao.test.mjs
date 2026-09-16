@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { prepararRepublicacao, credenciaisPendentes, idsDeCredencialDoAmbiente,
-  idsDeCredencialDoPublicado } from '../preparar-republicacao.mjs';
+  idsDeCredencialDoPublicado, arquivoDoRepo } from '../preparar-republicacao.mjs';
 
 // A FUSÃO QUE DEVOLVE O COMPORTAMENTO SEM PISAR NA INSTALAÇÃO.
 //
@@ -292,4 +292,23 @@ test('sem irmão, o mapa do ambiente continua resolvendo — a queda de 11/09 se
   const nos = porNome(prepararRepublicacao({ nodes: [], connections: {}, settings: {} }, REPO_LOTE,
     { idsPorNome: { [PG]: 'id-do-secret' } }));
   assert.equal(nos['Conferir Lote'].credentials.postgres.id, 'id-do-secret');
+});
+
+
+// ---------------------------------------------------------------------------
+// QUAL ARQUIVO PREPARAR — até 16/09/2026 (F0, fatia 0.3) era fixo na ingestão,
+// e os outros três workflows deste repositório não tinham como usar esta
+// fusão. MEDIDO com a escolha desligada (arquivoDoRepo() sempre devolvendo o
+// mesmo valor, como antes desta fatia): os dois primeiros testes abaixo
+// reprovam, porque nada muda quando N8N_ARQUIVO_REPO pede outro workflow.
+
+test('N8N_ARQUIVO_REPO escolhe QUAL workflow preparar', () => {
+  assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: 'N8N/workflow.macro.json' }), 'N8N/workflow.macro.json');
+  assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: 'N8N/workflow.erros.json' }), 'N8N/workflow.erros.json');
+});
+
+test('sem a variável, o padrão continua a ingestão — quem já automatizou isso não muda de alvo', () => {
+  assert.equal(arquivoDoRepo({}), 'N8N/workflow.e1-ingestao.json');
+  assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: '' }), 'N8N/workflow.e1-ingestao.json');
+  assert.equal(arquivoDoRepo({ N8N_ARQUIVO_REPO: '   ' }), 'N8N/workflow.e1-ingestao.json');
 });

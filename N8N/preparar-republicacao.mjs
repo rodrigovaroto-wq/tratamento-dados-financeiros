@@ -236,6 +236,8 @@ export function prepararRepublicacao(vivo, repo, { idsPorNome = {} } = {}) {
 }
 
 /** Os nós que ainda saem com `REPLACE` — o passo manual que sobra. */
+export { arquivoDoRepo };
+
 export function credenciaisPendentes(pronto) {
   const pendentes = [];
   for (const n of pronto.nodes ?? []) {
@@ -248,13 +250,37 @@ export function credenciaisPendentes(pronto) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * QUAL arquivo do repositório preparar — por variável de ambiente, nunca por
+ * argumento posicional (é a mesma convenção de `N8N_CRED_IDS`/`N8N_URL` deste
+ * script, e do `republicar.sh`, que é quem chama isto).
+ *
+ * POR QUE ISTO EXISTE. Até 16/09/2026 este script só sabia preparar
+ * `workflow.e1-ingestao.json` — hardcoded. Os OUTROS TRÊS workflows deste
+ * repositório (`macro`, `erros`, `diagnostico-ia`) não tinham como usar a
+ * mesma fusão que já protege a ingestão (o `id` do nó preservado, o `path` do
+ * formulário, as credenciais por (tipo, nome), o `errorWorkflow` da
+ * instalação) — cada republicação deles teria de repetir esses cinco anos de
+ * incidente à mão, ou arriscar o `PUT` direto que este arquivo existe para
+ * proibir.
+ *
+ * O padrão vazio continua apontando para a ingestão, de propósito: é o único
+ * workflow que tinha uso documentado sem a variável antes desta mudança, e
+ * mudar o padrão silenciosamente trocaria o alvo de quem já automatizou isso.
+ */
+function arquivoDoRepo(env = process.env) {
+  return env.N8N_ARQUIVO_REPO?.trim() || 'N8N/workflow.e1-ingestao.json';
+}
+
 if (ehExecucaoDireta(import.meta.url)) {
   const vivo = await lerWorkflowDaEntradaPadrao([
-    'uso: curl -s -H "X-N8N-API-KEY: $K" "$URL/api/v1/workflows/$ID" \\',
+    'uso: N8N_ARQUIVO_REPO=N8N/workflow.macro.json \\',
+    '     curl -s -H "X-N8N-API-KEY: $K" "$URL/api/v1/workflows/$ID" \\',
     '       | node N8N/preparar-republicacao.mjs > publicar.json',
     '     o JSON do workflow PUBLICADO entra pela entrada padrão; o pronto sai pela saída padrão.',
+    '     N8N_ARQUIVO_REPO escolhe QUAL workflow do repositório preparar — o padrão é a ingestão.',
   ]);
-  const repo = JSON.parse(readFileSync(resolve(RAIZ, 'N8N/workflow.e1-ingestao.json'), 'utf8'));
+  const repo = JSON.parse(readFileSync(resolve(RAIZ, arquivoDoRepo()), 'utf8'));
 
   const pronto = prepararRepublicacao(vivo, repo, { idsPorNome: idsDeCredencialDoAmbiente() });
 
