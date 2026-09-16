@@ -64,6 +64,7 @@ chmod a+w Supabase Supabase/schema.sql
 
 # suítes
 node --test 'N8N/test/*.test.mjs'
+node --test '.claude/hooks/test/*.test.mjs'   # os hooks do agente também têm suíte, e ela é portão
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
@@ -73,6 +74,8 @@ node --test 'N8N/test/*.test.mjs'
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-limite-de-envio.mts
 node .claude/conhecimento/indexar.mjs && git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
   && node .claude/conhecimento/conferir.mjs   # o índice do conhecimento é derivado e tem portão
+node .claude/verificar-comandos.mjs           # todo subagent_type citado por comando existe
+node .claude/verificar-espelho-claude-md.mjs  # este bloco não ficou para trás do CI
 sudo -u postgres env PGHOST=/tmp PGPORT=5432 PGUSER=postgres Supabase/test/run.sh
 CONFERIR_PSQL="sudo -u postgres psql -h /tmp -p 5432" CONFERIR_DB=tdf_test \
   node Supabase/test/conferir-chamadas.mjs

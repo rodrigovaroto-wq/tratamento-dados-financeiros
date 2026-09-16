@@ -32,10 +32,13 @@ defeito mais caro daqui.
 ## 3. Planejar em fatias
 
 Uma fatia por commit. Para cada uma: o defeito, a causa medida, o invariante que vai prová-la, e
-quem executa — a sessão principal por padrão, ou o especialista de `.claude/agents/` cuja linha
-casa o arquivo (`migrations-postgres`, `n8n-workflow`, `portal-export`). Delegar só quando o
-checklist do domínio for o que decide o resultado; caso contrário o contexto novo custa mais do
-que rende.
+quem executa — a sessão principal por padrão, ou o especialista cuja linha casa o arquivo:
+`subagent_type: "migrations-postgres"` para o banco, `subagent_type: "n8n-workflow"` para os
+geradores e nós Code, `subagent_type: "portal-export"` para o portal e o arquivo entregue.
+Delegar só quando o checklist do domínio for o que decide o resultado; caso contrário o contexto
+novo custa mais do que rende. (As citações são nesta grafia de propósito: é assim que
+`verificar-comandos.mjs` confere que o nome ainda existe. Em prosa, um agente renomeado passa
+pelo portão e falha na hora do despacho.)
 
 Onda paralela só quando **as duas** condições valem (sem dependência **e** `Files:` disjuntos,
 derivados incluídos) — `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.

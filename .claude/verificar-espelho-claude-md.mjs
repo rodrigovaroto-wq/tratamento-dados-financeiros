@@ -23,40 +23,64 @@
 // Uso:  node .claude/verificar-espelho-claude-md.mjs
 // Saída: exit 0 = espelho em dia; exit 1 = lista o que falta de cada lado.
 import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const CI = '.github/workflows/suites.yml';
-const DOC = 'CLAUDE.md';
+// Caminhos ancorados na RAIZ do repositório, nunca no diretório de onde se chamou. O bloco
+// canônico do CLAUDE.md deixa a sessão dentro de `portal/` (o `npm ci` é lá), e o passo 5 do
+// `/fechar` chama este portão logo depois — com caminho relativo ao cwd ele morria com um stack
+// trace de ENOENT, que é o mesmo defeito que `verificar-comandos.mjs` teve de corrigir.
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
+const CI = join(RAIZ, '.github/workflows/suites.yml');
+const DOC = join(RAIZ, 'CLAUDE.md');
 
-// Uma família por linha: o que se procura, e o nome que entra na mensagem de erro.
+// Uma família por linha: o que se procura, e o nome que entra na mensagem de erro. As duas
+// últimas entraram em 16/09/2026, na primeira revisão deste próprio portão: ele nascia cego para
+// a suíte dos hooks e para os DOIS portões de `.claude/` — inclusive ele mesmo —, ou seja, o
+// modo de falha que ele existe para pegar sobrevivia exatamente nas peças novas.
 const FAMILIAS = [
   { nome: 'suítes de verificação do portal', padrao: /portal\/scripts\/verificar-[a-z0-9-]+\.mts/g },
   { nome: 'medidores', padrao: /N8N\/medir-[a-z0-9-]+\.mjs/g },
+  { nome: 'portões de .claude', padrao: /\.claude\/verificar-[a-z-]+\.mjs/g },
+  { nome: 'suíte dos hooks', padrao: /\.claude\/hooks\/test\/\*\.test\.mjs/g },
 ];
 
 const ler = (p) => readFileSync(p, 'utf8');
 const citados = (texto, padrao) => new Set(texto.match(padrao) ?? []);
 
-const ci = ler(CI);
-const doc = ler(DOC);
+// Só conta o que é COMANDO dos dois lados, e a razão é medida: ao acrescentar a família dos
+// portões de `.claude`, o espelho fechou verde mesmo com a linha apagada do bloco canônico —
+// porque o nome do portão aparece também na PROSA do CLAUDE.md. Citação em comentário de YAML ou
+// em parágrafo explicativo não faz ninguém rodar nada; contá-la transforma o portão em enfeite.
+const semComentario = (yaml) =>
+  yaml.split('\n').filter((l) => !l.trimStart().startsWith('#')).join('\n');
+const soOsBlocosDeComando = (md) =>
+  (md.match(/```bash\n[\s\S]*?```/g) ?? []).join('\n');
+
+const ci = semComentario(ler(CI));
+const doc = soOsBlocosDeComando(ler(DOC));
 const problemas = [];
 
 for (const { nome, padrao } of FAMILIAS) {
   const noCi = citados(ci, new RegExp(padrao.source, 'g'));
   const noDoc = citados(doc, new RegExp(padrao.source, 'g'));
 
-  for (const f of noCi) if (!noDoc.has(f)) problemas.push(`${nome}: o CI roda \`${f}\` e o ${DOC} não cita`);
-  for (const f of noDoc) if (!noCi.has(f)) problemas.push(`${nome}: o ${DOC} manda rodar \`${f}\` e o CI não roda`);
+  for (const f of noCi) if (!noDoc.has(f)) problemas.push(`${nome}: o CI roda \`${f}\` e o CLAUDE.md não cita`);
+  for (const f of noDoc) if (!noCi.has(f)) problemas.push(`${nome}: o CLAUDE.md manda rodar \`${f}\` e o CI não roda`);
 
   // E o espelho pode estar em dia dos dois lados apontando para um arquivo que a renomeação
   // levou embora — que foi exatamente como as regras do `lembrar-derivados` morreram.
   for (const f of new Set([...noCi, ...noDoc])) {
-    if (!existsSync(f)) problemas.push(`${nome}: \`${f}\` é citado mas não existe no repositório`);
+    // Citação com `*` é glob (a suíte dos hooks roda por glob nos dois lados): o que tem de
+    // existir é o diretório, não um arquivo com asterisco no nome.
+    const alvo = f.includes('*') ? dirname(f) : f;
+    if (!existsSync(join(RAIZ, alvo))) problemas.push(`${nome}: \`${f}\` é citado mas não existe no repositório`);
   }
 }
 
 if (problemas.length === 0) {
   const total = FAMILIAS.map(({ nome, padrao }) => `${citados(ci, new RegExp(padrao.source, 'g')).size} ${nome}`).join(', ');
-  console.log(`espelho OK — ${total}, iguais no ${CI} e no ${DOC}`);
+  console.log(`espelho OK — ${total}, iguais no .github/workflows/suites.yml e no CLAUDE.md`);
   process.exit(0);
 }
 console.error(`*** o CLAUDE.md e o CI divergem em ${problemas.length} ponto(s) ***\n`);
