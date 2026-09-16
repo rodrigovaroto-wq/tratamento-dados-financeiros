@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Estado** | ACEITA em 16/09/2026 (F0, fatia 0.6) — com **uma fronteira que é decisão do dono**, marcada abaixo |
+| **Estado** | ACEITA em 16/09/2026 (F0, fatia 0.6). A fronteira motor×planilha, aberta na primeira versão, foi **DECIDIDA pelo dono no mesmo dia** — leitura (a), abaixo |
 | **Origem** | `ARQUITETURA_ALVO_E_ROADMAP.md`, camada L5 (motor de cálculo, F7) |
 | **Governa** | F1 a F17, e principalmente F7 |
 
@@ -39,23 +39,32 @@ restrição que ela impõe:
 Ou seja: **o sistema de hoje não cumpre esta ADR**, e o roadmap sabe disso — o motor é F7. Esta
 ADR é a restrição que impede a quinta casa de nascer enquanto ele não existe.
 
-## A fronteira que NÃO é decisão de engenharia
+## A fronteira motor × planilha — DECIDIDA pelo dono em 16/09/2026
 
 A quarta casa é diferente das outras três, e a diferença é doutrina escrita:
 **"a planilha tem de continuar viva: fórmula lendo a aba Macro, nunca valor escrito"**. O cliente
-mexe nas premissas e o modelo responde — é o produto, não um atalho.
-
-Então "toda aritmética no motor" e "planilha viva" só convivem sob uma destas leituras, e
-**escolher entre elas é do dono**:
+mexe nas premissas e o modelo responde — é o produto, não um atalho. Então "toda aritmética no
+motor" e "planilha viva" só conviviam sob duas leituras possíveis, e a escolha era do dono:
 
 - **(a) o motor calcula, a planilha recalcula o mesmo** — a fórmula do Excel é uma *reimplementação
   declarada* do motor, e algum portão tem de provar que as duas concordam sobre o mesmo insumo;
-- **(b) a planilha é o motor do que é interativo** — o motor entrega o realizado e as premissas, e
-  a projeção vive só na fórmula; o que o motor calcula, ele não duplica em fórmula.
+- ~~(b) a planilha é o motor do que é interativo~~ — descartada.
 
-Enquanto esta escolha não for feita, esta ADR vale integralmente para as **três primeiras casas**
-e está **suspensa** para a quarta — dito aqui, e não resolvido em silêncio por quem implementar
-F7 primeiro.
+**Escolhida a leitura (a): "o sistema deve verificar, não duplicar."** A fórmula do Excel
+continua existindo — é o produto, o cliente mexe na premissa e vê o modelo responder — mas ela
+NUNCA é a fonte da verdade do número. O motor calcula; a fórmula reimplementa o mesmo cálculo
+para ficar interativa; e um portão roda os dois sobre o mesmo insumo e **reprova se divergirem**.
+
+**O que isso obriga, e que ainda não existe (é conteúdo de F7, não desta ADR):**
+1. o motor (quando existir) expõe uma função por número que a planilha também calcula;
+2. o portão de concordância gera o book, lê o valor que a fórmula do Excel produziu (via
+   avaliação da planilha, não por inspeção da fórmula em texto) e compara com o que o motor
+   calculou para o MESMO insumo;
+3. divergência é FALHA do portão, nunca "diferença aceitável" — a régua é `avaliarCelula`, que
+   já existe em `portal/scripts/` para outro propósito, com a limitação conhecida de não
+   seguir referência entre abas (`.claude/memory/avaliarcelula-nao-cruza-abas.md`);
+4. até o motor existir (F7), esta obrigação fica registrada aqui e não é medível — nada no
+   portal hoje calcula fora da fórmula para comparar contra ela.
 
 ## O que isto proíbe desde já
 
