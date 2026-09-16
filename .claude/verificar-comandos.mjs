@@ -22,13 +22,18 @@
 //
 // Uso:  node .claude/verificar-comandos.mjs
 // Saída: exit 0 = todos resolvem; exit 1 = lista os que não resolvem.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const RAIZ = new URL('.', import.meta.url).pathname;
 
+// Diretório ausente é ZERO arquivos, não erro. MEDIDO em 16/09/2026: ao remover os 52
+// comandos importados, o `git rm` levou o diretório junto e este portão morreu com um
+// stack trace de ENOENT — a forma mais inútil de falhar, porque não diz nada sobre
+// citação nenhuma. Portão que quebra por ausência é pior que portão nenhum.
 function md(dir) {
   const saida = [];
+  if (!existsSync(dir)) return saida;
   for (const nome of readdirSync(dir)) {
     const caminho = join(dir, nome);
     if (statSync(caminho).isDirectory()) saida.push(...md(caminho));
