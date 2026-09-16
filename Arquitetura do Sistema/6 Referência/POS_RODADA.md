@@ -295,9 +295,11 @@ Esta é a parte que impede o problema de **reaparecer**, e não é comando nenhu
    passa a acusar.
 4. **Memória**, quando uma sessão futura ficaria surpresa e grata de saber antes de começar.
 
-E sobre os comandos importados em `.claude/commands/`: **não comece por `/smart-fix` nem
-`/full-review`.** Eles pulam para a correção e não conhecem a lente central deste projeto — o
-defeito que não produz erro. Servem como segunda opinião depois que a causa está estabelecida.
+Os comandos importados que diziam fazer isso (`/smart-fix`, `/full-review`) foram removidos em
+16/09/2026 — pulavam para a correção sem a lente central deste projeto, o defeito que não produz
+erro. No lugar deles: `/rodada` (o fluxo desta casa, teste → diagnóstico → plano → execução →
+teste) e `/revisar` (o painel reduzido ao que agrega: `revisor-defeito-silencioso` + fidelidade do
+número, e a lente do portal só quando o diff toca `portal/`).
 
 ---
 

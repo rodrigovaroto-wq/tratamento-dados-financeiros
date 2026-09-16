@@ -87,15 +87,15 @@ Legenda: KEEP · REFACTOR · REBUILD · EXTEND · DEPRECATE · REMOVE · MISSING
 | CI (28 passos) | **KEEP + EXTEND** | Falta aplicar migration, conferir n8n publicado, Sonar Quality Gate |
 | `.claude/conhecimento` | **KEEP** | Infraestrutura de sessão genuinamente boa |
 | 7 agentes do projeto | **KEEP + EXTEND** | Faltam **`motor-financeiro`** e **`ontologia-contabil`** |
-| 30 agentes `importado.*` + 52 comandos | **DEPRECATE** | 43 agentes para 7 úteis. Apagar comandos e agentes juntos |
+| 30 agentes `importado.*` + 52 comandos | **FEITO em 16/09/2026** | Removidos juntos; 7 agentes e 3 comandos escritos aqui. Procedência em `.claude/COMANDOS.md` |
 | `ESTADO.md` + `HANDOFF.md` (11.587 linhas) | **REFACTOR** | Cabeçalho curto sob portão; histórico particionado |
 | `PRONTIDAO_POR_ESTAGIO.md` | **REBUILD** | 35 sessões atrasado. Regerar do banco e do CI, não à mão |
 | `00_VISAO_E_ESCOPO.md` | **REBUILD** | Declara escopo negativo que o próprio código já ultrapassou |
 
 ### 1.5 O que remover
 
-Os 52 comandos importados + 30 agentes `importado.*`; `medir-fase0-denominador.mjs` se não for
-adotado. **Nada mais.** Não há código morto relevante: o que parece morto está DECLARADO como
+~~Os 52 comandos importados + 30 agentes `importado.*`~~ — **removidos em 16/09/2026**;
+`medir-fase0-denominador.mjs` se não for adotado. **Nada mais.** Não há código morto relevante: o que parece morto está DECLARADO como
 não-lido, o que é honestidade, não lixo.
 
 ### 1.6 MISSING (novo de verdade)

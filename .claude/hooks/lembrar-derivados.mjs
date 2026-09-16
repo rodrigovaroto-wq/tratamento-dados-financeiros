@@ -19,21 +19,25 @@ if (typeof caminho !== "string" || !caminho) process.exit(0);
 
 const regras = [
   {
-    quando: /n8n\/(build-workflow[^/]*\.mjs|lib\/)/,
+    // `N8N/` maiúsculo: a regex é sensível a caixa, e escrever `n8n/` deixou esta regra muda
+    // desde a renomeação de agosto — medido em 16/09/2026 por `test/lembrar-derivados.test.mjs`.
+    quando: /N8N\/(build-workflow[^/]*\.mjs|lib\/)/,
     aviso:
       "Você tocou a fonte dos workflows. Rode os QUATRO geradores e confira `git diff --exit-code -- N8N/`: " +
       "é o JSON commitado que o dono importa. E `node --test 'N8N/test/*.test.mjs'` — um backtick num " +
       "comentário do `jsCode` quebra o nó, e o gerador não parseia.",
   },
   {
-    quando: /db\/migrations\/\d{4}_/,
+    // Era `db/migrations/`, diretório que este repositório não tem desde a renomeação.
+    quando: /Supabase\/migrations\/\d{4}_/,
     aviso:
       "Migration nova: (a) acrescente o requisito ao catálogo da sonda — o `run.sh` reprova se ele ficar " +
       "para trás; (b) rode `Supabase/test/run.sh` e commite o `Supabase/schema.sql` que ele reescreve; (c) o topo do " +
       "`ESTADO.md` tem de citar esta migration; (d) escrita ≠ aplicada — só a sonda responde por produção.",
   },
   {
-    quando: /test-data\/[^/]+\/(motor|gerar)\.py|db\/test\/gerar_fixture/,
+    // Era `test-data/` e `db/test/`; hoje são `Dados de Teste/` e `Supabase/test/`.
+    quando: /Dados de Teste\/[^/]+\/(motor|gerar)\.py|Supabase\/test\/gerar_fixture/,
     aviso:
       "Você mexeu no gerador do book. As TRÊS fixtures derivadas (o `.sql` do banco, o `.json` do export e " +
       "o `GABARITO.json`) se comparam entre si — desincronizar uma faz as outras duas mentirem sobre a " +

@@ -158,6 +158,13 @@ jobs:
         # Ela também trava o fail-open: `JSON.parse("null")` devolve null SEM lançar, e um hook
         # que morre com stack trace vira um bloqueio acidental — no SessionStart, um que pode
         # impedir a sessão de começar.
+        #
+        # E desde 16/09 ela cobre o OUTRO erro do hook fail-open, o silencioso: `lembrar-derivados`
+        # passou semanas com 3 das 4 regras casando caminhos que a renomeação de agosto extinguiu
+        # (`n8n/`, `db/migrations/`, `test-data/`) — 4 das 5 entradas reais saíam mudas, e nada
+        # acusava, porque lembrete ausente é idêntico a lembrete sem o que dizer. O glob abaixo já
+        # inclui a suíte nova; ela exige que o caminho de exemplo de cada regra EXISTA, que é o que
+        # descobre a próxima renomeação.
         run: node --test '.claude/hooks/test/*.test.mjs'
 
       - name: Geradores de workflow — e o gerado tem de ser igual ao commitado
@@ -273,12 +280,24 @@ jobs:
 
       - name: Portão dos comandos de barra (todo subagent_type existe)
         # Despacho para `subagent_type` inexistente falha em tempo de execução, e
-        # o comando só descobre isso no meio de uma tarefa de alguém. Os 52
-        # comandos vieram de um MARKETPLACE, onde o nome do agente é qualificado
-        # pelo plugin — e fora dele nenhum desses nomes resolve. Medido na
-        # primeira execução: 57 citações quebradas, 30 nomes distintos, 13
-        # comandos. Não precisa de banco nem de build; roda em segundos.
+        # o comando só descobre isso no meio de uma tarefa de alguém. Medido na
+        # primeira execução, contra os 52 comandos importados: 57 citações
+        # quebradas, 30 nomes distintos, 13 comandos. Aqueles 52 saíram em
+        # 16/09/2026 (`.claude/COMANDOS.md`) e o portão continua valendo para os
+        # três escritos aqui. Não precisa de banco nem de build; roda em segundos.
         run: node .claude/verificar-comandos.mjs
+
+      - name: Espelho CLAUDE.md ↔ CI (suítes e medidores)
+        # O CLAUDE.md é lido por TODA sessão e é dele que sai a lista do que se
+        # roda aqui. Quando ele fica para trás deste arquivo, ele manda a sessão
+        # seguinte rodar MENOS do que o portão cobra — e ela relata "baseline
+        # completa" sobre medição que não existe. Aconteceu duas vezes, as duas
+        # achadas por acidente: sessão 82 (duas suítes fora, 18 asserts) e sessão
+        # 86 (os dois medidores fora). O CLAUDE.md documentava os `grep` que
+        # conferem isso; grep que alguém precisa lembrar de rodar não é portão.
+        # Medido em 16/09/2026 com o espelho quebrado de propósito: 4 divergências
+        # acusadas, incluindo arquivo citado que não existe.
+        run: node .claude/verificar-espelho-claude-md.mjs
 
       - name: Suíte de export (invariantes do arquivo entregue)
         # O binário do lock, chamado por caminho. `npx tsx` NÃO serve aqui, e isto

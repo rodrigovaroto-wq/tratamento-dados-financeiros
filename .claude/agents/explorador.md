@@ -1,6 +1,6 @@
 ---
 name: explorador
-description: Descobrir onde uma coisa mora antes de planejar — qual função, qual migration, qual nó. Use quando a pergunta é "onde isso acontece", não "como consertar".
+description: Mapear onde uma coisa mora, em fan-out por vários diretórios. Use SÓ depois que `buscar.mjs` devolveu pouco ou NADA ENCONTRADO — no caso normal a sessão principal roda `buscar.mjs` direto, que é um comando de Bash.
 model: haiku
 ---
 
