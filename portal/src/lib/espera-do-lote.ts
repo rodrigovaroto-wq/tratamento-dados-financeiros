@@ -112,29 +112,40 @@ export const INTERVALO_ACOMPANHAMENTO_MS = 8000;
 // teto de TPM corretamente e, no mesmo movimento, copiou o piso de batching
 // para cá — trocou o custo do documento pelo custo da chamada.
 //
-// MEDIDO EM RELÓGIO, contra a rodada real, não contra a aritmética das
+// MEDIDO EM RELÓGIO, contra rodadas reais, não contra a aritmética das
 // chamadas (que é o que errou das outras vezes). Cruzando a duração da execução
 // no n8n com o `lote_execucao` do banco:
 //
-//   execução #7747, 14/09 17:55:51 → 18:10:20 ... 44 documentos em 14min29
-//   (869s) = **19,7s por documento** — é a rodada limpa DEPOIS da correção do
-//   TPM, no mesmo regime de cadência que vale hoje.
+//   execução #7747, 14/09 17:55:51 → 18:10:20 ... 44 documentos em 869s
+//                                                 = 19,7s por documento
+//   execução #7851, 16/09 21:56:37 → 22:17:14 ... 49 documentos em 1237s
+//                                                 = **25,2s por documento**
 //
-//   (A rodada #7723, de 13/09, levou 1h28 para os mesmos 44 documentos — mas
-//   era o TPM no piso de Tier 1, regime que não existe mais. Não serve de
-//   calibração, serve de contraste.)
+//   As duas são rodadas limpas DEPOIS da correção do TPM, no regime de cadência
+//   que vale hoje. A #7851 é o lote 1 real do "Teste 00" (49 documentos, 47 com
+//   linha, custo US$ 0,18), e foi ela que desmentiu a primeira calibração desta
+//   mesma sessão — 20 tinha saído só da #7747 e já nasceu curto.
 //
-// 20 é 19,7 arredondado PARA CIMA, pela doutrina de sempre deste arquivo:
-// errar para o lento atrasa, errar para o rápido faz a tela mentir. E 20
-// respeita a faixa que `workflow-sim.test.mjs` exige — entre uma chamada (6s) e
-// quatro (24s) —, que é o teto que existe justamente para a estimativa não
-// descolar da cadência de novo.
+//   (A rodada #7723, de 13/09, levou 1h28 para 44 documentos — mas era o TPM no
+//   piso de Tier 1, regime que não existe mais. Não serve de calibração, serve
+//   de contraste.)
+//
+// 26 é 25,2 arredondado PARA CIMA, pela doutrina de sempre deste arquivo: errar
+// para o lento atrasa, errar para o rápido faz a tela mentir. Tomamos o PIOR
+// caso medido, não a média das duas — pela mesma razão.
+//
+// POR QUE A RAZÃO CONTRA A CADÊNCIA SUBIU (26 ÷ 6 ≈ 4,3×, e o teto antigo de
+// `workflow-sim.test.mjs` era 4×): parte do custo de um documento NÃO escala com
+// a cadência. `PREPARO_POR_ARQUIVO_S` (upload, leitura do texto, medição) é
+// aditivo e fixo. Quando a cadência era 73s ele sumia no ruído; com a cadência
+// em 6s ele é um quinto do total. O teto passou a somá-lo em vez de multiplicar
+// só a cadência — ver o comentário do assert lá.
 //
 // O QUE MUDA ESTE NÚMERO: qualquer coisa que mude o tempo de ponta a ponta de
 // um documento — a cadência dos nós de IA, o provedor, ou o peso do preparo.
 // E a forma de mudá-lo é a mesma que o produziu: cronometrar uma rodada real e
 // dividir pelo número de documentos. Não refazer a conta das chamadas.
-export const SEGUNDOS_POR_DOCUMENTO = 20;
+export const SEGUNDOS_POR_DOCUMENTO = 26;
 
 // A ESTIMATIVA É UMA FUNÇÃO SÓ, e isso não é preciosismo. Ela aparece em DOIS
 // lugares — antes de enviar (para decidir se espera) e depois (para acompanhar)

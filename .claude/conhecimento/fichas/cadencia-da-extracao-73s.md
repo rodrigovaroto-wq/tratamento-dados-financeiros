@@ -9,7 +9,7 @@ toca:
   - N8N/lib/extract.mjs
 prova: portal/scripts/verificar-mensagem-de-falha.mts
 ancora: portal/src/lib/espera-do-lote.ts#SEGUNDOS_POR_DOCUMENTO
-ancora_sha: a44a073e5738
+ancora_sha: e371ff572bd0
 ---
 
 # A cadência da extração ERA 73 s — hoje é 6 s, e o motivo trocou de time
@@ -94,10 +94,19 @@ para um lote que levava muito mais, durante a rodada real do "Teste 00".
 classificação por conteúdo quando o nome não resolve, uma ou MAIS extrações (documento fatiado
 faz várias) e as escritas no banco. A cadência é o piso de UM desses passos.
 
-**Medido em relógio, e é a única forma honesta de saber:** execução `#7747` do workflow de
-ingestão, 14/09/2026 das 17:55:51 às 18:10:20 no n8n, com o `lote_execucao` gravado dentro dessa
-janela declarando 44 documentos — **869 s ÷ 44 = 19,7 s por documento**, contra os 6 s de
-cadência. `SEGUNDOS_POR_DOCUMENTO` passou a 20 (arredondado para cima).
+**Medido em relógio, e é a única forma honesta de saber** — duas rodadas, não uma:
+
+| execução | quando | documentos | duração | s/documento |
+|---|---|---|---|---|
+| `#7747` | 14/09 17:55:51 → 18:10:20 | 44 | 869 s | 19,7 |
+| `#7851` | 16/09 21:56:37 → 22:17:14 | 49 | 1237 s | **25,2** |
+
+`SEGUNDOS_POR_DOCUMENTO` passou a **26** — o pior caso medido, arredondado para cima.
+
+**E UMA RODADA SÓ NÃO BASTOU, medido na mesma sessão:** a primeira correção de 16/09 tinha só a
+`#7747` e fixou 20. Horas depois a `#7851` — o lote 1 real do "Teste 00" — veio a 25,2 s e
+desmentiu o 20. Uma rodada descreve uma rodada; o que a tela promete tem de cobrir o pior caso
+já visto, e o portão agora confere contra as DUAS.
 
 **A regra que fica:** esta ficha responde "quanto custa uma CHAMADA". Quem quiser saber "quanto
 demora um DOCUMENTO" cronometra uma rodada real e divide pelo número de documentos — nunca
