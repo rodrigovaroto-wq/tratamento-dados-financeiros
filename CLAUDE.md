@@ -12,7 +12,7 @@ com modelo de FP&A vivo em fórmula.
 
 | Arquivo | Pergunta que responde |
 |---|---|
-| `node .claude/conhecimento/buscar.mjs "<assunto>"` | **Comece por aqui.** Devolve, em um comando, as fichas, os arquivos com linha, o portão que prova cada coisa e os commits do assunto — sem abrir nada. Medido: as cinco perguntas de `BASELINE.md` caíram de 50.245 para 10.667 bytes |
+| `node .claude/conhecimento/buscar.mjs "<assunto>"` | **Comece por aqui, sempre — vale para a sessão principal e para todo agente despachado.** Devolve, em um comando, as fichas, os arquivos com linha, o portão que prova cada coisa e os commits do assunto — sem abrir nada. Medido: as cinco perguntas de `BASELINE.md` caíram de 50.245 para 10.667 bytes. Quando ele responde **"NADA ENCONTRADO"**, isso é "procurei e não achei" — e só aí vale o `grep` |
 | `ESTADO.md` (topo) | **Onde estamos agora** — última migration, suítes, a rodada mais recente |
 | `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` | **O que falta até fechar**, em ordem, com critério de pronto |
 | `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` | O projeto medido contra o próprio objetivo, estágio por estágio |
@@ -93,19 +93,14 @@ cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \
   && ./node_modules/.bin/next build
 ```
 
-> **E o espelho JÁ ficou para trás — medido na sessão 82.** O CI rodava **seis** suítes de
-> verificação e este bloco listava **quatro**: faltavam `verificar-kit-basico.mts` (que entrou no
-> portão em 03/09, depois de ficar FORA dele) e `verificar-modelagem-cobertura.mts`. As duas
-> existiam, as duas rodavam no CI, e nenhuma sessão que seguisse este arquivo as executava — foi
-> exatamente assim que a sessão 82 rodou a "baseline completa" sem 18 asserts. **Quem acrescenta
-> suíte ao CI acrescenta a linha aqui na mesma passada**, e o jeito de conferir em dez segundos é
-> `grep -oE 'portal/scripts/verificar-[a-z-]+\.mts' .github/workflows/suites.yml CLAUDE.md | sort -u`.
-> **E a mesma conferência vale para os MEDIDORES**, que ficaram para trás pelo mesmo motivo
-> e foram achados na sessão 86: `medir-regua-cobertura.mjs` e `medir-custo-book.mjs` rodavam no
-> CI e não estavam aqui — e o primeiro nem roda sem o `book-canastra`, que também faltava no
-> preparo acima. O comando é
-> `grep -oE 'N8N/medir-[a-z0-9-]+\.mjs' .github/workflows/suites.yml CLAUDE.md | sort | uniq -c`
-> — cada script tem de aparecer DUAS vezes.
+> **E o espelho JÁ ficou para trás DUAS vezes — sessões 82 e 86.** Na 82 o CI rodava seis suítes
+> de verificação e este bloco listava quatro (`verificar-kit-basico.mts` e
+> `verificar-modelagem-cobertura.mts` faltavam): a "baseline completa" daquela sessão saiu sem 18
+> asserts. Na 86 foram os dois MEDIDORES, que rodavam no CI e não estavam aqui — e um deles nem
+> roda sem o `book-canastra`, cujo preparo também faltava acima. **Quem acrescenta suíte ou medidor
+> ao CI acrescenta a linha aqui na mesma passada**, e desde 16/09/2026 isso não depende mais de
+> ninguém lembrar: `node .claude/verificar-espelho-claude-md.mjs` roda no CI e reprova a
+> divergência dos dois lados, inclusive arquivo citado que não existe mais.
 
 `npx` **não** serve no lugar de `./portal/node_modules/.bin/<bin>` — para o `tsx`, o `tsc`, o
 `eslint` ou o `next`: sem o binário do lock, o npx baixa a última versão publicada no dia. Esta
@@ -124,15 +119,23 @@ cuja linha casa com a tarefa — os arquivos estão em `.claude/agents/`.
 | `migrations-postgres` | Migration, função SQL, sonda, `Supabase/test/*.sql` | médio |
 | `n8n-workflow` | Geradores, `N8N/lib/*`, nós Code, republicação | médio |
 | `portal-export` | `portal/src/**`, `export.ts`, endereços de célula | médio |
-| `suites-invariantes` | Escrever um invariante novo e **medi-lo não-vazio** | médio |
+| `suites-invariantes` | Executar o protocolo de invariante não-vazio (condicional) | médio |
 | `revisor-defeito-silencioso` | Revisar um diff sob a lente central do projeto | forte |
 | `estado-e-handoff` | Atualizar `ESTADO.md`, `MAPA`, memória, PR | barato |
-| `explorador` | Mapear onde uma coisa mora, antes de planejar | barato |
+| `explorador` | Fan-out amplo, só depois de `buscar.mjs` vir vazio (condicional) | barato |
 
-Existem também **30 agentes `importado.*`** em `.claude/agents/`, e eles NÃO são desta lista: só
-existem para que os 13 comandos de barra que os citam não morram em `Agent type not found`
-(`.claude/COMANDOS.md`). **Trabalho do projeto vai para os sete acima**, sempre — nenhum
-importado conhece as sete regras. O portão que mantém isso honesto é `node .claude/verificar-comandos.mjs`.
+**Estes sete são a lista inteira.** Os 30 agentes `importado.*` e os 52 comandos de barra
+importados foram removidos em 16/09/2026: custavam 19.439 bytes de `description` no prompt de
+TODA sessão, nenhum conhecia as sete regras, e três contradiziam a regra 2 (`/test-generate`,
+`/tdd-green`, `/sql-migrations`). A procedência ficou em `.claude/COMANDOS.md`. Sobraram três
+comandos escritos aqui — `/rodada`, `/revisar`, `/fechar` —, e o portão que prova que todo
+`subagent_type` citado existe é `node .claude/verificar-comandos.mjs`.
+
+**Dois dos sete são condicionais, não automáticos.** `explorador` só quando
+`buscar.mjs` devolveu pouco E a busca é ampla (fan-out por vários diretórios) — no caso normal a
+sessão principal roda `buscar.mjs` direto, que é um comando de Bash. `suites-invariantes` só
+quando o protocolo de medir não-vazio vai de fato ser EXECUTADO (desligar a correção, contar os
+asserts, religar); lembrar que a regra existe não é motivo para abrir um contexto novo.
 
 **Nível de modelo é escolhido por despacho, nunca herdado por acidente.** Despacho paralelo
 (ondas) só quando **as duas** condições valem: sem dependência entre as tarefas **e** conjuntos
