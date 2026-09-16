@@ -60,10 +60,21 @@ negociação com bancos (que nem deveria estar neste sistema).
 - A fonte única da verdade do **estado** de cada caso.
 
 **O que o sistema NÃO é (escopo negativo explícito)**
-- Não é ferramenta de modelagem financeira.
 - Não é motor de decisão contábil.
 - Não decide estratégia de negociação.
 - Não substitui o julgamento do analista — o **habilita** com dado confiável.
+
+> **DECISÃO DO DONO em 16/09/2026 (F0, fatia 0.6) — o item "não é ferramenta de modelagem
+> financeira" SAIU desta lista.** Ele já contradizia o código: o portal exporta um book em
+> Excel com modelo de FP&A vivo em fórmula (`modelo-institucional.ts`, 30 pontos de fórmula
+> gerados), e é isso que a F0 existia para parar de deixar acontecer em silêncio — ver
+> `ARQUITETURA_ALVO_E_ROADMAP.md`, `ADR-02`.
+>
+> A leitura oficial: **o produto é o sistema completo, com todas as fases integradas — a
+> modelagem financeira é UMA PARTE dele, não o produto final.** O que continua valendo do
+> texto original, e por isso NÃO virou modelagem automática: normalizar EBITDA, julgar
+> recorrente vs não-recorrente, e decidir premissa continuam sendo do analista. O sistema
+> monta a base e calcula em cima dela; não substitui o julgamento.
 
 **Personas**
 - **Analista Oria** (foco inicial): revisa extração/pendências, corrige, solicita reenvio.

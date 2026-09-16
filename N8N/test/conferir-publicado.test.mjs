@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { conferir } from '../conferir-publicado.mjs';
+import { conferir, escolherDoRepo, WORKFLOWS_DO_REPO } from '../conferir-publicado.mjs';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const RAIZ_REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // O CONFERIDOR DO QUE ESTÁ PUBLICADO — e por que ele precisa de teste próprio.
 //
@@ -174,4 +179,47 @@ test('e o nó desabilitado volta a acusar se alguém o LIGAR no editor sem crede
     'ligado e sem credencial: o perdão não vale mais');
   assert.ok(achados.includes('Upload Storage.disabled'),
     'e o próprio `disabled` divergente continua sendo acusado');
+});
+
+// ---------------------------------------------------------------------------
+// A ESCOLHA DO ARQUIVO DO REPOSITÓRIO — a metade que não era testada.
+//
+// O `conferir()` acima sempre teve suíte. O que NÃO tinha era a pergunta anterior a ele:
+// contra QUAL dos quatro workflows o publicado está sendo comparado? Até 16/09/2026 a resposta
+// era "contra a ingestão, sempre", fixa no código — e o efeito, MEDIDO antes da correção,
+// alimentando o próprio JSON commitado de cada workflow no script:
+//
+//     macro       55 divergências        erros          44 divergências
+//     diagnóstico 46 divergências        ingestão       13 (estas legítimas: `REPLACE` em nó ligado)
+//
+// As 145 primeiras eram FALSAS: o conferidor comparava dois workflows diferentes e relatava a
+// diferença entre eles como se fosse deriva da publicação. Três dos quatro workflows não tinham
+// conferência nenhuma; o quarto tinha uma que mentia quando apontada para o alvo errado.
+// Pior que não conferir, porque parece trabalho a fazer.
+
+test('cada workflow publicado escolhe o SEU arquivo do repositório, pelo `name`', () => {
+  for (const caminho of WORKFLOWS_DO_REPO) {
+    const doRepo = JSON.parse(readFileSync(resolve(RAIZ_REPO, caminho), 'utf8'));
+    const escolhido = escolherDoRepo({ name: doRepo.name, nodes: [], connections: {} });
+    assert.equal(escolhido?.caminho, caminho, `o workflow "${doRepo.name}" foi parar em ${escolhido?.caminho}`);
+  }
+});
+
+test('nome desconhecido devolve null — o conferidor NUNCA escolhe um alvo por padrão', () => {
+  // É esta asserção que impede o retorno do defeito: um palpite produz uma lista de achados que
+  // parece deriva da publicação e é só a diferença entre dois workflows distintos.
+  assert.equal(escolherDoRepo({ name: 'Oria — um workflow que não existe aqui' }), null);
+  assert.equal(escolherDoRepo({}), null);
+  assert.equal(escolherDoRepo(null), null);
+});
+
+test('MEDIDO: o macro contra o arquivo ERRADO acusa dezenas; contra o seu, nenhuma', () => {
+  const macro = JSON.parse(readFileSync(resolve(RAIZ_REPO, 'N8N/workflow.macro.json'), 'utf8'));
+  const ingestao = JSON.parse(readFileSync(resolve(RAIZ_REPO, 'N8N/workflow.e1-ingestao.json'), 'utf8'));
+
+  const contraOErrado = conferir(macro, ingestao);
+  const contraOSeu = conferir(macro, escolherDoRepo(macro).doRepo);
+
+  assert.equal(contraOSeu.length, 0, 'o macro tem de bater consigo mesmo');
+  assert.ok(contraOErrado.length > 20, `alvo errado deveria acusar dezenas, acusou ${contraOErrado.length}`);
 });

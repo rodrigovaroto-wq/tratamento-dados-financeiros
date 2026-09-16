@@ -147,6 +147,13 @@ jobs:
       - name: Suíte n8n
         run: node --test 'N8N/test/*.test.mjs'
 
+      - name: Suíte da sonda de produção (a tradução de "não perguntei" em veredito)
+        # O portão agendado (`sonda-producao.yml`) roda contra um banco que ESTA suíte não tem.
+        # O que dá para provar aqui é a única parte que decide alguma coisa: que "não consegui
+        # perguntar" (código 2) nunca colapsa em "está tudo bem" (código 0). MEDIDO em 16/09 com
+        # o colapso religado de propósito: 4 asserts reprovam.
+        run: node --test 'Supabase/test/*.test.mjs'
+
       - name: Suíte dos hooks do agente
         # A trava que impede o descarte de arquivo é a única trava DURA do repositório, e ela erra
         # de duas formas opostas: deixando passar o comando destrutivo (trabalho não commitado
@@ -191,7 +198,12 @@ jobs:
           # última no dia. Um release que mude a renderização quebra o gerador — ou,
           # pior, muda o PDF sem quebrar nada e o oráculo passa a medir outra coisa.
           # 5.0.1 é a versão com que a suíte inteira roda verde (conferido em 21/08).
-          python3 -m pip install --quiet 'reportlab==5.0.1'
+          # `--only-binary :all:` — achado do Sonar (`githubactions:S8541`), CI da base
+          # (`main`) e desta PR: sem a flag, um pacote sem wheel cairia para instalar via
+          # `setup.py`, que EXECUTA código arbitrário do pacote baixado. O reportlab==5.0.1
+          # publica wheel `py3-none-any` (conferido em 16/09), então a flag não muda o que
+          # é instalado — só fecha o caminho que executaria script de instalação.
+          python3 -m pip install --quiet --only-binary :all: 'reportlab==5.0.1'
           PYTHONPATH=. python3 gerar.py
 
       # ---- os DERIVADOS do gerador do book, conferidos como os workflows ----

@@ -217,22 +217,64 @@ export function conferir(vivo, repo) {
 
 // ---------------------------------------------------------------------------
 
+/** Os quatro workflows que este repositório gera. O `name` é a chave porque é o que o n8n
+ *  devolve no JSON publicado — o `id` é da instalação e muda de conta para conta. */
+export const WORKFLOWS_DO_REPO = [
+  'N8N/workflow.e1-ingestao.json',
+  'N8N/workflow.macro.json',
+  'N8N/workflow.diagnostico-ia.json',
+  'N8N/workflow.erros.json',
+];
+
+/**
+ * QUAL arquivo do repositório corresponde a ESTE publicado? — pelo `name`, nunca por padrão.
+ *
+ * POR QUE ISTO EXISTE, com o número medido em 16/09/2026 (F0, fatia 0.4). Este script comparava
+ * TUDO contra `workflow.e1-ingestao.json`, fixo no código. Conferir o macro publicado devolvia
+ * **55 divergências**, o de erros **44** e o de diagnóstico **46** — todas FALSAS, porque o
+ * conferidor estava comparando dois workflows diferentes e relatando a diferença entre eles como
+ * se fosse deriva da publicação. Três dos quatro workflows não tinham conferência nenhuma, e o
+ * quarto tinha uma que mentia quando apontada para o alvo errado.
+ *
+ * Devolver `null` (e NUNCA um palpite) é a parte que importa: um conferidor que escolhe sozinho
+ * o alvo errado produz uma lista de achados que parece trabalho a fazer e não é.
+ */
+export function escolherDoRepo(vivo, ler = (caminho) => readFileSync(resolve(RAIZ, caminho), 'utf8')) {
+  const nome = vivo?.name;
+  for (const caminho of WORKFLOWS_DO_REPO) {
+    const doRepo = JSON.parse(ler(caminho));
+    if (doRepo.name === nome) return { caminho, doRepo };
+  }
+  return null;
+}
+
 if (ehExecucaoDireta(import.meta.url)) {
   const vivo = await lerWorkflowDaEntradaPadrao([
     'uso: node N8N/conferir-publicado.mjs < workflow-publicado.json',
     '     o JSON é o BAIXADO do editor do n8n (… → Download), ou a resposta da API REST.',
     '     ele entra pela ENTRADA PADRÃO — com `<` ou por `|`.',
   ]);
-  const doRepo = JSON.parse(readFileSync(resolve(RAIZ, 'N8N/workflow.e1-ingestao.json'), 'utf8'));
+  const escolhido = escolherDoRepo(vivo);
+  if (!escolhido) {
+    console.error(`não sei contra qual workflow conferir: o publicado se chama ${JSON.stringify(vivo?.name ?? null)},`);
+    console.error('e nenhum arquivo do repositório tem esse `name`. Os quatro que existem são:\n');
+    for (const caminho of WORKFLOWS_DO_REPO) {
+      console.error(`  ${JSON.stringify(JSON.parse(readFileSync(resolve(RAIZ, caminho), 'utf8')).name)}`);
+      console.error(`      ${caminho}`);
+    }
+    console.error('\nRenomear o workflow no editor do n8n quebra esta ligação — o `name` é a chave.');
+    process.exit(1);
+  }
+  const { caminho, doRepo } = escolhido;
 
   const achados = conferir(vivo, doRepo);
   const nNos = (doRepo.nodes ?? []).length;
 
   if (achados.length === 0) {
-    console.log(`ok — os ${nNos} nós publicados batem com o repositório, inclusive disabled/onError/retryOnFail e o nome de cada credencial.`);
+    console.log(`ok — os ${nNos} nós publicados batem com ${caminho}, inclusive disabled/onError/retryOnFail e o nome de cada credencial.`);
     process.exit(0);
   }
-  console.error(`${achados.length} divergência(s) entre o publicado e o repositório:\n`);
+  console.error(`${achados.length} divergência(s) entre o publicado e ${caminho}:\n`);
   const larguraNo = Math.max(...achados.map((a) => a.no.length));
   for (const a of achados) {
     console.error(`  ${a.no.padEnd(larguraNo)}  ${a.campo}`);

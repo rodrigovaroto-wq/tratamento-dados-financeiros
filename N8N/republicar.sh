@@ -35,6 +35,11 @@
 #   export N8N_URL="https://seu-n8n"        # sem barra no fim
 #   export N8N_API_KEY="..."                # n8n → Settings → n8n API
 #   export N8N_WORKFLOW_ID="..."            # o id na URL do editor
+#   export N8N_ARQUIVO_REPO="N8N/workflow.macro.json"   # opcional — QUAL dos
+#                                            # quatro workflows publicar; o
+#                                            # padrão continua a ingestão, por
+#                                            # trás de quem já automatizou isso
+#                                            # sem esta variável (F0, fatia 0.3)
 #   ./N8N/republicar.sh
 #
 #   --dry-run   faz tudo menos o PUT (prepara, confere o arquivo, e para)
@@ -55,11 +60,13 @@ for v in N8N_URL N8N_API_KEY N8N_WORKFLOW_ID; do
   [[ -n "${!v:-}" ]] || erro "falta a variável \$$v — veja o cabeçalho deste arquivo"
 done
 N8N_URL="${N8N_URL%/}"
+ARQUIVO_REPO="${N8N_ARQUIVO_REPO:-N8N/workflow.e1-ingestao.json}"
+[[ -f "$ARQUIVO_REPO" ]] || erro "N8N_ARQUIVO_REPO aponta para \"$ARQUIVO_REPO\", que não existe no repositório."
 
 # --- TRAVA 1: a cópia local é a versão que se pretende publicar? -------------
 passo "1/5  a árvore local está atualizada?"
-if [[ -n "$(git status --porcelain -- N8N/workflow.e1-ingestao.json)" ]]; then
-  erro "N8N/workflow.e1-ingestao.json tem mudança não commitada.
+if [[ -n "$(git status --porcelain -- "$ARQUIVO_REPO")" ]]; then
+  erro "$ARQUIVO_REPO tem mudança não commitada.
            Publicar assim sobe algo que não está em nenhum commit — e ninguém
            consegue dizer depois o que foi publicado. Commite ou descarte antes."
 fi
@@ -93,7 +100,7 @@ echo "    ok — $(node -p "JSON.parse(require('fs').readFileSync('$VIVO','utf8'
 
 # --- fundir ------------------------------------------------------------------
 passo "3/5  fundindo comportamento do repositório com a identidade da instalação"
-node N8N/preparar-republicacao.mjs < "$VIVO" > "$PUB" \
+N8N_ARQUIVO_REPO="$ARQUIVO_REPO" node N8N/preparar-republicacao.mjs < "$VIVO" > "$PUB" \
   || erro "preparar-republicacao.mjs falhou — nada foi publicado"
 
 # --- TRAVA 2 e 3: o arquivo a publicar está são? -----------------------------
@@ -116,12 +123,19 @@ fi
            Isso quebraria as credenciais. O arquivo NÃO foi publicado; me mande
            esta mensagem."
 node -e '
+  // A checagem do PATH só vale para quem TEM gatilho de formulário — a ingestão
+  // é o único dos quatro workflows deste repositório que tem. Generalizada em
+  // 16/09/2026 (F0, fatia 0.3): antes desta correção, tentar publicar macro,
+  // erros ou diagnóstico abortava aqui SEMPRE, com "não achei o gatilho de
+  // formulário" — a trava certa (nenhum path para perder) travando pelo motivo
+  // errado (ela achava isso um erro, não a ausência esperada).
   const w = JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
   const form = (w.nodes||[]).find(n => (n.type||"").includes("formTrigger"));
-  if (!form) { console.error("não achei o gatilho de formulário"); process.exit(1); }
-  const p = form.parameters && form.parameters.path;
-  if (!p) { console.error("o path do formulário veio VAZIO — publicar trocaria a URL pública do intake"); process.exit(1); }
-  console.log("    ok — path do formulário preservado, credenciais reais, " + w.nodes.length + " nós");
+  if (form) {
+    const p = form.parameters && form.parameters.path;
+    if (!p) { console.error("o path do formulário veio VAZIO — publicar trocaria a URL pública do intake"); process.exit(1); }
+  }
+  console.log("    ok — " + (form ? "path do formulário preservado, " : "sem gatilho de formulário, ") + "credenciais reais, " + w.nodes.length + " nós");
 ' "$PUB" || erro "a conferência do arquivo reprovou — nada foi publicado"
 
 if [[ "$DRY_RUN" == "1" ]]; then

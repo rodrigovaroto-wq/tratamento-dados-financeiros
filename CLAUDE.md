@@ -65,6 +65,7 @@ chmod a+w Supabase Supabase/schema.sql
 # suítes
 node --test 'N8N/test/*.test.mjs'
 node --test '.claude/hooks/test/*.test.mjs'   # os hooks do agente também têm suíte, e ela é portão
+node --test 'Supabase/test/*.test.mjs'       # a tradução de "não perguntei a produção" em veredito
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-export.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-transcricao.mts
 ./portal/node_modules/.bin/tsx portal/scripts/verificar-mensagem-de-falha.mts
@@ -90,6 +91,25 @@ node N8N/medir-custo-book.mjs
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
 node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
+# E AS FIXTURES DO BOOK, que faltavam aqui até 16/09 (F0, fatia 0.4): as TRÊS pontas se comparam
+# entre si — o `.sql` do banco, o `.json` do export e o gabarito. Desincronizar uma faz as outras
+# duas mentirem sobre a terceira, e foi o que aconteceu em 19/08.
+cd "Dados de Teste"/book-vertentes \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py > ../../Supabase/test/fixture_book_vertentes.sql \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json \
+  && cd ../book-canastra \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture_canastra.py > ../../Supabase/test/fixture_book_canastra.sql \
+  && cd ../.. && git diff --exit-code -- Supabase/test/fixture_book_vertentes.sql \
+     portal/scripts/fixtures/book-vertentes.json Supabase/test/fixture_book_canastra.sql
+
+# contra PRODUÇÃO — não roda no `suites.yml` (ele monta o próprio banco, sempre em dia).
+# Quem roda é o workflow agendado `sonda-producao.yml`, e à mão é assim. Sem `SONDA_PSQL` o
+# script sai com 2 = NÃO CONFERIDO, que é diferente de verde:
+SONDA_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/test/sonda-producao.mjs
+# E a republicação do n8n, que é o passo sem o qual a correção fica no repositório e não no ar.
+# O caminho normal é Actions → "Republicar workflow no n8n"; o script que ela roda é:
+N8N_URL=... N8N_API_KEY=... N8N_WORKFLOW_ID=... bash N8N/republicar.sh
+# N8N_ARQUIVO_REPO escolhe QUAL dos quatro (padrão: a ingestão) — generalizado em 16/09/2026
 
 # portal
 cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \

@@ -1,0 +1,89 @@
+# A SONDA CONTRA PRODUÇÃO — o portão que olha para o banco que atende o cliente.
+#
+# POR QUE ELE EXISTE (F0, fatia 0.4), com o número que o justifica. O `suites.yml` roda
+# `fn_instalacao_conferir()` em TODA passada — contra o banco que ele mesmo acabou de montar a
+# partir das migrations. Esse banco está, por construção, sempre em dia, e por isso aquele passo
+# nunca poderia ter acusado o que estava acontecendo: em 16/09/2026 o repositório estava na `0177`
+# e produção na `0157`(+`0160`) — **20 migrations de defasagem**, acumuladas em silêncio porque
+# nenhum portão olhava para lá.
+#
+# ELE RODA AS DUAS PERGUNTAS, e uma só não serve:
+#
+#   1. `sonda-producao.mjs` — o que o catálogo do banco declara e não está lá;
+#   2. `conferir-chamadas.mjs` — o que o CÓDIGO chama e o banco não tem.
+#
+# A 1 sozinha tem ângulo morto, e ele é construção, não defeito: o catálogo mora DENTRO do banco,
+# então um banco atrasado responde sobre o catálogo que TEM. Medido em 02/09: banco parado na
+# `0150`, sonda sem acusar nada, e três nós Postgres do workflow sem resolver
+# (`.claude/memory/sonda-so-conhece-o-catalogo-que-o-banco-tem.md`). A 2 é a outra ponta.
+#
+# POR QUE AGENDADO E NÃO NO PR: o PR não muda produção. O que muda produção é o dono aplicar
+# migration — e isso acontece FORA daqui, em dia e hora que nenhum evento do GitHub anuncia.
+#
+# POR QUE ELE FALHA QUANDO O SEGREDO NÃO EXISTE, em vez de pular: pular deixaria o portão verde
+# sem ter perguntado nada, e "não rodou" ficaria idêntico a "rodou e não achou nada" — a regra 7
+# deste projeto, que é o defeito mais caro que ele já teve. Enquanto o segredo não existir, este
+# workflow fica vermelho DE PROPÓSITO, dizendo exatamente o que falta cadastrar.
+
+name: Sonda contra produção
+
+on:
+  schedule:
+    # 09:10 UTC = 06:10 em São Paulo. Minuto quebrado para não cair no pico do agendador.
+    - cron: '10 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sonda-producao
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sonda:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cliente psql 16
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-16 \
+            || sudo apt-get install -y --no-install-recommends postgresql-client
+          psql --version
+
+      - name: Conferir o segredo
+        env:
+          SONDA_DB_URL: ${{ secrets.SONDA_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SONDA_DB_URL:-}" ]; then
+            echo "::error::Secret SONDA_DB_URL não cadastrado — esta execução NÃO perguntou nada a produção."
+            echo "Settings → Secrets and variables → Actions → New repository secret."
+            echo "Valor: a connection string do Postgres de produção (papel somente-leitura basta:"
+            echo "as duas conferências abrem transação READ ONLY)."
+            exit 1
+          fi
+          echo "segredo presente (o valor nunca é impresso)"
+
+      - name: O catálogo de produção não tem ausência
+        env:
+          SONDA_PSQL: psql '${{ secrets.SONDA_DB_URL }}'
+        run: node Supabase/test/sonda-producao.mjs
+
+      - name: O que o código chama existe em produção
+        # A outra ponta, e ela é a que pegou o que a sonda não pegou em 02/09.
+        # `if: always()` para que a segunda pergunta seja feita mesmo quando a primeira reprova:
+        # as duas respostas juntas é que dizem o tamanho da defasagem.
+        if: always()
+        env:
+          CONFERIR_PSQL: psql '${{ secrets.SONDA_DB_URL }}'
+        run: node Supabase/test/conferir-chamadas.mjs
