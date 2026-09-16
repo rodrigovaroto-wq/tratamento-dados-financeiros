@@ -2994,12 +2994,30 @@ test('a estimativa que o PORTAL mostra é coerente com a cadência REAL do workf
     `a tela promete ${segundosPorDocumento}s por documento, e uma chamada sozinha já leva ${cadenciaS}s`);
 
   // TETO: um documento faz, no pior caso realista, uma classificação por
-  // conteúdo mais alguns blocos de extração. Quatro chamadas cobre isso com
-  // folga; acima, a estimativa deixou de acompanhar a cadência — que é
-  // exatamente o que aconteceu quando 45s sobreviveu à queda de 33s para 8s.
-  assert.ok(segundosPorDocumento <= cadenciaS * 4,
+  // conteúdo mais alguns blocos de extração — quatro chamadas cobrem isso —,
+  // MAIS o preparo, que não é chamada nenhuma.
+  //
+  // O TETO ERA `cadenciaS * 4` PURO, E ISSO ESTAVA ERRADO POR ESTRUTURA — medido
+  // em 16/09/2026. Parte do custo de um documento NÃO escala com a cadência:
+  // `PREPARO_POR_ARQUIVO_S` (upload ao Storage, leitura do texto, medição) é
+  // ADITIVO e fixo. Com a cadência em 73s ele sumia no ruído; com ela em 6s ele
+  // é um quinto do total, e a razão medida contra a cadência subiu para 4,2x
+  // (rodada #7851: 49 documentos em 1237s = 25,2s por documento, contra 6s de
+  // cadência). Um teto que multiplica só a cadência declara defeituosa uma
+  // estimativa que está CERTA — e força a tela a mentir para o rápido, que é
+  // o defeito que este arquivo inteiro existe para impedir.
+  //
+  // Somar o termo aditivo em vez de inflar o multiplicador mantém o teto
+  // apertado onde ele importa: o defeito histórico que este assert pegou (45s
+  // de estimativa contra 8s de cadência, 24/08) continua reprovando, porque
+  // 8*4+5 = 37 < 45.
+  const mPreparo = /const PREPARO_POR_ARQUIVO_S = (\d+);/.exec(fonte);
+  assert.ok(mPreparo, 'PREPARO_POR_ARQUIVO_S sumiu do portal — o teto perdeu o termo aditivo');
+  const preparoS = Number(mPreparo[1]);
+
+  assert.ok(segundosPorDocumento <= cadenciaS * 4 + preparoS,
     `a tela promete ${segundosPorDocumento}s por documento contra uma cadência de ${cadenciaS}s `
-    + '— a estimativa ficou para trás de uma mudança de cadência');
+    + `mais ${preparoS}s de preparo — a estimativa ficou para trás de uma mudança de cadência`);
 });
 
 // O LOTE DE 190 DOCUMENTOS — a espera da tela contra a BARREIRA do merge.
