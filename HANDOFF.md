@@ -4,6 +4,32 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 92 (16/09) — Auditoria profunda + arquitetura-alvo mergeadas (PR #227). Duas pendências que só o dono resolve
+
+`Arquitetura do Sistema/4 Análises e Auditorias/AUDITORIA_PROFUNDA_2026-09-15.md` e
+`Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md` — bateria COMPLETA do
+CI rodada antes de escrever qualquer conclusão, componente por componente, com gates objetivos e
+um roadmap em 17 fases. Nenhum código, nenhuma migration. Mergeado em `f16d31b`. **Duas coisas
+ficaram de pé, nenhuma é tarefa de engenharia:**
+
+1. **O `indexar.mjs` indexa arquivo gitignored.** Achado ao escrever a auditoria: rodar
+   `Verificação/variacoes.mts` deixa 51 artefatos em `Verificação/saida/` (gitignored), e o
+   indexador varre o SISTEMA DE ARQUIVOS, não o git — reindexar depois disso produz um
+   `grafo.jsonl` com nós e arestas que não existem no repositório, e nada aparece no `git status`
+   pra avisar. Foi exatamente o que reprovou o CI do PR #227 na primeira rodada (commit `1f16171`,
+   corrigido em `4318b54`). **A correção de raiz é o indexador respeitar o `.gitignore` (ou
+   indexar só o que `git ls-files` rastreia) — não incluí no PR porque ele era declaradamente sem
+   código.** Fica como tarefa aberta; qualquer sessão que rode o arnês de variações e depois
+   `indexar.mjs` está exposta ao mesmo defeito.
+2. **A F0 do roadmap (fechar o fosso repositório↔produção) depende de duas decisões do dono, não
+   de engenharia:** (a) aplicar as migrations pendentes contra produção — eram 17 na auditoria
+   (`0158`–`0174`), agora **20** depois que a `0175`–`0177` entraram no `main` por baixo do PR
+   (`0158`–`0177`), com backup conferido antes; (b) decidir se `00_VISAO_E_ESCOPO.md` mantém ou
+   retira o escopo negativo *"não é ferramenta de modelagem financeira"* — o repositório já tem
+   6.689 linhas de modelagem em `modelo-institucional.ts`, e essa contradição trava a priorização
+   do roadmap inteiro (é o item 6 do §4 "O que este inventário NÃO cobre" da auditoria, e o
+   destrava-tudo da fatia 0.6 do plano de execução).
+
 ## ✅ SESSÃO 91 (15/09) — 0177 CORRIGE O CRÍTICO. PR #226 empurrado, aguardando CI/Sonar no head novo
 
 **Atualização:** a `0177` (commit `f982049`, empurrada) corrigiu os quatro achados abaixo — a
