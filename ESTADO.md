@@ -11,18 +11,14 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > arquivo que quase nunca se edita não convida a editar nada. Aqui só há o que muda — e o
 > `Supabase/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
 
-> **O PLANO DE 14/09 (defeitos do book "teste 143") ESTÁ QUASE FECHADO.** Fatias 1-5 + a extensão
-> do CNPJ (renomear ao fundir) estão FEITAS, testadas e MERGEADAS na `main` (PR #221, PR #223 —
-> migrations `0165`-`0171`). O que falta, EM ANDAMENTO nesta sessão: fazer o CNPJ CHEGAR até o
-> banco (a IA lendo o conteúdo — schema, prompt e o nó `Registrar Documento` do n8n) e a Fatia 6
-> (dois defeitos de qualidade de extração, prompt-only). **Sem credencial de OpenAI nem acesso ao
-> n8n nesta sessão** — o código está testado deterministicamente (espelho-inline, workflow-sim,
-> régua de cobertura, custo do book — todos verdes) mas NÃO validado contra um lote real; isso é
-> tarefa do dono na próxima rodada. Leia "O PLANO DE 14/09" em `HANDOFF.md` (logo abaixo do
-> cabeçalho) para o detalhe de cada fatia. Regra permanente enquanto este plano não fechar: perto
-> de 90% do limite de uso da sessão, pare de avançar fatia, commite o que estiver pronto e atualize
-> esta nota dizendo exatamente onde parou
-> (`.claude/memory/sessao-perto-do-limite-fecha-e-documenta.md`).
+> **A F0 (fechar o fosso repositório ↔ produção) ESTÁ QUASE FECHADA.** Banco em dia (`0175`–`0177`
+> aplicadas e conferidas), os 4 workflows republicados e em dia, as duas ADRs + duas decisões do dono
+> registradas. Faltam dois itens operacionais: `SONDA_DB_URL` (segredo do CI para o workflow
+> `sonda-producao.yml` do dono) e a fatia 0.5 (reprocessar o lote "Teste 00" — decisão do dono).
+> Tudo medido antes de cada ação. Leia a SESSÃO 94 no `HANDOFF.md` para o detalhe das duas correções
+> de premissa (122 migrations, faltavam 3 não 20) e das três evidências que travaram o banco, a
+> republicação e o CI — onde o ambiente desta sessão não alcança Postgres diretamente (a saída foi a
+> API de gerenciamento do Supabase).
 
 ## Onde está
 
@@ -36,7 +32,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Workflow PUBLICADO no n8n** | **EM DIA — os QUATRO workflows republicados e conferidos nesta sessão (16/09/2026), com acesso real à API do n8n.** Antes de mexer, `conferir-publicado.mjs` (que só sabia comparar 1 dos 4 antes desta rodada — corrigido para casar pelo `name`) mediu: macro 0 divergências; erros 1 real (cosmética à parte); diagnóstico 1 real (TPM desatualizado); **ingestão 1 REAL E GRAVE** — o formulário de upload tinha perdido `multipleFiles: true`, e o cliente só conseguia subir um documento por vez, apesar do próprio texto do formulário dizer "suba TODOS de uma vez". Confirmado por três fontes antes de agir (o gerador declara o campo de propósito; é um defeito já nomeado em `.claude/memory/republicacao-do-n8n-perde-toggles.md`; o JSON buscado era fresco). `preparar-republicacao.mjs`/`republicar.sh` só sabiam publicar a ingestão — generalizados nesta rodada (`N8N_ARQUIVO_REPO`) para os quatro. Publicados via `--dry-run` e depois de verdade: os quatro batem 100% com o repositório agora, `FINGERPRINT_EXTRACAO` não mudou (`6f5a9374a9d2b1ae` — nenhum documento será reprocessado à toa), e o provedor confirmado ao vivo é OpenAI (`api.openai.com`), batendo com `PROVEDOR_PADRAO = 'openai'`. |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **CONCORDAM, medido em 16/09/2026.** Repositório: OpenAI `gpt-5.6-luna`, `PROVEDOR_PADRAO = 'openai'` em `N8N/lib/provedor.mjs`. Publicado: conferido ao vivo no nó `IA Extrair` do workflow republicado — `url: https://api.openai.com/v1/chat/completions`. **Não datar por este arquivo: `N8N/conferir-publicado.mjs` contra a instância é quem responde**, e ele agora confere os quatro workflows, não só um. |
-| **PR desta rodada** | **#229, MERGEADO em `c376b09`** (simplificação da arquitetura `.claude`: 30 agentes importados + 52 comandos de barra removidos; hook dos derivados e portão novo regenerado; três comandos escritos aqui; deduplicação; cifra de prompt por sessão reduzida em 92%) |
+| **PR desta rodada** | **#230, ABERTO (draft), mergeable_state: clean, CI verde** — F0 quase inteira: banco (0175–0177 aplicadas/conferidas), 4 workflows republicados/em dia, ADRs+decisões do dono registradas, 3 portões medindo conformidade, correção do Sonar que não era desta PR. O dono decide o merge. |
 
 ## A SESSÃO 87 (13/09) — O ORÇAMENTO QUE RECUSAVA O LOTE DA AMO: as duas fatias que a diagnose de 86 desenhou
 

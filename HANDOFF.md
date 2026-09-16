@@ -4,6 +4,26 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 94 (16/09) — F0 quase fechada: banco em dia, 4 workflows em dia, 3 portões medindo. PR #230 aberto (draft), CI verde
+
+Nove commits nesta rodada (ramo `claude/compassionate-carson-yshp5u`, derivado da PR #229 mergeada). Trabalho em acesso real: token de gerenciamento do Supabase (API HTTPS — a sessão não alcança porta de Postgres diretamente; ver `.claude/memory/` sobre o ambiente) e API key do n8n.
+
+**Duas correções de premissa, medidas antes de agir:** (1) total de migrations era 177 por arquivo, mas há um pulo de 0044 para 0100 — o real é **122 migrations**; (2) produção estava na `0174`, não numa estimativa anterior de "faltam 20" — faltavam exatamente **3**. Confirmado comparando corpo de `fn_entidade_aprender_cnpj` e `fn_registrar_diagnostico` byte a byte contra as 4 últimas migrations. Aplicadas em ordem (`0175` → `0176` → `0177`), sonda rodada depois de cada uma. Ao final: corpos batem, função nascida na `0176` existe, `fn_instalacao_conferir()` devolve zero linhas.
+
+**F0.1/F0.2 — banco:** 3 migrations aplicadas pela API de gerenciamento do Supabase (sessão não passa raw-TCP pelo proxy HTTP; fica como lição em `.claude/memory/`).
+
+**F0.3 — 4 workflows:** Comparados contra publicado via API real. Antes: macro 0 divergências; erros 1 real (cosmética); diagnóstico 1 real (TPM); **ingestão 1 REAL E GRAVE** — `multipleFiles: true` perdido no formulário (cliente só subia 1 doc por vez). Ferramenta (`preparar-republicacao.mjs`/`republicar.sh`) só sabia publicar ingestão — generalizada (`N8N_ARQUIVO_REPO`) para os quatro. Publicados via `--dry-run` e real: os 4 batem 100% com repositório, `FINGERPRINT_EXTRACAO` não mudou, provedor confirmado ao vivo é OpenAI.
+
+**F0.4/F0.6:** ADRs + decisões do dono já estavam feitas. Conferidas nesta rodada — continuam de pé, nada as tocou.
+
+**F0 não-regressão:** três portões novos medindo conformidade (espelho, conferidor do publicado, sonda contra produção). Espelho enxergava 4 famílias de caminho, rest era invisível — generalizado. Conferidor comparava tudo contra ingestão — adaptado para casar pelo `name` de cada workflow. Sonda: agora roda contra produção via API (a sessão também não alcança Postgres direto).
+
+**Achado de CI fora do escopo (mas consertado nesta PR):** Sonar reprovou pip install sem `--only-binary :all:` em `suites.yml:201` — já reprovava na `main` também. Portada aqui. Verificado que `reportlab==5.0.1` publica wheel antes da flag, não muda nada.
+
+**Um flake em workflow-macro-sim.test.mjs** (SyntaxError lendo arquivo válido, passou 3/3 local) — re-run confirmou flake, suítes fechou verde.
+
+**Pendências operacionais do dono (NÃO engenharia):** `SONDA_DB_URL` (segredo do CI) ainda não cadastrado — `sonda-producao.yml` vermelho de propósito. Fatia 0.5 (reprocessar "Teste 00") é decisão do dono, não começou. `PRONTIDAO_POR_ESTAGIO.md` gerado do banco/CI é próxima rodada de engenharia. PR #230 continua ABERTO — dono decide mergear.
+
 ## ✅ SESSÃO 93 (16/09) — Simplificação da arquitetura `.claude` mergeada (PR #229). Sete commits: arquitetura importada removida, hook consertado, três comandos escritos, deduplicação, portão novo
 
 PR #229 mergeado em `c376b09` (base `origin/main`). Seis fatias + merge, uma por commit: (1) 30 agentes `importado.*` + 52 comandos de barra (82 arquivos, 1,16 MB) removidos, `description` por sessão reduzida de 20.587 → 1.685 B (−92%); (2) `lembrar-derivados.mjs` consertado (3 das 4 regras casavam caminhos extintos), suíte nova `.claude/hooks/test/lembrar-derivados.test.mjs` com guarda que descobre renomeação; (3) três comandos escritos aqui (`/rodada`, `/revisar`, `/fechar`), `/revisar` reduzido de 5 lentes para 2 + 1 condicional; (4) deduplicação (briefing tirado dos 5 agentes, `explorador` e `suites-invariantes` condicionais); (5) portão novo `verificar-espelho-claude-md.mjs` no CI (12 arquivos em 4 famílias, medido não-vazio contra 5 casos); (6) três correções do portão nascer cego/fora-da-raiz/contando prosa, `verificar-comandos.mjs` consertado para ENOENT. Nenhuma migration, nenhum workflow, nenhum deploy — só `.claude/`, `CLAUDE.md`, CI e documentação de arquitetura. Pendência anterior do dono (migrations `0158`–`0177`, republicar workflow) continua de pé. A tarefa aberta "indexar.mjs indexa gitignored" de 92 segue aberta.
