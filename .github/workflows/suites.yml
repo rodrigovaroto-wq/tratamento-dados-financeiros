@@ -147,6 +147,13 @@ jobs:
       - name: Suíte n8n
         run: node --test 'N8N/test/*.test.mjs'
 
+      - name: Suíte da sonda de produção (a tradução de "não perguntei" em veredito)
+        # O portão agendado (`sonda-producao.yml`) roda contra um banco que ESTA suíte não tem.
+        # O que dá para provar aqui é a única parte que decide alguma coisa: que "não consegui
+        # perguntar" (código 2) nunca colapsa em "está tudo bem" (código 0). MEDIDO em 16/09 com
+        # o colapso religado de propósito: 4 asserts reprovam.
+        run: node --test 'Supabase/test/*.test.mjs'
+
       - name: Suíte dos hooks do agente
         # A trava que impede o descarte de arquivo é a única trava DURA do repositório, e ela erra
         # de duas formas opostas: deixando passar o comando destrutivo (trabalho não commitado

@@ -36,7 +36,7 @@
 //
 // Uso:  node .claude/verificar-espelho-claude-md.mjs
 // Saída: exit 0 = espelho em dia; exit 1 = lista o que falta de cada lado.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +44,12 @@ import { fileURLToPath } from 'node:url';
 // canônico deixa a sessão dentro de `portal/` (o `npm ci` é lá) e o `/fechar` chama este portão
 // logo depois. Com caminho relativo ao cwd ele morria com stack trace de ENOENT.
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CI = '.github/workflows/suites.yml';
+// TODOS os workflows, não só o `suites.yml`. MEDIDO em 16/09/2026 antes de decidir: incluir os
+// outros dois custa exatamente DUAS linhas novas no CLAUDE.md (`sonda-producao.mjs` e
+// `republicar.sh`) — e as duas são coisas que uma sessão precisa saber rodar e não estavam
+// escritas em lugar nenhum. Um portão que enxerga um arquivo e ignora os vizinhos volta a ser o
+// portão de famílias fixas, com outro nome.
+const CI_DIR = '.github/workflows';
 const DOC = 'CLAUDE.md';
 
 // O `\.?` do começo existe porque metade dos portões mora em `.claude/`: sem ele o token vinha
@@ -65,7 +70,8 @@ const normalizar = (tok) => {
 const ler = (p) => readFileSync(join(RAIZ, p), 'utf8');
 const citados = (texto) => new Set([...semComentario(texto).matchAll(SCRIPT)].map((m) => normalizar(m[0])));
 
-const noCi = citados(ler(CI));
+const workflows = readdirSync(join(RAIZ, CI_DIR)).filter((f) => f.endsWith('.yml')).sort();
+const noCi = citados(workflows.map((f) => ler(join(CI_DIR, f))).join('\n'));
 // Do CLAUDE.md só valem os blocos de comando; prosa explicativa não faz ninguém rodar nada.
 const noDoc = citados((ler(DOC).match(/```bash\n[\s\S]*?```/g) ?? []).join('\n'));
 
@@ -84,10 +90,10 @@ for (const f of new Set([...noCi, ...noDoc])) {
 }
 
 if (problemas.length === 0) {
-  console.log(`espelho OK — ${noCi.size} scripts, os mesmos no ${CI} e no ${DOC}`);
+  console.log(`espelho OK — ${noCi.size} scripts, os mesmos nos ${workflows.length} workflows do CI e no ${DOC}`);
   process.exit(0);
 }
-console.error(`*** o CLAUDE.md e o CI divergem em ${problemas.length} ponto(s) ***\n`);
+console.error(`*** o CLAUDE.md e os workflows do CI divergem em ${problemas.length} ponto(s) ***\n`);
 for (const p of problemas.sort()) console.error(`  ${p}`);
 console.error(`\nEspelho que fica para trás é pior que espelho nenhum: ele manda a próxima sessão\nrodar diferente do portão. Acerte o lado que está errado — nunca apague a linha do CI\npara o espelho fechar.`);
 process.exit(1);
