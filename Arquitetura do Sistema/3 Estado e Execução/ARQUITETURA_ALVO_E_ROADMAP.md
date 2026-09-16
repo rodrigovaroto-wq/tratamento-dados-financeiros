@@ -756,6 +756,27 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 - **Entregável:** ≥95% dos documentos com linha; o que falhar, falha por razão nova e documentada.
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
 
+**Achado, 16/09/2026 — o lote precisa ser dividido, e é limitação conhecida, não bug.** O dono
+tentou subir os 127 arquivos do lote em uma execução só (126,6 MB). A execução `#7834` do
+workflow de ingestão morreu aos 3m58s com `status: error`, `290MB` de dados de execução, e nem
+a interface do n8n consegue mostrar o node/mensagem exata ("This execution's data is too large
+to display") — evidência de que o processo estourou memória, não de um documento específico
+corrompido (não dá para provar qual node, e por doutrina não afirmamos o que não foi medido).
+
+**Causa provável (hipótese, não confirmada por falta de acesso ao painel):** o n8n roda no
+PikaPods (`HANDOFF.md`, RAM fixa por contêiner) e mantém TODO o lote — cada item, cada binário —
+na memória do processo durante a execução inteira. Um lote de 126 MB de binário mais a sobra do
+Node.js pode estourar o teto de RAM do plano contratado, e o SO mata o contêiner no meio —
+por isso nem um erro decente sobra para ler.
+
+**Decisão do dono, 16/09/2026: não redesenhar o workflow agora.** As duas saídas técnicas —
+(a) aumentar o plano do PikaPods (rápido, mas só empurra o teto: um lote maior no futuro estoura
+de novo) e (b) reescrever o grafo para processar item a item, memória plana independente do
+tamanho do lote (correção de raiz, mas é engenharia real com risco de republicação) — ficam
+registradas aqui para quando isso voltar a doer. Por ora: **conviver com o limite**, dividindo
+lotes grandes em partes de ~90 MB (o `caso_id` é o mesmo entre envios — `fn_upsert_caso` reaproveita
+pelo nome do mandato, então dividir em vários envios não perde nem duplica nada).
+
 ### Fatia 0.6 — Decisão de escopo e estado regerado · **as duas ADRs: FEITAS em 16/09/2026**
 - Reescrever `00_VISAO_E_ESCOPO.md`: o escopo negativo *"não é ferramenta de modelagem financeira"*
   precisa sair ou ser reafirmado. **É decisão do dono** — a engenharia não pode tomá-la, e o roadmap
