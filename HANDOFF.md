@@ -4,6 +4,10 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ✅ SESSÃO 93 (16/09) — Simplificação da arquitetura `.claude` mergeada (PR #229). Sete commits: arquitetura importada removida, hook consertado, três comandos escritos, deduplicação, portão novo
+
+PR #229 mergeado em `c376b09` (base `origin/main`). Seis fatias + merge, uma por commit: (1) 30 agentes `importado.*` + 52 comandos de barra (82 arquivos, 1,16 MB) removidos, `description` por sessão reduzida de 20.587 → 1.685 B (−92%); (2) `lembrar-derivados.mjs` consertado (3 das 4 regras casavam caminhos extintos), suíte nova `.claude/hooks/test/lembrar-derivados.test.mjs` com guarda que descobre renomeação; (3) três comandos escritos aqui (`/rodada`, `/revisar`, `/fechar`), `/revisar` reduzido de 5 lentes para 2 + 1 condicional; (4) deduplicação (briefing tirado dos 5 agentes, `explorador` e `suites-invariantes` condicionais); (5) portão novo `verificar-espelho-claude-md.mjs` no CI (12 arquivos em 4 famílias, medido não-vazio contra 5 casos); (6) três correções do portão nascer cego/fora-da-raiz/contando prosa, `verificar-comandos.mjs` consertado para ENOENT. Nenhuma migration, nenhum workflow, nenhum deploy — só `.claude/`, `CLAUDE.md`, CI e documentação de arquitetura. Pendência anterior do dono (migrations `0158`–`0177`, republicar workflow) continua de pé. A tarefa aberta "indexar.mjs indexa gitignored" de 92 segue aberta.
+
 ## ✅ SESSÃO 92 (16/09) — Auditoria profunda + arquitetura-alvo mergeadas (PR #227). Duas pendências que só o dono resolve
 
 `Arquitetura do Sistema/4 Análises e Auditorias/AUDITORIA_PROFUNDA_2026-09-15.md` e
