@@ -123,12 +123,19 @@ fi
            Isso quebraria as credenciais. O arquivo NÃO foi publicado; me mande
            esta mensagem."
 node -e '
+  // A checagem do PATH só vale para quem TEM gatilho de formulário — a ingestão
+  // é o único dos quatro workflows deste repositório que tem. Generalizada em
+  // 16/09/2026 (F0, fatia 0.3): antes desta correção, tentar publicar macro,
+  // erros ou diagnóstico abortava aqui SEMPRE, com "não achei o gatilho de
+  // formulário" — a trava certa (nenhum path para perder) travando pelo motivo
+  // errado (ela achava isso um erro, não a ausência esperada).
   const w = JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
   const form = (w.nodes||[]).find(n => (n.type||"").includes("formTrigger"));
-  if (!form) { console.error("não achei o gatilho de formulário"); process.exit(1); }
-  const p = form.parameters && form.parameters.path;
-  if (!p) { console.error("o path do formulário veio VAZIO — publicar trocaria a URL pública do intake"); process.exit(1); }
-  console.log("    ok — path do formulário preservado, credenciais reais, " + w.nodes.length + " nós");
+  if (form) {
+    const p = form.parameters && form.parameters.path;
+    if (!p) { console.error("o path do formulário veio VAZIO — publicar trocaria a URL pública do intake"); process.exit(1); }
+  }
+  console.log("    ok — " + (form ? "path do formulário preservado, " : "sem gatilho de formulário, ") + "credenciais reais, " + w.nodes.length + " nós");
 ' "$PUB" || erro "a conferência do arquivo reprovou — nada foi publicado"
 
 if [[ "$DRY_RUN" == "1" ]]; then
