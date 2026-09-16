@@ -421,6 +421,11 @@ F14→F16 · F15→F17 (contínua).
 > **Esforço:** P ≤ 1 rodada · M = 2–3 · G = 4–6 · GG > 6. Ordens de grandeza para sequenciar, não
 > estimativas de prazo.
 
+> **A passagem entre duas fases tem prompt próprio:** `5 Prompts/05-gate-de-fase.md`. Ele cobra, na
+> ENTRADA, de quem a fase depende e o que ela custa em rodada paga — as duas coisas que, descobertas
+> no meio, já pararam a linha por horas; e na SAÍDA, os seis veredictos com evidência. As tabelas
+> abaixo trazem `Dono` e `Custo` só onde eles existem: campo vazio não se escreve.
+
 ### F0 — FUNDAÇÃO: fechar o fosso e decidir o escopo
 
 | | |
@@ -457,6 +462,7 @@ F14→F16 · F15→F17 (contínua).
 | **Impacto** | Alto — destrava consolidação e intercompany · **Esforço** M |
 | **Saída** | toda entidade com papel e escopo; 0 `entidade_ambigua` não resolvida |
 | **Aceite financeiro** | perímetro reproduz o COMBINADO do cliente, ou declara a diferença |
+| **Dono** | o COMBINADO do cliente contra o qual o perímetro é conferido — sem ele o aceite financeiro não fecha |
 
 ### F2 — COBERTURA DE TIPOS: dar consumidor aos 27 tipos mudos
 
@@ -486,6 +492,8 @@ continuidade operacional e ressalva. Expor numa tela custa pouco e não depende 
 | **Saída** | D7 verde |
 | **Aceite financeiro** | concordância ≥ limiar do estágio, **publicada como piso enviesado** |
 | **Aceite técnico** | lote com falha parcial retoma sem reprocessar o que já custou |
+| **Dono** | as rodadas reais — concordância se mede contra veredito de PRODUÇÃO, e só o dono dispara o formulário |
+| **Custo** | rodada paga e repetida por definição (a mesma entrada, várias vezes). Estime com `N8N/medir-custo-book.mjs` e fixe o teto de rodadas ANTES de começar |
 
 ### F4 — CONTA CANÔNICA, HIERARQUIA E RESOLUÇÃO (intervenção central)
 
