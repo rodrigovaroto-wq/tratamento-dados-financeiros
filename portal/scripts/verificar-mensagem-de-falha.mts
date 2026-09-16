@@ -19,7 +19,7 @@ import {
 } from "../src/lib/falha-em-portugues.ts";
 import {
   semPrimeiroSinalMs, janelaPara, semProgressoMs, SEGUNDOS_POR_DOCUMENTO,
-  vereditoDoLote, carenciaDoFechamentoMs,
+  vereditoDoLote, carenciaDoFechamentoMs, estimativaEmMinutos,
 } from "../src/lib/espera-do-lote.ts";
 import { readFileSync } from "node:fs";
 
@@ -253,6 +253,53 @@ for (const n of [38, 190]) {
     `lote de ${n}: a janela entrega ${(janelaPara(n) / previstoMs).toFixed(2)}x do previsto, e a tela promete 3x`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// A ESTIMATIVA CONTRA UMA RODADA CRONOMETRADA — o portão que faltava
+// ---------------------------------------------------------------------------
+//
+// O DEFEITO, achado pelo dono NA TELA em 16/09/2026, durante a rodada real do
+// "Teste 00": o portal prometia ~5 minutos para um lote que levava muito mais.
+// `SEGUNDOS_POR_DOCUMENTO` valia 6 — a cadência de UMA chamada de IA — quando o
+// custo real de um documento de ponta a ponta (upload, texto, medição,
+// classificação, extração, escritas) é ~20s.
+//
+// POR QUE NENHUM PORTÃO PEGOU, e é isto que este bloco conserta. O único assert
+// que existia (`N8N/test/workflow-sim.test.mjs`) confere a estimativa contra o
+// `batchInterval` do nó e aceita qualquer valor entre 1x e 4x a cadência — e o 6
+// estava DENTRO da faixa. Medido nesta correção, com o valor antigo no lugar:
+// `workflow-sim.test.mjs` passou 115 asserts e esta suíte passou 66, zero
+// falhas nas duas. A faixa protege contra a estimativa descolar da CADÊNCIA; o
+// defeito que o dono viu era descolar do RELÓGIO, e ninguém olhava para o
+// relógio.
+//
+// O QUE ESTE ASSERT AFIRMA é COMPORTAMENTO (regra 3), não mecanismo: a tela
+// nunca promete um tempo menor do que uma rodada real já levou. Ele não refaz a
+// aritmética das chamadas — refazer essa conta é o que errou nas quatro
+// recalibrações anteriores documentadas em `espera-do-lote.ts`.
+//
+// A RODADA É MEDIDA, NÃO INVENTADA (regra 4): execução #7747 do workflow de
+// ingestão, cronometrada no n8n em 14/09/2026 das 17:55:51 às 18:10:20, e o
+// `lote_execucao` gravado dentro dessa janela (18:01:48) declara 44 documentos.
+// 869 segundos para 44 documentos. É a rodada limpa DEPOIS da correção do TPM,
+// no mesmo regime de cadência que vale hoje.
+const RODADA_CRONOMETRADA = { documentos: 44, segundos: 869, qual: "#7747, 14/09/2026" };
+const estimadoS = estimativaEmMinutos(RODADA_CRONOMETRADA.documentos) * 60;
+checar(
+  estimadoS >= RODADA_CRONOMETRADA.segundos,
+  `a tela promete ${(estimadoS / 60).toFixed(0)} min para ${RODADA_CRONOMETRADA.documentos} documentos, e a `
+  + `rodada real (${RODADA_CRONOMETRADA.qual}) levou ${(RODADA_CRONOMETRADA.segundos / 60).toFixed(1)} min `
+  + `— prometer mais rápido do que o já medido faz o analista ler o atraso como travamento`,
+);
+// O TETO existe para o assert não virar decoração no sentido oposto: prometer o
+// dobro do medido devolve o defeito de 24/08 (a tela dizia 29 minutos para um
+// lote de 8) por outro caminho.
+checar(
+  estimadoS <= RODADA_CRONOMETRADA.segundos * 2,
+  `a tela promete ${(estimadoS / 60).toFixed(0)} min contra os `
+  + `${(RODADA_CRONOMETRADA.segundos / 60).toFixed(1)} min medidos (${RODADA_CRONOMETRADA.qual}) `
+  + `— mais que o dobro é o defeito de 24/08 ao contrário`,
+);
 
 // A PARADA POR FALTA DE AVANÇO TAMBÉM CRESCE COM O LOTE — e este bloco existia
 // dizendo exatamente o contrário.
