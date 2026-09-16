@@ -9,7 +9,7 @@ toca:
   - N8N/lib/extract.mjs
 prova: portal/scripts/verificar-mensagem-de-falha.mts
 ancora: portal/src/lib/espera-do-lote.ts#SEGUNDOS_POR_DOCUMENTO
-ancora_sha: 57fa4093deb5
+ancora_sha: a44a073e5738
 ---
 
 # A cadência da extração ERA 73 s — hoje é 6 s, e o motivo trocou de time
@@ -78,6 +78,34 @@ piso realmente exigem; reprova se os espelhos divergirem em qualquer direção.
 
 ## O efeito, que é a parte prática
 
-48 documentos × 6 s ≈ **5 minutos** — contra os ~58 minutos que a mesma conta dava com o TPM no
-piso do Tier 1. É a mesma fórmula, o mesmo código, e o número mudou porque o DADO real da conta
-mudou — não porque alguém tocou em `build-workflow.mjs`.
+A cadência governa o INTERVALO ENTRE CHAMADAS do nó de extração: a cada 6 s sai uma chamada,
+contra uma a cada 73 s no regime do Tier 1. É a mesma fórmula, o mesmo código, e o número mudou
+porque o DADO real da conta mudou — não porque alguém tocou em `build-workflow.mjs`.
+
+## ⚠️ CADÊNCIA DA CHAMADA ≠ CUSTO DO DOCUMENTO — e esta ficha já confundiu os dois
+
+**Corrigido em 16/09/2026, e de novo pelo próprio portão de âncora.** A seção acima terminava
+dizendo *"48 documentos × 6 s ≈ 5 minutos"*, e isso é falso: multiplicava o custo de UMA CHAMADA
+pelo número de DOCUMENTOS. Não foi um erro só de texto — `SEGUNDOS_POR_DOCUMENTO` no portal
+estava com esse mesmo 6, pela mesma confusão, e o dono viu na tela: o portal prometia ~5 minutos
+para um lote que levava muito mais, durante a rodada real do "Teste 00".
+
+**Um documento não é uma chamada.** Ele é upload ao Storage, leitura do texto, medição,
+classificação por conteúdo quando o nome não resolve, uma ou MAIS extrações (documento fatiado
+faz várias) e as escritas no banco. A cadência é o piso de UM desses passos.
+
+**Medido em relógio, e é a única forma honesta de saber:** execução `#7747` do workflow de
+ingestão, 14/09/2026 das 17:55:51 às 18:10:20 no n8n, com o `lote_execucao` gravado dentro dessa
+janela declarando 44 documentos — **869 s ÷ 44 = 19,7 s por documento**, contra os 6 s de
+cadência. `SEGUNDOS_POR_DOCUMENTO` passou a 20 (arredondado para cima).
+
+**A regra que fica:** esta ficha responde "quanto custa uma CHAMADA". Quem quiser saber "quanto
+demora um DOCUMENTO" cronometra uma rodada real e divide pelo número de documentos — nunca
+refaz a aritmética das chamadas. As quatro recalibrações acima erraram todas pelo mesmo caminho,
+e a quinta (a de 16/09) foi a primeira a sair de um relógio.
+
+**O portão que faltava, criado junto com a correção:** `verificar-mensagem-de-falha.mts` (o
+`prova` desta ficha) agora fixa a estimativa contra a rodada `#7747` — a tela nunca promete menos
+do que uma rodada real já levou. Antes dele, `workflow-sim.test.mjs` só conferia a estimativa
+contra a cadência do nó, aceitando qualquer valor entre 1× e 4× — e o 6 estava dentro da faixa:
+medido, com o valor errado no lugar, as duas suítes passavam com ZERO falhas.
