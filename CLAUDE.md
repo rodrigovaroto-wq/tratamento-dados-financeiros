@@ -90,6 +90,16 @@ node N8N/medir-custo-book.mjs
 # geradores — o gerado TEM de ficar igual ao commitado (`git diff --exit-code`)
 node N8N/build-workflow.mjs && node N8N/build-workflow-macro.mjs \
   && node N8N/build-workflow-diagnostico.mjs && node N8N/build-workflow-erros.mjs
+# E AS FIXTURES DO BOOK, que faltavam aqui até 16/09 (F0, fatia 0.4): as TRÊS pontas se comparam
+# entre si — o `.sql` do banco, o `.json` do export e o gabarito. Desincronizar uma faz as outras
+# duas mentirem sobre a terceira, e foi o que aconteceu em 19/08.
+cd "Dados de Teste"/book-vertentes \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py > ../../Supabase/test/fixture_book_vertentes.sql \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture.py --json > ../../portal/scripts/fixtures/book-vertentes.json \
+  && cd ../book-canastra \
+  && PYTHONPATH=. python3 ../../Supabase/test/gerar_fixture_canastra.py > ../../Supabase/test/fixture_book_canastra.sql \
+  && cd ../.. && git diff --exit-code -- Supabase/test/fixture_book_vertentes.sql \
+     portal/scripts/fixtures/book-vertentes.json Supabase/test/fixture_book_canastra.sql
 
 # portal
 cd portal && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/eslint . \
