@@ -154,17 +154,14 @@ TODA sessão, nenhum conhecia as sete regras, e três contradiziam a regra 2 (`/
 comandos escritos aqui — `/rodada`, `/revisar`, `/fechar` —, e o portão que prova que todo
 `subagent_type` citado existe é `node .claude/verificar-comandos.mjs`.
 
-**O plugin `superpowers` está ligado, e CINCO das suas 14 skills estão VETADAS aqui.** Nunca
-invoque `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`
-nem `finishing-a-development-branch`: elas mandam, em texto, aceitar o relatório do implementador
-como prova de execução, fazer `git merge` e `git branch -d` sozinho, rodar um `npm test` que não
-existe neste repositório, e commitar com `feat: add specific feature`. E quando
-`test-driven-development` ("Test passes immediately" é red flag) divergir de
-`verification-before-completion` ("Revert fix → Run (MUST FAIL) → Restore"), **vale a segunda** —
-ela é a regra 2; a primeira é o que fez `/tdd-green` sair. O Claude Code não desliga skill
-individual, então o veto é este parágrafo: o plugin cede ao CLAUDE.md por construção. A auditoria
-por skill, com os trechos literais, está em
-`.claude/conhecimento/fichas/superpowers-cinco-skills-vetadas.md`.
+**O plugin `superpowers` está DESLIGADO neste projeto** (`.claude/settings.json`,
+`enabledPlugins`), pelo mesmo critério que cortou os 52 comandos importados. Das 14 skills, 5
+contradizem as regras 1, 6 e 7 em texto e 7 duplicam o que `/rodada`, `/revisar`, `/fechar` e o
+`buscar.mjs` já fazem melhor; as 9 que sobrariam somam **29,7k tokens de on-invoke** sob uma skill
+always-on que manda invocar "se houver 1% de chance de aplicar". A auditoria por skill, com os
+trechos literais, está em `.claude/conhecimento/fichas/superpowers-cinco-skills-vetadas.md` — e
+ela vale como veto se alguém religar o plugin. Versão nova é caso de reauditoria, não de religar
+no escuro.
 
 **Dois dos sete são condicionais, não automáticos.** `explorador` só quando
 `buscar.mjs` devolveu pouco E a busca é ampla (fan-out por vários diretórios) — no caso normal a

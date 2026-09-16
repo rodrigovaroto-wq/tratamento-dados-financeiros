@@ -1,25 +1,48 @@
 ---
 name: superpowers-cinco-skills-vetadas
-description: o plugin superpowers 6.3.0 está instalado e ligado, mas CINCO das suas 14 skills contradizem as sete regras — e ele se contradiz internamente sobre o caso exato da regra 2
+description: o plugin superpowers 6.3.0 foi auditado skill por skill e DESLIGADO neste projeto — 5 das 14 contradizem as regras 1, 6 e 7, as 9 restantes somam 29,7k de on-invoke, e ele se contradiz sobre o caso exato da regra 2
 tipo: doutrina
 toca: []
 ---
 
-# Superpowers 6.3.0: o que vale, o que está vetado, e o desempate da regra 2
+# Superpowers 6.3.0: auditado skill por skill e DESLIGADO neste projeto
 
 O plugin `superpowers@superpowers-marketplace` (v6.3.0, commit `b36e0829`) foi instalado em
-16/09/2026 no escopo `user` e **auditado skill por skill contra as sete regras** antes de
-qualquer uso. Ele não repete o problema dos 52 comandos importados: traz **14 skills, 0 agentes,
-0 comandos de barra, 0 servidores MCP**. O custo de prompt não é o argumento aqui — são ~688
-tokens declarados de always-on, mais ~800 que o hook `SessionStart` injeta ao colar
-`using-superpowers/SKILL.md` inteiro em toda sessão, dentro de `<EXTREMELY_IMPORTANT>`. Total
-~1,5k contra os 19.439 bytes cortados em 16/09. **O argumento é o conteúdo de cinco skills.**
+16/09/2026 no escopo `user`, **auditado skill por skill contra as sete regras** antes de qualquer
+uso, e **desligado neste projeto** em `.claude/settings.json` (`enabledPlugins`). Continua ativo
+nos outros projetos do dono; o desligamento é só aqui.
 
-O plugin cede à casa por construção, e é isso que faz este veto funcionar sem desligá-lo:
-`using-superpowers` diz, literalmente, *"User instructions (CLAUDE.md, AGENTS.md, GEMINI.md, etc,
-direct requests) take precedence over skills"*. **O Claude Code não desliga skill individual** —
-`claude plugin disable` só opera no plugin inteiro. Por isso o veto mora aqui e no `CLAUDE.md`,
-não numa configuração.
+Ele não repete o problema dos 52 comandos importados na forma: traz **14 skills, 0 agentes,
+0 comandos de barra, 0 servidores MCP**.
+
+## A conta que decidiu, e o número certo dela
+
+A primeira versão desta ficha comparou **always-on com always-on** — ~1,5k do plugin (~688
+declarados mais ~800 que o hook `SessionStart` injeta ao colar `using-superpowers/SKILL.md`
+inteiro dentro de `<EXTREMELY_IMPORTANT>`) contra ~4,9k dos 19.439 bytes cortados em 16/09. Por
+essa conta o plugin ganhava 3x, e **essa era a comparação errada**.
+
+O custo do superpowers não é always-on, é **por invocação** — e a única skill always-on dele
+existe para maximizar invocação: *"If you think there is even a 1% chance a skill might apply to
+what you are doing, you ABSOLUTELY MUST invoke the skill… YOU DO NOT HAVE A CHOICE."* As nove
+skills que sobreviveriam ao veto somam **29,7k tokens de on-invoke** (`brainstorming` 5,6k,
+`writing-skills` 9,7k, `systematic-debugging` 3,4k, `test-driven-development` 3,3k,
+`receiving-code-review` 2,2k, `dispatching-parallel-agents` 2,2k,
+`verification-before-completion` 1,2k, `using-superpowers` 1,1k, `requesting-code-review` 1,0k),
+mais ~1,5k fixos por sessão.
+
+**Contra o que:** dessas nove, **sete duplicam** o que `/rodada`, `/revisar`, `/fechar`, os sete
+agentes e o `buscar.mjs` já fazem — e fazem com a lente das sete regras, que nenhuma delas tem.
+Sobram duas que cobrem vão real: `verification-before-completion` (enuncia a regra 2 corretamente)
+e `receiving-code-review`. Duas skills úteis não pagam 29,7k de exposição mais um mandato de
+invocar por 1% de chance. É o mesmo critério de 16/09, aplicado ao número certo.
+
+**E o veto abaixo continua valendo**, porque desligar é reversível e a auditoria não: se alguém
+religar o plugin aqui, as cinco skills desta seção seguem proibidas. Funciona porque
+`using-superpowers` cede por construção: *"User instructions (CLAUDE.md, AGENTS.md, GEMINI.md,
+etc, direct requests) take precedence over skills"*. O Claude Code **não desliga skill
+individual** — `claude plugin disable` só opera no plugin inteiro —, então o veto por skill só
+pode ser texto.
 
 ## As cinco vetadas — nunca invocar neste repositório
 
@@ -31,10 +54,11 @@ não numa configuração.
 | `finishing-a-development-branch` | `git merge`, `git branch -d`, `git branch -D`, e cria PR pelo `gh` CLI | o contrato daqui é branch designada + PR draft, e **o contêiner não tem `gh`**, só ferramentas MCP do GitHub. Mesmo `npm test` falso do item acima |
 | `executing-plans` | — | sem conflito próprio; sai por ser genérica e por executar à risca o gabarito vazio do `writing-plans`. A própria skill se declara inferior: *"If subagents are available, use superpowers:subagent-driven-development instead"* |
 
-## As nove que ficam, e as três ressalvas que viajam com elas
+## As nove restantes — o que valeria, SE o plugin fosse religado
 
-`verification-before-completion` é a melhor do lote e deve ser tratada como **leitura
-autoritativa**. `systematic-debugging`, `test-driven-development`, `brainstorming`,
+Elas não estão em uso: o plugin está desligado. Esta seção existe para que uma reauditoria futura
+não precise refazer a leitura. `verification-before-completion` é a melhor do lote e, se algum dia
+for religada, deve ser tratada como **leitura autoritativa**. `systematic-debugging`, `test-driven-development`, `brainstorming`,
 `writing-skills`, `receiving-code-review`, `requesting-code-review`,
 `dispatching-parallel-agents` e `using-superpowers` ficam com as emendas abaixo.
 
@@ -92,6 +116,7 @@ A auditoria leu os 14 `SKILL.md`. **Não leu** os arquivos auxiliares que alguma
 `writing-good-tests.md`. Para as cinco vetadas isso não muda nada. Se alguma delas for
 reabilitada, os auxiliares precisam ser lidos antes.
 
-Não há portão que prove este veto: se a v6.4 renomear uma skill vetada, nada aqui reprova.
+Não há portão que prove este veto nem o desligamento: se a v6.4 renomear uma skill vetada, ou se
+alguém religar o plugin, nada aqui reprova.
 **Versão nova do plugin é caso de reauditoria**, e o commit que a instalar carrega a atualização
 desta ficha.
