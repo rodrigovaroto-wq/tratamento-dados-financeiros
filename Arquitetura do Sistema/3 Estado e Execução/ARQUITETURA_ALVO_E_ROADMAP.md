@@ -715,7 +715,7 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 - **Entregável:** `custo_gravado_pelo_n8n` presente; hash publicado == gerado.
 - *Agente: `n8n-workflow`. Risco: médio — a republicação já perdeu configuração antes.*
 
-### Fatia 0.4 — Portões que impedem o fosso de reabrir (valor permanente)
+### Fatia 0.4 — Portões que impedem o fosso de reabrir (valor permanente) · **FEITA em 16/09/2026**
 1. **Sonda contra produção** em agenda, não só contra o banco do CI — fecha o ponto cego de
    `sonda-so-conhece-o-catalogo-que-o-banco-tem`.
 2. **Hash do workflow publicado × gerado** — estende `conferir-publicado.mjs`.
@@ -732,13 +732,19 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 - **Entregável:** ≥95% dos documentos com linha; o que falhar, falha por razão nova e documentada.
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
 
-### Fatia 0.6 — Decisão de escopo e estado regerado
+### Fatia 0.6 — Decisão de escopo e estado regerado · **as duas ADRs: FEITAS em 16/09/2026**
 - Reescrever `00_VISAO_E_ESCOPO.md`: o escopo negativo *"não é ferramenta de modelagem financeira"*
   precisa sair ou ser reafirmado. **É decisão do dono** — a engenharia não pode tomá-la, e o roadmap
   inteiro depende dela.
 - `PRONTIDAO_POR_ESTAGIO.md` passa a ser **gerado** do banco e do CI.
-- Registrar as duas ADRs que governam tudo o que vem depois:
-  **(1) evidência é imutável, canônico é construído acima**; **(2) toda aritmética mora no motor**.
+- ~~Registrar as duas ADRs que governam tudo o que vem depois~~ — **FEITO**:
+  `1 Visão e Doutrina/04_ADR_01_EVIDENCIA_IMUTAVEL.md` e `05_ADR_02_ARITMETICA_NO_MOTOR.md`.
+  As duas trazem o estado de conformidade MEDIDO, e nenhuma se declara cumprida: a L2/L3 da
+  ADR-01 é conteúdo de F1–F4, e a ADR-02 mediu a aritmética em QUATRO casas hoje (n8n 191
+  linhas · 44 migrations com soma e 15 `fn_reconciliar_*` · 4 libs do portal · 30 pontos de
+  fórmula no Excel). **E a ADR-02 deixa uma fronteira aberta que é do dono**: "planilha viva"
+  e "toda aritmética no motor" só convivem sob uma de duas leituras, e escolher é decisão de
+  produto — está escrita lá, não resolvida em silêncio.
 - *Agente: `estado-e-handoff`. Risco: nenhum técnico.*
 
 ### Ordem e commits
