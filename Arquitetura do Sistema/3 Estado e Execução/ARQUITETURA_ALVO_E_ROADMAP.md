@@ -690,30 +690,54 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 
 **Entrada:** nenhuma. **Saída:** D1 verde e a decisão de escopo registrada.
 
-### Fatia 0.1 — Inventário do fosso (medir antes de corrigir)
-- `fn_instalacao_conferir()` **contra produção**, registrando a saída literal.
-- `conferir-chamadas.mjs` contra produção.
-- Hash do workflow publicado no n8n × gerado por `build-workflow.mjs`.
-- Confirmar quais das `0158`–`0177` estão de fato aplicadas — o `ESTADO.md` diz `0157`+`0160` fora
-  de ordem; **conferir, não confiar**.
-- **Entregável:** tabela com as três defasagens medidas, não lembradas.
-- *Agente: `explorador`. Risco: nenhum — é leitura.*
+### Fatia 0.1 — Inventário do fosso (medir antes de corrigir) · **FEITA em 16/09/2026**
+- `fn_instalacao_conferir()` **contra produção** — 0 ausências (via API de gerenciamento do
+  Supabase; a sessão não alcança a porta do Postgres direto neste ambiente).
+- Migrations pendentes confirmadas por comparação de CORPO, byte a byte, não por suposição:
+  `fn_entidade_aprender_cnpj` e `fn_registrar_diagnostico` bateram EXATAMENTE com a `0174` antes
+  de qualquer aplicação. **O número real era 3 (`0175`–`0177`), não os 20 que uma estimativa
+  anterior, errada, tinha calculado** — o total de migrations no repositório também estava errado
+  (122, não 177; o 177 é só o maior número de arquivo, com um pulo de 0044 para 0100).
+- Hash do workflow publicado × gerado: `conferir-publicado.mjs` alimentado com os 4 workflows
+  reais via API do n8n. Achado grave: a ingestão tinha perdido `multipleFiles: true` no formulário
+  (detalhado na fatia 0.3, abaixo).
+- **Entregável:** tabela medida, não lembrada — ver `ESTADO.md`, linhas "Aplicadas no Supabase" e
+  "Workflow PUBLICADO no n8n".
+- *Risco: nenhum — foi leitura.*
 
-### Fatia 0.2 — Aplicar as migrations pendentes
-- Aplicar em ordem, conferindo a sonda a cada bloco.
-- Atenção à `0160`, aplicada fora de ordem: o portão da própria migration já recusou reaplicação
-  (comportamento correto).
-- Reexecutar `fn_recomputar_completude` nos casos abertos — a `0158` endurece o `pronto`.
-- **Entregável:** sonda com 0 ausentes, exceto `custo_gravado_pelo_n8n` (a 0.3 fecha).
-- *Agente: `migrations-postgres`. Risco: médio — 20 migrations sobre dado real, e o número CRESCE a cada rodada que fecha. Backup conferido antes.*
+### Fatia 0.2 — Aplicar as migrations pendentes · **FEITA em 16/09/2026**
+- `0175`, `0176`, `0177` aplicadas EM ORDEM, sonda conferida depois de cada uma (0 ausências nas
+  três vezes). Nenhuma DDL estrutural nas três — só `create or replace function` e registro no
+  catálogo (`insert into instalacao_requisito`); os `insert`/`update` de dado real que aparecem
+  nos arquivos moram DENTRO de corpo de função, e só rodam quando a função for chamada depois —
+  não na hora de aplicar a migration. Verificado ANTES de aplicar, não suposto.
+- Verificação final: corpo de `fn_entidade_aprender_cnpj` bate byte a byte com a `0177`, e
+  `fn_pendencia_cnpj_colide_balcao` (nascida na `0176`) existe.
+- **Entregável:** sonda com 0 ausentes — ATINGIDO.
+- *Risco medido como baixo na prática: sem DDL estrutural, reversível reaplicando a versão
+  anterior da função se algo saísse errado. Nada saiu.*
 
-### Fatia 0.3 — Republicar os workflows e alinhar o provedor
-- Republicar os 4; conferir `Gravar Uso do Lote` presente no canvas.
-- Verificar os toggles (memória `republicacao-do-n8n-perde-toggles`).
-- Confirmar o provedor ativo e que as premissas de custo reescaladas em 13/09 (2,80→1,48)
-  correspondem ao que roda.
-- **Entregável:** `custo_gravado_pelo_n8n` presente; hash publicado == gerado.
-- *Agente: `n8n-workflow`. Risco: médio — a republicação já perdeu configuração antes.*
+### Fatia 0.3 — Republicar os workflows e alinhar o provedor · **FEITA em 16/09/2026**
+- Os 4 republicados: macro já batia (0 divergências, não precisou); erros e diagnóstico
+  republicados com a ferramenta generalizada nesta rodada; ingestão republicada corrigindo o
+  achado grave — `multipleFiles: true` void no formulário de upload (o cliente só conseguia subir
+  um documento por vez). Confirmado por três fontes antes de agir: o gerador declara o campo de
+  propósito, é defeito já nomeado em `.claude/memory/republicacao-do-n8n-perde-toggles.md`, e o
+  JSON buscado era fresco (`updatedAt` do dia).
+- **Achado no caminho:** `preparar-republicacao.mjs`/`republicar.sh` só sabiam publicar a
+  ingestão — hardcoded. Generalizados com `N8N_ARQUIVO_REPO`, com o padrão preservando quem já
+  automatizou sem a variável. Uma segunda trava (o script assumia gatilho de formulário em TODO
+  workflow) quebrou ao tentar publicar `erros` e foi corrigida na hora — condicional à existência
+  do gatilho.
+- `Gravar Uso do Lote` presente no canvas — confirmado ao vivo, `disabled: false`.
+- Provedor confirmado ao vivo no nó `IA Extrair`: `api.openai.com`, batendo com
+  `PROVEDOR_PADRAO = 'openai'` do repositório.
+- `FINGERPRINT_EXTRACAO` conferido ANTES e DEPOIS da republicação: `6f5a9374a9d2b1ae` nos dois —
+  não mudou, então a próxima rodada não reprocessa nenhum documento à toa.
+- **Entregável:** os 4 workflows batem 100% com o repositório — `conferir-publicado.mjs` OK nos
+  quatro, verificado depois de cada publicação.
+- *Risco realizado: um, achado e corrigido na hora (a trava do formulário). Nenhum PUT feito sem
+  `--dry-run` antes.*
 
 ### Fatia 0.4 — Portões que impedem o fosso de reabrir (valor permanente) · **FEITA em 16/09/2026**
 1. **Sonda contra produção** em agenda, não só contra o banco do CI — fecha o ponto cego de
