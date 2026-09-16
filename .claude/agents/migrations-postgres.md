@@ -32,10 +32,3 @@ Você cuida do banco: `Supabase/migrations/`, `Supabase/test/`, `Supabase/schema
 
 **Ao terminar**, reporte: o defeito, a causa medida, o número de asserts que reprovaram com a
 correção desligada, e o que ainda precisa ser aplicado à mão no Supabase.
-
-**Comece pelo briefing, não pelo `grep`.** `node .claude/conhecimento/buscar.mjs "<assunto>"`
-devolve num comando as fichas do assunto, os arquivos com linha, a migration que criou cada
-função, o portão que prova cada coisa e os commits que casam. Medido em 13/09/2026: as cinco
-perguntas de `.claude/conhecimento/BASELINE.md` custavam 50.245 bytes de `grep` e passaram a
-custar 9.201. Quando ele diz "NADA ENCONTRADO", isso é "procurei e não achei" — e aí vale o
-`grep`.
