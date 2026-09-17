@@ -12,10 +12,10 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > `Supabase/test/run.sh` reprova quando a migration mais nova não está citada abaixo.
 
 > **A F0 (fechar o fosso repositório ↔ produção) ESTÁ QUASE FECHADA.** Banco em dia (`0175`–`0177`
-> aplicadas e conferidas), os 4 workflows republicados e em dia, as duas ADRs + duas decisões do dono
+> aplicadas e conferidas), os 4 workflows republicados em 16/09 (repositório agora DESATUALIZADO em 17/09 — dois commits mudaram ingestão sem republicar), as duas ADRs + duas decisões do dono
 > registradas. Faltam dois itens operacionais: `SONDA_DB_URL` (segredo do CI para o workflow
 > `sonda-producao.yml` do dono) e a fatia 0.5 (reprocessar o lote "Teste 00" — decisão do dono).
-> Tudo medido antes de cada ação. Leia a SESSÃO 94 no `HANDOFF.md` para o detalhe das duas correções
+> Tudo medido antes de cada ação. Leia a SESSÃO 94/95 no `HANDOFF.md` para o detalhe das duas correções
 > de premissa (122 migrations, faltavam 3 não 20) e das três evidências que travaram o banco, a
 > republicação e o CI — onde o ambiente desta sessão não alcança Postgres diretamente (a saída foi a
 > API de gerenciamento do Supabase).
@@ -32,7 +32,7 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 | **Workflow PUBLICADO no n8n** | **DESATUALIZADO — republicação pendente.** Os quatro batiam 100% com o repositório em 16/09/2026 (republicados e conferidos nesta sessão, com acesso real à API do n8n — ver medição abaixo), mas **dois commits de 17/09 mudaram `N8N/workflow.e1-ingestao.json`** (nó "Juntar Blocos": o fix do Bug C e a correção do CRÍTICO da revisão multilente) **sem republicar**. Até rodar `N8N_ARQUIVO_REPO=workflow.e1-ingestao.json bash N8N/republicar.sh` (ou a Action "Republicar workflow no n8n"), a instância publicada continua rodando o `jsCode` de 16/09 — as certidões da JUCESP e a planilha de controle da AMO continuam abrindo `extracao_falhou` em produção apesar do repositório já estar corrigido. `FINGERPRINT_EXTRACAO` não mudou (`6f5a9374a9d2b1ae`) — quando republicar, nenhum documento já processado será reprocessado à toa. **Medição de 16/09 (histórico, não descreve o estado atual):** `conferir-publicado.mjs` (corrigido para casar pelo `name`, comparando os 4) mediu macro 0 divergências, erros 1 real (cosmética à parte), diagnóstico 1 real (TPM desatualizado), ingestão 1 REAL E GRAVE (formulário sem `multipleFiles: true`, já corrigido); `preparar-republicacao.mjs`/`republicar.sh` generalizados (`N8N_ARQUIVO_REPO`) para os quatro; provedor confirmado ao vivo OpenAI (`api.openai.com`), batendo com `PROVEDOR_PADRAO = 'openai'`. |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **CONCORDAM, medido em 16/09/2026.** Repositório: OpenAI `gpt-5.6-luna`, `PROVEDOR_PADRAO = 'openai'` em `N8N/lib/provedor.mjs`. Publicado: conferido ao vivo no nó `IA Extrair` do workflow republicado — `url: https://api.openai.com/v1/chat/completions`. **Não datar por este arquivo: `N8N/conferir-publicado.mjs` contra a instância é quem responde**, e ele agora confere os quatro workflows, não só um. |
-| **PR desta rodada** | **#230, ABERTO (draft), mergeable_state: clean, CI verde** — F0 quase inteira: banco (0175–0177 aplicadas/conferidas), 4 workflows republicados/em dia, ADRs+decisões do dono registradas, 3 portões medindo conformidade, correção do Sonar que não era desta PR. O dono decide o merge. |
+| **PR desta rodada** | **#234, ABERTO, mergeable_state: clean, CI verde** — Análise da rodada real AMO: 4 bugs nomeados (2 diferidos F2/F4, 1 corrigido PR #234, 1 não conferido). Fix do Bug C (cobertura parcial): guarda JS não calava para `tem_dado_financeiro=false` sem dado extraído. Revisão multilente descobre CRÍTICO (commit ad12d34): o fix original também calava para documento COM dados extraídos — corrigido em novo commit. Workflow corrigido mas não republicado em produção. O dono decide o merge e a republicação. |
 
 ## A SESSÃO ATUAL (17/09/2026) — RODADA REAL AMO TESTE 00: 118 DOCUMENTOS, 89 ACHADOS, 4 NOMEADOS
 
