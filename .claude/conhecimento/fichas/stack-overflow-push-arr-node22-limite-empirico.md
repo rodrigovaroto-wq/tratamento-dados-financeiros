@@ -8,7 +8,7 @@ substitui: []
 
 # Descoberta: Stack overflow em push(...arr), não esgotamento de RAM
 
-**Achado em:** análise de hipótese anterior (rodada real "AMO teste 00", 16/09/2026)
+**Achado em:** análise de hipótese anterior (rodada real "AMO teste 00", 17/09/2026)
 
 **Correção:** Hipótese anterior atribuía a morte de lotes grandes (~127 planilhas) a "esgotamento de RAM do PikaPods". **Refutada.**
 

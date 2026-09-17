@@ -4,7 +4,8 @@ description: portão calibrado sobre a entrada do GERADOR passa com +3% enquanto
 metadata:
   type: feedback
 tipo: armadilha
-toca: []
+toca:
+  - Dados de Teste/capturas/2026-08-31-texto-extraido-n8n
 prova: N8N/medir-regua-cobertura.mjs
 ---
 

@@ -6,7 +6,7 @@ substitui: []
 
 # Bug D: Precondição/divergência — NÃO CONFERIDO
 
-**Achado em:** rodada real "AMO teste 00", 118 documentos, 16/09/2026
+**Achado em:** rodada real "AMO teste 00", 118 documentos, 17/09/2026
 
 **Status:** NÃO CONFERIDO — não foi possível validar em produção nesta rodada
 

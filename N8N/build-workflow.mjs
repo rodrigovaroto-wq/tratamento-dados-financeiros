@@ -1579,8 +1579,12 @@ for(const [chave, blocos] of porDocumento){
   // abria "Extracao INCOMPLETA: 40 de 200"). \`semDadoExtraido\` reproduz a
   // condicao \`v_count = 0\` da 0111 no lado JS.
   //
-  // "!== false" (nao "=== true") continua de proposito: ausencia do sinal
-  // continua acusando -- regra 1, ausencia nao e' dado.
+  // "===false" DENTRO da negacao (nao "!==false" isolado) continua de
+  // proposito: ausencia do sinal (null/undefined) faz a comparacao dar
+  // false, o "!" vira true, e a guarda continua acusando -- regra 1,
+  // ausencia nao e' dado. CUIDADO para quem for mexer aqui: trocar por
+  // "!==false" isolado (sem o semDadoExtraido) volta a abrir o CRITICO
+  // que este bloco existe para fechar -- ver o teste 'ver-misto'.
   const semDadoExtraido=linhasDevolvidas===0;
   if(cobertura && !(semDadoExtraido && base.diagnostico?.tem_dado_financeiro===false)) motivos.push(cobertura.motivo
     + ' O documento foi lido em ' + r.blocos + ' de ' + r.blocosPlanejados + ' bloco(s) planejado(s)'
