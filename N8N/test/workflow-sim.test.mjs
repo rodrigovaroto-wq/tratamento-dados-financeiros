@@ -2618,6 +2618,32 @@ test('Camada 3: tem_dado_financeiro=false também cala a guarda de COBERTURA PAR
     'sem o sinal explícito tem_dado_financeiro=false, a guarda continua falando — regra 1, ausência não é dado');
 });
 
+// A PRIMEIRA VERSÃO DESTA CORREÇÃO (378f23a) CALAVA A GUARDA PARA QUALQUER
+// tem_dado_financeiro=false, SEM EXIGIR "nada foi extraído" — ao contrário da
+// própria 0111, que só se cala quando `v_count = 0`. Achado na revisão
+// multilente do PR #234 (17/09/2026): documento com 30 contas esperadas, o
+// modelo devolve 5 linhas COM valor monetário e MESMO ASSIM marca
+// tem_dado_financeiro=false (documento misto, ou erro do modelo) — a versão
+// anterior silenciava a cobertura e gravava os 5 campos sem pendência
+// nenhuma, PIOR que o defeito original (antes abria "Extração INCOMPLETA: 5
+// de 30"). `semDadoExtraido` (linhasDevolvidas===0) reproduz a condição
+// `v_count = 0` da 0111 no lado JS.
+test('Camada 3: tem_dado_financeiro=false só cala a guarda de cobertura quando NADA foi extraído, igual à 0111', async () => {
+  const linha = (k, v) => ({ ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null });
+  const out = await run('Juntar Blocos', { items: [
+    { json: {
+      documento_versao_id: 'ver-misto', bloco: 1, blocos: 1, celulas_no_documento: 30, contas_no_documento: 30,
+      campos: [linha('a', 1), linha('b', 2), linha('c', 3), linha('d', 4), linha('e', 5)],
+      diagnostico: { entidade: 'Amobeleza', tem_dado_financeiro: false }, falha_motivo: null,
+      custo_usd: 0.01, tokens: { entrada: 5, saida: 5, cache: 0 },
+    } },
+  ] });
+
+  const misto = out.find((i) => i.json.documento_versao_id === 'ver-misto').json;
+  assert.match(misto.falha_motivo, /Extração INCOMPLETA/,
+    'tem_dado_financeiro=false não pode calar a cobertura quando o documento devolveu linhas com valor — a guarda existe exatamente para este caso, e calar aqui perde dado em silêncio');
+});
+
 test('Camada 3: emenda limpa SOZINHA não é falha — lote 7377, "teste Canastra" (02/09)', async () => {
   // A rodada real: 17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf foi
   // lido INTEIRO em 2 blocos (302 pares conta×coluna, 95 contas distintas,
