@@ -1554,7 +1554,39 @@ for(const [chave, blocos] of porDocumento){
   // MESMA frase -- e sao as duas hipoteses que esta frase existe para separar.
   // Agora os dois aparecem, e a divergencia entre eles ja saiu como motivo
   // proprio em \`juntarBlocos\` (FALTOU BLOCO).
-  if(cobertura) motivos.push(cobertura.motivo
+  // TEM_DADO_FINANCEIRO=FALSE CALA ESTA GUARDA TAMBEM, NAO SO' O SINAL 3 --
+  // MAS SO' QUANDO NADA FOI EXTRAIDO, IGUAL A 0111.
+  //
+  // A 0111 ja resolveu isto para o Sinal 3 ("veio vazia", em
+  // fn_registrar_campos_extraidos): documento sem valor monetario por
+  // natureza (certidao, organograma, parecer de auditoria) nao e' falha. Mas
+  // aquela protecao mora no SQL e so cobre "veio vazia" -- esta guarda de
+  // COBERTURA PARCIAL e' outro codigo, escrito depois, e nunca foi ligada a
+  // mesma bandeira. MEDIDO na rodada real do "AMO teste 00" (17/09/2026): 3
+  // certidoes da JUCESP e 1 planilha de controle de extratos vieram com
+  // tem_dado_financeiro=false (a IA correta) e MESMO ASSIM abriram
+  // extracao_falhou, porque a regua de texto conta data/CNPJ/percentual como
+  // "linha de conta" sem saber que o documento e', por natureza, sem numero
+  // financeiro.
+  //
+  // PRIMEIRA VERSAO DESTA CORRECAO (378f23a) CALAVA A GUARDA PARA QUALQUER
+  // tem_dado_financeiro=false, SEM EXIGIR linhasDevolvidas===0 -- ao contrario
+  // da propria 0111, que so' se cala quando \`v_count = 0\`. Revisao multilente
+  // (17/09/2026) mediu o cenario: documento com 200 contas esperadas, o
+  // modelo devolve 40 linhas COM valor monetario e marca tem_dado_financeiro
+  // = false (documento misto, ou erro do modelo) -- a versao anterior gravava
+  // os 40 campos SEM pendencia nenhuma, pior que o defeito original (antes
+  // abria "Extracao INCOMPLETA: 40 de 200"). \`semDadoExtraido\` reproduz a
+  // condicao \`v_count = 0\` da 0111 no lado JS.
+  //
+  // "===false" DENTRO da negacao (nao "!==false" isolado) continua de
+  // proposito: ausencia do sinal (null/undefined) faz a comparacao dar
+  // false, o "!" vira true, e a guarda continua acusando -- regra 1,
+  // ausencia nao e' dado. CUIDADO para quem for mexer aqui: trocar por
+  // "!==false" isolado (sem o semDadoExtraido) volta a abrir o CRITICO
+  // que este bloco existe para fechar -- ver o teste 'ver-misto'.
+  const semDadoExtraido=linhasDevolvidas===0;
+  if(cobertura && !(semDadoExtraido && base.diagnostico?.tem_dado_financeiro===false)) motivos.push(cobertura.motivo
     + ' O documento foi lido em ' + r.blocos + ' de ' + r.blocosPlanejados + ' bloco(s) planejado(s)'
     + (r.blocosPlanejados>r.blocos
        ? '. Falta bloco: a cobertura acima mede o documento SEM esse trecho, entao ela NAO diz nada sobre a leitura do modelo.'

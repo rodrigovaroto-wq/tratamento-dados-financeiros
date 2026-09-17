@@ -785,6 +785,17 @@ registradas aqui para quando isso voltar a doer. Por ora: **conviver com o limit
 lotes grandes em partes de ~90 MB (o `caso_id` é o mesmo entre envios — `fn_upsert_caso` reaproveita
 pelo nome do mandato, então dividir em vários envios não perde nem duplica nada).
 
+**Correção da causa, 17/09/2026 — não era RAM.** A hipótese acima ("esgotamento de RAM do
+PikaPods") foi medida e refutada na rodada real "AMO teste 00" (ver `ESTADO.md`). A causa real é
+**stack overflow em JS** no nó de merge nativo do n8n: o operador de espalhamento `push(...arr)`
+estoura a pilha de argumentos do V8 no Node 22 com aproximadamente **125.000–150.000 itens**
+(limite empírico, medido por falhas e sucessos consecutivos) — não com megabytes de binário. Isso
+não muda a decisão do dono (dividir em lotes menores continua sendo a mitigação certa, porque
+reduz o número de itens, não só o peso em MB), mas muda a saída técnica (b): reescrever o grafo
+para memória plana não resolveria uma pilha de chamadas — precisaria trocar `push(...arr)` por
+um laço ou `arr.push.apply` em lotes, dentro do próprio nó de merge nativo do n8n (fora do
+controle do repositório) ou substituí-lo por um nó Code que acumule sem espalhar argumentos.
+
 ### Fatia 0.6 — Decisão de escopo e estado regerado · **as duas ADRs: FEITAS em 16/09/2026**
 - Reescrever `00_VISAO_E_ESCOPO.md`: o escopo negativo *"não é ferramenta de modelagem financeira"*
   precisa sair ou ser reafirmado. **É decisão do dono** — a engenharia não pode tomá-la, e o roadmap
