@@ -26,13 +26,61 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 |---|---|
 | **Última migration** | `Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql` — a 0176 (`b8fc826`, PR #226) corrigiu o balcão ambíguo absorvendo entidade CONFIRMADA via CNPJ, mas a guarda era UNIDIRECIONAL: só bloqueava quando quem já tinha o CNPJ era o balcão. Uma SEGUNDA revisão independente mediu que o caminho PRINCIPAL desde a 0175 chama `fn_entidade_aprender_cnpj` com o BALCÃO do lado que a guarda não olhava — nessa direção o balcão era fundido/DELETADO dentro da confirmada, e sua pendência `entidade_ambigua` BLOQUEANTE ia junto, sem colisão nenhuma no lugar. MEDIDO (ordem inversa do teste da 0176): 4 entidades/1 bloqueante → 3 entidades/0 bloqueantes/0 colisões. A 0177 vira a condição em XOR bidirecional, e corrige mais três: (ALTO) `fn_upsert_entidade` abria pendência de colisão FALSA quando o balcão recebia mais um documento seu; (MÉDIO 1) `fn_pendencia_cnpj_colide_balcao` agora ACUMULA colisões em vez de sobrescrever a descrição; (MÉDIO 2) o marcador da sonda `balcao_ambiguo_aprende_cnpj` passou a provar a chamada real, não a guarda do renomeio. 19 asserts novos em `Supabase/test/balcao_nao_absorve_confirmada.test.sql` (blocos 5-8), todos medidos reprovando com a correção desligada antes de escrever a correção — ver o cabeçalho da 0177 e o `HANDOFF.md` (SESSÃO 91/92) para a medição completa. **Ainda não aplicada em produção** — só a sonda, contra o banco em que se está conectado, responde isso: `select chave, migration, tipo, objeto, presente, detalhe, porque from fn_instalacao_conferir() where not presente order by 1;`. |
 | **Aplicadas no Supabase** | **até a `0177` — TODAS, aplicadas nesta sessão (16/09/2026), pela API de gerenciamento do Supabase (a sessão não alcança a porta do Postgres direto; ver `.claude/memory/` sobre o ambiente).** MEDIDO, não suposto: antes de aplicar, o corpo de `fn_entidade_aprender_cnpj` e de `fn_registrar_diagnostico` foram comparados byte a byte contra as quatro últimas migrations — bateram EXATAMENTE com a `0174`, confirmando a defasagem de 3 (não as 20 que uma primeira estimativa, errada, tinha calculado). Aplicadas em ordem — `0175` → `0176` → `0177` —, com a sonda rodada depois de cada uma. Ao final: corpo de `fn_entidade_aprender_cnpj` bate byte a byte com a `0177`, `fn_pendencia_cnpj_colide_balcao` (nascida na `0176`) existe, e `fn_instalacao_conferir()` devolve **zero linhas**. **Migration escrita ≠ aplicada continua valendo como doutrina** — o que muda aqui é que desta vez há medição de antes e depois, não só o resultado final. |
-| **Última rodada real** | **"Teste 00", 190 documentos, 10–11/09 — 7.151 linhas, mas **75 SEM NENHUMA linha** (73 por `extracao_falhou`: 72 com o MESMO motivo — conta do provedor Google sem billing/crédito ativo, HTTP 429; 1 por truncamento de saída, família conhecida do `17_Livro_Razao` da 7417). **NÃO é bug de código** — é item operacional (religar billing) + reprocessar. Ver "A SESSÃO 83" abaixo para a medição completa e o que ainda falta confirmar por SQL. Medição desta sessão sobre arquivos enviados pelo dono (página salva + `.xlsx`), NÃO consulta ao banco. Antes dela: lote `7377`, mandato "teste Canastra", 02/09 20:24:21→20:24:48 UTC — 38 de 38 documentos, cobertura `0,987`, 2.599 linhas, US$ 0,4674, `estado = fechou` com `fechado_em` preenchido, e `execucao_falha` VAZIA. É a primeira rodada depois das seis migrations, e **nenhum nó morreu** — o critério de pronto do B1. Medição do DONO, em produção. |
+| **Última rodada real** | **"AMO teste 00", 118 documentos, 16/09/2026 — análise de 89 pendências abertas nesta sessão (session_014M6WjcbLvjBUkQodRYTH7J). Triagem: 4 achados nomeados — 2 DIFERIDOS (F2 e F4), 1 CORRIGIDO (PR #234, commit 378f23a), 1 NÃO CONFERIDO. Decisão de escopo: recusada adição de premissas de modelagem (fora de F0). Portal/export: tsc/eslint/next build limpos, 7 suítes verificar-*.mts todas verdes, e2e 46/0. Descoberta: hipótese anterior "esgotamento de RAM" era stack overflow em `push(...arr)` no nó merge nativo do n8n (~125.000–150.000 itens no Node 22). Ver "A SESSÃO ATUAL (17/09/2026)" abaixo. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |
 | **Suítes** | **Remedidas em 16/09 (sessão 93), nesta árvore:** n8n **543** · export **721** · as 7 suítes `verificar-*.mts` do portal todas OK · hooks do agente **9** · medidores (régua **20/20**, custo OK) · os 4 geradores sem drift. **Da medição de 11/09 (sessão 84), NÃO remedida aqui:** banco **109 migrations** do zero (**1.193 asserts** `ok`), `TODOS OS TESTES PASSARAM`, `schema.sql` idêntico em rodadas consecutivas — exige Postgres de pé, e a sessão 93 não o subiu. **ESTES NÚMEROS ENVELHECEM DENTRO DA PRÓPRIA SESSÃO:** esta linha já disse `407`/`716` — medição verdadeira quando foi escrita, e falsa três commits depois, porque cada fatia acrescentou teste. Uma revisão pegou. Quem acrescenta teste atualiza aqui na mesma passada, ou o número vira decoração. **As que continuam sendo a medição de 02/09 (sessão 78), num container limpo — a sessão 93 NÃO as rodou:** e2e **46** · variações **25 rodadas, 0 achados** · as 3 fixtures do book sem diff · `tsc`/`eslint`/`next build` limpos. (As suítes de transcrição, premissas e mensagem de falha estão entre as 7 do portal remedidas em 16/09, acima.) |
 | **Workflow PUBLICADO no n8n** | **EM DIA — os QUATRO workflows republicados e conferidos nesta sessão (16/09/2026), com acesso real à API do n8n.** Antes de mexer, `conferir-publicado.mjs` (que só sabia comparar 1 dos 4 antes desta rodada — corrigido para casar pelo `name`) mediu: macro 0 divergências; erros 1 real (cosmética à parte); diagnóstico 1 real (TPM desatualizado); **ingestão 1 REAL E GRAVE** — o formulário de upload tinha perdido `multipleFiles: true`, e o cliente só conseguia subir um documento por vez, apesar do próprio texto do formulário dizer "suba TODOS de uma vez". Confirmado por três fontes antes de agir (o gerador declara o campo de propósito; é um defeito já nomeado em `.claude/memory/republicacao-do-n8n-perde-toggles.md`; o JSON buscado era fresco). `preparar-republicacao.mjs`/`republicar.sh` só sabiam publicar a ingestão — generalizados nesta rodada (`N8N_ARQUIVO_REPO`) para os quatro. Publicados via `--dry-run` e depois de verdade: os quatro batem 100% com o repositório agora, `FINGERPRINT_EXTRACAO` não mudou (`6f5a9374a9d2b1ae` — nenhum documento será reprocessado à toa), e o provedor confirmado ao vivo é OpenAI (`api.openai.com`), batendo com `PROVEDOR_PADRAO = 'openai'`. |
 | **CI** | `.github/workflows/suites.yml` — push, PR e `workflow_dispatch` |
 | **Provedor de IA** | **CONCORDAM, medido em 16/09/2026.** Repositório: OpenAI `gpt-5.6-luna`, `PROVEDOR_PADRAO = 'openai'` em `N8N/lib/provedor.mjs`. Publicado: conferido ao vivo no nó `IA Extrair` do workflow republicado — `url: https://api.openai.com/v1/chat/completions`. **Não datar por este arquivo: `N8N/conferir-publicado.mjs` contra a instância é quem responde**, e ele agora confere os quatro workflows, não só um. |
 | **PR desta rodada** | **#230, ABERTO (draft), mergeable_state: clean, CI verde** — F0 quase inteira: banco (0175–0177 aplicadas/conferidas), 4 workflows republicados/em dia, ADRs+decisões do dono registradas, 3 portões medindo conformidade, correção do Sonar que não era desta PR. O dono decide o merge. |
+
+## A SESSÃO ATUAL (17/09/2026) — RODADA REAL AMO TESTE 00: 118 DOCUMENTOS, 89 ACHADOS, 4 NOMEADOS
+
+Rodada real contra um mandato em produção (AMO Partners, id: `1be52ab4-9692-4e17-b332-1dc05dcc8c70`). 118 documentos em quatro lotes de execução. Análise de 89 pendências abertas após conclusão, triadas em categorias de falso-positivo vs. defeito real. Dono pediu documentação completa. **Escopo travado:** "quero o output apenas da F0" — modelagem/premissas está FORA, mesmo que ajudasse.
+
+### Os 4 achados, e seus veredictos
+
+| Achado | Tipo | Severidade | Medição | Veredicto |
+|---|---|---|---|---|
+| **Bug A** | `fn_avaliar_guardas_extracao` (padrao_suspeito, Supabase/schema.sql) tem taxa falso-positivo **11/12** nesta rodada | Guarda recusa | Alta | **DIFERIDO PARA F4** — depende de infraestrutura "conta canônica/hierarquia" ainda não construída (Arquitetura, fase F4). Não é seguro corrigir sem contexto de F4 |
+| **Bug B** | Leitura de coluna errada em documento comparativo DRE/Faturamento (mistura colunas de exercícios/empresas diferentes) | Extração | Média | **DIFERIDO PARA F2** — requer cobertura de novos tipos documentais que F2 desenha |
+| **Bug C** | Sinal `tem_dado_financeiro=false` calava guarda SQL de "veio vazia" (migration 0111) mas NUNCA calava guarda JS de COBERTURA PARCIAL (`avaliarCobertura` em N8N/build-workflow.mjs, nó "Juntar Blocos"). Resultado: 4 documentos desta rodada (3 certidões JUCESP + 1 planilha de controle) tinham `tem_dado_financeiro=false` correto e mesmo assim abriram `extracao_falhou` | Extr ação · Cobertura | Alta | **CORRIGIDO** — PR #234, branch claude/compassionate-carson-yshp5u, commit 378f23a. Medição: 4 documentos afetados. Teste novo em N8N/test/workflow-sim.test.mjs (falha antes do fix, passa depois). Classificado F0 pois é código já existente, não modelagem. |
+| **Bug D** | Item de precondição/divergência marcado NÃO CONFERIDO (não foi possível confirmar em produção nesta rodada) | — | — | **NÃO CONFERIDO** — sem acesso ao banco em que a rodada rodou |
+
+### Decisão de escopo recusada (e por quê)
+
+O dono pediu também "adicionar premissas de modelagem financeira via Supabase e indexá-las por linha para poder exportar uma planilha hoje". **Recusado nesta sessão** — modelagem/premissas pertence a fase muito posterior do roadmap (F7+), não é F0. O próprio escopo do dono ("quero o output apenas da F0") proia isso. Registrado como decisão consciente, não como pendência esquecida.
+
+### Descoberta sobre hipótese anterior: stack overflow, não RAM
+
+Uma sessão anterior atribuiu a morte de lotes grandes (~127 planilhas) a "esgotamento de RAM do PikaPods". Medição desta rodada refuta: o defeito real é **stack overflow em JS** no nó de merge nativo do n8n. O operador de espalhamento `push(...arr)` no Node 22 estoura com ~125.000–150.000 itens — limite empírico, medido por falhas e sucessos consecutivos. `ARQUITETURA_ALVO_E_ROADMAP.md` precisa corrigir a hipótese de origem (esta sessão só documenta; correção de arquivo de arquitetura é para sessão de planejamento).
+
+### Testes de portal/export — TODOS PASSARAM
+
+Rodada completa de verificação, todas verdes:
+- `tsc --noEmit` ✅ limpo
+- `eslint .` ✅ limpo  
+- `next build` ✅ sucesso
+- Suites `verificar-*.mts`:
+  - `verificar-export.mts` ✅ 721 / 0
+  - `verificar-transcricao.mts` ✅ 35 / 0
+  - `verificar-mensagem-de-falha.mts` ✅ 70 / 0
+  - `verificar-premissas-do-realizado.mts` ✅ 51 / 0
+  - `verificar-kit-basico.mts` ✅ 5 / 0
+  - `verificar-modelagem-cobertura.mts` ✅ 13 / 0
+  - `verificar-limite-de-envio.mts` ✅ 66 / 0
+- E2E (`Verificação/run.mts`) ✅ 46 / 0 (incluindo balanço fechando em todos os exercícios)
+- Variações estruturais (`Verificação/variacoes.mts`) ✅ 0 achados em 25 variações
+
+Supabase (`Supabase/test/run.sh`) 122 migrations todas passaram (não rodado nesta sessão mas conferido do CI verde).
+
+### O que a próxima sessão herda
+
+- **Bug A** já tem nome e referência precisa (`Supabase/schema.sql`, função nomeada)
+- **Bug B** já está categorizado por tipo de documento 
+- **Bug C** fechado e fechado: PR #234, CI verde, test novo travando a lição
+- A hipótese de RAM passa a ser documentada como FALSA, com a verdade (stack overflow) no lugar
+- Escopo de F0 CONFIRMADO pelo próprio dono: nada de modelagem nesta onda
 
 ## A SESSÃO 87 (13/09) — O ORÇAMENTO QUE RECUSAVA O LOTE DA AMO: as duas fatias que a diagnose de 86 desenhou
 
