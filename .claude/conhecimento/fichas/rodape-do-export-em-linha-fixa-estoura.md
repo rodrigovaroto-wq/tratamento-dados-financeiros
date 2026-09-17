@@ -42,3 +42,19 @@ quando o cliente fica grande. Se o bloco de baixo tem de ter endereço conhecido
 de antemão, o endereço não precisa ser CONSTANTE — precisa ser CALCULÁVEL antes
 da escrita. A pergunta certa não é "qual número é grande o bastante?", é "o que
 faz este bloco crescer, e eu consigo contar isso antes?".
+
+**O MESMO LIMITE FIXO APARECEU DUAS VEZES NA MESMA PASSADA.** Ao reproduzir o
+caso real com `portal/scripts/gerar-export-do-banco.mts`, o `execFileSync`
+estourou o `maxBuffer` PADRÃO DO NODE (1 MB): a consulta de `campo_extraido`
+(7.670 linhas) devolve ~2 MB de JSON, e o `JSON.parse` recebia a string cortada
+no meio, morrendo com erro de sintaxe que não diz nada sobre a causa. Corrigido
+junto. Ferramenta de repro que só funciona em caso pequeno falta exatamente
+quando é mais necessária — o caso grande é onde o defeito de layout aparece.
+
+**VERIFICADO PONTA A PONTA no caso real** (não só na fixture): o book do "AMO
+teste 00" foi gerado com 118 documentos, 7.670 campos, 26 premissas e 1.193
+vínculos. Na aba Modelagem, o modelo termina na linha 1.332, PARÂMETROS cai em
+1.401 e BASE DO MODELO em 1.415 — rodapé depois do modelo, sem sobreposição. O
+modelo institucional montou inteiro (Capa, Output com três cenários, Income
+Statement, Balance Sheet, Working Capital, Cash Flow), com zero avisos de
+"NÃO ESTÁ PROJETÁVEL".
