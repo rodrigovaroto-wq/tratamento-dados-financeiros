@@ -1554,7 +1554,21 @@ for(const [chave, blocos] of porDocumento){
   // MESMA frase -- e sao as duas hipoteses que esta frase existe para separar.
   // Agora os dois aparecem, e a divergencia entre eles ja saiu como motivo
   // proprio em \`juntarBlocos\` (FALTOU BLOCO).
-  if(cobertura) motivos.push(cobertura.motivo
+  // TEM_DADO_FINANCEIRO=FALSE CALA ESTA GUARDA TAMBEM, NAO SO' O SINAL 3.
+  //
+  // A 0111 ja resolveu isto para o Sinal 3 ("veio vazia", em
+  // fn_registrar_campos_extraidos): documento sem valor monetario por
+  // natureza (certidao, organograma, parecer de auditoria) nao e' falha. Mas
+  // aquela protecao mora no SQL e so cobre "veio vazia" -- esta guarda de
+  // COBERTURA PARCIAL e' outro codigo, escrito depois, e nunca foi ligada a
+  // mesma bandeira. MEDIDO na rodada real do "AMO teste 00" (17/09/2026): 3
+  // certidoes da JUCESP e 1 planilha de controle de extratos vieram com
+  // tem_dado_financeiro=false (a IA correta) e MESMO ASSIM abriram
+  // extracao_falhou, porque a regua de texto conta data/CNPJ/percentual como
+  // "linha de conta" sem saber que o documento e', por natureza, sem numero
+  // financeiro. "!== false" (nao "=== true") de proposito: ausencia do sinal
+  // continua acusando -- regra 1, ausencia nao e' dado.
+  if(cobertura && base.diagnostico?.tem_dado_financeiro !== false) motivos.push(cobertura.motivo
     + ' O documento foi lido em ' + r.blocos + ' de ' + r.blocosPlanejados + ' bloco(s) planejado(s)'
     + (r.blocosPlanejados>r.blocos
        ? '. Falta bloco: a cobertura acima mede o documento SEM esse trecho, entao ela NAO diz nada sobre a leitura do modelo.'

@@ -2572,6 +2572,52 @@ test('Camada 3: Juntar Blocos remonta o documento e ABRE PENDÊNCIA quando falta
   assert.equal(doc2.nota_emenda, null);
 });
 
+// A GUARDA DE COBERTURA IGNORAVA `tem_dado_financeiro=false` — achado na
+// rodada real do "AMO teste 00" (17/09/2026). A migration 0111 já resolveu
+// exatamente este problema para o Sinal 3 ("veio vazia"): "documento sem
+// valor monetário por natureza (certidão, organograma, parecer de auditoria)
+// não é falha de extração". Mas essa proteção só chegou ao lado SQL
+// (fn_registrar_campos_extraidos, Sinal 3). O sinal de COBERTURA PARCIAL
+// (`avaliarCobertura`, aqui em `Juntar Blocos`) é um código diferente, escrito
+// depois, e nunca foi ligado à mesma bandeira.
+//
+// MEDIDO em produção: 4 documentos desta rodada — 3 certidões da JUCESP e 1
+// planilha de controle de extratos — vieram com `tem_dado_financeiro=false`
+// (a IA correta, dizendo que o documento não tem valor financeiro) e MESMO
+// ASSIM abriram `extracao_falhou` por cobertura, porque a régua de texto
+// conta datas, CNPJs e percentuais como "linha de conta" sem saber que o
+// documento é, por natureza, sem número financeiro.
+test('Camada 3: tem_dado_financeiro=false também cala a guarda de COBERTURA PARCIAL, não só a de "veio vazia"', async () => {
+  const linha = (k, v) => ({ ordem: 0, chave: k, valor_num: v, valor_texto: String(v), entidade_coluna: null, periodo_coluna: null });
+  const out = await run('Juntar Blocos', { items: [
+    // Espelha a Certidão de inteiro teor da JUCESP real: 0 campos financeiros
+    // (não há valor monetário no documento), mas a régua de texto conta 30
+    // "linhas de conta" (datas de registro, números de processo, percentuais
+    // de participação societária) — sem a guarda, isso abre falha_motivo.
+    { json: {
+      documento_versao_id: 'ver-certidao', bloco: 1, blocos: 1, celulas_no_documento: 30, contas_no_documento: 30,
+      campos: [], diagnostico: { entidade: 'Amobeleza', tem_dado_financeiro: false }, falha_motivo: null,
+      custo_usd: 0.01, tokens: { entrada: 5, saida: 5, cache: 0 },
+    } },
+    // Contraprova no MESMO teste: um documento comum (tem_dado_financeiro
+    // ausente, o caso de sempre) com a MESMA cobertura baixa continua abrindo
+    // a pendência — a guarda não pode desligar sozinha para todo mundo.
+    { json: {
+      documento_versao_id: 'ver-balanco-comum', bloco: 1, blocos: 1, celulas_no_documento: 30, contas_no_documento: 30,
+      campos: [], diagnostico: { entidade: 'Amobeleza' }, falha_motivo: null,
+      custo_usd: 0.01, tokens: { entrada: 5, saida: 5, cache: 0 },
+    } },
+  ] });
+
+  const certidao = out.find((i) => i.json.documento_versao_id === 'ver-certidao').json;
+  assert.equal(certidao.falha_motivo, null,
+    'documento sem dado financeiro por natureza não pode abrir extracao_falhou por cobertura');
+
+  const comum = out.find((i) => i.json.documento_versao_id === 'ver-balanco-comum').json;
+  assert.match(comum.falha_motivo, /Extração INCOMPLETA/,
+    'sem o sinal explícito tem_dado_financeiro=false, a guarda continua falando — regra 1, ausência não é dado');
+});
+
 test('Camada 3: emenda limpa SOZINHA não é falha — lote 7377, "teste Canastra" (02/09)', async () => {
   // A rodada real: 17_Livro_Razao_Fornecedores_Canastra_Industria_12M25.pdf foi
   // lido INTEIRO em 2 blocos (302 pares conta×coluna, 95 contas distintas,
