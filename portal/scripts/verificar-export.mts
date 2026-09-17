@@ -3903,6 +3903,56 @@ const campo = (p: Partial<CampoExtraido> & { chave: string; documento_versao_id:
       "(49) sem faturamento mensal no caso, curva nenhuma é publicada");
   }
 
+  // ---- O RODAPÉ ACOMPANHA O TAMANHO DO CASO -------------------------------
+  //
+  // MEDIDO EM PRODUÇÃO (17/09/2026, mandato "AMO teste 00"): o export abortou
+  // com "o modelo chegou à linha 1349 e o bloco de PARÂMETROS começa em 186".
+  // `LINHA_PARAM_INICIO` era a constante 186 e o bloco "A CONFIGURAÇÃO DE
+  // MODELAGEM" escreve uma linha por premissa ativa MAIS uma por linha
+  // vinculada — 26 + 1.188 naquele caso. A guarda fez o certo (não sobrescreveu
+  // linha de modelo), mas o dono ficou sem arquivo nenhum.
+  //
+  // O invariante é de COMPORTAMENTO: um caso grande gera arquivo, e o rodapé
+  // fica DEPOIS do modelo. Não afirma o valor do offset — isso é mecanismo, e
+  // travá-lo aqui só protegeria a fórmula atual.
+  {
+    const N_LINHAS = 1200;
+    const linhasMuitas = Array.from({ length: N_LINHAS }, (_, i) => ({
+      rotulo: `Conta analítica ${i}`,
+      secaoCanonica: "despesas_operacionais" as string | null,
+      premissaCodigo: "CRESC_REAL" as string | null,
+      sazonalidadeCodigo: null,
+      valorBase: 10 + i,
+    }));
+    const wbGrande = buildExportWorkbook({
+      caso: { nome: "C", produto: "rx" }, documentos, campos,
+      agora: new Date("2026-07-27T12:00:00Z"),
+      modelagemConfig: {
+        entidade: "Projetada Ltda", ultimoExercicioReal: 2025, anosProjetados: 5,
+        premissas: [
+          { codigo: "CRESC_REAL", nome: "Crescimento real da receita", formula: "crescimento_composto",
+            unidade: "%", valores: { "2026": 0.1 } },
+        ],
+        linhas: linhasMuitas,
+      },
+    });
+    const mg = wbGrande.getWorksheet("Modelagem")!;
+    const rotG: string[] = [];
+    for (let r = 1; r <= mg.rowCount; r++) rotG.push(String(mg.getRow(r).getCell(1).value ?? ""));
+
+    const iConfig = rotG.findIndex((x) => x.startsWith("A CONFIGURAÇÃO DE MODELAGEM"));
+    const iUltimaConta = rotG.lastIndexOf(`Conta analítica ${N_LINHAS - 1}`);
+    const iParam = rotG.findIndex((x) => x.startsWith("PARÂMETROS"));
+
+    checar(iConfig >= 0 && iUltimaConta > iConfig,
+      `(49) caso com ${N_LINHAS} linhas configuradas gera a aba inteira, sem abortar`,
+      `config=${iConfig} ultimaConta=${iUltimaConta}`);
+    checar(iParam > iUltimaConta,
+      "(49) …e o bloco de PARÂMETROS fica DEPOIS da última linha do modelo — o rodapé "
+      + "acompanha o tamanho do caso em vez de ser sobrescrito",
+      `param=${iParam} ultimaConta=${iUltimaConta}`);
+  }
+
   // Sem configuração, o arquivo continua saindo como antes: o esqueleto agregado
   // é o fallback, e esta fase não tira modelo de ninguém.
   const semConfig = buildExportWorkbook({

@@ -845,7 +845,26 @@ export function construirAbaModelagem(
   // citam `refEntidade`/`refCorte` em toda coluna), e por isso o bloco mora em
   // LINHA FIXA, como a BASE DO MODELO — mesma razão, mesmo padrão. Se o modelo
   // crescer até aqui, a geração FALHA em vez de sobrescrever linha de modelo.
-  const LINHA_PARAM_INICIO = 186;
+  //
+  // O 186 ERA CONSTANTE E ESTOUROU EM PRODUÇÃO (17/09/2026, mandato "AMO teste
+  // 00"): a guarda abortou o export com "o modelo chegou à linha 1349 e o bloco
+  // de PARÂMETROS começa em 186". A guarda fez o certo — não sobrescreveu linha
+  // de modelo —, mas o dono ficou sem arquivo, e o número fixo é a causa.
+  //
+  // O bloco que cresce é UM só, e ele é conhecido ANTES de escrever: "A
+  // CONFIGURAÇÃO DE MODELAGEM" emite um título, uma linha por premissa ativa e
+  // uma linha por linha com premissa vinculada (ver o laço em `config.linhas`).
+  // No caso que estourou: 1 + 26 + 1.188 = 1.215 linhas, contra as ~134 de
+  // esqueleto que o 186 cobria com folga. Somar o tamanho desse bloco ao offset
+  // resolve para QUALQUER tamanho de caso, sem tirar a guarda do lugar — ela
+  // continua de rede, agora inalcançável na prática.
+  //
+  // Caso sem configuração (`config` ausente) mantém 186/200 exatamente como
+  // antes: o termo soma zero.
+  const LINHAS_BLOCO_CONFIG = config && config.linhas.length > 0
+    ? 1 + config.premissas.length + config.linhas.filter((l) => l.premissaCodigo).length
+    : 0;
+  const LINHA_PARAM_INICIO = 186 + LINHAS_BLOCO_CONFIG;
   // `const` agora: o endereço é FIXO desde a 7.4. Antes eram `let` porque o
   // número da linha só se conhecia ao emitir o cabeçalho — o bloco de parâmetros
   // no rodapé é o que torna o endereço conhecido de antemão.
@@ -872,7 +891,9 @@ export function construirAbaModelagem(
   // O número é fixo porque os endereços têm de ser conhecidos ANTES de o modelo
   // ser escrito. Se o modelo crescer até aqui, a geração FALHA (ver a guarda em
   // `escreverBaseLocal`) — nunca sobrescreve linha de modelo em silêncio.
-  const LINHA_BASE_INICIO = 200;
+  // Acompanha o PARÂMETROS pelo mesmo motivo, preservando os 14 de distância
+  // entre os dois blocos (era 200 − 186).
+  const LINHA_BASE_INICIO = LINHA_PARAM_INICIO + 14;
   const colBaseRotulo = 1;
   // A chave é `<entidade><CHAVE_SEP><período>` e vira o cabeçalho de coluna
   // escrito na aba ("<entidade> — <ano>", ver abaixo) — texto humano, então

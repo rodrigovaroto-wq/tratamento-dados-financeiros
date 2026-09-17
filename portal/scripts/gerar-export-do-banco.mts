@@ -83,7 +83,20 @@ console.error(`[gerar-export-do-banco] psql resolvido: ${PSQL_BIN}`);
 function q<T>(sql: string): T[] {
   const out = execFileSync(PSQL_BIN, ["-d", DB, "-tAc",
     `select coalesce(json_agg(t), '[]'::json)::text from (${sql}) t`],
-    { encoding: "utf8", env: { ...process.env, PATH: DIRS_PSQL_SEGUROS } });
+    {
+      encoding: "utf8",
+      env: { ...process.env, PATH: DIRS_PSQL_SEGUROS },
+      // O PADRÃO DO NODE É 1 MB, E ELE NÃO CHEGA PARA MANDATO GRANDE.
+      //
+      // MEDIDO em 17/09/2026 com o caso "AMO teste 00": a consulta de
+      // `campo_extraido` (7.670 linhas) devolve ~2 MB de JSON, e
+      // `execFileSync` estourou o buffer — o `JSON.parse` abaixo recebia a
+      // string CORTADA no meio e morria com erro de sintaxe, que não diz
+      // nada sobre a causa real. Ferramenta de repro que só funciona em caso
+      // pequeno é ferramenta que falta justamente quando é mais necessária:
+      // o caso grande é onde o defeito de layout aparece.
+      maxBuffer: 512 * 1024 * 1024,
+    });
   return JSON.parse(out.trim()) as T[];
 }
 
