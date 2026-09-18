@@ -6422,6 +6422,101 @@ $$;
 COMMENT ON FUNCTION public.fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0179: pendência complementar (não bloqueia nada) para entidade sem papel no grupo. Idempotente por entidade_id (motivo). Nunca decide o papel — só marca a ausência, regra 1 do CLAUDE.md.';
 
 --
+-- Name: fn_perimetro_definir_escopo(uuid, uuid, text, date, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_da_entidade uuid;
+  v_novo_id          uuid;
+begin
+  if p_desde is null then
+    raise exception 'p_desde não pode ser nulo — todo intervalo de perímetro tem início';
+  end if;
+
+  select caso_id into v_caso_da_entidade from entidade where id = p_entidade_id;
+  if v_caso_da_entidade is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+  if v_caso_da_entidade <> p_caso_id then
+    raise exception 'entidade % não pertence ao caso %', p_entidade_id, p_caso_id;
+  end if;
+
+  -- A MUDANÇA de perímetro no meio do mandato: o intervalo anterior GANHA UM FIM, não é
+  -- sobrescrito. Sem esta linha, uma segunda chamada para o mesmo (caso, entidade, escopo)
+  -- violaria `perimetro_atual_unico` (dois "vigente" ao mesmo tempo) em vez de fechar o
+  -- primeiro — é esta a MEDIÇÃO NÃO-VAZIA do cabeçalho desta migration.
+  update perimetro
+     set ate = p_desde - 1
+   where caso_id = p_caso_id and entidade_id = p_entidade_id and escopo = p_escopo
+     and ate is null;
+
+  insert into perimetro (caso_id, entidade_id, escopo, desde, ate)
+  values (p_caso_id, p_entidade_id, p_escopo, p_desde, null)
+  returning id into v_novo_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'perimetro_escopo_definido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('caso_id', p_caso_id, 'escopo', p_escopo, 'desde', p_desde));
+
+  return v_novo_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) IS '0180: o ÚNICO caminho de escrita de `perimetro` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). Fecha o intervalo aberto anterior do mesmo (caso, entidade, escopo) com `ate = p_desde - 1` em vez de sobrescrever — é a mudança de perímetro no meio do mandato que o roadmap cita (fatia 1.4). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). NÃO deriva nada de entidade.papel_no_grupo (0179) — ligar as duas fatias é decisão de F4, fora do escopo desta migration.';
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: entidade; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entidade (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    razao_social text NOT NULL,
+    cnpj text,
+    papel_no_grupo public.entidade_papel_no_grupo
+);
+
+--
+-- Name: COLUMN entidade.papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.papel_no_grupo IS '0179: enum entidade_papel_no_grupo (antes: text livre, NULL em todo caso — 0001 a 0178). NULL continua sendo o estado inicial de TODA entidade nova (fn_upsert_entidade nunca o passa no insert) — a ausência é honesta enquanto ninguém decidir, e fn_pendencia_papel_no_grupo_indefinido marca essa ausência sem afirmar hierarquia nenhuma. Só fn_entidade_definir_papel_no_grupo escreve aqui.';
+
+--
+-- Name: fn_perimetro_vigente(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date DEFAULT CURRENT_DATE) RETURNS SETOF public.entidade
+    LANGUAGE sql STABLE
+    AS $$
+  select e.*
+    from perimetro p
+    join entidade e on e.id = p.entidade_id
+   where p.caso_id = p_caso_id
+     and p.escopo = p_escopo
+     and p.desde <= p_data
+     and (p.ate is null or p.ate >= p_data)
+   order by e.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date) IS '0180: quem está no escopo de um COMBINADO numa data (padrão: hoje). Consumidor mínimo de `perimetro` — prova que desde/ate respondem "quem estava dentro em 30/06" diferente de "quem está dentro hoje" depois de uma troca de escopo. O consumidor REAL (o combinado calculado respeitando o perímetro) é F1.6/F4, fora do escopo desta fatia — ver seção 12.3 do roadmap.';
+
+--
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6676,10 +6771,6 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_premissa_valores_sugeridos(p_codigo text, p_ano_inicial integer, p_anos integer) IS 'Valores por ano que o Focus afirma para uma premissa macro (mediana da coleta mais recente de cada ano). Ano sem expectativa publicada fica FORA — ausência é ausência.';
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
 
 --
 -- Name: premissa_catalogo; Type: TABLE; Schema: public; Owner: -
@@ -12134,24 +12225,6 @@ COMMENT ON COLUMN public.documento_versao.fingerprint_extracao IS 'Impressão do
 COMMENT ON COLUMN public.documento_versao.fatos_avaliados_em IS 'Quando esta versão foi lida à procura de fatos materiais (0149). NULL = ainda não foi — e nesse caso os fatos da versão anterior continuam valendo na tela. Preenchida mesmo quando a leitura não achou nada: é o que distingue "sem fatos" de "não processada".';
 
 --
--- Name: entidade; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.entidade (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    caso_id uuid NOT NULL,
-    razao_social text NOT NULL,
-    cnpj text,
-    papel_no_grupo public.entidade_papel_no_grupo
-);
-
---
--- Name: COLUMN entidade.papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.entidade.papel_no_grupo IS '0179: enum entidade_papel_no_grupo (antes: text livre, NULL em todo caso — 0001 a 0178). NULL continua sendo o estado inicial de TODA entidade nova (fn_upsert_entidade nunca o passa no insert) — a ausência é honesta enquanto ninguém decidir, e fn_pendencia_papel_no_grupo_indefinido marca essa ausência sem afirmar hierarquia nenhuma. Só fn_entidade_definir_papel_no_grupo escreve aqui.';
-
---
 -- Name: estagio_autonomia; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12821,6 +12894,39 @@ COMMENT ON COLUMN public.pergunta_catalogo.prioridade IS '1 crítica … 4 conte
 COMMENT ON COLUMN public.pergunta_catalogo.gatilho_descricao IS 'O gatilho nas palavras da ENTREGA, inclusive quando pede espécie que ainda não existe. Fato, não configuração: é daqui que as espécies futuras (reconciliação, comparação, limiar…) saem.';
 
 --
+-- Name: perimetro; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perimetro (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    entidade_id uuid NOT NULL,
+    escopo text NOT NULL,
+    desde date NOT NULL,
+    ate date,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT perimetro_intervalo_valido CHECK (((ate IS NULL) OR (ate >= desde)))
+);
+
+--
+-- Name: TABLE perimetro; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.perimetro IS '0180 (fatia 1.4 do plano F1): quem entra no COMBINADO de um caso, por escopo e por intervalo de tempo. `escopo` é texto livre (o nome do combinado — não há vocabulário fechado medido ainda, mesmo raciocínio de `periodo.tipo`). `ate` NULL = ainda vigente. NÃO é derivada de `entidade.papel_no_grupo` (0179) — ligar as duas é decisão de F4 (consolidação), fora do escopo desta migration. O único caminho de escrita é `fn_perimetro_definir_escopo`.';
+
+--
+-- Name: COLUMN perimetro.escopo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.perimetro.escopo IS '0180: o nome do COMBINADO a que este período de perímetro pertence (texto livre, como `periodo.tipo`) — inventar um enum aqui seria estrutura sem medição (regra 1 do CLAUDE.md).';
+
+--
+-- Name: COLUMN perimetro.ate; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.perimetro.ate IS '0180: NULL = ainda vigente. Trocar o escopo de uma entidade (fn_perimetro_definir_escopo) FECHA este campo no intervalo anterior — nunca sobrescreve silenciosamente — porque um perímetro sem data mente sobre o exercício anterior (roadmap, fatia 1.4).';
+
+--
 -- Name: periodo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13199,6 +13305,13 @@ ALTER TABLE ONLY public.pergunta_catalogo
     ADD CONSTRAINT pergunta_catalogo_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: perimetro perimetro_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_pkey PRIMARY KEY (id);
+
+--
 -- Name: periodo periodo_caso_id_tipo_referencia_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13443,6 +13556,18 @@ CREATE INDEX idx_pendencia_caso ON public.pendencia USING btree (caso_id);
 CREATE INDEX idx_pendencia_estado ON public.pendencia USING btree (estado);
 
 --
+-- Name: idx_perimetro_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_perimetro_caso ON public.perimetro USING btree (caso_id);
+
+--
+-- Name: idx_perimetro_entidade; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_perimetro_entidade ON public.perimetro USING btree (entidade_id);
+
+--
 -- Name: idx_periodo_caso; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13459,6 +13584,12 @@ CREATE INDEX idx_reconciliacao_caso ON public.reconciliacao USING btree (caso_id
 --
 
 CREATE UNIQUE INDEX idx_rubrica_classe_unica ON public.rubrica_classe USING btree (padrao, COALESCE(secao_canonica, ''::text), COALESCE(tipo_taxonomia, ''::text), versao);
+
+--
+-- Name: perimetro_atual_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX perimetro_atual_unico ON public.perimetro USING btree (caso_id, entidade_id, escopo) WHERE (ate IS NULL);
 
 --
 -- Name: decisao trg_auto_promover_dial; Type: TRIGGER; Schema: public; Owner: -
@@ -13803,6 +13934,20 @@ ALTER TABLE ONLY public.pendencia
 
 ALTER TABLE ONLY public.pergunta_catalogo
     ADD CONSTRAINT pergunta_catalogo_gatilho_tipo_taxonomia_gatilho_conceito_fkey FOREIGN KEY (gatilho_tipo_taxonomia, gatilho_conceito) REFERENCES public.taxonomia_linha_exigida(tipo_taxonomia, conceito);
+
+--
+-- Name: perimetro perimetro_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: perimetro perimetro_entidade_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perimetro
+    ADD CONSTRAINT perimetro_entidade_id_fkey FOREIGN KEY (entidade_id) REFERENCES public.entidade(id) ON DELETE CASCADE;
 
 --
 -- Name: periodo periodo_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -14278,6 +14423,18 @@ ALTER TABLE public.pergunta_catalogo ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY pergunta_catalogo_read ON public.pergunta_catalogo FOR SELECT TO authenticated USING (true);
+
+--
+-- Name: perimetro; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.perimetro ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: perimetro perimetro_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY perimetro_read ON public.perimetro FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: periodo; Type: ROW SECURITY; Schema: public; Owner: -
@@ -14912,6 +15069,26 @@ GRANT ALL ON FUNCTION public.fn_papel_prioridade(p_papel text) TO authenticated;
 GRANT ALL ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_perimetro_definir_escopo(p_caso_id uuid, p_entidade_id uuid, p_escopo text, p_desde date, p_autor text) TO authenticated;
+
+--
+-- Name: TABLE entidade; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.entidade TO anon;
+GRANT ALL ON TABLE public.entidade TO authenticated;
+GRANT ALL ON TABLE public.entidade TO service_role;
+
+--
+-- Name: FUNCTION fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_perimetro_vigente(p_caso_id uuid, p_escopo text, p_data date) TO authenticated;
+
+--
 -- Name: FUNCTION fn_periodo_por_extenso(p_tipo text, p_referencia text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -15267,14 +15444,6 @@ GRANT ALL ON TABLE public.documento_versao TO authenticated;
 GRANT ALL ON TABLE public.documento_versao TO service_role;
 
 --
--- Name: TABLE entidade; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.entidade TO anon;
-GRANT ALL ON TABLE public.entidade TO authenticated;
-GRANT ALL ON TABLE public.entidade TO service_role;
-
---
 -- Name: TABLE estagio_autonomia; Type: ACL; Schema: public; Owner: -
 --
 
@@ -15473,6 +15642,14 @@ GRANT ALL ON TABLE public.pendencia TO service_role;
 GRANT ALL ON TABLE public.pergunta_catalogo TO anon;
 GRANT ALL ON TABLE public.pergunta_catalogo TO authenticated;
 GRANT ALL ON TABLE public.pergunta_catalogo TO service_role;
+
+--
+-- Name: TABLE perimetro; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.perimetro TO anon;
+GRANT ALL ON TABLE public.perimetro TO authenticated;
+GRANT ALL ON TABLE public.perimetro TO service_role;
 
 --
 -- Name: TABLE periodo; Type: ACL; Schema: public; Owner: -
