@@ -30,20 +30,21 @@ substitui: []
 - Função de escrita `fn_entidade_definir_papel_no_grupo` — nunca automático, sempre humano
 - Guarda de pendência `papel_no_grupo_indefinido` quando a função é chamada sem argumento (declare o motivo, não silencio)
 
-**Medição (regra 2):** 5 asserts novos em `entidade_papel.test.sql`. Sem a tipagem, teste que afirma enum deveria reprovar — **verificado**: com a tipagem removida, o teste reprova no tipo esperado.
+**Medição (regra 2):** **21 asserts novos** em `Supabase/test/entidade_papel_no_grupo.test.sql`. Com a chamada nova comentada dentro de `fn_upsert_entidade` (estado equivalente ao vigente antes da 0179) — **11 dos 21 reprovaram**, medido de fato. Religada, os 21 passam.
 
 ## Fatia 1.4: Tabela nova `perimetro(caso, entidade, escopo, desde, ate)` (migration 0180)
 
 **Problema que resolve:** Perímetro (quem entra no COMBINADO) não existia no schema. O que hoje é deduzido do dial era implícito no papel de entidade.
 
 **Solução:**
-- Tabela nova com identidade `(caso, entidade)` para cada perímetro
-- Coluna `escopo` como `enum`: `linha_por_linha`, `ativo_passivo`, `resultado` — o que entra no COMBINADO
-- Datas `desde` e `ate` porque perímetro **muda durante o mandato** — sem elas, um perímetro sem data mente sobre o exercício anterior
-- Função de leitura `fn_perimetro_vigente(p_caso, p_entidade, p_data)` — retorna o escopo ativo em uma data
+- Tabela nova, PK `id`; `caso_id`/`entidade_id` são FKs, não uma chave composta
+- Coluna `escopo` é **texto livre** (não há vocabulário fechado medido ainda — mesmo raciocínio de `periodo.tipo`; NÃO é um enum, e não há valores fixos como "linha_por_linha/ativo_passivo/resultado" — isso não existe no schema)
+- Índice único parcial `perimetro_atual_unico (caso_id, entidade_id, escopo) WHERE ate IS NULL` — no máximo um intervalo "vigente" por vez, para a mesma combinação
+- Datas `desde` e `ate` porque perímetro **muda durante o mandato** — trocar de escopo FECHA o intervalo anterior (não sobrescreve), porque um perímetro sem data mente sobre o exercício anterior
+- Função de leitura `fn_perimetro_vigente(p_caso_id, p_escopo, p_data default current_date)` — quem está no escopo numa data
 - Função de escrita `fn_perimetro_definir_escopo`
 
-**Medição (regra 2):** 8 asserts novos em `perimetro.test.sql`. Sem a tabela, teste de mudança de perímetro no meio de um mandato deveria reprovar.
+**Medição (regra 2):** **17 asserts novos** em `Supabase/test/perimetro.test.sql`. Com o fechamento do intervalo anterior desligado dentro de `fn_perimetro_definir_escopo` — **4 dos 17 reprovaram**, medido de fato (os 4 do bloco que depende do fechamento; os outros 13 passam com ou sem a correção, por razões diferentes — ver o cabeçalho do arquivo de teste). Religado, os 17 passam.
 
 **Nota sobre colisão:** Duas sessões paralelas na mesma branch causaram uma colisão no push (commit `5c6916a` é merge, não rebase). Resolvida por `git merge origin/...` após verificar compatibilidade — ver `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md`.
 
@@ -57,7 +58,7 @@ substitui: []
 - Guarda `fn_entidade_criaria_ciclo_participacao` — limite de 50 saltos — chamada **antes de gravar** por `fn_entidade_definir_participacao`
 - Função de leitura `fn_entidade_cadeia_controladora` — sobe a cadeia, para no topo
 
-**Diferença de F4:** Esta FK **não entrega nada** em F1 — é só preparação. Consolidação e intercompany (que vão consumir ela) são trabalho de F6, depois que F4 (Conta Canônica) existir.
+**Diferença de F4:** Esta FK **não entrega nada** em F1 — é só preparação. Consolidação e intercompany (que vão consumir ela) são trabalho de **F4**, conforme o roadmap ("é a fatia que destrava consolidação e intercompany", seção 12.2, fatia 1.5) — não F6.
 
 **Medição (regra 2):** 29 asserts novos em `entidade_participacao.test.sql`. **4 dos 29 foram medidos como não-vazios**: desligar a guarda de ciclo em `fn_entidade_definir_participacao` e os 4 asserts reprovam (tentativas de criar ciclo). Os outros 25 passam com ou sem a guarda. Medição registrada no cabeçalho do arquivo de teste.
 
@@ -65,7 +66,7 @@ substitui: []
 
 Cada fatia foi verificada antes de commit pela sessão principal:
 
-1. Reconstruir o banco do zero (`Supabase/test/run.sh`) — 122 migrations aplicadas em sequência
+1. Reconstruir o banco do zero (`Supabase/test/run.sh`) — de 124 (antes da 0179) a 126 (depois da 0181) migrations, uma reconstrução por fatia
 2. Desligar a correção (remover a guarda, trocar a tipagem, etc.) — confirmar que a suíte reprova **no ponto esperado**
 3. Religar a correção — confirmar `TODOS OS TESTES PASSARAM`
 4. Conferir que nenhuma outra suíte regrediu
