@@ -57,6 +57,7 @@
 {"k":"n","id":"arquivo:Supabase/test/documento_sem_dado_financeiro.test.sql","t":"arquivo","f":"Supabase/test/documento_sem_dado_financeiro.test.sql","txt":"documento_sem_dado_financeiro.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/eixo_documento_e_coluna.test.sql","t":"arquivo","f":"Supabase/test/eixo_documento_e_coluna.test.sql","txt":"eixo_documento_e_coluna.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_ambigua.test.sql","t":"arquivo","f":"Supabase/test/entidade_ambigua.test.sql","txt":"entidade_ambigua.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","t":"arquivo","f":"Supabase/test/entidade_titulo_suspeito.test.sql","txt":"entidade_titulo_suspeito.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fato_material.test.sql","t":"arquivo","f":"Supabase/test/fato_material.test.sql","txt":"fato_material.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/faturamento_por_mes.test.sql","t":"arquivo","f":"Supabase/test/faturamento_por_mes.test.sql","txt":"faturamento_por_mes.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fechar_mandato.test.sql","t":"arquivo","f":"Supabase/test/fechar_mandato.test.sql","txt":"fechar_mandato.test.sql"}
@@ -227,6 +228,7 @@
 {"k":"n","id":"fn:fn_entidade_canonica_forte","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade canonica forte"}
 {"k":"n","id":"fn:fn_entidade_e_balcao_ambiguo","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"entidade e balcao ambiguo"}
 {"k":"n","id":"fn:fn_entidade_nome_mais_completo","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade nome mais completo"}
+{"k":"n","id":"fn:fn_entidade_nome_parece_titulo_ou_arquivo","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"entidade nome parece titulo ou arquivo"}
 {"k":"n","id":"fn:fn_entidade_talvez_renomear","t":"fn","f":"Supabase/migrations/0173_o_renomeio_pelo_caminho_que_roda_sempre.sql","txt":"entidade talvez renomear"}
 {"k":"n","id":"fn:fn_entidades_candidatas","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"entidades candidatas"}
 {"k":"n","id":"fn:fn_entidades_candidatas_cnpj","t":"fn","f":"Supabase/migrations/0169_o_cnpj_e_a_identidade_que_o_nome_nao_e.sql","txt":"entidades candidatas cnpj"}
@@ -288,6 +290,7 @@
 {"k":"n","id":"fn:fn_pares_duplicados_do_caso","t":"fn","f":"Supabase/migrations/0144_duplicidade_e_entre_documentos.sql","txt":"pares duplicados do caso"}
 {"k":"n","id":"fn:fn_pendencia_cnpj_colide_balcao","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"pendencia cnpj colide balcao"}
 {"k":"n","id":"fn:fn_pendencia_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"pendencia entidade ambigua"}
+{"k":"n","id":"fn:fn_pendencia_entidade_nome_suspeito","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"pendencia entidade nome suspeito"}
 {"k":"n","id":"fn:fn_periodo_canonico","t":"fn","f":"Supabase/migrations/0020_periodo_canonico.sql","txt":"periodo canonico"}
 {"k":"n","id":"fn:fn_periodo_por_extenso","t":"fn","f":"Supabase/migrations/0122_pergunta_em_portugues.sql","txt":"periodo por extenso"}
 {"k":"n","id":"fn:fn_periodos_compativeis","t":"fn","f":"Supabase/migrations/0022_periodo_por_ano_e_guardas.sql","txt":"periodos compativeis"}
@@ -347,7 +350,7 @@
 {"k":"n","id":"fn:fn_trg_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"trg entidade ambigua"}
 {"k":"n","id":"fn:fn_unidade_predominante","t":"fn","f":"Supabase/migrations/0021_classe_b_checagem_unidade.sql","txt":"unidade predominante"}
 {"k":"n","id":"fn:fn_upsert_caso","t":"fn","f":"Supabase/migrations/0006_reset_funcoes.sql","txt":"upsert caso"}
-{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"upsert entidade"}
+{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"upsert entidade"}
 {"k":"n","id":"fn:fn_upsert_periodo","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"upsert periodo"}
 {"k":"n","id":"fn:fn_valor_conceito","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"valor conceito"}
 {"k":"n","id":"fn:fn_valor_conceito_col","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"valor conceito col"}
@@ -482,6 +485,7 @@
 {"k":"n","id":"migration:0175","t":"migration","f":"Supabase/migrations/0175_o_cnpj_tambem_resolve_o_balcao.sql","txt":"o cnpj tambem resolve o balcao"}
 {"k":"n","id":"migration:0176","t":"migration","f":"Supabase/migrations/0176_o_balcao_nao_absorve_quem_e_confirmado.sql","txt":"o balcao nao absorve quem e confirmado"}
 {"k":"n","id":"migration:0177","t":"migration","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"a guarda do balcao ia so num sentido"}
+{"k":"n","id":"migration:0178","t":"migration","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"o titulo da planilha nao e pessoa juridica"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -905,6 +909,12 @@
 {"k":"e","de":"arquivo:Supabase/test/entidade_ambigua.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/entidade_ambigua.test.sql","l":126}
 {"k":"e","de":"arquivo:Supabase/test/entidade_ambigua.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_ambigua.test.sql","l":72}
 {"k":"e","de":"arquivo:Supabase/test/entidade_ambigua.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_ambigua.test.sql","l":91}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_nome_parece_titulo_ou_arquivo","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":7}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_cnpj_colide_balcao","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":33}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_entidade_ambigua","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":34}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":74}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":68}
+{"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":2}
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_fatos_do_caso","f":"Supabase/test/fato_material.test.sql","l":194}
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_diagnostico","f":"Supabase/test/fato_material.test.sql","l":223}
 {"k":"e","de":"arquivo:Supabase/test/fato_material.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_fatos","f":"Supabase/test/fato_material.test.sql","l":38}
@@ -1600,6 +1610,9 @@
 {"k":"e","de":"migration:0177","rel":"CRIA","pa":"fn:fn_pendencia_cnpj_colide_balcao","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","l":131}
 {"k":"e","de":"migration:0177","rel":"CRIA","pa":"fn:fn_registrar_diagnostico","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","l":528}
 {"k":"e","de":"migration:0177","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","l":333}
+{"k":"e","de":"migration:0178","rel":"CRIA","pa":"fn:fn_entidade_nome_parece_titulo_ou_arquivo","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","l":98}
+{"k":"e","de":"migration:0178","rel":"CRIA","pa":"fn:fn_pendencia_entidade_nome_suspeito","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","l":115}
+{"k":"e","de":"migration:0178","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","l":156}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

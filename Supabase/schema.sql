@@ -2783,6 +2783,23 @@ $$;
 COMMENT ON FUNCTION public.fn_entidade_nome_mais_completo(p_atual text, p_novo text) IS '0171: entre dois nomes que o CNPJ já provou serem a MESMA empresa, qual fica. Três sinais em ordem: cara de endereço colado (nunca vence, mesmo mais longo) > sufixo societário > comprimento cru. Sem isso, "SURUBIJU, 1930" (55 chars) venceria "MARCAS LTDA" (52) só por ser mais longo — e é o nome ERRADO.';
 
 --
+-- Name: fn_entidade_nome_parece_titulo_ou_arquivo(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select fn_entidade_canonica(p_nome) ~
+    '^(comparativo|relatorio|controle|status|meses|liquido|empresas|vencidos)\y|\d{4}x\d{4}';
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_nome_parece_titulo_ou_arquivo(p_nome text) IS '0178: nome com cara de título de coluna/planilha/arquivo em vez de razão social. Mesma normalização de fn_entidade_canonica (2690); o léxico é referência direta de Supabase/test/perimetro-inventario.mjs (PADRAO_TITULO_OU_ARQUIVO), medido contra os 16 nomes reais da causa nome_de_arquivo_ou_titulo_virou_entidade (fatia 1.1), mais "empresas"/"vencidos" — as 2 palavras que faltavam para cobrir as 4 entidades reais medidas no AMO teste 00 (seção 12.1 do roadmap). Léxico, não estatística: combinar com CNPJ nulo é o chamador, nunca esta função sozinha — ver o cabeçalho da 0178 para a armadilha do balcão ambíguo.';
+
+--
 -- Name: fn_entidade_talvez_renomear(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6259,6 +6276,48 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_pendencia_entidade_ambigua(p_caso_id uuid, p_documento_id uuid, p_entidade_id uuid) IS 'Transforma a ambiguidade registrada por fn_upsert_entidade em pendência bloqueante, nomeando os candidatos (0153). Uma por entidade, não por documento.';
+
+--
+-- Name: fn_pendencia_entidade_nome_suspeito(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_motivo text := 'entidade_nome_suspeito:' || p_entidade_id;
+  v_pend   uuid;
+begin
+  select id into v_pend from pendencia
+   where caso_id = p_caso_id and motivo = v_motivo and estado <> 'resolvida'
+   limit 1;
+  if v_pend is not null then return v_pend; end if;
+
+  insert into pendencia
+    (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, entidade_id, motivo)
+  values (
+    p_caso_id, 'diagnostico', 'entidade_incorreta', 'importante', true,
+    format('O nome "%s" tem cara de título de coluna/aba/arquivo, não de razão social — sem '
+           || 'CNPJ e sem nenhum outro nome do caso para casar (0178). NÃO foi fundida nem '
+           || 'apagada — fundir errado é pior que deixar separada, e apagar perderia a '
+           || 'proveniência dos documentos já ligados a ela. O EFEITO, enquanto a pendência '
+           || 'estiver aberta: os documentos desta pseudo-entidade ficam contabilizados FORA '
+           || 'do book de qualquer empresa real do mandato. Confira o documento: se o nome '
+           || 'certo está no conteúdo, funda com fn_fundir_entidade; se é mesmo um artefato '
+           || '(cabeçalho de planilha, aba de controle), resolva a pendência sem fundir.',
+           p_nome),
+    p_entidade_id, v_motivo)
+  returning id into v_pend;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0178: pendência entidade_incorreta para entidade cujo nome bate fn_entidade_nome_parece_titulo_ou_arquivo, sem CNPJ e recém-criada. Idempotente por entidade_id (motivo). Nunca funde, nunca apaga — só marca para revisão humana.';
 
 --
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11033,6 +11092,21 @@ begin
                                'cnpj', v_cnpj));
   end if;
 
+  -- 0178: NEM CNPJ NEM CANDIDATO NENHUM CASOU, e o nome tem cara de
+  -- título/coluna/aba/arquivo — a CONJUNÇÃO que separa isso do balcão
+  -- ambíguo real (que também chega sem CNPJ por este mesmo `insert`, mas com
+  -- nome vindo do CONTEÚDO do documento, não de um título). Não recusa o
+  -- `insert` (o documento não pode ficar sem entidade — perderia
+  -- proveniência) e não funde com nada — só marca para revisão humana.
+  -- MEDIDO (`Supabase/test/entidade_titulo_suspeito.test.sql`): os 4 nomes
+  -- reais do AMO teste 00 (Empresas, Vencidos, Status Extratos, Controle
+  -- Extratos Ofx) batem aqui; um nome real de empresa do mesmo mandato,
+  -- AMOBELEZA COMERCIO DIGITAL E OFFLINE LTDA (com CNPJ), não passa por este
+  -- `if` porque `v_cnpj` não é nulo — nem chega a ser avaliado contra o léxico.
+  if v_cnpj is null and fn_entidade_nome_parece_titulo_ou_arquivo(trim(p_nome)) then
+    perform fn_pendencia_entidade_nome_suspeito(p_caso_id, v_id, trim(p_nome));
+  end if;
+
   return v_id;
 end;
 $$;
@@ -11041,7 +11115,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal. 0178: uma entidade NOVA (nenhum candidato casou), sem CNPJ, com nome que bate fn_entidade_nome_parece_titulo_ou_arquivo, ainda é criada (documento não perde dona) mas ganha pendência entidade_incorreta/entidade_nome_suspeito para revisão humana — nunca fundida nem apagada.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -

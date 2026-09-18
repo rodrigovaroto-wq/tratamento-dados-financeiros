@@ -554,6 +554,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/balcao_nao_absorve_confirmada.
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0178 — título de coluna/aba/arquivo não vira pessoa jurídica"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_titulo_suspeito.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \
