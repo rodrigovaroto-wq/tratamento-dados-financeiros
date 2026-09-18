@@ -1087,6 +1087,10 @@ ela ligada, as 4 têm de ser recusadas ou marcadas — e o número vai na mensag
 conhecido existe (é o caso do balcão, e as `0175`–`0177` inteiras nasceram disso). O sinal é a
 conjunção — sem CNPJ **e** com 1 documento **e** com nome que não tem forma de razão social.
 *Agente: `migrations-postgres`. Risco: médio — mexe na porta de entrada que já quebrou em produção.*
+**FEITA EM 18/09/2026** — migration `0178`, commit `ad431b9`. **APLICADA EM PRODUÇÃO em
+18/09/2026** (sonda: 0 ausentes). O backfill marcou **7** entidades no banco inteiro — previsto 7
+antes de aplicar, conferido 7 depois. A conjunção de sinais é o que segura o número: o critério
+frouxo ("sem CNPJ e 1 documento", sem o léxico) alcançaria 145.
 
 #### Fatia 1.3 — `papel_no_grupo` tipado E preenchido
 Enum (`holding`, `operacional`, `veiculo`, `coligada`, `fora_do_perimetro`), migration de
@@ -1094,19 +1098,19 @@ tipagem, e — a parte que não pode ficar de fora — **quem escreve**. Sem um 
 fatia entrega o vazio de hoje com tipo mais forte.
 **Pronto quando:** as 8 entidades reais do mandato têm papel, ou têm pendência dizendo por que não.
 *Agente: `migrations-postgres`. Risco: médio.*
-**FEITA EM 18/09/2026** — migration `0179`, verificação independente concluída (banco reconstruído do zero, correção desligada/religada). Commit `14e80da`.
+**FEITA EM 18/09/2026** — migration `0179`, verificação independente concluída (banco reconstruído do zero, correção desligada/religada). Commit `14e80da`. **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). Abriu 365 pendências `papel_no_grupo_indefinido` — uma por entidade de TODO o banco, não só do mandato; 347 resolvidas em lote como ruído de caso de teste, 18 seguem abertas. Ver `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
 
 #### Fatia 1.4 — `perimetro(caso, entidade, escopo, desde, ate)`
 A tabela nova. Escopo = o conjunto que entra no COMBINADO. `desde`/`ate` porque perímetro muda
 no meio do mandato, e um perímetro sem data mente sobre o exercício anterior.
 *Agente: `migrations-postgres`. Risco: baixo — aditivo.*
-**FEITA EM 18/09/2026** — migration `0180`, verificação independente concluída (idem 1.3). Colisão de duas sessões paralelas resolvida por merge (commits `5c6916a`, base `57a1814`).
+**FEITA EM 18/09/2026** — migration `0180`, verificação independente concluída (idem 1.3). Colisão de duas sessões paralelas resolvida por merge (commits `5c6916a`, base `57a1814`). **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). `perimetro` nasce com 0 linhas: a tabela existe, ninguém declarou perímetro nenhum ainda — isso é decisão humana, não código faltando.
 
 #### Fatia 1.5 — Participação societária
 `entidade.participacao`, e a FK preparada que a F4 vai consumir. É a fatia que destrava
 consolidação e intercompany.
 *Agente: `migrations-postgres`. Risco: médio.*
-**FEITA EM 18/09/2026** — migration `0181`, verificação independente concluída (idem 1.3). 29 asserts novos, 4 medidos reprovando (sem a guarda de ciclo). Commit `a3381d8`.
+**FEITA EM 18/09/2026** — migration `0181`, verificação independente concluída (idem 1.3). 29 asserts novos, 4 medidos reprovando (sem a guarda de ciclo). Commit `a3381d8`. **APLICADA EM PRODUÇÃO em 18/09/2026** (sonda: 0 ausentes). `controladora_id` segue NULL nas 365 entidades — e no mandato real isso está CERTO (não há holding, ver fatia 1.6 e a memória do controle comum).
 
 #### Fatia 1.6 — O aceite financeiro (paralela, e depende do dono)
 O perímetro tem de reproduzir o COMBINADO do cliente, ou declarar a diferença.

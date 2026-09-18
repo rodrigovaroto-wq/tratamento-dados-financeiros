@@ -68,6 +68,9 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 ## Produção (não está em nenhum arquivo do repositório)
 
+- [Aplicar migration em produção é pela API de gerenciamento](aplicar-migration-em-producao-pela-api.md)
+  — `psql` não alcança a porta; e a API envolve tudo numa transação, então `alter type … add
+  value` exige DUAS chamadas. Backfill: meça o alcance do `where` em produção ANTES (365 × 7)
 - [O mandato real não tem holding](grupo-por-controle-comum-sem-holding.md) — as 8 empresas são
   irmãs sob controle comum de PESSOAS FÍSICAS, medido nos contratos sociais; `controladora_id`
   (0181) fica NULL por estar certo, não por faltar cadastro, e é por isso que o COMBINADO do
