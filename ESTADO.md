@@ -1,5 +1,32 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## ▶️ EXECUÇÃO AUTÔNOMA DA F1 EM ANDAMENTO — RETOMADA APÓS HANDOFF DE 18/09/2026
+>
+> Uma sessão anterior foi interrompida a pedido do dono no fim da fatia 1.3 (para levar o estado a
+> um chat novo antes do limite de contexto) e deixou o handoff abaixo, preservado como registro. A
+> sessão que retomou daqui **já fechou também a fatia 1.4** (migration `0180`, tabela `perimetro`)
+> — a linha "Última migration" abaixo é a mais recente e precisa. Segue para a 1.5.
+>
+> **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
+> retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration
+> (uma quebrada, comitada localmente como "não confiar"; outra — `14e80da` — corrigida e melhor
+> medida, de uma continuação autônoma do mesmo agente). A quebrada foi descartada; a `14e80da` só
+> foi aceita depois de reconstruir o banco do zero e repetir a medição desligar→reprova→religar→
+> passa, a mesma bateria que qualquer fatia própria recebe antes do commit. **O mesmo padrão se
+> repetiu ao empurrar a 1.4**: o push foi rejeitado porque a sessão anterior tinha empurrado seu
+> commit de handoff entre o despacho e o commit desta sessão — resolvido com um merge (não rebase,
+> não force-push) depois de confirmar que os dois lados eram compatíveis.
+>
+> **O que fica para a próxima sessão, em ordem** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`):
+> fatia 1.5 (`entidade.participacao`), 1.6 (aceite financeiro contra o COMBINADO real do cliente —
+> depende do dono, o mandato AMO não tem um combinado real ingerido). Nenhuma das migrations
+> `0178`/`0179`/`0180` foi aplicada em produção — escrita ≠ aplicada é doutrina deste projeto, e
+> isso é decisão de uma sessão seguinte, contra a sonda.
+>
+> PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
+> aberto, rascunho. Uma sessão nova que continuar aqui deve chamar `subscribe_pr_activity` de novo
+> (a inscrição não atravessa sessões) e reconferir o CI antes de seguir para a 1.5.
+
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
 lidas para retomar. E `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
