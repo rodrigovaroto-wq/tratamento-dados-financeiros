@@ -1,11 +1,15 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## ▶️ EXECUÇÃO AUTÔNOMA DA F1 EM ANDAMENTO — RETOMADA APÓS HANDOFF DE 18/09/2026
+> ## ✅ F1.1–F1.5 FEITAS — F1.6 BLOQUEADA, AGUARDANDO COMBINADO REAL DO CLIENTE (18/09/2026)
 >
-> Uma sessão anterior foi interrompida a pedido do dono no fim da fatia 1.3 (para levar o estado a
-> um chat novo antes do limite de contexto) e deixou o handoff abaixo, preservado como registro. A
-> sessão que retomou daqui **já fechou também a fatia 1.4** (migration `0180`, tabela `perimetro`)
-> — a linha "Última migration" abaixo é a mais recente e precisa. Segue para a 1.5.
+> **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
+> - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
+> - **F1.4**: tabela nova `perimetro(caso, entidade, escopo, desde, ate)` com funções de leitura/escrita. Migration `0180`. **VERIFICADA**: idem acima.
+> - **F1.5**: `entidade.controladora_id` (FK self-referencing) + `percentual_participacao`, guarda contra ciclo, funções de leitura/escrita. Migration `0181`. **VERIFICADA**: idem acima. 29 asserts novos, 4 medidos reprovando sem a guarda.
+>
+> **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis. Ver `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md`.
+>
+> **F1.6 bloqueada**: depende do dono fornecer o COMBINADO real do cliente para conferir o perímetro contra ele. O mandato AMO teste 00 não tem COMBINADO real ingerido.
 >
 > **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
 > retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration

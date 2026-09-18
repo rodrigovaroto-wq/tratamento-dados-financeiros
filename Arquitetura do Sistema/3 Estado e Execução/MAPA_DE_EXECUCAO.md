@@ -3,6 +3,11 @@
 **Data:** 09/09/2026, sessão 81 · **Base conferida:** `main` em `668b6fe`, CI verde (PR #203).
 **Última migration:** `0160` — ver `ESTADO.md`.
 
+> **NOTA IMPORTANTE (18/09/2026):** Este arquivo é histórico. O roadmap detalhado e atual está em
+> `Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md` (atualizado em 15/09).
+> As seções B0–B7 abaixo refletem o estado anterior à F0 ser fechada. Ver `ESTADO.md` para o estado
+> atual e `ARQUITETURA_ALVO_E_ROADMAP.md` para as fatias de F1 em dia.
+
 > **O corpo deste arquivo é mais novo que este cabeçalho era.** Até 09/09 ele dizia "20/08, sessão
 > 55, migration `0133`" enquanto as seções abaixo já registravam coisas de 02/09 — uma revisão
 > pegou. É o mesmo defeito que separou o `ESTADO.md` do `HANDOFF.md`: a parte que muda toda rodada

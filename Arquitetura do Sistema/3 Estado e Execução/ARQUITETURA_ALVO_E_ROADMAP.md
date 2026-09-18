@@ -1094,16 +1094,19 @@ tipagem, e — a parte que não pode ficar de fora — **quem escreve**. Sem um 
 fatia entrega o vazio de hoje com tipo mais forte.
 **Pronto quando:** as 8 entidades reais do mandato têm papel, ou têm pendência dizendo por que não.
 *Agente: `migrations-postgres`. Risco: médio.*
+**FEITA EM 18/09/2026** — migration `0179`, verificação independente concluída (banco reconstruído do zero, correção desligada/religada). Commit `14e80da`.
 
 #### Fatia 1.4 — `perimetro(caso, entidade, escopo, desde, ate)`
 A tabela nova. Escopo = o conjunto que entra no COMBINADO. `desde`/`ate` porque perímetro muda
 no meio do mandato, e um perímetro sem data mente sobre o exercício anterior.
 *Agente: `migrations-postgres`. Risco: baixo — aditivo.*
+**FEITA EM 18/09/2026** — migration `0180`, verificação independente concluída (idem 1.3). Colisão de duas sessões paralelas resolvida por merge (commits `5c6916a`, base `57a1814`).
 
 #### Fatia 1.5 — Participação societária
 `entidade.participacao`, e a FK preparada que a F4 vai consumir. É a fatia que destrava
 consolidação e intercompany.
 *Agente: `migrations-postgres`. Risco: médio.*
+**FEITA EM 18/09/2026** — migration `0181`, verificação independente concluída (idem 1.3). 29 asserts novos, 4 medidos reprovando (sem a guarda de ciclo). Commit `a3381d8`.
 
 #### Fatia 1.6 — O aceite financeiro (paralela, e depende do dono)
 O perímetro tem de reproduzir o COMBINADO do cliente, ou declarar a diferença.
