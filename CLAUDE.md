@@ -111,6 +111,9 @@ SONDA_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/
 # sozinho não cumpre o critério, por isso a consulta separa "não tinha número para dar" (`0111`)
 # de "a extração voltou vazia e ninguém assumiu".
 psql "$URL" -v caso_id="'<uuid do caso>'" -f Supabase/test/cobertura-do-lote.sql
+# E o inventário do perímetro (F1, fatia 1.1): entidade por caso com CNPJ/papel, e a causa NOMEADA
+# de cada `entidade_incorreta` aberta — 71 pendências não é diagnóstico, é contagem (regra 1).
+CONFERIR_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/test/perimetro-inventario.mjs
 # E a republicação do n8n, que é o passo sem o qual a correção fica no repositório e não no ar.
 # O caminho normal é Actions → "Republicar workflow no n8n"; o script que ela roda é:
 N8N_URL=... N8N_API_KEY=... N8N_WORKFLOW_ID=... bash N8N/republicar.sh

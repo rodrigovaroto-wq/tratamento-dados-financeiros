@@ -1037,14 +1037,46 @@ qualquer um dos lados aqui seria ausência virando dado.
               |--> 1.6 (paralela: só aceite, depende do dono)
 ```
 
-#### Fatia 1.1 — Inventário do perímetro (medir antes de construir) · **bloqueia o resto**
-Rodar, contra produção, o mesmo tipo de consulta que a `cobertura-do-lote.sql` faz para documento:
-por caso, quantas entidades, quantas com CNPJ, quantas com `papel_no_grupo`, e a triagem das **71
-`entidade_incorreta` abertas** em categorias de causa. Sem isso, "0 entidade ambígua" continua
-sendo uma frase, e as 71 pendências continuam sendo um número sem diagnóstico.
-**Entregável:** consulta versionada (irmã da `cobertura-do-lote.sql`) + as 71 triadas por causa.
-**Pronto quando:** cada uma das 71 tem uma causa nomeada, e a distribuição está no `ESTADO.md`.
-*Agente: `migrations-postgres`. Risco: nenhum — é leitura.*
+#### Fatia 1.1 — Inventário do perímetro (medir antes de construir) · **FEITA em 18/09/2026**
+**Entregável:** `Supabase/test/perimetro-inventario.mjs` (irmão da `cobertura-do-lote.sql`, mas em
+JS porque a triagem exige normalização e distância de edição, que SQL puro não faz sem custar
+legibilidade) + `perimetro-inventario.test.mjs`, provado contra as 71 descrições REAIS lidas de
+produção em 18/09 (`Supabase/test/fixtures/entidade_incorreta_18-09-2026.json`, regra 4). Roda
+manual via `.github/workflows/perimetro-inventario.yml` (`workflow_dispatch`, não agendado — a
+entidade de um mandato muda quando o mandato muda, não no relógio, ao contrário do schema que a
+sonda confere todo dia).
+
+**As 71, 100% categorizadas — nenhuma "residual":**
+
+| Causa | N | É bug de comparação? |
+|---|---|---|
+| `normalizacao_acento_caixa_sufixo` (mesma empresa, acento/caixa/"Ltda." diferentes) | 20 | **sim** |
+| `nome_de_arquivo_ou_titulo_virou_entidade` ("Comparativo Araucaria X", "Canastra 2025x2024x2023") | 16 | não |
+| `apelido_ou_nome_fantasia_com_palavra_em_comum` ("Grupo Canastra" × razão social) | 12 | não |
+| `prefixo_comum_truncado` (nome cadastrado é prefixo do nome completo) | 10 | **sim** |
+| `sem_relacao_aparente_revisar_manualmente` ("Ar Log" × "AR TRANSPORTES…") | 4 | não |
+| `quase_igual_1_2_chars` ("ARAUGÁRIA" × "ARAUCÁRIA", 1 caractere) | 3 | **sim** |
+| `ambigua_ja_correta` (já é `entidade_ambigua`, funcionando como desenhado) | 2 | não |
+| `apelido_curto_sem_mapeamento` | 2 | não |
+| `mojibake` (encoding) | 1 | **sim** |
+| `fixture_sonda` (não é bug, não mexer — a `0162` depende dela) | 1 | não |
+
+**34 das 71 (48%) são bug de comparação** — a mesma empresa, escrita de duas formas, que deveria
+ter fechado sozinha. São as candidatas diretas da fatia 1.2. As outras 37 não são defeito de
+código: são gap de dado (apelido nunca mapeado, nome de arquivo virando cadastro) ou o sistema
+funcionando como desenhado — nenhuma das duas se resolve com a mesma correção.
+
+**Achado que muda o "por caso": não é só o AMO.** `papel_no_grupo` está NULL em **todo** caso do
+banco, inclusive os de teste — confirma que não é lacuna do mandato real, é ausência de caminho de
+escrita em qualquer lugar do pipeline (ver fatia 1.3). E os dois únicos lugares do repositório
+onde a coluna tem valor não-nulo são fixtures SQL **literais** dos books (`fixture_book_canastra.sql`,
+`fixture_book_vertentes.sql`) — dado escrito à mão para o export, não produzido por função nenhuma.
+
+**Achado fora do escopo da F1, registrado para a 1.2 não repetir a medição:** rodando o script
+contra o banco de TESTE local (122 migrations, fixtures da suíte), o classificador aplicado às
+23 pendências sintéticas ali (formato diferente das de produção) reprovou 5 como "residual" —
+corretamente: são descrições escritas para testes de migration específicos, não o formato do
+diagnóstico de IA. O script **avisa** quando isso acontece em vez de calar (regra 7).
 
 #### Fatia 1.2 — A entidade que não é entidade
 Guarda em `fn_upsert_entidade` para que cabeçalho de planilha não vire pessoa jurídica, e a

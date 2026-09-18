@@ -61,6 +61,7 @@
 {"k":"n","id":"arquivo:Supabase/test/faturamento_por_mes.test.sql","t":"arquivo","f":"Supabase/test/faturamento_por_mes.test.sql","txt":"faturamento_por_mes.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fechar_mandato.test.sql","t":"arquivo","f":"Supabase/test/fechar_mandato.test.sql","txt":"fechar_mandato.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fixture_modelagem_v35.sql","t":"arquivo","f":"Supabase/test/fixture_modelagem_v35.sql","txt":"fixture_modelagem_v35.sql"}
+{"k":"n","id":"arquivo:Supabase/test/fixtures/entidade_incorreta_18-09-2026.json","t":"arquivo","f":"Supabase/test/fixtures/entidade_incorreta_18-09-2026.json","txt":"entidade_incorreta_18-09-2026.json"}
 {"k":"n","id":"arquivo:Supabase/test/gerar_fixture.py","t":"arquivo","f":"Supabase/test/gerar_fixture.py","txt":"gerar_fixture.py"}
 {"k":"n","id":"arquivo:Supabase/test/golden.test.sql","t":"arquivo","f":"Supabase/test/golden.test.sql","txt":"golden.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/golden_rotulagem.test.sql","t":"arquivo","f":"Supabase/test/golden_rotulagem.test.sql","txt":"golden_rotulagem.test.sql"}
@@ -921,6 +922,7 @@
 {"k":"e","de":"arquivo:Supabase/test/fixture_modelagem_v35.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/fixture_modelagem_v35.sql","l":348}
 {"k":"e","de":"arquivo:Supabase/test/fixture_modelagem_v35.sql","rel":"CHAMA","pa":"fn:fn_rotulo_estrutural","f":"Supabase/test/fixture_modelagem_v35.sql","l":23}
 {"k":"e","de":"arquivo:Supabase/test/fixture_modelagem_v35.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/fixture_modelagem_v35.sql","l":317}
+{"k":"e","de":"arquivo:Supabase/test/fixtures/entidade_incorreta_18-09-2026.json","rel":"CHAMA","pa":"fn:fn_fundir_entidade","f":"Supabase/test/fixtures/entidade_incorreta_18-09-2026.json","l":1}
 {"k":"e","de":"arquivo:Supabase/test/golden.test.sql","rel":"CHAMA","pa":"fn:fn_golden_campos","f":"Supabase/test/golden.test.sql","l":498}
 {"k":"e","de":"arquivo:Supabase/test/golden.test.sql","rel":"CHAMA","pa":"fn:fn_golden_classe_a","f":"Supabase/test/golden.test.sql","l":557}
 {"k":"e","de":"arquivo:Supabase/test/golden.test.sql","rel":"CHAMA","pa":"fn:fn_golden_classificacao","f":"Supabase/test/golden.test.sql","l":264}
