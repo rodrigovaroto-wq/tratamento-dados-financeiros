@@ -839,7 +839,24 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 > número ninguém consegue conferir é pior que um aceite mais frouxo.
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
 
-**MEDIDO EM PRODUÇÃO, 18/09/2026 — e o aceite NÃO passa.** Primeira vez que a cobertura do lote
+> **ACEITE DADO PELO DONO em 18/09/2026, com a medição abaixo na mesa.** Os 94,9% ficam 0,1 ponto
+> abaixo do critério, e o dono julgou que isso cai na margem de erro — decisão dele, tomada vendo
+> o número e a decomposição, não por arredondamento de ninguém. O que sustenta o julgamento não é
+> o 0,1: é que **as duas colunas que importam são ZERO** (nenhuma falha silenciosa, nenhum
+> documento não processado), e toda a diferença é declarada e nominada.
+>
+> **Os 6 documentos NÃO ficam perdoados — ficam DIFERIDOS, com endereço.** Decisão do dono na
+> mesma passada: "devem ser corrigidos sim, e toda a rodada também deve ser otimizada e corrigida
+> ao extremo, mas não agora, e sim nas outras fases específicas". Endereço de cada um:
+> os 4 artefatos de planilha e as 2 certidões com contradição régua × IA são **F3b** (completude
+> por linha, que é o que torna a contradição decidível); a classificação errada dos 3 arquivos como
+> `EXTRATO_BANCARIO` é **F2**; e o `padrao_suspeito` que gera o falso-positivo é **F4**.
+>
+> **A F0 está FECHADA.** Os quatro critérios: geral (sonda verde em produção, execução #10),
+> técnico (portões medidos, CI reprova se produção divergir), de produto (escopo + duas ADRs) e
+> financeiro (este, aceito acima).
+
+**MEDIDO EM PRODUÇÃO, 18/09/2026 — o aceite fica 0,1 ponto abaixo, e o dono o concedeu.** Primeira vez que a cobertura do lote
 foi lida do banco do cliente, com `Supabase/test/cobertura-do-lote.sql` contra o caso
 `AMO teste 00` (`1be52ab4-9692-4e17-b332-1dc05dcc8c70`):
 
@@ -969,3 +986,105 @@ sessão principal, capturando o `HEAD` na hora.
 
 Nenhuma tabela nova. Nenhuma refatoração. Nenhuma migration de arquitetura. Nenhuma camada nova.
 **F0 não constrói — ela faz com que medir volte a significar alguma coisa.**
+
+---
+
+## 12. SECOND PHASE EXECUTION PLAN — F1 (entidade e perímetro)
+
+**Escrito em 18/09/2026, com a F0 fechada.** O mesmo formato da seção 11, e pela mesma razão: uma
+fase sem fatias declaradas vira uma lista de desejos que ninguém sabe quando acabou.
+
+### 12.1 O estado REAL, medido — e ele não é o "55%" desta página
+
+O cabeçalho da F1 estima `🟡 55%` desde 09/09. **Medido em 18/09 contra o schema e contra o banco
+de produção**, o quadro é outro, e em dois pontos é pior do que a estimativa sugeria:
+
+| O que | Medido |
+|---|---|
+| Colunas de `entidade` | **cinco**: `id`, `caso_id`, `razao_social`, `cnpj`, `papel_no_grupo` |
+| `papel_no_grupo` | **existe desde a `0001`**, é `text` livre, e está **NULL nas 13 entidades** do mandato real |
+| `perimetro` (tabela) | **não existe** |
+| `participacao` (coluna) | **não existe** |
+| Funções `fn_*` sobre entidade | **15** já escritas (`fn_upsert_entidade`, `fn_fundir_entidade`, `fn_entidade_canonica_forte`, `fn_entidade_aprender_cnpj`, …) |
+| `entidade_ambigua` aberta em produção | **0** — a frente `0169`–`0177` fechou isso, e a "saída" que a F1 declarava já está atingida |
+| `entidade_incorreta` aberta em produção | **71** (e 29 resolvidas) |
+
+**Duas leituras mudam o plano.**
+
+Primeira: **`papel_no_grupo` não é um gap de schema, é um estágio desligado.** A coluna está lá há
+177 migrations e nunca foi escrita. Isso tem exatamente a aparência de "campo que existe, logo o
+papel está modelado" — a regra 7 na forma mais cara, porque quem lê o schema conclui o contrário
+do que o dado diz. Tipá-la em enum sem resolver QUEM a preenche entrega o mesmo vazio com tipo
+mais forte.
+
+Segunda, e é um defeito que esta medição descobriu: **4 das 13 entidades do mandato real não são
+entidades.** São `Empresas`, `Vencidos`, `Status Extratos` e `Controle Extratos Ofx` — cabeçalhos
+e abas de planilha que viraram pessoa jurídica. Todas com 1 documento, todas sem CNPJ. O
+`fn_upsert_entidade` aceita qualquer string que a extração chame de entidade, e não há guarda
+entre "nome próprio de empresa" e "título de coluna". As 8 entidades reais do grupo têm CNPJ; as
+4 artefatos não têm nenhum — **o sinal que as separa já está no dado**, e é isso que torna a
+fatia barata.
+
+Há ainda um caso que a medição levanta e NÃO decide: `OMNIBEAUTY … GESTAO DE MARCAS LTDA` (com
+CNPJ, 17 documentos) e `OMNIBEAUTY … GESTAO DE NEGOCIOS LTDA` (sem CNPJ, 1 documento). Ou são
+duas empresas do grupo, ou é um nome lido errado. Só o contrato social responde, e afirmar
+qualquer um dos lados aqui seria ausência virando dado.
+
+### 12.2 As fatias, em ordem, com o que destrava o quê
+
+```
+1.1 --> 1.2 --> 1.3 --> 1.4 --> 1.5
+              |--> 1.6 (paralela: só aceite, depende do dono)
+```
+
+#### Fatia 1.1 — Inventário do perímetro (medir antes de construir) · **bloqueia o resto**
+Rodar, contra produção, o mesmo tipo de consulta que a `cobertura-do-lote.sql` faz para documento:
+por caso, quantas entidades, quantas com CNPJ, quantas com `papel_no_grupo`, e a triagem das **71
+`entidade_incorreta` abertas** em categorias de causa. Sem isso, "0 entidade ambígua" continua
+sendo uma frase, e as 71 pendências continuam sendo um número sem diagnóstico.
+**Entregável:** consulta versionada (irmã da `cobertura-do-lote.sql`) + as 71 triadas por causa.
+**Pronto quando:** cada uma das 71 tem uma causa nomeada, e a distribuição está no `ESTADO.md`.
+*Agente: `migrations-postgres`. Risco: nenhum — é leitura.*
+
+#### Fatia 1.2 — A entidade que não é entidade
+Guarda em `fn_upsert_entidade` para que cabeçalho de planilha não vire pessoa jurídica, e a
+decisão do que fazer com as 4 que já existem (fundir? marcar? apagar é perda de proveniência).
+**Medição não-vazia (regra 2):** com a guarda desligada, as 4 do mandato real têm de passar; com
+ela ligada, as 4 têm de ser recusadas ou marcadas — e o número vai na mensagem do commit.
+**A armadilha, dita antes:** o critério NÃO pode ser "sem CNPJ" sozinho. Entidade real sem CNPJ
+conhecido existe (é o caso do balcão, e as `0175`–`0177` inteiras nasceram disso). O sinal é a
+conjunção — sem CNPJ **e** com 1 documento **e** com nome que não tem forma de razão social.
+*Agente: `migrations-postgres`. Risco: médio — mexe na porta de entrada que já quebrou em produção.*
+
+#### Fatia 1.3 — `papel_no_grupo` tipado E preenchido
+Enum (`holding`, `operacional`, `veiculo`, `coligada`, `fora_do_perimetro`), migration de
+tipagem, e — a parte que não pode ficar de fora — **quem escreve**. Sem um caminho de escrita, a
+fatia entrega o vazio de hoje com tipo mais forte.
+**Pronto quando:** as 8 entidades reais do mandato têm papel, ou têm pendência dizendo por que não.
+*Agente: `migrations-postgres`. Risco: médio.*
+
+#### Fatia 1.4 — `perimetro(caso, entidade, escopo, desde, ate)`
+A tabela nova. Escopo = o conjunto que entra no COMBINADO. `desde`/`ate` porque perímetro muda
+no meio do mandato, e um perímetro sem data mente sobre o exercício anterior.
+*Agente: `migrations-postgres`. Risco: baixo — aditivo.*
+
+#### Fatia 1.5 — Participação societária
+`entidade.participacao`, e a FK preparada que a F4 vai consumir. É a fatia que destrava
+consolidação e intercompany.
+*Agente: `migrations-postgres`. Risco: médio.*
+
+#### Fatia 1.6 — O aceite financeiro (paralela, e depende do dono)
+O perímetro tem de reproduzir o COMBINADO do cliente, ou declarar a diferença.
+**E há uma notícia boa medida hoje:** o mandato AMO **já tem um documento `COMBINADO` ingerido**
+(1 documento, 44 linhas). Se ele for o combinado do cliente, o aceite da F1 é conferível com o
+que já está no banco, sem depender de um arquivo novo. **Conferir isso é a primeira coisa da
+1.6** — e se não for, aí sim é dependência do dono, como o cabeçalho da F1 já dizia.
+
+### 12.3 O que a F1 NÃO faz, dito de propósito
+
+- **Não cria `conta_canonica`.** Identidade de CONTA é F4, e misturar as duas é o caminho mais
+  curto para uma migration que ninguém consegue reverter.
+- **Não resolve o caso OMNIBEAUTY MARCAS × NEGOCIOS.** Isso é leitura de contrato social, não
+  engenharia — a 1.1 o deixa nomeado na triagem, e alguém decide com o documento na mão.
+- **Não toca `campo_extraido`.** O roadmap proíbe paralelizar qualquer coisa que toque esse
+  caminho com a F4, e antecipar isso na F1 cria a dependência que a proibição existe para evitar.
