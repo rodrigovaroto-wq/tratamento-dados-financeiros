@@ -46,6 +46,7 @@
 {"k":"n","id":"arquivo:Supabase/test/classificacao_contabil.test.sql","t":"arquivo","f":"Supabase/test/classificacao_contabil.test.sql","txt":"classificacao_contabil.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/cnpj_identidade.test.sql","t":"arquivo","f":"Supabase/test/cnpj_identidade.test.sql","txt":"cnpj_identidade.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/cnpj_renomeia.test.sql","t":"arquivo","f":"Supabase/test/cnpj_renomeia.test.sql","txt":"cnpj_renomeia.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/cobertura-do-lote.sql","t":"arquivo","f":"Supabase/test/cobertura-do-lote.sql","txt":"cobertura-do-lote.sql"}
 {"k":"n","id":"arquivo:Supabase/test/completude_conteudo.test.sql","t":"arquivo","f":"Supabase/test/completude_conteudo.test.sql","txt":"completude_conteudo.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/conferir-chamadas.mjs","t":"arquivo","f":"Supabase/test/conferir-chamadas.mjs","txt":"conferir-chamadas.mjs"}
 {"k":"n","id":"arquivo:Supabase/test/custo_do_lote.test.sql","t":"arquivo","f":"Supabase/test/custo_do_lote.test.sql","txt":"custo_do_lote.test.sql"}
@@ -843,6 +844,8 @@
 {"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/cnpj_renomeia.test.sql","l":289}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/cnpj_renomeia.test.sql","l":44}
 {"k":"e","de":"arquivo:Supabase/test/cnpj_renomeia.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/cnpj_renomeia.test.sql","l":45}
+{"k":"e","de":"arquivo:Supabase/test/cobertura-do-lote.sql","rel":"CHAMA","pa":"fn:fn_documentos_nao_extraidos","f":"Supabase/test/cobertura-do-lote.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/cobertura-do-lote.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/cobertura-do-lote.sql","l":27}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_aceitar_extracao","f":"Supabase/test/completude_conteudo.test.sql","l":10}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_recomputar_completude","f":"Supabase/test/completude_conteudo.test.sql","l":84}
 {"k":"e","de":"arquivo:Supabase/test/completude_conteudo.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/completude_conteudo.test.sql","l":50}
