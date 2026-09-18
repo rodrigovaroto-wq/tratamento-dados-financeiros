@@ -106,7 +106,7 @@ cd "Dados de Teste"/book-vertentes \
 # Quem roda é o workflow agendado `sonda-producao.yml`, e à mão é assim. Sem `SONDA_PSQL` o
 # script sai com 2 = NÃO CONFERIDO, que é diferente de verde:
 SONDA_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/test/sonda-producao.mjs
-# E a cobertura do lote real, que é o ACEITE FINANCEIRO da F0 (fatia 0.5): ≥95% dos documentos
+# E a cobertura do lote real, que é o ACEITE FINANCEIRO da F0 (fatia 0.5): ≥98% dos documentos
 # com linha, e a diferença explicada documento a documento. Somente leitura — e o percentual
 # sozinho não cumpre o critério, por isso a consulta separa "não tinha número para dar" (`0111`)
 # de "a extração voltou vazia e ninguém assumiu".

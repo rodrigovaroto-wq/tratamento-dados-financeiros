@@ -445,7 +445,7 @@ F14→F16 · F15→F17 (contínua).
 | **Entrada** | — |
 | **Saída** | D1 verde |
 | **Aceite** | sonda zero em produção; hash publicado == gerado; `PRONTIDAO` regerado automaticamente |
-| **Aceite financeiro** | reprocessar os 75 documentos sem linha da rodada "Teste 00" e obter ≥95% com linha |
+| **Aceite financeiro** | reprocessar os 75 documentos sem linha da rodada "Teste 00" e obter ≥98% com linha (era 95%; o dono subiu a régua em 18/09/2026) |
 | **Aceite técnico** | CI aplica migration e falha se produção divergir; espelho cobre TODAS as categorias de portão; cada portão novo medido não-vazio |
 
 ### F1 — ENTIDADE E PERÍMETRO
@@ -761,8 +761,62 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 ### Fatia 0.5 — Reprocessar a rodada "Teste 00"
 - Reprocessar os 75 documentos sem linha (73 `extracao_falhou`, 72 por billing).
 - **É o primeiro dado honesto do sistema:** a primeira rodada em que o código testado é o executado.
-- **Entregável:** ≥95% dos documentos com linha; o que falhar, falha por razão nova e documentada.
+- **Entregável:** ≥98% dos documentos com linha; o que falhar, falha por razão nova e documentada.
+  (Era 95%. O dono subiu para 98% em 18/09/2026. A unidade continua sendo o DOCUMENTO, e isso
+  foi decidido com a alternativa na mesa: "98% das linhas extraídas" mediria a fração das linhas
+  que existem no documento e foram lidas — e essa não é mensurável num mandato real, porque exige
+  um gabarito por documento, que só existe para os dois books sintéticos. Um aceite cujo número
+  ninguém consegue conferir é pior que um aceite mais frouxo.)
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
+
+**MEDIDO EM PRODUÇÃO, 18/09/2026 — e o aceite NÃO passa.** Primeira vez que a cobertura do lote
+foi lida do banco do cliente, com `Supabase/test/cobertura-do-lote.sql` contra o caso
+`AMO teste 00` (`1be52ab4-9692-4e17-b332-1dc05dcc8c70`):
+
+| | |
+|---|---|
+| documentos | **118** |
+| com linha | **112** |
+| sem linha, DECLARADO (`tem_dado_financeiro = false`, regra da `0111`) | **6** |
+| sem linha, SILENCIOSO (a extração voltou vazia e ninguém assumiu) | **0** |
+| extração nunca chamada | **0** |
+| `pct_com_linha` | **94,9%** |
+
+**94,9% reprova os 98% e reprovava também os 95% anteriores** — e o instrumento existe justamente
+para que esse número não seja lido sozinho. As duas outras colunas são a notícia boa e elas são
+fortes: **zero falha silenciosa e zero documento não processado.** Toda a diferença é declarada,
+o que quer dizer que a 0.2 e a 0.3 fizeram o que prometiam. Soma de linhas: **7.670**, que bate
+com os 7.670 campos do book entregue ao dono — a consulta conta a mesma coisa que o export.
+
+Os seis, nomeados (o aceite exige documento a documento):
+
+| Tipo | Arquivo | O que o sistema registrou |
+|---|---|---|
+| ORGANOGRAMA | `Organograma societário.xlsx` | sem `falha_motivo` — documento que por natureza não tem linha financeira |
+| EXTRATO_BANCARIO | `Controle_Extratos e OFX.xlsx` | sem `falha_motivo` |
+| EXTRATO_BANCARIO | `Status Extratos (2024,2025 e 2026).xlsx` | sem `falha_motivo` |
+| EXTRATO_BANCARIO | `Relação_Contas_AMO.xlsx` | **`falha_motivo` de cobertura: 0 de 30 linhas de conta vistas no texto** |
+| CONTRATO_SOCIAL | `Certidão 4ª Alteração - CORPORATE.pdf` | **`falha_motivo` de cobertura: 0 de 50** |
+| CONTRATO_SOCIAL | `Certidão 5ª Alteração - AMOBELEZA.pdf` | **`falha_motivo` de cobertura: 0 de 50** |
+
+**Três deles carregam uma CONTRADIÇÃO que esta medição expõe e não resolve.** O diagnóstico da IA
+disse `tem_dado_financeiro = false` ("não havia número para dar") e a régua de cobertura, que lê o
+texto do PDF sem IA, contou 30 e 50 linhas de conta nos mesmos arquivos. As duas afirmações não
+podem estar certas ao mesmo tempo. Ou a régua conta como conta o que não é (é a classe do **Bug A**,
+medido em 11/12 de falso-positivo nesta mesma rodada, diferido para F4), ou a extração deixou dado
+para trás e o `tem_dado_financeiro` está errado. **Não é decidível sem abrir os três arquivos**, e
+afirmar qualquer um dos lados aqui seria exatamente o que a regra 1 proíbe.
+
+**E há um achado que não é da F0, mas que a F2 vai cobrar:** `EXTRATO_BANCARIO` tem **3 documentos
+e ZERO linha** no mandato inteiro. O aceite financeiro da F2 diz, com todas as letras, que
+"mandato sem aging/extrato **não** é declarado pronto". Os três arquivos parecem ser planilhas de
+CONTROLE de extratos (nomes: "Controle_", "Status ", "Relação_"), não os extratos em si — se for
+isso, o mandato não tem extrato bancário nenhum ingerido, e é assunto do dono, não de engenharia.
+
+**Pendências ainda abertas no caso: 79.** As três maiores: `divergencia_reconciliacao` 28,
+`extracao_padrao_suspeito` 12 (o Bug A), `extracao_falhou` 12. As 12 de `extracao_falhou` são
+ANTERIORES à republicação do fix do Bug C (18/09) e não se resolvem sozinhas: a função resolve a
+pendência quando o documento é reprocessado, e nenhum foi.
 
 **Achado, 16/09/2026 — o lote precisa ser dividido, e é limitação conhecida, não bug.** O dono
 tentou subir os 127 arquivos do lote em uma execução só (126,6 MB). A execução `#7834` do
@@ -828,7 +882,7 @@ sessão principal, capturando o `HEAD` na hora.
 |---|---|
 | **Geral** | `fn_instalacao_conferir()` **em produção** devolve 0 ausentes |
 | **Técnico** | hash publicado == gerado · CI falha se produção divergir · espelho `CLAUDE.md`×CI cobre todas as categorias · cada portão novo medido não-vazio |
-| **Financeiro** | rodada "Teste 00" reprocessada com ≥95% dos documentos produzindo linha; a diferença de cobertura explicada documento a documento |
+| **Financeiro** | rodada "Teste 00" reprocessada com ≥98% dos documentos produzindo linha; a diferença de cobertura explicada documento a documento |
 | **De produto** | `00_VISAO_E_ESCOPO.md` diz o que o produto é em 2026, e as duas ADRs estão registradas |
 
 ### O que a F0 explicitamente NÃO faz

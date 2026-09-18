@@ -1,6 +1,6 @@
 -- COBERTURA DO LOTE, DOCUMENTO A DOCUMENTO — o aceite financeiro da F0 (fatia 0.5).
 --
--- POR QUE ESTE ARQUIVO EXISTE. O critério de aceite da fatia 0.5 é "≥95% dos documentos com
+-- POR QUE ESTE ARQUIVO EXISTE. O critério de aceite da fatia 0.5 é "≥98% dos documentos com
 -- linha; o que falhar, falha por razão nova e documentada". Um percentual sozinho NÃO cumpre
 -- esse critério, e cumprir pela metade aqui é pior do que não medir: um documento que
 -- legitimamente não tem linha (certidão, organograma, contrato social — a regra da `0111`) é
@@ -105,7 +105,7 @@ select situacao, tipo_taxonomia, nome_original, linhas, falha_motivo, tem_dado_f
  -- Os que não têm linha primeiro: são eles que o aceite manda explicar.
  order by (situacao = 'com_linha'), situacao, tipo_taxonomia, nome_original;
 
--- O placar, com as quatro situações abertas. O ">= 95%" do aceite é lido de `pct_com_linha`,
+-- O placar, com as quatro situações abertas. O ">= 98%" do aceite é lido de `pct_com_linha`,
 -- e as outras três colunas são o que impede esse número de ser lido sozinho.
 with ultima_versao as (
   select distinct on (dv.documento_id) dv.documento_id, dv.id as versao_id

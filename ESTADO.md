@@ -14,9 +14,22 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > **A F0 (fechar o fosso repositório ↔ produção) ESTÁ QUASE FECHADA.** Banco em dia (`0175`–`0177`
 > aplicadas e conferidas), os 4 workflows republicados e EM DIA (18/09 — a ingestão levou ao ar o
 > fix do Bug C + o CRÍTICO da revisão multilente, que tinham ficado só no repositório desde 17/09),
-> as duas ADRs + duas decisões do dono registradas. Faltam dois itens operacionais: `SONDA_DB_URL`
-> (segredo do CI para o workflow `sonda-producao.yml` do dono) e a fatia 0.5 (reprocessar o lote
-> "Teste 00" — decisão do dono).
+> as duas ADRs + duas decisões do dono registradas.
+>
+> **CORRIGIDO EM 18/09/2026, contra os logs do CI: `SONDA_DB_URL` JÁ ESTAVA CADASTRADO.** Esta
+> linha dizia que faltava, e dizia errado desde antes — a execução agendada de 17/09
+> (`sonda-producao.yml` #6) passou inteira, com "segredo presente" no log e o catálogo de produção
+> sem ausência. O que o dono aplicou em 18/09 foi uma SUBSTITUIÇÃO do valor, e ela QUEBROU o
+> portão: o segredo passou a conter a linha de comando `psql -h … -d postgres` em vez da URI, e
+> como o workflow monta `psql '<segredo>'`, o psql leu tudo aquilo como NOME DE BANCO e tentou o
+> socket local do runner (`/var/run/postgresql/.s.PGSQL.5432: No such file or directory`). O valor
+> certo é a URI (`postgresql://…/postgres`) de um POOLER — `Direct connection` é IPv6 e os runners
+> do GitHub são IPv4; o valor que funcionava era `aws-1-sa-east-1.pooler.supabase.com`.
+>
+> Falta, então, **um** item: a fatia 0.5 — e ela foi MEDIDA em 18/09 e **não passa**: 94,9% contra
+> os 98% que o dono fixou. Zero falha silenciosa e zero documento não processado; a diferença são
+> 6 documentos declarados sem dado financeiro, três deles em contradição com a régua de cobertura.
+> Ver a fatia 0.5 em `Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md`.
 > Tudo medido antes de cada ação. Leia a SESSÃO 94/95/96 no `HANDOFF.md` para o detalhe das duas correções
 > de premissa (122 migrations, faltavam 3 não 20) e das três evidências que travaram o banco, a
 > republicação e o CI — onde o ambiente desta sessão não alcança Postgres diretamente (a saída foi a
