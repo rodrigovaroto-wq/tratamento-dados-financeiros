@@ -66,6 +66,24 @@ CREATE TYPE public.documento_status AS ENUM (
 );
 
 --
+-- Name: entidade_papel_no_grupo; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.entidade_papel_no_grupo AS ENUM (
+    'holding',
+    'operacional',
+    'veiculo',
+    'coligada',
+    'fora_do_perimetro'
+);
+
+--
+-- Name: TYPE entidade_papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TYPE public.entidade_papel_no_grupo IS '0179: papel da entidade dentro do grupo do mandato. Tipado a partir de `entidade.papel_no_grupo` (text livre desde a 0001, NULL em todo caso do banco — fatia 1.3 do plano F1). Não existe sinal automático para preenchê-lo (sem tabela participacao/hierarquia — fatia 1.5, futura): o único caminho de escrita é `fn_entidade_definir_papel_no_grupo`, chamado por um humano.';
+
+--
 -- Name: golden_estrato; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -191,7 +209,8 @@ CREATE TYPE public.pendencia_tipo AS ENUM (
     'extracao_falhou',
     'item_sem_conteudo',
     'documento_nao_extraido',
-    'linha_exigida_ausente'
+    'linha_exigida_ausente',
+    'papel_no_grupo_indefinido'
 );
 
 --
@@ -2729,6 +2748,46 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) IS '0171: a forma canônica com a pontuação achatada ANTES do sufixo — sem isso "OMNIBEAUTY S.A." vira "omnibeauty s a" (dois tokens fantasma) e a decisão de renomear muda por causa da grafia do sufixo. Local a esta decisão: fn_entidade_canonica (0030) não é tocada.';
+
+--
+-- Name: fn_entidade_definir_papel_no_grupo(uuid, public.entidade_papel_no_grupo, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_papel_anterior entidade_papel_no_grupo;
+  v_caso_id        uuid;
+begin
+  select papel_no_grupo, caso_id into v_papel_anterior, v_caso_id
+  from entidade where id = p_entidade_id;
+
+  if v_caso_id is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+
+  update entidade set papel_no_grupo = p_papel where id = p_entidade_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'entidade_papel_no_grupo_definido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('papel_novo', p_papel, 'papel_anterior', v_papel_anterior));
+
+  update pendencia set estado = 'resolvida', resolvida_em = now(), resolvida_por = p_autor
+   where entidade_id = p_entidade_id
+     and tipo = 'papel_no_grupo_indefinido'
+     and motivo = 'papel_no_grupo_indefinido:' || p_entidade_id
+     and estado <> 'resolvida';
+
+  return p_entidade_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) IS '0179: o ÚNICO caminho de escrita de entidade.papel_no_grupo — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo da fatia 1.3). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''), e resolve fn_pendencia_papel_no_grupo_indefinido se estiver aberta para esta entidade. Reatribuir com papel diferente é permitido — é o estado ATUAL, o histórico mora em evento_auditoria.';
 
 --
 -- Name: fn_entidade_e_balcao_ambiguo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -6318,6 +6377,49 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_pendencia_entidade_nome_suspeito(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0178: pendência entidade_incorreta para entidade cujo nome bate fn_entidade_nome_parece_titulo_ou_arquivo, sem CNPJ e recém-criada. Idempotente por entidade_id (motivo). Nunca funde, nunca apaga — só marca para revisão humana.';
+
+--
+-- Name: fn_pendencia_papel_no_grupo_indefinido(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_motivo text := 'papel_no_grupo_indefinido:' || p_entidade_id;
+  v_pend   uuid;
+begin
+  select id into v_pend from pendencia
+   where caso_id = p_caso_id and motivo = v_motivo and estado <> 'resolvida'
+   limit 1;
+  if v_pend is not null then return v_pend; end if;
+
+  insert into pendencia
+    (caso_id, origem_estagio, tipo, severidade, sobrepujavel, descricao, entidade_id, motivo)
+  values (
+    p_caso_id, 'diagnostico', 'papel_no_grupo_indefinido', 'complementar', true,
+    format('A entidade "%s" ainda não tem papel no grupo (holding/operacional/veículo/coligada/'
+           || 'fora do perímetro) — ninguém decidiu ainda, e o sistema não infere isso sozinho '
+           || '(não há hierarquia de participação societária modelada — fatia 1.5, futura). '
+           || 'O EFEITO, hoje: nenhum, porque nenhum consumidor lê `papel_no_grupo` ainda — esta '
+           || 'entidade entra e sai do book exatamente como as demais. O efeito aparece nas fatias '
+           || 'seguintes do plano F1: o perímetro do combinado (1.4) e a participação societária '
+           || '(1.5) vão depender deste papel para decidir o que entra em cada agrupamento, e esta '
+           || 'entidade ficará de fora de qualquer agrupamento automático até alguém chamar '
+           || 'fn_entidade_definir_papel_no_grupo para ela.',
+           p_nome),
+    p_entidade_id, v_motivo)
+  returning id into v_pend;
+
+  return v_pend;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_pendencia_papel_no_grupo_indefinido(p_caso_id uuid, p_entidade_id uuid, p_nome text) IS '0179: pendência complementar (não bloqueia nada) para entidade sem papel no grupo. Idempotente por entidade_id (motivo). Nunca decide o papel — só marca a ausência, regra 1 do CLAUDE.md.';
 
 --
 -- Name: fn_periodo_canonico(text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -11107,6 +11209,15 @@ begin
     perform fn_pendencia_entidade_nome_suspeito(p_caso_id, v_id, trim(p_nome));
   end if;
 
+  -- 0179: TODA entidade nasce aqui com papel_no_grupo NULL por construção (a
+  -- coluna não é passada no insert acima) — marca a ausência, incondicional,
+  -- porque não existe sinal automático para decidir o papel (fatia 1.3;
+  -- roadmap, seção 12.1: sem participacao/hierarquia modelada). Vale tanto
+  -- para a entidade real quanto para a suspeita de título/arquivo logo acima
+  -- e para o balcão ambíguo (0153/0162, 0175-0177) — são sinais diferentes, e
+  -- é honesto os dois estarem abertos ao mesmo tempo.
+  perform fn_pendencia_papel_no_grupo_indefinido(p_caso_id, v_id, trim(p_nome));
+
   return v_id;
 end;
 $$;
@@ -11115,7 +11226,7 @@ $$;
 -- Name: FUNCTION fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal. 0178: uma entidade NOVA (nenhum candidato casou), sem CNPJ, com nome que bate fn_entidade_nome_parece_titulo_ou_arquivo, ainda é criada (documento não perde dona) mas ganha pendência entidade_incorreta/entidade_nome_suspeito para revisão humana — nunca fundida nem apagada.';
+COMMENT ON FUNCTION public.fn_upsert_entidade(p_caso_id uuid, p_nome text, p_cnpj text) IS 'Acha ou cria a entidade do caso (0030), sem ESCOLHER no empate (0153), com o nome truncado fundido no mais completo (0168), com o CNPJ como identidade (0169) e adotando a variante mais completa ao fundir por CNPJ (0171/0173 — a decisão mora em fn_entidade_talvez_renomear, chamada dos dois caminhos). 0174: o ramo (1) usa o RETORNO de fn_entidade_aprender_cnpj. 0176: o ramo (0) não devolve mais um balcão ambíguo (0162/0175) direto para OUTRA empresa — trata o CNPJ como ausente e registra a colisão (fn_pendencia_cnpj_colide_balcao). 0177: essa colisão só é registrada quando quem chegou NÃO é, ela própria, o mesmo balcão — um segundo documento do PRÓPRIO balcão (mesmo nome, mesmo CNPJ) não abre pendência falsa; segue pelo caminho normal. 0178: uma entidade NOVA (nenhum candidato casou), sem CNPJ, com nome que bate fn_entidade_nome_parece_titulo_ou_arquivo, ainda é criada (documento não perde dona) mas ganha pendência entidade_incorreta/entidade_nome_suspeito para revisão humana — nunca fundida nem apagada. 0179: toda entidade nova (real, suspeita ou balcão) ganha também a pendência papel_no_grupo_indefinido, incondicional — não há sinal automático para classificar o papel no grupo.';
 
 --
 -- Name: fn_upsert_periodo(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
@@ -12031,8 +12142,14 @@ CREATE TABLE public.entidade (
     caso_id uuid NOT NULL,
     razao_social text NOT NULL,
     cnpj text,
-    papel_no_grupo text
+    papel_no_grupo public.entidade_papel_no_grupo
 );
+
+--
+-- Name: COLUMN entidade.papel_no_grupo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.papel_no_grupo IS '0179: enum entidade_papel_no_grupo (antes: text livre, NULL em todo caso — 0001 a 0178). NULL continua sendo o estado inicial de TODA entidade nova (fn_upsert_entidade nunca o passa no insert) — a ausência é honesta enquanto ninguém decidir, e fn_pendencia_papel_no_grupo_indefinido marca essa ausência sem afirmar hierarquia nenhuma. Só fn_entidade_definir_papel_no_grupo escreve aqui.';
 
 --
 -- Name: estagio_autonomia; Type: TABLE; Schema: public; Owner: -
@@ -14469,6 +14586,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnp
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -

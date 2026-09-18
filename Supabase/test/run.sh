@@ -559,6 +559,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_titulo_suspeito.test.
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0179 — papel no grupo tipado e preenchido (fatia 1.3 do plano F1)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_papel_no_grupo.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \

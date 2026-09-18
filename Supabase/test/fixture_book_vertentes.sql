@@ -4,12 +4,12 @@
 begin;
 delete from caso where id = '11111111-1111-1111-1111-111111111111';
 insert into caso (id, nome, produto) values ('11111111-1111-1111-1111-111111111111', 'FIXTURE Grupo Vertentes', 'reestruturacao');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'VERTENTES METALÚRGICA LTDA.', 'alvo');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'VERTENTES COMPONENTES AUTOMOTIVOS LTDA.', 'alvo');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'VERTENTES PARTICIPAÇÕES S.A.', 'alvo');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', 'VT LOGÍSTICA E TRANSPORTES LTDA.', 'alvo');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', 'VERTENTES IMÓVEIS SPE LTDA.', 'alvo');
-insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000006', '11111111-1111-1111-1111-111111111111', 'GRUPO VERTENTES', 'alvo');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'VERTENTES METALÚRGICA LTDA.', 'operacional');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'VERTENTES COMPONENTES AUTOMOTIVOS LTDA.', 'operacional');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000003', '11111111-1111-1111-1111-111111111111', 'VERTENTES PARTICIPAÇÕES S.A.', 'holding');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', 'VT LOGÍSTICA E TRANSPORTES LTDA.', 'operacional');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000005', '11111111-1111-1111-1111-111111111111', 'VERTENTES IMÓVEIS SPE LTDA.', 'veiculo');
+insert into entidade (id, caso_id, razao_social, papel_no_grupo) values ('22222222-0000-0000-0000-000000000006', '11111111-1111-1111-1111-111111111111', 'GRUPO VERTENTES', 'holding');
 insert into periodo (id, caso_id, tipo, referencia) values ('33333333-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'multi', '24,25');
 insert into periodo (id, caso_id, tipo, referencia) values ('33333333-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111', 'anual', '2025');
 insert into periodo (id, caso_id, tipo, referencia) values ('33333333-0000-0000-0000-000000000004', '11111111-1111-1111-1111-111111111111', 'data-base', '2025-12-31');
