@@ -4,6 +4,62 @@ Nota de transição de contexto — **leia isto primeiro, é o resumo pra retoma
 novo.** O histórico detalhado sessão-a-sessão está preservado abaixo (seção "Sessão 7 (cont.¹⁻¹⁶)")
 só como referência — não precisa ler tudo pra continuar, comece por aqui.
 
+## ⏸️ SESSÃO 97 (18/09/2026) — F0 fechada, F1 (entidade e perímetro) em execução autônoma até a fatia 1.3, parada a pedido do dono
+
+**Leia o aviso no topo do `ESTADO.md` primeiro — este é só o resumo de como se chegou aqui.**
+
+### O que esta sessão fez, em ordem
+
+1. **F0 fechada.** `SONDA_DB_URL` tinha o segredo certo cadastrado, mas a instrução de cadastro em
+   `sonda-producao.mjs` citava o nome errado (`SONDA_PSQL_URL`) — corrigido com portão que compara
+   os dois lados (o nome que o `.yml` lê vs. o que a mensagem manda cadastrar). O dono trocou o
+   VALOR do segredo no meio da sessão e quebrou o portão duas vezes (linha de comando `psql` em vez
+   de URI; depois URI de `Direct connection`, que é IPv6 e os runners do GitHub são IPv4) — as
+   assinaturas de erro das duas ficaram documentadas para quem reconfigurar de novo. Escrita e
+   provada `cobertura-do-lote.sql` (o instrumento do aceite financeiro). **Medida contra produção
+   real**: 94,9% dos documentos do lote "AMO teste 00" com linha, zero falha silenciosa, zero
+   documento não processado. O dono subiu o aceite para 98%, mediu de novo, entendeu que 98% não
+   mede o que ele queria (linhas DENTRO do documento, não documentos) e voltou a 95% com o
+   argumento registrado — **o aceite reprovou por 0,1 ponto e foi concedido**, vendo a decomposição.
+   Achado no caminho: `PLANO_LINHA_A_LINHA.md` existia desde 01/09 e o roadmap nunca o citava —
+   plano órfão, encaixado como fase nova **F3b**.
+
+2. **F1.1 (Inventário do perímetro) — feita, commitada (`f42f3cf`).** As 71 pendências
+   `entidade_incorreta` abertas em produção, cada uma com causa nomeada (34 bug de comparação, 37
+   não). Script `Supabase/test/perimetro-inventario.mjs`, testado contra fixture real congelada.
+   Achado: `papel_no_grupo` NULL em TODO caso do banco, não só no mandato real.
+
+3. **F1.2 (Guarda contra entidade fantasma) — feita, commitada (`ad431b9`), NÃO aplicada em
+   produção.** Migration `0178`: 4 das 13 entidades do mandato AMO eram títulos de planilha
+   virando pessoa jurídica. Guarda por CONJUNÇÃO de sinais, nunca "sem CNPJ" sozinho — testada
+   explicitamente contra o cenário do balcão ambíguo. **Verificação independente estabelecida
+   como padrão aqui**: a sessão principal reconstrói o banco do zero, neutraliza a correção, prova
+   que reprova, restaura, prova que passa — antes de comitar, não confiando só no relato do
+   agente que escreveu.
+
+4. **F1.3 (papel_no_grupo tipado + caminho de escrita) — feita, commitada (`14e80da`), NÃO
+   aplicada em produção.** Migration `0179`: a coluna era `text` livre e NULL em todo caso do
+   banco desde a `0001` — estágio desligado, não gap de schema. Enum novo, pendência complementar
+   `papel_no_grupo_indefinido`, e `fn_entidade_definir_papel_no_grupo` como único caminho de
+   escrita (humano, nunca inferência automática). **O padrão da verificação independente se provou
+   necessário aqui de um jeito concreto**: a primeira versão desta fatia (escrita antes da ordem de
+   parar) tinha erro de sintaxe e não rodava; a sessão comitou isso localmente como "não confiar" e,
+   ao tentar empurrar, achou no remoto uma SEGUNDA versão já corrigida (presumivelmente uma
+   continuação autônoma do mesmo agente). A sessão descartou a quebrada, adotou a boa, e só a
+   aceitou depois de reconstruir o banco do zero duas vezes (neutralizada → reprova; religada →
+   `TODOS OS TESTES PASSARAM`) — o mesmo rigor da F1.2, não o relato por si só.
+
+### O que fazer a seguir (retomando em chat novo)
+
+Seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`: fatia 1.4 (tabela `perimetro`), 1.5
+(`entidade.participacao`), 1.6 (aceite contra o COMBINADO real — depende do dono, o mandato AMO
+não tem um combinado real ingerido, achado registrado na F0). Depois, as fases paralelizáveis
+F1(resto)/F2/F3/F3b. Sempre a mesma disciplina: `ESTADO.md` → `buscar.mjs` → delegar ao agente
+certo → **verificar antes de comitar, nunca confiar sozinho no relato de um agente, mesmo quando
+ele soa detalhado e medido**. PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237)
+segue aberto, rascunho; CI verde confirmado até `ad431b9` — reconferir os commits da F1.3 antes de
+seguir.
+
 ## ✅ SESSÃO 96 (17–18/09) — Modelagem do mandato AMO aplicada em produção, export corrigido (PR #235), workflow republicado com nome preservado (PR #236)
 
 Continuação da 95 no mesmo dia/dias seguintes, mesma branch original + duas novas. Três frentes, nesta ordem:

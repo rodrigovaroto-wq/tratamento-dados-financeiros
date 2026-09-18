@@ -1,5 +1,39 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## ⏸️ SESSÃO INTERROMPIDA A PEDIDO DO DONO EM 18/09/2026, NO FIM DA FATIA 1.3
+>
+> O dono mandou parar a execução autônoma da F1 no meio da fatia 1.3, para levar o estado a um
+> chat novo antes do limite de contexto. **A fatia 1.3 (migration `0179`) está FEITA e
+> VERIFICADA** — a linha "Última migration" abaixo é precisa. A verificação não foi só o relato de
+> quem escreveu: a sessão principal reconstruiu o banco do ZERO em worktree isolado, com a chamada
+> a `fn_pendencia_papel_no_grupo_indefinido` dentro de `fn_upsert_entidade` neutralizada — a suíte
+> reprova exatamente como esperado (`FALHOU: abriu pendência do tipo papel_no_grupo_indefinido`);
+> restaurada, `TODOS OS TESTES PASSARAM` de novo do zero. Mesmo padrão de rigor aplicado à fatia
+> 1.2 antes dela.
+>
+> **Houve um susto no meio do caminho que vale registrar, para quem for confiar em relato de
+> agente sem verificar de novo**: a primeira versão da fatia 1.3 (escrita por um agente
+> `migrations-postgres` despachado antes da ordem de parar) tinha um erro de sintaxe e não rodava
+> — a sessão principal comitou isso localmente como "WIP, não confiar" e, ao tentar empurrar,
+> encontrou no repositório remoto uma SEGUNDA versão da mesma fatia (`14e80da`), já corrigida e
+> mais bem medida (11 de 21 asserts, não 5) — presumivelmente uma continuação do mesmo agente que
+> seguiu trabalhando e empurrou por conta própria antes de a interrupção surtir efeito em todo
+> lugar. A sessão principal descartou a versão quebrada, adotou a `14e80da` como base, e a
+> verificou com a mesma bateria de testes que teria aplicado a qualquer fatia sua — só depois
+> disso confiou nela o suficiente para deixar aqui.
+>
+> **O que fica para a próxima sessão, em ordem** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`):
+> fatia 1.4 (tabela `perimetro`), 1.5 (`entidade.participacao`), 1.6 (aceite financeiro contra o
+> COMBINADO real do cliente — depende do dono, o mandato AMO não tem um combinado real ingerido).
+> Nenhuma das migrations `0178`/`0179` foi aplicada em produção — escrita ≠ aplicada é doutrina
+> deste projeto, e isso é decisão de uma sessão seguinte, contra a sonda.
+>
+> PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
+> aberto, rascunho, CI verde até `ad431b9` — os commits da 1.3 ainda não foram conferidos pelo CI
+> quando esta nota foi escrita. Uma sessão nova que continuar aqui deve chamar
+> `subscribe_pr_activity` de novo (a inscrição não atravessa sessões) e reconferir o CI antes de
+> seguir para a 1.4.
+
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
 lidas para retomar. E `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
