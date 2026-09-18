@@ -1107,10 +1107,17 @@ consolidação e intercompany.
 
 #### Fatia 1.6 — O aceite financeiro (paralela, e depende do dono)
 O perímetro tem de reproduzir o COMBINADO do cliente, ou declarar a diferença.
-**E há uma notícia boa medida hoje:** o mandato AMO **já tem um documento `COMBINADO` ingerido**
-(1 documento, 44 linhas). Se ele for o combinado do cliente, o aceite da F1 é conferível com o
-que já está no banco, sem depender de um arquivo novo. **Conferir isso é a primeira coisa da
-1.6** — e se não for, aí sim é dependência do dono, como o cabeçalho da F1 já dizia.
+
+**CORRIGIDO em 18/09/2026 — a "notícia boa" registrada ontem estava ERRADA, e a medição de hoje
+a desfaz.** O único documento `COMBINADO` do mandato AMO é, na verdade, `GENERAL TABACO - BALANÇO
+2024.pdf`, ligado a **uma única entidade** (`General Tabaco Negócios e Logística Ltda`) — não ao
+grupo. O próprio sistema já tinha aberto a pendência certa (`tipo_incorreto`, aberta, "o
+documento identifica uma única entidade e um único CNPJ… não se trata de um documento
+combinado") ANTES desta sessão perguntar; a medição de ontem só não tinha olhado. **O mandato AMO
+não tem combinado real ingerido**, mesma conclusão da classe `EXTRATO_BANCARIO` (F2): o que
+existe rotulado como "o documento certo" às vezes não é. **1.6 depende do dono de verdade** —
+precisa do combinado do cliente para conferir o perímetro contra ele, como o cabeçalho da F1 já
+dizia antes de qualquer medição.
 
 ### 12.3 O que a F1 NÃO faz, dito de propósito
 
