@@ -1119,8 +1119,8 @@
 {"k":"e","de":"arquivo:Supabase/test/seed_macro.test.sql","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"Supabase/test/seed_macro.test.sql","l":56}
 {"k":"e","de":"arquivo:Supabase/test/seed_macro.test.sql","rel":"CHAMA","pa":"fn:fn_indice_macro_anual","f":"Supabase/test/seed_macro.test.sql","l":63}
 {"k":"e","de":"arquivo:Supabase/test/sonda-producao.mjs","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda-producao.mjs","l":4}
-{"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda-producao.test.mjs","l":52}
-{"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_reconciliar_caso","f":"Supabase/test/sonda-producao.test.mjs","l":35}
+{"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_instalacao_conferir","f":"Supabase/test/sonda-producao.test.mjs","l":53}
+{"k":"e","de":"arquivo:Supabase/test/sonda-producao.test.mjs","rel":"CHAMA","pa":"fn:fn_reconciliar_caso","f":"Supabase/test/sonda-producao.test.mjs","l":36}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_golden_campos","f":"Supabase/test/transcricao_humana.test.sql","l":11}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_transcricao_humana","f":"Supabase/test/transcricao_humana.test.sql","l":77}
 {"k":"e","de":"arquivo:Supabase/test/transcricao_humana.test.sql","rel":"CHAMA","pa":"fn:fn_secao_e_de_resultado","f":"Supabase/test/transcricao_humana.test.sql","l":196}
