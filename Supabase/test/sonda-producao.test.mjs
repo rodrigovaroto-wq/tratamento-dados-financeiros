@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { interpretar } from './sonda-producao.mjs';
 
 test('sem configuração NUNCA vira verde — é ausência de medição, não ausência de problema', () => {
@@ -73,4 +74,30 @@ test('a URL com senha nunca aparece no relatório', () => {
     stderr: 'connection to server failed',
   });
   assert.doesNotMatch(r.mensagem, /postgresql:\/\/[^\s]*:[^\s]*@/);
+});
+
+test('o segredo que a mensagem manda cadastrar é o que o workflow lê', () => {
+  // POR QUE ESTE INVARIANTE EXISTE, e o defeito que ele descobriu em 18/09/2026. A mensagem dizia
+  // `SONDA_PSQL_URL` e `sonda-producao.yml` lia `SONDA_DB_URL`. Quem seguisse a instrução
+  // cadastraria o nome errado; o workflow continuaria vermelho dizendo "não cadastrado", e a
+  // leitura natural disso — "cadastrei, então o portão é que está quebrado" — é o pior desfecho
+  // possível para um portão cuja razão de ser é NÃO ficar verde sem ter perguntado (regra 7).
+  //
+  // E o portão afirma COMPORTAMENTO, não o literal (regra 3): ele não fixa a string
+  // `SONDA_DB_URL`, ele exige que a mensagem cite o nome que o workflow de fato lê. Renomear o
+  // segredo nos dois lugares continua passando; renomear em um só reprova.
+  const yml = readFileSync(
+    new URL('../../.github/workflows/sonda-producao.yml', import.meta.url),
+    'utf8',
+  );
+  const nomes = [...yml.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]);
+  assert.ok(nomes.length > 0, 'o workflow não lê segredo nenhum — o invariante nasceria vazio');
+  const distintos = [...new Set(nomes)];
+  assert.equal(
+    distintos.length,
+    1,
+    `o workflow lê mais de um segredo (${distintos.join(', ')}) e a mensagem cita um só`,
+  );
+  const { mensagem } = interpretar({ configurado: false });
+  assert.match(mensagem, new RegExp(`\\b${distintos[0]}\\b`));
 });

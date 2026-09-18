@@ -58,6 +58,21 @@ ENT = {
 NOME = {k: D.ENTIDADES[k]["razao_social"] for k in D.ENTIDADES}
 NOME["grupo"] = D.GRUPO
 
+# Fatia 1.3 — mesma correção e mesmo motivo do `gerar_fixture.py` (book
+# Vertentes): o valor literal 'alvo' não bate nenhum dos 5 rótulos do enum
+# `entidade_papel_no_grupo` (migration 0179) e quebraria o `alter column`. A
+# chave já escolhida em `ENT` por quem escreveu este gerador ("holding",
+# "imob" = SPE) é o sinal usado — nada novo é inferido.
+PAPEL = {
+    "holding": "holding",
+    "industria": "operacional",
+    "comercial": "operacional",
+    "transportes": "operacional",
+    "agro": "operacional",
+    "imob": "veiculo",
+    "grupo": "holding",
+}
+
 # TRÊS exercícios, e é isso que separa este book do primeiro: o comparativo tem
 # três colunas, e a série realizada do modelo tem três pontos em vez de dois.
 PER = {
@@ -533,7 +548,7 @@ out = [
 for k, u in ENT.items():
     out.append(
         "insert into entidade (id, caso_id, razao_social, papel_no_grupo) values "
-        f"('{u}', {CASO}, {q(NOME[k])}, 'alvo');")
+        f"('{u}', {CASO}, {q(NOME[k])}, '{PAPEL[k]}');")
 for u, tipo, ref in PER.values():
     out.append(
         "insert into periodo (id, caso_id, tipo, referencia) values "

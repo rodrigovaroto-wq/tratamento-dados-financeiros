@@ -106,6 +106,14 @@ cd "Dados de Teste"/book-vertentes \
 # Quem roda é o workflow agendado `sonda-producao.yml`, e à mão é assim. Sem `SONDA_PSQL` o
 # script sai com 2 = NÃO CONFERIDO, que é diferente de verde:
 SONDA_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/test/sonda-producao.mjs
+# E a cobertura do lote real, que é o ACEITE FINANCEIRO da F0 (fatia 0.5): ≥95% dos documentos
+# com linha, e a diferença explicada documento a documento. Somente leitura — e o percentual
+# sozinho não cumpre o critério, por isso a consulta separa "não tinha número para dar" (`0111`)
+# de "a extração voltou vazia e ninguém assumiu".
+psql "$URL" -v caso_id="'<uuid do caso>'" -f Supabase/test/cobertura-do-lote.sql
+# E o inventário do perímetro (F1, fatia 1.1): entidade por caso com CNPJ/papel, e a causa NOMEADA
+# de cada `entidade_incorreta` aberta — 71 pendências não é diagnóstico, é contagem (regra 1).
+CONFERIR_PSQL="psql 'postgresql://usuario:SENHA@host:5432/postgres'" node Supabase/test/perimetro-inventario.mjs
 # E a republicação do n8n, que é o passo sem o qual a correção fica no repositório e não no ar.
 # O caminho normal é Actions → "Republicar workflow no n8n"; o script que ela roda é:
 N8N_URL=... N8N_API_KEY=... N8N_WORKFLOW_ID=... bash N8N/republicar.sh

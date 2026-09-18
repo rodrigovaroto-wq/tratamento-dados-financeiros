@@ -1,5 +1,60 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## ✅ F1.1–F1.5 FEITAS — F1.6 BLOQUEADA, AGUARDANDO COMBINADO REAL DO CLIENTE (18/09/2026)
+>
+> **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
+> - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).
+> - **F1.4**: tabela nova `perimetro(caso, entidade, escopo, desde, ate)` com funções de leitura/escrita. Migration `0180`. **VERIFICADA**: idem acima.
+> - **F1.5**: `entidade.controladora_id` (FK self-referencing) + `percentual_participacao`, guarda contra ciclo, funções de leitura/escrita. Migration `0181`. **VERIFICADA**: idem acima. 29 asserts novos, 4 medidos reprovando sem a guarda.
+>
+> **Colisão de duas sessões paralelas em F1.4 resolvida por merge** (não rebase, não force-push) — ambas compatíveis. Ver `.claude/memory/colisao-sessoes-paralelas-mesma-branch.md`.
+>
+> **F1.6 bloqueada**: depende do dono fornecer o COMBINADO real do cliente para conferir o perímetro contra ele. O mandato AMO teste 00 não tem COMBINADO real ingerido.
+>
+> **O susto do handoff anterior, registrado aqui porque é o motivo de todo este rigor**: ao
+> retomar, a sessão da fatia 1.3 encontrou no remoto DUAS versões divergentes da mesma migration
+> (uma quebrada, comitada localmente como "não confiar"; outra — `14e80da` — corrigida e melhor
+> medida, de uma continuação autônoma do mesmo agente). A quebrada foi descartada; a `14e80da` só
+> foi aceita depois de reconstruir o banco do zero e repetir a medição desligar→reprova→religar→
+> passa, a mesma bateria que qualquer fatia própria recebe antes do commit. **O mesmo padrão se
+> repetiu ao empurrar a 1.4**: o push foi rejeitado porque a sessão anterior tinha empurrado seu
+> commit de handoff entre o despacho e o commit desta sessão — resolvido com um merge (não rebase,
+> não force-push) depois de confirmar que os dois lados eram compatíveis.
+>
+> **A F1.6 NÃO VAI FECHAR COMO ESTAVA DESENHADA, e a causa foi MEDIDA em 18/09/2026.** O dono
+> informou não conseguir o COMBINADO do cliente; a investigação foi para os contratos sociais já
+> ingeridos e achou o porquê: **não há holding neste grupo** — nos 4 contratos legíveis, todos os
+> sócios são pessoas físicas e nenhuma empresa é sócia de outra. São empresas irmãs sob controle
+> comum, e "demonstração combinada" é justamente a forma contábil desse arranjo, não exigida em
+> formato padrão — **o cliente provavelmente nunca preparou uma**. O aceite financeiro da F1 fica
+> **NÃO VERIFICADO, com motivo declarado** (regra 1), e NÃO foi substituído por uma soma que o
+> próprio sistema faria — isso seria circular. Ver
+> `.claude/memory/grupo-por-controle-comum-sem-holding.md` e a seção 12.2 do roadmap.
+>
+> **Fatia 1.7 nasceu dessa medição e está documentada, NÃO construída** (decisão do dono): a
+> `0181` modela participação como FK entre EMPRESAS, e não tem onde registrar controle comum por
+> pessoa física — hoje `controladora_id` NULL por "grupo horizontal" é indistinguível de NULL por
+> "ninguém cadastrou" (regra 7). A 1.5 segue válida para mandatos COM holding.
+>
+> **AS QUATRO MIGRATIONS DA F1 ESTÃO APLICADAS EM PRODUÇÃO desde 18/09/2026** (`0178`–`0181`),
+> conferidas pela sonda: 107 requisitos, **0 ausentes**, cobertura em `0181`. O que a F1 construiu
+> agora VALE no sistema real — ver a linha "Aplicadas no Supabase" abaixo para o efeito medido de
+> cada uma e para a armadilha do `alter type` da `0179`, que precisa de duas chamadas.
+>
+> **O que ainda depende de gente, não de código:** `perimetro` está com **0 linhas** e
+> `controladora_id` está NULL em todas as entidades — as duas corretas, porque ninguém decidiu
+> ainda (e, no caso do controle, porque o grupo real não tem holding). As 18 pendências de "papel
+> indefinido" que ficaram abertas são o convite para essa decisão; quem decidir chama
+> `fn_entidade_definir_papel_no_grupo` e `fn_perimetro_definir_escopo`.
+>
+> **O que fica para a próxima sessão** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`): decidir
+> entre a fatia 1.7, a F2 (dar consumidor aos 27 tipos mudos) ou a F3b (completude por linha) —
+> as três dependem só da F0, que está fechada.
+>
+> PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
+> aberto, rascunho. Uma sessão nova que continuar aqui deve chamar `subscribe_pr_activity` de novo
+> (a inscrição não atravessa sessões) e reconferir o CI antes de seguir para a 1.5.
+
 Este arquivo responde **onde o projeto está agora**. O `HANDOFF.md` responde **como chegou aqui** —
 5.000 linhas de histórico sessão a sessão, que continuam valendo como referência e não precisam ser
 lidas para retomar. E `Arquitetura do Sistema/3 Estado e Execução/PRONTIDAO_POR_ESTAGIO.md` mede o projeto contra o objetivo, estágio por estágio. `Arquitetura do Sistema/3 Estado e Execução/MAPA_DE_EXECUCAO.md` responde **o que falta até fechar**, em ordem, com o
@@ -14,9 +69,30 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > **A F0 (fechar o fosso repositório ↔ produção) ESTÁ QUASE FECHADA.** Banco em dia (`0175`–`0177`
 > aplicadas e conferidas), os 4 workflows republicados e EM DIA (18/09 — a ingestão levou ao ar o
 > fix do Bug C + o CRÍTICO da revisão multilente, que tinham ficado só no repositório desde 17/09),
-> as duas ADRs + duas decisões do dono registradas. Faltam dois itens operacionais: `SONDA_DB_URL`
-> (segredo do CI para o workflow `sonda-producao.yml` do dono) e a fatia 0.5 (reprocessar o lote
-> "Teste 00" — decisão do dono).
+> as duas ADRs + duas decisões do dono registradas.
+>
+> **CORRIGIDO EM 18/09/2026, contra os logs do CI: `SONDA_DB_URL` JÁ ESTAVA CADASTRADO.** Esta
+> linha dizia que faltava, e dizia errado desde antes — a execução agendada de 17/09
+> (`sonda-producao.yml` #6) passou inteira, com "segredo presente" no log e o catálogo de produção
+> sem ausência. O que o dono aplicou em 18/09 foi uma SUBSTITUIÇÃO do valor, e ela QUEBROU o
+> portão: o segredo passou a conter a linha de comando `psql -h … -d postgres` em vez da URI, e
+> como o workflow monta `psql '<segredo>'`, o psql leu tudo aquilo como NOME DE BANCO e tentou o
+> socket local do runner (`/var/run/postgresql/.s.PGSQL.5432: No such file or directory`). O valor
+> certo é a URI (`postgresql://…/postgres`) de um POOLER — `Direct connection` é IPv6 e os runners
+> do GitHub são IPv4; o valor que funcionava era `aws-1-sa-east-1.pooler.supabase.com`.
+>
+> **RESOLVIDO às 16:46 de 18/09**: o dono repôs o valor como URI de pooler e a sonda rodou verde nos
+> sete passos — inclusive os dois que se cobrem mutuamente, "o catálogo de produção não tem ausência"
+> e "o que o código chama existe em produção". O portão agendado voltou a perguntar. Três tentativas
+> foram necessárias e cada erro deixou uma assinatura distinta no log, que vale guardar: linha de
+> comando no lugar da URI → `socket "/var/run/postgresql/.s.PGSQL.5432": No such file or directory`
+> (o psql lê o comando inteiro como nome de banco); URI de `Direct connection` → `Network is
+> unreachable` num endereço IPv6, porque os runners do GitHub são IPv4 e só o POOLER atende.
+>
+> Falta, então, **um** item: a fatia 0.5 — e ela foi MEDIDA em 18/09 e **não passa**: 94,9% contra
+> os 95% do aceite. Zero falha silenciosa e zero documento não processado; a diferença são
+> 6 documentos declarados sem dado financeiro, três deles em contradição com a régua de cobertura.
+> Ver a fatia 0.5 em `Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md`.
 > Tudo medido antes de cada ação. Leia a SESSÃO 94/95/96 no `HANDOFF.md` para o detalhe das duas correções
 > de premissa (122 migrations, faltavam 3 não 20) e das três evidências que travaram o banco, a
 > republicação e o CI — onde o ambiente desta sessão não alcança Postgres diretamente (a saída foi a
@@ -26,8 +102,8 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 
 | | |
 |---|---|
-| **Última migration** | `Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql` — a 0176 (`b8fc826`, PR #226) corrigiu o balcão ambíguo absorvendo entidade CONFIRMADA via CNPJ, mas a guarda era UNIDIRECIONAL: só bloqueava quando quem já tinha o CNPJ era o balcão. Uma SEGUNDA revisão independente mediu que o caminho PRINCIPAL desde a 0175 chama `fn_entidade_aprender_cnpj` com o BALCÃO do lado que a guarda não olhava — nessa direção o balcão era fundido/DELETADO dentro da confirmada, e sua pendência `entidade_ambigua` BLOQUEANTE ia junto, sem colisão nenhuma no lugar. MEDIDO (ordem inversa do teste da 0176): 4 entidades/1 bloqueante → 3 entidades/0 bloqueantes/0 colisões. A 0177 vira a condição em XOR bidirecional, e corrige mais três: (ALTO) `fn_upsert_entidade` abria pendência de colisão FALSA quando o balcão recebia mais um documento seu; (MÉDIO 1) `fn_pendencia_cnpj_colide_balcao` agora ACUMULA colisões em vez de sobrescrever a descrição; (MÉDIO 2) o marcador da sonda `balcao_ambiguo_aprende_cnpj` passou a provar a chamada real, não a guarda do renomeio. 19 asserts novos em `Supabase/test/balcao_nao_absorve_confirmada.test.sql` (blocos 5-8), todos medidos reprovando com a correção desligada antes de escrever a correção — ver o cabeçalho da 0177 e o `HANDOFF.md` (SESSÃO 91/92) para a medição completa. **Ainda não aplicada em produção** — só a sonda, contra o banco em que se está conectado, responde isso: `select chave, migration, tipo, objeto, presente, detalhe, porque from fn_instalacao_conferir() where not presente order by 1;`. |
-| **Aplicadas no Supabase** | **até a `0177` — TODAS, aplicadas nesta sessão (16/09/2026), pela API de gerenciamento do Supabase (a sessão não alcança a porta do Postgres direto; ver `.claude/memory/` sobre o ambiente).** MEDIDO, não suposto: antes de aplicar, o corpo de `fn_entidade_aprender_cnpj` e de `fn_registrar_diagnostico` foram comparados byte a byte contra as quatro últimas migrations — bateram EXATAMENTE com a `0174`, confirmando a defasagem de 3 (não as 20 que uma primeira estimativa, errada, tinha calculado). Aplicadas em ordem — `0175` → `0176` → `0177` —, com a sonda rodada depois de cada uma. Ao final: corpo de `fn_entidade_aprender_cnpj` bate byte a byte com a `0177`, `fn_pendencia_cnpj_colide_balcao` (nascida na `0176`) existe, e `fn_instalacao_conferir()` devolve **zero linhas**. **Migration escrita ≠ aplicada continua valendo como doutrina** — o que muda aqui é que desta vez há medição de antes e depois, não só o resultado final. |
+| **Última migration** | `Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql` — fatia 1.5 do plano F1 (seção 12.2 do roadmap). Colunas novas `entidade.controladora_id` (FK self-referencing, no máximo uma controladora DIRETA por entidade — não um grafo completo de participação, limitação deliberada e documentada) e `entidade.percentual_participacao` (`numeric(6,3)`, checado em (0,100]). Guarda contra CICLO (`fn_entidade_criaria_ciclo_participacao`, limite de 50 saltos) chamada ANTES de gravar por `fn_entidade_definir_participacao` (humano, nunca inferência automática; remover a controladora exige percentual também null) e consumidor mínimo de leitura `fn_entidade_cadeia_controladora` (sobe a cadeia, para no topo). NÃO deriva nada de `perimetro` (0180) nem de `papel_no_grupo` (0179) — é a FK preparada que a F4 (consolidação/intercompany) vai consumir. 29 asserts novos em `Supabase/test/entidade_participacao.test.sql`, 4 dos 29 MEDIDOS reprovando (não estimados) contra o estado sem a guarda de ciclo em `fn_entidade_definir_participacao` — os outros 25 passam com ou sem a correção (ver o cabeçalho do arquivo de teste). **APLICADA em produção em 18/09/2026** — ver a linha abaixo. |
+| **Aplicadas no Supabase** | **até a `0181`** — a `0178`–`0181` (fatias 1.2 a 1.5 do F1) foram aplicadas em **18/09/2026**, pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container; `psql` contra o pooler expira). MEDIDO contra a sonda, não suposto: `fn_instalacao_conferir()` devolve **107 requisitos, 0 ausentes**, e `instalacao_cobertura.ate_migration = '0181'`. **A `0179` foi aplicada em DOIS passos**, e quem aplicar de novo precisa saber: o `alter type pendencia_tipo add value` tem de ser confirmado numa chamada SEPARADA antes do resto do arquivo, senão o Postgres recusa com "unsafe use of new value of enum type" (a migration não tem `begin;`/`commit;` por causa disso, mas a API de gerenciamento envolve o lote numa transação implícita). **EFEITO MEDIDO de cada uma:** `0178` marcou **7** entidades como nome suspeito (previsto 7 antes de aplicar, conferido depois — o backfill não surpreendeu); `0179` abriu **365** pendências `papel_no_grupo_indefinido`, uma por entidade de TODO o banco (70 casos, a maioria teste antigo) — dessas, **347 foram resolvidas em lote** por esta sessão com `resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'` e evento de auditoria `pendencias_papel_resolvidas_em_lote`, restando **18 abertas** (mandato real `AMO teste 00` + casos `AMOBELEZA*`); `0180` e `0181` criaram estrutura sem abrir pendência nenhuma. **O backfill da `0179` não distingue mandato real de caso de teste** — quem aplicar num banco novo vai ver o mesmo ruído e precisa repetir essa triagem. |
 | **Última rodada real** | **"AMO teste 00", 118 documentos, 17/09/2026 — análise de 89 pendências abertas nesta sessão (session_014M6WjcbLvjBUkQodRYTH7J). Triagem: 4 achados nomeados — 2 DIFERIDOS (F2 e F4), 1 CORRIGIDO (PR #234, commit 378f23a), 1 NÃO CONFERIDO. Decisão de escopo: recusada adição de premissas de modelagem (fora de F0). Portal/export: tsc/eslint/next build limpos, 7 suítes verificar-*.mts todas verdes, e2e 46/0. Descoberta: hipótese anterior "esgotamento de RAM" era stack overflow em `push(...arr)` no nó merge nativo do n8n (~125.000–150.000 itens no Node 22). Ver "A SESSÃO ATUAL (17/09/2026)" abaixo. |
 | **Modelagem do mandato AMO** | **APLICADA no Supabase de produção em 17/09/2026** (a pedido explícito do dono, fora do escopo F0 e sem tocar o repositório na aplicação em si). Parâmetros: entidade **`AMOBELEZA COMERCIO DIGITAL E OFFLINE LTDA`**, último exercício real 2025, índice macro IPCA, setor varejo, 5 anos projetados. **A entidade tem de ser uma STRING QUE EXISTE nos dados, não um rótulo descritivo:** a primeira tentativa gravou "AMOBELEZA / Grupo AMO" e o modelo institucional não montou — `fn_valores_por_ano(caso, entidade)` FILTRA por ela, devolveu vazio, e o export escreveu a aba "Modelagem não montada" dizendo "nenhum exercício tem valor NUMÉRICO". Medido, para trocar em uma linha se o dono preferir outra: GENERAL CORPORATE 636 linhas/2023-2026 · OMNIBEAUTY Marcas 572/2023-2026 · General Tabaco 486/2023-2026 · AMOBELEZA 452/2023-2026 · OMNIBEAUTY RS 253/2024-2026 · GLOBAL STORE 146/2023-2025. **26 premissas ativas cobrindo as 11 naturezas do catálogo** — macro (IPCA, IGP-M, SELIC, Câmbio) com valores do Focus, o resto `digitado` com a âncora declarada no comentário de cada uma. **1.188 de 1.252 linhas projetáveis com premissa (94,9%)**, escolhida pela natureza contábil da conta: caixa/aplicação→SELIC, clientes→PMR, fornecedores→PMP, estoque por marca→GIRO_ESTOQUE, folha→HEADCOUNT, aluguel→IGP-M, imobilizado→CAPEX_PCT, contingência DIFAL→SELIC. 34 linhas de venda com curva de sazonalidade derivada de 60 meses do próprio faturamento. **64 linhas fora, com motivo declarado:** 30 totais (dupla contagem), 20 cláusulas narrativas de contrato social, 14 resultados apurados. `fn_conferir_modelagem`: `pronto: true`, 0 órfãos, 0 premissa sem valor, 0 sazonalidade sem curva. |
 | **Schema materializado** | `Supabase/schema.sql` — gerado pelo `Supabase/test/run.sh`, conferido pelo CI |

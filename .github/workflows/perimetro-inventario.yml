@@ -1,0 +1,67 @@
+# O INVENTÁRIO DO PERÍMETRO — F1, fatia 1.1: medir a entidade antes de mexer nela.
+#
+# POR QUE ESTE WORKFLOW EXISTE, e por que ele é DISPARO MANUAL, não agendado. A F1 (entidade e
+# perímetro) começou em 18/09/2026 contra uma estimativa de "55%" que ninguém tinha reconferido
+# desde 09/09 — a mesma classe de erro que o `sonda-producao.yml` existe para não deixar acontecer
+# de novo, só que do lado da ENTIDADE em vez do lado do CATÁLOGO. A diferença para a sonda é o
+# ritmo: schema pode ficar defasado de produção em silêncio dia após dia, e por isso a sonda é
+# diária; a entidade de um mandato muda quando o mandato muda (documento novo, mandato novo), não
+# no relógio — então disparo manual (ou no começo de cada rodada da F1) é a cadência certa. Um
+# agendamento diário aqui só acumularia execuções idênticas.
+#
+# O QUE ELE RODA, e por que os dois passos: `perimetro-inventario.mjs` classifica a CAUSA de cada
+# pendência `entidade_incorreta` aberta — sem isso, "71 pendências" é contagem, não diagnóstico
+# (regra 1). `Supabase/test/*.test.mjs` prova que a classificação continua batendo com a fixture
+# real de 18/09/2026 ANTES de confiar no que a execução contra produção vai dizer — se a suíte
+# reprovasse, o número contra produção seria lido com uma régua que mudou sem aviso.
+#
+# MESMO SEGREDO DA SONDA (`SONDA_DB_URL`), porque é o mesmo requisito: leitura, transação somente-
+# leitura (`set default_transaction_read_only`, como a `cobertura-do-lote.sql`), papel
+# somente-leitura basta.
+
+name: Inventário do perímetro (F1.1)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventario:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cliente psql 16
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-16 \
+            || sudo apt-get install -y --no-install-recommends postgresql-client
+          psql --version
+
+      - name: A classificação ainda bate com a fixture real (regra 2, antes de confiar no número)
+        run: node --test 'Supabase/test/*.test.mjs'
+
+      - name: Conferir o segredo
+        env:
+          SONDA_DB_URL: ${{ secrets.SONDA_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SONDA_DB_URL:-}" ]; then
+            echo "::error::Secret SONDA_DB_URL não cadastrado — esta execução NÃO perguntou nada a produção."
+            exit 1
+          fi
+          echo "segredo presente (o valor nunca é impresso)"
+
+      - name: Entidades por caso e causa de cada entidade_incorreta aberta
+        env:
+          CONFERIR_PSQL: psql '${{ secrets.SONDA_DB_URL }}'
+        run: node Supabase/test/perimetro-inventario.mjs

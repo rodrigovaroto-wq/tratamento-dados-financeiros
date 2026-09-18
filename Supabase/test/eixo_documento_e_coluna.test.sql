@@ -51,8 +51,13 @@ declare
 begin
   insert into caso (id, nome, produto)
     values (v_caso, 'FIXTURE eixos (0144/0145)', 'reestruturacao');
+  -- Fatia 1.3: `papel_no_grupo` virou enum tipado (`entidade_papel_no_grupo`,
+  -- migration 0179) — 'alvo' não é um dos 5 rótulos e quebraria este insert.
+  -- Esta entidade sintética não representa nada da hierarquia real do caso
+  -- (o arquivo inteiro existe só para os eixos documento/coluna, não para
+  -- papel no grupo), então 'operacional' é o rótulo mais neutro dos 5.
   insert into entidade (id, caso_id, razao_social, papel_no_grupo)
-    values (v_ent, v_caso, 'EIXO INDÚSTRIA LTDA.', 'alvo');
+    values (v_ent, v_caso, 'EIXO INDÚSTRIA LTDA.', 'operacional');
   insert into periodo (id, caso_id, tipo, referencia)
     values (v_per, v_caso, 'anual', '2025');
 
