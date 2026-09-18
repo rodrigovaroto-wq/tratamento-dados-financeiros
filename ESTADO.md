@@ -21,11 +21,26 @@
 > commit de handoff entre o despacho e o commit desta sessão — resolvido com um merge (não rebase,
 > não force-push) depois de confirmar que os dois lados eram compatíveis.
 >
-> **O que fica para a próxima sessão, em ordem** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`):
-> fatia 1.5 (`entidade.participacao`), 1.6 (aceite financeiro contra o COMBINADO real do cliente —
-> depende do dono, o mandato AMO não tem um combinado real ingerido). Nenhuma das migrations
-> `0178`/`0179`/`0180` foi aplicada em produção — escrita ≠ aplicada é doutrina deste projeto, e
-> isso é decisão de uma sessão seguinte, contra a sonda.
+> **A F1.6 NÃO VAI FECHAR COMO ESTAVA DESENHADA, e a causa foi MEDIDA em 18/09/2026.** O dono
+> informou não conseguir o COMBINADO do cliente; a investigação foi para os contratos sociais já
+> ingeridos e achou o porquê: **não há holding neste grupo** — nos 4 contratos legíveis, todos os
+> sócios são pessoas físicas e nenhuma empresa é sócia de outra. São empresas irmãs sob controle
+> comum, e "demonstração combinada" é justamente a forma contábil desse arranjo, não exigida em
+> formato padrão — **o cliente provavelmente nunca preparou uma**. O aceite financeiro da F1 fica
+> **NÃO VERIFICADO, com motivo declarado** (regra 1), e NÃO foi substituído por uma soma que o
+> próprio sistema faria — isso seria circular. Ver
+> `.claude/memory/grupo-por-controle-comum-sem-holding.md` e a seção 12.2 do roadmap.
+>
+> **Fatia 1.7 nasceu dessa medição e está documentada, NÃO construída** (decisão do dono): a
+> `0181` modela participação como FK entre EMPRESAS, e não tem onde registrar controle comum por
+> pessoa física — hoje `controladora_id` NULL por "grupo horizontal" é indistinguível de NULL por
+> "ninguém cadastrou" (regra 7). A 1.5 segue válida para mandatos COM holding.
+>
+> **O que fica para a próxima sessão** (seção 12.2 de `ARQUITETURA_ALVO_E_ROADMAP.md`): decidir
+> entre a fatia 1.7, a F2 (dar consumidor aos 27 tipos mudos) ou a F3b (completude por linha) —
+> as três dependem só da F0, que está fechada. Nenhuma das migrations `0178`/`0179`/`0180`/`0181`
+> foi aplicada em produção — escrita ≠ aplicada é doutrina deste projeto, e isso é decisão de uma
+> sessão seguinte, contra a sonda.
 >
 > PR [#237](https://github.com/rodrigovaroto-wq/tratamento-dados-financeiros/pull/237) segue
 > aberto, rascunho. Uma sessão nova que continuar aqui deve chamar `subscribe_pr_activity` de novo

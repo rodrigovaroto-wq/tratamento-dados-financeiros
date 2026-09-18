@@ -68,6 +68,11 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 ## Produção (não está em nenhum arquivo do repositório)
 
+- [O mandato real não tem holding](grupo-por-controle-comum-sem-holding.md) — as 8 empresas são
+  irmãs sob controle comum de PESSOAS FÍSICAS, medido nos contratos sociais; `controladora_id`
+  (0181) fica NULL por estar certo, não por faltar cadastro, e é por isso que o COMBINADO do
+  cliente provavelmente nunca existiu
+
 - [A republicação do n8n perde toggles](republicacao-do-n8n-perde-toggles.md) — `multipleFiles`,
   `onError` em 23 nós, `retryOnFail` em 11
 - [A cota RPD 500 é o limite que aperta](cota-rpd-e-o-limite-do-dia.md) — 440/500 para 190

@@ -1122,6 +1122,48 @@ existe rotulado como "o documento certo" às vezes não é. **1.6 depende do don
 precisa do combinado do cliente para conferir o perímetro contra ele, como o cabeçalho da F1 já
 dizia antes de qualquer medição.
 
+**E EM 18/09/2026, À NOITE, A CAUSA DA AUSÊNCIA FOI MEDIDA — ela não é descuido do cliente.** O
+dono informou não conseguir o combinado; a investigação foi então para os CONTRATOS SOCIAIS já
+ingeridos, e eles explicam por quê: **não há holding neste grupo.** Nos 4 contratos legíveis,
+TODOS os sócios são pessoas físicas e nenhuma empresa é sócia de outra — GENERAL BUSINESS CENTER
+(Karina Souto Damasio Tascino ~50% + Rafael Teles ~50%), GENERAL TABACO (Igor Souto Damasio
+100%), GLOBAL STORE (Rafael Teles 100%), OMNIBEAUTY MARCAS (Igor Souto Damasio 60% + Leandro
+Morales Lima 20% + Roney Thiago Costa 20%). São **empresas irmãs sob controle comum**, e
+"demonstração COMBINADA" é exatamente a forma contábil desse arranjo — não exigida em formato
+padrão, logo **um grupo assim frequentemente nunca preparou uma**. A 1.6 presumia que o
+documento existiria em algum lugar; a medição diz que provavelmente nunca existiu.
+Ver `.claude/memory/grupo-por-controle-comum-sem-holding.md`.
+
+**O que a 1.6 vira, então:** enquanto o combinado do cliente não aparecer, o aceite financeiro
+da F1 fica **NÃO VERIFICADO, com o motivo declarado** (regra 1 — nunca "passou" por omissão).
+Não medido, não estimado, não substituído por uma soma que o próprio sistema faria (essa seria
+circular: compararia a nossa conta com ela mesma, e um erro de perímetro atravessaria os dois
+lados igual).
+
+**Lacunas nomeadas na mesma medição**, para não virarem buraco silencioso:
+`Certidão 5ª Alteração - AMOBELEZA.pdf` e `Certidão 4ª Alteração - CORPORATE.pdf` vieram com ZERO
+campos extraídos (as duas já tinham `extracao_falhou` aberta; a da AMOBELEZA também
+`tipo_incorreto` dizendo que é certidão, não contrato — o sistema detectou sozinho). Certidão de
+Junta não traz distribuição de quotas, mas o nome não prevê o resultado: `Certidão 5ª alteração -
+OMNIBEAUTY.pdf` extraiu 54 campos, por ser de inteiro teor. E OMNIBEAUTY DISTRIBUIDORA PR e RS
+**não têm contrato social nenhum** — pendências `item_faltante` abertas nesta rodada, motivo
+`contrato_social_ausente:<entidade_id>`. Resultado: estrutura societária medida em **4 de 8**
+entidades reais.
+
+#### Fatia 1.7 — Grupo econômico por controle comum (NOVA, nasceu da medição da 1.6)
+A `0181` modela participação como `entidade.controladora_id` — FK de EMPRESA para EMPRESA. No
+mandato real **nenhuma empresa controla outra**, então essa coluna fica NULL nas 8 por estar
+CERTA, e o sistema fica sem onde registrar que elas são um grupo. É a regra 7 outra vez: NULL
+por "o grupo é horizontal" é hoje indistinguível de NULL por "ninguém cadastrou".
+**O que falta:** uma forma de registrar o vínculo que existe de fato — controle comum por
+sócio/controlador — sem inventar uma holding que não existe.
+**Pronto quando:** as 8 entidades do mandato real podem ser reconhecidas como um grupo, e um
+`controladora_id` vazio passa a ser distinguível de um não preenchido.
+*Agente: `migrations-postgres`. Risco: médio — mexe no mesmo modelo que a 1.5 acabou de criar.*
+**NÃO INICIADA** — documentada em 18/09/2026, construção adiada por decisão do dono. A 1.5
+continua válida e correta para mandatos que TENHAM holding; esta fatia a complementa, não a
+substitui.
+
 ### 12.3 O que a F1 NÃO faz, dito de propósito
 
 - **Não cria `conta_canonica`.** Identidade de CONTA é F4, e misturar as duas é o caminho mais
