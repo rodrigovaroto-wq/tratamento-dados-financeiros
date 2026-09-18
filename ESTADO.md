@@ -26,8 +26,16 @@ critério de pronto de cada bloco — é o arquivo para abrir antes de escolher 
 > certo é a URI (`postgresql://…/postgres`) de um POOLER — `Direct connection` é IPv6 e os runners
 > do GitHub são IPv4; o valor que funcionava era `aws-1-sa-east-1.pooler.supabase.com`.
 >
+> **RESOLVIDO às 16:46 de 18/09**: o dono repôs o valor como URI de pooler e a sonda rodou verde nos
+> sete passos — inclusive os dois que se cobrem mutuamente, "o catálogo de produção não tem ausência"
+> e "o que o código chama existe em produção". O portão agendado voltou a perguntar. Três tentativas
+> foram necessárias e cada erro deixou uma assinatura distinta no log, que vale guardar: linha de
+> comando no lugar da URI → `socket "/var/run/postgresql/.s.PGSQL.5432": No such file or directory`
+> (o psql lê o comando inteiro como nome de banco); URI de `Direct connection` → `Network is
+> unreachable` num endereço IPv6, porque os runners do GitHub são IPv4 e só o POOLER atende.
+>
 > Falta, então, **um** item: a fatia 0.5 — e ela foi MEDIDA em 18/09 e **não passa**: 94,9% contra
-> os 98% que o dono fixou. Zero falha silenciosa e zero documento não processado; a diferença são
+> os 95% do aceite. Zero falha silenciosa e zero documento não processado; a diferença são
 > 6 documentos declarados sem dado financeiro, três deles em contradição com a régua de cobertura.
 > Ver a fatia 0.5 em `Arquitetura do Sistema/3 Estado e Execução/ARQUITETURA_ALVO_E_ROADMAP.md`.
 > Tudo medido antes de cada ação. Leia a SESSÃO 94/95/96 no `HANDOFF.md` para o detalhe das duas correções
