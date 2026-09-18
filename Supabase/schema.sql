@@ -2703,6 +2703,37 @@ $$;
 COMMENT ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) IS 'Grava o CNPJ numa entidade que ainda não tem um, com rastro (0169). Nunca sobrescreve: um CNPJ já gravado na MESMA entidade (mesmo que divergente) é decisão de humano. 0174: quando o CNPJ já pertence a OUTRA entidade do mesmo caso, funde as duas (fn_fundir_entidade) em vez de tentar gravar — sem isso o UPDATE violava entidade_caso_cnpj_unico e derrubava fn_registrar_diagnostico inteira. 0177: a fusão é recusada quando EXATAMENTE um dos dois lados é um balcão ambíguo (0162/0175) — em QUALQUER direção (a guarda da 0176 só olhava uma) — porque fundir apagaria uma entidade CONFIRMADA dentro de um balcão sem nome validado, ou apagaria o BALCÃO (com sua pendência de ambiguidade bloqueante) dentro de uma confirmada; a colisão vira pendência (fn_pendencia_cnpj_colide_balcao) e nada funde. Quando os DOIS são balcão (convergência 0175) ou os DOIS são confirmados, funde normalmente. Devolve o id da entidade que sobrou: SEMPRE use o retorno, nunca o id que foi passado — depois de uma fusão ele pode apontar para uma linha deletada.';
 
 --
+-- Name: fn_entidade_cadeia_controladora(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) RETURNS TABLE(entidade_id uuid, razao_social text, nivel integer)
+    LANGUAGE sql STABLE
+    AS $$
+  with recursive cadeia(entidade_id, nivel) as (
+    select e0.controladora_id, 1
+      from entidade e0
+     where e0.id = p_entidade_id
+       and e0.controladora_id is not null
+    union all
+    select e1.controladora_id, c.nivel + 1
+      from cadeia c
+      join entidade e1 on e1.id = c.entidade_id
+     where e1.controladora_id is not null
+       and c.nivel < 50
+  )
+  select c.entidade_id, e2.razao_social, c.nivel
+    from cadeia c
+    join entidade e2 on e2.id = c.entidade_id
+   order by c.nivel;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_cadeia_controladora(p_entidade_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) IS '0181: sobe a cadeia de controle a partir de uma entidade (nível 1 = controladora direta, nível 2 = a controladora da controladora, …), parando no topo (controladora_id NULL) ou no limite de 50 níveis (mesmo limite de fn_entidade_criaria_ciclo_participacao). Consumidor mínimo — prova que a FK serve para algo além de existir (regra 7 do CLAUDE.md). O consumidor REAL (consolidação/intercompany) é F4, fora do escopo desta fatia — ver roadmap, fatia 1.5.';
+
+--
 -- Name: fn_entidade_canonica(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2750,6 +2781,34 @@ $_$;
 COMMENT ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) IS '0171: a forma canônica com a pontuação achatada ANTES do sufixo — sem isso "OMNIBEAUTY S.A." vira "omnibeauty s a" (dois tokens fantasma) e a decisão de renomear muda por causa da grafia do sufixo. Local a esta decisão: fn_entidade_canonica (0030) não é tocada.';
 
 --
+-- Name: fn_entidade_criaria_ciclo_participacao(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_atual  uuid := p_nova_controladora_id;
+  v_saltos int  := 0;
+begin
+  while v_atual is not null and v_saltos < 50 loop
+    if v_atual = p_entidade_id then
+      return true;
+    end if;
+    select controladora_id into v_atual from entidade where id = v_atual;
+    v_saltos := v_saltos + 1;
+  end loop;
+  return false;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) IS '0181: sobe a cadeia de `controladora_id` a partir de `p_nova_controladora_id` e devolve true se `p_entidade_id` aparecer nela — nesse caso, torná-la controladora de `p_entidade_id` fecharia um ciclo. Limite de 50 saltos (mesmo limite do consumidor de leitura, item 4) evita loop infinito com dado sujo. Chamada por `fn_entidade_definir_participacao` ANTES de gravar — é a MEDIÇÃO NÃO-VAZIA desta migration (ver cabeçalho).';
+
+--
 -- Name: fn_entidade_definir_papel_no_grupo(uuid, public.entidade_papel_no_grupo, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2788,6 +2847,74 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) IS '0179: o ÚNICO caminho de escrita de entidade.papel_no_grupo — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo da fatia 1.3). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''), e resolve fn_pendencia_papel_no_grupo_indefinido se estiver aberta para esta entidade. Reatribuir com papel diferente é permitido — é o estado ATUAL, o histórico mora em evento_auditoria.';
+
+--
+-- Name: fn_entidade_definir_participacao(uuid, uuid, numeric, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_entidade         uuid;
+  v_caso_controladora     uuid;
+  v_controladora_anterior uuid;
+  v_percentual_anterior   numeric;
+begin
+  if p_controladora_id is null and p_percentual is not null then
+    raise exception 'percentual (%) sem controladora não significa nada — informe p_percentual '
+                     'null junto com p_controladora_id null', p_percentual;
+  end if;
+
+  select caso_id, controladora_id, percentual_participacao
+    into v_caso_entidade, v_controladora_anterior, v_percentual_anterior
+    from entidade where id = p_entidade_id;
+
+  if v_caso_entidade is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+
+  if p_controladora_id is not null then
+    select caso_id into v_caso_controladora from entidade where id = p_controladora_id;
+    if v_caso_controladora is null then
+      raise exception 'controladora % não encontrada', p_controladora_id;
+    end if;
+    if v_caso_controladora <> v_caso_entidade then
+      raise exception 'controladora % não pertence ao mesmo caso que a entidade %',
+        p_controladora_id, p_entidade_id;
+    end if;
+
+    -- A MEDIÇÃO NÃO-VAZIA desta migration (ver cabeçalho): sem esta chamada, um ciclo de 2 ou
+    -- 3 níveis seria GRAVADO em vez de recusado, e um consumidor futuro que suba a cadeia
+    -- (fn_entidade_cadeia_controladora ou qualquer código que a F4 escrever) entraria em loop
+    -- até o limite de profundidade, escondendo o defeito em vez de o recusar na escrita.
+    if fn_entidade_criaria_ciclo_participacao(p_entidade_id, p_controladora_id) then
+      raise exception 'definir % como controladora de % criaria um CICLO de participação — % já '
+                       'é controlada (direta ou indiretamente) por %',
+        p_controladora_id, p_entidade_id, p_controladora_id, p_entidade_id;
+    end if;
+  end if;
+
+  update entidade
+     set controladora_id = p_controladora_id,
+         percentual_participacao = p_percentual
+   where id = p_entidade_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'entidade_participacao_definida', 'entidade:' || p_entidade_id,
+          jsonb_build_object(
+            'controladora_id_novo', p_controladora_id, 'controladora_id_anterior', v_controladora_anterior,
+            'percentual_novo', p_percentual, 'percentual_anterior', v_percentual_anterior));
+
+  return p_entidade_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) IS '0181: o ÚNICO caminho de escrita de `entidade.controladora_id`/`percentual_participacao` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). p_controladora_id NULL remove a controladora e EXIGE p_percentual NULL. Valida que as duas entidades existem e pertencem ao mesmo caso, e recusa (raise exception) se fn_entidade_criaria_ciclo_participacao disser que fecharia um ciclo. Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). Reatribuir é permitido — é o estado ATUAL, o histórico mora em evento_auditoria.';
 
 --
 -- Name: fn_entidade_e_balcao_ambiguo(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -6484,7 +6611,11 @@ CREATE TABLE public.entidade (
     caso_id uuid NOT NULL,
     razao_social text NOT NULL,
     cnpj text,
-    papel_no_grupo public.entidade_papel_no_grupo
+    papel_no_grupo public.entidade_papel_no_grupo,
+    controladora_id uuid,
+    percentual_participacao numeric(6,3),
+    CONSTRAINT entidade_nao_controla_a_si_mesma CHECK (((controladora_id IS NULL) OR (controladora_id <> id))),
+    CONSTRAINT entidade_percentual_valido CHECK (((percentual_participacao IS NULL) OR ((percentual_participacao > (0)::numeric) AND (percentual_participacao <= (100)::numeric))))
 );
 
 --
@@ -6492,6 +6623,30 @@ CREATE TABLE public.entidade (
 --
 
 COMMENT ON COLUMN public.entidade.papel_no_grupo IS '0179: enum entidade_papel_no_grupo (antes: text livre, NULL em todo caso — 0001 a 0178). NULL continua sendo o estado inicial de TODA entidade nova (fn_upsert_entidade nunca o passa no insert) — a ausência é honesta enquanto ninguém decidir, e fn_pendencia_papel_no_grupo_indefinido marca essa ausência sem afirmar hierarquia nenhuma. Só fn_entidade_definir_papel_no_grupo escreve aqui.';
+
+--
+-- Name: COLUMN entidade.controladora_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.controladora_id IS '0181 (fatia 1.5 do plano F1): a controladora DIRETA desta entidade — no máximo UMA, aqui. NÃO é um grafo completo de participação societária: sócios minoritários múltiplos e participação cruzada NÃO cabem neste modelo simples, e isso é deliberado (ver cabeçalho da 0181) — é a cadeia de controle que a F4 (consolidação/intercompany) vai percorrer subindo por esta coluna. NULL por padrão em toda entidade nova (fn_upsert_entidade nunca o passa no insert) — não há contrato social lido pelo pipeline hoje para inferir isto automaticamente (regra 1 do CLAUDE.md). Só `fn_entidade_definir_participacao` escreve aqui, e só depois de perguntar a `fn_entidade_criaria_ciclo_participacao` se o ciclo se fecharia.';
+
+--
+-- Name: COLUMN entidade.percentual_participacao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade.percentual_participacao IS '0181: o percentual que `controladora_id` detém desta entidade, em (0, 100]. NULL sempre que `controladora_id` for NULL (percentual sem controladora não significa nada — `fn_entidade_definir_participacao` recusa a combinação inversa). `numeric(6,3)`: até 999,999% de headroom não faz sentido para um percentual real, mas a precisão cobre 100,000 com folga de formatação sem exigir um tipo mais estreito — ajustar depois é uma migration aditiva se algum dado real pedir mais casas.';
+
+--
+-- Name: CONSTRAINT entidade_nao_controla_a_si_mesma ON entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT entidade_nao_controla_a_si_mesma ON public.entidade IS '0181: recusa `controladora_id = id` mesmo por INSERT/UPDATE direto, sem passar pela função — é o ciclo de UM salto (o caso trivial que `fn_entidade_criaria_ciclo_participacao` também pega, mas o `check` protege o caminho que não chama a função nenhuma).';
+
+--
+-- Name: CONSTRAINT entidade_percentual_valido ON entidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT entidade_percentual_valido ON public.entidade IS '0181: percentual de participação tem de estar em (0, 100] — zero ou negativo não é participação, e mais de 100% não existe. Protege INSERT/UPDATE direto, mesma doutrina do `perimetro_intervalo_valido` da 0180.';
 
 --
 -- Name: fn_perimetro_vigente(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
@@ -13831,6 +13986,13 @@ ALTER TABLE ONLY public.entidade
     ADD CONSTRAINT entidade_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
 
 --
+-- Name: entidade entidade_controladora_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade
+    ADD CONSTRAINT entidade_controladora_id_fkey FOREIGN KEY (controladora_id) REFERENCES public.entidade(id);
+
+--
 -- Name: estagio_autonomia estagio_autonomia_medicao_rodada_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14739,16 +14901,34 @@ GRANT ALL ON FUNCTION public.fn_documentos_nao_extraidos(p_caso_id uuid) TO auth
 GRANT ALL ON FUNCTION public.fn_entidade_aprender_cnpj(p_entidade_id uuid, p_cnpj text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_cadeia_controladora(p_entidade_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_cadeia_controladora(p_entidade_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidade_canonica_forte(p_nome text); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) TO authenticated;
 
 --
+-- Name: FUNCTION fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) TO authenticated;
+
+--
 -- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_definir_participacao(p_entidade_id uuid, p_controladora_id uuid, p_percentual numeric, p_autor text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_entidade_e_balcao_ambiguo(p_caso_id uuid, p_entidade_id uuid); Type: ACL; Schema: public; Owner: -

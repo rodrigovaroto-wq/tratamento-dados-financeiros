@@ -286,6 +286,7 @@ supabase db execute --file Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num
 supabase db execute --file Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql
 supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
+supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

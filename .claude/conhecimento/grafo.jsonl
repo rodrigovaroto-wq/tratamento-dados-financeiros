@@ -58,6 +58,7 @@
 {"k":"n","id":"arquivo:Supabase/test/eixo_documento_e_coluna.test.sql","t":"arquivo","f":"Supabase/test/eixo_documento_e_coluna.test.sql","txt":"eixo_documento_e_coluna.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_ambigua.test.sql","t":"arquivo","f":"Supabase/test/entidade_ambigua.test.sql","txt":"entidade_ambigua.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","t":"arquivo","f":"Supabase/test/entidade_papel_no_grupo.test.sql","txt":"entidade_papel_no_grupo.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/entidade_participacao.test.sql","t":"arquivo","f":"Supabase/test/entidade_participacao.test.sql","txt":"entidade_participacao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","t":"arquivo","f":"Supabase/test/entidade_titulo_suspeito.test.sql","txt":"entidade_titulo_suspeito.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/fato_material.test.sql","t":"arquivo","f":"Supabase/test/fato_material.test.sql","txt":"fato_material.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/faturamento_por_mes.test.sql","t":"arquivo","f":"Supabase/test/faturamento_por_mes.test.sql","txt":"faturamento_por_mes.test.sql"}
@@ -226,9 +227,12 @@
 {"k":"n","id":"fn:fn_documento_serve_como","t":"fn","f":"Supabase/migrations/0157_o_combinado_que_travava_o_kit_basico.sql","txt":"documento serve como"}
 {"k":"n","id":"fn:fn_documentos_nao_extraidos","t":"fn","f":"Supabase/migrations/0112_lote_conferido_documento_por_documento.sql","txt":"documentos nao extraidos"}
 {"k":"n","id":"fn:fn_entidade_aprender_cnpj","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"entidade aprender cnpj"}
+{"k":"n","id":"fn:fn_entidade_cadeia_controladora","t":"fn","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"entidade cadeia controladora"}
 {"k":"n","id":"fn:fn_entidade_canonica","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"entidade canonica"}
 {"k":"n","id":"fn:fn_entidade_canonica_forte","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade canonica forte"}
+{"k":"n","id":"fn:fn_entidade_criaria_ciclo_participacao","t":"fn","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"entidade criaria ciclo participacao"}
 {"k":"n","id":"fn:fn_entidade_definir_papel_no_grupo","t":"fn","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"entidade definir papel no grupo"}
+{"k":"n","id":"fn:fn_entidade_definir_participacao","t":"fn","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"entidade definir participacao"}
 {"k":"n","id":"fn:fn_entidade_e_balcao_ambiguo","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"entidade e balcao ambiguo"}
 {"k":"n","id":"fn:fn_entidade_nome_mais_completo","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade nome mais completo"}
 {"k":"n","id":"fn:fn_entidade_nome_parece_titulo_ou_arquivo","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"entidade nome parece titulo ou arquivo"}
@@ -494,6 +498,7 @@
 {"k":"n","id":"migration:0178","t":"migration","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"o titulo da planilha nao e pessoa juridica"}
 {"k":"n","id":"migration:0179","t":"migration","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"o papel no grupo que nunca foi escrito"}
 {"k":"n","id":"migration:0180","t":"migration","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"o perimetro que o combinado nao tinha"}
+{"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -923,6 +928,11 @@
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_papel_no_grupo_indefinido","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":9}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":91}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":10}
+{"k":"e","de":"arquivo:Supabase/test/entidade_participacao.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_cadeia_controladora","f":"Supabase/test/entidade_participacao.test.sql","l":19}
+{"k":"e","de":"arquivo:Supabase/test/entidade_participacao.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_criaria_ciclo_participacao","f":"Supabase/test/entidade_participacao.test.sql","l":10}
+{"k":"e","de":"arquivo:Supabase/test/entidade_participacao.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/test/entidade_participacao.test.sql","l":4}
+{"k":"e","de":"arquivo:Supabase/test/entidade_participacao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_participacao.test.sql","l":86}
+{"k":"e","de":"arquivo:Supabase/test/entidade_participacao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_participacao.test.sql","l":90}
 {"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_nome_parece_titulo_ou_arquivo","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":7}
 {"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_cnpj_colide_balcao","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":33}
 {"k":"e","de":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_entidade_ambigua","f":"Supabase/test/entidade_titulo_suspeito.test.sql","l":34}
@@ -1636,6 +1646,9 @@
 {"k":"e","de":"migration:0179","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","l":212}
 {"k":"e","de":"migration:0180","rel":"CRIA","pa":"fn:fn_perimetro_definir_escopo","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","l":127}
 {"k":"e","de":"migration:0180","rel":"CRIA","pa":"fn:fn_perimetro_vigente","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","l":188}
+{"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_cadeia_controladora","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":238}
+{"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_criaria_ciclo_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":121}
+{"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":159}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
