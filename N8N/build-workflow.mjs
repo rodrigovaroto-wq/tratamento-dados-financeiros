@@ -2595,9 +2595,18 @@ const connections = {
 posicionar(nodes, connections);
 
 const workflow = {
-  name: 'Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)',
+  // O NOME MUDOU EM PRODUÇÃO, E O REPOSITÓRIO PASSOU A ACOMPANHAR, NÃO A
+  // BRIGAR. `conferir-publicado.mjs` casa repositório↔publicado pelo `name`
+  // (é a chave — "renomear o workflow no editor quebra esta ligação"), e
+  // `preparar-republicacao.mjs` sobrescreve o nome do publicado com o daqui
+  // (`repo.name ?? vivo.name`). Até 17/09/2026 este campo trazia o nome
+  // técnico de fatia ("E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3
+  // Reconciliação Classe A (Fatia 1)"), e o dono já tinha renomeado o
+  // publicado para o nome de marca abaixo — republicar sem perceber teria
+  // revertido a rebranding em silêncio. O nome de marca fica aqui agora.
+  name: 'Oria — SARF (Sistema Automático de Reestruturação Financeira)',
   nodes, connections, settings: { executionOrder: 'v1' },
-  meta: { note: 'Gerado por N8N/build-workflow.mjs. Nós Code espelham N8N/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato).' },
+  meta: { note: 'Gerado por N8N/build-workflow.mjs. Nós Code espelham N8N/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato). Fluxo interno: E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1).' },
 };
 
 writeFileSync(join(__dirname, 'workflow.e1-ingestao.json'), JSON.stringify(workflow, null, 2) + '\n');

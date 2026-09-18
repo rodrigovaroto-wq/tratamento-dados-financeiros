@@ -1,5 +1,5 @@
 {
-  "name": "Oria — E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)",
+  "name": "Oria — SARF (Sistema Automático de Reestruturação Financeira)",
   "nodes": [
     {
       "parameters": {
@@ -1386,6 +1386,6 @@
     "executionOrder": "v1"
   },
   "meta": {
-    "note": "Gerado por N8N/build-workflow.mjs. Nós Code espelham N8N/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato)."
+    "note": "Gerado por N8N/build-workflow.mjs. Nós Code espelham N8N/lib/ (testado). Diagnóstico de conteúdo roda SEMPRE (entidade/tipo/período/legibilidade); E2 em N0/sombra; E3 Classe A em N1 (gera pendência, nunca fato). Fluxo interno: E1 Ingestão + Diagnóstico + E2 Extração-Sombra + E3 Reconciliação Classe A (Fatia 1)."
   }
 }
