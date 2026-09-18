@@ -445,7 +445,7 @@ F14→F16 · F15→F17 (contínua).
 | **Entrada** | — |
 | **Saída** | D1 verde |
 | **Aceite** | sonda zero em produção; hash publicado == gerado; `PRONTIDAO` regerado automaticamente |
-| **Aceite financeiro** | reprocessar os 75 documentos sem linha da rodada "Teste 00" e obter ≥98% com linha (era 95%; o dono subiu a régua em 18/09/2026) |
+| **Aceite financeiro** | reprocessar os 75 documentos sem linha da rodada "Teste 00" e obter ≥95% com linha |
 | **Aceite técnico** | CI aplica migration e falha se produção divergir; espelho cobre TODAS as categorias de portão; cada portão novo medido não-vazio |
 
 ### F1 — ENTIDADE E PERÍMETRO
@@ -494,6 +494,60 @@ continuidade operacional e ressalva. Expor numa tela custa pouco e não depende 
 | **Aceite técnico** | lote com falha parcial retoma sem reprocessar o que já custou |
 | **Dono** | as rodadas reais — concordância se mede contra veredito de PRODUÇÃO, e só o dono dispara o formulário |
 | **Custo** | rodada paga e repetida por definição (a mesma entrada, várias vezes). Estime com `N8N/medir-custo-book.mjs` e fixe o teto de rodadas ANTES de começar |
+
+### F3b — COMPLETUDE POR LINHA: nenhuma linha faltando, nenhuma linha inventada
+
+**ESTA FASE NÃO É NOVA — ela estava ÓRFÃ.** O plano inteiro existe desde 01/09/2026 em
+`PLANO_LINHA_A_LINHA.md`, escrito a pedido do dono depois da rodada do araucária, e **este
+roadmap nunca o citou**. Um plano correto que o arquivo de "o que falta, em que ordem" não
+conhece tem exatamente a mesma aparência de um plano que não existe — é a regra 7 aplicada a
+documento em vez de a estágio. Encaixado aqui em 18/09/2026, quando o dono descreveu de novo,
+com outras palavras, o mecanismo que o plano já desenhava.
+
+| | |
+|---|---|
+| **Objetivo** | Que "todas as linhas foram extraídas" deixe de ser estatística e vire **aritmética** |
+| **Estado** | 🟡 Fase 0 do plano PARCIALMENTE FECHADA (01/09); Fases 1–5 não começaram |
+| **Dep.** | F0 · **paralelizável com F1/F2**, e é a única fase que toca o `SYSTEM_PROMPT` e o schema da linha |
+| **Risco** | Médio-alto — toca extração, fatiamento, schema, migration e guardas · **Esforço** G |
+| **Aceite financeiro** | os 3 documentos do araucária acusam buraco NOMEADO, e o número de linhas sem destino bate com 97−68, 150−102 e 20−13 |
+
+**Por que ela é a resposta ao que o aceite da 0.5 não mede.** O aceite conta documentos que
+produziram alguma linha. A pergunta do dono — *"a cada 100.000 que entram, pelo menos 99.900
+extraídas"* — é sobre LINHAS dentro de cada documento, e hoje isso é indecidível: não há
+coordenada comum entre o texto que entra e as linhas que saem, então nenhuma afirmação da forma
+"a linha 42 do documento virou esta conta" pode ser feita. **O limiar de 85%, a régua e o
+instrumento de blocos são todos substitutos trabalhando em volta dessa coordenada que falta.**
+
+As cinco fases, na ordem do plano (o detalhe, com os números medidos, está lá — não duplicar aqui):
+
+| Fase | O que entrega |
+|---|---|
+| **1** | A coordenada: texto NUMERADO ao lado do PDF (não no lugar dele), e `ln` obrigatório no schema da linha |
+| **2** | A bijeção: o modelo declara `descartadas` com motivo, e a guarda vira aritmética — buraco, duplicação e invenção de origem viram BLOQUEANTE nomeado pelo número da linha |
+| **3** | A literalidade: `vt` cobrado como o `tr` dos fatos — trecho literal da linha citada. É a primeira vez que "criar dado" fica detectável |
+| **4** | **Re-perguntar só o buraco** — "leia SÓ as linhas 23 a 51", com teto de 1 re-pergunta por documento |
+| **5** | Medir cada guarda não-vazia (regra 2) |
+
+**A Fase 4 é o fallback que o dono pediu em 18/09, e o plano a desenha melhor do que o pedido.**
+O pedido era: quando a régua conta 50 e a IA devolve 30, extrair de novo. O plano re-pergunta
+**só as linhas sem destino** — bloco pequeno, resposta pequena, custo proporcional ao defeito, em
+vez de pagar o documento inteiro de novo e poder voltar com outro buraco. **Mas ela depende das
+Fases 2 e 3**: sem a bijeção não existe "o buraco", existe só uma diferença entre dois números,
+e re-perguntar contra uma diferença é re-extrair o documento inteiro com outro nome.
+
+**E há um ganho que responde à desconfiança do dono sobre qual das duas partes está errada.** Hoje,
+quando a régua diz 50 e a IA diz "não havia número", não há como saber quem errou — foi
+exatamente o impasse dos três documentos da fatia 0.5. Com a Fase 2, **a régua deixa de ser
+juíza**: o modelo declara linha a linha o que é conta e o que é cabeçalho, e a régua vira uma
+segunda opinião sobre a MESMA linha. Onde as duas discordam é o sinal, e o sinal aponta para uma
+linha específica que um humano abre e confere em segundos — em vez de um percentual sobre o
+documento todo.
+
+**O que ela explicitamente NÃO resolve** (está no plano, e vale repetir para não vender demais):
+não garante que o modelo LEIA certo. Garante que ele declare o destino de cada linha e que o
+valor seja literal. Valor lido errado, mas literalmente copiado da linha certa, passa — e
+continua sendo trabalho das guardas de valor.
 
 ### F4 — CONTA CANÔNICA, HIERARQUIA E RESOLUÇÃO (intervenção central)
 
@@ -606,8 +660,12 @@ Dez fases no caminho crítico. **Duas dominam o custo: F4 e F7.** Tudo mais é a
 paralelizável.
 
 ### Paralelização POSSÍVEL
-- **F1 ∥ F2 ∥ F3** — conjuntos de arquivos disjuntos (entidade / taxonomia / provedor). Onda
-  paralela legítima pelo critério de `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`.
+- **F1 ∥ F2 ∥ F3 ∥ F3b** — conjuntos de arquivos disjuntos (entidade / taxonomia / provedor /
+  contrato de extração). Onda paralela legítima pelo critério de
+  `Arquitetura do Sistema/5 Prompts/03-onda-paralela.md`. **A F3b tem a ressalva de ser a única
+  das quatro que toca o `SYSTEM_PROMPT` e o schema da linha** — se a F3 (provedor) mexer no
+  mesmo prompt na mesma onda, os conjuntos deixam de ser disjuntos e as duas param de ser
+  paralelizáveis. Conferir antes de despachar, não durante.
 - **F9 ∥ F10 ∥ F11** após o MODEL GATE.
 - **F5** ∥ final de F4.
 - **F17** distribuída, sempre.
@@ -761,12 +819,24 @@ pare de se contradizer. **Nada de arquitetura nova nesta fase.**
 ### Fatia 0.5 — Reprocessar a rodada "Teste 00"
 - Reprocessar os 75 documentos sem linha (73 `extracao_falhou`, 72 por billing).
 - **É o primeiro dado honesto do sistema:** a primeira rodada em que o código testado é o executado.
-- **Entregável:** ≥98% dos documentos com linha; o que falhar, falha por razão nova e documentada.
-  (Era 95%. O dono subiu para 98% em 18/09/2026. A unidade continua sendo o DOCUMENTO, e isso
-  foi decidido com a alternativa na mesa: "98% das linhas extraídas" mediria a fração das linhas
-  que existem no documento e foram lidas — e essa não é mensurável num mandato real, porque exige
-  um gabarito por documento, que só existe para os dois books sintéticos. Um aceite cujo número
-  ninguém consegue conferir é pior que um aceite mais frouxo.)
+- **Entregável:** ≥95% dos documentos com linha; o que falhar, falha por razão nova e documentada.
+
+> **O 98% foi levantado e DEVOLVIDO a 95% no mesmo dia (18/09/2026), e o motivo é a parte que
+> interessa.** O dono subiu para 98%, depois reverteu com o argumento certo: *"ele não serve de
+> nada se estiver faltando linhas nos documentos que conseguiu extrair"*. Está correto, e nomeia
+> o limite deste aceite — **ele conta DOCUMENTOS que produziram alguma linha, e é cego para
+> quantas linhas faltaram dentro de cada um.** Um documento de 97 linhas que devolveu 68 conta
+> aqui como sucesso, exatamente igual a um que devolveu as 97.
+>
+> Subir 95 → 98 apertaria a régua que já é a certa para o que ela mede (a fatia 0.2/0.3
+> funcionaram: zero silencioso, zero não processado) e continuaria sem medir o que o dono quer
+> garantir. **A garantia que ele descreveu — "a cada 100.000 que entram, pelo menos 99.900
+> extraídas" — não é este número, é outro, e já tem plano escrito:
+> `PLANO_LINHA_A_LINHA.md`.** Ver a seção "A completude por linha" abaixo.
+>
+> A unidade também ficou decidida: é o DOCUMENTO. "98% das linhas extraídas" exigiria gabarito
+> por documento, que num mandato real não existe — só nos dois books sintéticos. Aceite cujo
+> número ninguém consegue conferir é pior que um aceite mais frouxo.
 - *Risco: baixo. É a validação de que 0.2 e 0.3 funcionaram.*
 
 **MEDIDO EM PRODUÇÃO, 18/09/2026 — e o aceite NÃO passa.** Primeira vez que a cobertura do lote
@@ -809,9 +879,19 @@ afirmar qualquer um dos lados aqui seria exatamente o que a regra 1 proíbe.
 
 **E há um achado que não é da F0, mas que a F2 vai cobrar:** `EXTRATO_BANCARIO` tem **3 documentos
 e ZERO linha** no mandato inteiro. O aceite financeiro da F2 diz, com todas as letras, que
-"mandato sem aging/extrato **não** é declarado pronto". Os três arquivos parecem ser planilhas de
-CONTROLE de extratos (nomes: "Controle_", "Status ", "Relação_"), não os extratos em si — se for
-isso, o mandato não tem extrato bancário nenhum ingerido, e é assunto do dono, não de engenharia.
+"mandato sem aging/extrato **não** é declarado pronto".
+
+**O dono respondeu, 18/09/2026, e a resposta corrige duas coisas.** Primeira: os três arquivos
+**não são extratos bancários** — "Status Extratos" tem relação com pagamento de dívidas, e os
+outros dois são controles. Estão CLASSIFICADOS como `EXTRATO_BANCARIO` e não são: é
+`tipo_incorreto`, que já tem 5 pendências abertas neste caso. Zero linha neles não é falha de
+extração. Segunda, e mais séria: **os extratos de verdade nunca foram enviados** — são os
+arquivos que começam com `CR` e `CP`, com centenas de milhares de linhas, e não passam pelo n8n.
+Isso liga direto ao limite medido na fatia 0.5 (o estouro de pilha em `push(...arr)` do nó de
+merge nativo, ~125.000–150.000 itens): o mandato não tem extrato porque a ingestão não aguenta
+o tamanho deles, não porque alguém esqueceu. **É requisito de F2 com dependência técnica não
+resolvida**, e não uma pendência administrativa. Registrado aqui para a F2 não começar supondo
+que basta pedir o arquivo ao cliente.
 
 **Pendências ainda abertas no caso: 79.** As três maiores: `divergencia_reconciliacao` 28,
 `extracao_padrao_suspeito` 12 (o Bug A), `extracao_falhou` 12. As 12 de `extracao_falhou` são
@@ -882,7 +962,7 @@ sessão principal, capturando o `HEAD` na hora.
 |---|---|
 | **Geral** | `fn_instalacao_conferir()` **em produção** devolve 0 ausentes |
 | **Técnico** | hash publicado == gerado · CI falha se produção divergir · espelho `CLAUDE.md`×CI cobre todas as categorias · cada portão novo medido não-vazio |
-| **Financeiro** | rodada "Teste 00" reprocessada com ≥98% dos documentos produzindo linha; a diferença de cobertura explicada documento a documento |
+| **Financeiro** | rodada "Teste 00" reprocessada com ≥95% dos documentos produzindo linha; a diferença de cobertura explicada documento a documento |
 | **De produto** | `00_VISAO_E_ESCOPO.md` diz o que o produto é em 2026, e as duas ADRs estão registradas |
 
 ### O que a F0 explicitamente NÃO faz
