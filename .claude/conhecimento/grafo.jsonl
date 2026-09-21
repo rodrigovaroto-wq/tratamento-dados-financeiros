@@ -75,6 +75,7 @@
 {"k":"n","id":"arquivo:Supabase/test/kit_basico_combinado_estrutural.test.sql","t":"arquivo","f":"Supabase/test/kit_basico_combinado_estrutural.test.sql","txt":"kit_basico_combinado_estrutural.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/linha_exigida.test.sql","t":"arquivo","f":"Supabase/test/linha_exigida.test.sql","txt":"linha_exigida.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/linha_exigida_entidade.test.sql","t":"arquivo","f":"Supabase/test/linha_exigida_entidade.test.sql","txt":"linha_exigida_entidade.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","t":"arquivo","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","txt":"linha_exigida_tipos_variaveis.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/lote_abre_antes_de_fechar.test.sql","t":"arquivo","f":"Supabase/test/lote_abre_antes_de_fechar.test.sql","txt":"lote_abre_antes_de_fechar.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/macro.test.sql","t":"arquivo","f":"Supabase/test/macro.test.sql","txt":"macro.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/modelagem_escala.test.sql","t":"arquivo","f":"Supabase/test/modelagem_escala.test.sql","txt":"modelagem_escala.test.sql"}
@@ -506,6 +507,7 @@
 {"k":"n","id":"migration:0179","t":"migration","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"o papel no grupo que nunca foi escrito"}
 {"k":"n","id":"migration:0180","t":"migration","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"o perimetro que o combinado nao tinha"}
 {"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
+{"k":"n","id":"migration:0185","t":"migration","f":"Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql","txt":"o tipo presente que ninguem conferia"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -1011,6 +1013,11 @@
 {"k":"e","de":"arquivo:Supabase/test/linha_exigida_entidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/linha_exigida_entidade.test.sql","l":68}
 {"k":"e","de":"arquivo:Supabase/test/linha_exigida_entidade.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/linha_exigida_entidade.test.sql","l":162}
 {"k":"e","de":"arquivo:Supabase/test/linha_exigida_entidade.test.sql","rel":"CHAMA","pa":"fn:fn_valor_conceito_col","f":"Supabase/test/linha_exigida_entidade.test.sql","l":27}
+{"k":"e","de":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","rel":"CHAMA","pa":"fn:fn_exigencias_do_caso","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","l":12}
+{"k":"e","de":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","rel":"CHAMA","pa":"fn:fn_recomputar_completude","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","l":13}
+{"k":"e","de":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","l":79}
+{"k":"e","de":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","l":72}
+{"k":"e","de":"arquivo:Supabase/test/linha_exigida_tipos_variaveis.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/linha_exigida_tipos_variaveis.test.sql","l":71}
 {"k":"e","de":"arquivo:Supabase/test/lote_abre_antes_de_fechar.test.sql","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"Supabase/test/lote_abre_antes_de_fechar.test.sql","l":29}
 {"k":"e","de":"arquivo:Supabase/test/lote_abre_antes_de_fechar.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_uso_lote","f":"Supabase/test/lote_abre_antes_de_fechar.test.sql","l":4}
 {"k":"e","de":"arquivo:Supabase/test/lote_abre_antes_de_fechar.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/lote_abre_antes_de_fechar.test.sql","l":24}
