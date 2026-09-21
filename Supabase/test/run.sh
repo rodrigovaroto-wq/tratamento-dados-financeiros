@@ -248,6 +248,11 @@ echo
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/reconciliacao.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
+echo
+echo "== motivo_precondicao (0186): o motivo verdadeiro que o achatamento engolia"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/reconciliacao_motivo_precondicao.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
 # O CASO POSITIVO das duas correções da v48 — e ele não cabia nos books.
 # Os dois books trazem extração fiel, então provam só o lado "não grita à toa":
 # com eles, a 0144 poderia ter matado a checagem de duplicidade inteira e todo

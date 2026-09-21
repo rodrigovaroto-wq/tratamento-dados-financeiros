@@ -308,6 +308,24 @@ supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nu
 # aparecer antes que apareçam sozinhas na fila do dono.
 supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
 
+# A 0186 acrescenta reconciliacao.motivo_precondicao e reemite
+# fn_registrar_reconciliacao para gravá-la — resultado NÃO muda de
+# vocabulário (continua 'precondicao_nao_satisfeita'), só passa a existir uma
+# coluna nova com o motivo verdadeiro. Ela também faz um BACKFILL a partir de
+# evento_auditoria para as linhas de reconciliacao já gravadas com
+# precondicoes_ok = false. Meça o alcance ANTES de aplicar (lição da 0179,
+# .claude/memory/aplicar-migration-em-producao-pela-api.md — 365 pendências
+# onde se previam 13), com uma consulta somente leitura:
+#   select count(*) from reconciliacao
+#     where precondicoes_ok = false and motivo_precondicao is null;
+# No banco de TESTE (recém-migrado, sem fixture) esse número é ZERO — a
+# tabela reconciliacao está vazia no instante em que a migration roda. Em
+# PRODUÇÃO ele é desconhecido: a medição de 21/09/2026 que abriu esta fatia
+# contou 1.926 linhas com precondicoes_ok = false (ESTADO.md, topo), então o
+# backfill tem chance real de tocar milhares de linhas — decida se roda como
+# está ou em lote depois de medir.
+supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql
+
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.
 #

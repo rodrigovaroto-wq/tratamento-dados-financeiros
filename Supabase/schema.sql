@@ -10240,12 +10240,37 @@ declare
   v_reconciliacao_id uuid;
   v_pendencia_id     uuid;
   v_motivo           text := 'reconciliacao:' || p_tipo;
+  -- 0186: O CONTRATO — todo motivo que o achatamento reconhece como "a
+  -- checagem não concluiu". `resultado` sai `precondicao_nao_satisfeita` para
+  -- QUALQUER um destes; o valor ORIGINAL vai para `motivo_precondicao` (ver
+  -- abaixo). Só 'documento_ausente' e 'precondicao_nao_satisfeita' têm
+  -- emissor hoje — os outros três são o contrato reservado para a fatia
+  -- seguinte, documentado no cabeçalho desta migration.
+  v_motivos_precondicao text[] := array[
+    'documento_ausente', 'precondicao_nao_satisfeita',
+    'linha_nao_localizada', 'unidade_divergente', 'sem_periodo_par'
+  ];
   -- 'documento_ausente' é um resultado NOSSO, para decidir a pendência; no log
   -- ele é gravado como pré-condição não satisfeita (é o que ele é).
-  v_res_log          text := case when p_resultado = 'documento_ausente'
+  v_res_log          text := case when p_resultado = any(v_motivos_precondicao)
                                   then 'precondicao_nao_satisfeita' else p_resultado end;
+  -- motivo_precondicao: o valor ORIGINAL, antes do achatamento acima — NULL
+  -- quando a checagem concluiu (v_res_log não é 'precondicao_nao_satisfeita').
+  -- Quando p_resultado já chega como 'precondicao_nao_satisfeita' (a função de
+  -- checagem não detalhou o motivo), grava esse mesmo valor: é honesto — "sem
+  -- motivo específico" é informação, não lacuna.
+  v_motivo_precondicao text := case when v_res_log = 'precondicao_nao_satisfeita'
+                                     then p_resultado else null end;
   -- 0127: a decisão passa para o corpo, porque agora ela depende do DIAL da
   -- classe — e o dial não se lê no declare sem esconder a regra.
+  --
+  -- 0186: ESTA LINHA NÃO MUDA. `documento_ausente` continua sendo o ÚNICO
+  -- motivo de precondição que NÃO abre pendência — é cobrança do checklist do
+  -- Kit Básico, não achado de revisão (0023, reafirmado pela 0127). Qualquer
+  -- motivo novo do array acima que não seja 'documento_ausente' cai do lado
+  -- de ABRE pendência por esta mesma linha, sem precisar tocá-la: documento
+  -- presente e algo não localizado é sempre achado acionável, mesmo quando o
+  -- motivo específico ainda não existe (default seguro).
   v_divergente       boolean := p_resultado not in ('ok', 'documento_ausente');
   v_abre_pendencia   boolean;
   v_estagio_dial     text;
@@ -10270,10 +10295,10 @@ begin
 
   insert into reconciliacao
     (caso_id, entidade_id, periodo_id, tipo, classe, fonte_a, fonte_b,
-     precondicoes_ok, resultado, divergencia_abs, divergencia_pct, materialidade)
+     precondicoes_ok, resultado, motivo_precondicao, divergencia_abs, divergencia_pct, materialidade)
   values (
     p_caso_id, p_entidade_id, p_periodo_id, p_tipo, p_classe, p_fonte_a, p_fonte_b,
-    v_res_log <> 'precondicao_nao_satisfeita', v_res_log,
+    v_res_log <> 'precondicao_nao_satisfeita', v_res_log, v_motivo_precondicao,
     p_divergencia_abs, p_divergencia_pct, p_materialidade
   )
   returning id into v_reconciliacao_id;
@@ -13126,8 +13151,15 @@ CREATE TABLE public.reconciliacao (
     divergencia_abs numeric,
     divergencia_pct numeric,
     materialidade jsonb,
-    criado_em timestamp with time zone DEFAULT now() NOT NULL
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    motivo_precondicao text
 );
+
+--
+-- Name: COLUMN reconciliacao.motivo_precondicao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.reconciliacao.motivo_precondicao IS 'O motivo VERDADEIRO quando resultado = precondicao_nao_satisfeita; NULL quando a checagem concluiu. Existe porque resultado achata estados com remédios OPOSTOS no mesmo texto (documento_ausente cobra o cliente pelo checklist; linha não localizada pede olhar o localizador ou a extração) — resultado não pode carregar essa distinção sem quebrar quem já lê essa coluna (portal, export, suítes, medidores). Ver o CONTRATO no cabeçalho da 0186 para a lista de valores reconhecidos.';
 
 --
 -- Name: rubrica_classe; Type: TABLE; Schema: public; Owner: -

@@ -1,5 +1,32 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## ✅ Migration `0186_o_motivo_que_o_achatamento_engolia.sql` — escrita, testada localmente, NÃO aplicada em produção
+>
+> Responde ao primeiro dos quatro estados que o diagnóstico logo abaixo ("MEDIDO 21/09/2026")
+> nomeia: `reconciliacao.resultado = 'precondicao_nao_satisfeita'` achatava "a contraparte não foi
+> entregue" (`documento_ausente`, remédio = cobrar pelo checklist) e "o documento veio e a linha
+> não foi localizada" (remédio = revisar extração/localizador) no MESMO texto — 1.922 das 1.926
+> linhas assim medidas em produção. Coluna nova `reconciliacao.motivo_precondicao` guarda o motivo
+> verdadeiro; `resultado` **não muda de vocabulário** (portal/export/suítes continuam lendo o
+> mesmo texto de sempre). `fn_registrar_reconciliacao` reemitida com essa gravação, mais um
+> backfill de `evento_auditoria` (onde o motivo original já sobrevivia, sem lugar acessível à
+> fila) para as linhas já gravadas. `documento_ausente` continua NÃO abrindo pendência — nada
+> disso mudou.
+>
+> Testada localmente: `Supabase/test/run.sh` do zero, verde, `Supabase/schema.sql` regravado sem
+> diff. Invariante novo em `Supabase/test/reconciliacao_motivo_precondicao.test.sql`, pela costura
+> real (`fn_upsert_caso` → `fn_registrar_documento` → `fn_registrar_campos_extraidos` →
+> `fn_reconciliar_caixa_bp_fluxo`), não por INSERT direto — **9 asserts, medidos reprovando com a
+> correção desligada** (banco reconstruído sem a `0186`) antes de religar. Catálogo da sonda
+> acrescido (`reconciliacao_motivo_precondicao_existe`, `coluna`; e
+> `fn_registrar_reconciliacao_grava_motivo`, `corpo`, bloqueante) e `instalacao_cobertura` em
+> `0186`.
+>
+> **Escrita ≠ aplicada.** O alcance do backfill em PRODUÇÃO **não foi medido** (a regra desta
+> sessão foi zero chamada ao Supabase) — quem aplicar mede antes, com a consulta somente leitura
+> que o comentário de aplicação em `Supabase/README.md` cita, e só a sonda (`fn_instalacao_conferir`)
+> responde se `0186` está de fato instalada.
+
 > ## 🚨 MEDIDO 21/09/2026: a camada de reconciliação quase não CONCLUI — e uma checagem nunca concluiu
 >
 > Nasceu de uma pergunta estreita (o DRE líquido cega a `despfin_dre_vs_divida`?). A resposta é sim,
