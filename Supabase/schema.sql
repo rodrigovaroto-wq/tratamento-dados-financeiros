@@ -40,6 +40,21 @@ CREATE TYPE public.caso_status AS ENUM (
 );
 
 --
+-- Name: controlador_tipo_pessoa; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.controlador_tipo_pessoa AS ENUM (
+    'fisica',
+    'juridica'
+);
+
+--
+-- Name: TYPE controlador_tipo_pessoa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TYPE public.controlador_tipo_pessoa IS '0182: pessoa física ou jurídica que detém participação num controlador comum. Vocabulário FECHADO e universalmente conhecido (dicotomia do direito civil brasileiro) — não é um rótulo de domínio deste projeto que possa crescer, ao contrário de `perimetro.escopo` (0180, texto livre por vocabulário não medido). Mesmo critério da 0179 para `papel_no_grupo` (enum): vocabulário fechado e conhecido vira enum; vocabulário aberto e não medido fica texto livre.';
+
+--
 -- Name: decisao_tipo; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -1980,6 +1995,46 @@ $$;
 COMMENT ON FUNCTION public.fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid) IS '0124: a empresa DO CASO que o rótulo nomeia como contraparte (o sufixo depois do separador), ou null. É o que permite conferir intragrupo sem adivinhar qual conta casa com qual.';
 
 --
+-- Name: fn_controlador_registrar(uuid, text, text, public.controlador_tipo_pessoa, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_controlador_registrar(p_caso_id uuid, p_nome text, p_documento text, p_tipo_pessoa public.controlador_tipo_pessoa, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_existe boolean;
+  v_documento   text := nullif(trim(coalesce(p_documento, '')), '');
+  v_id          uuid;
+begin
+  if p_nome is null or length(trim(p_nome)) = 0 then
+    raise exception 'p_nome não pode ser vazio — um controlador sem nome não é registrável';
+  end if;
+
+  select exists(select 1 from caso where id = p_caso_id) into v_caso_existe;
+  if not v_caso_existe then
+    raise exception 'caso % não encontrado', p_caso_id;
+  end if;
+
+  insert into controlador (caso_id, nome, documento, tipo_pessoa)
+  values (p_caso_id, trim(p_nome), v_documento, p_tipo_pessoa)
+  returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'controlador_registrado', 'controlador:' || v_id,
+          jsonb_build_object('caso_id', p_caso_id, 'nome', trim(p_nome),
+                              'documento', v_documento, 'tipo_pessoa', p_tipo_pessoa));
+
+  return v_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_controlador_registrar(p_caso_id uuid, p_nome text, p_documento text, p_tipo_pessoa public.controlador_tipo_pessoa, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_controlador_registrar(p_caso_id uuid, p_nome text, p_documento text, p_tipo_pessoa public.controlador_tipo_pessoa, p_autor text) IS '0182: o ÚNICO caminho de escrita de `controlador` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). NADA é inferido de campo_extraido, nome ou CNPJ — a decisão de QUEM é controlador vem do contrato social na mão de quem chama.';
+
+--
 -- Name: fn_decidir_pendencia(uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2807,6 +2862,60 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) IS '0181: sobe a cadeia de `controladora_id` a partir de `p_nova_controladora_id` e devolve true se `p_entidade_id` aparecer nela — nesse caso, torná-la controladora de `p_entidade_id` fecharia um ciclo. Limite de 50 saltos (mesmo limite do consumidor de leitura, item 4) evita loop infinito com dado sujo. Chamada por `fn_entidade_definir_participacao` ANTES de gravar — é a MEDIÇÃO NÃO-VAZIA desta migration (ver cabeçalho).';
+
+--
+-- Name: fn_entidade_definir_controlador(uuid, uuid, numeric, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entidade_definir_controlador(p_entidade_id uuid, p_controlador_id uuid, p_percentual numeric, p_autor text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_caso_entidade       uuid;
+  v_caso_controlador    uuid;
+  v_percentual_anterior numeric;
+  v_id                  uuid;
+begin
+  select caso_id into v_caso_entidade from entidade where id = p_entidade_id;
+  if v_caso_entidade is null then
+    raise exception 'entidade % não encontrada', p_entidade_id;
+  end if;
+
+  select caso_id into v_caso_controlador from controlador where id = p_controlador_id;
+  if v_caso_controlador is null then
+    raise exception 'controlador % não encontrado', p_controlador_id;
+  end if;
+
+  if v_caso_controlador <> v_caso_entidade then
+    raise exception 'controlador % não pertence ao mesmo caso que a entidade %',
+      p_controlador_id, p_entidade_id;
+  end if;
+
+  select percentual into v_percentual_anterior
+    from entidade_controlador
+   where entidade_id = p_entidade_id and controlador_id = p_controlador_id;
+
+  insert into entidade_controlador (caso_id, entidade_id, controlador_id, percentual)
+  values (v_caso_entidade, p_entidade_id, p_controlador_id, p_percentual)
+  on conflict (entidade_id, controlador_id)
+  do update set percentual = excluded.percentual, atualizado_em = now()
+  returning id into v_id;
+
+  insert into evento_auditoria (ator, acao, entidade_ref, depois)
+  values (p_autor, 'entidade_controlador_definido', 'entidade:' || p_entidade_id,
+          jsonb_build_object('controlador_id', p_controlador_id,
+                              'percentual_novo', p_percentual,
+                              'percentual_anterior', v_percentual_anterior));
+
+  return v_id;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_entidade_definir_controlador(p_entidade_id uuid, p_controlador_id uuid, p_percentual numeric, p_autor text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_entidade_definir_controlador(p_entidade_id uuid, p_controlador_id uuid, p_percentual numeric, p_autor text) IS '0182: o ÚNICO caminho de escrita de `entidade_controlador` — chamado por um humano/analista (portal ou SQL direto; o portal não é escopo desta fatia). Valida que entidade e controlador existem e pertencem ao mesmo caso. Upsert por (entidade_id, controlador_id) — reatribuir o percentual é permitido, é o ESTADO ATUAL (histórico em evento_auditoria). A guarda de soma (fn_trg_entidade_controlador_soma_maxima) recusa a gravação se a soma dos percentuais conhecidos da entidade passasse de 100. Grava evento_auditoria (ator = p_autor, nunca ''sistema:...''). NADA é inferido de campo_extraido, nome ou CNPJ.';
 
 --
 -- Name: fn_entidade_definir_papel_no_grupo(uuid, public.entidade_papel_no_grupo, text); Type: FUNCTION; Schema: public; Owner: -
@@ -4919,6 +5028,47 @@ $$;
 --
 
 COMMENT ON FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid) IS 'A pergunta do laço de calibração do Arquitetura do Sistema/2 Especificação/f0/06 ("concordância alta e estável?"), respondida em número. O TIPO MAIS FRACO governa: o dial é por estágio e o Arquitetura do Sistema/2 Especificação/f0/06 raciocina por tipo, e autonomia por (estágio x tipo) não existe no schema — enquanto não existir, a leitura conservadora é a única honesta. Rodada não congelada não autoriza nada. Métrica desconhecida RECUSA.';
+
+--
+-- Name: fn_grupo_por_controle_comum(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) RETURNS TABLE(entidade_id uuid, razao_social text, grupo_id uuid)
+    LANGUAGE sql STABLE
+    AS $$
+  with recursive par_direto as materialized (
+    select ec1.entidade_id as a, ec2.entidade_id as b
+      from entidade_controlador ec1
+      join entidade_controlador ec2
+        on ec2.controlador_id = ec1.controlador_id
+       and ec2.entidade_id <> ec1.entidade_id
+     where ec1.caso_id = p_caso_id
+  ),
+  alcance(entidade_id, alcancavel, salto) as (
+    select e.id, e.id, 0
+      from entidade e
+     where e.caso_id = p_caso_id
+       and exists (
+         select 1 from entidade_controlador ec
+          where ec.entidade_id = e.id and ec.caso_id = p_caso_id)
+    union
+    select al.entidade_id, pd.b, al.salto + 1
+      from alcance al
+      join par_direto pd on pd.a = al.alcancavel
+     where al.salto < 50
+  )
+  select al.entidade_id, e.razao_social, min(al.alcancavel::text)::uuid as grupo_id
+    from alcance al
+    join entidade e on e.id = al.entidade_id
+   group by al.entidade_id, e.razao_social
+   order by min(al.alcancavel::text), e.razao_social;
+$$;
+
+--
+-- Name: FUNCTION fn_grupo_por_controle_comum(p_caso_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) IS '0182: agrupa as entidades do caso por CONTROLE COMUM, por FECHO TRANSITIVO — se A e B compartilham um controlador, e B e C compartilham outro, as três caem no mesmo grupo. `par_direto` (pares de um salto) é MATERIALIZED de propósito (evita reavaliação a cada iteração da recursão — mesma lição da 0152, ver comentário acima da função). `grupo_id` é o entidade_id alcançável de menor ordenação textual — representante arbitrário mas estável do componente conexo, não uma entidade "principal". Entidade sem controlador registrado não aparece na saída — ausência não afirma nada sobre grupo real algum (regra 7 do CLAUDE.md). Limite de 50 saltos, mesmo headroom da guarda de ciclo da 0181. É o consumidor mínimo que prova a fatia 1.7 do roadmap: "as 8 entidades do mandato real podem ser reconhecidas como um grupo".';
 
 --
 -- Name: fn_indice_macro_anual(integer); Type: FUNCTION; Schema: public; Owner: -
@@ -11219,6 +11369,40 @@ $$;
 COMMENT ON FUNCTION public.fn_trg_entidade_ambigua() IS 'Chama fn_pendencia_entidade_ambigua quando um documento ganha entidade (0153). Existe porque checagem instalada e sem chamador é indistinguível de checagem que não achou nada.';
 
 --
+-- Name: fn_trg_entidade_controlador_soma_maxima(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_trg_entidade_controlador_soma_maxima() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_soma  numeric;
+  v_razao text;
+begin
+  select coalesce(sum(percentual), 0) into v_soma
+    from entidade_controlador
+   where entidade_id = NEW.entidade_id
+     and percentual is not null;
+
+  if v_soma > 100 then
+    select razao_social into v_razao from entidade where id = NEW.entidade_id;
+    raise exception 'a soma dos percentuais CONHECIDOS de "%" passaria de 100%% (chegaria a %) — '
+                     'conhecimento parcial é normal aqui (nem toda entidade tem todos os sócios '
+                     'medidos), mas a soma do que É CONHECIDO nunca pode superar o todo',
+      coalesce(v_razao, NEW.entidade_id::text), v_soma;
+  end if;
+
+  return NEW;
+end;
+$$;
+
+--
+-- Name: FUNCTION fn_trg_entidade_controlador_soma_maxima(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_trg_entidade_controlador_soma_maxima() IS '0182: a guarda de soma — nunca deixa a soma dos percentuais NÃO-NULOS de uma entidade passar de 100. NÃO exige que some 100 (regra 1 do CLAUDE.md pelo avesso — ver cabeçalho): conhecimento parcial (4 de 8 entidades do mandato real sem estrutura lida) é o estado normal, e exigir soma exata puniria isso. É a MEDIÇÃO NÃO-VAZIA (a) desta migration — sem o trigger abaixo chamando esta função, uma terceira participação que ultrapassasse 100% seria gravada em silêncio.';
+
+--
 -- Name: fn_unidade_predominante(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12258,6 +12442,31 @@ CREATE TABLE public.classe_contabil_catalogo (
 COMMENT ON TABLE public.classe_contabil_catalogo IS 'A taxonomia contábil fechada do Arquitetura do Sistema/2 Especificação/05 (recorrente, nao_recorrente, extraordinario, candidato_ajuste_ebitda, revisar_manual). TABELA e não enum de propósito: acrescentar um sexto rótulo deve custar uma linha de seed, não uma migration que altera tipo — no Postgres alterar enum não remove valor e não volta atrás. Mesma escolha que a 0038 fez com premissas.';
 
 --
+-- Name: controlador; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.controlador (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    nome text NOT NULL,
+    documento text,
+    tipo_pessoa public.controlador_tipo_pessoa NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: TABLE controlador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.controlador IS '0182 (fatia 1.7a do plano F1): a pessoa (física, ou jurídica externa ao perímetro do caso) que detém participação em uma ou mais entidades do caso — escopada por `caso_id`, como `entidade`. Existe para registrar CONTROLE COMUM sem inventar uma holding que não existe (ver `.claude/memory/grupo-por-controle-comum-sem-holding.md`): o vínculo mora em `entidade_controlador`, e `fn_grupo_por_controle_comum` agrupa as entidades por FECHO TRANSITIVO de controladores compartilhados. Não confundir com `entidade` — um controlador PESSOA FÍSICA nunca vira `entidade` (essa tabela é só de pessoas jurídicas do mandato); um controlador PESSOA JURÍDICA aqui é externo ao perímetro (senão a hierarquia seria `entidade.controladora_id`, 0181, não isto). Os dois caminhos de escrita são `fn_controlador_registrar` e `fn_entidade_definir_controlador` — nunca inferência automática a partir de `campo_extraido`, nome ou CNPJ (regra 1 do CLAUDE.md).';
+
+--
+-- Name: COLUMN controlador.documento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.controlador.documento IS '0182: CPF ou CNPJ do controlador, texto livre e OPCIONAL — não há função de canonicalização de CPF neste repositório (só `fn_cnpj_canonico`, 0169, que é de CNPJ), e exigir o documento transformaria "sabemos que é sócio, mas não temos o CPF no contrato" (o estado normal aqui) em bloqueio. NULL é um documento não informado, distinto de um documento informado errado.';
+
+--
 -- Name: decisao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12378,6 +12587,39 @@ COMMENT ON COLUMN public.documento_versao.fingerprint_extracao IS 'Impressão do
 --
 
 COMMENT ON COLUMN public.documento_versao.fatos_avaliados_em IS 'Quando esta versão foi lida à procura de fatos materiais (0149). NULL = ainda não foi — e nesse caso os fatos da versão anterior continuam valendo na tela. Preenchida mesmo quando a leitura não achou nada: é o que distingue "sem fatos" de "não processada".';
+
+--
+-- Name: entidade_controlador; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entidade_controlador (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    caso_id uuid NOT NULL,
+    entidade_id uuid NOT NULL,
+    controlador_id uuid NOT NULL,
+    percentual numeric(6,3),
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT entidade_controlador_percentual_valido CHECK (((percentual IS NULL) OR ((percentual > (0)::numeric) AND (percentual <= (100)::numeric))))
+);
+
+--
+-- Name: TABLE entidade_controlador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.entidade_controlador IS '0182 (fatia 1.7a do plano F1): quem controla o quê, por CONTROLE COMUM — o vínculo N:N entre `entidade` e `controlador` que `entidade.controladora_id` (0181, FK de empresa para empresa) não alcança quando não há holding (ver `.claude/memory/grupo-por-controle-comum-sem-holding.md` e o cabeçalho desta migration). SEM `desde`/`ate` — DELIBERADO, é uma limitação documentada, não um esquecimento (ver cabeçalho): não há nada medido hoje que justifique temporalidade aqui, ao contrário do `perimetro` da 0180. NO MÁXIMO uma linha por (entidade_id, controlador_id) — reatribuir o percentual é permitido (fn_entidade_definir_controlador sobrescreve o ESTADO ATUAL), o histórico mora em evento_auditoria. O único caminho de escrita é `fn_entidade_definir_controlador`.';
+
+--
+-- Name: COLUMN entidade_controlador.percentual; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entidade_controlador.percentual IS '0182: o percentual que este controlador detém desta entidade, em (0, 100], ou NULL. A DISTINÇÃO da regra 7 do CLAUDE.md: percentual NULL com a LINHA PRESENTE significa "é sócio CONHECIDO, o percentual NÃO foi medido" (ex.: um contrato que nomeia o sócio sem discriminar a fração, ou um dos 4 casos deste mandato em que o contrato social ainda não foi lido). A AUSÊNCIA DA LINHA inteira significa "não se sabe se esta pessoa é sócia desta entidade" — nem chegou a ser perguntado. As duas ausências (percentual NULL vs. linha ausente) NÃO SÃO A MESMA COISA, e confundi-las apagaria a diferença entre "sabemos que é sócio, falta o número" e "não sabemos nada". Nunca inserir uma linha só para registrar incerteza quando não há vínculo de sociedade conhecido algum.';
+
+--
+-- Name: CONSTRAINT entidade_controlador_percentual_valido ON entidade_controlador; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT entidade_controlador_percentual_valido ON public.entidade_controlador IS '0182: percentual tem de estar em (0, 100] quando informado — zero ou negativo não é participação, mais de 100% não existe. Protege INSERT/UPDATE direto, mesma doutrina do `entidade_percentual_valido` da 0181 e do `perimetro_intervalo_valido` da 0180.';
 
 --
 -- Name: estagio_autonomia; Type: TABLE; Schema: public; Owner: -
@@ -13264,6 +13506,13 @@ ALTER TABLE ONLY public.classe_contabil_catalogo
     ADD CONSTRAINT classe_contabil_catalogo_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: controlador controlador_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.controlador
+    ADD CONSTRAINT controlador_pkey PRIMARY KEY (id);
+
+--
 -- Name: decisao decisao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13297,6 +13546,20 @@ ALTER TABLE ONLY public.documento_versao
 
 ALTER TABLE ONLY public.documento_versao
     ADD CONSTRAINT documento_versao_pkey PRIMARY KEY (id);
+
+--
+-- Name: entidade_controlador entidade_controlador_par_unico; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade_controlador
+    ADD CONSTRAINT entidade_controlador_par_unico UNIQUE (entidade_id, controlador_id);
+
+--
+-- Name: entidade_controlador entidade_controlador_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade_controlador
+    ADD CONSTRAINT entidade_controlador_pkey PRIMARY KEY (id);
 
 --
 -- Name: entidade entidade_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -13537,6 +13800,18 @@ ALTER TABLE ONLY public.taxonomia_tipo_documento
     ADD CONSTRAINT taxonomia_tipo_documento_pkey PRIMARY KEY (codigo);
 
 --
+-- Name: controlador_caso_documento_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX controlador_caso_documento_unico ON public.controlador USING btree (caso_id, documento) WHERE (documento IS NOT NULL);
+
+--
+-- Name: INDEX controlador_caso_documento_unico; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON INDEX public.controlador_caso_documento_unico IS '0182: o mesmo documento não pode virar dois controladores diferentes no mesmo caso — duplicaria a contagem da guarda de soma sem decisão nenhuma. Documento NULL não colide com nada (vários controladores sem documento informado são permitidos).';
+
+--
 -- Name: documento_fato_versao_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13621,6 +13896,12 @@ CREATE INDEX idx_caso_premissa_caso ON public.caso_premissa USING btree (caso_id
 CREATE INDEX idx_checklist_caso ON public.checklist_item_status USING btree (caso_id);
 
 --
+-- Name: idx_controlador_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_controlador_caso ON public.controlador USING btree (caso_id);
+
+--
 -- Name: idx_decisao_caso; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13649,6 +13930,24 @@ CREATE INDEX idx_docversao_documento ON public.documento_versao USING btree (doc
 --
 
 CREATE INDEX idx_entidade_caso ON public.entidade USING btree (caso_id);
+
+--
+-- Name: idx_entidade_controlador_caso; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_entidade_controlador_caso ON public.entidade_controlador USING btree (caso_id);
+
+--
+-- Name: idx_entidade_controlador_controlador; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_entidade_controlador_controlador ON public.entidade_controlador USING btree (controlador_id);
+
+--
+-- Name: idx_entidade_controlador_entidade; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_entidade_controlador_entidade ON public.entidade_controlador USING btree (entidade_id);
 
 --
 -- Name: idx_evento_entidade_ref; Type: INDEX; Schema: public; Owner: -
@@ -13757,6 +14056,12 @@ CREATE TRIGGER trg_auto_promover_dial AFTER INSERT ON public.decisao FOR EACH RO
 --
 
 CREATE TRIGGER trg_entidade_ambigua AFTER INSERT OR UPDATE OF entidade_id ON public.documento FOR EACH ROW EXECUTE FUNCTION public.fn_trg_entidade_ambigua();
+
+--
+-- Name: entidade_controlador trg_entidade_controlador_soma_maxima; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_entidade_controlador_soma_maxima AFTER INSERT OR UPDATE OF percentual ON public.entidade_controlador FOR EACH ROW WHEN ((new.percentual IS NOT NULL)) EXECUTE FUNCTION public.fn_trg_entidade_controlador_soma_maxima();
 
 --
 -- Name: golden_campo trg_golden_campo_congelada; Type: TRIGGER; Schema: public; Owner: -
@@ -13923,6 +14228,13 @@ ALTER TABLE ONLY public.checklist_item_status
     ADD CONSTRAINT checklist_item_status_tipo_taxonomia_fkey FOREIGN KEY (tipo_taxonomia) REFERENCES public.taxonomia_tipo_documento(codigo);
 
 --
+-- Name: controlador controlador_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.controlador
+    ADD CONSTRAINT controlador_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
 -- Name: decisao decisao_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13984,6 +14296,27 @@ ALTER TABLE ONLY public.documento_versao
 
 ALTER TABLE ONLY public.entidade
     ADD CONSTRAINT entidade_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: entidade_controlador entidade_controlador_caso_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade_controlador
+    ADD CONSTRAINT entidade_controlador_caso_id_fkey FOREIGN KEY (caso_id) REFERENCES public.caso(id) ON DELETE CASCADE;
+
+--
+-- Name: entidade_controlador entidade_controlador_controlador_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade_controlador
+    ADD CONSTRAINT entidade_controlador_controlador_id_fkey FOREIGN KEY (controlador_id) REFERENCES public.controlador(id) ON DELETE CASCADE;
+
+--
+-- Name: entidade_controlador entidade_controlador_entidade_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entidade_controlador
+    ADD CONSTRAINT entidade_controlador_entidade_id_fkey FOREIGN KEY (entidade_id) REFERENCES public.entidade(id) ON DELETE CASCADE;
 
 --
 -- Name: entidade entidade_controladora_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -14299,6 +14632,18 @@ ALTER TABLE public.classe_contabil_catalogo ENABLE ROW LEVEL SECURITY;
 CREATE POLICY classe_contabil_catalogo_read ON public.classe_contabil_catalogo FOR SELECT TO authenticated USING (true);
 
 --
+-- Name: controlador; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.controlador ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: controlador controlador_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY controlador_read ON public.controlador FOR SELECT TO authenticated USING (true);
+
+--
 -- Name: decisao; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -14357,6 +14702,18 @@ ALTER TABLE public.entidade ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY entidade_authenticated_all ON public.entidade TO authenticated USING (true) WITH CHECK (true);
+
+--
+-- Name: entidade_controlador; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.entidade_controlador ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: entidade_controlador entidade_controlador_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY entidade_controlador_read ON public.entidade_controlador FOR SELECT TO authenticated USING (true);
 
 --
 -- Name: estagio_autonomia; Type: ROW SECURITY; Schema: public; Owner: -
@@ -14817,6 +15174,12 @@ GRANT ALL ON FUNCTION public.fn_contas_repetindo_valor(p_documento_versao_id uui
 GRANT ALL ON FUNCTION public.fn_contraparte_intragrupo(p_caso_id uuid, p_chave text, p_entidade_dona uuid) TO authenticated;
 
 --
+-- Name: FUNCTION fn_controlador_registrar(p_caso_id uuid, p_nome text, p_documento text, p_tipo_pessoa public.controlador_tipo_pessoa, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_controlador_registrar(p_caso_id uuid, p_nome text, p_documento text, p_tipo_pessoa public.controlador_tipo_pessoa, p_autor text) TO authenticated;
+
+--
 -- Name: FUNCTION fn_decidir_pendencia(p_pendencia_id uuid, p_autor text, p_decisao text, p_motivo text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -14917,6 +15280,12 @@ GRANT ALL ON FUNCTION public.fn_entidade_canonica_forte(p_nome text) TO authenti
 --
 
 GRANT ALL ON FUNCTION public.fn_entidade_criaria_ciclo_participacao(p_entidade_id uuid, p_nova_controladora_id uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_entidade_definir_controlador(p_entidade_id uuid, p_controlador_id uuid, p_percentual numeric, p_autor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_entidade_definir_controlador(p_entidade_id uuid, p_controlador_id uuid, p_percentual numeric, p_autor text) TO authenticated;
 
 --
 -- Name: FUNCTION fn_entidade_definir_papel_no_grupo(p_entidade_id uuid, p_papel public.entidade_papel_no_grupo, p_autor text); Type: ACL; Schema: public; Owner: -
@@ -15103,6 +15472,12 @@ GRANT ALL ON FUNCTION public.fn_golden_rotular_campos(p_rodada uuid, p_documento
 --
 
 GRANT ALL ON FUNCTION public.fn_golden_suficiente(p_estagio text, p_rodada uuid) TO authenticated;
+
+--
+-- Name: FUNCTION fn_grupo_por_controle_comum(p_caso_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.fn_grupo_por_controle_comum(p_caso_id uuid) TO authenticated;
 
 --
 -- Name: FUNCTION fn_indice_macro_anual(p_desde_ano integer); Type: ACL; Schema: public; Owner: -
@@ -15592,6 +15967,14 @@ GRANT ALL ON TABLE public.classe_contabil_catalogo TO authenticated;
 GRANT ALL ON TABLE public.classe_contabil_catalogo TO service_role;
 
 --
+-- Name: TABLE controlador; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.controlador TO anon;
+GRANT ALL ON TABLE public.controlador TO authenticated;
+GRANT ALL ON TABLE public.controlador TO service_role;
+
+--
 -- Name: TABLE decisao; Type: ACL; Schema: public; Owner: -
 --
 
@@ -15622,6 +16005,14 @@ GRANT ALL ON TABLE public.documento_fato TO service_role;
 GRANT ALL ON TABLE public.documento_versao TO anon;
 GRANT ALL ON TABLE public.documento_versao TO authenticated;
 GRANT ALL ON TABLE public.documento_versao TO service_role;
+
+--
+-- Name: TABLE entidade_controlador; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.entidade_controlador TO anon;
+GRANT ALL ON TABLE public.entidade_controlador TO authenticated;
+GRANT ALL ON TABLE public.entidade_controlador TO service_role;
 
 --
 -- Name: TABLE estagio_autonomia; Type: ACL; Schema: public; Owner: -

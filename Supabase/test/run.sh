@@ -574,6 +574,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_participacao.test.sql
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0182 — grupo por controle comum: controlador/entidade_controlador, sem holding (fatia 1.7a do plano F1)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_controlador.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \
