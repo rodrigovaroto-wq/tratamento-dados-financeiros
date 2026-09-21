@@ -3,9 +3,19 @@
 > ## Migration mais nova: `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — cobertura de
 > tipos: nove tipos antes mudos — AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS,
 > CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT — ganham UMA exigência de conteúdo cada, no
-> mesmo padrão `origem='proposta'` da 0113. Escrita e verificada localmente (banco do zero,
-> `run.sh` verde, sonda 0 ausentes); **ainda NÃO aplicada em produção** — quem aplicar confere a
-> sonda antes de dar a fatia por fechada. Detalhe completo abaixo, no bloco da F1/F1.7.
+> mesmo padrão `origem='proposta'` da 0113. **Passou por uma revisão independente que reprovou a
+> primeira versão** (localizadores de CONTINGENCIAS/HEADCOUNT/EXTRATO_BANCARIO/ESTOQUE casavam
+> `chave`, mas nos documentos reais o termo mora em `secao` — medido contra
+> `Supabase/test/fixture_book_canastra.sql`: 4 de 6 tipos presentes na fixture davam pendência
+> FALSA) — corrigida no mesmo arquivo (localizador `contra='secao'` em cascata, mecanismo que já
+> existia desde a 0113) e agora com um segundo bloco de teste que mede contra a fixture real, não
+> só contra rótulo escolhido pelo próprio teste. Escrita e verificada localmente (banco do zero,
+> `run.sh` verde); a sonda tem 1 ausente, pré-existente e não relacionado
+> (`custo_gravado_pelo_n8n`, 0115 — depende do n8n ter rodado, não de schema). **Ainda NÃO
+> aplicada em produção**: quem aplicar mede o ALCANCE antes — `fn_recomputar_completude` roda de
+> oito lugares diferentes (não só extração nova) e materializa as nove exigências
+> RETROATIVAMENTE para casos já gravados; ver o comentário junto do comando de apply em
+> `Supabase/README.md`. Detalhe completo abaixo, no bloco da F1/F1.7.
 >
 > ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
 >

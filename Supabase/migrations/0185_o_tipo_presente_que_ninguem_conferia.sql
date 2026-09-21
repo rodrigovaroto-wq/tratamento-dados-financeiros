@@ -52,8 +52,84 @@
 -- em produção sozinhas, sem função nenhuma reemitida aqui — exatamente como
 -- as três propostas da 0113 já entraram.
 --
+-- "SOZINHAS" NÃO É "SÓ NA PRÓXIMA EXTRAÇÃO". `fn_recomputar_completude` é
+-- chamada de dentro de `fn_registrar_campos_extraidos` (0128:989) E de mais
+-- sete lugares (0008:206, 0018:117, 0041:396, 0043:298, 0111:234, 0129:286, e
+-- o nó "Recomputar Completude" de `N8N/workflow.e1-ingestao.json`). Aplicar
+-- esta migration em produção materializa as nove exigências RETROATIVAMENTE
+-- para todo caso já gravado, no primeiro recompute que tocar cada um — o que
+-- inclui qualquer revisão no portal, não só extração de documento novo. Quem
+-- aplicar mede o alcance ANTES, pela lição da 0179
+-- (`.claude/memory/aplicar-migration-em-producao-pela-api.md`) — ver o
+-- comentário junto do comando de apply em `Supabase/README.md`.
+--
 -- Idempotente: `on conflict (tipo_taxonomia, conceito) do nothing` /
 -- `on conflict (exigencia_id, ordem) do nothing`, padrão do seed da 0113.
+--
+-- CORREÇÃO (revisão independente, medida contra
+-- Supabase/test/fixture_book_canastra.sql — o documento mais realista que o
+-- repositório tem, gerado e versionado pelo CI). A PRIMEIRA versão desta
+-- migration só tinha localizador `contra='chave'`. Contra a fixture real, isso
+-- é o MESMO defeito que a 0166 já corrigiu uma vez, em escala 4×: em quatro
+-- tipos, o termo que a extração real usa não mora no RÓTULO da linha, mora na
+-- SEÇÃO — e um localizador que só olha `chave` não vê o documento correto,
+-- abre pendência FALSA nele.
+--
+--   • CONTINGENCIAS: as chaves são "Trabalhista — Reclamações de horas
+--     extras…", "Tributária — Glosa de créditos de ICMS…" — "contingência"
+--     está na secao ("CONTINGÊNCIAS — Provável"/"Possível"/"Remoto"), não na
+--     chave.
+--   • HEADCOUNT: as chaves são nomes de centro de custo ("Produção - turno
+--     A", "Diretoria") — "Headcount" é a SECAO; zero ocorrências de
+--     "headcount"/"funcionario" em qualquer chave da fixture.
+--   • EXTRATO_BANCARIO: as chaves são "Banco Meridional S.A. — ag. 0341 c/c
+--     12.884-7" — "saldo" só aparece na secao ("SALDOS BANCÁRIOS").
+--   • ESTOQUE: a única chave que contém "estoque" é "TOTAL DE ESTOQUES", e o
+--     `exclui ['total']` do localizador por chave a mata de propósito (é o
+--     mesmo `exclui` que protege os outros tipos itemizados de satisfazer só
+--     com o rodapé). As linhas REAIS de estoque ("Matérias-primas…",
+--     "Produtos acabados", "(-) Provisão para obsolescência") têm chaves sem
+--     a palavra "estoque" nenhuma — mas TÊM secao = "ESTOQUES", em várias
+--     linhas além do total (fixture:1067, 1080, 1086 — não só a 1086).
+--
+-- A CORREÇÃO acrescenta, para esses quatro conceitos, um localizador em
+-- CASCATA com `contra='secao'` (mecanismo que já existe desde a 0113,
+-- 0113:150-162 e o `case` de 0113:230-240 — não foi usado em nenhum dos nove
+-- localizadores originais desta migration). A exigência satisfaz-se quando
+-- QUALQUER localizador casa, então o de `chave` continua ali (documentando a
+-- convenção "codigo" que ele cobriria, se algum documento a usasse) e o novo
+-- de `secao` é quem de fato casa a fixture real. Para ESTOQUE, especificamente,
+-- a decisão é MANTER o `exclui ['total']` do localizador por chave — ele seria
+-- perigoso remover (um documento que só trouxesse "TOTAL DE ESTOQUES" e mais
+-- nada voltaria a satisfazer com uma linha de rodapé só, o BURACO que esta
+-- migration existe para fechar, achado 4 da revisão) — e resolver via o novo
+-- localizador de secao, que casa as linhas de detalhe reais sem depender do
+-- rótulo "estoque" estar na chave.
+--
+-- O QUE ISTO NÃO FECHA (dívida nomeada, não bloqueante — achado 4 da revisão,
+-- registrado para quem for endurecer estas exigências depois):
+--   • AGING_AP/AGING_AR só se satisfazem hoje pela linha RESIDUAL da fixture
+--     ("Demais fornecedores (184 credores)", "Demais clientes (312
+--     sacados)") — as demais chaves são nomes próprios de contraparte, sem a
+--     palavra "fornecedor"/"cliente". Um aging que trouxesse só o top-N sem
+--     linha de resto abriria pendência FALSA; um que trouxesse SÓ a linha de
+--     resto SATISFAZ a exigência — o buraco oposto ao que a migration diz
+--     fechar. Não corrigido aqui: exigiria uma forma de localizador que este
+--     mecanismo (termo em chave/secao) não expressa — é candidato a esperar
+--     mais dado real antes de desenhar, mesma doutrina da 0181 sobre "grupo
+--     por controle comum sem holding".
+--   • `aval` é substring de "avaliação"/"avaliado" depois de
+--     `fn_normalizar_texto` (minúsculas, sem acento): `like '%aval%'` casaria
+--     "Participações em outras sociedades - avaliadas ao custo", presente na
+--     canastra num tipo de documento DIFERENTE de AVAIS_FIANCAS — inofensivo
+--     hoje porque a exigência só é cobrada dentro de documentos do próprio
+--     tipo AVAIS_FIANCAS (fn_exigencias_do_caso casa `c.tipo_taxonomia =
+--     e.tipo_taxonomia`), mas o termo continua largo o bastante para colidir
+--     se um documento de AVAIS_FIANCAS real tiver uma linha de avaliação de
+--     participação societária. GARANTIAS, AVAIS_FIANCAS e DEBITOS_TRIB não
+--     aparecem em nenhuma das duas fixtures do repositório (Vertentes nem
+--     Canastra) — não há documento real contra o qual medir estes três hoje;
+--     ficam com os localizadores originais, sem correção adicional.
 -- =============================================================================
 
 insert into taxonomia_linha_exigida
@@ -125,23 +201,38 @@ on conflict (tipo_taxonomia, conceito) do nothing;
 -- prova que o detalhe por contraparte/item existe. EXTRATO_BANCARIO e
 -- AVAIS_FIANCAS não excluem 'total' — "saldo" e "aval"/"fiança" não colidem
 -- com um rótulo de total genérico nesses dois tipos.
+--
+-- QUATRO conceitos (CONTINGENCIAS, HEADCOUNT, EXTRATO_BANCARIO, ESTOQUE)
+-- ganham AINDA um localizador `contra='secao'` — ver "CORREÇÃO" no header
+-- desta migration. Sem `exclui`: a secao de um documento real não é um rótulo
+-- de rodapé isolado, é o agrupamento inteiro (várias linhas de detalhe
+-- compartilham a mesma secao), então o risco de satisfazer só com uma linha
+-- de total sozinha — a razão do `exclui ['total']` nos localizadores de
+-- `chave` acima — não se aplica do mesmo jeito aqui.
 insert into taxonomia_linha_localizador (exigencia_id, ordem, contra, termos_inclui, termos_exclui)
-select e.id, x.ordem, 'chave', x.inclui, x.exclui
+select e.id, x.ordem, x.contra, x.inclui, x.exclui
 from taxonomia_linha_exigida e
 join (values
-  ('AGING_AP',        'saldo_em_aberto_fornecedor', 1, array['fornecedor']::text[], array['total']::text[]),
-  ('AGING_AR',         'saldo_em_aberto_cliente',    1, array['cliente']::text[],    array['total']::text[]),
-  ('EXTRATO_BANCARIO', 'saldo_em_conta',             1, array['saldo']::text[],      '{}'::text[]),
-  ('GARANTIAS',        'valor_garantia',             1, array['garantia']::text[],   array['total']::text[]),
-  ('AVAIS_FIANCAS',    'valor_aval_fianca',          1, array['aval']::text[],       '{}'::text[]),
-  ('AVAIS_FIANCAS',    'valor_aval_fianca',          2, array['fianca']::text[],     '{}'::text[]),
-  ('CONTINGENCIAS',    'valor_contingencia',         1, array['contingencia']::text[], array['total']::text[]),
-  ('DEBITOS_TRIB',     'valor_debito_tributario',    1, array['tributo']::text[],    array['total']::text[]),
-  ('DEBITOS_TRIB',     'valor_debito_tributario',    2, array['imposto']::text[],    array['total']::text[]),
-  ('ESTOQUE',          'valor_estoque',              1, array['estoque']::text[],    array['total']::text[]),
-  ('HEADCOUNT',        'quantidade_headcount',       1, array['headcount']::text[],  '{}'::text[]),
-  ('HEADCOUNT',        'quantidade_headcount',       2, array['funcionario']::text[], '{}'::text[])
-) x(tipo, conceito, ordem, inclui, exclui)
+  ('AGING_AP',        'saldo_em_aberto_fornecedor', 1, 'chave', array['fornecedor']::text[], array['total']::text[]),
+  ('AGING_AR',         'saldo_em_aberto_cliente',    1, 'chave', array['cliente']::text[],    array['total']::text[]),
+  ('EXTRATO_BANCARIO', 'saldo_em_conta',             1, 'chave', array['saldo']::text[],      '{}'::text[]),
+  ('GARANTIAS',        'valor_garantia',             1, 'chave', array['garantia']::text[],   array['total']::text[]),
+  ('AVAIS_FIANCAS',    'valor_aval_fianca',          1, 'chave', array['aval']::text[],       '{}'::text[]),
+  ('AVAIS_FIANCAS',    'valor_aval_fianca',          2, 'chave', array['fianca']::text[],     '{}'::text[]),
+  ('CONTINGENCIAS',    'valor_contingencia',         1, 'chave', array['contingencia']::text[], array['total']::text[]),
+  ('DEBITOS_TRIB',     'valor_debito_tributario',    1, 'chave', array['tributo']::text[],    array['total']::text[]),
+  ('DEBITOS_TRIB',     'valor_debito_tributario',    2, 'chave', array['imposto']::text[],    array['total']::text[]),
+  ('ESTOQUE',          'valor_estoque',              1, 'chave', array['estoque']::text[],    array['total']::text[]),
+  ('HEADCOUNT',        'quantidade_headcount',       1, 'chave', array['headcount']::text[],  '{}'::text[]),
+  ('HEADCOUNT',        'quantidade_headcount',       2, 'chave', array['funcionario']::text[], '{}'::text[]),
+  -- CORREÇÃO (revisão, ver o header): quatro conceitos em que o rótulo real
+  -- carrega o termo na SEÇÃO, não na chave (fixture_book_canastra.sql). O
+  -- `contra='secao'` já existe desde a 0113 — só não tinha sido usado aqui.
+  ('CONTINGENCIAS',    'valor_contingencia',         3, 'secao', array['contingencia']::text[], '{}'::text[]),
+  ('HEADCOUNT',        'quantidade_headcount',       3, 'secao', array['headcount']::text[],  '{}'::text[]),
+  ('EXTRATO_BANCARIO', 'saldo_em_conta',             2, 'secao', array['saldo']::text[],      '{}'::text[]),
+  ('ESTOQUE',          'valor_estoque',              2, 'secao', array['estoque']::text[],    '{}'::text[])
+) x(tipo, conceito, ordem, contra, inclui, exclui)
   on x.tipo = e.tipo_taxonomia and x.conceito = e.conceito
 where e.origem = 'proposta'
 on conflict (exigencia_id, ordem) do nothing;

@@ -15,10 +15,21 @@
 --   • o MESMO documento, com uma versão nova que TRAZ a linha (rótulo que
 --     casa o localizador) → satisfeita=true e a pendência resolve sozinha.
 --
--- Um caso por tipo (nove no total), loop em cima de um array de literais —
--- não é fixture inventada para provar bug de produção (regra 4 do CLAUDE.md):
--- é o mesmo tipo de rótulo real que os outros 18 asserts de linha_exigida.test.sql
--- já usam para os seis tipos 'codigo' e os três 'proposta' anteriores.
+-- Um caso por tipo (nove no total), loop em cima de um array de literais.
+--
+-- ADVERTÊNCIA (revisão independente, achado 3a): os `chave_ok` abaixo são
+-- rótulos PROPOSTOS por quem escreveu este teste — não são extraídos de
+-- nenhum documento real, e foram escolhidos depois do localizador, então por
+-- construção CONTÊM o termo que o localizador procura. Isto prova que o
+-- MECANISMO liga (a exigência consegue ser satisfeita por ALGUMA chave) e
+-- nada mais — não prova que o TERMO escolhido case o rótulo que um documento
+-- real usa. A primeira versão desta migration tinha exatamente essa lacuna:
+-- os 45 asserts abaixo ficaram verdes com quatro localizadores que, contra
+-- Supabase/test/fixture_book_canastra.sql (o documento mais realista do
+-- repositório), casavam ZERO chaves reais — o termo morava na `secao`, não na
+-- `chave` (CONTINGENCIAS, HEADCOUNT, EXTRATO_BANCARIO, ESTOQUE). O bloco 2
+-- deste arquivo, abaixo, é o que fecha essa lacuna: mede contra a fixture
+-- real, não contra um rótulo que o próprio teste inventou.
 
 \set ON_ERROR_STOP on
 
@@ -115,6 +126,56 @@ begin
   raise notice 'linha_exigida_tipos_variaveis OK — as 9 exigências da 0185 (AGING_AP/AGING_AR/'
     'EXTRATO_BANCARIO/GARANTIAS/AVAIS_FIANCAS/CONTINGENCIAS/DEBITOS_TRIB/ESTOQUE/HEADCOUNT) '
     'cobram sem a linha e resolvem sozinhas quando ela aparece';
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- BLOCO 2 (revisão independente, achado 2) — o CONTRAPOSITIVO, medido contra
+-- documento REAL, não contra rótulo escolhido pelo próprio teste.
+--
+-- O book CANASTRA (Supabase/test/fixture_book_canastra.sql, carregado por
+-- Supabase/test/run.sh ANTES deste arquivo) é "extração fiel" de documentos
+-- difíceis de verdade — é o padrão mais alto de realismo que o repositório
+-- tem para uma chave/seção. Seis dos nove tipos desta migration aparecem
+-- nele: AGING_AP, AGING_AR, CONTINGENCIAS, HEADCOUNT, EXTRATO_BANCARIO,
+-- ESTOQUE (GARANTIAS/AVAIS_FIANCAS/DEBITOS_TRIB não aparecem em nenhuma das
+-- duas fixtures do repositório — não há contra o que medir estes três hoje).
+--
+-- A propriedade travada: para cada um dos seis tipos presentes no caso da
+-- fixture, `fn_exigencias_do_caso` — chamada depois de um
+-- `fn_recomputar_completude` explícito, para não depender de QUAL teste
+-- anterior recomputou o caso por último — devolve satisfeita=TRUE. Antes da
+-- correção dos localizadores (ver "CORREÇÃO" no cabeçalho da migration 0185),
+-- este bloco reprovava em 4 dos 6 (CONTINGENCIAS, HEADCOUNT,
+-- EXTRATO_BANCARIO, ESTOQUE) — é o achado bloqueante da revisão.
+do $$
+declare
+  v_caso uuid := '11111111-3333-3333-3333-111111111111'; -- caso da fixture canastra
+  v_tipo text;
+  v_sat boolean;
+  v_conceito text;
+begin
+  perform fn_recomputar_completude(v_caso);
+
+  for v_tipo, v_conceito in
+    select tipo_taxonomia, conceito from taxonomia_linha_exigida
+     where origem = 'proposta'
+       and tipo_taxonomia in ('AGING_AP','AGING_AR','EXTRATO_BANCARIO','GARANTIAS',
+         'AVAIS_FIANCAS','CONTINGENCIAS','DEBITOS_TRIB','ESTOQUE','HEADCOUNT')
+       and exists (select 1 from documento d
+                    where d.caso_id = v_caso and d.tipo_taxonomia = taxonomia_linha_exigida.tipo_taxonomia)
+     order by 1, 2
+  loop
+    select x.satisfeita into v_sat
+      from fn_exigencias_do_caso(v_caso) x
+     where x.tipo_taxonomia = v_tipo and x.conceito = v_conceito;
+    perform teste_assert_letv(coalesce(v_sat, false),
+      v_tipo || '/' || v_conceito || ': satisfeita=true contra o documento REAL da fixture canastra',
+      coalesce(v_sat::text, 'exigência não apareceu (documento sem conteúdo?)'));
+  end loop;
+
+  raise notice 'linha_exigida_tipos_variaveis BLOCO 2 OK — os tipos da 0185 presentes na fixture '
+    'canastra (AGING_AP/AGING_AR/CONTINGENCIAS/HEADCOUNT/EXTRATO_BANCARIO/ESTOQUE) se satisfazem '
+    'contra o documento REAL, não só contra o rótulo que o bloco 1 escolheu';
 end $$;
 
 drop function teste_assert_letv(boolean, text, text);

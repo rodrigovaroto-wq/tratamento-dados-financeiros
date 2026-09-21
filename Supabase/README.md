@@ -287,6 +287,25 @@ supabase db execute --file Supabase/migrations/0178_o_titulo_da_planilha_nao_e_p
 supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
+
+# A 0185 é seed puro (nove exigências novas em taxonomia_linha_exigida), mas
+# NÃO é "só dado parado": fn_recomputar_completude — chamada de dentro de
+# fn_registrar_campos_extraidos (0128) e mais sete lugares (0008, 0018, 0041,
+# 0043, 0111, 0129, e o nó "Recomputar Completude" do N8N,
+# N8N/workflow.e1-ingestao.json) — já lê QUALQUER exigência ativa via
+# fn_exigencias_do_caso. Aplicar a 0185 materializa as nove exigências novas
+# RETROATIVAMENTE, no primeiro recompute de completude que tocar cada caso —
+# que é qualquer extração nova ou qualquer revisão no portal, não só
+# documento novo. Meça o alcance ANTES de aplicar (lição da 0179,
+# .claude/memory/aplicar-migration-em-producao-pela-api.md):
+#   select tipo_taxonomia, count(distinct caso_id) from documento
+#     where tipo_taxonomia in ('AGING_AP','AGING_AR','EXTRATO_BANCARIO',
+#       'GARANTIAS','AVAIS_FIANCAS','CONTINGENCIAS','DEBITOS_TRIB','ESTOQUE',
+#       'HEADCOUNT')
+#     group by 1;
+# e rode fn_exigencias_do_caso(caso_id) em modo LEITURA sobre os casos reais
+# encontrados, para saber quantas pendências linha_exigida_ausente novas vão
+# aparecer antes que apareçam sozinhas na fila do dono.
 supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_conferia.sql
 
 # ---------------------------------------------------------------------------
