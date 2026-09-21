@@ -1,5 +1,37 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## 🔎 DIAGNÓSTICO 21/09/2026: 64% da fila de pendências é UM conceito, e a pendência está certa dizendo a coisa errada
+>
+> Medido em produção (somente leitura). Das **81** pendências `linha_exigida_ausente` abertas,
+> **52 (64%) são `DRE / despesa_financeira`**, em 10 casos, uma por entidade (granularidade da
+> `0119`). A concentração parecia defeito de localizador — a hipótese estava ERRADA, e a medição
+> por entidade a desfez. As três causas, contadas:
+>
+> | Causa | Entidades |
+> |---|---|
+> | **B — o DRE apresenta `Resultado financeiro líquido` / `RESULTADO ANTES DO RESULTADO FINANCEIRO`, e não uma linha de despesa bruta** | **50** |
+> | D — a entidade não tem nenhuma linha financeira (ex.: `GLOBAL STORE`, 87 linhas, nenhuma) | 2 |
+> | A — FALSA: a entidade tem `JUROS E COMISSÕES BANCÁRIAS`, `JUROS DE MORA`, mas o localizador 2 exige "juros" **E** "encargos" no MESMO rótulo | 1 |
+>
+> **A causa B não é bug de extração nem de localizador: é uma escolha contábil legítima.** Um DRE
+> pode publicar o resultado financeiro LÍQUIDO em vez de abrir despesa e receita. A linha exigida
+> realmente não existe — a pendência está tecnicamente certa. **O problema é o que ela DIZ:** "a
+> linha exigida 'Despesa Financeira' não foi localizada" lê-se como falha de extração, quando o
+> recado útil seria *"o DRE traz o resultado financeiro líquido; a conferência contra o mapa de
+> dívida (`despfin_dre_vs_divida`, 0023) precisa da despesa BRUTA — peça a abertura"*. É a regra 1
+> pelo avesso: não é ausência virando dado, é ausência real com o motivo e o EFEITO omitidos.
+>
+> **A causa A é defeito de verdade, pequeno e com armadilha:** o localizador 2 de
+> `despesa_financeira` é `['juros','encargos']` — os dois termos no mesmo rótulo. Afrouxar para
+> `['juros']` sozinho é ERRADO: casaria `JUROS DE APLICAÇÕES` e `Juros s/ Aplicação Financeira`,
+> que são RECEITA, e satisfaria a exigência com o sinal trocado. Quem corrigir precisa excluir
+> aplicação/receita explicitamente.
+>
+> **Suspeita derivada, NÃO investigada:** `despesa_financeira` é `origem='codigo'` — ela espelha a
+> reconciliação `fn_reconciliar_despfin_dre_vs_divida` (`0023`). Se o DRE líquido cega a exigência,
+> é provável que cegue a reconciliação do mesmo jeito (precondição não satisfeita, em silêncio, nos
+> mesmos 50). Isso dobraria o valor da correção e ainda não foi medido.
+
 > ## Migration mais nova: `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — cobertura de
 > tipos: nove tipos antes mudos — AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS,
 > CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT — ganham UMA exigência de conteúdo cada, no
