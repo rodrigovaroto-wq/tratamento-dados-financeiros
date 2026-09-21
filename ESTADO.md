@@ -10,12 +10,13 @@
 > FALSA) — corrigida no mesmo arquivo (localizador `contra='secao'` em cascata, mecanismo que já
 > existia desde a 0113) e agora com um segundo bloco de teste que mede contra a fixture real, não
 > só contra rótulo escolhido pelo próprio teste. Escrita e verificada localmente (banco do zero,
-> `run.sh` verde); a sonda tem 1 ausente, pré-existente e não relacionado
+> `run.sh` verde); teste `linha_exigida_tipos_variaveis.test.sql` com **51 asserts** (45 sintéticos
+> bloco 1 + 6 contra fixture canastra bloco 2); a sonda tem 1 ausente, pré-existente e não relacionado
 > (`custo_gravado_pelo_n8n`, 0115 — depende do n8n ter rodado, não de schema). **Ainda NÃO
 > aplicada em produção**: quem aplicar mede o ALCANCE antes — `fn_recomputar_completude` roda de
 > oito lugares diferentes (não só extração nova) e materializa as nove exigências
 > RETROATIVAMENTE para casos já gravados; ver o comentário junto do comando de apply em
-> `Supabase/README.md`. Detalhe completo abaixo, no bloco da F1/F1.7.
+> `Supabase/README.md`. Detalhe completo em ficha de conhecimento (F2.1).
 >
 > ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
 >

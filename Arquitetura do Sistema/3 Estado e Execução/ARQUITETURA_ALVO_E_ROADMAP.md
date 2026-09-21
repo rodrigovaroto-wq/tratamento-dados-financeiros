@@ -469,14 +469,17 @@ F14→F16 · F15→F17 (contínua).
 | | |
 |---|---|
 | **Objetivo** | Que nenhum tipo seja ingerido sem que alguém confira se o conteúdo chegou |
-| **Estado** | 🔴 6 de 36 com exigência viva; 3 mortas |
-| **Gap** | exigência + localizador para `MAPA_DIVIDA` (fino), `AGING_AP`, `AGING_AR`, `EXTRATO_BANCARIO`, `GARANTIAS`, `AVAIS_FIANCAS`, `CONTINGENCIAS`, `DEBITOS_TRIB`, `ESTOQUE`, `HEADCOUNT`; promover as 3 `proposta` |
+| **Estado** | 🟡 9 de 36 com exigência viva (F2.1 FEITA 21/09/2026 — `0185`); 3 mortas |
+| **Gap** | exigência + localizador para `MAPA_DIVIDA` (fino), `AGING_AP`, `AGING_AR`; **promover as 3 `proposta` a bloqueante** |
 | **Dep.** | F0 |
 | **Agentes** | `migrations-postgres`, `n8n-workflow`, **`ontologia-contabil`** (novo) |
-| **Testes** | `linha_exigida.test.sql` estendido; **terceiro book: distress** |
+| **Testes** | `linha_exigida.test.sql` estendido; **terceiro book: distress**; **F2.1: linha_exigida_tipos_variaveis.test.sql (51 asserts)** |
 | **Risco** | Baixo — aditivo · **Impacto** Alto e subestimado · **Esforço** M |
 | **Saída** | D6 verde |
 | **Aceite financeiro** | mandato sem aging/extrato **não** é declarado pronto |
+| | |
+| **F2.1 — Tipos variáveis (migration 0185)** | **ESCRITA E VERIFICADA LOCALMENTE (21/09/2026)**, não aplicada em produção. Nove tipos antes mudos ganham uma exigência cada (`AGING_AP`, `AGING_AR`, `EXTRATO_BANCARIO`, `GARANTIAS`, `AVAIS_FIANCAS`, `CONTINGENCIAS`, `DEBITOS_TRIB`, `ESTOQUE`, `HEADCOUNT`), no padrão `origem='proposta'` da `0113`. Revisão independente reprovou primeira versão por localizadores casando `chave` quando termo mora em `secao` em docs reais — corrigida com `contra='secao'` em cascata. **51 asserts** (45 sintéticos + 6 contra fixture canastra). Portões: conferir.mjs OK, verificar-espelho OK, verificar-comandos OK. **Achado guardado:** MUTUOS e FAT_INTRAGRUPO também reprovam contra fixture (não investigado nesta fatia). |
+| **F2.2–F2.4** | MAPA_DIVIDA fino (F2.2) · promover MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL a bloqueante (F2.3) · terceiro book distress (F2.4) |
 
 *Entrega lateral barata: **Diagnóstico factual** — `documento_fato` já captura covenant rompido,
 continuidade operacional e ressalva. Expor numa tela custa pouco e não depende de nada adiante.*

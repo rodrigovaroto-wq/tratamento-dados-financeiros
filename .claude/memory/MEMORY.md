@@ -32,6 +32,8 @@ Uma linha por entrada; teto mole de 130 linhas não vazias.
 
 ## Armadilhas de teste e de portão
 
+- [Localizador contra `chave` abre pendência falsa quando termo mora em `secao`](../conhecimento/fichas/f2-localizador-chave-pendencia-falsa.md) —
+  aconteceu em `0166`, volta agora em `0185`, vai voltar em F2.2/F2.3/F2.4 se não for checado contra documento real
 - [Fixture nasce vazia com mais frequência do que parece](fixture-nasce-vazia.md) — duas da
   sessão 18 passavam com o bug LIGADO
 - [Derivado versionado precisa de `git diff --exit-code`](derivado-versionado-precisa-de-git-diff.md)
