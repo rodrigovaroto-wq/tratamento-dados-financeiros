@@ -75,18 +75,18 @@ Nenhuma das três fatias (0179/0180/0181) foi aplicada em produção ainda — e
 
 ## Aplicação em produção (18/09/2026)
 
-As **quatro migrations 0178–0181 foram aplicadas em produção** em decisão do dono, com sonda rodada para cada uma. **Resultado: 107 requisitos, 0 ausentes** — a cobertura da `0181` é completa. Efeito medido:
+As **quatro migrations 0178–0181 foram aplicadas em produção** pela API de gerenciamento do Supabase (a porta do Postgres não é alcançável do container), conferidas objeto a objeto após cada uma. **Resultado final: 107 requisitos no catálogo, 0 ausentes**, `instalacao_cobertura.ate_migration = '0181'`. Efeito MEDIDO de cada uma, em produção — não estimado:
 
-- `0178` (guarda de entidade fantasma): 4 detecções em mandato AMO
-- `0179` (papel_no_grupo tipado): 7 entidades inicialmente indefinidas, abrindo pendência complementar `papel_no_grupo_indefinido`
-- `0180` (perimetro novo): tabela criada, 0 linhas (à espera de decisão do dono sobre escopo)
-- `0181` (participacao com FK): FK e percentual em lugar, nenhuma controladora ainda (esperado — grupo real sem holding)
+- `0178` (guarda de entidade fantasma): marcou **7 entidades** no banco inteiro (70 casos) — previsto 7 antes de aplicar, medindo o léxico direto no banco; conferido 7 depois. O critério frouxo, sem o léxico, alcançaria 145.
+- `0179` (papel_no_grupo tipado): o backfill abriu **365 pendências** `papel_no_grupo_indefinido` — uma por entidade de TODO o banco (70 casos), não só as ~13 do mandato real. **347 foram resolvidas em lote** por decisão da sessão que aplicou, como ruído de caso de teste (`resolvida_por = 'sessao-claude:ruido-de-caso-de-teste'`, evento de auditoria `pendencias_papel_resolvidas_em_lote` com o critério registrado); **18 seguem abertas** — o mandato real `AMO teste 00` e os casos `AMOBELEZA*`. O backfill não distingue mandato real de caso de teste morto; isso é uma lição para a próxima migration com backfill, não um defeito desta.
+- `0180` (perimetro novo): tabela criada, **0 linhas** — correto: ninguém declarou perímetro ainda, é decisão humana via `fn_perimetro_definir_escopo`.
+- `0181` (participação com FK): estrutura pronta, `controladora_id` **NULL nas 365 entidades** — no mandato real isso está CERTO, não incompleto: o grupo não tem holding (ver seção abaixo).
 
-Instruções de aplicação futura (próxima migration em produção) e detalhes da necessidade de duas chamadas para `0179` (`alter type` exige DROP/CREATE) estão em `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
+**A armadilha do transporte, não do arquivo**: a API de gerenciamento envolve o lote numa transação implícita, e o Postgres recusa usar um rótulo de enum recém-criado dentro da MESMA transação em que nasceu — não é DROP/CREATE, é a regra de visibilidade de `ALTER TYPE ... ADD VALUE` dentro de transação. A `0179` acrescenta `papel_no_grupo_indefinido` e o usa no mesmo arquivo (por isso foi escrita sem `begin;`/`commit;`), mas isso não basta quando o transporte envolve tudo numa transação própria. Aplicada em DOIS passos: o `alter type` sozinho, depois o resto do arquivo com só aquela linha comentada numa cópia de scratchpad (nunca o arquivo versionado). Detalhe completo em `.claude/memory/aplicar-migration-em-producao-pela-api.md`.
 
 ## Estado de `F1.6` (próxima fatia)
 
-Bloqueada — aguardando que o dono forneça o COMBINADO real do cliente. O mandato AMO teste 00 não tem COMBINADO real ingerido; o que está marcado como tal é apenas um balanço de uma entidade. A fatia exige conferir o perímetro contra o COMBINADO, e sem ele é impossível.
+**NÃO VERIFICÁVEL, por motivo estrutural — não "bloqueada esperando documento".** A investigação nos contratos sociais reais (4 de 8 entidades legíveis) mediu que o grupo é de empresas IRMÃS sob controle comum de pessoas físicas, sem holding nenhuma. "Demonstração combinada" é a forma contábil desse arranjo, não exigida em formato padrão — o cliente provavelmente nunca preparou uma, e não é isso que falta pedir. O aceite financeiro da F1 fica NÃO VERIFICADO com o motivo declarado (regra 1), e isso NÃO bloqueia o resto do roadmap. Ver `.claude/memory/grupo-por-controle-comum-sem-holding.md` e a fatia 1.7 (nascida dessa medição, documentada e não construída).
 
 ## Commits (em ordem)
 
@@ -95,3 +95,8 @@ Bloqueada — aguardando que o dono forneça o COMBINADO real do cliente. O mand
 - `5c6916a` — merge das duas linhas paralelas
 - `57a1814` — F1.4
 - `a3381d8` — F1.5
+- `eb549d0` — handoff da rodada de construção (F1.3/1.4/1.5)
+- `e6e8799` — correção de números fabricados neste mesmo handoff
+- `f96faaf` — achado do grupo sem holding, F1.6 não verificável, fatia 1.7 nasce
+- `be9e1bf` — as 4 migrations aplicadas em produção, sonda 0 ausentes
+- `15c8716` — fechamento de documentação (esta seção tinha números errados nessa passada — 4/7 em vez de 7/365 — corrigidos no commit seguinte)
