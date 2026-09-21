@@ -284,11 +284,20 @@ jobs:
         # SUSPEITA), e o PISO de cobertura — que é a regra 7 aplicada ao próprio
         # índice, porque uma regex que parou de casar continua verde e devolve
         # briefing curto, que se lê como "não há nada sobre isso".
+        #
+        # A TERCEIRA metade, acrescentada em 21/09/2026 depois de o portão acima
+        # reprovar por um defeito que ele NÃO sabia nomear: o grafo tinha 50 nós de
+        # `Verificação/saida/` (gitignored), porque a sessão rodou `variacoes.mts`
+        # antes de `indexar.mjs`. O `git diff --exit-code` acusou "diverge", que é
+        # verdade e é inútil — não diz que a causa foi artefato gerado. O teste
+        # abaixo afirma o invariante direto e nomeia os caminhos: rodado contra
+        # aquele grafo (070b0c2), reprova com 25 caminhos distintos.
         run: |
           node .claude/conhecimento/indexar.mjs
           git diff --exit-code -- .claude/conhecimento/grafo.jsonl \
             || { echo "::error::o grafo commitado diverge do repositório — rode node .claude/conhecimento/indexar.mjs e commite o resultado"; exit 1; }
           node .claude/conhecimento/conferir.mjs
+          node --test '.claude/conhecimento/test/*.test.mjs'
 
       - name: Portão dos comandos de barra (todo subagent_type existe)
         # Despacho para `subagent_type` inexistente falha em tempo de execução, e

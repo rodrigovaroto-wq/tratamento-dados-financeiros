@@ -75,6 +75,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
 
 const RAIZ = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
@@ -94,14 +95,56 @@ const aresta = (de, rel, pa, f = "", l = 0) => {
 const ler = (p) => readFileSync(join(RAIZ, p), "utf8");
 const existe = (p) => existsSync(join(RAIZ, p));
 
-/** Percorre um diretório do repositório, sem entrar em node_modules nem .git. */
+// TUDO QUE O GIT IGNORA FICA FORA DO GRAFO, e a razão é um portão vermelho medido
+// em 21/09/2026 (PR #238). Antes desta linha, a lista de exclusão era três NOMES
+// (`node_modules`, `.git`, `.next`), e qualquer outro diretório gerado entrava no
+// índice. Foi o que aconteceu: `Verificação/variacoes.mts` grava 24 arquivos em
+// `Verificação/saida/` (gitignored, `.gitignore:21`), a sessão rodou o `variacoes`
+// ANTES do `indexar` — que é a ordem em que o bloco de comandos do `CLAUDE.md` os
+// lista —, e o grafo commitado saiu com **50 nós e arestas que não existem num
+// checkout limpo**. No runner esses arquivos não existem, o grafo regerado sai sem
+// eles, e o `git diff --exit-code` do portão reprovou.
+//
+// O defeito real não era o commit: era o conteúdo do grafo DEPENDER de quais
+// scripts a sessão rodou antes de indexar. Um portão cujo veredito é função do
+// estado local de quem commitou não está medindo o repositório — é a regra 7 do
+// CLAUDE.md aplicada à própria ferramenta de memória. Perguntar ao git, em vez de
+// manter uma lista de nomes à mão, é o mesmo princípio de "derivar, nunca
+// duplicar" que o cabeçalho deste arquivo defende: o `.gitignore` já é a
+// declaração de o que não é código do repositório, e mantê-la copiada aqui seria
+// a terceira ocorrência do defeito que o cabeçalho cita duas vezes.
+//
+// `-z` é OBRIGATÓRIO, não estilo: sem ele o git aplica `core.quotePath` e devolve
+// `"Verifica\303\247\303\243o/saida/"` — com aspas e escapes octais —, que nunca
+// casaria com o caminho real. Este repositório tem acento em nome de diretório de
+// topo (`Verificação/`), então o caso quebrado é o caso comum aqui.
+const IGNORADOS = new Set(
+  execFileSync("git", ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory"],
+    { cwd: RAIZ, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+    .split("\0")
+    .filter(Boolean)
+    .map((p) => p.replace(/\/$/, "")),
+);
+
+/** Percorre um diretório do repositório, pulando o que o git ignora. */
 function* arquivos(dir, filtro = () => true) {
   const abs = join(RAIZ, dir);
   if (!existsSync(abs)) return;
   for (const nome of readdirSync(abs).sort()) {
-    if (nome === "node_modules" || nome === ".git" || nome === ".next") continue;
+    // DOIS casos que `ls-files -i` NÃO cobre, e os dois foram CONFERIDOS em
+    // 21/09/2026 com `git check-ignore -q` antes de esta linha encolher:
+    //   `.git`   — o git não o "ignora", ele o desconhece; nunca sai em ls-files.
+    //   `.next`  — **NÃO está no `.gitignore` deste repositório** (medido: só
+    //              `portal/node_modules` sai ignorado; `portal/.next` não). Trocar
+    //              este pulo por "pergunte ao git" faria o build do Next entrar no
+    //              grafo na primeira sessão que rodasse `next build` — o mesmo
+    //              defeito que esta fatia corrige, ao contrário. Fica por NOME até
+    //              que alguém decida acrescentá-lo ao `.gitignore`, que é outra
+    //              fatia (e o `git status` hoje o mostra como não rastreado).
+    if (nome === ".git" || nome === ".next") continue;
     const p = join(abs, nome);
     const rel = relative(RAIZ, p);
+    if (IGNORADOS.has(rel)) continue;
     if (statSync(p).isDirectory()) yield* arquivos(rel, filtro);
     else if (filtro(rel)) yield rel;
   }
