@@ -8,9 +8,10 @@
 -- quebrar); é `motivo_precondicao` que passa a distinguir os dois estados com
 -- remédio oposto:
 --
---   documento_ausente          — a contraparte não foi entregue. NÃO abre
---                                 pendência (é cobrança do checklist do Kit
---                                 Básico, não achado de revisão).
+--   documento_ausente          — NÃO abre pendência, e é só isso que ele
+--                                 garante. NÃO prova que a contraparte deixou
+--                                 de ser entregue: a 0133 e a 0123 o emitem com
+--                                 o documento PRESENTE (ver o contrato na 0186).
 --   precondicao_nao_satisfeita — como MOTIVO, significa "o emissor não
 --                                 especificou o motivo" (ver o CONTRATO no
 --                                 cabeçalho da 0186) — NÃO prova que o
@@ -236,8 +237,13 @@ begin
     get stacked diagnostics v_msg = message_text;
   end;
 
-  perform teste_assert_motivo(v_erro,
-    'p_resultado fora do vocabulario levanta excecao (nao vira precondicoes_ok = true fabricado)',
+  -- Afirma a MENSAGEM, não só "levantou alguma exceção": sem isso, uma
+  -- restrição futura em `reconciliacao` (um `not null` novo, uma FK) faria esta
+  -- mesma chamada estourar por OUTRO motivo, o assert continuaria verde, e a
+  -- guarda de vocabulário poderia ter sumido sem ninguém ver.
+  perform teste_assert_motivo(v_erro and coalesce(v_msg, '') like '%fora do vocabulario%',
+    'p_resultado fora do vocabulario levanta excecao NOMEANDO o vocabulario '
+    '(nao vira precondicoes_ok = true fabricado, e nao passa por exceção de outra causa)',
     coalesce(v_msg, '(nao levantou excecao nenhuma)'));
 
   select count(*) into v_n from reconciliacao

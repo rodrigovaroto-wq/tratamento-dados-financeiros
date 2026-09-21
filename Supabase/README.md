@@ -348,7 +348,30 @@ supabase db execute --file Supabase/migrations/0185_o_tipo_presente_que_ninguem_
 # dentro do arquivo da migration, aplicado inteiro por
 # `supabase db execute --file`; ir em lote significaria editar o ARQUIVO
 # antes de aplicar, não uma opção que a migration ofereça.
+#
+#   (c) E A TERCEIRA CONSULTA, QUE É A QUE PODE MANDAR NÃO APLICAR. A 0186
+#   acrescenta um `raise exception` quando `p_resultado` está fora de um
+#   vocabulário fixo. Esse vocabulário foi levantado por varredura do
+#   REPOSITÓRIO e conferido contra o banco de teste — mas produção é o único
+#   lugar onde uma função criada fora do repositório apareceria, e a
+#   reconciliação roda DENTRO do fluxo de ingestão, sem `exception when others`
+#   em nenhum ponto do caminho (conferido). Um décimo valor em produção vira
+#   exceção que aborta a transação do caso na ingestão — muito pior que o
+#   defeito que a 0186 corrige. Rode ANTES de aplicar; qualquer valor fora dos
+#   nove aceitos significa NÃO APLICAR e voltar ao desenho:
+#     select ea.depois->>'resultado' as motivo_emitido, count(*)
+#       from evento_auditoria ea
+#      where ea.ator = 'sistema:reconciliacao'
+#        and ea.acao like 'reconciliacao\_%'
+#      group by 1 order by 2 desc;
 supabase db execute --file Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql
+# DEPOIS DESTA, confira o backfill — o `raise notice` dele é EFÊMERO e some
+# em qualquer apply cuja saída seja capturada (UI, pipeline). Sem esta
+# consulta, "preencheu 1.926" e "preencheu 0 porque a junção não bateu" ficam
+# indistinguíveis, com a coluna instalada e a sonda verde:
+#   select count(*) filter (where motivo_precondicao is not null) as preenchidas,
+#          count(*) filter (where motivo_precondicao is null)     as continuam_null
+#     from reconciliacao where not precondicoes_ok;
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

@@ -46,10 +46,26 @@
 > Esta fatia DISPONIBILIZA o motivo na coluna; não torna a fila acionável sozinha — isso é a fatia
 > seguinte (consumir a coluna numa tela/export).
 >
+> **⚠️ `documento_ausente` NÃO significa "a contraparte não foi entregue" — e quem construir a
+> tela da fatia seguinte precisa saber disso ANTES de escrever a primeira linha.** A segunda
+> revisão independente pegou isto, e é a regra 1 na forma invertida: afirmar presença/ausência que
+> ninguém mediu. Medido no banco de teste: das 306 linhas com precondição falha, **42 de
+> `secao_fecha` e 9 de `mutuos_planilha_vs_balanco` têm `documento_ausente` com o documento
+> PRESENTE** — a `0133:371` emite esse motivo com `documento_id` não-nulo para "este documento não
+> tem seção com filhos", e a `0123` o emite com a planilha de mútuos entregue. **O que o motivo
+> garante é só o que o código faz com ele: não abre pendência.** Uma tela que o traduza para
+> "cobrar o documento do cliente" vai pedir o que o cliente já mandou — e a causa real (seção sem
+> filhos, conta de mútuo sem lado reconhecível) nunca chega à fila, porque justamente esse motivo
+> não abre pendência.
+>
 > **Escrita ≠ aplicada.** O alcance do backfill em PRODUÇÃO **não foi medido** (a regra desta
-> sessão foi zero chamada ao Supabase) — quem aplicar mede antes, com as duas consultas somente
+> sessão foi zero chamada ao Supabase) — quem aplicar mede antes, com as consultas somente
 > leitura que o comentário de aplicação em `Supabase/README.md` cita, e só a sonda
-> (`fn_instalacao_conferir`) responde se `0186` está de fato instalada.
+> (`fn_instalacao_conferir`) responde se `0186` está de fato instalada. **Uma das três consultas
+> pode mandar NÃO aplicar:** a guarda de vocabulário nova transforma valor inesperado em exceção,
+> e a reconciliação roda dentro do fluxo de ingestão sem `exception when others` em ponto nenhum
+> do caminho — se produção emitir um motivo fora da lista, o apply passa a abortar a transação do
+> caso na ingestão, que é muito pior que o defeito corrigido.
 
 > ## 🚨 MEDIDO 21/09/2026: a camada de reconciliação quase não CONCLUI — e uma checagem nunca concluiu
 >

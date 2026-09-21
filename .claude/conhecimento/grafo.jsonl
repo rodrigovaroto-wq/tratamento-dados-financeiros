@@ -1157,11 +1157,11 @@
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":212}
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_valor_em_base","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":93}
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_do_lote.test.sql","rel":"CHAMA","pa":"fn:fn_versao_com_extracao","f":"Supabase/test/reconciliacao_do_lote.test.sql","l":103}
-{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":23}
-{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":22}
-{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_caixa_bp_fluxo","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":24}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_campos_extraidos","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":23}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_documento","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":23}
 {"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":4}
-{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":21}
+{"k":"e","de":"arquivo:Supabase/test/reconciliacao_motivo_precondicao.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/reconciliacao_motivo_precondicao.test.sql","l":22}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_avaliar_guardas_extracao","f":"Supabase/test/reconferir.test.sql","l":91}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_reconciliar_ativo_passivo_pl","f":"Supabase/test/reconferir.test.sql","l":67}
 {"k":"e","de":"arquivo:Supabase/test/reconferir.test.sql","rel":"CHAMA","pa":"fn:fn_reconferir_caso","f":"Supabase/test/reconferir.test.sql","l":17}
@@ -1689,7 +1689,7 @@
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_cadeia_controladora","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":238}
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_criaria_ciclo_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":121}
 {"k":"e","de":"migration:0181","rel":"CRIA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","l":159}
-{"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":194}
+{"k":"e","de":"migration:0186","rel":"CRIA","pa":"fn:fn_registrar_reconciliacao","f":"Supabase/migrations/0186_o_motivo_que_o_achatamento_engolia.sql","l":227}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}

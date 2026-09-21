@@ -14,10 +14,13 @@
 -- ser acionável.
 --
 -- A CAUSA, lida em `fn_registrar_reconciliacao` (0023, corpo vigente na
--- 0127): a função já sabe a diferença — quem chama passa `'documento_ausente'`
--- quando a contraparte não existe, e passa `'precondicao_nao_satisfeita'` (ou
--- um motivo mais fino, numa fatia futura) quando o documento está lá e algo
--- não foi localizado — e ACHATA os dois na hora de gravar:
+-- 0127): quem chama passa DOIS literais distintos — `'documento_ausente'` e
+-- `'precondicao_nao_satisfeita'` — e a função ACHATA os dois num só na hora de
+-- gravar. O que cada literal significa está no CONTRATO abaixo, e NÃO é o que
+-- a intuição sugere: nenhum dos dois prova presença ou ausência de documento.
+-- (Esta frase já esteve errada aqui, dizendo que `precondicao_nao_satisfeita`
+-- significava "o documento está lá" — a revisão independente derrubou, e a
+-- correção da correção derrubou também a simétrica sobre `documento_ausente`.)
 --
 --     v_res_log := case when p_resultado = 'documento_ausente'
 --                       then 'precondicao_nao_satisfeita' else p_resultado end;
@@ -62,8 +65,17 @@
 -- mais específico sem que nada a jusante quebre — `resultado` continua saindo
 -- `precondicao_nao_satisfeita` para qualquer um deles:
 --
---   'documento_ausente'      — a contraparte não foi entregue. NÃO abre
---                               pendência (checklist do Kit Básico cobra).
+--   'documento_ausente'      — o que ele GARANTE é só uma coisa: NÃO abre
+--                               pendência. Ele NÃO prova que a contraparte
+--                               deixou de ser entregue, e quem construir tela
+--                               sobre isso vai mandar cobrar documento que o
+--                               cliente já entregou. Medido: `fn_reconciliar_arvore`
+--                               (0133:371) o emite com `p_documento_id` NÃO-NULO
+--                               ("este documento não tem seção com filhos") e
+--                               `fn_reconciliar_mutuos` (0123) o emite com a
+--                               planilha de mútuos PRESENTE — 42 linhas de
+--                               `secao_fecha` e 9 de `mutuos_planilha_vs_balanco`
+--                               no banco de teste, com o documento lá.
 --   'precondicao_nao_satisfeita' — CORRIGIDO após revisão independente, que
 --                               achou este trecho descrevendo errado o que o
 --                               próprio valor significa (regra 1, invertida:
@@ -111,6 +123,21 @@
 -- gravar o valor certo sem tocar em `fn_registrar_reconciliacao` de novo. Até
 -- lá, listá-los aqui sem uso é o CONTRATO ficando escrito antes do primeiro
 -- consumidor — não é código morto, é o combinado.
+--
+-- E O VOCABULÁRIO É UMA GUARDA DURA, NÃO UM COMENTÁRIO: `p_resultado` fora da
+-- lista levanta exceção. Isso fecha o buraco que a revisão independente mediu
+-- (um literal com UMA letra trocada fazia `precondicoes_ok` virar TRUE — a
+-- coluna que é o denominador de toda a medição desta fase). Mas a guarda tem
+-- um custo que quem aplicar precisa pesar ANTES: a reconciliação roda dentro
+-- do fluxo de ingestão e não há `exception when others` em ponto nenhum desse
+-- caminho, então um valor inesperado deixa de ser dado errado em silêncio e
+-- passa a ABORTAR a transação do caso. O vocabulário foi levantado varrendo o
+-- repositório e conferido contra o banco de teste (os valores realmente
+-- emitidos no histórico são 6, todos dentro da lista) — mas produção é o único
+-- lugar onde uma função criada fora do repositório apareceria. A consulta que
+-- fecha isso é somente leitura, roda ANTES do apply, e está no
+-- `Supabase/README.md`, item (c) do bloco desta migration. Valor fora da lista
+-- lá = NÃO APLICAR.
 --
 -- O BACKFILL — alcance medido no banco de TESTE, não em produção.
 --
@@ -170,9 +197,15 @@ alter table reconciliacao
 
 comment on column reconciliacao.motivo_precondicao is
   'O motivo que o emissor passou ANTES do achatamento de resultado, quando a checagem NÃO '
-  'concluiu; NULL quando concluiu (ok/divergente/divergencia/zona_cinzenta). documento_ausente '
-  'é confiável — só é emitido quando a checagem detectou a contraparte de fato ausente (cobra '
-  'o cliente pelo checklist do Kit Básico). precondicao_nao_satisfeita como MOTIVO significa '
+  'concluiu; NULL quando concluiu (ok/divergente/divergencia/zona_cinzenta). NENHUM DOS DOIS '
+  'MOTIVOS PROVA PRESENÇA OU AUSÊNCIA DE DOCUMENTO, e quem construir tela sobre esta coluna '
+  'precisa saber disso. documento_ausente NÃO é confiável como "a contraparte não foi '
+  'entregue": fn_reconciliar_arvore (0133) o emite com documento_id NÃO-NULO para "este '
+  'documento não tem seção com filhos", e fn_reconciliar_mutuos (0123) o emite para "planilha '
+  'de mútuos presente, mas nenhum balanço traz conta de mútuo com lado reconhecível" — nos dois '
+  'o documento FOI entregue. Medido no banco de teste: 42 linhas de secao_fecha e 9 de '
+  'mutuos_planilha_vs_balanco com este motivo e documento presente. O que documento_ausente '
+  'garante é só o que o código faz com ele: NÃO abre pendência. precondicao_nao_satisfeita como MOTIVO significa '
   'apenas "o emissor não especificou o motivo" — NÃO AUTORIZA concluir que o documento estava '
   'presente: é o mesmo literal que o legado (0009/0022, antes da reescrita da 0023 de '
   'fn_reconciliar_ativo_passivo_pl) usava tanto para documento ausente quanto para documento '
@@ -383,11 +416,17 @@ $$;
 --       têm `reconciliacao.tipo = 'caixa_bp_vs_fluxo'`, mas o evento saiu com
 --       `acao = 'reconciliacao_caixa_bp_fluxo'` (sem o `_vs`) — a junção
 --       original (`'reconciliacao_' || r.tipo`) nunca casava essas linhas, e
---       ficavam NULL sem erro nem aviso. MEDIDO em produção (não suposto):
---       `caixa_bp_vs_fluxo` gravou de 22/07 a 27/07/2026 e nunca mais,
---       nenhuma função em produção hoje menciona esse tipo, e
---       `caixa_bp_fluxo` começou a gravar em 27/07 — é renomeação do mesmo
---       tipo, não uma checagem distinta. O `case` abaixo mapeia o nome antigo
+--       ficavam NULL sem erro nem aviso. A PROVA ESTÁ NO CÓDIGO-FONTE, que é
+--       melhor que medição de produção porque qualquer sessão futura pode
+--       reconferir sem acesso a banco nenhum: `0009_reconciliacao_e3.sql:355`
+--       grava `tipo = 'caixa_bp_vs_fluxo'` enquanto `:396` grava
+--       `acao = 'reconciliacao_caixa_bp_fluxo'` HARDCODED, sem o `_vs`; idem
+--       `0022:786` contra `0022:827`. Varridos os quatro arquivos legados
+--       (`0009`, `0015`, `0021`, `0022`), esse é o ÚNICO par tipo↔ação
+--       divergente — todos os outros usam `'reconciliacao_' || p_tipo`. A 0023
+--       renomeou o tipo para `caixa_bp_fluxo`; é renomeação, não checagem
+--       distinta. O alcance está medido e registrado em `ESTADO.md`: 55 linhas
+--       com o nome antigo em produção. O `case` abaixo mapeia o nome antigo
 --       para o atual só para montar o `acao` da junção.
 --
 --   (b) sinal POSITIVO de execução: sem isto, "0 linhas preenchidas porque a
