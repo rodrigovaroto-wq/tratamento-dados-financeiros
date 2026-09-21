@@ -12927,6 +12927,22 @@ CREATE VIEW public.instalacao_sonda_rotulo_contraditorio AS
 COMMENT ON VIEW public.instalacao_sonda_rotulo_contraditorio IS '(0159) Autoteste de fn_documento_decide_sozinho, EXECUTADA por literais (função pura, sem fixture de documento nem de pendência): 1 linha só se o caso medido (COMBINADO com tipo_incorreto aberta), o caso comum (COMBINADO sem pendência, decide sozinho), o NULL (coalesce trata como ausente), o espelho da 0155 (BALANCO com tipo_incorreto continua decidindo sozinho — é a autoridade que cai, não a confiança) e o irrelevante (RAZAO, nunca se autodeclarou derivado) valem todos ao mesmo tempo. Um marcador textual de corpo/função não pega um "false and" que mate o predicado e deixe os comentários intactos (achado D da revisão da 0157) — esta view pega, porque o predicado É executado.';
 
 --
+-- Name: instalacao_sonda_tipos_mudos_f21; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.instalacao_sonda_tipos_mudos_f21 AS
+ SELECT id,
+    tipo_taxonomia
+   FROM public.taxonomia_linha_exigida e
+  WHERE ((origem = 'proposta'::text) AND (tipo_taxonomia = ANY (ARRAY['AGING_AP'::text, 'AGING_AR'::text, 'EXTRATO_BANCARIO'::text, 'GARANTIAS'::text, 'AVAIS_FIANCAS'::text, 'CONTINGENCIAS'::text, 'DEBITOS_TRIB'::text, 'ESTOQUE'::text, 'HEADCOUNT'::text])));
+
+--
+-- Name: VIEW instalacao_sonda_tipos_mudos_f21; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.instalacao_sonda_tipos_mudos_f21 IS 'Sonda da 0182: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a 0182 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém confira o conteúdo.';
+
+--
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15798,6 +15814,14 @@ GRANT ALL ON TABLE public.instalacao_sonda_passivo_bare TO service_role;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO anon;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO authenticated;
 GRANT ALL ON TABLE public.instalacao_sonda_rotulo_contraditorio TO service_role;
+
+--
+-- Name: TABLE instalacao_sonda_tipos_mudos_f21; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO anon;
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO authenticated;
+GRANT ALL ON TABLE public.instalacao_sonda_tipos_mudos_f21 TO service_role;
 
 --
 -- Name: TABLE lote_execucao; Type: ACL; Schema: public; Owner: -

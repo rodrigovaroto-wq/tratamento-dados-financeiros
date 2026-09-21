@@ -1,5 +1,12 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
+> ## Migration mais nova: `0182_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — cobertura de
+> tipos: nove tipos antes mudos — AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS,
+> CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT — ganham UMA exigência de conteúdo cada, no
+> mesmo padrão `origem='proposta'` da 0113. Escrita e verificada localmente (banco do zero,
+> `run.sh` verde, sonda 0 ausentes); **ainda NÃO aplicada em produção** — quem aplicar confere a
+> sonda antes de dar a fatia por fechada. Detalhe completo abaixo, no bloco da F1/F1.7.
+>
 > ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
