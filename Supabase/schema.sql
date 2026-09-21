@@ -12940,7 +12940,7 @@ CREATE VIEW public.instalacao_sonda_tipos_mudos_f21 AS
 -- Name: VIEW instalacao_sonda_tipos_mudos_f21; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON VIEW public.instalacao_sonda_tipos_mudos_f21 IS 'Sonda da 0182: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a 0182 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém confira o conteúdo.';
+COMMENT ON VIEW public.instalacao_sonda_tipos_mudos_f21 IS 'Sonda da 0185: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a 0185 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém confira o conteúdo.';
 
 --
 -- Name: lote_execucao; Type: TABLE; Schema: public; Owner: -

@@ -346,7 +346,7 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/linha_exigida_entidade.test.sq
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
-echo "== testes de linha exigida dos tipos antes MUDOS (0182: F2.1 — cobertura de tipos)"
+echo "== testes de linha exigida dos tipos antes MUDOS (0185: F2.1 — cobertura de tipos)"
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/linha_exigida_tipos_variaveis.test.sql 2>&1 \
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 

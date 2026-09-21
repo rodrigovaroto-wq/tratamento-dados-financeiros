@@ -1,6 +1,6 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## Migration mais nova: `0182_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — cobertura de
+> ## Migration mais nova: `0185_o_tipo_presente_que_ninguem_conferia.sql` (F2.1 — cobertura de
 > tipos: nove tipos antes mudos — AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS,
 > CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT — ganham UMA exigência de conteúdo cada, no
 > mesmo padrão `origem='proposta'` da 0113. Escrita e verificada localmente (banco do zero,

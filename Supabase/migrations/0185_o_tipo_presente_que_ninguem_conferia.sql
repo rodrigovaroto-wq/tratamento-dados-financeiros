@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0182 — Nove tipos do complementar chegam e ninguém confere o CONTEÚDO
+-- 0185 — Nove tipos do complementar chegam e ninguém confere o CONTEÚDO
 --
 -- O DEFEITO. `taxonomia_linha_exigida` (0113) nomeou o que precisa existir
 -- dentro de um documento para seis tipos (BALANCO, COMBINADO, FLUXO_CAIXA,
@@ -162,16 +162,16 @@ create or replace view instalacao_sonda_tipos_mudos_f21 as
        'CONTINGENCIAS', 'DEBITOS_TRIB', 'ESTOQUE', 'HEADCOUNT');
 
 comment on view instalacao_sonda_tipos_mudos_f21 is
-  'Sonda da 0182: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham '
+  'Sonda da 0185: as nove exigências de conteúdo (F2.1) para tipos que antes não tinham '
   'NENHUMA linha em taxonomia_linha_exigida. Nove é o total — zero ou menos significa que a '
-  '0182 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém '
+  '0185 não foi aplicada e estes nove tipos continuam passando pela completude sem que ninguém '
   'confira o conteúdo.';
 
 grant select on instalacao_sonda_tipos_mudos_f21 to authenticated;
 
 insert into instalacao_requisito
   (chave, migration, tipo, objeto, marcador, criterio_seed, porque, severidade, ordem) values
-  ('tipos_mudos_f21_tem_exigencia', '0182', 'seed', 'instalacao_sonda_tipos_mudos_f21', null, 9,
+  ('tipos_mudos_f21_tem_exigencia', '0185', 'seed', 'instalacao_sonda_tipos_mudos_f21', null, 9,
    'AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS, CONTINGENCIAS, '
    'DEBITOS_TRIB, ESTOQUE e HEADCOUNT não tinham NENHUMA linha em taxonomia_linha_exigida — um '
    'documento desses tipos "passava" a completude com qualquer conteúdo, inclusive uma única '
@@ -183,8 +183,8 @@ on conflict (chave) do update set
   porque = excluded.porque, severidade = excluded.severidade, ordem = excluded.ordem;
 
 update instalacao_cobertura
-   set ate_migration = '0182', revisado_em = current_date,
-       observacao = 'A 0182 é seed puro (nove exigências origem=''proposta'' + localizadores, '
+   set ate_migration = '0185', revisado_em = current_date,
+       observacao = 'A 0185 é seed puro (nove exigências origem=''proposta'' + localizadores, '
                     'fatia F2.1 do roadmap — cobertura de tipos). O requisito aponta para a view '
                     'instalacao_sonda_tipos_mudos_f21, que isola as NOVE linhas que esta '
                     'migration insere; apontar para a tabela inteira contaria as 12 exigências '
@@ -206,7 +206,7 @@ begin
        'AGING_AP', 'AGING_AR', 'EXTRATO_BANCARIO', 'GARANTIAS', 'AVAIS_FIANCAS',
        'CONTINGENCIAS', 'DEBITOS_TRIB', 'ESTOQUE', 'HEADCOUNT');
   if v_n <> 9 then
-    raise exception '0182: esperava 9 exigências novas (uma por tipo), achou %', v_n;
+    raise exception '0185: esperava 9 exigências novas (uma por tipo), achou %', v_n;
   end if;
 
   select count(*) into v_n from taxonomia_linha_exigida e
@@ -216,7 +216,7 @@ begin
      and e.checagem = 'linha_por_termos'
      and not exists (select 1 from taxonomia_linha_localizador l where l.exigencia_id = e.id);
   if v_n <> 0 then
-    raise exception '0182: % exigência(s) por termos SEM localizador — não se procura, não se satisfaz nunca', v_n;
+    raise exception '0185: % exigência(s) por termos SEM localizador — não se procura, não se satisfaz nunca', v_n;
   end if;
 
   select count(*) into v_n from taxonomia_linha_exigida
@@ -225,8 +225,8 @@ begin
        'CONTINGENCIAS', 'DEBITOS_TRIB', 'ESTOQUE', 'HEADCOUNT')
      and (severidade is not null or sobrepujavel is not null);
   if v_n <> 0 then
-    raise exception '0182: % exigência(s) com política definida no seed — severidade/sobrepujavel são decisão do dono, nascem NULL', v_n;
+    raise exception '0185: % exigência(s) com política definida no seed — severidade/sobrepujavel são decisão do dono, nascem NULL', v_n;
   end if;
 
-  raise notice '0182 OK — 9 exigências propostas (AGING_AP/AGING_AR/EXTRATO_BANCARIO/GARANTIAS/AVAIS_FIANCAS/CONTINGENCIAS/DEBITOS_TRIB/ESTOQUE/HEADCOUNT), todas com localizador, política toda NULL (do dono)';
+  raise notice '0185 OK — 9 exigências propostas (AGING_AP/AGING_AR/EXTRATO_BANCARIO/GARANTIAS/AVAIS_FIANCAS/CONTINGENCIAS/DEBITOS_TRIB/ESTOQUE/HEADCOUNT), todas com localizador, política toda NULL (do dono)';
 end $$;

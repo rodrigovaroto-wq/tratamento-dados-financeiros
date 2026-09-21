@@ -1,4 +1,4 @@
--- Testes da 0182 — as nove exigências de conteúdo para os tipos que antes não
+-- Testes da 0185 — as nove exigências de conteúdo para os tipos que antes não
 -- tinham NENHUMA linha em taxonomia_linha_exigida (fatia F2.1 do roadmap:
 -- AGING_AP, AGING_AR, EXTRATO_BANCARIO, GARANTIAS, AVAIS_FIANCAS,
 -- CONTINGENCIAS, DEBITOS_TRIB, ESTOQUE, HEADCOUNT).
@@ -59,12 +59,12 @@ begin
 
     v_caso := (fn_upsert_caso('Caso tipos variáveis — ' || v_tipo.tipo_taxonomia))::uuid;
     v_r := fn_registrar_documento(
-      v_caso, 'Entidade Teste 0182', 'anual', '2025', v_tipo.tipo_taxonomia, 0.9, 'nome_arquivo',
+      v_caso, 'Entidade Teste 0185', 'anual', '2025', v_tipo.tipo_taxonomia, 0.9, 'nome_arquivo',
       'supabase_storage', 'bucket/' || lower(v_tipo.tipo_taxonomia) || '-ausente.pdf',
-      v_tipo.tipo_taxonomia || ' ausente.pdf', true, 'HASH-0182-' || v_tipo.tipo_taxonomia || '-A', 'ok');
+      v_tipo.tipo_taxonomia || ' ausente.pdf', true, 'HASH-0185-' || v_tipo.tipo_taxonomia || '-A', 'ok');
     v_ver := (v_r->>'documento_versao_id')::uuid;
     -- Conteúdo presente (não é o caso do item_sem_conteudo da 0036), mas o
-    -- rótulo não casa NENHUM termo dos localizadores da 0182.
+    -- rótulo não casa NENHUM termo dos localizadores da 0185.
     perform fn_registrar_campos_extraidos(v_ver, jsonb_build_array(jsonb_build_object(
       'chave', 'Linha genérica sem termo relevante', 'valor_num', '10', 'confianca', '0.9')), 'N0');
 
@@ -90,9 +90,9 @@ begin
 
     raise notice '--- % (%): a linha aparece numa versão nova ---', v_tipo.tipo_taxonomia, v_tipo.conceito;
     v_r := fn_registrar_documento(
-      v_caso, 'Entidade Teste 0182', 'anual', '2025', v_tipo.tipo_taxonomia, 0.9, 'nome_arquivo',
+      v_caso, 'Entidade Teste 0185', 'anual', '2025', v_tipo.tipo_taxonomia, 0.9, 'nome_arquivo',
       'supabase_storage', 'bucket/' || lower(v_tipo.tipo_taxonomia) || '-presente.pdf',
-      v_tipo.tipo_taxonomia || ' presente.pdf', true, 'HASH-0182-' || v_tipo.tipo_taxonomia || '-B', 'ok');
+      v_tipo.tipo_taxonomia || ' presente.pdf', true, 'HASH-0185-' || v_tipo.tipo_taxonomia || '-B', 'ok');
     v_ver := (v_r->>'documento_versao_id')::uuid;
     perform fn_registrar_campos_extraidos(v_ver, jsonb_build_array(jsonb_build_object(
       'chave', v_tipo.chave_ok, 'valor_num', '10', 'confianca', '0.9')), 'N0');
@@ -112,7 +112,7 @@ begin
       'ainda aberta: ' || v_n);
   end loop;
 
-  raise notice 'linha_exigida_tipos_variaveis OK — as 9 exigências da 0182 (AGING_AP/AGING_AR/'
+  raise notice 'linha_exigida_tipos_variaveis OK — as 9 exigências da 0185 (AGING_AP/AGING_AR/'
     'EXTRATO_BANCARIO/GARANTIAS/AVAIS_FIANCAS/CONTINGENCIAS/DEBITOS_TRIB/ESTOQUE/HEADCOUNT) '
     'cobram sem a linha e resolvem sozinhas quando ela aparece';
 end $$;
