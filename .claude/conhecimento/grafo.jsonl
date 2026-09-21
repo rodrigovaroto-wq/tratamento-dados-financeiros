@@ -61,6 +61,7 @@
 {"k":"n","id":"arquivo:Supabase/test/eixo_documento_e_coluna.test.sql","t":"arquivo","f":"Supabase/test/eixo_documento_e_coluna.test.sql","txt":"eixo_documento_e_coluna.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_ambigua.test.sql","t":"arquivo","f":"Supabase/test/entidade_ambigua.test.sql","txt":"entidade_ambigua.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_controlador.test.sql","t":"arquivo","f":"Supabase/test/entidade_controlador.test.sql","txt":"entidade_controlador.test.sql"}
+{"k":"n","id":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","t":"arquivo","f":"Supabase/test/entidade_forma_de_controle.test.sql","txt":"entidade_forma_de_controle.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","t":"arquivo","f":"Supabase/test/entidade_papel_no_grupo.test.sql","txt":"entidade_papel_no_grupo.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_participacao.test.sql","t":"arquivo","f":"Supabase/test/entidade_participacao.test.sql","txt":"entidade_participacao.test.sql"}
 {"k":"n","id":"arquivo:Supabase/test/entidade_titulo_suspeito.test.sql","t":"arquivo","f":"Supabase/test/entidade_titulo_suspeito.test.sql","txt":"entidade_titulo_suspeito.test.sql"}
@@ -241,6 +242,7 @@
 {"k":"n","id":"fn:fn_entidade_canonica_forte","t":"fn","f":"Supabase/migrations/0171_o_cnpj_tambem_renomeia.sql","txt":"entidade canonica forte"}
 {"k":"n","id":"fn:fn_entidade_criaria_ciclo_participacao","t":"fn","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"entidade criaria ciclo participacao"}
 {"k":"n","id":"fn:fn_entidade_definir_controlador","t":"fn","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","txt":"entidade definir controlador"}
+{"k":"n","id":"fn:fn_entidade_definir_forma_de_controle","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"entidade definir forma de controle"}
 {"k":"n","id":"fn:fn_entidade_definir_papel_no_grupo","t":"fn","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"entidade definir papel no grupo"}
 {"k":"n","id":"fn:fn_entidade_definir_participacao","t":"fn","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"entidade definir participacao"}
 {"k":"n","id":"fn:fn_entidade_e_balcao_ambiguo","t":"fn","f":"Supabase/migrations/0163_a_ancora_que_o_crlf_desalinhou.sql","txt":"entidade e balcao ambiguo"}
@@ -309,6 +311,7 @@
 {"k":"n","id":"fn:fn_pendencia_cnpj_colide_balcao","t":"fn","f":"Supabase/migrations/0177_a_guarda_do_balcao_ia_so_num_sentido.sql","txt":"pendencia cnpj colide balcao"}
 {"k":"n","id":"fn:fn_pendencia_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"pendencia entidade ambigua"}
 {"k":"n","id":"fn:fn_pendencia_entidade_nome_suspeito","t":"fn","f":"Supabase/migrations/0178_o_titulo_da_planilha_nao_e_pessoa_juridica.sql","txt":"pendencia entidade nome suspeito"}
+{"k":"n","id":"fn:fn_pendencia_forma_de_controle_indefinida","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"pendencia forma de controle indefinida"}
 {"k":"n","id":"fn:fn_pendencia_papel_no_grupo_indefinido","t":"fn","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"pendencia papel no grupo indefinido"}
 {"k":"n","id":"fn:fn_perimetro_definir_escopo","t":"fn","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"perimetro definir escopo"}
 {"k":"n","id":"fn:fn_perimetro_vigente","t":"fn","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"perimetro vigente"}
@@ -370,9 +373,10 @@
 {"k":"n","id":"fn:fn_trg_auto_promover_dial","t":"fn","f":"Supabase/migrations/0137_a_promocao_automatica_do_dial.sql","txt":"trg auto promover dial"}
 {"k":"n","id":"fn:fn_trg_entidade_ambigua","t":"fn","f":"Supabase/migrations/0153_a_entidade_ambigua_nao_decide.sql","txt":"trg entidade ambigua"}
 {"k":"n","id":"fn:fn_trg_entidade_controlador_soma_maxima","t":"fn","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","txt":"trg entidade controlador soma maxima"}
+{"k":"n","id":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"trg entidade forma de controle tem vinculo"}
 {"k":"n","id":"fn:fn_unidade_predominante","t":"fn","f":"Supabase/migrations/0021_classe_b_checagem_unidade.sql","txt":"unidade predominante"}
 {"k":"n","id":"fn:fn_upsert_caso","t":"fn","f":"Supabase/migrations/0006_reset_funcoes.sql","txt":"upsert caso"}
-{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0179_o_papel_no_grupo_que_nunca_foi_escrito.sql","txt":"upsert entidade"}
+{"k":"n","id":"fn:fn_upsert_entidade","t":"fn","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"upsert entidade"}
 {"k":"n","id":"fn:fn_upsert_periodo","t":"fn","f":"Supabase/migrations/0030_entidade_e_periodo_canonicos.sql","txt":"upsert periodo"}
 {"k":"n","id":"fn:fn_valor_conceito","t":"fn","f":"Supabase/migrations/0009_reconciliacao_e3.sql","txt":"valor conceito"}
 {"k":"n","id":"fn:fn_valor_conceito_col","t":"fn","f":"Supabase/migrations/0023_reconciliacao_sem_ruido.sql","txt":"valor conceito col"}
@@ -512,6 +516,7 @@
 {"k":"n","id":"migration:0180","t":"migration","f":"Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql","txt":"o perimetro que o combinado nao tinha"}
 {"k":"n","id":"migration:0181","t":"migration","f":"Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql","txt":"o controle que a entidade nunca registrava"}
 {"k":"n","id":"migration:0182","t":"migration","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","txt":"o grupo horizontal que a controladora nao alcancava"}
+{"k":"n","id":"migration:0183","t":"migration","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","txt":"a forma de controle que ninguem declarava"}
 {"k":"n","id":"no8n:Abortar Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abortar Lote code"}
 {"k":"n","id":"no8n:Abrir Lote","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Abrir Lote postgres"}
 {"k":"n","id":"no8n:Agenda Mensal","t":"no8n","f":"N8N/workflow.macro.json","txt":"Agenda Mensal scheduleTrigger"}
@@ -574,32 +579,32 @@
 {"k":"n","id":"no8n:Upload Storage","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Upload Storage httpRequest"}
 {"k":"n","id":"no8n:Upsert Caso (Postgres)","t":"no8n","f":"N8N/workflow.e1-ingestao.json","txt":"Upsert Caso (Postgres) postgres"}
 {"k":"n","id":"no8n:Veredito","t":"no8n","f":"N8N/workflow.diagnostico-ia.json","txt":"Veredito code"}
-{"k":"n","id":"portao:Arnês de variações — a cadeia real sobre documento sujo","t":"portao","f":".github/workflows/suites.yml","txt":"Arnês de variações — a cadeia real sobre documento sujo","l":417}
-{"k":"n","id":"portao:Build do portal","t":"portao","f":".github/workflows/suites.yml","txt":"Build do portal","l":434}
+{"k":"n","id":"portao:Arnês de variações — a cadeia real sobre documento sujo","t":"portao","f":".github/workflows/suites.yml","txt":"Arnês de variações — a cadeia real sobre documento sujo","l":426}
+{"k":"n","id":"portao:Build do portal","t":"portao","f":".github/workflows/suites.yml","txt":"Build do portal","l":443}
 {"k":"n","id":"portao:Cliente psql 16","t":"portao","f":".github/workflows/suites.yml","txt":"Cliente psql 16","l":123}
 {"k":"n","id":"portao:Custo do lote (medido no artefato, sem chamar a OpenAI)","t":"portao","f":".github/workflows/suites.yml","txt":"Custo do lote (medido no artefato, sem chamar a OpenAI)","l":250}
-{"k":"n","id":"portao:Espelho CLAUDE.md ↔ CI (suítes e medidores)","t":"portao","f":".github/workflows/suites.yml","txt":"Espelho CLAUDE.md ↔ CI (suítes e medidores)","l":301}
+{"k":"n","id":"portao:Espelho CLAUDE.md ↔ CI (suítes e medidores)","t":"portao","f":".github/workflows/suites.yml","txt":"Espelho CLAUDE.md ↔ CI (suítes e medidores)","l":310}
 {"k":"n","id":"portao:Fixtures derivadas do gerador do book (SQL, JSON) e git diff","t":"portao","f":".github/workflows/suites.yml","txt":"Fixtures derivadas do gerador do book (SQL, JSON) e git diff","l":210}
 {"k":"n","id":"portao:Geradores de workflow — e o gerado tem de ser igual ao commitado","t":"portao","f":".github/workflows/suites.yml","txt":"Geradores de workflow — e o gerado tem de ser igual ao commitado","l":176}
 {"k":"n","id":"portao:Gerar o book sintético","t":"portao","f":".github/workflows/suites.yml","txt":"Gerar o book sintético","l":190}
 {"k":"n","id":"portao:Gerar o book-canastra","t":"portao","f":".github/workflows/suites.yml","txt":"Gerar o book-canastra","l":243}
 {"k":"n","id":"portao:Instalar dependências do portal","t":"portao","f":".github/workflows/suites.yml","txt":"Instalar dependências do portal","l":91}
 {"k":"n","id":"portao:Lint e tipos do portal","t":"portao","f":".github/workflows/suites.yml","txt":"Lint e tipos do portal","l":135}
-{"k":"n","id":"portao:O que o código chama existe no banco","t":"portao","f":".github/workflows/suites.yml","txt":"O que o código chama existe no banco","l":396}
-{"k":"n","id":"portao:O schema materializado bate com as migrations","t":"portao","f":".github/workflows/suites.yml","txt":"O schema materializado bate com as migrations","l":390}
-{"k":"n","id":"portao:Portão dos comandos de barra (todo subagent_type existe)","t":"portao","f":".github/workflows/suites.yml","txt":"Portão dos comandos de barra (todo subagent_type existe)","l":292}
+{"k":"n","id":"portao:O que o código chama existe no banco","t":"portao","f":".github/workflows/suites.yml","txt":"O que o código chama existe no banco","l":405}
+{"k":"n","id":"portao:O schema materializado bate com as migrations","t":"portao","f":".github/workflows/suites.yml","txt":"O schema materializado bate com as migrations","l":399}
+{"k":"n","id":"portao:Portão dos comandos de barra (todo subagent_type existe)","t":"portao","f":".github/workflows/suites.yml","txt":"Portão dos comandos de barra (todo subagent_type existe)","l":301}
 {"k":"n","id":"portao:Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)","t":"portao","f":".github/workflows/suites.yml","txt":"Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)","l":256}
-{"k":"n","id":"portao:Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","l":370}
-{"k":"n","id":"portao:Suíte da mensagem de falha (o texto do dia ruim)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da mensagem de falha (o texto do dia ruim)","l":329}
-{"k":"n","id":"portao:Suíte da planilha de transcrição (ida e volta do formato)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da planilha de transcrição (ida e volta do formato)","l":321}
+{"k":"n","id":"portao:Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","l":379}
+{"k":"n","id":"portao:Suíte da mensagem de falha (o texto do dia ruim)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da mensagem de falha (o texto do dia ruim)","l":338}
+{"k":"n","id":"portao:Suíte da planilha de transcrição (ida e volta do formato)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da planilha de transcrição (ida e volta do formato)","l":330}
 {"k":"n","id":"portao:Suíte da sonda de produção (a tradução de \"não perguntei\" em veredito)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte da sonda de produção (a tradução de \"não perguntei\" em veredito)","l":149}
-{"k":"n","id":"portao:Suíte das premissas sugeridas do realizado","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte das premissas sugeridas do realizado","l":337}
-{"k":"n","id":"portao:Suíte de banco (migrations do zero + testes SQL)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte de banco (migrations do zero + testes SQL)","l":380}
-{"k":"n","id":"portao:Suíte de export (invariantes do arquivo entregue)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte de export (invariantes do arquivo entregue)","l":313}
-{"k":"n","id":"portao:Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","l":346}
-{"k":"n","id":"portao:Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","l":355}
+{"k":"n","id":"portao:Suíte das premissas sugeridas do realizado","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte das premissas sugeridas do realizado","l":346}
+{"k":"n","id":"portao:Suíte de banco (migrations do zero + testes SQL)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte de banco (migrations do zero + testes SQL)","l":389}
+{"k":"n","id":"portao:Suíte de export (invariantes do arquivo entregue)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte de export (invariantes do arquivo entregue)","l":322}
+{"k":"n","id":"portao:Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","l":355}
+{"k":"n","id":"portao:Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","l":364}
 {"k":"n","id":"portao:Suíte dos hooks do agente","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte dos hooks do agente","l":156}
-{"k":"n","id":"portao:Suíte e2e (extração → banco → export)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte e2e (extração → banco → export)","l":414}
+{"k":"n","id":"portao:Suíte e2e (extração → banco → export)","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte e2e (extração → banco → export)","l":423}
 {"k":"n","id":"portao:Suíte n8n","t":"portao","f":".github/workflows/suites.yml","txt":"Suíte n8n","l":146}
 {"k":"n","id":"portao:Índice do conhecimento — o grafo derivado bate com o repositório","t":"portao","f":".github/workflows/suites.yml","txt":"Índice do conhecimento — o grafo derivado bate com o repositório","l":274}
 {"k":"n","id":"sessao:10","t":"sessao","f":"HANDOFF.md","txt":"10 Teste v25: reconciliação sem ruído, export que fecha (PRs #49 #52)","l":4768}
@@ -941,6 +946,13 @@
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_mesma_entidade","f":"Supabase/test/entidade_controlador.test.sql","l":240}
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_controlador.test.sql","l":109}
 {"k":"e","de":"arquivo:Supabase/test/entidade_controlador.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_controlador.test.sql","l":150}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_controlador_registrar","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":150}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_controlador","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":152}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_forma_de_controle","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":22}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_participacao","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":110}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":12}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":69}
+{"k":"e","de":"arquivo:Supabase/test/entidade_forma_de_controle.test.sql","rel":"CHAMA","pa":"fn:fn_upsert_entidade","f":"Supabase/test/entidade_forma_de_controle.test.sql","l":32}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_entidade_definir_papel_no_grupo","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":4}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_cnpj_colide_balcao","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":195}
 {"k":"e","de":"arquivo:Supabase/test/entidade_papel_no_grupo.test.sql","rel":"CHAMA","pa":"fn:fn_pendencia_entidade_ambigua","f":"Supabase/test/entidade_papel_no_grupo.test.sql","l":195}
@@ -1682,6 +1694,10 @@
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_entidade_definir_controlador","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":336}
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_grupo_por_controle_comum","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":427}
 {"k":"e","de":"migration:0182","rel":"CRIA","pa":"fn:fn_trg_entidade_controlador_soma_maxima","f":"Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql","l":291}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_entidade_definir_forma_de_controle","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":251}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_pendencia_forma_de_controle_indefinida","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":317}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_trg_entidade_forma_de_controle_tem_vinculo","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":213}
+{"k":"e","de":"migration:0183","rel":"CRIA","pa":"fn:fn_upsert_entidade","f":"Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql","l":361}
 {"k":"e","de":"no8n:Abrir Lote","rel":"CHAMA","pa":"fn:fn_abrir_lote_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Classificar Nome","rel":"CHAMA","pa":"fn:fn_documento_preliminar","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Conferir Fontes","rel":"CHAMA","pa":"fn:fn_divergencias_indice_macro","f":"N8N/workflow.macro.json"}
@@ -1712,27 +1728,27 @@
 {"k":"e","de":"no8n:Registrar Falha","rel":"CHAMA","pa":"fn:fn_registrar_falha_execucao","f":"N8N/workflow.erros.json"}
 {"k":"e","de":"no8n:Registrar Recusa","rel":"CHAMA","pa":"fn:fn_registrar_falha_execucao","f":"N8N/workflow.e1-ingestao.json"}
 {"k":"e","de":"no8n:Upsert Caso (Postgres)","rel":"CHAMA","pa":"fn:fn_upsert_caso","f":"N8N/workflow.e1-ingestao.json"}
-{"k":"e","de":"portao:Arnês de variações — a cadeia real sobre documento sujo","rel":"RODA","pa":"arquivo:Verificação/variacoes.mts","f":".github/workflows/suites.yml","l":417}
+{"k":"e","de":"portao:Arnês de variações — a cadeia real sobre documento sujo","rel":"RODA","pa":"arquivo:Verificação/variacoes.mts","f":".github/workflows/suites.yml","l":426}
 {"k":"e","de":"portao:Custo do lote (medido no artefato, sem chamar a OpenAI)","rel":"RODA","pa":"arquivo:N8N/medir-custo-book.mjs","f":".github/workflows/suites.yml","l":250}
-{"k":"e","de":"portao:Espelho CLAUDE.md ↔ CI (suítes e medidores)","rel":"RODA","pa":"arquivo:.claude/verificar-espelho-claude-md.mjs","f":".github/workflows/suites.yml","l":301}
+{"k":"e","de":"portao:Espelho CLAUDE.md ↔ CI (suítes e medidores)","rel":"RODA","pa":"arquivo:.claude/verificar-espelho-claude-md.mjs","f":".github/workflows/suites.yml","l":310}
 {"k":"e","de":"portao:Fixtures derivadas do gerador do book (SQL, JSON) e git diff","rel":"RODA","pa":"arquivo:Supabase/test/gerar_fixture.py","f":".github/workflows/suites.yml","l":210}
 {"k":"e","de":"portao:Geradores de workflow — e o gerado tem de ser igual ao commitado","rel":"RODA","pa":"arquivo:N8N/build-workflow-diagnostico.mjs","f":".github/workflows/suites.yml","l":176}
 {"k":"e","de":"portao:Geradores de workflow — e o gerado tem de ser igual ao commitado","rel":"RODA","pa":"arquivo:N8N/build-workflow-erros.mjs","f":".github/workflows/suites.yml","l":176}
 {"k":"e","de":"portao:Geradores de workflow — e o gerado tem de ser igual ao commitado","rel":"RODA","pa":"arquivo:N8N/build-workflow-macro.mjs","f":".github/workflows/suites.yml","l":176}
 {"k":"e","de":"portao:Geradores de workflow — e o gerado tem de ser igual ao commitado","rel":"RODA","pa":"arquivo:N8N/build-workflow.mjs","f":".github/workflows/suites.yml","l":176}
-{"k":"e","de":"portao:O que o código chama existe no banco","rel":"RODA","pa":"arquivo:Supabase/test/conferir-chamadas.mjs","f":".github/workflows/suites.yml","l":396}
-{"k":"e","de":"portao:O schema materializado bate com as migrations","rel":"RODA","pa":"arquivo:Supabase/test/run.sh","f":".github/workflows/suites.yml","l":390}
-{"k":"e","de":"portao:Portão dos comandos de barra (todo subagent_type existe)","rel":"RODA","pa":"arquivo:.claude/verificar-comandos.mjs","f":".github/workflows/suites.yml","l":292}
+{"k":"e","de":"portao:O que o código chama existe no banco","rel":"RODA","pa":"arquivo:Supabase/test/conferir-chamadas.mjs","f":".github/workflows/suites.yml","l":405}
+{"k":"e","de":"portao:O schema materializado bate com as migrations","rel":"RODA","pa":"arquivo:Supabase/test/run.sh","f":".github/workflows/suites.yml","l":399}
+{"k":"e","de":"portao:Portão dos comandos de barra (todo subagent_type existe)","rel":"RODA","pa":"arquivo:.claude/verificar-comandos.mjs","f":".github/workflows/suites.yml","l":301}
 {"k":"e","de":"portao:Régua da cobertura (texto de PRODUÇÃO contra a verdade do gerador)","rel":"RODA","pa":"arquivo:N8N/medir-regua-cobertura.mjs","f":".github/workflows/suites.yml","l":256}
-{"k":"e","de":"portao:Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-modelagem-cobertura.mts","f":".github/workflows/suites.yml","l":370}
-{"k":"e","de":"portao:Suíte da mensagem de falha (o texto do dia ruim)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-mensagem-de-falha.mts","f":".github/workflows/suites.yml","l":329}
-{"k":"e","de":"portao:Suíte da planilha de transcrição (ida e volta do formato)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-transcricao.mts","f":".github/workflows/suites.yml","l":321}
-{"k":"e","de":"portao:Suíte das premissas sugeridas do realizado","rel":"RODA","pa":"arquivo:portal/scripts/verificar-premissas-do-realizado.mts","f":".github/workflows/suites.yml","l":337}
-{"k":"e","de":"portao:Suíte de banco (migrations do zero + testes SQL)","rel":"RODA","pa":"arquivo:Supabase/test/run.sh","f":".github/workflows/suites.yml","l":380}
-{"k":"e","de":"portao:Suíte de export (invariantes do arquivo entregue)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-export.mts","f":".github/workflows/suites.yml","l":313}
-{"k":"e","de":"portao:Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-kit-basico.mts","f":".github/workflows/suites.yml","l":346}
-{"k":"e","de":"portao:Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-limite-de-envio.mts","f":".github/workflows/suites.yml","l":355}
-{"k":"e","de":"portao:Suíte e2e (extração → banco → export)","rel":"RODA","pa":"arquivo:Verificação/run.mts","f":".github/workflows/suites.yml","l":414}
+{"k":"e","de":"portao:Suíte da cobertura da modelagem (o veredito não pinta 5% e 100% do mesmo verde)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-modelagem-cobertura.mts","f":".github/workflows/suites.yml","l":379}
+{"k":"e","de":"portao:Suíte da mensagem de falha (o texto do dia ruim)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-mensagem-de-falha.mts","f":".github/workflows/suites.yml","l":338}
+{"k":"e","de":"portao:Suíte da planilha de transcrição (ida e volta do formato)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-transcricao.mts","f":".github/workflows/suites.yml","l":330}
+{"k":"e","de":"portao:Suíte das premissas sugeridas do realizado","rel":"RODA","pa":"arquivo:portal/scripts/verificar-premissas-do-realizado.mts","f":".github/workflows/suites.yml","l":346}
+{"k":"e","de":"portao:Suíte de banco (migrations do zero + testes SQL)","rel":"RODA","pa":"arquivo:Supabase/test/run.sh","f":".github/workflows/suites.yml","l":389}
+{"k":"e","de":"portao:Suíte de export (invariantes do arquivo entregue)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-export.mts","f":".github/workflows/suites.yml","l":322}
+{"k":"e","de":"portao:Suíte do Kit Básico (a tela pergunta ao banco, nunca rederiva a regra)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-kit-basico.mts","f":".github/workflows/suites.yml","l":355}
+{"k":"e","de":"portao:Suíte do limite de envio (o lote que a hospedagem recusa antes do código rodar)","rel":"RODA","pa":"arquivo:portal/scripts/verificar-limite-de-envio.mts","f":".github/workflows/suites.yml","l":364}
+{"k":"e","de":"portao:Suíte e2e (extração → banco → export)","rel":"RODA","pa":"arquivo:Verificação/run.mts","f":".github/workflows/suites.yml","l":423}
 {"k":"e","de":"portao:Índice do conhecimento — o grafo derivado bate com o repositório","rel":"RODA","pa":"arquivo:.claude/conhecimento/conferir.mjs","f":".github/workflows/suites.yml","l":274}
 {"k":"e","de":"portao:Índice do conhecimento — o grafo derivado bate com o repositório","rel":"RODA","pa":"arquivo:.claude/conhecimento/indexar.mjs","f":".github/workflows/suites.yml","l":274}
 {"k":"e","de":"sessao:10","rel":"CITA","pa":"migration:0023","f":"HANDOFF.md","l":4768}

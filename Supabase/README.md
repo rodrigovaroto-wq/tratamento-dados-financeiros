@@ -288,6 +288,7 @@ supabase db execute --file Supabase/migrations/0179_o_papel_no_grupo_que_nunca_f
 supabase db execute --file Supabase/migrations/0180_o_perimetro_que_o_combinado_nao_tinha.sql
 supabase db execute --file Supabase/migrations/0181_o_controle_que_a_entidade_nunca_registrava.sql
 supabase db execute --file Supabase/migrations/0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql
+supabase db execute --file Supabase/migrations/0183_a_forma_de_controle_que_ninguem_declarava.sql
 
 # ---------------------------------------------------------------------------
 # DEPOIS DE APLICAR, CONFIRA — e a conferência não é reler esta lista.

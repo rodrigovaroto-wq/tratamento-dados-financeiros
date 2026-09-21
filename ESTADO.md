@@ -1,6 +1,6 @@
 # Estado do projeto — leia isto antes do `HANDOFF.md`
 
-> ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL) — F1.7a ESCRITA, NÃO APLICADA (21/09/2026)
+> ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL) — F1.7 (a+b) ESCRITA, NÃO APLICADA (21/09/2026)
 >
 > **F1.7a — migration `0182_o_grupo_horizontal_que_a_controladora_nao_alcancava.sql` (não commitada por este agente)**:
 > `controlador` + `entidade_controlador` (N:N, sem temporalidade, guarda de soma nunca > 100 sem
@@ -10,7 +10,12 @@
 > registrar o grupo. Teste `Supabase/test/entidade_controlador.test.sql`, 24 asserts — 3 reprovam
 > sem a guarda de soma, 2 reprovam com a recursão trocada por join de um salto (não discrimina o
 > fecho transitivo). Escrita ≠ aplicada — nenhum caso real tem controlador registrado ainda.
-> `forma_de_controle` (fatia 1.7b) é a migration `0183`, ainda não escrita.
+> `forma_de_controle` (fatia 1.7b, FECHA a fatia 1.7) é a migration
+> `0183_a_forma_de_controle_que_ninguem_declarava.sql` (não commitada por este agente) — torna
+> `controladora_id` NULL distinguível de um não preenchido, com guarda de coerência (check) e
+> guarda do vínculo (trigger). Teste `Supabase/test/entidade_forma_de_controle.test.sql`. Números
+> medidos: ver o cabeçalho da migration e o relatório da rodada que a escreveu. Escrita ≠
+> aplicada.
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
 > - **F1.3**: `entidade.papel_no_grupo` tipado em enum + escrita explícita (`fn_entidade_definir_papel_no_grupo`) + guarda de pendência. Migration `0179`. **VERIFICADA**: reconstrução do banco do zero, correção desligada (reprova no ponto esperado), religada (todas as suítes passam).

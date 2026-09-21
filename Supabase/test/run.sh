@@ -579,6 +579,11 @@ psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_controlador.test.sql 
   | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
 
 echo
+echo "== 0183 — forma_de_controle: o vazio de controladora_id distinguível de não preenchido (fatia 1.7b, fecha a 1.7)"
+psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/entidade_forma_de_controle.test.sql 2>&1 \
+  | grep -E '^(NOTICE|ERROR|psql)' | sed -E 's/^NOTICE:  //'
+
+echo
 echo "== carga inicial dos índices macro (dado real, versionado)"
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/seed/macro_carga_inicial.sql >/dev/null
 psql -v ON_ERROR_STOP=1 -d "$DB" -f Supabase/test/seed_macro.test.sql 2>&1 \
