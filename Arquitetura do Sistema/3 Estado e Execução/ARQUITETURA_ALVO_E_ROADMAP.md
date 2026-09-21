@@ -469,8 +469,8 @@ F14→F16 · F15→F17 (contínua).
 | | |
 |---|---|
 | **Objetivo** | Que nenhum tipo seja ingerido sem que alguém confira se o conteúdo chegou |
-| **Estado** | 🟡 9 de 36 com exigência viva (F2.1 FEITA 21/09/2026 — `0185`); 3 mortas |
-| **Gap** | exigência + localizador para `MAPA_DIVIDA` (fino), `AGING_AP`, `AGING_AR`; **promover as 3 `proposta` a bloqueante** |
+| **Estado** | 🔴 **6 de 36 com exigência VIVA** (lida por alguma checagem, `origem='codigo'`) — esse número **não mudou** com a F2.1. O que mudou: as `proposta` passaram de 3 para **12** (as 3 da `0113` + as 9 da `0185`). Exigência `proposta` nomeia a ausência e não é lida por checagem nenhuma — chamá-la de "viva" inflaria o progresso, que é a regra 1 aplicada ao próprio roadmap |
+| **Gap** | exigência + localizador para `MAPA_DIVIDA` (fino); dar **consumidor** às 12 `proposta` — isto é, uma checagem que as leia. **A severidade delas é decisão do DONO, não desta fase**: a `0113` as faz nascer com `severidade`/`sobrepujavel` NULL de propósito, e subir qualquer tipo de "complementar" a bloqueante é a pergunta em aberto que `2 Especificação/f0/03_taxonomia_reestruturacao.md` deixa para o dono decidir |
 | **Dep.** | F0 |
 | **Agentes** | `migrations-postgres`, `n8n-workflow`, **`ontologia-contabil`** (novo) |
 | **Testes** | `linha_exigida.test.sql` estendido; **terceiro book: distress**; **F2.1: linha_exigida_tipos_variaveis.test.sql (51 asserts)** |
@@ -479,7 +479,8 @@ F14→F16 · F15→F17 (contínua).
 | **Aceite financeiro** | mandato sem aging/extrato **não** é declarado pronto |
 | | |
 | **F2.1 — Tipos variáveis (migration 0185)** | **ESCRITA E VERIFICADA LOCALMENTE (21/09/2026)**, não aplicada em produção. Nove tipos antes mudos ganham uma exigência cada (`AGING_AP`, `AGING_AR`, `EXTRATO_BANCARIO`, `GARANTIAS`, `AVAIS_FIANCAS`, `CONTINGENCIAS`, `DEBITOS_TRIB`, `ESTOQUE`, `HEADCOUNT`), no padrão `origem='proposta'` da `0113`. Revisão independente reprovou primeira versão por localizadores casando `chave` quando termo mora em `secao` em docs reais — corrigida com `contra='secao'` em cascata. **51 asserts** (45 sintéticos + 6 contra fixture canastra). Portões: conferir.mjs OK, verificar-espelho OK, verificar-comandos OK. **Achado guardado:** MUTUOS e FAT_INTRAGRUPO também reprovam contra fixture (não investigado nesta fatia). |
-| **F2.2–F2.4** | MAPA_DIVIDA fino (F2.2) · promover MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL a bloqueante (F2.3) · terceiro book distress (F2.4) |
+| **F2.2–F2.4** | MAPA_DIVIDA fino (F2.2) · dar consumidor real a MUTUOS/FAT_INTRAGRUPO/CONTRATO_SOCIAL — uma checagem que de fato as leia, **não** subi-las a bloqueante, que é decisão do dono (F2.3) · terceiro book distress (F2.4) |
+| **Suspeita aberta, NÃO investigada** | Na medição da F2.1, `MUTUOS` e `FAT_INTRAGRUPO` também voltam `satisfeita=false` contra o caso da fixture canastra. Essas exigências são da `0113` e estão em produção desde então — pode ser exatamente o mesmo defeito que a revisão pegou na `0185` (termo na `secao`, localizador na `chave`), mais antigo e nunca notado. Levanta-se com `select x.tipo_taxonomia, x.satisfeita from fn_exigencias_do_caso('11111111-3333-3333-3333-111111111111') x where x.origem = 'proposta'` contra o banco de teste. **Suspeita, não veredito** — ninguém abriu a fixture para conferir se a ausência é real |
 
 *Entrega lateral barata: **Diagnóstico factual** — `documento_fato` já captura covenant rompido,
 continuidade operacional e ressalva. Expor numa tela custa pouco e não depende de nada adiante.*

@@ -18,6 +18,30 @@
 > RETROATIVAMENTE para casos já gravados; ver o comentário junto do comando de apply em
 > `Supabase/README.md`. Detalhe completo em ficha de conhecimento (F2.1).
 >
+> **A DECISÃO QUE ESTAVA PENDENTE FOI TOMADA PELO DONO EM 21/09/2026: F2.** O bloco abaixo, de
+> 18/09, dizia "decisão pendente entre 1.7/F2/F3b" — não está mais. Escolhida a F2, e com uma
+> condição que o dono declarou junto e que vale para as próximas rodadas, nas palavras dele:
+> *"não é ideal passarmos de fases deixando etapas em aberto, faremos isso quando necessário mas
+> visando fechar cada etapa anterior em aberto o mais rápido possível quando deixada para trás."*
+>
+> **O QUE FICA ABERTO, NOMEADO (é o contrário de esquecido):**
+> - **Fatia 1.7** — grupo econômico por controle comum. **EM CONSTRUÇÃO EM OUTRA SESSÃO** em
+>   21/09/2026, em paralelo a esta. Foi por causa dela que a migration desta rodada nasceu `0182`
+>   e virou **`0185`**: duas migrations com o mesmo prefixo não geram conflito de merge e a ordem
+>   de aplicação documentada passaria a mentir em silêncio. **`0182`–`0184` estão reservadas
+>   àquela sessão** — quem chegar aqui e vir o buraco na sequência não deve preenchê-lo.
+> - **F2.2** MAPA_DIVIDA fino · **F2.3** dar consumidor real às 12 exigências `proposta` (uma
+>   checagem que as leia — subi-las a bloqueante é decisão do dono, não da fase) · **F2.4**
+>   terceiro book "distress".
+> - **Decisão do dono, não de engenharia:** se aging/extrato devem subir de "complementar" para
+>   Kit Básico bloqueante. `2 Especificação/f0/03_taxonomia_reestruturacao.md` marca isso como
+>   pergunta em aberto para v2, e nenhuma sessão deve resolver isso sozinha.
+> - **Dívida nomeada dentro da própria `0185`:** AGING_AP/AGING_AR só se satisfazem hoje pela
+>   linha RESIDUAL da fixture ("Demais fornecedores (184 credores)"); `aval` é substring de
+>   "avaliação" depois da normalização; e **GARANTIAS, AVAIS_FIANCAS e DEBITOS_TRIB não têm
+>   medição nenhuma contra documento real** — não existem em nenhuma das duas fixtures do
+>   repositório. Isso é NÃO MEDIDO, que é diferente de medido e OK.
+>
 > ## ✅ F1.1–F1.5 FEITAS E APLICADAS EM PRODUÇÃO — F1.6 NÃO VERIFICÁVEL (ESTRUTURAL), DECISÃO PENDENTE ENTRE 1.7/F2/F3b (18/09/2026)
 >
 > **F1.3, F1.4 e F1.5 foram executadas e verificadas independentemente:**
